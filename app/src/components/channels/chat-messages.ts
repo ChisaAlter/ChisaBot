@@ -1,6 +1,6 @@
-import { readImageDims } from "@/lib/image-dims";
 import type { ActivityMessage, Message, ToolCall } from "@ag-ui/core";
 import { classifyAttachment } from "@/lib/channels/attachments";
+import { readImageDims } from "@/lib/image-dims";
 
 /**
  * Transcript projection that pairs assistant tool calls with later tool-result messages.
@@ -166,7 +166,7 @@ function readAttachmentMetadata(part: { type: string }): {
  * The url a part points at and the type the SERVER gave the bytes behind it, or null when the part
  * does not point at a url at all.
  *
- * A `data` source is the ordinary reason for null — `copilot.ts` swaps the bytes in as the run is
+ * A `data` source is the ordinary reason for null — 服务端的附件解析器 swaps the bytes in as the run is
  * built, so one can exist on a live turn — and a source that is missing, or carries no `value`, is
  * the malformed reason. Both answer the same question the same way: there is nothing to draw.
  *
@@ -478,7 +478,7 @@ export function toVisibleChatItems(
     /*
      * One row for all of them, with the caption appended after it (and absent rather than empty
      * when there is none). Only a `url` source ever reaches the browser this way —
-     * `copilot.ts` swaps in the `data` source later, building the run — but a part is skipped
+     * 服务端的附件解析器 swaps in the `data` source later, building the run — but a part is skipped
      * rather than thrown on if one ever did arrive here, and so is a part that is not a part at
      * all: see `isReadablePart`, and the whole-message caution above it that it extends.
      */
@@ -529,7 +529,9 @@ export function toVisibleChatItems(
         url,
         // Already narrowed to a non-empty string, or absent: see `readAttachmentMetadata`.
         ...(metadata.filename ? { filename: metadata.filename } : {}),
-        ...(metadata.width && metadata.height ? { width: metadata.width, height: metadata.height } : {}),
+        ...(metadata.width && metadata.height
+          ? { width: metadata.width, height: metadata.height }
+          : {}),
         /*
          * `source.mimeType` IS ALWAYS ABSENT HERE, AND THAT IS NO LONGER THE PROBLEM IT WAS.
          *

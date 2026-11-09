@@ -25,8 +25,8 @@ test("顶栏不放头像、账号菜单、搜索框或左栏开关", () => {
 
 test("头像（账号菜单）只在手机顶栏上，电脑顶栏没有", () => {
   // 外壳把账号菜单交给顶栏，顶栏只在手机布局里画它。
-  expect(shell).toContain(
-    '<GlassTopBar account={<AccountMenu placement="topbar" />} scope={scope} />',
+  expect(shell).toMatch(
+    /<GlassTopBar\s+account=\{<AccountMenu placement="topbar" \/>\}\s+scope=\{scope\}\s*\/>/,
   );
   expect(topbar).toMatch(
     /\{mobile \? \(\s*<>\s*<MobileSearchButton scope=\{scope\} \/>\s*\{account\}\s*<\/>\s*\) : null\}/,

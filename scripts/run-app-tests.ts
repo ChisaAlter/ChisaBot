@@ -7,8 +7,8 @@
  * import 在开跑前就解析好了，事后再怎么还原都来不及。结果是：
  *
  *   app/tests/approval-tools.test.tsx、app/tests/turn-unfinished.test.tsx
- *   把 `@copilotkit/react-core/v2` 整包换成替身 → 后面用真 SDK 的文件（channel-history-refresh、
- *   failed-send-attachments…）在同一个进程里拿到替身，`copilotkit.applyHeadersToAgent` 不存在，
+ *   把 会话客户端整包换成替身 → 后面用真 SDK 的文件（channel-history-refresh、
+ *   failed-send-attachments…）在同一个进程里拿到替身，实际客户端方法不存在，
  *   成片崩；单独跑这些文件却全绿。
  *
  * 所以分两次进程跑：先跑「其余全部」，再跑这两份。任何一次非 0 退出，整体就非 0。

@@ -5,7 +5,7 @@ import {
   messagesChanged,
   syncQuery,
   type ThreadSync,
-} from "../src/lib/copilot/thread-sync";
+} from "../src/lib/conversations/thread-sync";
 
 const user = (id: string, content: string): Message => ({
   id,

@@ -1,17 +1,17 @@
 import { expect, spyOn, test } from "bun:test";
 import type { AbstractAgent, BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType, HttpAgent } from "@ag-ui/client";
-import { LLMock } from "@copilotkit/aimock";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { z } from "zod";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import {
   buildAgents,
   type HandoffForRun,
   type RuntimeModel,
   type ToolSelection,
-} from "../src/copilot";
+} from "../src/conversation-runtime";
 import type { GrantedTool } from "../src/plugins/tools";
 import { createModelCompleter } from "../src/routing/model";
+import { createModelFixture } from "./support/model-fixture";
 
 const model: RuntimeModel = { provider: "openai", defaultModel: "gpt-5.5" };
 const input: RunAgentInput = {
@@ -79,10 +79,10 @@ function observe(agent: AbstractAgent) {
 }
 
 async function fixture() {
-  const llm = new LLMock();
+  const llm = createModelFixture();
   const originalBase = process.env.OPENAI_BASE_URL;
   process.env.OPENAI_BASE_URL = await llm.start();
-  llm.onMessage(/.*/, { content: "Fixture completed." });
+  llm.rules.push({ match: /.*/, reply: { content: "Fixture completed." } });
   let executions = 0;
   const granted: GrantedTool[] = [
     {
@@ -174,7 +174,7 @@ for (const phase of ["selector", "handoff"] as const) {
         await bounded(run.settled);
         // Drain the released build's continuation, not merely the abort notification.
         await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(f.llm.getRequests()).toHaveLength(0);
+        expect(f.llm.requests).toHaveLength(0);
         expect(run.events).toHaveLength(0);
         expect(f.executions()).toBe(0);
         expect(records).toBe(0);
@@ -187,9 +187,9 @@ for (const phase of ["selector", "handoff"] as const) {
   }
 }
 
-/** A real selector connection held by this test. Final requests go only to LLMock. */
+/** A real selector connection held by this test. Final requests go only to the local model fixture. */
 async function selectorEndpoint(
-  llm: LLMock,
+  llm: ReturnType<typeof createModelFixture>,
   hold: "selector" | "final" = "selector",
 ) {
   const entered = deferred<void>();
@@ -267,7 +267,7 @@ test("Stop cancels the production selector HTTP connection before a late reply c
       selectorRequests: 1,
       finalRequests: 0,
     });
-    expect(f.llm.getRequests()).toHaveLength(0);
+    expect(f.llm.requests).toHaveLength(0);
     expect(records).toBe(0);
     expect(run.events).toHaveLength(0);
     expect(run.completions()).toBe(1);
@@ -349,7 +349,7 @@ test("an aborted pending run does not cancel its clone or the next run on the sa
     }
     gate.resolve('{"skills":["read"]}');
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(f.llm.getRequests()).toHaveLength(2);
+    expect(f.llm.requests).toHaveLength(2);
     expect(first.events).toHaveLength(0);
     expect(first.completions()).toBe(1);
     expect(selections).toBe(3);

@@ -34,6 +34,7 @@ import {
 import type { AppVariables } from "../auth/guards";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { Database } from "../db/client";
+import { reasonWithoutStatement } from "../db/query-failure";
 import {
   channelMemberships,
   channels,
@@ -45,7 +46,6 @@ import { workItems } from "../db/schema/work";
 import type { CheckPrivateShare } from "../proactive/private-share";
 import type { TurnRunner } from "../turns/types";
 import type { WorkQueue } from "../work/queue";
-import { reasonWithoutStatement } from "../db/query-failure";
 
 export const GROUP_TURN_KIND = "group.turn";
 
@@ -222,7 +222,7 @@ export function createGroupStore(
           .values({ kind: GROUP_TURN_KIND, key: turn.messageId, payload: turn })
           .onConflictDoNothing();
         await tx.execute(
-          sql`select pg_notify('openbot_work_offered', ${GROUP_TURN_KIND})`,
+          sql`select pg_notify('chisabot_work_offered', ${GROUP_TURN_KIND})`,
         );
       });
     },
@@ -930,12 +930,7 @@ export function createGroupConversations(deps: {
           message: error.message,
           ...chainOf(turn),
         });
-      else
-        await deps.store.finish(
-          id,
-          reasonWithoutStatement(error),
-          "failed",
-        );
+      else await deps.store.finish(id, reasonWithoutStatement(error), "failed");
     }
   }
 

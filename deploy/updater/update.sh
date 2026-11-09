@@ -25,7 +25,7 @@
 # 依赖树 deps-<标签>/），之后的代码改动又走快速更新。
 # 内存紧的机器：构建期间停掉 PROTO_CONTAINERS，结束后（含失败）恢复。
 set -uo pipefail
-U=/opt/chisabot-updater
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 # shellcheck source=/dev/null
 . "$U/config.env"
 # 完整构建上线后写的底座（覆盖 config.env 里的 BASE_IMAGE / NODE_MODULES_BASE）。
@@ -33,6 +33,7 @@ U=/opt/chisabot-updater
 [ -f "$U/base.env" ] && . "$U/base.env"
 # shellcheck source=compose-image.sh
 . "$U/compose-image.sh"
+. "$U/dsh-release.sh"
 IMAGE_MODE=$(image_mode)
 FULL_BUILD_MEMORY=${FULL_BUILD_MEMORY:-6g}
 FULL_BUILDER=${FULL_BUILDER:-chisabot-builder}
@@ -41,6 +42,16 @@ FULL_BUILD_PARALLELISM=${FULL_BUILD_PARALLELISM:-2}
 BUILD_CACHE_MAX=${BUILD_CACHE_MAX:-20gb}
 KEEP_IMAGES=${KEEP_IMAGES:-5}
 KEEP_BACKUPS=${KEEP_BACKUPS:-5}
+# A retained alias of the same image is not an independent rollback candidate.
+[[ "$KEEP_IMAGES" =~ ^[0-9]+$ ]] && [ "$KEEP_IMAGES" -ge 3 ] || KEEP_IMAGES=3
+[[ "$KEEP_BACKUPS" =~ ^[0-9]+$ ]] && [ "$KEEP_BACKUPS" -ge 1 ] || KEEP_BACKUPS=5
+BACKUP_NODE=${CHISABOT_DSH_NODE:-node}
+BACKUP_STATE_AVAILABLE=1
+command -v "$BACKUP_NODE" >/dev/null 2>&1 || BACKUP_STATE_AVAILABLE=0
+backup_state() {
+  if [ "$BACKUP_STATE_AVAILABLE" = 1 ]; then "$BACKUP_NODE" "$U/backup-state.mjs" "$@"
+  else echo '（宿主未安装 Node，保留现有更新备份且跳过自动轮换；完整 DSH 备份需要其既有 Node 运行时）' >&2; fi
+}
 
 JOB="" TARGET="" DRY=0 BUILD_ONLY=0 TAG="" MODE_REQ=auto
 while [ $# -gt 0 ]; do
@@ -61,6 +72,8 @@ PROTO_STOPPED=""
 HERMES_TRANSACTION_COMMITTED=0
 HERMES_ROLLBACK_ATTEMPTED=0
 HERMES_PENDING_FILE=""
+DSH_ADMISSION_HELD=0
+DSH_RELEASE_ALLOWED=1
 RB=""
 B="$U/build"
 resume_proto() {
@@ -83,10 +96,15 @@ finish() {
     && [ "$HERMES_TRANSACTION_COMMITTED" != 1 ] && [ "$HERMES_ROLLBACK_ATTEMPTED" != 1 ] && [ -f "$RB" ]; then
     HERMES_ROLLBACK_ATTEMPTED=1
     echo "::error:: 发布在 Hermes 环境切换后中断，恢复上一版镜像与运行时"
-    if sh "$RB"; then RESULT=rolled_back
+    if sh "$RB"; then RESULT=rolled_back; DSH_RELEASE_ALLOWED=1
     else echo "::error:: 中断恢复失败，请使用已记录的回滚脚本"; fi
   fi
   resume_proto
+  if [ "$DSH_ADMISSION_HELD" = 1 ] && [ "$DSH_RELEASE_ALLOWED" = 1 ]; then
+    dsh_release_admission "$JOB" || echo "::error:: DSH 接纳仍暂停，请检查持久卷中的 .maintenance 后恢复"
+  elif [ "$DSH_ADMISSION_HELD" = 1 ]; then
+    echo "::error:: 应用或账号运行时切换未确认，保留 .maintenance；核对镜像和账号容器后恢复"
+  fi
   [ "$RESULT" = succeeded ] || [ ! -d "$U/deps-$TAG.partial" ] || rm -rf "$U/deps-$TAG.partial"
   echo "::result:: $RESULT"
 }
@@ -111,6 +129,9 @@ G cat-file -e "${TARGET}^{commit}" 2>/dev/null || fail "本机镜像里没有提
 MAIN=$(G rev-parse refs/heads/main) || fail "本机镜像里没有 main"
 if [ "$TARGET" != "$MAIN" ] && ! G merge-base --is-ancestor "$TARGET" "$MAIN"; then
   fail "提交 ${TARGET:0:7} 不在 main 上"
+fi
+if [ "$BUILD_ONLY" != 1 ]; then
+  dsh_require_source_tools "$TARGET" || fail "目标源码不能承载当前 DSH 部署，未备份或切换"
 fi
 CUR_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null) || fail "找不到正在运行的容器 $CONTAINER"
 CUR_TAG=${CUR_IMAGE##*:}
@@ -160,13 +181,14 @@ else
   step backup "备份数据库与 compose"
   BK="$U/backups/$(date -u +%Y%m%dT%H%M%SZ)-$JOB"
   mkdir -p "$BK"
+  chmod 0700 "$BK"
+  backup_state begin "$BK" update || fail "无法登记更新备份"
   docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/chisabot.dump" \
     || fail "pg_dump 失败"
   [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
   cp -p "$COMPOSE_DIR/$COMPOSE_FILE" "$BK/compose.yaml"
   for v in profiles workspace; do
-    # The volume behind /$v in the running container, whatever the compose project calls it (the
-    # physical names stayed `openbot-zh_*` when the project became `chisabot-zh`).
+    # Back up the actual mounted volume, independent of the deployment project name.
     VSRC=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"/$v\"}}{{.Source}}{{end}}{{end}}" "$CONTAINER" 2>/dev/null)
     [ -n "$VSRC" ] || VSRC="/var/lib/docker/volumes/${PROJECT}_$v/_data"
     tar czf "$BK/$v-volume.tgz" -C "$(dirname "$VSRC")" "$(basename "$VSRC")" 2>/dev/null || echo "（卷 $v 未备份）"
@@ -178,6 +200,10 @@ fi
 
 rm -rf "$B" && mkdir -p "$B/src" || fail "无法准备构建目录"
 G archive "$TARGET" | tar -x -C "$B/src" || fail "导出源码失败"
+if [ "$BUILD_ONLY" != 1 ] && [ "$DRY" != 1 ] && [ "$(image_mode)" = env ]; then
+  . "$B/src/deploy/legacy-resources.sh"
+  pin_existing_resources "$COMPOSE_DIR/.env" "$CONTAINER" || fail "无法保留现有部署资源"
+fi
 VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$B/src/package.json" | head -n 1)
 BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -287,6 +313,11 @@ exit $code
   cp -a "$B/src/shared" "$C/shared"
   cp -a "$B/src/examples/zh-CN" "$C/examples/zh-CN"
   cp -a "$B/src/agent-computer/src" "$C/agent-computer/src"
+  mkdir -p "$C/runtime/dsh"
+  cp -a "$B/src/runtime/dsh/src" "$C/runtime/dsh/src"
+  cp -p "$B/src/runtime/dsh/package.json" "$B/src/runtime/dsh/package-lock.json" "$C/runtime/dsh/"
+  mkdir -p "$C/deploy"
+  cp -a "$B/src/deploy/dsh" "$C/deploy/dsh"
   cp -p "$B/build-info.json" "$C/build-info.json"
   sed -e "s#@BASE_IMAGE@#$BASE_IMAGE#" -e "s#@COMMIT@#$TARGET#g" -e "s#@TAG@#$TAG#g" -e "s#@VERSION@#${VERSION:-0.0.0}#g" \
     "$U/Dockerfile.update" > "$C/Dockerfile" || fail "生成 Dockerfile 失败"
@@ -295,6 +326,11 @@ exit $code
   [ "$LAYERS" -lt 120 ] || fail "新镜像有 $LAYERS 层，太接近 127 层上限：需要完整构建（--full）"
   echo "镜像 $NEW_IMAGE 构建完成（$LAYERS 层）"
   echo "::image:: $NEW_IMAGE"
+fi
+
+# Reject an incompatible built candidate before admission is paused or a full snapshot is started.
+if [ "$BUILD_ONLY" != 1 ]; then
+  dsh_require_compatible_image "$NEW_IMAGE" || fail "候选镜像不能读取现有会话，当前服务未切换"
 fi
 
 if [ "$BUILD_ONLY" = 1 ] || [ "$DRY" = 1 ]; then
@@ -312,14 +348,26 @@ fi
 # 对话（线程锁）才切。最多等 DRAIN_SECONDS（默认 900 秒），到点还没空就照样切——重启后应用会把被打断的那一轮
 # 补完（工具结果 + 说明原因的 RUN_ERROR），聊天里写清楚是服务重启，不会说成模型的错。DRAIN_SECONDS=0 关掉。
 DRAIN_SECONDS=${DRAIN_SECONDS:-900}
-busy_threads() {
-  docker exec "$CONTAINER" sh -c 'export PGPASSWORD=$(cat /var/lib/postgresql/pgpassword 2>/dev/null); psql -h 127.0.0.1 -U openbot openbot -Atc "select count(*) from openbot_local_threads where lock_expires_at > now()"' 2>/dev/null | tr -dc 0-9
-}
-if [ "$DRAIN_SECONDS" -gt 0 ] 2>/dev/null; then
+DSH_ENABLED=$(dsh_enabled) || fail "无法读取 DSH 部署状态"
+if [ "$DSH_ENABLED" = 1 ]; then
+  dsh_accounts_check || fail "DSH 账号部署配置不完整，保持旧镜像"
+  dsh_hold_admission "$JOB" || fail "无法暂停新执行：检查已有 .maintenance 记录"
+  DSH_ADMISSION_HELD=1
+fi
+. "$U/legacy-schema.sh"
+busy_threads() { conversation_busy_threads; }
+if [ "$DRAIN_SECONDS" -gt 0 ] 2>/dev/null || [ "$DSH_ADMISSION_HELD" = 1 ]; then
   step drain "等正在回答的对话结束再切换（最多 $DRAIN_SECONDS 秒）"
   WAITED=0
   while :; do
-    N=$(busy_threads)
+    N=$(busy_threads) || N=''
+    if [ "$DSH_ADMISSION_HELD" = 1 ]; then
+      [[ "$N" =~ ^[0-9]+$ ]] || fail "无法读取活动对话，保持旧镜像"
+      DSH_BUSY=$(dsh_ops busy) || fail "无法读取 DSH 执行状态，保持旧镜像"
+      [[ "$DSH_BUSY" =~ ^[0-9]+$ ]] || fail "DSH 活动数量无效，保持旧镜像"
+      N=$((N + DSH_BUSY))
+      [ "$N" = 0 ] || [ "$WAITED" -lt "$DRAIN_SECONDS" ] || fail "DSH 执行尚未完成，已取消切换"
+    fi
     [ -z "$N" ] && { echo "读不到对话状态，直接切换"; break; }
     [ "$N" = 0 ] && { [ "$WAITED" -gt 0 ] && echo "对话都已结束（等了 $WAITED 秒）"; break; }
     [ "$WAITED" -ge "$DRAIN_SECONDS" ] && { echo "注意：等了 $WAITED 秒仍有 $N 个对话在回答，照常切换（重启后会把被打断的那一轮补完）"; break; }
@@ -328,10 +376,24 @@ if [ "$DRAIN_SECONDS" -gt 0 ] 2>/dev/null; then
   done
 fi
 
+if [ "$DSH_ADMISSION_HELD" = 1 ]; then
+  mkdir -p "$BK/cutover" && chmod 0700 "$BK/cutover" || fail "无法建立切换备份目录"
+  dsh_snapshot "$BK/cutover" || fail "DSH 日志与数据库备份未完成，保持旧镜像"
+  for v in profiles workspace; do
+    VSRC=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"/$v\"}}{{.Source}}{{end}}{{end}}" "$CONTAINER") || fail "无法读取 $v 卷"
+    [ -d "$VSRC" ] && tar czf "$BK/cutover/$v-volume.tgz" -C "$VSRC" . || fail "$v 卷备份失败"
+  done
+  dsh_require_compatible_image "$NEW_IMAGE" || fail "新镜像不能读取现有 DSH 日志，保持旧镜像"
+fi
+
+backup_state complete "$BK" || fail "更新备份不完整，保持旧镜像"
+
 # ---------- swap ----------
 step swap "切换到 $NEW_IMAGE"
+DSH_RELEASE_ALLOWED=0
 RB="$COMPOSE_DIR/rollback-to-$CUR_TAG.sh"
 sed -e "s#@NEW@#$NEW_IMAGE#g" -e "s#@NEW_TAG@#$TAG#g" -e "s#@PREV@#$CUR_IMAGE#g" -e "s#@JOB@#$JOB#g" \
+  -e "s#@UPDATER_HOME@#$U#g" \
   -e "s#@COMPOSE_DIR@#$COMPOSE_DIR#g" -e "s#@COMPOSE_FILE@#$COMPOSE_FILE#g" -e "s#@PROJECT@#$PROJECT#g" \
   -e "s#@SERVICE@#$SERVICE#g" -e "s#@CONTAINER@#$CONTAINER#g" \
   -e "s#@LOCAL_URL@#${LOCAL_URL:-http://127.0.0.1:3001}#g" -e "s#@PUBLIC_HEALTH_URL@#${PUBLIC_HEALTH_URL:-}#g" "$U/rollback.template.sh" > "$RB.tmp" && chmod 755 "$RB.tmp" && mv "$RB.tmp" "$RB" \
@@ -384,7 +446,9 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
     echo "网络配置变了（$DRIFT）：使用 --force-recreate"
     RECREATE=(--force-recreate)
   fi
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE"
+  dsh_prepare_candidate_reader "$NEW_IMAGE" || { echo "无法持久保存候选读取器要求，未启动候选"; exit 1; }
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE" || exit 1
+  if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$NEW_IMAGE" || exit 1; fi
 )
 SWAP=$?
 
@@ -415,21 +479,23 @@ if [ "$SWAP" = 0 ] && CHISABOT_SMOKE_DEFER_HERMES=$DEFER_HERMES bash "$U/health.
   else echo "::error:: Hermes 运行时激活或就绪检查失败"; fi
 fi
 if [ "$OK" != 1 ]; then
-  echo "::error:: 新版本健康检查没通过，自动回滚到 $CUR_IMAGE"
+  echo "::error:: 新版本健康检查没通过；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
   docker logs --tail 15 "$CONTAINER" 2>&1 | cut -c1-240 | sed 's/^/  容器日志 | /'
   HERMES_ROLLBACK_ATTEMPTED=1
   if sh "$RB" && bash "$U/health.sh" "$CUR_IMAGE" ""; then
+    DSH_RELEASE_ALLOWED=1
     echo "已回滚到 $CUR_IMAGE"
     RESULT=rolled_back
     exit 3
   fi
-  echo "::error:: 自动回滚后仍不健康，请人工处理（回滚脚本 $RB，备份 ${BK:-无}）"
+  echo "::error:: 自动回滚被兼容门槛阻止或未恢复健康；保持接纳暂停，使用兼容当前读取器的镜像恢复（回滚脚本 $RB，备份 ${BK:-无}）"
   exit 4
 fi
 
 # Runtime readiness and image health both passed; later cleanup/self-upgrade failures must not
 # roll a healthy release back. The immutable snapshot remains available for an explicit rollback.
 HERMES_TRANSACTION_COMMITTED=1
+DSH_RELEASE_ALLOWED=1
 
 # ---------- done ----------
 if [ "$MODE" = full ]; then
@@ -475,12 +541,24 @@ echo "::duration:: $(( $(date +%s) - START_TS ))"
 rm -rf "$B"
 # 只保留最近 KEEP_IMAGES 个一键更新镜像；不动正在用的、上一版（回滚目标）、底座和手动发布的 glass-* 等。
 docker images --format '{{.Repository}}:{{.Tag}} {{.CreatedAt}}' "$IMAGE_REPO" | awk '$1 ~ /:auto-/' | sort -k2 -r | awk '{print $1}' \
-  | tail -n +"$((KEEP_IMAGES + 1))" | while read -r img; do
+  | {
+  declare -A retained_ids=()
+  retained_count=0
+  while read -r img; do
+    image_id=$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null) || continue
+    if [ -n "${retained_ids[$image_id]:-}" ]; then continue; fi
+    if [ "$retained_count" -lt "$KEEP_IMAGES" ]; then
+      retained_ids[$image_id]=1
+      retained_count=$((retained_count + 1))
+      continue
+    fi
     if [ "$img" != "$NEW_IMAGE" ] && [ "$img" != "$CUR_IMAGE" ] && [ "$img" != "${BASE_IMAGE:-}" ] && docker rmi "$img" >/dev/null 2>&1; then
       echo "清理旧镜像 $img"
     fi
   done
-ls -1dt "$U"/backups/*/ 2>/dev/null | tail -n +"$((KEEP_BACKUPS + 1))" | xargs -r rm -rf
+}
+backup_state prune "$U/backups" update "$KEEP_BACKUPS" \
+  || echo '（备份保留检查未通过，未清理未知或受保护目录）' >&2
 docker image prune -f >/dev/null 2>&1
 RESULT=succeeded
 exit 0

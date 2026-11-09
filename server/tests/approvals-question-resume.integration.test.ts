@@ -125,7 +125,9 @@ test("a question whose conversation is gone is closed rather than counted for ev
     key,
     payload: question(),
   });
-  expect((await questions.list(owner)).some((row) => row.id === key)).toBeTrue();
+  expect(
+    (await questions.list(owner)).some((row) => row.id === key),
+  ).toBeTrue();
 
   expect(await questions.dismiss(owner, key)).toEqual({
     id: key,
@@ -133,20 +135,22 @@ test("a question whose conversation is gone is closed rather than counted for ev
   });
 
   // Gone from「在等你回答」, which is what the rail's number counts.
-  expect((await questions.list(owner)).some((row) => row.id === key)).toBeFalse();
+  expect(
+    (await questions.list(owner)).some((row) => row.id === key),
+  ).toBeFalse();
   const [row] = await database
     .select()
     .from(workItems)
-    .where(
-      and(eq(workItems.kind, "person.question"), eq(workItems.key, key)),
-    );
+    .where(and(eq(workItems.kind, "person.question"), eq(workItems.key, key)));
   expect(row?.finishedAt).not.toBeNull();
   // No answer was queued: closing a question resumes nothing.
   expect(
     await database
       .select()
       .from(workItems)
-      .where(and(eq(workItems.kind, "person.response"), eq(workItems.key, key))),
+      .where(
+        and(eq(workItems.kind, "person.response"), eq(workItems.key, key)),
+      ),
   ).toHaveLength(0);
   // Closing one that is already closed is a no-op, not a second revive of the row.
   expect(await questions.dismiss(owner, key)).toEqual({

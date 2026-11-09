@@ -25,13 +25,28 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   const tid = (name: string) => `${owner}-${name}`;
   let releaseSweepLock: (() => Promise<void>) | null = null;
   const turns: { threadId: string; content: string }[] = [];
-  let reply: (input: { threadId: string; runId: string }) => Promise<{ replyText: string; toolErrors?: string[] }> =
-    async () => ({ replyText: "⏰ 该喝水了" });
-  let botAvailable: (owner: string, agentId: string) => Promise<boolean> = async () => true;
+  let reply: (input: {
+    threadId: string;
+    runId: string;
+  }) => Promise<{ replyText: string; toolErrors?: string[] }> = async () => ({
+    replyText: "⏰ 该喝水了",
+  });
+  let botAvailable: (owner: string, agentId: string) => Promise<boolean> =
+    async () => true;
   const deps = {
-    runTurn: async (input: { threadId: string; userMessage?: { content?: unknown }; forwardedProps?: { chisabotSchedule?: { runId: string } } }) => {
-      turns.push({ threadId: input.threadId, content: String(input.userMessage?.content ?? "") });
-      return reply({ threadId: input.threadId, runId: input.forwardedProps?.chisabotSchedule?.runId ?? "" });
+    runTurn: async (input: {
+      threadId: string;
+      userMessage?: { content?: unknown };
+      forwardedProps?: { chisabotSchedule?: { runId: string } };
+    }) => {
+      turns.push({
+        threadId: input.threadId,
+        content: String(input.userMessage?.content ?? ""),
+      });
+      return reply({
+        threadId: input.threadId,
+        runId: input.forwardedProps?.chisabotSchedule?.runId ?? "",
+      });
     },
     botAvailable: (o: string, a: string) => botAvailable(o, a),
     retryDelayMs: 1,
@@ -39,7 +54,10 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   const s = url ? createSchedules(database, deps as never) : (null as never);
   const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
   const due = (id: string) =>
-    sql.unsafe("UPDATE chisabot_schedules SET next_run_at = date_trunc('minute', now() - interval '1 minute') WHERE id = $1", [id]);
+    sql.unsafe(
+      "UPDATE chisabot_schedules SET next_run_at = date_trunc('minute', now() - interval '1 minute') WHERE id = $1",
+      [id],
+    );
   const fireDue = async (id: string) => {
     await due(id);
     const r = await s.sweep();
@@ -48,29 +66,57 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   };
   const addThread = (id: string, messages: unknown[] = []) =>
     sql.unsafe(
-      "INSERT INTO openbot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, 'bot1', $3::text::jsonb)",
+      "INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id, messages) VALUES ($1, $2, 'bot1', $3::text::jsonb)",
       [id, owner, JSON.stringify(messages)],
     );
   const daily = (thread: string, title: string) =>
-    s.create({ owner, agentId: "bot1", threadId: tid(thread), title, instruction: `提醒：${title}`, when: { repeat: "daily", at: "09:00" } });
+    s.create({
+      owner,
+      agentId: "bot1",
+      threadId: tid(thread),
+      title,
+      instruction: `提醒：${title}`,
+      when: { repeat: "daily", at: "09:00" },
+    });
 
   beforeAll(async () => {
     releaseSweepLock = await holdScheduleSweepLock(url!);
     await s.ensure();
     // 本地对话表平时由 local-conversations 建；单独跑这个文件时自己建（同一份最小结构）。
-    await sql.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+    await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
       id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
       name text, archived boolean NOT NULL DEFAULT false,
       messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
       run_id text, lock_expires_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
     )`);
-    for (const t of ["m1", "m1-tool", "m2-a", "m2-b", "m2-other", "m3", "m3-gone", "s6-a", "s6-b"]) await addThread(tid(t));
+    for (const t of [
+      "m1",
+      "m1-tool",
+      "m2-a",
+      "m2-b",
+      "m2-other",
+      "m3",
+      "m3-gone",
+      "s6-a",
+      "s6-b",
+    ])
+      await addThread(tid(t));
   }, 120_000);
   afterAll(async () => {
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE owner_user_id = $1", [owner]).catch(() => {});
-    await sql.unsafe("DELETE FROM chisabot_schedule_runs WHERE owner_user_id LIKE $1", [`${owner}%`]);
-    await sql.unsafe("DELETE FROM chisabot_schedules WHERE owner_user_id LIKE $1", [`${owner}%`]);
+    await sql
+      .unsafe("DELETE FROM chisabot_local_threads WHERE owner_user_id = $1", [
+        owner,
+      ])
+      .catch(() => {});
+    await sql.unsafe(
+      "DELETE FROM chisabot_schedule_runs WHERE owner_user_id LIKE $1",
+      [`${owner}%`],
+    );
+    await sql.unsafe(
+      "DELETE FROM chisabot_schedules WHERE owner_user_id LIKE $1",
+      [`${owner}%`],
+    );
     await releaseSweepLock?.();
   });
 
@@ -88,15 +134,27 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     }
     const after = await s.get(owner, sc.id);
     expect(after.status).toBe("active");
-    expect(after.recentRuns!.map((r) => r.status)).toEqual(["ok", "ok", "ok", "ok"]);
+    expect(after.recentRuns!.map((r) => r.status)).toEqual([
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+    ]);
   });
 
   test("M1: tool errors from the runner still count as failures and pause after 3", async () => {
     const sc = await daily("m1-tool", "隧道巡检");
-    reply = async () => ({ replyText: "已检查。", toolErrors: ["ERR_TUNNEL_CONNECTION_FAILED"] });
+    reply = async () => ({
+      replyText: "已检查。",
+      toolErrors: ["ERR_TUNNEL_CONNECTION_FAILED"],
+    });
     for (let i = 0; i < 3; i++) await fireDue(sc.id);
     const after = await s.get(owner, sc.id);
-    expect(after.recentRuns!.map((r) => r.status)).toEqual(["failed", "failed", "failed"]);
+    expect(after.recentRuns!.map((r) => r.status)).toEqual([
+      "failed",
+      "failed",
+      "failed",
+    ]);
     expect(after.status).toBe("paused");
     reply = async () => ({ replyText: "⏰ 该喝水了" });
   });
@@ -107,22 +165,40 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     const sc = await daily("silent-failure", "巡检失败");
     reply = async ({ threadId, runId }) => {
       await sql.unsafe(
-        "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
-        [threadId, JSON.stringify([
-          { id: `schedule-${runId}`, role: "user", content: "巡检" },
-          { id: `reply-${runId}`, role: "assistant", content: SCHEDULE_SILENT_MARKER },
-        ])],
+        "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+        [
+          threadId,
+          JSON.stringify([
+            { id: `schedule-${runId}`, role: "user", content: "巡检" },
+            {
+              id: `reply-${runId}`,
+              role: "assistant",
+              content: SCHEDULE_SILENT_MARKER,
+            },
+          ]),
+        ],
       );
-      return { replyText: SCHEDULE_SILENT_MARKER, toolErrors: ["upstream unavailable"] };
+      return {
+        replyText: SCHEDULE_SILENT_MARKER,
+        toolErrors: ["upstream unavailable"],
+      };
     };
     try {
       for (let i = 0; i < 3; i++) await fireDue(sc.id);
       const after = await s.get(owner, sc.id);
-      expect(after.recentRuns!.map((r) => r.status)).toEqual(["failed", "failed", "failed"]);
-      expect(after.recentRuns!.every((r) => r.result === "巡检未完成：本次有工具执行失败。")).toBe(true);
+      expect(after.recentRuns!.map((r) => r.status)).toEqual([
+        "failed",
+        "failed",
+        "failed",
+      ]);
+      expect(
+        after.recentRuns!.every(
+          (r) => r.result === "巡检未完成：本次有工具执行失败。",
+        ),
+      ).toBe(true);
       expect(after.status).toBe("paused");
       const [thread] = await sql.unsafe<{ messages: unknown[] }[]>(
-        "SELECT messages FROM openbot_local_threads WHERE id = $1",
+        "SELECT messages FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
       expect(thread!.messages).toHaveLength(2);
@@ -136,7 +212,9 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     await addThread(threadId);
     const sc = await daily("manual-race", "并发手动运行");
     let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let calls = 0;
     const lockedDeps = {
       ...deps,
@@ -153,16 +231,24 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
         first.runNow(owner, sc.id),
         second.runNow(owner, sc.id),
       ]);
-      expect(claims.filter((claim) => claim.status === "fulfilled")).toHaveLength(1);
+      expect(
+        claims.filter((claim) => claim.status === "fulfilled"),
+      ).toHaveLength(1);
       const refused = claims.find((claim) => claim.status === "rejected");
-      expect(refused?.status === "rejected" && String(refused.reason)).toContain("正在运行");
+      expect(
+        refused?.status === "rejected" && String(refused.reason),
+      ).toContain("正在运行");
       await due(sc.id);
       expect((await s.sweep()).skipped).toContain(sc.id);
       await settle();
       expect(calls).toBe(1);
       const after = await s.get(owner, sc.id);
-      expect(after.recentRuns!.filter((run) => run.status === "running")).toHaveLength(1);
-      expect(after.recentRuns!.filter((run) => run.status === "skipped")).toHaveLength(1);
+      expect(
+        after.recentRuns!.filter((run) => run.status === "running"),
+      ).toHaveLength(1);
+      expect(
+        after.recentRuns!.filter((run) => run.status === "skipped"),
+      ).toHaveLength(1);
     } finally {
       release();
       await settle();
@@ -172,8 +258,15 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   test("M2: original thread deleted → nothing is sent anywhere, task is cancelled and marked 原对话已删除", async () => {
     const sc = await daily("m2-a", "喝水");
     // 同一个机器人另有一个最近活跃的对话：以前会回退到这里。
-    await sql.unsafe("UPDATE openbot_local_threads SET updated_at = now() WHERE id = $1", [tid("m2-other")]).catch(() => {});
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE id = $1", [tid("m2-a")]);
+    await sql
+      .unsafe(
+        "UPDATE chisabot_local_threads SET updated_at = now() WHERE id = $1",
+        [tid("m2-other")],
+      )
+      .catch(() => {});
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE id = $1", [
+      tid("m2-a"),
+    ]);
     const listed = (await s.list(owner)).find((x) => x.id === sc.id)!;
     expect(listed.threadDeleted).toBe(true);
     turns.length = 0;
@@ -189,11 +282,17 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   test("M2: deleting a thread cancels the web routines attached to it, not others", async () => {
     const onIt = await daily("m2-b", "挂在 b 上");
     const other = await daily("m2-other", "挂在别处");
-    await sql.unsafe("DELETE FROM openbot_local_threads WHERE id = $1", [tid("m2-b")]);
-    expect(await cancelSchedulesForDeletedThreads(sql, owner, [tid("m2-b")])).toBe(1);
+    await sql.unsafe("DELETE FROM chisabot_local_threads WHERE id = $1", [
+      tid("m2-b"),
+    ]);
+    expect(
+      await cancelSchedulesForDeletedThreads(sql, owner, [tid("m2-b")]),
+    ).toBe(1);
     expect((await s.get(owner, onIt.id)).status).toBe("cancelled");
     expect((await s.get(owner, other.id)).status).toBe("active");
-    expect((await s.list(owner)).find((x) => x.id === other.id)!.threadDeleted).toBe(false);
+    expect(
+      (await s.list(owner)).find((x) => x.id === other.id)!.threadDeleted,
+    ).toBe(false);
   });
 
   test("M3: botAvailable throwing is retried and the run goes ahead; never cancels", async () => {
@@ -238,26 +337,47 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     // a：触发消息后只有机器人的静默回复 → 收起，之前的消息保留。
     const a = await daily("s6-a", "巡检 a");
     reply = async ({ threadId, runId }) => {
-      await sql.unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
-        threadId,
-        JSON.stringify([old, { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" }, { id: "r1", role: "assistant", content: SILENT }]),
-      ]);
+      await sql.unsafe(
+        "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+        [
+          threadId,
+          JSON.stringify([
+            old,
+            { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" },
+            { id: "r1", role: "assistant", content: SILENT },
+          ]),
+        ],
+      );
       return { replyText: SILENT };
     };
     await fireDue(a.id);
-    const [ta] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM openbot_local_threads WHERE id = $1", [tid("s6-a")]);
+    const [ta] = await sql.unsafe<{ messages: { id: string }[] }[]>(
+      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
+      [tid("s6-a")],
+    );
     expect(ta!.messages.map((m) => m.id)).toEqual(["m-old"]);
     // b：静默回复后用户已经又发了一条 → 什么都不删。
     const b = await daily("s6-b", "巡检 b");
     reply = async ({ threadId, runId }) => {
-      await sql.unsafe("UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1", [
-        threadId,
-        JSON.stringify([old, { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" }, { id: "r1", role: "assistant", content: SILENT }, { id: "u2", role: "user", content: "在吗" }]),
-      ]);
+      await sql.unsafe(
+        "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+        [
+          threadId,
+          JSON.stringify([
+            old,
+            { id: `schedule-${runId}`, role: "user", content: "⟦…⟧" },
+            { id: "r1", role: "assistant", content: SILENT },
+            { id: "u2", role: "user", content: "在吗" },
+          ]),
+        ],
+      );
       return { replyText: SILENT };
     };
     await fireDue(b.id);
-    const [tb] = await sql.unsafe<{ messages: { id: string }[] }[]>("SELECT messages FROM openbot_local_threads WHERE id = $1", [tid("s6-b")]);
+    const [tb] = await sql.unsafe<{ messages: { id: string }[] }[]>(
+      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
+      [tid("s6-b")],
+    );
     expect(tb!.messages).toHaveLength(4);
     expect((await s.get(owner, b.id)).lastStatus).toBe("ok");
     reply = async () => ({ replyText: "⏰ 该喝水了" });
@@ -268,26 +388,59 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
     const live = `${owner}-bot-live`;
     const soft = `${owner}-bot-soft`;
     beforeAll(async () => {
-      await database.insert(users).values({ id: person, email: `${person}@example.test`, name: person }).onConflictDoNothing();
+      await database
+        .insert(users)
+        .values({ id: person, email: `${person}@example.test`, name: person })
+        .onConflictDoNothing();
       for (const id of [live, soft]) {
-        await database.insert(agents).values({ id, name: id, type: "remote_ag_ui", configuration: {} }).onConflictDoNothing();
+        await database
+          .insert(agents)
+          .values({ id, name: id, type: "remote_ag_ui", configuration: {} })
+          .onConflictDoNothing();
         await database
           .insert(agentProfiles)
-          .values({ agentId: id, ownerUserId: person, title: id, roleDescription: "test", avatarSeed: id, visibility: "private", ...(id === soft ? { deletedAt: new Date() } : {}) })
+          .values({
+            agentId: id,
+            ownerUserId: person,
+            title: id,
+            roleDescription: "test",
+            avatarSeed: id,
+            visibility: "private",
+            ...(id === soft ? { deletedAt: new Date() } : {}),
+          })
           .onConflictDoNothing();
       }
     });
     afterAll(async () => {
-      await database.delete(agentProfiles).where(inArray(agentProfiles.agentId, [live, soft]));
+      await database
+        .delete(agentProfiles)
+        .where(inArray(agentProfiles.agentId, [live, soft]));
       await database.delete(agents).where(inArray(agents.id, [live, soft]));
       await database.delete(users).where(inArray(users.id, [person]));
     });
-    const mk = async (o: string, agentId: string, status: string, age = "0 days") => {
-      const created = await s.create({ owner: o, agentId, threadId: `${o}-t`, title: `${agentId}-${status}`, instruction: "x", when: { repeat: "daily", at: "09:00" } });
-      await sql.unsafe(`UPDATE chisabot_schedules SET status = $2, updated_at = now() - interval '${age}' WHERE id = $1`, [created.id, status]);
+    const mk = async (
+      o: string,
+      agentId: string,
+      status: string,
+      age = "0 days",
+    ) => {
+      const created = await s.create({
+        owner: o,
+        agentId,
+        threadId: `${o}-t`,
+        title: `${agentId}-${status}`,
+        instruction: "x",
+        when: { repeat: "daily", at: "09:00" },
+      });
+      await sql.unsafe(
+        `UPDATE chisabot_schedules SET status = $2, updated_at = now() - interval '${age}' WHERE id = $1`,
+        [created.id, status],
+      );
       return created.id;
     };
-    const exists = async (id: string) => (await sql.unsafe("SELECT 1 FROM chisabot_schedules WHERE id = $1", [id])).length > 0;
+    const exists = async (id: string) =>
+      (await sql.unsafe("SELECT 1 FROM chisabot_schedules WHERE id = $1", [id]))
+        .length > 0;
 
     test("automatic purge keeps live / recently-ended orphans and only drops ones ended over a week ago", async () => {
       const activeOrphan = await mk(person, soft, "active");
@@ -303,7 +456,12 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
 
     test("profiles unreadable (no live profile for this owner at all) → nothing is purged or cancelled", async () => {
       const ghostOwner = `${owner}-ghost`;
-      const a = await mk(ghostOwner, `${owner}-unknown-bot`, "cancelled", "30 days");
+      const a = await mk(
+        ghostOwner,
+        `${owner}-unknown-bot`,
+        "cancelled",
+        "30 days",
+      );
       const b = await mk(ghostOwner, `${owner}-unknown-bot`, "active");
       expect(await s.purgeOrphanSchedules(ghostOwner)).toBe(0);
       await s.purgeOrphanSchedules();

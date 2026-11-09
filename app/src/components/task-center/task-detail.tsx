@@ -294,6 +294,12 @@ export function TaskDetail({
                   <p className="tc-prose">{task.summary}</p>
                 </section>
               ) : null}
+              {task.completion ? (
+                <section>
+                  <h4>完成条件</h4>
+                  <p className="tc-prose">{task.completion.criteria}</p>
+                </section>
+              ) : null}
               {task.artifacts.length ? (
                 <section>
                   <h4>交付物</h4>
@@ -430,11 +436,11 @@ const TRACE_KIND: Record<string, string> = {
   RUN_ERROR: "出错",
 };
 
-/** `task-center:<taskId>:<tag>:<attempt>` → 「规划」/「执行 · 第 N 次」。 */
+/** Versioned retries keep their own execution identity; the last segment is the attempt. */
 function traceThreadLabel(thread: string): string {
   const parts = thread.split(":");
   const tag = parts[2];
-  const attempt = parts[3];
+  const attempt = parts.at(-1);
   const name = tag === "plan" ? "规划" : tag === "run" ? "执行" : tag || "回合";
   return attempt ? `${name} · 第 ${attempt} 次` : name;
 }

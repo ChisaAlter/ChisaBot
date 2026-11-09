@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
-import { builtInAgentConfiguration } from "../src/copilot";
+import { builtInAgentConfiguration } from "../src/conversation-runtime";
 import { createModelCompleter } from "../src/routing/model";
 
 function endpoint() {

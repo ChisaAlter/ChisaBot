@@ -34,6 +34,8 @@ const LOGIN_LOOP_WINDOW_MS = 30_000;
 const SKIP_NAV =
   /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
 
+importScripts("/compat/legacy-browser.js");
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
@@ -108,7 +110,7 @@ async function navigate(event) {
     ]);
     if (response === "timeout") return failed();
     // 会话过期：网关对导航本该回 302 /login；万一回的是网关的 JSON 401（缺 Sec-Fetch-Mode / Accept 的请求），也送去登录页。
-    // 和前端 isGatewayLoginRequired（lib/auth/login-redirect.ts）同一个判断：只认 `openbotAuthRequired: true`；
+    // 和前端 isGatewayLoginRequired（lib/auth/login-redirect.ts）使用同一网关登录合同；
     // 没有网关的部署没有 /login，别的 401 原样交给浏览器。
     // 刚从 /login 过来（login.js 看到会话有效就 replace(next) 回来）还是这种 401：会话有效但后端不认
     // （身份头重放、签名校验失败）。再送去 /login 就是死循环，原样交给浏览器。真没登录的导航网关自己回 302。
@@ -135,7 +137,7 @@ async function isGatewayLoginRequired(response) {
     return false;
   try {
     const body = await response.clone().json();
-    return body?.openbotAuthRequired === true;
+    return ChisaLegacyBrowser.gatewayLoginRequired(body);
   } catch {
     return false;
   }
@@ -233,7 +235,7 @@ function retryMain(env) {
       ) {
         try {
           const body = await res.clone().json();
-          authRequired = body?.openbotAuthRequired === true;
+          authRequired = env.gatewayLoginRequired(body);
         } catch {}
       }
       if (authRequired) {
@@ -364,7 +366,7 @@ function offline() {
 }
 
 function slow() {
-  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])},loopKey:${JSON.stringify(LOGIN_REDIRECT_KEY)},loopWindowMs:${LOGIN_LOOP_WINDOW_MS}}`;
+  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])},loopKey:${JSON.stringify(LOGIN_REDIRECT_KEY)},loopWindowMs:${LOGIN_LOOP_WINDOW_MS},gatewayLoginRequired:${ChisaLegacyBrowser.gatewayLoginRequired.toString()}}`;
   return card(
     "slow",
     "服务器响应慢",

@@ -1,38 +1,22 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { AGUIMock } from "@copilotkit/aimock/agui";
 import { testAgentConnection } from "../src/agents/connection-test";
+import { createAgUiFixture } from "./support/ag-ui-fixture";
 
-/**
- * The connection test, against something that really speaks AG-UI.
- *
- * Uses a real AG-UI mock rather than a stubbed fetch. The other tests for this hand it a function that returns a hand-written
- * SSE body, which proves the parsing and nothing about the protocol: every one of them would still
- * pass if AG-UI changed its wire format underneath us, or if we had misread it in the first place.
- * The whole promise is that somebody else's agent works if it speaks this protocol, so the
- * test that matters is one where an implementation we did not write answers.
- *
- * `@copilotkit/aimock` is ours, which is the point: it is the org's deterministic backend for
- * exactly this, it tracks the protocol as the protocol moves, and using it here means ChisaBot finds
- * out about a drift in the same week as everything else that depends on it rather than in a
- * customer's integration.
- *
- * Deterministic and offline. No key, no network, no spend, and the same answer on every run, so
- * this belongs in CI, which is where an agent-facing contract most needs watching.
- */
+/** Real HTTP fixtures validate each event with the official AG-UI schema. */
 
 describe("registering an agent that really answers", () => {
-  const mock = new AGUIMock();
+  const mock = createAgUiFixture();
   let url = "";
 
   beforeAll(async () => {
     // The events a well-behaved agent sends for a trivial run: it starts, says something, finishes.
-    mock.onRun(/.*/, [
+    mock.events = [
       { type: "RUN_STARTED", threadId: "t", runId: "r" },
       { type: "TEXT_MESSAGE_START", messageId: "m", role: "assistant" },
       { type: "TEXT_MESSAGE_CONTENT", messageId: "m", delta: "ready" },
       { type: "TEXT_MESSAGE_END", messageId: "m" },
       { type: "RUN_FINISHED", threadId: "t", runId: "r" },
-    ] as never);
+    ] as never;
     url = await mock.start();
   });
 
@@ -160,11 +144,11 @@ describe("registering an agent that answers badly", () => {
      * agent's business and not something a registration check should refuse over: the alternative is
      * a person unable to register a slow agent, told their perfectly good service is broken.
      */
-    const partial = new AGUIMock();
-    partial.onRun(/.*/, [
+    const partial = createAgUiFixture();
+    partial.events = [
       { type: "RUN_STARTED", threadId: "t", runId: "r" },
       { type: "TEXT_MESSAGE_START", messageId: "m", role: "assistant" },
-    ] as never);
+    ] as never;
     const partialUrl = await partial.start();
 
     try {
@@ -183,11 +167,11 @@ describe("registering an agent that answers badly", () => {
   test("an agent that reports its own error still counts as speaking the protocol", async () => {
     // `RUN_ERROR` is the agent telling us something went wrong, which means it is there and it
     // speaks AG-UI. Refusing registration here would send somebody to debug the wrong end.
-    const failing = new AGUIMock();
-    failing.onRun(/.*/, [
+    const failing = createAgUiFixture();
+    failing.events = [
       { type: "RUN_STARTED", threadId: "t", runId: "r" },
       { type: "RUN_ERROR", message: "the model is unavailable" },
-    ] as never);
+    ] as never;
     const failingUrl = await failing.start();
 
     try {
@@ -209,8 +193,8 @@ describe("registering an agent that answers badly", () => {
      * decides it, so an endpoint that emits one is exactly the shape the gateway is built for, and
      * somebody registering it should see that it did.
      */
-    const calling = new AGUIMock();
-    calling.onRun(/.*/, [
+    const calling = createAgUiFixture();
+    calling.events = [
       { type: "RUN_STARTED", threadId: "t", runId: "r" },
       {
         type: "TOOL_CALL_START",
@@ -220,7 +204,7 @@ describe("registering an agent that answers badly", () => {
       { type: "TOOL_CALL_ARGS", toolCallId: "call_1", delta: '{"q":"x"}' },
       { type: "TOOL_CALL_END", toolCallId: "call_1" },
       { type: "RUN_FINISHED", threadId: "t", runId: "r" },
-    ] as never);
+    ] as never;
     const callingUrl = await calling.start();
 
     try {

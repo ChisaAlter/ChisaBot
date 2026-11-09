@@ -21,7 +21,7 @@ import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
-import { parsePageLimit } from "../paging";
+import { reasonWithoutStatement } from "../db/query-failure";
 import {
   agentProfiles,
   channelAgents,
@@ -29,22 +29,22 @@ import {
   channels,
   intelligenceChannelMappings,
 } from "../db/schema";
-import {
-  CHANNEL_ACTIVITY_TOPIC,
-  type ChannelActivityEvent,
-  type ChannelEventHub,
-} from "./events";
-import { upgradeWebSocket } from "./socket";
-import { searchChannelMessages } from "./search";
-import { oneLine } from "./text";
-import type { ThreadIdentity } from "./thread-identity";
+import { parsePageLimit } from "../paging";
 import {
   DRAFT_AGENT_CHANNEL_DESCRIPTION,
   type DraftDeleteOutcome,
   type DraftStorage,
   deleteEmptyDraft,
 } from "./drafts";
-import { reasonWithoutStatement } from "../db/query-failure";
+import {
+  CHANNEL_ACTIVITY_TOPIC,
+  type ChannelActivityEvent,
+  type ChannelEventHub,
+} from "./events";
+import { searchChannelMessages } from "./search";
+import { upgradeWebSocket } from "./socket";
+import { oneLine } from "./text";
+import type { ThreadIdentity } from "./thread-identity";
 
 export type AgentChannel = {
   id: string;
@@ -205,7 +205,11 @@ export type ChannelStore = {
    * 没有 → 给它建一个（同一个 thread id，不复制消息）。只认本人、这个机器人的对话；别人的 / 不存在的 → null。
    * 可选：测试替身不用实现。
    */
-  openThread?(actor: AgentActor, agentId: string, threadId: string): Promise<AgentChannel | null>;
+  openThread?(
+    actor: AgentActor,
+    agentId: string,
+    threadId: string,
+  ): Promise<AgentChannel | null>;
   get(actor: AgentActor, channelId: string): Promise<AgentChannel | null>;
   list(actor: AgentActor, query?: ChannelQuery): Promise<ChannelPage>;
   /** Pin or unpin the caller's own membership. Throws ChannelNotFoundError for a non-member. */
@@ -270,8 +274,10 @@ export type ChannelStore = {
 };
 
 const PRIVATE_AGENT_CHANNEL_DESCRIPTION = "Private agent channel.";
+
 /** 草稿对话的标记，定义在 `drafts.ts`（清理任务也用），这里照旧导出。 */
 export { DRAFT_AGENT_CHANNEL_DESCRIPTION };
+
 /**
  * 还没说过话的草稿对话：列表里不出现，`direct` 不挑它。说过一句（`lastMessageAt` 有值）就不再藏。
  */
@@ -445,12 +451,21 @@ export function createChannelStore(
     },
 
     async openThread(actor, agentId, threadId) {
-      if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(threadId) || /^(worker-|im-)/.test(threadId)) return null;
+      if (
+        !/^[A-Za-z0-9_.:-]{1,200}$/.test(threadId) ||
+        /^(worker-|im-)/.test(threadId)
+      )
+        return null;
       const found = await database.transaction(
         async (transaction) => {
-          await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${`channel:thread:${threadId}`}))`);
+          await transaction.execute(
+            sql`select pg_advisory_xact_lock(hashtext(${`channel:thread:${threadId}`}))`,
+          );
           const [mapped] = await transaction
-            .select({ channelId: intelligenceChannelMappings.channelId, userId: intelligenceChannelMappings.userId })
+            .select({
+              channelId: intelligenceChannelMappings.channelId,
+              userId: intelligenceChannelMappings.userId,
+            })
             .from(intelligenceChannelMappings)
             .where(eq(intelligenceChannelMappings.threadId, threadId))
             .limit(1);
@@ -459,23 +474,46 @@ export function createChannelStore(
             const [agentRow] = await transaction
               .select({ agentId: channelAgents.agentId })
               .from(channelAgents)
-              .where(and(eq(channelAgents.channelId, mapped.channelId), eq(channelAgents.agentId, agentId)))
+              .where(
+                and(
+                  eq(channelAgents.channelId, mapped.channelId),
+                  eq(channelAgents.agentId, agentId),
+                ),
+              )
               .limit(1);
             if (!agentRow) return null;
             // 删过的频道（同一条对话）恢复出来，而不是再建一个——thread id 在映射表里唯一。
-            await transaction.update(channels).set({ deletedAt: null }).where(eq(channels.id, mapped.channelId));
+            await transaction
+              .update(channels)
+              .set({ deletedAt: null })
+              .where(eq(channels.id, mapped.channelId));
             return mapped.channelId;
           }
           // 没有频道的旧 `/bot` 对话：库里必须是本人、这个机器人的（还没有行 = 没有可打开的内容）。
-          const rows = await transaction.execute<{ owner_user_id: string; agent_id: string }>(
-            sql`select owner_user_id, agent_id from openbot_local_threads where id = ${threadId}`,
-          ).catch(() => null);
-          const list = (rows && (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows)) as
+          const rows = await transaction
+            .execute<{ owner_user_id: string; agent_id: string }>(
+              sql`select owner_user_id, agent_id from chisabot_local_threads where id = ${threadId}`,
+            )
+            .catch(() => null);
+          const list = (rows &&
+            (Array.isArray(rows)
+              ? rows
+              : (rows as { rows?: unknown[] }).rows)) as
             | { owner_user_id: string; agent_id: string }[]
             | undefined;
           const row = list?.[0];
-          if (!row || row.owner_user_id !== actor.id || row.agent_id !== agentId) return null;
-          const made = await makeChannel(transaction, actor, [agentId], threadId);
+          if (
+            !row ||
+            row.owner_user_id !== actor.id ||
+            row.agent_id !== agentId
+          )
+            return null;
+          const made = await makeChannel(
+            transaction,
+            actor,
+            [agentId],
+            threadId,
+          );
           return made.id;
         },
         { isolationLevel: "read committed" },
@@ -1227,7 +1265,6 @@ export function createChannelRoutes(
     }
   });
 
-
   // FIX-03：Ctrl+K 搜消息正文（在 /:channelId 之前注册）。
   routes.get("/search", requireUser, async (context) => {
     const q = (context.req.query("q") ?? "").trim();
@@ -1238,7 +1275,12 @@ export function createChannelRoutes(
       const hits = await searchChannelMessages(database, context.var.actor, q);
       return context.json({ hits });
     } catch (error) {
-      console.error(JSON.stringify({ type: "channel-search-failed", error: reasonWithoutStatement(error).slice(0, 300) }));
+      console.error(
+        JSON.stringify({
+          type: "channel-search-failed",
+          error: reasonWithoutStatement(error).slice(0, 300),
+        }),
+      );
       return context.json({ error: "搜索暂时不可用，请重试。" }, 503);
     }
   });
@@ -1380,13 +1422,22 @@ export function createChannelRoutes(
 
   // 「历史对话」/ 旧 `/bot` 链接：在频道聊天里打开一条已有对话（CB-046）。
   routes.post("/open-thread", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as { agentId?: unknown; threadId?: unknown } | null;
+    const body = (await context.req.json().catch(() => null)) as {
+      agentId?: unknown;
+      threadId?: unknown;
+    } | null;
     const agentId = typeof body?.agentId === "string" ? body.agentId : "";
     const threadId = typeof body?.threadId === "string" ? body.threadId : "";
-    if (!agentId || !threadId) return context.json({ error: "缺少机器人或对话" }, 400);
-    if (!store.openThread) return context.json({ error: "Channel not found." }, 404);
+    if (!agentId || !threadId)
+      return context.json({ error: "缺少机器人或对话" }, 400);
+    if (!store.openThread)
+      return context.json({ error: "Channel not found." }, 404);
     try {
-      const channel = await store.openThread(context.var.actor, agentId, threadId);
+      const channel = await store.openThread(
+        context.var.actor,
+        agentId,
+        threadId,
+      );
       if (!channel) return context.json({ error: "没有这条对话" }, 404);
       return context.json({ channel: channelDto(channel) });
     } catch (error) {

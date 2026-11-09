@@ -1,9 +1,4 @@
 import {
-  type Attachment,
-  type AttachmentsConfig,
-  useAttachments,
-} from "@copilotkit/react-core/v2";
-import {
   IconArrowUp,
   IconChevronDown,
   IconChevronUp,
@@ -24,8 +19,8 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -35,17 +30,25 @@ import {
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { useReportPendingAttachments } from "@/lib/activity";
 import {
-  CHISABOT_QUOTE_EVENT,
-  type ComposerQuotePayload,
-} from "@/lib/chat/quote-event";
-import {
   attachmentUrl,
   classifyAttachment,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_EXTRACTED_CHARACTERS,
+  MAX_FILE_BYTES,
   mayBeTruncatedForModel,
   mediaTypeOf,
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
+import {
+  type Attachment,
+  type AttachmentsConfig,
+  useAttachments,
+} from "@/lib/chat/attachment-state";
+import { sendTargetsStaleChannel } from "@/lib/chat/pending-switch";
+import {
+  CHISABOT_QUOTE_EVENT,
+  type ComposerQuotePayload,
+} from "@/lib/chat/quote-event";
 import {
   listenDraftFiles,
   listenSendLanded,
@@ -56,9 +59,10 @@ import {
   takeDraftFiles,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
-import { shouldStopOnEscape } from "@/lib/copilot/held-supplements";
-import { sendTargetsStaleChannel } from "@/lib/chat/pending-switch";
+import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
 import { newId } from "@/lib/new-id";
+import { presenceRef } from "@/lib/presence-flag";
+import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { Button } from "../../ui/button";
 import { AttachmentStrip, type FailedUpload } from "./attachment-strip";
@@ -67,12 +71,6 @@ import {
   FILE_PICKER_ACCEPT,
   stagedRowId,
 } from "./attachments";
-import {
-  createUploadProgressStore,
-  useOverallUploadPercent,
-} from "./upload-progress";
-import { createUploadIdentity } from "./upload-identity";
-import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
 import {
@@ -89,21 +87,17 @@ import {
   pastedTextFile,
   screenPickedFiles,
 } from "./picked-files";
-import {
-  MAX_EXTRACTED_CHARACTERS,
-  MAX_FILE_BYTES,
-} from "@/lib/channels/attachments";
 import { type RejectedFile, RejectedFiles } from "./rejected-files";
 import { PLACEHOLDER_COMMANDS } from "./sources";
 import { type AgentOption, buildTriggers } from "./triggers";
+import { createUploadIdentity } from "./upload-identity";
+import {
+  createUploadProgressStore,
+  useOverallUploadPercent,
+} from "./upload-progress";
 import { useDictation } from "./use-dictation";
-import { presenceRef } from "@/lib/presence-flag";
 
-/**
- * The SDK's upload failure, derived rather than imported for the reason `attachments.ts` records
- * against the same derivation: `@copilotkit/shared` declares `AttachmentUploadError` and is not a
- * dependency of `app/`, so the only public spelling of this shape is the config it is passed to.
- */
+/** Upload errors use the same attachment contract as the uploader. */
 type UploadFailure = Parameters<
   NonNullable<AttachmentsConfig["onUploadFailed"]>
 >[0];
@@ -721,15 +715,18 @@ function ComposerImpl({
    * reconciler will notice the chip has gone and DELETE an attachment that has just been sent, or
    * that a queued message is still waiting to send.
    */
-  const releaseStagedRows = useCallback((released: readonly Attachment[]) => {
-    for (const attachment of released) {
-      const rowId = stagedRowId(attachment);
-      if (rowId !== undefined) {
-        uploadedRows.current.delete(rowId);
+  const releaseStagedRows = useCallback(
+    (released: readonly Attachment[]) => {
+      for (const attachment of released) {
+        const rowId = stagedRowId(attachment);
+        if (rowId !== undefined) {
+          uploadedRows.current.delete(rowId);
+        }
+        pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
       }
-      pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
-    }
-  }, [uploadIdentity]);
+    },
+    [uploadIdentity],
+  );
 
   const attachmentsConfig = useMemo(
     () =>
@@ -2029,42 +2026,46 @@ function ComposerImpl({
     event.preventDefault();
     onStop?.();
   };
-  const primaryAction = stopFailed && onRetryStop && !parking ? (
-    <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
-  ) : canStop && stopping ? (
-    <Button
-      aria-label={"停止中"}
-      className={cn(actionClassName, "w-auto whitespace-nowrap px-2.5 text-xs")}
-      data-testid="composer-stopping"
-      disabled
-      size="sm"
-      type="button"
-    >
-      停止中…
-    </Button>
-  ) : canStop ? (
-    <Button
-      aria-label={"停止机器人"}
-      className={actionClassName}
-      data-testid="composer-stop"
-      onClick={onStop}
-      size="icon"
-      type="button"
-    >
-      {STOP_ICON}
-    </Button>
-  ) : (
-    <Button
-      aria-label={sendLabel}
-      className={actionClassName}
-      data-testid="composer-send"
-      disabled={!canSend}
-      size="icon"
-      type="submit"
-    >
-      {SEND_ICON}
-    </Button>
-  );
+  const primaryAction =
+    stopFailed && onRetryStop && !parking ? (
+      <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
+    ) : canStop && stopping ? (
+      <Button
+        aria-label={"停止中"}
+        className={cn(
+          actionClassName,
+          "w-auto whitespace-nowrap px-2.5 text-xs",
+        )}
+        data-testid="composer-stopping"
+        disabled
+        size="sm"
+        type="button"
+      >
+        停止中…
+      </Button>
+    ) : canStop ? (
+      <Button
+        aria-label={"停止机器人"}
+        className={actionClassName}
+        data-testid="composer-stop"
+        onClick={onStop}
+        size="icon"
+        type="button"
+      >
+        {STOP_ICON}
+      </Button>
+    ) : (
+      <Button
+        aria-label={sendLabel}
+        className={actionClassName}
+        data-testid="composer-send"
+        disabled={!canSend}
+        size="icon"
+        type="submit"
+      >
+        {SEND_ICON}
+      </Button>
+    );
 
   /**
    * EVERY COMPOSER IS A DROP TARGET. What changes with `canAttach` is what happens to the file,

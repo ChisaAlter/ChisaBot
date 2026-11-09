@@ -684,7 +684,7 @@ export function createMemoryHistorySummaryStore(): HistorySummaryStore & {
 export async function ensureHistorySummaryTable(database: Database) {
   await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_history_summaries (
     id bigserial PRIMARY KEY,
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     through_message_id text NOT NULL,
     message_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
     digest text NOT NULL,
@@ -810,7 +810,7 @@ export async function lastMeasuredUsage(
     const rows = await database.$client.unsafe<
       { event: Record<string, unknown>; created_at: Date }[]
     >(
-      `SELECT event, created_at FROM openbot_local_events
+      `SELECT event, created_at FROM chisabot_local_events
        WHERE thread_id = $1 AND event->>'type' = 'RUN_FINISHED'
        AND (event ? 'usage' OR event->'metadata' ? 'contextUsage')
        ORDER BY sequence DESC LIMIT 1`,

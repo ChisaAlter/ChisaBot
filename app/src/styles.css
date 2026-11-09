@@ -587,40 +587,6 @@ html[data-sky-ease] body::before {
   text-wrap: pretty;
 }
 
-/*
- * A generated interface is never allowed to occupy nothing.
- *
- * The SDK sizes the frame it draws into from a single measurement taken inside the sandbox, and it
- * writes the result as an inline height on the frame's own container. Two races in that code make
- * the number wrong, and both were reproduced against @copilotkit/react-core 1.69.0:
- *
- *   - The measurement is queued alongside the expressions that build the interface. When it runs
- *     first the body it measures is still empty, the container is set to `height: 0px`, and because
- *     the container also clips, the interface is invisible. Nothing retries: the measurement is
- *     one-shot and its listener is removed after the first reply.
- *   - The effect that measures bails out when the sandbox has not finished loading, and its only
- *     dependency is "generation finished". An interface restored from thread history is already
- *     finished on its first render, while the sandbox is still being imported, so the effect bails
- *     and never runs again.
- *
- * A floor is the smallest thing that removes the failure that matters. `min-height` clamps above an
- * inline `height`, so a collapsed measurement can no longer render nothing, and a measurement that
- * came back correct and larger is left alone. The reader gets an interface that is present and may
- * be cut off, instead of a turn that looks like the Bot said nothing at all.
- *
- * Selected through the frame rather than through a class of ours because both chat surfaces render
- * this container and only one of them is ours: the packaged chat builds it too, and a rule that
- * needed our wrapper would fix the transcript and leave the other surface broken. `websandbox__frame`
- * is the class the sandbox library puts on the frame it creates.
- *
- * DELETE THIS WHEN THE SDK IS FIXED. It compensates for someone else's arithmetic, so it should not
- * outlive the bug: once the measurement re-runs on sandbox-ready and after the queue drains, this
- * rule can only make small interfaces taller than they asked to be.
- */
-:where(div:has(> iframe.websandbox__frame)) {
-  min-height: 200px;
-}
-
 /* ==========================================================================================
  * Glass — the blue-sky frosted-glass shell.
  *
@@ -3542,7 +3508,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 .device-danger { border: 1px solid color-mix(in oklch, var(--danger) 25%, transparent); }
 @media (prefers-reduced-motion: reduce) { .device-dot.is-ok { animation: none; } }
 
-/* ── 生成式界面 json-render（lib/copilot/render-ui-tool.tsx、json-render/registry.tsx）── */
+/* ── 生成式界面 json-render（lib/conversations/render-ui-tool.tsx、json-render/registry.tsx）── */
 .jr-surface { max-width: 720px; margin: 6px 0 2px; color: var(--ink-1); font-size: 14px; line-height: 1.6; }
 .jr-surface > .jr-el:not(.jr-card) { margin: 0; }
 .jr-el { min-width: 0; animation: jr-in var(--dur-2) var(--ease-out) both; }
@@ -7066,7 +7032,7 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .img-probe { margin: 0; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
 .img-probe.is-ok { color: var(--success); background: var(--success-soft); }
 .img-probe.is-bad { color: var(--danger); background: var(--danger-soft); }
-/* 拖文件进机器人聊天：CopilotKit 自带的英文提示换成中文。 */
+/* 拖文件进机器人聊天：会话客户端 自带的英文提示换成中文。 */
 
 @media (prefers-reduced-motion: reduce) {
   .cf-image-pending::before { animation: none; }
@@ -8966,10 +8932,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
   white-space: nowrap;
 }
 
-/* 隐藏 CopilotKit 默认的 Web Inspector 浮球与推广弹窗，避免遮挡右上角面板按钮与移动端顶栏 */
-cpk-web-inspector {
-  display: none !important;
-}
 
 
 
@@ -10770,3 +10732,20 @@ html[data-palette]:not([data-palette="default"]) #sky-root #skyph {
 
 /* 审查 10-3：头像表还没回来时的中性占位（不画默认花纹，免得自定义头像先闪一下花纹）。 */
 .bot-ava-placeholder { background: color-mix(in srgb, currentColor 12%, transparent); }
+
+/* A locally dark glass bubble needs matching code surfaces even when the page is light.
+   Last in the file so no later, less specific code/pre rule is declared after it. */
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] {
+  --background: rgb(16 18 22);
+  --sidebar: rgb(24 29 38);
+  --foreground: var(--ink-1);
+  --border: rgba(255, 255, 255, 0.12);
+  --muted-foreground: var(--ink-2);
+}
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] pre {
+  background: var(--shiki-dark-bg, transparent);
+}
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] code span {
+  color: var(--shiki-dark, var(--ink-1));
+  background-color: var(--shiki-dark-bg, transparent);
+}

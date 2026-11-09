@@ -37,7 +37,7 @@ const input = (): RunAgentInput => ({
   context: [],
   tools: [],
   state: { progress: 1 },
-  forwardedProps: { openbotRun: "signed" },
+  forwardedProps: { chisabotRun: "signed" },
 });
 test("background ingestion retains its memory initiator in signed assertions", () => {
   const signed = mintRunAssertion(
@@ -105,7 +105,7 @@ test("personal memory retains Automatic Learning catalog and tool authority", as
     content: "approved catalog",
   });
   request.tools.push({
-    name: "copilotkit_load_skill",
+    name: "load_skill",
     description: "Learned skill",
     parameters: {},
   });

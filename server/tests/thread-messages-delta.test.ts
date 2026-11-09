@@ -94,27 +94,29 @@ describe("messagesDelta", () => {
 describe("threadMessagesDelta middleware", () => {
   let stored: unknown[] = [user("u1", "hi"), bot("a1", "hello")];
   const app = new Hono();
-  app.use("/api/copilotkit/*", threadMessagesDelta);
-  app.get("/api/copilotkit/threads/:id/messages", (c) =>
+  app.use("/api/conversations/*", threadMessagesDelta);
+  app.get("/api/conversations/threads/:id/messages", (c) =>
     c.json({ messages: stored }),
   );
-  app.get("/api/copilotkit/threads/:id/other", (c) =>
+  app.get("/api/conversations/threads/:id/other", (c) =>
     c.json({ messages: stored }),
   );
 
   test("old clients without since/cursor get the response untouched", async () => {
-    const response = await app.request("/api/copilotkit/threads/t1/messages");
+    const response = await app.request(
+      "/api/conversations/threads/t1/messages",
+    );
     expect(await response.json()).toEqual({ messages: stored });
   });
 
   test("new clients get versions, unchanged answers and tails", async () => {
     const first = await (
-      await app.request("/api/copilotkit/threads/t1/messages?since=")
+      await app.request("/api/conversations/threads/t1/messages?since=")
     ).json();
     expect(first).toMatchObject({ start: 0, messages: stored });
     const query = `since=${encodeURIComponent(first.version)}&cursor=${encodeURIComponent(first.cursor)}`;
     const same = await app.request(
-      `/api/copilotkit/threads/t1/messages?${query}`,
+      `/api/conversations/threads/t1/messages?${query}`,
     );
     expect(same.headers.get("cache-control")).toBe("no-store");
     expect(await same.json()).toEqual({
@@ -128,18 +130,18 @@ describe("threadMessagesDelta middleware", () => {
       user("u2", "ok"),
     ];
     const tail = await (
-      await app.request(`/api/copilotkit/threads/t1/messages?${query}`)
+      await app.request(`/api/conversations/threads/t1/messages?${query}`)
     ).json();
     expect(tail).toMatchObject({ start: 1, messages: stored.slice(1) });
     // 同一份记录再读一次（命中缓存的指纹）：旧的 since 仍拿到尾部，新的 since 拿到 unchanged。
     const again = await (
-      await app.request(`/api/copilotkit/threads/t1/messages?${query}`)
+      await app.request(`/api/conversations/threads/t1/messages?${query}`)
     ).json();
     expect(again).toEqual(tail);
     const latest = `since=${encodeURIComponent(tail.version)}&cursor=${encodeURIComponent(tail.cursor)}`;
     expect(
       await (
-        await app.request(`/api/copilotkit/threads/t1/messages?${latest}`)
+        await app.request(`/api/conversations/threads/t1/messages?${latest}`)
       ).json(),
     ).toEqual({ unchanged: true, version: tail.version, cursor: tail.cursor });
   });
@@ -147,10 +149,10 @@ describe("threadMessagesDelta middleware", () => {
   test("other routes and error responses pass through", async () => {
     expect(
       await (
-        await app.request("/api/copilotkit/threads/t1/other?since=")
+        await app.request("/api/conversations/threads/t1/other?since=")
       ).json(),
     ).toEqual({ messages: stored });
-    const missing = await app.request("/api/copilotkit/nothing?since=");
+    const missing = await app.request("/api/conversations/nothing?since=");
     expect(missing.status).toBe(404);
   });
 });

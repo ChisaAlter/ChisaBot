@@ -1,0 +1,382 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { join, resolve } from "node:path";
+import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { DshHostClient } from "../src/client.mjs";
+
+test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion, first-output timeout, rebinding and the action nudge", {
+  timeout: 180_000,
+}, async (t) => {
+  const requests = [];
+  const bodies = [];
+  const NUDGE = "你刚才说要先查/先做";
+  // Scripted replies: a promise to act, a report of work done, a question and a refusal.
+  const scripted = {
+    promiser: "我先查一下最新的价格。",
+    reporter: "我已经查好了，价格是 42 元。",
+    asker: "要我先查一下最新的价格吗？",
+    refuser: "我不会去查这个。",
+  };
+  const upstream = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    requests.push(body.model);
+    bodies.push(body);
+    if (body.model === "slow") return; // No first byte; the owned client aborts the connection.
+    const status = {
+      bad_request: 400,
+      invalid: 401,
+      missing: 404,
+      retired: 410,
+      limited: 429,
+      backup_limited: 429,
+    }[body.model];
+    if (status) {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: `${body.model} HTTP ${status}`,
+            type: status === 401 ? "authentication_error" : "api_error",
+          },
+        }),
+      );
+      return;
+    }
+    const nudged = JSON.stringify(body.messages.at(-1)).includes(NUDGE);
+    const content =
+      scripted[body.model] && !nudged
+        ? scripted[body.model]
+        : "verified answer";
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    for (const [delta, finish_reason] of [
+      [{ role: "assistant", content }, null],
+      [{}, "stop"],
+    ]) {
+      response.write(
+        `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+      );
+    }
+    response.end("data: [DONE]\n\n");
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  t.after(() => {
+    upstream.closeAllConnections();
+    upstream.close();
+  });
+  await mkdir(resolve(".runtime"), { recursive: true });
+  const home = await mkdtemp(join(resolve(".runtime"), "model-failures-"));
+  const baseURL = `http://127.0.0.1:${upstream.address().port}/v1`;
+  const models = [
+    "available",
+    "available_b",
+    "bad_request",
+    ...Object.keys(scripted),
+    "invalid",
+    "missing",
+    "retired",
+    "limited",
+    "backup_limited",
+    "slow",
+  ].map((id) => ({
+    id,
+    contextWindow: 32000,
+    maxTokens: 1024,
+    input: ["text"],
+  }));
+  await writeFile(
+    join(home, "chisabot.json"),
+    JSON.stringify({
+      ownerUserId: "model-test-owner",
+      port: 0,
+      providers: {
+        fixture: {
+          api: "openai-completions",
+          baseURL,
+          apiKeyEnv: "CHISABOT_FAILURE_FIXTURE_KEY",
+          models,
+        },
+      },
+    }),
+  );
+  const host = spawn(process.execPath, ["src/start.mjs"], {
+    cwd: process.cwd(),
+    windowsHide: true,
+    env: {
+      ...process.env,
+      CHISABOT_DSH_HOME: home,
+      CHISABOT_FAILURE_FIXTURE_KEY: "isolated-fixture",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let logs = "",
+    client;
+  host.stdout.on("data", (chunk) => {
+    logs += chunk;
+  });
+  host.stderr.on("data", (chunk) => {
+    logs += chunk;
+  });
+  t.after(async () => {
+    await client?.close();
+    if (host.exitCode === null && host.signalCode === null) {
+      const exit = once(host, "exit");
+      host.kill();
+      await exit;
+    }
+  });
+  for (let n = 0; n < 1200 && !logs.includes("chisabot-runtime-ready"); n++) {
+    if (host.exitCode !== null) throw Error(logs);
+    await delay(50);
+  }
+  assert.match(logs, /chisabot-runtime-ready/);
+  const { endpoint } = JSON.parse(
+    await readFile(join(home, "connection.json"), "utf8"),
+  );
+  client = await DshHostClient.connect(endpoint);
+  const tool = (name) => ({
+    name,
+    description: `Fixture tool ${name}.`,
+    parameters: {
+      type: "object",
+      properties: { q: { type: "string" } },
+      additionalProperties: false,
+    },
+  });
+  const toolNames = (body) =>
+    (body.tools ?? []).map((entry) => entry.function?.name ?? entry.name);
+  async function run(
+    id,
+    primary,
+    fallback,
+    firstOutputMs = 0,
+    { tools = [], prompt = "Answer briefly.", revision = 1 } = {},
+  ) {
+    const start = requests.length;
+    await client.bind({
+      sessionId: id,
+      threadId: id,
+      runId: `${id}-${revision}`,
+      actorId: "model-test-owner",
+      botId: "bot",
+      revision,
+      prompt,
+      tools,
+      model: {
+        primary: { provider: "fixture", model: primary },
+        ...(fallback
+          ? { fallbacks: [{ provider: "fixture", model: fallback }] }
+          : {}),
+        firstOutputMs,
+      },
+    });
+    await client.prompt({
+      sessionId: id,
+      requestId: `${id}-${revision}`,
+      mode: "queue",
+      content: [{ type: "text", text: "Answer now." }],
+    });
+    assert.equal((await client.wait(id, { timeoutMs: 20_000 })).reason, "idle");
+    const events = (await client.events(id)).records.map((row) => row.event);
+    return {
+      events,
+      calls: requests.slice(start),
+      bodies: bodies.slice(start),
+      text: JSON.stringify(events),
+    };
+  }
+  /** Every request a fallback path sends still carries the bound tools and system prompt. */
+  function assertBound(result, names, prompt) {
+    assert.ok(result.bodies.length > 0);
+    for (const body of result.bodies) {
+      assert.deepEqual(toolNames(body), names, `tools on ${body.model}`);
+      assert.match(JSON.stringify(body.messages), new RegExp(prompt));
+    }
+  }
+  await t.test(
+    "invalid shared credential stops without trying another model",
+    async () => {
+      const result = await run("auth", "invalid", "available");
+      assert.deepEqual(result.calls, ["invalid"]);
+      assert.match(result.text, /主模型「invalid」请求失败/);
+      assert.doesNotMatch(result.text, /verified answer/);
+    },
+  );
+  for (const primary of ["missing", "retired"])
+    await t.test(
+      `HTTP ${primary} advances to a configured backup`,
+      async () => {
+        const result = await run(primary, primary, "available");
+        assert.deepEqual(result.calls, [primary, "available"]);
+        assert.match(result.text, /UNKNOWN_MODEL/);
+        assert.match(result.text, /verified answer/);
+      },
+    );
+  await t.test("stale catalog entry is skipped before transport", async () => {
+    const result = await run("stale", "not_in_catalog", "available");
+    assert.deepEqual(result.calls, ["available"]);
+    assert.match(result.text, /not_in_catalog/);
+    assert.match(result.text, /verified answer/);
+  });
+  await t.test(
+    "429 exhaustion is bounded and identifies the failing backup",
+    async () => {
+      const result = await run("exhausted", "limited", "backup_limited");
+      assert.deepEqual(result.calls, ["limited", "backup_limited"]);
+      assert.match(result.text, /备用模型「backup_limited」请求失败/);
+      assert.doesNotMatch(result.text, /verified answer/);
+    },
+  );
+  await t.test(
+    "fully stale catalog identifies the last candidate without transport",
+    async () => {
+      const result = await run(
+        "stale-exhausted",
+        "not_in_catalog",
+        "also_not_in_catalog",
+      );
+      assert.deepEqual(result.calls, []);
+      assert.match(result.text, /备用模型「also_not_in_catalog」请求失败/);
+      assert.doesNotMatch(result.text, /verified answer/);
+    },
+  );
+  await t.test(
+    "first-output timeout retries once, then completes through backup",
+    async () => {
+      const result = await run("timeout", "slow", "available", 200);
+      assert.deepEqual(result.calls, ["slow", "slow", "available"]);
+      assert.match(result.text, /TIMEOUT/);
+      assert.match(result.text, /verified answer/);
+    },
+  );
+  await t.test(
+    "tools and prompt stay bound across every fallback path",
+    async () => {
+      const bound = { tools: [tool("lookup")], prompt: "Bound prompt A7." };
+      const missing = await run(
+        "bound-missing",
+        "missing",
+        "available",
+        0,
+        bound,
+      );
+      assert.deepEqual(missing.calls, ["missing", "available"]);
+      assertBound(missing, ["lookup"], "Bound prompt A7");
+      const stale = await run(
+        "bound-stale",
+        "not_in_catalog",
+        "available",
+        0,
+        bound,
+      );
+      assert.deepEqual(stale.calls, ["available"]);
+      assertBound(stale, ["lookup"], "Bound prompt A7");
+      const slow = await run("bound-timeout", "slow", "available", 200, bound);
+      assert.deepEqual(slow.calls, ["slow", "slow", "available"]);
+      assertBound(slow, ["lookup"], "Bound prompt A7");
+      assert.match(slow.text, /verified answer/);
+    },
+  );
+  await t.test(
+    "HTTP 400 advances to the backup with the same tools and prompt",
+    async () => {
+      const result = await run("bad-request", "bad_request", "available", 0, {
+        tools: [tool("lookup")],
+        prompt: "Bound prompt A7.",
+      });
+      assert.deepEqual(result.calls, ["bad_request", "available"]);
+      assertBound(result, ["lookup"], "Bound prompt A7");
+      assert.match(result.text, /INVALID_REQUEST/);
+      assert.match(result.text, /verified answer/);
+    },
+  );
+  await t.test(
+    "a model switch rebinds the new tools and prompt, dropping the old ones",
+    async () => {
+      const first = await run("rebind", "available", undefined, 0, {
+        tools: [tool("lookup")],
+        prompt: "Old prompt Q1.",
+      });
+      assertBound(first, ["lookup"], "Old prompt Q1");
+      const second = await run("rebind", "available_b", undefined, 0, {
+        tools: [tool("lookup_two")],
+        prompt: "New prompt Q2.",
+        revision: 2,
+      });
+      assert.deepEqual(second.calls, ["available_b"]);
+      assertBound(second, ["lookup_two"], "New prompt Q2");
+      assert.doesNotMatch(JSON.stringify(second.bodies), /Old prompt Q1/);
+    },
+  );
+  await t.test(
+    "a promise to act with tools and no tool call is nudged exactly once",
+    async () => {
+      const result = await run("nudge", "promiser", undefined, 0, {
+        tools: [tool("lookup")],
+      });
+      assert.deepEqual(result.calls, ["promiser", "promiser"]);
+      assert.doesNotMatch(
+        JSON.stringify(result.bodies[0].messages),
+        new RegExp(NUDGE),
+      );
+      assert.match(
+        JSON.stringify(result.bodies[1].messages.at(-1)),
+        new RegExp(NUDGE),
+      );
+      assert.match(result.text, /verified answer/);
+    },
+  );
+  for (const [id, model, tools] of [
+    ["no-nudge-past", "reporter", [tool("lookup")]],
+    ["no-nudge-question", "asker", [tool("lookup")]],
+    ["no-nudge-negation", "refuser", [tool("lookup")]],
+    ["no-nudge-no-tools", "promiser", []],
+  ])
+    await t.test(`no nudge: ${id}`, async () => {
+      const result = await run(id, model, undefined, 0, { tools });
+      assert.deepEqual(result.calls, [model]);
+      assert.doesNotMatch(JSON.stringify(result.bodies), new RegExp(NUDGE));
+    });
+  await t.test(
+    "Stop remains cancellation, not timeout or fallback",
+    async () => {
+      await client.bind({
+        sessionId: "stop",
+        threadId: "stop",
+        runId: "stop",
+        actorId: "model-test-owner",
+        botId: "bot",
+        revision: 1,
+        prompt: "Answer.",
+        tools: [],
+        model: {
+          primary: { provider: "fixture", model: "slow" },
+          fallbacks: [{ provider: "fixture", model: "available" }],
+          firstOutputMs: 10000,
+        },
+      });
+      const start = requests.length;
+      await client.prompt({
+        sessionId: "stop",
+        requestId: "stop",
+        mode: "queue",
+        content: [{ type: "text", text: "Stop this." }],
+      });
+      for (let n = 0; n < 100 && requests.length === start; n++)
+        await delay(20);
+      await client.stop("stop", "stop");
+      await client.wait("stop", { timeoutMs: 10000 });
+      assert.deepEqual(requests.slice(start), ["slow"]);
+      assert.doesNotMatch(
+        JSON.stringify((await client.events("stop")).records),
+        /MODEL_FIRST_OUTPUT_TIMEOUT|TIMEOUT/,
+      );
+    },
+  );
+});

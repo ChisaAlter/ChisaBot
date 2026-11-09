@@ -9,15 +9,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
+import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
 import { IdentityCard } from "@/components/bot-profile/profile";
-import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Empty,
   EmptyDescription,
@@ -48,8 +44,8 @@ import {
   setAgentHiddenMutationOptions,
   setAgentPinnedMutationOptions,
 } from "@/lib/agents/mutations";
-import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
 import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
+import { useBotChat } from "@/lib/channels/bot-chat";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
@@ -125,7 +121,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
         <Sidebar className="hidden md:flex" collapsible="none">
           {/* Who this dialog is about, said once here rather than repeated per section. */}
           <SidebarHeader className="flex-row items-center gap-3 p-4">
-            <AbstractAvatar agentId={profile.id}
+            <AbstractAvatar
+              agentId={profile.id}
               name={profile.name}
               seed={profile.avatarSeed}
               size={36}
@@ -168,7 +165,8 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
            */}
           <div className="flex shrink-0 flex-col gap-2 border-b border-border p-3 pr-12 md:hidden">
             <div className="flex items-center gap-2">
-              <AbstractAvatar agentId={profile.id}
+              <AbstractAvatar
+                agentId={profile.id}
                 name={profile.name}
                 seed={profile.avatarSeed}
                 size={28}
@@ -219,7 +217,7 @@ function GeneralSection({
   agentId: string;
   profile: AgentProfile;
 }) {
-  const openBotChat = useOpenBotChat();
+  const openChat = useBotChat();
   const [editingIdentity, setEditingIdentity] = useState(false);
   const identityFieldRef = useRef<HTMLInputElement | null>(null);
 
@@ -230,9 +228,15 @@ function GeneralSection({
       <div className="flex flex-col gap-2">
         {/* 和新建、资料页同一张表（头像 · 名称 · 职责 · 它做什么，DESIGN.md §81）；以前这里叫「标题」「角色」，一格一格改。 */}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-muted-foreground">{"资料"}</span>
+          <span className="text-xs font-medium text-muted-foreground">
+            {"资料"}
+          </span>
           {profile.canManage && !editingIdentity ? (
-            <Button onClick={() => setEditingIdentity(true)} size="xs" variant="ghost">
+            <Button
+              onClick={() => setEditingIdentity(true)}
+              size="xs"
+              variant="ghost"
+            >
               {"编辑"}
             </Button>
           ) : null}
@@ -244,7 +248,12 @@ function GeneralSection({
           key={`${profile.name}\u0000${profile.title}\u0000${profile.roleDescription}`}
           setEditing={setEditingIdentity}
         />
-        <Item variant="muted"><ItemContent><ItemTitle>模型设置</ItemTitle><BotModelSelector agentId={agentId} /></ItemContent></Item>
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>模型设置</ItemTitle>
+            <BotModelSelector agentId={agentId} />
+          </ItemContent>
+        </Item>
         {profile.systemOwned ? (
           <Item variant="muted">
             <ItemContent>
@@ -263,12 +272,7 @@ function GeneralSection({
           <ItemDescription>{"打开和这个机器人的对话。"}</ItemDescription>
         </ItemContent>
         <ItemActions>
-          <Button
-            onClick={() =>
-              void openBotChat(agentId)
-            }
-            size="sm"
-          >
+          <Button onClick={() => void openChat(agentId)} size="sm">
             {"去聊天"}
           </Button>
         </ItemActions>
@@ -334,9 +338,7 @@ function AccessSection({ agentId }: { agentId: string }) {
             {"尚未授权"}
           </EmptyTitle>
           <EmptyDescription>
-            {
-              "管理员从插件屏幕授予连接器和技能。在此之前，这个机器人只能对话。"
-            }
+            {"管理员从插件屏幕授予连接器和技能。在此之前，这个机器人只能对话。"}
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -509,7 +511,8 @@ function ManageSection({
             </ItemDescription>
           </ItemContent>
           <ItemActions>
-            <Button mutation={duplicateAgent}
+            <Button
+              mutation={duplicateAgent}
               feedback="copy"
               onClick={async () => {
                 const copy = await duplicateAgent.mutateAsync(agentId);
@@ -528,7 +531,9 @@ function ManageSection({
             <ItemContent>
               <ItemTitle>{"删除机器人"}</ItemTitle>
               <ItemDescription>
-                {"彻底删除它，以及你与它的私人会话、记忆、定时任务和面板。此操作无法撤消。"}
+                {
+                  "彻底删除它，以及你与它的私人会话、记忆、定时任务和面板。此操作无法撤消。"
+                }
               </ItemDescription>
             </ItemContent>
             <ItemActions>

@@ -16,7 +16,7 @@ import { initResizeState } from "./lib/resize-state";
 import { installStaleChunkReload } from "./lib/stale-chunk";
 import { queryClient } from "./query-client";
 import { router } from "./router";
-import "@copilotkit/react-core/v2/styles.css";
+
 import "./styles.css";
 // 性能模式 / 减少透明度：全局关掉 backdrop-filter（DESIGN.md §10.3.1）。放在 styles.css 之后。
 import "./perf-noblur.css";

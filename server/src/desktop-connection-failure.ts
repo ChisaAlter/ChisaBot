@@ -2,6 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { BaseEvent } from "@ag-ui/client";
 import type { Env, Hono } from "hono";
 import { type Observable, tap } from "rxjs";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
+import { PREVIOUS_MODEL_AUTH_ERROR } from "./legacy/protocol";
 
 export type DesktopConnectionFailure =
   | { connection: "model"; code: "provider_authentication_failed" }
@@ -33,9 +35,11 @@ export function mountDesktopConnectionFailure<T extends Env>(
   const expected = hostToken?.trim();
   if (!expected) return;
   app.get("/api/desktop/connection-failure", (context) => {
-    const offered = context.req.header("x-chisabot-desktop-host-token") ??
-      context.req.header("x-openbot-desktop-host-token") ?? // installed desktops before 0.1.75
-      "";
+    const offered =
+      readCompatibleHeader(
+        context.req.raw.headers,
+        "x-chisabot-desktop-host-token",
+      ) ?? "";
     const a = Buffer.from(offered),
       b = Buffer.from(expected);
     if (a.length !== b.length || !timingSafeEqual(a, b))
@@ -72,7 +76,8 @@ export function observeModelConnection(
       next: (event) => {
         if (
           event.type === "RUN_ERROR" &&
-          (event.code === "CHISABOT_MODEL_AUTH_REQUIRED" || event.code === "OPENBOT_MODEL_AUTH_REQUIRED")
+          (event.code === "CHISABOT_MODEL_AUTH_REQUIRED" ||
+            event.code === PREVIOUS_MODEL_AUTH_ERROR)
         ) {
           recordDesktopConnectionFailure({
             connection: "model",

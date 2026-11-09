@@ -1,6 +1,6 @@
 # 在线更新
 
-ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、服务器本身（管理后台 → 系统更新）。
+ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更新入口。服务器发布统一沿 [串行部署](ops/deploy.md)；DSH 的账号 Host、Session、备份与恢复见 [运行时运维](ops/dsh-runtime.md)，0067 / reader 4 兼容要求见 [命名迁移](ops/upstream-removal.md)。本页解释更新机制，实际部署状态见 [实施记录](pipeline-runs/20261108-assistant-production.md)。
 
 ## 1. 网页：「有新版本，点此刷新」
 
@@ -27,10 +27,10 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
 ## 2. PC 客户端
 
 - `electron-updater`（6.8.9）generic provider，更新源是一个公开目录：`latest.yml` + `ChisaBot-<版本>-x64-setup.exe`
-  + `.blockmap`。目录按 `pc/src/build-config.js` 的顺序选：本机 `config.json` 的 `updateFeed` → 构建期 `updateFeed`
-  （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
-  通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
-  `latest.yml` 里有安装包的 sha512，electron-updater 下载完会校验，不一致丢弃。
+  - `.blockmap`。目录按 `pc/src/build-config.js` 的顺序选：本机 `config.json` 的 `updateFeed` → 构建期 `updateFeed`
+    （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
+    通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
+    `latest.yml` 里有安装包的 sha512，electron-updater 下载完会校验，不一致丢弃。
 - **更新验签**（`docs/pc-update-signing.md`）：发布时用 Ed25519 给 `latest.yml` 签名（`chisabotSig`），客户端用内置公钥
   （`pc/src/update-keys.json`）校验并重算安装包 sha512，不通过就删掉安装包、拒绝安装（「更新包签名校验失败，已拒绝安装」）。
   公钥表为空的构建（自建版没配 `CHISABOT_UPDATE_PUBKEYS`）不验签，保持只有 sha512 的旧行为，「本机」页提示「此版本未启用更新验签」。
@@ -41,7 +41,7 @@ ChisaBot 的三个客户端都能在线更新：网页、Windows PC 客户端、
   后台下载；下载好后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
   **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。
 - 网页 偏好设置 → 设备 → 这台电脑（「本机」标签）：「自动更新」开关、「客户端版本」行（当前 / 新版本 / 状态 / 下载进度）
-  + 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
+  - 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
 - 新 IPC 都经过来源检查：`pc:check-update`、`pc:install-update` 走 `handleWeb`（主窗口 + 顶层框架 + 已登录服务器）；
   `update:current`、`update:answer` 走 `handleLocal`（`src/ui/` 下的本机页面）。网页只能把「新版本已下载」窗口叫出来，
   立即重启要在本机窗口里由本人点。
@@ -130,10 +130,9 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
              └──▶ chisabot-updater（宿主机 root，systemd，python3 / python2.7）──▶ update.sh / rollback.sh
 ```
 
-- 容器只能放三种请求：`check`、`update`、`rollback`。宿主机只认这三种动作，请求里的字符串从不执行；`update` 只能更新到
+- 应用更新请求是 `check`、`update`、`rollback`；同一宿主服务另处理独立的 `magpie` 网关更新。宿主机只接受登记的动作，不执行请求里的任意字符串；`update` 只能更新到
   本机镜像 `main` 的最新提交（请求里的 `expectCommit` 必须等于它，否则拒绝「main 已经变了」），可选 `"mode": "full"` 强制完整构建。
-- 宿主机上手动操作也走同一个队列：`/opt/chisabot-updater/request.sh check | update [--full] | rollback | status`
-  （页面上能看到进度、日志、历史）。直接运行 `update.sh` 页面看不到任务，只会显示「宿主机上正在手动更新」并暂时禁用按钮。
+- 发布者通过 `scripts/ops/deploy-serial.sh` 进入同一个宿主队列，页面显示进度、日志与历史。`request.sh` 是该队列的底层接口；直接调用 `update.sh` 会绕过串行发布入口，不能代替 [部署流程](ops/deploy.md)。
 - 认证就是文件系统权限：`spool/requests` 归 uid 1002（镜像里的 API 用户）、700；`spool/state` 归 root、只读挂载。
   公网网关先认证会话，`/api/admin/system-update` 再要求管理员。
 - 同时只有一个任务：`/opt/chisabot-updater/update.lock`（flock，更新和回滚共用）；切换 compose 时再拿
@@ -149,8 +148,8 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
   - **完整构建**（`FULL_UPDATE_STEPS`：准备 → 检查依赖 → 备份 → 完整构建 → 导入镜像 → 切换 → 健康检查 → 完成）：`bun.lock`、
     各 `package.json`、`Dockerfile`、`docker/` 的指纹和底座不一样，或者底座镜像 / 依赖树不在了，或者当前镜像没有记录提交时。
     用仓库根目录的 `Dockerfile`（最后一段 `chisabot`）从 `ubuntu:24.04` 起完整构建：Playwright Chromium、s6、PostgreSQL 16、
-    `bun install --frozen-lockfile --linker hoisted`（根目录 + agent-computer + 生产依赖树）、前端（注入构建号）、
-    `build-info.json` 和 `chisabot.commit` 标签，约 26 层，离 127 层上限很远。
+    workspace 与生产依赖树使用 `bun install --frozen-lockfile --omit=peer --linker hoisted`；agent-computer 和 DSH 各用自身锁文件安装。
+    构建同时包含前端（注入构建号）、`runtime/dsh`、`deploy/dsh`、`build-info.json` 与 `chisabot.commit` 标签。
     - 构建器：`docker buildx` 的 docker-container 驱动，名字 `chisabot-builder`，**内存上限 `FULL_BUILD_MEMORY`（默认 6g，不含 swap）**，
       构建期间暂停 `PROTO_CONTAINERS`；层缓存留在构建器里（超过 `BUILD_CACHE_MAX` 时修剪），所以下一次完整构建只重做变了的层。
       同时最多 `FULL_BUILD_PARALLELISM`（默认 2）步：冷缓存时 apt、`bun install`、vite 会并行，不限的话会一起超过内存上限
@@ -159,32 +158,25 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
       内存上限或并行数改了，下次完整构建自动重建构建器（`.builder-config` 记着当前设置）。
     - 构建成功、切换并通过健康检查后，新镜像成为快速更新的**新底座**：写 `base.env`（`BASE_IMAGE`、`NODE_MODULES_BASE`、`BASE_COMMIT`，
       覆盖 `config.env` 同名项）、`base-deps.sha256`，并把构建时的完整依赖树（含 vite 等开发依赖，`--target updater-deps` 导出）放在
-      `deps-<标签>/`（保留两份）。之后依赖不变的提交又走快速更新。没通过就自动回滚，底座不变。
-    - 用时（FRA，6 核 / 24 GB，6g 上限、并行 2，2026-10-13 实测）：无缓存 358 秒（约 6 分钟，含备份），有缓存 226 秒（约 4 分钟，
+      `deps-<标签>/`（保留两份）。之后依赖不变的提交又走快速更新。没通过则底座不变，恢复必须满足当前 reader 要求。
+    - 历史用时（FRA，6 核 / 24 GB，6g 上限、并行 2，2026-10-13 实测）：无缓存 358 秒（约 6 分钟，含备份），有缓存 226 秒（约 4 分钟，
       其中导出 + 导入镜像约 1 分钟）；快速更新约 60 秒。页面「预计」取最近一次同类更新的实际用时。
-- **update.sh** 步骤（快速更新；与 `shared/system-update.ts` 的 `UPDATE_STEPS` 一致）：
+- **DSH 部署的 update.sh 步骤**（快速与完整构建共用切换/恢复约束）：
   1. 准备：目标提交在 `main` 上，磁盘剩余 ≥ 2.5 GB（完整构建 ≥ 12 GB）；
-  2. 检查依赖：`bun.lock`、各 `package.json`（含 `agent-computer/` 的 `package.json` 和 `bun.lock`）、`Dockerfile`、`docker/` 的指纹（根 `package.json` 去掉顶层 `version` 行再算，改版本号不影响）必须等于 `base-deps.sha256`（底座构建时的指纹），
+  2. 检查依赖：`deps-fingerprint.sh` 包含 workspace、agent-computer、DSH 的 manifest / 锁文件以及 Docker 构建文件（根 `package.json` 忽略顶层 `version`）。指纹必须等于 `base-deps.sha256`（底座构建时的指纹），
      否则自动改为完整构建（`--code-only` 时停下）；
-  3. 备份：`pg_dump`、compose、profiles / workspace 卷 → `/opt/chisabot-updater/backups/<时间>-<任务>/`（保留 5 份）；
-  4. 构建前端：`git archive` 导出源码，`node_modules` 硬链接自 `node_modules-base`，暂停原型沙箱，在限内存
-     （3500m，无 swap 的 7.6 GB 机器）的容器里 `vite build`（注入构建号），结束后恢复沙箱；
-  5. 构建镜像：`FROM` 底座（`base.env` 的 `BASE_IMAGE`；最早是压平的 `flat-20261011b`），只覆盖 `app/dist`、`server/{src,drizzle,scripts}`、`shared`、
-     `examples/zh-CN`、`agent-computer/src`（服务器直接 import 它的 `egress.ts`）、`build-info.json`，层数固定，不会碰到 127 层上限；标签 `auto-<UTC 时间>-<提交>`，标签
-     `chisabot.commit` 记录提交；
-  6. 切换：写回滚脚本 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`，`compose.yaml.before-<新标签>`，改镜像行，`docker compose up --wait`；
-  7. 健康检查（`health.sh`）：容器 healthy、20 秒内没有重启、本机 `/health` 200、`PUBLIC_HEALTH_URL`（公网登录页）200（为空或示例域名时跳过）、
-     `/api/version` 的构建号是新的；最后做一次模型往返自检（`POST /api/admin/smoke`，见 `docs/admin-smoke.md`，不写任何对话），
-     结果只记进日志、不影响通过与否；**不通过就自动执行回滚脚本**，任务记为「已自动回滚」；
-  8. 完成：只保留最近 3 个 `auto-*` 镜像（正在用的、上一版 = 回滚目标、底座都不删），`docker image prune`。
-- **回滚到上一版**（`rollback.sh`）：「上一版」= 当前镜像上线前的 compose（`compose.yaml.before-<当前标签>`，手动发布
-  和一键更新都会留下）。只换镜像，数据库不回退（备份在 backups/）。
+  3. 建立更新批次：保存 `pg_dump`、compose 和实际挂载的 profiles / workspace，登记在 `/opt/chisabot-updater/backups/<时间>-<任务>/`。这是切换前初始备份；DSH 的一致性快照在排空后完成；
+  4. 构建前端与镜像：导出指定源码，快速构建复用匹配的依赖树；代码层包含 `app/dist`、server、shared、中文租户、agent-computer，以及 `runtime/dsh` / `deploy/dsh`。资源上限由宿主配置确定，镜像标签为 `auto-<UTC 时间>-<提交>`；
+  5. 暂停 DSH 新命令接纳并排空产品回合和 DSH 执行，超时取消切换。按部署配置保存账号 Session、水位、数据库和工作文件到同一批次的 `cutover/`，检查备份完整性和目标镜像兼容性；
+  6. 写入带当前恢复守卫的回滚脚本与原镜像/Compose 记录。**候选启动前**持久保存 `.dsh-reader.json` 的最低 reader 要求，然后启动应用并协调替换账号 Host；该要求不能被健康检查失败或旧进程观测降低；
+  7. `health.sh` 检查镜像身份、容器 healthy、20 秒内未重启、本机健康、DSH 就绪、reader、构建号与配置的公网登录页。部署烟雾还检查版本、能力与聚合健康；模型往返默认只告警，`STRICT_MODEL_SMOKE=1` 才作为失败。失败时尝试受兼容守卫保护的恢复；旧版 reader 不兼容或恢复仍不健康时，保持接纳暂停，报告失败并使用兼容镜像处理；
+  8. 成功后释放接纳、登记新底座并轮换本更新器创建的产物。镜像与完整更新备份保留数量读取 `KEEP_IMAGES` / `KEEP_BACKUPS`（仓库默认均为 5），手工、迁移、未完成和 `.keep` 恢复批次不参加普通轮换。
+- **回滚到上一版**（`rollback.sh`）：原镜像由当前版本的 `.image.before` / `compose.yaml.before` 记录确定；先检查运行时、原生历史与产品 reader 兼容性，暂停接纳、排空，再协调核心服务和账号 Host。当前数据库与 Session 不倒退。0067 / reader 4 生效后，reader 1–3 不能成为回滚目标。详见 [回滚流程](ops/deploy.md#3-回滚) 和 [DSH 恢复](ops/dsh-runtime.md)。
 - 进度：脚本输出 `::step::` / `::error::` / `::result::` 标记，守护进程解析后把步骤、日志尾巴（60 行）写进 state.json，
   页面运行中每 2 秒刷新。守护进程重启（`KillMode=process`）不会打断正在跑的更新，新进程接着读日志。
 - 审计：容器在请求被接受 / 拒绝时写 `configuration.changed`（`targetType: system_update`），宿主机写完一个任务后
   管理后台下次读取时补一条结果；宿主机自己另有 `/opt/chisabot-updater/audit.log`。
-- 手动：`request.sh update [--full]`（排队，页面可见）；演练 `update.sh --job manual-xxxx --target <sha> [--full] --dry-run`
-  （备份 + 构建，在切换前停下）、`--build-only --tag <标签>`（只构建镜像，供手动发布）。
+- 实际发布沿串行入口。更新器支持 `update.sh --job manual-xxxx --target <sha> [--full] --dry-run`（备份 + 构建，切换前停下）和 `--build-only --tag <标签>`（只构建）；这些产物仍须沿现有发布步骤完成 reader、数据与健康检查，构建成功不代表已上线。
 
 ### 安装（默认自动）
 
@@ -215,11 +207,11 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
 仓库的 `deploy/compose.yaml` 自带：
 
 ```yaml
-    volumes:
-      - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
-      - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
-    environment:
-      CHISABOT_UPDATER_DIR: /var/lib/chisabot-updater
+volumes:
+  - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
+  - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
+environment:
+  CHISABOT_UPDATER_DIR: /var/lib/chisabot-updater
 ```
 
 没装更新服务时这两个目录由 Docker 建（root 所有、空的），页面显示「宿主机更新服务没有安装」和安装命令，请求写不进去时返回 503。
@@ -229,12 +221,10 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
 - **env 模式**（`deploy/start.sh` 部署：compose 写的是 `image: ${CHISABOT_IMAGE:-…}`）：仓库里的 `compose.yaml` 从不修改，切换 = 改
   同目录 `.env` 的 `CHISABOT_IMAGE`，上一版记在 `deploy/.image.before-<新标签>`；更新成功后，仓库检出（root 所有、没有本地改动、能快进时）
   快进到这次的提交，下次手动 `start.sh` 用的也是新代码。装了在线更新后 `start.sh` 看到 `CHISABOT_IMAGE` 是 `auto-*` 就不再构建、只启动
-  （否则会用 `Dockerfile.zh` 覆盖同名标签）；`CHISABOT_FORCE_BUILD=1` 强制按当前检出构建 `local/chisabot:latest`。
+  （避免用根 `Dockerfile` 覆盖更新器管理的同名标签）；`CHISABOT_FORCE_BUILD=1` 强制按当前检出构建 `local/chisabot:latest`。
 - **compose 模式**（手写 compose，`image: local/chisabot:<标签>` 写死）：和以前一样改这一行，留 `compose.yaml.before-<新标签>`。
 
-**镜像的来源提交**：`start.sh` 构建 `Dockerfile.zh` 时传 `CHISABOT_COMMIT`（工作区没有未提交改动时）等，镜像里有 `/app/build-info.json`
-和 `chisabot.commit` 标签，系统更新页能显示当前提交和落后多少个提交。它不是快速更新的底座（底座要和仓库根 `Dockerfile` 的依赖一致），
-所以**第一次一键更新仍是完整构建**，页面写明原因；之后依赖不变的更新走快速更新。
+**镜像的来源提交**：`start.sh` 使用根 `Dockerfile` 的 `chisabot` 目标，传入 `CHISABOT_COMMIT`（工作区没有未提交改动时）等构建信息。镜像内 `/app/build-info.json` 和 `chisabot.commit` 标签用于版本显示。快速更新还需要更新器登记的底座、对应依赖树和指纹；缺少这些材料时完整构建，不能只凭镜像来自同一 Dockerfile 就跳过依赖检查。
 
 **健康检查地址**：`PUBLIC_HEALTH_URL` 为空或还是示例域名时 `health.sh` 跳过公网登录页检查（日志里写明），不会因为它把好好的新版本回滚掉；
 页面上显示提示，教你改。
@@ -246,13 +236,13 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
 
 **页面上的几种状态**（管理后台 → 系统更新）：
 
-| 状态 | 原因 | 页面给的命令 |
-| --- | --- | --- |
-| 还没装宿主机更新服务 | 容器没有 `CHISABOT_UPDATER_DIR`（老 compose） | `cd <仓库> && git pull && sudo sh deploy/install-updater.sh` |
-| 宿主机更新服务没有安装 | 挂了目录，但 state.json 从没写过 | 同上 |
-| 更新程序离线 | state.json 超过 2 分钟没更新 | `sudo systemctl restart chisabot-updater`，不行再重装 |
-| 更新程序是旧版本 | state.json 的 `updaterVersion` < 3 | 同第一行（不重建容器） |
-| 配置提示 | `warnings`：`health_url_example` / `health_url_missing` / `compose_missing` / `buildx_missing` | 说明怎么改 |
+| 状态                   | 原因                                                                                           | 页面给的命令                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 还没装宿主机更新服务   | 容器没有 `CHISABOT_UPDATER_DIR`（老 compose）                                                  | `cd <仓库> && git pull && sudo sh deploy/install-updater.sh` |
+| 宿主机更新服务没有安装 | 挂了目录，但 state.json 从没写过                                                               | 同上                                                         |
+| 更新程序离线           | state.json 超过 2 分钟没更新                                                                   | `sudo systemctl restart chisabot-updater`，不行再重装        |
+| 更新程序是旧版本       | state.json 的 `updaterVersion` < 3                                                             | 同第一行（不重建容器）                                       |
+| 配置提示               | `warnings`：`health_url_example` / `health_url_missing` / `compose_missing` / `buildx_missing` | 说明怎么改                                                   |
 
 `<仓库>` 取容器环境变量 `CHISABOT_SOURCE_DIR`（`start.sh` 写进 `deploy/.env`），没有就按 README 的 `/opt/chisabot-src`。
 
@@ -271,21 +261,24 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 手动安装（不用 install-updater.sh）仍然可以：编辑 `deploy/updater/config.env` 后在 `deploy/updater/` 下 `bash install.sh`，
 再自己给 compose 加上面的挂载。已经有压平底座的老部署：`bash install.sh <底座对应的提交>`（写 `base-deps.sha256`，`NODE_MODULES_BASE` 放一份与 bun.lock 一致的 node_modules）。
 
-依赖或底座变了（指纹不符）：不用再手动构建，点「一键完整更新」（或 `request.sh update --full`）。
+依赖或底座变了（指纹不符）：更新器会选择完整构建；页面可点「一键完整更新」，发布者仍通过 [串行部署入口](ops/deploy.md) 请求更新。
 
-回滚完整更新：和快速更新一样，「回滚到上一版」或 `/opt/chisabot-zh/rollback-to-<旧标签>.sh`（只换镜像，数据库不回退）；
-`base.env` 指向新底座不影响回滚。要连底座一起退回：`mv base.env base.env.off` 并把 `base-deps.sha256` 改回旧值。
+回滚完整更新与快速更新使用同一条受保护的恢复路径：管理后台「回滚到上一版」，或核对过 reader 守卫的当前生成脚本。保留现有数据库与 Session；若旧版不兼容，使用兼容镜像恢复。`base.env` 是之后构建的底座记录，不用于绕过数据读取器要求；不要通过修改指纹伪装依赖兼容。登录 Cookie 已迁移时保留支持两代 Cookie 的网关与当前会话库，详见 [迁移说明](ops/upstream-removal.md)。
+
+### 当前 Compose 网络
+
+新安装默认网络为 `${CHISABOT_NETWORK_NAME:-chisabot-zh_default}`，默认子网 `172.19.0.0/16`、网关 `172.19.0.1`。旧安装由 `legacy-resources.sh` 固定实际卷和网络，DSH Host / targets 按 [DSH 运维](ops/dsh-runtime.md) 接线；不要将下面旧 Hermes 部署的端口或资源名套到当前 DSH 环境。
 
 ### compose 默认网络与 Hermes 桥接（CB-100）
 
-`deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`（和卷一样沿用改名前的名字）。宿主机上的 Hermes 桥接从容器里经这个网关访问，所以下面四处必须一致：
+**历史记录，针对旧 Hermes 部署。** 当时 `deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`。宿主机上的 Hermes 桥接从容器里经这个网关访问，下面四处必须一致；这些值记录事故条件，不是当前新安装默认值：
 
-| 位置 | 值 |
-| --- | --- |
-| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
-| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| 位置                                                             | 值                                                 |
+| ---------------------------------------------------------------- | -------------------------------------------------- |
+| compose 默认网络网关                                             | `172.19.0.1`（子网 `172.19.0.0/16`）               |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`                 | `172.19.0.1`                                       |
 | `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
-| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+| ufw                                                              | `allow from 172.19.0.0/16 to any port 4100`        |
 
 改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
 
@@ -297,9 +290,5 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 **回滚到 CB-100 之前的 compose 会让 Hermes 再次连不上。** CB-100 之前的 `compose.yaml` 没有固定默认网络：compose 会建一个名字/子网由 Docker 自动分配的网络（通常不是 `172.19.0.0/16`），容器出口网关就不再是 `172.19.0.1`，而 `ACP_BRIDGE_HOST`、`CHISABOT_HERMES_URL`、ufw 规则都还指向 `172.19.0.1`，于是每一轮都是「智能体运行时无法连接」。
 
-- env 模式（仓库自带 `deploy/compose.yaml`）的 `rollback.sh` 只改 `.env` 的 `CHISABOT_IMAGE`，compose 文件不变，镜像回滚不受影响。只有手动 `git checkout` 旧版本的 `deploy/`、或 compose 模式恢复了 `<compose>.before-<标签>` 这种 CB-100 之前的文件时才会出问题。
-- 处理办法（任选其一）：
-  1. **推荐**：只回滚镜像，保留新的 compose 文件（`.env` 里改 `CHISABOT_IMAGE` 后 `docker compose up -d`）。
-  2. 必须用旧 compose 时，把 CB-100 的 `networks.default` 那一段（`name: openbot-zh_default`，`ipam.config` 子网 `172.19.0.0/16`、网关 `172.19.0.1`）原样补进旧文件，然后 `docker compose up -d --force-recreate`。
-  3. 都不行时，按 `docker network inspect <实际网络>` 查出的新网关，同时改 `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`、`.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS`、ufw 规则，再 `systemctl restart hermes-acp-bridge` 并重建应用容器。
-- 无论哪种，最后都跑一次 `deploy/updater/hermes-reach.sh`（或 `/api/admin/smoke`）确认 `hermes=ok`。
+- 当时 env 模式的网络配置保留在 Compose 文件中，切换镜像不改变该网络；恢复 CB-100 之前的旧 Compose 文件则会重新引入网络漂移。此结论只针对网络，当前镜像恢复还须通过 reader 与运行时兼容检查。
+- 当时的修复原则是保留已对齐的网络，或同步调整 Compose 网关、桥接监听地址、运行时 URL 与防火墙，并以 `hermes-reach.sh` 检查连通性。当前 DSH 恢复必须先经过上述 reader / Session / 账号 Host 守卫；直接修改镜像变量后执行 Compose 会绕过这些步骤，不能作为当前回滚方法。

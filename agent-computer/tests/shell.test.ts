@@ -17,7 +17,7 @@ const workspaceHome = "/workspace/sales";
 
 const secrets = {
   KEY_ENCRYPTION_KEY: "deployment-key",
-  DATABASE_URL: "postgres://openbot:openbot@127.0.0.1/openbot",
+  DATABASE_URL: "postgres://chisabot:chisabot@127.0.0.1/chisabot",
   OPENAI_API_KEY: "sk-secret",
   COMPUTER_TOKEN: "computer-token",
   INTELLIGENCE_API_KEY: "cpk-secret",
@@ -74,7 +74,9 @@ describe("what a command inherits", () => {
     );
     const entries = env.PATH.split(":");
 
-    expect(entries.filter((entry) => entry === `${workspaceHome}/.npm-global/bin`)).toHaveLength(1);
+    expect(
+      entries.filter((entry) => entry === `${workspaceHome}/.npm-global/bin`),
+    ).toHaveLength(1);
     expect(entries.indexOf(`${workspaceHome}/.npm-global/bin`)).toBe(1);
     expect(entries).toContain(`${workspaceHome}/.bun/bin`);
   });
@@ -261,7 +263,9 @@ describe("the command that actually runs", () => {
     await Bun.write(tool, "#!/bin/sh\necho installed-tool-ran\n");
     await chmod(tool, 0o755);
 
-    const result = await createShell(root, source()).run({ command: "bot-tool" });
+    const result = await createShell(root, source()).run({
+      command: "bot-tool",
+    });
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("installed-tool-ran");

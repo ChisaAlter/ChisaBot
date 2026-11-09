@@ -58,6 +58,21 @@ export type TaskArtifact = {
   content?: string;
   mediaType?: string;
 };
+export const TASK_EVIDENCE_KINDS = ["file", "delivery", "device"] as const;
+/** Saved with the task payload; a text-only task legitimately requires no external evidence. */
+export const taskCompletionSchema = z
+  .object({
+    criteria: z.string().trim().min(1).max(1000),
+    required: z.array(z.enum(TASK_EVIDENCE_KINDS)).max(3),
+  })
+  .strict();
+export type TaskCompletion = z.infer<typeof taskCompletionSchema>;
+/** References verified by the executor against existing owned records, never supplied by model prose. */
+export type TaskResultEvidence = {
+  kind: (typeof TASK_EVIDENCE_KINDS)[number];
+  reference: string;
+  detail: string;
+};
 export type TaskUsage = {
   modelCalls?: number;
   inputTokens?: number;
@@ -104,6 +119,7 @@ export type TaskCenterTask = {
   parentId: string | null;
   dependencies: string[];
   planPrepared: boolean;
+  completion?: TaskCompletion;
   priority: number;
   attempts: number;
   maxAttempts: number;
@@ -238,6 +254,7 @@ export const taskInputSchema = z
     dependencies: z.array(z.string().min(1).max(128)).max(30).default([]),
     maxAttempts: z.number().int().min(1).max(5).default(3),
     timeoutSeconds: z.number().int().min(10).max(7200).default(900),
+    completion: taskCompletionSchema.optional(),
   })
   .strict();
 export type TaskInput = z.input<typeof taskInputSchema>;
@@ -246,11 +263,16 @@ export type TaskDiscovery = TaskInput & {
   sourceUrl?: string;
 };
 export type TaskPlanStep = TaskInput & { key: string; dependsOn?: string[] };
-export type TaskPlan = { summary: string; steps: TaskPlanStep[] };
+export type TaskPlan = {
+  summary: string;
+  steps: TaskPlanStep[];
+  completion?: TaskCompletion;
+};
 export type TaskExecutionResult = {
   summary: string;
   artifacts?: TaskArtifact[];
   usage?: TaskUsage;
+  evidence?: TaskResultEvidence[];
 };
 export type TaskExecutionContext = {
   signal: AbortSignal;
@@ -301,6 +323,7 @@ export function needsTaskApproval(risk: TaskRisk): boolean {
 export function validateTaskPlan(plan: TaskPlan): void {
   if (!plan || !Array.isArray(plan.steps) || plan.steps.length > 20)
     throw new Error("一个计划最多包含 20 个子任务。");
+  if (plan.completion) taskCompletionSchema.parse(plan.completion);
   const keys = new Set<string>();
   for (const step of plan.steps) {
     if (!step.key || keys.has(step.key))

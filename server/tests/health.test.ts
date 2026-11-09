@@ -11,7 +11,7 @@ const app = createApp(
 
 describe("health endpoint", () => {
   test("reports the server as healthy", async () => {
-    const response = await app.request("http://openbot.local/health");
+    const response = await app.request("http://chisabot.local/health");
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ status: "ok" });
@@ -36,7 +36,9 @@ describe("runtime capabilities", () => {
     expect(body).not.toContain("private");
   });
   test("reports the Intelligence runtime without exposing configuration secrets", async () => {
-    const response = await app.request("http://openbot.local/api/capabilities");
+    const response = await app.request(
+      "http://chisabot.local/api/capabilities",
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -50,8 +52,6 @@ describe("runtime capabilities", () => {
       accountsUi: true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里重新打开的，默认没有。
       extras: [],
-      // Default-on: a fresh clone is somebody evaluating the template.
-      selfHostBanner: true,
       transcription: false,
       // Names only. The sign-in screen reads this to know which buttons to draw.
       authProviders: ["google"],
@@ -61,7 +61,9 @@ describe("runtime capabilities", () => {
   // The runtime object holds the Intelligence API key and licence token. This endpoint has no
   // authentication, so a projection bug here publishes deployment secrets to anyone who asks.
   test("never serves the Intelligence credentials", async () => {
-    const response = await app.request("http://openbot.local/api/capabilities");
+    const response = await app.request(
+      "http://chisabot.local/api/capabilities",
+    );
     const body = await response.text();
     const parsed = (await new Response(body).json()) as Record<string, unknown>;
 
@@ -75,7 +77,6 @@ describe("runtime capabilities", () => {
       "replySources",
       "accountsUi",
       "extras",
-      "selfHostBanner",
       "transcription",
       "authProviders",
     ]);
@@ -97,32 +98,18 @@ describe("runtime capabilities", () => {
     );
 
     const response = await disabled.request(
-      "http://openbot.local/api/capabilities",
+      "http://chisabot.local/api/capabilities",
     );
 
     expect(response.status).toBe(200);
     expect((await response.json()).generativeUi).toBe(false);
-  });
-
-  // A fork running ChisaBot for its own people turns the banner off, and the browser has to hear it.
-  test("reports the self-host banner as off when the deployment opts out", async () => {
-    const disabled = createApp(
-      loadConfig(testEnvironment({ CHISABOT_SELF_HOST_BANNER: "false" })),
-    );
-
-    const response = await disabled.request(
-      "http://openbot.local/api/capabilities",
-    );
-
-    expect(response.status).toBe(200);
-    expect((await response.json()).selfHostBanner).toBe(false);
   });
 });
 
 describe("authentication availability", () => {
   test("fails loudly when no identity provider has been configured", async () => {
     const response = await app.request(
-      "http://openbot.local/api/auth/sign-in/social",
+      "http://chisabot.local/api/auth/sign-in/social",
       { method: "POST" },
     );
 
@@ -143,7 +130,7 @@ describe("authentication availability", () => {
     );
 
     const response = await authenticatedApp.request(
-      "http://openbot.local/api/auth/callback/google",
+      "http://chisabot.local/api/auth/callback/google",
     );
 
     expect(response.status).toBe(204);
@@ -163,7 +150,7 @@ describe("authentication availability", () => {
     );
 
     const response = await authenticatedApp.request(
-      "http://openbot.local/api/auth/sign-out",
+      "http://chisabot.local/api/auth/sign-out",
       { method: "POST" },
     );
 
@@ -207,7 +194,7 @@ describe("auth routes", () => {
 
 describe("version endpoint", () => {
   test("reports version fields without leaking secrets or build paths", async () => {
-    const response = await app.request("http://openbot.local/api/version");
+    const response = await app.request("http://chisabot.local/api/version");
     expect(response.status).toBe(200);
     const body = await response.text();
     const parsed = JSON.parse(body) as Record<string, unknown>;

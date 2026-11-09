@@ -22,12 +22,12 @@ import {
   type UpdateTransport,
 } from "./lifecycle";
 import type { BotReset } from "./lifecycle-reset";
-import type { AgentPurge } from "./purge";
 import type { AgentActor, AgentProfile } from "./profile-types";
+import type { AgentPurge } from "./purge";
 import type { WakeUpStore } from "./wake-up";
 
 /** The single-user developer's placeholder account, which has no users row to reference. */
-const DEV_ACTOR_EMAIL = "dev@openbot.local";
+const DEV_ACTOR_EMAIL = "dev@chisabot.local";
 
 const NOTIFY_VALUES: readonly BotNotify[] = ["all", "needs_input", "none"];
 

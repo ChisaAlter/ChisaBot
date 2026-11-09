@@ -194,7 +194,7 @@ suite("CB-104 stop and queue", () => {
         [threadId],
       );
       await database.$client.unsafe(
-        "DELETE FROM openbot_local_threads WHERE id = $1",
+        "DELETE FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
     }
@@ -212,11 +212,14 @@ suite("CB-104 stop and queue", () => {
   }
   const post = async (threadId: string, id: string, text = id) => {
     const response = await backend.handle(
-      new Request(`http://localhost/api/copilotkit/threads/${threadId}/inbox`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, text }),
-      }),
+      new Request(
+        `http://localhost/api/conversations/threads/${threadId}/inbox`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, text }),
+        },
+      ),
       owner,
     );
     expect(response?.status).toBe(200);
@@ -364,14 +367,14 @@ suite("CB-104 stop and queue", () => {
       expect(JSON.stringify(secondEvents)).not.toMatch(late);
       expect(JSON.stringify(secondEvents)).toContain("FRESH-ANSWER");
       const [row] = await database.$client.unsafe<{ messages: Message[] }[]>(
-        "SELECT messages FROM openbot_local_threads WHERE id = $1",
+        "SELECT messages FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
       const transcript = JSON.stringify(row?.messages);
       expect(transcript).not.toMatch(late);
       expect(transcript).toContain("FRESH-ANSWER");
       const stored = await database.$client.unsafe<{ event: unknown }[]>(
-        "SELECT event FROM openbot_local_events WHERE thread_id = $1",
+        "SELECT event FROM chisabot_local_events WHERE thread_id = $1",
         [threadId],
       );
       expect(JSON.stringify(stored)).not.toMatch(late);

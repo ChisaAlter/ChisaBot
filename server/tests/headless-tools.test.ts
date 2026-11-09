@@ -112,11 +112,11 @@ function turnHarness(
     intelligence: {
       getOrCreateThread: async () => undefined,
       getThreadMessages: async () => ({ messages: [] }),
-      ɵacquireThreadLock: async () => {
+      acquireThreadLease: async () => {
         lockCalls.push("acquire");
       },
-      ɵrenewThreadLock: async () => undefined,
-      ɵcleanupThreadLock: async () => {
+      renewThreadLease: async () => undefined,
+      releaseThreadLease: async () => {
         lockCalls.push("cleanup");
       },
     },
@@ -585,7 +585,7 @@ test("human help creates a durable suspension, persists the waiting event, and r
     persisted.filter((event) => event.type === EventType.CUSTOM),
   ).toMatchObject([
     {
-      name: "openbot.headless.waiting",
+      name: "chisabot.headless.waiting",
       value: { requestId: "durable-handoff" },
     },
   ]);

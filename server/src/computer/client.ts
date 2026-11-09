@@ -1,4 +1,5 @@
 import type { HandoffRequest } from "../../../shared/computer-control";
+import { computerHeaders } from "../../../shared/legacy-headers";
 import type { NavigateResult } from "./schema";
 import { checkNavigationTarget } from "./target";
 
@@ -235,10 +236,7 @@ export function createComputerTransport(
         ...init,
         headers: {
           ...(init?.headers as Record<string, string> | undefined),
-          "x-chisabot-bot-id": botId, "x-openbot-bot-id": botId,
-          ...(options.token
-            ? { "x-chisabot-computer-token": options.token , "x-openbot-computer-token": options.token }
-            : {}),
+          ...computerHeaders(botId, options.token),
         },
         signal: caller
           ? AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)])

@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { useComputerControl } from "@/lib/computers/use-control";
 import {
   forgetHandoff,
   hasActiveHandoff,
+  type PendingHandoff,
   pendingHandoff,
   rememberHandoff,
-  type PendingHandoff,
 } from "@/lib/computers/handoff";
+import { useComputerControl } from "@/lib/computers/use-control";
 import {
   findPendingTool,
   type HandoffAgent,
   resumeHandoffTask,
-} from "@/lib/copilot/handoff-resume";
+} from "@/lib/conversations/handoff-resume";
 
 /** SDK reconnect replays human-in-the-loop tools only; ordinary frontend handlers need this action. */
 export function HandoffResumeNotice({
@@ -91,9 +91,7 @@ export function HandoffResumeNotice({
     try {
       await resumeHandoffTask(botId, pending, agent, run, abort.signal);
     } catch (error) {
-      setProblem(
-        error instanceof Error ? error.message : "任务无法继续。",
-      );
+      setProblem(error instanceof Error ? error.message : "任务无法继续。");
     } finally {
       setBusy(false);
       controller.current = null;

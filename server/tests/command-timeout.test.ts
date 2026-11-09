@@ -7,8 +7,11 @@ import {
 } from "../../shared/command-timeout";
 import { createApprovalRoutes } from "../src/approvals/routes";
 import type { ApprovalService } from "../src/approvals/service";
-import { createHeadlessComputerTools, HeadlessToolSuspension } from "../src/computer/headless-tools";
 import { createComputerGateway } from "../src/computer/gateway";
+import {
+  createHeadlessComputerTools,
+  HeadlessToolSuspension,
+} from "../src/computer/headless-tools";
 
 /**
  * 机器人自己电脑上的前台命令超时（DESIGN.md §102）。
@@ -19,23 +22,57 @@ import { createComputerGateway } from "../src/computer/gateway";
 
 describe("normalizeCommandTimeout", () => {
   test("no timeout keeps the 120 s default", () => {
-    expect(normalizeCommandTimeout({})).toEqual({ timeoutMs: undefined, effectiveSec: 120, clamped: false });
-    expect(normalizeCommandTimeout({ timeoutSec: 0 })).toMatchObject({ timeoutMs: undefined, effectiveSec: 120 });
-    expect(normalizeCommandTimeout({ timeoutSec: "abc" })).toMatchObject({ timeoutMs: undefined });
+    expect(normalizeCommandTimeout({})).toEqual({
+      timeoutMs: undefined,
+      effectiveSec: 120,
+      clamped: false,
+    });
+    expect(normalizeCommandTimeout({ timeoutSec: 0 })).toMatchObject({
+      timeoutMs: undefined,
+      effectiveSec: 120,
+    });
+    expect(normalizeCommandTimeout({ timeoutSec: "abc" })).toMatchObject({
+      timeoutMs: undefined,
+    });
   });
   test("seconds and milliseconds are both accepted; seconds win", () => {
-    expect(normalizeCommandTimeout({ timeoutSec: 300 })).toEqual({ timeoutMs: 300_000, effectiveSec: 300, clamped: false });
-    expect(normalizeCommandTimeout({ timeoutSec: "300" })).toMatchObject({ timeoutMs: 300_000 });
-    expect(normalizeCommandTimeout({ timeoutMs: 240_000 })).toEqual({ timeoutMs: 240_000, effectiveSec: 240, clamped: false });
-    expect(normalizeCommandTimeout({ timeoutSec: 200, timeoutMs: 500_000 })).toMatchObject({ timeoutMs: 200_000 });
+    expect(normalizeCommandTimeout({ timeoutSec: 300 })).toEqual({
+      timeoutMs: 300_000,
+      effectiveSec: 300,
+      clamped: false,
+    });
+    expect(normalizeCommandTimeout({ timeoutSec: "300" })).toMatchObject({
+      timeoutMs: 300_000,
+    });
+    expect(normalizeCommandTimeout({ timeoutMs: 240_000 })).toEqual({
+      timeoutMs: 240_000,
+      effectiveSec: 240,
+      clamped: false,
+    });
+    expect(
+      normalizeCommandTimeout({ timeoutSec: 200, timeoutMs: 500_000 }),
+    ).toMatchObject({ timeoutMs: 200_000 });
   });
   test("a tiny timeoutMs is read as seconds, not a 0.3 s kill", () => {
-    expect(normalizeCommandTimeout({ timeoutMs: 300 })).toMatchObject({ timeoutMs: 300_000, clamped: false });
+    expect(normalizeCommandTimeout({ timeoutMs: 300 })).toMatchObject({
+      timeoutMs: 300_000,
+      clamped: false,
+    });
   });
   test("out-of-range values are clamped to 1–600 s instead of refused", () => {
-    expect(normalizeCommandTimeout({ timeoutSec: 900 })).toEqual({ timeoutMs: 600_000, effectiveSec: 600, clamped: true });
-    expect(normalizeCommandTimeout({ timeoutMs: 3_600_000 })).toMatchObject({ timeoutMs: 600_000, clamped: true });
-    expect(normalizeCommandTimeout({ timeoutSec: 0.2 })).toMatchObject({ timeoutMs: 1_000, clamped: true });
+    expect(normalizeCommandTimeout({ timeoutSec: 900 })).toEqual({
+      timeoutMs: 600_000,
+      effectiveSec: 600,
+      clamped: true,
+    });
+    expect(normalizeCommandTimeout({ timeoutMs: 3_600_000 })).toMatchObject({
+      timeoutMs: 600_000,
+      clamped: true,
+    });
+    expect(normalizeCommandTimeout({ timeoutSec: 0.2 })).toMatchObject({
+      timeoutMs: 1_000,
+      clamped: true,
+    });
   });
   test("the note says not to repeat the command unchanged", () => {
     expect(commandTimeoutNote(120)).toContain("larger timeoutSec");
@@ -78,14 +115,25 @@ function harness(execResult: Record<string, unknown> = {}) {
   const tools = createHeadlessComputerTools({
     gateway,
     botId: "bot",
-    actor: { id: "owner", userId: "owner", initiator: { kind: "routine", id: "routine" } },
+    actor: {
+      id: "owner",
+      userId: "owner",
+      initiator: { kind: "routine", id: "routine" },
+    },
   });
   const run = (args: unknown) => {
-    const tool = tools.find((t) => t.definition.name === "computer_run_command");
+    const tool = tools.find(
+      (t) => t.definition.name === "computer_run_command",
+    );
     if (!tool) throw new Error("missing computer_run_command");
-    return tool.execute(args, { toolCallId: "c1", signal: new AbortController().signal }) as Promise<Record<string, unknown>>;
+    return tool.execute(args, {
+      toolCallId: "c1",
+      signal: new AbortController().signal,
+    }) as Promise<Record<string, unknown>>;
   };
-  const schema = tools.find((t) => t.definition.name === "computer_run_command")?.definition;
+  const schema = tools.find(
+    (t) => t.definition.name === "computer_run_command",
+  )?.definition;
   return { received, run, schema };
 }
 
@@ -93,15 +141,23 @@ describe("computer_run_command (unattended / approvals path)", () => {
   test("the schema offers timeoutSec and timeoutMs and the description explains them", () => {
     const { schema } = harness();
     if (!schema) throw new Error("missing computer_run_command");
-    const properties = (schema.parameters as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(properties).sort()).toEqual(["command", "timeoutMs", "timeoutSec"]);
+    const properties = (
+      schema.parameters as { properties: Record<string, unknown> }
+    ).properties;
+    expect(Object.keys(properties).sort()).toEqual([
+      "command",
+      "timeoutMs",
+      "timeoutSec",
+    ]);
     expect(schema.description).toContain("timeoutSec");
     expect(schema.description).toContain("600");
   });
 
   test("timeoutSec reaches /exec as timeoutMs (no more 'Unrecognized key: timeoutSec')", async () => {
     const { received, run } = harness();
-    await expect(run({ command: "python3 slow.py", timeoutSec: 300 })).resolves.toMatchObject({ ok: true });
+    await expect(
+      run({ command: "python3 slow.py", timeoutSec: 300 }),
+    ).resolves.toMatchObject({ ok: true });
     await run({ command: "sleep 1", timeoutMs: 240_000 });
     await run({ command: "pwd" });
     // The gateway names the Bot itself (never the model), so the command's traffic is that Bot's.
@@ -146,7 +202,10 @@ describe("POST /api/approvals/computer/:botId for long actions", () => {
       createApprovalRoutes(
         { frontendAction } as unknown as ApprovalService,
         async (context, next) => {
-          context.set("actor" as never, { id: "dev-local-user", role: "admin" } as never);
+          context.set(
+            "actor" as never,
+            { id: "dev-local-user", role: "admin" } as never,
+          );
           await next();
         },
         { streamAfterMs: 30, heartbeatMs: 10 },
@@ -165,7 +224,9 @@ describe("POST /api/approvals/computer/:botId for long actions", () => {
     const response = await post(async () => ({ ok: true, stdout: "hi" }));
     expect(response.status).toBe(200);
     expect(response.headers.get("x-chisabot-long-action")).toBeNull();
-    expect(await response.json()).toEqual({ result: { ok: true, stdout: "hi" } });
+    expect(await response.json()).toEqual({
+      result: { ok: true, stdout: "hi" },
+    });
   });
 
   test("a long action starts the response at once, keeps it alive, and ends with the result", async () => {
@@ -179,13 +240,18 @@ describe("POST /api/approvals/computer/:botId for long actions", () => {
     const text = await response.text();
     // Heartbeats are leading whitespace, which JSON.parse accepts.
     expect(text.length - text.trimStart().length).toBeGreaterThanOrEqual(2);
-    expect(JSON.parse(text)).toEqual({ result: { ok: true, stdout: "done", timedOut: false } });
+    expect(JSON.parse(text)).toEqual({
+      result: { ok: true, stdout: "done", timedOut: false },
+    });
   });
 
   test("a long action that ends in a wait or an error carries its status in the body", async () => {
     const waiting = await post(async () => {
       await Bun.sleep(80);
-      throw new HeadlessToolSuspension("needs approval", { kind: "approval", requestId: "a1" });
+      throw new HeadlessToolSuspension("needs approval", {
+        kind: "approval",
+        requestId: "a1",
+      });
     });
     expect(waiting.status).toBe(200);
     expect(JSON.parse(await waiting.text())).toEqual({
@@ -199,6 +265,9 @@ describe("POST /api/approvals/computer/:botId for long actions", () => {
       await Bun.sleep(80);
       throw new TypeError("bug");
     });
-    expect(JSON.parse(await failed.text())).toEqual({ error: "bug", status: 500 });
+    expect(JSON.parse(await failed.text())).toEqual({
+      error: "bug",
+      status: 500,
+    });
   });
 });

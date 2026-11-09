@@ -2,11 +2,10 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { configuredAuthProviders, loadConfig } from "../src/config";
 
-// Intelligence is part of the MINIMUM contract, so it belongs in the base environment every other
-// case builds on. Leaving it out of the base would make most of this file assert the behaviour of a
-// deployment that is not allowed to exist.
+// The runtime is explicit: legacy credentials may coexist until operator inventory is complete.
 const baseEnvironment = {
-  DATABASE_URL: "postgres://openbot:openbot@localhost:5432/openbot",
+  CHISABOT_RUNTIME_MODE: "local",
+  DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/chisabot",
   KEY_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
   GOOGLE_OAUTH_CLIENT_ID: "google-client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
@@ -16,7 +15,6 @@ const baseEnvironment = {
   INTELLIGENCE_API_URL: "http://localhost:7100",
   INTELLIGENCE_GATEWAY_WS_URL: "ws://localhost:7103",
   INTELLIGENCE_API_KEY: "tenant-api-key",
-  COPILOTKIT_LICENSE_TOKEN: "license-token",
   MANAGED_AGENT_AG_UI_URL: " http://localhost:4200/ag-ui ",
   MANAGED_AGENT_TOKEN: "managed-agent-token",
 };
@@ -79,102 +77,35 @@ describe("deployment configuration", () => {
     ).toEqual({ url: "http://127.0.0.1:4100/ag-ui", token: "bridge-secret" });
   });
 
-  test("resolves the Intelligence runtime, which is the only runtime", () => {
+  test("resolves local durable storage without hosted runtime credentials", () => {
     const config = loadConfig(baseEnvironment);
-    expect(config.runtime).toEqual({
-      mode: "intelligence",
-      durableHistory: true,
-      intelligence: {
-        apiUrl: "http://localhost:7100",
-        gatewayWsUrl: "ws://localhost:7103",
-        apiKey: "tenant-api-key",
-        licenseToken: "license-token",
-      },
-    });
+    expect(config.runtime).toEqual({ mode: "local", durableHistory: true });
     expect(config.managedAgent).toEqual({
       endpoint: new URL("http://localhost:4200/ag-ui"),
       token: "managed-agent-token",
     });
-    expect(config.tenantPackageDirectory).toBe("../examples/zh-CN");
   });
 
-  test("allows deployment without an authentication provider, when asked to", () => {
-    const config = loadConfig({
-      DATABASE_URL: baseEnvironment.DATABASE_URL,
-      KEY_ENCRYPTION_KEY: baseEnvironment.KEY_ENCRYPTION_KEY,
-      INTELLIGENCE_API_URL: baseEnvironment.INTELLIGENCE_API_URL,
-      INTELLIGENCE_GATEWAY_WS_URL: baseEnvironment.INTELLIGENCE_GATEWAY_WS_URL,
-      INTELLIGENCE_API_KEY: baseEnvironment.INTELLIGENCE_API_KEY,
-      MANAGED_AGENT_AG_UI_URL: baseEnvironment.MANAGED_AGENT_AG_UI_URL,
-      MANAGED_AGENT_TOKEN: baseEnvironment.MANAGED_AGENT_TOKEN,
-      // Explicit, because no provider means every visitor is the administrator and a deployment has
-      // to say it meant that. See single-user.test.ts.
-      CHISABOT_SINGLE_USER: "true",
-    });
-
-    expect(config.auth).toBeUndefined();
-  });
-
-  // The product does not have a mode without Intelligence, so each of these is a refusal to boot
-  // rather than a degraded capability. Named individually because a deployment that sets three of
-  // four is the likeliest real mistake, and the message has to say which one is missing.
-  test.each([
-    "INTELLIGENCE_API_URL",
-    "INTELLIGENCE_GATEWAY_WS_URL",
-    "INTELLIGENCE_API_KEY",
-  ])("refuses to start when %s is missing", (name) => {
-    const environment: Record<string, string | undefined> = {
-      ...baseEnvironment,
-    };
-    delete environment[name];
-
-    expect(() => loadConfig(environment)).toThrow(
-      `CopilotKit Intelligence is required and is not configured. Missing: ${name}`,
-    );
-  });
-
-  test("starts without COPILOTKIT_LICENSE_TOKEN, because managed Intelligence no longer issues one", () => {
-    const environment: Record<string, string | undefined> = {
-      ...baseEnvironment,
-    };
-    delete environment.COPILOTKIT_LICENSE_TOKEN;
-
-    const config = loadConfig(environment);
-
-    if (config.runtime.mode !== "intelligence") {
-      throw new Error("expected the Intelligence runtime");
-    }
-    expect(config.runtime.intelligence.licenseToken).toBeUndefined();
-    expect(config.runtime.intelligence.apiKey).toBe(
-      baseEnvironment.INTELLIGENCE_API_KEY,
-    );
-  });
-
-  test("still forwards a licence token when a deployment sets one", () => {
-    const config = loadConfig({
-      ...baseEnvironment,
-      COPILOTKIT_LICENSE_TOKEN: "self-hosted-licence",
-    });
-
-    if (config.runtime.mode !== "intelligence") {
-      throw new Error("expected the Intelligence runtime");
-    }
-    expect(config.runtime.intelligence.licenseToken).toBe(
-      "self-hosted-licence",
-    );
-  });
-
-  test("refuses to start when Intelligence is absent entirely, rather than degrading", () => {
-    expect(() =>
+  test("new deployments default to local while old implicit hosted configuration requires migration", () => {
+    expect(
       loadConfig({
-        DATABASE_URL: baseEnvironment.DATABASE_URL,
-        KEY_ENCRYPTION_KEY: baseEnvironment.KEY_ENCRYPTION_KEY,
-        MANAGED_AGENT_AG_UI_URL: baseEnvironment.MANAGED_AGENT_AG_UI_URL,
-        MANAGED_AGENT_TOKEN: baseEnvironment.MANAGED_AGENT_TOKEN,
-      }),
-    ).toThrow("CopilotKit Intelligence is required and is not configured");
+        ...baseEnvironment,
+        CHISABOT_RUNTIME_MODE: undefined,
+        INTELLIGENCE_API_URL: undefined,
+        INTELLIGENCE_API_KEY: undefined,
+      }).runtime.mode,
+    ).toBe("local");
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: undefined }),
+    ).toThrow("migrate-intelligence.ts inventory");
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: "intelligence" }),
+    ).toThrow("existing data is not moved automatically");
   });
 
+  test("local mode has no licence prerequisite", () => {
+    expect(loadConfig(baseEnvironment).runtime.mode).toBe("local");
+  });
   test("rejects incomplete OAuth client configuration", () => {
     expect(() =>
       loadConfig({
@@ -559,7 +490,10 @@ describe("deployment configuration", () => {
       "one published origin among loopback ones",
       { TRUSTED_ORIGINS: "http://localhost:3010,https://chisabot.example.com" },
     ],
-    ["an address that is not a URL at all", { CHISABOT_PUBLIC_URL: "chisabot" }],
+    [
+      "an address that is not a URL at all",
+      { CHISABOT_PUBLIC_URL: "chisabot" },
+    ],
   ])("refuses no sign-in combined with %s", (_label, published) => {
     expect(() =>
       loadConfig({ ...withoutSignIn, ...OPEN, ...published }),
@@ -576,8 +510,11 @@ describe("deployment configuration", () => {
     ["a 10/8 address", { CHISABOT_PUBLIC_URL: "http://10.0.0.5:3001" }],
     ["a 172.16/12 address", { CHISABOT_PUBLIC_URL: "http://172.20.1.4:3001" }],
     ["a Tailscale address", { CHISABOT_PUBLIC_URL: "http://100.101.102.103" }],
-    ["a unique-local IPv6 address", { CHISABOT_PUBLIC_URL: "http://[fd00::1]" }],
-    ["an mDNS name", { TRUSTED_ORIGINS: "http://openbot.local:3010" }],
+    [
+      "a unique-local IPv6 address",
+      { CHISABOT_PUBLIC_URL: "http://[fd00::1]" },
+    ],
+    ["an mDNS name", { TRUSTED_ORIGINS: "http://chisabot.local:3010" }],
     ["a single-label LAN name", { TRUSTED_ORIGINS: "http://nas:3010" }],
   ])("still runs with no sign-in on %s", (_label, reachable) => {
     expect(() =>
@@ -905,16 +842,17 @@ describe("deployment configuration", () => {
     },
   );
 
-  test.each([
-    ["shared", "AGENT_COMPUTER_URL"],
-  ] as const)("refuses an invalid %s computer provider URL", (_, urlName) => {
-    expect(() =>
-      loadConfig({
-        ...baseEnvironment,
-        [urlName]: "not a URL",
-      }),
-    ).toThrow(`${urlName} must be a valid URL`);
-  });
+  test.each([["shared", "AGENT_COMPUTER_URL"]] as const)(
+    "refuses an invalid %s computer provider URL",
+    (_, urlName) => {
+      expect(() =>
+        loadConfig({
+          ...baseEnvironment,
+          [urlName]: "not a URL",
+        }),
+      ).toThrow(`${urlName} must be a valid URL`);
+    },
+  );
 });
 
 describe("accessibility", () => {
@@ -970,12 +908,15 @@ describe("generated interfaces", () => {
     ).toBe(true);
   });
 
-  test.each(["false", "0"])("are off for CHISABOT_GENERATIVE_UI=%p", (value) => {
-    expect(
-      loadConfig({ ...baseEnvironment, CHISABOT_GENERATIVE_UI: value })
-        .generativeUi,
-    ).toBe(false);
-  });
+  test.each(["false", "0"])(
+    "are off for CHISABOT_GENERATIVE_UI=%p",
+    (value) => {
+      expect(
+        loadConfig({ ...baseEnvironment, CHISABOT_GENERATIVE_UI: value })
+          .generativeUi,
+      ).toBe(false);
+    },
+  );
 
   test.each(["no", "", "yes", "TRUE", "on"])(
     "stay on for CHISABOT_GENERATIVE_UI=%p",
@@ -997,32 +938,6 @@ describe("generated interfaces", () => {
       }).generativeUi,
     ).toBe(true);
   });
-});
-
-describe("the self-host banner", () => {
-  test("is on when nothing is set", () => {
-    expect(loadConfig(baseEnvironment).selfHostBanner).toBe(true);
-  });
-
-  test.each(["false", "0"])(
-    "is off for CHISABOT_SELF_HOST_BANNER=%p",
-    (value) => {
-      expect(
-        loadConfig({ ...baseEnvironment, CHISABOT_SELF_HOST_BANNER: value })
-          .selfHostBanner,
-      ).toBe(false);
-    },
-  );
-
-  test.each(["true", "1", "", "no"])(
-    "stays on for CHISABOT_SELF_HOST_BANNER=%p",
-    (value) => {
-      expect(
-        loadConfig({ ...baseEnvironment, CHISABOT_SELF_HOST_BANNER: value })
-          .selfHostBanner,
-      ).toBe(true);
-    },
-  );
 });
 
 /**

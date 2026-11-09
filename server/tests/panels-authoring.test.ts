@@ -1,8 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { createDatabase } from "../src/db/client";
-import { createPanelStore } from "../src/panels/store";
 import { createPanelAuthoring } from "../src/panels/authoring";
+import { createPanelStore } from "../src/panels/store";
 import { testDatabaseUrl } from "./support/database";
+
 const db = createDatabase(testDatabaseUrl(), { max: 2 });
 afterAll(async () => {
   await db.$client.close();

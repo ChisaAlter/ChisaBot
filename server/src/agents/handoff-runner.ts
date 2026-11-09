@@ -16,9 +16,11 @@ import {
   recordAuditEvent,
 } from "../audit";
 import { cutAtCodeUnits } from "../channels/text";
+import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 import { HANDOFF_KIND } from "./handoff";
 import { ThreadBusyError } from "./handoff-delivery";
+import type { HandoffExecution, HandoffExecutions } from "./handoff-execution";
 import { BOT_PAUSED_REASON, isBotPaused } from "./lifecycle";
 
 /** What a hop carries, as `handoff.ts` wrote it. */
@@ -46,6 +48,7 @@ export type HandoffWork = {
    * the asking Bot, which is why it can speak in it at all.
    */
   answerIn?: string;
+  execution?: HandoffExecution;
 };
 
 export type HandoffDelivery = {
@@ -114,6 +117,7 @@ export function createHandoffRunner(options: {
   /** How the deployment signs what the addressed Bot's run is. */
   sign: (work: HandoffWork, claim: { key: string; owner: string }) => string;
   auditStore: AuditStore;
+  executions?: HandoffExecutions;
   /** How long a claim lasts before anything may take it back. */
   leaseMs?: number;
   /** How many hops one sweep will take. */
@@ -366,12 +370,68 @@ export function createHandoffRunner(options: {
 
           try {
             const shown = summarise(work);
-            const { answer } = await delivery.deliver({
+            if (options.executions && item.attempts > 1 && !work.execution)
+              throw new BackgroundTurnNeedsReview(
+                "This older handoff has a prior attempt without a durable execution identity; check its existing effects before starting new work.",
+              );
+            const execution = await options.executions?.ensure(
+              item.key,
+              owner,
               work,
-              message: attribute(work),
-              ...(shown ? { shown } : {}),
-              assertion: sign(work, { key: item.key, owner }),
-            });
+            );
+            if (execution) work.execution = execution;
+            const previous = execution
+              ? await options.executions?.read(work, execution)
+              : null;
+            if (previous?.status === "failed")
+              throw new BackgroundTurnNeedsReview(
+                previous.error ??
+                  "The original handoff execution failed; it will not be executed again.",
+              );
+            if (
+              previous?.status === "waiting" ||
+              previous?.status === "running"
+            ) {
+              await options.executions?.defer(item.key, owner, previous.status);
+              ours.delete(item.key);
+              report.skipped.push({
+                key: item.key,
+                reason: `execution_${previous.status}`,
+              });
+              continue;
+            }
+            const { answer } =
+              previous?.status === "finished"
+                ? { answer: previous.replyText || null }
+                : await delivery.deliver({
+                    work,
+                    message: attribute(work),
+                    ...(shown ? { shown } : {}),
+                    assertion: sign(work, { key: item.key, owner }),
+                  });
+            const current = execution
+              ? await options.executions?.read(work, execution)
+              : null;
+            if (
+              current?.status === "waiting" ||
+              current?.status === "running"
+            ) {
+              await options.executions?.defer(item.key, owner, current.status);
+              ours.delete(item.key);
+              report.skipped.push({
+                key: item.key,
+                reason: `execution_${current.status}`,
+              });
+              continue;
+            }
+            if (current?.status === "failed")
+              throw new BackgroundTurnNeedsReview(
+                current.error ??
+                  "The original handoff execution failed; it will not be executed again.",
+              );
+            // Queue the idempotent relay before finishing its source. A crash between these writes
+            // recovers the same durable answer and collides with the already queued relay.
+            if (!work.answerIn && answer) await relay(work, item.key, answer);
             const kept = await queue.finish({
               kind: HANDOFF_KIND,
               key: item.key,
@@ -409,22 +469,6 @@ export function createHandoffRunner(options: {
               continue;
             }
             report.delivered.push(work.toBotId);
-            /*
-             * The answer goes home through the queue, like the turn that produced it: durable, so a
-             * pod dying between the turn and the relay loses the relay to a retry rather than for
-             * ever. Only for a forward hop with words to carry — a relay of a relay is the loop the
-             * `answerIn` check exists to stop, and a wordless turn has nothing to say.
-             */
-            if (!work.answerIn && answer) {
-              await relay(work, item.key, answer).catch((failure) => {
-                // The turn happened and is on record; a relay that cannot be queued must not undo
-                // that by failing the hop into a retry and a second turn.
-                console.warn(
-                  "Could not queue the relay for a delivered hop.",
-                  failure,
-                );
-              });
-            }
             await recordAuditEvent(auditStore, {
               eventType: "agent.handoff_delivered",
               targetType: "agent",
@@ -456,7 +500,9 @@ export function createHandoffRunner(options: {
             // The deployment's controls refused it (Use Bots, the model allowlist). Trying again in a
             // minute gets the same answer, so this is the last try, whatever the count says.
             const refused =
-              error instanceof Error && error.name === "CapabilityRefusedError";
+              error instanceof BackgroundTurnNeedsReview ||
+              (error instanceof Error &&
+                error.name === "CapabilityRefusedError");
             if ((refused || item.attempts >= maxAttempts) && !work.answerIn) {
               await tell(work, item.key, reason).catch((failure) => {
                 // A notice that cannot be queued must not take the release with it: leaving the row

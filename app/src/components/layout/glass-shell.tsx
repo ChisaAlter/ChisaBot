@@ -1,14 +1,14 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef } from "react";
-import { KeptVisibleContext } from "@/lib/kept-visible";
 import { AccountMenu } from "@/components/layout/account-menu";
-import { usePresenceFlag } from "@/lib/presence-flag";
 import { GlassTopBar, type ShellScope } from "@/components/layout/glass-topbar";
 import { PhoneGestures } from "@/components/layout/phone-gestures";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
 import { TopBarOwnsSidebarToggle } from "@/components/layout/sidebar-toggle";
 import { ShellBoundary } from "@/components/startup-status";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { KeptVisibleContext } from "@/lib/kept-visible";
+import { usePresenceFlag } from "@/lib/presence-flag";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 
 /**
@@ -23,7 +23,6 @@ export function GlassShell({
   sidebar,
   right,
   rightHidden = false,
-  banner,
   children,
 }: {
   scope: ShellScope;
@@ -31,29 +30,42 @@ export function GlassShell({
   right?: ReactNode;
   /** 右栏留着但不显示（设置 / 管理里），回到聊天时不重新挂载（DESIGN.md §98）。 */
   rightHidden?: boolean;
-  banner?: ReactNode;
   children: ReactNode;
 }) {
   // 鼠标设备上根元素 overflow:hidden（styles.css §41 ②）；以前是 `html:has(> body .glass-shell)`。
   usePresenceFlag("has-shell", "html");
   return (
     <TopBarOwnsSidebarToggle.Provider value={true}>
-      <SidebarShell className="glass-shell h-svh overflow-hidden" iconWidth="80px" width="276px">
-        <GlassTopBar account={<AccountMenu placement="topbar" />} scope={scope} />
+      <SidebarShell
+        className="glass-shell h-svh overflow-hidden"
+        iconWidth="80px"
+        width="276px"
+      >
+        <GlassTopBar
+          account={<AccountMenu placement="topbar" />}
+          scope={scope}
+        />
         <SearchHotkey scope={scope} />
         <DrawerCloser />
         <CloseDrawerOnScope scope={scope} />
         <PhoneGestures />
         {sidebar}
-        <div className="glass-body relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-scope={scope}>
+        <div
+          className="glass-body relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+          data-scope={scope}
+        >
           <main className="glass-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {banner}
             <ShellBoundary>{children}</ShellBoundary>
           </main>
           {right ? (
-            <div className={rightHidden ? "hidden" : "contents"} data-right-hidden={rightHidden ? "true" : undefined}>
+            <div
+              className={rightHidden ? "hidden" : "contents"}
+              data-right-hidden={rightHidden ? "true" : undefined}
+            >
               {/* 藏着的右栏不轮询、不放画面（DESIGN.md §98.3）。 */}
-              <KeptVisibleContext.Provider value={!rightHidden}>{right}</KeptVisibleContext.Provider>
+              <KeptVisibleContext.Provider value={!rightHidden}>
+                {right}
+              </KeptVisibleContext.Provider>
             </div>
           ) : null}
         </div>
@@ -78,7 +90,8 @@ function DrawerCloser() {
 
 /** 地址属于外壳的哪一块（聊天 / 设置 / 管理）。 */
 export function scopeOfPath(pathname: string): ShellScope {
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
+  if (pathname === "/settings" || pathname.startsWith("/settings/"))
+    return "settings";
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return "admin";
   return "app";
 }
@@ -114,7 +127,8 @@ function SearchHotkey({ scope }: { scope: ShellScope }) {
   const navigate = useNavigate();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey)
+        return;
       if (event.key.toLowerCase() !== "k") return;
       event.preventDefault();
       if (scope !== "app") {

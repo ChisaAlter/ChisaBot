@@ -27,7 +27,7 @@ import { workItems } from "../db/schema";
  * all, and the queue stays the truth either way. A notification is a latency optimisation, never
  * a delivery mechanism — one lost in transit costs up to one poll interval, not the work.
  */
-export const WORK_OFFERED_TOPIC = "openbot_work_offered";
+export const WORK_OFFERED_TOPIC = "chisabot_work_offered";
 
 /** Inside the offering transaction where there is one, so it fires on commit and never before. */
 const announceOffered = (db: Pick<Database, "execute">, kind: string) =>

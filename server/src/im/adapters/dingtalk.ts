@@ -91,7 +91,7 @@ export class DingtalkAdapter extends LoopAdapter {
     if (headers.messageId) this.sendJson({ code: 200, headers: { contentType: "application/json", messageId: headers.messageId }, message: "OK", data: "{}" });
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const webhook = String((reply.inbound.reply as { sessionWebhook?: string }).sessionWebhook ?? "");
     if (!webhook) throw new Error("这条钉钉消息没有 sessionWebhook，无法回复");
     for (const chunk of reply.chunks) {

@@ -153,7 +153,7 @@ fun LoginScreen(vm: AppViewModel, activity: MainActivity) {
             }
         }
         Spacer(Modifier.height(18.dp))
-        Text("版本 ${BuildConfig.VERSION_NAME} · 原生版", color = sky.ink4, fontSize = 12.sp)
+        Text("版本 ${BuildConfig.VERSION_NAME}", color = sky.ink4, fontSize = 12.sp)
         Box(Modifier.height(24.dp))
     }
 }

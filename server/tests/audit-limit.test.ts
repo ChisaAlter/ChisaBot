@@ -27,7 +27,7 @@ const adminAuth = {
 
 function query(search: string) {
   return auditQueryFromUrl(
-    new URL(`http://openbot.local/api/admin/audit-events${search}`),
+    new URL(`http://chisabot.local/api/admin/audit-events${search}`),
   );
 }
 
@@ -82,7 +82,7 @@ describe("audit-events limit validation", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/audit-events?limit=12abc",
+      "http://chisabot.local/api/admin/audit-events?limit=12abc",
     );
 
     expect(response.status).toBe(400);
@@ -106,7 +106,7 @@ describe("audit-events limit validation", () => {
     );
 
     const response = await app.request(
-      "http://openbot.local/api/admin/audit-events?limit=10",
+      "http://chisabot.local/api/admin/audit-events?limit=10",
     );
 
     expect(response.status).toBe(200);

@@ -1,22 +1,58 @@
 import type { Message } from "@ag-ui/client";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import { IM_PLATFORMS, type ImConnectionView, type ImLogEntry, type ImPlatform, type ImStatus, imPlatform } from "../../../shared/im";
-import { BlockedUrlError, type GuardedFetchOptions, resolvePublic } from "../../../shared/net/guarded-fetch";
-import { checkPublicUrl, isBlockedAddress, isBlockedAddressAllowPrivate } from "../../../shared/net/ssrf";
+import {
+  IM_PLATFORMS,
+  type ImConnectionView,
+  type ImLogEntry,
+  type ImPlatform,
+  type ImStatus,
+  imPlatform,
+} from "../../../shared/im";
+import {
+  BlockedUrlError,
+  type GuardedFetchOptions,
+  resolvePublic,
+} from "../../../shared/net/guarded-fetch";
+import {
+  checkPublicUrl,
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+} from "../../../shared/net/ssrf";
 import { gatewayClientIp } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
+import { conversationAdmissionClosed } from "../conversations/maintenance";
 import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
+import {
+  BackgroundTurnNeedsReview,
+  readDurableTurn,
+} from "../turns/durable-outcome";
+import { drawnComponents } from "../turns/run-turn";
 import type { TurnRunner } from "../turns/types";
 import { OneBotAdapter } from "./adapters/onebot";
 import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
+import { createImDelivery } from "./delivery";
 import { imGuardedFetch, imGuardedFetchPrivate, imGuardedWs } from "./net";
-import { isQrPlatform, pollPlatformQr, type QrPlatform, startPlatformQr } from "./qr-auth";
+import {
+  isQrPlatform,
+  pollPlatformQr,
+  type QrPlatform,
+  startPlatformQr,
+} from "./qr-auth";
 import { createAdapter, testAdapter } from "./registry";
 import { errorText, markdownToPlain, splitText } from "./text";
-import type { AdapterContext, FetchLike, ImAdapter, ImAdapterStatus, ImInbound, ImLogLevel, WsFactory, WsLike } from "./types";
+import type {
+  AdapterContext,
+  FetchLike,
+  ImAdapter,
+  ImAdapterStatus,
+  ImInbound,
+  ImLogLevel,
+  WsFactory,
+  WsLike,
+} from "./types";
 
 /**
  * IM 接入（DESIGN.md §49，docs/im.md）：每个人自己的「连接」，一个连接 = 一个平台账号 → 一个机器人。
@@ -56,11 +92,17 @@ type Row = {
   created_at: Date;
 };
 
-type Live = { adapter: ImAdapter; status: ImAdapterStatus; ctx: AdapterContext };
+type Live = {
+  adapter: ImAdapter;
+  status: ImAdapterStatus;
+  ctx: AdapterContext;
+};
 
 function canUseConnection(row: Row, userId: string): boolean {
-  return (Array.isArray(row.owner_users) && row.owner_users.includes(userId)) ||
-    (Array.isArray(row.allow_users) && row.allow_users.includes(userId));
+  return (
+    (Array.isArray(row.owner_users) && row.owner_users.includes(userId)) ||
+    (Array.isArray(row.allow_users) && row.allow_users.includes(userId))
+  );
 }
 
 export type ImServiceOptions = {
@@ -73,9 +115,17 @@ export type ImServiceOptions = {
    * 解析或创建该机器人在 WebUI 中的直聊会话 threadId，使 IM 聊天与 WebUI 中该机器人的对话完全互通。
    * fresh=true 时（用户在 IM 发送 /new）开启一条新的 WebUI 会话并切换当前会话。
    */
-  resolveBotConversation?: (ownerUserId: string, agentId: string, fresh?: boolean) => Promise<string>;
+  resolveBotConversation?: (
+    ownerUserId: string,
+    agentId: string,
+    fresh?: boolean,
+  ) => Promise<string>;
   /** 记录会话活动（更新 WebUI 会话列表的最近消息摘要与时间）。 */
-  recordChannelActivity?: (threadId: string, actorUserId: string, text: string) => Promise<void>;
+  recordChannelActivity?: (
+    threadId: string,
+    actorUserId: string,
+    text: string,
+  ) => Promise<void>;
   /** 广播会话忙碌状态到 WebUI。 */
   signalThreadBusy?: (threadId: string, busy: boolean) => void;
   /** 回合因为要网页审批而停下（HeadlessToolSuspension）。 */
@@ -103,15 +153,25 @@ export type ImServiceOptions = {
 export type ImService = ReturnType<typeof createImService>;
 
 /** IM 回合的 initiator：`{kind:"routine", id:"im:<连接 id>"}`。 */
-export function imConnectionOf(initiator: { kind: string; id?: string } | undefined | null): string | null {
-  if (!initiator || initiator.kind !== "routine" || typeof initiator.id !== "string") return null;
-  return initiator.id.startsWith(IM_INITIATOR_PREFIX) ? initiator.id.slice(IM_INITIATOR_PREFIX.length) : null;
+export function imConnectionOf(
+  initiator: { kind: string; id?: string } | undefined | null,
+): string | null {
+  if (
+    initiator?.kind !== "routine" ||
+    typeof initiator.id !== "string"
+  )
+    return null;
+  return initiator.id.startsWith(IM_INITIATOR_PREFIX)
+    ? initiator.id.slice(IM_INITIATOR_PREFIX.length)
+    : null;
 }
 
 const defaultWs: WsFactory = imGuardedWs;
 
 const newId = () => `im_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-const newToken = () => crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+const newToken = () =>
+  crypto.randomUUID().replace(/-/g, "") +
+  crypto.randomUUID().replace(/-/g, "").slice(0, 8);
 
 /** 平台会话 → 线程键。 */
 export function chatKey(inbound: Pick<ImInbound, "chatType" | "chatId">) {
@@ -119,14 +179,32 @@ export function chatKey(inbound: Pick<ImInbound, "chatType" | "chatId">) {
 }
 
 const NEW_TOPIC = new Set(["/new", "/reset", "新话题", "/新话题", "重新开始"]);
-const IM_APPROVE_WORDS = new Set(["允许", "批准", "确认执行", "/approve", "/allow"]);
+const IM_APPROVE_WORDS = new Set([
+  "允许",
+  "批准",
+  "确认执行",
+  "/approve",
+  "/allow",
+]);
 const IM_DENY_WORDS = new Set(["拒绝", "取消执行", "/deny", "/reject"]);
 
 /** 给机器人看的那条用户消息：哪个平台、谁发的，然后是原文。 */
 export function frameInbound(platformName: string, inbound: ImInbound): string {
-  const where = inbound.chatType === "group" ? `${platformName}群聊` : `${platformName}私聊`;
-  const who = inbound.userName ? `${inbound.userName}（${inbound.userId}）` : inbound.userId;
-  const extras = (inbound.attachments ?? []).map((item) => ({ image: "[图片]", file: "[文件]", voice: "[语音]", video: "[视频]" })[item.kind]).join("");
+  const where =
+    inbound.chatType === "group"
+      ? `${platformName}群聊`
+      : `${platformName}私聊`;
+  const who = inbound.userName
+    ? `${inbound.userName}（${inbound.userId}）`
+    : inbound.userId;
+  const extras = (inbound.attachments ?? [])
+    .map(
+      (item) =>
+        ({ image: "[图片]", file: "[文件]", voice: "[语音]", video: "[视频]" })[
+          item.kind
+        ],
+    )
+    .join("");
   const text = inbound.text || (extras ? "" : "（空消息）");
   return `［经${where}发来｜发送者：${who}｜你的回复会以文字发回${platformName}，不要画卡片或面板］\n${extras ? `${extras}（这一版收不到附件内容）\n` : ""}${text}`;
 }
@@ -142,6 +220,10 @@ export function createImService(options: ImServiceOptions) {
   const emptyListHintAt = new Map<string, number>();
   const queues = new Map<string, { tail: Promise<void>; size: number }>();
   const logCounts = new Map<string, number>();
+  const delivery = createImDelivery(options.database);
+  const activeTurns = new Set<string>();
+  let deliveryTimer: ReturnType<typeof setInterval> | null = null;
+  let recovering = false;
   type QrLogin = {
     owner: string;
     platform: QrPlatform;
@@ -195,30 +277,58 @@ export function createImService(options: ImServiceOptions) {
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS allow_private boolean NOT NULL DEFAULT false;
     `);
+    await delivery.ensure();
   }
 
-  const rowById = async (id: string) => (await sql.unsafe<Row[]>("SELECT * FROM chisabot_im_connections WHERE id = $1", [id]))[0] ?? null;
+  const rowById = async (
+    id: string,
+    reader: Pick<Database["$client"], "unsafe"> = sql,
+  ) =>
+    (
+      await reader.unsafe<Row[]>(
+        "SELECT * FROM chisabot_im_connections WHERE id = $1",
+        [id],
+      )
+    )[0] ?? null;
   const owned = async (owner: string, id: string) => {
     if (!CONNECTION_ID.test(id)) return null;
     const row = await rowById(id);
     return row && row.owner_user_id === owner ? row : null;
   };
 
-  async function readSecrets(row: Pick<Row, "secrets">): Promise<Record<string, string>> {
+  async function readSecrets(
+    row: Pick<Row, "secrets">,
+  ): Promise<Record<string, string>> {
     if (!row.secrets) return {};
     try {
-      return JSON.parse(await decryptSecret(options.encryptionKey, row.secrets));
+      return JSON.parse(
+        await decryptSecret(options.encryptionKey, row.secrets),
+      );
     } catch {
       return {};
     }
   }
   const sealSecrets = async (secrets: Record<string, string>) =>
-    Object.keys(secrets).length ? await encryptSecret(options.encryptionKey, JSON.stringify(secrets)) : null;
+    Object.keys(secrets).length
+      ? await encryptSecret(options.encryptionKey, JSON.stringify(secrets))
+      : null;
 
   function log(connectionId: string, level: ImLogLevel, text: string) {
     const line = text.slice(0, 1000);
-    console.log(JSON.stringify({ type: "im", connection: connectionId, level, text: line.slice(0, 300) }));
-    void sql.unsafe("INSERT INTO chisabot_im_logs (connection_id, level, text) VALUES ($1, $2, $3)", [connectionId, level, line]).catch(() => {});
+    console.log(
+      JSON.stringify({
+        type: "im",
+        connection: connectionId,
+        level,
+        text: line.slice(0, 300),
+      }),
+    );
+    void sql
+      .unsafe(
+        "INSERT INTO chisabot_im_logs (connection_id, level, text) VALUES ($1, $2, $3)",
+        [connectionId, level, line],
+      )
+      .catch(() => {});
     const count = (logCounts.get(connectionId) ?? 0) + 1;
     logCounts.set(connectionId, count);
     if (count % 50 === 0)
@@ -234,20 +344,50 @@ export function createImService(options: ImServiceOptions) {
     const entry = live.get(connectionId);
     if (!entry) return;
     const previous = entry.status;
-    entry.status = { ...status, account: status.account ?? (status.state === "connected" ? null : previous.account) };
-    if (status.state === "connected" && status.account && status.account !== previous.account)
-      void sql.unsafe("UPDATE chisabot_im_connections SET account = $2 WHERE id = $1", [connectionId, status.account]).catch(() => {});
+    entry.status = {
+      ...status,
+      account:
+        status.account ??
+        (status.state === "connected" ? null : previous.account),
+    };
+    if (
+      status.state === "connected" &&
+      status.account &&
+      status.account !== previous.account
+    )
+      void sql
+        .unsafe(
+          "UPDATE chisabot_im_connections SET account = $2 WHERE id = $1",
+          [connectionId, status.account],
+        )
+        .catch(() => {});
     if (status.state === "error" && status.detail !== previous.detail)
-      void sql.unsafe("UPDATE chisabot_im_connections SET last_error = $2 WHERE id = $1", [connectionId, status.detail ?? null]).catch(() => {});
+      void sql
+        .unsafe(
+          "UPDATE chisabot_im_connections SET last_error = $2 WHERE id = $1",
+          [connectionId, status.detail ?? null],
+        )
+        .catch(() => {});
     if (status.state === "connected" && previous.state !== "connected")
-      void sql.unsafe("UPDATE chisabot_im_connections SET last_error = NULL WHERE id = $1", [connectionId]).catch(() => {});
+      void sql
+        .unsafe(
+          "UPDATE chisabot_im_connections SET last_error = NULL WHERE id = $1",
+          [connectionId],
+        )
+        .catch(() => {});
   }
 
   function view(row: Row, secrets: Record<string, string>): ImConnectionView {
     const info = imPlatform(row.platform);
     const entry = live.get(row.id);
-    const status: ImStatus = !row.enabled ? "disabled" : entry ? (entry.status.state as ImStatus) : "error";
-    const secretKeys = (info?.fields ?? []).filter((field) => field.type === "secret").map((field) => field.key);
+    const status: ImStatus = !row.enabled
+      ? "disabled"
+      : entry
+        ? (entry.status.state as ImStatus)
+        : "error";
+    const secretKeys = (info?.fields ?? [])
+      .filter((field) => field.type === "secret")
+      .map((field) => field.key);
     return {
       id: row.id,
       platform: row.platform,
@@ -255,17 +395,30 @@ export function createImService(options: ImServiceOptions) {
       agentId: row.agent_id,
       enabled: row.enabled,
       config: row.config ?? {},
-      secrets: Object.fromEntries(secretKeys.map((key) => [key, Boolean(secrets[key])])),
+      secrets: Object.fromEntries(
+        secretKeys.map((key) => [key, Boolean(secrets[key])]),
+      ),
       allowUsers: Array.isArray(row.allow_users) ? row.allow_users : [],
       ownerUsers: Array.isArray(row.owner_users) ? row.owner_users : [],
       allowDevices: row.allow_devices,
       allowPrivate: row.allow_private === true,
       status,
-      statusDetail: !row.enabled ? null : entry ? entry.status.detail ?? null : row.last_error ?? "还没有启动",
+      statusDetail: !row.enabled
+        ? null
+        : entry
+          ? (entry.status.detail ?? null)
+          : (row.last_error ?? "还没有启动"),
       account: entry?.status.account ?? row.account,
-      lastMessageAt: row.last_message_at ? new Date(row.last_message_at).toISOString() : null,
+      lastMessageAt: row.last_message_at
+        ? new Date(row.last_message_at).toISOString()
+        : null,
       createdAt: new Date(row.created_at).toISOString(),
-      ...(row.platform === "onebot" && row.config?.mode === "reverse" ? { reversePath: `/api/im/onebot/${row.id}`, reverseToken: secrets.accessToken ?? "" } : {}),
+      ...(row.platform === "onebot" && row.config?.mode === "reverse"
+        ? {
+            reversePath: `/api/im/onebot/${row.id}`,
+            reverseToken: secrets.accessToken ?? "",
+          }
+        : {}),
     };
   }
 
@@ -283,7 +436,11 @@ export function createImService(options: ImServiceOptions) {
    * 管理员开开关的连接，适配器请求里打到 url 类字段配置的那台主机才走内网放行通道；
    * 其余主机、以及用户 / 模型给的任何地址，一律仍走默认的纯公网通道。
    */
-  function scopedChannels(platform: ImPlatform, config: Record<string, string>, allowPrivate: boolean): { fetch: FetchLike; ws: WsFactory } {
+  function scopedChannels(
+    platform: ImPlatform,
+    config: Record<string, string>,
+    allowPrivate: boolean,
+  ): { fetch: FetchLike; ws: WsFactory } {
     const hosts = new Set<string>();
     if (allowPrivate) {
       for (const field of imPlatform(platform)?.fields ?? []) {
@@ -303,8 +460,16 @@ export function createImService(options: ImServiceOptions) {
     };
     if (!hosts.size) return { fetch: fetcher, ws: wsFactory };
     return {
-      fetch: (input, init) => (hosts.has(hostOf(String(input)) ?? "") ? privateFetcher : fetcher)(input, init),
-      ws: (url, wsOptions) => wsFactory(url, { ...wsOptions, allowPrivate: hosts.has(hostOf(url) ?? "") }),
+      fetch: (input, init) =>
+        (hosts.has(hostOf(String(input)) ?? "") ? privateFetcher : fetcher)(
+          input,
+          init,
+        ),
+      ws: (url, wsOptions) =>
+        wsFactory(url, {
+          ...wsOptions,
+          allowPrivate: hosts.has(hostOf(url) ?? ""),
+        }),
     };
   }
 
@@ -316,24 +481,47 @@ export function createImService(options: ImServiceOptions) {
     allowDevicesCache.set(row.id, row.allow_devices);
     if (!row.enabled) return;
     const secrets = await readSecrets(row);
-    const channels = scopedChannels(row.platform, row.config ?? {}, row.allow_private === true);
+    const channels = scopedChannels(
+      row.platform,
+      row.config ?? {},
+      row.allow_private === true,
+    );
     const ctx: AdapterContext = {
       connectionId: row.id,
       config: { ...(row.config ?? {}) },
       secrets,
       log: (level, text) => log(row.id, level, text),
       setStatus: (status) => setStatus(row.id, status),
-      onMessage: (message) => void onInbound(row.id, message).catch((error) => log(row.id, "error", `处理消息失败：${errorText(error)}`)),
+      onMessage: (message) =>
+        void onInbound(row.id, message).catch((error) =>
+          log(row.id, "error", `处理消息失败：${errorText(error)}`),
+        ),
       fetch: channels.fetch,
       ws: channels.ws,
     };
     const adapter = createAdapter(row.platform, ctx);
-    live.set(row.id, { adapter, status: { state: "connecting", account: row.account }, ctx });
+    live.set(row.id, {
+      adapter,
+      status: { state: "connecting", account: row.account },
+      ctx,
+    });
     await adapter.start();
+    if (!deliveryTimer) {
+      deliveryTimer = setInterval(
+        () =>
+          void recoverDeliveries().catch((error) =>
+            log(row.id, "error", `交付恢复失败：${errorText(error)}`),
+          ),
+        1000,
+      );
+      deliveryTimer.unref?.();
+    }
   }
 
   async function startAll() {
-    const rows = await sql.unsafe<Row[]>("SELECT * FROM chisabot_im_connections ORDER BY created_at");
+    const rows = await sql.unsafe<Row[]>(
+      "SELECT * FROM chisabot_im_connections ORDER BY created_at",
+    );
     for (const row of rows) {
       allowDevicesCache.set(row.id, row.allow_devices);
       if (!row.enabled) continue;
@@ -347,12 +535,22 @@ export function createImService(options: ImServiceOptions) {
   }
 
   async function stopAll() {
+    if (deliveryTimer) clearInterval(deliveryTimer);
+    deliveryTimer = null;
     await Promise.all([...live.keys()].map((id) => stopLive(id)));
   }
 
-  async function threadFor(row: Row, key: string, fresh = false): Promise<string> {
+  async function threadFor(
+    row: Row,
+    key: string,
+    fresh = false,
+  ): Promise<string> {
     if (options.resolveBotConversation) {
-      const threadId = await options.resolveBotConversation(row.owner_user_id, row.agent_id, fresh);
+      const threadId = await options.resolveBotConversation(
+        row.owner_user_id,
+        row.agent_id,
+        fresh,
+      );
       await sql.unsafe(
         `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id) VALUES ($1, $2, $3)
          ON CONFLICT (connection_id, chat_key) DO UPDATE SET thread_id = EXCLUDED.thread_id, updated_at = now()`,
@@ -367,7 +565,12 @@ export function createImService(options: ImServiceOptions) {
       return threadId;
     }
     if (!fresh) {
-      const found = (await sql.unsafe<{ thread_id: string }[]>("SELECT thread_id FROM chisabot_im_chats WHERE connection_id = $1 AND chat_key = $2", [row.id, key]))[0];
+      const found = (
+        await sql.unsafe<{ thread_id: string }[]>(
+          "SELECT thread_id FROM chisabot_im_chats WHERE connection_id = $1 AND chat_key = $2",
+          [row.id, key],
+        )
+      )[0];
       if (found) return found.thread_id;
     }
     const threadId = `im-${row.id.slice(3)}-${crypto.randomUUID().slice(0, 13)}`;
@@ -379,11 +582,128 @@ export function createImService(options: ImServiceOptions) {
     return threadId;
   }
 
-  async function reply(row: Row, adapter: ImAdapter, inbound: ImInbound, text: string) {
+  async function reply(
+    row: Row,
+    adapter: ImAdapter,
+    inbound: ImInbound,
+    text: string,
+  ) {
     const body = adapter.markdown ? text.trim() : markdownToPlain(text);
     const chunks = splitText(body, adapter.maxChunk);
     if (!chunks.length) return;
     await adapter.send({ inbound, chunks, text: body });
+  }
+
+  function answerFor(result: { replyText: string; components?: unknown[] }) {
+    return (
+      (result.replyText?.trim() || "（这次没有文字回复）") +
+      (result.components?.length
+        ? "\n\n（这条回复里还有卡片，打开 ChisaBot 网页能看到。）"
+        : "")
+    );
+  }
+
+  async function dispatchDelivery(id: string) {
+    const state = await delivery.dispatch(id, async (record, reader) => {
+      const row = await rowById(record.connection_id, reader);
+      if (
+        !row ||
+        row.owner_user_id !== record.owner_user_id ||
+        row.agent_id !== record.agent_id ||
+        !row.enabled ||
+        !canUseConnection(row, record.inbound.userId)
+      )
+        return "cancelled";
+      const entry = live.get(row.id);
+      if (entry?.status.state !== "connected") return null;
+      return { send: (message) => entry.adapter.send(message) };
+    });
+    if (state === "outcome_unknown")
+      throw new Error(
+        `IM 发送结果待核对，原回复已保存（${id}），不会自动重发。`,
+      );
+    if (state === "cancelled")
+      throw new Error("IM 连接或收件人授权已变更，原回复已保存但没有发送。");
+    return state;
+  }
+
+  async function queueReply(
+    row: Row,
+    adapter: ImAdapter,
+    inbound: ImInbound,
+    threadId: string,
+    text: string,
+    id: string,
+    inboxId?: string,
+  ) {
+    const body = adapter.markdown ? text.trim() : markdownToPlain(text);
+    await delivery.stage(
+      {
+        id,
+        connection_id: row.id,
+        owner_user_id: row.owner_user_id,
+        agent_id: row.agent_id,
+        thread_id: threadId,
+        inbound,
+        text: body,
+        chunks: splitText(body, adapter.maxChunk),
+      },
+      inboxId,
+    );
+    return dispatchDelivery(id);
+  }
+
+  async function recoverDeliveries() {
+    if (recovering || !live.size) return;
+    recovering = true;
+    try {
+      const ids = [...live.keys()];
+      for (const incoming of await delivery.pending(ids)) {
+        if (activeTurns.has(incoming.id)) continue;
+        const row = await rowById(incoming.connection_id),
+          entry = live.get(incoming.connection_id);
+        if (!row || !entry) continue;
+        const result = await readDurableTurn(
+          options.database,
+          incoming.owner_user_id,
+          incoming.thread_id,
+          incoming.id,
+        );
+        if (
+          !result ||
+          result.status === "running" ||
+          result.status === "waiting"
+        )
+          continue;
+        const text =
+          result.status === "finished"
+            ? answerFor({
+                replyText: result.replyText,
+                components: drawnComponents(result.messages ?? []),
+              })
+            : `抱歉，这次没能回答：${(result.error ?? "原执行中断，请核对已完成的操作。").slice(0, 200)}`;
+        await queueReply(
+          {
+            ...row,
+            owner_user_id: incoming.owner_user_id,
+            agent_id: incoming.agent_id,
+          },
+          entry.adapter,
+          incoming.inbound,
+          incoming.thread_id,
+          text,
+          `reply:${incoming.id}`,
+          incoming.id,
+        ).catch((error) => log(row.id, "error", errorText(error)));
+      }
+      for (const pending of await delivery.queued(ids)) {
+        await dispatchDelivery(pending.id).catch((error) =>
+          log("delivery", "error", errorText(error)),
+        );
+      }
+    } finally {
+      recovering = false;
+    }
   }
 
   async function onInbound(connectionId: string, inbound: ImInbound) {
@@ -391,13 +711,20 @@ export function createImService(options: ImServiceOptions) {
     if (!entry) return;
     if (inbound.chatType === "group" && !inbound.mentioned) return;
     const row = await rowById(connectionId);
-    if (!row || !row.enabled) return;
+    if (!row?.enabled) return;
     const platformName = imPlatform(row.platform)?.name ?? row.platform;
-    const who = inbound.userName ? `${inbound.userName}（${inbound.userId}）` : inbound.userId;
+    const who = inbound.userName
+      ? `${inbound.userName}（${inbound.userId}）`
+      : inbound.userId;
     const text = inbound.text.trim();
     // 「/id」谁都能用：把自己的 id 发给主人加进白名单。
     if (text === "/id" || text === "/我的id") {
-      await reply(row, entry.adapter, inbound, `你的用户 id：${inbound.userId}${inbound.chatType === "group" ? `\n这个群的 id：${inbound.chatId}` : ""}`).catch(() => {});
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        `你的用户 id：${inbound.userId}${inbound.chatType === "group" ? `\n这个群的 id：${inbound.chatId}` : ""}`,
+      ).catch(() => {});
       return;
     }
     // 谁能用：主人的平台 id + 白名单里的人；两边都空 = 谁也不理（RV-02：以前是「空 = 所有人可用」，任何人都能以主人身份发起回合、审批）。
@@ -413,18 +740,30 @@ export function createImService(options: ImServiceOptions) {
           if (emptyListHintAt.size > 5000) emptyListHintAt.clear();
           emptyListHintAt.set(hintKey, Date.now());
           log(row.id, "info", `名单为空，已提示 ${who} 怎么绑定主人`);
-          await reply(row, entry.adapter, inbound, "还没绑定主人：发 /id 拿到你的 id，填到 ChisaBot 连接设置的「主人」里").catch(() => {});
+          await reply(
+            row,
+            entry.adapter,
+            inbound,
+            "还没绑定主人：发 /id 拿到你的 id，填到 ChisaBot 连接设置的「主人」里",
+          ).catch(() => {});
         }
       }
       log(row.id, "info", `忽略 ${who} 的消息（不在可用名单里）`);
       return;
     }
-    await sql.unsafe("UPDATE chisabot_im_connections SET last_message_at = now() WHERE id = $1", [row.id]).catch(() => {});
+    await sql
+      .unsafe(
+        "UPDATE chisabot_im_connections SET last_message_at = now() WHERE id = $1",
+        [row.id],
+      )
+      .catch(() => {});
     const key = chatKey(inbound);
     if (NEW_TOPIC.has(text)) {
       await threadFor(row, key, true);
       log(row.id, "info", `${who} 开始了新话题`);
-      await reply(row, entry.adapter, inbound, "好的，已开始新话题。").catch((error) => log(row.id, "warn", `回复失败：${errorText(error)}`));
+      await reply(row, entry.adapter, inbound, "好的，已开始新话题。").catch(
+        (error) => log(row.id, "warn", `回复失败：${errorText(error)}`),
+      );
       return;
     }
     if (text === "/help" || text === "/帮助") {
@@ -453,12 +792,16 @@ export function createImService(options: ImServiceOptions) {
       }
       if (!isOwner) {
         log(row.id, "warn", `${who} 不是这个连接的主人，审批被忽略`);
-        await deny("只有这个连接的主人可以在 IM 里审批：请主人私聊回复，或到网页端处理。");
+        await deny(
+          "只有这个连接的主人可以在 IM 里审批：请主人私聊回复，或到网页端处理。",
+        );
         return;
       }
       const currentThread = await threadFor(row, key).catch(() => null);
       const resolved = currentThread
-        ? await options.resolveApproval(row.owner_user_id, currentThread, approvalDecision).catch(() => null)
+        ? await options
+            .resolveApproval(row.owner_user_id, currentThread, approvalDecision)
+            .catch(() => null)
         : null;
       if (resolved) {
         const targetStr = resolved.target ? `（${resolved.target}）` : "";
@@ -466,18 +809,38 @@ export function createImService(options: ImServiceOptions) {
           approvalDecision === "approve"
             ? `✅ 已批准「${resolved.title}」${targetStr}，机器人正在继续执行。`
             : `🚫 已拒绝「${resolved.title}」${targetStr}，该操作已取消。`;
-        log(row.id, "info", `${who} 在 IM 中${approvalDecision === "approve" ? "批准" : "拒绝"}了操作：${resolved.title}`);
+        log(
+          row.id,
+          "info",
+          `${who} 在 IM 中${approvalDecision === "approve" ? "批准" : "拒绝"}了操作：${resolved.title}`,
+        );
         await reply(row, entry.adapter, inbound, msg).catch(() => {});
         return;
       }
-      await deny("这段对话没有待确认的操作，不会替你处理别的对话里的确认卡片。");
+      await deny(
+        "这段对话没有待确认的操作，不会替你处理别的对话里的确认卡片。",
+      );
       return;
     }
     const queueKey = `${row.id}|${key}`;
+    if (conversationAdmissionClosed()) {
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        "服务正在更新，这条消息尚未执行，请稍后重发。",
+      );
+      return;
+    }
     const queue = queues.get(queueKey) ?? { tail: Promise.resolve(), size: 0 };
     if (queue.size >= MAX_QUEUE) {
       log(row.id, "warn", `${who} 的消息太多，排队已满，丢弃一条`);
-      await reply(row, entry.adapter, inbound, "上一条还在处理，稍等一下再发。").catch(() => {});
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        "上一条还在处理，稍等一下再发。",
+      ).catch(() => {});
       return;
     }
     queue.size++;
@@ -485,26 +848,74 @@ export function createImService(options: ImServiceOptions) {
     log(row.id, "info", `收到 ${who}：${text.slice(0, 80) || "（附件）"}`);
     queue.tail = queue.tail
       .then(() => runOne(connectionId, inbound, platformName, key))
-      .catch((error) => log(connectionId, "error", `处理失败：${errorText(error)}`))
+      .catch((error) =>
+        log(connectionId, "error", `处理失败：${errorText(error)}`),
+      )
       .finally(() => {
         queue.size--;
         if (queue.size <= 0) queues.delete(queueKey);
       });
   }
 
-  async function runOne(connectionId: string, inbound: ImInbound, platformName: string, key: string) {
+  async function runOne(
+    connectionId: string,
+    inbound: ImInbound,
+    platformName: string,
+    key: string,
+  ) {
     const entry = live.get(connectionId);
     const row = await rowById(connectionId);
-    if (!entry || !row || !row.enabled) return;
+    if (!entry || !row?.enabled) return;
     // 排队期间名单可能已变更；撤销授权后不再以主人身份执行尚未开始的消息。
     if (!canUseConnection(row, inbound.userId)) return;
     const adapter = entry.adapter;
     if (!(await options.botAvailable(row.owner_user_id, row.agent_id))) {
       log(row.id, "error", "对接的机器人不存在或已删除，请在设置里重新选择");
-      await reply(row, adapter, inbound, "这个连接对接的机器人已经不在了，请主人在 ChisaBot 设置里重新选择。").catch(() => {});
+      await reply(
+        row,
+        adapter,
+        inbound,
+        "这个连接对接的机器人已经不在了，请主人在 ChisaBot 设置里重新选择。",
+      ).catch(() => {});
       return;
     }
-    const threadId = await threadFor(row, key);
+    const messageId = inbound.messageId
+      ? `im:${row.id}:${Buffer.from(JSON.stringify([key, inbound.messageId]), "utf8").toString("base64url")}`
+      : crypto.randomUUID();
+    const received = await delivery.inbox(messageId);
+    if (
+      received &&
+      (received.owner_user_id !== row.owner_user_id ||
+        received.agent_id !== row.agent_id)
+    ) {
+      log(
+        row.id,
+        "warn",
+        "原消息属于此前的机器人配置，不会重新执行或转交新机器人。",
+      );
+      return;
+    }
+    if (received?.state === "staged") {
+      await dispatchDelivery(`reply:${messageId}`).catch((error) =>
+        log(row.id, "warn", errorText(error)),
+      );
+      log(
+        row.id,
+        "info",
+        "原消息已有交付记录，按原记录处理，不会重新执行或重复发送。",
+      );
+      return;
+    }
+    const threadId = received?.thread_id ?? (await threadFor(row, key));
+    inbound = received?.inbound ?? inbound;
+    await delivery.accept({
+      id: messageId,
+      connection_id: row.id,
+      owner_user_id: row.owner_user_id,
+      agent_id: row.agent_id,
+      thread_id: threadId,
+      inbound,
+    });
     // 定时任务到点或待确认卡片要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
     await sql
       .unsafe(
@@ -514,47 +925,95 @@ export function createImService(options: ImServiceOptions) {
       .catch(() => {});
     const content = frameInbound(platformName, inbound);
     const rawUserText = inbound.text.trim() || `［${platformName}消息］`;
-    void options.recordChannelActivity?.(threadId, row.owner_user_id, rawUserText).catch(() => {});
+    void options
+      .recordChannelActivity?.(threadId, row.owner_user_id, rawUserText)
+      .catch(() => {});
     options.signalThreadBusy?.(threadId, true);
     const started = Date.now();
     void adapter.typing?.(inbound);
-    const typingTimer = adapter.typing ? setInterval(() => void adapter.typing?.(inbound), 5000) : null;
+    const typingTimer = adapter.typing
+      ? setInterval(() => void adapter.typing?.(inbound), 5000)
+      : null;
     let answer: string;
+    activeTurns.add(messageId);
     try {
-      const result = await runWithRetry(() =>
-        options.runTurn({
+      const result = await runWithRetry(async () => {
+        for (;;) {
+          const prior = await readDurableTurn(
+            options.database,
+            row.owner_user_id,
+            threadId,
+            messageId,
+          );
+          if (!prior) break;
+          if (prior.status === "finished")
+            return {
+              replyText: prior.replyText,
+              components: drawnComponents(prior.messages ?? []),
+            };
+          if (prior.status === "failed")
+            throw new BackgroundTurnNeedsReview(
+              prior.error ?? "原消息执行未完成，请核对结果后再发送新请求。",
+            );
+          if (prior.status === "waiting")
+            return {
+              replyText:
+                "这条消息仍在等待你确认，请在原确认卡片或私聊中处理；没有重新执行。",
+            };
+          if (live.get(connectionId) !== entry)
+            throw new Error("IM observer stopped");
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        return options.runTurn({
           ownerUserId: row.owner_user_id,
           routineId: `${IM_INITIATOR_PREFIX}${row.id}`,
+          runId: messageId,
           agentId: row.agent_id,
           threadId,
           instruction: content,
           initiator: { kind: "routine", id: `${IM_INITIATOR_PREFIX}${row.id}` },
-          userMessage: { id: crypto.randomUUID(), role: "user", content } as Message,
-          forwardedProps: { chisabotIm: { connectionId: row.id, platform: row.platform } },
-        }),
-      );
-      answer = result.replyText?.trim() || "（这次没有文字回复）";
-      if (result.components?.length) answer += "\n\n（这条回复里还有卡片，打开 ChisaBot 网页能看到。）";
+          userMessage: { id: messageId, role: "user", content } as Message,
+          forwardedProps: {
+            chisabotIm: { connectionId: row.id, platform: row.platform },
+          },
+        });
+      });
+      answer = answerFor(result);
       if (result.replyText?.trim()) {
-        void options.recordChannelActivity?.(threadId, row.agent_id, result.replyText.trim()).catch(() => {});
+        void options
+          .recordChannelActivity?.(
+            threadId,
+            row.agent_id,
+            result.replyText.trim(),
+          )
+          .catch(() => {});
       }
     } catch (error) {
+      if (live.get(connectionId) !== entry) {
+        activeTurns.delete(messageId);
+        return;
+      }
       if (options.isSuspension?.(error)) {
         // 只有主人在私聊里能批（RV-02）：给别人的提示只说去哪确认，不暗示群里/陌生人能批。
         const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
-        const canApprove = inbound.chatType === "private" && owners.includes(inbound.userId);
+        const canApprove =
+          inbound.chatType === "private" && owners.includes(inbound.userId);
         /*
          * 卡在审批卡上时把卡片里的内容摘要一起发过去：IM 上看不到卡片本身，让人在回复
          * 「允许 / 拒绝」之前至少看到名字、模型、提示词开头和能看全文的链接。
          * 摘要只发给能在私聊里批的主人，不给群聊/陌生人泄露卡片内容。
          */
-        const waiting = (error as { waiting?: { kind?: unknown; approvalId?: unknown } }).waiting;
+        const waiting = (
+          error as { waiting?: { kind?: unknown; approvalId?: unknown } }
+        ).waiting;
         const summary =
           canApprove &&
           waiting?.kind === "approval" &&
           typeof waiting.approvalId === "string" &&
           options.approvalSummary
-            ? await options.approvalSummary(row.owner_user_id, waiting.approvalId).catch(() => null)
+            ? await options
+                .approvalSummary(row.owner_user_id, waiting.approvalId)
+                .catch(() => null)
             : null;
         answer = canApprove
           ? summary
@@ -572,12 +1031,25 @@ export function createImService(options: ImServiceOptions) {
       options.signalThreadBusy?.(threadId, false);
     }
     try {
-      const current = await rowById(connectionId);
-      if (!current?.enabled || live.get(connectionId) !== entry || !canUseConnection(current, inbound.userId)) return;
-      await reply(row, adapter, inbound, answer);
-      log(row.id, "info", `已回复（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`);
+      // Save the output even if the connection went offline while the Host was running.
+      const state = await queueReply(
+        row,
+        adapter,
+        inbound,
+        threadId,
+        answer,
+        `reply:${messageId}`,
+        messageId,
+      );
+      log(
+        row.id,
+        "info",
+        `${state === "sent" ? "已回复" : "回复已保存，等待发送"}（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`,
+      );
     } catch (error) {
       log(row.id, "error", `回复发送失败：${errorText(error)}`);
+    } finally {
+      activeTurns.delete(messageId);
     }
   }
 
@@ -617,11 +1089,16 @@ export function createImService(options: ImServiceOptions) {
    * 比如 169.254.169.254.nip.io——在保存时就拒掉，不等连的时候才发现。返回拦截原因，放行返回 null。
    * 解析失败（暂时没网 / 域名还没建好）不拦：真正连接时 guarded-fetch 还会按同样规则再判一遍。
    */
-  async function blockedByDns(hostname: string, allowPrivate: boolean): Promise<string | null> {
+  async function blockedByDns(
+    hostname: string,
+    allowPrivate: boolean,
+  ): Promise<string | null> {
     try {
       await resolvePublic(hostname, {
         ...(options.resolveDns ? { resolve: options.resolveDns } : {}),
-        isBlocked: allowPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress,
+        isBlocked: allowPrivate
+          ? isBlockedAddressAllowPrivate
+          : isBlockedAddress,
       });
       return null;
     } catch (error) {
@@ -632,7 +1109,10 @@ export function createImService(options: ImServiceOptions) {
   async function cleanFields(
     platform: ImPlatform,
     input: Input,
-    current: { config: Record<string, string>; secrets: Record<string, string> },
+    current: {
+      config: Record<string, string>;
+      secrets: Record<string, string>;
+    },
     owner: string,
     consumeQr = true,
     allowPrivate = false,
@@ -640,33 +1120,54 @@ export function createImService(options: ImServiceOptions) {
     const info = imPlatform(platform)!;
     const config: Record<string, string> = { ...current.config };
     const secrets: Record<string, string> = { ...current.secrets };
-    const rawConfig = (input.config && typeof input.config === "object" ? input.config : {}) as Record<string, unknown>;
-    const rawSecrets = (input.secrets && typeof input.secrets === "object" ? input.secrets : {}) as Record<string, unknown>;
+    const rawConfig = (
+      input.config && typeof input.config === "object" ? input.config : {}
+    ) as Record<string, unknown>;
+    const rawSecrets = (
+      input.secrets && typeof input.secrets === "object" ? input.secrets : {}
+    ) as Record<string, unknown>;
     for (const field of info.fields) {
       if (field.type === "secret") {
         const value = rawSecrets[field.key] ?? rawConfig[field.key];
-        if (typeof value === "string" && value.trim()) secrets[field.key] = value.trim().slice(0, 4000);
+        if (typeof value === "string" && value.trim())
+          secrets[field.key] = value.trim().slice(0, 4000);
         else if (value === null) delete secrets[field.key];
         continue;
       }
       const value = rawConfig[field.key];
       if (typeof value === "string") {
         const trimmed = value.trim().slice(0, 500);
-        if (field.type === "select" && field.options && trimmed && !field.options.some((option) => option.value === trimmed))
+        if (
+          field.type === "select" &&
+          field.options &&
+          trimmed &&
+          !field.options.some((option) => option.value === trimmed)
+        )
           throw new InputError(`「${field.label}」的值不对`);
         if (field.type === "url" && trimmed) {
-          if (!/^(https?|wss?):\/\//.test(trimmed)) throw new InputError(`「${field.label}」要以 http(s):// 或 ws(s):// 开头`);
-          const httpForm = trimmed.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
+          if (!/^(https?|wss?):\/\//.test(trimmed))
+            throw new InputError(
+              `「${field.label}」要以 http(s):// 或 ws(s):// 开头`,
+            );
+          const httpForm = trimmed
+            .replace(/^ws:/i, "http:")
+            .replace(/^wss:/i, "https:");
           // 「允许内网地址」开着时管理员配置的协议端可以指向内网（云元数据仍拦）；关着就还是只认公网。
           const verdict = checkPublicUrl(httpForm, { allowPrivate });
-          if (!verdict.ok) throw new InputError(`「${field.label}」不安全：${verdict.reason}`);
-          const dnsBlock = await blockedByDns(verdict.url.hostname, allowPrivate);
-          if (dnsBlock) throw new InputError(`「${field.label}」不安全：${dnsBlock}`);
+          if (!verdict.ok)
+            throw new InputError(`「${field.label}」不安全：${verdict.reason}`);
+          const dnsBlock = await blockedByDns(
+            verdict.url.hostname,
+            allowPrivate,
+          );
+          if (dnsBlock)
+            throw new InputError(`「${field.label}」不安全：${dnsBlock}`);
         }
         if (trimmed) config[field.key] = trimmed;
         else delete config[field.key];
       }
-      if (!config[field.key] && field.default) config[field.key] = field.default;
+      if (!config[field.key] && field.default)
+        config[field.key] = field.default;
     }
     const loginKey =
       typeof input.qrLogin === "string" && input.qrLogin
@@ -678,7 +1179,12 @@ export function createImService(options: ImServiceOptions) {
     let boundUserId: string | undefined;
     if (loginKey) {
       const login = qrLogins.get(loginKey);
-      if (!login || login.owner !== owner || login.platform !== platform || !login.result) {
+      if (
+        !login ||
+        login.owner !== owner ||
+        login.platform !== platform ||
+        !login.result
+      ) {
         const pName = imPlatform(platform)?.name ?? platform;
         throw new InputError(`${pName}扫码授权已失效，请重新扫码`);
       }
@@ -686,7 +1192,8 @@ export function createImService(options: ImServiceOptions) {
         if (k === "baseUrl" && v) {
           const cleanedBase = v.replace(/\/+$/, "");
           const verdict = checkPublicUrl(cleanedBase);
-          if (!verdict.ok) throw new InputError(`接口地址不安全：${verdict.reason}`);
+          if (!verdict.ok)
+            throw new InputError(`接口地址不安全：${verdict.reason}`);
           const dnsBlock = await blockedByDns(verdict.url.hostname, false);
           if (dnsBlock) throw new InputError(`接口地址不安全：${dnsBlock}`);
           config[k] = cleanedBase;
@@ -701,17 +1208,32 @@ export function createImService(options: ImServiceOptions) {
       boundUserId = login.result.boundUserId;
       if (consumeQr) qrLogins.delete(loginKey);
     }
-    if (platform === "onebot" && config.mode === "reverse" && !secrets.accessToken) secrets.accessToken = newToken();
+    if (
+      platform === "onebot" &&
+      config.mode === "reverse" &&
+      !secrets.accessToken
+    )
+      secrets.accessToken = newToken();
     return { config, secrets, account, boundUserId };
   }
 
-  function missingRequired(platform: ImPlatform, config: Record<string, string>, secrets: Record<string, string>): string | null {
+  function missingRequired(
+    platform: ImPlatform,
+    config: Record<string, string>,
+    secrets: Record<string, string>,
+  ): string | null {
     const info = imPlatform(platform)!;
     for (const field of info.fields) {
-      if (field.showIf && config[field.showIf.key] !== field.showIf.equals) continue;
-      const required = field.required || (platform === "onebot" && field.key === "url" && config.mode !== "reverse");
+      if (field.showIf && config[field.showIf.key] !== field.showIf.equals)
+        continue;
+      const required =
+        field.required ||
+        (platform === "onebot" &&
+          field.key === "url" &&
+          config.mode !== "reverse");
       if (!required) continue;
-      const value = field.type === "secret" ? secrets[field.key] : config[field.key];
+      const value =
+        field.type === "secret" ? secrets[field.key] : config[field.key];
       if (!value) return field.label;
     }
     if (platform === "weixin" && !secrets.token) return "微信扫码授权";
@@ -720,29 +1242,69 @@ export function createImService(options: ImServiceOptions) {
 
   const cleanUsers = (value: unknown) =>
     Array.isArray(value)
-      ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 200)
+      ? [
+          ...new Set(
+            value
+              .filter((item): item is string => typeof item === "string")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, 200)
       : undefined;
 
   /** 这次提交动了 url 类字段（协议端地址）没有：值和库里已存的不一样才算动。 */
-  function endpointChanged(platform: ImPlatform, input: Input, stored: Record<string, string>): boolean {
-    const raw = (input.config && typeof input.config === "object" ? input.config : {}) as Record<string, unknown>;
+  function endpointChanged(
+    platform: ImPlatform,
+    input: Input,
+    stored: Record<string, string>,
+  ): boolean {
+    const raw = (
+      input.config && typeof input.config === "object" ? input.config : {}
+    ) as Record<string, unknown>;
     return (imPlatform(platform)?.fields ?? []).some(
-      (field) => field.type === "url" && typeof raw[field.key] === "string" && (raw[field.key] as string).trim().slice(0, 500) !== (stored[field.key] ?? ""),
+      (field) =>
+        field.type === "url" &&
+        typeof raw[field.key] === "string" &&
+        (raw[field.key] as string).trim().slice(0, 500) !==
+          (stored[field.key] ?? ""),
     );
   }
 
   /** 扫码绑定时平台回了扫码人自己的用户 id（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书）就自动算进主人名单，不用手填。 */
   const withBoundOwner = (owners: string[], boundUserId: string | undefined) =>
-    boundUserId && !owners.includes(boundUserId) ? [...owners, boundUserId] : owners;
+    boundUserId && !owners.includes(boundUserId)
+      ? [...owners, boundUserId]
+      : owners;
 
-  async function create(owner: string, input: Input, admin = false): Promise<ImConnectionView> {
-    const platform = typeof input.platform === "string" ? (input.platform as ImPlatform) : null;
-    if (!platform || !imPlatform(platform)) throw new InputError("不支持这个平台");
-    const agentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
-    if (!agentId || !(await options.botAvailable(owner, agentId))) throw new InputError("请选择一个你的机器人");
-    const name = (typeof input.name === "string" && input.name.trim() ? input.name.trim() : imPlatform(platform)!.name).slice(0, 40);
+  async function create(
+    owner: string,
+    input: Input,
+    admin = false,
+  ): Promise<ImConnectionView> {
+    const platform =
+      typeof input.platform === "string"
+        ? (input.platform as ImPlatform)
+        : null;
+    if (!platform || !imPlatform(platform))
+      throw new InputError("不支持这个平台");
+    const agentId =
+      typeof input.agentId === "string" ? input.agentId.trim() : "";
+    if (!agentId || !(await options.botAvailable(owner, agentId)))
+      throw new InputError("请选择一个你的机器人");
+    const name = (
+      typeof input.name === "string" && input.name.trim()
+        ? input.name.trim()
+        : imPlatform(platform)!.name
+    ).slice(0, 40);
     const allowPrivate = admin && input.allowPrivate === true;
-    const { config, secrets, account, boundUserId } = await cleanFields(platform, input, { config: {}, secrets: {} }, owner, true, allowPrivate);
+    const { config, secrets, account, boundUserId } = await cleanFields(
+      platform,
+      input,
+      { config: {}, secrets: {} },
+      owner,
+      true,
+      allowPrivate,
+    );
     const enabled = input.enabled !== false;
     const missing = missingRequired(platform, config, secrets);
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
@@ -752,57 +1314,129 @@ export function createImService(options: ImServiceOptions) {
     await sql.unsafe(
       `INSERT INTO chisabot_im_connections (id, owner_user_id, platform, name, agent_id, enabled, config, secrets, allow_users, allow_devices, account, owner_users, allow_private)
        VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10, $11, $12::text::jsonb, $13)`,
-      [id, owner, platform, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(cleanUsers(input.allowUsers) ?? []), input.allowDevices === true, account ?? null, JSON.stringify(ownerUsers), allowPrivate],
+      [
+        id,
+        owner,
+        platform,
+        name,
+        agentId,
+        enabled,
+        JSON.stringify(config),
+        await sealSecrets(secrets),
+        JSON.stringify(cleanUsers(input.allowUsers) ?? []),
+        input.allowDevices === true,
+        account ?? null,
+        JSON.stringify(ownerUsers),
+        allowPrivate,
+      ],
     );
     log(id, "info", `创建了连接（${imPlatform(platform)!.name}）`);
-    if (boundUserId && !givenOwners.includes(boundUserId)) log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
+    if (boundUserId && !givenOwners.includes(boundUserId))
+      log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
     const row = (await rowById(id))!;
     await startRow(row);
     return view(row, secrets);
   }
 
-  async function update(owner: string, id: string, input: Input, admin = false): Promise<ImConnectionView | null> {
+  async function update(
+    owner: string,
+    id: string,
+    input: Input,
+    admin = false,
+  ): Promise<ImConnectionView | null> {
     const row = await owned(owner, id);
     if (!row) return null;
-    const current = { config: row.config ?? {}, secrets: await readSecrets(row) };
+    const current = {
+      config: row.config ?? {},
+      secrets: await readSecrets(row),
+    };
     // 「允许内网地址」只有管理员能改：非管理员传来的值直接丢掉，沿用库里已存的。
-    let allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : row.allow_private === true) : row.allow_private === true;
+    let allowPrivate = admin
+      ? typeof input.allowPrivate === "boolean"
+        ? input.allowPrivate
+        : row.allow_private === true
+      : row.allow_private === true;
     // 开关开着又改了协议端地址 = 要重新确认：管理员这次没把开关再传一遍，就先按「关」算——
     // 新地址是公网则静默落库（开关置关），是内网则被上面的地址校验 400 挡住。
-    if (allowPrivate && endpointChanged(row.platform, input, current.config) && !(admin && input.allowPrivate === true)) allowPrivate = false;
-    const { config, secrets, account, boundUserId } = await cleanFields(row.platform, input, current, owner, true, allowPrivate);
+    if (
+      allowPrivate &&
+      endpointChanged(row.platform, input, current.config) &&
+      !(admin && input.allowPrivate === true)
+    )
+      allowPrivate = false;
+    const { config, secrets, account, boundUserId } = await cleanFields(
+      row.platform,
+      input,
+      current,
+      owner,
+      true,
+      allowPrivate,
+    );
     let agentId = row.agent_id;
     if (typeof input.agentId === "string" && input.agentId !== row.agent_id) {
-      if (!(await options.botAvailable(owner, input.agentId))) throw new InputError("请选择一个你的机器人");
+      if (!(await options.botAvailable(owner, input.agentId)))
+        throw new InputError("请选择一个你的机器人");
       agentId = input.agentId;
       // 切换绑定的机器人后，清空旧会话映射，下一条消息自动绑定到新机器人的会话。
-      await sql.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]).catch(() => {});
+      await sql
+        .unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id])
+        .catch(() => {});
     }
-    const enabled = typeof input.enabled === "boolean" ? input.enabled : row.enabled;
+    const enabled =
+      typeof input.enabled === "boolean" ? input.enabled : row.enabled;
     const missing = missingRequired(row.platform, config, secrets);
     if (missing && enabled) throw new InputError(`请填写「${missing}」`);
-    const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 40) : row.name;
+    const name =
+      typeof input.name === "string" && input.name.trim()
+        ? input.name.trim().slice(0, 40)
+        : row.name;
     const allowUsers = cleanUsers(input.allowUsers) ?? row.allow_users;
-    const givenOwners = cleanUsers(input.ownerUsers) ?? (Array.isArray(row.owner_users) ? row.owner_users : []);
+    const givenOwners =
+      cleanUsers(input.ownerUsers) ??
+      (Array.isArray(row.owner_users) ? row.owner_users : []);
     const ownerUsers = withBoundOwner(givenOwners, boundUserId);
-    const allowDevices = typeof input.allowDevices === "boolean" ? input.allowDevices : row.allow_devices;
+    const allowDevices =
+      typeof input.allowDevices === "boolean"
+        ? input.allowDevices
+        : row.allow_devices;
     const nextAccount = account ?? row.account;
     await sql.unsafe(
       `UPDATE chisabot_im_connections SET name = $2, agent_id = $3, enabled = $4, config = $5::text::jsonb, secrets = $6,
        allow_users = $7::text::jsonb, allow_devices = $8, account = $9, owner_users = $10::text::jsonb, allow_private = $11, updated_at = now(), last_error = CASE WHEN $4 THEN last_error ELSE NULL END WHERE id = $1`,
-      [id, name, agentId, enabled, JSON.stringify(config), await sealSecrets(secrets), JSON.stringify(allowUsers), allowDevices, nextAccount, JSON.stringify(ownerUsers), allowPrivate],
+      [
+        id,
+        name,
+        agentId,
+        enabled,
+        JSON.stringify(config),
+        await sealSecrets(secrets),
+        JSON.stringify(allowUsers),
+        allowDevices,
+        nextAccount,
+        JSON.stringify(ownerUsers),
+        allowPrivate,
+      ],
     );
     allowDevicesCache.set(id, allowDevices);
-    if (boundUserId && !givenOwners.includes(boundUserId)) log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
+    if (boundUserId && !givenOwners.includes(boundUserId))
+      log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
     const changes = [
       enabled !== row.enabled ? (enabled ? "启用" : "停用") : null,
       agentId !== row.agent_id ? "换了机器人" : null,
-      JSON.stringify(config) !== JSON.stringify(row.config ?? {}) || JSON.stringify(secrets) !== JSON.stringify(current.secrets) ? "改了配置" : null,
+      JSON.stringify(config) !== JSON.stringify(row.config ?? {}) ||
+      JSON.stringify(secrets) !== JSON.stringify(current.secrets)
+        ? "改了配置"
+        : null,
     ].filter(Boolean);
     if (changes.length) log(id, "info", `设置已更新：${changes.join("、")}`);
     const next = (await rowById(id))!;
     // 只改了名字 / 白名单 / 机器人：不用重连。
-    const reconnect = enabled !== row.enabled || allowPrivate !== (row.allow_private === true) || JSON.stringify(config) !== JSON.stringify(row.config ?? {}) || JSON.stringify(secrets) !== JSON.stringify(current.secrets) || (enabled && !live.has(id));
+    const reconnect =
+      enabled !== row.enabled ||
+      allowPrivate !== (row.allow_private === true) ||
+      JSON.stringify(config) !== JSON.stringify(row.config ?? {}) ||
+      JSON.stringify(secrets) !== JSON.stringify(current.secrets) ||
+      (enabled && !live.has(id));
     if (reconnect) await startRow(next);
     return view(next, secrets);
   }
@@ -811,52 +1445,127 @@ export function createImService(options: ImServiceOptions) {
     const row = await owned(owner, id);
     if (!row) return false;
     await stopLive(id);
+    await delivery.cancelConnection(id);
     allowDevicesCache.delete(id);
     await sql.unsafe("DELETE FROM chisabot_im_connections WHERE id = $1", [id]);
-    await sql.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [id]);
-    await sql.unsafe("DELETE FROM chisabot_im_logs WHERE connection_id = $1", [id]);
+    await sql.unsafe("DELETE FROM chisabot_im_chats WHERE connection_id = $1", [
+      id,
+    ]);
+    await sql.unsafe("DELETE FROM chisabot_im_logs WHERE connection_id = $1", [
+      id,
+    ]);
     return true;
   }
 
   async function list(owner: string): Promise<ImConnectionView[]> {
-    const rows = await sql.unsafe<Row[]>("SELECT * FROM chisabot_im_connections WHERE owner_user_id = $1 ORDER BY created_at", [owner]);
-    return Promise.all(rows.map(async (row) => view(row, await readSecrets(row))));
+    const rows = await sql.unsafe<Row[]>(
+      "SELECT * FROM chisabot_im_connections WHERE owner_user_id = $1 ORDER BY created_at",
+      [owner],
+    );
+    return Promise.all(
+      rows.map(async (row) => view(row, await readSecrets(row))),
+    );
   }
 
   async function logs(owner: string, id: string): Promise<ImLogEntry[] | null> {
     if (!(await owned(owner, id))) return null;
-    const rows = await sql.unsafe<{ at: Date; level: ImLogEntry["level"]; text: string }[]>(
+    const rows = await sql.unsafe<
+      { at: Date; level: ImLogEntry["level"]; text: string }[]
+    >(
       "SELECT at, level, text FROM chisabot_im_logs WHERE connection_id = $1 ORDER BY id DESC LIMIT 100",
       [id],
     );
-    return rows.map((row) => ({ at: new Date(row.at).toISOString(), level: row.level, text: row.text }));
+    return rows.map((row) => ({
+      at: new Date(row.at).toISOString(),
+      level: row.level,
+      text: row.text,
+    }));
   }
 
-  function testContext(platform: ImPlatform, id: string, config: Record<string, string>, secrets: Record<string, string>, allowPrivate: boolean): AdapterContext {
+  function testContext(
+    platform: ImPlatform,
+    id: string,
+    config: Record<string, string>,
+    secrets: Record<string, string>,
+    allowPrivate: boolean,
+  ): AdapterContext {
     const channels = scopedChannels(platform, config, allowPrivate);
-    return { connectionId: id, config, secrets, log: () => {}, setStatus: () => {}, onMessage: () => {}, fetch: channels.fetch, ws: channels.ws };
+    return {
+      connectionId: id,
+      config,
+      secrets,
+      log: () => {},
+      setStatus: () => {},
+      onMessage: () => {},
+      fetch: channels.fetch,
+      ws: channels.ws,
+    };
   }
 
   async function test(owner: string, id: string) {
     const row = await owned(owner, id);
     if (!row) return null;
     const secrets = await readSecrets(row);
-    const result = await testAdapter(row.platform, testContext(row.platform, id, row.config ?? {}, secrets, row.allow_private === true), live.get(id)?.adapter);
+    const result = await testAdapter(
+      row.platform,
+      testContext(
+        row.platform,
+        id,
+        row.config ?? {},
+        secrets,
+        row.allow_private === true,
+      ),
+      live.get(id)?.adapter,
+    );
     log(id, result.ok ? "info" : "warn", `测试连接：${result.detail}`);
     return result;
   }
 
   /** 保存前测试：用表单里的值（编辑时空密钥沿用已保存的；扫码未保存时保留 qrLogin 会话供后续保存使用）。 */
-  async function testDraft(owner: string, input: Input & { id?: unknown }, admin = false) {
-    const existing = typeof input.id === "string" ? await owned(owner, input.id) : null;
+  async function testDraft(
+    owner: string,
+    input: Input & { id?: unknown },
+    admin = false,
+  ) {
+    const existing =
+      typeof input.id === "string" ? await owned(owner, input.id) : null;
     const platform = (existing?.platform ?? input.platform) as ImPlatform;
     if (!imPlatform(platform)) throw new InputError("不支持这个平台");
-    const current = existing ? { config: existing.config ?? {}, secrets: await readSecrets(existing) } : { config: {}, secrets: {} };
-    let allowPrivate = admin ? (typeof input.allowPrivate === "boolean" ? input.allowPrivate : existing?.allow_private === true) : existing?.allow_private === true;
+    const current = existing
+      ? { config: existing.config ?? {}, secrets: await readSecrets(existing) }
+      : { config: {}, secrets: {} };
+    let allowPrivate = admin
+      ? typeof input.allowPrivate === "boolean"
+        ? input.allowPrivate
+        : existing?.allow_private === true
+      : existing?.allow_private === true;
     // 和 update 同一条规矩：开关开着又改了协议端地址，没重新传开关就按「关」测试。
-    if (existing && allowPrivate && endpointChanged(platform, input, current.config) && !(admin && input.allowPrivate === true)) allowPrivate = false;
-    const { config, secrets } = await cleanFields(platform, input, current, owner, false, allowPrivate);
-    return testAdapter(platform, testContext(platform, existing?.id ?? "draft", config, secrets, allowPrivate), existing ? live.get(existing.id)?.adapter : undefined);
+    if (
+      existing &&
+      allowPrivate &&
+      endpointChanged(platform, input, current.config) &&
+      !(admin && input.allowPrivate === true)
+    )
+      allowPrivate = false;
+    const { config, secrets } = await cleanFields(
+      platform,
+      input,
+      current,
+      owner,
+      false,
+      allowPrivate,
+    );
+    return testAdapter(
+      platform,
+      testContext(
+        platform,
+        existing?.id ?? "draft",
+        config,
+        secrets,
+        allowPrivate,
+      ),
+      existing ? live.get(existing.id)?.adapter : undefined,
+    );
   }
 
   // ---- 多平台扫码授权（微信 / QQ 官方 / 企业微信 / 钉钉 / 飞书） ----
@@ -867,20 +1576,32 @@ export function createImService(options: ImServiceOptions) {
     }
   }
 
-  async function qrStart(owner: string, body: { platform?: string; baseUrl?: string; domain?: string }) {
+  async function qrStart(
+    owner: string,
+    body: { platform?: string; baseUrl?: string; domain?: string },
+  ) {
     const platform = body.platform ?? "weixin";
-    if (!isQrPlatform(platform)) throw new InputError("该平台不支持直接扫码绑定");
+    if (!isQrPlatform(platform))
+      throw new InputError("该平台不支持直接扫码绑定");
     let baseUrl = body.baseUrl;
     if (platform === "weixin") {
-      baseUrl = (baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE).replace(/\/+$/, "");
+      baseUrl = (
+        baseUrl && /^https?:\/\//.test(baseUrl) ? baseUrl : WEIXIN_DEFAULT_BASE
+      ).replace(/\/+$/, "");
       const verdict = checkPublicUrl(baseUrl);
-      if (!verdict.ok) throw new InputError(`微信接口地址不安全：${verdict.reason}`);
+      if (!verdict.ok)
+        throw new InputError(`微信接口地址不安全：${verdict.reason}`);
       const dnsBlock = await blockedByDns(verdict.url.hostname, false);
       if (dnsBlock) throw new InputError(`微信接口地址不安全：${dnsBlock}`);
     }
     pruneQrLogins();
-    const started = await startPlatformQr({ platform, baseUrl, domain: body.domain }, fetcher);
-    const sessionKey = started.qrcode || `qr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const started = await startPlatformQr(
+      { platform, baseUrl, domain: body.domain },
+      fetcher,
+    );
+    const sessionKey =
+      started.qrcode ||
+      `qr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     qrLogins.set(sessionKey, {
       owner,
       platform,
@@ -908,7 +1629,8 @@ export function createImService(options: ImServiceOptions) {
     }
     if (login.platform === "weixin" && login.state.baseUrl) {
       const baseVerdict = checkPublicUrl(login.state.baseUrl);
-      if (!baseVerdict.ok) throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
+      if (!baseVerdict.ok)
+        throw new InputError(`微信接口地址不安全：${baseVerdict.reason}`);
       const dnsBlock = await blockedByDns(baseVerdict.url.hostname, false);
       if (dnsBlock) throw new InputError(`微信接口地址不安全：${dnsBlock}`);
     }
@@ -939,10 +1661,14 @@ export function createImService(options: ImServiceOptions) {
     }
     if (polled.status === "expired") {
       qrLogins.delete(sessionKey);
-      return { status: "expired" as const, ...(polled.message ? { message: polled.message } : {}) };
+      return {
+        status: "expired" as const,
+        ...(polled.message ? { message: polled.message } : {}),
+      };
     }
     return {
-      status: polled.status === "scaned" ? ("scanned" as const) : ("wait" as const),
+      status:
+        polled.status === "scaned" ? ("scanned" as const) : ("wait" as const),
     };
   }
 
@@ -954,7 +1680,11 @@ export function createImService(options: ImServiceOptions) {
   async function weixinQrPoll(owner: string, qrcode: string) {
     const res = await qrPoll(owner, qrcode);
     if (res.status === "confirmed") {
-      return { status: "confirmed" as const, loginKey: res.loginKey, account: res.account };
+      return {
+        status: "confirmed" as const,
+        loginKey: res.loginKey,
+        account: res.account,
+      };
     }
     return { status: res.status };
   }
@@ -964,16 +1694,26 @@ export function createImService(options: ImServiceOptions) {
   async function authorizeReverse(id: string, token: string): Promise<boolean> {
     if (!CONNECTION_ID.test(id)) return false;
     const row = await rowById(id);
-    if (!row || row.platform !== "onebot" || row.config?.mode !== "reverse" || !row.enabled) return false;
+    if (
+      row?.platform !== "onebot" ||
+      row.config?.mode !== "reverse" ||
+      !row.enabled
+    )
+      return false;
     const secrets = await readSecrets(row);
     const expected = secrets.accessToken ?? "";
     if (!expected || token.length !== expected.length) return false;
     let diff = 0;
-    for (let index = 0; index < expected.length; index++) diff |= expected.charCodeAt(index) ^ token.charCodeAt(index);
+    for (let index = 0; index < expected.length; index++)
+      diff |= expected.charCodeAt(index) ^ token.charCodeAt(index);
     return diff === 0;
   }
 
-  function attachReverse(id: string, socket: WsLike, selfId: string | null): boolean {
+  function attachReverse(
+    id: string,
+    socket: WsLike,
+    selfId: string | null,
+  ): boolean {
     const entry = live.get(id);
     if (!entry || !(entry.adapter instanceof OneBotAdapter)) return false;
     const ok = entry.adapter.attach(socket, selfId);
@@ -995,23 +1735,42 @@ export function createImService(options: ImServiceOptions) {
         // 计数键 = 网关给的真实 IP（审计 #5）；不读客户端可伪造的 CF-Connecting-IP，和设备令牌限速同一个取法。
         const ip = gatewayClientIp(c.req.raw.headers) ?? "?";
         const failure = reverseFailures.get(ip);
-        if (failure && failure.count >= 20 && failure.until > Date.now()) return c.json({ error: "失败次数过多" }, 429);
+        if (failure && failure.count >= 20 && failure.until > Date.now())
+          return c.json({ error: "失败次数过多" }, 429);
         const header = c.req.header("authorization") ?? "";
-        const token = header.replace(/^(Bearer|Token)\s+/i, "").trim() || c.req.query("access_token") || "";
+        const token =
+          header.replace(/^(Bearer|Token)\s+/i, "").trim() ||
+          c.req.query("access_token") ||
+          "";
         if (!(await authorizeReverse(c.req.param("id"), token))) {
-          const next429 = failure && failure.until > Date.now() ? failure : { count: 0, until: Date.now() + 10 * 60_000 };
+          const next429 =
+            failure && failure.until > Date.now()
+              ? failure
+              : { count: 0, until: Date.now() + 10 * 60_000 };
           next429.count++;
           if (reverseFailures.size > 5000) reverseFailures.clear();
           reverseFailures.set(ip, next429);
-          return c.json({ error: "token 不对或连接没有启用反向 WebSocket" }, 401);
+          return c.json(
+            { error: "token 不对或连接没有启用反向 WebSocket" },
+            401,
+          );
         }
-        if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return c.json({ error: "这里要用 WebSocket 连接" }, 400);
+        if (c.req.header("upgrade")?.toLowerCase() !== "websocket")
+          return c.json({ error: "这里要用 WebSocket 连接" }, 400);
         await next();
       },
       upgradeWebSocket((c) => {
         const id = c.req.param("id")!;
         const selfId = c.req.header("x-self-id") ?? null;
-        const shim: WsLike = { readyState: 0, send: () => {}, close: () => {}, onopen: null, onmessage: null, onclose: null, onerror: null };
+        const shim: WsLike = {
+          readyState: 0,
+          send: () => {},
+          close: () => {},
+          onopen: null,
+          onmessage: null,
+          onclose: null,
+          onerror: null,
+        };
         return {
           onOpen: (_event, ws) => {
             shim.readyState = 1;
@@ -1035,7 +1794,9 @@ export function createImService(options: ImServiceOptions) {
     const authed = new Hono<{ Variables: AppVariables }>();
     authed.use("*", requireUser);
     const fail = (c: any, error: unknown) =>
-      error instanceof InputError ? c.json({ error: error.message }, 400) : (console.error(error), c.json({ error: "出错了，请重试" }, 500));
+      error instanceof InputError
+        ? c.json({ error: error.message }, 400)
+        : (console.error(error), c.json({ error: "出错了，请重试" }, 500));
     authed.get("/platforms", (c) => c.json({ platforms: IM_PLATFORMS }));
     authed.get("/connections", async (c) => {
       c.header("Cache-Control", "no-store");
@@ -1043,27 +1804,53 @@ export function createImService(options: ImServiceOptions) {
     });
     authed.post("/connections", async (c) => {
       try {
-        return c.json({ connection: await create(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin") }, 201);
+        return c.json(
+          {
+            connection: await create(
+              c.var.actor.id,
+              (await c.req.json().catch(() => ({}))) as Input,
+              c.var.actor.role === "admin",
+            ),
+          },
+          201,
+        );
       } catch (error) {
         return fail(c, error);
       }
     });
     authed.post("/test", async (c) => {
       try {
-        return c.json(await testDraft(c.var.actor.id, (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin"));
+        return c.json(
+          await testDraft(
+            c.var.actor.id,
+            (await c.req.json().catch(() => ({}))) as Input,
+            c.var.actor.role === "admin",
+          ),
+        );
       } catch (error) {
         return fail(c, error);
       }
     });
     authed.patch("/connections/:id", async (c) => {
       try {
-        const updated = await update(c.var.actor.id, c.req.param("id"), (await c.req.json().catch(() => ({}))) as Input, c.var.actor.role === "admin");
-        return updated ? c.json({ connection: updated }) : c.json({ error: "没有这个连接" }, 404);
+        const updated = await update(
+          c.var.actor.id,
+          c.req.param("id"),
+          (await c.req.json().catch(() => ({}))) as Input,
+          c.var.actor.role === "admin",
+        );
+        return updated
+          ? c.json({ connection: updated })
+          : c.json({ error: "没有这个连接" }, 404);
       } catch (error) {
         return fail(c, error);
       }
     });
-    authed.delete("/connections/:id", async (c) => ((await remove(c.var.actor.id, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "没有这个连接" }, 404)));
+    authed.delete("/connections/:id", async (c) =>
+      (await remove(c.var.actor.id, c.req.param("id")))
+        ? c.json({ ok: true })
+        : c.json({ error: "没有这个连接" }, 404),
+    );
     authed.post("/connections/:id/test", async (c) => {
       const result = await test(c.var.actor.id, c.req.param("id"));
       return result ? c.json(result) : c.json({ error: "没有这个连接" }, 404);
@@ -1071,11 +1858,24 @@ export function createImService(options: ImServiceOptions) {
     authed.get("/connections/:id/logs", async (c) => {
       c.header("Cache-Control", "no-store");
       const entries = await logs(c.var.actor.id, c.req.param("id"));
-      return entries ? c.json({ logs: entries }) : c.json({ error: "没有这个连接" }, 404);
+      return entries
+        ? c.json({ logs: entries })
+        : c.json({ error: "没有这个连接" }, 404);
+    });
+    authed.get("/connections/:id/deliveries", async (c) => {
+      // Historical records remain retrievable by their owner after a connection is removed.
+      c.header("Cache-Control", "no-store");
+      return c.json({
+        deliveries: await delivery.history(c.var.actor.id, c.req.param("id")),
+      });
     });
     authed.post("/qr/start", async (c) => {
       try {
-        const body = (await c.req.json().catch(() => ({}))) as { platform?: string; baseUrl?: string; domain?: string };
+        const body = (await c.req.json().catch(() => ({}))) as {
+          platform?: string;
+          baseUrl?: string;
+          domain?: string;
+        };
         return c.json(await qrStart(c.var.actor.id, body));
       } catch (error) {
         if (error instanceof InputError) return fail(c, error);
@@ -1093,7 +1893,9 @@ export function createImService(options: ImServiceOptions) {
     });
     authed.post("/weixin/qr", async (c) => {
       try {
-        const body = (await c.req.json().catch(() => ({}))) as { baseUrl?: string };
+        const body = (await c.req.json().catch(() => ({}))) as {
+          baseUrl?: string;
+        };
         return c.json(await weixinQr(c.var.actor.id, body.baseUrl));
       } catch (error) {
         if (error instanceof InputError) return fail(c, error);
@@ -1103,7 +1905,9 @@ export function createImService(options: ImServiceOptions) {
     authed.get("/weixin/qr/status", async (c) => {
       try {
         c.header("Cache-Control", "no-store");
-        return c.json(await weixinQrPoll(c.var.actor.id, c.req.query("qrcode") ?? ""));
+        return c.json(
+          await weixinQrPoll(c.var.actor.id, c.req.query("qrcode") ?? ""),
+        );
       } catch (error) {
         return c.json({ error: `查询扫码状态失败：${errorText(error)}` }, 502);
       }
@@ -1134,29 +1938,65 @@ export function createImService(options: ImServiceOptions) {
      * 主动把一段文字发到某个 IM 对话（定时任务到点或待确认卡片提示，DESIGN.md §55）：按这个对话最近一条消息的回复信息发。
      * 有的平台只许在一段时间内被动回复（QQ 官方机器人 msg_id 5 分钟、企业微信智能机器人按消息流式），过期会失败。
      */
-    async pushToThread(threadId: string, text: string, opts?: { privateOnly?: boolean }) {
+    async pushToThread(
+      threadId: string,
+      text: string,
+      opts?: {
+        privateOnly?: boolean;
+        deliveryId?: string;
+        connectionId?: string;
+      },
+    ) {
+      const deliveryId = `push:${opts?.deliveryId ?? crypto.randomUUID()}`;
+      const existing = await delivery.get(deliveryId);
+      if (existing) {
+        if (
+          existing.thread_id !== threadId ||
+          (opts?.connectionId && existing.connection_id !== opts.connectionId)
+        )
+          throw new Error("IM 交付标识不属于这段对话");
+        await dispatchDelivery(deliveryId);
+        return;
+      }
       const chat = (
         await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>(
-          `SELECT connection_id, last_inbound FROM chisabot_im_chats WHERE thread_id = $1 AND last_inbound IS NOT NULL ${opts?.privateOnly ? "AND chat_key LIKE 'private:%'" : ""} ORDER BY updated_at DESC LIMIT 1`,
-          [threadId],
+          `SELECT connection_id,last_inbound FROM (
+            SELECT connection_id,last_inbound,updated_at AS at FROM chisabot_im_chats WHERE thread_id=$1
+            UNION ALL SELECT connection_id,inbound,created_at FROM chisabot_im_inbox WHERE thread_id=$1
+          ) targets WHERE last_inbound IS NOT NULL AND ($2::text IS NULL OR connection_id=$2)
+          ${opts?.privateOnly ? "AND last_inbound->>'chatType'='private'" : ""} ORDER BY at DESC LIMIT 1`,
+          [threadId, opts?.connectionId ?? null],
         )
       )[0];
-      if (!chat) throw new Error("找不到这个 IM 对话（可能已经 /new 换了新话题）");
+      if (!chat)
+        throw new Error("找不到这个 IM 对话（可能已经 /new 换了新话题）");
       const entry = live.get(chat.connection_id);
       const row = await rowById(chat.connection_id);
-      if (!entry || !row || !row.enabled) throw new Error("IM 连接没有在线");
+      if (!row?.enabled) throw new Error("IM 连接已停用或删除");
       let inbound = chat.last_inbound as ImInbound | string | null;
-      if (typeof inbound === "string") inbound = JSON.parse(inbound) as ImInbound;
+      if (typeof inbound === "string")
+        inbound = JSON.parse(inbound) as ImInbound;
       if (!inbound) throw new Error("这个 IM 对话还没有可回复的消息");
-      if (!canUseConnection(row, inbound.userId)) throw new Error("这个 IM 对话的发送者已不在可用名单里");
-      await reply(row, entry.adapter, inbound, text);
-      log(row.id, "info", `主动推送消息（${text.length} 字）`);
+      if (!canUseConnection(row, inbound.userId))
+        throw new Error("这个 IM 对话的发送者已不在可用名单里");
+      const adapter =
+        entry?.adapter ??
+        createAdapter(
+          row.platform,
+          testContext(row.platform, row.id, row.config, {}, row.allow_private),
+        );
+      await queueReply(row, adapter, inbound, threadId, text, deliveryId);
+      log(row.id, "info", `主动推送消息已保存（${text.length} 字）`);
     },
     /** IM 回合能不能用电脑 / 设备类工具（连接里的开关）。 */
-    allowsDevices: (connectionId: string) => allowDevicesCache.get(connectionId) === true,
+    allowsDevices: (connectionId: string) =>
+      allowDevicesCache.get(connectionId) === true,
     /** 测试用：当前适配器。 */
-    adapterOf: (connectionId: string) => live.get(connectionId)?.adapter ?? null,
+    adapterOf: (connectionId: string) =>
+      live.get(connectionId)?.adapter ?? null,
     statusOf: (connectionId: string) => live.get(connectionId)?.status ?? null,
+    recoverDeliveries,
+    deliveries: delivery.history,
     InputError,
   };
 }

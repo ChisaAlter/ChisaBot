@@ -1,7 +1,7 @@
-import { OpenGenerativeUIActivityRenderer } from "@copilotkit/react-core/v2";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { galleryComponent } from "@/lib/copilot/gallery-registry";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
+import { galleryComponent } from "@/lib/conversations/gallery-registry";
 import {
   type SandboxedRecord,
   sandboxedListQueryOptions,
@@ -77,13 +77,7 @@ export function ComponentPreview({
     return (
       <FittedPreview fill={fill}>
         <div className="w-full" title={"已发布带有保存样本参数的组件"}>
-          <OpenGenerativeUIActivityRenderer
-            activityType="open-generative-ui"
-            agent={null}
-            content={content}
-            key={JSON.stringify(content)}
-            message={null}
-          />
+          <SandboxSurface content={content} key={JSON.stringify(content)} />
         </div>
       </FittedPreview>
     );

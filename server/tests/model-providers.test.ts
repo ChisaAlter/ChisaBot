@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { LLMock } from "@copilotkit/aimock";
 import { z } from "zod";
 import {
   normalizeModelBaseUrls,
   resolveRuntimeAgents,
   runtimeModelForEnvironment,
-} from "../src/copilot";
+} from "../src/conversation-runtime";
 import { encryptSecret, resolveModelApiKey } from "../src/credentials";
 import {
   anthropicMessagesUrl,
   createModelCompleter,
 } from "../src/routing/model";
 import { validateTenantPackage } from "../src/tenant-package";
+import { createModelFixture, modelMessages } from "./support/model-fixture";
 
 const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const originalEnvironment = {
@@ -203,7 +203,7 @@ test.each([
 ])(
   "Anthropic built-ins execute tools with a rotated key and base suffix '$suffix'",
   async ({ suffix, prefix }) => {
-    const mock = new LLMock();
+    const mock = createModelFixture();
     const executed: unknown[] = [];
     const keys: (string | null)[] = [];
     const paths: string[] = [];
@@ -227,15 +227,21 @@ test.each([
       process.env.ANTHROPIC_BASE_URL = `${proxy.url.origin}${suffix}`;
       normalizeModelBaseUrls();
       process.env.OPENAI_BASE_URL = base;
-      mock.on({ hasToolResult: true }, { content: "The balance is 42." });
-      mock.onMessage(/balance/, {
-        toolCalls: [
-          {
-            id: "balance-call",
-            name: "read_balance",
-            arguments: { account: "demo" },
-          },
-        ],
+      mock.rules.push({
+        match: { toolResult: true },
+        reply: { content: "The balance is 42." },
+      });
+      mock.rules.push({
+        match: /balance/,
+        reply: {
+          toolCalls: [
+            {
+              id: "balance-call",
+              name: "read_balance",
+              arguments: { account: "demo" },
+            },
+          ],
+        },
       });
       const model = runtimeModelForEnvironment(packageModel, {
         BOT_PROVIDER: "anthropic",
@@ -294,7 +300,7 @@ test.each([
         });
       }
       expect(executed).toEqual([{ account: "demo" }, { account: "demo" }]);
-      const requests = mock.getRequests();
+      const requests = mock.requests;
       expect(requests).toHaveLength(4);
       expect(requests.map((entry) => entry.path)).toEqual(
         Array(4).fill("/v1/messages"),
@@ -309,7 +315,7 @@ test.each([
       expect(
         requests.every((entry) => entry.body?.model === "claude-sonnet-4-5"),
       ).toBe(true);
-      expect(requests[1]?.body?.messages).toEqual(
+      expect(modelMessages(requests[1]!.body)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ role: "tool", content: "42" }),
         ]),
@@ -335,7 +341,7 @@ test.each([
 ])(
   "blank base URLs reach the official $provider endpoint through the real SDK",
   async ({ expectedUrl, ...model }) => {
-    const mock = new LLMock();
+    const mock = createModelFixture();
     const originalFetch = globalThis.fetch;
     const urls: string[] = [];
     const keys: (string | null)[] = [];
@@ -344,7 +350,7 @@ test.each([
       | undefined;
     try {
       const base = await mock.start();
-      mock.onMessage("Hello", { content: "Hello back." });
+      mock.rules.push({ match: "Hello", reply: { content: "Hello back." } });
       process.env.ANTHROPIC_BASE_URL = "";
       process.env.OPENAI_BASE_URL = "";
       normalizeModelBaseUrls();

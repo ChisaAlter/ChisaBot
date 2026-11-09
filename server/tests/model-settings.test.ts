@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { decryptSecret } from "../src/credentials";
 import {
   createModelSettingsService,
-  ModelSettingsValidationError,
-  parseModelConnectionInput,
   type ModelSettingsSnapshot,
   type ModelSettingsStore,
+  ModelSettingsValidationError,
+  parseModelConnectionInput,
 } from "../src/model-settings";
 
 const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";

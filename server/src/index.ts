@@ -1,31 +1,39 @@
+import {
+  authenticationRequired,
+  isConversationPath,
+  PREVIOUS_WAITING_EVENT,
+  runAssertionValue,
+} from "./legacy/protocol";
 import "../../shared/env-compat";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { createPersonalSources } from "./personal-sources/service";
-import { PanelError, type PanelCapability } from "../../shared/panels/types";
-import { createPanelServices } from "./panels/service";
-import { createNormalPanelTaskService } from "./panels/normal-task-service";
-import { recoverPanelTaskStatus } from "./panels/task-status";
-import { createGovernedPanelTaskAdapter } from "./panels/task-adapter";
-import { panelTaskRequests } from "./db/schema/panels";
 import { isDeepStrictEqual } from "node:util";
 import type { AbstractAgent, Message } from "@ag-ui/client";
-import {
-  IntelligenceAgentRunner,
-  type CopilotKitIntelligence,
-} from "@copilotkit/runtime/v2";
 import { serve } from "bun";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { DICTATION_HTTP_IDLE_SECONDS } from "../../shared/dictation";
+import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
+import { OPS_CODES } from "../../shared/ops-codes";
+import { bumpOps } from "../../shared/ops-counters";
+import { type PanelCapability, PanelError } from "../../shared/panels/types";
 import { buildResponsibilityTurn } from "../../shared/responsibility-turn";
+import {
+  proposedSkillSchema,
+  savedSkillAnswer,
+} from "../../shared/skill-authoring";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
+import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
 import {
   CoworkerUnavailableError,
   createActorAgentResolver,
 } from "./agents/agent-resolver";
+import {
+  createBotFactory,
+  createBotFactoryQueries,
+} from "./agents/bot-factory";
 import {
   mintRunAssertion,
   type RunAssertion,
@@ -34,32 +42,51 @@ import {
 } from "./agents/callback-token";
 import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
 import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
+import { createDshHealthProbe } from "./agents/dsh-health";
 import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
+import { createHandoffExecutions } from "./agents/handoff-execution";
 import { createHandoffRunner } from "./agents/handoff-runner";
-import { signHandoffDeliveryRun } from "./agents/handoff-signing";
+import {
+  bindHandoffExecution,
+  refreshApprovedHandoffRun,
+  signHandoffDeliveryRun,
+} from "./agents/handoff-signing";
 import {
   authoriseCoordinationRun,
   createCoordinationTools,
   readCoordinationHandoffClaim,
 } from "./agents/handoff-tool";
+import { probeHermesHealth } from "./agents/hermes-health";
+import { hermesRuntimeTools } from "./agents/hermes-runtime";
+import {
+  createPgHistorySummaryStore,
+  lastMeasuredUsage,
+} from "./agents/history-budget";
+import { historyRecoverTools } from "./agents/history-recover";
+import {
+  createHistorySummaryModelService,
+  createHistorySummaryModelStore,
+} from "./agents/history-summary-settings";
+import { createRuntimeKernelRoutes } from "./agents/kernel-status";
 import {
   BotPausedError,
   configureBotLifecycle,
   createBotLifecycleStore,
 } from "./agents/lifecycle";
 import { createBotReset } from "./agents/lifecycle-reset";
-import { createAgentPurge } from "./agents/purge";
 import {
-  createBotFactory,
-  createBotFactoryQueries,
-} from "./agents/bot-factory";
-import { createAgentProfileStore } from "./agents/profile-store";
-import { createCoworkerService } from "./agents/service";
+  createModelFallbackService,
+  createModelFallbackStore,
+} from "./agents/model-fallback-settings";
 import { createAgentModelService } from "./agents/model-selection";
+import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
+import { createAgentPurge } from "./agents/purge";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
+import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
+import { createCoworkerService } from "./agents/service";
 import {
   createWakeUpRunner,
   createWakeUpStore,
@@ -98,30 +125,28 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
-import { startDraftSweeps } from "./channels/drafts";
-import { withComputerActivity } from "./computer/activity-recorder";
-import {
-  createActivityStore as createComputerActivityStore,
-  installActivityStore,
-} from "./computer/activity-store";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
-import type { AuthService } from "./auth/guards";
-import { createRoleRepository } from "./auth/guards";
-import { type ChisaBotRole, setRole } from "./auth/roles";
 import {
   createGatewayRequireUser,
   GatewayReplayCache,
-  isReplayedGatewayIdentity,
   gatewaySecretFromEnvironment,
+  isReplayedGatewayIdentity,
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
-import type { AuthenticatedActor } from "./auth/guards";
+import type { AuthenticatedActor, AuthService } from "./auth/guards";
+import { createRoleRepository } from "./auth/guards";
+import { type ChisaBotRole, setRole } from "./auth/roles";
+import { createBotAvatars } from "./bot-avatars/service";
+import { createBotThreads } from "./bot-threads";
+import { createBrowserBookmarks } from "./browser-bookmarks/service";
+import { readRunningBuild } from "./build-info";
 import {
   loadAttachmentForTurn,
   markAttachmentsSent,
   setChannelUploadMirror,
 } from "./channels/attachments";
+import { startDraftSweeps } from "./channels/drafts";
 import {
   createChannelEventHub,
   startChannelActivityListener,
@@ -141,15 +166,20 @@ import {
 } from "./channels/summary";
 import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
+import { createChannelUploadMirror } from "./chat-files/channel-mirror";
+import { createChatFiles } from "./chat-files/service";
+import { turnAttachmentLoader } from "./chat-files/turn-attachments";
+import { createChatShots } from "./chat-shots";
+import { createHeadlessComponentTools } from "./components/headless";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
-import { createHeadlessComponentTools } from "./components/headless";
-import { hermesRuntimeTools } from "./agents/hermes-runtime";
-import { probeHermesHealth } from "./agents/hermes-health";
-import { createRuntimeKernelRoutes } from "./agents/kernel-status";
-import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
-import { createComputerGateway } from "./computer/gateway";
+import { withComputerActivity } from "./computer/activity-recorder";
+import {
+  createActivityStore as createComputerActivityStore,
+  installActivityStore,
+} from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
+import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
   HeadlessToolSuspension,
@@ -172,29 +202,41 @@ import {
 import { createSnapshotStore } from "./computer/snapshot-store";
 import { streamPathBotId } from "./computer/stream-path";
 import { loadConfig } from "./config";
+import { createConfirmations } from "./confirmations/service";
 import {
   type IdentifyActor,
   type IdentifyUser,
-  mountCopilotRuntime,
+  mountConversationRuntime,
   normalizeModelBaseUrls,
   runtimeModelForEnvironment,
   setAgentKernel,
   setHistorySummaries,
   setModelContextWindowResolver,
-  setModelVisionResolver,
-  setModelFileResolver,
-  setPreviousRunUsageResolver,
-  setModelOutputLimitResolver,
   setModelFallbackCatalog,
   setModelFallbackList,
+  setModelFileResolver,
+  setModelOutputLimitResolver,
+  setModelVisionResolver,
+  setPreviousRunUsageResolver,
   type ToolSelection,
-} from "./copilot";
+} from "./conversation-runtime";
+import { createConversationBindings } from "./conversations/bindings";
+import { createConfirmationResumer } from "./conversations/confirmation-resume";
+import { createConversationInteractions } from "./conversations/interactions";
+import { conversationAdmissionClosed } from "./conversations/maintenance";
+import { recoverConversations } from "./conversations/recovery";
+import { createDshRunJournal } from "./conversations/run-journal";
+import { loadDshTargets } from "./conversations/runtime-targets";
+import { createConversationSurfaceTools } from "./conversations/surface-tools";
+import { createDshToolGateway } from "./conversations/tool-gateway";
+import { createToolOperationStore } from "./conversations/tool-operations";
 import {
   createCredentialAdminService,
   createCredentialStore,
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
+import { reasonWithoutStatement } from "./db/query-failure";
 import {
   channelAgents,
   channelMemberships,
@@ -203,41 +245,58 @@ import {
   responsibilityRuns,
   users,
 } from "./db/schema";
+import { panelTaskRequests } from "./db/schema/panels";
+import { createPersonalNotifications } from "./delivery/personal-notifications";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
+import { createFleetAudit } from "./fleet-audit/service";
 import { executeRenderUi, renderUiTools } from "./generative-ui/render-ui";
-import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
-import { createIntelligenceClient } from "./intelligence-client";
-import { createLocalConversations } from "./local-conversations";
-import { createBotThreads } from "./bot-threads";
-import { createChatShots } from "./chat-shots";
+import { createGithub } from "./github/service";
 import { createImService, type ImService, imConnectionOf } from "./im/service";
 import { createLinkPreviews } from "./link-preview/service";
+import { createLivePanelService } from "./live-panels/service";
+import { createLivePanelStore } from "./live-panels/store";
+import {
+  createLocalAgentService,
+  type LocalAgentService,
+} from "./local-agents/service";
+import { createLocalConversations } from "./local-conversations";
+import { createMagpieService, readMagpieWebKey } from "./magpie";
 import { createMemoryNotes } from "./memory-notes/service";
-import { createFleetAudit } from "./fleet-audit/service";
-import { createBotAvatars } from "./bot-avatars/service";
-import { createBrowserBookmarks } from "./browser-bookmarks/service";
-import { createChisaSkills } from "./skills-chisa/tools";
-import { createVault, VAULT_GUIDANCE } from "./vault/service";
-import { createGithub } from "./github/service";
+import { createModelCatalogService } from "./model-catalog";
+import {
+  resolveScopedAgentModelConnection,
+  resolveScopedModelConnection,
+} from "./model-connection-context";
+import {
+  createModelSettingsService,
+  createModelSettingsStore,
+} from "./model-settings";
+import { createOpsBudgetRoutes } from "./ops-budget";
+import {
+  createAssistantSignalsProbe,
+  createDatabasePinger,
+  createOpsHealthRoutes,
+} from "./ops-health";
+import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
 import { createPages } from "./pages/service";
-import { createSchedules } from "./schedules/service";
-import { createTaskCenterRuntime } from "./task-center/runtime";
-import { createChannelUploadMirror } from "./chat-files/channel-mirror";
-import { createChatFiles } from "./chat-files/service";
-import { turnAttachmentLoader } from "./chat-files/turn-attachments";
-import { createConfirmations } from "./confirmations/service";
+import { createNormalPanelTaskService } from "./panels/normal-task-service";
+import { createPanelServices } from "./panels/service";
+import { createGovernedPanelTaskAdapter } from "./panels/task-adapter";
+import { recoverPanelTaskStatus } from "./panels/task-status";
 import { createSignInNotifier, createSignInResumer } from "./passwords/resume";
 import { createSignInService } from "./passwords/service";
 import { createPasswordStore } from "./passwords/store";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
+import { createPersonalSources } from "./personal-sources/service";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
+import { connectServiceTools } from "./plugins/connect-service";
 import { backfillComposioLogos } from "./plugins/logos";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
@@ -280,73 +339,53 @@ import { createTriggerIngressRoutes } from "./responsibilities/trigger-routes";
 import { useTriggerTools } from "./responsibilities/trigger-tools";
 import { createTriggerStore } from "./responsibilities/triggers";
 import type { Responsibility } from "./responsibilities/types";
-import { createTurnRunner } from "./turns/run-turn";
-import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
-import { createLivePanelService } from "./live-panels/service";
-import { createLivePanelStore } from "./live-panels/store";
-import { connectServiceTools } from "./plugins/connect-service";
-import { webSearch, webTools } from "./web/tools";
-import {
-  restrictNamedToolsForWorkflow,
-  restrictToolsForWorkflow,
-  filterHeadlessForWorkflow,
-  workflowToolAllowed,
-  guardWorkflowCallback,
-} from "./workflows/policy";
-import { createWorkflowRoutes } from "./workflows/routes";
-import { createWorkflowStore } from "./workflows/store";
-import { createInspectToolSchemaTool, workflowChatTools } from "./workflows/tools";
 import { createModelCompleter } from "./routing/model";
+import { createSchedules } from "./schedules/service";
+import { createChisaSkills } from "./skills-chisa/tools";
 import {
-  createModelSettingsService,
-  createModelSettingsStore,
-} from "./model-settings";
-import {
-  resolveScopedAgentModelConnection,
-  resolveScopedModelConnection,
-} from "./model-connection-context";
-import { createModelCatalogService } from "./model-catalog";
-import { createMagpieService, readMagpieWebKey } from "./magpie";
-import { readRunningBuild } from "./build-info";
-import { createSystemUpdateRoutes, createSystemUpdateService } from "./system-update";
-import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
-import {
-  createDatabasePinger,
-  createOpsHealthRoutes,
-} from "./ops-health";
-import { createOpsBudgetRoutes } from "./ops-budget";
-import { flushOpsMetrics, startOpsMetricsStore } from "./ops-metrics-store";
-import { OPS_CODES } from "../../shared/ops-codes";
-import { bumpOps } from "../../shared/ops-counters";
-import { createModelFallbackService, createModelFallbackStore } from "./agents/model-fallback-settings";
-import { createPgHistorySummaryStore, lastMeasuredUsage } from "./agents/history-budget";
-import { historyRecoverTools } from "./agents/history-recover";
-import { createHistorySummaryModelService, createHistorySummaryModelStore } from "./agents/history-summary-settings";
-import { createSelfHostBanner } from "./self-host-banner";
+  createSystemUpdateRoutes,
+  createSystemUpdateService,
+} from "./system-update";
+import { createLocalAgentRun } from "./task-center/local-agent-runner";
+import { createTaskCenterRoots } from "./task-center/roots";
+import { createTaskCenterRuntime } from "./task-center/runtime";
 import { createTeamBots } from "./team-bots/team-bots";
 import {
   createPackageStatusReader,
   loadTenantPackage,
   synchronizeTenantPackage,
 } from "./tenant-package";
+import { createTurnRunner } from "./turns/run-turn";
 import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
+import { createVault, VAULT_GUIDANCE } from "./vault/service";
+import { webSearch, webTools } from "./web/tools";
 import { repeatAfterEach } from "./work/loop";
-import { createWorkerService, type WorkerService } from "./workers/service";
-import { createLocalAgentService, type LocalAgentService } from "./local-agents/service";
-import { createLocalAgentRun } from "./task-center/local-agent-runner";
-import { createTaskCenterRoots } from "./task-center/roots";
-import { reasonWithoutStatement } from "./db/query-failure";
 import {
   createWorkQueue,
   DEFAULT_MAX_ATTEMPTS,
   startWorkOfferedListener,
   type WorkOfferedListener,
 } from "./work/queue";
+import { createWorkerService, type WorkerService } from "./workers/service";
+import { createWorkflowEngine, type WorkflowEngine } from "./workflows/engine";
+import {
+  filterHeadlessForWorkflow,
+  guardWorkflowCallback,
+  restrictNamedToolsForWorkflow,
+  restrictToolsForWorkflow,
+  workflowToolAllowed,
+} from "./workflows/policy";
+import { createWorkflowRoutes } from "./workflows/routes";
+import { createWorkflowStore } from "./workflows/store";
+import {
+  createInspectToolSchemaTool,
+  workflowChatTools,
+} from "./workflows/tools";
 
 /**
- * Who is asking, for a CopilotKit request.
+ * Who is asking, for a conversation runtime request.
  *
  * One resolver, because a run has two questions to answer about the same person: whose threads and
  * memory these are, and which coworkers they may run. Answering them from different places is how
@@ -360,23 +399,33 @@ async function resolveRequestActor(request: Request): Promise<{
   if (config.singleUser) {
     if (gatewaySecret) {
       const resolved = resolveGatewayRequest(gatewaySecret, request.headers);
-      if (resolved.kind === "refuse") throw new Error("A CopilotKit run requires a signed-in user.");
+      if (resolved.kind === "refuse")
+        throw new Error(
+          "A conversation runtime run requires a signed-in user.",
+        );
       await provisionGatewayUser(resolved.actor);
       const actor = resolved.actor;
-      return { id: actor.id, name: actor.id === DEV_ACTOR.id ? DEV_ACTOR.email : (actor.name ?? actor.id), role: actor.role };
+      return {
+        id: actor.id,
+        name:
+          actor.id === DEV_ACTOR.id
+            ? DEV_ACTOR.email
+            : (actor.name ?? actor.id),
+        role: actor.role,
+      };
     }
     return { id: DEV_ACTOR.id, name: DEV_ACTOR.email, role: DEV_ACTOR.role };
   }
   const session = await auth?.api.getSession({ headers: request.headers });
   const user = session?.user;
   if (!user) {
-    throw new Error("A CopilotKit run requires a signed-in user.");
+    throw new Error("A conversation runtime run requires a signed-in user.");
   }
   const roles = user.role
     ? [user.role]
     : await roleRepository.rolesForUser(user.id);
   if (!roles.includes("admin") && !roles.includes("user")) {
-    throw new Error("A CopilotKit run requires an authorized user.");
+    throw new Error("A conversation runtime run requires an authorized user.");
   }
   return {
     id: user.id,
@@ -419,10 +468,7 @@ const config = loadConfig();
 // `serverPort` in config.ts for what `process.env.PORT ?? …` did with `PORT=` instead.
 const port = config.port;
 const database = createDatabase(config.databaseUrl);
-const localBackend =
-  config.runtime.mode === "local"
-    ? await createLocalConversations(database)
-    : undefined;
+const localBackend = await createLocalConversations(database);
 // Every dispatch point asks this database whether its person paused the Bot. See agents/lifecycle.ts.
 configureBotLifecycle({ database });
 await initializeDevActorUser(database, config.singleUser);
@@ -478,24 +524,39 @@ const roleRepository = createRoleRepository(database);
  * 多账号（CB-040，docs/adr/0009-gateway-accounts.md）：单用户部署前面的登录网关签名告诉应用「这是谁」。
  * 第一次见到的朋友账号在 users / user_roles 建行；角色以网关为准（管理员在网关里改）。
  */
-const gatewaySecret = config.singleUser ? gatewaySecretFromEnvironment(process.env) : undefined;
-const provisionedGatewayUsers = new Map<string, { role: ChisaBotRole; at: number }>();
+const gatewaySecret = config.singleUser
+  ? gatewaySecretFromEnvironment(process.env)
+  : undefined;
+const provisionedGatewayUsers = new Map<
+  string,
+  { role: ChisaBotRole; at: number }
+>();
 async function provisionGatewayUser(actor: AuthenticatedActor): Promise<void> {
   if (actor.id === DEV_ACTOR.id) return;
   const seen = provisionedGatewayUsers.get(actor.id);
-  if (seen && seen.role === actor.role && Date.now() - seen.at < 5 * 60_000) return;
+  if (seen && seen.role === actor.role && Date.now() - seen.at < 5 * 60_000)
+    return;
   const inserted = await database
     .insert(users)
-    .values({ id: actor.id, email: actor.email, name: actor.name ?? actor.id, emailVerified: false })
+    .values({
+      id: actor.id,
+      email: actor.email,
+      name: actor.name ?? actor.id,
+      emailVerified: false,
+    })
     .onConflictDoNothing()
     .returning({ id: users.id });
   await setRole(database, actor.id, actor.role);
   // 朋友第一次进来直接到聊天（自己的「助手」），不走上游的英文引导页；名字已在邀请页设好。
-  if (inserted.length) await createOnboardingStore(database).complete(actor.id).catch(() => undefined);
+  if (inserted.length)
+    await createOnboardingStore(database)
+      .complete(actor.id)
+      .catch(() => undefined);
   if (provisionedGatewayUsers.size > 5000) provisionedGatewayUsers.clear();
   provisionedGatewayUsers.set(actor.id, { role: actor.role, at: Date.now() });
 }
-if (gatewaySecret) console.info(JSON.stringify({ type: "gateway-identity", enabled: true }));
+if (gatewaySecret)
+  console.info(JSON.stringify({ type: "gateway-identity", enabled: true }));
 const loadAgentsForActor = createRuntimeAgentLoader(
   database,
   agentVault,
@@ -586,10 +647,8 @@ let deliveryNotifications: (
     kind: "reply" | "question" | "approval";
     requestId?: string;
   },
-) => Promise<void> = async () => {
-  // Slack / Teams / SMS / push delivery was removed in slimming P4b (no transport is configured on a
-  // personal deployment). In-app notifications are unaffected; this stays as a no-op call site.
-};
+) => Promise<void> = async () => {};
+let personalNotificationSweep: (() => Promise<void>) | undefined;
 const authoriseQuestion = async (question: PersonQuestion) => {
   const source = await sourceForCoordinationRun({
     ...question,
@@ -622,8 +681,11 @@ const approvalService = createApprovalService(
         const signed =
           forwarded &&
           typeof forwarded === "object" &&
-          "openbotRun" in forwarded
-            ? readRunAssertion(forwarded.openbotRun, config.keyEncryptionKey)
+          runAssertionValue(forwarded) !== undefined
+            ? readRunAssertion(
+                runAssertionValue(forwarded),
+                config.keyEncryptionKey,
+              )
             : null;
         const run =
           signed &&
@@ -742,29 +804,49 @@ const draftSweeps = startDraftSweeps(database, {
  * 确认卡片 + 审批偏好（server/src/confirmations，DESIGN.md §58）。云端浏览器：用户在聊天里确认过付款
  * （confirm_action 类别 purchase）之后，这段对话 20 分钟内的浏览器操作不再被上游的付款安全规则交还给人。
  */
-const confirmations = createConfirmations(database, { auditStore: bootAuditStore });
+const confirmations = createConfirmations(database, {
+  auditStore: bootAuditStore,
+});
 await confirmations.ensure();
 // 机器人权限（输入框「请求批准 / 完全访问」，§97）：看得到这个机器人（自己的或共享给自己的）就能改自己那一份。
 confirmations.setBotAccess(async (actor, agentId) => {
-  const profile = await agentProfileStore.get({ id: actor.id, role: actor.role === "admin" ? "admin" : "user" }, agentId);
+  const profile = await agentProfileStore.get(
+    { id: actor.id, role: actor.role === "admin" ? "admin" : "user" },
+    agentId,
+  );
   return Boolean(profile && profile.deletedAt === null);
 });
 const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   // 网页上点「发送 / 发布 / 删除」这类按钮：服务器自己判断，按审批偏好出确认卡片（不靠机器人先调用 confirm_action）。
   if (!isApprovalRecheck() && candidate.toolRef === "computer_click") {
-    const target = (candidate.target ?? {}) as { pageUrl?: string; element?: { role?: string; name?: string } };
+    const target = (candidate.target ?? {}) as {
+      pageUrl?: string;
+      element?: { role?: string; name?: string };
+    };
     const outcome = await confirmations.pageAction({
       ownerUserId: candidate.actorId,
       agentId: candidate.botId,
-      threadId: (candidate.continuation ?? currentApprovalContext())?.threadId ?? null,
+      threadId:
+        (candidate.continuation ?? currentApprovalContext())?.threadId ?? null,
       element: target.element ?? null,
       pageUrl: target.pageUrl ?? null,
     });
     if (outcome && !outcome.ok) throw new ApprovalRefusedError(outcome.message);
   }
-  if (!isApprovalRecheck() && candidate.toolRef.startsWith("computer_") && candidate.effect !== "read") {
-    const threadId = (candidate.continuation ?? currentApprovalContext())?.threadId;
-    if (threadId && (await confirmations.purchaseConfirmed(candidate.actorId, threadId).catch(() => false))) return undefined;
+  if (
+    !isApprovalRecheck() &&
+    candidate.toolRef.startsWith("computer_") &&
+    candidate.effect !== "read"
+  ) {
+    const threadId = (candidate.continuation ?? currentApprovalContext())
+      ?.threadId;
+    if (
+      threadId &&
+      (await confirmations
+        .purchaseConfirmed(candidate.actorId, threadId)
+        .catch(() => false))
+    )
+      return undefined;
   }
   return approvalService.gate(candidate);
 };
@@ -1163,82 +1245,252 @@ const modelCatalog = createModelCatalogService({
   resolveConnection: () => modelSettings.resolve(),
 });
 // 不认识的模型（走 Anthropic 协议的非 Claude 模型）按目录里的 max_output_tokens 定输出上限，别被截在 4096。
-setModelOutputLimitResolver(async (modelId) =>
-  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.maxOutputTokens,
+setModelOutputLimitResolver(
+  async (modelId) =>
+    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
+      ?.maxOutputTokens,
 );
 // 目录项带 supportsTools 标记（有的话）：自动挑备用模型时跳过明说不能调工具的（QA1102-13）。
-setModelFallbackCatalog(async () =>
-  (await modelCatalog.list()).models.map((entry) => ({ id: entry.id, supportsTools: entry.supportsTools })),
-);
+setModelFallbackCatalog(async () => {
+  const catalog = await modelCatalog.list();
+  return { models: catalog.models, stale: catalog.stale };
+});
 // 设置 → 模型 →「备用模型」（DESIGN.md §61）：管理员排好的顺序优先于环境变量 / 同平台自动挑选。
-const modelFallbacks = createModelFallbackService({ store: createModelFallbackStore(database) });
+const modelFallbacks = createModelFallbackService({
+  store: createModelFallbackStore(database),
+});
 setModelFallbackList(() => modelFallbacks.models());
 // Hermes 内核长对话压缩前文（agents/history-budget.ts）：上下文窗口来自模型目录；摘要缓存表运行时自建；
 // 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
-setModelContextWindowResolver(async (modelId) =>
-  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.contextWindow,
+setModelContextWindowResolver(
+  async (modelId) =>
+    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
+      ?.contextWindow,
 );
 // Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
-setModelVisionResolver(async (modelId) =>
-  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsImages,
+setModelVisionResolver(
+  async (modelId) =>
+    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
+      ?.supportsImages,
 );
 // 内置内核按目录的 supportsFiles 决定 `file` 文档块是原样发还是换文字占位（QA1102-14 r1）。
-setModelFileResolver(async (modelId) =>
-  (await modelCatalog.list()).models.find((entry) => entry.id === modelId)?.supportsFiles,
+setModelFileResolver(
+  async (modelId) =>
+    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
+      ?.supportsFiles,
 );
-const historySummaryModel = createHistorySummaryModelService({ store: createHistorySummaryModelStore(database) });
-setHistorySummaries({ store: createPgHistorySummaryStore(database), model: () => historySummaryModel.model() });
-setPreviousRunUsageResolver((threadId) => lastMeasuredUsage(database, threadId));
-/* Hermes replaces the execution loop while every host tool keeps its existing policy and identity. */
-setAgentKernel(
-  config.hermesKernel
-    ? {
-        kind: "hermes",
-        url: config.hermesKernel.url,
-        ...(config.hermesKernel.token ? { token: config.hermesKernel.token } : {}),
-        binding: {
-          toolGatewayUrl: process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() || `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
-          readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
-          loadSurfaceTools: async (scope) => {
-            const actor = await actorFor(scope.actorId);
-            const profile = await agentProfileStore.get(actor, scope.botId);
-            if (!profile) throw new Error("That Bot is no longer available to this actor.");
-            const initiator = scope.initiator ?? PERSON_INITIATOR;
-            const imConnection = imConnectionOf(initiator);
-            const allowDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
-            const computer = computerGateway && allowDevices && canUseComputer(profile, actor)
-              ? createHeadlessComputerTools({
-                  gateway: computerGateway,
-                  botId: scope.botId,
-                  actor: { id: actor.id, userId: actor.id, initiator },
-                  auditStore: bootAuditStore,
-                  ...(signInService ? { signIn: signInService } : {}),
-                })
-              : [];
-            const components = !imConnection ? await createHeadlessComponentTools({
-              store: componentStore, botId: scope.botId, ownerUserId: scope.actorId, initiator, auditStore: bootAuditStore,
-            }) : [];
-            const allowed = filterHeadlessForWorkflow(initiator, [...computer, ...components]);
-            return allowed.map((tool) => ({
-              ...tool,
-              execute: async (args, context) => {
-                if (!workflowToolAllowed(initiator, tool.definition.name))
-                  throw new ApprovalRefusedError("This workflow no longer permits that tool.");
-                const fresh = await agentProfileStore.get(actor, scope.botId);
-                if (!fresh || (tool.definition.name.startsWith("computer_") && !canUseComputer(fresh, actor)))
-                  throw new ApprovalRefusedError("That Bot or computer is no longer available to this actor.");
-                return tool.execute(args, context);
-              },
-            }));
-          },
+const historySummaryModel = createHistorySummaryModelService({
+  store: createHistorySummaryModelStore(database),
+});
+setHistorySummaries({
+  store: createPgHistorySummaryStore(database),
+  model: () => historySummaryModel.model(),
+});
+setPreviousRunUsageResolver((threadId) =>
+  lastMeasuredUsage(database, threadId),
+);
+/* Both runtime adapters use the same actor-bound host tools and business policy. */
+const conversationInteractions = createConversationInteractions(database, {
+  saveSkill: async ({ actor, values, proposed, transaction, afterCommit }) => {
+    const skill = proposedSkillSchema
+      .extend({
+        slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/),
+        title: z.string().trim().min(1).max(120),
+        summary: z.string().max(200).default(""),
+        instructions: z.string().trim().min(1),
+        tools: z.array(z.string().trim().min(1)).default([]),
+      })
+      .parse(values);
+    const original = proposedSkillSchema.parse(proposed);
+    if (skill.slug !== original.slug)
+      throw new Error("技能名称与原卡片不一致。");
+    const owner = await pluginStore.skillOwner(skill.slug);
+    if (actor.role !== "admin" && owner !== undefined && owner !== actor.id)
+      throw new Error("这项技能属于其他用户或部署，无法替换。");
+    await pluginStore.installSkill(
+      { ...skill, ownerUserId: actor.id, by: actor.id },
+      { database: transaction, afterCommit },
+    );
+    return savedSkillAnswer(skill.slug);
+  },
+});
+await conversationInteractions.ensure();
+const runtimeToolBinding: import("./agents/hermes-runtime").HermesRuntimeBinding =
+  {
+    toolGatewayUrl:
+      process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() ||
+      `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
+    readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
+    loadSurfaceTools: async (scope) => {
+      const actor = await actorFor(scope.actorId);
+      const profile = await agentProfileStore.get(actor, scope.botId);
+      if (!profile)
+        throw new Error("That Bot is no longer available to this actor.");
+      const initiator = scope.initiator ?? PERSON_INITIATOR;
+      const imConnection = imConnectionOf(initiator);
+      const allowDevices =
+        !imConnection || imService?.allowsDevices(imConnection) === true;
+      const computer =
+        computerGateway && allowDevices && canUseComputer(profile, actor)
+          ? createHeadlessComputerTools({
+              gateway: computerGateway,
+              botId: scope.botId,
+              actor: { id: actor.id, userId: actor.id, initiator },
+              auditStore: bootAuditStore,
+              ...(signInService ? { signIn: signInService } : {}),
+            })
+          : [];
+      const components = !imConnection
+        ? await createHeadlessComponentTools({
+            store: componentStore,
+            botId: scope.botId,
+            ownerUserId: scope.actorId,
+            initiator,
+            auditStore: bootAuditStore,
+          })
+        : [];
+      const surfaces = !imConnection
+        ? await createConversationSurfaceTools({
+            actor,
+            botId: scope.botId,
+            plugins: pluginStore,
+            components: componentStore,
+            sandboxed: sandboxedStore,
+            interactions: conversationInteractions,
+            ...(computerGateway &&
+            allowDevices &&
+            canUseComputer(profile, actor)
+              ? {
+                  computer: {
+                    gateway: computerGateway,
+                    bookmarks: browserBookmarks,
+                    initiator,
+                  },
+                }
+              : {}),
+          })
+        : [];
+      const worker =
+        scope.threadId?.startsWith("worker-") &&
+        initiator.kind === "routine" &&
+        initiator.id === `worker:${scope.threadId.slice(7)}`
+          ? (workerService?.workerTools(scope.threadId.slice(7)) ?? [])
+          : [];
+      const allowed = filterHeadlessForWorkflow(initiator, [
+        ...computer,
+        ...components,
+        ...surfaces,
+        ...worker,
+      ]);
+      return allowed.map((tool) => ({
+        ...tool,
+        execute: async (args, context) => {
+          if (!workflowToolAllowed(initiator, tool.definition.name))
+            throw new ApprovalRefusedError(
+              "This workflow no longer permits that tool.",
+            );
+          const fresh = await agentProfileStore.get(actor, scope.botId);
+          if (
+            !fresh ||
+            (tool.definition.name.startsWith("computer_") &&
+              !canUseComputer(fresh, actor))
+          )
+            throw new ApprovalRefusedError(
+              "That Bot or computer is no longer available to this actor.",
+            );
+          const result = await tool.execute(args, context);
+          if (
+            tool.definition.name === "computer_screenshot" &&
+            result &&
+            typeof result === "object" &&
+            "base64" in result &&
+            typeof result.base64 === "string"
+          ) {
+            return chatShots.saveScreenshot(
+              scope.actorId,
+              scope.botId,
+              context.toolCallId,
+              result as { base64: string; url?: string },
+            );
+          }
+          return result;
         },
-      }
-    : { kind: "builtin" },
-);
+      }));
+    },
+  };
+let dshToolGateway: ReturnType<typeof createDshToolGateway> | undefined;
+let dshTargetFor:
+  | import("./agents/dsh-runtime").DshRuntimeBinding["targetFor"]
+  | undefined;
+if (config.dshKernel) {
+  const bindings = createConversationBindings(database);
+  const operations = createToolOperationStore(database);
+  const journal = createDshRunJournal(database);
+  await journal.ensure();
+  await bindings.ensure();
+  await operations.ensure();
+  dshToolGateway = createDshToolGateway(operations, journal);
+  dshTargetFor = config.dshKernel.targetsFile
+    ? await loadDshTargets(config.dshKernel.targetsFile)
+    : (
+        await import("./conversations/managed-runtime")
+      ).createManagedDshRuntimes({
+        root: config.dshKernel.root!,
+        gatewayUrl:
+          config.dshKernel.gatewayUrl ??
+          `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+      }).targetFor;
+  setAgentKernel({
+    kind: "dsh",
+    binding: {
+      ...runtimeToolBinding,
+      bindings,
+      journal,
+      gateway: dshToolGateway,
+      toolGatewayUrl:
+        config.dshKernel.gatewayUrl ??
+        `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+      revisionFor: async (threadId) => {
+        const [row] = await database.$client.unsafe<{ revision: number }[]>(
+          "SELECT (count(*)+1)::integer AS revision FROM chisabot_thread_truncations WHERE thread_id=$1",
+          [threadId],
+        );
+        // count(*) always returns one row; a fresh thread is revision 1.
+        return row?.revision ?? 1;
+      },
+      targetFor: dshTargetFor,
+    },
+  });
+} else {
+  setAgentKernel(
+    config.hermesKernel
+      ? {
+          kind: "hermes",
+          url: config.hermesKernel.url,
+          ...(config.hermesKernel.token
+            ? { token: config.hermesKernel.token }
+            : {}),
+          binding: runtimeToolBinding,
+        }
+      : { kind: "builtin", binding: runtimeToolBinding },
+  );
+}
 // One probe, shared by the settings status row and the informational ops-health entry.
 const hermesKernelUrl = config.hermesKernel?.url;
 const probeConfiguredHermes = hermesKernelUrl
   ? () => probeHermesHealth(hermesKernelUrl)
+  : undefined;
+const probeConfiguredDsh = dshTargetFor
+  ? createDshHealthProbe({
+      targetFor: dshTargetFor,
+      recentSessionFor: async (actorId) => {
+        const [row] = await database.$client.unsafe<{ session_id: string }[]>(
+          "SELECT session_id FROM chisabot_runtime_bindings WHERE owner_user_id=$1 AND active=true ORDER BY created_at DESC LIMIT 1",
+          [actorId],
+        );
+        return row?.session_id ?? null;
+      },
+    })
   : undefined;
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
@@ -1314,18 +1566,25 @@ const chooseSkills = createModelCompleter({
 
 // Named collaborators are bound once in actorAgentResolver for chat, hops, and headless turns.
 
-
 // PC 节点（docs/pc-node.md）：设备登记在数据库，在线连接在内存里的 hub。
 const deviceStore = createDeviceStore(database);
 await deviceStore.ensure();
-const deviceHub = createDeviceHub({ store: deviceStore, confirm: confirmations.deviceHook });
-confirmations.setDeviceDecider((approvalId, approved) => deviceHub.decide(approvalId, approved, "web"));
+const deviceHub = createDeviceHub({
+  store: deviceStore,
+  confirm: confirmations.deviceHook,
+});
+confirmations.setDeviceDecider((approvalId, approved) =>
+  deviceHub.decide(approvalId, approved, "web"),
+);
 // 2026-10-14：旧版登记、能力仍是出厂「全部关闭」且没人改过配置的电脑 → 新默认「全部询问」（每次审批）。
 // 幂等，用户自己关掉的不动；CHISABOT_DEVICE_ASK_DEFAULTS=0 关掉。
 if (process.env.CHISABOT_DEVICE_ASK_DEFAULTS !== "0") {
   try {
     const adopted = await deviceStore.adoptAskDefaults();
-    if (adopted.length) console.log(JSON.stringify({ type: "device-defaults-ask", count: adopted.length }));
+    if (adopted.length)
+      console.log(
+        JSON.stringify({ type: "device-defaults-ask", count: adopted.length }),
+      );
   } catch (error) {
     console.warn("adopting device ask defaults failed", error);
   }
@@ -1353,16 +1612,27 @@ const deviceToolsFor = async (
     const workspace = gateway?.writeBytes
       ? {
           write: async (path: string, bytes: Buffer) => {
-            await gateway.writeBytes!(botId, { id: actorId, userId: actorId, initiator: PERSON_INITIATOR }, { path, base64: bytes.toString("base64") });
+            await gateway.writeBytes!(
+              botId,
+              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+              { path, base64: bytes.toString("base64") },
+            );
             return true;
           },
           read: async (path: string) => {
-            const file = await gateway.downloadFile(botId, { id: actorId, userId: actorId, initiator: PERSON_INITIATOR }, { path });
+            const file = await gateway.downloadFile(
+              botId,
+              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+              { path },
+            );
             if (file.bytes > 200 * 1024 * 1024) {
               await file.body.cancel().catch(() => {});
               throw new Error(`文件 ${path} 超过 200 MB。`);
             }
-            return { bytes: Buffer.from(await new Response(file.body).arrayBuffer()), name: file.name };
+            return {
+              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+              name: file.name,
+            };
           },
         }
       : undefined;
@@ -1404,7 +1674,12 @@ await botAvatars.ensure();
 const browserBookmarks = createBrowserBookmarks(database, {
   agents: agentProfileStore,
   ...(computerGateway?.startLinks
-    ? { pushStartLinks: (botId: string, links: { title: string; url: string }[]) => computerGateway.startLinks!(botId, links) }
+    ? {
+        pushStartLinks: (
+          botId: string,
+          links: { title: string; url: string }[],
+        ) => computerGateway.startLinks!(botId, links),
+      }
     : {}),
 });
 await browserBookmarks.ensure();
@@ -1412,25 +1687,82 @@ await browserBookmarks.ensure();
 const vault = createVault(database, { encryptionKey: config.keyEncryptionKey });
 await vault.ensure();
 /** GitHub 账号连接（DESIGN.md §53）：令牌在保险箱（保留名 github），读直接做，写先在聊天里确认。 */
-const github = createGithub(database, { vault, apiBase: process.env.CHISABOT_GITHUB_API_BASE });
+const github = createGithub(database, {
+  vault,
+  apiBase: process.env.CHISABOT_GITHUB_API_BASE,
+});
 await github.ensure();
 /** 个人日程与收件箱只读接入（CB-013）+ 每日晨报（CB-014）。 */
-const personalSources = createPersonalSources(database, { encryptionKey: config.keyEncryptionKey });
+const personalSources = createPersonalSources(database, {
+  encryptionKey: config.keyEncryptionKey,
+});
 await personalSources.ensure();
+const personalNotifications = createPersonalNotifications({
+  database,
+  sources: personalSources,
+  publicUrl: process.env.CHISABOT_PUBLIC_URL,
+});
+deliveryNotifications = async (scope, input) => {
+  try {
+    await personalNotifications.deliver({
+      id: input.id,
+      owner: scope.ownerUserId,
+      message: input.text,
+      title: input.kind === "reply" ? "ChisaBot 提醒" : "ChisaBot 等待你的确认",
+      thread_id: scope.threadId,
+      agent_id: scope.agentId,
+      path:
+        input.kind === "reply"
+          ? `/channel/${encodeURIComponent(scope.channelId)}`
+          : "/approvals",
+    });
+  } catch {
+    // A notification transport must not replay an already completed action or block an approval.
+    console.warn(
+      JSON.stringify({
+        type: "personal-notification",
+        id: input.id,
+        state: "staging_failed",
+      }),
+    );
+  }
+};
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
 const pages = createPages(database, {
   publicUrl: process.env.CHISABOT_PUBLIC_URL?.trim() || null,
   ...(computerGateway
     ? {
-        readBotFile: async ({ ownerUserId, botId, path, initiator }: { ownerUserId: string; botId: string; path: string; initiator?: AuditInitiator }) => {
+        readBotFile: async ({
+          ownerUserId,
+          botId,
+          path,
+          initiator,
+        }: {
+          ownerUserId: string;
+          botId: string;
+          path: string;
+          initiator?: AuditInitiator;
+        }) => {
           const actor = await actorFor(ownerUserId);
-          if (!(await agentProfileStore.get(actor, botId))) throw new Error("That Bot is not available to this owner.");
-          const file = await computerGateway.downloadFile(botId, { id: actor.id, userId: actor.id, ...(initiator ? { initiator } : {}) }, { path });
+          if (!(await agentProfileStore.get(actor, botId)))
+            throw new Error("That Bot is not available to this owner.");
+          const file = await computerGateway.downloadFile(
+            botId,
+            {
+              id: actor.id,
+              userId: actor.id,
+              ...(initiator ? { initiator } : {}),
+            },
+            { path },
+          );
           if (file.bytes > 8 * 1024 * 1024 + 1) {
             await file.body.cancel().catch(() => {});
             throw new Error(`file too large: ${path}`);
           }
-          return { bytes: new Uint8Array(await new Response(file.body).arrayBuffer()), name: file.name };
+          return {
+            bytes: new Uint8Array(await new Response(file.body).arrayBuffer()),
+            name: file.name,
+          };
         },
       }
     : {}),
@@ -1446,25 +1778,51 @@ const chatFiles = createChatFiles(database, {
       modelId ??
       (await resolveRuntimeConnectionForAgent(agentId)
         .then((connection) => connection.model.defaultModel)
-        .catch(async () => (await agentModels.resolveModel(agentId).catch(() => null)) ?? (await resolveRuntimeConnection()).model.defaultModel));
-    return (await modelCatalog.list()).models.find((entry) => entry.id === id)?.supportsImages;
+        .catch(
+          async () =>
+            (await agentModels.resolveModel(agentId).catch(() => null)) ??
+            (
+              await resolveRuntimeConnection()
+            ).model.defaultModel,
+        ));
+    return (await modelCatalog.list()).models.find((entry) => entry.id === id)
+      ?.supportsImages;
   },
   isAdmin: async (userId) => (await actorFor(userId)).role === "admin",
-  ownsBot: async (owner, bot) => (await agentProfileStore.get(await actorFor(owner), bot).catch(() => null)) !== null,
+  ownsBot: async (owner, bot) =>
+    (await agentProfileStore
+      .get(await actorFor(owner), bot)
+      .catch(() => null)) !== null,
   ...(computerGateway?.writeBytes
     ? {
         workspace: {
-          write: async (owner: string, bot: string, path: string, bytes: Buffer) => {
-            await computerGateway.writeBytes!(bot, { id: owner, userId: owner, initiator: PERSON_INITIATOR }, { path, base64: bytes.toString("base64") });
+          write: async (
+            owner: string,
+            bot: string,
+            path: string,
+            bytes: Buffer,
+          ) => {
+            await computerGateway.writeBytes!(
+              bot,
+              { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+              { path, base64: bytes.toString("base64") },
+            );
             return true;
           },
           read: async (owner: string, bot: string, path: string) => {
-            const file = await computerGateway.downloadFile(bot, { id: owner, userId: owner, initiator: PERSON_INITIATOR }, { path });
+            const file = await computerGateway.downloadFile(
+              bot,
+              { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+              { path },
+            );
             if (file.bytes > 20 * 1024 * 1024) {
               await file.body.cancel().catch(() => {});
               throw new Error(`文件 ${path} 超过 20 MB。`);
             }
-            return { bytes: Buffer.from(await new Response(file.body).arrayBuffer()), name: file.name };
+            return {
+              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+              name: file.name,
+            };
           },
         },
       }
@@ -1476,7 +1834,12 @@ await chatFiles.ensure();
 setChannelUploadMirror(
   createChannelUploadMirror({
     botsInChannel: async (channelId) =>
-      (await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM channel_agents WHERE channel_id = $1", [channelId])).map((row) => row.agent_id),
+      (
+        await database.$client.unsafe<{ agent_id: string }[]>(
+          "SELECT agent_id FROM channel_agents WHERE channel_id = $1",
+          [channelId],
+        )
+      ).map((row) => row.agent_id),
     upload: (owner, agentId, file) => chatFiles.upload(owner, agentId, file),
   }),
 );
@@ -1526,7 +1889,8 @@ const loadToolsForActor =
     // IM 回合（initiator = routine「im:<连接>」）：网页才能显示的工具（render_ui、面板）不给；
     // 电脑 / 设备类工具只有连接里打开了「允许使用电脑和设备」才给。
     const imConnection = imConnectionOf(initiator);
-    const imDevices = !imConnection || imService?.allowsDevices(imConnection) === true;
+    const imDevices =
+      !imConnection || imService?.allowsDevices(imConnection) === true;
     // mcp_add 只对「本人是管理员」的网页对话提供：非管理员看不到工具（不是看到了再拒绝），
     // IM / 后台面板回合没有可交互的确认卡片场景，也不放。
     const chatActor = await actorFor(actorId).catch(() => null);
@@ -1536,98 +1900,124 @@ const loadToolsForActor =
       chatActor?.role === "admin";
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
     const rawTools = [
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : confirmations.tools(actorId, botId, initiator)),
-    ...wakeUpTools({
-      store: wakeUpStore,
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : confirmations.tools(actorId, botId, initiator)),
+      ...wakeUpTools({
+        store: wakeUpStore,
+        ownerUserId: actorId,
+        agentId: botId,
+        initiator,
+      }),
+      // 长期记忆（server/src/memory-notes，DESIGN.md §50）：一个人的所有机器人共用；后台刷新面板的回合不给。
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : memoryNotes.tools(actorId, botId)),
+      // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板的回合不给。
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : fleetAudit.tools(actorId)),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : chisaSkills.tools(actorId, botId)),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : vault.tools(actorId, botId, initiator)),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : await github.tools(actorId, botId, initiator).catch(() => [])),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : personalSources.tools(actorId)),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : pages.tools(actorId, botId, initiator)),
+      ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+        ? []
+        : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
+      ...(await grantedTools({
+        store: pluginStore,
+        botId,
+        actorId,
+        initiator,
+        // A Team Bot reaches its owner's accounts, and a teammate's own only with their consent.
+        credentialActorFor: teamBots.credentialActorFor(actorId, botId),
+      })),
+      ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
+      // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
+      ...(config.generativeUi && !imConnection
+        ? renderUiTools({ replySources: config.replySources === true })
+        : []),
+      // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
+      ...webTools(),
+      // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
+      // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
+      ...connectServiceTools({
+        store: pluginStore,
+        ownerUserId: actorId,
+        botId,
+        search: (query, count) => webSearch(query, count ?? 5),
+        builtinSources: async () => {
+          const [ps, gh] = await Promise.all([
+            personalSources.status(actorId).catch(() => null),
+            github.status(actorId).catch(() => null),
+          ]);
+          return {
+            email: {
+              connected: Boolean(ps?.email),
+              email: ps?.email?.email ?? null,
+              imapHost: ps?.email?.imapHost ?? null,
+            },
+            calendar: {
+              connected: Boolean(ps?.calendar),
+              label: ps?.calendar?.label ?? null,
+              eventCount: ps?.calendar?.eventCount ?? 0,
+            },
+            github: {
+              connected: Boolean(gh),
+              login: gh?.login ?? null,
+            },
+          };
+        },
+        canAutoEnable: async () => {
+          const actor = await actorFor(actorId);
+          return {
+            allowed: actor.role === "admin",
+            by: actor.id,
+          };
+        },
+        offerMcpAdd,
+      }),
+      // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
+      // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
+      // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
+      ...(config.generativeUi && !imConnection
+        ? livePanelService.tools(actorId, botId, {
+            ...(initiator.kind === "routine" && initiator.id.startsWith("lp_")
+              ? { refreshOf: initiator.id }
+              : {}),
+            // 懒查：只有机器人真的交上数据源时才读一次角色（命令源只给管理员）。
+            isAdmin: async () => (await actorFor(actorId)).role === "admin",
+          })
+        : []),
+      // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
+      // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这几个工具。
+      ...(config.extras?.includes("workflows")
+        ? workflowChatTools({
+            store: workflowStore,
+            engine: workflowEngineRef,
+            ownerUserId: actorId,
+            botId,
+            initiator,
+          })
+        : []),
+    ];
+    rawTools.push(createInspectToolSchemaTool(() => rawTools));
+    return confirmations.wrap(rawTools, {
       ownerUserId: actorId,
       agentId: botId,
       initiator,
-    }),
-    // 长期记忆（server/src/memory-notes，DESIGN.md §50）：一个人的所有机器人共用；后台刷新面板的回合不给。
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : memoryNotes.tools(actorId, botId)),
-    // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板的回合不给。
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : fleetAudit.tools(actorId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : chisaSkills.tools(actorId, botId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : vault.tools(actorId, botId, initiator)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await github.tools(actorId, botId, initiator).catch(() => [])),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : personalSources.tools(actorId)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : pages.tools(actorId, botId, initiator)),
-    ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? [] : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
-    ...(await grantedTools({
-      store: pluginStore,
-      botId,
-      actorId,
-      initiator,
-      // A Team Bot reaches its owner's accounts, and a teammate's own only with their consent.
-      credentialActorFor: teamBots.credentialActorFor(actorId, botId),
-    })),
-    ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
-    // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
-    ...(config.generativeUi && !imConnection ? renderUiTools({ replySources: config.replySources === true }) : []),
-    // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
-    ...webTools(),
-    // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
-    // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
-    ...connectServiceTools({
-      store: pluginStore,
-      ownerUserId: actorId,
-      botId,
-      search: (query, count) => webSearch(query, count ?? 5),
-      builtinSources: async () => {
-        const [ps, gh] = await Promise.all([
-          personalSources.status(actorId).catch(() => null),
-          github.status(actorId).catch(() => null),
-        ]);
-        return {
-          email: {
-            connected: Boolean(ps?.email),
-            email: ps?.email?.email ?? null,
-            imapHost: ps?.email?.imapHost ?? null,
-          },
-          calendar: {
-            connected: Boolean(ps?.calendar),
-            label: ps?.calendar?.label ?? null,
-            eventCount: ps?.calendar?.eventCount ?? 0,
-          },
-          github: {
-            connected: Boolean(gh),
-            login: gh?.login ?? null,
-          },
-        };
-      },
-      canAutoEnable: async () => {
-        const actor = await actorFor(actorId);
-        return {
-          allowed: actor.role === "admin",
-          by: actor.id,
-        };
-      },
-      offerMcpAdd,
-    }),
-    // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
-    // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
-    // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
-    ...(config.generativeUi && !imConnection
-      ? livePanelService.tools(actorId, botId, {
-          ...(initiator.kind === "routine" && initiator.id.startsWith("lp_") ? { refreshOf: initiator.id } : {}),
-          // 懒查：只有机器人真的交上数据源时才读一次角色（命令源只给管理员）。
-          isAdmin: async () => (await actorFor(actorId)).role === "admin",
-        })
-      : []),
-    // 工作流（docs/workflows.md）：在聊天和长期任务里运行工作流；工作流自己的步骤拿不到。
-    // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 workflows 才给机器人这几个工具。
-    ...(config.extras?.includes("workflows")
-      ? workflowChatTools({
-          store: workflowStore,
-          engine: workflowEngineRef,
-          ownerUserId: actorId,
-          botId,
-          initiator,
-        })
-      : []),
-    ];
-    rawTools.push(createInspectToolSchemaTool(() => rawTools));
-    return confirmations.wrap(rawTools, { ownerUserId: actorId, agentId: botId, initiator });
+    });
   };
 
 /** One person's standing instructions, for both the /api/settings routes and every run they start. */
@@ -1652,7 +2042,7 @@ const loadInstructionsForActor = (actorId: string) => () =>
  * row is fetched here and the bytes go up inline, so the Bot sees the file the person attached
  * instead of a link it cannot follow.
  *
- * Built per actor and passed to both turn paths — the request path through `mountCopilotRuntime` and
+ * Built per actor and passed to both turn paths — the request path through `mountConversationRuntime` and
  * a routine's turn through `buildAgentFor` — so a routine firing at three in the morning inlines
  * exactly as a person's chat turn does, on exactly the same footing.
  *
@@ -1671,8 +2061,10 @@ const loadInstructionsForActor = (actorId: string) => () =>
  * A PURE READ. `attachedAt` is written by the send rather than by anything here; see
  * `markAttachmentsSentForActor` below.
  */
-const loadAttachmentForActor = turnAttachmentLoader(chatFiles, (actorId, threadId, id) =>
-  loadAttachmentForTurn(database, { actorId, threadId }, id),
+const loadAttachmentForActor = turnAttachmentLoader(
+  chatFiles,
+  (actorId, threadId, id) =>
+    loadAttachmentForTurn(database, { actorId, threadId }, id),
 );
 
 /**
@@ -1680,7 +2072,7 @@ const loadAttachmentForActor = turnAttachmentLoader(chatFiles, (actorId, threadI
  *
  * Bound per actor and handed to the same two turn paths as the reader above, so a routine's send at
  * three in the morning is recorded exactly as a person's chat turn is. `inlineAttachments`
- * (copilot.ts) calls it with the ids on the message being asked about and no others: history is
+ * (conversation-runtime.ts) calls it with the ids on the message being asked about and no others: history is
  * replayed on every turn and by whoever is running it, so nothing behind that message is evidence
  * of a send.
  *
@@ -1726,14 +2118,16 @@ const signRunForActor =
       config.keyEncryptionKey,
     );
     if (previous?.handoff) {
-      if (previous.botId !== botId || previous.actorId !== actorId)
-        throw new Error(
-          "The delegated run identity does not match this Bot and owner.",
-        );
-      return previousAssertion as string;
+      return bindHandoffExecution(
+        previous,
+        { botId, actorId, runId, threadId },
+        config.keyEncryptionKey,
+      );
     }
     if (initiator.kind === "person" && threadId) {
-      void approvalQuestions.dismissForThread(actorId, threadId).catch(() => undefined);
+      void approvalQuestions
+        .dismissForThread(actorId, threadId)
+        .catch(() => undefined);
     }
     return mintRunAssertion(
       {
@@ -1839,7 +2233,8 @@ const actorFor = async (ownerUserId: string): Promise<AgentActor> => {
   // rewritten to DEV_ACTOR's: in this mode they are the same person, and if they ever were not,
   // silently borrowing the dev actor's identity would be worse than finding nothing.
   // 多账号（CB-040）：朋友账号的定时任务按他自己的角色跑，不再一律当管理员。
-  if (config.singleUser && (!gatewaySecret || ownerUserId === DEV_ACTOR.id)) return { id: ownerUserId, role: DEV_ACTOR.role };
+  if (config.singleUser && (!gatewaySecret || ownerUserId === DEV_ACTOR.id))
+    return { id: ownerUserId, role: DEV_ACTOR.role };
   const roles = await roleRepository.rolesForUser(ownerUserId);
   if (!roles.includes("admin") && !roles.includes("user")) {
     throw new Error("A routine requires an authorized owner.");
@@ -1858,7 +2253,8 @@ const fleetAudit = createFleetAudit({
   actorFor,
   profiles: agentProfileStore,
   agentModels,
-  resolveDefaultModel: async () => (await resolveRuntimeConnection()).model.defaultModel,
+  resolveDefaultModel: async () =>
+    (await resolveRuntimeConnection()).model.defaultModel,
   catalog: modelCatalog,
 });
 
@@ -2000,11 +2396,9 @@ const coordination = createCoordinationTools({
     approvalGate: approvalService.gate,
     grant: (kind, ref, agentId, by, executor) =>
       pluginStore.grant(kind, ref, agentId, by, executor),
-    pause: (ownerUserId, agentId) =>
-      botLifecycle.pause(ownerUserId, agentId),
+    pause: (ownerUserId, agentId) => botLifecycle.pause(ownerUserId, agentId),
     catalog: modelCatalog,
-    setModel: (actor, agentId, model) =>
-      agentModels.set(actor, agentId, model),
+    setModel: (actor, agentId, model) => agentModels.set(actor, agentId, model),
     // The Approvals page an IM summary links to, on the app's own origin (CHISABOT_APP_URL / first
     // trusted origin) — never on the API's, where no page exists.
     approvalsUrl: config.appUrl ? `${config.appUrl}/approvals` : undefined,
@@ -2023,7 +2417,8 @@ const coordination = createCoordinationTools({
         );
       },
       sourceThread: sourceForCoordinationRun,
-      delegationFor: (claim) => readCoordinationHandoffClaim(database, claim),
+      delegationFor: (claim, run) =>
+        readCoordinationHandoffClaim(database, claim, run),
     }),
   route: async (question) => {
     const source = await sourceForCoordinationRun(question);
@@ -2105,7 +2500,7 @@ const coordinationForActor =
   ) =>
   async (botId: string, input: import("@ag-ui/client").RunAgentInput) => {
     const assertion = readRunAssertion(
-      input.forwardedProps?.openbotRun,
+      runAssertionValue(input.forwardedProps),
       config.keyEncryptionKey,
     );
     if (
@@ -2210,26 +2605,31 @@ const buildAgentFor = async ({
   return agent;
 };
 
-/*
- * The pair a headless turn is driven through, built ONCE.
- *
- * Intelligence keeps its existing client and gateway runner. Local mode shares the Postgres client
- * and OSS runner used by browser turns, so routines persist into the same owner-scoped transcript.
- *
- * One runner for the process, reused across firings: it opens a socket per run and holds no idle
- * connection, but its `threads` map is per instance, and a runner per turn would fragment the
- * already-running check that keeps two turns off one thread. See `routines/run-turn.ts`.
- */
-// Only the legacy turn contracts use this facade; the OSS runtime receives the public runner.
-const routineIntelligence: CopilotKitIntelligence = localBackend
-  ? (localBackend.client as unknown as CopilotKitIntelligence)
-  : createIntelligenceClient(config.runtime.intelligence!);
-const routineAgentRunner =
-  localBackend?.runner ??
-  new IntelligenceAgentRunner({
-    url: routineIntelligence.ɵgetRunnerWsUrl(),
-    authToken: routineIntelligence.ɵgetRunnerAuthToken(),
-  });
+// Browser and background work share one execution owner and the same owner-scoped history.
+const routineIntelligence = localBackend.client;
+const routineAgentRunner = localBackend.runner;
+
+const dshRecoverySweep =
+  config.dshKernel && localBackend
+    ? repeatAfterEach(async () => {
+        try {
+          await recoverConversations({
+            backend: localBackend,
+            journal: createDshRunJournal(database),
+            buildAgentFor,
+          });
+        } finally {
+          await personalNotificationSweep?.().catch(() => {
+            console.warn(
+              JSON.stringify({
+                type: "personal-notification-sweep",
+                state: "failed",
+              }),
+            );
+          });
+        }
+      }, 15_000)
+    : undefined;
 
 const governedTurnRunner = createTurnRunner({
   intelligence: routineIntelligence,
@@ -2256,7 +2656,15 @@ const governedTurnRunner = createTurnRunner({
  * 后台任务（DESIGN.md §38，workers/service.ts）：只在本地对话后端下有。工人的回合用自己的一个回合运行器
  * （超时 15 分钟、多一个 worker_plan 工具），结果交回主对话用上面的 governedTurnRunner。
  */
-const workerComputerTools = async ({ ownerUserId, agentId, initiator }: { ownerUserId: string; agentId: string; initiator: AuditInitiator }) => {
+const workerComputerTools = async ({
+  ownerUserId,
+  agentId,
+  initiator,
+}: {
+  ownerUserId: string;
+  agentId: string;
+  initiator: AuditInitiator;
+}) => {
   if (!computerGateway) return [];
   const actor = await actorFor(ownerUserId);
   const profile = await agentProfileStore.get(actor, agentId);
@@ -2278,7 +2686,9 @@ if (localBackend) {
     buildAgentFor,
     toolsForTurn: async (input) => [
       ...(await workerComputerTools(input)),
-      ...(workerService && input.threadId.startsWith("worker-") ? workerService.workerTools(input.threadId.slice("worker-".length)) : []),
+      ...(workerService && input.threadId.startsWith("worker-")
+        ? workerService.workerTools(input.threadId.slice("worker-".length))
+        : []),
     ],
     turnTimeoutMs: 15 * 60_000 + 30_000,
   });
@@ -2289,14 +2699,23 @@ if (localBackend) {
     runTurn: workerTurnRunner,
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+        "SELECT agent_id FROM chisabot_local_threads WHERE id = $1",
+        [threadId],
+      );
       return rows[0]?.agent_id ?? null;
     },
   });
   await workerService.ensure();
   try {
     const interrupted = await workerService.recover();
-    if (interrupted) console.log(JSON.stringify({ type: "workers-interrupted-by-restart", count: interrupted }));
+    if (interrupted)
+      console.log(
+        JSON.stringify({
+          type: "workers-interrupted-by-restart",
+          count: interrupted,
+        }),
+      );
   } catch (error) {
     console.warn("marking interrupted workers failed", error);
   }
@@ -2304,7 +2723,8 @@ if (localBackend) {
   if (process.env.CHISABOT_WORKER_ORPHAN_SWEEP !== "0") {
     try {
       const swept = await workerService.sweepOrphans();
-      if (swept.workers || swept.inbox) console.log(JSON.stringify({ type: "worker-orphans-swept", ...swept }));
+      if (swept.workers || swept.inbox)
+        console.log(JSON.stringify({ type: "worker-orphans-swept", ...swept }));
     } catch (error) {
       console.warn("sweeping orphaned worker rows failed", error);
     }
@@ -2315,50 +2735,61 @@ if (localBackend) {
  * 确认卡片：工具已经不等了（超时 / 服务重启）之后用户才点「确认」——往那段对话里发一条「用户确认了」，
  * 叫机器人接着做（和后台任务交回结果同一条路：正在回答就进收件箱，空着就起一轮）。
  */
-confirmations.setResume(async ({ ownerUserId, agentId, threadId, requestId, text }) => {
-  const message = { id: `confirm-resume-${requestId}`, role: "user", content: text } as Message;
-  if (localBackend?.control.isActive(threadId)) {
-    await localBackend.inbox.enqueue({ threadId, ownerUserId, message });
-    if (localBackend.control.isActive(threadId)) return;
-    await localBackend.inbox.withdraw(threadId, message.id);
-  }
-  const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
-  const resolvedAgentId = rows[0]?.agent_id ?? agentId;
-  const result = await governedTurnRunner({
-    ownerUserId,
-    routineId: `confirm:${requestId}`,
-    agentId: resolvedAgentId,
-    threadId,
-    instruction: text,
-    initiator: { kind: "routine", id: `confirm:${requestId}` },
-    userMessage: message,
-    forwardedProps: { chisabotConfirmResume: { id: requestId } },
-  });
-  const replyText = result.replyText?.trim();
-  if (replyText) {
-    const [source] = await database
-      .select({ channelId: intelligenceChannelMappings.channelId })
-      .from(intelligenceChannelMappings)
-      .where(
-        and(
-          eq(intelligenceChannelMappings.userId, ownerUserId),
-          eq(intelligenceChannelMappings.threadId, threadId),
-        ),
-      )
-      .limit(1);
-    if (source) {
-      await channelStore
-        .recordActivity(
-          await actorFor(ownerUserId),
-          source.channelId,
-          { text: replyText, agentId: resolvedAgentId, at: new Date() },
-          { id: `confirm-resume-reply:${requestId}` },
+confirmations.setResume(
+  async ({ ownerUserId, agentId, threadId, requestId, text }) => {
+    const message = {
+      id: `confirm-resume-${requestId}`,
+      role: "user",
+      content: text,
+    } as Message;
+    if (localBackend?.control.isActive(threadId)) {
+      await localBackend.inbox.enqueue({ threadId, ownerUserId, message });
+      if (localBackend.control.isActive(threadId)) return;
+      await localBackend.inbox.withdraw(threadId, message.id);
+    }
+    const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+      "SELECT agent_id FROM chisabot_local_threads WHERE id = $1",
+      [threadId],
+    );
+    const resolvedAgentId = rows[0]?.agent_id ?? agentId;
+    const result = await governedTurnRunner({
+      ownerUserId,
+      routineId: `confirm:${requestId}`,
+      agentId: resolvedAgentId,
+      threadId,
+      instruction: text,
+      initiator: { kind: "routine", id: `confirm:${requestId}` },
+      userMessage: message,
+      forwardedProps: { chisabotConfirmResume: { id: requestId } },
+    });
+    const replyText = result.replyText?.trim();
+    if (replyText) {
+      const [source] = await database
+        .select({ channelId: intelligenceChannelMappings.channelId })
+        .from(intelligenceChannelMappings)
+        .where(
+          and(
+            eq(intelligenceChannelMappings.userId, ownerUserId),
+            eq(intelligenceChannelMappings.threadId, threadId),
+          ),
         )
+        .limit(1);
+      if (source) {
+        await channelStore
+          .recordActivity(
+            await actorFor(ownerUserId),
+            source.channelId,
+            { text: replyText, agentId: resolvedAgentId, at: new Date() },
+            { id: `confirm-resume-reply:${requestId}` },
+          )
+          .catch(() => {});
+      }
+      void imService
+        ?.pushToThread(threadId, replyText, { privateOnly: true })
         .catch(() => {});
     }
-    void imService?.pushToThread(threadId, replyText, { privateOnly: true }).catch(() => {});
-  }
-});
+  },
+);
 confirmations.setOnOpened((req) => {
   if (!req.threadId) return;
   const targetStr = req.target ? `（${req.target}）` : "";
@@ -2372,7 +2803,9 @@ confirmations.setOnOpened((req) => {
     "请直接回复「允许」或「拒绝」处理（也可在电脑弹窗或网页端确认）。",
   ].join("\n");
   // RV-02：待确认详情只推私聊，不落进群聊。
-  void imService?.pushToThread(req.threadId, msg, { privateOnly: true }).catch(() => {});
+  void imService
+    ?.pushToThread(req.threadId, msg, { privateOnly: true })
+    .catch(() => {});
 });
 
 /**
@@ -2386,17 +2819,28 @@ try {
     database,
     hub: deviceHub,
     deviceStore,
-    ...(localBackend ? { inbox: localBackend.inbox, control: localBackend.control } : {}),
+    ...(localBackend
+      ? { inbox: localBackend.inbox, control: localBackend.control }
+      : {}),
     deliverTurn: governedTurnRunner,
     agentOfThread: async (threadId) => {
-      const rows = await database.$client.unsafe<{ agent_id: string }[]>("SELECT agent_id FROM openbot_local_threads WHERE id = $1", [threadId]);
+      const rows = await database.$client.unsafe<{ agent_id: string }[]>(
+        "SELECT agent_id FROM chisabot_local_threads WHERE id = $1",
+        [threadId],
+      );
       return rows[0]?.agent_id ?? null;
     },
     resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
   });
   await localAgents.ensure();
   const interrupted = await localAgents.recover();
-  if (interrupted) console.log(JSON.stringify({ type: "local-agent-tasks-interrupted-by-restart", count: interrupted }));
+  if (interrupted)
+    console.log(
+      JSON.stringify({
+        type: "local-agent-tasks-interrupted-by-restart",
+        count: interrupted,
+      }),
+    );
   deviceHub.setExtension(localAgents.extension);
 } catch (error) {
   console.warn("local agents unavailable", error);
@@ -2440,7 +2884,10 @@ imService = createImService({
   runTurn: imTurnRunner,
   botAvailable: async (ownerUserId, agentId) => {
     try {
-      const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+      const profile = await agentProfileStore.get(
+        await actorFor(ownerUserId),
+        agentId,
+      );
       return Boolean(profile && !profile.deletedAt);
     } catch {
       return false;
@@ -2450,16 +2897,24 @@ imService = createImService({
     const actor = await actorFor(ownerUserId);
     if (fresh) {
       const created = await channelStore.create(actor, [agentId]);
-      await botThreads.setCurrent(ownerUserId, agentId, created.threadId, false).catch(() => {});
+      await botThreads
+        .setCurrent(ownerUserId, agentId, created.threadId, false)
+        .catch(() => {});
       return created.threadId;
     }
-    const synced = await botThreads.current(ownerUserId, agentId).catch(() => null);
+    const synced = await botThreads
+      .current(ownerUserId, agentId)
+      .catch(() => null);
     if (synced?.threadId) {
-      const opened = await channelStore.openThread?.(actor, agentId, synced.threadId).catch(() => null);
+      const opened = await channelStore
+        .openThread?.(actor, agentId, synced.threadId)
+        .catch(() => null);
       if (opened?.threadId) return opened.threadId;
     }
     const direct = await channelStore.direct(actor, agentId);
-    await botThreads.setCurrent(ownerUserId, agentId, direct.threadId, true).catch(() => {});
+    await botThreads
+      .setCurrent(ownerUserId, agentId, direct.threadId, true)
+      .catch(() => {});
     return direct.threadId;
   },
   recordChannelActivity: async (threadId, actorOrAgentId, text) => {
@@ -2487,16 +2942,24 @@ imService = createImService({
   resolveApproval: async (ownerUserId, threadId, decision) => {
     // RV-02：只批属于当前这段 IM 对话的待确认；对不上就不动，绝不兜底最近一条。
     if (!threadId) return null;
-    const allPending = (await confirmations.list(ownerUserId, { limit: 20 })).filter((r) => r.status === "pending");
+    const allPending = (
+      await confirmations.list(ownerUserId, { limit: 20 })
+    ).filter((r) => r.status === "pending");
     const target = allPending.find((r) => r.threadId === threadId);
     if (target) {
-      const decided = await confirmations.decide(ownerUserId, target.id, decision);
+      const decided = await confirmations.decide(
+        ownerUserId,
+        target.id,
+        decision,
+      );
       return { title: decided.title, target: decided.target };
     }
-    const pendingRequests = (await approvalService.store.list(ownerUserId).catch(() => [])).filter(
-      (r) => r.status === "pending",
+    const pendingRequests = (
+      await approvalService.store.list(ownerUserId).catch(() => [])
+    ).filter((r) => r.status === "pending");
+    const matchedAction = pendingRequests.find(
+      (r) => r.action.continuation?.threadId === threadId,
     );
-    const matchedAction = pendingRequests.find((r) => r.action.continuation?.threadId === threadId);
     if (matchedAction) {
       const handOff = matchedAction.action.policy?.behaviour === "hand_off";
       await approvalService.decide(
@@ -2506,7 +2969,10 @@ imService = createImService({
       );
       return {
         title: matchedAction.action.toolRef,
-        target: typeof matchedAction.action.target === "string" ? matchedAction.action.target : null,
+        target:
+          typeof matchedAction.action.target === "string"
+            ? matchedAction.action.target
+            : null,
       };
     }
     return null;
@@ -2514,9 +2980,13 @@ imService = createImService({
   // 审批卡发到 IM 时附上的内容摘要：卡片工具自己把给人看的说明存在 action.target.imSummary 里，
   // 这里只负责按 id 读回来；没有摘要的卡（比如别的工具）照发原来的提示。
   approvalSummary: async (ownerUserId, approvalId) => {
-    const record = await approvalService.store.get(ownerUserId, approvalId).catch(() => null);
+    const record = await approvalService.store
+      .get(ownerUserId, approvalId)
+      .catch(() => null);
     const target = record?.status === "pending" ? record.action.target : null;
-    return target && typeof target === "object" && typeof (target as { imSummary?: unknown }).imSummary === "string"
+    return target &&
+      typeof target === "object" &&
+      typeof (target as { imSummary?: unknown }).imSummary === "string"
       ? (target as { imSummary: string }).imSummary
       : null;
   },
@@ -2530,9 +3000,19 @@ await imService.ensure();
 const schedules = createSchedules(database, {
   runTurn: governedTurnRunner,
   runImTurn: imTurnRunner,
-  pushToIm: (threadId, text) => imService!.pushToThread(threadId, text),
-  isThreadActive: (threadId) => localBackend?.control.isActive(threadId) ?? false,
-  ...(localBackend ? { enqueueToThread: (input: { threadId: string; ownerUserId: string; message: Message }) => localBackend.inbox.enqueue({ ...input, kind: "message" }) } : {}),
+  pushToIm: (threadId, text, options) =>
+    imService!.pushToThread(threadId, text, options),
+  isThreadActive: (threadId) =>
+    localBackend?.control.isActive(threadId) ?? false,
+  ...(localBackend
+    ? {
+        enqueueToThread: (input: {
+          threadId: string;
+          ownerUserId: string;
+          message: Message;
+        }) => localBackend.inbox.enqueue({ ...input, kind: "message" }),
+      }
+    : {}),
   // FIX-02：定时回合结束后若仍占着对话锁，放开，避免输入框一直灰、消息发不出去。
   releaseThread: async (threadId) => {
     if (!localBackend) return;
@@ -2540,14 +3020,21 @@ const schedules = createSchedules(database, {
   },
   // 模块 13 M3：读资料出错要抛出去（定时任务按 BUSY_RETRY 重试），只有确实查到不在 / 已删才返回 false。
   botAvailable: async (ownerUserId, agentId) => {
-    const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+    const profile = await agentProfileStore.get(
+      await actorFor(ownerUserId),
+      agentId,
+    );
     return Boolean(profile && !profile.deletedAt);
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   isPaused: (error) => error instanceof BotPausedError,
 });
 await schedules.ensure();
-if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_SCHEDULES_SWEEP !== "0") schedules.start();
+if (
+  process.env.NODE_ENV !== "test" &&
+  process.env.CHISABOT_SCHEDULES_SWEEP !== "0"
+)
+  schedules.start();
 
 /*
  * 任务中心（server/src/task-center，docs/research/task-center-core-handoff.md）：统一 Inbox / Outbox。
@@ -2561,7 +3048,10 @@ const taskCenter = createTaskCenterRuntime({
   personalSources,
   github,
   botAvailable: async (ownerUserId, agentId) => {
-    const profile = await agentProfileStore.get(await actorFor(ownerUserId), agentId);
+    const profile = await agentProfileStore.get(
+      await actorFor(ownerUserId),
+      agentId,
+    );
     return Boolean(profile && !profile.deletedAt);
   },
   defaultAgentFor: async (ownerUserId) => {
@@ -2573,29 +3063,17 @@ const taskCenter = createTaskCenterRuntime({
     const actor = await actorFor(ownerUserId);
     return (await agentProfileStore.list(actor))[0]?.id ?? null;
   },
-  recordNotice: async (ownerUserId, agentId, text) => {
+  recordNotice: async (ownerUserId, agentId, text, context) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.direct(actor, agentId);
     await channelStore.recordActivity(
       actor,
       channel.id,
       { text, agentId, at: new Date() },
-      { id: `task-center-notice:${randomUUID()}` },
+      { id: context?.id ?? `task-center-notice:${randomUUID()}` },
     );
-    // 同一提醒推给这个机器人最近活跃过的私聊 IM（Telegram / 微信等，推送即触达移动端）；
-    // 没连过 IM 或推送失败只少一个渠道，站内活动已经记过了。
-    const [imChat] = await database.$client.unsafe<{ thread_id: string }[]>(
-      `SELECT c.thread_id FROM chisabot_im_chats c
-       JOIN chisabot_im_connections n ON n.id = c.connection_id
-       WHERE n.owner_user_id = $1 AND n.agent_id = $2
-         AND c.chat_key LIKE 'private:%' AND c.last_inbound IS NOT NULL
-       ORDER BY c.updated_at DESC LIMIT 1`,
-      [ownerUserId, agentId],
-    );
-    if (imChat)
-      void imService
-        ?.pushToThread(imChat.thread_id, text, { privateOnly: true })
-        .catch(() => {});
+    // The persisted decision is picked up by the existing recovery sweep and sent only to the
+    // owner's explicitly configured notification target, using the same stable decision id.
   },
   localRoots: async (ownerUserId) => {
     const roots = new Set<string>();
@@ -2611,7 +3089,9 @@ const taskCenter = createTaskCenterRuntime({
       }
     }
     // 用户在任务中心设置里加的授权目录与 env 白名单取并集（都是「允许读」语义）。
-    for (const p of await taskCenterRoots.list(ownerUserId).catch(() => [] as string[]))
+    for (const p of await taskCenterRoots
+      .list(ownerUserId)
+      .catch(() => [] as string[]))
       roots.add(p);
     return [...roots];
   },
@@ -2623,7 +3103,8 @@ const taskCenter = createTaskCenterRuntime({
           database,
           localAgents,
           botNameFor: async (ownerUserId, agentId) =>
-            (await agentProfileStore.get(await actorFor(ownerUserId), agentId))?.name ?? null,
+            (await agentProfileStore.get(await actorFor(ownerUserId), agentId))
+              ?.name ?? null,
         }),
       }
     : {}),
@@ -2631,7 +3112,9 @@ const taskCenter = createTaskCenterRuntime({
 const taskCenterRoots = createTaskCenterRoots(database);
 await taskCenterRoots.ensure();
 await taskCenter.ensure();
-if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0") taskCenter.start();
+personalNotificationSweep = personalNotifications.sweep;
+if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0")
+  taskCenter.start();
 
 const panelTaskService = createNormalPanelTaskService({
   database,
@@ -2708,14 +3191,14 @@ const panelTaskService = createNormalPanelTaskService({
     }
     if (localBackend && threadId && task.runId) {
       const runs = await database.$client.unsafe<{ status: string }[]>(
-        "SELECT status FROM openbot_local_runs WHERE thread_id=$1 AND run_id=$2",
+        "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
         [threadId, task.runId],
       );
       transportStatus = runs[0]?.status;
       const events = await database.$client.unsafe<{ waiting: boolean }[]>(
-        `SELECT EXISTS(SELECT 1 FROM openbot_local_events WHERE thread_id=$1 AND run_id=$2
-          AND event->>'type'='CUSTOM' AND event->>'name'='openbot.headless.waiting') AS waiting`,
-        [threadId, task.runId],
+        `SELECT EXISTS(SELECT 1 FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2
+          AND event->>'type'='CUSTOM' AND event->>'name' IN ('chisabot.headless.waiting', $3::text)) AS waiting`,
+        [threadId, task.runId, PREVIOUS_WAITING_EVENT],
       );
       waiting ||= events[0]?.waiting === true;
     }
@@ -2862,7 +3345,9 @@ workflowEngineInstance = createWorkflowEngine({
     });
     // 管理员能列出所有人的技能；工作流只用部署的和自己的。
     return skills
-      .filter((skill) => skill.ownerUserId === null || skill.ownerUserId === actor.id)
+      .filter(
+        (skill) => skill.ownerUserId === null || skill.ownerUserId === actor.id,
+      )
       .map(({ slug, title, instructions }) => ({ slug, title, instructions }));
   },
   beginPanelSession: async (ownerUserId, botId) => {
@@ -2886,7 +3371,12 @@ const chatShots = await createChatShots(database);
 const linkPreviews = await createLinkPreviews(database, {
   screenshots: process.env.CHISABOT_LINK_PREVIEW_SHOTS === "1",
   ...(config.computer?.provider === "shared"
-    ? { computer: { baseUrl: config.computer.baseUrl, ...(config.computer.token ? { token: config.computer.token } : {}) } }
+    ? {
+        computer: {
+          baseUrl: config.computer.baseUrl,
+          ...(config.computer.token ? { token: config.computer.token } : {}),
+        },
+      }
     : {}),
 });
 const livePanelStore = createLivePanelStore(database);
@@ -2894,8 +3384,16 @@ const livePanelService = createLivePanelService({
   store: livePanelStore,
   // 直连数据源（docs/live-panel-sources.md）：HTTP 走保险箱的 request，{{secret:名}} 只发往它绑定的域名、
   // guardedFetch 钉死 DNS、不跟重定向、回来的正文抹掉密钥值。命令源只给管理员（tools 的 isAdmin）。
-  requestHttp: (ownerUserId, input, signal) => vault.request(ownerUserId, input, signal),
-  runHeadless: async ({ ownerUserId, botId, instruction, panelId, model, signal }) => {
+  requestHttp: (ownerUserId, input, signal) =>
+    vault.request(ownerUserId, input, signal),
+  runHeadless: async ({
+    ownerUserId,
+    botId,
+    instruction,
+    panelId,
+    model,
+    signal,
+  }) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.create(actor, [botId]);
     try {
@@ -2908,7 +3406,11 @@ const livePanelService = createLivePanelService({
           instruction,
           initiator: { kind: "routine", id: panelId },
           signal,
-          userMessage: { id: `${panelId}:${Date.now()}`, role: "user", content: instruction },
+          userMessage: {
+            id: `${panelId}:${Date.now()}`,
+            role: "user",
+            content: instruction,
+          },
         }),
       );
     } finally {
@@ -2917,15 +3419,22 @@ const livePanelService = createLivePanelService({
   },
 });
 // 用户点「交还」：因为有人接管被推迟的面板马上重刷（control-blocks.ts onControlReleased）。
-onControlReleased((ownerUserId) => void livePanelService.resumeAfterHandback(ownerUserId));
+onControlReleased(
+  (ownerUserId) => void livePanelService.resumeAfterHandback(ownerUserId),
+);
 // CHISABOT_LIVE_PANEL_SWEEP=0：不跑后台刷新循环（只给并排的预览容器用，免得它替正式实例刷新面板）。
 if (process.env.CHISABOT_LIVE_PANEL_SWEEP !== "0") livePanelService.start();
 
-void workflowEngineInstance.recover().catch((error) =>
-  console.error(
-    JSON.stringify({ type: "workflow-recover-failed", reason: String(error) }),
-  ),
-);
+void workflowEngineInstance
+  .recover()
+  .catch((error) =>
+    console.error(
+      JSON.stringify({
+        type: "workflow-recover-failed",
+        reason: String(error),
+      }),
+    ),
+  );
 
 const actorAgentResolver = createActorAgentResolver({
   loadAgents: loadAgentsForActor,
@@ -2959,13 +3468,19 @@ const actorAgentResolver = createActorAgentResolver({
     return async (botId, input) => {
       const coordinated = await coordination(botId, input);
       const props = input.forwardedProps as
-        | { panelAuthoring?: { sessionId?: unknown }; chisabotWorker?: unknown; chisabotWorkerDelivery?: unknown }
+        | {
+            panelAuthoring?: { sessionId?: unknown };
+            chisabotWorker?: unknown;
+            chisabotWorkerDelivery?: unknown;
+          }
         | undefined;
       // 后台任务的委派工具：只给机器人私聊里人自己的回合和交付结果的回合（工人回合、群聊不给）。
       const delegating =
         workerService &&
         // 人自己的回合，或者「后台结果交回来」的那一轮（用户在那一轮里插的话也可能要委派）。
-        (!initiator || initiator.kind === "person" || Boolean(props?.chisabotWorkerDelivery)) &&
+        (!initiator ||
+          initiator.kind === "person" ||
+          Boolean(props?.chisabotWorkerDelivery)) &&
         !props?.chisabotWorker &&
         input.threadId &&
         !input.threadId.startsWith("worker-") &&
@@ -2974,25 +3489,44 @@ const actorAgentResolver = createActorAgentResolver({
         ? [
             ...coordinated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              workerService!.delegationTools({ ownerUserId: actorId, agentId: botId, threadId: input.threadId }),
+              workerService!.delegationTools({
+                ownerUserId: actorId,
+                agentId: botId,
+                threadId: input.threadId,
+              }),
             )()),
           ]
         : coordinated;
       // 定时任务（DESIGN.md §55）：人自己的回合、IM 回合、定时任务到点的回合、后台结果交回的回合；
       // 后台任务本身、面板刷新、群聊不给。工具要知道「这段对话」，所以从这里给（这里有 threadId）。
       const imOf = imConnectionOf(initiator);
-      const firing = Boolean((props as { chisabotSchedule?: unknown } | undefined)?.chisabotSchedule) || (initiator?.kind === "routine" && initiator.id.startsWith("schedule:"));
+      const firing =
+        Boolean(
+          (props as { chisabotSchedule?: unknown } | undefined)
+            ?.chisabotSchedule,
+        ) ||
+        (initiator?.kind === "routine" && initiator.id.startsWith("schedule:"));
       const scheduling =
         input.threadId &&
         !props?.chisabotWorker &&
         !input.threadId.startsWith("worker-") &&
-        (!initiator || initiator.kind === "person" || Boolean(imOf) || firing || Boolean(props?.chisabotWorkerDelivery)) &&
+        (!initiator ||
+          initiator.kind === "person" ||
+          Boolean(imOf) ||
+          firing ||
+          Boolean(props?.chisabotWorkerDelivery)) &&
         !(await isGroupChannelThread(input.threadId).catch(() => true));
       const tools = scheduling
         ? [
             ...delegated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              schedules.tools({ owner: actorId, agentId: botId, threadId: input.threadId, imConnectionId: imOf, firing }),
+              schedules.tools({
+                owner: actorId,
+                agentId: botId,
+                threadId: input.threadId,
+                imConnectionId: imOf,
+                firing,
+              }),
             )()),
           ]
         : delegated;
@@ -3004,12 +3538,21 @@ const actorAgentResolver = createActorAgentResolver({
                 .get(await actorFor(actorId), botId)
                 .then((profile) => profile?.name ?? null)
                 .catch(() => null);
-              const owner = await pluginStore.agentOwner(botId).catch(() => undefined);
+              const owner = await pluginStore
+                .agentOwner(botId)
+                .catch(() => undefined);
               if (typeof owner === "string" && owner !== actorId) return [];
-              return localAgents!.tools({ ownerUserId: actorId, botId, botName, threadId: input.threadId });
+              return localAgents!.tools({
+                ownerUserId: actorId,
+                botId,
+                botName,
+                threadId: input.threadId,
+              });
             })().catch(() => [])
           : [];
-      const withLocal = localAgentTools.length ? [...tools, ...localAgentTools] : tools;
+      const withLocal = localAgentTools.length
+        ? [...tools, ...localAgentTools]
+        : tools;
       // 长对话取回（agents/history-recover.ts）：预算裁掉 / 摘要代替的内容按 id 取回原文。
       // 只读这段对话自己的历史——模型在被裁前本来就逐字看过；群聊、IM、后台回合一样给。
       const recovered = input.threadId
@@ -3017,7 +3560,9 @@ const actorAgentResolver = createActorAgentResolver({
             historyRecoverTools({ database, threadId: input.threadId }),
           )().catch(() => [])
         : [];
-      const withHistory = recovered.length ? [...withLocal, ...recovered] : withLocal;
+      const withHistory = recovered.length
+        ? [...withLocal, ...recovered]
+        : withLocal;
       const sessionId = props?.panelAuthoring?.sessionId;
       if (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)
         return withHistory;
@@ -3035,7 +3580,7 @@ const actorAgentResolver = createActorAgentResolver({
   loadPersonalMemoryForActor,
 });
 
-const copilotRuntime = mountCopilotRuntime(
+const conversationRuntime = mountConversationRuntime(
   config,
   actorAgentResolver,
   identifyUser,
@@ -3271,7 +3816,82 @@ const approvalTurnRunner = createTurnRunner({
 });
 const approvalContinuationRunner: typeof approvalTurnRunner = (input) =>
   panelTaskService.runContinuation(input, approvalTurnRunner);
+const resumeConfirmation = localBackend
+  ? createConfirmationResumer({
+      database,
+      backend: localBackend,
+      confirmations,
+      buildAgentFor,
+      runTurn: approvalContinuationRunner,
+      refreshRunAssertion: (signed, ownerUserId, agentId) =>
+        refreshApprovedHandoffRun(
+          signed,
+          ownerUserId,
+          agentId,
+          config.keyEncryptionKey,
+        ),
+    })
+  : undefined;
+const confirmationOwner = workOwner("conversation-confirmation");
+const confirmationSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
+  if (!resumeConfirmation) return;
+  const [item] = await approvalQueue.claim({
+    kind: "conversation.confirmation-response",
+    owner: confirmationOwner,
+    leaseMs: 15 * 60_000,
+    limit: 1,
+  });
+  if (!item) return;
+  try {
+    const payload = z
+      .object({ ownerUserId: z.string().min(1), requestId: z.string().min(1) })
+      .parse(item.payload);
+    await resumeConfirmation(payload.ownerUserId, payload.requestId);
+    await approvalQueue.finish({
+      kind: item.kind,
+      key: item.key,
+      owner: confirmationOwner,
+    });
+  } catch (error) {
+    await approvalQueue.release({
+      kind: item.kind,
+      key: item.key,
+      owner: confirmationOwner,
+      delayMs: 5000,
+      reason: reasonWithoutStatement(error),
+    });
+  }
+}, 1000);
+const interactionOwner = workOwner("conversation-interaction");
+const interactionSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
+  const [item] = await approvalQueue.claim({
+    kind: "conversation.interaction-response",
+    owner: interactionOwner,
+    leaseMs: 15 * 60_000,
+    limit: 1,
+  });
+  if (!item) return;
+  try {
+    await conversationInteractions.resume(item.key, approvalContinuationRunner);
+    await approvalQueue.finish({
+      kind: item.kind,
+      key: item.key,
+      owner: interactionOwner,
+    });
+  } catch (error) {
+    await approvalQueue.release({
+      kind: item.kind,
+      key: item.key,
+      owner: interactionOwner,
+      delayMs: 5000,
+      reason: reasonWithoutStatement(error),
+    });
+  }
+}, 1000);
 const approvalSweep = repeatAfterEach(async () => {
+  if (conversationAdmissionClosed()) return;
   try {
     const [item] = await approvalQueue.claim({
       kind: "approval.resume",
@@ -3290,17 +3910,55 @@ const approvalSweep = repeatAfterEach(async () => {
         })
         .parse(item.payload);
       const resumeDependencies: ApprovalResumeDependencies = {
-        validate: (action) =>
-          approvalService.validateReentry(action, () =>
+        refusal: async (action) =>
+          config.dshKernel
+            ? createDshRunJournal(database).continuationRefusal(
+                action.threadId,
+                action.runId,
+              )
+            : null,
+        validate: async (action) => {
+          const refusal = config.dshKernel
+            ? await createDshRunJournal(database).continuationRefusal(
+                action.threadId,
+                action.runId,
+              )
+            : null;
+          if (refusal) throw new ApprovalRefusedError(refusal);
+          return approvalService.validateReentry(action, () =>
             executeApprovedAction(action),
-          ),
-        execute: executeApprovedAction,
+          );
+        },
+        execute: async (action) => {
+          const refusal = config.dshKernel
+            ? await createDshRunJournal(database).continuationRefusal(
+                action.threadId,
+                action.runId,
+              )
+            : null;
+          if (refusal) throw new ApprovalRefusedError(refusal);
+          return executeApprovedAction(action);
+        },
         continue: async ({
           continuation: snapshot,
           result,
           messageId,
           approvalId,
         }) => {
+          if (config.dshKernel) {
+            await database.$client.unsafe(
+              `UPDATE chisabot_tool_operations SET status='completed',result=$2::text::jsonb,updated_at=now()
+              WHERE owner_user_id=$1 AND status='waiting_approval' AND (session_id||':'||turn_number||':'||step_number||':'||call_id)=$3`,
+              [input.ownerUserId, JSON.stringify(result), snapshot.toolCallId],
+            );
+            if (
+              await createDshRunJournal(database).continuationRefusal(
+                snapshot.threadId,
+                snapshot.runId,
+              )
+            )
+              return;
+          }
           const [waitingRun] = await database
             .select({ id: responsibilityRuns.id })
             .from(responsibilityRuns)
@@ -3370,7 +4028,12 @@ const approvalSweep = repeatAfterEach(async () => {
               { id: messageId, text: outcome.replyText, kind: "reply" },
             );
           if (outcome.replyText?.trim()) {
-            void imService?.pushToThread(snapshot.threadId, outcome.replyText.trim(), { privateOnly: true }).catch(() => {});
+            void imService
+              ?.pushToThread(snapshot.threadId, outcome.replyText.trim(), {
+                privateOnly: true,
+                deliveryId: `approval:${approvalId}`,
+              })
+              .catch(() => {});
           }
         },
       };
@@ -3699,6 +4362,14 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
   const runner = createHandoffRunner({
     queue: createWorkQueue(database),
     owner: workOwner("handoff"),
+    executions: createHandoffExecutions(
+      database,
+      () => threadIdentity.mint(),
+      (value) =>
+        readRunAssertion(value, config.keyEncryptionKey, Date.now(), {
+          ignoreExpiry: true,
+        }),
+    ),
     auditStore: bootAuditStore,
     /*
      * The signed statement of the run the addressed Bot is about to start, carrying how deep the
@@ -3712,21 +4383,22 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
        * delivery that then rebuilt them as an ordinary user could not find the Bot the desk had just
        * agreed to, and the person was told it never answered.
        */
-      agentFor: async ({ actorId, botId, fromBotId }) => {
+      agentFor: async ({ actorId, botId, fromBotId, initiator, depth }) => {
         const actor = await actorFor(actorId).catch(() => null);
         if (!actor) {
           throw new Error(
             "who this is for could not be confirmed, so the Bot was not run",
           );
         }
-        return copilotRuntime.agentFor({
+        return conversationRuntime.agentFor({
           actor,
           botId,
-          initiator: { kind: "handoff", id: fromBotId },
+          initiator: initiator ?? { kind: "handoff", id: fromBotId },
+          depth,
         });
       },
-      history: copilotRuntime.history,
-      lock: copilotRuntime.threadLock,
+      history: conversationRuntime.history,
+      lock: conversationRuntime.threadLock,
       /*
        * A scratch thread of the addressed Bot's own, one per hop.
        *
@@ -3768,7 +4440,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
       // The same address and the same token the runtime uses. Assembling either from configuration
       // produced a runner every join was refused for, because the thread's active run is a lock the
       // platform issues rather than something an API key can claim.
-      runner: copilotRuntime.runner as never,
+      runner: conversationRuntime.runner as never,
     }),
   });
 
@@ -3912,13 +4584,6 @@ startEgressPolicyPush({
   ...(config.computer?.token ? { token: config.computer.token } : {}),
 });
 
-// Asked only whether this deployment pays for Intelligence, for the self-host banner. Its own client
-// rather than the runtime's, the same as the thread reader: the constructor opens nothing.
-const selfHostBannerIntelligence =
-  config.runtime.mode === "intelligence"
-    ? createIntelligenceClient(config.runtime.intelligence)
-    : undefined;
-
 const app = createApp(
   config,
   auth,
@@ -3932,7 +4597,7 @@ const app = createApp(
   createPackageStatusReader(database),
   // The runtime call: the model, per-actor agent loading, and the two identity
   // functions are how a run is attributed to a person.
-  copilotRuntime.handler,
+  conversationRuntime.handler,
   // The only path to an acting call.
   computerGateway,
   policyStore,
@@ -4011,8 +4676,14 @@ const app = createApp(
         agentId: botId,
         ...(initiator ? { initiator } : {}),
       }),
-      ...(name.startsWith("github_") ? await github.tools(actorId, botId, initiator ?? undefined) : []),
-      ...(/^(image_|file_share$|chat_files_)/.test(name) ? await chatFiles.tools(actorId, botId, initiator ?? undefined).catch(() => []) : []),
+      ...(name.startsWith("github_")
+        ? await github.tools(actorId, botId, initiator ?? undefined)
+        : []),
+      ...(/^(image_|file_share$|chat_files_)/.test(name)
+        ? await chatFiles
+            .tools(actorId, botId, initiator ?? undefined)
+            .catch(() => [])
+        : []),
     ].find((candidate) => candidate.name === name);
     if (memory) {
       const text = await memory.execute(args);
@@ -4028,7 +4699,11 @@ const app = createApp(
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
     if (name.startsWith("device_")) {
-      const rawDeviceTools = await deviceToolsFor(actorId, botId, initiator ?? undefined);
+      const rawDeviceTools = await deviceToolsFor(
+        actorId,
+        botId,
+        initiator ?? undefined,
+      );
       const deviceTool = confirmations
         .wrap(rawDeviceTools, {
           ownerUserId: actorId,
@@ -4103,12 +4778,6 @@ const app = createApp(
       auditStore: bootAuditStore,
     },
   },
-  selfHostBannerIntelligence
-    ? createSelfHostBanner({
-        enabled: config.selfHostBanner,
-        entitlements: () => selfHostBannerIntelligence.getRuntimeEntitlements(),
-      })
-    : { shown: async () => config.selfHostBanner },
   localBackend,
   modelSettings,
   agentModels,
@@ -4117,9 +4786,27 @@ const app = createApp(
   magpie,
   {
     modelCatalogRefreshMinutes,
-    ...(gatewaySecret ? { singleUserGuard: createGatewayRequireUser(gatewaySecret, provisionGatewayUser) } : {}),
+    ...(gatewaySecret
+      ? {
+          singleUserGuard: createGatewayRequireUser(
+            gatewaySecret,
+            provisionGatewayUser,
+          ),
+        }
+      : {}),
     extraRoutes: ({ requireUser }) => [
-      ["/api/internal/runtime-tools", createRuntimeToolsRoutes(hermesRuntimeTools)],
+      [
+        "/api/internal/runtime-tools",
+        createRuntimeToolsRoutes(hermesRuntimeTools),
+      ],
+      ...(dshToolGateway
+        ? [
+            ["/api/internal/dsh-tools", dshToolGateway.routes] as [
+              string,
+              typeof dshToolGateway.routes,
+            ],
+          ]
+        : []),
       [
         "/api/admin/smoke",
         createAdminSmokeRoutes({
@@ -4134,7 +4821,10 @@ const app = createApp(
               probe: probeConfiguredHermes
                 ? async () => {
                     const probe = await probeConfiguredHermes();
-                    return { reachable: probe.reachable === true, ...(probe.error ? { error: probe.error } : {}) };
+                    return {
+                      reachable: probe.reachable === true,
+                      ...(probe.error ? { error: probe.error } : {}),
+                    };
                   }
                 : undefined,
             });
@@ -4142,19 +4832,21 @@ const app = createApp(
           })(),
         }),
       ],
-      [
-        "/api/ops/budget",
-        createOpsBudgetRoutes({ requireUser }),
-      ],
+      ["/api/ops/budget", createOpsBudgetRoutes({ requireUser })],
       [
         "/api/admin/health",
         createOpsHealthRoutes({
           requireUser,
           pingDatabase: createDatabasePinger(database),
+          probeAssistant: createAssistantSignalsProbe(database),
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
           // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
-          ...(probeConfiguredHermes ? { probeHermes: probeConfiguredHermes } : {}),
+          ...(probeConfiguredHermes
+            ? { probeHermes: probeConfiguredHermes }
+            : {}),
+          dshRequired: !!config.dshKernel,
+          ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
           ...(computerProvider
             ? {
                 probeComputer: async () => {
@@ -4165,9 +4857,12 @@ const app = createApp(
                     let reachable = list.length === 0;
                     let error: string | undefined;
                     if (list[0]) {
-                      const status = await computerProvider.status(list[0].botId);
+                      const status = await computerProvider.status(
+                        list[0].botId,
+                      );
                       reachable = status.state === "ready";
-                      if (!reachable && status.reason) error = status.reason.slice(0, 200);
+                      if (!reachable && status.reason)
+                        error = status.reason.slice(0, 200);
                     }
                     return {
                       // Provider reachable (list worked). Per-bot ready is informational.
@@ -4175,7 +4870,8 @@ const app = createApp(
                       configured: true as const,
                       provider: computerProvider.name,
                       reachable,
-                      running: list.filter((c) => c.status === "running").length,
+                      running: list.filter((c) => c.status === "running")
+                        .length,
                       total: list.length,
                       ...(error ? { error } : {}),
                     };
@@ -4193,13 +4889,25 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
-      ["/api/admin/history-summary-model", historySummaryModel.routes(requireUser)],
+      [
+        "/api/conversation-interactions",
+        conversationInteractions.routes(requireUser),
+      ],
+      [
+        "/api/admin/history-summary-model",
+        historySummaryModel.routes(requireUser),
+      ],
       [
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({
           requireUser,
-          kernel: probeConfiguredHermes ? "hermes" : "builtin",
+          kernel: config.dshKernel
+            ? "dsh"
+            : probeConfiguredHermes
+              ? "hermes"
+              : "builtin",
           ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
+          ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
         }),
       ],
       [
@@ -4226,7 +4934,14 @@ const app = createApp(
       ["/p", pages.publicRoutes()],
       ["/api/schedules", schedules.routes(requireUser)],
       ["/api/task-center", taskCenter.routes(requireUser)],
-      ...(localAgents ? [["/api/local-agents", localAgents.routes(requireUser)] satisfies [string, unknown]] : []),
+      ...(localAgents
+        ? [
+            ["/api/local-agents", localAgents.routes(requireUser)] satisfies [
+              string,
+              unknown,
+            ],
+          ]
+        : []),
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
@@ -4248,7 +4963,8 @@ const app = createApp(
               skills
                 .filter(
                   (skill) =>
-                    skill.ownerUserId === null || skill.ownerUserId === actor.id,
+                    skill.ownerUserId === null ||
+                    skill.ownerUserId === actor.id,
                 )
                 .map((skill) => skill.slug),
             );
@@ -4319,9 +5035,20 @@ const gatewayReplayCache = new GatewayReplayCache();
 
 serve<SocketData>({
   port,
+  hostname: process.env.CHISABOT_BIND_HOST?.trim() || "0.0.0.0",
   async fetch(request, server) {
-    if (gatewaySecret && isReplayedGatewayIdentity(gatewaySecret, request.headers, gatewayReplayCache)) {
-      return Response.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, { status: 401 });
+    if (
+      gatewaySecret &&
+      isReplayedGatewayIdentity(
+        gatewaySecret,
+        request.headers,
+        gatewayReplayCache,
+      )
+    ) {
+      return Response.json(
+        { ok: false, error: "请先登录。", ...authenticationRequired() },
+        { status: 401 },
+      );
     }
     const url = new URL(request.url);
     if (url.pathname === "/api/audio/transcriptions") {
@@ -4329,20 +5056,29 @@ serve<SocketData>({
     }
     // 计算机工具（打开网页、执行命令、接管）常常超过 Bun 默认的 10 秒空闲超时，被切断后用户看到
     // “计算机无法访问”而浏览器其实还在工作。由 agent-computer 自己的超时兜底。
-    if (url.pathname.startsWith("/api/computers/") && !request.headers.get("upgrade")) server.timeout(request, 0);
+    if (
+      url.pathname.startsWith("/api/computers/") &&
+      !request.headers.get("upgrade")
+    )
+      server.timeout(request, 0);
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
-    if (url.pathname.startsWith("/api/approvals/computer/")) server.timeout(request, 0);
+    if (url.pathname.startsWith("/api/approvals/computer/"))
+      server.timeout(request, 0);
     // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
-    if (url.pathname.startsWith("/api/internal/runtime-tools/")) server.timeout(request, 0);
+    if (
+      url.pathname.startsWith("/api/internal/runtime-tools/") ||
+      url.pathname.startsWith("/api/internal/dsh-tools/")
+    )
+      server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
-    if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade")) server.timeout(request, 60);
+    if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade"))
+      server.timeout(request, 60);
     // 模型回合是流式的（SSE）：免费 / 慢模型首个 token 前常常要想十几秒，带很多工具时更久。Bun 默认
     // 10 秒没有字节就切断连接，用户看到的就是「network error」、回合半途而废（2026-10-13 实测）。
     // 流式接口不设空闲超时，由运行本身的超时 / 停止兜底。
     const isKnownStreamPath =
-      url.pathname.startsWith("/api/copilotkit/") ||
+      isConversationPath(url.pathname) ||
       url.pathname.startsWith("/api/channels/") ||
-      url.pathname.startsWith("/api/conversations/") ||
       url.pathname.startsWith("/api/approvals/");
     const hasSessionOrToken = Boolean(
       request.headers.get("cookie") ||
@@ -4350,7 +5086,7 @@ serve<SocketData>({
         request.headers.get("x-chisabot-gateway-sig"),
     );
     if (
-      url.pathname.startsWith("/api/copilotkit/") ||
+      isConversationPath(url.pathname) ||
       ((isKnownStreamPath || hasSessionOrToken) &&
         request.headers.get("accept")?.includes("text/event-stream"))
     )
@@ -4460,23 +5196,36 @@ serve<SocketData>({
       // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
-          const buffered = (ws as unknown as { bufferedAmount?: number }).bufferedAmount;
+          const buffered = (ws as unknown as { bufferedAmount?: number })
+            .bufferedAmount;
           if (typeof buffered === "number" && buffered > 2_000_000) {
             return; // drop stale frame rather than queue forever
           }
           ws.send(String(event.data));
         } catch {
-          try { inward.close(); } catch { /* ignore */ }
+          try {
+            inward.close();
+          } catch {
+            /* ignore */
+          }
         }
       };
       inward.onclose = () => {
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       };
       inward.onerror = () => {
         bumpOps(OPS_CODES.STREAM_DISCONNECT, {
           fields: { reason: "upstream-error" },
         });
-        try { ws.close(); } catch { /* ignore */ }
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       };
     },
     message(ws, raw) {
@@ -4523,6 +5272,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     void taskCenter.stop();
     wakeUpReaper.stop();
     approvalSweep.stop();
+    interactionSweep.stop();
+    confirmationSweep.stop();
+    dshRecoverySweep?.stop();
     personResponseSweep.stop();
     groupSweep.stop();
     void Promise.allSettled([
@@ -4560,7 +5312,17 @@ if (process.env.CHISABOT_IM !== "0") {
   setTimeout(() => {
     void imService
       ?.startAll()
-      .then((count) => count && console.info(JSON.stringify({ type: "im-started", connections: count })))
-      .catch((error) => console.error(JSON.stringify({ type: "im-start-failed", reason: String(error) })));
+      .then(
+        (count) =>
+          count &&
+          console.info(
+            JSON.stringify({ type: "im-started", connections: count }),
+          ),
+      )
+      .catch((error) =>
+        console.error(
+          JSON.stringify({ type: "im-start-failed", reason: String(error) }),
+        ),
+      );
   }, 3000);
 }

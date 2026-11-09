@@ -1,8 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import { z } from "zod";
-import { buildAgents } from "../src/copilot";
 import { currentApprovalContext } from "../src/approvals/types";
 import { HeadlessToolSuspension } from "../src/computer/headless-tools";
+import { buildAgents } from "../src/conversation-runtime";
 
 test("a real built-in native tool carries provider call identity and suspends AG-UI without a fake tool result", async () => {
   const transport = spyOn(globalThis, "fetch").mockImplementation(
@@ -104,7 +104,7 @@ test("a real built-in native tool carries provider call identity and suspends AG
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "CUSTOM",
-        name: "openbot.headless.waiting",
+        name: "chisabot.headless.waiting",
       }),
     );
     expect(events).toContainEqual(

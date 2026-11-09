@@ -6,16 +6,16 @@ import {
   isHonestSendFailureReason,
   raceSendWatchdog,
   reportBudgetEvent,
-  sendReachedServer,
   SEND_HANG_REASON,
   SEND_REPLY_HANG_REASON,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
-} from "../src/lib/copilot/connection-drop";
-import { friendlyStopReason } from "../src/lib/copilot/stopped-turn";
+} from "../src/lib/conversations/connection-drop";
+import { friendlyStopReason } from "../src/lib/conversations/stopped-turn";
 
 test("browser-side stream failures are connection drops, not model errors", () => {
   expect(isConnectionDrop(new TypeError("network error"))).toBe(true);
@@ -61,9 +61,12 @@ test("the lost-connection sentence does not blame the model", () => {
 
 const fakeClock = () => {
   let t = 0;
-  return { now: () => t, sleep: async (ms: number) => {
-    t += ms;
-  } };
+  return {
+    now: () => t,
+    sleep: async (ms: number) => {
+      t += ms;
+    },
+  };
 };
 
 test("server still running → continuing, without reading the stored turn", async () => {

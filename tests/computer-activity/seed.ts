@@ -72,9 +72,9 @@ const actor = { id: user };
 
 async function ensureThread(prompt: string, runId: string) {
   await database.execute(sql`
-    insert into openbot_local_threads (id, owner_user_id, agent_id, messages)
+    insert into chisabot_local_threads (id, owner_user_id, agent_id, messages)
     values (${thread}, ${user}, ${bot}, ${JSON.stringify([{ id: `u-${runId}`, role: "user", content: prompt }])}::text::jsonb)
-    on conflict (id) do update set messages = openbot_local_threads.messages || excluded.messages`);
+    on conflict (id) do update set messages = chisabot_local_threads.messages || excluded.messages`);
 }
 
 let call = 0;
@@ -98,7 +98,7 @@ if (phase === "history") {
     sql`delete from computer_activity_steps where computer_id = ${bot}`,
   );
   await database.execute(
-    sql`update openbot_local_threads set messages = '[]'::jsonb where id = ${thread}`,
+    sql`update chisabot_local_threads set messages = '[]'::jsonb where id = ${thread}`,
   );
   // 时间断言用：三步之间隔开 1 秒以上，记下每一步写入前后的真实时间，
   // activity.mjs 拿界面上每条的 <time> 来对（v0.1.78 每条都显示同一个时间）。
@@ -167,7 +167,7 @@ if (phase === "history") {
     READ_CALL,
   );
   await database.execute(sql`
-    update openbot_local_threads set messages = messages || ${JSON.stringify([
+    update chisabot_local_threads set messages = messages || ${JSON.stringify([
       {
         id: "a-jump",
         role: "assistant",

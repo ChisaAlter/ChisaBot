@@ -1,28 +1,29 @@
 import type { Message } from "@ag-ui/core";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { restampOverlayMarker } from "@/lib/overlay-back";
-import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
-import { LandingRedirect } from "@/components/agents/landing-redirect";
-import { channelListQueryOptions } from "@/lib/channels/queries";
-import { reusableEmptyChannelFor } from "@/lib/channels/latest";
-import { ChannelAvatar } from "@/components/channels/avatar";
-import { PermissionChip } from "@/components/chat/permission-chip";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
-import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
-import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
+import { LandingRedirect } from "@/components/agents/landing-redirect";
+import { ChannelAvatar } from "@/components/channels/avatar";
 import { canSend, type Recipient } from "@/components/channels/compose-state";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { seedMessage } from "@/components/channels/transcript-messages";
-import {
-  agentListQueryOptions,
-  agentQueryOptions,
-} from "@/lib/agents/queries";
+import { PermissionChip } from "@/components/chat/permission-chip";
+import { agentListQueryOptions, agentQueryOptions } from "@/lib/agents/queries";
 import { reclaimDraftText } from "@/lib/channels/draft-channel";
+import { reusableEmptyChannelFor } from "@/lib/channels/latest";
+import { channelListQueryOptions } from "@/lib/channels/queries";
 import { useStartChannel } from "@/lib/channels/start";
 import { addDraftFiles } from "@/lib/chat/ui-memory";
+import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
+import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
+import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
+import { restampOverlayMarker } from "@/lib/overlay-back";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { newId } from "../../../../lib/new-id";
 
@@ -48,7 +49,9 @@ const INTRO_TRIES = [
 const AGENT_NOT_FOUND = "Agent not found.";
 
 export const Route = createFileRoute("/_authed/_app/channel/new")({
-  validateSearch: (search: Record<string, unknown>): { agent?: string; topic?: "new"; watch?: boolean } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { agent?: string; topic?: "new"; watch?: boolean } => ({
     ...(typeof search.agent === "string" ? { agent: search.agent } : {}),
     // 新话题（DESIGN-v3 §5.3）：留在这个机器人的空聊天，不转跳到它已有的对话；第一条消息发出时才建会话。
     ...(search.topic === "new" ? { topic: "new" as const } : {}),
@@ -61,10 +64,25 @@ export const Route = createFileRoute("/_authed/_app/channel/new")({
 function RouteComponent() {
   const { agent, topic, watch } = Route.useSearch();
   if (!agent) return <LandingRedirect />;
-  return <BotChat agent={agent} fresh={topic === "new"} watch={watch === true} key={`${agent}:${topic ?? ""}`} />;
+  return (
+    <BotChat
+      agent={agent}
+      fresh={topic === "new"}
+      watch={watch === true}
+      key={`${agent}:${topic ?? ""}`}
+    />
+  );
 }
 
-function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch: boolean }) {
+function BotChat({
+  agent,
+  fresh,
+  watch,
+}: {
+  agent: string;
+  fresh: boolean;
+  watch: boolean;
+}) {
   /*
    * 没发就离开的草稿对话（A1）：它藏着的页面要等这一页画完才卸载、回收，字那时才放回 `new:<agent>`，而下面输入框
    * 只在挂载时读一次草稿。所以挂上这一页时先同步把字挪回来（`reclaimDraftText`），输入框第一帧就有（#399 回归）。
@@ -84,12 +102,20 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
   const [sent, setSent] = useState<Message | null>(null);
 
   // Always a new topic: a conversation that already has messages is never reopened from here
-  // ("和它聊天" entries resolve the ongoing chat first, `useOpenBotChat`). Only the Bot's most recent
+  // ("和它聊天" entries resolve the ongoing chat first, `useBotChat`). Only the Bot's most recent
   // channel, when nothing was said in it yet, is reused rather than leaving an empty one beside it.
-  const existing = sent || fresh ? undefined : reusableEmptyChannelFor(agent, channels.data)?.id;
+  const existing =
+    sent || fresh
+      ? undefined
+      : reusableEmptyChannelFor(agent, channels.data)?.id;
   useEffect(() => {
     if (existing)
-      void navigate({ to: "/channel/$channelId", params: { channelId: existing }, search: watch ? { watch: true } : {}, replace: true });
+      void navigate({
+        to: "/channel/$channelId",
+        params: { channelId: existing },
+        search: watch ? { watch: true } : {},
+        replace: true,
+      });
   }, [existing, navigate, watch]);
 
   // 右栏「计算机」开关（DESIGN.md §79）：和对话页一样记在 `watch` 搜索参数里（刷新保留、后退关闭）。
@@ -128,9 +154,7 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
     enabled: Boolean(agent) && profiles !== undefined && !listed,
     retry: false,
   });
-  const chosen =
-    listed ??
-    (fetched?.id === agent ? fetched : undefined);
+  const chosen = listed ?? (fetched?.id === agent ? fetched : undefined);
   const needsUrlAgentDetail =
     Boolean(agent) && profiles !== undefined && !listed;
   // The Bot is chosen in the left roster only (no "至：" picker here); `?agent=` carries the choice.
@@ -218,7 +242,12 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
     }
   };
 
-  if ((profiles === undefined && !rosterError) || channels.isPending || existing) return null;
+  if (
+    (profiles === undefined && !rosterError) ||
+    channels.isPending ||
+    existing
+  )
+    return null;
 
   return (
     <div className="relative flex h-full flex-col">
@@ -237,11 +266,21 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
         <div className="chat-intro">
           <ChannelAvatar participantIds={[chosen.id]} size={48} />
           <p className="chat-intro-name">{chosen.name}</p>
-          {chosen.title ? <p className="chat-intro-sub">{chosen.title}</p> : null}
-          {fresh ? <p className="chat-intro-topic">{"新话题 · 之前的对话不会发给它"}</p> : null}
+          {chosen.title ? (
+            <p className="chat-intro-sub">{chosen.title}</p>
+          ) : null}
+          {fresh ? (
+            <p className="chat-intro-topic">
+              {"新话题 · 之前的对话不会发给它"}
+            </p>
+          ) : null}
           {/* 新朋友不知道能问什么（成熟度扫查 F2）：几句不带副作用的开场，点了直接发。 */}
           {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
-          <div className="chat-intro-tries" role="group" aria-label="试试这样问">
+          <div
+            className="chat-intro-tries"
+            role="group"
+            aria-label="试试这样问"
+          >
             {INTRO_TRIES.map((text) => (
               <button
                 className="chat-intro-try"
@@ -257,7 +296,9 @@ function BotChat({ agent, fresh, watch }: { agent: string; fresh: boolean; watch
         </div>
       ) : null}
       <ConversationView
-        modelControl={chosen ? <BotModelSelector agentId={chosen.id} compact /> : null}
+        modelControl={
+          chosen ? <BotModelSelector agentId={chosen.id} compact /> : null
+        }
         leadingControl={chosen ? <PermissionChip agentId={chosen.id} /> : null}
         sendBlocked={modelSaving}
         // Choosing a coworker answers the "To:" field, so the message is what remains: the caret

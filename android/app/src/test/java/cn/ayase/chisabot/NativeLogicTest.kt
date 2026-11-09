@@ -23,6 +23,8 @@ import cn.ayase.chisabot.ui.MIC_DENIED_ONCE_MESSAGE
 import cn.ayase.chisabot.ui.MIC_DENIED_SETTINGS_MESSAGE
 import cn.ayase.chisabot.ui.isMicPermanentlyDenied
 import cn.ayase.chisabot.ui.micResourcesToGrant
+import cn.ayase.chisabot.ui.webDownloadName
+import cn.ayase.chisabot.ui.webExportPickerMime
 import cn.ayase.chisabot.ui.siteOf
 import cn.ayase.chisabot.ui.needsShell
 import cn.ayase.chisabot.ui.sameTitle
@@ -38,6 +40,17 @@ import org.junit.Test
 
 class NativeLogicTest {
     private fun ev(s: String) = Json.parseToJsonElement(s) as JsonObject
+
+    @Test fun webDownloadPreservesServerUnicodeFilenameAndDropsPaths() {
+        assertEquals("回滚验收文件.txt", webDownloadName("https://example.com/api/chat-files/id?download=1", "attachment; filename*=UTF-8''%E5%9B%9E%E6%BB%9A%E9%AA%8C%E6%94%B6%E6%96%87%E4%BB%B6.txt", "application/octet-stream"))
+        assertEquals("a+b.txt", webDownloadName("https://example.com/file", "attachment; filename*=UTF-8''..%2Fa+b.txt", "text/plain"))
+    }
+
+    @Test fun exportPickerRetainsCodeExtensionWithoutOverridingSpecificMediaTypes() {
+        assertEquals("application/javascript", webExportPickerMime("file.js", "text/plain;charset=utf-8"))
+        assertEquals("image/png", webExportPickerMime("image.js", "image/png"))
+        assertEquals("application/octet-stream", webExportPickerMime("unknown.custom", "application/octet-stream"))
+    }
 
     @Test fun reducerStreamsTextAndTools() {
         val r = AgUiReducer(listOf(ChatMessage("u1", "user", "hi")))

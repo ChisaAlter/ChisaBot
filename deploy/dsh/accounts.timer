@@ -1,0 +1,10 @@
+[Unit]
+Description=Prepare ChisaBot execution environments for newly registered accounts
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=30s
+Unit=chisabot-dsh-accounts.service
+
+[Install]
+WantedBy=timers.target

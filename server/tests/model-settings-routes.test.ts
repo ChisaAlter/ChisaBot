@@ -35,7 +35,7 @@ function appFor(role: "admin" | "user" | null = "admin", fail = false) {
     },
   } as never;
   args[2] = { rolesForUser: async () => [role] } as never;
-  args[37] = {
+  args[36] = {
     get: async () => config,
     save: async (input: unknown, by: string) => {
       calls.push({ input, by });

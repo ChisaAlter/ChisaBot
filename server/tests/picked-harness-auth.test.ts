@@ -7,7 +7,7 @@ import { createAgentProfileStore } from "../src/agents/profile-store";
 import { createRuntimeAgentLoader } from "../src/agents/runtime-agents";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
-import { buildAgents } from "../src/copilot";
+import { buildAgents } from "../src/conversation-runtime";
 import { encryptSecret } from "../src/credentials";
 import { createDatabase } from "../src/db/client";
 import { loadTenantPackage } from "../src/tenant-package";

@@ -1,19 +1,32 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { WORK_STYLE_GUIDANCE } from "../../shared/bot-prompt";
-import type { ChatFileView } from "../../shared/chat-files";
-import type { PageView } from "../../shared/pages";
 import { groupArtifactsByBucket } from "@/components/bot-profile/files-section";
-import { PANEL_PRESETS, panelPresetBatch } from "@/components/panels/panel-rail";
+import {
+  PANEL_PRESETS,
+  panelPresetBatch,
+} from "@/components/panels/panel-rail";
 import { isWorkCall } from "@/lib/chat/work-steps";
-import { BotExchangeCard, describeHandoffStatus } from "@/lib/copilot/handoff-tool";
-import { HANDED_OVER } from "@/lib/copilot/markers";
+import {
+  BotExchangeCard,
+  describeHandoffStatus,
+} from "@/lib/conversations/handoff-tool";
+import { HANDED_OVER } from "@/lib/conversations/markers";
 import {
   CONNECTED_ACCOUNTS_TABS,
   normalizeConnectedAccountsTab,
 } from "@/routes/_authed/settings/connected-accounts";
 import { VAULT_SECURITY_NOTE } from "@/routes/_authed/settings/vault";
+import { WORK_STYLE_GUIDANCE } from "../../shared/bot-prompt";
+import type { ChatFileView } from "../../shared/chat-files";
+import type { PageView } from "../../shared/pages";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => {
@@ -140,7 +153,8 @@ describe("CB-093: Bot-to-Bot exchange anchor card", () => {
       describeHandoffStatus({
         asked: "数据分析师",
         running: false,
-        result: "This is already 1 Bot deep, which is as far as this deployment allows.",
+        result:
+          "This is already 1 Bot deep, which is as far as this deployment allows.",
       }),
     ).toMatchObject({
       state: "depth-cap",

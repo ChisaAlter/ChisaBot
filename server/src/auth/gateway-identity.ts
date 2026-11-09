@@ -1,6 +1,12 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { MiddlewareHandler } from "hono";
+import { authenticationRequired } from "../legacy/protocol";
 import { DEV_ACTOR } from "./dev-actor";
 import type { AppVariables, AuthenticatedActor } from "./guards";
 import type { ChisaBotRole } from "./roles";
@@ -34,9 +40,16 @@ export const GATEWAY_IDENTITY_HEADER = "x-chisabot-identity";
 export const LOCAL_CALLER_HEADER = "x-chisabot-local-caller";
 const MAX_SKEW_MS = 2 * 60_000;
 
-export type GatewayIdentity = { id: string; name: string; role: ChisaBotRole; issuedAt: number; nonce?: string };
+export type GatewayIdentity = {
+  id: string;
+  name: string;
+  role: ChisaBotRole;
+  issuedAt: number;
+  nonce?: string;
+};
 
-const b64 = (value: Buffer | string) => Buffer.from(value).toString("base64url");
+const b64 = (value: Buffer | string) =>
+  Buffer.from(value).toString("base64url");
 
 function mac(secret: string, body: string): Buffer {
   return createHmac("sha256", secret).update(body).digest();
@@ -49,7 +62,13 @@ export function signGatewayIdentity(
   now = Date.now(),
 ): string {
   const payload = b64(
-    JSON.stringify({ u: identity.id, n: identity.name, r: identity.role, t: now, j: randomBytes(16).toString("base64url") }),
+    JSON.stringify({
+      u: identity.id,
+      n: identity.name,
+      r: identity.role,
+      t: now,
+      j: randomBytes(16).toString("base64url"),
+    }),
   );
   const body = `v1.${payload}`;
   return `${body}.${b64(mac(secret, body))}`;
@@ -64,7 +83,8 @@ export function verifyGatewayIdentity(
   header: string | null | undefined,
   now = Date.now(),
 ): GatewayIdentity | null {
-  if (!secret || typeof header !== "string" || header.length > 1024) return null;
+  if (!secret || typeof header !== "string" || header.length > 1024)
+    return null;
   const parts = header.split(".");
   if (parts.length !== 3 || parts[0] !== "v1") return null;
   const body = `v1.${parts[1]}`;
@@ -75,7 +95,8 @@ export function verifyGatewayIdentity(
   } catch {
     return null;
   }
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  if (given.length !== expected.length || !timingSafeEqual(given, expected))
+    return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
@@ -86,10 +107,21 @@ export function verifyGatewayIdentity(
   const { u, n, r, t, j } = parsed as Record<string, unknown>;
   if (typeof u !== "string" || !USER_ID.test(u)) return null;
   if (r !== "admin" && r !== "user") return null;
-  if (typeof t !== "number" || !Number.isFinite(t) || Math.abs(now - t) > MAX_SKEW_MS) return null;
+  if (
+    typeof t !== "number" ||
+    !Number.isFinite(t) ||
+    Math.abs(now - t) > MAX_SKEW_MS
+  )
+    return null;
   if (j !== undefined && (typeof j !== "string" || !NONCE.test(j))) return null;
   const name = typeof n === "string" && n.trim() ? n.trim().slice(0, 64) : u;
-  return { id: u, name, role: r, issuedAt: t, ...(typeof j === "string" ? { nonce: j } : {}) };
+  return {
+    id: u,
+    name,
+    role: r,
+    issuedAt: t,
+    ...(typeof j === "string" ? { nonce: j } : {}),
+  };
 }
 
 /**
@@ -123,14 +155,15 @@ export class GatewayReplayCache {
 
   /** 清掉已过期的条目。 */
   sweep(now = Date.now()): void {
-    for (const [key, until] of this.seen) if (until < now) this.seen.delete(key);
+    for (const [key, until] of this.seen)
+      if (until < now) this.seen.delete(key);
   }
 }
 
 /**
  * serve 入口调用：这个 HTTP 请求带的身份头是不是重放。只管「验签通过且带 j」的头；
  * 无效的头交给后面的 resolveGatewayRequest 照旧 401，旧格式（无 j）照旧放行。
- * 同一个请求在应用内部会被多处 resolve（守卫、CopilotKit 两次、WebSocket），所以消费只在入口做一次。
+ * 同一个请求在应用内部会被多处 resolve（守卫、conversation runtime 两次、WebSocket），所以消费只在入口做一次。
  */
 export function isReplayedGatewayIdentity(
   secret: string,
@@ -146,7 +179,9 @@ export function isReplayedGatewayIdentity(
 }
 
 /** 读密钥：CHISABOT_GATEWAY_SECRET 或 CHISABOT_GATEWAY_SECRET_FILE（≥32 字符）；没配 = 不启用。 */
-export function gatewaySecretFromEnvironment(environment: Record<string, string | undefined>): string | undefined {
+export function gatewaySecretFromEnvironment(
+  environment: Record<string, string | undefined>,
+): string | undefined {
   let secret = environment.CHISABOT_GATEWAY_SECRET?.trim();
   const file = environment.CHISABOT_GATEWAY_SECRET_FILE?.trim();
   if (!secret && file) {
@@ -157,7 +192,8 @@ export function gatewaySecretFromEnvironment(environment: Record<string, string 
     }
   }
   if (!secret) return undefined;
-  if (secret.length < 32) throw new Error("CHISABOT_GATEWAY_SECRET 至少 32 个字符。");
+  if (secret.length < 32)
+    throw new Error("CHISABOT_GATEWAY_SECRET 至少 32 个字符。");
   return secret;
 }
 
@@ -173,11 +209,16 @@ function viaGateway(headers: Headers): boolean {
  * （X-Real-IP 优先），**从不**读 CF-Connecting-IP。不经网关的直连 → null。
  */
 export function gatewayClientIp(headers: Headers): string | null {
-  const ip = headers.get("x-real-ip")?.trim() || headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const ip =
+    headers.get("x-real-ip")?.trim() ||
+    headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return ip ? ip.slice(0, 64) : null;
 }
 /** 本机调用方是否出示了与网关密钥匹配的 {@link LOCAL_CALLER_HEADER}（常量时间比较）。 */
-export function localCallerAuthorized(secret: string, headers: Headers): boolean {
+export function localCallerAuthorized(
+  secret: string,
+  headers: Headers,
+): boolean {
   if (!secret) return false;
   const given = headers.get(LOCAL_CALLER_HEADER);
   if (typeof given !== "string" || !given) return false;
@@ -188,7 +229,9 @@ export function localCallerAuthorized(secret: string, headers: Headers): boolean
 }
 
 /** 紧急：允许没有身份头、也没有本机证明的直连当管理员（默认关）。 */
-export function trustUnsignedLocal(environment: Record<string, string | undefined> = process.env): boolean {
+export function trustUnsignedLocal(
+  environment: Record<string, string | undefined> = process.env,
+): boolean {
   return environment.CHISABOT_TRUST_UNSIGNED_LOCAL?.trim() === "1";
 }
 
@@ -197,7 +240,9 @@ export type GatewayResolution =
   | { kind: "refuse" };
 
 /** 网关账号对应到应用里的人。管理员 = DEV_ACTOR（同一个 id / 邮箱，原有数据不变）。 */
-export function actorForIdentity(identity: GatewayIdentity): AuthenticatedActor {
+export function actorForIdentity(
+  identity: GatewayIdentity,
+): AuthenticatedActor {
   if (identity.id === DEV_ACTOR.id) return { ...DEV_ACTOR, role: "admin" };
   return {
     id: identity.id,
@@ -221,11 +266,15 @@ export function resolveGatewayRequest(
   const header = headers.get(GATEWAY_IDENTITY_HEADER);
   if (header) {
     const identity = verifyGatewayIdentity(secret, header, now);
-    return identity ? { kind: "actor", actor: actorForIdentity(identity) } : { kind: "refuse" };
+    return identity
+      ? { kind: "actor", actor: actorForIdentity(identity) }
+      : { kind: "refuse" };
   }
   if (viaGateway(headers)) return { kind: "refuse" };
-  if (localCallerAuthorized(secret, headers)) return { kind: "actor", actor: DEV_ACTOR };
-  if (trustUnsignedLocal(environment)) return { kind: "actor", actor: DEV_ACTOR };
+  if (localCallerAuthorized(secret, headers))
+    return { kind: "actor", actor: DEV_ACTOR };
+  if (trustUnsignedLocal(environment))
+    return { kind: "actor", actor: DEV_ACTOR };
   return { kind: "refuse" };
 }
 
@@ -233,7 +282,7 @@ export type ProvisionUser = (actor: AuthenticatedActor) => Promise<void>;
 
 /**
  * 网关身份模式的 requireUser：认出是谁，第一次见到的朋友账号自动在 users / user_roles 建行（provision）。
- * 401 带 openbotAuthRequired，网页里的 workspace.js 会据此跳回登录页。
+ * 401 带 chisabotAuthRequired，网页里的 workspace.js 会据此跳回登录页。
  */
 export function createGatewayRequireUser(
   secret: string,
@@ -242,7 +291,10 @@ export function createGatewayRequireUser(
   return async (context, next) => {
     const resolved = resolveGatewayRequest(secret, context.req.raw.headers);
     if (resolved.kind === "refuse") {
-      return context.json({ ok: false, error: "请先登录。", openbotAuthRequired: true }, 401);
+      return context.json(
+        { ok: false, error: "请先登录。", ...authenticationRequired() },
+        401,
+      );
     }
     await provision(resolved.actor);
     context.set("actor", resolved.actor);

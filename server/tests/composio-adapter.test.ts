@@ -4724,7 +4724,9 @@ describe("what a malformed field of a row actually costs", () => {
       fakeVendor({
         authConfigs: {
           list: async () => ({
-            items: [{ id: "   ", name: "Linear (ChisaBot)", status: "ENABLED" }],
+            items: [
+              { id: "   ", name: "Linear (ChisaBot)", status: "ENABLED" },
+            ],
           }),
         },
       }),
@@ -5664,7 +5666,11 @@ describe("a field Composio padded with whitespace", () => {
         authConfigs: {
           list: async () => ({
             items: [
-              { id: "ac_ours", name: "Linear (ChisaBot)", status: " DISABLED " },
+              {
+                id: "ac_ours",
+                name: "Linear (ChisaBot)",
+                status: " DISABLED ",
+              },
             ],
           }),
         },

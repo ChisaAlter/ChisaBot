@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 
 /**
- * 线程消息的增量读取：GET /api/copilotkit/threads/:id/messages?since=<version>&cursor=<cursor>。
+ * 线程消息的增量读取：GET /api/conversations/threads/:id/messages?since=<version>&cursor=<cursor>。
  *
  * 不带这两个参数时响应原样不动（旧客户端照旧拿整份 { messages }）。带了参数：
  * - version 是整份消息的指纹（条数 + 逐条前缀哈希）；since 与它相同时只回 { unchanged: true }，不再传整份历史；
@@ -99,7 +99,7 @@ function remember(key: string, prefix: readonly string[]) {
   if (oldest !== undefined) known.delete(oldest);
 }
 
-/** 套在 /api/copilotkit/* 外面：本地后端和 Intelligence 两条路读出来的 { messages } 都按 since/cursor 改写。 */
+/** 套在 /api/conversations/* 外面：本地后端和 Intelligence 两条路读出来的 { messages } 都按 since/cursor 改写。 */
 export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
   await next();
   if (context.req.method !== "GET") return;

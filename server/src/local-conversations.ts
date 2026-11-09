@@ -1,4 +1,3 @@
-import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import {
   type AbstractAgent,
   type BaseEvent,
@@ -7,36 +6,64 @@ import {
   type Message,
 } from "@ag-ui/client";
 import { MessageSchema } from "@ag-ui/core/schemas";
-import {
-  AgentRunner,
-  type AgentRunnerConnectRequest,
-  type AgentRunnerRunRequest,
-  type AgentRunnerStopRequest,
-  createRunEventFinalizer,
-} from "@copilotkit/runtime/v2";
 import { Observable, ReplaySubject, Subject } from "rxjs";
 import { concatMap, filter } from "rxjs/operators";
 import { capConnectMessages } from "../../shared/connect-snapshot";
-import { fallbackNotice } from "./agents/model-fallback";
 import { forgetHistorySummaries } from "./agents/history-budget";
+import { fallbackNotice } from "./agents/model-fallback";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
 import {
   estimateTokens,
   readingFromRunFinished,
   type ThreadContextReading,
 } from "./context-usage";
+import {
+  BACKGROUND_CAPACITY,
+  backgroundCount,
+  CAPACITY_WAIT_MESSAGE,
+  createExecutionCapacity,
+  lockBackgroundAccount,
+  reportCapacityState,
+} from "./conversations/capacity";
+import {
+  type ConversationCommands,
+  createConversationCommands,
+} from "./conversations/commands";
+import {
+  resolveInboxMessage,
+  retainInboxAttachments,
+  stripInboxContext,
+} from "./conversations/inbox-message";
+import { createConversationInteractions } from "./conversations/interactions";
+import { assertConversationAdmissionOpen } from "./conversations/maintenance";
+import { createDshRunJournal } from "./conversations/run-journal";
+import {
+  type AgentRunnerConnectRequest,
+  type AgentRunnerRunRequest,
+  type AgentRunnerStopRequest,
+  type ConversationRunner,
+  createEventLifecycles,
+  createRunEventFinalizer,
+} from "./conversations/runner";
 import type { Database } from "./db/client";
 import { reasonWithoutStatement } from "./db/query-failure";
 import { imageDimsFor } from "./image-dims";
+import {
+  assertConversationNamespace,
+  conversationPath,
+  normalizeConversationEvent,
+  normalizeRunInput,
+} from "./legacy/protocol";
+import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import {
   anchorsPresent,
   classifyMidTurnIntent,
   INBOX_TEXT_LIMIT,
   isWorkerResult,
   newSteerSession,
-  textOfMessage,
   ThreadInbox,
   type TranscriptInjection,
+  textOfMessage,
   weaveMessages,
   withSteering,
 } from "./thread-inbox";
@@ -170,11 +197,13 @@ export function prepareConversationMessages(
   input: readonly Message[],
   persistedInput?: readonly Message[],
   pausedUserIds: ReadonlySet<string> = new Set(),
+  recoveringOutputIds: ReadonlySet<string> = new Set(),
 ) {
   // Already-read supplements stay visible as history, but a later turn must not execute them.
   // Assistant calls and their tool results remain paired in the execution history.
-  const execution = mergeConversationMessages(stored, input)
-    .filter((message) => message.role !== "user" || !pausedUserIds.has(message.id));
+  const execution = mergeConversationMessages(stored, input).filter(
+    (message) => message.role !== "user" || !pausedUserIds.has(message.id),
+  );
   const visible = mergeConversationMessages(stored, persistedInput ?? input);
   const visibleById = new Map(visible.map((message) => [message.id, message]));
   const inputIds = new Set(execution.map((message) => message.id));
@@ -194,11 +223,17 @@ export function prepareConversationMessages(
         : [],
     ),
   );
-  const project = (messages: readonly Message[]) =>
-    mergeConversationMessages(
-      visible,
+  const project = (messages: readonly Message[]) => {
+    const recovered = new Map(
+      messages
+        .filter((message) => recoveringOutputIds.has(message.id))
+        .map((message) => [message.id, message]),
+    );
+    return mergeConversationMessages(
+      visible.map((message) => recovered.get(message.id) ?? message),
       messages.filter((message) => !inputIds.has(message.id)),
     );
+  };
   // Snapshots also appear inside custom event/state payloads. Replace only known input message
   // objects; fresh outputs, tool results, and arbitrary domain state retain their original values.
   const sanitize = (value: unknown): unknown => {
@@ -251,6 +286,7 @@ type ThreadRow = {
   lock_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  snapshot_sequence?: string | number | bigint | null;
 };
 type EventRow = { sequence: string | number | bigint; event: BaseEvent };
 type ThreadIdentity = { threadId: string; userId: string };
@@ -258,7 +294,12 @@ type ThreadCreation = ThreadIdentity & {
   agentId: string;
   learningContainerId?: string;
 };
-type ThreadLock = ThreadCreation & { runId: string; ttlSeconds?: number };
+type ThreadLock = ThreadCreation & {
+  runId: string;
+  ttlSeconds?: number;
+  background?: boolean;
+  signal?: AbortSignal;
+};
 type LeaseIdentity = { threadId: string; runId: string };
 
 function record(row: ThreadRow) {
@@ -285,7 +326,7 @@ class ConversationStore {
 
   async thread(threadId: string): Promise<ThreadRow> {
     const rows = await this.database.$client.unsafe<ThreadRow[]>(
-      "SELECT * FROM openbot_local_threads WHERE id = $1",
+      "SELECT * FROM chisabot_local_threads WHERE id = $1",
       [threadId],
     );
     if (!rows[0]) throw new LocalConversationError("Thread not found", 404);
@@ -300,10 +341,14 @@ class ConversationStore {
   }
 
   async events(threadId: string): Promise<EventRow[]> {
-    return await this.database.$client.unsafe<EventRow[]>(
-      "SELECT sequence, event FROM openbot_local_events WHERE thread_id = $1 ORDER BY sequence",
+    const rows = await this.database.$client.unsafe<EventRow[]>(
+      "SELECT sequence, event FROM chisabot_local_events WHERE thread_id = $1 ORDER BY sequence",
       [threadId],
     );
+    return rows.map((row) => ({
+      ...row,
+      event: normalizeConversationEvent(row.event),
+    }));
   }
 
   /** 只要最大序号，接入时不必把整段事件日志读进内存（长对话可达数千条 / 上 MB）。 */
@@ -311,7 +356,7 @@ class ConversationStore {
     const rows = await this.database.$client.unsafe<
       { sequence: string | number | bigint | null }[]
     >(
-      "SELECT max(sequence) AS sequence FROM openbot_local_events WHERE thread_id = $1",
+      "SELECT max(sequence) AS sequence FROM chisabot_local_events WHERE thread_id = $1",
       [threadId],
     );
     const value = rows[0]?.sequence;
@@ -325,7 +370,8 @@ class ConversationStore {
     state: unknown,
   ) {
     const rows = await this.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb, updated_at = now()
+      `UPDATE chisabot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb,
+       snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM chisabot_local_events WHERE thread_id=$1), updated_at = now()
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING id`,
       [threadId, runId, JSON.stringify(messages), JSON.stringify(state ?? {})],
     );
@@ -344,8 +390,8 @@ class ConversationStore {
     const rows = await this.database.$client.unsafe<
       { sequence: string | number | bigint }[]
     >(
-      `INSERT INTO openbot_local_events (thread_id, run_id, event)
-       SELECT id, $2, $3::text::jsonb FROM openbot_local_threads
+      `INSERT INTO chisabot_local_events (thread_id, run_id, event)
+       SELECT id, $2, $3::text::jsonb FROM chisabot_local_threads
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING sequence`,
       [threadId, runId, JSON.stringify(event)],
     );
@@ -363,7 +409,7 @@ class ConversationStore {
  *
  * 以前只把它标成 interrupted、放掉锁：存下的事件停在半截（最后一条常常是 TOOL_CALL_END，没有结果、没有
  * RUN_ERROR），重新打开对话时那张「正在操作你的设备」卡永远在转，报错条要么没有，要么说成「连不上模型服务」。
- * 现在按正常收尾的同一套规则（@copilotkit/shared finalizeRunEvents）把它补完：没结果的工具调用补一条
+ * 现在按正常收尾的同一套规则（finalizeRunEvents）把它补完：没结果的工具调用补一条
  * 「被打断」的结果，最后补一条说清原因的 RUN_ERROR；对话记录里也给这些调用补上同样的结果。
  * 只追加，不改不删已有的事件和消息。
  */
@@ -376,11 +422,11 @@ export async function closeInterruptedRun(
   runId: string,
 ): Promise<boolean> {
   const rows = await database.$client.unsafe<{ event: BaseEvent }[]>(
-    "SELECT event FROM openbot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
+    "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
     [threadId, runId],
   );
   if (!rows.length) return false;
-  const events = rows.map((row) => row.event);
+  const events = rows.map((row) => normalizeConversationEvent(row.event));
   if (
     events.some(
       (event) =>
@@ -397,7 +443,7 @@ export async function closeInterruptedRun(
   if (!appended.length) return false;
   for (const event of appended) {
     await database.$client.unsafe(
-      "INSERT INTO openbot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
+      "INSERT INTO chisabot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
       [threadId, runId, JSON.stringify(event)],
     );
   }
@@ -408,7 +454,7 @@ export async function closeInterruptedRun(
   >;
   if (results.length) {
     const thread = await database.$client.unsafe<{ messages: Message[] }[]>(
-      "SELECT messages FROM openbot_local_threads WHERE id = $1",
+      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
       [threadId],
     );
     const messages = thread[0]?.messages;
@@ -445,7 +491,7 @@ export async function closeInterruptedRun(
       }
       if (next !== messages) {
         await database.$client.unsafe(
-          "UPDATE openbot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
+          "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
           [threadId, JSON.stringify(next)],
         );
       }
@@ -468,7 +514,7 @@ export class LocalConversationClient {
         400,
       );
     await this.store.database.$client.unsafe(
-      `INSERT INTO openbot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, $3)
+      `INSERT INTO chisabot_local_threads (id, owner_user_id, agent_id) VALUES ($1, $2, $3)
        ON CONFLICT (id) DO NOTHING`,
       [identity.threadId, identity.userId, identity.agentId],
     );
@@ -491,29 +537,60 @@ export class LocalConversationClient {
     };
   }
 
-  async ɵacquireThreadLock(identity: ThreadLock) {
+  async acquireThreadLease(identity: ThreadLock) {
     await this.getOrCreateThread(identity);
-    const rows = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = $2,
+    for (;;) {
+      identity.signal?.throwIfAborted();
+      if (identity.background) {
+        const refusal = await createDshRunJournal(
+          this.store.database,
+        ).continuationRefusal(identity.threadId, identity.runId);
+        if (refusal) throw new LocalConversationError(refusal, 409);
+      }
+      const rows = await this.store.database.$client.begin(async (tx) => {
+        if (identity.background) {
+          await lockBackgroundAccount(tx, identity.userId);
+          if (
+            (await backgroundCount(tx, identity.userId)) >= BACKGROUND_CAPACITY
+          )
+            return null;
+        }
+        const claimed = await tx.unsafe(
+          `UPDATE chisabot_local_threads SET run_id = $2,
        lock_expires_at = now() + $5 * interval '1 second', updated_at = now()
        WHERE id = $1 AND owner_user_id = $3 AND agent_id = $4
-       AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2) RETURNING id`,
-      [
-        identity.threadId,
-        identity.runId,
-        identity.userId,
-        identity.agentId,
-        ttl(identity.ttlSeconds),
-      ],
-    );
-    if (rows.length === 0)
-      throw new LocalConversationError("Thread already running", 409);
-    return { threadId: identity.threadId, runId: identity.runId };
+       AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2)
+       AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.run_id<>$2 AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
+          [
+            identity.threadId,
+            identity.runId,
+            identity.userId,
+            identity.agentId,
+            ttl(identity.ttlSeconds),
+          ],
+        );
+        if (claimed.length && identity.background)
+          await tx.unsafe(
+            'UPDATE chisabot_local_runs SET execution=coalesce(execution,\'{"kind":"background"}\'::jsonb) WHERE thread_id=$1 AND run_id=$2',
+            [identity.threadId, identity.runId],
+          );
+        return claimed;
+      });
+      if (!rows) {
+        reportCapacityState("waiting");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      if (rows.length === 0)
+        throw new LocalConversationError("Thread already running", 409);
+      if (identity.background) reportCapacityState("admitted");
+      return { threadId: identity.threadId, runId: identity.runId };
+    }
   }
 
-  async ɵrenewThreadLock(identity: LeaseIdentity & { ttlSeconds: number }) {
+  async renewThreadLease(identity: LeaseIdentity & { ttlSeconds: number }) {
     const rows = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET lock_expires_at = now() + $3 * interval '1 second'
+      `UPDATE chisabot_local_threads SET lock_expires_at = now() + $3 * interval '1 second'
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING id`,
       [identity.threadId, identity.runId, ttl(identity.ttlSeconds)],
     );
@@ -528,20 +605,23 @@ export class LocalConversationClient {
    * 用户看到的就是「发消息没反应」。一个数据库只跑一个 ChisaBot 进程（compose 先停旧容器再起新的）；
    * 多副本部署设 CHISABOT_RELEASE_LOCKS_ON_START=0 关掉。
    */
-  async ɵreleaseOrphanedLocks(): Promise<{
+  async releaseOrphanedLocks(): Promise<{
     threads: number;
     runs: number;
     closed: number;
   }> {
+    await this.store.database.$client.unsafe(
+      "UPDATE chisabot_local_runs SET status='capacity_wait' WHERE status='reserved'",
+    );
     const runs = await this.store.database.$client.unsafe<
       { thread_id: string; run_id: string }[]
     >(
-      `UPDATE openbot_local_runs SET status = 'interrupted', finished_at = now()
-       WHERE status = 'running' RETURNING thread_id, run_id`,
+      `UPDATE chisabot_local_runs SET status = 'interrupted', finished_at = now()
+       WHERE status = 'running' AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_runs.thread_id AND d.run_id=chisabot_local_runs.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING thread_id, run_id`,
     );
     const threads = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
-       WHERE run_id IS NOT NULL RETURNING id`,
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
+       WHERE run_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_threads.id AND d.run_id=chisabot_local_threads.run_id AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
     );
     let closed = 0;
     for (const run of runs) {
@@ -562,27 +642,27 @@ export class LocalConversationClient {
   }
 
   /** 这个进程里没有对应的运行（上一个进程留下的锁）：按停止时直接释放，用户不用干等锁到期。 */
-  async ɵreleaseOrphanedLock(
+  async releaseOrphanedLock(
     threadId: string,
     runId?: string,
   ): Promise<boolean> {
     const rows = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE id = $1 AND run_id IS NOT NULL AND ($2::text IS NULL OR run_id = $2) RETURNING run_id`,
       [threadId, runId ?? null],
     );
     if (rows.length === 0) return false;
     await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_runs SET status = 'interrupted', finished_at = now()
+      `UPDATE chisabot_local_runs SET status = 'interrupted', finished_at = now()
        WHERE thread_id = $1 AND status = 'running'`,
       [threadId],
     );
     return true;
   }
 
-  async ɵcleanupThreadLock(identity: LeaseIdentity): Promise<void> {
+  async releaseThreadLease(identity: LeaseIdentity): Promise<void> {
     await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE id = $1 AND run_id = $2`,
       [identity.threadId, identity.runId],
     );
@@ -590,21 +670,23 @@ export class LocalConversationClient {
 
   /**
    * Track B：进程存活期间周期性清「已过期仍占着 run_id」的锁，以及把对应 running 标成 interrupted。
-   * 启动时的 ɵreleaseOrphanedLocks 管重启；这里管运行中 renewal 停了却没走到 finally 的边角。
+   * 启动时的 releaseOrphanedLocks 管重启；这里管运行中 renewal 停了却没走到 finally 的边角。
    */
-  async ɵsweepExpiredLocks(): Promise<{ threads: number; runs: number }> {
+  async sweepExpiredLocks(): Promise<{ threads: number; runs: number }> {
     const runs = await this.store.database.$client.unsafe<
       { thread_id: string; run_id: string }[]
     >(
-      `UPDATE openbot_local_runs r SET status = 'interrupted', finished_at = now()
-       FROM openbot_local_threads t
+      `UPDATE chisabot_local_runs r SET status = 'interrupted', finished_at = now()
+       FROM chisabot_local_threads t
        WHERE r.thread_id = t.id AND r.run_id = t.run_id AND r.status = 'running'
+         AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id AND d.status IN ('admitting','observing','projecting'))
          AND (t.lock_expires_at IS NULL OR t.lock_expires_at <= now())
        RETURNING r.thread_id, r.run_id`,
     );
     const threads = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads SET run_id = NULL, lock_expires_at = NULL
+      `UPDATE chisabot_local_threads SET run_id = NULL, lock_expires_at = NULL
        WHERE run_id IS NOT NULL AND (lock_expires_at IS NULL OR lock_expires_at <= now())
+       AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=chisabot_local_threads.id AND d.run_id=chisabot_local_threads.run_id AND d.status IN ('admitting','observing','projecting'))
        RETURNING id`,
     );
     return { threads: threads.length, runs: runs.length };
@@ -612,12 +694,26 @@ export class LocalConversationClient {
 }
 
 /** A wire run can end while its frontend tools are still executing in the browser. */
-function pendingFrontendCalls(messages: readonly Message[], tools: readonly { name: string }[]): string[] {
+function pendingFrontendCalls(
+  messages: readonly Message[],
+  tools: readonly { name: string }[],
+): string[] {
   const frontend = new Set(tools.map((tool) => tool.name));
-  const answered = new Set(messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
-  return messages.flatMap((message) => message.role === "assistant"
-    ? (message.toolCalls ?? []).filter((call) => frontend.has(call.function.name) && !answered.has(call.id)).map((call) => call.id)
-    : []);
+  const answered = new Set(
+    messages.flatMap((message) =>
+      message.role === "tool" ? [message.toolCallId] : [],
+    ),
+  );
+  return messages.flatMap((message) =>
+    message.role === "assistant"
+      ? (message.toolCalls ?? [])
+          .filter(
+            (call) =>
+              frontend.has(call.function.name) && !answered.has(call.id),
+          )
+          .map((call) => call.id)
+      : [],
+  );
 }
 
 type FrontendRelay = {
@@ -682,7 +778,10 @@ const FRONTEND_CLOSE_GIVE_UP_MS = 60_000;
 export const STOP_GRACE_MS = 1_500;
 
 /** Resolves `true` once `signal` has been aborted for `ms`; never resolves otherwise. */
-export const afterStopGrace = (signal: AbortSignal, ms: number): Promise<true> =>
+export const afterStopGrace = (
+  signal: AbortSignal,
+  ms: number,
+): Promise<true> =>
   new Promise((resolve) => {
     const arm = () => {
       const timer = setTimeout(() => resolve(true), ms);
@@ -720,10 +819,13 @@ export function withRunStartedAck(
 }
 
 /** Public OSS runner with our own PostgreSQL transcript and per-thread lease. */
-class PostgresAgentRunner extends AgentRunner {
+class PostgresAgentRunner implements ConversationRunner {
+  readonly ownsThreadLease = true;
   private readonly active = new Map<string, ActiveRun>();
   /** Kept between wire runs, until all dispatched frontend results arrive or the turn is stopped. */
   private readonly frontend = new Map<string, FrontendRelay>();
+  /** Observers of persisted capacity waits, not execution slots or thread owners. */
+  private readonly capacityWaits = new Map<string, ReplaySubject<BaseEvent>>();
   private clearFrontend(threadId: string): FrontendRelay | undefined {
     const relay = this.frontend.get(threadId);
     if (relay) clearTimeout(relay.timer);
@@ -731,7 +833,12 @@ class PostgresAgentRunner extends AgentRunner {
     return relay;
   }
   /** Keep the old relay busy until its durable pause is committed, before any fresh turn starts. */
-  private closeFrontend(threadId: string, relay: FrontendRelay, outcome: "owed" | "stopped", recordStop = false): Promise<void> {
+  private closeFrontend(
+    threadId: string,
+    relay: FrontendRelay,
+    outcome: "owed" | "stopped",
+    recordStop = false,
+  ): Promise<void> {
     if (relay.closing) return relay.closing;
     clearTimeout(relay.timer);
     relay.closing = (async () => {
@@ -739,11 +846,15 @@ class PostgresAgentRunner extends AgentRunner {
       while (this.frontend.get(threadId) === relay) {
         try {
           // These state transitions are idempotent, including an unknown COMMIT result.
-          for (const runId of relay.inboxRunIds) await this.inbox.settle(threadId, runId, outcome);
-          if (recordStop) await this.store.database.$client.unsafe(
-            "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2", [threadId, relay.runId],
-          );
-          if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
+          for (const runId of relay.inboxRunIds)
+            await this.inbox.settle(threadId, runId, outcome);
+          if (recordStop)
+            await this.store.database.$client.unsafe(
+              "UPDATE chisabot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+              [threadId, relay.runId],
+            );
+          if (this.frontend.get(threadId) === relay)
+            this.clearFrontend(threadId);
           return;
         } catch (error) {
           if (Date.now() >= giveUpAt) {
@@ -752,14 +863,20 @@ class PostgresAgentRunner extends AgentRunner {
              * 这条对话看起来永远忙碌。到点让位：腾出槽位让新回合进得来；
              * 没收尾的收件箱行维持原状（queued 的由下一轮 claim 读走，read 的留痕可查）。
              */
-            console.warn(JSON.stringify({
-              type: "frontend-close-gave-up",
-              threadId,
-              runId: relay.runId,
-              outcome,
-              error: error instanceof Error ? reasonWithoutStatement(error).slice(0, 200) : "unknown",
-            }));
-            if (this.frontend.get(threadId) === relay) this.clearFrontend(threadId);
+            console.warn(
+              JSON.stringify({
+                type: "frontend-close-gave-up",
+                threadId,
+                runId: relay.runId,
+                outcome,
+                error:
+                  error instanceof Error
+                    ? reasonWithoutStatement(error).slice(0, 200)
+                    : "unknown",
+              }),
+            );
+            if (this.frontend.get(threadId) === relay)
+              this.clearFrontend(threadId);
             return;
           }
           // The database bounds each attempt. Keep one closing owner while it recovers;
@@ -770,8 +887,13 @@ class PostgresAgentRunner extends AgentRunner {
     })();
     return relay.closing;
   }
-  private pendingFrontend(entry: ActiveRun, tools: readonly { name: string }[]): string[] {
-    const fresh = entry.agent.messages.filter((message) => !entry.inputMessageIds.has(message.id));
+  private pendingFrontend(
+    entry: ActiveRun,
+    tools: readonly { name: string }[],
+  ): string[] {
+    const fresh = entry.agent.messages.filter(
+      (message) => !entry.inputMessageIds.has(message.id),
+    );
     return pendingFrontendCalls(fresh, tools);
   }
   private readonly observers = new Map<
@@ -782,9 +904,7 @@ class PostgresAgentRunner extends AgentRunner {
     private readonly store: ConversationStore,
     private readonly client: LocalConversationClient,
     readonly inbox: ThreadInbox,
-  ) {
-    super();
-  }
+  ) {}
 
   /** Includes browser tools running between two server requests in the same logical turn. */
   isActive(threadId: string): boolean {
@@ -825,10 +945,11 @@ class PostgresAgentRunner extends AgentRunner {
       set = new Set();
       this.observers.set(threadId, set);
     }
-    set.add(listener);
+    const listeners = set;
+    listeners.add(listener);
     return () => {
-      set!.delete(listener);
-      if (!set!.size && this.observers.get(threadId) === set)
+      listeners.delete(listener);
+      if (!listeners.size && this.observers.get(threadId) === listeners)
         this.observers.delete(threadId);
     };
   }
@@ -842,59 +963,118 @@ class PostgresAgentRunner extends AgentRunner {
     request: AgentRunnerRunRequest,
     pending: Promise<unknown>,
   ): Observable<BaseEvent> {
-    return withRunStartedAck(request, request.input.runId, new Observable<BaseEvent>((subscriber) => {
-      let subscription: { unsubscribe(): void } | undefined;
-      let closed = false;
-      const timer = setTimeout(() => {
-        if (!closed)
-          subscriber.error(new LocalConversationError("上一轮收尾超时，请再发一次", 409));
-      }, RESUME_WAIT_MS);
-      timer.unref?.();
-      void pending.then(() => {
-        if (!closed) subscription = this.run(request).subscribe(subscriber);
-      }).catch((error) => subscriber.error(error));
-      return () => { closed = true; clearTimeout(timer); subscription?.unsubscribe(); };
-    }));
+    return withRunStartedAck(
+      request,
+      request.input.runId,
+      new Observable<BaseEvent>((subscriber) => {
+        let subscription: { unsubscribe(): void } | undefined;
+        let closed = false;
+        const timer = setTimeout(() => {
+          if (!closed)
+            subscriber.error(
+              new LocalConversationError("上一轮收尾超时，请再发一次", 409),
+            );
+        }, RESUME_WAIT_MS);
+        timer.unref?.();
+        void pending
+          .then(() => {
+            if (!closed) subscription = this.run(request).subscribe(subscriber);
+          })
+          .catch((error) => subscriber.error(error));
+        return () => {
+          closed = true;
+          clearTimeout(timer);
+          subscription?.unsubscribe();
+        };
+      }),
+    );
   }
 
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
+    request = { ...request, input: normalizeRunInput(request.input) };
+    if (!request.recover) assertConversationAdmissionOpen();
     if (request.input.threadId !== request.threadId || !request.input.runId)
       throw new LocalConversationError(
         "Run thread and runId are required",
         400,
       );
+    if (
+      request.execution?.kind === "background" &&
+      !request.capacityReserved &&
+      !request.recover
+    )
+      return this.waitForCapacity(request, request.execution);
     const running = this.active.get(request.threadId);
+    if (
+      request.join === false &&
+      (running || this.frontend.has(request.threadId))
+    )
+      throw new LocalConversationError("Thread already running", 409);
     // 正在回答时又发来消息：不拒绝、不打断。新的用户消息进收件箱（下一步读进去），这个请求接上正在跑的那一轮。
     if (running) {
       // RUN_FINISHED can reach the browser a few awaits before execute's cleanup finishes.
       // A frontend result in that window must resume after cleanup, rather than join and lose it.
       const pending = this.pendingFrontend(running, request.input.tools);
-      const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      const answered = new Set(
+        request.input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      );
       if (pending.length && pending.every((id) => answered.has(id)))
         return this.resumeAfter(request, running.done);
-      return withRunStartedAck(request, running.runId, this.join(request, running));
+      return withRunStartedAck(
+        request,
+        running.runId,
+        this.join(request, running),
+      );
     }
     const relay = this.frontend.get(request.threadId);
     if (relay) {
       if (relay.closing) return this.resumeAfter(request, relay.closing);
-      const answered = new Set(request.input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
+      const answered = new Set(
+        request.input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      );
       // A concurrent user send is not a tool continuation. Park it without replaying the old
       // tool events (which would dispatch those tools again on the joining browser).
       if (!relay.callIds.every((id) => answered.has(id))) {
-        return withRunStartedAck(request, request.input.runId, new Observable<BaseEvent>((subscriber) => {
-          void (async () => {
-            const row = await this.store.thread(request.threadId);
-            const known = new Set(row.messages.map((message) => message.id));
-            const dead = await tombstones(this.store.database, request.threadId);
-            for (const message of dropTombstoned(request.input.messages, dead)) {
-              if (message.role !== "user" || known.has(message.id)) continue;
-              await this.inbox.enqueue({ threadId: request.threadId, ownerUserId: row.owner_user_id, message });
-            }
-            subscriber.next({ type: EventType.RUN_STARTED, threadId: request.threadId, runId: request.input.runId } as BaseEvent);
-            subscriber.next({ type: EventType.RUN_FINISHED, threadId: request.threadId, runId: request.input.runId } as BaseEvent);
-            subscriber.complete();
-          })().catch((error) => subscriber.error(error));
-        }));
+        return withRunStartedAck(
+          request,
+          request.input.runId,
+          new Observable<BaseEvent>((subscriber) => {
+            void (async () => {
+              const row = await this.store.thread(request.threadId);
+              const known = new Set(row.messages.map((message) => message.id));
+              const dead = await tombstones(
+                this.store.database,
+                request.threadId,
+              );
+              for (const message of dropTombstoned(
+                request.input.messages,
+                dead,
+              )) {
+                if (message.role !== "user" || known.has(message.id)) continue;
+                await this.inbox.enqueue({
+                  threadId: request.threadId,
+                  ownerUserId: row.owner_user_id,
+                  message,
+                });
+              }
+              subscriber.next({
+                type: EventType.RUN_STARTED,
+                threadId: request.threadId,
+                runId: request.input.runId,
+              } as BaseEvent);
+              subscriber.next({
+                type: EventType.RUN_FINISHED,
+                threadId: request.threadId,
+                runId: request.input.runId,
+              } as BaseEvent);
+              subscriber.complete();
+            })().catch((error) => subscriber.error(error));
+          }),
+        );
       }
       this.clearFrontend(request.threadId);
     }
@@ -913,10 +1093,121 @@ class PostgresAgentRunner extends AgentRunner {
     this.active.set(request.threadId, entry);
     entry.done = this.execute(request, entry);
     // Do not let a fast frontend continuation overtake the old lease cleanup.
-    return withRunStartedAck(request, request.input.runId, entry.stream.pipe(concatMap(async (event) => {
-      if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await entry.done;
-      return event;
-    })));
+    return withRunStartedAck(
+      request,
+      request.input.runId,
+      entry.stream.pipe(
+        concatMap(async (event) => {
+          if (
+            event.type === EventType.RUN_FINISHED ||
+            event.type === EventType.RUN_ERROR
+          )
+            await entry.done;
+          return event;
+        }),
+      ),
+    );
+  }
+
+  private waitForCapacity(
+    request: AgentRunnerRunRequest,
+    execution: NonNullable<AgentRunnerRunRequest["execution"]>,
+  ): Observable<BaseEvent> {
+    const key = `${request.threadId}:${request.input.runId}`;
+    let stream = this.capacityWaits.get(key);
+    if (stream) return withRunStartedAck(request, request.input.runId, stream);
+    stream = new ReplaySubject<BaseEvent>();
+    this.capacityWaits.set(key, stream);
+    const pending = stream;
+    void (async () => {
+      const identity = await this.store.thread(request.threadId);
+      if (request.agent.agentId && request.agent.agentId !== identity.agent_id)
+        throw new LocalConversationError(
+          "Thread belongs to a different agent",
+          409,
+        );
+      const capacity = createExecutionCapacity(this.store.database);
+      await capacity.enqueue(request.threadId, request.input.runId, {
+        ...execution,
+        input: request.input,
+        ...(request.persistedInputMessages
+          ? { persistedInputMessages: request.persistedInputMessages }
+          : {}),
+        ...(request.continuationRunId
+          ? { continuationRunId: request.continuationRunId }
+          : {}),
+      });
+      let announced = false;
+      for (;;) {
+        if (
+          request.continuationRunId &&
+          (await createDshRunJournal(this.store.database).continuationRefusal(
+            request.threadId,
+            request.continuationRunId,
+          ))
+        )
+          await capacity.stop(request.threadId, request.input.runId);
+        const result = await capacity.claim(
+          identity.owner_user_id,
+          request.threadId,
+          request.input.runId,
+          this.isActive(request.threadId),
+        );
+        if (result === "stopped") {
+          pending.next({
+            type: EventType.RUN_FINISHED,
+            threadId: request.threadId,
+            runId: request.input.runId,
+            outcome: { type: "cancelled" },
+          } as BaseEvent);
+          pending.complete();
+          return;
+        }
+        if (result === "claimed") {
+          reportCapacityState("admitted");
+          pending.next({
+            type: EventType.CUSTOM,
+            name: "chisabot.capacity",
+            value: { status: "admitted" },
+          } as BaseEvent);
+          this.capacityWaits.delete(key);
+          try {
+            this.run({ ...request, capacityReserved: true }).subscribe(pending);
+          } catch (error) {
+            await capacity.releaseReservation(
+              request.threadId,
+              request.input.runId,
+            );
+            throw error;
+          }
+          return;
+        }
+        if (!announced) {
+          reportCapacityState("waiting");
+          const event = {
+            type: EventType.CUSTOM,
+            name: "chisabot.capacity",
+            value: { status: "queued", message: CAPACITY_WAIT_MESSAGE },
+          } as BaseEvent;
+          await this.store.database.$client.unsafe(
+            `INSERT INTO chisabot_local_events(thread_id,run_id,event)
+            SELECT $1,$2,$3::text::jsonb WHERE EXISTS(SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2 AND status='capacity_wait')`,
+            [request.threadId, request.input.runId, JSON.stringify(event)],
+          );
+          pending.next(event);
+          for (const listener of this.observers.get(request.threadId) ?? [])
+            listener(event);
+          announced = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    })()
+      .catch((error) => pending.error(error))
+      .finally(() => {
+        if (this.capacityWaits.get(key) === pending)
+          this.capacityWaits.delete(key);
+      });
+    return withRunStartedAck(request, request.input.runId, pending);
   }
 
   private join(
@@ -945,11 +1236,24 @@ class PostgresAgentRunner extends AgentRunner {
             this.interruptSegment(request.threadId);
           }
         }
+        await createConversationCommands(this.store.database).join(
+          request.threadId,
+          request.input.runId,
+          running.runId,
+        );
         if (closed) return;
-        subscription = running.stream.pipe(concatMap(async (event) => {
-          if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) await running.done;
-          return event;
-        })).subscribe(subscriber);
+        subscription = running.stream
+          .pipe(
+            concatMap(async (event) => {
+              if (
+                event.type === EventType.RUN_FINISHED ||
+                event.type === EventType.RUN_ERROR
+              )
+                await running.done;
+              return event;
+            }),
+          )
+          .subscribe(subscriber);
       })().catch((error) => subscriber.error(error));
       return () => {
         closed = true;
@@ -973,6 +1277,7 @@ class PostgresAgentRunner extends AgentRunner {
     const finalizer = createRunEventFinalizer();
     const newMessages: Message[] = [];
     let prepared = prepareConversationMessages([], [], []);
+    let inputPrepared = false;
     /** 段与段之间扣下的 RUN_FINISHED：还要接着跑就丢掉，最后一段的才发出去。 */
     let heldFinish: BaseEvent | undefined;
     let segmenting = false;
@@ -986,7 +1291,14 @@ class PostgresAgentRunner extends AgentRunner {
       if (!entry.stopped) return false;
       lateDropped += 1;
       if (lateDropped === 1)
-        console.warn(JSON.stringify({ type: "local-run-late-output-dropped", threadId, runId: entry.runId, kind }));
+        console.warn(
+          JSON.stringify({
+            type: "local-run-late-output-dropped",
+            threadId,
+            runId: entry.runId,
+            kind,
+          }),
+        );
       return true;
     };
     /** 已读进来、但它紧跟的工具结果还没到消息列表里的插话：等到了再推快照。 */
@@ -1045,6 +1357,12 @@ class PostgresAgentRunner extends AgentRunner {
         entry.runId,
         published,
       );
+      if (published.type === EventType.RUN_STARTED)
+        await createConversationCommands(this.store.database).status(
+          threadId,
+          entry.runId,
+          "dispatched",
+        );
       if (published.type !== EventType.RUN_STARTED) {
         segFinalizer.observe(published);
       }
@@ -1071,7 +1389,8 @@ class PostgresAgentRunner extends AgentRunner {
           } catch {
             /* Finalization reports the original write failure. */
           }
-          void agent.detachActiveRun();
+          if (!("acknowledgesStop" in agent && agent.acknowledgesStop === true))
+            void agent.detachActiveRun();
         }
       });
       return durableWrites;
@@ -1126,7 +1445,9 @@ class PostgresAgentRunner extends AgentRunner {
       );
     const finalize = async (interruptionMessage?: string) => {
       // A stopped run closes on what was accepted before Stop, not on whatever the runtime added later.
-      let closed = entry.stopped ? (structuredClone(latest) as Message[]) : undefined;
+      let closed = entry.stopped
+        ? (structuredClone(latest) as Message[])
+        : undefined;
       if (closed) agent.setMessages(closed);
       if (heldFinish && !terminal) {
         const finish = heldFinish;
@@ -1165,14 +1486,24 @@ class PostgresAgentRunner extends AgentRunner {
         await emit(event);
       }
       await durableWrites;
-      await this.store.snapshot(
-        threadId,
-        entry.runId,
-        prepared.project(woven(closed ?? agent.messages)),
-        prepared.sanitize(entry.stopped ? latestState : agent.state),
-      );
+      // An admission refusal has no new execution snapshot. In particular, a stale paused
+      // resend must not replace the saved transcript with an uninitialized agent's messages.
+      if (inputPrepared)
+        await this.store.snapshot(
+          threadId,
+          entry.runId,
+          prepared.project(woven(closed ?? agent.messages)),
+          prepared.sanitize(entry.stopped ? latestState : agent.state),
+        );
       if (lateDropped)
-        console.warn(JSON.stringify({ type: "local-run-late-output-dropped", threadId, runId: entry.runId, count: lateDropped }));
+        console.warn(
+          JSON.stringify({
+            type: "local-run-late-output-dropped",
+            threadId,
+            runId: entry.runId,
+            count: lateDropped,
+          }),
+        );
     };
     try {
       const identity = await this.store.thread(threadId);
@@ -1184,22 +1515,53 @@ class PostgresAgentRunner extends AgentRunner {
       // Claim and run-record creation are atomic. A duplicate ID never releases the existing lease.
       await this.store.database.$client.begin(async (transaction) => {
         const claimed = await transaction.unsafe(
-          `UPDATE openbot_local_threads SET run_id = $2,
+          `UPDATE chisabot_local_threads SET run_id = $2,
            lock_expires_at = now() + interval '120 seconds', updated_at = now()
-           WHERE id = $1 AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2) RETURNING id`,
+           WHERE id = $1 AND (run_id IS NULL OR lock_expires_at <= now() OR run_id = $2)
+           AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.run_id<>$2 AND d.status IN ('admitting','observing','projecting')) RETURNING id`,
           [threadId, entry.runId],
         );
         if (claimed.length === 0)
           throw new LocalConversationError("Thread already running", 409);
         const inserted = await transaction.unsafe(
-          `INSERT INTO openbot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')
+          `INSERT INTO chisabot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'running')
            ON CONFLICT (thread_id, run_id) DO NOTHING RETURNING run_id`,
           [threadId, entry.runId],
         );
-        if (inserted.length === 0)
+        if (
+          inserted.length === 0 &&
+          !request.recover &&
+          !request.capacityReserved
+        )
           throw new LocalConversationError("Run ID was already used", 409);
+        if (
+          inserted.length === 0 &&
+          (request.recover || request.capacityReserved)
+        )
+          await transaction.unsafe(
+            "UPDATE chisabot_local_runs SET status='running',finished_at=NULL WHERE thread_id=$1 AND run_id=$2",
+            [threadId, entry.runId],
+          );
+        if (request.execution)
+          await transaction.unsafe(
+            "UPDATE chisabot_local_runs SET execution=coalesce(execution,$3::text::jsonb) WHERE thread_id=$1 AND run_id=$2",
+            [threadId, entry.runId, JSON.stringify(request.execution)],
+          );
       });
       started = true;
+      if (request.recover) {
+        // The old API process may have persisted an opening but died before its closing event.
+        // End those wire streams before rebuilding the same messages from DSH's durable state.
+        const lifecycles = createEventLifecycles();
+        const previous = await this.store.database.$client.unsafe<
+          { event: BaseEvent }[]
+        >(
+          "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 ORDER BY sequence",
+          [threadId, entry.runId],
+        );
+        for (const { event } of previous) lifecycles.accept(event);
+        for (const event of lifecycles.closeStreams()) await emit(event);
+      }
       // Read after claiming so a prior run finishing during acquisition cannot leave stale history.
       const row = await this.store.thread(threadId);
       // 重新生成 / 编辑后重发截掉的消息（DESIGN.md §67）：还没收到截断的旧设备会把它们一起发上来，滤掉，不让它们复活。
@@ -1207,40 +1569,163 @@ class PostgresAgentRunner extends AgentRunner {
       const held = await this.inbox.heldIds(threadId);
       // A stale tab may still append a paused row as ordinary input. Only a new explicit
       // user message or the per-row action below can authorize new work after Stop.
-      let incoming = dropTombstoned(input.messages, dead).filter((message) => !held.has(message.id));
+      let incoming = dropTombstoned(input.messages, dead).filter(
+        (message) => !held.has(message.id),
+      );
+      const canonicalInbox = await this.inbox.messagesFor(
+        threadId,
+        incoming
+          .filter((message) => message.role === "user")
+          .map((message) => message.id),
+      );
+      incoming = incoming.map(
+        (message) =>
+          canonicalInbox.get(message.id) ?? stripInboxContext(message),
+      );
       let visible = request.persistedInputMessages
-        ? dropTombstoned(request.persistedInputMessages, dead).filter((message) => !held.has(message.id))
+        ? dropTombstoned(request.persistedInputMessages, dead)
+            .filter((message) => !held.has(message.id))
+            .map(stripInboxContext)
         : incoming;
       const storedIds = new Set(row.messages.map((message) => message.id));
-      const backgroundDelivery = Boolean(input.forwardedProps?.chisabotWorkerDelivery) || request.persistedInputMessages !== undefined;
-      const freshUser = !backgroundDelivery && incoming.some((message) => message.role === "user" && !isWorkerResult(message) && !storedIds.has(message.id));
-      const resume = input.forwardedProps?.chisabotInboxResume as { sourceId?: unknown; messageId?: unknown } | undefined;
+      const backgroundDelivery =
+        Boolean(input.forwardedProps?.chisabotWorkerDelivery) ||
+        request.persistedInputMessages !== undefined;
+      // Only the internal turn runner supplies this source-run identity and projection.
+      // A recovered receipt can continue without unpausing supplements, but a stopped or
+      // edited source run (including a late sign-in result) cannot authorize another turn.
+      const continuationRunId = request.continuationRunId;
+      const [continuationSource] = continuationRunId
+        ? await this.store.database.$client.unsafe<{ status: string }[]>(
+            "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
+            [threadId, continuationRunId],
+          )
+        : [];
+      const serverContinuation =
+        continuationRunId &&
+        continuationSource &&
+        continuationSource.status !== "stopped" &&
+        request.persistedInputMessages !== undefined &&
+        input.resume?.some((item) => item.status === "resolved") &&
+        !(await createDshRunJournal(this.store.database).continuationRefusal(
+          threadId,
+          continuationRunId,
+        ));
+      const freshUser =
+        !backgroundDelivery &&
+        incoming.some(
+          (message) =>
+            message.role === "user" &&
+            !isWorkerResult(message) &&
+            !storedIds.has(message.id),
+        );
+      const resume = input.forwardedProps?.chisabotInboxResume as
+        | { sourceId?: unknown; messageId?: unknown }
+        | undefined;
       let stored = row.messages;
       if (resume) {
-        if (typeof resume.sourceId !== "string" || typeof resume.messageId !== "string" ||
-          !incoming.some((message) => message.id === resume.messageId && message.role === "user" && !storedIds.has(message.id)))
-          throw new LocalConversationError("A new message is required to send a paused supplement", 400);
-        const source = await this.inbox.resumeOne(threadId, resume.sourceId, entry.runId);
-        if (!source) throw new LocalConversationError("这条保留消息已被发送或撤回，请刷新后查看。", 409);
+        if (
+          typeof resume.sourceId !== "string" ||
+          typeof resume.messageId !== "string" ||
+          !incoming.some(
+            (message) =>
+              message.id === resume.messageId &&
+              message.role === "user" &&
+              !storedIds.has(message.id),
+          )
+        )
+          throw new LocalConversationError(
+            "A new message is required to send a paused supplement",
+            400,
+          );
+        const source = await this.inbox.resumeOne(
+          threadId,
+          resume.sourceId,
+          entry.runId,
+        );
+        if (!source)
+          throw new LocalConversationError(
+            "这条保留消息已被发送或撤回，请刷新后查看。",
+            409,
+          );
         const shown = { ...source, id: resume.messageId } as Message;
         // CB-104: the resent copy replaces the held original, so the transcript shows it once.
-        stored = row.messages.filter((message) => message.id !== resume.sourceId || message.role !== "user");
-        visible = visible.map((message) => message.id === resume.messageId ? shown : message);
-        incoming = incoming.map((message) => message.id === resume.messageId ? {
-          ...shown,
-          content: `用户刚刚主动点击“发送这条”，现在要求处理下面这一条此前暂停的补充。这次点击已经满足原文“等我主动发送”“收到确认后”等等待条件；不要再次等待发送或仅回复收到。若这条补充明确要求新的工具操作，现在只执行所选补充的操作一次。上一轮已经执行、停止或失败的其他工具操作不得自动重试；本次只授权所选补充，没有授权重跑上一轮任务。\n\n所选补充原文：\n${typeof source.content === "string" ? source.content : JSON.stringify(source.content)}`,
-        } as Message : message);
-      } else if (!freshUser && await this.inbox.isPaused(threadId)) {
+        stored = row.messages.filter(
+          (message) =>
+            message.id !== resume.sourceId || message.role !== "user",
+        );
+        visible = visible.map((message) =>
+          message.id === resume.messageId ? shown : message,
+        );
+        const resumeNote =
+          "用户刚刚主动点击“发送这条”，现在要求处理下面这一条此前暂停的补充。这次点击已经满足原文“等我主动发送”“收到确认后”等等待条件；不要再次等待发送或仅回复收到。若这条补充明确要求新的工具操作，现在只执行所选补充的操作一次。上一轮已经执行、停止或失败的其他工具操作不得自动重试；本次只授权所选补充，没有授权重跑上一轮任务。\n\n所选补充原文：\n";
+        incoming = incoming.map((message) =>
+          message.id === resume.messageId
+            ? ({
+                ...shown,
+                content:
+                  typeof source.content === "string"
+                    ? resumeNote + source.content
+                    : [
+                        { type: "text", text: resumeNote },
+                        ...(Array.isArray(source.content)
+                          ? source.content
+                          : []),
+                      ],
+              } as Message)
+            : message,
+        );
+      } else if (
+        !freshUser &&
+        !serverContinuation &&
+        (await this.inbox.isPaused(threadId))
+      ) {
         // A background completion is useful data, not authority to resume a stopped turn.
         for (const message of incoming) {
           if (message.role !== "user" || storedIds.has(message.id)) continue;
-          await this.inbox.enqueue({ threadId, ownerUserId: row.owner_user_id, message, kind: isWorkerResult(message) ? "worker_result" : "message" });
+          await this.inbox.enqueue({
+            threadId,
+            ownerUserId: row.owner_user_id,
+            message,
+            kind: isWorkerResult(message) ? "worker_result" : "message",
+          });
         }
-        throw new LocalConversationError("保留的消息已暂停，请主动发送新消息或点击“发送这条”。", 409);
+        throw new LocalConversationError(
+          "保留的消息已暂停，请主动发送新消息或点击“发送这条”。",
+          409,
+        );
       }
       if (freshUser) await this.inbox.startExplicitTurn(threadId);
-      prepared = prepareConversationMessages(stored, incoming, visible, held);
-      entry.inputMessageIds = new Set(prepared.execution.map((message) => message.id));
+      const recoveringRun = request.recover
+        ? await createDshRunJournal(this.store.database).get(
+            threadId,
+            entry.runId,
+          )
+        : undefined;
+      const priorIds = new Set(
+        recoveringRun?.input.messages.map((message) => message.id),
+      );
+      const recoveringOutputIds = new Set(
+        recoveringRun
+          ? stored
+              .filter(
+                (message) =>
+                  message.role !== "user" && !priorIds.has(message.id),
+              )
+              .map((message) => message.id)
+          : [],
+      );
+      prepared = prepareConversationMessages(
+        stored,
+        incoming,
+        visible,
+        held,
+        recoveringOutputIds,
+      );
+      inputPrepared = true;
+      entry.inputMessageIds = new Set(
+        prepared.execution.map((message) => message.id),
+      );
       const oldIds = new Set(row.messages.map((message) => message.id));
       newMessages.push(
         ...prepared.visible.filter((message) => !oldIds.has(message.id)),
@@ -1305,13 +1790,17 @@ class PostgresAgentRunner extends AgentRunner {
           } catch {
             /* ignore */
           }
-          void entry.agent.detachActiveRun().catch(() => undefined);
+          void createDshRunJournal(this.store.database)
+            .stop(threadId, entry.runId)
+            .catch(() => undefined);
+          if (!("acknowledgesStop" in agent && agent.acknowledgesStop === true))
+            void entry.agent.detachActiveRun().catch(() => undefined);
           return;
         }
         if (renewing) return;
         renewing = true;
         void guarded(() =>
-          this.client.ɵrenewThreadLock({
+          this.client.renewThreadLease({
             threadId,
             runId: entry.runId,
             ttlSeconds: 120,
@@ -1330,17 +1819,29 @@ class PostgresAgentRunner extends AgentRunner {
         const segAbort = new AbortController();
         entry.segmentAbort = segAbort;
         const onRunAbort = () => segAbort.abort(entry.abort.signal.reason);
-        entry.abort.signal.addEventListener("abort", onRunAbort, { once: true });
+        entry.abort.signal.addEventListener("abort", onRunAbort, {
+          once: true,
+        });
         if (entry.abort.signal.aborted) onRunAbort();
         let finalized!: () => void;
         const finalization = new Promise<void>((resolve) => {
           finalized = resolve;
         });
-        const segmentInput = { ...input, runId: entry.runId, messages: agent.messages };
+        const segmentInput = {
+          ...input,
+          ...(segment > 0 ? { resume: undefined } : {}),
+          runId: entry.runId,
+          messages: agent.messages,
+        };
         try {
           const segmentWork = (async () => {
             await withConfirmTurn(
-              { threadId, runId: entry.runId, stopped: () => entry.stopped || Boolean(entry.segmentInterrupted) },
+              {
+                threadId,
+                runId: entry.runId,
+                stopped: () =>
+                  entry.stopped || Boolean(entry.segmentInterrupted),
+              },
               () =>
                 withToolAbort(segAbort.signal, () =>
                   withSteering(steering(), () =>
@@ -1364,10 +1865,13 @@ class PostgresAgentRunner extends AgentRunner {
           })();
           // CB-104: Stop must end the turn in ~2 s even when the runtime (Hermes, a tool) is slow to
           // honour the abort. After a short grace the run is detached and closed as stopped.
-          const forced = await Promise.race([
-            segmentWork.then(() => false),
-            afterStopGrace(entry.abort.signal, STOP_GRACE_MS),
-          ]);
+          const forced =
+            "acknowledgesStop" in agent && agent.acknowledgesStop === true
+              ? await segmentWork.then(() => false)
+              : await Promise.race([
+                  segmentWork.then(() => false),
+                  afterStopGrace(entry.abort.signal, STOP_GRACE_MS),
+                ]);
           if (forced) {
             segmentWork.catch(() => {});
             void Promise.resolve(agent.detachActiveRun()).catch(() => {});
@@ -1384,14 +1888,16 @@ class PostgresAgentRunner extends AgentRunner {
           if (entry.segmentAbort === segAbort) entry.segmentAbort = undefined;
         }
         await durableWrites;
-        const wasInterrupted = Boolean(entry.segmentInterrupted) && !entry.stopped;
+        const wasInterrupted =
+          Boolean(entry.segmentInterrupted) && !entry.stopped;
         entry.segmentInterrupted = false;
         if (wasInterrupted) {
           // 补齐被打断分段里未闭合的消息或工具调用结果，保持 AG-UI 事件流与消息历史成对合法。
           for (const closing of segFinalizer.finalize({
             stopRequested: true,
             protocolVersion: input.protocolVersion,
-            interruptionMessage: "【用户中途打断了当前任务并下达新指令】已中止该旧工具操作，请直接执行用户接下来的新指令。",
+            interruptionMessage:
+              "【用户中途打断了当前任务并下达新指令】已中止该旧工具操作，请直接执行用户接下来的新指令。",
           })) {
             if (
               closing.type === EventType.RUN_FINISHED ||
@@ -1420,11 +1926,18 @@ class PostgresAgentRunner extends AgentRunner {
           }
           await durableWrites;
         }
-        if (persistenceError || failed || entry.stopped || (!heldFinish && !wasInterrupted)) break;
+        if (
+          persistenceError ||
+          failed ||
+          entry.stopped ||
+          (!heldFinish && !wasInterrupted)
+        )
+          break;
         // RUN_FINISHED ends only the wire segment when frontend tools have no results yet.
         // Claiming here would put a user row ahead of those results; the seeded-history
         // sanitizer then correctly removes the dangling call and the model issues it again.
-        if (!wasInterrupted && this.pendingFrontend(entry, input.tools).length) break;
+        if (!wasInterrupted && this.pendingFrontend(entry, input.tools).length)
+          break;
         // 这一段正常结束（或被用户新指令打断）了，收件箱里还有没读的：同一次运行接着开下一段，把它们读进去。
         const more =
           segment + 1 < MAX_SEGMENTS
@@ -1487,16 +2000,17 @@ class PostgresAgentRunner extends AgentRunner {
       if (started) {
         try {
           await this.store.database.$client.unsafe(
-            "UPDATE openbot_local_runs SET status = $3, finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+            "UPDATE chisabot_local_runs SET status = $3, finished_at = now() WHERE thread_id = $1 AND run_id = $2",
             [
               threadId,
               entry.runId,
               entry.stopped ? "stopped" : failed ? "error" : "finished",
             ],
           );
-          const callIds = !entry.stopped && !failed && !persistenceError
-            ? this.pendingFrontend(entry, input.tools)
-            : [];
+          const callIds =
+            !entry.stopped && !failed && !persistenceError
+              ? this.pendingFrontend(entry, input.tools)
+              : [];
           if (callIds.length) {
             const relay: FrontendRelay = {
               runId: entry.runId,
@@ -1504,30 +2018,50 @@ class PostgresAgentRunner extends AgentRunner {
               callIds,
               timer: setTimeout(() => {
                 if (this.frontend.get(threadId) !== relay) return;
-                void this.closeFrontend(threadId, relay, "owed").catch(() => {});
+                void this.closeFrontend(threadId, relay, "owed").catch(
+                  () => {},
+                );
               }, MAX_RUN_WALL_MS),
             };
             relay.timer.unref?.();
             this.frontend.set(threadId, relay);
           } else {
-            for (const runId of entry.inboxRunIds) await this.inbox.settle(
-              threadId,
-              runId,
-              entry.stopped ? "stopped" : failed ? "owed" : "answered",
-            );
+            for (const runId of entry.inboxRunIds)
+              await this.inbox.settle(
+                threadId,
+                runId,
+                entry.stopped ? "stopped" : failed ? "owed" : "answered",
+              );
           }
-          await this.client.ɵcleanupThreadLock({
+          await this.client.releaseThreadLease({
             threadId,
             runId: entry.runId,
           });
+          await createConversationCommands(this.store.database).status(
+            threadId,
+            entry.runId,
+            entry.stopped ? "stopped" : failed ? "failed" : "settled",
+          );
+          if ("executionSettled" in agent && agent.executionSettled === true)
+            await this.store.database.$client.unsafe(
+              "UPDATE chisabot_dsh_runs SET status='settled',updated_at=now() WHERE thread_id=$1 AND run_id=$2 AND status IN ('admitting','observing','projecting')",
+              [threadId, entry.runId],
+            );
+          await this.store.database.$client.unsafe(
+            `UPDATE chisabot_conversation_commands c SET status=CASE WHEN i.status='answered' THEN 'settled' ELSE 'stopped' END,updated_at=now()
+            FROM chisabot_thread_inbox i WHERE c.thread_id=$1 AND c.command_id=i.id AND i.thread_id=c.thread_id AND i.run_id=$2 AND i.status IN ('answered','paused')`,
+            [threadId, entry.runId],
+          );
           // Stop can arrive while lease cleanup awaits the database, after the relay was
           // installed. It still targets the active entry then, so reconcile that late stop
           // before deleting active and exposing a stray relay as a 25-minute busy turn.
           if (entry.stopped) {
-            if (this.frontend.get(threadId)?.runId === entry.runId) this.clearFrontend(threadId);
-            for (const runId of entry.inboxRunIds) await this.inbox.settle(threadId, runId, "stopped");
+            if (this.frontend.get(threadId)?.runId === entry.runId)
+              this.clearFrontend(threadId);
+            for (const runId of entry.inboxRunIds)
+              await this.inbox.settle(threadId, runId, "stopped");
             await this.store.database.$client.unsafe(
-              "UPDATE openbot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
+              "UPDATE chisabot_local_runs SET status = 'stopped', finished_at = now() WHERE thread_id = $1 AND run_id = $2",
               [threadId, entry.runId],
             );
           }
@@ -1547,27 +2081,141 @@ class PostgresAgentRunner extends AgentRunner {
       const entry = this.active.get(request.threadId);
       const pending: LiveEvent[] = [];
       let ready = false;
-      let completed = !entry;
-      let liveError: unknown;
       let lastSequence = 0n;
+      let observedRunId: string | undefined;
+      let streamRunId: string | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let checking = false;
+      const lifecycles = createEventLifecycles();
+      const publish = (item: LiveEvent) => {
+        if (item.sequence <= lastSequence) return;
+        lastSequence = item.sequence;
+        // The durable run row, rather than the HTTP/live subscription, decides completion.
+        if (
+          (
+            [
+              EventType.RUN_STARTED,
+              EventType.RUN_FINISHED,
+              EventType.RUN_ERROR,
+            ] as readonly string[]
+          ).includes(item.event.type)
+        )
+          return;
+        const event = normalizeConversationEvent(item.event);
+        if (lifecycles.accept(event)) subscriber.next(event);
+      };
+      const selectRun = (runId: string | undefined) => {
+        if (!runId || runId === observedRunId) return;
+        observedRunId = runId;
+        if (!streamRunId) {
+          streamRunId = runId;
+          subscriber.next({
+            type: EventType.RUN_STARTED,
+            threadId: request.threadId,
+            runId,
+          } as BaseEvent);
+        }
+        subscriber.next({
+          type: EventType.CUSTOM,
+          name: "chisabot.execution",
+          value: { threadId: request.threadId, runId },
+        } as BaseEvent);
+      };
       // Subscribe before reading; sequence IDs remove overlap without losing a live event.
       const live = entry?.live.subscribe({
         next: (item) => {
           if (!ready) pending.push(item);
-          else if (item.sequence > lastSequence) {
-            lastSequence = item.sequence;
-            subscriber.next(item.event);
-          }
+          else publish(item);
         },
-        error: (error) => {
-          liveError = error;
-          if (ready) subscriber.error(error);
-        },
-        complete: () => {
-          completed = true;
-          if (ready) subscriber.complete();
+        error: () => {
+          /* Read persisted state; another observer can recover the execution. */
         },
       });
+      const check = async () => {
+        if (checking || subscriber.closed) return;
+        checking = true;
+        try {
+          const [command] = request.commandId
+            ? await this.store.database.$client.unsafe<
+                {
+                  status: string;
+                  run_id: string;
+                  execution_run_id: string | null;
+                }[]
+              >(
+                "SELECT status,run_id,execution_run_id FROM chisabot_conversation_commands WHERE thread_id=$1 AND command_id=$2",
+                [request.threadId, request.commandId],
+              )
+            : [];
+          const [run] = await this.store.database.$client.unsafe<
+            { run_id: string; status: string; pending: boolean }[]
+          >(
+            `SELECT r.run_id,r.status,EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=r.thread_id AND d.run_id=r.run_id AND d.status IN ('admitting','observing','projecting')) AS pending
+             FROM chisabot_local_runs r WHERE r.thread_id=$1 AND ($2::text IS NULL OR r.run_id=$2) ORDER BY r.created_at DESC LIMIT 1`,
+            [
+              request.threadId,
+              command?.execution_run_id ??
+                command?.run_id ??
+                request.runId ??
+                observedRunId ??
+                null,
+            ],
+          );
+          selectRun(run?.run_id);
+          const uncovered = await this.store.database.$client.unsafe<
+            EventRow[]
+          >(
+            "SELECT sequence,event FROM chisabot_local_events WHERE thread_id=$1 AND sequence>$2::bigint ORDER BY sequence",
+            [request.threadId, String(lastSequence)],
+          );
+          for (const item of uncovered)
+            publish({
+              sequence: BigInt(item.sequence),
+              event: normalizeConversationEvent(item.event),
+            });
+          const commandPending =
+            command &&
+            ["accepted", "queued", "dispatched"].includes(command.status);
+          if (commandPending || run?.pending || run?.status === "running")
+            return;
+          if (run) {
+            const [terminal] = await this.store.database.$client.unsafe<
+              { event: BaseEvent }[]
+            >(
+              "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND event->>'type' IN ('RUN_FINISHED','RUN_ERROR') ORDER BY sequence DESC LIMIT 1",
+              [request.threadId, run.run_id],
+            );
+            if (terminal) {
+              const event = normalizeConversationEvent(terminal.event);
+              subscriber.next(
+                event.type === EventType.RUN_FINISHED
+                  ? ({
+                      ...event,
+                      runId: streamRunId,
+                      threadId: request.threadId,
+                    } as BaseEvent)
+                  : event,
+              );
+            } else
+              subscriber.next({
+                type: EventType.RUN_ERROR,
+                code: "RUN_INTERRUPTED",
+                message: "这一轮缺少完成记录，请查看已保存的输出后再继续。",
+              } as BaseEvent);
+          } else if (command)
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              code: "ADMISSION_FAILED",
+              message: "消息已保存，但执行未能开始。",
+            } as BaseEvent);
+          subscriber.complete();
+        } catch (error) {
+          subscriber.error(error);
+        } finally {
+          checking = false;
+          if (!subscriber.closed) timer = setTimeout(() => void check(), 500);
+        }
+      };
       void (async () => {
         /*
          * DOG-01 follow-up（2026-10-18）：长对话的事件日志可达数千条 / ~1MB。旧逻辑把 slimReplay 后的
@@ -1581,7 +2229,30 @@ class PostgresAgentRunner extends AgentRunner {
         const row = await this.store.thread(request.threadId);
         if (request.agentId && row.agent_id !== request.agentId)
           throw new LocalConversationError("Thread not found", 404);
-        lastSequence = await this.store.lastEventSequence(request.threadId);
+        const [command] = request.commandId
+          ? await this.store.database.$client.unsafe<
+              { run_id: string; execution_run_id: string | null }[]
+            >(
+              "SELECT run_id,execution_run_id FROM chisabot_conversation_commands WHERE thread_id=$1 AND command_id=$2",
+              [request.threadId, request.commandId],
+            )
+          : [];
+        const [previous] =
+          !entry && !request.runId && !row.run_id && !command
+            ? await this.store.database.$client.unsafe<{ run_id: string }[]>(
+                "SELECT run_id FROM chisabot_local_runs WHERE thread_id=$1 ORDER BY created_at DESC LIMIT 1",
+                [request.threadId],
+              )
+            : [];
+        selectRun(
+          command?.execution_run_id ??
+            entry?.runId ??
+            request.runId ??
+            row.run_id ??
+            command?.run_id ??
+            previous?.run_id,
+        );
+        lastSequence = BigInt(row.snapshot_sequence ?? 0);
         const dims = imageDimsFor(this.store.database);
         /*
          * Track B：长对话压力——全量 annotate 上千条再一次塞进浏览器仍会拖住 `/run`。
@@ -1607,34 +2278,50 @@ class PostgresAgentRunner extends AgentRunner {
           type: EventType.STATE_SNAPSHOT,
           snapshot: row.state ?? {},
         } as BaseEvent);
+        if (observedRunId) {
+          const before = await this.store.database.$client.unsafe<
+            { event: BaseEvent }[]
+          >(
+            "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND sequence<=$3::bigint ORDER BY sequence",
+            [request.threadId, observedRunId, String(lastSequence)],
+          );
+          for (const item of before)
+            lifecycles.accept(normalizeConversationEvent(item.event));
+          for (const opening of lifecycles.openings()) subscriber.next(opening);
+        }
+        // Fill the snapshot suffix before releasing buffered live frames.
+        await check();
         ready = true;
-        for (const item of pending)
-          if (item.sequence > lastSequence) {
-            lastSequence = item.sequence;
-            subscriber.next(item.event);
-          }
-        if (liveError) subscriber.error(liveError);
-        else if (completed) subscriber.complete();
+        for (const item of pending) publish(item);
       })().catch((error) => subscriber.error(error));
-      return () => live?.unsubscribe();
+      return () => {
+        clearTimeout(timer);
+        live?.unsubscribe();
+      };
     });
   }
 
   async isRunning({ threadId }: { threadId: string }): Promise<boolean> {
     if (this.isActive(threadId)) return true;
     const rows = await this.store.database.$client.unsafe(
-      "SELECT id FROM openbot_local_threads WHERE id = $1 AND run_id IS NOT NULL AND lock_expires_at > now()",
+      "SELECT id FROM chisabot_local_threads WHERE id = $1 AND ((run_id IS NOT NULL AND lock_expires_at > now()) OR EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.status IN ('admitting','observing','projecting')))",
       [threadId],
     );
     return rows.length > 0;
   }
 
-  /** A failed frontend handler has a real result, but CopilotKit does not open a follow-up run. */
-  async finishFrontend(threadId: string, results: readonly Message[]): Promise<boolean> {
+  /** A failed frontend handler has a real result, but conversation runtime does not open a follow-up run. */
+  async finishFrontend(
+    threadId: string,
+    results: readonly Message[],
+  ): Promise<boolean> {
     const relay = this.frontend.get(threadId);
     if (!relay) return false;
     const allowed = new Set(relay.callIds);
-    const accepted = results.filter((message): message is Message & { role: "tool"; toolCallId: string } => message.role === "tool" && allowed.has(message.toolCallId));
+    const accepted = results.filter(
+      (message): message is Message & { role: "tool"; toolCallId: string } =>
+        message.role === "tool" && allowed.has(message.toolCallId),
+    );
     const answered = new Set(accepted.map((message) => message.toolCallId));
     if (!relay.callIds.every((id) => answered.has(id))) return false;
     const row = await this.store.thread(threadId);
@@ -1642,22 +2329,39 @@ class PostgresAgentRunner extends AgentRunner {
     // Preserve call/result adjacency without inventing a second model run just to persist an error.
     const messages = [...row.messages];
     for (const result of accepted) {
-      if (messages.some((message) => message.id === result.id || (message.role === "tool" && message.toolCallId === result.toolCallId))) continue;
-      const at = messages.findIndex((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.id === result.toolCallId));
+      if (
+        messages.some(
+          (message) =>
+            message.id === result.id ||
+            (message.role === "tool" &&
+              message.toolCallId === result.toolCallId),
+        )
+      )
+        continue;
+      const at = messages.findIndex(
+        (message) =>
+          message.role === "assistant" &&
+          message.toolCalls?.some((call) => call.id === result.toolCallId),
+      );
       if (at < 0) continue;
       let insertAt = at + 1;
       while (messages[insertAt]?.role === "tool") insertAt++;
       messages.splice(insertAt, 0, result);
     }
     const changed = await this.store.database.$client.unsafe(
-      `UPDATE openbot_local_threads t SET messages = $2::text::jsonb, updated_at = now()
+      `UPDATE chisabot_local_threads t SET messages = $2::text::jsonb, updated_at = now()
        WHERE t.id = $1 AND t.run_id IS NULL AND t.messages = $3::text::jsonb
-       AND EXISTS (SELECT 1 FROM openbot_local_runs r WHERE r.thread_id = t.id
+       AND EXISTS (SELECT 1 FROM chisabot_local_runs r WHERE r.thread_id = t.id
          AND r.run_id = $4 AND r.status = 'finished')
-       AND (SELECT r.run_id FROM openbot_local_runs r WHERE r.thread_id = t.id
+       AND (SELECT r.run_id FROM chisabot_local_runs r WHERE r.thread_id = t.id
          ORDER BY r.created_at DESC, r.run_id DESC LIMIT 1) = $4
        RETURNING t.id`,
-      [threadId, JSON.stringify(messages), JSON.stringify(row.messages), relay.runId],
+      [
+        threadId,
+        JSON.stringify(messages),
+        JSON.stringify(row.messages),
+        relay.runId,
+      ],
     );
     if (!changed.length || this.frontend.get(threadId) !== relay) return false;
     await this.closeFrontend(threadId, relay, "owed");
@@ -1665,8 +2369,58 @@ class PostgresAgentRunner extends AgentRunner {
   }
 
   async stop({ threadId, runId }: AgentRunnerStopRequest): Promise<boolean> {
+    // CB-104: winding down starts the moment Stop is accepted, before the durable bookkeeping
+    // below; a message sent in that window is told to wait instead of being queued and held.
+    const current = this.active.get(threadId);
+    const claimed =
+      current !== undefined &&
+      !current.stopped &&
+      (runId === undefined || current.runId === runId);
+    if (claimed) current.stopped = true;
+    const queued = await createExecutionCapacity(this.store.database).stop(
+      threadId,
+      runId,
+    );
+    const persistent = await createDshRunJournal(this.store.database).stop(
+      threadId,
+      runId,
+    );
+    await createConversationInteractions(this.store.database).cancel(
+      threadId,
+      runId,
+    );
     const entry = this.active.get(threadId);
     if (!entry) {
+      if (persistent) {
+        await this.inbox.pause(threadId);
+        await this.store.database.$client.begin(async (tx) => {
+          const stopped = await tx.unsafe<{ run_id: string }[]>(
+            `UPDATE chisabot_local_runs r SET status='stopped',finished_at=now()
+            FROM chisabot_dsh_runs d WHERE d.thread_id=$1 AND d.thread_id=r.thread_id AND d.run_id=r.run_id
+              AND d.stop_requested AND d.status='settled' AND r.status<>'stopped' RETURNING r.run_id`,
+            [threadId],
+          );
+          for (const run of stopped) {
+            await tx.unsafe(
+              "INSERT INTO chisabot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb)",
+              [
+                threadId,
+                run.run_id,
+                JSON.stringify({
+                  type: EventType.RUN_ERROR,
+                  code: "DSH_RUN_CANCELLED",
+                  message: "用户已停止这一轮。",
+                }),
+              ],
+            );
+            await tx.unsafe(
+              "UPDATE chisabot_conversation_commands SET status='stopped',updated_at=now() WHERE thread_id=$1 AND run_id=$2",
+              [threadId, run.run_id],
+            );
+          }
+        });
+        return true;
+      }
       const relay = this.frontend.get(threadId);
       if (relay && runId !== undefined && relay.runId !== runId) return false;
       if (relay) {
@@ -1675,17 +2429,26 @@ class PostgresAgentRunner extends AgentRunner {
       }
       // Stop in a browser tool/idle gap still durably holds unseen supplements.
       if (runId === undefined) await this.inbox.pause(threadId);
-      return await this.client.ɵreleaseOrphanedLock(threadId, runId);
+      return (await this.client.releaseOrphanedLock(threadId, runId)) || queued;
     }
-    if (entry.stopped || (runId !== undefined && entry.runId !== runId))
-      return false;
-    entry.stopped = true;
+    if (!claimed || entry !== current) return queued;
     entry.abort.abort();
     entry.agent.abortRun();
     await this.inbox.pause(threadId);
+    // Persistent kernels confirm their own termination. Keep the observer/lease until that fact.
+    if (
+      "acknowledgesStop" in entry.agent &&
+      entry.agent.acknowledgesStop === true
+    )
+      return true;
     // A runtime that ignores the abort must not hold the Stop request open (CB-104).
-    const detached = Promise.resolve(entry.agent.detachActiveRun()).catch(() => {});
-    await Promise.race([detached, new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS).unref?.())]);
+    const detached = Promise.resolve(entry.agent.detachActiveRun()).catch(
+      () => {},
+    );
+    await Promise.race([
+      detached,
+      new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS).unref?.()),
+    ]);
     return true;
   }
 }
@@ -1716,10 +2479,19 @@ export type LocalRunControl = {
 };
 
 export type LocalConversationBackend = {
+  commands: ConversationCommands;
+  capacity: ReturnType<typeof createExecutionCapacity>;
   client: LocalConversationClient;
-  runner: AgentRunner;
+  runner: ConversationRunner;
   control: LocalRunControl;
   inbox: ThreadInbox;
+  leases: {
+    acquire(identity: ThreadLock): Promise<{ threadId: string; runId: string }>;
+    renew(
+      identity: LeaseIdentity & { ttlSeconds: number },
+    ): Promise<{ threadId: string; runId: string }>;
+    release(identity: LeaseIdentity): Promise<void>;
+  };
   /** 后台任务服务建好以后挂上来（index.ts）。 */
   setWorkers(routes: ThreadWorkerRoutes): void;
   handle(request: Request, actorId: string): Promise<Response | undefined>;
@@ -1728,30 +2500,50 @@ export type LocalConversationBackend = {
 export async function createLocalConversations(
   database: Database,
 ): Promise<LocalConversationBackend> {
+  await assertConversationNamespace(database.$client);
+  const commands = createConversationCommands(database);
+  await commands.ensure();
+  await createDshRunJournal(database).ensure();
+  await createConversationInteractions(database).ensure();
   // Independent tables avoid any dependency on a hosted migration service.
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_threads (
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_threads (
     id text PRIMARY KEY, owner_user_id text NOT NULL, agent_id text NOT NULL,
     name text, archived boolean NOT NULL DEFAULT false,
     messages jsonb NOT NULL DEFAULT '[]'::jsonb, state jsonb NOT NULL DEFAULT '{}'::jsonb,
     run_id text, lock_expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
   )`);
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_runs (
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_runs (
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     run_id text NOT NULL, status text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
     PRIMARY KEY (thread_id, run_id)
   )`);
-  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS openbot_local_events (
+  await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_local_events (
     sequence bigserial PRIMARY KEY,
-    thread_id text NOT NULL REFERENCES openbot_local_threads(id) ON DELETE CASCADE,
+    thread_id text NOT NULL REFERENCES chisabot_local_threads(id) ON DELETE CASCADE,
     run_id text NOT NULL, event jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
   )`);
   await database.$client.unsafe(
-    "CREATE INDEX IF NOT EXISTS openbot_local_events_thread_sequence ON openbot_local_events(thread_id, sequence)",
+    "CREATE INDEX IF NOT EXISTS chisabot_local_events_thread_sequence ON chisabot_local_events(thread_id, sequence)",
   );
   await database.$client.unsafe(
-    "CREATE INDEX IF NOT EXISTS openbot_local_threads_owner_updated ON openbot_local_threads(owner_user_id, updated_at DESC)",
+    "ALTER TABLE chisabot_local_threads ADD COLUMN IF NOT EXISTS snapshot_sequence bigint",
+  );
+  await database.$client.unsafe(
+    "ALTER TABLE chisabot_local_runs ADD COLUMN IF NOT EXISTS execution jsonb",
+  );
+  await database.$client.unsafe(`DO $$ BEGIN IF to_regclass('public.chisabot_local_agent_tasks') IS NOT NULL THEN
+    IF NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='chisabot_local_agent_tasks'::regclass AND attname='capacity_active' AND NOT attisdropped) THEN
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN capacity_active boolean NOT NULL DEFAULT false;
+      UPDATE chisabot_local_agent_tasks SET capacity_active=true WHERE status IN ('starting','running');
+    END IF;
+  END IF; END $$`);
+  await database.$client.unsafe(
+    "UPDATE chisabot_local_threads t SET snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM chisabot_local_events e WHERE e.thread_id=t.id) WHERE snapshot_sequence IS NULL",
+  );
+  await database.$client.unsafe(
+    "CREATE INDEX IF NOT EXISTS chisabot_local_threads_owner_updated ON chisabot_local_threads(owner_user_id, updated_at DESC)",
   );
   await ensureTruncationTable(database);
   const store = new ConversationStore(database);
@@ -1760,7 +2552,10 @@ export async function createLocalConversations(
   await inbox.ensure();
   if (process.env.CHISABOT_RELEASE_LOCKS_ON_START !== "0") {
     try {
-      const owed = await inbox.releaseInterrupted();
+      const retained = await createDshRunJournal(database).pending();
+      const owed = await inbox.releaseInterrupted(
+        retained.map((run) => run.thread_id),
+      );
       if (owed)
         console.log(
           JSON.stringify({
@@ -1772,7 +2567,7 @@ export async function createLocalConversations(
       console.warn("releasing interrupted inbox items failed", error);
     }
     try {
-      const released = await client.ɵreleaseOrphanedLocks();
+      const released = await client.releaseOrphanedLocks();
       if (released.threads || released.runs)
         console.log(
           JSON.stringify({ type: "conversation-locks-released", ...released }),
@@ -1785,7 +2580,7 @@ export async function createLocalConversations(
   if (process.env.CHISABOT_RELEASE_LOCKS_ON_START !== "0") {
     const sweep = () => {
       void client
-        .ɵsweepExpiredLocks()
+        .sweepExpiredLocks()
         .then((report) => {
           if (report.threads || report.runs)
             console.info(
@@ -1810,7 +2605,7 @@ export async function createLocalConversations(
     const rows = await database.$client.unsafe<
       { event: Record<string, unknown>; created_at: Date }[]
     >(
-      `SELECT event, created_at FROM openbot_local_events
+      `SELECT event, created_at FROM chisabot_local_events
        WHERE thread_id = $1 AND event->>'type' = 'RUN_FINISHED'
        AND (event ? 'usage' OR event->'metadata' ? 'contextUsage')
        ORDER BY sequence DESC LIMIT 1`,
@@ -1835,8 +2630,8 @@ export async function createLocalConversations(
     const started = await database.$client.unsafe<
       { event: { input?: { messages?: { id?: string }[] } } }[]
     >(
-      `SELECT e.event FROM openbot_local_events e
-       JOIN openbot_local_runs r ON r.thread_id = e.thread_id AND r.run_id = e.run_id
+      `SELECT e.event FROM chisabot_local_events e
+       JOIN chisabot_local_runs r ON r.thread_id = e.thread_id AND r.run_id = e.run_id
        WHERE e.thread_id = $1 AND r.status = 'stopped' AND e.event->>'type' = 'RUN_STARTED'
        ORDER BY e.sequence DESC LIMIT 50`,
       [threadId],
@@ -1867,10 +2662,10 @@ export async function createLocalConversations(
       }[]
     >(
       `SELECT f.event->'metadata'->'modelFallback' AS fallback,
-              (SELECT s.event FROM openbot_local_events s
+              (SELECT s.event FROM chisabot_local_events s
                 WHERE s.thread_id = f.thread_id AND s.run_id = f.run_id AND s.event->>'type' = 'RUN_STARTED'
                 ORDER BY s.sequence ASC LIMIT 1) AS started
-       FROM openbot_local_events f
+       FROM chisabot_local_events f
        WHERE f.thread_id = $1 AND f.event->>'type' = 'RUN_FINISHED' AND f.event->'metadata' ? 'modelFallback'
        ORDER BY f.sequence DESC LIMIT 50`,
       [threadId],
@@ -1901,7 +2696,11 @@ export async function createLocalConversations(
         const message = messages[at];
         if (message?.role !== "user") continue;
         const reason =
-          fallback.reason === "unavailable" ? "unavailable" : fallback.reason === "rejected" ? "rejected" : "quota";
+          fallback.reason === "unavailable"
+            ? "unavailable"
+            : fallback.reason === "rejected"
+              ? "rejected"
+              : "quota";
         if (!turns.has(message.id))
           turns.set(message.id, {
             userMessageId: message.id,
@@ -1930,7 +2729,7 @@ export async function createLocalConversations(
         created_at: Date;
       }[]
     >(
-      `SELECT event, created_at FROM openbot_local_events
+      `SELECT event, created_at FROM chisabot_local_events
        WHERE thread_id = $1 AND event->>'type' = 'RUN_STARTED'
        ORDER BY sequence DESC LIMIT 40`,
       [threadId],
@@ -1958,8 +2757,8 @@ export async function createLocalConversations(
     actorId: string,
   ): Promise<Response | undefined> => {
     const url = new URL(request.url);
-    const matched = /^\/api\/copilotkit\/threads(?:\/(.*))?\/?$/.exec(
-      url.pathname,
+    const matched = /^\/api\/conversations\/threads(?:\/(.*))?\/?$/.exec(
+      conversationPath(url.pathname),
     );
     if (!matched) return undefined;
     try {
@@ -1968,7 +2767,7 @@ export async function createLocalConversations(
       const suffix = matched[1] ?? "";
       if (!suffix && request.method === "GET") {
         const rows = await database.$client.unsafe<ThreadRow[]>(
-          `SELECT * FROM openbot_local_threads WHERE owner_user_id = $1
+          `SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1
            AND ($2::text IS NULL OR agent_id = $2) AND ($3::boolean OR NOT archived)
            ORDER BY updated_at DESC LIMIT 100`,
           [
@@ -1982,7 +2781,7 @@ export async function createLocalConversations(
       if (suffix === "clear" && request.method === "POST") {
         await database.$client.begin(async (transaction) => {
           const rows = await transaction.unsafe<ThreadRow[]>(
-            "SELECT * FROM openbot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
+            "SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
             [actorId],
           );
           if (
@@ -1997,10 +2796,16 @@ export async function createLocalConversations(
               "Stop running threads before clearing history",
               409,
             );
-          await transaction.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
-          await transaction.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id IN (SELECT id FROM openbot_local_threads WHERE owner_user_id = $1)", [actorId]);
           await transaction.unsafe(
-            "DELETE FROM openbot_local_threads WHERE owner_user_id = $1",
+            "DELETE FROM chisabot_thread_inbox_control WHERE thread_id IN (SELECT id FROM chisabot_local_threads WHERE owner_user_id = $1)",
+            [actorId],
+          );
+          await transaction.unsafe(
+            "DELETE FROM chisabot_thread_inbox WHERE thread_id IN (SELECT id FROM chisabot_local_threads WHERE owner_user_id = $1)",
+            [actorId],
+          );
+          await transaction.unsafe(
+            "DELETE FROM chisabot_local_threads WHERE owner_user_id = $1",
             [actorId],
           );
         });
@@ -2021,7 +2826,7 @@ export async function createLocalConversations(
       ) {
         const found = await database.$client.unsafe<
           { owner_user_id: string }[]
-        >("SELECT owner_user_id FROM openbot_local_threads WHERE id = $1", [
+        >("SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1", [
           threadId,
         ]);
         if (!found[0] || found[0].owner_user_id !== actorId)
@@ -2029,13 +2834,21 @@ export async function createLocalConversations(
       }
       // Inbox polling needs identity and queue rows, never the growing transcript JSON.
       if (operation === "inbox" && request.method === "GET") {
-        const [identity] = await database.$client.unsafe<{ agent_id: string }[]>(
-          "SELECT agent_id FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2", [threadId, actorId],
+        const [identity] = await database.$client.unsafe<
+          { agent_id: string }[]
+        >(
+          "SELECT agent_id FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2",
+          [threadId, actorId],
         );
         if (!identity) return Response.json(EMPTY_THREAD_READS.inbox);
         const requestedAgent = url.searchParams.get("agentId");
-        if (requestedAgent && requestedAgent !== identity.agent_id) throw new LocalConversationError("Thread not found", 404);
-        return Response.json({ running: runner.isActive(threadId), paused: await inbox.isPaused(threadId), items: await inbox.list(threadId) });
+        if (requestedAgent && requestedAgent !== identity.agent_id)
+          throw new LocalConversationError("Thread not found", 404);
+        return Response.json({
+          running: await runner.isRunning({ threadId }),
+          paused: await inbox.isPaused(threadId),
+          items: await inbox.list(threadId),
+        });
       }
       const row = await store.owned({ threadId, userId: actorId });
       const requestedAgent = url.searchParams.get("agentId");
@@ -2122,7 +2935,10 @@ export async function createLocalConversations(
         // 压缩前文的摘要缓存里覆盖了被截掉消息的那些作废（agents/history-budget.ts）。
         await forgetHistorySummaries(database, threadId, result.removed);
         // A regenerated thread must not retain paused supplements from its removed history.
-        await database.$client.unsafe("UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now() WHERE thread_id = $1 AND status IN ('paused', 'stopped')", [threadId]);
+        await database.$client.unsafe(
+          "UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now() WHERE thread_id = $1 AND status IN ('paused', 'stopped')",
+          [threadId],
+        );
         if (workers) {
           for (const workerId of await workersSince(
             database,
@@ -2153,40 +2969,96 @@ export async function createLocalConversations(
       if (operation === "frontend-finished" && request.method === "POST") {
         const body = (await request.json()) as { results?: unknown };
         if (!Array.isArray(body.results) || body.results.length > 100)
-          throw new LocalConversationError("Frontend tool results are required", 400);
+          throw new LocalConversationError(
+            "Frontend tool results are required",
+            400,
+          );
         const results: Message[] = [];
         for (const value of body.results) {
           const parsed = MessageSchema.safeParse(value);
           if (!parsed.success || parsed.data.role !== "tool")
-            throw new LocalConversationError("Invalid frontend tool result", 400);
+            throw new LocalConversationError(
+              "Invalid frontend tool result",
+              400,
+            );
           results.push(parsed.data);
         }
-        return Response.json({ finished: await runner.finishFrontend(threadId, results) });
+        return Response.json({
+          finished: await runner.finishFrontend(threadId, results),
+        });
       }
       if (operation === "inbox" && request.method === "POST") {
         // 正在回答时又发来的一条：进收件箱（这一轮的下一步读进去）。没在跑就告诉客户端照常发送。
-        const body = (await request.json()) as { id?: unknown; text?: unknown };
+        const body = (await request.json()) as {
+          id?: unknown;
+          text?: unknown;
+          message?: unknown;
+          skillIds?: unknown;
+        };
+        const fullMessage =
+          body.message !== undefined || body.skillIds !== undefined;
         const id = typeof body.id === "string" ? body.id.trim() : "";
-        const text = typeof body.text === "string" ? body.text.trim() : "";
         if (!id || id.length > 128)
           throw new LocalConversationError("Message id is required", 400);
-        if (!text)
-          throw new LocalConversationError("Message text is required", 400);
+        const parsed = MessageSchema.safeParse(
+          body.message ?? {
+            id,
+            role: "user",
+            content: typeof body.text === "string" ? body.text.trim() : "",
+          },
+        );
+        if (
+          !parsed.success ||
+          parsed.data.role !== "user" ||
+          parsed.data.id !== id
+        )
+          throw new LocalConversationError(
+            "A user message with the matching id is required",
+            400,
+          );
+        const content = parsed.data.content;
+        const text = textOfMessage(parsed.data);
+        if (typeof content === "string" ? !content.trim() : !content.length)
+          throw new LocalConversationError("Message content is required", 400);
         if (text.length > INBOX_TEXT_LIMIT)
           throw new LocalConversationError("Message is too long", 413);
+        if (
+          body.skillIds !== undefined &&
+          (!Array.isArray(body.skillIds) ||
+            body.skillIds.length > 50 ||
+            body.skillIds.some(
+              (id) => typeof id !== "string" || !id || id.length > 128,
+            ))
+        )
+          throw new LocalConversationError("Invalid selected skills", 400);
         const existing = await inbox.get(threadId, id);
-        if (existing) return Response.json({ queued: true, status: existing.status });
+        if (existing)
+          return Response.json({
+            queued: true,
+            status: existing.status,
+            ...(fullMessage ? { message: existing.message } : {}),
+          });
         // CB-104: a message typed after Stop is explicit intent. Idle (even with held items) → send
         // it as a fresh turn; still winding down from Stop → tell the client to wait, never park it.
         if (!runner.isActive(threadId)) return Response.json({ queued: false });
-        if (runner.isStopping(threadId)) return Response.json({ queued: false, stopping: true });
+        if (runner.isStopping(threadId))
+          return Response.json({ queued: false, stopping: true });
         if (row.messages.some((message) => message.id === id))
           return Response.json({ queued: true, status: "read" });
+        const message = await resolveInboxMessage(
+          database,
+          actorId,
+          row.agent_id,
+          parsed.data,
+          [...new Set((body.skillIds as string[]) ?? [])],
+        );
         try {
           await inbox.enqueue({
             threadId,
             ownerUserId: actorId,
-            message: { id, role: "user", content: text } as Message,
+            message,
+            beforeInsert: (sql) =>
+              retainInboxAttachments(sql, { actorId, threadId }, message),
           });
         } catch (error) {
           throw new LocalConversationError(
@@ -2194,16 +3066,27 @@ export async function createLocalConversations(
             429,
           );
         }
-        const status = (await inbox.get(threadId, id))?.status ?? "queued";
-        if (status === "queued" && classifyMidTurnIntent(text) === "interrupt") {
+        const saved = await inbox.get(threadId, id);
+        const status = saved?.status ?? "queued";
+        if (
+          status === "queued" &&
+          classifyMidTurnIntent(text) === "interrupt"
+        ) {
           runner.interruptSegment(threadId);
         }
-        return Response.json({ queued: true, status });
+        return Response.json({
+          queued: true,
+          status,
+          ...(fullMessage ? { message: saved?.message ?? message } : {}),
+        });
       }
       if (operation === "inbox" && request.method === "DELETE") {
         const id = (url.searchParams.get("id") ?? "").trim();
-        if (!id || id.length > 128) throw new LocalConversationError("Message id is required", 400);
-        return Response.json({ withdrawn: await inbox.withdrawPending(threadId, id, actorId) });
+        if (!id || id.length > 128)
+          throw new LocalConversationError("Message id is required", 400);
+        return Response.json({
+          withdrawn: await inbox.withdrawPending(threadId, id, actorId),
+        });
       }
       if (operation === "workers" && request.method === "POST") {
         if (!workers)
@@ -2236,7 +3119,7 @@ export async function createLocalConversations(
       }
       if (!operation && request.method === "DELETE") {
         const removed = await database.$client.unsafe(
-          `DELETE FROM openbot_local_threads WHERE id = $1 AND owner_user_id = $2
+          `DELETE FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2
            AND (run_id IS NULL OR lock_expires_at <= now()) RETURNING id`,
           [threadId, actorId],
         );
@@ -2245,10 +3128,18 @@ export async function createLocalConversations(
             "Stop the running thread before deleting it",
             409,
           );
-        await database.$client.unsafe("DELETE FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
-        await database.$client.unsafe("DELETE FROM chisabot_thread_inbox WHERE thread_id = $1", [threadId]);
+        await database.$client.unsafe(
+          "DELETE FROM chisabot_thread_inbox_control WHERE thread_id = $1",
+          [threadId],
+        );
+        await database.$client.unsafe(
+          "DELETE FROM chisabot_thread_inbox WHERE thread_id = $1",
+          [threadId],
+        );
         // 模块 13 M2：挂在这段对话上的例程一起取消，不再到点发到别的对话。
-        await cancelSchedulesForDeletedThreads(database.$client, actorId, [threadId]);
+        await cancelSchedulesForDeletedThreads(database.$client, actorId, [
+          threadId,
+        ]);
         return new Response(null, { status: 204 });
       }
       if (
@@ -2271,7 +3162,7 @@ export async function createLocalConversations(
         if (body.archived !== undefined && typeof body.archived !== "boolean")
           throw new LocalConversationError("Archived must be boolean", 400);
         const changed = await database.$client.unsafe<ThreadRow[]>(
-          `UPDATE openbot_local_threads SET name = $3, archived = $4, updated_at = now()
+          `UPDATE chisabot_local_threads SET name = $3, archived = $4, updated_at = now()
            WHERE id = $1 AND owner_user_id = $2 RETURNING *`,
           [
             threadId,
@@ -2296,7 +3187,7 @@ export async function createLocalConversations(
         const stopped = await runner.stop({ threadId }).catch(() => false);
         const released = stopped
           ? true
-          : await client.ɵreleaseOrphanedLock(threadId);
+          : await client.releaseOrphanedLock(threadId);
         console.info(
           JSON.stringify({
             type: "conversation-force-unlock",
@@ -2335,10 +3226,17 @@ export async function createLocalConversations(
     stop: (request) => runner.stop(request),
   };
   return {
+    commands,
+    capacity: createExecutionCapacity(database),
     client,
     runner,
     control,
     inbox,
+    leases: {
+      acquire: (identity) => client.acquireThreadLease(identity),
+      renew: (identity) => client.renewThreadLease(identity),
+      release: (identity) => client.releaseThreadLease(identity),
+    },
     setWorkers: (routes) => {
       workers = routes;
     },

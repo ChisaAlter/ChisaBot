@@ -226,318 +226,323 @@ function render(t: Theme): string {
 
   out.push(`<rect width="${W}" height="${H}" fill="${t.paper}"/>`);
 
-  // ---- title -------------------------------------------------------------
+  // Keep the existing whiteboard style; show runtime and product ownership separately.
   text(64, 56, "ChisaBot", { size: 26, weight: 700, fill: t.ink });
   text(
     64,
     82,
-    "Every action a Bot takes is decided before it happens and recorded after.",
+    "DSH runs the model loop; ChisaBot owns permissions, durable work and delivery.",
     {
       size: 15,
       fill: t.muted,
     },
   );
 
-  // ---- the Bots, along the top ------------------------------------------
-  const botY = 126;
-  const botH = 92;
-  const bots: [number, number, string, string, boolean][] = [
-    [372, 212, "agent-bot :4200", "proof-of-concept AG-UI Bot", false],
-    [606, 212, "agent-langgraph :4201", "LangGraph AG-UI Bot", false],
-    [840, 250, "your agent", "any AG-UI endpoint, any framework", true],
-  ];
-  text(372, botY - 14, "BOTS", {
-    size: 11.5,
+  // ---- execution and model history, along the top ------------------------
+  const hostX = 372;
+  const hostY = 126;
+  const hostW = 476;
+  const hostH = 114;
+  box(hostX, hostY, hostW, hostH, t, { stroke: t.bring, strokeWidth: 2 });
+  text(hostX + 22, hostY + 34, "DSH Host · Node.js", {
+    size: 18,
     weight: 700,
-    fill: t.faint,
-    spacing: 1.6,
+    fill: t.bring,
   });
-  for (const [x, w, name, sub, byo] of bots) {
-    box(x, botY, w, botH, t, {
-      stroke: byo ? t.bring : t.ink,
-      dashed: byo,
-      strokeWidth: byo ? 1.8 : 1.6,
-    });
-    text(x + 18, botY + 34, name, {
-      size: 15,
-      weight: 650,
-      fill: byo ? t.bring : t.ink,
-    });
-    text(x + 18, botY + 58, sub, { size: byo ? 12.5 : 13, fill: t.muted });
-    if (byo)
-      text(x + 18, botY + 79, "bring your own", {
-        size: 12.5,
-        fill: t.bring,
-        italic: true,
-      });
-  }
-
-  // ---- you, on the left --------------------------------------------------
-  const youX = 64;
-  const youY = 296;
-  const youW = 232;
-  const youH = 196;
-  box(youX, youY, youW, youH, t, { stroke: t.ink });
-  text(youX + 18, youY + 36, "you", { size: 18, weight: 700, fill: t.ink });
-  text(youX + 18, youY + 58, "app :3010", { size: 13, fill: t.muted });
   lines(
-    youX + 18,
-    youY + 92,
-    ["channels and chat", "the Bot's live screen", "take the wheel", "/admin"],
+    hostX + 22,
+    hostY + 60,
+    [
+      "one isolated runtime per account",
+      "model / tool loop · streaming · stop / resume",
+    ],
     t,
+    13.5,
+    24,
   );
 
-  // a Bot that reaches something it should not do alone hands the browser back to a person
-  const hX = youX;
-  const hY = 560;
-  box(hX, hY, youW, 156, t, { stroke: t.muted, dashed: true });
-  text(hX + 18, hY + 34, "when it needs you", {
+  box(64, hostY, 232, hostH, t, { stroke: t.muted, dashed: true });
+  text(82, hostY + 34, "Model providers", {
+    size: 16,
+    weight: 650,
+    fill: t.ink,
+  });
+  lines(
+    82,
+    hostY + 60,
+    ["Magpie (optional)", "OpenAI / Anthropic APIs"],
+    t,
+    13,
+    24,
+  );
+
+  const targetX = 1076;
+  const targetW = 300;
+  box(targetX, hostY, targetW, hostH, t, { stroke: t.bring });
+  text(targetX + 18, hostY + 34, "DSH Session volume", {
+    size: 16,
+    weight: 650,
+    fill: t.bring,
+  });
+  lines(
+    targetX + 18,
+    hostY + 60,
+    ["account-owned model history", "durable events and checkpoints"],
+    t,
+    13,
+    24,
+  );
+
+  // ---- the common interface, on the left ---------------------------------
+  const appX = 64;
+  const appY = 320;
+  const appW = 232;
+  box(appX, appY, appW, 196, t, { stroke: t.ink });
+  text(appX + 18, appY + 34, "One shared interface", {
+    size: 17,
+    weight: 700,
+    fill: t.ink,
+  });
+  lines(
+    appX + 18,
+    appY + 62,
+    [
+      "Web / PWA · Electron",
+      "Android WebView (phone)",
+      "HTTPS login gateway",
+      "chat · tasks · approvals",
+      "live browser handoff",
+    ],
+    t,
+    13,
+    23,
+  );
+
+  box(appX, 620, appW, 136, t, { stroke: t.muted, dashed: true });
+  text(appX + 18, 654, "When it needs you", {
     size: 15,
     weight: 650,
     fill: t.ink,
   });
   lines(
-    hX + 18,
-    hY + 62,
+    appX + 18,
+    681,
     [
-      "it stops and asks,",
-      "you take the wheel",
-      "in its browser,",
-      "and hand it back",
+      "approve in the conversation,",
+      "take over the live browser,",
+      "then hand control back",
     ],
     t,
-    13,
+    12.5,
     22,
   );
 
-  // ---- the server, in the middle ----------------------------------------
-  const svX = 372;
-  const svY = 296;
-  const svW = 476;
-  const svH = 304;
-  box(svX, svY, svW, svH, t, { stroke: t.ink, strokeWidth: 2 });
-  text(svX + 22, svY + 36, "server :3001", {
+  // ---- product core and the tool boundary, in the middle -----------------
+  const coreX = 372;
+  const coreY = 320;
+  const coreW = 476;
+  const coreH = 286;
+  box(coreX, coreY, coreW, coreH, t, { stroke: t.ink, strokeWidth: 2 });
+  text(coreX + 22, coreY + 35, "ChisaBot core :3001", {
     size: 18,
     weight: 700,
     fill: t.ink,
   });
-  text(svX + 22, svY + 58, "CopilotKit runtime, auth, roles, coworkers", {
-    size: 13,
-    fill: t.muted,
-  });
+  text(
+    coreX + 22,
+    coreY + 60,
+    "conversation commands · history · tasks · delivery",
+    {
+      size: 13,
+      fill: t.muted,
+    },
+  );
 
-  // the gateway: the choke point everything passes through
-  const gX = svX + 22;
-  const gY = svY + 82;
-  const gW = svW - 44;
-  const gH = 194;
-  box(gX, gY, gW, gH, t, { stroke: t.gate, strokeWidth: 2.4, roughness: 1.4 });
-  text(gX + 18, gY + 32, "the gateway", {
+  const gateX = coreX + 22;
+  const gateY = coreY + 86;
+  box(gateX, gateY, coreW - 44, 176, t, {
+    stroke: t.gate,
+    strokeWidth: 2.4,
+    roughness: 1.4,
+  });
+  text(gateX + 18, gateY + 32, "Tool gateway & approvals", {
     size: 16,
     weight: 700,
     fill: t.gate,
   });
   lines(
-    gX + 18,
-    gY + 62,
+    gateX + 18,
+    gateY + 60,
     [
-      "1.  resolve the target",
-      "2.  decide  ·  your CEL policy, deny before allow",
-      "3.  record  ·  an audit row, allowed or refused",
-      "4.  act, or refuse and name the rule",
+      "1.  bind account, Bot and run",
+      "2.  check permissions · approve / hand off",
+      "3.  execute / refuse · persist the tool outcome",
     ],
     t,
     13.5,
     26,
   );
-  text(gX + 18, gY + 176, "browser · files · MCP · components", {
-    size: 12,
-    fill: t.faint,
-  });
-
-  // ---- the computers, on the right --------------------------------------
-  const cX = 1076;
-  const cY = 296;
-  const cW = 300;
-  text(cX, cY - 14, "A COMPUTER EACH", {
-    size: 11.5,
-    weight: 700,
-    fill: t.faint,
-    spacing: 1.6,
-  });
-  const computers = ["risk-analyst", "knowledge", "your agent"];
-  computers.forEach((name, i) => {
-    const y = cY + i * 100;
-    box(cX, y, cW, 84, t, { stroke: t.ink });
-    text(cX + 18, y + 30, name, { size: 15, weight: 650, fill: t.ink });
-    text(cX + 18, y + 52, "Chromium · its own logins", {
-      size: 12.5,
-      fill: t.muted,
-    });
-    text(cX + 18, y + 70, "/workspace · its own files", {
-      size: 12.5,
-      fill: t.muted,
-    });
-  });
-
-  // ---- supervisor --------------------------------------------------------
-  const supX = cX;
-  const supY = 656;
-  box(supX, supY, cW, 90, t, { stroke: t.ink, dashed: true });
-  text(supX + 18, supY + 30, "supervisor :4500", {
-    size: 14.5,
-    weight: 650,
-    fill: t.ink,
-  });
-  text(supX + 18, supY + 54, "the only process that", {
-    size: 12.5,
-    fill: t.muted,
-  });
-  text(supX + 18, supY + 72, "creates a computer", {
+  text(gateX + 18, gateY + 151, "browser · devices · MCP · integrations", {
     size: 12.5,
     fill: t.muted,
   });
 
-  text(cX, 782, "no Bot can read another's files", {
-    size: 12.5,
-    fill: t.muted,
-    italic: true,
-  });
-  text(cX, 802, "or reuse another's sign-ins", {
-    size: 12.5,
-    fill: t.muted,
-    italic: true,
-  });
-
-  // ---- stores, along the bottom -----------------------------------------
-  const dbX = 372;
-  const dbY = 660;
-  box(dbX, dbY, 226, 118, t, { stroke: t.ink });
-  text(dbX + 18, dbY + 32, "PostgreSQL :5432", {
-    size: 14.5,
+  // ---- tool targets, on the right ----------------------------------------
+  box(targetX, 320, targetW, 108, t, { stroke: t.ink });
+  text(targetX + 18, 351, "Cloud tools", {
+    size: 16,
     weight: 650,
     fill: t.ink,
   });
   lines(
-    dbX + 18,
-    dbY + 58,
-    ["the audit trail", "policy, grants", "credentials, encrypted"],
+    targetX + 18,
+    375,
+    [
+      "agent-computer · Chromium / Xvfb",
+      "per-Bot browser profiles",
+      "shared process and /workspace",
+    ],
     t,
     12.5,
-    19,
+    20,
   );
 
-  const intX = 622;
-  box(intX, dbY, 226, 118, t, { stroke: t.ink });
-  text(intX + 18, dbY + 32, "CopilotKit Intelligence", {
-    size: 14.5,
+  box(targetX, 462, targetW, 108, t, { stroke: t.ink });
+  text(targetX + 18, 493, "Your devices", {
+    size: 16,
     weight: 650,
     fill: t.ink,
   });
   lines(
-    intX + 18,
-    dbY + 58,
-    ["durable threads", "memory", "external service"],
+    targetX + 18,
+    517,
+    [
+      "account-owned Windows / Linux / macOS",
+      "outbound WSS · device_* tools",
+      "local agents · files · terminal",
+    ],
     t,
     12.5,
-    19,
+    20,
+  );
+
+  // ---- product storage and host operations -------------------------------
+  const dbY = 690;
+  box(coreX, dbY, coreW, 118, t, { stroke: t.ink });
+  text(coreX + 22, dbY + 32, "PostgreSQL :5432", {
+    size: 16,
+    weight: 650,
+    fill: t.ink,
+  });
+  lines(
+    coreX + 22,
+    dbY + 59,
+    [
+      "conversation history · tasks · memory · delivery",
+      "approvals · durable tool ledger · audit",
+      "permissions and encrypted credentials",
+    ],
+    t,
+    13,
+    20,
+  );
+
+  box(targetX, dbY, targetW, 118, t, { stroke: t.muted, dashed: true });
+  text(targetX + 18, dbY + 32, "Host updater", {
+    size: 16,
+    weight: 650,
+    fill: t.ink,
+  });
+  lines(
+    targetX + 18,
+    dbY + 58,
+    [
+      "build · backup · compatible switch",
+      "health check · guarded recovery",
+      "app has no Docker socket",
+    ],
+    t,
+    12.5,
+    21,
   );
 
   // ---- the wiring --------------------------------------------------------
-  // you -> server, and the answer back
-  arrow(youX + youW + 6, youY + 76, svX - 8, youY + 76, { colour: t.ink });
-  label((youX + youW + svX) / 2, youY + 62, "a turn", t.muted);
-  arrow(svX - 8, youY + 132, youX + youW + 6, youY + 132, {
-    colour: t.ink,
-    dashed: true,
+  // DSH calls the configured model connection, directly or through the core's proxy.
+  arrow(hostX - 8, hostY + 47, appX + appW + 8, hostY + 47, {
+    colour: t.muted,
   });
-  label((youX + youW + svX) / 2, youY + 156, "the answer", t.muted);
-
-  // server -> bots and back
-  arrow(svX + 140, svY - 8, svX + 140, botY + botH + 8, { colour: t.ink });
-  label(svX + 92, svY - 36, "AG-UI", t.muted);
-  arrow(svX + 320, botY + botH + 8, svX + 320, svY - 8, {
-    colour: t.ink,
-    dashed: true,
+  label((appX + appW + hostX) / 2, hostY + 30, "model API", t.muted);
+  text(64, hostY + hostH + 24, "direct or via the core model proxy", {
+    size: 12,
+    fill: t.muted,
   });
-  label(svX + 390, svY - 36, "a tool call", t.muted);
-  // the one you bring plugs in exactly the same way
-  arrow(940, botY + botH + 8, svX + svW - 40, svY - 8, {
+  arrow(hostX + hostW + 8, hostY + 57, targetX - 10, hostY + 57, {
     colour: t.bring,
-    dashed: true,
-    width: 1.5,
+    tailHead: true,
   });
+  label((hostX + hostW + targetX) / 2, hostY + 41, "persist / resume", t.bring);
 
-  // the gateway -> a computer, but only once it has decided so
-  arrow(svX + svW + 8, gY + 58, cX - 10, cY + 42, {
+  // Commands flow to DSH; scoped tool callbacks flow back to the product gateway.
+  arrow(coreX + 110, coreY - 8, coreX + 110, hostY + hostH + 8, {
+    colour: t.ink,
+    tailHead: true,
+  });
+  label(coreX + 94, 280, "commands / events", t.muted, "end");
+  arrow(coreX + 334, hostY + hostH + 8, coreX + 334, coreY - 8, {
+    colour: t.gate,
+    dashed: true,
+  });
+  label(coreX + 350, 280, "tool callbacks", t.gate, "start");
+
+  // The app's API transport is product-owned; responses stream back over the same origin.
+  arrow(appX + appW + 6, appY + 76, coreX - 8, appY + 76, { colour: t.ink });
+  label((appX + appW + coreX) / 2, appY + 61, "request", t.muted);
+  arrow(coreX - 8, appY + 132, appX + appW + 6, appY + 132, {
+    colour: t.ink,
+    dashed: true,
+  });
+  label((appX + appW + coreX) / 2, appY + 155, "stream", t.muted);
+
+  arrow(coreX + coreW + 8, gateY + 39, targetX - 10, 374, {
     colour: t.allow,
     width: 2.2,
   });
-  label((svX + svW + cX) / 2, gY + 26, "allowed", t.allow);
-
-  // ...and the refusal, which never reaches the computer at all
-  const ry = gY + 150;
-  const rx1 = svX + svW + 8;
-  const rx2 = rx1 + 116;
-  arrow(rx1, ry, rx2, ry, { colour: t.refuse, head: false, width: 2.2 });
-  const cross = 10;
-  for (const [dx1, dy1, dx2, dy2] of [
-    [-cross, -cross, cross, cross],
-    [cross, -cross, -cross, cross],
-  ]) {
-    draw(
-      gen.line(
-        rx2 + 14 + (dx1 as number),
-        ry + (dy1 as number),
-        rx2 + 14 + (dx2 as number),
-        ry + (dy2 as number),
-        {
-          seed: nextSeed(),
-          stroke: t.refuse,
-          strokeWidth: 2.6,
-          roughness: 1.1,
-        },
-      ),
-    );
-  }
-  label(rx2 + 14, ry + 40, "refused,", t.refuse);
-  label(rx2 + 14, ry + 57, "naming the rule", t.refuse);
-
-  // every decision lands in the trail, allowed or not
-  arrow(gX + 90, svY + svH + 8, gX + 90, dbY - 8, {
-    colour: t.gate,
+  label(964, 378, "authorized tools", t.allow);
+  // The device initiates the WSS connection; tool requests and results use that channel.
+  arrow(targetX - 10, 516, coreX + coreW + 8, 516, {
+    colour: t.allow,
     width: 2.2,
-  });
-  label(gX + 72, (svY + svH + dbY) / 2 + 4, "always", t.gate, "end");
-
-  // threads and memory, both ways
-  arrow(intX + 113, svY + svH + 8, intX + 113, dbY - 8, {
-    colour: t.ink,
-    dashed: true,
     tailHead: true,
   });
+  label(964, 498, "device connection", t.allow);
 
-  // the supervisor builds each computer
-  arrow(supX + 150, supY - 8, cX + 150, cY + 2 * 100 + 92, {
-    colour: t.ink,
+  arrow(coreX + 190, coreY + coreH + 8, coreX + 190, dbY - 8, {
+    colour: t.gate,
+    width: 2.2,
+    tailHead: true,
+  });
+  label(coreX + 210, 654, "product records", t.muted, "start");
+
+  arrow(coreX + coreW + 8, coreY + coreH - 16, targetX - 10, dbY + 30, {
+    colour: t.muted,
     dashed: true,
   });
-  label(supX + 166, supY - 22, "creates one each", t.muted, "start");
+  label(968, 627, "spool request", t.muted);
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">`,
     `<title>ChisaBot architecture</title>`,
-    `<desc>A turn goes from the app to the server, which sends it to a Bot over AG-UI. Every tool call ` +
-      `the Bot makes returns through the gateway, which resolves the target, decides it against the ` +
-      `configured policy, records an audit row, and only then acts, or refuses and names the rule. ` +
-      `Allowed actions reach that Bot's own computer, one container each holding its own Chromium, ` +
-      `logins and workspace, created by the supervisor. Every decision lands in PostgreSQL; threads ` +
-      `and memory live in CopilotKit Intelligence.</desc>`,
+    `<desc>Web, PWA, Electron and Android WebView share the same product interface and HTTPS login gateway. ` +
+      `The core owns conversation commands, history, tasks, permissions, approvals and delivery. ` +
+      `A separate DSH Host per account runs the model and tool loop and persists model history in its Session volume. ` +
+      `Tool callbacks return to the core gateway before reaching the shared cloud computer, account-owned devices ` +
+      `or integrations. Cloud browser profiles are per Bot; the current app container shares its computer process ` +
+      `and workspace. Devices initiate outbound WSS connections. Product records live in PostgreSQL. ` +
+      `The host updater reads spool requests and applies compatible updates without exposing Docker to the app.</desc>`,
     ...out,
     `</svg>`,
   ].join("\n");
 }
-
 for (const theme of [LIGHT, DARK]) {
   await Bun.write(
     new URL(`../assets/architecture-${theme.name}.svg`, import.meta.url),

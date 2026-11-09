@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { AbstractAgent, type BaseEvent, EventType } from "@ag-ui/client";
 import { EMPTY, Observable } from "rxjs";
 import { createHandoffDelivery } from "../src/agents/handoff-delivery";
-import type { RuntimeModelConnection } from "../src/copilot";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 import {
   resolveScopedModelConnection,
   withModelConnectionScope,
@@ -128,9 +128,14 @@ test("routine turns retain their built connection through asynchronous execution
     intelligence: {
       getOrCreateThread: async () => ({}),
       getThreadMessages: async () => ({ messages: [] }),
-      ɵacquireThreadLock: async () => ({}),
-      ɵrenewThreadLock: async () => ({}),
-      ɵcleanupThreadLock: async () => {},
+      acquireThreadLease: async () => ({}),
+      renewThreadLease: async () => ({}),
+      releaseThreadLease: async () => {},
+    },
+    leases: {
+      acquire: async () => ({}),
+      renew: async () => ({}),
+      release: async () => {},
     },
     buildAgentFor: async () => {
       seen.push(

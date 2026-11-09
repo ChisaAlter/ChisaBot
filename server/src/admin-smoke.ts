@@ -18,13 +18,17 @@
 import { randomBytes } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import {
+  type FallbackUse,
+  fallbackNotice,
+  withFallbackListener,
+} from "./agents/model-fallback";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
-import { type FallbackUse, fallbackNotice, withFallbackListener } from "./agents/model-fallback";
 import {
   fallbackConnectionModel,
   type RuntimeModelConnection,
-} from "./copilot";
+} from "./conversation-runtime";
 import { withModelConnectionScope } from "./model-connection-context";
 
 export const SMOKE_TIMEOUT_MS = 45_000;
@@ -103,7 +107,9 @@ export function smokePrompt(question: Pick<SmokeQuestion, "a" | "b">): string {
 
 /** 回复里有没有正确答案（全角数字也认；整数完整匹配，「185」不算答对 85）。 */
 export function smokeAnswered(reply: string, answer: number): boolean {
-  const normalized = reply.replace(/[０-９]/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+  const normalized = reply.replace(/[０-９]/gu, (digit) =>
+    String.fromCharCode(digit.charCodeAt(0) - 0xfee0),
+  );
   const numbers: string[] = normalized.match(/\d+/gu) ?? [];
   return numbers.includes(String(answer));
 }
@@ -122,7 +128,8 @@ export function resolveSmokeHermesProbe(input: {
   if (input.agentKernel?.trim().toLowerCase() === "hermes") {
     return async () => ({
       reachable: false,
-      error: "内核是 hermes（CHISABOT_AGENT_KERNEL=hermes），但没有配置 CHISABOT_HERMES_URL",
+      error:
+        "内核是 hermes（CHISABOT_AGENT_KERNEL=hermes），但没有配置 CHISABOT_HERMES_URL",
     });
   }
   return input.probe;
@@ -207,10 +214,13 @@ export function createAdminSmokeRoutes(options: {
         try {
           const probe = await options.probeHermes();
           hermes = probe.reachable ? "ok" : "unreachable";
-          if (!probe.reachable) hermesError = (probe.error ?? "无法连接").slice(0, 200);
+          if (!probe.reachable)
+            hermesError = (probe.error ?? "无法连接").slice(0, 200);
         } catch (error) {
           hermes = "unreachable";
-          hermesError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+          hermesError = (
+            error instanceof Error ? error.message : String(error)
+          ).slice(0, 200);
         }
       }
       const answered = !failure && smokeAnswered(reply, question.answer);
@@ -231,11 +241,12 @@ export function createAdminSmokeRoutes(options: {
             ? `智能体运行时（Hermes）无法连接：${hermesError ?? "无法连接"}。${modelOk ? "模型本身可用。" : ""}`
             : "") +
           (failure ??
-          (answered
-            ? "自检通过：模型正确回答了测试题。"
-            : ok
-              ? "自检通过：模型有回复（答案没对上，但连接和模型往返正常）。"
-              : "模型返回了空回复。")) + (fallback && !failure ? `（${fallbackNotice(fallback)}）` : ""),
+            (answered
+              ? "自检通过：模型正确回答了测试题。"
+              : ok
+                ? "自检通过：模型有回复（答案没对上，但连接和模型往返正常）。"
+                : "模型返回了空回复。")) +
+          (fallback && !failure ? `（${fallbackNotice(fallback)}）` : ""),
         ...(fallback ? { fallback } : {}),
         hermes,
         ...(hermesError ? { hermesError } : {}),

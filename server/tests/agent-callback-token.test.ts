@@ -447,7 +447,7 @@ describe("the tool-call route a callback token guards", () => {
   /** What the model is handed, as the route builds it. */
   async function toolResult(thrown: unknown): Promise<string> {
     const response = await appWhoseToolThrows(thrown).request(
-      "http://openbot.local/api/agent-tools/call",
+      "http://chisabot.local/api/agent-tools/call",
       {
         method: "POST",
         headers: {
@@ -636,7 +636,7 @@ describe("the tool-call route a callback token guards", () => {
       undefined,
       undefined,
       store,
-    ).request("http://openbot.local/api/agent-tools/call", {
+    ).request("http://chisabot.local/api/agent-tools/call", {
       method: "POST",
       headers: {
         "content-type": "application/json",

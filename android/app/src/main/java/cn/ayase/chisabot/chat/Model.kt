@@ -146,7 +146,7 @@ fun contentAll(content: JsonElement?): Triple<String, List<String>, List<Attachm
     return Triple(text.toString(), images, files)
 }
 
-/** GET /api/copilotkit/threads/<id>/messages 的 messages[] → 界面消息（tool 结果并进对应的调用）。 */
+/** GET /api/conversations/threads/<id>/messages 的 messages[] → 界面消息（tool 结果并进对应的调用）。 */
 fun parseHistory(messages: JsonArray): List<ChatMessage> {
     val out = mutableListOf<ChatMessage>()
     val results = HashMap<String, String>()

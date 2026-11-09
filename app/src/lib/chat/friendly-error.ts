@@ -17,9 +17,26 @@ export type FriendlyError = {
  * （最后一轮是人发的消息、后面什么都没有），就用这个稳定的字符串当原因，让错误卡和「重试」在刷新后
  * 照样重建出来，而不是消失。
  */
-export const UNANSWERED_TURN_REASON = "unanswered-turn: no reply was stored for this turn";
+export const UNANSWERED_TURN_REASON =
+  "unanswered-turn: no reply was stored for this turn";
 
-const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boolean }> = [
+const RULES: Array<{
+  test: RegExp;
+  title: string;
+  hint?: string;
+  retryable?: boolean;
+}> = [
+  {
+    test: /Hermes fallback model call failed:|备用模型「[^」]+」请求失败：/i,
+    title: "备用模型也未能完成回答",
+    hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
+  },
+  {
+    test: /host gateway outcome is unknown|run is no longer authorized|工具调用没拿到确定结果|这一步可能已经执行|结果尚待核对/i,
+    title: "这一步操作未能确认结果",
+    hint: "工具连接中断或本轮授权已结束。已有操作可能已经执行，请先核对结果，再决定是否重试。",
+    retryable: false,
+  },
   {
     // CB-100：服务器在流开始前就连不上智能体运行时（Hermes 桥接 / 远程 AG-UI），发来的 RUN_ERROR。
     // 放在最前面：原因里带的 ConnectionRefused / ECONN 不能被当成「网络连接中断」（那是浏览器这边的网络）。
@@ -68,6 +85,11 @@ const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boo
     test: /content[_ ]?filter|safety|moderation|sensitive|违规|敏感|审核/i,
     title: "请求被模型的内容安全策略拦截",
     hint: "换个说法再试，或切换到其他模型。",
+  },
+  {
+    test: /context compaction failed|no safe compaction range|上下文压缩未能完成/i,
+    title: "上下文压缩未能完成",
+    hint: "已保存的对话仍然保留。请换用上下文更大的模型后重试。",
   },
   {
     test: /context[_ ]?length|too long|maximum context|token limit|超出.*长度|上下文/i,
@@ -141,8 +163,17 @@ export function friendlyError(raw: string): FriendlyError {
     };
   // 做到一半就停了（工具出错 / 续轮到上限 / 空回复，DESIGN.md §100）：原因本身已经是给人看的中文，
   // 放在提示里直接显示；放在规则前面，免得里面带的英文原文（如 timeout）被认成「模型超时」。
-  if (/^机器人(在「[^」]*」这一步出错|做完「[^」]*」之后没有接着做|这一轮没有给出任何回复)/.test(detail)) {
-    return { title: "这一轮没有做完", hint: detail, detail: "", retryable: true };
+  if (
+    /^机器人(在「[^」]*」这一步出错|做完「[^」]*」之后没有接着做|这一轮没有给出任何回复)/.test(
+      detail,
+    )
+  ) {
+    return {
+      title: "这一轮没有做完",
+      hint: detail,
+      detail: "",
+      retryable: true,
+    };
   }
   for (const rule of RULES) {
     if (rule.test.test(detail)) {

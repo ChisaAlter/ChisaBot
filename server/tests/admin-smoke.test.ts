@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { createAdminSmokeRoutes, resolveSmokeHermesProbe, smokeAnswered, smokePrompt } from "../src/admin-smoke";
+import {
+  createAdminSmokeRoutes,
+  resolveSmokeHermesProbe,
+  smokeAnswered,
+  smokePrompt,
+} from "../src/admin-smoke";
 import type { AppVariables } from "../src/auth/guards";
-import type { RuntimeModelConnection } from "../src/copilot";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 
 const connection: RuntimeModelConnection = {
-  model: { provider: "openai", defaultModel: "gpt-test", baseUrl: "http://model.invalid/v1" },
+  model: {
+    provider: "openai",
+    defaultModel: "gpt-test",
+    baseUrl: "http://model.invalid/v1",
+  },
   apiKey: "sk-secret",
 };
 
@@ -18,8 +27,16 @@ function app(
     probeHermes?: () => Promise<{ reachable: boolean; error?: string }>;
   } = {},
 ) {
-  const requireUser = (async (context: { set: (k: string, v: unknown) => void }, next: () => Promise<void>) => {
-    context.set("actor", { id: `${role}-1`, email: `${role}@x`, name: role, role });
+  const requireUser = (async (
+    context: { set: (k: string, v: unknown) => void },
+    next: () => Promise<void>,
+  ) => {
+    context.set("actor", {
+      id: `${role}-1`,
+      email: `${role}@x`,
+      name: role,
+      role,
+    });
     await next();
   }) as never;
   const root = new Hono<{ Variables: AppVariables }>();
@@ -78,7 +95,14 @@ test("a correct answer passes (answered); never persists; no question or secrets
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
   const body = await response.json();
-  expect(body).toMatchObject({ ok: true, answered: true, echoed: true, persisted: false, model: "gpt-test", agentId: null });
+  expect(body).toMatchObject({
+    ok: true,
+    answered: true,
+    echoed: true,
+    persisted: false,
+    model: "gpt-test",
+    agentId: null,
+  });
   expect(seenPrompt).toMatch(/^\d{2} \+ \d{2} /u);
   expect(logs).toHaveLength(1);
   expect(logs[0]).not.toContain("sk-secret");
@@ -86,15 +110,25 @@ test("a correct answer passes (answered); never persists; no question or secrets
 });
 
 test("any non-empty reply proves the round trip (a refusal must not fail the self-test)", async () => {
-  const refused = await post(app("admin", async () => "抱歉，我不能执行这个请求。"));
+  const refused = await post(
+    app("admin", async () => "抱歉，我不能执行这个请求。"),
+  );
   expect(refused.status).toBe(200);
-  expect(await refused.json()).toMatchObject({ ok: true, answered: false, persisted: false });
+  expect(await refused.json()).toMatchObject({
+    ok: true,
+    answered: false,
+    persisted: false,
+  });
 });
 
 test("an empty reply or a failed call is a 502 with a reason", async () => {
   const empty = await post(app("admin", async () => "   "));
   expect(empty.status).toBe(502);
-  expect(await empty.json()).toMatchObject({ ok: false, answered: false, persisted: false });
+  expect(await empty.json()).toMatchObject({
+    ok: false,
+    answered: false,
+    persisted: false,
+  });
   const failed = await post(
     app("admin", async () => {
       throw new Error("boom sk-secret");
@@ -108,15 +142,26 @@ test("an empty reply or a failed call is a 502 with a reason", async () => {
 
 test("agentId uses the Bot's own model resolution and is validated", async () => {
   const asked: string[] = [];
-  const root = app("admin", async (c, prompt) => `${c.model.defaultModel} ${solve(prompt)}`, {
-    forAgent: async (id) => {
-      asked.push(id);
-      return { ...connection, model: { ...connection.model, defaultModel: "bot-model" } };
+  const root = app(
+    "admin",
+    async (c, prompt) => `${c.model.defaultModel} ${solve(prompt)}`,
+    {
+      forAgent: async (id) => {
+        asked.push(id);
+        return {
+          ...connection,
+          model: { ...connection.model, defaultModel: "bot-model" },
+        };
+      },
     },
-  });
+  );
   const response = await post(root, { agentId: "agent-1" });
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ ok: true, model: "bot-model", agentId: "agent-1" });
+  expect(await response.json()).toMatchObject({
+    ok: true,
+    model: "bot-model",
+    agentId: "agent-1",
+  });
   expect(asked).toEqual(["agent-1"]);
   expect((await post(root, { agentId: "../x y" })).status).toBe(400);
 });
@@ -130,21 +175,38 @@ test("prompt and answer check", () => {
 });
 
 test("self-test passes through a fallback model when the main model is out of quota, and says so (§61)", async () => {
-  const { fallbackLanguageModel, resetModelCooldowns } = await import("../src/agents/model-fallback");
+  const { fallbackLanguageModel, resetModelCooldowns } = await import(
+    "../src/agents/model-fallback"
+  );
   resetModelCooldowns();
-  const quota = Object.assign(new Error("Daily free limit reached. Try again in 18h 14m"), { statusCode: 429 });
+  const quota = Object.assign(
+    new Error("Daily free limit reached. Try again in 18h 14m"),
+    { statusCode: 429 },
+  );
   const logs: string[] = [];
   const response = await post(
     app(
       "admin",
       async (_c, prompt) => {
-        const primary = { modelId: "p", doGenerate: async () => { throw quota; } };
-        const backup = { modelId: "b", doGenerate: async () => ({ text: solve(prompt) }) };
-        const wrapped = fallbackLanguageModel(primary, "clinepass/cline-free/mimo", {
-          candidates: async () => ["clinepass/cline-free/step-5-preview"],
-          build: () => backup,
-          log: () => {},
-        });
+        const primary = {
+          modelId: "p",
+          doGenerate: async () => {
+            throw quota;
+          },
+        };
+        const backup = {
+          modelId: "b",
+          doGenerate: async () => ({ text: solve(prompt) }),
+        };
+        const wrapped = fallbackLanguageModel(
+          primary,
+          "clinepass/cline-free/mimo",
+          {
+            candidates: async () => ["clinepass/cline-free/step-5-preview"],
+            build: () => backup,
+            log: () => {},
+          },
+        );
         return ((await wrapped.doGenerate({})) as { text: string }).text;
       },
       { logs },
@@ -153,7 +215,11 @@ test("self-test passes through a fallback model when the main model is out of qu
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.ok).toBe(true);
-  expect(body.fallback).toEqual({ from: "clinepass/cline-free/mimo", to: "clinepass/cline-free/step-5-preview", reason: "quota" });
+  expect(body.fallback).toEqual({
+    from: "clinepass/cline-free/mimo",
+    to: "clinepass/cline-free/step-5-preview",
+    reason: "quota",
+  });
   expect(body.message).toContain("主模型额度用完，已改用 step-5-preview");
   expect(logs[0]).toContain("fallback=clinepass/cline-free/step-5-preview");
   resetModelCooldowns();
@@ -161,7 +227,9 @@ test("self-test passes through a fallback model when the main model is out of qu
 
 // CB-100：自检要真的连一次 Hermes。以前只直连模型，Hermes 连不上时发布照样通过。
 test("Hermes not configured: hermes=skipped and model result decides", async () => {
-  const response = await post(app("admin", async (_c, prompt) => solve(prompt)));
+  const response = await post(
+    app("admin", async (_c, prompt) => solve(prompt)),
+  );
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ ok: true, hermes: "skipped" });
 });
@@ -169,7 +237,10 @@ test("Hermes not configured: hermes=skipped and model result decides", async () 
 test("Hermes reachable: hermes=ok", async () => {
   const logs: string[] = [];
   const response = await post(
-    app("admin", async (_c, prompt) => solve(prompt), { logs, probeHermes: async () => ({ reachable: true }) }),
+    app("admin", async (_c, prompt) => solve(prompt), {
+      logs,
+      probeHermes: async () => ({ reachable: true }),
+    }),
   );
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ ok: true, hermes: "ok" });
@@ -181,12 +252,20 @@ test("Hermes unreachable fails the smoke even though the model answered", async 
   const response = await post(
     app("admin", async (_c, prompt) => solve(prompt), {
       logs,
-      probeHermes: async () => ({ reachable: false, error: "连接不上 Hermes 桥接（可能没有启动或端口不对）" }),
+      probeHermes: async () => ({
+        reachable: false,
+        error: "连接不上 Hermes 桥接（可能没有启动或端口不对）",
+      }),
     }),
   );
   expect(response.status).toBe(502);
   const body = await response.json();
-  expect(body).toMatchObject({ ok: false, hermes: "unreachable", answered: true, persisted: false });
+  expect(body).toMatchObject({
+    ok: false,
+    hermes: "unreachable",
+    answered: true,
+    persisted: false,
+  });
   expect(body.message).toContain("Hermes");
   expect(logs[0]).toContain("hermes=unreachable");
 });
@@ -200,27 +279,56 @@ test("a throwing Hermes probe counts as unreachable", async () => {
     }),
   );
   expect(response.status).toBe(502);
-  expect(await response.json()).toMatchObject({ ok: false, hermes: "unreachable" });
+  expect(await response.json()).toMatchObject({
+    ok: false,
+    hermes: "unreachable",
+  });
 });
 
 describe("resolveSmokeHermesProbe (CB-100b)", () => {
   const ok = async () => ({ reachable: true });
   test("kernel=hermes without URL is unreachable, not skipped", async () => {
-    const probe = resolveSmokeHermesProbe({ agentKernel: "hermes", hermesUrl: undefined, probe: undefined });
+    const probe = resolveSmokeHermesProbe({
+      agentKernel: "hermes",
+      hermesUrl: undefined,
+      probe: undefined,
+    });
     expect(probe).toBeDefined();
     const result = await probe!();
     expect(result.reachable).toBe(false);
     expect(result.error).toContain("CHISABOT_HERMES_URL");
   });
   test("kernel=HERMES with blank URL is unreachable", async () => {
-    const probe = resolveSmokeHermesProbe({ agentKernel: " HERMES ", hermesUrl: "  ", probe: undefined });
+    const probe = resolveSmokeHermesProbe({
+      agentKernel: " HERMES ",
+      hermesUrl: "  ",
+      probe: undefined,
+    });
     expect((await probe!()).reachable).toBe(false);
   });
   test("URL configured uses the real probe", () => {
-    expect(resolveSmokeHermesProbe({ agentKernel: "hermes", hermesUrl: "http://h:1", probe: ok })).toBe(ok);
+    expect(
+      resolveSmokeHermesProbe({
+        agentKernel: "hermes",
+        hermesUrl: "http://h:1",
+        probe: ok,
+      }),
+    ).toBe(ok);
   });
   test("builtin kernel without URL stays skipped", () => {
-    expect(resolveSmokeHermesProbe({ agentKernel: undefined, hermesUrl: undefined, probe: undefined })).toBeUndefined();
-    expect(resolveSmokeHermesProbe({ agentKernel: "builtin", hermesUrl: "", probe: undefined })).toBeUndefined();
+    expect(
+      resolveSmokeHermesProbe({
+        agentKernel: undefined,
+        hermesUrl: undefined,
+        probe: undefined,
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveSmokeHermesProbe({
+        agentKernel: "builtin",
+        hermesUrl: "",
+        probe: undefined,
+      }),
+    ).toBeUndefined();
   });
 });

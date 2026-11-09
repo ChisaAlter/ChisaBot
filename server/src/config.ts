@@ -1,9 +1,10 @@
 /** Runtime storage is chosen explicitly at the boot boundary. */
+
+import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import { singleUserEnabled } from "./auth/dev-actor";
 import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
-import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import {
   type TranscriptionConfig,
   transcriptionConfig,
@@ -21,13 +22,7 @@ export type RuntimeCapabilities =
       intelligence?: never;
     };
 
-/**
- * The Intelligence contract. Three values are required; see runtimeCapabilities.
- *
- * `licenseToken` is optional. Managed Intelligence derives entitlement from the project key, and
- * `@copilotkit/runtime` declares `licenseToken` optional with a `COPILOTKIT_LICENSE_TOKEN` fallback
- * of its own. A deployment that still holds one keeps passing it; nothing here requires it.
- */
+/** Legacy configuration accepted by migration readers; hosted execution has retired. */
 export type IntelligenceSettings = {
   apiUrl: string;
   gatewayWsUrl: string;
@@ -232,10 +227,11 @@ export type DeploymentConfig = {
    * 全面换内核：设置后，所有 built-in 机器人改由 Hermes 的 ACP 桥回答。
    *
    * `url` 是 `examples/acp-agent` 桥的 AG-UI 地址；`token` 是它的 `ACP_BRIDGE_TOKEN`。未设置时
-   * 行为不变（CopilotKit + AI SDK 的内置循环）。这是一个部署级开关，不是每个机器人的字段：
+   * 行为不变（conversation runtime + AI SDK 的内置循环）。这是一个部署级开关，不是每个机器人的字段：
    * 现有的和以后新建的 `built_in` 机器人都会走新内核，不会漏掉某一个。
    */
   hermesKernel?: { url: string; token?: string };
+  dshKernel?: { targetsFile?: string; root?: string; gatewayUrl?: string };
   /**
    * Where this deployment is reached from outside, with no trailing slash.
    *
@@ -298,7 +294,7 @@ export type DeploymentConfig = {
    * 生成式界面开关（CHISABOT_GENERATIVE_UI）：Bot 能否用 json-render 画界面。
    *
    * 打开时每个机器人都有 `render_ui` 服务器工具（server/src/generative-ui/render-ui.ts），浏览器
-   * 注册它的渲染器（app/src/lib/copilot/render-ui-tool.tsx）；关闭时两边都没有。界面只能由共享
+   * 注册它的渲染器（app/src/lib/chat/render-ui-tool.tsx）；关闭时两边都没有。界面只能由共享
    * 目录里的 Skyglass 组件拼成，规格在服务器上校验，不运行 Bot 写的脚本。
    *
    * 这不是组件库（编译进来或在 playground 里写、由管理员授权给 Bot 的组件），那是另一套机制。
@@ -315,15 +311,6 @@ export type DeploymentConfig = {
    * 否则来源就看不到了。/api/capabilities 的 replySources 与它一致。
    */
   replySources?: boolean;
-  /**
-   * Whether the signed-in app shows the banner offering help self-hosting ChisaBot.
-   *
-   * On by default, because a fresh clone is somebody evaluating the template. A fork that runs
-   * ChisaBot for its own organization turns it off with CHISABOT_SELF_HOST_BANNER=false or
-   * CHISABOT_SELF_HOST_BANNER=0, since its people have nothing to self-host. This is the operator's
-   * switch only; a deployment on a paid Intelligence plan hides the bar too (self-host-banner.ts).
-   */
-  selfHostBanner: boolean;
   /**
    * 设置 → 管理 →「账号」（朋友账号 / 邀请，CB-040）的入口是否显示。默认开（2026-10-21 起默认开启，方便邀请家人朋友）。
    * CHISABOT_ACCOUNTS_UI=0（或 false）关闭。只管界面入口；网关多账号、签名身份、按人隔离都不受影响。
@@ -374,7 +361,11 @@ type Environment = Record<string, string | undefined>;
  * the default would believe it had set one: the failure has to be at start-up where somebody is
  * looking, not at the first loop.
  */
-function wholeNumber(environment: Environment, name: string, fallback: number): number {
+function wholeNumber(
+  environment: Environment,
+  name: string,
+  fallback: number,
+): number {
   const raw = optional(environment, name);
   if (raw === undefined) return fallback;
   const value = Number(raw);
@@ -533,7 +524,7 @@ function singleUserAllowed(
  *
  * Not two answers but three, because the middle one is most of the deployments this flag exists
  * for. "No sign-in, one administrator" is a thing people run on a home server at `192.168.1.10`,
- * over Tailscale at `100.something`, on a VPN, or at `openbot.local`. None of those is loopback and
+ * over Tailscale at `100.something`, on a VPN, or at `chisabot.local`. None of those is loopback and
  * none of them is a stranger's to reach, so refusing them would refuse the feature's own audience
  * while the operator's only recourse is to turn off the flag that describes what they are doing.
  *
@@ -913,41 +904,24 @@ function oktaAuth(
   return { ...client, issuer };
 }
 
-/** Local mode owns its storage; the default Intelligence mode retains its existing contract. */
+/** Local PostgreSQL owns execution; hosted history is moved through the explicit migration command. */
 function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
-  const mode = optional(environment, "CHISABOT_RUNTIME_MODE") ?? "intelligence";
-  if (mode === "local") return { mode: "local", durableHistory: true };
-  if (mode !== "intelligence") {
-    throw new Error("CHISABOT_RUNTIME_MODE must be intelligence or local.");
-  }
-  const settings = {
-    apiUrl: url(environment, "INTELLIGENCE_API_URL"),
-    gatewayWsUrl: url(environment, "INTELLIGENCE_GATEWAY_WS_URL"),
-    apiKey: optional(environment, "INTELLIGENCE_API_KEY"),
-    licenseToken: optional(environment, "COPILOTKIT_LICENSE_TOKEN"),
-  };
-
-  const missing = Object.entries({
-    INTELLIGENCE_API_URL: settings.apiUrl,
-    INTELLIGENCE_GATEWAY_WS_URL: settings.gatewayWsUrl,
-    INTELLIGENCE_API_KEY: settings.apiKey,
-  })
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
-
-  if (missing.length > 0) {
+  const configured = optional(environment, "CHISABOT_RUNTIME_MODE");
+  const legacyConfigured = Boolean(
+    optional(environment, "INTELLIGENCE_API_URL") ||
+      optional(environment, "INTELLIGENCE_API_KEY"),
+  );
+  if (configured === "intelligence" || (!configured && legacyConfigured)) {
     throw new Error(
-      `CopilotKit Intelligence is required and is not configured. Missing: ${missing.join(", ")}`,
+      "Intelligence execution has retired. Export existing history with `bun server/scripts/migrate-intelligence.ts inventory --user <owner-id> --agent <bot-id> --out <snapshot.json>`, then import it with `bun server/scripts/migrate-intelligence.ts import --snapshot <snapshot.json>` while admission is paused. Set CHISABOT_RUNTIME_MODE=local after migration; existing data is not moved automatically.",
     );
   }
-
-  return {
-    mode: "intelligence",
-    durableHistory: true,
-    intelligence: settings as IntelligenceSettings,
-  };
+  if (configured && configured !== "local")
+    throw new Error(
+      "CHISABOT_RUNTIME_MODE must be local; intelligence requires history migration.",
+    );
+  return { mode: "local", durableHistory: true };
 }
-
 /**
  * Whether a Bot may reach addresses inside this deployment's own network.
  *
@@ -1185,12 +1159,6 @@ function generativeUiEnabled(environment: Environment): boolean {
   return value !== "false" && value !== "0";
 }
 
-/** Same rule as generated interfaces: on unless explicitly "false" or "0". */
-function selfHostBannerEnabled(environment: Environment): boolean {
-  const value = optional(environment, "CHISABOT_SELF_HOST_BANNER");
-  return value !== "false" && value !== "0";
-}
-
 /**
  * How long the audit trail is kept.
  *
@@ -1278,14 +1246,48 @@ export function loadConfig(
   }
   const managedAgent = managedAgentConfig(environment);
   const runtime = runtimeCapabilities(environment);
-  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(/\/+$/, "");
+  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(
+    /\/+$/,
+    "",
+  );
   const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
+  const dshTargetsFile = optional(environment, "CHISABOT_DSH_TARGETS_FILE");
+  const dshGatewayUrl = optional(environment, "CHISABOT_DSH_TOOL_GATEWAY_URL");
+  if (dshGatewayUrl) {
+    const address = new URL(dshGatewayUrl);
+    if (
+      !["http:", "https:"].includes(address.protocol) ||
+      address.username ||
+      address.password ||
+      address.search ||
+      address.hash
+    ) {
+      throw new Error(
+        "CHISABOT_DSH_TOOL_GATEWAY_URL must be an HTTP(S) endpoint without credentials, query or fragment.",
+      );
+    }
+  }
 
   return {
     port: serverPort(environment),
     transcription: transcriptionConfig(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
+    ...(optional(environment, "CHISABOT_AGENT_KERNEL") === "dsh"
+      ? {
+          dshKernel: {
+            ...(dshTargetsFile
+              ? { targetsFile: dshTargetsFile }
+              : {
+                  root:
+                    optional(environment, "CHISABOT_DSH_ROOT") ?? ".data/dsh",
+                }),
+            ...(dshGatewayUrl
+              ? { gatewayUrl: dshGatewayUrl.replace(/\/+$/, "") }
+              : {}),
+          },
+        }
+      : {}),
     ...(managedAgent ? { managedAgent } : {}),
     ...(hermesUrl
       ? {
@@ -1314,13 +1316,18 @@ export function loadConfig(
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser:
-      singleUserAllowed(environment, configuredAuthProviders(auth).length > 0),
+    singleUser: singleUserAllowed(
+      environment,
+      configuredAuthProviders(auth).length > 0,
+    ),
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
-    replySources: ["1", "true"].includes((optional(environment, "CHISABOT_REPLY_SOURCES") ?? "").toLowerCase()),
-    selfHostBanner: selfHostBannerEnabled(environment),
-    accountsUi: !["0", "false"].includes((optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase()),
+    replySources: ["1", "true"].includes(
+      (optional(environment, "CHISABOT_REPLY_SOURCES") ?? "").toLowerCase(),
+    ),
+    accountsUi: !["0", "false"].includes(
+      (optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase(),
+    ),
     extras: parseChisabotExtras(optional(environment, "CHISABOT_EXTRAS")),
     ...(optional(environment, "APP_DIST_DIR")
       ? { appDistDir: optional(environment, "APP_DIST_DIR") as string }
@@ -1334,13 +1341,19 @@ export function loadConfig(
   };
 }
 
-
 /** 默认隐藏、管理员可用 CHISABOT_EXTRAS 重新打开的功能（DESIGN.md §74）。 */
-export const CHISABOT_EXTRAS = ["workflows", "plugins", "boundaries", "components"] as const;
+export const CHISABOT_EXTRAS = [
+  "workflows",
+  "plugins",
+  "boundaries",
+  "components",
+] as const;
 export type ChisabotExtra = (typeof CHISABOT_EXTRAS)[number];
 
 /** `CHISABOT_EXTRAS=workflows,plugins` → 这两项；`all` → 全部；不认识的名字忽略。 */
-export function parseChisabotExtras(value: string | undefined): ChisabotExtra[] {
+export function parseChisabotExtras(
+  value: string | undefined,
+): ChisabotExtra[] {
   const names = (value ?? "")
     .split(/[\s,]+/)
     .map((name) => name.trim().toLowerCase())

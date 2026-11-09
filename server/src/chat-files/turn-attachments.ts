@@ -1,5 +1,5 @@
 import type { StoredAttachment } from "../channels/attachment-parts";
-import type { LoadAttachment } from "../copilot";
+import type { LoadAttachment } from "../conversation-runtime";
 import type { ChatFiles } from "./service";
 
 /**

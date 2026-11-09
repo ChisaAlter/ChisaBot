@@ -1,22 +1,25 @@
-/**
- * Recognising a Bot run on the CopilotKit runtime path (moved out of the removed upstream enterprise
- * gate in slimming P6-1; behaviour unchanged).
- */
-const COPILOT_BASE = "/api/copilotkit";
+import { conversationPath } from "../legacy/protocol";
 
 /**
- * A run or connect of a Bot through the CopilotKit runtime, matched the way the runtime matches it.
+ * Recognising a Bot run on the conversation runtime path (moved out of the removed upstream enterprise
+ * gate in slimming P6-1; behaviour unchanged).
+ */
+const CONVERSATION_BASE = "/api/conversations";
+
+/**
+ * A run or connect of a Bot through the conversation runtime, matched the way the runtime matches it.
  *
  * The runtime does not anchor its routes: its router (`fetch-router` `matchSegments`) takes any path
  * under its base whose LAST segments are `agent/<id>/run`, `agent/<id>/connect` or `agent/<id>/suggest`
  * (a suggestion runs the Bot's model on whatever messages the caller sends). So
- * `/api/copilotkit/x/agent/<id>/run` runs the Bot exactly as `/api/copilotkit/agent/<id>/run` does,
+ * `/api/conversations/x/agent/<id>/run` runs the Bot exactly as `/api/conversations/agent/<id>/run` does,
  * and an anchored pattern here would let the first one through ungoverned.
  */
 export function runtimeRun(
   path: string,
 ): { agentId: string; action: "run" | "connect" | "suggest" } | null {
-  if (path !== COPILOT_BASE && !path.startsWith(`${COPILOT_BASE}/`))
+  path = conversationPath(path);
+  if (path !== CONVERSATION_BASE && !path.startsWith(`${CONVERSATION_BASE}/`))
     return null;
   const segments = path.split("/").filter(Boolean);
   const count = segments.length;

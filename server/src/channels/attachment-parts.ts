@@ -52,7 +52,8 @@ function attachmentIdFor(part: unknown): string | null {
   if (source.type !== "url" || typeof source.value !== "string") return null;
   // 机器人私聊里上传的文件（DESIGN.md §56）：`/api/chat-files/<id>` → `cf:<id>`，由 index.ts 的加载器按人取。
   if (source.value.startsWith(CHAT_FILE_URL_PREFIX)) {
-    const id = source.value.slice(CHAT_FILE_URL_PREFIX.length).split(/[?#]/)[0] ?? "";
+    const id =
+      source.value.slice(CHAT_FILE_URL_PREFIX.length).split(/[?#]/)[0] ?? "";
     return id ? `cf:${id}` : null;
   }
   if (!source.value.startsWith(ATTACHMENT_URL_PREFIX)) return null;
@@ -64,7 +65,7 @@ function attachmentIdFor(part: unknown): string | null {
  * only once.
  *
  * Exported so the caller that knows WHICH message it is holding — `inlineAttachments` in
- * `copilot.ts`, the one place that can tell the message being asked about from the history behind
+ * `conversation-runtime.ts`, the one place that can tell the message being asked about from the history behind
  * it — can say those ids went out in a send. Resolving a part cannot make that statement itself:
  * every message in the thread is resolved on every turn, and only one of them is the send.
  *

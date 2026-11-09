@@ -120,7 +120,7 @@ export class TelegramAdapter extends LoopAdapter {
     } catch {}
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const messageId = (reply.inbound.reply as { messageId?: number }).messageId;
     let first = true;
     for (const chunk of reply.chunks) {

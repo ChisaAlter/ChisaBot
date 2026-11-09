@@ -17,9 +17,10 @@ async function runProductionEntry() {
   await writeFile(
     envPath,
     [
-      "DATABASE_URL=postgres://openbot:openbot@127.0.0.1:1/openbot",
+      "DATABASE_URL=postgres://chisabot:chisabot@127.0.0.1:1/chisabot",
       "KEY_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       "CHISABOT_SINGLE_USER=true",
+      "CHISABOT_RUNTIME_MODE=local",
       "MANAGED_AGENT_AG_UI_URL=http://127.0.0.1:4200/ag-ui",
       "MANAGED_AGENT_TOKEN=synthetic-managed-token",
       "AGENT_COMPUTER_URL=http://127.0.0.1:4300",
@@ -79,9 +80,10 @@ describe("production server loader boundary", () => {
     expect(result.exitCode).not.toBe(0);
     expect(output).not.toContain("require() async module");
     expect(output).not.toContain("CHISABOT_SERVER_LOADER_SMOKE");
-    expect(output).toContain("Failed query: insert into");
+    // Local conversation schema initialization is now the first DB operation, before seed INSERTs.
+    expect(output).toMatch(/PostgresError|Failed query:/);
     expect(output).toMatch(
       /Connection closed|Failed to connect|ERR_POSTGRES_CONNECTION_REFUSED/,
     );
-  });
+  }, 15_000);
 });

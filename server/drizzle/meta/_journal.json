@@ -442,6 +442,41 @@
       "when": 1793619069530,
       "tag": "0062_bot_factory_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1794109054590,
+      "tag": "0063_dsh_conversation_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1794111800576,
+      "tag": "0064_im_delivery_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1794138087768,
+      "tag": "0065_personal_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794172800000,
+      "tag": "0066_background_capacity",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794182400000,
+      "tag": "0067_conversation_namespace",
+      "breakpoints": true
     }
   ]
 }

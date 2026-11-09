@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AdminComponentPreview } from "@/components/component-preview";
@@ -11,7 +10,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { componentListQueryOptions } from "@/lib/components/queries";
-import { LazyCopilotProvider } from "@/lib/copilot/lazy-provider";
+import { LazyConversationToolsProvider } from "@/lib/conversations/lazy-provider";
+import { requireExtra } from "@/lib/deployment/extras";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,11 +22,11 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_authed/admin/components/")({
   // 功能精简（DESIGN.md §74）：默认隐藏，CHISABOT_EXTRAS 含 components 才能进。
   beforeLoad: requireExtra("components"),
-  // 组件预览里的工具卡片要 CopilotKit 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层，按需加载。
+  // 组件预览里的工具卡片要 会话客户端 上下文；它不再包整个应用，只包聊天主区（DESIGN.md §41.5），这里自己包一层，按需加载。
   component: () => (
-    <LazyCopilotProvider>
+    <LazyConversationToolsProvider>
       <RouteComponent />
-    </LazyCopilotProvider>
+    </LazyConversationToolsProvider>
   ),
 });
 
@@ -45,7 +45,9 @@ function RouteComponent() {
        * placeholder, and it has to come first: the empty sentence would otherwise stand there
        * asserting there are no components for as long as the fetch takes.
        */}
-      {components.isPending ? <PageSkeleton /> : components.error ? (
+      {components.isPending ? (
+        <PageSkeleton />
+      ) : components.error ? (
         <p className="mt-12 text-destructive text-sm" role="alert">
           {"无法加载组件。"}
         </p>

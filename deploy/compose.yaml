@@ -3,12 +3,14 @@ services:
     image: ${CHISABOT_IMAGE:-local/chisabot:latest}
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.zh
+      dockerfile: Dockerfile
+      target: chisabot
       # start.sh 填：镜像记下来源提交（/api/version、管理后台 → 系统更新 据此显示当前版本和落后的提交）。
       args:
         CHISABOT_COMMIT: ${CHISABOT_COMMIT:-}
         CHISABOT_VERSION: ${CHISABOT_VERSION:-0.0.0}
         CHISABOT_BUILD: ${CHISABOT_BUILD:-dev}
+        VITE_CHISABOT_BUILD_ID: ${CHISABOT_BUILD:-dev}
         CHISABOT_BUILT_AT: ${CHISABOT_BUILT_AT:-}
         CHISABOT_IMAGE: ${CHISABOT_IMAGE:-local/chisabot:latest}
     container_name: chisabot-zh
@@ -20,21 +22,22 @@ services:
       - database:/var/lib/postgresql
       - workspace:/workspace
       - profiles:/profiles
+      - dsh:/var/lib/chisabot-dsh
       # 管理后台 → 系统更新：和宿主机更新服务 chisabot-updater 共用的两个目录（deploy/install-updater.sh 安装；
       # docs/online-update.md）。没装时这两个目录是空的，页面显示怎么安装。
       - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
       - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
     networks:
       default:
-        # 改名前的服务 DNS 名：同一网络上按 openbot-zh 找应用的旧配置继续可用（CB-100）。
+        # start.sh pins an existing deployment alias before applying fresh defaults.
         aliases:
-          - openbot-zh
+          - ${CHISABOT_SERVICE_ALIAS:-chisabot-zh}
       magpie: {}
     environment:
       EMBEDDED_POSTGRES: "on"
-      CHISABOT_RUNTIME_MODE: ${CHISABOT_RUNTIME_MODE:-${OPENBOT_RUNTIME_MODE:-local}}
+      CHISABOT_RUNTIME_MODE: ${CHISABOT_RUNTIME_MODE:-local}
+      CHISABOT_DSH_ROOT: /var/lib/chisabot-dsh
       SL_ENABLED: "false"
-      COPILOTKIT_TELEMETRY_DISABLED: "true"
       DO_NOT_TRACK: "1"
       CHISABOT_SINGLE_USER: "true"
       # .env 优先：允许部署者按需扩展（如内网地址），未设置时回退到安全的 loopback 默认值。
@@ -44,7 +47,6 @@ services:
       BOT_MODEL: ${BOT_MODEL:-your-model-id}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
-      CHISABOT_SELF_HOST_BANNER: "false"
       SERVER_INTERNAL_URL: http://127.0.0.1:3001
       # 管理后台 → 模型平台 Magpie（docs/magpie.md）。Web key 文件挂载见该文档；留空则只显示连接信息。
       MAGPIE_ADMIN_URL: ${MAGPIE_ADMIN_URL:-}
@@ -57,32 +59,25 @@ services:
         max-size: 20m
         max-file: "3"
 
-# Physical volume names are pinned to the pre-rename ones (the stack was the `openbot-zh` compose
-# project before 0.1.75): the project is now `chisabot-zh`, and without `name:` compose would create
-# fresh, empty `chisabot-zh_*` volumes next to the live data. Override CHISABOT_VOLUME_PREFIX only on a
-# brand-new server that has never run the old project.
+# Existing deployments are pinned by legacy-resources.sh before startup; new installs use these names.
 volumes:
   database:
-    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_database
+    name: ${CHISABOT_DATABASE_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_database}
   workspace:
-    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_workspace
+    name: ${CHISABOT_WORKSPACE_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_workspace}
   profiles:
-    name: ${CHISABOT_VOLUME_PREFIX:-openbot-zh}_profiles
+    name: ${CHISABOT_PROFILES_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_profiles}
+  dsh:
+    name: ${CHISABOT_DSH_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_dsh}
 
-# CB-100: the default network is pinned to the pre-rename one, like the volumes above. Without `name:`
-# the 0.1.75 project rename made compose create `chisabot-zh_default` on a random subnet
-# (192.168.112.0/20) and drop `openbot-zh_default`, so the host Hermes bridge on the old gateway
-# 172.19.0.1:4100 (ACP_BRIDGE_HOST, .env CHISABOT_HERMES_URL / AGENT_ENDPOINT_ALLOWED_HOSTS, the ufw
-# rule for 172.19.0.0/16) became unreachable and every turn hung. Not `external: true`: a fresh server
-# must be able to create it. Changing any of these three values means changing the bridge host, .env
-# and ufw together (docs/online-update.md, docs/hermes-runtime.md).
+# Preserve an existing network through its explicit name; fresh installs use the canonical name.
 networks:
   default:
-    name: ${CHISABOT_NETWORK_NAME:-openbot-zh_default}
+    name: ${CHISABOT_NETWORK_NAME:-chisabot-zh_default}
     ipam:
       config:
         - subnet: ${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}
           gateway: ${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}
   magpie:
     external: true
-    name: ${MAGPIE_NETWORK:-openbot_magpie}
+    name: ${MAGPIE_NETWORK:-chisabot_magpie}

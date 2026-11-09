@@ -5,13 +5,12 @@ import {
   beforeEach,
   describe,
   expect,
+  spyOn,
   test,
 } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MCPMock, type MCPToolDefinition } from "@copilotkit/aimock/mcp";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import type { ActionPolicy } from "../src/computer/policy";
@@ -46,6 +45,7 @@ import {
   type ComposioResult,
   useComposioClient,
 } from "../src/plugins/composio";
+import * as mcpTransport from "../src/plugins/mcp";
 import { redirectUriFor } from "../src/plugins/oauth";
 import {
   type AccessToken,
@@ -63,6 +63,7 @@ import {
 } from "../src/plugins/store";
 import { grantedTools, REFUSAL_MARKER } from "../src/plugins/tools";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { type McpFixtureTool, McpTestServer } from "./support/mcp-server";
 
 /**
  * The two questions a tool call has to pass, and the row each answer leaves behind.
@@ -508,7 +509,7 @@ afterAll(async () => {
 
 describe("a grant is the permission", () => {
   test("a Bot that was never granted a tool is refused, and the refusal is recorded", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
     await expect(
       store.callTool({
         ref,
@@ -531,7 +532,7 @@ describe("a grant is the permission", () => {
   });
 
   test("a refusal names the routine that asked, not only the person it ran as", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
     await expect(
       store.callTool({
         ref,
@@ -554,7 +555,7 @@ describe("a grant is the permission", () => {
   });
 
   test("a call nobody said anything about is still filed as a person's", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
     await expect(
       store.callTool({
         ref,
@@ -576,20 +577,20 @@ describe("a grant is the permission", () => {
   });
 
   test("granting lets the same Bot past the grant check", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     const decision = await store.decide("mcp", ref, holderId);
     expect(decision.allowed).toBe(true);
   });
 
   test("revoking takes it away again", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
-    await store.revoke("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
+    await store.revoke("mcp", ref, holderId, "admin@chisabot.local");
     const decision = await store.decide("mcp", ref, holderId);
     expect(decision.allowed).toBe(false);
   });
 
   test("a Bot is offered exactly what it holds", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     const held = await store.listForAgent(holderId);
     expect(held.tools.map((tool) => tool.ref)).toEqual([ref]);
     // The name the model is offered, which may not contain a slash.
@@ -607,7 +608,7 @@ describe("a grant is the permission", () => {
      * would pass every other test in this file: the Bot would still be offered what it holds, and the
      * stranger would still be offered nothing.
      */
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     const held = await store.listForAgent(holderId);
 
     expect(held.tools.map((tool) => tool.ref)).toEqual([ref]);
@@ -619,18 +620,24 @@ describe("a grant is the permission", () => {
 
 describe("the policy is asked as well as the grant", () => {
   test("credential material is refused and never copied into the audit trail", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     const secret = `sk-${"z".repeat(32)}`;
 
-    await expect(
-      store.callTool({
+    // Settle native SQL before asserting: Bun 1.3.14's rejects.toThrow stalled this first read.
+    const refusal = await store
+      .callTool({
         ref,
         args: { query: "quarterly report", nested: { apiKey: secret } },
         botId: holderId,
         actorId,
-      }),
-    ).rejects.toThrow("credential material");
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(refusal).toBeInstanceOf(PluginRefusedError);
+    expect((refusal as Error).message).toContain("credential material");
 
     const rows = await auditRowsFor(ref, holderId, actorId);
     const rejected = rows.filter(
@@ -653,8 +660,8 @@ describe("the policy is asked as well as the grant", () => {
   });
 
   test("a granted tool is still refused by a deny rule, and the rule is named", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     policy = {
       mode: "enforce",
       deny: ['mcp.server == "google-drive"'],
@@ -692,7 +699,7 @@ describe("the policy is asked as well as the grant", () => {
   });
 
   test("a rule can speak about effect rather than about tool names", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     // `search_files` is advertised and is not in the vendor's write list, so it is a read and
     // this deny rule must NOT catch it. The assertion is that the call gets past the policy, which
     // it proves by failing at the network instead of as a refusal.
@@ -708,7 +715,7 @@ describe("the policy is asked as well as the grant", () => {
         ref,
         args: {},
         botId: holderId,
-        actorId: "someone@openbot.local",
+        actorId: "someone@chisabot.local",
       });
     } catch (error) {
       thrown = error;
@@ -728,8 +735,8 @@ describe("the policy is asked as well as the grant", () => {
   });
 
   test("a dry-run refusal is recorded, even though the call is let through", async () => {
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     /*
      * The mode an operator switches on to size a rule before enforcing it, and the only mode in
      * which the policy refuses and the call still goes out. Its whole value is the row: without one
@@ -794,8 +801,8 @@ describe("the trail says what happened, not what was permitted", () => {
    * call is permitted and then cannot be made — which is the shape of failure the row must show.
    */
   test("a call that is permitted and then fails is recorded as failed, not as succeeded", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
-    const actorId = `audit-call-${randomUUID()}@openbot.local`;
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
+    const actorId = `audit-call-${randomUUID()}@chisabot.local`;
 
     await expect(
       store.callTool({ ref, args: {}, botId: holderId, actorId }),
@@ -820,7 +827,7 @@ describe("the trail says what happened, not what was permitted", () => {
 
 describe("a boundary written about the browser does not refuse tool calls", () => {
   test("an unguarded rule about a page element does not refuse a tool call", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openbot.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
     /**
      * This engine treats an expression it cannot evaluate as a MATCH, which is right for a browser
      * action on an element the server could not resolve and catastrophic for a tool call: with
@@ -844,7 +851,7 @@ describe("a boundary written about the browser does not refuse tool calls", () =
         ref,
         args: {},
         botId: holderId,
-        actorId: "someone@openbot.local",
+        actorId: "someone@chisabot.local",
       });
     } catch (error) {
       thrown = error;
@@ -890,7 +897,7 @@ describe("removing an MCP server", () => {
       provenance: "custom",
     });
 
-    await store.removeServer(removalServerId, "admin@openbot.local");
+    await store.removeServer(removalServerId, "admin@chisabot.local");
 
     expect(revokedCredentialIds).toEqual([credentialId]);
     const [row] = await database
@@ -973,7 +980,7 @@ describe("removing an MCP server", () => {
     });
 
     try {
-      await store.removeServer(removalServerId, "admin@openbot.local");
+      await store.removeServer(removalServerId, "admin@chisabot.local");
 
       expect(revokedCredentialIds).toEqual([grantId]);
       const [row] = await database
@@ -1052,7 +1059,7 @@ describe("removing an MCP server", () => {
       provenance: "custom",
     });
 
-    await store.removeServer(removalServerId, "admin@openbot.local");
+    await store.removeServer(removalServerId, "admin@chisabot.local");
 
     // Not asked, because the row already says it is retired.
     expect(revokedCredentialIds).toEqual([]);
@@ -1091,7 +1098,7 @@ describe("removing an MCP server", () => {
       provenance: "custom",
     });
 
-    await store.removeServer(removalServerId, "admin@openbot.local");
+    await store.removeServer(removalServerId, "admin@chisabot.local");
 
     expect(revokedCredentialIds).toEqual([]);
   });
@@ -1099,7 +1106,7 @@ describe("removing an MCP server", () => {
 
 describe("the trail can be read by a second reader", () => {
   test("a refusal names the bot, the server and the tool in queryable JSON", async () => {
-    const actorId = `audit-payload-${randomUUID()}@openbot.local`;
+    const actorId = `audit-payload-${randomUUID()}@chisabot.local`;
     await expect(
       store.callTool({
         ref,
@@ -1178,7 +1185,7 @@ describe("a grant on a tool the vendor no longer lists", () => {
         description: "Listed by the vendor when the grant was made.",
       })
       .onConflictDoNothing();
-    await store.grant("mcp", withdrawnRef, holderId, "admin@openbot.local");
+    await store.grant("mcp", withdrawnRef, holderId, "admin@chisabot.local");
 
     // Then withdrawn. A refresh replaces the tool list wholesale, so this is what one does to a name
     // the vendor has stopped offering.
@@ -1267,6 +1274,7 @@ describe("refresh token rotation", () => {
   let mint: (refreshToken: string) => Promise<AccessToken> = async () => {
     throw new Error("no exchange was installed for this test");
   };
+  const rotationVault = createCredentialStore(database);
 
   /**
    * The vault, wired once and shared by every store this describe builds.
@@ -1286,12 +1294,11 @@ describe("refresh token rotation", () => {
         .where(eq(credentials.id, id));
       return row ?? null;
     },
-    create: async (value: CredentialStoreValue) => {
-      const [row] = await database
-        .insert(credentials)
-        .values(value)
-        .returning({ id: credentials.id, revokedAt: credentials.revokedAt });
-      if (!row) throw new Error("credential was not stored");
+    create: async (
+      value: CredentialStoreValue,
+      executor?: Parameters<typeof rotationVault.create>[1],
+    ) => {
+      const row = await rotationVault.create(value, executor);
       vaultRows.push(row.id);
       return row;
     },
@@ -1303,7 +1310,7 @@ describe("refresh token rotation", () => {
      * the copy rather than the vault — and would not join the caller's transaction, which is the
      * whole of what keeps two replicas from spending one refresh token twice.
      */
-    updateSecret: createCredentialStore(database).updateSecret,
+    updateSecret: rotationVault.updateSecret,
     /*
      * The real swap and the real key lookup too: `credentials_active_key_idx` holds one live row
      * per key, so a reconnect in this suite replaces its previous token through the same
@@ -1311,13 +1318,14 @@ describe("refresh token rotation", () => {
      */
     rotate: async (
       value: CredentialStoreValue & { previousCredentialId: string },
+      executor?: Parameters<typeof rotationVault.rotate>[1],
     ) => {
-      const stored = await createCredentialStore(database).rotate(value);
+      const stored = await rotationVault.rotate(value, executor);
       vaultRows.push(stored.id);
       return stored;
     },
-    findLiveByKey: createCredentialStore(database).findLiveByKey,
-    isLive: createCredentialStore(database).isLive,
+    findLiveByKey: rotationVault.findLiveByKey,
+    isLive: rotationVault.isLive,
     revoke: async (id: string) => {
       const [row] = await database
         .update(credentials)
@@ -1547,7 +1555,7 @@ describe("refresh token rotation", () => {
       "mcp",
       rotationRef,
       rotationBotId,
-      "admin@openbot.local",
+      "admin@chisabot.local",
     );
     await registerClient();
   });
@@ -2214,8 +2222,8 @@ test.each(["success", "failure"])(
  * A real MCP server on localhost answering as the pinned Notion host, and everything a refresh
  * against it overwrites put back afterwards.
  *
- * The seam is `fetch`: the host is pinned and nothing in the store will take a URL from a caller, so
- * pointing the pinned host at the mock is what lets a real listing over the real protocol happen.
+ * The seam is the transport's listing entry point: its HTTP client pins DNS and does not use global
+ * fetch. Redirect only this fixture's expected destination, then use the real MCP protocol client.
  * What a refresh then overwrites is the deployment's own row — it replaces the advertised tool list
  * wholesale and stamps `toolsRefreshedAt` and `lastError` — so the list and both stamps are read
  * first and put back in a `finally`.
@@ -2226,19 +2234,11 @@ test.each(["success", "failure"])(
  */
 async function withMockedNotionListing(
   notionServerId: string,
-  /*
-   * The mock's own tool shape, plus the annotations a real server publishes.
-   *
-   * `MCPToolDefinition` names only name, description and schema, and the mock hands whatever it was
-   * given straight back in its `tools/list` answer — so an annotation travels at runtime and is
-   * simply unspellable in the type. Widened here rather than cast at each fixture, because the
-   * hints are what `listTools` reads to decide an action's recorded effect, and a test about that
-   * decision should not be the one place a cast hides a shape drifting.
-   */
-  tools: (MCPToolDefinition & { annotations?: ToolAnnotations })[],
+  // The official SDK Tool shape includes the vendor annotations.
+  tools: McpFixtureTool[],
   body: () => Promise<void>,
 ) {
-  const mock = new MCPMock();
+  const mock = new McpTestServer();
   for (const tool of tools) mock.addTool(tool);
   const mockUrl = await mock.start();
 
@@ -2254,20 +2254,25 @@ async function withMockedNotionListing(
     .from(mcpServers)
     .where(eq(mcpServers.id, notionServerId));
 
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const target = String(input instanceof Request ? input.url : input);
-    return realFetch(
-      target.startsWith("https://mcp.notion.com") ? mockUrl : input,
-      init,
-    );
-  }) as typeof fetch;
+  const realListTools = mcpTransport.listTools;
+  const listing = spyOn(mcpTransport, "listTools").mockImplementation(
+    (connection) => {
+      if (connection.url !== "https://mcp.notion.com/mcp") {
+        throw new Error("Unexpected listing destination");
+      }
+      return realListTools({
+        ...connection,
+        url: mockUrl,
+        allowPrivateHost: true,
+      });
+    },
+  );
 
   try {
     await body();
   } finally {
-    globalThis.fetch = realFetch;
-    await mock.stop?.();
+    listing.mockRestore();
+    await mock.stop();
     await database
       .delete(mcpTools)
       .where(eq(mcpTools.serverId, notionServerId));
@@ -2605,7 +2610,7 @@ describe("a dynamic client the vendor has evicted", () => {
       "mcp",
       dynamicRef,
       dynamicBotId,
-      "admin@openbot.local",
+      "admin@chisabot.local",
     );
   });
 
@@ -7625,7 +7630,7 @@ describe("a vault read that fails on a query of this deployment's own", () => {
   const faultToolName = "do_something";
   const faultRef = `${faultServerId}/${faultToolName}`;
   const faultBotId = `agent_vault_fault_${suite}`;
-  const faultActorId = "someone@openbot.local";
+  const faultActorId = "someone@chisabot.local";
   /** The sentence a withdrawn credential earns, and the one a query fault must never be given. */
   const WITHDRAWN = "An administrator has to add it again.";
 
@@ -7716,7 +7721,7 @@ describe("a vault read that fails on a query of this deployment's own", () => {
       name: faultToolName,
       description: "Do something.",
     });
-    await faultStore.grant("mcp", faultRef, faultBotId, "admin@openbot.local");
+    await faultStore.grant("mcp", faultRef, faultBotId, "admin@chisabot.local");
   });
 
   afterAll(async () => {

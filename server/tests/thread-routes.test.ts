@@ -31,7 +31,7 @@ function app(reader?: ThreadReader) {
 }
 
 async function mint() {
-  const response = await app().request("http://openbot.local/threads/mint", {
+  const response = await app().request("http://chisabot.local/threads/mint", {
     method: "POST",
   });
   return (await response.json()) as { threadId: string };
@@ -55,7 +55,7 @@ describe("minting a thread", () => {
     ) => context.json({ error: "Unauthorized." }, 401);
     const response = await new Hono()
       .route("/threads", createThreadRoutes(identity, refusing))
-      .request("http://openbot.local/threads/mint", { method: "POST" });
+      .request("http://chisabot.local/threads/mint", { method: "POST" });
     expect(response.status).toBe(401);
   });
 });
@@ -64,7 +64,7 @@ describe("checking whether a remembered thread is still known upstream", () => {
   test("answers known when the reader can produce the thread", async () => {
     const threadId = identity.mint();
     const response = await app(async () => "known").request(
-      `http://openbot.local/threads/${threadId}`,
+      `http://chisabot.local/threads/${threadId}`,
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ known: true });
@@ -73,7 +73,7 @@ describe("checking whether a remembered thread is still known upstream", () => {
   test("answers unknown when the reader reports Intelligence has never heard of it", async () => {
     const threadId = identity.mint();
     const response = await app(async () => "unknown").request(
-      `http://openbot.local/threads/${threadId}`,
+      `http://chisabot.local/threads/${threadId}`,
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ known: false });
@@ -88,7 +88,7 @@ describe("checking whether a remembered thread is still known upstream", () => {
       );
     };
     const response = await app(reader).request(
-      `http://openbot.local/threads/${identity.mint()}`,
+      `http://chisabot.local/threads/${identity.mint()}`,
     );
     expect(response.status).toBe(502);
     const body = (await response.json()) as { error?: unknown };
@@ -102,11 +102,11 @@ describe("checking whether a remembered thread is still known upstream", () => {
     // route that was never wired up.
     const bare = app();
     const status = await bare.request(
-      `http://openbot.local/threads/${identity.mint()}`,
+      `http://chisabot.local/threads/${identity.mint()}`,
     );
     expect(status.status).toBe(404);
 
-    const minted = await bare.request("http://openbot.local/threads/mint", {
+    const minted = await bare.request("http://chisabot.local/threads/mint", {
       method: "POST",
     });
     expect(minted.status).toBe(200);
@@ -120,7 +120,7 @@ describe("checking whether a remembered thread is still known upstream", () => {
       return "known" as const;
     };
     await app(reader).request(
-      `http://openbot.local/threads/${threadId}?userId=someone-else`,
+      `http://chisabot.local/threads/${threadId}?userId=someone-else`,
     );
     expect(calls).toEqual([{ threadId, userId: "u1" }]);
   });

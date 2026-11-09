@@ -13,6 +13,11 @@
  */
 import type { AbstractAgent, BaseEvent } from "@ag-ui/client";
 import type { Observable } from "rxjs";
+import type { AuditInitiator } from "../audit";
+import {
+  type ExecutionClass,
+  executionDeadline,
+} from "../conversations/capacity";
 import { withModelConnectionScope } from "../model-connection-context";
 import type { HandoffDelivery } from "./handoff-runner";
 import { guardBotTurn } from "./lifecycle";
@@ -32,12 +37,15 @@ export class ThreadBusyError extends Error {
 }
 
 export type ThreadRunner = {
+  readonly ownsThreadLease?: boolean;
   run: (request: {
     threadId: string;
     agent: AbstractAgent;
     input: unknown;
     /** What the conversation keeps, when that is not the whole of what the model was sent. */
     persistedInputMessages?: readonly unknown[];
+    join?: boolean;
+    execution?: ExecutionClass;
   }) => Observable<BaseEvent>;
   /** Stop a run in flight, as a pause does for every other turn. */
   stop?: (input: { threadId: string; runId: string }) => Promise<unknown>;
@@ -88,6 +96,8 @@ export function createHandoffDelivery(options: {
     botId: string;
     /** The Bot that handed the work on, so the trail says a hop ran this and not the person. */
     fromBotId: string;
+    initiator?: AuditInitiator;
+    depth?: number;
   }) => Promise<AbstractAgent | null>;
   /**
    * The conversation so far, so the addressed Bot is not answering out of context.
@@ -180,6 +190,8 @@ export function createHandoffDelivery(options: {
         actorId: work.actorId,
         botId: work.toBotId,
         fromBotId: work.fromBotId,
+        ...(work.initiator ? { initiator: work.initiator } : {}),
+        depth: work.depth,
       });
       if (!agent) {
         /*
@@ -254,7 +266,7 @@ export function createHandoffDelivery(options: {
        */
       const where: { threadId: string } = work.answerIn
         ? { threadId: work.answerIn }
-        : { threadId: mintThreadId() };
+        : { threadId: work.execution?.threadId ?? mintThreadId() };
 
       /*
        * A forward hop lights the asking channel while it runs, because its own run is in a scratch
@@ -294,7 +306,7 @@ export function createHandoffDelivery(options: {
          */
         const held = await lock.acquire({
           threadId: where.threadId,
-          runId: newRunId(),
+          runId: work.execution?.runId ?? newRunId(),
           userId: work.actorId,
           agentId: work.toBotId,
         });
@@ -341,9 +353,13 @@ export function createHandoffDelivery(options: {
          * and the platform's window is short; a lock that lapses mid-answer lets a second run into the
          * conversation, which is the thing it exists to prevent.
          */
-        const heartbeat = setInterval(() => {
-          void lock.renew({ threadId: where.threadId, runId }).catch(() => {});
-        }, LOCK_RENEW_EVERY_MS);
+        const heartbeat = runner.ownsThreadLease
+          ? undefined
+          : setInterval(() => {
+              void lock
+                .renew({ threadId: where.threadId, runId })
+                .catch(() => {});
+            }, LOCK_RENEW_EVERY_MS);
 
         try {
           /*
@@ -356,67 +372,42 @@ export function createHandoffDelivery(options: {
             ownerUserId: work.actorId,
             agentId: work.toBotId,
           });
-          await settled(
-            runner.run({
+          const stream = runner.run({
+            threadId: where.threadId,
+            agent,
+            join: false,
+            execution: {
+              kind: work.answerIn ? "foreground" : "background",
+              initiator: { kind: "handoff", id: work.fromBotId },
+            },
+            persistedInputMessages: shown
+              ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
+              : [],
+            input: {
               threadId: where.threadId,
-              agent,
-              /*
-               * What the conversation KEEPS, which is not what the model was sent.
-               *
-               * The runner persists whatever it is given here, and given nothing it persists the whole
-               * prompt: the asking conversation's history repeated into a second conversation, and a
-               * paragraph of instructions to a model sitting in a bubble that looks like something the
-               * person typed. What belongs in a transcript is the one line saying why this Bot spoke.
-               */
-              persistedInputMessages: shown
-                ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
-                : [],
-              /*
-               * NOTHING IS PASSED FOR THE CONNECTION, and that is load-bearing.
-               *
-               * The lock hands back a join token as well as a run id, and it reads like the thing to
-               * present here. It is not: it is what a BROWSER presents to join a conversation and
-               * watch it, and the runner's socket is a different connection with its own credential.
-               * Handing it in overrides that credential, the socket is refused, and because the runner
-               * treats a socket that will not connect as something to keep retrying rather than as a
-               * failed run, nothing is ever emitted and nothing ever completes. The hop hangs, in
-               * total silence, until the deadline below ends it.
-               *
-               * What makes this run legitimate is the lock itself: the gateway compares the run id on
-               * every event to the one the lock holds. Taking the lock is the whole of the ceremony.
-               */
-              input: {
-                threadId: where.threadId,
-                runId,
-                /*
-                 * The same conversation the agent was given, so the run's own record of what it was
-                 * asked agrees with what it read.
-                 */
-                messages: asked,
-                tools: [],
-                context: [],
-                state: {},
-                /*
-                 * The deployment's own statement of what this run is, carrying how deep the chain has
-                 * gone. It is what stops the addressed Bot handing the work on for ever, and it is
-                 * signed, so the Bot cannot edit its own depth on the way past.
-                 */
-                forwardedProps: { openbotRun: assertion },
-              },
-            }),
+              runId,
+              messages: asked,
+              tools: [],
+              context: [],
+              state: {},
+              forwardedProps: { chisabotRun: assertion },
+            },
+          });
+          await settled(
+            stream,
             deadlineMs,
             paused,
-            () => {
-              void runner
+            () =>
+              runner
                 .stop?.({ threadId: where.threadId, runId })
-                .catch(() => undefined);
-            },
+                .catch(() => undefined) ?? Promise.resolve(),
             () =>
               `${work.toBotId} did not finish within ${Math.round(deadlineMs / 1000)}s ${
                 seen.count === 0
                   ? "and never reached its model"
                   : `after ${seen.count} events, the last ${seen.last}`
               }`,
+            "acknowledgesStop" in agent && agent.acknowledgesStop === true,
           );
           /*
            * Only once the run is on record, and only when it said something: a conversation lifted to
@@ -435,7 +426,7 @@ export function createHandoffDelivery(options: {
             });
           }
         } finally {
-          clearInterval(heartbeat);
+          if (heartbeat) clearInterval(heartbeat);
           /*
            * Given back whatever happened. Left held, the conversation is unusable by anybody until the
            * lock expires: the person cannot ask a follow-up and the next hop is refused, which turns
@@ -447,6 +438,7 @@ export function createHandoffDelivery(options: {
            * lapses: the person cannot type in it and the next hop to the same Bot is refused, while a
            * lock somebody else may be holding on the asking side is dropped from under them.
            */
+          // The runner stream settles after its own cleanup. The adapter also clears presence.
           await lock
             .release({ threadId: where.threadId, runId })
             .catch(() => {});
@@ -537,9 +529,10 @@ function settled(
   deadlineMs: number,
   /** Aborts when the person pauses the Bot; the run is stopped and the hop fails with the reason. */
   paused: AbortSignal,
-  stop: () => void,
+  stop: () => Promise<unknown>,
   /** Written when the deadline passes, so it can say how far the run had got by then. */
   timedOut: () => string,
+  awaitsExecutionStop: boolean,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let failure: Error | undefined;
@@ -555,28 +548,47 @@ function settled(
      * socket open, so a delivery that walked away from a stalled one would leak a connection per
      * attempt and go on paying for a run nobody is reading.
      */
-    const onPause = () => {
-      stop();
-      finish(() => reject(paused.reason));
+    let cancellation: unknown;
+    const cancel = (reason: unknown) => {
+      if (done || cancellation) return;
+      cancellation = reason;
+      void stop().then(
+        () => {
+          if (!awaitsExecutionStop) finish(() => reject(reason));
+        },
+        (error) => finish(() => reject(error)),
+      );
     };
+    const onPause = () =>
+      cancel(paused.reason ?? new Error("The Bot was paused."));
     const finish = (settle: () => void) => {
       if (done) return;
       done = true;
-      clearTimeout(timer);
+      timer.cancel();
       paused.removeEventListener("abort", onPause);
       subscription?.unsubscribe();
       settle();
     };
-    const timer = setTimeout(() => {
-      finish(() => reject(new Error(timedOut())));
-    }, deadlineMs);
+    const timer = executionDeadline(deadlineMs, () => {
+      cancel(new Error(timedOut()));
+    });
     if (paused.aborted) {
       onPause();
-      return;
     }
     paused.addEventListener("abort", onPause, { once: true });
     subscription = events.subscribe({
       next: (event) => {
+        if (
+          event.type === "CUSTOM" &&
+          "name" in event &&
+          event.name === "chisabot.capacity"
+        )
+          timer.state(
+            (event as BaseEvent & { value?: { status?: string } }).value
+              ?.status === "queued"
+              ? "waiting"
+              : "admitted",
+          );
         // Compared as a string rather than through the enum: `@ag-ui/client` re-exports the types
         // this file needs and not that value, and adding a second AG-UI package for one constant
         // would be a dependency to keep in step for no gain.
@@ -591,7 +603,14 @@ function settled(
         finish(() =>
           reject(error instanceof Error ? error : new Error(String(error))),
         ),
-      complete: () => finish(() => (failure ? reject(failure) : resolve())),
+      complete: () =>
+        finish(() =>
+          cancellation
+            ? reject(cancellation)
+            : failure
+              ? reject(failure)
+              : resolve(),
+        ),
     });
     // The stream that finished inside `subscribe`: `finish` had nothing to unsubscribe from at the
     // time, and the subscription it could not reach is this one.

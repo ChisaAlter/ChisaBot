@@ -6,7 +6,7 @@ import type { SignInService } from "./service";
 import { SignInRefusedError } from "./types";
 
 /** Same rule as the computer routes: the local development actor is not a users row. */
-const DEV_ACTOR_EMAIL = "dev@openbot.local";
+const DEV_ACTOR_EMAIL = "dev@chisabot.local";
 
 function actorOf(context: { var: AppVariables }): ActionActor {
   const record = context.var.actor;

@@ -1,5 +1,5 @@
-import { createServer } from "node:http";
 import { describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
 import { BlockedUrlError, guardedFetch } from "../../shared/net/guarded-fetch";
 import { isBlockedAddress } from "../../shared/net/ssrf";
 
@@ -10,10 +10,14 @@ import { isBlockedAddress } from "../../shared/net/ssrf";
 describe("guardedFetch SSRF redirects", () => {
   test("refuses a 302 to the cloud metadata address", async () => {
     const server = createServer((req, res) => {
-      res.writeHead(302, { Location: "http://169.254.169.254/latest/meta-data/" });
+      res.writeHead(302, {
+        Location: "http://169.254.169.254/latest/meta-data/",
+      });
       res.end();
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as { port: number };
     try {
       await expect(
@@ -21,12 +25,15 @@ describe("guardedFetch SSRF redirects", () => {
           maxBytes: 4_096,
           timeoutMs: 5_000,
           // 本测只关心重定向目标；允许连本机测试服务器。
-          isBlocked: (address) => address !== "127.0.0.1" && isBlockedAddress(address),
+          isBlocked: (address) =>
+            address !== "127.0.0.1" && isBlockedAddress(address),
           resolve: async () => [{ address: "127.0.0.1", family: 4 }],
         }),
       ).rejects.toBeInstanceOf(BlockedUrlError);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 
@@ -35,19 +42,24 @@ describe("guardedFetch SSRF redirects", () => {
       res.writeHead(302, { Location: "http://10.0.0.5/secret" });
       res.end();
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as { port: number };
     try {
       await expect(
         guardedFetch(`http://127.0.0.1:${port}/go`, {
           maxBytes: 4_096,
           timeoutMs: 5_000,
-          isBlocked: (address) => address !== "127.0.0.1" && isBlockedAddress(address),
+          isBlocked: (address) =>
+            address !== "127.0.0.1" && isBlockedAddress(address),
           resolve: async () => [{ address: "127.0.0.1", family: 4 }],
         }),
       ).rejects.toBeInstanceOf(BlockedUrlError);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 
@@ -57,7 +69,9 @@ describe("guardedFetch SSRF redirects", () => {
       const host = req.headers.host ?? "";
       if (host.startsWith("origin-a.example")) {
         const { port } = server.address() as { port: number };
-        res.writeHead(302, { Location: `http://origin-b.example:${port}/land` });
+        res.writeHead(302, {
+          Location: `http://origin-b.example:${port}/land`,
+        });
         res.end();
         return;
       }
@@ -65,7 +79,9 @@ describe("guardedFetch SSRF redirects", () => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("ok");
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as { port: number };
     try {
       const res = await guardedFetch(`http://origin-a.example:${port}/start`, {
@@ -77,7 +93,8 @@ describe("guardedFetch SSRF redirects", () => {
           "Proxy-Authorization": "Basic abc",
           "X-Custom": "keep-me",
         },
-        isBlocked: (address) => address !== "127.0.0.1" && isBlockedAddress(address),
+        isBlocked: (address) =>
+          address !== "127.0.0.1" && isBlockedAddress(address),
         resolve: async () => [{ address: "127.0.0.1", family: 4 }],
       });
       expect(res.status).toBe(200);
@@ -86,7 +103,9 @@ describe("guardedFetch SSRF redirects", () => {
       expect(secondHopHeaders["proxy-authorization"]).toBeUndefined();
       expect(secondHopHeaders["x-custom"]).toBe("keep-me");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 
@@ -110,24 +129,32 @@ describe("guardedFetch SSRF redirects", () => {
         res.end("done");
       });
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as { port: number };
     try {
-      const res = await guardedFetch(`http://origin-a.example:${port}/post-start`, {
-        method: "POST",
-        body: JSON.stringify({ secret: 1 }),
-        headers: { "Content-Type": "application/json" },
-        maxBytes: 4_096,
-        timeoutMs: 5_000,
-        isBlocked: (address) => address !== "127.0.0.1" && isBlockedAddress(address),
-        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-      });
+      const res = await guardedFetch(
+        `http://origin-a.example:${port}/post-start`,
+        {
+          method: "POST",
+          body: JSON.stringify({ secret: 1 }),
+          headers: { "Content-Type": "application/json" },
+          maxBytes: 4_096,
+          timeoutMs: 5_000,
+          isBlocked: (address) =>
+            address !== "127.0.0.1" && isBlockedAddress(address),
+          resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        },
+      );
       expect(res.status).toBe(200);
       expect(secondHopMethod).toBe("GET");
       expect(secondHopBody).toBe("");
       expect(secondHopHeaders["content-type"]).toBeUndefined();
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
     }
   });
 });

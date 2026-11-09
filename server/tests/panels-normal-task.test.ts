@@ -2,9 +2,10 @@ import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/db/client";
 import { panelTaskRequests } from "../src/db/schema/panels";
-import { createPanelStore } from "../src/panels/store";
 import { createNormalPanelTaskService } from "../src/panels/normal-task-service";
+import { createPanelStore } from "../src/panels/store";
 import { testDatabaseUrl } from "./support/database";
+
 const db = createDatabase(testDatabaseUrl(), { max: 2 });
 afterAll(() => db.$client.close());
 async function request() {

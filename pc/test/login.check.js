@@ -49,7 +49,7 @@ test("login posts exactly what the gateway's web form posts, with Origin and the
   let seen;
   const fetchImpl = async (url, init) => {
     seen = { url, init };
-    return res(200, { ok: true, next: "/" }, { "set-cookie": "__Host-openbot_session=abc; Path=/; Secure; HttpOnly; SameSite=Lax" });
+    return res(200, { ok: true, next: "/" }, { "set-cookie": "__Host-chisabot_session=abc; Path=/; Secure; HttpOnly; SameSite=Lax" });
   };
   const r = await auth.login({ serverUrl: "x.example", username: "me", password: "pw", remember: false, fetchImpl });
   assert.equal(seen.url, "https://x.example/auth/login");
@@ -57,7 +57,7 @@ test("login posts exactly what the gateway's web form posts, with Origin and the
   assert.equal(seen.init.headers.Origin, "https://x.example");
   assert.equal(seen.init.headers["Content-Type"], "application/json");
   assert.deepEqual(JSON.parse(seen.init.body), { username: "me", password: "pw", remember: false });
-  assert.equal(r.cookies[0].name, "__Host-openbot_session");
+  assert.equal(r.cookies[0].name, "__Host-chisabot_session");
   assert.equal(r.cookies[0].maxAge, undefined, "没勾记住登录 = 会话 Cookie");
 });
 

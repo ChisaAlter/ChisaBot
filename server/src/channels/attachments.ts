@@ -1,4 +1,3 @@
-import { imageDimsFor } from "../image-dims";
 import {
   and,
   eq,
@@ -12,14 +11,6 @@ import {
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { AppVariables } from "../auth/guards";
-import type { Database } from "../db/client";
-import {
-  attachments,
-  channelMemberships,
-  channels,
-  intelligenceChannelMappings,
-} from "../db/schema";
 import {
   ATTACHMENT_THUMB_WIDTHS,
   type AttachmentThumbWidth,
@@ -32,8 +23,17 @@ import {
   unreadablePhotoFormat,
   unsupportedImageReason,
 } from "../../../shared/attachments";
-import type { StoredAttachment } from "./attachment-parts";
+import type { AppVariables } from "../auth/guards";
+import type { Database } from "../db/client";
+import {
+  attachments,
+  channelMemberships,
+  channels,
+  intelligenceChannelMappings,
+} from "../db/schema";
+import { imageDimsFor } from "../image-dims";
 import { sniffMimeType } from "./attachment-mime";
+import type { StoredAttachment } from "./attachment-parts";
 import { attachmentThumbnailer, type Thumbnailer } from "./attachment-thumbs";
 
 function megabytes(bytes: number): string {
@@ -146,7 +146,7 @@ function inTheTurnsChannel(database: Database, threadId: string) {
  *
  * The send writes the column instead. It goes out through AG-UI rather than through either router
  * in this file, so the write is made where the send is actually known to have happened — in
- * `inlineAttachments` (copilot.ts), which is the one place that can tell the message being asked
+ * `inlineAttachments` (conversation-runtime.ts), which is the one place that can tell the message being asked
  * about from the history behind it — through {@link markAttachmentsSent}.
  *
  * IT DOES READ `attachedAt`, THOUGH, WHICH IS NEW. A staged row is a file nobody has shared with
@@ -249,6 +249,45 @@ class UnrecordedSend extends Error {
   }
 }
 
+/** Use the caller's transaction so inbox admission and attachment ownership commit together. */
+export async function recordAttachmentsSent(
+  database: Database,
+  turn: { actorId: string; threadId: string },
+  ids: readonly string[],
+): Promise<void> {
+  const known = ids.filter(isUuidShaped);
+  if (!known.length) return;
+  await database
+    .update(attachments)
+    .set({ attachedAt: new Date() })
+    .where(
+      and(
+        inArray(attachments.id, known),
+        eq(attachments.uploadedBy, turn.actorId),
+        // The channel this send actually happened in. See {@link inTheTurnsChannel}.
+        inTheTurnsChannel(database, turn.threadId),
+        isNull(attachments.attachedAt),
+      ),
+    );
+
+  const recorded = await database
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(
+      and(
+        inArray(attachments.id, known),
+        inTheTurnsChannel(database, turn.threadId),
+        isNotNull(attachments.attachedAt),
+      ),
+    );
+
+  const durable = new Set(recorded.map((row) => row.id));
+  const missing = known.filter((id) => !durable.has(id));
+  // Thrown rather than returned, because the rollback is the point: see the paragraph above on
+  // what keeping a partial set of stamps would leave behind.
+  if (missing.length > 0) throw new UnrecordedSend(missing);
+}
+
 /**
  * Records that these attachments went out in a message, on behalf of the person who sent it.
  *
@@ -303,7 +342,7 @@ class UnrecordedSend extends Error {
  * here said that a turn is a person waiting for an answer, and that bookkeeping which could not be
  * written is not worth failing that answer over. The first half is true. The second rested on a
  * premise that is false: that by the time this runs, the answer has been earned. It has not.
- * `inlineAttachments` (copilot.ts) calls this BEFORE it hands the history back, and that history is
+ * `inlineAttachments` (conversation-runtime.ts) calls this BEFORE it hands the history back, and that history is
  * what `super.run` / `next.run` is given afterwards — so at this moment no model has been called, no
  * token has been spent, and the person's message is still in front of them. Raising here costs a
  * retry of something that never started.
@@ -390,35 +429,11 @@ export async function markAttachmentsSent(
 
   const unrecorded = await database
     .transaction(async (transaction) => {
-      await transaction
-        .update(attachments)
-        .set({ attachedAt: new Date() })
-        .where(
-          and(
-            inArray(attachments.id, known),
-            eq(attachments.uploadedBy, turn.actorId),
-            // The channel this send actually happened in. See {@link inTheTurnsChannel}.
-            inTheTurnsChannel(database, turn.threadId),
-            isNull(attachments.attachedAt),
-          ),
-        );
-
-      const recorded = await transaction
-        .select({ id: attachments.id })
-        .from(attachments)
-        .where(
-          and(
-            inArray(attachments.id, known),
-            inTheTurnsChannel(database, turn.threadId),
-            isNotNull(attachments.attachedAt),
-          ),
-        );
-
-      const durable = new Set(recorded.map((row) => row.id));
-      const missing = known.filter((id) => !durable.has(id));
-      // Thrown rather than returned, because the rollback is the point: see the paragraph above on
-      // what keeping a partial set of stamps would leave behind.
-      if (missing.length > 0) throw new UnrecordedSend(missing);
+      await recordAttachmentsSent(
+        transaction as unknown as Database,
+        turn,
+        known,
+      );
       return [];
     })
     .catch((error: unknown) => {
@@ -712,7 +727,9 @@ export type ChannelUploadMirror = (input: {
   bytes: Buffer;
 }) => Promise<void>;
 let channelUploadMirror: ChannelUploadMirror | null = null;
-export function setChannelUploadMirror(mirror: ChannelUploadMirror | null): void {
+export function setChannelUploadMirror(
+  mirror: ChannelUploadMirror | null,
+): void {
   channelUploadMirror = mirror;
 }
 
@@ -1164,7 +1181,13 @@ export function createChannelAttachmentRoutes(
         mimeType: outcome.inserted.mimeType,
         bytes: Buffer.from(bytes),
       }).catch((error: unknown) => {
-        console.error(JSON.stringify({ type: "channel-upload-mirror-failed", channelId, error: error instanceof Error ? error.name : "UnknownError" }));
+        console.error(
+          JSON.stringify({
+            type: "channel-upload-mirror-failed",
+            channelId,
+            error: error instanceof Error ? error.name : "UnknownError",
+          }),
+        );
       });
     }
 
@@ -1172,10 +1195,19 @@ export function createChannelAttachmentRoutes(
      * 图片的宽高（DESIGN.md §83.2）：记下来，也随回答给作曲框，它写进消息 part 的 metadata，
      * 网页画这张图之前就能按比例留好框。不是图片 / 读不出来就不带。旧客户端不看这两个字段。
      */
-    const dims = kind === "image"
-      ? await imageDimsFor(database).remember(`a:${outcome.inserted.id.toLowerCase()}`, bytes)
-      : null;
-    return context.json(dims ? { ...outcome.inserted, width: dims.width, height: dims.height } : outcome.inserted, 201);
+    const dims =
+      kind === "image"
+        ? await imageDimsFor(database).remember(
+            `a:${outcome.inserted.id.toLowerCase()}`,
+            bytes,
+          )
+        : null;
+    return context.json(
+      dims
+        ? { ...outcome.inserted, width: dims.width, height: dims.height }
+        : outcome.inserted,
+      201,
+    );
   });
 
   return routes;
@@ -1425,7 +1457,7 @@ function couldNotReadAttachment(context: AttachmentContext) {
  * throws mid-inline — where the message is persisted anyway and the row stays staged for ever.
  * Their attachments now read "unavailable" to everybody but the sender rather than being served out
  * of a draft nobody sent. That is the more honest answer of the two, and the underlying leak — a
- * persisted message whose rows were never stamped — is a copilot.ts fault worth fixing on its own.
+ * persisted message whose rows were never stamped — is a conversation-runtime.ts fault worth fixing on its own.
  *
  * A CONDITION RATHER THAN A WHOLE QUERY, WHICH IS WHAT LETS THE THREE READS DIFFER IN NOTHING BUT
  * THEIR COLUMNS. The fetch wants the bytes, the probe wants the size, and a revalidation wants

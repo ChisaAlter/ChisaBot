@@ -1,30 +1,31 @@
 # ChisaBot 自托管部署
 
-此目录是可自行配置的 Linux 部署模板。使用 `CHISABOT_RUNTIME_MODE=local` 后，会话运行、聊天记录和个人记忆保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目密钥。模型推理由接入的模型服务处理，支持自托管模型、兼容 API 和自部署 Magpie。
+此目录是可自行配置的 Linux 部署模板。ChisaBot 用自有 Conversation 服务管理会话、权限与交付，聊天记录和个人记忆保存在自己的 PostgreSQL 中；DSH Host 负责模型/工具循环与独立 Session。模型推理由接入的模型服务处理，支持自托管模型、兼容 API 和自部署 Magpie。
 
-需要 Bun 1.3.14、Docker Engine、Docker Compose v2。主应用使用上游公开基础镜像，并将本分支源码及构建后的中文界面覆盖进去；不是已发布的 ChisaBot 公共镜像。
+宿主机需要 Bun 1.3.14、Docker Engine、Docker Compose v2；在宿主机直接运行 DSH 时还需 Node.js 24.9 或以上。主应用由仓库根 `Dockerfile` 的 `chisabot` 目标完整构建，前端、服务端、DSH 依赖与工具环境一起进入镜像。
 
 ## 构建与启动
 
 **好友可装包（推荐新装）**：`sh deploy/friend-up.sh` —— 安全默认模板、自动填密钥、拒绝公网直连应用端口。说明见 [docs/friend-deploy.md](../docs/friend-deploy.md)。
 
-在仓库根目录执行（手动）：
+首次安装时，在仓库根目录执行；已有安装保留原 `.env`，按下文升级步骤操作：
 
 ```sh
-bun install --frozen-lockfile
+bun install --frozen-lockfile --omit=peer
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
 # 仅为首次安装的空字段生成随机密钥，不打印密钥（服务端要求 base64 编码的 32 字节密钥）。
 bun -e 'let text=await Bun.file("deploy/.env").text();for(const name of ["KEY_ENCRYPTION_KEY"]){text=text.replace(new RegExp("^"+name+"=\\s*$","m"),name+"="+require("node:crypto").randomBytes(32).toString("base64"))}await Bun.write("deploy/.env",text)'
-TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app build
 sh deploy/start.sh
 ```
 
 `deploy/.env` 中的 `BOT_PROVIDER`、`BOT_MODEL`、对应 API 地址及密钥是首次启动的模型连接。可以先保留示例模型，再通过网页登录后的“管理 → 模型设置”配置和测试真实连接。启动不要求先调用模型，旧 `preflight-model.ts` 仅作为手动 OpenAI 兼容接口诊断工具。
 
+使用 DSH 还需设置 `CHISABOT_AGENT_KERNEL=dsh`，并完成账号 Host、targets、Session 持久化及工具网关配置，按 [DSH 运维](../docs/ops/dsh-runtime.md) 接线。仅启动主应用或设置一个环境变量不能代替这一步。
+
 主服务默认只监听 `127.0.0.1:3001`。公网使用需要继续配置 [HTTPS 登录网关](public/README.zh-CN.md)。网关保护下的后端沿用单管理员工作空间；不要将该单用户后端端口直接对外开放。
 
-`start.sh` 检查 `.env`、前端产物和 Compose 配置，**安装或升级宿主机在线更新服务 `chisabot-updater`**（`install-updater.sh`，需要 root + systemd；不满足时只提示，照常启动），创建共享模型网络，再构建并启动容器。`app/dist` 必须先构建；首次构建会拉取固定的上游基础镜像并安装锁定依赖。完整默认镜像名为 `local/chisabot:latest`，可通过 `CHISABOT_IMAGE` 修改；镜像会记下来源提交（工作区没有未提交改动时），系统更新页据此显示落后多少个提交。
+`start.sh` 先检查 `.env`，通过 `legacy-resources.sh` 固定已有卷与网络，再检查 Compose 配置。它会**安装或升级宿主机在线更新服务 `chisabot-updater`**（`install-updater.sh`，需要 root + systemd；不满足时只提示，照常启动），创建共享模型网络，最后完整构建并启动容器。前端在镜像构建内生成，无须预先准备 `app/dist`。默认镜像名为 `local/chisabot:latest`，可通过 `CHISABOT_IMAGE` 修改；镜像会记下来源提交（工作区没有未提交改动时），系统更新页据此显示落后多少个提交。
 
 ## 在线更新（管理后台 → 系统更新）
 
@@ -42,9 +43,9 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 ## Magpie
 
-主模板与 `magpie.compose.yaml` 使用相同的 `MAGPIE_NETWORK`，默认为 `openbot_magpie`。独立使用其他模型 API 时该空网络仍会创建，不依赖其他部署的 New API 网络。
+主模板与 `magpie.compose.yaml` 使用相同的 `MAGPIE_NETWORK`，首次安装默认为 `chisabot_magpie`。已有安装由启动入口保留原网络；两个 Compose 必须使用同一个已固定值。独立使用其他模型 API 时该空网络仍会创建，不依赖其他部署的 New API 网络。
 
-主服务启动后，在 `deploy/` 执行：
+首次配置 Magpie 时，主服务启动后在 `deploy/` 执行：
 
 ```sh
 install -d -m 700 private magpie-data
@@ -63,7 +64,9 @@ API 端口 `3425`、管理端口 `3430` 只绑定 loopback。ChisaBot 容器通�
 
 ## 数据与兼容性
 
-Compose 项目仍使用 `chisabot-zh`，容器为 `chisabot-zh`，数据卷为该项目的 `database`、`workspace`、`profiles`，环境变量及内部协议继续使用上游名称。这样已有部署不会因展示名称变化而切换数据库卷。首次安装可以沿用这些名字。
+首次安装使用 Compose 项目和容器名 `chisabot-zh`，卷默认为 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles`、`chisabot-zh_dsh`，内部网络为 `chisabot-zh_default`。配置与主动请求使用 `CHISABOT_*`、`/api/conversations` 等产品命名；旧配置和旧客户端只在集中兼容入口处理。
+
+已有安装必须通过 `start.sh` 或更新器升级：资源适配会优先采用现有容器挂载，并在 `.env` 固定实际卷名和网络名；旧数据库身份沿专用兼容入口使用。不要为了改名重建空卷、删除旧库或覆盖加密密钥。0067 将三张会话表原地改名，产品 reader 升至 4，完成后不能把 reader 1–3 的镜像重新挂到同一数据上。此次清理尚未发布，具体迁移与恢复约束见 [命名与资源迁移](../docs/ops/upstream-removal.md)。
 
 `KEY_ENCRYPTION_KEY` 加密持久化的模型密钥，必须随数据库备份保存；更新已有安装时不可重置它。`.env`、Magpie 私密配置、网页登录配置、会话数据库、证书与备份不能提交 Git。
 
@@ -71,7 +74,7 @@ Compose 项目仍使用 `chisabot-zh`，容器为 `chisabot-zh`，数据卷为�
 
 ## 可选 SSH 维护
 
-日常使用走 HTTPS 网页。Windows 维护脚本只针对已经上传或克隆、已构建前端的服务器源码目录，不负责首次传输整个仓库。先通过可信渠道核对服务器指纹并写入 known_hosts；脚本使用 `StrictHostKeyChecking=yes`。
+日常使用走 HTTPS 网页。Windows 维护脚本针对已经上传或克隆的服务器源码目录，不负责首次传输整个仓库。构建由服务器的 `start.sh` 完成。先通过可信渠道核对服务器指纹并写入 known_hosts；脚本使用 `StrictHostKeyChecking=yes`。
 
 ```powershell
 ./deploy/configure.ps1 -Server server.example.com -User root -Port 22 `
@@ -93,4 +96,4 @@ bun run --cwd server typecheck
 docker compose --env-file deploy/.env -p chisabot-zh -f deploy/compose.yaml config --quiet
 ```
 
-构建、类型检查及指定功能测试的通过结果不能代替全量测试；当前分支保留上游测试，其中部分 UI 文案断言及全局 SDK mock 仍待适配中文分支，详见 [维护指南](../docs/operations.md)。
+这些命令检查本地源码与配置；发布还需对应候选的迁移、资源兼容和健康/恢复检查，以及桌面与手机布局的实际验收。按 [测试指南](../docs/testing.md) 先完成本地定向 QA，再执行最终 CI。当前候选的已通过项和未完成项见 [实施记录](../docs/pipeline-runs/20261108-assistant-production.md)。

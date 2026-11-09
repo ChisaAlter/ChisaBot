@@ -16,10 +16,10 @@ import {
   contentDispositionFilename,
   createAttachmentRoutes,
   createChannelAttachmentRoutes,
-  setChannelUploadMirror,
   loadAttachmentForTurn,
-  markAttachmentsSent,
   MAX_STAGED_ATTACHMENTS_PER_UPLOADER,
+  markAttachmentsSent,
+  setChannelUploadMirror,
 } from "../src/channels/attachments";
 import { loadConfig } from "../src/config";
 import type { Database } from "../src/db/client";
@@ -162,7 +162,7 @@ function attachmentApp(
  * query rejects in about 2ms.
  */
 const unreachableDatabase = createDatabase(
-  "postgres://openbot:openbot@127.0.0.1:1/openbot",
+  "postgres://chisabot:chisabot@127.0.0.1:1/chisabot",
   { max: 1 },
 );
 
@@ -536,28 +536,64 @@ describe("POST /:channelId/attachments", () => {
 
   test("an image upload answers with its pixel size (DESIGN.md §83.2); a bare signature has none", async () => {
     const { app, channelId } = await harness();
-    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACUAAAAVCAIAAABOhrD5AAAAJklEQVR4nGOUqzjBQEfARE/LRu0btW/UvlH7Ru0btW/UvlH7qAAAVx0BiGHvRxAAAAAASUVORK5CYII=", "base64");
-    const response = await upload(app, channelId, new File([png], "small.png", { type: "image/png" }));
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAACUAAAAVCAIAAABOhrD5AAAAJklEQVR4nGOUqzjBQEfARE/LRu0btW/UvlH7Ru0btW/UvlH7qAAAVx0BiGHvRxAAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const response = await upload(
+      app,
+      channelId,
+      new File([png], "small.png", { type: "image/png" }),
+    );
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ mimeType: "image/png", width: 37, height: 21 });
-    const bare = await upload(app, channelId, new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "b.png", { type: "image/png" }));
+    expect(await response.json()).toMatchObject({
+      mimeType: "image/png",
+      width: 37,
+      height: 21,
+    });
+    const bare = await upload(
+      app,
+      channelId,
+      new File(
+        [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+        "b.png",
+        { type: "image/png" },
+      ),
+    );
     expect("width" in ((await bare.json()) as object)).toBe(false);
   });
 
   test("a stored upload is handed to the bot-workspace mirror (CB-046)", async () => {
     const { app, channelId } = await harness();
     const seen: { channelId: string; name: string; size: number }[] = [];
-    setChannelUploadMirror(async (input) => void seen.push({ channelId: input.channelId, name: input.name, size: input.bytes.length }));
+    setChannelUploadMirror(
+      async (input) =>
+        void seen.push({
+          channelId: input.channelId,
+          name: input.name,
+          size: input.bytes.length,
+        }),
+    );
     try {
-      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-      const response = await upload(app, channelId, new File([bytes], "photo.png", { type: "image/png" }));
+      const bytes = new Uint8Array([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ]);
+      const response = await upload(
+        app,
+        channelId,
+        new File([bytes], "photo.png", { type: "image/png" }),
+      );
       expect(response.status).toBe(201);
       expect(seen).toEqual([{ channelId, name: "photo.png", size: 8 }]);
       // A failing mirror never fails the upload.
       setChannelUploadMirror(async () => {
         throw new Error("workspace down");
       });
-      const again = await upload(app, channelId, new File([bytes], "b.png", { type: "image/png" }));
+      const again = await upload(
+        app,
+        channelId,
+        new File([bytes], "b.png", { type: "image/png" }),
+      );
       expect(again.status).toBe(201);
     } finally {
       setChannelUploadMirror(null);
@@ -1374,7 +1410,11 @@ describe("POST /:channelId/attachments", () => {
       0x00, 0x00, 0x00, 0x00, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63,
     ]);
     for (const name of ["08-photo.heic", "IMG_0001.HEIF", "cover.avif"]) {
-      const response = await upload(app, channelId, new File([heic], name, { type: "" }));
+      const response = await upload(
+        app,
+        channelId,
+        new File([heic], name, { type: "" }),
+      );
       expect(response.status).toBe(415);
       const { error } = (await response.json()) as { error: string };
       expect(error).toContain(`「${name}」`);
@@ -1392,11 +1432,17 @@ describe("POST /:channelId/attachments", () => {
     const { app, channelId } = await harness();
     const big = new Uint8Array(MAX_IMAGE_BYTES + 1);
     big.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const response = await upload(app, channelId, new File([big], "big.png", { type: "image/png" }));
+    const response = await upload(
+      app,
+      channelId,
+      new File([big], "big.png", { type: "image/png" }),
+    );
     expect(response.status).toBe(413);
     const { error } = (await response.json()) as { error: string };
     expect(error).toContain("「big.png」图片太大");
-    expect(error).toContain(`${(MAX_IMAGE_BYTES / (1024 * 1024)).toFixed(0)}MB`);
+    expect(error).toContain(
+      `${(MAX_IMAGE_BYTES / (1024 * 1024)).toFixed(0)}MB`,
+    );
   });
 });
 

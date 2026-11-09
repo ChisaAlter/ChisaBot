@@ -106,6 +106,10 @@ function filePartToText(part: unknown): unknown {
   if (!part || typeof part !== "object" || (part as Part).type !== "file")
     return part;
   const file = part as Part;
+  const mime0 = typeof file.mediaType === "string" ? file.mediaType : "";
+  // 图片在 AI SDK 里也是 `file` part：原样留给 provider，OpenAI 兼容端点（DeepSeek）会收到
+  // image_url。换成文字会让能看图的模型拿不到图（QA1102-14）。
+  if (/^image\//i.test(mime0)) return part;
   const name =
     typeof file.filename === "string" && file.filename
       ? file.filename.slice(0, 200)

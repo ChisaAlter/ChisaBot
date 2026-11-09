@@ -11,8 +11,10 @@ export function latestChannelFor(
 ): ChannelSummary | undefined {
   let best: ChannelSummary | undefined;
   for (const channel of channels ?? []) {
-    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId) continue;
-    if (!best || (channel.lastMessageAt ?? "") > (best.lastMessageAt ?? "")) best = channel;
+    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId)
+      continue;
+    if (!best || (channel.lastMessageAt ?? "") > (best.lastMessageAt ?? ""))
+      best = channel;
   }
   return best;
 }
@@ -26,7 +28,7 @@ export function isEmptyChannel(channel: ChannelSummary): boolean {
  * What `/channel/new?agent=…` may reuse instead of opening a new topic: the Bot's most recent
  * one-to-one channel, and only while nothing has been said in it. A conversation with messages is
  * never reopened from there — that route always starts a new topic; callers that mean "the Bot's
- * ongoing chat" resolve it themselves first (`useOpenBotChat`).
+ * ongoing chat" resolve it themselves first (`useBotChat`).
  *
  * "Most recent" counts a channel's creation time when it has no messages, so a just-created empty
  * channel beats an older conversation.

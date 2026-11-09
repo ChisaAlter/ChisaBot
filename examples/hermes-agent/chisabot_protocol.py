@@ -946,8 +946,11 @@ def failure_category(reason: Any = None, error: BaseException | None = None) -> 
     return "unknown"
 
 
-def failure_message(category: str) -> str:
-    return _FAILURE_MESSAGES.get(category, TURN_FAILED)
+def failure_message(category: str, *, fallback: bool = False) -> str:
+    message = _FAILURE_MESSAGES.get(category, TURN_FAILED)
+    if fallback:
+        return message.replace("Hermes model call failed:", "Hermes fallback model call failed:")
+    return message
 
 
 # Hermes also narrates a failed model call as ordinary reply text written for a CLI

@@ -1,4 +1,9 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 import {
   type DeviceAuditEntry,
@@ -8,12 +13,17 @@ import {
   initialCapabilities,
   isFactoryOff,
   isMobilePlatform,
+  MOBILE_PLATFORMS,
   normalizeCapabilities,
 } from "../../../shared/devices";
-import { MOBILE_PLATFORMS } from "../../../shared/devices";
 
 /** 有人（网页 / 手机 / PC 本机）改过这台电脑配置时写的审计动作。系统自动迁移不算。 */
-export const USER_CONFIG_ACTIONS = ["config_changed", "kill_switch_on", "kill_switch_off"] as const;
+export const USER_CONFIG_ACTIONS = [
+  "config_changed",
+  "kill_switch_on",
+  "kill_switch_off",
+] as const;
+
 import type { Database } from "../db/client";
 import { deviceAuditEvents, deviceBotAccess, devices } from "../db/schema";
 
@@ -41,7 +51,8 @@ function sameHash(a: string, b: string) {
 }
 
 export function cleanName(value: unknown, fallback = "我的电脑"): string {
-  const text = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  const text =
+    typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
   return (text || fallback).slice(0, MAX_NAME);
 }
 
@@ -72,13 +83,21 @@ function short(value: unknown, max: number): string | null {
 
 type Row = typeof devices.$inferSelect;
 
-export type DeviceRecord = Omit<DeviceView, "online" | "fullAccess" | "fullAccessRemainingMs" | "features"> & {
+export type DeviceRecord = Omit<
+  DeviceView,
+  "online" | "fullAccess" | "fullAccessRemainingMs" | "features"
+> & {
   tokenHash: string;
 };
 
 type LastUse = DeviceView["lastUsedBy"];
 
-function toRecord(row: Row, botIds: string[], lastUsedBy: LastUse = null, fullAccessUntil: string | null = null): DeviceRecord {
+function toRecord(
+  row: Row,
+  botIds: string[],
+  lastUsedBy: LastUse = null,
+  fullAccessUntil: string | null = null,
+): DeviceRecord {
   return {
     id: row.id,
     ownerUserId: row.ownerUserId,
@@ -103,7 +122,12 @@ function toRecord(row: Row, botIds: string[], lastUsedBy: LastUse = null, fullAc
 }
 
 /** 完全访问现在是否生效（未到期）。 */
-export function fullAccessActive(record: Pick<DeviceRecord, "paused" | "revoked"> & { fullAccessUntil?: string | null | undefined }, now = Date.now()): boolean {
+export function fullAccessActive(
+  record: Pick<DeviceRecord, "paused" | "revoked"> & {
+    fullAccessUntil?: string | null | undefined;
+  },
+  now = Date.now(),
+): boolean {
   if (!record.fullAccessUntil || record.paused || record.revoked) return false;
   const until = Date.parse(record.fullAccessUntil);
   return Number.isFinite(until) && until > now;
@@ -140,7 +164,9 @@ export function createDeviceStore(database: Database) {
   }
 
   /** 每台设备最近一次由机器人发起的操作（审计表上 (device_id, at) 有索引）。 */
-  async function lastBotUseFor(ids: string[]): Promise<Map<string, NonNullable<LastUse>>> {
+  async function lastBotUseFor(
+    ids: string[],
+  ): Promise<Map<string, NonNullable<LastUse>>> {
     const map = new Map<string, NonNullable<LastUse>>();
     if (!ids.length) return map;
     try {
@@ -152,10 +178,19 @@ export function createDeviceStore(database: Database) {
           at: deviceAuditEvents.at,
         })
         .from(deviceAuditEvents)
-        .where(and(inArray(deviceAuditEvents.deviceId, ids), eq(deviceAuditEvents.actorType, "bot")))
+        .where(
+          and(
+            inArray(deviceAuditEvents.deviceId, ids),
+            eq(deviceAuditEvents.actorType, "bot"),
+          ),
+        )
         .orderBy(deviceAuditEvents.deviceId, desc(deviceAuditEvents.at));
       for (const row of rows)
-        map.set(row.deviceId, { botId: row.actorId, botName: row.actorName, at: row.at.toISOString() });
+        map.set(row.deviceId, {
+          botId: row.actorId,
+          botName: row.actorName,
+          at: row.at.toISOString(),
+        });
     } catch {
       /* 只是展示用的附加信息，读不到就不显示。 */
     }
@@ -175,7 +210,8 @@ export function createDeviceStore(database: Database) {
         "SELECT id, full_access_until FROM devices WHERE id = ANY(string_to_array($1, ',')) AND full_access_until IS NOT NULL",
         [ids.join(",")],
       )) as unknown as { id: string; full_access_until: Date | string }[];
-      for (const row of rows) map.set(row.id, new Date(row.full_access_until).toISOString());
+      for (const row of rows)
+        map.set(row.id, new Date(row.full_access_until).toISOString());
     } catch {
       /* 列还没建好时当作都没开 */
     }
@@ -186,17 +222,34 @@ export function createDeviceStore(database: Database) {
 
   async function setFullAccess(id: string, until: string | null) {
     if (!fullAccessColumn) await store.ensure();
-    await database.$client.unsafe("UPDATE devices SET full_access_until = $2 WHERE id = $1", [id, until ? new Date(until) : null]);
+    await database.$client.unsafe(
+      "UPDATE devices SET full_access_until = $2 WHERE id = $1",
+      [id, until ? new Date(until).toISOString() : null],
+    );
   }
 
   async function hydrate(rows: Row[]): Promise<DeviceRecord[]> {
     const ids = rows.map((row) => row.id);
-    const [bots, lastUse, full] = await Promise.all([botIdsFor(ids), lastBotUseFor(ids), fullAccessFor(ids)]);
-    return rows.map((row) => toRecord(row, bots.get(row.id) ?? [], lastUse.get(row.id) ?? null, full.get(row.id) ?? null));
+    const [bots, lastUse, full] = await Promise.all([
+      botIdsFor(ids),
+      lastBotUseFor(ids),
+      fullAccessFor(ids),
+    ]);
+    return rows.map((row) =>
+      toRecord(
+        row,
+        bots.get(row.id) ?? [],
+        lastUse.get(row.id) ?? null,
+        full.get(row.id) ?? null,
+      ),
+    );
   }
 
   async function get(id: string): Promise<DeviceRecord | null> {
-    const [row] = await database.select().from(devices).where(eq(devices.id, id));
+    const [row] = await database
+      .select()
+      .from(devices)
+      .where(eq(devices.id, id));
     if (!row) return null;
     return (await hydrate([row]))[0] ?? null;
   }
@@ -207,7 +260,9 @@ export function createDeviceStore(database: Database) {
     /** 开机时调用一次：建完全访问列（幂等）。 */
     async ensure() {
       try {
-        await database.$client.unsafe("ALTER TABLE devices ADD COLUMN IF NOT EXISTS full_access_until timestamptz");
+        await database.$client.unsafe(
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS full_access_until timestamptz",
+        );
         fullAccessColumn = true;
       } catch (error) {
         console.warn("devices.full_access_until column unavailable", error);
@@ -261,8 +316,11 @@ export function createDeviceStore(database: Database) {
     },
 
     /** 用令牌找到未撤销的设备；不区分「不存在」和「已撤销」以外的原因。 */
-    async authenticate(token: string): Promise<DeviceRecord | "revoked" | null> {
-      if (!token.startsWith(DEVICE_TOKEN_PREFIX) || token.length > 100) return null;
+    async authenticate(
+      token: string,
+    ): Promise<DeviceRecord | "revoked" | null> {
+      if (!token.startsWith(DEVICE_TOKEN_PREFIX) || token.length > 100)
+        return null;
       const hash = hashDeviceToken(token);
       const [row] = await database
         .select()
@@ -284,9 +342,12 @@ export function createDeviceStore(database: Database) {
         arch?: unknown;
       } = {},
     ) {
-      const set: Partial<typeof devices.$inferInsert> = { lastSeenAt: new Date() };
+      const set: Partial<typeof devices.$inferInsert> = {
+        lastSeenAt: new Date(),
+      };
       if (facts.ip) set.lastIp = facts.ip;
-      if (facts.clientVersion) set.clientVersion = short(facts.clientVersion, 32);
+      if (facts.clientVersion)
+        set.clientVersion = short(facts.clientVersion, 32);
       if (facts.platform) set.platform = short(facts.platform, 32) ?? "unknown";
       if (facts.osVersion) set.osVersion = short(facts.osVersion, 120);
       if (facts.hostname) set.hostname = short(facts.hostname, 120);
@@ -301,7 +362,8 @@ export function createDeviceStore(database: Database) {
       const current = await get(id);
       if (!current || current.revoked) return null;
       const set: Partial<typeof devices.$inferInsert> = {};
-      if (patch.name !== undefined) set.name = cleanName(patch.name, current.name);
+      if (patch.name !== undefined)
+        set.name = cleanName(patch.name, current.name);
       if (patch.capabilities)
         set.capabilities = normalizeCapabilities({
           ...current.capabilities,
@@ -316,11 +378,17 @@ export function createDeviceStore(database: Database) {
       if (Object.keys(set).length)
         await database.update(devices).set(set).where(eq(devices.id, id));
       // 紧急停止同时关掉完全访问（解除紧急停止不会自动恢复，要重新打开）。
-      if (patch.paused === true && current.fullAccessUntil) await setFullAccess(id, null);
-      else if (patch.fullAccessUntil !== undefined) await setFullAccess(id, patch.fullAccessUntil);
+      if (patch.paused === true && current.fullAccessUntil)
+        await setFullAccess(id, null);
+      else if (patch.fullAccessUntil !== undefined)
+        await setFullAccess(id, patch.fullAccessUntil);
       if (patch.botIds !== undefined) {
-        const botIds = [...new Set(patch.botIds.filter((b) => typeof b === "string" && b))].slice(0, 100);
-        await database.delete(deviceBotAccess).where(eq(deviceBotAccess.deviceId, id));
+        const botIds = [
+          ...new Set(patch.botIds.filter((b) => typeof b === "string" && b)),
+        ].slice(0, 100);
+        await database
+          .delete(deviceBotAccess)
+          .where(eq(deviceBotAccess.deviceId, id));
         if (botIds.length)
           await database
             .insert(deviceBotAccess)
@@ -341,7 +409,9 @@ export function createDeviceStore(database: Database) {
 
     async remove(id: string) {
       await database.delete(devices).where(eq(devices.id, id));
-      await database.delete(deviceAuditEvents).where(eq(deviceAuditEvents.deviceId, id));
+      await database
+        .delete(deviceAuditEvents)
+        .where(eq(deviceAuditEvents.deviceId, id));
     },
 
     /**
@@ -403,14 +473,24 @@ export function createDeviceStore(database: Database) {
       const rows = await database
         .select()
         .from(devices)
-        .where(and(isNull(devices.revokedAt), notInArray(devices.platform, [...MOBILE_PLATFORMS])));
+        .where(
+          and(
+            isNull(devices.revokedAt),
+            notInArray(devices.platform, [...MOBILE_PLATFORMS]),
+          ),
+        );
       const changed: string[] = [];
       for (const device of await hydrate(rows)) {
         if (!isFactoryOff(device.capabilities)) continue;
         if (await store.everConfigured(device.id)) continue;
         await database
           .update(devices)
-          .set({ capabilities: initialCapabilities() as unknown as Record<string, unknown> })
+          .set({
+            capabilities: initialCapabilities() as unknown as Record<
+              string,
+              unknown
+            >,
+          })
           .where(eq(devices.id, device.id));
         await store.audit({
           deviceId: device.id,
@@ -419,7 +499,8 @@ export function createDeviceStore(database: Database) {
           actorId: null,
           actorName: "系统",
           action: "defaults_ask",
-          summary: "默认权限改为「每次询问」：机器人可以申请使用这台电脑，每次操作都要你批准。不想要可在 权限 里改回「关闭」。",
+          summary:
+            "默认权限改为「每次询问」：机器人可以申请使用这台电脑，每次操作都要你批准。不想要可在 权限 里改回「关闭」。",
           outcome: "succeeded",
           detail: null,
           durationMs: null,
@@ -436,7 +517,8 @@ export function createDeviceStore(database: Database) {
       const roots = cleanRoots(suggested).slice(0, 5);
       if (!roots.length) return false;
       const current = await get(id);
-      if (!current || current.revoked || current.allowedRoots.length) return false;
+      if (!current || current.revoked || current.allowedRoots.length)
+        return false;
       if (await store.everConfigured(id)) return false;
       await database
         .update(devices)
@@ -478,7 +560,11 @@ export function createDeviceStore(database: Database) {
     /** 把「进行中」的审计行改成最终结果：先写后做，崩溃也留下记录。 */
     async finishAudit(
       id: string,
-      result: { outcome: string; detail?: string | null; durationMs?: number | null },
+      result: {
+        outcome: string;
+        detail?: string | null;
+        durationMs?: number | null;
+      },
     ): Promise<void> {
       await database
         .update(deviceAuditEvents)

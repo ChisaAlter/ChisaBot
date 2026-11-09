@@ -3,7 +3,7 @@
   "description": "ChisaBot API、会话运行和模型管理服务",
   "license": "MIT",
   "private": true,
-  "version": "0.1.137",
+  "version": "0.1.138",
   "type": "module",
   "scripts": {
     "build": "bun x tsc --noEmit",
@@ -18,20 +18,23 @@
     "@ag-ui/mastra": "2.0.1",
     "@ai-sdk/anthropic": "3.0.111",
     "@ai-sdk/openai": "3.0.99",
+    "@ai-sdk/provider": "3.0.15",
     "@better-auth/drizzle-adapter": "^1.7.7",
     "@composio/core": "^0.27.0",
-    "@copilotkit/runtime": "1.80.0",
     "@json-render/core": "0.21.3",
     "@json-render/react": "0.21.3",
     "@mastra/client-js": "^1.56.0",
     "@mastra/core": "^1.64.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "ai": "6.0.264",
     "better-auth": "^1.7.7",
     "cel-js": "^0.8.2",
     "cron-parser": "^5",
     "drizzle-orm": "^0.45.4",
     "eventsource": "3.0.7",
     "hono": "^4.10.0",
+    "node-ical": "0.27.5",
+    "nodemailer": "10.4.0",
     "postgres": "^3.4.9",
     "rxjs": "7.8.1",
     "sharp": "^0.35.5",
@@ -40,8 +43,6 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@copilotkit/aimock": "1.46.0",
-    "@copilotkit/core": "1.80.0",
     "drizzle-kit": "^0.31.11"
   }
 }

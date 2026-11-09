@@ -1,53 +1,5 @@
-/**
- * One headless turn, run into the Intelligence thread the person will open.
- *
- * WRITTEN AGAINST `@copilotkit/runtime` 1.69.0, MIRRORING
- * `node_modules/@copilotkit/runtime/dist/v2/runtime/core/channel-manager.mjs:189-316`
- * (`runCanonicalChannelAgent`, the package's own module-private headless-turn engine) and
- * `dist/v2/runtime/handlers/intelligence/run.mjs:114-127` for `persistedInputMessages`. That engine is
- * not exported, so this is a hand copy of it with one addition — `getOrCreateThread` first — and it
- * has to be re-read against the package whenever the runtime is upgraded.
- *
- * WHY NOT A SECOND MOUNTED HANDLER. A loopback that mounts a second `mountCopilotRuntime` and POSTs
- * to its own run route is viable on identity grounds: `identifyUser` and `identifyActor` are both
- * injectable there (`copilot.ts:915-916`), so a routine's request could assert its owner without a
- * header. It was rejected on information, not on identity. The run route answers at gateway-JOIN
- * rather than at completion (`run.mjs:229-247` returns `{threadId, runId, joinToken, realtime}` as
- * soon as the runner has joined), so a caller learns that a turn STARTED and nothing else: no
- * completion signal, no reply text, and no failure. Recovering either would need a second transport —
- * a websocket back into the gateway — which is strictly more moving parts for strictly less
- * information than driving the runner in-process.
- *
- * WHAT WE ARE REACHING INTO. Five `ɵ`-prefixed methods: `ɵgetRunnerWsUrl` and `ɵgetRunnerAuthToken`
- * (at wiring time, in `index.ts`), and `ɵacquireThreadLock`, `ɵrenewThreadLock`,
- * `ɵcleanupThreadLock` here. They typecheck today and are how the package's own handlers do this, but
- * the `ɵ` prefix is the package saying it may change them without a major. Their request and response
- * interfaces — `AcquireThreadLockRequest`, `RenewThreadLockRequest`, `CleanupThreadLockRequest` — are
- * declared in `dist/v2/runtime/intelligence-platform/client.d.mts:339-367` and are NOT exported from
- * `@copilotkit/runtime/v2`, so the shapes in `IntelligenceLike` below are RESTATED BY HAND. Nothing
- * fails loudly when the package changes them: a renamed field would typecheck against our own
- * restatement and be silently dropped on the wire. That is what the test file is for.
- *
- * THE LOCK LIFECYCLE IS NOW OURS TO KEEP CORRECT. In the browser path the runtime holds the lock and
- * releases it; here we do. A bug in it is not a failed routine, it is a thread the person cannot chat
- * in — see the `finally` block, which is the single most important thing in this file.
- *
- * GATEWAY AVAILABILITY IS NOW ON THE CRON RUN'S CRITICAL PATH. Driving the runner means the turn goes
- * through the Intelligence gateway's Phoenix channel: it can answer `CHANNEL_JOIN_ERROR` or time out
- * joining (`runner/intelligence.mjs:194-229`), and events must be durably acknowledged within
- * `EVENT_DURABILITY_DEADLINE_MS = 60_000` (`intelligence.mjs:16, 505-511`) or the run fails. So a
- * routine firing during an Intelligence incident fails HERE, where a turn that only called the model
- * and never persisted anything would have succeeded. That trade was made deliberately: a reply nobody
- * can find in the channel is not a reply, and the transcript is the whole point of a routine.
- *
- * WHY A SECOND RUNNER INSTANCE IS SAFE. The thread lock is a platform resource, not a process one —
- * `POST /api/threads/:id/lock`, Redis-backed, keyed by thread — so a lock taken by this runner is seen
- * by the runtime's runner and by every other replica. `IntelligenceAgentRunner.threads` is a local
- * fast path (`intelligence.mjs:105`, "Thread already running") and nothing else, which is why the
- * runner is built ONCE at wiring time and reused: one instance per turn would fragment that map, and
- * two concurrent turns on one thread would then race past the local check and collide at the platform
- * lock instead of failing cheaply here.
- */
+/** Background turns use the same conversation runner and durable history as browser turns. */
+
 import type {
   AbstractAgent,
   BaseEvent,
@@ -57,7 +9,6 @@ import type {
 import { EventType } from "@ag-ui/client";
 import { NOT_SHOWN } from "../../../shared/component-markers";
 import { frameFiring } from "../../../shared/routine-firing";
-import { withModelConnectionScope } from "../model-connection-context";
 import { sanitizeSeededHistory } from "../agents/history-sanitize";
 import { guardBotTurn } from "../agents/lifecycle";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
@@ -73,7 +24,15 @@ import {
   HeadlessToolsMiddleware,
   type HeadlessWaiting,
 } from "../computer/headless-tools";
-import { historyOrEmpty } from "../copilot";
+import { historyOrEmpty } from "../conversation-runtime";
+import {
+  type ExecutionClass,
+  executionClass,
+  executionDeadline,
+} from "../conversations/capacity";
+import { assertConversationAdmissionOpen } from "../conversations/maintenance";
+import { normalizeConversationEvent } from "../legacy/protocol";
+import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
 
@@ -81,7 +40,7 @@ import type { DrawnComponent, TurnRunner } from "./types";
  * The gap between stopping a turn and giving up on it.
  *
  * `abortRun` on `RunSelectedAgent` reaches the agent the run turned into, and that agent does not
- * exist until `build()` resolves (`copilot.ts:649, 664-673`): during that window the wrapper has no
+ * exist until `build()` resolves (`conversation-runtime.ts:649, 664-673`): during that window the wrapper has no
  * `inner`, so abort is a no-op and the deadline cannot actually stop anything. This is the backstop
  * that settles the promise anyway, so a firing cannot hang for ever on a build that never finishes.
  *
@@ -116,15 +75,8 @@ type ThreadHistoryMessage = {
   toolCallId?: string;
 };
 
-/**
- * The platform client, named by the methods this file calls and nothing else.
- *
- * Narrow and structural on purpose. It is what lets the tests drive every exit path without a
- * gateway, and it is the honest documentation of how much of `CopilotKitIntelligence` a headless turn
- * depends on. The real client satisfies it; see the seam note above about the `ɵ` shapes being
- * restatements rather than imports.
- */
-export type IntelligenceLike = {
+/** The history interface used by background consumers of the conversation runner. */
+export type ConversationHistory = {
   getOrCreateThread(params: {
     threadId: string;
     userId: string;
@@ -135,7 +87,11 @@ export type IntelligenceLike = {
     threadId: string;
     userId: string;
   }): Promise<{ messages: ThreadHistoryMessage[] }>;
-  ɵacquireThreadLock(params: {
+};
+
+/** A lease adapter is required only by runners that do not own their thread lease. */
+export type ConversationLeases = {
+  acquire(params: {
     threadId: string;
     runId: string;
     userId: string;
@@ -144,15 +100,12 @@ export type IntelligenceLike = {
     learningContainerId?: string;
   }): Promise<unknown>;
   /** NOTE: no `userId` and no `agentId` — renew is identified by the thread and the run alone. */
-  ɵrenewThreadLock(params: {
+  renew(params: {
     threadId: string;
     runId: string;
     ttlSeconds: number;
   }): Promise<unknown>;
-  ɵcleanupThreadLock(params: {
-    threadId: string;
-    runId: string;
-  }): Promise<void>;
+  release(params: { threadId: string; runId: string }): Promise<void>;
 };
 
 /**
@@ -167,13 +120,17 @@ type EventStream = {
   }): unknown;
 };
 
-/** The `IntelligenceAgentRunner`, named by the two methods this file calls. */
+/** The conversation runner, named by the two methods this file calls. */
 export type RunnerLike = {
+  readonly ownsThreadLease?: boolean;
   run(request: {
     threadId: string;
     agent: AbstractAgent;
     input: RunAgentInput;
     persistedInputMessages?: Message[];
+    continuationRunId?: string;
+    join?: boolean;
+    execution?: ExecutionClass;
   }): EventStream;
   stop(request: {
     threadId: string;
@@ -218,7 +175,7 @@ function toAgentMessage(message: ThreadHistoryMessage): Message {
 
 /**
  * Re-exported from `agents/history-sanitize.ts`, where it now lives, because a chat turn needs
- * it too and this module cannot be imported from `copilot.ts`, since the import already runs the
+ * it too and this module cannot be imported from `conversation-runtime.ts`, since the import already runs the
  * other way. Kept as a name on this module because this is where the reasoning was found and where the
  * tests that cover the seeding path still reach for it.
  */
@@ -278,7 +235,8 @@ export function drawnComponents(messages: Message[]): DrawnComponent[] {
 export { frameFiring };
 
 export function createTurnRunner(options: {
-  intelligence: IntelligenceLike;
+  intelligence: ConversationHistory;
+  leases?: ConversationLeases;
   runner: RunnerLike;
   /** The owner's coworkers, resolved as the owner. Built per turn, keyed by registry id. */
   buildAgentFor: (input: {
@@ -367,6 +325,7 @@ export function createTurnRunner(options: {
      * of. `getOrCreateThread` is public API, idempotent, and already handles the 409 create-race
      * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
      */
+    assertConversationAdmissionOpen();
     await intelligence.getOrCreateThread({
       threadId,
       userId: ownerUserId,
@@ -530,21 +489,28 @@ export function createTurnRunner(options: {
         : {}),
     });
 
+    // The lease this turn holds itself; a runner that owns the thread lease needs none.
+    const leases = runner.ownsThreadLease ? undefined : options.leases;
     try {
-      await intelligence.ɵacquireThreadLock({
-        threadId,
-        runId,
-        userId: ownerUserId,
-        agentId,
-        ttlSeconds: lockTtlSeconds,
-      });
+      if (!runner.ownsThreadLease) {
+        if (!leases)
+          throw new Error("This conversation runner requires a lease adapter.");
+        await leases.acquire({
+          threadId,
+          runId,
+          userId: ownerUserId,
+          agentId,
+          ttlSeconds: lockTtlSeconds,
+        });
+      }
     } catch (error) {
       spoken.unsubscribe();
       throw error;
     }
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof executionDeadline> | undefined;
+    let capacityState: "waiting" | "admitted" = "admitted";
     let backstop: ReturnType<typeof setTimeout> | undefined;
     let heartbeatError: unknown;
     let waiting: HeadlessToolSuspension | undefined;
@@ -560,6 +526,8 @@ export function createTurnRunner(options: {
      */
     let stopPromise: Promise<boolean | undefined> | undefined;
     let cancelTurn: (() => void) | undefined;
+    const awaitsExecutionStop =
+      "acknowledgesStop" in agent && agent.acknowledgesStop === true;
 
     const clearHeartbeat = () => {
       if (heartbeat === undefined) return;
@@ -580,23 +548,24 @@ export function createTurnRunner(options: {
       stopPromise ??= runner.stop({ threadId, runId }).catch(() => undefined);
     };
 
-    heartbeat = setInterval(() => {
-      void intelligence
-        .ɵrenewThreadLock({ threadId, runId, ttlSeconds: lockTtlSeconds })
-        .catch((error: unknown) => {
-          if (heartbeat === undefined) return;
-          /*
-           * A lock we no longer hold means somebody else is in this thread — the person, most
-           * likely, having just typed something. Continuing would write this turn's events into
-           * their run, so the turn is stopped and the failure is raised rather than recovered.
-           */
-          clearHeartbeat();
-          heartbeatError = error;
-          stopTurn();
-        });
-    }, heartbeatMs);
+    if (leases)
+      heartbeat = setInterval(() => {
+        void leases
+          .renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
+          .catch((error: unknown) => {
+            if (heartbeat === undefined) return;
+            /*
+             * A lock we no longer hold means somebody else is in this thread — the person, most
+             * likely, having just typed something. Continuing would write this turn's events into
+             * their run, so the turn is stopped and the failure is raised rather than recovered.
+             */
+            clearHeartbeat();
+            heartbeatError = error;
+            stopTurn();
+          });
+      }, heartbeatMs);
     // So a heartbeat that is still pending cannot hold a one-shot process open.
-    heartbeat.unref?.();
+    heartbeat?.unref?.();
 
     try {
       // Cancellation may arrive while acquiring the lock. Stopping a runner that has not
@@ -605,7 +574,8 @@ export function createTurnRunner(options: {
       const cancelled = new Promise<never>((_resolve, reject) => {
         cancelTurn = () => {
           stopTurn();
-          reject(new Error("The headless turn was cancelled."));
+          if (!awaitsExecutionStop)
+            reject(new Error("The headless turn was cancelled."));
         };
         signal?.addEventListener("abort", cancelTurn, { once: true });
         if (signal?.aborted) cancelTurn();
@@ -613,7 +583,20 @@ export function createTurnRunner(options: {
       const completed = new Promise<void>((resolve, reject) => {
         let terminal: Error | undefined;
         runner
-          .run({ threadId, agent, input, persistedInputMessages })
+          .run({
+            threadId,
+            agent,
+            input,
+            persistedInputMessages,
+            join: false,
+            execution: executionClass(
+              initiator,
+              Boolean(suppliedForwardedProps?.chisabotWorkerDelivery),
+            ),
+            ...(continuation
+              ? { continuationRunId: continuation.snapshot.runId }
+              : {}),
+          })
           .subscribe({
             /*
              * RUN_ERROR THROUGH `next` IS TERMINAL. The Intelligence runner reports a failed run by
@@ -623,9 +606,21 @@ export function createTurnRunner(options: {
              * answered with nothing.
              */
             next: (event) => {
+              event = normalizeConversationEvent(event);
               if (
                 event.type === EventType.CUSTOM &&
-                event.name === "openbot.headless.waiting"
+                "name" in event &&
+                event.name === "chisabot.capacity"
+              ) {
+                const status = (
+                  event as BaseEvent & { value?: { status?: string } }
+                ).value?.status;
+                capacityState = status === "queued" ? "waiting" : "admitted";
+                deadline?.state(capacityState);
+              }
+              if (
+                event.type === EventType.CUSTOM &&
+                event.name === "chisabot.headless.waiting"
               ) {
                 const value = event.value as HeadlessWaiting & {
                   message?: string;
@@ -652,19 +647,20 @@ export function createTurnRunner(options: {
       });
 
       const timeout = new Promise<never>((_resolve, reject) => {
-        deadline = setTimeout(() => {
+        deadline = executionDeadline(turnTimeoutMs, () => {
           stopped = true;
           stopTurn();
-        }, turnTimeoutMs);
-        deadline.unref?.();
-        backstop = setTimeout(() => {
-          reject(
-            new Error(
-              `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
-            ),
-          );
-        }, turnTimeoutMs + abortGraceMs);
-        backstop.unref?.();
+          if (!awaitsExecutionStop)
+            backstop = setTimeout(() => {
+              reject(
+                new Error(
+                  `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
+                ),
+              );
+            }, abortGraceMs);
+          backstop?.unref?.();
+        });
+        deadline.state(capacityState);
       });
 
       await Promise.race([completed, timeout, cancelled]);
@@ -682,13 +678,13 @@ export function createTurnRunner(options: {
       clearHeartbeat();
       if (cancelTurn) signal?.removeEventListener("abort", cancelTurn);
       if (signal?.aborted) await stopPromise;
-      if (deadline !== undefined) clearTimeout(deadline);
+      deadline?.cancel();
       if (backstop !== undefined) clearTimeout(backstop);
       spoken.unsubscribe();
-      await intelligence
-        .ɵcleanupThreadLock({ threadId, runId })
-        .catch(() => undefined);
+      if (leases)
+        await leases.release({ threadId, runId }).catch(() => undefined);
     }
+    if (signal?.aborted) throw new Error("The headless turn was cancelled.");
 
     // Raised after the lock is released, and ahead of any reply: a turn that lost its lock partway
     // through is not a turn that answered, however much text it produced first. `stopPromise` is

@@ -219,7 +219,6 @@ test("/channel/new keeps a successful empty roster as an empty state, not a fail
   });
   queryClient.setQueryData(userPreferencesQueryOptions("user").queryKey, {
     messageListEmphasis: "thread",
-    selfHostBannerDismissed: false,
     mainBotId: null,
     brandAccent: "Chisa",
     brandRest: "Bot",

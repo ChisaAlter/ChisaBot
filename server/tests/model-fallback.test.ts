@@ -13,9 +13,16 @@ import {
 } from "../src/agents/model-fallback";
 
 function apiError(statusCode: number, message: string) {
-  return Object.assign(new Error(message), { name: "AI_APICallError", statusCode, responseBody: message });
+  return Object.assign(new Error(message), {
+    name: "AI_APICallError",
+    statusCode,
+    responseBody: message,
+  });
 }
-const DAILY = apiError(429, "ClinePass: Error 429: Daily free limit reached on model xiaomi/mimo-v2.6-flash. Try again in 19h 51m");
+const DAILY = apiError(
+  429,
+  "ClinePass: Error 429: Daily free limit reached on model xiaomi/mimo-v2.6-flash. Try again in 19h 51m",
+);
 
 function fakeModel(id: string, behaviour: () => Promise<unknown>) {
   const calls: unknown[] = [];
@@ -42,7 +49,13 @@ describe("model fallback on quota errors", () => {
   test("recognises quota errors, not others", () => {
     expect(isQuotaError(DAILY)).toBe(true);
     expect(isQuotaError(apiError(402, "payment required"))).toBe(true);
-    expect(isQuotaError({ name: "AI_RetryError", message: "Failed after 3 attempts", lastError: DAILY })).toBe(true);
+    expect(
+      isQuotaError({
+        name: "AI_RetryError",
+        message: "Failed after 3 attempts",
+        lastError: DAILY,
+      }),
+    ).toBe(true);
     expect(isQuotaError(apiError(400, "invalid tool schema"))).toBe(false);
     expect(isQuotaError(apiError(500, "upstream exploded"))).toBe(false);
     expect(isQuotaError(new Error("network down"))).toBe(false);
@@ -50,7 +63,9 @@ describe("model fallback on quota errors", () => {
 
   test("reads the retry hint", () => {
     expect(cooldownMs(DAILY)).toBe((19 * 3600 + 51 * 60) * 1000);
-    expect(cooldownMs(apiError(429, "rate limited, retry after 30s"))).toBe(30_000);
+    expect(cooldownMs(apiError(429, "rate limited, retry after 30s"))).toBe(
+      30_000,
+    );
     // 没写原因的 429 是一时限流：1 分钟；写着额度 / 每日限额的 10 分钟（§101）。
     expect(cooldownMs(apiError(429, "slow down"))).toBe(60_000);
     expect(cooldownMs(apiError(429, "quota exceeded"))).toBe(10 * 60_000);
@@ -69,14 +84,23 @@ describe("model fallback on quota errors", () => {
       now: () => t,
       log: (line) => logs.push(line),
     });
-    expect(await wrapped.doStream({ prompt: 1 })).toEqual({ stream: "ok-from-b" });
+    expect(await wrapped.doStream({ prompt: 1 })).toEqual({
+      stream: "ok-from-b",
+    });
     expect(primary.calls.length).toBe(1);
     expect(coolingDown("clinepass/p", t)).toBe(true);
     // next turn: primary not called at all
-    expect(await wrapped.doGenerate({ prompt: 2 })).toEqual({ stream: "ok-from-b" });
+    expect(await wrapped.doGenerate({ prompt: 2 })).toEqual({
+      stream: "ok-from-b",
+    });
     expect(primary.calls.length).toBe(1);
     expect(backup.calls).toEqual([{ prompt: 1 }, { prompt: 2 }]);
-    expect(logs.map((l) => l.event)).toEqual(["primary-quota", "used", "skip-primary", "used"]);
+    expect(logs.map((l) => l.event)).toEqual([
+      "primary-quota",
+      "used",
+      "skip-primary",
+      "used",
+    ]);
     // after the cooldown the primary is tried again
     t += 20 * 3600_000;
     expect(coolingDown("clinepass/p", t)).toBe(false);
@@ -101,7 +125,9 @@ describe("model fallback on quota errors", () => {
         return { ...(options as object), described: true };
       },
     });
-    expect(await wrapped.doStream({ prompt: "image" })).toEqual({ stream: "ok-from-b" });
+    expect(await wrapped.doStream({ prompt: "image" })).toEqual({
+      stream: "ok-from-b",
+    });
     expect(primary.calls).toEqual([{ prompt: "image" }]);
     expect(backup.calls).toEqual([{ prompt: "image", described: true }]);
     expect(adapted).toEqual(["clinepass/b"]);
@@ -109,18 +135,24 @@ describe("model fallback on quota errors", () => {
     // 改写失败不挡住回答：照原请求发。
     resetModelCooldowns();
     const failing = fakeModel("b2", async () => ({ stream: "ok-from-b2" }));
-    const wrapped2 = fallbackLanguageModel(fakeModel("p", async () => {
-      throw DAILY;
-    }).model, "clinepass/p", {
-      candidates: async () => ["clinepass/b2"],
-      build: () => failing.model,
-      log: () => {},
-      firstOutputMs: 0,
-      adapt: async () => {
-        throw new Error("vision down");
+    const wrapped2 = fallbackLanguageModel(
+      fakeModel("p", async () => {
+        throw DAILY;
+      }).model,
+      "clinepass/p",
+      {
+        candidates: async () => ["clinepass/b2"],
+        build: () => failing.model,
+        log: () => {},
+        firstOutputMs: 0,
+        adapt: async () => {
+          throw new Error("vision down");
+        },
       },
+    );
+    expect(await wrapped2.doStream({ prompt: "image" })).toEqual({
+      stream: "ok-from-b2",
     });
-    expect(await wrapped2.doStream({ prompt: "image" })).toEqual({ stream: "ok-from-b2" });
     expect(failing.calls).toEqual([{ prompt: "image" }]);
   });
 
@@ -191,7 +223,9 @@ describe("model fallback on quota errors", () => {
       build: () => gone.model,
       log: () => {},
     });
-    await expect(wrapped.doStream({})).rejects.toMatchObject({ statusCode: 429 });
+    await expect(wrapped.doStream({})).rejects.toMatchObject({
+      statusCode: 429,
+    });
     primaryFails = false;
     // 主模型还在冷却里，候选也冷却了：直接再试主模型
     expect(await wrapped.doStream({})).toEqual({ stream: "primary-back" });
@@ -199,30 +233,65 @@ describe("model fallback on quota errors", () => {
 
   test("keeps other properties of the wrapped model", () => {
     const primary = fakeModel("p", async () => ({}));
-    const wrapped = fallbackLanguageModel(primary.model, "c/p", { candidates: async () => [], build: () => null });
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => [],
+      build: () => null,
+    });
     expect(wrapped.modelId).toBe("p");
     expect(wrapped.provider).toBe("test");
   });
 
   test("candidates: env list, off, or same platform prefix from the catalog", async () => {
-    const catalog = async () => ["clinepass/a", "clinepass/p", "opencode-zen/x-free", "clinepass/b", "clinepass/c", "clinepass/d"];
-    expect(await fallbackCandidates(catalog, {})("clinepass/p")).toEqual(["clinepass/a", "clinepass/b", "clinepass/c"]);
-    expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "codex/g, clinepass/p ,clinepass/b" })("clinepass/p")).toEqual(["codex/g", "clinepass/b"]);
-    expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "off" })("clinepass/p")).toEqual([]);
+    const catalog = async () => [
+      "clinepass/a",
+      "clinepass/p",
+      "opencode-zen/x-free",
+      "clinepass/b",
+      "clinepass/c",
+      "clinepass/d",
+    ];
+    expect(await fallbackCandidates(catalog, {})("clinepass/p")).toEqual([
+      "clinepass/a",
+      "clinepass/b",
+      "clinepass/c",
+    ]);
+    expect(
+      await fallbackCandidates(catalog, {
+        CHISABOT_MODEL_FALLBACKS: "codex/g, clinepass/p ,clinepass/b",
+      })("clinepass/p"),
+    ).toEqual(["codex/g", "clinepass/b"]);
+    expect(
+      await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "off" })(
+        "clinepass/p",
+      ),
+    ).toEqual([]);
     expect(await fallbackCandidates(catalog, {})("gpt-4o")).toEqual([]);
+    expect(
+      await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "  " })(
+        "clinepass/p",
+      ),
+    ).toEqual(["clinepass/a", "clinepass/b", "clinepass/c"]);
   });
 
   test("5xx / overloaded fall back too (cooldown backs off); 401/network do not", async () => {
     expect(fallbackReason(DAILY)).toBe("quota");
-    expect(fallbackReason(apiError(503, "service unavailable"))).toBe("unavailable");
+    expect(fallbackReason(apiError(503, "service unavailable"))).toBe(
+      "unavailable",
+    );
     expect(fallbackReason(apiError(529, "overloaded"))).toBe("unavailable");
-    expect(fallbackReason(apiError(500, "upstream exploded"))).toBe("unavailable");
-    expect(fallbackReason(apiError(400, "invalid tool schema"))).toBe("rejected");
+    expect(fallbackReason(apiError(500, "upstream exploded"))).toBe(
+      "unavailable",
+    );
+    expect(fallbackReason(apiError(400, "invalid tool schema"))).toBe(
+      "rejected",
+    );
     expect(fallbackReason(apiError(413, "payload too large"))).toBe("rejected");
-    expect(fallbackReason(apiError(422, "unprocessable entity"))).toBe("rejected");
+    expect(fallbackReason(apiError(422, "unprocessable entity"))).toBe(
+      "rejected",
+    );
     expect(fallbackReason(apiError(401, "invalid api key"))).toBe(null);
     expect(fallbackReason(new Error("network down"))).toBe(null);
-    let t = 0;
+    const t = 0;
     const primary = fakeModel("p", async () => {
       throw apiError(503, "service unavailable");
     });
@@ -234,7 +303,12 @@ describe("model fallback on quota errors", () => {
       log: () => {},
     });
     const seen: FallbackUse[] = [];
-    expect(await withFallbackListener((use) => seen.push(use), () => wrapped.doStream({}))).toEqual({ ok: "b" });
+    expect(
+      await withFallbackListener(
+        (use) => seen.push(use),
+        () => wrapped.doStream({}),
+      ),
+    ).toEqual({ ok: "b" });
     expect(seen).toEqual([{ from: "m/p", to: "m/b", reason: "unavailable" }]);
     // 服务不可用的首次冷却默认 60 秒（指数退避的基数）。
     expect(coolingDown("m/p", 59_999)).toBe(true);
@@ -259,7 +333,11 @@ describe("model fallback on quota errors", () => {
     // 第一轮：主模型 503 → 冷却 60s，备用答上。
     expect(await wrapped.doStream({})).toEqual({ stream: "ok-from-b" });
     expect(primary.calls.length).toBe(1);
-    expect(logs[0]).toMatchObject({ event: "primary-unavailable", cooldownSeconds: 60, consecutiveFailures: 1 });
+    expect(logs[0]).toMatchObject({
+      event: "primary-unavailable",
+      cooldownSeconds: 60,
+      consecutiveFailures: 1,
+    });
     // 第二轮起（冷却内）：主模型一次都没被调用，每轮一条 skip-primary 带 reason 和剩余冷却。
     for (const at of [t + 1_000, t + 30_000]) {
       t = at;
@@ -274,8 +352,13 @@ describe("model fallback on quota errors", () => {
     t += 61_000;
     expect(await wrapped.doStream({})).toEqual({ stream: "ok-from-b" });
     expect(primary.calls.length).toBe(2);
-    const reopened = logs.filter((l) => l.event === "primary-unavailable").at(-1);
-    expect(reopened).toMatchObject({ cooldownSeconds: 120, consecutiveFailures: 2 });
+    const reopened = logs
+      .filter((l) => l.event === "primary-unavailable")
+      .at(-1);
+    expect(reopened).toMatchObject({
+      cooldownSeconds: 120,
+      consecutiveFailures: 2,
+    });
     // 60s 后仍在冷却（翻倍后的 120s 没过）：继续跳过。
     t += 61_000;
     expect(await wrapped.doStream({})).toEqual({ stream: "ok-from-b" });
@@ -290,7 +373,6 @@ describe("model fallback on quota errors", () => {
     expect(logs.filter((l) => l.event === "skip-primary").length).toBe(3);
     expect(coolingDown("c/p", t)).toBe(false);
   });
-
 
   test("QA1102-14: a 400 is rejected — cleaned retry once on the primary, no cooldown, no 3x", async () => {
     const boom = apiError(400, "Invalid input, param messages.370.content");
@@ -310,9 +392,17 @@ describe("model fallback on quota errors", () => {
       },
     });
     const seen: FallbackUse[] = [];
-    expect(await withFallbackListener((use) => seen.push(use), () => wrapped.doStream({ prompt: 1 }))).toEqual({ stream: "ok-from-b" });
+    expect(
+      await withFallbackListener(
+        (use) => seen.push(use),
+        () => wrapped.doStream({ prompt: 1 }),
+      ),
+    ).toEqual({ stream: "ok-from-b" });
     // 主模型恰好两次（原始 + 清洗后一次重试），不是三次；备用模型拿到的是原请求。
-    expect(primary.calls).toEqual([{ prompt: 1 }, { prompt: 1, cleaned: true }]);
+    expect(primary.calls).toEqual([
+      { prompt: 1 },
+      { prompt: 1, cleaned: true },
+    ]);
     expect(backup.calls).toEqual([{ prompt: 1 }]);
     expect(cleaned).toEqual([{ prompt: 1 }]);
     // 不进冷却：下一轮照样先试主模型。
@@ -343,7 +433,9 @@ describe("model fallback on quota errors", () => {
       },
       log: () => {},
     });
-    expect(await wrapped.doStream({ prompt: 1 })).toEqual({ stream: "primary-ok" });
+    expect(await wrapped.doStream({ prompt: 1 })).toEqual({
+      stream: "primary-ok",
+    });
     expect(primary.calls.length).toBe(2);
     expect(built).toEqual([]);
     expect(coolingDown("c/p")).toBe(false);
@@ -354,12 +446,22 @@ describe("model fallback on quota errors", () => {
       throw DAILY;
     });
     const backup = fakeModel("b", async () => ({ ok: true }));
-    const wrapped = fallbackLanguageModel(primary.model, "c/p", { candidates: async () => ["c/b"], build: () => backup.model, log: () => {} });
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => ["c/b"],
+      build: () => backup.model,
+      log: () => {},
+    });
     const a: FallbackUse[] = [];
     const b: FallbackUse[] = [];
-    await withFallbackListener((use) => a.push(use), () => wrapped.doStream({}));
+    await withFallbackListener(
+      (use) => a.push(use),
+      () => wrapped.doStream({}),
+    );
     // 下一轮主模型在冷却，直接用备用模型，提示仍然说「额度用完」。
-    await withFallbackListener((use) => b.push(use), () => wrapped.doGenerate({}));
+    await withFallbackListener(
+      (use) => b.push(use),
+      () => wrapped.doGenerate({}),
+    );
     expect(a).toEqual([{ from: "c/p", to: "c/b", reason: "quota" }]);
     expect(b).toEqual([{ from: "c/p", to: "c/b", reason: "quota" }]);
     // 没有监听者也照常工作。
@@ -368,22 +470,83 @@ describe("model fallback on quota errors", () => {
 
   test("a primary that answers announces nothing", async () => {
     const primary = fakeModel("p", async () => ({ ok: "p" }));
-    const wrapped = fallbackLanguageModel(primary.model, "c/p", { candidates: async () => ["c/b"], build: () => null, log: () => {} });
+    const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+      candidates: async () => ["c/b"],
+      build: () => null,
+      log: () => {},
+    });
     const seen: FallbackUse[] = [];
-    expect(await withFallbackListener((use) => seen.push(use), () => wrapped.doStream({}))).toEqual({ ok: "p" });
+    expect(
+      await withFallbackListener(
+        (use) => seen.push(use),
+        () => wrapped.doStream({}),
+      ),
+    ).toEqual({ ok: "p" });
     expect(seen).toEqual([]);
   });
 
   test("candidates: the admin list wins over env and catalog, keeps its order, drops the primary", async () => {
     const catalog = async () => ["clinepass/a", "clinepass/p", "clinepass/b"];
     const admin = async () => ["codex/x", "clinepass/p", "clinepass/b"];
-    expect(await fallbackCandidates(catalog, { CHISABOT_MODEL_FALLBACKS: "off" }, admin)("clinepass/p")).toEqual(["codex/x", "clinepass/b"]);
+    expect(
+      await fallbackCandidates(
+        catalog,
+        { CHISABOT_MODEL_FALLBACKS: "off" },
+        admin,
+      )("clinepass/p"),
+    ).toEqual(["codex/x", "clinepass/b"]);
     // 空的管理员列表 = 不指定，退回环境变量 / 目录。
-    expect(await fallbackCandidates(catalog, {}, async () => [])("clinepass/p")).toEqual(["clinepass/a", "clinepass/b"]);
+    expect(
+      await fallbackCandidates(catalog, {}, async () => [])("clinepass/p"),
+    ).toEqual(["clinepass/a", "clinepass/b"]);
     // 读管理员列表失败也不影响回答。
-    expect(await fallbackCandidates(catalog, {}, async () => { throw new Error("db down"); })("clinepass/p")).toEqual(["clinepass/a", "clinepass/b"]);
+    expect(
+      await fallbackCandidates(catalog, {}, async () => {
+        throw new Error("db down");
+      })("clinepass/p"),
+    ).toEqual(["clinepass/a", "clinepass/b"]);
   });
 
+  test("fresh directory skips retired explicit backups without inventing replacements", async () => {
+    const admin = async () => ["clinepass/retired", "devin/backup"];
+    expect(
+      await fallbackCandidates(
+        async () => ({ models: ["devin/primary", "devin/backup"] }),
+        {},
+        admin,
+      )("devin/primary"),
+    ).toEqual(["devin/backup"]);
+    expect(
+      await fallbackCandidates(
+        async () => ({ models: ["devin/primary", "devin/other"] }),
+        {},
+        admin,
+      )("devin/primary"),
+    ).toEqual([]);
+    expect(
+      await fallbackCandidates(
+        async () => ({ models: ["devin/primary"], stale: true }),
+        {},
+        admin,
+      )("devin/primary"),
+    ).toEqual(await admin());
+    expect(
+      await fallbackCandidates(
+        async () => {
+          throw new Error("catalog unavailable");
+        },
+        {},
+        admin,
+      )("devin/primary"),
+    ).toEqual(await admin());
+    expect(
+      await fallbackCandidates(
+        async () => ({ models: [] }),
+        {},
+        admin,
+      )("devin/primary"),
+    ).toEqual(await admin());
+  });
 
   test("candidates: catalog entries the directory says cannot call tools are skipped (QA1102-13)", async () => {
     const catalog = async () => [
@@ -403,7 +566,18 @@ describe("model fallback on quota errors", () => {
 
   test("QA1102-14 r1: first request has no raw file part for a model without file support", async () => {
     const prompt = [
-      { role: "user", content: [{ type: "text", text: "看这份文件" }, { type: "file", mediaType: "application/pdf", data: "JVBERi0=", filename: "a.pdf" }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "看这份文件" },
+          {
+            type: "file",
+            mediaType: "application/pdf",
+            data: "JVBERi0=",
+            filename: "a.pdf",
+          },
+        ],
+      },
     ];
     const primary = fakeModel("p", async () => ({ stream: "ok-p" }));
     // 目录没说能收文件（dep 缺失 / false）：第一次请求就把 file part 换成文字。
@@ -416,9 +590,17 @@ describe("model fallback on quota errors", () => {
       });
       primary.calls.length = 0;
       expect(await wrapped.doStream({ prompt })).toEqual({ stream: "ok-p" });
-      const content = (primary.calls[0] as { prompt: { content: { type: string }[] }[] }).prompt[0].content;
+      const content = (
+        primary.calls[0] as { prompt: { content: { type: string }[] }[] }
+      ).prompt[0].content;
       expect(content.every((p) => p.type !== "file")).toBe(true);
-      expect(content.some((p) => p.type === "text" && String((p as { text?: string }).text).includes("a.pdf"))).toBe(true);
+      expect(
+        content.some(
+          (p) =>
+            p.type === "text" &&
+            String((p as { text?: string }).text).includes("a.pdf"),
+        ),
+      ).toBe(true);
     }
     // 目录明说能收文件：file part 原样发出。
     const wrapped = fallbackLanguageModel(primary.model, "gpt-files", {
@@ -429,7 +611,11 @@ describe("model fallback on quota errors", () => {
     });
     primary.calls.length = 0;
     await wrapped.doStream({ prompt });
-    expect((primary.calls[0] as { prompt: { content: { type: string }[] }[] }).prompt[0].content.some((p) => p.type === "file")).toBe(true);
+    expect(
+      (
+        primary.calls[0] as { prompt: { content: { type: string }[] }[] }
+      ).prompt[0].content.some((p) => p.type === "file"),
+    ).toBe(true);
   });
 
   test("a fallback call carries the same tools the primary got (QA1102-13)", async () => {
@@ -449,9 +635,18 @@ describe("model fallback on quota errors", () => {
   });
 
   test("notice text uses the short model name", () => {
-    expect(fallbackNotice({ to: "clinepass/cline-free/step-5-preview", reason: "quota" })).toBe("主模型额度用完，已改用 step-5-preview");
-    expect(fallbackNotice({ to: "codex/gpt-5.6-luna", reason: "unavailable" })).toBe("主模型暂时不可用，已改用 gpt-5.6-luna");
-    expect(fallbackNotice({ to: "clinepass/solar-mini4", reason: "rejected" })).toBe("请求被主模型拒绝，已改用 solar-mini4");
+    expect(
+      fallbackNotice({
+        to: "clinepass/cline-free/step-5-preview",
+        reason: "quota",
+      }),
+    ).toBe("主模型额度用完，已改用 step-5-preview");
+    expect(
+      fallbackNotice({ to: "codex/gpt-5.6-luna", reason: "unavailable" }),
+    ).toBe("主模型暂时不可用，已改用 gpt-5.6-luna");
+    expect(
+      fallbackNotice({ to: "clinepass/solar-mini4", reason: "rejected" }),
+    ).toBe("请求被主模型拒绝，已改用 solar-mini4");
   });
 
   // §101.10：主模型一直不回（不报错）时也换备用模型。
@@ -466,15 +661,24 @@ describe("model fallback on quota errors", () => {
           out.push(next.value);
         }
       })();
-    const hangs = () =>
-      fakeModel("p", () => new Promise(() => {})).model;
+    const hangs = () => fakeModel("p", () => new Promise(() => {})).model;
 
     test("doGenerate that hangs past the deadline goes to the backup and cools the primary 1 min", async () => {
       const backup = fakeModel("b", async () => ({ ok: "b" }));
       const logs: Record<string, unknown>[] = [];
-      const wrapped = fallbackLanguageModel(hangs(), "c/p", { candidates: async () => ["c/b"], build: () => backup.model, log: (l) => logs.push(l), firstOutputMs: 30 });
+      const wrapped = fallbackLanguageModel(hangs(), "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        log: (l) => logs.push(l),
+        firstOutputMs: 30,
+      });
       const seen: FallbackUse[] = [];
-      expect(await withFallbackListener((use) => seen.push(use), () => wrapped.doGenerate({}))).toEqual({ ok: "b" });
+      expect(
+        await withFallbackListener(
+          (use) => seen.push(use),
+          () => wrapped.doGenerate({}),
+        ),
+      ).toEqual({ ok: "b" });
       expect(seen).toEqual([{ from: "c/p", to: "c/b", reason: "unavailable" }]);
       expect(logs.some((l) => l.event === "primary-timeout")).toBe(true);
       expect(coolingDown("c/p", Date.now() + 30_000)).toBe(true);
@@ -488,14 +692,23 @@ describe("model fallback on quota errors", () => {
         modelId: "p",
         async doStream(options: { abortSignal?: AbortSignal }) {
           signal = options.abortSignal;
-          return { stream: new ReadableStream({
-            start: (c) => c.enqueue({ type: "stream-start" }),
-            cancel: () => { cancelled = true; },
-          }) };
+          return {
+            stream: new ReadableStream({
+              start: (c) => c.enqueue({ type: "stream-start" }),
+              cancel: () => {
+                cancelled = true;
+              },
+            }),
+          };
         },
       };
       const backup = fakeModel("b", async () => ({ ok: "b" }));
-      const wrapped = fallbackLanguageModel(primary, "c/p", { candidates: async () => ["c/b"], build: () => backup.model, log: () => {}, firstOutputMs: 30 });
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        log: () => {},
+        firstOutputMs: 30,
+      });
       expect(await wrapped.doStream({})).toEqual({ ok: "b" });
       expect(signal?.aborted).toBe(true);
       expect(cancelled).toBe(true);
@@ -505,20 +718,29 @@ describe("model fallback on quota errors", () => {
       let cancelled = false;
       const primary = {
         async doStream() {
-          return { stream: new ReadableStream({
-            start(c) {
-              c.enqueue({ type: "stream-start" });
-              c.enqueue({ type: "error", error: apiError(429, "rate limited") });
-            },
-            cancel: () => { cancelled = true; },
-          }) };
+          return {
+            stream: new ReadableStream({
+              start(c) {
+                c.enqueue({ type: "stream-start" });
+                c.enqueue({
+                  type: "error",
+                  error: apiError(429, "rate limited"),
+                });
+              },
+              cancel: () => {
+                cancelled = true;
+              },
+            }),
+          };
         },
       };
       const backup = fakeModel("b", async () => ({ ok: "backup" }));
       const logs: Record<string, unknown>[] = [];
       const wrapped = fallbackLanguageModel(primary, "c/p", {
-        candidates: async () => ["c/b"], build: () => backup.model,
-        log: (line) => logs.push(line), firstOutputMs: 1_000,
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        log: (line) => logs.push(line),
+        firstOutputMs: 1_000,
       });
       expect(await wrapped.doStream({})).toEqual({ ok: "backup" });
       expect(cancelled).toBe(true);
@@ -528,14 +750,23 @@ describe("model fallback on quota errors", () => {
 
     test("Stop during rejected-request cleanup cannot start a retry or backup", async () => {
       const controller = new AbortController();
-      const primary = fakeModel("p", async () => { throw apiError(400, "invalid input"); });
+      const primary = fakeModel("p", async () => {
+        throw apiError(400, "invalid input");
+      });
       const backup = fakeModel("b", async () => ({ ok: "backup" }));
       const wrapped = fallbackLanguageModel(primary.model, "c/p", {
-        candidates: async () => ["c/b"], build: () => backup.model,
-        log: () => {}, firstOutputMs: 0,
-        sanitize: (options) => { controller.abort(new Error("stopped")); return options; },
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        log: () => {},
+        firstOutputMs: 0,
+        sanitize: (options) => {
+          controller.abort(new Error("stopped"));
+          return options;
+        },
       });
-      await expect(wrapped.doGenerate({ abortSignal: controller.signal })).rejects.toThrow("stopped");
+      await expect(
+        wrapped.doGenerate({ abortSignal: controller.signal }),
+      ).rejects.toThrow("stopped");
       expect(primary.calls).toHaveLength(1);
       expect(backup.calls).toHaveLength(0);
       expect(coolingDown("c/p")).toBe(false);
@@ -554,7 +785,11 @@ describe("model fallback on quota errors", () => {
               start(c) {
                 // @ai-sdk/openai 的 Responses 流在 response.created 就发 response-metadata，之后可以一直挂着。
                 c.enqueue({ type: "stream-start" });
-                c.enqueue({ type: "response-metadata", id: "resp-1", modelId: "p" });
+                c.enqueue({
+                  type: "response-metadata",
+                  id: "resp-1",
+                  modelId: "p",
+                });
               },
             }),
           };
@@ -579,7 +814,9 @@ describe("model fallback on quota errors", () => {
       t += 61_000;
       expect(await wrapped.doStream({})).toEqual({ ok: "b" });
       expect(primary.calls).toBe(2);
-      expect(logs.filter((l) => l.event === "primary-timeout").at(-1)).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
+      expect(
+        logs.filter((l) => l.event === "primary-timeout").at(-1),
+      ).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
     });
 
     test("an error after real output propagates without switching, counts one failure but no cooldown", async () => {
@@ -587,7 +824,8 @@ describe("model fallback on quota errors", () => {
       const primary = {
         modelId: "p",
         async doStream() {
-          if (phase === "request-error") throw apiError(503, "service unavailable");
+          if (phase === "request-error")
+            throw apiError(503, "service unavailable");
           return {
             stream: new ReadableStream({
               start(c) {
@@ -610,17 +848,24 @@ describe("model fallback on quota errors", () => {
         log: (l) => logs.push(l),
         firstOutputMs: 5_000,
       });
-      const result = (await wrapped.doStream({})) as { stream: ReadableStream<{ type?: string }> };
+      const result = (await wrapped.doStream({})) as {
+        stream: ReadableStream<{ type?: string }>;
+      };
       // 错误顺流上抛，不换模型、不进冷却，但记一次连续失败。
       await expect(parts(result.stream)).rejects.toThrow("mid stream 503");
       expect(backup.calls.length).toBe(0);
       expect(coolingDown("c/p", t)).toBe(false);
       expect(logs.filter((l) => l.event === "stream-error")).toHaveLength(1);
-      expect(logs.find((l) => l.event === "stream-error")).toMatchObject({ model: "c/p", consecutiveFailures: 1 });
+      expect(logs.find((l) => l.event === "stream-error")).toMatchObject({
+        model: "c/p",
+        consecutiveFailures: 1,
+      });
       // 下一次请求级失败把连续失败算到 2，冷却翻成 120s（否则是首次的 60s）。
       phase = "request-error";
       expect(await wrapped.doStream({})).toEqual({ ok: "b" });
-      expect(logs.filter((l) => l.event === "primary-unavailable").at(-1)).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
+      expect(
+        logs.filter((l) => l.event === "primary-unavailable").at(-1),
+      ).toMatchObject({ consecutiveFailures: 2, cooldownSeconds: 120 });
     });
 
     test("a primary that streams in time is untouched: same parts in order, nothing announced", async () => {
@@ -642,11 +887,23 @@ describe("model fallback on quota errors", () => {
           };
         },
       };
-      const wrapped = fallbackLanguageModel(primary, "c/p", { candidates: async () => ["c/b"], build: () => null, log: () => {}, firstOutputMs: 30 });
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => null,
+        log: () => {},
+        firstOutputMs: 30,
+      });
       const seen: FallbackUse[] = [];
-      const result = (await withFallbackListener((use) => seen.push(use), () => wrapped.doStream({}))) as { request: unknown; stream: ReadableStream<{ type?: string }> };
+      const result = (await withFallbackListener(
+        (use) => seen.push(use),
+        () => wrapped.doStream({}),
+      )) as { request: unknown; stream: ReadableStream<{ type?: string }> };
       expect(result.request).toEqual({ id: 1 });
-      expect(await parts(result.stream)).toEqual([{ type: "stream-start" }, { type: "text-delta", delta: "你" }, { type: "text-delta", delta: "好" }]);
+      expect(await parts(result.stream)).toEqual([
+        { type: "stream-start" },
+        { type: "text-delta", delta: "你" },
+        { type: "text-delta", delta: "好" },
+      ]);
       expect(seen).toEqual([]);
       expect(coolingDown("c/p")).toBe(false);
     });
@@ -656,18 +913,42 @@ describe("model fallback on quota errors", () => {
       const primary = {
         modelId: "p",
         doGenerate: (options: { abortSignal?: AbortSignal }) =>
-          new Promise((_, reject) => options.abortSignal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })))),
+          new Promise((_, reject) =>
+            options.abortSignal?.addEventListener("abort", () =>
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" }),
+              ),
+            ),
+          ),
       };
-      const wrapped = fallbackLanguageModel(primary, "c/p", { candidates: async () => ["c/b"], build: () => backup.model, log: () => {}, firstOutputMs: 5_000 });
+      const wrapped = fallbackLanguageModel(primary, "c/p", {
+        candidates: async () => ["c/b"],
+        build: () => backup.model,
+        log: () => {},
+        firstOutputMs: 5_000,
+      });
       const stop = new AbortController();
       setTimeout(() => stop.abort(), 20);
-      await expect(wrapped.doGenerate({ abortSignal: stop.signal })).rejects.toThrow("aborted");
+      await expect(
+        wrapped.doGenerate({ abortSignal: stop.signal }),
+      ).rejects.toThrow("aborted");
       expect(backup.calls.length).toBe(0);
     });
 
     test("no backup configured: no deadline, the primary is waited for", async () => {
-      const primary = fakeModel("p", () => new Promise((resolve) => setTimeout(() => resolve({ ok: "slow" }), 80)));
-      const wrapped = fallbackLanguageModel(primary.model, "c/p", { candidates: async () => [], build: () => null, log: () => {}, firstOutputMs: 20 });
+      const primary = fakeModel(
+        "p",
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ ok: "slow" }), 80),
+          ),
+      );
+      const wrapped = fallbackLanguageModel(primary.model, "c/p", {
+        candidates: async () => [],
+        build: () => null,
+        log: () => {},
+        firstOutputMs: 20,
+      });
       expect(await wrapped.doGenerate({})).toEqual({ ok: "slow" });
     });
 

@@ -33,7 +33,8 @@ export function useBotComputerTab(
 
   // 地址说开着、记的是关着（例如别人发来的链接、旧版本留下的地址）：以地址为准记下来。
   useEffect(() => {
-    if (agentId && watch === true && !remembered) setBotUi(agentId, { computer: true });
+    if (agentId && watch === true && !remembered)
+      setBotUi(agentId, { computer: true });
   }, [agentId, watch, remembered]);
 
   // 用记下的选择打开的：把地址补上，地址和屏幕说同一件事。
@@ -45,7 +46,11 @@ export function useBotComputerTab(
   }, [agentId, open, watch, writeUrl]);
 
   // 同一个机器人页里，地址从「开着」变成没有（浏览器后退）= 关上。
-  const previous = useRef<{ agentId: string | undefined; watch: boolean | undefined; epoch: number }>({ agentId, watch, epoch });
+  const previous = useRef<{
+    agentId: string | undefined;
+    watch: boolean | undefined;
+    epoch: number;
+  }>({ agentId, watch, epoch });
   useEffect(() => {
     const was = previous.current;
     previous.current = { agentId, watch, epoch };
@@ -56,7 +61,7 @@ export function useBotComputerTab(
       was.watch === true &&
       watch !== true &&
       // 只有真·后退 / 前进把参数退掉才算关上。不是后退的同地址导航也会丢 `watch`——`/` 落地跳回这段对话、
-      // 左栏再点正在看的这一行、`useOpenBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
+      // 左栏再点正在看的这一行、`useBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
       // 离开再回来就永远是「面板」。非后退的丢弃不清记忆，由上面的 effect 把地址补回来。
       lastHistoryEventWasPop()
     ) {

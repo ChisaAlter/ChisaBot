@@ -81,7 +81,7 @@ fi
 # 4) 前端产物（依赖必须用 hoisted 模式安装，否则 shared/ 下解析不到 zod 等包，见 Dockerfile）
 if ! test -f ../app/dist/index.html; then
   say "安装依赖…"
-  (cd .. && bun install --frozen-lockfile --linker hoisted) || die "依赖安装失败"
+  (cd .. && bun install --frozen-lockfile --omit=peer --linker hoisted) || die "依赖安装失败"
   say "构建前端…"
   # hoisted 安装把 vite 放在仓库根 node_modules，app/node_modules 里没有；app 的 build 脚本写死
   # app/node_modules/vite，会 "Module not found"。和 updater/update.sh 一样：先找 app 下，找不到用根目录的。

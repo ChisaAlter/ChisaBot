@@ -21,12 +21,6 @@ export type DeploymentCapabilities = {
    * so both halves read this one answer.
    */
   generativeUi: boolean;
-  /**
-   * Whether to show the banner offering help self-hosting ChisaBot. A fork that runs ChisaBot for its
-   * own organization turns it off with CHISABOT_SELF_HOST_BANNER=false, and the server answers false
-   * for a deployment on a paid Intelligence plan.
-   */
-  selfHostBanner: boolean;
   /** 设置 → 管理 →「账号」入口（朋友账号，CB-040）。默认隐藏：多用户以后再做（2026-10-15）。 */
   accountsUi?: boolean;
   /** 功能精简（DESIGN.md §74）：默认隐藏、这台部署用 CHISABOT_EXTRAS 重新打开的功能。 */
@@ -70,7 +64,6 @@ export function deploymentCapabilitiesQueryOptions() {
         durableHistory?: boolean;
         learning?: boolean;
         generativeUi?: boolean;
-        selfHostBanner?: boolean;
         accountsUi?: boolean;
         extras?: unknown;
         transcription?: boolean;
@@ -85,10 +78,11 @@ export function deploymentCapabilitiesQueryOptions() {
         learning:
           typeof body.learning === "boolean" ? body.learning : undefined,
         generativeUi: body.generativeUi === true,
-        selfHostBanner: body.selfHostBanner === true,
         accountsUi: body.accountsUi === true,
         extras: Array.isArray(body.extras)
-          ? body.extras.filter((extra): extra is string => typeof extra === "string")
+          ? body.extras.filter(
+              (extra): extra is string => typeof extra === "string",
+            )
           : [],
         transcription: body.transcription === true,
       };

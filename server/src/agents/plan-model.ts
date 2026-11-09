@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 import { HttpAgent, type Message, type RunAgentInput } from "@ag-ui/client";
 import { EventSchemas } from "@ag-ui/core/schemas";
-import type { BuiltInAgentClassicConfig } from "@copilotkit/runtime/v2";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Subscription } from "rxjs";
+import { managedAgentHeaders } from "../../../shared/legacy-headers";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,
 } from "../desktop-connection-failure";
+import {
+  PREVIOUS_MODEL_AUTH_ERROR,
+  previousManagedImage,
+} from "../legacy/protocol";
 
-// Use the model contract of the runtime we actually ship, without a second AI SDK version.
-export type PlanLanguageModel = Extract<
-  BuiltInAgentClassicConfig["model"],
-  { specificationVersion: "v3" }
->;
+// The same provider contract used by the deployment model adapters.
+export type PlanLanguageModel = LanguageModelV3;
 type Options = Parameters<PlanLanguageModel["doStream"]>[0];
 type StreamResult = Awaited<ReturnType<PlanLanguageModel["doStream"]>>;
 type Part = StreamResult["stream"] extends ReadableStream<infer T> ? T : never;
@@ -39,7 +41,8 @@ export function planModelForEnvironment(
   const harness = claude ? "agent-claude-sdk" : "agent-langgraph-agui";
   if (
     environment.PICKED_HARNESS_SOURCE?.trim() === "byo" ||
-    !new RegExp(`(?:^|/)(?:chisabot-|openbot-)?${harness}(?::|@|$)`).test(image)
+    (!new RegExp(`(?:^|/)(?:chisabot-)?${harness}(?::|@|$)`).test(image) &&
+      !previousManagedImage(image, harness))
   ) {
     throw new Error(
       `The selected plan requires the installed ${harness} harness for built-in Bots.`,
@@ -204,8 +207,7 @@ export class PlanModel implements PlanLanguageModel {
               signal: AbortSignal.timeout(5000),
               headers: {
                 "content-type": "application/json",
-                "x-chisabot-agent-token": config.token,
-                "x-openbot-agent-token": config.token, // pre-0.1.75 agents
+                ...managedAgentHeaders(config.token),
               },
               body: JSON.stringify({ threadId: this.threadId }),
             },
@@ -268,8 +270,7 @@ export class PlanModel implements PlanLanguageModel {
     const agent = new HttpAgent({
       url: this.config.endpoint.href,
       headers: {
-        "x-chisabot-agent-token": this.config.token,
-        "x-openbot-agent-token": this.config.token, // pre-0.1.75 agents
+        ...managedAgentHeaders(this.config.token),
       },
       fetch: (url, init) =>
         fetch(url, {
@@ -314,8 +315,8 @@ export class PlanModel implements PlanLanguageModel {
               })),
             state: null,
             forwardedProps: {
-              openbotModelOnly: true,
-              openbotBotId: this.botId,
+              chisabotModelOnly: true,
+              chisabotBotId: this.botId,
             },
           })
           .subscribe({
@@ -405,7 +406,10 @@ export class PlanModel implements PlanLanguageModel {
                   }
                   case "RUN_ERROR": {
                     const error = new Error(event.message);
-                    if ((event.code === "CHISABOT_MODEL_AUTH_REQUIRED" || event.code === "OPENBOT_MODEL_AUTH_REQUIRED")) {
+                    if (
+                      event.code === "CHISABOT_MODEL_AUTH_REQUIRED" ||
+                      event.code === PREVIOUS_MODEL_AUTH_ERROR
+                    ) {
                       error.name = "ChisaBotModelAuthenticationError";
                       recordDesktopConnectionFailure({
                         connection: "model",

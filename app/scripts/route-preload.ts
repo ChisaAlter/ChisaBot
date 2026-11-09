@@ -21,7 +21,7 @@ export const ROUTE_PRELOAD_GROUPS: Record<string, string[]> = {
     "chunk:route-shell",
     "src/routes/_authed/_app/channel/$channelId.tsx",
     "src/components/channels/channel-page.tsx",
-    "src/lib/copilot/provider.tsx",
+    "src/lib/conversations/provider.tsx",
     "src/components/layout/left-rail.tsx",
     "src/components/panels/panel-rail.tsx",
   ],
@@ -41,9 +41,15 @@ export const ROUTE_PRELOAD_GROUPS: Record<string, string[]> = {
 
 /** 路径 → 组。只认这几个首屏；其余路径（登录页、分享页……）不预载任何东西。 */
 export function routePreloadGroup(pathname: string): string | null {
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) return "settings";
+  if (pathname === "/settings" || pathname.startsWith("/settings/"))
+    return "settings";
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return "admin";
-  if (pathname === "/" || pathname === "/channel" || pathname.startsWith("/channel/")) return "chat";
+  if (
+    pathname === "/" ||
+    pathname === "/channel" ||
+    pathname.startsWith("/channel/")
+  )
+    return "chat";
   return null;
 }
 
@@ -58,8 +64,12 @@ function normalize(id: string): string {
 }
 
 /** 构建产物里：每组要预载的块（去掉入口已经静态带上的）。 */
-export function routePreloadMap(bundle: OutputBundle): Record<string, string[]> {
-  const chunks = Object.values(bundle).filter((c): c is OutputChunk => c.type === "chunk");
+export function routePreloadMap(
+  bundle: OutputBundle,
+): Record<string, string[]> {
+  const chunks = Object.values(bundle).filter(
+    (c): c is OutputChunk => c.type === "chunk",
+  );
   const byFile = new Map(chunks.map((c) => [c.fileName, c]));
   const initial = new Set<string>();
   const addStatic = (file: string, into: Set<string>) => {
@@ -75,7 +85,9 @@ export function routePreloadMap(bundle: OutputBundle): Record<string, string[]> 
     for (const suffix of suffixes) {
       const owner = suffix.startsWith("chunk:")
         ? chunks.find((c) => c.name === suffix.slice("chunk:".length))
-        : chunks.find((c) => c.moduleIds.some((id) => normalize(id).endsWith(`/app/${suffix}`)));
+        : chunks.find((c) =>
+            c.moduleIds.some((id) => normalize(id).endsWith(`/app/${suffix}`)),
+          );
       if (owner) addStatic(owner.fileName, files);
     }
     map[group] = [...files].filter((f) => !initial.has(f)).sort();
@@ -93,7 +105,9 @@ export function routePreload(): Plugin {
         if (!ctx.bundle) return html;
         const script = `<script>${routePreloadScript(routePreloadMap(ctx.bundle))}</script>`;
         const at = html.indexOf('<script type="module"');
-        return at < 0 ? html.replace("</head>", `${script}</head>`) : html.slice(0, at) + script + html.slice(at);
+        return at < 0
+          ? html.replace("</head>", `${script}</head>`)
+          : html.slice(0, at) + script + html.slice(at);
       },
     },
   };

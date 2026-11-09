@@ -17,7 +17,7 @@ export type ChannelSearchHit = {
   /** 这段对话的机器人（CB-106：结果里显示机器人名）。 */
   agentId: string | null;
   /**
-   * 对话最近一次更新的时间。消息本身不存时间戳（openbot_local_threads.messages 只有 id/role/content），
+   * 对话最近一次更新的时间。消息本身不存时间戳（chisabot_local_threads.messages 只有 id/role/content），
    * 所以这里给的是会话时间，界面上写「最近活动」而不是冒充消息时间。
    */
   updatedAt: string | null;
@@ -69,7 +69,10 @@ export function snippetAround(
   const snippet = `${prefix}${slice}${suffix}`;
   const hi = snippet.toLowerCase().indexOf(n);
   if (hi < 0) {
-    return { snippet, highlight: { start: prefix.length, end: prefix.length + needle.length } };
+    return {
+      snippet,
+      highlight: { start: prefix.length, end: prefix.length + needle.length },
+    };
   }
   return { snippet, highlight: { start: hi, end: hi + needle.length } };
 }
@@ -90,7 +93,7 @@ export async function searchChannelMessages(
      FROM channels c
      INNER JOIN channel_memberships cm ON cm.channel_id = c.id AND cm.user_id = $1
      INNER JOIN intelligence_channel_mappings m ON m.channel_id = c.id AND m.user_id = $1
-     INNER JOIN openbot_local_threads t ON t.id = m.thread_id AND t.owner_user_id = $1
+     INNER JOIN chisabot_local_threads t ON t.id = m.thread_id AND t.owner_user_id = $1
      WHERE c.deleted_at IS NULL
        AND t.messages::text ILIKE $2 ESCAPE '\\'
      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
@@ -116,7 +119,9 @@ export async function searchChannelMessages(
       const message = messages[i]!;
       const body = textOf(message.content);
       if (!body) continue;
-      const searchable = body.startsWith("⟦chisabot:") ? body.replace(/^⟦[^⟧]*⟧\n?/, "") : body;
+      const searchable = body.startsWith("⟦chisabot:")
+        ? body.replace(/^⟦[^⟧]*⟧\n?/, "")
+        : body;
       const found = snippetAround(searchable, needle);
       if (!found) continue;
       const key = `${row.channel_id}:${message.id ?? i}`;
@@ -132,7 +137,9 @@ export async function searchChannelMessages(
         messageId: typeof message.id === "string" ? message.id : null,
         role: typeof message.role === "string" ? message.role : null,
         agentId: row.agent_id ?? null,
-        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        updatedAt: row.updated_at
+          ? new Date(row.updated_at).toISOString()
+          : null,
       });
       break;
     }

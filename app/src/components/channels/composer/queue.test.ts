@@ -1,6 +1,6 @@
-import type { Attachment } from "@copilotkit/react-core/v2";
 import { describe, expect, test } from "bun:test";
 import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import type { ComposerDraft } from "./draft";
 import { type QueuedMessage, reduceQueue } from "./queue";
 

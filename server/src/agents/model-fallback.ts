@@ -14,7 +14,10 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { filePartsToText, sanitizeCallOptionsForRetry } from "./request-sanitize";
+import {
+  filePartsToText,
+  sanitizeCallOptionsForRetry,
+} from "./request-sanitize";
 
 type Model = Record<string, unknown> & { modelId?: string };
 
@@ -33,7 +36,10 @@ type FallbackListener = (use: FallbackUse) => void;
  * 运行之间互不串。
  */
 const listeners = new AsyncLocalStorage<FallbackListener>();
-export function withFallbackListener<T>(listener: FallbackListener, run: () => T): T {
+export function withFallbackListener<T>(
+  listener: FallbackListener,
+  run: () => T,
+): T {
   return listeners.run(listener, run);
 }
 function announce(use: FallbackUse) {
@@ -72,7 +78,9 @@ export type FallbackDeps = {
    * 不说就当不能：多数 OpenAI 兼容端点（DeepSeek 等）对不认识的 part 类型整单 400——
    * 所以第一次请求就把文档块换成文字 / 占位，不是等 400 之后才救（QA1102-14 r1）。
    */
-  supportsFiles?: (modelId: string) => boolean | undefined | Promise<boolean | undefined>;
+  supportsFiles?: (
+    modelId: string,
+  ) => boolean | undefined | Promise<boolean | undefined>;
 };
 
 /**
@@ -94,7 +102,10 @@ class FirstOutputTimeout extends Error {
   }
 }
 
-type StreamResult = { stream: ReadableStream<{ type?: string }> } & Record<string, unknown>;
+type StreamResult = { stream: ReadableStream<{ type?: string }> } & Record<
+  string,
+  unknown
+>;
 
 /**
  * 流里算「第一段真正输出」的部分：文本 / 推理增量、工具调用（含流式的 tool-input-*）。stream-start、
@@ -181,7 +192,10 @@ async function withFirstOutputDeadline(
       // Providers can report a rejected request as an error part after HTTP 200. Until real
       // output arrives this is still a request failure, so the same fallback rules apply.
       if (next.value?.type === "error")
-        throw (next.value as { error?: unknown }).error ?? new Error("Model stream failed before producing output.");
+        throw (
+          (next.value as { error?: unknown }).error ??
+          new Error("Model stream failed before producing output.")
+        );
       head.push(next.value);
       if (isFirstOutputPart(next.value)) break;
     }
@@ -219,7 +233,8 @@ async function withFirstOutputDeadline(
   } catch (error) {
     // The first-output race may abandon a pending read. Cancel the owned reader as well as
     // aborting the request so transformed streams release their upstream connection.
-    if (openingReader && !streaming) void openingReader.cancel(error).catch(() => {});
+    if (openingReader && !streaming)
+      void openingReader.cancel(error).catch(() => {});
     if (timedOut && !parent?.aborted) throw new FirstOutputTimeout(ms);
     throw error;
   } finally {
@@ -273,8 +288,10 @@ function errorParts(error: unknown): { status?: number; text: string } {
   for (let depth = 0; current && depth < 5 && !seen.has(current); depth++) {
     seen.add(current);
     const e = current as Record<string, unknown>;
-    if (typeof e.statusCode === "number" && status === undefined) status = e.statusCode;
-    for (const key of ["message", "responseBody"]) if (typeof e[key] === "string") texts.push(e[key] as string);
+    if (typeof e.statusCode === "number" && status === undefined)
+      status = e.statusCode;
+    for (const key of ["message", "responseBody"])
+      if (typeof e[key] === "string") texts.push(e[key] as string);
     current = e.lastError ?? e.cause;
   }
   return { status, text: texts.join(" ") };
@@ -286,17 +303,24 @@ function errorSnippet(error: unknown): string {
   return `${status ?? ""} ${text}`.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
-const QUOTA_TEXT = /quota|rate.?limit|daily.*limit|free (tier|limit)|limit reached|insufficient.*(credit|balance)|exceeded|额度|限额|余额/i;
+const QUOTA_TEXT =
+  /quota|rate.?limit|daily.*limit|free (tier|limit)|limit reached|insufficient.*(credit|balance)|exceeded|额度|限额|余额/i;
 
 /** 这个错误是不是「这个模型暂时用不了（额度 / 限流）」，换一个模型有意义。 */
 export function isQuotaError(error: unknown): boolean {
   const { status, text } = errorParts(error);
   if (status === 429 || status === 402) return true;
-  if ((status === 403 || status === 400 || status === undefined) && QUOTA_TEXT.test(text) && /429|limit|quota|额度|限额/i.test(text)) return true;
+  if (
+    (status === 403 || status === 400 || status === undefined) &&
+    QUOTA_TEXT.test(text) &&
+    /429|limit|quota|额度|限额/i.test(text)
+  )
+    return true;
   return false;
 }
 
-const UNAVAILABLE_TEXT = /overloaded|service unavailable|bad gateway|upstream (error|request failed)|temporarily unavailable/i;
+const UNAVAILABLE_TEXT =
+  /overloaded|service unavailable|bad gateway|upstream (error|request failed)|temporarily unavailable/i;
 
 /**
  * 这个错误值不值得换模型：额度 / 限流 → quota；模型服务 5xx / 529 过载 → unavailable；
@@ -305,15 +329,25 @@ const UNAVAILABLE_TEXT = /overloaded|service unavailable|bad gateway|upstream (e
 export function fallbackReason(error: unknown): FallbackReason | null {
   if (isQuotaError(error)) return "quota";
   const { status, text } = errorParts(error);
-  if (status !== undefined && (status === 529 || (status >= 500 && status <= 504))) return "unavailable";
-  if (status === undefined && /\b(50[0234]|529)\b/.test(text) && UNAVAILABLE_TEXT.test(text)) return "unavailable";
+  if (
+    status !== undefined &&
+    (status === 529 || (status >= 500 && status <= 504))
+  )
+    return "unavailable";
+  if (
+    status === undefined &&
+    /\b(50[0234]|529)\b/.test(text) &&
+    UNAVAILABLE_TEXT.test(text)
+  )
+    return "unavailable";
   // 400/413/422 是「这一次请求本身被拒」（invalid input、context too long）：不算模型不可用。
   if (status === 400 || status === 413 || status === 422) return "rejected";
   return null;
 }
 
 /** 一天 / 免费额度这类「短时间不会恢复」的字样；没有它的 429 多半只是一时限流。 */
-const LONG_QUOTA_TEXT = /quota|daily|free (tier|limit)|limit reached|insufficient|exceeded|额度|限额|余额/i;
+const LONG_QUOTA_TEXT =
+  /quota|daily|free (tier|limit)|limit reached|insufficient|exceeded|额度|限额|余额/i;
 
 /**
  * 「Try again in 19h 51m」/「retry after 30s」→ 毫秒；读不出来时：写着额度 / 每日限额的 10 分钟，
@@ -323,9 +357,14 @@ const LONG_QUOTA_TEXT = /quota|daily|free (tier|limit)|limit reached|insufficien
  */
 export function cooldownMs(error: unknown): number {
   const { text } = errorParts(error);
-  const m = /(?:try again|retry)[^0-9]{0,20}(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?:in)?)?\s*(?:(\d+)\s*s)?/i.exec(text);
+  const m =
+    /(?:try again|retry)[^0-9]{0,20}(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?:in)?)?\s*(?:(\d+)\s*s)?/i.exec(
+      text,
+    );
   if (m && (m[1] || m[2] || m[3])) {
-    const ms = (Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)) * 1000;
+    const ms =
+      (Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0)) *
+      1000;
     if (ms > 0) return Math.min(ms, 24 * 3600_000);
   }
   return LONG_QUOTA_TEXT.test(text) ? 10 * 60_000 : 60_000;
@@ -338,17 +377,31 @@ const BROKEN_CANDIDATE_MS = 30 * 60_000;
  * 记一次模型失败并放进冷却，返回冷却毫秒数：额度类按错误里写的恢复时间；不可用 / 超时
  * 按连续失败次数指数退避（UNAVAILABLE_COOLDOWN_MS 起步、MAX_COOLDOWN_MS 封顶）。
  */
-function cool(modelId: string, reason: FallbackReason, error: unknown, now: number): number {
+function cool(
+  modelId: string,
+  reason: FallbackReason,
+  error: unknown,
+  now: number,
+): number {
   const consecutive = (failures.get(modelId) ?? 0) + 1;
   failures.set(modelId, consecutive);
   const ms =
-    reason === "quota" ? cooldownMs(error) : Math.min(UNAVAILABLE_COOLDOWN_MS * 2 ** (consecutive - 1), MAX_COOLDOWN_MS);
+    reason === "quota"
+      ? cooldownMs(error)
+      : Math.min(
+          UNAVAILABLE_COOLDOWN_MS * 2 ** (consecutive - 1),
+          MAX_COOLDOWN_MS,
+        );
   cooldown.set(modelId, now + ms);
   cooledReason.set(modelId, reason);
   return ms;
 }
 
-export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: FallbackDeps): T {
+export function fallbackLanguageModel<T>(
+  model: T,
+  primaryId: string,
+  deps: FallbackDeps,
+): T {
   if (!model || typeof model !== "object") return model;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((line) => console.log(JSON.stringify(line)));
@@ -359,118 +412,200 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
    */
   const midStreamFailure = (modelId: string) => () => {
     failures.set(modelId, (failures.get(modelId) ?? 0) + 1);
-    log({ type: "model-fallback", event: "stream-error", model: modelId, consecutiveFailures: failures.get(modelId) });
+    log({
+      type: "model-fallback",
+      event: "stream-error",
+      model: modelId,
+      consecutiveFailures: failures.get(modelId),
+    });
   };
-  const wrap = (property: "doStream" | "doGenerate") => async (options: unknown) => {
-    const parentSignal = (options as { abortSignal?: AbortSignal } | null)?.abortSignal;
-    parentSignal?.throwIfAborted();
-    const primaryCall = (target[property] as Call).bind(model);
-    let firstError: unknown = null;
-    let reason: FallbackReason = "quota";
-    const list = await deps.candidates(primaryId).catch(() => [] as string[]);
-    const deadlineMs = deps.firstOutputMs ?? FIRST_OUTPUT_MS;
-    // 模型明说能收 `file` 文档块才原样发；没说 / 说不能就把文档块换成文字 / 占位
-    // （DeepSeek 这类端点对不认识的 part 整单 400）——每一次调用前都换，第一次就在内。
-    const prepare = async (modelId: string, opts: unknown): Promise<unknown> => {
-      const accepts = await Promise.resolve(deps.supportsFiles?.(modelId)).catch(() => undefined);
-      return accepts === true ? opts : filePartsToText(opts);
-    };
-    const primaryOptions = await prepare(primaryId, options);
-    parentSignal?.throwIfAborted();
-    const until = cooldown.get(primaryId);
-    if (until === undefined || until <= now()) {
-      if (until !== undefined) cooldown.delete(primaryId);
-      try {
-        // 有备用模型可换时才给主模型设「第一段输出」期限（§101.10）；没得换就照旧等它。
-        const result =
-          deadlineMs > 0 && list.some((id) => id !== primaryId)
-            ? await withFirstOutputDeadline(primaryCall, primaryOptions, property, deadlineMs, midStreamFailure(primaryId))
-            : await primaryCall(primaryOptions);
-        // 主模型答上了：探测恢复，连续失败计数清零。
-        failures.delete(primaryId);
-        return result;
-      } catch (error) {
-        if (parentSignal?.aborted) throw error;
-        const why = error instanceof FirstOutputTimeout ? ("unavailable" as const) : fallbackReason(error);
-        if (!why) throw error;
-        firstError = error;
-        reason = why;
-        if (why === "rejected") {
-          /*
-           * 主模型拒绝了这一次请求本身（400/413/422）：模型没病，不进冷却、不计连续失败，
-           * 也不该让它按默认重试三次。先清洗 + 压缩这份请求，再用主模型重试一次；
-           * 还不行才落到下面的备用模型（QA1102-14）。
-           */
-          const clean = deps.sanitize ?? sanitizeCallOptionsForRetry;
-          const cleaned = await Promise.resolve(clean(primaryOptions)).catch(() => primaryOptions);
-          parentSignal?.throwIfAborted();
-          try {
-            const result =
-              deadlineMs > 0 && list.some((id) => id !== primaryId)
-                ? await withFirstOutputDeadline(primaryCall, cleaned, property, deadlineMs)
-                : await primaryCall(cleaned);
-            failures.delete(primaryId);
-            return result;
-          } catch (retryError) {
-            if (parentSignal?.aborted) throw retryError;
-            firstError = retryError;
-            log({ type: "model-fallback", event: "primary-rejected", model: primaryId, error: errorSnippet(retryError) });
+  const wrap =
+    (property: "doStream" | "doGenerate") => async (options: unknown) => {
+      const parentSignal = (options as { abortSignal?: AbortSignal } | null)
+        ?.abortSignal;
+      parentSignal?.throwIfAborted();
+      const primaryCall = (target[property] as Call).bind(model);
+      let firstError: unknown = null;
+      let reason: FallbackReason = "quota";
+      const list = await deps.candidates(primaryId).catch(() => [] as string[]);
+      const deadlineMs = deps.firstOutputMs ?? FIRST_OUTPUT_MS;
+      // 模型明说能收 `file` 文档块才原样发；没说 / 说不能就把文档块换成文字 / 占位
+      // （DeepSeek 这类端点对不认识的 part 整单 400）——每一次调用前都换，第一次就在内。
+      const prepare = async (
+        modelId: string,
+        opts: unknown,
+      ): Promise<unknown> => {
+        const accepts = await Promise.resolve(
+          deps.supportsFiles?.(modelId),
+        ).catch(() => undefined);
+        return accepts === true ? opts : filePartsToText(opts);
+      };
+      const primaryOptions = await prepare(primaryId, options);
+      parentSignal?.throwIfAborted();
+      const until = cooldown.get(primaryId);
+      if (until === undefined || until <= now()) {
+        if (until !== undefined) cooldown.delete(primaryId);
+        try {
+          // 有备用模型可换时才给主模型设「第一段输出」期限（§101.10）；没得换就照旧等它。
+          const result =
+            deadlineMs > 0 && list.some((id) => id !== primaryId)
+              ? await withFirstOutputDeadline(
+                  primaryCall,
+                  primaryOptions,
+                  property,
+                  deadlineMs,
+                  midStreamFailure(primaryId),
+                )
+              : await primaryCall(primaryOptions);
+          // 主模型答上了：探测恢复，连续失败计数清零。
+          failures.delete(primaryId);
+          return result;
+        } catch (error) {
+          if (parentSignal?.aborted) throw error;
+          const why =
+            error instanceof FirstOutputTimeout
+              ? ("unavailable" as const)
+              : fallbackReason(error);
+          if (!why) throw error;
+          firstError = error;
+          reason = why;
+          if (why === "rejected") {
+            /*
+             * 主模型拒绝了这一次请求本身（400/413/422）：模型没病，不进冷却、不计连续失败，
+             * 也不该让它按默认重试三次。先清洗 + 压缩这份请求，再用主模型重试一次；
+             * 还不行才落到下面的备用模型（QA1102-14）。
+             */
+            const clean = deps.sanitize ?? sanitizeCallOptionsForRetry;
+            const cleaned = await Promise.resolve(clean(primaryOptions)).catch(
+              () => primaryOptions,
+            );
+            parentSignal?.throwIfAborted();
+            try {
+              const result =
+                deadlineMs > 0 && list.some((id) => id !== primaryId)
+                  ? await withFirstOutputDeadline(
+                      primaryCall,
+                      cleaned,
+                      property,
+                      deadlineMs,
+                    )
+                  : await primaryCall(cleaned);
+              failures.delete(primaryId);
+              return result;
+            } catch (retryError) {
+              if (parentSignal?.aborted) throw retryError;
+              firstError = retryError;
+              log({
+                type: "model-fallback",
+                event: "primary-rejected",
+                model: primaryId,
+                error: errorSnippet(retryError),
+              });
+            }
+          } else {
+            const ms = cool(primaryId, why, error, now());
+            log({
+              type: "model-fallback",
+              event:
+                error instanceof FirstOutputTimeout
+                  ? "primary-timeout"
+                  : why === "quota"
+                    ? "primary-quota"
+                    : "primary-unavailable",
+              model: primaryId,
+              cooldownSeconds: Math.round(ms / 1000),
+              consecutiveFailures: failures.get(primaryId),
+              error:
+                error instanceof FirstOutputTimeout
+                  ? error.message
+                  : errorSnippet(error),
+            });
           }
-        } else {
-          const ms = cool(primaryId, why, error, now());
+        }
+      } else {
+        reason = cooledReason.get(primaryId) ?? "quota";
+        // 每次跳过都留一行：冷却期内的回合一眼能看出主模型没再等。
+        log({
+          type: "model-fallback",
+          event: "skip-primary",
+          model: primaryId,
+          reason,
+          cooldownRemainingSeconds: Math.max(
+            0,
+            Math.round((until - now()) / 1000),
+          ),
+        });
+      }
+      for (const id of list) {
+        parentSignal?.throwIfAborted();
+        if (id === primaryId || coolingDown(id, now())) continue;
+        const other = deps.build(id) as Model | null;
+        const call =
+          other && typeof other[property] === "function"
+            ? (other[property] as Call).bind(other)
+            : null;
+        if (!call) continue;
+        const adapted = deps.adapt
+          ? await deps.adapt(id, options).catch(() => options)
+          : options;
+        const sent = await prepare(id, adapted);
+        parentSignal?.throwIfAborted();
+        try {
+          const result =
+            deadlineMs > 0
+              ? await withFirstOutputDeadline(
+                  call,
+                  sent,
+                  property,
+                  deadlineMs,
+                  midStreamFailure(id),
+                )
+              : await call(sent);
+          failures.delete(id);
           log({
             type: "model-fallback",
-            event: error instanceof FirstOutputTimeout ? "primary-timeout" : why === "quota" ? "primary-quota" : "primary-unavailable",
+            event: "used",
             model: primaryId,
+            fallback: id,
+            reason,
+          });
+          announce({ from: primaryId, to: id, reason });
+          return result;
+        } catch (error) {
+          if (parentSignal?.aborted) throw error;
+          // 备用模型的任何错误都不该挡住下一个候选（以前 404「model not found」直接抛出，后面的候选和主模型都没机会，§101）。
+          const why =
+            error instanceof FirstOutputTimeout
+              ? "unavailable"
+              : fallbackReason(error);
+          const ms = why ? cool(id, why, error, now()) : BROKEN_CANDIDATE_MS;
+          if (!why) {
+            failures.set(id, (failures.get(id) ?? 0) + 1);
+            cooldown.set(id, now() + BROKEN_CANDIDATE_MS);
+          }
+          cooledReason.set(id, why ?? "unavailable");
+          log({
+            type: "model-fallback",
+            event: "candidate-failed",
+            model: primaryId,
+            fallback: id,
+            reason: why ?? "broken",
             cooldownSeconds: Math.round(ms / 1000),
-            consecutiveFailures: failures.get(primaryId),
-            error: error instanceof FirstOutputTimeout ? error.message : errorSnippet(error),
+            error: errorSnippet(error),
           });
         }
       }
-    } else {
-      reason = cooledReason.get(primaryId) ?? "quota";
-      // 每次跳过都留一行：冷却期内的回合一眼能看出主模型没再等。
-      log({ type: "model-fallback", event: "skip-primary", model: primaryId, reason, cooldownRemainingSeconds: Math.max(0, Math.round((until - now()) / 1000)) });
-    }
-    for (const id of list) {
-      parentSignal?.throwIfAborted();
-      if (id === primaryId || coolingDown(id, now())) continue;
-      const other = deps.build(id) as Model | null;
-      const call = other && typeof other[property] === "function" ? (other[property] as Call).bind(other) : null;
-      if (!call) continue;
-      const adapted = deps.adapt ? await deps.adapt(id, options).catch(() => options) : options;
-      const sent = await prepare(id, adapted);
-      parentSignal?.throwIfAborted();
-      try {
-        const result =
-          deadlineMs > 0
-            ? await withFirstOutputDeadline(call, sent, property, deadlineMs, midStreamFailure(id))
-            : await call(sent);
-        failures.delete(id);
-        log({ type: "model-fallback", event: "used", model: primaryId, fallback: id, reason });
-        announce({ from: primaryId, to: id, reason });
-        return result;
-      } catch (error) {
-        if (parentSignal?.aborted) throw error;
-        // 备用模型的任何错误都不该挡住下一个候选（以前 404「model not found」直接抛出，后面的候选和主模型都没机会，§101）。
-        const why = error instanceof FirstOutputTimeout ? "unavailable" : fallbackReason(error);
-        const ms = why ? cool(id, why, error, now()) : BROKEN_CANDIDATE_MS;
-        if (!why) {
-          failures.set(id, (failures.get(id) ?? 0) + 1);
-          cooldown.set(id, now() + BROKEN_CANDIDATE_MS);
-        }
-        cooledReason.set(id, why ?? "unavailable");
-        log({ type: "model-fallback", event: "candidate-failed", model: primaryId, fallback: id, reason: why ?? "broken", cooldownSeconds: Math.round(ms / 1000), error: errorSnippet(error) });
-      }
-    }
-    // 这一次主模型是因为冷却被跳过的（没真的试）：候选都不行就再试一次主模型，它可能已经恢复了。
-    if (!firstError) return primaryCall(primaryOptions);
-    throw firstError;
-  };
+      // 这一次主模型是因为冷却被跳过的（没真的试）：候选都不行就再试一次主模型，它可能已经恢复了。
+      if (!firstError) return primaryCall(primaryOptions);
+      throw firstError;
+    };
   return new Proxy(model as unknown as object, {
     get(object, property) {
-      if ((property === "doStream" || property === "doGenerate") && typeof target[property] === "function") return wrap(property);
+      if (
+        (property === "doStream" || property === "doGenerate") &&
+        typeof target[property] === "function"
+      )
+        return wrap(property);
       const value = Reflect.get(object, property);
       return typeof value === "function" ? value.bind(object) : value;
     },
@@ -483,32 +618,83 @@ export function fallbackLanguageModel<T>(model: T, primaryId: string, deps: Fall
  * 2. 环境变量 CHISABOT_MODEL_FALLBACKS（逗号分隔；off / 0 关闭自动挑选）；
  * 3. 目录里与当前模型同平台前缀的其它模型（最多 3 个；目录明说不能调工具的跳过——备用模型
  *    要接着主模型手里的工具往下跑，QA1102-13）。
- * 只返回目录里存在的模型的规则只用于第 3 条；管理员列表照填写的顺序，目录暂时读不到也照用。
+ * 当前完整目录会过滤失效的显式候选；目录为空、过期或暂时读不到时保留配置。
+ * 旧调用者只提供模型数组时不把它当作完整目录，继续沿用原有显式候选行为。
  */
+export type FallbackCatalogEntries = readonly (
+  | string
+  | { id: string; supportsTools?: boolean }
+)[];
+export type FallbackCatalog =
+  | FallbackCatalogEntries
+  | { models: FallbackCatalogEntries; stale?: boolean };
+
 export function fallbackCandidates(
-  catalog: () => Promise<readonly (string | { id: string; supportsTools?: boolean })[]>,
+  catalog: () => Promise<FallbackCatalog>,
   env: Record<string, string | undefined> = process.env,
   configured: () => Promise<string[]> = async () => [],
 ): (primary: string) => Promise<string[]> {
   return async (primary) => {
-    const admin = (await configured().catch(() => [] as string[])).filter((id) => id && id !== primary);
-    if (admin.length) return admin;
+    const admin = (await configured().catch(() => [] as string[])).filter(
+      (id) => id && id !== primary,
+    );
     const fromEnv = env.CHISABOT_MODEL_FALLBACKS?.trim();
-    if (fromEnv === "off" || fromEnv === "0") return [];
-    if (fromEnv) return fromEnv.split(",").map((s) => s.trim()).filter((s) => s && s !== primary);
+    if (!admin.length && (fromEnv === "off" || fromEnv === "0")) return [];
+    const explicit = admin.length
+      ? admin
+      : fromEnv
+        ? fromEnv
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s && s !== primary)
+        : undefined;
     const slash = primary.indexOf("/");
-    if (slash <= 0) return [];
+    if (!explicit && slash <= 0) return [];
+    const snapshot = await catalog().catch(() => [] as FallbackCatalogEntries);
+    const listed = "models" in snapshot ? snapshot.models : snapshot;
+    const entries = listed.map((row) =>
+      typeof row === "string" ? { id: row } : row,
+    );
+    if (explicit) {
+      // A successful full directory can rule out retired routes. An unavailable/stale
+      // directory (or a legacy caller supplying only ids) cannot veto configured models.
+      if (!("models" in snapshot) || snapshot.stale || !entries.length)
+        return explicit;
+      const available = new Set(
+        entries
+          .filter((row) => row.supportsTools !== false)
+          .map((row) => row.id),
+      );
+      const candidates = explicit.filter((id) => available.has(id));
+      const skipped = explicit.filter((id) => !available.has(id));
+      if (skipped.length)
+        console.info(
+          JSON.stringify({
+            type: "model-fallback",
+            event: "unavailable-candidates",
+            models: skipped,
+          }),
+        );
+      // Do not substitute a different provider when all explicitly chosen backups are gone.
+      return candidates;
+    }
     const prefix = primary.slice(0, slash + 1);
-    const entries = (await catalog()).map((row) => (typeof row === "string" ? { id: row } : row));
     return entries
-      .filter((row) => row.id !== primary && row.id.startsWith(prefix) && row.supportsTools !== false)
+      .filter(
+        (row) =>
+          row.id !== primary &&
+          row.id.startsWith(prefix) &&
+          row.supportsTools !== false,
+      )
       .slice(0, 3)
       .map((row) => row.id);
   };
 }
 
 /** 对话里那行淡色小字（DESIGN.md §61）：模型 id 只留最后一段（clinepass/cline-free/step-5 → step-5）。 */
-export function fallbackNotice(use: Pick<FallbackUse, "to" | "reason">): string {
+export function fallbackNotice(
+  use: Pick<FallbackUse, "to" | "reason">,
+): string {
   const short = use.to.split("/").filter(Boolean).pop() || use.to;
   return use.reason === "unavailable"
     ? `主模型暂时不可用，已改用 ${short}`

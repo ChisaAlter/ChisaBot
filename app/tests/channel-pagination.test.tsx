@@ -29,10 +29,10 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { agentKeys } from "@/lib/agents/queries";
 import { authKeys } from "@/lib/auth/queries";
-import { type ChannelSummary, channelKeys } from "@/lib/channels/queries";
-import { setSidebarSearch } from "@/lib/sidebar-search";
-import { userPreferencesQueryOptions } from "@/lib/settings/message-list";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
+import { type ChannelSummary, channelKeys } from "@/lib/channels/queries";
+import { userPreferencesQueryOptions } from "@/lib/settings/message-list";
+import { setSidebarSearch } from "@/lib/sidebar-search";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -217,7 +217,6 @@ function channel(id: string): ChannelSummary {
 function preferences(emphasis: "agent" | "thread") {
   return {
     messageListEmphasis: emphasis,
-    selfHostBannerDismissed: false,
     mainBotId: null,
     brandAccent: "Chisa",
     brandRest: "Bot",
@@ -344,9 +343,7 @@ test("opening the history asks for the next cursor once and stops at the final p
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(await view.findByText("Older conversation")).toBeTruthy();
   expect(view.getByText("Recent conversation")).toBeTruthy();
-  expect(
-    view.queryByRole("button", { name: "加载更早的会话" }),
-  ).toBeNull();
+  expect(view.queryByRole("button", { name: "加载更早的会话" })).toBeNull();
 });
 
 test("a failed page preserves the rows and waits for an explicit retry", async () => {
@@ -376,9 +373,7 @@ test("a failed page preserves the rows and waits for an explicit retry", async (
       channels: [channel("Recovered conversation")],
       nextCursor: "last-page",
     });
-  fireEvent.click(
-    view.getByRole("button", { name: "重试加载更早对话" }),
-  );
+  fireEvent.click(view.getByRole("button", { name: "重试加载更早对话" }));
   expect(await view.findByText("Recovered conversation")).toBeTruthy();
   expect(listRequests()).toEqual([
     "/api/channels?cursor=older%2Fpage",
@@ -406,9 +401,7 @@ test("a search filters what is loaded and the history is opened by hand", async 
   const search = await view.findByRole("combobox", { name: "搜索会话" });
   await user.type(search, "Archived");
 
-  expect(
-    await view.findByText("没有会话匹配您的搜索"),
-  ).toBeTruthy();
+  expect(await view.findByText("没有会话匹配您的搜索")).toBeTruthy();
   // The filter says what it can see; it does not go looking through the history on its own.
   expect(listRequests()).toEqual([]);
   expect(ScrollObserver.active.size).toBe(0);

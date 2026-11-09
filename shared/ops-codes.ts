@@ -14,6 +14,8 @@ export const OPS_CODES = {
   HEALTH_MAGPIE: "OPS_HEALTH_MAGPIE",
   /** Computer node was configured but /health failed. */
   HEALTH_COMPUTER: "OPS_HEALTH_COMPUTER",
+  /** Selected DSH runtime identity, protocol, or persisted session is unavailable. */
+  HEALTH_DSH: "OPS_HEALTH_DSH",
   /** Post-deploy smoke suite failed a hard check (version / capabilities / aggregate). */
   SMOKE_HARD_FAIL: "OPS_SMOKE_HARD_FAIL",
   /** Admin model round-trip smoke failed (advisory unless STRICT_MODEL_SMOKE=1). */

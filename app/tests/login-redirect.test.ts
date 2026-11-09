@@ -26,7 +26,7 @@ const gateway401 = () =>
     JSON.stringify({
       ok: false,
       error: "请先登录。",
-      openbotAuthRequired: true,
+      chisabotAuthRequired: true,
     }),
     {
       status: 401,
@@ -103,7 +103,7 @@ describe("网关登录跳转", () => {
     ).toBe(false);
     expect(
       await isGatewayLoginRequired(
-        new Response(JSON.stringify({ openbotAuthRequired: true }), {
+        new Response(JSON.stringify({ chisabotAuthRequired: true }), {
           status: 403,
           headers: { "content-type": "application/json" },
         }),
@@ -119,7 +119,7 @@ describe("网关登录跳转", () => {
     installLoginRedirect(win);
     const response = await win.fetch("/api/channels");
     expect(response.status).toBe(401);
-    expect(await response.json()).toMatchObject({ openbotAuthRequired: true });
+    expect(await response.json()).toMatchObject({ chisabotAuthRequired: true });
     expect(isGoingToLogin()).toBe(true);
     await win.fetch("/api/me");
     expect(replaced).toEqual(["/login?next=%2Fsettings%2Fmodels%3Ftab%3Da"]);

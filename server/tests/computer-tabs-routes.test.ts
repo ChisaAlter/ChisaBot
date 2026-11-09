@@ -11,8 +11,9 @@ function signedIn(id: string): MiddlewareHandler<{ Variables: AppVariables }> {
     await next();
   };
 }
-const ownedBy = (owner: string) => async (actor: { id: string }, botId: string) =>
-  botId === "sales" && actor.id === owner;
+const ownedBy =
+  (owner: string) => async (actor: { id: string }, botId: string) =>
+    botId === "sales" && actor.id === owner;
 
 function app(actorId: string) {
   const reached: unknown[] = [];
@@ -21,8 +22,18 @@ function app(actorId: string) {
     max: 8,
     activeId,
     tabs: [
-      { id: "t1", url: "https://a.test/", title: "A", active: activeId === "t1" },
-      { id: "t2", url: "about:blank", title: "新标签页", active: activeId === "t2" },
+      {
+        id: "t1",
+        url: "https://a.test/",
+        title: "A",
+        active: activeId === "t1",
+      },
+      {
+        id: "t2",
+        url: "about:blank",
+        title: "新标签页",
+        active: activeId === "t2",
+      },
     ],
   });
   const gateway = {
@@ -59,7 +70,10 @@ describe("computer tabs routes", () => {
     const { hono, reached } = app("owner");
     const response = await hono.request("http://t/api/computers/sales/tabs");
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { tabs: unknown[]; activeId: string };
+    const body = (await response.json()) as {
+      tabs: unknown[];
+      activeId: string;
+    };
     expect(body.tabs.length).toBe(2);
     expect(body.activeId).toBe("t1");
     expect(reached).toEqual([["tabs", "sales"]]);
@@ -67,9 +81,30 @@ describe("computer tabs routes", () => {
 
   test("bot opens a tab with a url, switches, closes", async () => {
     const { hono, reached } = app("owner");
-    expect((await hono.request("http://t/api/computers/sales/tabs", post({ action: "new", url: " https://b.test/ " }))).status).toBe(200);
-    expect((await hono.request("http://t/api/computers/sales/tabs", post({ action: "activate", id: "t1" }))).status).toBe(200);
-    expect((await hono.request("http://t/api/computers/sales/tabs", post({ action: "close", id: "t2" }))).status).toBe(200);
+    expect(
+      (
+        await hono.request(
+          "http://t/api/computers/sales/tabs",
+          post({ action: "new", url: " https://b.test/ " }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await hono.request(
+          "http://t/api/computers/sales/tabs",
+          post({ action: "activate", id: "t1" }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await hono.request(
+          "http://t/api/computers/sales/tabs",
+          post({ action: "close", id: "t2" }),
+        )
+      ).status,
+    ).toBe(200);
     expect(reached).toEqual([
       ["bot", "sales", "owner", { action: "new", url: "https://b.test/" }],
       ["bot", "sales", "owner", { action: "activate", id: "t1" }],
@@ -79,23 +114,45 @@ describe("computer tabs routes", () => {
 
   test("refuses an unknown action with 400 before reaching the computer", async () => {
     const { hono, reached } = app("owner");
-    const response = await hono.request("http://t/api/computers/sales/tabs", post({ action: "nuke" }));
+    const response = await hono.request(
+      "http://t/api/computers/sales/tabs",
+      post({ action: "nuke" }),
+    );
     expect(response.status).toBe(400);
     expect(reached).toEqual([]);
   });
 
   test("human tab actions go to humanTab, not to the generic human input route", async () => {
     const { hono, reached } = app("owner");
-    const response = await hono.request("http://t/api/computers/sales/human/tab", post({ action: "new" }));
+    const response = await hono.request(
+      "http://t/api/computers/sales/human/tab",
+      post({ action: "new" }),
+    );
     expect(response.status).toBe(200);
     expect(reached).toEqual([["human", "sales", { action: "new" }]]);
   });
 
   test("somebody else's bot: 404 and nothing reached", async () => {
     const { hono, reached } = app("stranger");
-    expect((await hono.request("http://t/api/computers/sales/tabs")).status).toBe(404);
-    expect((await hono.request("http://t/api/computers/sales/tabs", post({ action: "new" }))).status).toBe(404);
-    expect((await hono.request("http://t/api/computers/sales/human/tab", post({ action: "close", id: "t1" }))).status).toBe(404);
+    expect(
+      (await hono.request("http://t/api/computers/sales/tabs")).status,
+    ).toBe(404);
+    expect(
+      (
+        await hono.request(
+          "http://t/api/computers/sales/tabs",
+          post({ action: "new" }),
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await hono.request(
+          "http://t/api/computers/sales/human/tab",
+          post({ action: "close", id: "t1" }),
+        )
+      ).status,
+    ).toBe(404);
     expect(reached).toEqual([]);
   });
 });

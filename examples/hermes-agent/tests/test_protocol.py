@@ -498,6 +498,8 @@ class FailureCategoryTests(unittest.TestCase):
     def test_messages_are_fixed_and_unknown_keeps_old_sentence(self):
         self.assertEqual(failure_message("unknown"), TURN_FAILED)
         self.assertEqual(failure_message("rate_limit"), "Hermes model call failed: rate_limit (HTTP 429)")
+        self.assertEqual(failure_message("model_not_found", fallback=True),
+                         "Hermes fallback model call failed: model not found (HTTP 404)")
 
     def test_hermes_own_prose_is_a_failure_never_an_answer(self):
         # The wording Hermes prints for a CLI operator when the model call cannot run.

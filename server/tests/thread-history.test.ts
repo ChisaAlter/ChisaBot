@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { historyOrEmpty, isMissingThread } from "../src/copilot";
+import { historyOrEmpty, isMissingThread } from "../src/conversation-runtime";
 
 /**
  * Reading history on a thread the platform has never seen.
@@ -13,7 +13,7 @@ import { historyOrEmpty, isMissingThread } from "../src/copilot";
 /**
  * A `PlatformRequestError` as the platform client constructs one.
  *
- * Built by hand because the class is not re-exported from `@copilotkit/runtime/v2` and the package's
+ * Built by hand because the class is not re-exported from `the original runtime` and the package's
  * `exports` map reaches nothing that holds it — which is also why the code under test matches on the
  * shape. The constructor sets the message, then `status`, then `name`, so this is the same object.
  */

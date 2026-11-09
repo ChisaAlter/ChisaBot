@@ -1,10 +1,18 @@
 import { expect, spyOn, test } from "bun:test";
 import { HttpAgent } from "@ag-ui/client";
-import { InMemoryAgentRunner } from "@copilotkit/runtime/v2";
+import { EMPTY } from "rxjs";
+
+const unusedRunner = {
+  run: () => EMPTY,
+  connect: () => EMPTY,
+  isRunning: async () => false,
+  stop: async () => false,
+};
+
 import { Hono } from "hono";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
-import { mountCopilotRuntime } from "../src/copilot";
+import { mountConversationRuntime } from "../src/conversation-runtime";
 import type { LocalConversationBackend } from "../src/local-conversations";
 import { testEnvironment } from "./support/environment";
 
@@ -15,7 +23,6 @@ function configuration() {
       INTELLIGENCE_API_URL: undefined,
       INTELLIGENCE_GATEWAY_WS_URL: undefined,
       INTELLIGENCE_API_KEY: undefined,
-      COPILOTKIT_LICENSE_TOKEN: undefined,
     }),
   );
 }
@@ -27,23 +34,22 @@ test("local OSS configuration has durable history and no Intelligence credential
   });
   expect(() =>
     loadConfig(testEnvironment({ CHISABOT_RUNTIME_MODE: "other" })),
-  ).toThrow("CHISABOT_RUNTIME_MODE must be intelligence or local");
+  ).toThrow("CHISABOT_RUNTIME_MODE must be local");
 });
 
 test("the public SSE runtime reports disabled telemetry and makes no vendor request", async () => {
-  const originalTelemetry = process.env.COPILOTKIT_TELEMETRY_DISABLED;
   const originalTracking = process.env.DO_NOT_TRACK;
   const network = spyOn(globalThis, "fetch").mockImplementation(async () => {
-    throw new Error("A local runtime must not contact CopilotKit.");
+    throw new Error("A local runtime must not contact conversation runtime.");
   });
   let identityCalls = 0;
   try {
     const backend = {
-      runner: new InMemoryAgentRunner(),
+      runner: unusedRunner,
       client: {},
       handle: async () => undefined,
     } as LocalConversationBackend;
-    const mounted = mountCopilotRuntime(
+    const mounted = mountConversationRuntime(
       configuration(),
       {
         resolveAgentsForActor: async () => ({
@@ -59,11 +65,11 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
       async () => ({ id: "owner", role: "admin" }),
       { localBackend: backend },
     );
-    const response = await mounted.handler.request("/api/copilotkit/info");
+    const response = await mounted.handler.request("/api/conversations/info");
     expect(response.status).toBe(200);
     const information = await response.json();
-    expect(information.mode).toBe("sse");
-    expect(information.telemetryDisabled).toBe(true);
+    expect(information.version).toBe("chisabot-1");
+
     expect(identityCalls).toBe(0);
     expect(network).not.toHaveBeenCalled();
     const appArgs: Parameters<typeof createApp> = [
@@ -79,9 +85,9 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
       { rolesForUser: async () => ["admin"] },
     ];
     appArgs[6] = mounted.handler;
-    appArgs[36] = backend;
+    appArgs[35] = backend;
     const integratedInfo = await (
-      await createApp(...appArgs).request("/api/copilotkit/info")
+      await createApp(...appArgs).request("/api/conversations/info")
     ).json();
     expect(integratedInfo.threadEndpoints).toEqual({
       list: true,
@@ -94,9 +100,6 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
     expect(network).not.toHaveBeenCalled();
   } finally {
     network.mockRestore();
-    if (originalTelemetry === undefined)
-      delete process.env.COPILOTKIT_TELEMETRY_DISABLED;
-    else process.env.COPILOTKIT_TELEMETRY_DISABLED = originalTelemetry;
     if (originalTracking === undefined) delete process.env.DO_NOT_TRACK;
     else process.env.DO_NOT_TRACK = originalTracking;
   }
@@ -107,7 +110,7 @@ function localApp(signedIn: boolean) {
   const readers: string[] = [];
   let sdkCalls = 0;
   const backend = {
-    runner: new InMemoryAgentRunner(),
+    runner: unusedRunner,
     client: {
       getOrCreateThread: async (scope: {
         threadId: string;
@@ -134,7 +137,7 @@ function localApp(signedIn: boolean) {
       return undefined;
     },
   } as unknown as LocalConversationBackend;
-  const handler = new Hono().all("/api/copilotkit/*", (context) => {
+  const handler = new Hono().all("/api/conversations/*", (context) => {
     sdkCalls++;
     return context.json({ accepted: true });
   });
@@ -152,7 +155,7 @@ function localApp(signedIn: boolean) {
     { rolesForUser: async () => ["admin"] },
   ];
   args[6] = handler;
-  args[36] = backend;
+  args[35] = backend;
   return { app: createApp(...args), claims, readers, sdkCalls: () => sdkCalls };
 }
 
@@ -160,36 +163,40 @@ test("local history and runs require a session and use the verified actor", asyn
   const anonymous = localApp(false);
   expect(
     (
-      await anonymous.app.request("/api/copilotkit/threads/clear", {
+      await anonymous.app.request("/api/conversations/threads/clear", {
         method: "POST",
       })
     ).status,
   ).toBe(401);
   expect(
-    (await anonymous.app.request("/api/copilotkit", { method: "POST" })).status,
+    (await anonymous.app.request("/api/conversations", { method: "POST" }))
+      .status,
   ).toBe(401);
   expect(anonymous.readers).toEqual([]);
   const signedIn = localApp(true);
   expect(
-    (await signedIn.app.request("/api/copilotkit/threads?userId=spoofed"))
+    (await signedIn.app.request("/api/conversations/threads?userId=spoofed"))
       .status,
   ).toBe(200);
-  const response = await signedIn.app.request("/api/copilotkit/agent/bot/run", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      threadId: "owned",
-      userId: "spoofed",
-      agentId: "spoofed",
-    }),
-  });
+  const response = await signedIn.app.request(
+    "/api/conversations/agent/bot/run",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        threadId: "owned",
+        userId: "spoofed",
+        agentId: "spoofed",
+      }),
+    },
+  );
   expect(response.status).toBe(200);
   expect(signedIn.claims).toEqual([
     { threadId: "owned", userId: "verified-owner", agentId: "bot" },
   ]);
   expect(
     (
-      await signedIn.app.request("/api/copilotkit/agent/bot/connect", {
+      await signedIn.app.request("/api/conversations/agent/bot/connect", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -209,13 +216,13 @@ test("local history and runs require a session and use the verified actor", asyn
 test("foreign run and stop scopes never reach the SDK and Learning is unavailable", async () => {
   const { app, sdkCalls } = localApp(true);
   for (const route of [
-    "/api/copilotkit/agent/bot/run",
-    "/api/copilotkit/agent/bot/stop/foreign",
-    "/api/copilotkit/agent/bot/stop/foreign/",
-    "/api/copilotkit/agent//bot//stop//foreign//",
-    "/api/copilotkit/nested//agent//bot/stop/foreign/",
-    "/api/copilotkit/nested//agent//bot/run/",
-    "/api/copilotkit/nested//agent//bot/connect//",
+    "/api/conversations/agent/bot/run",
+    "/api/conversations/agent/bot/stop/foreign",
+    "/api/conversations/agent/bot/stop/foreign/",
+    "/api/conversations/agent//bot//stop//foreign//",
+    "/api/conversations/nested//agent//bot/stop/foreign/",
+    "/api/conversations/nested//agent//bot/run/",
+    "/api/conversations/nested//agent//bot/connect//",
   ]) {
     expect(
       (
@@ -228,7 +235,7 @@ test("foreign run and stop scopes never reach the SDK and Learning is unavailabl
     ).toBe(404);
   }
   expect(sdkCalls()).toBe(0);
-  const unavailable = await app.request("/api/copilotkit/x/agent/bot/run", {
+  const unavailable = await app.request("/api/conversations/x/agent/bot/run", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ threadId: "outage" }),
@@ -245,7 +252,7 @@ test("foreign run and stop scopes never reach the SDK and Learning is unavailabl
   });
   expect(
     (
-      await app.request("/api/copilotkit/nested//agent//bot/stop/owned///", {
+      await app.request("/api/conversations/nested//agent//bot/stop/owned///", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",

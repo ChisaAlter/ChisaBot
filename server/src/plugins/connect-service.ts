@@ -2,7 +2,11 @@ import { z } from "zod";
 import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { markUntrusted } from "../untrusted-content";
 import { CATALOGUE, customUrlRefusal } from "./catalogue";
-import { CHINA_DIRECTORY, type DirectoryEntry, pathwayLines } from "./directory";
+import {
+  CHINA_DIRECTORY,
+  type DirectoryEntry,
+  pathwayLines,
+} from "./directory";
 import { listTools } from "./mcp";
 import {
   CatalogueEntryUnknownError,
@@ -121,7 +125,16 @@ const ALIASES: Record<string, readonly string[]> = {
     "webcal",
   ],
   github: ["github", "gh"],
-  webhook: ["webhook", "通知", "推送", "bark", "server酱", "飞书通知", "钉钉通知", "企业微信通知"],
+  webhook: [
+    "webhook",
+    "通知",
+    "推送",
+    "bark",
+    "server酱",
+    "飞书通知",
+    "钉钉通知",
+    "企业微信通知",
+  ],
   notion: ["notion"],
   "google-drive": ["googledrive", "谷歌云盘", "谷歌drive", "drive"],
   parallel: ["parallel", "parallelsearch"],
@@ -415,13 +428,15 @@ function directoryMatches(names: readonly string[]): DirectoryEntry[] {
 }
 
 function directorySection(entries: readonly DirectoryEntry[]): string {
-  const shown = entries.slice(0, 5).map((entry) =>
-    [
-      `- ${entry.title}${entry.official ? "（官方）" : "（社区）"}：${firstSentence(entry.summary)}`,
-      ...pathwayLines(entry).map((line) => `  ${line}`),
-      ...(entry.note ? [`  ⚠️ ${entry.note}`] : []),
-    ].join("\n"),
-  );
+  const shown = entries
+    .slice(0, 5)
+    .map((entry) =>
+      [
+        `- ${entry.title}${entry.official ? "（官方）" : "（社区）"}：${firstSentence(entry.summary)}`,
+        ...pathwayLines(entry).map((line) => `  ${line}`),
+        ...(entry.note ? [`  ⚠️ ${entry.note}`] : []),
+      ].join("\n"),
+    );
   if (entries.length > shown.length) {
     shown.push(
       `……另外 ${entries.length - shown.length} 条相关条目，用更具体的名字再问，或到 设置 → 插件 → 国内应用目录 浏览全表。`,
@@ -478,9 +493,9 @@ function builtinMatchSection(
       [
         "✅ 【内置电子邮箱连接器（IMAP 收信 + SMTP 审批发信）】已经内置就绪，支持 Gmail、QQ 邮箱、163 邮箱、Outlook、iCloud 等：",
         `  - 当前账号状态：${statusText}`,
-        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（在对话中直接绑定连接邮箱）、`email_send`（通过已连接邮箱发信/回信，发信前自动弹确认卡片）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
+        "  - 当前机器人已持有工具：`email_list_recent`（查看最近邮件与未读摘要）、`email_connect`（打开邮箱安全设置）、`email_send`（通过已连接邮箱发信/回信，发信前自动弹确认卡片）、`morning_brief_generate`（生成含未读邮件的每日晨报卡片）",
         "  - 怎么立即连上：",
-        "    1. 【对话内直接代连（最快）】用户只要把邮箱地址和「应用专用密码 / IMAP 授权码」发到对话里（Gmail 在 Google 账号「安全性 → 两步验证 → 应用专用密码」生成 16 位密码；QQ/163 在邮箱设置开启 IMAP 生成授权码），你就可以直接调用 `email_connect` 自动填好 `imap.gmail.com:993` 等服务器并完成绑定；",
+        "    1. 用 email_connect 打开安全设置。应用专用密码或授权码仅在设置表单中输入，不要让用户发到聊天里。",
         "    2. 【设置页一键预设】引导用户点开下方链接卡进入「设置 → 账号连接」，在「个人日程与收件箱」点「连接邮箱」，一键选 Gmail / QQ / 163 / Outlook 预设填入即可。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
@@ -492,8 +507,8 @@ function builtinMatchSection(
     blocks.push(
       [
         "✅ 【内置随身通知推送 & 外部 Webhook 触发器】已经内置就绪，支持飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱及自定义 Webhook：",
-        "  - 当前机器人已持有工具：`notify_webhook_connect`（在对话中直接绑定推送 Webhook）、`notify_push`（向手机/IM 即时推送提醒）、`webhook_trigger_info`（获取专属外部事件入站 Webhook 地址）",
-        "  - 怎么立即连上：用户只要把 Webhook 链接发到对话里（或说「开启演示推送」），直接调用 `notify_webhook_connect` 即可完成绑定。",
+        "  - 当前机器人已持有工具：`notify_webhook_connect`（打开通知安全设置）、`notify_push`（向手机/IM 即时推送提醒）、`webhook_trigger_info`（打开入站地址安全设置）",
+        "  - 怎么立即连上：用 notify_webhook_connect 打开账号连接设置，在安全表单输入 Webhook 地址，不要让用户把带密钥的链接发到聊天里。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
       ].join("\n"),
@@ -509,9 +524,9 @@ function builtinMatchSection(
       [
         "✅ 【内置个人日历连接器（iCal / ICS 订阅）】已经内置就绪，支持 Google Calendar、Apple iCloud、Outlook、飞书日历：",
         `  - 当前账号状态：${statusText}`,
-        "  - 当前机器人已持有工具：`calendar_list_events`（查看近期日程）、`calendar_connect`（在对话中直接绑定日历订阅链接）、`morning_brief_generate`（每日晨报卡片）",
+        "  - 当前机器人已持有工具：`calendar_list_events`（查看近期日程）、`calendar_connect`（打开日历安全设置）、`morning_brief_generate`（每日晨报卡片）",
         "  - 怎么立即连上：",
-        "    1. 【对话内直接代连（最快）】让用户把日历的 iCal / ICS 私密订阅地址（`https://...` 或 `webcal://...`）发到对话里，你直接调用 `calendar_connect` 当场连上；",
+        "    1. 用 calendar_connect 打开安全设置，私密 ICS 地址仅在设置表单中输入。",
         "    2. 【设置页配置】或者点开下方链接卡在「设置 → 账号连接 → 个人日程与收件箱」里粘贴订阅地址。",
         "  - 回复末尾请附上独立一行的链接卡：",
         "    [打开账号连接](/settings/connected-accounts)",
@@ -547,16 +562,18 @@ function overviewReport(
 ): string {
   const emailStatus = builtin?.email?.connected
     ? `已连接（${builtin.email.email ?? "邮箱"}）`
-    : "未连接（支持对话内直接发邮箱+授权码由我调用 `email_connect` 代连，或在「设置 → 账号连接」连接）";
+    : "未连接（调用 email_connect 打开「设置 → 账号连接」，在安全表单输入授权码）";
   const calStatus = builtin?.calendar?.connected
     ? `已连接（${builtin.calendar.label ?? "我的日历"}，${builtin.calendar.eventCount ?? 0} 个日程）`
-    : "未连接（支持直接发 iCal/ICS 链接由我调用 `calendar_connect` 代连，或在「设置 → 账号连接」连接）";
+    : "未连接（调用 calendar_connect 打开「设置 → 账号连接」，在安全表单输入私密地址）";
   const ghStatus = builtin?.github?.connected
     ? `已连接（@${builtin.github.login ?? "github"}）`
     : "未连接（对话里点 [连接 GitHub](/settings/connected-accounts/github) 链接卡就地填令牌；也可在「设置 → 账号连接」填）";
 
   const addedIds = new Set(servers.map((s) => s.id));
-  const unaddedCatalogue = CATALOGUE.filter((entry) => !addedIds.has(entry.key));
+  const unaddedCatalogue = CATALOGUE.filter(
+    (entry) => !addedIds.has(entry.key),
+  );
 
   const sections: string[] = [
     "【当前部署连接器全景】",
@@ -577,7 +594,9 @@ function overviewReport(
         .join("\n"),
     );
   } else {
-    sections.push("二、已启用的 MCP / 第三方连接器：\n- 当前暂未启用额外的 MCP 连接器。");
+    sections.push(
+      "二、已启用的 MCP / 第三方连接器：\n- 当前暂未启用额外的 MCP 连接器。",
+    );
   }
 
   if (unaddedCatalogue.length > 0) {
@@ -690,7 +709,10 @@ function report(
     );
 
     if (matched.length === 0) {
-      sections.push("怎么接进来：", customMcpNote(options.offerMcpAdd === true));
+      sections.push(
+        "怎么接进来：",
+        customMcpNote(options.offerMcpAdd === true),
+      );
     }
   }
 
@@ -715,15 +737,27 @@ const mcpAddInput = z.object({
     .min(1)
     .max(40)
     .describe("服务器标识：小写字母、数字、连字符，例如 ima-knowledge"),
-  title: z.string().trim().min(1).max(60).describe("显示名，例如「腾讯 ima 知识库」"),
-  url: z.string().trim().min(1).max(500).describe("Streamable HTTP 端点地址，必须 https"),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(60)
+    .describe("显示名，例如「腾讯 ima 知识库」"),
+  url: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .describe("Streamable HTTP 端点地址，必须 https"),
   credentialId: z
     .string()
     .trim()
     .min(1)
     .max(120)
     .optional()
-    .describe("部署里已存在的凭证 id；一般留空，用户稍后在插件页填 token 更稳妥"),
+    .describe(
+      "部署里已存在的凭证 id；一般留空，用户稍后在插件页填 token 更稳妥",
+    ),
 });
 
 function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
@@ -736,7 +770,9 @@ function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
     prepareConfirm: async (input) => {
       const parsed = mcpAddInput.safeParse(input);
       if (!parsed.success) {
-        return { skip: `mcp_add 需要 id、title、url 参数：${parsed.error.issues[0]?.message ?? ""}` };
+        return {
+          skip: `mcp_add 需要 id、title、url 参数：${parsed.error.issues[0]?.message ?? ""}`,
+        };
       }
       const { id, title, url, credentialId } = parsed.data;
       const refusal = customUrlRefusal(url);
@@ -776,7 +812,9 @@ function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
       }
       // 工具列表是构建时的快照；真正写入前按当时身份再问一次。
       const permission = options.canAutoEnable
-        ? await options.canAutoEnable().catch(() => ({ allowed: false, by: "" }))
+        ? await options
+            .canAutoEnable()
+            .catch(() => ({ allowed: false, by: "" }))
         : { allowed: false, by: "" };
       if (!permission.allowed) {
         return `${REFUSAL_MARKER} 只有管理员能在对话里添加 MCP 服务器。`;
@@ -801,13 +839,20 @@ function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
             continue;
           }
           try {
-            await options.store.grant("mcp", tool.ref, options.botId, permission.by);
+            await options.store.grant(
+              "mcp",
+              tool.ref,
+              options.botId,
+              permission.by,
+            );
             held.add(tool.name);
           } catch {
             // 单个授权失败不撤销已完成的添加；结果里如实报数量。
           }
         }
-        const blocked = server.tools.filter((tool) => tool.destructive).map((tool) => tool.name);
+        const blocked = server.tools
+          .filter((tool) => tool.destructive)
+          .map((tool) => tool.name);
         return [
           `已添加 MCP 服务器「${server.title}」（${server.url}）。`,
           server.tools.length === 0
@@ -826,7 +871,10 @@ function mcpAddTool(options: ConnectServiceOptions): GrantedTool {
           .filter(Boolean)
           .join("\n");
       } catch (error) {
-        if (error instanceof CustomServerRefusedError || error instanceof CatalogueEntryUnknownError) {
+        if (
+          error instanceof CustomServerRefusedError ||
+          error instanceof CatalogueEntryUnknownError
+        ) {
           return `${REFUSAL_MARKER} ${error.message}`;
         }
         if (isDeploymentFault(error)) {

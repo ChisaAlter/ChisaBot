@@ -1,0 +1,10 @@
+[Unit]
+Description=Prepare isolated ChisaBot account runtimes
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/node /opt/chisabot-updater/accounts.mjs reconcile /etc/chisabot/dsh-accounts.json
+TimeoutStartSec=300

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
+import type { AppVariables } from "../src/auth/guards";
 import type { ComputerGateway } from "../src/computer/gateway";
 import type { PolicyStore } from "../src/computer/policy-store";
 import { createComputerRoutes } from "../src/computer/routes";
-import type { AppVariables } from "../src/auth/guards";
-import type { MiddlewareHandler } from "hono";
 
 /**
  * A person's own mouse and keyboard, shaped before it travels.

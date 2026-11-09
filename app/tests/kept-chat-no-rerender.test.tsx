@@ -5,7 +5,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { memo } from "react";
 import { KeepAliveStage } from "@/components/layout/keep-alive";
-import { useThreadActivity } from "@/lib/copilot/thread-activity";
+import { useThreadActivity } from "@/lib/conversations/thread-activity";
 import { useKeptVisibility } from "@/lib/kept-visible";
 import { settleReactWork } from "./settle-react-work";
 
@@ -152,7 +152,7 @@ for (const how of [
 test("thread-activity 只订阅可见性，不读会让整段聊天重画的 KeptVisibleContext", () => {
   // 真渲染的重画计数在 kept-chat-real-render.test.tsx；这里只防有人把订阅换回 context。
   const activity = readFileSync(
-    join(import.meta.dir, "../src/lib/copilot/thread-activity.ts"),
+    join(import.meta.dir, "../src/lib/conversations/thread-activity.ts"),
     "utf8",
   );
   expect(activity).toContain("useKeptVisibility()");

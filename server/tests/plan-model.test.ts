@@ -6,7 +6,7 @@ import {
   planMessages,
   planModelForEnvironment,
 } from "../src/agents/plan-model";
-import { buildAgents } from "../src/copilot";
+import { buildAgents } from "../src/conversation-runtime";
 
 test("a plan-only built-in keeps its identity and instructions", async () => {
   const requests: Record<string, unknown>[] = [];
@@ -299,8 +299,8 @@ test("the original built-in executes its granted tool and sends the actual match
       }),
     );
     expect(requests[0]?.forwardedProps).toEqual({
-      openbotModelOnly: true,
-      openbotBotId: "knowledge",
+      chisabotModelOnly: true,
+      chisabotBotId: "knowledge",
     });
     expect(agent.messages.at(-1)).toMatchObject({
       content: "Policy 42 [source].",

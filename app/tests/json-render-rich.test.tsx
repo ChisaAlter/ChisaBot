@@ -1,8 +1,19 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import {
+  createStateStore,
+  JSONUIProvider,
+  Renderer,
+  type Spec,
+} from "@json-render/react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { createStateStore, JSONUIProvider, Renderer, type Spec } from "@json-render/react";
-import { inspectRenderUiSpec } from "../../shared/json-render/catalog";
 import {
   canTween,
   countdownParts,
@@ -22,7 +33,8 @@ import {
   shortNumber,
   toNumber,
   trendOfText,
-} from "@/lib/copilot/json-render/rich-utils";
+} from "@/lib/conversations/json-render/rich-utils";
+import { inspectRenderUiSpec } from "../../shared/json-render/catalog";
 import { settleReactWork } from "./settle-react-work";
 
 /** 富组件（DESIGN.md §29）：纯函数 + 用真实注册表把每个新组件画一遍。 */
@@ -38,7 +50,13 @@ describe("rich-utils", () => {
 
   test("display values split into prefix / number / suffix and format back the same way", () => {
     const price = parseNumeric("$81,272");
-    expect(price).toMatchObject({ prefix: "$", value: 81272, grouped: true, suffix: "", decimals: 0 });
+    expect(price).toMatchObject({
+      prefix: "$",
+      value: 81272,
+      grouped: true,
+      suffix: "",
+      decimals: 0,
+    });
     expect(formatLike(80123.4, price!)).toBe("$80,123");
     const temp = parseNumeric("26.9℃");
     expect(formatLike(27.25, temp!)).toBe("27.3℃");
@@ -48,11 +66,18 @@ describe("rich-utils", () => {
     expect(parseNumeric("31°/24°")).toBeNull();
     expect(parseNumeric("10月13日")).toBeNull();
     expect(canTween(parseNumeric("$1,000"), parseNumeric("$1,200"))).toBe(true);
-    expect(canTween(parseNumeric("1,000 USD"), parseNumeric("$1,200"))).toBe(false);
+    expect(canTween(parseNumeric("1,000 USD"), parseNumeric("$1,200"))).toBe(
+      false,
+    );
   });
 
   test("monotone path passes through every point and never overshoots", () => {
-    const d = monotonePath([{ x: 0, y: 10 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 10 }]);
+    const d = monotonePath([
+      { x: 0, y: 10 },
+      { x: 10, y: 0 },
+      { x: 20, y: 0 },
+      { x: 30, y: 10 },
+    ]);
     expect(d.startsWith("M0,10C")).toBe(true);
     expect(d.endsWith("30,10")).toBe(true);
     // flat segment between two equal points stays flat: control points keep y = 0
@@ -77,7 +102,13 @@ describe("rich-utils", () => {
     expect(relativeTime("2026-10-13T09:57:00+08:00", now)).toBe("3 分钟前");
     expect(relativeTime("2026-10-13T12:00:00+08:00", now)).toBe("2 小时后");
     expect(relativeTime("2026-10-13T09:59:50+08:00", now)).toBe("刚刚");
-    expect(countdownParts("2026-10-14T11:02:03+08:00", now)).toMatchObject({ days: 1, hours: 1, minutes: 2, seconds: 3, done: false });
+    expect(countdownParts("2026-10-14T11:02:03+08:00", now)).toMatchObject({
+      days: 1,
+      hours: 1,
+      minutes: 2,
+      seconds: 3,
+      done: false,
+    });
     expect(countdownParts("2026-10-12T00:00:00+08:00", now)?.done).toBe(true);
     expect(countdownParts("下周五", now)).toBeNull();
   });
@@ -125,7 +156,11 @@ describe("initials (Avatar / List / Products 共用)", () => {
     expect(initials("e\u0301cole x")).toBe("E\u0301X");
     for (const name of ["🎧 降噪耳机", "😀😀", "🇨🇳 China", "𠀋字"]) {
       const out = initials(name);
-      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out)).toBe(false);
+      expect(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+          out,
+        ),
+      ).toBe(false);
       expect(out).not.toContain("\uFFFD");
     }
     expect(initials("𠀋字")).toBe("𠀋");
@@ -135,7 +170,8 @@ describe("initials (Avatar / List / Products 共用)", () => {
     expect(initials("ß straße")).toBe("ßS");
     expect(initials("straße ß")).toBe("Sß");
     expect(initials("ǆemal x")).toBe("ǄX");
-    for (const name of ["ß straße", "ﬁsh ﬂy", "ŉ x"]) expect(Array.from(initials(name)).length).toBeLessThanOrEqual(2);
+    for (const name of ["ß straße", "ﬁsh ﬂy", "ŉ x"])
+      expect(Array.from(initials(name)).length).toBeLessThanOrEqual(2);
   });
 
   test("a leading digit is kept, followed by the letter right after it", () => {
@@ -147,7 +183,8 @@ describe("initials (Avatar / List / Products 共用)", () => {
   });
 
   test("empty or all-symbol names give an empty string, never 「?」", () => {
-    for (const name of ["", "   ", "🎧", "【】", "!!!", "★☆", "— · —"]) expect(initials(name)).toBe("");
+    for (const name of ["", "   ", "🎧", "【】", "!!!", "★☆", "— · —"])
+      expect(initials(name)).toBe("");
   });
 });
 
@@ -162,19 +199,25 @@ describe("rich components render", () => {
   });
   afterEach(() => cleanup());
   afterAll(async () => {
-  await settleReactWork();
-  GlobalRegistrator.unregister();
-});
+    await settleReactWork();
+    GlobalRegistrator.unregister();
+  });
 
   async function draw(spec: Record<string, unknown>) {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
+    const { jsonRenderRegistry } = await import(
+      "@/lib/conversations/json-render/registry"
+    );
     const verdict = inspectRenderUiSpec(JSON.stringify(spec));
     expect(verdict.ok).toBe(true);
     const safe = verdict.ok ? verdict.spec : (spec as unknown as Spec);
     const store = createStateStore({});
     return render(
       <div className="jr-surface">
-        <JSONUIProvider handlers={{}} registry={jsonRenderRegistry} store={store}>
+        <JSONUIProvider
+          handlers={{}}
+          registry={jsonRenderRegistry}
+          store={store}
+        >
           <Renderer registry={jsonRenderRegistry} spec={safe as Spec} />
         </JSONUIProvider>
       </div>,
@@ -185,37 +228,192 @@ describe("rich components render", () => {
     const view = await draw({
       root: "r",
       elements: {
-        r: { type: "Stack", props: {}, children: ["hero", "m", "chart", "bar", "ring", "gauge", "heat", "tl", "kv", "cd", "st", "dl", "av", "ln", "sep", "list"] },
-        hero: { type: "Hero", props: { title: "多云", value: "26.9℃", eyebrow: "香港 · 现在", tone: "info" }, children: [] },
-        m: { type: "Metric", props: { label: "现价", value: "$81,272", delta: "24h -3.1%", trend: "down", spark: [3, 2, 1], variant: "tinted", icon: "currency-bitcoin" }, children: [] },
-        chart: { type: "Chart", props: { labels: ["10/12", "10/13"], data: [1, 2], unit: "$" }, children: [] },
-        bar: { type: "Chart", props: { kind: "bar", labels: ["a", "b", "c"], series: [{ name: "x", data: [1, 2, 3] }, { name: "y", data: [3, 2, 1] }] }, children: [] },
-        ring: { type: "Ring", props: { value: 42, label: "CPU" }, children: [] },
-        gauge: { type: "Gauge", props: { value: 95, dangerAt: 90, unit: "%" }, children: [] },
-        heat: { type: "HeatStrip", props: { values: [0, 1, 2, 3], label: "提交" }, children: [] },
-        tl: { type: "Timeline", props: { items: [{ title: "已发货", time: "10/13 08:00" }, { title: "已签收" }] }, children: [] },
-        kv: { type: "KeyValue", props: { items: [{ label: "IP", value: "10.0.0.8", mono: true, copy: "10.0.0.8" }] }, children: [] },
-        cd: { type: "Countdown", props: { target: "2099-01-01T00:00:00+08:00", label: "距离" }, children: [] },
-        st: { type: "Status", props: { label: "官网", tone: "success", pulse: true, detail: "200 · 85ms" }, children: [] },
-        dl: { type: "Delta", props: { value: "+3.2%", label: "24h" }, children: [] },
-        av: { type: "Avatar", props: { name: "owner/repo", shape: "square", href: "https://github.com/owner/repo" }, children: [] },
-        ln: { type: "Link", props: { url: "https://www.reuters.com/x", title: "标题", meta: "2 小时前" }, children: [] },
+        r: {
+          type: "Stack",
+          props: {},
+          children: [
+            "hero",
+            "m",
+            "chart",
+            "bar",
+            "ring",
+            "gauge",
+            "heat",
+            "tl",
+            "kv",
+            "cd",
+            "st",
+            "dl",
+            "av",
+            "ln",
+            "sep",
+            "list",
+          ],
+        },
+        hero: {
+          type: "Hero",
+          props: {
+            title: "多云",
+            value: "26.9℃",
+            eyebrow: "香港 · 现在",
+            tone: "info",
+          },
+          children: [],
+        },
+        m: {
+          type: "Metric",
+          props: {
+            label: "现价",
+            value: "$81,272",
+            delta: "24h -3.1%",
+            trend: "down",
+            spark: [3, 2, 1],
+            variant: "tinted",
+            icon: "currency-bitcoin",
+          },
+          children: [],
+        },
+        chart: {
+          type: "Chart",
+          props: { labels: ["10/12", "10/13"], data: [1, 2], unit: "$" },
+          children: [],
+        },
+        bar: {
+          type: "Chart",
+          props: {
+            kind: "bar",
+            labels: ["a", "b", "c"],
+            series: [
+              { name: "x", data: [1, 2, 3] },
+              { name: "y", data: [3, 2, 1] },
+            ],
+          },
+          children: [],
+        },
+        ring: {
+          type: "Ring",
+          props: { value: 42, label: "CPU" },
+          children: [],
+        },
+        gauge: {
+          type: "Gauge",
+          props: { value: 95, dangerAt: 90, unit: "%" },
+          children: [],
+        },
+        heat: {
+          type: "HeatStrip",
+          props: { values: [0, 1, 2, 3], label: "提交" },
+          children: [],
+        },
+        tl: {
+          type: "Timeline",
+          props: {
+            items: [
+              { title: "已发货", time: "10/13 08:00" },
+              { title: "已签收" },
+            ],
+          },
+          children: [],
+        },
+        kv: {
+          type: "KeyValue",
+          props: {
+            items: [
+              { label: "IP", value: "10.0.0.8", mono: true, copy: "10.0.0.8" },
+            ],
+          },
+          children: [],
+        },
+        cd: {
+          type: "Countdown",
+          props: { target: "2099-01-01T00:00:00+08:00", label: "距离" },
+          children: [],
+        },
+        st: {
+          type: "Status",
+          props: {
+            label: "官网",
+            tone: "success",
+            pulse: true,
+            detail: "200 · 85ms",
+          },
+          children: [],
+        },
+        dl: {
+          type: "Delta",
+          props: { value: "+3.2%", label: "24h" },
+          children: [],
+        },
+        av: {
+          type: "Avatar",
+          props: {
+            name: "owner/repo",
+            shape: "square",
+            href: "https://github.com/owner/repo",
+          },
+          children: [],
+        },
+        ln: {
+          type: "Link",
+          props: {
+            url: "https://www.reuters.com/x",
+            title: "标题",
+            meta: "2 小时前",
+          },
+          children: [],
+        },
         sep: { type: "Separator", props: { label: "更早" }, children: [] },
-        list: { type: "List", props: { items: [{ title: "新闻一", href: "https://news.test/1", time: "2026-10-13T08:00:00Z", badge: "新" }] }, children: [] },
+        list: {
+          type: "List",
+          props: {
+            items: [
+              {
+                title: "新闻一",
+                href: "https://news.test/1",
+                time: "2026-10-13T08:00:00Z",
+                badge: "新",
+              },
+            ],
+          },
+          children: [],
+        },
       },
     });
     const { container } = view;
-    for (const selector of [".jr-hero", ".jr-metric.is-tinted", ".jr-spark", ".jr-chart svg", ".jr-bars .jr-bar", ".jr-ring-arc", ".jr-gauge-arc", ".jr-heat-cell.is-l4", ".jr-tl-item", ".jr-kv-row", ".jr-countdown-u", ".jr-dot.is-pulse", ".jr-delta", ".jr-avatar-face", ".lc-card", ".jr-sep-l"]) {
+    for (const selector of [
+      ".jr-hero",
+      ".jr-metric.is-tinted",
+      ".jr-spark",
+      ".jr-chart svg",
+      ".jr-bars .jr-bar",
+      ".jr-ring-arc",
+      ".jr-gauge-arc",
+      ".jr-heat-cell.is-l4",
+      ".jr-tl-item",
+      ".jr-kv-row",
+      ".jr-countdown-u",
+      ".jr-dot.is-pulse",
+      ".jr-delta",
+      ".jr-avatar-face",
+      ".lc-card",
+      ".jr-sep-l",
+    ]) {
       expect(container.querySelector(selector)).not.toBeNull();
     }
     expect(container.textContent).toContain("多云");
     expect(container.textContent).toContain("reuters.com");
     // Gauge past dangerAt turns red
-    expect(container.querySelector(".jr-gauge")?.className).toContain("jr-tone-danger");
+    expect(container.querySelector(".jr-gauge")?.className).toContain(
+      "jr-tone-danger",
+    );
     // delta chip on the metric is a down chip
-    expect(container.querySelector(".jr-metric .jr-delta-chip")?.className).toContain("jr-tone-danger");
+    expect(
+      container.querySelector(".jr-metric .jr-delta-chip")?.className,
+    ).toContain("jr-tone-danger");
     // links open in a new tab with noopener and show ↗
-    const link = container.querySelector<HTMLAnchorElement>(".jr-list-row.jr-action");
+    const link = container.querySelector<HTMLAnchorElement>(
+      ".jr-list-row.jr-action",
+    );
     expect(link?.getAttribute("target")).toBe("_blank");
     expect(link?.getAttribute("rel")).toContain("noopener");
     expect(container.querySelector(".jr-list-go")).not.toBeNull();
@@ -225,9 +423,23 @@ describe("rich components render", () => {
     const { container } = await draw({
       root: "c",
       elements: {
-        c: { type: "Card", props: { title: "500 元内降噪耳机", icon: "no-such-icon" }, children: ["a", "b"] },
-        a: { type: "List", props: { items: [{ title: "华为 FreeBuds 6i", icon: "no-such-icon" }] }, children: [] },
-        b: { type: "List", props: { items: [{ title: "Anker Soundcore Q30", icon: "info" }] }, children: [] },
+        c: {
+          type: "Card",
+          props: { title: "500 元内降噪耳机", icon: "no-such-icon" },
+          children: ["a", "b"],
+        },
+        a: {
+          type: "List",
+          props: {
+            items: [{ title: "华为 FreeBuds 6i", icon: "no-such-icon" }],
+          },
+          children: [],
+        },
+        b: {
+          type: "List",
+          props: { items: [{ title: "Anker Soundcore Q30", icon: "info" }] },
+          children: [],
+        },
       },
     });
     expect(container.querySelector(".jr-card-ic")).toBeNull();
@@ -245,7 +457,11 @@ describe("rich components render", () => {
           type: "List",
           props: {
             items: [
-              { title: "华为 FreeBuds 6i", description: "无图，icon 认不出", icon: "headphones-anc" },
+              {
+                title: "华为 FreeBuds 6i",
+                description: "无图，icon 认不出",
+                icon: "headphones-anc",
+              },
               { title: "Anker Soundcore Q30", description: "无图无 icon" },
               { title: "能认出的图标", icon: "news" },
             ],
@@ -261,24 +477,41 @@ describe("rich components render", () => {
     expect(rows[1]!.querySelector(".jr-list-ic, .jr-list-thumb")).toBeNull();
     // a known icon still draws its tinted tile, and every drawn tile has an svg in it
     expect(rows[2]!.querySelector(".jr-list-ic svg")).not.toBeNull();
-    for (const tile of container.querySelectorAll(".jr-list-ic")) expect(tile.childElementCount).toBeGreaterThan(0);
+    for (const tile of container.querySelectorAll(".jr-list-ic"))
+      expect(tile.childElementCount).toBeGreaterThan(0);
   });
 
   test("List item image that fails to load falls back to the initial, like Avatar (0.1.108 #11)", async () => {
     const { container } = await draw({
       root: "l",
       elements: {
-        l: { type: "List", props: { items: [{ title: "Redmi Buds 6 Pro", image: "https://img.test/broken.png", icon: "headphones-anc" }] }, children: [] },
+        l: {
+          type: "List",
+          props: {
+            items: [
+              {
+                title: "Redmi Buds 6 Pro",
+                image: "https://img.test/broken.png",
+                icon: "headphones-anc",
+              },
+            ],
+          },
+          children: [],
+        },
       },
     });
     const img = container.querySelector<HTMLImageElement>(".jr-list-thumb img");
     expect(img).not.toBeNull();
-    expect(container.querySelector("[data-testid=jr-list-fallback]")).toBeNull();
+    expect(
+      container.querySelector("[data-testid=jr-list-fallback]"),
+    ).toBeNull();
     await act(async () => {
       fireEvent.error(img!);
     });
     expect(container.querySelector(".jr-list-thumb img")).toBeNull();
-    const ph = container.querySelector<HTMLElement>(".jr-list-thumb [data-testid=jr-list-fallback]");
+    const ph = container.querySelector<HTMLElement>(
+      ".jr-list-thumb [data-testid=jr-list-fallback]",
+    );
     expect(ph?.textContent).toBe("RB");
     expect(ph?.style.getPropertyValue("--jr-hue")).not.toBe("");
   });
@@ -291,10 +524,18 @@ describe("rich components render", () => {
         a1: { type: "Avatar", props: { name: "🎧 降噪耳机" }, children: [] },
         a2: { type: "Avatar", props: { name: "" }, children: [] },
         a3: { type: "Avatar", props: { name: "Ada Lovelace" }, children: [] },
-        l: { type: "List", props: { items: [{ title: "🎧", image: "https://img.test/broken.png" }] }, children: [] },
+        l: {
+          type: "List",
+          props: {
+            items: [{ title: "🎧", image: "https://img.test/broken.png" }],
+          },
+          children: [],
+        },
       },
     });
-    const faces = [...container.querySelectorAll<HTMLElement>(".jr-avatar-face")];
+    const faces = [
+      ...container.querySelectorAll<HTMLElement>(".jr-avatar-face"),
+    ];
     expect(faces.map((f) => f.textContent)).toEqual(["降", "", "AL"]);
     expect(faces[0]?.hasAttribute("data-empty")).toBe(false);
     expect(faces[1]?.hasAttribute("data-empty")).toBe(true);
@@ -305,7 +546,9 @@ describe("rich components render", () => {
     await act(async () => {
       fireEvent.error(img!);
     });
-    const ph = container.querySelector<HTMLElement>("[data-testid=jr-list-fallback]");
+    const ph = container.querySelector<HTMLElement>(
+      "[data-testid=jr-list-fallback]",
+    );
     expect(ph?.hasAttribute("data-empty")).toBe(true);
     expect(ph?.querySelector("[data-testid=jr-ph-glyph]")).not.toBeNull();
   });
@@ -318,8 +561,19 @@ describe("rich components render", () => {
           type: "Products",
           props: {
             items: [
-              { name: "索尼 WH-1000XM6", price: "¥2,999", note: "降噪最强", badge: "首选", url: "https://www.sony.com.cn/headphones", source: "官网" },
-              { name: "Bose QC Ultra", price: "¥2,499", url: "https://www.bose.cn/qc" },
+              {
+                name: "索尼 WH-1000XM6",
+                price: "¥2,999",
+                note: "降噪最强",
+                badge: "首选",
+                url: "https://www.sony.com.cn/headphones",
+                source: "官网",
+              },
+              {
+                name: "Bose QC Ultra",
+                price: "¥2,499",
+                url: "https://www.bose.cn/qc",
+              },
               { name: "没有链接的那款" },
             ],
           },
@@ -329,15 +583,23 @@ describe("rich components render", () => {
     });
     const cards = container.querySelectorAll(".jr-product");
     expect(cards.length).toBe(3);
-    expect(container.querySelector<HTMLElement>(".jr-products")?.style.getPropertyValue("--jr-cols")).toBe("3");
+    expect(
+      container
+        .querySelector<HTMLElement>(".jr-products")
+        ?.style.getPropertyValue("--jr-cols"),
+    ).toBe("3");
     expect(container.querySelectorAll(".jr-product-media").length).toBe(3);
-    expect(container.querySelector(".jr-product-badge")?.textContent).toBe("首选");
+    expect(container.querySelector(".jr-product-badge")?.textContent).toBe(
+      "首选",
+    );
     expect(container.textContent).toContain("¥2,999");
     expect(container.textContent).toContain("官网");
     expect(container.textContent).toContain("bose.cn");
     const link = container.querySelector<HTMLAnchorElement>("a.jr-product-a");
     expect(link?.getAttribute("target")).toBe("_blank");
-    expect(link?.getAttribute("href")).toBe("https://www.sony.com.cn/headphones");
+    expect(link?.getAttribute("href")).toBe(
+      "https://www.sony.com.cn/headphones",
+    );
     // the card without a url is not a link, and never shows a broken image
     expect(container.querySelectorAll("a.jr-product-a").length).toBe(2);
     expect(container.querySelector('img[src=""]')).toBeNull();
@@ -348,7 +610,11 @@ describe("rich components render", () => {
       root: "r",
       elements: {
         r: { type: "Stack", props: {}, children: ["tabs", "acc"] },
-        tabs: { type: "Tabs", props: { tabs: ["今天", "本周"] }, children: ["a", "b"] },
+        tabs: {
+          type: "Tabs",
+          props: { tabs: ["今天", "本周"] },
+          children: ["a", "b"],
+        },
         a: { type: "Text", props: { text: "今天的内容" }, children: [] },
         b: { type: "Text", props: { text: "本周的内容" }, children: [] },
         acc: { type: "Accordion", props: { title: "详情" }, children: ["c"] },
@@ -366,9 +632,16 @@ describe("rich components render", () => {
   });
 
   test("a changed value flashes and keeps the same element (refresh updates in place)", async () => {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
+    const { jsonRenderRegistry } = await import(
+      "@/lib/conversations/json-render/registry"
+    );
     const spec = (value: string) =>
-      ({ root: "m", elements: { m: { type: "Metric", props: { label: "现价", value }, children: [] } } }) as unknown as Spec;
+      ({
+        root: "m",
+        elements: {
+          m: { type: "Metric", props: { label: "现价", value }, children: [] },
+        },
+      }) as unknown as Spec;
     const store = createStateStore({});
     const tree = (value: string) => (
       <JSONUIProvider handlers={{}} registry={jsonRenderRegistry} store={store}>
@@ -389,15 +662,33 @@ describe("rich components render", () => {
     root: "r",
     elements: {
       r: { type: "Stack", props: {}, children: ["word", "page", "more"] },
-      word: { type: "Button", props: { label: "Word 文档", ask: "用 Word", choice: true }, children: [] },
-      page: { type: "Button", props: { label: "在线页面", ask: "做成页面", choice: true }, children: [] },
-      more: { type: "Button", props: { label: "先说说区别", ask: "两种有什么区别", variant: "ghost" }, children: [] },
+      word: {
+        type: "Button",
+        props: { label: "Word 文档", ask: "用 Word", choice: true },
+        children: [],
+      },
+      page: {
+        type: "Button",
+        props: { label: "在线页面", ask: "做成页面", choice: true },
+        children: [],
+      },
+      more: {
+        type: "Button",
+        props: { label: "先说说区别", ask: "两种有什么区别", variant: "ghost" },
+        children: [],
+      },
     },
   };
 
-  async function drawChoices(options: { initial?: string | null; panel?: boolean } = {}) {
-    const { jsonRenderRegistry } = await import("@/lib/copilot/json-render/registry");
-    const { ChoiceProvider, RichUiProvider, choiceOptionsOf } = await import("@/lib/copilot/json-render/rich-context");
+  async function drawChoices(
+    options: { initial?: string | null; panel?: boolean } = {},
+  ) {
+    const { jsonRenderRegistry } = await import(
+      "@/lib/conversations/json-render/registry"
+    );
+    const { ChoiceProvider, RichUiProvider, choiceOptionsOf } = await import(
+      "@/lib/conversations/json-render/rich-context"
+    );
     const verdict = inspectRenderUiSpec(JSON.stringify(choiceSpec));
     expect(verdict.ok).toBe(true);
     const safe = (verdict.ok ? verdict.spec : choiceSpec) as Spec;
@@ -406,25 +697,35 @@ describe("rich components render", () => {
       said.push(text);
     };
     const tree = (
-      <JSONUIProvider handlers={{}} registry={jsonRenderRegistry} store={createStateStore({})}>
+      <JSONUIProvider
+        handlers={{}}
+        registry={jsonRenderRegistry}
+        store={createStateStore({})}
+      >
         <Renderer registry={jsonRenderRegistry} spec={safe} />
       </JSONUIProvider>
     );
     const view = render(
-      <RichUiProvider value={{ surface: options.panel ? "panel" : "chat", ask }}>
+      <RichUiProvider
+        value={{ surface: options.panel ? "panel" : "chat", ask }}
+      >
         {options.panel ? (
           tree
         ) : (
-          <ChoiceProvider ask={ask} initial={options.initial ?? null} options={choiceOptionsOf(safe.elements as never)}>
+          <ChoiceProvider
+            ask={ask}
+            initial={options.initial ?? null}
+            options={choiceOptionsOf(safe.elements as never)}
+          >
             {tree}
           </ChoiceProvider>
         )}
       </RichUiProvider>,
     );
     const button = (label: string) => {
-      const found = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
-        b.textContent?.includes(label),
-      );
+      const found = [
+        ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((b) => b.textContent?.includes(label));
       if (!found) throw new Error(`没有找到按钮「${label}」`);
       return found;
     };
@@ -492,7 +793,9 @@ describe("rich components render", () => {
   });
 
   test("a chat surface with text outside any Card becomes the shell itself (DESIGN.md §29)", async () => {
-    const { JsonRenderSurface } = await import("@/lib/copilot/json-render-surface");
+    const { JsonRenderSurface } = await import(
+      "@/lib/conversations/json-render-surface"
+    );
     const checked = (raw: Record<string, unknown>) => {
       const verdict = inspectRenderUiSpec(JSON.stringify(raw));
       expect(verdict.ok).toBe(true);
@@ -508,10 +811,16 @@ describe("rich components render", () => {
         at: { type: "Text", props: { text: "快" }, children: [] },
         b: { type: "Card", props: { title: "方案 B" }, children: ["bt"] },
         bt: { type: "Text", props: { text: "省" }, children: [] },
-        note: { type: "Text", props: { text: "数值越大越好", tone: "muted", size: "sm" }, children: [] },
+        note: {
+          type: "Text",
+          props: { text: "数值越大越好", tone: "muted", size: "sm" },
+          children: [],
+        },
       },
     });
-    const shelled = render(<JsonRenderSurface spec={compare} streaming={false} />).container.querySelector(".jr-surface");
+    const shelled = render(
+      <JsonRenderSurface spec={compare} streaming={false} />,
+    ).container.querySelector(".jr-surface");
     expect(shelled?.classList.contains("jr-card")).toBe(true);
     // 里面两张卡片照常画（样式上按嵌套卡片平铺成小节）。
     expect(shelled?.querySelectorAll(".jr-card")).toHaveLength(2);
@@ -524,7 +833,9 @@ describe("rich components render", () => {
         t: { type: "Text", props: { text: "说明" }, children: [] },
       },
     });
-    const plain = render(<JsonRenderSurface spec={carded} streaming={false} />).container.querySelector(".jr-surface");
+    const plain = render(
+      <JsonRenderSurface spec={carded} streaming={false} />,
+    ).container.querySelector(".jr-surface");
     expect(plain?.classList.contains("jr-card")).toBe(false);
   });
 });

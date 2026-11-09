@@ -140,7 +140,7 @@ describe("history_recover", () => {
     expect(tool?.name).toBe("history_recover");
     const text = await tool?.execute({ id: "a2" });
     expect(text).toContain("第二轮的回答");
-    expect(queries[0]).toContain("openbot_local_threads");
+    expect(queries[0]).toContain("chisabot_local_threads");
     expect(queries[0]).toContain("thread-9");
     expect(await tool?.execute({})).toContain(REFUSAL_MARKER);
     // 线程不存在 / 还没有历史：明确的话，不抛异常。

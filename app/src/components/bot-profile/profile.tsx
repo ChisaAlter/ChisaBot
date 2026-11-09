@@ -10,7 +10,11 @@ import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { BotProfileForm } from "@/components/agents/bot-profile-form";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
-import { PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import {
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,7 +26,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { runWithPageLoader } from "@/components/ui/page-loader";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import type { AgentProfile } from "@/lib/agents/queries";
@@ -39,8 +49,11 @@ import {
   botResetPlanQueryOptions,
   type ResetPlan,
 } from "@/lib/bot-lifecycle/queries";
-import { useOpenBotChat } from "@/lib/channels/open-bot-chat";
-import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { useBotChat } from "@/lib/channels/bot-chat";
+import {
+  agentModelQueryOptions,
+  modelCatalogQueryOptions,
+} from "@/lib/model-selection/queries";
 import { useMainBot } from "@/lib/settings/message-list";
 import { queryClient as sharedQueryClient } from "@/query-client";
 import { ActivityRow } from "./activity";
@@ -79,7 +92,9 @@ function resetLines(plan: ResetPlan): string[] {
     [plan.backgroundResearch, "项后台调研"],
     [plan.standingApprovals, "条长期授权"],
   ];
-  return lines.filter(([count]) => count > 0).map(([count, what]) => `${count} ${what}`);
+  return lines
+    .filter(([count]) => count > 0)
+    .map(([count, what]) => `${count} ${what}`);
 }
 
 function ResetDialog({
@@ -91,7 +106,10 @@ function ResetDialog({
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }) {
-  const plan = useQuery({ ...botResetPlanQueryOptions(agent.id), enabled: open });
+  const plan = useQuery({
+    ...botResetPlanQueryOptions(agent.id),
+    enabled: open,
+  });
   const reset = useMutation(resetBotMutationOptions(sharedQueryClient));
   const lines = plan.data ? resetLines(plan.data) : [];
   return (
@@ -129,7 +147,9 @@ function ResetDialog({
                   {`${plan.data.sharedConversationsKept} 个和别人共享的对话会保留。`}
                 </p>
               ) : null}
-              <p className="text-muted-foreground">{"你直接告诉它要记住的内容会保留。"}</p>
+              <p className="text-muted-foreground">
+                {"你直接告诉它要记住的内容会保留。"}
+              </p>
             </div>
           )}
           {reset.error ? (
@@ -139,7 +159,11 @@ function ResetDialog({
           ) : null}
         </DialogBody>
         <DialogFooter className="mt-4">
-          <Button onClick={() => onOpenChange(false)} size="sm" variant="outline">
+          <Button
+            onClick={() => onOpenChange(false)}
+            size="sm"
+            variant="outline"
+          >
             {"取消"}
           </Button>
           <Button
@@ -175,7 +199,8 @@ function StatusLine({ agent }: { agent: AgentProfile }) {
   const catalog = useQuery(modelCatalogQueryOptions());
   const modelId = model.data?.available ? model.data.model : null;
   const modelLabel = modelId
-    ? (catalog.data?.models.find((entry) => entry.id === modelId)?.label ?? modelId)
+    ? (catalog.data?.models.find((entry) => entry.id === modelId)?.label ??
+      modelId)
     : model.data && !model.data.available
       ? "外部机器人"
       : null;
@@ -188,7 +213,13 @@ function StatusLine({ agent }: { agent: AgentProfile }) {
         </span>
       ) : null}
       {paused === undefined ? null : (
-        <span className={paused ? "bp-status-item bp-state is-paused" : "bp-status-item bp-state"}>
+        <span
+          className={
+            paused
+              ? "bp-status-item bp-state is-paused"
+              : "bp-status-item bp-state"
+          }
+        >
           <span aria-hidden className="bp-state-dot" />
           {paused ? "已暂停" : "运行中"}
         </span>
@@ -225,7 +256,9 @@ export function IdentityCard({
     );
   }
 
-  const long = agent.roleDescription.length > 160 || agent.roleDescription.split("\n").length > 3;
+  const long =
+    agent.roleDescription.length > 160 ||
+    agent.roleDescription.split("\n").length > 3;
   return (
     <Card className="bp-card">
       <div className="bp-row">
@@ -238,9 +271,15 @@ export function IdentityCard({
       </div>
       <div className="bp-row is-block">
         <span className="bp-label">{"它做什么"}</span>
-        <p className={expanded || !long ? "bp-prompt" : "bp-prompt is-clamped"}>{agent.roleDescription}</p>
+        <p className={expanded || !long ? "bp-prompt" : "bp-prompt is-clamped"}>
+          {agent.roleDescription}
+        </p>
         {long ? (
-          <button className="bp-more" onClick={() => setExpanded((v) => !v)} type="button">
+          <button
+            className="bp-more"
+            onClick={() => setExpanded((v) => !v)}
+            type="button"
+          >
             {expanded ? "收起" : "展开全部"}
           </button>
         ) : null}
@@ -256,7 +295,9 @@ function RunCard({ agent }: { agent: AgentProfile }) {
   const notify = useMutation(setBotNotifyMutationOptions(sharedQueryClient));
   const [permission, setPermission] = useState<string>(() => {
     try {
-      return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+      return typeof Notification === "undefined"
+        ? "unsupported"
+        : Notification.permission;
     } catch {
       return "unsupported";
     }
@@ -269,7 +310,9 @@ function RunCard({ agent }: { agent: AgentProfile }) {
         </div>
       </SettingRow>
       {lifecycle.isPending ? (
-        <div className="bp-srow-skel"><PageSkeleton rows={2} /></div>
+        <div className="bp-srow-skel">
+          <PageSkeleton rows={2} />
+        </div>
       ) : lifecycle.error ? (
         <p className="bp-error px-5 py-4" role="alert">
           {"无法加载运行状态。"}
@@ -285,15 +328,22 @@ function RunCard({ agent }: { agent: AgentProfile }) {
               aria-label={"暂停"}
               checked={lifecycle.data.paused}
               disabled={pause.isPending}
-              onCheckedChange={(paused) => pause.mutate({ agentId: agent.id, paused })}
+              onCheckedChange={(paused) =>
+                pause.mutate({ agentId: agent.id, paused })
+              }
             />
           </SettingRow>
-          <SettingRow className="bp-srow" description={"左栏的角标始终显示。"} title={"通知"}>
+          <SettingRow
+            className="bp-srow"
+            description={"左栏的角标始终显示。"}
+            title={"通知"}
+          >
             <Select
               disabled={notify.isPending}
               items={NOTIFY_LABEL}
               onValueChange={(next) =>
-                next && notify.mutate({ agentId: agent.id, notify: next as BotNotify })
+                next &&
+                notify.mutate({ agentId: agent.id, notify: next as BotNotify })
               }
               value={lifecycle.data.notify}
             >
@@ -368,7 +418,7 @@ function TasksSection({ agentId }: { agentId: string }) {
 
 /** 机器人资料页。 */
 export function BotProfilePage({ agent }: { agent: AgentProfile }) {
-  const openBotChat = useOpenBotChat();
+  const openChat = useBotChat();
   const { mainBotId } = useMainBot();
   const isMain = mainBotId === agent.id;
   const [editing, setEditing] = useState(false);
@@ -382,7 +432,10 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
   const startEdit = () => {
     setEditing(true);
     requestAnimationFrame(() => {
-      identityRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      identityRef.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
       firstFieldRef.current?.focus();
     });
   };
@@ -391,12 +444,17 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     <PageShell
       action={
         <div className="bp-actions">
-          <Button onClick={() => void openBotChat(agent.id)} size="sm">
+          <Button onClick={() => void openChat(agent.id)} size="sm">
             <IconMessage />
             {"开始聊天"}
           </Button>
           {canEdit ? (
-            <Button disabled={editing} onClick={startEdit} size="sm" variant="outline">
+            <Button
+              disabled={editing}
+              onClick={startEdit}
+              size="sm"
+              variant="outline"
+            >
               <IconPencil />
               {"编辑"}
             </Button>
@@ -422,7 +480,14 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
       backButton={{ label: "机器人", linkProps: { to: "/bots" } }}
       className="bot-profile"
       description={<StatusLine agent={agent} />}
-      media={<AbstractAvatar agentId={agent.id} name={agent.name} seed={agent.avatarSeed} size={56} />}
+      media={
+        <AbstractAvatar
+          agentId={agent.id}
+          name={agent.name}
+          seed={agent.avatarSeed}
+          size={56}
+        />
+      }
       title={agent.name}
     >
       <div ref={identityRef}>

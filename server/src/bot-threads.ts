@@ -6,9 +6,9 @@ import type { Database } from "./db/client";
 /**
  * 全端同步（2026-10-13，DESIGN.md §42）：每个人和每个机器人的「当前对话」存在服务器上。
  *
- * 以前机器人聊天用哪条对话只记在浏览器的 localStorage 里（`openbot.bot-thread.<agentId>`），网页、装成应用的
+ * 以前机器人聊天用哪条对话只记在浏览器的 localStorage 里（`legacy bot-thread storage <agentId>`），网页、装成应用的
  * PWA、PC 客户端、安卓客户端各有各的 localStorage，于是同一个机器人在每台设备上都是另一段对话。对话本身
- * （openbot_local_threads / events）早就在服务器上、按人存，缺的只是「现在用的是哪一条」。
+ * （chisabot_local_threads / events）早就在服务器上、按人存，缺的只是「现在用的是哪一条」。
  *
  * - `GET  /api/bot-threads/:agentId`        → `{ threadId | null, updatedAt }`
  * - `PUT  /api/bot-threads/:agentId`        `{ threadId, onlyIfNone? }` → 设成当前对话（「新对话」/ 迁移）。
@@ -54,7 +54,13 @@ export function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content))
     return content
-      .map((part) => (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : ""))
+      .map((part) =>
+        part &&
+        typeof part === "object" &&
+        typeof (part as { text?: unknown }).text === "string"
+          ? (part as { text: string }).text
+          : "",
+      )
       .join(" ");
   return "";
 }
@@ -71,7 +77,10 @@ type CurrentRow = { thread_id: string; updated_at: Date | string };
 const iso = (value: Date | string | null | undefined) =>
   value ? new Date(value).toISOString() : null;
 
-export async function createBotThreads(database: Database, control?: BotThreadRunControl) {
+export async function createBotThreads(
+  database: Database,
+  control?: BotThreadRunControl,
+) {
   const sql = database.$client;
   await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_bot_threads (
     owner_user_id text NOT NULL, agent_id text NOT NULL, thread_id text NOT NULL,
@@ -85,25 +94,40 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
       [ownerUserId, agentId],
     );
     const row = rows[0];
-    return row ? { threadId: row.thread_id, updatedAt: iso(row.updated_at) } : null;
+    return row
+      ? { threadId: row.thread_id, updatedAt: iso(row.updated_at) }
+      : null;
   }
 
   /** 库里有这条对话时它必须是这个人、这个机器人的；没有（还没发过消息）也行。 */
-  async function mayUse(ownerUserId: string, agentId: string, threadId: string): Promise<boolean> {
+  async function mayUse(
+    ownerUserId: string,
+    agentId: string,
+    threadId: string,
+  ): Promise<boolean> {
     try {
-      const rows = await sql.unsafe<{ owner_user_id: string; agent_id: string }[]>(
-        "SELECT owner_user_id, agent_id FROM openbot_local_threads WHERE id = $1",
+      const rows = await sql.unsafe<
+        { owner_user_id: string; agent_id: string }[]
+      >(
+        "SELECT owner_user_id, agent_id FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
       const row = rows[0];
-      return !row || (row.owner_user_id === ownerUserId && row.agent_id === agentId);
+      return (
+        !row || (row.owner_user_id === ownerUserId && row.agent_id === agentId)
+      );
     } catch {
       // 不是本地会话模式（没有这张表）：对话在别处，按 id 记下即可。
       return true;
     }
   }
 
-  async function setCurrent(ownerUserId: string, agentId: string, threadId: string, onlyIfNone: boolean) {
+  async function setCurrent(
+    ownerUserId: string,
+    agentId: string,
+    threadId: string,
+    onlyIfNone: boolean,
+  ) {
     await sql.unsafe(
       onlyIfNone
         ? `INSERT INTO chisabot_bot_threads (owner_user_id, agent_id, thread_id) VALUES ($1, $2, $3)
@@ -115,17 +139,27 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
     return current(ownerUserId, agentId);
   }
 
-  async function activity(ownerUserId: string, threadId: string): Promise<BotThreadActivity | null> {
+  async function activity(
+    ownerUserId: string,
+    threadId: string,
+  ): Promise<BotThreadActivity | null> {
     let owner: string | null = null;
     let locked = false;
     let seq = "0";
     let inbox: string | null = null;
     try {
-      const rows = await sql.unsafe<{ owner: string | null; locked: boolean | null; seq: string | null; inbox: Date | null }[]>(
+      const rows = await sql.unsafe<
+        {
+          owner: string | null;
+          locked: boolean | null;
+          seq: string | null;
+          inbox: Date | null;
+        }[]
+      >(
         `SELECT
-           (SELECT owner_user_id FROM openbot_local_threads WHERE id = $1) AS owner,
-           (SELECT run_id IS NOT NULL AND lock_expires_at > now() FROM openbot_local_threads WHERE id = $1) AS locked,
-           (SELECT max(sequence)::text FROM openbot_local_events WHERE thread_id = $1) AS seq,
+           (SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1) AS owner,
+           (SELECT run_id IS NOT NULL AND lock_expires_at > now() FROM chisabot_local_threads WHERE id = $1) AS locked,
+           (SELECT max(sequence)::text FROM chisabot_local_events WHERE thread_id = $1) AS seq,
            (SELECT max(updated_at) FROM chisabot_thread_inbox WHERE thread_id = $1) AS inbox`,
         [threadId],
       );
@@ -152,29 +186,51 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
     let revision = "0";
     try {
       const rows = await sql.unsafe<{ n: string | null }[]>(
-        "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1", [threadId],
+        "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1",
+        [threadId],
       );
       revision = rows[0]?.n ?? "0";
     } catch {
       // 截断没启用（没有这张表）。
     }
-    return { threadId, seq, running: Boolean(control?.isActive(threadId)) || locked, workers, inbox, revision };
+    return {
+      threadId,
+      seq,
+      running: Boolean(control?.isActive(threadId)) || locked,
+      workers,
+      inbox,
+      revision,
+    };
   }
 
   /** 「历史对话」（DESIGN.md §42.6）：最近 30 条有消息的对话，新的在前。 */
-  async function history(ownerUserId: string, agentId: string): Promise<BotThreadSummary[]> {
+  async function history(
+    ownerUserId: string,
+    agentId: string,
+  ): Promise<BotThreadSummary[]> {
     try {
-      const rows = await sql.unsafe<{ id: string; name: string | null; first: unknown; count: number; updated_at: Date | string }[]>(
+      const rows = await sql.unsafe<
+        {
+          id: string;
+          name: string | null;
+          first: unknown;
+          count: number;
+          updated_at: Date | string;
+        }[]
+      >(
         `SELECT id, name, jsonb_array_length(messages) AS count, updated_at,
            (SELECT m->'content' FROM jsonb_array_elements(messages) m WHERE m->>'role' = 'user' LIMIT 1) AS first
-         FROM openbot_local_threads
+         FROM chisabot_local_threads
          WHERE owner_user_id = $1 AND agent_id = $2 AND id NOT LIKE 'worker-%' AND id NOT LIKE 'im-%' AND jsonb_array_length(messages) > 0
          ORDER BY updated_at DESC LIMIT 30`,
         [ownerUserId, agentId],
       );
       return rows.map((row) => ({
         threadId: row.id,
-        title: clipTitle(row.name) || clipTitle(textOf(row.first)) || "（没有文字的对话）",
+        title:
+          clipTitle(row.name) ||
+          clipTitle(textOf(row.first)) ||
+          "（没有文字的对话）",
         messages: Number(row.count) || 0,
         updatedAt: iso(row.updated_at),
       }));
@@ -189,33 +245,49 @@ export async function createBotThreads(database: Database, control?: BotThreadRu
     app.use("*", requireUser);
     app.get("/:agentId", async (c) => {
       const agentId = c.req.param("agentId");
-      if (!AGENT_ID.test(agentId)) return c.json({ error: "机器人 id 不对" }, 400);
+      if (!AGENT_ID.test(agentId))
+        return c.json({ error: "机器人 id 不对" }, 400);
       const row = await current(c.var.actor.id, agentId);
       return c.json(row ?? { threadId: null, updatedAt: null });
     });
     app.put("/:agentId", async (c) => {
       const agentId = c.req.param("agentId");
-      if (!AGENT_ID.test(agentId)) return c.json({ error: "机器人 id 不对" }, 400);
-      const body = (await c.req.json().catch(() => null)) as { threadId?: unknown; onlyIfNone?: unknown } | null;
+      if (!AGENT_ID.test(agentId))
+        return c.json({ error: "机器人 id 不对" }, 400);
+      const body = (await c.req.json().catch(() => null)) as {
+        threadId?: unknown;
+        onlyIfNone?: unknown;
+      } | null;
       const threadId = typeof body?.threadId === "string" ? body.threadId : "";
-      if (!THREAD_ID.test(threadId)) return c.json({ error: "对话 id 不对" }, 400);
-      if (!(await mayUse(c.var.actor.id, agentId, threadId))) return c.json({ error: "没有这条对话" }, 404);
-      const row = await setCurrent(c.var.actor.id, agentId, threadId, body?.onlyIfNone === true);
+      if (!THREAD_ID.test(threadId))
+        return c.json({ error: "对话 id 不对" }, 400);
+      if (!(await mayUse(c.var.actor.id, agentId, threadId)))
+        return c.json({ error: "没有这条对话" }, 404);
+      const row = await setCurrent(
+        c.var.actor.id,
+        agentId,
+        threadId,
+        body?.onlyIfNone === true,
+      );
       return c.json(row ?? { threadId, updatedAt: null });
     });
     app.get("/:agentId/history", async (c) => {
       const agentId = c.req.param("agentId");
-      if (!AGENT_ID.test(agentId)) return c.json({ error: "机器人 id 不对" }, 400);
+      if (!AGENT_ID.test(agentId))
+        return c.json({ error: "机器人 id 不对" }, 400);
       c.header("Cache-Control", "no-store");
       return c.json({ threads: await history(c.var.actor.id, agentId) });
     });
     app.get("/:agentId/sync", async (c) => {
       const agentId = c.req.param("agentId");
-      if (!AGENT_ID.test(agentId)) return c.json({ error: "机器人 id 不对" }, 400);
+      if (!AGENT_ID.test(agentId))
+        return c.json({ error: "机器人 id 不对" }, 400);
       const threadId = c.req.query("threadId") ?? "";
       const [row, thread] = await Promise.all([
         current(c.var.actor.id, agentId),
-        THREAD_ID.test(threadId) ? activity(c.var.actor.id, threadId) : Promise.resolve(null),
+        THREAD_ID.test(threadId)
+          ? activity(c.var.actor.id, threadId)
+          : Promise.resolve(null),
       ]);
       c.header("Cache-Control", "no-store");
       return c.json({ current: row, thread });

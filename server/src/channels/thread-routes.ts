@@ -6,7 +6,7 @@ import type { ThreadIdentity } from "./thread-identity";
 /**
  * A thread id for a conversation this deployment keeps no channel for.
  *
- * The direct Bot chat is CopilotKit's own component, and left to itself it generates an id in the
+ * The direct Bot chat is conversation runtime's own component, and left to itself it generates an id in the
  * browser that says nothing about where the conversation came from. Minting it here puts those
  * threads in the same namespace as every channel's, so one project shared by two deployments can
  * still tell whose conversations are whose.

@@ -309,7 +309,11 @@ describe("what a person may do over HTTP", () => {
 
 describe("handing a skill to the deployment, and taking it back", () => {
   const moving = `moving-${suite}`;
-  const save = (ownerUserId: string | null, claimOwner?: boolean, instructions = "Do the thing.") =>
+  const save = (
+    ownerUserId: string | null,
+    claimOwner?: boolean,
+    instructions = "Do the thing.",
+  ) =>
     store.installSkill({
       slug: moving,
       title: moving,
@@ -333,10 +337,18 @@ describe("handing a skill to the deployment, and taking it back", () => {
   test("claimOwner moves it to the deployment and back", async () => {
     await save(null, true);
     expect(await store.skillOwner(moving)).toBeNull();
-    expect((await store.listSkills({ id: bob, isAdmin: false })).map((skill) => skill.slug)).toContain(moving);
+    expect(
+      (await store.listSkills({ id: bob, isAdmin: false })).map(
+        (skill) => skill.slug,
+      ),
+    ).toContain(moving);
 
     await save(alice, true);
     expect(await store.skillOwner(moving)).toBe(alice);
-    expect((await store.listSkills({ id: bob, isAdmin: false })).map((skill) => skill.slug)).not.toContain(moving);
+    expect(
+      (await store.listSkills({ id: bob, isAdmin: false })).map(
+        (skill) => skill.slug,
+      ),
+    ).not.toContain(moving);
   });
 });

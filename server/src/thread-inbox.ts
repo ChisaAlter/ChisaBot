@@ -16,7 +16,15 @@ import type { Database } from "./db/client";
  *   没有一条会被悄悄丢掉。
  */
 export type InboxKind = "message" | "worker_result";
-export type InboxStatus = "queued" | "paused" | "read" | "answered" | "stopped" | "owed" | "withdrawn" | "merged";
+export type InboxStatus =
+  | "queued"
+  | "paused"
+  | "read"
+  | "answered"
+  | "stopped"
+  | "owed"
+  | "withdrawn"
+  | "merged";
 export type InboxItem = {
   id: string;
   threadId: string;
@@ -29,14 +37,28 @@ export type InboxItem = {
 };
 
 type InboxRow = {
-  id: string; thread_id: string; owner_user_id: string; kind: InboxKind; message: Message;
-  status: InboxStatus; run_id: string | null; created_at: Date | string; read_at: Date | string | null;
+  id: string;
+  thread_id: string;
+  owner_user_id: string;
+  kind: InboxKind;
+  message: Message;
+  status: InboxStatus;
+  run_id: string | null;
+  created_at: Date | string;
+  read_at: Date | string | null;
 };
 
-const iso = (value: Date | string | null) => (value ? new Date(value).toISOString() : null);
+const iso = (value: Date | string | null) =>
+  value ? new Date(value).toISOString() : null;
 const item = (row: InboxRow): InboxItem => ({
-  id: row.id, threadId: row.thread_id, kind: row.kind, message: row.message, status: row.status,
-  runId: row.run_id, createdAt: iso(row.created_at)!, readAt: iso(row.read_at),
+  id: row.id,
+  threadId: row.thread_id,
+  kind: row.kind,
+  message: row.message,
+  status: row.status,
+  runId: row.run_id,
+  createdAt: iso(row.created_at)!,
+  readAt: iso(row.read_at),
 });
 
 /** 一条排队消息最多这么长（和普通输入框一样，太长的请走附件）。 */
@@ -67,69 +89,131 @@ export class ThreadInbox {
   }
 
   /** One durable row serializes pause, late enqueue, claim and explicit send across devices. */
-  private async locked<T>(threadId: string, action: (sql: Database["$client"], paused: boolean) => Promise<T>): Promise<T> {
+  private async locked<T>(
+    threadId: string,
+    action: (sql: Database["$client"], paused: boolean) => Promise<T>,
+  ): Promise<T> {
     return this.database.$client.begin(async (sql) => {
-      await sql.unsafe("INSERT INTO chisabot_thread_inbox_control (thread_id) VALUES ($1) ON CONFLICT DO NOTHING", [threadId]);
-      const [state] = await sql.unsafe<{ paused: boolean }[]>("SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1 FOR UPDATE", [threadId]);
-      return action(sql as unknown as Database["$client"], Boolean(state?.paused));
+      await sql.unsafe(
+        "INSERT INTO chisabot_thread_inbox_control (thread_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        [threadId],
+      );
+      const [state] = await sql.unsafe<{ paused: boolean }[]>(
+        "SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1 FOR UPDATE",
+        [threadId],
+      );
+      return action(
+        sql as unknown as Database["$client"],
+        Boolean(state?.paused),
+      );
     }) as Promise<T>;
   }
 
   async isPaused(threadId: string): Promise<boolean> {
-    const [row] = await this.database.$client.unsafe<{ paused: boolean }[]>("SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1", [threadId]);
+    const [row] = await this.database.$client.unsafe<{ paused: boolean }[]>(
+      "SELECT paused FROM chisabot_thread_inbox_control WHERE thread_id = $1",
+      [threadId],
+    );
     return Boolean(row?.paused);
   }
 
   /** Stop/error holds unseen supplements, including enqueues that arrive after Stop. */
   async pause(threadId: string) {
     await this.locked(threadId, async (sql) => {
-      await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1", [threadId]);
-      await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')", [threadId]);
+      await sql.unsafe(
+        "UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1",
+        [threadId],
+      );
+      await sql.unsafe(
+        "UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')",
+        [threadId],
+      );
     });
   }
 
   /** A fresh explicit user turn permits future supplements, without resuming old paused rows. */
   async startExplicitTurn(threadId: string) {
     await this.locked(threadId, async (sql) => {
-      await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = false, updated_at = now() WHERE thread_id = $1", [threadId]);
+      await sql.unsafe(
+        "UPDATE chisabot_thread_inbox_control SET paused = false, updated_at = now() WHERE thread_id = $1",
+        [threadId],
+      );
     });
   }
 
   /** The user sends exactly one paused row again as a new message; no old tool call is replayed. */
-  async resumeOne(threadId: string, sourceId: string, runId: string): Promise<Message | null> {
+  async resumeOne(
+    threadId: string,
+    sourceId: string,
+    runId: string,
+  ): Promise<Message | null> {
     return this.locked(threadId, async (sql) => {
-      const [row] = await sql.unsafe<InboxRow[]>(`UPDATE chisabot_thread_inbox SET status = 'read', run_id = $3,
-        read_at = now(), updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('paused', 'owed', 'stopped') RETURNING *`, [threadId, sourceId, runId]);
+      const [row] = await sql.unsafe<InboxRow[]>(
+        `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $3,
+        read_at = now(), updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('paused', 'owed', 'stopped') RETURNING *`,
+        [threadId, sourceId, runId],
+      );
       return row?.message ?? null;
     });
   }
 
   async heldIds(threadId: string): Promise<Set<string>> {
-    const rows = await this.database.$client.unsafe<{ id: string }[]>("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('paused', 'owed', 'stopped')", [threadId]);
+    const rows = await this.database.$client.unsafe<{ id: string }[]>(
+      "SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('paused', 'owed', 'stopped')",
+      [threadId],
+    );
     return new Set(rows.map((row) => row.id));
   }
 
   /** 同一个 id 的重试不改变暂停状态。 */
-  async enqueue(input: { threadId: string; ownerUserId: string; message: Message; kind?: InboxKind }): Promise<boolean> {
+  async enqueue(input: {
+    threadId: string;
+    ownerUserId: string;
+    message: Message;
+    kind?: InboxKind;
+    beforeInsert?: (sql: Database["$client"]) => Promise<void>;
+  }): Promise<boolean> {
     return this.locked(input.threadId, async (sql, paused) => {
-      const existing = await sql.unsafe("SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2", [input.threadId, input.message.id]);
+      const existing = await sql.unsafe(
+        "SELECT id FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2",
+        [input.threadId, input.message.id],
+      );
       if (existing.length) {
         // Older background-delivery fallbacks may have changed this row back to queued.
-        if (paused) await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'owed', 'stopped')", [input.threadId, input.message.id]);
+        if (paused)
+          await sql.unsafe(
+            "UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'owed', 'stopped')",
+            [input.threadId, input.message.id],
+          );
         return false;
       }
-      const [queued] = await sql.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('queued', 'paused', 'owed', 'stopped')", [input.threadId]);
-      if ((queued?.n ?? 0) >= INBOX_QUEUE_LIMIT) throw new Error("排队的消息太多了，请先发送或撤回保留的消息。");
-      const rows = await sql.unsafe(`INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message, status)
+      const [queued] = await sql.unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_thread_inbox WHERE thread_id = $1 AND status IN ('queued', 'paused', 'owed', 'stopped')",
+        [input.threadId],
+      );
+      if ((queued?.n ?? 0) >= INBOX_QUEUE_LIMIT)
+        throw new Error("排队的消息太多了，请先发送或撤回保留的消息。");
+      await input.beforeInsert?.(sql);
+      const rows = await sql.unsafe(
+        `INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message, status)
         VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
-        [input.threadId, input.message.id, input.ownerUserId, input.kind ?? "message", JSON.stringify(input.message), paused ? "paused" : "queued"]);
+        [
+          input.threadId,
+          input.message.id,
+          input.ownerUserId,
+          input.kind ?? "message",
+          JSON.stringify(input.message),
+          paused ? "paused" : "queued",
+        ],
+      );
       return rows.length > 0;
     });
   }
 
   async queued(threadId: string): Promise<InboxItem[]> {
     const rows = await this.database.$client.unsafe<InboxRow[]>(
-      "SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND status = 'queued' ORDER BY created_at, id", [threadId],
+      "SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND status = 'queued' ORDER BY created_at, id",
+      [threadId],
     );
     return rows.map(item);
   }
@@ -140,9 +224,15 @@ export class ThreadInbox {
       if (paused) return [];
       const rows = await sql.unsafe<InboxRow[]>(
         `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
-         WHERE thread_id = $1 AND status = 'queued' RETURNING *`, [threadId, runId],
+         WHERE thread_id = $1 AND status = 'queued' RETURNING *`,
+        [threadId, runId],
       );
-      return rows.map(item).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      return rows
+        .map(item)
+        .sort(
+          (a, b) =>
+            a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        );
     });
   }
 
@@ -155,21 +245,33 @@ export class ThreadInbox {
       await sql.unsafe(
         `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = coalesce(read_at, now()), updated_at = now()
          WHERE thread_id = $1 AND status = 'queued'
-         AND id IN (SELECT jsonb_array_elements_text($3::text::jsonb))`, [threadId, runId, JSON.stringify(ids)],
+         AND id IN (SELECT jsonb_array_elements_text($3::text::jsonb))`,
+        [threadId, runId, JSON.stringify(ids)],
       );
     });
   }
 
   /** 一次运行结束：它读过的消息按结局落定。 */
-  async settle(threadId: string, runId: string, outcome: "answered" | "stopped" | "owed") {
+  async settle(
+    threadId: string,
+    runId: string,
+    outcome: "answered" | "stopped" | "owed",
+  ) {
     await this.locked(threadId, async (sql) => {
       if (outcome !== "answered") {
-        await sql.unsafe("UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1", [threadId]);
-        await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')", [threadId]);
+        await sql.unsafe(
+          "UPDATE chisabot_thread_inbox_control SET paused = true, updated_at = now() WHERE thread_id = $1",
+          [threadId],
+        );
+        await sql.unsafe(
+          "UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE thread_id = $1 AND status IN ('queued', 'owed', 'stopped')",
+          [threadId],
+        );
       }
       await sql.unsafe(
         `UPDATE chisabot_thread_inbox SET status = $3, updated_at = now()
-         WHERE thread_id = $1 AND run_id = $2 AND status = 'read'`, [threadId, runId, outcome === "answered" ? outcome : "paused"],
+         WHERE thread_id = $1 AND run_id = $2 AND status = 'read'`,
+        [threadId, runId, outcome === "answered" ? outcome : "paused"],
       );
     });
   }
@@ -177,26 +279,58 @@ export class ThreadInbox {
   async withdraw(threadId: string, id: string): Promise<boolean> {
     const rows = await this.database.$client.unsafe(
       `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
-       WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped') RETURNING id`, [threadId, id],
+       WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped') RETURNING id`,
+      [threadId, id],
     );
     return rows.length > 0;
   }
 
   /** HTTP withdrawal also reserves absent IDs, so a timed-out POST cannot arrive after withdrawal. */
-  async withdrawPending(threadId: string, id: string, ownerUserId: string): Promise<boolean> {
+  async withdrawPending(
+    threadId: string,
+    id: string,
+    ownerUserId: string,
+  ): Promise<boolean> {
     return this.locked(threadId, async (sql) => {
-      await sql.unsafe(`INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, message, status)
+      await sql.unsafe(
+        `INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, message, status)
         VALUES ($1, $2, $3, $4::text::jsonb, 'withdrawn') ON CONFLICT (thread_id, id) DO NOTHING`,
-        [threadId, id, ownerUserId, JSON.stringify({ id, role: "user", content: "" })]);
-      const rows = await sql.unsafe(`UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
-        WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`, [threadId, id]);
+        [
+          threadId,
+          id,
+          ownerUserId,
+          JSON.stringify({ id, role: "user", content: "" }),
+        ],
+      );
+      const rows = await sql.unsafe(
+        `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
+        WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`,
+        [threadId, id],
+      );
       return rows.length > 0;
     });
   }
 
   async get(threadId: string, id: string): Promise<InboxItem | null> {
-    const [row] = await this.database.$client.unsafe<InboxRow[]>("SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2", [threadId, id]);
+    const [row] = await this.database.$client.unsafe<InboxRow[]>(
+      "SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND id = $2",
+      [threadId, id],
+    );
     return row ? item(row) : null;
+  }
+
+  async messagesFor(
+    threadId: string,
+    ids: readonly string[],
+  ): Promise<Map<string, Message>> {
+    if (!ids.length) return new Map();
+    const rows = await this.database.$client.unsafe<
+      { id: string; message: Message }[]
+    >(
+      "SELECT id, message FROM chisabot_thread_inbox WHERE thread_id=$1 AND id IN (SELECT jsonb_array_elements_text($2::text::jsonb))",
+      [threadId, JSON.stringify(ids)],
+    );
+    return new Map(rows.map((row) => [row.id, row.message]));
   }
 
   /** 界面要看的：还在排队的、欠回答的，以及最近 10 分钟内状态变过的（「已读取」的淡出）。 */
@@ -207,18 +341,28 @@ export class ThreadInbox {
          UNION ALL
          (SELECT * FROM chisabot_thread_inbox WHERE thread_id = $1 AND status NOT IN ('queued', 'paused', 'owed', 'stopped')
           AND updated_at > now() - interval '10 minutes' ORDER BY updated_at DESC, id DESC LIMIT 100)
-       ) visible ORDER BY created_at, id`, [threadId],
+       ) visible ORDER BY created_at, id`,
+      [threadId],
     );
     return rows.map(item);
   }
 
   /** After restart there is no live tool owner. Keep every unfinished row for an explicit send. */
-  async releaseInterrupted(): Promise<number> {
+  async releaseInterrupted(
+    preservedThreads: readonly string[] = [],
+  ): Promise<number> {
     return this.database.$client.begin(async (sql) => {
-      await sql.unsafe(`INSERT INTO chisabot_thread_inbox_control (thread_id, paused)
+      await sql.unsafe(
+        `INSERT INTO chisabot_thread_inbox_control (thread_id, paused)
         SELECT DISTINCT thread_id, true FROM chisabot_thread_inbox WHERE status IN ('queued', 'read', 'owed', 'stopped', 'paused')
-        ON CONFLICT (thread_id) DO UPDATE SET paused = true, updated_at = now()`);
-      const rows = await sql.unsafe("UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE status IN ('queued', 'read', 'owed', 'stopped') RETURNING id");
+        AND thread_id NOT IN (SELECT jsonb_array_elements_text($1::text::jsonb))
+        ON CONFLICT (thread_id) DO UPDATE SET paused = true, updated_at = now()`,
+        [JSON.stringify(preservedThreads)],
+      );
+      const rows = await sql.unsafe(
+        "UPDATE chisabot_thread_inbox SET status = 'paused', updated_at = now() WHERE status IN ('queued', 'read', 'owed', 'stopped') AND thread_id NOT IN (SELECT jsonb_array_elements_text($1::text::jsonb)) RETURNING id",
+        [JSON.stringify(preservedThreads)],
+      );
       return rows.length;
     }) as Promise<number>;
   }
@@ -266,7 +410,13 @@ export function textOfMessage(message: Pick<Message, "content">): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((part) => (part && typeof part === "object" && (part as { type?: unknown }).type === "text" ? String((part as { text?: unknown }).text ?? "") : ""))
+    .map((part) =>
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text"
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
     .filter(Boolean)
     .join("\n");
 }
@@ -276,7 +426,10 @@ export const WORKER_RESULT_MARKER = "⟦chisabot:worker-result:";
 export function isWorkerResult(message: Pick<Message, "content">) {
   const text = textOfMessage(message);
   // 本地 agent 任务的结果（docs/local-agents.md）同样是自带说明的交付消息。
-  return text.startsWith(WORKER_RESULT_MARKER) || text.startsWith("⟦chisabot:local-agent-result:");
+  return (
+    text.startsWith(WORKER_RESULT_MARKER) ||
+    text.startsWith("⟦chisabot:local-agent-result:")
+  );
 }
 
 export type MidTurnIntent = "interrupt" | "concurrent" | "supplement";
@@ -295,20 +448,28 @@ export function classifyMidTurnIntent(text: string): MidTurnIntent {
   }
   // 1. 明确打断 / 取消 / 叫停 / 推翻旧方向
   if (
-    /^(?:停|先停|停一下|停下|打住|暂停|算了|不用了|不用查了|不用做了|不用找了|不用看了|不用写了|别查了|别找了|别做了|别管了|别弄了|别看了|别写了|别搜了|取消|先取消|放弃|重来|换个方向|stop|cancel|abort|never\s*mind|forget\s*(?:it|that))(?:[，,。.！!？?\s]|$)/i.test(t) ||
-    /(?:先?别(?:再)?(?:查|找|做|弄|管|看|写|跑|搜|执行)|不用(?:再)?(?:查|找|做|弄|管|看|写|跑|搜)|停一下|打断一下|取消刚才|放弃刚才|刚才(?:那个|说的|让你做的)(?:算了|不用|取消|别做了|作废)|不要刚才那个|换个方向|重新来|不对[，,\s]*(?:不是这个意思|我是说|重来|改成|我要的是)|搞错了[，,\s]*(?:我是要|重来|不是))/.test(t)
+    /^(?:停|先停|停一下|停下|打住|暂停|算了|不用了|不用查了|不用做了|不用找了|不用看了|不用写了|别查了|别找了|别做了|别管了|别弄了|别看了|别写了|别搜了|取消|先取消|放弃|重来|换个方向|stop|cancel|abort|never\s*mind|forget\s*(?:it|that))(?:[，,。.！!？?\s]|$)/i.test(
+      t,
+    ) ||
+    /(?:先?别(?:再)?(?:查|找|做|弄|管|看|写|跑|搜|执行)|不用(?:再)?(?:查|找|做|弄|管|看|写|跑|搜)|停一下|打断一下|取消刚才|放弃刚才|刚才(?:那个|说的|让你做的)(?:算了|不用|取消|别做了|作废)|不要刚才那个|换个方向|重新来|不对[，,\s]*(?:不是这个意思|我是说|重来|改成|我要的是)|搞错了[，,\s]*(?:我是要|重来|不是))/.test(
+      t,
+    )
   ) {
     return "interrupt";
   }
   // 2. 明确的补充 / 修正前缀优先判为 supplement
   if (
-    /^(?:补充(?:一下|一点)?|更正(?:一下)?|修正(?:一下)?|顺便说一下|忘了说|加上|再加上|再加一条|还要|只要|不要|限定|限制|预算|时间改|日期改|用中文|用英文|格式用|记得)/.test(t)
+    /^(?:补充(?:一下|一点)?|更正(?:一下)?|修正(?:一下)?|顺便说一下|忘了说|加上|再加上|再加一条|还要|只要|不要|限定|限制|预算|时间改|日期改|用中文|用英文|格式用|记得)/.test(
+      t,
+    )
   ) {
     return "supplement";
   }
   // 3. 明确的新需求 / 多并发指令，或与当前操作并列的独立问题
   if (
-    /^(?:另外|还有(?:一件事|个问题|一个事|一个问题)?|顺便(?:帮我|问一下|查一下|看看|做个)|再帮我|同时(?:帮我)?|对了[，,\s]*|此外|再问(?:个问题|一下)?|另起一个|单开一个|后台帮我|顺带(?:帮我)?)/.test(t) ||
+    /^(?:另外|还有(?:一件事|个问题|一个事|一个问题)?|顺便(?:帮我|问一下|查一下|看看|做个)|再帮我|同时(?:帮我)?|对了[，,\s]*|此外|再问(?:个问题|一下)?|另起一个|单开一个|后台帮我|顺带(?:帮我)?)/.test(
+      t,
+    ) ||
     /(?:另外|同时|顺便)(?:再)?(?:帮我|查|看|搜|写|做|整理|安排|对比)/.test(t) ||
     (/[？?]$/.test(t) && !/^(?:那|这|它|他|她|那个|这个|上面|刚才)/.test(t))
   ) {
@@ -360,16 +521,23 @@ export function attachMidTurnNoticeToToolResult(
 
 /** 插进 prompt 时给模型看的样子：用户插话带一句说明，后台任务结果本身已经写清楚了。 */
 export function promptMessageFor(message: Message): PromptMessage {
-  return { role: "user", content: [{ type: "text", text: formatMidTurnMessageForModel(message) }] };
+  return {
+    role: "user",
+    content: [{ type: "text", text: formatMidTurnMessageForModel(message) }],
+  };
 }
 
 /** 原始 prompt + 已插的话，按记录的位置插回去（位置是相对原始 prompt 的，逐个加偏移）。 */
-export function weavePrompt(prompt: readonly PromptMessage[], injections: SteerSession["injections"]): PromptMessage[] {
+export function weavePrompt(
+  prompt: readonly PromptMessage[],
+  injections: SteerSession["injections"],
+): PromptMessage[] {
   const sorted = [...injections].sort((a, b) => a.index - b.index);
   const out: PromptMessage[] = [];
   let next = 0;
   for (let index = 0; index <= prompt.length; index++) {
-    while (next < sorted.length && sorted[next]!.index === index) out.push(...sorted[next++]!.messages);
+    while (next < sorted.length && sorted[next]!.index === index)
+      out.push(...sorted[next++]!.messages);
     if (index < prompt.length) out.push(prompt[index]!);
   }
   // 位置超出（不该发生）就放在最后，宁可多给也不丢。
@@ -378,7 +546,9 @@ export function weavePrompt(prompt: readonly PromptMessage[], injections: SteerS
 }
 
 /** prompt 末尾连续的工具结果里的 toolCallId（插话紧跟在它们后面）。 */
-export function trailingToolCallIds(prompt: readonly PromptMessage[]): string[] {
+export function trailingToolCallIds(
+  prompt: readonly PromptMessage[],
+): string[] {
   const ids: string[] = [];
   for (let index = prompt.length - 1; index >= 0; index--) {
     const message = prompt[index]!;
@@ -408,12 +578,18 @@ async function steer(options: unknown): Promise<unknown> {
       console.warn("thread inbox claim failed", error);
     }
     if (claimed.length) {
-      session.injections.push({ index: typed.length, messages: claimed.map(promptMessageFor) });
+      session.injections.push({
+        index: typed.length,
+        messages: claimed.map(promptMessageFor),
+      });
       session.onInjected(claimed, trailingToolCallIds(typed));
     }
   }
   if (!session.injections.length) return options;
-  return { ...(options as object), prompt: weavePrompt(typed, session.injections) };
+  return {
+    ...(options as object),
+    prompt: weavePrompt(typed, session.injections),
+  };
 }
 
 type SteerableModel = {
@@ -430,8 +606,12 @@ export function steerLanguageModel<T>(model: T): T {
   const target = model as unknown as SteerableModel;
   return new Proxy(model as unknown as object, {
     get(object, property) {
-      if ((property === "doStream" || property === "doGenerate") && typeof target[property] === "function") {
-        return async (options: unknown) => target[property]!.call(object, await steer(options));
+      if (
+        (property === "doStream" || property === "doGenerate") &&
+        typeof target[property] === "function"
+      ) {
+        return async (options: unknown) =>
+          target[property]!.call(object, await steer(options));
       }
       const value = Reflect.get(object, property);
       return typeof value === "function" ? value.bind(object) : value;
@@ -442,13 +622,20 @@ export function steerLanguageModel<T>(model: T): T {
 /* ------------------------------------------------------------------ transcript ------------------------------------------------------------------ */
 
 /** 插话在对话记录里的位置：紧跟在 anchors 这些工具结果后面；没有锚点就跟在 afterId 后面，再没有就放最后。 */
-export type TranscriptInjection = { message: Message; anchors: string[]; afterId?: string };
+export type TranscriptInjection = {
+  message: Message;
+  anchors: string[];
+  afterId?: string;
+};
 
 /**
  * 把插话放进 AG-UI 的消息列表。智能体自己的消息列表里没有它们（不是它产生的事件），每次存档 / 推给界面
  * 之前都从头织一遍；已经在列表里的（同 id）不重复放。
  */
-export function weaveMessages(base: readonly Message[], injections: readonly TranscriptInjection[]): Message[] {
+export function weaveMessages(
+  base: readonly Message[],
+  injections: readonly TranscriptInjection[],
+): Message[] {
   const out = [...base];
   const present = new Set(out.map((message) => message.id));
   const injected = new Set(injections.map((injection) => injection.message.id));
@@ -459,11 +646,20 @@ export function weaveMessages(base: readonly Message[], injections: readonly Tra
       const anchors = new Set(injection.anchors);
       for (let index = out.length - 1; index >= 0; index--) {
         const message = out[index] as Message & { toolCallId?: string };
-        if (message.role === "tool" && message.toolCallId && anchors.has(message.toolCallId)) { at = index + 1; break; }
+        if (
+          message.role === "tool" &&
+          message.toolCallId &&
+          anchors.has(message.toolCallId)
+        ) {
+          at = index + 1;
+          break;
+        }
       }
     }
     if (at < 0 && injection.afterId) {
-      const index = out.findIndex((message) => message.id === injection.afterId);
+      const index = out.findIndex(
+        (message) => message.id === injection.afterId,
+      );
       if (index >= 0) at = index + 1;
     }
     if (at < 0) at = out.length;
@@ -476,10 +672,15 @@ export function weaveMessages(base: readonly Message[], injections: readonly Tra
 }
 
 /** 这些工具结果是不是都已经在消息列表里了（插话的位置定下来了，才推快照给界面）。 */
-export function anchorsPresent(messages: readonly Message[], anchors: readonly string[]): boolean {
+export function anchorsPresent(
+  messages: readonly Message[],
+  anchors: readonly string[],
+): boolean {
   if (!anchors.length) return true;
   const seen = new Set(
-    messages.filter((message) => message.role === "tool").map((message) => (message as { toolCallId?: string }).toolCallId),
+    messages
+      .filter((message) => message.role === "tool")
+      .map((message) => (message as { toolCallId?: string }).toolCallId),
   );
   return anchors.every((anchor) => seen.has(anchor));
 }

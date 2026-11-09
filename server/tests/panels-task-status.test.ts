@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { recoverPanelTaskStatus } from "../src/panels/task-status";
+
 const interrupted = {
   savedStatus: "running",
   ageMs: 60_000,

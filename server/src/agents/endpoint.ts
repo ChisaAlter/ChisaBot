@@ -1,4 +1,5 @@
 import { checkNavigationTarget } from "../computer/target";
+import { withoutRunAssertion } from "../legacy/protocol";
 
 /**
  * Where an external agent lives, and whether we are willing to talk to it.
@@ -199,7 +200,7 @@ function strippedBody(body: BodyInit | null | undefined): { body?: BodyInit } {
   if (!run.forwardedProps || typeof run.forwardedProps !== "object") {
     return { body };
   }
-  const { openbotRun: _dropped, ...rest } = run.forwardedProps;
+  const rest = withoutRunAssertion(run.forwardedProps);
   return { body: JSON.stringify({ ...run, forwardedProps: rest }) };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { runForDuplicate } from "../src/agents/profile-store";
-import { pickFromRoster } from "../src/copilot";
+import { pickFromRoster } from "../src/conversation-runtime";
 
 describe("which agent on a Mastra server a Bot means", () => {
   test("the name it asks for, when the endpoint serves it", () => {

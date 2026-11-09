@@ -1,10 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import type { Database } from "../src/db/client";
-import { dropTombstoned, planTruncation, tombstones } from "../src/thread-truncate";
+import {
+  dropTombstoned,
+  planTruncation,
+  tombstones,
+} from "../src/thread-truncate";
 
 test("a tombstone read failure cannot permit stale history to be merged", async () => {
   const failure = new Error("database connection lost");
-  const database = { $client: { unsafe: async () => { throw failure; } } } as unknown as Database;
+  const database = {
+    $client: {
+      unsafe: async () => {
+        throw failure;
+      },
+    },
+  } as unknown as Database;
   await expect(tombstones(database, "thread")).rejects.toBe(failure);
 });
 
@@ -14,7 +24,17 @@ describe("planTruncation", () => {
     { id: "u1", role: "user" },
     { id: "a1", role: "assistant" },
     { id: "u2", role: "user" },
-    { id: "a2", role: "assistant", toolCalls: [{ id: "call-1", type: "function", function: { name: "x", arguments: "{}" } }] },
+    {
+      id: "a2",
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "call-1",
+          type: "function",
+          function: { name: "x", arguments: "{}" },
+        },
+      ],
+    },
     { id: "t2", role: "tool" },
     { id: "a3", role: "assistant" },
   ] as never[];
@@ -26,7 +46,13 @@ describe("planTruncation", () => {
 
   test("cuts at the run that started with this user message and everything after", () => {
     const plan = planTruncation(messages, starts, "u2");
-    expect(plan).toEqual({ ok: true, index: 2, cutSequence: "20", removed: ["u2", "a2", "t2", "a3"], removedToolCalls: ["call-1"] });
+    expect(plan).toEqual({
+      ok: true,
+      index: 2,
+      cutSequence: "20",
+      removed: ["u2", "a2", "t2", "a3"],
+      removedToolCalls: ["call-1"],
+    });
   });
 
   test("an earlier user message removes later turns too", () => {
@@ -36,14 +62,27 @@ describe("planTruncation", () => {
   });
 
   test("refuses assistant messages, unknown ids and mid-run injections", () => {
-    expect(planTruncation(messages, starts, "a1")).toMatchObject({ ok: false, status: 400 });
-    expect(planTruncation(messages, starts, "nope")).toMatchObject({ ok: false, status: 404 });
+    expect(planTruncation(messages, starts, "a1")).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+    expect(planTruncation(messages, starts, "nope")).toMatchObject({
+      ok: false,
+      status: 404,
+    });
     const injected = [...messages, { id: "u3", role: "user" }] as never[];
-    expect(planTruncation(injected, starts, "u3")).toMatchObject({ ok: false, status: 409 });
+    expect(planTruncation(injected, starts, "u3")).toMatchObject({
+      ok: false,
+      status: 409,
+    });
   });
 
   test("a thread without events cuts only messages", () => {
-    expect(planTruncation(messages, [], "u2")).toMatchObject({ ok: true, index: 2, cutSequence: null });
+    expect(planTruncation(messages, [], "u2")).toMatchObject({
+      ok: true,
+      index: 2,
+      cutSequence: null,
+    });
   });
 });
 

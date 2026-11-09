@@ -19,8 +19,8 @@ import {
   users,
 } from "../src/db/schema";
 import {
-  synchronizeTenantPackage,
   type LoadedTenantPackage,
+  synchronizeTenantPackage,
 } from "../src/tenant-package";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -94,28 +94,24 @@ async function bot(
     packageId = row!.id;
     ids.packages.push(packageId);
   }
-  await database
-    .insert(agents)
-    .values({
-      id,
-      name: "Test",
-      type: options.remote ? "remote_ag_ui" : "built_in",
-      configuration: options.remote
-        ? { endpoint: "https://example.test/ag-ui" }
-        : { systemPrompt: "Reply." },
-      override: options.override,
-      packageId,
-    });
-  await database
-    .insert(agentProfiles)
-    .values({
-      agentId: id,
-      ownerUserId: owner?.id ?? null,
-      title: "Test",
-      roleDescription: "Reply.",
-      avatarSeed: id,
-      visibility: "public",
-    });
+  await database.insert(agents).values({
+    id,
+    name: "Test",
+    type: options.remote ? "remote_ag_ui" : "built_in",
+    configuration: options.remote
+      ? { endpoint: "https://example.test/ag-ui" }
+      : { systemPrompt: "Reply." },
+    override: options.override,
+    packageId,
+  });
+  await database.insert(agentProfiles).values({
+    agentId: id,
+    ownerUserId: owner?.id ?? null,
+    title: "Test",
+    roleDescription: "Reply.",
+    avatarSeed: id,
+    visibility: "public",
+  });
   ids.bots.push(id);
   return id;
 }

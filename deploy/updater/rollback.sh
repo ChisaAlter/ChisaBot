@@ -7,10 +7,21 @@ U=/opt/chisabot-updater
 . "$U/config.env"
 # shellcheck source=compose-image.sh
 . "$U/compose-image.sh"
+. "$U/dsh-release.sh"
 JOB=""
 [ "${1:-}" = "--job" ] && JOB="${2:-}"
 RESULT=failed
-trap 'echo "::result:: $RESULT"' EXIT
+DSH_ADMISSION_HELD=0
+DSH_RELEASE_ALLOWED=1
+finish() {
+  if [ "$DSH_ADMISSION_HELD" = 1 ] && [ "$DSH_RELEASE_ALLOWED" = 1 ]; then
+    dsh_release_admission "$JOB" || echo "::error:: DSH 接纳仍暂停，请检查 .maintenance 后恢复"
+  elif [ "$DSH_ADMISSION_HELD" = 1 ]; then
+    echo "::error:: 回滚尚未确认应用和账号容器就绪，保留 .maintenance"
+  fi
+  echo "::result:: $RESULT"
+}
+trap finish EXIT
 step() { echo "::step:: $1"; echo "[$(date '+%H:%M:%S')] $2"; }
 fail() { echo "::error:: $*"; exit 2; }
 case "$JOB" in ''|*[!A-Za-z0-9_-]*) fail "任务 id 无效" ;; esac
@@ -27,12 +38,22 @@ docker image inspect "$PREV" >/dev/null 2>&1 || fail "上一版镜像 $PREV 已�
 echo "::from:: $CUR_IMAGE"
 echo "::to:: $PREV"
 echo "$CUR_IMAGE → $PREV"
+dsh_require_compatible_image "$PREV" || fail "上一版不支持现有 DSH 历史，未切换"
+DSH_ENABLED=$(dsh_enabled) || fail "无法读取 DSH 部署状态"
+if [ "$DSH_ENABLED" = 1 ]; then
+  dsh_accounts_check || fail "DSH 账号部署配置不完整，未切换"
+  dsh_hold_admission "$JOB" || fail "无法暂停新的执行，未切换"
+  DSH_ADMISSION_HELD=1
+  dsh_wait_idle || fail "DSH 执行未结束，未切换"
+fi
 
 step swap "切换到 $PREV"
+DSH_RELEASE_ALLOWED=0
 (
   cd "$COMPOSE_DIR" || exit 1
   exec 8>.deploy.lock
   flock -w 60 8 || exit 1
+  dsh_require_compatible_image "$PREV" || exit 1
   restore_hermes_release "$CUR_TAG" || exit 1
   if [ "$(image_mode)" = env ]; then
     set_image "$PREV" || exit 1
@@ -46,11 +67,14 @@ step swap "切换到 $PREV"
     echo "网络配置变了（$DRIFT）：使用 --force-recreate"
     RECREATE=(--force-recreate)
   fi
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 180 "$SERVICE"
+  dsh_prepare_candidate_reader "$PREV" || exit 1
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 180 "$SERVICE" || exit 1
+  if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$PREV" || exit 1; fi
 ) || fail "切换失败（compose 已改回上一版，请检查容器）"
 
 step health "健康检查"
 bash "$U/health.sh" "$PREV" "" || fail "回滚后健康检查没通过"
+DSH_RELEASE_ALLOWED=1
 step done "已回滚到 $PREV"
 RESULT=succeeded
 exit 0

@@ -4,7 +4,13 @@
 // Run locally with a configured ACP_AGENT_CMD; the tests use only fake-acp.mjs.
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -72,20 +78,38 @@ class AcpClient {
         cwd: this.options.cwd,
         env: {
           ...process.env,
-          HERMES_DISABLE_LAZY_INSTALLS: process.env.HERMES_DISABLE_LAZY_INSTALLS ?? "1",
+          HERMES_DISABLE_LAZY_INSTALLS:
+            process.env.HERMES_DISABLE_LAZY_INSTALLS ?? "1",
         },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
       this.child = child;
       child.stdout.setEncoding("utf8");
-      createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => this.onLine(line));
+      createInterface({ input: child.stdout, crlfDelay: Infinity }).on(
+        "line",
+        (line) => this.onLine(line),
+      );
       // Agent stderr may contain request payloads. Drain it without forwarding credentials to logs.
       child.stderr.resume();
-      child.stdin.on("error", () => this.fail(rpcError("ACP agent stdin closed", "ACP_PROCESS_EXIT")));
-      child.on("error", (error) => this.fail(rpcError(`ACP agent spawn failed (${error.code || "error"})`, "ACP_SPAWN_ERROR")));
+      child.stdin.on("error", () =>
+        this.fail(rpcError("ACP agent stdin closed", "ACP_PROCESS_EXIT")),
+      );
+      child.on("error", (error) =>
+        this.fail(
+          rpcError(
+            `ACP agent spawn failed (${error.code || "error"})`,
+            "ACP_SPAWN_ERROR",
+          ),
+        ),
+      );
       child.on("exit", (code, signal) => {
-        this.fail(rpcError(`ACP agent exited (code ${code ?? "null"}${signal ? `, ${signal}` : ""})`, "ACP_PROCESS_EXIT"));
+        this.fail(
+          rpcError(
+            `ACP agent exited (code ${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+            "ACP_PROCESS_EXIT",
+          ),
+        );
       });
     } catch {
       this.fail(rpcError("ACP agent could not be spawned", "ACP_SPAWN_ERROR"));
@@ -95,7 +119,11 @@ class AcpClient {
   onLine(line) {
     if (this.failed) return;
     let message;
-    try { message = JSON.parse(line); } catch { return; }
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
     if (message.id !== undefined && typeof message.method === "string") {
       void this.answerRequest(message);
     } else if (message.id !== undefined) {
@@ -106,12 +134,16 @@ class AcpClient {
       if (message.error) {
         // The host adapter puts the safe, curated reason in data.details (RequestError.invalid_params);
         // forwarding it is the difference between "Invalid params" and the actual cause.
-        const base = typeof message.error.message === "string" && message.error.message
-          ? message.error.message : "ACP JSON-RPC error";
+        const base =
+          typeof message.error.message === "string" && message.error.message
+            ? message.error.message
+            : "ACP JSON-RPC error";
         const data = message.error.data;
         const detail = isObject(data) ? data.details : data;
-        const suffix = typeof detail === "string" && detail.trim() && detail.trim() !== base
-          ? `: ${detail.trim().slice(0, 300)}` : "";
+        const suffix =
+          typeof detail === "string" && detail.trim() && detail.trim() !== base
+            ? `: ${detail.trim().slice(0, 300)}`
+            : "";
         pending.reject(rpcError(`${base}${suffix}`, "ACP_RPC_ERROR"));
       } else pending.resolve(message.result);
     } else if (typeof message.method === "string") {
@@ -124,11 +156,19 @@ class AcpClient {
       try {
         if (await handler(message)) return;
       } catch {
-        this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32603, message: "ACP client request failed" } });
+        this.write({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32603, message: "ACP client request failed" },
+        });
         return;
       }
     }
-    this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unsupported ACP client method" } });
+    this.write({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32601, message: "unsupported ACP client method" },
+    });
   }
 
   fail(error) {
@@ -162,21 +202,28 @@ class AcpClient {
     if (this.failed) return Promise.reject(this.failure);
     const id = ++this.seq;
     return new Promise((resolvePromise, reject) => {
-      const timer = setTimeout(() => {
-        if (onTimeout) {
-          onTimeout();
-          return;
-        }
-        this.pending.delete(id);
-        reject(rpcError(`ACP ${method} timed out`, "ACP_RPC_TIMEOUT"));
-      }, Math.max(1, timeoutMs));
+      const timer = setTimeout(
+        () => {
+          if (onTimeout) {
+            onTimeout();
+            return;
+          }
+          this.pending.delete(id);
+          reject(rpcError(`ACP ${method} timed out`, "ACP_RPC_TIMEOUT"));
+        },
+        Math.max(1, timeoutMs),
+      );
       this.pending.set(id, { resolve: resolvePromise, reject, timer });
       this.write({ jsonrpc: "2.0", id, method, params });
     });
   }
 
-  notify(method, params) { this.write({ jsonrpc: "2.0", method, params }); }
-  respond(id, result) { this.write({ jsonrpc: "2.0", id, result }); }
+  notify(method, params) {
+    this.write({ jsonrpc: "2.0", method, params });
+  }
+  respond(id, result) {
+    this.write({ jsonrpc: "2.0", id, result });
+  }
   onNotification(listener) {
     this.notificationListeners.add(listener);
     return () => this.notificationListeners.delete(listener);
@@ -188,7 +235,9 @@ class AcpClient {
 
   retire(reason = "ACP process generation retired") {
     this.fail(rpcError(reason, "ACP_GENERATION_RETIRED"));
-    try { this.child?.kill("SIGKILL"); } catch {}
+    try {
+      this.child?.kill("SIGKILL");
+    } catch {}
   }
 
   async close() {
@@ -197,56 +246,98 @@ class AcpClient {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     await new Promise((resolvePromise) => {
       const timer = setTimeout(resolvePromise, 500);
-      child.once("exit", () => { clearTimeout(timer); resolvePromise(); });
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolvePromise();
+      });
     });
   }
 }
 
 function stableJson(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item) ?? "null").join(",")}]`;
-  return `{${Object.keys(value).sort().filter((key) => value[key] !== undefined)
-    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  if (Array.isArray(value))
+    return `[${value.map((item) => stableJson(item) ?? "null").join(",")}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .filter((key) => value[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    .join(",")}}`;
 }
-const digest = (value) => createHash("sha256").update(stableJson(value)).digest("hex");
-const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
+const digest = (value) =>
+  createHash("sha256").update(stableJson(value)).digest("hex");
+const own = (value, key) => Object.hasOwn(value, key);
+const isObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const nonempty = (value) =>
+  typeof value === "string" && value.trim().length > 0;
 
 function redact(value, secrets = []) {
   if (typeof value === "string") {
-    for (const secret of secrets) if (secret) value = value.split(secret).join("[REDACTED]");
+    for (const secret of secrets)
+      if (secret) value = value.split(secret).join("[REDACTED]");
     return value;
   }
   if (Array.isArray(value)) return value.map((item) => redact(item, secrets));
-  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key,
-    /^(capability|authorization|token|access_?token|api_?key|password)$/i.test(key) ? "[REDACTED]" : redact(item, secrets),
-  ]));
+  if (isObject(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        /^(capability|authorization|token|access_?token|api_?key|password)$/i.test(
+          key,
+        )
+          ? "[REDACTED]"
+          : redact(item, secrets),
+      ]),
+    );
   return value;
 }
 
 function blockText(content) {
   if (content == null) return "";
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(blockText).filter(Boolean).join("\n");
+  if (Array.isArray(content))
+    return content.map(blockText).filter(Boolean).join("\n");
   if (typeof content !== "object") return String(content);
-  if (content.type === "text") return typeof content.text === "string" ? content.text : "";
+  if (content.type === "text")
+    return typeof content.text === "string" ? content.text : "";
   if (content.type === "content") return blockText(content.content);
-  if (content.type === "diff") return `[diff${content.path ? ` ${content.path}` : ""}]${content.newText ? `\n${content.newText}` : ""}`;
+  if (content.type === "diff")
+    return `[diff${content.path ? ` ${content.path}` : ""}]${content.newText ? `\n${content.newText}` : ""}`;
   return "";
 }
 
 const DOCUMENT_TEXT_MAX_CHARS = 120_000;
-const METADATA_TEXT_KEYS = ["summary", "description", "ocr", "text", "extractedText", "extracted", "transcription", "caption", "alt"];
-const REASONING_PARTS = new Set(["thinking", "reasoning", "redacted_thinking", "reasoning_content"]);
+const METADATA_TEXT_KEYS = [
+  "summary",
+  "description",
+  "ocr",
+  "text",
+  "extractedText",
+  "extracted",
+  "transcription",
+  "caption",
+  "alt",
+];
+const REASONING_PARTS = new Set([
+  "thinking",
+  "reasoning",
+  "redacted_thinking",
+  "reasoning_content",
+]);
 const TOOL_PARTS = new Set(["tool_use", "tool_call", "function_call"]);
 const BASE64ISH = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** The name a person would recognize for this part, or "" — never an opaque id. */
 function partName(part) {
   const metadata = isObject(part?.metadata) ? part.metadata : {};
-  for (const value of [metadata.filename, metadata.name, part?.name, part?.filename, part?.title]) {
+  for (const value of [
+    metadata.filename,
+    metadata.name,
+    part?.name,
+    part?.filename,
+    part?.title,
+  ]) {
     if (nonempty(value)) return String(value).slice(0, 200);
   }
   return "";
@@ -257,7 +348,8 @@ function partMetadataText(part) {
   const metadata = isObject(part?.metadata) ? part.metadata : {};
   for (const key of METADATA_TEXT_KEYS) {
     const value = metadata[key];
-    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 4_000);
+    if (typeof value === "string" && value.trim())
+      return value.trim().slice(0, 4_000);
   }
   return "";
 }
@@ -280,18 +372,39 @@ function mediaUrl(value) {
  * no access to the host's attachment store.
  */
 function resolveMediaUrl(part, fallbackMime = "application/octet-stream") {
-  const bareBase64 = (value, mime) => (typeof value === "string" && value.length > 64 && BASE64ISH.test(value) && !value.includes(":")
-    ? `data:${mime};base64,${value}` : null);
+  const bareBase64 = (value, mime) =>
+    typeof value === "string" &&
+    value.length > 64 &&
+    BASE64ISH.test(value) &&
+    !value.includes(":")
+      ? `data:${mime};base64,${value}`
+      : null;
   const source = part?.source;
-  if (typeof source === "string") return mediaUrl(source) ?? bareBase64(source, part?.mimeType ?? fallbackMime);
+  if (typeof source === "string")
+    return (
+      mediaUrl(source) ?? bareBase64(source, part?.mimeType ?? fallbackMime)
+    );
   if (isObject(source)) {
-    const mime = nonempty(source.mimeType) ? source.mimeType : nonempty(source.media_type) ? source.media_type : fallbackMime;
-    if (source.type === "data" || source.type === "base64" || !nonempty(source.type)) {
+    const mime = nonempty(source.mimeType)
+      ? source.mimeType
+      : nonempty(source.media_type)
+        ? source.media_type
+        : fallbackMime;
+    if (
+      source.type === "data" ||
+      source.type === "base64" ||
+      !nonempty(source.type)
+    ) {
       for (const value of [source.value, source.data, source.base64]) {
         if (nonempty(value)) return `data:${mime};base64,${value}`;
       }
     }
-    if (source.type === "url" || source.type === "data" || source.type === "base64" || !nonempty(source.type)) {
+    if (
+      source.type === "url" ||
+      source.type === "data" ||
+      source.type === "base64" ||
+      !nonempty(source.type)
+    ) {
       for (const value of [source.value, source.url, source.uri]) {
         const url = mediaUrl(value);
         if (url) return url;
@@ -308,14 +421,25 @@ function resolveMediaUrl(part, fallbackMime = "application/octet-stream") {
     return `data:${mime};base64,${part.data}`;
   }
   const image = part?.image;
-  if (typeof image === "string") return mediaUrl(image) ?? bareBase64(image, nonempty(part?.mimeType) ? part.mimeType : fallbackMime);
+  if (typeof image === "string")
+    return (
+      mediaUrl(image) ??
+      bareBase64(image, nonempty(part?.mimeType) ? part.mimeType : fallbackMime)
+    );
   if (isObject(image)) {
     for (const value of [image.url, image.uri]) {
       const url = mediaUrl(value);
       if (url) return url;
     }
     for (const value of [image.data, image.value, image.base64]) {
-      const url = bareBase64(value, nonempty(image.mimeType) ? image.mimeType : nonempty(part?.mimeType) ? part.mimeType : fallbackMime);
+      const url = bareBase64(
+        value,
+        nonempty(image.mimeType)
+          ? image.mimeType
+          : nonempty(part?.mimeType)
+            ? part.mimeType
+            : fallbackMime,
+      );
       if (url) return url;
     }
   }
@@ -327,14 +451,25 @@ function resolveMediaUrl(part, fallbackMime = "application/octet-stream") {
 function documentText(part) {
   if (typeof part?.text === "string" && part.text.trim()) return part.text;
   const source = isObject(part?.source) ? part.source : {};
-  const mime = nonempty(source.mimeType) ? source.mimeType : nonempty(part?.mimeType) ? part.mimeType : "";
-  const textual = /^text\//.test(mime) || ["application/json", "application/xml", "application/javascript"].includes(mime);
+  const mime = nonempty(source.mimeType)
+    ? source.mimeType
+    : nonempty(part?.mimeType)
+      ? part.mimeType
+      : "";
+  const textual =
+    /^text\//.test(mime) ||
+    ["application/json", "application/xml", "application/javascript"].includes(
+      mime,
+    );
   if (!textual) return null;
   for (const value of [source.value, source.data, part?.data]) {
     if (!nonempty(value)) continue;
     try {
       const text = Buffer.from(String(value), "base64").toString("utf8");
-      if (text.trim()) return text.length > DOCUMENT_TEXT_MAX_CHARS ? `${text.slice(0, DOCUMENT_TEXT_MAX_CHARS)}\n\n[attachment truncated at ${DOCUMENT_TEXT_MAX_CHARS} characters]` : text;
+      if (text.trim())
+        return text.length > DOCUMENT_TEXT_MAX_CHARS
+          ? `${text.slice(0, DOCUMENT_TEXT_MAX_CHARS)}\n\n[attachment truncated at ${DOCUMENT_TEXT_MAX_CHARS} characters]`
+          : text;
     } catch {}
   }
   return null;
@@ -348,7 +483,9 @@ function imagePlaceholder(part, vision) {
   const name = partName(part);
   const label = `image${name ? ` "${name}"` : ""}`;
   const detail = partMetadataText(part);
-  const head = vision ? `[${label} could not be included]` : `[${label} — this model cannot view images]`;
+  const head = vision
+    ? `[${label} could not be included]`
+    : `[${label} — this model cannot view images]`;
   return textPart(detail ? `${head}\n${detail}` : head);
 }
 
@@ -364,7 +501,10 @@ function documentPlaceholder(part, capability) {
     return { type: "file", file };
   }
   const extracted = documentText(part);
-  if (extracted) return textPart(`Attached file${name ? ` "${name}"` : ""}:\n\n${extracted}`);
+  if (extracted)
+    return textPart(
+      `Attached file${name ? ` "${name}"` : ""}:\n\n${extracted}`,
+    );
   return textPart(detail ? `[${label}]\n${detail}` : `[${label}]`);
 }
 
@@ -388,7 +528,8 @@ function openAIContent(content, capability) {
     if (!isObject(part)) continue;
     const type = String(part.type || "");
     if (type === "text" || type === "input_text" || type === "output_text") {
-      if (typeof part.text === "string" && part.text.trim()) parts.push(textPart(part.text));
+      if (typeof part.text === "string" && part.text.trim())
+        parts.push(textPart(part.text));
       continue;
     }
     if (REASONING_PARTS.has(type)) continue;
@@ -398,19 +539,46 @@ function openAIContent(content, capability) {
     }
     if (type === "image_url") {
       const url = mediaUrl(part.image_url?.url);
-      parts.push(url && capability.vision
-        ? { type: "image_url", image_url: { url, ...(typeof part.image_url?.detail === "string" ? { detail: part.image_url.detail } : {}) } }
-        : imagePlaceholder(part, capability.vision));
+      parts.push(
+        url && capability.vision
+          ? {
+              type: "image_url",
+              image_url: {
+                url,
+                ...(typeof part.image_url?.detail === "string"
+                  ? { detail: part.image_url.detail }
+                  : {}),
+              },
+            }
+          : imagePlaceholder(part, capability.vision),
+      );
       continue;
     }
-    if (type === "image" || type === "input_image" || (type === "binary" && String(part.mimeType || "").startsWith("image/"))) {
+    if (
+      type === "image" ||
+      type === "input_image" ||
+      (type === "binary" && String(part.mimeType || "").startsWith("image/"))
+    ) {
       const url = resolveMediaUrl(part, "image/png");
-      parts.push(url && capability.vision
-        ? { type: "image_url", image_url: { url } }
-        : imagePlaceholder(part, capability.vision));
+      parts.push(
+        url && capability.vision
+          ? { type: "image_url", image_url: { url } }
+          : imagePlaceholder(part, capability.vision),
+      );
       continue;
     }
-    if (["document", "file", "input_file", "audio", "input_audio", "video", "binary", "attachment"].includes(type)) {
+    if (
+      [
+        "document",
+        "file",
+        "input_file",
+        "audio",
+        "input_audio",
+        "video",
+        "binary",
+        "attachment",
+      ].includes(type)
+    ) {
       parts.push(documentPlaceholder(part, capability));
       continue;
     }
@@ -421,11 +589,17 @@ function openAIContent(content, capability) {
 
 /** What this turn's model accepts, from the host-declared catalog capability on context.model. */
 function modelCapability(model) {
-  return { vision: !isObject(model) || model.supportsImages !== false, files: isObject(model) && model.supportsFiles === true };
+  return {
+    vision: !isObject(model) || model.supportsImages !== false,
+    files: isObject(model) && model.supportsFiles === true,
+  };
 }
 
 function openAIMessage(message, capability) {
-  const result = { role: message.role, content: openAIContent(message.content, capability) };
+  const result = {
+    role: message.role,
+    content: openAIContent(message.content, capability),
+  };
   if (nonempty(message.name)) result.name = message.name;
   if (message.role === "assistant") {
     const calls = message.tool_calls ?? message.toolCalls;
@@ -435,9 +609,10 @@ function openAIMessage(message, capability) {
         type: "function",
         function: {
           name: call.function?.name ?? call.name,
-          arguments: typeof (call.function?.arguments ?? call.args) === "string"
-            ? (call.function?.arguments ?? call.args)
-            : JSON.stringify(call.function?.arguments ?? call.args ?? {}),
+          arguments:
+            typeof (call.function?.arguments ?? call.args) === "string"
+              ? (call.function?.arguments ?? call.args)
+              : JSON.stringify(call.function?.arguments ?? call.args ?? {}),
         },
       }));
     }
@@ -447,69 +622,130 @@ function openAIMessage(message, capability) {
   }
   if (message.role === "tool") {
     const callId = message.tool_call_id ?? message.toolCallId;
-    if (!nonempty(callId)) throw rpcError("Tool history is missing tool_call_id", "ACP_INVALID_HISTORY");
+    if (!nonempty(callId))
+      throw rpcError(
+        "Tool history is missing tool_call_id",
+        "ACP_INVALID_HISTORY",
+      );
     result.tool_call_id = callId;
   }
   return result;
 }
 
 function promptBlocks(message) {
-  if (typeof message.content === "string") return message.content.trim() ? [{ type: "text", text: message.content }] : [];
+  if (typeof message.content === "string")
+    return message.content.trim()
+      ? [{ type: "text", text: message.content }]
+      : [];
   if (!Array.isArray(message.content)) return [];
   return message.content.flatMap((part) => {
-    if (part?.type === "text" && nonempty(part.text)) return [{ type: "text", text: part.text }];
+    if (part?.type === "text" && nonempty(part.text))
+      return [{ type: "text", text: part.text }];
     if (part?.type === "file") {
       const url = part.file?.file_data ?? part.file?.file_url;
-      if (typeof url === "string") return [{ type: "resource_link", uri: url, name: part.file.filename || "user file", mimeType: part.file.mime_type || "application/octet-stream" }];
+      if (typeof url === "string")
+        return [
+          {
+            type: "resource_link",
+            uri: url,
+            name: part.file.filename || "user file",
+            mimeType: part.file.mime_type || "application/octet-stream",
+          },
+        ];
       return [];
     }
     const url = part?.type === "image_url" ? part.image_url?.url : null;
     if (typeof url === "string") {
       const inline = /^data:(image\/[^;,]+);base64,([\s\S]+)$/.exec(url);
       // The adapter receives the original current message too; ACP image data is for compatible peers.
-      if (inline) return [{ type: "image", mimeType: inline[1], data: inline[2] }];
-      return [{ type: "resource_link", uri: url, name: "user image", mimeType: "image/*" }];
+      if (inline)
+        return [{ type: "image", mimeType: inline[1], data: inline[2] }];
+      return [
+        {
+          type: "resource_link",
+          uri: url,
+          name: "user image",
+          mimeType: "image/*",
+        },
+      ];
     }
     return [];
   });
 }
 
 const MAX_FALLBACK_MODELS = 8;
-const modelId = (value) => typeof value === "string" && value.length > 0 && value.length <= 200
-  && ![...value].some((character) => /\s/u.test(character) || character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+const modelId = (value) =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 200 &&
+  ![...value].some(
+    (character) =>
+      /\s/u.test(character) ||
+      character.charCodeAt(0) < 32 ||
+      character.charCodeAt(0) === 127,
+  );
 
 /** The host's model for this turn: id, its ordered backup models (same connection) and output cap. */
 function hostModel(model) {
   const result = { id: model.id };
   if (model.fallbacks !== undefined) {
-    if (!Array.isArray(model.fallbacks) || model.fallbacks.length > MAX_FALLBACK_MODELS || !model.fallbacks.every(modelId)) {
-      throw rpcError("Invalid chisabotHermes model fallbacks", "ACP_INVALID_HOST_CONTEXT");
+    if (
+      !Array.isArray(model.fallbacks) ||
+      model.fallbacks.length > MAX_FALLBACK_MODELS ||
+      !model.fallbacks.every(modelId)
+    ) {
+      throw rpcError(
+        "Invalid chisabotHermes model fallbacks",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
     if (model.fallbacks.length) result.fallbacks = [...model.fallbacks];
   }
   if (model.maxOutputTokens !== undefined) {
-    if (!Number.isSafeInteger(model.maxOutputTokens) || model.maxOutputTokens <= 0 || model.maxOutputTokens > 1_000_000) {
-      throw rpcError("Invalid chisabotHermes model output limit", "ACP_INVALID_HOST_CONTEXT");
+    if (
+      !Number.isSafeInteger(model.maxOutputTokens) ||
+      model.maxOutputTokens <= 0 ||
+      model.maxOutputTokens > 1_000_000
+    ) {
+      throw rpcError(
+        "Invalid chisabotHermes model output limit",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
     result.maxOutputTokens = model.maxOutputTokens;
   }
   if (model.contextCompression !== undefined) {
     // false = the host already compacted this run's history; the adapter keeps Hermes' own compression off.
-    if (typeof model.contextCompression !== "boolean") throw rpcError("Invalid chisabotHermes model compression flag", "ACP_INVALID_HOST_CONTEXT");
+    if (typeof model.contextCompression !== "boolean")
+      throw rpcError(
+        "Invalid chisabotHermes model compression flag",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     result.contextCompression = model.contextCompression;
   }
   if (model.contextWindow !== undefined) {
     // The host's declared context window seeds the adapter's pre-construction provider pin
     // (QA1104-01): gateways that omit context metadata would otherwise probe 32K defaults.
-    if (!Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0 || model.contextWindow > 16_000_000) {
-      throw rpcError("Invalid chisabotHermes model context window", "ACP_INVALID_HOST_CONTEXT");
+    if (
+      !Number.isSafeInteger(model.contextWindow) ||
+      model.contextWindow <= 0 ||
+      model.contextWindow > 16_000_000
+    ) {
+      throw rpcError(
+        "Invalid chisabotHermes model context window",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
     result.contextWindow = model.contextWindow;
   }
   for (const key of ["supportsImages", "supportsFiles"]) {
     // Catalog capability flags drive image/document part conversion in openAIContent.
     if (model[key] === undefined) continue;
-    if (typeof model[key] !== "boolean") throw rpcError("Invalid chisabotHermes model capability flag", "ACP_INVALID_HOST_CONTEXT");
+    if (typeof model[key] !== "boolean")
+      throw rpcError(
+        "Invalid chisabotHermes model capability flag",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     result[key] = model[key];
   }
   return result;
@@ -517,13 +753,31 @@ function hostModel(model) {
 
 /** What the adapter detected in the installed Hermes (initialize `_meta.chisabotModelControls`). */
 function modelControls(value) {
-  return { fallback: isObject(value) && value.fallback === true, maxOutputTokens: isObject(value) && value.maxOutputTokens === true };
+  return {
+    fallback: isObject(value) && value.fallback === true,
+    maxOutputTokens: isObject(value) && value.maxOutputTokens === true,
+  };
 }
 
 /** One Hermes model switch reported by the adapter; anything malformed is dropped, never forwarded. */
 function modelFallback(value) {
-  if (!isObject(value) || !modelId(value.from) || !modelId(value.to) || value.from === value.to) return null;
-  return { from: value.from, to: value.to, reason: value.reason === "quota" ? "quota" : value.reason === "rejected" ? "rejected" : "unavailable" };
+  if (
+    !isObject(value) ||
+    !modelId(value.from) ||
+    !modelId(value.to) ||
+    value.from === value.to
+  )
+    return null;
+  return {
+    from: value.from,
+    to: value.to,
+    reason:
+      value.reason === "quota"
+        ? "quota"
+        : value.reason === "rejected"
+          ? "rejected"
+          : "unavailable",
+  };
 }
 
 /** Last provider call's real token usage, returned in `session/prompt` `_meta.chisabot.usage`.
@@ -533,9 +787,22 @@ function turnUsage(value) {
   if (!isObject(value)) return null;
   const inputTokens = value.inputTokens;
   const outputTokens = value.outputTokens;
-  if (!Number.isSafeInteger(inputTokens) || inputTokens <= 0 || inputTokens > 16_000_000) return null;
-  if (!Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > 16_000_000) return null;
-  const model = typeof value.model === "string" && value.model.trim() ? value.model : undefined;
+  if (
+    !Number.isSafeInteger(inputTokens) ||
+    inputTokens <= 0 ||
+    inputTokens > 16_000_000
+  )
+    return null;
+  if (
+    !Number.isSafeInteger(outputTokens) ||
+    outputTokens < 0 ||
+    outputTokens > 16_000_000
+  )
+    return null;
+  const model =
+    typeof value.model === "string" && value.model.trim()
+      ? value.model
+      : undefined;
   return { inputTokens, outputTokens, ...(model ? { model } : {}) };
 }
 
@@ -543,69 +810,183 @@ function prepareInput(input, options) {
   const host = input?.forwardedProps?.chisabotHermes;
   let context = null;
   if (host !== undefined) {
-    if (!isObject(host) || host.version !== 1 || !isObject(host.scope)
-      || !["actorId", "botId", "threadId", "runId"].every((key) => nonempty(host.scope[key]))
-      || !isObject(host.toolGateway) || !nonempty(host.toolGateway.url) || !nonempty(host.toolGateway.capability)
-      || !isObject(host.model) || !nonempty(host.model.id)) {
-      throw rpcError("Invalid chisabotHermes host context", "ACP_INVALID_HOST_CONTEXT");
+    if (
+      !isObject(host) ||
+      host.version !== 1 ||
+      !isObject(host.scope) ||
+      !["actorId", "botId", "threadId", "runId"].every((key) =>
+        nonempty(host.scope[key]),
+      ) ||
+      !isObject(host.toolGateway) ||
+      !nonempty(host.toolGateway.url) ||
+      !nonempty(host.toolGateway.capability) ||
+      !isObject(host.model) ||
+      !nonempty(host.model.id)
+    ) {
+      throw rpcError(
+        "Invalid chisabotHermes host context",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
-    if (input.threadId !== host.scope.threadId || input.runId !== host.scope.runId) {
-      throw rpcError("Host scope does not match AG-UI threadId/runId", "ACP_INVALID_HOST_CONTEXT");
+    if (
+      input.threadId !== host.scope.threadId ||
+      input.runId !== host.scope.runId
+    ) {
+      throw rpcError(
+        "Host scope does not match AG-UI threadId/runId",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
     let gateway;
-    try { gateway = new URL(host.toolGateway.url); } catch {}
-    if (!gateway || !["http:", "https:"].includes(gateway.protocol) || gateway.username || gateway.password
-      || gateway.search || gateway.hash || /\s/.test(host.toolGateway.url)
-      || !/^[\x21-\x7e]+$/.test(host.toolGateway.capability)) {
-      throw rpcError("Invalid host tool gateway URL or capability", "ACP_INVALID_HOST_CONTEXT");
+    try {
+      gateway = new URL(host.toolGateway.url);
+    } catch {}
+    if (
+      !gateway ||
+      !["http:", "https:"].includes(gateway.protocol) ||
+      gateway.username ||
+      gateway.password ||
+      gateway.search ||
+      gateway.hash ||
+      /\s/.test(host.toolGateway.url) ||
+      !/^[\x21-\x7e]+$/.test(host.toolGateway.capability)
+    ) {
+      throw rpcError(
+        "Invalid host tool gateway URL or capability",
+        "ACP_INVALID_HOST_CONTEXT",
+      );
     }
     context = {
       version: 1,
-      scope: Object.fromEntries(["actorId", "botId", "threadId", "runId"].map((key) => [key, host.scope[key]])),
-      toolGateway: { url: host.toolGateway.url, capability: host.toolGateway.capability },
+      scope: Object.fromEntries(
+        ["actorId", "botId", "threadId", "runId"].map((key) => [
+          key,
+          host.scope[key],
+        ]),
+      ),
+      toolGateway: {
+        url: host.toolGateway.url,
+        capability: host.toolGateway.capability,
+      },
       model: hostModel(host.model),
     };
   }
-  if (options.requireHostContext && !context) throw rpcError("Trusted chisabotHermes host context is required", "ACP_HOST_CONTEXT_REQUIRED");
-  if (options.requireHostContext && !options.statePath) throw rpcError("ACP_STATE_PATH is required for safe Hermes run recovery", "ACP_STATE_REQUIRED");
+  if (options.requireHostContext && !context)
+    throw rpcError(
+      "Trusted chisabotHermes host context is required",
+      "ACP_HOST_CONTEXT_REQUIRED",
+    );
+  if (options.requireHostContext && !options.statePath)
+    throw rpcError(
+      "ACP_STATE_PATH is required for safe Hermes run recovery",
+      "ACP_STATE_REQUIRED",
+    );
   if (!context && Array.isArray(input?.tools) && input.tools.length) {
-    throw rpcError("Host tools require chisabotHermes context and a host-tools ACP adapter", "ACP_HOST_CONTEXT_REQUIRED");
+    throw rpcError(
+      "Host tools require chisabotHermes context and a host-tools ACP adapter",
+      "ACP_HOST_CONTEXT_REQUIRED",
+    );
   }
-  const threadId = context?.scope.threadId ?? (nonempty(input?.threadId) ? input.threadId : "thread");
-  const runId = context?.scope.runId ?? (nonempty(input?.runId) ? input.runId : randomUUID());
+  const threadId =
+    context?.scope.threadId ??
+    (nonempty(input?.threadId) ? input.threadId : "thread");
+  const runId =
+    context?.scope.runId ??
+    (nonempty(input?.runId) ? input.runId : randomUUID());
   const rawMessages = Array.isArray(input?.messages) ? input.messages : [];
-  const systems = rawMessages.filter((message) => message?.role === "system" || message?.role === "developer");
-  const systemPrompt = [typeof input?.system === "string" ? input.system : "", ...systems.map((message) => blockText(message.content))]
-    .filter((text) => text.trim()).join("\n\n");
-  const messages = rawMessages.filter((message) => ["user", "assistant", "tool"].includes(message?.role));
+  const systems = rawMessages.filter(
+    (message) => message?.role === "system" || message?.role === "developer",
+  );
+  const systemPrompt = [
+    typeof input?.system === "string" ? input.system : "",
+    ...systems.map((message) => blockText(message.content)),
+  ]
+    .filter((text) => text.trim())
+    .join("\n\n");
+  const messages = rawMessages.filter((message) =>
+    ["user", "assistant", "tool"].includes(message?.role),
+  );
   const capability = modelCapability(context?.model);
-  const normalized = messages.map((message) => openAIMessage(message, capability));
+  const normalized = messages.map((message) =>
+    openAIMessage(message, capability),
+  );
   const last = normalized.at(-1);
   const continuation = context && last?.role === "tool";
   if (!last || (!continuation && last.role !== "user")) {
-    throw rpcError("This turn has no new user message or tool-result continuation", "ACP_EMPTY_PROMPT");
+    throw rpcError(
+      "This turn has no new user message or tool-result continuation",
+      "ACP_EMPTY_PROMPT",
+    );
   }
   const prompt = continuation
-    ? [{ type: "text", text: "Continue the assistant turn using the authoritative host history and the tool results provided in metadata." }]
+    ? [
+        {
+          type: "text",
+          text: "Continue the assistant turn using the authoritative host history and the tool results provided in metadata.",
+        },
+      ]
     : promptBlocks(last);
-  if (!prompt.length) throw rpcError("This turn has no supported user content", "ACP_EMPTY_PROMPT");
+  if (!prompt.length)
+    throw rpcError(
+      "This turn has no supported user content",
+      "ACP_EMPTY_PROMPT",
+    );
   const tools = (Array.isArray(input?.tools) ? input.tools : []).map((tool) => {
-    if (!nonempty(tool?.name)) throw rpcError("A host tool has no name", "ACP_INVALID_TOOLS");
-    const inputSchema = tool.inputSchema ?? tool.parameters ?? { type: "object", properties: {} };
-    if (!isObject(inputSchema)) throw rpcError("A host tool has an invalid input schema", "ACP_INVALID_TOOLS");
-    return { name: tool.name, description: typeof tool.description === "string" ? tool.description : "", inputSchema };
+    if (!nonempty(tool?.name))
+      throw rpcError("A host tool has no name", "ACP_INVALID_TOOLS");
+    const inputSchema = tool.inputSchema ??
+      tool.parameters ?? { type: "object", properties: {} };
+    if (!isObject(inputSchema))
+      throw rpcError(
+        "A host tool has an invalid input schema",
+        "ACP_INVALID_TOOLS",
+      );
+    return {
+      name: tool.name,
+      description: typeof tool.description === "string" ? tool.description : "",
+      inputSchema,
+    };
   });
-  if (new Set(tools.map((tool) => tool.name)).size !== tools.length) throw rpcError("Duplicate host tool names", "ACP_INVALID_TOOLS");
-  if (context && stableJson([systemPrompt, normalized, tools, context.model]).includes(context.toolGateway.capability)) {
-    throw rpcError("Host capability must not occur in model-visible content", "ACP_INVALID_HOST_CONTEXT");
+  if (new Set(tools.map((tool) => tool.name)).size !== tools.length)
+    throw rpcError("Duplicate host tool names", "ACP_INVALID_TOOLS");
+  if (
+    context &&
+    stableJson([systemPrompt, normalized, tools, context.model]).includes(
+      context.toolGateway.capability,
+    )
+  ) {
+    throw rpcError(
+      "Host capability must not occur in model-visible content",
+      "ACP_INVALID_HOST_CONTEXT",
+    );
   }
-  const namespace = digest(context ? ["host", context.scope.actorId, context.scope.botId, threadId] : ["generic", threadId]);
+  const namespace = digest(
+    context
+      ? ["host", context.scope.actorId, context.scope.botId, threadId]
+      : ["generic", threadId],
+  );
   // Hash non-system rows separately: regenerated system memory must not invalidate a history extension.
-  const rowHashes = normalized.map((message, index) => digest({ ...message, id: messages[index].id }));
-  const inputDigest = digest({ systemPrompt, messages: normalized, rowHashes, tools, model: context?.model ?? null });
+  const rowHashes = normalized.map((message, index) =>
+    digest({ ...message, id: messages[index].id }),
+  );
+  const inputDigest = digest({
+    systemPrompt,
+    messages: normalized,
+    rowHashes,
+    tools,
+    model: context?.model ?? null,
+  });
   return {
-    threadId, runId, namespace, key: digest([namespace, runId]), inputDigest, rowHashes,
-    prompt, systemPrompt, context, tools,
+    threadId,
+    runId,
+    namespace,
+    key: digest([namespace, runId]),
+    inputDigest,
+    rowHashes,
+    prompt,
+    systemPrompt,
+    context,
+    tools,
     history: continuation ? normalized : normalized.slice(0, -1),
     currentMessage: continuation ? null : last,
     continuation: Boolean(continuation),
@@ -615,7 +996,8 @@ function prepareInput(input, options) {
 export function createAcpBridge(overrides = {}) {
   const options = { ...DEFAULTS, ...overrides };
   for (const key of ["turnTimeoutMs", "initTimeoutMs", "cancelGraceMs"]) {
-    if (!Number.isFinite(options[key]) || options[key] <= 0) throw new Error(`Invalid ${key}`);
+    if (!Number.isFinite(options[key]) || options[key] <= 0)
+      throw new Error(`Invalid ${key}`);
   }
   const runs = new Map();
   const sessionQueues = new Map();
@@ -628,15 +1010,34 @@ export function createAcpBridge(overrides = {}) {
   const statePath = options.statePath ? resolve(options.statePath) : "";
   if (statePath && existsSync(statePath)) {
     let saved;
-    try { saved = JSON.parse(readFileSync(statePath, "utf8")); } catch { throw new Error("ACP state ledger is unreadable; refusing unsafe recovery"); }
-    if (saved?.version !== 1 || !Array.isArray(saved.runs)) throw new Error("ACP state ledger has an unsupported format");
+    try {
+      saved = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch {
+      throw new Error(
+        "ACP state ledger is unreadable; refusing unsafe recovery",
+      );
+    }
+    if (saved?.version !== 1 || !Array.isArray(saved.runs))
+      throw new Error("ACP state ledger has an unsupported format");
     for (const item of saved.runs) {
-      if (!nonempty(item.key) || !nonempty(item.digest) || !Array.isArray(item.rowHashes) || !Array.isArray(item.events)
-        || !["started", "completed", "unknown"].includes(item.status)) throw new Error("ACP state ledger has an invalid run record");
+      if (
+        !nonempty(item.key) ||
+        !nonempty(item.digest) ||
+        !Array.isArray(item.rowHashes) ||
+        !Array.isArray(item.events) ||
+        !["started", "completed", "unknown"].includes(item.status)
+      )
+        throw new Error("ACP state ledger has an invalid run record");
       const entry = {
-        key: item.key, digest: item.digest, rowHashes: item.rowHashes,
+        key: item.key,
+        digest: item.digest,
+        rowHashes: item.rowHashes,
         status: item.status === "completed" ? "completed" : "unknown",
-        events: item.events, done: true, subscribers: new Set(), secrets: [], started: true,
+        events: item.events,
+        done: true,
+        subscribers: new Set(),
+        secrets: [],
+        started: true,
       };
       if (!runs.has(item.key)) runs.set(item.key, []);
       runs.get(item.key).push(entry);
@@ -645,19 +1046,34 @@ export function createAcpBridge(overrides = {}) {
 
   const persist = () => {
     if (!statePath) return;
-    const records = [...runs.values()].flat().filter((entry) => entry.started).map((entry) => ({
-      key: entry.key, digest: entry.digest, rowHashes: entry.rowHashes,
-      status: entry.status === "completed" ? "completed" : entry.status === "unknown" ? "unknown" : "started",
-      events: redact(entry.events, entry.secrets),
-    }));
+    const records = [...runs.values()]
+      .flat()
+      .filter((entry) => entry.started)
+      .map((entry) => ({
+        key: entry.key,
+        digest: entry.digest,
+        rowHashes: entry.rowHashes,
+        status:
+          entry.status === "completed"
+            ? "completed"
+            : entry.status === "unknown"
+              ? "unknown"
+              : "started",
+        events: redact(entry.events, entry.secrets),
+      }));
     const temporary = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
     try {
       mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 });
-      writeFileSync(temporary, JSON.stringify({ version: 1, runs: records }), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ version: 1, runs: records }), {
+        mode: 0o600,
+      });
       renameSync(temporary, statePath);
     } catch {
       stateHealthy = false;
-      throw rpcError("ACP state ledger could not be persisted; execution is blocked", "ACP_STATE_ERROR");
+      throw rpcError(
+        "ACP state ledger could not be persisted; execution is blocked",
+        "ACP_STATE_ERROR",
+      );
     }
   };
 
@@ -665,8 +1081,19 @@ export function createAcpBridge(overrides = {}) {
     if (closing) throw rpcError("ACP bridge is closed", "ACP_CLOSED");
     if (!generation || generation.client.failed) {
       const previous = generation;
-      if (previous) void previous.client.close().finally(() => generations.delete(previous));
-      generation = { id: ++generationSeq, client: new AcpClient(options), init: null, hostTools: false, modelControls: null, sessions: new Map(), seeded: new Set() };
+      if (previous)
+        void previous.client
+          .close()
+          .finally(() => generations.delete(previous));
+      generation = {
+        id: ++generationSeq,
+        client: new AcpClient(options),
+        init: null,
+        hostTools: false,
+        modelControls: null,
+        sessions: new Map(),
+        seeded: new Set(),
+      };
       generations.add(generation);
     }
     return generation;
@@ -675,14 +1102,20 @@ export function createAcpBridge(overrides = {}) {
   const ensureInitialized = async (current) => {
     if (!current.init) {
       current.init = (async () => {
-        const result = await current.client.request("initialize", {
-          protocolVersion: 1,
-          clientCapabilities: {},
-          clientInfo: { name: "chisabot-acp-bridge", version: "0.2.0" },
-        }, options.initTimeoutMs);
+        const result = await current.client.request(
+          "initialize",
+          {
+            protocolVersion: 1,
+            clientCapabilities: {},
+            clientInfo: { name: "chisabot-acp-bridge", version: "0.2.0" },
+          },
+          options.initTimeoutMs,
+        );
         if (current.client.failed) throw current.client.failure;
         current.hostTools = result?._meta?.chisabotHostTools === 1;
-        current.modelControls = modelControls(result?._meta?.chisabotModelControls);
+        current.modelControls = modelControls(
+          result?._meta?.chisabotModelControls,
+        );
         current.client.initialized = true;
         current.client.healthy = true;
       })().catch((error) => {
@@ -697,9 +1130,11 @@ export function createAcpBridge(overrides = {}) {
     const previous = sessionQueues.get(key) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(task);
     sessionQueues.set(key, next);
-    void next.finally(() => {
-      if (sessionQueues.get(key) === next) sessionQueues.delete(key);
-    }).catch(() => {});
+    void next
+      .finally(() => {
+        if (sessionQueues.get(key) === next) sessionQueues.delete(key);
+      })
+      .catch(() => {});
     return next;
   };
 
@@ -714,9 +1149,16 @@ export function createAcpBridge(overrides = {}) {
     const safe = redact(terminal, entry.secrets);
     entry.events.push(safe);
     entry.status = "completed";
-    try { persist(); } catch {
+    try {
+      persist();
+    } catch {
       entry.status = "unknown";
-      entry.events[entry.events.length - 1] = { type: "RUN_ERROR", code: "ACP_STATE_ERROR", message: "ACP result could not be committed to the run ledger; do not retry this run" };
+      entry.events[entry.events.length - 1] = {
+        type: "RUN_ERROR",
+        code: "ACP_STATE_ERROR",
+        message:
+          "ACP result could not be committed to the run ledger; do not retry this run",
+      };
     }
     entry.done = true;
     for (const subscriber of entry.subscribers) {
@@ -728,28 +1170,53 @@ export function createAcpBridge(overrides = {}) {
 
   const execute = async (entry, prepared) => {
     if (entry.cancelReason) {
-      complete(entry, { type: "RUN_ERROR", code: "ACP_CANCELLED", message: entry.cancelReason });
+      complete(entry, {
+        type: "RUN_ERROR",
+        code: "ACP_CANCELLED",
+        message: entry.cancelReason,
+      });
       return;
     }
     const active = {
-      generation: null, sessionId: null, cancelReason: null, cancelCode: null, grace: null, cancelSent: false,
+      generation: null,
+      sessionId: null,
+      cancelReason: null,
+      cancelCode: null,
+      grace: null,
+      cancelSent: false,
       cancel(reason, code = "ACP_CANCELLED") {
         if (this.cancelReason) return;
         this.cancelReason = reason;
         this.cancelCode = code;
         this.sendCancel();
-        this.grace = setTimeout(() => this.generation?.client.retire("ACP cancellation grace expired"), options.cancelGraceMs);
+        this.grace = setTimeout(
+          () =>
+            this.generation?.client.retire("ACP cancellation grace expired"),
+          options.cancelGraceMs,
+        );
       },
       sendCancel() {
-        if (!this.cancelReason || this.cancelSent || !this.sessionId || !this.generation) return;
+        if (
+          !this.cancelReason ||
+          this.cancelSent ||
+          !this.sessionId ||
+          !this.generation
+        )
+          return;
         this.cancelSent = true;
-        this.generation.client.notify("session/cancel", { sessionId: this.sessionId });
+        this.generation.client.notify("session/cancel", {
+          sessionId: this.sessionId,
+        });
       },
     };
     entry.active = active;
     activeTurns.add(active);
     const deadline = Date.now() + options.turnTimeoutMs;
-    const timeout = () => active.cancel(`ACP turn timed out after ${options.turnTimeoutMs}ms`, "ACP_TURN_TIMEOUT");
+    const timeout = () =>
+      active.cancel(
+        `ACP turn timed out after ${options.turnTimeoutMs}ms`,
+        "ACP_TURN_TIMEOUT",
+      );
     const timer = setTimeout(timeout, options.turnTimeoutMs);
     const remaining = () => Math.max(1, deadline - Date.now());
     let offNotification = () => {};
@@ -760,12 +1227,16 @@ export function createAcpBridge(overrides = {}) {
     let waitingCallId = null;
     const toolCalls = new Map();
     const closeText = () => {
-      if (textMessageId) emit(entry, { type: "TEXT_MESSAGE_END", messageId: textMessageId });
+      if (textMessageId)
+        emit(entry, { type: "TEXT_MESSAGE_END", messageId: textMessageId });
       textMessageId = null;
     };
     const closeReasoning = () => {
       if (reasoningMessageId) {
-        emit(entry, { type: "REASONING_MESSAGE_END", messageId: reasoningMessageId });
+        emit(entry, {
+          type: "REASONING_MESSAGE_END",
+          messageId: reasoningMessageId,
+        });
         emit(entry, { type: "REASONING_END", messageId: reasoningMessageId });
       }
       reasoningMessageId = null;
@@ -773,7 +1244,11 @@ export function createAcpBridge(overrides = {}) {
     const endTool = (tool) => {
       if (tool.ended) return;
       // rawInput updates are snapshots. Emit one complete JSON document immediately before END.
-      emit(entry, { type: "TOOL_CALL_ARGS", toolCallId: tool.id, delta: JSON.stringify(tool.rawInput ?? {}) });
+      emit(entry, {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: tool.id,
+        delta: JSON.stringify(tool.rawInput ?? {}),
+      });
       emit(entry, { type: "TOOL_CALL_END", toolCallId: tool.id });
       tool.ended = true;
     };
@@ -783,134 +1258,268 @@ export function createAcpBridge(overrides = {}) {
       for (const tool of toolCalls.values()) endTool(tool);
     };
     try {
-      if (!stateHealthy) throw rpcError("ACP state ledger is unhealthy; execution is blocked", "ACP_STATE_ERROR");
+      if (!stateHealthy)
+        throw rpcError(
+          "ACP state ledger is unhealthy; execution is blocked",
+          "ACP_STATE_ERROR",
+        );
       const current = getGeneration();
       active.generation = current;
       await ensureInitialized(current);
-      if (active.cancelReason) throw rpcError(active.cancelReason, active.cancelCode);
-      if (prepared.context && !current.hostTools) throw rpcError("ACP adapter did not advertise chisabotHostTools:1", "ACP_HOST_TOOLS_UNSUPPORTED");
+      if (active.cancelReason)
+        throw rpcError(active.cancelReason, active.cancelCode);
+      if (prepared.context && !current.hostTools)
+        throw rpcError(
+          "ACP adapter did not advertise chisabotHostTools:1",
+          "ACP_HOST_TOOLS_UNSUPPORTED",
+        );
       let session = current.sessions.get(prepared.namespace);
       if (!session) {
-        session = current.client.request("session/new", {
-          cwd: resolve(options.cwd), mcpServers: [],
-          _meta: { chisabotNamespace: prepared.namespace },
-        }, remaining(), timeout).then((created) => {
-          if (!nonempty(created?.sessionId)) throw rpcError("ACP session/new did not return a sessionId", "ACP_INVALID_SESSION");
-          return created.sessionId;
-        });
+        session = current.client
+          .request(
+            "session/new",
+            {
+              cwd: resolve(options.cwd),
+              mcpServers: [],
+              _meta: { chisabotNamespace: prepared.namespace },
+            },
+            remaining(),
+            timeout,
+          )
+          .then((created) => {
+            if (!nonempty(created?.sessionId))
+              throw rpcError(
+                "ACP session/new did not return a sessionId",
+                "ACP_INVALID_SESSION",
+              );
+            return created.sessionId;
+          });
         current.sessions.set(prepared.namespace, session);
       }
       active.sessionId = await session;
       active.sendCancel();
-      if (active.cancelReason) throw rpcError(active.cancelReason, active.cancelCode);
+      if (active.cancelReason)
+        throw rpcError(active.cancelReason, active.cancelCode);
       const sessionId = active.sessionId;
       offNotification = current.client.onNotification((message) => {
-        if (active.cancelReason || current.client.failed || message.method !== "session/update" || message.params?.sessionId !== sessionId) return;
+        if (
+          active.cancelReason ||
+          current.client.failed ||
+          message.method !== "session/update" ||
+          message.params?.sessionId !== sessionId
+        )
+          return;
         const update = message.params.update ?? {};
         const metadata = update._meta?.chisabot;
         if (isObject(metadata?.waiting)) {
           waiting = metadata.waiting;
           waitingCallId = metadata.callId ?? update.toolCallId ?? waitingCallId;
         }
-        if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") {
+        if (
+          update.sessionUpdate === "agent_message_chunk" ||
+          update.sessionUpdate === "agent_thought_chunk"
+        ) {
           const text = blockText(update.content);
           if (!text) return;
           if (update.sessionUpdate === "agent_message_chunk") {
             closeReasoning();
             if (!textMessageId) {
               textMessageId = `msg-${randomUUID()}`;
-              emit(entry, { type: "TEXT_MESSAGE_START", messageId: textMessageId, role: "assistant" });
+              emit(entry, {
+                type: "TEXT_MESSAGE_START",
+                messageId: textMessageId,
+                role: "assistant",
+              });
             }
-            emit(entry, { type: "TEXT_MESSAGE_CONTENT", messageId: textMessageId, delta: text });
+            emit(entry, {
+              type: "TEXT_MESSAGE_CONTENT",
+              messageId: textMessageId,
+              delta: text,
+            });
           } else {
             closeText();
             if (!reasoningMessageId) {
               reasoningMessageId = `reasoning-${randomUUID()}`;
-              emit(entry, { type: "REASONING_START", messageId: reasoningMessageId });
-              emit(entry, { type: "REASONING_MESSAGE_START", messageId: reasoningMessageId, role: "reasoning" });
+              emit(entry, {
+                type: "REASONING_START",
+                messageId: reasoningMessageId,
+              });
+              emit(entry, {
+                type: "REASONING_MESSAGE_START",
+                messageId: reasoningMessageId,
+                role: "reasoning",
+              });
             }
-            emit(entry, { type: "REASONING_MESSAGE_CONTENT", messageId: reasoningMessageId, delta: text });
+            emit(entry, {
+              type: "REASONING_MESSAGE_CONTENT",
+              messageId: reasoningMessageId,
+              delta: text,
+            });
           }
           return;
         }
-        if (!["tool_call", "tool_call_update"].includes(update.sessionUpdate)) return;
+        if (!["tool_call", "tool_call_update"].includes(update.sessionUpdate))
+          return;
         closeText();
         closeReasoning();
         if (!nonempty(update.toolCallId)) {
-          active.cancel("ACP tool update is missing its real toolCallId", "ACP_INVALID_TOOL_CALL");
+          active.cancel(
+            "ACP tool update is missing its real toolCallId",
+            "ACP_INVALID_TOOL_CALL",
+          );
           return;
         }
         let tool = toolCalls.get(update.toolCallId);
         if (!tool) {
           tool = {
-            id: update.toolCallId, rawInput: {}, ended: false, result: false,
-            name: update._meta?.name || update.name || metadata?.name || update.title || update.kind || "tool",
+            id: update.toolCallId,
+            rawInput: {},
+            ended: false,
+            result: false,
+            name:
+              update._meta?.name ||
+              update.name ||
+              metadata?.name ||
+              update.title ||
+              update.kind ||
+              "tool",
           };
           toolCalls.set(tool.id, tool);
-          emit(entry, { type: "TOOL_CALL_START", toolCallId: tool.id, toolCallName: String(tool.name) });
+          emit(entry, {
+            type: "TOOL_CALL_START",
+            toolCallId: tool.id,
+            toolCallName: String(tool.name),
+          });
         }
-        const hasInput = update.rawInput !== null && update.rawInput !== undefined;
+        const hasInput =
+          update.rawInput !== null && update.rawInput !== undefined;
         if (hasInput) {
-          if (tool.ended && stableJson(update.rawInput) !== stableJson(tool.rawInput)) {
-            active.cancel("ACP tool input changed after its complete arguments were published", "ACP_TOOL_INPUT_CONFLICT");
+          if (
+            tool.ended &&
+            stableJson(update.rawInput) !== stableJson(tool.rawInput)
+          ) {
+            active.cancel(
+              "ACP tool input changed after its complete arguments were published",
+              "ACP_TOOL_INPUT_CONFLICT",
+            );
             return;
           }
           if (!tool.ended) tool.rawInput = update.rawInput;
         }
         // Host callbacks wait for the canonical call to be captured before execution. The adapter
         // marks its provider arguments complete, so publish them before its separate HTTP request.
-        if (prepared.context && update.sessionUpdate === "tool_call" && metadata?.inputComplete === true) {
-          if (metadata.version !== 1 || metadata.callId !== tool.id || metadata.name !== tool.name || !hasInput) {
-            active.cancel("ACP host tool start has invalid complete-input metadata", "ACP_INVALID_TOOL_CALL");
+        if (
+          prepared.context &&
+          update.sessionUpdate === "tool_call" &&
+          metadata?.inputComplete === true
+        ) {
+          if (
+            metadata.version !== 1 ||
+            metadata.callId !== tool.id ||
+            metadata.name !== tool.name ||
+            !hasInput
+          ) {
+            active.cancel(
+              "ACP host tool start has invalid complete-input metadata",
+              "ACP_INVALID_TOOL_CALL",
+            );
             return;
           }
           endTool(tool);
         }
-        if (update.status === "completed" || update.status === "failed" || metadata?.waiting) {
+        if (
+          update.status === "completed" ||
+          update.status === "failed" ||
+          metadata?.waiting
+        ) {
           endTool(tool);
-          const hasOutput = update.rawOutput !== null && update.rawOutput !== undefined;
-          const hasContent = typeof update.content === "string"
-            || (Array.isArray(update.content) && update.content.length > 0);
+          const hasOutput =
+            update.rawOutput !== null && update.rawOutput !== undefined;
+          const hasContent =
+            typeof update.content === "string" ||
+            (Array.isArray(update.content) && update.content.length > 0);
           if (!tool.result && !metadata?.waiting && (hasOutput || hasContent)) {
             tool.result = true;
             const content = hasOutput
-              ? typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput)
-              : blockText(update.content) || (typeof update.content === "string" ? update.content : JSON.stringify(update.content));
-            emit(entry, { type: "TOOL_CALL_RESULT", messageId: `tool-result-${tool.id}`, toolCallId: tool.id, content: content ?? "", role: "tool" });
+              ? typeof update.rawOutput === "string"
+                ? update.rawOutput
+                : JSON.stringify(update.rawOutput)
+              : blockText(update.content) ||
+                (typeof update.content === "string"
+                  ? update.content
+                  : JSON.stringify(update.content));
+            emit(entry, {
+              type: "TOOL_CALL_RESULT",
+              messageId: `tool-result-${tool.id}`,
+              toolCallId: tool.id,
+              content: content ?? "",
+              role: "tool",
+            });
           }
         }
       });
       offRequest = current.client.onRequest((message) => {
-        if (message.method !== "session/request_permission" || message.params?.sessionId !== sessionId) return false;
-        const list = Array.isArray(message.params.options) ? message.params.options : [];
-        const selected = options.approval === "deny" || active.cancelReason ? null
-          : list.find((option) => option?.kind === "allow_once") ?? list.find((option) => String(option?.kind || "").startsWith("allow"));
-        current.client.respond(message.id, selected
-          ? { outcome: { outcome: "selected", optionId: selected.optionId } }
-          : { outcome: { outcome: "cancelled" } });
+        if (
+          message.method !== "session/request_permission" ||
+          message.params?.sessionId !== sessionId
+        )
+          return false;
+        const list = Array.isArray(message.params.options)
+          ? message.params.options
+          : [];
+        const selected =
+          options.approval === "deny" || active.cancelReason
+            ? null
+            : (list.find((option) => option?.kind === "allow_once") ??
+              list.find((option) =>
+                String(option?.kind || "").startsWith("allow"),
+              ));
+        current.client.respond(
+          message.id,
+          selected
+            ? { outcome: { outcome: "selected", optionId: selected.optionId } }
+            : { outcome: { outcome: "cancelled" } },
+        );
         return true;
       });
       const prompt = [...prepared.prompt];
       const params = { sessionId, prompt };
       if (prepared.context) {
-        params._meta = { chisabot: {
-          ...prepared.context, systemPrompt: prepared.systemPrompt, history: prepared.history, tools: prepared.tools,
-          ...(prepared.continuation ? { continuation: true } : {}),
-          // ACP content cannot represent every OpenAI image URL. This is the same current user row,
-          // not history; the adapter can retain the exact multimodal content when constructing input.
-          ...(prepared.currentMessage ? { currentMessage: prepared.currentMessage } : {}),
-        } };
+        params._meta = {
+          chisabot: {
+            ...prepared.context,
+            systemPrompt: prepared.systemPrompt,
+            history: prepared.history,
+            tools: prepared.tools,
+            ...(prepared.continuation ? { continuation: true } : {}),
+            // ACP content cannot represent every OpenAI image URL. This is the same current user row,
+            // not history; the adapter can retain the exact multimodal content when constructing input.
+            ...(prepared.currentMessage
+              ? { currentMessage: prepared.currentMessage }
+              : {}),
+          },
+        };
       } else if (prepared.systemPrompt && !current.seeded.has(sessionId)) {
-        prompt.unshift({ type: "text", text: `【宿主设定】\n${prepared.systemPrompt}` });
+        prompt.unshift({
+          type: "text",
+          text: `【宿主设定】\n${prepared.systemPrompt}`,
+        });
         current.seeded.add(sessionId);
       }
       // Commit before issuing the write-capable RPC. On restart an unfinished record is unknown.
       entry.started = true;
       entry.status = "started";
       persist();
-      if (active.cancelReason) throw rpcError(active.cancelReason, active.cancelCode);
-      const result = await current.client.request("session/prompt", params, remaining(), timeout);
-      if (active.cancelReason) throw rpcError(active.cancelReason, active.cancelCode);
+      if (active.cancelReason)
+        throw rpcError(active.cancelReason, active.cancelCode);
+      const result = await current.client.request(
+        "session/prompt",
+        params,
+        remaining(),
+        timeout,
+      );
+      if (active.cancelReason)
+        throw rpcError(active.cancelReason, active.cancelCode);
       const resultMetadata = result?._meta?.chisabot;
       if (isObject(resultMetadata?.waiting)) {
         waiting = resultMetadata.waiting;
@@ -919,28 +1528,74 @@ export function createAcpBridge(overrides = {}) {
       closeMessages();
       const fallbackUsed = modelFallback(resultMetadata?.modelFallback);
       const usageUsed = turnUsage(resultMetadata?.usage);
-      const finishedMetadata = (fallbackUsed || usageUsed)
-        ? { metadata: { ...(fallbackUsed ? { modelFallback: fallbackUsed } : {}), ...(usageUsed ? { contextUsage: usageUsed } : {}) } }
-        : {};
-      const waitingId = waiting?.toolCallId ?? waitingCallId ?? waiting?.requestId ?? `waiting-${prepared.runId}`;
-      const unresolved = [...toolCalls.values()].filter((tool) => !tool.result && (!waiting || tool.id !== waitingId));
-      if (unresolved.length) throw rpcError(`ACP finished without tool results: ${unresolved.map((tool) => tool.id).join(", ")}`, "ACP_MISSING_TOOL_RESULT");
+      const finishedMetadata =
+        fallbackUsed || usageUsed
+          ? {
+              metadata: {
+                ...(fallbackUsed ? { modelFallback: fallbackUsed } : {}),
+                ...(usageUsed ? { contextUsage: usageUsed } : {}),
+              },
+            }
+          : {};
+      const waitingId =
+        waiting?.toolCallId ??
+        waitingCallId ??
+        waiting?.requestId ??
+        `waiting-${prepared.runId}`;
+      const unresolved = [...toolCalls.values()].filter(
+        (tool) => !tool.result && (!waiting || tool.id !== waitingId),
+      );
+      if (unresolved.length)
+        throw rpcError(
+          `ACP finished without tool results: ${unresolved.map((tool) => tool.id).join(", ")}`,
+          "ACP_MISSING_TOOL_RESULT",
+        );
       if (waiting) {
         const safeWaiting = { ...waiting, toolCallId: waitingId };
-        emit(entry, { type: "CUSTOM", name: "openbot.headless.waiting", value: safeWaiting });
+        emit(entry, {
+          type: "CUSTOM",
+          name: "chisabot.headless.waiting",
+          value: safeWaiting,
+        });
         complete(entry, {
-          type: "RUN_FINISHED", threadId: prepared.threadId, runId: prepared.runId,
-          outcome: { type: "interrupt", interrupts: [{
-            id: waitingId, toolCallId: waitingId, reason: waiting.reason ?? "waiting", payload: safeWaiting,
-            metadata: { openbotWaiting: safeWaiting },
-          }] },
+          type: "RUN_FINISHED",
+          threadId: prepared.threadId,
+          runId: prepared.runId,
+          outcome: {
+            type: "interrupt",
+            interrupts: [
+              {
+                id: waitingId,
+                toolCallId: waitingId,
+                reason: waiting.reason ?? "waiting",
+                payload: safeWaiting,
+                metadata: { chisabotWaiting: safeWaiting },
+              },
+            ],
+          },
           ...finishedMetadata,
         });
       } else if (result?.stopReason === "end_turn") {
-        complete(entry, { type: "RUN_FINISHED", threadId: prepared.threadId, runId: prepared.runId, ...finishedMetadata });
+        complete(entry, {
+          type: "RUN_FINISHED",
+          threadId: prepared.threadId,
+          runId: prepared.runId,
+          ...finishedMetadata,
+        });
       } else {
-        const reasons = { cancelled: "ACP agent cancelled this turn", refusal: "ACP agent 拒绝了这一轮", max_tokens: "ACP agent reached its token limit", max_turn_requests: "ACP agent reached its request limit" };
-        throw rpcError(reasons[result?.stopReason] ?? "ACP agent returned no successful stop reason", result?.stopReason === "cancelled" ? "ACP_CANCELLED" : "ACP_STOP_ERROR");
+        const reasons = {
+          cancelled: "ACP agent cancelled this turn",
+          refusal: "ACP agent 拒绝了这一轮",
+          max_tokens: "ACP agent reached its token limit",
+          max_turn_requests: "ACP agent reached its request limit",
+        };
+        throw rpcError(
+          reasons[result?.stopReason] ??
+            "ACP agent returned no successful stop reason",
+          result?.stopReason === "cancelled"
+            ? "ACP_CANCELLED"
+            : "ACP_STOP_ERROR",
+        );
       }
     } catch (error) {
       closeMessages();
@@ -948,8 +1603,11 @@ export function createAcpBridge(overrides = {}) {
       active.generation?.sessions.delete(prepared.namespace);
       if (active.sessionId) active.generation?.seeded.delete(active.sessionId);
       complete(entry, {
-        type: "RUN_ERROR", code: active.cancelCode ?? error?.code ?? "ACP_ERROR",
-        message: active.cancelReason ?? (error instanceof Error ? error.message : String(error)),
+        type: "RUN_ERROR",
+        code: active.cancelCode ?? error?.code ?? "ACP_ERROR",
+        message:
+          active.cancelReason ??
+          (error instanceof Error ? error.message : String(error)),
       });
     } finally {
       clearTimeout(timer);
@@ -961,35 +1619,75 @@ export function createAcpBridge(overrides = {}) {
     }
   };
 
-  const errorResponse = (message, code = "ACP_ERROR") => new Response(`data: ${JSON.stringify({ type: "RUN_ERROR", code, message })}\n\n`, {
-    headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform" },
-  });
+  const errorResponse = (message, code = "ACP_ERROR") =>
+    new Response(
+      `data: ${JSON.stringify({ type: "RUN_ERROR", code, message })}\n\n`,
+      {
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache, no-transform",
+        },
+      },
+    );
 
   const run = (input, requestSignal) => {
     let prepared;
-    try { prepared = prepareInput(input, options); } catch (error) {
+    try {
+      prepared = prepareInput(input, options);
+    } catch (error) {
       return errorResponse(error.message, error.code);
     }
     const siblings = runs.get(prepared.key) ?? [];
     let entry = siblings.find((item) => item.digest === prepared.inputDigest);
-    if (entry?.status === "unknown") return errorResponse("This run was already started before recovery; its outcome is unknown and it must not be replayed", "ACP_RUN_UNKNOWN");
+    if (entry?.status === "unknown")
+      return errorResponse(
+        "This run was already started before recovery; its outcome is unknown and it must not be replayed",
+        "ACP_RUN_UNKNOWN",
+      );
     if (!entry && siblings.length) {
       const previous = siblings.at(-1);
-      if (previous.status === "unknown") return errorResponse("A previous segment of this run has an unknown outcome", "ACP_RUN_UNKNOWN");
-      if (prepared.rowHashes.length <= previous.rowHashes.length || !previous.rowHashes.every((row, index) => prepared.rowHashes[index] === row)) {
-        return errorResponse("Conflicting input for an existing ACP run; refusing a second prompt", "ACP_RUN_CONFLICT");
+      if (previous.status === "unknown")
+        return errorResponse(
+          "A previous segment of this run has an unknown outcome",
+          "ACP_RUN_UNKNOWN",
+        );
+      if (
+        prepared.rowHashes.length <= previous.rowHashes.length ||
+        !previous.rowHashes.every(
+          (row, index) => prepared.rowHashes[index] === row,
+        )
+      ) {
+        return errorResponse(
+          "Conflicting input for an existing ACP run; refusing a second prompt",
+          "ACP_RUN_CONFLICT",
+        );
       }
     }
     const fresh = !entry;
     if (!entry) {
       entry = {
-        key: prepared.key, digest: prepared.inputDigest, rowHashes: prepared.rowHashes,
-        status: "queued", events: [], done: false, subscribers: new Set(), started: false, active: null,
-        secrets: [options.token, prepared.context?.toolGateway.capability].filter(Boolean), cancelReason: null,
+        key: prepared.key,
+        digest: prepared.inputDigest,
+        rowHashes: prepared.rowHashes,
+        status: "queued",
+        events: [],
+        done: false,
+        subscribers: new Set(),
+        started: false,
+        active: null,
+        secrets: [
+          options.token,
+          prepared.context?.toolGateway.capability,
+        ].filter(Boolean),
+        cancelReason: null,
       };
       siblings.push(entry);
       runs.set(prepared.key, siblings);
-      emit(entry, { type: "RUN_STARTED", threadId: prepared.threadId, runId: prepared.runId });
+      emit(entry, {
+        type: "RUN_STARTED",
+        threadId: prepared.threadId,
+        runId: prepared.runId,
+      });
     }
     let detach = () => {};
     const stream = new ReadableStream({
@@ -999,20 +1697,27 @@ export function createAcpBridge(overrides = {}) {
           subscriber.finish();
           entry.subscribers.delete(subscriber);
           if (!entry.done && entry.subscribers.size === 0) {
-            if (entry.active) entry.active.cancel("The caller cancelled this turn");
+            if (entry.active)
+              entry.active.cancel("The caller cancelled this turn");
             else entry.cancelReason = "The caller cancelled this queued turn";
           }
         };
         const subscriber = {
           send(event) {
             if (closed) return;
-            try { controller.enqueue(`data: ${JSON.stringify(event)}\n\n`); } catch { onAbort(); }
+            try {
+              controller.enqueue(`data: ${JSON.stringify(event)}\n\n`);
+            } catch {
+              onAbort();
+            }
           },
           finish() {
             if (closed) return;
             closed = true;
             requestSignal?.removeEventListener("abort", onAbort);
-            try { controller.close(); } catch {}
+            try {
+              controller.close();
+            } catch {}
           },
         };
         detach = onAbort;
@@ -1021,50 +1726,97 @@ export function createAcpBridge(overrides = {}) {
         else {
           entry.subscribers.add(subscriber);
           if (requestSignal?.aborted) onAbort();
-          else requestSignal?.addEventListener("abort", onAbort, { once: true });
+          else
+            requestSignal?.addEventListener("abort", onAbort, { once: true });
         }
       },
-      cancel() { detach(); },
+      cancel() {
+        detach();
+      },
     });
-    if (fresh) void serialize(prepared.namespace, () => execute(entry, prepared)).catch((error) => {
-      complete(entry, { type: "RUN_ERROR", code: "ACP_ERROR", message: error instanceof Error ? error.message : String(error) });
+    if (fresh)
+      void serialize(prepared.namespace, () => execute(entry, prepared)).catch(
+        (error) => {
+          complete(entry, {
+            type: "RUN_ERROR",
+            code: "ACP_ERROR",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        },
+      );
+    return new Response(stream, {
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+      },
     });
-    return new Response(stream, { headers: {
-      "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform", connection: "keep-alive",
-    } });
   };
 
   const healthSnapshot = () => ({
-    ok: Boolean(generation?.client.healthy && generation.client.initialized && stateHealthy
-      && (!options.requireHostContext || (generation.hostTools && statePath))),
+    ok: Boolean(
+      generation?.client.healthy &&
+        generation.client.initialized &&
+        stateHealthy &&
+        (!options.requireHostContext || (generation.hostTools && statePath)),
+    ),
     hostTools: Boolean(generation?.hostTools),
     // Detected by the adapter in the installed Hermes; null until the adapter has initialised.
-    modelControls: generation?.client.initialized && generation.modelControls ? generation.modelControls : null,
-    healthy: Boolean(generation?.client.healthy), initialized: Boolean(generation?.client.initialized),
-    generation: generation?.id ?? 0, sessions: generation?.client.failed ? 0 : generation?.sessions.size ?? 0,
-    queuedScopes: sessionQueues.size, activeTurns: activeTurns.size,
-    runRecords: [...runs.values()].reduce((count, entries) => count + entries.length, 0),
-    persistentState: Boolean(statePath), stateHealthy,
+    modelControls:
+      generation?.client.initialized && generation.modelControls
+        ? generation.modelControls
+        : null,
+    healthy: Boolean(generation?.client.healthy),
+    initialized: Boolean(generation?.client.initialized),
+    generation: generation?.id ?? 0,
+    sessions: generation?.client.failed ? 0 : (generation?.sessions.size ?? 0),
+    queuedScopes: sessionQueues.size,
+    activeTurns: activeTurns.size,
+    runRecords: [...runs.values()].reduce(
+      (count, entries) => count + entries.length,
+      0,
+    ),
+    persistentState: Boolean(statePath),
+    stateHealthy,
   });
 
   const server = Bun.serve({
-    hostname: options.host, port: options.port, idleTimeout: 0,
+    hostname: options.host,
+    port: options.port,
+    idleTimeout: 0,
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname === "/health") return Response.json(healthSnapshot());
       // Authenticated deployment readiness does not create a session or run a write-capable prompt.
       if (url.pathname === "/ready") {
-        if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
-        if (!options.token || request.headers.get("authorization") !== `Bearer ${options.token}`) return new Response("unauthorized", { status: 401 });
-        try { await ensureInitialized(getGeneration()); } catch {}
+        if (request.method !== "POST")
+          return new Response("method not allowed", { status: 405 });
+        if (
+          !options.token ||
+          request.headers.get("authorization") !== `Bearer ${options.token}`
+        )
+          return new Response("unauthorized", { status: 401 });
+        try {
+          await ensureInitialized(getGeneration());
+        } catch {}
         const snapshot = healthSnapshot();
         return Response.json(snapshot, { status: snapshot.ok ? 200 : 503 });
       }
-      if (url.pathname !== "/ag-ui") return new Response("not found", { status: 404 });
-      if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
-      if (options.token && request.headers.get("authorization") !== `Bearer ${options.token}`) return new Response("unauthorized", { status: 401 });
+      if (url.pathname !== "/ag-ui")
+        return new Response("not found", { status: 404 });
+      if (request.method !== "POST")
+        return new Response("method not allowed", { status: 405 });
+      if (
+        options.token &&
+        request.headers.get("authorization") !== `Bearer ${options.token}`
+      )
+        return new Response("unauthorized", { status: 401 });
       let input;
-      try { input = await request.json(); } catch { return new Response("invalid JSON", { status: 400 }); }
+      try {
+        input = await request.json();
+      } catch {
+        return new Response("invalid JSON", { status: 400 });
+      }
       return run(input, request.signal);
     },
   });
@@ -1077,7 +1829,9 @@ export function createAcpBridge(overrides = {}) {
       closing = true;
       for (const active of activeTurns) active.cancel("ACP bridge is closing");
       server.stop(true);
-      await Promise.all([...generations].map((current) => current.client.close()));
+      await Promise.all(
+        [...generations].map((current) => current.client.close()),
+      );
       await Promise.allSettled([...sessionQueues.values()]);
     },
   };
@@ -1085,8 +1839,13 @@ export function createAcpBridge(overrides = {}) {
 
 if (import.meta.main) {
   const bridge = createAcpBridge();
-  console.log(`ACP bridge listening on http://${bridge.server.hostname}:${bridge.server.port}/ag-ui`);
-  const stop = async () => { await bridge.close(); process.exit(0); };
+  console.log(
+    `ACP bridge listening on http://${bridge.server.hostname}:${bridge.server.port}/ag-ui`,
+  );
+  const stop = async () => {
+    await bridge.close();
+    process.exit(0);
+  };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 }

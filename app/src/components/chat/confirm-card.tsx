@@ -1,4 +1,3 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import {
   IconCheck,
   IconClockHour4,
@@ -12,7 +11,18 @@ import {
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { isChatRunning } from "@/lib/copilot/computer-activity";
+import { useAsyncAction } from "@/components/ui/async-action";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
+import {
+  confirmKeys,
+  decideConfirmation,
+  setConfirmPref,
+  useThreadConfirmations,
+} from "@/lib/confirmations";
+import { isChatRunning } from "@/lib/conversations/computer-activity";
+import { cn } from "@/lib/utils";
 import {
   CONFIRM_CATEGORY_INFO,
   CONFIRM_RESUME_MARKER,
@@ -21,11 +31,6 @@ import {
   type ConfirmRequestView,
   type ConfirmStatus,
 } from "../../../../shared/confirmations";
-import { useAsyncAction } from "@/components/ui/async-action";
-import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/toast";
-import { confirmKeys, decideConfirmation, setConfirmPref, useThreadConfirmations } from "@/lib/confirmations";
-import { cn } from "@/lib/utils";
 
 /**
  * 聊天里的确认卡片（DESIGN.md §58）：机器人要做有后果的事、用户的偏好是「先问我」时，卡片画在那条工具调用
@@ -79,11 +84,20 @@ export function ConfirmCardView({
   denyLabel?: string;
   testId?: string;
 }) {
-  const approve = useAsyncAction(async () => onApprove?.(), { errorToast: (error) => error.message });
-  const deny = useAsyncAction(async () => onDeny?.(), { errorToast: (error) => error.message });
-  const always = useAsyncAction(async () => onAlways?.(), { errorToast: (error) => error.message });
+  const approve = useAsyncAction(async () => onApprove?.(), {
+    errorToast: (error) => error.message,
+  });
+  const deny = useAsyncAction(async () => onDeny?.(), {
+    errorToast: (error) => error.message,
+  });
+  const always = useAsyncAction(async () => onAlways?.(), {
+    errorToast: (error) => error.message,
+  });
   const pending = model.status === "pending";
-  const busy = approve.state === "pending" || deny.state === "pending" || always.state === "pending";
+  const busy =
+    approve.state === "pending" ||
+    deny.state === "pending" ||
+    always.state === "pending";
   const Icon = ICON[model.category];
   const info = CONFIRM_CATEGORY_INFO[model.category];
   const details = model.details ?? [];
@@ -97,18 +111,36 @@ export function ConfirmCardView({
     >
       <div className="cf-head">
         <span className="cf-ico" aria-hidden>
-          {pending ? <Icon className="size-[18px]" /> : model.status === "approved" ? <IconCheck className="size-[18px]" /> : model.status === "expired" ? <IconClockHour4 className="size-[18px]" /> : <IconX className="size-[18px]" />}
+          {pending ? (
+            <Icon className="size-[18px]" />
+          ) : model.status === "approved" ? (
+            <IconCheck className="size-[18px]" />
+          ) : model.status === "expired" ? (
+            <IconClockHour4 className="size-[18px]" />
+          ) : (
+            <IconX className="size-[18px]" />
+          )}
         </span>
         <div className="cf-main">
           <div className="cf-eyebrow">
-            {pending ? (model.eyebrow ?? `需要你确认 · ${info.label}`) : `${DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]} · ${info.label}`}
+            {pending
+              ? (model.eyebrow ?? `需要你确认 · ${info.label}`)
+              : `${DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]} · ${info.label}`}
           </div>
           <div className="cf-title">{model.title}</div>
-          {model.target ? <div className="cf-target">{model.target}</div> : null}
+          {model.target ? (
+            <div className="cf-target">{model.target}</div>
+          ) : null}
         </div>
-        {!pending && model.decidedNote ? <span className="cf-note">{model.decidedNote}</span> : null}
+        {!pending && model.decidedNote ? (
+          <span className="cf-note">{model.decidedNote}</span>
+        ) : null}
       </div>
-      <div className="cf-fold" data-open={pending ? "" : undefined} inert={!pending}>
+      <div
+        className="cf-fold"
+        data-open={pending ? "" : undefined}
+        inert={!pending}
+      >
         <div className="cf-fold-in">
           {details.length ? (
             <dl className="cf-details">
@@ -121,7 +153,9 @@ export function ConfirmCardView({
                       <DiffLines diff={detail.value} />
                     </dd>
                   ) : (
-                    <dd className={cn(detail.code && "is-code")}>{detail.value}</dd>
+                    <dd className={cn(detail.code && "is-code")}>
+                      {detail.value}
+                    </dd>
                   )}
                 </div>
               ))}
@@ -131,7 +165,11 @@ export function ConfirmCardView({
             <Button
               data-testid="confirm-approve"
               disabled={!pending || (busy && approve.state !== "pending")}
-              feedback={{ pending: "确认中…", success: "已确认", error: "确认失败" }}
+              feedback={{
+                pending: "确认中…",
+                success: "已确认",
+                error: "确认失败",
+              }}
               onClick={() => void approve.run()}
               size="sm"
               state={approve.state}
@@ -180,13 +218,31 @@ function viaNote(request: ConfirmRequestView) {
 }
 
 /** 一张服务器上的确认卡片（按 id 决定，决定后刷新这段对话的卡片列表）。 */
-export function ConfirmRequestCard({ request, threadId }: { request: ConfirmRequestView; threadId: string | null }) {
+export function ConfirmRequestCard({
+  request,
+  threadId,
+}: {
+  request: ConfirmRequestView;
+  threadId: string | null;
+}) {
   const queryClient = useQueryClient();
-  const refresh = () => Promise.all([threadId ? queryClient.invalidateQueries({ queryKey: confirmKeys.thread(threadId) }) : null, queryClient.invalidateQueries({ queryKey: confirmKeys.recent })]);
+  const refresh = () =>
+    Promise.all([
+      threadId
+        ? queryClient.invalidateQueries({
+            queryKey: confirmKeys.thread(threadId),
+          })
+        : null,
+      queryClient.invalidateQueries({ queryKey: confirmKeys.recent }),
+    ]);
   const decide = async (decision: "approve" | "deny") => {
     const updated = await decideConfirmation(request.id, decision);
     if (threadId)
-      queryClient.setQueryData<ConfirmRequestView[]>(confirmKeys.thread(threadId), (list) => list?.map((item) => (item.id === updated.id ? updated : item)));
+      queryClient.setQueryData<ConfirmRequestView[]>(
+        confirmKeys.thread(threadId),
+        (list) =>
+          list?.map((item) => (item.id === updated.id ? updated : item)),
+      );
     await refresh();
   };
   return (
@@ -200,9 +256,15 @@ export function ConfirmRequestCard({ request, threadId }: { request: ConfirmRequ
         decidedNote: viaNote(request),
       }}
       onAlways={async () => {
-        await setConfirmPref(request.category, "auto", "在确认卡片上选了「以后这类直接做」");
+        await setConfirmPref(
+          request.category,
+          "auto",
+          "在确认卡片上选了「以后这类直接做」",
+        );
         await decide("approve");
-        toast.success(`以后「${CONFIRM_CATEGORY_INFO[request.category].label}」直接做，可在 设置 → 权限与审批 改回`);
+        toast.success(
+          `以后「${CONFIRM_CATEGORY_INFO[request.category].label}」直接做，可在 设置 → 权限与审批 改回`,
+        );
       }}
       onApprove={() => decide("approve")}
       onDeny={() => decide("deny")}
@@ -214,26 +276,45 @@ export function ConfirmRequestCard({ request, threadId }: { request: ConfirmRequ
 function useChatRunning() {
   const [running, setRunning] = useState(() => isChatRunning());
   useEffect(() => {
-    const on = (event: Event) => setRunning(Boolean((event as CustomEvent<boolean>).detail));
+    const on = (event: Event) =>
+      setRunning(Boolean((event as CustomEvent<boolean>).detail));
     window.addEventListener("chisabot-chat-running", on);
     return () => window.removeEventListener("chisabot-chat-running", on);
   }, []);
   return running;
 }
 
-
 /**
  * 频道聊天（CB-046，DESIGN.md §68）：一个工具调用下面的确认卡片。`answered` = 这个调用已经有结果；
  * `recent` = 它在对话末尾附近（刷新后卡片可能还在等）。
  */
-export function ToolCallConfirmCards({ toolCallId, answered, recent }: { toolCallId: string; answered: boolean; recent: boolean }) {
+export function ToolCallConfirmCards({
+  toolCallId,
+  answered,
+  recent,
+}: {
+  toolCallId: string;
+  answered: boolean;
+  recent: boolean;
+}) {
   const ids = useMemo(() => [toolCallId], [toolCallId]);
-  const done = useMemo(() => (answered ? new Set([toolCallId]) : new Set<string>()), [answered, toolCallId]);
+  const done = useMemo(
+    () => (answered ? new Set([toolCallId]) : new Set<string>()),
+    [answered, toolCallId],
+  );
   return <ToolConfirmCards answered={done} ids={ids} recent={recent} />;
 }
 
-function ToolConfirmCards({ ids, answered, recent }: { ids: readonly string[]; answered: ReadonlySet<string>; recent: boolean }) {
-  const chat = useCopilotChatConfiguration();
+function ToolConfirmCards({
+  ids,
+  answered,
+  recent,
+}: {
+  ids: readonly string[];
+  answered: ReadonlySet<string>;
+  recent: boolean;
+}) {
+  const chat = useConversationScope();
   const threadId = chat?.threadId ?? null;
   // 有工具调用还没结果、且（这一轮正在跑，或它在最近几条消息里——刷新后卡片还在等）时才轮询；
   // 历史里被打断、永远没结果的调用不让页面一直轮询。一轮刚跑完再取一次，卡片状态马上对上。
@@ -242,14 +323,23 @@ function ToolConfirmCards({ ids, answered, recent }: { ids: readonly string[]; a
   const list = useThreadConfirmations(ids.length ? threadId : null, open);
   const queryClient = useQueryClient();
   useEffect(() => {
-    if (!running && recent && threadId && ids.length) void queryClient.invalidateQueries({ queryKey: confirmKeys.thread(threadId) });
+    if (!running && recent && threadId && ids.length)
+      void queryClient.invalidateQueries({
+        queryKey: confirmKeys.thread(threadId),
+      });
   }, [running, recent, threadId, ids.length, queryClient]);
-  const cards = (list.data ?? []).filter((request) => request.toolCallId && ids.includes(request.toolCallId)).reverse();
+  const cards = (list.data ?? [])
+    .filter((request) => request.toolCallId && ids.includes(request.toolCallId))
+    .reverse();
   if (!cards.length) return null;
   return (
     <div className="cf-stack">
       {cards.map((request) => (
-        <ConfirmRequestCard key={request.id} request={request} threadId={threadId} />
+        <ConfirmRequestCard
+          key={request.id}
+          request={request}
+          threadId={threadId}
+        />
       ))}
     </div>
   );
@@ -269,31 +359,52 @@ export function looseConfirmations(
   resumed: ReadonlySet<string>,
 ): ConfirmRequestView[] {
   return list
-    .filter((request) => !request.toolCallId && !resumed.has(request.id) && (request.status === "pending" || seen.has(request.id)))
+    .filter(
+      (request) =>
+        !request.toolCallId &&
+        !resumed.has(request.id) &&
+        (request.status === "pending" || seen.has(request.id)),
+    )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 const RESUME_ID = /^⟦chisabot:confirm:([^⟧]+)⟧/;
 /** 「用户确认了」那条消息里的卡片 id。 */
-export const confirmResumeId = (text: string): string | null => RESUME_ID.exec(text)?.[1] ?? null;
+export const confirmResumeId = (text: string): string | null =>
+  RESUME_ID.exec(text)?.[1] ?? null;
 
-export function LooseConfirmCards({ resumed, version }: { resumed: ReadonlySet<string>; version: number }) {
-  const chat = useCopilotChatConfiguration();
+export function LooseConfirmCards({
+  resumed,
+  version,
+}: {
+  resumed: ReadonlySet<string>;
+  version: number;
+}) {
+  const chat = useConversationScope();
   const threadId = chat?.threadId ?? null;
   const list = useThreadConfirmations(threadId, false);
   const queryClient = useQueryClient();
   // 后台回合的消息同步进来（列表变长）时卡片多半也刚放好：再取一次。有卡在等时 useThreadConfirmations 自己 1.5 秒一取。
   useEffect(() => {
-    if (threadId && version > 0) void queryClient.invalidateQueries({ queryKey: confirmKeys.thread(threadId) });
+    if (threadId && version > 0)
+      void queryClient.invalidateQueries({
+        queryKey: confirmKeys.thread(threadId),
+      });
   }, [threadId, version, queryClient]);
   const seen = useRef<Set<string>>(new Set());
-  for (const request of list.data ?? []) if (request.status === "pending" && !request.toolCallId) seen.current.add(request.id);
+  for (const request of list.data ?? [])
+    if (request.status === "pending" && !request.toolCallId)
+      seen.current.add(request.id);
   const cards = looseConfirmations(list.data ?? [], seen.current, resumed);
   if (!cards.length) return null;
   return (
     <div className="cf-stack cf-loose" data-testid="loose-confirm-cards">
       {cards.map((request) => (
-        <ConfirmRequestCard key={request.id} request={request} threadId={threadId} />
+        <ConfirmRequestCard
+          key={request.id}
+          request={request}
+          threadId={threadId}
+        />
       ))}
     </div>
   );
@@ -305,11 +416,16 @@ export function ConfirmResumeRow({ text }: { text: string }): ReactNode {
   return (
     <div className="cf-resume" data-testid="confirm-resume-row">
       <IconCheck className="size-3.5" aria-hidden />
-      <span>{title ? `你确认了「${title}」，机器人接着做` : "你确认了，机器人接着做"}</span>
+      <span>
+        {title
+          ? `你确认了「${title}」，机器人接着做`
+          : "你确认了，机器人接着做"}
+      </span>
     </div>
   );
 }
-export const isConfirmResume = (text: string) => text.startsWith(CONFIRM_RESUME_MARKER);
+export const isConfirmResume = (text: string) =>
+  text.startsWith(CONFIRM_RESUME_MARKER);
 
 /** 设备改文件的 unified diff：加行绿、删行红、@@ 灰（同 设置 → 设备 的 .device-diff，DESIGN.md §62）。 */
 function DiffLines({ diff }: { diff: string }) {

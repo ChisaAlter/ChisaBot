@@ -6,7 +6,7 @@ import type { AgentActor } from "../src/agents/profile-types";
 import { createRuntimeAgentLoader } from "../src/agents/runtime-agents";
 import { createChannelStore } from "../src/channels/routes";
 import { createThreadIdentity } from "../src/channels/thread-identity";
-import { standingRoleMessage } from "../src/copilot";
+import { standingRoleMessage } from "../src/conversation-runtime";
 import { type CredentialSecretReader, encryptSecret } from "../src/credentials";
 import { createDatabase } from "../src/db/client";
 import {

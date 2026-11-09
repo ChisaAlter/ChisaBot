@@ -35,12 +35,26 @@ routing hint). MCP servers are rejected. Full host metadata is optional on
 ```json
 {
   "version": 1,
-  "scope": {"actorId": "actor", "botId": "bot", "threadId": "thread", "runId": "run"},
+  "scope": {
+    "actorId": "actor",
+    "botId": "bot",
+    "threadId": "thread",
+    "runId": "run"
+  },
   "systemPrompt": "The ChisaBot identity and instructions",
-  "history": [{"role": "user", "content": "Earlier user message"}],
-  "tools": [{"name": "device_list", "description": "List granted devices", "inputSchema": {"type": "object", "properties": {}}}],
-  "toolGateway": {"url": "http://reachable-host/run-base", "capability": "opaque-run-capability"},
-  "model": {"id": "the-configured-model-id"}
+  "history": [{ "role": "user", "content": "Earlier user message" }],
+  "tools": [
+    {
+      "name": "device_list",
+      "description": "List granted devices",
+      "inputSchema": { "type": "object", "properties": {} }
+    }
+  ],
+  "toolGateway": {
+    "url": "http://reachable-host/run-base",
+    "capability": "opaque-run-capability"
+  },
+  "model": { "id": "the-configured-model-id" }
 }
 ```
 
@@ -116,7 +130,10 @@ the first failing one and each half-open probe alike — is interrupted when no
 real output (text / reasoning / tool delta) arrives in time, counted as a
 breaker failure, and the turn retries on the next healthy fallback. Once real
 output arrives the attempt runs unbounded; a mid-stream error after output
-counts one consecutive failure without opening a cooldown.
+counts one consecutive failure without opening a cooldown. With no usable backup in the
+host's list, this switch deadline is disabled; the primary remains subject to the model
+request timeout (90 seconds by default). A failed backup is reported with the distinct
+`Hermes fallback model call failed:` prefix so its 404 is not attributed to the selected primary.
 
 `model.contextCompression: false` means ChisaBot already trimmed or
 summarized this run's history. The adapter then sets
@@ -200,7 +217,13 @@ JSON-valued `result` and an optional `ok: true` wrapper are also accepted.
 Suspension response:
 
 ```json
-{"error":{"code":"tool_suspended","message":"Waiting"},"waiting":{"kind":"approval","continuation":{"id":"opaque-continuation"}}}
+{
+  "error": { "code": "tool_suspended", "message": "Waiting" },
+  "waiting": {
+    "kind": "approval",
+    "continuation": { "id": "opaque-continuation" }
+  }
+}
 ```
 
 This is recognized only with HTTP 409. The adapter retains `waiting`, requests
@@ -215,7 +238,20 @@ null result/content, and `_meta: {name, chisabot: {version: 1, callId, name, wai
 The prompt response overrides ordinary stop behavior:
 
 ```json
-{"stopReason":"cancelled","_meta":{"chisabot":{"version":1,"callId":"the-original-model-call-id","name":"device_list","waiting":{"kind":"approval","continuation":{"id":"opaque-continuation"}}}}}
+{
+  "stopReason": "cancelled",
+  "_meta": {
+    "chisabot": {
+      "version": 1,
+      "callId": "the-original-model-call-id",
+      "name": "device_list",
+      "waiting": {
+        "kind": "approval",
+        "continuation": { "id": "opaque-continuation" }
+      }
+    }
+  }
+}
 ```
 
 The model sees only a fixed interruption marker, never the waiting object or

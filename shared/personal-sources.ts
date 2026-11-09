@@ -8,6 +8,7 @@ export type CalendarConnectionView = {
   eventCount: number;
   connectedAt: string;
   checkedAt: string;
+  timeZone?: string;
 };
 
 export type EmailConnectionView = {
@@ -23,7 +24,14 @@ export type EmailConnectionView = {
 };
 
 export type NotifyWebhookView = {
-  kind: "feishu" | "dingtalk" | "wecom" | "bark" | "serverchan" | "custom" | "demo";
+  kind:
+    | "feishu"
+    | "dingtalk"
+    | "wecom"
+    | "bark"
+    | "serverchan"
+    | "custom"
+    | "demo";
   label: string;
   urlHint: string;
   connectedAt: string;
@@ -42,6 +50,7 @@ export type PersonalSourcesStatusView = {
   weatherCity: string;
   notifyWebhook?: NotifyWebhookView | null;
   inboundWebhook?: InboundWebhookView | null;
+  deliveries?: PersonalDeliveryView[];
 };
 
 export type CalendarEventItem = {
@@ -50,8 +59,63 @@ export type CalendarEventItem = {
   startIso: string;
   endIso?: string | undefined;
   allDay: boolean;
+  timeZone?: string;
+  startDate?: string;
   location?: string | undefined;
   description?: string | undefined;
+};
+
+export type SourceRead<T> = {
+  state: "fresh" | "cached" | "unavailable" | "not_connected";
+  items: T[];
+  checkedAt: string | null;
+  error?: string;
+};
+
+export type PersonalDeliveryEvidence = {
+  type: "personal_delivery";
+  id: string;
+  channel: "smtp" | "notify";
+  state: "accepted";
+  providerMessageIds: string[];
+  summary: string;
+};
+
+export function parsePersonalDeliveryEvidence(
+  content: unknown,
+): PersonalDeliveryEvidence | null {
+  try {
+    const value = typeof content === "string" ? JSON.parse(content) : content;
+    return value &&
+      value.type === "personal_delivery" &&
+      typeof value.id === "string" &&
+      value.id.length > 0 &&
+      (value.channel === "smtp" || value.channel === "notify") &&
+      value.state === "accepted" &&
+      Array.isArray(value.providerMessageIds) &&
+      value.providerMessageIds.every((id: unknown) => typeof id === "string") &&
+      typeof value.summary === "string"
+      ? (value as PersonalDeliveryEvidence)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export type PersonalDeliveryView = {
+  id: string;
+  kind: "smtp" | "notify";
+  state:
+    | "queued"
+    | "sending"
+    | "sent"
+    | "failed"
+    | "outcome_unknown"
+    | "cancelled";
+  title: string;
+  target: string;
+  error: string | null;
+  createdAt: string;
 };
 
 export type EmailSummaryItem = {
@@ -62,7 +126,10 @@ export type EmailSummaryItem = {
   unread: boolean;
 };
 
-export const IMAP_PRESETS: Record<string, { host: string; port: number; label: string }> = {
+export const IMAP_PRESETS: Record<
+  string,
+  { host: string; port: number; label: string }
+> = {
   "qq.com": { host: "imap.qq.com", port: 993, label: "QQ 邮箱" },
   "foxmail.com": { host: "imap.qq.com", port: 993, label: "Foxmail" },
   "163.com": { host: "imap.163.com", port: 993, label: "网易 163" },

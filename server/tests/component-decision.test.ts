@@ -42,7 +42,7 @@ function app() {
 
 async function decide(body: Record<string, unknown>) {
   const response = await app().request(
-    "http://openbot.local/components/showActivityReport/decision",
+    "http://chisabot.local/components/showActivityReport/decision",
     {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -84,7 +84,7 @@ describe("deciding a component", () => {
 
   test("refuses a list with anything that is not a name instead of ignoring it", async () => {
     const response = await app().request(
-      "http://openbot.local/components/showActivityReport/decision",
+      "http://chisabot.local/components/showActivityReport/decision",
       {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -25,7 +25,12 @@ import {
   opsHistorySeries,
 } from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
+import type { DshHealthCheck } from "./agents/dsh-health";
 import type { HermesHealthCheck } from "./agents/hermes-health";
+import {
+  type AssistantSignals,
+  readAssistantSignals,
+} from "./assistant-signals";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
 import { readRunningBuild, versionPayload } from "./build-info";
@@ -77,6 +82,14 @@ export type OpsHealthReport = {
     computer: ComputerCheck;
     /** Informational only: never part of the aggregate verdict. */
     hermes: HermesHealthCheck;
+    dsh:
+      | (DshHealthCheck & { configured: true })
+      | { ok: null; configured: false };
+    /** Business attention is visible but never triggers an image-readiness rollback. */
+    assistant:
+      | AssistantSignals
+      | { ok: null; state: "not_configured" }
+      | { ok: false; state: "unavailable" };
     localCaller: LocalCallerCheck;
   };
   /** PRD-P1-02: SEND/STREAM/SSRF budgets — totals, last15m, rates, 1h series. */
@@ -121,6 +134,10 @@ export async function collectOpsHealth(options: {
   probeComputer?: ProbeComputer | null;
   /** Informational: its result never changes the aggregate `ok`. */
   probeHermes?: (() => Promise<HermesHealthCheck>) | null;
+  /** Required only when DSH is the selected execution kernel. */
+  dshRequired?: boolean;
+  probeDsh?: (() => Promise<DshHealthCheck>) | null;
+  probeAssistant?: (() => Promise<AssistantSignals>) | null;
   gatewayMode: "on" | "off";
   now?: () => number;
   log?: (line: string) => void;
@@ -217,12 +234,46 @@ export async function collectOpsHealth(options: {
       };
     }
   };
-  const [database, magpie, computer, hermes] = await Promise.all([
-    checkDatabase(),
-    checkMagpie(),
-    checkComputer(),
-    checkHermes(),
-  ]);
+  const checkDsh = async (): Promise<OpsHealthReport["checks"]["dsh"]> => {
+    if (!options.dshRequired) return { ok: null, configured: false };
+    if (!options.probeDsh)
+      return { ok: false, configured: true, error: "DSH 健康检查尚未接通。" };
+    try {
+      return {
+        ...(await withTimeout(options.probeDsh(), 8000, "dsh")),
+        configured: true,
+      };
+    } catch {
+      return {
+        ok: false,
+        configured: true,
+        error: "DSH 执行内核健康检查失败。",
+      };
+    }
+  };
+  const checkAssistant = async (): Promise<
+    OpsHealthReport["checks"]["assistant"]
+  > => {
+    if (!options.probeAssistant) return { ok: null, state: "not_configured" };
+    try {
+      return await withTimeout(
+        options.probeAssistant(),
+        DB_TIMEOUT_MS,
+        "assistant",
+      );
+    } catch {
+      return { ok: false, state: "unavailable" };
+    }
+  };
+  const [database, magpie, computer, hermes, dsh, assistant] =
+    await Promise.all([
+      checkDatabase(),
+      checkMagpie(),
+      checkComputer(),
+      checkHermes(),
+      checkDsh(),
+      checkAssistant(),
+    ]);
 
   const required: Array<{ name: string; ok: CheckOk }> = [
     { name: "app", ok: app.ok },
@@ -230,6 +281,7 @@ export async function collectOpsHealth(options: {
     { name: "magpie", ok: magpie.ok },
     { name: "computer", ok: computer.ok },
     { name: "localCaller", ok: localCaller.ok },
+    { name: "dsh", ok: dsh.ok },
   ];
   const failed = required.filter((c) => c.ok === false).map((c) => c.name);
   const ok = failed.length === 0;
@@ -245,6 +297,8 @@ export async function collectOpsHealth(options: {
     );
     if (database.ok === false)
       log(opsLogLine(OPS_CODES.HEALTH_DB, { error: database.error ?? "" }));
+    if (dsh.ok === false)
+      log(opsLogLine(OPS_CODES.HEALTH_DSH, { error: dsh.error ?? "" }));
     if (magpie.ok === false)
       log(opsLogLine(OPS_CODES.HEALTH_MAGPIE, { error: magpie.error ?? "" }));
     if (computer.ok === false)
@@ -257,7 +311,16 @@ export async function collectOpsHealth(options: {
     ok,
     checkedAt,
     version,
-    checks: { app, database, magpie, computer, hermes, localCaller },
+    checks: {
+      app,
+      database,
+      magpie,
+      computer,
+      hermes,
+      dsh,
+      assistant,
+      localCaller,
+    },
     budgets: opsCounterSnapshot(options.now?.() ?? Date.now()),
   };
 }
@@ -271,6 +334,14 @@ export function createDatabasePinger(database: Database): PingDatabase {
   };
 }
 
+export function createAssistantSignalsProbe(database: Database) {
+  return (ownerUserId: string) =>
+    readAssistantSignals(
+      (statement, parameters) => database.$client.unsafe(statement, parameters),
+      ownerUserId,
+    );
+}
+
 export function createOpsHealthRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
   pingDatabase: PingDatabase;
@@ -278,6 +349,9 @@ export function createOpsHealthRoutes(options: {
   probeComputer?: ProbeComputer | null;
   /** Informational: forwarded to {@link collectOpsHealth}, never part of the aggregate. */
   probeHermes?: (() => Promise<HermesHealthCheck>) | null;
+  dshRequired?: boolean;
+  probeDsh?: ((actorId: string) => Promise<DshHealthCheck>) | null;
+  probeAssistant?: ((actorId: string) => Promise<AssistantSignals>) | null;
   gatewayMode: "on" | "off";
   log?: (line: string) => void;
 }) {
@@ -291,11 +365,17 @@ export function createOpsHealthRoutes(options: {
   });
 
   routes.get("/", async (context) => {
+    const { probeDsh, probeAssistant } = options;
     const report = await collectOpsHealth({
       pingDatabase: options.pingDatabase,
       magpie: options.magpie,
       probeComputer: options.probeComputer,
       probeHermes: options.probeHermes,
+      dshRequired: options.dshRequired,
+      probeDsh: probeDsh ? () => probeDsh(context.var.actor.id) : undefined,
+      probeAssistant: probeAssistant
+        ? () => probeAssistant(context.var.actor.id)
+        : undefined,
       gatewayMode: options.gatewayMode,
       log: options.log,
     });

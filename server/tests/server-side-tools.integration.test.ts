@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { MCPMock } from "@copilotkit/aimock/mcp";
 import { and, eq } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import { createDatabase } from "../src/db/client";
@@ -11,10 +10,12 @@ import {
   mcpTools,
   pluginGrants,
 } from "../src/db/schema";
+import { callTool } from "../src/plugins/mcp";
 import { createPluginStore } from "../src/plugins/store";
 import { grantedTools, REFUSAL_MARKER } from "../src/plugins/tools";
 import type { ActionPolicy } from "../src/policy/engine";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { McpTestServer } from "./support/mcp-server";
 
 /**
  * A tool call that happens with no browser involved.
@@ -23,7 +24,7 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
  * asserted here is that the same call runs from the server and arrives at a real MCP server, and
  * that moving it did not take the grant, the policy or the audit row with it.
  *
- * The server on the other end is `@copilotkit/aimock`, ours, speaking real MCP over HTTP rather than
+ * The server on the other end uses the official MCP SDK and HTTP transport rather than
  * a stubbed fetch. A stub would pass whether or not we had understood the protocol; this fails if
  * the wire format moves underneath us, which is the whole promise of pointing a Bot at somebody
  * else's server.
@@ -39,6 +40,7 @@ const toolName = "search_notes";
 const ref = `${serverId}/${toolName}`;
 
 let policy: ActionPolicy = { mode: "enforce", deny: [], allow: ["true"] };
+let fixtureUrl = "";
 
 const store = createPluginStore({
   database,
@@ -46,9 +48,15 @@ const store = createPluginStore({
   credentials: { readSecret: async () => null },
   encryptionKey: "x".repeat(44),
   policy: () => policy,
+  // Only this test's own loopback server may use the existing private-host fixture seam.
+  callVendor: async (connection, name, args) => {
+    if (connection.url !== fixtureUrl)
+      throw new Error("Unexpected fixture destination");
+    return callTool({ ...connection, allowPrivateHost: true }, name, args);
+  },
 });
 
-const mock = new MCPMock();
+const mock = new McpTestServer();
 /** What the server on the other end was actually asked, recorded where the assertion can see it. */
 const received: unknown[] = [];
 
@@ -77,6 +85,7 @@ beforeAll(async () => {
     return `Found one note about ${query}.`;
   });
   const url = await mock.start();
+  fixtureUrl = url;
 
   await database
     .insert(mcpServers)
@@ -120,18 +129,18 @@ describe("the tools a Bot is handed on the server", () => {
     const tools = await grantedTools({
       store,
       botId: strangerId,
-      actorId: "someone@openkai.local",
+      actorId: "someone@chisabot.local",
     });
     expect(tools).toHaveLength(0);
   });
 
   test("a granted tool is offered with the vendor's own schema", async () => {
-    await store.grant("mcp", ref, holderId, "admin@openkai.local");
+    await store.grant("mcp", ref, holderId, "admin@chisabot.local");
 
     const tools = await grantedTools({
       store,
       botId: holderId,
-      actorId: "someone@openkai.local",
+      actorId: "someone@chisabot.local",
     });
 
     expect(tools).toHaveLength(1);
@@ -147,7 +156,7 @@ describe("the tools a Bot is handed on the server", () => {
     const tools = await grantedTools({
       store,
       botId: holderId,
-      actorId: "someone@openkai.local",
+      actorId: "someone@chisabot.local",
     });
 
     const text = await tools[0]?.execute({ query: "invoices" });
@@ -183,7 +192,7 @@ describe("the tools a Bot is handed on the server", () => {
       const tools = await grantedTools({
         store,
         botId: holderId,
-        actorId: "someone@openkai.local",
+        actorId: "someone@chisabot.local",
       });
       const text = await tools[0]?.execute({ query: "invoices" });
 

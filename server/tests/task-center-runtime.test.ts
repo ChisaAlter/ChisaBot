@@ -4,6 +4,10 @@ import type {
   TaskExecutionContext,
 } from "../../shared/task-center";
 import {
+  isLocalAgentExecutor,
+  localAgentKindOf,
+} from "../src/task-center/local-agent-runner";
+import {
   appendLearned,
   componentArtifacts,
   extractJson,
@@ -11,10 +15,6 @@ import {
   learnEntry,
   taskThreadId,
 } from "../src/task-center/runtime";
-import {
-  isLocalAgentExecutor,
-  localAgentKindOf,
-} from "../src/task-center/local-agent-runner";
 
 function task(overrides: Partial<TaskCenterTask> = {}): TaskCenterTask {
   return {

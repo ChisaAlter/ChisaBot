@@ -1,47 +1,31 @@
-# Android 原生版（CB-068）
+# Android 客户端
 
-Android 客户端（`android/`）是 Kotlin + Jetpack Compose（Material3）原生应用。界面规则见 DESIGN.md §80。
+Android（`android/`）以全屏 WebView 加载服务器提供的 React 前端，使用与桌面相同的组件、主题、消息气泡、卡片和设置，在手机 viewport 下应用现有响应式布局。没有额外的原生聊天顶栏、输入框或机器人列表。
 
-## 结构
+## 主入口与系统能力
 
-| 文件 | 做什么 |
-| --- | --- |
-| `MainActivity.kt` | Compose 入口、扫码（zxing-android-embedded）、桌面快捷方式、`chisabot://pair` 链接、在线更新（`Updater.kt`） |
-| `AppViewModel.kt` | 全部状态：登录 / 机器人 / 聊天 / 面板；导航栈 |
-| `GatewayAuth.kt` / `Pairing.kt` | 登录网关请求（和 PC `pc/src/agent/auth.js` 同一套规则），WebView 版沿用 |
-| `net/Api.kt` | OkHttp；Cookie 存在 `android.webkit.CookieManager`（和网页兜底页、旧 WebView 版同一份）；SSE 按行解析 AG-UI 事件；401 时用设备令牌静默续期一次 |
-| `chat/Model.kt` | AG-UI 事件 → 消息（`AgUiReducer`），历史消息合并工具结果 |
-| `chat/WorkSteps.kt` | 干活卡说法，抄 `shared/work-step.ts` + `app/src/lib/chat/work-steps.ts`（改一边要同步另一边） |
-| `chat/Turns.kt` | 一轮怎么画：开场一句 / 干活卡 / 过程话 / 结果 / 卡片 / 思考中 / 停顿小点 |
-| `md/Markdown.kt` | 轻量 Markdown 块解析 + 切气泡（§69） |
-| `ui/*` | 主题（蓝天玻璃）、登录、机器人列表、聊天、Markdown 渲染、json-render 原生组件、面板、网页兜底 |
+- `MainActivity.kt`：启动已有服务器会话；保留扫码绑定、系统相机收到的 `chisabot://pair` 链接、桌面快捷方式和 APK 更新。
+- `AppViewModel.kt`：沿用 SharedPreferences `chisabot` 与 CookieManager 的登录状态；按服务器恢复上次网页路由。首启/切换服务器使用原有登录页。
+- `ui/WebScreen.kt`：承载完整 React 应用。同源页面在壳内导航，站外 HTTP(S)、邮件和电话链接交给系统。Android 返回键先调用网页已有 `window.__chisabotBack()` 关闭抽屉，再退网页历史，最后将 App 移到后台。
+- 文件选择沿用网页 `<input type=file>` 的类型和多选要求；拍照入口使用系统相机和 FileProvider。录音仅向同源页面授予麦克风权限。
+- 文件下载由 Android DownloadManager 执行，同源下载携带 Cookie，完成通知和下载目录由系统管理。
+- 代码块和任务的 `blob:` 导出由 `ui/WebExports.kt` 捕获这次用户点击产生的同源内容，交给系统“保存文件”。保留文件名与字节；通用文本 MIME 的保存提示按已知扩展名补充类型，避免 `.js` 被系统改成 `.js.txt`。取消后页面照常使用；单次导出上限 20 MB。
+- 网页使用真实可用 viewport；系统栏与软键盘 Insets 由壳处理，网页继续使用自身手机断点。网页主题存储是主界面的外观来源，导航不会覆盖用户选择。
 
-## 图片与图标
+WebView UA 带 `ChisaBotAndroid/<version>`，**不带 `native` 后缀**。网页由此识别 App 壳并关闭 PWA 安装提示；服务器只有旧 `ChisaBotAndroid/<version> native` 客户端归类为受限原生协议 surface，主界面使用完整 web 工具与交互合同。
 
-- 图片（Coil）走 `Api.imageClient`：同一份 Cookie、跟随跳转；消息 / 头像里的相对路径 `/api/…` 用 `absUrl()` 补成当前服务器地址。
-- 启动图标沿用品牌头像（mipmap 名字不变，桌面图标缓存键稳定）；自适应图标多一层 `monochrome`（头像剪影，`mipmap-xxxhdpi/ic_launcher_monochrome.png`），Android 13+ 打开「主题图标」时可以跟着壁纸变色。
-- 网页兜底页跟随系统深浅色：页面开始 / 加载完把网页的 `localStorage.chisabot-theme` 和 `html.dark` 对齐到原生。
+## 登录、恢复和更新
 
-## 用到的服务器接口（都是已有的）
+登录、扫码绑定和设备令牌续期复用 `GatewayAuth.kt`、`Pairing.kt` 与 CookieManager。同源页面登录过期时先尝试已绑定设备续期，失败再回服务器登录页。切换服务器和退出登录仍可由桌面图标长按快捷方式进入；后台自动检查 APK 更新。服务器前端更新继续使用网页自己的刷新提示。
 
-- 登录：`POST /api/devices/agent/pair`、`POST /auth/device-session`（`X-Device-Token`）、`POST /auth/login`、`GET /auth/session`、`POST /api/devices/agent/unenroll`、`POST /auth/logout`
-- 机器人：`GET /api/agents`、`GET /api/settings/preferences`（`mainBotId`）、`GET /api/bot-avatars`（DESIGN §81 自定义头像：图片 / emoji / 首字；接口不存在或没设的机器人 → 按 `avatarSeed` 选渐变色 + 首字）。头像一律圆形。
-- 会话：`GET /api/channels?limit=100`（机器人打开最近的一对一会话）、`POST /api/channels {agentIds:[bot]}`（第一条消息时建）
-- 历史：`GET /api/copilotkit/threads/<threadId>/messages`、`…/inbox`（`running` = 别处正在回答，原生版每 1.5 秒读一次历史直到结束）
-- 回复：`POST /api/copilotkit/agent/<bot>/run`（`Accept: text/event-stream`，body = RunAgentInput，只带新的那条用户消息，服务器以存下的历史为准）；停止 `POST /api/copilotkit/agent/<bot>/stop/<threadId>`
-- 面板：`GET /api/live-panels?botId=`（只读；搭建 / 刷新中每 5 秒再读一次）
-- 确认卡片：`GET /api/confirmations/requests?thread=`、`POST /api/confirmations/requests/<id> {decision}`、`PUT /api/confirmations/prefs/<类别>`；上游审批 `GET /api/approvals`、`POST /api/approvals/<id>/decision`
-- 附件：`POST /api/channels/<channelId>/attachments`（multipart `file` + `uploadGroup`）→ 消息里的 `image` / `document` 段（`/api/attachments/<id>`）
-- 重新生成 / 编辑：`POST /api/copilotkit/threads/<threadId>/truncate {fromMessageId, mode}`，然后照常发一轮
-- 设置：`GET /api/me`、`GET /api/devices`（只读）
+debug 包才开放 WebView 调试。应用不暴露任意 JavaScript 调用原生权限的通用桥；返回处理仅消费既有网页布尔回执。
 
-## 构建
+## 兼容代码
 
-和以前一样：`cd android && gradle assembleRelease`（JDK 17、Gradle 8.9、AGP 8.5.2、Kotlin 1.9.24、Compose 编译器 1.5.14）。单测 `gradle testDebugUnitTest`。
-服务器地址默认 https；http 只放行局域网 / 环回地址（`GatewayAuth.normalize` → `privateHost`：localhost、*.local、10/8 · 172.16/12 · 192.168/16、127/8、169.254/16、IPv6 ::1 / ULA / fe80::），调试包连模拟器的 `http://10.0.2.2:<端口>` 也在这条规则里。平台层 `usesCleartextTraffic` 已放开，公网 http 的拦截靠 `normalize`。
+`chat/Model.kt`、`chat/Turns.kt`、`ui/BotsScreen.kt`、`ui/ChatScreen.kt`、`ui/PanelsScreen.kt` 与原生历史轮询仍保留，供旧协议回归和迁移兼容使用；它们不再构成 Android 的主产品界面。先前原生页面验收不能替代当前完整网页手机布局验收。
 
-## 阶段
+## 构建与验证
 
-1. **核心原生（0.1.13）**：登录、机器人列表、聊天、富卡片、面板只读；其余网页兜底。
-2. **第二轮（0.1.14，DESIGN §86）**：确认卡片 + 上游审批（§58）、附件（照片 / 拍照 / 文件，§56）、停止、重新生成 / 编辑重发（§67）、服务器行（§68.2）、原生设置基础（外观、账号 / 服务器、设备只读）。还没有：回答期间插话（§38 收件箱）、别处正在回答时接上事件流（现在每 1.5 秒读历史）、render_ui 表单组件、聊天文件卡（`⟦chisabot:files⟧`）。
-3. 原生设置其余部分（主机器人、模型、审批偏好）、通知、离线缓存、桌面小组件。
+使用 JDK 17、Gradle 8.9、Android SDK 34：`cd android && gradle assembleDebug`。发布构建 `gradle assembleRelease`，签名仅从现有环境变量加载；`gradle testDebugUnitTest` 运行原生边界单测。
+
+升级用 `adb install -r app/build/outputs/apk/debug/app-debug.apk` 保留账号、Cookie、网页存储和历史。验收需实际安装后检查网页 DOM/资源与服务器前端一致，手机抽屉、键盘/输入框、发送/停止、确认卡、文件选择/下载和关闭重开。桌面浏览器的窄屏预览是视觉参考，不能替代实际 WebView 与 Android 系统能力检查。

@@ -1,21 +1,23 @@
 import type { Message } from "@ag-ui/core";
-import {
-  type Attachment,
-  CopilotChatConfigurationProvider,
-  UseAgentUpdate,
-  useAgent,
-  useCopilotKit,
-} from "@copilotkit/react-core/v2";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
-import { attachmentModality } from "@/components/channels/chat-messages";
-import { isPersonSentMessage } from "@/components/channels/chat-transcript";
-import { toAgentOptions } from "@/components/channels/composer";
-import { ConversationView } from "@/components/channels/conversation-view";
 import { ChannelAvatar } from "@/components/channels/avatar";
+import { attachmentModality } from "@/components/channels/chat-messages";
+import {
+  type ComposerDraft,
+  toAgentOptions,
+} from "@/components/channels/composer";
+import { ConversationView } from "@/components/channels/conversation-view";
 import {
   seedMessage,
   takeFirstMessage,
@@ -26,11 +28,9 @@ import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { useReportBusy } from "@/lib/activity";
+import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import {
-  type ApprovalInboxData,
-  dismissPersonQuestion,
-} from "@/lib/approvals";
+import { type ApprovalInboxData, dismissPersonQuestion } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
@@ -46,15 +46,20 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
+import type { Attachment } from "@/lib/chat/attachment-state";
+import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
+import {
+  conversationClient,
+  useConversationSession,
+} from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
-import { bindAgentBot, useActiveBot } from "@/lib/copilot/active-bot";
-import { observeApprovalAgent } from "@/lib/copilot/approval-context";
-import type { ThreadActivity } from "@/lib/copilot/bot-thread";
-import { readSync } from "@/lib/copilot/bot-thread";
-import { reportChatRunning } from "@/lib/copilot/computer-activity";
-import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
-import { syncComputerMessages } from "@/lib/copilot/computer-tools";
+import { interruptWaitingKind } from "@/lib/compat/legacy-client";
+import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+import type { ThreadActivity } from "@/lib/conversations/bot-thread";
+import { readSync } from "@/lib/conversations/bot-thread";
+import { reportChatRunning } from "@/lib/conversations/computer-activity";
+import { syncComputerMessages } from "@/lib/conversations/computer-tools";
 import {
   CONNECTION_LOST_REASON,
   decideSendWatchdogAction,
@@ -62,17 +67,23 @@ import {
   isConnectionDrop,
   raceSendWatchdog,
   reportBudgetEvent,
-  sendReachedServer,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
-} from "@/lib/copilot/connection-drop";
-import { ConversationProvider, replyAfterToolCall } from "@/lib/copilot/conversation";
-import { frontendToolProgressAt } from "@/lib/copilot/frontend-tool-activity";
-import { hideHeldSupplements, useStopRequest } from "@/lib/copilot/held-supplements";
-import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
+} from "@/lib/conversations/connection-drop";
+import {
+  ConversationProvider,
+  replyAfterToolCall,
+} from "@/lib/conversations/conversation";
+import { frontendToolProgressAt } from "@/lib/conversations/frontend-tool-activity";
+import {
+  hideHeldSupplements,
+  useStopRequest,
+} from "@/lib/conversations/held-supplements";
+import { afterMs, joinWithin } from "@/lib/conversations/join-thread";
 import {
   contentText,
   lastUserIndex,
@@ -80,50 +91,59 @@ import {
   type TruncateMode,
   truncateConversation,
   withEditedText,
-} from "@/lib/copilot/regenerate";
-import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
+} from "@/lib/conversations/regenerate";
+import { repairUnansweredToolCalls } from "@/lib/conversations/repair-history";
 import {
   isAbortFailure,
   pausedForApproval,
   stoppedReason,
   unfinishedTurnReason,
-} from "@/lib/copilot/stopped-turn";
+} from "@/lib/conversations/stopped-turn";
 import {
   useThreadActivity,
   withStoredTail,
-} from "@/lib/copilot/thread-activity";
-import { inboxState, queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/copilot/thread-inbox";
+} from "@/lib/conversations/thread-activity";
+import {
+  inboxState,
+  queuedFor,
+  queueMessage,
+  restoreQueue,
+  useQueuedMessages,
+} from "@/lib/conversations/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
   type StoredThread,
   THREAD_MESSAGES_RETRY_DEADLINE_MS,
-} from "@/lib/copilot/thread-messages";
+} from "@/lib/conversations/thread-messages";
 import {
   cachedTranscript,
   rememberTranscript,
-} from "@/lib/copilot/transcript-cache";
+} from "@/lib/conversations/transcript-cache";
 import {
   useFallbackTurns,
   useLastSentAt,
   useStoppedTurnIds,
-} from "@/lib/copilot/turn-compaction";
-import { useConversationSync } from "@/lib/copilot/use-conversation-sync";
-import { useThreadInbox } from "@/lib/copilot/use-thread-inbox";
+} from "@/lib/conversations/turn-compaction";
+import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
+import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
-import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
-import { modelMissingFromCatalog } from "../../../../shared/model-selection";
+import {
+  agentModelQueryOptions,
+  modelCatalogQueryOptions,
+} from "@/lib/model-selection/queries";
 import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
+import { modelMissingFromCatalog } from "../../../../shared/model-selection";
 import { newId } from "../../lib/new-id";
 
 /**
  * How long a stalled thread join is worth waiting for before it is ended.
  *
- * Ended, not outrun. See `lib/copilot/join-thread.ts` for what a connect left in flight does to the
+ * Ended, not outrun. See `lib/conversations/join-thread.ts` for what a connect left in flight does to the
  * next message sent.
  */
 const JOIN_DEADLINE_MS = 1500;
@@ -152,8 +172,11 @@ function sameActivity(
   );
 }
 
-/** Failed frontend handlers do not cause CopilotKit to send a continuation request. */
-async function persistFailedFrontendResults(threadId: string, messages: readonly Message[]) {
+/** Failed frontend handlers do not request a continuation. */
+async function persistFailedFrontendResults(
+  threadId: string,
+  messages: readonly Message[],
+) {
   // Only the last wire segment can still own a relay. Older errors are ordinary history.
   let callAt = -1;
   for (let at = messages.length - 1; at >= 0; at--) {
@@ -166,14 +189,26 @@ async function persistFailedFrontendResults(threadId: string, messages: readonly
     if (message?.role === "user") return;
   }
   if (callAt < 0) return false;
-  const results = messages.slice(callAt + 1).filter((message) => message.role === "tool");
-  if (!results.some((message) => typeof message.content === "string" && message.content.startsWith("Error:"))) return;
-  await fetch(`/api/copilotkit/threads/${encodeURIComponent(threadId)}/frontend-finished`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ results }),
-  }).catch(() => null);
+  const results = messages
+    .slice(callAt + 1)
+    .filter((message) => message.role === "tool");
+  if (
+    !results.some(
+      (message) =>
+        typeof message.content === "string" &&
+        message.content.startsWith("Error:"),
+    )
+  )
+    return;
+  await fetch(
+    `/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ results }),
+    },
+  ).catch(() => null);
   return true;
 }
 
@@ -398,8 +433,6 @@ export function ChannelChat({
   channel: AgentChannel;
   runtimeAgentId: string;
 }) {
-  // The core attaches the frontend tool registry; direct agent runs do not.
-  const { copilotkit } = useCopilotKit();
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
   /*
@@ -409,7 +442,10 @@ export function ChannelChat({
    */
   const modelState = useQuery(agentModelQueryOptions(runtimeAgentId));
   const modelCatalog = useQuery(modelCatalogQueryOptions());
-  const modelMissing = modelMissingFromCatalog(modelState.data, modelCatalog.data);
+  const modelMissing = modelMissingFromCatalog(
+    modelState.data,
+    modelCatalog.data,
+  );
   const modelMissingRef = useRef(modelMissing);
   modelMissingRef.current = modelMissing;
   // Mentions are scoped to the channel's permitted agents.
@@ -418,16 +454,12 @@ export function ChannelChat({
     (profile) => profile.id === channel.agentIds[0],
   );
   const channelAgentId = `channel:${channel.id}`;
-  const { agent, isReady } = useAgent({
+  const { agent, isReady } = useConversationSession({
     agentId: channelAgentId,
     runtimeAgentId,
     threadId: channel.threadId,
-    updates: [
-      UseAgentUpdate.OnMessagesChanged,
-      UseAgentUpdate.OnRunStatusChanged,
-    ],
   });
-  useEffect(() => observeApprovalAgent(agent), [agent]);
+
   // 这段对话的工具调用操作这个机器人的计算机，不管用户此刻在看哪段对话（§101）。
   bindAgentBot(agent, runtimeAgentId);
 
@@ -608,7 +640,7 @@ export function ChannelChat({
       try {
         // Bounded, and finished when it returns; `join-thread.ts` has why that matters.
         await joinWithin({
-          connect: copilotkit.connectAgent({ agent }),
+          connect: conversationClient.connectAgent({ agent }),
           deadline: afterMs(JOIN_DEADLINE_MS),
           detach: () => agent.detachActiveRun(),
         });
@@ -679,7 +711,7 @@ export function ChannelChat({
       current = false;
     };
   }, [
-    copilotkit,
+    conversationClient,
     agent,
     isReady,
     channel.threadId,
@@ -718,8 +750,9 @@ export function ChannelChat({
     [activity.onActivity],
   );
   const connectChat = useCallback(
-    (options: { agent: typeof agent }) => copilotkit.connectAgent(options),
-    [copilotkit],
+    (options: { agent: typeof agent }) =>
+      conversationClient.connectAgent(options),
+    [conversationClient],
   );
   const suppressConnectDuringSend = useCallback(
     () => sendInFlightRef.current,
@@ -737,6 +770,7 @@ export function ChannelChat({
     onJoinedActivity,
     {
       liveTail: true,
+      snapshotContinuations: agent.transport === "commands",
       suppressConnect: suppressConnectDuringSend,
       skipReconcile: skipReconcileWhileJoining,
     },
@@ -751,7 +785,11 @@ export function ChannelChat({
         // 给回放 / 实时流一点时间收尾；这台自己在跑（刚又发了一句）时不动。
         await new Promise((resolve) => setTimeout(resolve, 600));
         const current = agentRef.current;
-        if (current.isRunning || turnsRef.current > 0 || sendInFlightRef.current)
+        if (
+          current.isRunning ||
+          turnsRef.current > 0 ||
+          sendInFlightRef.current
+        )
           return;
         const stored = await readThreadMessages(
           channel.threadId,
@@ -940,55 +978,18 @@ export function ChannelChat({
     unreadable,
   });
 
-  // Run failures arrive as events and are reported only for turns started in this mount.
+  // The server replays the latest terminal event when this conversation is reopened.
   const [runError, setRunError] = useState<string | null>(null);
   const awaitingReply = useRef(false);
-  /**
-   * 这一轮最后一次「确实动了」的时刻（DESIGN.md §100 / DOG-01）。
-   *
-   * 发送看门狗原来只看「整轮多久没结束」。可一轮里用浏览器做事是好几段 run 接力，中间那一段是浏览器里
-   * 的工具在跑（`computer_run_command` 最长 600 秒，见 lib/copilot/frontend-tool-activity.ts），
-   * 这期间聊天这头一个字节的进展都没有：没有模型输出、没有工具结果。于是 12 秒一到就 `stopAgent()`，
-   * CopilotKit 用**不带 reason** 的 `abort()` 掐掉正在跑的命令，工具结果变成
-   * `Error: signal is aborted without reason`，这一轮以「运行命令 这一步出错」收尾（2026-10-20 真机）。
-   *
-   * 现在看门狗看的是**静默**：模型在写、工具在跑、工具结果在回来，都刷新这个时刻；真的什么都没动满
-   * 12 秒（首段）/ 180 秒（等回答）才算挂起。
-   */
+  /** Last observed progress, including a running tool. The watchdog measures silence rather
+   * than total elapsed time so a long tool does not look like a disconnected model. */
   const runProgressAt = useRef(0);
   const runEventSeenRef = useRef(false);
   const noteRunProgress = useRef(() => {
     runProgressAt.current = Date.now();
   });
-  /**
-   * WHY THIS TURN ENDED WITHOUT AN ANSWER, KEPT WHERE `deliver` CAN STILL SEE IT — because the one
-   * thing that knows is a subscriber, and the one thing that has to act on it is an `await`.
-   *
-   * `copilotkit.runAgent` DOES NOT REJECT ON A FAILED RUN. `CopilotKitCore.runAgent` catches
-   * everything the agent throws, reports it through `emitError` as `AGENT_RUN_FAILED`, and returns
-   * `{ result: undefined, newMessages: [] }` — a value indistinguishable from a run that finished
-   * with nothing to say. So a gateway 503, a stream that dies, a model that refuses the request:
-   * every one of them arrived here as a resolved promise, and `say` reported success for a turn
-   * that never reached the server.
-   *
-   * WHAT THAT COST, WHICH IS THE REASON THIS EXISTS. `say` resolving is what every caller reads as
-   * "it went". The composer clears the box and gives up the chips it was riding; the queue empties
-   * into a draft nothing retries; `conversation-view.tsx` never runs either of the failure paths it
-   * has written for exactly this. The person is left with the failed turn in the transcript and a
-   * notice under it, the words unretryable, and the files behind them staged rows that nothing on
-   * any screen points at any more. The notice is honest and everything under it was not.
-   *
-   * READ OFF THE SAME `fail` THE NOTICE IS, and deliberately not from a second subscription of its
-   * own. `fail` already answers the one question a separate subscriber would get wrong: a turn the
-   * PERSON stopped also reaches `onRunFailed`, with an abort, and `onStop` clears `awaitingReply`
-   * before it — so Stop is not a failure here and nothing restores a draft somebody chose to end.
-   *
-   * ONE SLOT FOR ONE TURN AT A TIME, the same assumption `awaitingReply` beside it already makes.
-   * Two overlapping turns — a component button pressed during a composer send — would have the
-   * second clear the first's reason, which reports the earlier turn as successful. That is the
-   * pre-existing shape of `awaitingReply`, not a new one, and narrowing it means giving a run a
-   * handle that `copilotkit.runAgent` does not hand back.
-   */
+  /** The stream subscriber records a turn failure before the send promise settles. Stop clears
+   * awaitingReply first, so a deliberate cancellation does not restore an abandoned draft. */
   const turnFailure = useRef<string | null>(null);
   /** 这一轮的流在浏览器这头断了（不是模型出错，DESIGN.md §89）：先不报，run 结束后问服务器这一轮怎样了。 */
   const connectionDropped = useRef(false);
@@ -1003,7 +1004,7 @@ export function ChannelChat({
    * what decides whether the next thing typed is sent or parked, and what tells the queue its wait
    * is over.
    *
-   * `runsInFlight` counts what Stop can actually reach: the run `copilotkit.runAgent` opens, and
+   * `runsInFlight` counts what Stop can actually reach: the run `conversationClient.runAgent` opens, and
    * nothing before it. A turn can be in flight for a second and a half before that, while `say`
    * waits for the runtime agent, and a Stop drawn in that window aborts a controller nobody has
    * made yet.
@@ -1096,9 +1097,7 @@ export function ChannelChat({
           if (stored?.availability === "ready") {
             landed = answeredOnly
               ? storedTurnAnswered(stored.messages, userMessageId)
-              : stored.messages.some(
-                  (message) => message.id === userMessageId,
-                );
+              : stored.messages.some((message) => message.id === userMessageId);
           }
         }
         if (!landed) await afterMs(2_000);
@@ -1257,12 +1256,23 @@ export function ChannelChat({
        */
       noteRunProgress.current();
       runEventSeenRef.current = false;
-      const runPromise = copilotkit.runAgent({
+      const runPromise = conversationClient.runAgent({
         agent: target,
-        ...((panelAuthoring || inboxSourceId) ? { forwardedProps: {
-          ...panelAuthoring,
-          ...(inboxSourceId ? { chisabotInboxResume: { sourceId: inboxSourceId, messageId: userMessageId } } : {}),
-        } } : {}),
+        ...(panelAuthoring || inboxSourceId
+          ? {
+              forwardedProps: {
+                ...panelAuthoring,
+                ...(inboxSourceId
+                  ? {
+                      chisabotInboxResume: {
+                        sourceId: inboxSourceId,
+                        messageId: userMessageId,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       });
       /**
        * 看门狗问的「最近一次有进展」的三类证词：这一轮的 run 事件（模型在写、工具结果在回来…）；
@@ -1284,7 +1294,8 @@ export function ChannelChat({
         lastProgressAt,
       });
       if (race === "timeout") {
-        let persisted: boolean | null = runEventSeenRef.current;
+        let persisted: boolean | null =
+          target.isCommandAccepted(userMessageId) || runEventSeenRef.current;
         if (!persisted) {
           /*
            * 落库检查要两个证人都问：messages 表（普通回合）和服务端收件箱（正在回答时
@@ -1292,20 +1303,22 @@ export function ChannelChat({
            * 一条安全躺在收件箱里、等着被当前回合读走的消息误判成「没发出去」。
            */
           const [stored, inbox] = await Promise.all([
-            readThreadMessages(
-              channel.threadId,
-              runtimeAgentId,
-            ).catch(() => null),
+            readThreadMessages(channel.threadId, runtimeAgentId).catch(
+              () => null,
+            ),
             inboxState(channel.threadId).catch(() => null),
           ]);
           persisted = sendReachedServer({
             stored:
               stored != null && stored.availability === "ready"
-                ? stored.messages.some((message) => message.id === userMessageId)
+                ? stored.messages.some(
+                    (message) => message.id === userMessageId,
+                  )
                 : null,
-            queued: inbox != null
-              ? inbox.items.some((item) => item.id === userMessageId)
-              : null,
+            queued:
+              inbox != null
+                ? inbox.items.some((item) => item.id === userMessageId)
+                : null,
           });
         }
         // First-bound decision without reply race yet.
@@ -1324,7 +1337,9 @@ export function ChannelChat({
            */
           if (first.kind === "hang") {
             try {
-              copilotkit.stopAgent({ agent: target });
+              void conversationClient
+                .stopAgent({ agent: target })
+                .catch(() => {});
             } catch {
               /* stop best-effort */
             }
@@ -1340,7 +1355,9 @@ export function ChannelChat({
             first.kind === "unverified"
               ? () => {
                   try {
-                    copilotkit.stopAgent({ agent: target });
+                    void conversationClient
+                      .stopAgent({ agent: target })
+                      .catch(() => {});
                   } catch {
                     /* stop best-effort */
                   }
@@ -1348,7 +1365,7 @@ export function ChannelChat({
                 }
               : undefined,
           );
-          // Still let runPromise settle in the background so CopilotKit counters clear.
+          // Let runPromise settle so the session counters clear.
           void runPromise.catch(() => undefined);
           throw new Error(first.reason);
         }
@@ -1366,7 +1383,9 @@ export function ChannelChat({
         });
         if (second.kind === "reply_hang") {
           try {
-            copilotkit.stopAgent({ agent: target });
+            void conversationClient
+              .stopAgent({ agent: target })
+              .catch(() => {});
           } catch {
             /* stop best-effort */
           }
@@ -1388,10 +1407,17 @@ export function ChannelChat({
       } else {
         await runPromise;
       }
+    } catch (error) {
+      if (!target.isCommandAccepted(userMessageId)) throw error;
+      // The message is already in the server's command log. Keep a failed execution in the
+      // transcript; restoring its draft would offer to send the accepted command a second time.
+      if (!stopRequestedRef.current && !connectionDropped.current)
+        failRef.current(stoppedReason(error));
     } finally {
       setRunsInFlight((count) => Math.max(0, count - 1));
     }
-    if (!stopRequestedRef.current) await persistFailedFrontendResults(channel.threadId, target.messages);
+    if (!stopRequestedRef.current)
+      await persistFailedFrontendResults(channel.threadId, target.messages);
 
     /*
      * 流断了而不是模型出错（DESIGN.md §89）：问服务器这一轮怎样了。只读——不重发消息，设备命令不会再跑一遍。
@@ -1444,7 +1470,7 @@ export function ChannelChat({
 
     /*
      * 整轮跑完了，既没报错、也不是断流（§100）：看看是不是「做了几步就没下文」。最后一条是工具结果
-     * （工具出错 / 续轮到上限，CopilotKit 不再发起下一轮），或者一条空回复——都要在聊天里说清楚并给「重试」，
+     * （工具出错 / 续轮到上限，会话客户端 不再发起下一轮），或者一条空回复——都要在聊天里说清楚并给「重试」，
      * 不能静默结束。等审批卡、用户自己按停止的不算（awaitingReply 已被放下 / 最后一条是没有结果的工具调用）。
      */
     if (
@@ -1490,7 +1516,11 @@ export function ChannelChat({
        * 输入框清空、记下的草稿也清掉（DESIGN.md §88.4）；「重试」从这条消息起重新生成（`retryTurn`）。
        * 什么都没回来就失败的，照旧把字放回去（重试 = 再发一次，先拿掉失败的那份）。
        */
-      if (!turnAnswered(target.messages)) throw new Error(turnFailure.current);
+      if (
+        !target.isCommandAccepted(userMessageId) &&
+        !turnAnswered(target.messages)
+      )
+        throw new Error(turnFailure.current);
     }
     return target.messages
       .filter(
@@ -1536,7 +1566,10 @@ export function ChannelChat({
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
 
     // Every request shares this turn boundary, including gaps between frontend tools.
-    if (turnsRef.current > 0 || agentRef.current.isRunning) {
+    if (
+      turnsRef.current > 0 ||
+      (joinGateSettledRef.current && agentRef.current.isRunning)
+    ) {
       throw new Error("代理仍在处理另一个请求。请等待或先停止该任务。");
     }
 
@@ -1568,7 +1601,9 @@ export function ChannelChat({
   };
 
   const failRef = useRef<(message: string) => void>(() => {});
-  useEffect(() => {
+  // AG-UI captures subscribers synchronously when connectAgent begins. Register before the
+  // passive mount effect starts that connection, including its replayed terminal event.
+  useLayoutEffect(() => {
     const fail = (message: string) => {
       if (!awaitingReply.current) return;
       awaitingReply.current = false;
@@ -1590,6 +1625,7 @@ export function ChannelChat({
       onRunStartedEvent: () => {
         runEventSeenRef.current = true;
         noteRunProgress.current();
+        if (!awaitingReply.current) setRunError(null);
       },
       // Both surfaces fall back to the same sentence, from the same place, so a person who uses
       // both is not told two different things about the same silence.
@@ -1597,14 +1633,17 @@ export function ChannelChat({
         noteRunProgress.current();
         if (
           stopRequestedRef.current ||
-          (event as { code?: unknown } | undefined)?.code ===
-            "HERMES_RUN_CANCELLED" ||
+          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(
+            String((event as { code?: unknown } | undefined)?.code),
+          ) ||
           event?.message === "This run was stopped."
         ) {
           awaitingReply.current = false;
           return;
         }
-        fail(stoppedReason(event?.message));
+        const reason = stoppedReason(event?.message);
+        if (awaitingReply.current) fail(reason);
+        else setRunError(reason);
       },
       onRunFailed: ({ error }) => {
         noteRunProgress.current();
@@ -1617,8 +1656,22 @@ export function ChannelChat({
         }
         fail(stoppedReason(error));
       },
-      onRunFinishedEvent: () => {
+      onRunFinishedEvent: ({ event }) => {
         noteRunProgress.current();
+        if (event.outcome?.type === "interrupt") {
+          awaitingReply.current = false;
+          const uncertain = event.outcome.interrupts.find(
+            (interrupt) =>
+              interruptWaitingKind(interrupt.metadata) === "operation_unknown",
+          );
+          if (uncertain) {
+            const message =
+              uncertain.message ?? "这一步可能已经执行，但结果尚待核对。";
+            turnFailure.current = message;
+            setRunError(message);
+          }
+          return;
+        }
         /*
          * 不在这里把 awaitingReply 放下（DESIGN.md §100）。一轮里用浏览器做事是好几个 run 接力：第一个 run
          * 以工具调用结束，浏览器做完再发起下一个。以前第一个 run 一结束就放下，后面接力的 run 出错、断流，
@@ -1653,24 +1706,52 @@ export function ChannelChat({
   sayRef.current = say;
   useEffect(() => {
     const onSendPaused = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId: string; id: string; accept: (run: () => Promise<unknown>) => void }>).detail;
-      if (!detail || detail.threadId !== channel.threadId || typeof detail.accept !== "function") return;
+      const detail = (
+        event as CustomEvent<{
+          threadId: string;
+          id: string;
+          accept: (run: () => Promise<unknown>) => void;
+        }>
+      ).detail;
+      if (
+        !detail ||
+        detail.threadId !== channel.threadId ||
+        typeof detail.accept !== "function"
+      )
+        return;
       detail.accept(async () => {
-        const item = queuedFor(channel.threadId).find((item) => item.id === detail.id && item.status === "paused");
+        const item = queuedFor(channel.threadId).find(
+          (item) => item.id === detail.id && item.status === "paused",
+        );
         if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
         // CB-104: the resent copy replaces a held original the stopped turn had read (server does the same).
         const target = agentRef.current;
-        if (target.messages.some((message) => message.id === item.id && message.role === "user"))
-          target.setMessages(target.messages.filter((message) => message.id !== item.id) as typeof target.messages);
+        if (
+          target.messages.some(
+            (message) => message.id === item.id && message.role === "user",
+          )
+        )
+          target.setMessages(
+            target.messages.filter(
+              (message) => message.id !== item.id,
+            ) as typeof target.messages,
+          );
         try {
-          return await sayRef.current(item.text, [], [], undefined, item.id);
+          return await sayRef.current(
+            item.text,
+            [],
+            [],
+            item.message?.content,
+            item.id,
+          );
         } finally {
           await restoreQueue(channel.threadId);
         }
       });
     };
     window.addEventListener("chisabot-send-paused", onSendPaused);
-    return () => window.removeEventListener("chisabot-send-paused", onSendPaused);
+    return () =>
+      window.removeEventListener("chisabot-send-paused", onSendPaused);
   }, [channel.threadId]);
 
   // 「已停止」（2026-10-13 第四轮）：本机刚按停止的那一轮 + 服务器记下的（刷新、换设备也在）。
@@ -1687,7 +1768,12 @@ export function ChannelChat({
   // CB-104: follow-ups held by Stop are shown once, as held items, not also as transcript bubbles.
   const inboxQueue = useQueuedMessages(channel.threadId);
   const heldIds = useMemo(
-    () => new Set(inboxQueue.filter((item) => item.status === "paused").map((item) => item.id)),
+    () =>
+      new Set(
+        inboxQueue
+          .filter((item) => item.status === "paused")
+          .map((item) => item.id),
+      ),
     [inboxQueue],
   );
   // CB-104: 「停止中…」 from the click until the stopped turn has really ended.
@@ -1695,8 +1781,12 @@ export function ChannelChat({
   // CB-104: a failed stop request says so at once (「停止失败，重试」) instead of reverting quietly.
   // CB-104: while 「停止失败，重试」 shows, ask the server whether the turn is still running; once it
   // is not (finished, stopped or errored on its own), the prompt goes away and Send comes back.
-  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<boolean | undefined>(undefined);
-  const stopRequest = useStopRequest(channel.threadId, undefined, { running: stopFailedServerRunning });
+  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<
+    boolean | undefined
+  >(undefined);
+  const stopRequest = useStopRequest(channel.threadId, undefined, {
+    running: stopFailedServerRunning,
+  });
   useEffect(() => {
     if (!stopRequest.failed) {
       setStopFailedServerRunning(undefined);
@@ -1723,43 +1813,16 @@ export function ChannelChat({
     stopRequest.clear();
     setStopping(true);
     sendStop();
-    try {
-      copilotkit.stopAgent({ agent });
-    } catch {
-      /* stop best-effort */
-    }
   };
   const stopTask = () => {
     setStopping(true);
     // The server pauses what the stopped turn read or had queued; pick that up promptly.
     for (const delay of [800, 2_000, 4_500])
       setTimeout(() => void restoreQueue(channel.threadId), delay);
-    // Anchor 「已停止」 on the person-sent user turn that opened this run — skip schedule/worker
-    // markers that also wear role=user, otherwise the chip can stick to an earlier completed reply.
-    const lastUser =
-      [...agent.messages].reverse().find((message) => {
-        if (message.role !== "user") return false;
-        const text = typeof message.content === "string" ? message.content : "";
-        return isPersonSentMessage("user", text);
-      }) ??
-      [...agent.messages].reverse().find((message) => message.role === "user");
-    if (lastUser)
-      setLocalStops((previous) => new Set([...previous, lastUser.id]));
     // Also blocks inbox fallback after Stop during a frontend tool handoff.
     stopRequestedRef.current = true;
     awaitingReply.current = false;
-    // Track B：停止必须立刻放下 busy，不能干等 runPromise/finally——否则频道永久灰。
-    turnsRef.current = 0;
-    setTurnsInFlight(0);
-    setRunsInFlight(0);
-    sendInFlightRef.current = false;
-    void setChannelBusy({ channelId: channel.id, busy: false });
     sendStop();
-    try {
-      copilotkit.stopAgent({ agent });
-    } catch {
-      /* stop best-effort */
-    }
   };
 
   /*
@@ -1839,7 +1902,15 @@ export function ChannelChat({
    * 补发的那一轮也算「在跑」（Stop 能停、输入框显示在回答）。
    */
   const queueToServer = useCallback(
-    (text: string) => queueMessage(channel.threadId, text),
+    (draft: ComposerDraft) =>
+      queueMessage(channel.threadId, {
+        message: {
+          id: newId(),
+          role: "user",
+          content: toMessageContent(draft.text.trim(), draft.attachments),
+        } as Message,
+        skillIds: draft.commandIds,
+      }),
     [channel.threadId],
   );
   const runInboxTurn = useCallback(
@@ -1850,9 +1921,17 @@ export function ChannelChat({
       stopRequestedRef.current = false;
       setRunsInFlight((count) => count + 1);
       try {
-        const result = await copilotkit.runAgent(options);
-        if (!stopRequestedRef.current && await persistFailedFrontendResults(channel.threadId, options.agent.messages)) {
-          turnFailure.current = unfinishedTurnReason(options.agent.messages as never, new Set()) ?? "工具执行失败。";
+        const result = await conversationClient.runAgent(options);
+        if (
+          !stopRequestedRef.current &&
+          (await persistFailedFrontendResults(
+            channel.threadId,
+            options.agent.messages,
+          ))
+        ) {
+          turnFailure.current =
+            unfinishedTurnReason(options.agent.messages as never, new Set()) ??
+            "工具执行失败。";
         }
         return result;
       } finally {
@@ -1862,12 +1941,15 @@ export function ChannelChat({
         if (turnsRef.current === 0) sendInFlightRef.current = false;
       }
     },
-    [copilotkit, channel.threadId],
+    [conversationClient, channel.threadId],
   );
   useThreadInbox(channel.threadId, agent, runInboxTurn as never, {
     pullServerTurns: false,
     turnRunning: turnsInFlight > 0,
-    canFlush: () => turnsRef.current === 0 && !stopRequestedRef.current && turnFailure.current === null,
+    canFlush: () =>
+      turnsRef.current === 0 &&
+      !stopRequestedRef.current &&
+      turnFailure.current === null,
   });
 
   /**
@@ -1929,7 +2011,7 @@ export function ChannelChat({
   /*
    * 挂载时的「接入」不是一轮回答（2026-10-22）。
    *
-   * `@copilotkit/core` 的 connect 从开始到回放结束都把 `agent.isRunning` 设成 true（`connectWithoutEventVerification`，
+   * `@conversationClient/core` 的 connect 从开始到回放结束都把 `agent.isRunning` 设成 true（`connectWithoutEventVerification`，
    * 只在那一轮的 finalize 里清掉）。于是每次打开 / 切换机器人 / 从设置回来（留着的那个超过 10 分钟被放掉了），
    * 输入框的发送键先画成「停止机器人」、对话末尾挂一行「思考中」，回放完再收回去——用户看到的就是
    * 「切个机器人像发了一次消息」。更糟的是那个「停止」按下去撤掉的是这一次接入 / 回放本身。
@@ -1951,12 +2033,12 @@ export function ChannelChat({
   /*
    * 两个事实，分开用（2026-10-22）：
    * - `agentLive`：这条对话**真的**在跑一轮（本机发起的 / 服务器在写 / 有 run 在路上）。决定「发出去还是排队」，
-   *   以及能不能重新生成。这里仍然算上 `agent.isRunning`——接入期间它为 true，那时候发出去会被 `say` 拒
-   *   （「代理仍在处理另一个请求」），排队等接入结束才是对的。
+   *   以及能不能重新生成。打开时的 connect 只恢复记录，发送由 joinGate 等它完成。
    * - `chatBusy`：**画给人看的**「机器人在回答」。接入（回放）不算，否则每次切换机器人，发送键都先变成
    *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
    */
-  const agentLive = agent.isRunning || turnsInFlight > 0 || runsInFlight > 0;
+  const agentLive =
+    (agent.isRunning && !joining) || turnsInFlight > 0 || runsInFlight > 0;
   // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
   const agentLiveBefore = useRef(agentLive);
   useEffect(() => {
@@ -1965,14 +2047,21 @@ export function ChannelChat({
   }, [agentLive, stopRequest.clear]);
   useEffect(() => {
     if (!stopping) return;
-    if (!agentLive) {
-      setStopping(false);
-      return;
-    }
-    // Never leave the composer stuck on 「停止中…」 if the stream end is missed.
-    const timer = setTimeout(() => setStopping(false), 10_000);
-    return () => clearTimeout(timer);
-  }, [stopping, agentLive]);
+    let alive = true;
+    const check = async () => {
+      const state = await restoreQueue(channel.threadId);
+      if (alive && state?.running === false) {
+        setStopping(false);
+        void agent.detachActiveRun();
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [stopping, agent, channel.threadId]);
   const chatBusy =
     seedSending ||
     turnsInFlight > 0 ||
@@ -1999,7 +2088,8 @@ export function ChannelChat({
   const activeMessagesRef = useRef(activeMessages);
   activeMessagesRef.current = activeMessages;
   const replyAfter = useCallback(
-    (toolCallId: string) => replyAfterToolCall(activeMessagesRef.current, toolCallId),
+    (toolCallId: string) =>
+      replyAfterToolCall(activeMessagesRef.current, toolCallId),
     [],
   );
   useEffect(() => {
@@ -2012,7 +2102,10 @@ export function ChannelChat({
     // 手动停止或出错结束的一轮不跳「做完了」（DESIGN.md §81）。
     stopping || runError !== null,
   );
-  useEffect(() => publishBotActivity(runtimeAgentId, liveActivity), [runtimeAgentId, liveActivity]);
+  useEffect(
+    () => publishBotActivity(runtimeAgentId, liveActivity),
+    [runtimeAgentId, liveActivity],
+  );
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
@@ -2057,8 +2150,9 @@ export function ChannelChat({
   return (
     // Activity renderers resolve their agent through this SDK context. It must match useAgent's
     // channel instance so an action continues this thread instead of looking for a default agent.
-    <CopilotChatConfigurationProvider
+    <ConversationScopeProvider
       agentId={channelAgentId}
+      botId={runtimeAgentId}
       threadId={channel.threadId}
     >
       <ConversationProvider ask={askFromComponent} replyAfter={replyAfter}>
@@ -2129,7 +2223,7 @@ export function ChannelChat({
                     run={async () => {
                       setRunsInFlight((count) => count + 1);
                       try {
-                        await copilotkit.runAgent({ agent });
+                        await conversationClient.runAgent({ agent });
                       } finally {
                         setRunsInFlight((count) => count - 1);
                       }
@@ -2248,8 +2342,17 @@ export function ChannelChat({
                * part of the conversation and stays.
                */
               onRetryTurn={() => {
-                // 中途断的一轮（已经有回答 / 工具调用）：字没放回输入框，重试 = 从这条消息起重新生成（§88.4）。
-                if (!turnAnswered(agentRef.current.messages)) return false;
+                // An admitted command is retried from its stored turn, including a failure
+                // before the first token. Its original draft has already been sent.
+                const current = agentRef.current;
+                const lastUser = current.messages.findLast(
+                  (message) => message.role === "user",
+                );
+                if (
+                  !turnAnswered(current.messages) &&
+                  !(lastUser && current.isCommandAccepted(lastUser.id))
+                )
+                  return false;
                 void regenerate().catch(() => undefined);
                 return true;
               }}
@@ -2279,7 +2382,7 @@ export function ChannelChat({
           </div>
         </MessageActionsContext.Provider>
       </ConversationProvider>
-    </CopilotChatConfigurationProvider>
+    </ConversationScopeProvider>
   );
 }
 
@@ -2356,7 +2459,8 @@ export function openToolCallPending(list: readonly Message[]): boolean {
     const message = list[i];
     if (!message) continue;
     if (message.role === "tool") {
-      if (typeof message.toolCallId === "string") answered.add(message.toolCallId);
+      if (typeof message.toolCallId === "string")
+        answered.add(message.toolCallId);
       continue;
     }
     if (message.role === "assistant") {

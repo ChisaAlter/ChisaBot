@@ -8,6 +8,13 @@ import {
   deploymentPackages,
   users,
 } from "../db/schema";
+import { teamBotPublications } from "../db/schema/team-bots";
+import { deleteGrantsForAgent } from "../package-orphans";
+import {
+  assignedCondition,
+  assignedToActor,
+  teamBotAccess,
+} from "../team-bots/access";
 import {
   authFromConfiguration,
   retireReplacedKey,
@@ -18,15 +25,8 @@ import {
   mintCallbackToken,
   sameToken,
 } from "./callback-token";
-import {
-  assignedCondition,
-  assignedToActor,
-  teamBotAccess,
-} from "../team-bots/access";
-import { teamBotPublications } from "../db/schema/team-bots";
-import { canDeleteAgent, canManageAgent } from "./profile-policy";
-import { deleteGrantsForAgent } from "../package-orphans";
 import { modelOverrideFromValue } from "./model-selection";
+import { canDeleteAgent, canManageAgent } from "./profile-policy";
 import type {
   AgentActor,
   AgentProfile,
@@ -105,10 +105,7 @@ export type AgentProfileStore = {
      * does (a per-person recount must not count the row being created), and is handed the new
      * agent's id. A throw rolls the whole creation back.
      */
-    within?: (
-      executor: ProfileWriteExecutor,
-      agentId: string,
-    ) => Promise<void>,
+    within?: (executor: ProfileWriteExecutor, agentId: string) => Promise<void>,
   ): Promise<AgentProfile>;
   update(
     actor: AgentActor,
@@ -308,7 +305,7 @@ export type AgentRun = {
  *
  * That copy is the failure this repository already has a paragraph about. It looks identical on every
  * screen and its whole instruction becomes `standingRoleMessage` — see the note above that function
- * in `copilot.ts`, which names the compliance Bot that answered a filing question with invented
+ * in `conversation-runtime.ts`, which names the compliance Bot that answered a filing question with invented
  * thresholds because one sentence of role description was all that reached it. The default tenant
  * package ships two `built_in` coworkers, and one of them, `Knowledge`, is a careful
  * do-not-fabricate instruction. Copy it and you get a coworker with the name, the title, the avatar,
@@ -652,7 +649,6 @@ export function createAgentProfileStore(
       });
     },
 
-
     update(actor, id, input) {
       return database.transaction(
         async (transaction) => {
@@ -882,7 +878,8 @@ export function createAgentProfileStore(
           await lockProfileMutationRows(transaction, id);
           const profile = await findAccessibleProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
-          if (!canDeleteAgent(actor, profile)) requireManageable(actor, profile);
+          if (!canDeleteAgent(actor, profile))
+            requireManageable(actor, profile);
 
           const deletedAt = new Date();
           await transaction

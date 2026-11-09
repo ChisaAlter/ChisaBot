@@ -531,7 +531,7 @@ describe("retiring the credentials a person owns", () => {
     await store.callTool({ ref, args: {}, botId, actorId: askerId });
     expect(exchanged.at(-1)).toBe(askerRefreshToken);
 
-    await store.retireConnectionsFor(askerId, "admin@openbot.local");
+    await store.retireConnectionsFor(askerId, "admin@chisabot.local");
 
     const [credential] = await database
       .select({ revokedAt: credentials.revokedAt })
@@ -564,7 +564,7 @@ describe("retiring the credentials a person owns", () => {
       .delete(mcpUserCredentials)
       .where(eq(mcpUserCredentials.userId, otherId));
 
-    await store.retireConnectionsFor(otherId, "admin@openbot.local");
+    await store.retireConnectionsFor(otherId, "admin@chisabot.local");
 
     const [credential] = await database
       .select({ revokedAt: credentials.revokedAt })
@@ -579,17 +579,17 @@ describe("retiring the credentials a person owns", () => {
     await connect(askerId, askerRefreshToken);
 
     expect(
-      (await store.retireConnectionsFor(askerId, "admin@openbot.local"))
+      (await store.retireConnectionsFor(askerId, "admin@chisabot.local"))
         .retired,
     ).toBeGreaterThan(0);
     // Already revoked is something an administrator can legitimately do twice.
     expect(
-      (await store.retireConnectionsFor(askerId, "admin@openbot.local"))
+      (await store.retireConnectionsFor(askerId, "admin@chisabot.local"))
         .retired,
     ).toBe(0);
     // The empty actor is ANONYMOUS_ACTOR. It owns nothing, and must not match rows by being empty.
     expect(
-      (await store.retireConnectionsFor("", "admin@openbot.local")).retired,
+      (await store.retireConnectionsFor("", "admin@chisabot.local")).retired,
     ).toBe(0);
   });
 });

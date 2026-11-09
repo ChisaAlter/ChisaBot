@@ -7,12 +7,12 @@
 
 ## 1. 更新源
 
-| 更新源 | 目录（示例） | 内容 |
-|---|---|---|
-| PC 公开更新源 | `<PUBLIC_WEB_ROOT>/downloads/chisabot-pc/` | `latest.yml` + `ChisaBot-<版本>-x64-setup.exe` + `.blockmap` |
-| Android 公开更新源 | `<PUBLIC_WEB_ROOT>/downloads/chisabot-android/` | `latest.json` + 签名 APK |
-| 登录后的下载页（可选） | `/opt/chisabot-zh/public/downloads/pc/` | `latest.json`（带 sha256 / 字节数），旧版移到 `archive-<版本>/` |
-| CI 产物工作目录 | `/opt/chisabot-release/ci-<版本>/` | 每次下载下来的 artifact，留作重建更新源的来源 |
+| 更新源                 | 目录（示例）                                    | 内容                                                            |
+| ---------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| PC 公开更新源          | `<PUBLIC_WEB_ROOT>/downloads/chisabot-pc/`      | `latest.yml` + `ChisaBot-<版本>-x64-setup.exe` + `.blockmap`    |
+| Android 公开更新源     | `<PUBLIC_WEB_ROOT>/downloads/chisabot-android/` | `latest.json` + 签名 APK                                        |
+| 登录后的下载页（可选） | `/opt/chisabot-zh/public/downloads/pc/`         | `latest.json`（带 sha256 / 字节数），旧版移到 `archive-<版本>/` |
+| CI 产物工作目录        | `/opt/chisabot-release/ci-<版本>/`              | 每次下载下来的 artifact，留作重建更新源的来源                   |
 
 不自建更新源也可以：通用版直接从 GitHub Releases 更新（首次运行让用户填服务器地址）。
 
@@ -47,6 +47,8 @@
 
 ## 4. 发版后检查
 
+- 先核对用户实际安装包内的 `src/build-config.json` 和本机 `config.json` 的有效更新源；通用版使用 GitHub Releases，更新自建下载目录不会通知通用版客户端。新清单版本必须高于已安装版本。
+- 用旧版本的真实 `electron-updater` 检查并下载待发布安装包，确认进入 `downloaded`；不得用服务器 `/api/version` 或安装包仅在本地存在代替客户端更新验收。
 - `curl -s https://<YOUR_DOMAIN>/downloads/chisabot-pc/latest.yml | head`：版本号、sha512、`chisabotShell` 外壳指纹。
 - `curl -s https://<YOUR_DOMAIN>/downloads/chisabot-android/latest.json`：`versionCode` 比上一版大。
 - 外壳指纹变了的版本，PC 会提示「此更新需要重新安装」，发版说明里写清楚。

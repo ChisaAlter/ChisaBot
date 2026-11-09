@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
 import type { ComputerGateway } from "../src/computer/gateway";
-import { CaptureBusyError, ComputerUnavailableError } from "../src/computer/gateway";
+import {
+  CaptureBusyError,
+  ComputerUnavailableError,
+} from "../src/computer/gateway";
 import type { PolicyStore } from "../src/computer/policy-store";
 import { createComputerRoutes } from "../src/computer/routes";
 
@@ -101,7 +104,9 @@ describe("computer fleet listing", () => {
       ],
     }));
 
-    const response = await app.request("http://chisabot.test/any-bot/computers");
+    const response = await app.request(
+      "http://chisabot.test/any-bot/computers",
+    );
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -126,7 +131,9 @@ describe("computer fleet listing", () => {
     };
     const { app, listed } = appFor(administrator, async () => fleet);
 
-    const response = await app.request("http://chisabot.test/any-bot/computers");
+    const response = await app.request(
+      "http://chisabot.test/any-bot/computers",
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(fleet);
@@ -343,10 +350,15 @@ describe("GET /control always answers 200 with a state (CB-103)", () => {
 
   test("locate failed → unreachable with reason locate_failed", async () => {
     const { status, body } = await read(async () => {
-      throw new ComputerUnavailableError("The computer address is not allowed.");
+      throw new ComputerUnavailableError(
+        "The computer address is not allowed.",
+      );
     });
     expect(status).toBe(200);
-    expect(body).toMatchObject({ state: "unreachable", reason: "locate_failed" });
+    expect(body).toMatchObject({
+      state: "unreachable",
+      reason: "locate_failed",
+    });
   });
 
   test("CaptureBusy → unreachable, not 503", async () => {
@@ -354,7 +366,10 @@ describe("GET /control always answers 200 with a state (CB-103)", () => {
       throw new CaptureBusyError("Live screen is streaming.", true, true);
     });
     expect(status).toBe(200);
-    expect(body).toMatchObject({ state: "unreachable", reason: "capture_busy" });
+    expect(body).toMatchObject({
+      state: "unreachable",
+      reason: "capture_busy",
+    });
   });
 
   test("an unexpected error → unreachable, not 500", async () => {

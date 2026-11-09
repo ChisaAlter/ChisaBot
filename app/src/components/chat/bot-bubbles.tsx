@@ -168,6 +168,24 @@ export function normalizeDirectiveCards(raw: string): string {
 
   while (i < rawLines.length) {
     const line = (rawLines[i] ?? "").trim();
+    // Directives inside a Markdown fence are literal code, including doc/card examples.
+    // Ordinary streaming answers keep their Markdown structure throughout the turn.
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLines[i] ?? "");
+    if (fence) {
+      const marker = fence[1]!;
+      step1.push(rawLines[i++]!);
+      while (i < rawLines.length) {
+        const raw = rawLines[i++]!;
+        step1.push(raw);
+        const close = raw.trim();
+        if (
+          close.length >= marker.length &&
+          [...close].every((c) => c === marker[0])
+        )
+          break;
+      }
+      continue;
+    }
 
     if (line === ":::group") {
       const groupLines: string[] = [rawLines[i]!];
@@ -229,113 +247,7 @@ export function normalizeDirectiveCards(raw: string): string {
     i++;
   }
 
-  const joined = step1.join("\n");
-  // 若模型输出了多小节结构化长文（≥2 个 Markdown 小标题 + 列表/表格，且未手工包裹 ```doc），
-  // 自动把中间的结构化长文段合并为 Hark 风格的 ```doc 摘要卡，保留开头导语气泡与末尾跟进建议气泡。
-  if (
-    !/^(`{3,}|~{3,})\s*(doc|document|summary|report|brief|morning-brief|daily-brief|cards|draft)\b/im.test(
-      joined,
-    )
-  ) {
-    return autoWrapMultiSectionDoc(joined);
-  }
-  return joined;
-}
-
-function autoWrapMultiSectionDoc(text: string): string {
-  const lines = text.split("\n");
-  let inFence = false;
-  const headingIndices: number[] = [];
-  for (let idx = 0; idx < lines.length; idx++) {
-    const trimmed = (lines[idx] ?? "").trim();
-    if (/^(`{3,}|~{3,})/.test(trimmed)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (!inFence && /^#{1,4}\s+\S/.test(trimmed)) {
-      headingIndices.push(idx);
-    }
-  }
-  if (headingIndices.length < 2) return text;
-
-  const firstHeadingIdx = headingIndices[0]!;
-  const lastHeadingIdx = headingIndices[headingIndices.length - 1]!;
-  // 找到最后一个小节结束的位置：如果末尾有一段简短的普通话（非列表、非表格、非标题），留作结尾跟进气泡
-  let docEndIdx = lines.length - 1;
-  while (docEndIdx > lastHeadingIdx && !(lines[docEndIdx] ?? "").trim()) {
-    docEndIdx--;
-  }
-  // 检查最后一个非空段落是不是简短收尾句（无列表符号、无标题、≤120 字）
-  let tailStart = docEndIdx;
-  while (tailStart > lastHeadingIdx && (lines[tailStart] ?? "").trim() !== "") {
-    tailStart--;
-  }
-  if (tailStart > lastHeadingIdx) {
-    const tailParaLines = lines.slice(tailStart + 1, docEndIdx + 1);
-    const tailText = tailParaLines.join("\n").trim();
-    const isPlainFollowup =
-      tailParaLines.length <= 2 &&
-      tailText.length > 0 &&
-      tailText.length <= 120 &&
-      !tailParaLines.some((l) =>
-        /^(\s*[-*+]|\s*\d+[.)]|\s*#|\s*\||\[[^\]]+\]\(\/)/.test(l),
-      );
-    if (isPlainFollowup) {
-      docEndIdx = tailStart - 1;
-      while (docEndIdx > lastHeadingIdx && !(lines[docEndIdx] ?? "").trim()) {
-        docEndIdx--;
-      }
-    }
-  }
-
-  const docLines = lines.slice(firstHeadingIdx, docEndIdx + 1);
-  const nonEmptyDocLines = docLines.filter((l) => l.trim().length > 0);
-  const listOrTableLines = nonEmptyDocLines.filter((l) =>
-    /^(\s*[-*+]|\s*\d+[.)]|\s*\|)/.test(l),
-  );
-  if (nonEmptyDocLines.length < 5 || listOrTableLines.length < 2) {
-    return text;
-  }
-
-  // 提取卡片标题：如果第一行是 # 或 ## 总标题则取它；否则从导语或第一个小标题提炼
-  const firstHeadingLine = (docLines[0] ?? "").trim();
-  const hMatch = /^(#{1,4})\s+(.+)$/.exec(firstHeadingLine);
-  let docTitle = "结构化执行摘要";
-  const bodyLines = [...docLines];
-  if (hMatch) {
-    const hashes = hMatch[1]!;
-    const rawHeadingText = hMatch[2]!.replace(/[*_`~]+/g, "").trim();
-    if (hashes.length <= 2 && !/^[1一(（]/.test(rawHeadingText)) {
-      docTitle = rawHeadingText.slice(0, 40);
-      bodyLines.shift();
-    } else {
-      const leadText = lines
-        .slice(0, firstHeadingIdx)
-        .join(" ")
-        .replace(/[*_`~：:。！!？?]+/g, " ")
-        .trim();
-      const leadMatch =
-        /(?:整理了|汇总了|生成了|如下|关于)\s*([^，,。：:\s]{3,22})/.exec(
-          leadText,
-        );
-      docTitle =
-        (
-          leadMatch?.[1] ??
-          rawHeadingText.replace(/^[0-9一二三四五六七八九十]+[、.．)\s]+/, "")
-        ).slice(0, 36) || "重点事项总览";
-    }
-  }
-
-  const before = lines.slice(0, firstHeadingIdx).join("\n").trim();
-  const after = lines
-    .slice(docEndIdx + 1)
-    .join("\n")
-    .trim();
-  const parts: string[] = [];
-  if (before) parts.push(before);
-  parts.push(["````doc", `标题：${docTitle}`, ...bodyLines, "````"].join("\n"));
-  if (after) parts.push(after);
-  return parts.join("\n\n");
+  return step1.join("\n");
 }
 
 export function parseStatusCardsFence(
@@ -671,7 +583,7 @@ function Segment({
       <Bubble
         align="start"
         className={
-          seg.kind === "code"
+          seg.kind === "code" && /^\s*(`{3,}|~{3,})/.test(seg.text)
             ? "chat-bubble-bare w-full"
             : seg.wide
               ? "w-full"

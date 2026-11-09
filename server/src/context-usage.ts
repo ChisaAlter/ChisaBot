@@ -1,7 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { EventType, type BaseEvent } from "@ag-ui/client";
+import { type BaseEvent, EventType } from "@ag-ui/client";
 import { Observable } from "rxjs";
-import { type FallbackUse, withFallbackListener } from "./agents/model-fallback";
+import {
+  type FallbackUse,
+  withFallbackListener,
+} from "./agents/model-fallback";
 
 /**
  * 输入框里的「上下文」读数（DESIGN.md §25）：这一轮对话现在有多大。
@@ -15,7 +18,7 @@ import { type FallbackUse, withFallbackListener } from "./agents/model-fallback"
  *   的计量器里（AsyncLocalStorage，运行之间互不串）；
  * - `meterRun` 让一次运行在计量器里跑，并在 RUN_FINISHED 上补一个 `metadata.contextUsage`。
  *
- * 事件照常写进本地会话表，所以刷新页面以后也读得到（`GET /api/copilotkit/threads/:id/context`）。
+ * 事件照常写进本地会话表，所以刷新页面以后也读得到（`GET /api/conversations/threads/:id/context`）。
  * 提供方没有给用量时什么也不补，读数退回到「约」的估算，绝不编数字。
  */
 export type ContextUsage = {
@@ -36,12 +39,15 @@ const count = (value: unknown): number | undefined =>
     : undefined;
 
 /** AI SDK 两代用量形状都认：V3 是 `{ total, … }` 对象，V2 是数字。 */
-export function readStepUsage(usage: unknown): Omit<ContextUsage, "model"> | undefined {
+export function readStepUsage(
+  usage: unknown,
+): Omit<ContextUsage, "model"> | undefined {
   if (!usage || typeof usage !== "object") return undefined;
   const raw = usage as Record<string, unknown>;
   const pick = (key: string, sub: string) => {
     const value = raw[key];
-    if (value && typeof value === "object") return count((value as Record<string, unknown>)[sub]);
+    if (value && typeof value === "object")
+      return count((value as Record<string, unknown>)[sub]);
     return count(value);
   };
   const inputTokens = pick("inputTokens", "total");
@@ -65,7 +71,10 @@ function record(usage: unknown, model: string | undefined) {
   if (step) meter.last = { ...step, ...(model ? { model } : {}) };
 }
 
-type StreamResult = { stream: ReadableStream<unknown> } & Record<string, unknown>;
+type StreamResult = { stream: ReadableStream<unknown> } & Record<
+  string,
+  unknown
+>;
 type MeterableModel = {
   modelId?: string;
   doStream?: (options: unknown) => PromiseLike<StreamResult>;
@@ -84,15 +93,24 @@ export function meterLanguageModel<T>(model: T): T {
       if (property === "doStream" && typeof target.doStream === "function") {
         return async (options: unknown) => {
           const result = await target.doStream!.call(object, options);
-          if (!meters.getStore() || !(result?.stream instanceof ReadableStream)) return result;
+          if (!meters.getStore() || !(result?.stream instanceof ReadableStream))
+            return result;
           let responseModel: string | undefined;
           const stream = result.stream.pipeThrough(
             new TransformStream<unknown, unknown>({
               transform(part, controller) {
-                const chunk = part as { type?: string; usage?: unknown; modelId?: unknown };
-                if (chunk?.type === "response-metadata" && typeof chunk.modelId === "string")
+                const chunk = part as {
+                  type?: string;
+                  usage?: unknown;
+                  modelId?: unknown;
+                };
+                if (
+                  chunk?.type === "response-metadata" &&
+                  typeof chunk.modelId === "string"
+                )
                   responseModel = chunk.modelId;
-                if (chunk?.type === "finish") record(chunk.usage, responseModel ?? target.modelId);
+                if (chunk?.type === "finish")
+                  record(chunk.usage, responseModel ?? target.modelId);
                 controller.enqueue(part);
               },
             }),
@@ -100,11 +118,21 @@ export function meterLanguageModel<T>(model: T): T {
           return { ...result, stream };
         };
       }
-      if (property === "doGenerate" && typeof target.doGenerate === "function") {
+      if (
+        property === "doGenerate" &&
+        typeof target.doGenerate === "function"
+      ) {
         return async (options: unknown) => {
           const result = await target.doGenerate!.call(object, options);
-          const response = result?.response as { modelId?: unknown } | undefined;
-          record(result?.usage, typeof response?.modelId === "string" ? response.modelId : target.modelId);
+          const response = result?.response as
+            | { modelId?: unknown }
+            | undefined;
+          record(
+            result?.usage,
+            typeof response?.modelId === "string"
+              ? response.modelId
+              : target.modelId,
+          );
           return result;
         };
       }
@@ -119,7 +147,9 @@ export function meterLanguageModel<T>(model: T): T {
  * 让一次运行在自己的计量器里跑，RUN_FINISHED 带上最后一步的用量。
  * 订阅发生在 `meters.run` 里，AI SDK 之后的所有异步调用都继承这个上下文。
  */
-export function meterRun(run: () => Observable<BaseEvent>): Observable<BaseEvent> {
+export function meterRun(
+  run: () => Observable<BaseEvent>,
+): Observable<BaseEvent> {
   return new Observable<BaseEvent>((subscriber) => {
     const meter: Meter = {};
     /*
@@ -129,27 +159,34 @@ export function meterRun(run: () => Observable<BaseEvent>): Observable<BaseEvent
     const onFallback = (use: FallbackUse) => {
       meter.fallback ??= use;
     };
-    const subscription = meters.run(meter, () => withFallbackListener(onFallback, () =>
-      run().subscribe({
-        next: (event) => {
-          if (event.type === EventType.RUN_FINISHED && (meter.last || meter.fallback)) {
-            const finished = event as BaseEvent & { metadata?: Record<string, unknown> };
-            subscriber.next({
-              ...finished,
-              metadata: {
-                ...(finished.metadata ?? {}),
-                ...(meter.last ? { contextUsage: meter.last } : {}),
-                ...(meter.fallback ? { modelFallback: meter.fallback } : {}),
-              },
-            } as BaseEvent);
-            return;
-          }
-          subscriber.next(event);
-        },
-        error: (error) => subscriber.error(error),
-        complete: () => subscriber.complete(),
-      }),
-    ));
+    const subscription = meters.run(meter, () =>
+      withFallbackListener(onFallback, () =>
+        run().subscribe({
+          next: (event) => {
+            if (
+              event.type === EventType.RUN_FINISHED &&
+              (meter.last || meter.fallback)
+            ) {
+              const finished = event as BaseEvent & {
+                metadata?: Record<string, unknown>;
+              };
+              subscriber.next({
+                ...finished,
+                metadata: {
+                  ...(finished.metadata ?? {}),
+                  ...(meter.last ? { contextUsage: meter.last } : {}),
+                  ...(meter.fallback ? { modelFallback: meter.fallback } : {}),
+                },
+              } as BaseEvent);
+              return;
+            }
+            subscriber.next(event);
+          },
+          error: (error) => subscriber.error(error),
+          complete: () => subscriber.complete(),
+        }),
+      ),
+    );
     return () => subscription.unsubscribe();
   });
 }
@@ -171,13 +208,20 @@ export type ThreadContextReading = {
   at?: string;
 };
 
-type RunFinishedRow = { event: Record<string, unknown>; created_at: Date | string };
+type RunFinishedRow = {
+  event: Record<string, unknown>;
+  created_at: Date | string;
+};
 
 /** 从一条 RUN_FINISHED 里读读数：优先 `metadata.contextUsage`，否则退到 AG-UI 的累加 `usage`。 */
-export function readingFromRunFinished(row: RunFinishedRow): ThreadContextReading | undefined {
+export function readingFromRunFinished(
+  row: RunFinishedRow,
+): ThreadContextReading | undefined {
   const at = new Date(row.created_at).toISOString();
   const metadata = row.event.metadata as Record<string, unknown> | undefined;
-  const measured = metadata?.contextUsage as Record<string, unknown> | undefined;
+  const measured = metadata?.contextUsage as
+    | Record<string, unknown>
+    | undefined;
   if (measured && count(measured.inputTokens)) {
     const inputTokens = count(measured.inputTokens)!;
     const outputTokens = count(measured.outputTokens) ?? 0;
@@ -185,13 +229,17 @@ export function readingFromRunFinished(row: RunFinishedRow): ThreadContextReadin
       tokens: inputTokens + outputTokens,
       inputTokens,
       outputTokens,
-      ...(count(measured.cachedInputTokens) !== undefined ? { cachedInputTokens: count(measured.cachedInputTokens) } : {}),
+      ...(count(measured.cachedInputTokens) !== undefined
+        ? { cachedInputTokens: count(measured.cachedInputTokens) }
+        : {}),
       ...(typeof measured.model === "string" ? { model: measured.model } : {}),
       source: "measured",
       at,
     };
   }
-  const usage = Array.isArray(row.event.usage) ? (row.event.usage as Record<string, unknown>[]) : [];
+  const usage = Array.isArray(row.event.usage)
+    ? (row.event.usage as Record<string, unknown>[])
+    : [];
   const last = usage[usage.length - 1];
   if (last && count(last.inputTokens)) {
     const inputTokens = count(last.inputTokens)!;
@@ -219,7 +267,10 @@ export function estimateTokens(messages: readonly unknown[]): number {
     if (depth > 6 || value === null || value === undefined) return;
     if (typeof value === "string") {
       for (const char of value) {
-        if (/[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/u.test(char)) cjk += 1;
+        if (
+          /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/u.test(char)
+        )
+          cjk += 1;
         else other += 1;
       }
       return;
@@ -231,8 +282,21 @@ export function estimateTokens(messages: readonly unknown[]): number {
     if (typeof value === "object") {
       const record = value as Record<string, unknown>;
       // 图片 / 文件的内联字节不是「文字」，按字符数估会离谱，跳过。
-      if (record.type === "image" || record.type === "file" || record.type === "binary") return;
-      for (const key of ["content", "text", "arguments", "args", "toolCalls", "function", "result"])
+      if (
+        record.type === "image" ||
+        record.type === "file" ||
+        record.type === "binary"
+      )
+        return;
+      for (const key of [
+        "content",
+        "text",
+        "arguments",
+        "args",
+        "toolCalls",
+        "function",
+        "result",
+      ])
         if (key in record) visit(record[key], depth + 1);
     }
   };

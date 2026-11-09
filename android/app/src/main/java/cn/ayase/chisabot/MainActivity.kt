@@ -25,11 +25,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
-import cn.ayase.chisabot.ui.BotsScreen
-import cn.ayase.chisabot.ui.ChatScreen
 import cn.ayase.chisabot.ui.ChisaTheme
 import cn.ayase.chisabot.ui.LoginScreen
-import cn.ayase.chisabot.ui.PanelsScreen
 import cn.ayase.chisabot.ui.SkyBackground
 import cn.ayase.chisabot.ui.WebScreen
 import com.journeyapps.barcodescanner.ScanContract
@@ -37,9 +34,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 
 /**
- * ChisaBot Android 原生版（Kotlin + Jetpack Compose）。登录、机器人列表、聊天（流式、干活卡、富卡片）、面板是原生的；
- * 设置 / 管理等还没做成原生的页面在应用内的网页页（WebScreen）里打开，同一个会话，不会走到死路。
- * 登录状态沿用 WebView 版（SharedPreferences「chisabot」+ CookieManager），从旧版更新过来不用重新登录。
+ * Android 壳复用桌面端同一套 React 前端的手机布局。
+ * 原生层只承接服务器登录、扫码、系统文件/权限和更新，登录状态沿用原有 CookieManager。
  */
 class MainActivity : ComponentActivity() {
 
@@ -130,10 +126,10 @@ class MainActivity : ComponentActivity() {
         ) { s ->
             when (s) {
                 Screen.Login -> LoginScreen(vm, this@MainActivity)
-                Screen.Bots -> BotsScreen(vm, onCheckUpdate = ::checkUpdate, onLogout = { confirmLogout = true })
-                Screen.Settings -> cn.ayase.chisabot.ui.SettingsScreen(vm, onCheckUpdate = ::checkUpdate, onLogout = { confirmLogout = true })
-                is Screen.Chat -> ChatScreen(vm, s.bot)
-                is Screen.Panels -> PanelsScreen(vm, s.bot)
+                Screen.Bots -> WebScreen(vm, "/", "ChisaBot")
+                Screen.Settings -> WebScreen(vm, "/settings", "设置")
+                is Screen.Chat -> WebScreen(vm, "/channel/new?agent=${s.bot.id}", s.bot.name)
+                is Screen.Panels -> WebScreen(vm, "/channel/new?agent=${s.bot.id}", s.bot.name)
                 is Screen.Web -> WebScreen(vm, s.path, s.title)
             }
         }

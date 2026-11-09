@@ -1,7 +1,10 @@
 import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
-import { teamBotAccess } from "../team-bots/access";
+import { managedAgentHeaders } from "../../../shared/legacy-headers";
 import type { ManagedAgentConfig } from "../config";
-import { type RegisteredAgent, registeredAgentFromRow } from "../copilot";
+import {
+  type RegisteredAgent,
+  registeredAgentFromRow,
+} from "../conversation-runtime";
 import type { CredentialSecretReader } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -11,6 +14,7 @@ import {
   channelMemberships,
   channels,
 } from "../db/schema";
+import { teamBotAccess } from "../team-bots/access";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
 
@@ -72,8 +76,7 @@ export function createRuntimeAgentLoader(
         if (ours) {
           agent.headers = {
             ...agent.headers,
-            "x-chisabot-agent-token": managedAgent.token,
-            "x-openbot-agent-token": managedAgent.token, // pre-0.1.75 agents
+            ...managedAgentHeaders(managedAgent.token),
           };
         }
       }

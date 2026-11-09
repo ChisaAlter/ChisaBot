@@ -33,4 +33,4 @@ services:
 networks:
   magpie:
     external: true
-    name: ${MAGPIE_NETWORK:-openbot_magpie}
+    name: ${MAGPIE_NETWORK:-chisabot_magpie}

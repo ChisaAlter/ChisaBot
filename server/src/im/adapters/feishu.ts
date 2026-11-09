@@ -231,7 +231,7 @@ export class FeishuAdapter extends LoopAdapter {
     if (body.code !== 0) throw new Error(`飞书回复失败：${body.code} ${body.msg ?? ""}`.trim());
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const messageId = String((reply.inbound.reply as { messageId?: string }).messageId ?? reply.inbound.messageId);
     for (const chunk of reply.chunks) {
       try {

@@ -30,6 +30,13 @@ normalize_kernel() {
 }
 TIMEOUT_MS=${HERMES_REACH_TIMEOUT_MS:-5000}
 
+# A retained Hermes URL is recovery configuration after switching kernels, not an active dependency.
+SELECTED=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_AGENT_KERNEL 2>/dev/null || printenv CHISABOT_AGENT_KERNEL 2>/dev/null' 2>/dev/null | head -n 1)
+if [ "$(normalize_kernel "$SELECTED")" = dsh ]; then
+  echo 'hermes=skipped（当前执行内核是 DSH）'
+  exit 0
+fi
+
 # s6 把容器环境写在 /run/s6/container_environment（update.sh 取 DATABASE_URL 也是这样）；兜底用 printenv。
 URL=$(docker exec "$CONTAINER" sh -c 'cat /run/s6/container_environment/CHISABOT_HERMES_URL 2>/dev/null || printenv CHISABOT_HERMES_URL 2>/dev/null' 2>/dev/null | tr -d '\r\n')
 if [ -z "$URL" ]; then
@@ -71,5 +78,5 @@ if [ "$CODE" = 0 ] && printf '%s' "$OUT" | grep -q '^status='; then
 fi
 echo "::error:: hermes=unreachable 应用容器 $CONTAINER 连不上 Hermes：$URL（${OUT:-无输出}）"
 echo "  检查：hermes-acp-bridge 的 ACP_BRIDGE_HOST、.env 的 CHISABOT_HERMES_URL / AGENT_ENDPOINT_ALLOWED_HOSTS、ufw 规则，"
-echo "  是否都和 compose 默认网络的网关一致（默认 openbot-zh_default 172.19.0.0/16，网关 172.19.0.1）。"
+echo "  是否都和 compose 默认网络的网关一致（实际 CHISABOT_NETWORK_NAME 172.19.0.0/16，网关 172.19.0.1）。"
 exit 1

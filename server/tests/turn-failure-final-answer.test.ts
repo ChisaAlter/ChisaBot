@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { LLMock } from "@copilotkit/aimock";
 import { z } from "zod";
-import { buildAgents, type RuntimeModel } from "../src/copilot";
+import { buildAgents, type RuntimeModel } from "../src/conversation-runtime";
 import { type GrantedTool, REFUSAL_MARKER } from "../src/plugins/tools";
 import { searchQueryForUrl, type WebIo, webTools } from "../src/web/tools";
+import { createModelFixture } from "./support/model-fixture";
 
 /**
  * Hark 对比 #12（A4，2026-10-29）：「帮我总结这个网页 <维基>」第一次整轮没有回答。
  * web_fetch 失败（「1 步失败」）之后模型一个字没说，这一轮照样 RUN_FINISHED，界面只剩「这一轮没有收到回答」。
  *
- * 第一组用 aimock 当模型：第一步说一句开场白并调 web_fetch，工具失败，第二步模型返回空内容。
+ * 第一组用 loopback 协议端点当模型：第一步说一句开场白并调 web_fetch，工具失败，第二步模型返回空内容。
  * 断言这一轮最后一定有一句说清原因的回答（修之前 origin/main 上这里没有任何文字）。
  */
 
@@ -85,23 +85,29 @@ const failingFetch = (result: string): GrantedTool => ({
 });
 
 describe("一个工具步骤失败之后，这一轮仍然有回答", () => {
-  const llm = new LLMock();
+  const llm = createModelFixture();
   const originalBase = process.env.OPENAI_BASE_URL;
   let secondStep = "";
 
   beforeAll(async () => {
     process.env.OPENAI_BASE_URL = await llm.start();
     // 第二步（拿到工具结果之后）：按用例决定模型说什么；空字符串就是线上那次「什么都没说」。
-    llm.onToolResult("call_fetch_12", () => ({ content: secondStep }));
-    llm.onMessage(/总结这个网页/, {
-      content: "我先读一下网页内容。",
-      toolCalls: [
-        {
-          id: "call_fetch_12",
-          name: "web_fetch",
-          arguments: JSON.stringify({ url: URL_12 }),
-        },
-      ],
+    llm.rules.push({
+      match: { toolResult: "call_fetch_12" },
+      reply: () => ({ content: secondStep }),
+    });
+    llm.rules.push({
+      match: /总结这个网页/,
+      reply: {
+        content: "我先读一下网页内容。",
+        toolCalls: [
+          {
+            id: "call_fetch_12",
+            name: "web_fetch",
+            arguments: JSON.stringify({ url: URL_12 }),
+          },
+        ],
+      },
     });
   });
   afterAll(async () => {

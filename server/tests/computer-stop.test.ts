@@ -21,13 +21,17 @@ const realComputer = process.env.CHISABOT_COMPUTER_STOP_HTTP === "1";
 const token = "computer-stop-test-token";
 const delayMs = 900;
 if (realComputer && process.platform !== "linux")
-  throw new Error("CHISABOT_COMPUTER_STOP_HTTP=1 requires Linux and /bin/bash.");
+  throw new Error(
+    "CHISABOT_COMPUTER_STOP_HTTP=1 requires Linux and /bin/bash.",
+  );
 
 async function until(check: () => Promise<boolean> | boolean) {
   const deadline = Date.now() + 10_000;
   while (!(await check())) {
     if (Date.now() >= deadline)
-      throw new Error("Timed out waiting for the command fixture's observable condition.");
+      throw new Error(
+        "Timed out waiting for the command fixture's observable condition.",
+      );
     await Bun.sleep(10);
   }
 }
@@ -46,11 +50,16 @@ function snapshot(command: string): ApprovalContinuation {
         id: "a1",
         role: "assistant",
         content: "",
-        toolCalls: [{
-          id: "stop-call",
-          type: "function",
-          function: { name: "computer_run_command", arguments: JSON.stringify(args) },
-        }],
+        toolCalls: [
+          {
+            id: "stop-call",
+            type: "function",
+            function: {
+              name: "computer_run_command",
+              arguments: JSON.stringify(args),
+            },
+          },
+        ],
       },
     ],
     state: {},
@@ -69,7 +78,11 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
   let base: string;
   let completed = 0;
   if (actualComputer) {
-    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const probe = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response(),
+    });
     const port = probe.port;
     await probe.stop(true);
     base = `http://127.0.0.1:${port}`;
@@ -91,7 +104,10 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
       await until(async () => {
         if (agent?.exitCode !== null)
           throw new Error(`agent-computer exited with ${agent?.exitCode}.`);
-        return fetch(`${base}/health`).then((response) => response.ok, () => false);
+        return fetch(`${base}/health`).then(
+          (response) => response.ok,
+          () => false,
+        );
       });
     } catch (error) {
       agent.kill();
@@ -104,7 +120,7 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
-        const { command } = await request.json() as { command: string };
+        const { command } = (await request.json()) as { command: string };
         const worker = Bun.spawn([process.execPath, "-e", command], {
           cwd: root,
           stdout: "ignore",
@@ -119,8 +135,13 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
         workers.delete(worker);
         completed++;
         return Response.json({
-          command, exitCode, stdout: "", stderr: "", truncated: false,
-          timedOut: false, elapsedMs: 1,
+          command,
+          exitCode,
+          stdout: "",
+          stderr: "",
+          truncated: false,
+          timedOut: false,
+          elapsedMs: 1,
         });
       },
     });
@@ -137,7 +158,11 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
       reset: async () => ({ cleared: true }),
     },
     token,
-    auditStore: { insert: async (event) => { audit.push(event); } },
+    auditStore: {
+      insert: async (event) => {
+        audit.push(event);
+      },
+    },
     policy: () => ({ mode: "enforce", allow: ["true"], deny: [] }),
     approvalGate: (candidate) => service.gate(candidate),
   });
@@ -151,18 +176,36 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
         actor: { id: ownerUserId, initiator: { kind: "person" } },
       }).find((tool) => tool.definition.name === action.toolName);
       if (!tool) throw new Error("Missing command tool.");
-      return tool.execute(action.args, { toolCallId: action.toolCallId, signal });
+      return tool.execute(action.args, {
+        toolCallId: action.toolCallId,
+        signal,
+      });
     },
   );
   const app = new Hono<{ Variables: AppVariables }>();
-  app.route("/api/approvals", createApprovalRoutes(service, async (context, next) => {
-    context.set("actor", { id: "owner", email: "owner@example.test", role: "user" });
-    await next();
-  }, { streamAfterMs, heartbeatMs: 20 }));
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
+  app.route(
+    "/api/approvals",
+    createApprovalRoutes(
+      service,
+      async (context, next) => {
+        context.set("actor", {
+          id: "owner",
+          email: "owner@example.test",
+          role: "user",
+        });
+        await next();
+      },
+      { streamAfterMs, heartbeatMs: 20 },
+    ),
+  );
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: app.fetch,
+  });
   const command = actualComputer
-    // A descendant of bash owns the delayed effect, so killing bash alone cannot pass this test.
-    ? `printf 'START\\n' >> probe.log; (sleep ${delayMs / 1000}; printf 'DONE\\n' >> probe.log) & wait`
+    ? // A descendant of bash owns the delayed effect, so killing bash alone cannot pass this test.
+      `printf 'START\\n' >> probe.log; (sleep ${delayMs / 1000}; printf 'DONE\\n' >> probe.log) & wait`
     : `import { appendFileSync } from "node:fs"; appendFileSync("probe.log", "START\\n"); setTimeout(() => appendFileSync("probe.log", "DONE\\n"), ${delayMs});`;
   const init = {
     method: "POST",
@@ -170,16 +213,22 @@ async function fixture(streamAfterMs: number, actualComputer = false) {
     body: JSON.stringify(snapshot(command)),
   };
   return {
-    get log() { return Bun.file(logPath); },
+    get log() {
+      return Bun.file(logPath);
+    },
     audit,
     app,
     init,
     url: new URL("api/approvals/computer/bot-stop", server.url),
-    started: () => until(async () => {
-      const file = Bun.file(logPath);
-      return (await file.exists()) && (await file.text()) === "START\n";
-    }),
-    stopped: () => until(() => audit.some((event) => event.eventType === "computer.action_stopped")),
+    started: () =>
+      until(async () => {
+        const file = Bun.file(logPath);
+        return (await file.exists()) && (await file.text()) === "START\n";
+      }),
+    stopped: () =>
+      until(() =>
+        audit.some((event) => event.eventType === "computer.action_stopped"),
+      ),
     completed: () => completed,
     async close() {
       await server.stop(true);
@@ -198,7 +247,9 @@ describe("Web Stop reaches the executing computer command", () => {
     const f = await fixture(20);
     try {
       const response = await fetch(f.url, f.init);
-      expect(await response.json()).toMatchObject({ result: { ok: true, exitCode: 0 } });
+      expect(await response.json()).toMatchObject({
+        result: { ok: true, exitCode: 0 },
+      });
       expect(await f.log.text()).toBe("START\nDONE\n");
       expect(f.completed()).toBe(1);
     } finally {
@@ -209,37 +260,50 @@ describe("Web Stop reaches the executing computer command", () => {
   test.each([
     ["before response headers", 20_000],
     ["after the heartbeat stream starts", 20],
-  ])("Stop %s prevents the delayed process side effect", async (_name, streamAfterMs) => {
-    const f = await fixture(streamAfterMs);
-    const controller = new AbortController();
-    let receivedResponse = false;
-    const request = fetch(f.url, { ...f.init, signal: controller.signal })
-      .then(async (response) => {
-        receivedResponse = true;
-        return response.text();
-      }).then(() => "finished", () => "aborted");
-    try {
-      await f.started();
-      if (streamAfterMs < 100) await until(() => receivedResponse);
-      else expect(receivedResponse).toBe(false);
-      controller.abort();
-      expect(await request).toBe("aborted");
-      await f.stopped();
-      await until(() => f.completed() === 1);
-      await Bun.sleep(delayMs + 100);
-      expect(await f.log.text()).toBe("START\n");
-      expect(f.audit.some((event) => event.eventType === "computer.action_failed")).toBe(false);
-    } finally {
-      controller.abort();
-      await request;
-      await f.close();
-    }
-  }, 15_000);
+  ])(
+    "Stop %s prevents the delayed process side effect",
+    async (_name, streamAfterMs) => {
+      const f = await fixture(streamAfterMs);
+      const controller = new AbortController();
+      let receivedResponse = false;
+      const request = fetch(f.url, { ...f.init, signal: controller.signal })
+        .then(async (response) => {
+          receivedResponse = true;
+          return response.text();
+        })
+        .then(
+          () => "finished",
+          () => "aborted",
+        );
+      try {
+        await f.started();
+        if (streamAfterMs < 100) await until(() => receivedResponse);
+        else expect(receivedResponse).toBe(false);
+        controller.abort();
+        expect(await request).toBe("aborted");
+        await f.stopped();
+        await until(() => f.completed() === 1);
+        await Bun.sleep(delayMs + 100);
+        expect(await f.log.text()).toBe("START\n");
+        expect(
+          f.audit.some((event) => event.eventType === "computer.action_failed"),
+        ).toBe(false);
+      } finally {
+        controller.abort();
+        await request;
+        await f.close();
+      }
+    },
+    15_000,
+  );
 
   test("cancelling a streaming response also stops its action without a request abort", async () => {
     const f = await fixture(20);
     try {
-      const response = await f.app.request("/api/approvals/computer/bot-stop", f.init);
+      const response = await f.app.request(
+        "/api/approvals/computer/bot-stop",
+        f.init,
+      );
       expect(response.headers.get("x-chisabot-long-action")).toBe("1");
       await f.started();
       await response.body!.cancel();
@@ -253,37 +317,50 @@ describe("Web Stop reaches the executing computer command", () => {
   }, 15_000);
 });
 
-describe.skipIf(!realComputer)("Linux Bun request abort reaches the actual agent-computer process group", () => {
-  test.each([
-    ["before response headers", 20_000],
-    ["after the heartbeat stream starts", 20],
-  ])("Stop %s kills descendants before they write DONE", async (_name, streamAfterMs) => {
-    const f = await fixture(streamAfterMs, true);
-    const controller = new AbortController();
-    let receivedResponse = false;
-    const request = fetch(f.url, { ...f.init, signal: controller.signal })
-      .then(async (response) => {
-        receivedResponse = true;
-        return response.text();
-      }).then(() => "finished", () => "aborted");
-    try {
-      await f.started();
-      if (streamAfterMs < 100) await until(() => receivedResponse);
-      controller.abort();
-      expect(await request).toBe("aborted");
-      await f.stopped();
-      // Wait beyond the descendant's original write deadline, not only for the HTTP promise to reject.
-      await Bun.sleep(delayMs + 100);
-      expect(await f.log.text()).toBe("START\n");
-      const recovery = await fetch(f.url, {
-        ...f.init,
-        body: JSON.stringify(snapshot("printf RECOVERY_OK")),
-      });
-      expect(await recovery.json()).toMatchObject({ result: { ok: true, exitCode: 0, stdout: "RECOVERY_OK" } });
-    } finally {
-      controller.abort();
-      await request;
-      await f.close();
-    }
-  }, 30_000);
-});
+describe.skipIf(!realComputer)(
+  "Linux Bun request abort reaches the actual agent-computer process group",
+  () => {
+    test.each([
+      ["before response headers", 20_000],
+      ["after the heartbeat stream starts", 20],
+    ])(
+      "Stop %s kills descendants before they write DONE",
+      async (_name, streamAfterMs) => {
+        const f = await fixture(streamAfterMs, true);
+        const controller = new AbortController();
+        let receivedResponse = false;
+        const request = fetch(f.url, { ...f.init, signal: controller.signal })
+          .then(async (response) => {
+            receivedResponse = true;
+            return response.text();
+          })
+          .then(
+            () => "finished",
+            () => "aborted",
+          );
+        try {
+          await f.started();
+          if (streamAfterMs < 100) await until(() => receivedResponse);
+          controller.abort();
+          expect(await request).toBe("aborted");
+          await f.stopped();
+          // Wait beyond the descendant's original write deadline, not only for the HTTP promise to reject.
+          await Bun.sleep(delayMs + 100);
+          expect(await f.log.text()).toBe("START\n");
+          const recovery = await fetch(f.url, {
+            ...f.init,
+            body: JSON.stringify(snapshot("printf RECOVERY_OK")),
+          });
+          expect(await recovery.json()).toMatchObject({
+            result: { ok: true, exitCode: 0, stdout: "RECOVERY_OK" },
+          });
+        } finally {
+          controller.abort();
+          await request;
+          await f.close();
+        }
+      },
+      30_000,
+    );
+  },
+);

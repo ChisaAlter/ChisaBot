@@ -11,7 +11,7 @@ type RequestTiming = { at: number; marks: Map<string, number> };
 const requests = new AsyncLocalStorage<RequestTiming>();
 const clock = () => performance.now();
 
-/** `/api/copilotkit/*` 进门时调用：这次请求之后发生的一切（包括 agent.run）都能读到进门时刻。 */
+/** `/api/conversations/*` 进门时调用：这次请求之后发生的一切（包括 agent.run）都能读到进门时刻。 */
 export function withRequestTiming<T>(run: () => T, at: number = clock()): T {
   return requests.run({ at, marks: new Map() }, run);
 }

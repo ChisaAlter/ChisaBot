@@ -143,7 +143,7 @@ export function createApprovalQuestions(
           .set({ finishedAt: sql`now()`, updatedAt: sql`now()` })
           .where(owned(owner, id));
         await tx.execute(
-          sql`select pg_notify('openbot_work_offered', 'person.response')`,
+          sql`select pg_notify('chisabot_work_offered', 'person.response')`,
         );
         return { id, queued: true };
       });

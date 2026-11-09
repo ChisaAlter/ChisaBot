@@ -11,7 +11,10 @@ import { MAX_BUBBLES, splitBubbles } from "../src/lib/chat/bubbles";
 describe("splitBubbles（DESIGN.md §69）", () => {
   test("空行分段，一段一个气泡", () => {
     const s = splitBubbles("东京现在 13:15。\n\n要我做个世界时钟面板吗？");
-    expect(s.map((x) => x.text)).toEqual(["东京现在 13:15。", "要我做个世界时钟面板吗？"]);
+    expect(s.map((x) => x.text)).toEqual([
+      "东京现在 13:15。",
+      "要我做个世界时钟面板吗？",
+    ]);
     expect(s.every((x) => x.kind === "text" && !x.wide)).toBe(true);
   });
 
@@ -20,7 +23,8 @@ describe("splitBubbles（DESIGN.md §69）", () => {
   });
 
   test("代码块不会从中间的空行切开，代码块宽", () => {
-    const md = "回文判断：\n\n```python\ndef f(s):\n\n    return s == s[::-1]\n```\n\n要忽略大小写吗？";
+    const md =
+      "回文判断：\n\n```python\ndef f(s):\n\n    return s == s[::-1]\n```\n\n要忽略大小写吗？";
     const s = splitBubbles(md);
     expect(s.length).toBe(3);
     expect(s[1]?.kind).toBe("code");
@@ -35,14 +39,20 @@ describe("splitBubbles（DESIGN.md §69）", () => {
   });
 
   test("```draft = 草稿卡，标题行拿出来", () => {
-    const s = splitBubbles("写好了，可以直接发：\n\n```draft\n标题：给房东\n房东您好，厨房水管漏水了。\n\n周六上午方便来修吗？\n```\n\n要更客气一点吗？");
+    const s = splitBubbles(
+      "写好了，可以直接发：\n\n```draft\n标题：给房东\n房东您好，厨房水管漏水了。\n\n周六上午方便来修吗？\n```\n\n要更客气一点吗？",
+    );
     expect(s.map((x) => x.kind)).toEqual(["text", "draft", "text"]);
     expect(s[1]?.title).toBe("给房东");
-    expect(s[1]?.text).toBe("房东您好，厨房水管漏水了。\n\n周六上午方便来修吗？");
+    expect(s[1]?.text).toBe(
+      "房东您好，厨房水管漏水了。\n\n周六上午方便来修吗？",
+    );
   });
 
   test("段首引用 = 回复引用；只有引用的段落照普通段落", () => {
-    const s = splitBubbles("iPhone 17 Pro 起售价 8999 元。\n\n> 只要 256G 的价格\n256GB 就是 8999 元。");
+    const s = splitBubbles(
+      "iPhone 17 Pro 起售价 8999 元。\n\n> 只要 256G 的价格\n256GB 就是 8999 元。",
+    );
     expect(s[1]?.quote).toBe("只要 256G 的价格");
     expect(s[1]?.text).toBe("256GB 就是 8999 元。");
     const only = splitBubbles("> 一句名言");
@@ -57,7 +67,9 @@ describe("splitBubbles（DESIGN.md §69）", () => {
   });
 
   test("引导句 + 列表合成一段；松散列表合成一段；三项以上的列表宽", () => {
-    const s = splitBubbles("主要配置：\n\n- A19 Pro\n\n- 6.3 英寸\n\n- 三摄\n\n要对比 Pro Max 吗？");
+    const s = splitBubbles(
+      "主要配置：\n\n- A19 Pro\n\n- 6.3 英寸\n\n- 三摄\n\n要对比 Pro Max 吗？",
+    );
     expect(s.length).toBe(2);
     expect(s[0]?.text).toContain("主要配置：");
     expect(s[0]?.text).toContain("- 三摄");
@@ -83,33 +95,50 @@ describe("splitBubbles（DESIGN.md §69）", () => {
     expect(s[MAX_BUBBLES - 1]?.text).toContain(`第 ${MAX_BUBBLES} 段。`);
   });
   test("```doc / ```summary = 文档卡（§76）：标题行拿出来，正文 Markdown 原样（含空行、列表）", () => {
-    const s = splitBubbles("React 19 主要是表单和异步更省事。\n\n```doc\n标题：React 19 新特性\n## Actions\n- useActionState\n- useFormStatus\n\n## 其他\nref 可以当 prop。\n```\n\n要我按升级顺序再排一下吗？");
+    const s = splitBubbles(
+      "React 19 主要是表单和异步更省事。\n\n```doc\n标题：React 19 新特性\n## Actions\n- useActionState\n- useFormStatus\n\n## 其他\nref 可以当 prop。\n```\n\n要我按升级顺序再排一下吗？",
+    );
     expect(s.map((x) => x.kind)).toEqual(["text", "doc", "text"]);
     expect(s[1]?.title).toBe("React 19 新特性");
-    expect(s[1]?.text).toBe("## Actions\n- useActionState\n- useFormStatus\n\n## 其他\nref 可以当 prop。");
+    expect(s[1]?.text).toBe(
+      "## Actions\n- useActionState\n- useFormStatus\n\n## 其他\nref 可以当 prop。",
+    );
     expect(s[1]?.wide).toBe(true);
     expect(splitBubbles("```summary\n要点一\n```")[0]?.kind).toBe("doc");
   });
   test("流式时没闭合的 ```doc 也是文档卡", () => {
-    const s = splitBubbles("先说结论。\n\n```doc\n标题：笔记\n第一点\n\n第二点");
+    const s = splitBubbles(
+      "先说结论。\n\n```doc\n标题：笔记\n第一点\n\n第二点",
+    );
     expect(s.map((x) => x.kind)).toEqual(["text", "doc"]);
     expect(s[1]?.text).toBe("第一点\n\n第二点");
   });
   test("标题行 + 草稿 / 文档卡：标题当卡片标题，不塞进正文", () => {
     const s = splitBubbles("## 给房东的消息\n\n```draft\n房东您好。\n```");
-    expect(s).toEqual([{ kind: "draft", text: "房东您好。", title: "给房东的消息", wide: true }]);
-    const d = splitBubbles("### 学习计划\n```doc\n标题：Rust 四周\n第一周\n```");
+    expect(s).toEqual([
+      { kind: "draft", text: "房东您好。", title: "给房东的消息", wide: true },
+    ]);
+    const d = splitBubbles(
+      "### 学习计划\n```doc\n标题：Rust 四周\n第一周\n```",
+    );
     expect(d[0]?.kind).toBe("doc");
     expect(d[0]?.title).toBe("Rust 四周");
     expect(d[0]?.text).toBe("第一周");
   });
   test("并进最后一个气泡的文档卡写回 ```doc", () => {
-    const parts = Array.from({ length: MAX_BUBBLES }, (_, i) => `第 ${i + 1} 段。`);
-    const s = splitBubbles([...parts, "```doc\n标题：附录\n内容\n```"].join("\n\n"));
+    const parts = Array.from(
+      { length: MAX_BUBBLES },
+      (_, i) => `第 ${i + 1} 段。`,
+    );
+    const s = splitBubbles(
+      [...parts, "```doc\n标题：附录\n内容\n```"].join("\n\n"),
+    );
     expect(s[MAX_BUBBLES - 1]?.text).toContain("```doc\n标题：附录\n内容\n```");
   });
   test("````doc 里面可以放 ``` 代码块（收尾围栏至少一样长）", () => {
-    const s = splitBubbles("````doc\n标题：用法\n```ts\nconst a = 1;\n```\n说明\n````\n\n好了。");
+    const s = splitBubbles(
+      "````doc\n标题：用法\n```ts\nconst a = 1;\n```\n说明\n````\n\n好了。",
+    );
     expect(s.map((x) => x.kind)).toEqual(["doc", "text"]);
     expect(s[0]?.text).toBe("```ts\nconst a = 1;\n```\n说明");
   });
@@ -147,13 +176,15 @@ describe("splitBubbles（DESIGN.md §69）", () => {
       },
     ]);
     // 模型少写外层收尾 ::: 时，后面的段落不会被吞进 cards 围栏
-    const singleClose = normalizeDirectiveCards(":::group\n:::card{title=\"GitHub\"}\n已连接\n:::\n\n接着说。");
+    const singleClose = normalizeDirectiveCards(
+      ':::group\n:::card{title="GitHub"}\n已连接\n:::\n\n接着说。',
+    );
     const singleSegs = splitBubbles(singleClose);
     expect(singleSegs.map((x) => x.kind)).toEqual(["code", "text"]);
     expect(singleSegs[1]?.text).toBe("接着说。");
   });
 
-  test("Hark 三段式自动折叠：多小节结构化 Markdown 自动折叠为 doc 卡片并保留导语与跟进句", () => {
+  test("多小节正文在流式增长时保持 Markdown，不突然变成折叠文档", () => {
     const raw = [
       "我已经把今天下午的执行清单整理好了，重点都标出来了：",
       "",
@@ -170,11 +201,31 @@ describe("splitBubbles（DESIGN.md §69）", () => {
     ].join("\n");
     const normalized = normalizeDirectiveCards(raw);
     const segments = splitBubbles(normalized);
-    expect(segments.map((x) => x.kind)).toEqual(["text", "doc", "text"]);
-    expect(segments[0]?.text).toBe("我已经把今天下午的执行清单整理好了，重点都标出来了：");
-    expect(segments[1]?.title).toBe("下午执行总览");
+    expect(normalized).toBe(raw);
+    expect(segments.every((x) => x.kind === "text")).toBe(true);
+    expect(segments[0]?.text).toBe(
+      "我已经把今天下午的执行清单整理好了，重点都标出来了：",
+    );
     expect(segments[1]?.text).toContain("### 1. 优先处理事项");
-    expect(segments[2]?.text).toBe("需要的话，我可以帮你直接起草客户邮件的回复。");
+    expect(segments.at(-1)?.text).toBe(
+      "需要的话，我可以帮你直接起草客户邮件的回复。",
+    );
+    for (let end = 1; end <= raw.length; end++) {
+      expect(normalizeDirectiveCards(raw.slice(0, end))).toBe(
+        raw.slice(0, end),
+      );
+    }
+  });
+
+  test("代码里的卡片指令和站内链接保持原样", () => {
+    const raw =
+      '```markdown\n:::card{title="示例"}\n说明\n:::\n[连接 Google](/settings/connected-accounts)\n```';
+    for (let end = raw.indexOf("\n") + 1; end <= raw.length; end++) {
+      expect(normalizeDirectiveCards(raw.slice(0, end))).toBe(
+        raw.slice(0, end),
+      );
+    }
+    expect(splitBubbles(normalizeDirectiveCards(raw))).toHaveLength(1);
   });
 
   test("Hark 站内操作胶囊行：自动拆分为独立段落供 HarkActionPill 渲染", () => {
@@ -199,8 +250,13 @@ describe("DocCard 收起阈值（FIX-PLAN 4c：RO 量内容高度，不再读 sc
     expect(docIsTall(0)).toBe(false);
   });
   test("组件里不再读 scrollHeight", async () => {
-    const src = await Bun.file(new URL("../src/components/chat/bot-bubbles.tsx", import.meta.url)).text();
-    const doc = src.slice(src.indexOf("export function DocCard"), src.indexOf("const heading = title || \"文档\""));
+    const src = await Bun.file(
+      new URL("../src/components/chat/bot-bubbles.tsx", import.meta.url),
+    ).text();
+    const doc = src.slice(
+      src.indexOf("export function DocCard"),
+      src.indexOf('const heading = title || "文档"'),
+    );
     expect(doc).not.toContain(".scrollHeight");
     expect(doc).toContain("new ResizeObserver");
   });

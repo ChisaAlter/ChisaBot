@@ -50,45 +50,6 @@ export function useMessageListEmphasis() {
   return useUserPreferences().data?.messageListEmphasis ?? "thread";
 }
 
-/**
- * Close the self-host banner for this person, on every device they sign in from.
- *
- * Patched in onMutate so the bar is gone the moment the button is pressed, and put back if the save
- * fails, because a banner that vanished and then reappeared on the next load would read as ignoring
- * the click. The reply seeds the cache with what the server stored.
- */
-export function dismissSelfHostBannerMutationOptions(
-  queryClient: QueryClient,
-  userId: string | undefined,
-) {
-  const queryKey = userPreferencesQueryOptions(userId).queryKey;
-  return mutationOptions({
-    mutationFn: (): Promise<UserPreferences> => {
-      if (!userId) throw new Error("登录以保存您的偏好设置。");
-      return client("/api/settings/preferences", "preferences", {
-        method: "PATCH",
-        body: { selfHostBannerDismissed: true },
-        fallback: "无法保存您的偏好设置",
-      });
-    },
-    onMutate: () => {
-      const previous = queryClient.getQueryData(queryKey);
-      if (previous) {
-        queryClient.setQueryData(queryKey, {
-          ...previous,
-          selfHostBannerDismissed: true,
-        });
-      }
-      return { previous };
-    },
-    onError: (_error, _variables, context) => {
-      if (context?.previous)
-        queryClient.setQueryData(queryKey, context.previous);
-    },
-    onSuccess: (preferences) => queryClient.setQueryData(queryKey, preferences),
-  });
-}
-
 export function saveUserPreferencesMutationOptions(
   queryClient: QueryClient,
   userId: string | undefined,
@@ -132,11 +93,13 @@ export function useMainBot() {
     },
     onMutate: (mainBotId) => {
       const previous = queryClient.getQueryData(queryKey);
-      if (previous) queryClient.setQueryData(queryKey, { ...previous, mainBotId });
+      if (previous)
+        queryClient.setQueryData(queryKey, { ...previous, mainBotId });
       return { previous };
     },
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      if (context?.previous)
+        queryClient.setQueryData(queryKey, context.previous);
     },
     onSuccess: (saved) => queryClient.setQueryData(queryKey, saved),
   });

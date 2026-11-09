@@ -1,0 +1,2978 @@
+import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
+import { AbstractAgent, HttpAgent } from "@ag-ui/client";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import type { Observable } from "rxjs";
+import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
+import { z } from "zod";
+import {
+  ACTION_GUIDANCE,
+  botIdentityGuidance,
+  PROVENANCE_GUIDANCE,
+  selfMapGuidance,
+  WORK_STYLE_GUIDANCE,
+} from "../../shared/bot-prompt";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
+import {
+  type ActorAgentResolver,
+  CoworkerUnavailableError,
+} from "./agents/agent-resolver";
+import {
+  ClassicRuntimeAgent as BuiltInAgent,
+  type ClassicAgentConfiguration as BuiltInAgentConfiguration,
+} from "./agents/classic-runtime";
+import type { DshRuntimeBinding } from "./agents/dsh-runtime";
+import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
+import {
+  HERMES_MAX_FALLBACKS,
+  HermesRuntimeAgent,
+  type HermesRuntimeBinding,
+} from "./agents/hermes-runtime";
+import {
+  compactHistory,
+  HISTORY_SUMMARY_ID,
+  type HistoryCompaction,
+  HistoryPlanMemo,
+  type HistorySummaryStore,
+  type MeasuredUsage,
+  type Summarize,
+  summaryPrompt,
+} from "./agents/history-budget";
+import { sanitizeSeededHistory } from "./agents/history-sanitize";
+import {
+  type FallbackCatalog,
+  fallbackCandidates,
+  fallbackLanguageModel,
+} from "./agents/model-fallback";
+import { modelOverrideFromValue } from "./agents/model-selection";
+import {
+  PLAN_RUN_COMPLETED,
+  PlanModel,
+  type PlanModelConfig,
+  planModelForEnvironment,
+} from "./agents/plan-model";
+import { FailFastTransport } from "./agents/pre-stream-failure";
+import type { AgentActor } from "./agents/profile-types";
+import { thinkTagLanguageModel } from "./agents/think-tags";
+import {
+  executeNativeApprovalTool,
+  nativeApprovalRun,
+} from "./approvals/native-context";
+import { type AuditInitiator, PERSON_INITIATOR } from "./audit";
+import {
+  attachmentIdsIn,
+  newInlineBudget,
+  resolveAttachmentParts,
+  type StoredAttachment,
+} from "./channels/attachment-parts";
+import type { AgentFetch, StallGuard } from "./channels/stall-guard";
+import { HeadlessToolsMiddleware } from "./computer/headless-tools";
+import type { DeploymentConfig } from "./config";
+import {
+  currentConfirmTurn,
+  currentToolAbort,
+  TOOL_STOPPED_ZH,
+  withConfirmToolCall,
+} from "./confirmations/context";
+import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
+import { createConversationRoutes } from "./conversations/routes";
+import { reasonWithoutStatement } from "./db/query-failure";
+import { observeModelConnection } from "./desktop-connection-failure";
+import { runAssertionValue } from "./legacy/protocol";
+import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
+import type { LocalConversationBackend } from "./local-conversations";
+import {
+  type LoadPersonalMemory,
+  PersonalMemoryMiddleware,
+} from "./memory/tools";
+import { knownContextWindowOf } from "./model-catalog";
+import type { SelectableSkill, Selection } from "./plugins/selection";
+import {
+  latestUserText,
+  SELECTION_FLOOR,
+  selectTools,
+} from "./plugins/selection";
+import {
+  type GrantedTool,
+  grantedToolGuidance,
+  parametersFor,
+  REFUSAL_MARKER,
+  toolCarriedGuidance,
+} from "./plugins/tools";
+import { steerLanguageModel } from "./thread-inbox";
+import { UNTRUSTED_GUIDANCE } from "./untrusted-content";
+import { WEB_GUIDANCE } from "./web/tools";
+
+/** Product model/tool assembly and the compatibility AG-UI mount. DSH owns new execution;
+ * existing builtin bindings use the AI SDK adapter, and remote Bots retain their transports. */
+
+/** Resolve the signed-in person for a request. Threads and memory are scoped to whoever this returns. */
+export type IdentifyUser = (
+  request: Request,
+) => Promise<{ id: string; name: string }>;
+
+type RegisteredBuiltInAgent = {
+  id: string;
+  name: string;
+  type: "built_in";
+  systemPrompt: string;
+  /** This BOT's durable gateway model ID; absent inherits the deployment default. */
+  model?: string;
+};
+
+type RegisteredRemoteAgentFacts = {
+  id: string;
+  name: string;
+  endpoint: string;
+  /** Which agent on the endpoint, for a server that serves a roster. See `remoteTransport`. */
+  remoteAgentId?: string;
+  standingMessage: StandingRoleMessage;
+  /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
+  headers?: Record<string, string>;
+};
+
+/**
+ * A Bot at somebody else's endpoint, in the two ways this deployment knows how to dial one.
+ *
+ * The kinds differ in transport and in nothing else: the difference ends at `remoteTransport`, which
+ * returns an `AbstractAgent` either way, and every control after that is written against that
+ * interface. What is deliberate here is the SHAPE. This is a union of two single-literal variants
+ * rather than one type whose `type` is `"remote_ag_ui" | "remote_mastra"`, because TypeScript will
+ * not eliminate a union member whose discriminant is itself a union: excluding both literals narrows
+ * the property and keeps the member, so the built-in path below would silently stop being narrowed
+ * to a built-in Bot. Verified against tsc 5.x; collapsing these two back into one costs that.
+ */
+type RegisteredRemoteAgent =
+  | (RegisteredRemoteAgentFacts & { type: "remote_ag_ui" })
+  | (RegisteredRemoteAgentFacts & { type: "remote_mastra" });
+
+/**
+ * A coworker the caller may see but may not run: its profile was deleted while a channel it worked
+ * in still exists. It is registered so Intelligence can restore that thread and the person can read
+ * what was said; every run is refused here, without contacting the endpoint.
+ */
+type RegisteredUnavailableAgent = {
+  id: string;
+  name: string;
+  type: "unavailable";
+  reason: string;
+};
+
+export type RegisteredAgent =
+  | RegisteredBuiltInAgent
+  | RegisteredRemoteAgent
+  | RegisteredUnavailableAgent;
+
+type AgentRunInput = Parameters<AbstractAgent["run"]>[0];
+type AgentMessage = AgentRunInput["messages"][number];
+type AgentContext = NonNullable<AgentRunInput["context"]>[number];
+export type StandingRoleMessage = Extract<AgentMessage, { role: "system" }>;
+type AgentHeaders = Record<string, string>;
+type HeaderBearingAgent = AbstractAgent & { headers?: AgentHeaders };
+
+/** The durable part of a coworker: who it is and what its standing job is. */
+export type AgentStandingProfile = {
+  id: string;
+  name: string;
+  title: string;
+  roleDescription: string;
+};
+
+/**
+ * The coworker's job, as one system message.
+ *
+ * It is an ordinary AG-UI system message rather than `forwardedProps` or framework-specific state
+ * because the endpoint on the other side may be LangGraph, Mastra, ADK or a hand-written server, and
+ * a system message is the only thing all of them already understand. The id is derived from the
+ * agent so a run can recognise a copy of it and refuse to send a second.
+ */
+export function standingRoleMessage(
+  profile: AgentStandingProfile,
+): StandingRoleMessage {
+  return {
+    id: `standing-role:${profile.id}`,
+    role: "system",
+    content: [
+      `You are ${profile.name}, ${profile.title}.`,
+      profile.roleDescription,
+      "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
+      /*
+       * Here rather than in the package, because for a remote Bot the standing role is the only
+       * instruction there is: `role_description` is one sentence somebody wrote about what it is
+       * for, and nothing else reaches it. The compliance Bot that answered a filing question with
+       * thresholds and deadlines and no source was a `remote-ag-ui` agent whose entire prompt was
+       * "Investigate policies, transaction monitoring, and control evidence."
+       */
+      PROVENANCE_GUIDANCE,
+      // And for the same reason, how to read the untrusted-content envelope its tool results carry.
+      UNTRUSTED_GUIDANCE,
+    ].join("\n\n"),
+  };
+}
+
+export type RuntimeModel = {
+  provider: "openai" | "anthropic";
+  defaultModel: string;
+  plan?: PlanModelConfig;
+  /** A saved connection's exact API base; scoped to this run rather than process.env. */
+  baseUrl?: string;
+  useApiKey?: boolean;
+};
+
+export type RuntimeModelConnection = {
+  model: RuntimeModel;
+  apiKey: string | null;
+};
+export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
+
+/**
+ * 机器人用哪个内核回答。
+ *
+ * `builtin` 是保留旧绑定的 AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
+ * remote-ag-ui，指向 `examples/acp-agent` 的桥；Hermes 的 ACP session 就是新的循环。
+ *
+ * 这是部署级开关，不是每个机器人的字段：现有机器人都有 `built_in` 行，逐个改会漏掉新建的；
+ * 一个开关让「以后新建的机器人」也自动走新内核。
+ */
+export type AgentKernel =
+  | { kind: "builtin"; binding?: HermesRuntimeBinding }
+  | { kind: "dsh"; binding: DshRuntimeBinding }
+  | {
+      kind: "hermes";
+      url: string;
+      token?: string;
+      binding?: HermesRuntimeBinding;
+    };
+let agentKernel: AgentKernel = { kind: "builtin" };
+export function setAgentKernel(kernel: AgentKernel): void {
+  agentKernel = kernel;
+}
+/** 测试和健康检查读它；不要用它改状态。 */
+export function currentAgentKernel(): AgentKernel {
+  return agentKernel;
+}
+
+export function connectionLanguageModel(
+  model: RuntimeModel,
+  apiKey: string | null,
+) {
+  const connectionFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    if (model.useApiKey === false) {
+      headers.delete("authorization");
+      headers.delete("x-api-key");
+    }
+    // An API endpoint cannot redirect a credential to a different host.
+    return fetch(input, { ...init, headers, redirect: "error" });
+  }) as typeof fetch;
+  const options = {
+    apiKey: apiKey ?? "",
+    baseURL: model.baseUrl,
+    fetch: connectionFetch,
+  };
+  // 正文里 <think>…</think> 的推理改成思考片段，不进回复气泡（think-tags.ts）。
+  return thinkTagLanguageModel(
+    model.provider === "anthropic"
+      ? outputLimitLanguageModel(
+          createAnthropic(options)(model.defaultModel),
+          model.defaultModel,
+        )
+      : createOpenAI(options).chat(model.defaultModel),
+  );
+}
+
+/** 模型目录（index.ts 接上），给额度用完时找候选模型用（agents/model-fallback.ts）。 */
+let fallbackCatalog: () => Promise<FallbackCatalog> = async () => [];
+export function setModelFallbackCatalog(
+  catalog: () => Promise<FallbackCatalog>,
+): void {
+  fallbackCatalog = catalog;
+}
+/** 管理员排好的「备用模型」（设置 → 模型，DESIGN.md §61；index.ts 接上）。 */
+let fallbackConfigured: () => Promise<string[]> = async () => [];
+export function setModelFallbackList(list: () => Promise<string[]>): void {
+  fallbackConfigured = list;
+}
+/** 聊天回合用的模型：额度用完（429 等）时自动换同平台的其它模型重发（DESIGN.md §60）。 */
+export function fallbackConnectionModel(
+  model: RuntimeModel,
+  apiKey: string | null,
+  /** How a request is rewritten for the model a fallback switches to (see `LoadAttachment.promptForModel`). */
+  adapt?: (modelId: string, callOptions: unknown) => Promise<unknown>,
+) {
+  return fallbackLanguageModel(
+    connectionLanguageModel(model, apiKey),
+    model.defaultModel,
+    {
+      ...(adapt ? { adapt } : {}),
+      candidates: fallbackCandidates(
+        () => fallbackCatalog(),
+        process.env,
+        () => fallbackConfigured(),
+      ),
+      build: (id) =>
+        connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
+      supportsFiles: (id) => resolveModelFileSupport(id),
+    },
+  );
+}
+
+/**
+ * 输出上限（不认识的模型别被截在 4096）。
+ *
+ * AI SDK 的 Anthropic 客户端只认得 Claude 的型号；走 Magpie 的 Anthropic 协议跑别家模型（默认的
+ * clinepass/…/mimo-v2.6-flash 就是）时，调用方没给 maxOutputTokens 它就按 4096 发，长回答写到一半
+ * 被截断（finish=length），界面上看不出来。这里在调用方没给的时候补上：模型目录（Magpie 的
+ * max_output_tokens）里有就用它，封顶 {@link MAX_OUTPUT_CAP}（CHISABOT_MAX_OUTPUT_TOKENS 可改）；
+ * 目录里没有就不动，照旧由 SDK 决定。认得的 Claude 型号 SDK 自己会再压到它的真实上限。
+ */
+export const MAX_OUTPUT_CAP =
+  Number(process.env.CHISABOT_MAX_OUTPUT_TOKENS) || 32_000;
+type OutputLimitResolver = (modelId: string) => Promise<number | undefined>;
+let outputLimitFor: OutputLimitResolver = async () => undefined;
+/** index.ts 接上模型目录。 */
+export function setModelOutputLimitResolver(
+  resolver: OutputLimitResolver,
+): void {
+  outputLimitFor = resolver;
+}
+export async function resolveOutputLimit(
+  modelId: string,
+): Promise<number | undefined> {
+  try {
+    const limit = await Promise.race([
+      outputLimitFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    return typeof limit === "number" && limit > 0
+      ? Math.min(limit, MAX_OUTPUT_CAP)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * 上下文窗口（模型目录的 context_window；index.ts 接上）。Hermes 内核下估算这一轮要发多少 token、
+ * 决定要不要压缩前文（agents/history-budget.ts）。不知道窗口就不压缩。
+ */
+type ContextWindowResolver = (modelId: string) => Promise<number | undefined>;
+let contextWindowFor: ContextWindowResolver = async () => undefined;
+export function setModelContextWindowResolver(
+  resolver: ContextWindowResolver,
+): void {
+  contextWindowFor = resolver;
+}
+export async function resolveContextWindow(
+  modelId: string,
+): Promise<number | undefined> {
+  try {
+    const window = await Promise.race([
+      contextWindowFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    if (typeof window === "number" && Number.isFinite(window) && window > 0)
+      return window;
+  } catch {
+    // Fall through to the known-window table.
+  }
+  // The settings catalog can be a different gateway than the one the runtime actually
+  // serves the model from (settings → MiniMax; Hermes → local Magpie). A miss there
+  // must not lose the declared window entirely (QA1104-01).
+  return knownContextWindowOf(modelId);
+}
+/**
+ * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
+ * Hermes 内核下桥按它转换历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
+ * undefined → 目录没说就当能看（和识图回退的判断一致），不下发标记。
+ */
+type VisionResolver = (modelId: string) => Promise<boolean | undefined>;
+let visionFor: VisionResolver = async () => undefined;
+export function setModelVisionResolver(resolver: VisionResolver): void {
+  visionFor = resolver;
+}
+export async function resolveModelVisionSupport(
+  modelId: string,
+): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      visionFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 目录说这一轮模型能不能收 `file` 文档块（QA1102-14；index.ts 接上）。没说就当不能收。 */
+type FilesResolver = (modelId: string) => Promise<boolean | undefined>;
+let filesFor: FilesResolver = async () => undefined;
+export function setModelFileResolver(resolver: FilesResolver): void {
+  filesFor = resolver;
+}
+export async function resolveModelFileSupport(
+  modelId: string,
+): Promise<boolean | undefined> {
+  try {
+    const value = await Promise.race([
+      filesFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Hermes 长对话压缩前文用的摘要缓存和「摘要模型」（设置 → 模型；index.ts 接上）。
+ * 摘要模型没配置（null）就用这一轮的主模型，不在代码里写死。
+ */
+let historySummaryStore: HistorySummaryStore | undefined;
+let historySummaryModel: () => Promise<string | null> = async () => null;
+export function setHistorySummaries(options: {
+  store?: HistorySummaryStore;
+  model?: () => Promise<string | null>;
+}): void {
+  historySummaryStore = options.store;
+  if (options.model) historySummaryModel = options.model;
+}
+/** 上一轮 provider 返回的真实用量（index.ts 接上 lastMeasuredUsage），用来校准估算；没有就按安全系数。 */
+let previousRunUsage: (threadId: string) => Promise<MeasuredUsage | null> =
+  async () => null;
+export function setPreviousRunUsageResolver(
+  resolver: (threadId: string) => Promise<MeasuredUsage | null>,
+): void {
+  previousRunUsage = resolver;
+}
+async function resolvePreviousRunUsage(
+  threadId: string,
+): Promise<MeasuredUsage | null> {
+  try {
+    return await Promise.race([
+      previousRunUsage(threadId),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), 1000).unref?.(),
+      ),
+    ]);
+  } catch {
+    return null;
+  }
+}
+const historyPlans = new HistoryPlanMemo();
+/** 回复结束后在后台写摘要的任务（按 runId；RUN_FINISHED 时取出来跑，不等它）。 */
+const historyRefreshes = new Map<string, () => Promise<void>>();
+function rememberRefresh(runId: string, refresh: (() => Promise<void>) | null) {
+  historyRefreshes.delete(runId);
+  if (refresh) historyRefreshes.set(runId, refresh);
+  while (historyRefreshes.size > 200)
+    historyRefreshes.delete(historyRefreshes.keys().next().value as string);
+}
+/** 这次运行的回复结束了：后台写摘要（下一轮用），失败只记日志。 */
+export function runHistoryRefresh(runId: string): void {
+  const refresh = historyRefreshes.get(runId);
+  if (!refresh) return;
+  historyRefreshes.delete(runId);
+  void refresh().catch(() => {});
+}
+/** 每次运行压缩了什么，RUN_FINISHED 时附上（HermesRuntimeAgent finishedMetadata）。 */
+const historyCompactions = new Map<string, HistoryCompaction>();
+function rememberCompaction(
+  runId: string,
+  compaction: HistoryCompaction | null,
+) {
+  historyCompactions.delete(runId);
+  if (compaction) historyCompactions.set(runId, compaction);
+  while (historyCompactions.size > 200)
+    historyCompactions.delete(historyCompactions.keys().next().value as string);
+}
+
+/** 用同一个连接上的摘要模型（没配置就是主模型）写较早对话的摘要。 */
+export function connectionSummarizer(
+  model: RuntimeModel,
+  apiKey: string | null,
+): Summarize {
+  return async ({ previousSummary, messages, signal }) => {
+    const id =
+      (await historySummaryModel().catch(() => null)) || model.defaultModel;
+    const result = await connectionLanguageModel(
+      { ...model, defaultModel: id },
+      apiKey,
+    ).doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: summaryPrompt(previousSummary, messages) },
+          ],
+        },
+      ],
+      // 会先「思考」的模型要留够余量，不然思考用完了正文是空的。
+      maxOutputTokens: 1500,
+      abortSignal: signal,
+    });
+    const summary = result.content
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
+    return { summary, model: id };
+  };
+}
+
+export function outputLimitLanguageModel<T>(model: T, modelId: string): T {
+  if (!model || typeof model !== "object" || /^claude-/i.test(modelId))
+    return model;
+  const target = model as unknown as Record<string, unknown>;
+  const fill = async (options: unknown) => {
+    const call = options as { maxOutputTokens?: number } | undefined;
+    if (!call || call.maxOutputTokens != null) return options;
+    const limit = await resolveOutputLimit(modelId);
+    return limit ? { ...call, maxOutputTokens: limit } : options;
+  };
+  return new Proxy(model as unknown as object, {
+    get(object, property) {
+      if (
+        (property === "doStream" || property === "doGenerate") &&
+        typeof target[property] === "function"
+      ) {
+        const method = target[property] as (
+          options: unknown,
+        ) => Promise<unknown>;
+        return async (options: unknown) =>
+          method.call(object, await fill(options));
+      }
+      // 不传 receiver：模型类的私有字段只认它自己（同 meterLanguageModel）。
+      const value = Reflect.get(object, property);
+      return typeof value === "function" ? value.bind(object) : value;
+    },
+  }) as unknown as T;
+}
+
+/** Optional desktop environment values may be present but blank; SDKs treat them as URLs. */
+export function normalizeModelBaseUrls(
+  environment: Record<string, string | undefined> = process.env,
+): void {
+  for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"]) {
+    const value = environment[key]?.trim();
+    if (!value) {
+      delete environment[key];
+    } else if (key === "ANTHROPIC_BASE_URL") {
+      // The SDK appends only /messages; match the selector's versioned-base contract.
+      const base = value.replace(/\/+$/, "");
+      environment[key] = /\/v\d+$/.test(base) ? base : `${base}/v1`;
+    } else {
+      environment[key] = value;
+    }
+  }
+}
+
+export function runtimeModelForEnvironment(
+  packageModel: RuntimeModel,
+  environment: Record<string, string | undefined> = process.env,
+): RuntimeModel {
+  const selectedModel = environment.BOT_MODEL?.trim();
+  const selectedProvider = environment.BOT_PROVIDER?.trim().toLowerCase();
+  // The desktop writes an empty provider when switching back to OpenAI. An absent
+  // choice leaves the tenant package authoritative.
+  const provider =
+    selectedProvider === "anthropic"
+      ? "anthropic"
+      : selectedProvider === "openai" || selectedProvider === ""
+        ? "openai"
+        : packageModel.provider;
+  const defaultModel =
+    provider === packageModel.provider
+      ? packageModel.defaultModel
+      : provider === "anthropic"
+        ? "claude-sonnet-4-5"
+        : "gpt-5.6-terra";
+  const selectedModelApplies =
+    provider === "anthropic" ||
+    ((!selectedProvider || selectedProvider === "openai") &&
+      !!environment.OPENAI_BASE_URL?.trim());
+  return {
+    provider,
+    plan: planModelForEnvironment(environment),
+    defaultModel:
+      selectedModelApplies && selectedModel ? selectedModel : defaultModel,
+  };
+}
+
+type RuntimeAgentRow = {
+  id: string;
+  name: string;
+  type: "built_in" | "remote_ag_ui" | "remote_mastra";
+  configuration: unknown;
+  override?: unknown;
+  title: string;
+  roleDescription: string;
+};
+
+export function registeredAgentFromRow(
+  row: RuntimeAgentRow,
+): RegisteredAgent | null {
+  if (!isPlainObject(row.configuration)) {
+    return null;
+  }
+  const configuration = row.configuration;
+  if (row.type === "built_in") {
+    const systemPrompt = configuration?.systemPrompt;
+    const selectedModel = modelOverrideFromValue(row.override);
+    const trimmedSystemPrompt =
+      typeof systemPrompt === "string" ? systemPrompt.trim() : "";
+    return trimmedSystemPrompt.length > 0
+      ? {
+          id: row.id,
+          name: row.name,
+          type: "built_in",
+          systemPrompt: trimmedSystemPrompt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+        }
+      : null;
+  }
+
+  const endpoint = configuration?.endpoint;
+  /*
+   * Which agent on that endpoint, when the endpoint serves more than one.
+   *
+   * Mastra servers are rosters rather than single agents, so a Bot row has to say which one it is.
+   * Absent falls back to this Bot's own id and then, on a single-agent server, to the only one
+   * there: see `remoteTransport`.
+   */
+  const remoteAgentId = configuration?.remoteAgentId;
+  return typeof endpoint === "string" && isHttpUrl(endpoint)
+    ? {
+        id: row.id,
+        name: row.name,
+        type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
+        endpoint,
+        ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
+          ? { remoteAgentId }
+          : {}),
+        standingMessage: standingRoleMessage(row),
+      }
+    : null;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isHttpUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the person asking has said they want, in every channel, from every coworker.
+ *
+ * The ChisaBot equivalent of a CLAUDE.md, and the third instruction carrier beside the two that
+ * already existed. A role is the coworker's and reads the same to everybody who talks to it; a skill
+ * is pulled in for one task. This is the person's, and it is true of every task they ever ask for —
+ * how they want to be written to, what their company is called, what it is not to be called.
+ *
+ * THE PRECEDENCE SENTENCE IS PART OF THE BLOCK, not decoration. Two standing instructions in one
+ * prompt is a conflict waiting to be resolved by whichever the model read last, and the answer is
+ * not symmetric: a person may say how they want things done, and must not be able to say what a
+ * coworker is for. Without the sentence, "always answer in one line" quietly overrides a role that
+ * exists to produce a filing with its sources in it.
+ *
+ * BUILT-IN COWORKERS ONLY. A remote AG-UI bot runs its own loop at somebody else's endpoint, and
+ * everything this deployment sends it is a standing system message rather than a prompt it composes
+ * — see `remoteAgentWithStandingRole`. Adding a third message there is a real change with its own
+ * questions (whether an endpoint that ignores the role would honour this, and whether one
+ * deployment's person may address another's server with their own prose), and it is deliberately not
+ * made here.
+ *
+ * Null for anything blank, so the caller has one thing to test rather than an empty paragraph to
+ * detect.
+ */
+export function standingInstructionsGuidance(
+  instructions: string | null | undefined,
+): string | null {
+  const trimmed = instructions?.trim() ?? "";
+  if (trimmed.length === 0) return null;
+
+  return [
+    `The person you are working with has standing instructions that apply in every channel and every task, alongside your role: ${trimmed}`,
+    "Where the two conflict, the role decides what you do and these decide how you do it.",
+  ].join("\n\n");
+}
+
+/**
+ * Who the run belongs to, reduced to the one fact a Bot's self-map may state about them.
+ *
+ * A `BotAudience` rather than the `AgentActor`, because the prompt is not the place for a user id
+ * or an email address: it needs "is this person allowed to approve an admin action", and nothing
+ * else. Resolved per build like the tools and the standing instructions, so a role edited a moment
+ * ago applies to the next run.
+ */
+export type BotAudience = {
+  isAdmin?: boolean;
+};
+
+export function builtInAgentConfiguration(
+  agent: RegisteredBuiltInAgent,
+  model: RuntimeModel,
+  apiKey: string | null,
+  /**
+   * What this Bot may call, resolved for the person asking.
+   *
+   * Handed to the agent rather than registered by the surface, so a run needs no browser. These are
+   * not raw MCP servers on purpose: each one executes through the plugin store, which checks the
+   * grant, evaluates the policy and writes the audit row. Passing `mcpServers` here instead would
+   * let the agent reach a vendor directly and walk around all three.
+   */
+  tools: GrantedTool[] = [],
+  /**
+   * What this Bot should know about the computer, when this deployment has one.
+   *
+   * Appended to the role rather than replacing it: the package says what the Bot is for, this says
+   * what its hands are. Absent leaves the role alone, which is right for a deployment with no
+   * computer configured, where the browser routes are not mounted and a Bot promised a browser would
+   * be promising something that does not exist.
+   */
+  computerGuidance?: string,
+  /**
+   * Vendors this deployment connects to, whether or not this Bot holds any of their tools.
+   *
+   * A Bot holding nothing was told nothing, so it treated a connected vendor as an ordinary website
+   * and browsed to it. See `grantedToolGuidance`.
+   */
+  connectedVendors: readonly string[] = [],
+  /**
+   * The standing instructions of the person this run belongs to. Absent means they have written
+   * none, which is most people on most days and costs the prompt nothing.
+   */
+  standingInstructions?: string | null,
+  planModel?: PlanModel,
+  /** Rewrites a request for the model a fallback switches to (images it cannot see → descriptions). */
+  adaptForFallback?: (
+    modelId: string,
+    callOptions: unknown,
+  ) => Promise<unknown>,
+  /** Who is asking, for the self-map. Appended last for the usual positional reason. */
+  audience?: BotAudience,
+): BuiltInAgentConfiguration {
+  if (!apiKey && !planModel && model.useApiKey !== false) {
+    return {
+      type: "custom",
+      // biome-ignore lint/correctness/useYield: this agent must fail when iteration starts.
+      factory: async function* () {
+        throw new Error(
+          `Model credential is not configured for ${agent.name}. Add the package credential or set ${model.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"}.`,
+        );
+      },
+    };
+  }
+
+  const standing = standingInstructionsGuidance(standingInstructions);
+  const allTools = [...tools];
+
+  return {
+    // 每一步开始前看收件箱：机器人回答期间用户又发来的话、后台任务的结果在步与步之间读进去（thread-inbox.ts）。
+    // 计划模型（PlanModel）自己转发整段对话，不插话；它照样能吃到段与段之间读进来的消息。
+    model: planModel
+      ? planModel
+      : model.baseUrl || model.useApiKey === false
+        ? // 每一步的用量记到当前运行的计量器（输入框的「上下文」读数，context-usage.ts）。
+          steerLanguageModel(
+            meterLanguageModel(
+              fallbackConnectionModel(model, apiKey, adaptForFallback),
+            ),
+          )
+        : `${model.provider}/${model.defaultModel}`,
+    /*
+     * The package's role, then the person's own standing instructions, then what this Bot actually
+     * holds, then the computer.
+     *
+     * The grants go BEFORE the computer prose on purpose. That prose is long and emphatic about the
+     * browser and mentions connectors nowhere, so a Bot that read it last reached for the browser
+     * even when it held a tool for the exact system being asked about.
+     *
+     * The person's instructions go straight after the role and before all of it, because they are
+     * the other half of the same question — who you are and who you are working for — and because
+     * their precedence sentence only means anything next to the role it defers to.
+     */
+    prompt: [
+      agent.systemPrompt,
+      ...(standing ? [standing] : []),
+      /*
+       * Unconditional, unlike the two below it.
+       *
+       * Those describe things a deployment may or may not have. This describes how to answer at all,
+       * and a Bot with no tools and no computer needs it most: it has nothing to read, so everything
+       * it says comes from its own knowledge, and saying so is the only honest move available.
+       */
+      PROVENANCE_GUIDANCE,
+      // How to read the untrusted-content envelope every outside result arrives in.
+      UNTRUSTED_GUIDANCE,
+      // 说话方式：开工一句话、不念工具、结果先行、必要时卡片、一个下一步（向 Hark 看齐）。
+      WORK_STYLE_GUIDANCE,
+      // 行动优先：手里有工具时，先把事做了再回话；不许在调用工具之前说“我没有权限”。
+      ...(tools.length > 0 ? [ACTION_GUIDANCE] : []),
+      // 机器人的名字（不然它会自称模型名，DESIGN.md §69）。
+      botIdentityGuidance(agent.name, model.defaultModel),
+      /*
+       * 它在架构里的位置（§121）：为谁工作、MCP 接到它身上、内核在它之下。能力行照着这一轮
+       * 实际提供的工具说——mcp_add / device_mcp_call 在不在，本身就是管理员和配对设备的事实。
+       */
+      selfMapGuidance({
+        actorIsAdmin: audience?.isAdmin,
+        offersMcpAdd: tools.some((tool) => tool.name === "mcp_add"),
+        offersDeviceMcp: tools.some((tool) => tool.name === "device_mcp_call"),
+      }),
+      ...(tools.some((tool) => tool.name === "web_search")
+        ? [WEB_GUIDANCE]
+        : []),
+      ...(tools.some((tool) => tool.name === "panel_create")
+        ? [LIVE_PANEL_GUIDANCE]
+        : []),
+      ...(grantedToolGuidance(tools, connectedVendors)
+        ? [grantedToolGuidance(tools, connectedVendors)]
+        : []),
+      ...(computerGuidance ? [computerGuidance] : []),
+      /*
+       * Guidance carried by the offered tools themselves (today: the person's linked PCs). After the
+       * computer prose on purpose: that prose says "you have your own browser", and a Bot that read
+       * it last answered "I can't see your computer" while holding device_* tools for it.
+       */
+      ...toolCarriedGuidance(tools),
+    ].join("\n\n"),
+    ...(planModel ? {} : { apiKey: apiKey ?? undefined }),
+    /*
+     * A run stops after one step unless told otherwise, which for a Bot with tools means it calls
+     * one and never speaks: the tool executes, the result arrives, and the run ends before the model
+     * can say what it found. The person sees their own question and nothing else.
+     *
+     * Only set when there are tools, because a Bot with none has nothing to continue for. The cap
+     * bounds a model that would otherwise call tools in a circle. Interrupt tools, if any are ever
+     * added here, require the default of one and must not be mixed in.
+     */
+    ...(allTools.length > 0
+      ? {
+          tools: allTools.map((tool) => ({
+            ...tool,
+            execute: async (
+              args: unknown,
+              execution?: { toolCallId?: string; abortSignal?: AbortSignal },
+            ) => {
+              // FIX-04：用户已按停止 → 立刻拒绝，不再开新工具；并把 signal 传给 web_search 等长操作。
+              const signal = execution?.abortSignal ?? currentToolAbort();
+              if (signal?.aborted || currentConfirmTurn()?.stopped()) {
+                return withStepBudgetNote(
+                  `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`,
+                );
+              }
+              // 确认卡片要画在这条工具调用下面：把 toolCallId 带给 server/src/confirmations。
+              const result = await withConfirmToolCall(
+                execution?.toolCallId,
+                tool.name,
+                () =>
+                  executeNativeApprovalTool(
+                    tool.name,
+                    args,
+                    execution?.toolCallId,
+                    tools.find((granted) => granted.name === tool.name)
+                      ?.initiator,
+                    () => tool.execute(args, signal ? { signal } : undefined),
+                  ),
+              );
+              // 步数快用完时提醒收尾（§101）。
+              return withStepBudgetNote(result);
+            },
+          })),
+          maxSteps: TOOL_STEPS,
+        }
+      : {}),
+  };
+}
+
+/**
+ * How many turns of the tool loop one run may take.
+ *
+ * Enough for a Bot to search, read what came back, search again on a better term, and answer.
+ * Beyond that a model is not making progress, and every extra step is somebody's money.
+ */
+const TOOL_STEPS = 12;
+
+/**
+ * 步数快用完时提醒模型收尾（DESIGN.md §101）。
+ *
+ * 到了 TOOL_STEPS 这一轮就硬停：模型最后一步还在调工具，就没有最终回答，界面只能显示「这一轮没有做完」
+ * （2026-10-18 实测：搜了 11 次新闻，一句结论都没给）。这里按这一轮（同一个 run）已经执行的工具次数，
+ * 从倒数第三次起在工具结果后面加一句「停止调用工具，直接回答」。只加在字符串 / 普通对象结果上，不改别的。
+ */
+const stepCounts = new WeakMap<object, number>();
+const STEP_NOTE = (left: number) =>
+  `【系统提示】这一轮的工具步数快用完了（最多还能再调 ${left} 次）。现在停止调用工具，用已经拿到的信息直接给用户完整的回答；信息不全就说明缺什么。`;
+export function withStepBudgetNote<T>(
+  result: T,
+  turn: object | undefined = currentConfirmTurn(),
+): T {
+  if (!turn) return result;
+  const used = (stepCounts.get(turn) ?? 0) + 1;
+  stepCounts.set(turn, used);
+  const left = TOOL_STEPS - used;
+  if (left > 2) return result;
+  const note = STEP_NOTE(Math.max(left, 0));
+  if (typeof result === "string") return `${result}\n\n${note}` as T;
+  if (
+    result &&
+    typeof result === "object" &&
+    !Array.isArray(result) &&
+    Object.getPrototypeOf(result) === Object.prototype
+  )
+    return { ...(result as Record<string, unknown>), systemNote: note } as T;
+  return result;
+}
+
+/**
+ * Build the built-in and remote AG-UI agent map the runtime serves.
+ *
+ * Keyed by the registry id, which is what the browser sends as the agent name, so the two cannot
+ * drift apart without the lookup failing loudly rather than silently running the wrong Bot.
+ */
+export async function buildAgents(
+  agents: RegisteredAgent[],
+  model: RuntimeModel,
+  apiKey: string | null,
+  /** Absent leaves every stream unwatched, which is what an unconfigured timeout means. */
+  stallGuard?: StallGuard,
+  /** Absent leaves every Bot with no tools, which is the correct answer when nothing is granted. */
+  loadTools: LoadToolsForBot = async () => [],
+  signRun?: SignRun,
+  /** What every built-in Bot is told about the computer. Absent means this deployment has none. */
+  computerGuidance?: string,
+  /**
+   * Which vendors this deployment connects to. Asked once per build rather than per Bot, because it
+   * is a fact about the deployment; what differs per Bot is which of them it holds.
+   */
+  loadVendors: () => Promise<readonly string[]> = async () => [],
+  /** How a run's tools are narrowed to what it is about. Absent means they are not. */
+  selection?: ToolSelection,
+  /**
+   * The fetch a remote agent is dialled with.
+   *
+   * Absent uses the runtime's own, which follows redirects wherever they point. A deployment passes
+   * one that re-checks each hop, because the address a registration was validated against and the
+   * address a run finally reaches are only the same address while nobody redirects.
+   */
+  agentFetch?: AgentFetch,
+  /** How a run gets its tool for handing work on. Absent means no Bot is offered one. */
+  handoff?: HandoffForRun,
+  /**
+   * What the person asking has told every coworker they run. Absent means this deployment does not
+   * carry standing instructions, which is what every deployment did before they existed.
+   */
+  loadInstructions?: LoadInstructions,
+  initiator?: AuditInitiator,
+  /**
+   * How a message's attached files are put in front of the model.
+   *
+   * Appended last on purpose, like the collaborators above it: these are positional, so inserting
+   * one anywhere else silently shifts every existing call site's arguments by one.
+   *
+   * Absent means nothing is inlined and a Bot is shown the URL a file is stored behind rather than
+   * the file, which is what every deployment did before this existed.
+   */
+  loadAttachment?: LoadAttachment,
+  /**
+   * How a run says the files on the message it is answering went out in a send. Appended after
+   * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
+   */
+  markAttachmentsSent?: MarkAttachmentsSent,
+  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  _removedLearnedSkills?: undefined,
+  loadPersonalMemory?: LoadPersonalMemory,
+  resolveConnectionForAgent?: (
+    agentId: string,
+  ) => Promise<RuntimeModelConnection>,
+  /** Who the build is for, for each built-in Bot's self-map. Appended last, positionally as ever. */
+  audience?: BotAudience,
+): Promise<Record<string, AbstractAgent>> {
+  let vendors: readonly string[] = [];
+  try {
+    vendors = await loadVendors();
+  } catch {
+    // Vendor guidance is best-effort: losing it must not prevent a run or change its grants.
+    // Report once per build here, including failures from the production plugin-store loader.
+    // Never log the thrown value: database errors can contain connection details or row contents.
+    console.error({
+      error: "connected_vendor_lookup_failed",
+      context: { operation: "loadVendors", agentCount: agents.length },
+      timestamp: new Date().toISOString(),
+    });
+  }
+  /*
+   * Read once per build and only when somebody will be told it, like the vendors above and the model
+   * key below: it is a fact about the person, not about a coworker, and asking per Bot would be the
+   * same row fetched once for each of them. Skipped entirely when nothing built-in is being built,
+   * because the remote path does not carry this at all.
+   *
+   * A failed read costs a paragraph, not a conversation. Report it once per build so operators can
+   * distinguish a failed read from a person who has written no instructions.
+   */
+  let instructions: string | null = null;
+  if (agents.some((agent) => agent.type === "built_in")) {
+    try {
+      instructions = (await loadInstructions?.()) ?? null;
+    } catch {
+      // Never log the thrown value: database errors can expose instructions or credentials.
+      console.error({
+        error: "standing_instruction_read_failed",
+        context: { operation: "loadInstructions", agentCount: agents.length },
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+  return Object.fromEntries(
+    await Promise.all(
+      agents.map(async (agent) => {
+        const connection =
+          agent.type === "built_in"
+            ? await resolveConnectionForAgent?.(agent.id)
+            : undefined;
+        const selectedModel =
+          connection?.model ??
+          (agent.type === "built_in" && agent.model
+            ? { ...model, defaultModel: agent.model, plan: undefined }
+            : model);
+        const built = await buildAgent(
+          agent,
+          selectedModel,
+          connection ? connection.apiKey : apiKey,
+          stallGuard,
+          loadTools,
+          signRun,
+          computerGuidance,
+          vendors,
+          selection,
+          agentFetch,
+          handoff,
+          instructions ?? null,
+          initiator,
+          // 同一个加载器给每个机器人绑上自己的 id 和这一轮实际用的模型：图片给原图还是给描述看这个模型（§59）。
+          loadAttachment &&
+            Object.assign(
+              (id: string, threadId: string) =>
+                loadAttachment(
+                  id,
+                  threadId,
+                  agent.id,
+                  selectedModel.defaultModel,
+                ),
+              loadAttachment.promptForModel
+                ? { promptForModel: loadAttachment.promptForModel }
+                : {},
+            ),
+          markAttachmentsSent,
+          audience,
+        );
+        if (loadPersonalMemory)
+          built.use(new PersonalMemoryMiddleware(agent.id, loadPersonalMemory));
+        return [agent.id, built];
+      }),
+    ),
+  );
+}
+
+/**
+ * The standing instructions of whoever this run belongs to, resolved when a run needs them.
+ *
+ * A closure rather than a string passed down, for the same reason `LoadToolsForBot` is one: it is a
+ * per-person fact that a person can change between two runs, and a value captured at boot would
+ * serve everybody the first person's preferences. Null means they have written none.
+ */
+export type LoadInstructions = () => Promise<string | null>;
+
+/**
+ * The bytes behind one stored attachment, fetched when a turn turns out to refer to it.
+ *
+ * A closure rather than the rows themselves, for the same reason {@link LoadInstructions} is one:
+ * which files a turn names is decided by the message, and a request is earlier than a message. It is
+ * ALSO bound to one person, like {@link LoadInstructions}: the ids reach it out of browser-supplied
+ * message content, so which rows it may return is decided against the asker's channel memberships.
+ * Null means this deployment no longer holds it OR it is not this person's to see, and on the
+ * message the turn is answering `resolveAttachmentParts` turns either into a failed turn rather
+ * than an answer about a file they never sent. Behind that message it becomes a note that the file
+ * is gone; see {@link inlineAttachments} for why the two answers differ.
+ *
+ * TAKES THE RUN'S THREAD, AND TAKES IT AS A REQUIRED SECOND ARGUMENT. Which files a turn may reach
+ * is decided by the conversation it is running in, not only by who is asking: an implementation
+ * resolves the thread to its channel and refuses a file belonging to another one. Required rather
+ * than optional, and second rather than curried in beside the actor, because those are the two
+ * shapes that cannot be forgotten — `resolveAttachmentParts` accepts a `(id) => …`, so a
+ * `LoadAttachment` is deliberately NOT assignable to it, and the binding that adapts one to the
+ * other is the line where the thread id has to be named. A caller that omits it does not compile.
+ * Mirrors {@link SignRun}, which takes the thread for the same class of reason.
+ */
+export type LoadAttachment = ((
+  id: string,
+  threadId: string,
+  /**
+   * Which Bot the turn is for, when the caller knows. Images are handed over differently depending
+   * on whether THAT Bot's model can see pictures (DESIGN.md §59): the original when it can, a
+   * vision model's description when it cannot. Bound per agent in `resolveRuntimeAgents`.
+   */
+  agentId?: string,
+  /**
+   * The model this turn actually runs on (the person's or the Bot's choice, already resolved), so the
+   * decision above is made for that model rather than for whatever the catalog default is.
+   */
+  modelId?: string,
+) => Promise<StoredAttachment | null>) & {
+  /**
+   * Rewrites one model request for a different model, when a fallback switches to it mid-turn
+   * (agents/model-fallback.ts): images the new model cannot see become a vision model's description.
+   * Absent means a fallback resends the request unchanged, which is what happened before.
+   */
+  promptForModel?: (
+    agentId: string,
+    modelId: string,
+    callOptions: unknown,
+  ) => Promise<unknown>;
+};
+
+/**
+ * Records that these attachments went out in a message somebody sent.
+ *
+ * A closure bound to one person, like {@link LoadAttachment}, and for a stricter reason: this one
+ * WRITES. `attachedAt` is what the sweeper, the upload cap and the withdrawal route all read as
+ * "this file rode in a message somebody sent", so only the person whose send it was may record it,
+ * and only for rows they uploaded themselves — see `markAttachmentsSent` in
+ * channels/attachments.ts, which puts `uploadedBy` in the WHERE for exactly that.
+ *
+ * Called with the ids on the message being asked about and nothing else. History is replayed on
+ * every turn and by whoever runs it, so a message behind the send is not evidence of one.
+ *
+ * A FAILURE TO RECORD REFUSES THE TURN, AND THIS PARAGRAPH USED TO PROMISE THE OPPOSITE. It said a
+ * failure was swallowed and logged, because a turn is somebody waiting for an answer. The waiting
+ * is real; the conclusion was not. {@link inlineAttachments} calls this BEFORE it returns the
+ * history, and the history is what the run is given afterwards, so nothing has reached a model when
+ * this resolves. A rejection here therefore costs a turn that never started, while a silent one
+ * costs the file itself — `attachedAt` is what stops the culler reclaiming it, so a send recorded
+ * nowhere is a message that displays a file the sweeper deletes a day later. The long argument, and
+ * the four things that still do NOT reject, are in `markAttachmentsSent` in channels/attachments.ts.
+ *
+ * SO AN IMPLEMENTATION MUST RESOLVE ONLY WHEN THE RECORD IS DURABLE. Resolving because a statement
+ * was accepted is not enough: an UPDATE that matched no row is a successful command in Postgres, so
+ * an implementation that cannot distinguish "stamped" from "matched nothing" is reporting a send
+ * that did not happen. It must also treat a row that is ALREADY sent as recorded, because a replayed
+ * message and a retried run are both ordinary and neither is an error.
+ *
+ * REJECT WITH A SENTENCE, NOT A SYMPTOM. There is no `app.onError` behind this server, and what an
+ * implementation throws travels out of the run as an AG-UI error and is shown to the person who was
+ * waiting. It is the same road `resolvePart`'s refusals take, and it wants the same kind of message:
+ * what happened, and what they can do about it.
+ *
+ * Absent still means nothing is recorded, which is what every deployment did before this existed.
+ */
+export type MarkAttachmentsSent = (
+  ids: readonly string[],
+  /**
+   * The conversation the send happened in, required for the reason {@link LoadAttachment} takes
+   * one — and here it is the stronger of the two cases, because this WRITES. A stamp recorded
+   * against the wrong conversation freezes a row in a channel that never saw the file: it can no
+   * longer be withdrawn and the culler will no longer reclaim it.
+   */
+  threadId: string,
+) => Promise<void>;
+
+/**
+ * The same history with every attached file put in front of the model.
+ *
+ * USER MESSAGES ONLY. A stored reference gets into a thread by somebody attaching a file to what
+ * they said; rewriting an assistant or tool message would be rewriting what a model already
+ * produced. A message that refers to no attachment comes back BY IDENTITY, which is almost all of
+ * them, so this pass costs nothing on a thread with no files in it.
+ *
+ * NOTHING HERE CATCHES, FOR THE MESSAGE BEING ASKED ABOUT. An attachment this deployment cannot load
+ * fails that turn, deliberately: see `resolvePart` in `channels/attachment-parts.ts` for why a Bot
+ * answering confidently about an image it never received is the worse of the two outcomes.
+ *
+ * THE MESSAGE BEING ASKED ABOUT IS THE LAST USER MESSAGE. Everything after it in `input.messages` is
+ * the Bot's own work on this turn, and everything before it is a turn already answered; the last
+ * thing a person said is what the run is a reply to, and so the only message whose attachments the
+ * answer is going to be about. It is also the only one whose attachments were just uploaded, which
+ * is what makes failing there recoverable: the person is still there, and can re-attach and re-send.
+ *
+ * OLDER MESSAGES DEGRADE INSTEAD. This maps over the WHOLE history, and history is replayed on every
+ * turn, so one vanished row failing here would fail this channel's every future turn for ever — the
+ * same geometry as the dangling tool call in `agents/history-sanitize.ts`, which opens by recording
+ * that exact failure found in production twice: a permanent failure grown out of transient damage,
+ * and nothing the person did wrong. It is reachable the same way, too: a send whose run is stopped
+ * before the load never stamps `attachedAt`, and the sweeper deletes the row a day later. So an
+ * older part whose row is gone becomes text saying so, which keeps the property that matters — the
+ * model is never left to answer as though a file it cannot see were in front of it — without the
+ * permanence.
+ *
+ * AND IT WALKS BACKWARDS, WHICH IS WHAT MAKES THE BUDGET FAIR. `MAX_INLINED_BYTES_PER_RUN` bounds
+ * what one turn may inline in total — nothing did, before, and a channel that had seen a few large
+ * images made every later turn read and base64 all of them again. A budget is only defensible if
+ * the person's own question is never what it cuts, so the walk starts at the newest message: the
+ * one being asked about is charged first, and is never cut whatever it costs. What runs out is the
+ * room left for the history behind it, and that history has already been in front of the model
+ * once, in the turn it arrived.
+ *
+ * NEVER CUT IS NOT THE SAME AS NEVER BOUNDED, and reading the first as the second is what left the
+ * asked message with no ceiling at all: `resolvePart` stopped spending only under
+ * `onMissing: "note"`, so a message a browser had just written could name two hundred
+ * previously-sent files and inline every one of them. It is still never cut — a person is never
+ * told their own question's attachment was quietly left out — but a message past
+ * `MAX_INLINED_BYTES_PER_RUN` now fails this turn with a sentence naming the file and the limit.
+ * Refusing is an answer somebody can act on, since the message is still in front of them; silently
+ * serving half of it is not.
+ *
+ * The walk is sequential for the same reason the parts within a message are: a budget spent by
+ * whichever database read happened to settle first would cut a different message on each run over
+ * the same thread. The concurrency given up is one round trip per message that carries a file,
+ * which is very few messages in very few threads.
+ */
+async function inlineAttachments(
+  messages: Message[],
+  load: LoadAttachment,
+  /**
+   * The conversation this run is in, passed to every load and to the stamp.
+   *
+   * Taken as a parameter rather than read off anything reachable from here because this function
+   * is handed a history, not a run — and it is the ONLY place that both knows which message is
+   * being asked about and is called from every path that can send one. Both call sites below have
+   * `input.threadId` in hand; neither can supply it by accident, since {@link LoadAttachment} does
+   * not typecheck without it.
+   */
+  threadId: string,
+  markSent?: MarkAttachmentsSent,
+): Promise<Message[]> {
+  const asked = messages.reduce(
+    (latest, message, index) => (message.role === "user" ? index : latest),
+    -1,
+  );
+  const budget = newInlineBudget();
+  const inlined = [...messages];
+  /**
+   * The ids to stamp once the whole walk has come back, or none.
+   *
+   * Collected during the walk and spent after it, which is the whole of the fix described at the
+   * `markSent` call below: the asked message is the FIRST thing this backward loop resolves, so a
+   * stamp written where it is found is written before any older message has been looked at.
+   */
+  let sentIds: readonly string[] = [];
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "user") continue;
+    const content = await resolveAttachmentParts(
+      message.content,
+      /*
+       * The seam narrows to `(id) => …` HERE, and this line is the whole reason the thread id is a
+       * required parameter rather than something a wiring could forget. `resolveAttachmentParts`
+       * asks about one id at a time and knows nothing about runs; a `LoadAttachment` is not
+       * assignable to what it takes, so adapting one to the other cannot be done without naming
+       * the conversation the ids are being resolved for.
+       */
+      (id) => load(id, threadId),
+      index === asked ? "fail" : "note",
+      budget,
+    );
+    /*
+     * AND THIS IS WHERE `attachedAt` IS WRITTEN, for the asked message alone.
+     *
+     * The send that puts a file in front of a Bot goes out through AG-UI, so there is no request
+     * handler in channels/attachments.ts to hook the write onto; this function is the first place
+     * in the server that both knows the message and knows it is the one being asked about. Every
+     * other message here is history, replayed in full on every turn and by whoever is running it,
+     * which is why the write cannot live in `load`: a read happens for all of them.
+     *
+     * AFTER THE WHOLE HISTORY RESOLVES, NOT AFTER THIS MESSAGE DOES, which is why the ids are only
+     * COLLECTED here and the write happens past the end of the loop. The strict `"fail"` above is
+     * what refuses a turn that names a file the asker cannot see, and a send is not recorded for a
+     * turn that never ran — but this loop walks BACKWARDS, so the asked message is the first thing
+     * it resolves and every older message is still ahead of it. Stamping here meant stamping before
+     * any of them had been looked at, and a history load that rejects (a pool error, a timeout;
+     * `"note"` softens a MISSING row, not a failing read) then failed the turn with `attachedAt`
+     * already written for it. The stamp's entire meaning is "this file reached a message somebody
+     * actually sent", and three readers act on it — the sweeper's delete, the upload cap, the
+     * withdrawal route — so a stamp for a turn that never ran is not a cosmetic inaccuracy.
+     *
+     * Past the end of the loop is as late as this function can put it, and no later: whether the
+     * model ever answers is decided by things well downstream of here, and a stamp that waited for
+     * that would be waiting on something this function does not observe. What it can promise is
+     * that every message this turn was going to inline was inlined first.
+     *
+     * AND IT IS NO LONGER CAUGHT HERE, WHICH IS THE REVERSAL OF WHAT THIS SEAM USED TO DO. A
+     * `try`/`catch` stood around the call, holding {@link MarkAttachmentsSent}'s old promise that a
+     * failure to record would never fail an answer. The promise was kept and the outcome was still
+     * wrong: the run carried on to a model with a file whose `attachedAt` was never written, the
+     * culler reclaimed the row a day later, and the message went on displaying an attachment that no
+     * longer existed. Nobody was told, on either side.
+     *
+     * THE POINT IS *WHERE* THIS LINE SITS, and it is the reason refusing is affordable at all.
+     * Everything above has resolved into `inlined`, and `inlined` is RETURNED — the run is handed to
+     * `super.run` / `next.run` by the caller, after this function comes back. So a rejection on this
+     * line happens with no model called, no token spent, and the person's message still in front of
+     * them, which is the same position `resolvePart`'s `"fail"` refusal leaves them in a few lines
+     * above. The turn is not yet spent, so the trade is not "an answer for a file" — it is a retry
+     * for a file, and it is only available here.
+     *
+     * The implementation logs the actor and the ids; what it throws is a sentence naming the files
+     * and what to do about them, and that sentence is what leaves through the run as an AG-UI error.
+     * Wrapping it again here would only put this seam's words in front of the ones that know which
+     * rows are involved.
+     */
+    if (index === asked && markSent) {
+      sentIds = attachmentIdsIn(message.content);
+    }
+    if (content !== message.content) {
+      inlined[index] = { ...message, content } as Message;
+    }
+  }
+  if (markSent && sentIds.length > 0) {
+    await markSent(sentIds, threadId);
+  }
+  return inlined;
+}
+
+/** The host still owns tools, identity, memory and settings; Hermes owns the execution loop. */
+async function hermesKernelAgent(options: {
+  agent: RegisteredBuiltInAgent;
+  kernel: Extract<AgentKernel, { kind: "hermes" }>;
+  model: RuntimeModel;
+  /** 只给压缩前文时写摘要用（同一个连接）；Hermes 自己的模型调用不经过这里。 */
+  apiKey?: string | null;
+  tools: GrantedTool[];
+  signRun?: SignRun;
+  standingInstructions: string | null;
+  computerGuidance?: string;
+  connectedVendors: readonly string[];
+  stallGuard?: StallGuard;
+  agentFetch?: AgentFetch;
+  initiator?: AuditInitiator;
+  loadAttachment?: LoadAttachment;
+  markAttachmentsSent?: MarkAttachmentsSent;
+  handoff?: HandoffForRun;
+  audience?: BotAudience;
+}): Promise<AbstractAgent> {
+  const { agent, kernel, signRun } = options;
+  if (!kernel.binding || !signRun)
+    throw new Error(
+      "Hermes requires an authenticated host tool binding before it can run.",
+    );
+  const transport = await remoteTransport(
+    {
+      id: agent.id,
+      name: agent.name,
+      type: "remote_ag_ui",
+      endpoint: kernel.url,
+      ...(kernel.token
+        ? { headers: { authorization: `Bearer ${kernel.token}` } }
+        : {}),
+      standingMessage: standingRoleMessage({
+        id: agent.id,
+        name: agent.name,
+        title: "ChisaBot assistant",
+        roleDescription: agent.systemPrompt,
+      }),
+    },
+    options.stallGuard,
+    options.agentFetch,
+    options.initiator,
+  );
+  return new HermesRuntimeAgent(transport, {
+    botId: agent.id,
+    modelId: options.model.defaultModel,
+    binding: kernel.binding,
+    signRun: (runId, threadId, previous) =>
+      signRun(agent.id, runId, threadId, previous),
+    // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
+    modelControls: async (modelId) => {
+      const [fallbacks, maxOutputTokens, supportsImages, contextWindow] =
+        await Promise.all([
+          fallbackCandidates(
+            () => fallbackCatalog(),
+            process.env,
+            () => fallbackConfigured(),
+          )(modelId).catch(() => [] as string[]),
+          resolveOutputLimit(modelId),
+          resolveModelVisionSupport(modelId),
+          resolveContextWindow(modelId),
+        ]);
+      return {
+        fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS),
+        ...(maxOutputTokens ? { maxOutputTokens } : {}),
+        ...(supportsImages === undefined ? {} : { supportsImages }),
+        ...(contextWindow ? { contextWindow } : {}),
+      };
+    },
+    finishedMetadata: (runId) => {
+      // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。
+      runHistoryRefresh(runId);
+      const compaction = historyCompactions.get(runId);
+      return compaction ? { historyCompaction: compaction } : undefined;
+    },
+    // 我们已经压缩过前文的运行，Hermes 自带的上下文压缩关掉，免得二次压缩。
+    hostCompacted: (runId) => historyCompactions.has(runId),
+    toolsFor: async (input, signal) => {
+      const passing = (await options.handoff?.(agent.id, input)) ?? [];
+      signal.throwIfAborted();
+      return [...options.tools, ...passing];
+    },
+    prepare: async (input, tools) => {
+      // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
+      const configured = builtInAgentConfiguration(
+        agent,
+        { ...options.model, useApiKey: false },
+        null,
+        [...tools],
+        options.computerGuidance,
+        options.connectedVendors,
+        options.standingInstructions,
+        undefined,
+        undefined,
+        options.audience,
+      );
+      const prompt = "prompt" in configured ? configured.prompt : undefined;
+      if (typeof prompt !== "string")
+        throw new Error("The Hermes host instructions could not be prepared.");
+      const answeredByResume = new Set(
+        (input.resume ?? []).map((entry) => entry.interruptId),
+      );
+      const existingResults = new Set(
+        input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      );
+      const resumed: Message[] = (input.resume ?? [])
+        .filter(
+          (entry) =>
+            entry.status === "resolved" &&
+            !existingResults.has(entry.interruptId),
+        )
+        .map((entry) => ({
+          id: `hermes-resume:${entry.interruptId}`,
+          role: "tool" as const,
+          toolCallId: entry.interruptId,
+          content:
+            typeof entry.payload === "string"
+              ? entry.payload
+              : JSON.stringify(entry.payload ?? null),
+        }));
+      const history = sanitizeSeededHistory(
+        [
+          ...input.messages.filter(
+            (message) =>
+              message.id !== `hermes-role:${agent.id}` &&
+              message.id !== HISTORY_SUMMARY_ID,
+          ),
+          ...resumed,
+        ],
+        answeredByResume,
+      );
+      const messages = options.loadAttachment
+        ? await inlineAttachments(
+            history,
+            options.loadAttachment,
+            input.threadId,
+            options.markAttachmentsSent,
+          )
+        : history;
+      // 长对话：按上下文窗口估算，>70% 裁剪旧工具结果 / 超长旧消息，>85% 用缓存的摘要代替较早轮次（agents/history-budget.ts）。
+      // 这一轮从不等摘要模型：没有现成摘要就只裁剪，回复结束后后台写摘要。只改这一次发出去的副本，数据库里的完整历史不动。
+      let budget: Awaited<ReturnType<typeof compactHistory>> = {
+        summary: null,
+        messages,
+        compaction: null,
+        refresh: null,
+      };
+      try {
+        let toolTokens = 0;
+        try {
+          toolTokens = Math.round(
+            JSON.stringify(
+              tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: z.toJSONSchema(tool.parameters, { io: "input" }),
+              })),
+            ).length / 4,
+          );
+        } catch {
+          toolTokens = 0;
+        }
+        const [contextWindow, previousUsage] = await Promise.all([
+          resolveContextWindow(options.model.defaultModel),
+          historyPlans.get(input.runId)
+            ? null
+            : resolvePreviousRunUsage(input.threadId),
+        ]);
+        budget = await compactHistory({
+          threadId: input.threadId,
+          runId: input.runId,
+          history: messages,
+          overheadTokens: estimateTokens([{ content: prompt }]) + toolTokens,
+          contextWindow,
+          store: historySummaryStore,
+          summarize: connectionSummarizer(
+            options.model,
+            options.apiKey ?? null,
+          ),
+          memo: historyPlans,
+          previousUsage,
+          log: (line) => console.log(JSON.stringify(line)),
+        });
+      } catch (error) {
+        console.warn(
+          JSON.stringify({
+            type: "history-budget",
+            event: "failed",
+            error:
+              error instanceof Error
+                ? reasonWithoutStatement(error).slice(0, 200)
+                : "unknown",
+          }),
+        );
+      }
+      rememberCompaction(input.runId, budget.compaction);
+      if (budget.refresh) rememberRefresh(input.runId, budget.refresh);
+      return {
+        ...input,
+        messages: [
+          { id: `hermes-role:${agent.id}`, role: "system", content: prompt },
+          ...(budget.summary ? [budget.summary] : []),
+          ...budget.messages,
+        ],
+      };
+    },
+  });
+}
+
+async function buildAgent(
+  agent: RegisteredAgent,
+  model: RuntimeModel,
+  apiKey: string | null,
+  stallGuard: StallGuard | undefined,
+  loadTools: LoadToolsForBot,
+  signRun?: SignRun,
+  computerGuidance?: string,
+  connectedVendors: readonly string[] = [],
+  selection?: ToolSelection,
+  agentFetch?: AgentFetch,
+  handoff?: HandoffForRun,
+  /** Already resolved by {@link buildAgents}, so one roster costs one read. */
+  standingInstructions: string | null = null,
+  initiator?: AuditInitiator,
+  /** How this run's attached files are inlined. See {@link buildAgents}. */
+  loadAttachment?: LoadAttachment,
+  /** How this run records that those files were sent. See {@link buildAgents}. */
+  markAttachmentsSent?: MarkAttachmentsSent,
+  /** Who the run belongs to, for the self-map. Appended last for the usual positional reason. */
+  audience?: BotAudience,
+): Promise<AbstractAgent> {
+  if (agent.type === "unavailable") {
+    return new UnavailableAgent(agent);
+  }
+
+  const granted = await loadTools(agent.id);
+  if (agentKernel.kind === "hermes" && agent.type === "built_in") {
+    return hermesKernelAgent({
+      agent,
+      kernel: agentKernel,
+      model,
+      apiKey,
+      tools: granted,
+      signRun,
+      standingInstructions,
+      computerGuidance,
+      connectedVendors,
+      stallGuard,
+      agentFetch,
+      initiator,
+      loadAttachment,
+      markAttachmentsSent,
+      handoff,
+      audience,
+    });
+  }
+
+  /*
+   * Whether narrowing can do anything here at all.
+   *
+   * A skill that declares no tools is not a unit of retrieval, and a catalogue already small enough
+   * to choose from has nothing to gain. In both cases the Bot is built exactly as it was before any
+   * of this existed: no deferral, no per-run model call, nothing to go wrong. That is most
+   * deployments on their first day, and they should not pay for a feature they are not using.
+   */
+  let skills: SelectableSkill[] = [];
+  if (selection) {
+    try {
+      skills = await selection.loadSkills(agent.id);
+    } catch {
+      // Never log the thrown value: database errors can contain connection details or row contents.
+      console.error({
+        error: "tool_selection_skill_read_failed",
+        context: { operation: "loadSkills", agentId: agent.id },
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+  const narrowing =
+    selection &&
+    skills.some((skill) => skill.tools.length > 0) &&
+    granted.length > (selection.floor ?? SELECTION_FLOOR)
+      ? selection
+      : undefined;
+
+  const diagnoseRecordFailure = (chosen: Selection<GrantedTool>) => {
+    console.error({
+      error: "tool_selection_record_failed",
+      context: {
+        operation: "record",
+        agentId: agent.id,
+        reason: chosen.reason,
+        granted: chosen.granted,
+        offered: chosen.offered.length,
+        skills: chosen.skills,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  /** Pass one and pass two, for one run. Shared by both agent kinds; each applies it differently. */
+  const offeredFor = async (
+    input: RunAgentInput,
+    signal?: AbortSignal,
+  ): Promise<GrantedTool[]> => {
+    if (!narrowing) return granted;
+    const chosen = await selectTools({
+      tools: granted,
+      skills,
+      text: latestUserText(input.messages),
+      choose: narrowing.choose,
+      signal,
+      ...(narrowing.floor === undefined ? {} : { floor: narrowing.floor }),
+    });
+    signal?.throwIfAborted();
+    // Awaited, so the row is on record before the model is handed the tools it names. A discovery
+    // written afterwards would sit in the trail after the calls it explains.
+    await narrowing.record?.(agent.id, chosen).catch(() => {
+      diagnoseRecordFailure(chosen);
+    });
+    return chosen.offered;
+  };
+
+  if (agentKernel.kind === "dsh" && agent.type === "built_in") {
+    if (!signRun) throw new Error("DSH requires an authenticated run binding.");
+    const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
+    return new DshRuntimeAgent({
+      botId: agent.id,
+      binding: agentKernel.binding,
+      tools: granted,
+      selectTools: narrowing ? offeredFor : undefined,
+      ...(model.plan ? { plan: model.plan } : {}),
+      toolsFor: async (input, signal) => {
+        const tools = (await handoff?.(agent.id, input)) ?? [];
+        signal.throwIfAborted();
+        return tools;
+      },
+      prepareInput: async (input) => ({
+        ...input,
+        messages: loadAttachment
+          ? await inlineAttachments(
+              input.messages,
+              loadAttachment,
+              input.threadId,
+              markAttachmentsSent,
+            )
+          : input.messages,
+      }),
+      signRun: (input) =>
+        signRun(
+          agent.id,
+          input.runId,
+          input.threadId,
+          runAssertionValue(input.forwardedProps),
+        ),
+      connection: {
+        provider: model.provider,
+        baseUrl:
+          model.baseUrl ??
+          (model.provider === "anthropic"
+            ? (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com")
+            : (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")),
+        apiKey,
+        useApiKey: model.useApiKey,
+        model: model.defaultModel,
+      },
+      prompt: (tools) => {
+        const configured = builtInAgentConfiguration(
+          agent,
+          { ...model, useApiKey: false },
+          null,
+          [...tools],
+          computerGuidance,
+          connectedVendors,
+          standingInstructions,
+          undefined,
+          undefined,
+          audience,
+        );
+        if (!("prompt" in configured) || typeof configured.prompt !== "string")
+          throw new Error("The ChisaBot prompt is unavailable.");
+        return configured.prompt;
+      },
+      modelInfo: async (modelId) => {
+        const [maxOutputTokens, contextWindow, supportsImages] =
+          await Promise.all([
+            resolveOutputLimit(modelId),
+            resolveContextWindow(modelId),
+            resolveModelVisionSupport(modelId),
+          ]);
+        return { maxOutputTokens, contextWindow, supportsImages };
+      },
+      fallbacks: () =>
+        fallbackCandidates(
+          () => fallbackCatalog(),
+          process.env,
+          () => fallbackConfigured(),
+        )(model.defaultModel),
+    });
+  }
+  if (agent.type === "remote_ag_ui" || agent.type === "remote_mastra") {
+    /*
+     * The remote path narrows inside its own middleware rather than by being wrapped.
+     *
+     * `.use()` middleware is applied by `runAgent`, not by `run`, so an outer agent delegating to
+     * `remote.run(input)` skips it: the endpoint would get a run with no standing role, no holdings
+     * message, no tools and no signed assertion, and every one of those failures is silent.
+     *
+     * Coordination tools are resolved for this exact run by the same loader built-in Bots use.
+     * Their executable half stays in the signed deployment callback, where current grants, source
+     * ownership and handoff lease ownership are checked again.
+     *
+     * AND THE PERSON'S STANDING INSTRUCTIONS ARE NOT SENT HERE EITHER. `standingInstructions` is
+     * built-in only, deliberately: a remote Bot composes its own prompt at somebody else's endpoint,
+     * so this deployment would be sending one person's prose to a server it does not run, with no
+     * way to know whether it is read or how it ranks against the role. See
+     * `standingInstructionsGuidance`.
+     */
+    return remoteAgentWithStandingRole(
+      agent,
+      await remoteTransport(agent, stallGuard, agentFetch, initiator),
+      granted,
+      signRun,
+      connectedVendors,
+      narrowing ? offeredFor : undefined,
+      loadAttachment,
+      markAttachmentsSent,
+      handoff,
+      initiator,
+    );
+  }
+
+  /*
+   * A built-in Bot takes its tools in its configuration, so narrowing means building it again once
+   * the message is known. The guidance it is given is generated from the tools passed here, which is
+   * what keeps a narrowed run from being told it holds something it was not offered.
+   */
+  const promptForModel = loadAttachment?.promptForModel;
+  const promptForFallback = promptForModel
+    ? (modelId: string, callOptions: unknown) =>
+        promptForModel(agent.id, modelId, callOptions)
+    : undefined;
+  const withTools = (
+    tools: GrantedTool[],
+    input?: RunAgentInput,
+    signal?: AbortSignal,
+  ) =>
+    new BuiltInAgentWithSaneHistory(
+      builtInAgentConfiguration(
+        agent,
+        model,
+        apiKey,
+        tools,
+        computerGuidance,
+        connectedVendors,
+        standingInstructions,
+        model.plan && input
+          ? new PlanModel(
+              model.plan,
+              agent.id,
+              input,
+              new Set(input.tools.map((tool) => tool.name)),
+              signal,
+            )
+          : undefined,
+        promptForFallback,
+        audience,
+      ),
+      loadAttachment,
+      markAttachmentsSent,
+    );
+
+  const whole = withTools(granted);
+  if (!narrowing && !handoff && !model.plan) return whole;
+
+  return new RunBuiltAgent(
+    { agentId: agent.id, description: agent.name },
+    whole,
+    async (input, signal) => {
+      const offered = narrowing ? await offeredFor(input, signal) : granted;
+      signal.throwIfAborted();
+      /*
+       * The tool for handing work to another Bot is made per run, not per request.
+       *
+       * It has to know which run is asking: how deep the chain already is, and which conversation an
+       * answer belongs in. Both live on the run rather than on the request, and both have to be this
+       * deployment's own statement rather than anything the model can edit. A request is earlier
+       * than a run and knows neither.
+       */
+      const passing = (await handoff?.(agent.id, input)) ?? [];
+      signal.throwIfAborted();
+      const tools = passing.length > 0 ? [...offered, ...passing] : offered;
+      // Nothing added and nothing narrowed means nothing to rebuild, and reusing the agent already
+      // built for this request keeps that path allocation-for-allocation what it was.
+      return !model.plan &&
+        tools.length === granted.length &&
+        passing.length === 0
+        ? whole
+        : withTools(tools, input, signal);
+    },
+  );
+}
+
+/**
+ * The tools a run gets for reaching past itself: handing work to another Bot, and asking a person.
+ *
+ * Given the Bot and the run, because the answers depend on both: which Bots this one has been
+ * granted, and how deep the chain it is already part of has gone. Empty means this run reaches
+ * nobody, which is the right shape for a deployment with the capability switched off.
+ *
+ * The two arrive together because a model chooses between them. Offering the way to hand work
+ * sideways without the way to stop and ask leaves the model one exit from a decision it cannot make,
+ * and it takes it: it asks a Bot that cannot settle the question either.
+ */
+export type HandoffForRun = (
+  botId: string,
+  input: RunAgentInput,
+) => Promise<readonly GrantedTool[]>;
+
+/**
+ * How a deployment narrows a Bot's tools to the ones a run is about. Absent means it does not.
+ *
+ * Three collaborators rather than one, because they fail differently and are configured in
+ * different places: the skills come from the plugin store, the choosing is a model call on the
+ * deployment's own key, and the record goes to the audit trail. A deployment missing any of them
+ * should lose the narrowing and keep the Bot, which is why `record` is optional and the other two
+ * are allowed to throw.
+ */
+export type ToolSelection = {
+  /** What this Bot's granted skills declare. Failure is diagnosed and treated as "no skills". */
+  loadSkills: (botId: string) => Promise<SelectableSkill[]>;
+  /** Pass one. Ordinary failures skip narrowing; cancellation stops the run. */
+  choose: (prompt: string, signal?: AbortSignal) => Promise<string | null>;
+  /** Writes the discovery row. Never allowed to fail a run. */
+  record?: (botId: string, selection: Selection<GrantedTool>) => Promise<void>;
+  /** Overrides the default catalogue size below which nothing is narrowed. */
+  floor?: number;
+};
+
+/**
+ * A remote AG-UI agent that states its standing role on every run.
+ *
+ * This is standard AG-UI middleware rather than a request transformation on one provider's client,
+ * so the same coworker works against any endpoint that speaks the protocol. Any copy of the standing
+ * message already in the conversation is dropped: the endpoint must receive exactly one, first,
+ * however many times the thread has been replayed.
+ *
+ * The stall watch is not here but in {@link remoteTransport}, on the fetch: this middleware works in
+ * AG-UI events and a stall is the absence of one, so the thing that has to be watched is the
+ * response body, and the fetch is where this deployment still holds it.
+ */
+/** The client `@ag-ui/mastra` asks for, taken from its own signature. See `remoteTransport`. */
+type MastraClientForBridge = Parameters<
+  typeof import("@ag-ui/mastra").getRemoteAgents
+>[0]["mastraClient"];
+
+/**
+ * How this deployment dials a remote Bot's endpoint.
+ *
+ * Both kinds come back as an `AbstractAgent`, which is the whole point of putting them here. Every
+ * control the wrapper below adds — the standing role, the holdings message, the offered tools, the
+ * signed run assertion — is written against that interface, so a Mastra Bot is governed by exactly
+ * the same code as an AG-UI one and cannot skip a control by being a different kind. A second
+ * wrapper per transport is how that stops being true, silently, three months later.
+ *
+ * Mastra is reached through `@ag-ui/mastra`, the bridge Mastra and AG-UI maintain between them,
+ * rather than through anything written here. A Mastra server speaks its own client protocol, and the
+ * mapping from that protocol to AG-UI events belongs to the people who change both ends of it.
+ * Imported dynamically so a deployment that registers no Mastra Bot never loads it.
+ */
+async function remoteTransport(
+  agent: RegisteredRemoteAgent,
+  stallGuard: StallGuard | undefined,
+  agentFetch?: AgentFetch,
+  /** Who or what started this run, so a stall is reported against them rather than nobody. */
+  initiator?: AuditInitiator,
+): Promise<AbstractAgent> {
+  // The watch wraps whichever fetch is underneath, so a deployment gets both the stall timeout and
+  // the redirect check rather than having to choose.
+  const dial = stallGuard
+    ? stallGuard.watch(
+        { id: agent.id, name: agent.name, ...(initiator ? { initiator } : {}) },
+        agentFetch,
+      )
+    : agentFetch;
+
+  if (agent.type === "remote_ag_ui") {
+    // CB-100: a connect failure before the first event becomes a terminal RUN_ERROR, not a hang.
+    return new FailFastTransport(
+      new HttpAgent({
+        url: agent.endpoint,
+        agentId: agent.id,
+        // The customer's own key, if their agent sits behind one. `HttpAgentConfig` is
+        // `{ url, headers?, fetch? }`, verified against @ag-ui/client 0.0.57.
+        ...(agent.headers ? { headers: agent.headers } : {}),
+        ...(dial ? { fetch: dial } : {}),
+      }),
+    );
+  }
+
+  const [{ MastraClient }, { getRemoteAgents }] = await Promise.all([
+    import("@mastra/client-js"),
+    import("@ag-ui/mastra"),
+  ]);
+
+  const client = new MastraClient({
+    baseUrl: agent.endpoint,
+    ...(agent.headers ? { headers: agent.headers } : {}),
+    // `MastraClient` types this as the global `fetch`, which carries `preconnect`; the watched fetch
+    // is a call signature only, and is never used as anything but a fetch.
+    ...(dial ? { fetch: dial as unknown as typeof fetch } : {}),
+  });
+
+  const roster = await getRemoteAgents({
+    /*
+     * The same class, twice, under two names.
+     *
+     * This server runs zod 4 and `@ag-ui/mastra` depends on zod 3, so the package manager resolves
+     * two peer variants of `@mastra/client-js` — identical code at identical version 1.43.0, but
+     * two nominal types to TypeScript, which tells them apart by a private field. The cast crosses
+     * that and nothing else. It is deliberately written against the bridge's own parameter type, so
+     * the day the two versions really do diverge this stops compiling instead of lying.
+     *
+     * The alternative, forcing zod 4 onto `@ag-ui/mastra` with an override, makes the type error go
+     * away by risking a real one at runtime in somebody else's package. Not worth it for a private
+     * field.
+     */
+    mastraClient: client as unknown as MastraClientForBridge,
+    /*
+     * Mastra scopes its memory by `resourceId`, and this deployment hands it the Bot rather than the
+     * person deliberately. History here is ours: it is restored from Intelligence and sanitised
+     * before every run, so nothing depends on the endpoint remembering anything. Sending the
+     * person's identity would put it on a server this deployment does not run, to drive a feature it
+     * does not use, which is the same reason standing instructions stop at the built-in path.
+     */
+    resourceId: agent.id,
+  });
+
+  const picked = pickFromRoster(Object.keys(roster), agent);
+  return new FailFastTransport(roster[picked] as AbstractAgent);
+}
+
+/**
+ * Which agent on a Mastra server a Bot means.
+ *
+ * Pure and separate from the dialling so it can be tested without a server, because the failure it
+ * prevents is not one a live test would show: picking the wrong agent produces a Bot that answers
+ * confidently as somebody else, which reads as a bad model rather than as the misconfiguration it
+ * is. Throws rather than guessing, and names what the endpoint does serve, because that is the one
+ * fact whoever is reading the error does not have.
+ */
+export function pickFromRoster(
+  served: readonly string[],
+  agent: { id: string; remoteAgentId?: string },
+): string {
+  const wanted = agent.remoteAgentId ?? agent.id;
+  if (served.includes(wanted)) {
+    return wanted;
+  }
+  /*
+   * One agent and no name asked for is the ordinary single-agent server, and taking it is what was
+   * meant. A name that was asked for and is not there is never silently replaced by the only agent
+   * present: that turns a typo into a Bot that works and is wrong.
+   */
+  const only = served.length === 1 ? served[0] : undefined;
+  if (!agent.remoteAgentId && only) {
+    return only;
+  }
+  throw new Error(
+    `Mastra endpoint for Bot "${agent.id}" serves no agent named "${wanted}". It serves: ${
+      served.join(", ") || "none"
+    }.`,
+  );
+}
+
+function remoteAgentWithStandingRole(
+  agent: RegisteredRemoteAgent,
+  /**
+   * The dialled endpoint, already built. See {@link remoteTransport}.
+   *
+   * Passed in rather than constructed here because building a Mastra transport is asynchronous and
+   * this function is not, but the better reason is that it makes the governance below indifferent
+   * to the transport: there is one wrapper, and no kind of remote Bot has its own copy of it to
+   * drift from.
+   */
+  remote: AbstractAgent,
+  /**
+   * What this Bot was granted. Governed vendor and host tools execute through the AG-UI client
+   * lifecycle here, where the grant, policy and approval context are. Coordination tools use the
+   * signed deployment callback to retain verified delegation and durable person-question routing.
+   */
+  tools: GrantedTool[] = [],
+  signRun?: SignRun,
+  /** As for the built-in path: what this deployment connects to, held or not. */
+  connectedVendors: readonly string[] = [],
+  /**
+   * Which of those tools this run is about, decided once the message is known.
+   *
+   * NARROWED HERE RATHER THAN BY WRAPPING THE AGENT, and the difference is not cosmetic. Middleware
+   * registered with `.use()` is applied by `runAgent`, not by `run`: an outer agent that delegated
+   * to `remote.run(input)` would skip this whole function's work, and the endpoint would receive a
+   * run with no standing role, no holdings message, no tools and no signed assertion. Every one of
+   * those is silent — the Bot simply answers worse — so the narrowing goes inside the middleware
+   * that is already here.
+   *
+   * Absent means no narrowing, which is the behaviour every deployment had before this existed.
+   */
+  narrow?: (input: RunAgentInput) => Promise<GrantedTool[]>,
+  /*
+   * No `agentFetch` and no `initiator` here any more, and they were not dropped: the transport this
+   * function used to build itself is now built by `remoteTransport` and handed in as `next`, and
+   * that is where both went. Passing them again would be two names for one wiring, and the second
+   * one would be the one nothing reads.
+   */
+  /**
+   * How this run's attached files are inlined, applied inside the middleware below for the reason
+   * the sanitiser is: `run` skips `.use()`. Absent means nothing is inlined.
+   */
+  loadAttachment?: LoadAttachment,
+  /** How this run records that those files were sent. See {@link buildAgents}. */
+  markAttachmentsSent?: MarkAttachmentsSent,
+  coordination?: HandoffForRun,
+  initiator?: AuditInitiator,
+) {
+  /*
+   * What this Bot holds, as a second standing message.
+   *
+   * Beside the role rather than inside it, because the role comes from the package and this comes
+   * from the grants: they change for different reasons and at different times. Sent on every run for
+   * the same reason the tools are, so switching a connector on reaches the next run.
+   *
+   * The remote path needs this more than the built-in one, not less. A framework Bot is handed the
+   * tools as an offer and decides for itself what to call, with `COMPUTER_GUIDANCE` as its whole
+   * prompt — a page about the browser that mentions connectors nowhere. That is the Bot that browsed
+   * to drive.google.com holding four Drive tools.
+   *
+   * Built from the tools this run was offered rather than from everything granted, so a narrowed
+   * run is never told it holds a system it cannot reach on this turn.
+   */
+  const holdingsMessageFor = (offered: GrantedTool[]) => {
+    const holdings = grantedToolGuidance(offered, connectedVendors);
+    return holdings
+      ? {
+          id: `granted-tools:${agent.id}`,
+          role: "system" as const,
+          content: holdings,
+        }
+      : null;
+  };
+
+  const runWith = (
+    tools: GrantedTool[],
+    input: RunAgentInput,
+    next: AbstractAgent,
+  ) => {
+    const holdingsMessage = holdingsMessageFor(tools);
+    const runAssertion = signRun
+      ? signRun(
+          agent.id,
+          input.runId,
+          input.threadId,
+          runAssertionValue(input.forwardedProps),
+        )
+      : undefined;
+    // Governed vendor/host calls use the actual AG-UI client lifecycle, so approvals capture
+    // the provider's toolCallId, messages and state. Coordination retains its signed callback.
+    const clientTools = tools.filter(
+      (tool) =>
+        typeof tool.execute === "function" &&
+        tool.name !== "message_bot" &&
+        tool.name !== "ask_person",
+    );
+    const clientNames = new Set(clientTools.map((tool) => tool.name));
+    const deploymentTools = tools
+      .filter((tool) => !clientNames.has(tool.name))
+      .map((tool) => tool.name);
+    const forwardedProps = {
+      ...(isPlainObject(input.forwardedProps) ? input.forwardedProps : {}),
+      chisabotBotId: agent.id,
+      /*
+       * Which of those tools this deployment runs, as opposed to the surface.
+       *
+       * `tools` mixes two kinds that a name cannot tell apart: the Bot's grants, which execute
+       * here through the policy and the audit trail, and the components the browser draws. A Bot
+       * that ran the second kind through this deployment asked it to execute a chart, was told it
+       * could not, and then apologised to the person for not showing the chart that was on screen
+       * in front of them. Only this side knows which is which, so only this side can say.
+       */
+      chisabotDeploymentTools: deploymentTools,
+      /*
+       * This deployment's own statement of what this run is.
+       *
+       * Signed, short-lived, and naming the Bot and the person. The agent hands it back when it
+       * calls a tool, and that is where the Bot and the actor come from: its own token says which
+       * agent is calling, and this says who it is calling for. Neither is taken from the request
+       * body any more, which is what used to make the audit trail forgeable by anything holding
+       * one shared secret.
+       */
+      ...(runAssertion
+        ? { chisabotRun: runAssertion }
+        : /*
+           * Absent means this deployment cannot sign, so the agent is given nothing to hand back
+           * and its tool calls will be refused. That is the right direction to fail: a Bot that
+           * cannot prove whose run it is should not be spending anybody's grants.
+           */
+          {}),
+    };
+    /*
+     * The same guard a built-in Bot gets in `BuiltInAgentWithSaneHistory`, applied here because a
+     * remote Bot never passes through it: this middleware is the last thing between the browser's
+     * `input.messages` and the endpoint. A framework at the other end that converts with the same
+     * SDK refuses a dangling call for the same reason, and one that does not would still be
+     * shown a call nothing is going to answer. Done inside the middleware rather than by wrapping
+     * the agent, for the reason given above `remoteAgentWithStandingRole`: `run` skips `.use()`.
+     */
+    const answeredByResume = new Set(
+      (input.resume ?? []).map((entry) => entry.interruptId),
+    );
+    const history = sanitizeSeededHistory(
+      input.messages.filter(
+        (message) =>
+          message.id !== agent.standingMessage.id &&
+          message.id !== holdingsMessage?.id,
+      ),
+      answeredByResume,
+    );
+    /*
+     * And the attached files, inlined here for the same reason that guard is here: this middleware
+     * is the last thing between the browser's `input.messages` and the endpoint, and `run` skips
+     * `.use()`. Left alone, a file reaches the endpoint as an `/api/attachments/<id>` URL on a
+     * server that holds no session here and cannot fetch it, so the Bot answers about a file it
+     * never received.
+     *
+     * ALONGSIDE THE SANITISER, NOT INSTEAD OF IT. One drops what the provider is going to refuse;
+     * this puts in front of the model what the person actually attached.
+     */
+    return from(
+      loadAttachment
+        ? inlineAttachments(
+            history,
+            loadAttachment,
+            // The conversation this run is in, which is what decides whose files it may reach.
+            input.threadId,
+            markAttachmentsSent,
+          )
+        : Promise.resolve(history),
+    ).pipe(
+      switchMap((messages) => {
+        const prepared: RunAgentInput = {
+          ...input,
+          messages: [
+            agent.standingMessage,
+            ...(holdingsMessage ? [holdingsMessage] : []),
+            ...messages,
+          ],
+          /*
+           * The Bot's own grants, added to whatever the surface offered.
+           *
+           * Sent on every run rather than configured once on the endpoint, because a grant an
+           * administrator adds or revokes has to apply to the next run and the endpoint is somebody
+           * else's process.
+           */
+          tools: [
+            ...(input.tools ?? []),
+            ...tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: z.toJSONSchema(tool.parameters) as Record<
+                string,
+                unknown
+              >,
+            })),
+          ],
+          context:
+            agent.type === "remote_mastra"
+              ? [
+                  ...callerMastraContext(input.context ?? []),
+                  ...mastraChisaBotContext({
+                    standingMessage: agent.standingMessage,
+                    holdingsMessage,
+                    botId: agent.id,
+                    deploymentTools,
+                    runAssertion,
+                  }),
+                ]
+              : input.context,
+          // Who the Bot is calling back as, so the audit row names it rather than "an agent".
+          forwardedProps,
+        };
+        if (clientTools.length === 0) return next.run(prepared);
+        return new HeadlessToolsMiddleware(
+          clientTools.map((tool) => ({
+            definition: {
+              name: tool.name,
+              description: tool.description,
+              parameters: z.toJSONSchema(tool.parameters) as Record<
+                string,
+                unknown
+              >,
+            },
+            execute: (args, context) =>
+              tool.execute(args, { signal: context.signal }),
+          })),
+          initiator,
+        ).run(prepared, next);
+      }),
+    );
+  };
+
+  /*
+   * Deferred, because choosing the tools is a model call and middleware has to answer with a stream
+   * straight away. `defer` puts the work on the subscription, which is where the run actually
+   * begins, so nothing happens until somebody is listening and a retried run chooses again.
+   */
+  return new CloningRemoteAgent(remote, (target) => {
+    target.use((input, next) => {
+      const stream = defer(() =>
+        from(
+          Promise.all([
+            narrow ? narrow(input) : Promise.resolve(tools),
+            coordination?.(agent.id, input) ?? Promise.resolve([]),
+          ]).then(([offered, coordinationTools]) => [
+            ...offered,
+            ...coordinationTools,
+          ]),
+        ).pipe(switchMap((offered) => runWith(offered, input, next))),
+      );
+      const owned =
+        !!process.env.MANAGED_AGENT_TOKEN &&
+        readCompatibleHeader(
+          new Headers(agent.headers),
+          "x-chisabot-agent-token",
+        ) === process.env.MANAGED_AGENT_TOKEN &&
+        [
+          process.env.PICKED_HARNESS_URL,
+          process.env.MANAGED_AGENT_AG_UI_URL,
+        ].some(
+          (url) =>
+            url?.replace(/\/$/, "") === agent.endpoint.replace(/\/$/, ""),
+        );
+      return owned ? observeModelConnection(stream) : stream;
+    });
+  });
+}
+
+const RESERVED_MASTRA_CONTEXT_DESCRIPTIONS = new Set([
+  "ChisaBot standing role",
+  "ChisaBot granted tools guidance",
+  "ChisaBot Bot id",
+  "ChisaBot deployment tools",
+  "ChisaBot signed run assertion",
+  "ChisaBot learned skills",
+]);
+
+function callerMastraContext(context: AgentContext[]): AgentContext[] {
+  return context.filter(
+    (entry) => !RESERVED_MASTRA_CONTEXT_DESCRIPTIONS.has(entry.description),
+  );
+}
+
+function mastraChisaBotContext({
+  standingMessage,
+  holdingsMessage,
+  botId,
+  deploymentTools,
+  runAssertion,
+}: {
+  standingMessage: StandingRoleMessage;
+  holdingsMessage: StandingRoleMessage | null;
+  botId: string;
+  deploymentTools: string[];
+  runAssertion: string | undefined;
+}): AgentContext[] {
+  return [
+    {
+      description: "ChisaBot standing role",
+      value: standingMessage.content,
+    },
+    ...(holdingsMessage
+      ? [
+          {
+            description: "ChisaBot granted tools guidance",
+            value: holdingsMessage.content,
+          },
+        ]
+      : []),
+    {
+      description: "ChisaBot Bot id",
+      value: botId,
+    },
+    {
+      description: "ChisaBot deployment tools",
+      value: JSON.stringify(deploymentTools),
+    },
+    ...(runAssertion
+      ? [
+          {
+            description: "ChisaBot signed run assertion",
+            value: runAssertion,
+          },
+        ]
+      : []),
+  ];
+}
+
+class CloningRemoteAgent extends AbstractAgent {
+  headers?: AgentHeaders;
+  private readonly remote: HeaderBearingAgent;
+
+  constructor(
+    remote: AbstractAgent,
+    private readonly attachChisaBotMiddleware: (target: AbstractAgent) => void,
+  ) {
+    super({
+      agentId: remote.agentId,
+      description: remote.description,
+      threadId: remote.threadId,
+      initialMessages: remote.messages,
+      initialState: remote.state,
+      debug: remote.debug,
+    });
+    this.remote = remote as HeaderBearingAgent;
+    if (this.remote.headers) {
+      this.headers = { ...this.remote.headers };
+    }
+    this.attachChisaBotMiddleware(this);
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    if (this.headers) {
+      this.remote.headers = { ...this.headers };
+    }
+    return this.remote.run(input);
+  }
+
+  async getCapabilities() {
+    return this.remote.getCapabilities?.() ?? {};
+  }
+
+  abortRun(): void {
+    this.remote.abortRun();
+    super.abortRun();
+  }
+
+  clone() {
+    const clonedRemote = this.remote.clone() as AbstractAgent;
+    const clone = new CloningRemoteAgent(
+      clonedRemote,
+      this.attachChisaBotMiddleware,
+    );
+    if (this.headers) {
+      clone.headers = { ...this.headers };
+    }
+    return clone;
+  }
+}
+
+/**
+ * A built-in Bot that will not hand the model provider a conversation it is going to refuse.
+ *
+ * FOUND LIVE, ON CHAT. One person's next three messages each failed with
+ * `AI_MissingToolResultsError: Tool result is missing for tool call chatcmpl-tool-8dd56dc7497c5ea9`,
+ * thrown out of the AI SDK's `convertToLanguageModelPrompt`. A frontend tool handler had been torn
+ * down while its call was open, so the agent's live messages in the browser carried an assistant
+ * message whose tool call never got a result. The durable store did not have it, nothing was going
+ * to answer it, and every retry sent it straight back up as `input.messages`. The conversation was
+ * finished until the person worked out for themselves to start another one.
+ *
+ * The guard has to be on this side of `run`. `BuiltInAgent.run` converts `input.messages` itself,
+ * with no seam in between, so wrapping the agent is the only place left to stand. The reasoning for
+ * why a dangling call is DROPPED rather than repaired, and why ids are never changed, is in
+ * `agents/history-sanitize.ts`, where the routines path found the same failure first.
+ *
+ * A RESUMED CALL IS NOT A DANGLE. `run` appends a tool result for each `input.resume` entry by
+ * `interruptId` AFTER converting the messages, so a call that a resume is about to answer must
+ * survive this pass or the appended result lands on nothing.
+ */
+class BuiltInAgentWithSaneHistory extends BuiltInAgent {
+  /**
+   * The configuration, held a second time because the base class keeps its own copy private and
+   * {@link clone} has to build another one of THIS class rather than of the base.
+   */
+  private readonly configuration: BuiltInAgentConfiguration;
+  /**
+   * How this Bot's attached files are inlined, or absent to leave them alone.
+   *
+   * Held for the same reason {@link configuration} is: {@link clone} builds another one of THIS
+   * class and everything the run depends on has to survive that.
+   */
+  private readonly loadAttachment: LoadAttachment | undefined;
+  /**
+   * How this Bot records that the files on the message it is answering were sent, or absent to
+   * record nothing. Held for the reason {@link loadAttachment} is: {@link clone} builds another one
+   * of THIS class, and a seam lost in a clone is a seam that never runs.
+   */
+  private readonly markAttachmentsSent: MarkAttachmentsSent | undefined;
+
+  constructor(
+    configuration: BuiltInAgentConfiguration,
+    loadAttachment?: LoadAttachment,
+    markAttachmentsSent?: MarkAttachmentsSent,
+  ) {
+    super(configuration);
+    this.configuration = configuration;
+    this.loadAttachment = loadAttachment;
+    this.markAttachmentsSent = markAttachmentsSent;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    const answeredByResume = new Set(
+      (input.resume ?? []).map((entry) => entry.interruptId),
+    );
+    const history = sanitizeSeededHistory(input.messages, answeredByResume);
+    const load = this.loadAttachment;
+    /*
+     * ALONGSIDE THE GUARD ABOVE, NOT INSTEAD OF IT. One drops a conversation the model provider is
+     * going to refuse; this replaces the stored reference a person's attachment arrives as with the
+     * bytes themselves, because `BuiltInAgent.run` converts `input.messages` with no seam in
+     * between and a `/api/attachments/<id>` URL is not something a model provider will go and fetch.
+     *
+     * Nothing to load means nothing to inline, and the run goes up exactly as it did before any of
+     * this existed.
+     */
+    if (!load)
+      return meterRun(() =>
+        nativeApprovalRun({ ...input, messages: history }, () =>
+          guaranteeFinalAnswer(
+            observeModelConnection(super.run({ ...input, messages: history })),
+          ),
+        ),
+      );
+    /*
+     * Deferred, because `run` has to answer with a stream straight away and reading the bytes is a
+     * database round trip. `defer` puts that read on the subscription, which is where the run
+     * actually begins, so nothing is fetched until somebody is listening.
+     */
+    return meterRun(() =>
+      defer(() =>
+        from(
+          inlineAttachments(
+            history,
+            load,
+            // As above: the run's own conversation, not the actor's channels at large.
+            input.threadId,
+            this.markAttachmentsSent,
+          ),
+        ).pipe(
+          switchMap((messages) =>
+            nativeApprovalRun({ ...input, messages }, () =>
+              guaranteeFinalAnswer(
+                observeModelConnection(super.run({ ...input, messages })),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * Carried by hand, for the same reason {@link RunBuiltAgent.clone} is.
+   *
+   * The runtime clones an agent before every run, and the base class's clone hard-codes
+   * `new BuiltInAgent(this.config)`: inherited unchanged, the very first message anybody sends
+   * would go through an agent that does none of the above. The middleware list is copied because
+   * the base clone copies it, and it is reached through a cast because `AbstractAgent` declares it
+   * private. Nothing registers middleware on a built-in Bot today, and this is here so that the day
+   * something does, it is not lost in a clone.
+   */
+  clone(): BuiltInAgentWithSaneHistory {
+    const cloned = new BuiltInAgentWithSaneHistory(
+      this.configuration,
+      this.loadAttachment,
+      this.markAttachmentsSent,
+    );
+    type WithMiddlewares = { middlewares: unknown[] };
+    (cloned as unknown as WithMiddlewares).middlewares = [
+      ...(this as unknown as WithMiddlewares).middlewares,
+    ];
+    return cloned;
+  }
+}
+
+/**
+ * An agent whose tools are decided when the run starts, because that is the first moment anybody
+ * knows what the run is about, and who is asking on whose behalf.
+ *
+ * WHY A WRAPPER AND NOT A NARROWER `loadTools`. Tools are resolved per request, and a request is
+ * earlier than a run: at that point there is a Bot and a person and no message, so there is nothing
+ * to select against. `run(input)` is the first place the message exists. Both underlying agents take
+ * their tools at construction — a built-in one in its configuration, a remote one in the middleware
+ * that sends them — so the only way to hand either a set chosen from the message is to build it
+ * after the message arrives. That is all this does: it defers `build` to the first subscription and
+ * then gets out of the way.
+ *
+ * The deferral is per subscription, so a retried run reselects rather than reusing a decision made
+ * for a message that is no longer the last one.
+ */
+class RunBuiltAgent extends AbstractAgent {
+  /**
+   * Stop must reach the pending build as well as the eventual model. Keep both in one per-run
+   * record so a late build or teardown cannot replace the next run's cancellation target.
+   */
+  private active?: { controller: AbortController; inner?: AbstractAgent };
+  /** The same Bot with nothing narrowed, kept to answer questions that are not about one run. */
+  private whole: AbstractAgent;
+  private build: (
+    input: RunAgentInput,
+    signal: AbortSignal,
+  ) => Promise<AbstractAgent>;
+
+  constructor(
+    identity: { agentId: string; description: string },
+    whole: AbstractAgent,
+    build: (
+      input: RunAgentInput,
+      signal: AbortSignal,
+    ) => Promise<AbstractAgent>,
+  ) {
+    super(identity);
+    this.whole = whole;
+    this.build = build;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return defer(() => {
+      const active: NonNullable<RunBuiltAgent["active"]> = {
+        controller: new AbortController(),
+      };
+      this.active = active;
+      const { signal } = active.controller;
+      return defer(() => this.build(input, signal)).pipe(
+        switchMap((agent) => {
+          signal.throwIfAborted();
+          active.inner = agent;
+          return agent.run(input);
+        }),
+        // Settle Stop even if a collaborator ignores the signal or rejects after cancellation.
+        takeUntil(fromEvent(signal, "abort")),
+        finalize(() => {
+          if (this.active === active) this.active = undefined;
+          active.controller.abort(PLAN_RUN_COMPLETED);
+        }),
+      );
+    });
+  }
+
+  /**
+   * What the Bot can do, answered from the un-narrowed agent.
+   *
+   * Capabilities are asked for outside a run, where there is no message and so nothing to select
+   * against. They are also a fact about the Bot rather than about one turn: a deployment that
+   * narrowed this run to three tools has not stopped supporting whatever the underlying agent
+   * supports.
+   */
+  getCapabilities() {
+    return this.whole.getCapabilities?.() ?? Promise.resolve({});
+  }
+
+  /**
+   * Carried by hand, because `AbstractAgent.clone` does not know this class exists.
+   *
+   * It builds a bare object on the prototype and copies a fixed list of base fields onto it, so
+   * every field declared here arrives `undefined`. The runtime clones an agent before every run
+   * (`agents[agentId].clone()`), which means the omission is not a corner case: without this, the
+   * first message anybody sends fails on a `build` that is not a function.
+   */
+  clone(): RunBuiltAgent {
+    const cloned = super.clone() as RunBuiltAgent;
+    cloned.whole = this.whole;
+    cloned.build = this.build;
+    // A clone owns its cancellation state, including while its build is pending.
+    cloned.active = undefined;
+    return cloned;
+  }
+
+  abortRun(): void {
+    const active = this.active;
+    active?.controller.abort();
+    active?.inner?.abortRun();
+    super.abortRun();
+  }
+}
+
+class UnavailableAgent extends AbstractAgent {
+  private reason: string;
+
+  constructor(agent: RegisteredUnavailableAgent) {
+    super({ agentId: agent.id, description: agent.name });
+    this.reason = agent.reason;
+  }
+
+  clone(): UnavailableAgent {
+    const cloned = super.clone() as UnavailableAgent;
+    // The runtime clones before running; the base clone only carries base-class fields.
+    cloned.reason = this.reason;
+    return cloned;
+  }
+
+  // Refused here rather than at the endpoint: a deleted coworker has no endpoint worth contacting,
+  // and the person is owed the reason rather than a transport error.
+  run(): never {
+    throw new Error(this.reason);
+  }
+}
+
+export async function resolveRuntimeAgents(
+  loadAgents: () => Promise<RegisteredAgent[]>,
+  model: RuntimeModel,
+  resolveModelApiKey: () => Promise<string | null>,
+  stallGuard?: StallGuard,
+  loadTools?: LoadToolsForBot,
+  signRun?: SignRun,
+  computerGuidance?: string,
+  loadVendors?: () => Promise<readonly string[]>,
+  selection?: ToolSelection,
+  agentFetch?: AgentFetch,
+  /** How a run gets its tool for handing work on. Absent means no Bot is offered one. */
+  handoff?: HandoffForRun,
+  /**
+   * Build only this one, when the caller wants only this one.
+   *
+   * A hop delivery and a routine's turn each want a single Bot, and both were resolving the whole
+   * roster to reach it: every registered Bot constructed, and a granted-tools query for each, with
+   * all but one thrown away. On a hop that is paid again on every retry. The roster is still LOADED
+   * in full, because which Bots exist for this person is what decides whether the one asked for is
+   * theirs to see at all; what narrows is what gets built.
+   */
+  onlyBotId?: string,
+  /**
+   * The standing instructions of the person this build is for.
+   *
+   * Appended after `onlyBotId` rather than beside the other per-person collaborators, because these
+   * are positional and moving one shifts every existing call site by one.
+   */
+  loadInstructions?: LoadInstructions,
+  /** Appended after `loadInstructions`, for the positional reason it gives. */
+  initiator?: AuditInitiator,
+  /**
+   * How a message's attached files are put in front of the model. Appended after `initiator`, for
+   * the same positional reason. Absent means nothing is inlined, which is what every deployment did
+   * before this existed.
+   */
+  loadAttachment?: LoadAttachment,
+  /**
+   * How a send is recorded against the files it carried. Appended after `loadAttachment`, for the
+   * same positional reason. Absent means nothing is recorded.
+   */
+  markAttachmentsSent?: MarkAttachmentsSent,
+  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  _removedLearnedSkills?: undefined,
+  loadPersonalMemory?: LoadPersonalMemory,
+  resolveConnectionForAgent?: (
+    agentId: string,
+  ) => Promise<RuntimeModelConnection>,
+  /** Appended after `resolveConnectionForAgent`, for the same positional reason it gives. */
+  audience?: BotAudience,
+): Promise<Record<string, AbstractAgent>> {
+  const all = await loadAgents();
+  if (all.length === 0) {
+    throw new Error(
+      "No agents are registered. Add one to the tenant package or the agents table.",
+    );
+  }
+  const registered =
+    onlyBotId === undefined
+      ? all
+      : all.filter((agent) => agent.id === onlyBotId);
+  // Not an error: a caller asking for a Bot this person cannot see gets an empty result and decides
+  // what that means, exactly as it would have from a roster that did not contain it.
+  if (registered.length === 0) return {};
+
+  const apiKey = registered.some((agent) => agent.type === "built_in")
+    ? await resolveModelApiKey()
+    : null;
+  return buildAgents(
+    registered,
+    model,
+    apiKey,
+    stallGuard,
+    loadTools,
+    signRun,
+    computerGuidance,
+    loadVendors,
+    selection,
+    agentFetch,
+    handoff,
+    loadInstructions,
+    initiator,
+    loadAttachment,
+    markAttachmentsSent,
+    undefined,
+    loadPersonalMemory,
+    resolveConnectionForAgent,
+    audience,
+  );
+}
+
+/** What one Bot may call, for the person whose request this is. */
+export type LoadToolsForBot = (botId: string) => Promise<GrantedTool[]>;
+
+/**
+ * The deployment's signed statement of what a run is, for the agent that will run it.
+ *
+ * A closure rather than a key passed down, so the encryption key stays in the module that owns
+ * configuration and this one never holds a secret. Shaped like `LoadToolsForBot` on purpose: both are
+ * per-actor facts resolved once per request and asked per Bot.
+ */
+export type SignRun = (
+  botId: string,
+  runId: string,
+  /** Which conversation, so a Bot handing work on cannot choose where the answer lands. */
+  threadId: string,
+  /** A prior signed delegation, verified by the deployment signer before being preserved. */
+  previousAssertion?: unknown,
+) => string;
+
+/** Who is asking. Agent visibility is decided per person, so a run has to know this first. */
+export type IdentifyActor = (request: Request) => Promise<AgentActor>;
+
+/** Loads exactly the agents one person may see, already carrying their standing roles. */
+export type LoadAgentsForActor = (
+  actor: AgentActor,
+) => Promise<RegisteredAgent[]>;
+
+/**
+ * Build the runtime's per-request agent factory.
+ *
+ * Resolution is per request, not per boot, because who may run a coworker is a property of the
+ * person asking: a private coworker must be absent for everybody else, and a role edited a moment
+ * ago must apply to the next run without a restart. Both fall out of rebuilding the map here.
+ */
+export function createRequestAgents(
+  identifyActor: IdentifyActor,
+  resolver: ActorAgentResolver,
+) {
+  return async ({ request }: { request: Request }) =>
+    resolver.resolveAgentsForActor(await identifyActor(request), {
+      initiator: personInitiatorForRequest(request),
+    });
+}
+
+/**
+ * Which surface this person's run speaks from, read off the request. The Android client declares
+ * itself in the user agent (`ChisaBotAndroid/<version> native`); anything else is the web app —
+ * browser, PWA and desktop all render the same React surface.
+ *
+ * The initiator rather than a header passed onward: the tools that ask "can this turn hang a card
+ * somebody must fill" already read it (`vault` `interactive`, GitHub `canConfirm`), so the answer
+ * travels with the turn instead of being re-derived per tool.
+ */
+export function personInitiatorForRequest(request: Request): AuditInitiator {
+  return /\bChisaBotAndroid\/[^\s]+\s+native\b/i.test(
+    request.headers.get("user-agent") ?? "",
+  )
+    ? { kind: "person", surface: "app" }
+    : PERSON_INITIATOR;
+}
+
+/**
+ * Mount the conversation runtime endpoint onto the host Hono app.
+ *
+ * `agents` is a factory rather than a fixed map so a Bot registered while the server is running is
+ * reachable on the next request. Resolving once at boot would mean every new Bot needed a restart,
+ * which is not a property you can explain to somebody who just created one.
+ */
+/**
+ * Whether this failure means "the platform has never heard of that thread".
+ *
+ * A thread id is minted before the thread exists — the platform creates it on the first run — so
+ * reading history on a brand-new conversation is the normal opening move, and the platform answers
+ * `THREAD_NOT_FOUND` with a 404. The runtime's own handler catches everything and returns a bare 500,
+ * so every new chat produced one, with a stack trace behind it.
+ *
+ * Matched on the shape rather than with `instanceof`. The class is `PlatformRequestError` and it
+ * carries `.status` for exactly this — its own documentation gives `error.status === 404` as the
+ * example — but it is not re-exported from the retired upstream runtime, and the package's `exports` map
+ * offers no subpath that reaches it, so there is no type to test against. The name is set by the
+ * constructor and the status is a number on the instance; both are checked, so an unrelated error
+ * carrying a `status` of 404 does not qualify.
+ *
+ * 404 ONLY, and nothing wider. A 500 from the platform means an outage or a bad key, and answering
+ * that with an empty history would tell the browser the conversation is gone and invite somebody to
+ * start it over. That is the failure this must not introduce while removing the noisy one.
+ */
+export function isMissingThread(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === "PlatformRequestError" &&
+    (error as { status?: unknown }).status === 404
+  );
+}
+
+/**
+ * Read a thread's history, treating a thread the platform does not know about as having none.
+ *
+ * Takes the read as a function rather than being folded into the class below, so the decision can be
+ * exercised against a function that really throws. The previous attempt at this fix
+ * (#71) was tested by re-implementing its middleware inside the test file, which passes with the real
+ * code deleted; this is the actual code path in both places.
+ */
+export async function historyOrEmpty<T>(
+  read: () => Promise<T>,
+  whenMissing: T,
+): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    if (isMissingThread(error)) return whenMissing;
+    throw error;
+  }
+}
+
+/** One mount for browser, Android compatibility and server-side handoffs. */
+export function mountConversationRuntime(
+  config: DeploymentConfig,
+  resolver: ActorAgentResolver,
+  _identifyUser: IdentifyUser,
+  identifyActor: IdentifyActor,
+  options: {
+    basePath?: string;
+    onRunBusy?: (input: { threadId: string; busy: boolean }) => void;
+    localBackend?: LocalConversationBackend;
+  } = {},
+) {
+  const backend = options.localBackend;
+  if (config.runtime.mode !== "local" || !backend) {
+    throw new Error(
+      "The local conversation backend must be initialized before mounting the runtime.",
+    );
+  }
+  if (options.basePath && options.basePath !== "/api/conversations") {
+    throw new Error(
+      "The local runtime requires /api/conversations so every request passes the owner guard.",
+    );
+  }
+  const announce = (threadId: string, busy: boolean) => {
+    try {
+      options.onRunBusy?.({ threadId, busy });
+    } catch {
+      /* Presence cannot revoke an acquired lease. */
+    }
+  };
+  return {
+    handler: createConversationRoutes({
+      backend,
+      resolver,
+      identifyActor,
+      prepareAgent: async (actorId, agent) => {
+        if (agentKernel.kind !== "dsh" || !config.dshKernel?.targetsFile)
+          return;
+        const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
+        if (agent instanceof DshRuntimeAgent)
+          await agentKernel.binding.targetFor(actorId);
+      },
+      toolsFor: async (actorId, botId, input) =>
+        agentKernel.kind === "dsh"
+          ? []
+          : ((await agentKernel.binding?.loadSurfaceTools?.({
+              actorId,
+              botId,
+              threadId: input.threadId,
+              runId: input.runId,
+              depth: 0,
+              initiator: PERSON_INITIATOR,
+            })) ?? []),
+    }),
+    runner: backend.runner,
+    threadLock: {
+      acquire: async (input: {
+        threadId: string;
+        runId: string;
+        userId: string;
+        agentId: string;
+      }) => {
+        try {
+          await backend.client.getOrCreateThread(input);
+          const held = await backend.leases.acquire(input);
+          announce(input.threadId, true);
+          return { runId: held.runId };
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "status" in error &&
+            error.status === 409
+          )
+            return null;
+          throw error;
+        }
+      },
+      renew: async (input: { threadId: string; runId: string }) => {
+        await backend.leases.renew({ ...input, ttlSeconds: 120 });
+      },
+      release: async (input: { threadId: string; runId: string }) => {
+        announce(input.threadId, false);
+        await backend.leases.release(input);
+      },
+    },
+    agentFor: async (input: {
+      actor: AgentActor;
+      botId: string;
+      initiator?: AuditInitiator;
+      depth?: number;
+    }): Promise<AbstractAgent | null> => {
+      try {
+        return await resolver.resolveAgentForActor(input.actor, input.botId, {
+          initiator: input.initiator,
+          depth: input.depth,
+        });
+      } catch (error) {
+        if (error instanceof CoworkerUnavailableError) return null;
+        throw error;
+      }
+    },
+    history: async (input: { threadId: string; actorId: string }) =>
+      (
+        await backend.client.getThreadMessages({
+          threadId: input.threadId,
+          userId: input.actorId,
+        })
+      ).messages,
+  };
+}

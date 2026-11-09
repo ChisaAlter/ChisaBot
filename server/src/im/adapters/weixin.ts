@@ -191,7 +191,7 @@ export class WeixinAdapter extends LoopAdapter {
     } catch {}
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const contextToken = String((reply.inbound.reply as { contextToken?: string }).contextToken ?? "");
     for (const chunk of reply.chunks) {
       const body = await this.post("ilink/bot/sendmessage", {

@@ -195,7 +195,7 @@ export class QqOfficialAdapter extends LoopAdapter {
     return { path: `/dms/${reply.guildId}/messages`, v2: false };
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const { path, v2 } = this.pathFor(reply.inbound);
     const msgId = (reply.inbound.reply as { msgId?: string }).msgId;
     let seq = 1;

@@ -142,7 +142,7 @@ export const computerPageFrame = pgTable(
  * 以前只存在浏览器内存里：刷新就没了、换设备看不到、时间是重放时刻、超过 200 条静默丢弃。现在由服务端
  * gateway 在动作开始时写一行（running），结束时补上结果，记录真实发生时间。
  *
- * 不对 openbot_local_threads 建外键：那几张表由 local-conversations.ts 在运行时建，迁移跑的时候不一定在。
+ * 不对 chisabot_local_threads 建外键：那几张表由 local-conversations.ts 在运行时建，迁移跑的时候不一定在。
  * 删 Bot 时由 agents/purge.ts 一并删掉；保留期由 activity-store 的定时清理负责（90 天）。
  *
  * 写进来的内容已经打过码（computer/activity-redact.ts）：密码、secret、URL 里的 token/key/code 参数、
@@ -153,9 +153,9 @@ export const computerActivitySteps = pgTable(
   {
     id: text("id").primaryKey(),
     computerId: text("computer_id").notNull(),
-    /** openbot_local_threads.id；无头 / 后台任务可能没有。 */
+    /** chisabot_local_threads.id；无头 / 后台任务可能没有。 */
     threadId: text("thread_id"),
-    /** openbot_local_runs.run_id，即一个 turn。 */
+    /** chisabot_local_runs.run_id，即一个 turn。 */
     runId: text("run_id"),
     /** 与聊天里的工具调用、computer_page_frame 对应。 */
     toolCallId: text("tool_call_id"),

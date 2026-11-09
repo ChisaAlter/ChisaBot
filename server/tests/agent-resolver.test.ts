@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import type { AuditInitiator } from "../src/audit";
 
 describe("actor-scoped agent resolver", () => {

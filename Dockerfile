@@ -23,6 +23,11 @@
 FROM node:24.18.1-bookworm-slim AS node-toolchain
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS bun-toolchain
 
+FROM node-toolchain AS dsh-deps
+WORKDIR /runtime/dsh
+COPY runtime/dsh/package.json runtime/dsh/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
 FROM ubuntu:24.04 AS base
 
 # The Bun image digest pins the amd64/arm64 release bytes, including if its tag changes.
@@ -37,7 +42,7 @@ COPY --from=bun-toolchain /usr/local/bin/bun /usr/local/bin/bun
 # browser download must change too.
 COPY agent-computer/package.json /tmp/agent-computer-package.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl unzip xz-utils \
+      ca-certificates curl unzip xz-utils util-linux \
   && ln -s bun /usr/local/bin/bunx \
   && PLAYWRIGHT_VERSION="$(node -p "require('/tmp/agent-computer-package.json').dependencies.playwright.replace(/^[^0-9]*/, '')")" \
   && test -n "$PLAYWRIGHT_VERSION" \
@@ -67,7 +72,7 @@ COPY server/package.json server/package.json
 # `shared/` walks up to a root `node_modules` that does not have them and the build fails. The hoisted
 # layout puts every package at the root, which is also the layout the running ChisaBot images have
 # always had (deploy/Dockerfile.zh installs the same way).
-RUN bun install --frozen-lockfile --linker hoisted
+RUN bun install --frozen-lockfile --omit=peer --linker hoisted
 
 # The lockfile travels with the manifest, because `--frozen-lockfile` with no lockfile in the context
 # is not an error: bun resolves afresh, succeeds, and the flag has decorated nothing. With both files
@@ -83,7 +88,7 @@ RUN mkdir -p /prod && cp package.json bun.lock /prod/ \
   && cd /prod && mkdir -p app server \
   && cp /src/app/package.json app/package.json \
   && cp /src/server/package.json server/package.json \
-  && bun install --frozen-lockfile --production --linker hoisted \
+  && bun install --frozen-lockfile --production --omit=peer --linker hoisted \
   && mkdir -p /prod/server/node_modules
 
 
@@ -149,7 +154,7 @@ WORKDIR /app
 # packages it could hoist go to the root `node_modules`, and a per-workspace `node_modules` sits
 # beside each manifest holding the rest. The server's half used to be taken from /src, which is the
 # unpruned install, so the prune above bought nothing where the server actually resolves — and
-# `@copilotkit/aimock`, a development dependency, shipped as a symlink into a store the prune had
+# a development dependency shipped as a symlink into a store the prune had
 # emptied, along with the two `.bin` shims pointing at it. Every dependency `server/package.json`
 # declares resolves from the /prod half; the ones it does not declare are absent now rather than
 # present and broken.
@@ -165,6 +170,14 @@ COPY --from=deps /src/agent-computer/node_modules agent-computer/node_modules
 COPY server server
 COPY shared shared
 COPY examples examples
+COPY --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
+COPY runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
+COPY runtime/dsh/src runtime/dsh/src
+COPY deploy/dsh deploy/dsh
+RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
+  && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
+RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
+ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 COPY agent-computer/src agent-computer/src
 COPY agent-computer/package.json agent-computer/package.json
 
@@ -175,7 +188,7 @@ COPY agent-computer/package.json agent-computer/package.json
 # instruction that could not be followed where it shipped.
 #
 # ONE FILE, NOT `scripts/`. The others there are the laptop's. `diagram` and `mock:knowledge` reach
-# for `roughjs` and `@copilotkit/aimock`, which the prune above removes; `test:ci` runs a suite that
+# for development fixtures and `roughjs`, which the prune above removes; `test:ci` runs a suite that
 # is not in the image; `generate:app-config` writes a file the build has already baked into
 # `app/dist`. Copying the directory ships four more entries with nothing to do here, to fix one that
 # has something to do.
@@ -327,7 +340,7 @@ RUN mkdir -p /workspace /profiles \
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.
 ENV EMBEDDED_POSTGRES=off
-ENV DATABASE_URL=postgres://openbot@127.0.0.1:5432/openbot
+ENV DATABASE_URL=postgres://chisabot@127.0.0.1:5432/chisabot
 
 ENV NODE_ENV=production
 ENV PORT=3001

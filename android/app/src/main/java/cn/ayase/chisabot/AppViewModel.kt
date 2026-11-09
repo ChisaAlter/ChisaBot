@@ -192,14 +192,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (stack.isNotEmpty()) return
         // loggedIn 只有退出 / 会话失效才写成 false；老版本没这个键（升级过来）按已登录处理，Cookie 不行自然回落登录页。
         if (prefs.getString("server", null).isNullOrBlank() || !prefs.getBoolean("loggedIn", true)) { stack += Screen.Login; return }
-        stack += Screen.Bots
-        viewModelScope.launch {
-            runCatching { ctx.store.data.first()[BOTS_CACHE] }.getOrNull()?.let { cached ->
-                runCatching { bots = parseBots(Api.json.parseToJsonElement(cached) as JsonArray) }
-            }
-            loadBots()
+        stack += Screen.Web(webStartPath(), "ChisaBot")
+    }
+
+    private fun webPathKey() = "webPath:${origin().orEmpty()}"
+    private fun webStartPath(): String = prefs.getString(webPathKey(), "/")?.takeIf { it.startsWith("/") && !it.startsWith("//") } ?: "/"
+    fun rememberWebPath(path: String) {
+        if (path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/auth") && !path.startsWith("/login")) {
+            prefs.edit().putString(webPathKey(), path).apply()
         }
     }
+    suspend fun renewWebSession(): Boolean = origin()?.let { renewWithDevice(it) } ?: false
 
     fun recentServers(): List<String> = runCatching {
         org.json.JSONArray(prefs.getString("recent", "[]")).let { arr -> (0 until arr.length()).map { arr.getString(it) } }
@@ -254,9 +257,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun enterApp() {
         notice = ""
-        stack.clear(); stack += Screen.Bots
-        bots = emptyList()
-        viewModelScope.launch { loadBots() }
+        stack.clear(); stack += Screen.Web(webStartPath(), "ChisaBot")
     }
 
     fun logout() {
@@ -389,11 +390,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (generation != chatGeneration) return@launch
                 val t = threadId
                 if (t != null) {
-                    val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: JsonArray(emptyList())
+                    // 先看运行状态再读历史：读到 idle 后取到的历史才包含已结算的最后一段。
+                    val inbox = runCatching { api.get("/api/conversations/threads/$t/inbox") }.getOrNull()
+                    val hist = api.get("/api/conversations/threads/$t/messages").a("messages") ?: JsonArray(emptyList())
                     if (generation != chatGeneration || threadId != t) return@launch
                     if (!running) messages = parseHistory(hist)
-                    val inbox = runCatching { api.get("/api/copilotkit/threads/$t/inbox") }.getOrNull()
-                    if (generation != chatGeneration || threadId != t) return@launch
                     if (inbox?.get("running")?.toString() == "true" && !running) watch(bot, t)
                     kickConfirms()
                 }
@@ -417,10 +418,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 while (true) {
                     delay(1500)
                     if (chatBot?.id != bot.id || threadId != t || screen !is Screen.Chat) break
-                    val hist = api.get("/api/copilotkit/threads/$t/messages").a("messages") ?: break
+                    val inbox = api.get("/api/conversations/threads/$t/inbox")
+                    val hist = api.get("/api/conversations/threads/$t/messages").a("messages") ?: break
                     if (generation != chatGeneration || threadId != t) break
                     messages = parseHistory(hist)
-                    val inbox = api.get("/api/copilotkit/threads/$t/inbox")
                     if (inbox["running"]?.toString() != "true") break
                 }
             } catch (_: Exception) { } finally {
@@ -442,7 +443,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         nc to nt
     }
 
-    /** 发一条：没有会话就先建，带上传好的附件（AG-UI image / document 段），然后 POST /api/copilotkit/agent/<bot>/run 读事件流。 */
+    /** 发一条：没有会话就先建，带上传好的附件（AG-UI image / document 段），然后 POST /api/conversations/agent/<bot>/run 读事件流。 */
     suspend fun send(text: String): Boolean {
         val bot = chatBot ?: return false
         val api = api ?: return false
@@ -500,7 +501,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         var lastPush = 0L
         try {
-            api.stream("/api/copilotkit/agent/${bot.id}/run", body, onCall = {
+            api.stream("/api/conversations/agent/${bot.id}/run", body, onCall = {
                 if (generation == chatGeneration) liveCall = it else it.cancel()
             }) { event ->
                 reducer.apply(event)
@@ -532,7 +533,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 liveCall = null
                 kickConfirms()
                 // 读一次服务器存下的历史，让本机和别的设备一致（含 MESSAGES_SNAPSHOT 之外的整理）
-                if (threadId == t) runCatching { api.get("/api/copilotkit/threads/$t/messages").a("messages") }.getOrNull()?.let {
+                if (threadId == t) runCatching { api.get("/api/conversations/threads/$t/messages").a("messages") }.getOrNull()?.let {
                     val parsed = parseHistory(it)
                     if (generation == chatGeneration && threadId == t && !running && parsed.isNotEmpty()) messages = parsed
                 }
@@ -550,7 +551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val generation = chatGeneration
         stopping = true
         viewModelScope.launch {
-            runCatching { api.post("/api/copilotkit/agent/${bot.id}/stop/$t") }
+            runCatching { api.post("/api/conversations/agent/${bot.id}/stop/$t") }
             delay(400)
             if (generation != chatGeneration) return@launch
             liveCall?.cancel()
@@ -564,7 +565,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun truncate(api: Api, t: String, fromId: String, mode: String) {
         try {
-            api.post("/api/copilotkit/threads/$t/truncate", buildJsonObject { put("fromMessageId", fromId); put("mode", mode) })
+            api.post("/api/conversations/threads/$t/truncate", buildJsonObject { put("fromMessageId", fromId); put("mode", mode) })
         } catch (e: ApiError) {
             throw IllegalStateException(when (e.status) {
                 409 -> e.message?.takeIf { Regex("[\\u4e00-\\u9fa5]").containsMatchIn(it) } ?: "机器人正在回答，等它说完再试。"
@@ -815,9 +816,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (!running) viewModelScope.launch {
                 delay(1200)
                 val bot = chatBot ?: return@launch
-                val inbox = runCatching { api.get("/api/copilotkit/threads/$t/inbox") }.getOrNull()
+                val inbox = runCatching { api.get("/api/conversations/threads/$t/inbox") }.getOrNull()
                 if (inbox?.get("running")?.toString() == "true" && !running && threadId == t) watch(bot, t)
-                else if (threadId == t) runCatching { api.get("/api/copilotkit/threads/$t/messages").a("messages") }.getOrNull()?.let { if (!running) messages = parseHistory(it) }
+                else if (threadId == t) runCatching { api.get("/api/conversations/threads/$t/messages").a("messages") }.getOrNull()?.let { if (!running) messages = parseHistory(it) }
             }
             true
         } catch (_: Unauthorized) { expired(); false }

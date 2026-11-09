@@ -7,7 +7,7 @@ describe("TEST_DATABASE_URL isolation", () => {
     const databaseUrl = testDatabaseUrl();
     const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
     process.env.DATABASE_URL =
-      "postgres://openbot:openbot@localhost:5432/openbot";
+      "postgres://chisabot:chisabot@localhost:5432/chisabot";
 
     const first = createDatabase(databaseUrl, TEST_POOL);
     try {

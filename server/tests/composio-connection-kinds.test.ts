@@ -603,7 +603,7 @@ const NO_PROBE_APP = {
 
 /** The Bot a brokered call is made as, which is the only way to reach the per-person gate. */
 const botId = `agent_kinds_${suite}`;
-const admin = "admin@openbot.local";
+const admin = "admin@chisabot.local";
 
 const APP_IDS = [...Object.values(APP).map((app) => app.id), NO_PROBE_APP.id];
 const TOOLKITS = [

@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import sharp from "sharp";
 import type { AppVariables } from "./auth/guards";
 import type { Database } from "./db/client";
 
@@ -38,7 +39,10 @@ export async function createChatShots(database: Database) {
 
   /** 机器人被删时一起删（也给测试清理用）。 */
   async function removeForBot(ownerUserId: string, botId: string) {
-    await database.$client.unsafe("DELETE FROM chisabot_chat_shots WHERE owner_user_id = $1 AND bot_id = $2", [ownerUserId, botId]);
+    await database.$client.unsafe(
+      "DELETE FROM chisabot_chat_shots WHERE owner_user_id = $1 AND bot_id = $2",
+      [ownerUserId, botId],
+    );
   }
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
@@ -47,13 +51,27 @@ export async function createChatShots(database: Database) {
     app.put("/:id", async (c) => {
       const id = c.req.param("id");
       if (!ID.test(id)) return c.json({ error: "截图 id 不对" }, 400);
-      const body = (await c.req.json().catch(() => null)) as { dataUrl?: unknown; botId?: unknown; url?: unknown } | null;
-      const match = typeof body?.dataUrl === "string" ? /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(body.dataUrl) : null;
+      const body = (await c.req.json().catch(() => null)) as {
+        dataUrl?: unknown;
+        botId?: unknown;
+        url?: unknown;
+      } | null;
+      const match =
+        typeof body?.dataUrl === "string"
+          ? /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(
+              body.dataUrl,
+            )
+          : null;
       if (!match) return c.json({ error: "只收 JPEG / PNG / WebP 图片" }, 400);
       const bytes = Buffer.from(match[2]!, "base64");
-      if (bytes.length === 0 || bytes.length > MAX_BYTES) return c.json({ error: "截图太大" }, 413);
-      const botId = typeof body?.botId === "string" ? body.botId.slice(0, 200) : null;
-      const url = typeof body?.url === "string" && /^(https?:|file:)/i.test(body.url) ? body.url.slice(0, 2000) : null;
+      if (bytes.length === 0 || bytes.length > MAX_BYTES)
+        return c.json({ error: "截图太大" }, 413);
+      const botId =
+        typeof body?.botId === "string" ? body.botId.slice(0, 200) : null;
+      const url =
+        typeof body?.url === "string" && /^(https?:|file:)/i.test(body.url)
+          ? body.url.slice(0, 2000)
+          : null;
       await database.$client.unsafe(
         `INSERT INTO chisabot_chat_shots (id, owner_user_id, bot_id, url, mime, data) VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (owner_user_id, id) DO UPDATE SET bot_id = EXCLUDED.bot_id, url = EXCLUDED.url, mime = EXCLUDED.mime, data = EXCLUDED.data`,
@@ -65,8 +83,11 @@ export async function createChatShots(database: Database) {
     app.get("/:id", async (c) => {
       const id = c.req.param("id");
       if (!ID.test(id)) return c.json({ error: "没有这张截图" }, 404);
-      const rows = await database.$client.unsafe<{ mime: string; data: Uint8Array; url: string | null }[]>(
-        "SELECT mime, data, url FROM chisabot_chat_shots WHERE owner_user_id = $1 AND id = $2", [c.var.actor.id, id],
+      const rows = await database.$client.unsafe<
+        { mime: string; data: Uint8Array; url: string | null }[]
+      >(
+        "SELECT mime, data, url FROM chisabot_chat_shots WHERE owner_user_id = $1 AND id = $2",
+        [c.var.actor.id, id],
       );
       const row = rows[0];
       if (!row) return c.json({ error: "没有这张截图" }, 404);
@@ -82,5 +103,26 @@ export async function createChatShots(database: Database) {
     return app;
   }
 
-  return { routes, removeForBot, prune };
+  async function saveScreenshot(
+    ownerUserId: string,
+    botId: string,
+    id: string,
+    frame: { base64: string; url?: string },
+  ) {
+    if (!ID.test(id)) throw new Error("Invalid screenshot call identity.");
+    const data = await sharp(Buffer.from(frame.base64, "base64"))
+      .resize({ width: 960, withoutEnlargement: true })
+      .jpeg({ quality: 76 })
+      .toBuffer();
+    if (data.length > MAX_BYTES)
+      throw new Error("Screenshot exceeds the storage limit.");
+    await database.$client.unsafe(
+      `INSERT INTO chisabot_chat_shots(id,owner_user_id,bot_id,url,mime,data) VALUES($1,$2,$3,$4,'image/jpeg',$5)
+      ON CONFLICT(owner_user_id,id) DO UPDATE SET data=EXCLUDED.data,url=EXCLUDED.url,mime=EXCLUDED.mime`,
+      [id, ownerUserId, botId, frame.url ?? null, data],
+    );
+    await prune(ownerUserId);
+    return { ok: true, shown: true, url: frame.url ?? null };
+  }
+  return { routes, removeForBot, prune, saveScreenshot };
 }

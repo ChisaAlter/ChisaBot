@@ -1,10 +1,4 @@
 import type { ActivityMessage, Message } from "@ag-ui/core";
-import type { Attachment } from "@copilotkit/react-core/v2";
-import {
-  useCopilotChatConfiguration,
-  useRenderActivityMessage,
-  useRenderToolCall,
-} from "@copilotkit/react-core/v2";
 import {
   IconAlertTriangle,
   IconBox,
@@ -31,8 +25,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { BotBubbles, ReplyQuote, type ReplyTarget } from "@/components/chat/bot-bubbles";
-import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import type { VirtualizerHandle } from "virtua";
+import {
+  type VirtualCell,
+  VirtualTranscriptControls,
+  VirtualTranscriptRows,
+} from "@/components/channels/virtual-transcript";
+import {
+  BotBubbles,
+  ReplyQuote,
+  type ReplyTarget,
+} from "@/components/chat/bot-bubbles";
 import {
   ConfirmResumeRow,
   confirmResumeId,
@@ -48,7 +51,6 @@ import {
 } from "@/components/chat/message-actions";
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
-import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import {
   NoAnswerRow,
   PausedCapsule,
@@ -95,6 +97,7 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
+import { approvalInboxOptions } from "@/lib/approvals";
 import {
   attachmentThumbUrl,
   attachmentUrl,
@@ -103,30 +106,33 @@ import {
 import { isMessageHeld } from "@/lib/channels/focus-message";
 import { readWakeUpTurn } from "@/lib/channels/follow-up-turn";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
-import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { readFiring } from "@/lib/channels/routine-firing";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { contentGap, nextBlankHeight } from "@/lib/chat/blank-release";
-import { friendlyError, UNANSWERED_TURN_REASON } from "@/lib/chat/friendly-error";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
+import {
+  friendlyError,
+  UNANSWERED_TURN_REASON,
+} from "@/lib/chat/friendly-error";
 import { supersededPageCalls } from "@/lib/chat/page-cards";
+import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import {
+  useRenderActivityMessage,
+  useRenderToolCall,
+} from "@/lib/chat/renderers";
 import {
   previousSentAt,
   rememberSent,
+  type SentAtReading,
   staysInSameTurn,
   takeSendWhileBusy,
-  type SentAtReading,
 } from "@/lib/chat/send-scroll";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
+import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
-import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
 import { splitVirtualTail } from "@/lib/chat/virtual-transcript";
 import { useVirtualTranscript } from "@/lib/chat/virtual-transcript-flag";
-import {
-  type VirtualCell,
-  VirtualTranscriptControls,
-  VirtualTranscriptRows,
-} from "@/components/channels/virtual-transcript";
-import type { VirtualizerHandle } from "virtua";
 import {
   isBlankNote,
   isWorkCall,
@@ -136,10 +142,10 @@ import {
   workCallFailed,
   workCallInterrupted,
 } from "@/lib/chat/work-steps";
-import { approvalInboxOptions } from "@/lib/approvals";
 import { useThreadConfirmations } from "@/lib/confirmations";
-import { isEditableUserText } from "@/lib/copilot/regenerate";
-import { useReadMark } from "@/lib/copilot/thread-inbox";
+import { isEditableUserText } from "@/lib/conversations/regenerate";
+import { useRenderUiPreload } from "@/lib/conversations/render-ui-preload";
+import { useReadMark } from "@/lib/conversations/thread-inbox";
 import {
   type CardChecks,
   isLineOnlyRender,
@@ -149,8 +155,8 @@ import {
   unfinishedToolText,
   useActivityRenderers,
   useToolRenderers,
-} from "@/lib/copilot/tool-renderers";
-import { WORKER_RESULT_MARKER } from "@/lib/copilot/workers";
+} from "@/lib/conversations/tool-renderers";
+import { WORKER_RESULT_MARKER } from "@/lib/conversations/workers";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
@@ -160,6 +166,7 @@ import {
   REFUSAL_MARKER,
   toolResultFailed,
 } from "@/lib/plugins/tool-result";
+import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { cn } from "@/lib/utils";
 import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
 import { SCHEDULE_MARKER } from "../../../../shared/schedules";
@@ -177,7 +184,6 @@ import { splitChatOrigin } from "./chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";
-import { useRenderUiPreload } from "@/lib/copilot/render-ui-preload";
 
 type ChatTranscriptProps = {
   busy?: boolean;
@@ -377,7 +383,13 @@ function RestoringTranscript() {
 function Thinking({ since }: { since: number }) {
   // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
   // 读屏读到的「思考中」在对话末尾那个一直挂着的 role=status 里（transcript-live-status），胶囊自己不带。
-  return <StatusCapsule label={"思考中"} since={since} testId="transcript-thinking" />;
+  return (
+    <StatusCapsule
+      label={"思考中"}
+      since={since}
+      testId="transcript-thinking"
+    />
+  );
 }
 
 /**
@@ -432,7 +444,7 @@ function Stopped({
           </>
         ) : null}
       </div>
-      {onRetry ? (
+      {onRetry && friendly.retryable ? (
         <button className="chat-error-retry" onClick={onRetry} type="button">
           <IconRefresh className="size-3.5" />
           {"重试"}
@@ -821,18 +833,16 @@ function SettleAtEnd({
             content.offsetHeight - blankArea(content, s.slack) - s.lastRows;
           const keep = blank - Math.max(0, growth);
           setSlack(keep > 0 ? keep + gap : 0);
-          element.style.scrollBehavior = "auto";
-          scrollToEnd({ behavior: "auto" });
+          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
           if (
             wasAtBottom &&
             blank > 0 &&
             Math.abs(element.scrollTop - before) <= 2
           )
             element.scrollTop = before;
-          element.style.scrollBehavior = "";
         } else {
           setSlack(0);
-          scrollToEnd({ behavior: "auto" });
+          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
         }
       } else {
         s.until = 0;
@@ -1062,9 +1072,12 @@ function SettleAtEnd({
       if (held()) return;
       const max = element.scrollHeight - element.clientHeight;
       if (element.scrollTop >= max - 1) return;
-      element.style.scrollBehavior = "auto";
-      element.scrollTop = max;
-      element.style.scrollBehavior = "";
+      // Follow growing content with the scroller's native motion. An error card or a
+      // buffered message can add more than a line; snapping to max moved history >150px.
+      element.scrollTo({
+        top: max,
+        behavior: reduceMotion ? "auto" : "smooth",
+      });
     };
     const look = () => {
       reflowed();
@@ -1090,6 +1103,7 @@ function SettleAtEnd({
         "[data-message-scroller-spacer]",
       );
       const ok =
+        s.busy &&
         seen.atBottom &&
         !s.releasing &&
         !active() &&
@@ -1167,22 +1181,13 @@ function SettleAtEnd({
           element.style.scrollBehavior = "auto";
           element.scrollTop = seen.top;
           element.style.scrollBehavior = "";
-        } else if (
-          grew > use &&
-          seen.atBottom &&
-          !s.restore &&
-          !anchoring()
-        ) {
+        } else if (grew > use && seen.atBottom && !s.restore && !anchoring()) {
           stickToBottom();
         }
-      } else if (
-        grew > 0 &&
-        seen.atBottom &&
-        !s.restore &&
-        !anchoring()
-      ) {
+      } else if (grew > 0 && seen.atBottom && !s.restore && !anchoring()) {
         stickToBottom();
       } else if (
+        s.busy &&
         grew < 0 &&
         !recentlyTouched &&
         seen.atBottom &&
@@ -1213,6 +1218,7 @@ function SettleAtEnd({
        */
       const max = element.scrollHeight - element.clientHeight;
       if (
+        s.busy &&
         seen.atBottom &&
         !s.releasing &&
         !active() &&
@@ -1352,7 +1358,12 @@ function SettleAtEnd({
         total,
       );
       if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
-      if (total <= 1) return why("none");
+      if (total <= 1) {
+        // Even a zero-height elastic slack can retain the previous content min-height.
+        // Once idle, a collapsed row must not recreate that floor on the next resize.
+        if (s.floor !== null) setSlack(0);
+        return why("none");
+      }
       s.releasing = true;
       element.dataset.cbRelease = `release:${Math.round(total)}`;
       // 1) 滚动容器的空挪进留白（同一帧），2) 让它改成跟着底部（spacer 清零，位置不变）。
@@ -1727,7 +1738,8 @@ function FollowUpFiring({
       <IconClock aria-hidden className="size-4 shrink-0 translate-y-0.5" />
       <div className="min-w-0">
         <p>
-          <span className="font-medium">{"定时任务已运行。"}</span> {turn.reason}
+          <span className="font-medium">{"定时任务已运行。"}</span>{" "}
+          {turn.reason}
         </p>
         {turn.instruction ? (
           <p className="whitespace-pre-wrap">{turn.instruction}</p>
@@ -1775,7 +1787,10 @@ export type MemoryPillItem = {
   action: "save" | "update" | "log";
 };
 
-function splitUserQuote(raw: string): { quote?: string | undefined; body: string } {
+function splitUserQuote(raw: string): {
+  quote?: string | undefined;
+  body: string;
+} {
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   let q = 0;
   while (q < lines.length && /^\s{0,3}>\s?/.test(lines[q] ?? "")) q++;
@@ -1851,12 +1866,16 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
     setUndoError(null);
     try {
       if (item.noteId && item.noteId.startsWith("mem_")) {
-        const response = await fetch(`/api/memory-notes/${encodeURIComponent(item.noteId)}`, {
-          method: "DELETE",
-          credentials: "include",
-        });
+        const response = await fetch(
+          `/api/memory-notes/${encodeURIComponent(item.noteId)}`,
+          {
+            method: "DELETE",
+            credentials: "include",
+          },
+        );
         // 删除失败（网络、权限、已被删）不能显示「已撤销」，否则用户以为记忆没了，其实还在。
-        if (!response.ok && response.status !== 404) throw new Error(`撤销失败（${response.status}）`);
+        if (!response.ok && response.status !== 404)
+          throw new Error(`撤销失败（${response.status}）`);
       }
       setUndoneIds((prev) => ({ ...prev, [item.id]: true }));
     } catch (error) {
@@ -1880,9 +1899,14 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
               onClick={() => setActive(item)}
               type="button"
             >
-              <IconSparkles aria-hidden="true" className="size-3.5 shrink-0 text-amber-400" />
+              <IconSparkles
+                aria-hidden="true"
+                className="size-3.5 shrink-0 text-amber-400"
+              />
               <span className="chat-memory-pill-text truncate">
-                {isUndone ? `已撤销记忆：${item.summary}` : `已记住：${item.summary}`}
+                {isUndone
+                  ? `已撤销记忆：${item.summary}`
+                  : `已记住：${item.summary}`}
               </span>
               <span className="chat-memory-pill-cta">
                 {isUndone ? "已撤销" : "点击查看/撤销"}
@@ -1904,7 +1928,10 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
         {active ? (
           <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
             <div className="flex items-center gap-2 pb-2">
-              <IconSparkles aria-hidden="true" className="size-4 text-amber-400" />
+              <IconSparkles
+                aria-hidden="true"
+                className="size-4 text-amber-400"
+              />
               <DialogTitle className="text-base">{"记忆写入详情"}</DialogTitle>
             </div>
             <div className="space-y-3 text-sm">
@@ -1917,7 +1944,6 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                     {`对象：${active.subject}`}
                   </span>
                 ) : null}
-
               </div>
               <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
                 {active.summary}
@@ -1925,7 +1951,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
               <div className="flex items-center justify-between pt-2">
                 {/*
                  * 用路由内跳转，并先关掉弹窗（CB-106）。原来是 <a href>：在打开的模态弹窗里整页重载，
-                 * 整个应用（对话、CopilotKit 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
+                 * 整个应用（对话、会话客户端 连接、几千条记忆）从头再来一遍，s2 里这一下把标签页拖崩过。
                  */}
                 <Link
                   className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
@@ -1936,7 +1962,10 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                   {"管理全部长期记忆 →"}
                 </Link>
                 {undoneIds[active.id] ? (
-                  <span className="text-xs font-medium text-emerald-400" data-testid="memory-undone-status">
+                  <span
+                    className="text-xs font-medium text-emerald-400"
+                    data-testid="memory-undone-status"
+                  >
                     {"✓ 已从长期记忆中撤销"}
                   </span>
                 ) : (
@@ -1953,7 +1982,11 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                 )}
               </div>
               {undoError ? (
-                <p className="text-xs text-destructive" data-testid="memory-undo-error" role="alert">
+                <p
+                  className="text-xs text-destructive"
+                  data-testid="memory-undo-error"
+                  role="alert"
+                >
                   {undoError}
                 </p>
               ) : null}
@@ -2041,21 +2074,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
 }: TranscriptMessageProps) {
   const [editing, setEditing] = useState(false);
   const isUser = role === "user";
-  if (!isUser && tone === "step") {
-    return (
-      <MessageRow align="start">
-        <MessageContent>
-          <Arriving animate={animate} delay={delay}>
-            <div className="chat-step-line" data-cb-turn="step">
-              <SmoothStreamdown components={markdownComponents}>
-                {text}
-              </SmoothStreamdown>
-            </div>
-          </Arriving>
-        </MessageContent>
-      </MessageRow>
-    );
-  }
+  // Visible assistant text always uses the same bubbles, including a live or interrupted
+  // intermediate message. compactTurns owns whether narration is folded into the work row.
   /*
    * Checked before anything else a person's message gets. A firing is not a person's message: the
    * chip split, the end alignment and the bubble are all wrong for it, and each one of them would
@@ -2165,7 +2185,8 @@ const TranscriptMessage = memo(function TranscriptMessage({
                            * breaks the line it is in reads as a separate message.
                            */}
                           <span className="mr-1 inline-flex items-center gap-1 rounded bg-foreground/10 px-1.5 py-0.5 align-middle font-mono text-foreground/80 text-xs">
-                            <IconBox className="size-3 shrink-0" />/{invoked.chip}
+                            <IconBox className="size-3 shrink-0" />/
+                            {invoked.chip}
                           </span>
                           {invoked.rest}
                         </>
@@ -2196,7 +2217,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
             editable && messageId ? (
               <div className="chat-msg-actions" data-align="end">
                 {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
-                <QuoteReplyAction messageId={messageId} role="user" text={said} />
+                <QuoteReplyAction
+                  messageId={messageId}
+                  role="user"
+                  text={said}
+                />
                 <EditAction onEdit={() => setEditing(true)} />
               </div>
             ) : null
@@ -2204,7 +2229,11 @@ const TranscriptMessage = memo(function TranscriptMessage({
             canRegenerate ? (
               <div className="chat-msg-actions">
                 {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
-                <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
+                <QuoteReplyAction
+                  messageId={messageId}
+                  role="assistant"
+                  text={text}
+                />
                 <RegenerateAction />
               </div>
             ) : null
@@ -2609,7 +2638,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
    *
    * `toVisibleChatItems` passes on whatever a `url` source carried, and nothing between here and
    * the wire narrows it. A sent message only ever carries the relative form — `shared/attachments.ts`
-   * says the url "is never fetched by a provider", and `copilot.ts` swaps the source for the bytes
+   * says the url "is never fetched by a provider", and 服务端的附件解析器 swaps the source for the bytes
    * as the run is built — so an absolute url arriving here did not come from this app's composer,
    * and putting it in `src` would have the reader's browser fetch a third party the instant the
    * transcript drew, announcing to whoever owns it that this person opened this channel.
@@ -2947,7 +2976,9 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
          * drawn the way a Bot's prose is drawn.
          */}
         <ToolTurnEndedContext.Provider value={turnEnded}>
-          {turnEnded && result === undefined && registeredCardChecks.has(name) ? (
+          {turnEnded &&
+          result === undefined &&
+          registeredCardChecks.has(name) ? (
             <UnfinishedTool name={name} />
           ) : (
             (drawn ?? <ServerToolLine name={name} result={result} />)
@@ -2964,7 +2995,10 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
  */
 export function UnfinishedTool({ name }: { name: string }) {
   return (
-    <p className="my-1.5 text-muted-foreground text-xs" data-testid="tool-unfinished">
+    <p
+      className="my-1.5 text-muted-foreground text-xs"
+      data-testid="tool-unfinished"
+    >
       {unfinishedToolText(name)}
     </p>
   );
@@ -3233,7 +3267,9 @@ export function ChatTranscript({
    * cost was markdown parsing and chart SVGs, and those are skipped by the memoised children below,
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
-  const items = groupBrowserSteps(toVisibleChatItems(collapseScheduleRuns(messages)));
+  const items = groupBrowserSteps(
+    toVisibleChatItems(collapseScheduleRuns(messages)),
+  );
   // render_ui 渲染面：历史里已有卡片就立即预载（不等 capabilities）；其余情况 RenderUiTool 空闲时预载。
   useRenderUiPreload(messages);
   /*
@@ -3274,7 +3310,7 @@ export function ChatTranscript({
    * 确认卡 / 审批卡挂在哪些工具调用上：简单回合（下面）和「这一轮有没有回答」都要用。确认列表和确认卡片用同一份
    * 缓存（同一个 queryKey），审批收件箱和行内审批卡也是同一份，不多发请求。
    */
-  const chatConfig = useCopilotChatConfiguration();
+  const chatConfig = useConversationScope();
   const chatThreadId = chatConfig?.threadId ?? null;
   const hasTools = items.some((item) => item.kind === "tool");
   const confirmations = useThreadConfirmations(
@@ -3334,7 +3370,8 @@ export function ChatTranscript({
   const runningKeyRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     const previous = runningKeyRef.current;
-    if (previous !== null && previous !== runningKey) markTurnRunEnded(previous);
+    if (previous !== null && previous !== runningKey)
+      markTurnRunEnded(previous);
     runningKeyRef.current = runningKey;
   }, [runningKey]);
   const showToolActivity = useToolActivityVisible();
@@ -3603,7 +3640,9 @@ export function ChatTranscript({
       if (flash()) return;
       if (virtualRef.current) {
         // 虚拟化下那一行可能没挂：先经数据层滚过去，挂上后再闪。
-        if (dataLayerRef.current?.scrollToMessage(owner.id, { align: "center" }))
+        if (
+          dataLayerRef.current?.scrollToMessage(owner.id, { align: "center" })
+        )
           requestAnimationFrame(() => requestAnimationFrame(flash));
         return;
       }
@@ -3665,7 +3704,8 @@ export function ChatTranscript({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const anchorOffset = paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
+  const anchorOffset =
+    paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
 
   return (
     <MessageScrollerProvider
@@ -3677,7 +3717,7 @@ export function ChatTranscript({
         <MessageScrollerViewport
           ref={viewportRef}
           // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
-          className="[overflow-anchor:auto]"
+          className="scroll-smooth motion-reduce:scroll-auto [overflow-anchor:auto]"
         >
           <MessageScrollerContent
             aria-busy={busy}
@@ -3865,8 +3905,7 @@ export function ChatTranscript({
     const fallback = compact.fallbackAfter.get(item.id);
     // 「这一轮没有回答」：最后一轮已经有错误卡（带重试）时不再挂一遍。
     const noAnswer = compact.noAnswerAfter.get(item.id);
-    const noAnswerHere =
-      noAnswer !== undefined && !(noAnswer.last && tailStop);
+    const noAnswerHere = noAnswer !== undefined && !(noAnswer.last && tailStop);
     const hidden = rowHidden(item.id);
     const row = hidden
       ? foldedRef.current.has(item.id)
@@ -3886,11 +3925,7 @@ export function ChatTranscript({
           messageId={`${item.id}:no-answer`}
         >
           <NoAnswerRow
-            onRetry={
-              noAnswer?.last && !live
-                ? onRetryUnanswered
-                : undefined
-            }
+            onRetry={noAnswer?.last && !live ? onRetryUnanswered : undefined}
           />
         </MessageScrollerItem>
       ) : null,
@@ -4183,7 +4218,7 @@ export function lastAnswerId(
 }
 
 /**
- * 一轮收成「开场一句 → 结果」（频道聊天版，规则与 lib/copilot/turn-compaction.ts 相同，2026-10-13 第四轮）。
+ * 一轮收成「开场一句 → 结果」（频道聊天版，规则与 lib/conversations/turn-compaction.ts 相同，2026-10-13 第四轮）。
  *
  *  - 每轮第一段助手文字 = 开场一句（气泡，没有复制）；
  *  - 结果 = 最后一段文字，且它后面没有再调工具 / 开网页；这一轮还在跑或被用户停掉时没有结果；
@@ -4261,7 +4296,10 @@ export function toolDrawsCard(
     const check = renderer.name === name ? checks.get(name) : undefined;
     if (!check) return true;
     if (tool.result === undefined) return live;
-    return check({ args: tool.toolCall.function.arguments, result: tool.result });
+    return check({
+      args: tool.toolCall.function.arguments,
+      result: tool.result,
+    });
   }
   return isHostAccessRefusal(tool.toolCall.function.name, tool.result);
 }
@@ -4313,7 +4351,9 @@ export function compactTurns(
   const liveTools = new Set<string>();
   let liveKey: string | null = null;
   const formatQuoteText = (raw: string): string => {
-    const clean = (splitChatOrigin(raw)?.text ?? raw).replace(/\s+/g, " ").trim();
+    const clean = (splitChatOrigin(raw)?.text ?? raw)
+      .replace(/\s+/g, " ")
+      .trim();
     return clean.length > 64 ? `${clean.slice(0, 63)}…` : clean;
   };
   // 一轮的开头：人发的消息，或服务器放进来、接着跑一轮的那几种（定时任务 / 任务结果 / 后来确认，CB-046）。
@@ -4336,7 +4376,9 @@ export function compactTurns(
   const personTextsOf = (list: readonly TranscriptItem[]) =>
     list.filter(
       (u): u is Extract<TranscriptItem, { kind: "text" }> =>
-        u.kind === "text" && isPersonSentMessage(u.role, u.text) && u.text.trim().length > 0,
+        u.kind === "text" &&
+        isPersonSentMessage(u.role, u.text) &&
+        u.text.trim().length > 0,
     );
   turns.forEach((turn, index) => {
     const live = busy && index === turns.length - 1;
@@ -4408,7 +4450,10 @@ export function compactTurns(
     if (final) {
       const lastWorkAt = turn.rest.findLastIndex(doesWork);
       for (const item of texts)
-        if (turn.rest.indexOf(item) > lastWorkAt && tone.get(item.id) !== "final") {
+        if (
+          turn.rest.indexOf(item) > lastWorkAt &&
+          tone.get(item.id) !== "final"
+        ) {
           tone.set(item.id, "final");
           replies.add(item.id);
         }
@@ -4424,11 +4469,17 @@ export function compactTurns(
       !prevTurnStopped &&
       prevUsers.length > 0 &&
       prevTurn.rest.length > 0 &&
-      !prevTurn.rest.some((r) => r.kind === "text" && tone.get(r.id) === "final");
-    const multiReplyTurn = (personUsers.length > 1 || prevInterjected) && texts.length > 1;
+      !prevTurn.rest.some(
+        (r) => r.kind === "text" && tone.get(r.id) === "final",
+      );
+    const multiReplyTurn =
+      (personUsers.length > 1 || prevInterjected) && texts.length > 1;
     if (final)
       for (const item of texts)
-        if (tone.get(item.id) === "step" && !(multiReplyTurn && item.id === texts[0]?.id))
+        if (
+          tone.get(item.id) === "step" &&
+          !(multiReplyTurn && item.id === texts[0]?.id)
+        )
           hidden.add(item.id);
     const browsers = turn.rest.filter((item) => item.kind === "browser");
     for (const item of browsers.slice(0, -1)) hidden.add(item.id);
@@ -4528,7 +4579,9 @@ export function compactTurns(
     // 为助手可见的回复气泡自动附上所回应的用户原话胶囊。
     const visibleBotTexts = texts.filter((t) => !hidden.has(t.id));
     if (multiReplyTurn && visibleBotTexts.length >= 2) {
-      const firstUser = prevInterjected ? prevUsers[prevUsers.length - 1] : personUsers[0];
+      const firstUser = prevInterjected
+        ? prevUsers[prevUsers.length - 1]
+        : personUsers[0];
       const lastUser = personUsers[personUsers.length - 1];
       const firstBot = visibleBotTexts[0]!;
       const lastBot = visibleBotTexts[visibleBotTexts.length - 1]!;
@@ -4542,10 +4595,15 @@ export function compactTurns(
       }
     } else {
       const replyTargetId = final ?? visibleBotTexts[0]?.id ?? null;
-      if (replyTargetId && personUsers.length > 0 && (personUsers.length > 1 || prevInterjected)) {
+      if (
+        replyTargetId &&
+        personUsers.length > 0 &&
+        (personUsers.length > 1 || prevInterjected)
+      ) {
         const targetUser = personUsers[personUsers.length - 1]!;
         const quoteText = formatQuoteText(targetUser.text);
-        if (quoteText) replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
+        if (quoteText)
+          replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
       }
     }
     /*
@@ -4586,7 +4644,8 @@ export function compactTurns(
       let parsedArgs: Record<string, unknown> = {};
       try {
         const raw = JSON.parse(item.toolCall.function.arguments || "{}");
-        if (raw && typeof raw === "object") parsedArgs = raw as Record<string, unknown>;
+        if (raw && typeof raw === "object")
+          parsedArgs = raw as Record<string, unknown>;
       } catch {
         // ignore
       }
@@ -4600,7 +4659,9 @@ export function compactTurns(
       const rawSummary =
         (typeof parsedArgs.content === "string" && parsedArgs.content.trim()) ||
         (typeof parsedArgs.entry === "string" && parsedArgs.entry.trim()) ||
-        resStr.replace(/^已(?:记下|并入|更新)[：:]\s*(?:\[mem_[^\]]+\]\s*)?/, "").trim();
+        resStr
+          .replace(/^已(?:记下|并入|更新)[：:]\s*(?:\[mem_[^\]]+\]\s*)?/, "")
+          .trim();
       if (!rawSummary) continue;
       turnMemories.push({
         id: item.toolCall.id || item.id,
@@ -4612,7 +4673,10 @@ export function compactTurns(
             : typeof parsedArgs.kind === "string"
               ? parsedArgs.kind
               : "fact",
-        subject: typeof parsedArgs.subject === "string" ? parsedArgs.subject : undefined,
+        subject:
+          typeof parsedArgs.subject === "string"
+            ? parsedArgs.subject
+            : undefined,
         action:
           fnName === "memory_save"
             ? "save"
@@ -4621,7 +4685,8 @@ export function compactTurns(
               : "log",
       });
     }
-    const memTargetId = final ?? visibleBotTexts[visibleBotTexts.length - 1]?.id ?? null;
+    const memTargetId =
+      final ?? visibleBotTexts[visibleBotTexts.length - 1]?.id ?? null;
     if (memTargetId && turnMemories.length > 0) {
       memories.set(memTargetId, turnMemories);
     }

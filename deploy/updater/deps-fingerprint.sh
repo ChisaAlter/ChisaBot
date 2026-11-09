@@ -7,7 +7,8 @@ G="git --git-dir=/opt/chisabot-updater/mirror.git"
 {
   $G ls-tree -r "$1" -- \
     bun.lock tsconfig.base.json bunfig.toml app/package.json server/package.json Dockerfile docker \
-    agent-computer/package.json agent-computer/bun.lock
+    agent-computer/package.json agent-computer/bun.lock runtime/dsh/package.json runtime/dsh/package-lock.json \
+    deploy/Dockerfile.zh deploy/Dockerfile.update deploy/Dockerfile.glass deploy/updater/Dockerfile.update
   echo "package.json (without version):"
   $G show "$1:package.json" | sed '/^  "version": /d'
 } | sha256sum | cut -d' ' -f1

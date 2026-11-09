@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   type ActionPolicy,
   evaluateActionPolicy,
-  policyInitiator,
   type PolicyContext,
+  policyInitiator,
 } from "../src/computer/policy";
 import { parseActionPolicy } from "../src/computer/policy-store";
 

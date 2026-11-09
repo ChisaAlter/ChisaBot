@@ -1,7 +1,7 @@
 {
   "name": "chisabot",
   "description": "ChisaBot 中文自托管 AI 助手与 Magpie 模型集成",
-  "version": "0.1.137",
+  "version": "0.1.138",
   "license": "MIT",
   "private": true,
   "packageManager": "bun@1.3.14",
@@ -33,7 +33,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
-    "@copilotkit/aimock": "1.46.0",
     "@types/bun": "^1.4.4",
     "@types/css-tree": "^3.2.0",
     "roughjs": "^4.6.6",

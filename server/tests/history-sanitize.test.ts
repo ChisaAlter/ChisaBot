@@ -6,7 +6,7 @@ import { sanitizeSeededHistory } from "../src/agents/history-sanitize";
  * The filter itself, asserted as a function rather than through either turn path.
  *
  * Both callers reach it through machinery of their own: a routine seeds history off the platform
- * (`routine-run-turn.test.ts`) and a chat turn is handed it by the browser (`copilot.test.ts`). Those
+ * (`routine-run-turn.test.ts`) and a chat turn is handed it by the browser (`conversation-runtime.test.ts`). Those
  * files assert that the guard IS applied where it has to be. The rules it applies are asserted once,
  * here, because they are the same rules on both paths and neither path is a good place to enumerate
  * them.

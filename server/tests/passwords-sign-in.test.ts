@@ -555,9 +555,9 @@ describe("an unattended turn that needs a sign-in", () => {
       intelligence: {
         getOrCreateThread: async () => undefined,
         getThreadMessages: async () => ({ messages: [] }),
-        ɵacquireThreadLock: async () => undefined,
-        ɵrenewThreadLock: async () => undefined,
-        ɵcleanupThreadLock: async () => undefined,
+        acquireThreadLease: async () => undefined,
+        renewThreadLease: async () => undefined,
+        releaseThreadLease: async () => undefined,
       },
       runner,
       buildAgentFor: async () => agent,

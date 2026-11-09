@@ -25,8 +25,8 @@ import {
   workItems,
 } from "../src/db/schema";
 import { createPrivateShareCheck } from "../src/proactive/private-share";
-import type { TurnRunner } from "../src/turns/types";
 import { createTeamBots } from "../src/team-bots/team-bots";
+import type { TurnRunner } from "../src/turns/types";
 import { createWorkQueue } from "../src/work/queue";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -275,7 +275,6 @@ describe("group conversations in PostgreSQL", () => {
         botId: ada,
       }),
     ).toBeNull();
-
   });
 
   test("without a Bot-to-Bot grant a mention is audited and refused", async () => {

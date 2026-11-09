@@ -28,9 +28,11 @@ COPY agent-computer/package.json agent-computer/bun.lock ./
 RUN bun install --frozen-lockfile
 
 COPY agent-computer/src ./src
-# index.ts imports ../../shared/file-download at runtime (the other shared imports are type-only and
-# erased), so the one file it needs goes where that path resolves from /app/src.
+# Shared runtime boundaries resolve at /shared from /app/src.
 COPY shared/file-download.ts /shared/file-download.ts
+COPY shared/env-compat.ts shared/legacy-compat.ts shared/legacy-headers.ts /shared/
+COPY shared/net /shared/net
+COPY shared/ops-codes.ts shared/ops-counters.ts /shared/
 
 # Durable working directory. Bot-produced files that must survive replacement live here.
 RUN mkdir -p /workspace

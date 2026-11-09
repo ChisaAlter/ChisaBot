@@ -1,4 +1,9 @@
-import { createContext, useContext, useEffect, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
 
 /**
  * 留着但藏起来的聊天 / 右栏（DESIGN.md §98.3）：`false` 时这块不在屏幕上。
@@ -25,7 +30,9 @@ export type KeptVisibility = {
   subscribe: (listener: () => void) => () => void;
 };
 
-export function createKeptVisibility(initial: boolean): KeptVisibility & { set: (visible: boolean) => void } {
+export function createKeptVisibility(
+  initial: boolean,
+): KeptVisibility & { set: (visible: boolean) => void } {
   let current = initial;
   const subscribers = new Set<() => void>();
   return {
@@ -44,16 +51,20 @@ export function createKeptVisibility(initial: boolean): KeptVisibility & { set: 
   };
 }
 
-const ALWAYS_VISIBLE: KeptVisibility = { get: () => true, subscribe: () => () => {} };
+const ALWAYS_VISIBLE: KeptVisibility = {
+  get: () => true,
+  subscribe: () => () => {},
+};
 
-export const KeptVisibilityContext = createContext<KeptVisibility>(ALWAYS_VISIBLE);
+export const KeptVisibilityContext =
+  createContext<KeptVisibility>(ALWAYS_VISIBLE);
 
 export function useKeptVisibility(): KeptVisibility {
   return useContext(KeptVisibilityContext);
 }
 
 /*
- * 机器人组件授权的轮询挂在全局（CopilotProvider 里的 GalleryTools / SandboxedTools），不在聊天的树里，
+ * 机器人组件授权的轮询挂在全局（ConversationToolsProvider 里的 GalleryTools / SandboxedTools），不在聊天的树里，
  * 读不到上面的 context：藏着的聊天把它的机器人登记成「不在屏幕上」，那两处就不再每 5 秒问一次。
  */
 const hiddenBots = new Map<string, number>();
@@ -74,7 +85,10 @@ const subscribeHidden = (listener: () => void) => {
 };
 
 /** 聊天藏着时登记它的机器人「藏着」，看得见时登记「看着」（卸载或切换时撤销）。 */
-export function useMarkBotHidden(botId: string | undefined, hidden: boolean): void {
+export function useMarkBotHidden(
+  botId: string | undefined,
+  hidden: boolean,
+): void {
   useEffect(() => {
     if (!botId) return;
     const map = hidden ? hiddenBots : shownBots;

@@ -11,12 +11,12 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, renderHook } from "@testing-library/react";
 
 /** render_ui 渲染面预载：有 render_ui 历史立即；否则 RenderUiTool 挂上后等浏览器空闲（不在挂载时立刻下）。 */
-let mod: typeof import("@/lib/copilot/render-ui-preload");
+let mod: typeof import("@/lib/conversations/render-ui-preload");
 type IdleCb = () => void;
 let idleQueue: IdleCb[] = [];
 beforeAll(async () => {
   GlobalRegistrator.register({ url: "http://localhost/" });
-  mod = await import("@/lib/copilot/render-ui-preload");
+  mod = await import("@/lib/conversations/render-ui-preload");
 });
 afterAll(async () => {
   await GlobalRegistrator.unregister();
@@ -138,7 +138,7 @@ describe("wiring", () => {
   test("RenderUiTool no longer preloads on mount; ChatTranscript preloads from history", async () => {
     const fs = await import("node:fs");
     const tool = fs.readFileSync(
-      new URL("../src/lib/copilot/render-ui-tool.tsx", import.meta.url),
+      new URL("../src/lib/conversations/render-ui-tool.tsx", import.meta.url),
       "utf8",
     );
     const transcript = fs.readFileSync(

@@ -171,7 +171,7 @@ function boundedText(
  * The audit table has a foreign key to that table, so writing this id would fail the constraint and
  * lose the row entirely. Who it was is in the payload either way.
  */
-export const DEV_ACTOR_EMAIL = "dev@openbot.local";
+export const DEV_ACTOR_EMAIL = "dev@chisabot.local";
 
 /** Whoever asked for the coworker: the signed-in person on the routes, the run's owner from a tool. */
 export type CoworkerActor = AgentActor & { email?: string };

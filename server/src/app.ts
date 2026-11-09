@@ -1,4 +1,3 @@
-import { markEventStreamUnbuffered } from "./event-stream-headers";
 import type { Hono as HonoApp, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -9,28 +8,28 @@ import {
   CSP_REPORT_ONLY_HEADER,
   createAppCspReader,
 } from "../../shared/content-security-policy";
-import type { PanelServices } from "./panels/service";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
+import type { MagpieOverview } from "../../shared/model-selection";
 import {
   authoriseAgentCall,
   parseAgentToolCallInput,
   type RunAssertion,
 } from "./agents/callback-token";
 import { computerAccessCheck } from "./agents/computer-access";
-import { withRequestTiming } from "./agents/run-timing";
-import { runtimeRun } from "./agents/runtime-path";
 import {
   type BotLifecycleServices,
   createBotLifecycleRoutes,
 } from "./agents/lifecycle-routes";
-import type { BotAccessCheck } from "./agents/profile-policy";
-import type { AgentProfileStore } from "./agents/profile-store";
 import {
   type AgentModelService,
   ModelSelectionError,
 } from "./agents/model-selection";
+import type { BotAccessCheck } from "./agents/profile-policy";
+import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
+import { withRequestTiming } from "./agents/run-timing";
+import { runtimeRun } from "./agents/runtime-path";
 import { createApprovalRoutes } from "./approvals/routes";
-import { parseProfileInput, profileNeedsSetup } from "./people/onboarding";
 import type { ApprovalService } from "./approvals/service";
 import {
   type AuditEventType,
@@ -50,15 +49,13 @@ import {
   type RoleRepository,
   requireAdmin,
 } from "./auth/guards";
+import { readRunningBuild, versionPayload } from "./build-info";
 import {
   createAttachmentRoutes,
   createChannelAttachmentRoutes,
 } from "./channels/attachments";
 import type { ChannelEventHub } from "./channels/events";
-import {
-  createGroupRoutes,
-  type GroupConversations,
-} from "./channels/group";
+import { createGroupRoutes, type GroupConversations } from "./channels/group";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import type { ThreadIdentity } from "./channels/thread-identity";
 import { createThreadRoutes } from "./channels/thread-routes";
@@ -78,24 +75,26 @@ import {
   CredentialRefusedError,
 } from "./credentials";
 import type { Database } from "./db/client";
-import { withModelConnectionScope } from "./model-connection-context";
-import { type ModelCatalogService, ModelCatalogError } from "./model-catalog";
-import { MAGPIE_MOUNT, type MagpieService } from "./magpie";
-import { readRunningBuild, versionPayload } from "./build-info";
-import type { MagpieOverview } from "../../shared/model-selection";
-import {
-  type ModelSettingsService,
-  ModelSettingsValidationError,
-} from "./model-settings";
 import { withoutStatement } from "./db/query-failure";
 import { mountDesktopConnectionFailure } from "./desktop-connection-failure";
 import { createTranscriptionProvider } from "./dictation/provider";
 import { createDictationRoutes } from "./dictation/routes";
+import { markEventStreamUnbuffered } from "./event-stream-headers";
 import { createIntelligenceClient } from "./intelligence-client";
+import { mountPreviousConversationRoutes } from "./legacy/protocol";
 import type { LocalConversationBackend } from "./local-conversations";
+import { MAGPIE_MOUNT, type MagpieService } from "./magpie";
+import { ModelCatalogError, type ModelCatalogService } from "./model-catalog";
+import { withModelConnectionScope } from "./model-connection-context";
+import {
+  type ModelSettingsService,
+  ModelSettingsValidationError,
+} from "./model-settings";
+import type { PanelServices } from "./panels/service";
 import { createPasswordRoutes, createSignInRoutes } from "./passwords/routes";
 import type { SignInService } from "./passwords/service";
 import type { OnboardingStore } from "./people/onboarding";
+import { parseProfileInput, profileNeedsSetup } from "./people/onboarding";
 import type { PeopleStore } from "./people/store";
 import type { ComposioBroker } from "./plugins/broker";
 import { createPluginRoutes } from "./plugins/routes";
@@ -115,14 +114,13 @@ import { createGithubResponsibilityRoutes } from "./responsibilities/github";
 import { createResponsibilityRoutes } from "./responsibilities/routes";
 import type { TriggerStore } from "./responsibilities/triggers";
 import type { ResponsibilityStore } from "./responsibilities/types";
-import type { SelfHostBanner } from "./self-host-banner";
 import type { PackageStatusReader } from "./tenant-package";
+import { threadMessagesDelta } from "./thread-messages-delta";
 import {
   INSTRUCTIONS_LIMIT,
   InstructionsTooLongError,
   type UserInstructionsStore,
 } from "./user-instructions";
-import { threadMessagesDelta } from "./thread-messages-delta";
 import type { UserPreferencesStore } from "./user-preferences";
 import { userPreferencesRoutes } from "./user-preferences-routes";
 
@@ -186,13 +184,13 @@ export function createApp(
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
   /**
-   * The CopilotKit endpoint, already built by the caller.
+   * The conversation runtime endpoint, already built by the caller.
    *
    * Passed in rather than constructed here so this module never imports the runtime. The runtime
    * pulls in `eventsource`, which Bun cannot `require()` from a test, so importing it at module
-   * scope broke every server test that touches createApp even though none of them use CopilotKit.
+   * scope broke every server test that touches createApp even though none of them use conversation runtime.
    */
-  copilotHandler?: HonoApp,
+  conversationHandler?: HonoApp,
   /** The single governed computer module: policy, audit trail, transport, and provider lifecycle. */
   computerGateway?: ComputerGateway,
   /** What the gateway enforces, and what an administrator can change while running. */
@@ -253,7 +251,7 @@ export function createApp(
   /**
    * Chooses which coworker an untagged message is for, before a channel is pinned to one.
    *
-   * Passed in already built, like the copilot handler, so this module never imports the model
+   * Passed in already built, like the conversation handler, so this module never imports the model
    * client. Absent leaves the composer's existing behaviour untouched: an untagged message goes to
    * the default coworker, which is exactly the failsafe the router itself falls back to.
    */
@@ -322,7 +320,7 @@ export function createApp(
    * Appended last, like everything above it: these are positional, so inserting one anywhere else
    * silently shifts every existing call site's arguments by one.
    *
-   * Passed in already built, like the copilot handler and the intent router, so this module never
+   * Passed in already built, like the conversation handler and the intent router, so this module never
    * imports the vendor's package. Absent leaves the plugin surface reporting that no broker is
    * configured, which is the correct degraded behaviour: a deployment with no Composio API key has
    * no app directory to offer, rather than one that lists apps nobody can connect.
@@ -360,12 +358,6 @@ export function createApp(
      */
     groups?: GroupConversations;
   },
-  /**
-   * Whether to offer help self-hosting, which also hides it from a deployment that pays for
-   * Intelligence. Absent falls back to the operator's switch alone, so a test or a build without the
-   * resolver still answers from `config.selfHostBanner` rather than asking the network.
-   */
-  selfHostBanner?: SelfHostBanner,
   localBackend?: LocalConversationBackend,
   modelSettings?: ModelSettingsService,
   agentModels?: AgentModelService,
@@ -389,6 +381,7 @@ export function createApp(
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
+  mountPreviousConversationRoutes(app);
   app.use("*", async (_context, next) => withModelConnectionScope(next));
   /*
    * 慢请求日志：只记耗时超过 1 秒的 API 请求（一行 JSON：method/path/耗时），正常请求零开销。
@@ -411,12 +404,12 @@ export function createApp(
   });
   /*
    * API 响应 gzip 压缩：远程访问（Tailscale 等）省带宽、首屏更快。
-   * /api/copilotkit/* 是 SSE 流式接口（markEventStreamUnbuffered 已声明别压缩），必须排除——
+   * /api/conversations/* 是 SSE 流式接口（markEventStreamUnbuffered 已声明别压缩），必须排除——
    * gzip 会攒够一块才发，流式回复就一段一段地蹦了。
    */
   const compressApi = compress();
   app.use("/api/*", async (context, next) => {
-    if (context.req.path.startsWith("/api/copilotkit/")) return next();
+    if (context.req.path.startsWith("/api/conversations/")) return next();
     return compressApi(context, next);
   });
   mountDesktopConnectionFailure(app, desktopHostToken);
@@ -431,7 +424,10 @@ export function createApp(
   app.get("/api/version", (context) => {
     context.header("Cache-Control", "no-store");
     // gatewayIdentity：登录网关据此确认应用认得签名身份（CB-040）；旧版本没有这个字段，网关就不放朋友账号进来。
-    return context.json({ ...versionPayload(readRunningBuild()), ...(options.singleUserGuard ? { gatewayIdentity: true } : {}) });
+    return context.json({
+      ...versionPayload(readRunningBuild()),
+      ...(options.singleUserGuard ? { gatewayIdentity: true } : {}),
+    });
   });
   // Projected, never the raw runtime. config.runtime carries the Intelligence contract, including
   // INTELLIGENCE_API_KEY and the licence token, and this endpoint is reachable by anyone. Returning
@@ -458,11 +454,6 @@ export function createApp(
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
       extras: [...(config.extras ?? [])],
-      // Whether to offer help self-hosting ChisaBot. A fork running it for its own people turns it off,
-      // and a deployment that pays for Intelligence never sees it. See self-host-banner.ts.
-      selfHostBanner: selfHostBanner
-        ? await selfHostBanner.shown()
-        : config.selfHostBanner,
       transcription: Boolean(config.transcription),
       /*
        * Which identity providers this deployment can sign somebody in with.
@@ -544,13 +535,17 @@ export function createApp(
     });
   });
   app.patch("/api/me/profile", requireUser, async (context) => {
-    if (!onboardingStore) return context.json({ error: "个人资料不可用。" }, 503);
-    const parsed = parseProfileInput(await context.req.json().catch(() => undefined));
+    if (!onboardingStore)
+      return context.json({ error: "个人资料不可用。" }, 503);
+    const parsed = parseProfileInput(
+      await context.req.json().catch(() => undefined),
+    );
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
     const current = await onboardingStore.profile(context.var.actor.id);
     const next = {
       name: parsed.value.name ?? current.name,
-      image: parsed.value.image === undefined ? current.image : parsed.value.image,
+      image:
+        parsed.value.image === undefined ? current.image : parsed.value.image,
     };
     await onboardingStore.setProfile(context.var.actor.id, next);
     return context.json({ profile: next });
@@ -718,12 +713,14 @@ export function createApp(
       if (magpie?.managementAvailable && catalog.source === "magpie") {
         const status = await magpie.status({ refresh }).catch(() => null);
         if (status?.reachable)
-          catalog.providers = status.providers.map(({ id, name, ready, enabled }) => ({
-            id,
-            name,
-            ready,
-            enabled,
-          }));
+          catalog.providers = status.providers.map(
+            ({ id, name, ready, enabled }) => ({
+              id,
+              name,
+              ready,
+              enabled,
+            }),
+          );
       }
       return context.json(catalog);
     } catch (error) {
@@ -788,7 +785,9 @@ export function createApp(
       managementPath: `${MAGPIE_MOUNT}/`,
       reachable: status.reachable,
       ...(status.version ? { version: status.version } : {}),
-      ...(status.gatewayOn !== undefined ? { gatewayOn: status.gatewayOn } : {}),
+      ...(status.gatewayOn !== undefined
+        ? { gatewayOn: status.gatewayOn }
+        : {}),
       checkedAt: status.checkedAt,
       ...(status.error ? { error: status.error } : {}),
       providers: status.providers,
@@ -1027,25 +1026,25 @@ export function createApp(
     }
     return context.json({ package: await packageStatusReader.active() });
   });
-  // The CopilotKit runtime, behind the same session guard as every other API route. Mounted last so
-  // its own routing under /api/copilotkit cannot shadow an ChisaBot route declared above.
-  if (copilotHandler) {
+  // The conversation runtime, behind the same session guard as every other API route. Mounted last so
+  // its own routing under /api/conversations cannot shadow an ChisaBot route declared above.
+  if (conversationHandler) {
     // 流式回复（SSE）对任何反向代理都声明「别缓冲、别压缩」：nginx 认 X-Accel-Buffering，
     // no-transform 让 CDN / 代理不去 gzip 它（gzip 会攒够一块才发，回复就一段一段地蹦）。
     // 自带网关已经关了缓冲；这两个头是给别人自己部署时前面再套一层代理用的（docs/streaming.md）。
-    app.use("/api/copilotkit/*", markEventStreamUnbuffered);
+    app.use("/api/conversations/*", markEventStreamUnbuffered);
     // 记下请求进门的时刻，一轮回答的分段计时（agents/run-timing.ts）从这里算排队。
-    app.use("/api/copilotkit/*", (_context, next) =>
+    app.use("/api/conversations/*", (_context, next) =>
       withRequestTiming(() => next()),
     );
     // 读对话记录带 since/cursor 时只回变化（不带参数的旧客户端原样拿整份）；本地后端和 Intelligence 两条路都过这一层。
-    app.use("/api/copilotkit/*", threadMessagesDelta);
+    app.use("/api/conversations/*", threadMessagesDelta);
     if (config.runtime.mode === "local") {
       if (!localBackend)
         throw new Error("The local conversation backend is required.");
       // SSE mode has no SDK identity callback. Every local history and execution request therefore
       // enters through ChisaBot's existing session guard before the public SDK handler.
-      app.use("/api/copilotkit/*", requireUser, async (context, next) => {
+      app.use("/api/conversations/*", requireUser, async (context, next) => {
         const actor = context.var.actor;
         const request = context.req.raw;
         const localResponse = await localBackend.handle(request, actor.id);
@@ -1142,11 +1141,11 @@ export function createApp(
       });
     }
     // Mounted at the ROOT with the handler carrying its own basePath. Mounting it at
-    // "/api/copilotkit" as well double-prefixes it: Hono strips the prefix before the handler sees
-    // the path, so every route lands at /api/copilotkit/api/copilotkit/* and /info 404s. The browser
+    // "/api/conversations" as well double-prefixes it: Hono strips the prefix before the handler sees
+    // the path, so every route lands at /api/conversations/api/conversations/* and /info 404s. The browser
     // reports that as "Runtime info request failed with status 404" and every run fails before it
     // starts, with nothing at all in the server log.
-    app.route("/", copilotHandler);
+    app.route("/", conversationHandler);
   }
 
   /**
@@ -1190,8 +1189,6 @@ export function createApp(
       ),
     );
   }
-
-
 
   if (agentProfileStore) {
     app.route(
@@ -1241,7 +1238,13 @@ export function createApp(
   if (channelStore) {
     app.route(
       "/api/channels",
-      createChannelRoutes(channelStore, requireUser, channelEvents, auditStore, attachmentDatabase),
+      createChannelRoutes(
+        channelStore,
+        requireUser,
+        channelEvents,
+        auditStore,
+        attachmentDatabase,
+      ),
     );
   }
 
@@ -1452,9 +1455,10 @@ export function createApp(
 
       const verdict = await authoriseAgentCall({
         presented:
-          context.req.header("x-chisabot-agent-token") ??
-          context.req.header("x-openbot-agent-token") ?? // pre-0.1.75 name
-          "",
+          readCompatibleHeader(
+            context.req.raw.headers,
+            "x-chisabot-agent-token",
+          ) ?? "",
         run: body?.run,
         encryptionKey: config.keyEncryptionKey,
         legacyToken,
@@ -1641,7 +1645,10 @@ export function createApp(
     app.use("/assets/*", async (context, next) => {
       await next();
       if (context.res.status === 200)
-        context.res.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+        context.res.headers.set(
+          "Cache-Control",
+          "public, max-age=31536000, immutable",
+        );
     });
     app.use("/*", async (context, next) => {
       await next();
@@ -1653,7 +1660,10 @@ export function createApp(
           context.res.headers.set(CSP_REPORT_ONLY_HEADER, await appCsp());
       }
       // PWA（DESIGN.md §40）：service worker 和清单每次都向服务器确认，部署后浏览器马上拿到新的 sw.js。
-      else if (context.req.path === "/sw.js" || context.req.path === "/manifest.webmanifest")
+      else if (
+        context.req.path === "/sw.js" ||
+        context.req.path === "/manifest.webmanifest"
+      )
         context.res.headers.set("Cache-Control", "no-cache");
     });
     app.use("/*", serveStatic({ root }));
@@ -1733,4 +1743,3 @@ function credentialInput(
     actorUserId,
   };
 }
-

@@ -14,6 +14,19 @@ export type UserPreferencesStore = {
   ) => Promise<UserPreferences>;
 };
 
+/** Expose supported preferences while retaining unrelated stored JSON for other readers. */
+function supportedPreferences(
+  stored: Partial<UserPreferences> | null,
+): UserPreferences {
+  const merged = { ...DEFAULT_USER_PREFERENCES, ...stored };
+  return Object.fromEntries(
+    Object.keys(DEFAULT_USER_PREFERENCES).map((key) => [
+      key,
+      merged[key as keyof UserPreferences],
+    ]),
+  ) as UserPreferences;
+}
+
 export function createUserPreferencesStore(
   database: Database,
 ): UserPreferencesStore {
@@ -25,20 +38,20 @@ export function createUserPreferencesStore(
         .where(eq(users.id, userId))
         .limit(1);
       if (!user) throw new Error("User preferences could not be found.");
-      return { ...DEFAULT_USER_PREFERENCES, ...user.preferences };
+      return supportedPreferences(user.preferences);
     },
     async patch(userId, preferences) {
       const [user] = await database
         .update(users)
         .set({
           // Merge in Postgres so simultaneous updates to different preferences are preserved.
-          preferences: sql`${users.preferences} || ${preferences}::jsonb`,
+          preferences: sql`${users.preferences} || ${JSON.stringify(preferences)}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(users.id, userId))
         .returning({ preferences: users.preferences });
       if (!user) throw new Error("User preferences could not be saved.");
-      return { ...DEFAULT_USER_PREFERENCES, ...user.preferences };
+      return supportedPreferences(user.preferences);
     },
   };
 }

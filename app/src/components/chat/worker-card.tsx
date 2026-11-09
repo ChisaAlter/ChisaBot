@@ -1,4 +1,3 @@
-import { useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import {
   IconAlertTriangle,
   IconCheck,
@@ -10,8 +9,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { useNow } from "@/lib/use-now";
-import { cn } from "@/lib/utils";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   ACTIVE_WORKER,
   formatElapsed,
@@ -20,7 +18,9 @@ import {
   useWorkerAction,
   WORKER_STATUS_ZH,
   type WorkerView,
-} from "@/lib/copilot/workers";
+} from "@/lib/conversations/workers";
+import { useNow } from "@/lib/use-now";
+import { cn } from "@/lib/utils";
 
 /**
  * 后台任务卡片（DESIGN.md §38.2，「思考提示框」）：机器人委派一件事时，在那条回复里出现一张紧凑的玻璃卡——
@@ -33,11 +33,19 @@ import {
  * 读屏（审查模块 7）：收起的清单 / 结果正文 `inert` + `aria-hidden`（读屏不读、Tab 进不去）；每个展开 / 收起按钮的
  * `aria-expanded` 跟着真实状态；进度（当前步骤、第几步、结束）放在卡片里一个一直挂着的 role=status 里播报。
  */
-export function WorkerCard({ workerId, pendingTitle }: { workerId?: string; pendingTitle?: string }) {
-  const chat = useCopilotChatConfiguration();
+export function WorkerCard({
+  workerId,
+  pendingTitle,
+}: {
+  workerId?: string;
+  pendingTitle?: string;
+}) {
+  const chat = useConversationScope();
   const threadId = chat?.threadId;
   const workers = useThreadWorkers(threadId);
-  const worker = workerId ? workers.data?.find((item) => item.id === workerId) : undefined;
+  const worker = workerId
+    ? workers.data?.find((item) => item.id === workerId)
+    : undefined;
   // 刚委派、列表里还没有它：马上再取一次（之后有任务在跑就自动轮询）。
   useEffect(() => {
     if (workerId && workers.data && !worker) {
@@ -47,9 +55,20 @@ export function WorkerCard({ workerId, pendingTitle }: { workerId?: string; pend
   }, [workerId, worker, workers]);
   if (!worker) {
     return (
-      <div className="worker-card is-pending" data-testid="worker-card" data-status="pending">
-        <span aria-atomic="true" className="sr-only" data-testid="worker-progress" role="status">
-          {pendingTitle ? `后台任务「${pendingTitle}」正在交给后台` : "正在安排后台任务"}
+      <div
+        className="worker-card is-pending"
+        data-testid="worker-card"
+        data-status="pending"
+      >
+        <span
+          aria-atomic="true"
+          className="sr-only"
+          data-testid="worker-progress"
+          role="status"
+        >
+          {pendingTitle
+            ? `后台任务「${pendingTitle}」正在交给后台`
+            : "正在安排后台任务"}
         </span>
         <div className="worker-head">
           <span className="worker-icon is-running">
@@ -62,15 +81,25 @@ export function WorkerCard({ workerId, pendingTitle }: { workerId?: string; pend
             </>
           ) : (
             // CB-023：还不知道是什么任务时不写笼统的「后台任务」，只一行进度（同一高度，名字到了原地换字）。
-            <span className="worker-title is-arranging">{"正在安排后台任务…"}</span>
+            <span className="worker-title is-arranging">
+              {"正在安排后台任务…"}
+            </span>
           )}
         </div>
       </div>
     );
   }
   // 同时有不止一个任务在跑：在跑的卡片默认收成一行（点开看清单和按钮），四张展开的卡片会占满一屏。
-  const running = workers.data?.filter((item) => ACTIVE_WORKER.includes(item.status)).length ?? 0;
-  return <WorkerCardBody compact={running > 1} threadId={threadId!} worker={worker} />;
+  const running =
+    workers.data?.filter((item) => ACTIVE_WORKER.includes(item.status))
+      .length ?? 0;
+  return (
+    <WorkerCardBody
+      compact={running > 1}
+      threadId={threadId!}
+      worker={worker}
+    />
+  );
 }
 
 /** 收成一行的摘要是给眼睛看的纯文字：去掉 markdown 记号（审计里出现过「截至 **2026-10-16**」）。 */
@@ -86,7 +115,10 @@ export function plainSummary(text: string): string {
 }
 
 /** 收起的内容：读屏不读、Tab 进不去（只用 grid 0fr + opacity 藏起来时两样都还在）。 */
-export function collapsedProps(open: boolean): { inert?: boolean; "aria-hidden"?: true } {
+export function collapsedProps(open: boolean): {
+  inert?: boolean;
+  "aria-hidden"?: true;
+} {
   return open ? {} : { inert: true, "aria-hidden": true };
 }
 
@@ -97,7 +129,9 @@ export function collapsedProps(open: boolean): { inert?: boolean; "aria-hidden"?
 export function workerProgressText(worker: WorkerView): string {
   const done = worker.plan.filter((step) => step.status === "done").length;
   if (ACTIVE_WORKER.includes(worker.status)) {
-    const plan = worker.plan.length ? `，步骤 ${done}/${worker.plan.length}` : "";
+    const plan = worker.plan.length
+      ? `，步骤 ${done}/${worker.plan.length}`
+      : "";
     return `后台任务「${worker.title}」${stepLine(worker)}${plan}`;
   }
   return `后台任务「${worker.title}」${WORKER_STATUS_ZH[worker.status]}`;
@@ -105,7 +139,12 @@ export function workerProgressText(worker: WorkerView): string {
 
 function WorkerProgressStatus({ worker }: { worker: WorkerView }) {
   return (
-    <span aria-atomic="true" className="sr-only" data-testid="worker-progress" role="status">
+    <span
+      aria-atomic="true"
+      className="sr-only"
+      data-testid="worker-progress"
+      role="status"
+    >
       {workerProgressText(worker)}
     </span>
   );
@@ -116,11 +155,21 @@ function stepLine(worker: WorkerView): string {
   if (worker.status === "queued") return "排队中，前面的任务做完就开始";
   // 没有中文说法的工具（服务器写成「正在使用 skill_load」）不给用户看工具名（§69.3 / §75.2），改看清单。
   if (worker.step && !worker.step.startsWith("正在使用 ")) return worker.step;
-  const current = worker.plan.find((step) => step.status === "current") ?? worker.plan.find((step) => step.status === "pending");
+  const current =
+    worker.plan.find((step) => step.status === "current") ??
+    worker.plan.find((step) => step.status === "pending");
   return current?.text || "正在看任务要求";
 }
 
-export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean; threadId: string; worker: WorkerView }) {
+export function WorkerCardBody({
+  compact,
+  threadId,
+  worker,
+}: {
+  compact: boolean;
+  threadId: string;
+  worker: WorkerView;
+}) {
   const active = ACTIVE_WORKER.includes(worker.status);
   const planId = useId();
   const now = useNow(active);
@@ -139,7 +188,9 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
     if (steering) input.current?.focus();
   }, [steering]);
 
-  const started = worker.startedAt ? Date.parse(worker.startedAt) : Date.parse(worker.createdAt);
+  const started = worker.startedAt
+    ? Date.parse(worker.startedAt)
+    : Date.parse(worker.createdAt);
   const ended = worker.finishedAt ? Date.parse(worker.finishedAt) : now;
   const elapsed = formatElapsed(ended - started);
   const done = worker.plan.filter((step) => step.status === "done").length;
@@ -164,7 +215,9 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
 
   const openResult = () => {
     const id = worker.resultMessageId;
-    const target = id ? document.querySelector(`[data-message-id="${CSS.escape(id)}"]`) : null;
+    const target = id
+      ? document.querySelector(`[data-message-id="${CSS.escape(id)}"]`)
+      : null;
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
       target.classList.add("is-flash");
@@ -175,17 +228,41 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
   // 不止一个在跑：一行（图标 · 标题 · 当前步骤 · 用时 · 展开）。
   if (active && !(runningOpen ?? !compact) && !steering) {
     return (
-      <div className={cn("worker-card is-collapsed", `is-${worker.status}`)} data-status={worker.status} data-testid="worker-card" data-compact="">
+      <div
+        className={cn("worker-card is-collapsed", `is-${worker.status}`)}
+        data-status={worker.status}
+        data-testid="worker-card"
+        data-compact=""
+      >
         <WorkerProgressStatus worker={worker} />
-        <button aria-expanded={false} className="worker-line" onClick={() => setRunningOpen(true)} title={"展开"} type="button">
+        <button
+          aria-expanded={false}
+          className="worker-line"
+          onClick={() => setRunningOpen(true)}
+          title={"展开"}
+          type="button"
+        >
           <span className="worker-icon is-running">
             <IconLoader2 className="size-3.5" />
           </span>
           <span className="worker-title">{worker.title}</span>
-          <span className="worker-line-text" data-testid="worker-step" key={worker.step ?? worker.status}>{stepLine(worker)}</span>
+          <span
+            className="worker-line-text"
+            data-testid="worker-step"
+            key={worker.step ?? worker.status}
+          >
+            {stepLine(worker)}
+          </span>
           <span className="worker-time">{elapsed}</span>
         </button>
-        <button aria-expanded={false} aria-label={"展开"} className="worker-more" onClick={() => setRunningOpen(true)} title={"展开"} type="button">
+        <button
+          aria-expanded={false}
+          aria-label={"展开"}
+          className="worker-more"
+          onClick={() => setRunningOpen(true)}
+          title={"展开"}
+          type="button"
+        >
           <IconChevronDown className="size-3.5" />
         </button>
       </div>
@@ -196,7 +273,11 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
   if (!active && !expanded) {
     const ok = worker.status === "done";
     return (
-      <div className={cn("worker-card is-collapsed", `is-${worker.status}`)} data-status={worker.status} data-testid="worker-card">
+      <div
+        className={cn("worker-card is-collapsed", `is-${worker.status}`)}
+        data-status={worker.status}
+        data-testid="worker-card"
+      >
         <WorkerProgressStatus worker={worker} />
         {/* 有结果消息时这一行是「跳到结果」（不是展开），不带 aria-expanded；没有时它就是展开。 */}
         <button
@@ -206,17 +287,43 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
           title={worker.resultMessageId ? "跳到结果" : "展开"}
           type="button"
         >
-          <span className={cn("worker-icon", ok ? "is-done" : worker.status === "cancelled" ? "is-stopped" : "is-failed")}>
-            {ok ? <IconCheck className="size-3.5" stroke={2.5} /> : worker.status === "cancelled" ? <IconPlayerStopFilled className="size-3" /> : <IconAlertTriangle className="size-3.5" />}
+          <span
+            className={cn(
+              "worker-icon",
+              ok
+                ? "is-done"
+                : worker.status === "cancelled"
+                  ? "is-stopped"
+                  : "is-failed",
+            )}
+          >
+            {ok ? (
+              <IconCheck className="size-3.5" stroke={2.5} />
+            ) : worker.status === "cancelled" ? (
+              <IconPlayerStopFilled className="size-3" />
+            ) : (
+              <IconAlertTriangle className="size-3.5" />
+            )}
           </span>
           <span className="worker-title">{worker.title}</span>
           <span className="worker-line-text">
-            {ok ? (worker.summary ? plainSummary(worker.summary) : "") || "已完成" : worker.status === "cancelled" ? "已停止" : worker.error || "没有完成"}
+            {ok
+              ? (worker.summary ? plainSummary(worker.summary) : "") || "已完成"
+              : worker.status === "cancelled"
+                ? "已停止"
+                : worker.error || "没有完成"}
           </span>
           <span className="worker-time">{elapsed}</span>
         </button>
         {worker.plan.length ? (
-          <button aria-expanded={false} aria-label={"展开详情"} className="worker-more" onClick={() => setExpanded(true)} title={"详情"} type="button">
+          <button
+            aria-expanded={false}
+            aria-label={"展开详情"}
+            className="worker-more"
+            onClick={() => setExpanded(true)}
+            title={"详情"}
+            type="button"
+          >
             <IconChevronDown className="size-3.5" />
           </button>
         ) : null}
@@ -225,14 +332,36 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
   }
 
   return (
-    <div className={cn("worker-card", `is-${worker.status}`)} data-status={worker.status} data-testid="worker-card">
+    <div
+      className={cn("worker-card", `is-${worker.status}`)}
+      data-status={worker.status}
+      data-testid="worker-card"
+    >
       <WorkerProgressStatus worker={worker} />
       <div className="worker-head">
-        <span className={cn("worker-icon", active ? "is-running" : worker.status === "done" ? "is-done" : "is-failed")}>
-          {active ? <IconLoader2 className="size-4" /> : worker.status === "done" ? <IconCheck className="size-3.5" stroke={2.5} /> : <IconAlertTriangle className="size-3.5" />}
+        <span
+          className={cn(
+            "worker-icon",
+            active
+              ? "is-running"
+              : worker.status === "done"
+                ? "is-done"
+                : "is-failed",
+          )}
+        >
+          {active ? (
+            <IconLoader2 className="size-4" />
+          ) : worker.status === "done" ? (
+            <IconCheck className="size-3.5" stroke={2.5} />
+          ) : (
+            <IconAlertTriangle className="size-3.5" />
+          )}
         </span>
         <span className="worker-title">{worker.title}</span>
-        <span className={cn("worker-chip", `is-${worker.status}`)} data-testid="worker-status">
+        <span
+          className={cn("worker-chip", `is-${worker.status}`)}
+          data-testid="worker-status"
+        >
           {WORKER_STATUS_ZH[worker.status]}
         </span>
         <span className="worker-time">{elapsed}</span>
@@ -241,7 +370,9 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
             aria-expanded={true}
             aria-label={"收起"}
             className="worker-more"
-            onClick={() => (active ? setRunningOpen(false) : setExpanded(false))}
+            onClick={() =>
+              active ? setRunningOpen(false) : setExpanded(false)
+            }
             title={"收起"}
             type="button"
           >
@@ -249,7 +380,11 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
           </button>
         ) : null}
       </div>
-      <div className="worker-step" data-testid="worker-step" key={worker.step ?? worker.status}>
+      <div
+        className="worker-step"
+        data-testid="worker-step"
+        key={worker.step ?? worker.status}
+      >
         {active
           ? stepLine(worker)
           : worker.status === "done"
@@ -265,16 +400,33 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
             onClick={() => setPlanOpen((value) => !value)}
             type="button"
           >
-            <IconChevronDown className={cn("size-3.5 transition-transform", !planOpen && "-rotate-90")} />
+            <IconChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !planOpen && "-rotate-90",
+              )}
+            />
             {`步骤 ${done}/${worker.plan.length}`}
           </button>
-          <div className="worker-plan-collapse" data-open={planOpen || undefined} id={planId} {...collapsedProps(planOpen)}>
+          <div
+            className="worker-plan-collapse"
+            data-open={planOpen || undefined}
+            id={planId}
+            {...collapsedProps(planOpen)}
+          >
             <ol className="worker-plan" data-testid="worker-plan">
               {worker.plan.map((step, index) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
-                <li className={cn("worker-plan-step", `is-${step.status}`)} key={`${index}-${step.text}`}>
+                <li
+                  className={cn("worker-plan-step", `is-${step.status}`)}
+                  key={`${index}-${step.text}`}
+                >
                   <span className="worker-plan-mark" aria-hidden>
-                    {step.status === "done" ? <IconCheck className="size-3" stroke={2.75} /> : step.status === "blocked" ? "!" : null}
+                    {step.status === "done" ? (
+                      <IconCheck className="size-3" stroke={2.75} />
+                    ) : step.status === "blocked" ? (
+                      "!"
+                    ) : null}
                   </span>
                   <span className="worker-plan-text">{step.text}</span>
                 </li>
@@ -305,19 +457,46 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
                 ref={input}
                 value={note}
               />
-              <button className="worker-btn is-primary" disabled={!note.trim() || busy === "steer"} title={"发送"} type="submit">
-                {busy === "steer" ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconSend2 className="size-3.5" />}
+              <button
+                className="worker-btn is-primary"
+                disabled={!note.trim() || busy === "steer"}
+                title={"发送"}
+                type="submit"
+              >
+                {busy === "steer" ? (
+                  <IconLoader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <IconSend2 className="size-3.5" />
+                )}
                 <span className="worker-btn-label">{"发送"}</span>
               </button>
-              <button aria-label={"取消"} className="worker-btn" onClick={() => setSteering(false)} title={"取消"} type="button">
+              <button
+                aria-label={"取消"}
+                className="worker-btn"
+                onClick={() => setSteering(false)}
+                title={"取消"}
+                type="button"
+              >
                 <IconX className="size-3.5" />
               </button>
             </form>
           ) : (
             <>
-              <button className="worker-btn" data-testid="worker-steer" onClick={() => setSteering(true)} title={"补充说明"} type="button">
-                {sent ? <IconCheck className="size-3.5" /> : <IconMessagePlus className="size-3.5" />}
-                <span className="worker-btn-label">{sent ? "已发送" : "补充说明"}</span>
+              <button
+                className="worker-btn"
+                data-testid="worker-steer"
+                onClick={() => setSteering(true)}
+                title={"补充说明"}
+                type="button"
+              >
+                {sent ? (
+                  <IconCheck className="size-3.5" />
+                ) : (
+                  <IconMessagePlus className="size-3.5" />
+                )}
+                <span className="worker-btn-label">
+                  {sent ? "已发送" : "补充说明"}
+                </span>
               </button>
               <button
                 className="worker-btn is-danger"
@@ -327,8 +506,14 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
                 title={"停止这个后台任务"}
                 type="button"
               >
-                {busy === "cancel" ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconPlayerStopFilled className="size-3" />}
-                <span className="worker-btn-label">{busy === "cancel" ? "停止中…" : "停止"}</span>
+                {busy === "cancel" ? (
+                  <IconLoader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <IconPlayerStopFilled className="size-3" />
+                )}
+                <span className="worker-btn-label">
+                  {busy === "cancel" ? "停止中…" : "停止"}
+                </span>
               </button>
             </>
           )}
@@ -343,7 +528,13 @@ export function WorkerCardBody({ compact, threadId, worker }: { compact: boolean
  * 交回来的结果消息（role=user，开头是标记）不画成用户气泡：一行「后台任务「x」已完成」，点开看全文。
  * 主机器人接着用一两句话总结它，那才是用户要读的。
  */
-export function WorkerResultRow({ messageId, text }: { messageId: string; text: string }) {
+export function WorkerResultRow({
+  messageId,
+  text,
+}: {
+  messageId: string;
+  text: string;
+}) {
   const parsed = parseWorkerResult(text);
   const [open, setOpen] = useState(false);
   const bodyId = useId();
@@ -351,16 +542,51 @@ export function WorkerResultRow({ messageId, text }: { messageId: string; text: 
   const ok = parsed.status === "done";
   const stopped = parsed.status === "cancelled";
   return (
-    <div className={cn("worker-result", ok ? "is-done" : stopped ? "is-stopped" : "is-failed")} data-message-id={messageId} data-testid="worker-result">
-      <button aria-controls={bodyId} aria-expanded={open} className="worker-result-line" onClick={() => setOpen((value) => !value)} type="button">
-        <span className={cn("worker-icon", ok ? "is-done" : stopped ? "is-stopped" : "is-failed")}>
-          {ok ? <IconCheck className="size-3.5" stroke={2.5} /> : stopped ? <IconPlayerStopFilled className="size-3" /> : <IconAlertTriangle className="size-3.5" />}
+    <div
+      className={cn(
+        "worker-result",
+        ok ? "is-done" : stopped ? "is-stopped" : "is-failed",
+      )}
+      data-message-id={messageId}
+      data-testid="worker-result"
+    >
+      <button
+        aria-controls={bodyId}
+        aria-expanded={open}
+        className="worker-result-line"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <span
+          className={cn(
+            "worker-icon",
+            ok ? "is-done" : stopped ? "is-stopped" : "is-failed",
+          )}
+        >
+          {ok ? (
+            <IconCheck className="size-3.5" stroke={2.5} />
+          ) : stopped ? (
+            <IconPlayerStopFilled className="size-3" />
+          ) : (
+            <IconAlertTriangle className="size-3.5" />
+          )}
         </span>
-        <span className="worker-result-head">{parsed.headline.replace(/。$/, "")}</span>
-        <span className="worker-result-hint">{open ? "收起" : stopped ? "详情" : "查看结果"}</span>
-        <IconChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
+        <span className="worker-result-head">
+          {parsed.headline.replace(/。$/, "")}
+        </span>
+        <span className="worker-result-hint">
+          {open ? "收起" : stopped ? "详情" : "查看结果"}
+        </span>
+        <IconChevronDown
+          className={cn("size-3.5 transition-transform", open && "rotate-180")}
+        />
       </button>
-      <div className="worker-plan-collapse" data-open={open || undefined} id={bodyId} {...collapsedProps(open)}>
+      <div
+        className="worker-plan-collapse"
+        data-open={open || undefined}
+        id={bodyId}
+        {...collapsedProps(open)}
+      >
         <div className="worker-result-body">{parsed.body}</div>
       </div>
     </div>

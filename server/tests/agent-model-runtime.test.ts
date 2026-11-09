@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
-import { registeredAgentFromRow } from "../src/copilot";
+import { registeredAgentFromRow } from "../src/conversation-runtime";
 import {
   resolveScopedAgentModelConnection,
   resolveScopedModelConnection,

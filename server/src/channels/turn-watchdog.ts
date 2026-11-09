@@ -19,7 +19,7 @@
  * WHAT THE STREAM ACTUALLY DOES IN THIS PRODUCT, measured before any of this was designed, because
  * the answer decides whether a long tool call would be reported as a stall.
  *
- * ChisaBot runs in Intelligence mode and has no other mode, so `POST /api/copilotkit/agent/:id/run`
+ * ChisaBot runs in Intelligence mode and has no other mode, so `POST /api/conversations/agent/:id/run`
  * does not stream at all. It answers `Content-Type: application/json` with a fixed Content-Length in
  * about a second, carrying a join token, and the AG-UI events reach the browser over a WebSocket to
  * the Intelligence gateway. Wrapping that response body would watch a JSON envelope go past. The
@@ -29,8 +29,8 @@
  *
  * The computer tools are frontend tools, executed in the browser, and the run ENDS before the
  * browser runs one. The Bot emits TOOL_CALL_START, ARGS and END and then RUN_FINISHED, its stream
- * closes, the browser executes the tool, and the CopilotKit client opens a SECOND run carrying the
- * result. Verified in @copilotkit/core 1.67.1, whose `processAgentResult` executes frontend tools
+ * closes, the browser executes the tool, and the conversation runtime client opens a SECOND run carrying the
+ * result. The browser client `processAgentResult` executes frontend tools
  * only after `agent.runAgent` has resolved and then re-enters `runAgent`, and against `agent-bot` in
  * this repository, which writes its tool calls followed by RUN_FINISHED and closes the stream.
  *

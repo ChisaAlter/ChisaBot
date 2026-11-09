@@ -33,7 +33,7 @@ import {
   workStepLines,
   workTimeline,
 } from "@/lib/chat/work-steps";
-import type { WorkerView } from "@/lib/copilot/workers";
+import type { WorkerView } from "@/lib/conversations/workers";
 import { describeWorkerStep } from "../../shared/work-step";
 import { settleReactWork } from "./settle-react-work";
 

@@ -5,10 +5,9 @@
  * anybody having connected anything. This stands in for the customer's Notion: real MCP over HTTP,
  * fixed content, safe to point at the open internet.
  *
- * `@copilotkit/aimock` rather than a hand-rolled server, so what a Bot talks to here is the same
- * protocol implementation the tests talk to.
+ * Uses the same official MCP transport fixture as the protocol tests.
  */
-import { MCPMock } from "@copilotkit/aimock/mcp";
+import { McpTestServer } from "../server/tests/support/mcp-server";
 
 const PORT = Number.parseInt(process.env.MOCK_KNOWLEDGE_PORT ?? "4300", 10);
 
@@ -30,7 +29,7 @@ const NOTES = [
   },
 ];
 
-const mock = new MCPMock({ port: PORT } as never);
+const mock = new McpTestServer({ port: PORT });
 
 mock.addTool({
   name: "search_notes",

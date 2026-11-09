@@ -88,11 +88,21 @@ export function createApprovalRoutes(
      * 结果 → 状态码 + 内容。和以前一样：200 { result }、202 { waiting… }，别的错误交给 onError 的规则。
      * 抽成一个函数，是因为长动作（§102，最长 600 秒的前台命令）要在响应已经开始之后才知道结果。
      */
-    const settle = async (): Promise<{ status: 200 | 202 | 400 | 404 | 500; body: Record<string, unknown> }> => {
+    const settle = async (): Promise<{
+      status: 200 | 202 | 400 | 404 | 500;
+      body: Record<string, unknown>;
+    }> => {
       try {
         return {
           status: 200,
-          body: { result: await service.frontendAction(context.var.actor.id, botId, input, action.signal) },
+          body: {
+            result: await service.frontendAction(
+              context.var.actor.id,
+              botId,
+              input,
+              action.signal,
+            ),
+          },
         };
       } catch (error) {
         if (error instanceof HeadlessToolSuspension)
@@ -107,7 +117,7 @@ export function createApprovalRoutes(
             },
           };
         // 普通的计算机失败（元素过期、下拉框没有这个选项、电脑暂时不可用…）是这一步的结果，不是 500：
-        // 交回 { ok:false, reason } 让机器人接着做。抛 500 会让网页里的工具处理函数报错，CopilotKit 就不再
+        // 交回 { ok:false, reason } 让机器人接着做。抛 500 会让网页里的工具处理函数报错，conversation runtime 就不再
         // 发起下一轮，这一轮静默结束（DESIGN.md §100，2026-10-17 用户截图）。
         const outcome = computerFailureOutcome(error);
         if (outcome) return { status: 200, body: { result: outcome } };
@@ -116,10 +126,17 @@ export function createApprovalRoutes(
           status:
             error instanceof ApprovalNotFoundError
               ? 404
-              : error instanceof ApprovalRefusedError || error instanceof z.ZodError || error instanceof SyntaxError
+              : error instanceof ApprovalRefusedError ||
+                  error instanceof z.ZodError ||
+                  error instanceof SyntaxError
                 ? 400
                 : 500,
-          body: { error: error instanceof SyntaxError ? "Supply a valid request." : message },
+          body: {
+            error:
+              error instanceof SyntaxError
+                ? "Supply a valid request."
+                : message,
+          },
         };
       }
     };
@@ -137,7 +154,7 @@ export function createApprovalRoutes(
      * §102：动作还在跑（多半是长命令）。浏览器直接等这个请求，中间隔着 Cloudflare：100 秒内源站一个字节
      * 都不回就 524，网页里的工具只看到一页 HTML。所以先回 200 和响应头，每 15 秒写一个空格（JSON 允许前导
      * 空白，前端照样 response.json()），结果出来再写正文。状态码已经发出去了，等待 / 错误就写进正文
-     * （`status` 字段），前端按正文判断（app/src/lib/copilot/approval-tools.tsx）。
+     * （`status` 字段），前端按正文判断（app/src/lib/chat/approval-tools.tsx）。
      * text/event-stream：nginx 的 gzip 不压它（不攒缓冲），Cloudflare 也按流式转发。
      */
     const encoder = new TextEncoder();
@@ -158,7 +175,9 @@ export function createApprovalRoutes(
           clearInterval(beat);
           write(
             JSON.stringify(
-              settled.status === 200 ? settled.body : { ...settled.body, status: settled.status },
+              settled.status === 200
+                ? settled.body
+                : { ...settled.body, status: settled.status },
             ),
           );
           try {

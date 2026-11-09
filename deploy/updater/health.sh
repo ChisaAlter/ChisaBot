@@ -28,6 +28,10 @@ H=$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER")
 C=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$LOCAL_URL/health")
 echo "本机 /health $C"
 [ "$C" = 200 ] || exit 1
+# Required kernel readiness is independent of optional model smoke and also applies to rollback.
+. "$U/dsh-release.sh"
+dsh_readiness || { echo "DSH 运行时未就绪"; exit 1; }
+dsh_record_reader || { echo "无法保存 DSH 读取器兼容记录"; exit 1; }
 case "${PUBLIC_HEALTH_URL:-}" in
   "")
     echo "PUBLIC_HEALTH_URL 没有配置：跳过公网登录页检查（配好 HTTPS 网关后在 /opt/chisabot-updater/config.env 填上）" ;;

@@ -34,7 +34,6 @@ import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { useMarkBotHidden } from "@/lib/kept-visible";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 
-
 export type ChannelPageProps = {
   channelId: string;
   settings?: boolean;
@@ -233,7 +232,7 @@ export const ChannelPage = memo(function ChannelPage({
 });
 
 /**
- * A channel with exactly one coworker is its CopilotKit chat. Old multi-Bot group conversations
+ * A channel with exactly one coworker is its 会话客户端 chat. Old multi-Bot group conversations
  * have no page since slimming P4b; they say so instead of redirecting to the removed `/group`.
  */
 // `memo`：`visible` 变了（从设置回来）`ChannelPage` 要重画，但聊天本身（props 是同一个对话对象和两个布尔）
@@ -282,7 +281,7 @@ const ChannelBody = memo(function ChannelBody({
     );
   }
 
-  // Remount on channel changes so CopilotKit agent/thread state cannot leak between channels.
+  // Remount on channel changes so 会话客户端 agent/thread state cannot leak between channels.
   return (
     <ChannelChat
       channel={channel}

@@ -8,7 +8,10 @@ describe("CHISABOT_EXTRAS", () => {
     expect(parseChisabotExtras("")).toEqual([]);
   });
   test("逗号 / 空格分隔，大小写不敏感，不认识的忽略", () => {
-    expect(parseChisabotExtras("Workflows, plugins nope")).toEqual(["workflows", "plugins"]);
+    expect(parseChisabotExtras("Workflows, plugins nope")).toEqual([
+      "workflows",
+      "plugins",
+    ]);
   });
   test("all = 全部", () => {
     expect(parseChisabotExtras("all")).toEqual([...CHISABOT_EXTRAS]);

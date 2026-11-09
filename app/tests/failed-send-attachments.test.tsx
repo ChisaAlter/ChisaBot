@@ -8,7 +8,6 @@ import {
 } from "bun:test";
 import type { Message, RunAgentInput } from "@ag-ui/core";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
-import { CopilotKitProvider, useCopilotKit } from "@copilotkit/react-core/v2";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -17,6 +16,7 @@ import {
   type RenderResult,
   render,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChannelChat } from "@/components/channels/channel-chat";
@@ -30,7 +30,15 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
+import {
+  ConversationSessionProvider,
+  conversationClient,
+} from "@/lib/chat/session-client";
 import { queryClient } from "@/query-client";
+import {
+  applyInboxState,
+  queuedFor,
+} from "../src/lib/conversations/thread-inbox";
 import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
 
@@ -89,11 +97,17 @@ let uploads: string[];
  * rather than as a hang.
  */
 let runAnswers: ((input: RunAgentInput) => Promise<Response>)[];
-let core: ReturnType<typeof useCopilotKit>["copilotkit"] | undefined;
+const admittedEvents = new Map<string, Response>();
+/** The server inbox: rows queued while a turn runs, by id, in the order they arrived. */
+const inbox = new Map<
+  string,
+  { id: string; status: string; kind: string; message: { content?: unknown } }
+>();
+let core: typeof conversationClient | undefined;
 let originalFetch: typeof fetch;
 
 function CoreProbe() {
-  core = useCopilotKit().copilotkit;
+  core = conversationClient;
   return null;
 }
 
@@ -136,6 +150,35 @@ beforeAll(() => {
             : input.url,
         "http://localhost",
       );
+      if (url.pathname.endsWith("/inbox")) {
+        if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            id: string;
+            text?: string;
+            message?: { content?: unknown };
+          };
+          if (!inbox.has(body.id))
+            inbox.set(body.id, {
+              id: body.id,
+              status: "queued",
+              kind: "message",
+              message: body.message ?? { content: body.text ?? "" },
+            });
+          return NativeResponse.json({
+            queued: true,
+            status: inbox.get(body.id)!.status,
+          });
+        }
+        if (init?.method === "DELETE") {
+          const id = url.searchParams.get("id") ?? "";
+          return NativeResponse.json({ withdrawn: inbox.delete(id) });
+        }
+        return NativeResponse.json({
+          running: false,
+          paused: false,
+          items: [...inbox.values()],
+        });
+      }
       if (init?.method === "DELETE") {
         deletes.push(url.pathname);
         return new NativeResponse(null, { status: 204 });
@@ -159,13 +202,33 @@ beforeAll(() => {
           { type: "MESSAGES_SNAPSHOT", messages: [opening] },
           { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
         ]);
-      if (url.pathname.endsWith("/run")) {
+      if (url.pathname.endsWith("/commands")) {
         const request =
           input instanceof Request ? input : new Request(url, init);
-        const body = RunAgentInputSchema.parse(await request.json());
+        const body = RunAgentInputSchema.parse(
+          ((await request.json()) as { input: unknown }).input,
+        );
         const answer = runAnswers[runs.length];
         runs.push(body);
-        return answer ? await answer(body) : finished(body);
+        const response = answer ? await answer(body) : finished(body);
+        if (!response.ok) return response;
+        // An admitted command answers the inbox rows it carries, as the server does.
+        for (const message of body.messages) {
+          const row = inbox.get(message.id);
+          if (row) row.status = "answered";
+        }
+        const commandId = body.messages.findLast(
+          (message) => message.role === "user",
+        )!.id;
+        admittedEvents.set(commandId, response);
+        return NativeResponse.json(
+          { accepted: true, commandId, runId: body.runId },
+          { status: 202 },
+        );
+      }
+      if (url.pathname.endsWith("/events")) {
+        const { commandId } = JSON.parse(String(init?.body));
+        return admittedEvents.get(commandId)!;
       }
       if (/\/api\/channels\/[^/]+\/attachments$/.test(url.pathname)) {
         const body = init?.body as FormData;
@@ -207,9 +270,21 @@ beforeEach(() => {
   deletes = [];
   uploads = [];
   runAnswers = [];
+  admittedEvents.clear();
+  inbox.clear();
 });
 
 afterEach(() => {
+  // The queue store outlives a render: answer this thread's rows so the next test starts empty.
+  applyInboxState("failed-send-thread", {
+    running: false,
+    items: queuedFor("failed-send-thread").map((item) => ({
+      id: item.id,
+      status: "answered",
+      kind: "message",
+      message: {},
+    })),
+  });
   cleanup();
   queryClient.clear();
   core = undefined;
@@ -242,10 +317,10 @@ async function mounted() {
   cacheChannel();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <CoreProbe />
         <ChannelChat channel={channel} runtimeAgentId="failed-send-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
   await view.findByText(opening.content);
@@ -296,46 +371,38 @@ function chips({ container }: RenderResult) {
     .map((label) => label.slice("移除 ".length));
 }
 
-/** What the last user turn on the agent is carrying, as the wire sees it. */
-function lastUserContent() {
-  const messages = currentAgent().messages;
-  const last = [...messages]
-    .reverse()
-    .find((message) => message.role === "user");
-  return last?.content;
+/** The queued stack under the transcript: the server inbox rows this tab shows. */
+function queueStack({ container }: RenderResult) {
+  return (
+    container.querySelector("[data-testid='queued-messages']")?.textContent ??
+    ""
+  );
 }
 
 /**
- * FINDING 1. A drained turn whose send fails must not delete rows the transcript is still showing.
+ * FINDING 1. A drained turn whose send fails must not drop the queued message or its files.
  *
- * The reviewer's reproduction, step for step: park a file mid-turn, let the queue drain when the
- * turn ends, and fail the drained request. `deliver` has already added the user message — with the
- * attachment's URL in it — to `agent.messages` by the time the run is attempted, and nothing
- * removes it when the run rejects. So a release here deletes the row behind a message that is on
- * screen and stays on screen: a broken attachment in the transcript, which is data loss and not a
- * rough edge.
+ * A correction typed at a working Bot goes to the server inbox with its attachment. When the turn
+ * ends the queue drains as the next turn; if that send fails before the server admits it, nothing
+ * was sent: the row comes back as a failed, retryable entry carrying its file, it is not drawn in
+ * the transcript as if it had been sent, it is not re-sent on its own, and no row is released.
  */
-test("a drained turn whose send fails keeps the rows behind the message the transcript still shows", async () => {
+test("a drained turn whose send fails keeps the message and its file as a retryable row", async () => {
   const firstRun = deferred();
   runAnswers = [
-    // The turn the file is parked behind: held open until this test ends it.
+    // The turn the file is queued behind: held open until this test ends it.
     () => firstRun.promise,
-    // The drained turn: a transient upstream failure before anything is stamped.
-    // HTTP 500 (not 502/503/504): those statuses are connection-drops and settle via sync.
+    // The drained turn: a transient upstream failure before anything is admitted.
     async () => new NativeResponse("upstream unavailable", { status: 500 }),
   ];
 
   const view = await mounted();
   const user = userEvent.setup({ document: view.container.ownerDocument });
 
-  await user.type(
-    view.getByRole("textbox", { name: "消息" }),
-    "Get started",
-  );
+  await user.type(view.getByRole("textbox", { name: "消息" }), "Get started");
   await user.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(runs).toHaveLength(1));
 
-  // A correction typed at a Bot that is already working, with a file under it.
   drop(form(view), [named("plan.txt")]);
   await uploaded(view, ["plan.txt"]);
   await user.type(
@@ -344,47 +411,36 @@ test("a drained turn whose send fails keeps the rows behind the message the tran
   );
   await user.click(view.getByRole("button", { name: "排队发送" }));
   await waitFor(() =>
-    expect(
-      view.container.querySelector("[aria-label^='移除队列消息']"),
-    ).not.toBeNull(),
+    expect(queueStack(view)).toContain("Use the attached plan"),
   );
+  expect([...inbox.keys()]).toHaveLength(1);
   expect(deletes).toEqual([]);
 
   // The turn ends, the queue drains, and the drained send fails.
   firstRun.settle(finished(runs[0] as RunAgentInput));
   await waitFor(() => expect(runs).toHaveLength(2));
+  expect(JSON.stringify(runs[1]?.messages.at(-1)?.content)).toContain(
+    attachmentUrl("stored-plan.txt"),
+  );
 
-  // The drained message reached the wire carrying the row, which is what makes the release below
-  // wrong: the same message is now in `agent.messages` and drawn in the transcript.
-  await waitFor(() =>
-    expect(JSON.stringify(lastUserContent())).toContain(
-      attachmentUrl("stored-plan.txt"),
+  // THE FINDING. The words and the file are back as a failed row someone can retry.
+  await waitFor(() => {
+    const stack = queueStack(view);
+    expect(stack).toContain("Use the attached plan");
+    expect(stack).toContain("plan.txt");
+    expect(stack).toContain("没发出去");
+  });
+  // Not shown as a sent message, not re-sent on its own, and no row released.
+  expect(
+    currentAgent().messages.some(
+      (message) =>
+        message.role === "user" &&
+        JSON.stringify(message.content).includes("Use the attached plan"),
     ),
-  );
-  expect(view.getAllByText("Use the attached plan").length).toBeGreaterThan(0);
-
-  // THE FINDING. Nothing may delete a row that a message on this screen still points at. The
-  // release that used to happen here left the transcript showing an attachment whose bytes were
-  // gone, with nothing said and no way back to it.
+  ).toBe(false);
   await settleReactWork();
+  expect(runs).toHaveLength(2);
   expect(deletes).toEqual([]);
-
-  // And the failed turn is retryable rather than merely undeleted: its words and its file are back
-  // in the queue, where the next turn carries them and a Remove is the only thing that drops them.
-  //
-  // Read off the queued ROW rather than off the button's label, which names the words only: the
-  // claim is that the file came back with them, and the file is a tile inside that row.
-  const parkedBtn = view.container.querySelector(
-    "[aria-label^='移除队列消息']",
-  );
-  expect(parkedBtn).not.toBeNull();
-  // Label names the parked words (ZH aria); file chip sits in the same row.
-  expect(parkedBtn?.getAttribute("aria-label") ?? "").toContain(
-    "Use the attached plan",
-  );
-  const parked =
-    parkedBtn?.closest("[data-slot='message']") ?? parkedBtn?.parentElement;
-  expect(parked?.textContent ?? "").toContain("plan.txt");
 });
 
 /**
@@ -467,16 +523,11 @@ test("a failed send restored beside a second batch cannot be retried over the pe
 });
 
 /**
- * THE OTHER HALF OF "RETRYABLE", THROUGH THE SAME REAL PATH. A restored queue entry that nothing
- * ever carries is just an undeleted row with a Remove button on it.
- *
- * The retry is the next turn, and it has to be a turn somebody asked for: a queue that re-sent
- * itself the instant it came back would spin against a server that is refusing every request. So
- * the restored message waits, and the next thing sent takes it along — ahead of the newer words,
- * because it was typed first and the whole reason this queue exists is that a correction must not
- * be read after the sentence correcting it.
+ * THE OTHER HALF OF "RETRYABLE", THROUGH THE SAME REAL PATH. A restored row that nothing ever
+ * carries is just an undeleted file with a button on it. The retry is one the person asks for, and
+ * it carries the same message with its file.
  */
-test("the next turn carries a restored message, with its file, ahead of the newer words", async () => {
+test("retrying the restored row sends the same message with its file", async () => {
   const firstRun = deferred();
   runAnswers = [
     () => firstRun.promise,
@@ -486,10 +537,7 @@ test("the next turn carries a restored message, with its file, ahead of the newe
   const view = await mounted();
   const user = userEvent.setup({ document: view.container.ownerDocument });
 
-  await user.type(
-    view.getByRole("textbox", { name: "消息" }),
-    "Get started",
-  );
+  await user.type(view.getByRole("textbox", { name: "消息" }), "Get started");
   await user.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(runs).toHaveLength(1));
 
@@ -500,41 +548,33 @@ test("the next turn carries a restored message, with its file, ahead of the newe
     "Use the attached plan",
   );
   await user.click(view.getByRole("button", { name: "排队发送" }));
-
-  // The turn ends, the queue drains, and the drained send fails.
-  firstRun.settle(finished(runs[0] as RunAgentInput));
-  await waitFor(() => expect(runs).toHaveLength(2));
   await waitFor(() =>
-    expect(
-      view.container.querySelector("[aria-label^='移除队列消息']"),
-    ).not.toBeNull(),
+    expect(queueStack(view)).toContain("Use the attached plan"),
   );
 
-  // Nothing ran on its own while it sat there. The restore is a retry somebody can take, not one
-  // this screen keeps attempting.
+  firstRun.settle(finished(runs[0] as RunAgentInput));
+  await waitFor(() => expect(runs).toHaveLength(2));
+  await waitFor(() => expect(queueStack(view)).toContain("没发出去"));
   await settleReactWork();
   expect(runs).toHaveLength(2);
 
-  // The next thing sent takes it along.
-  await user.type(
-    view.getByRole("textbox", { name: "消息" }),
-    "And the summary too",
-  );
-  await user.click(view.getByRole("button", { name: "发送消息" }));
+  // The person retries it.
+  const stack = view.container.querySelector(
+    "[data-testid='queued-messages']",
+  ) as HTMLElement;
+  await user.click(within(stack).getByRole("button", { name: "重试" }));
   await waitFor(() => expect(runs).toHaveLength(3));
 
   const sent = runs[2]?.messages.at(-1);
+  expect(sent?.id).toBe(runs[1]?.messages.at(-1)?.id);
   expect(JSON.stringify(sent?.content)).toContain(
     attachmentUrl("stored-plan.txt"),
   );
-  // In the order they were typed: the message that failed, then the one typed after it.
-  expect(JSON.stringify(sent?.content)).toContain(
-    "Use the attached plan\\nAnd the summary too",
-  );
+  expect(JSON.stringify(sent?.content)).toContain("Use the attached plan");
 
-  // Carried, not copied: the queue gave it up to the run, so nothing is left waiting to run again.
-  expect(
-    view.container.querySelector("[aria-label^='移除队列消息']"),
-  ).toBeNull();
+  // Carried, not copied: nothing is left waiting to run again, and no row was released.
+  await waitFor(() =>
+    expect(queueStack(view)).not.toContain("Use the attached plan"),
+  );
   expect(deletes).toEqual([]);
 });

@@ -3,8 +3,7 @@
  *
  * service.ts 只管队列、租约、依赖与 Outbox 生命周期；这里决定「谁巡检、谁规划、谁执行、怎么通知」：
  * - collect：task-center/sources.ts 的八种采集器，只读，凭据走既有账号连接，不落 config。
- * - plan：一次无头回合让机器人把目标拆成 <= 6 步，输出严格 JSON；拆不出来就当单任务直接执行，
- *   绝不因为规划格式问题把任务卡死在重试里。
+ * - plan：一次无头回合让机器人把目标拆成 <= 6 步，并保存需要文件/发送/设备回执的完成条件。
  * - execute：同一条 governedTurnRunner（定时任务 / 工作流 / 后台任务都在用），在隐藏的
  *   `task-center:<taskId>:<tag>:<attempt>` 线程里跑——每次尝试独立线程（见 taskThreadId）；
  *   线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
@@ -13,10 +12,12 @@
  * - learn：任务到达终态后把结果写进「已学到」上下文（appendLearned/learnEntry），
  *   同时沉淀一条 memory-notes 长期记忆（kind=project，按标题合并）——履历给人看，
  *   记忆给机器人检索；执行回合本身也握着 memory_* 工具，可以当场记细节。
- *   交付物 = 回合里画出的组件（componentArtifacts），用量 = 回合台账 RUN_FINISHED 的 contextUsage。
+ *   交付物包含经实际文件/交付账本验证的引用与回合组件；用量读取原 RUN_FINISHED。
  * - localAgentRun：executor=local-agent 时把任务委派给设备上的本地 agent
  *   （local-agents 子系统做审批 / 隔离 / 并发），任务侧心跳续租约，等它终态。
  */
+
+import { setTimeout as delay } from "node:timers/promises";
 import type { Message } from "@ag-ui/client";
 import type {
   TaskArtifact,
@@ -32,6 +33,7 @@ import type {
 import {
   needsTaskApproval,
   TASK_LEVEL_LABELS,
+  taskCompletionSchema,
   validateTaskPlan,
 } from "../../../shared/task-center";
 import type { Database } from "../db/client";
@@ -39,7 +41,19 @@ import { reasonWithoutStatement } from "../db/query-failure";
 import type { Github } from "../github/service";
 import type { createMemoryNotes } from "../memory-notes/service";
 import type { PersonalSourcesService } from "../personal-sources/service";
+import {
+  BackgroundTurnNeedsReview,
+  readDurableTurn,
+} from "../turns/durable-outcome";
+import { drawnComponents } from "../turns/run-turn";
 import type { DrawnComponent, TurnRunner } from "../turns/types";
+import { isLocalAgentExecutor, localAgentThreadId } from "./local-agent-runner";
+import {
+  assertTaskEvidence,
+  TaskResultNeedsReview,
+  taskTurnFailure,
+  verifyTaskTurn,
+} from "./outcome";
 import { createTaskCenterRoots } from "./roots";
 import { createTaskCenterRoutes } from "./routes";
 import {
@@ -47,7 +61,6 @@ import {
   TaskCenterError,
   type TaskCenterService,
 } from "./service";
-import { isLocalAgentExecutor } from "./local-agent-runner";
 import { createTaskSourceCollectors } from "./sources";
 import { createTaskCenterTrace } from "./trace";
 
@@ -57,7 +70,7 @@ const TASK_THREAD_PREFIX = "task-center:";
  * paused/held，重试沿用同一线程只会重复 409「保留的消息已暂停」，永远到不了模型。
  */
 export const taskThreadId = (task: TaskCenterTask, tag: string) =>
-  `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.attempts}`;
+  `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.version > 1 ? `v${task.version}:` : ""}${task.attempts}`;
 const MAX_PLAN_STEPS = 6;
 const INSTRUCTION_LIMIT = 12_000;
 const LEARNED_LIMIT = 5000;
@@ -132,6 +145,7 @@ export type TaskCenterRuntimeOptions = {
     ownerUserId: string,
     agentId: string,
     text: string,
+    context?: { id: string; taskId: string },
   ) => Promise<void>;
   /** 部署策略 + 用户设置的授权巡检目录（按 owner 查）；缺省 = 不允许读任何本机目录。 */
   localRoots?: (ownerUserId: string) => string[] | Promise<string[]>;
@@ -209,8 +223,11 @@ export function frameTask(
     `\n背景与要求：\n${clip(task.description, INSTRUCTION_LIMIT)}`,
     dependenciesBrief(context.dependencies),
     approvalBrief(context),
+    task.completion
+      ? `\n完成条件：${task.completion.criteria}\n需要核对的回执：${task.completion.required.join("、") || "直接回答即可"}。文件请用 file_share 交付实际文件；仅写路径不会被视为文件成果。`
+      : "",
     `\n执行中如果发现值得长期记住的事实、偏好或教训（用户/项目/习惯），用 memory_save 记入长期记忆，别只写在回复里。`,
-    `\n完成后：总结实际交付的结果（这段总结进入任务记录），产出文件 / 页面 / 代码要写明位置；做不到就直说原因，不要假装完成。`,
+    `\n完成后：总结实际交付的结果（这段总结进入任务记录），产出文件 / 页面 / 代码要写明位置；文件须用 file_share 交付，设备文件须实际读回确认；做不到就直说原因，不要假装完成。`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -218,10 +235,13 @@ export function frameTask(
 
 const PLAN_PROMPT = `你是任务规划器。把目标拆成可独立推进的子任务（最多 ${MAX_PLAN_STEPS} 步；目标很直接就只留空 steps）。
 只输出一个 JSON 对象，不要调用工具，不要输出计划以外的任何文字：
-{"summary":"<计划的一句话说明>","steps":[{"key":"s1","title":"…","description":"…","level":1,"risk":"read","category":"research","dependsOn":[]}]}
+{"summary":"<计划的一句话说明>","completion":{"criteria":"按原要求说明完成条件","required":[]},"steps":[{"key":"s1","title":"…","description":"…","level":1,"risk":"read","category":"research","dependsOn":[],"completion":{"criteria":"此步骤的完成条件","required":[]}}]}
 字段约束：key 是步骤间的稳定引用；dependsOn 只能引用其他 key；title<=200 字；description<=2000 字，写清验收标准；
 level∈1..5（1 整理信息 / 2 分析建议 / 3 生成成果 / 4 确认后完成 / 5 自主交付）；risk∈read|internal|external|sensitive|publish；
-category∈research|development|documents|project|schedule|communication|decision|other。能并行的步骤不要互相依赖。`;
+category∈research|development|documents|project|schedule|communication|decision|other。能并行的步骤不要互相依赖。
+completion.required 只能包含 file（明确要求实际文件）、delivery（明确要求向外发送或通知）、device（明确要求操作设备），可同时包含多种。
+整理、分析、建议或在回复中提供草稿/代码片段用空数组；不得给这类任务强加文件或外发要求。依据用户目标填写，不以机器人声称完成代替回执。
+顶层 completion 和每个子任务 completion 都必须填写，即使 steps 为空。不要为核对成果扩大任务范围或新增副作用。`;
 
 export function extractJson(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1];
@@ -267,50 +287,122 @@ export function createTaskCenterRuntime(
     signal: AbortSignal,
     tag: string,
   ) {
-    return options.runTurn({
-      ownerUserId: task.ownerUserId,
-      routineId: `task:${task.id}:${tag}`,
-      agentId: await resolveAgent(task),
-      threadId: taskThreadId(task, tag),
-      instruction,
-      initiator: { kind: "routine", id: `task:${task.id}` },
-      signal,
-      userMessage: {
-        id: `task:${task.id}:${tag}`,
-        role: "user",
-        content: instruction,
-      } as Message,
-    });
+    const threadId = taskThreadId(task, tag);
+    for (;;) {
+      const previous = await readDurableTurn(
+        options.database,
+        task.ownerUserId,
+        threadId,
+      );
+      if (!previous) break;
+      if (previous.status === "finished")
+        return {
+          replyText: previous.replyText,
+          components: drawnComponents(previous.messages ?? []),
+          resumed: true,
+        };
+      if (previous.status === "failed") {
+        const message = previous.error ?? "原执行需要核对，未自动重做。";
+        throw tag === "run"
+          ? await taskTurnFailure(
+              options.database,
+              task,
+              previous.runId,
+              message,
+            )
+          : new BackgroundTurnNeedsReview(message);
+      }
+      await delay(1000, undefined, { signal });
+    }
+    try {
+      return {
+        ...(await options.runTurn({
+          ownerUserId: task.ownerUserId,
+          routineId: `task:${task.id}:${tag}`,
+          agentId: await resolveAgent(task),
+          threadId,
+          runId: threadId,
+          instruction,
+          initiator: { kind: "routine", id: `task:${task.id}` },
+          signal,
+          userMessage: {
+            id: `task:${task.id}:${tag}`,
+            role: "user",
+            content: instruction,
+          } as Message,
+        })),
+        resumed: false,
+      };
+    } catch (error) {
+      const durable = await readDurableTurn(
+        options.database,
+        task.ownerUserId,
+        threadId,
+      );
+      if (durable) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "原执行需要核对，未自动重做。";
+        throw tag === "run"
+          ? await taskTurnFailure(
+              options.database,
+              task,
+              durable.runId,
+              message,
+            )
+          : new BackgroundTurnNeedsReview(message);
+      }
+      throw error;
+    }
   }
 
   /**
-   * 规划回合失败只降级为「按单任务执行」，不让模型输出格式问题变成任务失败重试。
-   * L1/L2 任务本身就是「整理 / 建议」粒度，直接执行比再花一次模型调用拆解划算。
+   * 新计划在执行前明确完成条件；已保存的旧计划仍按原合同读取。
+   * L1/L2 只确认完成条件，不拆分任务；显式条件已有时无需再调用模型。
    */
   async function plan(
     task: TaskCenterTask,
     context: TaskContext,
     signal: AbortSignal,
   ): Promise<TaskPlan> {
-    if (task.level <= 2)
-      return { summary: "整理 / 建议类任务直接执行。", steps: [] };
+    if (task.level <= 2 && task.completion)
+      return {
+        summary: "整理 / 建议类任务直接执行。",
+        steps: [],
+        completion: task.completion,
+      };
+    let resumed = false;
     try {
       const outcome = await runTaskTurn(
         task,
-        `${PLAN_PROMPT}\n\n目标：${task.title}\n\n${clip(task.description, INSTRUCTION_LIMIT)}\n\n${contextBrief(context)}`,
+        `${PLAN_PROMPT}${task.level <= 2 ? "\n本次只确认完成条件，steps 必须为空，不拆分任务。" : ""}\n\n目标：${task.title}\n\n${clip(task.description, INSTRUCTION_LIMIT)}\n\n${contextBrief(context)}`,
         signal,
         "plan",
       );
+      resumed = outcome.resumed;
       const plan = extractJson(outcome.replyText ?? "") as TaskPlan;
+      plan.completion =
+        task.completion ??
+        (plan.completion
+          ? taskCompletionSchema.parse(plan.completion)
+          : undefined);
+      if (!resumed && !plan.completion)
+        throw new Error("本次规划缺少完成条件。");
+      if (!resumed)
+        for (const step of plan.steps ?? [])
+          taskCompletionSchema.parse(step.completion);
       validateTaskPlan(plan);
       if (plan.steps.length > MAX_PLAN_STEPS)
-        plan.steps = plan.steps.slice(0, MAX_PLAN_STEPS);
+        throw new Error(`计划最多 ${MAX_PLAN_STEPS} 步，不能截断依赖。`);
       return {
         summary: clip(String(plan.summary || task.title), 500),
         steps: plan.steps,
+        completion: plan.completion,
       };
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted || error instanceof BackgroundTurnNeedsReview)
+        throw error;
       console.warn(
         JSON.stringify({
           type: "task-center-plan-fallback",
@@ -318,9 +410,14 @@ export function createTaskCenterRuntime(
           reason: reasonWithoutStatement(error).slice(0, 300),
         }),
       );
+      if (!resumed && !task.completion)
+        throw new BackgroundTurnNeedsReview(
+          "规划没有给出可核对的完成条件，请检查任务要求后重试；本次尚未执行任务动作。",
+        );
       return {
         summary: "任务较直接或规划未产出有效拆解，按单一任务执行。",
         steps: [],
+        completion: task.completion,
       };
     }
   }
@@ -359,7 +456,14 @@ export function createTaskCenterRuntime(
         );
       if (needsTaskApproval(task.risk) && !context.approval)
         throw new TaskCenterError("此操作仍在等待人工确认。", 409);
-      return options.localAgentRun(task, await resolveAgent(task), context);
+      const result = await options.localAgentRun(
+        task,
+        await resolveAgent(task),
+        context,
+      );
+      context.signal.throwIfAborted();
+      assertTaskEvidence(task, result);
+      return result;
     }
     if (task.executor !== "bot")
       throw new TaskCenterError(
@@ -374,17 +478,47 @@ export function createTaskCenterRuntime(
       context.signal,
       "run",
     );
-    const summary = outcome.replyText?.trim();
-    if (!summary) throw new TaskCenterError("执行回合没有产出结果摘要。");
-    return {
+    const durable = await readDurableTurn(
+      options.database,
+      task.ownerUserId,
+      taskThreadId(task, "run"),
+    );
+    if (durable && durable.status !== "finished")
+      throw new BackgroundTurnNeedsReview(
+        "原执行尚未成功结束，任务结果需要核对。",
+      );
+    const verified = await verifyTaskTurn({
+      database: options.database,
+      task,
+      runId: durable?.runId ?? taskThreadId(task, "run"),
+      messages: durable?.messages ?? [],
+      dependencies: context.dependencies,
+    });
+    const summary =
+      outcome.replyText?.trim() ||
+      (verified.evidence.length
+        ? verified.evidence.map((item) => item.detail).join("；")
+        : "");
+    if (!summary)
+      throw new TaskResultNeedsReview(
+        "执行回合没有交付摘要或可核查成果，请检查本次结果后继续。",
+      );
+    context.signal.throwIfAborted();
+    const result: TaskExecutionResult = {
       summary: clip(summary, 60_000),
-      artifacts: componentArtifacts(outcome.components),
+      artifacts: [
+        ...verified.artifacts,
+        ...componentArtifacts(outcome.components),
+      ].slice(0, 50),
       usage: await readTurnUsage(taskThreadId(task, "run")),
+      evidence: verified.evidence,
     };
+    assertTaskEvidence(task, result);
+    return result;
   }
 
   /**
-   * 回合台账（openbot_local_events）在 RUN_FINISHED 里记录 contextUsage；
+   * 回合台账（chisabot_local_events）在 RUN_FINISHED 里记录 contextUsage；
    * 读取失败只意味着用量缺失，不值得为此让任务重试。
    */
   async function readTurnUsage(
@@ -397,7 +531,7 @@ export function createTaskCenterRuntime(
         `SELECT count(*)::int AS calls,
           sum((event->'metadata'->'contextUsage'->>'inputTokens')::int)::int AS input,
           sum((event->'metadata'->'contextUsage'->>'outputTokens')::int)::int AS output
-        FROM openbot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
+        FROM chisabot_local_events WHERE thread_id=$1 AND event->>'type'='RUN_FINISHED'`,
         [threadId],
       );
       if (!row?.calls) return undefined;
@@ -419,7 +553,7 @@ export function createTaskCenterRuntime(
     const [row] = await options.database.$client.unsafe<
       { agent_id: string | null }[]
     >(
-      "SELECT payload->>'agentId' AS agent_id FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2",
+      "SELECT (CASE WHEN jsonb_typeof(payload)='string' THEN (payload #>> '{}')::jsonb ELSE payload END)->>'agentId' AS agent_id FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2",
       [ownerUserId, decision.taskId],
     );
     const agentId =
@@ -429,6 +563,7 @@ export function createTaskCenterRuntime(
       ownerUserId,
       agentId,
       `[任务中心] 「${decision.proposedAction.title}」需要你的确认：到 任务中心 › Outbox 批准或拒绝。`,
+      { id: `task-decision:${decision.id}`, taskId: decision.taskId },
     );
   }
 
@@ -460,6 +595,22 @@ export function createTaskCenterRuntime(
 
   let serviceRef: TaskCenterService | undefined;
   const service = createTaskCenter(options.database, {
+    hasDurableExecution: async (task) => {
+      if (isLocalAgentExecutor(task.executor) && task.status !== "planning") {
+        const [row] = await options.database.$client.unsafe(
+          "SELECT id FROM chisabot_local_agent_tasks WHERE owner_user_id=$1 AND thread_id=$2 LIMIT 1",
+          [task.ownerUserId, localAgentThreadId(task)],
+        );
+        return Boolean(row);
+      }
+      return Boolean(
+        await readDurableTurn(
+          options.database,
+          task.ownerUserId,
+          taskThreadId(task, task.status === "planning" ? "plan" : "run"),
+        ),
+      );
+    },
     collect: collectors.collect,
     execute,
     plan,
@@ -502,7 +653,7 @@ export function createTaskCenterRuntime(
   /**
    * service.ts 的 routes 组装点不开放协作者入口，这里在 runtime 层把它接上：
    * 授权目录（roots，用户可维护的本机目录白名单）与执行轨迹（trace，
-   * openbot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
+   * chisabot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
    */
   const roots = createTaskCenterRoots(options.database);
   const trace = createTaskCenterTrace(options.database);

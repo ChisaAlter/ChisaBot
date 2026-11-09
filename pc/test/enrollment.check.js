@@ -27,7 +27,7 @@ function deps(config, overrides = {}) {
     input: {
       config,
       sessionStatus: async () => "ok",
-      cookieHeader: async () => "openbot_session=abc",
+      cookieHeader: async () => "chisabot_session=abc",
       enroll: async (input) => {
         calls.enroll.push(input);
         return { token: "cbd_new", device: { id: "dev_new", name: "AYASE" } };
@@ -50,7 +50,7 @@ test("logged in (session cookie still valid) but no device token: enrolls with t
   assert.equal(config.getToken(), "cbd_new");
   assert.equal(config.get().deviceId, "dev_new");
   assert.equal(calls.enroll.length, 1);
-  assert.equal(calls.enroll[0].cookieHeader, "openbot_session=abc");
+  assert.equal(calls.enroll[0].cookieHeader, "chisabot_session=abc");
   assert.equal(calls.enroll[0].serverUrl, "https://chat.example.com");
 });
 

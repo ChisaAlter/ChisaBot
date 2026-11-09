@@ -1,9 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import type { Message } from "@ag-ui/core";
-import { CopilotKitProvider } from "@copilotkit/react-core/v2";
+import type { Message, RunAgentInput } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import { ChannelChat } from "@/components/channels/channel-chat";
 import {
   type AgentChannel,
@@ -11,7 +16,11 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
-import { resetStoredSyncs } from "@/lib/copilot/thread-messages";
+import {
+  ConversationSessionProvider,
+  conversationClient,
+} from "@/lib/chat/session-client";
+import { resetStoredSyncs } from "@/lib/conversations/thread-messages";
 import { queryClient } from "@/query-client";
 import { settleReactWork } from "./settle-react-work";
 
@@ -39,6 +48,9 @@ let originalFetch: typeof fetch;
 let historyReads: string[] = [];
 /** 接入时服务器回放的事件；null = 回放存下的对话、没有在跑的一轮。 */
 let joinEvents: unknown[] | null = null;
+let joinDelay: Promise<void> | undefined;
+let submitted: RunAgentInput[] = [];
+const modelFailure = "隔离验证：模型输出失败。";
 
 function sse(events: unknown[]) {
   return new NativeResponse(
@@ -51,7 +63,7 @@ beforeAll(() => {
   GlobalRegistrator.register();
   originalFetch = globalThis.fetch;
   globalThis.fetch = Object.assign(
-    async (input: Parameters<typeof fetch>[0]) => {
+    async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = new URL(
         typeof input === "string"
           ? input
@@ -73,7 +85,35 @@ beforeAll(() => {
           mode: "sse",
           telemetryDisabled: true,
         });
-      if (url.pathname.endsWith("/connect"))
+      if (url.pathname.endsWith("/commands")) {
+        const body = JSON.parse(String(init?.body)) as { input: RunAgentInput };
+        submitted.push(body.input);
+        return NativeResponse.json(
+          {
+            accepted: true,
+            commandId: body.input.messages.at(-1)?.id,
+            runId: body.input.runId,
+          },
+          { status: 202 },
+        );
+      }
+      if (url.pathname.endsWith("/events")) {
+        const input = submitted.at(-1)!;
+        return sse([
+          {
+            type: "RUN_STARTED",
+            threadId: channel.threadId,
+            runId: input.runId,
+          },
+          {
+            type: "RUN_ERROR",
+            code: "DSH_RUNTIME_ERROR",
+            message: modelFailure,
+          },
+        ]);
+      }
+      if (url.pathname.endsWith("/connect")) {
+        await joinDelay;
         return sse(
           joinEvents ?? [
             { type: "RUN_STARTED", threadId: channel.threadId, runId: "join" },
@@ -81,6 +121,7 @@ beforeAll(() => {
             { type: "RUN_FINISHED", threadId: channel.threadId, runId: "join" },
           ],
         );
+      }
       if (/\/threads\/[^/]+\/messages$/.test(url.pathname)) {
         historyReads.push(url.search);
         return NativeResponse.json({
@@ -105,6 +146,8 @@ afterEach(() => {
   queryClient.clear();
   resetStoredSyncs();
   joinEvents = null;
+  joinDelay = undefined;
+  submitted = [];
 });
 afterAll(async () => {
   await settleReactWork();
@@ -136,9 +179,9 @@ test("opening a chat reads the stored history once", async () => {
   cacheChannel();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <ChannelChat channel={channel} runtimeAgentId="open-once-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
   await view.findByText("Stored reply");
@@ -175,9 +218,9 @@ test("a run that finishes exactly while the chat is opening still shows its answ
   cacheChannel();
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <ChannelChat channel={channel} runtimeAgentId="open-once-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
   await view.findByText("Answer finished while opening");
@@ -199,12 +242,91 @@ test("a run that finishes exactly while the chat is opening still shows its answ
 function renderChat() {
   return render(
     <QueryClientProvider client={queryClient}>
-      <CopilotKitProvider runtimeUrl="http://localhost/api/copilotkit">
+      <ConversationSessionProvider>
         <ChannelChat channel={channel} runtimeAgentId="open-once-bot" />
-      </CopilotKitProvider>
+      </ConversationSessionProvider>
     </QueryClientProvider>,
   );
 }
+
+test("reopening a failed turn retains the server's actual terminal reason", async () => {
+  joinEvents = [
+    { type: "RUN_STARTED", threadId: channel.threadId, runId: "failed" },
+    {
+      type: "MESSAGES_SNAPSHOT",
+      messages: [
+        ...stored,
+        { id: "failed-user", role: "user", content: "Please answer" },
+      ],
+    },
+    { type: "RUN_ERROR", code: "DSH_RUNTIME_ERROR", message: modelFailure },
+  ];
+  cacheChannel();
+  const view = renderChat();
+  await view.findByText(modelFailure);
+  expect(view.queryByText("这一轮没有收到回答")).toBeNull();
+  expect(
+    conversationClient
+      .getAgent("channel:open-once-channel")
+      ?.isCommandAccepted("failed-user"),
+  ).toBe(true);
+});
+
+test("reopening an uncertain operation shows the interruption without a retry action", async () => {
+  joinEvents = [
+    { type: "RUN_STARTED", threadId: channel.threadId, runId: "unknown" },
+    {
+      type: "MESSAGES_SNAPSHOT",
+      messages: [
+        ...stored,
+        { id: "unknown-user", role: "user", content: "Send once" },
+      ],
+    },
+    {
+      type: "RUN_FINISHED",
+      threadId: channel.threadId,
+      runId: "unknown",
+      outcome: {
+        type: "interrupt",
+        interrupts: [
+          {
+            id: "operation-1",
+            reason: "human_input",
+            message: "这一步可能已经执行，但结果尚待核对。",
+            metadata: { chisabotWaiting: { kind: "operation_unknown" } },
+          },
+        ],
+      },
+    },
+  ];
+  cacheChannel();
+  const view = renderChat();
+  await view.findByText("这一步操作未能确认结果");
+  expect(view.queryByRole("button", { name: "重试" })).toBeNull();
+  expect(view.queryByText("这一轮没有收到回答")).toBeNull();
+});
+
+test("a message typed during the opening join waits, then an admitted failure does not restore its draft", async () => {
+  let releaseJoin!: () => void;
+  joinDelay = new Promise<void>((resolve) => {
+    releaseJoin = resolve;
+  });
+  cacheChannel();
+  const view = renderChat();
+  const editor = view.getByRole("textbox", { name: "消息" });
+  fireEvent.input(editor, { target: { textContent: "Send while joining" } });
+  fireEvent.submit(editor.closest("form")!);
+  expect(submitted).toHaveLength(0);
+  await act(async () => {
+    releaseJoin();
+  });
+  await view.findByText(modelFailure);
+  await waitFor(() => expect(editor.textContent).toBe(""));
+  expect(submitted).toHaveLength(1);
+  expect(view.getAllByText("Send while joining")).toHaveLength(1);
+  expect(view.queryByText("没发出去")).toBeNull();
+  expect(view.getByRole("button", { name: "重试" })).toBeDefined();
+});
 
 test("cold open with the roster already cached (real last line) reads history once", async () => {
   historyReads = [];
