@@ -17,6 +17,7 @@ export function hasManagedAgentToken(
 ): boolean {
   return matchesToken(
     expected,
-    readCompatibleHeader(request.headers, "x-chisabot-agent-token")?.trim() ?? "",
+    readCompatibleHeader(request.headers, "x-chisabot-agent-token")?.trim() ??
+      "",
   );
 }

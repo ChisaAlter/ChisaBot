@@ -1,9 +1,16 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import type { ShellScope } from "@/components/layout/glass-topbar";
-import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
+import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
 import { lazyPart } from "@/components/ui/lazy-part";
 import { useLanding } from "@/lib/agents/landing";
@@ -28,7 +35,13 @@ const ChannelPage = lazyPart(
  * - 挂上以后再也不摘（`conversationMounted` 只会从 false 变 true），留着的聊天去设置再回来照旧不卸载（§98），
  *   正在跑的回合、登记过的前端工具一直在，和以前全局一个 Provider 一样只有一个实例。
  */
-const ChatConversation = lazyPart(() => import("@/lib/conversations/provider").then((m) => m.ConversationToolsProvider), <RouteSkeleton />);
+const ChatConversation = lazyPart(
+  () =>
+    import("@/lib/conversations/provider").then(
+      (m) => m.ConversationToolsProvider,
+    ),
+  <RouteSkeleton />,
+);
 
 /* 左栏、右栏只在自己那一块（聊天 / 设置 / 管理）用到时下载；没到之前画同样形状的骨架。 */
 const LeftRail = lazyPart(
@@ -36,14 +49,19 @@ const LeftRail = lazyPart(
   <SidebarSkeleton className="glass-sidebar-container" />,
 );
 const SettingsSidebar = lazyPart(
-  () => import("@/components/settings/settings-sidebar").then((m) => m.SettingsSidebar),
+  () =>
+    import("@/components/settings/settings-sidebar").then(
+      (m) => m.SettingsSidebar,
+    ),
   <SidebarSkeleton className="glass-sidebar-container" />,
 );
 const AdminSidebar = lazyPart(
   () => import("@/components/admin/admin-sidebar").then((m) => m.AdminSidebar),
   <SidebarSkeleton className="glass-sidebar-container" />,
 );
-const PanelRail = lazyPart(() => import("@/components/panels/panel-rail").then((m) => m.PanelRail));
+const PanelRail = lazyPart(() =>
+  import("@/components/panels/panel-rail").then((m) => m.PanelRail),
+);
 
 /**
  * 登录之后的那个外壳（DESIGN.md §98）。
@@ -57,7 +75,8 @@ const PanelRail = lazyPart(() => import("@/components/panels/panel-rail").then((
  */
 export function AuthedShell() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  if (pathname === "/onboarding" || pathname.startsWith("/sign-in")) return <Outlet />;
+  if (pathname === "/onboarding" || pathname.startsWith("/sign-in"))
+    return <Outlet />;
   return <ShellFrame pathname={pathname} />;
 }
 
@@ -72,7 +91,8 @@ function useIdleSettingsPrefetch(scope: string) {
   const router = useRouter();
   useEffect(() => {
     if (scope !== "app") return;
-    const run = () => void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+    const run = () =>
+      void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
     if (typeof window.requestIdleCallback === "function") {
       const id = window.requestIdleCallback(run, { timeout: 4000 });
       return () => window.cancelIdleCallback(id);
@@ -87,7 +107,9 @@ function ShellFrame({ pathname }: { pathname: string }) {
   const scope = scopeOfPath(pathname);
   useIdleSettingsPrefetch(scope);
   // 进过一次聊天就保持会话上下文挂载（见上面 ChatConversation）。
-  const [conversationMounted, setConversationMounted] = useState(scope === "app");
+  const [conversationMounted, setConversationMounted] = useState(
+    scope === "app",
+  );
   if (scope === "app" && !conversationMounted) setConversationMounted(true);
   if (conversationMounted) {
     // 两块一起下载，不排队（index.html 的首屏预加载在地址是聊天时已经提前拉了）。
@@ -119,7 +141,11 @@ function ShellFrame({ pathname }: { pathname: string }) {
  * 以前按 scope 三选一，关设置 = 聊天左栏重新挂上、重画整份名单、重新拉列表。两个孩子的位置固定，换 scope 不会让
  * 聊天左栏换位置重挂；`memo`：设置里切分类（只有 pathname 变）时整块不重画。
  */
-export const ShellSidebar = memo(function ShellSidebar({ scope }: { scope: ShellScope }) {
+export const ShellSidebar = memo(function ShellSidebar({
+  scope,
+}: {
+  scope: ShellScope;
+}) {
   return (
     <>
       <LeftRail className="glass-sidebar-container" parked={scope !== "app"} />
@@ -165,7 +191,9 @@ function useChatAddress(): ChatAddress | null {
 }
 
 const sameAddress = (a: ChatAddress, b: ChatAddress) =>
-  a.channelId === b.channelId && a.settings === b.settings && a.watch === b.watch;
+  a.channelId === b.channelId &&
+  a.settings === b.settings &&
+  a.watch === b.watch;
 
 /** 地址没换时（延后渲染还没跟上的那一次、左栏高亮那一次）不重画整段对话。 */
 const KeptChannelPage = memo(ChannelPage);
@@ -193,7 +221,9 @@ function ChatStage({ pathname }: { pathname: string }) {
   // `/` 正在跳的那段（最近的对话）正是留着的这段时才先露着；跳向别的机器人 / 空聊天时不露，免得闪一下别人的对话。
   const landing = useLanding();
   const landingChannel =
-    landing.state === "ready" && landing.target.to === "/channel/$channelId" ? landing.target.params.channelId : null;
+    landing.state === "ready" && landing.target.to === "/channel/$channelId"
+      ? landing.target.params.channelId
+      : null;
   // 还没发过的草稿对话（A1）：只有去新话题页时藏起来就卸载（随即回收，`draft-channel.ts`）；去设置等别的页面照常留
   // 10 分钟，回来图和上传都在。
   const keptTtl = useCallback(
@@ -204,7 +234,10 @@ function ChatStage({ pathname }: { pathname: string }) {
     <KeepAliveStage
       address={address}
       switching={switching}
-      idleVisible={(kept) => pathname === "/" && (landing.state === "loading" || landingChannel === kept.channelId)}
+      idleVisible={(kept) =>
+        pathname === "/" &&
+        (landing.state === "loading" || landingChannel === kept.channelId)
+      }
       ttlMs={keptTtl}
       renderKept={(kept, { visible, epoch }) => (
         <KeptChannelPage

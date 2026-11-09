@@ -40,7 +40,13 @@ export function hermesFallbackUnsupportedNote(
 export type RuntimeKernelStatus = {
   kernel: "hermes" | "builtin" | "dsh";
   hermes: HermesKernelHealth | null;
-  dsh?: { ok: boolean; version?: string; sessions?: number; running?: number; error?: string } | null;
+  dsh?: {
+    ok: boolean;
+    version?: string;
+    sessions?: number;
+    running?: number;
+    error?: string;
+  } | null;
 };
 
 export const runtimeKernelKeys = {

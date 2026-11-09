@@ -52,6 +52,9 @@ export function usePrefetchBotChats(
 }
 
 /** 悬停 / 聚焦 / 手指按下左栏某个机器人时先读它的对话（点下去之前那 100–300ms 也用上）。 */
-export function prefetchBotChat(botId: string, latest: ChannelSummary | undefined) {
+export function prefetchBotChat(
+  botId: string,
+  latest: ChannelSummary | undefined,
+) {
   if (latest) void prefetchTranscript(latest.threadId, botId);
 }

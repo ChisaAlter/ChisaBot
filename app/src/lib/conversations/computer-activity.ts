@@ -35,7 +35,12 @@ export function onComputerActivity(
  * 计算机卡片顶部的状态行（「正在打开 example.com…」「正在填写表单…」），像 Hark 的浏览器卡片一样告诉
  * 用户机器人此刻在做什么。由 callComputer 在每个动作开始 / 结束时写入；`useComputerStatus` 读。
  */
-export type ComputerStatus = { botId: string; label: string; pending: boolean; at: number };
+export type ComputerStatus = {
+  botId: string;
+  label: string;
+  pending: boolean;
+  at: number;
+};
 let status: ComputerStatus | null = null;
 const statusListeners = new Set<(s: ComputerStatus | null) => void>();
 
@@ -43,7 +48,8 @@ function hostOf(url: unknown): string {
   if (typeof url !== "string") return "网页";
   try {
     const u = new URL(url);
-    if (u.hostname === "workspace.local") return `工作区的 ${decodeURIComponent(u.pathname.replace(/^\//, "")) || "页面"}`;
+    if (u.hostname === "workspace.local")
+      return `工作区的 ${decodeURIComponent(u.pathname.replace(/^\//, "")) || "页面"}`;
     return u.hostname.replace(/^www\./, "");
   } catch {
     return url.slice(0, 40);
@@ -51,8 +57,14 @@ function hostOf(url: unknown): string {
 }
 
 /** 把一次计算机调用翻成一句人话。返回 null 的调用（控制权查询等）不改状态行。 */
-export function describeComputerCall(path: string, body: unknown): string | null {
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+export function describeComputerCall(
+  path: string,
+  body: unknown,
+): string | null {
+  const b = (body && typeof body === "object" ? body : {}) as Record<
+    string,
+    unknown
+  >;
   if (path.startsWith("/navigate")) return `正在打开 ${hostOf(b.url)}`;
   if (path.startsWith("/snapshot")) return "正在查看页面上的按钮和输入框";
   if (path.startsWith("/read")) return "正在阅读页面";
@@ -60,20 +72,30 @@ export function describeComputerCall(path: string, body: unknown): string | null
   if (path.startsWith("/click")) return "正在点击";
   if (path.startsWith("/key")) return "正在按键";
   if (path.startsWith("/scroll")) return "正在滚动页面";
-  if (path.startsWith("/files/write")) return `正在写文件${typeof b.path === "string" ? ` ${b.path}` : ""}`;
+  if (path.startsWith("/files/write"))
+    return `正在写文件${typeof b.path === "string" ? ` ${b.path}` : ""}`;
   if (path.startsWith("/files/read")) return "正在读文件";
   if (path.startsWith("/files/list")) return "正在查看工作区";
   if (path.startsWith("/exec")) return "正在运行命令";
   if (path.startsWith("/control/request")) return "正在请你帮忙";
-  if (path === "/tabs" && b.action === "new") return typeof b.url === "string" ? `正在新标签页打开 ${hostOf(b.url)}` : "正在新开标签页";
+  if (path === "/tabs" && b.action === "new")
+    return typeof b.url === "string"
+      ? `正在新标签页打开 ${hostOf(b.url)}`
+      : "正在新开标签页";
   if (path === "/tabs" && b.action === "activate") return "正在切换标签页";
   if (path === "/tabs" && b.action === "close") return "正在关标签页";
   return null;
 }
 
 /** 把服务端 / 消息流里的 computer_* 工具调用翻成同一句状态行。 */
-export function describeComputerToolCall(toolName: string, args: unknown): string | null {
-  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+export function describeComputerToolCall(
+  toolName: string,
+  args: unknown,
+): string | null {
+  const a = (args && typeof args === "object" ? args : {}) as Record<
+    string,
+    unknown
+  >;
   switch (toolName) {
     case "computer_navigate":
       return describeComputerCall("/navigate", a);
@@ -115,13 +137,19 @@ export function describeComputerToolCall(toolName: string, args: unknown): strin
 
 const lastStatusByBot = new Map<string, ComputerStatus>();
 
-export function reportComputerStatus(botId: string, label: string, pending: boolean): void {
+export function reportComputerStatus(
+  botId: string,
+  label: string,
+  pending: boolean,
+): void {
   status = { botId, label, pending, at: Date.now() };
   lastStatusByBot.set(botId, status);
   for (const listener of statusListeners) listener(status);
 }
 
-export function lastComputerStatusFor(botId: string | undefined): ComputerStatus | null {
+export function lastComputerStatusFor(
+  botId: string | undefined,
+): ComputerStatus | null {
   return botId ? (lastStatusByBot.get(botId) ?? null) : null;
 }
 
@@ -129,7 +157,9 @@ export function currentComputerStatus(): ComputerStatus | null {
   return status;
 }
 
-export function onComputerStatus(listener: (s: ComputerStatus | null) => void): () => void {
+export function onComputerStatus(
+  listener: (s: ComputerStatus | null) => void,
+): () => void {
   statusListeners.add(listener);
   return () => {
     statusListeners.delete(listener);
@@ -148,5 +178,7 @@ export function isChatRunning(): boolean {
 export function reportChatRunning(running: boolean): void {
   if (running === chatRunning) return;
   chatRunning = running;
-  window.dispatchEvent(new CustomEvent("chisabot-chat-running", { detail: running }));
+  window.dispatchEvent(
+    new CustomEvent("chisabot-chat-running", { detail: running }),
+  );
 }

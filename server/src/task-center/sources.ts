@@ -1,7 +1,7 @@
-import { realpath, readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, extname, basename } from "node:path";
-import { z } from "zod";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import { parse } from "parse5";
+import { z } from "zod";
 import type {
   TaskCapability,
   TaskCenterSource,

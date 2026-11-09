@@ -1,5 +1,5 @@
-import { IntelligenceHistoryClient } from "./conversations/intelligence-history";
 import type { IntelligenceSettings } from "./config";
+import { IntelligenceHistoryClient } from "./conversations/intelligence-history";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,

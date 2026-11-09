@@ -1,6 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -8,22 +14,36 @@ import path from "node:path";
  * CB-100b: compose_network_drift must not depend on python3. Run it with a fake `docker` and a PATH
  * that contains exactly one JSON parser (or none) to prove every fallback path.
  */
-const lib = path.resolve(import.meta.dir, "../../deploy/updater/compose-image.sh");
+const lib = path.resolve(
+  import.meta.dir,
+  "../../deploy/updater/compose-image.sh",
+);
 const dirs: string[] = [];
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
 const config = JSON.stringify({
-  networks: { default: { name: "chisabot-zh_default", ipam: { config: [{ subnet: "172.19.0.0/16" }] } } },
+  networks: {
+    default: {
+      name: "chisabot-zh_default",
+      ipam: { config: [{ subnet: "172.19.0.0/16" }] },
+    },
+  },
 });
 
 function which(bin: string): string | undefined {
-  const r = spawnSync("bash", ["-c", `command -v ${bin}`], { encoding: "utf8" });
+  const r = spawnSync("bash", ["-c", `command -v ${bin}`], {
+    encoding: "utf8",
+  });
   return r.status === 0 ? r.stdout.trim() : undefined;
 }
 
-function run(parser: string | undefined, containerNetwork: string, subnet = "172.19.0.0/16") {
+function run(
+  parser: string | undefined,
+  containerNetwork: string,
+  subnet = "172.19.0.0/16",
+) {
   const bin = mkdtempSync(path.join(tmpdir(), "cb100b-drift-"));
   dirs.push(bin);
   writeFileSync(
@@ -46,8 +66,14 @@ esac
   }
   return spawnSync(
     which("bash")!,
-    ["-c", `source "${lib}"; PROJECT=p COMPOSE_FILE=c.yaml CONTAINER=chisabot-zh; compose_network_drift; echo "rc=$?"`],
-    { encoding: "utf8", env: { PATH: bin, CHISABOT_PYTHON: "", LANG: "C.UTF-8" } },
+    [
+      "-c",
+      `source "${lib}"; PROJECT=p COMPOSE_FILE=c.yaml CONTAINER=chisabot-zh; compose_network_drift; echo "rc=$?"`,
+    ],
+    {
+      encoding: "utf8",
+      env: { PATH: bin, CHISABOT_PYTHON: "", LANG: "C.UTF-8" },
+    },
   );
 }
 

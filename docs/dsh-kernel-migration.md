@@ -38,14 +38,14 @@
 
 ### 1.1 解决的具体问题
 
-| 问题 | 本次应改变的机制 | 用户看到的结果 |
-|---|---|---|
-| 模型错误、桥接错误、备用模型失败混在一起 | 统一错误分类，保留主请求与每次备用尝试的归属 | 看得懂哪里失败，已有输出保留，可采取对应动作 |
-| 文本出气泡、空白区过大、流式结束时布局突变 | 固定消息身份与内容块类型，保留已完成的渲染修复 | 同一段正文始终在同一气泡，滚动不突跳 |
-| 多层运行状态互相覆盖 | 一个执行会话所有者；产品状态从事实投影 | 刷新、切后台、换设备看到一致状态 |
-| 工具执行和前端接力纠缠 | 所有实际工具由服务端负责，前端负责展示与提交人的决定 | 无浏览器时任务也能继续，不会因缺卡片回执重复执行 |
-| 取消影响共享桥接进程，或者只停止界面 | 单会话取消、工具撤销、后台任务生命周期分别落实 | 停 A 不影响 B；仍在清理时显示“正在停止” |
-| 历史、压缩、模型设置有多个来源 | 执行历史和压缩归 DSH；产品设置归 ChisaBot | 长对话无需每轮跨桥复制完整历史，模型切换按既有规则生效 |
+| 问题                                       | 本次应改变的机制                                     | 用户看到的结果                                         |
+| ------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------ |
+| 模型错误、桥接错误、备用模型失败混在一起   | 统一错误分类，保留主请求与每次备用尝试的归属         | 看得懂哪里失败，已有输出保留，可采取对应动作           |
+| 文本出气泡、空白区过大、流式结束时布局突变 | 固定消息身份与内容块类型，保留已完成的渲染修复       | 同一段正文始终在同一气泡，滚动不突跳                   |
+| 多层运行状态互相覆盖                       | 一个执行会话所有者；产品状态从事实投影               | 刷新、切后台、换设备看到一致状态                       |
+| 工具执行和前端接力纠缠                     | 所有实际工具由服务端负责，前端负责展示与提交人的决定 | 无浏览器时任务也能继续，不会因缺卡片回执重复执行       |
+| 取消影响共享桥接进程，或者只停止界面       | 单会话取消、工具撤销、后台任务生命周期分别落实       | 停 A 不影响 B；仍在清理时显示“正在停止”                |
+| 历史、压缩、模型设置有多个来源             | 执行历史和压缩归 DSH；产品设置归 ChisaBot            | 长对话无需每轮跨桥复制完整历史，模型切换按既有规则生效 |
 
 换内核和修复显示各自有责任方。DSH 的输出协议能减少前端猜测，但气泡、Markdown、滚动及错误卡仍由 ChisaBot 实现。
 
@@ -67,12 +67,12 @@
 
 ### 2.1 使用的源码版本
 
-| 对象 | 本轮核对范围 | 对设计的约束 |
-|---|---|---|
-| ChisaBot | 当前 `fix/chat-reliability` 工作树，基线 `9a00ed625f1e3508fa66da2ea036f573db0c4f92`，包版本 `0.1.137`，含未提交聊天修复 | 实施必须保留这些修复；版本号不是线上已验收证明 |
-| 官方 DSH | `0.2.2-rc.1`，提交 `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` | 第一候选固定此版本；官方声明 Node `>=24.9.0` |
-| Whale Isle 内置 DSH | pin 为 `0.2.1-rc.4` / `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`，含下游扩展 | 可复用经验，不能把下游特性当官方契约，也不能整树复制代替选版 |
-| DSH SDK 发布标签 | 本轮核对时 SDK `latest` 与 DSH `latest` 不同，SDK `next` 指向 `0.2.2-rc.1` | 精确锁版本，禁止依靠无版本安装得到兼容组合 |
+| 对象                | 本轮核对范围                                                                                                            | 对设计的约束                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| ChisaBot            | 当前 `fix/chat-reliability` 工作树，基线 `9a00ed625f1e3508fa66da2ea036f573db0c4f92`，包版本 `0.1.137`，含未提交聊天修复 | 实施必须保留这些修复；版本号不是线上已验收证明               |
+| 官方 DSH            | `0.2.2-rc.1`，提交 `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`                                                           | 第一候选固定此版本；官方声明 Node `>=24.9.0`                 |
+| Whale Isle 内置 DSH | pin 为 `0.2.1-rc.4` / `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`，含下游扩展                                            | 可复用经验，不能把下游特性当官方契约，也不能整树复制代替选版 |
+| DSH SDK 发布标签    | 本轮核对时 SDK `latest` 与 DSH `latest` 不同，SDK `next` 指向 `0.2.2-rc.1`                                              | 精确锁版本，禁止依靠无版本安装得到兼容组合                   |
 
 官方 DSH 仍是 developer preview，存在破坏性变更。来源及版本差异见[内核接口核对](research/20261107-dsh-kernel-sources.md)。本方案的可靠性判断来自接口与代码分析；迁移后的性能、故障恢复和真实客户端验收安排在第 19 章。
 
@@ -120,15 +120,15 @@ flowchart LR
 
 ### 3.2 不选择的实现方式
 
-| 方式 | 本项目不采用的原因 |
-|---|---|
-| 保持现有所有权不变，只把 Python 换成 DSH | 历史、压缩、运行和工具接力仍有两套管理者，维护成本没有实质下降 |
-| 直接把 DSH `run()` 套进聊天接口 | 缺实时流、单会话停止，且区间结果不能准确绑定产品任务 |
-| 只抽 DSH agent-loop 到 Bun 进程 | 需要重组其服务依赖、持久化和插件装配，失去采用完整 runtime 的主要收益；Bun 兼容也未验证 |
-| 全量替换成 DSH 自带网页 | 不能自然保留 ChisaBot 的 Bot、渠道、任务中心、设备和既有交互 |
-| 将 Whale Isle vendor 整体复制进来 | 带入桌面补丁和升级耦合；插件和公开接口能完成的部分不应变成私有 fork |
-| 继续保留 CopilotKit 为所有内核的总运行器 | 用户明确要摆脱该依赖，且后台的私有接口耦合仍然存在 |
-| 同一请求双跑 Hermes 和 DSH 比较效果 | 会重复工具副作用和模型费用；比较使用受控独立样本或纯事件回放 |
+| 方式                                     | 本项目不采用的原因                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| 保持现有所有权不变，只把 Python 换成 DSH | 历史、压缩、运行和工具接力仍有两套管理者，维护成本没有实质下降                          |
+| 直接把 DSH `run()` 套进聊天接口          | 缺实时流、单会话停止，且区间结果不能准确绑定产品任务                                    |
+| 只抽 DSH agent-loop 到 Bun 进程          | 需要重组其服务依赖、持久化和插件装配，失去采用完整 runtime 的主要收益；Bun 兼容也未验证 |
+| 全量替换成 DSH 自带网页                  | 不能自然保留 ChisaBot 的 Bot、渠道、任务中心、设备和既有交互                            |
+| 将 Whale Isle vendor 整体复制进来        | 带入桌面补丁和升级耦合；插件和公开接口能完成的部分不应变成私有 fork                     |
+| 继续保留 CopilotKit 为所有内核的总运行器 | 用户明确要摆脱该依赖，且后台的私有接口耦合仍然存在                                      |
+| 同一请求双跑 Hermes 和 DSH 比较效果      | 会重复工具副作用和模型费用；比较使用受控独立样本或纯事件回放                            |
 
 直接 AI SDK / Pi core 更适合“只换循环、其余自行维护”的目标；本次选择 DSH 是为了接替完整执行职责。若第 17 章的最小整合验证无法满足关键契约，再按证据收窄，而不是静默降级成另一个方案。
 
@@ -164,18 +164,18 @@ flowchart TB
 
 ### 4.2 唯一事实来源
 
-| 数据或决定 | 所有者 | 另一侧如何使用 |
-|---|---|---|
-| 账号、角色、Bot 所有权、频道成员 | ChisaBot | 运行前绑定，工具执行时重查授权 |
-| 用户请求、补话、停止、显式恢复 | ChisaBot 命令与收件箱 | 接纳后提交到确定的 DSH Session |
-| 模型输入历史、步骤、工具调用事实、压缩 | DSH Session | ChisaBot 从持久事件构造展示投影 |
-| 模型连接、Bot 模型覆盖、备用顺序 | ChisaBot 设置 | DSH 接受确定版本的路由快照 |
-| 长期记忆、技能、文件、页面 | ChisaBot | 插件提供按权限筛选的内容或工具 |
-| 审批偏好、决定、外部操作回执 | ChisaBot | 插件等待或恢复一个已绑定的具体操作 |
-| 设备权限、接管、急停、本地 agent | 现有 ChisaBot 执行器 | DSH 调用现有受治理工具 |
-| 任务中心、Outbox、调度、重试策略 | ChisaBot | 把一次执行交给 DSH，按实际结果更新产品任务 |
-| DSH Session 的实时帧 | DSH 当前进程 | 临时显示；持久结算到达后由日志事实替换 |
-| 气泡、卡片、显示游标 | ChisaBot 展示投影 | 可由 DSH 日志与 ChisaBot 产品事实重建 |
+| 数据或决定                             | 所有者                | 另一侧如何使用                             |
+| -------------------------------------- | --------------------- | ------------------------------------------ |
+| 账号、角色、Bot 所有权、频道成员       | ChisaBot              | 运行前绑定，工具执行时重查授权             |
+| 用户请求、补话、停止、显式恢复         | ChisaBot 命令与收件箱 | 接纳后提交到确定的 DSH Session             |
+| 模型输入历史、步骤、工具调用事实、压缩 | DSH Session           | ChisaBot 从持久事件构造展示投影            |
+| 模型连接、Bot 模型覆盖、备用顺序       | ChisaBot 设置         | DSH 接受确定版本的路由快照                 |
+| 长期记忆、技能、文件、页面             | ChisaBot              | 插件提供按权限筛选的内容或工具             |
+| 审批偏好、决定、外部操作回执           | ChisaBot              | 插件等待或恢复一个已绑定的具体操作         |
+| 设备权限、接管、急停、本地 agent       | 现有 ChisaBot 执行器  | DSH 调用现有受治理工具                     |
+| 任务中心、Outbox、调度、重试策略       | ChisaBot              | 把一次执行交给 DSH，按实际结果更新产品任务 |
+| DSH Session 的实时帧                   | DSH 当前进程          | 临时显示；持久结算到达后由日志事实替换     |
+| 气泡、卡片、显示游标                   | ChisaBot 展示投影     | 可由 DSH 日志与 ChisaBot 产品事实重建      |
 
 PostgreSQL 展示投影是读取优化，不再作为新 DSH 会话的模型历史反向回灌。ChisaBot 工具账本记录外部效果；DSH 日志记录 Agent 观察到的调用结果，两者各自回答不同问题。
 
@@ -198,20 +198,20 @@ PostgreSQL 展示投影是读取优化，不再作为新 DSH 会话的模型历�
 
 ### 5.1 标识含义
 
-| 标识 | 含义与生命周期 |
-|---|---|
-| `actorId` | 本次操作经认证的使用者；由服务端确定 |
-| `botId` | 提供能力和角色的 Bot；可见性不等于执行所有权 |
-| `threadId` | ChisaBot 对话身份；旧链接、频道映射和历史入口继续使用 |
-| `commandId` | 一次用户或系统指令的幂等身份；网络重试使用相同值 |
-| `runId` | ChisaBot 接受一次执行所建立的运行记录；可包含补话和多个 DSH turn |
-| `bindingId` / `bindingRevision` | 一个产品线程与某个内核会话的绑定及其修订；切换或编辑分支时递增 |
-| `runtimeInstanceId` | 账号所属 DSH Host 实例 |
-| `runtimeGeneration` | Host 本次进程生命周期；只用于存活状态和实时帧，不能作为持久日志去重键 |
-| `sessionId` | DSH 持久执行会话；普通后续对话复用，不每轮重建 |
-| `turnId` / `stepId` | DSH 执行边界；一个 step 对应模型请求及相应工具阶段 |
-| `toolCallId` | 模型提出的一次工具调用，结合 Session/step 才确定作用域 |
-| `taskId` / `workerId` | 产品任务或后台工作的身份；不等于 run 完成状态 |
+| 标识                            | 含义与生命周期                                                        |
+| ------------------------------- | --------------------------------------------------------------------- |
+| `actorId`                       | 本次操作经认证的使用者；由服务端确定                                  |
+| `botId`                         | 提供能力和角色的 Bot；可见性不等于执行所有权                          |
+| `threadId`                      | ChisaBot 对话身份；旧链接、频道映射和历史入口继续使用                 |
+| `commandId`                     | 一次用户或系统指令的幂等身份；网络重试使用相同值                      |
+| `runId`                         | ChisaBot 接受一次执行所建立的运行记录；可包含补话和多个 DSH turn      |
+| `bindingId` / `bindingRevision` | 一个产品线程与某个内核会话的绑定及其修订；切换或编辑分支时递增        |
+| `runtimeInstanceId`             | 账号所属 DSH Host 实例                                                |
+| `runtimeGeneration`             | Host 本次进程生命周期；只用于存活状态和实时帧，不能作为持久日志去重键 |
+| `sessionId`                     | DSH 持久执行会话；普通后续对话复用，不每轮重建                        |
+| `turnId` / `stepId`             | DSH 执行边界；一个 step 对应模型请求及相应工具阶段                    |
+| `toolCallId`                    | 模型提出的一次工具调用，结合 Session/step 才确定作用域                |
+| `taskId` / `workerId`           | 产品任务或后台工作的身份；不等于 run 完成状态                         |
 
 ### 5.2 绑定规则
 
@@ -245,9 +245,18 @@ lease 到期后先查询对应 Host 与工具执行器：原执行仍活跃就�
 
 ```ts
 interface ConversationService {
-  submit(actor: AuthenticatedActor, command: ConversationCommand): Promise<CommandReceipt>;
-  snapshot(actor: AuthenticatedActor, query: SnapshotQuery): Promise<ConversationSnapshot>;
-  follow(actor: AuthenticatedActor, query: FollowQuery): AsyncIterable<ConversationFrame>;
+  submit(
+    actor: AuthenticatedActor,
+    command: ConversationCommand,
+  ): Promise<CommandReceipt>;
+  snapshot(
+    actor: AuthenticatedActor,
+    query: SnapshotQuery,
+  ): Promise<ConversationSnapshot>;
+  follow(
+    actor: AuthenticatedActor,
+    query: FollowQuery,
+  ): AsyncIterable<ConversationFrame>;
 }
 
 type ConversationCommand =
@@ -269,12 +278,12 @@ type ConversationCommand =
 
 建议新增 `/api/conversations/:threadId/commands`、`/snapshot`、`/events` 和命令状态查询。事件下行采用现有部署可支持的 SSE，控制操作走 HTTP；不另造通用双向 RPC。
 
-| 请求 | 请求要点 | 响应合同 |
-|---|---|---|
-| `POST .../commands` | commandId、绑定 revision、具体动作及产品资源引用 | 新接纳返回 202；幂等重复返回 200 和原 receipt；均不等待模型完成 |
-| `GET .../commands/:commandId` | 认证使用者可见的命令 ID | 返回 stored、dispatched、runtime-accepted 或终态/拒绝原因 |
-| `GET .../snapshot` | 可选历史窗口/分页位置 | 返回稳定消息、活动 run、交互、队列及 viewRevision |
-| `GET .../events?afterRevision=...` | ChisaBot 自有显示游标 | snapshot 或连续 committed 增量，以及独立 live 帧 |
+| 请求                               | 请求要点                                         | 响应合同                                                        |
+| ---------------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
+| `POST .../commands`                | commandId、绑定 revision、具体动作及产品资源引用 | 新接纳返回 202；幂等重复返回 200 和原 receipt；均不等待模型完成 |
+| `GET .../commands/:commandId`      | 认证使用者可见的命令 ID                          | 返回 stored、dispatched、runtime-accepted 或终态/拒绝原因       |
+| `GET .../snapshot`                 | 可选历史窗口/分页位置                            | 返回稳定消息、活动 run、交互、队列及 viewRevision               |
+| `GET .../events?afterRevision=...` | ChisaBot 自有显示游标                            | snapshot 或连续 committed 增量，以及独立 live 帧                |
 
 401/403 表示身份或权限不满足；404 表示目标不存在或不可见；409 表示绑定/运行修订或相同 commandId 内容冲突；422 表示内容/附件不合法；503 表示接纳前依赖不可用。命令一旦持久接纳，后续启动失败通过命令/run 状态报告，不能再用一个无归属的网络错误诱导客户端创建新命令。
 
@@ -306,14 +315,14 @@ PostgreSQL 与 DSH 日志没有跨存储事务。采用“持久命令 → 幂�
 
 连接状态单独是 `connecting / online / reconnecting / offline`。网络断开不会把运行改成 failed；模型完成也不会把仍在清理的工具假装改成 stopped。
 
-| 状态 | 可接受的用户操作 | 离开状态的证据 |
-|---|---|---|
-| queued / starting | 撤回、停止 | 接纳、启动失败或撤回持久确认 |
-| running | 补话、打断、停止 | DSH 执行事件、交互请求或终态 |
-| waiting | 回答、拒绝、停止、受规则允许的补话 | 交互消耗、取消或依赖完成 |
-| stopping | 查看进度；新消息留队列 | Agent 停止、受当前运行管理的工具清理完成 |
-| interrupted | 查看已完成内容，显式恢复或新发消息 | 未决操作隔离后可接新命令；恢复原操作先完成对账 |
-| completed / failed / stopped | 新请求、编辑、重新生成 | 新运行建立；旧运行终态不复活 |
+| 状态                         | 可接受的用户操作                   | 离开状态的证据                                 |
+| ---------------------------- | ---------------------------------- | ---------------------------------------------- |
+| queued / starting            | 撤回、停止                         | 接纳、启动失败或撤回持久确认                   |
+| running                      | 补话、打断、停止                   | DSH 执行事件、交互请求或终态                   |
+| waiting                      | 回答、拒绝、停止、受规则允许的补话 | 交互消耗、取消或依赖完成                       |
+| stopping                     | 查看进度；新消息留队列             | Agent 停止、受当前运行管理的工具清理完成       |
+| interrupted                  | 查看已完成内容，显式恢复或新发消息 | 未决操作隔离后可接新命令；恢复原操作先完成对账 |
+| completed / failed / stopped | 新请求、编辑、重新生成             | 新运行建立；旧运行终态不复活                   |
 
 ### 7.2 停止的具体事务与执行顺序
 
@@ -354,12 +363,12 @@ DSH 的持久 Session 事件与 `agent/assistant-stream` 临时帧不同。完�
 
 若源日志丢失了已经展示的尾部，不允许在同一绑定中把后来的新事件认成相同 sourceSeq 的旧事件。冻结该绑定的续写，保留中断观察记录，通过明确的新执行段承接已知状态；恢复动作先处置关联副作用。正常重连、正常进程重启只要源前缀一致，就继续使用原绑定。
 
-| 通道 | 身份 | 用途 | 断线恢复 |
-|---|---|---|---|
-| 持久执行事实 | bindingId + sessionId + sourceSeq | 消息、工具、步骤、运行结算 | 按 seq 补齐，重复去重 |
-| ChisaBot 产品事实 | command/approval/task 等持久 ID 与修订 | 接纳、暂停、交互决定、任务交付 | 从产品数据补齐 |
-| 实时 assistant 帧 | runtimeGeneration + session/turn/step/attempt + index | 即时文字、思考、参数片段 | 请求 active baseline，不能盲接旧帧 |
-| 浏览器展示增量 | threadId + viewRevision | 更新消息和状态 | snapshot + 游标补齐 |
+| 通道              | 身份                                                  | 用途                           | 断线恢复                           |
+| ----------------- | ----------------------------------------------------- | ------------------------------ | ---------------------------------- |
+| 持久执行事实      | bindingId + sessionId + sourceSeq                     | 消息、工具、步骤、运行结算     | 按 seq 补齐，重复去重              |
+| ChisaBot 产品事实 | command/approval/task 等持久 ID 与修订                | 接纳、暂停、交互决定、任务交付 | 从产品数据补齐                     |
+| 实时 assistant 帧 | runtimeGeneration + session/turn/step/attempt + index | 即时文字、思考、参数片段       | 请求 active baseline，不能盲接旧帧 |
+| 浏览器展示增量    | threadId + viewRevision                               | 更新消息和状态                 | snapshot + 游标补齐                |
 
 同一个 DSH 事件可产生多个展示变更，投影器以 source key 和固定子序号防重复。runtimeGeneration 不参与持久事件的 identity，否则重启会把同一历史变成新消息。
 
@@ -367,10 +376,16 @@ DSH 的持久 Session 事件与 `agent/assistant-stream` 临时帧不同。完�
 
 ```ts
 type ConversationFrame =
-  | { kind: 'snapshot'; revision: string; snapshot: ConversationSnapshot }
-  | { kind: 'committed'; revision: string; changes: ConversationChange[] }
-  | { kind: 'live'; generation: string; attemptId: string; index: number; delta: LiveDelta }
-  | { kind: 'live-reset'; generation: string; active: ActiveAttemptSnapshot[] };
+  | { kind: "snapshot"; revision: string; snapshot: ConversationSnapshot }
+  | { kind: "committed"; revision: string; changes: ConversationChange[] }
+  | {
+      kind: "live";
+      generation: string;
+      attemptId: string;
+      index: number;
+      delta: LiveDelta;
+    }
+  | { kind: "live-reset"; generation: string; active: ActiveAttemptSnapshot[] };
 ```
 
 这里的标识是接口示意，底层 DSH branded 类型由 Adapter 解码。浏览器不直接依赖 DSH 内部 ContentBlock 或 SessionEvent 的字段布局。
@@ -423,14 +438,14 @@ ChisaBot 每次建立或更新运行上下文时，按 actor、Bot、initiator�
 
 状态：`registered → waiting_approval → dispatching → running → succeeded/failed/cancelled`；无法判断外部效果时进入 `outcome_unknown`。拒绝或撤销可在派发前直接终止。
 
-| 重复或故障 | 处理 |
-|---|---|
-| 相同身份、相同参数，已成功 | 返回已有结果，不再调用外部执行器 |
-| 相同身份、参数不同 | 拒绝，报告调用身份冲突 |
-| 同一操作仍在本进程执行 | 加入现有观察，不开启第二次调用 |
-| 数据库已记 dispatching，进程随后退出 | 按外部 receipt 查询；无查询能力则 outcome_unknown |
-| 外部支持幂等键 | 使用稳定 operationId；恢复先查询，再按该提供方契约处理 |
-| 外部无幂等/查询能力 | 不自动重做写操作，由明确核实或新授权决定下一步 |
+| 重复或故障                           | 处理                                                   |
+| ------------------------------------ | ------------------------------------------------------ |
+| 相同身份、相同参数，已成功           | 返回已有结果，不再调用外部执行器                       |
+| 相同身份、参数不同                   | 拒绝，报告调用身份冲突                                 |
+| 同一操作仍在本进程执行               | 加入现有观察，不开启第二次调用                         |
+| 数据库已记 dispatching，进程随后退出 | 按外部 receipt 查询；无查询能力则 outcome_unknown      |
+| 外部支持幂等键                       | 使用稳定 operationId；恢复先查询，再按该提供方契约处理 |
+| 外部无幂等/查询能力                  | 不自动重做写操作，由明确核实或新授权决定下一步         |
 
 数据库事务不能覆盖邮件发送、浏览器点击和设备命令。账本的作用是保存已知结果和不确定性，不承诺所有外部操作恰好执行一次。
 
@@ -517,15 +532,15 @@ DSH Session 管理模型可见历史和压缩。ChisaBot 的 `history-budget.ts`
 
 ### 12.1 前端模块分工
 
-| 目标模块 | 责任 | 主要替换对象 |
-|---|---|---|
-| `app/src/lib/chat/session-client.ts` | 同源命令、snapshot、SSE、重连 | CopilotKit transport 与 run/connect 调用 |
-| `app/src/lib/chat/session-store.ts` | 单线程消息投影、运行、交互、队列、游标 | `agent.messages` 及分散的运行补偿状态 |
-| `app/src/lib/chat/conversation-scope.tsx` | 给卡片提供 thread/bot 和操作回调 | `useCopilotChatConfiguration` |
-| `app/src/lib/chat/renderers/` | 工具、活动、产物的纯渲染注册表 | `useRenderTool`、`useRenderToolCall` |
-| `app/src/lib/chat/sandbox-surface.tsx` | 已发布 HTML 组件和管理预览 | `OpenGenerativeUIActivityRenderer` |
-| Composer 的 attachment state | 上传、取消、重试、草稿与已接纳引用 | SDK `useAttachments` |
-| 兼容 Adapter | 旧历史、旧协议转产品消息 | 旧 AG-UI 回放与字段正规化逻辑 |
+| 目标模块                                  | 责任                                   | 主要替换对象                             |
+| ----------------------------------------- | -------------------------------------- | ---------------------------------------- |
+| `app/src/lib/chat/session-client.ts`      | 同源命令、snapshot、SSE、重连          | CopilotKit transport 与 run/connect 调用 |
+| `app/src/lib/chat/session-store.ts`       | 单线程消息投影、运行、交互、队列、游标 | `agent.messages` 及分散的运行补偿状态    |
+| `app/src/lib/chat/conversation-scope.tsx` | 给卡片提供 thread/bot 和操作回调       | `useCopilotChatConfiguration`            |
+| `app/src/lib/chat/renderers/`             | 工具、活动、产物的纯渲染注册表         | `useRenderTool`、`useRenderToolCall`     |
+| `app/src/lib/chat/sandbox-surface.tsx`    | 已发布 HTML 组件和管理预览             | `OpenGenerativeUIActivityRenderer`       |
+| Composer 的 attachment state              | 上传、取消、重试、草稿与已接纳引用     | SDK `useAttachments`                     |
+| 兼容 Adapter                              | 旧历史、旧协议转产品消息               | 旧 AG-UI 回放与字段正规化逻辑            |
 
 `ConversationView`、`ChatTranscript`、Composer、Markdown、现有卡片、滚动与 UI 记忆继续作为呈现层。`ChannelChat` 只组合会话状态和用户操作，退出“自己修补 SDK 执行过程”的职责。
 
@@ -572,18 +587,18 @@ AG-UI 保留在远程 Bot、旧历史和兼容入口的 Adapter 中；shared 类
 
 ### 13.1 统一执行入口，保留业务所有者
 
-| 入口 | 现有责任方 | 迁移后如何运行 | 完成的依据 |
-|---|---|---|---|
-| 网页 / Android | 频道与 Bot 线程 | Conversation submit/follow | run 终态与持久消息 |
-| IM | `server/src/im/` | 保留平台 inbound ID 作为来源幂等键，调用统一 TurnRunner | 回答持久化及平台发送回执分开记录 |
-| 定时任务 | `server/src/schedules/` | 调度器继续拥有到期和重试，执行落入原 thread | 执行结果和交付记录 |
-| 后台 worker | `server/src/workers/service.ts` | 独立执行线程，卡片和结果入箱沿用 | worker 终态、产物、向主线程交付回执 |
-| 工作流 / 职责 | workflows / responsibilities | 步骤调用统一执行接口，保留步骤和审批来源 | 工作流/职责自身判定 |
-| 任务中心 | `server/src/task-center/` | 复用依赖、lease、风险和 Outbox；只替换 runTurn | 任务版本、依赖、审批和交付完成 |
-| 面板刷新 | live-panels | 保留工具子集与非交互预算 | 面板版本更新及数据结果 |
-| Bot 间 handoff | work queue / handoff runner | 每 hop 保留独立目标 Bot 线程和 initiator | 回执投递到原对话且无重复 |
-| 设备本地 Agent | local-agents | 原设备执行器继续工作，DSH 可调用委派工具 | 设备执行终态与结果交付 |
-| 远程 AG-UI / Mastra Bot | agents 的现有远程类型 | 协议 Adapter 接 Conversation，不强制改成 DSH | 该远端协议的结果及产品结算 |
+| 入口                    | 现有责任方                      | 迁移后如何运行                                          | 完成的依据                          |
+| ----------------------- | ------------------------------- | ------------------------------------------------------- | ----------------------------------- |
+| 网页 / Android          | 频道与 Bot 线程                 | Conversation submit/follow                              | run 终态与持久消息                  |
+| IM                      | `server/src/im/`                | 保留平台 inbound ID 作为来源幂等键，调用统一 TurnRunner | 回答持久化及平台发送回执分开记录    |
+| 定时任务                | `server/src/schedules/`         | 调度器继续拥有到期和重试，执行落入原 thread             | 执行结果和交付记录                  |
+| 后台 worker             | `server/src/workers/service.ts` | 独立执行线程，卡片和结果入箱沿用                        | worker 终态、产物、向主线程交付回执 |
+| 工作流 / 职责           | workflows / responsibilities    | 步骤调用统一执行接口，保留步骤和审批来源                | 工作流/职责自身判定                 |
+| 任务中心                | `server/src/task-center/`       | 复用依赖、lease、风险和 Outbox；只替换 runTurn          | 任务版本、依赖、审批和交付完成      |
+| 面板刷新                | live-panels                     | 保留工具子集与非交互预算                                | 面板版本更新及数据结果              |
+| Bot 间 handoff          | work queue / handoff runner     | 每 hop 保留独立目标 Bot 线程和 initiator                | 回执投递到原对话且无重复            |
+| 设备本地 Agent          | local-agents                    | 原设备执行器继续工作，DSH 可调用委派工具                | 设备执行终态与结果交付              |
+| 远程 AG-UI / Mastra Bot | agents 的现有远程类型           | 协议 Adapter 接 Conversation，不强制改成 DSH            | 该远端协议的结果及产品结算          |
 
 ### 13.2 DSH 子代理与产品后台任务不混用
 
@@ -603,16 +618,16 @@ DSH subagent 属于一个执行任务内部的协作关系。ChisaBot worker、�
 
 以下新增表名为建议，实施时通过版本化数据库迁移创建；旧表先保留。业务数据已有表继续复用。
 
-| 数据 | 建议表 | 关键字段与约束 |
-|---|---|---|
-| 内核绑定 | `chisabot_runtime_bindings` | thread、revision、kernel、runtime、session、版本、状态、legacy 截点；每线程最多一个 active |
-| 命令接纳 | `chisabot_conversation_commands` | owner、thread、commandId、type、payload、bindingRevision、dispatch/receipt 状态；同线程 commandId 唯一 |
-| 产品 run | `chisabot_conversation_runs` | runId、绑定、发起者、状态、输入关联、停止 fence、开始/结束与原因 |
-| 显示消息 | `chisabot_conversation_messages` | 稳定消息 ID、所属 thread/run、原始来源、内容块、结算状态、分支可见性 |
-| 显示事件与源游标 | `chisabot_conversation_events` / `..._projection_cursors` | thread revision、source key、changes；源游标与投影同事务提交 |
-| 工具操作 | `chisabot_tool_operations` | 复合调用身份、immutable args、状态、审批关联、receipt、结果、fence |
-| 交互关联 | `chisabot_runtime_interactions` | 原审批/问题 ID、operation、Session、状态、决定修订；已有审批政策表不复制 |
-| 迁移记录 | `chisabot_conversation_migrations` | 旧线程截点、状态、计数、异常清单、导入/续接来源、候选绑定 |
+| 数据             | 建议表                                                    | 关键字段与约束                                                                                         |
+| ---------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 内核绑定         | `chisabot_runtime_bindings`                               | thread、revision、kernel、runtime、session、版本、状态、legacy 截点；每线程最多一个 active             |
+| 命令接纳         | `chisabot_conversation_commands`                          | owner、thread、commandId、type、payload、bindingRevision、dispatch/receipt 状态；同线程 commandId 唯一 |
+| 产品 run         | `chisabot_conversation_runs`                              | runId、绑定、发起者、状态、输入关联、停止 fence、开始/结束与原因                                       |
+| 显示消息         | `chisabot_conversation_messages`                          | 稳定消息 ID、所属 thread/run、原始来源、内容块、结算状态、分支可见性                                   |
+| 显示事件与源游标 | `chisabot_conversation_events` / `..._projection_cursors` | thread revision、source key、changes；源游标与投影同事务提交                                           |
+| 工具操作         | `chisabot_tool_operations`                                | 复合调用身份、immutable args、状态、审批关联、receipt、结果、fence                                     |
+| 交互关联         | `chisabot_runtime_interactions`                           | 原审批/问题 ID、operation、Session、状态、决定修订；已有审批政策表不复制                               |
+| 迁移记录         | `chisabot_conversation_migrations`                        | 旧线程截点、状态、计数、异常清单、导入/续接来源、候选绑定                                              |
 
 DSH Session 先使用官方持久化实现和独立持久卷。首版不另写 PostgreSQL SessionPersistence provider，以免在内核迁移中再承担一套存储引擎兼容工作。
 
@@ -640,16 +655,16 @@ DSH Session 先使用官方持久化实现和独立持久卷。首版不另写 P
 
 ### 14.4 队列、审批与正在执行的任务
 
-| 迁移时状态 | 处理 |
-|---|---|
-| 空闲且无未决副作用 | 可准备新 Session 和续接上下文 |
-| 正在执行或停止中 | 等原所有者结算；不将一半 run 搬到新内核 |
-| paused 补话 | 原 ID 和状态保留；切换不会自动发送 |
-| 已入 DSH/旧 runtime 但接纳结果未知 | 先对账，禁止两边都投递 |
-| 待审批且尚未派发 | 原决定记录保留；绑定到可恢复操作后切换，否则旧绑定继续处理 |
-| 外部操作 outcome_unknown | 对账或人工核实前保持原执行范围，不迁成“待重试” |
-| worker / workflow / task-center 在跑 | 原执行继续；后续新 run 按已记录绑定选择，不能跨版本猜测 |
-| 编辑/截断进行中 | 等 revision 操作完成，再确定截点 |
+| 迁移时状态                           | 处理                                                       |
+| ------------------------------------ | ---------------------------------------------------------- |
+| 空闲且无未决副作用                   | 可准备新 Session 和续接上下文                              |
+| 正在执行或停止中                     | 等原所有者结算；不将一半 run 搬到新内核                    |
+| paused 补话                          | 原 ID 和状态保留；切换不会自动发送                         |
+| 已入 DSH/旧 runtime 但接纳结果未知   | 先对账，禁止两边都投递                                     |
+| 待审批且尚未派发                     | 原决定记录保留；绑定到可恢复操作后切换，否则旧绑定继续处理 |
+| 外部操作 outcome_unknown             | 对账或人工核实前保持原执行范围，不迁成“待重试”             |
+| worker / workflow / task-center 在跑 | 原执行继续；后续新 run 按已记录绑定选择，不能跨版本猜测    |
+| 编辑/截断进行中                      | 等 revision 操作完成，再确定截点                           |
 
 ### 14.5 激活是一次受控切换
 
@@ -683,13 +698,13 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 
 ### 15.2 配置合同
 
-| 配置 | 目标含义 |
-|---|---|
-| 现有 `CHISABOT_AGENT_KERNEL` 扩展 `dsh` | 新建内置执行绑定的部署默认值，不能覆盖已记录的线程绑定 |
-| runtime 目标配置 | 账号到 Host 地址、凭据引用、持久卷、版本的服务端映射 |
-| 灰度策略 | 限定可新建 DSH 绑定的账号/Bot；独立于 DSH 进程是否启动 |
-| 插件协议版本 | ChisaBot 与插件的能力握手；不兼容拒绝接纳新工作 |
-| 模型连接 | 继续来自现有数据库设置，不能被 DSH HOME 的另一份模型配置暗中覆盖 |
+| 配置                                    | 目标含义                                                         |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| 现有 `CHISABOT_AGENT_KERNEL` 扩展 `dsh` | 新建内置执行绑定的部署默认值，不能覆盖已记录的线程绑定           |
+| runtime 目标配置                        | 账号到 Host 地址、凭据引用、持久卷、版本的服务端映射             |
+| 灰度策略                                | 限定可新建 DSH 绑定的账号/Bot；独立于 DSH 进程是否启动           |
+| 插件协议版本                            | ChisaBot 与插件的能力握手；不兼容拒绝接纳新工作                  |
+| 模型连接                                | 继续来自现有数据库设置，不能被 DSH HOME 的另一份模型配置暗中覆盖 |
 
 配置不一致时就近报错并阻止该 runtime 接纳，不能静默切另一个内核继续执行同一请求。已接纳运行固定在原 binding，网络错误不触发跨内核重跑。
 
@@ -697,13 +712,13 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 
 ### 15.3 健康分层
 
-| 检查 | 证明什么 | 故障时影响 |
-|---|---|---|
-| ChisaBot liveness | 主进程响应 | 进程管理 |
-| ChisaBot readiness | 数据库和必要产品依赖可用 | 是否接新产品请求 |
-| DSH readiness | 进程、插件、存储、所需方法和版本可用 | 对应账号是否可新建执行 |
-| Session health | 某个会话的日志、owner、活动状态可解释 | 只阻止该会话有风险的操作 |
-| 模型诊断 | 指定模型能否进行实际请求 | 区分网关/模型故障和 runtime 故障 |
+| 检查               | 证明什么                              | 故障时影响                       |
+| ------------------ | ------------------------------------- | -------------------------------- |
+| ChisaBot liveness  | 主进程响应                            | 进程管理                         |
+| ChisaBot readiness | 数据库和必要产品依赖可用              | 是否接新产品请求                 |
+| DSH readiness      | 进程、插件、存储、所需方法和版本可用  | 对应账号是否可新建执行           |
+| Session health     | 某个会话的日志、owner、活动状态可解释 | 只阻止该会话有风险的操作         |
+| 模型诊断           | 指定模型能否进行实际请求              | 区分网关/模型故障和 runtime 故障 |
 
 健康查询本身不产生付费模型请求。发布流程若启用 DSH，必须要求对应 readiness 通过；不能沿用旧 Hermes 的提示性检查规则把必需 runtime 故障忽略。后台已有 run 的健康也要检查，不以首页打开代替。
 
@@ -766,55 +781,55 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 
 ### 17.2 工作包
 
-| 包 | 产物与主要改动 | 依赖 | 退出条件 |
-|---|---|---|---|
-| P0 Host 整合 | composition、插件入口、版本与鉴权、客户端兼容、真实链路和 fallback | 固定上游契约 | 阶段 0 全链路与备用模型验证通过 |
-| P1 Conversation 内核接口 | commands、binding、run、快照/事件、DSH Adapter、兼容入口 | P0 | 幂等、单会话状态、重连/恢复明确 |
-| P2 工具与交互 | 现有 executor 接入、operation 账本、审批/问题、停止 fence | P1 | 副作用、late approval、撤销与结果未知通过 |
-| P3 前端状态替换 | store/client/scope、纯渲染、附件、HTML 沙箱、原交互 | P1/P2 契约 | 实际 UI、所有预览消费者、无浏览器后台通过 |
-| P4 后台消费者 | TurnRunner、IM、worker、任务中心、工作流、handoff | P1/P2 | 每类真实入口及交付可用 |
-| P5 数据连续性 | 盘点、legacy reader、续接、编辑分支、迁移工具 | P1–P4 | 旧对话和未决对象逐项对上，能回滚 |
-| P6 部署灰度 | 新卷、runtime 映射、健康、更新器、备份与回滚 | P0–P5 | 隔离环境和指定真实客户端验收 |
-| P7 依赖退休 | 删除 CopilotKit 生产依赖、旧接力、私有锁接口和残留配置 | P3–P6 | 依赖图与消费者证明已完成替换 |
+| 包                       | 产物与主要改动                                                     | 依赖         | 退出条件                                  |
+| ------------------------ | ------------------------------------------------------------------ | ------------ | ----------------------------------------- |
+| P0 Host 整合             | composition、插件入口、版本与鉴权、客户端兼容、真实链路和 fallback | 固定上游契约 | 阶段 0 全链路与备用模型验证通过           |
+| P1 Conversation 内核接口 | commands、binding、run、快照/事件、DSH Adapter、兼容入口           | P0           | 幂等、单会话状态、重连/恢复明确           |
+| P2 工具与交互            | 现有 executor 接入、operation 账本、审批/问题、停止 fence          | P1           | 副作用、late approval、撤销与结果未知通过 |
+| P3 前端状态替换          | store/client/scope、纯渲染、附件、HTML 沙箱、原交互                | P1/P2 契约   | 实际 UI、所有预览消费者、无浏览器后台通过 |
+| P4 后台消费者            | TurnRunner、IM、worker、任务中心、工作流、handoff                  | P1/P2        | 每类真实入口及交付可用                    |
+| P5 数据连续性            | 盘点、legacy reader、续接、编辑分支、迁移工具                      | P1–P4        | 旧对话和未决对象逐项对上，能回滚          |
+| P6 部署灰度              | 新卷、runtime 映射、健康、更新器、备份与回滚                       | P0–P5        | 隔离环境和指定真实客户端验收              |
+| P7 依赖退休              | 删除 CopilotKit 生产依赖、旧接力、私有锁接口和残留配置             | P3–P6        | 依赖图与消费者证明已完成替换              |
 
 同一状态机和协议由一个实施负责人维护。工具/审批、前端呈现和部署可在接口确定后分工；不能由多个并行负责人分别发明 run、终态或恢复语义。
 
 ### 17.3 主要代码迁移地图
 
-| 当前位置 | 改动方向 |
-|---|---|
-| `server/src/copilot.ts` | 提取模型/提示/工具的产品逻辑；DSH Adapter 不继承 BuiltInAgent；最终退出 CopilotKit 挂载 |
-| `server/src/local-conversations.ts` | 分离旧历史 reader 与新 Conversation 模块；移除 AgentRunner 继承和前端续跑 |
-| `server/src/turns/run-turn.ts` | 改为统一执行接口的消费者，退出 `ɵ` 锁调用与上游私有流程复制 |
-| `server/src/agents/hermes-runtime.ts` / `runtime-tools.ts` | 旧绑定期间保留；提取可复用授权/executor，DSH 不继续使用 capture 等待桥 |
-| `server/src/thread-inbox.ts` / `thread-truncate.ts` | 保留产品队列、暂停和编辑合同，改为命令与 binding revision 驱动 |
-| `server/src/approvals/` / `confirmations/` | 保留政策和记录，接 operation 与 runtime interaction |
-| `server/src/index.ts` | 将各 `createTurnRunner`、copilotRuntime.history/lock/runner 调用改到统一入口 |
-| `server/src/task-center/` / `workers/` / `schedules/` / `im/` | 保留业务状态机，替换执行与终态订阅 |
-| `app/src/lib/copilot/` | 分拆成新 chat 状态、渲染器和 legacy Adapter，逐项退休原模块 |
-| `channel-chat.tsx` / `chat-transcript.tsx` / Composer | 接新状态，保留气泡、滚动、附件及草稿行为 |
-| `app/src/components/component-preview.tsx` / 管理组件路由 | 替换 SDK 沙箱 renderer，保留预览与授权 |
-| `shared/task-center.ts` / `reply-sources.ts` | 用产品事件与明确 legacy variant 表达，退出 SDK 类型扩散 |
-| `android/.../AppViewModel.kt` / `chat/Model.kt` | 第一阶段由兼容路由保证可用；后续原生接新协议仍独立验收 |
-| `deploy/compose.yaml` / 更新器 / 健康与内核状态 | 添加独立 runtime 版本与存储，保持旧物理卷和可回滚读取版本 |
+| 当前位置                                                      | 改动方向                                                                                |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `server/src/copilot.ts`                                       | 提取模型/提示/工具的产品逻辑；DSH Adapter 不继承 BuiltInAgent；最终退出 CopilotKit 挂载 |
+| `server/src/local-conversations.ts`                           | 分离旧历史 reader 与新 Conversation 模块；移除 AgentRunner 继承和前端续跑               |
+| `server/src/turns/run-turn.ts`                                | 改为统一执行接口的消费者，退出 `ɵ` 锁调用与上游私有流程复制                             |
+| `server/src/agents/hermes-runtime.ts` / `runtime-tools.ts`    | 旧绑定期间保留；提取可复用授权/executor，DSH 不继续使用 capture 等待桥                  |
+| `server/src/thread-inbox.ts` / `thread-truncate.ts`           | 保留产品队列、暂停和编辑合同，改为命令与 binding revision 驱动                          |
+| `server/src/approvals/` / `confirmations/`                    | 保留政策和记录，接 operation 与 runtime interaction                                     |
+| `server/src/index.ts`                                         | 将各 `createTurnRunner`、copilotRuntime.history/lock/runner 调用改到统一入口            |
+| `server/src/task-center/` / `workers/` / `schedules/` / `im/` | 保留业务状态机，替换执行与终态订阅                                                      |
+| `app/src/lib/copilot/`                                        | 分拆成新 chat 状态、渲染器和 legacy Adapter，逐项退休原模块                             |
+| `channel-chat.tsx` / `chat-transcript.tsx` / Composer         | 接新状态，保留气泡、滚动、附件及草稿行为                                                |
+| `app/src/components/component-preview.tsx` / 管理组件路由     | 替换 SDK 沙箱 renderer，保留预览与授权                                                  |
+| `shared/task-center.ts` / `reply-sources.ts`                  | 用产品事件与明确 legacy variant 表达，退出 SDK 类型扩散                                 |
+| `android/.../AppViewModel.kt` / `chat/Model.kt`               | 第一阶段由兼容路由保证可用；后续原生接新协议仍独立验收                                  |
+| `deploy/compose.yaml` / 更新器 / 健康与内核状态               | 添加独立 runtime 版本与存储，保持旧物理卷和可回滚读取版本                               |
 
 ## 18. 需要在实施中判定的具体契约
 
 这些项目有明确验证动作和责任，不留为笼统的“后续优化”。
 
-| 项目 | 责任模块 | 最早验证阶段 | 不满足时的处理 |
-|---|---|---|---|
-| 无 UI Host 最小 composition 可启动，Gateway 鉴权与 Session follow 可用 | runtime/plugin | P0 | 按官方 Host 组合补足依赖，不退回缺取消的 SDK 聊天路径 |
-| 官方 Node client 的必要传输模块在现有 Bun 进程可用 | Host Adapter | P0 | 根据实际不兼容点选择官方传输的受支持装配；必要时仅将 Adapter 放在 Node 侧，保留产品接口和既有 Bun 服务 |
-| requestId 持久去重与接纳查询 | Conversation/plugin | P0/P1 | 插件记录来源 receipt；未解决前不接正式写任务 |
-| 取消与 inbox 竞争能保持 paused 语义 | Conversation/plugin | P1/P2 | 单 Session 控制入口与 pre-step fence；不靠取消共享进程 |
-| 审批重启后有真实恢复路径 | tools/interactions | P2 | 使用操作账本恢复命令；原 Promise 失效要可见 |
-| Magpie 实际工具/多模态/推理协议 | model Adapter | P0 | 调整明确的 provider 配置，保留不支持项和对应错误 |
-| 自动跨模型 fallback 能通过公共接口保持请求与日志语义 | model Adapter / 上游扩展 | P0 | 完成 provider Adapter 或最小公开扩展；没有完成则不正式切流 |
-| DSH 运行中模型策略与子代理默认能被产品约束 | runtime/plugin | P0/P2 | 禁用未接治理的能力，完成接线后再开放 |
-| 旧历史续接覆盖未完成要求、附件和来源 | migration | P5 | 不激活该线程绑定；修复转换清单 |
-| 当前发布/回滚体系能同时管理应用和 runtime | deploy | P6 | 保留兼容基线，不进行全量切换 |
-| 多账号、Team Bot 不借用其他人的工具身份 | identity/tools | P1/P2/P6 | 补齐授权映射与实例隔离，保持未验证账号原绑定 |
+| 项目                                                                   | 责任模块                 | 最早验证阶段 | 不满足时的处理                                                                                         |
+| ---------------------------------------------------------------------- | ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------ |
+| 无 UI Host 最小 composition 可启动，Gateway 鉴权与 Session follow 可用 | runtime/plugin           | P0           | 按官方 Host 组合补足依赖，不退回缺取消的 SDK 聊天路径                                                  |
+| 官方 Node client 的必要传输模块在现有 Bun 进程可用                     | Host Adapter             | P0           | 根据实际不兼容点选择官方传输的受支持装配；必要时仅将 Adapter 放在 Node 侧，保留产品接口和既有 Bun 服务 |
+| requestId 持久去重与接纳查询                                           | Conversation/plugin      | P0/P1        | 插件记录来源 receipt；未解决前不接正式写任务                                                           |
+| 取消与 inbox 竞争能保持 paused 语义                                    | Conversation/plugin      | P1/P2        | 单 Session 控制入口与 pre-step fence；不靠取消共享进程                                                 |
+| 审批重启后有真实恢复路径                                               | tools/interactions       | P2           | 使用操作账本恢复命令；原 Promise 失效要可见                                                            |
+| Magpie 实际工具/多模态/推理协议                                        | model Adapter            | P0           | 调整明确的 provider 配置，保留不支持项和对应错误                                                       |
+| 自动跨模型 fallback 能通过公共接口保持请求与日志语义                   | model Adapter / 上游扩展 | P0           | 完成 provider Adapter 或最小公开扩展；没有完成则不正式切流                                             |
+| DSH 运行中模型策略与子代理默认能被产品约束                             | runtime/plugin           | P0/P2        | 禁用未接治理的能力，完成接线后再开放                                                                   |
+| 旧历史续接覆盖未完成要求、附件和来源                                   | migration                | P5           | 不激活该线程绑定；修复转换清单                                                                         |
+| 当前发布/回滚体系能同时管理应用和 runtime                              | deploy                   | P6           | 保留兼容基线，不进行全量切换                                                                           |
+| 多账号、Team Bot 不借用其他人的工具身份                                | identity/tools           | P1/P2/P6     | 补齐授权映射与实例隔离，保持未验证账号原绑定                                                           |
 
 ## 19. 验收：证明用户能够持续完成任务
 
@@ -827,34 +842,34 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 
 ### 19.2 必须通过的场景
 
-| 编号 | 操作 | 通过依据 |
-|---|---|---|
-| A01 | 普通新对话、连续多轮、长历史 | 消息不重复；DSH 持久历史连续；不用每轮传全量旧历史 |
-| A02 | 文本、表格、多标题、代码、围栏示例 | 流式/结束/停止均在气泡；普通 Markdown 不误变文档卡 |
-| A03 | 上滑阅读、加载旧页、折叠工具、窄屏 | 阅读锚点稳定；idle 无新增大块留白；reduced-motion 正确 |
-| A04 | 仅图片/文件/卡片交付 | 有效产物可读可下载；不误报“没有回答” |
-| A05 | 发送响应丢失后重试 | 一个 command 只被接纳一次，用户消息与工具效果不重复 |
-| A06 | 回答中断网、关闭网页、另一设备打开 | runtime 继续；重连按水位恢复；不重发 prompt |
-| A07 | 重复/乱序/缺口/新 generation 实时帧 | 有缺口补读；正式消息原位结算，文本和参数不重复 |
-| A08 | 模型请求中 Stop，另一线程同时运行 | 第一条真实停止，第二条继续；不关闭共享 Host |
-| A09 | 工具执行中 Stop，随后 late callback | executor 收到取消；未结束则显示 stopping；晚到结果不复活 run |
-| A10 | 审批中 Stop；随后另端批准 | 决定不执行被撤销动作；所有端看到一致终态 |
-| A11 | 文字/附件/技能补话后 Stop、刷新、发新话 | 旧暂停项保留；“发送这条”只派发指定项 |
-| A12 | 审批允许/拒绝/handled/过期/双端竞争 | 一次有效决定，调用归属准确，无重复执行 |
-| A13 | 审批等待时重启 runtime，再 late approve | 旧等待正确结束；通过操作账本恢复或明确说明不可恢复 |
-| A14 | 工具已产生效果但回执丢失 | 有幂等/查询能力则对账；否则 outcome_unknown，不自动再做 |
-| A15 | 主模型无效/配额/超时、备用无效、目录过旧 | 错误归属正确；重试预算有界；已完成工具不重跑 |
-| A16 | 图片、推理级别、输出上限、模型切换 | 实际 provider 参数正确；旧 run 与新 run 设置边界一致 |
-| A17 | 网页关闭后跑 IM/定时/worker/任务中心 | 每类入口有真实结果和交付回执；原 thread 可查看 |
-| A18 | Bot handoff、子代理、设备 local-agent | 权限与上下文归属正确；父子状态与产品任务互不混淆 |
-| A19 | 历史导入后继续、编辑旧消息、重新生成 | 旧 ID/文件可用；新 binding 一致；旧流与审批不污染新分支 |
-| A20 | 切换后回滚，再打开新旧对话 | 新历史、工具结果、审批、暂停输入和附件全部可访问 |
-| A21 | 第二账号越权读取/停止/回答审批；Team Bot调用 | 服务端拒绝越权；实例和工具授权均符合实际 actor |
-| A22 | 原生 Android 原版本兼容、新 Android Web 主界面与远程 AG-UI Bot | 旧路由和事件仍可用；未偷偷要求所有客户端同时升级；新 Android 实机呈现同一 Web 手机布局并保留系统文件、返回、键盘与恢复能力 |
-| A23 | 聊天与管理页 HTML/json-render 预览 | 组件正常展示；授权撤销有效；不依赖 CopilotKit 包 |
-| A24 | DSH 源日志可用但投影缺失/落后 | 可重建至相同消息和状态；不触发模型或工具重执行 |
-| A25 | ChisaBot 重启/派发 lease 到期，而 DSH 仍在工作 | 重新接管观察；不释放成可重跑请求；原 run 只执行一次 |
-| A26 | 源日志已 flush 与未 flush 尾部的故障恢复 | 水位差异可解释；丢失尾部不复用冲突 sourceSeq；副作用先对账 |
+| 编号 | 操作                                                           | 通过依据                                                                                                                   |
+| ---- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| A01  | 普通新对话、连续多轮、长历史                                   | 消息不重复；DSH 持久历史连续；不用每轮传全量旧历史                                                                         |
+| A02  | 文本、表格、多标题、代码、围栏示例                             | 流式/结束/停止均在气泡；普通 Markdown 不误变文档卡                                                                         |
+| A03  | 上滑阅读、加载旧页、折叠工具、窄屏                             | 阅读锚点稳定；idle 无新增大块留白；reduced-motion 正确                                                                     |
+| A04  | 仅图片/文件/卡片交付                                           | 有效产物可读可下载；不误报“没有回答”                                                                                       |
+| A05  | 发送响应丢失后重试                                             | 一个 command 只被接纳一次，用户消息与工具效果不重复                                                                        |
+| A06  | 回答中断网、关闭网页、另一设备打开                             | runtime 继续；重连按水位恢复；不重发 prompt                                                                                |
+| A07  | 重复/乱序/缺口/新 generation 实时帧                            | 有缺口补读；正式消息原位结算，文本和参数不重复                                                                             |
+| A08  | 模型请求中 Stop，另一线程同时运行                              | 第一条真实停止，第二条继续；不关闭共享 Host                                                                                |
+| A09  | 工具执行中 Stop，随后 late callback                            | executor 收到取消；未结束则显示 stopping；晚到结果不复活 run                                                               |
+| A10  | 审批中 Stop；随后另端批准                                      | 决定不执行被撤销动作；所有端看到一致终态                                                                                   |
+| A11  | 文字/附件/技能补话后 Stop、刷新、发新话                        | 旧暂停项保留；“发送这条”只派发指定项                                                                                       |
+| A12  | 审批允许/拒绝/handled/过期/双端竞争                            | 一次有效决定，调用归属准确，无重复执行                                                                                     |
+| A13  | 审批等待时重启 runtime，再 late approve                        | 旧等待正确结束；通过操作账本恢复或明确说明不可恢复                                                                         |
+| A14  | 工具已产生效果但回执丢失                                       | 有幂等/查询能力则对账；否则 outcome_unknown，不自动再做                                                                    |
+| A15  | 主模型无效/配额/超时、备用无效、目录过旧                       | 错误归属正确；重试预算有界；已完成工具不重跑                                                                               |
+| A16  | 图片、推理级别、输出上限、模型切换                             | 实际 provider 参数正确；旧 run 与新 run 设置边界一致                                                                       |
+| A17  | 网页关闭后跑 IM/定时/worker/任务中心                           | 每类入口有真实结果和交付回执；原 thread 可查看                                                                             |
+| A18  | Bot handoff、子代理、设备 local-agent                          | 权限与上下文归属正确；父子状态与产品任务互不混淆                                                                           |
+| A19  | 历史导入后继续、编辑旧消息、重新生成                           | 旧 ID/文件可用；新 binding 一致；旧流与审批不污染新分支                                                                    |
+| A20  | 切换后回滚，再打开新旧对话                                     | 新历史、工具结果、审批、暂停输入和附件全部可访问                                                                           |
+| A21  | 第二账号越权读取/停止/回答审批；Team Bot调用                   | 服务端拒绝越权；实例和工具授权均符合实际 actor                                                                             |
+| A22  | 原生 Android 原版本兼容、新 Android Web 主界面与远程 AG-UI Bot | 旧路由和事件仍可用；未偷偷要求所有客户端同时升级；新 Android 实机呈现同一 Web 手机布局并保留系统文件、返回、键盘与恢复能力 |
+| A23  | 聊天与管理页 HTML/json-render 预览                             | 组件正常展示；授权撤销有效；不依赖 CopilotKit 包                                                                           |
+| A24  | DSH 源日志可用但投影缺失/落后                                  | 可重建至相同消息和状态；不触发模型或工具重执行                                                                             |
+| A25  | ChisaBot 重启/派发 lease 到期，而 DSH 仍在工作                 | 重新接管观察；不释放成可重跑请求；原 run 只执行一次                                                                        |
+| A26  | 源日志已 flush 与未 flush 尾部的故障恢复                       | 水位差异可解释；丢失尾部不复用冲突 sourceSeq；副作用先对账                                                                 |
 
 ### 19.3 体验与性能目标
 
@@ -919,5 +934,3 @@ Hermes/builtin 旧执行路径只有在所有活动绑定、审批恢复、后�
 - [官方 Agent 接口](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/agent/README.md)、[Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/api/session-controller/README.md)、[Gateway](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/api/gateway/README.md)。
 - [官方工具扩展](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/cookbook/adding-a-tool.md)、[模型配置](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/user/guide/providers.md)。
 - [Hermes 评估](research/20261107-hermes-kernel-sources.md)、[轻量内核比较](research/20261107-kernel-alternatives.md)、[Pi core 资料](research/20261107-pi-kernel-sources.md)。
-
-

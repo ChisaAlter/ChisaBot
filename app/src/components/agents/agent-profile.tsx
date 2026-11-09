@@ -1,15 +1,15 @@
+import { IconLayoutDashboard, IconTrash } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
-import { IconLayoutDashboard, IconTrash } from "@tabler/icons-react";
 import { AgentDialog } from "@/components/agents/agent-dialog";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
 import { BotComputerAccess } from "@/components/devices/bot-computer-access";
-import { useBotChat } from "@/lib/channels/bot-chat";
-import { showPanels } from "@/lib/panels/rail-open";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentQueryOptions } from "@/lib/agents/queries";
+import { useBotChat } from "@/lib/channels/bot-chat";
+import { showPanels } from "@/lib/panels/rail-open";
 
 function Tag({ children }: { children: ReactNode }) {
   return (
@@ -74,7 +74,8 @@ export function AgentProfile({ agentId }: { agentId: string }) {
   return (
     <div className="flex w-full flex-col gap-6 p-8">
       <header className="flex flex-col items-center gap-3 text-center">
-        <AbstractAvatar agentId={profile.id}
+        <AbstractAvatar
+          agentId={profile.id}
           name={profile.name}
           seed={profile.avatarSeed}
           size={80}
@@ -105,9 +106,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
       <div className="flex flex-col gap-2">
         <Button
           className="w-full text-sm!"
-          onClick={() =>
-            void openChat(agentId)
-          }
+          onClick={() => void openChat(agentId)}
         >
           {"去聊天"}
         </Button>
@@ -126,9 +125,15 @@ export function AgentProfile({ agentId }: { agentId: string }) {
           {"自定义面板"}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {"它为你做的仪表盘、列表和小工具；也可以让它新建一个，或从面板库安装。"}
+          {
+            "它为你做的仪表盘、列表和小工具；也可以让它新建一个，或从面板库安装。"
+          }
         </p>
-        <Button className="w-full text-sm!" onClick={() => showPanels()} variant="outline">
+        <Button
+          className="w-full text-sm!"
+          onClick={() => showPanels()}
+          variant="outline"
+        >
           <IconLayoutDashboard />
           {"打开面板"}
         </Button>
@@ -139,12 +144,14 @@ export function AgentProfile({ agentId }: { agentId: string }) {
           {"电脑操作"}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {"你关联的设备由所有机器人共用：它可以使用在线设备，只限每台设备开启的能力和允许的文件夹，每一步都有记录。"}
+          {
+            "你关联的设备由所有机器人共用：它可以使用在线设备，只限每台设备开启的能力和允许的文件夹，每一步都有记录。"
+          }
         </p>
         <BotComputerAccess agentId={agentId} botName={profile.name} compact />
       </section>
 
-      {profile.canDelete ?? profile.canManage ? (
+      {(profile.canDelete ?? profile.canManage) ? (
         <section className="bot-danger grid min-w-0 grid-cols-1 gap-2">
           <h2 className="text-xs font-medium uppercase tracking-wide text-destructive">
             {"删除机器人"}
@@ -154,7 +161,11 @@ export function AgentProfile({ agentId }: { agentId: string }) {
               ? "彻底删除这个部署自带的机器人，以及你与它的私人会话、记忆、定时任务和面板。删除会被记住，更新后也不会回来。此操作无法撤消。"
               : "彻底删除这个机器人，以及你与它的私人会话、记忆、定时任务和面板。此操作无法撤消。"}
           </p>
-          <Button className="w-full text-sm!" onClick={() => setDeleting(true)} variant="destructive">
+          <Button
+            className="w-full text-sm!"
+            onClick={() => setDeleting(true)}
+            variant="destructive"
+          >
             <IconTrash />
             {"删除机器人…"}
           </Button>

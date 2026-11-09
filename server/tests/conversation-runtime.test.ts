@@ -1,11 +1,8 @@
-import { FailFastTransport } from "../src/agents/pre-stream-failure";
 import { describe, expect, spyOn, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AbstractAgent, RunAgentInput } from "@ag-ui/client";
 import { HttpAgent } from "@ag-ui/client";
-import { createModelFixture } from "./support/model-fixture";
-import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import { EMPTY, lastValueFrom } from "rxjs";
 import { z } from "zod";
 import {
@@ -16,6 +13,8 @@ import {
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import { createActorAgentResolver } from "../src/agents/agent-resolver";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
+import { FailFastTransport } from "../src/agents/pre-stream-failure";
 import type { AuditInitiator } from "../src/audit";
 import { MAX_INLINED_BYTES_PER_RUN } from "../src/channels/attachment-parts";
 import { loadConfig } from "../src/config";
@@ -35,6 +34,7 @@ import { grantedToolGuidance } from "../src/plugins/tools";
 import { loadTenantPackage } from "../src/tenant-package";
 import { UNTRUSTED_GUIDANCE } from "../src/untrusted-content";
 import { testEnvironment } from "./support/environment";
+import { createModelFixture } from "./support/model-fixture";
 
 /**
  * The Bot under test, or a failure that says it was never built.
@@ -161,10 +161,13 @@ describe("deployment model selection", () => {
     const originalBase = process.env.OPENAI_BASE_URL;
     try {
       process.env.OPENAI_BASE_URL = await recorder.start();
-      recorder.rules.push({ match: /.*/, reply: {
-        type: "text",
-        content: "DEFAULTMODEL001 fixture completed.",
-      } });
+      recorder.rules.push({
+        match: /.*/,
+        reply: {
+          type: "text",
+          content: "DEFAULTMODEL001 fixture completed.",
+        },
+      });
       const agents = await resolveRuntimeAgents(
         () => [
           {
@@ -814,7 +817,9 @@ describe("standing agent roles", () => {
     // when the user taps "在网页中打开这段对话" to fill a card, it must be treated as web.
     await factory({
       request: new Request("http://chisabot.test/api/conversations", {
-        headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) ChisaBotAndroid/1.4.0" },
+        headers: {
+          "user-agent": "Mozilla/5.0 (Linux; Android 14) ChisaBotAndroid/1.4.0",
+        },
       }),
     });
     await factory({
@@ -1133,13 +1138,20 @@ describe("what a Bot is told it holds", () => {
       guidance: "THE PERSON'S PC IS ONLINE",
     };
     const prompt = builtInAgentConfiguration(
-      { id: "knowledge", name: "知识助手", type: "built_in", systemPrompt: "Help." },
+      {
+        id: "knowledge",
+        name: "知识助手",
+        type: "built_in",
+        systemPrompt: "Help.",
+      },
       { provider: "openai", defaultModel: "gpt-5.6-terra" },
       "openai-secret",
       [pc, { ...pc, name: "device_system_info", ref: "devices/system_info" }],
       "BROWSER GUIDANCE HERE",
     ).prompt as string;
-    expect(prompt.indexOf("THE PERSON'S PC IS ONLINE")).toBeGreaterThan(prompt.indexOf("BROWSER GUIDANCE HERE"));
+    expect(prompt.indexOf("THE PERSON'S PC IS ONLINE")).toBeGreaterThan(
+      prompt.indexOf("BROWSER GUIDANCE HERE"),
+    );
     expect(prompt.split("THE PERSON'S PC IS ONLINE")).toHaveLength(2);
   });
 });
@@ -1275,12 +1287,36 @@ describe("full kernel replacement with Hermes", () => {
 
   test("routes a built-in Bot with its host tools, role and model", async () => {
     await using endpoint = fakeAgUiEndpoint();
-    setAgentKernel({ kind: "hermes", url: endpoint.url, binding: {
-      toolGatewayUrl: "http://host/api/internal/runtime-tools",
-      readRun: () => ({ actorId: "owner", botId: "general-assistant", threadId: "hermes-thread", runId: "hermes-run" }),
-    } });
+    setAgentKernel({
+      kind: "hermes",
+      url: endpoint.url,
+      binding: {
+        toolGatewayUrl: "http://host/api/internal/runtime-tools",
+        readRun: () => ({
+          actorId: "owner",
+          botId: "general-assistant",
+          threadId: "hermes-thread",
+          runId: "hermes-run",
+        }),
+      },
+    });
     try {
-      const agents = await buildAgents([assistant], model, null, undefined, async () => [{ name: "web_search", ref: "web/search", description: "Search", parameters: z.object({ query: z.string() }), execute: async () => "result" }], () => "signed-run");
+      const agents = await buildAgents(
+        [assistant],
+        model,
+        null,
+        undefined,
+        async () => [
+          {
+            name: "web_search",
+            ref: "web/search",
+            description: "Search",
+            parameters: z.object({ query: z.string() }),
+            execute: async () => "result",
+          },
+        ],
+        () => "signed-run",
+      );
       const agent = built(agents, "general-assistant");
       agent.threadId = "hermes-thread";
       agent.addMessage({ id: "u", role: "user", content: "Hello" });
@@ -1291,13 +1327,26 @@ describe("full kernel replacement with Hermes", () => {
         content: "Categorized.",
       });
       const sent = endpoint.requests.at(-1) as
-        | { messages?: { role?: string; content?: unknown }[]; tools?: unknown[] }
+        | {
+            messages?: { role?: string; content?: unknown }[];
+            tools?: unknown[];
+          }
         | undefined;
-      const system = sent?.messages?.find((message) => message.role === "system");
+      const system = sent?.messages?.find(
+        (message) => message.role === "system",
+      );
       expect(JSON.stringify(system)).toContain("General Assistant");
       expect(JSON.stringify(system)).toContain("Be the general assistant.");
       expect(sent?.tools).toMatchObject([{ name: "web_search" }]);
-      expect(endpoint.requests.at(-1)).toMatchObject({ forwardedProps: { chisabotHermes: { version: 1, model: { id: model.defaultModel }, scope: { actorId: "owner", botId: "general-assistant" } } } });
+      expect(endpoint.requests.at(-1)).toMatchObject({
+        forwardedProps: {
+          chisabotHermes: {
+            version: 1,
+            model: { id: model.defaultModel },
+            scope: { actorId: "owner", botId: "general-assistant" },
+          },
+        },
+      });
     } finally {
       setAgentKernel({ kind: "builtin" });
     }
@@ -1462,7 +1511,10 @@ describe("a person's standing instructions", () => {
     const originalBase = process.env.OPENAI_BASE_URL;
     try {
       process.env.OPENAI_BASE_URL = await recorder.start();
-      recorder.rules.push({ match: /.*/, reply: { type: "text", content: "Fixture completed." } });
+      recorder.rules.push({
+        match: /.*/,
+        reply: { type: "text", content: "Fixture completed." },
+      });
       const agents = await buildAgents(
         [
           assistant,

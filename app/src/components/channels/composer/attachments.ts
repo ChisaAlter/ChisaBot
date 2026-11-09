@@ -1,11 +1,11 @@
-import { readImageDims } from "@/lib/image-dims";
-import type { AttachmentsConfig } from "@/lib/chat/attachment-state";
 import {
   ACCEPTED_IMAGE_MIME,
   ACCEPTED_TEXT_MIME,
   attachmentUrl,
   MAX_IMAGE_BYTES,
 } from "@/lib/channels/attachments";
+import type { AttachmentsConfig } from "@/lib/chat/attachment-state";
+import { readImageDims } from "@/lib/image-dims";
 
 /** Uploads a file and returns its stored reference. Derive result/error types from the composer contract. */
 type AttachmentUploadResult = Awaited<

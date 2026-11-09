@@ -1,4 +1,3 @@
-import { runAssertionValue } from "../legacy/protocol";
 import {
   AbstractAgent,
   type BaseEvent,
@@ -6,19 +5,23 @@ import {
   Middleware,
   type RunAgentInput,
   type RunFinishedEvent,
-  type ToolCallStartEvent,
   type ToolCallResultEvent,
+  type ToolCallStartEvent,
 } from "@ag-ui/client";
 import { Observable, type Subscription } from "rxjs";
 import { z } from "zod";
+import type { HeadlessTool } from "../computer/headless-tools";
+import { currentToolAbort } from "../confirmations/context";
+import { runAssertionValue } from "../legacy/protocol";
+import type { GrantedTool } from "../plugins/tools";
+import { currentSteerSession } from "../thread-inbox";
 import type { RunAssertion } from "./callback-token";
 import { logRunTiming, RunTimer } from "./run-timing";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
-import { createRuntimeToolRegistry, type RuntimeToolRun } from "./runtime-tools";
-import type { HeadlessTool } from "../computer/headless-tools";
-import { currentToolAbort } from "../confirmations/context";
-import type { GrantedTool } from "../plugins/tools";
-import { currentSteerSession } from "../thread-inbox";
+import {
+  createRuntimeToolRegistry,
+  type RuntimeToolRun,
+} from "./runtime-tools";
 
 export const hermesRuntimeTools = createRuntimeToolRegistry();
 
@@ -34,8 +37,14 @@ export type HermesRunConfiguration = {
   modelId: string;
   binding: HermesRuntimeBinding;
   signRun: (runId: string, threadId: string, previous?: unknown) => string;
-  toolsFor: (input: RunAgentInput, signal: AbortSignal) => Promise<readonly GrantedTool[]>;
-  prepare: (input: RunAgentInput, tools: readonly GrantedTool[]) => Promise<RunAgentInput>;
+  toolsFor: (
+    input: RunAgentInput,
+    signal: AbortSignal,
+  ) => Promise<readonly GrantedTool[]>;
+  prepare: (
+    input: RunAgentInput,
+    tools: readonly GrantedTool[],
+  ) => Promise<RunAgentInput>;
   /**
    * 这一轮的备用模型（同一个连接，按优先级）和输出上限（模型目录，见 conversation-runtime.ts resolveOutputLimit）。
    * 每一轮都问一次（管理员改了设置下一轮就生效）；没有就只发模型 id，Hermes 用它自己的默认。
@@ -65,19 +74,50 @@ export type HermesModelControls = {
 export const HERMES_MAX_FALLBACKS = 8;
 
 /** 线上传给桥接层的 model 字段：id + 去重后的备用模型 + 输出上限（都可省略）。 */
-export function hermesWireModel(modelId: string, controls: HermesModelControls | undefined, hostCompacted = false) {
-  const fallbacks = [...new Set((controls?.fallbacks ?? []).map((id) => id.trim()))]
-    .filter((id) => id && id !== modelId && id.length <= 200 && ![...id].some((character) => /\s/u.test(character) || character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))
+export function hermesWireModel(
+  modelId: string,
+  controls: HermesModelControls | undefined,
+  hostCompacted = false,
+) {
+  const fallbacks = [
+    ...new Set((controls?.fallbacks ?? []).map((id) => id.trim())),
+  ]
+    .filter(
+      (id) =>
+        id &&
+        id !== modelId &&
+        id.length <= 200 &&
+        ![...id].some(
+          (character) =>
+            /\s/u.test(character) ||
+            character.charCodeAt(0) < 32 ||
+            character.charCodeAt(0) === 127,
+        ),
+    )
     .slice(0, HERMES_MAX_FALLBACKS);
   const limit = controls?.maxOutputTokens;
   return {
     id: modelId,
     ...(fallbacks.length ? { fallbacks } : {}),
-    ...(typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 && limit <= 1_000_000 ? { maxOutputTokens: limit } : {}),
+    ...(typeof limit === "number" &&
+    Number.isSafeInteger(limit) &&
+    limit > 0 &&
+    limit <= 1_000_000
+      ? { maxOutputTokens: limit }
+      : {}),
     ...(hostCompacted ? { contextCompression: false } : {}),
-    ...(typeof controls?.contextWindow === "number" && Number.isSafeInteger(controls.contextWindow) && controls.contextWindow > 0 && controls.contextWindow <= 16_000_000 ? { contextWindow: controls.contextWindow } : {}),
-    ...(typeof controls?.supportsImages === "boolean" ? { supportsImages: controls.supportsImages } : {}),
-    ...(typeof controls?.supportsFiles === "boolean" ? { supportsFiles: controls.supportsFiles } : {}),
+    ...(typeof controls?.contextWindow === "number" &&
+    Number.isSafeInteger(controls.contextWindow) &&
+    controls.contextWindow > 0 &&
+    controls.contextWindow <= 16_000_000
+      ? { contextWindow: controls.contextWindow }
+      : {}),
+    ...(typeof controls?.supportsImages === "boolean"
+      ? { supportsImages: controls.supportsImages }
+      : {}),
+    ...(typeof controls?.supportsFiles === "boolean"
+      ? { supportsFiles: controls.supportsFiles }
+      : {}),
   };
 }
 
@@ -85,14 +125,27 @@ export function hermesWireModel(modelId: string, controls: HermesModelControls |
  * Hermes 换了备用模型（适配器回报，桥接层放在 RUN_FINISHED metadata.modelFallback）：只认这一轮发出去的
  * 主模型 → 发出去的某个备用模型，其余一律丢弃。认下来的同内置路径一样记日志、进对话里那行淡色小字。
  */
-export function acceptedHermesFallback(value: unknown, wire: { id: string; fallbacks?: readonly string[] }) {
+export function acceptedHermesFallback(
+  value: unknown,
+  wire: { id: string; fallbacks?: readonly string[] },
+) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const { from, to, reason } = value as Record<string, unknown>;
-  if (from !== wire.id || typeof to !== "string" || !wire.fallbacks?.includes(to)) return null;
+  if (
+    from !== wire.id ||
+    typeof to !== "string" ||
+    !wire.fallbacks?.includes(to)
+  )
+    return null;
   return {
     from,
     to,
-    reason: reason === "quota" ? ("quota" as const) : reason === "rejected" ? ("rejected" as const) : ("unavailable" as const),
+    reason:
+      reason === "quota"
+        ? ("quota" as const)
+        : reason === "rejected"
+          ? ("rejected" as const)
+          : ("unavailable" as const),
   };
 }
 
@@ -105,13 +158,20 @@ function asGranted(tool: HeadlessTool): GrantedTool {
     // early validation without replacing the original tool's policy or implementation.
     parameters: z.fromJSONSchema(tool.definition.parameters),
     execute: async (args, context) => {
-      const { currentConfirmToolCall } = await import("../confirmations/context");
+      const { currentConfirmToolCall } = await import(
+        "../confirmations/context"
+      );
       const callId = currentConfirmToolCall()?.toolCallId;
-      if (!callId || !context?.signal) throw new Error("The host tool is missing its run context.");
-      const result = await tool.execute(args, { toolCallId: callId, signal: context.signal });
+      if (!callId || !context?.signal)
+        throw new Error("The host tool is missing its run context.");
+      const result = await tool.execute(args, {
+        toolCallId: callId,
+        signal: context.signal,
+      });
       if (typeof result === "string") return result;
       const text = JSON.stringify(result);
-      if (text === undefined) throw new Error("The host tool returned no result.");
+      if (text === undefined)
+        throw new Error("The host tool returned no result.");
       return text;
     },
   };
@@ -119,17 +179,31 @@ function asGranted(tool: HeadlessTool): GrantedTool {
 
 /** Events after which the captured messages can differ in a way a tool call or continuation reads. */
 const CAPTURE_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
-  EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END, EventType.TOOL_CALL_RESULT,
-  EventType.TEXT_MESSAGE_END, EventType.REASONING_MESSAGE_END, EventType.MESSAGES_SNAPSHOT,
-  EventType.RUN_FINISHED, EventType.RUN_ERROR,
+  EventType.TOOL_CALL_START,
+  EventType.TOOL_CALL_ARGS,
+  EventType.TOOL_CALL_END,
+  EventType.TOOL_CALL_RESULT,
+  EventType.TEXT_MESSAGE_END,
+  EventType.REASONING_MESSAGE_END,
+  EventType.MESSAGES_SNAPSHOT,
+  EventType.RUN_FINISHED,
+  EventType.RUN_ERROR,
 ]);
 const CAPTURE_STATE_EVENTS: ReadonlySet<string> = new Set([
-  EventType.STATE_SNAPSHOT, EventType.STATE_DELTA, EventType.MESSAGES_SNAPSHOT, EventType.RUN_FINISHED,
+  EventType.STATE_SNAPSHOT,
+  EventType.STATE_DELTA,
+  EventType.MESSAGES_SNAPSHOT,
+  EventType.RUN_FINISHED,
 ]);
 
 /** Capture real AG-UI calls before the separate HTTP tool request may spend a grant. */
 class CaptureHermesRun extends Middleware {
-  constructor(private readonly runTools: RuntimeToolRun, private readonly ownedNames: string[]) { super(); }
+  constructor(
+    private readonly runTools: RuntimeToolRun,
+    private readonly ownedNames: string[],
+  ) {
+    super();
+  }
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     return new Observable((subscriber) => {
       const pending = new Map<string, string>();
@@ -143,28 +217,48 @@ class CaptureHermesRun extends Middleware {
            * Hermes 的 HTTP 工具调用先到，3 秒内等不到捕获就 409，整轮以「outcome is unknown」失败）。
            * 文本 / 推理增量不碰工具调用，等它们的 END 一起刷新即可。
            */
-          if (CAPTURE_MESSAGE_EVENTS.has(event.type)) this.runTools.updateMessages(messages);
-          if (CAPTURE_STATE_EVENTS.has(event.type)) this.runTools.updateState(state);
+          if (CAPTURE_MESSAGE_EVENTS.has(event.type))
+            this.runTools.updateMessages(messages);
+          if (CAPTURE_STATE_EVENTS.has(event.type))
+            this.runTools.updateState(state);
           if (event.type === EventType.TOOL_CALL_START) {
             const call = event as ToolCallStartEvent;
             pending.set(call.toolCallId, call.toolCallName);
           }
-          if (event.type === EventType.TOOL_CALL_RESULT) answered.add((event as ToolCallResultEvent).toolCallId);
+          if (event.type === EventType.TOOL_CALL_RESULT)
+            answered.add((event as ToolCallResultEvent).toolCallId);
           if (event.type === EventType.RUN_FINISHED) {
             terminal = true;
-            if ((event as RunFinishedEvent).outcome?.type !== "interrupt" && [...pending.keys()].some((id) => !answered.has(id))) {
-              subscriber.next({ type: EventType.RUN_ERROR, code: "HERMES_MISSING_TOOL_RECEIPT", message: "Hermes ended before a host tool returned its execution receipt. The operation will not be repeated automatically." });
+            if (
+              (event as RunFinishedEvent).outcome?.type !== "interrupt" &&
+              [...pending.keys()].some((id) => !answered.has(id))
+            ) {
+              subscriber.next({
+                type: EventType.RUN_ERROR,
+                code: "HERMES_MISSING_TOOL_RECEIPT",
+                message:
+                  "Hermes ended before a host tool returned its execution receipt. The operation will not be repeated automatically.",
+              });
               return;
             }
           }
           if (event.type === EventType.RUN_ERROR) terminal = true;
           subscriber.next(event);
           if (event.type === EventType.RUN_STARTED)
-            subscriber.next({ type: EventType.CUSTOM, name: "chisabot.backend-owned-tools", value: { names: this.ownedNames } });
+            subscriber.next({
+              type: EventType.CUSTOM,
+              name: "chisabot.backend-owned-tools",
+              value: { names: this.ownedNames },
+            });
         },
         error: (error) => subscriber.error(error),
         complete: () => {
-          if (!terminal) subscriber.next({ type: EventType.RUN_ERROR, code: "HERMES_MISSING_TERMINAL", message: "Hermes disconnected before the run completed." });
+          if (!terminal)
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              code: "HERMES_MISSING_TERMINAL",
+              message: "Hermes disconnected before the run completed.",
+            });
           subscriber.complete();
         },
       });
@@ -200,7 +294,11 @@ export class HermesRuntimeAgent extends AbstractAgent {
         runTools?.close();
         remote.abortRun();
         if (!subscriber.closed) {
-          subscriber.next({ type: EventType.RUN_ERROR, code: "HERMES_RUN_CANCELLED", message: "This run was stopped." });
+          subscriber.next({
+            type: EventType.RUN_ERROR,
+            code: "HERMES_RUN_CANCELLED",
+            message: "This run was stopped.",
+          });
           subscriber.complete();
         }
       };
@@ -210,10 +308,21 @@ export class HermesRuntimeAgent extends AbstractAgent {
       if (hostAbort?.aborted) stop();
       const work = async () => {
         controller.signal.throwIfAborted();
-        const assertion = this.configuration.signRun(input.runId, input.threadId, runAssertionValue(input.forwardedProps));
+        const assertion = this.configuration.signRun(
+          input.runId,
+          input.threadId,
+          runAssertionValue(input.forwardedProps),
+        );
         const scope = this.configuration.binding.readRun(assertion);
-        if (!scope || scope.botId !== this.configuration.botId || scope.runId !== input.runId || scope.threadId !== input.threadId)
-          throw new Error("The Hermes run could not be bound to its authenticated actor, Bot and conversation.");
+        if (
+          !scope ||
+          scope.botId !== this.configuration.botId ||
+          scope.runId !== input.runId ||
+          scope.threadId !== input.threadId
+        )
+          throw new Error(
+            "The Hermes run could not be bound to its authenticated actor, Bot and conversation.",
+          );
         const [granted, surfaces] = await Promise.all([
           this.configuration.toolsFor(input, controller.signal),
           this.configuration.binding.loadSurfaceTools?.(scope) ?? [],
@@ -221,21 +330,38 @@ export class HermesRuntimeAgent extends AbstractAgent {
         controller.signal.throwIfAborted();
         const tools = new Map(granted.map((tool) => [tool.name, tool]));
         // The middleware contribution is the exact executor already assembled for a background turn.
-        const allSurfaces = new Map([...surfaces, ...contributed].map((tool) => [tool.definition.name, tool]));
+        const allSurfaces = new Map(
+          [...surfaces, ...contributed].map((tool) => [
+            tool.definition.name,
+            tool,
+          ]),
+        );
         for (const surface of allSurfaces.values()) {
-          if (!surface.hidden && !tools.has(surface.definition.name)) tools.set(surface.definition.name, asGranted(surface));
+          if (!surface.hidden && !tools.has(surface.definition.name))
+            tools.set(surface.definition.name, asGranted(surface));
         }
         const assembled = [...tools.values()];
         timer.mark("assembled");
         const [prepared, controls] = await Promise.all([
           this.configuration.prepare(input, assembled),
-          this.configuration.modelControls?.(this.configuration.modelId).catch(() => undefined),
+          this.configuration
+            .modelControls?.(this.configuration.modelId)
+            .catch(() => undefined),
         ]);
-        const wireModel = hermesWireModel(this.configuration.modelId, controls, this.configuration.hostCompacted?.(input.runId) === true);
+        const wireModel = hermesWireModel(
+          this.configuration.modelId,
+          controls,
+          this.configuration.hostCompacted?.(input.runId) === true,
+        );
         controller.signal.throwIfAborted();
         // A client cannot grant a tool by supplying its schema. Only host-bound executors are offered.
-        prepared.tools = assembled.map((tool) => ({ name: tool.name, description: tool.description, parameters: z.toJSONSchema(tool.parameters, { io: "input" }) }));
-        const { chisabotHermes: _untrustedHermes, ...hostProps } = prepared.forwardedProps ?? {};
+        prepared.tools = assembled.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: z.toJSONSchema(tool.parameters, { io: "input" }),
+        }));
+        const { chisabotHermes: _untrustedHermes, ...hostProps } =
+          prepared.forwardedProps ?? {};
         prepared.forwardedProps = {
           ...hostProps,
           chisabotRun: assertion,
@@ -256,41 +382,78 @@ export class HermesRuntimeAgent extends AbstractAgent {
             ...prepared.forwardedProps,
             chisabotHermes: {
               version: 1,
-              scope: { actorId: scope.actorId, botId: scope.botId, threadId: input.threadId, runId: input.runId },
+              scope: {
+                actorId: scope.actorId,
+                botId: scope.botId,
+                threadId: input.threadId,
+                runId: input.runId,
+              },
               model: wireModel,
-              toolGateway: { url: this.configuration.binding.toolGatewayUrl, capability: runTools.capability },
+              toolGateway: {
+                url: this.configuration.binding.toolGatewayUrl,
+                capability: runTools.capability,
+              },
             },
           },
         };
         // Headless middleware observes the ownership marker after RUN_STARTED and never
         // compensates a missing receipt by executing a Hermes-owned call itself.
         timer.mark("sent");
-        subscription = new CaptureHermesRun(runTools, assembled.map((tool) => tool.name)).run(wire, new SeededTransport(remote, wire)).subscribe({
-          next: (event) => {
-            timer.observe(event);
-            if (event.type === EventType.RUN_FINISHED) logRunTiming(timer.finish("finished"));
-            else if (event.type === EventType.RUN_ERROR) logRunTiming(timer.finish("error"));
-            subscriber.next(event.type === EventType.RUN_FINISHED ? this.finished(event as RunFinishedEvent, input.runId, wireModel) : event);
-          },
-          error: (error) => {
-            logRunTiming(timer.finish("error"));
-            subscriber.error(error);
-          },
-          complete: () => {
-            logRunTiming(timer.finish("closed"));
-            subscriber.complete();
-          },
-        });
+        subscription = new CaptureHermesRun(
+          runTools,
+          assembled.map((tool) => tool.name),
+        )
+          .run(wire, new SeededTransport(remote, wire))
+          .subscribe({
+            next: (event) => {
+              timer.observe(event);
+              if (event.type === EventType.RUN_FINISHED)
+                logRunTiming(timer.finish("finished"));
+              else if (event.type === EventType.RUN_ERROR)
+                logRunTiming(timer.finish("error"));
+              subscriber.next(
+                event.type === EventType.RUN_FINISHED
+                  ? this.finished(
+                      event as RunFinishedEvent,
+                      input.runId,
+                      wireModel,
+                    )
+                  : event,
+              );
+            },
+            error: (error) => {
+              logRunTiming(timer.finish("error"));
+              subscriber.error(error);
+            },
+            complete: () => {
+              logRunTiming(timer.finish("closed"));
+              subscriber.complete();
+            },
+          });
       };
       work().catch((error: unknown) => {
-        logRunTiming(timer.finish(controller.signal.aborted ? "cancelled" : "error"));
+        logRunTiming(
+          timer.finish(controller.signal.aborted ? "cancelled" : "error"),
+        );
         if (!subscriber.closed) {
-          subscriber.next({ type: EventType.RUN_ERROR, code: controller.signal.aborted ? "HERMES_RUN_CANCELLED" : "HERMES_HOST_BINDING_ERROR", message: controller.signal.aborted ? "This run was stopped." : error instanceof Error ? error.message : "Hermes host binding failed." });
+          subscriber.next({
+            type: EventType.RUN_ERROR,
+            code: controller.signal.aborted
+              ? "HERMES_RUN_CANCELLED"
+              : "HERMES_HOST_BINDING_ERROR",
+            message: controller.signal.aborted
+              ? "This run was stopped."
+              : error instanceof Error
+                ? error.message
+                : "Hermes host binding failed.",
+          });
           subscriber.complete();
         }
       });
       return () => {
-        logRunTiming(timer.finish(controller.signal.aborted ? "cancelled" : "closed"));
+        logRunTiming(
+          timer.finish(controller.signal.aborted ? "cancelled" : "closed"),
+        );
         hostAbort?.removeEventListener("abort", stop);
         controller.signal.removeEventListener("abort", cancelled);
         controller.abort();
@@ -303,28 +466,53 @@ export class HermesRuntimeAgent extends AbstractAgent {
   }
 
   /** RUN_FINISHED 的 metadata：核对过的 modelFallback + 宿主自己的（historyCompaction 等）。 */
-  private finished(event: RunFinishedEvent, runId: string, wire: { id: string; fallbacks?: readonly string[] }): BaseEvent {
-    const { modelFallback: reported, ...rest } = ((event as { metadata?: Record<string, unknown> }).metadata ?? {}) as Record<string, unknown>;
+  private finished(
+    event: RunFinishedEvent,
+    runId: string,
+    wire: { id: string; fallbacks?: readonly string[] },
+  ): BaseEvent {
+    const { modelFallback: reported, ...rest } = ((
+      event as { metadata?: Record<string, unknown> }
+    ).metadata ?? {}) as Record<string, unknown>;
     const metadata: Record<string, unknown> = { ...rest };
     const fallback = acceptedHermesFallback(reported, wire);
     if (fallback) {
       metadata.modelFallback = fallback;
-      (this.configuration.log ?? ((line) => console.log(JSON.stringify(line))))({ type: "model-fallback", event: "used", model: fallback.from, fallback: fallback.to, reason: fallback.reason, kernel: "hermes" });
+      (this.configuration.log ?? ((line) => console.log(JSON.stringify(line))))(
+        {
+          type: "model-fallback",
+          event: "used",
+          model: fallback.from,
+          fallback: fallback.to,
+          reason: fallback.reason,
+          kernel: "hermes",
+        },
+      );
     }
     try {
-      Object.assign(metadata, this.configuration.finishedMetadata?.(runId) ?? {});
+      Object.assign(
+        metadata,
+        this.configuration.finishedMetadata?.(runId) ?? {},
+      );
     } catch {
       // 附加信息失败不影响回答。
     }
-    const { metadata: _old, ...base } = event as RunFinishedEvent & { metadata?: unknown };
-    return (Object.keys(metadata).length ? { ...base, metadata } : base) as BaseEvent;
+    const { metadata: _old, ...base } = event as RunFinishedEvent & {
+      metadata?: unknown;
+    };
+    return (
+      Object.keys(metadata).length ? { ...base, metadata } : base
+    ) as BaseEvent;
   }
 
   clone(): HermesRuntimeAgent {
     const clone = super.clone() as HermesRuntimeAgent;
     // AbstractAgent.clone copies base fields only.
-    (clone as unknown as { transport: AbstractAgent }).transport = this.transport.clone();
-    (clone as unknown as { configuration: HermesRunConfiguration }).configuration = this.configuration;
+    (clone as unknown as { transport: AbstractAgent }).transport =
+      this.transport.clone();
+    (
+      clone as unknown as { configuration: HermesRunConfiguration }
+    ).configuration = this.configuration;
     clone.active = undefined;
     return clone;
   }
@@ -336,8 +524,13 @@ export class HermesRuntimeAgent extends AbstractAgent {
 }
 
 class SeededTransport extends AbstractAgent {
-  constructor(private readonly transport: AbstractAgent, input: RunAgentInput) {
+  constructor(
+    private readonly transport: AbstractAgent,
+    input: RunAgentInput,
+  ) {
     super({ initialMessages: input.messages, initialState: input.state });
   }
-  run(input: RunAgentInput) { return this.transport.run(input); }
+  run(input: RunAgentInput) {
+    return this.transport.run(input);
+  }
 }

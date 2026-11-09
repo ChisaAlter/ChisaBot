@@ -8,8 +8,8 @@
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppVariables, requireAdmin } from "../auth/guards";
-import type { HermesHealthCheck } from "./hermes-health";
 import type { DshHealthCheck } from "./dsh-health";
+import type { HermesHealthCheck } from "./hermes-health";
 
 export type RuntimeKernelStatus = {
   kernel: "hermes" | "builtin" | "dsh";
@@ -21,7 +21,9 @@ export function createRuntimeKernelRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
   kernel: "hermes" | "builtin" | "dsh";
   probe?: () => Promise<HermesHealthCheck>;
-  probeDsh?: (actorId: string) => Promise<NonNullable<RuntimeKernelStatus["dsh"]>>;
+  probeDsh?: (
+    actorId: string,
+  ) => Promise<NonNullable<RuntimeKernelStatus["dsh"]>>;
 }) {
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", options.requireUser, async (context, next) => {
@@ -34,7 +36,9 @@ export function createRuntimeKernelRoutes(options: {
     const status: RuntimeKernelStatus = {
       kernel: options.kernel,
       hermes: options.probe ? await options.probe() : null,
-      ...(options.probeDsh ? { dsh: await options.probeDsh(context.var.actor.id) } : {}),
+      ...(options.probeDsh
+        ? { dsh: await options.probeDsh(context.var.actor.id) }
+        : {}),
     };
     return context.json(status);
   });

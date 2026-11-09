@@ -88,11 +88,21 @@ export function createApprovalRoutes(
      * 结果 → 状态码 + 内容。和以前一样：200 { result }、202 { waiting… }，别的错误交给 onError 的规则。
      * 抽成一个函数，是因为长动作（§102，最长 600 秒的前台命令）要在响应已经开始之后才知道结果。
      */
-    const settle = async (): Promise<{ status: 200 | 202 | 400 | 404 | 500; body: Record<string, unknown> }> => {
+    const settle = async (): Promise<{
+      status: 200 | 202 | 400 | 404 | 500;
+      body: Record<string, unknown>;
+    }> => {
       try {
         return {
           status: 200,
-          body: { result: await service.frontendAction(context.var.actor.id, botId, input, action.signal) },
+          body: {
+            result: await service.frontendAction(
+              context.var.actor.id,
+              botId,
+              input,
+              action.signal,
+            ),
+          },
         };
       } catch (error) {
         if (error instanceof HeadlessToolSuspension)
@@ -116,10 +126,17 @@ export function createApprovalRoutes(
           status:
             error instanceof ApprovalNotFoundError
               ? 404
-              : error instanceof ApprovalRefusedError || error instanceof z.ZodError || error instanceof SyntaxError
+              : error instanceof ApprovalRefusedError ||
+                  error instanceof z.ZodError ||
+                  error instanceof SyntaxError
                 ? 400
                 : 500,
-          body: { error: error instanceof SyntaxError ? "Supply a valid request." : message },
+          body: {
+            error:
+              error instanceof SyntaxError
+                ? "Supply a valid request."
+                : message,
+          },
         };
       }
     };
@@ -158,7 +175,9 @@ export function createApprovalRoutes(
           clearInterval(beat);
           write(
             JSON.stringify(
-              settled.status === 200 ? settled.body : { ...settled.body, status: settled.status },
+              settled.status === 200
+                ? settled.body
+                : { ...settled.body, status: settled.status },
             ),
           );
           try {

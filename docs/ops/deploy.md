@@ -31,13 +31,13 @@
 
 ## 2. 更新器（`/opt/chisabot-updater/`）
 
-| 命令 | 作用 |
-|---|---|
-| `sh request.sh check` | 拉最新 main，算出落后几个提交 |
+| 命令                            | 作用                                             |
+| ------------------------------- | ------------------------------------------------ |
+| `sh request.sh check`           | 拉最新 main，算出落后几个提交                    |
 | `sh request.sh update [--full]` | 更新（自动选快速 / 完整；`--full` 强制完整构建） |
-| `sh request.sh rollback` | 回到上一镜像 |
-| `sh request.sh status` | 最近任务的状态和日志尾部 |
-| `sh smoke.sh` | 管理员自检（模型往返一次，不保存） |
+| `sh request.sh rollback`        | 回到上一镜像                                     |
+| `sh request.sh status`          | 最近任务的状态和日志尾部                         |
+| `sh smoke.sh`                   | 管理员自检（模型往返一次，不保存）               |
 
 网页上的「检查更新 / 一键更新 / 回滚 / 自检」（设置 → 系统更新）走的是同一个队列。
 
@@ -89,13 +89,13 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 
 ## 4. 不随一键更新的部分
 
-| 部分 | 怎么更新 | 详见 |
-|---|---|---|
-| 公网网关 nginx（`deploy/public/nginx.conf`） | **`sync-nginx.sh --apply`**（备份+渲染+`nginx -t`+reload）；`deploy-serial` 默认 `--check` 漂移则失败 | [gateway.md](gateway.md) §2.1 |
-| 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `chisabot-web-auth` | [gateway.md](gateway.md) |
-| 更新器自己（`deploy/updater/`） | 每次成功更新后自升级；老部署跑一次 `install-updater.sh` | §2 |
-| PC / Android 客户端 | 发版流程 | [client-release.md](client-release.md)、[release.md](../release.md) |
-| Magpie 模型网关 | 独立 compose，手动（先备份配置） | [magpie.md](../magpie.md) |
+| 部分                                                    | 怎么更新                                                                                              | 详见                                                                |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 公网网关 nginx（`deploy/public/nginx.conf`）            | **`sync-nginx.sh --apply`**（备份+渲染+`nginx -t`+reload）；`deploy-serial` 默认 `--check` 漂移则失败 | [gateway.md](gateway.md) §2.1                                       |
+| 登录服务（`deploy/public/auth/server.ts`、`auth-web/`） | 拷文件 → 重启 `chisabot-web-auth`                                                                     | [gateway.md](gateway.md)                                            |
+| 更新器自己（`deploy/updater/`）                         | 每次成功更新后自升级；老部署跑一次 `install-updater.sh`                                               | §2                                                                  |
+| PC / Android 客户端                                     | 发版流程                                                                                              | [client-release.md](client-release.md)、[release.md](../release.md) |
+| Magpie 模型网关                                         | 独立 compose，手动（先备份配置）                                                                      | [magpie.md](../magpie.md)                                           |
 
 ## 5. 上线后检查（不碰任何真实对话）
 
@@ -105,7 +105,7 @@ sh /opt/chisabot-zh/rollback-to-auto-<时间>-<提交>.sh
 4. **快照对比**：上线前后核对会话、机器人、设备、用户、关键设置、备用模型列表和待决工作。只允许本次迁移明确规定的字段变化，原消息与操作结果应保持。
 5. **用户入口检查**：检查实际网关、TLS、登录与鉴权边界、前端版本及静态资源；需要界面验收时使用正常登录或隔离预览，不导出用户会话凭据。
 6. 改到聊天 / 同步 / 滚动的 PR：在预览里跑 `tests/chat-scroll/regression.sh`（[testing.md](../testing.md) §3）。
-8. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
+7. 更新项目看板：ROADMAP「最近完成」、BACKLOG 状态、[CHANGELOG](../CHANGELOG.md)。
 
 ## 6. 并行开发时
 

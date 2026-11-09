@@ -27,10 +27,10 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
 ## 2. PC 客户端
 
 - `electron-updater`（6.8.9）generic provider，更新源是一个公开目录：`latest.yml` + `ChisaBot-<版本>-x64-setup.exe`
-  + `.blockmap`。目录按 `pc/src/build-config.js` 的顺序选：本机 `config.json` 的 `updateFeed` → 构建期 `updateFeed`
-  （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
-  通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
-  `latest.yml` 里有安装包的 sha512，electron-updater 下载完会校验，不一致丢弃。
+  - `.blockmap`。目录按 `pc/src/build-config.js` 的顺序选：本机 `config.json` 的 `updateFeed` → 构建期 `updateFeed`
+    （CI 变量 `CHISABOT_UPDATE_FEED`）→ `https://github.com/<owner>/<repo>/releases/latest/download/`（GitHub Releases，仓库须公开）。
+    通用版（仓库 Releases 里的）就走最后一项；自建发布把自己的静态 HTTPS 目录写进 `CHISABOT_UPDATE_FEED`。
+    `latest.yml` 里有安装包的 sha512，electron-updater 下载完会校验，不一致丢弃。
 - **更新验签**（`docs/pc-update-signing.md`）：发布时用 Ed25519 给 `latest.yml` 签名（`chisabotSig`），客户端用内置公钥
   （`pc/src/update-keys.json`）校验并重算安装包 sha512，不通过就删掉安装包、拒绝安装（「更新包签名校验失败，已拒绝安装」）。
   公钥表为空的构建（自建版没配 `CHISABOT_UPDATE_PUBKEYS`）不验签，保持只有 sha512 的旧行为，「本机」页提示「此版本未启用更新验签」。
@@ -41,7 +41,7 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
   后台下载；下载好后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
   **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。
 - 网页 偏好设置 → 设备 → 这台电脑（「本机」标签）：「自动更新」开关、「客户端版本」行（当前 / 新版本 / 状态 / 下载进度）
-  + 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
+  - 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
 - 新 IPC 都经过来源检查：`pc:check-update`、`pc:install-update` 走 `handleWeb`（主窗口 + 顶层框架 + 已登录服务器）；
   `update:current`、`update:answer` 走 `handleLocal`（`src/ui/` 下的本机页面）。网页只能把「新版本已下载」窗口叫出来，
   立即重启要在本机窗口里由本人点。
@@ -207,11 +207,11 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
 仓库的 `deploy/compose.yaml` 自带：
 
 ```yaml
-    volumes:
-      - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
-      - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
-    environment:
-      CHISABOT_UPDATER_DIR: /var/lib/chisabot-updater
+volumes:
+  - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/requests:/var/lib/chisabot-updater/requests
+  - ${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}/spool/state:/var/lib/chisabot-updater/state:ro
+environment:
+  CHISABOT_UPDATER_DIR: /var/lib/chisabot-updater
 ```
 
 没装更新服务时这两个目录由 Docker 建（root 所有、空的），页面显示「宿主机更新服务没有安装」和安装命令，请求写不进去时返回 503。
@@ -236,13 +236,13 @@ sh deploy/install-updater.sh --check         # 只检查：打印会做什么，
 
 **页面上的几种状态**（管理后台 → 系统更新）：
 
-| 状态 | 原因 | 页面给的命令 |
-| --- | --- | --- |
-| 还没装宿主机更新服务 | 容器没有 `CHISABOT_UPDATER_DIR`（老 compose） | `cd <仓库> && git pull && sudo sh deploy/install-updater.sh` |
-| 宿主机更新服务没有安装 | 挂了目录，但 state.json 从没写过 | 同上 |
-| 更新程序离线 | state.json 超过 2 分钟没更新 | `sudo systemctl restart chisabot-updater`，不行再重装 |
-| 更新程序是旧版本 | state.json 的 `updaterVersion` < 3 | 同第一行（不重建容器） |
-| 配置提示 | `warnings`：`health_url_example` / `health_url_missing` / `compose_missing` / `buildx_missing` | 说明怎么改 |
+| 状态                   | 原因                                                                                           | 页面给的命令                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 还没装宿主机更新服务   | 容器没有 `CHISABOT_UPDATER_DIR`（老 compose）                                                  | `cd <仓库> && git pull && sudo sh deploy/install-updater.sh` |
+| 宿主机更新服务没有安装 | 挂了目录，但 state.json 从没写过                                                               | 同上                                                         |
+| 更新程序离线           | state.json 超过 2 分钟没更新                                                                   | `sudo systemctl restart chisabot-updater`，不行再重装        |
+| 更新程序是旧版本       | state.json 的 `updaterVersion` < 3                                                             | 同第一行（不重建容器）                                       |
+| 配置提示               | `warnings`：`health_url_example` / `health_url_missing` / `compose_missing` / `buildx_missing` | 说明怎么改                                                   |
 
 `<仓库>` 取容器环境变量 `CHISABOT_SOURCE_DIR`（`start.sh` 写进 `deploy/.env`），没有就按 README 的 `/opt/chisabot-src`。
 
@@ -273,12 +273,12 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 **历史记录，针对旧 Hermes 部署。** 当时 `deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`。宿主机上的 Hermes 桥接从容器里经这个网关访问，下面四处必须一致；这些值记录事故条件，不是当前新安装默认值：
 
-| 位置 | 值 |
-| --- | --- |
-| compose 默认网络网关 | `172.19.0.1`（子网 `172.19.0.0/16`） |
-| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST` | `172.19.0.1` |
+| 位置                                                             | 值                                                 |
+| ---------------------------------------------------------------- | -------------------------------------------------- |
+| compose 默认网络网关                                             | `172.19.0.1`（子网 `172.19.0.0/16`）               |
+| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`                 | `172.19.0.1`                                       |
 | `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
-| ufw | `allow from 172.19.0.0/16 to any port 4100` |
+| ufw                                                              | `allow from 172.19.0.0/16 to any port 4100`        |
 
 改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
 

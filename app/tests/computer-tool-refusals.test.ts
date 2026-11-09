@@ -34,19 +34,33 @@ describe("computer operation lifetime", () => {
       return realTimeout(ms);
     }) as typeof AbortSignal.timeout;
     let received: AbortSignal | undefined;
-    globalThis.fetch = (async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    globalThis.fetch = (async (
+      _url: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
       received = init?.signal ?? undefined;
       return Response.json({ stdout: "done" });
     }) as unknown as typeof fetch;
     try {
       const owner = new AbortController();
-      expect((await callComputer("bot-1", "/exec", { method: "POST", body: { timeoutMs: 600_000 } }, owner.signal)).ok).toBe(true);
+      expect(
+        (
+          await callComputer(
+            "bot-1",
+            "/exec",
+            { method: "POST", body: { timeoutMs: 600_000 } },
+            owner.signal,
+          )
+        ).ok,
+      ).toBe(true);
       expect(budgets).toEqual([630_000]);
       owner.abort();
       expect(received?.aborted).toBe(true);
       await callComputer("bot-1", "/download", { method: "POST" });
       expect(budgets.at(-1)).toBe(315_000);
-    } finally { AbortSignal.timeout = realTimeout; }
+    } finally {
+      AbortSignal.timeout = realTimeout;
+    }
   });
 });
 
@@ -56,11 +70,21 @@ describe("an unconfirmed computer result", () => {
       new Response("not JSON"),
       Response.json(null),
       Response.json([]),
-      Object.assign(new Response(), { json: async () => { throw new DOMException("deadline", "TimeoutError"); } }),
+      Object.assign(new Response(), {
+        json: async () => {
+          throw new DOMException("deadline", "TimeoutError");
+        },
+      }),
     ]) {
       let calls = 0;
-      globalThis.fetch = (async () => { calls++; return response; }) as unknown as typeof fetch;
-      const outcome = await callComputer("bot-1", "/exec", { method: "POST", body: { command: "write once" } });
+      globalThis.fetch = (async () => {
+        calls++;
+        return response;
+      }) as unknown as typeof fetch;
+      const outcome = await callComputer("bot-1", "/exec", {
+        method: "POST",
+        body: { command: "write once" },
+      });
       expect(outcome.ok).toBe(false);
       expect(outcome.reason).toContain("未能确认");
       expect(calls).toBe(1);
@@ -69,11 +93,16 @@ describe("an unconfirmed computer result", () => {
 
   test("Stop during body consumption retains the stopped outcome", async () => {
     const owner = new AbortController();
-    globalThis.fetch = (async () => Object.assign(new Response(), { json: async () => {
-      owner.abort();
-      throw owner.signal.reason;
-    } })) as unknown as typeof fetch;
-    expect(await callComputer("bot-1", "/exec", { method: "POST" }, owner.signal)).toMatchObject({ ok: false, stopped: true });
+    globalThis.fetch = (async () =>
+      Object.assign(new Response(), {
+        json: async () => {
+          owner.abort();
+          throw owner.signal.reason;
+        },
+      })) as unknown as typeof fetch;
+    expect(
+      await callComputer("bot-1", "/exec", { method: "POST" }, owner.signal),
+    ).toMatchObject({ ok: false, stopped: true });
   });
 });
 

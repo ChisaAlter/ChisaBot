@@ -11,9 +11,9 @@ import {
 } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { Database } from "./db/client";
+import { reasonWithoutStatement } from "./db/query-failure";
 import { auditEvents } from "./db/schema";
 import { parsePageLimit } from "./paging";
-import { reasonWithoutStatement } from "./db/query-failure";
 
 const sensitiveKeys = new Set([
   "access_token",
@@ -648,28 +648,37 @@ export function addAuditTap(tap: AuditTap): () => void {
 
 export function createAuditStore(database: Database): AuditStore {
   return {
-    insert: async event => { (await insertTransactionalAuditEvent(database, event))(); },
+    insert: async (event) => {
+      (await insertTransactionalAuditEvent(database, event))();
+    },
   };
 }
 
 /** Write with the business transaction; its owner publishes taps only after commit succeeds. */
-export async function insertTransactionalAuditEvent(database: Pick<Database, "insert">, { initiator, ...event }: AuditEventInput): Promise<() => void> {
-  const row = { ...event, ...initiatorColumns(initiator), payload: redactAuditPayload(event.payload) as Record<string, unknown> };
+export async function insertTransactionalAuditEvent(
+  database: Pick<Database, "insert">,
+  { initiator, ...event }: AuditEventInput,
+): Promise<() => void> {
+  const row = {
+    ...event,
+    ...initiatorColumns(initiator),
+    payload: redactAuditPayload(event.payload) as Record<string, unknown>,
+  };
   await database.insert(auditEvents).values(row);
   return () => {
-      for (const tap of auditTaps) {
-        try {
-          tap(row);
-        } catch (error) {
-          console.error(
-            JSON.stringify({
-              type: "audit-tap-failed",
-              eventType: row.eventType,
-              error: reasonWithoutStatement(error).slice(0, 300),
-            }),
-          );
-        }
+    for (const tap of auditTaps) {
+      try {
+        tap(row);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            type: "audit-tap-failed",
+            eventType: row.eventType,
+            error: reasonWithoutStatement(error).slice(0, 300),
+          }),
+        );
       }
+    }
   };
 }
 

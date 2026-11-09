@@ -7,7 +7,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { type BotThreadSummary, readThreadHistory } from "@/lib/conversations/bot-thread";
+import {
+  type BotThreadSummary,
+  readThreadHistory,
+} from "@/lib/conversations/bot-thread";
 import { cn } from "@/lib/utils";
 
 /** 「刚刚 / 3 分钟前 / 5 小时前 / 10月12日」（跨年带年份）。 */
@@ -23,7 +26,9 @@ function whenText(at: string | null): string {
   const sameYear = date.getFullYear() === new Date().getFullYear();
   return date.toLocaleDateString(
     "zh-CN",
-    sameYear ? { month: "long", day: "numeric" } : { year: "numeric", month: "long", day: "numeric" },
+    sameYear
+      ? { month: "long", day: "numeric" }
+      : { year: "numeric", month: "long", day: "numeric" },
   );
 }
 
@@ -51,7 +56,8 @@ export function BotThreadHistoryDialog({
     staleTime: 0,
     gcTime: 60_000,
   });
-  const threads: BotThreadSummary[] = list.data && list.data !== "unsupported" ? list.data : [];
+  const threads: BotThreadSummary[] =
+    list.data && list.data !== "unsupported" ? list.data : [];
   const pick = (threadId: string) => {
     onOpenChange(false);
     if (threadId !== currentThreadId) onPick(threadId);
@@ -62,16 +68,24 @@ export function BotThreadHistoryDialog({
       <DialogContent className="bot-history max-w-[440px]">
         <DialogHeader>
           <DialogTitle>{"历史对话"}</DialogTitle>
-          <DialogDescription>{"点一条打开，接着聊。旧对话都会保留。"}</DialogDescription>
+          <DialogDescription>
+            {"点一条打开，接着聊。旧对话都会保留。"}
+          </DialogDescription>
         </DialogHeader>
         {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
         <div className="bot-history-list" role="list">
           {list.isPending ? (
-            [0, 1, 2].map((i) => <div aria-hidden className="bot-history-skel" key={i} />)
+            [0, 1, 2].map((i) => (
+              <div aria-hidden className="bot-history-skel" key={i} />
+            ))
           ) : list.isError ? (
             <p className="bot-history-empty">
               {"历史对话没加载出来。"}
-              <button className="bot-history-retry" onClick={() => void list.refetch()} type="button">
+              <button
+                className="bot-history-retry"
+                onClick={() => void list.refetch()}
+                type="button"
+              >
                 {"重试"}
               </button>
             </p>
@@ -98,7 +112,9 @@ export function BotThreadHistoryDialog({
                       {`${thread.messages} 条消息 · ${whenText(thread.updatedAt)}`}
                     </span>
                   </span>
-                  {current ? <span className="bot-history-badge">{"当前"}</span> : null}
+                  {current ? (
+                    <span className="bot-history-badge">{"当前"}</span>
+                  ) : null}
                 </button>
               );
             })

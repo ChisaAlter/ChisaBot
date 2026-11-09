@@ -1,5 +1,8 @@
-import { ACTIVITY_RENDERERS, useRegisteredToolRenderers } from "@/lib/chat/renderers";
 import { createContext } from "react";
+import {
+  ACTIVITY_RENDERERS,
+  useRegisteredToolRenderers,
+} from "@/lib/chat/renderers";
 
 /**
  * 对话里一个工具调用画不画「看得见的卡片」（回复显示①复审，2026-10-29）。

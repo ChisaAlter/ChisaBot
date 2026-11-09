@@ -17,6 +17,10 @@ describe("agent runtime unreachable", () => {
     expect(friendlyError("Failed to fetch").title).toBe("网络连接中断");
   });
   test("bot chat stop reason says the runtime is unreachable, not the model", () => {
-    expect(friendlyStopReason("智能体运行时无法连接（ConnectionRefused: Unable to connect）")).toContain("智能体运行时无法连接");
+    expect(
+      friendlyStopReason(
+        "智能体运行时无法连接（ConnectionRefused: Unable to connect）",
+      ),
+    ).toContain("智能体运行时无法连接");
   });
 });

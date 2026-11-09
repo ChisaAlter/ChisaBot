@@ -1,8 +1,6 @@
 import { IconLock } from "@tabler/icons-react";
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { client } from "@/lib/client";
-import type { ToolRenderProps } from "@/lib/chat/renderers";
+import { useState } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { SignInForm } from "@/components/passwords/sign-in-form";
@@ -15,6 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { ToolRenderProps } from "@/lib/chat/renderers";
+import { client } from "@/lib/client";
 import { readSignIn, requestSignIn } from "@/lib/passwords/mutations";
 import { FINAL_SIGN_IN } from "@/lib/passwords/queries";
 import { useActiveBotHolder } from "./active-bot";
@@ -73,13 +73,34 @@ export function SignInTool() {
   return null;
 }
 
-function SignInCall({ args, result, status, toolCallId }: ToolRenderProps<{ site: string; reason?: string }>) {
-  const requests = useQuery({ queryKey: ["passwords", "pending"], enabled: result === undefined, refetchInterval: result === undefined ? 1500 : false,
-    queryFn: async () => (await client("/api/sign-in-requests")).json() as Promise<{ requests: { id: string; toolCallId?: string }[] }>,
+function SignInCall({
+  args,
+  result,
+  status,
+  toolCallId,
+}: ToolRenderProps<{ site: string; reason?: string }>) {
+  const requests = useQuery({
+    queryKey: ["passwords", "pending"],
+    enabled: result === undefined,
+    refetchInterval: result === undefined ? 1500 : false,
+    queryFn: async () =>
+      (await client("/api/sign-in-requests")).json() as Promise<{
+        requests: { id: string; toolCallId?: string }[];
+      }>,
   });
   const outcome = parse(result);
-  const requestId = outcome.requestId ?? requests.data?.requests.find(request => request.toolCallId === toolCallId)?.id;
-  return <SignInCard site={args.site ?? ""} requestId={requestId} running={status !== "complete"} outcome={outcome} />;
+  const requestId =
+    outcome.requestId ??
+    requests.data?.requests.find((request) => request.toolCallId === toolCallId)
+      ?.id;
+  return (
+    <SignInCard
+      site={args.site ?? ""}
+      requestId={requestId}
+      running={status !== "complete"}
+      outcome={outcome}
+    />
+  );
 }
 
 function SignInCard({

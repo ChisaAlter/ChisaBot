@@ -13,14 +13,22 @@ import {
   isInlineSafeMime,
   MAX_CHAT_FILE_BYTES,
 } from "../../../shared/chat-files";
-import type { StoredAttachment } from "../channels/attachment-parts";
+import {
+  BlockedUrlError,
+  guardedFetch,
+} from "../../../shared/net/guarded-fetch";
 import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
+import type { StoredAttachment } from "../channels/attachment-parts";
 import type { Database } from "../db/client";
 import { imageDimsFor } from "../image-dims";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
-import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
-import { ImageProviderError, type ImageProviderConfig, probeImageModel, runImageModel } from "./image-provider";
+import {
+  type ImageProviderConfig,
+  ImageProviderError,
+  probeImageModel,
+  runImageModel,
+} from "./image-provider";
 import { createMediaModels } from "./media-models";
 
 /**
@@ -54,14 +62,24 @@ type FileRow = {
 
 export type ChatFilesWorkspace = {
   /** 把字节写进机器人工作区；返回是否写成。 */
-  write: (owner: string, agentId: string, path: string, bytes: Buffer) => Promise<boolean>;
+  write: (
+    owner: string,
+    agentId: string,
+    path: string,
+    bytes: Buffer,
+  ) => Promise<boolean>;
   /** 从机器人工作区读一个文件的字节；文件不在时抛错（错误信息给机器人看）。 */
-  read: (owner: string, agentId: string, path: string) => Promise<{ bytes: Buffer; name: string }>;
+  read: (
+    owner: string,
+    agentId: string,
+    path: string,
+  ) => Promise<{ bytes: Buffer; name: string }>;
 };
 
 export class ChatFilesError extends Error {}
 
-const LIST_COLUMNS = "id, owner_user_id, agent_id, kind, name, mime_type, size_bytes, workspace_path, prompt, model, source_id, created_at";
+const LIST_COLUMNS =
+  "id, owner_user_id, agent_id, kind, name, mime_type, size_bytes, workspace_path, prompt, model, source_id, created_at";
 const iso = (value: Date | string) => new Date(value).toISOString();
 
 export function fileView(row: FileRow): ChatFileView {
@@ -86,28 +104,57 @@ export function fileView(row: FileRow): ChatFileView {
  */
 export const IMAGE_INPUT_GUIDANCE = {
   main: "用户在消息里附的图片会作为图片直接随这条消息给你，你看到的就是原图：直接看图回答，不要先调 chat_files_recent 或其他工具去找图片，也不要说没收到图片。",
-  model: "当前聊天模型不能看图片，用户附的图片由识图模型转成文字描述给你（消息里写着【图片描述】）；描述里没有的细节用 image_inspect 追问，不要编。",
+  model:
+    "当前聊天模型不能看图片，用户附的图片由识图模型转成文字描述给你（消息里写着【图片描述】）；描述里没有的细节用 image_inspect 追问，不要编。",
   none: "",
 } as const;
 
 /** 模型请求里文件部分的数据（字节、base64、data: 地址）→ 字节；外链地址不去拉。 */
 function dataBytes(data: unknown): Buffer | null {
   if (data instanceof Uint8Array) return Buffer.from(data);
-  const text = data instanceof URL ? data.href : typeof data === "string" ? data : null;
+  const text =
+    data instanceof URL ? data.href : typeof data === "string" ? data : null;
   if (text === null) return null;
   if (text.startsWith("data:")) {
     const comma = text.indexOf(",");
-    return comma > 0 && text.slice(0, comma).endsWith(";base64") ? Buffer.from(text.slice(comma + 1), "base64") : null;
+    return comma > 0 && text.slice(0, comma).endsWith(";base64")
+      ? Buffer.from(text.slice(comma + 1), "base64")
+      : null;
   }
   if (/^[a-z]+:\/\//i.test(text)) return null;
   return Buffer.from(text, "base64");
 }
 
 export function sniffImage(bytes: Uint8Array): string | null {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "image/gif";
-  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  )
+    return "image/png";
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return "image/jpeg";
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  )
+    return "image/gif";
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
+    String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP"
+  )
+    return "image/webp";
   return null;
 }
 
@@ -132,7 +179,11 @@ const EXT_MIME: Record<string, string> = {
 export function detectMime(bytes: Uint8Array, name: string): string {
   const image = sniffImage(bytes);
   if (image) return image;
-  if (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-") return "application/pdf";
+  if (
+    bytes.length >= 5 &&
+    String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-"
+  )
+    return "application/pdf";
   const ext = name.toLowerCase().split(".").pop() ?? "";
   return EXT_MIME[ext] ?? "application/octet-stream";
 }
@@ -148,7 +199,12 @@ export function safeName(raw: string, fallback = "文件"): string {
   return cleaned || fallback;
 }
 
-const EXT_FOR_MIME: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+const EXT_FOR_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
 
 function slugOf(prompt: string) {
   const ascii = prompt
@@ -170,7 +226,12 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
+const TEXT_TYPES = new Set([
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+]);
 
 export function createChatFiles(
   database: Database,
@@ -183,7 +244,10 @@ export function createChatFiles(
     /** 网址结果的下载；默认只许公网地址、最大 20MB。测试里换掉。 */
     download?: (url: string) => Promise<Buffer>;
     /** 这个机器人当前的聊天模型能不能看图（模型目录里的 input modalities）；不知道 = undefined。 */
-    mainModelSupportsImages?: (agentId: string, modelId?: string) => Promise<boolean | undefined>;
+    mainModelSupportsImages?: (
+      agentId: string,
+      modelId?: string,
+    ) => Promise<boolean | undefined>;
     isAdmin?: (userId: string) => Promise<boolean>;
     assertPublic?: (url: string) => Promise<unknown>;
   },
@@ -195,7 +259,9 @@ export function createChatFiles(
     encryptionKey: options.encryptionKey,
     fetch: doFetch,
     env,
-    ...(options.mainModelSupportsImages ? { mainModelSupportsImages: options.mainModelSupportsImages } : {}),
+    ...(options.mainModelSupportsImages
+      ? { mainModelSupportsImages: options.mainModelSupportsImages }
+      : {}),
     ...(options.isAdmin ? { isAdmin: options.isAdmin } : {}),
     ...(options.assertPublic ? { assertPublic: options.assertPublic } : {}),
   });
@@ -205,13 +271,19 @@ export function createChatFiles(
     // guardedFetch 钉死 DNS、逐跳重验，超大截断。
     let response: Awaited<ReturnType<typeof guardedFetch>>;
     try {
-      response = await guardedFetch(url, { maxBytes: MAX_CHAT_FILE_BYTES + 1, timeoutMs: 60_000 });
+      response = await guardedFetch(url, {
+        maxBytes: MAX_CHAT_FILE_BYTES + 1,
+        timeoutMs: 60_000,
+      });
     } catch (error) {
-      if (error instanceof BlockedUrlError) throw new ImageProviderError(error.message);
+      if (error instanceof BlockedUrlError)
+        throw new ImageProviderError(error.message);
       throw error;
     }
-    if (response.status >= 400) throw new ImageProviderError(`取图片失败（HTTP ${response.status}）。`);
-    if (response.truncated || response.body.length > MAX_CHAT_FILE_BYTES) throw new ImageProviderError("图片太大。");
+    if (response.status >= 400)
+      throw new ImageProviderError(`取图片失败（HTTP ${response.status}）。`);
+    if (response.truncated || response.body.length > MAX_CHAT_FILE_BYTES)
+      throw new ImageProviderError("图片太大。");
     return response.body;
   }
   const download = options.download ?? defaultDownload;
@@ -253,11 +325,20 @@ export function createChatFiles(
 
   /** 管理员的生图默认（§56 原接口，保留给 /api/chat-files/settings/image 和旧测试）。 */
   const settingsView = () => media.imageDefaultView();
-  const providerConfig = (override?: Partial<ImageProviderConfig>) => media.imageDefaultConfig(override);
-  const saveSettings = (actorId: string, raw: unknown) => media.saveImageDefault(actorId, raw);
-  async function testSettings(raw: unknown): Promise<{ ok: boolean; message: string }> {
+  const providerConfig = (override?: Partial<ImageProviderConfig>) =>
+    media.imageDefaultConfig(override);
+  const saveSettings = (actorId: string, raw: unknown) =>
+    media.saveImageDefault(actorId, raw);
+  async function testSettings(
+    raw: unknown,
+  ): Promise<{ ok: boolean; message: string }> {
     const input = z
-      .object({ provider: z.enum(["minimax", "openai"]).optional(), baseUrl: z.string().optional(), model: z.string().optional(), apiKey: z.string().max(4000).optional() })
+      .object({
+        provider: z.enum(["minimax", "openai"]).optional(),
+        baseUrl: z.string().optional(),
+        model: z.string().optional(),
+        apiKey: z.string().max(4000).optional(),
+      })
       .passthrough()
       .parse(raw ?? {});
     const config = await providerConfig({
@@ -266,7 +347,11 @@ export function createChatFiles(
       ...(input.model?.trim() ? { model: input.model.trim() } : {}),
       ...(input.apiKey?.trim() ? { apiKey: input.apiKey.trim() } : {}),
     });
-    if (!config) return { ok: false, message: "没有密钥：填一个密钥，或者在部署环境变量里配置。" };
+    if (!config)
+      return {
+        ok: false,
+        message: "没有密钥：填一个密钥，或者在部署环境变量里配置。",
+      };
     return probeImageModel(config, doFetch);
   }
 
@@ -275,13 +360,35 @@ export function createChatFiles(
   async function store(
     owner: string,
     agentId: string,
-    input: { kind: ChatFileKind; name: string; mimeType: string; bytes: Buffer; workspacePath?: string | null; prompt?: string | null; model?: string | null; sourceId?: string | null },
+    input: {
+      kind: ChatFileKind;
+      name: string;
+      mimeType: string;
+      bytes: Buffer;
+      workspacePath?: string | null;
+      prompt?: string | null;
+      model?: string | null;
+      sourceId?: string | null;
+    },
   ): Promise<ChatFileView> {
     const id = randomUUID();
     const rows = await sql.unsafe<FileRow[]>(
       `INSERT INTO chisabot_chat_files (id, owner_user_id, agent_id, kind, name, mime_type, size_bytes, bytes, workspace_path, prompt, model, source_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING ${LIST_COLUMNS}`,
-      [id, owner, agentId, input.kind, input.name, input.mimeType, input.bytes.length, input.bytes, input.workspacePath ?? null, input.prompt ?? null, input.model ?? null, input.sourceId ?? null],
+      [
+        id,
+        owner,
+        agentId,
+        input.kind,
+        input.name,
+        input.mimeType,
+        input.bytes.length,
+        input.bytes,
+        input.workspacePath ?? null,
+        input.prompt ?? null,
+        input.model ?? null,
+        input.sourceId ?? null,
+      ],
     );
     const view = fileView(rows[0]!);
     // 图片记下宽高，随工具结果的文件清单给网页（DESIGN.md §83.2）。
@@ -291,10 +398,17 @@ export function createChatFiles(
   }
 
   async function setWorkspacePath(id: string, path: string | null) {
-    await sql.unsafe("UPDATE chisabot_chat_files SET workspace_path = $2 WHERE id = $1", [id, path]);
+    await sql.unsafe(
+      "UPDATE chisabot_chat_files SET workspace_path = $2 WHERE id = $1",
+      [id, path],
+    );
   }
 
-  async function row(owner: string, id: string, withBytes = false): Promise<FileRow | null> {
+  async function row(
+    owner: string,
+    id: string,
+    withBytes = false,
+  ): Promise<FileRow | null> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
     const rows = await sql.unsafe<FileRow[]>(
       `SELECT ${LIST_COLUMNS}${withBytes ? ", bytes" : ""} FROM chisabot_chat_files WHERE id = $1 AND owner_user_id = $2`,
@@ -310,7 +424,9 @@ export function createChatFiles(
   ): Promise<ChatFileView[]> {
     const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
     const beforeMs = opts.before ? Date.parse(opts.before) : Number.NaN;
-    const beforeIso = Number.isFinite(beforeMs) ? new Date(beforeMs).toISOString() : null;
+    const beforeIso = Number.isFinite(beforeMs)
+      ? new Date(beforeMs).toISOString()
+      : null;
     const rows = beforeIso
       ? await sql.unsafe<FileRow[]>(
           `SELECT ${LIST_COLUMNS} FROM chisabot_chat_files WHERE owner_user_id = $1 ${agentId ? "AND agent_id = $2" : "AND $2::text IS NULL"} AND created_at < $3::timestamptz
@@ -327,25 +443,41 @@ export function createChatFiles(
 
   async function remove(owner: string, id: string): Promise<boolean> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-    const rows = await sql.begin(async transaction => {
+    const rows = await sql.begin(async (transaction) => {
       // Serialize staged cleanup with inbox admission's ownership transfer.
-      await transaction.unsafe("SELECT id FROM chisabot_chat_files WHERE id=$1 AND owner_user_id=$2 FOR UPDATE", [id, owner]);
-      const [inbox] = await transaction.unsafe<{ present: boolean }[]>("SELECT to_regclass('chisabot_thread_inbox') IS NOT NULL AS present");
+      await transaction.unsafe(
+        "SELECT id FROM chisabot_chat_files WHERE id=$1 AND owner_user_id=$2 FOR UPDATE",
+        [id, owner],
+      );
+      const [inbox] = await transaction.unsafe<{ present: boolean }[]>(
+        "SELECT to_regclass('chisabot_thread_inbox') IS NOT NULL AS present",
+      );
       if (inbox?.present) {
-        const held = await transaction.unsafe(`SELECT 1 FROM chisabot_thread_inbox i,
+        const held = await transaction.unsafe(
+          `SELECT 1 FROM chisabot_thread_inbox i,
           LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(i.message->'content')='array' THEN i.message->'content' ELSE '[]'::jsonb END) part
           WHERE i.owner_user_id=$1 AND i.status <> 'withdrawn'
-          AND split_part(split_part(part->'source'->>'value', '?', 1), '#', 1)=$2 LIMIT 1`, [owner, chatFileUrl(id)]);
+          AND split_part(split_part(part->'source'->>'value', '?', 1), '#', 1)=$2 LIMIT 1`,
+          [owner, chatFileUrl(id)],
+        );
         if (held.length) return [];
       }
-      return transaction.unsafe<{ id: string }[]>("DELETE FROM chisabot_chat_files WHERE id = $1 AND owner_user_id = $2 RETURNING id", [id, owner]);
+      return transaction.unsafe<{ id: string }[]>(
+        "DELETE FROM chisabot_chat_files WHERE id = $1 AND owner_user_id = $2 RETURNING id",
+        [id, owner],
+      );
     });
     if (rows.length > 0) await media.forgetDescriptions(id).catch(() => {});
     return rows.length > 0;
   }
 
   /** 工作区里一个不和自己已有记录撞名的路径。 */
-  async function freePath(owner: string, agentId: string, folder: string, name: string): Promise<string> {
+  async function freePath(
+    owner: string,
+    agentId: string,
+    folder: string,
+    name: string,
+  ): Promise<string> {
     const dot = name.lastIndexOf(".");
     const stem = dot > 0 ? name.slice(0, dot) : name;
     const ext = dot > 0 ? name.slice(dot) : "";
@@ -360,25 +492,57 @@ export function createChatFiles(
     return `${folder}/${stem}-${randomUUID().slice(0, 6)}${ext}`;
   }
 
-  async function intoWorkspace(owner: string, agentId: string, folder: string, name: string, bytes: Buffer): Promise<string | null> {
+  async function intoWorkspace(
+    owner: string,
+    agentId: string,
+    folder: string,
+    name: string,
+    bytes: Buffer,
+  ): Promise<string | null> {
     if (!options.workspace) return null;
     try {
       const path = await freePath(owner, agentId, folder, name);
-      return (await options.workspace.write(owner, agentId, path, bytes)) ? path : null;
+      return (await options.workspace.write(owner, agentId, path, bytes))
+        ? path
+        : null;
     } catch (error) {
-      console.error(JSON.stringify({ type: "chat-files-workspace-write-failed", error: error instanceof Error ? error.name : "UnknownError", agentId }));
+      console.error(
+        JSON.stringify({
+          type: "chat-files-workspace-write-failed",
+          error: error instanceof Error ? error.name : "UnknownError",
+          agentId,
+        }),
+      );
       return null;
     }
   }
 
-  async function upload(owner: string, agentId: string, file: { name: string; bytes: Buffer }): Promise<ChatFileView> {
-    if (!(await options.ownsBot(owner, agentId))) throw new ChatFilesError("找不到这个机器人。");
+  async function upload(
+    owner: string,
+    agentId: string,
+    file: { name: string; bytes: Buffer },
+  ): Promise<ChatFileView> {
+    if (!(await options.ownsBot(owner, agentId)))
+      throw new ChatFilesError("找不到这个机器人。");
     if (file.bytes.length === 0) throw new ChatFilesError("文件是空的。");
-    if (file.bytes.length > MAX_CHAT_FILE_BYTES) throw new ChatFilesError(`文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}。`);
+    if (file.bytes.length > MAX_CHAT_FILE_BYTES)
+      throw new ChatFilesError(`文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}。`);
     const name = safeName(file.name);
     const mimeType = detectMime(file.bytes, name);
-    const workspacePath = await intoWorkspace(owner, agentId, "uploads", name, file.bytes);
-    return store(owner, agentId, { kind: "upload", name, mimeType, bytes: file.bytes, workspacePath });
+    const workspacePath = await intoWorkspace(
+      owner,
+      agentId,
+      "uploads",
+      name,
+      file.bytes,
+    );
+    return store(owner, agentId, {
+      kind: "upload",
+      name,
+      mimeType,
+      bytes: file.bytes,
+      workspacePath,
+    });
   }
 
   /**
@@ -394,21 +558,47 @@ export function createChatFiles(
   async function imageForModel(
     owner: string,
     agentId: string,
-    image: { cacheId: string; name: string; mimeType: string; bytes: Buffer; head: string; createdAt?: Date | string; inspectSource?: string },
+    image: {
+      cacheId: string;
+      name: string;
+      mimeType: string;
+      bytes: Buffer;
+      head: string;
+      createdAt?: Date | string;
+      inspectSource?: string;
+    },
     /** 这一轮实际用的聊天模型；没给就按这一轮的选择找（media.imageInputFor）。 */
     modelId?: string,
   ): Promise<StoredAttachment> {
     const { name, bytes, head } = image;
-    const input = await media.imageInputFor(owner, agentId, modelId).catch(() => ({ kind: "main" }) as const);
+    const input = await media
+      .imageInputFor(owner, agentId, modelId)
+      .catch(() => ({ kind: "main" }) as const);
     if (input.kind === "main") return { mimeType: image.mimeType, name, bytes };
-    const note = (text: string): StoredAttachment => ({ mimeType: "text/plain", name, bytes: Buffer.from(text) });
+    const note = (text: string): StoredAttachment => ({
+      mimeType: "text/plain",
+      name,
+      bytes: Buffer.from(text),
+    });
     if (input.kind === "none") {
-      return note(`${head}。当前聊天模型不能看图片，也没有配置识图模型，所以你看不到图片内容。请告诉用户：在 设置 → 生图与识图（或管理员在 设置 → 模型 → 识图模型）里配置一个识图模型后再发。`);
+      return note(
+        `${head}。当前聊天模型不能看图片，也没有配置识图模型，所以你看不到图片内容。请告诉用户：在 设置 → 生图与识图（或管理员在 设置 → 模型 → 识图模型）里配置一个识图模型后再发。`,
+      );
     }
-    const ask = image.inspectSource ? `描述里没有的细节用 image_inspect（source 填 ${image.inspectSource}）去问，` : "描述里没有的细节如实说看不到，";
-    const fresh = image.createdAt === undefined || Date.now() - new Date(image.createdAt).getTime() < media.DESCRIBE_FRESH_MS;
+    const ask = image.inspectSource
+      ? `描述里没有的细节用 image_inspect（source 填 ${image.inspectSource}）去问，`
+      : "描述里没有的细节如实说看不到，";
+    const fresh =
+      image.createdAt === undefined ||
+      Date.now() - new Date(image.createdAt).getTime() <
+        media.DESCRIBE_FRESH_MS;
     try {
-      const text = await media.describe(image.cacheId, { bytes, mimeType: image.mimeType }, input.config, { fresh });
+      const text = await media.describe(
+        image.cacheId,
+        { bytes, mimeType: image.mimeType },
+        input.config,
+        { fresh },
+      );
       if (text === null) {
         return note(
           image.inspectSource
@@ -416,40 +606,72 @@ export function createChatFiles(
             : `${head}。这是较早的图片，没有现成的描述，你看不到它的内容；需要时请用户重新发一次。`,
         );
       }
-      return note(`${head}。当前聊天模型不能看图片，下面是识图模型（${input.label}）对它的描述，按这个回答；${ask}不要编。\n\n【图片描述】\n${text}`);
+      return note(
+        `${head}。当前聊天模型不能看图片，下面是识图模型（${input.label}）对它的描述，按这个回答；${ask}不要编。\n\n【图片描述】\n${text}`,
+      );
     } catch (error) {
       const reason = error instanceof Error ? error.message : "未知错误";
-      console.error(JSON.stringify({ type: "chat-files-describe-failed", error: error instanceof Error ? error.name : "UnknownError" }));
-      return note(`${head}。识图模型没能读这张图（${reason.slice(0, 200)}），你看不到图片内容；如实告诉用户。`);
+      console.error(
+        JSON.stringify({
+          type: "chat-files-describe-failed",
+          error: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
+      return note(
+        `${head}。识图模型没能读这张图（${reason.slice(0, 200)}），你看不到图片内容；如实告诉用户。`,
+      );
     }
   }
 
-  async function imageForTurn(owner: string, found: FileRow, bytes: Buffer, mimeType: string, where: string, modelId?: string): Promise<StoredAttachment> {
-    return imageForModel(owner, found.agent_id, {
-      cacheId: found.id,
-      name: found.name,
-      mimeType,
-      bytes,
-      head: `用户上传的图片「${found.name}」（${where}，文件 id：${found.id}）`,
-      createdAt: found.created_at,
-      inspectSource: "文件 id",
-    }, modelId);
+  async function imageForTurn(
+    owner: string,
+    found: FileRow,
+    bytes: Buffer,
+    mimeType: string,
+    where: string,
+    modelId?: string,
+  ): Promise<StoredAttachment> {
+    return imageForModel(
+      owner,
+      found.agent_id,
+      {
+        cacheId: found.id,
+        name: found.name,
+        mimeType,
+        bytes,
+        head: `用户上传的图片「${found.name}」（${where}，文件 id：${found.id}）`,
+        createdAt: found.created_at,
+        inspectSource: "文件 id",
+      },
+      modelId,
+    );
   }
 
   /**
    * 频道附件（`/api/attachments/<id>`）交给某个机器人的主模型之前过一遍：图片按 {@link imageForModel}，
    * 其他原样。主模型能看图时是原样返回（同一个对象），和改之前一样。
    */
-  async function channelAttachmentForModel(owner: string, agentId: string, attachmentId: string, attachment: StoredAttachment, modelId?: string): Promise<StoredAttachment> {
+  async function channelAttachmentForModel(
+    owner: string,
+    agentId: string,
+    attachmentId: string,
+    attachment: StoredAttachment,
+    modelId?: string,
+  ): Promise<StoredAttachment> {
     const image = sniffImage(attachment.bytes);
     if (!image) return attachment;
-    const described = await imageForModel(owner, agentId, {
-      cacheId: `att:${attachmentId}`,
-      name: attachment.name,
-      mimeType: image,
-      bytes: attachment.bytes,
-      head: `用户在这条消息里附的图片「${attachment.name}」`,
-    }, modelId);
+    const described = await imageForModel(
+      owner,
+      agentId,
+      {
+        cacheId: `att:${attachmentId}`,
+        name: attachment.name,
+        mimeType: image,
+        bytes: attachment.bytes,
+        head: `用户在这条消息里附的图片「${attachment.name}」`,
+      },
+      modelId,
+    );
     return described.mimeType === "text/plain" ? described : attachment;
   }
 
@@ -458,36 +680,94 @@ export function createChatFiles(
    * 看不了就把请求里用户消息上的图片换成识图模型的描述（没配识图模型就换成一句如实的说明），系统提示里
    * 「图片直接随消息给你」那句也换成描述版。主模型那一次请求不经过这里。
    */
-  async function promptForModel(owner: string, agentId: string, modelId: string, callOptions: unknown): Promise<unknown> {
+  async function promptForModel(
+    owner: string,
+    agentId: string,
+    modelId: string,
+    callOptions: unknown,
+  ): Promise<unknown> {
     const options = callOptions as { prompt?: unknown } | null;
     if (!options || !Array.isArray(options.prompt)) return callOptions;
     const prompt = options.prompt as { role?: string; content?: unknown }[];
-    const isImage = (part: unknown): part is { type: "file"; mediaType: string; data: unknown; filename?: string } =>
-      !!part && typeof part === "object" && (part as { type?: unknown }).type === "file" && String((part as { mediaType?: unknown }).mediaType ?? "").startsWith("image/");
-    if (!prompt.some((m) => m.role === "user" && Array.isArray(m.content) && m.content.some(isImage))) return callOptions;
-    const input = await media.imageInputFor(owner, agentId, modelId).catch(() => ({ kind: "main" }) as const);
+    const isImage = (
+      part: unknown,
+    ): part is {
+      type: "file";
+      mediaType: string;
+      data: unknown;
+      filename?: string;
+    } =>
+      !!part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "file" &&
+      String((part as { mediaType?: unknown }).mediaType ?? "").startsWith(
+        "image/",
+      );
+    if (
+      !prompt.some(
+        (m) =>
+          m.role === "user" &&
+          Array.isArray(m.content) &&
+          m.content.some(isImage),
+      )
+    )
+      return callOptions;
+    const input = await media
+      .imageInputFor(owner, agentId, modelId)
+      .catch(() => ({ kind: "main" }) as const);
     if (input.kind === "main") return callOptions;
     const short = modelId.split("/").filter(Boolean).pop() || modelId;
-    const textFor = async (part: { mediaType: string; data: unknown; filename?: string }): Promise<string> => {
+    const textFor = async (part: {
+      mediaType: string;
+      data: unknown;
+      filename?: string;
+    }): Promise<string> => {
       const label = part.filename ? `图片「${part.filename}」` : "一张图片";
-      if (input.kind === "none") return `[用户附了${label}。现在换用的备用模型 ${short} 不能看图片，也没有配置识图模型，你看不到它的内容；如实告诉用户。]`;
+      if (input.kind === "none")
+        return `[用户附了${label}。现在换用的备用模型 ${short} 不能看图片，也没有配置识图模型，你看不到它的内容；如实告诉用户。]`;
       const bytes = dataBytes(part.data);
-      if (!bytes) return `[用户附了${label}，但没法交给识图模型，你看不到它的内容；如实告诉用户。]`;
+      if (!bytes)
+        return `[用户附了${label}，但没法交给识图模型，你看不到它的内容；如实告诉用户。]`;
       try {
-        const text = await media.describeTransient({ bytes, mimeType: part.mediaType }, input.config);
+        const text = await media.describeTransient(
+          { bytes, mimeType: part.mediaType },
+          input.config,
+        );
         return `[用户附了${label}。现在换用的备用模型 ${short} 不能看图片，下面是识图模型（${input.label}）的描述，按它回答，描述里没有的不要编。]\n【图片描述】\n${text}`;
       } catch {
-        console.error(JSON.stringify({ type: "fallback-image-describe-failed" }));
+        console.error(
+          JSON.stringify({ type: "fallback-image-describe-failed" }),
+        );
         return `[用户附了${label}，识图模型没能读它，你看不到它的内容；如实告诉用户。]`;
       }
     };
     const next = await Promise.all(
       prompt.map(async (message) => {
         if (message.role === "system" && typeof message.content === "string") {
-          return { ...message, content: message.content.replace(IMAGE_INPUT_GUIDANCE.main, IMAGE_INPUT_GUIDANCE[input.kind]) };
+          return {
+            ...message,
+            content: message.content.replace(
+              IMAGE_INPUT_GUIDANCE.main,
+              IMAGE_INPUT_GUIDANCE[input.kind],
+            ),
+          };
         }
-        if (message.role !== "user" || !Array.isArray(message.content) || !message.content.some(isImage)) return message;
-        return { ...message, content: await Promise.all(message.content.map(async (part) => (isImage(part) ? { type: "text", text: await textFor(part) } : part))) };
+        if (
+          message.role !== "user" ||
+          !Array.isArray(message.content) ||
+          !message.content.some(isImage)
+        )
+          return message;
+        return {
+          ...message,
+          content: await Promise.all(
+            message.content.map(async (part) =>
+              isImage(part)
+                ? { type: "text", text: await textFor(part) }
+                : part,
+            ),
+          ),
+        };
       }),
     );
     return { ...options, prompt: next };
@@ -497,16 +777,34 @@ export function createChatFiles(
    * 模型读一个聊天文件（attachment-parts 的 `cf:` 引用）：图片给字节；小的文本给文字；
    * 其他（PDF、Office、压缩包…）给一句说明，告诉机器人文件在工作区哪里、可以怎么处理。
    */
-  async function loadForTurn(owner: string, id: string, turn?: { agentId?: string; modelId?: string }): Promise<StoredAttachment | null> {
+  async function loadForTurn(
+    owner: string,
+    id: string,
+    turn?: { agentId?: string; modelId?: string },
+  ): Promise<StoredAttachment | null> {
     const found = await row(owner, id, true);
     if (!found?.bytes) return null;
     const bytes = Buffer.from(found.bytes);
-    const where = found.workspace_path ? `已保存在你的工作区 ${found.workspace_path}` : "没能写进你的工作区";
+    const where = found.workspace_path
+      ? `已保存在你的工作区 ${found.workspace_path}`
+      : "没能写进你的工作区";
     const image = sniffImage(bytes);
     // 这一轮的模型只在文件就是这个机器人的时候才算数；别的机器人的文件按它自己的模型走（和以前一样）。
-    if (image) return imageForTurn(owner, found, bytes, image, where, turn?.agentId === found.agent_id ? turn.modelId : undefined);
+    if (image)
+      return imageForTurn(
+        owner,
+        found,
+        bytes,
+        image,
+        where,
+        turn?.agentId === found.agent_id ? turn.modelId : undefined,
+      );
     if (TEXT_TYPES.has(found.mime_type) && bytes.length <= 512 * 1024) {
-      return { mimeType: "text/plain", name: found.name, bytes: Buffer.concat([Buffer.from(`（${where}）\n\n`), bytes]) };
+      return {
+        mimeType: "text/plain",
+        name: found.name,
+        bytes: Buffer.concat([Buffer.from(`（${where}）\n\n`), bytes]),
+      };
     }
     const hint =
       found.mime_type === "application/pdf"
@@ -515,54 +813,104 @@ export function createChatFiles(
     return {
       mimeType: "text/plain",
       name: found.name,
-      bytes: Buffer.from(`用户上传了文件「${found.name}」（${found.mime_type}，${formatSize(bytes.length)}），${where}。${found.workspace_path ? hint : ""}文件 id：${found.id}`),
+      bytes: Buffer.from(
+        `用户上传了文件「${found.name}」（${found.mime_type}，${formatSize(bytes.length)}），${where}。${found.workspace_path ? hint : ""}文件 id：${found.id}`,
+      ),
     };
   }
 
   // ------------------------------------------------------------------ 图片
 
-  async function sourceImage(owner: string, agentId: string, source: string | undefined): Promise<{ bytes: Buffer; mimeType: string; name: string; id: string | null }> {
+  async function sourceImage(
+    owner: string,
+    agentId: string,
+    source: string | undefined,
+  ): Promise<{
+    bytes: Buffer;
+    mimeType: string;
+    name: string;
+    id: string | null;
+  }> {
     const ref = source?.trim() ?? "";
     const id = ref.replace(/^.*\/api\/chat-files\//, "").replace(/[?#].*$/, "");
     if (/^[0-9a-f-]{36}$/i.test(id)) {
       const found = await row(owner, id, true);
-      if (!found?.bytes) throw new ChatFilesError("找不到这张图片（文件 id 不对，或者已经删了）。");
+      if (!found?.bytes)
+        throw new ChatFilesError(
+          "找不到这张图片（文件 id 不对，或者已经删了）。",
+        );
       const bytes = Buffer.from(found.bytes);
       const mimeType = sniffImage(bytes);
-      if (!mimeType) throw new ChatFilesError(`「${found.name}」不是 PNG / JPEG / GIF / WebP 图片。`);
+      if (!mimeType)
+        throw new ChatFilesError(
+          `「${found.name}」不是 PNG / JPEG / GIF / WebP 图片。`,
+        );
       return { bytes, mimeType, name: found.name, id: found.id };
     }
     if (ref) {
-      if (!options.workspace) throw new ChatFilesError("这个部署没有工作区；请用文件 id 指定图片。");
+      if (!options.workspace)
+        throw new ChatFilesError("这个部署没有工作区；请用文件 id 指定图片。");
       const file = await options.workspace.read(owner, agentId, ref);
       const mimeType = sniffImage(file.bytes);
-      if (!mimeType) throw new ChatFilesError(`${ref} 不是 PNG / JPEG / GIF / WebP 图片。`);
+      if (!mimeType)
+        throw new ChatFilesError(`${ref} 不是 PNG / JPEG / GIF / WebP 图片。`);
       return { ...file, mimeType, id: null };
     }
     const [latest] = await list(owner, agentId, { imagesOnly: true, limit: 1 });
-    if (!latest) throw new ChatFilesError("还没有可以修改的图片：请用户先上传一张，或先用 image_generate 生成。");
+    if (!latest)
+      throw new ChatFilesError(
+        "还没有可以修改的图片：请用户先上传一张，或先用 image_generate 生成。",
+      );
     return sourceImage(owner, agentId, latest.id);
   }
 
   async function makeImage(
     owner: string,
     agentId: string,
-    input: { prompt: string; aspect: ImageAspect; edit?: boolean; source?: string },
+    input: {
+      prompt: string;
+      aspect: ImageAspect;
+      edit?: boolean;
+      source?: string;
+    },
     signal?: AbortSignal,
   ): Promise<ChatFileView> {
     const chosen = await media.imageFor(owner);
-    if (!chosen) throw new ChatFilesError("图片生成没有打开：请管理员在 设置 → 模型 → 生图模型 里打开，或者在 设置 → 生图与识图 里填自己的生图模型。");
+    if (!chosen)
+      throw new ChatFilesError(
+        "图片生成没有打开：请管理员在 设置 → 模型 → 生图模型 里打开，或者在 设置 → 生图与识图 里填自己的生图模型。",
+      );
     const config = chosen.config;
-    const src = input.edit ? await sourceImage(owner, agentId, input.source) : null;
+    const src = input.edit
+      ? await sourceImage(owner, agentId, input.source)
+      : null;
     const result = await runImageModel(
       config,
-      { prompt: input.prompt, aspect: input.aspect, ...(src ? { input: { bytes: src.bytes, mimeType: src.mimeType, name: src.name } } : {}) },
+      {
+        prompt: input.prompt,
+        aspect: input.aspect,
+        ...(src
+          ? {
+              input: {
+                bytes: src.bytes,
+                mimeType: src.mimeType,
+                name: src.name,
+              },
+            }
+          : {}),
+      },
       { fetch: doFetch, download, ...(signal ? { signal } : {}) },
     );
     const mimeType = sniffImage(result.bytes);
     if (!mimeType) throw new ChatFilesError("图片模型返回的不是图片。");
     const name = `${stamp()}-${slugOf(input.prompt)}.${EXT_FOR_MIME[mimeType] ?? "png"}`;
-    const workspacePath = await intoWorkspace(owner, agentId, "images", name, result.bytes);
+    const workspacePath = await intoWorkspace(
+      owner,
+      agentId,
+      "images",
+      name,
+      result.bytes,
+    );
     return store(owner, agentId, {
       kind: src ? "edited" : "generated",
       name,
@@ -575,14 +923,32 @@ export function createChatFiles(
     });
   }
 
-  async function share(owner: string, agentId: string, path: string, title?: string): Promise<ChatFileView> {
+  async function share(
+    owner: string,
+    agentId: string,
+    path: string,
+    title?: string,
+  ): Promise<ChatFileView> {
     if (!options.workspace) throw new ChatFilesError("这个部署没有工作区。");
     const file = await options.workspace.read(owner, agentId, path);
-    if (file.bytes.length > MAX_CHAT_FILE_BYTES) throw new ChatFilesError(`文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}，不能交给用户。`);
+    if (file.bytes.length > MAX_CHAT_FILE_BYTES)
+      throw new ChatFilesError(
+        `文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}，不能交给用户。`,
+      );
     const base = safeName(file.name || path.split("/").pop() || "文件");
     const ext = base.includes(".") ? base.slice(base.lastIndexOf(".")) : "";
-    const name = title?.trim() ? safeName(title.trim().endsWith(ext) ? title.trim() : `${title.trim()}${ext}`) : base;
-    return store(owner, agentId, { kind: "shared", name, mimeType: detectMime(file.bytes, base), bytes: file.bytes, workspacePath: path });
+    const name = title?.trim()
+      ? safeName(
+          title.trim().endsWith(ext) ? title.trim() : `${title.trim()}${ext}`,
+        )
+      : base;
+    return store(owner, agentId, {
+      kind: "shared",
+      name,
+      mimeType: detectMime(file.bytes, base),
+      bytes: file.bytes,
+      workspacePath: path,
+    });
   }
 
   // ------------------------------------------------------------------ 机器人
@@ -594,21 +960,39 @@ export function createChatFiles(
     return `文件 id：${file.id}；${file.workspacePath ? `工作区路径：${file.workspacePath}` : "没有写进工作区"}；${formatSize(file.size)}`;
   }
 
-  async function tools(owner: string, agentId: string, initiator?: AuditInitiator): Promise<GrantedTool[]> {
+  async function tools(
+    owner: string,
+    agentId: string,
+    initiator?: AuditInitiator,
+  ): Promise<GrantedTool[]> {
     void initiator;
-    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
+    const tool = <T extends z.ZodType>(
+      name: string,
+      description: string,
+      parameters: T,
+      run: (input: z.infer<T>) => Promise<string>,
+    ): GrantedTool => ({
       name,
       ref: `chat-files/${name}`,
       description,
       parameters,
       async execute(args) {
         const parsed = parameters.safeParse(args);
-        if (!parsed.success) return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
+        if (!parsed.success)
+          return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
         try {
           return await run(parsed.data);
         } catch (error) {
-          if (error instanceof ChatFilesError || error instanceof ImageProviderError) return `${REFUSAL_MARKER} ${error.message}`;
-          if (error instanceof Error && /file|path|workspace|There is no|文件/i.test(error.message)) return `${REFUSAL_MARKER} ${error.message}`;
+          if (
+            error instanceof ChatFilesError ||
+            error instanceof ImageProviderError
+          )
+            return `${REFUSAL_MARKER} ${error.message}`;
+          if (
+            error instanceof Error &&
+            /file|path|workspace|There is no|文件/i.test(error.message)
+          )
+            return `${REFUSAL_MARKER} ${error.message}`;
           throw error;
         }
       },
@@ -616,15 +1000,33 @@ export function createChatFiles(
     const out: GrantedTool[] = [];
     const images = await media.imageViewFor(owner).catch(() => null);
     if (images?.ready) {
-      const aspect = z.enum(IMAGE_ASPECTS).optional().describe("画幅，默认 1:1");
+      const aspect = z
+        .enum(IMAGE_ASPECTS)
+        .optional()
+        .describe("画幅，默认 1:1");
       out.push(
         tool(
           "image_generate",
           "按文字描述生成一张图片。图片会自动显示在聊天里（可以点开看大图、下载），同时存进你的工作区 images/。不要再用 Markdown 贴图或贴链接。提示词写清主体、风格、构图。",
-          z.object({ prompt: z.string().min(1).max(2000).describe("图片描述（中英文都可以）"), aspect_ratio: aspect }).strict(),
+          z
+            .object({
+              prompt: z
+                .string()
+                .min(1)
+                .max(2000)
+                .describe("图片描述（中英文都可以）"),
+              aspect_ratio: aspect,
+            })
+            .strict(),
           async (input) => {
-            const file = await makeImage(owner, agentId, { prompt: input.prompt, aspect: input.aspect_ratio ?? "1:1" });
-            return withFiles(`已生成 1 张图片，已经显示在聊天里，用户可以点开看大图、下载。不要再贴这张图或它的链接。${describe(file)}`, [file]);
+            const file = await makeImage(owner, agentId, {
+              prompt: input.prompt,
+              aspect: input.aspect_ratio ?? "1:1",
+            });
+            return withFiles(
+              `已生成 1 张图片，已经显示在聊天里，用户可以点开看大图、下载。不要再贴这张图或它的链接。${describe(file)}`,
+              [file],
+            );
           },
         ),
         tool(
@@ -632,14 +1034,32 @@ export function createChatFiles(
           `按要求修改一张已有的图片（用户上传的、你生成的，或工作区里的图片），结果显示在聊天里并存进工作区 images/。不写 source 就改这个聊天里最近的一张图片。${images.provider === "minimax" ? IMAGE_PROVIDER_PRESETS.minimax.editNote : ""}`,
           z
             .object({
-              prompt: z.string().min(1).max(2000).describe("怎么改，或者修改后的样子"),
-              source: z.string().max(400).optional().describe("要改的图片：文件 id、/api/chat-files/… 网址，或工作区路径（如 uploads/a.png）；不写 = 最近一张"),
+              prompt: z
+                .string()
+                .min(1)
+                .max(2000)
+                .describe("怎么改，或者修改后的样子"),
+              source: z
+                .string()
+                .max(400)
+                .optional()
+                .describe(
+                  "要改的图片：文件 id、/api/chat-files/… 网址，或工作区路径（如 uploads/a.png）；不写 = 最近一张",
+                ),
               aspect_ratio: aspect,
             })
             .strict(),
           async (input) => {
-            const file = await makeImage(owner, agentId, { prompt: input.prompt, aspect: input.aspect_ratio ?? "1:1", edit: true, ...(input.source ? { source: input.source } : {}) });
-            return withFiles(`已改好，新图片已经显示在聊天里。不要再贴这张图或它的链接。${describe(file)}`, [file]);
+            const file = await makeImage(owner, agentId, {
+              prompt: input.prompt,
+              aspect: input.aspect_ratio ?? "1:1",
+              edit: true,
+              ...(input.source ? { source: input.source } : {}),
+            });
+            return withFiles(
+              `已改好，新图片已经显示在聊天里。不要再贴这张图或它的链接。${describe(file)}`,
+              [file],
+            );
           },
         ),
       );
@@ -649,10 +1069,31 @@ export function createChatFiles(
         tool(
           "file_share",
           "把你工作区里的一个文件交给用户：聊天里会出现一张可以下载的文件卡（图片和 PDF 能预览）。做好报告、表格、压缩包、图片等要给用户时用它，不要贴工作区路径或 workspace.local 链接让用户自己找。",
-          z.object({ path: z.string().min(1).max(400).describe("工作区里的相对路径，如 report.pdf"), title: z.string().max(80).optional().describe("给用户看的文件名（可选）") }).strict(),
+          z
+            .object({
+              path: z
+                .string()
+                .min(1)
+                .max(400)
+                .describe("工作区里的相对路径，如 report.pdf"),
+              title: z
+                .string()
+                .max(80)
+                .optional()
+                .describe("给用户看的文件名（可选）"),
+            })
+            .strict(),
           async (input) => {
-            const file = await share(owner, agentId, input.path.trim(), input.title);
-            return withFiles(`已把「${file.name}」交给用户（聊天里有下载卡片）。不要再贴路径或链接，但在回复正文里请直接写出文件中的关键结论或摘要，让用户不打开文件也能一眼看到结果。${describe(file)}`, [file]);
+            const file = await share(
+              owner,
+              agentId,
+              input.path.trim(),
+              input.title,
+            );
+            return withFiles(
+              `已把「${file.name}」交给用户（聊天里有下载卡片）。不要再贴路径或链接，但在回复正文里请直接写出文件中的关键结论或摘要，让用户不打开文件也能一眼看到结果。${describe(file)}`,
+              [file],
+            );
           },
         ),
       );
@@ -668,13 +1109,27 @@ export function createChatFiles(
             : "让识图模型看一张图片并回答一个具体问题（图里某处写了什么、某个数字、某个细节）。上传的图片你只拿到了文字描述；描述里没有的细节用它去问，不要编。",
           z
             .object({
-              question: z.string().min(1).max(1000).describe("要问识图模型的具体问题"),
-              source: z.string().max(400).optional().describe("哪张图片：文件 id、/api/chat-files/… 网址，或工作区路径；不写 = 这个聊天里最近的一张"),
+              question: z
+                .string()
+                .min(1)
+                .max(1000)
+                .describe("要问识图模型的具体问题"),
+              source: z
+                .string()
+                .max(400)
+                .optional()
+                .describe(
+                  "哪张图片：文件 id、/api/chat-files/… 网址，或工作区路径；不写 = 这个聊天里最近的一张",
+                ),
             })
             .strict(),
           async (input) => {
             const src = await sourceImage(owner, agentId, input.source);
-            const answer = await media.ask(vision.config, { bytes: src.bytes, mimeType: src.mimeType }, `${input.question}\n\n只根据图片回答，用中文；看不清就说看不清。`);
+            const answer = await media.ask(
+              vision.config,
+              { bytes: src.bytes, mimeType: src.mimeType },
+              `${input.question}\n\n只根据图片回答，用中文；看不清就说看不清。`,
+            );
             return `识图模型（${vision.label}）对「${src.name}」的回答：\n${answer}`;
           },
         ),
@@ -684,12 +1139,30 @@ export function createChatFiles(
       tool(
         "chat_files_recent",
         "列出这个聊天里最近的文件：用户上传的、你生成的图片、你交给用户的文件（文件 id、工作区路径）。",
-        z.object({ images_only: z.boolean().optional(), limit: z.number().int().min(1).max(30).optional() }).strict(),
+        z
+          .object({
+            images_only: z.boolean().optional(),
+            limit: z.number().int().min(1).max(30).optional(),
+          })
+          .strict(),
         async (input) => {
-          const files = await list(owner, agentId, { imagesOnly: input.images_only === true, limit: input.limit ?? 10 });
+          const files = await list(owner, agentId, {
+            imagesOnly: input.images_only === true,
+            limit: input.limit ?? 10,
+          });
           if (files.length === 0) return "还没有文件。";
-          const label = { upload: "用户上传", generated: "你生成", edited: "你修改", shared: "你交给用户" } as const;
-          return files.map((f) => `- ${f.name}（${label[f.kind]}，${f.mimeType}，${formatSize(f.size)}）id ${f.id}${f.workspacePath ? `，工作区 ${f.workspacePath}` : ""}`).join("\n");
+          const label = {
+            upload: "用户上传",
+            generated: "你生成",
+            edited: "你修改",
+            shared: "你交给用户",
+          } as const;
+          return files
+            .map(
+              (f) =>
+                `- ${f.name}（${label[f.kind]}，${f.mimeType}，${formatSize(f.size)}）id ${f.id}${f.workspacePath ? `，工作区 ${f.workspacePath}` : ""}`,
+            )
+            .join("\n");
         },
       ),
     );
@@ -698,11 +1171,18 @@ export function createChatFiles(
 
   /** 每轮开头给机器人的用法（不点名具体文件）。 */
   async function guidance(owner?: string, agentId?: string): Promise<string> {
-    const images = owner ? await media.imageViewFor(owner).catch(() => null) : await settingsView().catch(() => null);
-    const input = owner && agentId ? await media.imageInputFor(owner, agentId).catch(() => null) : null;
+    const images = owner
+      ? await media.imageViewFor(owner).catch(() => null)
+      : await settingsView().catch(() => null);
+    const input =
+      owner && agentId
+        ? await media.imageInputFor(owner, agentId).catch(() => null)
+        : null;
     return [
       "【文件】用户在聊天里上传的文件会存进你的工作区 uploads/（消息里能看到图片和说明）。",
-      options.workspace ? "要把工作区里的文件给用户，用 file_share（聊天里出下载卡片），不要贴路径或 workspace.local 链接；同时在回复正文里直接写出关键结论或内容摘要。" : "",
+      options.workspace
+        ? "要把工作区里的文件给用户，用 file_share（聊天里出下载卡片），不要贴路径或 workspace.local 链接；同时在回复正文里直接写出关键结论或内容摘要。"
+        : "",
       images?.ready
         ? "要画图用 image_generate，要改图（包括用户刚上传的）用 image_edit；结果会自动显示，不要再用 Markdown 贴图。"
         : "还没打开图片生成：用户要你画图时，告诉他请管理员在 设置 → 模型 → 生图模型 里打开，或在 设置 → 生图与识图 里填自己的生图模型。",
@@ -718,18 +1198,46 @@ export function createChatFiles(
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser);
     app.onError((error, c) => {
-      if (error instanceof ChatFilesError) return c.json({ error: error.message }, 400);
-      if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "chat-files-error", error: error.name, route: c.req.path }));
+      if (error instanceof ChatFilesError)
+        return c.json({ error: error.message }, 400);
+      if (error instanceof z.ZodError)
+        return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
+      console.error(
+        JSON.stringify({
+          type: "chat-files-error",
+          error: error.name,
+          route: c.req.path,
+        }),
+      );
       return c.json({ error: "文件服务暂时不可用，请重试。" }, 503);
     });
-    const admin: MiddlewareHandler<{ Variables: AppVariables }> = async (c, next) => {
-      if (c.var.actor.role !== "admin") return c.json({ error: "只有管理员能改图片模型。" }, 403);
+    const admin: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      if (c.var.actor.role !== "admin")
+        return c.json({ error: "只有管理员能改图片模型。" }, 403);
       await next();
     };
-    app.get("/settings/image", admin, async (c) => c.json({ settings: await settingsView() }));
-    app.put("/settings/image", admin, bodyLimit({ maxSize: 16_384 }), async (c) => c.json({ settings: await saveSettings(c.var.actor.id, await c.req.json()) }));
-    app.post("/settings/image/test", admin, bodyLimit({ maxSize: 16_384 }), async (c) => c.json(await testSettings(await c.req.json().catch(() => ({})))));
+    app.get("/settings/image", admin, async (c) =>
+      c.json({ settings: await settingsView() }),
+    );
+    app.put(
+      "/settings/image",
+      admin,
+      bodyLimit({ maxSize: 16_384 }),
+      async (c) =>
+        c.json({
+          settings: await saveSettings(c.var.actor.id, await c.req.json()),
+        }),
+    );
+    app.post(
+      "/settings/image/test",
+      admin,
+      bodyLimit({ maxSize: 16_384 }),
+      async (c) =>
+        c.json(await testSettings(await c.req.json().catch(() => ({})))),
+    );
     app.get("/", async (c) => {
       const agentId = c.req.query("agentId") || undefined;
       const before = c.req.query("before") || undefined;
@@ -743,21 +1251,32 @@ export function createChatFiles(
     });
     app.post(
       "/",
-      bodyLimit({ maxSize: MAX_CHAT_FILE_BYTES + 512 * 1024, onError: (c) => c.json({ error: `文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}。` }, 413) }),
+      bodyLimit({
+        maxSize: MAX_CHAT_FILE_BYTES + 512 * 1024,
+        onError: (c) =>
+          c.json(
+            { error: `文件超过 ${formatSize(MAX_CHAT_FILE_BYTES)}。` },
+            413,
+          ),
+      }),
       async (c) => {
         const form = await c.req.formData().catch(() => null);
         const file = form?.get("file");
         const agentId = String(form?.get("agentId") ?? "");
         if (!(file instanceof File)) throw new ChatFilesError("没有收到文件。");
         if (!agentId) throw new ChatFilesError("缺少机器人。");
-        const saved = await upload(c.var.actor.id, agentId, { name: file.name, bytes: Buffer.from(await file.arrayBuffer()) });
+        const saved = await upload(c.var.actor.id, agentId, {
+          name: file.name,
+          bytes: Buffer.from(await file.arrayBuffer()),
+        });
         return c.json({ file: saved }, 201);
       },
     );
     app.get("/:id", async (c) => {
       const found = await row(c.var.actor.id, c.req.param("id"), true);
       if (!found?.bytes) return c.json({ error: "找不到这个文件。" }, 404);
-      const inline = isInlineSafeMime(found.mime_type) && c.req.query("download") !== "1";
+      const inline =
+        isInlineSafeMime(found.mime_type) && c.req.query("download") !== "1";
       const encoded = encodeURIComponent(found.name);
       const headers: Record<string, string> = {
         "content-type": inline ? found.mime_type : "application/octet-stream",
@@ -767,10 +1286,18 @@ export function createChatFiles(
         "cache-control": "private, max-age=31536000, immutable",
       };
       // PDF 要浏览器自带的阅读器，沙箱 CSP 会把它挡掉；图片和附件都加沙箱。
-      if (found.mime_type !== "application/pdf" || !inline) headers["content-security-policy"] = "sandbox; default-src 'none'";
-      return new Response(c.req.method === "HEAD" ? null : new Uint8Array(found.bytes), { headers });
+      if (found.mime_type !== "application/pdf" || !inline)
+        headers["content-security-policy"] = "sandbox; default-src 'none'";
+      return new Response(
+        c.req.method === "HEAD" ? null : new Uint8Array(found.bytes),
+        { headers },
+      );
     });
-    app.delete("/:id", async (c) => ((await remove(c.var.actor.id, c.req.param("id"))) ? c.body(null, 204) : c.json({ error: "找不到这个文件。" }, 404)));
+    app.delete("/:id", async (c) =>
+      (await remove(c.var.actor.id, c.req.param("id")))
+        ? c.body(null, 204)
+        : c.json({ error: "找不到这个文件。" }, 404),
+    );
     return app;
   }
 
@@ -779,6 +1306,27 @@ export function createChatFiles(
     await media.ensure();
   }
 
-  return { ensure: ensureAll, media, settingsView, saveSettings, testSettings, providerConfig, store, setWorkspacePath, row, list, remove, upload, loadForTurn, channelAttachmentForModel, promptForModel, makeImage, share, tools, guidance, routes };
+  return {
+    ensure: ensureAll,
+    media,
+    settingsView,
+    saveSettings,
+    testSettings,
+    providerConfig,
+    store,
+    setWorkspacePath,
+    row,
+    list,
+    remove,
+    upload,
+    loadForTurn,
+    channelAttachmentForModel,
+    promptForModel,
+    makeImage,
+    share,
+    tools,
+    guidance,
+    routes,
+  };
 }
 export type ChatFiles = ReturnType<typeof createChatFiles>;

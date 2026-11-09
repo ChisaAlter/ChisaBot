@@ -1,5 +1,5 @@
 /** Compatibility with installed clients and gateways from before the product rename. */
-(function (root) {
+((root) => {
   const gatewayLoginRequired = (body) =>
     body?.chisabotAuthRequired === true || body?.openbotAuthRequired === true;
 
@@ -8,7 +8,8 @@
       const key = store.key(i);
       if (!key || !key.includes("openbot")) continue;
       const current = key.replaceAll("openbot", "chisabot");
-      if (store.getItem(current) === null) store.setItem(current, store.getItem(key));
+      if (store.getItem(current) === null)
+        store.setItem(current, store.getItem(key));
     }
   }
 
@@ -20,5 +21,9 @@
     document.body.appendChild(marker);
   }
 
-  root.ChisaLegacyBrowser = { gatewayLoginRequired, migrateStorage, mountAccountMarker };
+  root.ChisaLegacyBrowser = {
+    gatewayLoginRequired,
+    migrateStorage,
+    mountAccountMarker,
+  };
 })(globalThis);

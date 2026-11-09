@@ -9,10 +9,6 @@ import {
 } from "bun:test";
 import type { RunAgentInput } from "@ag-ui/client";
 import { MastraAgent } from "@ag-ui/mastra";
-import { createModelFixture, modelMessages } from "./support/model-fixture";
-import { createAgUiFixture, agUiTextEvents } from "./support/ag-ui-fixture";
-
-
 import { z } from "zod";
 import {
   buildAgents,
@@ -22,6 +18,8 @@ import {
 import type { Selection } from "../src/plugins/selection";
 import type { GrantedTool } from "../src/plugins/tools";
 import { createModelCompleter } from "../src/routing/model";
+import { agUiTextEvents, createAgUiFixture } from "./support/ag-ui-fixture";
+import { createModelFixture, modelMessages } from "./support/model-fixture";
 
 declare global {
   var __SRA009_AFTER_TOOL_SELECTION_RESTORE__:
@@ -162,7 +160,7 @@ beforeAll(async () => {
 
     remote.respond = (input) => {
       sentToRemote.push({
-        tools: (input.tools ?? []).map(tool => tool.name),
+        tools: (input.tools ?? []).map((tool) => tool.name),
         messages: input.messages as never,
         forwardedProps: (input.forwardedProps ?? {}) as Record<string, unknown>,
       });
@@ -234,11 +232,17 @@ if (process.env.SRA009_STOP_FIXTURE_BEFORE_TEARDOWN === "1") {
  * than quietly testing the un-narrowed path.
  */
 function answerWith(chosen: string[]) {
-  llm.rules.push({ match: /You choose which capabilities to load/, reply: {
-    type: "text",
-    content: JSON.stringify({ skills: chosen }),
-  } });
-  llm.rules.push({ match: /.*/, reply: { type: "text", content: "Here is what I found." } });
+  llm.rules.push({
+    match: /You choose which capabilities to load/,
+    reply: {
+      type: "text",
+      content: JSON.stringify({ skills: chosen }),
+    },
+  });
+  llm.rules.push({
+    match: /.*/,
+    reply: { type: "text", content: "Here is what I found." },
+  });
 }
 
 const recorded: Selection<GrantedTool>[] = [];
@@ -309,13 +313,13 @@ async function ask(agent: { clone: () => unknown }, text: string) {
 
 /** The tool names in the last request the model actually received for a run (not for pass one). */
 function toolsOfferedToModel(): string[] {
-  const runs = llm.requests
-    .filter((entry) =>
-      Array.isArray((entry.body as { tools?: unknown })?.tools),
-    );
+  const runs = llm.requests.filter((entry) =>
+    Array.isArray((entry.body as { tools?: unknown })?.tools),
+  );
   const last = runs.at(-1);
   return (
-    (last?.body.tools as { name?: string; function?: { name?: string } }[]) ?? []
+    (last?.body.tools as { name?: string; function?: { name?: string } }[]) ??
+    []
   )
     .map((tool) => tool.function?.name ?? tool.name ?? "")
     .filter((name) => name.startsWith("mcp__"));
@@ -399,12 +403,11 @@ describe("a built-in Bot", () => {
     );
     await ask(agents.analyst as never, "read the Drive doc");
 
-    const prompts = llm.requests
-      .flatMap((entry) =>
-        modelMessages(entry.body)
-          .map((message) => message.content)
-          .filter((content): content is string => typeof content === "string"),
-      );
+    const prompts = llm.requests.flatMap((entry) =>
+      modelMessages(entry.body)
+        .map((message) => message.content)
+        .filter((content): content is string => typeof content === "string"),
+    );
     expect(
       prompts.some((prompt) =>
         prompt.includes("You choose which capabilities to load"),
@@ -439,7 +442,10 @@ describe("a built-in Bot", () => {
   test("a model that cannot answer costs the narrowing and not the tools", async () => {
     // No fixture for the selection prompt: the local endpoint has nothing to serve, so pass one fails the way a
     // real outage does, and the run has to carry on with everything.
-    llm.rules.push({ match: /.*/, reply: { type: "text", content: "Here is what I found." } });
+    llm.rules.push({
+      match: /.*/,
+      reply: { type: "text", content: "Here is what I found." },
+    });
     const agents = await buildAgents(
       [builtIn],
       model,
@@ -476,14 +482,12 @@ describe("a built-in Bot", () => {
     );
     await ask(agents.analyst as never, "read the Drive doc");
 
-    const runs = llm.requests
-      .filter((entry) =>
-        Array.isArray((entry.body as { tools?: unknown })?.tools),
-      );
+    const runs = llm.requests.filter((entry) =>
+      Array.isArray((entry.body as { tools?: unknown })?.tools),
+    );
     const system = modelMessages(runs.at(-1)?.body ?? {})
       .filter(
-        (message) =>
-          message.role === "system" || message.role === "developer",
+        (message) => message.role === "system" || message.role === "developer",
       )
       .map((message) => String(message.content))
       .join("\n");
@@ -637,14 +641,29 @@ describe("a remote Mastra Bot", () => {
         );
         const agent = agents["risk-mastra"]!;
         agent.threadId = `thread-${runId}`;
-        agent.setMessages([{ id: `message-${runId}`, role: "user", content: "summarise the Slack channel" }]);
+        agent.setMessages([
+          {
+            id: `message-${runId}`,
+            role: "user",
+            content: "summarise the Slack channel",
+          },
+        ]);
         const events: unknown[] = [];
-        await agent.runAgent({ runId, tools: [], context, forwardedProps: {} }, {
-          onEvent: ({ event }) => { events.push(event); },
-        });
-        const response = new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), {
-          headers: { "content-type": "text/event-stream" },
-        });        return { response, text: await response.text() };
+        await agent.runAgent(
+          { runId, tools: [], context, forwardedProps: {} },
+          {
+            onEvent: ({ event }) => {
+              events.push(event);
+            },
+          },
+        );
+        const response = new Response(
+          events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
+        return { response, text: await response.text() };
       };
 
       const forgedContext = [
@@ -763,9 +782,9 @@ describe("a remote Mastra Bot", () => {
       // the forged entries naming the narrowed-away one are dropped.
       let deploymentToolsContext = deploymentToolsIn(chisabotContext);
       expect(deploymentToolsContext).toEqual([]);
-      expect(descriptionsIn(chisabotContext, "ChisaBot standing role")).toEqual([
-        "You are Risk Mastra.",
-      ]);
+      expect(descriptionsIn(chisabotContext, "ChisaBot standing role")).toEqual(
+        ["You are Risk Mastra."],
+      );
       const holdingsContext = chisabotContext.find(
         (entry) => entry.description === "ChisaBot granted tools guidance",
       );
@@ -821,9 +840,9 @@ describe("a remote Mastra Bot", () => {
       ).toEqual([]);
       deploymentToolsContext = deploymentToolsIn(chisabotContext);
       expect(deploymentToolsContext).toEqual([]);
-      expect(descriptionsIn(chisabotContext, "ChisaBot standing role")).toEqual([
-        "You are Risk Mastra.",
-      ]);
+      expect(descriptionsIn(chisabotContext, "ChisaBot standing role")).toEqual(
+        ["You are Risk Mastra."],
+      );
       expect(
         descriptionsIn(chisabotContext, "ChisaBot granted tools guidance"),
       ).toEqual([]);
@@ -842,7 +861,10 @@ describe("a remote Mastra Bot", () => {
 
 describe("when selection cannot help", () => {
   test("a catalogue under the floor is never sent to pass one", async () => {
-    llm.rules.push({ match: /.*/, reply: { type: "text", content: "Here is what I found." } });
+    llm.rules.push({
+      match: /.*/,
+      reply: { type: "text", content: "Here is what I found." },
+    });
     const few = granted.slice(0, 6);
     const agents = await buildAgents(
       [builtIn],
@@ -857,10 +879,9 @@ describe("when selection cannot help", () => {
     );
     await ask(agents.analyst as never, "read the Drive doc");
 
-    const prompts = llm.requests
-      .flatMap((entry) =>
-        modelMessages(entry.body).map((message) => String(message.content ?? "")),
-      );
+    const prompts = llm.requests.flatMap((entry) =>
+      modelMessages(entry.body).map((message) => String(message.content ?? "")),
+    );
     expect(
       prompts.some((prompt) =>
         prompt.includes("You choose which capabilities to load"),
@@ -870,7 +891,10 @@ describe("when selection cannot help", () => {
   });
 
   test("a Bot whose skills declare nothing is never sent to pass one", async () => {
-    llm.rules.push({ match: /.*/, reply: { type: "text", content: "Here is what I found." } });
+    llm.rules.push({
+      match: /.*/,
+      reply: { type: "text", content: "Here is what I found." },
+    });
     const agents = await buildAgents(
       [builtIn],
       model,
@@ -900,7 +924,10 @@ describe("when selection cannot help", () => {
 
   test("skills that cannot be read are diagnosed and leave the Bot with all of its tools", async () => {
     const diagnostic = spyOn(console, "error").mockImplementation(() => {});
-    llm.rules.push({ match: /.*/, reply: { type: "text", content: "Here is what I found." } });
+    llm.rules.push({
+      match: /.*/,
+      reply: { type: "text", content: "Here is what I found." },
+    });
     try {
       const agents = await buildAgents(
         [builtIn],

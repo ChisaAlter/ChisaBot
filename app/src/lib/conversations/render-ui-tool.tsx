@@ -1,7 +1,9 @@
-import { useRenderTool } from "@/lib/chat/renderers";
 import type { Spec } from "@json-render/react";
 import { memo, useContext, useMemo } from "react";
 import { z } from "zod";
+import { ToolLine } from "@/components/channels/tool-line";
+import { useRenderTool } from "@/lib/chat/renderers";
+import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import {
   inspectRenderUiSpec,
   parseRenderUiSpec,
@@ -9,10 +11,16 @@ import {
   sanitizeRenderUiSpec,
 } from "../../../../shared/json-render/catalog";
 import { pruneEmptySections } from "../../../../shared/json-render/empty-sections";
-import { ToolLine } from "@/components/channels/tool-line";
-import { REFUSAL_MARKER } from "@/lib/plugins/tool-result";
-import { JsonRenderSurface, RenderUiPlaceholder, useRenderUiIdlePreload } from "./render-ui-preload";
-import { type CardCheck, registerCardCheck, ToolTurnEndedContext } from "./tool-renderers";
+import {
+  JsonRenderSurface,
+  RenderUiPlaceholder,
+  useRenderUiIdlePreload,
+} from "./render-ui-preload";
+import {
+  type CardCheck,
+  registerCardCheck,
+  ToolTurnEndedContext,
+} from "./tool-renderers";
 
 /**
  * 机器人用 `render_ui` 画出的界面（json-render，取代 A2UI）。
@@ -37,13 +45,24 @@ type RenderUiFinal =
   | { kind: "empty" }
   | { kind: "card"; spec: Spec };
 
-export function renderUiFinal(source: string | undefined, result: string | undefined): RenderUiFinal {
+export function renderUiFinal(
+  source: string | undefined,
+  result: string | undefined,
+): RenderUiFinal {
   const verdict = inspectRenderUiSpec(source ?? "");
-  const refused = typeof result === "string" && result.startsWith(REFUSAL_MARKER);
-  if (refused || !verdict.ok) return { kind: "failed", issues: verdict.ok ? [] : verdict.issues };
+  const refused =
+    typeof result === "string" && result.startsWith(REFUSAL_MARKER);
+  if (refused || !verdict.ok)
+    return { kind: "failed", issues: verdict.ok ? [] : verdict.issues };
   // 先宽容处理（跳过坏节点、修正参数别名），与服务器校验的是同一份；写完后剪掉空区块。
-  const spec = source ? pruneEmptySections(sanitizeRenderUiSpec(parseRenderUiSpec(source, false))?.spec ?? null) : null;
-  return spec?.root && spec.elements?.[spec.root] ? { kind: "card", spec } : { kind: "empty" };
+  const spec = source
+    ? pruneEmptySections(
+        sanitizeRenderUiSpec(parseRenderUiSpec(source, false))?.spec ?? null,
+      )
+    : null;
+  return spec?.root && spec.elements?.[spec.root]
+    ? { kind: "card", spec }
+    : { kind: "empty" };
 }
 
 function specArgument(args: string): string | undefined {
@@ -56,14 +75,20 @@ function specArgument(args: string): string | undefined {
 }
 
 /** render_ui 完成后画没画出卡片（格式有误的那一行、画不出东西的都不算）。 */
-export const renderUiDrawsCard: CardCheck = registerCardCheck([RENDER_UI_TOOL], ({ args, result }) => renderUiFinal(specArgument(args), result).kind === "card");
+export const renderUiDrawsCard: CardCheck = registerCardCheck(
+  [RENDER_UI_TOOL],
+  ({ args, result }) =>
+    renderUiFinal(specArgument(args), result).kind === "card",
+);
 
 /**
  * 格式有误那一行的说法：这一轮还在跑时机器人几乎总会马上改好再调一次（「会修正后重新生成」）；这一轮已经结束时没有下一次了，
  * 下面挂着「这一轮没有回答」和重试，不能再说机器人会重新生成（复审 #404 第四轮）。
  */
 export function renderUiFailedDetail(turnEnded: boolean): string {
-  return turnEnded ? "界面格式有误，没能显示" : "格式有误，机器人会修正后重新生成";
+  return turnEnded
+    ? "界面格式有误，没能显示"
+    : "格式有误，机器人会修正后重新生成";
 }
 
 export function RenderUiTool() {
@@ -100,10 +125,16 @@ const RenderUiCall = memo(function RenderUiCall({
 }) {
   // 流式时每写完一行就多画一块（还没写完的列表本来就是空的，不剪空区块）；写完后按 renderUiFinal 画。
   const partial = useMemo(
-    () => (streaming && source ? (sanitizeRenderUiSpec(parseRenderUiSpec(source, true))?.spec ?? null) : null),
+    () =>
+      streaming && source
+        ? (sanitizeRenderUiSpec(parseRenderUiSpec(source, true))?.spec ?? null)
+        : null,
     [source, streaming],
   );
-  const final = useMemo(() => (streaming ? null : renderUiFinal(source, result)), [source, streaming, result]);
+  const final = useMemo(
+    () => (streaming ? null : renderUiFinal(source, result)),
+    [source, streaming, result],
+  );
   const turnEnded = useContext(ToolTurnEndedContext);
 
   if (final?.kind === "failed") {
@@ -112,7 +143,11 @@ const RenderUiCall = memo(function RenderUiCall({
      * 所以这是一次「没成功的尝试」，不是需要用户处理的错误。原始问题收在展开里。
      */
     return (
-      <ToolLine detail={renderUiFailedDetail(turnEnded)} failed label={"生成界面"}>
+      <ToolLine
+        detail={renderUiFailedDetail(turnEnded)}
+        failed
+        label={"生成界面"}
+      >
         <pre className="whitespace-pre-wrap font-mono">
           {final.issues.length > 0 ? final.issues.join("\n") : (result ?? "")}
         </pre>
@@ -125,5 +160,12 @@ const RenderUiCall = memo(function RenderUiCall({
     return streaming ? <RenderUiPlaceholder /> : null;
   }
 
-  return <JsonRenderSurface spec={spec} streaming={streaming} title={title} toolCallId={toolCallId} />;
+  return (
+    <JsonRenderSurface
+      spec={spec}
+      streaming={streaming}
+      title={title}
+      toolCallId={toolCallId}
+    />
+  );
 });

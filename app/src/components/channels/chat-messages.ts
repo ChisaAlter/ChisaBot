@@ -1,6 +1,6 @@
-import { readImageDims } from "@/lib/image-dims";
 import type { ActivityMessage, Message, ToolCall } from "@ag-ui/core";
 import { classifyAttachment } from "@/lib/channels/attachments";
+import { readImageDims } from "@/lib/image-dims";
 
 /**
  * Transcript projection that pairs assistant tool calls with later tool-result messages.
@@ -529,7 +529,9 @@ export function toVisibleChatItems(
         url,
         // Already narrowed to a non-empty string, or absent: see `readAttachmentMetadata`.
         ...(metadata.filename ? { filename: metadata.filename } : {}),
-        ...(metadata.width && metadata.height ? { width: metadata.width, height: metadata.height } : {}),
+        ...(metadata.width && metadata.height
+          ? { width: metadata.width, height: metadata.height }
+          : {}),
         /*
          * `source.mimeType` IS ALWAYS ABSENT HERE, AND THAT IS NO LONGER THE PROBLEM IT WAS.
          *

@@ -2,13 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { createModelFixture } from "./support/model-fixture";
-import { buildAgents, type RuntimeModel } from "../src/conversation-runtime";
 import { createChatFiles } from "../src/chat-files/service";
 import { turnAttachmentLoader } from "../src/chat-files/turn-attachments";
 import { solidPng } from "../src/chat-files/vision-provider";
+import { buildAgents, type RuntimeModel } from "../src/conversation-runtime";
 import { createDatabase } from "../src/db/client";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { createModelFixture } from "./support/model-fixture";
 
 /**
  * 审查 M9-1（2026-10-29）：网页聊天「新话题 → 发一句文字 → 附一张图问图里内容」。
@@ -129,10 +129,16 @@ describe.skipIf(!url)(
         },
       });
       process.env.OPENAI_BASE_URL = `http://127.0.0.1:${proxy.port}${new URL(upstream).pathname.replace(/\/$/, "")}`;
-      llm.rules.push({ match: /你好/, reply: { content: "你好！有什么可以帮你？" } });
-      llm.rules.push({ match: /图里写了什么/, reply: {
-        content: "图里是一个红色方块，右下角写着「编号 7」。",
-      } });
+      llm.rules.push({
+        match: /你好/,
+        reply: { content: "你好！有什么可以帮你？" },
+      });
+      llm.rules.push({
+        match: /图里写了什么/,
+        reply: {
+          content: "图里是一个红色方块，右下角写着「编号 7」。",
+        },
+      });
     });
     afterAll(async () => {
       if (originalBase === undefined) delete process.env.OPENAI_BASE_URL;

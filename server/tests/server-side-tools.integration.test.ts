@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { McpTestServer } from "./support/mcp-server";
 import { and, eq } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import { createDatabase } from "../src/db/client";
@@ -11,11 +10,12 @@ import {
   mcpTools,
   pluginGrants,
 } from "../src/db/schema";
-import { createPluginStore } from "../src/plugins/store";
 import { callTool } from "../src/plugins/mcp";
+import { createPluginStore } from "../src/plugins/store";
 import { grantedTools, REFUSAL_MARKER } from "../src/plugins/tools";
 import type { ActionPolicy } from "../src/policy/engine";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { McpTestServer } from "./support/mcp-server";
 
 /**
  * A tool call that happens with no browser involved.
@@ -50,7 +50,8 @@ const store = createPluginStore({
   policy: () => policy,
   // Only this test's own loopback server may use the existing private-host fixture seam.
   callVendor: async (connection, name, args) => {
-    if (connection.url !== fixtureUrl) throw new Error("Unexpected fixture destination");
+    if (connection.url !== fixtureUrl)
+      throw new Error("Unexpected fixture destination");
     return callTool({ ...connection, allowPrivateHost: true }, name, args);
   },
 });

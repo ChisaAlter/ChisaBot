@@ -36,47 +36,87 @@ export function stoppedReason(reported: unknown): string {
  */
 export function friendlyStopReason(said: string): string {
   if (!said) return "";
-  const text = said.replace(/^Failed after \d+ attempts?\.\s*(Last error:\s*)?/i, "");
+  const text = said.replace(
+    /^Failed after \d+ attempts?\.\s*(Last error:\s*)?/i,
+    "",
+  );
   const wait = /try again in\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?/i.exec(text);
   const when =
     wait && (wait[1] || wait[2])
       ? `，约 ${[wait[1] ? `${Number(wait[1])} 小时` : "", wait[2] ? `${Number(wait[2])} 分钟` : ""].filter(Boolean).join(" ")}后恢复`
       : "";
-  const stalled = /^(.+?) stopped responding\. Nothing arrived from it for (an? |\d+ )(second|minute)s?/i.exec(text);
+  const stalled =
+    /^(.+?) stopped responding\. Nothing arrived from it for (an? |\d+ )(second|minute)s?/i.exec(
+      text,
+    );
   if (stalled) {
     const n = /^\d/.test(stalled[2]) ? Number.parseInt(stalled[2], 10) : 1;
     return `「${stalled[1]}」${n} ${/minute/i.test(stalled[3]) ? "分钟" : "秒"}没有任何回应，这一轮已结束。再发一次试试；一直这样就换一个模型。`;
   }
   // CB-100：服务器在流开始前连不上智能体运行时（Hermes 桥接等）。放在 ECONNREFUSED 那条前面，免得说成「连不上模型服务」。
-  if (/智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/.test(text))
+  if (
+    /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/.test(
+      text,
+    )
+  )
     return "智能体运行时无法连接，这一轮没有开始。请管理员检查运行时服务（Hermes 桥接）后再发一次。";
   // Hermes 调宿主工具时拿不到确定结果（网关 409 / 5xx / 断开），为了不重复执行副作用主动停下这一轮。
   // 以前落到「这一轮出错了：<英文>」，标题又成了「这一轮没有收到回答」，可前面的回答明明在（2026-11-06）。
-  if (/host gateway outcome is unknown|HERMES_MISSING_TOOL_RECEIPT|ended before a host tool returned/i.test(text))
+  if (
+    /host gateway outcome is unknown|HERMES_MISSING_TOOL_RECEIPT|ended before a host tool returned/i.test(
+      text,
+    )
+  )
     return "有一步工具调用没拿到确定结果，请先核对这一步是否已经执行，再决定如何继续。";
   // A compaction failure alone does not establish which part of the input filled the window.
-  if (/context compaction failed|no safe compaction range|上下文压缩未能完成/i.test(text)) return text;
+  if (
+    /context compaction failed|no safe compaction range|上下文压缩未能完成/i.test(
+      text,
+    )
+  )
+    return text;
   if (/only be used from within OpenCode/i.test(text))
     return "这个模型只能在 OpenCode 客户端里用。点输入框右下角的模型名，换一个模型再发。";
-  if (/daily (free )?limit|free (tier|limit)|quota|insufficient.*(credit|balance)|\b402\b/i.test(text))
+  if (
+    /daily (free )?limit|free (tier|limit)|quota|insufficient.*(credit|balance)|\b402\b/i.test(
+      text,
+    )
+  )
     return `这个模型的额度用完了${when}。点输入框右下角的模型名，换一个模型再发。`;
   if (/\b429\b|rate.?limit|too many requests/i.test(text))
     return `模型请求太频繁，被暂时限流了${when}。稍等一会儿再发，或换一个模型。`;
   if (/\b401\b|unauthori[sz]ed|invalid.*api.?key|authentication/i.test(text))
     return "模型密钥无效或已过期。请管理员到 管理后台 → 模型 检查连接。";
-  if (/context (length|window)|maximum context|too many tokens|prompt is too long/i.test(text))
+  if (
+    /context (length|window)|maximum context|too many tokens|prompt is too long/i.test(
+      text,
+    )
+  )
     return "这段对话太长，超出了模型能读的范围。点 ⋯ → 新话题 重新开始。";
-  if (/AI SDK stream error|stream error|connection lost|GOAWAY|server_shutting_down|premature close/i.test(text))
+  if (
+    /AI SDK stream error|stream error|connection lost|GOAWAY|server_shutting_down|premature close/i.test(
+      text,
+    )
+  )
     return "模型的连接中途断开了，这一轮的回答没写完。再发一次试试；经常这样就换一个模型。";
-  if (/timed? ?out|ETIMEDOUT|deadline/i.test(text)) return "模型太久没有回应。稍后再发，或换一个模型。";
-  if (/fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|network|\b50[234]\b|bad gateway|service unavailable|overloaded/i.test(text))
+  if (/timed? ?out|ETIMEDOUT|deadline/i.test(text))
+    return "模型太久没有回应。稍后再发，或换一个模型。";
+  if (
+    /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|network|\b50[234]\b|bad gateway|service unavailable|overloaded/i.test(
+      text,
+    )
+  )
     return "暂时连不上模型服务。稍后再发，或换一个模型。";
   // 模型被服务商下线（2026-10-20 线上：space-bunny-free → 410「…has been deprecated」）。
   // 以前落到底下那句英文原样的「这一轮出错了：…」，看不出是模型没了。
   if (/deprecat|retired|已下线|不再提供/i.test(text))
     return "这个模型已经下线了（服务商不再提供）。点输入框右下角的模型名换一个再发。";
   // 浏览器 AbortError 或运行被取消的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
-  if (/aborted without reason|AbortError|signal is aborted|This run was stopped|HERMES_RUN_CANCELLED/i.test(text))
+  if (
+    /aborted without reason|AbortError|signal is aborted|This run was stopped|HERMES_RUN_CANCELLED/i.test(
+      text,
+    )
+  )
     return "这一轮被中断了（不是模型出错）。再发一次试试；一直这样就刷新一下页面。";
   if (/[\u4e00-\u9fff]/.test(said)) return said;
   return `这一轮出错了：${text}`;
@@ -116,9 +156,21 @@ export const pausedForApproval = () => Date.now() - approvalPausedAt < 15_000;
 /** 一个 run 失败是不是因为中止（停止 / 等审批），而不是出错。 */
 export function isAbortFailure(error: unknown): boolean {
   if (!error) return false;
-  if (typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError") return true;
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  return /\babort(ed)?\b|This run was stopped|HERMES_RUN_CANCELLED/i.test(message);
+  if (
+    typeof error === "object" &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  )
+    return true;
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return /\babort(ed)?\b|This run was stopped|HERMES_RUN_CANCELLED/i.test(
+    message,
+  );
 }
 
 /**
@@ -131,7 +183,13 @@ export function isAbortFailure(error: unknown): boolean {
  * 只看这一轮新加的消息（`before` 是发送前已有的消息 id），不翻旧账。
  */
 export function unfinishedTurnReason(
-  messages: readonly { id: string; role: string; content?: unknown; toolCallId?: string; toolCalls?: readonly { id: string; function?: { name?: string } }[] }[],
+  messages: readonly {
+    id: string;
+    role: string;
+    content?: unknown;
+    toolCallId?: string;
+    toolCalls?: readonly { id: string; function?: { name?: string } }[];
+  }[],
   before: ReadonlySet<string>,
 ): string | null {
   const last = messages[messages.length - 1];
@@ -141,7 +199,9 @@ export function unfinishedTurnReason(
     // 在等审批卡 / 等用户处理（approval-tools 交回 { waiting: true }），之后会由服务器接上这一轮。
     if (/^\s*\{\s*"waiting"\s*:\s*true/.test(content)) return null;
     const call = messages
-      .flatMap((message) => (message.role === "assistant" ? (message.toolCalls ?? []) : []))
+      .flatMap((message) =>
+        message.role === "assistant" ? (message.toolCalls ?? []) : [],
+      )
       .find((toolCall) => toolCall.id === last.toolCallId);
     const step = stepName(call?.function?.name);
     if (content.startsWith("Error:")) {
@@ -153,7 +213,8 @@ export function unfinishedTurnReason(
   if (last.role === "assistant") {
     const text = typeof last.content === "string" ? last.content.trim() : "";
     const calls = last.toolCalls ?? [];
-    if (!text && calls.length === 0) return "机器人这一轮没有给出任何回复。点「重试」再来一次；一直这样就换一个模型。";
+    if (!text && calls.length === 0)
+      return "机器人这一轮没有给出任何回复。点「重试」再来一次；一直这样就换一个模型。";
   }
   return null;
 }
@@ -186,14 +247,23 @@ function friendlyToolError(detail: string): string {
    */
   if (/aborted without reason|AbortError|signal is aborted/i.test(detail))
     return "这一轮被中断了，这条命令没跑完（不是命令本身出错）。再让它跑一次试试。";
-  if (/not on the page any more|Nothing on this page has the ref|out of date/i.test(detail))
+  if (
+    /not on the page any more|Nothing on this page has the ref|out of date/i.test(
+      detail,
+    )
+  )
     return "页面已经变了，它要找的元素不在了。";
-  if (/could not be reached|unavailable|ECONNREFUSED|fetch failed/i.test(detail)) return "云端电脑暂时连不上。";
+  if (
+    /could not be reached|unavailable|ECONNREFUSED|fetch failed/i.test(detail)
+  )
+    return "云端电脑暂时连不上。";
   return detail.length > 160 ? `${detail.slice(0, 160)}…` : detail;
 }
 
 /** 订阅者本身（纯函数，便于测试）：每一轮开始清掉，出错 / 失败记下原因（用户自己按停止的除外）。 */
-export function stoppedTurnSubscriber(setStopped: (reason: string | null) => void) {
+export function stoppedTurnSubscriber(
+  setStopped: (reason: string | null) => void,
+) {
   return {
     onRunInitialized: () => setStopped(null),
     /*
@@ -203,10 +273,15 @@ export function stoppedTurnSubscriber(setStopped: (reason: string | null) => voi
      * 了一轮，那条错误就不是「上一轮」的了：任何一轮开始都清掉。
      */
     onRunStartedEvent: () => setStopped(null),
-    onRunErrorEvent: ({ event }: { event?: { code?: unknown; message?: unknown } }) => {
+    onRunErrorEvent: ({
+      event,
+    }: {
+      event?: { code?: unknown; message?: unknown };
+    }) => {
       if (
         stoppedByUser() ||
-        event?.code === "HERMES_RUN_CANCELLED" || event?.code === "DSH_RUN_CANCELLED" ||
+        event?.code === "HERMES_RUN_CANCELLED" ||
+        event?.code === "DSH_RUN_CANCELLED" ||
         event?.message === "This run was stopped."
       ) {
         return;

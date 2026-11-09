@@ -1,4 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AdminComponentPreview } from "@/components/component-preview";
@@ -12,6 +11,7 @@ import {
 } from "@/components/ui/empty";
 import { componentListQueryOptions } from "@/lib/components/queries";
 import { LazyConversationToolsProvider } from "@/lib/conversations/lazy-provider";
+import { requireExtra } from "@/lib/deployment/extras";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,7 +45,9 @@ function RouteComponent() {
        * placeholder, and it has to come first: the empty sentence would otherwise stand there
        * asserting there are no components for as long as the fetch takes.
        */}
-      {components.isPending ? <PageSkeleton /> : components.error ? (
+      {components.isPending ? (
+        <PageSkeleton />
+      ) : components.error ? (
         <p className="mt-12 text-destructive text-sm" role="alert">
           {"无法加载组件。"}
         </p>

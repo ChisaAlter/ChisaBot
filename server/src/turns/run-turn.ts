@@ -1,5 +1,5 @@
 /** Background turns use the same conversation runner and durable history as browser turns. */
-import { normalizeConversationEvent } from "../legacy/protocol";
+
 import type {
   AbstractAgent,
   BaseEvent,
@@ -9,9 +9,6 @@ import type {
 import { EventType } from "@ag-ui/client";
 import { NOT_SHOWN } from "../../../shared/component-markers";
 import { frameFiring } from "../../../shared/routine-firing";
-import { withModelConnectionScope } from "../model-connection-context";
-import { assertConversationAdmissionOpen } from "../conversations/maintenance";
-import { executionClass, executionDeadline, type ExecutionClass } from "../conversations/capacity";
 import { sanitizeSeededHistory } from "../agents/history-sanitize";
 import { guardBotTurn } from "../agents/lifecycle";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
@@ -28,6 +25,14 @@ import {
   type HeadlessWaiting,
 } from "../computer/headless-tools";
 import { historyOrEmpty } from "../conversation-runtime";
+import {
+  type ExecutionClass,
+  executionClass,
+  executionDeadline,
+} from "../conversations/capacity";
+import { assertConversationAdmissionOpen } from "../conversations/maintenance";
+import { normalizeConversationEvent } from "../legacy/protocol";
+import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
 
@@ -100,10 +105,7 @@ export type ConversationLeases = {
     runId: string;
     ttlSeconds: number;
   }): Promise<unknown>;
-  release(params: {
-    threadId: string;
-    runId: string;
-  }): Promise<void>;
+  release(params: { threadId: string; runId: string }): Promise<void>;
 };
 
 /**
@@ -489,7 +491,8 @@ export function createTurnRunner(options: {
 
     try {
       if (!runner.ownsThreadLease) {
-        if (!options.leases) throw new Error("This conversation runner requires a lease adapter.");
+        if (!options.leases)
+          throw new Error("This conversation runner requires a lease adapter.");
         await options.leases.acquire({
           threadId,
           runId,
@@ -521,7 +524,8 @@ export function createTurnRunner(options: {
      */
     let stopPromise: Promise<boolean | undefined> | undefined;
     let cancelTurn: (() => void) | undefined;
-    const awaitsExecutionStop = "acknowledgesStop" in agent && agent.acknowledgesStop === true;
+    const awaitsExecutionStop =
+      "acknowledgesStop" in agent && agent.acknowledgesStop === true;
 
     const clearHeartbeat = () => {
       if (heartbeat === undefined) return;
@@ -542,21 +546,22 @@ export function createTurnRunner(options: {
       stopPromise ??= runner.stop({ threadId, runId }).catch(() => undefined);
     };
 
-    if (!runner.ownsThreadLease) heartbeat = setInterval(() => {
-      void options.leases!
-        .renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
-        .catch((error: unknown) => {
-          if (heartbeat === undefined) return;
-          /*
-           * A lock we no longer hold means somebody else is in this thread — the person, most
-           * likely, having just typed something. Continuing would write this turn's events into
-           * their run, so the turn is stopped and the failure is raised rather than recovered.
-           */
-          clearHeartbeat();
-          heartbeatError = error;
-          stopTurn();
-        });
-    }, heartbeatMs);
+    if (!runner.ownsThreadLease)
+      heartbeat = setInterval(() => {
+        void options
+          .leases!.renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
+          .catch((error: unknown) => {
+            if (heartbeat === undefined) return;
+            /*
+             * A lock we no longer hold means somebody else is in this thread — the person, most
+             * likely, having just typed something. Continuing would write this turn's events into
+             * their run, so the turn is stopped and the failure is raised rather than recovered.
+             */
+            clearHeartbeat();
+            heartbeatError = error;
+            stopTurn();
+          });
+      }, heartbeatMs);
     // So a heartbeat that is still pending cannot hold a one-shot process open.
     heartbeat?.unref?.();
 
@@ -567,7 +572,8 @@ export function createTurnRunner(options: {
       const cancelled = new Promise<never>((_resolve, reject) => {
         cancelTurn = () => {
           stopTurn();
-          if (!awaitsExecutionStop) reject(new Error("The headless turn was cancelled."));
+          if (!awaitsExecutionStop)
+            reject(new Error("The headless turn was cancelled."));
         };
         signal?.addEventListener("abort", cancelTurn, { once: true });
         if (signal?.aborted) cancelTurn();
@@ -575,9 +581,19 @@ export function createTurnRunner(options: {
       const completed = new Promise<void>((resolve, reject) => {
         let terminal: Error | undefined;
         runner
-          .run({ threadId, agent, input, persistedInputMessages, join: false,
-            execution: executionClass(initiator, Boolean(suppliedForwardedProps?.chisabotWorkerDelivery)),
-            ...(continuation ? { continuationRunId: continuation.snapshot.runId } : {}),
+          .run({
+            threadId,
+            agent,
+            input,
+            persistedInputMessages,
+            join: false,
+            execution: executionClass(
+              initiator,
+              Boolean(suppliedForwardedProps?.chisabotWorkerDelivery),
+            ),
+            ...(continuation
+              ? { continuationRunId: continuation.snapshot.runId }
+              : {}),
           })
           .subscribe({
             /*
@@ -589,8 +605,14 @@ export function createTurnRunner(options: {
              */
             next: (event) => {
               event = normalizeConversationEvent(event);
-              if (event.type === EventType.CUSTOM && "name" in event && event.name === "chisabot.capacity") {
-                const status = (event as BaseEvent & { value?: { status?: string } }).value?.status;
+              if (
+                event.type === EventType.CUSTOM &&
+                "name" in event &&
+                event.name === "chisabot.capacity"
+              ) {
+                const status = (
+                  event as BaseEvent & { value?: { status?: string } }
+                ).value?.status;
                 capacityState = status === "queued" ? "waiting" : "admitted";
                 deadline?.state(capacityState);
               }
@@ -626,13 +648,14 @@ export function createTurnRunner(options: {
         deadline = executionDeadline(turnTimeoutMs, () => {
           stopped = true;
           stopTurn();
-          if (!awaitsExecutionStop) backstop = setTimeout(() => {
-            reject(
-              new Error(
-                `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
-              ),
-            );
-          }, abortGraceMs);
+          if (!awaitsExecutionStop)
+            backstop = setTimeout(() => {
+              reject(
+                new Error(
+                  `The routine's turn did not finish within ${Math.round(turnTimeoutMs / 1000)}s and could not be stopped.`,
+                ),
+              );
+            }, abortGraceMs);
           backstop?.unref?.();
         });
         deadline.state(capacityState);
@@ -656,9 +679,10 @@ export function createTurnRunner(options: {
       deadline?.cancel();
       if (backstop !== undefined) clearTimeout(backstop);
       spoken.unsubscribe();
-      if (!runner.ownsThreadLease) await options.leases!
-        .release({ threadId, runId })
-        .catch(() => undefined);
+      if (!runner.ownsThreadLease)
+        await options
+          .leases!.release({ threadId, runId })
+          .catch(() => undefined);
     }
     if (signal?.aborted) throw new Error("The headless turn was cancelled.");
 

@@ -1,9 +1,11 @@
-import { useSyncExternalStore } from "react";
 import type { Message } from "@ag-ui/core";
-import { tryClient, type ClientOptions } from "../client";
+import { useSyncExternalStore } from "react";
+import { type ClientOptions, tryClient } from "../client";
 
 export type InboxMessage = Message & {
-  metadata?: { chisabotInbox?: { skillIds?: string[]; skillInstructions?: string[] } };
+  metadata?: {
+    chisabotInbox?: { skillIds?: string[]; skillInstructions?: string[] };
+  };
 };
 export type InboxDraft = { message: InboxMessage; skillIds?: string[] };
 
@@ -11,7 +13,11 @@ export type InboxDraft = { message: InboxMessage; skillIds?: string[] };
 export function inboxMessageText(message: { content?: unknown }): string {
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return "";
-  return message.content.flatMap((part) => part?.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+  return message.content
+    .flatMap((part) =>
+      part?.type === "text" && typeof part.text === "string" ? [part.text] : [],
+    )
+    .join("\n");
 }
 
 /**
@@ -44,14 +50,21 @@ function ownIds(): string[] {
   try {
     const raw = window.localStorage.getItem(OWN_KEY);
     const list = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
+    return Array.isArray(list)
+      ? list.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
 }
 function rememberOwn(id: string) {
   try {
-    window.localStorage.setItem(OWN_KEY, JSON.stringify([...ownIds().filter((other) => other !== id), id].slice(-200)));
+    window.localStorage.setItem(
+      OWN_KEY,
+      JSON.stringify(
+        [...ownIds().filter((other) => other !== id), id].slice(-200),
+      ),
+    );
   } catch {
     // 存不了：最坏是刷新后这条被当作别的设备排的，不补发（服务器那一轮仍会读到它）。
   }
@@ -80,17 +93,29 @@ function set(threadId: string, next: QueuedMessage[]) {
   emit();
 }
 
-export function queuedFor(threadId: string | null | undefined): QueuedMessage[] {
+export function queuedFor(
+  threadId: string | null | undefined,
+): QueuedMessage[] {
   return (threadId && queues.get(threadId)) || EMPTY;
 }
 
-export function useQueuedMessages(threadId: string | null | undefined): QueuedMessage[] {
-  return useSyncExternalStore(subscribe, () => queuedFor(threadId), () => EMPTY);
+export function useQueuedMessages(
+  threadId: string | null | undefined,
+): QueuedMessage[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => queuedFor(threadId),
+    () => EMPTY,
+  );
 }
 
 /** 「已读取」标记要不要画（读到后 6 秒内）。 */
 export function useReadMark(messageId: string): boolean {
-  useSyncExternalStore(subscribe, () => version, () => 0);
+  useSyncExternalStore(
+    subscribe,
+    () => version,
+    () => 0,
+  );
   const at = readAt.get(messageId);
   return at !== undefined && Date.now() - at < 6_000;
 }
@@ -99,43 +124,96 @@ export function useReadMark(messageId: string): boolean {
 export const STOPPING_WAIT_MS = 10_000;
 const STOPPING_POLL_MS = 250;
 
-const api = (threadId: string) => `/api/conversations/threads/${encodeURIComponent(threadId)}/inbox`;
+const api = (threadId: string) =>
+  `/api/conversations/threads/${encodeURIComponent(threadId)}/inbox`;
 
 /**
  * 机器人正在回答时发一条：进收件箱。返回 "queued" = 已排队；"send" = 那一轮刚好已经结束，调用方照常发送。
  * 失败（网络、排队满）时气泡标成失败，可以重试或撤回。
  */
-export async function queueMessage(threadId: string, draft: string | InboxDraft, id: string = typeof draft === "string" ? crypto.randomUUID() : draft.message.id, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<"queued" | "send" | "failed"> {
-  const text = typeof draft === "string" ? draft : inboxMessageText(draft.message);
-  const item: QueuedMessage = { id, text, ...(typeof draft === "string" ? {} : { message: { ...draft.message, id } as InboxMessage, skillIds: draft.skillIds }), status: "sending", at: Date.now() };
+export async function queueMessage(
+  threadId: string,
+  draft: string | InboxDraft,
+  id: string = typeof draft === "string"
+    ? crypto.randomUUID()
+    : draft.message.id,
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<"queued" | "send" | "failed"> {
+  const text =
+    typeof draft === "string" ? draft : inboxMessageText(draft.message);
+  const item: QueuedMessage = {
+    id,
+    text,
+    ...(typeof draft === "string"
+      ? {}
+      : {
+          message: { ...draft.message, id } as InboxMessage,
+          skillIds: draft.skillIds,
+        }),
+    status: "sending",
+    at: Date.now(),
+  };
   rememberOwn(id);
-  set(threadId, [...queuedFor(threadId).filter((other) => other.id !== id), item]);
+  set(threadId, [
+    ...queuedFor(threadId).filter((other) => other.id !== id),
+    item,
+  ]);
   const update = (status: QueuedStatus) =>
-    set(threadId, queuedFor(threadId).map((other) => (other.id === id ? { ...other, status } : other)));
+    set(
+      threadId,
+      queuedFor(threadId).map((other) =>
+        other.id === id ? { ...other, status } : other,
+      ),
+    );
   try {
     const post = async () => {
-      const response = await tryClient(api(threadId), { ...options, method: "POST", body: typeof draft === "string" ? { id, text } : { id, message: item.message, skillIds: item.skillIds } });
+      const response = await tryClient(api(threadId), {
+        ...options,
+        method: "POST",
+        body:
+          typeof draft === "string"
+            ? { id, text }
+            : { id, message: item.message, skillIds: item.skillIds },
+      });
       if (!response.ok) throw new Error(String(response.status));
-      const body = (await response.json()) as { queued?: boolean; status?: string; stopping?: boolean } | null;
-      if (!body || typeof body.queued !== "boolean") throw new Error("Invalid inbox response");
+      const body = (await response.json()) as {
+        queued?: boolean;
+        status?: string;
+        stopping?: boolean;
+      } | null;
+      if (!body || typeof body.queued !== "boolean")
+        throw new Error("Invalid inbox response");
       return body;
     };
     let body = await post();
     // CB-104: typed after Stop while the turn is still winding down. The user's intent is explicit,
     // so it is never parked: wait for the turn to end, then the caller sends it as a fresh turn.
     const waitUntil = Date.now() + STOPPING_WAIT_MS;
-    while (body.stopping && Date.now() < waitUntil && !options.signal?.aborted) {
+    while (
+      body.stopping &&
+      Date.now() < waitUntil &&
+      !options.signal?.aborted
+    ) {
       await new Promise((resolve) => setTimeout(resolve, STOPPING_POLL_MS));
       body = await post();
     }
     // A confirmed withdrawal can finish before the original POST response arrives.
     if (!queuedFor(threadId).some((other) => other.id === id)) return "queued";
     if (!body.queued) {
-      set(threadId, queuedFor(threadId).filter((other) => other.id !== id));
+      set(
+        threadId,
+        queuedFor(threadId).filter((other) => other.id !== id),
+      );
       return "send";
     }
-    if (["read", "answered", "withdrawn", "merged"].includes(body.status ?? "")) markRead(threadId, id);
-    else update(["paused", "owed", "stopped"].includes(body.status ?? "") ? "paused" : "queued");
+    if (["read", "answered", "withdrawn", "merged"].includes(body.status ?? ""))
+      markRead(threadId, id);
+    else
+      update(
+        ["paused", "owed", "stopped"].includes(body.status ?? "")
+          ? "paused"
+          : "queued",
+      );
     return "queued";
   } catch {
     update("failed");
@@ -144,14 +222,27 @@ export async function queueMessage(threadId: string, draft: string | InboxDraft,
 }
 
 /** 撤回一条还没被读到的。服务器那边已经读了就撤不回（返回 false，气泡等快照来了自己消失）。 */
-export async function withdrawMessage(threadId: string, id: string, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<boolean> {
+export async function withdrawMessage(
+  threadId: string,
+  id: string,
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<boolean> {
   const item = queuedFor(threadId).find((other) => other.id === id);
   if (!item) return false;
   try {
-    const response = await tryClient(`${api(threadId)}?id=${encodeURIComponent(id)}`, { ...options, method: "DELETE" });
-    const body = response.ok ? await response.json() as { withdrawn?: unknown } | null : null;
+    const response = await tryClient(
+      `${api(threadId)}?id=${encodeURIComponent(id)}`,
+      { ...options, method: "DELETE" },
+    );
+    const body = response.ok
+      ? ((await response.json()) as { withdrawn?: unknown } | null)
+      : null;
     const withdrawn = body?.withdrawn === true;
-    if (withdrawn) set(threadId, queuedFor(threadId).filter((other) => other.id !== id));
+    if (withdrawn)
+      set(
+        threadId,
+        queuedFor(threadId).filter((other) => other.id !== id),
+      );
     return withdrawn;
   } catch {
     return false;
@@ -161,25 +252,44 @@ export async function withdrawMessage(threadId: string, id: string, options: Pic
 /** 这条已经出现在对话记录里了：从排队里拿掉，挂几秒「已读取」。 */
 export function markRead(threadId: string, id: string) {
   readAt.set(id, Date.now());
-  set(threadId, queuedFor(threadId).filter((other) => other.id !== id));
+  set(
+    threadId,
+    queuedFor(threadId).filter((other) => other.id !== id),
+  );
   setTimeout(emit, 6_100);
 }
 
 /** 运行结束、还在排队的：交给调用方当普通消息发出去，并从排队里拿掉。 */
 export function takeQueued(threadId: string): QueuedMessage[] {
-  const taken = queuedFor(threadId).filter((item) => item.status === "queued" && !item.remote);
-  if (taken.length) set(threadId, queuedFor(threadId).filter((item) => item.status !== "queued" || item.remote));
+  const taken = queuedFor(threadId).filter(
+    (item) => item.status === "queued" && !item.remote,
+  );
+  if (taken.length)
+    set(
+      threadId,
+      queuedFor(threadId).filter(
+        (item) => item.status !== "queued" || item.remote,
+      ),
+    );
   return taken;
 }
 
 export type InboxState = {
   running: boolean;
   paused?: boolean;
-  items: { id: string; status: string; kind: string; message: { content?: unknown; metadata?: InboxMessage["metadata"] } }[];
+  items: {
+    id: string;
+    status: string;
+    kind: string;
+    message: { content?: unknown; metadata?: InboxMessage["metadata"] };
+  }[];
 };
 
 /** 打开对话时、以及同步发现收件箱变了时：另一台设备 / 刷新前排的队还在服务器上，接回来（别的设备排的标 remote）。 */
-export async function restoreQueue(threadId: string, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<InboxState | null> {
+export async function restoreQueue(
+  threadId: string,
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<InboxState | null> {
   const state = await inboxState(threadId, options);
   if (state) applyInboxState(threadId, state);
   return state;
@@ -189,40 +299,94 @@ export async function restoreQueue(threadId: string, options: Pick<ClientOptions
 export function applyInboxState(threadId: string, state: InboxState) {
   const current = queuedFor(threadId);
   const own = new Set(ownIds());
-  const active = new Map(state.items.filter((item) => ["queued", "paused", "owed", "stopped"].includes(item.status) && (item.kind === "message" || (item.kind === "worker_result" && (state.paused || item.status !== "queued")))).map((item) => [item.id, item]));
+  const active = new Map(
+    state.items
+      .filter(
+        (item) =>
+          ["queued", "paused", "owed", "stopped"].includes(item.status) &&
+          (item.kind === "message" ||
+            (item.kind === "worker_result" &&
+              (state.paused || item.status !== "queued"))),
+      )
+      .map((item) => [item.id, item]),
+  );
   const known = new Set(state.items.map((item) => item.id));
   const next: QueuedMessage[] = [];
   for (const old of current) {
     const item = active.get(old.id);
     if (item) {
-      next.push({ ...old, message: item.message as InboxMessage, skillIds: item.message.metadata?.chisabotInbox?.skillIds, status: item.status === "queued" && !state.paused ? "queued" : "paused" });
+      next.push({
+        ...old,
+        message: item.message as InboxMessage,
+        skillIds: item.message.metadata?.chisabotInbox?.skillIds,
+        status: item.status === "queued" && !state.paused ? "queued" : "paused",
+      });
       active.delete(old.id);
     } else if (!known.has(old.id) && !old.remote) {
-      next.push(state.paused && old.status === "queued" ? { ...old, status: "paused" } : old);
+      next.push(
+        state.paused && old.status === "queued"
+          ? { ...old, status: "paused" }
+          : old,
+      );
     }
   }
   for (const item of active.values()) {
     const content = inboxMessageText(item.message);
-    const text = item.kind === "worker_result" ? content.replace(/^⟦chisabot:[^⟧]*⟧\s*/, "").split("\n")[0] || "后台任务结果" : content;
-    if (text || Array.isArray(item.message.content)) next.push({ id: item.id, text, message: item.message as InboxMessage, skillIds: item.message.metadata?.chisabotInbox?.skillIds, kind: item.kind === "worker_result" ? "worker_result" : "message", status: item.status === "queued" && !state.paused ? "queued" : "paused", at: Date.now(), ...(own.has(item.id) ? {} : { remote: true }) });
+    const text =
+      item.kind === "worker_result"
+        ? content.replace(/^⟦chisabot:[^⟧]*⟧\s*/, "").split("\n")[0] ||
+          "后台任务结果"
+        : content;
+    if (text || Array.isArray(item.message.content))
+      next.push({
+        id: item.id,
+        text,
+        message: item.message as InboxMessage,
+        skillIds: item.message.metadata?.chisabotInbox?.skillIds,
+        kind: item.kind === "worker_result" ? "worker_result" : "message",
+        status: item.status === "queued" && !state.paused ? "queued" : "paused",
+        at: Date.now(),
+        ...(own.has(item.id) ? {} : { remote: true }),
+      });
   }
   // CB-104: held items read in the order they were sent (a read-then-held one was re-added last).
   const order = new Map(state.items.map((item, index) => [item.id, index]));
-  next.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  next.sort(
+    (a, b) =>
+      (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+      (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+  );
   // CB-104: a supplement held by Stop got no reply — it must not keep a 「已读取」 mark.
   let unmarked = false;
-  for (const item of next) if (item.status === "paused" && readAt.delete(item.id)) unmarked = true;
+  for (const item of next)
+    if (item.status === "paused" && readAt.delete(item.id)) unmarked = true;
   if (JSON.stringify(next) !== JSON.stringify(current)) set(threadId, next);
   else if (unmarked) emit();
 }
 
-export async function inboxState(threadId: string, options: Pick<ClientOptions, "signal" | "timeoutMs"> = {}): Promise<InboxState | null> {
+export async function inboxState(
+  threadId: string,
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<InboxState | null> {
   try {
     const response = await tryClient(api(threadId), options);
     if (!response.ok) return null;
-    const state = await response.json() as InboxState;
-    return state && typeof state.running === "boolean" && (state.paused === undefined || typeof state.paused === "boolean") && Array.isArray(state.items) &&
-      state.items.every((item) => item && typeof item.id === "string" && typeof item.status === "string" && typeof item.kind === "string" && item.message && typeof item.message === "object") ? state : null;
+    const state = (await response.json()) as InboxState;
+    return state &&
+      typeof state.running === "boolean" &&
+      (state.paused === undefined || typeof state.paused === "boolean") &&
+      Array.isArray(state.items) &&
+      state.items.every(
+        (item) =>
+          item &&
+          typeof item.id === "string" &&
+          typeof item.status === "string" &&
+          typeof item.kind === "string" &&
+          item.message &&
+          typeof item.message === "object",
+      )
+      ? state
+      : null;
   } catch {
     return null;
   }
@@ -232,11 +396,19 @@ export async function inboxState(threadId: string, options: Pick<ClientOptions, 
 export function sendPausedMessage(threadId: string, id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     let handled = false;
-    window.dispatchEvent(new CustomEvent("chisabot-send-paused", { detail: { threadId, id, accept: (run: () => Promise<unknown>) => {
-      if (handled) return;
-      handled = true;
-      void run().then(() => resolve(), reject);
-    } } }));
+    window.dispatchEvent(
+      new CustomEvent("chisabot-send-paused", {
+        detail: {
+          threadId,
+          id,
+          accept: (run: () => Promise<unknown>) => {
+            if (handled) return;
+            handled = true;
+            void run().then(() => resolve(), reject);
+          },
+        },
+      }),
+    );
     if (!handled) reject(new Error("请先打开这个对话，再发送保留的消息。"));
   });
 }

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "@ag-ui/core";
 import { QueryClient } from "@tanstack/react-query";
+import { channelFromRoster, channelKeys } from "@/lib/channels/queries";
 import {
   cachedTranscript,
   clearTranscriptCache,
   prefetchTranscript,
   rememberTranscript,
 } from "@/lib/conversations/transcript-cache";
-import { channelFromRoster, channelKeys } from "@/lib/channels/queries";
 
 /**
  * 打开对话 / 切机器人「秒开」（DESIGN.md §83）：切回刚看过的机器人时，第一帧画的是这里记下的那一份，
@@ -25,10 +25,13 @@ beforeEach(() => {
   globalThis.fetch = mock(async () => {
     calls += 1;
     await new Promise((resolve) => setTimeout(resolve, 5));
-    return new Response(JSON.stringify({ messages: [msg("s1"), msg("s2", "assistant")] }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ messages: [msg("s1"), msg("s2", "assistant")] }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
   }) as unknown as typeof fetch;
 });
 afterEach(() => {
@@ -60,7 +63,10 @@ describe("transcript cache", () => {
   });
 
   test("同一段对话同时预取只发一次请求，30 秒内不再发", async () => {
-    await Promise.all([prefetchTranscript("t1", "bot"), prefetchTranscript("t1", "bot")]);
+    await Promise.all([
+      prefetchTranscript("t1", "bot"),
+      prefetchTranscript("t1", "bot"),
+    ]);
     expect(calls).toBe(1);
     expect(cachedTranscript("t1")?.map((m) => m.id)).toEqual(["s1", "s2"]);
     await prefetchTranscript("t1", "bot");
@@ -68,7 +74,9 @@ describe("transcript cache", () => {
   });
 
   test("预取读不到不报错、不记", async () => {
-    globalThis.fetch = mock(async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
+    globalThis.fetch = mock(
+      async () => new Response("no", { status: 500 }),
+    ) as unknown as typeof fetch;
     await prefetchTranscript("t9", "bot");
     expect(cachedTranscript("t9")).toBeNull();
   });

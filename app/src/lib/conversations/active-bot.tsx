@@ -33,7 +33,10 @@ type BotHolder = { current: string };
 const agentBots = new WeakMap<object, string>();
 
 /** 由每段对话声明：这个 agent 的工具调用操作这个机器人的计算机。agent 和机器人一一对应，不用撤销。 */
-export function bindAgentBot(agent: object | null | undefined, botId: string | undefined) {
+export function bindAgentBot(
+  agent: object | null | undefined,
+  botId: string | undefined,
+) {
   if (agent && botId) agentBots.set(agent, botId);
 }
 
@@ -46,7 +49,11 @@ export function botForAgent(agent: unknown): string | undefined {
  * 在 `run` 同步执行期间，让 holder.current 读到这次调用所属的机器人。
  * 处理函数都在第一个 await 之前读 `bot.current`，所以同步覆盖就够；之后立刻还原。
  */
-export function withRunBot<T>(holder: BotHolder, botId: string | undefined, run: () => T): T {
+export function withRunBot<T>(
+  holder: BotHolder,
+  botId: string | undefined,
+  run: () => T,
+): T {
   if (!botId || !(holder instanceof RunScopedHolder)) return run();
   const previous = holder.run;
   holder.run = botId;
@@ -100,7 +107,8 @@ export function useActiveBot(botId: string | undefined): void {
   const value = useContext(ActiveBotValueContext);
   useEffect(() => {
     if (!holder) return;
-    const previous = holder instanceof RunScopedHolder ? holder.base : holder.current;
+    const previous =
+      holder instanceof RunScopedHolder ? holder.base : holder.current;
     holder.current = botId ?? DEFAULT_BOT_ID;
     value?.announce(botId ?? DEFAULT_BOT_ID);
     return () => {

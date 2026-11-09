@@ -439,16 +439,26 @@ describe("agent lifecycle routes", () => {
     const store = fakeStore({
       async list() {
         return [
-          profile({ id: "theirs", ownerUserId: "user-1", visibility: "public" }),
+          profile({
+            id: "theirs",
+            ownerUserId: "user-1",
+            visibility: "public",
+          }),
           // 多账号（CB-040）：别人的私有机器人不出现在管理员的列表里。
-          profile({ id: "their-private", ownerUserId: "user-1", visibility: "private" }),
+          profile({
+            id: "their-private",
+            ownerUserId: "user-1",
+            visibility: "private",
+          }),
           profile({ id: "ours", ownerUserId: administrator.id }),
         ];
       },
     });
 
     const body = (await json(
-      await appFor(store, requireAdministrator).request("http://chisabot.test/"),
+      await appFor(store, requireAdministrator).request(
+        "http://chisabot.test/",
+      ),
     )) as { agents: { id: string; canManage: boolean; mine: boolean }[] };
 
     // An administrator may manage everybody's coworkers but only created their own. A roster that
@@ -530,7 +540,9 @@ describe("agent lifecycle routes", () => {
   test("returns 404 when get returns null", async () => {
     const store = fakeStore({ get: async () => null });
 
-    const response = await appFor(store).request("http://chisabot.test/missing");
+    const response = await appFor(store).request(
+      "http://chisabot.test/missing",
+    );
 
     expect(response.status).toBe(404);
     expect(await json(response)).toEqual({ error: "Agent not found." });
@@ -624,7 +636,9 @@ describe("agent route composition", () => {
       store,
     );
 
-    const unauthenticated = await app.request("http://chisabot.test/api/agents");
+    const unauthenticated = await app.request(
+      "http://chisabot.test/api/agents",
+    );
     expect(unauthenticated.status).toBe(401);
     expect(store.calls).toEqual([]);
 

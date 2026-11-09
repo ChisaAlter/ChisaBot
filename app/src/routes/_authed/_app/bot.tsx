@@ -18,8 +18,12 @@ export const Route = createFileRoute("/_authed/_app/bot")({
   validateSearch: (
     search: Record<string, unknown>,
   ): { agent?: string; thread?: string; watch?: boolean } => ({
-    ...(typeof search.agent === "string" && search.agent ? { agent: search.agent } : {}),
-    ...(typeof search.thread === "string" && search.thread ? { thread: search.thread } : {}),
+    ...(typeof search.agent === "string" && search.agent
+      ? { agent: search.agent }
+      : {}),
+    ...(typeof search.thread === "string" && search.thread
+      ? { thread: search.thread }
+      : {}),
     ...(search.watch === true ? { watch: true } : {}),
   }),
 });

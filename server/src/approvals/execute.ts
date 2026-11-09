@@ -1,8 +1,8 @@
-import { runAssertionValue } from "../legacy/protocol";
 import { z } from "zod";
 import type { RunAssertion } from "../agents/callback-token";
 import type { AuditInitiator } from "../audit";
 import type { HeadlessTool } from "../computer/headless-tools";
+import { runAssertionValue } from "../legacy/protocol";
 import { PluginRefusedError } from "../plugins/store";
 import { isApprovalRecheck } from "./service";
 import {
@@ -124,7 +124,9 @@ export function createApprovedActionExecutor(deps: ApprovedActionDependencies) {
     if (action.toolRef.startsWith("bot/")) {
       const forwarded = snapshot.forwardedProps;
       const signed =
-        forwarded && typeof forwarded === "object" && runAssertionValue(forwarded) !== undefined
+        forwarded &&
+        typeof forwarded === "object" &&
+        runAssertionValue(forwarded) !== undefined
           ? (deps.readRun?.(runAssertionValue(forwarded)) ?? null)
           : null;
       const run: RunAssertion =

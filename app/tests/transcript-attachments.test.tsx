@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import type { Message, UserMessage } from "@ag-ui/core";
-import type { Attachment } from "@/lib/chat/attachment-state";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -20,6 +19,7 @@ import {
 } from "@/components/channels/chat-transcript";
 import type { QueuedMessage } from "@/components/channels/composer";
 import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { buildWakeUpInstruction } from "../../shared/follow-up-turn";
 import { frameFiring } from "../../shared/routine-firing";
 import { settleReactWork } from "./settle-react-work";
@@ -174,17 +174,36 @@ test("流式中的后续正文也在气泡里", async () => {
     { id: "bubble-next", role: "assistant", content: "第二段详细说明。" },
   ];
   const view = renderTranscript(messages, { busy: true });
-  await waitFor(() => expect(view.getByText("第二段详细说明。").closest('[data-slot="bubble-content"]')).not.toBeNull());
+  await waitFor(() =>
+    expect(
+      view
+        .getByText("第二段详细说明。")
+        .closest('[data-slot="bubble-content"]'),
+    ).not.toBeNull(),
+  );
   expect(view.container.querySelector(".chat-step-line")).toBeNull();
 });
 
 test("代码块前的标题保留气泡底色", async () => {
   const view = renderTranscript([
     { id: "code-user", role: "user", content: "给我示例" },
-    { id: "code-answer", role: "assistant", content: "### 命令示例\n\n```sh\necho ok\n```" },
+    {
+      id: "code-answer",
+      role: "assistant",
+      content: "### 命令示例\n\n```sh\necho ok\n```",
+    },
   ]);
-  await waitFor(() => expect(view.getByText("命令示例").closest('[data-slot="bubble"]')).not.toBeNull());
-  expect(view.getByText("命令示例").closest('[data-slot="bubble"]')?.classList.contains("chat-bubble-bare")).toBe(false);
+  await waitFor(() =>
+    expect(
+      view.getByText("命令示例").closest('[data-slot="bubble"]'),
+    ).not.toBeNull(),
+  );
+  expect(
+    view
+      .getByText("命令示例")
+      .closest('[data-slot="bubble"]')
+      ?.classList.contains("chat-bubble-bare"),
+  ).toBe(false);
 });
 
 /** A file staged on the composer, as the SDK hands it over: settled, and pointing at its own row. */

@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { contentText, isEditableUserText, lastUserIndex, withEditedText } from "@/lib/conversations/regenerate";
+import {
+  contentText,
+  isEditableUserText,
+  lastUserIndex,
+  withEditedText,
+} from "@/lib/conversations/regenerate";
 import { revisionNeedsRebuild } from "@/lib/conversations/use-conversation-sync";
 
 /** 重新生成 / 编辑后重发（DESIGN.md §67，CB-042）的纯函数。 */
 describe("regenerate helpers", () => {
   test("lastUserIndex", () => {
-    expect(lastUserIndex([{ id: "a", role: "user" }, { id: "b", role: "assistant" }, { id: "c", role: "user" }, { id: "d", role: "tool" }])).toBe(2);
+    expect(
+      lastUserIndex([
+        { id: "a", role: "user" },
+        { id: "b", role: "assistant" },
+        { id: "c", role: "user" },
+        { id: "d", role: "tool" },
+      ]),
+    ).toBe(2);
     expect(lastUserIndex([{ id: "b", role: "assistant" }])).toBe(-1);
   });
 
@@ -13,9 +25,16 @@ describe("regenerate helpers", () => {
     expect(withEditedText("old", " new ")).toBe("new");
     expect(withEditedText("old", "  ")).toBeNull();
     const image = { type: "image", source: { type: "url", value: "/a.png" } };
-    expect(withEditedText([{ type: "text", text: "old" }, image], "new")).toEqual([{ type: "text", text: "new" }, image]);
-    expect(withEditedText([image], "caption")).toEqual([{ type: "text", text: "caption" }, image]);
-    expect(withEditedText([{ type: "text", text: "old" }, image], "")).toEqual([image]);
+    expect(
+      withEditedText([{ type: "text", text: "old" }, image], "new"),
+    ).toEqual([{ type: "text", text: "new" }, image]);
+    expect(withEditedText([image], "caption")).toEqual([
+      { type: "text", text: "caption" },
+      image,
+    ]);
+    expect(withEditedText([{ type: "text", text: "old" }, image], "")).toEqual([
+      image,
+    ]);
     expect(contentText([{ type: "text", text: "x" }, image])).toBe("x");
   });
 

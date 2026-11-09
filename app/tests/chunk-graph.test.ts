@@ -9,10 +9,17 @@ import {
   readDist,
 } from "../scripts/chunk-graph";
 
-function graph(edges: Record<string, string[]>, entry = "assets/index-AAAAAAAA.js"): ChunkGraph {
+function graph(
+  edges: Record<string, string[]>,
+  entry = "assets/index-AAAAAAAA.js",
+): ChunkGraph {
   const g: ChunkGraph = new Map();
   for (const [file, imports] of Object.entries(edges)) {
-    g.set(file, { name: file.replace(/^assets\//, "").replace(/-[\w-]{8}\.js$/, ""), imports, isEntry: file === entry });
+    g.set(file, {
+      name: file.replace(/^assets\//, "").replace(/-[\w-]{8}\.js$/, ""),
+      imports,
+      isEntry: file === entry,
+    });
   }
   return g;
 }
@@ -27,7 +34,9 @@ test("finds cycles between chunks, including longer ones", () => {
     "assets/b-FFFFFFFF.js": ["assets/c-GGGGGGGG.js"],
     "assets/c-GGGGGGGG.js": ["assets/a-EEEEEEEE.js"],
   });
-  const cycles = findChunkCycles(g).map((c) => c.map((f) => g.get(f)!.name).sort());
+  const cycles = findChunkCycles(g).map((c) =>
+    c.map((f) => g.get(f)!.name).sort(),
+  );
   expect(cycles).toContainEqual(["vendor-conversation", "vendor-mcp"]);
   expect(cycles).toContainEqual(["a", "b", "c"]);
   expect(cycles).toHaveLength(2);
@@ -41,15 +50,21 @@ test("first screen = entry closure + preload closure", () => {
     "assets/shell-DDDDDDDD.js": ["assets/vendor-react-BBBBBBBB.js"],
     "assets/vendor-conversation-EEEEEEEE.js": [],
   });
-  const names = [...firstScreenChunks(g, ["assets/route-settings-CCCCCCCC.js"])].map((f) => g.get(f)!.name).sort();
+  const names = [...firstScreenChunks(g, ["assets/route-settings-CCCCCCCC.js"])]
+    .map((f) => g.get(f)!.name)
+    .sort();
   expect(names).toEqual(["index", "route-settings", "shell", "vendor-react"]);
 });
 
 test("flags conversation client / Markdown on the settings and admin first screens", () => {
   const g = graph({
     "assets/index-AAAAAAAA.js": [],
-    "assets/route-admin-BBBBBBBB.js": ["assets/vendor-conversation-CCCCCCCC.js"],
-    "assets/vendor-conversation-CCCCCCCC.js": ["assets/vendor-markdown-DDDDDDDD.js"],
+    "assets/route-admin-BBBBBBBB.js": [
+      "assets/vendor-conversation-CCCCCCCC.js",
+    ],
+    "assets/vendor-conversation-CCCCCCCC.js": [
+      "assets/vendor-markdown-DDDDDDDD.js",
+    ],
     "assets/vendor-markdown-DDDDDDDD.js": [],
     "assets/route-settings-EEEEEEEE.js": [],
   });
@@ -65,7 +80,8 @@ test("flags conversation client / Markdown on the settings and admin first scree
 
 test("rebuilds the chunk graph from minified output (static imports only)", () => {
   const g = graphFromFiles({
-    "assets/index-AAAAAAAA.js": 'import{a as b}from"./vendor-react-BBBBBBBB.js";import"./shell-CCCCCCCC.js";const x=()=>import("./route-admin-DDDDDDDD.js");',
+    "assets/index-AAAAAAAA.js":
+      'import{a as b}from"./vendor-react-BBBBBBBB.js";import"./shell-CCCCCCCC.js";const x=()=>import("./route-admin-DDDDDDDD.js");',
     "assets/vendor-react-BBBBBBBB.js": "export const a=1;",
     "assets/shell-CCCCCCCC.js": 'import {a} from "./vendor-react-BBBBBBBB.js";',
     "assets/route-admin-DDDDDDDD.js": "",
@@ -84,12 +100,24 @@ test("rebuilds the chunk graph from minified output (static imports only)", () =
  */
 const dist = readDist(path.join(import.meta.dir, "..", "dist"));
 
-test.skipIf(!dist)("built dist/: no chunk cycles, settings/admin first screens stay light", () => {
-  const { graph: g, preloadMap } = dist!;
-  expect(Object.keys(preloadMap).sort()).toEqual(["admin", "chat", "settings"]);
-  expect(chunkProblems(g, preloadMap)).toEqual([]);
-  const names = (group: string) => new Set([...firstScreenChunks(g, preloadMap[group] ?? [])].map((f) => g.get(f)!.name));
-  expect(names("chat").has("vendor-conversation")).toBe(true);
-  expect(names("settings").has("vendor-conversation")).toBe(false);
-  expect(names("admin").has("vendor-markdown")).toBe(false);
-});
+test.skipIf(!dist)(
+  "built dist/: no chunk cycles, settings/admin first screens stay light",
+  () => {
+    const { graph: g, preloadMap } = dist!;
+    expect(Object.keys(preloadMap).sort()).toEqual([
+      "admin",
+      "chat",
+      "settings",
+    ]);
+    expect(chunkProblems(g, preloadMap)).toEqual([]);
+    const names = (group: string) =>
+      new Set(
+        [...firstScreenChunks(g, preloadMap[group] ?? [])].map(
+          (f) => g.get(f)!.name,
+        ),
+      );
+    expect(names("chat").has("vendor-conversation")).toBe(true);
+    expect(names("settings").has("vendor-conversation")).toBe(false);
+    expect(names("admin").has("vendor-markdown")).toBe(false);
+  },
+);

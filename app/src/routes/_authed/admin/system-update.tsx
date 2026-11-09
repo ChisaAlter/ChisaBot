@@ -1,4 +1,5 @@
 import {
+  IconAlertTriangle,
   IconArrowBackUp,
   IconBrandGithub,
   IconCheck,
@@ -9,7 +10,6 @@ import {
   IconPackage,
   IconRefresh,
   IconServer,
-  IconAlertTriangle,
   IconStethoscope,
   IconTool,
   IconX,
@@ -18,24 +18,28 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  DEFAULT_UPDATE_ESTIMATE_SEC,
-  estimateText,
-  FULL_UPDATE_STEPS,
-  installUpdaterCommand,
-  ROLLBACK_STEPS,
-  SYSTEM_UPDATE_UPDATER_VERSION,
-  type SystemUpdateWarning,
-  type SystemUpdateHistoryEntry,
-  type SystemUpdateJob,
-  type SystemUpdateOverview,
-  UPDATE_STEPS,
-} from "../../../../../shared/system-update";
-import { PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
-import { CopyButton } from "@/components/ui/copy-button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { Card, EmptyState, ErrorCard, SettingRow, StatTile } from "@/components/ui/skyglass";
+import { CopyButton } from "@/components/ui/copy-button";
+import {
+  Card,
+  EmptyState,
+  ErrorCard,
+  SettingRow,
+  StatTile,
+} from "@/components/ui/skyglass";
+import { Switch } from "@/components/ui/switch";
+import { type AdminSmokeResult, runAdminSmoke } from "@/lib/admin-smoke";
+import {
+  setToolActivityVisible,
+  useToolActivityVisible,
+} from "@/lib/chat/tool-activity";
+import { runtimeKernelQueryOptions } from "@/lib/runtime-kernel";
 import {
   durationText,
   loadSystemUpdate,
@@ -46,17 +50,29 @@ import {
   timeText,
   useElapsed,
 } from "@/lib/system-update";
-import { type AdminSmokeResult, runAdminSmoke } from "@/lib/admin-smoke";
-import { runtimeKernelQueryOptions } from "@/lib/runtime-kernel";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
-import { setToolActivityVisible, useToolActivityVisible } from "@/lib/chat/tool-activity";
+import {
+  DEFAULT_UPDATE_ESTIMATE_SEC,
+  estimateText,
+  FULL_UPDATE_STEPS,
+  installUpdaterCommand,
+  ROLLBACK_STEPS,
+  SYSTEM_UPDATE_UPDATER_VERSION,
+  type SystemUpdateHistoryEntry,
+  type SystemUpdateJob,
+  type SystemUpdateOverview,
+  type SystemUpdateWarning,
+  UPDATE_STEPS,
+} from "../../../../../shared/system-update";
 
 export const Route = createFileRoute("/_authed/admin/system-update")({
   component: SystemUpdatePage,
 });
 
-const STATUS_TEXT: Record<SystemUpdateHistoryEntry["status"], { text: string; tone: "ok" | "warn" | "danger" | "muted" | "accent" }> = {
+const STATUS_TEXT: Record<
+  SystemUpdateHistoryEntry["status"],
+  { text: string; tone: "ok" | "warn" | "danger" | "muted" | "accent" }
+> = {
   queued: { text: "排队中", tone: "muted" },
   running: { text: "进行中", tone: "accent" },
   succeeded: { text: "成功", tone: "ok" },
@@ -65,7 +81,12 @@ const STATUS_TEXT: Record<SystemUpdateHistoryEntry["status"], { text: string; to
   rejected: { text: "未执行", tone: "muted" },
 };
 
-const ACTION_TEXT = { check: "检查更新", update: "更新", rollback: "回滚", magpie: "更新 Magpie" } as const;
+const ACTION_TEXT = {
+  check: "检查更新",
+  update: "更新",
+  rollback: "回滚",
+  magpie: "更新 Magpie",
+} as const;
 
 function isActive(data?: SystemUpdateOverview) {
   return (
@@ -85,7 +106,12 @@ function estimateFor(data: SystemUpdateOverview, full: boolean) {
 
 function sourceText(data: SystemUpdateOverview) {
   if (!data.source) return "还没有从 GitHub 拉取过";
-  return data.source.kind === "github" ? `GitHub ${data.source.repo || ""} · ${data.source.branch}`.replace("  ", " ") : "本机镜像（不联网）";
+  return data.source.kind === "github"
+    ? `GitHub ${data.source.repo || ""} · ${data.source.branch}`.replace(
+        "  ",
+        " ",
+      )
+    : "本机镜像（不联网）";
 }
 
 /**
@@ -99,20 +125,23 @@ function SystemUpdatePage() {
 
   const check = useAsyncAction(
     async () => {
-    const before = data?.source?.fetchedAt ?? data?.updatedAt;
-    await requestSystemUpdate("check");
-    // 等宿主机取走请求并写回新的状态（通常 2–10 秒）。
-    const started = Date.now();
-    while (Date.now() - started < 45_000) {
-      await new Promise((r) => setTimeout(r, 1500));
-      const next = await loadSystemUpdate();
-      queryClient.setQueryData(systemUpdateKeys.overview, next);
-      if (!next.pending.includes("check") && (next.source?.fetchedAt ?? next.updatedAt) !== before) {
-        if (next.source?.error) throw new Error(next.source.error);
-        return;
+      const before = data?.source?.fetchedAt ?? data?.updatedAt;
+      await requestSystemUpdate("check");
+      // 等宿主机取走请求并写回新的状态（通常 2–10 秒）。
+      const started = Date.now();
+      while (Date.now() - started < 45_000) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const next = await loadSystemUpdate();
+        queryClient.setQueryData(systemUpdateKeys.overview, next);
+        if (
+          !next.pending.includes("check") &&
+          (next.source?.fetchedAt ?? next.updatedAt) !== before
+        ) {
+          if (next.source?.error) throw new Error(next.source.error);
+          return;
+        }
       }
-    }
-    throw new Error("宿主机更新程序没有回应。");
+      throw new Error("宿主机更新程序没有回应。");
     },
     { errorToast: (error) => error.message },
   );
@@ -122,7 +151,11 @@ function SystemUpdatePage() {
       action={
         <Button
           disabled={!data?.configured}
-          feedback={{ pending: "检查中…", success: "已检查", error: "检查失败" }}
+          feedback={{
+            pending: "检查中…",
+            success: "已检查",
+            error: "检查失败",
+          }}
           onClick={() => void check.run()}
           size="sm"
           state={check.state}
@@ -140,7 +173,13 @@ function SystemUpdatePage() {
       ) : !data ? (
         <ErrorCard
           action={
-            <Button className="mt-2" onClick={() => void overview.refetch()} size="sm" type="button" variant="outline">
+            <Button
+              className="mt-2"
+              onClick={() => void overview.refetch()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
               {"重试"}
             </Button>
           }
@@ -160,13 +199,17 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
   const active = isActive(data);
   const full = data.depsChanged;
   // 当前镜像没有记录提交（behind 未知）时只能完整构建一次。
-  const pendingUpdate = (data.behind ?? 0) > 0 || (data.behind === null && full && !!data.latest);
-  const canUpdate = data.configured && data.updaterOnline && !active && pendingUpdate;
+  const pendingUpdate =
+    (data.behind ?? 0) > 0 || (data.behind === null && full && !!data.latest);
+  const canUpdate =
+    data.configured && data.updaterOnline && !active && pendingUpdate;
   const estimate = estimateText(estimateFor(data, full));
 
   const update = useAsyncAction(
     async () => {
-      const result = await requestSystemUpdate("update", data.latest?.sha, { full });
+      const result = await requestSystemUpdate("update", data.latest?.sha, {
+        full,
+      });
       queryClient.setQueryData(systemUpdateKeys.overview, result.overview);
     },
     { errorToast: (error) => error.message },
@@ -242,26 +285,55 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
       ))}
       <div className="magpie-stats">
         <StatTile
-          delta={data.running.builtAt ? `构建于 ${timeText(data.running.builtAt)}` : undefined}
+          delta={
+            data.running.builtAt
+              ? `构建于 ${timeText(data.running.builtAt)}`
+              : undefined
+          }
           icon={<IconPackage className="size-4" />}
           label="当前版本"
-          value={<span className="sysupd-mono">{shortSha(data.running.commit ?? data.current?.commit)}</span>}
+          value={
+            <span className="sysupd-mono">
+              {shortSha(data.running.commit ?? data.current?.commit)}
+            </span>
+          }
         />
         <StatTile
-          delta={data.current?.deployedAt ? `上线于 ${timeText(data.current.deployedAt)}` : undefined}
+          delta={
+            data.current?.deployedAt
+              ? `上线于 ${timeText(data.current.deployedAt)}`
+              : undefined
+          }
           icon={<IconServer className="size-4" />}
           label="运行镜像"
-          value={<span className="sysupd-image">{(data.current?.image ?? data.running.buildId).replace(/^.*:/u, "")}</span>}
+          value={
+            <span className="sysupd-image">
+              {(data.current?.image ?? data.running.buildId).replace(
+                /^.*:/u,
+                "",
+              )}
+            </span>
+          }
         />
         <StatTile
           delta={data.source?.error ? "上次拉取失败" : sourceText(data)}
           icon={<IconBrandGithub className="size-4" />}
           label="上次检查"
           tone={data.source?.error ? "warn" : undefined}
-          value={data.source?.fetchedAt ? timeText(data.source.fetchedAt) : "从未检查"}
+          value={
+            data.source?.fetchedAt
+              ? timeText(data.source.fetchedAt)
+              : "从未检查"
+          }
         />
         <StatTile
-          delta={data.behind === null ? "当前镜像没有记录提交" : data.behind ? `最新 ${shortSha(data.latest?.sha)}` : "已是最新"}
+          delta={
+            data.behind === null
+              ? "当前镜像没有记录提交"
+              : data.behind
+                ? `最新 ${shortSha(data.latest?.sha)}`
+                : "已是最新"
+          }
           icon={<IconGitCommit className="size-4" />}
           label="待更新提交"
           tone={data.behind ? "warn" : data.behind === 0 ? "ok" : undefined}
@@ -272,7 +344,11 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
       <KernelSection />
 
       {data.source?.error ? (
-        <ErrorCard className="mt-4" description={data.source.error} title="检查更新失败" />
+        <ErrorCard
+          className="mt-4"
+          description={data.source.error}
+          title="检查更新失败"
+        />
       ) : null}
 
       {data.externalBusy ? (
@@ -282,7 +358,11 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
           </span>
           <div className="min-w-0 flex-1">
             <h4>{"宿主机上正在手动更新"}</h4>
-            <p>{"有人在服务器上直接运行了更新或回滚脚本。等它结束后这里会自动刷新，再点更新。"}</p>
+            <p>
+              {
+                "有人在服务器上直接运行了更新或回滚脚本。等它结束后这里会自动刷新，再点更新。"
+              }
+            </p>
           </div>
         </Card>
       ) : null}
@@ -292,7 +372,11 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
           full ? null : (
             <Button
               disabled={!canUpdate}
-              feedback={{ pending: "提交中…", success: "已开始", error: "未开始" }}
+              feedback={{
+                pending: "提交中…",
+                success: "已开始",
+                error: "未开始",
+              }}
               onClick={() => void startUpdate()}
               size="sm"
               state={update.state}
@@ -320,13 +404,23 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
                 {`${data.fullReason ?? "这些提交改动了依赖或镜像底座"}，只替换代码的快速更新做不了。一键完整更新会从 GitHub 下载最新代码，重新安装依赖、构建前端和镜像，然后切换；先备份数据库，健康检查不通过自动回滚。`}
               </p>
               <p className="sysupd-note-meta">
-                {[estimate ? `预计${estimate}` : "", "构建期间照常可用", "切换时断开十几秒"].filter(Boolean).join(" · ")}
+                {[
+                  estimate ? `预计${estimate}` : "",
+                  "构建期间照常可用",
+                  "切换时断开十几秒",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
             <Button
               className="sysupd-note-btn"
               disabled={!canUpdate}
-              feedback={{ pending: "提交中…", success: "已开始", error: "未开始" }}
+              feedback={{
+                pending: "提交中…",
+                success: "已开始",
+                error: "未开始",
+              }}
               onClick={() => void startUpdate()}
               state={update.state}
             >
@@ -344,7 +438,11 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
                   <span className="sysupd-subject" title={item.subject}>
                     {item.subject}
                   </span>
-                  <span className="sysupd-meta">{[item.author, timeText(item.date)].filter(Boolean).join(" · ")}</span>
+                  <span className="sysupd-meta">
+                    {[item.author, timeText(item.date)]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -355,14 +453,20 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
               <span className="sysupd-ok-ic">
                 <IconCheck className="size-4" />
               </span>
-              {data.behind === null ? "当前镜像没有记录来源提交，更新一次后这里会显示新提交。" : "已经是最新版本。"}
+              {data.behind === null
+                ? "当前镜像没有记录来源提交，更新一次后这里会显示新提交。"
+                : "已经是最新版本。"}
             </div>
           </Card>
         )}
       </PageSection>
 
       {data.job || data.pending.some((a) => a !== "check") ? (
-        <JobCard estimates={data.estimates} job={data.job} pending={data.pending} />
+        <JobCard
+          estimates={data.estimates}
+          job={data.job}
+          pending={data.pending}
+        />
       ) : null}
 
       <PageSection settingItem="system-update.rollback" title="回滚">
@@ -377,7 +481,11 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
           >
             <Button
               disabled={!data.previous || !data.updaterOnline || active}
-              feedback={{ pending: "提交中…", success: "已开始", error: "未开始" }}
+              feedback={{
+                pending: "提交中…",
+                success: "已开始",
+                error: "未开始",
+              }}
               onClick={() => void startRollback()}
               size="sm"
               state={rollback.state}
@@ -405,25 +513,48 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
                     </time>
                     <div className="min-w-0 flex-1">
                       <div className="sysupd-ht">
-                        <b>{entry.action === "update" && entry.mode === "full" ? "完整更新" : ACTION_TEXT[entry.action]}</b>
+                        <b>
+                          {entry.action === "update" && entry.mode === "full"
+                            ? "完整更新"
+                            : ACTION_TEXT[entry.action]}
+                        </b>
                         {entry.fromImage || entry.toImage ? (
                           <span className="sysupd-mono">
-                            {[entry.fromImage, entry.toImage].filter(Boolean).map((i) => i?.replace(/^.*:/u, "")).join(" → ")}
+                            {[entry.fromImage, entry.toImage]
+                              .filter(Boolean)
+                              .map((i) => i?.replace(/^.*:/u, ""))
+                              .join(" → ")}
                           </span>
                         ) : null}
                       </div>
                       <div className="sysupd-hs">
-                        {[entry.actor, entry.durationSec ? `用时 ${durationText(entry.durationSec)}` : "", entry.error].filter(Boolean).join(" · ")}
+                        {[
+                          entry.actor,
+                          entry.durationSec
+                            ? `用时 ${durationText(entry.durationSec)}`
+                            : "",
+                          entry.error,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </div>
                     </div>
-                    <span className={cn("device-badge is-sm", `is-${status.tone}`)}><T>{status.text}</T></span>
+                    <span
+                      className={cn("device-badge is-sm", `is-${status.tone}`)}
+                    >
+                      <T>{status.text}</T>
+                    </span>
                   </li>
                 );
               })}
             </ul>
           </Card>
         ) : (
-          <EmptyState description="一键更新和回滚都会记在这里，也写进 管理后台 → 审计。" icon={<IconHistory className="size-6" />} title="还没有更新记录" />
+          <EmptyState
+            description="一键更新和回滚都会记在这里，也写进 管理后台 → 审计。"
+            icon={<IconHistory className="size-6" />}
+            title="还没有更新记录"
+          />
         )}
       </PageSection>
     </>
@@ -442,33 +573,54 @@ function KernelSection() {
   const hermes = data?.hermes;
   const hermesMode = data?.kernel === "hermes";
   const dshMode = data?.kernel === "dsh";
-  const connected = dshMode ? data?.dsh?.ok === true : hermesMode && hermes?.ok === true;
+  const connected = dshMode
+    ? data?.dsh?.ok === true
+    : hermesMode && hermes?.ok === true;
   const label = kernel.isError
     ? "状态不可用"
     : !data
       ? "读取中…"
-      : dshMode ? connected ? "DSH 已连接" : "DSH 未连接" : !hermesMode
-        ? "内置循环"
-        : connected
-          ? "Hermes 已连接"
-          : "Hermes 未连接";
-  const tone = kernel.isError || !data || (!hermesMode && !dshMode) ? "muted" : connected ? "ok" : "warn";
+      : dshMode
+        ? connected
+          ? "DSH 已连接"
+          : "DSH 未连接"
+        : !hermesMode
+          ? "内置循环"
+          : connected
+            ? "Hermes 已连接"
+            : "Hermes 未连接";
+  const tone =
+    kernel.isError || !data || (!hermesMode && !dshMode)
+      ? "muted"
+      : connected
+        ? "ok"
+        : "warn";
   const details = kernel.isError
     ? "无法读取执行内核状态：需要管理员权限，或服务器暂时没有回应。"
     : !data
       ? "正在读取执行内核…"
-      : dshMode ? connected ? `DSH ${data?.dsh?.version ?? ""} · ${data?.dsh?.sessions ?? 0} 个会话 · ${data?.dsh?.running ?? 0} 个正在运行` : data?.dsh?.error ?? "正在读取 DSH 状态。" : !hermesMode
-        ? "这个部署没有配置 Hermes，机器人使用应用内置的执行循环。"
-        : !hermes
-          ? "已配置 Hermes，但还没有健康状态。"
-          : connected
-            ? [
-                hermes.hostTools ? "工具回调已注册" : "工具回调未注册",
-                hermes.persistentState ? "持久去重账本正常" : "没有持久账本",
-                typeof hermes.sessions === "number" ? `${hermes.sessions} 个会话` : "",
-                typeof hermes.generation === "number" ? `第 ${hermes.generation} 代` : "",
-              ].filter(Boolean).join(" · ")
-            : `${hermes.error ?? "Hermes 桥接没有响应。"} 在服务器上运行 systemctl status hermes-acp-bridge 查看。`;
+      : dshMode
+        ? connected
+          ? `DSH ${data?.dsh?.version ?? ""} · ${data?.dsh?.sessions ?? 0} 个会话 · ${data?.dsh?.running ?? 0} 个正在运行`
+          : (data?.dsh?.error ?? "正在读取 DSH 状态。")
+        : !hermesMode
+          ? "这个部署没有配置 Hermes，机器人使用应用内置的执行循环。"
+          : !hermes
+            ? "已配置 Hermes，但还没有健康状态。"
+            : connected
+              ? [
+                  hermes.hostTools ? "工具回调已注册" : "工具回调未注册",
+                  hermes.persistentState ? "持久去重账本正常" : "没有持久账本",
+                  typeof hermes.sessions === "number"
+                    ? `${hermes.sessions} 个会话`
+                    : "",
+                  typeof hermes.generation === "number"
+                    ? `第 ${hermes.generation} 代`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : `${hermes.error ?? "Hermes 桥接没有响应。"} 在服务器上运行 systemctl status hermes-acp-bridge 查看。`;
   return (
     <PageSection
       description="部署级设置：所有内置机器人共用同一个执行循环，不在每个机器人上单独切换。"
@@ -518,7 +670,10 @@ function SmokeSection() {
         <SettingRow
           description={
             result ? (
-              <span className={cn("sysupd-smoke", result.ok ? "is-ok" : "is-bad")} data-smoke-result="">
+              <span
+                className={cn("sysupd-smoke", result.ok ? "is-ok" : "is-bad")}
+                data-smoke-result=""
+              >
                 {`${result.message} · ${result.model} · ${result.latencyMs} ms · 未保存任何对话`}
               </span>
             ) : (
@@ -556,7 +711,13 @@ function UpdaterSetupCard({
   tone?: "warn" | "danger";
 }) {
   return (
-    <Card className={cn("sysupd-note sysupd-setup mt-2", tone === "danger" ? "is-danger" : "is-full")} role="status">
+    <Card
+      className={cn(
+        "sysupd-note sysupd-setup mt-2",
+        tone === "danger" ? "is-danger" : "is-full",
+      )}
+      role="status"
+    >
       <span className="sysupd-note-ic" aria-hidden>
         <IconTool className="size-[18px]" />
       </span>
@@ -567,13 +728,20 @@ function UpdaterSetupCard({
           <code className="sysupd-mono">{command}</code>
           <CopyButton size="sm" value={command} variant="outline" />
         </div>
-        <p className="sysupd-note-meta">{"需要 root（sudo）、systemd、Docker、python3。详见 docs/online-update.md「老部署怎么升级到可一键更新」。"}</p>
+        <p className="sysupd-note-meta">
+          {
+            "需要 root（sudo）、systemd、Docker、python3。详见 docs/online-update.md「老部署怎么升级到可一键更新」。"
+          }
+        </p>
       </div>
     </Card>
   );
 }
 
-const WARNING_TEXT: Record<SystemUpdateWarning, { title: string; body: string }> = {
+const WARNING_TEXT: Record<
+  SystemUpdateWarning,
+  { title: string; body: string }
+> = {
   health_url_example: {
     title: "健康检查地址还是示例域名",
     body: "/opt/chisabot-updater/config.env 的 PUBLIC_HEALTH_URL 还是 chisabot.example.com，公网登录页检查被跳过。改成自己的 https://<域名>:<端口>/login（或在 deploy/.env 填好 CHISABOT_DOMAIN 后运行 sudo sh deploy/install-updater.sh 自动改）。",
@@ -616,15 +784,25 @@ function JobCard({
   pending: SystemUpdateOverview["pending"];
   estimates: SystemUpdateOverview["estimates"];
 }) {
-  const queued = !job || (job.status !== "running" && pending.some((a) => a !== "check"));
-  const action = queued ? (pending.find((a) => a !== "check") ?? "update") : job.action;
+  const queued =
+    !job || (job.status !== "running" && pending.some((a) => a !== "check"));
+  const action = queued
+    ? (pending.find((a) => a !== "check") ?? "update")
+    : job.action;
   const full = !queued && job.action === "update" && job.mode === "full";
-  const steps = action === "rollback" ? ROLLBACK_STEPS : full ? FULL_UPDATE_STEPS : UPDATE_STEPS;
+  const steps =
+    action === "rollback"
+      ? ROLLBACK_STEPS
+      : full
+        ? FULL_UPDATE_STEPS
+        : UPDATE_STEPS;
   const status = queued ? "queued" : job.status;
   const currentIndex = queued ? -1 : steps.findIndex((s) => s.key === job.step);
   const badge = STATUS_TEXT[status];
   const elapsed = useElapsed(job?.startedAt, !queued && status === "running");
-  const expected = full ? (estimates.full ?? DEFAULT_UPDATE_ESTIMATE_SEC.full) : (estimates.code ?? DEFAULT_UPDATE_ESTIMATE_SEC.code);
+  const expected = full
+    ? (estimates.full ?? DEFAULT_UPDATE_ESTIMATE_SEC.full)
+    : (estimates.code ?? DEFAULT_UPDATE_ESTIMATE_SEC.code);
   const timing = queued
     ? ""
     : status === "running" && elapsed !== undefined
@@ -634,7 +812,11 @@ function JobCard({
         : "";
   return (
     <PageSection
-      action={<span className={cn("device-badge", `is-${badge.tone}`)}><T>{badge.text}</T></span>}
+      action={
+        <span className={cn("device-badge", `is-${badge.tone}`)}>
+          <T>{badge.text}</T>
+        </span>
+      }
       description={
         queued
           ? "已提交，等待宿主机更新程序开始（几秒内）。"
@@ -647,12 +829,17 @@ function JobCard({
               .filter(Boolean)
               .join(" · ")
       }
-      title={action === "rollback" ? "回滚进度" : full ? "完整更新进度" : "更新进度"}
+      title={
+        action === "rollback" ? "回滚进度" : full ? "完整更新进度" : "更新进度"
+      }
     >
       <Card className="sysupd-job">
         <ol className="sysupd-steps">
           {steps.map((step, index) => {
-            const failed = !queued && (status === "failed" || status === "rolled_back") && index === currentIndex;
+            const failed =
+              !queued &&
+              (status === "failed" || status === "rolled_back") &&
+              index === currentIndex;
             const state = queued
               ? "todo"
               : failed
@@ -665,15 +852,26 @@ function JobCard({
             return (
               <li data-step={state} key={step.key}>
                 <span className="sysupd-step-ic" aria-hidden>
-                  {state === "done" ? <IconCheck className="size-3.5" /> : state === "failed" ? <IconX className="size-3.5" /> : state === "active" ? <i className="sysupd-spin" /> : null}
+                  {state === "done" ? (
+                    <IconCheck className="size-3.5" />
+                  ) : state === "failed" ? (
+                    <IconX className="size-3.5" />
+                  ) : state === "active" ? (
+                    <i className="sysupd-spin" />
+                  ) : null}
                 </span>
                 {step.label}
               </li>
             );
           })}
         </ol>
-        {!queued && job.error ? <p className="sysupd-error">{job.error}</p> : null}
-        {!queued && status === "succeeded" && action === "update" && job.toImage ? (
+        {!queued && job.error ? (
+          <p className="sysupd-error">{job.error}</p>
+        ) : null}
+        {!queued &&
+        status === "succeeded" &&
+        action === "update" &&
+        job.toImage ? (
           <p className="sysupd-done">
             <IconCheck className="size-4" />
             {`已上线 ${job.toImage.replace(/^.*:/u, "")}${job.durationSec ? `，用时 ${durationText(job.durationSec)}` : ""}。打开的页面会提示「有新版本，点此刷新」。`}
@@ -692,8 +890,10 @@ function JobLog({ lines }: { lines: string[] }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (!node) return;
-    const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-    if (nearBottom || node.dataset.stuck !== "0") node.scrollTop = node.scrollHeight;
+    const nearBottom =
+      node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+    if (nearBottom || node.dataset.stuck !== "0")
+      node.scrollTop = node.scrollHeight;
   }, [node, last, lines.length]);
   return (
     <pre
@@ -703,7 +903,8 @@ function JobLog({ lines }: { lines: string[] }) {
       className="sysupd-log"
       onScroll={(event) => {
         const el = event.currentTarget;
-        el.dataset.stuck = el.scrollHeight - el.scrollTop - el.clientHeight < 48 ? "1" : "0";
+        el.dataset.stuck =
+          el.scrollHeight - el.scrollTop - el.clientHeight < 48 ? "1" : "0";
       }}
       ref={setNode}
     >

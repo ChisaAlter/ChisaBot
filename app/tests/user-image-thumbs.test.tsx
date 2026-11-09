@@ -7,13 +7,13 @@ import {
   test,
 } from "bun:test";
 import type { Message } from "@ag-ui/core";
-import type { Attachment } from "@/lib/chat/attachment-state";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
 import { attachmentThumbUrl, attachmentUrl } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { readThreadMessages } from "@/lib/conversations/thread-messages";
 import { settleReactWork } from "./settle-react-work";
 

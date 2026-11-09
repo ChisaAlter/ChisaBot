@@ -17,13 +17,13 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { cleanup, render, waitFor } from "@testing-library/react";
+import { deploymentKeys } from "@/lib/deployment/queries";
 import {
   type PluginServer,
   type PluginsPage,
   type PluginTool,
   pluginKeys,
 } from "@/lib/plugins/queries";
-import { deploymentKeys } from "@/lib/deployment/queries";
 import { Route as BotAppRoute } from "@/routes/_authed/admin/plugins/$key_.bots.$agentId";
 import { settleReactWork } from "./settle-react-work";
 
@@ -275,9 +275,7 @@ test("a failed plugin read reports the failure instead of claiming the app is no
 
   // The whole point: an app that may be enabled, with grants on it right now, must never be
   // reported as absent on the evidence of a request that never came back.
-  expect(
-    view.queryByText("此部署未启用名为该名称的应用程序。"),
-  ).toBeNull();
+  expect(view.queryByText("此部署未启用名为该名称的应用程序。")).toBeNull();
   expect(view.queryByText("这里没有可授权的内容。")).toBeNull();
 });
 
@@ -325,9 +323,7 @@ test("a failed REFETCH keeps the grant list it already had, not the error", asyn
 
   expect(await view.findByText("list_channels")).toBeTruthy();
   expect(view.queryByText("插件无法加载。")).toBeNull();
-  expect(
-    view.queryByText("此部署未启用名为该名称的应用程序。"),
-  ).toBeNull();
+  expect(view.queryByText("此部署未启用名为该名称的应用程序。")).toBeNull();
 });
 
 /*
@@ -413,9 +409,7 @@ test("an action the vendor calls destructive is marked, and a write it says noth
 
   // The mark itself, on the row that earned it: the heading already says these rows change things,
   // and this is the one saying what this row changes does not come back.
-  expect(rowActions(view, "delete_channel").textContent).toContain(
-    "销毁东西",
-  );
+  expect(rowActions(view, "delete_channel").textContent).toContain("销毁东西");
 
   // The other half, which matters as much. `destructive: false` is the vendor having made no claim,
   // not a claim that nothing is lost — so nothing at all goes beside this switch. A word here, of

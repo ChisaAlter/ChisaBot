@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { createModelFixture } from "./support/model-fixture";
 import { z } from "zod";
 import { buildAgents, type RuntimeModel } from "../src/conversation-runtime";
 import { type GrantedTool, REFUSAL_MARKER } from "../src/plugins/tools";
 import { searchQueryForUrl, type WebIo, webTools } from "../src/web/tools";
+import { createModelFixture } from "./support/model-fixture";
 
 /**
  * Hark 对比 #12（A4，2026-10-29）：「帮我总结这个网页 <维基>」第一次整轮没有回答。
@@ -92,17 +92,23 @@ describe("一个工具步骤失败之后，这一轮仍然有回答", () => {
   beforeAll(async () => {
     process.env.OPENAI_BASE_URL = await llm.start();
     // 第二步（拿到工具结果之后）：按用例决定模型说什么；空字符串就是线上那次「什么都没说」。
-    llm.rules.push({ match: { toolResult: "call_fetch_12" }, reply: () => ({ content: secondStep }) });
-    llm.rules.push({ match: /总结这个网页/, reply: {
-      content: "我先读一下网页内容。",
-      toolCalls: [
-        {
-          id: "call_fetch_12",
-          name: "web_fetch",
-          arguments: JSON.stringify({ url: URL_12 }),
-        },
-      ],
-    } });
+    llm.rules.push({
+      match: { toolResult: "call_fetch_12" },
+      reply: () => ({ content: secondStep }),
+    });
+    llm.rules.push({
+      match: /总结这个网页/,
+      reply: {
+        content: "我先读一下网页内容。",
+        toolCalls: [
+          {
+            id: "call_fetch_12",
+            name: "web_fetch",
+            arguments: JSON.stringify({ url: URL_12 }),
+          },
+        ],
+      },
+    });
   });
   afterAll(async () => {
     if (originalBase === undefined) delete process.env.OPENAI_BASE_URL;

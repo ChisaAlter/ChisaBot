@@ -1,9 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import type { AbstractAgent, BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { EventType, HttpAgent } from "@ag-ui/client";
-import { createModelFixture } from "./support/model-fixture";
-import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import { z } from "zod";
+import { ClassicRuntimeAgent as BuiltInAgent } from "../src/agents/classic-runtime";
 import {
   buildAgents,
   type HandoffForRun,
@@ -12,6 +11,7 @@ import {
 } from "../src/conversation-runtime";
 import type { GrantedTool } from "../src/plugins/tools";
 import { createModelCompleter } from "../src/routing/model";
+import { createModelFixture } from "./support/model-fixture";
 
 const model: RuntimeModel = { provider: "openai", defaultModel: "gpt-5.5" };
 const input: RunAgentInput = {

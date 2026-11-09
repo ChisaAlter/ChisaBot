@@ -33,7 +33,8 @@ export function useBotComputerTab(
 
   // 地址说开着、记的是关着（例如别人发来的链接、旧版本留下的地址）：以地址为准记下来。
   useEffect(() => {
-    if (agentId && watch === true && !remembered) setBotUi(agentId, { computer: true });
+    if (agentId && watch === true && !remembered)
+      setBotUi(agentId, { computer: true });
   }, [agentId, watch, remembered]);
 
   // 用记下的选择打开的：把地址补上，地址和屏幕说同一件事。
@@ -45,7 +46,11 @@ export function useBotComputerTab(
   }, [agentId, open, watch, writeUrl]);
 
   // 同一个机器人页里，地址从「开着」变成没有（浏览器后退）= 关上。
-  const previous = useRef<{ agentId: string | undefined; watch: boolean | undefined; epoch: number }>({ agentId, watch, epoch });
+  const previous = useRef<{
+    agentId: string | undefined;
+    watch: boolean | undefined;
+    epoch: number;
+  }>({ agentId, watch, epoch });
   useEffect(() => {
     const was = previous.current;
     previous.current = { agentId, watch, epoch };

@@ -21,18 +21,28 @@ export function createPersonalNotifications(options: {
   let publicOrigin = "";
   if (options.publicUrl) {
     const url = new URL(options.publicUrl);
-    if (url.protocol === "https:" || url.protocol === "http:") publicOrigin = url.origin;
+    if (url.protocol === "https:" || url.protocol === "http:")
+      publicOrigin = url.origin;
   }
-  const report = (id: string, state: string) => console.warn(JSON.stringify({
-    type: "personal-notification", id, state,
-  }));
+  const report = (id: string, state: string) =>
+    console.warn(
+      JSON.stringify({
+        type: "personal-notification",
+        id,
+        state,
+      }),
+    );
 
   async function deliver(notice: Notice) {
     // A previously staged intent owns its original text and target, including unknown outcomes.
     // The regular flush handles queued work; producers must never overwrite or resend it.
-    const [existing] = await sql.unsafe("SELECT id FROM chisabot_personal_deliveries WHERE id=$1 AND owner_user_id=$2", [`personal:${notice.owner}:${notice.id}`, notice.owner]);
+    const [existing] = await sql.unsafe(
+      "SELECT id FROM chisabot_personal_deliveries WHERE id=$1 AND owner_user_id=$2",
+      [`personal:${notice.owner}:${notice.id}`, notice.owner],
+    );
     if (existing) return;
-    const link = publicOrigin && notice.path ? `\n${publicOrigin}${notice.path}` : "";
+    const link =
+      publicOrigin && notice.path ? `\n${publicOrigin}${notice.path}` : "";
     const outcome = await options.sources.notify(notice.owner, {
       id: notice.id,
       title: notice.title,
@@ -40,7 +50,8 @@ export function createPersonalNotifications(options: {
       ...(notice.thread_id ? { threadId: notice.thread_id } : {}),
       ...(notice.agent_id ? { agentId: notice.agent_id } : {}),
     });
-    if (outcome.state === "failed" || outcome.state === "outcome_unknown") report(notice.id, outcome.state);
+    if (outcome.state === "failed" || outcome.state === "outcome_unknown")
+      report(notice.id, outcome.state);
   }
 
   async function sweep() {
@@ -93,8 +104,11 @@ export function createPersonalNotifications(options: {
       ORDER BY c.at,c.id LIMIT 100
     `);
     for (const notice of rows) {
-      try { await deliver(notice); }
-      catch { report(notice.id, "staging_failed"); }
+      try {
+        await deliver(notice);
+      } catch {
+        report(notice.id, "staging_failed");
+      }
     }
     await options.sources.flushNotifications();
   }

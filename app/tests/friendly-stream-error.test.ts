@@ -3,11 +3,13 @@ import { friendlyError } from "../src/lib/chat/friendly-error";
 import { friendlyStopReason } from "../src/lib/conversations/stopped-turn";
 
 test("DSH备用模型错误优先保留真实归属", () => {
-  const raw = '备用模型「backup」请求失败：HTTP 404 model not found';
+  const raw = "备用模型「backup」请求失败：HTTP 404 model not found";
   const result = friendlyError(raw);
   expect(result.title).toBe("备用模型也未能完成回答");
   expect(result.detail).toBe(raw);
-  expect(friendlyError('主模型「primary」请求失败：HTTP 401 invalid API key').title).toBe("模型密钥无效或已过期");
+  expect(
+    friendlyError("主模型「primary」请求失败：HTTP 401 invalid API key").title,
+  ).toBe("模型密钥无效或已过期");
 });
 
 describe("模型回答到一半断开（成熟度扫查 F7）", () => {
@@ -15,13 +17,19 @@ describe("模型回答到一半断开（成熟度扫查 F7）", () => {
     const f = friendlyError("AI SDK stream error");
     expect(f.title).toBe("模型的连接中途断开了");
     expect(f.retryable).toBe(true);
-    expect(friendlyError('ClinePass: connection lost mid-reply (http2: server sent GOAWAY and closed the connection; debug="server_shutting_down")').title).toBe("模型的连接中途断开了");
+    expect(
+      friendlyError(
+        'ClinePass: connection lost mid-reply (http2: server sent GOAWAY and closed the connection; debug="server_shutting_down")',
+      ).title,
+    ).toBe("模型的连接中途断开了");
   });
   test("机器人聊天的停止提示说中文", () => {
     expect(friendlyStopReason("AI SDK stream error")).toContain("连接中途断开");
   });
   test("原来的规则不受影响", () => {
-    expect(friendlyError("Error 429: Too Many Requests").title).toContain("限流");
+    expect(friendlyError("Error 429: Too Many Requests").title).toContain(
+      "限流",
+    );
     expect(friendlyError("fetch failed").title).toBe("网络连接中断");
   });
 });
@@ -72,7 +80,9 @@ describe("模型登录被服务商撤销", () => {
 
   test("key 被拒仍是密钥提示", () => {
     expect(
-      friendlyError("custom rejected your API key, so the model can't be reached.").title,
+      friendlyError(
+        "custom rejected your API key, so the model can't be reached.",
+      ).title,
     ).toBe("模型密钥无效或已过期");
   });
 });

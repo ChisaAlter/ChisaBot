@@ -12,6 +12,13 @@ import {
 import { Observable, type Subscription } from "rxjs";
 import { z } from "zod";
 import {
+  COMMAND_DEFAULT_TIMEOUT_SEC,
+  COMMAND_MAX_TIMEOUT_SEC,
+  COMMAND_TIMEOUT_GUIDE,
+  normalizeCommandTimeout,
+} from "../../../shared/command-timeout";
+import { withRuntimeSurfaceTools } from "../agents/runtime-tool-context";
+import {
   currentApprovalContext,
   withApprovalContext,
 } from "../approvals/types";
@@ -21,20 +28,22 @@ import {
   recordAuditEvent,
 } from "../audit";
 import {
+  withConfirmActor,
+  withConfirmToolCall,
+  withToolAbort,
+} from "../confirmations/context";
+import {
+  HUMAN_CONTROL_ZH,
+  isUnattendedInitiator,
+  noteHumanControlBlock,
+  suspendsOnHumanControl,
+} from "./control-blocks";
+import {
   type ActionActor,
   type ComputerGateway,
   HumanHasControlError,
 } from "./gateway";
-import { HUMAN_CONTROL_ZH, isUnattendedInitiator, noteHumanControlBlock, suspendsOnHumanControl } from "./control-blocks";
 import type { ControlState } from "./schema";
-import { withConfirmActor, withConfirmToolCall, withToolAbort } from "../confirmations/context";
-import { withRuntimeSurfaceTools } from "../agents/runtime-tool-context";
-import {
-  COMMAND_DEFAULT_TIMEOUT_SEC,
-  COMMAND_MAX_TIMEOUT_SEC,
-  COMMAND_TIMEOUT_GUIDE,
-  normalizeCommandTimeout,
-} from "../../../shared/command-timeout";
 
 /** Client tools supplied by ChisaBot when the caller has no browser. */
 export type HeadlessTool = {
@@ -70,7 +79,6 @@ export class HeadlessToolSuspension extends Error {
 /** 定时 / IM 回合要人在场时的中文拒绝（FIX-02）：不挂起，让回合正常结束。 */
 const UNATTENDED_NEED_HUMAN_ZH = (what: string) =>
   `没有执行：${what}。这一轮是定时任务 / 后台触发，用户不在场，没法请他接管浏览器或登录。告诉用户：在 ChisaBot 网页聊天里当面让你再做一次。`;
-
 
 const MAX_TOOL_SEGMENTS = 30;
 
@@ -127,45 +135,54 @@ export class HeadlessToolsMiddleware extends Middleware {
           let terminal: RunFinishedEvent | undefined;
           let failed = false;
           await new Promise<void>((resolve, reject) => {
-            subscription = withRuntimeSurfaceTools(this.tools, () => this.runNextWithState(
-              request,
-              new InvocationTransport(next, request),
-            ).subscribe({
-              next: ({
-                event,
-                messages: updatedMessages,
-                state: updatedState,
-              }) => {
-                messages = updatedMessages;
-                state = updatedState;
-                if (event.type === EventType.CUSTOM && event.name === "chisabot.backend-owned-tools") {
-                  const value = event.value as { names?: unknown } | undefined;
-                  if (Array.isArray(value?.names)) for (const name of value.names) if (typeof name === "string") backendOwned.add(name);
-                }
-                if (event.type === EventType.TOOL_CALL_START)
-                  emitted.add(String(event.toolCallId));
-                if (event.type === EventType.MESSAGES_SNAPSHOT) {
-                  for (const message of messages) {
-                    if (message.role !== "assistant") continue;
-                    for (const call of message.toolCalls ?? []) {
-                      if (!historical.has(call.id)) emitted.add(call.id);
+            subscription = withRuntimeSurfaceTools(this.tools, () =>
+              this.runNextWithState(
+                request,
+                new InvocationTransport(next, request),
+              ).subscribe({
+                next: ({
+                  event,
+                  messages: updatedMessages,
+                  state: updatedState,
+                }) => {
+                  messages = updatedMessages;
+                  state = updatedState;
+                  if (
+                    event.type === EventType.CUSTOM &&
+                    event.name === "chisabot.backend-owned-tools"
+                  ) {
+                    const value = event.value as
+                      | { names?: unknown }
+                      | undefined;
+                    if (Array.isArray(value?.names))
+                      for (const name of value.names)
+                        if (typeof name === "string") backendOwned.add(name);
+                  }
+                  if (event.type === EventType.TOOL_CALL_START)
+                    emitted.add(String(event.toolCallId));
+                  if (event.type === EventType.MESSAGES_SNAPSHOT) {
+                    for (const message of messages) {
+                      if (message.role !== "assistant") continue;
+                      for (const call of message.toolCalls ?? []) {
+                        if (!historical.has(call.id)) emitted.add(call.id);
+                      }
                     }
                   }
-                }
-                if (event.type === EventType.RUN_FINISHED) {
-                  terminal = event as RunFinishedEvent;
-                  return;
-                }
-                if (event.type === EventType.RUN_STARTED) {
-                  if (started) return;
-                  started = true;
-                }
-                if (event.type === EventType.RUN_ERROR) failed = true;
-                subscriber.next(event);
-              },
-              error: reject,
-              complete: resolve,
-            }));
+                  if (event.type === EventType.RUN_FINISHED) {
+                    terminal = event as RunFinishedEvent;
+                    return;
+                  }
+                  if (event.type === EventType.RUN_STARTED) {
+                    if (started) return;
+                    started = true;
+                  }
+                  if (event.type === EventType.RUN_ERROR) failed = true;
+                  subscriber.next(event);
+                },
+                error: reject,
+                complete: resolve,
+              }),
+            );
           });
           if (subscriber.closed || failed) return;
           if (!terminal)
@@ -193,13 +210,15 @@ export class HeadlessToolsMiddleware extends Middleware {
               subscriber.next(terminal);
               return;
             }
-            throw new Error("A backend-owned tool has no execution receipt; it will not be executed again by the host.");
+            throw new Error(
+              "A backend-owned tool has no execution receipt; it will not be executed again by the host.",
+            );
           }
           const owned = pending.filter(
             (call) =>
               !backendOwned.has(call.function.name) &&
               (tools.has(call.function.name) ||
-              call.function.name.startsWith("computer_")),
+                call.function.name.startsWith("computer_")),
           );
           if (owned.length === 0) {
             subscriber.next(terminal);
@@ -234,13 +253,18 @@ export class HeadlessToolsMiddleware extends Middleware {
                 forwardedProps: request.forwardedProps,
                 initiator: this.initiator,
               };
-              const result = await withConfirmToolCall(call.id, call.function.name, () =>
-                withToolAbort(controller.signal, () => withApprovalContext(continuation, () =>
-                  tool.execute(args, {
-                    toolCallId: call.id,
-                    signal: controller.signal,
-                  }),
-                )),
+              const result = await withConfirmToolCall(
+                call.id,
+                call.function.name,
+                () =>
+                  withToolAbort(controller.signal, () =>
+                    withApprovalContext(continuation, () =>
+                      tool.execute(args, {
+                        toolCallId: call.id,
+                        signal: controller.signal,
+                      }),
+                    ),
+                  ),
               );
               content =
                 typeof result === "string" ? result : JSON.stringify(result);
@@ -429,13 +453,27 @@ export function createHeadlessComputerTools(options: {
           throw new Error("The computer action was stopped.");
         try {
           // 确认卡片（server/src/confirmations）要知道这次是谁发起的（网页聊天才能出卡片）。
-          return await withConfirmActor(actor.initiator, () => execute(input, context));
+          return await withConfirmActor(actor.initiator, () =>
+            execute(input, context),
+          );
         } catch (error) {
-          if (error instanceof HumanHasControlError && !suspendsOnHumanControl(actor.initiator)) {
+          if (
+            error instanceof HumanHasControlError &&
+            !suspendsOnHumanControl(actor.initiator)
+          ) {
             // 聊天 / 面板刷新：不挂起（挂起后没有东西会把这一轮接上，用户只看到一句话就没下文了）。
             // 交回一个普通的中文结果，机器人照常把话说完（control-blocks.ts）。
-            noteHumanControlBlock(actor.initiator && "id" in actor.initiator ? actor.initiator.id : undefined);
-            return { ok: false, humanHasControl: true, reason: HUMAN_CONTROL_ZH, error: HUMAN_CONTROL_ZH };
+            noteHumanControlBlock(
+              actor.initiator && "id" in actor.initiator
+                ? actor.initiator.id
+                : undefined,
+            );
+            return {
+              ok: false,
+              humanHasControl: true,
+              reason: HUMAN_CONTROL_ZH,
+              error: HUMAN_CONTROL_ZH,
+            };
           }
           if (error instanceof HumanHasControlError) {
             throw new HeadlessToolSuspension(error.message, {
@@ -475,7 +513,12 @@ export function createHeadlessComputerTools(options: {
         if (result.challenge) {
           if (isUnattendedInitiator(actor.initiator)) {
             const reason = UNATTENDED_NEED_HUMAN_ZH(result.challenge.reason);
-            return { ok: false, error: reason, reason, siteBlock: { notice: reason } };
+            return {
+              ok: false,
+              error: reason,
+              reason,
+              siteBlock: { notice: reason },
+            };
           }
           throw new HeadlessToolSuspension(result.challenge.reason, {
             kind: "computer_handoff",
@@ -655,7 +698,9 @@ export function createHeadlessComputerTools(options: {
       z.strictObject({ label: text, ref, snapshotId }),
       async (input) => {
         if (isUnattendedInitiator(actor.initiator)) {
-          const msg = UNATTENDED_NEED_HUMAN_ZH(`请用户亲自输入「${input.label}」`);
+          const msg = UNATTENDED_NEED_HUMAN_ZH(
+            `请用户亲自输入「${input.label}」`,
+          );
           return { ok: false, error: msg, reason: msg };
         }
         return waiting(

@@ -1,4 +1,7 @@
-import { jsonb as drizzleJsonb, type PgJsonbBuilder } from "drizzle-orm/pg-core";
+import {
+  jsonb as drizzleJsonb,
+  type PgJsonbBuilder,
+} from "drizzle-orm/pg-core";
 
 type ObjectJsonbBuilder<TName extends string> = PgJsonbBuilder<{
   name: TName;

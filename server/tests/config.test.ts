@@ -80,13 +80,27 @@ describe("deployment configuration", () => {
   test("resolves local durable storage without hosted runtime credentials", () => {
     const config = loadConfig(baseEnvironment);
     expect(config.runtime).toEqual({ mode: "local", durableHistory: true });
-    expect(config.managedAgent).toEqual({ endpoint: new URL("http://localhost:4200/ag-ui"), token: "managed-agent-token" });
+    expect(config.managedAgent).toEqual({
+      endpoint: new URL("http://localhost:4200/ag-ui"),
+      token: "managed-agent-token",
+    });
   });
 
   test("new deployments default to local while old implicit hosted configuration requires migration", () => {
-    expect(loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: undefined, INTELLIGENCE_API_URL: undefined, INTELLIGENCE_API_KEY: undefined }).runtime.mode).toBe("local");
-    expect(() => loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: undefined })).toThrow("migrate-intelligence.ts inventory");
-    expect(() => loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: "intelligence" })).toThrow("existing data is not moved automatically");
+    expect(
+      loadConfig({
+        ...baseEnvironment,
+        CHISABOT_RUNTIME_MODE: undefined,
+        INTELLIGENCE_API_URL: undefined,
+        INTELLIGENCE_API_KEY: undefined,
+      }).runtime.mode,
+    ).toBe("local");
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: undefined }),
+    ).toThrow("migrate-intelligence.ts inventory");
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: "intelligence" }),
+    ).toThrow("existing data is not moved automatically");
   });
 
   test("local mode has no licence prerequisite", () => {
@@ -476,7 +490,10 @@ describe("deployment configuration", () => {
       "one published origin among loopback ones",
       { TRUSTED_ORIGINS: "http://localhost:3010,https://chisabot.example.com" },
     ],
-    ["an address that is not a URL at all", { CHISABOT_PUBLIC_URL: "chisabot" }],
+    [
+      "an address that is not a URL at all",
+      { CHISABOT_PUBLIC_URL: "chisabot" },
+    ],
   ])("refuses no sign-in combined with %s", (_label, published) => {
     expect(() =>
       loadConfig({ ...withoutSignIn, ...OPEN, ...published }),
@@ -493,7 +510,10 @@ describe("deployment configuration", () => {
     ["a 10/8 address", { CHISABOT_PUBLIC_URL: "http://10.0.0.5:3001" }],
     ["a 172.16/12 address", { CHISABOT_PUBLIC_URL: "http://172.20.1.4:3001" }],
     ["a Tailscale address", { CHISABOT_PUBLIC_URL: "http://100.101.102.103" }],
-    ["a unique-local IPv6 address", { CHISABOT_PUBLIC_URL: "http://[fd00::1]" }],
+    [
+      "a unique-local IPv6 address",
+      { CHISABOT_PUBLIC_URL: "http://[fd00::1]" },
+    ],
     ["an mDNS name", { TRUSTED_ORIGINS: "http://chisabot.local:3010" }],
     ["a single-label LAN name", { TRUSTED_ORIGINS: "http://nas:3010" }],
   ])("still runs with no sign-in on %s", (_label, reachable) => {
@@ -822,16 +842,17 @@ describe("deployment configuration", () => {
     },
   );
 
-  test.each([
-    ["shared", "AGENT_COMPUTER_URL"],
-  ] as const)("refuses an invalid %s computer provider URL", (_, urlName) => {
-    expect(() =>
-      loadConfig({
-        ...baseEnvironment,
-        [urlName]: "not a URL",
-      }),
-    ).toThrow(`${urlName} must be a valid URL`);
-  });
+  test.each([["shared", "AGENT_COMPUTER_URL"]] as const)(
+    "refuses an invalid %s computer provider URL",
+    (_, urlName) => {
+      expect(() =>
+        loadConfig({
+          ...baseEnvironment,
+          [urlName]: "not a URL",
+        }),
+      ).toThrow(`${urlName} must be a valid URL`);
+    },
+  );
 });
 
 describe("accessibility", () => {
@@ -887,12 +908,15 @@ describe("generated interfaces", () => {
     ).toBe(true);
   });
 
-  test.each(["false", "0"])("are off for CHISABOT_GENERATIVE_UI=%p", (value) => {
-    expect(
-      loadConfig({ ...baseEnvironment, CHISABOT_GENERATIVE_UI: value })
-        .generativeUi,
-    ).toBe(false);
-  });
+  test.each(["false", "0"])(
+    "are off for CHISABOT_GENERATIVE_UI=%p",
+    (value) => {
+      expect(
+        loadConfig({ ...baseEnvironment, CHISABOT_GENERATIVE_UI: value })
+          .generativeUi,
+      ).toBe(false);
+    },
+  );
 
   test.each(["no", "", "yes", "TRUE", "on"])(
     "stay on for CHISABOT_GENERATIVE_UI=%p",

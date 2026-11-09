@@ -1,7 +1,14 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
-import { ActiveBotProvider, bindAgentBot, botForAgent, useActiveBot, useActiveBotHolder, withRunBot } from "@/lib/conversations/active-bot";
+import {
+  ActiveBotProvider,
+  bindAgentBot,
+  botForAgent,
+  useActiveBot,
+  useActiveBotHolder,
+  withRunBot,
+} from "@/lib/conversations/active-bot";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -36,10 +43,16 @@ test("a tool call routes to its own conversation's bot, not the one on screen", 
   expect(botForAgent(undefined)).toBeUndefined();
 
   // 处理函数同步读 holder.current：在 withRunBot 里读到的是这次调用的机器人，之后立刻还原
-  const seen = withRunBot(holder!, botForAgent(asunaAgent), () => holder!.current);
+  const seen = withRunBot(
+    holder!,
+    botForAgent(asunaAgent),
+    () => holder!.current,
+  );
   expect(seen).toBe("agent_asuna");
   expect(holder!.current).toBe("agent_xingling");
 
   // 不知道属于谁：照旧用 holder
-  expect(withRunBot(holder!, undefined, () => holder!.current)).toBe("agent_xingling");
+  expect(withRunBot(holder!, undefined, () => holder!.current)).toBe(
+    "agent_xingling",
+  );
 });

@@ -1,9 +1,16 @@
-import type { Message } from "@ag-ui/core";
 import type { AbstractAgent } from "@ag-ui/client";
+import type { Message } from "@ag-ui/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { tryClient } from "../client";
-import { applyInboxState, inboxState, markRead, queuedFor, restoreQueue, takeQueued } from "./thread-inbox";
+import {
+  applyInboxState,
+  inboxState,
+  markRead,
+  queuedFor,
+  restoreQueue,
+  takeQueued,
+} from "./thread-inbox";
 import { mergeServerMessages, syncQuery, type ThreadSync } from "./thread-sync";
 import { ACTIVE_WORKER, type WorkerView, workerKeys } from "./workers";
 
@@ -46,16 +53,27 @@ export function useThreadInbox(
     let alive = true;
     const reconcile = () => {
       const ids = new Set(agent.messages.map((message) => message.id));
-      for (const item of queuedFor(threadId)) if (item.status !== "paused" && ids.has(item.id)) markRead(threadId, item.id);
+      for (const item of queuedFor(threadId))
+        if (item.status !== "paused" && ids.has(item.id))
+          markRead(threadId, item.id);
     };
     let flushing = false;
     let failed = false;
-    const idle = () => alive && !agent.isRunning && !optionsRef.current.turnRunning &&
-      optionsRef.current.canFlush?.() !== false && !failed;
+    const idle = () =>
+      alive &&
+      !agent.isRunning &&
+      !optionsRef.current.turnRunning &&
+      optionsRef.current.canFlush?.() !== false &&
+      !failed;
     const flush = async () => {
       if (!idle() || flushing) return;
       reconcile();
-      if (!queuedFor(threadId).some((item) => item.status === "queued" && !item.remote)) return;
+      if (
+        !queuedFor(threadId).some(
+          (item) => item.status === "queued" && !item.remote,
+        )
+      )
+        return;
       flushing = true;
       try {
         // Wire finalization is not the end of a frontend turn. Verify the server's relay
@@ -67,20 +85,34 @@ export function useThreadInbox(
         if (state.running || state.paused) return;
         const left = takeQueued(threadId);
         if (!left.length) return;
-        for (const item of left) agent.addMessage(item.message ?? { id: item.id, role: "user", content: item.text } as Message);
+        for (const item of left)
+          agent.addMessage(
+            item.message ??
+              ({ id: item.id, role: "user", content: item.text } as Message),
+          );
         await runAgent({ agent }).catch(() => {});
       } finally {
         flushing = false;
       }
     };
-    const scheduleFlush = () => { setTimeout(() => void flush(), 250); };
+    const scheduleFlush = () => {
+      setTimeout(() => void flush(), 250);
+    };
     flushRef.current = scheduleFlush;
     const subscription = agent.subscribe({
       onMessagesChanged: () => reconcile(),
-      onRunStartedEvent: () => { failed = false; },
-      onRunErrorEvent: () => { failed = true; },
-      onRunFailed: () => { failed = true; },
-      onRunFinishedEvent: ({ event }) => { if (event.outcome?.type === "cancelled") failed = true; },
+      onRunStartedEvent: () => {
+        failed = false;
+      },
+      onRunErrorEvent: () => {
+        failed = true;
+      },
+      onRunFailed: () => {
+        failed = true;
+      },
+      onRunFinishedEvent: ({ event }) => {
+        if (event.outcome?.type === "cancelled") failed = true;
+      },
       onRunFinalized: scheduleFlush,
     });
     void restoreQueue(threadId).then((state) => {
@@ -108,31 +140,41 @@ export function useThreadInbox(
     let sync: ThreadSync | null = null;
     /** 有任务交回来的那条消息（结果，或用户在卡片上停掉后的「已停止」）还没出现在这边。 */
     const resultMissing = () => {
-      const workers = queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ?? [];
+      const workers =
+        queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
+        [];
       const have = new Set(agent.messages.map((message) => message.id));
       return workers.some(
         (worker) =>
-          Boolean(worker.resultMessageId) && !have.has(worker.resultMessageId!) &&
-          Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) < 10 * 60_000,
+          Boolean(worker.resultMessageId) &&
+          !have.has(worker.resultMessageId!) &&
+          Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
+            10 * 60_000,
       );
     };
     const workersNeedSync = () => {
-      const workers = queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ?? [];
+      const workers =
+        queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
+        [];
       const have = new Set(agent.messages.map((message) => message.id));
       return workers.some(
         (worker) =>
           ACTIVE_WORKER.includes(worker.status) ||
           // 停掉的任务：只有用户在卡片上停的才有交回的「已停止」消息（有 resultMessageId），要等它出现。
-          (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) < 10 * 60_000 &&
+          (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
+            10 * 60_000 &&
             (worker.status === "cancelled"
-              ? Boolean(worker.resultMessageId) && !have.has(worker.resultMessageId!)
+              ? Boolean(worker.resultMessageId) &&
+                !have.has(worker.resultMessageId!)
               : !worker.resultMessageId || !have.has(worker.resultMessageId))),
       );
     };
     const pull = async () => {
       try {
         const query = syncQuery(agent.messages, sync);
-        const response = await tryClient(`/api/conversations/threads/${encodeURIComponent(threadId)}/messages?${query}`);
+        const response = await tryClient(
+          `/api/conversations/threads/${encodeURIComponent(threadId)}/messages?${query}`,
+        );
         if (!response.ok || !alive || agent.isRunning) return;
         const body: unknown = await response.json();
         if (!alive || agent.isRunning) return;
@@ -142,7 +184,14 @@ export function useThreadInbox(
           return;
         }
         if (merged.next) agent.setMessages(merged.next);
-        sync = merged.version && merged.cursor ? { version: merged.version, cursor: merged.cursor, applied: agent.messages.slice() } : null;
+        sync =
+          merged.version && merged.cursor
+            ? {
+                version: merged.version,
+                cursor: merged.cursor,
+                applied: agent.messages.slice(),
+              }
+            : null;
       } catch {
         // A timed-out or malformed snapshot cannot erase the readable local conversation.
       }

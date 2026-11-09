@@ -1,9 +1,10 @@
 /** Runtime storage is chosen explicitly at the boot boundary. */
+
+import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import { singleUserEnabled } from "./auth/dev-actor";
 import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
-import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import {
   type TranscriptionConfig,
   transcriptionConfig,
@@ -360,7 +361,11 @@ type Environment = Record<string, string | undefined>;
  * the default would believe it had set one: the failure has to be at start-up where somebody is
  * looking, not at the first loop.
  */
-function wholeNumber(environment: Environment, name: string, fallback: number): number {
+function wholeNumber(
+  environment: Environment,
+  name: string,
+  fallback: number,
+): number {
   const raw = optional(environment, name);
   if (raw === undefined) return fallback;
   const value = Number(raw);
@@ -902,11 +907,19 @@ function oktaAuth(
 /** Local PostgreSQL owns execution; hosted history is moved through the explicit migration command. */
 function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
   const configured = optional(environment, "CHISABOT_RUNTIME_MODE");
-  const legacyConfigured = Boolean(optional(environment, "INTELLIGENCE_API_URL") || optional(environment, "INTELLIGENCE_API_KEY"));
+  const legacyConfigured = Boolean(
+    optional(environment, "INTELLIGENCE_API_URL") ||
+      optional(environment, "INTELLIGENCE_API_KEY"),
+  );
   if (configured === "intelligence" || (!configured && legacyConfigured)) {
-    throw new Error("Intelligence execution has retired. Export existing history with `bun server/scripts/migrate-intelligence.ts inventory --user <owner-id> --agent <bot-id> --out <snapshot.json>`, then import it with `bun server/scripts/migrate-intelligence.ts import --snapshot <snapshot.json>` while admission is paused. Set CHISABOT_RUNTIME_MODE=local after migration; existing data is not moved automatically.");
+    throw new Error(
+      "Intelligence execution has retired. Export existing history with `bun server/scripts/migrate-intelligence.ts inventory --user <owner-id> --agent <bot-id> --out <snapshot.json>`, then import it with `bun server/scripts/migrate-intelligence.ts import --snapshot <snapshot.json>` while admission is paused. Set CHISABOT_RUNTIME_MODE=local after migration; existing data is not moved automatically.",
+    );
   }
-  if (configured && configured !== "local") throw new Error("CHISABOT_RUNTIME_MODE must be local; intelligence requires history migration.");
+  if (configured && configured !== "local")
+    throw new Error(
+      "CHISABOT_RUNTIME_MODE must be local; intelligence requires history migration.",
+    );
   return { mode: "local", durableHistory: true };
 }
 /**
@@ -1233,14 +1246,25 @@ export function loadConfig(
   }
   const managedAgent = managedAgentConfig(environment);
   const runtime = runtimeCapabilities(environment);
-  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(/\/+$/, "");
+  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(
+    /\/+$/,
+    "",
+  );
   const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
   const dshTargetsFile = optional(environment, "CHISABOT_DSH_TARGETS_FILE");
   const dshGatewayUrl = optional(environment, "CHISABOT_DSH_TOOL_GATEWAY_URL");
   if (dshGatewayUrl) {
     const address = new URL(dshGatewayUrl);
-    if (!["http:", "https:"].includes(address.protocol) || address.username || address.password || address.search || address.hash) {
-      throw new Error("CHISABOT_DSH_TOOL_GATEWAY_URL must be an HTTP(S) endpoint without credentials, query or fragment.");
+    if (
+      !["http:", "https:"].includes(address.protocol) ||
+      address.username ||
+      address.password ||
+      address.search ||
+      address.hash
+    ) {
+      throw new Error(
+        "CHISABOT_DSH_TOOL_GATEWAY_URL must be an HTTP(S) endpoint without credentials, query or fragment.",
+      );
     }
   }
 
@@ -1249,7 +1273,21 @@ export function loadConfig(
     transcription: transcriptionConfig(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
-    ...(optional(environment, "CHISABOT_AGENT_KERNEL") === "dsh" ? { dshKernel: { ...(dshTargetsFile ? { targetsFile: dshTargetsFile } : { root: optional(environment, "CHISABOT_DSH_ROOT") ?? ".data/dsh" }), ...(dshGatewayUrl ? { gatewayUrl: dshGatewayUrl.replace(/\/+$/, "") } : {}) } } : {}),
+    ...(optional(environment, "CHISABOT_AGENT_KERNEL") === "dsh"
+      ? {
+          dshKernel: {
+            ...(dshTargetsFile
+              ? { targetsFile: dshTargetsFile }
+              : {
+                  root:
+                    optional(environment, "CHISABOT_DSH_ROOT") ?? ".data/dsh",
+                }),
+            ...(dshGatewayUrl
+              ? { gatewayUrl: dshGatewayUrl.replace(/\/+$/, "") }
+              : {}),
+          },
+        }
+      : {}),
     ...(managedAgent ? { managedAgent } : {}),
     ...(hermesUrl
       ? {
@@ -1278,12 +1316,18 @@ export function loadConfig(
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser:
-      singleUserAllowed(environment, configuredAuthProviders(auth).length > 0),
+    singleUser: singleUserAllowed(
+      environment,
+      configuredAuthProviders(auth).length > 0,
+    ),
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
-    replySources: ["1", "true"].includes((optional(environment, "CHISABOT_REPLY_SOURCES") ?? "").toLowerCase()),
-    accountsUi: !["0", "false"].includes((optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase()),
+    replySources: ["1", "true"].includes(
+      (optional(environment, "CHISABOT_REPLY_SOURCES") ?? "").toLowerCase(),
+    ),
+    accountsUi: !["0", "false"].includes(
+      (optional(environment, "CHISABOT_ACCOUNTS_UI") ?? "").toLowerCase(),
+    ),
     extras: parseChisabotExtras(optional(environment, "CHISABOT_EXTRAS")),
     ...(optional(environment, "APP_DIST_DIR")
       ? { appDistDir: optional(environment, "APP_DIST_DIR") as string }
@@ -1297,13 +1341,19 @@ export function loadConfig(
   };
 }
 
-
 /** 默认隐藏、管理员可用 CHISABOT_EXTRAS 重新打开的功能（DESIGN.md §74）。 */
-export const CHISABOT_EXTRAS = ["workflows", "plugins", "boundaries", "components"] as const;
+export const CHISABOT_EXTRAS = [
+  "workflows",
+  "plugins",
+  "boundaries",
+  "components",
+] as const;
 export type ChisabotExtra = (typeof CHISABOT_EXTRAS)[number];
 
 /** `CHISABOT_EXTRAS=workflows,plugins` → 这两项；`all` → 全部；不认识的名字忽略。 */
-export function parseChisabotExtras(value: string | undefined): ChisabotExtra[] {
+export function parseChisabotExtras(
+  value: string | undefined,
+): ChisabotExtra[] {
   const names = (value ?? "")
     .split(/[\s,]+/)
     .map((name) => name.trim().toLowerCase())

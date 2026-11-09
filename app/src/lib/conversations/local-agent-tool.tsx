@@ -1,6 +1,6 @@
-import { useRenderTool } from "@/lib/chat/renderers";
 import { z } from "zod";
 import { LocalAgentCard } from "@/components/chat/local-agent-card";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { type CardCheck, registerCardCheck } from "./tool-renderers";
 
 /**
@@ -24,7 +24,10 @@ export function taskIdOf(result: unknown): string | undefined | null {
       break;
     }
   }
-  const id = value && typeof value === "object" ? (value as { taskId?: unknown }).taskId : undefined;
+  const id =
+    value && typeof value === "object"
+      ? (value as { taskId?: unknown }).taskId
+      : undefined;
   if (typeof id === "string") return id;
   const match = /"taskId"\s*:\s*\\?"([0-9a-f-]{36})/.exec(result);
   if (match?.[1]) return match[1];
@@ -33,7 +36,10 @@ export function taskIdOf(result: unknown): string | undefined | null {
 }
 
 /** device_agent_run 完成后画不画卡片：拿到 taskId 才画；被拒绝（taskIdOf 返回 null）时渲染器画空，这一轮不算有回答。 */
-export const localAgentDrawsCard: CardCheck = registerCardCheck(["device_agent_run"], ({ result }) => taskIdOf(result) !== null);
+export const localAgentDrawsCard: CardCheck = registerCardCheck(
+  ["device_agent_run"],
+  ({ result }) => taskIdOf(result) !== null,
+);
 
 export function LocalAgentTool() {
   useRenderTool({
@@ -42,7 +48,14 @@ export function LocalAgentTool() {
     render: ({ parameters: given, result }) => {
       const id = taskIdOf(result);
       if (id === null) return <></>;
-      return <LocalAgentCard pendingTitle={typeof given?.title === "string" ? given.title : undefined} taskId={id} />;
+      return (
+        <LocalAgentCard
+          pendingTitle={
+            typeof given?.title === "string" ? given.title : undefined
+          }
+          taskId={id}
+        />
+      );
     },
   });
   return null;

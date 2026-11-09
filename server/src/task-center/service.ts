@@ -23,13 +23,17 @@ import {
   validateTaskPlan,
 } from "../../../shared/task-center";
 import type { AppVariables } from "../auth/guards";
+import {
+  CAPACITY_WAIT_MESSAGE,
+  executionDeadline,
+  withCapacityFeedback,
+} from "../conversations/capacity";
+import { conversationAdmissionClosed } from "../conversations/maintenance";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
-import { executionDeadline, withCapacityFeedback, CAPACITY_WAIT_MESSAGE } from "../conversations/capacity";
-import { createTaskCenterRoutes } from "./routes";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
-import { conversationAdmissionClosed } from "../conversations/maintenance";
 import { assertTaskEvidence, TaskResultNeedsReview } from "./outcome";
+import { createTaskCenterRoutes } from "./routes";
 
 export class TaskCenterError extends Error {
   constructor(
@@ -456,15 +460,37 @@ export function createTaskCenter(
         if (!allowed.includes(task.status))
           throw new TaskCenterError("当前状态不能执行这个操作。", 409);
         if (action === "retry") {
-          const [failure] = await tx.unsafe<{ data: { verifyOnly?: boolean; attempt?: number; version?: number } }[]>(
-            "SELECT data FROM chisabot_task_center_events WHERE owner_user_id=$1 AND task_id=$2 AND type='failed' ORDER BY created_at DESC LIMIT 1", [owner, id]);
+          const [failure] = await tx.unsafe<
+            {
+              data: {
+                verifyOnly?: boolean;
+                attempt?: number;
+                version?: number;
+              };
+            }[]
+          >(
+            "SELECT data FROM chisabot_task_center_events WHERE owner_user_id=$1 AND task_id=$2 AND type='failed' ORDER BY created_at DESC LIMIT 1",
+            [owner, id],
+          );
           const failedResult = failure ? json(failure.data) : null;
-          const verifyOnly = failedResult?.verifyOnly === true && failedResult.attempt === task.attempts && failedResult.version === task.version;
+          const verifyOnly =
+            failedResult?.verifyOnly === true &&
+            failedResult.attempt === task.attempts &&
+            failedResult.version === task.version;
           await tx.unsafe(
             "UPDATE chisabot_task_center_tasks SET version=version+$3,attempts=$4,error=NULL,finished_at=NULL WHERE owner_user_id=$1 AND id=$2",
-            [owner, id, verifyOnly ? 0 : 1, verifyOnly ? Math.max(0, task.attempts - 1) : 0],
+            [
+              owner,
+              id,
+              verifyOnly ? 0 : 1,
+              verifyOnly ? Math.max(0, task.attempts - 1) : 0,
+            ],
           );
-          task = { ...task, version: task.version + (verifyOnly ? 0 : 1), attempts: verifyOnly ? Math.max(0, task.attempts - 1) : 0 };
+          task = {
+            ...task,
+            version: task.version + (verifyOnly ? 0 : 1),
+            attempts: verifyOnly ? Math.max(0, task.attempts - 1) : 0,
+          };
         }
         // Resuming a parent resumes the children its pause stopped, or the parent would wait on them forever.
         const resumed =
@@ -776,8 +802,18 @@ export function createTaskCenter(
       for (const row of expired) {
         const task = taskView(row);
         if (await options.hasDurableExecution?.(task)) {
-          await tx.unsafe("UPDATE chisabot_task_center_tasks SET status='queued',attempts=greatest(attempts-1,0),lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2", [task.ownerUserId, task.id]);
-          await event(task.ownerUserId, task.id, "recovered", "正在接回原执行并核对结果。", {}, tx);
+          await tx.unsafe(
+            "UPDATE chisabot_task_center_tasks SET status='queued',attempts=greatest(attempts-1,0),lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2",
+            [task.ownerUserId, task.id],
+          );
+          await event(
+            task.ownerUserId,
+            task.id,
+            "recovered",
+            "正在接回原执行并核对结果。",
+            {},
+            tx,
+          );
           continue;
         }
         const retry =
@@ -872,11 +908,28 @@ export function createTaskCenter(
     if (!plan.steps.length) {
       const rows = await sql.unsafe(
         "UPDATE chisabot_task_center_tasks SET plan_prepared=true,status='running',payload=(CASE WHEN jsonb_typeof(payload)='string' THEN (payload #>> '{}')::jsonb ELSE payload END) || $4::text::jsonb,updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='planning' RETURNING id",
-        [task.ownerUserId, task.id, instance, JSON.stringify(plan.completion && !task.completion ? { completion: plan.completion } : {})],
+        [
+          task.ownerUserId,
+          task.id,
+          instance,
+          JSON.stringify(
+            plan.completion && !task.completion
+              ? { completion: plan.completion }
+              : {},
+          ),
+        ],
       );
       if (!rows.length) throw new TaskCenterError("任务状态已改变。", 409);
-      if (!task.completion && plan.completion) task.completion = plan.completion;
-      if (task.completion) await event(task.ownerUserId, task.id, "completion_criteria", `完成条件：${task.completion.criteria}`, { completion: task.completion });
+      if (!task.completion && plan.completion)
+        task.completion = plan.completion;
+      if (task.completion)
+        await event(
+          task.ownerUserId,
+          task.id,
+          "completion_criteria",
+          `完成条件：${task.completion.criteria}`,
+          { completion: task.completion },
+        );
       return false;
     }
     for (const step of plan.steps)
@@ -943,7 +996,11 @@ export function createTaskCenter(
           task.id,
           [...task.dependencies, ...ids.values()].join("\x1f"),
           plan.summary.slice(0, eventLimit),
-          JSON.stringify(plan.completion && !task.completion ? { completion: plan.completion } : {}),
+          JSON.stringify(
+            plan.completion && !task.completion
+              ? { completion: plan.completion }
+              : {},
+          ),
         ],
       );
       await event(
@@ -951,7 +1008,10 @@ export function createTaskCenter(
         task.id,
         "planned",
         plan.summary,
-        { childIds: [...ids.values()], ...(plan.completion ? { completion: plan.completion } : {}) },
+        {
+          childIds: [...ids.values()],
+          ...(plan.completion ? { completion: plan.completion } : {}),
+        },
         tx,
       );
     });
@@ -961,8 +1021,8 @@ export function createTaskCenter(
   async function run(task: TaskCenterTask) {
     const controller = new AbortController();
     controllers.set(task.id, controller);
-    const timeout = executionDeadline(task.timeoutSeconds * 1000,
-      () => controller.abort(new Error("任务达到执行时限。")),
+    const timeout = executionDeadline(task.timeoutSeconds * 1000, () =>
+      controller.abort(new Error("任务达到执行时限。")),
     );
     let capacityWaiting = false;
     const capacityState = (state: "waiting" | "admitted") => {
@@ -970,9 +1030,30 @@ export function createTaskCenter(
       if ((state === "waiting") === capacityWaiting) return;
       capacityWaiting = state === "waiting";
       const waiting = capacityWaiting;
-      void sql.unsafe("UPDATE chisabot_task_center_tasks SET error=$4 WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3", [task.ownerUserId, task.id, instance, capacityWaiting ? CAPACITY_WAIT_MESSAGE : null])
-        .then(() => event(task.ownerUserId, task.id, "progress", waiting ? CAPACITY_WAIT_MESSAGE : "已取得后台执行位，继续原任务。"))
-        .catch(error => console.warn("task capacity feedback failed", reasonWithoutStatement(error)));
+      void sql
+        .unsafe(
+          "UPDATE chisabot_task_center_tasks SET error=$4 WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3",
+          [
+            task.ownerUserId,
+            task.id,
+            instance,
+            capacityWaiting ? CAPACITY_WAIT_MESSAGE : null,
+          ],
+        )
+        .then(() =>
+          event(
+            task.ownerUserId,
+            task.id,
+            "progress",
+            waiting ? CAPACITY_WAIT_MESSAGE : "已取得后台执行位，继续原任务。",
+          ),
+        )
+        .catch((error) =>
+          console.warn(
+            "task capacity feedback failed",
+            reasonWithoutStatement(error),
+          ),
+        );
     };
     const heartbeat = setInterval(() => {
       void sql
@@ -989,7 +1070,9 @@ export function createTaskCenter(
       await checkBot(task.ownerUserId, task.agentId);
       const context = await getContext(task.ownerUserId);
       if (task.status === "planning" && options.plan) {
-        const plan = await withCapacityFeedback(capacityState, () => options.plan!(task, context, controller.signal));
+        const plan = await withCapacityFeedback(capacityState, () =>
+          options.plan!(task, context, controller.signal),
+        );
         controller.signal.throwIfAborted();
         if (await applyPlan(task, plan)) return;
       }
@@ -1002,22 +1085,24 @@ export function createTaskCenter(
             )
           ).map(taskView)
         : [];
-      const result = await withCapacityFeedback(capacityState, async () => options.execute(task, {
-        signal: controller.signal,
-        context,
-        dependencies,
-        approval: await approvedDecision(task),
-        onEvent: async (entry) => {
-          controller.signal.throwIfAborted();
-          await event(
-            task.ownerUserId,
-            task.id,
-            entry.type,
-            entry.message,
-            entry.data,
-          );
-        },
-      }));
+      const result = await withCapacityFeedback(capacityState, async () =>
+        options.execute(task, {
+          signal: controller.signal,
+          context,
+          dependencies,
+          approval: await approvedDecision(task),
+          onEvent: async (entry) => {
+            controller.signal.throwIfAborted();
+            await event(
+              task.ownerUserId,
+              task.id,
+              entry.type,
+              entry.message,
+              entry.data,
+            );
+          },
+        }),
+      );
       controller.signal.throwIfAborted();
       if (
         !result ||
@@ -1050,7 +1135,12 @@ export function createTaskCenter(
             task.ownerUserId,
             task.id,
             "delivered",
-            result.evidence?.length ? `成果已核对：${result.evidence.map(item => item.detail).join("；").slice(0, 1000)}` : "结果已交付。",
+            result.evidence?.length
+              ? `成果已核对：${result.evidence
+                  .map((item) => item.detail)
+                  .join("；")
+                  .slice(0, 1000)}`
+              : "结果已交付。",
             {
               artifacts:
                 result.artifacts?.map((a) => ({ name: a.name, uri: a.uri })) ??
@@ -1063,10 +1153,11 @@ export function createTaskCenter(
           );
         return rows.length > 0;
       });
-      if (settled) await reportLearn(task, {
-        status: "succeeded",
-        detail: result.summary,
-      });
+      if (settled)
+        await reportLearn(task, {
+          status: "succeeded",
+          detail: result.summary,
+        });
     } catch (error) {
       let terminalFailure: string | null = null;
       await sql.begin(async (tx) => {
@@ -1078,11 +1169,14 @@ export function createTaskCenter(
         // A shutdown is not the task's fault: give the attempt back. An approved outward action may have
         // partly happened, so it waits for a person instead of running again by itself.
         const interrupted = stopping && controller.signal.aborted;
-        const retry = error instanceof BackgroundTurnNeedsReview ? false : interrupted
-          ? !needsTaskApproval(task.risk)
-          : !needsTaskApproval(task.risk) &&
-            row.attempts < task.maxAttempts &&
-            !controller.signal.aborted;
+        const retry =
+          error instanceof BackgroundTurnNeedsReview
+            ? false
+            : interrupted
+              ? !needsTaskApproval(task.risk)
+              : !needsTaskApproval(task.risk) &&
+                row.attempts < task.maxAttempts &&
+                !controller.signal.aborted;
         const message = interrupted
           ? retry
             ? "服务重启中断了执行，稍后自动继续。"
@@ -1110,7 +1204,13 @@ export function createTaskCenter(
           task.id,
           interrupted ? "recovered" : retry ? "retry_scheduled" : "failed",
           message,
-          { attempt: row.attempts, version: task.version, ...(error instanceof TaskResultNeedsReview ? { verifyOnly: true } : {}) },
+          {
+            attempt: row.attempts,
+            version: task.version,
+            ...(error instanceof TaskResultNeedsReview
+              ? { verifyOnly: true }
+              : {}),
+          },
           tx,
         );
       });

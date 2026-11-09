@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { Hono } from "hono";
 import { OPS_CODES } from "../../shared/ops-codes";
 import { resetOpsCountersForTests } from "../../shared/ops-counters";
-import type { HermesHealthCheck } from "../src/agents/hermes-health";
 import type { DshHealthCheck } from "../src/agents/dsh-health";
-import type { AppVariables } from "../src/auth/guards";
+import type { HermesHealthCheck } from "../src/agents/hermes-health";
 import type { AssistantSignals } from "../src/assistant-signals";
+import type { AppVariables } from "../src/auth/guards";
 import type { MagpieService, MagpieStatus } from "../src/magpie";
 import {
   type ComputerCheck,
@@ -219,43 +219,71 @@ test("GET /api/admin/health: admins only", async () => {
 });
 
 test("selected DSH failure makes the authenticated aggregate unavailable", async () => {
-  let owner = '';
-  const response = await app('admin', { dshRequired: true, probeDsh: async actorId => {
-    owner = actorId;
-    return { ok: false, error: '会话存储不可用。' };
-  } }).request('/api/admin/health');
+  let owner = "";
+  const response = await app("admin", {
+    dshRequired: true,
+    probeDsh: async (actorId) => {
+      owner = actorId;
+      return { ok: false, error: "会话存储不可用。" };
+    },
+  }).request("/api/admin/health");
   expect(response.status).toBe(503);
-  expect(owner).toBe('admin-1');
+  expect(owner).toBe("admin-1");
   const body = await response.json();
   expect(body.checks.dsh).toMatchObject({ configured: true, ok: false });
   expect(body.checks.database.ok).toBe(true);
 });
 
 test("a selected DSH without a probe cannot report healthy", async () => {
-  const report = await collectOpsHealth({ pingDatabase: async () => ({ ok: true }), gatewayMode: 'on', dshRequired: true, log: () => {} });
+  const report = await collectOpsHealth({
+    pingDatabase: async () => ({ ok: true }),
+    gatewayMode: "on",
+    dshRequired: true,
+    log: () => {},
+  });
   expect(report.ok).toBe(false);
   expect(report.checks.dsh.ok).toBe(false);
 });
 
 test("unselected DSH does not change the old deployment contract", async () => {
-  const report = await collectOpsHealth({ pingDatabase: async () => ({ ok: true }), gatewayMode: 'off', probeDsh: async () => { throw Error('not selected'); } });
+  const report = await collectOpsHealth({
+    pingDatabase: async () => ({ ok: true }),
+    gatewayMode: "off",
+    probeDsh: async () => {
+      throw Error("not selected");
+    },
+  });
   expect(report.ok).toBe(true);
   expect(report.checks.dsh).toEqual({ configured: false, ok: null });
 });
 
 test("DSH probe exceptions are reported without private connection details", async () => {
-  const report = await collectOpsHealth({ pingDatabase: async () => ({ ok: true }), gatewayMode: 'on', dshRequired: true,
-    probeDsh: async () => { throw Error('private-host.invalid token=sensitive'); }, log: () => {} });
+  const report = await collectOpsHealth({
+    pingDatabase: async () => ({ ok: true }),
+    gatewayMode: "on",
+    dshRequired: true,
+    probeDsh: async () => {
+      throw Error("private-host.invalid token=sensitive");
+    },
+    log: () => {},
+  });
   expect(report.ok).toBe(false);
-  expect(JSON.stringify(report.checks.dsh)).not.toContain('private-host');
-  expect(JSON.stringify(report.checks.dsh)).not.toContain('sensitive');
+  expect(JSON.stringify(report.checks.dsh)).not.toContain("private-host");
+  expect(JSON.stringify(report.checks.dsh)).not.toContain("sensitive");
 });
 
 test("DSH health reports validated storage while an unused Hermes bridge is down", async () => {
-  const response = await app('admin', { dshRequired: true,
-    probeDsh: async () => ({ ok: true, version: '0.2.2-rc.1', historyReadable: true, checkedSessions: 1, running: 0 }),
+  const response = await app("admin", {
+    dshRequired: true,
+    probeDsh: async () => ({
+      ok: true,
+      version: "0.2.2-rc.1",
+      historyReadable: true,
+      checkedSessions: 1,
+      running: 0,
+    }),
     probeHermes: async () => ({ ok: false, configured: true }),
-  }).request('/api/admin/health');
+  }).request("/api/admin/health");
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.checks.dsh.checkedSessions).toBe(1);
@@ -320,10 +348,12 @@ test("GET /api/admin/health/budgets: scrape history shape", async () => {
 
 test("assistant signal probe uses the authenticated owner and hides failures without causing rollback", async () => {
   let owner = "";
-  const response = await app("admin", { probeAssistant: async actorId => {
-    owner = actorId;
-    throw new Error("private-database.invalid internal SQL and token");
-  } }).request("/api/admin/health");
+  const response = await app("admin", {
+    probeAssistant: async (actorId) => {
+      owner = actorId;
+      throw new Error("private-database.invalid internal SQL and token");
+    },
+  }).request("/api/admin/health");
   expect(owner).toBe("admin-1");
   expect(response.status).toBe(200);
   const body = await response.json();

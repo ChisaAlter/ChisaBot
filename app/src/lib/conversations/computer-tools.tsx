@@ -1,8 +1,22 @@
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
-import { CommandOutput } from "@/components/computer/command-output";
 import { BrowseChip } from "@/components/computer/browse-chip";
-import { keepShot, ScreenshotCard, shrinkPng } from "@/components/computer/screenshot-card";
+import { CommandOutput } from "@/components/computer/command-output";
+import {
+  keepShot,
+  ScreenshotCard,
+  shrinkPng,
+} from "@/components/computer/screenshot-card";
+import { syncStartLinks } from "@/lib/browser-bookmarks";
+import { tryClient } from "@/lib/client";
+import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
+import { callComputer, type ToolOutcome } from "@/lib/computers/call";
+import { type ControlState, readControl } from "@/lib/computers/control";
+import {
+  runBrowserRead,
+  runHelpRequest,
+  runNavigation,
+} from "@/lib/computers/handoff";
 import { readScreenshot } from "@/lib/computers/screen";
 import {
   describeComputerToolCall,
@@ -10,10 +24,6 @@ import {
   reportComputerActivity,
   reportComputerStatus,
 } from "@/lib/conversations/computer-activity";
-import { tryClient } from "@/lib/client";
-import { syncStartLinks } from "@/lib/browser-bookmarks";
-import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
-import { callComputer, type ToolOutcome } from "@/lib/computers/call";
 import {
   COMMAND_DEFAULT_TIMEOUT_SEC,
   COMMAND_MAX_TIMEOUT_SEC,
@@ -21,12 +31,6 @@ import {
   normalizeCommandTimeout,
 } from "../../../../shared/command-timeout";
 import { formatBytes } from "../../../../shared/computer-activity-labels";
-import { type ControlState, readControl } from "@/lib/computers/control";
-import {
-  runBrowserRead,
-  runHelpRequest,
-  runNavigation,
-} from "@/lib/computers/handoff";
 import { useActiveBotHolder } from "./active-bot";
 import { useComputerToolRenderer } from "./approval-tools";
 import { useComputerAvailable } from "./computer-available";
@@ -254,7 +258,9 @@ export function ComputerTools() {
       // 一行小条（BrowseChip），画面在右栏「计算机」里；失败 / 拒绝时说清楚。
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           {...(page?.title ? { title: page.title } : {})}
           {...(page?.url
             ? { url: page.url }
@@ -280,9 +286,19 @@ export function ComputerTools() {
     // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。
     lineOnly: true,
     parameters: z.object({
-      action: z.enum(["list", "new", "switch", "close"]).describe("What to do."),
-      id: z.string().optional().describe("Tab id from action=list, for switch / close."),
-      url: z.string().optional().describe("For action=new: the page to open in the new tab (full https:// address)."),
+      action: z
+        .enum(["list", "new", "switch", "close"])
+        .describe("What to do."),
+      id: z
+        .string()
+        .optional()
+        .describe("Tab id from action=list, for switch / close."),
+      url: z
+        .string()
+        .optional()
+        .describe(
+          "For action=new: the page to open in the new tab (full https:// address).",
+        ),
     }),
     render: ({ args, status, result }) => {
       const a = (args ?? {}) as { action?: string; url?: string };
@@ -292,9 +308,13 @@ export function ComputerTools() {
       if (a.action !== "new" || !a.url) return null;
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           url={a.url}
-          {...(typeof outcome.page === "object" && outcome.page && typeof (outcome.page as { title?: unknown }).title === "string"
+          {...(typeof outcome.page === "object" &&
+          outcome.page &&
+          typeof (outcome.page as { title?: unknown }).title === "string"
             ? { title: (outcome.page as { title: string }).title }
             : {})}
         />
@@ -309,8 +329,16 @@ export function ComputerTools() {
     lineOnly: true,
     parameters: z.object({
       action: z.enum(["list", "open", "add", "remove"]),
-      id: z.string().optional().describe("Bookmark id from action=list, for open / remove."),
-      url: z.string().optional().describe("For add: the address to bookmark. Omit to bookmark the active tab."),
+      id: z
+        .string()
+        .optional()
+        .describe("Bookmark id from action=list, for open / remove."),
+      url: z
+        .string()
+        .optional()
+        .describe(
+          "For add: the address to bookmark. Omit to bookmark the active tab.",
+        ),
       title: z.string().optional().describe("For add: a short name."),
       newTab: z.boolean().optional().describe("For open: open in a new tab."),
     }),
@@ -327,9 +355,13 @@ export function ComputerTools() {
             : undefined;
       return (
         <BrowseChip
-          state={!finished ? "running" : outcome.ok === false ? "failed" : "done"}
+          state={
+            !finished ? "running" : outcome.ok === false ? "failed" : "done"
+          }
           {...(opened ? { url: opened } : {})}
-          {...(typeof outcome.title === "string" ? { title: outcome.title } : {})}
+          {...(typeof outcome.title === "string"
+            ? { title: outcome.title }
+            : {})}
         />
       );
     },
@@ -339,14 +371,24 @@ export function ComputerTools() {
   useComputerToolRenderer({
     name: "computer_screenshot",
     parameters: z.object({}),
-    render: ({ result, status, toolCallId }: { result?: string; status: string; toolCallId?: string }) => {
+    render: ({
+      result,
+      status,
+      toolCallId,
+    }: {
+      result?: string;
+      status: string;
+      toolCallId?: string;
+    }) => {
       const finished = status === "complete" || result !== undefined;
       const outcome = finished ? outcomeOf(result) : {};
       return (
         <ScreenshotCard
           id={toolCallId}
           running={!finished}
-          {...(outcome.ok === false ? { failed: outcome.reason ?? "没截到图" } : {})}
+          {...(outcome.ok === false
+            ? { failed: outcome.reason ?? "没截到图" }
+            : {})}
           {...(typeof outcome.url === "string" ? { url: outcome.url } : {})}
         />
       );
@@ -367,9 +409,7 @@ export function ComputerTools() {
           running={status !== "complete"}
           label={"读取页面"}
           detail={
-            elements.length
-              ? `${elements.length} 个可操作元素`
-              : undefined
+            elements.length ? `${elements.length} 个可操作元素` : undefined
           }
         />
       );
@@ -393,7 +433,8 @@ export function ComputerTools() {
     }),
     render: ({ args, result, status }) => {
       const field =
-        labelOf(result) ?? (typeof args?.ref === "string" ? args.ref : undefined);
+        labelOf(result) ??
+        (typeof args?.ref === "string" ? args.ref : undefined);
       // 原生下拉框（§100）：选中的是页面上的一个选项，不是输入的内容，可以显示。
       const picked = selectedLabel(result);
       return (

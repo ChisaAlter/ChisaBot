@@ -369,7 +369,9 @@ describe("channel routes", () => {
   test("returns 404 when get returns null", async () => {
     const store = fakeStore({ get: async () => null });
 
-    const response = await appFor(store).request("http://chisabot.test/missing");
+    const response = await appFor(store).request(
+      "http://chisabot.test/missing",
+    );
 
     expect(response.status).toBe(404);
     expect(await json(response)).toEqual({ error: "Channel not found." });

@@ -25,11 +25,14 @@ import {
   opsHistorySeries,
 } from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
-import type { HermesHealthCheck } from "./agents/hermes-health";
 import type { DshHealthCheck } from "./agents/dsh-health";
+import type { HermesHealthCheck } from "./agents/hermes-health";
+import {
+  type AssistantSignals,
+  readAssistantSignals,
+} from "./assistant-signals";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
-import { readAssistantSignals, type AssistantSignals } from "./assistant-signals";
 import { readRunningBuild, versionPayload } from "./build-info";
 import type { Database } from "./db/client";
 import { reasonWithoutStatement } from "./db/query-failure";
@@ -79,9 +82,14 @@ export type OpsHealthReport = {
     computer: ComputerCheck;
     /** Informational only: never part of the aggregate verdict. */
     hermes: HermesHealthCheck;
-    dsh: (DshHealthCheck & { configured: true }) | { ok: null; configured: false };
+    dsh:
+      | (DshHealthCheck & { configured: true })
+      | { ok: null; configured: false };
     /** Business attention is visible but never triggers an image-readiness rollback. */
-    assistant: AssistantSignals | { ok: null; state: "not_configured" } | { ok: false; state: "unavailable" };
+    assistant:
+      | AssistantSignals
+      | { ok: null; state: "not_configured" }
+      | { ok: false; state: "unavailable" };
     localCaller: LocalCallerCheck;
   };
   /** PRD-P1-02: SEND/STREAM/SSRF budgets — totals, last15m, rates, 1h series. */
@@ -226,28 +234,46 @@ export async function collectOpsHealth(options: {
       };
     }
   };
-  const checkDsh = async (): Promise<OpsHealthReport['checks']['dsh']> => {
+  const checkDsh = async (): Promise<OpsHealthReport["checks"]["dsh"]> => {
     if (!options.dshRequired) return { ok: null, configured: false };
-    if (!options.probeDsh) return { ok: false, configured: true, error: 'DSH 健康检查尚未接通。' };
+    if (!options.probeDsh)
+      return { ok: false, configured: true, error: "DSH 健康检查尚未接通。" };
     try {
-      return { ...await withTimeout(options.probeDsh(), 8000, 'dsh'), configured: true };
+      return {
+        ...(await withTimeout(options.probeDsh(), 8000, "dsh")),
+        configured: true,
+      };
     } catch {
-      return { ok: false, configured: true, error: 'DSH 执行内核健康检查失败。' };
+      return {
+        ok: false,
+        configured: true,
+        error: "DSH 执行内核健康检查失败。",
+      };
     }
   };
-  const checkAssistant = async (): Promise<OpsHealthReport['checks']['assistant']> => {
+  const checkAssistant = async (): Promise<
+    OpsHealthReport["checks"]["assistant"]
+  > => {
     if (!options.probeAssistant) return { ok: null, state: "not_configured" };
-    try { return await withTimeout(options.probeAssistant(), DB_TIMEOUT_MS, "assistant"); }
-    catch { return { ok: false, state: "unavailable" }; }
+    try {
+      return await withTimeout(
+        options.probeAssistant(),
+        DB_TIMEOUT_MS,
+        "assistant",
+      );
+    } catch {
+      return { ok: false, state: "unavailable" };
+    }
   };
-  const [database, magpie, computer, hermes, dsh, assistant] = await Promise.all([
-    checkDatabase(),
-    checkMagpie(),
-    checkComputer(),
-    checkHermes(),
-    checkDsh(),
-    checkAssistant(),
-  ]);
+  const [database, magpie, computer, hermes, dsh, assistant] =
+    await Promise.all([
+      checkDatabase(),
+      checkMagpie(),
+      checkComputer(),
+      checkHermes(),
+      checkDsh(),
+      checkAssistant(),
+    ]);
 
   const required: Array<{ name: string; ok: CheckOk }> = [
     { name: "app", ok: app.ok },
@@ -285,7 +311,16 @@ export async function collectOpsHealth(options: {
     ok,
     checkedAt,
     version,
-    checks: { app, database, magpie, computer, hermes, dsh, assistant, localCaller },
+    checks: {
+      app,
+      database,
+      magpie,
+      computer,
+      hermes,
+      dsh,
+      assistant,
+      localCaller,
+    },
     budgets: opsCounterSnapshot(options.now?.() ?? Date.now()),
   };
 }
@@ -300,9 +335,11 @@ export function createDatabasePinger(database: Database): PingDatabase {
 }
 
 export function createAssistantSignalsProbe(database: Database) {
-  return (ownerUserId: string) => readAssistantSignals(
-    (statement, parameters) => database.$client.unsafe(statement, parameters), ownerUserId,
-  );
+  return (ownerUserId: string) =>
+    readAssistantSignals(
+      (statement, parameters) => database.$client.unsafe(statement, parameters),
+      ownerUserId,
+    );
 }
 
 export function createOpsHealthRoutes(options: {
@@ -334,8 +371,12 @@ export function createOpsHealthRoutes(options: {
       probeComputer: options.probeComputer,
       probeHermes: options.probeHermes,
       dshRequired: options.dshRequired,
-      probeDsh: options.probeDsh ? () => options.probeDsh!(context.var.actor.id) : undefined,
-      probeAssistant: options.probeAssistant ? () => options.probeAssistant!(context.var.actor.id) : undefined,
+      probeDsh: options.probeDsh
+        ? () => options.probeDsh!(context.var.actor.id)
+        : undefined,
+      probeAssistant: options.probeAssistant
+        ? () => options.probeAssistant!(context.var.actor.id)
+        : undefined,
       gatewayMode: options.gatewayMode,
       log: options.log,
     });

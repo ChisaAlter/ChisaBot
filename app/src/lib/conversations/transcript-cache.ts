@@ -29,7 +29,10 @@ export function cachedTranscript(threadId: string): readonly Message[] | null {
 }
 
 /** 记下这段对话现在的样子（空的不记：空白不比骨架好）。 */
-export function rememberTranscript(threadId: string, messages: readonly Message[]): void {
+export function rememberTranscript(
+  threadId: string,
+  messages: readonly Message[],
+): void {
   if (!threadId || messages.length === 0) return;
   cache.delete(threadId);
   cache.set(threadId, { messages: [...messages], at: Date.now() });
@@ -44,7 +47,10 @@ export function rememberTranscript(threadId: string, messages: readonly Message[
  * 预取（悬停 / 空闲时）：从存储读一次放进来。已经有新的、或者正在读，就什么都不做。
  * 读不到不报错：只是切过去时先显示骨架。
  */
-export function prefetchTranscript(threadId: string, agentId: string): Promise<void> {
+export function prefetchTranscript(
+  threadId: string,
+  agentId: string,
+): Promise<void> {
   const hit = cache.get(threadId);
   if (hit && Date.now() - hit.at < FRESH_MS) return Promise.resolve();
   const running = inflight.get(threadId);
@@ -55,7 +61,8 @@ export function prefetchTranscript(threadId: string, agentId: string): Promise<v
       // 对话打开期间记下的（离开时）比预取的新：不覆盖。
       const now = cache.get(threadId);
       if (now && now.at > startedAt) return;
-      if (stored.availability === "ready") rememberTranscript(threadId, stored.messages);
+      if (stored.availability === "ready")
+        rememberTranscript(threadId, stored.messages);
     })
     .catch(() => {})
     .finally(() => {

@@ -8,7 +8,6 @@ import {
 } from "bun:test";
 import type { Message, RunAgentInput } from "@ag-ui/core";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
-import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -30,6 +29,10 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
+import {
+  ConversationSessionProvider,
+  conversationClient,
+} from "@/lib/chat/session-client";
 import { queryClient } from "@/query-client";
 import { installFetchBackedXhr } from "./fetch-backed-xhr";
 import { settleReactWork } from "./settle-react-work";
@@ -163,14 +166,21 @@ beforeAll(() => {
       if (url.pathname.endsWith("/commands")) {
         const request =
           input instanceof Request ? input : new Request(url, init);
-        const body = RunAgentInputSchema.parse((await request.json() as { input: unknown }).input);
+        const body = RunAgentInputSchema.parse(
+          ((await request.json()) as { input: unknown }).input,
+        );
         const answer = runAnswers[runs.length];
         runs.push(body);
         const response = answer ? await answer(body) : finished(body);
         if (!response.ok) return response;
-        const commandId = body.messages.findLast(message => message.role === "user")!.id;
+        const commandId = body.messages.findLast(
+          (message) => message.role === "user",
+        )!.id;
         admittedEvents.set(commandId, response);
-        return NativeResponse.json({ accepted: true, commandId, runId: body.runId }, { status: 202 });
+        return NativeResponse.json(
+          { accepted: true, commandId, runId: body.runId },
+          { status: 202 },
+        );
       }
       if (url.pathname.endsWith("/events")) {
         const { commandId } = JSON.parse(String(init?.body));
@@ -338,10 +348,7 @@ test("a drained turn whose send fails keeps the rows behind the message the tran
   const view = await mounted();
   const user = userEvent.setup({ document: view.container.ownerDocument });
 
-  await user.type(
-    view.getByRole("textbox", { name: "消息" }),
-    "Get started",
-  );
+  await user.type(view.getByRole("textbox", { name: "消息" }), "Get started");
   await user.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(runs).toHaveLength(1));
 
@@ -496,10 +503,7 @@ test("the next turn carries a restored message, with its file, ahead of the newe
   const view = await mounted();
   const user = userEvent.setup({ document: view.container.ownerDocument });
 
-  await user.type(
-    view.getByRole("textbox", { name: "消息" }),
-    "Get started",
-  );
+  await user.type(view.getByRole("textbox", { name: "消息" }), "Get started");
   await user.click(view.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(runs).toHaveLength(1));
 

@@ -15,10 +15,15 @@ export type UserPreferencesStore = {
 };
 
 /** Expose supported preferences while retaining unrelated stored JSON for other readers. */
-function supportedPreferences(stored: Partial<UserPreferences> | null): UserPreferences {
+function supportedPreferences(
+  stored: Partial<UserPreferences> | null,
+): UserPreferences {
   const merged = { ...DEFAULT_USER_PREFERENCES, ...stored };
   return Object.fromEntries(
-    Object.keys(DEFAULT_USER_PREFERENCES).map((key) => [key, merged[key as keyof UserPreferences]]),
+    Object.keys(DEFAULT_USER_PREFERENCES).map((key) => [
+      key,
+      merged[key as keyof UserPreferences],
+    ]),
   ) as UserPreferences;
 }
 

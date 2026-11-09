@@ -10,11 +10,11 @@
 
 ## 公开接入方式与真正差别
 
-| 路径 | 官方契约 | 对 ChisaBot 的意义 |
-|---|---|---|
-| TypeScript SDK `@deepseek-ai/dsh-sdk-client` | `DeepSeekHarness`/`HarnessClient` 启动子进程，通过 stdio JSON-RPC 驱动完整 runtime；可选 profile、独立 `dshHome`、ordered patches、模型路由 | 适合任务调用和独立执行器；无需抓 CLI 文本 |
-| Host/Client Gateway + Session Controller | Session 的 create/resume/prompt、queue/steer、cancel、history/follow；follow 可请求 `assistantStream: true`，包含快照、持久事件和实时 assistant frames | 更接近 ChisaBot 交互聊天需要的流式显示、独立停止与恢复读取 |
-| 自定义 Cordis composition/plugin | public `Agent`、`ctx.tools`、`ctx.llm` 和扩展事件；核心 loop 实现可替换 | 可把 ChisaBot 工具、授权与模型接入放到明确插件接口，不必改写私有 agent 方法 |
+| 路径                                         | 官方契约                                                                                                                                               | 对 ChisaBot 的意义                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| TypeScript SDK `@deepseek-ai/dsh-sdk-client` | `DeepSeekHarness`/`HarnessClient` 启动子进程，通过 stdio JSON-RPC 驱动完整 runtime；可选 profile、独立 `dshHome`、ordered patches、模型路由            | 适合任务调用和独立执行器；无需抓 CLI 文本                                   |
+| Host/Client Gateway + Session Controller     | Session 的 create/resume/prompt、queue/steer、cancel、history/follow；follow 可请求 `assistantStream: true`，包含快照、持久事件和实时 assistant frames | 更接近 ChisaBot 交互聊天需要的流式显示、独立停止与恢复读取                  |
+| 自定义 Cordis composition/plugin             | public `Agent`、`ctx.tools`、`ctx.llm` 和扩展事件；核心 loop 实现可替换                                                                                | 可把 ChisaBot 工具、授权与模型接入放到明确插件接口，不必改写私有 agent 方法 |
 
 来源：[SDK 家族](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/sdk/README.md)、[SDK client](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/sdk/client/README.md)、[Session Controller](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/api/session-controller/README.md)、[Session wire types](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/api/session-controller/src/types.ts)、[Gateway](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/api/gateway/README.md)、[Core group](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/README.md)。
 

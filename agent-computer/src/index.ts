@@ -1,11 +1,11 @@
 import "../../shared/env-compat";
-import { readCompatibleHeader } from "../../shared/legacy-headers";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "bun";
 import type { BrowserContext, Page } from "playwright";
 import { downloadHeaders } from "../../shared/file-download";
-import { visiblePageText } from "./readable-text";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
+import type { Release } from "./action-barrier";
 import {
   cutAtCodeUnits,
   parseAriaSnapshot,
@@ -19,13 +19,9 @@ import {
   offeredToken,
 } from "./authorisation";
 import { isPlainBotId } from "./bot-id";
-import {
-  CaptureBusyError,
-} from "./capture-gate";
-import { PreviewShotBusyError, PreviewShotRefusedError, previewShot } from "./preview-shot";
 import { browserRuntimeFromEnv } from "./browser-runtime";
+import { CaptureBusyError } from "./capture-gate";
 import { detectChallenge } from "./challenge";
-import { detectSiteBlock } from "./site-block";
 import {
   ControlError,
   ControlRequestError,
@@ -33,52 +29,10 @@ import {
   SnapshotRequiredError,
   TAKE_CONTROL_FIRST,
 } from "./control";
+import { forgetControlState } from "./control-store";
 import { describeHumanGesture } from "./demonstration";
 import { handleEgressPolicyRequest, startEgressFilter } from "./egress";
 import { identity } from "./identity";
-import {
-  assertPageAccess,
-  navigateWebPage,
-  type PagePurpose,
-} from "./navigation";
-import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
-import {
-  EXEC_MAX_TIMEOUT_MS,
-  parseExecTimeout,
-  parseInputMessage,
-  parseNavigateUrl,
-  parseScrollDelta,
-} from "./request-validation";
-import { type InputMessage, startScreencast } from "./screencast";
-import {
-  keepAlivePingPayload,
-  keepAlivePongPayload,
-  isKeepAlivePing,
-  isKeepAlivePong,
-  STREAM_IDLE_TIMEOUT_S,
-  STREAM_KEEPALIVE_MS,
-} from "./stream-keepalive";
-import {
-  markElementSecret,
-  maskSensitiveValues,
-  SECRET_ATTRIBUTE,
-  SENSITIVE_FIELD_SELECTOR,
-  sensitiveRefs,
-} from "./secret-masking";
-import type { Release } from "./action-barrier";
-import { forgetControlState } from "./control-store";
-import { type BotSession, createSessions } from "./sessions";
-import {
-  DEFAULT_START_LINKS,
-  ensureStartPage,
-  redrawStartPage,
-  type StartLink,
-  whileNavigating,
-} from "./start-page";
-import { TabError } from "./tabs";
-import { createShell } from "./shell";
-import { fillSignIn, parseSignInFill } from "./sign-in";
-import { startVirtualDisplay } from "./virtual-display";
 import {
   chooseClickedOption,
   chooseNativeOption,
@@ -88,12 +42,53 @@ import {
   SelectOptionError,
 } from "./native-select";
 import {
-  contentTypeFor,
-  workspacePathFromUrl,
-  workspaceProblemPage,
-  workspaceRequestAllowed,
-  WORKSPACE_ORIGIN,
-} from "./workspace-origin";
+  assertPageAccess,
+  navigateWebPage,
+  type PagePurpose,
+} from "./navigation";
+import {
+  PreviewShotBusyError,
+  PreviewShotRefusedError,
+  previewShot,
+} from "./preview-shot";
+import { createProfiles, numberFromEnv, VIEWPORT } from "./profiles";
+import { visiblePageText } from "./readable-text";
+import {
+  EXEC_MAX_TIMEOUT_MS,
+  parseExecTimeout,
+  parseInputMessage,
+  parseNavigateUrl,
+  parseScrollDelta,
+} from "./request-validation";
+import { type InputMessage, startScreencast } from "./screencast";
+import {
+  markElementSecret,
+  maskSensitiveValues,
+  SECRET_ATTRIBUTE,
+  SENSITIVE_FIELD_SELECTOR,
+  sensitiveRefs,
+} from "./secret-masking";
+import { type BotSession, createSessions } from "./sessions";
+import { createShell } from "./shell";
+import { fillSignIn, parseSignInFill } from "./sign-in";
+import { detectSiteBlock } from "./site-block";
+import {
+  DEFAULT_START_LINKS,
+  ensureStartPage,
+  redrawStartPage,
+  type StartLink,
+  whileNavigating,
+} from "./start-page";
+import {
+  isKeepAlivePing,
+  isKeepAlivePong,
+  keepAlivePingPayload,
+  keepAlivePongPayload,
+  STREAM_IDLE_TIMEOUT_S,
+  STREAM_KEEPALIVE_MS,
+} from "./stream-keepalive";
+import { TabError } from "./tabs";
+import { startVirtualDisplay } from "./virtual-display";
 import {
   createWorkspace,
   WorkspaceFileError,
@@ -101,6 +96,13 @@ import {
   WorkspaceFileTooLargeError,
   WorkspacePathError,
 } from "./workspace";
+import {
+  contentTypeFor,
+  WORKSPACE_ORIGIN,
+  workspacePathFromUrl,
+  workspaceProblemPage,
+  workspaceRequestAllowed,
+} from "./workspace-origin";
 
 /**
  * The Bot's computer: one long-lived browser, reachable over HTTP.
@@ -236,7 +238,10 @@ const sessions = createSessions({
  * COMPUTER_LAUNCH_DEADLINE_MS) plus its own work. A command carries its own timeout.
  */
 /** After the caller hung up, how long an unfinished browser action may still hold the wheel. */
-const CALLER_GONE_GRACE_MS = numberFromEnv("COMPUTER_CALLER_GONE_GRACE_MS", 15_000);
+const CALLER_GONE_GRACE_MS = numberFromEnv(
+  "COMPUTER_CALLER_GONE_GRACE_MS",
+  15_000,
+);
 
 function actionLeaseMs(pathname: string): number {
   if (pathname === "/exec") return EXEC_MAX_TIMEOUT_MS + 60_000;
@@ -355,7 +360,8 @@ const profiles = createProfiles(
  * 只在内存里：进程重启后先用默认五个，下一次推送就换回来。
  */
 const startLinks = new Map<string, StartLink[]>();
-const linksFor = (botId: string): StartLink[] => startLinks.get(botId) ?? DEFAULT_START_LINKS;
+const linksFor = (botId: string): StartLink[] =>
+  startLinks.get(botId) ?? DEFAULT_START_LINKS;
 
 /** 标签变了时立刻让直播画面跟过去，不用等下一次 1 秒的轮询。 */
 const kickers = new Map<string, Set<() => void>>();
@@ -365,7 +371,8 @@ function kick(botId: string): void {
 
 /** 标签接口的统一出错处理：TabError 带自己的状态码，别的当 502。 */
 function tabFailure(error: unknown): Response {
-  if (error instanceof TabError) return json({ error: error.message }, error.status);
+  if (error instanceof TabError)
+    return json({ error: error.message }, error.status);
   return json({ error: describe(error, "标签页操作没有成功。") }, 502);
 }
 // Rooted in the same workspace the file tools use, so a command and a written file see one
@@ -441,7 +448,11 @@ async function installWorkspaceOrigin(context: BrowserContext): Promise<void> {
               : "读取失败。";
         await route
           .fulfill({
-            status: notFound ? 404 : error instanceof WorkspacePathError ? 403 : 500,
+            status: notFound
+              ? 404
+              : error instanceof WorkspacePathError
+                ? 403
+                : 500,
             headers: { "content-type": "text/html; charset=utf-8" },
             body: workspaceProblemPage(path, problem),
           })
@@ -708,7 +719,9 @@ serve<StreamData>({
           void ensureStartPage(target, linksFor(ws.data.botId));
           void pushTabs();
           if (target === casting) return;
-          const cast = await startScreencast(target, (frame) => slot.broadcast(frame));
+          const cast = await startScreencast(target, (frame) =>
+            slot.broadcast(frame),
+          );
           // The slot refuses (and stops) a cast that lost its viewers while it was starting.
           if (await slot.install(cast)) casting = target;
           else casting = undefined;
@@ -737,7 +750,10 @@ serve<StreamData>({
           clearInterval(follow);
           clearInterval(keepAlive);
           botKickers.delete(kicked);
-          if (botKickers.size === 0 && kickers.get(ws.data.botId) === botKickers)
+          if (
+            botKickers.size === 0 &&
+            kickers.get(ws.data.botId) === botKickers
+          )
             kickers.delete(ws.data.botId);
         });
         /*
@@ -759,8 +775,13 @@ serve<StreamData>({
          * It is told the same reason and dropped; both windows then show it and a Retry.
          */
         if (slot.viewers() > 0)
-          await slot.releaseAll(describe(error, "The screen could not be started."));
-        say({ type: "error", error: describe(error, "The screen could not be started.") });
+          await slot.releaseAll(
+            describe(error, "The screen could not be started."),
+          );
+        say({
+          type: "error",
+          error: describe(error, "The screen could not be started."),
+        });
         ws.close();
       }
     },
@@ -917,7 +938,10 @@ serve<StreamData>({
      * stream carries the token as a query
      * parameter the same way it already carries the Bot.
      */
-    const authenticated = matchesToken(COMPUTER_TOKEN, offeredToken(request.headers, url));
+    const authenticated = matchesToken(
+      COMPUTER_TOKEN,
+      offeredToken(request.headers, url),
+    );
     if (!isOpenPath(url.pathname) && !authenticated) {
       // Says nothing about what is here. A refusal that describes the endpoint it is protecting is a
       // directory listing for whoever is knocking.
@@ -930,7 +954,9 @@ serve<StreamData>({
       const healthBotId = authenticated ? botIdOf(request) : DEFAULT_BOT_ID;
       if (authenticated && !isPlainBotId(healthBotId))
         return json({ error: "That is not a usable bot id." }, 400);
-      const profile = profiles.summary([healthBotId]).find((item) => item.botId === healthBotId);
+      const profile = profiles
+        .summary([healthBotId])
+        .find((item) => item.botId === healthBotId);
       return json({
         status: "ok",
         browser: profile?.running ?? false,
@@ -957,14 +983,26 @@ serve<StreamData>({
       return handleEgressPolicyRequest(botId, request);
     // 链接预览卡的截图：独立的无头浏览器，不碰任何机器人的会话（preview-shot.ts）。
     if (url.pathname === "/preview-shot" && request.method === "POST") {
-      const body = (await request.json().catch(() => null)) as { url?: unknown } | null;
-      if (typeof body?.url !== "string") return json({ error: "缺少网址" }, 400);
+      const body = (await request.json().catch(() => null)) as {
+        url?: unknown;
+      } | null;
+      if (typeof body?.url !== "string")
+        return json({ error: "缺少网址" }, 400);
       try {
-        const shot = await previewShot(body.url, { sandbox: process.env.COMPUTER_SANDBOX === "on" });
-        return new Response(Buffer.from(shot), { headers: { "content-type": "image/jpeg", "cache-control": "no-store" } });
+        const shot = await previewShot(body.url, {
+          sandbox: process.env.COMPUTER_SANDBOX === "on",
+        });
+        return new Response(Buffer.from(shot), {
+          headers: {
+            "content-type": "image/jpeg",
+            "cache-control": "no-store",
+          },
+        });
       } catch (error) {
-        if (error instanceof PreviewShotBusyError) return json({ error: error.message }, 429);
-        if (error instanceof PreviewShotRefusedError) return json({ error: error.message }, 422);
+        if (error instanceof PreviewShotBusyError)
+          return json({ error: error.message }, 429);
+        if (error instanceof PreviewShotRefusedError)
+          return json({ error: error.message }, 422);
         return json({ error: "截图失败" }, 502);
       }
     }
@@ -1032,7 +1070,9 @@ serve<StreamData>({
       // for help without having to reload anything.
       if (url.pathname === "/control" && request.method === "GET") {
         return json({
-          ...session.control.get(url.searchParams.get("requestId") ?? undefined),
+          ...session.control.get(
+            url.searchParams.get("requestId") ?? undefined,
+          ),
           // CB-103：右栏 / 大屏是否正在直播，网关据此回 state=live。
           live: session.viewer.casting(),
         });
@@ -1200,7 +1240,11 @@ serve<StreamData>({
         }
         try {
           const target = await currentPage(botId);
-          const result = await performHumanInput(target, url.pathname, body ?? {});
+          const result = await performHumanInput(
+            target,
+            url.pathname,
+            body ?? {},
+          );
           session.control.noteHumanActivity();
           return json(result);
         } catch (error) {
@@ -1302,12 +1346,15 @@ serve<StreamData>({
         ["/tabs/new", "/tabs/activate", "/tabs/close"].includes(url.pathname) &&
         request.method === "POST"
       ) {
-        const body = (await request.json().catch(() => null)) as { id?: unknown } | null;
+        const body = (await request.json().catch(() => null)) as {
+          id?: unknown;
+        } | null;
         try {
           if (url.pathname === "/tabs/new") await profiles.openTab(botId);
           else if (typeof body?.id !== "string" || !body.id.trim())
             return json({ error: "要说明是哪个标签页（id）。" }, 400);
-          else if (url.pathname === "/tabs/activate") await profiles.activateTab(botId, body.id);
+          else if (url.pathname === "/tabs/activate")
+            await profiles.activateTab(botId, body.id);
           else await profiles.closeTab(botId, body.id);
           // 旧快照里的元素编号属于原来那页。
           await currentPage(botId);
@@ -1320,7 +1367,8 @@ serve<StreamData>({
 
       // 人自己的标签操作：只有接管时可以。
       if (url.pathname === "/human/tab" && request.method === "POST") {
-        if (!session.control.humanMayDrive()) return json({ error: TAKE_CONTROL_FIRST }, 409);
+        if (!session.control.humanMayDrive())
+          return json({ error: TAKE_CONTROL_FIRST }, 409);
         const body = (await request.json().catch(() => null)) as {
           action?: unknown;
           id?: unknown;
@@ -1329,9 +1377,15 @@ serve<StreamData>({
           if (body?.action === "new") await profiles.openTab(botId);
           else if (typeof body?.id !== "string" || !body.id.trim())
             return json({ error: "要说明是哪个标签页（id）。" }, 400);
-          else if (body.action === "activate") await profiles.activateTab(botId, body.id);
-          else if (body.action === "close") await profiles.closeTab(botId, body.id);
-          else return json({ error: "标签页操作只能是 new / activate / close。" }, 400);
+          else if (body.action === "activate")
+            await profiles.activateTab(botId, body.id);
+          else if (body.action === "close")
+            await profiles.closeTab(botId, body.id);
+          else
+            return json(
+              { error: "标签页操作只能是 new / activate / close。" },
+              400,
+            );
           await currentPage(botId);
           kick(botId);
           session.control.noteHumanActivity();
@@ -1343,8 +1397,11 @@ serve<StreamData>({
 
       // 服务器推来这个机器人主人的收藏夹：起始页上的常用网站跟着变。
       if (url.pathname === "/start-links" && request.method === "POST") {
-        const body = (await request.json().catch(() => null)) as { links?: unknown } | null;
-        if (!Array.isArray(body?.links)) return json({ error: "links 要是数组。" }, 400);
+        const body = (await request.json().catch(() => null)) as {
+          links?: unknown;
+        } | null;
+        if (!Array.isArray(body?.links))
+          return json({ error: "links 要是数组。" }, 400);
         const links: StartLink[] = body.links
           .filter(
             (link): link is { title: unknown; url: string } =>
@@ -1357,7 +1414,8 @@ serve<StreamData>({
           .slice(0, 12)
           .map((link) => ({
             url: link.url,
-            title: typeof link.title === "string" ? link.title.slice(0, 60) : "",
+            title:
+              typeof link.title === "string" ? link.title.slice(0, 60) : "",
           }));
         const before = JSON.stringify(linksFor(botId));
         startLinks.set(botId, links);
@@ -1594,7 +1652,11 @@ serve<StreamData>({
           typeof body.botId === "string" && body.botId.trim()
             ? body.botId.trim()
             : url.searchParams.get("botId")?.trim() ||
-              readCompatibleHeader(request.headers, "x-chisabot-bot-id")?.trim() || undefined;
+              readCompatibleHeader(
+                request.headers,
+                "x-chisabot-bot-id",
+              )?.trim() ||
+              undefined;
         try {
           return json(
             await shell.run({
@@ -1968,7 +2030,13 @@ async function performAction(
       await field
         .evaluate(
           (el: Element, value: string) => {
-            if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+            if (
+              !(
+                el instanceof HTMLInputElement ||
+                el instanceof HTMLTextAreaElement
+              )
+            )
+              return;
             const jq = (
               window as unknown as {
                 jQuery?: (node: Element) => {
@@ -2026,12 +2094,25 @@ async function performAction(
       // 原生下拉框上按键：弹出的系统列表会让按键卡到超时（用户截图里的第二轮）。先收起列表，
       // 结果里提醒机器人用 computer_type 选（§100）。
       if ((await nativeSelectKind(element, ACTION_TIMEOUT_MS)) === "select") {
-        await element.evaluate((el) => (el as HTMLElement).blur(), undefined, { timeout: ACTION_TIMEOUT_MS }).catch(() => undefined);
-        await element.focus({ timeout: ACTION_TIMEOUT_MS }).catch(() => undefined);
+        await element
+          .evaluate((el) => (el as HTMLElement).blur(), undefined, {
+            timeout: ACTION_TIMEOUT_MS,
+          })
+          .catch(() => undefined);
+        await element
+          .focus({ timeout: ACTION_TIMEOUT_MS })
+          .catch(() => undefined);
         // Enter / 空格 / F4 / Alt+↓ 会再弹出系统列表，不按；方向键、字母照常（收起状态下直接换选中项）。
-        if (!/^(Enter|NumpadEnter|Space| |F4|Alt\+ArrowDown|Alt\+ArrowUp)$/i.test(body.key))
+        if (
+          !/^(Enter|NumpadEnter|Space| |F4|Alt\+ArrowDown|Alt\+ArrowUp)$/i.test(
+            body.key,
+          )
+        )
           await target.keyboard.press(body.key);
-        const listed = await focusNativeSelect(element, ACTION_TIMEOUT_MS).catch(() => null);
+        const listed = await focusNativeSelect(
+          element,
+          ACTION_TIMEOUT_MS,
+        ).catch(() => null);
         return {
           action: "key",
           key: body.key,

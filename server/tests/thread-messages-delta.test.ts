@@ -103,7 +103,9 @@ describe("threadMessagesDelta middleware", () => {
   );
 
   test("old clients without since/cursor get the response untouched", async () => {
-    const response = await app.request("/api/conversations/threads/t1/messages");
+    const response = await app.request(
+      "/api/conversations/threads/t1/messages",
+    );
     expect(await response.json()).toEqual({ messages: stored });
   });
 

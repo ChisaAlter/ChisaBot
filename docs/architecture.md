@@ -66,13 +66,13 @@ React + TanStack Router + 自有会话客户端与呈现注册表（`app/src/lib
 
 ### 2.4.1 会话与工具接口边界
 
-| 入口 | 责任 |
-|---|---|
-| `POST /api/conversations/:threadId/commands` | 接纳带幂等身份的会话命令 |
-| `GET /api/conversations/:threadId/commands/:commandId` | 查询已接纳命令的结果 |
-| `POST /api/conversations/:threadId/events` | 订阅对应命令的持久事件与实时输出 |
-| `server/src/agents/dsh-runtime.ts` → `runtime/dsh/` | 将会话执行连接到账号 DSH Host |
-| 核心服务的工具网关 | 校验账号、机器人、回合与权限，保存工具结果和交付记录 |
+| 入口                                                   | 责任                                                 |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| `POST /api/conversations/:threadId/commands`           | 接纳带幂等身份的会话命令                             |
+| `GET /api/conversations/:threadId/commands/:commandId` | 查询已接纳命令的结果                                 |
+| `POST /api/conversations/:threadId/events`             | 订阅对应命令的持久事件与实时输出                     |
+| `server/src/agents/dsh-runtime.ts` → `runtime/dsh/`    | 将会话执行连接到账号 DSH Host                        |
+| 核心服务的工具网关                                     | 校验账号、机器人、回合与权限，保存工具结果和交付记录 |
 
 当前前端发送新消息走 commands/events；AG-UI 兼容调用、停止与重新接入仍由同一会话边界处理。旧协议映射集中在 `server/src/legacy/protocol.ts`，不作为新增功能的第二套入口。
 
@@ -109,56 +109,56 @@ Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡
 
 业务表沿 `server/drizzle/` 登记版本化变更，部分模块保留幂等初始化。回滚必须检查产品reader，不能仅因新增表或列可被忽略就使用旧镜像。每张表的用途见 [data-model.md](data-model.md)。
 
-| 功能 | DESIGN | 文档 | 代码 | 数据 |
-|---|---|---|---|---|
-| 聊天、流式、富卡片 | §24–§27、§30–§32、§35 | [streaming.md](streaming.md) | `app/src/lib/conversations/`、`server/src/conversation-runtime.ts`、`server/src/agents/` | `chisabot_local_threads/_runs/_events` |
-| 聊天截图缩略图 | §27 | — | `server/src/chat-shots.ts` | `chisabot_chat_shots` |
-| 回答中发消息 · 后台任务 | §38 | — | `server/src/thread-inbox.ts`、`server/src/workers/` | `chisabot_thread_inbox`、`chisabot_workers` |
-| 全端同步 · 历史对话 | §42 | — | `server/src/bot-threads.ts` | `chisabot_bot_threads` |
-| 只有一套聊天（`/bot` → 频道聊天跳转、open-thread、上传进工作区） | §68 · ADR-0013 | [streaming.md](streaming.md) | `app/src/routes/_authed/_app/bot.tsx`、`app/src/lib/channels/open-thread.ts`、`server/src/channels/routes.ts`（`/api/channels/open-thread`）、`server/src/chat-files/channel-mirror.ts` | `intelligence_channel_mappings`、`channel_agents`、`chisabot_chat_files` |
-| 实时面板 | §29、§43、§77 | — | `server/src/live-panels/` | `live_panels`（迁移 0056/0057） |
-| 浏览器多标签 · 收藏夹 | §95、§96 | [browser-tabs.md](browser-tabs.md) | `agent-computer/src/tabs.ts`、`server/src/browser-bookmarks/` | `chisabot_browser_bookmarks`、`chisabot_browser_bookmark_seeds` |
-| 重新生成 / 编辑后重发 | §67 | — | `server/src/thread-truncate.ts` | `chisabot_thread_truncations` |
-| 图片宽高预留 | §83.2 | — | `server/src/image-dims/` | `chisabot_image_dims` |
-| 链接卡 | §48 | — | `server/src/link-preview/`、`app/src/lib/rich-previews/` | `chisabot_link_previews`、`chisabot_link_preview_assets` |
-| 设备 / PC 节点 · 扫码绑定 | §16、§33、§45 | [pc-node.md](pc-node.md) | `server/src/devices/`、`pc/` | `devices`、`device_audit_events`（迁移 0054；`device_bot_access` 已不用） |
-| 新建机器人 · 资料页 | §46、§47、§81 | [coworkers.md](coworkers.md) | `server/src/agents/` | `agents` 表（迁移 0058 一律私有） |
-| 机器人头像 | §81 | [bot-avatars.md](bot-avatars.md) | `server/src/bot-avatars/` | `chisabot_bot_avatars` |
-| 确认卡片 · 权限与审批 · 每个机器人的权限 | §58、§97 | [confirmations.md](confirmations.md)、[settings-ia.md](settings-ia.md) | `server/src/confirmations/` | `chisabot_confirm_prefs/_rules/_requests`、`chisabot_bot_permissions` |
-| 设备编码工具 · 完全访问 · 无界面节点 | §62 | [pc-node.md](pc-node.md) | `server/src/devices/tools.ts`、`roots.ts`、`node-install.ts` | `devices.full_access_until` |
-| 本地 agent | §66 · ADR-0010 | [local-agents.md](local-agents.md) | `server/src/local-agents/`、`pc/src/agent-runtime/` | `chisabot_device_agent_settings`、`chisabot_local_agent_tasks` |
-| Android 同源网页客户端 | §80 当前方向；§86 旧实现 | [android-native.md](android-native.md) | `android/`、`app/` | — |
-| 设置分组 · 设置搜索 | §97 | [settings-ia.md](settings-ia.md) | `app/src/lib/settings/registry.ts` | — |
-| IM 接入与持久交付 | §49；DSH §13 | [im.md](im.md) | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections/_chats/_logs`、0064 `_inbox/_outbox`；正文与平台回执独立于模型执行保存 |
-| 长期记忆 | §50 | [memory.md](memory.md) | `server/src/memory-notes/` | `chisabot_memory_notes`、`chisabot_memory_bots` |
-| 技能 | §51 | [skills.md](skills.md) | `server/src/skills-chisa/` | `skills` 表 |
-| 密钥保险箱 | §52 | [vault.md](vault.md) | `server/src/vault/` | `chisabot_vault_secrets`、`chisabot_vault_requests` |
-| GitHub 连接 | §53 | [github.md](github.md) | `server/src/github/` | `chisabot_github_connections`、`chisabot_github_actions`（令牌在保险箱 `github`） |
-| 页面 | §54 | [pages.md](pages.md) | `server/src/pages/` | `chisabot_pages/_page_versions/_page_assets/_page_origins` |
-| 定时任务与提醒 | §55 | [schedules.md](schedules.md) | `server/src/schedules/` | `chisabot_schedules`、`chisabot_schedule_runs` |
-| 聊天文件与生图 · 识图 | §56、§59 | [chat-files.md](chat-files.md) | `server/src/chat-files/` | `chisabot_chat_files`、`chisabot_image_settings`、`chisabot_media_models`、`chisabot_image_descriptions` |
-| 备用模型 | §60、§61 | [models.md](models.md) | `server/src/agents/model-fallback.ts` | `enterprise_settings`（`model_fallbacks`） |
-| 工作流（默认隐藏） | §26、§74 | [workflows.md](workflows.md) | `server/src/workflows/` | `workflows`、`workflow_runs`、`workflow_run_events`（迁移 0055） |
-| 在线更新 · 自检 | §22 | [online-update.md](online-update.md)、[admin-smoke.md](admin-smoke.md) | `server/src/system-update.ts`、`deploy/updater/` | 宿主机 spool |
-| 手机网页 · PWA | §40 | [pwa.md](pwa.md) | `app/public/sw.js`、`app/src/lib/device.ts` | — |
-| 朋友账号（多账号，默认隐藏） | §65 | [accounts.md](accounts.md) | `deploy/public/auth/server.ts`、`server/src/auth/gateway-identity.ts`、`app/src/routes/_authed/admin/accounts.tsx` | 网关 SQLite `accounts`、`invites`、`sessions.user_id`；应用 `users` / `user_roles` 自动建行 |
-| 导航 · 瘦身 | §57 | [slimming.md](slimming.md) | `server/src/package-orphans.ts` | 只删孤儿行 |
+| 功能                                                             | DESIGN                   | 文档                                                                   | 代码                                                                                                                                                                                    | 数据                                                                                                     |
+| ---------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 聊天、流式、富卡片                                               | §24–§27、§30–§32、§35    | [streaming.md](streaming.md)                                           | `app/src/lib/conversations/`、`server/src/conversation-runtime.ts`、`server/src/agents/`                                                                                                | `chisabot_local_threads/_runs/_events`                                                                   |
+| 聊天截图缩略图                                                   | §27                      | —                                                                      | `server/src/chat-shots.ts`                                                                                                                                                              | `chisabot_chat_shots`                                                                                    |
+| 回答中发消息 · 后台任务                                          | §38                      | —                                                                      | `server/src/thread-inbox.ts`、`server/src/workers/`                                                                                                                                     | `chisabot_thread_inbox`、`chisabot_workers`                                                              |
+| 全端同步 · 历史对话                                              | §42                      | —                                                                      | `server/src/bot-threads.ts`                                                                                                                                                             | `chisabot_bot_threads`                                                                                   |
+| 只有一套聊天（`/bot` → 频道聊天跳转、open-thread、上传进工作区） | §68 · ADR-0013           | [streaming.md](streaming.md)                                           | `app/src/routes/_authed/_app/bot.tsx`、`app/src/lib/channels/open-thread.ts`、`server/src/channels/routes.ts`（`/api/channels/open-thread`）、`server/src/chat-files/channel-mirror.ts` | `intelligence_channel_mappings`、`channel_agents`、`chisabot_chat_files`                                 |
+| 实时面板                                                         | §29、§43、§77            | —                                                                      | `server/src/live-panels/`                                                                                                                                                               | `live_panels`（迁移 0056/0057）                                                                          |
+| 浏览器多标签 · 收藏夹                                            | §95、§96                 | [browser-tabs.md](browser-tabs.md)                                     | `agent-computer/src/tabs.ts`、`server/src/browser-bookmarks/`                                                                                                                           | `chisabot_browser_bookmarks`、`chisabot_browser_bookmark_seeds`                                          |
+| 重新生成 / 编辑后重发                                            | §67                      | —                                                                      | `server/src/thread-truncate.ts`                                                                                                                                                         | `chisabot_thread_truncations`                                                                            |
+| 图片宽高预留                                                     | §83.2                    | —                                                                      | `server/src/image-dims/`                                                                                                                                                                | `chisabot_image_dims`                                                                                    |
+| 链接卡                                                           | §48                      | —                                                                      | `server/src/link-preview/`、`app/src/lib/rich-previews/`                                                                                                                                | `chisabot_link_previews`、`chisabot_link_preview_assets`                                                 |
+| 设备 / PC 节点 · 扫码绑定                                        | §16、§33、§45            | [pc-node.md](pc-node.md)                                               | `server/src/devices/`、`pc/`                                                                                                                                                            | `devices`、`device_audit_events`（迁移 0054；`device_bot_access` 已不用）                                |
+| 新建机器人 · 资料页                                              | §46、§47、§81            | [coworkers.md](coworkers.md)                                           | `server/src/agents/`                                                                                                                                                                    | `agents` 表（迁移 0058 一律私有）                                                                        |
+| 机器人头像                                                       | §81                      | [bot-avatars.md](bot-avatars.md)                                       | `server/src/bot-avatars/`                                                                                                                                                               | `chisabot_bot_avatars`                                                                                   |
+| 确认卡片 · 权限与审批 · 每个机器人的权限                         | §58、§97                 | [confirmations.md](confirmations.md)、[settings-ia.md](settings-ia.md) | `server/src/confirmations/`                                                                                                                                                             | `chisabot_confirm_prefs/_rules/_requests`、`chisabot_bot_permissions`                                    |
+| 设备编码工具 · 完全访问 · 无界面节点                             | §62                      | [pc-node.md](pc-node.md)                                               | `server/src/devices/tools.ts`、`roots.ts`、`node-install.ts`                                                                                                                            | `devices.full_access_until`                                                                              |
+| 本地 agent                                                       | §66 · ADR-0010           | [local-agents.md](local-agents.md)                                     | `server/src/local-agents/`、`pc/src/agent-runtime/`                                                                                                                                     | `chisabot_device_agent_settings`、`chisabot_local_agent_tasks`                                           |
+| Android 同源网页客户端                                           | §80 当前方向；§86 旧实现 | [android-native.md](android-native.md)                                 | `android/`、`app/`                                                                                                                                                                      | —                                                                                                        |
+| 设置分组 · 设置搜索                                              | §97                      | [settings-ia.md](settings-ia.md)                                       | `app/src/lib/settings/registry.ts`                                                                                                                                                      | —                                                                                                        |
+| IM 接入与持久交付                                                | §49；DSH §13             | [im.md](im.md)                                                         | `server/src/im/`、`shared/im.ts`                                                                                                                                                        | `chisabot_im_connections/_chats/_logs`、0064 `_inbox/_outbox`；正文与平台回执独立于模型执行保存          |
+| 长期记忆                                                         | §50                      | [memory.md](memory.md)                                                 | `server/src/memory-notes/`                                                                                                                                                              | `chisabot_memory_notes`、`chisabot_memory_bots`                                                          |
+| 技能                                                             | §51                      | [skills.md](skills.md)                                                 | `server/src/skills-chisa/`                                                                                                                                                              | `skills` 表                                                                                              |
+| 密钥保险箱                                                       | §52                      | [vault.md](vault.md)                                                   | `server/src/vault/`                                                                                                                                                                     | `chisabot_vault_secrets`、`chisabot_vault_requests`                                                      |
+| GitHub 连接                                                      | §53                      | [github.md](github.md)                                                 | `server/src/github/`                                                                                                                                                                    | `chisabot_github_connections`、`chisabot_github_actions`（令牌在保险箱 `github`）                        |
+| 页面                                                             | §54                      | [pages.md](pages.md)                                                   | `server/src/pages/`                                                                                                                                                                     | `chisabot_pages/_page_versions/_page_assets/_page_origins`                                               |
+| 定时任务与提醒                                                   | §55                      | [schedules.md](schedules.md)                                           | `server/src/schedules/`                                                                                                                                                                 | `chisabot_schedules`、`chisabot_schedule_runs`                                                           |
+| 聊天文件与生图 · 识图                                            | §56、§59                 | [chat-files.md](chat-files.md)                                         | `server/src/chat-files/`                                                                                                                                                                | `chisabot_chat_files`、`chisabot_image_settings`、`chisabot_media_models`、`chisabot_image_descriptions` |
+| 备用模型                                                         | §60、§61                 | [models.md](models.md)                                                 | `server/src/agents/model-fallback.ts`                                                                                                                                                   | `enterprise_settings`（`model_fallbacks`）                                                               |
+| 工作流（默认隐藏）                                               | §26、§74                 | [workflows.md](workflows.md)                                           | `server/src/workflows/`                                                                                                                                                                 | `workflows`、`workflow_runs`、`workflow_run_events`（迁移 0055）                                         |
+| 在线更新 · 自检                                                  | §22                      | [online-update.md](online-update.md)、[admin-smoke.md](admin-smoke.md) | `server/src/system-update.ts`、`deploy/updater/`                                                                                                                                        | 宿主机 spool                                                                                             |
+| 手机网页 · PWA                                                   | §40                      | [pwa.md](pwa.md)                                                       | `app/public/sw.js`、`app/src/lib/device.ts`                                                                                                                                             | —                                                                                                        |
+| 朋友账号（多账号，默认隐藏）                                     | §65                      | [accounts.md](accounts.md)                                             | `deploy/public/auth/server.ts`、`server/src/auth/gateway-identity.ts`、`app/src/routes/_authed/admin/accounts.tsx`                                                                      | 网关 SQLite `accounts`、`invites`、`sessions.user_id`；应用 `users` / `user_roles` 自动建行              |
+| 导航 · 瘦身                                                      | §57                      | [slimming.md](slimming.md)                                             | `server/src/package-orphans.ts`                                                                                                                                                         | 只删孤儿行                                                                                               |
 
 ## 4. 运行时开关（常用）
 
 以下是环境变量的仓库默认值或可选开关；生产实际值取决于部署配置。完整列表见 [configuration.md](configuration.md) 和各功能文档。
 
-| 变量 | 作用 |
-|---|---|
-| `CHISABOT_EXTRAS` | 默认空；`workflows,plugins,boundaries,components` 或 `all` 重新打开被精简隐藏的功能（§74） |
-| `CHISABOT_ACCOUNTS_UI=1` | 显示 设置 → 账号（朋友账号）；网关 `config.json` 的 `"invites": true` 才能发新邀请 |
-| `CHISABOT_GATEWAY_SECRET` / `_FILE` | 多账号：与登录服务 `identitySecret` 相同的密钥（≥32 字符），启用网关签名身份（[accounts.md](accounts.md)） |
-| `CHISABOT_SCHEDULES_SWEEP=0` | 关掉定时任务扫描 |
-| `CHISABOT_IM=0` | 开机不启动 IM 连接 |
-| `CHISABOT_RELEASE_LOCKS_ON_START=0` | 不在启动时释放孤儿线程锁（多进程共用一个库时） |
-| `CHISABOT_ORPHAN_SWEEP=0` / `CHISABOT_WORKER_ORPHAN_SWEEP=0` / `CHISABOT_PANEL_ORPHAN_SWEEP=0` | 关掉对应的开机孤儿清理 |
-| `CHISABOT_DEVICE_ASK_DEFAULTS=0` | 不把从没改过的「全部关闭」设备改成「询问」 |
-| `COMPUTER_BROWSER_MODE=headless` | 云端浏览器回到无界面模式 |
-| `CHISABOT_MAX_OUTPUT_TOKENS` | 单次输出上限（默认按模型目录，封顶 32000） |
-| `CHISABOT_GITHUB_API_BASE` | GitHub Enterprise 或测试替身 |
-| `CHISABOT_LINK_PREVIEW_SHOTS=1` | 没有 og:image 时截图做链接卡缩略图 |
+| 变量                                                                                           | 作用                                                                                                       |
+| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `CHISABOT_EXTRAS`                                                                              | 默认空；`workflows,plugins,boundaries,components` 或 `all` 重新打开被精简隐藏的功能（§74）                 |
+| `CHISABOT_ACCOUNTS_UI=1`                                                                       | 显示 设置 → 账号（朋友账号）；网关 `config.json` 的 `"invites": true` 才能发新邀请                         |
+| `CHISABOT_GATEWAY_SECRET` / `_FILE`                                                            | 多账号：与登录服务 `identitySecret` 相同的密钥（≥32 字符），启用网关签名身份（[accounts.md](accounts.md)） |
+| `CHISABOT_SCHEDULES_SWEEP=0`                                                                   | 关掉定时任务扫描                                                                                           |
+| `CHISABOT_IM=0`                                                                                | 开机不启动 IM 连接                                                                                         |
+| `CHISABOT_RELEASE_LOCKS_ON_START=0`                                                            | 不在启动时释放孤儿线程锁（多进程共用一个库时）                                                             |
+| `CHISABOT_ORPHAN_SWEEP=0` / `CHISABOT_WORKER_ORPHAN_SWEEP=0` / `CHISABOT_PANEL_ORPHAN_SWEEP=0` | 关掉对应的开机孤儿清理                                                                                     |
+| `CHISABOT_DEVICE_ASK_DEFAULTS=0`                                                               | 不把从没改过的「全部关闭」设备改成「询问」                                                                 |
+| `COMPUTER_BROWSER_MODE=headless`                                                               | 云端浏览器回到无界面模式                                                                                   |
+| `CHISABOT_MAX_OUTPUT_TOKENS`                                                                   | 单次输出上限（默认按模型目录，封顶 32000）                                                                 |
+| `CHISABOT_GITHUB_API_BASE`                                                                     | GitHub Enterprise 或测试替身                                                                               |
+| `CHISABOT_LINK_PREVIEW_SHOTS=1`                                                                | 没有 og:image 时截图做链接卡缩略图                                                                         |

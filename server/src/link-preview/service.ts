@@ -1,8 +1,7 @@
-import { computerHeaders } from "../../../shared/legacy-headers";
-import { imageDimsFor, imageKeyForUrl } from "../image-dims";
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { computerHeaders } from "../../../shared/legacy-headers";
 import {
   BlockedUrlError,
   guardedFetch,
@@ -10,6 +9,7 @@ import {
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
+import { imageDimsFor, imageKeyForUrl } from "../image-dims";
 import {
   decodeHtml,
   displayDomain,
@@ -103,7 +103,11 @@ export function degradedTitle(url: string): string {
   try {
     const last = new URL(url).pathname.split("/").pop() ?? "";
     const name = decodeURIComponent(last);
-    if (/\.[a-z0-9]{1,8}$/i.test(name) && name.length <= 120 && !/\.(html?|php|aspx?|jsp)$/i.test(name))
+    if (
+      /\.[a-z0-9]{1,8}$/i.test(name) &&
+      name.length <= 120 &&
+      !/\.(html?|php|aspx?|jsp)$/i.test(name)
+    )
       return name;
   } catch {
     /* 保持域名 */
@@ -171,7 +175,9 @@ export function redactUrl(url: string): string {
 /** 图片直链的标题：路径最后一段像文件名（photo.jpg）就用它；只剩个扩展名样的词（/image/png）就叫「图片」。 */
 export function directImageTitle(url: string): string {
   try {
-    const name = decodeURIComponent(new URL(url).pathname.split("/").pop() ?? "");
+    const name = decodeURIComponent(
+      new URL(url).pathname.split("/").pop() ?? "",
+    );
     if (/^.+\.[a-z0-9]{1,8}$/i.test(name)) return name.slice(0, 120);
   } catch {
     /* 落到下面 */
@@ -212,20 +218,44 @@ export function isChallengePage(
   } catch {
     return false;
   }
-  if (to !== from && /^(sec|captcha|verify|challenge|security)\./i.test(to)) return true;
-  if (/\/(captcha|challenge|verify)(\/|$)/i.test(path) && to !== from) return true;
+  if (to !== from && /^(sec|captcha|verify|challenge|security)\./i.test(to))
+    return true;
+  if (/\/(captcha|challenge|verify)(\/|$)/i.test(path) && to !== from)
+    return true;
   const head = html.slice(0, 65536);
   if (/<meta[^>]+id=["']zh-zse-ck["']/i.test(head.slice(0, 4096))) return true;
   const t = title.trim();
   if (CHALLENGE_TITLE_STRONG.test(t)) return true;
-  if (CHALLENGE_TITLE_WEAK.test(t)) return CHALLENGE_STATUS.has(status) || CHALLENGE_MARKERS.test(head);
+  if (CHALLENGE_TITLE_WEAK.test(t))
+    return CHALLENGE_STATUS.has(status) || CHALLENGE_MARKERS.test(head);
   return false;
 }
 
 const GITHUB_RESERVED = new Set([
-  "about", "apps", "collections", "customer-stories", "enterprise", "explore", "features",
-  "login", "marketplace", "new", "notifications", "orgs", "organizations", "pricing", "pulls",
-  "issues", "search", "settings", "site", "sponsors", "topics", "trending", "users", "join",
+  "about",
+  "apps",
+  "collections",
+  "customer-stories",
+  "enterprise",
+  "explore",
+  "features",
+  "login",
+  "marketplace",
+  "new",
+  "notifications",
+  "orgs",
+  "organizations",
+  "pricing",
+  "pulls",
+  "issues",
+  "search",
+  "settings",
+  "site",
+  "sponsors",
+  "topics",
+  "trending",
+  "users",
+  "join",
 ]);
 
 /**
@@ -259,11 +289,14 @@ type ApiSource = {
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-const obj = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+const obj = (v: unknown) =>
+  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 const httpsImage = (v: unknown) => {
   const s = str(v);
   if (!s) return null;
-  const full = s.startsWith("//") ? `https:${s}` : s.replace(/^http:\/\//, "https://");
+  const full = s.startsWith("//")
+    ? `https:${s}`
+    : s.replace(/^http:\/\//, "https://");
   return /^https:\/\//.test(full) ? full : null;
 };
 
@@ -300,7 +333,11 @@ export function apiSourceFor(url: string): ApiSource | null {
         const title = str(j.title);
         if (!title) return null;
         const author = str(j.author_name);
-        return { title, description: author, image: httpsImage(j.thumbnail_url) };
+        return {
+          title,
+          description: author,
+          image: httpsImage(j.thumbnail_url),
+        };
       },
     };
   }
@@ -323,7 +360,13 @@ export function apiSourceFor(url: string): ApiSource | null {
           const desc = str(d.desc);
           return {
             title,
-            description: [owner && `UP 主：${owner}`, desc && desc !== "-" ? desc : ""].filter(Boolean).join(" · ").slice(0, 300),
+            description: [
+              owner && `UP 主：${owner}`,
+              desc && desc !== "-" ? desc : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")
+              .slice(0, 300),
             image: httpsImage(d.pic),
           };
         },
@@ -346,7 +389,11 @@ export function apiSourceFor(url: string): ApiSource | null {
           const j = obj(json);
           const title = str(j.title);
           if (!title) return null;
-          return { title, description: str(j.abstract).slice(0, 300) || str(j.desc), image: httpsImage(j.image) };
+          return {
+            title,
+            description: str(j.abstract).slice(0, 300) || str(j.desc),
+            image: httpsImage(j.image),
+          };
         },
       };
     }
@@ -367,7 +414,8 @@ export async function createLinkPreviews(
 ) {
   const fetchUrl: PreviewFetch = options.fetch ?? guardedFetch;
   const log =
-    options.log ?? ((event: Record<string, unknown>) => console.warn(JSON.stringify(event)));
+    options.log ??
+    ((event: Record<string, unknown>) => console.warn(JSON.stringify(event)));
   await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_link_previews (
     url_key text PRIMARY KEY, url text NOT NULL, ok boolean NOT NULL, data jsonb NOT NULL,
     fetched_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
@@ -460,9 +508,14 @@ export async function createLinkPreviews(
         },
       });
     } catch (error) {
-      if (error instanceof BlockedUrlError) return { asset: null, reason: "blocked" };
+      if (error instanceof BlockedUrlError)
+        return { asset: null, reason: "blocked" };
       const message = error instanceof Error ? error.message : String(error);
-      return { asset: null, reason: `error: ${message.slice(0, 120)}`, retry: true };
+      return {
+        asset: null,
+        reason: `error: ${message.slice(0, 120)}`,
+        retry: true,
+      };
     }
     if (res.status < 200 || res.status >= 300) {
       const after = res.headers["retry-after"];
@@ -472,21 +525,33 @@ export async function createLinkPreviews(
         retry: res.status >= 500,
       };
     }
-    if (res.truncated) return { asset: null, reason: `too-large (>${max} bytes)` };
-    if (res.body.length === 0) return { asset: null, reason: "empty", retry: true };
+    if (res.truncated)
+      return { asset: null, reason: `too-large (>${max} bytes)` };
+    if (res.body.length === 0)
+      return { asset: null, reason: "empty", retry: true };
     const mime = sniffImage(res.body);
     if (!mime || !IMAGE_MIME.test(mime))
-      return { asset: null, reason: `not-image (${res.contentType || "no content-type"})` };
-    if (mime === "image/svg+xml" && !allowSvg) return { asset: null, reason: "svg-not-allowed" };
+      return {
+        asset: null,
+        reason: `not-image (${res.contentType || "no content-type"})`,
+      };
+    if (mime === "image/svg+xml" && !allowSvg)
+      return { asset: null, reason: "svg-not-allowed" };
     try {
       return { asset: await storeAsset(res.body, mime) };
     } catch (error) {
-      return { asset: null, reason: `store-failed: ${error instanceof Error ? error.name : "Error"}` };
+      return {
+        asset: null,
+        reason: `store-failed: ${error instanceof Error ? error.name : "Error"}`,
+      };
     }
   }
 
   /** 预览图（og:image、视频封面、GitHub 兜底图）：失败要留下原因，不然线上只看得到「没图」。 */
-  async function fetchPreviewImage(url: string, role: string): Promise<string | null> {
+  async function fetchPreviewImage(
+    url: string,
+    role: string,
+  ): Promise<string | null> {
     return (await fetchPreviewImageResult(url, role)).asset;
   }
 
@@ -497,14 +562,27 @@ export async function createLinkPreviews(
   ): Promise<{ asset: string | null; limited: boolean }> {
     let result = await fetchImageResult(url, IMAGE_MAX, false);
     // og:image 偶尔第一次很慢（GitHub 的图是现做的）：网络错误 / 5xx 再试一次；429、404 再试也一样。
-    if (!result.asset && result.retry) result = await fetchImageResult(url, IMAGE_MAX, false);
+    if (!result.asset && result.retry)
+      result = await fetchImageResult(url, IMAGE_MAX, false);
     if (!result.asset)
-      log({ type: "link-preview-image-failed", role, url: redactUrl(url), reason: result.reason });
-    return { asset: result.asset, limited: /^status 429\b/.test(result.reason ?? "") };
+      log({
+        type: "link-preview-image-failed",
+        role,
+        url: redactUrl(url),
+        reason: result.reason,
+      });
+    return {
+      asset: result.asset,
+      limited: /^status 429\b/.test(result.reason ?? ""),
+    };
   }
 
   /** 图标：一次就好，失败不记（每个网页会试好几个地址）。 */
-  async function fetchImage(url: string, max: number, allowSvg: boolean): Promise<string | null> {
+  async function fetchImage(
+    url: string,
+    max: number,
+    allowSvg: boolean,
+  ): Promise<string | null> {
     return (await fetchImageResult(url, max, allowSvg)).asset;
   }
 
@@ -557,15 +635,16 @@ export async function createLinkPreviews(
     const title = degradedTitle(url);
     let favicon: string | null = null;
     // 连不上 / 超时的站点，图标多半也取不到：不再白等一轮。
-    if (reason !== "fetch") try {
-      favicon = await fetchImage(
-        new URL("/favicon.ico", url).toString(),
-        ICON_MAX,
-        true,
-      );
-    } catch {
-      favicon = null;
-    }
+    if (reason !== "fetch")
+      try {
+        favicon = await fetchImage(
+          new URL("/favicon.ico", url).toString(),
+          ICON_MAX,
+          true,
+        );
+      } catch {
+        favicon = null;
+      }
     const preview: LinkPreview = {
       url,
       finalUrl,
@@ -682,7 +761,11 @@ export async function createLinkPreviews(
     const preview: LinkPreview = {
       url,
       finalUrl: page.url,
-      title: normalizeGithubTitle(parsed.title || domain, url, parsed.description),
+      title: normalizeGithubTitle(
+        parsed.title || domain,
+        url,
+        parsed.description,
+      ),
       siteName: parsed.siteName,
       domain,
       description: parsed.description,
@@ -693,7 +776,13 @@ export async function createLinkPreviews(
     };
     // 网页说有图但没取到（或只用了兜底图）：只缓存 30 分钟，过后再试真正的图，不让一次限流挂一整天。
     const imageMissed = Boolean(parsed.image || fallbacks.length) && !ogImage;
-    await writeCache(key, url, true, preview, limited ? LIMITED_TTL : imageMissed).catch(() => {});
+    await writeCache(
+      key,
+      url,
+      true,
+      preview,
+      limited ? LIMITED_TTL : imageMissed,
+    ).catch(() => {});
     if (wantShot) startScreenshot(key, preview);
     void prune().catch(() => {});
     return preview;
@@ -720,7 +809,10 @@ export async function createLinkPreviews(
    * - 404 / 其它 4xx（私有、不存在）：仍回能画大卡的数据（标题 owner/repo、头像），缓存 30 分钟。
    * - API 自己限流（429，或 403 且剩余额度 0）/ 5xx / 网络错误：返回 null，照旧抓网页。
    */
-  async function buildGithubRepo(url: string, key: string): Promise<LinkPreview | null> {
+  async function buildGithubRepo(
+    url: string,
+    key: string,
+  ): Promise<LinkPreview | null> {
     const repo = githubRepoOf(url);
     if (!repo) return null;
     const name = `${repo.owner}/${repo.repo}`;
@@ -736,7 +828,8 @@ export async function createLinkPreviews(
     }
     const rateLimited =
       res.status === 429 ||
-      (res.status === 403 && String(res.headers["x-ratelimit-remaining"] ?? "") === "0");
+      (res.status === 403 &&
+        String(res.headers["x-ratelimit-remaining"] ?? "") === "0");
     if (rateLimited || res.status >= 500 || res.status < 200) return null;
     const found = res.status >= 200 && res.status < 300;
     let json: Record<string, unknown> = {};
@@ -747,11 +840,18 @@ export async function createLinkPreviews(
         return null;
       }
     }
-    const fullName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(str(json.full_name))
+    const fullName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(
+      str(json.full_name),
+    )
       ? str(json.full_name)
       : name;
-    const description = str(json.description).replace(/\s+/g, " ").slice(0, 300);
-    const stars = typeof json.stargazers_count === "number" ? json.stargazers_count : undefined;
+    const description = str(json.description)
+      .replace(/\s+/g, " ")
+      .slice(0, 300);
+    const stars =
+      typeof json.stargazers_count === "number"
+        ? json.stargazers_count
+        : undefined;
     const avatar =
       httpsImage(obj(json.owner).avatar_url) ??
       `https://avatars.githubusercontent.com/${repo.owner}?s=400`;
@@ -780,7 +880,11 @@ export async function createLinkPreviews(
     const preview: LinkPreview = {
       url,
       finalUrl: url,
-      title: normalizeGithubTitle(fullName, `https://github.com/${fullName}`, description),
+      title: normalizeGithubTitle(
+        fullName,
+        `https://github.com/${fullName}`,
+        description,
+      ),
       siteName: "GitHub",
       domain: displayDomain(url),
       description,
@@ -799,12 +903,17 @@ export async function createLinkPreviews(
    * 网页本身拿不到东西的几个站，用它们公开的接口：YouTube oEmbed、bilibili 视频信息、百度百科词条卡。
    * 接口失败返回 null，照常走网页那条路（最后多半是 30 分钟的兜底卡）。
    */
-  async function buildFromApi(url: string, key: string): Promise<LinkPreview | null> {
+  async function buildFromApi(
+    url: string,
+    key: string,
+  ): Promise<LinkPreview | null> {
     const source = apiSourceFor(url);
     if (!source) return null;
     const info = source.read(await fetchJson(source.api));
     if (!info?.title) return null;
-    const image = info.image ? await fetchPreviewImage(info.image, source.kind ?? "api") : null;
+    const image = info.image
+      ? await fetchPreviewImage(info.image, source.kind ?? "api")
+      : null;
     const preview: LinkPreview = {
       url,
       finalUrl: url,
@@ -818,7 +927,13 @@ export async function createLinkPreviews(
       favicon: null,
       ...(source.kind === "video" ? { kind: "video" as const } : {}),
     };
-    await writeCache(key, url, true, preview, Boolean(info.image) && !image).catch(() => {});
+    await writeCache(
+      key,
+      url,
+      true,
+      preview,
+      Boolean(info.image) && !image,
+    ).catch(() => {});
     return preview;
   }
 
@@ -854,7 +969,9 @@ export async function createLinkPreviews(
     const key = imageKeyForUrl(preview.image);
     if (!key) return preview;
     const size = (await imageDimsFor(database).lookup([key])).get(key);
-    return size ? { ...preview, imageWidth: size.width, imageHeight: size.height } : preview;
+    return size
+      ? { ...preview, imageWidth: size.width, imageHeight: size.height }
+      : preview;
   }
 
   function allow(userId: string): boolean {

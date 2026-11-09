@@ -80,7 +80,9 @@ export function deploymentCapabilitiesQueryOptions() {
         generativeUi: body.generativeUi === true,
         accountsUi: body.accountsUi === true,
         extras: Array.isArray(body.extras)
-          ? body.extras.filter((extra): extra is string => typeof extra === "string")
+          ? body.extras.filter(
+              (extra): extra is string => typeof extra === "string",
+            )
           : [],
         transcription: body.transcription === true,
       };

@@ -1,11 +1,11 @@
 import { MessageSchema } from "@ag-ui/core/schemas";
 import { z } from "zod";
 import type { Database } from "../db/client";
-import { conversationAdmissionClosed } from "./maintenance";
 import type {
   IntelligenceHistoryClient,
   LegacyHistoryMessage,
 } from "./intelligence-history";
+import { conversationAdmissionClosed } from "./maintenance";
 
 const threadSchema = z
   .object({

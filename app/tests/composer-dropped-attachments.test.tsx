@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import type { Attachment } from "@/lib/chat/attachment-state";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { settleReactWork } from "./settle-react-work";
 
 /**

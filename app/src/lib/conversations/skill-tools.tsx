@@ -1,9 +1,9 @@
-import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { z } from "zod";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 import {
   agentPluginsQueryOptions,

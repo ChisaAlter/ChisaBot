@@ -1,8 +1,17 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 
-export type ConversationScope = { threadId: string; agentId: string; botId?: string };
+export type ConversationScope = {
+  threadId: string;
+  agentId: string;
+  botId?: string;
+};
 const Scope = createContext<ConversationScope | null>(null);
-export function ConversationScopeProvider({ children, ...scope }: ConversationScope & { children: ReactNode }) {
+export function ConversationScopeProvider({
+  children,
+  ...scope
+}: ConversationScope & { children: ReactNode }) {
   return <Scope.Provider value={scope}>{children}</Scope.Provider>;
 }
-export function useConversationScope() { return useContext(Scope); }
+export function useConversationScope() {
+  return useContext(Scope);
+}

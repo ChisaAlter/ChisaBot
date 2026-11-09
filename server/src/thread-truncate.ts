@@ -16,10 +16,20 @@ import type { Database } from "./db/client";
  * 回答中途插进去的消息（收件箱读进来的）没有自己的 RUN_STARTED，从它截会留下半轮回放，拒绝。
  */
 
-export type TruncationStart = { sequence: string; runId: string; ids: readonly string[] };
+export type TruncationStart = {
+  sequence: string;
+  runId: string;
+  ids: readonly string[];
+};
 
 export type TruncationPlan =
-  | { ok: true; index: number; cutSequence: string | null; removed: string[]; removedToolCalls: string[] }
+  | {
+      ok: true;
+      index: number;
+      cutSequence: string | null;
+      removed: string[];
+      removedToolCalls: string[];
+    }
   | { ok: false; status: 400 | 404 | 409; error: string };
 
 /**
@@ -32,17 +42,39 @@ export function planTruncation(
   fromMessageId: string,
 ): TruncationPlan {
   const index = messages.findIndex((message) => message.id === fromMessageId);
-  if (index < 0) return { ok: false, status: 404, error: "这条消息不在对话里（可能已经被别的设备改过了）" };
-  if (messages[index]!.role !== "user") return { ok: false, status: 400, error: "只能从用户消息开始重发" };
+  if (index < 0)
+    return {
+      ok: false,
+      status: 404,
+      error: "这条消息不在对话里（可能已经被别的设备改过了）",
+    };
+  if (messages[index]!.role !== "user")
+    return { ok: false, status: 400, error: "只能从用户消息开始重发" };
   const removedMessages = messages.slice(index);
   const removed = removedMessages.map((message) => message.id);
   const removedToolCalls = removedMessages.flatMap((message) =>
-    message.role === "assistant" ? ((message as { toolCalls?: { id?: unknown }[] }).toolCalls ?? []).map((call) => String(call.id ?? "")).filter(Boolean) : [],
+    message.role === "assistant"
+      ? ((message as { toolCalls?: { id?: unknown }[] }).toolCalls ?? [])
+          .map((call) => String(call.id ?? ""))
+          .filter(Boolean)
+      : [],
   );
-  if (!starts.length) return { ok: true, index, cutSequence: null, removed, removedToolCalls };
+  if (!starts.length)
+    return { ok: true, index, cutSequence: null, removed, removedToolCalls };
   const start = starts.find((item) => item.ids.includes(fromMessageId));
-  if (!start) return { ok: false, status: 409, error: "这条消息是在回答中途插进去的，不能单独重发" };
-  return { ok: true, index, cutSequence: start.sequence, removed, removedToolCalls };
+  if (!start)
+    return {
+      ok: false,
+      status: 409,
+      error: "这条消息是在回答中途插进去的，不能单独重发",
+    };
+  return {
+    ok: true,
+    index,
+    cutSequence: start.sequence,
+    removed,
+    removedToolCalls,
+  };
 }
 
 export async function ensureTruncationTable(database: Database) {
@@ -52,23 +84,35 @@ export async function ensureTruncationTable(database: Database) {
     owner_user_id text NOT NULL, from_message_id text NOT NULL, mode text NOT NULL DEFAULT 'resend',
     removed jsonb NOT NULL DEFAULT '[]'::jsonb, created_at timestamptz NOT NULL DEFAULT now()
   )`);
-  await database.$client.unsafe("CREATE INDEX IF NOT EXISTS chisabot_thread_truncations_thread ON chisabot_thread_truncations(thread_id, id)");
-  await database.$client.unsafe("ALTER TABLE chisabot_thread_truncations ADD COLUMN IF NOT EXISTS previous_messages jsonb");
+  await database.$client.unsafe(
+    "CREATE INDEX IF NOT EXISTS chisabot_thread_truncations_thread ON chisabot_thread_truncations(thread_id, id)",
+  );
+  await database.$client.unsafe(
+    "ALTER TABLE chisabot_thread_truncations ADD COLUMN IF NOT EXISTS previous_messages jsonb",
+  );
 }
 
 /** 本地会话初始化时已建表；读取失败必须阻止合并，不能把旧客户端的已删除消息重新写回。 */
-export async function tombstones(database: Database, threadId: string): Promise<Set<string>> {
+export async function tombstones(
+  database: Database,
+  threadId: string,
+): Promise<Set<string>> {
   const rows = await database.$client.unsafe<{ id: string }[]>(
-    "SELECT jsonb_array_elements_text(removed) AS id FROM chisabot_thread_truncations WHERE thread_id = $1", [threadId],
+    "SELECT jsonb_array_elements_text(removed) AS id FROM chisabot_thread_truncations WHERE thread_id = $1",
+    [threadId],
   );
   return new Set(rows.map((row) => row.id));
 }
 
 /** 对话版本：截断过几次。 */
-export async function threadRevision(database: Database, threadId: string): Promise<string> {
+export async function threadRevision(
+  database: Database,
+  threadId: string,
+): Promise<string> {
   try {
     const rows = await database.$client.unsafe<{ n: string }[]>(
-      "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1", [threadId],
+      "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1",
+      [threadId],
     );
     return rows[0]?.n ?? "0";
   } catch {
@@ -77,19 +121,30 @@ export async function threadRevision(database: Database, threadId: string): Prom
 }
 
 /** 滤掉墓碑里的消息（没有墓碑时原样返回同一个数组）。 */
-export function dropTombstoned<T extends { id: string }>(messages: readonly T[], dead: ReadonlySet<string>): T[] {
+export function dropTombstoned<T extends { id: string }>(
+  messages: readonly T[],
+  dead: ReadonlySet<string>,
+): T[] {
   if (!dead.size) return messages as T[];
   const kept = messages.filter((message) => !dead.has(message.id));
   return kept.length === messages.length ? (messages as T[]) : kept;
 }
 
 export class TruncateError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
     super(message);
   }
 }
 
-type ThreadLockRow = { owner_user_id: string; messages: Message[]; run_id: string | null; lock_expires_at: Date | string | null };
+type ThreadLockRow = {
+  owner_user_id: string;
+  messages: Message[];
+  run_id: string | null;
+  lock_expires_at: Date | string | null;
+};
 
 /**
  * 截断（事务里锁住这一行再做）。调用方已确认是本人的对话、且本进程里没在跑。
@@ -97,19 +152,38 @@ type ThreadLockRow = { owner_user_id: string; messages: Message[]; run_id: strin
  */
 export async function truncateThread(
   database: Database,
-  input: { threadId: string; ownerUserId: string; fromMessageId: string; mode: "regenerate" | "edit" | "resend" },
+  input: {
+    threadId: string;
+    ownerUserId: string;
+    fromMessageId: string;
+    mode: "regenerate" | "edit" | "resend";
+  },
 ) {
   return await database.$client.begin(async (transaction) => {
     // Serialize the revision cut with DSH's first/replacement binding, including an absent row.
-    await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [input.threadId]);
+    await transaction.unsafe(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [input.threadId],
+    );
     const rows = await transaction.unsafe<ThreadLockRow[]>(
-      "SELECT owner_user_id, messages, run_id, lock_expires_at FROM chisabot_local_threads WHERE id = $1 FOR UPDATE", [input.threadId],
+      "SELECT owner_user_id, messages, run_id, lock_expires_at FROM chisabot_local_threads WHERE id = $1 FOR UPDATE",
+      [input.threadId],
     );
     const row = rows[0];
-    if (!row || row.owner_user_id !== input.ownerUserId) throw new TruncateError("Thread not found", 404);
-    if (row.run_id && row.lock_expires_at && new Date(row.lock_expires_at).getTime() > Date.now())
-      throw new TruncateError("机器人正在回答，等它说完（或先停止）再重发", 409);
-    const starts = await transaction.unsafe<{ sequence: string; run_id: string; ids: string[] | null }[]>(
+    if (!row || row.owner_user_id !== input.ownerUserId)
+      throw new TruncateError("Thread not found", 404);
+    if (
+      row.run_id &&
+      row.lock_expires_at &&
+      new Date(row.lock_expires_at).getTime() > Date.now()
+    )
+      throw new TruncateError(
+        "机器人正在回答，等它说完（或先停止）再重发",
+        409,
+      );
+    const starts = await transaction.unsafe<
+      { sequence: string; run_id: string; ids: string[] | null }[]
+    >(
       `SELECT sequence::text AS sequence, run_id,
          (SELECT coalesce(jsonb_agg(m->>'id'), '[]'::jsonb) FROM jsonb_array_elements(coalesce(event->'input'->'messages', '[]'::jsonb)) m) AS ids
        FROM chisabot_local_events WHERE thread_id = $1 AND event->>'type' = 'RUN_STARTED' ORDER BY sequence`,
@@ -117,7 +191,11 @@ export async function truncateThread(
     );
     const plan = planTruncation(
       row.messages,
-      starts.map((start) => ({ sequence: start.sequence, runId: start.run_id, ids: (start.ids ?? []).map(String) })),
+      starts.map((start) => ({
+        sequence: start.sequence,
+        runId: start.run_id,
+        ids: (start.ids ?? []).map(String),
+      })),
       input.fromMessageId,
     );
     if (!plan.ok) throw new TruncateError(plan.error, plan.status);
@@ -129,13 +207,17 @@ export async function truncateThread(
       );
       const runIds = [...new Set(runs.map((item) => item.run_id))];
       if (runIds.length) {
-        const deleted = await transaction.unsafe<{ created_at: Date | string }[]>(
+        const deleted = await transaction.unsafe<
+          { created_at: Date | string }[]
+        >(
           `DELETE FROM chisabot_local_runs WHERE thread_id = $1 AND run_id IN (SELECT jsonb_array_elements_text($2::text::jsonb))
            AND NOT EXISTS (SELECT 1 FROM chisabot_local_events e WHERE e.thread_id = chisabot_local_runs.thread_id AND e.run_id = chisabot_local_runs.run_id)
            RETURNING created_at`,
           [input.threadId, JSON.stringify(runIds)],
         );
-        const times = deleted.map((item) => new Date(item.created_at).getTime()).filter(Number.isFinite);
+        const times = deleted
+          .map((item) => new Date(item.created_at).getTime())
+          .filter(Number.isFinite);
         if (times.length) cutAt = new Date(Math.min(...times)).toISOString();
       }
     }
@@ -148,7 +230,14 @@ export async function truncateThread(
     await transaction.unsafe(
       `INSERT INTO chisabot_thread_truncations (thread_id, owner_user_id, from_message_id, mode, removed, previous_messages)
        VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`,
-      [input.threadId, input.ownerUserId, input.fromMessageId, input.mode, JSON.stringify(plan.removed), JSON.stringify(row.messages)],
+      [
+        input.threadId,
+        input.ownerUserId,
+        input.fromMessageId,
+        input.mode,
+        JSON.stringify(plan.removed),
+        JSON.stringify(row.messages),
+      ],
     );
     const [dsh] = await transaction.unsafe<{ present: boolean }[]>(
       "SELECT to_regclass('public.chisabot_runtime_bindings') IS NOT NULL AS present",
@@ -156,16 +245,29 @@ export async function truncateThread(
     if (dsh?.present) {
       // The edit itself revokes the old execution branch. Waiting until the next send would let
       // an already-approved operation run against the edited history in the meantime.
-      await transaction.unsafe("UPDATE chisabot_runtime_bindings SET active=false WHERE thread_id=$1 AND owner_user_id=$2 AND active", [input.threadId, input.ownerUserId]);
-      await transaction.unsafe(`UPDATE chisabot_dsh_runs SET stop_requested=true,status='interrupted',updated_at=now()
-        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('admitting','observing','projecting','waiting')`, [input.threadId, input.ownerUserId]);
-      await transaction.unsafe(`UPDATE chisabot_conversation_commands SET status='stopped',updated_at=now()
-        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('accepted','dispatched','queued')`, [input.threadId, input.ownerUserId]);
-      await transaction.unsafe(`UPDATE chisabot_conversation_interactions SET status='cancelled'
-        WHERE thread_id=$1 AND owner_user_id=$2 AND status='pending'`, [input.threadId, input.ownerUserId]);
+      await transaction.unsafe(
+        "UPDATE chisabot_runtime_bindings SET active=false WHERE thread_id=$1 AND owner_user_id=$2 AND active",
+        [input.threadId, input.ownerUserId],
+      );
+      await transaction.unsafe(
+        `UPDATE chisabot_dsh_runs SET stop_requested=true,status='interrupted',updated_at=now()
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('admitting','observing','projecting','waiting')`,
+        [input.threadId, input.ownerUserId],
+      );
+      await transaction.unsafe(
+        `UPDATE chisabot_conversation_commands SET status='stopped',updated_at=now()
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status IN ('accepted','dispatched','queued')`,
+        [input.threadId, input.ownerUserId],
+      );
+      await transaction.unsafe(
+        `UPDATE chisabot_conversation_interactions SET status='cancelled'
+        WHERE thread_id=$1 AND owner_user_id=$2 AND status='pending'`,
+        [input.threadId, input.ownerUserId],
+      );
     }
     const revision = await transaction.unsafe<{ n: string }[]>(
-      "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1", [input.threadId],
+      "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1",
+      [input.threadId],
     );
     return {
       removed: plan.removed,
@@ -180,31 +282,55 @@ export async function truncateThread(
 /** 截断之后的收尾：撤回收件箱、作废确认卡片。每一项单独兜底（表可能没启用）。 */
 export async function afterTruncate(
   database: Database,
-  input: { threadId: string; ownerUserId: string; removedToolCalls: readonly string[] },
+  input: {
+    threadId: string;
+    ownerUserId: string;
+    removedToolCalls: readonly string[];
+  },
 ) {
   const sql = database.$client;
   try {
     await sql.unsafe(
       `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
-       WHERE thread_id = $1 AND status IN ('queued', 'owed')`, [input.threadId],
+       WHERE thread_id = $1 AND status IN ('queued', 'owed')`,
+      [input.threadId],
     );
-  } catch { /* 收件箱没启用 */ }
+  } catch {
+    /* 收件箱没启用 */
+  }
   if (input.removedToolCalls.length) {
-    await sql.unsafe("UPDATE chisabot_conversation_interactions SET status='cancelled' WHERE owner_user_id=$1 AND thread_id=$2 AND status='pending' AND call_id IN (SELECT jsonb_array_elements_text($3::text::jsonb))",
-      [input.ownerUserId, input.threadId, JSON.stringify(input.removedToolCalls)]);
+    await sql.unsafe(
+      "UPDATE chisabot_conversation_interactions SET status='cancelled' WHERE owner_user_id=$1 AND thread_id=$2 AND status='pending' AND call_id IN (SELECT jsonb_array_elements_text($3::text::jsonb))",
+      [
+        input.ownerUserId,
+        input.threadId,
+        JSON.stringify(input.removedToolCalls),
+      ],
+    );
     try {
       await sql.unsafe(
         `UPDATE chisabot_confirm_requests SET status = 'cancelled', decided_at = coalesce(decided_at, now())
          WHERE owner_user_id = $1 AND thread_id = $2 AND status = 'pending'
          AND tool_call_id IN (SELECT jsonb_array_elements_text($3::text::jsonb))`,
-        [input.ownerUserId, input.threadId, JSON.stringify(input.removedToolCalls)],
+        [
+          input.ownerUserId,
+          input.threadId,
+          JSON.stringify(input.removedToolCalls),
+        ],
       );
-    } catch { /* 确认卡片没启用 */ }
+    } catch {
+      /* 确认卡片没启用 */
+    }
   }
 }
 
 /** 被截那几轮里派出去、还在跑的后台任务（按创建时间）。 */
-export async function workersSince(database: Database, threadId: string, ownerUserId: string, since: string | null): Promise<string[]> {
+export async function workersSince(
+  database: Database,
+  threadId: string,
+  ownerUserId: string,
+  since: string | null,
+): Promise<string[]> {
   if (!since) return [];
   try {
     const rows = await database.$client.unsafe<{ id: string }[]>(

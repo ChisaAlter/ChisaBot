@@ -11,7 +11,6 @@ import {
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { McpTestServer, type McpFixtureTool } from "./support/mcp-server";
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import type { ActionPolicy } from "../src/computer/policy";
@@ -46,8 +45,8 @@ import {
   type ComposioResult,
   useComposioClient,
 } from "../src/plugins/composio";
-import { redirectUriFor } from "../src/plugins/oauth";
 import * as mcpTransport from "../src/plugins/mcp";
+import { redirectUriFor } from "../src/plugins/oauth";
 import {
   type AccessToken,
   CustomServerRefusedError,
@@ -64,6 +63,7 @@ import {
 } from "../src/plugins/store";
 import { grantedTools, REFUSAL_MARKER } from "../src/plugins/tools";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import { type McpFixtureTool, McpTestServer } from "./support/mcp-server";
 
 /**
  * The two questions a tool call has to pass, and the row each answer leaves behind.
@@ -625,12 +625,17 @@ describe("the policy is asked as well as the grant", () => {
     const secret = `sk-${"z".repeat(32)}`;
 
     // Settle native SQL before asserting: Bun 1.3.14's rejects.toThrow stalled this first read.
-    const refusal = await store.callTool({
-      ref,
-      args: { query: "quarterly report", nested: { apiKey: secret } },
-      botId: holderId,
-      actorId,
-    }).then(() => null, (error: unknown) => error);
+    const refusal = await store
+      .callTool({
+        ref,
+        args: { query: "quarterly report", nested: { apiKey: secret } },
+        botId: holderId,
+        actorId,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
     expect(refusal).toBeInstanceOf(PluginRefusedError);
     expect((refusal as Error).message).toContain("credential material");
 
@@ -2250,12 +2255,18 @@ async function withMockedNotionListing(
     .where(eq(mcpServers.id, notionServerId));
 
   const realListTools = mcpTransport.listTools;
-  const listing = spyOn(mcpTransport, "listTools").mockImplementation((connection) => {
-    if (connection.url !== "https://mcp.notion.com/mcp") {
-      throw new Error("Unexpected listing destination");
-    }
-    return realListTools({ ...connection, url: mockUrl, allowPrivateHost: true });
-  });
+  const listing = spyOn(mcpTransport, "listTools").mockImplementation(
+    (connection) => {
+      if (connection.url !== "https://mcp.notion.com/mcp") {
+        throw new Error("Unexpected listing destination");
+      }
+      return realListTools({
+        ...connection,
+        url: mockUrl,
+        allowPrivateHost: true,
+      });
+    },
+  );
 
   try {
     await body();

@@ -1,4 +1,5 @@
 import { conversationPath } from "../legacy/protocol";
+
 /**
  * Recognising a Bot run on the conversation runtime path (moved out of the removed upstream enterprise
  * gate in slimming P6-1; behaviour unchanged).

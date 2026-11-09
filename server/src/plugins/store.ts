@@ -2,9 +2,9 @@ import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { type ApprovalGate, currentApprovalContext } from "../approvals/types";
 import {
+  type AuditEventInput,
   type AuditInitiator,
   type AuditStore,
-  type AuditEventInput,
   insertTransactionalAuditEvent,
   recordAuditEvent,
 } from "../audit";
@@ -1237,7 +1237,10 @@ export function createPluginStore(options: PluginStoreOptions) {
       const rows = await database.$client.unsafe<{ server_id: string }[]>(
         "SELECT server_id FROM chisabot_mcp_global_grants WHERE enabled = true",
       );
-      autoGrantCache = { at: now, servers: new Set(rows.map((r) => r.server_id)) };
+      autoGrantCache = {
+        at: now,
+        servers: new Set(rows.map((r) => r.server_id)),
+      };
       return autoGrantCache.servers;
     } catch (error) {
       if (now - autoGrantFailureLoggedAt > 30_000) {
@@ -1246,11 +1249,16 @@ export function createPluginStore(options: PluginStoreOptions) {
           JSON.stringify({
             type: "mcp-auto-grant-unreadable",
             error: error instanceof Error ? error.name : "unknown",
-            serving: cached && now - cached.at < AUTO_GRANT_STALE_MS ? "last-known" : "none",
+            serving:
+              cached && now - cached.at < AUTO_GRANT_STALE_MS
+                ? "last-known"
+                : "none",
           }),
         );
       }
-      return cached && now - cached.at < AUTO_GRANT_STALE_MS ? cached.servers : new Set<string>();
+      return cached && now - cached.at < AUTO_GRANT_STALE_MS
+        ? cached.servers
+        : new Set<string>();
     }
   }
 
@@ -4361,27 +4369,33 @@ export function createPluginStore(options: PluginStoreOptions) {
       return row ? row.ownerUserId : undefined;
     },
 
-    async installSkill(input: {
-      slug: string;
-      title: string;
-      summary: string;
-      instructions: string;
-      origin?: string;
-      /** Whose it is. Null writes a skill for the whole deployment, which is an admin's to make. */
-      ownerUserId: string | null;
-      /**
-       * The tools this skill needs, as `<serverId>/<toolName>` refs. Absent leaves whatever was
-       * declared before; an empty array clears it, which is how a skill stops asking for anything.
-       */
-      tools?: string[];
-      by: string;
-      /**
-       * Move the skill to `ownerUserId` even though it already exists. Off by default: a re-save
-       * keeps whoever owns the skill. Only a route that has checked the caller may hand a skill
-       * to the deployment (or take a shared one back) sets this.
-       */
-      claimOwner?: boolean;
-    }, transaction?: { database: Pick<Database, "insert" | "delete">; afterCommit: (notify: () => void) => void }): Promise<void> {
+    async installSkill(
+      input: {
+        slug: string;
+        title: string;
+        summary: string;
+        instructions: string;
+        origin?: string;
+        /** Whose it is. Null writes a skill for the whole deployment, which is an admin's to make. */
+        ownerUserId: string | null;
+        /**
+         * The tools this skill needs, as `<serverId>/<toolName>` refs. Absent leaves whatever was
+         * declared before; an empty array clears it, which is how a skill stops asking for anything.
+         */
+        tools?: string[];
+        by: string;
+        /**
+         * Move the skill to `ownerUserId` even though it already exists. Off by default: a re-save
+         * keeps whoever owns the skill. Only a route that has checked the caller may hand a skill
+         * to the deployment (or take a shared one back) sets this.
+         */
+        claimOwner?: boolean;
+      },
+      transaction?: {
+        database: Pick<Database, "insert" | "delete">;
+        afterCommit: (notify: () => void) => void;
+      },
+    ): Promise<void> {
       /*
        * Checked before anything is written, so a save is all-or-nothing from the caller's side: a
        * skill is never left saved with half its declarations because the fourth ref was a typo.
@@ -4405,50 +4419,50 @@ export function createPluginStore(options: PluginStoreOptions) {
       }
 
       const write = async (writer: Pick<Database, "insert" | "delete">) => {
-      await writer
-        .insert(skills)
-        .values({
-          id: input.slug,
-          slug: input.slug,
-          ownerUserId: input.ownerUserId,
-          title: input.title,
-          summary: input.summary,
-          instructions: input.instructions,
-          origin: input.origin ?? "yours",
-          installedBy: input.by,
-        })
-        // Editing keeps the owner it already had. Whose a skill is, is not something a re-save
-        // should quietly change, and the route has already checked this person may edit it.
-        // The one exception is `claimOwner`, set when an administrator shares or unshares it.
-        .onConflictDoUpdate({
-          target: skills.slug,
-          set: {
+        await writer
+          .insert(skills)
+          .values({
+            id: input.slug,
+            slug: input.slug,
+            ownerUserId: input.ownerUserId,
             title: input.title,
             summary: input.summary,
             instructions: input.instructions,
-            ...(input.claimOwner ? { ownerUserId: input.ownerUserId } : {}),
-            updatedAt: new Date(),
-          },
-        });
+            origin: input.origin ?? "yours",
+            installedBy: input.by,
+          })
+          // Editing keeps the owner it already had. Whose a skill is, is not something a re-save
+          // should quietly change, and the route has already checked this person may edit it.
+          // The one exception is `claimOwner`, set when an administrator shares or unshares it.
+          .onConflictDoUpdate({
+            target: skills.slug,
+            set: {
+              title: input.title,
+              summary: input.summary,
+              instructions: input.instructions,
+              ...(input.claimOwner ? { ownerUserId: input.ownerUserId } : {}),
+              updatedAt: new Date(),
+            },
+          });
 
-      /*
-       * Replaced wholesale rather than merged. What a skill needs is a set the author is editing, so
-       * a save says what it is now; merging would make removing one a thing with no gesture for it.
-       */
-      if (declared !== undefined) {
-        await writer
-          .delete(skillTools)
-          .where(eq(skillTools.skillId, input.slug));
-        if (declared.length > 0) {
-          await writer.insert(skillTools).values(
-            declared.map((ref) => ({
-              skillId: input.slug,
-              ref,
-              declaredBy: input.by,
-            })),
-          );
+        /*
+         * Replaced wholesale rather than merged. What a skill needs is a set the author is editing, so
+         * a save says what it is now; merging would make removing one a thing with no gesture for it.
+         */
+        if (declared !== undefined) {
+          await writer
+            .delete(skillTools)
+            .where(eq(skillTools.skillId, input.slug));
+          if (declared.length > 0) {
+            await writer.insert(skillTools).values(
+              declared.map((ref) => ({
+                skillId: input.slug,
+                ref,
+                declaredBy: input.by,
+              })),
+            );
+          }
         }
-      }
       };
       if (transaction) await write(transaction.database);
       else await database.transaction(write);
@@ -4466,7 +4480,10 @@ export function createPluginStore(options: PluginStoreOptions) {
           ...(declared === undefined ? {} : { declares: declared }),
         },
       };
-      if (transaction) transaction.afterCommit(await insertTransactionalAuditEvent(transaction.database, audit));
+      if (transaction)
+        transaction.afterCommit(
+          await insertTransactionalAuditEvent(transaction.database, audit),
+        );
       else await recordAuditEvent(auditStore, audit);
     },
 
@@ -4589,7 +4606,8 @@ export function createPluginStore(options: PluginStoreOptions) {
           .where(eq(pluginGrants.agentId, agentId)),
         globalAutoGrantServers(),
       ]);
-      if (held.length === 0 && autoServers.size === 0) return { tools: [], skills: [] };
+      if (held.length === 0 && autoServers.size === 0)
+        return { tools: [], skills: [] };
 
       const toolRefs = held
         .filter((row) => row.kind === "mcp")
@@ -4629,7 +4647,11 @@ export function createPluginStore(options: PluginStoreOptions) {
       // A set, so this is a lookup per row rather than a walk of the grants per row.
       const granted = new Set(toolRefs);
       const grantedTools = toolRows
-        .filter((row) => autoServers.has(row.serverId) || granted.has(`${row.serverId}/${row.name}`))
+        .filter(
+          (row) =>
+            autoServers.has(row.serverId) ||
+            granted.has(`${row.serverId}/${row.name}`),
+        )
         .map((row) => {
           const ref = `${row.serverId}/${row.name}`;
           return {
@@ -6946,7 +6968,9 @@ export function createPluginStore(options: PluginStoreOptions) {
           targetId: serverId,
           payload: {
             actor: by,
-            change: enabled ? "mcp_auto_grant_enabled" : "mcp_auto_grant_disabled",
+            change: enabled
+              ? "mcp_auto_grant_enabled"
+              : "mcp_auto_grant_disabled",
             server: serverId,
           },
         });

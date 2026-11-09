@@ -45,18 +45,23 @@ export function SmoothStreamdown({
   // 正文里的 Vec<String>、Option<T> 不是 HTML：先转义成文字，免得被当未知标签丢掉（escape-unknown-tags.ts）。
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
-  const origin = typeof window === "undefined" ? "" : (window.location?.origin ?? "");
+  const origin =
+    typeof window === "undefined" ? "" : (window.location?.origin ?? "");
   // 挂载后内容变过就算「流式中」：此后末块不入缓存。块数在 Streamdown 切块时记下（同一次渲染内先于各块）。
   const first = useRef(children);
   const tail = useRef<MdTail | null>(null);
   if (!tail.current) tail.current = { live: false, count: 0 };
   if (children !== first.current) tail.current.live = true;
-  const incRef = useRef<ReturnType<typeof createIncrementalBlockParser> | null>(null);
-  if (!incRef.current) incRef.current = createIncrementalBlockParser(parseMarkdownIntoBlocks);
+  const incRef = useRef<ReturnType<typeof createIncrementalBlockParser> | null>(
+    null,
+  );
+  if (!incRef.current)
+    incRef.current = createIncrementalBlockParser(parseMarkdownIntoBlocks);
   const split = useRef((markdown: string) => {
-    const blocks = tail.current?.live && incRef.current
-      ? incRef.current(markdown)
-      : parseMarkdownIntoBlocks(markdown);
+    const blocks =
+      tail.current?.live && incRef.current
+        ? incRef.current(markdown)
+        : parseMarkdownIntoBlocks(markdown);
     if (tail.current) tail.current.count = blocks.length;
     return blocks;
   }).current;
@@ -68,7 +73,11 @@ export function SmoothStreamdown({
         parseMarkdownIntoBlocksFn={split}
         {...props}
       >
-        {workspaceLinks(cjkFriendlyEmphasis(escapeUnknownTags(shown)), bot, origin)}
+        {workspaceLinks(
+          cjkFriendlyEmphasis(escapeUnknownTags(shown)),
+          bot,
+          origin,
+        )}
       </Streamdown>
     </MdTailContext.Provider>
   );

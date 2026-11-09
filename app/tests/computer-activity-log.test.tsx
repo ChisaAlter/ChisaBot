@@ -325,7 +325,9 @@ test("每条记录显示自己写入时的时间：互不相同，且与 started
 });
 
 test("旧路径：从对话记录回放的调用不盖「读回来那一刻」的时间", async () => {
-  const { syncComputerMessages } = await import("@/lib/conversations/computer-tools");
+  const { syncComputerMessages } = await import(
+    "@/lib/conversations/computer-tools"
+  );
   const { activityFor } = await import("@/lib/computers/activity");
   const msgs = [0, 1, 2].flatMap((i) => [
     {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { PluginServer, PluginSkill } from "@/lib/plugins/queries";
-import { type SkillFormValues, skillFormSchema } from "./form";
 import { savedSkillAnswer } from "../../../../shared/skill-authoring";
+import { type SkillFormValues, skillFormSchema } from "./form";
 
 /**
  * A skill a Bot proposes during a conversation, and the checks it goes through before anybody is
@@ -70,7 +70,9 @@ export const SKILL_CREATOR_SLUG = "skill-creator";
  * seen `Find A Document` in a title will otherwise offer it as a command.
  */
 export { proposedSkillSchema } from "../../../../shared/skill-authoring";
+
 import type { ProposedSkill } from "../../../../shared/skill-authoring";
+
 export type { ProposedSkill };
 
 /** What checking a proposal answers with: the four fields to save, or the problems to fix. */

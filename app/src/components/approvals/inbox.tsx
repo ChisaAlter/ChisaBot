@@ -10,9 +10,19 @@ import { confirmDialog } from "@/components/ui/confirm";
 import { Card, EmptyState, ErrorCard } from "@/components/ui/skyglass";
 import { Textarea } from "@/components/ui/textarea";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { type ApprovalDecision, type ApprovalInboxData, answerPersonQuestion, approvalInboxOptions, decideApproval, dismissPersonQuestion } from "@/lib/approvals";
+import {
+  type ApprovalDecision,
+  type ApprovalInboxData,
+  answerPersonQuestion,
+  approvalInboxOptions,
+  decideApproval,
+  dismissPersonQuestion,
+} from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
-import { confirmKeys, recentConfirmationsQueryOptions } from "@/lib/confirmations";
+import {
+  confirmKeys,
+  recentConfirmationsQueryOptions,
+} from "@/lib/confirmations";
 import { botFactoryApprovalSpec } from "@/lib/conversations/bot-factory-tool";
 import { agoText } from "@/lib/im";
 
@@ -30,10 +40,19 @@ export function PendingInbox() {
     const names = new Map((bots.data ?? []).map((bot) => [bot.id, bot.name]));
     return (id: string) => names.get(id) ?? "机器人";
   }, [bots.data]);
-  const refresh = () => Promise.all([cache.invalidateQueries({ queryKey: ["approvals"] }), cache.invalidateQueries({ queryKey: confirmKeys.all }), cache.invalidateQueries({ queryKey: botLifecycleKeys.all })]);
+  const refresh = () =>
+    Promise.all([
+      cache.invalidateQueries({ queryKey: ["approvals"] }),
+      cache.invalidateQueries({ queryKey: confirmKeys.all }),
+      cache.invalidateQueries({ queryKey: botLifecycleKeys.all }),
+    ]);
 
-  const confirms = (recent.data ?? []).filter((request) => request.status === "pending");
-  const requests = (upstream.data?.requests ?? []).filter((request) => request.status === "pending");
+  const confirms = (recent.data ?? []).filter(
+    (request) => request.status === "pending",
+  );
+  const requests = (upstream.data?.requests ?? []).filter(
+    (request) => request.status === "pending",
+  );
   const questions = upstream.data?.questions ?? [];
   const loading = recent.isPending || upstream.isPending;
   const failed = recent.error || upstream.error;
@@ -46,7 +65,12 @@ export function PendingInbox() {
       ) : failed ? (
         <ErrorCard
           action={
-            <Button className="mt-2" onClick={() => void refresh()} size="sm" variant="outline">
+            <Button
+              className="mt-2"
+              onClick={() => void refresh()}
+              size="sm"
+              variant="outline"
+            >
               {"重试"}
             </Button>
           }
@@ -56,7 +80,9 @@ export function PendingInbox() {
         />
       ) : total === 0 ? (
         <EmptyState
-          description={"机器人要做有后果的事（对外发消息、删除、付款、操作你的电脑）时会在聊天里先问你；没来得及点的会留在这里。"}
+          description={
+            "机器人要做有后果的事（对外发消息、删除、付款、操作你的电脑）时会在聊天里先问你；没来得及点的会留在这里。"
+          }
           icon={<IconChecks className="size-6" />}
           title={"没有等你处理的事"}
         />
@@ -66,7 +92,12 @@ export function PendingInbox() {
             <PageSection title={`等你确认 · ${confirms.length}`}>
               <Card className="mem-card">
                 {confirms.map((request) => (
-                  <ConfirmRow botName={botName(request.agentId)} key={request.id} onDecided={refresh} request={request} />
+                  <ConfirmRow
+                    botName={botName(request.agentId)}
+                    key={request.id}
+                    onDecided={refresh}
+                    request={request}
+                  />
                 ))}
               </Card>
             </PageSection>
@@ -75,7 +106,12 @@ export function PendingInbox() {
             <PageSection title={`要你处理 · ${requests.length}`}>
               <div className="space-y-3">
                 {requests.map((request) => (
-                  <HandOffCard botName={botName(request.action.botId)} key={request.id} onDone={refresh} request={request} />
+                  <HandOffCard
+                    botName={botName(request.action.botId)}
+                    key={request.id}
+                    onDone={refresh}
+                    request={request}
+                  />
                 ))}
               </div>
             </PageSection>
@@ -84,7 +120,12 @@ export function PendingInbox() {
             <PageSection title={`在等你回答 · ${questions.length}`}>
               <div className="space-y-3">
                 {questions.map((question) => (
-                  <QuestionCard botName={botName(question.botId)} key={question.id} onDone={refresh} question={question} />
+                  <QuestionCard
+                    botName={botName(question.botId)}
+                    key={question.id}
+                    onDone={refresh}
+                    question={question}
+                  />
                 ))}
               </div>
             </PageSection>
@@ -94,7 +135,11 @@ export function PendingInbox() {
       <Link className="pending-prefs-link" to="/settings/approvals">
         <span>
           <span className="pending-prefs-t">{"哪些事先问我"}</span>
-          <span className="pending-prefs-s">{"设置 → 权限与审批：按类别选「先问我 / 直接做」，或用自己的话写规则"}</span>
+          <span className="pending-prefs-s">
+            {
+              "设置 → 权限与审批：按类别选「先问我 / 直接做」，或用自己的话写规则"
+            }
+          </span>
         </span>
         <IconChevronRight aria-hidden className="size-4 shrink-0" />
       </Link>
@@ -105,14 +150,25 @@ export function PendingInbox() {
 type PendingRequest = ApprovalInboxData["requests"][number];
 
 /** 上游审批闸门交给你的一步（付款 / 改密码这类安全规则，或「执行前询问」）：人话标题，参数折叠在「查看详情」里。 */
-function HandOffCard({ request, botName, onDone }: { request: PendingRequest; botName: string; onDone: () => Promise<unknown> }) {
+function HandOffCard({
+  request,
+  botName,
+  onDone,
+}: {
+  request: PendingRequest;
+  botName: string;
+  onDone: () => Promise<unknown>;
+}) {
   const handOff = request.action.policy?.behaviour === "hand_off";
   const decide = async (choice: ApprovalDecision) => {
     await decideApproval(request.id, choice);
     await onDone();
   };
   const opts = { errorToast: (error: Error) => error.message };
-  const first = useAsyncAction(() => decide(handOff ? "handled" : "allow_once"), opts);
+  const first = useAsyncAction(
+    () => decide(handOff ? "handled" : "allow_once"),
+    opts,
+  );
   const always = useAsyncAction(() => decide("allow_always"), opts);
   const deny = useAsyncAction(() => decide("deny"), opts);
   /*
@@ -123,12 +179,22 @@ function HandOffCard({ request, botName, onDone }: { request: PendingRequest; bo
     request.action.toolRef,
     request.action.target,
   );
-  const what = factorySpec?.verb ?? request.action.toolRef.replace(/^computer_|^host\//, "").replaceAll("_", " ");
+  const what =
+    factorySpec?.verb ??
+    request.action.toolRef
+      .replace(/^computer_|^host\//, "")
+      .replaceAll("_", " ");
   return (
     <Card className="pending-card">
-      <div className="pending-card-t">{handOff ? `${botName}把这一步交给你亲自完成` : `${botName}想执行「${what}」`}</div>
+      <div className="pending-card-t">
+        {handOff
+          ? `${botName}把这一步交给你亲自完成`
+          : `${botName}想执行「${what}」`}
+      </div>
       <div className="pending-card-s">
-        {[request.action.policy?.reason, agoText(request.createdAt)].filter(Boolean).join(" · ")}
+        {[request.action.policy?.reason, agoText(request.createdAt)]
+          .filter(Boolean)
+          .join(" · ")}
       </div>
       {factorySpec?.rows.length ? (
         <dl className="pending-card-spec">
@@ -145,15 +211,36 @@ function HandOffCard({ request, botName, onDone }: { request: PendingRequest; bo
         <pre>{JSON.stringify(request.action.args, null, 2)}</pre>
       </details>
       <div className="pending-card-a">
-        <Button feedback={{ pending: "处理中…", success: handOff ? "已标记完成" : "已允许", error: "失败" }} onClick={() => void first.run()} size="sm" state={first.state}>
+        <Button
+          feedback={{
+            pending: "处理中…",
+            success: handOff ? "已标记完成" : "已允许",
+            error: "失败",
+          }}
+          onClick={() => void first.run()}
+          size="sm"
+          state={first.state}
+        >
           {handOff ? "我已自己完成" : "允许一次"}
         </Button>
         {handOff ? null : (
-          <Button feedback={{ pending: "处理中…", success: "已允许", error: "失败" }} onClick={() => void always.run()} size="sm" state={always.state} variant="outline">
+          <Button
+            feedback={{ pending: "处理中…", success: "已允许", error: "失败" }}
+            onClick={() => void always.run()}
+            size="sm"
+            state={always.state}
+            variant="outline"
+          >
             {"以后都允许"}
           </Button>
         )}
-        <Button feedback="cancel" onClick={() => void deny.run()} size="sm" state={deny.state} variant="outline">
+        <Button
+          feedback="cancel"
+          onClick={() => void deny.run()}
+          size="sm"
+          state={deny.state}
+          variant="outline"
+        >
           {"不要执行"}
         </Button>
       </div>
@@ -161,7 +248,15 @@ function HandOffCard({ request, botName, onDone }: { request: PendingRequest; bo
   );
 }
 
-function QuestionCard({ question, botName, onDone }: { question: ApprovalInboxData["questions"][number]; botName: string; onDone: () => Promise<unknown> }) {
+function QuestionCard({
+  question,
+  botName,
+  onDone,
+}: {
+  question: ApprovalInboxData["questions"][number];
+  botName: string;
+  onDone: () => Promise<unknown>;
+}) {
   const [text, setText] = useState("");
   const send = useAsyncAction(
     async () => {
@@ -184,18 +279,41 @@ function QuestionCard({ question, botName, onDone }: { question: ApprovalInboxDa
   return (
     <Card className="pending-card">
       <div className="pending-card-t">{`${botName}问：${question.question}`}</div>
-      {question.why ? <div className="pending-card-s">{question.why}</div> : null}
-      <Textarea aria-label={"你的回答"} data-unsent-watch onChange={(event) => setText(event.target.value)} placeholder={"你的回答"} value={text} />
+      {question.why ? (
+        <div className="pending-card-s">{question.why}</div>
+      ) : null}
+      <Textarea
+        aria-label={"你的回答"}
+        data-unsent-watch
+        onChange={(event) => setText(event.target.value)}
+        placeholder={"你的回答"}
+        value={text}
+      />
       <div className="pending-card-a">
-        <Button disabled={!text.trim()} feedback={{ pending: "发送中…", success: "已发送", error: "发送失败" }} onClick={() => void send.run()} size="sm" state={send.state}>
+        <Button
+          disabled={!text.trim()}
+          feedback={{
+            pending: "发送中…",
+            success: "已发送",
+            error: "发送失败",
+          }}
+          onClick={() => void send.run()}
+          size="sm"
+          state={send.state}
+        >
           {"发送"}
         </Button>
         <Button
-          feedback={{ pending: "关闭中…", success: "已关闭", error: "关闭失败" }}
+          feedback={{
+            pending: "关闭中…",
+            success: "已关闭",
+            error: "关闭失败",
+          }}
           onClick={async () => {
             const ok = await confirmDialog({
               title: "不用回答这个问题了？",
-              description: "这条问题会被关掉，机器人不会再等它。想让它接着做，在这里回答就好。",
+              description:
+                "这条问题会被关掉，机器人不会再等它。想让它接着做，在这里回答就好。",
               confirmLabel: "关掉问题",
               destructive: true,
             });

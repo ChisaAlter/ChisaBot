@@ -1,6 +1,6 @@
-import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { galleryComponent } from "@/lib/conversations/gallery-registry";
 import {
   type SandboxedRecord,
@@ -77,10 +77,7 @@ export function ComponentPreview({
     return (
       <FittedPreview fill={fill}>
         <div className="w-full" title={"已发布带有保存样本参数的组件"}>
-          <SandboxSurface
-            content={content}
-            key={JSON.stringify(content)}
-          />
+          <SandboxSurface content={content} key={JSON.stringify(content)} />
         </div>
       </FittedPreview>
     );

@@ -9,7 +9,9 @@ describe("effectiveStatus", () => {
     expect(effectiveStatus(400, { error: "no" })).toBe(400);
   });
   test("a streamed long action reports the status written in its body", () => {
-    expect(effectiveStatus(200, { waiting: true, kind: "approval", status: 202 })).toBe(202);
+    expect(
+      effectiveStatus(200, { waiting: true, kind: "approval", status: 202 }),
+    ).toBe(202);
     expect(effectiveStatus(200, { error: "bug", status: 500 })).toBe(500);
     expect(effectiveStatus(200, { result: { ok: true, status: 7 } })).toBe(200);
     expect(effectiveStatus(200, null)).toBe(200);

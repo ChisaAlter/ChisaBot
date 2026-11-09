@@ -354,7 +354,10 @@ describe("dialling a stored agent endpoint", () => {
     },
     body: JSON.stringify({
       threadId: "t",
-      forwardedProps: { chisabotBotId: "risk", chisabotRun: "signed.run.token" },
+      forwardedProps: {
+        chisabotBotId: "risk",
+        chisabotRun: "signed.run.token",
+      },
     }),
   };
 

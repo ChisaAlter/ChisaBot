@@ -5,23 +5,23 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 
 ## 从这里开始
 
-| 我想… | 看这里 |
-|---|---|
-| 一页看懂 ChisaBot 是什么、由哪几部分组成 | [概览 overview](overview.md) |
-| 知道有哪些功能、入口在哪、代码在哪、怎么开关 | [功能目录 features](features.md) |
-| 知道每个版本改了什么 | [版本记录 CHANGELOG](CHANGELOG.md)（按版本 / PR）· 部署者向的逐条说明在根 [CHANGELOG.md](../CHANGELOG.md) |
-| 知道现在在做什么、接下来做什么 | [ROADMAP（看板）](ROADMAP.md) · [BACKLOG（带验收标准的条目）](BACKLOG.md) |
-| 让现有 DSH 版成为可长期使用的个人助理 | [个人助理生产交付计划](production-assistant-plan.md)：复用能力、必要修补、桌面与服务器验收、发布恢复 |
-| 用个人助理整理资料、设提醒、接日历邮箱和检查发送结果 | [个人助理使用说明](personal-assistant.md)（候选功能；部署状态见实施记录） |
-| 理解系统怎么搭的 | [架构 architecture](architecture.md) · [数据模型 data-model](data-model.md) · [ADR](adr/README.md) |
-| 知道为什么这样做、有哪些长期规则 | [产品决策与需求原则 decisions](decisions.md) · [ADR](adr/README.md) |
-| 改界面 | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md) |
-| 提交改动 | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md) |
-| 自己部署、运维一套 ChisaBot | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
-| 发布 DSH、核心服务与共用网页 | [部署、回滚与上线检查](ops/deploy.md)（串行入口）· [DSH 运行时与恢复](ops/dsh-runtime.md) · [网关同步](ops/gateway.md) |
-| 升级旧接口、会话表和部署资源 | [命名与依赖迁移](ops/upstream-removal.md)（0067 / reader 4 与兼容边界） |
-| 测试 | [测试与验证 testing](testing.md) |
-| 看懂中文术语 | [术语表 glossary](glossary.md) |
+| 我想…                                                | 看这里                                                                                                                       |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 一页看懂 ChisaBot 是什么、由哪几部分组成             | [概览 overview](overview.md)                                                                                                 |
+| 知道有哪些功能、入口在哪、代码在哪、怎么开关         | [功能目录 features](features.md)                                                                                             |
+| 知道每个版本改了什么                                 | [版本记录 CHANGELOG](CHANGELOG.md)（按版本 / PR）· 部署者向的逐条说明在根 [CHANGELOG.md](../CHANGELOG.md)                    |
+| 知道现在在做什么、接下来做什么                       | [ROADMAP（看板）](ROADMAP.md) · [BACKLOG（带验收标准的条目）](BACKLOG.md)                                                    |
+| 让现有 DSH 版成为可长期使用的个人助理                | [个人助理生产交付计划](production-assistant-plan.md)：复用能力、必要修补、桌面与服务器验收、发布恢复                         |
+| 用个人助理整理资料、设提醒、接日历邮箱和检查发送结果 | [个人助理使用说明](personal-assistant.md)（候选功能；部署状态见实施记录）                                                    |
+| 理解系统怎么搭的                                     | [架构 architecture](architecture.md) · [数据模型 data-model](data-model.md) · [ADR](adr/README.md)                           |
+| 知道为什么这样做、有哪些长期规则                     | [产品决策与需求原则 decisions](decisions.md) · [ADR](adr/README.md)                                                          |
+| 改界面                                               | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md)                                                  |
+| 提交改动                                             | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md)                                                    |
+| 自己部署、运维一套 ChisaBot                          | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
+| 发布 DSH、核心服务与共用网页                         | [部署、回滚与上线检查](ops/deploy.md)（串行入口）· [DSH 运行时与恢复](ops/dsh-runtime.md) · [网关同步](ops/gateway.md)       |
+| 升级旧接口、会话表和部署资源                         | [命名与依赖迁移](ops/upstream-removal.md)（0067 / reader 4 与兼容边界）                                                      |
+| 测试                                                 | [测试与验证 testing](testing.md)                                                                                             |
+| 看懂中文术语                                         | [术语表 glossary](glossary.md)                                                                                               |
 
 ## 当前维护入口
 
@@ -33,14 +33,14 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 
 ## 项目管理
 
-| 文档 | 内容 |
-|---|---|
-| [ROADMAP.md](ROADMAP.md) | 里程碑、现在 / 接下来 / 以后、最近完成 |
-| [BACKLOG.md](BACKLOG.md) | CB-001 起的全部条目、验收标准、状态（GitHub Issues 未开启前它就是 issue 列表） |
-| [decisions.md](decisions.md) | 所有者的长期规则（发布流程、测试安全、版本号、界面原则），带日期 |
-| [CHANGELOG.md](CHANGELOG.md) | 按发版标签分组的版本与 PR 记录 |
-| [adr/](adr/README.md) | 架构决策记录 0001–0014（0012 号空缺） |
-| [pipeline-runs/](pipeline-runs/) | 带日期的实施、验收与发布证据；当前交付入口见上文 |
+| 文档                             | 内容                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| [ROADMAP.md](ROADMAP.md)         | 里程碑、现在 / 接下来 / 以后、最近完成                                         |
+| [BACKLOG.md](BACKLOG.md)         | CB-001 起的全部条目、验收标准、状态（GitHub Issues 未开启前它就是 issue 列表） |
+| [decisions.md](decisions.md)     | 所有者的长期规则（发布流程、测试安全、版本号、界面原则），带日期               |
+| [CHANGELOG.md](CHANGELOG.md)     | 按发版标签分组的版本与 PR 记录                                                 |
+| [adr/](adr/README.md)            | 架构决策记录 0001–0014（0012 号空缺）                                          |
+| [pipeline-runs/](pipeline-runs/) | 带日期的实施、验收与发布证据；当前交付入口见上文                               |
 
 ## 架构
 
@@ -56,50 +56,50 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 
 完整列表见 [features.md](features.md)。
 
-| 范围 | 文档 | DESIGN |
-|---|---|---|
-| 聊天 | [流式回复](streaming.md) · [聊天文件与图片生成](chat-files.md) · [聊天可靠性](chat-reliability.md) | §24–§27、§30–§32、§35、§38、§42、§48、§56、§67–§70、§75、§76、§83、§88–§90、§92–§94 |
-| 机器人 | [机器人头像](bot-avatars.md) · [BOT 配置](coworkers.md) | §46、§47、§74、§81 |
-| 确认与权限 | [确认卡片与审批偏好](confirmations.md) | §58、§97 |
-| 模型 | [模型配置与切换](models.md) · [Magpie 深度集成](magpie.md) | §15、§59–§61 |
-| 面板 / 计算机 | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) · [面板的直连数据源与看板布局](live-panel-sources.md) | §23、§29、§39、§43、§77、§79、§95、§96、§109 |
-| 设备 / PC / 手机 | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 客户端](android-native.md) · [手机网页版与 PWA](pwa.md) | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91 |
-| 记忆 · 技能 · 保险箱 | [长期记忆](memory.md) · [技能](skills.md) · [密钥保险箱](vault.md) | §50–§52 |
-| GitHub · 页面 · 定时 | [GitHub 账号连接](github.md) · [页面](pages.md) · [定时任务与提醒](schedules.md) | §53–§55 |
-| IM | [IM 接入](im.md) | §49 |
-| 账号 | [朋友账号（多账号，默认隐藏）](accounts.md) | §65 |
-| 设置 | [设置的信息结构与搜索](settings-ia.md) | §57、§71、§97 |
-| 工作流（默认隐藏） | [工作流](workflows.md) | §26 |
-| 瘦身 | [瘦身计划与进度](slimming.md) | §57、§74 |
+| 范围                 | 文档                                                                                                                                            | DESIGN                                                                              |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| 聊天                 | [流式回复](streaming.md) · [聊天文件与图片生成](chat-files.md) · [聊天可靠性](chat-reliability.md)                                              | §24–§27、§30–§32、§35、§38、§42、§48、§56、§67–§70、§75、§76、§83、§88–§90、§92–§94 |
+| 机器人               | [机器人头像](bot-avatars.md) · [BOT 配置](coworkers.md)                                                                                         | §46、§47、§74、§81                                                                  |
+| 确认与权限           | [确认卡片与审批偏好](confirmations.md)                                                                                                          | §58、§97                                                                            |
+| 模型                 | [模型配置与切换](models.md) · [Magpie 深度集成](magpie.md)                                                                                      | §15、§59–§61                                                                        |
+| 面板 / 计算机        | [浏览器多标签与收藏夹](browser-tabs.md) · [侧栏与弹出面板一致性](sidebar-panel-parity.md) · [面板的直连数据源与看板布局](live-panel-sources.md) | §23、§29、§39、§43、§77、§79、§95、§96、§109                                        |
+| 设备 / PC / 手机     | [PC 节点与扫码绑定](pc-node.md) · [本地 agent 与权限档位](local-agents.md) · [Android 客户端](android-native.md) · [手机网页版与 PWA](pwa.md)   | §16、§33、§36、§40、§45、§62、§66、§80、§86、§91                                    |
+| 记忆 · 技能 · 保险箱 | [长期记忆](memory.md) · [技能](skills.md) · [密钥保险箱](vault.md)                                                                              | §50–§52                                                                             |
+| GitHub · 页面 · 定时 | [GitHub 账号连接](github.md) · [页面](pages.md) · [定时任务与提醒](schedules.md)                                                                | §53–§55                                                                             |
+| IM                   | [IM 接入](im.md)                                                                                                                                | §49                                                                                 |
+| 账号                 | [朋友账号（多账号，默认隐藏）](accounts.md)                                                                                                     | §65                                                                                 |
+| 设置                 | [设置的信息结构与搜索](settings-ia.md)                                                                                                          | §57、§71、§97                                                                       |
+| 工作流（默认隐藏）   | [工作流](workflows.md)                                                                                                                          | §26                                                                                 |
+| 瘦身                 | [瘦身计划与进度](slimming.md)                                                                                                                   | §57、§74                                                                            |
 
 ## 运维、发布与测试
 
-| 文档 | 适合解决的问题 |
-| --- | --- |
-| [快速开始](getting-started.md) | 第一次部署，配置完成后怎样开始聊天 |
-| [本地开发参考](development.md) | 本地数据库迁移、分开启动服务与质量检查；生产使用本表的部署入口 |
-| [自托管部署](../deploy/README.zh-CN.md) | 镜像、持久化、认证网关与 Magpie 部署模板 |
-| [**运维手册（总览）**](ops/README.md) | 自己部署后长期运维的全部章节入口与一页速查 |
-| [主机与端口规划](ops/hosts.md) | 机器配置、公网端口、只绑 loopback 的端口、防火墙 |
-| [容器与服务](ops/containers.md) | 每个容器、镜像、卷、systemd 单元的用途 |
-| [目录布局与凭据存放](ops/layout.md) | 宿主机目录、各类密钥应放在哪里与权限 |
-| [部署、回滚与上线检查](ops/deploy.md) | 合并后怎么上线、更新器怎么工作、怎么回滚、上线后检查什么 |
-| [DSH 运行时与恢复](ops/dsh-runtime.md) | 账号 Host、targets、Session、完整备份与兼容恢复 |
-| [命名与依赖迁移](ops/upstream-removal.md) | 0067 会话表迁移、reader 4、旧客户端登录和原卷保留 |
-| [网关与登录服务](ops/gateway.md) | nginx 规则、登录服务、多账号开关、签名身份密钥、证书 |
-| [客户端发布（运维）](ops/client-release.md) | 更新源目录、APK 签名、发版上传与临时文件安全删除 |
-| [模型配置运维](ops/model-config.md) | 默认 / 备用模型、生图识图、额度用完怎么办 |
-| [预览与测试环境](ops/preview.md) | 预览容器、出网封锁、生产测试守则与只读检查 |
-| [监控与巡检](ops/monitoring.md) | 每日 / 上线后的只读巡检清单、定时任务、日志 |
-| [磁盘清理指南](ops/cleanup.md) | 保留什么、可以删什么、不要碰什么 |
-| [常见故障与事故复盘](ops/incidents.md) | 典型故障处理、过去事故的教训、整机迁移 |
-| [发布流程](release.md) | 版本号规则、服务器上线、客户端发版、外壳指纹与「重新安装」、自测规则 |
-| [测试与验证](testing.md) | 单元测试、预览约定、回归套件、生产只读检查、已知不稳定测试 |
-| [在线更新](online-update.md) | 网页提示刷新、PC / Android 自动更新、系统更新（宿主机更新器） |
-| [管理员自检](admin-smoke.md) | 不碰任何对话的模型往返检查 |
-| [维护与排错](operations.md) | 备份、升级、连接故障与部署验收 |
-| [环境配置](configuration.md) | 环境变量和租户包 YAML |
-| [来源与许可](THIRD_PARTY_NOTICES.md) | 上游项目与保留的许可证声明 |
+| 文档                                        | 适合解决的问题                                                       |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| [快速开始](getting-started.md)              | 第一次部署，配置完成后怎样开始聊天                                   |
+| [本地开发参考](development.md)              | 本地数据库迁移、分开启动服务与质量检查；生产使用本表的部署入口       |
+| [自托管部署](../deploy/README.zh-CN.md)     | 镜像、持久化、认证网关与 Magpie 部署模板                             |
+| [**运维手册（总览）**](ops/README.md)       | 自己部署后长期运维的全部章节入口与一页速查                           |
+| [主机与端口规划](ops/hosts.md)              | 机器配置、公网端口、只绑 loopback 的端口、防火墙                     |
+| [容器与服务](ops/containers.md)             | 每个容器、镜像、卷、systemd 单元的用途                               |
+| [目录布局与凭据存放](ops/layout.md)         | 宿主机目录、各类密钥应放在哪里与权限                                 |
+| [部署、回滚与上线检查](ops/deploy.md)       | 合并后怎么上线、更新器怎么工作、怎么回滚、上线后检查什么             |
+| [DSH 运行时与恢复](ops/dsh-runtime.md)      | 账号 Host、targets、Session、完整备份与兼容恢复                      |
+| [命名与依赖迁移](ops/upstream-removal.md)   | 0067 会话表迁移、reader 4、旧客户端登录和原卷保留                    |
+| [网关与登录服务](ops/gateway.md)            | nginx 规则、登录服务、多账号开关、签名身份密钥、证书                 |
+| [客户端发布（运维）](ops/client-release.md) | 更新源目录、APK 签名、发版上传与临时文件安全删除                     |
+| [模型配置运维](ops/model-config.md)         | 默认 / 备用模型、生图识图、额度用完怎么办                            |
+| [预览与测试环境](ops/preview.md)            | 预览容器、出网封锁、生产测试守则与只读检查                           |
+| [监控与巡检](ops/monitoring.md)             | 每日 / 上线后的只读巡检清单、定时任务、日志                          |
+| [磁盘清理指南](ops/cleanup.md)              | 保留什么、可以删什么、不要碰什么                                     |
+| [常见故障与事故复盘](ops/incidents.md)      | 典型故障处理、过去事故的教训、整机迁移                               |
+| [发布流程](release.md)                      | 版本号规则、服务器上线、客户端发版、外壳指纹与「重新安装」、自测规则 |
+| [测试与验证](testing.md)                    | 单元测试、预览约定、回归套件、生产只读检查、已知不稳定测试           |
+| [在线更新](online-update.md)                | 网页提示刷新、PC / Android 自动更新、系统更新（宿主机更新器）        |
+| [管理员自检](admin-smoke.md)                | 不碰任何对话的模型往返检查                                           |
+| [维护与排错](operations.md)                 | 备份、升级、连接故障与部署验收                                       |
+| [环境配置](configuration.md)                | 环境变量和租户包 YAML                                                |
+| [来源与许可](THIRD_PARTY_NOTICES.md)        | 上游项目与保留的许可证声明                                           |
 
 常见问题：
 

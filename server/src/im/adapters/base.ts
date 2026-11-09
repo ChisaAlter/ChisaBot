@@ -1,6 +1,13 @@
 import type { ImPlatform } from "../../../../shared/im";
 import { backoffMs, errorText } from "../text";
-import type { AdapterContext, ImAdapter, ImDeliveryReceipt, ImInbound, ImReply, WsLike } from "../types";
+import type {
+  AdapterContext,
+  ImAdapter,
+  ImDeliveryReceipt,
+  ImInbound,
+  ImReply,
+  WsLike,
+} from "../types";
 
 /**
  * 所有适配器共用的「连上 → 断了 → 退避 → 再连」循环。
@@ -40,7 +47,10 @@ export abstract class LoopAdapter implements ImAdapter {
     this.socket = null;
     this.onStop();
     this.wake?.();
-    await Promise.race([this.loopDone, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    await Promise.race([
+      this.loopDone,
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
   }
 
   /** 子类的清理（心跳计时器等）。 */
@@ -48,7 +58,11 @@ export abstract class LoopAdapter implements ImAdapter {
 
   protected markConnected(account?: string | null, detail?: string | null) {
     this.connectedAt = Date.now();
-    this.ctx.setStatus({ state: "connected", account: account ?? null, detail: detail ?? null });
+    this.ctx.setStatus({
+      state: "connected",
+      account: account ?? null,
+      detail: detail ?? null,
+    });
   }
 
   /** 收到一条消息：去重后交给服务。 */
@@ -60,7 +74,8 @@ export abstract class LoopAdapter implements ImAdapter {
       this.seen.set(message.messageId, now);
       if (this.seen.size > 500) {
         for (const [key, at] of this.seen) {
-          if (now - at > 10 * 60_000 || this.seen.size > 400) this.seen.delete(key);
+          if (now - at > 10 * 60_000 || this.seen.size > 400)
+            this.seen.delete(key);
           else break;
         }
       }
@@ -70,7 +85,10 @@ export abstract class LoopAdapter implements ImAdapter {
 
   private async loop() {
     while (!this.stopped) {
-      this.ctx.setStatus({ state: "connecting", detail: this.attempt ? `第 ${this.attempt + 1} 次连接…` : "正在连接…" });
+      this.ctx.setStatus({
+        state: "connecting",
+        detail: this.attempt ? `第 ${this.attempt + 1} 次连接…` : "正在连接…",
+      });
       try {
         await this.runOnce();
         if (!this.stopped) this.ctx.log("warn", "连接断开了，稍后重连");
@@ -82,7 +100,8 @@ export abstract class LoopAdapter implements ImAdapter {
       }
       this.onStop();
       if (this.stopped) break;
-      if (this.connectedAt && Date.now() - this.connectedAt > 60_000) this.attempt = 0;
+      if (this.connectedAt && Date.now() - this.connectedAt > 60_000)
+        this.attempt = 0;
       this.connectedAt = 0;
       const wait = this.retryDelay(this.attempt++);
       await this.sleep(wait);
@@ -115,7 +134,12 @@ export abstract class LoopAdapter implements ImAdapter {
    */
   protected openSocket(
     url: string,
-    handlers: { onOpen?: (socket: WsLike) => void | Promise<void>; onMessage: (data: unknown, socket: WsLike) => void | Promise<void>; binary?: boolean; headers?: Record<string, string> },
+    handlers: {
+      onOpen?: (socket: WsLike) => void | Promise<void>;
+      onMessage: (data: unknown, socket: WsLike) => void | Promise<void>;
+      binary?: boolean;
+      headers?: Record<string, string>;
+    },
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -128,7 +152,10 @@ export abstract class LoopAdapter implements ImAdapter {
       };
       let socket: WsLike;
       try {
-        socket = this.ctx.ws(url, handlers.headers ? { headers: handlers.headers } : undefined);
+        socket = this.ctx.ws(
+          url,
+          handlers.headers ? { headers: handlers.headers } : undefined,
+        );
       } catch (error) {
         reject(error);
         return;
@@ -152,9 +179,11 @@ export abstract class LoopAdapter implements ImAdapter {
         Promise.resolve(handlers.onOpen?.(socket)).catch(fail);
       };
       socket.onmessage = (event) => {
-        Promise.resolve(handlers.onMessage(event.data, socket)).catch((error) => {
-          this.ctx.log("warn", `处理平台消息出错：${errorText(error)}`);
-        });
+        Promise.resolve(handlers.onMessage(event.data, socket)).catch(
+          (error) => {
+            this.ctx.log("warn", `处理平台消息出错：${errorText(error)}`);
+          },
+        );
       };
       socket.onerror = () => {
         // 细节在随后的 close 里；有的运行时 error 之后不再发 close。
@@ -162,8 +191,17 @@ export abstract class LoopAdapter implements ImAdapter {
       };
       socket.onclose = (event) => {
         if (this.socket === socket) this.socket = null;
-        if (event?.code && event.code !== 1000 && event.code !== 1005 && !this.stopped)
-          finish(new Error(`连接被关闭（${event.code}${event.reason ? ` ${event.reason}` : ""}）`));
+        if (
+          event?.code &&
+          event.code !== 1000 &&
+          event.code !== 1005 &&
+          !this.stopped
+        )
+          finish(
+            new Error(
+              `连接被关闭（${event.code}${event.reason ? ` ${event.reason}` : ""}）`,
+            ),
+          );
         else finish();
       };
     });
@@ -179,17 +217,25 @@ export abstract class LoopAdapter implements ImAdapter {
 /** WebSocket 收到的数据 → 字符串。 */
 export function dataText(data: unknown): string {
   if (typeof data === "string") return data;
-  if (data instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(data));
-  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data as Uint8Array);
+  if (data instanceof ArrayBuffer)
+    return new TextDecoder().decode(new Uint8Array(data));
+  if (ArrayBuffer.isView(data))
+    return new TextDecoder().decode(data as Uint8Array);
   return String(data);
 }
 
 /** WebSocket 收到的数据 → 字节。 */
 export function dataBytes(data: unknown): Uint8Array {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (ArrayBuffer.isView(data)) return new Uint8Array((data as Uint8Array).buffer, (data as Uint8Array).byteOffset, (data as Uint8Array).byteLength);
+  if (ArrayBuffer.isView(data))
+    return new Uint8Array(
+      (data as Uint8Array).buffer,
+      (data as Uint8Array).byteOffset,
+      (data as Uint8Array).byteLength,
+    );
   if (typeof data === "string") return new TextEncoder().encode(data);
   throw new Error("收到不认识的二进制数据");
 }
 
-export const randomId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+export const randomId = () =>
+  crypto.randomUUID().replace(/-/g, "").slice(0, 16);

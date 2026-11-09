@@ -20,13 +20,18 @@ export type TruncateMode = "regenerate" | "edit";
 
 /** 最后一条用户消息的位置；没有为 -1。 */
 export function lastUserIndex(messages: readonly Row[]): number {
-  for (let at = messages.length - 1; at >= 0; at -= 1) if (messages[at]?.role === "user") return at;
+  for (let at = messages.length - 1; at >= 0; at -= 1)
+    if (messages[at]?.role === "user") return at;
   return -1;
 }
 
 /** 用户角色但不是人发的（后台任务结果、定时任务、确认后接着做）：不给编辑。 */
 export function isEditableUserText(text: string): boolean {
-  return !(text.startsWith(WORKER_RESULT_MARKER) || text.startsWith(SCHEDULE_MARKER) || text.startsWith(CONFIRM_RESUME_MARKER));
+  return !(
+    text.startsWith(WORKER_RESULT_MARKER) ||
+    text.startsWith(SCHEDULE_MARKER) ||
+    text.startsWith(CONFIRM_RESUME_MARKER)
+  );
 }
 
 /** 消息里的文字（字符串，或分段里的 text 段拼起来）。 */
@@ -34,7 +39,13 @@ export function contentText(content: Content): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((part) => (part && typeof part === "object" && (part as { type?: unknown }).type === "text" ? String((part as { text?: unknown }).text ?? "") : ""))
+    .map((part) =>
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text"
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
     .filter(Boolean)
     .join("\n");
 }
@@ -49,7 +60,10 @@ export function withEditedText(content: Content, text: string): Content | null {
   const parts: unknown[] = [];
   let placed = false;
   for (const part of content) {
-    const isText = part && typeof part === "object" && (part as { type?: unknown }).type === "text";
+    const isText =
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text";
     if (!isText) {
       parts.push(part);
       continue;
@@ -64,27 +78,48 @@ export function withEditedText(content: Content, text: string): Content | null {
 export class TruncateFailed extends Error {}
 
 /** 请服务器截断。失败时抛 TruncateFailed（带中文原因）。 */
-export async function truncateConversation(threadId: string, fromMessageId: string, mode: TruncateMode): Promise<{ removed: string[]; revision: string }> {
+export async function truncateConversation(
+  threadId: string,
+  fromMessageId: string,
+  mode: TruncateMode,
+): Promise<{ removed: string[]; revision: string }> {
   let response: Response;
   try {
-    response = await fetch(`/api/conversations/threads/${encodeURIComponent(threadId)}/truncate`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fromMessageId, mode }),
-    });
+    response = await fetch(
+      `/api/conversations/threads/${encodeURIComponent(threadId)}/truncate`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fromMessageId, mode }),
+      },
+    );
   } catch {
     throw new TruncateFailed("网络连不上，稍后再试。");
   }
-  const body = (await response.json().catch(() => null)) as { removed?: unknown; revision?: unknown; error?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as {
+    removed?: unknown;
+    revision?: unknown;
+    error?: unknown;
+  } | null;
   if (!response.ok) {
-    const reason = typeof body?.error === "string" && /[\u4e00-\u9fa5]/.test(body.error) ? body.error : null;
-    if (response.status === 409) throw new TruncateFailed(reason ?? "机器人正在回答，等它说完再试。");
-    if (response.status === 404) throw new TruncateFailed(reason ?? "这条消息已经不在了（可能在别的设备上改过），刷新看看。");
+    const reason =
+      typeof body?.error === "string" && /[\u4e00-\u9fa5]/.test(body.error)
+        ? body.error
+        : null;
+    if (response.status === 409)
+      throw new TruncateFailed(reason ?? "机器人正在回答，等它说完再试。");
+    if (response.status === 404)
+      throw new TruncateFailed(
+        reason ?? "这条消息已经不在了（可能在别的设备上改过），刷新看看。",
+      );
     throw new TruncateFailed(reason ?? "没能重发，稍后再试。");
   }
   const removed = Array.isArray(body?.removed) ? body!.removed.map(String) : [];
-  const revision = typeof body?.revision === "string" ? body.revision : String(body?.revision ?? "");
+  const revision =
+    typeof body?.revision === "string"
+      ? body.revision
+      : String(body?.revision ?? "");
   if (revision) noteOwnRevision(threadId, revision);
   return { removed, revision };
 }

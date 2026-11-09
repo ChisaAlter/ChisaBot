@@ -34,20 +34,37 @@ test("撤销 IM 白名单后丢弃排队消息、在途回答和后续主动推�
   const outgoing = new Map<string, Record<string, unknown>>();
   const database = {
     $client: {
-      begin: async (run: (tx: Database["$client"]) => Promise<unknown>) => run(database.$client),
-      reserve: async () => ({ unsafe: database.$client.unsafe, release: () => {} }),
+      begin: async (run: (tx: Database["$client"]) => Promise<unknown>) =>
+        run(database.$client),
+      reserve: async () => ({
+        unsafe: database.$client.unsafe,
+        release: () => {},
+      }),
       unsafe: async (query: string, args: unknown[] = []) => {
         if (query.includes("pg_try_advisory_lock")) return [{ locked: true }];
         if (query.startsWith("INSERT INTO chisabot_im_outbox")) {
-          outgoing.set(String(args[0]), { id: args[0], connection_id: args[1], owner_user_id: args[2], agent_id: args[3],
-            thread_id: args[4], inbound: JSON.parse(String(args[5])), text: args[6], chunks: JSON.parse(String(args[7])), state: "queued" });
+          outgoing.set(String(args[0]), {
+            id: args[0],
+            connection_id: args[1],
+            owner_user_id: args[2],
+            agent_id: args[3],
+            thread_id: args[4],
+            inbound: JSON.parse(String(args[5])),
+            text: args[6],
+            chunks: JSON.parse(String(args[7])),
+            state: "queued",
+          });
         }
         if (query.startsWith("SELECT * FROM chisabot_im_outbox")) {
-          const record = outgoing.get(String(args[0])); return record ? [record] : [];
+          const record = outgoing.get(String(args[0]));
+          return record ? [record] : [];
         }
         if (query.startsWith("UPDATE chisabot_im_outbox")) {
           const record = outgoing.get(String(args[0]));
-          if (record) { record.state = query.match(/SET state='([^']+)'/)?.[1]; return [{ id: record.id }]; }
+          if (record) {
+            record.state = query.match(/SET state='([^']+)'/)?.[1];
+            return [{ id: record.id }];
+          }
         }
         if (query.startsWith("SELECT * FROM chisabot_im_connections"))
           return [{ ...row }];

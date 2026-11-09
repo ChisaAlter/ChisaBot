@@ -1,4 +1,3 @@
-import { previousBotAnnotation } from "../legacy/protocol";
 /**
  * A computer each, as a `Sandbox` on Kubernetes.
  *
@@ -16,13 +15,14 @@ import { previousBotAnnotation } from "../legacy/protocol";
  * in-cluster service account gives a token and a CA, which is what `inClusterConfig` reads.
  */
 import { readFile } from "node:fs/promises";
+import { reasonWithoutStatement } from "../db/query-failure";
+import { previousBotAnnotation } from "../legacy/protocol";
 import type {
   ComputerLocation,
   ComputerProvider,
   ComputerUpdate,
 } from "./provider";
 import type { ComputerStatus } from "./schema";
-import { reasonWithoutStatement } from "../db/query-failure";
 
 const SERVICE_ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount";
 const GROUP = "agents.x-k8s.io";
@@ -582,7 +582,10 @@ export function createSandboxComputerProvider(
         const botId =
           (sandbox.metadata as { annotations?: Record<string, string> })
             ?.annotations?.["chisabot.dev/bot-id"] ??
-          previousBotAnnotation((sandbox.metadata as { annotations?: Record<string, string> })?.annotations) ??
+          previousBotAnnotation(
+            (sandbox.metadata as { annotations?: Record<string, string> })
+              ?.annotations,
+          ) ??
           sandbox.metadata?.name ??
           "";
         return {

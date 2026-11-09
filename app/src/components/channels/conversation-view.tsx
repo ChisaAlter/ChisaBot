@@ -1,5 +1,4 @@
 import type { Message } from "@ag-ui/core";
-import type { Attachment } from "@/lib/chat/attachment-state";
 import {
   type ReactNode,
   useCallback,
@@ -21,6 +20,7 @@ import {
   reduceQueue,
 } from "@/components/channels/composer";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
 import { newId } from "../../lib/new-id";
 
@@ -76,7 +76,9 @@ export function ConversationView({
    * 回答期间的完整草稿进入持久收件箱，附件和技能随文字一起保留。
    * "send" 表示当前回合已经结束，按正常发送处理。
    */
-  queueToServer?: (draft: ComposerDraft) => Promise<"queued" | "send" | "failed">;
+  queueToServer?: (
+    draft: ComposerDraft,
+  ) => Promise<"queued" | "send" | "failed">;
   /** Shown above the composer. An error, or why this conversation is read-only. */
   notice?: ReactNode;
   /** 显示在会话顶部（第一条消息之上），例如较早的消息读不到时的提示和「重试」。 */

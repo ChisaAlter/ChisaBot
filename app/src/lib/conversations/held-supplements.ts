@@ -83,7 +83,11 @@ export async function requestStop(
 }
 
 /** Turn statuses that mean the turn is over, so a failed stop request no longer matters. */
-export const ENDED_TURN_STATUSES: ReadonlySet<string> = new Set(["done", "stopped", "error"]);
+export const ENDED_TURN_STATUSES: ReadonlySet<string> = new Set([
+  "done",
+  "stopped",
+  "error",
+]);
 
 export type StopRequestTurn = {
   /** Whether this turn is still running; `undefined` while not known yet (never clears). */
@@ -97,11 +101,16 @@ export type StopRequestTurn = {
  * the turn ends: `running` reported false, or `status` entering done / stopped / error. A new turn
  * (`running` false → true) never inherits the previous turn's failure.
  */
-export function useStopRequest(threadId: string, fetchImpl?: typeof fetch, turn: StopRequestTurn = {}) {
+export function useStopRequest(
+  threadId: string,
+  fetchImpl?: typeof fetch,
+  turn: StopRequestTurn = {},
+) {
   const [failed, setFailed] = useState(false);
   const { running, status } = turn;
   const wasRunning = useRef(running);
-  const ended = running === false || (status != null && ENDED_TURN_STATUSES.has(status));
+  const ended =
+    running === false || (status != null && ENDED_TURN_STATUSES.has(status));
   useEffect(() => {
     const startedAgain = running === true && wasRunning.current === false;
     wasRunning.current = running;

@@ -10,14 +10,14 @@
 
 ## 1. 入口与状态所有者
 
-| 现有入口 | 当前职责 | 迁移处置 |
-|---|---|---|
-| [`app/src/components/layout/authed-shell.tsx`](../../app/src/components/layout/authed-shell.tsx) 的 `ChatCopilot` | 在已认证应用中懒加载全局聊天 Provider | 换为自有聊天作用域/渲染器 Provider；继续保持聊天代码按需加载 |
-| [`app/src/lib/copilot/provider.tsx:52`](../../app/src/lib/copilot/provider.tsx) 的 `CopilotProvider` | `/api/copilotkit`、cookie 凭据、错误回调、所有工具注册、ActiveBot | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
-| [`channel-chat.tsx:393`](../../app/src/components/channels/channel-chat.tsx) 的 `ChannelChat` | `channel:${channel.id}` 本地 agent、`runtimeAgentId`、`threadId`；发消息、同步、恢复、停止、编辑重发、队列和状态补偿 | 改为消费一份 thread-scoped 会话状态；容器协调 UI，不再直接改 SDK Agent |
-| [`conversation-view.tsx:28`](../../app/src/components/channels/conversation-view.tsx) 的 `ConversationView` | 接收 messages、busy/pending/stopping、提交/停止、草稿与队列回调；组织输入与转录区 | 保留为呈现入口，去掉 `Message`、`Attachment` 的 SDK 类型依赖 |
-| [`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx) | 消息投影、过程折叠、气泡、工具/活动卡、确认/审批、无回答状态、历史挂载与滚动 | 继续使用现有呈现算法；把 chat context、工具注册和活动渲染替换为自有接口 |
-| [`composer/composer.tsx:807`](../../app/src/components/channels/composer/composer.tsx) 的 `useAttachments` | 附件上传状态、文件处理、粘贴/拖拽；外加现有本地草稿、技能 chip、语音、队列 | 替换 SDK 附件状态 Hook，复用上传 transport、去重和草稿逻辑 |
+| 现有入口                                                                                                          | 当前职责                                                                                                             | 迁移处置                                                                 |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [`app/src/components/layout/authed-shell.tsx`](../../app/src/components/layout/authed-shell.tsx) 的 `ChatCopilot` | 在已认证应用中懒加载全局聊天 Provider                                                                                | 换为自有聊天作用域/渲染器 Provider；继续保持聊天代码按需加载             |
+| [`app/src/lib/copilot/provider.tsx:52`](../../app/src/lib/copilot/provider.tsx) 的 `CopilotProvider`              | `/api/copilotkit`、cookie 凭据、错误回调、所有工具注册、ActiveBot                                                    | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
+| [`channel-chat.tsx:393`](../../app/src/components/channels/channel-chat.tsx) 的 `ChannelChat`                     | `channel:${channel.id}` 本地 agent、`runtimeAgentId`、`threadId`；发消息、同步、恢复、停止、编辑重发、队列和状态补偿 | 改为消费一份 thread-scoped 会话状态；容器协调 UI，不再直接改 SDK Agent   |
+| [`conversation-view.tsx:28`](../../app/src/components/channels/conversation-view.tsx) 的 `ConversationView`       | 接收 messages、busy/pending/stopping、提交/停止、草稿与队列回调；组织输入与转录区                                    | 保留为呈现入口，去掉 `Message`、`Attachment` 的 SDK 类型依赖             |
+| [`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx)                                    | 消息投影、过程折叠、气泡、工具/活动卡、确认/审批、无回答状态、历史挂载与滚动                                         | 继续使用现有呈现算法；把 chat context、工具注册和活动渲染替换为自有接口  |
+| [`composer/composer.tsx:807`](../../app/src/components/channels/composer/composer.tsx) 的 `useAttachments`        | 附件上传状态、文件处理、粘贴/拖拽；外加现有本地草稿、技能 chip、语音、队列                                           | 替换 SDK 附件状态 Hook，复用上传 transport、去重和草稿逻辑               |
 
 目前 `ChannelChat` 同时保留 `agent.messages`、缓存/early history、`turnsInFlight`、`runsInFlight`、`agent.isRunning`、`joining`、`awaitingReply`、`turnFailure`。这些值对应不同事实，不能合并成一个笼统的 `isRunning`。特别是 SDK connect 回放也会设置 `isRunning`；现有页面通过 `joining` 区分“恢复历史”和“正在回答”。证据：[`channel-chat.tsx:1930`](../../app/src/components/channels/channel-chat.tsx)。
 
@@ -127,15 +127,15 @@
 
 ## 7. 建议的前端模块
 
-| 模块 | 拥有的数据/行为 | 不应承担 |
-|---|---|---|
-| `chat/session-store` | 单会话不可变 snapshot、持久 seq、live attempts、admission 状态、执行状态、待答交互、队列投影 | 发模型请求、执行工具、批准动作 |
-| `chat/session-client` | 同源鉴权 transport、发送/停止/决议命令、follow 生命周期、断线补读 | 渲染布局、从自然语言猜状态 |
-| `chat/legacy-adapter` | 旧 AG-UI messages/events 与存储方言转为产品视图；保留旧链接、ID 和未知元信息 | 在 DSH 会话中偷偷重放旧工具 |
-| `chat/renderers` | 工具/活动注册表、fallback 行、有效交付卡判断、错误隔离 | 自动 dispatch 工具 |
-| `chat/conversation-scope` | thread/bot 身份与明确动作 callback，供卡片、队列、确认消费者使用 | 全局“最近活跃 Bot”执行身份 |
-| `composer/attachment-state` | 上传状态、取消、重试，与现有草稿、队列协调 | 模型输入编码和权限决定 |
-| `chat/sandbox-surface` | 已发布 HTML 组件与预览的 iframe 展示 | 主页面凭据、无限制宿主调用 |
+| 模块                        | 拥有的数据/行为                                                                              | 不应承担                       |
+| --------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------ |
+| `chat/session-store`        | 单会话不可变 snapshot、持久 seq、live attempts、admission 状态、执行状态、待答交互、队列投影 | 发模型请求、执行工具、批准动作 |
+| `chat/session-client`       | 同源鉴权 transport、发送/停止/决议命令、follow 生命周期、断线补读                            | 渲染布局、从自然语言猜状态     |
+| `chat/legacy-adapter`       | 旧 AG-UI messages/events 与存储方言转为产品视图；保留旧链接、ID 和未知元信息                 | 在 DSH 会话中偷偷重放旧工具    |
+| `chat/renderers`            | 工具/活动注册表、fallback 行、有效交付卡判断、错误隔离                                       | 自动 dispatch 工具             |
+| `chat/conversation-scope`   | thread/bot 身份与明确动作 callback，供卡片、队列、确认消费者使用                             | 全局“最近活跃 Bot”执行身份     |
+| `composer/attachment-state` | 上传状态、取消、重试，与现有草稿、队列协调                                                   | 模型输入编码和权限决定         |
+| `chat/sandbox-surface`      | 已发布 HTML 组件与预览的 iframe 展示                                                         | 主页面凭据、无限制宿主调用     |
 
 这些名字是设计建议。目标是将当前 `ChannelChat` 的接入补偿移到一个有清楚合同的模块，并利用已存在的 `TranscriptDataLayer`、tail-first/可选虚拟化、stable row id 和 memo，而不是重写整个聊天视觉层。
 
@@ -156,27 +156,27 @@
 
 本矩阵定义后续实施验收；此次资料调查未运行应用或测试。
 
-| 场景 | 必须看到的结果 |
-|---|---|
-| 新会话首条消息、仅附件、技能 chip | 每次只有一条接收记录；内容与附件不丢；用户自己的文字不被技能正文替换 |
-| 打开已有会话/从设置返回 | 恢复历史不冒充新回答；不闪停止按钮、不跳到半截历史 |
-| 后台运行时切 Bot/切 thread | 原任务继续且归属不变；回到原线程显示正确最新状态 |
-| 普通文本、长 Markdown、代码围栏、表格、标题+代码 | 正文留在气泡；普通长文不突然变卡；格式在流式和完成后稳定 |
-| 工具连续执行并逐步输出 | 工具卡和文字顺序稳定；单个 token 不令全部已完成卡片重渲染 |
-| tool-only 图片/文件/确认卡完成 | 有效卡片算可见结果；不会附加误导的“没有回答/重新执行” |
-| 工具失败/无结果/未知工具 | 有可理解的失败或未完成状态；不留永久 skeleton、不让整段聊天白屏 |
-| 断网再连接/重复帧/乱序与缺口 | 已接收请求不重发；文字和工具参数不重复；缺口补读后顺序一致 |
-| 浏览器关闭后模型完成 | 重开可读完整回答及工具结果；不依赖浏览器补一轮模型请求 |
-| 接收前停止、工具中停止、审批时停止 | 停止状态有据可查；未获授权的工具不执行；其他线程继续 |
-| 停止失败或响应丢失 | 显示待确认/可重试；不虚报“已停止”，不新发一份任务 |
-| 忙时补话、附图补话、多设备排队 | 同一内容只入队/读取一次；停止后 paused 消息保留待用户发送 |
-| 审批允许/拒绝/过期/刷新/两设备竞争决定 | 同一请求最多一次有效决定；卡片与最终工具结果一致 |
-| 组件授权在运行中撤销 | 已有可读结果保留；新调用由服务器按当前授权决定 |
-| 编辑/重新生成、另一设备同时观察 | 附件保留；revision 切换明确；旧流不污染新版本 |
-| 长历史补页/搜索跳转/用户向上阅读 | 保留阅读锚点；新 token 不抢滚动；结束后无大块空白 |
-| 桌面/窄屏、明暗主题、reduced motion | 同等信息和操作可达；滚动和气泡不溢出 |
-| 管理组件列表及单组件预览 | Gallery、json-render、已发布 sandbox HTML 都能正常展示 |
-| 旧 AG-UI 历史、外部 Agent 对话 | 保留可读性、工具结果、附件和现有入口；单项损坏可见且不清空历史 |
+| 场景                                             | 必须看到的结果                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------- |
+| 新会话首条消息、仅附件、技能 chip                | 每次只有一条接收记录；内容与附件不丢；用户自己的文字不被技能正文替换 |
+| 打开已有会话/从设置返回                          | 恢复历史不冒充新回答；不闪停止按钮、不跳到半截历史                   |
+| 后台运行时切 Bot/切 thread                       | 原任务继续且归属不变；回到原线程显示正确最新状态                     |
+| 普通文本、长 Markdown、代码围栏、表格、标题+代码 | 正文留在气泡；普通长文不突然变卡；格式在流式和完成后稳定             |
+| 工具连续执行并逐步输出                           | 工具卡和文字顺序稳定；单个 token 不令全部已完成卡片重渲染            |
+| tool-only 图片/文件/确认卡完成                   | 有效卡片算可见结果；不会附加误导的“没有回答/重新执行”                |
+| 工具失败/无结果/未知工具                         | 有可理解的失败或未完成状态；不留永久 skeleton、不让整段聊天白屏      |
+| 断网再连接/重复帧/乱序与缺口                     | 已接收请求不重发；文字和工具参数不重复；缺口补读后顺序一致           |
+| 浏览器关闭后模型完成                             | 重开可读完整回答及工具结果；不依赖浏览器补一轮模型请求               |
+| 接收前停止、工具中停止、审批时停止               | 停止状态有据可查；未获授权的工具不执行；其他线程继续                 |
+| 停止失败或响应丢失                               | 显示待确认/可重试；不虚报“已停止”，不新发一份任务                    |
+| 忙时补话、附图补话、多设备排队                   | 同一内容只入队/读取一次；停止后 paused 消息保留待用户发送            |
+| 审批允许/拒绝/过期/刷新/两设备竞争决定           | 同一请求最多一次有效决定；卡片与最终工具结果一致                     |
+| 组件授权在运行中撤销                             | 已有可读结果保留；新调用由服务器按当前授权决定                       |
+| 编辑/重新生成、另一设备同时观察                  | 附件保留；revision 切换明确；旧流不污染新版本                        |
+| 长历史补页/搜索跳转/用户向上阅读                 | 保留阅读锚点；新 token 不抢滚动；结束后无大块空白                    |
+| 桌面/窄屏、明暗主题、reduced motion              | 同等信息和操作可达；滚动和气泡不溢出                                 |
+| 管理组件列表及单组件预览                         | Gallery、json-render、已发布 sandbox HTML 都能正常展示               |
+| 旧 AG-UI 历史、外部 Agent 对话                   | 保留可读性、工具结果、附件和现有入口；单项损坏可见且不清空历史       |
 
 ## 10. 给主设计的决策点
 

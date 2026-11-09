@@ -8,7 +8,10 @@ import { Window } from "happy-dom";
  * sign-out button over the right drawer.
  */
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const compatibility = readFileSync(new URL("../public/compat/legacy-browser.js", import.meta.url), "utf8");
+const compatibility = readFileSync(
+  new URL("../public/compat/legacy-browser.js", import.meta.url),
+  "utf8",
+);
 const gateway = readFileSync(
   new URL("../../deploy/public/auth-web/workspace.js", import.meta.url),
   "utf8",
@@ -34,7 +37,13 @@ function mountWith(script: string, body: string, installLegacyMarker = false) {
   window.document.body.innerHTML = body;
   if (installLegacyMarker) {
     new Function("globalThis", compatibility)(window);
-    (window as unknown as { ChisaLegacyBrowser: { mountAccountMarker(document: Window["document"]): void } }).ChisaLegacyBrowser.mountAccountMarker(window.document);
+    (
+      window as unknown as {
+        ChisaLegacyBrowser: {
+          mountAccountMarker(document: Window["document"]): void;
+        };
+      }
+    ).ChisaLegacyBrowser.mountAccountMarker(window.document);
   }
   new Function("window", "document", script)(window, window.document);
   return window.document;
@@ -42,7 +51,9 @@ function mountWith(script: string, body: string, installLegacyMarker = false) {
 
 test("index loads the compatibility script before the gateway marker is installed", () => {
   expect(html).toContain('<div id="chisabot-account-control" hidden></div>');
-  expect(html.indexOf('src="/compat/legacy-browser.js"')).toBeLessThan(html.indexOf("ChisaLegacyBrowser.mountAccountMarker(document)"));
+  expect(html.indexOf('src="/compat/legacy-browser.js"')).toBeLessThan(
+    html.indexOf("ChisaLegacyBrowser.mountAccountMarker(document)"),
+  );
 });
 
 const legacyGateway = gateway.replaceAll(
@@ -55,7 +66,9 @@ for (const [name, script] of [
   ["pre-rename gateway", legacyGateway],
 ] as const) {
   test(`${name} adds no floating sign-out button over the app`, () => {
-    const markers = html.match(/<div id="chisabot-account-control" hidden><\/div>/g)!.join("");
+    const markers = html
+      .match(/<div id="chisabot-account-control" hidden><\/div>/g)!
+      .join("");
     const document = mountWith(script, markers, true);
     expect(
       document.querySelectorAll(

@@ -11,8 +11,9 @@ export class ConversationMaintenanceError extends Error {
 
 /** The updater closes admission before draining and backing up the persistent runtime volume. */
 export function conversationAdmissionClosed(): boolean {
-  const root = process.env.CHISABOT_DSH_ROOT?.trim()
-    || (process.env.CHISABOT_AGENT_KERNEL === "dsh" ? ".data/dsh" : undefined);
+  const root =
+    process.env.CHISABOT_DSH_ROOT?.trim() ||
+    (process.env.CHISABOT_AGENT_KERNEL === "dsh" ? ".data/dsh" : undefined);
   if (!root) return false;
   try {
     accessSync(join(resolve(root), ".maintenance"));

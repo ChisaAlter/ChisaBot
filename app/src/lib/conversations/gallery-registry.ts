@@ -1,5 +1,5 @@
-import type { z } from "zod";
 import type { ReactElement } from "react";
+import type { z } from "zod";
 
 /**
  * Discover gallery components from files that export `GALLERY`; deployment state owns publication,

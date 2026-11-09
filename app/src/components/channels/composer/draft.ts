@@ -1,4 +1,3 @@
-import type { Attachment } from "@/lib/chat/attachment-state";
 import {
   getChipsByTrigger,
   isSegmentsEmpty,
@@ -7,6 +6,7 @@ import {
   segmentsToPlainText,
   text,
 } from "prompt-area/helpers";
+import type { Attachment } from "@/lib/chat/attachment-state";
 
 /**
  * Pure boundary between prompt-area segments and ChisaBot's message draft model.

@@ -1,7 +1,11 @@
 import { pageIdFromResult } from "@/lib/pages";
 
 /** 在聊天里画成页面卡片的工具（lib/conversations/pages-tool.tsx）。 */
-export const PAGE_CARD_TOOLS: ReadonlySet<string> = new Set(["page_create", "page_update", "page_publish"]);
+export const PAGE_CARD_TOOLS: ReadonlySet<string> = new Set([
+  "page_create",
+  "page_update",
+  "page_publish",
+]);
 
 type PageCall = { id: string; name: string; args: string; result?: string };
 
@@ -35,11 +39,18 @@ export function supersededPageCalls(calls: readonly PageCall[]): Set<string> {
   for (const call of calls) {
     if (!PAGE_CARD_TOOLS.has(call.name)) continue;
     if (pageKeyOf(call)) seenPage = true;
-    else if (seenPage && call.name !== "page_create" && call.result === undefined) hidden.add(call.id);
+    else if (
+      seenPage &&
+      call.name !== "page_create" &&
+      call.result === undefined
+    )
+      hidden.add(call.id);
   }
   for (const list of byPage.values()) {
     if (list.length < 2) continue;
-    const keep = list.findLast((call) => call.result !== undefined) ?? list[list.length - 1]!;
+    const keep =
+      list.findLast((call) => call.result !== undefined) ??
+      list[list.length - 1]!;
     for (const call of list) if (call !== keep) hidden.add(call.id);
   }
   return hidden;

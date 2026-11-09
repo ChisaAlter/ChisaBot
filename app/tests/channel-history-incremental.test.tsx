@@ -1,6 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import type { Message } from "@ag-ui/core";
-import { ConversationSessionProvider, conversationClient } from "@/lib/chat/session-client";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { type InfiniteData, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
@@ -12,6 +11,10 @@ import {
   channelKeys,
 } from "@/lib/channels/queries";
 import { applyChannelEvent } from "@/lib/channels/use-channel-events";
+import {
+  ConversationSessionProvider,
+  conversationClient,
+} from "@/lib/chat/session-client";
 import { resetStoredSyncs } from "@/lib/conversations/thread-messages";
 import { queryClient } from "@/query-client";
 import { settleReactWork } from "./settle-react-work";

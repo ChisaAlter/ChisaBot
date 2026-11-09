@@ -178,7 +178,11 @@ export function normalizeDirectiveCards(raw: string): string {
         const raw = rawLines[i++]!;
         step1.push(raw);
         const close = raw.trim();
-        if (close.length >= marker.length && [...close].every((c) => c === marker[0])) break;
+        if (
+          close.length >= marker.length &&
+          [...close].every((c) => c === marker[0])
+        )
+          break;
       }
       continue;
     }

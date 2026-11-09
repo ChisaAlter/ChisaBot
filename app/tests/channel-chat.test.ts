@@ -1,7 +1,7 @@
-import type { Attachment } from "@/lib/chat/attachment-state";
 import { describe, expect, test } from "bun:test";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { attachmentUrl } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 
 /**
  * `toMessageContent` is the wire format every attachment message is built from — the contract

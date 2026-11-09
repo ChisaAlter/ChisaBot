@@ -37,18 +37,18 @@ ChisaBot 是以 **DSH 为执行内核**的中文私人助手，自托管、全�
         模型网关（Magpie，可选）      独立 DSH Host / Session         宿主机更新器 chisabot-updater
 ```
 
-| 组件 | 代码 | 做什么 | 怎么更新 |
-|---|---|---|---|
-| **Web 应用** | `app/`（React + TanStack Router + 自有会话客户端） | 聊天、设置、管理的共用界面；PC 与 Android 分别使用桌面和手机布局 | 随服务器部署，网页提示「有新版本，点此刷新」 |
-| **服务器** | `server/`（Hono + Conversation） | 接纳命令、管理权限、任务、交付与历史；DSH 执行模型回合，数据库按版本迁移 | 一键更新 / `deploy-serial.sh` |
-| **执行内核** | `runtime/dsh/`（Node.js + DSH） | 每账号独立 Host，管理模型/工具循环和持久 Session | 随固定依赖与兼容 reader 更新 |
-| **云端浏览器** | `agent-computer/`（Chromium on Xvfb） | 机器人的浏览器 + `/workspace` 工作区；多标签、收藏夹、可接管 | 随服务器镜像 |
-| **PC 客户端** | `pc/`（Electron, Windows） | 一个窗口加载服务器网页 + 一个**设备节点**（主动 WSS 连服务器）；小窗模式、托盘、本地 agent | electron-updater，外壳指纹变了要「重新安装」 |
-| **无界面节点** | `pc/src/headless.js` → `chisabot-node` | Linux / macOS 服务器当设备（一行命令安装，systemd / launchd） | 节点自动下载新版 |
-| **Android** | `android/`（Kotlin 壳 + WebView） | 原生登录、扫码、系统权限和下载；聊天、卡片、面板与设置使用同一 React 手机布局 | `latest.json` 更新源，versionCode 只增 |
-| **公网网关** | `deploy/public/`（nginx + `auth/server.ts`） | TLS、登录（Argon2id + 会话）、签名身份、公开页面 `/p/`、设备 / OneBot 例外路由 | **手工部署**，不随一键更新 |
-| **更新器** | `deploy/updater/`（python3, systemd） | 拉 main → 快速更新或完整构建 → 备份 → 切换 → 健康检查 → 失败自动回滚 | 每次成功更新后自升级 |
-| **模型网关** | Magpie（外部项目） | 多模型接入、目录、密钥；ChisaBot 也可直接接 OpenAI / Anthropic 兼容接口 | 独立 compose |
+| 组件           | 代码                                               | 做什么                                                                                     | 怎么更新                                     |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Web 应用**   | `app/`（React + TanStack Router + 自有会话客户端） | 聊天、设置、管理的共用界面；PC 与 Android 分别使用桌面和手机布局                           | 随服务器部署，网页提示「有新版本，点此刷新」 |
+| **服务器**     | `server/`（Hono + Conversation）                   | 接纳命令、管理权限、任务、交付与历史；DSH 执行模型回合，数据库按版本迁移                   | 一键更新 / `deploy-serial.sh`                |
+| **执行内核**   | `runtime/dsh/`（Node.js + DSH）                    | 每账号独立 Host，管理模型/工具循环和持久 Session                                           | 随固定依赖与兼容 reader 更新                 |
+| **云端浏览器** | `agent-computer/`（Chromium on Xvfb）              | 机器人的浏览器 + `/workspace` 工作区；多标签、收藏夹、可接管                               | 随服务器镜像                                 |
+| **PC 客户端**  | `pc/`（Electron, Windows）                         | 一个窗口加载服务器网页 + 一个**设备节点**（主动 WSS 连服务器）；小窗模式、托盘、本地 agent | electron-updater，外壳指纹变了要「重新安装」 |
+| **无界面节点** | `pc/src/headless.js` → `chisabot-node`             | Linux / macOS 服务器当设备（一行命令安装，systemd / launchd）                              | 节点自动下载新版                             |
+| **Android**    | `android/`（Kotlin 壳 + WebView）                  | 原生登录、扫码、系统权限和下载；聊天、卡片、面板与设置使用同一 React 手机布局              | `latest.json` 更新源，versionCode 只增       |
+| **公网网关**   | `deploy/public/`（nginx + `auth/server.ts`）       | TLS、登录（Argon2id + 会话）、签名身份、公开页面 `/p/`、设备 / OneBot 例外路由             | **手工部署**，不随一键更新                   |
+| **更新器**     | `deploy/updater/`（python3, systemd）              | 拉 main → 快速更新或完整构建 → 备份 → 切换 → 健康检查 → 失败自动回滚                       | 每次成功更新后自升级                         |
+| **模型网关**   | Magpie（外部项目）                                 | 多模型接入、目录、密钥；ChisaBot 也可直接接 OpenAI / Anthropic 兼容接口                    | 独立 compose                                 |
 
 详细结构见 [architecture.md](architecture.md)，全部功能见 [features.md](features.md)，数据表见 [data-model.md](data-model.md)。
 
@@ -61,11 +61,11 @@ ChisaBot 是以 **DSH 为执行内核**的中文私人助手，自托管、全�
 
 ## 5. 去哪里看
 
-| 我想… | 看这里 |
-|---|---|
-| 知道有哪些功能、在哪、怎么开关 | [features.md](features.md) |
-| 理解系统结构 | [architecture.md](architecture.md) · [data-model.md](data-model.md) · [ADR](adr/README.md) |
-| 知道为什么这样设计 | [decisions.md](decisions.md) · [ADR](adr/README.md) |
-| 改界面 | [DESIGN.md](../DESIGN.md) |
-| 发版 / 上线 / 测试 | [release.md](release.md) · [ops/deploy.md](ops/deploy.md) · [testing.md](testing.md) |
-| 看懂中文术语 | [glossary.md](glossary.md) |
+| 我想…                          | 看这里                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| 知道有哪些功能、在哪、怎么开关 | [features.md](features.md)                                                                 |
+| 理解系统结构                   | [architecture.md](architecture.md) · [data-model.md](data-model.md) · [ADR](adr/README.md) |
+| 知道为什么这样设计             | [decisions.md](decisions.md) · [ADR](adr/README.md)                                        |
+| 改界面                         | [DESIGN.md](../DESIGN.md)                                                                  |
+| 发版 / 上线 / 测试             | [release.md](release.md) · [ops/deploy.md](ops/deploy.md) · [testing.md](testing.md)       |
+| 看懂中文术语                   | [glossary.md](glossary.md)                                                                 |

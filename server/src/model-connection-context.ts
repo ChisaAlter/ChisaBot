@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { RuntimeModelConnection, RuntimeModelResolver } from "./conversation-runtime";
+import type {
+  RuntimeModelConnection,
+  RuntimeModelResolver,
+} from "./conversation-runtime";
 
 type ModelConnectionScope = {
   connection?: Promise<RuntimeModelConnection>;

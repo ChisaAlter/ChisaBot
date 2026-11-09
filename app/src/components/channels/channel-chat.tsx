@@ -1,18 +1,24 @@
-import { interruptWaitingKind } from "@/lib/compat/legacy-client";
 import type { Message } from "@ag-ui/core";
-import type { Attachment } from "@/lib/chat/attachment-state";
-import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
-import { conversationClient, useConversationSession } from "@/lib/chat/session-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
+import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { isPersonSentMessage } from "@/components/channels/chat-transcript";
-import { toAgentOptions, type ComposerDraft } from "@/components/channels/composer";
+import {
+  type ComposerDraft,
+  toAgentOptions,
+} from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
-import { ChannelAvatar } from "@/components/channels/avatar";
 import {
   seedMessage,
   takeFirstMessage,
@@ -23,11 +29,9 @@ import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { useReportBusy } from "@/lib/activity";
+import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import {
-  type ApprovalInboxData,
-  dismissPersonQuestion,
-} from "@/lib/approvals";
+import { type ApprovalInboxData, dismissPersonQuestion } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
 import { attachmentUrl } from "@/lib/channels/attachments";
 import {
@@ -43,14 +47,19 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
+import type { Attachment } from "@/lib/chat/attachment-state";
+import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
+import {
+  conversationClient,
+  useConversationSession,
+} from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
+import { interruptWaitingKind } from "@/lib/compat/legacy-client";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
-
 import type { ThreadActivity } from "@/lib/conversations/bot-thread";
 import { readSync } from "@/lib/conversations/bot-thread";
 import { reportChatRunning } from "@/lib/conversations/computer-activity";
-import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { syncComputerMessages } from "@/lib/conversations/computer-tools";
 import {
   CONNECTION_LOST_REASON,
@@ -59,16 +68,22 @@ import {
   isConnectionDrop,
   raceSendWatchdog,
   reportBudgetEvent,
-  sendReachedServer,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
 } from "@/lib/conversations/connection-drop";
-import { ConversationProvider, replyAfterToolCall } from "@/lib/conversations/conversation";
+import {
+  ConversationProvider,
+  replyAfterToolCall,
+} from "@/lib/conversations/conversation";
 import { frontendToolProgressAt } from "@/lib/conversations/frontend-tool-activity";
-import { hideHeldSupplements, useStopRequest } from "@/lib/conversations/held-supplements";
+import {
+  hideHeldSupplements,
+  useStopRequest,
+} from "@/lib/conversations/held-supplements";
 import { afterMs, joinWithin } from "@/lib/conversations/join-thread";
 import {
   contentText,
@@ -89,7 +104,13 @@ import {
   useThreadActivity,
   withStoredTail,
 } from "@/lib/conversations/thread-activity";
-import { inboxState, queueMessage, queuedFor, restoreQueue, useQueuedMessages } from "@/lib/conversations/thread-inbox";
+import {
+  inboxState,
+  queuedFor,
+  queueMessage,
+  restoreQueue,
+  useQueuedMessages,
+} from "@/lib/conversations/thread-inbox";
 import {
   HISTORY_RETRY_DELAYS_MS,
   readThreadMessages,
@@ -110,11 +131,14 @@ import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
-import { agentModelQueryOptions, modelCatalogQueryOptions } from "@/lib/model-selection/queries";
-import { modelMissingFromCatalog } from "../../../../shared/model-selection";
+import {
+  agentModelQueryOptions,
+  modelCatalogQueryOptions,
+} from "@/lib/model-selection/queries";
 import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
+import { modelMissingFromCatalog } from "../../../../shared/model-selection";
 import { newId } from "../../lib/new-id";
 
 /**
@@ -150,7 +174,10 @@ function sameActivity(
 }
 
 /** Failed frontend handlers do not request a continuation. */
-async function persistFailedFrontendResults(threadId: string, messages: readonly Message[]) {
+async function persistFailedFrontendResults(
+  threadId: string,
+  messages: readonly Message[],
+) {
   // Only the last wire segment can still own a relay. Older errors are ordinary history.
   let callAt = -1;
   for (let at = messages.length - 1; at >= 0; at--) {
@@ -163,14 +190,26 @@ async function persistFailedFrontendResults(threadId: string, messages: readonly
     if (message?.role === "user") return;
   }
   if (callAt < 0) return false;
-  const results = messages.slice(callAt + 1).filter((message) => message.role === "tool");
-  if (!results.some((message) => typeof message.content === "string" && message.content.startsWith("Error:"))) return;
-  await fetch(`/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ results }),
-  }).catch(() => null);
+  const results = messages
+    .slice(callAt + 1)
+    .filter((message) => message.role === "tool");
+  if (
+    !results.some(
+      (message) =>
+        typeof message.content === "string" &&
+        message.content.startsWith("Error:"),
+    )
+  )
+    return;
+  await fetch(
+    `/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ results }),
+    },
+  ).catch(() => null);
   return true;
 }
 
@@ -404,7 +443,10 @@ export function ChannelChat({
    */
   const modelState = useQuery(agentModelQueryOptions(runtimeAgentId));
   const modelCatalog = useQuery(modelCatalogQueryOptions());
-  const modelMissing = modelMissingFromCatalog(modelState.data, modelCatalog.data);
+  const modelMissing = modelMissingFromCatalog(
+    modelState.data,
+    modelCatalog.data,
+  );
   const modelMissingRef = useRef(modelMissing);
   modelMissingRef.current = modelMissing;
   // Mentions are scoped to the channel's permitted agents.
@@ -709,7 +751,8 @@ export function ChannelChat({
     [activity.onActivity],
   );
   const connectChat = useCallback(
-    (options: { agent: typeof agent }) => conversationClient.connectAgent(options),
+    (options: { agent: typeof agent }) =>
+      conversationClient.connectAgent(options),
     [conversationClient],
   );
   const suppressConnectDuringSend = useCallback(
@@ -743,7 +786,11 @@ export function ChannelChat({
         // 给回放 / 实时流一点时间收尾；这台自己在跑（刚又发了一句）时不动。
         await new Promise((resolve) => setTimeout(resolve, 600));
         const current = agentRef.current;
-        if (current.isRunning || turnsRef.current > 0 || sendInFlightRef.current)
+        if (
+          current.isRunning ||
+          turnsRef.current > 0 ||
+          sendInFlightRef.current
+        )
           return;
         const stored = await readThreadMessages(
           channel.threadId,
@@ -1051,9 +1098,7 @@ export function ChannelChat({
           if (stored?.availability === "ready") {
             landed = answeredOnly
               ? storedTurnAnswered(stored.messages, userMessageId)
-              : stored.messages.some(
-                  (message) => message.id === userMessageId,
-                );
+              : stored.messages.some((message) => message.id === userMessageId);
           }
         }
         if (!landed) await afterMs(2_000);
@@ -1214,10 +1259,21 @@ export function ChannelChat({
       runEventSeenRef.current = false;
       const runPromise = conversationClient.runAgent({
         agent: target,
-        ...((panelAuthoring || inboxSourceId) ? { forwardedProps: {
-          ...panelAuthoring,
-          ...(inboxSourceId ? { chisabotInboxResume: { sourceId: inboxSourceId, messageId: userMessageId } } : {}),
-        } } : {}),
+        ...(panelAuthoring || inboxSourceId
+          ? {
+              forwardedProps: {
+                ...panelAuthoring,
+                ...(inboxSourceId
+                  ? {
+                      chisabotInboxResume: {
+                        sourceId: inboxSourceId,
+                        messageId: userMessageId,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
       });
       /**
        * 看门狗问的「最近一次有进展」的三类证词：这一轮的 run 事件（模型在写、工具结果在回来…）；
@@ -1239,7 +1295,8 @@ export function ChannelChat({
         lastProgressAt,
       });
       if (race === "timeout") {
-        let persisted: boolean | null = target.isCommandAccepted(userMessageId) || runEventSeenRef.current;
+        let persisted: boolean | null =
+          target.isCommandAccepted(userMessageId) || runEventSeenRef.current;
         if (!persisted) {
           /*
            * 落库检查要两个证人都问：messages 表（普通回合）和服务端收件箱（正在回答时
@@ -1247,20 +1304,22 @@ export function ChannelChat({
            * 一条安全躺在收件箱里、等着被当前回合读走的消息误判成「没发出去」。
            */
           const [stored, inbox] = await Promise.all([
-            readThreadMessages(
-              channel.threadId,
-              runtimeAgentId,
-            ).catch(() => null),
+            readThreadMessages(channel.threadId, runtimeAgentId).catch(
+              () => null,
+            ),
             inboxState(channel.threadId).catch(() => null),
           ]);
           persisted = sendReachedServer({
             stored:
               stored != null && stored.availability === "ready"
-                ? stored.messages.some((message) => message.id === userMessageId)
+                ? stored.messages.some(
+                    (message) => message.id === userMessageId,
+                  )
                 : null,
-            queued: inbox != null
-              ? inbox.items.some((item) => item.id === userMessageId)
-              : null,
+            queued:
+              inbox != null
+                ? inbox.items.some((item) => item.id === userMessageId)
+                : null,
           });
         }
         // First-bound decision without reply race yet.
@@ -1279,7 +1338,9 @@ export function ChannelChat({
            */
           if (first.kind === "hang") {
             try {
-              void conversationClient.stopAgent({ agent: target }).catch(() => {});
+              void conversationClient
+                .stopAgent({ agent: target })
+                .catch(() => {});
             } catch {
               /* stop best-effort */
             }
@@ -1295,7 +1356,9 @@ export function ChannelChat({
             first.kind === "unverified"
               ? () => {
                   try {
-                    void conversationClient.stopAgent({ agent: target }).catch(() => {});
+                    void conversationClient
+                      .stopAgent({ agent: target })
+                      .catch(() => {});
                   } catch {
                     /* stop best-effort */
                   }
@@ -1321,7 +1384,9 @@ export function ChannelChat({
         });
         if (second.kind === "reply_hang") {
           try {
-            void conversationClient.stopAgent({ agent: target }).catch(() => {});
+            void conversationClient
+              .stopAgent({ agent: target })
+              .catch(() => {});
           } catch {
             /* stop best-effort */
           }
@@ -1347,11 +1412,13 @@ export function ChannelChat({
       if (!target.isCommandAccepted(userMessageId)) throw error;
       // The message is already in the server's command log. Keep a failed execution in the
       // transcript; restoring its draft would offer to send the accepted command a second time.
-      if (!stopRequestedRef.current && !connectionDropped.current) failRef.current(stoppedReason(error));
+      if (!stopRequestedRef.current && !connectionDropped.current)
+        failRef.current(stoppedReason(error));
     } finally {
       setRunsInFlight((count) => Math.max(0, count - 1));
     }
-    if (!stopRequestedRef.current) await persistFailedFrontendResults(channel.threadId, target.messages);
+    if (!stopRequestedRef.current)
+      await persistFailedFrontendResults(channel.threadId, target.messages);
 
     /*
      * 流断了而不是模型出错（DESIGN.md §89）：问服务器这一轮怎样了。只读——不重发消息，设备命令不会再跑一遍。
@@ -1450,7 +1517,11 @@ export function ChannelChat({
        * 输入框清空、记下的草稿也清掉（DESIGN.md §88.4）；「重试」从这条消息起重新生成（`retryTurn`）。
        * 什么都没回来就失败的，照旧把字放回去（重试 = 再发一次，先拿掉失败的那份）。
        */
-      if (!target.isCommandAccepted(userMessageId) && !turnAnswered(target.messages)) throw new Error(turnFailure.current);
+      if (
+        !target.isCommandAccepted(userMessageId) &&
+        !turnAnswered(target.messages)
+      )
+        throw new Error(turnFailure.current);
     }
     return target.messages
       .filter(
@@ -1496,7 +1567,10 @@ export function ChannelChat({
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
 
     // Every request shares this turn boundary, including gaps between frontend tools.
-    if (turnsRef.current > 0 || (joinGateSettledRef.current && agentRef.current.isRunning)) {
+    if (
+      turnsRef.current > 0 ||
+      (joinGateSettledRef.current && agentRef.current.isRunning)
+    ) {
       throw new Error("代理仍在处理另一个请求。请等待或先停止该任务。");
     }
 
@@ -1560,7 +1634,9 @@ export function ChannelChat({
         noteRunProgress.current();
         if (
           stopRequestedRef.current ||
-          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(String((event as { code?: unknown } | undefined)?.code)) ||
+          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(
+            String((event as { code?: unknown } | undefined)?.code),
+          ) ||
           event?.message === "This run was stopped."
         ) {
           awaitingReply.current = false;
@@ -1585,10 +1661,13 @@ export function ChannelChat({
         noteRunProgress.current();
         if (event.outcome?.type === "interrupt") {
           awaitingReply.current = false;
-          const uncertain = event.outcome.interrupts.find(interrupt =>
-            interruptWaitingKind(interrupt.metadata) === "operation_unknown");
+          const uncertain = event.outcome.interrupts.find(
+            (interrupt) =>
+              interruptWaitingKind(interrupt.metadata) === "operation_unknown",
+          );
           if (uncertain) {
-            const message = uncertain.message ?? "这一步可能已经执行，但结果尚待核对。";
+            const message =
+              uncertain.message ?? "这一步可能已经执行，但结果尚待核对。";
             turnFailure.current = message;
             setRunError(message);
           }
@@ -1628,24 +1707,52 @@ export function ChannelChat({
   sayRef.current = say;
   useEffect(() => {
     const onSendPaused = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId: string; id: string; accept: (run: () => Promise<unknown>) => void }>).detail;
-      if (!detail || detail.threadId !== channel.threadId || typeof detail.accept !== "function") return;
+      const detail = (
+        event as CustomEvent<{
+          threadId: string;
+          id: string;
+          accept: (run: () => Promise<unknown>) => void;
+        }>
+      ).detail;
+      if (
+        !detail ||
+        detail.threadId !== channel.threadId ||
+        typeof detail.accept !== "function"
+      )
+        return;
       detail.accept(async () => {
-        const item = queuedFor(channel.threadId).find((item) => item.id === detail.id && item.status === "paused");
+        const item = queuedFor(channel.threadId).find(
+          (item) => item.id === detail.id && item.status === "paused",
+        );
         if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
         // CB-104: the resent copy replaces a held original the stopped turn had read (server does the same).
         const target = agentRef.current;
-        if (target.messages.some((message) => message.id === item.id && message.role === "user"))
-          target.setMessages(target.messages.filter((message) => message.id !== item.id) as typeof target.messages);
+        if (
+          target.messages.some(
+            (message) => message.id === item.id && message.role === "user",
+          )
+        )
+          target.setMessages(
+            target.messages.filter(
+              (message) => message.id !== item.id,
+            ) as typeof target.messages,
+          );
         try {
-          return await sayRef.current(item.text, [], [], item.message?.content, item.id);
+          return await sayRef.current(
+            item.text,
+            [],
+            [],
+            item.message?.content,
+            item.id,
+          );
         } finally {
           await restoreQueue(channel.threadId);
         }
       });
     };
     window.addEventListener("chisabot-send-paused", onSendPaused);
-    return () => window.removeEventListener("chisabot-send-paused", onSendPaused);
+    return () =>
+      window.removeEventListener("chisabot-send-paused", onSendPaused);
   }, [channel.threadId]);
 
   // 「已停止」（2026-10-13 第四轮）：本机刚按停止的那一轮 + 服务器记下的（刷新、换设备也在）。
@@ -1662,7 +1769,12 @@ export function ChannelChat({
   // CB-104: follow-ups held by Stop are shown once, as held items, not also as transcript bubbles.
   const inboxQueue = useQueuedMessages(channel.threadId);
   const heldIds = useMemo(
-    () => new Set(inboxQueue.filter((item) => item.status === "paused").map((item) => item.id)),
+    () =>
+      new Set(
+        inboxQueue
+          .filter((item) => item.status === "paused")
+          .map((item) => item.id),
+      ),
     [inboxQueue],
   );
   // CB-104: 「停止中…」 from the click until the stopped turn has really ended.
@@ -1670,8 +1782,12 @@ export function ChannelChat({
   // CB-104: a failed stop request says so at once (「停止失败，重试」) instead of reverting quietly.
   // CB-104: while 「停止失败，重试」 shows, ask the server whether the turn is still running; once it
   // is not (finished, stopped or errored on its own), the prompt goes away and Send comes back.
-  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<boolean | undefined>(undefined);
-  const stopRequest = useStopRequest(channel.threadId, undefined, { running: stopFailedServerRunning });
+  const [stopFailedServerRunning, setStopFailedServerRunning] = useState<
+    boolean | undefined
+  >(undefined);
+  const stopRequest = useStopRequest(channel.threadId, undefined, {
+    running: stopFailedServerRunning,
+  });
   useEffect(() => {
     if (!stopRequest.failed) {
       setStopFailedServerRunning(undefined);
@@ -1796,10 +1912,15 @@ export function ChannelChat({
    * 补发的那一轮也算「在跑」（Stop 能停、输入框显示在回答）。
    */
   const queueToServer = useCallback(
-    (draft: ComposerDraft) => queueMessage(channel.threadId, {
-      message: { id: newId(), role: "user", content: toMessageContent(draft.text.trim(), draft.attachments) } as Message,
-      skillIds: draft.commandIds,
-    }),
+    (draft: ComposerDraft) =>
+      queueMessage(channel.threadId, {
+        message: {
+          id: newId(),
+          role: "user",
+          content: toMessageContent(draft.text.trim(), draft.attachments),
+        } as Message,
+        skillIds: draft.commandIds,
+      }),
     [channel.threadId],
   );
   const runInboxTurn = useCallback(
@@ -1811,8 +1932,16 @@ export function ChannelChat({
       setRunsInFlight((count) => count + 1);
       try {
         const result = await conversationClient.runAgent(options);
-        if (!stopRequestedRef.current && await persistFailedFrontendResults(channel.threadId, options.agent.messages)) {
-          turnFailure.current = unfinishedTurnReason(options.agent.messages as never, new Set()) ?? "工具执行失败。";
+        if (
+          !stopRequestedRef.current &&
+          (await persistFailedFrontendResults(
+            channel.threadId,
+            options.agent.messages,
+          ))
+        ) {
+          turnFailure.current =
+            unfinishedTurnReason(options.agent.messages as never, new Set()) ??
+            "工具执行失败。";
         }
         return result;
       } finally {
@@ -1827,7 +1956,10 @@ export function ChannelChat({
   useThreadInbox(channel.threadId, agent, runInboxTurn as never, {
     pullServerTurns: false,
     turnRunning: turnsInFlight > 0,
-    canFlush: () => turnsRef.current === 0 && !stopRequestedRef.current && turnFailure.current === null,
+    canFlush: () =>
+      turnsRef.current === 0 &&
+      !stopRequestedRef.current &&
+      turnFailure.current === null,
   });
 
   /**
@@ -1915,7 +2047,8 @@ export function ChannelChat({
    * - `chatBusy`：**画给人看的**「机器人在回答」。接入（回放）不算，否则每次切换机器人，发送键都先变成
    *   「停止机器人」、末尾挂一行「思考中」，回放完再收回去；那个「停止」按下去撤掉的是回放本身。
    */
-  const agentLive = (agent.isRunning && !joining) || turnsInFlight > 0 || runsInFlight > 0;
+  const agentLive =
+    (agent.isRunning && !joining) || turnsInFlight > 0 || runsInFlight > 0;
   // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
   const agentLiveBefore = useRef(agentLive);
   useEffect(() => {
@@ -1934,7 +2067,10 @@ export function ChannelChat({
     };
     void check();
     const timer = setInterval(() => void check(), 1500);
-    return () => { alive = false; clearInterval(timer); };
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
   }, [stopping, agent, channel.threadId]);
   const chatBusy =
     seedSending ||
@@ -1962,7 +2098,8 @@ export function ChannelChat({
   const activeMessagesRef = useRef(activeMessages);
   activeMessagesRef.current = activeMessages;
   const replyAfter = useCallback(
-    (toolCallId: string) => replyAfterToolCall(activeMessagesRef.current, toolCallId),
+    (toolCallId: string) =>
+      replyAfterToolCall(activeMessagesRef.current, toolCallId),
     [],
   );
   useEffect(() => {
@@ -1975,7 +2112,10 @@ export function ChannelChat({
     // 手动停止或出错结束的一轮不跳「做完了」（DESIGN.md §81）。
     stopping || runError !== null,
   );
-  useEffect(() => publishBotActivity(runtimeAgentId, liveActivity), [runtimeAgentId, liveActivity]);
+  useEffect(
+    () => publishBotActivity(runtimeAgentId, liveActivity),
+    [runtimeAgentId, liveActivity],
+  );
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const messageActions = useMemo(
     () => ({ canAct: canResend, regenerate, edit: editAndResend }),
@@ -2020,7 +2160,11 @@ export function ChannelChat({
   return (
     // Activity renderers resolve their agent through this SDK context. It must match useAgent's
     // channel instance so an action continues this thread instead of looking for a default agent.
-    <ConversationScopeProvider agentId={channelAgentId} botId={runtimeAgentId} threadId={channel.threadId}>
+    <ConversationScopeProvider
+      agentId={channelAgentId}
+      botId={runtimeAgentId}
+      threadId={channel.threadId}
+    >
       <ConversationProvider ask={askFromComponent} replyAfter={replyAfter}>
         <MessageActionsContext.Provider value={messageActions}>
           <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2211,8 +2355,14 @@ export function ChannelChat({
                 // An admitted command is retried from its stored turn, including a failure
                 // before the first token. Its original draft has already been sent.
                 const current = agentRef.current;
-                const lastUser = current.messages.findLast(message => message.role === "user");
-                if (!turnAnswered(current.messages) && !(lastUser && current.isCommandAccepted(lastUser.id))) return false;
+                const lastUser = current.messages.findLast(
+                  (message) => message.role === "user",
+                );
+                if (
+                  !turnAnswered(current.messages) &&
+                  !(lastUser && current.isCommandAccepted(lastUser.id))
+                )
+                  return false;
                 void regenerate().catch(() => undefined);
                 return true;
               }}
@@ -2242,7 +2392,7 @@ export function ChannelChat({
           </div>
         </MessageActionsContext.Provider>
       </ConversationProvider>
-      </ConversationScopeProvider>
+    </ConversationScopeProvider>
   );
 }
 
@@ -2319,7 +2469,8 @@ export function openToolCallPending(list: readonly Message[]): boolean {
     const message = list[i];
     if (!message) continue;
     if (message.role === "tool") {
-      if (typeof message.toolCallId === "string") answered.add(message.toolCallId);
+      if (typeof message.toolCallId === "string")
+        answered.add(message.toolCallId);
       continue;
     }
     if (message.role === "assistant") {

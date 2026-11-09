@@ -22,7 +22,15 @@ type ProductItem = {
   source?: string | null;
 };
 
-function ProductPhoto({ name, image, url }: { name: string; image: string | null; url: string | null }) {
+function ProductPhoto({
+  name,
+  image,
+  url,
+}: {
+  name: string;
+  image: string | null;
+  url: string | null;
+}) {
   const { src, loading } = usePreviewImage(image, url);
   const [failed, setFailed] = useState(false);
   if (src && !failed) {
@@ -49,29 +57,62 @@ function ProductPhoto({ name, image, url }: { name: string; image: string | null
   );
 }
 
-export function Products({ items, columns }: { items: readonly ProductItem[] | null | undefined; columns?: number | null }) {
-  const list = Array.isArray(items) ? items.filter((item) => item && typeof item.name === "string") : [];
+export function Products({
+  items,
+  columns,
+}: {
+  items: readonly ProductItem[] | null | undefined;
+  columns?: number | null;
+}) {
+  const list = Array.isArray(items)
+    ? items.filter((item) => item && typeof item.name === "string")
+    : [];
   if (list.length === 0) return null;
   // 2 / 3 个时一排放完（不留空位）；4 个两排两列；更多时 3 列（模型写的 columns 只在 5 个以上时听，避免 3 个排成 2 列留个洞）。
-  const cols = list.length <= 3 ? Math.max(2, list.length) : list.length === 4 ? 2 : Math.min(4, Math.max(2, columns ?? 3));
+  const cols =
+    list.length <= 3
+      ? Math.max(2, list.length)
+      : list.length === 4
+        ? 2
+        : Math.min(4, Math.max(2, columns ?? 3));
   return (
-    <div className="jr-products jr-el" data-testid="jr-products" style={{ "--jr-cols": String(cols) } as CSSProperties}>
+    <div
+      className="jr-products jr-el"
+      data-testid="jr-products"
+      style={{ "--jr-cols": String(cols) } as CSSProperties}
+    >
       {list.map((item, index) => {
         const href = safeHttp(item.url ?? undefined) ?? null;
         const image = safeHttps(item.image ?? undefined) ?? null;
         const site = item.source || (href ? domainOf(href) : "");
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
-          <div className="jr-product" data-testid="jr-product" key={index} style={{ "--jr-i": String(index) } as CSSProperties}>
-            <ActionArea affordance="none" className="jr-product-a" item={{ href: href ?? undefined }} label={item.name}>
+          <div
+            className="jr-product"
+            data-testid="jr-product"
+            key={index}
+            style={{ "--jr-i": String(index) } as CSSProperties}
+          >
+            <ActionArea
+              affordance="none"
+              className="jr-product-a"
+              item={{ href: href ?? undefined }}
+              label={item.name}
+            >
               <span className="jr-product-media">
                 <ProductPhoto image={image} name={item.name} url={href} />
-                {item.badge ? <span className="jr-product-badge">{item.badge}</span> : null}
+                {item.badge ? (
+                  <span className="jr-product-badge">{item.badge}</span>
+                ) : null}
               </span>
               <span className="jr-product-body">
                 <span className="jr-product-name">{item.name}</span>
-                {item.price ? <span className="jr-product-price">{item.price}</span> : null}
-                {item.note ? <span className="jr-product-note">{item.note}</span> : null}
+                {item.price ? (
+                  <span className="jr-product-price">{item.price}</span>
+                ) : null}
+                {item.note ? (
+                  <span className="jr-product-note">{item.note}</span>
+                ) : null}
                 {site ? <span className="jr-product-site">{site}</span> : null}
               </span>
             </ActionArea>

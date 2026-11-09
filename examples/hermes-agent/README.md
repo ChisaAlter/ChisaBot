@@ -35,12 +35,26 @@ routing hint). MCP servers are rejected. Full host metadata is optional on
 ```json
 {
   "version": 1,
-  "scope": {"actorId": "actor", "botId": "bot", "threadId": "thread", "runId": "run"},
+  "scope": {
+    "actorId": "actor",
+    "botId": "bot",
+    "threadId": "thread",
+    "runId": "run"
+  },
   "systemPrompt": "The ChisaBot identity and instructions",
-  "history": [{"role": "user", "content": "Earlier user message"}],
-  "tools": [{"name": "device_list", "description": "List granted devices", "inputSchema": {"type": "object", "properties": {}}}],
-  "toolGateway": {"url": "http://reachable-host/run-base", "capability": "opaque-run-capability"},
-  "model": {"id": "the-configured-model-id"}
+  "history": [{ "role": "user", "content": "Earlier user message" }],
+  "tools": [
+    {
+      "name": "device_list",
+      "description": "List granted devices",
+      "inputSchema": { "type": "object", "properties": {} }
+    }
+  ],
+  "toolGateway": {
+    "url": "http://reachable-host/run-base",
+    "capability": "opaque-run-capability"
+  },
+  "model": { "id": "the-configured-model-id" }
 }
 ```
 
@@ -203,7 +217,13 @@ JSON-valued `result` and an optional `ok: true` wrapper are also accepted.
 Suspension response:
 
 ```json
-{"error":{"code":"tool_suspended","message":"Waiting"},"waiting":{"kind":"approval","continuation":{"id":"opaque-continuation"}}}
+{
+  "error": { "code": "tool_suspended", "message": "Waiting" },
+  "waiting": {
+    "kind": "approval",
+    "continuation": { "id": "opaque-continuation" }
+  }
+}
 ```
 
 This is recognized only with HTTP 409. The adapter retains `waiting`, requests
@@ -218,7 +238,20 @@ null result/content, and `_meta: {name, chisabot: {version: 1, callId, name, wai
 The prompt response overrides ordinary stop behavior:
 
 ```json
-{"stopReason":"cancelled","_meta":{"chisabot":{"version":1,"callId":"the-original-model-call-id","name":"device_list","waiting":{"kind":"approval","continuation":{"id":"opaque-continuation"}}}}}
+{
+  "stopReason": "cancelled",
+  "_meta": {
+    "chisabot": {
+      "version": 1,
+      "callId": "the-original-model-call-id",
+      "name": "device_list",
+      "waiting": {
+        "kind": "approval",
+        "continuation": { "id": "opaque-continuation" }
+      }
+    }
+  }
+}
 ```
 
 The model sees only a fixed interruption marker, never the waiting object or

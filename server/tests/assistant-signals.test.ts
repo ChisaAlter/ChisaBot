@@ -2,11 +2,16 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createDatabase } from "../src/db/client";
-import { collectOpsHealth, createAssistantSignalsProbe } from "../src/ops-health";
+import {
+  collectOpsHealth,
+  createAssistantSignalsProbe,
+} from "../src/ops-health";
 import { testDatabaseUrl } from "./support/database";
 
 const schema = `assistant_signals_${randomUUID().replaceAll("-", "")}`;
-const database = createDatabase(`${testDatabaseUrl()}?search_path=${schema}`, { max: 2 });
+const database = createDatabase(`${testDatabaseUrl()}?search_path=${schema}`, {
+  max: 2,
+});
 const sql = database.$client;
 const probe = createAssistantSignalsProbe(database);
 
@@ -53,23 +58,44 @@ test("actual PG: three completed failures and unknown receipts surface without f
   const signals = await probe("owner");
   expect(signals.state).toBe("needs_attention");
   expect(signals.taskFailureStreak).toBe(3);
-  expect(signals.unknown).toEqual({ personalDeliveriesAtLeast: 1, toolOperationsAtLeast: 1 });
-  const health = await collectOpsHealth({ pingDatabase: async () => ({ ok: true }),
-    gatewayMode: "on", probeAssistant: () => probe("owner") });
+  expect(signals.unknown).toEqual({
+    personalDeliveriesAtLeast: 1,
+    toolOperationsAtLeast: 1,
+  });
+  const health = await collectOpsHealth({
+    pingDatabase: async () => ({ ok: true }),
+    gatewayMode: "on",
+    probeAssistant: () => probe("owner"),
+  });
   expect(health.ok).toBe(true);
   expect(health.checks.assistant.ok).toBe(false);
   expect(JSON.stringify(signals)).not.toContain("private-");
-  expect((await sql.unsafe("SELECT status FROM chisabot_tool_operations WHERE id='private-operation'"))[0].status).toBe("outcome_unknown");
+  expect(
+    (
+      await sql.unsafe(
+        "SELECT status FROM chisabot_tool_operations WHERE id='private-operation'",
+      )
+    )[0].status,
+  ).toBe("outcome_unknown");
   const child = Bun.spawn([process.execPath, "deploy/dsh/ops.ts", "signals"], {
     // Local checkout is isolated-linked; production Docker explicitly installs a hoisted tree.
-    env: { ...process.env, NODE_PATH: resolve("server/node_modules"), DATABASE_URL: `${testDatabaseUrl()}?search_path=${schema}` }, stdout: "pipe", stderr: "pipe",
+    env: {
+      ...process.env,
+      NODE_PATH: resolve("server/node_modules"),
+      DATABASE_URL: `${testDatabaseUrl()}?search_path=${schema}`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
   });
   const output = await new Response(child.stdout).text();
   expect(output, await new Response(child.stderr).text()).not.toBe("");
   expect(await child.exited).toBe(1);
   const hostSignals = JSON.parse(output);
   expect(hostSignals.state).toBe("needs_attention");
-  expect(hostSignals.unknown).toEqual({ personalDeliveriesAtLeast: 2, toolOperationsAtLeast: 2 });
+  expect(hostSignals.unknown).toEqual({
+    personalDeliveriesAtLeast: 2,
+    toolOperationsAtLeast: 2,
+  });
   expect(output).not.toContain("other-operation");
 }, 30000);
 
@@ -82,8 +108,20 @@ test("actual PG: a newer success clears the completion streak; paused and pendin
   expect(signals.taskFailureStreak).toBe(0);
   expect(signals.unknown.toolOperationsAtLeast).toBe(0);
   expect(signals.coverage.unknownCounts).toBe("lower_bound");
-  expect((await sql.unsafe("SELECT status FROM chisabot_task_center_tasks WHERE id='paused'"))[0].status).toBe("paused");
-  expect((await sql.unsafe("SELECT status FROM chisabot_tool_operations WHERE id='waiting-operation'"))[0].status).toBe("waiting_approval");
+  expect(
+    (
+      await sql.unsafe(
+        "SELECT status FROM chisabot_task_center_tasks WHERE id='paused'",
+      )
+    )[0].status,
+  ).toBe("paused");
+  expect(
+    (
+      await sql.unsafe(
+        "SELECT status FROM chisabot_tool_operations WHERE id='waiting-operation'",
+      )
+    )[0].status,
+  ).toBe("waiting_approval");
 }, 30000);
 
 test("actual PG: schedule streak uses terminal results within 24h and resets on a successful result", async () => {
@@ -95,7 +133,9 @@ test("actual PG: schedule streak uses terminal results within 24h and resets on 
     ('waiting','owner','waiting',NULL),('running','owner','running',NULL);`);
   expect((await probe("owner")).scheduleFailureStreak).toBe(3);
   expect((await probe("owner")).state).toBe("needs_attention");
-  await sql.unsafe("UPDATE chisabot_schedule_runs SET status='ok' WHERE id='s3'");
+  await sql.unsafe(
+    "UPDATE chisabot_schedule_runs SET status='ok' WHERE id='s3'",
+  );
   expect((await probe("owner")).scheduleFailureStreak).toBe(0);
   expect((await probe("owner")).state).toBe("clear_in_sample");
 }, 30000);
@@ -112,5 +152,11 @@ test("actual PG: a clear bounded sample never claims the entire ledger has no un
   expect(signals.coverage.scope).toBe("owner_recent_sample");
   expect(signals.coverage.unknownCounts).toBe("lower_bound");
   expect(signals.coverage.imOutbox).toBe("not_sampled");
-  expect((await sql.unsafe("SELECT state FROM chisabot_personal_deliveries WHERE id='private-delivery'"))[0].state).toBe("outcome_unknown");
+  expect(
+    (
+      await sql.unsafe(
+        "SELECT state FROM chisabot_personal_deliveries WHERE id='private-delivery'",
+      )
+    )[0].state,
+  ).toBe("outcome_unknown");
 }, 30000);

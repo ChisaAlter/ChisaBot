@@ -1,8 +1,8 @@
-import { SQL } from "bun";
 import { readFileSync } from "node:fs";
+import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import * as schema from "./schema";
 import { recoveringSql } from "./recovery";
+import * as schema from "./schema";
 
 /**
  * One percent-decoded part of the address, or a refusal that names it.
@@ -229,24 +229,28 @@ export function createDatabase(
   delete process.env.DATABASE_URL;
 
   const address = addressOf(databaseUrl);
-  const client = recoveringSql(() => new SQL({
-    ...address,
-    // Bun 1.3.14's simple BEGIN sends Query+Sync, producing two ReadyForQuery replies.
-    // When split across reads, the second reply can advance named preparation before its
-    // metadata arrives and assign a concurrent query's types to the wrong statement. Use Bun's
-    // existing unnamed extended-query mode: Parse+Bind stay together, with no named cache or
-    // automatic pipeline. Keep this explicit until the split-reply regression passes upstream.
-    prepare: false,
-    // Bound the work on PostgreSQL itself, so a browser deadline does not leave a locked or
-    // expensive query occupying the pool forever. Operators can override these per deployment
-    // with connection parameters in DATABASE_URL; transactions may still set a local budget.
-    connection: {
-      statement_timeout: "25000",
-      lock_timeout: "5000",
-      ...address.connection,
-    },
-    ...(options.max === undefined ? {} : { max: options.max }),
-  }), options.queryTimeoutMs);
+  const client = recoveringSql(
+    () =>
+      new SQL({
+        ...address,
+        // Bun 1.3.14's simple BEGIN sends Query+Sync, producing two ReadyForQuery replies.
+        // When split across reads, the second reply can advance named preparation before its
+        // metadata arrives and assign a concurrent query's types to the wrong statement. Use Bun's
+        // existing unnamed extended-query mode: Parse+Bind stay together, with no named cache or
+        // automatic pipeline. Keep this explicit until the split-reply regression passes upstream.
+        prepare: false,
+        // Bound the work on PostgreSQL itself, so a browser deadline does not leave a locked or
+        // expensive query occupying the pool forever. Operators can override these per deployment
+        // with connection parameters in DATABASE_URL; transactions may still set a local budget.
+        connection: {
+          statement_timeout: "25000",
+          lock_timeout: "5000",
+          ...address.connection,
+        },
+        ...(options.max === undefined ? {} : { max: options.max }),
+      }),
+    options.queryTimeoutMs,
+  );
 
   return drizzle({ client, schema });
 }

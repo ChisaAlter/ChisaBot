@@ -1,17 +1,20 @@
-import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
-import { SandboxSurface } from "@/lib/chat/sandbox-surface";
-import { useBotOnScreen } from "@/lib/kept-visible";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import * as z from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { RefusedCard } from "@/components/gallery/refused";
+import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import {
   agentComponentsQueryOptions,
   decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import { useActiveBotId, useDeclaredBotId } from "@/lib/conversations/active-bot";
+import {
+  useActiveBotId,
+  useDeclaredBotId,
+} from "@/lib/conversations/active-bot";
+import { useBotOnScreen } from "@/lib/kept-visible";
 import {
   type PublishedSandboxed,
   publishedSandboxedQueryOptions,

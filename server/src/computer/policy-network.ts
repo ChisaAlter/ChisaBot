@@ -1,4 +1,3 @@
-import { computerHeaders } from "../../../shared/legacy-headers";
 /**
  * Getting a Bot's computer its network policy.
  *
@@ -9,9 +8,13 @@ import { computerHeaders } from "../../../shared/legacy-headers";
  * every action ({@link withPolicyPushOnWake}) and every 30 seconds to running computers
  * ({@link startEgressPolicyPush}).
  */
-import type { EgressPolicy, EgressRule } from "../../../agent-computer/src/egress";
-import type { ComputerProvider } from "./provider";
+import type {
+  EgressPolicy,
+  EgressRule,
+} from "../../../agent-computer/src/egress";
+import { computerHeaders } from "../../../shared/legacy-headers";
 import { reasonWithoutStatement } from "../db/query-failure";
+import type { ComputerProvider } from "./provider";
 
 export type { EgressPolicy, EgressRule };
 

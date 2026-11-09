@@ -13,7 +13,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { cn } from "@/lib/utils";
-import { canTween, easeOut, formatLike, parseNumeric, safeHttp } from "./rich-utils";
+import {
+  canTween,
+  easeOut,
+  formatLike,
+  parseNumeric,
+  safeHttp,
+} from "./rich-utils";
 
 /**
  * 富组件的运行环境（DESIGN.md §32）：一张界面画在哪里（对话 / 右栏面板），点了以后做什么。
@@ -58,11 +64,25 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const DEFAULT_ACTIONS: RichActions = { surface: "chat", openLink: openInNewTab, copy: copyText };
+const DEFAULT_ACTIONS: RichActions = {
+  surface: "chat",
+  openLink: openInNewTab,
+  copy: copyText,
+};
 const RichUiContext = createContext<RichActions>(DEFAULT_ACTIONS);
 
-export function RichUiProvider({ value, children }: { value: Partial<RichActions>; children: ReactNode }) {
-  return <RichUiContext.Provider value={{ ...DEFAULT_ACTIONS, ...value }}>{children}</RichUiContext.Provider>;
+export function RichUiProvider({
+  value,
+  children,
+}: {
+  value: Partial<RichActions>;
+  children: ReactNode;
+}) {
+  return (
+    <RichUiContext.Provider value={{ ...DEFAULT_ACTIONS, ...value }}>
+      {children}
+    </RichUiContext.Provider>
+  );
 }
 
 export function useRichActions(): RichActions {
@@ -110,7 +130,8 @@ export function ChoiceProvider({
     const said = text.trim();
     if (!said || lock.current || !askRef.current) return false;
     // 对话记录里已经有答案（别的设备上选的）：同样不再发。
-    if (answeredRef.current && optionsRef.current.includes(answeredRef.current)) return false;
+    if (answeredRef.current && optionsRef.current.includes(answeredRef.current))
+      return false;
     lock.current = true;
     setPicked(said);
     askRef.current(said);
@@ -120,9 +141,15 @@ export function ChoiceProvider({
   useEffect(() => {
     if (initial) setAnswered((current) => current ?? initial);
   }, [initial]);
-  const effective = picked ?? (answered && options.includes(answered) ? answered : null);
-  const value = useMemo<ChoiceScope>(() => ({ picked: effective, pick }), [effective, pick]);
-  return <ChoiceContext.Provider value={value}>{children}</ChoiceContext.Provider>;
+  const effective =
+    picked ?? (answered && options.includes(answered) ? answered : null);
+  const value = useMemo<ChoiceScope>(
+    () => ({ picked: effective, pick }),
+    [effective, pick],
+  );
+  return (
+    <ChoiceContext.Provider value={value}>{children}</ChoiceContext.Provider>
+  );
 }
 
 /** 这张界面的选项状态；不在对话里（右栏面板）是 null。 */
@@ -141,13 +168,22 @@ export function choiceState(
 
 /** 从一份规范里收集所有 choice 按钮的 ask（去重、去掉首尾空白）。 */
 export function choiceOptionsOf(
-  elements: Record<string, { type?: string; props?: unknown } | undefined> | undefined,
+  elements:
+    | Record<string, { type?: string; props?: unknown } | undefined>
+    | undefined,
 ): string[] {
   const found = new Set<string>();
   for (const element of Object.values(elements ?? {})) {
     if (element?.type !== "Button") continue;
-    const props = element.props as { choice?: unknown; ask?: unknown } | undefined;
-    if (props?.choice === true && typeof props.ask === "string" && props.ask.trim()) found.add(props.ask.trim());
+    const props = element.props as
+      | { choice?: unknown; ask?: unknown }
+      | undefined;
+    if (
+      props?.choice === true &&
+      typeof props.ask === "string" &&
+      props.ask.trim()
+    )
+      found.add(props.ask.trim());
   }
   return [...found];
 }
@@ -192,7 +228,10 @@ export function useNow(granularitySeconds = 1): number {
 
 export function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(
-    () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -228,7 +267,11 @@ export function useLiveValue(value: string): { shown: string; flash: boolean } {
     setFlash(true);
     const from = parseNumeric(before);
     const to = parseNumeric(value);
-    if (reduced || !canTween(from, to) || typeof requestAnimationFrame !== "function") {
+    if (
+      reduced ||
+      !canTween(from, to) ||
+      typeof requestAnimationFrame !== "function"
+    ) {
       setShown(value);
     } else {
       const start = performance.now();
@@ -256,16 +299,33 @@ export function useLiveValue(value: string): { shown: string; flash: boolean } {
 }
 
 /** 一个会滚动 + 高亮的数值（外层自己决定字号、颜色）。 */
-export function LiveText({ value, className }: { value: string; className?: string }) {
+export function LiveText({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}) {
   const { shown, flash } = useLiveValue(value);
-  return <span className={cn("jr-live", flash && "jr-flash", className)}>{shown}</span>;
+  return (
+    <span className={cn("jr-live", flash && "jr-flash", className)}>
+      {shown}
+    </span>
+  );
 }
 
 /* ── 可点的项：href → <a target=_blank>（↗），ask → 发一句话，copy → 复制（✓ 已复制）── */
 
-export type ItemAction = { href?: string | null; ask?: string | null; copy?: string | null };
+export type ItemAction = {
+  href?: string | null;
+  ask?: string | null;
+  copy?: string | null;
+};
 
-export function hasAction(item: ItemAction | null | undefined, actions: RichActions): boolean {
+export function hasAction(
+  item: ItemAction | null | undefined,
+  actions: RichActions,
+): boolean {
   if (!item) return false;
   return Boolean(safeHttp(item.href) || (item.ask && actions.ask) || item.copy);
 }
@@ -316,7 +376,13 @@ export function ActionArea({
       >
         {children}
         {affordance === "none" ? null : (
-          <IconArrowUpRight aria-hidden className={cn("jr-action-go", affordance === "inline" && "is-inline")} />
+          <IconArrowUpRight
+            aria-hidden
+            className={cn(
+              "jr-action-go",
+              affordance === "inline" && "is-inline",
+            )}
+          />
         )}
       </a>
     );
@@ -325,21 +391,46 @@ export function ActionArea({
     const ask = actions.ask;
     const text = item.ask;
     return (
-      <button className={cn("jr-action is-ask", className)} onClick={() => ask(text)} title={`发送：${text}`} type="button">
+      <button
+        className={cn("jr-action is-ask", className)}
+        onClick={() => ask(text)}
+        title={`发送：${text}`}
+        type="button"
+      >
         {children}
       </button>
     );
   }
   if (item?.copy) {
     return (
-      <button aria-label={label ? `复制 ${label}` : "复制"} className={cn("jr-action is-copy", copied && "is-copied", className)} onClick={onCopy} title={copied ? "已复制" : "点击复制"} type="button">
+      <button
+        aria-label={label ? `复制 ${label}` : "复制"}
+        className={cn("jr-action is-copy", copied && "is-copied", className)}
+        onClick={onCopy}
+        title={copied ? "已复制" : "点击复制"}
+        type="button"
+      >
         {children}
         {affordance === "none" ? null : copied ? (
-          <IconCheck aria-hidden className={cn("jr-action-go is-ok", affordance === "inline" && "is-inline")} />
+          <IconCheck
+            aria-hidden
+            className={cn(
+              "jr-action-go is-ok",
+              affordance === "inline" && "is-inline",
+            )}
+          />
         ) : (
-          <IconCopy aria-hidden className={cn("jr-action-go", affordance === "inline" && "is-inline")} />
+          <IconCopy
+            aria-hidden
+            className={cn(
+              "jr-action-go",
+              affordance === "inline" && "is-inline",
+            )}
+          />
         )}
-        <span aria-live="polite" className="sr-only">{copied ? "已复制" : ""}</span>
+        <span aria-live="polite" className="sr-only">
+          {copied ? "已复制" : ""}
+        </span>
       </button>
     );
   }

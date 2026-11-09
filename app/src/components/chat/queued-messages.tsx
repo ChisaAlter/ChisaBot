@@ -1,8 +1,18 @@
-import { useConversationScope } from "@/lib/chat/conversation-scope";
-import { IconClockHour4, IconPaperclip, IconRefresh, IconX } from "@tabler/icons-react";
+import {
+  IconClockHour4,
+  IconPaperclip,
+  IconRefresh,
+  IconX,
+} from "@tabler/icons-react";
 import { useState } from "react";
-import { queueMessage, sendPausedMessage, useQueuedMessages, withdrawMessage } from "@/lib/conversations/thread-inbox";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
+import {
+  queueMessage,
+  sendPausedMessage,
+  useQueuedMessages,
+  withdrawMessage,
+} from "@/lib/conversations/thread-inbox";
 
 /**
  * 消息列表末尾的「已排队」气泡（DESIGN.md §38.1）：机器人回答期间发的消息，在它被读进去之前画在这里，
@@ -19,17 +29,28 @@ export function QueuedMessages() {
     if (!threadId) return;
     setSending(id);
     setError(null);
-    try { await sendPausedMessage(threadId, id); }
-    catch (reason) { setError({ id, text: reason instanceof Error ? reason.message : "发送失败，请稍后重试。" }); }
-    finally { setSending(null); }
+    try {
+      await sendPausedMessage(threadId, id);
+    } catch (reason) {
+      setError({
+        id,
+        text:
+          reason instanceof Error ? reason.message : "发送失败，请稍后重试。",
+      });
+    } finally {
+      setSending(null);
+    }
   };
   const withdraw = async (id: string) => {
     if (!threadId) return;
     setSending(id);
     setError(null);
     try {
-      if (!await withdrawMessage(threadId, id)) setError({ id, text: "还未确认撤回，请稍后重试。" });
-    } finally { setSending(null); }
+      if (!(await withdrawMessage(threadId, id)))
+        setError({ id, text: "还未确认撤回，请稍后重试。" });
+    } finally {
+      setSending(null);
+    }
   };
   // CB-104: everything Stop held, sent in order (each as its own turn), with one press.
   const held = items.filter((item) => item.status === "paused");
@@ -44,8 +65,14 @@ export function QueuedMessages() {
         await sendPausedMessage(threadId, item.id);
       }
     } catch (reason) {
-      setError({ id: current, text: reason instanceof Error ? reason.message : "发送失败，请稍后重试。" });
-    } finally { setSending(null); }
+      setError({
+        id: current,
+        text:
+          reason instanceof Error ? reason.message : "发送失败，请稍后重试。",
+      });
+    } finally {
+      setSending(null);
+    }
   };
   if (!threadId || !items.length) return null;
   return (
@@ -53,28 +80,60 @@ export function QueuedMessages() {
       {held.length > 1 && (
         <div className="queued-meta">
           <span className="queued-state">{`${held.length} 条已暂停 · 等待你发送`}</span>
-          <button className="queued-action" data-testid="queued-send-all" type="button" disabled={sending !== null} onClick={() => void sendAll()}
-            title="按顺序发送全部保留的消息">
+          <button
+            className="queued-action"
+            data-testid="queued-send-all"
+            type="button"
+            disabled={sending !== null}
+            onClick={() => void sendAll()}
+            title="按顺序发送全部保留的消息"
+          >
             {sending === "*" ? "发送中…" : "全部发送"}
           </button>
         </div>
       )}
       {items.map((item) => (
-        <div className="queued-msg" data-queued-id={item.id} data-status={item.status} key={item.id}>
+        <div
+          className="queued-msg"
+          data-queued-id={item.id}
+          data-status={item.status}
+          key={item.id}
+        >
           <div className="queued-bubble">
-            {item.message && toVisibleChatItems([item.message]).flatMap((row) => row.kind === "attachments" ? row.attachments : []).map((file) => (
-              <a className="flex items-center gap-1.5 py-1 text-sm underline-offset-2 hover:underline" href={file.url} target="_blank" rel="noreferrer" key={file.id}>
-                <IconPaperclip className="size-4 shrink-0" />{file.filename || "附件"}
-              </a>
-            ))}
+            {item.message &&
+              toVisibleChatItems([item.message])
+                .flatMap((row) =>
+                  row.kind === "attachments" ? row.attachments : [],
+                )
+                .map((file) => (
+                  <a
+                    className="flex items-center gap-1.5 py-1 text-sm underline-offset-2 hover:underline"
+                    href={file.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    key={file.id}
+                  >
+                    <IconPaperclip className="size-4 shrink-0" />
+                    {file.filename || "附件"}
+                  </a>
+                ))}
             {item.text}
           </div>
           <div className="queued-meta">
             {item.status === "paused" ? (
               <>
-                <span className="queued-state">{item.kind === "worker_result" ? "后台结果已暂停 · 等待你发送" : "已暂停 · 等待你发送"}</span>
-                <button className="queued-action" type="button" disabled={sending !== null} onClick={() => void send(item.id)}
-                  title="只发送这条补充，其他保留消息继续暂停">
+                <span className="queued-state">
+                  {item.kind === "worker_result"
+                    ? "后台结果已暂停 · 等待你发送"
+                    : "已暂停 · 等待你发送"}
+                </span>
+                <button
+                  className="queued-action"
+                  type="button"
+                  disabled={sending !== null}
+                  onClick={() => void send(item.id)}
+                  title="只发送这条补充，其他保留消息继续暂停"
+                >
                   {sending === item.id ? "发送中…" : "发送这条"}
                 </button>
               </>
@@ -83,7 +142,15 @@ export function QueuedMessages() {
                 <span className="queued-state is-failed">{"没发出去"}</span>
                 <button
                   className="queued-action"
-                  onClick={() => void queueMessage(threadId, item.message ? { message: item.message, skillIds: item.skillIds } : item.text, item.id)}
+                  onClick={() =>
+                    void queueMessage(
+                      threadId,
+                      item.message
+                        ? { message: item.message, skillIds: item.skillIds }
+                        : item.text,
+                      item.id,
+                    )
+                  }
                   title={"重新发送"}
                   type="button"
                 >
@@ -94,7 +161,9 @@ export function QueuedMessages() {
             ) : (
               <span className="queued-state">
                 <IconClockHour4 className="size-3" />
-                {item.status === "sending" ? "发送中…" : "已排队 · 当前步骤结束后读取"}
+                {item.status === "sending"
+                  ? "发送中…"
+                  : "已排队 · 当前步骤结束后读取"}
               </span>
             )}
             <button
@@ -109,7 +178,11 @@ export function QueuedMessages() {
               {"撤回"}
             </button>
           </div>
-          {error?.id === item.id && <div role="alert" className="text-destructive text-xs">{error.text}</div>}
+          {error?.id === item.id && (
+            <div role="alert" className="text-destructive text-xs">
+              {error.text}
+            </div>
+          )}
         </div>
       ))}
     </div>

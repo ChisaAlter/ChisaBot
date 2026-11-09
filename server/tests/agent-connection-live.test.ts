@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createAgUiFixture } from "./support/ag-ui-fixture";
 import { testAgentConnection } from "../src/agents/connection-test";
+import { createAgUiFixture } from "./support/ag-ui-fixture";
 
 /** Real HTTP fixtures validate each event with the official AG-UI schema. */
 

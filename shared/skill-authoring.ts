@@ -31,4 +31,5 @@ export const proposedSkillSchema = z.object({
 });
 
 export type ProposedSkill = z.infer<typeof proposedSkillSchema>;
-export const savedSkillAnswer = (slug: string) => `Saved. /${slug} is now in the slash menu. It is on no Bot yet — putting it on one is done from the Skills page, so tell the person that is the remaining step.`;
+export const savedSkillAnswer = (slug: string) =>
+  `Saved. /${slug} is now in the slash menu. It is on no Bot yet — putting it on one is done from the Skills page, so tell the person that is the remaining step.`;

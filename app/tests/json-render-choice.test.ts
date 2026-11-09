@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { inspectRenderUiSpec } from "../../shared/json-render/catalog";
 import { replyAfterToolCall } from "@/lib/conversations/conversation";
-import { choiceOptionsOf, choiceState } from "@/lib/conversations/json-render/rich-context";
+import {
+  choiceOptionsOf,
+  choiceState,
+} from "@/lib/conversations/json-render/rich-context";
+import { inspectRenderUiSpec } from "../../shared/json-render/catalog";
 
 /**
  * 对话里的选项卡片：选完就定、不能重复点（CB-090，DESIGN.md §112）——纯函数部分。
@@ -33,8 +36,14 @@ describe("replyAfterToolCall", () => {
 describe("choice helpers", () => {
   test("collects only Button elements with choice: true and an ask", () => {
     const options = choiceOptionsOf({
-      a: { type: "Button", props: { label: "Word", ask: " 用 Word ", choice: true } },
-      b: { type: "Button", props: { label: "页面", ask: "做成页面", choice: true } },
+      a: {
+        type: "Button",
+        props: { label: "Word", ask: " 用 Word ", choice: true },
+      },
+      b: {
+        type: "Button",
+        props: { label: "页面", ask: "做成页面", choice: true },
+      },
       c: { type: "Button", props: { label: "展开", ask: "展开讲讲" } },
       d: { type: "List", props: { choice: true, ask: "不算" } },
       e: { type: "Button", props: { label: "空", ask: "  ", choice: true } },
@@ -43,16 +52,31 @@ describe("choice helpers", () => {
   });
 
   test("state: nothing picked is open; once picked every option locks and only one is marked", () => {
-    expect(choiceState(null, "用 Word")).toEqual({ picked: false, locked: false });
-    expect(choiceState("用 Word", " 用 Word ")).toEqual({ picked: true, locked: true });
-    expect(choiceState("用 Word", "做成页面")).toEqual({ picked: false, locked: true });
+    expect(choiceState(null, "用 Word")).toEqual({
+      picked: false,
+      locked: false,
+    });
+    expect(choiceState("用 Word", " 用 Word ")).toEqual({
+      picked: true,
+      locked: true,
+    });
+    expect(choiceState("用 Word", "做成页面")).toEqual({
+      picked: false,
+      locked: true,
+    });
   });
 
   test("the catalog accepts choice on Button", () => {
     const verdict = inspectRenderUiSpec(
       JSON.stringify({
         root: "b",
-        elements: { b: { type: "Button", props: { label: "Word", ask: "用 Word", choice: true }, children: [] } },
+        elements: {
+          b: {
+            type: "Button",
+            props: { label: "Word", ask: "用 Word", choice: true },
+            children: [],
+          },
+        },
       }),
     );
     expect(verdict.ok).toBe(true);

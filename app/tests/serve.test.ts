@@ -336,9 +336,7 @@ async function startProxy(upstreamPort: number) {
   };
 }
 
-test.each([
-  ["dictation", "/api/audio/transcriptions", "x-chisabot-dictation"],
-])(
+test.each([["dictation", "/api/audio/transcriptions", "x-chisabot-dictation"]])(
   "%s can wait for a provider past Bun's default idle timeout",
   async (_name, path, header) => {
     const upstream = Bun.serve({
@@ -557,12 +555,20 @@ describe("API 响应经代理转发（Content-Encoding）", () => {
     }
     expect(headers.get("content-type")).toBe("application/json");
     expect(headers.get("cache-control")).toBe("no-store");
-    expect(headers.getSetCookie()).toEqual(["a=1; Path=/; HttpOnly", "b=2; Path=/"]);
+    expect(headers.getSetCookie()).toEqual([
+      "a=1; Path=/; HttpOnly",
+      "b=2; Path=/",
+    ]);
   });
 
   test("上游返回 gzip 时，经 serve.ts 后客户端能解析 JSON，且不带 gzip 编码头", async () => {
-    const payload = { user: { id: "u1", name: "测试用户" }, items: Array.from({ length: 50 }, (_, i) => i) };
-    const compressed = Bun.gzipSync(new TextEncoder().encode(JSON.stringify(payload)));
+    const payload = {
+      user: { id: "u1", name: "测试用户" },
+      items: Array.from({ length: 50 }, (_, i) => i),
+    };
+    const compressed = Bun.gzipSync(
+      new TextEncoder().encode(JSON.stringify(payload)),
+    );
     const upstream = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

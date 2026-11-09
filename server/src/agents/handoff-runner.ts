@@ -16,12 +16,12 @@ import {
   recordAuditEvent,
 } from "../audit";
 import { cutAtCodeUnits } from "../channels/text";
+import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
 import { HANDOFF_KIND } from "./handoff";
 import { ThreadBusyError } from "./handoff-delivery";
-import { BOT_PAUSED_REASON, isBotPaused } from "./lifecycle";
 import type { HandoffExecution, HandoffExecutions } from "./handoff-execution";
-import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { BOT_PAUSED_REASON, isBotPaused } from "./lifecycle";
 
 /** What a hop carries, as `handoff.ts` wrote it. */
 export type HandoffWork = {

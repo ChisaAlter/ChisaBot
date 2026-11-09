@@ -52,7 +52,8 @@ function attachmentIdFor(part: unknown): string | null {
   if (source.type !== "url" || typeof source.value !== "string") return null;
   // 机器人私聊里上传的文件（DESIGN.md §56）：`/api/chat-files/<id>` → `cf:<id>`，由 index.ts 的加载器按人取。
   if (source.value.startsWith(CHAT_FILE_URL_PREFIX)) {
-    const id = source.value.slice(CHAT_FILE_URL_PREFIX.length).split(/[?#]/)[0] ?? "";
+    const id =
+      source.value.slice(CHAT_FILE_URL_PREFIX.length).split(/[?#]/)[0] ?? "";
     return id ? `cf:${id}` : null;
   }
   if (!source.value.startsWith(ATTACHMENT_URL_PREFIX)) return null;

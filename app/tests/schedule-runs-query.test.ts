@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { focusManager, QueryClient, QueryObserver } from "@tanstack/react-query";
+import {
+  focusManager,
+  QueryClient,
+  QueryObserver,
+} from "@tanstack/react-query";
 
-import { SCHEDULE_RUNS_STALE_MS, scheduleRunsQueryOptions } from "@/lib/schedules";
+import {
+  SCHEDULE_RUNS_STALE_MS,
+  scheduleRunsQueryOptions,
+} from "@/lib/schedules";
 
 /*
  * 用 fetch 打桩，而不是 mock.module("@/lib/client")。Bun 的 mock.module 是进程级的，而且换不回来：
@@ -13,7 +20,12 @@ const originalFetch = globalThis.fetch;
 function serveSchedule() {
   globalThis.fetch = Object.assign(
     async (input: RequestInfo | URL) => {
-      if (String(input instanceof Request ? input.url : input).startsWith("/api/schedules/s1")) calls += 1;
+      if (
+        String(input instanceof Request ? input.url : input).startsWith(
+          "/api/schedules/s1",
+        )
+      )
+        calls += 1;
       return Response.json({ schedule: { id: "s1", recentRuns: [] } });
     },
     { preconnect: originalFetch.preconnect },
@@ -35,7 +47,11 @@ describe("scheduleRunsQueryOptions", () => {
     try {
       calls = 0;
       serveSchedule();
-      const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 30_000 } } });
+      const qc = new QueryClient({
+        defaultOptions: {
+          queries: { refetchOnWindowFocus: false, staleTime: 30_000 },
+        },
+      });
       qc.mount();
       const obs = new QueryObserver(qc, scheduleRunsQueryOptions("s1", 20));
       const off = obs.subscribe(() => {});

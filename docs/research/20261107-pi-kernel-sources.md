@@ -12,15 +12,15 @@
 
 ## 公开接口能提供什么
 
-| 能力 | 官方实际语义 | ChisaBot 的责任 |
-|---|---|---|
-| 工具循环和流式事件 | `Agent` 执行模型与工具循环，发出 agent/turn/message/tool 生命周期事件；工具 executor 接收真实 `toolCallId`、解析后的参数、`AbortSignal` 和进度回调 | 把已有工具包装为 `AgentTool`，将事件映射到当前前端事件协议 |
-| 宿主历史与压缩 | `transformContext` 可裁剪/注入上下文，`convertToLlm` 过滤应用消息；`prepareRequest` 在每次模型请求前可加载 canonical persisted context | 用现有数据库和长历史预算策略作为权威来源；保留原始历史与消息 ID |
-| 工具授权 | `beforeToolCall` 在参数校验后、执行前运行，可以阻止工具；`afterToolCall` 可调整结果 | actor/bot 权限、审批卡、审计和授权撤销仍由 ChisaBot 负责 |
-| 可靠事件次序 | `Agent.subscribe` 按注册顺序 await listener；assistant `message_end` 处理是工具预检前的 barrier；`prompt`/`waitForIdle` 等 `agent_end` listener 完成才 settle | 可先持久化工具调用记录，再执行副作用；listener 必须处理失败与取消 |
-| 用户插话 | `steer` 在当前 assistant turn 的工具调用全部完成后注入；`followUp` 在没有工具和 steering 时追加下一轮 | “立即停止当前工具”仍需 `abort` 与工具实际取消，不能把 `steer` 当成抢占式中断 |
-| 取消 | `Agent.abort()` 触发当前 AbortController；工具/hook 接收 signal 并必须配合；`waitForIdle()` 等实际结束 | 设备进程树、外部请求、取消宽限和结果未知处理仍是宿主契约 |
-| 回合结束或继续 | `finishTurn` 可返回 `end`/`continue`；错误和 aborted 是硬退出。工具结果可 `terminate: true`，仅当整个批次都要求 terminate 时提前停止 | 实现长任务预算、最终回答判定和审批挂起恢复；不依靠无限循环 |
+| 能力               | 官方实际语义                                                                                                                                                  | ChisaBot 的责任                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 工具循环和流式事件 | `Agent` 执行模型与工具循环，发出 agent/turn/message/tool 生命周期事件；工具 executor 接收真实 `toolCallId`、解析后的参数、`AbortSignal` 和进度回调            | 把已有工具包装为 `AgentTool`，将事件映射到当前前端事件协议                   |
+| 宿主历史与压缩     | `transformContext` 可裁剪/注入上下文，`convertToLlm` 过滤应用消息；`prepareRequest` 在每次模型请求前可加载 canonical persisted context                        | 用现有数据库和长历史预算策略作为权威来源；保留原始历史与消息 ID              |
+| 工具授权           | `beforeToolCall` 在参数校验后、执行前运行，可以阻止工具；`afterToolCall` 可调整结果                                                                           | actor/bot 权限、审批卡、审计和授权撤销仍由 ChisaBot 负责                     |
+| 可靠事件次序       | `Agent.subscribe` 按注册顺序 await listener；assistant `message_end` 处理是工具预检前的 barrier；`prompt`/`waitForIdle` 等 `agent_end` listener 完成才 settle | 可先持久化工具调用记录，再执行副作用；listener 必须处理失败与取消            |
+| 用户插话           | `steer` 在当前 assistant turn 的工具调用全部完成后注入；`followUp` 在没有工具和 steering 时追加下一轮                                                         | “立即停止当前工具”仍需 `abort` 与工具实际取消，不能把 `steer` 当成抢占式中断 |
+| 取消               | `Agent.abort()` 触发当前 AbortController；工具/hook 接收 signal 并必须配合；`waitForIdle()` 等实际结束                                                        | 设备进程树、外部请求、取消宽限和结果未知处理仍是宿主契约                     |
+| 回合结束或继续     | `finishTurn` 可返回 `end`/`continue`；错误和 aborted 是硬退出。工具结果可 `terminate: true`，仅当整个批次都要求 terminate 时提前停止                          | 实现长任务预算、最终回答判定和审批挂起恢复；不依靠无限循环                   |
 
 证据：[Agent README](https://github.com/earendil-works/pi/blob/085c84e98e7f4c950f2be606466fff4f75d8fe7c/packages/agent/README.md)、[类型契约](https://github.com/earendil-works/pi/blob/085c84e98e7f4c950f2be606466fff4f75d8fe7c/packages/agent/src/types.ts)、[Agent 实现](https://github.com/earendil-works/pi/blob/085c84e98e7f4c950f2be606466fff4f75d8fe7c/packages/agent/src/agent.ts)。
 

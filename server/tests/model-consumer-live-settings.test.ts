@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { RuntimeModelConnection } from "../src/conversation-runtime";
 import { createChannelTitler } from "../src/channels/titler";
+import type { RuntimeModelConnection } from "../src/conversation-runtime";
 
 test.each(["title"] as const)(
   "%s uses a complete new model connection on each call, with exact custom endpoint paths",

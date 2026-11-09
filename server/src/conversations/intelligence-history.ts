@@ -1,5 +1,5 @@
-import type { IntelligenceSettings } from "../config";
 import { z } from "zod";
+import type { IntelligenceSettings } from "../config";
 
 export type LegacyThread = {
   id: string;
@@ -164,9 +164,7 @@ export class IntelligenceHistoryClient {
     return { status: "ready", entitlement };
   }
 
-  getThreadEvents(input: {
-    threadId: string;
-  }): Promise<{
+  getThreadEvents(input: { threadId: string }): Promise<{
     events: Record<string, unknown>[];
     decodeErrorRowIds: string[];
     truncated: boolean;

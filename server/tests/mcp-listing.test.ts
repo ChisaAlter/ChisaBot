@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { McpTestServer, type McpFixtureTool } from "./support/mcp-server";
 import { catalogueEntry, classifyTool } from "../src/plugins/catalogue";
 import { listTools } from "../src/plugins/mcp";
+import { type McpFixtureTool, McpTestServer } from "./support/mcp-server";
 
 /**
  * What an MCP listing carries out of the transport, and what the classifier then makes of it.

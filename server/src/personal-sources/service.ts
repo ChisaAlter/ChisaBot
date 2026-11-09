@@ -5,14 +5,24 @@
  * - 邮箱：支持 IMAP over TLS 只读拉取最近邮件与未读邮件摘要，密码用 AES-256-GCM 加密存库；
  * - 每日晨报：聚合今日日期、实时天气、日程安排、未读邮件、定时提醒与长期记忆要点，输出 ```brief 卡片。
  */
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
 import { isIP } from "node:net";
 import * as tls from "node:tls";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
 import { guardedFetch } from "../../../shared/net/guarded-fetch";
-import { checkPublicUrl, isBlockedAddress, isBlockedHostname } from "../../../shared/net/ssrf";
+import {
+  checkPublicUrl,
+  isBlockedAddress,
+  isBlockedHostname,
+} from "../../../shared/net/ssrf";
 import type {
   CalendarConnectionView,
   CalendarEventItem,
@@ -20,19 +30,27 @@ import type {
   EmailSummaryItem,
   InboundWebhookView,
   NotifyWebhookView,
+  PersonalDeliveryEvidence,
   PersonalSourcesStatusView,
   SourceRead,
-  PersonalDeliveryEvidence,
 } from "../../../shared/personal-sources";
 import type { AppVariables } from "../auth/guards";
+import {
+  currentConfirmToolCall,
+  currentConfirmTurn,
+  currentToolAbort,
+} from "../confirmations/context";
 import type { Database } from "../db/client";
-import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
-import { currentConfirmToolCall, currentConfirmTurn, currentToolAbort } from "../confirmations/context";
-import { DeliveryOutcomeUnknownError, DeliveryRejectedError } from "../delivery/durable-dispatch";
-import { createPersonalDelivery, type PersonalSendContext } from "./delivery";
+import {
+  DeliveryOutcomeUnknownError,
+  DeliveryRejectedError,
+} from "../delivery/durable-dispatch";
+import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { parseIcsEvents } from "./calendar";
-import { sendSmtpMessage, type SmtpMessage } from "./smtp";
+import { createPersonalDelivery, type PersonalSendContext } from "./delivery";
 import { sendWebhook } from "./notify";
+import { type SmtpMessage, sendSmtpMessage } from "./smtp";
+
 export { parseIcsEvents } from "./calendar";
 
 export type PersonalSourcesOptions = {
@@ -73,7 +91,9 @@ type PersonalSourceRow = {
 };
 
 function deriveKey(secret: string): Buffer {
-  return createHash("sha256").update(`chisabot-personal-sources:${secret}`).digest();
+  return createHash("sha256")
+    .update(`chisabot-personal-sources:${secret}`)
+    .digest();
 }
 
 function encryptText(plain: string, secret: string): string {
@@ -89,38 +109,51 @@ function decryptText(payload: string, secret: string): string {
   const [ivB64, tagB64, encB64] = payload.split(".");
   if (!ivB64 || !tagB64 || !encB64) throw new Error("密文格式损坏");
   const key = deriveKey(secret);
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64"));
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    key,
+    Buffer.from(ivB64, "base64"),
+  );
   decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  const dec = Buffer.concat([decipher.update(Buffer.from(encB64, "base64")), decipher.final()]);
+  const dec = Buffer.concat([
+    decipher.update(Buffer.from(encB64, "base64")),
+    decipher.final(),
+  ]);
   return dec.toString("utf8");
 }
 
 function decodeMimeWords(str: string): string {
   return str
-    .replace(/=\?([^?]+)\?([BQbq])\?([^?]*)\?=/g, (_full, charset: string, encoding: string, data: string) => {
-      try {
-        const enc = encoding.toUpperCase();
-        if (enc === "B") {
-          return new TextDecoder(charset).decode(Buffer.from(data, "base64"));
-        }
-        if (enc === "Q") {
-          const qFixed = data.replace(/_/g, " ");
-          const bytes: number[] = [];
-          for (let i = 0; i < qFixed.length; i++) {
-            if (qFixed[i] === "=" && /^[0-9A-Fa-f]{2}$/.test(qFixed.slice(i + 1, i + 3))) {
-              bytes.push(Number.parseInt(qFixed.slice(i + 1, i + 3), 16));
-              i += 2;
-            } else {
-              bytes.push(qFixed.charCodeAt(i));
-            }
+    .replace(
+      /=\?([^?]+)\?([BQbq])\?([^?]*)\?=/g,
+      (_full, charset: string, encoding: string, data: string) => {
+        try {
+          const enc = encoding.toUpperCase();
+          if (enc === "B") {
+            return new TextDecoder(charset).decode(Buffer.from(data, "base64"));
           }
-          return new TextDecoder(charset).decode(new Uint8Array(bytes));
+          if (enc === "Q") {
+            const qFixed = data.replace(/_/g, " ");
+            const bytes: number[] = [];
+            for (let i = 0; i < qFixed.length; i++) {
+              if (
+                qFixed[i] === "=" &&
+                /^[0-9A-Fa-f]{2}$/.test(qFixed.slice(i + 1, i + 3))
+              ) {
+                bytes.push(Number.parseInt(qFixed.slice(i + 1, i + 3), 16));
+                i += 2;
+              } else {
+                bytes.push(qFixed.charCodeAt(i));
+              }
+            }
+            return new TextDecoder(charset).decode(new Uint8Array(bytes));
+          }
+        } catch {
+          // fallback
         }
-      } catch {
-        // fallback
-      }
-      return data;
-    })
+        return data;
+      },
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -136,25 +169,51 @@ export class WebhookRateLimitError extends Error {
   }
 }
 
-export type ScannedEmailSummary = EmailSummaryItem & { messageId?: string; mailboxUid?: string };
+export type ScannedEmailSummary = EmailSummaryItem & {
+  messageId?: string;
+  mailboxUid?: string;
+};
 
-export function parseImapSummaryResponse(buffer: string, uidValidity: string): ScannedEmailSummary[] {
-  if (/^A3 (?:NO|BAD)/m.test(buffer)) throw new Error("IMAP 服务器拒绝读取邮件摘要。");
-  if (!/^A3 OK/m.test(buffer)) throw new Error("IMAP 服务器未完成读取邮件摘要。");
-  const rawBlocks = [...buffer.matchAll(/^\*\s+(\d+)\s+FETCH\b([\s\S]*?)(?=^\*\s+\d+\s+FETCH\b|^A3\s|$(?![\s\S]))/gm)];
-  return rawBlocks.map((match) => {
-    const block = match[2]!;
-    const metadata = block.slice(0, block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"));
-    const header = (name: string) => new RegExp(`^${name}:\\s*(.+?)(?:\\r?\\n(?![ \\t])|$)`, "ims").exec(block)?.[1]?.trim();
-    const messageId = header("Message-ID");
-    const uid = /\bUID\s+(\d+)/i.exec(metadata)?.[1];
-    return {
-      seq: Number(match[1]), subject: decodeMimeWords(header("Subject") ?? "（无主题）").slice(0, 140),
-      from: decodeMimeWords(header("From") ?? "未知发件人").slice(0, 100), date: header("Date") ?? "",
-      unread: !/FLAGS\s*\([^)]*\\Seen\b/i.test(metadata), ...(messageId ? { messageId } : {}),
-      ...(uid && uidValidity ? { mailboxUid: `${uidValidity}:${uid}` } : {}),
-    };
-  }).reverse();
+export function parseImapSummaryResponse(
+  buffer: string,
+  uidValidity: string,
+): ScannedEmailSummary[] {
+  if (/^A3 (?:NO|BAD)/m.test(buffer))
+    throw new Error("IMAP 服务器拒绝读取邮件摘要。");
+  if (!/^A3 OK/m.test(buffer))
+    throw new Error("IMAP 服务器未完成读取邮件摘要。");
+  const rawBlocks = [
+    ...buffer.matchAll(
+      /^\*\s+(\d+)\s+FETCH\b([\s\S]*?)(?=^\*\s+\d+\s+FETCH\b|^A3\s|$(?![\s\S]))/gm,
+    ),
+  ];
+  return rawBlocks
+    .map((match) => {
+      const block = match[2]!;
+      const metadata = block.slice(
+        0,
+        block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"),
+      );
+      const header = (name: string) =>
+        new RegExp(`^${name}:\\s*(.+?)(?:\\r?\\n(?![ \\t])|$)`, "ims")
+          .exec(block)?.[1]
+          ?.trim();
+      const messageId = header("Message-ID");
+      const uid = /\bUID\s+(\d+)/i.exec(metadata)?.[1];
+      return {
+        seq: Number(match[1]),
+        subject: decodeMimeWords(header("Subject") ?? "（无主题）").slice(
+          0,
+          140,
+        ),
+        from: decodeMimeWords(header("From") ?? "未知发件人").slice(0, 100),
+        date: header("Date") ?? "",
+        unread: !/FLAGS\s*\([^)]*\\Seen\b/i.test(metadata),
+        ...(messageId ? { messageId } : {}),
+        ...(uid && uidValidity ? { mailboxUid: `${uidValidity}:${uid}` } : {}),
+      };
+    })
+    .reverse();
 }
 
 export async function fetchImapInboxSummary(input: {
@@ -165,7 +224,11 @@ export async function fetchImapInboxSummary(input: {
   limit?: number;
 }): Promise<ScannedEmailSummary[]> {
   const limit = Math.max(1, Math.min(20, input.limit ?? 8));
-  if (/[\r\n\0]/.test(input.host) || /[\r\n\0]/.test(input.user) || /[\r\n\0]/.test(input.pass)) {
+  if (
+    /[\r\n\0]/.test(input.host) ||
+    /[\r\n\0]/.test(input.user) ||
+    /[\r\n\0]/.test(input.pass)
+  ) {
     throw new Error("邮箱配置参数不能包含换行或控制字符。");
   }
   if (input.host === "demo.imap.local" || input.pass === "demo-inbox") {
@@ -196,7 +259,11 @@ export async function fetchImapInboxSummary(input: {
   }
 
   const cleanHost = input.host.trim();
-  if (isBlockedHostname(cleanHost) || (isIP(cleanHost.replace(/^\[|\]$/g, "")) !== 0 && isBlockedAddress(cleanHost))) {
+  if (
+    isBlockedHostname(cleanHost) ||
+    (isIP(cleanHost.replace(/^\[|\]$/g, "")) !== 0 &&
+      isBlockedAddress(cleanHost))
+  ) {
     throw new Error("不能连接内网或本机 IMAP 服务器地址。");
   }
 
@@ -220,7 +287,11 @@ export async function fetchImapInboxSummary(input: {
 
     const timer = setTimeout(() => {
       socket.destroy();
-      reject(new Error("连接 IMAP 服务器超时（8 秒），请检查服务器地址、端口或应用专用密码。"));
+      reject(
+        new Error(
+          "连接 IMAP 服务器超时（8 秒），请检查服务器地址、端口或应用专用密码。",
+        ),
+      );
     }, 8_000);
 
     const finish = (err?: Error, items?: ScannedEmailSummary[]) => {
@@ -244,7 +315,9 @@ export async function fetchImapInboxSummary(input: {
       if (step === "greet" && /\r?\n/.test(buffer)) {
         buffer = "";
         step = "login";
-        socket.write(`A1 LOGIN ${quoteImap(input.user)} ${quoteImap(input.pass)}\r\n`);
+        socket.write(
+          `A1 LOGIN ${quoteImap(input.user)} ${quoteImap(input.pass)}\r\n`,
+        );
         return;
       }
       if (step === "login") {
@@ -253,14 +326,20 @@ export async function fetchImapInboxSummary(input: {
           step = "select";
           socket.write("A2 EXAMINE INBOX\r\n");
         } else if (/^A1 (?:NO|BAD)/m.test(buffer)) {
-          finish(new Error("邮箱登录失败：请确认账号及「应用专用密码 / 授权码」是否正确。"));
+          finish(
+            new Error(
+              "邮箱登录失败：请确认账号及「应用专用密码 / 授权码」是否正确。",
+            ),
+          );
         }
         return;
       }
       if (step === "select") {
         if (/^A2 OK/m.test(buffer)) {
           const existsMatch = /\*\s+(\d+)\s+EXISTS/i.exec(buffer);
-          totalMessages = existsMatch ? Number.parseInt(existsMatch[1]!, 10) : 0;
+          totalMessages = existsMatch
+            ? Number.parseInt(existsMatch[1]!, 10)
+            : 0;
           uidValidity = /\[UIDVALIDITY\s+(\d+)\]/i.exec(buffer)?.[1] ?? "";
           buffer = "";
           if (totalMessages <= 0) {
@@ -281,8 +360,13 @@ export async function fetchImapInboxSummary(input: {
       if (step === "fetch") {
         if (/^A3 (?:OK|NO|BAD)/m.test(buffer)) {
           step = "done";
-          try { finish(undefined, parseImapSummaryResponse(buffer, uidValidity)); }
-          catch (error) { finish(error instanceof Error ? error : new Error("邮件摘要无法解析。")); }
+          try {
+            finish(undefined, parseImapSummaryResponse(buffer, uidValidity));
+          } catch (error) {
+            finish(
+              error instanceof Error ? error : new Error("邮件摘要无法解析。"),
+            );
+          }
         }
       }
     });
@@ -307,7 +391,10 @@ const WEATHER_CODE_LABELS: Record<number, string> = {
   95: "雷阵雨",
 };
 
-async function fetchWeatherSummary(city: string, fetchImpl: typeof fetch): Promise<string> {
+async function fetchWeatherSummary(
+  city: string,
+  fetchImpl: typeof fetch,
+): Promise<string> {
   const cleanCity = city.trim() || "上海";
   try {
     const geoRes = await fetchImpl(
@@ -319,7 +406,11 @@ async function fetchWeatherSummary(city: string, fetchImpl: typeof fetch): Promi
       results?: { name?: string; latitude?: number; longitude?: number }[];
     };
     const loc = geoJson.results?.[0];
-    if (!loc || typeof loc.latitude !== "number" || typeof loc.longitude !== "number") {
+    if (
+      !loc ||
+      typeof loc.latitude !== "number" ||
+      typeof loc.longitude !== "number"
+    ) {
       return `${cleanCity} · 天气暂时无法获取`;
     }
     const wxRes = await fetchImpl(
@@ -331,13 +422,20 @@ async function fetchWeatherSummary(city: string, fetchImpl: typeof fetch): Promi
       current?: { temperature_2m?: number; weather_code?: number };
       daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[] };
     };
-    if (typeof wxJson.current?.temperature_2m !== "number" || typeof wxJson.current?.weather_code !== "number") return `${cleanCity} · 天气数据不完整`;
+    if (
+      typeof wxJson.current?.temperature_2m !== "number" ||
+      typeof wxJson.current?.weather_code !== "number"
+    )
+      return `${cleanCity} · 天气数据不完整`;
     const temp = Math.round(wxJson.current.temperature_2m);
-    const desc = WEATHER_CODE_LABELS[wxJson.current.weather_code] ?? "天气状况未知";
+    const desc =
+      WEATHER_CODE_LABELS[wxJson.current.weather_code] ?? "天气状况未知";
     const hi = wxJson.daily?.temperature_2m_max?.[0];
     const lo = wxJson.daily?.temperature_2m_min?.[0];
     const range =
-      typeof hi === "number" && typeof lo === "number" ? ` (${Math.round(lo)}~${Math.round(hi)}°C)` : "";
+      typeof hi === "number" && typeof lo === "number"
+        ? ` (${Math.round(lo)}~${Math.round(hi)}°C)`
+        : "";
     return `${cleanCity} · ${temp}°C ${desc}${range}`;
   } catch {
     return `${cleanCity} · 天气暂时无法获取`;
@@ -362,7 +460,10 @@ function toIso(d: string | Date | null | undefined): string {
   return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
 }
 
-export function createPersonalSources(database: Database, options: PersonalSourcesOptions) {
+export function createPersonalSources(
+  database: Database,
+  options: PersonalSourcesOptions,
+) {
   const sql = database.$client;
   const fetchImpl = options.fetchFn ?? fetch;
   const readInbox = options.readInbox ?? fetchImapInboxSummary;
@@ -419,26 +520,47 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return row ?? null;
   }
 
-  function inferSmtpServer(emailOrImap: string): { host: string; port: number } {
+  function inferSmtpServer(emailOrImap: string): {
+    host: string;
+    port: number;
+  } {
     const clean = emailOrImap.trim().toLowerCase();
     if (clean.includes("demo")) return { host: "demo.smtp.local", port: 465 };
-    const domain = clean.includes("@") ? (clean.split("@")[1] ?? "") : clean.replace(/^imap\./, "");
-    if (domain.includes("gmail") || domain.includes("googlemail")) return { host: "smtp.gmail.com", port: 465 };
-    if (domain.includes("qq.com") || domain.includes("foxmail.com")) return { host: "smtp.qq.com", port: 465 };
+    const domain = clean.includes("@")
+      ? (clean.split("@")[1] ?? "")
+      : clean.replace(/^imap\./, "");
+    if (domain.includes("gmail") || domain.includes("googlemail"))
+      return { host: "smtp.gmail.com", port: 465 };
+    if (domain.includes("qq.com") || domain.includes("foxmail.com"))
+      return { host: "smtp.qq.com", port: 465 };
     if (domain.includes("163.com")) return { host: "smtp.163.com", port: 465 };
     if (domain.includes("126.com")) return { host: "smtp.126.com", port: 465 };
-    if (domain.includes("aliyun.com")) return { host: "smtp.aliyun.com", port: 465 };
+    if (domain.includes("aliyun.com"))
+      return { host: "smtp.aliyun.com", port: 465 };
     if (domain.includes("sina.")) return { host: "smtp.sina.com", port: 465 };
-    if (domain.includes("icloud.com") || domain.includes("me.com")) return { host: "smtp.mail.me.com", port: 465 };
-    if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("office365")) {
+    if (domain.includes("icloud.com") || domain.includes("me.com"))
+      return { host: "smtp.mail.me.com", port: 465 };
+    if (
+      domain.includes("outlook") ||
+      domain.includes("hotmail") ||
+      domain.includes("office365")
+    ) {
       return { host: "smtp.office365.com", port: 587 };
     }
     return { host: domain ? `smtp.${domain}` : "smtp.qq.com", port: 465 };
   }
 
-  function toStatusView(row: PersonalSourceRow | null): PersonalSourcesStatusView {
+  function toStatusView(
+    row: PersonalSourceRow | null,
+  ): PersonalSourcesStatusView {
     if (!row) {
-      return { calendar: null, email: null, weatherCity: "上海", notifyWebhook: null, inboundWebhook: null };
+      return {
+        calendar: null,
+        email: null,
+        weatherCity: "上海",
+        notifyWebhook: null,
+        inboundWebhook: null,
+      };
     }
     const calendar: CalendarConnectionView | null = row.calendar_ics_enc
       ? {
@@ -467,7 +589,8 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         : null;
     const notifyWebhook: NotifyWebhookView | null = row.notify_webhook_enc
       ? {
-          kind: (row.notify_webhook_kind as NotifyWebhookView["kind"]) || "custom",
+          kind:
+            (row.notify_webhook_kind as NotifyWebhookView["kind"]) || "custom",
           label: row.notify_webhook_label || "随身通知推送",
           urlHint: row.notify_webhook_hint?.split("/")[0] || "Webhook",
           connectedAt: toIso(row.notify_connected_at),
@@ -477,7 +600,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       ? {
           token: row.inbound_webhook_token,
           path: `/api/personal-sources/webhook/${row.inbound_webhook_token}`,
-          lastTriggeredAt: row.inbound_last_at ? toIso(row.inbound_last_at) : null,
+          lastTriggeredAt: row.inbound_last_at
+            ? toIso(row.inbound_last_at)
+            : null,
           lastSummary: row.inbound_last_summary ?? null,
         }
       : null;
@@ -493,16 +618,24 @@ export function createPersonalSources(database: Database, options: PersonalSourc
   async function connectCalendar(
     actorId: string,
     input: { label?: string; urlOrIcs: string; timeZone?: string },
-  ): Promise<{ status: PersonalSourcesStatusView; events: CalendarEventItem[] }> {
+  ): Promise<{
+    status: PersonalSourcesStatusView;
+    events: CalendarEventItem[];
+  }> {
     const raw = input.urlOrIcs.trim();
     if (!raw) throw new Error("请填写日历 ICS 订阅地址或粘贴 .ics 日历内容。");
     const timeZone = input.timeZone || "Asia/Shanghai";
-    try { new Intl.DateTimeFormat("en", { timeZone }).format(); } catch { throw new Error("请填写有效的 IANA 时区，例如 Asia/Shanghai。"); }
+    try {
+      new Intl.DateTimeFormat("en", { timeZone }).format();
+    } catch {
+      throw new Error("请填写有效的 IANA 时区，例如 Asia/Shanghai。");
+    }
     let icsText = "";
     let urlHint = "内联 ICS 日历";
 
     if (raw.toLowerCase() === "demo") {
-      if (!options.allowDemo) throw new Error("请连接真实日历；演示连接只在隔离验收环境使用。");
+      if (!options.allowDemo)
+        throw new Error("请连接真实日历；演示连接只在隔离验收环境使用。");
       const now = new Date();
       const y = now.getFullYear();
       const m = String(now.getMonth() + 1).padStart(2, "0");
@@ -535,7 +668,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       try {
         parsedUrl = new URL(normalizedUrl);
       } catch {
-        throw new Error("日历地址格式不正确，请填写 https:// 或 webcal:// 开头的 ICS 地址，或直接粘贴 BEGIN:VCALENDAR 内容。");
+        throw new Error(
+          "日历地址格式不正确，请填写 https:// 或 webcal:// 开头的 ICS 地址，或直接粘贴 BEGIN:VCALENDAR 内容。",
+        );
       }
       const verdict = checkPublicUrl(parsedUrl.toString());
       if (!verdict.ok) {
@@ -556,10 +691,15 @@ export function createPersonalSources(database: Database, options: PersonalSourc
 
     const events = parseIcsEvents(icsText, { timeZone });
     if (events.length === 0 && !/BEGIN:VCALENDAR/i.test(icsText)) {
-      throw new Error("该地址未返回有效的 iCalendar (VCALENDAR / VEVENT) 数据。");
+      throw new Error(
+        "该地址未返回有效的 iCalendar (VCALENDAR / VEVENT) 数据。",
+      );
     }
 
-    const enc = encryptText(raw.toLowerCase() === "demo" ? icsText : raw, options.encryptionKey);
+    const enc = encryptText(
+      raw.toLowerCase() === "demo" ? icsText : raw,
+      options.encryptionKey,
+    );
     const label = (input.label?.trim() || "我的日历").slice(0, 60);
     await sql.unsafe(
       `INSERT INTO chisabot_personal_sources (
@@ -576,12 +716,25 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         calendar_checked_at = now(),
         cached_events = EXCLUDED.cached_events,
         updated_at = now()`,
-      [actorId, label, enc, urlHint, events.length, JSON.stringify(events.slice(0, 100)), timeZone],
+      [
+        actorId,
+        label,
+        enc,
+        urlHint,
+        events.length,
+        JSON.stringify(events.slice(0, 100)),
+        timeZone,
+      ],
     );
-    return { status: toStatusView(await getRow(actorId)), events: events.slice(0, 20) };
+    return {
+      status: toStatusView(await getRow(actorId)),
+      events: events.slice(0, 20),
+    };
   }
 
-  async function disconnectCalendar(actorId: string): Promise<PersonalSourcesStatusView> {
+  async function disconnectCalendar(
+    actorId: string,
+  ): Promise<PersonalSourcesStatusView> {
     await sql.unsafe(
       `UPDATE chisabot_personal_sources SET
         calendar_label = NULL, calendar_ics_enc = NULL, calendar_url_hint = NULL,
@@ -595,17 +748,37 @@ export function createPersonalSources(database: Database, options: PersonalSourc
 
   async function connectEmail(
     actorId: string,
-    input: { email: string; imapHost: string; imapPort?: number; password: string },
-  ): Promise<{ status: PersonalSourcesStatusView; emails: EmailSummaryItem[] }> {
+    input: {
+      email: string;
+      imapHost: string;
+      imapPort?: number;
+      password: string;
+    },
+  ): Promise<{
+    status: PersonalSourcesStatusView;
+    emails: EmailSummaryItem[];
+  }> {
     const email = input.email.trim();
     const host = input.imapHost.trim();
     const port = Number(input.imapPort ?? 993);
     const pass = input.password.trim();
     if (!email || !host || !pass) {
-      throw new Error("请填写完整的邮箱地址、IMAP 服务器地址和应用专用密码/授权码。");
+      throw new Error(
+        "请填写完整的邮箱地址、IMAP 服务器地址和应用专用密码/授权码。",
+      );
     }
-    if (!options.allowDemo && (host === "demo.imap.local" || pass === "demo-inbox")) throw new Error("请连接真实邮箱；演示连接只在隔离验收环境使用。");
-    const emails = await readInbox({ host, port, user: email, pass, limit: 10 });
+    if (
+      !options.allowDemo &&
+      (host === "demo.imap.local" || pass === "demo-inbox")
+    )
+      throw new Error("请连接真实邮箱；演示连接只在隔离验收环境使用。");
+    const emails = await readInbox({
+      host,
+      port,
+      user: email,
+      pass,
+      limit: 10,
+    });
     const enc = encryptText(pass, options.encryptionKey);
     const hint = "已加密保存";
 
@@ -629,7 +802,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return { status: toStatusView(await getRow(actorId)), emails };
   }
 
-  async function disconnectEmail(actorId: string): Promise<PersonalSourcesStatusView> {
+  async function disconnectEmail(
+    actorId: string,
+  ): Promise<PersonalSourcesStatusView> {
     await sql.unsafe(
       `UPDATE chisabot_personal_sources SET
         email_address = NULL, imap_host = NULL, imap_port = NULL,
@@ -642,69 +817,143 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return toStatusView(await getRow(actorId));
   }
 
-  async function readEvents(actorId: string, days = 7): Promise<SourceRead<CalendarEventItem>> {
+  async function readEvents(
+    actorId: string,
+    days = 7,
+  ): Promise<SourceRead<CalendarEventItem>> {
     const row = await getRow(actorId);
-    if (!row?.calendar_ics_enc) return { state: "not_connected", items: [], checkedAt: null };
+    if (!row?.calendar_ics_enc)
+      return { state: "not_connected", items: [], checkedAt: null };
     const from = new Date(Date.now() - 86_400_000);
-    const to = new Date(Date.now() + Math.min(30, Math.max(1, days)) * 86_400_000);
-    const inWindow = (event: CalendarEventItem) => Date.parse(event.endIso ?? event.startIso) >= +from && Date.parse(event.startIso) <= +to;
+    const to = new Date(
+      Date.now() + Math.min(30, Math.max(1, days)) * 86_400_000,
+    );
+    const inWindow = (event: CalendarEventItem) =>
+      Date.parse(event.endIso ?? event.startIso) >= +from &&
+      Date.parse(event.startIso) <= +to;
     try {
       const raw = decryptText(row.calendar_ics_enc, options.encryptionKey);
       let ics = raw;
       if (!/^BEGIN:VCALENDAR/i.test(raw)) {
-        const response = await guardedFetch(raw.replace(/^webcal:\/\//i, "https://"), { fetchImpl, timeoutMs: 8_000, maxBytes: 2 * 1024 * 1024 });
-        if (response.status < 200 || response.status >= 300) throw new Error("calendar read failed");
+        const response = await guardedFetch(
+          raw.replace(/^webcal:\/\//i, "https://"),
+          { fetchImpl, timeoutMs: 8_000, maxBytes: 2 * 1024 * 1024 },
+        );
+        if (response.status < 200 || response.status >= 300)
+          throw new Error("calendar read failed");
         ics = response.body.toString("utf8");
       }
-      const items = parseIcsEvents(ics, { from, to, timeZone: row.calendar_timezone || "Asia/Shanghai" });
-      await sql.unsafe("UPDATE chisabot_personal_sources SET cached_events=$2::text::jsonb,calendar_event_count=$3,calendar_checked_at=now() WHERE owner_user_id=$1", [actorId, JSON.stringify(items.slice(0, 100)), items.length]);
-      return { state: "fresh", items: items.slice(0, 100), checkedAt: new Date().toISOString() };
+      const items = parseIcsEvents(ics, {
+        from,
+        to,
+        timeZone: row.calendar_timezone || "Asia/Shanghai",
+      });
+      await sql.unsafe(
+        "UPDATE chisabot_personal_sources SET cached_events=$2::text::jsonb,calendar_event_count=$3,calendar_checked_at=now() WHERE owner_user_id=$1",
+        [actorId, JSON.stringify(items.slice(0, 100)), items.length],
+      );
+      return {
+        state: "fresh",
+        items: items.slice(0, 100),
+        checkedAt: new Date().toISOString(),
+      };
     } catch {
-      const items = parseJsonArray<CalendarEventItem>(row.cached_events).filter(inWindow);
-      return { state: row.calendar_checked_at ? "cached" : "unavailable", items, checkedAt: row.calendar_checked_at ? toIso(row.calendar_checked_at) : null, error: "日历读取失败，请检查订阅连接。" };
+      const items = parseJsonArray<CalendarEventItem>(row.cached_events).filter(
+        inWindow,
+      );
+      return {
+        state: row.calendar_checked_at ? "cached" : "unavailable",
+        items,
+        checkedAt: row.calendar_checked_at
+          ? toIso(row.calendar_checked_at)
+          : null,
+        error: "日历读取失败，请检查订阅连接。",
+      };
     }
   }
 
-  async function readEmails(actorId: string, limit = 8): Promise<SourceRead<ScannedEmailSummary>> {
+  async function readEmails(
+    actorId: string,
+    limit = 8,
+  ): Promise<SourceRead<ScannedEmailSummary>> {
     const row = await getRow(actorId);
-    if (!row?.email_address || !row.imap_host || !row.imap_pass_enc) return { state: "not_connected", items: [], checkedAt: null };
+    if (!row?.email_address || !row.imap_host || !row.imap_pass_enc)
+      return { state: "not_connected", items: [], checkedAt: null };
     try {
       const pass = decryptText(row.imap_pass_enc, options.encryptionKey);
-      if (!options.allowDemo && (row.imap_host === "demo.imap.local" || pass === "demo-inbox")) throw new Error("demo source");
-      const items = await readInbox({ host: row.imap_host, port: Number(row.imap_port ?? 993), user: row.email_address, pass, limit });
-      await sql.unsafe("UPDATE chisabot_personal_sources SET cached_emails=$2::text::jsonb,email_checked_at=now() WHERE owner_user_id=$1", [actorId, JSON.stringify(items)]);
+      if (
+        !options.allowDemo &&
+        (row.imap_host === "demo.imap.local" || pass === "demo-inbox")
+      )
+        throw new Error("demo source");
+      const items = await readInbox({
+        host: row.imap_host,
+        port: Number(row.imap_port ?? 993),
+        user: row.email_address,
+        pass,
+        limit,
+      });
+      await sql.unsafe(
+        "UPDATE chisabot_personal_sources SET cached_emails=$2::text::jsonb,email_checked_at=now() WHERE owner_user_id=$1",
+        [actorId, JSON.stringify(items)],
+      );
       return { state: "fresh", items, checkedAt: new Date().toISOString() };
     } catch {
-      return { state: row.email_checked_at ? "cached" : "unavailable", items: parseJsonArray<ScannedEmailSummary>(row.cached_emails).slice(0, limit), checkedAt: row.email_checked_at ? toIso(row.email_checked_at) : null, error: "收件箱读取失败，请检查邮箱连接。" };
+      return {
+        state: row.email_checked_at ? "cached" : "unavailable",
+        items: parseJsonArray<ScannedEmailSummary>(row.cached_emails).slice(
+          0,
+          limit,
+        ),
+        checkedAt: row.email_checked_at ? toIso(row.email_checked_at) : null,
+        error: "收件箱读取失败，请检查邮箱连接。",
+      };
     }
   }
 
   function fresh<T>(source: SourceRead<T>, label: string): T[] {
-    if (source.state === "not_connected") throw new Error(`尚未连接${label}，请先在账号连接中设置。`);
-    if (source.state !== "fresh") throw new Error(source.error || `${label}读取失败。`);
+    if (source.state === "not_connected")
+      throw new Error(`尚未连接${label}，请先在账号连接中设置。`);
+    if (source.state !== "fresh")
+      throw new Error(source.error || `${label}读取失败。`);
     return source.items;
   }
   // Keep the existing list/scan entry points strict; consumers wanting cached data must read its state.
-  const listEvents = async (actorId: string, days = 7) => fresh(await readEvents(actorId, days), "日历");
-  const listEmails = async (actorId: string, limit = 8) => fresh(await readEmails(actorId, limit), "邮箱");
-  const scanCalendar = async (actorId: string, days = 7) => (await listEvents(actorId, days)).filter(event => Date.parse(event.startIso) >= Date.now()).slice(0, 50);
-  const scanEmails = async (actorId: string, limit = 20) => listEmails(actorId, limit);
+  const listEvents = async (actorId: string, days = 7) =>
+    fresh(await readEvents(actorId, days), "日历");
+  const listEmails = async (actorId: string, limit = 8) =>
+    fresh(await readEmails(actorId, limit), "邮箱");
+  const scanCalendar = async (actorId: string, days = 7) =>
+    (await listEvents(actorId, days))
+      .filter((event) => Date.parse(event.startIso) >= Date.now())
+      .slice(0, 50);
+  const scanEmails = async (actorId: string, limit = 20) =>
+    listEmails(actorId, limit);
 
   function sourceLine<T>(label: string, source: SourceRead<T>): string {
-    if (source.state === "not_connected") return `${label}尚未连接。请在「设置 → 账号连接」接入。`;
-    if (source.state === "unavailable") return source.error || `${label}暂时无法读取。`;
-    if (source.state === "cached") return `${source.error}以下仅为上次缓存（${source.checkedAt}），不代表当前状态。`;
+    if (source.state === "not_connected")
+      return `${label}尚未连接。请在「设置 → 账号连接」接入。`;
+    if (source.state === "unavailable")
+      return source.error || `${label}暂时无法读取。`;
+    if (source.state === "cached")
+      return `${source.error}以下仅为上次缓存（${source.checkedAt}），不代表当前状态。`;
     return `${label}已更新（${source.checkedAt}）。`;
   }
 
-  async function generateMorningBrief(actorId: string, cityOverride?: string): Promise<{
+  async function generateMorningBrief(
+    actorId: string,
+    cityOverride?: string,
+  ): Promise<{
     title: string;
     dateStr: string;
     weather: string;
     markdown: string;
   }> {
     const row = await getRow(actorId);
-    const city = (cityOverride?.trim() || row?.weather_city || "上海").slice(0, 30);
+    const city = (cityOverride?.trim() || row?.weather_city || "上海").slice(
+      0,
+      30,
+    );
     const now = new Date();
     const dateStr = new Intl.DateTimeFormat("zh-CN", {
       month: "long",
@@ -713,26 +962,42 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       timeZone: row?.calendar_timezone || "Asia/Shanghai",
     }).format(now);
 
-    const [weather, calendarRead, emailRead, schedules, memories] = await Promise.all([
-      fetchWeatherSummary(city, fetchImpl),
-      readEvents(actorId, 1),
-      readEmails(actorId, 5),
-      sql
-        .unsafe<{ title: string | null; instruction: string | null; cron: string | null; run_at: string | null }[]>(
-          "SELECT title, instruction, cron, run_at FROM chisabot_schedules WHERE owner_user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 4",
-          [actorId],
-        )
-        .catch(() => null),
-      sql
-        .unsafe<{ kind: string; subject: string | null; content: string }[]>(
-          "SELECT kind, subject, content FROM chisabot_memory_notes WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT 4",
-          [actorId],
-        )
-        .catch(() => null),
-    ]);
+    const [weather, calendarRead, emailRead, schedules, memories] =
+      await Promise.all([
+        fetchWeatherSummary(city, fetchImpl),
+        readEvents(actorId, 1),
+        readEmails(actorId, 5),
+        sql
+          .unsafe<
+            {
+              title: string | null;
+              instruction: string | null;
+              cron: string | null;
+              run_at: string | null;
+            }[]
+          >(
+            "SELECT title, instruction, cron, run_at FROM chisabot_schedules WHERE owner_user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 4",
+            [actorId],
+          )
+          .catch(() => null),
+        sql
+          .unsafe<{ kind: string; subject: string | null; content: string }[]>(
+            "SELECT kind, subject, content FROM chisabot_memory_notes WHERE owner_user_id = $1 ORDER BY updated_at DESC LIMIT 4",
+            [actorId],
+          )
+          .catch(() => null),
+      ]);
 
-    const day = new Intl.DateTimeFormat("en-CA", { timeZone: row?.calendar_timezone || "Asia/Shanghai" }).format(now);
-    const events = calendarRead.items.filter(event => event.allDay ? event.startDate === day : new Intl.DateTimeFormat("en-CA", { timeZone: row?.calendar_timezone || "Asia/Shanghai" }).format(new Date(event.startIso)) === day);
+    const day = new Intl.DateTimeFormat("en-CA", {
+      timeZone: row?.calendar_timezone || "Asia/Shanghai",
+    }).format(now);
+    const events = calendarRead.items.filter((event) =>
+      event.allDay
+        ? event.startDate === day
+        : new Intl.DateTimeFormat("en-CA", {
+            timeZone: row?.calendar_timezone || "Asia/Shanghai",
+          }).format(new Date(event.startIso)) === day,
+    );
     const emails = emailRead.items;
     const title = `今日晨报 · ${dateStr}`;
     const calendarLines =
@@ -740,7 +1005,11 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         ? events.slice(0, 4).map((e) => {
             const d = new Date(e.startIso);
             const tStr = e.allDay
-              ? d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", timeZone: "UTC" })
+              ? d.toLocaleDateString("zh-CN", {
+                  month: "numeric",
+                  day: "numeric",
+                  timeZone: "UTC",
+                })
               : d.toLocaleString("zh-CN", {
                   month: "numeric",
                   day: "numeric",
@@ -750,21 +1019,43 @@ export function createPersonalSources(database: Database, options: PersonalSourc
                 });
             return `- ${tStr}｜${e.summary}${e.location ? `（${e.location}）` : ""}`;
           })
-        : [calendarRead.state === "fresh" ? "- 今日没有日历安排。" : "- 暂时无法确认今日安排。"];
+        : [
+            calendarRead.state === "fresh"
+              ? "- 今日没有日历安排。"
+              : "- 暂时无法确认今日安排。",
+          ];
 
     const emailLines =
       emails.length > 0
-        ? emails.slice(0, 4).map((m) => `- ${m.unread ? "【未读】" : ""}${m.subject} — ${m.from}`)
-        : [emailRead.state === "fresh" ? "- 当前收件箱查询范围内没有邮件。" : "- 暂时无法确认收件箱状态。"];
+        ? emails
+            .slice(0, 4)
+            .map(
+              (m) => `- ${m.unread ? "【未读】" : ""}${m.subject} — ${m.from}`,
+            )
+        : [
+            emailRead.state === "fresh"
+              ? "- 当前收件箱查询范围内没有邮件。"
+              : "- 暂时无法确认收件箱状态。",
+          ];
 
     const reminderLines =
       schedules && schedules.length > 0
-        ? schedules.map((s) => `- ${s.title || s.instruction || "未命名提醒"}${s.cron ? `（定时：${s.cron}）` : ""}`)
-        : [schedules ? "- 暂无活跃的定时提醒任务" : "- 定时提醒读取失败，暂时无法确认任务状态。"];
+        ? schedules.map(
+            (s) =>
+              `- ${s.title || s.instruction || "未命名提醒"}${s.cron ? `（定时：${s.cron}）` : ""}`,
+          )
+        : [
+            schedules
+              ? "- 暂无活跃的定时提醒任务"
+              : "- 定时提醒读取失败，暂时无法确认任务状态。",
+          ];
 
     const memoryLines =
       memories && memories.length > 0
-        ? memories.map((m) => `- ${m.subject ? `[${m.subject}] ` : ""}${m.content.slice(0, 70)}`)
+        ? memories.map(
+            (m) =>
+              `- ${m.subject ? `[${m.subject}] ` : ""}${m.content.slice(0, 70)}`,
+          )
         : [memories ? "- 暂无已保存的近期记忆。" : "- 近期记忆读取失败。"];
 
     const body = [
@@ -796,14 +1087,21 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     const clean = email.trim().toLowerCase();
     if (clean === "demo" || clean === "demo@ayase.cn") return "demo.imap.local";
     const domain = clean.split("@")[1] ?? "";
-    if (domain === "gmail.com" || domain === "googlemail.com") return "imap.gmail.com";
+    if (domain === "gmail.com" || domain === "googlemail.com")
+      return "imap.gmail.com";
     if (domain === "qq.com" || domain === "foxmail.com") return "imap.qq.com";
     if (domain === "163.com") return "imap.163.com";
     if (domain === "126.com") return "imap.126.com";
-    if (domain === "outlook.com" || domain === "hotmail.com" || domain === "live.com" || domain === "office365.com") {
+    if (
+      domain === "outlook.com" ||
+      domain === "hotmail.com" ||
+      domain === "live.com" ||
+      domain === "office365.com"
+    ) {
       return "outlook.office365.com";
     }
-    if (domain === "icloud.com" || domain === "me.com") return "imap.mail.me.com";
+    if (domain === "icloud.com" || domain === "me.com")
+      return "imap.mail.me.com";
     if (domain === "aliyun.com") return "imap.aliyun.com";
     if (domain === "sina.com" || domain === "sina.cn") return "imap.sina.com";
     return domain ? `imap.${domain}` : "";
@@ -812,57 +1110,141 @@ export function createPersonalSources(database: Database, options: PersonalSourc
   function toolSendContext(): PersonalSendContext {
     const turn = currentConfirmTurn();
     const call = currentConfirmToolCall();
-    if (!call || !turn) throw new DeliveryRejectedError("发送缺少可恢复的工具调用标识，请从原对话重试。");
-    if (turn.stopped() || currentToolAbort()?.aborted) throw new DeliveryRejectedError("用户已停止，未发送。");
-    return { id: `tool:${turn.runId}:${call.toolCallId}`, threadId: turn.threadId, runId: turn.runId };
+    if (!call || !turn)
+      throw new DeliveryRejectedError(
+        "发送缺少可恢复的工具调用标识，请从原对话重试。",
+      );
+    if (turn.stopped() || currentToolAbort()?.aborted)
+      throw new DeliveryRejectedError("用户已停止，未发送。");
+    return {
+      id: `tool:${turn.runId}:${call.toolCallId}`,
+      threadId: turn.threadId,
+      runId: turn.runId,
+    };
   }
 
   async function dispatchPersonal(id: string) {
-    return delivery.dispatch(id, async record => {
+    return delivery.dispatch(id, async (record) => {
       const row = await getRow(record.owner_user_id);
-      const version = record.kind === "smtp" ? row?.email_connected_at : row?.notify_connected_at;
-      if (!version || toIso(version) !== record.connection_version) return "cancelled";
-      if (record.kind === "smtp" && (!row?.email_address || !row.imap_pass_enc)) return "cancelled";
-      if (record.kind === "notify" && !row?.notify_webhook_enc) return "cancelled";
-      return { send: async () => {
-        let providerMessageIds: string[];
-        const signal = currentToolAbort();
-        if (signal?.aborted || currentConfirmTurn()?.stopped()) throw new DeliveryRejectedError("用户已停止，未发送。");
-        if (record.kind === "smtp") {
-          const smtp = inferSmtpServer(row!.email_address!);
-          if (isBlockedHostname(smtp.host) || smtp.host === "demo.smtp.local") throw new DeliveryRejectedError("SMTP 连接地址无效，未发送。");
-          providerMessageIds = await (options.sendMail ?? sendSmtpMessage)({ ...smtp, from: row!.email_address!, pass: decryptText(row!.imap_pass_enc!, options.encryptionKey), to: record.payload.target, subject: record.payload.title, body: record.payload.body, id, ...(signal ? { signal } : {}) });
-        } else {
-          const url = decryptText(row!.notify_webhook_enc!, options.encryptionKey);
-          const kind = (row!.notify_webhook_kind || "custom") as NotifyWebhookView["kind"];
-          if (kind === "demo") throw new DeliveryRejectedError("演示渠道不能产生真实发送凭据。");
-          providerMessageIds = await sendWebhook({ url, kind, title: record.payload.title, body: record.payload.body, id, fetchImpl, ...(signal ? { signal } : {}) });
-        }
-        return { type: "personal_delivery", id, channel: record.kind, state: "accepted", providerMessageIds,
-          summary: record.kind === "smtp" ? `SMTP 已接受发往 ${record.payload.target} 的邮件「${record.payload.title}」；收件人阅读状态未知。` : `「${record.payload.target}」通知接口已接受请求；收件人阅读状态未知。` };
-      } };
+      const version =
+        record.kind === "smtp"
+          ? row?.email_connected_at
+          : row?.notify_connected_at;
+      if (!version || toIso(version) !== record.connection_version)
+        return "cancelled";
+      if (record.kind === "smtp" && (!row?.email_address || !row.imap_pass_enc))
+        return "cancelled";
+      if (record.kind === "notify" && !row?.notify_webhook_enc)
+        return "cancelled";
+      return {
+        send: async () => {
+          let providerMessageIds: string[];
+          const signal = currentToolAbort();
+          if (signal?.aborted || currentConfirmTurn()?.stopped())
+            throw new DeliveryRejectedError("用户已停止，未发送。");
+          if (record.kind === "smtp") {
+            const smtp = inferSmtpServer(row!.email_address!);
+            if (isBlockedHostname(smtp.host) || smtp.host === "demo.smtp.local")
+              throw new DeliveryRejectedError("SMTP 连接地址无效，未发送。");
+            providerMessageIds = await (options.sendMail ?? sendSmtpMessage)({
+              ...smtp,
+              from: row!.email_address!,
+              pass: decryptText(row!.imap_pass_enc!, options.encryptionKey),
+              to: record.payload.target,
+              subject: record.payload.title,
+              body: record.payload.body,
+              id,
+              ...(signal ? { signal } : {}),
+            });
+          } else {
+            const url = decryptText(
+              row!.notify_webhook_enc!,
+              options.encryptionKey,
+            );
+            const kind = (row!.notify_webhook_kind ||
+              "custom") as NotifyWebhookView["kind"];
+            if (kind === "demo")
+              throw new DeliveryRejectedError("演示渠道不能产生真实发送凭据。");
+            providerMessageIds = await sendWebhook({
+              url,
+              kind,
+              title: record.payload.title,
+              body: record.payload.body,
+              id,
+              fetchImpl,
+              ...(signal ? { signal } : {}),
+            });
+          }
+          return {
+            type: "personal_delivery",
+            id,
+            channel: record.kind,
+            state: "accepted",
+            providerMessageIds,
+            summary:
+              record.kind === "smtp"
+                ? `SMTP 已接受发往 ${record.payload.target} 的邮件「${record.payload.title}」；收件人阅读状态未知。`
+                : `「${record.payload.target}」通知接口已接受请求；收件人阅读状态未知。`,
+          };
+        },
+      };
     });
   }
 
-  async function sendSmtpEmail(actorId: string, input: { to: string; subject: string; body: string }, context: PersonalSendContext = {}): Promise<PersonalDeliveryEvidence> {
-    if (/[\r\n\0]/.test(input.to) || /[\r\n\0]/.test(input.subject)) throw new DeliveryRejectedError("邮件头字段不能包含换行或控制字符。");
+  async function sendSmtpEmail(
+    actorId: string,
+    input: { to: string; subject: string; body: string },
+    context: PersonalSendContext = {},
+  ): Promise<PersonalDeliveryEvidence> {
+    if (/[\r\n\0]/.test(input.to) || /[\r\n\0]/.test(input.subject))
+      throw new DeliveryRejectedError("邮件头字段不能包含换行或控制字符。");
     const row = await getRow(actorId);
-    if (!row?.email_address || !row.imap_pass_enc || !row.email_connected_at) throw new DeliveryRejectedError("还没有连接邮箱，请先在「设置 → 账号连接」连接。");
+    if (!row?.email_address || !row.imap_pass_enc || !row.email_connected_at)
+      throw new DeliveryRejectedError(
+        "还没有连接邮箱，请先在「设置 → 账号连接」连接。",
+      );
     const to = input.to.trim();
-    if (!/^[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+$/.test(to) || /[\r\n\0]/.test(input.subject) || !input.subject.trim() || !input.body.trim()) throw new DeliveryRejectedError("请提供有效的收件人、主题和正文；邮件头不能包含换行。");
-    const id = await delivery.stage(actorId, "smtp", toIso(row.email_connected_at), { target: to, title: input.subject.trim().slice(0, 200), body: input.body.slice(0, 10_000) }, context);
+    if (
+      !/^[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+$/.test(to) ||
+      /[\r\n\0]/.test(input.subject) ||
+      !input.subject.trim() ||
+      !input.body.trim()
+    )
+      throw new DeliveryRejectedError(
+        "请提供有效的收件人、主题和正文；邮件头不能包含换行。",
+      );
+    const id = await delivery.stage(
+      actorId,
+      "smtp",
+      toIso(row.email_connected_at),
+      {
+        target: to,
+        title: input.subject.trim().slice(0, 200),
+        body: input.body.slice(0, 10_000),
+      },
+      context,
+    );
     await dispatchPersonal(id);
     return delivery.accepted(id);
   }
 
-  function detectWebhookKind(url: string): { kind: NotifyWebhookView["kind"]; defaultLabel: string } {
+  function detectWebhookKind(url: string): {
+    kind: NotifyWebhookView["kind"];
+    defaultLabel: string;
+  } {
     const clean = url.trim().toLowerCase();
-    if (clean === "demo" || clean.includes("demo.webhook.local")) return { kind: "demo", defaultLabel: "演示随身通知" };
-    if (clean.includes("feishu.cn") || clean.includes("larksuite.com")) return { kind: "feishu", defaultLabel: "飞书群机器人通知" };
-    if (clean.includes("dingtalk.com")) return { kind: "dingtalk", defaultLabel: "钉钉群机器人通知" };
-    if (clean.includes("qyapi.weixin.qq.com")) return { kind: "wecom", defaultLabel: "企业微信机器人通知" };
-    if (clean.includes("api.day.app")) return { kind: "bark", defaultLabel: "Bark iOS 推送" };
-    if (clean.includes("sctapi.ftqq.com")) return { kind: "serverchan", defaultLabel: "Server酱微信通知" };
+    if (clean === "demo" || clean.includes("demo.webhook.local"))
+      return { kind: "demo", defaultLabel: "演示随身通知" };
+    if (clean.includes("feishu.cn") || clean.includes("larksuite.com"))
+      return { kind: "feishu", defaultLabel: "飞书群机器人通知" };
+    if (clean.includes("dingtalk.com"))
+      return { kind: "dingtalk", defaultLabel: "钉钉群机器人通知" };
+    if (clean.includes("qyapi.weixin.qq.com"))
+      return { kind: "wecom", defaultLabel: "企业微信机器人通知" };
+    if (clean.includes("api.day.app"))
+      return { kind: "bark", defaultLabel: "Bark iOS 推送" };
+    if (clean.includes("sctapi.ftqq.com"))
+      return { kind: "serverchan", defaultLabel: "Server酱微信通知" };
     return { kind: "custom", defaultLabel: "自定义 Webhook 通知" };
   }
 
@@ -871,15 +1253,22 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     input: { url: string; label?: string },
   ): Promise<PersonalSourcesStatusView> {
     const raw = input.url.trim();
-    if (!raw) throw new Error("请填写通知 Webhook 地址（支持飞书、钉钉、企业微信、Bark、Server酱或自定义 JSON Webhook，或填 demo）。");
-    const isDemo = raw.toLowerCase() === "demo" || raw.includes("demo.webhook.local");
-    if (isDemo && !options.allowDemo) throw new Error("请绑定真实通知渠道；演示连接只在隔离验收环境使用。");
+    if (!raw)
+      throw new Error(
+        "请填写通知 Webhook 地址（支持飞书、钉钉、企业微信、Bark、Server酱或自定义 JSON Webhook，或填 demo）。",
+      );
+    const isDemo =
+      raw.toLowerCase() === "demo" || raw.includes("demo.webhook.local");
+    if (isDemo && !options.allowDemo)
+      throw new Error("请绑定真实通知渠道；演示连接只在隔离验收环境使用。");
     const normalizedUrl = isDemo ? "https://demo.webhook.local/push" : raw;
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(normalizedUrl);
     } catch {
-      throw new Error("Webhook 地址格式不正确，请填写 https:// 开头的链接或 demo。");
+      throw new Error(
+        "Webhook 地址格式不正确，请填写 https:// 开头的链接或 demo。",
+      );
     }
     if (!isDemo) {
       const verdict = checkPublicUrl(normalizedUrl);
@@ -907,7 +1296,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return toStatusView(await getRow(actorId));
   }
 
-  async function disconnectNotifyWebhook(actorId: string): Promise<PersonalSourcesStatusView> {
+  async function disconnectNotifyWebhook(
+    actorId: string,
+  ): Promise<PersonalSourcesStatusView> {
     await sql.unsafe(
       `UPDATE chisabot_personal_sources SET
         notify_webhook_enc = NULL, notify_webhook_kind = NULL, notify_webhook_label = NULL,
@@ -918,22 +1309,53 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return toStatusView(await getRow(actorId));
   }
 
-  async function stageNotification(actorId: string, input: { title?: string; message: string }, context: PersonalSendContext) {
+  async function stageNotification(
+    actorId: string,
+    input: { title?: string; message: string },
+    context: PersonalSendContext,
+  ) {
     const row = await getRow(actorId);
     if (!row?.notify_webhook_enc || !row.notify_connected_at) return null;
     const message = input.message.trim().slice(0, 2000);
     if (!message) throw new DeliveryRejectedError("通知内容不能为空。");
-    return delivery.stage(actorId, "notify", toIso(row.notify_connected_at), { target: row.notify_webhook_label || "随身通知", title: (input.title?.trim() || "ChisaBot 提醒").slice(0, 80), body: message }, context);
+    return delivery.stage(
+      actorId,
+      "notify",
+      toIso(row.notify_connected_at),
+      {
+        target: row.notify_webhook_label || "随身通知",
+        title: (input.title?.trim() || "ChisaBot 提醒").slice(0, 80),
+        body: message,
+      },
+      context,
+    );
   }
 
-  async function pushNotifyMessage(actorId: string, input: { title?: string; message: string }, context: PersonalSendContext = {}): Promise<PersonalDeliveryEvidence> {
+  async function pushNotifyMessage(
+    actorId: string,
+    input: { title?: string; message: string },
+    context: PersonalSendContext = {},
+  ): Promise<PersonalDeliveryEvidence> {
     const id = await stageNotification(actorId, input, context);
-    if (!id) throw new DeliveryRejectedError("还没有绑定随身通知，请先在「设置 → 账号连接」绑定 Webhook。");
+    if (!id)
+      throw new DeliveryRejectedError(
+        "还没有绑定随身通知，请先在「设置 → 账号连接」绑定 Webhook。",
+      );
     await dispatchPersonal(id);
     return delivery.accepted(id);
   }
 
-  async function notify(actorId: string, input: { id: string; title?: string; message: string; threadId?: string; runId?: string; agentId?: string }) {
+  async function notify(
+    actorId: string,
+    input: {
+      id: string;
+      title?: string;
+      message: string;
+      threadId?: string;
+      runId?: string;
+      agentId?: string;
+    },
+  ) {
     const id = await stageNotification(actorId, input, input);
     if (!id) return { state: "not_configured" as const };
     await dispatchPersonal(id);
@@ -942,14 +1364,21 @@ export function createPersonalSources(database: Database, options: PersonalSourc
   }
 
   async function flushNotifications() {
-    for (const { id } of await delivery.queuedNotifications()) await dispatchPersonal(id);
+    for (const { id } of await delivery.queuedNotifications())
+      await dispatchPersonal(id);
   }
 
   async function status(actorId: string): Promise<PersonalSourcesStatusView> {
-    return { ...toStatusView(await getRow(actorId)), deliveries: await delivery.history(actorId) };
+    return {
+      ...toStatusView(await getRow(actorId)),
+      deliveries: await delivery.history(actorId),
+    };
   }
 
-  async function ensureInboundToken(actorId: string, rotate = false): Promise<PersonalSourcesStatusView> {
+  async function ensureInboundToken(
+    actorId: string,
+    rotate = false,
+  ): Promise<PersonalSourcesStatusView> {
     const row = await getRow(actorId);
     if (row?.inbound_webhook_token && !rotate) {
       return toStatusView(row);
@@ -964,11 +1393,20 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     return toStatusView(await getRow(actorId));
   }
 
-  const webhookRateLimits = new Map<string, { count: number; resetAt: number }>();
+  const webhookRateLimits = new Map<
+    string,
+    { count: number; resetAt: number }
+  >();
 
   async function triggerInboundWebhook(
     token: string,
-    payload: { title?: string; message?: string; text?: string; source?: string; event?: string },
+    payload: {
+      title?: string;
+      message?: string;
+      text?: string;
+      source?: string;
+      event?: string;
+    },
   ): Promise<{ ok: boolean; summary: string } | null> {
     if (!token || !/^whk_[a-zA-Z0-9_-]{8,64}$/.test(token)) return null;
     const nowMs = Date.now();
@@ -976,7 +1414,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     const bucket = webhookRateLimits.get(token);
     if (bucket && bucket.resetAt > nowMs) {
       if (bucket.count >= 30) {
-        throw new WebhookRateLimitError("Webhook 调用过于频繁（每分钟最多 30 次），请稍后再试。");
+        throw new WebhookRateLimitError(
+          "Webhook 调用过于频繁（每分钟最多 30 次），请稍后再试。",
+        );
       }
       bucket.count += 1;
     } else {
@@ -988,10 +1428,17 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       [token],
     );
     if (!row) return null;
-    const src = (payload.source || payload.event || "外部 Webhook").replace(/[\r\n\0]+/g, " ").slice(0, 40);
+    const src = (payload.source || payload.event || "外部 Webhook")
+      .replace(/[\r\n\0]+/g, " ")
+      .slice(0, 40);
     const title = (payload.title || "").replace(/[\r\n\0]+/g, " ").slice(0, 80);
-    const body = (payload.message || payload.text || JSON.stringify(payload)).replace(/[\r\n\0]+/g, " ").slice(0, 400);
-    const rawSummary = `[${src}] ${title ? `${title}：` : ""}${body}`.slice(0, 300);
+    const body = (payload.message || payload.text || JSON.stringify(payload))
+      .replace(/[\r\n\0]+/g, " ")
+      .slice(0, 400);
+    const rawSummary = `[${src}] ${title ? `${title}：` : ""}${body}`.slice(
+      0,
+      300,
+    );
     const summary = rawSummary.replace(/<\/?untrusted_data[^>]*>/gi, "").trim();
 
     await sql.unsafe(
@@ -1000,7 +1447,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     );
 
     // 同步记入用户今日日志（chisabot_memory_notes，按日合并并受单用户 200 条上限约束）
-    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+    }).format(new Date());
     const entryLine = `- [Webhook 事件｜外部数据] ${summary}`;
     await (async () => {
       const [same] = await sql.unsafe<{ id: string; content: string }[]>(
@@ -1023,14 +1472,23 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         await sql.unsafe(
           `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context)
            VALUES ($1, $2, 'daily', $3, $4, 'webhook_trigger')`,
-          [`mem_${randomBytes(10).toString("hex")}`, row.owner_user_id, today, entryLine],
+          [
+            `mem_${randomBytes(10).toString("hex")}`,
+            row.owner_user_id,
+            today,
+            entryLine,
+          ],
         );
       }
     })().catch(() => {});
 
     // 如果用户绑定了随身通知 Webhook，自动转发推送
     if (row.notify_webhook_enc) {
-      await notify(row.owner_user_id, { id: `inbound:${randomUUID()}`, title: title || `${src} 事件触发`, message: body });
+      await notify(row.owner_user_id, {
+        id: `inbound:${randomUUID()}`,
+        title: title || `${src} 事件触发`,
+        message: body,
+      });
     }
 
     return { ok: true, summary };
@@ -1061,17 +1519,34 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         ? { at: toIso(row.inbound_last_at), summary: row.inbound_last_summary }
         : null;
 
-    const lines: string[] = [sourceLine("日历", calendarRead), sourceLine("邮箱", emailRead)];
+    const lines: string[] = [
+      sourceLine("日历", calendarRead),
+      sourceLine("邮箱", emailRead),
+    ];
     if (upcomingEvents.length > 0) {
-      lines.push(`⏰ **即将开始的日程（2 小时内）**：\n${upcomingEvents.map((e) => `- ${e.startIso}｜${e.summary}`).join("\n")}`);
+      lines.push(
+        `⏰ **即将开始的日程（2 小时内）**：\n${upcomingEvents.map((e) => `- ${e.startIso}｜${e.summary}`).join("\n")}`,
+      );
     }
     if (unreadEmails.length > 0) {
-      lines.push(`📬 **未读邮件（${unreadEmails.length} 封）**：\n${unreadEmails.slice(0, 5).map((m) => `- ${m.subject}（${m.from}）`).join("\n")}`);
+      lines.push(
+        `📬 **未读邮件（${unreadEmails.length} 封）**：\n${unreadEmails
+          .slice(0, 5)
+          .map((m) => `- ${m.subject}（${m.from}）`)
+          .join("\n")}`,
+      );
     }
     if (lastWebhookEvent) {
-      lines.push(`🔔 **最近外部 Webhook 触发（${lastWebhookEvent.at}）**：\n- ${lastWebhookEvent.summary}`);
+      lines.push(
+        `🔔 **最近外部 Webhook 触发（${lastWebhookEvent.at}）**：\n- ${lastWebhookEvent.summary}`,
+      );
     }
-    if (!upcomingEvents.length && !unreadEmails.length && calendarRead.state === "fresh" && emailRead.state === "fresh") {
+    if (
+      !upcomingEvents.length &&
+      !unreadEmails.length &&
+      calendarRead.state === "fresh" &&
+      emailRead.state === "fresh"
+    ) {
       lines.push("当前查询范围内没有 2 小时内日程或未读邮件提醒。");
     }
 
@@ -1088,50 +1563,96 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       {
         name: "calendar_list_events",
         ref: "personal-sources/calendar_list_events",
-        description: "查看用户已连接的个人日历（iCal / ICS）近期日程安排（只读）。",
+        description:
+          "查看用户已连接的个人日历（iCal / ICS）近期日程安排（只读）。",
         parameters: z.object({
-          days: z.number().int().min(1).max(30).optional().describe("往后看几天，默认 7 天"),
+          days: z
+            .number()
+            .int()
+            .min(1)
+            .max(30)
+            .optional()
+            .describe("往后看几天，默认 7 天"),
         }),
         execute: async (args) => {
-          const parsed = z.object({ days: z.number().int().min(1).max(30).optional() }).safeParse(args);
+          const parsed = z
+            .object({ days: z.number().int().min(1).max(30).optional() })
+            .safeParse(args);
           const days = parsed.success ? (parsed.data.days ?? 7) : 7;
           const row = await getRow(actorId);
           if (!row?.calendar_ics_enc) {
             return `${REFUSAL_MARKER} 用户还没有连接日历。请通过「设置 → 账号连接」的安全表单接入，不要在聊天中提供私密订阅链接：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const source = await readEvents(actorId, days);
-          return [source.state === "fresh" ? sourceLine("日历", source) : `${REFUSAL_MARKER} ${sourceLine("日历", source)}`, ...source.items.map(e => `- ${e.startIso}｜${e.summary}${e.location ? `（地点：${e.location}）` : ""}`), ...(source.state === "fresh" && !source.items.length ? [`未来 ${days} 天内没有日程安排。`] : [])].join("\n");
+          return [
+            source.state === "fresh"
+              ? sourceLine("日历", source)
+              : `${REFUSAL_MARKER} ${sourceLine("日历", source)}`,
+            ...source.items.map(
+              (e) =>
+                `- ${e.startIso}｜${e.summary}${e.location ? `（地点：${e.location}）` : ""}`,
+            ),
+            ...(source.state === "fresh" && !source.items.length
+              ? [`未来 ${days} 天内没有日程安排。`]
+              : []),
+          ].join("\n");
         },
       },
       {
-        name: "calendar_connect", ref: "personal-sources/calendar_connect",
-        description: "打开日历的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
+        name: "calendar_connect",
+        ref: "personal-sources/calendar_connect",
+        description:
+          "打开日历的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
-        execute: async () => "请在安全设置中连接日历，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+        execute: async () =>
+          "请在安全设置中连接日历，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "email_list_recent",
         ref: "personal-sources/email_list_recent",
-        description: "查看用户已连接的个人收件箱（IMAP 只读，支持 Gmail / QQ / 163 / Outlook / iCloud）最近邮件与未读邮件摘要。",
+        description:
+          "查看用户已连接的个人收件箱（IMAP 只读，支持 Gmail / QQ / 163 / Outlook / iCloud）最近邮件与未读邮件摘要。",
         parameters: z.object({
-          limit: z.number().int().min(1).max(20).optional().describe("最多返回几封，默认 8 封"),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(20)
+            .optional()
+            .describe("最多返回几封，默认 8 封"),
         }),
         execute: async (args) => {
-          const parsed = z.object({ limit: z.number().int().min(1).max(20).optional() }).safeParse(args);
+          const parsed = z
+            .object({ limit: z.number().int().min(1).max(20).optional() })
+            .safeParse(args);
           const limit = parsed.success ? (parsed.data.limit ?? 8) : 8;
           const row = await getRow(actorId);
           if (!row?.email_address || !row.imap_pass_enc) {
             return `${REFUSAL_MARKER} 用户还没有连接邮箱。请在「设置 → 账号连接」的安全表单中接入 IMAP，不要在聊天中提供授权码：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const source = await readEmails(actorId, limit);
-          return [source.state === "fresh" ? sourceLine("邮箱", source) : `${REFUSAL_MARKER} ${sourceLine("邮箱", source)}`, ...source.items.map(m => `- ${m.unread ? "[未读] " : ""}${m.subject}｜发件人：${m.from}｜时间：${m.date}`), ...(source.state === "fresh" && !source.items.length ? ["当前查询范围内没有邮件。"] : [])].join("\n");
+          return [
+            source.state === "fresh"
+              ? sourceLine("邮箱", source)
+              : `${REFUSAL_MARKER} ${sourceLine("邮箱", source)}`,
+            ...source.items.map(
+              (m) =>
+                `- ${m.unread ? "[未读] " : ""}${m.subject}｜发件人：${m.from}｜时间：${m.date}`,
+            ),
+            ...(source.state === "fresh" && !source.items.length
+              ? ["当前查询范围内没有邮件。"]
+              : []),
+          ].join("\n");
         },
       },
       {
-        name: "email_connect", ref: "personal-sources/email_connect",
-        description: "打开邮箱的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
+        name: "email_connect",
+        ref: "personal-sources/email_connect",
+        description:
+          "打开邮箱的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
-        execute: async () => "请在安全设置中连接邮箱，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+        execute: async () =>
+          "请在安全设置中连接邮箱，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "email_send",
@@ -1151,9 +1672,12 @@ export function createPersonalSources(database: Database, options: PersonalSourc
               body: z.string().min(1).max(10000),
             })
             .safeParse(args);
-          if (!parsed.success) return `${REFUSAL_MARKER} 请提供完整的收件人邮箱 (to)、主题 (subject) 和正文 (body)。`;
+          if (!parsed.success)
+            return `${REFUSAL_MARKER} 请提供完整的收件人邮箱 (to)、主题 (subject) 和正文 (body)。`;
           try {
-            return JSON.stringify(await sendSmtpEmail(actorId, parsed.data, toolSendContext()));
+            return JSON.stringify(
+              await sendSmtpEmail(actorId, parsed.data, toolSendContext()),
+            );
           } catch (err) {
             if (!(err instanceof DeliveryRejectedError)) throw err;
             return `${REFUSAL_MARKER} 发送邮件失败：${err instanceof Error ? err.message : "未知错误"}`;
@@ -1161,10 +1685,13 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         },
       },
       {
-        name: "notify_webhook_connect", ref: "personal-sources/notify_webhook_connect",
-        description: "打开通知推送的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
+        name: "notify_webhook_connect",
+        ref: "personal-sources/notify_webhook_connect",
+        description:
+          "打开通知推送的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
-        execute: async () => "请在安全设置中连接通知推送，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+        execute: async () =>
+          "请在安全设置中连接通知推送，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "notify_push",
@@ -1172,14 +1699,26 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         description:
           "向用户已绑定的随身通知渠道（飞书 / 钉钉 / 企业微信 / Bark / Server酱 / 自定义 Webhook）发送即时推送提醒。适合长任务完成通知、重要日程告警、每日简报摘要推送。",
         parameters: z.object({
-          title: z.string().max(80).optional().describe("通知标题，如「今日晨报」「会议即将开始」"),
+          title: z
+            .string()
+            .max(80)
+            .optional()
+            .describe("通知标题，如「今日晨报」「会议即将开始」"),
           message: z.string().min(1).max(2000).describe("通知正文内容"),
         }),
         execute: async (args) => {
-          const parsed = z.object({ title: z.string().max(80).optional(), message: z.string().min(1).max(2000) }).safeParse(args);
-          if (!parsed.success) return `${REFUSAL_MARKER} 请提供通知内容 message。`;
+          const parsed = z
+            .object({
+              title: z.string().max(80).optional(),
+              message: z.string().min(1).max(2000),
+            })
+            .safeParse(args);
+          if (!parsed.success)
+            return `${REFUSAL_MARKER} 请提供通知内容 message。`;
           try {
-            return JSON.stringify(await pushNotifyMessage(actorId, parsed.data, toolSendContext()));
+            return JSON.stringify(
+              await pushNotifyMessage(actorId, parsed.data, toolSendContext()),
+            );
           } catch (err) {
             if (!(err instanceof DeliveryRejectedError)) throw err;
             return `${REFUSAL_MARKER} ${err instanceof Error ? err.message : "推送失败"}`;
@@ -1187,10 +1726,13 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         },
       },
       {
-        name: "webhook_trigger_info", ref: "personal-sources/webhook_trigger_info",
-        description: "打开入站 Webhook 的安全设置入口，复制或重置地址均在账号连接设置中完成。",
+        name: "webhook_trigger_info",
+        ref: "personal-sources/webhook_trigger_info",
+        description:
+          "打开入站 Webhook 的安全设置入口，复制或重置地址均在账号连接设置中完成。",
         parameters: z.object({}).strict(),
-        execute: async () => "请在账号连接设置中复制或重置入站 Webhook 地址，带密钥的地址不会进入聊天记录。\n[打开账号连接](/settings/connected-accounts)",
+        execute: async () =>
+          "请在账号连接设置中复制或重置入站 Webhook 地址，带密钥的地址不会进入聊天记录。\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "personal_check_updates",
@@ -1209,11 +1751,20 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         description:
           "为用户生成今日晨报卡片（聚合天气、日历日程、未读邮件、定时提醒与近期记忆）。返回的内容包含 ```brief 代码块，请原样放进回复里展示为晨报卡片。",
         parameters: z.object({
-          city: z.string().max(30).optional().describe("天气城市，如「上海」「北京」，不填使用用户默认城市"),
+          city: z
+            .string()
+            .max(30)
+            .optional()
+            .describe("天气城市，如「上海」「北京」，不填使用用户默认城市"),
         }),
         execute: async (args) => {
-          const parsed = z.object({ city: z.string().max(30).optional() }).safeParse(args);
-          const brief = await generateMorningBrief(actorId, parsed.success ? parsed.data.city : undefined);
+          const parsed = z
+            .object({ city: z.string().max(30).optional() })
+            .safeParse(args);
+          const brief = await generateMorningBrief(
+            actorId,
+            parsed.success ? parsed.data.city : undefined,
+          );
           return `已生成今日晨报，请将以下 \`\`\`brief 代码块原样输出给用户（会自动渲染为晨报卡片）：\n\n${brief.markdown}`;
         },
       },
@@ -1252,7 +1803,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       return c.json(await status(c.var.actor.id));
     });
 
-    const handleCalendarSave = async (c: import("hono").Context<{ Variables: AppVariables }>) => {
+    const handleCalendarSave = async (
+      c: import("hono").Context<{ Variables: AppVariables }>,
+    ) => {
       const body = (await c.req.json().catch(() => ({}))) as {
         label?: string;
         urlOrIcs?: string;
@@ -1261,15 +1814,26 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         timeZone?: string;
       };
       try {
-        const raw = body.urlOrIcs?.trim() || body.icsText?.trim() || body.icsUrl?.trim() || "";
+        const raw =
+          body.urlOrIcs?.trim() ||
+          body.icsText?.trim() ||
+          body.icsUrl?.trim() ||
+          "";
         const res = await connectCalendar(c.var.actor.id, {
           label: body.label,
           urlOrIcs: raw,
           timeZone: body.timeZone,
         });
-        return c.json({ ...res.status, status: res.status, events: res.events });
+        return c.json({
+          ...res.status,
+          status: res.status,
+          events: res.events,
+        });
       } catch (err) {
-        return c.json({ error: err instanceof Error ? err.message : "连接日历失败" }, 400);
+        return c.json(
+          { error: err instanceof Error ? err.message : "连接日历失败" },
+          400,
+        );
       }
     };
     app.put("/calendar", handleCalendarSave);
@@ -1280,7 +1844,9 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       return c.json({ ...status, status });
     });
 
-    const handleEmailSave = async (c: import("hono").Context<{ Variables: AppVariables }>) => {
+    const handleEmailSave = async (
+      c: import("hono").Context<{ Variables: AppVariables }>,
+    ) => {
       const body = (await c.req.json().catch(() => ({}))) as {
         email?: string;
         imapHost?: string;
@@ -1289,16 +1855,24 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       };
       try {
         const emailAddr = (body.email ?? "").trim();
-        const imapHost = (body.imapHost ?? "").trim() || inferImapHost(emailAddr);
+        const imapHost =
+          (body.imapHost ?? "").trim() || inferImapHost(emailAddr);
         const res = await connectEmail(c.var.actor.id, {
           email: emailAddr,
           imapHost,
           imapPort: body.imapPort,
           password: body.password ?? "",
         });
-        return c.json({ ...res.status, status: res.status, emails: res.emails });
+        return c.json({
+          ...res.status,
+          status: res.status,
+          emails: res.emails,
+        });
       } catch (err) {
-        return c.json({ error: err instanceof Error ? err.message : "连接邮箱失败" }, 400);
+        return c.json(
+          { error: err instanceof Error ? err.message : "连接邮箱失败" },
+          400,
+        );
       }
     };
     app.put("/email", handleEmailSave);
@@ -1310,21 +1884,38 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     });
 
     app.post("/email/send", async (c) => {
-      const body = (await c.req.json().catch(() => ({}))) as { to?: string; subject?: string; body?: string; requestId?: string };
+      const body = (await c.req.json().catch(() => ({}))) as {
+        to?: string;
+        subject?: string;
+        body?: string;
+        requestId?: string;
+      };
       try {
-        const res = await sendSmtpEmail(c.var.actor.id, {
-          to: body.to ?? "",
-          subject: body.subject ?? "",
-          body: body.body ?? "",
-        }, { id: body.requestId || randomUUID() });
+        const res = await sendSmtpEmail(
+          c.var.actor.id,
+          {
+            to: body.to ?? "",
+            subject: body.subject ?? "",
+            body: body.body ?? "",
+          },
+          { id: body.requestId || randomUUID() },
+        );
         return c.json(res);
       } catch (err) {
-        return c.json({ error: err instanceof Error ? err.message : "发送邮件失败" }, err instanceof DeliveryOutcomeUnknownError ? 409 : 400);
+        return c.json(
+          { error: err instanceof Error ? err.message : "发送邮件失败" },
+          err instanceof DeliveryOutcomeUnknownError ? 409 : 400,
+        );
       }
     });
 
-    const handleNotifySave = async (c: import("hono").Context<{ Variables: AppVariables }>) => {
-      const body = (await c.req.json().catch(() => ({}))) as { url?: string; label?: string };
+    const handleNotifySave = async (
+      c: import("hono").Context<{ Variables: AppVariables }>,
+    ) => {
+      const body = (await c.req.json().catch(() => ({}))) as {
+        url?: string;
+        label?: string;
+      };
       try {
         const status = await connectNotifyWebhook(c.var.actor.id, {
           url: body.url ?? "",
@@ -1332,7 +1923,12 @@ export function createPersonalSources(database: Database, options: PersonalSourc
         });
         return c.json({ ...status, status });
       } catch (err) {
-        return c.json({ error: err instanceof Error ? err.message : "绑定通知 Webhook 失败" }, 400);
+        return c.json(
+          {
+            error: err instanceof Error ? err.message : "绑定通知 Webhook 失败",
+          },
+          400,
+        );
       }
     };
     app.put("/notify-webhook", handleNotifySave);
@@ -1344,15 +1940,26 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     });
 
     app.post("/notify-test", async (c) => {
-      const body = (await c.req.json().catch(() => ({}))) as { title?: string; message?: string; requestId?: string };
+      const body = (await c.req.json().catch(() => ({}))) as {
+        title?: string;
+        message?: string;
+        requestId?: string;
+      };
       try {
-        const res = await pushNotifyMessage(c.var.actor.id, {
-          title: body.title || "ChisaBot 测试通知",
-          message: body.message || "这是一条 ChisaBot 连接测试通知。",
-        }, { id: body.requestId || randomUUID() });
+        const res = await pushNotifyMessage(
+          c.var.actor.id,
+          {
+            title: body.title || "ChisaBot 测试通知",
+            message: body.message || "这是一条 ChisaBot 连接测试通知。",
+          },
+          { id: body.requestId || randomUUID() },
+        );
         return c.json(res);
       } catch (err) {
-        return c.json({ error: err instanceof Error ? err.message : "发送测试通知失败" }, err instanceof DeliveryOutcomeUnknownError ? 409 : 400);
+        return c.json(
+          { error: err instanceof Error ? err.message : "发送测试通知失败" },
+          err instanceof DeliveryOutcomeUnknownError ? 409 : 400,
+        );
       }
     });
 
@@ -1366,9 +1973,18 @@ export function createPersonalSources(database: Database, options: PersonalSourc
       return c.json({ ...res, markdown: res.summaryText });
     });
 
-    const handleWeatherSave = async (c: import("hono").Context<{ Variables: AppVariables }>) => {
-      const body = (await c.req.json().catch(() => ({}))) as { weatherCity?: string; city?: string };
-      const city = (body.weatherCity?.trim() || body.city?.trim() || "上海").slice(0, 30);
+    const handleWeatherSave = async (
+      c: import("hono").Context<{ Variables: AppVariables }>,
+    ) => {
+      const body = (await c.req.json().catch(() => ({}))) as {
+        weatherCity?: string;
+        city?: string;
+      };
+      const city = (
+        body.weatherCity?.trim() ||
+        body.city?.trim() ||
+        "上海"
+      ).slice(0, 30);
       await sql.unsafe(
         `INSERT INTO chisabot_personal_sources (owner_user_id, weather_city, updated_at)
          VALUES ($1, $2, now())
@@ -1381,10 +1997,15 @@ export function createPersonalSources(database: Database, options: PersonalSourc
     app.put("/weather", handleWeatherSave);
     app.put("/weather-city", handleWeatherSave);
 
-    const handleBrief = async (c: import("hono").Context<{ Variables: AppVariables }>) => {
+    const handleBrief = async (
+      c: import("hono").Context<{ Variables: AppVariables }>,
+    ) => {
       const qCity = c.req.query("city");
       const body = (await c.req.json().catch(() => ({}))) as { city?: string };
-      const brief = await generateMorningBrief(c.var.actor.id, body.city || qCity);
+      const brief = await generateMorningBrief(
+        c.var.actor.id,
+        body.city || qCity,
+      );
       return c.json(brief);
     };
     app.post("/brief", handleBrief);

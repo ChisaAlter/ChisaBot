@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
-import { reusableEmptyChannelFor } from "../src/lib/channels/latest";
 import { botChatChannelId } from "../src/lib/channels/bot-chat";
+import { reusableEmptyChannelFor } from "../src/lib/channels/latest";
 import { type ChannelSummary, channelKeys } from "../src/lib/channels/queries";
 
 /**

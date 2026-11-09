@@ -51,7 +51,9 @@ describe("the database address", () => {
     const secret = "s3cr3t-p4ssw0rd";
     let message = "";
     try {
-      createDatabase(`postgres://chisabot:${secret}@127.0.0.1:notaport/chisabot`);
+      createDatabase(
+        `postgres://chisabot:${secret}@127.0.0.1:notaport/chisabot`,
+      );
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -61,9 +63,9 @@ describe("the database address", () => {
 
   test("refuses a URL with no host, which would otherwise parse and connect nowhere", () => {
     // `new URL` accepts this: the scheme is "chisabot:" and there is no host at all.
-    expect(() => createDatabase("chisabot:chisabot@localhost/chisabot")).toThrow(
-      /names no host/,
-    );
+    expect(() =>
+      createDatabase("chisabot:chisabot@localhost/chisabot"),
+    ).toThrow(/names no host/);
   });
 
   test("refuses a URL that names no database, rather than connecting to a default", () => {

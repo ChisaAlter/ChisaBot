@@ -1,10 +1,10 @@
-import { runAssertionValue } from "../legacy/protocol";
 import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client";
+import { runAssertionValue } from "../legacy/protocol";
 import { readDurableTurn } from "../turns/durable-outcome";
+import type { RunAssertion } from "./callback-token";
 import { HANDOFF_KIND } from "./handoff";
 import type { HandoffWork } from "./handoff-runner";
-import type { RunAssertion } from "./callback-token";
 
 export type HandoffExecution = { threadId: string; runId: string };
 

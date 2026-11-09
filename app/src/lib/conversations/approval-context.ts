@@ -1,8 +1,12 @@
-import type { RunAgentInput } from "@ag-ui/core";
 import type { AbstractAgent, ToolCall } from "@ag-ui/client";
+import type { RunAgentInput } from "@ag-ui/core";
 import { markApprovalPause } from "./stopped-turn";
 
-type HandlerContext = { agent?: AbstractAgent; toolCall: ToolCall; signal?: AbortSignal };
+type HandlerContext = {
+  agent?: AbstractAgent;
+  toolCall: ToolCall;
+  signal?: AbortSignal;
+};
 type Agent = NonNullable<HandlerContext["agent"]>;
 const inputs = new WeakMap<Agent, RunAgentInput>();
 type BackendOwnedRun = {
@@ -19,9 +23,11 @@ export function backendOwnsFrontendCall(context: HandlerContext): boolean {
   const agent = context.agent;
   const run = agent ? backendRuns.get(agent) : undefined;
   return Boolean(
-    run && agent && run.threadId === agent.threadId &&
-    run.names.has(context.toolCall.function.name) &&
-    run.calls.get(context.toolCall.id) === context.toolCall.function.name,
+    run &&
+      agent &&
+      run.threadId === agent.threadId &&
+      run.names.has(context.toolCall.function.name) &&
+      run.calls.get(context.toolCall.id) === context.toolCall.function.name,
   );
 }
 
@@ -37,14 +43,25 @@ export function observeApprovalAgent(agent: Agent) {
       stopped: false,
     });
   };
-  const stopBackendFallback = (messages: ReadonlyArray<Readonly<RunAgentInput["messages"][number]>>) => {
+  const stopBackendFallback = (
+    messages: ReadonlyArray<Readonly<RunAgentInput["messages"][number]>>,
+  ) => {
     const run = backendRuns.get(agent);
     if (!run || run.stopped || run.threadId !== agent.threadId) return;
-    const answered = new Set(messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
-    const pending = messages.some((message) =>
-      message.role === "assistant" && message.toolCalls?.some((call) =>
-        run.names.has(call.function.name) && run.calls.get(call.id) === call.function.name && !answered.has(call.id),
+    const answered = new Set(
+      messages.flatMap((message) =>
+        message.role === "tool" ? [message.toolCallId] : [],
       ),
+    );
+    const pending = messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.toolCalls?.some(
+          (call) =>
+            run.names.has(call.function.name) &&
+            run.calls.get(call.id) === call.function.name &&
+            !answered.has(call.id),
+        ),
     );
     if (!pending) return;
     run.stopped = true;
@@ -62,7 +79,14 @@ export function observeApprovalAgent(agent: Agent) {
       if (event.name !== "chisabot.backend-owned-tools") return;
       const run = backendRuns.get(agent);
       const value: unknown = event.value;
-      if (!run || !value || typeof value !== "object" || !("names" in value) || !Array.isArray(value.names)) return;
+      if (
+        !run ||
+        !value ||
+        typeof value !== "object" ||
+        !("names" in value) ||
+        !Array.isArray(value.names)
+      )
+        return;
       for (const name of value.names)
         if (typeof name === "string" && name) run.names.add(name);
     },

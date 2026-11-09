@@ -24,7 +24,11 @@ export function graphFromBundle(bundle: Rollup.OutputBundle): ChunkGraph {
   const graph: ChunkGraph = new Map();
   for (const c of Object.values(bundle)) {
     if (c.type !== "chunk") continue;
-    graph.set(c.fileName, { name: c.name, imports: [...c.imports], isEntry: c.isEntry });
+    graph.set(c.fileName, {
+      name: c.name,
+      imports: [...c.imports],
+      isEntry: c.isEntry,
+    });
   }
   return graph;
 }
@@ -61,7 +65,8 @@ export function findChunkCycles(graph: ChunkGraph): string[][] {
         onStack.delete(w);
         scc.push(w);
       } while (w !== v);
-      if (scc.length > 1 || graph.get(v)?.imports.includes(v)) cycles.push(scc.sort());
+      if (scc.length > 1 || graph.get(v)?.imports.includes(v))
+        cycles.push(scc.sort());
     }
   };
   for (const v of graph.keys()) if (!idx.has(v)) visit(v);
@@ -69,7 +74,10 @@ export function findChunkCycles(graph: ChunkGraph): string[][] {
 }
 
 /** 某组首屏会下载执行的块：入口的静态闭包 + 这组预载的块（及其静态闭包）。 */
-export function firstScreenChunks(graph: ChunkGraph, preload: string[]): Set<string> {
+export function firstScreenChunks(
+  graph: ChunkGraph,
+  preload: string[],
+): Set<string> {
   const out = new Set<string>();
   const add = (file: string) => {
     if (out.has(file) || !graph.has(file)) return;
@@ -81,14 +89,19 @@ export function firstScreenChunks(graph: ChunkGraph, preload: string[]): Set<str
   return out;
 }
 
-export function chunkProblems(graph: ChunkGraph, preloadMap: Record<string, string[]>): string[] {
+export function chunkProblems(
+  graph: ChunkGraph,
+  preloadMap: Record<string, string[]>,
+): string[] {
   const problems: string[] = [];
   const label = (file: string) => graph.get(file)?.name ?? file;
   for (const cycle of findChunkCycles(graph)) {
     problems.push(`块之间有循环 import：${cycle.map(label).join(" ↔ ")}`);
   }
   for (const [group, forbidden] of Object.entries(FIRST_SCREEN_FORBIDDEN)) {
-    const names = new Set([...firstScreenChunks(graph, preloadMap[group] ?? [])].map(label));
+    const names = new Set(
+      [...firstScreenChunks(graph, preloadMap[group] ?? [])].map(label),
+    );
     for (const bad of forbidden) {
       if (names.has(bad)) problems.push(`${group} 首屏带上了 ${bad}`);
     }
@@ -102,7 +115,10 @@ export function chunkGuard(): Plugin {
     name: "chisabot-chunk-guard",
     apply: "build",
     generateBundle(_options, bundle) {
-      const problems = chunkProblems(graphFromBundle(bundle), routePreloadMap(bundle));
+      const problems = chunkProblems(
+        graphFromBundle(bundle),
+        routePreloadMap(bundle),
+      );
       if (problems.length === 0) return;
       const message = `分块检查失败（DESIGN.md §41.5）：\n- ${problems.join("\n- ")}`;
       if (process.env.CHISABOT_CHUNK_GUARD === "warn") this.warn(message);
@@ -117,34 +133,48 @@ export function graphFromFiles(files: Record<string, string>): ChunkGraph {
   for (const [file, code] of Object.entries(files)) {
     const dir = file.slice(0, file.lastIndexOf("/") + 1);
     const imports = new Set<string>();
-    for (const [, spec] of code.matchAll(/(?:\bfrom\s*|\bimport\s*)["'](\.{1,2}\/[^"']+\.js)["']/g)) {
+    for (const [, spec] of code.matchAll(
+      /(?:\bfrom\s*|\bimport\s*)["'](\.{1,2}\/[^"']+\.js)["']/g,
+    )) {
       if (spec) imports.add(new URL(spec, `http://x/${dir}`).pathname.slice(1));
     }
     const base = file.slice(file.lastIndexOf("/") + 1).replace(/\.js$/, "");
-    graph.set(file, { name: base.replace(/-[\w-]{8}$/, ""), imports: [...imports], isEntry: false });
+    graph.set(file, {
+      name: base.replace(/-[\w-]{8}$/, ""),
+      imports: [...imports],
+      isEntry: false,
+    });
   }
   return graph;
 }
 
 /** 读一份构建好的 dist/：块图（标好入口）+ index.html 里内联的首屏预载表。没有 dist/ 时返回 null。 */
-export function readDist(dir: string): { graph: ChunkGraph; preloadMap: Record<string, string[]> } | null {
+export function readDist(
+  dir: string,
+): { graph: ChunkGraph; preloadMap: Record<string, string[]> } | null {
   const htmlPath = path.join(dir, "index.html");
   const assets = path.join(dir, "assets");
   if (!fs.existsSync(htmlPath) || !fs.existsSync(assets)) return null;
   const files: Record<string, string> = {};
   for (const f of fs.readdirSync(assets)) {
-    if (f.endsWith(".js")) files[`assets/${f}`] = fs.readFileSync(path.join(assets, f), "utf8");
+    if (f.endsWith(".js"))
+      files[`assets/${f}`] = fs.readFileSync(path.join(assets, f), "utf8");
   }
   const graph = graphFromFiles(files);
   const html = fs.readFileSync(htmlPath, "utf8");
-  const entry = html.match(/<script type="module"[^>]*src="\/(assets\/[^"]+\.js)"/)?.[1];
+  const entry = html.match(
+    /<script type="module"[^>]*src="\/(assets\/[^"]+\.js)"/,
+  )?.[1];
   const entryNode = entry ? graph.get(entry) : undefined;
   if (!entryNode) throw new Error(`${htmlPath} 里找不到入口脚本`);
   entryNode.isEntry = true;
   const inline = html.match(/var m=(\{.*?\});var p=/)?.[1];
   const raw: Record<string, string[]> = inline ? JSON.parse(inline) : {};
   const preloadMap = Object.fromEntries(
-    Object.entries(raw).map(([group, list]) => [group, list.map((f) => f.replace(/^\//, ""))]),
+    Object.entries(raw).map(([group, list]) => [
+      group,
+      list.map((f) => f.replace(/^\//, "")),
+    ]),
   );
   return { graph, preloadMap };
 }

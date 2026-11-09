@@ -1,27 +1,70 @@
 import { describe, expect, test } from "bun:test";
 import { createServer, type Socket } from "node:net";
+import type { SQL } from "bun";
 import { sql } from "drizzle-orm";
 import { createDatabase } from "../src/db/client";
 import { recoveringSql } from "../src/db/recovery";
-import type { SQL } from "bun";
 
-const int16 = (n: number) => { const b = Buffer.alloc(2); b.writeInt16BE(n); return b; };
-const int32 = (n: number) => { const b = Buffer.alloc(4); b.writeInt32BE(n); return b; };
+const int16 = (n: number) => {
+  const b = Buffer.alloc(2);
+  b.writeInt16BE(n);
+  return b;
+};
+const int32 = (n: number) => {
+  const b = Buffer.alloc(4);
+  b.writeInt32BE(n);
+  return b;
+};
 const cstring = (text: string) => Buffer.from(text + "\0");
 const packet = (tag: string, ...parts: Buffer[]) => {
   const body = Buffer.concat(parts);
   return Buffer.concat([Buffer.from(tag), int32(body.length + 4), body]);
 };
-const ready = (transaction = false) => packet("Z", Buffer.from(transaction ? "T" : "I"));
-const column = (binary = false) => packet("T", int16(1), cstring("ok"), int32(0), int16(0), int32(23), int16(4), int32(-1), int16(binary ? 1 : 0));
-const row = (simple: boolean) => packet("D", int16(1), int32(simple ? 1 : 4), simple ? Buffer.from("1") : int32(1));
-const error = (code: string) => packet("E", Buffer.from("SERROR\0VERROR\0C" + code + "\0Mbind message supplies 1 parameters, but prepared statement \"\" requires 8\0\0"));
+const ready = (transaction = false) =>
+  packet("Z", Buffer.from(transaction ? "T" : "I"));
+const column = (binary = false) =>
+  packet(
+    "T",
+    int16(1),
+    cstring("ok"),
+    int32(0),
+    int16(0),
+    int32(23),
+    int16(4),
+    int32(-1),
+    int16(binary ? 1 : 0),
+  );
+const row = (simple: boolean) =>
+  packet(
+    "D",
+    int16(1),
+    int32(simple ? 1 : 4),
+    simple ? Buffer.from("1") : int32(1),
+  );
+const error = (code: string) =>
+  packet(
+    "E",
+    Buffer.from(
+      "SERROR\0VERROR\0C" +
+        code +
+        '\0Mbind message supplies 1 parameters, but prepared statement "" requires 8\0\0',
+    ),
+  );
 
-type Peer = { socket: Socket; connection: number; command: string; transaction: boolean };
+type Peer = {
+  socket: Socket;
+  connection: number;
+  command: string;
+  transaction: boolean;
+};
 
 // A loopback-only PostgreSQL peer. It records work that actually reached the wire, including COMMIT.
 // It deliberately never opens an application or development database.
-async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol", brokenJson: (peer: Peer) => boolean = () => false, splitBegin = false) {
+async function fakePostgres(
+  onCommand: (peer: Peer) => "ok" | "silence" | "eof" | "protocol",
+  brokenJson: (peer: Peer) => boolean = () => false,
+  splitBegin = false,
+) {
   const commands: Array<{ connection: number; sql: string }> = [];
   const bindings: Array<{ sql: string; count: number }> = [];
   const sockets = new Set<Socket>();
@@ -32,7 +75,12 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
   const server = createServer((socket) => {
     socket.setNoDelay(true);
     sockets.add(socket);
-    const peer: Peer = { socket, connection: ++connections, command: "", transaction: false };
+    const peer: Peer = {
+      socket,
+      connection: ++connections,
+      command: "",
+      transaction: false,
+    };
     let input = Buffer.alloc(0);
     let startup = true;
     let failed = false;
@@ -42,29 +90,113 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
     let held = false;
     const pending: Buffer[] = [];
     const statements = new Map<string, string>();
-    const send = (message: Buffer) => { if (held) pending.push(message); else socket.write(message); };
-    const resultColumn = () => / AS thread_id\b/.test(peer.command)
-      ? packet("T", int16(1), cstring("thread_id"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0))
-      : / AS event\b/.test(peer.command)
-        ? packet("T", int16(1), cstring("event"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0))
-        : column(binary);
+    const send = (message: Buffer) => {
+      if (held) pending.push(message);
+      else socket.write(message);
+    };
+    const resultColumn = () =>
+      / AS thread_id\b/.test(peer.command)
+        ? packet(
+            "T",
+            int16(1),
+            cstring("thread_id"),
+            int32(0),
+            int16(0),
+            int32(25),
+            int16(-1),
+            int32(-1),
+            int16(0),
+          )
+        : / AS event\b/.test(peer.command)
+          ? packet(
+              "T",
+              int16(1),
+              cstring("event"),
+              int32(0),
+              int16(0),
+              int32(114),
+              int16(-1),
+              int32(-1),
+              int16(0),
+            )
+          : column(binary);
     socket.on("error", () => {});
-    socket.on("close", () => { sockets.delete(socket); closed++; });
+    socket.on("close", () => {
+      sockets.delete(socket);
+      closed++;
+    });
     const execute = (simple: boolean) => {
       commands.push({ connection: peer.connection, sql: peer.command });
       const mode = onCommand(peer);
-      if (mode === "silence") { silent = true; return; }
-      if (mode === "eof") { socket.end(); return; }
-      if (mode === "protocol") { send(error("08P01")); failed = true; if (simple) send(ready(peer.transaction)); return; }
+      if (mode === "silence") {
+        silent = true;
+        return;
+      }
+      if (mode === "eof") {
+        socket.end();
+        return;
+      }
+      if (mode === "protocol") {
+        send(error("08P01"));
+        failed = true;
+        if (simple) send(ready(peer.transaction));
+        return;
+      }
       if (/^BEGIN/i.test(peer.command)) peer.transaction = true;
       if (/^(COMMIT|ROLLBACK)/i.test(peer.command)) peer.transaction = false;
       const select = /^SELECT/i.test(peer.command);
-      const jsonColumn = packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0));
-      const jsonRow = packet("D", int16(1), int32(14), Buffer.from("thread-invalid"));
-      const textValue = / AS thread_id\b/.test(peer.command) ? "thread-alpha" : / AS event\b/.test(peer.command) ? '{"kind":"json"}' : undefined;
-      const resultRow = textValue === undefined ? row(simple || !binary) : packet("D", int16(1), int32(Buffer.byteLength(textValue)), Buffer.from(textValue));
-      send(Buffer.concat([...(select ? [...(simple ? [brokenJson(peer) ? jsonColumn : resultColumn()] : []), brokenJson(peer) ? jsonRow : resultRow] : []), packet("C", cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK")), ...(simple ? [ready(peer.transaction)] : [])]));
-      if (splitBegin && simple && /^BEGIN/i.test(peer.command)) { waitingForBeginSync = true; held = true; }
+      const jsonColumn = packet(
+        "T",
+        int16(1),
+        cstring("broken"),
+        int32(0),
+        int16(0),
+        int32(114),
+        int16(-1),
+        int32(-1),
+        int16(0),
+      );
+      const jsonRow = packet(
+        "D",
+        int16(1),
+        int32(14),
+        Buffer.from("thread-invalid"),
+      );
+      const textValue = / AS thread_id\b/.test(peer.command)
+        ? "thread-alpha"
+        : / AS event\b/.test(peer.command)
+          ? '{"kind":"json"}'
+          : undefined;
+      const resultRow =
+        textValue === undefined
+          ? row(simple || !binary)
+          : packet(
+              "D",
+              int16(1),
+              int32(Buffer.byteLength(textValue)),
+              Buffer.from(textValue),
+            );
+      send(
+        Buffer.concat([
+          ...(select
+            ? [
+                ...(simple
+                  ? [brokenJson(peer) ? jsonColumn : resultColumn()]
+                  : []),
+                brokenJson(peer) ? jsonRow : resultRow,
+              ]
+            : []),
+          packet(
+            "C",
+            cstring(select ? "SELECT 1" : peer.command.split(" ")[0] || "OK"),
+          ),
+          ...(simple ? [ready(peer.transaction)] : []),
+        ]),
+      );
+      if (splitBegin && simple && /^BEGIN/i.test(peer.command)) {
+        waitingForBeginSync = true;
+        held = true;
+      }
     };
     socket.on("data", (chunk: Buffer) => {
       input = Buffer.concat([input, chunk]);
@@ -74,20 +206,39 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
         const message = input.subarray(0, length);
         input = input.subarray(length);
         if (startup) {
-          if (message.readInt32BE(4) === 80877102) { socket.end(); return; } // CancelRequest
+          if (message.readInt32BE(4) === 80877102) {
+            socket.end();
+            return;
+          } // CancelRequest
           startup = false;
-          socket.write(Buffer.concat([packet("R", int32(0)), packet("S", cstring("server_version"), cstring("16.0")), packet("S", cstring("client_encoding"), cstring("UTF8")), packet("K", int32(peer.connection), int32(42)), ready()]));
+          socket.write(
+            Buffer.concat([
+              packet("R", int32(0)),
+              packet("S", cstring("server_version"), cstring("16.0")),
+              packet("S", cstring("client_encoding"), cstring("UTF8")),
+              packet("K", int32(peer.connection), int32(42)),
+              ready(),
+            ]),
+          );
           continue;
         }
         const tag = String.fromCharCode(message[0]!);
         const body = message.subarray(5);
-        if (tag === "X") { socket.end(); continue; }
+        if (tag === "X") {
+          socket.end();
+          continue;
+        }
         if (silent) continue;
-        if (tag === "Q") { peer.command = body.toString().replace(/\0$/, ""); execute(true); }
+        if (tag === "Q") {
+          peer.command = body.toString().replace(/\0$/, "");
+          execute(true);
+        }
         if (tag === "P") {
           const end = body.indexOf(0);
           const name = body.subarray(0, end).toString();
-          peer.command = body.subarray(end + 1, body.indexOf(0, end + 1)).toString();
+          peer.command = body
+            .subarray(end + 1, body.indexOf(0, end + 1))
+            .toString();
           statements.set(name, peer.command);
           if (held) parsedBeforeSecondReady++;
           send(packet("1"));
@@ -95,19 +246,54 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
         if (tag === "D") {
           const name = body.subarray(1, body.indexOf(0, 1)).toString();
           peer.command = statements.get(name) ?? peer.command;
-          const count = Math.max(0, ...Array.from(peer.command.matchAll(/\$(\d+)/g), match => Number(match[1])));
-          const types = Array.from({ length: count }, (_, i) => / AS event\b/.test(peer.command) && i === 2 ? 114 : / AS (thread_id|event)\b/.test(peer.command) ? 25 : 23);
-          if (body[0] === 83) send(packet("t", int16(count), ...types.map(int32)));
-          send(/^SELECT/i.test(peer.command) ? brokenJson(peer)
-            ? packet("T", int16(1), cstring("broken"), int32(0), int16(0), int32(114), int16(-1), int32(-1), int16(0))
-            : resultColumn() : packet("n"));
+          const count = Math.max(
+            0,
+            ...Array.from(peer.command.matchAll(/\$(\d+)/g), (match) =>
+              Number(match[1]),
+            ),
+          );
+          const types = Array.from({ length: count }, (_, i) =>
+            / AS event\b/.test(peer.command) && i === 2
+              ? 114
+              : / AS (thread_id|event)\b/.test(peer.command)
+                ? 25
+                : 23,
+          );
+          if (body[0] === 83)
+            send(packet("t", int16(count), ...types.map(int32)));
+          send(
+            /^SELECT/i.test(peer.command)
+              ? brokenJson(peer)
+                ? packet(
+                    "T",
+                    int16(1),
+                    cstring("broken"),
+                    int32(0),
+                    int16(0),
+                    int32(114),
+                    int16(-1),
+                    int32(-1),
+                    int16(0),
+                  )
+                : resultColumn()
+              : packet("n"),
+          );
         }
         if (tag === "B") {
-          const afterPortal = body.indexOf(0) + 1, afterName = body.indexOf(0, afterPortal) + 1;
-          peer.command = statements.get(body.subarray(afterPortal, afterName - 1).toString()) ?? peer.command;
-          const formats = body.readInt16BE(afterName), atCount = afterName + 2 + formats * 2, count = body.readInt16BE(atCount);
+          const afterPortal = body.indexOf(0) + 1,
+            afterName = body.indexOf(0, afterPortal) + 1;
+          peer.command =
+            statements.get(
+              body.subarray(afterPortal, afterName - 1).toString(),
+            ) ?? peer.command;
+          const formats = body.readInt16BE(afterName),
+            atCount = afterName + 2 + formats * 2,
+            count = body.readInt16BE(atCount);
           let offset = atCount + 2;
-          for (let i = 0; i < count; i++) { const length = body.readInt32BE(offset); offset += 4 + Math.max(0, length); }
+          for (let i = 0; i < count; i++) {
+            const length = body.readInt32BE(offset);
+            offset += 4 + Math.max(0, length);
+          }
           const resultFormats = body.readInt16BE(offset);
           binary = resultFormats > 0 && body.readInt16BE(offset + 2) === 1;
           bindings.push({ sql: peer.command, count });
@@ -119,8 +305,11 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
             waitingForBeginSync = false;
             const timer = setTimeout(() => {
               timers.delete(timer);
-              socket.write(Buffer.concat([ready(peer.transaction), ...pending]));
-              pending.length = 0; held = false;
+              socket.write(
+                Buffer.concat([ready(peer.transaction), ...pending]),
+              );
+              pending.length = 0;
+              held = false;
             }, 15);
             timers.add(timer);
           } else send(ready(peer.transaction));
@@ -130,15 +319,30 @@ async function fakePostgres(onCommand: (peer: Peer) => "ok" | "silence" | "eof" 
       }
     });
   });
-  await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("No loopback port");
+  if (!address || typeof address === "string")
+    throw new Error("No loopback port");
   return {
-    url: `postgres://t:t@127.0.0.1:${address.port}/fake_test`, commands, bindings,
-    get connections() { return connections; },
-    get closed() { return closed; },
-    get parsedBeforeSecondReady() { return parsedBeforeSecondReady; },
-    async close() { for (const timer of timers) clearTimeout(timer); for (const socket of sockets) socket.destroy(); await new Promise<void>((resolve) => server.close(() => resolve())); },
+    url: `postgres://t:t@127.0.0.1:${address.port}/fake_test`,
+    commands,
+    bindings,
+    get connections() {
+      return connections;
+    },
+    get closed() {
+      return closed;
+    },
+    get parsedBeforeSecondReady() {
+      return parsedBeforeSecondReady;
+    },
+    async close() {
+      for (const timer of timers) clearTimeout(timer);
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
@@ -146,75 +350,147 @@ async function observed<T>(promise: PromiseLike<T>, timeoutMs = 250) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      Promise.resolve(promise).then((value) => ({ status: "resolved" as const, value }), (error: unknown) => ({ status: "rejected" as const, error })),
-      new Promise<{ status: "pending" }>((resolve) => { timer = setTimeout(() => resolve({ status: "pending" }), timeoutMs); }),
+      Promise.resolve(promise).then(
+        (value) => ({ status: "resolved" as const, value }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      ),
+      new Promise<{ status: "pending" }>((resolve) => {
+        timer = setTimeout(() => resolve({ status: "pending" }), timeoutMs);
+      }),
     ]);
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 describe("Bun SQL recovery", () => {
   test("split simple-BEGIN replies preserve concurrent parameter and JSON result ownership", async () => {
-    const fake = await fakePostgres(() => "ok", () => false, true);
+    const fake = await fakePostgres(
+      () => "ok",
+      () => false,
+      true,
+    );
     const database = createDatabase(fake.url, { max: 4, queryTimeoutMs: 1000 });
     const text = "SELECT $1::text AS thread_id WHERE $2::text IS NOT NULL";
-    const json = "SELECT $3::json AS event WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL";
+    const json =
+      "SELECT $3::json AS event WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL";
     try {
-      const [a, b] = await database.$client.begin(tx => Promise.all([
-        tx.unsafe(text, ["thread-alpha", "second"]),
-        tx.unsafe(json, ["first", "second", '{"kind":"json"}']),
-      ]));
+      const [a, b] = await database.$client.begin((tx) =>
+        Promise.all([
+          tx.unsafe(text, ["thread-alpha", "second"]),
+          tx.unsafe(json, ["first", "second", '{"kind":"json"}']),
+        ]),
+      );
       expect(database.$client.options.prepare).toBe(false);
       expect(fake.parsedBeforeSecondReady).toBeGreaterThan(0);
       expect(a[0]).toEqual({ thread_id: "thread-alpha" });
-      const event = typeof b[0]?.event === "string" ? JSON.parse(b[0].event) : b[0]?.event;
+      const event =
+        typeof b[0]?.event === "string" ? JSON.parse(b[0].event) : b[0]?.event;
       expect(event).toEqual({ kind: "json" });
-      expect(fake.bindings.map(binding => binding.count)).toEqual([2, 3]);
-      expect(fake.commands.map(command => command.sql)).toEqual(["BEGIN", text, json, "COMMIT"]);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(fake.bindings.map((binding) => binding.count)).toEqual([2, 3]);
+      expect(fake.commands.map((command) => command.sql)).toEqual([
+        "BEGIN",
+        text,
+        json,
+        "COMMIT",
+      ]);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("a native row JSON decoder failure retires current and pending queries without replay", async () => {
-    const fake = await fakePostgres(() => "ok", peer => peer.connection === 1 && /^SELECT/.test(peer.command));
+    const fake = await fakePostgres(
+      () => "ok",
+      (peer) => peer.connection === 1 && /^SELECT/.test(peer.command),
+    );
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
     try {
-      const current = observed(database.$client.unsafe("SELECT native_json"), 500);
-      const pending = observed(database.$client.unsafe("INSERT INTO probe VALUES (9)"), 500);
+      const current = observed(
+        database.$client.unsafe("SELECT native_json"),
+        500,
+      );
+      const pending = observed(
+        database.$client.unsafe("INSERT INTO probe VALUES (9)"),
+        500,
+      );
       const [failed, cancelled] = await Promise.all([current, pending]);
-      expect(failed.status).toBe("rejected"); expect(cancelled.status).toBe("rejected");
-      if (failed.status === "rejected") { expect(failed.error).toBeInstanceOf(SyntaxError); expect(String(failed.error)).toContain("JSON Parse error:"); }
+      expect(failed.status).toBe("rejected");
+      expect(cancelled.status).toBe("rejected");
+      if (failed.status === "rejected") {
+        expect(failed.error).toBeInstanceOf(SyntaxError);
+        expect(String(failed.error)).toContain("JSON Parse error:");
+      }
       expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(2);
-      expect(fake.commands.filter(command => /^SELECT native_json/.test(command.sql))).toHaveLength(1);
-      expect(fake.commands.filter(command => /^INSERT/.test(command.sql)).length).toBeLessThanOrEqual(1);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(
+        fake.commands.filter((command) =>
+          /^SELECT native_json/.test(command.sql),
+        ),
+      ).toHaveLength(1);
+      expect(
+        fake.commands.filter((command) => /^INSERT/.test(command.sql)).length,
+      ).toBeLessThanOrEqual(1);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("a transaction business JSON SyntaxError does not retire its healthy SQL generation", async () => {
     const fake = await fakePostgres(() => "ok");
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
-    const business = new SyntaxError('JSON Parse error: Unexpected identifier "thread"');
+    const business = new SyntaxError(
+      'JSON Parse error: Unexpected identifier "thread"',
+    );
     try {
-      await expect(database.$client.begin(async tx => { await tx.unsafe("SELECT 1"); throw business; })).rejects.toBe(business);
+      await expect(
+        database.$client.begin(async (tx) => {
+          await tx.unsafe("SELECT 1");
+          throw business;
+        }),
+      ).rejects.toBe(business);
       expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(1);
-      expect(fake.commands.map(command => command.sql)).toEqual(["BEGIN", "SELECT 1", "ROLLBACK", "SELECT 1"]);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(fake.commands.map((command) => command.sql)).toEqual([
+        "BEGIN",
+        "SELECT 1",
+        "ROLLBACK",
+        "SELECT 1",
+      ]);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
   test("a numeric network errno rejects immediately without a second error in the rejection handler", async () => {
-    const network = Object.assign(new Error("Connection refused"), { errno: -111, code: "ECONNREFUSED" });
-    const client = recoveringSql(() => ({
-      unsafe: () => Promise.reject(network),
-      close: async () => {},
-    }) as unknown as SQL, 1000);
+    const network = Object.assign(new Error("Connection refused"), {
+      errno: -111,
+      code: "ECONNREFUSED",
+    });
+    const client = recoveringSql(
+      () =>
+        ({
+          unsafe: () => Promise.reject(network),
+          close: async () => {},
+        }) as unknown as SQL,
+      1000,
+    );
     try {
       const outcome = await observed(client.unsafe("SELECT 1"), 100);
       expect(outcome.status).toBe("rejected");
       if (outcome.status === "rejected") expect(outcome.error).toBe(network);
-    } finally { await client.close(); }
+    } finally {
+      await client.close();
+    }
   });
 
   test("a Postgres statement_timeout (57014) rejects only that query without retiring the pool or killing concurrent queries", async () => {
-    const queryCanceled = Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    const queryCanceled = Object.assign(
+      new Error("canceling statement due to statement timeout"),
+      { code: "57014" },
+    );
     let poolsCreated = 0;
     let resolveConcurrent!: (value: unknown[]) => void;
     const concurrentPromise = new Promise<unknown[]>((resolve) => {
@@ -224,7 +500,9 @@ describe("Bun SQL recovery", () => {
       poolsCreated++;
       return {
         unsafe: (queryText: string) =>
-          queryText.includes("slow") ? Promise.reject(queryCanceled) : concurrentPromise,
+          queryText.includes("slow")
+            ? Promise.reject(queryCanceled)
+            : concurrentPromise,
         close: async () => {},
       } as unknown as SQL;
     }, 1000);
@@ -232,7 +510,8 @@ describe("Bun SQL recovery", () => {
       const concurrent = observed(client.unsafe("SELECT fast"), 500);
       const timedOut = await observed(client.unsafe("SELECT slow"), 100);
       expect(timedOut.status).toBe("rejected");
-      if (timedOut.status === "rejected") expect(timedOut.error).toBe(queryCanceled);
+      if (timedOut.status === "rejected")
+        expect(timedOut.error).toBe(queryCanceled);
       resolveConcurrent([{ ok: 1 }]);
       const fastOutcome = await concurrent;
       expect(fastOutcome).toEqual({ status: "resolved", value: [{ ok: 1 }] });
@@ -243,16 +522,25 @@ describe("Bun SQL recovery", () => {
   });
 
   test("a silent single connection fails current and queued work, closes the old socket and recovers", async () => {
-    const fake = await fakePostgres((peer) => peer.connection === 1 ? "silence" : "ok");
+    const fake = await fakePostgres((peer) =>
+      peer.connection === 1 ? "silence" : "ok",
+    );
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
     try {
       const first = observed(database.execute(sql`SELECT 1`), 1000);
       const start = performance.now();
-      while (fake.commands.length === 0 && performance.now() - start < 500) await new Promise((resolve) => setTimeout(resolve, 1));
+      while (fake.commands.length === 0 && performance.now() - start < 500)
+        await new Promise((resolve) => setTimeout(resolve, 1));
       expect(fake.commands).toHaveLength(1);
-      const queued = observed(database.$client.unsafe("INSERT INTO probe VALUES (2)"), 1000);
+      const queued = observed(
+        database.$client.unsafe("INSERT INTO probe VALUES (2)"),
+        1000,
+      );
       const results = await Promise.all([first, queued]);
-      expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+      expect(results.map((result) => result.status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
       expect(fake.commands.map((command) => command.sql)).toEqual(["SELECT 1"]);
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(2);
@@ -262,39 +550,71 @@ describe("Bun SQL recovery", () => {
       while (fake.closed < 1 && performance.now() - closingStarted < 500)
         await new Promise((resolve) => setTimeout(resolve, 1));
       expect(fake.closed).toBeGreaterThanOrEqual(1);
-      expect(fake.commands.filter((command) => /^INSERT/.test(command.sql))).toHaveLength(0);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(
+        fake.commands.filter((command) => /^INSERT/.test(command.sql)),
+      ).toHaveLength(0);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("a protocol violation retires the pool immediately without repeating an ambiguous write", async () => {
-    const fake = await fakePostgres((peer) => peer.connection === 1 ? "protocol" : "ok");
+    const fake = await fakePostgres((peer) =>
+      peer.connection === 1 ? "protocol" : "ok",
+    );
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
     try {
-      const outcome = await observed(database.$client.unsafe("INSERT INTO probe VALUES ($1)", [1]), 500);
+      const outcome = await observed(
+        database.$client.unsafe("INSERT INTO probe VALUES ($1)", [1]),
+        500,
+      );
       expect(outcome.status).toBe("rejected");
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(2);
-      expect(fake.commands.filter((command) => /^INSERT/.test(command.sql))).toHaveLength(1);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(
+        fake.commands.filter((command) => /^INSERT/.test(command.sql)),
+      ).toHaveLength(1);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
-  test.each(["eof", "silence"] as const)("an unacknowledged COMMIT (%s) rejects once and later requests recover", async (mode) => {
-    const fake = await fakePostgres((peer) => /^COMMIT/i.test(peer.command) ? mode : "ok");
-    const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
-    let calls = 0;
-    try {
-      const outcome = await observed(database.transaction(async (tx) => {
-        calls++;
-        await tx.execute(sql`INSERT INTO probe VALUES (1)`);
-      }), 1000);
-      expect(outcome.status).toBe("rejected");
-      expect(calls).toBe(1);
-      expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
-      expect(fake.commands.filter((command) => /^INSERT/.test(command.sql))).toHaveLength(1);
-      expect(fake.commands.filter((command) => /^COMMIT/.test(command.sql))).toHaveLength(1);
-      expect(fake.commands.filter((command) => /^ROLLBACK/.test(command.sql))).toHaveLength(0);
-    } finally { await database.$client.close(); await fake.close(); }
-  });
+  test.each(["eof", "silence"] as const)(
+    "an unacknowledged COMMIT (%s) rejects once and later requests recover",
+    async (mode) => {
+      const fake = await fakePostgres((peer) =>
+        /^COMMIT/i.test(peer.command) ? mode : "ok",
+      );
+      const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
+      let calls = 0;
+      try {
+        const outcome = await observed(
+          database.transaction(async (tx) => {
+            calls++;
+            await tx.execute(sql`INSERT INTO probe VALUES (1)`);
+          }),
+          1000,
+        );
+        expect(outcome.status).toBe("rejected");
+        expect(calls).toBe(1);
+        expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
+        expect(
+          fake.commands.filter((command) => /^INSERT/.test(command.sql)),
+        ).toHaveLength(1);
+        expect(
+          fake.commands.filter((command) => /^COMMIT/.test(command.sql)),
+        ).toHaveLength(1);
+        expect(
+          fake.commands.filter((command) => /^ROLLBACK/.test(command.sql)),
+        ).toHaveLength(0);
+      } finally {
+        await database.$client.close();
+        await fake.close();
+      }
+    },
+  );
 
   test("a normal transaction callback can wait longer than one database deadline", async () => {
     const fake = await fakePostgres(() => "ok");
@@ -306,8 +626,15 @@ describe("Bun SQL recovery", () => {
       });
       expect(rows[0]?.ok).toBe(1);
       expect(fake.connections).toBe(1);
-      expect(fake.commands.map((command) => command.sql)).toEqual(["BEGIN", "SELECT 1", "COMMIT"]);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(fake.commands.map((command) => command.sql)).toEqual([
+        "BEGIN",
+        "SELECT 1",
+        "COMMIT",
+      ]);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("a pool waiter expires even while a transaction callback holds the sole connection", async () => {
@@ -315,25 +642,45 @@ describe("Bun SQL recovery", () => {
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
     let release!: () => void;
     let acquired!: () => void;
-    const hold = new Promise<void>((resolve) => { release = resolve; });
-    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
     let late: unknown;
     try {
-      const held = observed(database.$client.begin(async (tx) => {
-        acquired();
-        await hold;
-        try { await tx.unsafe("INSERT INTO probe VALUES (3)"); } catch (error) { late = error; }
-      }), 1000);
+      const held = observed(
+        database.$client.begin(async (tx) => {
+          acquired();
+          await hold;
+          try {
+            await tx.unsafe("INSERT INTO probe VALUES (3)");
+          } catch (error) {
+            late = error;
+          }
+        }),
+        1000,
+      );
       await ready;
-      const waiter = await observed(database.$client.unsafe("INSERT INTO probe VALUES (2)"), 1000);
+      const waiter = await observed(
+        database.$client.unsafe("INSERT INTO probe VALUES (2)"),
+        1000,
+      );
       expect(waiter.status).toBe("rejected");
       expect((await held).status).toBe("rejected");
       release();
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(late).toBeDefined();
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
-      expect(fake.commands.filter((command) => /^(INSERT|COMMIT)/.test(command.sql))).toHaveLength(0);
-    } finally { release(); await database.$client.close(); await fake.close(); }
+      expect(
+        fake.commands.filter((command) => /^(INSERT|COMMIT)/.test(command.sql)),
+      ).toHaveLength(0);
+    } finally {
+      release();
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("reserve also has a finite pool wait and no late connection escapes the retired pool", async () => {
@@ -343,39 +690,70 @@ describe("Bun SQL recovery", () => {
       const reserved = await database.$client.reserve();
       const outcome = await observed(database.$client.reserve(), 1000);
       expect(outcome.status).toBe("rejected");
-      expect((await observed(Promise.resolve().then(() => reserved.unsafe("SELECT 1")))).status).toBe("rejected");
+      expect(
+        (
+          await observed(
+            Promise.resolve().then(() => reserved.unsafe("SELECT 1")),
+          )
+        ).status,
+      ).toBe("rejected");
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
       expect(fake.connections).toBe(2);
-    } finally { await database.$client.close(); await fake.close(); }
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("ROLLBACK response loss and silence before BEGIN finish both fail finitely", async () => {
     for (const phase of ["BEGIN", "ROLLBACK"]) {
-      const fake = await fakePostgres((peer) => peer.command === phase ? "silence" : "ok");
+      const fake = await fakePostgres((peer) =>
+        peer.command === phase ? "silence" : "ok",
+      );
       const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
       let calls = 0;
       try {
-        const result = await observed(database.$client.begin(async () => { calls++; throw new Error("abort"); }), 1000);
+        const result = await observed(
+          database.$client.begin(async () => {
+            calls++;
+            throw new Error("abort");
+          }),
+          1000,
+        );
         expect(result.status).toBe("rejected");
         expect(calls).toBe(phase === "BEGIN" ? 0 : 1);
         expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
-      } finally { await database.$client.close(); await fake.close(); }
+      } finally {
+        await database.$client.close();
+        await fake.close();
+      }
     }
   });
 
   test("lazy queries created in a finished or retired scope never run on a new connection", async () => {
-    const fake = await fakePostgres((peer) => peer.connection === 1 && /^SELECT/.test(peer.command) ? "silence" : "ok");
+    const fake = await fakePostgres((peer) =>
+      peer.connection === 1 && /^SELECT/.test(peer.command) ? "silence" : "ok",
+    );
     const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 80 });
     try {
       let escaped!: ReturnType<typeof database.$client.unsafe>;
-      await database.$client.begin(async (tx) => { escaped = tx.unsafe("INSERT INTO probe VALUES (7)"); });
+      await database.$client.begin(async (tx) => {
+        escaped = tx.unsafe("INSERT INTO probe VALUES (7)");
+      });
       expect((await observed(escaped)).status).toBe("rejected");
       const stale = database.$client.unsafe("INSERT INTO probe VALUES (8)");
-      expect((await observed(database.execute(sql`SELECT 1`), 1000)).status).toBe("rejected");
+      expect(
+        (await observed(database.execute(sql`SELECT 1`), 1000)).status,
+      ).toBe("rejected");
       expect((await observed(stale)).status).toBe("rejected");
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
-      expect(fake.commands.filter((command) => /^INSERT/.test(command.sql))).toHaveLength(0);
-    } finally { await database.$client.close(); await fake.close(); }
+      expect(
+        fake.commands.filter((command) => /^INSERT/.test(command.sql)),
+      ).toHaveLength(0);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("assigned SQL methods and Function.call keep their normal callable object semantics", async () => {
@@ -384,13 +762,19 @@ describe("Bun SQL recovery", () => {
     try {
       const original = database.$client.unsafe;
       let calls = 0;
-      database.$client.unsafe = ((...args: Parameters<typeof original>) => { calls++; return original(...args); }) as typeof original;
+      database.$client.unsafe = ((...args: Parameters<typeof original>) => {
+        calls++;
+        return original(...args);
+      }) as typeof original;
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
       expect(calls).toBe(1);
       database.$client.unsafe = original;
       expect(database.$client.call(undefined, { ok: 1 })).toBeDefined();
       expect((await database.execute(sql`SELECT 1`))[0]?.ok).toBe(1);
-    } finally { await database.$client.close(); await fake.close(); }
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 
   test("reserve, lazy execution, tagged values and result modes preserve Bun's public surface", async () => {
@@ -403,10 +787,17 @@ describe("Bun SQL recovery", () => {
       expect((await query.values())[0]).toEqual([1]);
       const reserved = await database.$client.reserve();
       expect((await reserved.unsafe("SELECT 1"))[0]?.ok).toBe(1);
-      await reserved.begin(async (tx) => { expect((await tx.unsafe("SELECT 1"))[0]?.ok).toBe(1); });
+      await reserved.begin(async (tx) => {
+        expect((await tx.unsafe("SELECT 1"))[0]?.ok).toBe(1);
+      });
       await reserved.release();
-      expect((await database.$client.unsafe("SELECT 1").simple().execute())[0]?.ok).toBe(1);
+      expect(
+        (await database.$client.unsafe("SELECT 1").simple().execute())[0]?.ok,
+      ).toBe(1);
       expect(fake.connections).toBe(1);
-    } finally { await database.$client.close(); await fake.close(); }
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
   });
 });

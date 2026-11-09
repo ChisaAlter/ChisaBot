@@ -6,11 +6,11 @@
 
 迁移 `0067_conversation_namespace` 将三张表原地改名：
 
-| 原表 | 当前表 |
-|---|---|
+| 原表                    | 当前表                   |
+| ----------------------- | ------------------------ |
 | `openbot_local_threads` | `chisabot_local_threads` |
-| `openbot_local_runs` | `chisabot_local_runs` |
-| `openbot_local_events` | `chisabot_local_events` |
+| `openbot_local_runs`    | `chisabot_local_runs`    |
+| `openbot_local_events`  | `chisabot_local_events`  |
 
 迁移同步约束、索引和事件序列名称，保留表对象、记录、外键、原始消息和待决输入；不创建空库替换历史。旧迁移及旧快照继续保留，以便新安装完整重放迁移。若两代同名用途的表同时存在，迁移会拒绝猜选，需要先核对数据来源。
 

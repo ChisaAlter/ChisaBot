@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readRunAssertion } from "../src/agents/callback-token";
 import { ThreadBusyError } from "../src/agents/handoff-delivery";
+import type { HandoffExecutions } from "../src/agents/handoff-execution";
 import {
   createHandoffRunner,
   type HandoffWork,
@@ -11,7 +12,6 @@ import {
   signHandoffDeliveryRun,
 } from "../src/agents/handoff-signing";
 import type { AuditStore } from "../src/audit";
-import type { HandoffExecutions } from "../src/agents/handoff-execution";
 import type { WorkItem, WorkQueue } from "../src/work/queue";
 
 /**

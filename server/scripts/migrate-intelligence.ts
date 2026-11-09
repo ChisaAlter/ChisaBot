@@ -1,11 +1,11 @@
 import { writeFile } from "node:fs/promises";
-import { createDatabase } from "../src/db/client";
 import { IntelligenceHistoryClient } from "../src/conversations/intelligence-history";
 import {
   importIntelligenceInventory,
   inventoryIntelligence,
   legacyInventorySchema,
 } from "../src/conversations/legacy-import";
+import { createDatabase } from "../src/db/client";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {

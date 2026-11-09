@@ -32,6 +32,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
+import { reasonWithoutStatement } from "../db/query-failure";
 import {
   agentProfiles,
   agents,
@@ -54,7 +55,6 @@ import {
 } from "../db/schema";
 import type { BotReset, ResetPlan } from "./lifecycle-reset";
 import type { AgentActor } from "./profile-types";
-import { reasonWithoutStatement } from "../db/query-failure";
 
 export type PurgeReport = {
   agentId: string;
@@ -98,7 +98,8 @@ export function createAgentPurge(options: {
   forgetComputer?: (agentId: string, actor: AgentActor) => Promise<unknown>;
 }): AgentPurge {
   const { database, reset } = options;
-  const profilesDir = options.profilesDir ?? process.env.PROFILES_DIR ?? "/profiles";
+  const profilesDir =
+    options.profilesDir ?? process.env.PROFILES_DIR ?? "/profiles";
 
   async function liveConversations(agentId: string): Promise<number> {
     const [row] = await database
@@ -106,7 +107,10 @@ export function createAgentPurge(options: {
       .from(channelAgents)
       .innerJoin(
         channels,
-        and(eq(channels.id, channelAgents.channelId), isNull(channels.deletedAt)),
+        and(
+          eq(channels.id, channelAgents.channelId),
+          isNull(channels.deletedAt),
+        ),
       )
       .where(eq(channelAgents.agentId, agentId));
     return row?.total ?? 0;
@@ -150,7 +154,9 @@ export function createAgentPurge(options: {
         .where(
           or(
             eq(panelDrafts.botId, agentId),
-            sessionIds.length ? inArray(panelDrafts.sessionId, sessionIds) : undefined,
+            sessionIds.length
+              ? inArray(panelDrafts.sessionId, sessionIds)
+              : undefined,
             instanceIds.length
               ? inArray(panelDrafts.targetInstanceId, instanceIds)
               : undefined,
@@ -174,13 +180,19 @@ export function createAgentPurge(options: {
         await tx
           .delete(panelCapabilityGrants)
           .where(inArray(panelCapabilityGrants.instanceId, instanceIds));
-        await tx.delete(panelStates).where(inArray(panelStates.instanceId, instanceIds));
+        await tx
+          .delete(panelStates)
+          .where(inArray(panelStates.instanceId, instanceIds));
         await tx
           .delete(botPanelInstanceVersions)
           .where(inArray(botPanelInstanceVersions.instanceId, instanceIds));
-        await tx.delete(botPanelInstances).where(inArray(botPanelInstances.id, instanceIds));
+        await tx
+          .delete(botPanelInstances)
+          .where(inArray(botPanelInstances.id, instanceIds));
       }
-      await tx.delete(panelOperations).where(eq(panelOperations.botId, agentId));
+      await tx
+        .delete(panelOperations)
+        .where(eq(panelOperations.botId, agentId));
       // 计算机活动记录（CB-101）。
       await tx
         .delete(computerActivitySteps)
@@ -191,7 +203,9 @@ export function createAgentPurge(options: {
         .where(eq(livePanels.botId, agentId))
         .returning({ id: livePanels.id });
 
-      await tx.delete(groupBotThreads).where(eq(groupBotThreads.agentId, agentId));
+      await tx
+        .delete(groupBotThreads)
+        .where(eq(groupBotThreads.agentId, agentId));
       await tx
         .delete(learningThreadBindings)
         .where(eq(learningThreadBindings.agentId, agentId));
@@ -216,7 +230,9 @@ export function createAgentPurge(options: {
           sql`select to_regclass('public.chisabot_thread_inbox_control') is not null as present`,
         );
         if ((inboxControl as { present?: boolean } | undefined)?.present)
-          await tx.execute(sql`delete from chisabot_thread_inbox_control where thread_id in (select id from chisabot_local_threads where agent_id = ${agentId})`);
+          await tx.execute(
+            sql`delete from chisabot_thread_inbox_control where thread_id in (select id from chisabot_local_threads where agent_id = ${agentId})`,
+          );
         await tx.execute(
           sql`delete from chisabot_local_threads where agent_id = ${agentId}`,
         );
@@ -225,7 +241,9 @@ export function createAgentPurge(options: {
         sql`select to_regclass('public.chisabot_workers') is not null as present`,
       );
       if ((workers as { present?: boolean } | undefined)?.present)
-        await tx.execute(sql`delete from chisabot_workers where agent_id = ${agentId}`);
+        await tx.execute(
+          sql`delete from chisabot_workers where agent_id = ${agentId}`,
+        );
       // 这个机器人还在等确认的卡片（§58 / §101.9）：机器人没了，卡片永远等不到下文，作废（记录留着）。
       const [confirms] = await tx.execute<{ present: boolean }>(
         sql`select to_regclass('public.chisabot_confirm_requests') is not null as present`,
@@ -239,7 +257,9 @@ export function createAgentPurge(options: {
         sql`select to_regclass('public.chisabot_bot_threads') is not null as present`,
       );
       if ((pointers as { present?: boolean } | undefined)?.present)
-        await tx.execute(sql`delete from chisabot_bot_threads where agent_id = ${agentId}`);
+        await tx.execute(
+          sql`delete from chisabot_bot_threads where agent_id = ${agentId}`,
+        );
 
       // Everything else hangs off `agents` with ON DELETE CASCADE.
       // 部署包机器人的 agents 行要留着：它带着「已被删除」的标记（override.removedAt），删掉它的话
@@ -266,7 +286,10 @@ export function createAgentPurge(options: {
     }
   }
 
-  async function purge(actor: AgentActor, agentId: string): Promise<PurgeReport> {
+  async function purge(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<PurgeReport> {
     const report: PurgeReport = {
       agentId,
       reset: null,
@@ -285,14 +308,24 @@ export function createAgentPurge(options: {
 
     report.reset = await reset.execute(actor, agentId);
     report.mainBotCleared = await clearMainBot(agentId);
-    await options.retirePanels?.(agentId).catch((error: unknown) =>
-      console.warn(`[agents] retiring live panels of ${agentId} failed:`, reasonWithoutStatement(error)),
-    );
+    await options
+      .retirePanels?.(agentId)
+      .catch((error: unknown) =>
+        console.warn(
+          `[agents] retiring live panels of ${agentId} failed:`,
+          reasonWithoutStatement(error),
+        ),
+      );
     report.sharedConversationsKept = await liveConversations(agentId);
     if (report.sharedConversationsKept === 0) {
-      await options.stopWorkers?.(agentId).catch((error: unknown) =>
-        console.warn(`[agents] stopping background tasks of ${agentId} failed:`, reasonWithoutStatement(error)),
-      );
+      await options
+        .stopWorkers?.(agentId)
+        .catch((error: unknown) =>
+          console.warn(
+            `[agents] stopping background tasks of ${agentId} failed:`,
+            reasonWithoutStatement(error),
+          ),
+        );
       report.panelsRemoved = await removeForGood(agentId);
       report.removed = true;
       let forgotten = false;

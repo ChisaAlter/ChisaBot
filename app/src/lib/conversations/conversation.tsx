@@ -51,7 +51,9 @@ function textOf(content: unknown): string {
   if (Array.isArray(content)) {
     return content
       .map((part) =>
-        part && typeof part === "object" && (part as { type?: unknown }).type === "text"
+        part &&
+        typeof part === "object" &&
+        (part as { type?: unknown }).type === "text"
           ? String((part as { text?: unknown }).text ?? "")
           : "",
       )
@@ -70,7 +72,10 @@ export function replyAfterToolCall(
 ): string | null {
   let at = -1;
   messages.forEach((message, index) => {
-    if (message.toolCallId === toolCallId || message.toolCalls?.some((call) => call.id === toolCallId)) {
+    if (
+      message.toolCallId === toolCallId ||
+      message.toolCalls?.some((call) => call.id === toolCallId)
+    ) {
       at = index;
     }
   });

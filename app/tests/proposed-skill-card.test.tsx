@@ -41,11 +41,23 @@ const DRAFT = {
 test("durable skill card sends one save-and-answer command and retains a server refusal", async () => {
   const answers: unknown[] = [];
   const user = userEvent.setup({ document: window.document });
-  const view = render(<ProposedSkillCard args={DRAFT} respond={async answer => { answers.push(answer); throw new Error("这张卡片已停止。"); }} />);
+  const view = render(
+    <ProposedSkillCard
+      args={DRAFT}
+      respond={async (answer) => {
+        answers.push(answer);
+        throw new Error("这张卡片已停止。");
+      }}
+    />,
+  );
   await user.click(view.getByRole("button", { name: "创建" }));
-  await waitFor(() => expect(view.getByRole("alert").textContent).toBe("这张卡片已停止。"));
+  await waitFor(() =>
+    expect(view.getByRole("alert").textContent).toBe("这张卡片已停止。"),
+  );
   expect(answers).toEqual([{ kind: "save-skill", values: DRAFT }]);
-  expect(view.getByRole("button", { name: "创建" }).hasAttribute("disabled")).toBe(false);
+  expect(
+    view.getByRole("button", { name: "创建" }).hasAttribute("disabled"),
+  ).toBe(false);
 });
 
 test("a draft still streaming shows no controls to press", () => {

@@ -56,7 +56,10 @@ test("patching one preference preserves other JSON fields", async () => {
     .select({ preferences: users.preferences })
     .from(users)
     .where(eq(users.id, id));
-  expect(await store.read(id)).toEqual({ ...DEFAULT_USER_PREFERENCES, messageListEmphasis: "agent" });
+  expect(await store.read(id)).toEqual({
+    ...DEFAULT_USER_PREFERENCES,
+    messageListEmphasis: "agent",
+  });
   expect(user?.preferences).toEqual({
     messageListEmphasis: "agent",
     futurePreference: true,

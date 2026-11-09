@@ -67,7 +67,8 @@ export function frontendToolsRunning(): number {
  */
 export function frontendToolProgressAt(now = Date.now()): number {
   if (running === 0) return touchedAt;
-  const capped = startedAt > 0 ? Math.min(now, startedAt + MAX_TOOL_CREDIT_MS) : now;
+  const capped =
+    startedAt > 0 ? Math.min(now, startedAt + MAX_TOOL_CREDIT_MS) : now;
   return Math.max(touchedAt, capped);
 }
 

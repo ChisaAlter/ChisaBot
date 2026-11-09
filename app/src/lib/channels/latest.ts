@@ -11,8 +11,10 @@ export function latestChannelFor(
 ): ChannelSummary | undefined {
   let best: ChannelSummary | undefined;
   for (const channel of channels ?? []) {
-    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId) continue;
-    if (!best || (channel.lastMessageAt ?? "") > (best.lastMessageAt ?? "")) best = channel;
+    if (channel.agentIds.length !== 1 || channel.agentIds[0] !== botId)
+      continue;
+    if (!best || (channel.lastMessageAt ?? "") > (best.lastMessageAt ?? ""))
+      best = channel;
   }
   return best;
 }

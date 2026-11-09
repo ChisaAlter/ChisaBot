@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   act,
@@ -9,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
+import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import { QueuedMessages } from "../src/components/chat/queued-messages";
 import {
   hideHeldSupplements,
@@ -232,35 +232,77 @@ test("a single held item has no 「全部发送」", () => {
 test("rich inbox admission and failed retry keep attachment parts and selected skills", async () => {
   const threadId = crypto.randomUUID();
   const message = {
-    id: crypto.randomUUID(), role: "user" as const,
-    content: [{ type: "document" as const, source: { type: "url" as const, value: "/api/attachments/queued-file" }, metadata: { attachmentId: "queued-file", filename: "计划.txt" } }],
+    id: crypto.randomUUID(),
+    role: "user" as const,
+    content: [
+      {
+        type: "document" as const,
+        source: { type: "url" as const, value: "/api/attachments/queued-file" },
+        metadata: { attachmentId: "queued-file", filename: "计划.txt" },
+      },
+    ],
   };
   const posted: unknown[] = [];
   impl = (async (_url: string | URL | Request, init?: RequestInit) => {
     posted.push(JSON.parse(String(init?.body)));
-    return posted.length === 1 ? new NativeResponse("unavailable", { status: 503 }) : NativeResponse.json({ queued: true, status: "queued" });
+    return posted.length === 1
+      ? new NativeResponse("unavailable", { status: 503 })
+      : NativeResponse.json({ queued: true, status: "queued" });
   }) as unknown as typeof fetch;
-  expect(await queueMessage(threadId, { message, skillIds: ["review-plan"] })).toBe("failed");
-  const view = render(<ConversationScopeProvider agentId="bot" threadId={threadId}><QueuedMessages /></ConversationScopeProvider>);
-  expect(view.getByRole("link", { name: "计划.txt" }).getAttribute("href")).toBe("/api/attachments/queued-file");
+  expect(
+    await queueMessage(threadId, { message, skillIds: ["review-plan"] }),
+  ).toBe("failed");
+  const view = render(
+    <ConversationScopeProvider agentId="bot" threadId={threadId}>
+      <QueuedMessages />
+    </ConversationScopeProvider>,
+  );
+  expect(
+    view.getByRole("link", { name: "计划.txt" }).getAttribute("href"),
+  ).toBe("/api/attachments/queued-file");
   fireEvent.click(view.getByText("重试"));
   await waitFor(() => expect(queuedFor(threadId)[0]?.status).toBe("queued"));
-  expect(posted).toEqual([1, 2].map(() => ({ id: message.id, message, skillIds: ["review-plan"] })));
+  expect(posted).toEqual(
+    [1, 2].map(() => ({ id: message.id, message, skillIds: ["review-plan"] })),
+  );
 });
 
 test("a fresh browser restores attachment-only and skill payloads as paused without draining", () => {
   const threadId = crypto.randomUUID();
   const message = {
-    id: "rich-restored", role: "user" as const,
-    content: [{ type: "document" as const, source: { type: "url" as const, value: "/api/attachments/restored-file" }, metadata: { attachmentId: "restored-file", filename: "保留.txt" } }],
-    metadata: { chisabotInbox: { skillIds: ["summarize"], skillInstructions: ["Summarize the supplied file."] } },
+    id: "rich-restored",
+    role: "user" as const,
+    content: [
+      {
+        type: "document" as const,
+        source: {
+          type: "url" as const,
+          value: "/api/attachments/restored-file",
+        },
+        metadata: { attachmentId: "restored-file", filename: "保留.txt" },
+      },
+    ],
+    metadata: {
+      chisabotInbox: {
+        skillIds: ["summarize"],
+        skillInstructions: ["Summarize the supplied file."],
+      },
+    },
   };
-  applyInboxState(threadId, { running: false, paused: true, items: [{ id: message.id, kind: "message", status: "paused", message }] });
+  applyInboxState(threadId, {
+    running: false,
+    paused: true,
+    items: [{ id: message.id, kind: "message", status: "paused", message }],
+  });
   expect(queuedFor(threadId)).toHaveLength(1);
   expect(queuedFor(threadId)[0]?.message).toEqual(message);
   expect(queuedFor(threadId)[0]?.skillIds).toEqual(["summarize"]);
   expect(takeQueued(threadId)).toEqual([]);
-  const view = render(<ConversationScopeProvider agentId="bot" threadId={threadId}><QueuedMessages /></ConversationScopeProvider>);
+  const view = render(
+    <ConversationScopeProvider agentId="bot" threadId={threadId}>
+      <QueuedMessages />
+    </ConversationScopeProvider>,
+  );
   expect(view.getByRole("link", { name: "保留.txt" })).toBeTruthy();
   expect(view.getByText("发送这条")).toBeTruthy();
 });
@@ -275,7 +317,9 @@ test("Esc does not stop while the IME is processing the key (keyCode 229)", () =
 });
 
 test("a failed stop request says 「停止失败，重试」 at once; retry sends it again", async () => {
-  const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
+  const { useStopRequest } = await import(
+    "../src/lib/conversations/held-supplements"
+  );
   const { StopFailedButton } = await import(
     "../src/components/channels/composer/composer"
   );
@@ -294,7 +338,11 @@ test("a failed stop request says 「停止失败，重试」 at once; retry send
     const stop = useStopRequest("thread-x", fake);
     return (
       <div>
-        <button data-testid="stop" onClick={() => void stop.send()} type="button">
+        <button
+          data-testid="stop"
+          onClick={() => void stop.send()}
+          type="button"
+        >
           {"停止"}
         </button>
         {stop.failed ? (
@@ -321,7 +369,10 @@ test("a failed stop request says 「停止失败，重试」 at once; retry send
 });
 
 // CB-104: once the turn is over, 「停止失败，重试」 goes away and the normal Send button is back.
-const turnEnds: Array<{ name: string; turn: { running?: boolean; status?: string } }> = [
+const turnEnds: Array<{
+  name: string;
+  turn: { running?: boolean; status?: string };
+}> = [
   { name: "the stream ends (running → false)", turn: { running: false } },
   { name: "status → done", turn: { running: true, status: "done" } },
   { name: "status → stopped", turn: { running: true, status: "stopped" } },
@@ -329,12 +380,19 @@ const turnEnds: Array<{ name: string; turn: { running?: boolean; status?: string
 ];
 for (const { name, turn: endedTurn } of turnEnds) {
   test(`「停止失败，重试」 clears when the turn ends: ${name}`, async () => {
-    const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
-    const { Composer } = await import("../src/components/channels/composer/composer");
-    const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
+    const { useStopRequest } = await import(
+      "../src/lib/conversations/held-supplements"
+    );
+    const { Composer } = await import(
+      "../src/components/channels/composer/composer"
+    );
+    const fake = (async () =>
+      new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
     let setTurn: (t: { running?: boolean; status?: string }) => void = () => {};
     function Harness() {
-      const [turn, set] = useState<{ running?: boolean; status?: string }>({ running: true });
+      const [turn, set] = useState<{ running?: boolean; status?: string }>({
+        running: true,
+      });
       setTurn = set;
       const stop = useStopRequest("thread-end", fake, turn);
       const busy = turn.running === true && !turn.status;
@@ -354,15 +412,20 @@ for (const { name, turn: endedTurn } of turnEnds) {
     fireEvent.click(view.getByTestId("composer-stop"));
     await view.findByTestId("composer-stop-failed");
     await act(async () => setTurn(endedTurn));
-    await waitFor(() => expect(view.queryByTestId("composer-stop-failed")).toBeNull());
+    await waitFor(() =>
+      expect(view.queryByTestId("composer-stop-failed")).toBeNull(),
+    );
     expect(view.getByTestId("composer-send")).toBeTruthy();
     expect(view.queryByTestId("composer-stop")).toBeNull();
   });
 }
 
 test("a new turn does not inherit the previous turn's 「停止失败，重试」", async () => {
-  const { useStopRequest } = await import("../src/lib/conversations/held-supplements");
-  const fake = (async () => new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
+  const { useStopRequest } = await import(
+    "../src/lib/conversations/held-supplements"
+  );
+  const fake = (async () =>
+    new NativeResponse("{}", { status: 503 })) as unknown as typeof fetch;
   let api: { send: () => Promise<boolean> } | null = null;
   let setRunning: (r: boolean | undefined) => void = () => {};
   function Harness() {

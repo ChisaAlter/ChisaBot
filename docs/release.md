@@ -11,13 +11,13 @@ ChisaBot 有两种「发布」：
 
 ## 1. 版本号规则（[ADR-0007](adr/0007-version-reset-0-1-0.md)）
 
-| 规则 | 说明 |
-|---|---|
-| 从 0.1.0 起 | 2026-10-12 归正；内部 0.2.x 全部作废。装着 0.2.x 的 PC 不会自动降级，要卸载后装 0.1.x 一次（数据保留） |
-| **三处同一个版本** | 根 `package.json`（→ 服务器 `/api/version`）、`pc/package.json`、`android/app/build.gradle.kts` 的 `versionName`。CI 检查 PC 和 Android 一致，不一致不出包 |
-| **versionCode 只增不减** | Android 按它判断更新（0.1.0 = 206，0.1.15 = 221）；每次发版 +1，即使只是版本号同步 |
-| 补丁号递增 | 每次客户端发版 +0.0.1；只有服务器改动时可以只提升根 `package.json`（例：0.1.4 只是服务器版本号，没有客户端发版和标签） |
-| 0.2.0 | 留给真机验证后的下一个大版本（CB-019） |
+| 规则                     | 说明                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 从 0.1.0 起              | 2026-10-12 归正；内部 0.2.x 全部作废。装着 0.2.x 的 PC 不会自动降级，要卸载后装 0.1.x 一次（数据保留）                                                     |
+| **三处同一个版本**       | 根 `package.json`（→ 服务器 `/api/version`）、`pc/package.json`、`android/app/build.gradle.kts` 的 `versionName`。CI 检查 PC 和 Android 一致，不一致不出包 |
+| **versionCode 只增不减** | Android 按它判断更新（0.1.0 = 206，0.1.15 = 221）；每次发版 +1，即使只是版本号同步                                                                         |
+| 补丁号递增               | 每次客户端发版 +0.0.1；只有服务器改动时可以只提升根 `package.json`（例：0.1.4 只是服务器版本号，没有客户端发版和标签）                                     |
+| 0.2.0                    | 留给真机验证后的下一个大版本（CB-019）                                                                                                                     |
 
 ## 2. 服务器 / 网页上线
 
@@ -48,11 +48,11 @@ ChisaBot 有两种「发布」：
 
 ### 3.2 构建与发布（`.github/workflows/release.yml`）
 
-| 方式 | 结果 |
-|---|---|
-| 推送 `v*` 标签，或 workflow_dispatch 填 `tag` | 通用版：PC 安装包 + Android APK 发到 GitHub Release；首次运行让用户填服务器地址，从 GitHub Releases 更新 |
-| workflow_dispatch 不填 `tag`，填 `server_url` / `update_feed` / `android_update_feed` | **只构建**自建版（预填自己的服务器地址和更新源）作为 artifact，自己发布到自己的静态目录 |
-| `signed_apk_url` + `signed_apk_sha256` | 仓库没配 Android 签名 Secrets 时：离线签好的通用版 APK 地址，Release 用它代替未签名 APK（sha256 不一致就失败） |
+| 方式                                                                                  | 结果                                                                                                           |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 推送 `v*` 标签，或 workflow_dispatch 填 `tag`                                         | 通用版：PC 安装包 + Android APK 发到 GitHub Release；首次运行让用户填服务器地址，从 GitHub Releases 更新       |
+| workflow_dispatch 不填 `tag`，填 `server_url` / `update_feed` / `android_update_feed` | **只构建**自建版（预填自己的服务器地址和更新源）作为 artifact，自己发布到自己的静态目录                        |
+| `signed_apk_url` + `signed_apk_sha256`                                                | 仓库没配 Android 签名 Secrets 时：离线签好的通用版 APK 地址，Release 用它代替未签名 APK（sha256 不一致就失败） |
 
 推荐顺序（仓库没有签名 Secrets 时）：只构建 dispatch → 下载 artifact → 在自己的机器上用同一把签名密钥签两份 APK →
 带 `tag` + `signed_apk_url` 的 dispatch 出 Release → 用只构建的自建版 artifact 更新自己的更新源（核对 `latest.yml` 的 sha512）。

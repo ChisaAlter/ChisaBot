@@ -1,5 +1,3 @@
-import { requireExtra } from "@/lib/deployment/extras";
-import { RouteSkeleton } from "@/components/startup-status";
 import {
   IconAlertTriangle,
   IconChevronRight,
@@ -21,6 +19,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { SettingsItemBackground } from "@/components/settings/background";
+import { RouteSkeleton } from "@/components/startup-status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -63,6 +62,7 @@ import {
 } from "@/lib/components/queries";
 import { RENDERABLE_NAMES } from "@/lib/conversations/gallery-registry";
 import { LazyConversationToolsProvider } from "@/lib/conversations/lazy-provider";
+import { requireExtra } from "@/lib/deployment/extras";
 import { queryClient } from "@/query-client";
 
 /**

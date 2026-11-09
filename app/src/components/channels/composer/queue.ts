@@ -1,5 +1,5 @@
-import type { Attachment } from "@/lib/chat/attachment-state";
 import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/channels/attachments";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import type { ComposerDraft } from "./draft";
 
 /**

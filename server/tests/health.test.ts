@@ -36,7 +36,9 @@ describe("runtime capabilities", () => {
     expect(body).not.toContain("private");
   });
   test("reports the Intelligence runtime without exposing configuration secrets", async () => {
-    const response = await app.request("http://chisabot.local/api/capabilities");
+    const response = await app.request(
+      "http://chisabot.local/api/capabilities",
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -59,7 +61,9 @@ describe("runtime capabilities", () => {
   // The runtime object holds the Intelligence API key and licence token. This endpoint has no
   // authentication, so a projection bug here publishes deployment secrets to anyone who asks.
   test("never serves the Intelligence credentials", async () => {
-    const response = await app.request("http://chisabot.local/api/capabilities");
+    const response = await app.request(
+      "http://chisabot.local/api/capabilities",
+    );
     const body = await response.text();
     const parsed = (await new Response(body).json()) as Record<string, unknown>;
 
@@ -100,7 +104,6 @@ describe("runtime capabilities", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).generativeUi).toBe(false);
   });
-
 });
 
 describe("authentication availability", () => {

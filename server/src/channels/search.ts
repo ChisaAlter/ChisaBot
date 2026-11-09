@@ -69,7 +69,10 @@ export function snippetAround(
   const snippet = `${prefix}${slice}${suffix}`;
   const hi = snippet.toLowerCase().indexOf(n);
   if (hi < 0) {
-    return { snippet, highlight: { start: prefix.length, end: prefix.length + needle.length } };
+    return {
+      snippet,
+      highlight: { start: prefix.length, end: prefix.length + needle.length },
+    };
   }
   return { snippet, highlight: { start: hi, end: hi + needle.length } };
 }
@@ -116,7 +119,9 @@ export async function searchChannelMessages(
       const message = messages[i]!;
       const body = textOf(message.content);
       if (!body) continue;
-      const searchable = body.startsWith("⟦chisabot:") ? body.replace(/^⟦[^⟧]*⟧\n?/, "") : body;
+      const searchable = body.startsWith("⟦chisabot:")
+        ? body.replace(/^⟦[^⟧]*⟧\n?/, "")
+        : body;
       const found = snippetAround(searchable, needle);
       if (!found) continue;
       const key = `${row.channel_id}:${message.id ?? i}`;
@@ -132,7 +137,9 @@ export async function searchChannelMessages(
         messageId: typeof message.id === "string" ? message.id : null,
         role: typeof message.role === "string" ? message.role : null,
         agentId: row.agent_id ?? null,
-        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        updatedAt: row.updated_at
+          ? new Date(row.updated_at).toISOString()
+          : null,
       });
       break;
     }

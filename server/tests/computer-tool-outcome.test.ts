@@ -22,34 +22,50 @@ import { computerFailureOutcome } from "../src/computer/tool-outcome";
 
 describe("computerFailureOutcome", () => {
   test("maps each ordinary computer failure to a result the Bot can act on", () => {
-    expect(computerFailureOutcome(new ElementNotFoundError("Element f4e36 is not on the page any more."))).toEqual({
+    expect(
+      computerFailureOutcome(
+        new ElementNotFoundError("Element f4e36 is not on the page any more."),
+      ),
+    ).toEqual({
       ok: false,
       reason: "Element f4e36 is not on the page any more.",
       staleRefs: true,
     });
-    expect(computerFailureOutcome(new StaleSnapshotError("old", true))).toEqual({
-      ok: false,
-      reason: "old",
-      staleRefs: true,
-      snapshotRequired: true,
-    });
-    expect(computerFailureOutcome(new ActionRefusedError("no", "rule-1"))).toEqual({
+    expect(computerFailureOutcome(new StaleSnapshotError("old", true))).toEqual(
+      {
+        ok: false,
+        reason: "old",
+        staleRefs: true,
+        snapshotRequired: true,
+      },
+    );
+    expect(
+      computerFailureOutcome(new ActionRefusedError("no", "rule-1")),
+    ).toEqual({
       ok: false,
       reason: "no",
       refused: true,
       rule: "rule-1",
     });
-    expect(computerFailureOutcome(new HumanHasControlError("held", "req-1"))).toEqual({
+    expect(
+      computerFailureOutcome(new HumanHasControlError("held", "req-1")),
+    ).toEqual({
       ok: false,
       reason: "held",
       humanHasControl: true,
       requestId: "req-1",
     });
-    expect(computerFailureOutcome(new WorkspaceRequestError("这个下拉框里没有「1800」对应的选项。"))).toEqual({
+    expect(
+      computerFailureOutcome(
+        new WorkspaceRequestError("这个下拉框里没有「1800」对应的选项。"),
+      ),
+    ).toEqual({
       ok: false,
       reason: "这个下拉框里没有「1800」对应的选项。",
     });
-    expect(computerFailureOutcome(new ComputerUnavailableError("down"))).toEqual({
+    expect(
+      computerFailureOutcome(new ComputerUnavailableError("down")),
+    ).toEqual({
       ok: false,
       reason: "down",
       unavailable: true,
@@ -73,7 +89,10 @@ describe("POST /api/approvals/computer/:botId", () => {
     root.route(
       "/",
       createApprovalRoutes(service, async (context, next) => {
-        context.set("actor" as never, { id: "dev-local-user", role: "admin" } as never);
+        context.set(
+          "actor" as never,
+          { id: "dev-local-user", role: "admin" } as never,
+        );
         await next();
       }),
     );
@@ -88,13 +107,16 @@ describe("POST /api/approvals/computer/:botId", () => {
 
   test("a stale element is a 200 result with ok:false, so the turn continues", async () => {
     const response = await post(
-      new ElementNotFoundError("Element f4e36 is not on the page any more. Take a fresh snapshot and use the refs from it."),
+      new ElementNotFoundError(
+        "Element f4e36 is not on the page any more. Take a fresh snapshot and use the refs from it.",
+      ),
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       result: {
         ok: false,
-        reason: "Element f4e36 is not on the page any more. Take a fresh snapshot and use the refs from it.",
+        reason:
+          "Element f4e36 is not on the page any more. Take a fresh snapshot and use the refs from it.",
         staleRefs: true,
       },
     });

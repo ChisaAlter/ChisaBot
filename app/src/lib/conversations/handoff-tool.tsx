@@ -1,4 +1,3 @@
-import { useRenderTool } from "@/lib/chat/renderers";
 import { IconArrowsExchange, IconChevronDown } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -8,6 +7,7 @@ import { ToolLine } from "@/components/channels/tool-line";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
 import { channelListQueryOptions } from "@/lib/channels/queries";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { HANDED_OVER } from "@/lib/conversations/markers";
 import { saidItWentAhead } from "@/lib/plugins/tool-result";
@@ -28,7 +28,12 @@ const parameters = z.object({
   expecting: z.string().optional(),
 });
 
-export type HandoffCardState = "running" | "handed-over" | "depth-cap" | "deleted" | "refused";
+export type HandoffCardState =
+  | "running"
+  | "handed-over"
+  | "depth-cap"
+  | "deleted"
+  | "refused";
 
 export type HandoffStatusSummary = {
   state: HandoffCardState;
@@ -78,7 +83,9 @@ export function describeHandoffStatus(input: {
   }
 
   const isDepthOrFanoutCap =
-    /already \d+ Bots? deep|already asked \d+ Bots?|does not let one Bot hand work|上限/i.test(raw);
+    /already \d+ Bots? deep|already asked \d+ Bots?|does not let one Bot hand work|上限/i.test(
+      raw,
+    );
   if (isDepthOrFanoutCap) {
     return {
       state: "depth-cap",
@@ -127,7 +134,9 @@ export function BotExchangeCard({
   running: boolean;
   result?: unknown;
   /** 可选传入（方便单测直接注入）；不传时从 agentListQueryOptions 读。 */
-  knownBots?: readonly { id: string; name: string; hidden?: boolean }[] | undefined;
+  knownBots?:
+    | readonly { id: string; name: string; hidden?: boolean }[]
+    | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const rosterQuery = useQuery(
@@ -142,7 +151,9 @@ export function BotExchangeCard({
   const matchedBot =
     wanted && roster
       ? roster.find(
-          (b) => !b.hidden && (b.id.toLowerCase() === wanted || b.name.toLowerCase() === wanted),
+          (b) =>
+            !b.hidden &&
+            (b.id.toLowerCase() === wanted || b.name.toLowerCase() === wanted),
         )
       : undefined;
   // 「去「X」的对话」是它正在用的那段对话：左栏已经加载过会话列表，这里只读缓存、不另外请求。

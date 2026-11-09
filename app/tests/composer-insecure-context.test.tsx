@@ -1,4 +1,3 @@
-import type { Attachment } from "@/lib/chat/attachment-state";
 import {
   afterAll,
   afterEach,
@@ -10,8 +9,9 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
-import { settleReactWork } from "./settle-react-work";
+import type { Attachment } from "@/lib/chat/attachment-state";
 import { installFetchBackedXhr } from "./fetch-backed-xhr";
+import { settleReactWork } from "./settle-react-work";
 
 /**
  * THE COMPOSER ON A DEPLOYMENT THAT IS NOT A SECURE CONTEXT.
@@ -113,9 +113,7 @@ test("a pick-time refusal still names the file with no crypto.randomUUID", async
   ]);
 
   await waitFor(() => expect(view.queryByRole("alert")).not.toBeNull());
-  expect(
-    view.queryByText(/是 SVG，可能带脚本，不能上传/),
-  ).not.toBeNull();
+  expect(view.queryByText(/是 SVG，可能带脚本，不能上传/)).not.toBeNull();
   // The rest of the gesture survived the refusal, which is the part the throw used to take with it.
   await waitFor(() =>
     expect(view.queryByLabelText("移除 notes.txt")).not.toBeNull(),

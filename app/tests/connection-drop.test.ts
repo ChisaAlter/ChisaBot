@@ -6,12 +6,12 @@ import {
   isHonestSendFailureReason,
   raceSendWatchdog,
   reportBudgetEvent,
-  sendReachedServer,
   SEND_HANG_REASON,
   SEND_REPLY_HANG_REASON,
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
 } from "../src/lib/conversations/connection-drop";
@@ -61,9 +61,12 @@ test("the lost-connection sentence does not blame the model", () => {
 
 const fakeClock = () => {
   let t = 0;
-  return { now: () => t, sleep: async (ms: number) => {
-    t += ms;
-  } };
+  return {
+    now: () => t,
+    sleep: async (ms: number) => {
+      t += ms;
+    },
+  };
 };
 
 test("server still running → continuing, without reading the stored turn", async () => {

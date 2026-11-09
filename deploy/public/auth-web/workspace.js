@@ -1,31 +1,45 @@
-"use strict";
-
 (() => {
   // Compatibility stays here for gateways serving cached application bundles.
   const legacy = {
-    drawsAccountControl: () => !!document.getElementById("openbot-account-control"),
+    drawsAccountControl: () =>
+      !!document.getElementById("openbot-account-control"),
     authRequired: (data) => data?.openbotAuthRequired === true,
   };
   // The app marks that it draws its own account control. Accept the pre-rename id too (CB-100c), so a
   // newer gateway in front of an older app image does not float a second sign-out button over the app.
   const appDrawsAccountControl = () =>
-    !!(document.getElementById("chisabot-account-control") || legacy.drawsAccountControl());
-  if (window.location.pathname === "/login" || window.location.pathname.startsWith("/auth/") || appDrawsAccountControl()) return;
+    !!(
+      document.getElementById("chisabot-account-control") ||
+      legacy.drawsAccountControl()
+    );
+  if (
+    window.location.pathname === "/login" ||
+    window.location.pathname.startsWith("/auth/") ||
+    appDrawsAccountControl()
+  )
+    return;
 
   const originalFetch = window.fetch.bind(window);
   let redirecting = false;
-  const authChannel = typeof window.BroadcastChannel === "function" ? new window.BroadcastChannel("chisabot-auth") : null;
+  const authChannel =
+    typeof window.BroadcastChannel === "function"
+      ? new window.BroadcastChannel("chisabot-auth")
+      : null;
 
   function goToLogin(preservePath = true) {
     if (redirecting) return;
     redirecting = true;
     if (!preservePath) authChannel?.postMessage("logout");
-    const next = window.location.pathname + window.location.search + window.location.hash;
-    window.location.replace(preservePath ? "/login?next=" + encodeURIComponent(next) : "/login");
+    const next =
+      window.location.pathname + window.location.search + window.location.hash;
+    window.location.replace(
+      preservePath ? "/login?next=" + encodeURIComponent(next) : "/login",
+    );
   }
-  if (authChannel) authChannel.onmessage = (event) => {
-    if (event.data === "logout") goToLogin(false);
-  };
+  if (authChannel)
+    authChannel.onmessage = (event) => {
+      if (event.data === "logout") goToLogin(false);
+    };
 
   // Read only the small authentication error copy. The app keeps the original
   // response, including its SSE stream, headers, status and body.
@@ -35,18 +49,29 @@
     let method = "GET";
     try {
       const request = args[0];
-      const requestUrl = request instanceof Request ? request.url : String(request);
+      const requestUrl =
+        request instanceof Request ? request.url : String(request);
       const url = new URL(requestUrl, window.location.href);
       if (url.origin === window.location.origin) path = url.pathname;
-      method = (args[1]?.method || (request instanceof Request ? request.method : "GET")).toUpperCase();
+      method = (
+        args[1]?.method || (request instanceof Request ? request.method : "GET")
+      ).toUpperCase();
     } catch {
       // Fetch accepted the request; unrelated input formats need no interception.
     }
     if (path === "/api/auth/sign-out" && method === "POST" && response.ok) {
       goToLogin(false);
-    } else if (path && response.status === 401 && (response.headers.get("Content-Type") || "").includes("application/json")) {
-      const data = await response.clone().json().catch(() => null);
-      if (data?.chisabotAuthRequired === true || legacy.authRequired(data)) goToLogin();
+    } else if (
+      path &&
+      response.status === 401 &&
+      (response.headers.get("Content-Type") || "").includes("application/json")
+    ) {
+      const data = await response
+        .clone()
+        .json()
+        .catch(() => null);
+      if (data?.chisabotAuthRequired === true || legacy.authRequired(data))
+        goToLogin();
     }
     return response;
   };
@@ -54,7 +79,13 @@
   let checkingSession = false;
   let lastSessionCheck = 0;
   async function checkSession() {
-    if (document.visibilityState !== "visible" || checkingSession || redirecting || Date.now() - lastSessionCheck < 2000) return;
+    if (
+      document.visibilityState !== "visible" ||
+      checkingSession ||
+      redirecting ||
+      Date.now() - lastSessionCheck < 2000
+    )
+      return;
     checkingSession = true;
     lastSessionCheck = Date.now();
     const controller = new AbortController();
@@ -63,7 +94,7 @@
       const response = await originalFetch("/auth/session", {
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "Accept": "application/json" },
+        headers: { Accept: "application/json" },
         signal: controller.signal,
       });
       const data = response.ok ? await response.json().catch(() => null) : null;
@@ -105,7 +136,7 @@
         const response = await fetch("/auth/logout", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Accept": "application/json" },
+          headers: { Accept: "application/json" },
           signal: controller.signal,
         });
         const data = await response.json().catch(() => null);
@@ -123,6 +154,9 @@
       }
     });
   }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountAccountControl, { once: true });
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", mountAccountControl, {
+      once: true,
+    });
   else mountAccountControl();
 })();

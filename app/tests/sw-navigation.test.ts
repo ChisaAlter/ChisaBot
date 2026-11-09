@@ -5,7 +5,10 @@ import { runInNewContext } from "node:vm";
 
 /** DF-13：导航失败要区分「真断网」和「服务器慢 / 部署重启 / 502」。直接在沙箱里跑 app/public/sw.js。 */
 const source = readFileSync(join(import.meta.dir, "../public/sw.js"), "utf8");
-const legacySource = readFileSync(join(import.meta.dir, "../public/compat/legacy-browser.js"), "utf8");
+const legacySource = readFileSync(
+  join(import.meta.dir, "../public/compat/legacy-browser.js"),
+  "utf8",
+);
 
 type Timer = { at: number; fn: () => void; id: number };
 function fakeClock() {
@@ -380,10 +383,13 @@ describe("sw.js 会话过期（401）", () => {
   test("导航拿到 401：302 到 /login?next=原地址，不是把 401 页面交给浏览器", async () => {
     const sw = loadSw({
       fetch: async () =>
-        new Response(JSON.stringify({ ok: false, chisabotAuthRequired: true }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ ok: false, chisabotAuthRequired: true }),
+          {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          },
+        ),
     });
     const res = await sw.navigate("/channel/abc?watch=true");
     expect(res.status).toBe(302);

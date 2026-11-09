@@ -40,7 +40,10 @@ import {
   fileToolDrawsCard,
   imageToolDrawsCard,
 } from "@/lib/conversations/chat-file-tools";
-import { localAgentDrawsCard, taskIdOf } from "@/lib/conversations/local-agent-tool";
+import {
+  localAgentDrawsCard,
+  taskIdOf,
+} from "@/lib/conversations/local-agent-tool";
 import {
   renderUiDrawsCard,
   renderUiFailedDetail,

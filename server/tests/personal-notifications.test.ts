@@ -1,27 +1,48 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createDatabase } from "../src/db/client";
 import { createPersonalNotifications } from "../src/delivery/personal-notifications";
 import { createPersonalDelivery } from "../src/personal-sources/delivery";
 import { testDatabaseUrl } from "./support/database";
 
 const schema = `notification_${randomUUID().replaceAll("-", "")}`;
-const database = createDatabase(`${testDatabaseUrl()}?search_path=${schema}`, { max: 2 });
+const database = createDatabase(`${testDatabaseUrl()}?search_path=${schema}`, {
+  max: 2,
+});
 const sql = database.$client;
 const sent: string[] = [];
 const deliveries = createPersonalDelivery(database);
 let flushes = 0;
 const sources = {
-  notify: async (owner: string, input: { id: string; title?: string; message: string }) => {
-    const id = await deliveries.stage(owner, "notify", "connected", { target: "fixture", title: input.title!, body: input.message }, input);
+  notify: async (
+    owner: string,
+    input: { id: string; title?: string; message: string },
+  ) => {
+    const id = await deliveries.stage(
+      owner,
+      "notify",
+      "connected",
+      { target: "fixture", title: input.title!, body: input.message },
+      input,
+    );
     sent.push(input.id);
-    await sql.unsafe("UPDATE chisabot_personal_deliveries SET state='sent' WHERE id=$1", [id]);
+    await sql.unsafe(
+      "UPDATE chisabot_personal_deliveries SET state='sent' WHERE id=$1",
+      [id],
+    );
     return { id, state: "sent" as const };
   },
-  flushNotifications: async () => { flushes++; },
+  flushNotifications: async () => {
+    flushes++;
+  },
 };
-const relay = () => createPersonalNotifications({ database, sources, publicUrl: "https://assistant.example" });
+const relay = () =>
+  createPersonalNotifications({
+    database,
+    sources,
+    publicUrl: "https://assistant.example",
+  });
 
 beforeAll(async () => {
   await sql.unsafe(`CREATE SCHEMA ${schema}`);
@@ -36,14 +57,24 @@ beforeAll(async () => {
     CREATE TABLE approval_requests(id text PRIMARY KEY,owner_user_id text,action jsonb,status text,created_at timestamptz DEFAULT now());
     CREATE TABLE work_items(key text PRIMARY KEY,kind text,payload jsonb,finished_at timestamptz,created_at timestamptz DEFAULT now());
   `);
-  const migration = await readFile(new URL("../drizzle/0065_personal_delivery.sql", import.meta.url), "utf8");
+  const migration = await readFile(
+    new URL("../drizzle/0065_personal_delivery.sql", import.meta.url),
+    "utf8",
+  );
   await sql.unsafe(migration);
-  const columns = await sql.unsafe<{ column_name: string }[]>("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='chisabot_personal_deliveries'", [schema]);
-  expect(columns.map(column => column.column_name)).toContain("attempts");
-  expect(columns.map(column => column.column_name)).toContain("next_attempt_at");
+  const columns = await sql.unsafe<{ column_name: string }[]>(
+    "SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name='chisabot_personal_deliveries'",
+    [schema],
+  );
+  expect(columns.map((column) => column.column_name)).toContain("attempts");
+  expect(columns.map((column) => column.column_name)).toContain(
+    "next_attempt_at",
+  );
   await deliveries.ensure();
   await sql.unsafe(migration);
-  await sql.unsafe("INSERT INTO chisabot_personal_sources VALUES ('owner','encrypted-fixture',now()-interval '1 minute','Asia/Shanghai'),('unconnected',NULL,NULL,'Asia/Shanghai')");
+  await sql.unsafe(
+    "INSERT INTO chisabot_personal_sources VALUES ('owner','encrypted-fixture',now()-interval '1 minute','Asia/Shanghai'),('unconnected',NULL,NULL,'Asia/Shanghai')",
+  );
 }, 60000);
 
 afterAll(async () => {
@@ -59,9 +90,19 @@ test("a committed result recovers after a producer crash and restart does not du
   await relay().sweep();
   expect(sent).toHaveLength(1);
   const record = await deliveries.get("personal:owner:schedule:result");
-  expect(record?.payload.body).toContain("https://assistant.example/settings/schedules");
-  await sql.unsafe("UPDATE chisabot_personal_deliveries SET state='outcome_unknown' WHERE id=$1", [record!.id]);
-  await relay().deliver({ id: "schedule:result", owner: "owner", title: "changed", message: "new text" });
+  expect(record?.payload.body).toContain(
+    "https://assistant.example/settings/schedules",
+  );
+  await sql.unsafe(
+    "UPDATE chisabot_personal_deliveries SET state='outcome_unknown' WHERE id=$1",
+    [record!.id],
+  );
+  await relay().deliver({
+    id: "schedule:result",
+    owner: "owner",
+    title: "changed",
+    message: "new text",
+  });
   expect(sent).toHaveLength(1);
   expect((await deliveries.get(record!.id))?.payload).toEqual(record?.payload);
   expect(flushes).toBe(2);
@@ -89,11 +130,21 @@ test("only connected-owner new events and live approvals notify; silent and hist
       ('question','person.question','{"actorId":"owner","threadId":"thread","botId":"bot","question":"选哪个草稿？"}');
   `);
   await relay().sweep();
-  expect(sent.slice(1).sort()).toEqual(["approval", "confirmation:current", "question", "task-decision:valid", "task-event:done"]);
-  expect((await deliveries.get("personal:owner:task-event:done"))?.payload.body).toContain("/tasks?view=history&task=report");
+  expect(sent.slice(1).sort()).toEqual([
+    "approval",
+    "confirmation:current",
+    "question",
+    "task-decision:valid",
+    "task-event:done",
+  ]);
+  expect(
+    (await deliveries.get("personal:owner:task-event:done"))?.payload.body,
+  ).toContain("/tasks?view=history&task=report");
   await relay().sweep();
   expect(sent).toHaveLength(6);
-  const [column] = await sql.unsafe("SELECT calendar_timezone FROM chisabot_personal_sources WHERE owner_user_id='owner'");
+  const [column] = await sql.unsafe(
+    "SELECT calendar_timezone FROM chisabot_personal_sources WHERE owner_user_id='owner'",
+  );
   expect(column?.calendar_timezone).toBe("Asia/Shanghai");
 }, 30000);
 
@@ -101,13 +152,22 @@ test("legacy JSON-string task payload and one staging failure do not prevent oth
   await sql.unsafe(`UPDATE chisabot_task_center_tasks SET payload=to_jsonb(payload::text) WHERE id='report';
     INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message) VALUES
       ('failed-stage','owner','report','delivered','one'),('next','owner','report','delivered','two');`);
-  const failing = createPersonalNotifications({ database, sources: { ...sources, notify: async (owner, input) => {
-    if (input.id === "task-event:failed-stage") throw Error("database temporarily unavailable");
-    return sources.notify(owner, input);
-  } } });
+  const failing = createPersonalNotifications({
+    database,
+    sources: {
+      ...sources,
+      notify: async (owner, input) => {
+        if (input.id === "task-event:failed-stage")
+          throw Error("database temporarily unavailable");
+        return sources.notify(owner, input);
+      },
+    },
+  });
   await failing.sweep();
   expect(sent.at(-1)).toBe("task-event:next");
-  expect((await deliveries.get("personal:owner:task-event:next"))?.payload.body).toStartWith("资料报告");
+  expect(
+    (await deliveries.get("personal:owner:task-event:next"))?.payload.body,
+  ).toStartWith("资料报告");
   await relay().sweep();
   expect(sent.at(-1)).toBe("task-event:failed-stage");
 }, 30000);

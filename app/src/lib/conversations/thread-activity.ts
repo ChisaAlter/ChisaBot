@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
-import { readSync, SYNC_INTERVAL_MS, type ThreadActivity } from "./bot-thread";
 import { useKeptVisibility } from "@/lib/kept-visible";
+import { readSync, SYNC_INTERVAL_MS, type ThreadActivity } from "./bot-thread";
 
 /**
  * 频道聊天（/channel/:id）的「这条对话有没有新动静」（DESIGN.md §64，CB-041 / CB-043）。
@@ -13,7 +13,10 @@ import { useKeptVisibility } from "@/lib/kept-visible";
 /** 藏着的聊天问变化戳的间隔（DESIGN.md §98.3）。 */
 export const HIDDEN_SYNC_INTERVAL_MS = 10_000;
 
-export function useThreadActivity(agentId: string, threadId: string | undefined) {
+export function useThreadActivity(
+  agentId: string,
+  threadId: string | undefined,
+) {
   const listenersRef = useRef(new Set<(activity: ThreadActivity) => void>());
   const kickRef = useRef<() => void>(() => {});
   /**
@@ -34,12 +37,16 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
     /** 服务器没有这个接口（旧版本 / 不是本地会话模式）：不再问。 */
     let unsupported = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+    const visible = () =>
+      typeof document === "undefined" || document.visibilityState !== "hidden";
     const schedule = () => {
       if (timer) clearTimeout(timer);
       timer =
         alive && !unsupported && visible()
-          ? setTimeout(() => void tick(), onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS)
+          ? setTimeout(
+              () => void tick(),
+              onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS,
+            )
           : undefined;
     };
     const tick = async () => {
@@ -69,7 +76,8 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
     pauseRef.current = () => {
       if (!busy) schedule();
     };
-    const onVisibility = () => (visible() ? now() : timer && clearTimeout(timer));
+    const onVisibility = () =>
+      visible() ? now() : timer && clearTimeout(timer);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", now);
     window.addEventListener("online", now);
@@ -99,19 +107,27 @@ export function useThreadActivity(agentId: string, threadId: string | undefined)
     return visibility.subscribe(sync);
   }, [visibility]);
 
-  const onActivity = useCallback((listener: (activity: ThreadActivity) => void) => {
-    listenersRef.current.add(listener);
-    return () => {
-      listenersRef.current.delete(listener);
-    };
-  }, []);
+  const onActivity = useCallback(
+    (listener: (activity: ThreadActivity) => void) => {
+      listenersRef.current.add(listener);
+      return () => {
+        listenersRef.current.delete(listener);
+      };
+    },
+    [],
+  );
   /** 马上问一次（比如刚打开时的接入到了时限被截断：不等下一个 2 秒）。 */
   const kick = useCallback(() => kickRef.current(), []);
 
   return { onActivity, kick };
 }
 
-type Row = { id: string; role: string; content?: unknown; toolCalls?: readonly { id: string }[] };
+type Row = {
+  id: string;
+  role: string;
+  content?: unknown;
+  toolCalls?: readonly { id: string }[];
+};
 /**
  * 回答结束后重读到的对话里，最后一条用户消息之后、这台也有的那几条（回答 / 思考），按服务器存的补齐：
  *  - 正文：这台手里的比服务器存的短（被截断的半截）就换成服务器的。只会变长。
@@ -120,7 +136,10 @@ type Row = { id: string; role: string; content?: unknown; toolCalls?: readonly {
  *    开场一句作为气泡露在结果上面，刷新后却没有（0.1.110 验收「重连后 5 条、刷新后 4 条」的一种）。
  * 别的消息和字段不动；没变化返回原数组。
  */
-export function withStoredTail<T extends Row>(local: readonly T[], stored: readonly T[]): T[] {
+export function withStoredTail<T extends Row>(
+  local: readonly T[],
+  stored: readonly T[],
+): T[] {
   const lastUser = local.map((message) => message.role).lastIndexOf("user");
   const byId = new Map(stored.map((message) => [message.id, message]));
   let changed = false;
@@ -140,7 +159,9 @@ export function withStoredTail<T extends Row>(local: readonly T[], stored: reado
     const localCalls = message.toolCalls ?? [];
     if (
       savedCalls.length > localCalls.length &&
-      localCalls.every((call) => savedCalls.some((stored) => stored.id === call.id))
+      localCalls.every((call) =>
+        savedCalls.some((stored) => stored.id === call.id),
+      )
     )
       next = { ...next, toolCalls: savedCalls };
     if (next !== message) changed = true;

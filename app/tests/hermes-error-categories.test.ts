@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { friendlyError } from "../src/lib/chat/friendly-error";
 
 test("压缩失败保留原始诊断，不推断哪部分占满了窗口", () => {
-  const raw = "Cannot switch model: context compaction failed: no safe compaction range can reduce context below target";
+  const raw =
+    "Cannot switch model: context compaction failed: no safe compaction range can reduce context below target";
   const error = friendlyError(raw);
   expect(error.title).toBe("上下文压缩未能完成");
   expect(error.hint).toContain("上下文更大的模型");
@@ -11,13 +12,17 @@ test("压缩失败保留原始诊断，不推断哪部分占满了窗口", () =>
 });
 
 test("备用模型的 404 不指控当前选择的主模型不存在", () => {
-  const error = friendlyError("Hermes fallback model call failed: model not found (HTTP 404)");
+  const error = friendlyError(
+    "Hermes fallback model call failed: model not found (HTTP 404)",
+  );
   expect(error.title).toBe("备用模型也未能完成回答");
   expect(error.hint).toContain("备用模型");
 });
 
 test("工具结果未知时提示先核对执行结果", () => {
-  const error = friendlyError("The host gateway outcome is unknown or the run is no longer authorized");
+  const error = friendlyError(
+    "The host gateway outcome is unknown or the run is no longer authorized",
+  );
   expect(error.title).toBe("这一步操作未能确认结果");
   expect(error.hint).toContain("已有操作可能已经执行");
   expect(error.retryable).toBe(false);

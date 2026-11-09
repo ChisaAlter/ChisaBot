@@ -10,12 +10,12 @@
 
 ## 官方建议的接入路径
 
-| 使用方式 | 官方定位与语义 | 对 ChisaBot 评估的意义 |
-|---|---|---|
-| ACP，stdio JSON-RPC | 面向已有 ACP 客户端的 IDE；暴露会话、提示、流式文本、工具事件、许可、取消、认证等 | 可以用，但不应因为已有桥接就认定它是定制 Web 宿主的首选 |
-| TUI gateway，stdio/WebSocket JSON-RPC | 官方推荐给想获得完整 Hermes 功能的自定义桌面/Web/TUI 宿主；有 `@hermes/shared/gateway-client`，具备能力发现、恢复连接、审批与会话事件 | 继续保留 Hermes 为主后端时，值得优先评估这一公共宿主路径 |
-| HTTP API + SSE | 面向 OpenAI 兼容前端和非 Python 客户端；提供 `/v1/runs`、状态、事件、审批、steer、stop、capabilities | 比仅把 agent 当作一次 Chat Completions 更能表达长期运行与人机交互 |
-| Python 进程内 `run_agent.AIAgent` | 官方列出的无子进程嵌入方式，`chat()` 或 `run_conversation()` | 可以去掉 ACP 传输，但不自动解决宿主与 Hermes 的状态所有权重叠 |
+| 使用方式                              | 官方定位与语义                                                                                                                        | 对 ChisaBot 评估的意义                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| ACP，stdio JSON-RPC                   | 面向已有 ACP 客户端的 IDE；暴露会话、提示、流式文本、工具事件、许可、取消、认证等                                                     | 可以用，但不应因为已有桥接就认定它是定制 Web 宿主的首选           |
+| TUI gateway，stdio/WebSocket JSON-RPC | 官方推荐给想获得完整 Hermes 功能的自定义桌面/Web/TUI 宿主；有 `@hermes/shared/gateway-client`，具备能力发现、恢复连接、审批与会话事件 | 继续保留 Hermes 为主后端时，值得优先评估这一公共宿主路径          |
+| HTTP API + SSE                        | 面向 OpenAI 兼容前端和非 Python 客户端；提供 `/v1/runs`、状态、事件、审批、steer、stop、capabilities                                  | 比仅把 agent 当作一次 Chat Completions 更能表达长期运行与人机交互 |
+| Python 进程内 `run_agent.AIAgent`     | 官方列出的无子进程嵌入方式，`chat()` 或 `run_conversation()`                                                                          | 可以去掉 ACP 传输，但不自动解决宿主与 Hermes 的状态所有权重叠     |
 
 以上来自 [Programmatic Integration](https://github.com/NousResearch/hermes-agent/blob/cf7003f3fa650e2cebc06a0af0c09dabaf5ee367/website/docs/developer-guide/programmatic-integration.md) 与 [ACP Internals](https://github.com/NousResearch/hermes-agent/blob/cf7003f3fa650e2cebc06a0af0c09dabaf5ee367/website/docs/developer-guide/acp-internals.md)。
 
@@ -52,14 +52,14 @@ Hermes **有明确的原生插件兼容契约**：文档化 `PluginContext` 方�
 
 2026-11-07 只读核对：生产 Hermes checkout 为 `40cc180823d182826536416de2fc27be44b4ac57`（提交日期 2026-10-20），适配器 release 为 ChisaBot `9a00ed625f1e3508fa66da2ea036f573db0c4f92`。上面的新官方接口说明需要按版本评估，不能假定现有部署已具备全部能力。
 
-| 本地事实 | 对选择的影响 |
-|---|---|
-| ChisaBot 拥有账号/bot/thread、数据库历史、权限审批、任务工作流和记忆；适配器设置 `skip_memory=True`、`skip_background_review=True`，关闭原生上下文文件、身份、checkpoints、trajectories 与原生工具，只保留宿主工具 | Hermes 的完整助手能力没有被整套复用；需要比较的是剩余执行循环收益与适配成本。[宿主职责](../hermes-runtime.md)、[适配器](../../examples/hermes-agent/chisabot_acp.py) |
-| 调用链为 ChisaBot → AG-UI/SSE → bridge → ACP stdio → Python adapter → AIAgent；工具再经 HTTP 回调 ChisaBot。每轮传完整历史，并翻译消息、工具 ID、审批 continuation、取消和错误 | 不只是换一次模型请求，多个协议阶段必须保持同一回合语义。[调用链](../../examples/acp-agent/README.md)、[真实调用捕获](../../server/src/agents/runtime-tools.ts) |
-| 模型 ID、fallback 与上下文参数从 ChisaBot 发给 Hermes；实际 provider、端点、凭据由 Hermes `load_config` / `resolve_runtime_provider` 解析，安装时首次复制独立配置 | 有两个模型连接配置来源，需要显式同步；当前 wire 本身没有将 ChisaBot 的完整连接快照传过去。[wire](../../server/src/agents/hermes-runtime.ts)、[安装](../../deploy/install-hermes-runtime.sh) |
-| 自定义适配器包装 `_try_activate_fallback`，调用 `_switch_model`、`_init_fallback_chain`，改写私有状态；`--check` 只验证 import/签名 | 升级需验证行为，不能把公共插件契约等同于这些内部方法的兼容保证。[适配器与检查](../../examples/hermes-agent/chisabot_acp.py) |
-| 桥按会话排队，但多个会话共享一个 ACP 子进程代；取消超过宽限期会退役整个代，其所有 pending RPC 都被拒绝 | 存在某轮顽固取消影响同进程其他会话的结构性风险；此轮未执行并发故障注入。[bridge](../../examples/acp-agent/bridge.mjs) |
-| 内置路径仍存在，但 `TOOL_STEPS=12`，Hermes 路径的 `compactHistory` 没有在 `BuiltInAgentWithSaneHistory.run` 同样接线 | 直接删除 Hermes URL 不能视为等价迁移。需要先补齐任务长度、长上下文和恢复契约。[两条执行路径](../../server/src/copilot.ts) |
+| 本地事实                                                                                                                                                                                                           | 对选择的影响                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ChisaBot 拥有账号/bot/thread、数据库历史、权限审批、任务工作流和记忆；适配器设置 `skip_memory=True`、`skip_background_review=True`，关闭原生上下文文件、身份、checkpoints、trajectories 与原生工具，只保留宿主工具 | Hermes 的完整助手能力没有被整套复用；需要比较的是剩余执行循环收益与适配成本。[宿主职责](../hermes-runtime.md)、[适配器](../../examples/hermes-agent/chisabot_acp.py)                        |
+| 调用链为 ChisaBot → AG-UI/SSE → bridge → ACP stdio → Python adapter → AIAgent；工具再经 HTTP 回调 ChisaBot。每轮传完整历史，并翻译消息、工具 ID、审批 continuation、取消和错误                                     | 不只是换一次模型请求，多个协议阶段必须保持同一回合语义。[调用链](../../examples/acp-agent/README.md)、[真实调用捕获](../../server/src/agents/runtime-tools.ts)                              |
+| 模型 ID、fallback 与上下文参数从 ChisaBot 发给 Hermes；实际 provider、端点、凭据由 Hermes `load_config` / `resolve_runtime_provider` 解析，安装时首次复制独立配置                                                  | 有两个模型连接配置来源，需要显式同步；当前 wire 本身没有将 ChisaBot 的完整连接快照传过去。[wire](../../server/src/agents/hermes-runtime.ts)、[安装](../../deploy/install-hermes-runtime.sh) |
+| 自定义适配器包装 `_try_activate_fallback`，调用 `_switch_model`、`_init_fallback_chain`，改写私有状态；`--check` 只验证 import/签名                                                                                | 升级需验证行为，不能把公共插件契约等同于这些内部方法的兼容保证。[适配器与检查](../../examples/hermes-agent/chisabot_acp.py)                                                                 |
+| 桥按会话排队，但多个会话共享一个 ACP 子进程代；取消超过宽限期会退役整个代，其所有 pending RPC 都被拒绝                                                                                                             | 存在某轮顽固取消影响同进程其他会话的结构性风险；此轮未执行并发故障注入。[bridge](../../examples/acp-agent/bridge.mjs)                                                                       |
+| 内置路径仍存在，但 `TOOL_STEPS=12`，Hermes 路径的 `compactHistory` 没有在 `BuiltInAgentWithSaneHistory.run` 同样接线                                                                                               | 直接删除 Hermes URL 不能视为等价迁移。需要先补齐任务长度、长上下文和恢复契约。[两条执行路径](../../server/src/copilot.ts)                                                                   |
 
 当前故障需分别归因：气泡外正文、自动文档转换、留白来自 ChisaBot 前端；30 秒取消后调用失效备用并误报主模型 404，来自配置与适配策略。换内核不会自动修复前者。此前用同一网关直接调用 SWE-2 成功，只证明当时模型路由可用，未验证内核优劣。[故障证据](../pipeline-runs/20261107-chat-reliability.md)
 

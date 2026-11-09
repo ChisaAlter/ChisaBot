@@ -13,16 +13,19 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   IMAP_PRESETS,
   type PersonalSourcesStatusView,
 } from "../../../../shared/personal-sources";
-import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
 
 const LazyBotBubbles = lazy(() =>
-  import("@/components/chat/bot-bubbles").then((m) => ({ default: m.BotBubbles })),
+  import("@/components/chat/bot-bubbles").then((m) => ({
+    default: m.BotBubbles,
+  })),
 );
+
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -88,7 +91,9 @@ export function PersonalSourcesSection() {
           credentials: "include",
           body: JSON.stringify({ city }),
         });
-        await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+        await queryClient.invalidateQueries({
+          queryKey: personalSourcesKeys.all,
+        });
       }
       const res = await fetch(
         `/api/personal-sources/morning-brief?city=${encodeURIComponent(city)}`,
@@ -119,7 +124,9 @@ export function PersonalSourcesSection() {
       }
       setBriefModalTitle("⚡ 个人助理主动巡检动态");
       setBriefMarkdown(data.markdown);
-      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+      await queryClient.invalidateQueries({
+        queryKey: personalSourcesKeys.all,
+      });
     },
     { errorToast: (err) => err.message },
   );
@@ -139,7 +146,9 @@ export function PersonalSourcesSection() {
         }),
       });
       if (!res.ok) throw new Error("触发模拟事件失败");
-      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+      await queryClient.invalidateQueries({
+        queryKey: personalSourcesKeys.all,
+      });
       toast.success("已触发模拟入站事件！可点「⚡ 巡检动态」查看捕获结果");
     },
     { errorToast: (err) => err.message },
@@ -161,7 +170,8 @@ export function PersonalSourcesSection() {
   async function disconnectCalendar() {
     const ok = await confirmDialog({
       title: "断开日历？",
-      description: "将从服务器移除你的 ICS 日历订阅地址，机器人不再读取你的日程。",
+      description:
+        "将从服务器移除你的 ICS 日历订阅地址，机器人不再读取你的日程。",
       confirmLabel: "断开",
       destructive: true,
     });
@@ -179,7 +189,8 @@ export function PersonalSourcesSection() {
   async function disconnectEmail() {
     const ok = await confirmDialog({
       title: "断开收件箱？",
-      description: "将从服务器永久删除加密保存的邮箱专用密码，机器人不再读取你的收件箱。",
+      description:
+        "将从服务器永久删除加密保存的邮箱专用密码，机器人不再读取你的收件箱。",
       confirmLabel: "断开",
       destructive: true,
     });
@@ -221,7 +232,9 @@ export function PersonalSourcesSection() {
         body: JSON.stringify({ requestId: crypto.randomUUID() }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
-      await queryClient.invalidateQueries({ queryKey: personalSourcesKeys.all });
+      await queryClient.invalidateQueries({
+        queryKey: personalSourcesKeys.all,
+      });
       if (!res.ok) throw new Error(data.error || "发送测试通知失败");
       toast.success("通知平台已接受测试通知");
     },
@@ -241,17 +254,23 @@ export function PersonalSourcesSection() {
     >
       <CalendarConnectDialog
         onOpenChange={setCalOpen}
-        onSaved={(next) => queryClient.setQueryData(personalSourcesKeys.all, next)}
+        onSaved={(next) =>
+          queryClient.setQueryData(personalSourcesKeys.all, next)
+        }
         open={calOpen}
       />
       <EmailConnectDialog
         onOpenChange={setMailOpen}
-        onSaved={(next) => queryClient.setQueryData(personalSourcesKeys.all, next)}
+        onSaved={(next) =>
+          queryClient.setQueryData(personalSourcesKeys.all, next)
+        }
         open={mailOpen}
       />
       <NotifyWebhookDialog
         onOpenChange={setNotifyOpen}
-        onSaved={(next) => queryClient.setQueryData(personalSourcesKeys.all, next)}
+        onSaved={(next) =>
+          queryClient.setQueryData(personalSourcesKeys.all, next)
+        }
         open={notifyOpen}
       />
       <Dialog
@@ -260,16 +279,27 @@ export function PersonalSourcesSection() {
         }}
         open={Boolean(briefMarkdown)}
       >
-        <DialogContent className="im-dialog max-w-2xl" data-testid="morning-brief-preview-dialog">
+        <DialogContent
+          className="im-dialog max-w-2xl"
+          data-testid="morning-brief-preview-dialog"
+        >
           <DialogHeader>
             <DialogTitle>{briefModalTitle}</DialogTitle>
             <DialogDescription>
-              {"在聊天中对机器人说「早安」或「巡检今日动态」，机器人也会自动调用对应工具生成这张结构化卡片。"}
+              {
+                "在聊天中对机器人说「早安」或「巡检今日动态」，机器人也会自动调用对应工具生成这张结构化卡片。"
+              }
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="mt-2">
             {briefMarkdown ? (
-              <Suspense fallback={<div className="text-sm text-muted-foreground">{briefMarkdown}</div>}>
+              <Suspense
+                fallback={
+                  <div className="text-sm text-muted-foreground">
+                    {briefMarkdown}
+                  </div>
+                }
+              >
                 <LazyBotBubbles text={briefMarkdown} />
               </Suspense>
             ) : null}
@@ -292,7 +322,11 @@ export function PersonalSourcesSection() {
               <IconMessageReply className="size-3.5" />
               {"带入聊天继续追问"}
             </Button>
-            <Button onClick={() => setBriefMarkdown(null)} type="button" variant="outline">
+            <Button
+              onClick={() => setBriefMarkdown(null)}
+              type="button"
+              variant="outline"
+            >
               {"关闭"}
             </Button>
           </DialogFooter>
@@ -302,9 +336,21 @@ export function PersonalSourcesSection() {
       {status.isPending ? (
         <PageSkeleton rows={2} />
       ) : status.isError ? (
-        <p role="alert" className="text-sm text-destructive">连接状态读取失败。<Button variant="ghost" size="sm" onClick={() => void status.refetch()}>重新读取</Button></p>
+        <p role="alert" className="text-sm text-destructive">
+          连接状态读取失败。
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void status.refetch()}
+          >
+            重新读取
+          </Button>
+        </p>
       ) : (
-        <div className="flex flex-col gap-3" data-testid="personal-sources-section">
+        <div
+          className="flex flex-col gap-3"
+          data-testid="personal-sources-section"
+        >
           {/* 日历只读接入 */}
           <Card className="mem-card" data-testid="personal-calendar-card">
             <div className="im-row flex-wrap">
@@ -319,7 +365,9 @@ export function PersonalSourcesSection() {
                     cal ? (
                       <>
                         <span className="device-row-meta">
-                          <span className="gh-state is-ok">{"已连接（只读）"}</span>
+                          <span className="gh-state is-ok">
+                            {"已连接（只读）"}
+                          </span>
                           <span className="device-cap-chip">
                             <T>{`${cal.eventCount} 个日程事件`}</T>
                           </span>
@@ -373,7 +421,9 @@ export function PersonalSourcesSection() {
                     mail ? (
                       <>
                         <span className="device-row-meta">
-                          <span className="gh-state is-ok">{"收件箱已验证"}</span>
+                          <span className="gh-state is-ok">
+                            {"收件箱已验证"}
+                          </span>
                           <span className="device-cap-chip">
                             <T>{`未读 ${mail.unreadCount} 封`}</T>
                           </span>
@@ -387,7 +437,11 @@ export function PersonalSourcesSection() {
                       "未连接 · 用应用专用密码连接 QQ / 163 / Gmail / Outlook / iCloud（支持收件箱摘要与确认后发信）"
                     )
                   }
-                  title={mail ? mail.email : "电子邮箱（IMAP 收件箱 + SMTP 确认发信）"}
+                  title={
+                    mail
+                      ? mail.email
+                      : "电子邮箱（IMAP 收件箱 + SMTP 确认发信）"
+                  }
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -434,17 +488,25 @@ export function PersonalSourcesSection() {
                         </span>
                       ) : (
                         <span className="mem-body">
-                          {"支持飞书 / 钉钉 / 企业微信群机器人、Bark (iOS)、Server酱或自定义 Webhook，让机器人随时向你推送提醒。"}
+                          {
+                            "支持飞书 / 钉钉 / 企业微信群机器人、Bark (iOS)、Server酱或自定义 Webhook，让机器人随时向你推送提醒。"
+                          }
                         </span>
                       )}
                       {inboundWh ? (
                         <span className="mem-by">
-                          {inboundWh.lastSummary ? `最近入站事件：${inboundWh.lastSummary}` : "入站地址含私密密钥，可通过右侧按钮复制。"}
+                          {inboundWh.lastSummary
+                            ? `最近入站事件：${inboundWh.lastSummary}`
+                            : "入站地址含私密密钥，可通过右侧按钮复制。"}
                         </span>
                       ) : null}
                     </>
                   }
-                  title={notifyWh ? notifyWh.label : "随身通知推送 & 外部 Webhook 触发器"}
+                  title={
+                    notifyWh
+                      ? notifyWh.label
+                      : "随身通知推送 & 外部 Webhook 触发器"
+                  }
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -465,7 +527,11 @@ export function PersonalSourcesSection() {
                     </Button>
                     <Button
                       data-testid="test-inbound-webhook-btn"
-                      feedback={{ pending: "触发中…", success: "已触发", error: "失败" }}
+                      feedback={{
+                        pending: "触发中…",
+                        success: "已触发",
+                        error: "失败",
+                      }}
                       onClick={() => void simulateInboundWebhook.run()}
                       size="sm"
                       state={simulateInboundWebhook.state}
@@ -490,7 +556,11 @@ export function PersonalSourcesSection() {
                 {notifyWh ? (
                   <Button
                     data-testid="test-notify-webhook-btn"
-                    feedback={{ pending: "推送中…", success: "已推送", error: "失败" }}
+                    feedback={{
+                      pending: "推送中…",
+                      success: "已推送",
+                      error: "失败",
+                    }}
                     onClick={() => void testNotify.run()}
                     size="sm"
                     state={testNotify.state}
@@ -521,27 +591,65 @@ export function PersonalSourcesSection() {
             </div>
           </Card>
 
-          <section className="px-1 py-2" aria-label="最近发送记录" data-testid="personal-deliveries">
+          <section
+            className="px-1 py-2"
+            aria-label="最近发送记录"
+            data-testid="personal-deliveries"
+          >
             <div className="mb-2 flex items-center justify-between gap-3">
               <h3 className="text-sm font-medium">最近发送记录</h3>
-              <Button variant="ghost" size="sm" onClick={() => void status.refetch()}>刷新记录</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void status.refetch()}
+              >
+                刷新记录
+              </Button>
             </div>
             {status.data?.deliveries?.length ? (
               <ul className="divide-y divide-border/60">
-                {status.data.deliveries.map(item => (
+                {status.data.deliveries.map((item) => (
                   <li className="py-3 text-sm" key={item.id}>
                     <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
-                      <span className="min-w-0 break-words font-medium">{item.title}</span>
-                      <span className={item.state === "outcome_unknown" || item.state === "failed" ? "text-destructive" : "text-muted-foreground"}>
-                        {{ queued: "等待发送", sending: "正在发送", sent: "平台已接受", failed: "发送失败", outcome_unknown: "结果待核对", cancelled: "已取消" }[item.state]}
+                      <span className="min-w-0 break-words font-medium">
+                        {item.title}
+                      </span>
+                      <span
+                        className={
+                          item.state === "outcome_unknown" ||
+                          item.state === "failed"
+                            ? "text-destructive"
+                            : "text-muted-foreground"
+                        }
+                      >
+                        {
+                          {
+                            queued: "等待发送",
+                            sending: "正在发送",
+                            sent: "平台已接受",
+                            failed: "发送失败",
+                            outcome_unknown: "结果待核对",
+                            cancelled: "已取消",
+                          }[item.state]
+                        }
                       </span>
                     </div>
-                    <p className="mt-1 break-words text-muted-foreground">{item.target} · {agoText(item.createdAt)}</p>
-                    {item.error ? <p className="mt-1 break-words text-muted-foreground">{item.error}</p> : null}
+                    <p className="mt-1 break-words text-muted-foreground">
+                      {item.target} · {agoText(item.createdAt)}
+                    </p>
+                    {item.error ? (
+                      <p className="mt-1 break-words text-muted-foreground">
+                        {item.error}
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>
-            ) : <p className="text-sm text-muted-foreground">还没有邮件或通知发送记录。</p>}
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                还没有邮件或通知发送记录。
+              </p>
+            )}
           </section>
           {/* 每日晨报（Morning Brief）生成与城市设置 */}
           <Card className="mem-card" data-testid="morning-brief-config-card">
@@ -568,7 +676,11 @@ export function PersonalSourcesSection() {
                 />
                 <Button
                   data-testid="personal-check-updates-btn"
-                  feedback={{ pending: "巡检中…", success: "已巡检", error: "失败" }}
+                  feedback={{
+                    pending: "巡检中…",
+                    success: "已巡检",
+                    error: "失败",
+                  }}
                   onClick={() => void checkUpdates.run()}
                   size="sm"
                   state={checkUpdates.state}
@@ -579,7 +691,11 @@ export function PersonalSourcesSection() {
                 </Button>
                 <Button
                   data-testid="generate-morning-brief-btn"
-                  feedback={{ pending: "生成中…", success: "已生成", error: "失败" }}
+                  feedback={{
+                    pending: "生成中…",
+                    success: "已生成",
+                    error: "失败",
+                  }}
                   onClick={() => void generateBrief.run()}
                   size="sm"
                   state={generateBrief.state}
@@ -608,7 +724,9 @@ function CalendarConnectDialog({
   const [label, setLabel] = useState("我的日程");
   const [icsUrl, setIcsUrl] = useState("");
   const [icsText, setIcsText] = useState("");
-  const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai");
+  const [timeZone, setTimeZone] = useState(
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+  );
 
   const save = useAsyncAction(
     async () => {
@@ -623,7 +741,9 @@ function CalendarConnectDialog({
           timeZone,
         }),
       });
-      const data = (await res.json()) as PersonalSourcesStatusView & { error?: string };
+      const data = (await res.json()) as PersonalSourcesStatusView & {
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error || "连接日历失败");
       onSaved(data);
       toast.success("日历已连接");
@@ -632,15 +752,22 @@ function CalendarConnectDialog({
     { errorToast: (err) => err.message },
   );
 
-  const valid = Boolean(icsUrl.trim() || icsText.trim().includes("BEGIN:VCALENDAR"));
+  const valid = Boolean(
+    icsUrl.trim() || icsText.trim().includes("BEGIN:VCALENDAR"),
+  );
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg" data-testid="calendar-connect-dialog">
+      <DialogContent
+        className="im-dialog max-w-lg"
+        data-testid="calendar-connect-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{"连接个人日历（ICS 只读）"}</DialogTitle>
           <DialogDescription>
-            {"粘贴 iCloud / Google / Outlook / 飞书日历的私密 ICS/WebCal 订阅链接，或直接粘贴 .ics 日历内容。"}
+            {
+              "粘贴 iCloud / Google / Outlook / 飞书日历的私密 ICS/WebCal 订阅链接，或直接粘贴 .ics 日历内容。"
+            }
           </DialogDescription>
         </DialogHeader>
         <form
@@ -671,8 +798,15 @@ function CalendarConnectDialog({
               />
             </label>
             <label className="im-field">
-              <span className="gh-step-t">日历时区（无时区日程采用此设置）</span>
-              <Input data-testid="calendar-timezone-input" value={timeZone} onChange={e => setTimeZone(e.target.value)} placeholder="Asia/Shanghai" />
+              <span className="gh-step-t">
+                日历时区（无时区日程采用此设置）
+              </span>
+              <Input
+                data-testid="calendar-timezone-input"
+                value={timeZone}
+                onChange={(e) => setTimeZone(e.target.value)}
+                placeholder="Asia/Shanghai"
+              />
             </label>
             <div className="im-field">
               <div className="flex items-center justify-between">
@@ -688,13 +822,21 @@ function CalendarConnectDialog({
             </div>
           </DialogBody>
           <DialogFooter className="mt-3">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
             <Button
               data-testid="calendar-save-btn"
               disabled={!valid}
-              feedback={{ pending: "验证中…", success: "已连接", error: "失败" }}
+              feedback={{
+                pending: "验证中…",
+                success: "已连接",
+                error: "失败",
+              }}
               state={save.state}
               type="submit"
             >
@@ -743,7 +885,9 @@ function EmailConnectDialog({
           password: password.trim(),
         }),
       });
-      const data = (await res.json()) as PersonalSourcesStatusView & { error?: string };
+      const data = (await res.json()) as PersonalSourcesStatusView & {
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error || "连接邮箱失败");
       onSaved(data);
       setPassword("");
@@ -753,15 +897,25 @@ function EmailConnectDialog({
     { errorToast: (err) => err.message },
   );
 
-  const valid = email.includes("@") && password.trim().length >= 4 && imapHost.trim().length > 0;
+  const valid =
+    email.includes("@") &&
+    password.trim().length >= 4 &&
+    imapHost.trim().length > 0;
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg" data-testid="email-connect-dialog">
+      <DialogContent
+        className="im-dialog max-w-lg"
+        data-testid="email-connect-dialog"
+      >
         <DialogHeader>
-          <DialogTitle>{"连接电子邮箱（IMAP 收件箱 + SMTP 审批发信）"}</DialogTitle>
+          <DialogTitle>
+            {"连接电子邮箱（IMAP 收件箱 + SMTP 审批发信）"}
+          </DialogTitle>
           <DialogDescription>
-            {"请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码会加密保存，仅在此表单输入。发信按审批偏好确认，平台接收结果会单独记录。"}
+            {
+              "请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码会加密保存，仅在此表单输入。发信按审批偏好确认，平台接收结果会单独记录。"
+            }
           </DialogDescription>
         </DialogHeader>
         <form
@@ -847,13 +1001,21 @@ function EmailConnectDialog({
             </label>
           </DialogBody>
           <DialogFooter className="mt-3">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
             <Button
               data-testid="email-save-btn"
               disabled={!valid}
-              feedback={{ pending: "验证中…", success: "已连接", error: "连接失败" }}
+              feedback={{
+                pending: "验证中…",
+                success: "已连接",
+                error: "连接失败",
+              }}
               state={save.state}
               type="submit"
             >
@@ -889,7 +1051,9 @@ function NotifyWebhookDialog({
           url: url.trim(),
         }),
       });
-      const data = (await res.json()) as PersonalSourcesStatusView & { error?: string };
+      const data = (await res.json()) as PersonalSourcesStatusView & {
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error || "绑定通知推送失败");
       onSaved(data);
       toast.success("随身通知推送已绑定");
@@ -902,11 +1066,16 @@ function NotifyWebhookDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg" data-testid="notify-webhook-dialog">
+      <DialogContent
+        className="im-dialog max-w-lg"
+        data-testid="notify-webhook-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{"绑定随身通知推送 Webhook"}</DialogTitle>
           <DialogDescription>
-            {"填入飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱或任意自定义 JSON Webhook 链接。"}
+            {
+              "填入飞书群机器人、钉钉群机器人、企业微信机器人、Bark (iOS)、Server酱或任意自定义 JSON Webhook 链接。"
+            }
           </DialogDescription>
         </DialogHeader>
         <form
@@ -943,13 +1112,21 @@ function NotifyWebhookDialog({
             </label>
           </DialogBody>
           <DialogFooter className="mt-3">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
             <Button
               data-testid="notify-save-btn"
               disabled={!valid}
-              feedback={{ pending: "保存中…", success: "已绑定", error: "失败" }}
+              feedback={{
+                pending: "保存中…",
+                success: "已绑定",
+                error: "失败",
+              }}
               state={save.state}
               type="submit"
             >

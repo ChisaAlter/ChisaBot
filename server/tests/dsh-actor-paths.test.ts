@@ -1,27 +1,25 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { defaultCapabilities } from "../../shared/devices";
-import { createDatabase } from "../src/db/client";
-import { agents, agentProfiles, users } from "../src/db/schema";
-import { createLocalConversations } from "../src/local-conversations";
-import { createConversationBindings } from "../src/conversations/bindings";
-import { createDshRunJournal } from "../src/conversations/run-journal";
-import { createToolOperationStore } from "../src/conversations/tool-operations";
-import { createDshToolGateway } from "../src/conversations/tool-gateway";
+import {
+  mintRunAssertion,
+  type RunAssertion,
+  readRunAssertion,
+} from "../src/agents/callback-token";
+import { computerAccessCheck } from "../src/agents/computer-access";
 import {
   DshRuntimeAgent,
   type DshRuntimeBinding,
 } from "../src/agents/dsh-runtime";
-import { createTurnRunner } from "../src/turns/run-turn";
-import type { TurnRunner } from "../src/turns/types";
 import { createHandoffDesk } from "../src/agents/handoff";
-import { createHandoffRunner } from "../src/agents/handoff-runner";
 import { createHandoffDelivery } from "../src/agents/handoff-delivery";
+import { createHandoffExecutions } from "../src/agents/handoff-execution";
+import { createHandoffRunner } from "../src/agents/handoff-runner";
 import {
   bindHandoffExecution,
   refreshApprovedHandoffRun,
@@ -32,32 +30,34 @@ import {
   createCoordinationTools,
   readCoordinationHandoffClaim,
 } from "../src/agents/handoff-tool";
-import {
-  mintRunAssertion,
-  readRunAssertion,
-  type RunAssertion,
-} from "../src/agents/callback-token";
 import { createAgentProfileStore } from "../src/agents/profile-store";
-import { computerAccessCheck } from "../src/agents/computer-access";
-import { createAuditStore, type AuditInitiator } from "../src/audit";
+import { withRuntimeSurfaceTools } from "../src/agents/runtime-tool-context";
 import { currentApprovalContext } from "../src/approvals/types";
-import { createWorkQueue } from "../src/work/queue";
-import { createTeamBots } from "../src/team-bots/team-bots";
-import { createLocalAgentService } from "../src/local-agents/service";
-import { createDeviceHub } from "../src/devices/hub";
-import type { DeviceRecord } from "../src/devices/store";
+import { type AuditInitiator, createAuditStore } from "../src/audit";
+import { loadConfig } from "../src/config";
+import { createConfirmations, digestOf } from "../src/confirmations/service";
 import {
   buildAgents,
   currentAgentKernel,
   mountConversationRuntime,
   setAgentKernel,
 } from "../src/conversation-runtime";
-import { withRuntimeSurfaceTools } from "../src/agents/runtime-tool-context";
-import { loadConfig } from "../src/config";
-import { testEnvironment } from "./support/environment";
-import { createHandoffExecutions } from "../src/agents/handoff-execution";
-import { createConfirmations, digestOf } from "../src/confirmations/service";
+import { createConversationBindings } from "../src/conversations/bindings";
 import { createConfirmationResumer } from "../src/conversations/confirmation-resume";
+import { createDshRunJournal } from "../src/conversations/run-journal";
+import { createDshToolGateway } from "../src/conversations/tool-gateway";
+import { createToolOperationStore } from "../src/conversations/tool-operations";
+import { createDatabase } from "../src/db/client";
+import { agentProfiles, agents, users } from "../src/db/schema";
+import { createDeviceHub } from "../src/devices/hub";
+import type { DeviceRecord } from "../src/devices/store";
+import { createLocalAgentService } from "../src/local-agents/service";
+import { createLocalConversations } from "../src/local-conversations";
+import { createTeamBots } from "../src/team-bots/team-bots";
+import { createTurnRunner } from "../src/turns/run-turn";
+import type { TurnRunner } from "../src/turns/types";
+import { createWorkQueue } from "../src/work/queue";
+import { testEnvironment } from "./support/environment";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const key = "isolated-actor-acceptance-signing-key";

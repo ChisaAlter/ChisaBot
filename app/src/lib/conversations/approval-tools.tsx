@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { z } from "zod";
 import { InlineApproval } from "@/components/approvals/inline-approval";
-import { useRenderTool, type ToolRenderProps } from "@/lib/chat/renderers";
+import { type ToolRenderProps, useRenderTool } from "@/lib/chat/renderers";
 import { lineOnlyRender } from "./tool-renderers";
 
 export async function neverThrow<T>(
@@ -12,13 +12,12 @@ export async function neverThrow<T>(
     return await run();
   } catch (error) {
     if (signal?.aborted) throw error;
-    const message = error instanceof Error ? error.message : String(error ?? "");
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
     console.warn("[chisabot] frontend tool failed", message);
     return {
       ok: false,
-      reason: message
-        ? `这一步没有成功：${message}`
-        : "这一步没有成功。",
+      reason: message ? `这一步没有成功：${message}` : "这一步没有成功。",
     };
   }
 }
@@ -37,15 +36,22 @@ export function effectiveStatus(httpStatus: number, payload: unknown): number {
     : httpStatus;
 }
 
-
 /** Computer execution and authorization belong to the server; this hook only draws results. */
 export function useComputerToolRenderer<S extends z.ZodType>(tool: {
- name: string; parameters: S; lineOnly?: boolean; render?: (props: ToolRenderProps<z.infer<S>>) => React.ReactNode;
+  name: string;
+  parameters: S;
+  lineOnly?: boolean;
+  render?: (props: ToolRenderProps<z.infer<S>>) => React.ReactNode;
 }) {
- const render = useMemo(() => {
-   const Original = tool.render;
-   const Renderer = (props: ToolRenderProps<z.infer<S>>) => <InlineApproval toolCallId={props.toolCallId} fallback={Original ? <Original {...props} /> : null} />;
-   return tool.lineOnly ? lineOnlyRender(Renderer) : Renderer;
- }, [tool.render, tool.lineOnly]);
- useRenderTool({ name: tool.name, parameters: tool.parameters, render });
+  const render = useMemo(() => {
+    const Original = tool.render;
+    const Renderer = (props: ToolRenderProps<z.infer<S>>) => (
+      <InlineApproval
+        toolCallId={props.toolCallId}
+        fallback={Original ? <Original {...props} /> : null}
+      />
+    );
+    return tool.lineOnly ? lineOnlyRender(Renderer) : Renderer;
+  }, [tool.render, tool.lineOnly]);
+  useRenderTool({ name: tool.name, parameters: tool.parameters, render });
 }

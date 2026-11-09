@@ -17,9 +17,15 @@ export type FriendlyError = {
  * （最后一轮是人发的消息、后面什么都没有），就用这个稳定的字符串当原因，让错误卡和「重试」在刷新后
  * 照样重建出来，而不是消失。
  */
-export const UNANSWERED_TURN_REASON = "unanswered-turn: no reply was stored for this turn";
+export const UNANSWERED_TURN_REASON =
+  "unanswered-turn: no reply was stored for this turn";
 
-const RULES: Array<{ test: RegExp; title: string; hint?: string; retryable?: boolean }> = [
+const RULES: Array<{
+  test: RegExp;
+  title: string;
+  hint?: string;
+  retryable?: boolean;
+}> = [
   {
     test: /Hermes fallback model call failed:|备用模型「[^」]+」请求失败：/i,
     title: "备用模型也未能完成回答",
@@ -157,8 +163,17 @@ export function friendlyError(raw: string): FriendlyError {
     };
   // 做到一半就停了（工具出错 / 续轮到上限 / 空回复，DESIGN.md §100）：原因本身已经是给人看的中文，
   // 放在提示里直接显示；放在规则前面，免得里面带的英文原文（如 timeout）被认成「模型超时」。
-  if (/^机器人(在「[^」]*」这一步出错|做完「[^」]*」之后没有接着做|这一轮没有给出任何回复)/.test(detail)) {
-    return { title: "这一轮没有做完", hint: detail, detail: "", retryable: true };
+  if (
+    /^机器人(在「[^」]*」这一步出错|做完「[^」]*」之后没有接着做|这一轮没有给出任何回复)/.test(
+      detail,
+    )
+  ) {
+    return {
+      title: "这一轮没有做完",
+      hint: detail,
+      detail: "",
+      retryable: true,
+    };
   }
   for (const rule of RULES) {
     if (rule.test.test(detail)) {

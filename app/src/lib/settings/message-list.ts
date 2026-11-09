@@ -93,11 +93,13 @@ export function useMainBot() {
     },
     onMutate: (mainBotId) => {
       const previous = queryClient.getQueryData(queryKey);
-      if (previous) queryClient.setQueryData(queryKey, { ...previous, mainBotId });
+      if (previous)
+        queryClient.setQueryData(queryKey, { ...previous, mainBotId });
       return { previous };
     },
     onError: (_error, _variables, context) => {
-      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      if (context?.previous)
+        queryClient.setQueryData(queryKey, context.previous);
     },
     onSuccess: (saved) => queryClient.setQueryData(queryKey, saved),
   });

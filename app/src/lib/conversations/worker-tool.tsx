@@ -1,6 +1,6 @@
-import { useRenderTool } from "@/lib/chat/renderers";
 import { z } from "zod";
 import { WorkerCard } from "@/components/chat/worker-card";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { pendingWorkerTitle } from "@/lib/chat/worker-title";
 import { type CardCheck, registerCardCheck } from "./tool-renderers";
 
@@ -27,7 +27,10 @@ export function workerIdOf(result: unknown): string | undefined | null {
       break;
     }
   }
-  const id = value && typeof value === "object" ? (value as { workerId?: unknown }).workerId : undefined;
+  const id =
+    value && typeof value === "object"
+      ? (value as { workerId?: unknown }).workerId
+      : undefined;
   if (typeof id === "string") return id;
   const match = /"workerId"\s*:\s*\\?"([0-9a-f-]{36})/.exec(result);
   if (match?.[1]) return match[1];
@@ -36,7 +39,10 @@ export function workerIdOf(result: unknown): string | undefined | null {
 }
 
 /** delegate_task 完成后画不画卡片：拿到 workerId 才画；被拒绝时渲染器画空，这一轮不算有回答。 */
-export const workerDrawsCard: CardCheck = registerCardCheck(["delegate_task"], ({ result }) => workerIdOf(result) !== null);
+export const workerDrawsCard: CardCheck = registerCardCheck(
+  ["delegate_task"],
+  ({ result }) => workerIdOf(result) !== null,
+);
 
 export function WorkerTool() {
   useRenderTool({
@@ -45,7 +51,9 @@ export function WorkerTool() {
     render: ({ parameters: given, result }) => {
       const id = workerIdOf(result);
       if (id === null) return <></>;
-      return <WorkerCard pendingTitle={pendingWorkerTitle(given)} workerId={id} />;
+      return (
+        <WorkerCard pendingTitle={pendingWorkerTitle(given)} workerId={id} />
+      );
     },
   });
   return null;

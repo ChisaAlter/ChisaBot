@@ -60,10 +60,12 @@ export type TaskArtifact = {
 };
 export const TASK_EVIDENCE_KINDS = ["file", "delivery", "device"] as const;
 /** Saved with the task payload; a text-only task legitimately requires no external evidence. */
-export const taskCompletionSchema = z.object({
-  criteria: z.string().trim().min(1).max(1000),
-  required: z.array(z.enum(TASK_EVIDENCE_KINDS)).max(3),
-}).strict();
+export const taskCompletionSchema = z
+  .object({
+    criteria: z.string().trim().min(1).max(1000),
+    required: z.array(z.enum(TASK_EVIDENCE_KINDS)).max(3),
+  })
+  .strict();
 export type TaskCompletion = z.infer<typeof taskCompletionSchema>;
 /** References verified by the executor against existing owned records, never supplied by model prose. */
 export type TaskResultEvidence = {
@@ -261,7 +263,11 @@ export type TaskDiscovery = TaskInput & {
   sourceUrl?: string;
 };
 export type TaskPlanStep = TaskInput & { key: string; dependsOn?: string[] };
-export type TaskPlan = { summary: string; steps: TaskPlanStep[]; completion?: TaskCompletion };
+export type TaskPlan = {
+  summary: string;
+  steps: TaskPlanStep[];
+  completion?: TaskCompletion;
+};
 export type TaskExecutionResult = {
   summary: string;
   artifacts?: TaskArtifact[];

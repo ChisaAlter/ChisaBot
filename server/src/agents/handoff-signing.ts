@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   mintRunAssertion,
-  readApprovedRunAssertion,
   type RunAssertion,
+  readApprovedRunAssertion,
 } from "./callback-token";
 import type { HandoffWork } from "./handoff-runner";
 

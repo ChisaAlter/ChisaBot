@@ -13,9 +13,9 @@ import {
   ActionRefusedError,
   ComputerUnavailableError,
   ElementNotFoundError,
-  PageTimeoutError,
   HumanHasControlError,
   NavigationRefusedError,
+  PageTimeoutError,
   StaleSnapshotError,
   WorkspaceNotFoundError,
   WorkspaceRefusedError,
@@ -36,7 +36,10 @@ export function computerFailureOutcome(
   const reason = error.message || "这一步没有成功。";
   if (error instanceof ActionRefusedError)
     return { ok: false, reason, refused: true, rule: error.rule };
-  if (error instanceof NavigationRefusedError || error instanceof WorkspaceRefusedError)
+  if (
+    error instanceof NavigationRefusedError ||
+    error instanceof WorkspaceRefusedError
+  )
     return { ok: false, reason, refused: true, rule: null };
   if (error instanceof HumanHasControlError)
     return {
@@ -55,7 +58,8 @@ export function computerFailureOutcome(
     };
   if (error instanceof ElementNotFoundError)
     return { ok: false, reason, staleRefs: true };
-  if (error instanceof PageTimeoutError) return { ok: false, reason, pageTimeout: true };
+  if (error instanceof PageTimeoutError)
+    return { ok: false, reason, pageTimeout: true };
   if (
     error instanceof WorkspaceRequestError ||
     error instanceof WorkspaceNotFoundError ||

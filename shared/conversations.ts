@@ -13,17 +13,61 @@ export const ConversationBindingSchema = z.object({
 export type ConversationBinding = z.infer<typeof ConversationBindingSchema>;
 
 export const ConversationCommandSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("send"), commandId: identity, revision: z.number().int().positive(), messageId: identity,
-    content: z.array(z.object({ type: z.literal("text"), text: z.string().max(200_000) }).or(z.object({ type: z.literal("attachment"), attachmentId: identity }))).min(1),
+  z.object({
+    kind: z.literal("send"),
+    commandId: identity,
+    revision: z.number().int().positive(),
+    messageId: identity,
+    content: z
+      .array(
+        z
+          .object({ type: z.literal("text"), text: z.string().max(200_000) })
+          .or(
+            z.object({ type: z.literal("attachment"), attachmentId: identity }),
+          ),
+      )
+      .min(1),
     mode: z.enum(["queue", "steer"]).default("queue"),
   }),
-  z.object({ kind: z.literal("stop"), commandId: identity, revision: z.number().int().positive(), runId: identity }),
-  z.object({ kind: z.literal("resume-inbox"), commandId: identity, revision: z.number().int().positive(), sourceIds: z.array(identity).min(1).max(100) }),
-  z.object({ kind: z.literal("answer"), commandId: identity, revision: z.number().int().positive(), interactionId: identity, answer: z.unknown() }),
+  z.object({
+    kind: z.literal("stop"),
+    commandId: identity,
+    revision: z.number().int().positive(),
+    runId: identity,
+  }),
+  z.object({
+    kind: z.literal("resume-inbox"),
+    commandId: identity,
+    revision: z.number().int().positive(),
+    sourceIds: z.array(identity).min(1).max(100),
+  }),
+  z.object({
+    kind: z.literal("answer"),
+    commandId: identity,
+    revision: z.number().int().positive(),
+    interactionId: identity,
+    answer: z.unknown(),
+  }),
 ]);
 export type ConversationCommand = z.infer<typeof ConversationCommandSchema>;
-export type ConversationRunStatus = "queued" | "starting" | "running" | "waiting" | "stopping" | "stopped" | "completed" | "failed" | "interrupted";
-export type ConversationReceipt = { commandId: string; runId: string | null; bindingId: string; revision: number; accepted: true; alreadyAccepted: boolean };
+export type ConversationRunStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "waiting"
+  | "stopping"
+  | "stopped"
+  | "completed"
+  | "failed"
+  | "interrupted";
+export type ConversationReceipt = {
+  commandId: string;
+  runId: string | null;
+  bindingId: string;
+  revision: number;
+  accepted: true;
+  alreadyAccepted: boolean;
+};
 
 export type ConversationSourceEvent = {
   type: string;

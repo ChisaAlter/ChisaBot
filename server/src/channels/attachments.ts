@@ -1,4 +1,3 @@
-import { imageDimsFor } from "../image-dims";
 import {
   and,
   eq,
@@ -12,14 +11,6 @@ import {
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { AppVariables } from "../auth/guards";
-import type { Database } from "../db/client";
-import {
-  attachments,
-  channelMemberships,
-  channels,
-  intelligenceChannelMappings,
-} from "../db/schema";
 import {
   ATTACHMENT_THUMB_WIDTHS,
   type AttachmentThumbWidth,
@@ -32,8 +23,17 @@ import {
   unreadablePhotoFormat,
   unsupportedImageReason,
 } from "../../../shared/attachments";
-import type { StoredAttachment } from "./attachment-parts";
+import type { AppVariables } from "../auth/guards";
+import type { Database } from "../db/client";
+import {
+  attachments,
+  channelMemberships,
+  channels,
+  intelligenceChannelMappings,
+} from "../db/schema";
+import { imageDimsFor } from "../image-dims";
 import { sniffMimeType } from "./attachment-mime";
+import type { StoredAttachment } from "./attachment-parts";
 import { attachmentThumbnailer, type Thumbnailer } from "./attachment-thumbs";
 
 function megabytes(bytes: number): string {
@@ -429,7 +429,11 @@ export async function markAttachmentsSent(
 
   const unrecorded = await database
     .transaction(async (transaction) => {
-      await recordAttachmentsSent(transaction as unknown as Database, turn, known);
+      await recordAttachmentsSent(
+        transaction as unknown as Database,
+        turn,
+        known,
+      );
       return [];
     })
     .catch((error: unknown) => {
@@ -723,7 +727,9 @@ export type ChannelUploadMirror = (input: {
   bytes: Buffer;
 }) => Promise<void>;
 let channelUploadMirror: ChannelUploadMirror | null = null;
-export function setChannelUploadMirror(mirror: ChannelUploadMirror | null): void {
+export function setChannelUploadMirror(
+  mirror: ChannelUploadMirror | null,
+): void {
   channelUploadMirror = mirror;
 }
 
@@ -1175,7 +1181,13 @@ export function createChannelAttachmentRoutes(
         mimeType: outcome.inserted.mimeType,
         bytes: Buffer.from(bytes),
       }).catch((error: unknown) => {
-        console.error(JSON.stringify({ type: "channel-upload-mirror-failed", channelId, error: error instanceof Error ? error.name : "UnknownError" }));
+        console.error(
+          JSON.stringify({
+            type: "channel-upload-mirror-failed",
+            channelId,
+            error: error instanceof Error ? error.name : "UnknownError",
+          }),
+        );
       });
     }
 
@@ -1183,10 +1195,19 @@ export function createChannelAttachmentRoutes(
      * 图片的宽高（DESIGN.md §83.2）：记下来，也随回答给作曲框，它写进消息 part 的 metadata，
      * 网页画这张图之前就能按比例留好框。不是图片 / 读不出来就不带。旧客户端不看这两个字段。
      */
-    const dims = kind === "image"
-      ? await imageDimsFor(database).remember(`a:${outcome.inserted.id.toLowerCase()}`, bytes)
-      : null;
-    return context.json(dims ? { ...outcome.inserted, width: dims.width, height: dims.height } : outcome.inserted, 201);
+    const dims =
+      kind === "image"
+        ? await imageDimsFor(database).remember(
+            `a:${outcome.inserted.id.toLowerCase()}`,
+            bytes,
+          )
+        : null;
+    return context.json(
+      dims
+        ? { ...outcome.inserted, width: dims.width, height: dims.height }
+        : outcome.inserted,
+      201,
+    );
   });
 
   return routes;

@@ -9,8 +9,10 @@ describe("TEST_DATABASE_URL", () => {
   test("refuses the live development database even when DATABASE_URL names it", () => {
     expect(() =>
       testDatabaseUrlFrom({
-        TEST_DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/openbot",
-        DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/chisabot_test",
+        TEST_DATABASE_URL:
+          "postgres://chisabot:chisabot@localhost:5432/openbot",
+        DATABASE_URL:
+          "postgres://chisabot:chisabot@localhost:5432/chisabot_test",
       }),
     ).toThrow(/live chisabot database/);
   });
@@ -18,7 +20,8 @@ describe("TEST_DATABASE_URL", () => {
   test("does not read DATABASE_URL as a fallback", () => {
     expect(() =>
       testDatabaseUrlFrom({
-        DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/chisabot_test",
+        DATABASE_URL:
+          "postgres://chisabot:chisabot@localhost:5432/chisabot_test",
       }),
     ).toThrow(/TEST_DATABASE_URL/);
   });

@@ -212,11 +212,14 @@ suite("CB-104 stop and queue", () => {
   }
   const post = async (threadId: string, id: string, text = id) => {
     const response = await backend.handle(
-      new Request(`http://localhost/api/conversations/threads/${threadId}/inbox`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, text }),
-      }),
+      new Request(
+        `http://localhost/api/conversations/threads/${threadId}/inbox`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, text }),
+        },
+      ),
       owner,
     );
     expect(response?.status).toBe(200);

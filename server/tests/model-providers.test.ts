@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { createModelFixture, modelMessages } from "./support/model-fixture";
 import { z } from "zod";
 import {
   normalizeModelBaseUrls,
@@ -12,6 +11,7 @@ import {
   createModelCompleter,
 } from "../src/routing/model";
 import { validateTenantPackage } from "../src/tenant-package";
+import { createModelFixture, modelMessages } from "./support/model-fixture";
 
 const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const originalEnvironment = {
@@ -227,16 +227,22 @@ test.each([
       process.env.ANTHROPIC_BASE_URL = `${proxy.url.origin}${suffix}`;
       normalizeModelBaseUrls();
       process.env.OPENAI_BASE_URL = base;
-      mock.rules.push({ match: { toolResult: true }, reply: { content: "The balance is 42." } });
-      mock.rules.push({ match: /balance/, reply: {
-        toolCalls: [
-          {
-            id: "balance-call",
-            name: "read_balance",
-            arguments: { account: "demo" },
-          },
-        ],
-      } });
+      mock.rules.push({
+        match: { toolResult: true },
+        reply: { content: "The balance is 42." },
+      });
+      mock.rules.push({
+        match: /balance/,
+        reply: {
+          toolCalls: [
+            {
+              id: "balance-call",
+              name: "read_balance",
+              arguments: { account: "demo" },
+            },
+          ],
+        },
+      });
       const model = runtimeModelForEnvironment(packageModel, {
         BOT_PROVIDER: "anthropic",
         BOT_MODEL: "claude-sonnet-4-5",

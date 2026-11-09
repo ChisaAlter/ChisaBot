@@ -14,11 +14,14 @@
 import type { AbstractAgent, BaseEvent } from "@ag-ui/client";
 import type { Observable } from "rxjs";
 import type { AuditInitiator } from "../audit";
+import {
+  type ExecutionClass,
+  executionDeadline,
+} from "../conversations/capacity";
 import { withModelConnectionScope } from "../model-connection-context";
 import type { HandoffDelivery } from "./handoff-runner";
 import { guardBotTurn } from "./lifecycle";
 import { textOf } from "./message-text";
-import { executionDeadline, type ExecutionClass } from "../conversations/capacity";
 
 /** Whatever runs an agent against a thread and records what it did. */
 
@@ -373,7 +376,10 @@ export function createHandoffDelivery(options: {
             threadId: where.threadId,
             agent,
             join: false,
-            execution: { kind: work.answerIn ? "foreground" : "background", initiator: { kind: "handoff", id: work.fromBotId } },
+            execution: {
+              kind: work.answerIn ? "foreground" : "background",
+              initiator: { kind: "handoff", id: work.fromBotId },
+            },
             persistedInputMessages: shown
               ? [{ id: `handoff-${runId}`, role: "user", content: shown }]
               : [],
@@ -572,8 +578,17 @@ function settled(
     paused.addEventListener("abort", onPause, { once: true });
     subscription = events.subscribe({
       next: (event) => {
-        if (event.type === "CUSTOM" && "name" in event && event.name === "chisabot.capacity")
-          timer.state((event as BaseEvent & { value?: { status?: string } }).value?.status === "queued" ? "waiting" : "admitted");
+        if (
+          event.type === "CUSTOM" &&
+          "name" in event &&
+          event.name === "chisabot.capacity"
+        )
+          timer.state(
+            (event as BaseEvent & { value?: { status?: string } }).value
+              ?.status === "queued"
+              ? "waiting"
+              : "admitted",
+          );
         // Compared as a string rather than through the enum: `@ag-ui/client` re-exports the types
         // this file needs and not that value, and adding a second AG-UI package for one constant
         // would be a dependency to keep in step for no gain.

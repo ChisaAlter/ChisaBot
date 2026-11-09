@@ -199,9 +199,9 @@ describe("deleting a name this surface does not own", () => {
   });
 
   test("refuses a compiled component's name instead of deleting its governance", async () => {
-    await expect(store.remove(compiled, "admin@chisabot.local")).rejects.toThrow(
-      SandboxedNotFoundError,
-    );
+    await expect(
+      store.remove(compiled, "admin@chisabot.local"),
+    ).rejects.toThrow(SandboxedNotFoundError);
 
     const [governance] = await database
       .select()

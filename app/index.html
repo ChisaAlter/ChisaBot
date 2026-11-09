@@ -81,10 +81,10 @@
          手机 = 主要指针是触屏且屏幕短边 < 600，或浏览器明确说是手机（UA-CH）；横屏手机也是手机，平板按宽度。 -->
     <script>
       try {
-        (function () {
+        (() => {
           var d = document.documentElement;
           var ua = navigator.userAgent || "";
-          var mm = function (q) { return !!(window.matchMedia && window.matchMedia(q).matches); };
+          var mm = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
           var force = null;
           try { force = window.localStorage.getItem("chisabot-layout"); } catch (e) {}
           var uad = navigator.userAgentData;
@@ -96,7 +96,7 @@
           if (mm("(display-mode: standalone)") || mm("(display-mode: fullscreen)") || mm("(display-mode: window-controls-overlay)") || navigator.standalone === true) d.setAttribute("data-standalone", "");
           if (/ChisaBotAndroid\//.test(ua)) d.setAttribute("data-android-app", "");
           // 浏览器「可以安装」的事件可能比应用脚本先到：先接住，app/src/lib/pwa.ts 再接手。
-          window.addEventListener("beforeinstallprompt", function (event) { event.preventDefault(); window.__chisabotInstallPrompt = event; });
+          window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); window.__chisabotInstallPrompt = event; });
         })();
       } catch (e) {}
     </script>

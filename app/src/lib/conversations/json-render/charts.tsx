@@ -1,7 +1,17 @@
 // biome-ignore-all lint/style/noNonNullAssertion: indexes are bounded by the loop / length checks right above each access.
-import { type CSSProperties, type PointerEvent, useId, useMemo, useRef, useState } from "react";
-import { normaliseTone, type Tone } from "../../../../../shared/json-render/catalog";
+import {
+  type CSSProperties,
+  type PointerEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "@/lib/utils";
+import {
+  normaliseTone,
+  type Tone,
+} from "../../../../../shared/json-render/catalog";
 import { LiveText } from "./rich-context";
 import {
   gaugeTone,
@@ -50,9 +60,18 @@ function SeriesPaths({
           // biome-ignore lint/suspicious/noArrayIndexKey: segments have no identity beyond their order.
           <g key={index}>
             {area && points.length > 1 ? (
-              <path className="jr-c-area" d={`${line}L${last.x.toFixed(2)},${height}L${first.x.toFixed(2)},${height}Z`} fill={`url(#${gradientId})`} />
+              <path
+                className="jr-c-area"
+                d={`${line}L${last.x.toFixed(2)},${height}L${first.x.toFixed(2)},${height}Z`}
+                fill={`url(#${gradientId})`}
+              />
             ) : null}
-            <path className="jr-c-line" d={line} fill="none" vectorEffect="non-scaling-stroke" />
+            <path
+              className="jr-c-line"
+              d={line}
+              fill="none"
+              vectorEffect="non-scaling-stroke"
+            />
           </g>
         );
       })}
@@ -70,38 +89,91 @@ function Gradient({ id }: { id: string }) {
 }
 
 /** 迷你走势线：Metric 的 spark 和 Sparkline 组件共用。tone 不给时按首尾涨跌自动绿 / 红。 */
-export function SparkSvg({ data, tone, height = 32, className }: { data: unknown; tone?: unknown; height?: number; className?: string }) {
+export function SparkSvg({
+  data,
+  tone,
+  height = 32,
+  className,
+}: {
+  data: unknown;
+  tone?: unknown;
+  height?: number;
+  className?: string;
+}) {
   const id = useId().replace(/:/g, "");
   const values = useMemo(() => toSeries(data), [data]);
   const numeric = values.filter((v) => v !== null).length;
   if (numeric < 2) return null;
-  const resolved: Tone = tone ? normaliseTone(tone) : (({ up: "success", down: "danger", flat: "accent" }) as const)[seriesTrend(values)];
+  const resolved: Tone = tone
+    ? normaliseTone(tone)
+    : ({ up: "success", down: "danger", flat: "accent" } as const)[
+        seriesTrend(values)
+      ];
   const { segments, x, y } = layoutSeries([values], VIEW_W, height, 3);
-  const lastIndex = values.map((v, i) => (v === null ? -1 : i)).filter((i) => i >= 0).pop() ?? 0;
+  const lastIndex =
+    values
+      .map((v, i) => (v === null ? -1 : i))
+      .filter((i) => i >= 0)
+      .pop() ?? 0;
   const lastValue = values[lastIndex] ?? 0;
   return (
-    <div className={cn("jr-spark", toneClass(resolved), className)} style={{ height }}>
-      <svg aria-hidden className="jr-c-svg" preserveAspectRatio="none" viewBox={`0 0 ${VIEW_W} ${height}`}>
+    <div
+      className={cn("jr-spark", toneClass(resolved), className)}
+      style={{ height }}
+    >
+      <svg
+        aria-hidden
+        className="jr-c-svg"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${VIEW_W} ${height}`}
+      >
         <defs>
           <Gradient id={`g${id}`} />
         </defs>
-        <SeriesPaths area gradientId={`g${id}`} height={height} segments={segments[0] ?? []} />
+        <SeriesPaths
+          area
+          gradientId={`g${id}`}
+          height={height}
+          segments={segments[0] ?? []}
+        />
       </svg>
       <span
         aria-hidden
         className="jr-c-dot is-end"
-        style={{ left: `${(x(lastIndex) / VIEW_W) * 100}%`, top: `${(y(lastValue) / height) * 100}%` }}
+        style={{
+          left: `${(x(lastIndex) / VIEW_W) * 100}%`,
+          top: `${(y(lastValue) / height) * 100}%`,
+        }}
       />
     </div>
   );
 }
 
-export function Sparkline({ data, tone, label, value, height }: { data: unknown; tone?: unknown; label?: string | null; value?: string | number | null; height?: number | null }) {
+export function Sparkline({
+  data,
+  tone,
+  label,
+  value,
+  height,
+}: {
+  data: unknown;
+  tone?: unknown;
+  label?: string | null;
+  value?: string | number | null;
+  height?: number | null;
+}) {
   return (
     <div className="jr-sparkline jr-el">
       {label ? <span className="jr-sparkline-k">{label}</span> : null}
-      <SparkSvg className="jr-sparkline-c" data={data} height={height ?? 32} tone={tone} />
-      {value !== null && value !== undefined && value !== "" ? <LiveText className="jr-sparkline-v" value={String(value)} /> : null}
+      <SparkSvg
+        className="jr-sparkline-c"
+        data={data}
+        height={height ?? 32}
+        tone={tone}
+      />
+      {value !== null && value !== undefined && value !== "" ? (
+        <LiveText className="jr-sparkline-v" value={String(value)} />
+      ) : null}
     </div>
   );
 }
@@ -136,29 +208,67 @@ export function Chart({
       return series.slice(0, 3).map((s, i) => ({
         name: String(s?.name ?? `系列 ${i + 1}`),
         data: toSeries(s?.data),
-        tone: s?.tone ? normaliseTone(s.tone) : i === 0 && tone ? normaliseTone(tone) : SERIES_TONES[i]!,
+        tone: s?.tone
+          ? normaliseTone(s.tone)
+          : i === 0 && tone
+            ? normaliseTone(tone)
+            : SERIES_TONES[i]!,
       }));
     }
-    return [{ name: "", data: toSeries(data), tone: tone ? normaliseTone(tone) : "accent" }];
+    return [
+      {
+        name: "",
+        data: toSeries(data),
+        tone: tone ? normaliseTone(tone) : "accent",
+      },
+    ];
   }, [series, data, tone]);
   const count = Math.max(...all.map((s) => s.data.length), 0);
   const type = kind ?? "area";
   // 上下各留 16px 给坐标字（最高 / 最低），线和柱子不会压在字上。
-  const layout = useMemo(() => layoutSeries(all.map((s) => s.data), VIEW_W, H, 16, type === "bar" ? 0 : null), [all, H, type]);
+  const layout = useMemo(
+    () =>
+      layoutSeries(
+        all.map((s) => s.data),
+        VIEW_W,
+        H,
+        16,
+        type === "bar" ? 0 : null,
+      ),
+    [all, H, type],
+  );
   if (count < (type === "bar" ? 1 : 2)) return null;
   const xLabels = Array.isArray(labels) ? labels : [];
-  const pct = (i: number) => (count === 1 ? 50 : type === "bar" ? ((i + 0.5) / count) * 100 : (i / (count - 1)) * 100);
-  const fmt = (v: number | null) => (v === null ? "—" : `${unit && /^[$¥€£₿]$/.test(unit) ? unit : ""}${shortNumber(v)}${unit && !/^[$¥€£₿]$/.test(unit) ? unit : ""}`);
+  const pct = (i: number) =>
+    count === 1
+      ? 50
+      : type === "bar"
+        ? ((i + 0.5) / count) * 100
+        : (i / (count - 1)) * 100;
+  const fmt = (v: number | null) =>
+    v === null
+      ? "—"
+      : `${unit && /^[$¥€£₿]$/.test(unit) ? unit : ""}${shortNumber(v)}${unit && !/^[$¥€£₿]$/.test(unit) ? unit : ""}`;
 
   const pick = (event: PointerEvent<HTMLDivElement>) => {
     const rect = plotRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return;
-    const fx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    setHover(type === "bar" ? Math.min(count - 1, Math.floor(fx * count)) : Math.round(fx * (count - 1)));
+    const fx = Math.min(
+      1,
+      Math.max(0, (event.clientX - rect.left) / rect.width),
+    );
+    setHover(
+      type === "bar"
+        ? Math.min(count - 1, Math.floor(fx * count))
+        : Math.round(fx * (count - 1)),
+    );
   };
 
   // 窄卡里最多 3 个横轴刻度（首、中、尾），长标签（10/13 11:00）也不会挤在一起。
-  const tickIndexes = sampleLabels(xLabels.length ? Math.min(xLabels.length, count) : 0, 3);
+  const tickIndexes = sampleLabels(
+    xLabels.length ? Math.min(xLabels.length, count) : 0,
+    3,
+  );
   const hoverLeft = hover === null ? 0 : pct(hover);
 
   return (
@@ -166,7 +276,10 @@ export function Chart({
       {all.length > 1 ? (
         <div className="jr-chart-legend">
           {all.map((s) => (
-            <span className={cn("jr-chart-key", toneClass(s.tone))} key={s.name}>
+            <span
+              className={cn("jr-chart-key", toneClass(s.tone))}
+              key={s.name}
+            >
               <i />
               {s.name}
             </span>
@@ -182,22 +295,47 @@ export function Chart({
         style={{ height: H }}
       >
         <span className="jr-chart-y is-top">{fmt(layout.max)}</span>
-        <span className="jr-chart-y is-bottom">{fmt(type === "bar" ? 0 : layout.min)}</span>
+        <span className="jr-chart-y is-bottom">
+          {fmt(type === "bar" ? 0 : layout.min)}
+        </span>
         {type === "bar" ? (
-          <div className="jr-bars" style={{ "--jr-series": String(all.length) } as CSSProperties}>
+          <div
+            className="jr-bars"
+            style={{ "--jr-series": String(all.length) } as CSSProperties}
+          >
             {Array.from({ length: count }, (_, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: one column per data index.
-              <div className={cn("jr-bar-col", hover === i && "is-hover")} key={i}>
+              <div
+                className={cn("jr-bar-col", hover === i && "is-hover")}
+                key={i}
+              >
                 {all.map((s) => {
                   const v = s.data[i] ?? null;
-                  const h = v === null ? 0 : Math.max(2, ((Math.max(0, v) - 0) / (layout.max || 1)) * 100);
-                  return <span className={cn("jr-bar", toneClass(s.tone))} key={s.name} style={{ height: `${h}%` }} />;
+                  const h =
+                    v === null
+                      ? 0
+                      : Math.max(
+                          2,
+                          ((Math.max(0, v) - 0) / (layout.max || 1)) * 100,
+                        );
+                  return (
+                    <span
+                      className={cn("jr-bar", toneClass(s.tone))}
+                      key={s.name}
+                      style={{ height: `${h}%` }}
+                    />
+                  );
                 })}
               </div>
             ))}
           </div>
         ) : (
-          <svg aria-hidden className="jr-c-svg jr-chart-svg" preserveAspectRatio="none" viewBox={`0 0 ${VIEW_W} ${H}`}>
+          <svg
+            aria-hidden
+            className="jr-c-svg jr-chart-svg"
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${VIEW_W} ${H}`}
+          >
             <defs>
               {all.map((s, i) => (
                 <g className={toneClass(s.tone)} key={s.name}>
@@ -206,18 +344,37 @@ export function Chart({
               ))}
             </defs>
             {[0.25, 0.5, 0.75].map((f) => (
-              <line className="jr-c-grid" key={f} vectorEffect="non-scaling-stroke" x1="0" x2={VIEW_W} y1={H * f} y2={H * f} />
+              <line
+                className="jr-c-grid"
+                key={f}
+                vectorEffect="non-scaling-stroke"
+                x1="0"
+                x2={VIEW_W}
+                y1={H * f}
+                y2={H * f}
+              />
             ))}
             {all.map((s, i) => (
               <g className={cn("jr-c-series", toneClass(s.tone))} key={s.name}>
-                <SeriesPaths area={type === "area" && all.length === 1} gradientId={`g${id}${i}`} height={H} segments={layout.segments[i] ?? []} />
+                <SeriesPaths
+                  area={type === "area" && all.length === 1}
+                  gradientId={`g${id}${i}`}
+                  height={H}
+                  segments={layout.segments[i] ?? []}
+                />
               </g>
             ))}
           </svg>
         )}
         {hover !== null ? (
           <>
-            {type === "bar" ? null : <span aria-hidden className="jr-chart-cursor" style={{ left: `${hoverLeft}%` }} />}
+            {type === "bar" ? null : (
+              <span
+                aria-hidden
+                className="jr-chart-cursor"
+                style={{ left: `${hoverLeft}%` }}
+              />
+            )}
             {type === "bar"
               ? null
               : all.map((s) => {
@@ -228,7 +385,10 @@ export function Chart({
                       aria-hidden
                       className={cn("jr-c-dot is-hover", toneClass(s.tone))}
                       key={s.name}
-                      style={{ left: `${hoverLeft}%`, top: `${(layout.y(v) / H) * 100}%` }}
+                      style={{
+                        left: `${hoverLeft}%`,
+                        top: `${(layout.y(v) / H) * 100}%`,
+                      }}
                     />
                   );
                 })}
@@ -237,9 +397,14 @@ export function Chart({
               role="status"
               style={{ left: `${hoverLeft}%` }}
             >
-              {xLabels[hover] ? <div className="jr-chart-tip-k">{xLabels[hover]}</div> : null}
+              {xLabels[hover] ? (
+                <div className="jr-chart-tip-k">{xLabels[hover]}</div>
+              ) : null}
               {all.map((s) => (
-                <div className={cn("jr-chart-tip-v", toneClass(s.tone))} key={s.name}>
+                <div
+                  className={cn("jr-chart-tip-v", toneClass(s.tone))}
+                  key={s.name}
+                >
                   {all.length > 1 ? <i /> : null}
                   {all.length > 1 ? <span>{s.name}</span> : null}
                   <b>{fmt(s.data[hover] ?? null)}</b>
@@ -253,7 +418,10 @@ export function Chart({
         <div className="jr-chart-x" aria-hidden>
           {tickIndexes.map((i, n) => (
             <span
-              className={cn(n === 0 && "is-first", n === tickIndexes.length - 1 && "is-last")}
+              className={cn(
+                n === 0 && "is-first",
+                n === tickIndexes.length - 1 && "is-last",
+              )}
               key={i}
               style={{ left: `${pct(i)}%` }}
             >
@@ -262,7 +430,9 @@ export function Chart({
           ))}
         </div>
       ) : null}
-      {caption ? <figcaption className="jr-chart-cap">{caption}</figcaption> : null}
+      {caption ? (
+        <figcaption className="jr-chart-cap">{caption}</figcaption>
+      ) : null}
     </figure>
   );
 }
@@ -284,13 +454,27 @@ export function Ring({
   tone?: unknown;
   size?: "sm" | "md" | "lg" | null;
 }) {
-  const parts = Array.isArray(segments) && segments.length && (value === null || value === undefined) ? segments.slice(0, 6) : null;
+  const parts =
+    Array.isArray(segments) &&
+    segments.length &&
+    (value === null || value === undefined)
+      ? segments.slice(0, 6)
+      : null;
   const single = parts ? null : Math.max(0, Math.min(100, Number(value) || 0));
   const singleTone = tone ? normaliseTone(tone) : "accent";
-  const arcs = parts ? ringSegments(parts.map((p) => Number(p.value) || 0)) : [];
-  const partTone = (i: number): Tone => (parts?.[i]?.tone ? normaliseTone(parts[i]!.tone) : (["accent", "info", "success", "warn", "danger", "default"] as Tone[])[i % 6]!);
-  const total = parts?.reduce((a, p) => a + Math.max(0, Number(p.value) || 0), 0) ?? 0;
-  const centerText = center ?? (single !== null ? `${Math.round(single)}%` : "");
+  const arcs = parts
+    ? ringSegments(parts.map((p) => Number(p.value) || 0))
+    : [];
+  const partTone = (i: number): Tone =>
+    parts?.[i]?.tone
+      ? normaliseTone(parts[i]!.tone)
+      : (["accent", "info", "success", "warn", "danger", "default"] as Tone[])[
+          i % 6
+        ]!;
+  const total =
+    parts?.reduce((a, p) => a + Math.max(0, Number(p.value) || 0), 0) ?? 0;
+  const centerText =
+    center ?? (single !== null ? `${Math.round(single)}%` : "");
   return (
     <div className={cn("jr-ring jr-el", `is-${size ?? "md"}`)}>
       <div className="jr-ring-fig">
@@ -306,7 +490,10 @@ export function Ring({
             />
           ) : (
             arcs.map((arc) => {
-              const length = Math.max(0, (arc.end - arc.start) * 100 - (arcs.length > 1 ? 1.2 : 0));
+              const length = Math.max(
+                0,
+                (arc.end - arc.start) * 100 - (arcs.length > 1 ? 1.2 : 0),
+              );
               return (
                 <circle
                   className={cn("jr-ring-arc", toneClass(partTone(arc.index)))}
@@ -324,13 +511,17 @@ export function Ring({
         {centerText ? (
           <div className="jr-ring-center">
             <LiveText className="jr-ring-v" value={centerText} />
-            {label && size !== "sm" ? <span className="jr-ring-k">{label}</span> : null}
+            {label && size !== "sm" ? (
+              <span className="jr-ring-k">{label}</span>
+            ) : null}
           </div>
         ) : null}
       </div>
       {parts || caption || (label && size === "sm") ? (
         <div className="jr-ring-side">
-          {label && (size === "sm" || !centerText) ? <div className="jr-ring-title">{label}</div> : null}
+          {label && (size === "sm" || !centerText) ? (
+            <div className="jr-ring-title">{label}</div>
+          ) : null}
           {parts ? (
             <ul className="jr-ring-legend">
               {parts.map((p, i) => (
@@ -338,7 +529,11 @@ export function Ring({
                 <li className={toneClass(partTone(i))} key={i}>
                   <i />
                   <span className="jr-ring-legend-k">{p.label}</span>
-                  <span className="jr-ring-legend-v">{total > 0 ? `${Math.round(((Number(p.value) || 0) / total) * 100)}%` : ""}</span>
+                  <span className="jr-ring-legend-v">
+                    {total > 0
+                      ? `${Math.round(((Number(p.value) || 0) / total) * 100)}%`
+                      : ""}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -373,13 +568,24 @@ export function Gauge({
   const hi = max ?? 100;
   const v = toNumber(value) ?? 0;
   const share = hi === lo ? 0 : Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
-  const resolved = normaliseTone(gaugeTone(v, warnAt, dangerAt, tone ? normaliseTone(tone) : "accent"));
+  const resolved = normaliseTone(
+    gaugeTone(v, warnAt, dangerAt, tone ? normaliseTone(tone) : "accent"),
+  );
   const display = `${Number.isInteger(v) ? v : Number(v.toFixed(1))}`;
   return (
     <div className={cn("jr-gauge jr-el", toneClass(resolved))}>
       <svg aria-hidden className="jr-gauge-svg" viewBox="0 0 120 66">
-        <path className="jr-gauge-track" d="M10 60 A50 50 0 0 1 110 60" pathLength={100} />
-        <path className="jr-gauge-arc" d="M10 60 A50 50 0 0 1 110 60" pathLength={100} strokeDasharray={`${share * 100} 100`} />
+        <path
+          className="jr-gauge-track"
+          d="M10 60 A50 50 0 0 1 110 60"
+          pathLength={100}
+        />
+        <path
+          className="jr-gauge-arc"
+          d="M10 60 A50 50 0 0 1 110 60"
+          pathLength={100}
+          strokeDasharray={`${share * 100} 100`}
+        />
       </svg>
       <div className="jr-gauge-center">
         <span className="jr-gauge-v">
@@ -427,14 +633,20 @@ export function HeatStrip({
       ) : null}
       <div
         className={cn("jr-heat-grid", calendar ? "is-calendar" : "is-strip")}
-        style={calendar ? ({ "--jr-heat-rows": String(rows) } as CSSProperties) : undefined}
+        style={
+          calendar
+            ? ({ "--jr-heat-rows": String(rows) } as CSSProperties)
+            : undefined
+        }
       >
         {data.map((v, i) => (
           <span
             className={`jr-heat-cell is-l${heatLevel(v, max)}`}
             // biome-ignore lint/suspicious/noArrayIndexKey: cells are positional.
             key={i}
-            title={[tips[i], v === null ? "无数据" : String(v)].filter(Boolean).join(" · ")}
+            title={[tips[i], v === null ? "无数据" : String(v)]
+              .filter(Boolean)
+              .join(" · ")}
           />
         ))}
       </div>

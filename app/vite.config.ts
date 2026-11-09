@@ -102,15 +102,15 @@ const serving = {
  * paint and the app can never disagree.
  */
 function skyBoot(): Plugin {
-  const marker =
-    /<!-- chisabot-sky-boot:[^>]*-->/;
+  const marker = /<!-- chisabot-sky-boot:[^>]*-->/;
   return {
     name: "chisabot-sky-boot",
     transformIndexHtml(html) {
       // 时段天空之后是用户选的配色（覆盖 --sky-1..3）、玻璃材质和地址栏颜色（lib/palette.ts）。
       return html.replace(
         marker,
-        () => `<script>${skyBootScript()}</script><script>${paletteBootScript()}</script>`,
+        () =>
+          `<script>${skyBootScript()}</script><script>${paletteBootScript()}</script>`,
       );
     },
   };
@@ -118,11 +118,17 @@ function skyBoot(): Plugin {
 
 /** Keep the pre-paint storage upgrade synchronous without adding a blocking network request. */
 function legacyBrowserBoot(): Plugin {
-  const source = readFileSync(path.resolve(__dirname, "public/compat/legacy-browser.js"), "utf8");
+  const source = readFileSync(
+    path.resolve(__dirname, "public/compat/legacy-browser.js"),
+    "utf8",
+  );
   return {
     name: "chisabot-legacy-browser-boot",
     transformIndexHtml(html) {
-      return html.replace('<script src="/compat/legacy-browser.js"></script>', () => `<script>${source}</script>`);
+      return html.replace(
+        '<script src="/compat/legacy-browser.js"></script>',
+        () => `<script>${source}</script>`,
+      );
     },
   };
 }
@@ -198,7 +204,10 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   // 下面几个同理：本身只在少数地方按需用，但体积大，一旦和小模块同块就被拖上首屏。KaTeX 和 micromark-extension-math
   // 反而不能点名：点名进手工块后 mathHtml 会留下来，把 KaTeX（~78KB gzip）静态带上；main 上它只被 Mermaid 按需引用。
 
-  [/\/node_modules\/(shiki|@shikijs\/(core|engine-javascript|types|vscode-textmate)|oniguruma-to-es|oniguruma-parser|regex|regex-recursion|regex-utilities)\//, "vendor-shiki"],
+  [
+    /\/node_modules\/(shiki|@shikijs\/(core|engine-javascript|types|vscode-textmate)|oniguruma-to-es|oniguruma-parser|regex|regex-recursion|regex-utilities)\//,
+    "vendor-shiki",
+  ],
   // 代码高亮的 Oniguruma 引擎（内联 wasm，~240KB gzip）单独一块：否则 Rollup 会把 Markdown 用到的几个小包和它同块。
   [/\/node_modules\/@shikijs\/engine-oniguruma\//, "vendor-shiki-wasm"],
   [/\/node_modules\/lucide-react\//, "vendor-lucide"],
@@ -217,14 +226,23 @@ const SHELL_ROOTS = [
   "/src/components/panels/panel-rail.tsx",
 ];
 
-type ModuleInfoLookup = (id: string) => { importedIds: readonly string[]; isEntry: boolean } | null;
-type ManualChunkMeta = { getModuleIds: () => IterableIterator<string>; getModuleInfo: ModuleInfoLookup };
+type ModuleInfoLookup = (
+  id: string,
+) => { importedIds: readonly string[]; isEntry: boolean } | null;
+type ManualChunkMeta = {
+  getModuleIds: () => IterableIterator<string>;
+  getModuleInfo: ModuleInfoLookup;
+};
 
 function isVendorChunked(id: string): boolean {
   const normalizedId = normalizedModuleId(id);
   // streamdown 自己按需 import 的代码块部分不归进来，否则 Markdown 一加载就静态依赖 shiki。
   // 它的 Mermaid 小包装只是一行 re-export（真正的 mermaid 仍是动态 import），跟着 vendor-markdown 走。
-  if (/\.css($|\?)/.test(normalizedId) || /\/streamdown\/dist\/code-block-/.test(normalizedId)) return false;
+  if (
+    /\.css($|\?)/.test(normalizedId) ||
+    /\/streamdown\/dist\/code-block-/.test(normalizedId)
+  )
+    return false;
   return VENDOR_CHUNKS.some(([pattern]) => pattern.test(normalizedId));
 }
 
@@ -252,19 +270,29 @@ export function shellModuleIds(meta: ManualChunkMeta): Set<string> {
     ids.filter((id) => meta.getModuleInfo(id)?.isEntry),
     () => false,
   );
-  const roots = ids.filter((id) => SHELL_ROOTS.some((root) => normalizedModuleId(id).endsWith(root)));
-  const shell = closure(roots, (id) => entry.has(id) || isVendorChunked(id) || /\.css($|\?)/.test(id));
+  const roots = ids.filter((id) =>
+    SHELL_ROOTS.some((root) => normalizedModuleId(id).endsWith(root)),
+  );
+  const shell = closure(
+    roots,
+    (id) => entry.has(id) || isVendorChunked(id) || /\.css($|\?)/.test(id),
+  );
   shellSets.set(meta.getModuleInfo, shell);
   return shell;
 }
 
-export function selectChisaBotManualChunk(id: string, meta?: ManualChunkMeta): string | undefined {
+export function selectChisaBotManualChunk(
+  id: string,
+  meta?: ManualChunkMeta,
+): string | undefined {
   const normalizedId = normalizedModuleId(id);
   // 样式不归入 JS vendor 块，避免入口为了 CSS 静态下载整块代码。
-  if (isVendorChunked(id)) return VENDOR_CHUNKS.find(([pattern]) => pattern.test(normalizedId))?.[1];
+  if (isVendorChunked(id))
+    return VENDOR_CHUNKS.find(([pattern]) => pattern.test(normalizedId))?.[1];
   // CommonJS 互操作的公共小工具（React 是 CJS，要用它）跟 React 同块，否则 vendor-react 又得依赖别的共享块。
   if (id.startsWith("\0commonjsHelpers")) return "vendor-react";
-  if (meta && !routeComponentSplitPath(id) && shellModuleIds(meta).has(id)) return "shell";
+  if (meta && !routeComponentSplitPath(id) && shellModuleIds(meta).has(id))
+    return "shell";
   const routePath = routeComponentSplitPath(id);
   if (!routePath) {
     return undefined;
@@ -305,7 +333,13 @@ export const routeBuildRollupOutputOptions = {
 };
 
 export const BUNDLE_STUBS = [
-  { find: /^@ag-ui\/proto$/, replacement: path.resolve(__dirname, "./src/lib/bundle-stubs/ag-ui-proto.ts") },
+  {
+    find: /^@ag-ui\/proto$/,
+    replacement: path.resolve(
+      __dirname,
+      "./src/lib/bundle-stubs/ag-ui-proto.ts",
+    ),
+  },
 ];
 
 /**
@@ -326,7 +360,9 @@ function chisabotNodeBundle(): Plugin {
       try {
         const { build } = await import("esbuild");
         const root = path.resolve(__dirname, "..");
-        const pcPackage = JSON.parse(readFileSync(path.join(root, "pc/package.json"), "utf8")) as { version: string };
+        const pcPackage = JSON.parse(
+          readFileSync(path.join(root, "pc/package.json"), "utf8"),
+        ) as { version: string };
         const result = await build({
           entryPoints: [path.join(root, "pc/src/headless.js")],
           bundle: true,
@@ -337,12 +373,20 @@ function chisabotNodeBundle(): Plugin {
           minify: false,
           legalComments: "inline",
           external: ["bufferutil", "utf-8-validate", "electron"],
-          define: { __CHISABOT_NODE_VERSION__: JSON.stringify(pcPackage.version) },
-          banner: { js: `// chisabot-node ${pcPackage.version} — https://github.com/ChisaAlter/ChisaBot (docs/pc-node.md §14)` },
+          define: {
+            __CHISABOT_NODE_VERSION__: JSON.stringify(pcPackage.version),
+          },
+          banner: {
+            js: `// chisabot-node ${pcPackage.version} — https://github.com/ChisaAlter/ChisaBot (docs/pc-node.md §14)`,
+          },
           logLevel: "silent",
         });
         const code = result.outputFiles[0]?.text ?? "";
-        this.emitFile({ type: "asset", fileName: "node-agent/chisabot-node.cjs", source: code });
+        this.emitFile({
+          type: "asset",
+          fileName: "node-agent/chisabot-node.cjs",
+          source: code,
+        });
       } catch (error) {
         const message = `chisabot-node bundle skipped: ${error instanceof Error ? error.message : String(error)}`;
         if (process.env.CI) this.error(message);

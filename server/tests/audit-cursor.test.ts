@@ -43,7 +43,9 @@ describe("audit cursor validation", () => {
   test("a corrupt cursor is a query error, not a server failure", () => {
     expect(() =>
       auditQueryFromUrl(
-        new URL("http://chisabot.local/api/admin/audit-events?cursor=!!bogus!!"),
+        new URL(
+          "http://chisabot.local/api/admin/audit-events?cursor=!!bogus!!",
+        ),
       ),
     ).toThrow(AuditQueryError);
     expect(() =>

@@ -28,23 +28,23 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 
 ## 2. 关注的信号
 
-| 信号 | 说明 | 处理 |
-|---|---|---|
-| 根分区 > 80% | 镜像、构建缓存、预览容器、备份会持续增长 | [cleanup.md](cleanup.md) |
-| `bind message supplies … requires …` | Bun SQL 连接错位，之后所有 `/api` 挂起 | 重启应用容器，见 [incidents.md](incidents.md) §1 |
-| 所有发送返回 409 | 线程锁残留（部署中断后） | [incidents.md](incidents.md) §2 |
-| 自检失败 / 机器人不答 | 模型额度或上游故障 | [model-config.md](model-config.md) |
-| 回滚脚本对应的镜像不存在 | 清理或 `KEEP_IMAGES` 删掉了 | 心里有数：需要更早版本时走 revert PR |
-| 更新器底座镜像不存在 | 清理删掉了 | 下一次部署自动走完整构建（时间更长、更吃内存），成功后恢复 |
+| 信号                                 | 说明                                     | 处理                                                       |
+| ------------------------------------ | ---------------------------------------- | ---------------------------------------------------------- |
+| 根分区 > 80%                         | 镜像、构建缓存、预览容器、备份会持续增长 | [cleanup.md](cleanup.md)                                   |
+| `bind message supplies … requires …` | Bun SQL 连接错位，之后所有 `/api` 挂起   | 重启应用容器，见 [incidents.md](incidents.md) §1           |
+| 所有发送返回 409                     | 线程锁残留（部署中断后）                 | [incidents.md](incidents.md) §2                            |
+| 自检失败 / 机器人不答                | 模型额度或上游故障                       | [model-config.md](model-config.md)                         |
+| 回滚脚本对应的镜像不存在             | 清理或 `KEEP_IMAGES` 删掉了              | 心里有数：需要更早版本时走 revert PR                       |
+| 更新器底座镜像不存在                 | 清理删掉了                               | 下一次部署自动走完整构建（时间更长、更吃内存），成功后恢复 |
 
 ## 3. 宿主机定时任务
 
-| 定时任务 | 频率 | 作用 |
-|---|---|---|
-| `chisabot-zh-attachments.timer` | 每小时 | 清理无主附件（可选） |
-| `chisabot-public-cert-reload.timer` | 每天 | 证书续期后 reload 网关 |
-| acme.sh / certbot 定时任务 | 每天 | 证书续期 |
-| `chisabot-zh-routines.timer` | — | **已废弃，不要启用**（[containers.md](containers.md) §4） |
+| 定时任务                            | 频率   | 作用                                                      |
+| ----------------------------------- | ------ | --------------------------------------------------------- |
+| `chisabot-zh-attachments.timer`     | 每小时 | 清理无主附件（可选）                                      |
+| `chisabot-public-cert-reload.timer` | 每天   | 证书续期后 reload 网关                                    |
+| acme.sh / certbot 定时任务          | 每天   | 证书续期                                                  |
+| `chisabot-zh-routines.timer`        | —      | **已废弃，不要启用**（[containers.md](containers.md) §4） |
 
 应用内部的定时任务（ChisaBot 定时任务、附件扫描）在服务器进程里跑，不需要宿主机定时器。
 
@@ -99,12 +99,12 @@ journalctl -u chisabot-dsh-accounts.service --since '30 min ago' -o cat | grep '
 
 进程内计数仍在 `GET /api/admin/health` → `budgets`（totals / last15m）。自 v0.1.32 起额外提供：
 
-| 字段 / 端点 | 含义 |
-|-------------|------|
-| `budgets.rates` | `last1h` / `last6h` / `last24h` 事件数；`perHour1h` / `perHour6h` |
-| `budgets.series.points` | 近 60 分钟**非零**分钟桶（稀疏） |
-| `GET /api/admin/health/budgets?hours=1\|6\|24` | 刮数友好：同结构 + 更长 `points` |
-| 磁盘文件 | 默认 `/workspace/.chisabot-ops/budgets.json`（compose `workspace` 卷）；`CHISABOT_OPS_METRICS_PATH` 可覆盖。重启后 `import` 进分钟环。目录由 `docker/s6/s6-rc.d/api/run` 在降权前建好并 `chown apiuser`——工作区卷属 `pwuser`，少了这一步每次 flush 都 EACCES，预算永远是空的 |
+| 字段 / 端点                                    | 含义                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `budgets.rates`                                | `last1h` / `last6h` / `last24h` 事件数；`perHour1h` / `perHour6h`                                                                                                                                                                                                            |
+| `budgets.series.points`                        | 近 60 分钟**非零**分钟桶（稀疏）                                                                                                                                                                                                                                             |
+| `GET /api/admin/health/budgets?hours=1\|6\|24` | 刮数友好：同结构 + 更长 `points`                                                                                                                                                                                                                                             |
+| 磁盘文件                                       | 默认 `/workspace/.chisabot-ops/budgets.json`（compose `workspace` 卷）；`CHISABOT_OPS_METRICS_PATH` 可覆盖。重启后 `import` 进分钟环。目录由 `docker/s6/s6-rc.d/api/run` 在降权前建好并 `chown apiuser`——工作区卷属 `pwuser`，少了这一步每次 flush 都 EACCES，预算永远是空的 |
 
 本机读取示例：
 
@@ -117,4 +117,3 @@ docker exec chisabot-zh sh -c 'wc -c /workspace/.chisabot-ops/budgets.json; tail
 ```
 
 仍**没有**托管 Prometheus/Grafana；需要看板时用上述 JSON + 你自己的 Uptime/脚本即可。
-

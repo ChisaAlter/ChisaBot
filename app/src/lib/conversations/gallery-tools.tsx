@@ -1,9 +1,8 @@
-import { useRenderTool, useInteractionRenderer } from "@/lib/chat/renderers";
-import { SandboxSurface } from "@/lib/chat/sandbox-surface";
-import { useBotOnScreen } from "@/lib/kept-visible";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefusedCard } from "@/components/gallery/refused";
+import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
+import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import {
   agentComponentsQueryOptions,
   announceGallery,
@@ -11,12 +10,16 @@ import {
   decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import { useActiveBotId, useDeclaredBotId } from "@/lib/conversations/active-bot";
+import {
+  useActiveBotId,
+  useDeclaredBotId,
+} from "@/lib/conversations/active-bot";
 import {
   GALLERY_COMPONENTS,
   type GalleryComponent,
   galleryManifest,
 } from "@/lib/conversations/gallery-registry";
+import { useBotOnScreen } from "@/lib/kept-visible";
 import {
   NOT_SHOWN,
   NOT_SHOWN_TAIL,

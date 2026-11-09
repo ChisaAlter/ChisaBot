@@ -12,22 +12,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
   fireEvent,
-  render as rtlRender,
   type RenderResult,
+  render as rtlRender,
   waitFor,
 } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
-import * as AttachmentState from "@/lib/chat/attachment-state";
 import { useCallback } from "react";
 import { Composer } from "@/components/channels/composer/composer";
-import { ConversationView } from "@/components/channels/conversation-view";
 import type { ComposerDraft } from "@/components/channels/composer/draft";
+import { ConversationView } from "@/components/channels/conversation-view";
 import {
   attachmentUrl,
   MAX_ATTACHMENTS_PER_MESSAGE,
 } from "@/lib/channels/attachments";
-import { settleReactWork } from "./settle-react-work";
+import * as AttachmentState from "@/lib/chat/attachment-state";
 import { installFetchBackedXhr } from "./fetch-backed-xhr";
+import { settleReactWork } from "./settle-react-work";
 
 function render(ui: ReactElement): RenderResult {
   const client = new QueryClient({
@@ -39,11 +39,9 @@ function render(ui: ReactElement): RenderResult {
   const result = rtlRender(wrap(ui));
   return {
     ...result,
-    rerender: (next: ReactNode) =>
-      result.rerender(wrap(next as ReactElement)),
+    rerender: (next: ReactNode) => result.rerender(wrap(next as ReactElement)),
   };
 }
-
 
 /**
  * WHAT THE QUEUE DOES TO AN ATTACHMENT BEHIND SOMEBODY'S BACK, AT BOTH ENDS OF THE SAME ROW.
@@ -146,7 +144,9 @@ beforeAll(() => {
       );
       const consumeAttachments = useCallback(() => {
         consumeAttachmentsCallCount += 1;
-        throw new Error("A queue must remove only the selected attachment IDs.");
+        throw new Error(
+          "A queue must remove only the selected attachment IDs.",
+        );
       }, []);
 
       handedOut.removeAttachment.add(removeAttachment);
@@ -364,14 +364,26 @@ function named(name: string) {
 test("a channel with durable inbox transfers the complete attachment draft and never drains it on Stop", async () => {
   const drafts: ComposerDraft[] = [];
   let sends = 0;
-  const common = { channelId: "channel-1", messages: [], onSubmit: () => { sends++; }, queueWhileBusy: true,
-    queueToServer: async (draft: ComposerDraft) => { drafts.push(draft); return "queued" as const; } };
+  const common = {
+    channelId: "channel-1",
+    messages: [],
+    onSubmit: () => {
+      sends++;
+    },
+    queueWhileBusy: true,
+    queueToServer: async (draft: ComposerDraft) => {
+      drafts.push(draft);
+      return "queued" as const;
+    },
+  };
   const view = render(<ConversationView {...common} pending />);
   await dropAndWait(view, [notes()]);
   fireEvent.submit(view.container.querySelector("form") as HTMLFormElement);
   await waitFor(() => expect(drafts).toHaveLength(1));
   expect(drafts[0]?.attachments).toHaveLength(1);
-  expect(drafts[0]?.attachments[0]?.metadata).toMatchObject({ attachmentId: "stored-notes.txt" });
+  expect(drafts[0]?.attachments[0]?.metadata).toMatchObject({
+    attachmentId: "stored-notes.txt",
+  });
   view.rerender(<ConversationView {...common} pending={false} />);
   await settleReactWork();
   expect(sends).toBe(0);
@@ -613,9 +625,7 @@ test("a drained turn whose send fails puts the queue back instead of releasing i
 
   // The one gesture that still releases the row: taking the restored message back by hand.
   fireEvent.click(
-    container.querySelector(
-      "[aria-label^='移除队列消息']",
-    ) as HTMLElement,
+    container.querySelector("[aria-label^='移除队列消息']") as HTMLElement,
   );
   await waitFor(() =>
     expect(deletes).toEqual([attachmentUrl("stored-notes.txt")]),

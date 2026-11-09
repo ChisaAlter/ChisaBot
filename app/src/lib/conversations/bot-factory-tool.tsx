@@ -1,4 +1,3 @@
-import { useRenderTool } from "@/lib/chat/renderers";
 import { IconChevronDown, IconRobot } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -9,6 +8,7 @@ import { invalidateAgents } from "@/lib/agents/mutations";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
 import { channelListQueryOptions } from "@/lib/channels/queries";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import { asText } from "@/lib/plugins/tool-result";
 import { queryClient as sharedQueryClient } from "@/query-client";

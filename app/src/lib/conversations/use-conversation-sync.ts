@@ -17,11 +17,19 @@ const KNOWN_MESSAGE_EVENTS = new Set([
   "REASONING_MESSAGE_END",
   "REASONING_END",
 ]);
-const KNOWN_TOOL_EVENTS = new Set(["TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"]);
+const KNOWN_TOOL_EVENTS = new Set([
+  "TOOL_CALL_START",
+  "TOOL_CALL_ARGS",
+  "TOOL_CALL_END",
+]);
 
 type Msg = { id: string };
 /** 把快照里这台没有的消息按快照里的位置插进来（跟在它前面最近一条这台也有的消息后面）；这台已有的不动、不删。 */
-export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: readonly T[], replaceExisting = false): T[] {
+export function mergeSnapshot<T extends Msg>(
+  local: readonly T[],
+  snapshot: readonly T[],
+  replaceExisting = false,
+): T[] {
   const result = [...local];
   const index = new Map(result.map((message, at) => [message.id, at]));
   let changed = false;
@@ -29,7 +37,10 @@ export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: read
     const message = snapshot[at]!;
     const existing = index.get(message.id);
     if (existing !== undefined) {
-      if (replaceExisting && JSON.stringify(result[existing]) !== JSON.stringify(message)) {
+      if (
+        replaceExisting &&
+        JSON.stringify(result[existing]) !== JSON.stringify(message)
+      ) {
         result[existing] = message;
         changed = true;
       }
@@ -46,7 +57,8 @@ export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: read
     result.splice(insertAt, 0, message);
     changed = true;
     index.clear();
-    for (const [position, item] of result.entries()) index.set(item.id, position);
+    for (const [position, item] of result.entries())
+      index.set(item.id, position);
   }
   return changed ? result : (local as T[]);
 }
@@ -58,7 +70,10 @@ export function mergeSnapshot<T extends Msg>(local: readonly T[], snapshot: read
  * 不为它重建——重建会把它从列表里删掉，整段聊天跟着往回跳一截（DESIGN.md §42.7）；服务器有、这台没有的
  * 由合并式接入补进来，也不用重建。
  */
-export function userOrderDiffers(local: readonly string[], server: readonly string[]): boolean {
+export function userOrderDiffers(
+  local: readonly string[],
+  server: readonly string[],
+): boolean {
   const inServer = new Set(server);
   const inLocal = new Set(local);
   const a = local.filter((id) => inServer.has(id));
@@ -81,7 +96,11 @@ export function noteOwnRevision(threadId: string, revision: string) {
 /**
  * 版本变化要不要重建：第一次看到（还没有基线）不算；和基线一样不算；是本机自己截出来的那个版本不算。
  */
-export function revisionNeedsRebuild(known: string | null, seen: string | undefined, own: string | undefined): boolean {
+export function revisionNeedsRebuild(
+  known: string | null,
+  seen: string | undefined,
+  own: string | undefined,
+): boolean {
   if (seen === undefined || known === null) return false;
   if (seen === known) return false;
   return seen !== own;
@@ -95,18 +114,28 @@ export function revisionNeedsRebuild(known: string | null, seen: string | undefi
  * 不跳过时由 `tailReplayPatch` 在「开始」事件里先清空这条（SDK 自己不清，§90.3），再按回放重建，然后接着实时往下写。
  */
 export function knownForMerge(
-  messages: readonly { id: string; role: string; toolCalls?: { id: string }[] }[],
+  messages: readonly {
+    id: string;
+    role: string;
+    toolCalls?: { id: string }[];
+  }[],
   liveTail = false,
 ): { messages: Set<string>; toolCalls: Set<string> } {
   let keep = messages.length;
   if (liveTail) {
-    const lastUser = messages.map((message) => message.role).lastIndexOf("user");
+    const lastUser = messages
+      .map((message) => message.role)
+      .lastIndexOf("user");
     keep = lastUser + 1;
   }
   const kept = messages.slice(0, keep);
   return {
     messages: new Set(kept.map((message) => message.id)),
-    toolCalls: new Set(kept.flatMap((message) => (message.toolCalls ?? []).map((call) => call.id))),
+    toolCalls: new Set(
+      kept.flatMap((message) =>
+        (message.toolCalls ?? []).map((call) => call.id),
+      ),
+    ),
   };
 }
 
@@ -120,42 +149,87 @@ export function knownForMerge(
  *  - 工具调用的「开始」：参数清空；
  *  - 工具结果：已经有同 id / 同一个调用的结果就原地换内容，不再插第二条。
  */
-export type TailReplay = { messages: Set<string>; toolCalls: Set<string>; reset: Set<string> };
+export type TailReplay = {
+  messages: Set<string>;
+  toolCalls: Set<string>;
+  reset: Set<string>;
+};
 
-export function liveTailOf(messages: readonly { id: string; role: string; toolCalls?: { id: string }[] }[]): TailReplay {
+export function liveTailOf(
+  messages: readonly {
+    id: string;
+    role: string;
+    toolCalls?: { id: string }[];
+  }[],
+): TailReplay {
   const lastUser = messages.map((message) => message.role).lastIndexOf("user");
   const tail = messages.slice(lastUser + 1);
   return {
     messages: new Set(tail.map((message) => message.id)),
-    toolCalls: new Set(tail.flatMap((message) => (message.toolCalls ?? []).map((call) => call.id))),
+    toolCalls: new Set(
+      tail.flatMap((message) =>
+        (message.toolCalls ?? []).map((call) => call.id),
+      ),
+    ),
     reset: new Set(),
   };
 }
 
-type TailMsg = { id: string; role: string; content?: unknown; toolCallId?: string; toolCalls?: { id: string; function: { name: string; arguments: string } }[] };
+type TailMsg = {
+  id: string;
+  role: string;
+  content?: unknown;
+  toolCallId?: string;
+  toolCalls?: { id: string; function: { name: string; arguments: string } }[];
+};
 
 export function tailReplayPatch<T extends TailMsg>(
-  event: { type: string; messageId?: string; toolCallId?: string; content?: unknown },
+  event: {
+    type: string;
+    messageId?: string;
+    toolCallId?: string;
+    content?: unknown;
+  },
   messages: readonly T[],
   tail: TailReplay,
 ): { messages?: T[]; stopPropagation?: true } | undefined {
-  if ((event.type === "TEXT_MESSAGE_START" || event.type === "REASONING_MESSAGE_START") && event.messageId) {
+  if (
+    (event.type === "TEXT_MESSAGE_START" ||
+      event.type === "REASONING_MESSAGE_START") &&
+    event.messageId
+  ) {
     const id = event.messageId;
     if (!tail.messages.has(id) || tail.reset.has(id)) return;
     tail.reset.add(id);
     if (!messages.some((message) => message.id === id)) return;
-    return { messages: messages.map((message) => (message.id === id ? { ...message, content: "" } : message)) };
+    return {
+      messages: messages.map((message) =>
+        message.id === id ? { ...message, content: "" } : message,
+      ),
+    };
   }
   if (event.type === "TOOL_CALL_START" && event.toolCallId) {
     const id = event.toolCallId;
     const key = `tool:${id}`;
     if (!tail.toolCalls.has(id) || tail.reset.has(key)) return;
     tail.reset.add(key);
-    if (!messages.some((message) => message.toolCalls?.some((call) => call.id === id))) return;
+    if (
+      !messages.some((message) =>
+        message.toolCalls?.some((call) => call.id === id),
+      )
+    )
+      return;
     return {
       messages: messages.map((message) =>
         message.toolCalls?.some((call) => call.id === id)
-          ? { ...message, toolCalls: message.toolCalls.map((call) => (call.id === id ? { ...call, function: { ...call.function, arguments: "" } } : call)) }
+          ? {
+              ...message,
+              toolCalls: message.toolCalls.map((call) =>
+                call.id === id
+                  ? { ...call, function: { ...call.function, arguments: "" } }
+                  : call,
+              ),
+            }
           : message,
       ),
     };
@@ -164,7 +238,9 @@ export function tailReplayPatch<T extends TailMsg>(
     const at = messages.findIndex(
       (message) =>
         (event.messageId !== undefined && message.id === event.messageId) ||
-        (message.role === "tool" && event.toolCallId !== undefined && message.toolCallId === event.toolCallId),
+        (message.role === "tool" &&
+          event.toolCallId !== undefined &&
+          message.toolCallId === event.toolCallId),
     );
     if (at === -1) return;
     const next = [...messages];
@@ -251,8 +327,14 @@ export function useConversationSync(
     const join = (mode: "merge" | "rebuild" = "merge", running = false) => {
       if (connecting || agent.isRunning || suppressConnect?.()) return;
       connecting = true;
-      merge = mode === "merge" ? knownForMerge(agent.messages as never, liveTail && running) : null;
-      tail = mode === "merge" && liveTail && running ? liveTailOf(agent.messages as never) : null;
+      merge =
+        mode === "merge"
+          ? knownForMerge(agent.messages as never, liveTail && running)
+          : null;
+      tail =
+        mode === "merge" && liveTail && running
+          ? liveTailOf(agent.messages as never)
+          : null;
       void connect({ agent })
         .catch(() => {})
         .finally(() => {
@@ -269,16 +351,25 @@ export function useConversationSync(
      * 平时顺序一致什么都不做。
      */
     const hasResult = (toolCallId: string) =>
-      agent.messages.some((message) => message.role === "tool" && (message as { toolCallId?: string }).toolCallId === toolCallId);
+      agent.messages.some(
+        (message) =>
+          message.role === "tool" &&
+          (message as { toolCallId?: string }).toolCallId === toolCallId,
+      );
     let reconcileTimer: ReturnType<typeof setTimeout> | undefined;
     const reconcile = () => {
       if (reconcileTimer) clearTimeout(reconcileTimer);
       reconcileTimer = setTimeout(async () => {
         if (!alive || agent.isRunning || connecting) return;
         // 增量读（readStoredRows）：每轮结束后的这一次核对不再拉整份，只拉变了的尾部；请求仍是原来的 fetch。
-        const rows = await readStoredRows(threadId, undefined, (path) => fetch(path, { credentials: "include" })).catch(() => null);
+        const rows = await readStoredRows(threadId, undefined, (path) =>
+          fetch(path, { credentials: "include" }),
+        ).catch(() => null);
         if (!alive || !rows || agent.isRunning || connecting) return;
-        const userIds = (list: readonly { id: string; role: string }[]) => list.filter((message) => message.role === "user").map((message) => message.id);
+        const userIds = (list: readonly { id: string; role: string }[]) =>
+          list
+            .filter((message) => message.role === "user")
+            .map((message) => message.id);
         const server = userIds(rows as readonly { id: string; role: string }[]);
         const local = userIds(agent.messages as never);
         if (!server.length) return;
@@ -296,7 +387,12 @@ export function useConversationSync(
        */
       onEvent: ({ event, messages }) => {
         if (!merge) return;
-        const e = event as { type: string; messages?: unknown[]; messageId?: string; toolCallId?: string };
+        const e = event as {
+          type: string;
+          messages?: unknown[];
+          messageId?: string;
+          toolCallId?: string;
+        };
         if (e.type === "MESSAGES_SNAPSHOT" && Array.isArray(e.messages)) {
           // 空快照（HTTP 重连开头那个）丢掉；回放里的历史快照只用来「补」这台没有的消息、按服务器的位置插进去，
           // 不删这台已有的（历史快照比现在短，照 SDK 原样会把之后的消息全删掉）。顺序不一致由 reconcile 重建。
@@ -306,15 +402,39 @@ export function useConversationSync(
             // START only reopens the stream; clearing that body would lose the recovered prefix.
             for (const message of e.messages as TailMsg[]) {
               tail.reset.add(message.id);
-              for (const call of message.toolCalls ?? []) tail.reset.add(`tool:${call.id}`);
+              for (const call of message.toolCalls ?? [])
+                tail.reset.add(`tool:${call.id}`);
             }
           }
-          return { messages: mergeSnapshot(messages as never, e.messages as never, snapshotContinuations) as never, stopPropagation: true };
+          return {
+            messages: mergeSnapshot(
+              messages as never,
+              e.messages as never,
+              snapshotContinuations,
+            ) as never,
+            stopPropagation: true,
+          };
         }
         // 这台已经有的消息：开始 / 正文 / 结束整组都跳过（SDK 在「开始」时会把已有消息的正文清空，只跳正文会留下空气泡）。
-        if (e.messageId && KNOWN_MESSAGE_EVENTS.has(e.type) && merge.messages.has(e.messageId)) return { stopPropagation: true };
-        if (e.toolCallId && KNOWN_TOOL_EVENTS.has(e.type) && merge.toolCalls.has(e.toolCallId)) return { stopPropagation: true };
-        if (e.type === "TOOL_CALL_RESULT" && ((e.messageId && merge.messages.has(e.messageId)) || (e.toolCallId && merge.toolCalls.has(e.toolCallId) && hasResult(e.toolCallId))))
+        if (
+          e.messageId &&
+          KNOWN_MESSAGE_EVENTS.has(e.type) &&
+          merge.messages.has(e.messageId)
+        )
+          return { stopPropagation: true };
+        if (
+          e.toolCallId &&
+          KNOWN_TOOL_EVENTS.has(e.type) &&
+          merge.toolCalls.has(e.toolCallId)
+        )
+          return { stopPropagation: true };
+        if (
+          e.type === "TOOL_CALL_RESULT" &&
+          ((e.messageId && merge.messages.has(e.messageId)) ||
+            (e.toolCallId &&
+              merge.toolCalls.has(e.toolCallId) &&
+              hasResult(e.toolCallId)))
+        )
           return { stopPropagation: true };
         if (tail) return tailReplayPatch(e, messages as never, tail) as never;
         return;
@@ -335,9 +455,21 @@ export function useConversationSync(
       lastActivityAt = Date.now();
       const seenBefore = seenSeq;
       seenSeq = activity.seq;
-      if (revisionNeedsRebuild(knownRevision, activity.revision, ownRevisions.get(threadId))) rebuildPending = true;
+      if (
+        revisionNeedsRebuild(
+          knownRevision,
+          activity.revision,
+          ownRevisions.get(threadId),
+        )
+      )
+        rebuildPending = true;
       if (activity.revision !== undefined) knownRevision = activity.revision;
-      if (rebuildPending && !agent.isRunning && !connecting && !suppressConnect?.()) {
+      if (
+        rebuildPending &&
+        !agent.isRunning &&
+        !connecting &&
+        !suppressConnect?.()
+      ) {
         // 别的设备重新生成 / 编辑重发截断了这段对话：清空，按服务器回放重建（截掉的气泡、卡片一起消失）。
         rebuildPending = false;
         last = activity;
@@ -356,16 +488,25 @@ export function useConversationSync(
         rebase = false;
         // 服务器在回答、这台却没在跟（刚回到前台、刚打开时那一轮还没开始）：接上。
         // 本机刚跑完一轮（3 秒内）收到的在途 running=true 是本机那一轮的尾声，不重接回放（否则会清空刚流完的回答）。
-        if (activity.running && Date.now() - lastOwnFinishAt > 3000) join("merge", true);
+        if (activity.running && Date.now() - lastOwnFinishAt > 3000)
+          join("merge", true);
         // 断线 / 很久没问到之后的第一次：这段时间别处写进来的不能当基线吞掉，序号变了就合并式接上补齐。
         // 没有基线（空对话的第一轮在这台跑完）时拿跑的时候问到的序号比；打开后第一次问（什么都没见过）照旧只记基线。
-        else if (quietFor > MISSED_ACTIVITY_MS && (previous?.seq ?? seenBefore) !== null && activity.seq !== (previous?.seq ?? seenBefore)) join();
+        else if (
+          quietFor > MISSED_ACTIVITY_MS &&
+          (previous?.seq ?? seenBefore) !== null &&
+          activity.seq !== (previous?.seq ?? seenBefore)
+        )
+          join();
         return;
       }
       if (activity.workers !== previous.workers)
-        void queryClient.invalidateQueries({ queryKey: workerKeys.thread(threadId) });
+        void queryClient.invalidateQueries({
+          queryKey: workerKeys.thread(threadId),
+        });
       if (activity.inbox !== previous.inbox) void restoreQueue(threadId);
-      if (activity.seq !== previous.seq || activity.running) join("merge", activity.running);
+      if (activity.seq !== previous.seq || activity.running)
+        join("merge", activity.running);
     });
     return () => {
       alive = false;
@@ -373,5 +514,14 @@ export function useConversationSync(
       off();
       subscription.unsubscribe();
     };
-  }, [threadId, agent, connect, onActivity, queryClient, liveTail, snapshotContinuations, suppressConnect]);
+  }, [
+    threadId,
+    agent,
+    connect,
+    onActivity,
+    queryClient,
+    liveTail,
+    snapshotContinuations,
+    suppressConnect,
+  ]);
 }

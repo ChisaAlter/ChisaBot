@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { McpTestServer } from "./support/mcp-server";
 import { callTool, listTools } from "../src/plugins/mcp";
+import { McpTestServer } from "./support/mcp-server";
 
 /**
  * The one door in this deployment that speaks MCP to somebody else's server, against something that

@@ -1,7 +1,14 @@
 import { expect, spyOn, test } from "bun:test";
 import { HttpAgent } from "@ag-ui/client";
 import { EMPTY } from "rxjs";
-const unusedRunner = { run: () => EMPTY, connect: () => EMPTY, isRunning: async () => false, stop: async () => false };
+
+const unusedRunner = {
+  run: () => EMPTY,
+  connect: () => EMPTY,
+  isRunning: async () => false,
+  stop: async () => false,
+};
+
 import { Hono } from "hono";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
@@ -62,7 +69,7 @@ test("the public SSE runtime reports disabled telemetry and makes no vendor requ
     expect(response.status).toBe(200);
     const information = await response.json();
     expect(information.version).toBe("chisabot-1");
-    
+
     expect(identityCalls).toBe(0);
     expect(network).not.toHaveBeenCalled();
     const appArgs: Parameters<typeof createApp> = [
@@ -162,7 +169,8 @@ test("local history and runs require a session and use the verified actor", asyn
     ).status,
   ).toBe(401);
   expect(
-    (await anonymous.app.request("/api/conversations", { method: "POST" })).status,
+    (await anonymous.app.request("/api/conversations", { method: "POST" }))
+      .status,
   ).toBe(401);
   expect(anonymous.readers).toEqual([]);
   const signedIn = localApp(true);
@@ -170,15 +178,18 @@ test("local history and runs require a session and use the verified actor", asyn
     (await signedIn.app.request("/api/conversations/threads?userId=spoofed"))
       .status,
   ).toBe(200);
-  const response = await signedIn.app.request("/api/conversations/agent/bot/run", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      threadId: "owned",
-      userId: "spoofed",
-      agentId: "spoofed",
-    }),
-  });
+  const response = await signedIn.app.request(
+    "/api/conversations/agent/bot/run",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        threadId: "owned",
+        userId: "spoofed",
+        agentId: "spoofed",
+      }),
+    },
+  );
   expect(response.status).toBe(200);
   expect(signedIn.claims).toEqual([
     { threadId: "owned", userId: "verified-owner", agentId: "bot" },

@@ -1,10 +1,7 @@
-import { readCompatibleHeader } from "../../shared/legacy-headers";
-import { runAssertionValue } from "./legacy/protocol";
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
 import { AbstractAgent, HttpAgent } from "@ag-ui/client";
-import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { ClassicRuntimeAgent as BuiltInAgent, type ClassicAgentConfiguration as BuiltInAgentConfiguration } from "./agents/classic-runtime";
+import { createOpenAI } from "@ai-sdk/openai";
 import type { Observable } from "rxjs";
 import { defer, finalize, from, fromEvent, switchMap, takeUntil } from "rxjs";
 import { z } from "zod";
@@ -15,17 +12,22 @@ import {
   selfMapGuidance,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
-import { WEB_GUIDANCE } from "./web/tools";
+import { readCompatibleHeader } from "../../shared/legacy-headers";
 import {
   type ActorAgentResolver,
   CoworkerUnavailableError,
 } from "./agents/agent-resolver";
-import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
-import { sanitizeSeededHistory } from "./agents/history-sanitize";
-import { FailFastTransport } from "./agents/pre-stream-failure";
-import { HERMES_MAX_FALLBACKS, HermesRuntimeAgent, type HermesRuntimeBinding } from "./agents/hermes-runtime";
+import {
+  ClassicRuntimeAgent as BuiltInAgent,
+  type ClassicAgentConfiguration as BuiltInAgentConfiguration,
+} from "./agents/classic-runtime";
 import type { DshRuntimeBinding } from "./agents/dsh-runtime";
+import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
+import {
+  HERMES_MAX_FALLBACKS,
+  HermesRuntimeAgent,
+  type HermesRuntimeBinding,
+} from "./agents/hermes-runtime";
 import {
   compactHistory,
   HISTORY_SUMMARY_ID,
@@ -36,23 +38,27 @@ import {
   type Summarize,
   summaryPrompt,
 } from "./agents/history-budget";
+import { sanitizeSeededHistory } from "./agents/history-sanitize";
+import {
+  type FallbackCatalog,
+  fallbackCandidates,
+  fallbackLanguageModel,
+} from "./agents/model-fallback";
+import { modelOverrideFromValue } from "./agents/model-selection";
 import {
   PLAN_RUN_COMPLETED,
   PlanModel,
   type PlanModelConfig,
   planModelForEnvironment,
 } from "./agents/plan-model";
+import { FailFastTransport } from "./agents/pre-stream-failure";
 import type { AgentActor } from "./agents/profile-types";
-import { knownContextWindowOf } from "./model-catalog";
-import { modelOverrideFromValue } from "./agents/model-selection";
 import { thinkTagLanguageModel } from "./agents/think-tags";
-import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH, withConfirmToolCall } from "./confirmations/context";
-import { type FallbackCatalog, fallbackCandidates, fallbackLanguageModel } from "./agents/model-fallback";
 import {
   executeNativeApprovalTool,
   nativeApprovalRun,
 } from "./approvals/native-context";
-import { PERSON_INITIATOR, type AuditInitiator } from "./audit";
+import { type AuditInitiator, PERSON_INITIATOR } from "./audit";
 import {
   attachmentIdsIn,
   newInlineBudget,
@@ -62,26 +68,40 @@ import {
 import type { AgentFetch, StallGuard } from "./channels/stall-guard";
 import { HeadlessToolsMiddleware } from "./computer/headless-tools";
 import type { DeploymentConfig } from "./config";
+import {
+  currentConfirmTurn,
+  currentToolAbort,
+  TOOL_STOPPED_ZH,
+  withConfirmToolCall,
+} from "./confirmations/context";
 import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
-import { steerLanguageModel } from "./thread-inbox";
+import { createConversationRoutes } from "./conversations/routes";
 import { reasonWithoutStatement } from "./db/query-failure";
 import { observeModelConnection } from "./desktop-connection-failure";
-
-
+import { runAssertionValue } from "./legacy/protocol";
+import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import type { LocalConversationBackend } from "./local-conversations";
-import { createConversationRoutes } from "./conversations/routes";
 import {
   type LoadPersonalMemory,
   PersonalMemoryMiddleware,
 } from "./memory/tools";
+import { knownContextWindowOf } from "./model-catalog";
 import type { SelectableSkill, Selection } from "./plugins/selection";
 import {
   latestUserText,
   SELECTION_FLOOR,
   selectTools,
 } from "./plugins/selection";
-import { REFUSAL_MARKER, type GrantedTool, grantedToolGuidance, parametersFor, toolCarriedGuidance } from "./plugins/tools";
+import {
+  type GrantedTool,
+  grantedToolGuidance,
+  parametersFor,
+  REFUSAL_MARKER,
+  toolCarriedGuidance,
+} from "./plugins/tools";
+import { steerLanguageModel } from "./thread-inbox";
 import { UNTRUSTED_GUIDANCE } from "./untrusted-content";
+import { WEB_GUIDANCE } from "./web/tools";
 
 /** Product model/tool assembly and the compatibility AG-UI mount. DSH owns new execution;
  * existing builtin bindings use the AI SDK adapter, and remote Bots retain their transports. */
@@ -217,7 +237,12 @@ export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 export type AgentKernel =
   | { kind: "builtin"; binding?: HermesRuntimeBinding }
   | { kind: "dsh"; binding: DshRuntimeBinding }
-  | { kind: "hermes"; url: string; token?: string; binding?: HermesRuntimeBinding };
+  | {
+      kind: "hermes";
+      url: string;
+      token?: string;
+      binding?: HermesRuntimeBinding;
+    };
 let agentKernel: AgentKernel = { kind: "builtin" };
 export function setAgentKernel(kernel: AgentKernel): void {
   agentKernel = kernel;
@@ -250,7 +275,10 @@ export function connectionLanguageModel(
   // 正文里 <think>…</think> 的推理改成思考片段，不进回复气泡（think-tags.ts）。
   return thinkTagLanguageModel(
     model.provider === "anthropic"
-      ? outputLimitLanguageModel(createAnthropic(options)(model.defaultModel), model.defaultModel)
+      ? outputLimitLanguageModel(
+          createAnthropic(options)(model.defaultModel),
+          model.defaultModel,
+        )
       : createOpenAI(options).chat(model.defaultModel),
   );
 }
@@ -274,12 +302,21 @@ export function fallbackConnectionModel(
   /** How a request is rewritten for the model a fallback switches to (see `LoadAttachment.promptForModel`). */
   adapt?: (modelId: string, callOptions: unknown) => Promise<unknown>,
 ) {
-  return fallbackLanguageModel(connectionLanguageModel(model, apiKey), model.defaultModel, {
-    ...(adapt ? { adapt } : {}),
-    candidates: fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured()),
-    build: (id) => connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
-    supportsFiles: (id) => resolveModelFileSupport(id),
-  });
+  return fallbackLanguageModel(
+    connectionLanguageModel(model, apiKey),
+    model.defaultModel,
+    {
+      ...(adapt ? { adapt } : {}),
+      candidates: fallbackCandidates(
+        () => fallbackCatalog(),
+        process.env,
+        () => fallbackConfigured(),
+      ),
+      build: (id) =>
+        connectionLanguageModel({ ...model, defaultModel: id }, apiKey),
+      supportsFiles: (id) => resolveModelFileSupport(id),
+    },
+  );
 }
 
 /**
@@ -291,20 +328,29 @@ export function fallbackConnectionModel(
  * max_output_tokens）里有就用它，封顶 {@link MAX_OUTPUT_CAP}（CHISABOT_MAX_OUTPUT_TOKENS 可改）；
  * 目录里没有就不动，照旧由 SDK 决定。认得的 Claude 型号 SDK 自己会再压到它的真实上限。
  */
-export const MAX_OUTPUT_CAP = Number(process.env.CHISABOT_MAX_OUTPUT_TOKENS) || 32_000;
+export const MAX_OUTPUT_CAP =
+  Number(process.env.CHISABOT_MAX_OUTPUT_TOKENS) || 32_000;
 type OutputLimitResolver = (modelId: string) => Promise<number | undefined>;
 let outputLimitFor: OutputLimitResolver = async () => undefined;
 /** index.ts 接上模型目录。 */
-export function setModelOutputLimitResolver(resolver: OutputLimitResolver): void {
+export function setModelOutputLimitResolver(
+  resolver: OutputLimitResolver,
+): void {
   outputLimitFor = resolver;
 }
-export async function resolveOutputLimit(modelId: string): Promise<number | undefined> {
+export async function resolveOutputLimit(
+  modelId: string,
+): Promise<number | undefined> {
   try {
     const limit = await Promise.race([
       outputLimitFor(modelId),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
     ]);
-    return typeof limit === "number" && limit > 0 ? Math.min(limit, MAX_OUTPUT_CAP) : undefined;
+    return typeof limit === "number" && limit > 0
+      ? Math.min(limit, MAX_OUTPUT_CAP)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -315,16 +361,23 @@ export async function resolveOutputLimit(modelId: string): Promise<number | unde
  */
 type ContextWindowResolver = (modelId: string) => Promise<number | undefined>;
 let contextWindowFor: ContextWindowResolver = async () => undefined;
-export function setModelContextWindowResolver(resolver: ContextWindowResolver): void {
+export function setModelContextWindowResolver(
+  resolver: ContextWindowResolver,
+): void {
   contextWindowFor = resolver;
 }
-export async function resolveContextWindow(modelId: string): Promise<number | undefined> {
+export async function resolveContextWindow(
+  modelId: string,
+): Promise<number | undefined> {
   try {
     const window = await Promise.race([
       contextWindowFor(modelId),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
     ]);
-    if (typeof window === "number" && Number.isFinite(window) && window > 0) return window;
+    if (typeof window === "number" && Number.isFinite(window) && window > 0)
+      return window;
   } catch {
     // Fall through to the known-window table.
   }
@@ -343,11 +396,15 @@ let visionFor: VisionResolver = async () => undefined;
 export function setModelVisionResolver(resolver: VisionResolver): void {
   visionFor = resolver;
 }
-export async function resolveModelVisionSupport(modelId: string): Promise<boolean | undefined> {
+export async function resolveModelVisionSupport(
+  modelId: string,
+): Promise<boolean | undefined> {
   try {
     const value = await Promise.race([
       visionFor(modelId),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
     ]);
     return typeof value === "boolean" ? value : undefined;
   } catch {
@@ -361,11 +418,15 @@ let filesFor: FilesResolver = async () => undefined;
 export function setModelFileResolver(resolver: FilesResolver): void {
   filesFor = resolver;
 }
-export async function resolveModelFileSupport(modelId: string): Promise<boolean | undefined> {
+export async function resolveModelFileSupport(
+  modelId: string,
+): Promise<boolean | undefined> {
   try {
     const value = await Promise.race([
       filesFor(modelId),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500).unref?.()),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
     ]);
     return typeof value === "boolean" ? value : undefined;
   } catch {
@@ -379,20 +440,30 @@ export async function resolveModelFileSupport(modelId: string): Promise<boolean 
  */
 let historySummaryStore: HistorySummaryStore | undefined;
 let historySummaryModel: () => Promise<string | null> = async () => null;
-export function setHistorySummaries(options: { store?: HistorySummaryStore; model?: () => Promise<string | null> }): void {
+export function setHistorySummaries(options: {
+  store?: HistorySummaryStore;
+  model?: () => Promise<string | null>;
+}): void {
   historySummaryStore = options.store;
   if (options.model) historySummaryModel = options.model;
 }
 /** 上一轮 provider 返回的真实用量（index.ts 接上 lastMeasuredUsage），用来校准估算；没有就按安全系数。 */
-let previousRunUsage: (threadId: string) => Promise<MeasuredUsage | null> = async () => null;
-export function setPreviousRunUsageResolver(resolver: (threadId: string) => Promise<MeasuredUsage | null>): void {
+let previousRunUsage: (threadId: string) => Promise<MeasuredUsage | null> =
+  async () => null;
+export function setPreviousRunUsageResolver(
+  resolver: (threadId: string) => Promise<MeasuredUsage | null>,
+): void {
   previousRunUsage = resolver;
 }
-async function resolvePreviousRunUsage(threadId: string): Promise<MeasuredUsage | null> {
+async function resolvePreviousRunUsage(
+  threadId: string,
+): Promise<MeasuredUsage | null> {
   try {
     return await Promise.race([
       previousRunUsage(threadId),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000).unref?.()),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), 1000).unref?.(),
+      ),
     ]);
   } catch {
     return null;
@@ -404,7 +475,8 @@ const historyRefreshes = new Map<string, () => Promise<void>>();
 function rememberRefresh(runId: string, refresh: (() => Promise<void>) | null) {
   historyRefreshes.delete(runId);
   if (refresh) historyRefreshes.set(runId, refresh);
-  while (historyRefreshes.size > 200) historyRefreshes.delete(historyRefreshes.keys().next().value as string);
+  while (historyRefreshes.size > 200)
+    historyRefreshes.delete(historyRefreshes.keys().next().value as string);
 }
 /** 这次运行的回复结束了：后台写摘要（下一轮用），失败只记日志。 */
 export function runHistoryRefresh(runId: string): void {
@@ -415,29 +487,51 @@ export function runHistoryRefresh(runId: string): void {
 }
 /** 每次运行压缩了什么，RUN_FINISHED 时附上（HermesRuntimeAgent finishedMetadata）。 */
 const historyCompactions = new Map<string, HistoryCompaction>();
-function rememberCompaction(runId: string, compaction: HistoryCompaction | null) {
+function rememberCompaction(
+  runId: string,
+  compaction: HistoryCompaction | null,
+) {
   historyCompactions.delete(runId);
   if (compaction) historyCompactions.set(runId, compaction);
-  while (historyCompactions.size > 200) historyCompactions.delete(historyCompactions.keys().next().value as string);
+  while (historyCompactions.size > 200)
+    historyCompactions.delete(historyCompactions.keys().next().value as string);
 }
 
 /** 用同一个连接上的摘要模型（没配置就是主模型）写较早对话的摘要。 */
-export function connectionSummarizer(model: RuntimeModel, apiKey: string | null): Summarize {
+export function connectionSummarizer(
+  model: RuntimeModel,
+  apiKey: string | null,
+): Summarize {
   return async ({ previousSummary, messages, signal }) => {
-    const id = (await historySummaryModel().catch(() => null)) || model.defaultModel;
-    const result = await connectionLanguageModel({ ...model, defaultModel: id }, apiKey).doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: summaryPrompt(previousSummary, messages) }] }],
+    const id =
+      (await historySummaryModel().catch(() => null)) || model.defaultModel;
+    const result = await connectionLanguageModel(
+      { ...model, defaultModel: id },
+      apiKey,
+    ).doGenerate({
+      prompt: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: summaryPrompt(previousSummary, messages) },
+          ],
+        },
+      ],
       // 会先「思考」的模型要留够余量，不然思考用完了正文是空的。
       maxOutputTokens: 1500,
       abortSignal: signal,
     });
-    const summary = result.content.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
+    const summary = result.content
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
     return { summary, model: id };
   };
 }
 
 export function outputLimitLanguageModel<T>(model: T, modelId: string): T {
-  if (!model || typeof model !== "object" || /^claude-/i.test(modelId)) return model;
+  if (!model || typeof model !== "object" || /^claude-/i.test(modelId))
+    return model;
   const target = model as unknown as Record<string, unknown>;
   const fill = async (options: unknown) => {
     const call = options as { maxOutputTokens?: number } | undefined;
@@ -447,9 +541,15 @@ export function outputLimitLanguageModel<T>(model: T, modelId: string): T {
   };
   return new Proxy(model as unknown as object, {
     get(object, property) {
-      if ((property === "doStream" || property === "doGenerate") && typeof target[property] === "function") {
-        const method = target[property] as (options: unknown) => Promise<unknown>;
-        return async (options: unknown) => method.call(object, await fill(options));
+      if (
+        (property === "doStream" || property === "doGenerate") &&
+        typeof target[property] === "function"
+      ) {
+        const method = target[property] as (
+          options: unknown,
+        ) => Promise<unknown>;
+        return async (options: unknown) =>
+          method.call(object, await fill(options));
       }
       // 不传 receiver：模型类的私有字段只认它自己（同 meterLanguageModel）。
       const value = Reflect.get(object, property);
@@ -664,7 +764,10 @@ export function builtInAgentConfiguration(
   standingInstructions?: string | null,
   planModel?: PlanModel,
   /** Rewrites a request for the model a fallback switches to (images it cannot see → descriptions). */
-  adaptForFallback?: (modelId: string, callOptions: unknown) => Promise<unknown>,
+  adaptForFallback?: (
+    modelId: string,
+    callOptions: unknown,
+  ) => Promise<unknown>,
   /** Who is asking, for the self-map. Appended last for the usual positional reason. */
   audience?: BotAudience,
 ): BuiltInAgentConfiguration {
@@ -690,7 +793,11 @@ export function builtInAgentConfiguration(
       ? planModel
       : model.baseUrl || model.useApiKey === false
         ? // 每一步的用量记到当前运行的计量器（输入框的「上下文」读数，context-usage.ts）。
-          steerLanguageModel(meterLanguageModel(fallbackConnectionModel(model, apiKey, adaptForFallback)))
+          steerLanguageModel(
+            meterLanguageModel(
+              fallbackConnectionModel(model, apiKey, adaptForFallback),
+            ),
+          )
         : `${model.provider}/${model.defaultModel}`,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
@@ -730,12 +837,14 @@ export function builtInAgentConfiguration(
       selfMapGuidance({
         actorIsAdmin: audience?.isAdmin,
         offersMcpAdd: tools.some((tool) => tool.name === "mcp_add"),
-        offersDeviceMcp: tools.some(
-          (tool) => tool.name === "device_mcp_call",
-        ),
+        offersDeviceMcp: tools.some((tool) => tool.name === "device_mcp_call"),
       }),
-      ...(tools.some((tool) => tool.name === "web_search") ? [WEB_GUIDANCE] : []),
-      ...(tools.some((tool) => tool.name === "panel_create") ? [LIVE_PANEL_GUIDANCE] : []),
+      ...(tools.some((tool) => tool.name === "web_search")
+        ? [WEB_GUIDANCE]
+        : []),
+      ...(tools.some((tool) => tool.name === "panel_create")
+        ? [LIVE_PANEL_GUIDANCE]
+        : []),
       ...(grantedToolGuidance(tools, connectedVendors)
         ? [grantedToolGuidance(tools, connectedVendors)]
         : []),
@@ -761,21 +870,30 @@ export function builtInAgentConfiguration(
       ? {
           tools: allTools.map((tool) => ({
             ...tool,
-            execute: async (args: unknown, execution?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
+            execute: async (
+              args: unknown,
+              execution?: { toolCallId?: string; abortSignal?: AbortSignal },
+            ) => {
               // FIX-04：用户已按停止 → 立刻拒绝，不再开新工具；并把 signal 传给 web_search 等长操作。
               const signal = execution?.abortSignal ?? currentToolAbort();
               if (signal?.aborted || currentConfirmTurn()?.stopped()) {
-                return withStepBudgetNote(`${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`);
+                return withStepBudgetNote(
+                  `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`,
+                );
               }
               // 确认卡片要画在这条工具调用下面：把 toolCallId 带给 server/src/confirmations。
-              const result = await withConfirmToolCall(execution?.toolCallId, tool.name, () =>
-                executeNativeApprovalTool(
-                  tool.name,
-                  args,
-                  execution?.toolCallId,
-                  tools.find((granted) => granted.name === tool.name)?.initiator,
-                  () => tool.execute(args, signal ? { signal } : undefined),
-                ),
+              const result = await withConfirmToolCall(
+                execution?.toolCallId,
+                tool.name,
+                () =>
+                  executeNativeApprovalTool(
+                    tool.name,
+                    args,
+                    execution?.toolCallId,
+                    tools.find((granted) => granted.name === tool.name)
+                      ?.initiator,
+                    () => tool.execute(args, signal ? { signal } : undefined),
+                  ),
               );
               // 步数快用完时提醒收尾（§101）。
               return withStepBudgetNote(result);
@@ -805,7 +923,10 @@ const TOOL_STEPS = 12;
 const stepCounts = new WeakMap<object, number>();
 const STEP_NOTE = (left: number) =>
   `【系统提示】这一轮的工具步数快用完了（最多还能再调 ${left} 次）。现在停止调用工具，用已经拿到的信息直接给用户完整的回答；信息不全就说明缺什么。`;
-export function withStepBudgetNote<T>(result: T, turn: object | undefined = currentConfirmTurn()): T {
+export function withStepBudgetNote<T>(
+  result: T,
+  turn: object | undefined = currentConfirmTurn(),
+): T {
   if (!turn) return result;
   const used = (stepCounts.get(turn) ?? 0) + 1;
   stepCounts.set(turn, used);
@@ -813,7 +934,12 @@ export function withStepBudgetNote<T>(result: T, turn: object | undefined = curr
   if (left > 2) return result;
   const note = STEP_NOTE(Math.max(left, 0));
   if (typeof result === "string") return `${result}\n\n${note}` as T;
-  if (result && typeof result === "object" && !Array.isArray(result) && Object.getPrototypeOf(result) === Object.prototype)
+  if (
+    result &&
+    typeof result === "object" &&
+    !Array.isArray(result) &&
+    Object.getPrototypeOf(result) === Object.prototype
+  )
     return { ...(result as Record<string, unknown>), systemNote: note } as T;
   return result;
 }
@@ -947,7 +1073,12 @@ export async function buildAgents(
           loadAttachment &&
             Object.assign(
               (id: string, threadId: string) =>
-                loadAttachment(id, threadId, agent.id, selectedModel.defaultModel),
+                loadAttachment(
+                  id,
+                  threadId,
+                  agent.id,
+                  selectedModel.defaultModel,
+                ),
               loadAttachment.promptForModel
                 ? { promptForModel: loadAttachment.promptForModel }
                 : {},
@@ -1240,29 +1371,54 @@ async function hermesKernelAgent(options: {
 }): Promise<AbstractAgent> {
   const { agent, kernel, signRun } = options;
   if (!kernel.binding || !signRun)
-    throw new Error("Hermes requires an authenticated host tool binding before it can run.");
-  const transport = await remoteTransport({
-    id: agent.id,
-    name: agent.name,
-    type: "remote_ag_ui",
-    endpoint: kernel.url,
-    ...(kernel.token ? { headers: { authorization: `Bearer ${kernel.token}` } } : {}),
-    standingMessage: standingRoleMessage({ id: agent.id, name: agent.name, title: "ChisaBot assistant", roleDescription: agent.systemPrompt }),
-  }, options.stallGuard, options.agentFetch, options.initiator);
+    throw new Error(
+      "Hermes requires an authenticated host tool binding before it can run.",
+    );
+  const transport = await remoteTransport(
+    {
+      id: agent.id,
+      name: agent.name,
+      type: "remote_ag_ui",
+      endpoint: kernel.url,
+      ...(kernel.token
+        ? { headers: { authorization: `Bearer ${kernel.token}` } }
+        : {}),
+      standingMessage: standingRoleMessage({
+        id: agent.id,
+        name: agent.name,
+        title: "ChisaBot assistant",
+        roleDescription: agent.systemPrompt,
+      }),
+    },
+    options.stallGuard,
+    options.agentFetch,
+    options.initiator,
+  );
   return new HermesRuntimeAgent(transport, {
     botId: agent.id,
     modelId: options.model.defaultModel,
     binding: kernel.binding,
-    signRun: (runId, threadId, previous) => signRun(agent.id, runId, threadId, previous),
+    signRun: (runId, threadId, previous) =>
+      signRun(agent.id, runId, threadId, previous),
     // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
     modelControls: async (modelId) => {
-      const [fallbacks, maxOutputTokens, supportsImages, contextWindow] = await Promise.all([
-        fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(modelId).catch(() => [] as string[]),
-        resolveOutputLimit(modelId),
-        resolveModelVisionSupport(modelId),
-        resolveContextWindow(modelId),
-      ]);
-      return { fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS), ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(supportsImages === undefined ? {} : { supportsImages }), ...(contextWindow ? { contextWindow } : {}) };
+      const [fallbacks, maxOutputTokens, supportsImages, contextWindow] =
+        await Promise.all([
+          fallbackCandidates(
+            () => fallbackCatalog(),
+            process.env,
+            () => fallbackConfigured(),
+          )(modelId).catch(() => [] as string[]),
+          resolveOutputLimit(modelId),
+          resolveModelVisionSupport(modelId),
+          resolveContextWindow(modelId),
+        ]);
+      return {
+        fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS),
+        ...(maxOutputTokens ? { maxOutputTokens } : {}),
+        ...(supportsImages === undefined ? {} : { supportsImages }),
+        ...(contextWindow ? { contextWindow } : {}),
+      };
     },
     finishedMetadata: (runId) => {
       // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。
@@ -1279,34 +1435,91 @@ async function hermesKernelAgent(options: {
     },
     prepare: async (input, tools) => {
       // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
-      const configured = builtInAgentConfiguration(agent, { ...options.model, useApiKey: false }, null, [...tools], options.computerGuidance, options.connectedVendors, options.standingInstructions, undefined, undefined, options.audience);
+      const configured = builtInAgentConfiguration(
+        agent,
+        { ...options.model, useApiKey: false },
+        null,
+        [...tools],
+        options.computerGuidance,
+        options.connectedVendors,
+        options.standingInstructions,
+        undefined,
+        undefined,
+        options.audience,
+      );
       const prompt = "prompt" in configured ? configured.prompt : undefined;
-      if (typeof prompt !== "string") throw new Error("The Hermes host instructions could not be prepared.");
-      const answeredByResume = new Set((input.resume ?? []).map((entry) => entry.interruptId));
-      const existingResults = new Set(input.messages.flatMap((message) => message.role === "tool" ? [message.toolCallId] : []));
-      const resumed: Message[] = (input.resume ?? []).filter((entry) => entry.status === "resolved" && !existingResults.has(entry.interruptId)).map((entry) => ({
-        id: `hermes-resume:${entry.interruptId}`,
-        role: "tool" as const,
-        toolCallId: entry.interruptId,
-        content: typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload ?? null),
-      }));
-      const history = sanitizeSeededHistory([...input.messages.filter((message) => message.id !== `hermes-role:${agent.id}` && message.id !== HISTORY_SUMMARY_ID), ...resumed], answeredByResume);
+      if (typeof prompt !== "string")
+        throw new Error("The Hermes host instructions could not be prepared.");
+      const answeredByResume = new Set(
+        (input.resume ?? []).map((entry) => entry.interruptId),
+      );
+      const existingResults = new Set(
+        input.messages.flatMap((message) =>
+          message.role === "tool" ? [message.toolCallId] : [],
+        ),
+      );
+      const resumed: Message[] = (input.resume ?? [])
+        .filter(
+          (entry) =>
+            entry.status === "resolved" &&
+            !existingResults.has(entry.interruptId),
+        )
+        .map((entry) => ({
+          id: `hermes-resume:${entry.interruptId}`,
+          role: "tool" as const,
+          toolCallId: entry.interruptId,
+          content:
+            typeof entry.payload === "string"
+              ? entry.payload
+              : JSON.stringify(entry.payload ?? null),
+        }));
+      const history = sanitizeSeededHistory(
+        [
+          ...input.messages.filter(
+            (message) =>
+              message.id !== `hermes-role:${agent.id}` &&
+              message.id !== HISTORY_SUMMARY_ID,
+          ),
+          ...resumed,
+        ],
+        answeredByResume,
+      );
       const messages = options.loadAttachment
-        ? await inlineAttachments(history, options.loadAttachment, input.threadId, options.markAttachmentsSent)
+        ? await inlineAttachments(
+            history,
+            options.loadAttachment,
+            input.threadId,
+            options.markAttachmentsSent,
+          )
         : history;
       // 长对话：按上下文窗口估算，>70% 裁剪旧工具结果 / 超长旧消息，>85% 用缓存的摘要代替较早轮次（agents/history-budget.ts）。
       // 这一轮从不等摘要模型：没有现成摘要就只裁剪，回复结束后后台写摘要。只改这一次发出去的副本，数据库里的完整历史不动。
-      let budget: Awaited<ReturnType<typeof compactHistory>> = { summary: null, messages, compaction: null, refresh: null };
+      let budget: Awaited<ReturnType<typeof compactHistory>> = {
+        summary: null,
+        messages,
+        compaction: null,
+        refresh: null,
+      };
       try {
         let toolTokens = 0;
         try {
-          toolTokens = Math.round(JSON.stringify(tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: z.toJSONSchema(tool.parameters, { io: "input" }) }))).length / 4);
+          toolTokens = Math.round(
+            JSON.stringify(
+              tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: z.toJSONSchema(tool.parameters, { io: "input" }),
+              })),
+            ).length / 4,
+          );
         } catch {
           toolTokens = 0;
         }
         const [contextWindow, previousUsage] = await Promise.all([
           resolveContextWindow(options.model.defaultModel),
-          historyPlans.get(input.runId) ? null : resolvePreviousRunUsage(input.threadId),
+          historyPlans.get(input.runId)
+            ? null
+            : resolvePreviousRunUsage(input.threadId),
         ]);
         budget = await compactHistory({
           threadId: input.threadId,
@@ -1315,19 +1528,35 @@ async function hermesKernelAgent(options: {
           overheadTokens: estimateTokens([{ content: prompt }]) + toolTokens,
           contextWindow,
           store: historySummaryStore,
-          summarize: connectionSummarizer(options.model, options.apiKey ?? null),
+          summarize: connectionSummarizer(
+            options.model,
+            options.apiKey ?? null,
+          ),
           memo: historyPlans,
           previousUsage,
           log: (line) => console.log(JSON.stringify(line)),
         });
       } catch (error) {
-        console.warn(JSON.stringify({ type: "history-budget", event: "failed", error: error instanceof Error ? reasonWithoutStatement(error).slice(0, 200) : "unknown" }));
+        console.warn(
+          JSON.stringify({
+            type: "history-budget",
+            event: "failed",
+            error:
+              error instanceof Error
+                ? reasonWithoutStatement(error).slice(0, 200)
+                : "unknown",
+          }),
+        );
       }
       rememberCompaction(input.runId, budget.compaction);
       if (budget.refresh) rememberRefresh(input.runId, budget.refresh);
       return {
         ...input,
-        messages: [{ id: `hermes-role:${agent.id}`, role: "system", content: prompt }, ...(budget.summary ? [budget.summary] : []), ...budget.messages],
+        messages: [
+          { id: `hermes-role:${agent.id}`, role: "system", content: prompt },
+          ...(budget.summary ? [budget.summary] : []),
+          ...budget.messages,
+        ],
       };
     },
   });
@@ -1451,24 +1680,77 @@ async function buildAgent(
     if (!signRun) throw new Error("DSH requires an authenticated run binding.");
     const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
     return new DshRuntimeAgent({
-      botId: agent.id, binding: agentKernel.binding, tools: granted,
+      botId: agent.id,
+      binding: agentKernel.binding,
+      tools: granted,
       selectTools: narrowing ? offeredFor : undefined,
       ...(model.plan ? { plan: model.plan } : {}),
-      toolsFor: async (input, signal) => { const tools = await handoff?.(agent.id, input) ?? []; signal.throwIfAborted(); return tools; },
-      prepareInput: async input => ({ ...input, messages: loadAttachment ? await inlineAttachments(input.messages, loadAttachment, input.threadId, markAttachmentsSent) : input.messages }),
-      signRun: input => signRun(agent.id, input.runId, input.threadId, runAssertionValue(input.forwardedProps)),
-      connection: { provider: model.provider, baseUrl: model.baseUrl ?? (model.provider === "anthropic" ? process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com" : process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"),
-        apiKey, useApiKey: model.useApiKey, model: model.defaultModel },
-      prompt: tools => {
-        const configured = builtInAgentConfiguration(agent, { ...model, useApiKey: false }, null, [...tools], computerGuidance, connectedVendors, standingInstructions, undefined, undefined, audience);
-        if (!("prompt" in configured) || typeof configured.prompt !== "string") throw new Error("The ChisaBot prompt is unavailable.");
+      toolsFor: async (input, signal) => {
+        const tools = (await handoff?.(agent.id, input)) ?? [];
+        signal.throwIfAborted();
+        return tools;
+      },
+      prepareInput: async (input) => ({
+        ...input,
+        messages: loadAttachment
+          ? await inlineAttachments(
+              input.messages,
+              loadAttachment,
+              input.threadId,
+              markAttachmentsSent,
+            )
+          : input.messages,
+      }),
+      signRun: (input) =>
+        signRun(
+          agent.id,
+          input.runId,
+          input.threadId,
+          runAssertionValue(input.forwardedProps),
+        ),
+      connection: {
+        provider: model.provider,
+        baseUrl:
+          model.baseUrl ??
+          (model.provider === "anthropic"
+            ? (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com")
+            : (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")),
+        apiKey,
+        useApiKey: model.useApiKey,
+        model: model.defaultModel,
+      },
+      prompt: (tools) => {
+        const configured = builtInAgentConfiguration(
+          agent,
+          { ...model, useApiKey: false },
+          null,
+          [...tools],
+          computerGuidance,
+          connectedVendors,
+          standingInstructions,
+          undefined,
+          undefined,
+          audience,
+        );
+        if (!("prompt" in configured) || typeof configured.prompt !== "string")
+          throw new Error("The ChisaBot prompt is unavailable.");
         return configured.prompt;
       },
-      modelInfo: async modelId => {
-        const [maxOutputTokens, contextWindow, supportsImages] = await Promise.all([resolveOutputLimit(modelId), resolveContextWindow(modelId), resolveModelVisionSupport(modelId)]);
+      modelInfo: async (modelId) => {
+        const [maxOutputTokens, contextWindow, supportsImages] =
+          await Promise.all([
+            resolveOutputLimit(modelId),
+            resolveContextWindow(modelId),
+            resolveModelVisionSupport(modelId),
+          ]);
         return { maxOutputTokens, contextWindow, supportsImages };
       },
-      fallbacks: () => fallbackCandidates(() => fallbackCatalog(), process.env, () => fallbackConfigured())(model.defaultModel),
+      fallbacks: () =>
+        fallbackCandidates(
+          () => fallbackCatalog(),
+          process.env,
+          () => fallbackConfigured(),
+        )(model.defaultModel),
     });
   }
   if (agent.type === "remote_ag_ui" || agent.type === "remote_mastra") {
@@ -1659,14 +1941,16 @@ async function remoteTransport(
 
   if (agent.type === "remote_ag_ui") {
     // CB-100: a connect failure before the first event becomes a terminal RUN_ERROR, not a hang.
-    return new FailFastTransport(new HttpAgent({
-      url: agent.endpoint,
-      agentId: agent.id,
-      // The customer's own key, if their agent sits behind one. `HttpAgentConfig` is
-      // `{ url, headers?, fetch? }`, verified against @ag-ui/client 0.0.57.
-      ...(agent.headers ? { headers: agent.headers } : {}),
-      ...(dial ? { fetch: dial } : {}),
-    }));
+    return new FailFastTransport(
+      new HttpAgent({
+        url: agent.endpoint,
+        agentId: agent.id,
+        // The customer's own key, if their agent sits behind one. `HttpAgentConfig` is
+        // `{ url, headers?, fetch? }`, verified against @ag-ui/client 0.0.57.
+        ...(agent.headers ? { headers: agent.headers } : {}),
+        ...(dial ? { fetch: dial } : {}),
+      }),
+    );
   }
 
   const [{ MastraClient }, { getRemoteAgents }] = await Promise.all([
@@ -1969,7 +2253,8 @@ function remoteAgentWithStandingRole(
                 unknown
               >,
             },
-            execute: (args, context) => tool.execute(args, { signal: context.signal }),
+            execute: (args, context) =>
+              tool.execute(args, { signal: context.signal }),
           })),
           initiator,
         ).run(prepared, next);
@@ -1997,8 +2282,10 @@ function remoteAgentWithStandingRole(
       );
       const owned =
         !!process.env.MANAGED_AGENT_TOKEN &&
-        readCompatibleHeader(new Headers(agent.headers), "x-chisabot-agent-token") ===
-          process.env.MANAGED_AGENT_TOKEN &&
+        readCompatibleHeader(
+          new Headers(agent.headers),
+          "x-chisabot-agent-token",
+        ) === process.env.MANAGED_AGENT_TOKEN &&
         [
           process.env.PICKED_HARNESS_URL,
           process.env.MANAGED_AGENT_AG_UI_URL,
@@ -2192,7 +2479,9 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
     if (!load)
       return meterRun(() =>
         nativeApprovalRun({ ...input, messages: history }, () =>
-          guaranteeFinalAnswer(observeModelConnection(super.run({ ...input, messages: history }))),
+          guaranteeFinalAnswer(
+            observeModelConnection(super.run({ ...input, messages: history })),
+          ),
         ),
       );
     /*
@@ -2213,7 +2502,9 @@ class BuiltInAgentWithSaneHistory extends BuiltInAgent {
         ).pipe(
           switchMap((messages) =>
             nativeApprovalRun({ ...input, messages }, () =>
-              guaranteeFinalAnswer(observeModelConnection(super.run({ ...input, messages }))),
+              guaranteeFinalAnswer(
+                observeModelConnection(super.run({ ...input, messages })),
+              ),
             ),
           ),
         ),
@@ -2589,33 +2880,66 @@ export function mountConversationRuntime(
 ) {
   const backend = options.localBackend;
   if (config.runtime.mode !== "local" || !backend) {
-    throw new Error("The local conversation backend must be initialized before mounting the runtime.");
+    throw new Error(
+      "The local conversation backend must be initialized before mounting the runtime.",
+    );
   }
   if (options.basePath && options.basePath !== "/api/conversations") {
-    throw new Error("The local runtime requires /api/conversations so every request passes the owner guard.");
+    throw new Error(
+      "The local runtime requires /api/conversations so every request passes the owner guard.",
+    );
   }
   const announce = (threadId: string, busy: boolean) => {
-    try { options.onRunBusy?.({ threadId, busy }); } catch { /* Presence cannot revoke an acquired lease. */ }
+    try {
+      options.onRunBusy?.({ threadId, busy });
+    } catch {
+      /* Presence cannot revoke an acquired lease. */
+    }
   };
   return {
-    handler: createConversationRoutes({ backend, resolver, identifyActor,
+    handler: createConversationRoutes({
+      backend,
+      resolver,
+      identifyActor,
       prepareAgent: async (actorId, agent) => {
-        if (agentKernel.kind !== "dsh" || !config.dshKernel?.targetsFile) return;
+        if (agentKernel.kind !== "dsh" || !config.dshKernel?.targetsFile)
+          return;
         const { DshRuntimeAgent } = await import("./agents/dsh-runtime");
-        if (agent instanceof DshRuntimeAgent) await agentKernel.binding.targetFor(actorId);
+        if (agent instanceof DshRuntimeAgent)
+          await agentKernel.binding.targetFor(actorId);
       },
-      toolsFor: async (actorId, botId, input) => agentKernel.kind === "dsh" ? [] : await agentKernel.binding?.loadSurfaceTools?.({ actorId, botId, threadId: input.threadId, runId: input.runId, depth: 0, initiator: PERSON_INITIATOR }) ?? [],
+      toolsFor: async (actorId, botId, input) =>
+        agentKernel.kind === "dsh"
+          ? []
+          : ((await agentKernel.binding?.loadSurfaceTools?.({
+              actorId,
+              botId,
+              threadId: input.threadId,
+              runId: input.runId,
+              depth: 0,
+              initiator: PERSON_INITIATOR,
+            })) ?? []),
     }),
     runner: backend.runner,
     threadLock: {
-      acquire: async (input: { threadId: string; runId: string; userId: string; agentId: string }) => {
+      acquire: async (input: {
+        threadId: string;
+        runId: string;
+        userId: string;
+        agentId: string;
+      }) => {
         try {
           await backend.client.getOrCreateThread(input);
           const held = await backend.leases.acquire(input);
           announce(input.threadId, true);
           return { runId: held.runId };
         } catch (error) {
-          if (error instanceof Error && "status" in error && error.status === 409) return null;
+          if (
+            error instanceof Error &&
+            "status" in error &&
+            error.status === 409
+          )
+            return null;
           throw error;
         }
       },
@@ -2627,11 +2951,28 @@ export function mountConversationRuntime(
         await backend.leases.release(input);
       },
     },
-    agentFor: async (input: { actor: AgentActor; botId: string; initiator?: AuditInitiator; depth?: number }): Promise<AbstractAgent | null> => {
-      try { return await resolver.resolveAgentForActor(input.actor, input.botId, { initiator: input.initiator, depth: input.depth }); }
-      catch (error) { if (error instanceof CoworkerUnavailableError) return null; throw error; }
+    agentFor: async (input: {
+      actor: AgentActor;
+      botId: string;
+      initiator?: AuditInitiator;
+      depth?: number;
+    }): Promise<AbstractAgent | null> => {
+      try {
+        return await resolver.resolveAgentForActor(input.actor, input.botId, {
+          initiator: input.initiator,
+          depth: input.depth,
+        });
+      } catch (error) {
+        if (error instanceof CoworkerUnavailableError) return null;
+        throw error;
+      }
     },
     history: async (input: { threadId: string; actorId: string }) =>
-      (await backend.client.getThreadMessages({ threadId: input.threadId, userId: input.actorId })).messages,
+      (
+        await backend.client.getThreadMessages({
+          threadId: input.threadId,
+          userId: input.actorId,
+        })
+      ).messages,
   };
 }

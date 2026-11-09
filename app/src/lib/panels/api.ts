@@ -205,11 +205,9 @@ export const panelsApi = {
       `/instances/${encodeURIComponent(instanceId)}/tasks`,
     ),
   taskAction: (botId: string, taskId: string, action: "confirm" | "cancel") =>
-    call<PanelTask>(
-      botId,
-      `/tasks/${encodeURIComponent(taskId)}/${action}`,
-      { method: "POST" },
-    ),
+    call<PanelTask>(botId, `/tasks/${encodeURIComponent(taskId)}/${action}`, {
+      method: "POST",
+    }),
 };
 
 export const panelKeys = {
@@ -267,7 +265,8 @@ export function panelErrorText(error: unknown): string {
       panel_runtime_timeout: "面板运行超时，已暂停。其他页面仍可使用。",
       panel_bot_unavailable: "此 BOT 不可用。",
       unauthenticated: "登录已过期，请重新登录。",
-    }[code] ?? (code && /[\u4e00-\u9fa5]/.test(code)
+    }[code] ??
+    (code && /[\u4e00-\u9fa5]/.test(code)
       ? code
       : "操作未完成，您的草稿和原面板已保留。请刷新后重试。")
   );
@@ -283,8 +282,9 @@ export const PANEL_AUTHORING_PROP = "panelAuthoring";
 export function asksForPanel(text: string): boolean {
   const t = text.replace(/\s+/g, "");
   return (
-    /(建立|建|做|创建|新建|生成|弄|加|添加|设计|搞|整)(一个|个|一块|块|一张|张)?[^，。？！,.?!]{0,12}面板/.test(t) &&
-    !/面板(库|怎么|在哪|是什么)/.test(t)
+    /(建立|建|做|创建|新建|生成|弄|加|添加|设计|搞|整)(一个|个|一块|块|一张|张)?[^，。？！,.?!]{0,12}面板/.test(
+      t,
+    ) && !/面板(库|怎么|在哪|是什么)/.test(t)
   );
 }
 

@@ -6,16 +6,22 @@ import {
   isLoginLoopDetected,
 } from "../lib/auth/login-redirect";
 import { currentUserQueryOptions, needsOnboarding } from "../lib/auth/queries";
-import { AppHotkeys } from "../lib/hotkeys/app-hotkeys";
 import { setControlAccount } from "../lib/computers/use-control";
+import { AppHotkeys } from "../lib/hotkeys/app-hotkeys";
 
 /*
  * 首屏用不到的三样（Alt+Space 速记带着整个 Markdown 渲染、定时任务提醒、补资料弹窗）等首屏画完、浏览器空下来再下载挂上
  * （DESIGN.md §41.5）。会话客户端 不在这里包了：它只包聊天这一块的主区，进聊天时才下载（components/layout/authed-shell.tsx）。
  */
-const QuickSpotlight = lazyPart(() => import("../components/chat/quick-spotlight").then((m) => m.QuickSpotlight));
-const ScheduleNotifier = lazyPart(() => import("../components/schedules/notifier").then((m) => m.ScheduleNotifier));
-const ProfileSetupGate = lazyPart(() => import("../components/layout/profile-dialog").then((m) => m.ProfileSetupGate));
+const QuickSpotlight = lazyPart(() =>
+  import("../components/chat/quick-spotlight").then((m) => m.QuickSpotlight),
+);
+const ScheduleNotifier = lazyPart(() =>
+  import("../components/schedules/notifier").then((m) => m.ScheduleNotifier),
+);
+const ProfileSetupGate = lazyPart(() =>
+  import("../components/layout/profile-dialog").then((m) => m.ProfileSetupGate),
+);
 
 export const Route = createFileRoute("/_authed")({
   beforeLoad: async ({ context, location }) => {

@@ -96,12 +96,12 @@ DSH 保存模型执行历史；ChisaBot 保存业务消息映射、执行段、�
 
 ### 4.2 两种序号各管什么
 
-| 数据 | 识别和顺序 | 重连处理 |
-|---|---|---|
-| 持久事件 | Session ID + event `seq` | 从 opening snapshot、history page 和后续 events 重建；完整重复项可去重，缺口必须补读 |
-| 实时 assistant attempt | `attemptId`、`revision`、`index`，并带 turn/step、`startedAfterSeq` | opening baseline 替换旧 process-local 状态；不能跨 generation 比 revision 大小 |
-| durable settlement | `assistant/message` 或 `assistant/attempt`，end frame 指向 committed `seq` | 用它接替对应临时内容，不能追加第二份完整正文 |
-| abandoned attempt | live end 的 `kind: abandoned` | 清理对应临时状态；不伪造成功持久消息 |
+| 数据                   | 识别和顺序                                                                 | 重连处理                                                                             |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 持久事件               | Session ID + event `seq`                                                   | 从 opening snapshot、history page 和后续 events 重建；完整重复项可去重，缺口必须补读 |
+| 实时 assistant attempt | `attemptId`、`revision`、`index`，并带 turn/step、`startedAfterSeq`        | opening baseline 替换旧 process-local 状态；不能跨 generation 比 revision 大小       |
+| durable settlement     | `assistant/message` 或 `assistant/attempt`，end frame 指向 committed `seq` | 用它接替对应临时内容，不能追加第二份完整正文                                         |
+| abandoned attempt      | live end 的 `kind: abandoned`                                              | 清理对应临时状态；不伪造成功持久消息                                                 |
 
 实时 `chunk.index` 密集递增。开流 baseline 携带已累积 compact stream 和 `nextIndex`。durable settlement 与 live end 到达次序需按官方规则协调；失败 attempt 与成功 message 的展示行为不同。断线可以补全已提交消息，进程硬退出前尚未 settlement 的 token 不承诺持久保存。[Session types][session-types] [Session Controller][session]
 
@@ -121,11 +121,11 @@ DSH 保存模型执行历史；ChisaBot 保存业务消息映射、执行段、�
 
 官方 `Agent.cancel(cause, {keepInbox})` 取消当前活动；省略 keepInbox 会清空队列。Host `session.cancel` 选择 `keepInbox: true`，因此 pending next-turn 和 next-step 输入继续存在。[Agent runtime types][agent-runtime] [Session commands][session-commands]
 
-| ChisaBot 动作 | 必须处理的状态 |
-|---|---|
-| 停止当前回答 | 请求取消当前 turn，撤销当前审批等待，等待前台工具退出；保留队列与否由产品动作明确表达 |
-| 停止本次任务 | 还需撤销这个任务拥有的待执行输入、子任务和后台作业，保留无关会话 |
-| 停止 runtime | 停止接收新任务，按拥有关系回收全部 Agent/工具，flush 并关闭存储，再结束进程 |
+| ChisaBot 动作 | 必须处理的状态                                                                        |
+| ------------- | ------------------------------------------------------------------------------------- |
+| 停止当前回答  | 请求取消当前 turn，撤销当前审批等待，等待前台工具退出；保留队列与否由产品动作明确表达 |
+| 停止本次任务  | 还需撤销这个任务拥有的待执行输入、子任务和后台作业，保留无关会话                      |
+| 停止 runtime  | 停止接收新任务，按拥有关系回收全部 Agent/工具，flush 并关闭存储，再结束进程           |
 
 返回 accepted 只是取消请求被接受。UI 的“已停止”应在对应活动和工具清理达到终态后显示；等待期间显示正在停止。不要为停止一条对话关闭共享 runtime，让其他会话失败。
 

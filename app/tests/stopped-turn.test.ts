@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { stoppedReason, stoppedTurnSubscriber } from "../src/lib/conversations/stopped-turn";
+import {
+  stoppedReason,
+  stoppedTurnSubscriber,
+} from "../src/lib/conversations/stopped-turn";
 
 /**
  * What a person is told when a turn ends and no answer came.
@@ -10,38 +13,61 @@ import { stoppedReason, stoppedTurnSubscriber } from "../src/lib/conversations/s
 
 describe("model errors in plain Chinese (2026-10-15)", () => {
   test("daily quota with retry hint", () => {
-    const r = stoppedReason(new Error("Failed after 3 attempts. Last error: ClinePass: Error 429: Daily free limit reached on model xiaomi/mimo-v2.6-flash. Try again in 19h 51m"));
-    expect(r).toBe("这个模型的额度用完了，约 19 小时 51 分钟后恢复。点输入框右下角的模型名，换一个模型再发。");
+    const r = stoppedReason(
+      new Error(
+        "Failed after 3 attempts. Last error: ClinePass: Error 429: Daily free limit reached on model xiaomi/mimo-v2.6-flash. Try again in 19h 51m",
+      ),
+    );
+    expect(r).toBe(
+      "这个模型的额度用完了，约 19 小时 51 分钟后恢复。点输入框右下角的模型名，换一个模型再发。",
+    );
   });
   test("opencode-only free tier", () => {
-    expect(stoppedReason("OpenCode Zen: OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.")).toContain("只能在 OpenCode");
+    expect(
+      stoppedReason(
+        "OpenCode Zen: OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.",
+      ),
+    ).toContain("只能在 OpenCode");
   });
   test("rate limit, auth, context, timeout, network", () => {
     expect(stoppedReason("Error 429: Too Many Requests")).toContain("限流");
     expect(stoppedReason("401 Unauthorized")).toContain("密钥");
-    expect(stoppedReason("prompt is too long: 300000 tokens > 200000 maximum")).toContain("太长");
+    expect(
+      stoppedReason("prompt is too long: 300000 tokens > 200000 maximum"),
+    ).toContain("太长");
     expect(stoppedReason("Request timed out")).toContain("太久");
     expect(stoppedReason("fetch failed")).toContain("连不上");
   });
   test("a host tool with no definite outcome says the turn paused, not that no answer came (2026-11-06)", async () => {
     const { friendlyError } = await import("../src/lib/chat/friendly-error");
-    const r = stoppedReason("The host gateway outcome is unknown or the run is no longer authorized");
+    const r = stoppedReason(
+      "The host gateway outcome is unknown or the run is no longer authorized",
+    );
     expect(r).toContain("先核对这一步是否已经执行");
     expect(friendlyError(r).title).toBe("这一步操作未能确认结果");
     expect(friendlyError(r).retryable).toBe(false);
     expect(friendlyError(r).title).not.toBe("这一轮没有收到回答");
-    expect(stoppedReason("Hermes ended before a host tool returned its execution receipt. The operation will not be repeated automatically.")).toBe(r);
+    expect(
+      stoppedReason(
+        "Hermes ended before a host tool returned its execution receipt. The operation will not be repeated automatically.",
+      ),
+    ).toBe(r);
   });
   test("Chinese reasons pass through unchanged", () => {
-    expect(stoppedReason("机器人超过 2 分钟没有回应，这一轮已结束。")).toBe("机器人超过 2 分钟没有回应，这一轮已结束。");
+    expect(stoppedReason("机器人超过 2 分钟没有回应，这一轮已结束。")).toBe(
+      "机器人超过 2 分钟没有回应，这一轮已结束。",
+    );
   });
   test("compaction diagnostics survive without assigning a cause", () => {
-    const reason = "context compaction failed: no safe compaction range can reduce context below target";
+    const reason =
+      "context compaction failed: no safe compaction range can reduce context below target";
     expect(stoppedReason(reason)).toBe(reason);
   });
   test("cancelled run reason is translated as an interruption rather than a raw English error", () => {
     expect(stoppedReason("This run was stopped.")).toContain("这一轮被中断了");
-    expect(stoppedReason("This run was stopped.")).not.toContain("This run was stopped.");
+    expect(stoppedReason("This run was stopped.")).not.toContain(
+      "This run was stopped.",
+    );
   });
 });
 
@@ -51,7 +77,9 @@ describe("the reason a turn ended", () => {
       stoppedReason(
         "Risk Analyst stopped responding. Nothing arrived from it for 2 minutes, so this turn was ended. Ask again, or check that the Bot is running.",
       ),
-    ).toBe("「Risk Analyst」2 分钟没有任何回应，这一轮已结束。再发一次试试；一直这样就换一个模型。");
+    ).toBe(
+      "「Risk Analyst」2 分钟没有任何回应，这一轮已结束。再发一次试试；一直这样就换一个模型。",
+    );
   });
 
   test("reads an Error the same way, because a failed run carries one", () => {
@@ -63,14 +91,10 @@ describe("the reason a turn ended", () => {
   test("says so plainly when nothing was reported, rather than inventing a cause", () => {
     // This is the one moment a person has no other way to find out what went wrong, so a guess here
     // would be worse than an admission.
-    expect(stoppedReason(undefined)).toBe(
-      "机器人没有给出原因就停止了。",
-    );
+    expect(stoppedReason(undefined)).toBe("机器人没有给出原因就停止了。");
     expect(stoppedReason("")).toBe("机器人没有给出原因就停止了。");
     expect(stoppedReason("   ")).toBe("机器人没有给出原因就停止了。");
-    expect(stoppedReason(new Error(""))).toBe(
-      "机器人没有给出原因就停止了。",
-    );
+    expect(stoppedReason(new Error(""))).toBe("机器人没有给出原因就停止了。");
     expect(stoppedReason({ message: "not a string or an Error" })).toBe(
       "机器人没有给出原因就停止了。",
     );
@@ -89,13 +113,16 @@ describe("the stopped notice across a replayed history", () => {
     });
     for (const e of events) {
       if (e === "start") sub.onRunStartedEvent();
-      if (e === "error") sub.onRunErrorEvent({ event: { message: "上游出错了" } });
+      if (e === "error")
+        sub.onRunErrorEvent({ event: { message: "上游出错了" } });
     }
     return shown as string | null;
   };
 
   test("an error followed by a later turn is not shown", () => {
-    expect(replay(["start", "error", "start", "finish", "start", "finish"])).toBeNull();
+    expect(
+      replay(["start", "error", "start", "finish", "start", "finish"]),
+    ).toBeNull();
   });
 
   test("an error in the last turn is still shown", () => {
