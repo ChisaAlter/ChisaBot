@@ -2369,6 +2369,14 @@ class PostgresAgentRunner implements ConversationRunner {
   }
 
   async stop({ threadId, runId }: AgentRunnerStopRequest): Promise<boolean> {
+    // CB-104: winding down starts the moment Stop is accepted, before the durable bookkeeping
+    // below; a message sent in that window is told to wait instead of being queued and held.
+    const current = this.active.get(threadId);
+    const claimed =
+      current !== undefined &&
+      !current.stopped &&
+      (runId === undefined || current.runId === runId);
+    if (claimed) current.stopped = true;
     const queued = await createExecutionCapacity(this.store.database).stop(
       threadId,
       runId,
@@ -2423,9 +2431,7 @@ class PostgresAgentRunner implements ConversationRunner {
       if (runId === undefined) await this.inbox.pause(threadId);
       return (await this.client.releaseOrphanedLock(threadId, runId)) || queued;
     }
-    if (entry.stopped || (runId !== undefined && entry.runId !== runId))
-      return queued;
-    entry.stopped = true;
+    if (!claimed || entry !== current) return queued;
     entry.abort.abort();
     entry.agent.abortRun();
     await this.inbox.pause(threadId);
