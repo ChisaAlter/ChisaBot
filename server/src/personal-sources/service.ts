@@ -12,17 +12,12 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import { isIP } from "node:net";
 import * as tls from "node:tls";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
-import { guardedFetch } from "../../../shared/net/guarded-fetch";
-import {
-  checkPublicUrl,
-  isBlockedAddress,
-  isBlockedHostname,
-} from "../../../shared/net/ssrf";
+import { guardedFetch, resolvePublic } from "../../../shared/net/guarded-fetch";
+import { checkPublicUrl, isBlockedHostname } from "../../../shared/net/ssrf";
 import type {
   CalendarConnectionView,
   CalendarEventItem,
@@ -216,12 +211,47 @@ export function parseImapSummaryResponse(
     .reverse();
 }
 
+/** 隔离验收用的演示收件箱。只有 `allowDemo`（测试环境）才会走到这里；真实连接函数不认演示地址。 */
+function demoInboxSummary(limit: number): ScannedEmailSummary[] {
+  const now = new Date();
+  return [
+    {
+      seq: 103,
+      subject: "【架构评审】ChisaBot v2.4 晨报与卡片交互上线确认",
+      from: "产品团队 <team@ayase.cn>",
+      date: now.toISOString(),
+      unread: true,
+    },
+    {
+      seq: 102,
+      subject: "GitHub 安全周报：本周依赖扫描 0 高危漏洞",
+      from: "GitHub <noreply@github.com>",
+      date: new Date(now.getTime() - 3600_000 * 3).toISOString(),
+      unread: true,
+    },
+    {
+      seq: 101,
+      subject: "云服务器月度账单与资源续费提醒",
+      from: "云平台通知 <billing@cloud.example.com>",
+      date: new Date(now.getTime() - 3600_000 * 18).toISOString(),
+      unread: false,
+    },
+  ].slice(0, limit);
+}
+
+/** IMAP over TLS (993) or the registered IMAP port (143); anything else is not a mail server. */
+export const IMAP_PORTS: ReadonlySet<number> = new Set([143, 993]);
+
 export async function fetchImapInboxSummary(input: {
   host: string;
   port: number;
   user: string;
   pass: string;
   limit?: number;
+  /** Test seam for DNS; production uses the system resolver. */
+  resolve?: (
+    hostname: string,
+  ) => Promise<{ address: string; family: number }[]>;
 }): Promise<ScannedEmailSummary[]> {
   const limit = Math.max(1, Math.min(20, input.limit ?? 8));
   if (
@@ -231,46 +261,26 @@ export async function fetchImapInboxSummary(input: {
   ) {
     throw new Error("邮箱配置参数不能包含换行或控制字符。");
   }
-  if (input.host === "demo.imap.local" || input.pass === "demo-inbox") {
-    const now = new Date();
-    return [
-      {
-        seq: 103,
-        subject: "【架构评审】ChisaBot v2.4 晨报与卡片交互上线确认",
-        from: "产品团队 <team@ayase.cn>",
-        date: now.toISOString(),
-        unread: true,
-      },
-      {
-        seq: 102,
-        subject: "GitHub 安全周报：本周依赖扫描 0 高危漏洞",
-        from: "GitHub <noreply@github.com>",
-        date: new Date(now.getTime() - 3600_000 * 3).toISOString(),
-        unread: true,
-      },
-      {
-        seq: 101,
-        subject: "云服务器月度账单与资源续费提醒",
-        from: "云平台通知 <billing@cloud.example.com>",
-        date: new Date(now.getTime() - 3600_000 * 18).toISOString(),
-        unread: false,
-      },
-    ].slice(0, limit);
-  }
 
+  if (!IMAP_PORTS.has(input.port))
+    throw new Error("IMAP 端口只能是 993（TLS）或 143。");
   const cleanHost = input.host.trim();
-  if (
-    isBlockedHostname(cleanHost) ||
-    (isIP(cleanHost.replace(/^\[|\]$/g, "")) !== 0 &&
-      isBlockedAddress(cleanHost))
-  ) {
+  if (isBlockedHostname(cleanHost))
+    throw new Error("不能连接内网或本机 IMAP 服务器地址。");
+  // 解析一次、检查全部解析结果，再钉死连这个地址（防 DNS 重绑定）；证书仍按主机名校验。
+  let pinned: { address: string; family: number };
+  try {
+    pinned = await (input.resolve
+      ? resolvePublic(cleanHost, { resolve: input.resolve })
+      : resolvePublic(cleanHost));
+  } catch {
     throw new Error("不能连接内网或本机 IMAP 服务器地址。");
   }
 
   return new Promise<ScannedEmailSummary[]>((resolve, reject) => {
     const socket = tls.connect(
       {
-        host: cleanHost,
+        host: pinned.address,
         port: input.port,
         servername: cleanHost,
         rejectUnauthorized: true,
@@ -466,7 +476,12 @@ export function createPersonalSources(
 ) {
   const sql = database.$client;
   const fetchImpl = options.fetchFn ?? fetch;
-  const readInbox = options.readInbox ?? fetchImapInboxSummary;
+  const readRealInbox = options.readInbox ?? fetchImapInboxSummary;
+  const readInbox: typeof fetchImapInboxSummary = async (input) =>
+    options.allowDemo &&
+    (input.host === "demo.imap.local" || input.pass === "demo-inbox")
+      ? demoInboxSummary(input.limit ?? 8)
+      : readRealInbox(input);
   const delivery = createPersonalDelivery(database);
 
   async function ensure(): Promise<void> {

@@ -138,7 +138,7 @@ jobs:
         working-directory: agent-computer
         run: bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
       - name: SSRF red-line (PRD-P1-06)
-        run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
+        run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts server/tests/personal-imap-egress.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
         run: bun test shared/trust-boundary.test.ts server/tests/trust-boundary-redline.test.ts
       - name: Log-scrub red-line (PRD-P0-05)
