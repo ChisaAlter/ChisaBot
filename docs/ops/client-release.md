@@ -47,6 +47,8 @@
 
 ## 4. 发版后检查
 
+- 先核对用户实际安装包内的 `src/build-config.json` 和本机 `config.json` 的有效更新源；通用版使用 GitHub Releases，更新自建下载目录不会通知通用版客户端。新清单版本必须高于已安装版本。
+- 用旧版本的真实 `electron-updater` 检查并下载待发布安装包，确认进入 `downloaded`；不得用服务器 `/api/version` 或安装包仅在本地存在代替客户端更新验收。
 - `curl -s https://<YOUR_DOMAIN>/downloads/chisabot-pc/latest.yml | head`：版本号、sha512、`chisabotShell` 外壳指纹。
 - `curl -s https://<YOUR_DOMAIN>/downloads/chisabot-android/latest.json`：`versionCode` 比上一版大。
 - 外壳指纹变了的版本，PC 会提示「此更新需要重新安装」，发版说明里写清楚。

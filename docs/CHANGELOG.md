@@ -1,6 +1,9 @@
-## 未发版
+## 0.1.138（待发布）
 
-- CB-114（`fix/chat-reliability`）：修复失效备用模型导致主模型被误报 404、流式正文出气泡、普通 Markdown 自动转文档及空白/滚动突跳。DESIGN §126；本地验证通过，正式服务与 Hermes 适配器尚未更新。
+- 客户端版本统一为 0.1.138，Android versionCode 为 320；桌面安装包已本地构建，真实更新链路验收与正式更新源发布待完成。服务器已部署不代表桌面更新已发布。
+- Android 主界面改为桌面共用 React 前端的手机布局，保留原生登录、文件选择、导出、键盘及返回键能力。
+- 正式服务器已完成 DSH 与 conversation reader 4 迁移，保留原会话、消息、任务和审批；移除 OpenBot 产品入口与现役接线。
+- CB-114（`fix/chat-reliability`）：流式正文使用聊天气泡，普通 Markdown 不再自动转文档，修复残留空白与滚动突跳；早期 Hermes 回退实现已由 DSH 运行时替代。正式部署与恢复记录见 `pipeline-runs/20261108-assistant-production.md`。
 
 ## 0.1.137
 
