@@ -187,7 +187,10 @@ describe("中途断的一轮不把字放回输入框（§88.4）", () => {
   });
   test("接线：只有什么都没回来的失败才抛（放回字）；重试先问 onRetryTurn", () => {
     const chat = src("components/channels/channel-chat.tsx");
-    expect(chat).toContain("if (!turnAnswered(target.messages)) throw new Error(turnFailure.current);");
+    // 服务器已接纳这条命令的，也算发出去了（不再回填）；两样都没有才抛。
+    expect(chat.replace(/\s+/g, " ")).toContain(
+      "if ( !target.isCommandAccepted(userMessageId) && !turnAnswered(target.messages) ) throw new Error(turnFailure.current);",
+    );
     expect(chat).toContain("onRetryTurn={() => {");
     expect(src("components/channels/conversation-view.tsx")).toContain("if (onRetryTurn?.()) return;");
   });

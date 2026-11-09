@@ -20,9 +20,20 @@ test.each([
     const requests: { url: string; input: RunAgentInput }[] = [];
     const original = globalThis.fetch;
     globalThis.fetch = Object.assign(
-      async (url: any, options?: RequestInit) => {
-        const input = JSON.parse(String(options?.body)) as RunAgentInput;
-        requests.push({ url: String(url), input });
+      async (url: string | URL | Request, options?: RequestInit) => {
+        const href = String(url);
+        // Admission is its own request; the browser's declared tools must be dropped there.
+        if (href.endsWith("/commands")) {
+          const { input } = JSON.parse(String(options?.body)) as {
+            input: RunAgentInput;
+          };
+          requests.push({ url: href, input });
+          return Response.json({ runId: input.runId, commandId: "user" });
+        }
+        // The event subscription only names the admitted command.
+        expect(href.endsWith("/events")).toBe(true);
+        expect(JSON.parse(String(options?.body))).toEqual({ commandId: "user" });
+        const input = requests.at(-1)!.input;
         const frames: BaseEvent[] = [
           {
             type: EventType.RUN_STARTED,
@@ -109,6 +120,7 @@ test.each([
         })
         .catch(() => {});
       expect(requests).toHaveLength(1);
+      expect(requests[0]!.url).toBe("/api/conversations/thread/commands");
       expect(requests[0]!.input.tools).toEqual([]);
       expect(
         agent.messages.filter((message) => message.role === "tool"),

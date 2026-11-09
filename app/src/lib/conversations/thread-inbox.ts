@@ -93,6 +93,31 @@ function set(threadId: string, next: QueuedMessage[]) {
   emit();
 }
 
+/** Store changes for code outside React (the inbox flush watches for a person's retry). */
+export function subscribeQueued(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/**
+ * A drained turn whose send failed before the server admitted it: the rows go back to the queue as
+ * failed, with their files, in the order they were sent. Failed rows are never sent on their own;
+ * the person's 「重试」 re-queues them and the next idle flush carries them.
+ */
+export function restoreFailedQueue(
+  threadId: string,
+  items: readonly QueuedMessage[],
+) {
+  if (!items.length) return;
+  const ids = new Set(items.map((item) => item.id));
+  set(threadId, [
+    ...items.map((item) => ({ ...item, status: "failed" as const })),
+    ...queuedFor(threadId).filter((other) => !ids.has(other.id)),
+  ]);
+}
+
 export function queuedFor(
   threadId: string | null | undefined,
 ): QueuedMessage[] {
@@ -295,6 +320,19 @@ export async function restoreQueue(
   return state;
 }
 
+/**
+ * The message a queued row may keep in the browser. A background worker result is sent by id from
+ * the server's inbox, so the browser keeps only its one-line summary: the full private result never
+ * enters the queue store (or anything that serializes it).
+ */
+function visibleMessage(item: InboxState["items"][number]): {
+  message?: InboxMessage;
+} {
+  return item.kind === "worker_result"
+    ? {}
+    : { message: item.message as InboxMessage };
+}
+
 /** Reconcile local and remote ownership without promoting a durable pause back to queued. */
 export function applyInboxState(threadId: string, state: InboxState) {
   const current = queuedFor(threadId);
@@ -315,11 +353,19 @@ export function applyInboxState(threadId: string, state: InboxState) {
   for (const old of current) {
     const item = active.get(old.id);
     if (item) {
+      const { message: _held, ...rest } = old;
       next.push({
-        ...old,
-        message: item.message as InboxMessage,
+        ...rest,
+        ...visibleMessage(item),
         skillIds: item.message.metadata?.chisabotInbox?.skillIds,
-        status: item.status === "queued" && !state.paused ? "queued" : "paused",
+        // A failed send stays failed until the person retries it; the server still holding the
+        // row as queued must not turn it back into something this tab sends on its own.
+        status:
+          old.status === "failed"
+            ? "failed"
+            : item.status === "queued" && !state.paused
+              ? "queued"
+              : "paused",
       });
       active.delete(old.id);
     } else if (!known.has(old.id) && !old.remote) {
@@ -341,7 +387,7 @@ export function applyInboxState(threadId: string, state: InboxState) {
       next.push({
         id: item.id,
         text,
-        message: item.message as InboxMessage,
+        ...visibleMessage(item),
         skillIds: item.message.metadata?.chisabotInbox?.skillIds,
         kind: item.kind === "worker_result" ? "worker_result" : "message",
         status: item.status === "queued" && !state.paused ? "queued" : "paused",

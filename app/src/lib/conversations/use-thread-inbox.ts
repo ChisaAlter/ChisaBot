@@ -7,8 +7,11 @@ import {
   applyInboxState,
   inboxState,
   markRead,
+  type QueuedMessage,
   queuedFor,
+  restoreFailedQueue,
   restoreQueue,
+  subscribeQueued,
   takeQueued,
 } from "./thread-inbox";
 import { mergeServerMessages, syncQuery, type ThreadSync } from "./thread-sync";
@@ -59,6 +62,26 @@ export function useThreadInbox(
     };
     let flushing = false;
     let failed = false;
+    /** Rows a failed drain gave back; the person's retry turns one back to queued. */
+    const retryable = new Set<string>();
+    const accepted = (id: string) =>
+      (
+        agent as { isCommandAccepted?: (id: string) => boolean }
+      ).isCommandAccepted?.(id) === true;
+    const unadmitted = (items: readonly QueuedMessage[]) => {
+      if (items.some((item) => accepted(item.id))) return false;
+      const ids = new Set(items.map((item) => item.id));
+      const first = agent.messages.findIndex((message) => ids.has(message.id));
+      return (
+        first >= 0 &&
+        !agent.messages
+          .slice(first)
+          .some(
+            (message) =>
+              message.role === "assistant" || message.role === "tool",
+          )
+      );
+    };
     const idle = () =>
       alive &&
       !agent.isRunning &&
@@ -90,7 +113,20 @@ export function useThreadInbox(
             item.message ??
               ({ id: item.id, role: "user", content: item.text } as Message),
           );
-        await runAgent({ agent }).catch(() => {});
+        let threw = false;
+        await runAgent({ agent }).catch(() => {
+          threw = true;
+        });
+        if ((threw || failed) && unadmitted(left)) {
+          // Never admitted and nothing came back: the send did not happen. Take the copies out of
+          // the transcript and give the rows back, files included, for the person to retry.
+          const ids = new Set(left.map((item) => item.id));
+          agent.setMessages(
+            agent.messages.filter((message) => !ids.has(message.id)),
+          );
+          for (const item of left) retryable.add(item.id);
+          restoreFailedQueue(threadId, left);
+        }
       } finally {
         flushing = false;
       }
@@ -115,6 +151,15 @@ export function useThreadInbox(
       },
       onRunFinalized: scheduleFlush,
     });
+    const unwatch = subscribeQueued(() => {
+      const retried = queuedFor(threadId).some(
+        (item) => item.status === "queued" && retryable.delete(item.id),
+      );
+      if (retried) {
+        failed = false;
+        scheduleFlush();
+      }
+    });
     void restoreQueue(threadId).then((state) => {
       reconcile();
       if (state && !state.running && !state.paused) scheduleFlush();
@@ -123,6 +168,7 @@ export function useThreadInbox(
       alive = false;
       if (flushRef.current === scheduleFlush) flushRef.current = null;
       subscription.unsubscribe();
+      unwatch();
     };
   }, [threadId, agent, runAgent]);
 
