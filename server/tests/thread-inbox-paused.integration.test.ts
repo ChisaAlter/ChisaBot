@@ -94,6 +94,8 @@ suite("durably paused thread inbox", () => {
       actor,
     );
     expect(response?.status).toBe(200);
+    // Paused bodies must not linger in a browser or proxy cache (QA508 P3).
+    expect(response?.headers.get("cache-control")).toBe("no-store");
     return response!.json() as Promise<{
       paused: boolean;
       running: boolean;
@@ -174,6 +176,7 @@ suite("durably paused thread inbox", () => {
         owner,
       );
       expect(response?.status).toBe(200);
+      expect(response?.headers.get("cache-control")).toBe("no-store");
       return response!.json();
     };
     const withdraw = async (id: string) => {

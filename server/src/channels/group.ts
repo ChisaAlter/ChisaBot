@@ -31,7 +31,7 @@ import {
   PERSON_INITIATOR,
   recordAuditEvent,
 } from "../audit";
-import type { AppVariables } from "../auth/guards";
+import { type AppVariables, requireAdmin } from "../auth/guards";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -44,6 +44,7 @@ import {
 import { groupBotThreads, groupMessages } from "../db/schema/group";
 import { workItems } from "../db/schema/work";
 import type { CheckPrivateShare } from "../proactive/private-share";
+import { publicErrorMessage } from "../public-error";
 import type { TurnRunner } from "../turns/types";
 import type { WorkQueue } from "../work/queue";
 
@@ -1264,7 +1265,7 @@ export type GroupConversations = ReturnType<typeof createGroupConversations>;
  * service's entry points are reachable and tested over HTTP, so a person message can queue a group
  * turn and a Bot's `@Name` reply can hand the turn to a peer through the same desk grant it uses
  * anywhere else. Membership is still the roster check inside each method — a non-member gets the
- * same 404 as a channel that does not exist.
+ * same 404 as a channel that does not exist. Administrators only (CB-BC v1): anyone else gets 403.
  */
 export function createGroupRoutes(
   service: GroupConversations,
@@ -1272,16 +1273,25 @@ export function createGroupRoutes(
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", requireUser);
-  routes.onError((error, context) =>
-    context.json(
-      { error: error.message },
+  // CB-BC v1: groups are an administrator surface until the product ships them to everyone.
+  routes.use("*", async (context, next) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+    await next();
+  });
+  routes.onError((error, context) => {
+    const status =
       error instanceof GroupNotFoundError
         ? 404
         : error instanceof GroupRefusedError || error instanceof z.ZodError
           ? 400
-          : 500,
-    ),
-  );
+          : 500;
+    // A 500 is somebody else's failure text: it goes out through the shared redaction only.
+    return context.json(
+      { error: status === 500 ? publicErrorMessage(error) : error.message },
+      status,
+    );
+  });
   routes.post("/", async (context) =>
     context.json(
       {

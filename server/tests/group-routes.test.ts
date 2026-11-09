@@ -47,7 +47,7 @@ function appWith(calls: string[], service?: Partial<GroupConversations>) {
     context.set("actor", {
       id: context.req.header("x-test-user") ?? "anon",
       email: "t@chisabot.test",
-      role: "user",
+      role: context.req.header("x-test-role") ?? "admin",
     } as never);
     await next();
   };
@@ -98,6 +98,35 @@ describe("/api/groups", () => {
       "list:u-1:ch-1",
       "send:u-1:ch-1",
     ]);
+  });
+
+  test("a signed-in non-administrator is refused before any service method runs", async () => {
+    const calls: string[] = [];
+    const app = appWith(calls);
+    for (const [path, init] of [
+      ["/", { method: "POST", body: JSON.stringify({ agentIds: ["ada"] }) }],
+      ["/ch-1", {}],
+      [
+        "/ch-1",
+        { method: "POST", body: JSON.stringify({ id: "m", text: "hi" }) },
+      ],
+      [
+        "/ch-1/members",
+        { method: "POST", body: JSON.stringify({ email: "g@x.test" }) },
+      ],
+      ["/ch-1/members/u-2", { method: "DELETE" }],
+    ] as const) {
+      const response = await app.request(path, {
+        ...init,
+        headers: {
+          "content-type": "application/json",
+          "x-test-user": "u-1",
+          "x-test-role": "user",
+        },
+      });
+      expect(response.status).toBe(403);
+    }
+    expect(calls).toEqual([]);
   });
 
   test("membership, refusal and validation failures keep their statuses", async () => {

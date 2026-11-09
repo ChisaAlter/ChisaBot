@@ -1,5 +1,6 @@
 import {
   type AbstractAgent,
+  type AgentSubscriber,
   type BaseEvent,
   compactEvents,
   EventType,
@@ -46,7 +47,6 @@ import {
   createRunEventFinalizer,
 } from "./conversations/runner";
 import type { Database } from "./db/client";
-import { reasonWithoutStatement } from "./db/query-failure";
 import { imageDimsFor } from "./image-dims";
 import {
   assertConversationNamespace,
@@ -54,6 +54,12 @@ import {
   normalizeConversationEvent,
   normalizeRunInput,
 } from "./legacy/protocol";
+import {
+  GENERIC_FAILURE,
+  publicError,
+  publicErrorMessage,
+  redactPublicText,
+} from "./public-error";
 import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import {
   anchorsPresent,
@@ -635,7 +641,11 @@ export class LocalConversationClient {
         )
           closed++;
       } catch (error) {
-        console.warn("closing interrupted run failed", run.run_id, error);
+        console.warn(
+          "closing interrupted run failed",
+          run.run_id,
+          publicErrorMessage(error),
+        );
       }
     }
     return { threads: threads.length, runs: runs.length, closed };
@@ -744,6 +754,17 @@ type ActiveRun = {
 };
 
 /** 一次运行最多接着跑几段（每段 = 一次完整的模型循环；段与段之间读进新排队的消息）。 */
+
+/** The failures @ag-ui/client itself swallows without logging (cancellation shapes). */
+function quietAgUiFailure(error: Error): boolean {
+  return (
+    error.name === "AbortError" ||
+    error.message === "Fetch is aborted" ||
+    error.message === "signal is aborted without reason" ||
+    error.message === "component unmounted" ||
+    String(error) === "component unmounted"
+  );
+}
 const MAX_SEGMENTS = 8;
 
 /**
@@ -869,10 +890,7 @@ class PostgresAgentRunner implements ConversationRunner {
                 threadId,
                 runId: relay.runId,
                 outcome,
-                error:
-                  error instanceof Error
-                    ? reasonWithoutStatement(error).slice(0, 200)
-                    : "unknown",
+                error: publicErrorMessage(error, "unknown").slice(0, 200),
               }),
             );
             if (this.frontend.get(threadId) === relay)
@@ -1349,6 +1367,15 @@ class PostgresAgentRunner implements ConversationRunner {
           runId: entry.runId,
         } as BaseEvent;
         return;
+      }
+      // Every RUN_ERROR — runtime, provider, interruption — is redacted before it is stored or sent.
+      if (event.type === EventType.RUN_ERROR) {
+        const failure = event as BaseEvent & { message?: unknown };
+        if (typeof failure.message === "string")
+          event = {
+            ...event,
+            message: redactPublicText(failure.message) || GENERIC_FAILURE,
+          } as BaseEvent;
       }
       const published = prepared.event(event);
       if (!published) return;
@@ -1834,6 +1861,7 @@ class PostgresAgentRunner implements ConversationRunner {
           messages: agent.messages,
         };
         try {
+          let agentFailure: Error | undefined;
           const segmentWork = (async () => {
             await withConfirmTurn(
               {
@@ -1845,19 +1873,33 @@ class PostgresAgentRunner implements ConversationRunner {
               () =>
                 withToolAbort(segAbort.signal, () =>
                   withSteering(steering(), () =>
-                    agent.runAgent(segmentInput, {
-                      onEvent: ({ event }) =>
-                        dropLate(event.type)
-                          ? undefined
-                          : guarded(() => emit(structuredClone(event))),
-                      onMessagesChanged: ({ messages, state }) =>
-                        capture(messages, state),
-                      onStateChanged: ({ messages, state }) =>
-                        capture(messages, state),
-                      onRunFinalized: () => {
-                        finalized();
-                      },
-                    }),
+                    agent
+                      .runAgent(segmentInput, {
+                        onEvent: ({ event }) =>
+                          dropLate(event.type)
+                            ? undefined
+                            : guarded(() => emit(structuredClone(event))),
+                        onMessagesChanged: ({ messages, state }) =>
+                          capture(messages, state),
+                        onStateChanged: ({ messages, state }) =>
+                          capture(messages, state),
+                        onRunFinalized: () => {
+                          finalized();
+                        },
+                        // @ag-ui/client would console.error the raw failure ("Agent execution
+                        // failed: …") before rethrowing it. Keep it, rethrow it below, log nothing raw.
+                        // Its runtime honours stopPropagation here although the type omits it;
+                        // conversation-redaction.test.ts fails if that ever stops being true.
+                        onRunFailed: (({ error }: { error: Error }) => {
+                          if (quietAgUiFailure(error)) return;
+                          agentFailure = error;
+                          return { stopPropagation: true };
+                        }) as unknown as AgentSubscriber["onRunFailed"],
+                      })
+                      .then((result) => {
+                        if (agentFailure) throw agentFailure;
+                        return result;
+                      }),
                   ),
                 ),
             );
@@ -1984,16 +2026,15 @@ class PostgresAgentRunner implements ConversationRunner {
       await durableWrites;
       if (started && !persistenceError) {
         try {
-          await finalize(
-            error instanceof Error ? error.message : "Local agent run failed",
-          );
+          await finalize(publicErrorMessage(error, "Local agent run failed"));
         } catch (writeError) {
           persistenceError = writeError;
         }
       }
       if (!started || persistenceError) {
-        entry.stream.error(persistenceError ?? error);
-        entry.live.error(persistenceError ?? error);
+        const failure = publicError(persistenceError ?? error);
+        entry.stream.error(failure);
+        entry.live.error(failure);
       }
     } finally {
       if (heartbeat) clearInterval(heartbeat);
@@ -2564,7 +2605,10 @@ export async function createLocalConversations(
           }),
         );
     } catch (error) {
-      console.warn("releasing interrupted inbox items failed", error);
+      console.warn(
+        "releasing interrupted inbox items failed",
+        publicErrorMessage(error),
+      );
     }
     try {
       const released = await client.releaseOrphanedLocks();
@@ -2573,7 +2617,10 @@ export async function createLocalConversations(
           JSON.stringify({ type: "conversation-locks-released", ...released }),
         );
     } catch (error) {
-      console.warn("releasing orphaned conversation locks failed", error);
+      console.warn(
+        "releasing orphaned conversation locks failed",
+        publicErrorMessage(error),
+      );
     }
   }
   // Track B：存活期间也扫过期锁（启动清锁管重启；这里管 renewal 停了却没 finally 的边角）。
@@ -2588,7 +2635,10 @@ export async function createLocalConversations(
             );
         })
         .catch((error) =>
-          console.warn("sweeping expired conversation locks failed", error),
+          console.warn(
+            "sweeping expired conversation locks failed",
+            publicErrorMessage(error),
+          ),
         );
     };
     const sweepTimer = setInterval(sweep, STALE_LOCK_SWEEP_MS);
@@ -2752,7 +2802,25 @@ export async function createLocalConversations(
   const runner = new PostgresAgentRunner(store, client, inbox);
   let workers: ThreadWorkerRoutes | undefined;
 
+  /**
+   * Inbox reads and writes carry queued and paused message bodies: never cached by the browser or a
+   * proxy (QA508 P3), whichever branch — empty, error or full — answers.
+   */
   const handle = async (
+    request: Request,
+    actorId: string,
+  ): Promise<Response | undefined> => {
+    const response = await handleThreads(request, actorId);
+    if (
+      response &&
+      /\/inbox(?:\/[^/]*)?\/?$/.test(
+        conversationPath(new URL(request.url).pathname),
+      )
+    )
+      response.headers.set("cache-control", "no-store");
+    return response;
+  };
+  const handleThreads = async (
     request: Request,
     actorId: string,
   ): Promise<Response | undefined> => {
