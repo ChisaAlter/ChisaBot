@@ -61,6 +61,8 @@ jobs:
           server/tests/dynamic-model-runtime.test.ts
           server/tests/model-catalog.test.ts
           server/tests/model-connection-context.test.ts
+          server/tests/request-sanitize.test.ts
+          server/tests/deepseek-image-request.test.ts
           server/tests/model-selection-routes.test.ts
           server/tests/model-settings-routes.test.ts
           server/tests/model-settings.test.ts
