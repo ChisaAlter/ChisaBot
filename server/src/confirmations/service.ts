@@ -31,6 +31,7 @@ import {
   recordAuditEvent,
 } from "../audit";
 import type { AppVariables } from "../auth/guards";
+import { redactText } from "../computer/activity-redact";
 import { createDshRunJournal } from "../conversations/run-journal";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -44,7 +45,6 @@ import {
   flattenForMatch,
   titleForTool,
 } from "./classify";
-import { redactText } from "../computer/activity-redact";
 import {
   currentConfirmActor,
   currentConfirmInteractive,
