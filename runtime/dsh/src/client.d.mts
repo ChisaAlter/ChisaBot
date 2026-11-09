@@ -58,9 +58,7 @@ export class DshHostClient {
     endpoint: string,
     options?: { signal?: AbortSignal },
   ): Promise<DshHostClient>;
-  health(
-    signal?: AbortSignal,
-  ): Promise<{
+  health(signal?: AbortSignal): Promise<{
     ok: boolean;
     protocol: number;
     version: string;
@@ -158,9 +156,7 @@ export class DshHostClient {
   follow(sessionId: string, signal?: AbortSignal): AsyncIterable<DshFrame>;
   close(): Promise<void>;
 }
-export function expandActiveAttempt(
-  baseline: unknown,
-):
+export function expandActiveAttempt(baseline: unknown):
   | {
       attemptId: string;
       turn: number;

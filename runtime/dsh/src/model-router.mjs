@@ -11,6 +11,9 @@ const fallbackCodes = new Set([
   "EMPTY_RESPONSE",
   "UNKNOWN_MODEL",
   "NO_ADAPTER",
+  // HTTP 400 (the Hermes adapter's "400 retry"): this candidate rejected the request as built,
+  // so the next configured candidate gets the same tools and prompt; never the same model again.
+  "INVALID_REQUEST",
 ]);
 
 function routeFailure(failure, choice, index) {

@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
+import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
 import { ChisaModelRouter } from "./model-router.mjs";
 
 export const name = "chisabot-runtime";
@@ -84,8 +85,21 @@ export async function apply(ctx, config) {
   const pending = new Map();
   ctx.on("session/event", (session, event) => {
     const state = sessions.get(session.id);
-    if (event.type === "tool/call")
+    if (event.type === "tool/call") {
       state?.calls.set(event.data.callId, { ...event.data, seq: event.seq });
+      state?.toolTurns.add(event.data.turn);
+    }
+    // The last model reply of each turn, for the promise-without-action guard.
+    if (state && event.type === "assistant/message")
+      state.reply = {
+        turn: event.data.turn,
+        text: (event.data.message?.content ?? [])
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join(""),
+      };
+    if (state && event.type === "assistant/attempt")
+      state.reply = { turn: event.data?.turn, failed: true };
     if (state && event.type === "tool/result") {
       const key = `${event.data.turn}:${event.data.step}`;
       if (state.resultStep !== key) {
@@ -205,6 +219,9 @@ export async function apply(ctx, config) {
 
   function compose(agentCtx, agent, state) {
     state.steeringInstructions = [];
+    state.toolTurns = new Set();
+    state.nudgedTurns = new Set();
+    state.reply = undefined;
     state.disposers.push(
       agentCtx.systemPrompt.section({
         name: "chisabot:prompt",
@@ -319,6 +336,35 @@ export async function apply(ctx, config) {
           ),
         );
         return { ...decision, messages: [...decision.messages, ...injected] };
+      }),
+    );
+    // Promise without action (ported from the Hermes adapter): a turn about to close on "I'll go
+    // check now" — tools on offer, none called this turn — is steered once to actually act.
+    state.disposers.push(
+      agentCtx.on("agent/turn-stopping", ({ turn, signal }) => {
+        const reply = state.reply;
+        if (
+          signal?.aborted ||
+          state.stopped ||
+          state.waiting ||
+          state.binding.tools.length === 0 ||
+          state.toolTurns.has(turn) ||
+          state.nudgedTurns.has(turn) ||
+          reply?.turn !== turn ||
+          reply.failed ||
+          !actionPromise(reply.text)
+        )
+          return;
+        state.nudgedTurns.add(turn);
+        agent.steer(
+          createUserMessage({
+            source: {
+              kind: "user",
+              rpcId: `chisabot:action-nudge:${state.binding.runId}:${turn}`,
+            },
+            content: [{ type: "text", text: ACTION_NUDGE }],
+          }),
+        );
       }),
     );
     state.disposers.push(

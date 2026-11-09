@@ -222,6 +222,25 @@ jobs:
       - run: cp .env.example .env
       - run: bun run test:app
 
+  # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办。
+  dsh-runtime:
+    name: DSH runtime tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: runtime/dsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
   # PC 客户端（pc/）的 node 测试；和 release.yml 的 pc-test 同一套（CB-113：以前只有发版时才跑）。
   pc-test:
     name: PC client tests
