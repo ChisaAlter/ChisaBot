@@ -7,7 +7,7 @@ import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
 import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
 import { ChisaModelRouter } from "./model-router.mjs";
-import { ToolLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
+import { ensureLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
 export const name = "chisabot-runtime";
 export const inject = [
@@ -224,9 +224,9 @@ export async function apply(ctx, config) {
     state.toolTurns = new Set();
     state.nudgedTurns = new Set();
     state.reply = undefined;
-    // Bounds each turn's tool loop and turns a runaway loop into an honest answer.
-    state.loopGuard = new ToolLoopGuard(loopLimits);
-    state.loopConcluded = undefined;
+    // Bounds each turn's tool loop. Keep the same guard across rebinds of this run
+    // (approval resume must not clear the per-turn counters — QA513 P3).
+    ensureLoopGuard(state, loopLimits);
     state.disposers.push(
       agentCtx.systemPrompt.section({
         name: "chisabot:prompt",
@@ -293,20 +293,29 @@ export async function apply(ctx, config) {
             }
             // Refused calls never reach the gateway; the model is told to stop and answer.
             if (verdict.kind === "refuse") throw new Error(verdict.message);
-            const result = await invokeGateway(
-              state,
-              "execute",
-              {
-                callId: execution.callId,
-                turn: call.turn,
-                step: call.step,
-                throughSeq: call.seq,
-                name: tool.name,
-                args,
-              },
-              execution.signal,
-            );
+            let result;
+            try {
+              result = await invokeGateway(
+                state,
+                "execute",
+                {
+                  callId: execution.callId,
+                  turn: call.turn,
+                  step: call.step,
+                  throughSeq: call.seq,
+                  name: tool.name,
+                  args,
+                },
+                execution.signal,
+              );
+            } catch (error) {
+              // Gateway 409 / transport failure: not an actual execution (QA513 P3).
+              state.loopGuard.observe({ rejected: true });
+              throw error;
+            }
             if (result.waiting) {
+              // Approval pause: the call has not run yet; do not count it as executed.
+              state.loopGuard.observe({ deferred: true });
               state.waiting = result.waiting;
               appendPluginRecord(agent.session, "plugin:chisabot/waiting", {
                 callId: execution.callId,
@@ -323,6 +332,7 @@ export async function apply(ctx, config) {
                 "Waiting for a ChisaBot approval; the operation has not executed.",
               );
             }
+            state.loopGuard.observe({ result });
             return result;
           },
         }),
