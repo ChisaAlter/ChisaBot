@@ -298,7 +298,9 @@ describe("a timeout that names no element", () => {
     );
 
   test("a screenshot timeout is a page timeout, not a stale element", async () => {
-    const pending = busy("page.screenshot: Timeout 30000ms exceeded.\nCall log:\n  - taking page screenshot\n").screenshot();
+    const pending = busy(
+      "page.screenshot: Timeout 30000ms exceeded.\nCall log:\n  - taking page screenshot\n",
+    ).screenshot();
     await expect(pending).rejects.toBeInstanceOf(PageTimeoutError);
     await pending.catch((error: Error) => {
       expect(error.message).not.toContain("snapshot and use the refs");
@@ -308,7 +310,9 @@ describe("a timeout that names no element", () => {
 
   test("a locator timeout still means the element is gone", async () => {
     await expect(
-      busy("click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator('aria-ref=e9')\n").click({ ref: "e9", snapshotId: 1 }),
+      busy(
+        "click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator('aria-ref=e9')\n",
+      ).click({ ref: "e9", snapshotId: 1 }),
     ).rejects.toBeInstanceOf(ElementNotFoundError);
   });
 });
@@ -592,7 +596,6 @@ describe("a person's Stop", () => {
   });
 });
 
-
 /**
  * 0.1.41 / DOG-05 root：LiveScreen 出图时 HTTP /screenshot 主动 503+captureBusy，
  * 或页面忙 422+pageTimeout。必须保留标志，不能吞成「电脑挂了」。
@@ -609,7 +612,8 @@ describe("screenshot captureBusy / pageTimeout from agent-computer", () => {
 
   test("503 + captureBusy + liveCast → CaptureBusyError", async () => {
     const pending = answering(503, {
-      error: "Live screen is streaming; HTTP screenshot paused so they do not fight.",
+      error:
+        "Live screen is streaming; HTTP screenshot paused so they do not fight.",
       captureBusy: true,
       liveCast: true,
     }).screenshot();
@@ -633,7 +637,8 @@ describe("screenshot captureBusy / pageTimeout from agent-computer", () => {
 
   test("CB-103: captureBusy + userControl → CaptureBusyError.userControl, still unavailable", async () => {
     const pending = answering(503, {
-      error: "Live screen is streaming; HTTP screenshot paused so they do not fight.",
+      error:
+        "Live screen is streaming; HTTP screenshot paused so they do not fight.",
       captureBusy: true,
       liveCast: true,
       userControl: true,
@@ -660,7 +665,8 @@ describe("screenshot captureBusy / pageTimeout from agent-computer", () => {
   test("422 + pageTimeout → PageTimeoutError", async () => {
     await expect(
       answering(422, {
-        error: "The page did not respond in time (it may still be loading or busy drawing).",
+        error:
+          "The page did not respond in time (it may still be loading or busy drawing).",
         pageTimeout: true,
       }).screenshot(),
     ).rejects.toBeInstanceOf(PageTimeoutError);

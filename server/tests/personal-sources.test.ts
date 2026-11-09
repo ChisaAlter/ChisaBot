@@ -179,7 +179,7 @@ describe("transport acceptance", () => {
       },
     });
     const app = service.routes(async (c, next) => {
-      c.set("actor", { id: owner } as any);
+      c.set("actor", { id: owner } as never);
       await next();
     });
     const request = (path: string, body: unknown) =>
@@ -273,7 +273,9 @@ describe("transport acceptance", () => {
       expect(brief.weather).not.toContain("22");
       expect(brief.markdown).toContain("上次缓存");
       const response = await request("/check-updates", {});
-      expect(((await response.json()) as any).markdown).toContain("读取失败");
+      expect(
+        ((await response.json()) as { markdown: string }).markdown,
+      ).toContain("读取失败");
       mailFails = false;
     });
     test("stable notification id has one send and typed receipt, including two competing dispatchers", async () => {
@@ -367,7 +369,7 @@ describe("transport acceptance", () => {
         connection_id: "conn",
         agent_id: "bot",
         thread_id: "thread",
-        inbound: {} as any,
+        inbound: {} as never,
         text: "fixture",
         chunks: ["fixture"],
       });

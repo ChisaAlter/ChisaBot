@@ -37,7 +37,7 @@ test("a replayed call only displays its approval; an explicit click sends the de
   const posted: { url: string; body: unknown }[] = [];
   let decided = false;
   globalThis.fetch = Object.assign(
-    async (url: any, options?: RequestInit) => {
+    async (url: string | URL | Request, options?: RequestInit) => {
       if (options?.method === "POST") {
         posted.push({
           url: String(url),

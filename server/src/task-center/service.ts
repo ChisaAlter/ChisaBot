@@ -1069,9 +1069,10 @@ export function createTaskCenter(
     try {
       await checkBot(task.ownerUserId, task.agentId);
       const context = await getContext(task.ownerUserId);
-      if (task.status === "planning" && options.plan) {
+      const planTask = options.plan;
+      if (task.status === "planning" && planTask) {
         const plan = await withCapacityFeedback(capacityState, () =>
-          options.plan!(task, context, controller.signal),
+          planTask(task, context, controller.signal),
         );
         controller.signal.throwIfAborted();
         if (await applyPlan(task, plan)) return;

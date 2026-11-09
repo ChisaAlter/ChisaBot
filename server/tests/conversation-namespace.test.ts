@@ -90,7 +90,7 @@ test("old SSE clients retain waiting metadata without changing canonical events"
 });
 
 test("saved assertions and waiting effects normalize without mutation or replay", () => {
-  const input: any = {
+  const input = {
     threadId: "t",
     runId: "r",
     messages: [],
@@ -114,7 +114,7 @@ test("saved assertions and waiting effects normalize without mutation or replay"
   expect(
     withoutRunAssertion({ openbotRun: "old", chisabotRun: "new", custom: 3 }),
   ).toEqual({ custom: 3 });
-  const event: any = {
+  const event = {
     type: "RUN_FINISHED",
     runId: "r",
     threadId: "t",
@@ -128,7 +128,7 @@ test("saved assertions and waiting effects normalize without mutation or replay"
       ],
     },
   };
-  const next: any = normalizeConversationEvent(event);
+  const next = normalizeConversationEvent(event) as typeof event;
   expect(next.outcome.interrupts[0].metadata).toEqual({
     chisabotWaiting: { kind: "operation_unknown" },
   });

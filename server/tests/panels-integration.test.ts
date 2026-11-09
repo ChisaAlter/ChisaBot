@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from "bun:test";
 import { Hono } from "hono";
+import type { AppVariables } from "../src/auth/guards";
 import { createDatabase } from "../src/db/client";
 import { createPanelServices } from "../src/panels/service";
 import { testDatabaseUrl } from "./support/database";
-import type { AppVariables } from "../src/auth/guards";
+
 const db = createDatabase(testDatabaseUrl(), { max: 2 });
 afterAll(async () => {
   await db.$client.close();

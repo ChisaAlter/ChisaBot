@@ -1,13 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/db/client";
-import { createPanelStore } from "../src/panels/store";
-import { capabilityHash, createPanelBroker } from "../src/panels/broker";
 import {
   panelCapabilityGrants,
   panelTaskRequests,
 } from "../src/db/schema/panels";
-import { eq } from "drizzle-orm";
+import { capabilityHash, createPanelBroker } from "../src/panels/broker";
+import { createPanelStore } from "../src/panels/store";
 import { testDatabaseUrl } from "./support/database";
+
 const db = createDatabase(testDatabaseUrl(), { max: 2 });
 afterAll(async () => {
   await db.$client.close();

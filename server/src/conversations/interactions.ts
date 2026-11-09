@@ -165,7 +165,8 @@ export function createConversationInteractions(
           "kind" in body.data.answer &&
           body.data.answer.kind === "save-skill"
         ) {
-          if (!options.saveSkill)
+          const saveSkill = options.saveSkill;
+          if (!saveSkill)
             return context.json({ error: "技能保存暂不可用。" }, 503);
           const answer = body.data.answer as { values?: unknown };
           try {
@@ -177,18 +178,14 @@ export function createConversationInteractions(
               >(query`SELECT *,answer_input=${JSON.stringify(body.data.answer)}::text::jsonb AS same
                 FROM chisabot_conversation_interactions WHERE call_id=${context.req.param("callId")} AND owner_user_id=${context.var.actor.id} FOR UPDATE`);
               if (row?.status === "answered" && row.same) return;
-              if (
-                !row ||
-                row.status !== "pending" ||
-                row.tool_name !== "save_skill"
-              )
+              if (row?.status !== "pending" || row.tool_name !== "save_skill")
                 throw new Error("这张卡片已被处理或停止。");
               const [stale] =
                 await transaction.execute(query`SELECT d.run_id FROM chisabot_dsh_runs d WHERE d.thread_id=${row.thread_id} AND d.run_id=${row.run_id}
                 AND (d.stop_requested OR NOT EXISTS(SELECT 1 FROM chisabot_runtime_bindings b WHERE b.thread_id=d.thread_id AND b.active AND b.revision=d.binding_revision))`);
               if (stale) throw new Error("这一轮已停止或被编辑，技能未保存。");
               assertConversationAdmissionOpen();
-              const result = await options.saveSkill!({
+              const result = await saveSkill({
                 actor: context.var.actor,
                 values: answer.values,
                 proposed: row.args,

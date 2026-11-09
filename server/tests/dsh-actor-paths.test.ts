@@ -58,6 +58,7 @@ import { createTurnRunner } from "../src/turns/run-turn";
 import type { TurnRunner } from "../src/turns/types";
 import { createWorkQueue } from "../src/work/queue";
 import { testEnvironment } from "./support/environment";
+import type { Row, WireBody, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const key = "isolated-actor-acceptance-signing-key";
@@ -113,7 +114,7 @@ async function until<T>(
     }) => Promise<DshRuntimeAgent>;
     let device: DeviceRecord;
     let connection: ReturnType<ReturnType<typeof createDeviceHub>["attach"]>;
-    const sent: Record<string, any>[] = [];
+    const sent: Record<string, unknown>[] = [];
     let teamBot = "";
     let teamBots: ReturnType<typeof createTeamBots>;
     const teamResults: {
@@ -124,11 +125,11 @@ async function until<T>(
       initiator?: AuditInitiator;
     }[] = [];
     let requests = 0;
-    const providerBodies: any[] = [];
+    const providerBodies: WireBody[] = [];
     let selectionBinding: DshRuntimeBinding;
     let selectionModelUrl = "";
     let confirmations: ReturnType<typeof createConfirmations>;
-    let approval: any;
+    let approval: Row | undefined;
     let effects = 0;
     let resumedCoordination = false;
     let restartHost: () => Promise<void>;
@@ -234,7 +235,7 @@ async function until<T>(
           if (!new URL(request.url).pathname.startsWith("/v1/"))
             return gateway.routes.fetch(request);
           requests++;
-          const body = (await request.json()) as any;
+          const body = (await request.json()) as WireBody;
           providerBodies.push(body);
           const stage = stages[0];
           if (!stage)
@@ -242,11 +243,11 @@ async function until<T>(
               "Unexpected model execution after the accepted stages.",
             );
           const lastUser = body.messages.findLastIndex(
-            (message: any) => message.role === "user",
+            (message: WireMessage) => message.role === "user",
           );
           const result = body.messages
             .slice(lastUser + 1)
-            .some((message: any) => message.role === "tool");
+            .some((message: WireMessage) => message.role === "tool");
           const callsTool = Boolean(stage.tool && !result);
           const delta = callsTool
             ? {
@@ -745,8 +746,8 @@ async function until<T>(
         );
         return map[asker]!.clone();
       };
-      const names = (body: any) =>
-        body.tools.map((tool: any) => tool.function.name).sort();
+      const names = (body: WireBody) =>
+        (body.tools ?? []).map((tool) => tool.function.name).sort();
       const execute = async (threadId: string, instruction: string) =>
         withRuntimeSurfaceTools(
           [
@@ -825,7 +826,7 @@ async function until<T>(
         expect(selected.at(-1)?.reason).toBe("unavailable");
 
         choice = "change";
-        let selectedApproval: any;
+        let selectedApproval: Row | undefined;
         confirmations.setOnOpened((value) => {
           selectedApproval = value;
         });
@@ -902,7 +903,7 @@ async function until<T>(
         depth: 1,
       });
       const rows = await database.$client.unsafe<
-        { owner_user_id: string; agent_id: string; messages: any[] }[]
+        { owner_user_id: string; agent_id: string; messages: WireMessage[] }[]
       >(
         "SELECT owner_user_id,agent_id,messages FROM chisabot_local_threads WHERE id=$1",
         [probes[0]!.threadId!],

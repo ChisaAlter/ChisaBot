@@ -92,7 +92,11 @@ describe("agent profile permissions", () => {
   });
 
   test("lets only admins delete a deployment-package profile, and follows manage rules otherwise", () => {
-    const packaged = profile({ visibility: "public", ownerUserId: null, systemOwned: true });
+    const packaged = profile({
+      visibility: "public",
+      ownerUserId: null,
+      systemOwned: true,
+    });
     expect(canDeleteAgent(admin, packaged)).toBe(true);
     expect(canDeleteAgent(creator, packaged)).toBe(false);
     expect(canManageAgent(admin, packaged)).toBe(false);
@@ -101,6 +105,8 @@ describe("agent profile permissions", () => {
     expect(canDeleteAgent(creator, own)).toBe(true);
     expect(canDeleteAgent(otherUser, own)).toBe(false);
     expect(canDeleteAgent(admin, own)).toBe(true);
-    expect(canDeleteAgent(admin, profile({ deletedAt: new Date() }))).toBe(false);
+    expect(canDeleteAgent(admin, profile({ deletedAt: new Date() }))).toBe(
+      false,
+    );
   });
 });

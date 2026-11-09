@@ -371,15 +371,6 @@ function chips({ container }: RenderResult) {
     .map((label) => label.slice("移除 ".length));
 }
 
-/** What the last user turn on the agent is carrying, as the wire sees it. */
-function lastUserContent() {
-  const messages = currentAgent().messages;
-  const last = [...messages]
-    .reverse()
-    .find((message) => message.role === "user");
-  return last?.content;
-}
-
 /** The queued stack under the transcript: the server inbox rows this tab shows. */
 function queueStack({ container }: RenderResult) {
   return (

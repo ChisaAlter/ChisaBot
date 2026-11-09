@@ -13,7 +13,6 @@ import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
-import { isPersonSentMessage } from "@/components/channels/chat-transcript";
 import {
   type ComposerDraft,
   toAgentOptions,
@@ -1820,15 +1819,6 @@ export function ChannelChat({
     // The server pauses what the stopped turn read or had queued; pick that up promptly.
     for (const delay of [800, 2_000, 4_500])
       setTimeout(() => void restoreQueue(channel.threadId), delay);
-    // Anchor 「已停止」 on the person-sent user turn that opened this run — skip schedule/worker
-    // markers that also wear role=user, otherwise the chip can stick to an earlier completed reply.
-    const lastUser =
-      [...agent.messages].reverse().find((message) => {
-        if (message.role !== "user") return false;
-        const text = typeof message.content === "string" ? message.content : "";
-        return isPersonSentMessage("user", text);
-      }) ??
-      [...agent.messages].reverse().find((message) => message.role === "user");
     // Also blocks inbox fallback after Stop during a frontend tool handoff.
     stopRequestedRef.current = true;
     awaitingReply.current = false;

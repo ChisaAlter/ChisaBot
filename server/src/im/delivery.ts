@@ -133,12 +133,12 @@ export function createImDelivery(database: Database) {
         record: ImOutboxRecord,
         reader: Pick<Database["$client"], "unsafe">,
       ) => Promise<
-        | { send: (reply: ImReply) => Promise<void | ImDeliveryReceipt> }
+        | { send: (reply: ImReply) => Promise<ImDeliveryReceipt | undefined> }
         | "cancelled"
         | null
       >,
     ) {
-      return dispatchDurable({
+      return dispatchDurable<ImOutboxRecord, ImDeliveryReceipt | undefined>({
         database,
         key: `im-outbox:${id}`,
         load: async (reader) =>
@@ -151,7 +151,7 @@ export function createImDelivery(database: Database) {
         settle: async (
           reader,
           state,
-          receipt?: void | ImDeliveryReceipt,
+          receipt?: ImDeliveryReceipt,
           error?: string,
         ) => {
           await reader.unsafe(

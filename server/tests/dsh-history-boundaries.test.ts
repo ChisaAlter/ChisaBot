@@ -29,6 +29,7 @@ import {
   type LocalHistoryMessage,
 } from "../src/local-conversations";
 import { createTurnRunner } from "../src/turns/run-turn";
+import type { WireBody, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const resources: (() => unknown | Promise<unknown>)[] = [];
@@ -40,7 +41,7 @@ const eventsOf = async (response: Response) =>
     .split("\n")
     .filter((line) => line.startsWith("data: "))
     .map((line) => JSON.parse(line.slice(6))) as Array<
-    BaseEvent & Record<string, any>
+    BaseEvent & Record<string, unknown>
   >;
 // A decoded 1 x 1 sRGB PNG. Tiny placeholder strings can have valid headers but invalid pixels.
 const png =
@@ -74,7 +75,7 @@ const cardSpec = JSON.stringify({
     let agent: DshRuntimeAgent;
     let card: { id: string; threadId: string } | undefined;
     let effects = 0;
-    const requests: any[] = [];
+    const requests: WireBody[] = [];
     const suffix = randomUUID(),
       owner = `boundaries-${suffix}`,
       bot = `${owner}-bot`,
@@ -107,13 +108,13 @@ const cardSpec = JSON.stringify({
         fetch: async (request) => {
           const path = new URL(request.url).pathname;
           if (!path.startsWith("/v1/")) return gateway.routes.fetch(request);
-          const body = (await request.json()) as any;
+          const body = (await request.json()) as WireBody;
           requests.push(body);
           // DSH appends a runtime-context user record on a new Session; select the explicit fixture
           // request rather than mistaking that machine context for the person's newest request.
           const text = body.messages
-            .filter((message: any) => message.role === "user")
-            .map((message: any) =>
+            .filter((message: WireMessage) => message.role === "user")
+            .map((message: WireMessage) =>
               typeof message.content === "string"
                 ? message.content
                 : JSON.stringify(message.content),
@@ -154,7 +155,7 @@ const cardSpec = JSON.stringify({
             delta = { role: "assistant", content: "" };
           else if (text === "file-only" || text === "card-only") {
             const result = body.messages.findLast(
-              (message: any) => message.role === "tool",
+              (message: WireMessage) => message.role === "tool",
             );
             if (!result) {
               delta = {

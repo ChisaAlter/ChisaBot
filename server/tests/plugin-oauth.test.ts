@@ -665,7 +665,6 @@ describe("redeeming an authorization code", () => {
     }
   });
 
-
   test("refuses a metadata / private token URL before fetch (SSRF leftover)", async () => {
     let fetched = 0;
     const realFetch = globalThis.fetch;

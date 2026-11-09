@@ -134,7 +134,7 @@ export function createConfirmationResumer(options: {
           checking = false;
         });
     }, 1000);
-    let result;
+    let result: Awaited<ReturnType<typeof agent.resumeConfirmation>>;
     try {
       assertConversationAdmissionOpen();
       if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId))

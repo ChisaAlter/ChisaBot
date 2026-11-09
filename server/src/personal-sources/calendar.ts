@@ -29,14 +29,15 @@ export function parseIcsEvents(
         /^(DTSTART|DTEND|RECURRENCE-ID|EXDATE|RDATE)((?:;[^:]*)?):(.+)$/i.exec(
           line,
         );
+      if (!match) return line;
+      const [, name, params = "", values = ""] = match;
       if (
-        !match ||
-        /;TZID=/i.test(match[2]!) ||
-        /;VALUE=DATE(?:;|$)/i.test(match[2]!) ||
-        !match[3]!.split(",").every((value) => /^\d{8}T\d{6}$/.test(value))
+        /;TZID=/i.test(params) ||
+        /;VALUE=DATE(?:;|$)/i.test(params) ||
+        !values.split(",").every((value) => /^\d{8}T\d{6}$/.test(value))
       )
         return line;
-      return `${match[1]}${match[2]};TZID=${calendarZone}:${match[3]}`;
+      return `${name}${params};TZID=${calendarZone}:${values}`;
     })
     .join("\r\n");
   const parsed = ical.sync.parseICS(normalized);

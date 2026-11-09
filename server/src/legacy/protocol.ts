@@ -1,5 +1,5 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
-import type { Hono } from "hono";
+import type { Env, Hono } from "hono";
 
 /** Installed clients keep their old URLs while current callers use the conversation API. */
 const PREVIOUS_CONVERSATION_BASE = "/api/copilotkit";
@@ -17,7 +17,7 @@ export function isConversationPath(path: string): boolean {
     canonical.startsWith(`${CONVERSATION_BASE}/`)
   );
 }
-export function mountPreviousConversationRoutes(app: Hono<any>) {
+export function mountPreviousConversationRoutes<E extends Env>(app: Hono<E>) {
   app.all(`${PREVIOUS_CONVERSATION_BASE}/*`, async (context) => {
     const url = new URL(context.req.url);
     url.pathname = conversationPath(url.pathname);
@@ -32,18 +32,25 @@ export function mountPreviousConversationRoutes(app: Hono<any>) {
   });
 }
 
-function previousEvent(value: Record<string, any>): Record<string, any> {
+type PreviousInterrupt = {
+  metadata?: { chisabotWaiting?: unknown; [key: string]: unknown };
+  [key: string]: unknown;
+};
+
+function previousEvent(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
   if (value.type === "CUSTOM" && value.name === "chisabot.headless.waiting")
     return { ...value, name: PREVIOUS_WAITING_EVENT };
-  if (
-    value.type === "RUN_FINISHED" &&
-    Array.isArray(value.outcome?.interrupts)
-  ) {
+  const outcome = value.outcome as
+    | { interrupts?: unknown; [key: string]: unknown }
+    | undefined;
+  if (value.type === "RUN_FINISHED" && Array.isArray(outcome?.interrupts)) {
     return {
       ...value,
       outcome: {
-        ...value.outcome,
-        interrupts: value.outcome.interrupts.map((item: any) => {
+        ...outcome,
+        interrupts: (outcome.interrupts as PreviousInterrupt[]).map((item) => {
           if (item.metadata?.chisabotWaiting === undefined) return item;
           const { chisabotWaiting, ...metadata } = item.metadata;
           return {
@@ -82,7 +89,7 @@ function previousConversationResponse(response: Response): Response {
         const lines = pending.split("\n");
         pending = lines.pop() ?? "";
         for (const line of lines)
-          controller.enqueue(encoder.encode(rewrite(line) + "\n"));
+          controller.enqueue(encoder.encode(`${rewrite(line)}\n`));
       },
       flush(controller) {
         pending += decoder.decode();

@@ -26,6 +26,12 @@ import { createTaskCenterRuntime } from "../src/task-center/runtime";
 import { createTurnRunner } from "../src/turns/run-turn";
 import type { TurnRunner } from "../src/turns/types";
 import { createWorkerService } from "../src/workers/service";
+import type {
+  Initiator,
+  Row,
+  WireBody,
+  WireMessage,
+} from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const answer = "后台验收完成：产物已保存。";
@@ -46,7 +52,7 @@ async function until<T>(
 /** The OneBot protocol endpoint acknowledges each delivery; no real platform/account is used. */
 class ProtocolSocket implements WsLike {
   readyState = 0;
-  sent: any[] = [];
+  sent: Record<string, unknown>[] = [];
   acknowledgeReplies = true;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
@@ -126,7 +132,7 @@ class ProtocolSocket implements WsLike {
         fetch: async (request) => {
           if (!new URL(request.url).pathname.startsWith("/v1/"))
             return gateway.routes.fetch(request);
-          const body = (await request.json()) as any;
+          const body = (await request.json()) as WireBody;
           modelRequests.push(body);
           const marker = [...holdMarkers].find((value) =>
             JSON.stringify(body.messages).includes(value),
@@ -141,11 +147,11 @@ class ProtocolSocket implements WsLike {
             await Bun.sleep(1000);
           }
           const latestUser = body.messages.findLastIndex(
-            (message: any) => message.role === "user",
+            (message: WireMessage) => message.role === "user",
           );
           const hasResult = body.messages
             .slice(latestUser + 1)
-            .some((message: any) => message.role === "tool");
+            .some((message: WireMessage) => message.role === "tool");
           const delta = hasResult
             ? { role: "assistant", content: answer }
             : {
@@ -202,7 +208,7 @@ class ProtocolSocket implements WsLike {
       const buildAgentFor = async (input: {
         ownerUserId: string;
         agentId: string;
-        initiator: any;
+        initiator: Initiator;
       }) =>
         new DshRuntimeAgent({
           botId: input.agentId,
@@ -324,11 +330,11 @@ class ProtocolSocket implements WsLike {
           scanCalendar: async () => [],
           scanEmails: async () => [],
           status: async () => ({}),
-        } as any,
+        } as never,
         github: {
           listOpenItems: async () => [],
           status: async () => ({}),
-        } as any,
+        } as never,
         botAvailable: async () => true,
         defaultAgentFor: async () => bot,
       });
@@ -347,7 +353,7 @@ class ProtocolSocket implements WsLike {
       const queuedTask = await until(
         async () =>
           (
-            await database.$client.unsafe<any[]>(
+            await database.$client.unsafe<Row[]>(
               "SELECT r.* FROM chisabot_local_runs r WHERE r.status='capacity_wait' AND r.thread_id LIKE $1",
               [`task-center:${task.id}:%`],
             )
@@ -369,7 +375,7 @@ class ProtocolSocket implements WsLike {
       await until(
         async () =>
           (
-            await database.$client.unsafe<any[]>(
+            await database.$client.unsafe<Row[]>(
               "SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND status='capacity_wait'",
               [queuedThread],
             )
@@ -401,7 +407,7 @@ class ProtocolSocket implements WsLike {
       await until(
         async () =>
           (
-            await database.$client.unsafe<any[]>(
+            await database.$client.unsafe<Row[]>(
               "SELECT 1 FROM chisabot_local_runs WHERE thread_id=$1 AND status='capacity_wait'",
               [`${owner}-short-queue`],
             )
@@ -423,7 +429,7 @@ class ProtocolSocket implements WsLike {
       );
       expect(
         (
-          await database.$client.unsafe<any[]>(
+          await database.$client.unsafe<Row[]>(
             "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
             [queuedTask.thread_id, queuedTask.run_id],
           )
@@ -571,11 +577,11 @@ class ProtocolSocket implements WsLike {
           scanCalendar: async () => [],
           scanEmails: async () => [],
           status: async () => ({}),
-        } as any,
+        } as never,
         github: {
           listOpenItems: async () => [],
           status: async () => ({}),
-        } as any,
+        } as never,
         botAvailable: async () => true,
         defaultAgentFor: async () => bot,
       };

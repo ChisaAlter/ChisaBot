@@ -571,6 +571,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
 
   // ── 任务 ──────────────────────────────────────────────────────────────
 
+  /** A task this service just wrote or claimed; its row going missing is a broken invariant. */
+  async function savedTaskRow(id: string) {
+    const row = await taskRow(id);
+    if (!row) throw new Error("本机任务记录已不存在。");
+    return row;
+  }
   async function taskRow(id: string) {
     return (
       (
@@ -1519,12 +1525,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         state.step = "正在发给电脑";
         pushLine(id, "approval", "已批准");
       }
-      await dispatchQueued((await taskRow(id))!, run);
+      await dispatchQueued((await savedTaskRow(id)), run);
     })().catch((error) => {
       console.warn("local agent start failed", error);
       void finish(id, "failed", { error: "启动失败。" });
     });
-    return view((await taskRow(id))!);
+    return view((await savedTaskRow(id)));
   }
 
   async function claimDeviceCapacity(
@@ -1709,7 +1715,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           : "机器人停止了这个任务。",
       requestDeviceStop: row.device_id,
     });
-    return view(done ?? (await taskRow(id))!);
+    return view(done ?? (await savedTaskRow(id)));
   }
 
   async function applyChanges(actorId: string, id: string, discard: boolean) {
@@ -1759,7 +1765,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         durationMs: null,
       });
     if (result) throw new LocalAgentError(result, 409);
-    return view((await taskRow(id))!);
+    return view((await savedTaskRow(id)));
   }
 
   async function forThread(actorId: string, threadId: string) {

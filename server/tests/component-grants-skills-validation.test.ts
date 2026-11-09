@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../src/auth/guards";
+import { createComponentRoutes } from "../src/components/routes";
+import { ComponentNotFoundError } from "../src/components/store";
 import type { BotAccessCheck } from "../src/plugins/routes";
 import { createPluginRoutes } from "../src/plugins/routes";
 import type { PluginStore } from "../src/plugins/store";
-import { createComponentRoutes } from "../src/components/routes";
-import { ComponentNotFoundError } from "../src/components/store";
 
 const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
   context,

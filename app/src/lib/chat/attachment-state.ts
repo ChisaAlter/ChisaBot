@@ -64,7 +64,8 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
   const processFiles = useCallback(
     async (files: File[] | FileList) => {
       const selected = settings.current;
-      if (!selected?.enabled || !selected.onUpload) return;
+      const upload = selected?.enabled ? selected.onUpload : undefined;
+      if (!selected || !upload) return;
       // Stage every placeholder synchronously, including files queued behind an earlier upload.
       const uploads = Array.from(files, (file) => ({ file, id: newId() }));
       setAttachments((items) => [
@@ -101,7 +102,7 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
               removeAttachment(id);
               continue;
             }
-            const { metadata, ...source } = await selected.onUpload!(file);
+            const { metadata, ...source } = await upload(file);
             if (mounted.current)
               setAttachments((items) =>
                 items.map((item) =>

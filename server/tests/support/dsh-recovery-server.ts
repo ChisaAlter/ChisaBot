@@ -11,6 +11,7 @@ import { createToolOperationStore } from "../../src/conversations/tool-operation
 import { createDatabase } from "../../src/db/client";
 import { createLocalConversations } from "../../src/local-conversations";
 import { createTurnRunner } from "../../src/turns/run-turn";
+import type { Initiator } from "./wire-types";
 
 const config = JSON.parse(await readFile(process.argv[2]!, "utf8"));
 const database = createDatabase(process.env.CHISABOT_DSH_TEST_DATABASE_URL!, {
@@ -24,7 +25,7 @@ await bindings.ensure();
 await journal.ensure();
 await operations.ensure();
 const gateway = createDshToolGateway(operations, journal);
-const build = (initiator: any = { kind: "person" }) =>
+const build = (initiator: Initiator = { kind: "person" }) =>
   new DshRuntimeAgent({
     botId: config.botId,
     binding: {

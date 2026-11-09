@@ -46,13 +46,17 @@ export async function resolveInboxMessage(
     [JSON.stringify(skillIds), actorId, agentId],
   );
   const byId = new Map(rows.map((row) => [row.slug, row.instructions]));
-  const accessible = skillIds.filter((id) => byId.has(id));
+  // In the order the person picked them, only those this actor may use.
+  const accessible = skillIds.flatMap((id) => {
+    const instructions = byId.get(id);
+    return instructions === undefined ? [] : [{ id, instructions }];
+  });
   return {
     ...stripInboxContext(message),
     metadata: {
       chisabotInbox: {
-        skillIds: accessible,
-        skillInstructions: accessible.map((id) => byId.get(id)!),
+        skillIds: accessible.map((skill) => skill.id),
+        skillInstructions: accessible.map((skill) => skill.instructions),
       },
     },
   } as Message;

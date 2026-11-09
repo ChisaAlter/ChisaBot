@@ -106,7 +106,12 @@ beforeAll(async () => {
     await database.$client.unsafe(
       `INSERT INTO chisabot_schedules (id, owner_user_id, agent_id, thread_id, title, instruction, kind, cron, timezone, status, next_run_at)
        VALUES ($1, $2, $3, $4, 'Daily summary', 'Summarise the day', 'cron', '0 9 * * *', 'Asia/Shanghai', 'active', now() + interval '1 hour')`,
-      [`${prefix}-schedule-${person}`, person, bot, `${prefix}-thread-${person}`],
+      [
+        `${prefix}-schedule-${person}`,
+        person,
+        bot,
+        `${prefix}-thread-${person}`,
+      ],
     );
     await database.insert(responsibilities).values({
       id: `${prefix}-goal-${person}`,
@@ -273,8 +278,7 @@ describe("Activity and attention", () => {
     expect(all.some((item) => item.title === "Not yours")).toBe(false);
     expect(
       result.scheduled.some(
-        (item) =>
-          item.kind === "schedule" && item.title === "Daily summary",
+        (item) => item.kind === "schedule" && item.title === "Daily summary",
       ),
     ).toBe(true);
     expect(

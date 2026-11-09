@@ -157,8 +157,7 @@ export function imConnectionOf(
   initiator: { kind: string; id?: string } | undefined | null,
 ): string | null {
   if (
-    !initiator ||
-    initiator.kind !== "routine" ||
+    initiator?.kind !== "routine" ||
     typeof initiator.id !== "string"
   )
     return null;
@@ -616,7 +615,7 @@ export function createImService(options: ImServiceOptions) {
       )
         return "cancelled";
       const entry = live.get(row.id);
-      if (!entry || entry.status.state !== "connected") return null;
+      if (entry?.status.state !== "connected") return null;
       return { send: (message) => entry.adapter.send(message) };
     });
     if (state === "outcome_unknown")
@@ -712,7 +711,7 @@ export function createImService(options: ImServiceOptions) {
     if (!entry) return;
     if (inbound.chatType === "group" && !inbound.mentioned) return;
     const row = await rowById(connectionId);
-    if (!row || !row.enabled) return;
+    if (!row?.enabled) return;
     const platformName = imPlatform(row.platform)?.name ?? row.platform;
     const who = inbound.userName
       ? `${inbound.userName}（${inbound.userId}）`
@@ -866,7 +865,7 @@ export function createImService(options: ImServiceOptions) {
   ) {
     const entry = live.get(connectionId);
     const row = await rowById(connectionId);
-    if (!entry || !row || !row.enabled) return;
+    if (!entry || !row?.enabled) return;
     // 排队期间名单可能已变更；撤销授权后不再以主人身份执行尚未开始的消息。
     if (!canUseConnection(row, inbound.userId)) return;
     const adapter = entry.adapter;
@@ -1696,8 +1695,7 @@ export function createImService(options: ImServiceOptions) {
     if (!CONNECTION_ID.test(id)) return false;
     const row = await rowById(id);
     if (
-      !row ||
-      row.platform !== "onebot" ||
+      row?.platform !== "onebot" ||
       row.config?.mode !== "reverse" ||
       !row.enabled
     )
@@ -1974,7 +1972,7 @@ export function createImService(options: ImServiceOptions) {
         throw new Error("找不到这个 IM 对话（可能已经 /new 换了新话题）");
       const entry = live.get(chat.connection_id);
       const row = await rowById(chat.connection_id);
-      if (!row || !row.enabled) throw new Error("IM 连接已停用或删除");
+      if (!row?.enabled) throw new Error("IM 连接已停用或删除");
       let inbound = chat.last_inbound as ImInbound | string | null;
       if (typeof inbound === "string")
         inbound = JSON.parse(inbound) as ImInbound;

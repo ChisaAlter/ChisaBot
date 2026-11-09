@@ -621,7 +621,9 @@ export function createConfirmations(
           : null,
       ],
     );
-    return rows[0]!;
+    const [created] = rows;
+    if (!created) throw new Error("确认卡片写入后没有返回。");
+    return created;
   }
   async function setStatus(
     id: string,

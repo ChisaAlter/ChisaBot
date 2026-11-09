@@ -17,7 +17,6 @@ import {
 } from "@/lib/channels/queries";
 import {
   ConversationSessionProvider,
-  conversationClient,
 } from "@/lib/chat/session-client";
 import * as TailFirstModule from "@/lib/chat/use-tail-first-mount";
 import { useMainBot, useUserPreferences } from "@/lib/settings/message-list";

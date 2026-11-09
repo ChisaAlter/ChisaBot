@@ -11,7 +11,7 @@ type BindingRow = {
   runtime_id: string;
   session_id: string;
 };
-const valueOf = (row: BindingRow): ConversationBinding => ({
+const bindingOf = (row: BindingRow): ConversationBinding => ({
   bindingId: row.id,
   revision: row.revision,
   ownerUserId: row.owner_user_id,
@@ -41,7 +41,7 @@ export function createConversationBindings(database: Database) {
         "SELECT * FROM chisabot_runtime_bindings WHERE thread_id=$1 AND active",
         [threadId],
       );
-      return row ? valueOf(row) : null;
+      return row ? bindingOf(row) : null;
     },
     async getOrCreate(input: {
       threadId: string;

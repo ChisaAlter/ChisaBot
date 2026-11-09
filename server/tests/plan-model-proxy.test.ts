@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { createPlanModelProxy } from "../src/conversations/plan-model-proxy";
+import type { WireBody } from "./support/wire-types";
 
 test("DSH plan transport preserves the owned harness and returns tool arguments without executing them", async () => {
-  const requests: any[] = [];
+  const requests: WireBody[] = [];
   const harness = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,

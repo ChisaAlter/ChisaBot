@@ -6,7 +6,7 @@
   function migrateStorage(store) {
     for (let i = 0; i < store.length; i++) {
       const key = store.key(i);
-      if (!key || !key.includes("openbot")) continue;
+      if (!key?.includes("openbot")) continue;
       const current = key.replaceAll("openbot", "chisabot");
       if (store.getItem(current) === null)
         store.setItem(current, store.getItem(key));

@@ -5,7 +5,25 @@ import {
   type PlanModelConfig,
 } from "../agents/plan-model";
 
-type Prompt = Parameters<PlanLanguageModel["doStream"]>[0]["prompt"];
+type StreamOptions = Parameters<PlanLanguageModel["doStream"]>[0];
+type Prompt = StreamOptions["prompt"];
+type FunctionTool = Extract<
+  NonNullable<StreamOptions["tools"]>[number],
+  { type: "function" }
+>;
+
+/** The OpenAI chat-completions request DSH sends, as far as the plan proxy reads it. */
+type ChatTool = {
+  type?: string;
+  function?: { name?: string; description?: string; parameters?: unknown };
+};
+type ChatPart = { type?: string; text?: string; image_url?: { url?: unknown } };
+type ChatMessage = {
+  role?: string;
+  content?: string | ChatPart[] | null;
+  tool_call_id?: string;
+  tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+};
 
 /** Translate only model traffic. DSH still owns the loop and ChisaBot owns all executors. */
 export function createPlanModelProxy(
@@ -16,21 +34,26 @@ export function createPlanModelProxy(
   signal: AbortSignal,
 ) {
   const model = new PlanModel(config, botId, input, new Set(toolNames), signal);
-  return async (body: any, requestSignal: AbortSignal) => {
-    if (!Array.isArray(body.messages) || !Array.isArray(body.tools ?? []))
+  return async (body: unknown, requestSignal: AbortSignal) => {
+    const request = (body ?? {}) as { messages?: unknown; tools?: unknown };
+    if (!Array.isArray(request.messages) || !Array.isArray(request.tools ?? []))
       throw new Error("Invalid plan model request.");
     const allowed = new Set(toolNames);
-    const tools = (body.tools ?? []).map((tool: any) => {
-      if (tool.type !== "function" || !allowed.has(tool.function?.name))
-        throw new Error("The plan request contains an ungranted tool.");
-      return {
-        type: "function" as const,
-        name: tool.function.name,
-        description: tool.function.description ?? "",
-        inputSchema: tool.function.parameters,
-      };
-    });
-    const prompt: Prompt = body.messages.map((message: any) => {
+    const tools = ((request.tools ?? []) as ChatTool[]).map(
+      (tool): FunctionTool => {
+        const name = tool.function?.name;
+        if (tool.type !== "function" || !name || !allowed.has(name))
+          throw new Error("The plan request contains an ungranted tool.");
+        return {
+          type: "function",
+          name,
+          description: tool.function?.description ?? "",
+          inputSchema: tool.function?.parameters as FunctionTool["inputSchema"],
+        };
+      },
+    );
+    const messages = request.messages as ChatMessage[];
+    const prompt: Prompt = messages.map((message): Prompt[number] => {
       if (message.role === "system" || message.role === "developer")
         return { role: "system", content: String(message.content ?? "") };
       if (message.role === "tool")
@@ -39,7 +62,7 @@ export function createPlanModelProxy(
           content: [
             {
               type: "tool-result",
-              toolCallId: message.tool_call_id,
+              toolCallId: String(message.tool_call_id ?? ""),
               toolName: "",
               output: { type: "text", value: String(message.content ?? "") },
             },
@@ -50,10 +73,10 @@ export function createPlanModelProxy(
           role: "assistant",
           content: [
             ...(typeof message.content === "string" && message.content
-              ? [{ type: "text", text: message.content }]
+              ? [{ type: "text" as const, text: message.content }]
               : []),
-            ...(message.tool_calls ?? []).map((call: any) => ({
-              type: "tool-call",
+            ...(message.tool_calls ?? []).map((call) => ({
+              type: "tool-call" as const,
               toolCallId: call.id,
               toolName: call.function.name,
               input: JSON.parse(call.function.arguments),
@@ -62,26 +85,28 @@ export function createPlanModelProxy(
         };
       if (message.role !== "user")
         throw new Error("Unsupported plan message role.");
+      const content = message.content;
+      if (typeof content !== "string" && !Array.isArray(content))
+        throw new Error("Unsupported plan message content.");
       return {
         role: "user",
         content:
-          typeof message.content === "string"
-            ? [{ type: "text", text: message.content }]
-            : message.content.map((part: any) => {
+          typeof content === "string"
+            ? [{ type: "text", text: content }]
+            : content.map((part) => {
                 if (part.type === "text")
-                  return { type: "text", text: part.text };
-                if (
-                  part.type !== "image_url" ||
-                  typeof part.image_url?.url !== "string"
-                )
+                  return {
+                    type: "text" as const,
+                    text: String(part.text ?? ""),
+                  };
+                const url = part.image_url?.url;
+                if (part.type !== "image_url" || typeof url !== "string")
                   throw new Error("Unsupported plan attachment.");
-                const match = /^data:([^;]+);base64,(.*)$/s.exec(
-                  part.image_url.url,
-                );
+                const match = /^data:([^;]+);base64,(.*)$/s.exec(url);
                 return {
-                  type: "file",
+                  type: "file" as const,
                   mediaType: match?.[1] ?? "image/*",
-                  data: match ? match[2] : new URL(part.image_url.url),
+                  data: match ? (match[2] ?? "") : new URL(url),
                 };
               }),
       };

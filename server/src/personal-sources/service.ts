@@ -184,7 +184,7 @@ export function parseImapSummaryResponse(
   ];
   return rawBlocks
     .map((match) => {
-      const block = match[2]!;
+      const block = match[2] ?? "";
       const metadata = block.slice(
         0,
         block.indexOf("\n") < 0 ? block.length : block.indexOf("\n"),
@@ -347,9 +347,7 @@ export async function fetchImapInboxSummary(input: {
       if (step === "select") {
         if (/^A2 OK/m.test(buffer)) {
           const existsMatch = /\*\s+(\d+)\s+EXISTS/i.exec(buffer);
-          totalMessages = existsMatch
-            ? Number.parseInt(existsMatch[1]!, 10)
-            : 0;
+          totalMessages = Number.parseInt(existsMatch?.[1] ?? "0", 10);
           uidValidity = /\[UIDVALIDITY\s+(\d+)\]/i.exec(buffer)?.[1] ?? "";
           buffer = "";
           if (totalMessages <= 0) {
@@ -1147,36 +1145,39 @@ export function createPersonalSources(
           : row?.notify_connected_at;
       if (!version || toIso(version) !== record.connection_version)
         return "cancelled";
-      if (record.kind === "smtp" && (!row?.email_address || !row.imap_pass_enc))
-        return "cancelled";
-      if (record.kind === "notify" && !row?.notify_webhook_enc)
-        return "cancelled";
+      // What this send may use, read once from the row whose connection version was checked.
+      const mailbox =
+        record.kind === "smtp" && row?.email_address && row.imap_pass_enc
+          ? { address: row.email_address, passEnc: row.imap_pass_enc }
+          : null;
+      const webhook =
+        record.kind === "notify" && row?.notify_webhook_enc
+          ? { urlEnc: row.notify_webhook_enc, kind: row.notify_webhook_kind }
+          : null;
+      if (!mailbox && !webhook) return "cancelled";
       return {
         send: async () => {
           let providerMessageIds: string[];
           const signal = currentToolAbort();
           if (signal?.aborted || currentConfirmTurn()?.stopped())
             throw new DeliveryRejectedError("用户已停止，未发送。");
-          if (record.kind === "smtp") {
-            const smtp = inferSmtpServer(row!.email_address!);
+          if (mailbox) {
+            const smtp = inferSmtpServer(mailbox.address);
             if (isBlockedHostname(smtp.host) || smtp.host === "demo.smtp.local")
               throw new DeliveryRejectedError("SMTP 连接地址无效，未发送。");
             providerMessageIds = await (options.sendMail ?? sendSmtpMessage)({
               ...smtp,
-              from: row!.email_address!,
-              pass: decryptText(row!.imap_pass_enc!, options.encryptionKey),
+              from: mailbox.address,
+              pass: decryptText(mailbox.passEnc, options.encryptionKey),
               to: record.payload.target,
               subject: record.payload.title,
               body: record.payload.body,
               id,
               ...(signal ? { signal } : {}),
             });
-          } else {
-            const url = decryptText(
-              row!.notify_webhook_enc!,
-              options.encryptionKey,
-            );
-            const kind = (row!.notify_webhook_kind ||
+          } else if (webhook) {
+            const url = decryptText(webhook.urlEnc, options.encryptionKey);
+            const kind = (webhook.kind ||
               "custom") as NotifyWebhookView["kind"];
             if (kind === "demo")
               throw new DeliveryRejectedError("演示渠道不能产生真实发送凭据。");
@@ -1189,7 +1190,7 @@ export function createPersonalSources(
               fetchImpl,
               ...(signal ? { signal } : {}),
             });
-          }
+          } else throw new DeliveryRejectedError("发送渠道已断开，未发送。");
           return {
             type: "personal_delivery",
             id,

@@ -10,7 +10,29 @@ type Message = {
   tool_call_id?: string;
   [key: string]: unknown;
 };
-type Body = Record<string, any>;
+/** One content part / input entry of a provider request (OpenAI, Anthropic or Responses). */
+type WirePart = {
+  type?: string;
+  text?: string;
+  tool_use_id?: string;
+  content?: unknown;
+  [key: string]: unknown;
+};
+type WireEntry = {
+  type?: string;
+  role?: string;
+  call_id?: string;
+  output?: unknown;
+  content?: string | WirePart[];
+  [key: string]: unknown;
+};
+type Body = {
+  input?: WireEntry[];
+  instructions?: string;
+  messages?: WireEntry[];
+  stream?: boolean;
+  [key: string]: unknown;
+};
 type Rule = {
   match: string | RegExp | { toolResult: string | true };
   reply: ModelReply | (() => ModelReply);
@@ -19,8 +41,8 @@ const sse = (events: unknown[], named = false) =>
   new Response(
     events
       .map(
-        (event: any) =>
-          `${named ? `event: ${event.type}\n` : ""}data: ${JSON.stringify(event)}\n\n`,
+        (event) =>
+          `${named ? `event: ${(event as { type?: string }).type}\n` : ""}data: ${JSON.stringify(event)}\n\n`,
       )
       .join(""),
     { headers: { "content-type": "text/event-stream" } },
@@ -33,32 +55,39 @@ export function modelMessages(body: Body): Message[] {
       ...(body.instructions
         ? [{ role: "system", content: body.instructions }]
         : []),
-      ...body.input.map((entry: any) =>
-        entry.type === "function_call_output"
-          ? { role: "tool", tool_call_id: entry.call_id, content: entry.output }
-          : {
-              ...entry,
-              content: Array.isArray(entry.content)
-                ? entry.content.map((part: any) => part.text ?? "").join("")
-                : entry.content,
-            },
+      ...body.input.map(
+        (entry): Message =>
+          entry.type === "function_call_output"
+            ? {
+                role: "tool",
+                tool_call_id: entry.call_id,
+                content: entry.output,
+              }
+            : {
+                ...entry,
+                content: Array.isArray(entry.content)
+                  ? entry.content.map((part) => part.text ?? "").join("")
+                  : entry.content,
+              },
       ),
     ];
-  return (body.messages ?? []).flatMap((entry: any) =>
+  return (body.messages ?? []).flatMap((entry): Message[] =>
     Array.isArray(entry.content)
       ? entry.content
-          .filter((part: any) => part.type === "tool_result")
-          .map((part: any) => ({
-            role: "tool",
-            tool_call_id: part.tool_use_id,
-            content: part.content,
-          }))
+          .filter((part) => part.type === "tool_result")
+          .map(
+            (part): Message => ({
+              role: "tool",
+              tool_call_id: part.tool_use_id,
+              content: part.content,
+            }),
+          )
           .concat([
             {
               ...entry,
               content: entry.content
-                .filter((part: any) => part.type !== "tool_result")
-                .map((part: any) => part.text ?? "")
+                .filter((part) => part.type !== "tool_result")
+                .map((part) => part.text ?? "")
                 .join(""),
             },
           ])
@@ -129,7 +158,9 @@ function wireResponse(path: string, body: Body, reply: ModelReply) {
                   index,
                   delta: {
                     type: "input_json_delta",
-                    partial_json: JSON.stringify((block as any).input),
+                    partial_json: JSON.stringify(
+                      (block as { input?: unknown }).input,
+                    ),
                   },
                 },
                 { type: "content_block_stop", index },
@@ -182,7 +213,7 @@ function wireResponse(path: string, body: Body, reply: ModelReply) {
         type: "response.created",
         response: { ...response, status: "in_progress", output: [] },
       },
-      ...output.flatMap((item: any, output_index) =>
+      ...output.flatMap((item: Record<string, unknown>, output_index) =>
         item.type === "message"
           ? [
               {
@@ -316,8 +347,9 @@ export function createModelFixture() {
                     message.role !== "tool" &&
                     (typeof match === "string"
                       ? String(message.content).includes(match)
-                      : ((match.lastIndex = 0),
-                        match.test(String(message.content)))),
+                      : new RegExp(match.source, match.flags).test(
+                          String(message.content),
+                        )),
                 ),
           );
           if (!rule)

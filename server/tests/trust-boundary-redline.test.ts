@@ -10,17 +10,17 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  LOCAL_CALLER_HEADER,
-  resolveGatewayRequest,
-} from "../src/auth/gateway-identity";
-import {
   assertTrustedOriginsLoopbackOnly,
   composeHostBindIsLoopback,
   extractComposePortLines,
+  isolateScriptCoversSidecarDeny,
   nginxClearsLocalCallerForAppProxies,
   nginxPinsClientIpHeaders,
-  isolateScriptCoversSidecarDeny,
 } from "../../shared/trust-boundary";
+import {
+  LOCAL_CALLER_HEADER,
+  resolveGatewayRequest,
+} from "../src/auth/gateway-identity";
 
 const root = join(import.meta.dir, "../..");
 const secret = "unit-test-secret-0123456789abcdef-xyz";
@@ -58,9 +58,9 @@ describe("Local-Caller binding (host scrape only)", () => {
   });
 
   test("bare request without Local-Caller → refused", () => {
-    expect(resolveGatewayRequest(secret, new Headers(), Date.now(), {}).kind).toBe(
-      "refuse",
-    );
+    expect(
+      resolveGatewayRequest(secret, new Headers(), Date.now(), {}).kind,
+    ).toBe("refuse");
   });
 });
 
@@ -116,7 +116,30 @@ describe("nginx takes the client IP from Cloudflare only (audit #5)", () => {
   test("real_ip_header CF-Connecting-IP + every official Cloudflare range, nothing wider", () => {
     const conf = read("deploy/public/nginx.conf");
     expect(conf).toMatch(/^\s*real_ip_header CF-Connecting-IP;/m);
-    for (const cidr of ["173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22","141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20","197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13","104.24.0.0/14","172.64.0.0/13","131.0.72.0/22","2400:cb00::/32","2606:4700::/32","2803:f800::/32","2405:b500::/32","2405:8100::/32","2a06:98c0::/29","2c0f:f248::/32"]) {
+    for (const cidr of [
+      "173.245.48.0/20",
+      "103.21.244.0/22",
+      "103.22.200.0/22",
+      "103.31.4.0/22",
+      "141.101.64.0/18",
+      "108.162.192.0/18",
+      "190.93.240.0/20",
+      "188.114.96.0/20",
+      "197.234.240.0/22",
+      "198.41.128.0/17",
+      "162.158.0.0/15",
+      "104.16.0.0/13",
+      "104.24.0.0/14",
+      "172.64.0.0/13",
+      "131.0.72.0/22",
+      "2400:cb00::/32",
+      "2606:4700::/32",
+      "2803:f800::/32",
+      "2405:b500::/32",
+      "2405:8100::/32",
+      "2a06:98c0::/29",
+      "2c0f:f248::/32",
+    ]) {
       expect(conf).toContain(`set_real_ip_from ${cidr};`);
     }
     expect(conf).not.toMatch(/set_real_ip_from\s+(0\.0\.0\.0\/0|::\/0);/);
@@ -137,7 +160,10 @@ describe("nginx pins the client IP headers on every proxy (audit #5)", () => {
   });
   test("a location that forwards the client's CF-Connecting-IP is flagged", () => {
     const conf = `location / {\n  proxy_pass http://127.0.0.1:3001;\n  proxy_set_header X-Real-IP $remote_addr;\n}\nlocation /a {\n  proxy_pass http://127.0.0.1:3002;\n  proxy_set_header CF-Connecting-IP "";\n  proxy_set_header X-Real-IP $http_x_real_ip;\n}\n`;
-    expect(nginxPinsClientIpHeaders(conf).missingNear).toEqual(["location /", "location /a"]);
+    expect(nginxPinsClientIpHeaders(conf).missingNear).toEqual([
+      "location /",
+      "location /a",
+    ]);
   });
 });
 describe("deploy scripts refuse 0.0.0.0 app bind", () => {
@@ -161,7 +187,6 @@ describe("nginx sync process (v0.1.34)", () => {
   });
 });
 
-
 describe("sidecar isolate (PRD-P0-02 / v0.1.39)", () => {
   test("isolate-sidecar-app.sh + deploy-serial + systemd unit", () => {
     const iso = read("scripts/ops/isolate-sidecar-app.sh");
@@ -169,8 +194,12 @@ describe("sidecar isolate (PRD-P0-02 / v0.1.39)", () => {
     const serial = read("scripts/ops/deploy-serial.sh");
     expect(serial).toMatch(/isolate-sidecar-app/);
     expect(serial).toMatch(/exit 8/);
-    expect(read("deploy/magpie-isolate.service")).toMatch(/isolate-sidecar-app/);
+    expect(read("deploy/magpie-isolate.service")).toMatch(
+      /isolate-sidecar-app/,
+    );
     expect(read("deploy/start.sh")).toMatch(/isolate-sidecar-app/);
-    expect(read("scripts/ops/check-trust-boundary.sh")).toMatch(/isolate-sidecar-app/);
+    expect(read("scripts/ops/check-trust-boundary.sh")).toMatch(
+      /isolate-sidecar-app/,
+    );
   });
 });

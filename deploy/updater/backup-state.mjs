@@ -75,7 +75,7 @@ export async function beginBackup(path, kind) {
 
 export async function completeBackup(path, metadata = {}) {
   const current = await manifest(path);
-  if (!current || current.state !== "pending")
+  if (current?.state !== "pending")
     throw new Error("Only this updater pending backup can complete");
   const artifacts = [];
   async function walk(directory, prefix = "") {

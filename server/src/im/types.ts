@@ -88,7 +88,7 @@ export interface ImAdapter {
   start(): Promise<void>;
   stop(): Promise<void>;
   /** 回复一条消息。 */
-  send(reply: ImReply): Promise<void | ImDeliveryReceipt>;
+  send(reply: ImReply): Promise<ImDeliveryReceipt | undefined>;
   /** 「正在输入」之类的提示，可选。 */
   typing?(inbound: ImInbound): Promise<void>;
   /** 回复前的占位（企业微信流式的转圈），可选。 */

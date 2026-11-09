@@ -25,7 +25,8 @@ export type ToolRenderProps<T = Record<string, unknown>> = {
 export type RegisteredToolRenderer = {
   name: string;
   agentId?: string;
-  render: (props: ToolRenderProps<any>) => ReactNode;
+  /** Method syntax on purpose: each renderer narrows its own args; the registry holds them all. */
+  render(props: ToolRenderProps): ReactNode;
 };
 class RenderRegistry {
   private entries = new Map<symbol, RegisteredToolRenderer>();
@@ -169,8 +170,8 @@ export type InteractionRenderProps<T = Record<string, unknown>> =
 function InteractionCard({
   render: Render,
   ...props
-}: ToolRenderProps<any> & {
-  render: (props: InteractionRenderProps<any>) => ReactNode;
+}: ToolRenderProps & {
+  render(props: InteractionRenderProps): ReactNode;
 }) {
   const cache = useQueryClient();
   const key = ["conversation-interaction", props.toolCallId];

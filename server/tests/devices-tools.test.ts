@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { defaultCapabilities } from "../../shared/devices";
 import type { DeviceHub } from "../src/devices/hub";
 import type { DeviceRecord, DeviceStore } from "../src/devices/store";
-import { agoText, deviceGuidance, deviceTools, resolveDevice } from "../src/devices/tools";
+import {
+  agoText,
+  deviceGuidance,
+  deviceTools,
+  resolveDevice,
+} from "../src/devices/tools";
 import { toolCarriedGuidance } from "../src/plugins/tools";
 
 function record(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
@@ -31,20 +36,39 @@ function record(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
 }
 
 function harness(devices: DeviceRecord[], online: string[]) {
-  const calls: Array<{ deviceId: string; botId: string; operation: string }> = [];
+  const calls: Array<{ deviceId: string; botId: string; operation: string }> =
+    [];
   const store = {
-    get: async (id: string) => devices.find((device) => device.id === id) ?? null,
-    forOwner: async (owner: string) => devices.filter((device) => device.ownerUserId === owner && !device.revoked),
+    get: async (id: string) =>
+      devices.find((device) => device.id === id) ?? null,
+    forOwner: async (owner: string) =>
+      devices.filter(
+        (device) => device.ownerUserId === owner && !device.revoked,
+      ),
   } as unknown as DeviceStore;
   const hub = {
     isOnline: (id: string) => online.includes(id),
-    invoke: async (input: { device: DeviceRecord; operation: string; bot: { id: string } }) => {
-      calls.push({ deviceId: input.device.id, botId: input.bot.id, operation: input.operation });
+    invoke: async (input: {
+      device: DeviceRecord;
+      operation: string;
+      bot: { id: string };
+    }) => {
+      calls.push({
+        deviceId: input.device.id,
+        botId: input.bot.id,
+        operation: input.operation,
+      });
       return { ok: true, device: input.device.id };
     },
   } as unknown as DeviceHub;
   const toolsFor = (botId: string, actorId = "u1") =>
-    deviceTools({ store, hub, botId, actorId, devices: devices.filter((d) => online.includes(d.id)) });
+    deviceTools({
+      store,
+      hub,
+      botId,
+      actorId,
+      devices: devices.filter((d) => online.includes(d.id)),
+    });
   return { calls, store, hub, toolsFor };
 }
 
@@ -55,9 +79,13 @@ describe("device tools are shared by every bot of the owner", () => {
       const tools = toolsFor(botId);
       expect(tools.map((tool) => tool.name)).toContain("device_clipboard");
       const list = JSON.parse(String(await tools[0]!.execute({})));
-      expect(list.devices.map((d: { deviceId: string }) => d.deviceId)).toEqual(["dev_1"]);
+      expect(list.devices.map((d: { deviceId: string }) => d.deviceId)).toEqual(
+        ["dev_1"],
+      );
       // 只有一台在线：deviceId 可以省略。
-      await tools.find((tool) => tool.name === "device_clipboard")!.execute({ action: "read" });
+      await tools
+        .find((tool) => tool.name === "device_clipboard")!
+        .execute({ action: "read" });
     }
     expect(calls).toEqual([
       { deviceId: "dev_1", botId: "bot-a", operation: "clipboard_read" },
@@ -67,29 +95,45 @@ describe("device tools are shared by every bot of the owner", () => {
 
   test("capabilities stay off by default: no shell tool when shell is off", () => {
     const { toolsFor } = harness([record()], ["dev_1"]);
-    expect(toolsFor("bot-a").map((tool) => tool.name)).not.toContain("device_run_shell");
+    expect(toolsFor("bot-a").map((tool) => tool.name)).not.toContain(
+      "device_run_shell",
+    );
   });
 
   test("a selector is required when several devices are online, and may be a name", async () => {
-    const devices = [record(), record({ id: "dev_2", name: "笔记本", hostname: "LAPTOP" })];
+    const devices = [
+      record(),
+      record({ id: "dev_2", name: "笔记本", hostname: "LAPTOP" }),
+    ];
     const { store } = harness(devices, ["dev_1", "dev_2"]);
     const online = (id: string) => id === "dev_1" || id === "dev_2";
-    expect(await resolveDevice(store, "u1", undefined, online)).toContain("2 台设备在线");
-    expect(((await resolveDevice(store, "u1", "笔记本", online)) as DeviceRecord).id).toBe("dev_2");
-    expect(((await resolveDevice(store, "u1", "study", online)) as DeviceRecord).id).toBe("dev_1");
-    expect(((await resolveDevice(store, "u1", "dev_1", online)) as DeviceRecord).id).toBe("dev_1");
+    expect(await resolveDevice(store, "u1", undefined, online)).toContain(
+      "2 台设备在线",
+    );
+    expect(
+      ((await resolveDevice(store, "u1", "笔记本", online)) as DeviceRecord).id,
+    ).toBe("dev_2");
+    expect(
+      ((await resolveDevice(store, "u1", "study", online)) as DeviceRecord).id,
+    ).toBe("dev_1");
+    expect(
+      ((await resolveDevice(store, "u1", "dev_1", online)) as DeviceRecord).id,
+    ).toBe("dev_1");
   });
 
   test("another person's device is never reachable", async () => {
     const { store } = harness([record({ ownerUserId: "u2" })], ["dev_1"]);
-    expect(typeof (await resolveDevice(store, "u1", "dev_1", () => true))).toBe("string");
+    expect(typeof (await resolveDevice(store, "u1", "dev_1", () => true))).toBe(
+      "string",
+    );
   });
 });
 
 describe("the bot knows whether the person's computer is linked and online (2026-10-13)", () => {
   const all = (devices: DeviceRecord[], online: string[]) => {
     const { store, hub } = harness(devices, online);
-    return (botId = "bot-a") => deviceTools({ store, hub, botId, actorId: "u1", devices });
+    return (botId = "bot-a") =>
+      deviceTools({ store, hub, botId, actorId: "u1", devices });
   };
 
   test("no linked device: no tools and nothing said", () => {
@@ -107,7 +151,11 @@ describe("the bot knows whether the person's computer is linked and online (2026
     expect(guidance).toContain("约 15 小时前");
     expect(guidance).toContain("ChisaBot desktop app");
     const list = JSON.parse(String(await tools[0]!.execute({})));
-    expect(list.devices[0]).toMatchObject({ deviceId: "dev_1", online: false, lastSeen: "约 15 小时前" });
+    expect(list.devices[0]).toMatchObject({
+      deviceId: "dev_1",
+      online: false,
+      lastSeen: "约 15 小时前",
+    });
   });
 
   test("online: guidance says yes, names the enabled capabilities, and tells the bot not to deny it", () => {
@@ -118,19 +166,34 @@ describe("the bot knows whether the person's computer is linked and online (2026
     expect(guidance).toHaveLength(1);
     expect(guidance[0]).toContain("ONLINE now");
     expect(guidance[0]).toContain("剪贴板");
-    expect(guidance[0]).toContain("Never claim you only have an isolated browser");
+    expect(guidance[0]).toContain(
+      "Never claim you only have an isolated browser",
+    );
   });
 
   test("online with every capability off: still told it is online, and how to turn capabilities on", () => {
-    const tools = all([record({ capabilities: defaultCapabilities() })], ["dev_1"])();
-    expect(tools.map((tool) => tool.name)).toEqual(["device_list", "device_system_info"]);
+    const tools = all(
+      [record({ capabilities: defaultCapabilities() })],
+      ["dev_1"],
+    )();
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "device_list",
+      "device_system_info",
+    ]);
     const [guidance] = toolCarriedGuidance(tools);
     expect(guidance).toContain("none yet");
     expect(guidance).toContain("设置 → 设备");
   });
 
   test("operation tools only reflect online devices", () => {
-    const devices = [record({ capabilities: defaultCapabilities() }), record({ id: "dev_2", name: "旧电脑", capabilities: { ...defaultCapabilities(), shell: "allow" } })];
+    const devices = [
+      record({ capabilities: defaultCapabilities() }),
+      record({
+        id: "dev_2",
+        name: "旧电脑",
+        capabilities: { ...defaultCapabilities(), shell: "allow" },
+      }),
+    ];
     const names = all(devices, ["dev_1"])().map((tool) => tool.name);
     expect(names).not.toContain("device_run_shell");
   });
@@ -146,13 +209,21 @@ describe("the bot knows whether the person's computer is linked and online (2026
 
 describe("device_run_shell never strands the turn on a foreground wait", () => {
   const shellTools = (invoke: DeviceHub["invoke"]) => {
-    const device = record({ capabilities: { ...defaultCapabilities(), shell: "allow" } });
+    const device = record({
+      capabilities: { ...defaultCapabilities(), shell: "allow" },
+    });
     const store = {
       get: async () => device,
       forOwner: async () => [device],
     } as unknown as DeviceStore;
     const hub = { isOnline: () => true, invoke } as unknown as DeviceHub;
-    return deviceTools({ store, hub, botId: "bot-a", actorId: "u1", devices: [device] });
+    return deviceTools({
+      store,
+      hub,
+      botId: "bot-a",
+      actorId: "u1",
+      devices: [device],
+    });
   };
 
   const shellTool = (invoke: DeviceHub["invoke"]) =>
@@ -174,7 +245,9 @@ describe("device_run_shell never strands the turn on a foreground wait", () => {
       timedOut: true,
       durationMs: 300_000,
     }));
-    const out = JSON.parse(String(await tool.execute({ command: "npm run build", timeoutSec: 300 })));
+    const out = JSON.parse(
+      String(await tool.execute({ command: "npm run build", timeoutSec: 300 })),
+    );
     expect(out.timedOut).toBe(true);
     expect(out.timeoutSec).toBe(300);
     expect(out.note).toContain("不要原样重跑");
@@ -186,7 +259,9 @@ describe("device_run_shell never strands the turn on a foreground wait", () => {
     const tool = shellTool(async () => {
       throw new Error("PC 端 620 秒内没有返回结果。");
     });
-    const out = String(await tool.execute({ command: "devin login", timeoutSec: 600 }));
+    const out = String(
+      await tool.execute({ command: "devin login", timeoutSec: 600 }),
+    );
     expect(out).toContain("设备操作失败");
     expect(out).toContain("不要原样重跑");
     expect(out).toContain("等输入");
@@ -202,7 +277,13 @@ describe("device_run_shell never strands the turn on a foreground wait", () => {
       durationMs: 1200,
     }));
     const out = JSON.parse(String(await tool.execute({ command: "echo ok" })));
-    expect(out).toEqual({ exitCode: 0, stdout: "ok", stderr: "", truncated: false, timedOut: false, durationMs: 1200 });
+    expect(out).toEqual({
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+      truncated: false,
+      timedOut: false,
+      durationMs: 1200,
+    });
   });
 });
-

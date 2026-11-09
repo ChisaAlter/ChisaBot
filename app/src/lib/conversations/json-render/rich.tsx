@@ -60,7 +60,6 @@ export function SafeImg({
 }) {
   const url = safeHttps(src);
   const [failed, setFailed] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new address gets a fresh try.
   useEffect(() => setFailed(false), [url]);
   if (!url || failed) return null;
   return (
@@ -370,7 +369,6 @@ export function Tabs({
             aria-selected={i === current}
             className={cn("jr-tab", i === current && "is-on")}
             id={`${id}-t${i}`}
-            // biome-ignore lint/suspicious/noArrayIndexKey: tabs are positional.
             key={i}
             onClick={() => setActive(i)}
             onKeyDown={(event) => {
@@ -417,7 +415,6 @@ export function Carousel({
       end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2,
     });
   };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: measure once on mount; the observer keeps it current.
   useEffect(() => {
     update();
     const el = track.current;
@@ -546,7 +543,6 @@ export function Timeline({
   return (
     <ol className="jr-timeline jr-el">
       {(Array.isArray(items) ? items : []).map((item, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
         <li
           className={cn("jr-tl-item", toneClass(item.tone))}
           key={i}
@@ -599,7 +595,6 @@ export function KeyValue({
   return (
     <div className={cn("jr-kv jr-el", columns === 2 && "is-2")}>
       {(Array.isArray(items) ? items : []).map((item, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
         <ActionArea
           affordance="inline"
           className="jr-kv-row"

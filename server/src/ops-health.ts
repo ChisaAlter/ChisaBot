@@ -365,17 +365,16 @@ export function createOpsHealthRoutes(options: {
   });
 
   routes.get("/", async (context) => {
+    const { probeDsh, probeAssistant } = options;
     const report = await collectOpsHealth({
       pingDatabase: options.pingDatabase,
       magpie: options.magpie,
       probeComputer: options.probeComputer,
       probeHermes: options.probeHermes,
       dshRequired: options.dshRequired,
-      probeDsh: options.probeDsh
-        ? () => options.probeDsh!(context.var.actor.id)
-        : undefined,
-      probeAssistant: options.probeAssistant
-        ? () => options.probeAssistant!(context.var.actor.id)
+      probeDsh: probeDsh ? () => probeDsh(context.var.actor.id) : undefined,
+      probeAssistant: probeAssistant
+        ? () => probeAssistant(context.var.actor.id)
         : undefined,
       gatewayMode: options.gatewayMode,
       log: options.log,

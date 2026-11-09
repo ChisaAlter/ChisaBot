@@ -22,6 +22,7 @@ import { createToolOperationStore } from "../src/conversations/tool-operations";
 import { createDatabase } from "../src/db/client";
 import { createLocalConversations } from "../src/local-conversations";
 import { createTurnRunner } from "../src/turns/run-turn";
+import type { Row, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 
@@ -63,10 +64,10 @@ async function until<T>(
     let effects = 0,
       modelRequests = 0,
       gatewayRequests = 0;
-    const providerInputs: any[] = [];
+    const providerInputs: unknown[] = [];
     const bridgeErrors: string[] = [];
     let interception: "none" | "drop-once" | "hold" = "none";
-    let committedWaiting: { requestId: string; body: any } | undefined;
+    let committedWaiting: { requestId: string; body: unknown } | undefined;
     const server = createServer(async (request, response) => {
       try {
         const chunks: Buffer[] = [];
@@ -105,7 +106,7 @@ async function until<T>(
         modelRequests++;
         providerInputs.push(input);
         const finished = input.messages.some(
-          (message: any) => message.role === "tool",
+          (message: WireMessage) => message.role === "tool",
         );
         const deltas = finished
           ? [
@@ -339,7 +340,10 @@ async function until<T>(
         retried.events.find((event) => event.type === "RUN_ERROR"),
         JSON.stringify({ events: retried.events, bridgeErrors, logs }),
       ).toBeUndefined();
-      expect((retried.events.at(-1) as any)?.outcome?.type).toBe("interrupt");
+      expect(
+        (retried.events.at(-1) as { outcome?: { type?: string } })?.outcome
+          ?.type,
+      ).toBe("interrupt");
       expect(gatewayRequests).toBe(2);
       expect(effects).toBe(0);
       expect(await countCards(retried.input.threadId)).toBe(1);
@@ -363,7 +367,7 @@ async function until<T>(
         async () => committedWaiting,
         "WAITING committed before 202 is exposed",
       );
-      const [operationBefore] = await sql.unsafe<any[]>(
+      const [operationBefore] = await sql.unsafe<Row[]>(
         "SELECT id,status FROM chisabot_tool_operations WHERE confirmation_id=$1",
         [gap.requestId],
       );
@@ -492,7 +496,7 @@ async function until<T>(
       await resume()(actorId, gap.requestId);
       expect(effects).toBe(2);
       expect(modelRequests).toBe(requestsBeforeResume + 1);
-      const [operationAfter] = await sql.unsafe<any[]>(
+      const [operationAfter] = await sql.unsafe<Row[]>(
         "SELECT id,status,result FROM chisabot_tool_operations WHERE confirmation_id=$1",
         [gap.requestId],
       );

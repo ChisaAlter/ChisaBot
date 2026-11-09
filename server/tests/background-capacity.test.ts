@@ -7,6 +7,7 @@ import type { DeviceRecord } from "../src/devices/store";
 import { createLocalAgentService } from "../src/local-agents/service";
 import { createLocalConversations } from "../src/local-conversations";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+import type { Row } from "./support/wire-types";
 
 const url = process.env.TEST_DATABASE_URL ? testDatabaseUrl() : null;
 async function until(check: () => Promise<unknown>, timeout = 8000) {
@@ -51,7 +52,7 @@ describe.skipIf(!url)(
       tokenHash: "fixture",
       fullAccessUntil: new Date(Date.now() + 60_000).toISOString(),
     };
-    const sent: any[] = [];
+    const sent: unknown[] = [];
     let decision:
       | ((value: { approved: boolean; by: string }) => void)
       | undefined;
@@ -70,11 +71,14 @@ describe.skipIf(!url)(
     };
     const hub = {
       isOnline: () => true,
-      sendRaw: (_id: string, value: any) => (sent.push(value), true),
+      sendRaw: (_id: string, value: unknown) => {
+        sent.push(value);
+        return true;
+      },
       decide: () => true,
       requestUserApproval: async (
-        _record: any,
-        _input: any,
+        _record: unknown,
+        _input: unknown,
         created: (id: string) => void,
       ) => {
         created(randomUUID());
@@ -109,12 +113,12 @@ describe.skipIf(!url)(
         task,
         ...(profile ? { profile } : {}),
       });
-    const node = (taskId: string, message: any) =>
+    const node = (taskId: string, message: Record<string, unknown>) =>
       service.handleNodeMessage(device, { taskId, ...message });
     const count = () => backgroundCount(sql, owner);
     const row = async (id: string) =>
       (
-        await sql.unsafe<any[]>(
+        await sql.unsafe<Row[]>(
           "SELECT * FROM chisabot_local_agent_tasks WHERE id=$1",
           [id],
         )

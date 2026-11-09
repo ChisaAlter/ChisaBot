@@ -77,9 +77,8 @@ test("real AG-UI client parses reasoning, answer and tool stream with stable sou
     },
     { type: "tool-call-delta", id: "lookup", argumentsDelta: '"hello"}' },
   ];
-  chunks.forEach((chunk, index) =>
-    projection.live({ type: "chunk", attemptId: "attempt", index, chunk }),
-  );
+  for (const [index, chunk] of chunks.entries())
+    projection.live({ type: "chunk", attemptId: "attempt", index, chunk });
   projection.live({ type: "end", attemptId: "attempt", index: chunks.length });
   projection.durable(
     durable(0, "assistant/message", {
@@ -117,7 +116,8 @@ test("real AG-UI client parses reasoning, answer and tool stream with stable sou
   expect(
     reasoningEvents.every(
       (event) =>
-        (event as any).messageId === "session:assistant:1:1:1:reasoning",
+        (event as { messageId?: string }).messageId ===
+        "session:assistant:1:1:1:reasoning",
     ),
   ).toBe(true);
 });

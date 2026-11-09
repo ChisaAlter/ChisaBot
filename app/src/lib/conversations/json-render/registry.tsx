@@ -82,7 +82,6 @@ function DottedText({ text: value }: { text: string }) {
   return (
     <>
       {parts.map((part, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed string.
         <span key={index}>
           {index > 0 ? " · " : ""}
           <span className="jr-text-seg">{part}</span>
@@ -120,7 +119,7 @@ export function splitMetricValue(value: string): { num: string; unit: string } {
   const m = value
     .trim()
     .match(/^([+\-−]?[$¥€£₿]?\s?\d[\d,]*(?:\.\d+)?)\s*([^\d\s][^\d]{0,9})?$/u);
-  if (!m || !m[2]) return { num: value.trim(), unit: "" };
+  if (!m?.[2]) return { num: value.trim(), unit: "" };
   return { num: m[1], unit: m[2].trim() };
 }
 
@@ -136,7 +135,6 @@ function FitLine({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -232,7 +230,6 @@ function CompactRows({
         ))}
       </div>
       {rows.map((row, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: rows carry no identity of their own.
         // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
         // biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件
         <div className="jr-rows-r" key={index} role="row">
@@ -544,7 +541,6 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
                 </thead>
                 <tbody>
                   {rows.map((row, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: rows carry no identity of their own.
                     <tr key={index}>
                       {columns.map((column) => (
                         <td
@@ -580,7 +576,6 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
             {items.map((item, index) => {
               const linked = Boolean(safeHttp(item.href));
               return (
-                // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
                 <li
                   className={cn("jr-list-item", toneOf(item.tone))}
                   key={index}

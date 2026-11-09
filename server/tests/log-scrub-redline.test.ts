@@ -35,7 +35,9 @@ describe("log-scrub red-line (PRD-P0-05)", () => {
     for (const file of walk(root)) {
       const text = readFileSync(file, "utf8");
       // Strip block comments so doc examples do not trip the gate.
-      const stripped = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      const stripped = text
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "");
       for (const re of FORBIDDEN) {
         if (re.test(stripped)) {
           hits.push(relative(join(root, "..", ".."), file));
@@ -47,10 +49,7 @@ describe("log-scrub red-line (PRD-P0-05)", () => {
   });
 
   test("reasonWithoutStatement is the scrub helper", () => {
-    const helper = readFileSync(
-      join(root, "db/query-failure.ts"),
-      "utf8",
-    );
+    const helper = readFileSync(join(root, "db/query-failure.ts"), "utf8");
     expect(helper).toContain("export function reasonWithoutStatement");
     expect(helper).toContain("isQueryFailure");
   });

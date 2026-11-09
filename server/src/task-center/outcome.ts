@@ -299,7 +299,7 @@ export async function verifyTaskTurn(options: {
       "SELECT id,state,receipt FROM chisabot_personal_deliveries WHERE id=$1 AND owner_user_id=$2 AND run_id=$3",
       [receipt.id, task.ownerUserId, runId],
     );
-    if (!delivery || delivery.state !== "sent" || !delivery.receipt) {
+    if (delivery?.state !== "sent" || !delivery.receipt) {
       throw new TaskResultNeedsReview(
         "外发记录尚未确认接纳，任务保持待核对，不会自动重发。",
       );

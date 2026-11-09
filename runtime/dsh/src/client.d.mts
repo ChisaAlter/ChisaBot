@@ -2,7 +2,7 @@ export type DshEvent = {
   type: string;
   seq: number;
   time: number;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   surfaceOp?: unknown;
 };
 export type DshFrame =
@@ -11,10 +11,10 @@ export type DshFrame =
       cursor: number;
       records: { type: "event"; event: DshEvent }[];
       hasMore: boolean;
-      assistantStream?: any;
+      assistantStream?: unknown;
     }
   | { type: "event"; event: DshEvent }
-  | { type: "assistant-stream"; frame: any };
+  | { type: "assistant-stream"; frame: unknown };
 export type DshBindingInput = {
   sessionId: string;
   runId: string;
@@ -162,6 +162,6 @@ export function expandActiveAttempt(baseline: unknown):
       turn: number;
       step: number;
       nextIndex: number;
-      chunks: Record<string, any>[];
+      chunks: Record<string, unknown>[];
     }
   | undefined;

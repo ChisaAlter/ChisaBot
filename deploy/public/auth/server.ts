@@ -56,7 +56,8 @@ function cookieToken(
     .map((part) => part.trim())
     .filter((part) => part.startsWith(name + "="));
   if (matches.length === 0) return { present: false, token: null };
-  const token = matches.length === 1 ? matches[0]!.slice(name.length + 1) : "";
+  const token =
+    matches.length === 1 ? (matches[0]?.slice(name.length + 1) ?? "") : "";
   return {
     present: true,
     token: /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null,
@@ -385,7 +386,7 @@ export function createAuthApp(config: AuthConfig) {
   const startupCounts = new Map<string, { count: number; at: number }>();
   function cleanStartupReports() {
     const cutoff = now() - 20 * 60_000;
-    while (startupReports.length && startupReports[0]!.at <= cutoff)
+    while ((startupReports[0]?.at ?? Number.POSITIVE_INFINITY) <= cutoff)
       startupReports.shift();
     for (const [key, value] of startupCounts)
       if (value.at <= cutoff) startupCounts.delete(key);
@@ -574,7 +575,8 @@ export function createAuthApp(config: AuthConfig) {
     let key = credentialKey;
     let userId: string | null = null;
     if (!principal.builtin) {
-      const row = account(principal.id)!;
+      const row = account(principal.id);
+      if (!row) throw new Error("The signed-in account no longer exists.");
       key = accountKey(row.id, row.password_hash);
       userId = row.id;
       db.query("UPDATE accounts SET last_login_at = ? WHERE id = ?").run(

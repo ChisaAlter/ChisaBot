@@ -181,14 +181,12 @@ async function writeContainerInput(name, code, input) {
     ["exec", "-i", name, "/usr/local/bin/node", "-e", code],
     { stdio: ["pipe", "pipe", "pipe"] },
   );
-  let output = "",
-    errors = "";
+  let output = "";
   child.stdout.on("data", (chunk) => {
     output += chunk;
   });
-  child.stderr.on("data", (chunk) => {
-    errors += chunk;
-  });
+  // Drained, not kept: the runtime check's stderr is never echoed into deploy logs.
+  child.stderr.resume();
   child.stdin.end(JSON.stringify(input));
   const exit = await new Promise((resolve, reject) => {
     child.once("error", reject);
@@ -295,6 +293,7 @@ if (command === "snapshot") {
     "/usr/local/bin/bun",
     "-e",
     tablesProgram +
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: program text run by node -e inside the API container; its own template fills ${tables.*} there.
       "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const tables=await conversationTables(sql);const [r]=await sql.unsafe(`select (select count(*) from ${tables.threads} where lock_expires_at>now())+(select count(*) from chisabot_dsh_runs where status in ('admitting','observing','projecting'))+(select count(*) from chisabot_tool_operations where status='dispatching') as count`);console.log(r.count)}finally{await sql.end({timeout:5})}",
   );
   if (busy !== "0")
@@ -324,6 +323,7 @@ if (command === "snapshot") {
       "/usr/local/bin/bun",
       "-e",
       tablesProgram +
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: program text run by node -e inside the API container; its own template fills ${tables.*} there.
         "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const tables=await conversationTables(sql);const [projection]=await sql.unsafe(`select coalesce(max(sequence),0)::text as cursor from ${tables.events}`);const bindings=await sql`select id,thread_id,revision,owner_user_id,runtime_id,session_id,active from chisabot_runtime_bindings where kernel='dsh' order by owner_user_id,thread_id,revision`;console.log(JSON.stringify({cursor:projection.cursor,bindings}))}finally{await sql.end({timeout:5})}",
     ),
   );

@@ -9,13 +9,21 @@ const source = readFileSync(
   new URL("../public/compat/legacy-browser.js", import.meta.url),
   "utf8",
 );
-const root: any = {};
+/** What the compat script hangs on the global it is given. */
+const root: {
+  ChisaLegacyBrowser?: {
+    gatewayLoginRequired: (body: unknown) => boolean;
+    migrateStorage: (
+      store: Pick<Storage, "length" | "key" | "getItem" | "setItem">,
+    ) => void;
+  };
+} = {};
 new Function("globalThis", source)(root);
 
 test("current and pre-rename gateways keep the same login boundary in app and worker", () => {
   for (const read of [
     gatewayLoginRequired,
-    root.ChisaLegacyBrowser.gatewayLoginRequired,
+    root.ChisaLegacyBrowser?.gatewayLoginRequired ?? (() => undefined),
   ]) {
     expect(read({ chisabotAuthRequired: true })).toBe(true);
     expect(read({ openbotAuthRequired: true })).toBe(true);
@@ -33,13 +41,15 @@ test("old theme, layout and drafts survive without replacing newer preferences",
     ["openbot:draft:thread", "unfinished message"],
     ["unrelated", "keep"],
   ]);
-  root.ChisaLegacyBrowser.migrateStorage({
+  root.ChisaLegacyBrowser?.migrateStorage({
     get length() {
       return values.size;
     },
     key: (i: number) => [...values.keys()][i] ?? null,
     getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => values.set(key, value),
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
   });
   expect(values.get("chisabot-theme")).toBe("dark");
   expect(values.get("chisabot-layout")).toBe("wide");

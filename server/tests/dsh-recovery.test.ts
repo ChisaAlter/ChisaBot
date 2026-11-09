@@ -10,6 +10,7 @@ import { backgroundCount } from "../src/conversations/capacity";
 import { createManagedDshRuntimes } from "../src/conversations/managed-runtime";
 import { createDshRunJournal } from "../src/conversations/run-journal";
 import { createDatabase } from "../src/db/client";
+import type { Row, WireBody, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 (address ? test : test.skip)(
@@ -40,7 +41,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
               body: await request.text(),
             });
           }
-          const body = (await request.json()) as any;
+          const body = (await request.json()) as WireBody;
           requests++;
           const background = [
             "background-one",
@@ -185,9 +186,9 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
         await Bun.sleep(20);
       expect(backgroundModels.size).toBe(2);
       expect(await backgroundCount(database.$client, actorId)).toBe(2);
-      let queuedBefore: any;
+      let queuedBefore: Row | undefined;
       for (let i = 0; i < 300; i++) {
-        [queuedBefore] = await database.$client.unsafe<any[]>(
+        [queuedBefore] = await database.$client.unsafe<Row[]>(
           "SELECT status FROM chisabot_local_runs WHERE thread_id=$1",
           [backgroundThreads[2]!],
         );
@@ -222,7 +223,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
       for (let i = 0; i < 300 && !finishModel; i++) await Bun.sleep(20);
       expect(finishModel).toBeDefined();
       // Ensure the product snapshot actually contains the live prefix before killing its owner.
-      let stored: any;
+      let stored: Row | undefined;
       for (let i = 0; i < 100; i++) {
         [stored] = await database.$client.unsafe(
           "SELECT messages FROM chisabot_local_threads WHERE id=$1",
@@ -230,7 +231,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
         );
         if (
           stored.messages.some(
-            (message: any) => message.content === "Before restart. ",
+            (message: WireMessage) => message.content === "Before restart. ",
           )
         )
           break;
@@ -238,7 +239,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
       }
       expect(
         stored.messages.some(
-          (message: any) => message.content === "Before restart. ",
+          (message: WireMessage) => message.content === "Before restart. ",
         ),
       ).toBe(true);
       await killApi();
@@ -323,7 +324,7 @@ const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
       expect(await backgroundCount(database.$client, actorId)).toBe(0);
       expect(requests).toBe(4);
       for (const id of backgroundThreads) {
-        const [stored] = await database.$client.unsafe<any[]>(
+        const [stored] = await database.$client.unsafe<Row[]>(
           "SELECT count(*)::int AS count FROM chisabot_dsh_runs WHERE thread_id=$1",
           [id],
         );

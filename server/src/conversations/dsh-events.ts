@@ -2,6 +2,64 @@ import { type BaseEvent, EventType, type Message } from "@ag-ui/client";
 import type { DshEvent } from "../../../runtime/dsh/src/client.mjs";
 import { expandActiveAttempt } from "../../../runtime/dsh/src/client.mjs";
 
+/** Content blocks of a settled assistant message, as far as this projection reads them. */
+type TextBlock = { type: "text" | "reasoning"; text: string };
+type ToolCallBlock = {
+  type: "tool-call";
+  id: string;
+  name: string;
+  arguments: string;
+};
+/** Any other block DSH may add (images, signatures…): kept on the wire, ignored here. */
+type OtherBlock = { type: "other" };
+type ContentBlock = TextBlock | ToolCallBlock | OtherBlock;
+
+/** One process-local stream chunk of an assistant attempt. */
+type StreamChunk =
+  | { type: "text-delta" | "reasoning-delta"; text: string }
+  | {
+      type: "tool-call-delta";
+      id: string;
+      name?: string;
+      argumentsDelta?: string;
+    }
+  | { type: "block-end"; block?: ContentBlock }
+  | { type: "other" };
+
+/** A live assistant-stream frame from the Host follow socket. */
+export type DshLiveFrame =
+  | {
+      type: "start";
+      attemptId: string;
+      turn: number;
+      step: number;
+      startedAfterSeq: number;
+    }
+  | { type: "end"; attemptId: string; index: number }
+  | { type: "chunk"; attemptId: string; index: number; chunk: StreamChunk };
+
+/** Why a DSH turn ended (`turn/end`). */
+export type DshTurnReason = {
+  kind?: string;
+  error?: { message?: string; code?: string };
+};
+
+/** The durable event fields this projection reads; DSH validates the shapes it commits. */
+type DurableData = {
+  turn: number;
+  step: number;
+  callId: string;
+  provider: string;
+  model: string;
+  candidate: number;
+  message: {
+    content: ContentBlock[];
+    toolCallId: string;
+  };
+  usage?: Record<string, unknown>;
+  reason?: DshTurnReason;
+};
+
 type Attempt = {
   id: string;
   turn: number;
@@ -23,7 +81,7 @@ export class DshEventProjection {
   private readonly presentations = new Map<string, Attempt>();
   private readonly settled = new Set<string>();
   private readonly waitingCalls = new Set<string>();
-  lastReason: Record<string, any> | undefined;
+  lastReason: DshTurnReason | undefined;
   model: { provider: string; model: string; candidate: number } | undefined;
   usage: Record<string, unknown> | undefined;
   private readonly messages: Map<string, Message>;
@@ -86,7 +144,8 @@ export class DshEventProjection {
           type: "function" as const,
           function: { name: String(value.toolCallName), arguments: "" },
         };
-        (message.toolCalls ??= []).push(call);
+        message.toolCalls ??= [];
+        message.toolCalls.push(call);
         this.calls.set(call.id, call);
       }
     }
@@ -143,14 +202,15 @@ export class DshEventProjection {
     // DSH's wire start anchors a process-local attempt to the durable prefix that preceded it.
     // Reads may overtake that frame; count only earlier settlements to recover its same ordinal.
     // A real retry starts after its predecessor's settlement and therefore gets the next ordinal.
+    const after = frame.startedAfterSeq;
     if (
-      !Number.isInteger(frame.startedAfterSeq) ||
-      frame.startedAfterSeq! > this.sourceSeq
+      after === undefined ||
+      !Number.isInteger(after) ||
+      after > this.sourceSeq
     )
       throw new Error("DSH stream opening has a source baseline gap.");
     const prior = this.settlements.get(`${frame.turn}:${frame.step}`) ?? [];
-    const ordinal =
-      prior.filter((seq) => seq <= frame.startedAfterSeq!).length + 1;
+    const ordinal = prior.filter((seq) => seq <= after).length + 1;
     const attempt = this.create(frame.turn, frame.step, ordinal);
     this.attempts.set(frame.attemptId, attempt);
     return attempt;
@@ -201,16 +261,9 @@ export class DshEventProjection {
     attempt.ended = true;
   }
 
-  live(frame: Record<string, any>) {
+  live(frame: DshLiveFrame) {
     if (frame.type === "start") {
-      this.liveAttempt(
-        frame as {
-          attemptId: string;
-          turn: number;
-          step: number;
-          startedAfterSeq: number;
-        },
-      );
+      this.liveAttempt(frame);
       return;
     }
     const attempt = this.attempts.get(frame.attemptId);
@@ -241,12 +294,16 @@ export class DshEventProjection {
     if (this.settled.has(attempt.id)) return;
     if (active.chunks.length !== active.nextIndex)
       throw new Error("DSH reconnect baseline has an incomplete stream.");
-    for (let index = attempt.nextIndex; index < active.nextIndex; index++)
-      this.chunk(attempt, active.chunks[index]!);
+    for (let index = attempt.nextIndex; index < active.nextIndex; index++) {
+      const chunk = active.chunks[index];
+      if (!chunk)
+        throw new Error("DSH reconnect baseline has an incomplete stream.");
+      this.chunk(attempt, chunk as StreamChunk);
+    }
     attempt.nextIndex = active.nextIndex;
   }
 
-  private chunk(attempt: Attempt, chunk: Record<string, any>) {
+  private chunk(attempt: Attempt, chunk: StreamChunk) {
     if (chunk.type === "text-delta") {
       this.start(attempt);
       attempt.text += chunk.text;
@@ -298,7 +355,8 @@ export class DshEventProjection {
           name: block.name,
           argumentsDelta: block.arguments,
         });
-      const tool = attempt.tools.get(block.id)!;
+      const tool = attempt.tools.get(block.id);
+      if (!tool) throw new Error("DSH tool call ended without its start.");
       if (tool.args !== block.arguments) {
         if (block.arguments.startsWith(tool.args))
           this.chunk(attempt, {
@@ -336,13 +394,11 @@ export class DshEventProjection {
     if (event.seq !== this.sourceSeq + 1)
       throw new Error(`DSH event gap after ${this.sourceSeq}.`);
     this.sourceSeq = event.seq;
-    const data = event.data;
+    const data = event.data as DurableData;
     // Compaction replaces the model's context surface; the person's transcript stays complete.
     if (event.surfaceOp && typeof event.surfaceOp === "object") return;
     if (event.type === "plugin:chisabot/waiting") {
-      this.waitingCalls.add(
-        this.toolId(data as Pick<Attempt, "turn" | "step">, data.callId),
-      );
+      this.waitingCalls.add(this.toolId(data, data.callId));
     } else if (event.type === "plugin:chisabot/model-route") {
       this.model = {
         provider: data.provider,
@@ -359,12 +415,12 @@ export class DshEventProjection {
       settlements.push(event.seq);
       this.settlements.set(key, settlements);
       if (event.type === "assistant/message") {
-        const content = data.message.content as Record<string, any>[];
+        const content = data.message.content;
         let replaced = false;
         const kinds = new Set<string>();
         const reconcileText = (kind: "text" | "reasoning") => {
           const value = content
-            .filter((block) => block.type === kind)
+            .filter((block): block is TextBlock => block.type === kind)
             .map((block) => block.text)
             .join("");
           const previous = attempt[kind];
@@ -440,7 +496,8 @@ export class DshEventProjection {
                   type: "function" as const,
                   function: { name: block.name, arguments: block.arguments },
                 };
-                (message.toolCalls ??= []).push(next);
+                message.toolCalls ??= [];
+                message.toolCalls.push(next);
                 this.calls.set(id, next);
                 replaced = true;
               }
@@ -470,26 +527,15 @@ export class DshEventProjection {
       this.settled.add(attempt.id);
     } else if (event.type === "tool/result") {
       const message = data.message;
-      if (
-        this.waitingCalls.has(
-          this.toolId(
-            data as Pick<Attempt, "turn" | "step">,
-            message.toolCallId,
-          ),
-        )
-      )
-        return;
+      if (this.waitingCalls.has(this.toolId(data, message.toolCallId))) return;
       this.send({
         type: EventType.TOOL_CALL_RESULT,
-        toolCallId: this.toolId(
-          data as Pick<Attempt, "turn" | "step">,
-          message.toolCallId,
-        ),
+        toolCallId: this.toolId(data, message.toolCallId),
         messageId: `${this.sessionId}:tool-result:${event.seq}`,
         role: "tool",
         content: message.content
-          .filter((x: Record<string, any>) => x.type === "text")
-          .map((x: Record<string, any>) => x.text)
+          .filter((block): block is TextBlock => block.type === "text")
+          .map((block) => block.text)
           .join("\n"),
       });
     } else if (event.type === "turn/end") this.lastReason = data.reason;

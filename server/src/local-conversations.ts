@@ -945,10 +945,11 @@ class PostgresAgentRunner implements ConversationRunner {
       set = new Set();
       this.observers.set(threadId, set);
     }
-    set.add(listener);
+    const listeners = set;
+    listeners.add(listener);
     return () => {
-      set!.delete(listener);
-      if (!set!.size && this.observers.get(threadId) === set)
+      listeners.delete(listener);
+      if (!listeners.size && this.observers.get(threadId) === listeners)
         this.observers.delete(threadId);
     };
   }
@@ -1002,7 +1003,7 @@ class PostgresAgentRunner implements ConversationRunner {
       !request.capacityReserved &&
       !request.recover
     )
-      return this.waitForCapacity(request);
+      return this.waitForCapacity(request, request.execution);
     const running = this.active.get(request.threadId);
     if (
       request.join === false &&
@@ -1110,6 +1111,7 @@ class PostgresAgentRunner implements ConversationRunner {
 
   private waitForCapacity(
     request: AgentRunnerRunRequest,
+    execution: NonNullable<AgentRunnerRunRequest["execution"]>,
   ): Observable<BaseEvent> {
     const key = `${request.threadId}:${request.input.runId}`;
     let stream = this.capacityWaits.get(key);
@@ -1126,7 +1128,7 @@ class PostgresAgentRunner implements ConversationRunner {
         );
       const capacity = createExecutionCapacity(this.store.database);
       await capacity.enqueue(request.threadId, request.input.runId, {
-        ...request.execution!,
+        ...execution,
         input: request.input,
         ...(request.persistedInputMessages
           ? { persistedInputMessages: request.persistedInputMessages }
@@ -1592,20 +1594,22 @@ class PostgresAgentRunner implements ConversationRunner {
       // Only the internal turn runner supplies this source-run identity and projection.
       // A recovered receipt can continue without unpausing supplements, but a stopped or
       // edited source run (including a late sign-in result) cannot authorize another turn.
-      const [continuationSource] = request.continuationRunId
+      const continuationRunId = request.continuationRunId;
+      const [continuationSource] = continuationRunId
         ? await this.store.database.$client.unsafe<{ status: string }[]>(
             "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
-            [threadId, request.continuationRunId],
+            [threadId, continuationRunId],
           )
         : [];
       const serverContinuation =
+        continuationRunId &&
         continuationSource &&
         continuationSource.status !== "stopped" &&
         request.persistedInputMessages !== undefined &&
         input.resume?.some((item) => item.status === "resolved") &&
         !(await createDshRunJournal(this.store.database).continuationRefusal(
           threadId,
-          request.continuationRunId!,
+          continuationRunId,
         ));
       const freshUser =
         !backgroundDelivery &&
@@ -1863,7 +1867,7 @@ class PostgresAgentRunner implements ConversationRunner {
           // honour the abort. After a short grace the run is detached and closed as stopped.
           const forced =
             "acknowledgesStop" in agent && agent.acknowledgesStop === true
-              ? (await segmentWork, false)
+              ? await segmentWork.then(() => false)
               : await Promise.race([
                   segmentWork.then(() => false),
                   afterStopGrace(entry.abort.signal, STOP_GRACE_MS),
@@ -2088,11 +2092,13 @@ class PostgresAgentRunner implements ConversationRunner {
         lastSequence = item.sequence;
         // The durable run row, rather than the HTTP/live subscription, decides completion.
         if (
-          [
-            EventType.RUN_STARTED,
-            EventType.RUN_FINISHED,
-            EventType.RUN_ERROR,
-          ].includes(item.event.type as any)
+          (
+            [
+              EventType.RUN_STARTED,
+              EventType.RUN_FINISHED,
+              EventType.RUN_ERROR,
+            ] as readonly string[]
+          ).includes(item.event.type)
         )
           return;
         const event = normalizeConversationEvent(item.event);

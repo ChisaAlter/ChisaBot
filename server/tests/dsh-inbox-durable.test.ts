@@ -27,6 +27,7 @@ import {
   users,
 } from "../src/db/schema";
 import { createLocalConversations } from "../src/local-conversations";
+import type { Row, WireBody, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const resources: (() => unknown | Promise<unknown>)[] = [];
@@ -98,21 +99,25 @@ const deferred = () => {
     });
     let entered = deferred(),
       release = deferred();
-    const requests: any[] = [];
+    const requests: WireBody[] = [];
     const bridge = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: async (request) => {
         if (!new URL(request.url).pathname.startsWith("/v1/"))
           return gateway.routes.fetch(request);
-        const body = (await request.json()) as any;
+        const body = (await request.json()) as WireBody;
         requests.push(body);
         const text = JSON.stringify(
-          body.messages.filter((message: any) => message.role === "user"),
+          body.messages.filter(
+            (message: WireMessage) => message.role === "user",
+          ),
         );
         const hold =
           text.includes("START_HOLD") &&
-          !body.messages.some((message: any) => message.role === "tool") &&
+          !body.messages.some(
+            (message: WireMessage) => message.role === "tool",
+          ) &&
           !text.includes("所选补充原文");
         const delta = hold
           ? {
@@ -279,13 +284,11 @@ const deferred = () => {
       };
       return new Promise<BaseEvent[]>((resolve, reject) => {
         const events: BaseEvent[] = [];
-        backend.runner
-          .run({ threadId, agent: makeAgent(), input })
-          .subscribe({
-            next: (event) => events.push(event),
-            error: reject,
-            complete: () => resolve(events),
-          });
+        backend.runner.run({ threadId, agent: makeAgent(), input }).subscribe({
+          next: (event) => events.push(event),
+          error: reject,
+          complete: () => resolve(events),
+        });
       });
     };
     const post = async (threadId: string, body: unknown, actor = owner) => {
@@ -441,11 +444,11 @@ const deferred = () => {
     const items = (await reloaded!.json()).items;
     expect(
       items
-        .filter((item: any) => item.status === "paused")
-        .map((item: any) => item.id)
+        .filter((item: Row) => item.status === "paused")
+        .map((item: Row) => item.id)
         .sort(),
     ).toEqual([selectedId, otherId].sort());
-    expect(items.find((item: any) => item.id === selectedId).message).toEqual(
+    expect(items.find((item: Row) => item.id === selectedId).message).toEqual(
       accepted.body.message,
     );
     const resumeId = randomUUID(),

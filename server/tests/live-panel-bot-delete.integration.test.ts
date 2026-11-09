@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
-import { createAgentPurge } from "../src/agents/purge";
 import type { BotReset } from "../src/agents/lifecycle-reset";
+import { createAgentPurge } from "../src/agents/purge";
 import { createDatabase } from "../src/db/client";
 import { agentProfiles, agents, livePanels, users } from "../src/db/schema";
 import { createLivePanelStore } from "../src/live-panels/store";
@@ -20,8 +20,10 @@ const agentIds: string[] = [];
 const panelIds: string[] = [];
 
 afterAll(async () => {
-  if (panelIds.length) await database.delete(livePanels).where(inArray(livePanels.id, panelIds));
-  if (agentIds.length) await database.delete(agents).where(inArray(agents.id, agentIds));
+  if (panelIds.length)
+    await database.delete(livePanels).where(inArray(livePanels.id, panelIds));
+  if (agentIds.length)
+    await database.delete(agents).where(inArray(agents.id, agentIds));
   await database.delete(users).where(eq(users.id, userId));
   await database.$client.close();
 });
@@ -29,7 +31,9 @@ afterAll(async () => {
 async function bot(deleted = false) {
   const id = `${prefix}-agent-${agentIds.length}`;
   agentIds.push(id);
-  await database.insert(agents).values({ id, name: id, type: "built_in", configuration: {} });
+  await database
+    .insert(agents)
+    .values({ id, name: id, type: "built_in", configuration: {} });
   await database.insert(agentProfiles).values({
     agentId: id,
     ownerUserId: userId,
@@ -58,12 +62,15 @@ async function panel(botId: string) {
   });
   return id;
 }
-const rowOf = async (id: string) => (await database.select().from(livePanels).where(eq(livePanels.id, id)))[0];
+const rowOf = async (id: string) =>
+  (await database.select().from(livePanels).where(eq(livePanels.id, id)))[0];
 const dueIds = async () => (await store.due(500)).map((row) => row.id);
 
 describe("删机器人时它的面板", () => {
   test("setup", async () => {
-    await database.insert(users).values({ id: userId, email: `${userId}@example.test`, name: "lp" });
+    await database
+      .insert(users)
+      .values({ id: userId, email: `${userId}@example.test`, name: "lp" });
   });
 
   test("retireForBot：只软删除这个机器人的面板，并停掉调度", async () => {
@@ -92,7 +99,10 @@ describe("删机器人时它的面板", () => {
   test("purge 删掉机器人时连 live_panels 行一起删", async () => {
     const c = await bot();
     const pc = await panel(c);
-    await database.update(agentProfiles).set({ deletedAt: new Date() }).where(eq(agentProfiles.agentId, c));
+    await database
+      .update(agentProfiles)
+      .set({ deletedAt: new Date() })
+      .where(eq(agentProfiles.agentId, c));
     const retired: string[] = [];
     const reset = { execute: async () => null } as unknown as BotReset;
     const purge = createAgentPurge({
@@ -110,7 +120,10 @@ describe("删机器人时它的面板", () => {
 
   test("删除机器人时，它的云端浏览器经由浏览器进程删除（DESIGN.md §99）", async () => {
     const c = await bot();
-    await database.update(agentProfiles).set({ deletedAt: new Date() }).where(eq(agentProfiles.agentId, c));
+    await database
+      .update(agentProfiles)
+      .set({ deletedAt: new Date() })
+      .where(eq(agentProfiles.agentId, c));
     const forgotten: string[] = [];
     const reset = { execute: async () => null } as unknown as BotReset;
     const purge = createAgentPurge({

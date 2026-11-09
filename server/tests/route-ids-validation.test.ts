@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { AppVariables } from "../src/auth/guards";
 import { createAgentRoutes } from "../src/agents/routes";
+import type { AppVariables } from "../src/auth/guards";
 import { createChannelRoutes } from "../src/channels/routes";
 
 const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (

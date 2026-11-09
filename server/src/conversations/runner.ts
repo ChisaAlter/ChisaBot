@@ -36,22 +36,28 @@ export interface ConversationRunner {
 /** Restore only open protocol lifecycles at a message-snapshot watermark. */
 export function createEventLifecycles() {
   const active = new Map<string, BaseEvent>();
+  const text: [string, string] = ["text", "messageId"];
+  const reasoning: [string, string] = ["reasoning", "messageId"];
+  const reasoningMessage: [string, string] = ["reasoning-message", "messageId"];
+  const tool: [string, string] = ["tool", "toolCallId"];
+  const step: [string, string] = ["step", "stepName"];
+  const subagent: [string, string] = ["subagent", "subagentRunId"];
   const starts: Record<string, [string, string]> = {
-    TEXT_MESSAGE_START: ["text", "messageId"],
-    REASONING_START: ["reasoning", "messageId"],
-    REASONING_MESSAGE_START: ["reasoning-message", "messageId"],
-    TOOL_CALL_START: ["tool", "toolCallId"],
-    STEP_STARTED: ["step", "stepName"],
-    SUBAGENT_STARTED: ["subagent", "subagentRunId"],
+    TEXT_MESSAGE_START: text,
+    REASONING_START: reasoning,
+    REASONING_MESSAGE_START: reasoningMessage,
+    TOOL_CALL_START: tool,
+    STEP_STARTED: step,
+    SUBAGENT_STARTED: subagent,
   };
   const ends: Record<string, [string, string]> = {
-    TEXT_MESSAGE_END: starts.TEXT_MESSAGE_START!,
-    REASONING_END: starts.REASONING_START!,
-    REASONING_MESSAGE_END: starts.REASONING_MESSAGE_START!,
-    TOOL_CALL_END: starts.TOOL_CALL_START!,
-    STEP_FINISHED: starts.STEP_STARTED!,
-    SUBAGENT_FINISHED: starts.SUBAGENT_STARTED!,
-    SUBAGENT_ERROR: starts.SUBAGENT_STARTED!,
+    TEXT_MESSAGE_END: text,
+    REASONING_END: reasoning,
+    REASONING_MESSAGE_END: reasoningMessage,
+    TOOL_CALL_END: tool,
+    STEP_FINISHED: step,
+    SUBAGENT_FINISHED: subagent,
+    SUBAGENT_ERROR: subagent,
   };
   return {
     accept(event: BaseEvent): boolean {
@@ -104,7 +110,14 @@ export function createRunEventFinalizer() {
   let terminal = false;
   return {
     observe(event: BaseEvent) {
-      const e = event as BaseEvent & Record<string, any>;
+      // Each field is read only under the event type that carries it.
+      const e = event as BaseEvent & {
+        threadId: string;
+        runId: string;
+        messageId: string;
+        toolCallId: string;
+        subagentId: string;
+      };
       switch (e.type) {
         case "RUN_STARTED":
           identity = { threadId: e.threadId, runId: e.runId };

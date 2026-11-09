@@ -489,11 +489,13 @@ export function createTurnRunner(options: {
         : {}),
     });
 
+    // The lease this turn holds itself; a runner that owns the thread lease needs none.
+    const leases = runner.ownsThreadLease ? undefined : options.leases;
     try {
       if (!runner.ownsThreadLease) {
-        if (!options.leases)
+        if (!leases)
           throw new Error("This conversation runner requires a lease adapter.");
-        await options.leases.acquire({
+        await leases.acquire({
           threadId,
           runId,
           userId: ownerUserId,
@@ -546,10 +548,10 @@ export function createTurnRunner(options: {
       stopPromise ??= runner.stop({ threadId, runId }).catch(() => undefined);
     };
 
-    if (!runner.ownsThreadLease)
+    if (leases)
       heartbeat = setInterval(() => {
-        void options
-          .leases!.renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
+        void leases
+          .renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
           .catch((error: unknown) => {
             if (heartbeat === undefined) return;
             /*
@@ -679,10 +681,8 @@ export function createTurnRunner(options: {
       deadline?.cancel();
       if (backstop !== undefined) clearTimeout(backstop);
       spoken.unsubscribe();
-      if (!runner.ownsThreadLease)
-        await options
-          .leases!.release({ threadId, runId })
-          .catch(() => undefined);
+      if (leases)
+        await leases.release({ threadId, runId }).catch(() => undefined);
     }
     if (signal?.aborted) throw new Error("The headless turn was cancelled.");
 

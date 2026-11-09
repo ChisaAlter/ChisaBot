@@ -31,6 +31,16 @@ export function canReadDshState(current, candidate) {
   );
 }
 
+/** Removes a leftover temporary file; returns the failure (one already gone is fine) instead of throwing. */
+function removeTemporary(temporary) {
+  try {
+    unlinkSync(temporary);
+  } catch (error) {
+    if (error.code !== "ENOENT") return error;
+  }
+  return undefined;
+}
+
 // The release caller serializes writers with the host's reader lock. A snapshot or an old process
 // observed after failed startup must never lower the floor already committed for a migrating image.
 export function recordReaderFloor(path, observed) {
@@ -50,6 +60,7 @@ export function recordReaderFloor(path, observed) {
   }
   const temporary = `${path}.tmp-${process.pid}`;
   let descriptor;
+  let cleanup;
   try {
     descriptor = openSync(temporary, "wx", 0o600);
     writeFileSync(descriptor, `${JSON.stringify(next)}\n`);
@@ -68,12 +79,10 @@ export function recordReaderFloor(path, observed) {
     }
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
-    try {
-      unlinkSync(temporary);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    cleanup = removeTemporary(temporary);
   }
+  // A failed write keeps its own error; a cleanup failure is reported only after a good write.
+  if (cleanup) throw cleanup;
   return next;
 }
 

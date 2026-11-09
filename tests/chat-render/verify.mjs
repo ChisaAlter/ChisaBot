@@ -254,7 +254,7 @@ try {
     await editor.press("Enter");
     await page.getByText("隔离验证：模型停止。", { exact: true }).waitFor();
     assert.equal(
-      await editor.innerText(),
+      await editor.textContent(),
       "",
       `${name}: admitted failure restored a duplicate draft`,
     );

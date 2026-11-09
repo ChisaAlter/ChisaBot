@@ -70,9 +70,7 @@ export type DshToolRegistration = {
   signal: AbortSignal;
   initiator?: AuditInitiator;
   steering?: SteerSession;
-  prepareSteering?: (
-    messages: Message[],
-  ) => Promise<{
+  prepareSteering?: (messages: Message[]) => Promise<{
     messages: {
       id: string;
       content: Parameters<DshHostClient["prompt"]>[0]["content"];

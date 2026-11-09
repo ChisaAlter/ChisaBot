@@ -33,7 +33,10 @@ test("ops metrics store persists and reloads minute ring", async () => {
     await flushOpsMetrics(t0 + 3_000, path);
 
     const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as { version: number; totals: Record<string, number> };
+    const parsed = JSON.parse(raw) as {
+      version: number;
+      totals: Record<string, number>;
+    };
     expect(parsed.version).toBe(1);
     expect(parsed.totals.SSRF_DENIED).toBe(1);
     expect(parsed.totals.SEND_UNREACHABLE).toBe(1);

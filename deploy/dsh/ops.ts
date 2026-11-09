@@ -10,7 +10,9 @@ import { loadDshTargets } from "../../server/src/conversations/runtime-targets";
 // Run with the API's environment and uid. Never print endpoints, owner IDs or connection tokens.
 const command = process.argv[2] ?? "health";
 const kernel = process.env.CHISABOT_AGENT_KERNEL?.trim().toLowerCase();
-const db = postgres(process.env.DATABASE_URL!, { max: 1, connect_timeout: 10 });
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) throw new Error("DATABASE_URL is not set.");
+const db = postgres(databaseUrl, { max: 1, connect_timeout: 10 });
 try {
   const [table] =
     await db`select to_regclass('chisabot_runtime_bindings') as name`;

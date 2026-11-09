@@ -31,7 +31,7 @@ export abstract class LoopAdapter implements ImAdapter {
   constructor(protected readonly ctx: AdapterContext) {}
 
   protected abstract runOnce(): Promise<void>;
-  abstract send(reply: ImReply): Promise<void | ImDeliveryReceipt>;
+  abstract send(reply: ImReply): Promise<ImDeliveryReceipt | undefined>;
 
   async start(): Promise<void> {
     if (!this.stopped) return;
@@ -209,7 +209,7 @@ export abstract class LoopAdapter implements ImAdapter {
 
   protected sendJson(payload: unknown) {
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1) throw new Error("还没有连上平台");
+    if (socket?.readyState !== 1) throw new Error("还没有连上平台");
     socket.send(JSON.stringify(payload));
   }
 }

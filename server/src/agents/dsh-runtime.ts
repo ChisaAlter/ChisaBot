@@ -23,7 +23,11 @@ import {
 } from "../confirmations/context";
 import { readStepUsage } from "../context-usage";
 import type { ConversationBindings } from "../conversations/bindings";
-import { DshEventProjection } from "../conversations/dsh-events";
+import {
+  DshEventProjection,
+  type DshLiveFrame,
+  type DshTurnReason,
+} from "../conversations/dsh-events";
 import { inboxInstructions } from "../conversations/inbox-message";
 import { createModelConnectionProxy } from "../conversations/model-connection-proxy";
 import { createPlanModelProxy } from "../conversations/plan-model-proxy";
@@ -68,9 +72,7 @@ type Configuration = {
     model: string;
   };
   plan?: PlanModelConfig;
-  modelInfo: (
-    model: string,
-  ) => Promise<{
+  modelInfo: (model: string) => Promise<{
     maxOutputTokens?: number;
     contextWindow?: number;
     supportsImages?: boolean;
@@ -133,7 +135,7 @@ function textOf(message: Message): string {
 }
 
 function emptyReplyAfterDelivery(
-  reason: Record<string, any> | undefined,
+  reason: DshTurnReason | undefined,
   messages: Message[],
   original: readonly Message[],
 ): boolean {
@@ -348,9 +350,8 @@ export class DshRuntimeAgent extends AbstractAgent {
         const endpoint = JSON.parse(
           await readFile(target.connectionFile, "utf8"),
         ) as { endpoint: string };
-        let client = (active.client = await DshHostClient.connect(
-          endpoint.endpoint,
-        ));
+        let client = await DshHostClient.connect(endpoint.endpoint);
+        active.client = client;
         const health = await client.health();
         if (health.ownerUserId !== scope.actorId || health.protocol !== 1)
           throw new Error("DSH owner or plugin protocol does not match.");
@@ -478,11 +479,12 @@ export class DshRuntimeAgent extends AbstractAgent {
         const contextWindow = Math.min(
           ...definitions.map((model) => model.contextWindow),
         );
-        const choices = definitions.map((model) => ({
+        const [primary, ...fallbacks] = definitions.map((model) => ({
           provider: "configured",
           model: model.id,
           maxTokens: Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
         }));
+        if (!primary) throw new Error("没有可用的模型。");
         const identity = {
           sessionId: binding.sessionId,
           runId: input.runId,
@@ -571,8 +573,8 @@ export class DshRuntimeAgent extends AbstractAgent {
           toolCapability: capability.capability,
           steering: Boolean(steering),
           model: {
-            primary: choices[0]!,
-            fallbacks: choices.slice(1),
+            primary,
+            fallbacks,
             firstOutputMs: 30_000,
             contextWindow,
           },
@@ -662,7 +664,8 @@ export class DshRuntimeAgent extends AbstractAgent {
           name: "chisabot.backend-owned-tools",
           value: { names: [...tools.keys()] },
         } as BaseEvent);
-        followAbort = new AbortController();
+        const follow = new AbortController();
+        followAbort = follow;
         let openedResolve!: () => void;
         let openedReject!: (error: unknown) => void;
         const opened = new Promise<void>((resolve, reject) => {
@@ -680,7 +683,7 @@ export class DshRuntimeAgent extends AbstractAgent {
               value: { status: "reconnecting" },
             } as BaseEvent);
             let delay = 250;
-            while (!followAbort!.signal.aborted) {
+            while (!follow.signal.aborted) {
               try {
                 // The launch token may change when the Host restarts; never reuse its old cookie.
                 const address = JSON.parse(
@@ -733,18 +736,18 @@ export class DshRuntimeAgent extends AbstractAgent {
             reconnecting = undefined;
           }));
         const observing = (async () => {
-          while (!followAbort!.signal.aborted) {
+          while (!follow.signal.aborted) {
             try {
               for await (const frame of client.follow(
                 binding.sessionId,
-                followAbort!.signal,
+                follow.signal,
               )) {
                 if (frame.type === "snapshot") {
                   const missing = await client.eventsAfter(
                     binding.sessionId,
                     projection.cursor,
                     frame.cursor,
-                    followAbort!.signal,
+                    follow.signal,
                   );
                   for (const record of missing.records)
                     projection.durable(record.event);
@@ -767,17 +770,17 @@ export class DshRuntimeAgent extends AbstractAgent {
                       binding.sessionId,
                       projection.cursor,
                       frame.event.seq,
-                      followAbort!.signal,
+                      follow.signal,
                     );
                     for (const record of missing.records)
                       projection.durable(record.event);
                   }
-                } else projection.live(frame.frame);
+                } else projection.live(frame.frame as DshLiveFrame);
               }
-              if (!followAbort!.signal.aborted)
+              if (!follow.signal.aborted)
                 throw new Error("DSH observation disconnected.");
             } catch (error) {
-              if (followAbort!.signal.aborted) return;
+              if (follow.signal.aborted) return;
               if (
                 error instanceof Error &&
                 /DSH.*(gap|chunk|stream|settlement|prefix|baseline)|settled DSH/i.test(
@@ -829,7 +832,7 @@ export class DshRuntimeAgent extends AbstractAgent {
           input.runId,
           "observing",
         );
-        let result;
+        let result: { reason: string };
         do {
           if (
             (
@@ -847,7 +850,7 @@ export class DshRuntimeAgent extends AbstractAgent {
               timeoutMs: 10_000,
               afterSeq: page.cursor,
             });
-          } catch (error) {
+          } catch {
             if (streamError) throw streamError;
             await reconnect();
             result = { reason: "timeout" };
@@ -866,7 +869,7 @@ export class DshRuntimeAgent extends AbstractAgent {
         for (const record of settled.records)
           if (record.event.seq > projection.cursor)
             projection.durable(record.event);
-        followAbort.abort();
+        follow.abort();
         await observing;
         if (streamError) throw streamError;
         const status = await client.health();

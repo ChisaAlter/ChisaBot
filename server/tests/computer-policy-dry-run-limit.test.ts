@@ -15,7 +15,11 @@ import { createComputerRoutes } from "../src/computer/routes";
  * A what-if answered from the wrong slice of history is worse than no answer.
  */
 
-const ADMIN = { id: "u1", email: "admin@chisabot.test", role: "admin" } as const;
+const ADMIN = {
+  id: "u1",
+  email: "admin@chisabot.test",
+  role: "admin",
+} as const;
 const POLICY = { mode: "enforce", deny: [], allow: [] };
 
 function app(seen: { limit?: number }[]) {

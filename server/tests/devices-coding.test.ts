@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { capabilityFor, defaultCapabilities, FULL_ACCESS_FOREVER, gitIsRead } from "../../shared/devices";
+import {
+  capabilityFor,
+  defaultCapabilities,
+  FULL_ACCESS_FOREVER,
+  gitIsRead,
+} from "../../shared/devices";
 import { createDeviceHub } from "../src/devices/hub";
 import { installScript } from "../src/devices/node-install";
 import { createPairingStore } from "../src/devices/pairing";
 import type { DeviceRecord, DeviceStore } from "../src/devices/store";
 import { fullAccessActive } from "../src/devices/store";
-import { deviceGuidance, deviceTools, editsPreview } from "../src/devices/tools";
+import {
+  deviceGuidance,
+  deviceTools,
+  editsPreview,
+} from "../src/devices/tools";
 
 function record(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
   return {
@@ -17,7 +26,12 @@ function record(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
     hostname: "box",
     arch: "x64",
     clientVersion: "0.1.8-node",
-    capabilities: { ...defaultCapabilities(), shell: "allow", files_read: "allow", files_write: "ask" },
+    capabilities: {
+      ...defaultCapabilities(),
+      shell: "allow",
+      files_read: "allow",
+      files_write: "ask",
+    },
     allowedRoots: ["/srv/app"],
     paused: false,
     revoked: false,
@@ -58,7 +72,10 @@ function fakeStore(initial: DeviceRecord) {
 
 function socket() {
   const sent: Array<Record<string, any>> = [];
-  return { sent, socket: { send: (d: string) => sent.push(JSON.parse(d)), close() {} } };
+  return {
+    sent,
+    socket: { send: (d: string) => sent.push(JSON.parse(d)), close() {} },
+  };
 }
 const tick = () => new Promise((r) => setTimeout(r, 5));
 const bot = { id: "bot1", name: "B" };
@@ -70,8 +87,12 @@ describe("capability mapping for coding operations", () => {
     expect(capabilityFor("edit_file")).toBe("files_write");
     expect(capabilityFor("apply_patch")).toBe("files_write");
     expect(capabilityFor("git", { subcommand: "status" })).toBe("files_read");
-    expect(capabilityFor("git", { subcommand: "log", args: ["--oneline"] })).toBe("files_read");
-    expect(capabilityFor("git", { subcommand: "branch", args: ["feature"] })).toBe("shell");
+    expect(
+      capabilityFor("git", { subcommand: "log", args: ["--oneline"] }),
+    ).toBe("files_read");
+    expect(
+      capabilityFor("git", { subcommand: "branch", args: ["feature"] }),
+    ).toBe("shell");
     expect(capabilityFor("git", { subcommand: "commit" })).toBe("shell");
     expect(capabilityFor("exec_start")).toBe("shell");
     expect(capabilityFor("activity")).toBe(null);
@@ -85,8 +106,18 @@ describe("hub: features, push approval, full access", () => {
     const hub = createDeviceHub({ store: fake.store as never });
     const s = socket();
     const h = hub.attach(record(), s.socket, null);
-    await h.onMessage(JSON.stringify({ type: "hello", clientVersion: "0.1.7" }));
-    await expect(hub.invoke({ device: record(), operation: "search", args: { pattern: "x" }, bot, summary: "搜索" })).rejects.toThrow("0.1.8");
+    await h.onMessage(
+      JSON.stringify({ type: "hello", clientVersion: "0.1.7" }),
+    );
+    await expect(
+      hub.invoke({
+        device: record(),
+        operation: "search",
+        args: { pattern: "x" },
+        bot,
+        summary: "搜索",
+      }),
+    ).rejects.toThrow("0.1.8");
     expect(hub.supports("dev_1", "shell")).toBe(true);
     expect(hub.supports("dev_1", "edit_file")).toBe(false);
   });
@@ -96,14 +127,35 @@ describe("hub: features, push approval, full access", () => {
     const hub = createDeviceHub({ store: fake.store as never });
     const s = socket();
     const h = hub.attach(record(), s.socket, null);
-    await h.onMessage(JSON.stringify({ type: "hello", features: ["git", "shell"] }));
-    const status = hub.invoke({ device: record(), operation: "git", args: { subcommand: "status" }, bot, summary: "git status" });
+    await h.onMessage(
+      JSON.stringify({ type: "hello", features: ["git", "shell"] }),
+    );
+    const status = hub.invoke({
+      device: record(),
+      operation: "git",
+      args: { subcommand: "status" },
+      bot,
+      summary: "git status",
+    });
     await tick();
     const call = s.sent.find((m) => m.type === "call");
     expect(call?.args.subcommand).toBe("status");
-    await h.onMessage(JSON.stringify({ type: "result", id: call!.id, ok: true, result: { exitCode: 0 } }));
+    await h.onMessage(
+      JSON.stringify({
+        type: "result",
+        id: call!.id,
+        ok: true,
+        result: { exitCode: 0 },
+      }),
+    );
     await status;
-    const push = hub.invoke({ device: record(), operation: "git", args: { subcommand: "push" }, bot, summary: "git push" });
+    const push = hub.invoke({
+      device: record(),
+      operation: "git",
+      args: { subcommand: "push" },
+      bot,
+      summary: "git push",
+    });
     await tick();
     expect(hub.listApprovals("u1").length).toBe(1);
     hub.decide(hub.listApprovals("u1")[0]!.id, false, "web");
@@ -115,36 +167,79 @@ describe("hub: features, push approval, full access", () => {
     const hub = createDeviceHub({ store: fake.store as never });
     const s = socket();
     const h = hub.attach(record(), s.socket, null);
-    await h.onMessage(JSON.stringify({ type: "hello", features: ["edit_file"] }));
+    await h.onMessage(
+      JSON.stringify({ type: "hello", features: ["edit_file"] }),
+    );
     const diff = editsPreview("a.js", [{ oldText: "a - b", newText: "a + b" }]);
-    const p = hub.invoke({ device: record(), operation: "edit_file", args: { path: "a.js" }, bot, summary: "修改", diff });
+    const p = hub.invoke({
+      device: record(),
+      operation: "edit_file",
+      args: { path: "a.js" },
+      bot,
+      summary: "修改",
+      diff,
+    });
     await tick();
     expect(hub.listApprovals("u1")[0]?.diff).toContain("+a + b");
-    expect(s.sent.find((m) => m.type === "approval_request")?.diff).toContain("-a - b");
+    expect(s.sent.find((m) => m.type === "approval_request")?.diff).toContain(
+      "-a - b",
+    );
     hub.decide(hub.listApprovals("u1")[0]!.id, false, "web");
     await expect(p).rejects.toThrow();
   });
 
   test("full access: no approval, off capabilities allowed, elevated allowed; expired = back to normal", async () => {
-    const on = record({ capabilities: defaultCapabilities(), fullAccessUntil: new Date(Date.now() + 3600_000).toISOString() });
+    const on = record({
+      capabilities: defaultCapabilities(),
+      fullAccessUntil: new Date(Date.now() + 3600_000).toISOString(),
+    });
     const fake = fakeStore(on);
     const hub = createDeviceHub({ store: fake.store as never });
     const s = socket();
     const h = hub.attach(on, s.socket, null);
-    await h.onMessage(JSON.stringify({ type: "hello", features: ["shell", "edit_file"] }));
-    expect(s.sent.find((m) => m.type === "welcome")?.device.fullAccess).toBe(true);
-    const p = hub.invoke({ device: on, operation: "shell", args: { command: "id", elevated: true }, bot, summary: "id" });
+    await h.onMessage(
+      JSON.stringify({ type: "hello", features: ["shell", "edit_file"] }),
+    );
+    expect(s.sent.find((m) => m.type === "welcome")?.device.fullAccess).toBe(
+      true,
+    );
+    const p = hub.invoke({
+      device: on,
+      operation: "shell",
+      args: { command: "id", elevated: true },
+      bot,
+      summary: "id",
+    });
     await tick();
     const call = s.sent.find((m) => m.type === "call");
     expect(call).toBeDefined();
     expect(hub.listApprovals("u1").length).toBe(0);
-    await h.onMessage(JSON.stringify({ type: "result", id: call!.id, ok: true, result: {} }));
+    await h.onMessage(
+      JSON.stringify({ type: "result", id: call!.id, ok: true, result: {} }),
+    );
     await p;
     expect(String(fake.audits.at(-1)?.detail)).toContain("完全访问");
-    const expired = record({ capabilities: defaultCapabilities(), fullAccessUntil: new Date(Date.now() - 1000).toISOString() });
-    await expect(hub.invoke({ device: expired, operation: "shell", args: { command: "id" }, bot, summary: "id" })).rejects.toThrow("关闭");
+    const expired = record({
+      capabilities: defaultCapabilities(),
+      fullAccessUntil: new Date(Date.now() - 1000).toISOString(),
+    });
     await expect(
-      hub.invoke({ device: record(), operation: "shell", args: { command: "id", elevated: true }, bot, summary: "id" }),
+      hub.invoke({
+        device: expired,
+        operation: "shell",
+        args: { command: "id" },
+        bot,
+        summary: "id",
+      }),
+    ).rejects.toThrow("关闭");
+    await expect(
+      hub.invoke({
+        device: record(),
+        operation: "shell",
+        args: { command: "id", elevated: true },
+        bot,
+        summary: "id",
+      }),
     ).rejects.toThrow("完全访问");
   });
 
@@ -153,31 +248,78 @@ describe("hub: features, push approval, full access", () => {
     const fake = fakeStore(on);
     const hub = createDeviceHub({ store: fake.store as never });
     const h = hub.attach(on, socket().socket, null);
-    await h.onMessage(JSON.stringify({ type: "set_config", fullAccess: "off" }));
+    await h.onMessage(
+      JSON.stringify({ type: "set_config", fullAccess: "off" }),
+    );
     expect((await fake.store.get()).fullAccessUntil).toBe(null);
     expect(fake.audits.at(-1)?.action).toBe("full_access_off");
-    await h.onMessage(JSON.stringify({ type: "set_config", fullAccess: "permanent" }));
+    await h.onMessage(
+      JSON.stringify({ type: "set_config", fullAccess: "permanent" }),
+    );
     expect((await fake.store.get()).fullAccessUntil).toBe(null);
   });
 
   test("fullAccessActive respects pause, revoke, expiry, forever", () => {
-    expect(fullAccessActive({ fullAccessUntil: FULL_ACCESS_FOREVER, paused: false, revoked: false })).toBe(true);
-    expect(fullAccessActive({ fullAccessUntil: FULL_ACCESS_FOREVER, paused: true, revoked: false })).toBe(false);
-    expect(fullAccessActive({ fullAccessUntil: new Date(Date.now() - 1).toISOString(), paused: false, revoked: false })).toBe(false);
-    expect(fullAccessActive({ fullAccessUntil: null, paused: false, revoked: false })).toBe(false);
+    expect(
+      fullAccessActive({
+        fullAccessUntil: FULL_ACCESS_FOREVER,
+        paused: false,
+        revoked: false,
+      }),
+    ).toBe(true);
+    expect(
+      fullAccessActive({
+        fullAccessUntil: FULL_ACCESS_FOREVER,
+        paused: true,
+        revoked: false,
+      }),
+    ).toBe(false);
+    expect(
+      fullAccessActive({
+        fullAccessUntil: new Date(Date.now() - 1).toISOString(),
+        paused: false,
+        revoked: false,
+      }),
+    ).toBe(false);
+    expect(
+      fullAccessActive({
+        fullAccessUntil: null,
+        paused: false,
+        revoked: false,
+      }),
+    ).toBe(false);
   });
 });
 
 describe("coding tools", () => {
   function harness(device: DeviceRecord) {
-    const calls: Array<{ operation: string; args: any; diff?: string | null; summary: string }> = [];
-    const store = { forOwner: async () => [device], get: async () => device } as unknown as DeviceStore;
+    const calls: Array<{
+      operation: string;
+      args: any;
+      diff?: string | null;
+      summary: string;
+    }> = [];
+    const store = {
+      forOwner: async () => [device],
+      get: async () => device,
+    } as unknown as DeviceStore;
     const hub = {
       isOnline: () => true,
       supports: () => true,
       invoke: async (input: any) => {
-        calls.push({ operation: input.operation, args: input.args, diff: input.diff, summary: input.summary });
-        if (input.operation === "file_download") return { base64: Buffer.from("abc").toString("base64"), size: 3, done: true, name: "f" };
+        calls.push({
+          operation: input.operation,
+          args: input.args,
+          diff: input.diff,
+          summary: input.summary,
+        });
+        if (input.operation === "file_download")
+          return {
+            base64: Buffer.from("abc").toString("base64"),
+            size: 3,
+            done: true,
+            name: "f",
+          };
         return { ok: true };
       },
     } as never;
@@ -188,7 +330,13 @@ describe("coding tools", () => {
       botId: "bot1",
       actorId: "u1",
       devices: [device],
-      workspace: { read: async () => ({ bytes: Buffer.alloc(7_000_000, 1), name: "big" }), write: async (p, b) => { written[p] = b; return true; } },
+      workspace: {
+        read: async () => ({ bytes: Buffer.alloc(7_000_000, 1), name: "big" }),
+        write: async (p, b) => {
+          written[p] = b;
+          return true;
+        },
+      },
     });
     const tool = (name: string) => {
       const found = tools.find((t) => t.name === name);
@@ -200,33 +348,67 @@ describe("coding tools", () => {
 
   test("all coding tools are offered when shell/files are on", () => {
     const names = harness(record()).tools.map((t) => t.name);
-    for (const n of ["device_search", "device_read_file", "device_edit_file", "device_apply_patch", "device_git", "device_run_shell", "device_shell_output", "device_shell_kill", "device_processes", "device_upload", "device_download"])
+    for (const n of [
+      "device_search",
+      "device_read_file",
+      "device_edit_file",
+      "device_apply_patch",
+      "device_git",
+      "device_run_shell",
+      "device_shell_output",
+      "device_shell_kill",
+      "device_processes",
+      "device_upload",
+      "device_download",
+    ])
       expect(names).toContain(n);
   });
 
   test("edit tool sends exact edits with a diff preview; read with ranges", async () => {
     const h = harness(record());
-    await h.tool("device_edit_file").execute({ path: "a.js", edits: [{ oldText: "x", newText: "y" }] });
+    await h
+      .tool("device_edit_file")
+      .execute({ path: "a.js", edits: [{ oldText: "x", newText: "y" }] });
     expect(h.calls[0]?.operation).toBe("edit_file");
     expect(h.calls[0]?.diff).toContain("-x\n+y");
-    await h.tool("device_read_file").execute({ path: "a.js", startLine: 10, endLine: 20 });
-    expect(h.calls[1]?.args).toEqual({ path: "a.js", startLine: 10, endLine: 20 });
+    await h
+      .tool("device_read_file")
+      .execute({ path: "a.js", startLine: 10, endLine: 20 });
+    expect(h.calls[1]?.args).toEqual({
+      path: "a.js",
+      startLine: 10,
+      endLine: 20,
+    });
   });
 
   test("run_shell background goes to exec_start; output polls; session passes through", async () => {
     const h = harness(record());
-    await h.tool("device_run_shell").execute({ command: "npm test", cwd: "/srv/app", background: true, session: "main" });
+    await h
+      .tool("device_run_shell")
+      .execute({
+        command: "npm test",
+        cwd: "/srv/app",
+        background: true,
+        session: "main",
+      });
     expect(h.calls[0]?.operation).toBe("exec_start");
     expect(h.calls[0]?.args.session).toBe("main");
-    await h.tool("device_shell_output").execute({ jobId: "job_1", since: 10, waitSec: 5 });
-    expect(h.calls[1]).toMatchObject({ operation: "exec_poll", args: { jobId: "job_1", since: 10, waitMs: 5000 } });
+    await h
+      .tool("device_shell_output")
+      .execute({ jobId: "job_1", since: 10, waitSec: 5 });
+    expect(h.calls[1]).toMatchObject({
+      operation: "exec_poll",
+      args: { jobId: "job_1", since: 10, waitMs: 5000 },
+    });
     await h.tool("device_shell_output").execute({});
     expect(h.calls[2]?.operation).toBe("exec_list");
   });
 
   test("upload is chunked with sha256 on the last chunk; download writes the workspace", async () => {
     const h = harness(record());
-    await h.tool("device_upload").execute({ from: "out/big", to: "/srv/app/big" });
+    await h
+      .tool("device_upload")
+      .execute({ from: "out/big", to: "/srv/app/big" });
     const ups = h.calls.filter((c) => c.operation === "file_upload");
     expect(ups.length).toBe(3);
     expect(ups.at(-1)?.args.final).toBe(true);
@@ -241,7 +423,10 @@ describe("coding tools", () => {
     expect(text).toContain("device_edit_file");
     expect(text).toContain("device_windows");
     expect(text).toContain("cannot turn it on");
-    const full = deviceGuidance([record({ fullAccessUntil: FULL_ACCESS_FOREVER })], () => true);
+    const full = deviceGuidance(
+      [record({ fullAccessUntil: FULL_ACCESS_FOREVER })],
+      () => true,
+    );
     expect(full).toContain("FULL ACCESS is ON");
   });
 
@@ -252,7 +437,13 @@ describe("coding tools", () => {
     await h.tool("device_windows").execute({ action: "list", query: "Chrome" });
     expect(h.calls[0]?.operation).toBe("shell");
     expect(String(h.calls[0]?.args.command)).toContain("-EncodedCommand");
-    await h.tool("device_windows").execute({ action: "focus", query: "Visual Studio Code", maximize: true });
+    await h
+      .tool("device_windows")
+      .execute({
+        action: "focus",
+        query: "Visual Studio Code",
+        maximize: true,
+      });
     expect(h.calls[1]?.operation).toBe("shell");
     expect(h.calls[1]?.summary).toContain("聚焦窗口");
   });

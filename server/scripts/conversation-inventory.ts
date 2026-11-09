@@ -58,7 +58,10 @@ try {
         const states = status
           ? await sql`select status, count(*)::text as count from ${sql(table)} group by status order by status`
           : undefined;
-        entries[table] = { count: total!.count, ...(states ? { states } : {}) };
+        entries[table] = {
+          count: total?.count ?? "0",
+          ...(states ? { states } : {}),
+        };
       }
       if (
         (entries.chisabot_local_threads as { exists?: boolean }).exists !==

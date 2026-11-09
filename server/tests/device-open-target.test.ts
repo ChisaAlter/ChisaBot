@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { checkOpenTarget } from "../../shared/devices";
 import { classifyOpenTarget } from "../../pc/src/agent/open-target.js";
+import { checkOpenTarget } from "../../shared/devices";
 
 /** CB-030：「打开」只做安全的打开——网址或文件 / 文件夹路径，不启动程序、不带参数。服务器和 PC 同一套规则。 */
 const ok = [

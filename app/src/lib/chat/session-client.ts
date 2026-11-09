@@ -91,10 +91,12 @@ export class ConversationSession extends HttpAgent {
           const error = await response.json().catch(() => ({}));
           throw new Error(error.error ?? "消息接纳尚未确认，请重试。");
         }
-        receipt ??= await response.json();
+        const admitted: { runId: string; commandId: string } =
+          receipt ?? (await response.json());
+        receipt = admitted;
         // Admission is durable even if the event subscription fails before its first frame.
         this.acceptedCommands.add(commandId);
-        this.observedRunId = receipt!.runId;
+        this.observedRunId = admitted.runId;
         abort.signal.throwIfAborted();
         const events = new HttpAgent({
           url: `${endpoint}/events`,

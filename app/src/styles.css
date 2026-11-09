@@ -2391,22 +2391,6 @@ button.chat-bottom-pill:hover {
 .dark [data-streamdown="code-block"] { border-color: rgba(255, 255, 255, 0.08) !important; }
 [data-streamdown="code-block"] pre { overflow-x: auto; }
 
-/* A locally dark glass bubble needs matching code surfaces even when the page is light. */
-[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] {
-  --background: rgb(16 18 22);
-  --sidebar: rgb(24 29 38);
-  --foreground: var(--ink-1);
-  --border: rgba(255, 255, 255, 0.12);
-  --muted-foreground: var(--ink-2);
-}
-[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] pre {
-  background: var(--shiki-dark-bg, transparent);
-}
-[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] code span {
-  color: var(--shiki-dark, var(--ink-1));
-  background-color: var(--shiki-dark-bg, transparent);
-}
-
 /* ---------- Settings / admin pages ---------- */
 .page-title { color: var(--glass-ink); }
 .page-section-title { color: var(--glass-ink); letter-spacing: 0.01em; }
@@ -10748,3 +10732,20 @@ html[data-palette]:not([data-palette="default"]) #sky-root #skyph {
 
 /* 审查 10-3：头像表还没回来时的中性占位（不画默认花纹，免得自定义头像先闪一下花纹）。 */
 .bot-ava-placeholder { background: color-mix(in srgb, currentColor 12%, transparent); }
+
+/* A locally dark glass bubble needs matching code surfaces even when the page is light.
+   Last in the file so no later, less specific code/pre rule is declared after it. */
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] {
+  --background: rgb(16 18 22);
+  --sidebar: rgb(24 29 38);
+  --foreground: var(--ink-1);
+  --border: rgba(255, 255, 255, 0.12);
+  --muted-foreground: var(--ink-2);
+}
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] pre {
+  background: var(--shiki-dark-bg, transparent);
+}
+[data-slot="bubble-content"][data-lg-ink="dark"] [data-streamdown="code-block"] code span {
+  color: var(--shiki-dark, var(--ink-1));
+  background-color: var(--shiki-dark-bg, transparent);
+}

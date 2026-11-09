@@ -27,7 +27,9 @@ describe("assertPublicUrl (shared SSRF)", () => {
       "http://169.254.169.254/latest/meta-data/",
     ];
     for (const url of blocked) {
-      await expect(assertPublicUrl(url)).rejects.toThrow(/不能访问|只支持|不是有效/);
+      await expect(assertPublicUrl(url)).rejects.toThrow(
+        /不能访问|只支持|不是有效/,
+      );
     }
   });
 });

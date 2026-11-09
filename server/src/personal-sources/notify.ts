@@ -37,7 +37,7 @@ export async function sendWebhook(input: {
                 source: "chisabot",
                 deliveryId: input.id,
               };
-  let response;
+  let response: Awaited<ReturnType<typeof guardedFetch>>;
   try {
     response = await guardedFetch(input.url, {
       method: "POST",

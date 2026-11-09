@@ -561,6 +561,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     result: r.result,
     manual: r.manual,
   });
+  /** The row an INSERT/UPDATE … RETURNING just wrote; none back is a broken invariant. */
+  const written = <T>(rows: readonly T[]): T => {
+    const [row] = rows;
+    if (row === undefined) throw new Error("定时任务记录写入后没有返回。");
+    return row;
+  };
   const view = (r: Row, runs?: RunRow[]): ScheduleView => ({
     id: r.id,
     agentId: r.agent_id,
@@ -712,7 +718,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         iso(resolved.next),
       ],
     );
-    return view(rows[0]!);
+    return view(written(rows));
   }
 
   async function update(
@@ -786,7 +792,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         isoOrNull(next),
       ],
     );
-    return view(rows[0]!);
+    return view(written(rows));
   }
 
   async function remove(owner: string, id: string): Promise<boolean> {
@@ -811,7 +817,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         "UPDATE chisabot_schedules SET status='done', next_run_at=NULL, last_status='skipped', last_result='这次提醒被跳过了', updated_at=now() WHERE id=$1 RETURNING *",
         [row.id],
       );
-      return view(rows[0]!);
+      return view(written(rows));
     }
     const from = row.next_run_at ? new Date(row.next_run_at) : now();
     const next = nextOccurrence(
@@ -823,7 +829,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       "UPDATE chisabot_schedules SET next_run_at=$2, updated_at=now() WHERE id=$1 RETURNING *",
       [row.id, iso(next)],
     );
-    return view(rows[0]!);
+    return view(written(rows));
   }
 
   async function runNow(

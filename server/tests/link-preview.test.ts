@@ -15,7 +15,11 @@ import {
   detectCharset,
   parsePage,
 } from "../src/link-preview/parse";
-import { degradedTitle, normalizePreviewUrl, sniffImage } from "../src/link-preview/service";
+import {
+  degradedTitle,
+  normalizePreviewUrl,
+  sniffImage,
+} from "../src/link-preview/service";
 
 describe("SSRF 防护：哪些地址不能连", () => {
   test("IPv4 内网、本机、元数据、保留段", () => {
@@ -379,12 +383,18 @@ describe("网页解析", () => {
 
 describe("兜底卡（DESIGN.md §48）", () => {
   test("标题：像文件名就用文件名，网页 / 目录用域名", () => {
-    expect(degradedTitle("https://github.com/ChisaAlter/ChisaBot/releases/download/v0.1.7/ChisaBot-PC-0.1.7-x64-setup.exe")).toBe(
-      "ChisaBot-PC-0.1.7-x64-setup.exe",
-    );
+    expect(
+      degradedTitle(
+        "https://github.com/ChisaAlter/ChisaBot/releases/download/v0.1.7/ChisaBot-PC-0.1.7-x64-setup.exe",
+      ),
+    ).toBe("ChisaBot-PC-0.1.7-x64-setup.exe");
     expect(degradedTitle("https://www.example.com/docs/")).toBe("example.com");
-    expect(degradedTitle("https://www.example.com/index.html")).toBe("example.com");
-    expect(degradedTitle("https://a.cn/%E6%8A%A5%E5%91%8A.pdf")).toBe("报告.pdf");
+    expect(degradedTitle("https://www.example.com/index.html")).toBe(
+      "example.com",
+    );
+    expect(degradedTitle("https://a.cn/%E6%8A%A5%E5%91%8A.pdf")).toBe(
+      "报告.pdf",
+    );
   });
 
   test("云元数据、IPv6 映射、十进制 / 十六进制写法的本机地址都不能预览", () => {
@@ -399,6 +409,8 @@ describe("兜底卡（DESIGN.md §48）", () => {
       "gopher://example.com/",
     ])
       expect(normalizePreviewUrl(url)).toBeNull();
-    expect(normalizePreviewUrl("https://example.com/a#b")).toBe("https://example.com/a");
+    expect(normalizePreviewUrl("https://example.com/a#b")).toBe(
+      "https://example.com/a",
+    );
   });
 });

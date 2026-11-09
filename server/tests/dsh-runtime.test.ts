@@ -18,6 +18,7 @@ import { createToolOperationStore } from "../src/conversations/tool-operations";
 import { createDatabase } from "../src/db/client";
 import { createLocalConversations } from "../src/local-conversations";
 import { createTurnRunner } from "../src/turns/run-turn";
+import type { Row, WireBody, WireMessage } from "./support/wire-types";
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const run = address ? test : test.skip;
@@ -58,14 +59,16 @@ run(
         const url = new URL(request.url);
         if (/^\/(execute|steer)/.test(url.pathname))
           return gateway.routes.fetch(request);
-        const body = (await request.json()) as any;
+        const body = (await request.json()) as WireBody;
         requests.push(body.model);
         if (body.model === "unavailable")
           return Response.json(
             { error: { message: "quota", type: "rate_limit_error" } },
             { status: 429 },
           );
-        const hasTool = body.messages.some((x: any) => x.role === "tool");
+        const hasTool = body.messages.some(
+          (x: WireMessage) => x.role === "tool",
+        );
         const entries = hasTool
           ? [
               {
@@ -150,7 +153,7 @@ run(
       }
     });
     await waitReady();
-    let card: any;
+    let card: Row | undefined;
     confirmations.setOnOpened((value) => {
       card = value;
     });
@@ -270,7 +273,9 @@ run(
     expect(card.threadId).toBe(threadId);
     expect(card.toolCallId).toContain(":operation-1");
     await done;
-    expect((events.at(-1) as any)?.outcome?.type).toBe("interrupt");
+    expect(
+      (events.at(-1) as { outcome?: { type?: string } })?.outcome?.type,
+    ).toBe("interrupt");
     // Waiting is persisted in the product ledger. Killing the entire Host must not lose the
     // pending decision or turn approval into another model-selected tool invocation.
     const oldConnection = JSON.parse(
@@ -333,7 +338,7 @@ run(
     ]);
     const binding = await bindings.get(threadId);
     const [operation] = await database.$client.unsafe<
-      { status: string; result: any }[]
+      { status: string; result: unknown }[]
     >(
       "SELECT status,result FROM chisabot_tool_operations WHERE binding_id=$1",
       [binding!.bindingId],
@@ -342,7 +347,8 @@ run(
     expect(operation?.result.content).toBe("approved-once");
     expect(binding?.ownerUserId).toBe(actorId);
     expect(
-      events.filter((x: any) => x.type === "TOOL_CALL_RESULT").length,
+      events.filter((x: { type?: string }) => x.type === "TOOL_CALL_RESULT")
+        .length,
     ).toBe(0);
     const stored = await backend.client.getThreadMessages({
       threadId,

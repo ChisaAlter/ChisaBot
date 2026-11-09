@@ -257,7 +257,6 @@ import { createFleetAudit } from "./fleet-audit/service";
 import { executeRenderUi, renderUiTools } from "./generative-ui/render-ui";
 import { createGithub } from "./github/service";
 import { createImService, type ImService, imConnectionOf } from "./im/service";
-import { createIntelligenceClient } from "./intelligence-client";
 import { createLinkPreviews } from "./link-preview/service";
 import { createLivePanelService } from "./live-panels/service";
 import { createLivePanelStore } from "./live-panels/store";
@@ -1456,7 +1455,8 @@ if (config.dshKernel) {
           "SELECT (count(*)+1)::integer AS revision FROM chisabot_thread_truncations WHERE thread_id=$1",
           [threadId],
         );
-        return row!.revision;
+        // count(*) always returns one row; a fresh thread is revision 1.
+        return row?.revision ?? 1;
       },
       targetFor: dshTargetFor,
     },

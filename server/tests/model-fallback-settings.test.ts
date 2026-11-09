@@ -25,19 +25,32 @@ function memoryStore(initial: string[] = []) {
 
 describe("备用模型 settings (DESIGN.md §61)", () => {
   test("parse: trims, dedupes, keeps order, validates", () => {
-    expect(parseFallbackModels({ models: [" a/b ", "c/d", "a/b"] })).toEqual(["a/b", "c/d"]);
+    expect(parseFallbackModels({ models: [" a/b ", "c/d", "a/b"] })).toEqual([
+      "a/b",
+      "c/d",
+    ]);
     expect(parseFallbackModels([])).toEqual([]);
     expect(() => parseFallbackModels({ models: ["has space"] })).toThrow();
     expect(() => parseFallbackModels({ models: [""] })).toThrow();
     expect(() => parseFallbackModels({ models: "a/b" })).toThrow();
     expect(() => parseFallbackModels(null)).toThrow();
-    expect(() => parseFallbackModels({ models: Array.from({ length: MAX_FALLBACK_MODELS + 1 }, (_, i) => `m/${i}`) })).toThrow();
+    expect(() =>
+      parseFallbackModels({
+        models: Array.from(
+          { length: MAX_FALLBACK_MODELS + 1 },
+          (_, i) => `m/${i}`,
+        ),
+      }),
+    ).toThrow();
   });
 
   test("models() caches for 30 s; save updates the cache at once", async () => {
     const memory = memoryStore(["x/1"]);
     let t = 0;
-    const service = createModelFallbackService({ store: memory.store, now: () => t });
+    const service = createModelFallbackService({
+      store: memory.store,
+      now: () => t,
+    });
     expect(await service.models()).toEqual(["x/1"]);
     expect(await service.models()).toEqual(["x/1"]);
     expect(memory.reads()).toBe(1);
@@ -65,21 +78,31 @@ describe("备用模型 settings (DESIGN.md §61)", () => {
 
   test("routes: admin reads and saves; bad input is 400", async () => {
     const { root, memory } = app("admin");
-    expect(await (await root.request("/api/admin/model-fallbacks")).json()).toEqual({ models: [] });
+    expect(
+      await (await root.request("/api/admin/model-fallbacks")).json(),
+    ).toEqual({ models: [] });
     const saved = await root.request("/api/admin/model-fallbacks", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ models: ["clinepass/cline-free/step-5-preview", "codex/gpt-5.6-luna"] }),
+      body: JSON.stringify({
+        models: ["clinepass/cline-free/step-5-preview", "codex/gpt-5.6-luna"],
+      }),
     });
     expect(saved.status).toBe(200);
-    expect(memory.models()).toEqual(["clinepass/cline-free/step-5-preview", "codex/gpt-5.6-luna"]);
+    expect(memory.models()).toEqual([
+      "clinepass/cline-free/step-5-preview",
+      "codex/gpt-5.6-luna",
+    ]);
     const bad = await root.request("/api/admin/model-fallbacks", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ models: ["no spaces allowed"] }),
     });
     expect(bad.status).toBe(400);
-    expect(memory.models()).toEqual(["clinepass/cline-free/step-5-preview", "codex/gpt-5.6-luna"]);
+    expect(memory.models()).toEqual([
+      "clinepass/cline-free/step-5-preview",
+      "codex/gpt-5.6-luna",
+    ]);
   });
 
   test("routes: non-admins are refused", async () => {

@@ -168,7 +168,7 @@ export class WecomBotAdapter extends LoopAdapter {
     if (reqId.startsWith("ping")) this.missed = 0;
   }
 
-  async send(reply: ImReply): Promise<void> {
+  async send(reply: ImReply): Promise<undefined> {
     const { inbound } = reply;
     const meta = inbound.reply as { reqId?: string; streamId?: string; chatid?: string };
     const [first, ...rest] = reply.chunks;

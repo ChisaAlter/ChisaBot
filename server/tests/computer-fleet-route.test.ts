@@ -24,7 +24,11 @@ import { createComputerRoutes } from "../src/computer/routes";
  * Found by driving the screen against a deployment that had computers, not by reading the diff.
  */
 
-const ADMIN = { id: "u1", email: "admin@chisabot.test", role: "admin" } as const;
+const ADMIN = {
+  id: "u1",
+  email: "admin@chisabot.test",
+  role: "admin",
+} as const;
 
 function app(role: "admin" | "user" = "admin") {
   const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (
@@ -129,11 +133,15 @@ describe("browsers left over from deleted Bots (DESIGN.md §99)", () => {
       async () => false,
       undefined,
       undefined,
-      async (_actor, botId) => (botId === "agent_live" ? { name: "Asuna" } : null),
+      async (_actor, botId) =>
+        botId === "agent_live" ? { name: "Asuna" } : null,
     );
     return {
       forgotten,
-      hono: new Hono<{ Variables: AppVariables }>().route("/api/computers", routes),
+      hono: new Hono<{ Variables: AppVariables }>().route(
+        "/api/computers",
+        routes,
+      ),
     };
   }
   const forget = (hono: Hono<{ Variables: AppVariables }>, botId: string) =>
@@ -145,12 +153,18 @@ describe("browsers left over from deleted Bots (DESIGN.md §99)", () => {
 
   test("the fleet names each browser's Bot and marks the left-over ones", async () => {
     const { hono } = fleetApp();
-    const body = (await (await hono.request("http://t/api/computers/fleet")).json()) as {
+    const body = (await (
+      await hono.request("http://t/api/computers/fleet")
+    ).json()) as {
       computers: { botId: string; owner: string; botName?: string }[];
     };
     expect(body.computers).toEqual([
       expect.objectContaining({ botId: "agent_gone", owner: "deleted" }),
-      expect.objectContaining({ botId: "agent_live", owner: "bot", botName: "Asuna" }),
+      expect.objectContaining({
+        botId: "agent_live",
+        owner: "bot",
+        botName: "Asuna",
+      }),
       expect.objectContaining({ botId: "shared", owner: "default" }),
     ]);
   });
