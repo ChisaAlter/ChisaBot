@@ -9,7 +9,10 @@ import {
 import { MessageSchema } from "@ag-ui/core/schemas";
 import { Observable, ReplaySubject, Subject } from "rxjs";
 import { concatMap, filter } from "rxjs/operators";
-import { capConnectMessages } from "../../shared/connect-snapshot";
+import {
+  capConnectMessages,
+  snapshotSince,
+} from "../../shared/connect-snapshot";
 import { forgetHistorySummaries } from "./agents/history-budget";
 import { fallbackNotice } from "./agents/model-fallback";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
@@ -2299,8 +2302,18 @@ class PostgresAgentRunner implements ConversationRunner {
          * Track B：长对话压力——全量 annotate 上千条再一次塞进浏览器仍会拖住 `/run`。
          * 先按条数/体积封顶，只给最近一段标宽高；完整历史仍走 GET .../messages。
          */
-        const capped = capConnectMessages(row.messages ?? []);
-        if (capped.truncated) {
+        const since = snapshotSince(row.messages ?? [], request.snapshotAfter);
+        const capped = capConnectMessages(since ?? row.messages ?? []);
+        if (since)
+          console.info(
+            JSON.stringify({
+              type: "connect-snapshot-delta",
+              thread: request.threadId,
+              sent: capped.messages.length,
+              total: row.messages?.length ?? 0,
+            }),
+          );
+        else if (capped.truncated) {
           console.info(
             JSON.stringify({
               type: "connect-snapshot-capped",

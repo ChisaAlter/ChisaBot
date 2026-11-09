@@ -147,6 +147,9 @@ jobs:
         run: bun test server/tests/log-scrub-redline.test.ts server/tests/conversation-public-error.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
+      # 2026-11-09 重连循环：增量接入快照（snapshotSince）与封顶快照。应用侧的回归测试在 test:app 里。
+      - name: Connect snapshot checks (reconnect loop)
+        run: bun test shared/connect-snapshot.test.ts server/tests/connect-snapshot.test.ts
       - name: Schedule honesty / partition (non-tram re-verify)
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks

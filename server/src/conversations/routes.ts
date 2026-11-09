@@ -2,6 +2,7 @@ import type { BaseEvent } from "@ag-ui/client";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { Hono } from "hono";
 import { Observable, type Subscription } from "rxjs";
+import { connectSnapshotAnchors } from "../../../shared/connect-snapshot";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
 import {
   type HeadlessTool,
@@ -260,7 +261,7 @@ export function createConversationRoutes(options: {
   });
   routes.post("/api/conversations/agent/:agentId/connect", async (context) => {
     const actor = await identifyActor(context.req.raw);
-    const { threadId } = await context.req.json();
+    const { threadId, snapshotAfter } = await context.req.json();
     if (typeof threadId !== "string" || !threadId || threadId.length > 512)
       return context.json({ error: "Thread is required." }, 400);
     const agentId = context.req.param("agentId");
@@ -269,7 +270,14 @@ export function createConversationRoutes(options: {
       userId: actor.id,
       agentId,
     });
-    return eventStream(backend.runner.connect({ threadId, agentId }));
+    const anchors = connectSnapshotAnchors(snapshotAfter);
+    return eventStream(
+      backend.runner.connect({
+        threadId,
+        agentId,
+        ...(anchors ? { snapshotAfter: anchors } : {}),
+      }),
+    );
   });
   routes.post(
     "/api/conversations/agent/:agentId/stop/:threadId",
