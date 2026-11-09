@@ -132,6 +132,11 @@ test("routine turns retain their built connection through asynchronous execution
       renewThreadLease: async () => ({}),
       releaseThreadLease: async () => {},
     },
+    leases: {
+      acquire: async () => ({}),
+      renew: async () => ({}),
+      release: async () => {},
+    },
     buildAgentFor: async () => {
       seen.push(
         (await resolveScopedModelConnection(resolve)).model.defaultModel,
