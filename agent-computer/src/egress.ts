@@ -404,9 +404,15 @@ function expandIpv6Groups(address: string): number[] | null {
   // Trailing dotted IPv4 (`::ffff:1.2.3.4`) → two hex groups before splitting.
   const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(hex);
   if (dotted) {
-    const parts = dotted[1]!.split(".").map(Number);
-    const hi = ((parts[0]! << 8) | parts[1]!).toString(16);
-    const lo = ((parts[2]! << 8) | parts[3]!).toString(16);
+    const ipv4 = dotted[1] ?? "";
+    const parts = ipv4.split(".").map(Number);
+    if (parts.length !== 4) return null;
+    const a = parts[0] ?? 0;
+    const b = parts[1] ?? 0;
+    const c = parts[2] ?? 0;
+    const d = parts[3] ?? 0;
+    const hi = ((a << 8) | b).toString(16);
+    const lo = ((c << 8) | d).toString(16);
     hex = hex.slice(0, dotted.index) + `${hi}:${lo}`;
   }
   const halves = hex.split("::");
@@ -433,20 +439,21 @@ function expandIpv6Groups(address: string): number[] | null {
 function embeddedIpv4(address: string): string | null {
   if (isIP(address) !== 6) return null;
   const g = expandIpv6Groups(address);
-  if (!g || g.length !== 8) return null;
+  if (g?.length !== 8) return null;
   const zeros = (from: number, to: number) =>
     g.slice(from, to).every((n) => n === 0);
   const v4 = (high: number, low: number) =>
     [high >> 8, high & 255, low >> 8, low & 255].join(".");
+  const high = g[6] ?? 0;
+  const low = g[7] ?? 0;
   // ::ffff:a.b.c.d and ::ffff:XXXX:YYYY
-  if (zeros(0, 5) && g[5] === 0xffff) return v4(g[6]!, g[7]!);
+  if (zeros(0, 5) && g[5] === 0xffff) return v4(high, low);
   // ::ffff:0:a.b.c.d (translated)
-  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(g[6]!, g[7]!);
+  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(high, low);
   // 64:ff9b::/96 NAT64
-  if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(g[6]!, g[7]!);
+  if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(high, low);
   // Deprecated compatible ::a.b.c.d — not :: / ::1 (those stay IPv6).
-  if (zeros(0, 6) && (g[6] !== 0 || (g[7] ?? 0) > 1))
-    return v4(g[6] ?? 0, g[7] ?? 0);
+  if (zeros(0, 6) && (high !== 0 || low > 1)) return v4(high, low);
   return null;
 }
 
@@ -489,10 +496,11 @@ export async function classifyEgressTunnel(
   if (!host || !Number.isInteger(port) || port < 1 || port > 65535)
     return "unknown";
   if (isPrivateEgressHost(host)) return "private";
-  if (!filter) return "unknown";
+  const running = filter;
+  if (!running) return "unknown";
   const authority = isIP(host) === 6 ? `[${host}]` : host;
   const head = await new Promise<string>((resolve) => {
-    const socket = connect(filter!.port, "127.0.0.1", () => {
+    const socket = connect(running.port, "127.0.0.1", () => {
       socket.write(
         `CONNECT ${authority}:${port} HTTP/1.1\r\nHost: ${authority}:${port}\r\n\r\n`,
       );
