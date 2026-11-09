@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { PluginServer, PluginSkill } from "@/lib/plugins/queries";
 import { savedSkillAnswer } from "../../../../shared/skill-authoring";
 import { type SkillFormValues, skillFormSchema } from "./form";

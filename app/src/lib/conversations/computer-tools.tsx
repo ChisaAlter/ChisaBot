@@ -2,22 +2,9 @@ import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { BrowseChip } from "@/components/computer/browse-chip";
 import { CommandOutput } from "@/components/computer/command-output";
-import {
-  keepShot,
-  ScreenshotCard,
-  shrinkPng,
-} from "@/components/computer/screenshot-card";
-import { syncStartLinks } from "@/lib/browser-bookmarks";
-import { tryClient } from "@/lib/client";
+import { ScreenshotCard } from "@/components/computer/screenshot-card";
 import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
-import { callComputer, type ToolOutcome } from "@/lib/computers/call";
-import { type ControlState, readControl } from "@/lib/computers/control";
-import {
-  runBrowserRead,
-  runHelpRequest,
-  runNavigation,
-} from "@/lib/computers/handoff";
-import { readScreenshot } from "@/lib/computers/screen";
+import type { ToolOutcome } from "@/lib/computers/call";
 import {
   describeComputerToolCall,
   lastComputerStatusFor,
@@ -27,13 +14,9 @@ import {
 import {
   COMMAND_DEFAULT_TIMEOUT_SEC,
   COMMAND_MAX_TIMEOUT_SEC,
-  COMMAND_TIMEOUT_GUIDE,
-  normalizeCommandTimeout,
 } from "../../../../shared/command-timeout";
 import { formatBytes } from "../../../../shared/computer-activity-labels";
-import { useActiveBotHolder } from "./active-bot";
 import { useComputerToolRenderer } from "./approval-tools";
-import { useComputerAvailable } from "./computer-available";
 
 /**
  * Frontend registrations for computer tools, including inline rendering and policy-refusal display.
@@ -42,32 +25,6 @@ import { useComputerAvailable } from "./computer-available";
 export type { ToolOutcome } from "@/lib/computers/call";
 /** What every computer call returns to the model: either the result, or a reason it did not happen. */
 export { callComputer } from "@/lib/computers/call";
-
-/**
- * Secret-entry wait window. Browser takeovers use server-authoritative request state instead.
- */
-const WAIT_FOR_SECRET_MS = 10 * 60_000;
-
-/** How often the waiting handler asks whether the person has answered yet. */
-const WAIT_POLL_MS = 1_000;
-
-/** Hold the secret-entry call open until its masked prompt is answered, cancelled, or expires. */
-async function waitForSecret(
-  botId: string,
-  done: (state: ControlState) => boolean,
-  signal: AbortSignal | undefined,
-  giveUpAfterMs = WAIT_FOR_SECRET_MS,
-): Promise<"answered" | "gave up" | "cancelled"> {
-  const deadline = Date.now() + giveUpAfterMs;
-  while (Date.now() < deadline) {
-    // Stop must actually stop, including out of a wait. The SDK aborts this when a person presses it.
-    if (signal?.aborted) return "cancelled";
-    const state = await readControl(botId).catch(() => null);
-    if (state && done(state)) return "answered";
-    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
-  }
-  return "gave up";
-}
 
 /** What a computer tool's render can read back out of its own result. */
 type ComputerOutcome = {
@@ -215,10 +172,6 @@ function didNotWork(outcome: ComputerOutcome): boolean {
 }
 
 export function ComputerTools() {
-  const bot = useActiveBotHolder();
-  // Not offered to a Team Bot's teammates; see useComputerAvailable.
-  const available = useComputerAvailable();
-
   useComputerToolRenderer({
     name: "computer_navigate",
     // 只画一行过程（或什么都不画），不算对话里的卡片（tool-renderers.ts）。

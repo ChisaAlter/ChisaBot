@@ -1,19 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { RefusedCard } from "@/components/gallery/refused";
 import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
-import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import {
   agentComponentsQueryOptions,
   announceGallery,
   componentKeys,
-  decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import {
-  useActiveBotId,
-  useDeclaredBotId,
-} from "@/lib/conversations/active-bot";
+import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 import {
   GALLERY_COMPONENTS,
   type GalleryComponent,
@@ -39,8 +34,6 @@ export function GalleryTools() {
     });
   }, [queryClient]);
 
-  // Active Bot comes from the route/channel surface currently driving the provider.
-  const grantsFor = useActiveBotId();
   // See sandboxed-tools: the placeholder Bot is not fetchable, so the grant query waits for a
   // surface to declare a real one.
   const declared = useDeclaredBotId();
@@ -67,12 +60,7 @@ export function GalleryTools() {
         spec.kind === "decision" ? (
           <GrantedDecision held={held} key={spec.name} spec={spec} />
         ) : (
-          <GrantedTool
-            grantsFor={grantsFor}
-            held={held}
-            key={spec.name}
-            spec={spec}
-          />
+          <GrantedTool held={held} key={spec.name} spec={spec} />
         ),
       )}
     </>
@@ -80,25 +68,14 @@ export function GalleryTools() {
 }
 
 function GrantedTool({
-  grantsFor,
   spec,
   held,
 }: {
-  grantsFor: string;
   spec: GalleryComponent;
   held: Map<string, string>;
 }) {
   const description = held.get(spec.name);
   const isHeld = description !== undefined;
-
-  /**
-   * Refusals decided by the server, keyed by the call they refused.
-   *
-   * Per-call keys preserve the original render for calls made before a grant was revoked.
-   */
-  const [refusals, setRefusals] = useState<ReadonlyMap<string, string>>(
-    new Map(),
-  );
 
   const Component = spec.Component;
 
@@ -108,16 +85,9 @@ function GrantedTool({
       args?: Record<string, unknown>;
       result?: string;
     }) => {
-      const refusal = props.toolCallId
-        ? refusals.get(props.toolCallId)
-        : undefined;
-      if (refusal) {
-        return <RefusedCard reason={refusal} title={spec.title} />;
-      }
       /*
-       * A stored refusal. The in-memory map above is gone once the page reloads, and a headless turn
-       * never had one: the server answered the call itself (`server/src/components/headless.ts`).
-       * The result is what survives, so a call that drew nothing is drawn as the refusal it was.
+       * A refusal. Component tools are server-owned: the server decides the grant and answers the
+       * call itself (`server/src/components/headless.ts`), so the stored result is the only record.
        */
       if (props.result?.startsWith(NOT_SHOWN)) {
         const lead = `${NOT_SHOWN}${spec.title}. `;
@@ -139,7 +109,7 @@ function GrantedTool({
       }
       return <Component {...(props.args ?? {})} />;
     },
-    [Component, isHeld, refusals, spec.title],
+    [Component, isHeld, spec.title],
   );
 
   useRenderTool({

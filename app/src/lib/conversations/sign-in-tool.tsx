@@ -15,19 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import type { ToolRenderProps } from "@/lib/chat/renderers";
 import { client } from "@/lib/client";
-import { readSignIn, requestSignIn } from "@/lib/passwords/mutations";
-import { FINAL_SIGN_IN } from "@/lib/passwords/queries";
-import { useActiveBotHolder } from "./active-bot";
 import { useComputerToolRenderer } from "./approval-tools";
-import { useComputerAvailable } from "./computer-available";
-
-/** How long the open chat waits for the person to answer. The server's request lasts as long. */
-const WAIT_MS = 15 * 60_000;
-const POLL_MS = 1_500;
-
-/** Must match SIGN_IN_TOOL_DESCRIPTION in server/src/computer/headless-tools.ts. */
-const DESCRIPTION =
-  "Ask the person you work for to sign you in to a website. They get a private sign-in form outside this conversation (or take over the browser), and their login is typed straight into your browser by the computer. You never see the username, password or code, and must never ask for them any other way. Open the site's sign-in page first, then call this with the site's address. This turn pauses until they answer; you are then told only whether it worked.";
 
 type Outcome = {
   ok?: boolean;

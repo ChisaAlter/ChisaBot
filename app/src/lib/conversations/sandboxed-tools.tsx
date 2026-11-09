@@ -1,31 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import * as z from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { RefusedCard } from "@/components/gallery/refused";
-import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
+import { useRenderTool } from "@/lib/chat/renderers";
 import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import {
   agentComponentsQueryOptions,
-  decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import {
-  useActiveBotId,
-  useDeclaredBotId,
-} from "@/lib/conversations/active-bot";
+import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 import { useBotOnScreen } from "@/lib/kept-visible";
 import {
   type PublishedSandboxed,
   publishedSandboxedQueryOptions,
 } from "@/lib/sandboxed/queries";
+import {
+  NOT_SHOWN,
+  NOT_SHOWN_TAIL,
+} from "../../../../shared/component-markers";
 
 /**
  * Browser-authored components use the same component grants as compiled gallery components, but
  * render published runtime markup in the SDK sandbox.
  */
 export function SandboxedTools() {
-  const botId = useActiveBotId();
   // Grants are fetched only once a surface has declared its Bot; the placeholder is not one the
   // server knows, and asking would 404 on every poll.
   const declared = useDeclaredBotId();
@@ -48,7 +47,6 @@ export function SandboxedTools() {
     <>
       {(published ?? []).map((component) => (
         <SandboxedTool
-          botId={botId}
           component={component}
           description={held.get(component.name)}
           key={component.name}
@@ -72,33 +70,28 @@ function parametersFor(schema: Record<string, unknown>) {
 function SandboxedTool({
   component,
   description,
-  botId,
 }: {
   component: PublishedSandboxed;
   description: string | undefined;
-  botId: string;
 }) {
-  const [refusals, setRefusals] = useState<Map<string, string>>(new Map());
   const isHeld = description !== undefined;
 
   const render = useCallback(
-    // `toolCallId`, not `toolCall.id`: a renderer's props carry the id flat,
-    // which is the shape gallery-tools and computer-tools already read and
-    // the one the library's own DefaultToolCallRenderer destructures. The
-    // handler below is the other shape, `context.toolCall.id`, and reading
-    // that one here meant the key was always undefined -- so a refusal the
-    // server had just recorded was never found, and the component the server
-    // refused was drawn instead of the card saying it was not allowed.
+    // Sandboxed tools are server-owned: a refused call is answered by the server, and its stored
+    // result (`Not shown: …`) is the only record that survives a reload.
     (props: {
       args?: Record<string, unknown>;
       status?: string;
-      toolCallId?: string;
+      result?: string;
     }) => {
-      const refusal = props.toolCallId
-        ? refusals.get(props.toolCallId)
-        : undefined;
-      if (refusal) {
-        return <RefusedCard reason={refusal} title={component.name} />;
+      if (props.result?.startsWith(NOT_SHOWN)) {
+        const lead = `${NOT_SHOWN}${component.name}. `;
+        const reason = (
+          props.result.startsWith(lead)
+            ? props.result.slice(lead.length)
+            : props.result.slice(NOT_SHOWN.length)
+        ).replace(NOT_SHOWN_TAIL, "");
+        return <RefusedCard reason={reason} title={component.name} />;
       }
       if (!isHeld) {
         return (
@@ -131,7 +124,7 @@ function SandboxedTool({
         </div>
       );
     },
-    [component, isHeld, refusals],
+    [component, isHeld],
   );
 
   useRenderTool({

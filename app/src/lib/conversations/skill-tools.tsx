@@ -1,24 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { z } from "zod";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
+import { useInteractionRenderer } from "@/lib/chat/renderers";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 import {
   agentPluginsQueryOptions,
   pluginsPageQueryOptions,
 } from "@/lib/plugins/queries";
 import {
-  describeSkill,
-  describeSkills,
-  describeToolRefs,
   ownershipOf,
   type ProposedSkill,
   proposedSkillSchema,
   SKILL_CREATOR_SLUG,
 } from "@/lib/skills/proposal";
-import { queryClient } from "@/query-client";
 
 /**
  * Writing a skill from inside a conversation.
