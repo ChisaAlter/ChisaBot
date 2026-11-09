@@ -575,7 +575,11 @@ export class DshRuntimeAgent extends AbstractAgent {
           model: {
             primary,
             fallbacks,
-            firstOutputMs: 30_000,
+            // Tests may shrink this via CHISABOT_DSH_FIRST_OUTPUT_MS (QA511 P2 server path).
+            firstOutputMs: Math.max(
+              1,
+              Number(process.env.CHISABOT_DSH_FIRST_OUTPUT_MS) || 30_000,
+            ),
             contextWindow,
           },
           connection: {

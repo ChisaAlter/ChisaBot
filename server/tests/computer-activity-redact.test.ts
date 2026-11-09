@@ -171,6 +171,15 @@ describe("activity redaction", () => {
         expect(out).not.toContain(piece);
     }
   });
+  test("QA511 P3: Basic authentication prose is not a credential", () => {
+    expect(redactText("Basic authentication required")).toBe(
+      "Basic authentication required",
+    );
+    expect(
+      redactText("Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l"),
+    ).toContain("••••");
+  });
+
   test("masks secrets inside command text", () => {
     const text = redactText(
       "curl -H 'Authorization: Bearer abcdefghijklmnop' https://x.dev/?token=t1 && API_KEY=sekrit run --password p4ss",

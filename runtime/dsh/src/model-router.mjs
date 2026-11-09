@@ -117,7 +117,7 @@ const spokenSeconds = (ms) =>
   ms < 10_000 ? Math.round(ms / 100) / 10 : Math.round(ms / 1000);
 
 /** First-output budget multiplier when a route has no fallback to switch to. */
-const SINGLE_MODEL_DEADLINE_FACTOR = 4;
+export const SINGLE_MODEL_DEADLINE_FACTOR = 4;
 
 /** A stable session/model route with run-scoped credentials and retry state. */
 export class ChisaModelRouter extends LlmAdapter {
@@ -406,11 +406,11 @@ export class ChisaModelRouter extends LlmAdapter {
     // A first-output deadline already waited the whole budget on this model: switch now.
     const deadline = route.firstOutputExpired === route.index;
     route.firstOutputExpired = -1;
+    // TIMEOUT never retries the same model (QA511 P2): a silent hang must end on the
+    // first-output deadline, not burn another provider request timeout on the same candidate.
     if (
       !deadline &&
-      ["SERVER", "TIMEOUT", "TRANSPORT", "EMPTY_RESPONSE"].includes(
-        failure.code,
-      ) &&
+      ["SERVER", "TRANSPORT", "EMPTY_RESPONSE"].includes(failure.code) &&
       route.sameModelRetries < 1
     ) {
       route.sameModelRetries++;

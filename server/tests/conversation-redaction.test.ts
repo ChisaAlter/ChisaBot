@@ -115,6 +115,19 @@ describe("shared public error redaction", () => {
       "git@github.com:owner/repo.git",
       "mail ops@example.com bounced",
       "deadbeef: not an address",
+      // QA511 P3: parameter / header / locale / model names are not Docker hosts.
+      "max_tokens:4096 exceeds limit",
+      "x-ratelimit-remaining:59",
+      "deepseek-chat:128",
+      "en-US:80",
+      "context_length:65536",
+      "rate_limit:60 per minute",
+      "retry_after:30",
+      "utf-8:12",
+      "gpt-4o:2024",
+      "localhost.example.com/a",
+      "Basic authentication required",
+      "web-1:80",
     ])
       expect(redactPublicText(keep)).toBe(keep);
     expect(redactPublicText("模型服务暂时不可用，请稍后再试。")).toBe(

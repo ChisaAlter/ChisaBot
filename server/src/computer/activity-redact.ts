@@ -43,8 +43,8 @@ export function redactUrl(value: string): string {
 }
 
 const SECRET_SHAPES: RegExp[] = [
-  // Authorization: Bearer xxx / token xxx
-  /\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  // Authorization: Bearer xxx / token xxx. `Basic authentication` is prose (QA511 P3).
+  /\b(bearer|token|basic)\s+(?!authentication\b)[A-Za-z0-9._~+/=-]{12,}/gi,
   // KEY=value（环境变量 / 配置）。`_PWD` 结尾（MYSQL_PWD）和 SSHPASS 也算；单独的 PWD（当前目录）不算。
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY)[A-Z0-9_]*|[A-Z0-9_]+_PWD|SSHPASS)=("[^"]*"|'[^']*'|\S+)/gi,
   // 长参数：--password x / --password=x / --db-password x / --access-token x / --pass x …（任何命令都打）。
