@@ -54,6 +54,16 @@ test("a finish promised for later is not a report; a permission question is not 
     true,
   );
   assert.equal(actionPromise("查好了。我再去看看别的。"), false);
+  // QA509 P3: a finished part, then a fresh promise with its own report-back.
+  assert.equal(
+    actionPromise("第一部分我查完了，第二部分我马上去查，查完告诉你"),
+    true,
+  );
+  assert.equal(actionPromise("第一部分我查完了，第二部分没有问题"), false);
+  assert.equal(
+    actionPromise("第一部分查完了，第二部分要我查完告诉你吗？"),
+    false,
+  );
   assert.equal(actionPromise(""), false);
   assert.equal(actionPromise(undefined), false);
 });

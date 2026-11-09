@@ -33,11 +33,19 @@ export function actionPromise(text) {
   if (typeof text !== "string" || !text.trim()) return false;
   // Clauses keep their closing mark so "我先查一下？" is read as the question it is.
   const clauses = text.match(/[^,，;；.!?。！？\n]+[,，;；.!?。！？]*/g) ?? [];
-  // A reported finish anywhere vetoes; a finish the reply only promises for later does not.
-  if (clauses.some((clause) => DONE.test(clause) && !LATER.test(clause)))
-    return false;
+  // A reported finish vetoes what precedes it; a finish only promised for later does not. After
+  // the last reported finish, a fresh promise counts only with its own report-back ("第一部分我
+  // 查完了，第二部分我马上去查，查完告诉你"); "查好了。我再去看看别的。" stays a report.
+  let rest = text;
+  const lastDone = clauses.findLastIndex(
+    (clause) => DONE.test(clause) && !LATER.test(clause),
+  );
+  if (lastDone >= 0) {
+    rest = clauses.slice(lastDone + 1).join("");
+    if (!LATER.test(rest)) return false;
+  }
   // Questions and refusals are read per sentence: "我先查一下，可以吗？" asks before acting.
-  const sentences = text.match(/[^.!?。！？\n]+[.!?。！？]*/g) ?? [];
+  const sentences = rest.match(/[^.!?。！？\n]+[.!?。！？]*/g) ?? [];
   return sentences.some(
     (sentence) =>
       PROMISE.test(sentence) &&
