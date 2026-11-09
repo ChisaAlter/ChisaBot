@@ -22,9 +22,12 @@ export function redactUrl(value: string): string {
      */
     return redactPlain(value);
   }
-  if (parsed.username || parsed.password) {
+  // 同 redactUserinfo 的策略：有密码时两者都打码；只有用户名时，像令牌才打码。
+  if (parsed.password) {
     parsed.username = parsed.username ? MASK : "";
-    parsed.password = parsed.password ? MASK : "";
+    parsed.password = MASK;
+  } else if (parsed.username && userLooksSecret(parsed.username)) {
+    parsed.username = MASK;
   }
   for (const name of [...parsed.searchParams.keys()]) {
     if (SENSITIVE_PARAM.test(name)) parsed.searchParams.set(name, MASK);
@@ -256,17 +259,49 @@ function redactPlain(value: string): string {
 }
 
 /**
- * 任意 scheme 的 URL userinfo（QA509：postgres:// redis:// mongodb+srv:// wss:// ftp:// amqp://…）。
- * redactUrl 只接 http(s)；其余 scheme 的 `user:pass@` / `:pass@` / `user@` 一律整段换成 ••••。
- * userinfo 贪婪匹配到 host 前最后一个 @，密码里带 @ 也不漏半截。
+ * URL userinfo 打码策略（QA509 / QA510 P3），redactUrl 和 redactUserinfo 共用：
+ * - 带密码（包括空用户名的 `:pass@`）：用户名和密码一起打码。连接串里两者成对出现，
+ *   只藏密码、留用户名，等于给撞库留一半线索。
+ * - 只有用户名：保留（`ssh://git@github.com`、`postgres://app@db` 里的用户名不是秘密）。
+ *   例外：用户名本身像令牌时打码，`https://<token>@github.com` 正是把令牌放在用户名位置。
+ *   判断依据是已知密钥前缀、20 位以上，或者 looksLikeSecret。
  */
-const ANY_SCHEME_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#"'<>]+)@/gi;
-export function redactUserinfo(value: string): string {
-  return value.replace(
-    ANY_SCHEME_USERINFO,
-    (_m, scheme: string, userinfo: string) =>
-      `${scheme}${userinfo.includes(":") ? `${MASK}:${MASK}` : MASK}@`,
+function userLooksSecret(user: string): boolean {
+  let decoded = user;
+  try {
+    decoded = decodeURIComponent(user);
+  } catch {
+    // 坏的百分号编码按原样判断。
+  }
+  return (
+    decoded.length >= 20 ||
+    new RegExp((SECRET_SHAPES[3] as RegExp).source).test(decoded) ||
+    looksLikeSecret(decoded)
   );
+}
+
+/**
+ * 任意 scheme 带密码的 userinfo（postgres:// redis:// mongodb+srv:// wss:// ftp:// amqp://…）。
+ * 密码段贪婪匹配到这一串里最后一个 @：密码里没编码的 `@ / # ?` 也整段打码（QA510 P3）。
+ * `host:8080/@scope` 这种「端口 + 路径」不是密码，原样保留；纯数字开头再跟 `/ ? #` 的密码
+ * 和它分不出来，按端口处理（这种写法本身不合 RFC）。
+ */
+const URL_CREDENTIALS =
+  /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#@:"'<>]*):([^\s"'<>]*)@/gi;
+/** 任意 scheme 只有用户名的 userinfo：按上面的策略决定打不打码。 */
+const URL_USER_ONLY = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#@:"'<>]+)@/gi;
+export function redactUserinfo(value: string): string {
+  return value
+    .replace(
+      URL_CREDENTIALS,
+      (match, scheme: string, _user: string, password: string) =>
+        /^\d{1,5}(?:[/?#]|$)/.test(password)
+          ? match
+          : `${scheme}${MASK}:${MASK}@`,
+    )
+    .replace(URL_USER_ONLY, (match, scheme: string, user: string) =>
+      user === MASK || !userLooksSecret(user) ? match : `${scheme}${MASK}@`,
+    );
 }
 
 /** 文本（命令、输出）打码：像密钥的串换成 ••••；其中能解析的 URL 也按 redactUrl 处理。 */

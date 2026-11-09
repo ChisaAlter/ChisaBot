@@ -37,6 +37,14 @@ const HOST_SHAPES: RegExp[] = [
   /\[(?:::1|f[cd][0-9a-f]{2}:[0-9a-f:]*|fe80:[0-9a-f:]*)\](?::\d{1,5})?/gi,
   /\blocalhost(?::\d{1,5})?\b/gi,
   /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:internal|local|lan|svc|cluster\.local|intranet|corp)(?::\d{1,5})?\b/gi,
+  // Docker / compose service name with a port (QA510 P3): `chisabot-postgres:5432`, `redis:6379`.
+  // A dotless name counts when it has a - or _ in it, or is a usual service name; a dotted
+  // public host is left alone, and so is `12:30` or `error:500`.
+  /(?<![\w.:-])[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+:\d{2,5}\b/gi,
+  /(?<![\w.:-])(?:postgres(?:ql)?|pg|redis|valkey|mysql|mariadb|mongo(?:db)?|db|database|rabbitmq|amqp|minio|kafka|zookeeper|elasticsearch|opensearch|memcached|nginx|magpie|backend|gateway|api|app|server|worker|web)\d*:\d{2,5}\b/gi,
+  // Bare (unbracketed) private / link-local / loopback IPv6 (QA510 P3): fd00::12, fe80::1%eth0, ::1.
+  /(?<![\w:])(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):(?::{0,2}[0-9a-f]{1,4}){1,7}(?:%[\w.-]+)?(?![\w:])/gi,
+  /(?<![\w:])::1(?![\w:])/g,
 ];
 
 /** Bare `user:password@host` without a scheme (redactText only parses full URLs). */

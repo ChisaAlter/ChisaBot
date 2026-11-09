@@ -134,6 +134,43 @@ describe("activity redaction", () => {
       "see https://example.com/a@b",
     );
   });
+  test("QA510 P3: userinfo policy — password masks both, a plain username stays, a token username is masked", () => {
+    expect(redactText("git clone ssh://git@github.com/o/r")).toBe(
+      "git clone ssh://git@github.com/o/r",
+    );
+    expect(redactUrl("https://deploy@example.com/x")).toBe(
+      "https://deploy@example.com/x",
+    );
+    expect(redactText("psql postgres://app:pw@db/x")).toBe(
+      `psql postgres://${MASK}:${MASK}@db/x`,
+    );
+    expect(redactUrl("https://bob:hunter2@example.com/")).toBe(
+      `https://${MASK}:${MASK}@example.com/`,
+    );
+    for (const token of [
+      "ghp_abcdefghijklmnopqrstuvwxyz0123",
+      "0123456789abcdef0123456789abcdef",
+      "Ab3$xY9!kL",
+    ]) {
+      expect(redactUrl(`https://${token}@github.com/o/r`)).not.toContain(token);
+      expect(redactText(`clone git+ssh://${token}@host/r`)).not.toContain(
+        token,
+      );
+    }
+  });
+  test("QA510 P3: unencoded / # ? @ in a password are masked whole", () => {
+    for (const url of [
+      "postgres://app:sl/ash22@db/x",
+      "ftp://u:ha#sh23@files/x",
+      "amqp://u:qu?es24@mq/x",
+      "https://u:a@b/c@host/x",
+    ]) {
+      const out = redactText(`connect ${url}`);
+      expect(out).toContain(`${MASK}:${MASK}@`);
+      for (const piece of ["ash22", "sh23", "es24", "c@host"])
+        expect(out).not.toContain(piece);
+    }
+  });
   test("masks secrets inside command text", () => {
     const text = redactText(
       "curl -H 'Authorization: Bearer abcdefghijklmnop' https://x.dev/?token=t1 && API_KEY=sekrit run --password p4ss",

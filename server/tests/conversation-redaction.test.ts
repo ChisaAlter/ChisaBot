@@ -77,6 +77,46 @@ describe("shared public error redaction", () => {
       expect(out).toContain("••••");
       expect(out).toContain("connect");
     }
+    // QA510 P3: unencoded / # ? (and @) inside a password are masked whole.
+    for (const [url, secret] of [
+      ["postgres://app:sl/ash22@db.example.com/x", "ash22"],
+      ["postgres://app:ha#sh23@db.example.com/x", "sh23"],
+      ["postgres://app:qu?es24@db.example.com/x", "es24"],
+      ["https://u:p/q#r?s@api.example.com/v1", "q#r"],
+      ["redis://:a@b/c#d@cache.example.com:6379", "c#d"],
+    ]) {
+      const out = publicErrorMessage(new Error(`connect ${url} failed`));
+      expect(out).not.toContain(secret);
+      expect(out).toContain("••••:••••@");
+    }
+    // QA510 P3: Docker service:port and bare private IPv6 are internal addresses.
+    for (const [sample, bad] of [
+      ["connect ECONNREFUSED chisabot-postgres:5432", "chisabot-postgres"],
+      ["redis:6379 refused the connection", "redis:6379"],
+      ["upstream magpie_sidecar:3425 timed out", "magpie_sidecar"],
+      ["postgres://app@db:5432/x unreachable", "db:5432"],
+      ["dial fd00::12 failed", "fd00::12"],
+      ["bind fe80::1%eth0 failed", "fe80::1"],
+      ["listen ::1 refused", "::1"],
+      ["route fdab:cd::3:4 down", "fdab:cd"],
+    ]) {
+      const out = redactPublicText(sample);
+      expect(out).not.toContain(bad);
+      expect(out).toContain("[内网地址]");
+    }
+    // …without eating ordinary text that looks a little like them.
+    for (const keep of [
+      "会议在 12:30:45 开始",
+      "HTTP error:500 from upstream",
+      "see https://medium.com/@author and https://registry.npmjs.org/@scope/pkg",
+      "https://example.com:8443/@scope/pkg",
+      "ssh://git@github.com/owner/repo",
+      "postgres://app@db.example.com/x",
+      "git@github.com:owner/repo.git",
+      "mail ops@example.com bounced",
+      "deadbeef: not an address",
+    ])
+      expect(redactPublicText(keep)).toBe(keep);
     expect(redactPublicText("模型服务暂时不可用，请稍后再试。")).toBe(
       "模型服务暂时不可用，请稍后再试。",
     );
