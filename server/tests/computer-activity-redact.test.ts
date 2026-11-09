@@ -195,6 +195,17 @@ describe("short-flag passwords, by command", () => {
     ],
     ["MYSQL_PWD=hunter2 mysql", "MYSQL_PWD=•••• mysql"],
     ["SSHPASS=hunter2 sshpass -e ssh h", "SSHPASS=•••• sshpass -e ssh h"],
+    // 设备审计摘要曾原样写入 shell 命令：ima 的 CLIENTID / APIKEY 都要打掉（2026-11-09 线上 28 条泄漏）。
+    [
+      "$env:IMA_OPENAPI_CLIENTID='cid1234567890'; $env:IMA_OPENAPI_APIKEY='sekritvalue123456'; node wrap.mjs",
+      "$env:IMA_OPENAPI_CLIENTID=••••; $env:IMA_OPENAPI_APIKEY=••••; node wrap.mjs",
+    ],
+    [
+      "set IMA_OPENAPI_CLIENTID=cid1234567890&& set IMA_OPENAPI_APIKEY=sekritvalue123456&& node wrap.mjs",
+      "set IMA_OPENAPI_CLIENTID=••••&& set IMA_OPENAPI_APIKEY=••••&& node wrap.mjs",
+    ],
+    ["OAUTH_CLIENT_ID=abc123def456", "OAUTH_CLIENT_ID=••••"],
+    ["OAUTH_CLIENT_SECRET=sekritvalue123456", "OAUTH_CLIENT_SECRET=••••"],
   ];
   for (const [input, expected] of masked) {
     test(`masks: ${input}`, () => {

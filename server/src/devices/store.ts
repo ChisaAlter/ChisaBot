@@ -24,6 +24,7 @@ export const USER_CONFIG_ACTIONS = [
   "kill_switch_off",
 ] as const;
 
+import { redactText } from "../computer/activity-redact";
 import type { Database } from "../db/client";
 import { deviceAuditEvents, deviceBotAccess, devices } from "../db/schema";
 
@@ -549,9 +550,12 @@ export function createDeviceStore(database: Database) {
         actorId: input.actorId,
         actorName: short(input.actorName, 80),
         action: input.action.slice(0, 64),
-        summary: short(input.summary, 500),
+        summary: short(redactText(String(input.summary ?? "")), 500),
         outcome: input.outcome.slice(0, 32),
-        detail: short(input.detail, 1000),
+        detail: short(
+          input.detail == null ? null : redactText(String(input.detail)),
+          1000,
+        ),
         durationMs: input.durationMs,
       });
       return id;
@@ -570,7 +574,10 @@ export function createDeviceStore(database: Database) {
         .update(deviceAuditEvents)
         .set({
           outcome: result.outcome.slice(0, 32),
-          detail: short(result.detail, 1000),
+          detail: short(
+            result.detail == null ? null : redactText(String(result.detail)),
+            1000,
+          ),
           durationMs: result.durationMs ?? null,
         })
         .where(eq(deviceAuditEvents.id, id));
