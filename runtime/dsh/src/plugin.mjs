@@ -7,6 +7,7 @@ import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
 import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
 import { ChisaModelRouter } from "./model-router.mjs";
+import { ToolLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
 export const name = "chisabot-runtime";
 export const inject = [
@@ -32,6 +33,7 @@ const requiredText = (value, label) => {
 
 export async function apply(ctx, config) {
   const generation = randomUUID();
+  const loopLimits = toolLoopLimits(config.toolLoop);
   // References only, never key values. A crash must not leave temporary run credentials forever.
   const keyJournal = join(config.home, "route-keys.json");
   const keyRefs = new Set();
@@ -222,6 +224,9 @@ export async function apply(ctx, config) {
     state.toolTurns = new Set();
     state.nudgedTurns = new Set();
     state.reply = undefined;
+    // Bounds each turn's tool loop and turns a runaway loop into an honest answer.
+    state.loopGuard = new ToolLoopGuard(loopLimits);
+    state.loopConcluded = undefined;
     state.disposers.push(
       agentCtx.systemPrompt.section({
         name: "chisabot:prompt",
@@ -266,6 +271,28 @@ export async function apply(ctx, config) {
               throw new Error(
                 "The invocation has no committed DSH tool-call identity.",
               );
+            const verdict = state.loopGuard.admit(call.turn, tool.name, args);
+            if (verdict.kind === "conclude") {
+              // The model ignored the stop notice. End the turn here with a plain account of what
+              // happened (projected to the person as the turn's answer) instead of spinning on.
+              if (state.loopConcluded !== call.turn) {
+                state.loopConcluded = call.turn;
+                appendPluginRecord(agent.session, "plugin:chisabot/loop-stop", {
+                  turn: call.turn,
+                  step: call.step,
+                  text: verdict.text,
+                });
+                await ctx.sessions.flush(agent.session);
+              }
+              execution.concludeTurn();
+              return {
+                content:
+                  "Not executed: ChisaBot stopped this turn's tool loop and answered the user.",
+                stopped: true,
+              };
+            }
+            // Refused calls never reach the gateway; the model is told to stop and answer.
+            if (verdict.kind === "refuse") throw new Error(verdict.message);
             const result = await invokeGateway(
               state,
               "execute",
@@ -350,6 +377,7 @@ export async function apply(ctx, config) {
           state.binding.tools.length === 0 ||
           state.toolTurns.has(turn) ||
           state.nudgedTurns.has(turn) ||
+          state.loopGuard.isStopped(turn) ||
           reply?.turn !== turn ||
           reply.failed ||
           !actionPromise(reply.text)

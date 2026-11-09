@@ -59,6 +59,7 @@ jobs:
           server/tests/agent-resolver.test.ts
           server/tests/agent-routes.test.ts
           server/tests/group-routes.test.ts
+          server/tests/dsh-loop-stop-projection.test.ts
           server/tests/dynamic-model-runtime.test.ts
           server/tests/model-catalog.test.ts
           server/tests/model-connection-context.test.ts
@@ -224,7 +225,7 @@ jobs:
       - run: cp .env.example .env
       - run: bun run test:app
 
-  # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办。
+  # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办、工具循环上限。
   dsh-runtime:
     name: DSH runtime tests
     runs-on: ubuntu-latest
