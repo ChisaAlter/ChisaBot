@@ -561,13 +561,21 @@ function policiesForBot(botId: string): EgressPolicy[] | "refuse" {
  * The fallback for a connection with no proxy credentials at all.
  *
  * Such a connection is never any particular Bot: it is not judged by a Bot's policy and never sees a
- * Bot's allowlist or upstream proxy. It gets this policy, which names no Bot's rules: the
- * registries in {@link DEFAULT_EGRESS_DESTINATIONS} and nothing else.
+ * Bot's allowlist. When every Bot on this computer is `allow_all` (ChisaBot's only pushed mode after
+ * slimming P6-1), anonymous matches that — Chromium is launched with proxy credentials via Playwright
+ * but only sends `Proxy-Authorization` after a 407, and this filter historically answered missing
+ * credentials as anonymous instead of challenging, so the browser never proved who it was and was
+ * stuck on {@link DEFAULT_EGRESS_DESTINATIONS} (package registries). OAuth pages like claude.com then
+ * failed with `ERR_TUNNEL_CONNECTION_FAILED`. Matching `allow_all` keeps the private-net floor
+ * ({@link ALWAYS_DENIED}) and unblocks public sites. When any Bot still uses an allowlist mode,
+ * anonymous falls back to the registries only (or refuse under `allowlist_only` / `deny_all`).
  */
 export const ANONYMOUS_EGRESS_POLICY: EgressPolicy = Object.freeze({
   mode: "defaults_plus_allowlist",
   rules: Object.freeze([]) as unknown as EgressRule[],
 }) as EgressPolicy;
+
+const ANONYMOUS_ALLOW_ALL: EgressPolicy = { mode: "allow_all", rules: [] };
 
 const ANONYMOUS_DENY: EgressPolicy = { mode: "deny_all", rules: [] };
 
@@ -577,10 +585,10 @@ const ANONYMOUS_DENY: EgressPolicy = { mode: "deny_all", rules: [] };
  *
  * - Nothing pushed: refused, as for a Bot (or, with EGRESS_POLICY_REQUIRED=0, no policy at all, the
  *   same as a Bot without one; the private-net floor still applies).
- * - Otherwise {@link ANONYMOUS_EGRESS_POLICY}, capped by the strictest *mode* pushed to this
- *   computer: when any Bot here may not reach the default registries (`allowlist_only`,
- *   `deny_all`), stripping credentials must not get that Bot more than it has, so anonymous is
- *   refused. Only modes are read, never a Bot's rules, so no Bot's allowlist ever opens anything here.
+ * - Any Bot is `allowlist_only` / `deny_all`: refuse. Stripping credentials must not get that Bot
+ *   more than it has. Only modes are read, never a Bot's rules.
+ * - Every Bot is `allow_all`: anonymous is `allow_all` too (still under {@link ALWAYS_DENIED}).
+ * - Otherwise {@link ANONYMOUS_EGRESS_POLICY} (package registries only).
  */
 function anonymousPolicies(): EgressPolicy[] | "refuse" {
   if (policies.size === 0) return policyRequired ? "refuse" : [];
@@ -588,7 +596,10 @@ function anonymousPolicies(): EgressPolicy[] | "refuse" {
     if (policy.mode === "allowlist_only" || policy.mode === "deny_all")
       return [ANONYMOUS_DENY];
   }
-  return [ANONYMOUS_EGRESS_POLICY];
+  for (const policy of policies.values()) {
+    if (policy.mode !== "allow_all") return [ANONYMOUS_EGRESS_POLICY];
+  }
+  return [ANONYMOUS_ALLOW_ALL];
 }
 
 /* ------------------------------- who is asking (proxy credentials) ------------------------------- */

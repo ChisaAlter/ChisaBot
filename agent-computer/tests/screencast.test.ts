@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright";
-import { type InputMessage, startScreencast } from "../src/screencast";
+import {
+  type InputMessage,
+  navigationProblem,
+  startScreencast,
+} from "../src/screencast";
 
 /**
  * What a person's keystroke turns into on the wire.
@@ -147,16 +151,28 @@ describe("开场帧与地址栏", () => {
     await startScreencast(page, (frame) => frames.push(frame));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(frames).toEqual([
-      { type: "frame", data: "SHOT", width: 1280, height: 800, url: "about:blank" },
+      {
+        type: "frame",
+        data: "SHOT",
+        width: 1280,
+        height: 800,
+        url: "about:blank",
+      },
     ]);
   });
 
   test("Chrome 自己的帧先到时，不再补开场帧", async () => {
     const { page, emit } = castable({ screenshot: "SHOT" });
     const frames: { data?: string }[] = [];
-    const cast = startScreencast(page, (frame) => frames.push(frame as { data?: string }));
+    const cast = startScreencast(page, (frame) =>
+      frames.push(frame as { data?: string }),
+    );
     await cast;
-    emit({ data: "CAST", sessionId: 1, metadata: { deviceWidth: 1280, deviceHeight: 800 } });
+    emit({
+      data: "CAST",
+      sessionId: 1,
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(frames.map((f) => f.data)).toContain("CAST");
   });
@@ -166,11 +182,17 @@ describe("开场帧与地址栏", () => {
     const messages: unknown[] = [];
     const cast = await startScreencast(page, (m) => messages.push(m));
     await cast.send({ type: "navigate", url: "https://example.com/" });
-    expect(messages).toContainEqual({ type: "navigation", ok: true, url: "https://example.com/" });
+    expect(messages).toContainEqual({
+      type: "navigation",
+      ok: true,
+      url: "https://example.com/",
+    });
   });
 
   test("打不开时是一句中文说明，不是断线", async () => {
-    const { page } = castable({ gotoFails: "net::ERR_TUNNEL_CONNECTION_FAILED at https://x.test/" });
+    const { page } = castable({
+      gotoFails: "net::ERR_TUNNEL_CONNECTION_FAILED at https://x.test/",
+    });
     const messages: unknown[] = [];
     const cast = await startScreencast(page, (m) => messages.push(m));
     await cast.send({ type: "navigate", url: "https://x.test/" });
@@ -178,7 +200,32 @@ describe("开场帧与地址栏", () => {
       type: "navigation",
       ok: false,
       url: "about:blank",
-      error: "网络策略不允许访问这个网址。",
+      error: "连不上这个网址。",
     });
+  });
+});
+
+describe("navigationProblem", () => {
+  test("隧道失败如实说连不上，不说成策略拦截", () => {
+    expect(
+      navigationProblem(
+        new Error("net::ERR_TUNNEL_CONNECTION_FAILED at https://claude.com/"),
+      ),
+    ).toBe("连不上这个网址。");
+    expect(
+      navigationProblem(new Error("net::ERR_PROXY_CONNECTION_FAILED")),
+    ).toBe("连不上这个网址。");
+  });
+
+  test("其它常见错误仍是对应中文", () => {
+    expect(navigationProblem(new Error("net::ERR_NAME_NOT_RESOLVED"))).toBe(
+      "找不到这个网址。",
+    );
+    expect(navigationProblem(new Error("net::ERR_CONNECTION_REFUSED"))).toBe(
+      "网站没有响应，请稍后再试。",
+    );
+    expect(
+      navigationProblem(new Error("net::ERR_CERT_AUTHORITY_INVALID")),
+    ).toBe("网站的安全证书有问题。");
   });
 });

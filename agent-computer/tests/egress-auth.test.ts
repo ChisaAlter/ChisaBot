@@ -226,6 +226,8 @@ describe("the filter: who may go out as whom", () => {
           "site.b.test": ["203.0.113.11"],
           "anything.example.test": ["203.0.113.12"],
           "registry.npmjs.org": ["203.0.113.20"],
+          "oauth.example.test": ["203.0.113.30"],
+          "claude.com": ["160.79.104.10"],
         })[host] ?? [],
     );
     setEgressLogger((line) => logged.push(line));
@@ -337,6 +339,19 @@ describe("the filter: who may go out as whom", () => {
     // The private-net floor holds for anonymous too.
     setEgressPolicy("c", null);
     expect(await tunnel(filter.port, "100.64.0.1:443")).toContain("403");
+  });
+
+  test("when every Bot is allow_all, anonymous reaches public sites (browser has no Proxy-Authorization)", async () => {
+    const filter = await start();
+    setEgressPolicy("xingling", { mode: "allow_all", rules: [] });
+    setEgressPolicy("other", { mode: "allow_all", rules: [] });
+
+    // Chromium goes through the filter without credentials; ChisaBot only pushes allow_all, so
+    // public OAuth hosts must open (private-net floor still holds).
+    expect(await get(filter.port, "oauth.example.test")).toContain("reached");
+    expect(await tunnel(filter.port, "claude.com:443")).toContain("reached");
+    expect(await tunnel(filter.port, "100.64.0.1:443")).toContain("403");
+    expect(await tunnel(filter.port, "192.168.1.1:443")).toContain("403");
   });
 
   test("anonymous connections are logged with where they came from, throttled, without a key", async () => {
