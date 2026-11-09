@@ -2,6 +2,8 @@
 
 后续所有界面设计和改动都必须遵守本文档。新增或修改组件前先读一遍；与本文档冲突的旧实现，在顺手改到时一并修正。
 
+本文保留带日期的设计演进与实测记录；当前实现以较新的修正和现有源码为准。2026-11-09 的清理候选使用 `app/src/lib/conversations/`、`server/src/conversation-runtime.ts` 与 `/api/conversations`，表名按 0067 / reader 4 说明；本轮尚未发布，迁移状态见 [命名与资源迁移](docs/ops/upstream-removal.md)。
+
 ## 章节索引
 
 章节号只增不改：新章节写在末尾，合并前认领「main 上最大编号 + 1」（见 docs/dev/parallel-work.md §4），并在这张表末尾加一行。
@@ -534,7 +536,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 17. 生成式界面 json-render（2026-10-11 glass-20261011b）
 
-- 取代 A2UI。机器人调用 `render_ui` 工具，参数是 json-render 的 SpecStream（JSONL，每行一个 JSON Patch）；服务器按共享目录 `shared/json-render/catalog.ts` 校验，浏览器用同一份目录在对话里渲染（`app/src/lib/copilot/render-ui-tool.tsx`、`json-render/registry.tsx`），参数流式到达时逐块淡入。开关仍是 `CHISABOT_GENERATIVE_UI`（关闭时既不提供工具也不注册渲染器）。
+- 取代 A2UI。机器人调用 `render_ui` 工具，参数是 json-render 的 SpecStream（JSONL，每行一个 JSON Patch）；服务器按共享目录 `shared/json-render/catalog.ts` 校验，浏览器用同一份目录在对话里渲染（`app/src/lib/conversations/render-ui-tool.tsx`、`json-render/registry.tsx`），参数流式到达时逐块淡入。开关仍是 `CHISABOT_GENERATIVE_UI`（关闭时既不提供工具也不注册渲染器）。
 - 组件（17 个，2026-10-13 扩到 37 个，见 §32）：Card、Stack、Grid、Heading、Text、Metric、Table、List、Badge、Button、Input、Select、Checkbox、Alert、Progress、Image、Separator。样式全部是 `styles.css` 的 `.jr-*`，只用 Skyglass 令牌（玻璃 L1 卡片、L2 子块、墨色主按钮、天蓝进度/焦点），亮暗自动适配；动效 `--dur-2` 淡入上移 4px，减少动态效果时只淡入。
 - 按钮动作：`send_message`（以用户身份在当前对话发一条可见消息，可用 `includeState` 附上表单值）、`open_link`（仅 http/https，新标签页）、内置 `setState / pushState / removeState / validateForm`。真正的操作仍由机器人用自己的工具完成并经过审批。
 - 生成中：同形状骨架 →「正在生成界面…」；格式错误：一行琥珀色「生成界面，无法工作 · 格式有误，机器人会修正后重新生成」，问题列表收在展开里（机器人会收到同样的问题并重试）。
@@ -617,7 +619,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 整个应用是一块天空：左栏卡、右栏卡（「面板 | 计算机」）是两张 L1 玻璃卡，中间的聊天列**不画任何白色 / 黑色底板**，消息与输入框直接浮在同一片背景上。
 
-- 适用于频道聊天与机器人聊天（`/bot`，CopilotChat）。CopilotChat 自带的 `[data-copilotkit]{background:var(--background)}` 在 `.bot-chat-sky` 里被去掉（`styles.css` 末尾）。
+- 机器人聊天统一使用频道的 `ConversationView` / `ChatTranscript`，`/bot` 仅做兼容跳转（§68）。聊天列使用自身样式与 Skyglass 令牌，不依赖第三方聊天容器的底板规则。
 - 内容列与输入框同宽：`min(42rem, 100% - 32px)` 居中，所以无论左栏展开 / 收起、右栏展开 / 收成侧边标签，输入框与左右卡之间至少 16px，不会贴边。（2026-10-16 起才真的这样实现，见 §92；之前输入框列是 `max-w-2xl px-0`，主区窄于 42rem 时贴边。）
 - 输入框是 `.glass-composer` 同款玻璃卡（L2，聚焦变 L3），底部与左右卡底边对齐（16px）；模型选择已移进输入框工具栏（§25）；不显示免责声明（与频道聊天一致）。
 - 可读性：用户消息墨色气泡，机器人文字放在 L1 玻璃气泡里（与频道聊天一致），浅色 / 深色天空下都看得清。
@@ -639,7 +641,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 数字的来源，不编造：
 
 - **窗口**只来自模型目录（Magpie / 网关 `/v1/models` 的 `context_window`/`context_length`/`max_input_tokens`，`shared/model-selection.ts` 的 `contextWindow`）。目录里没有这个模型的窗口 → 圆环只画虚线轨道、不画比例，详情里不写分母，只写已用。
-- **已用**来自服务器：`GET /api/copilotkit/threads/:id/context`（`server/src/local-conversations.ts`）读这条对话最近一次带用量的 RUN_FINISHED。
+- **已用**来自服务器：`GET /api/conversations/threads/:id/context`（`server/src/local-conversations.ts`）读这条对话最近一次带用量的 RUN_FINISHED。
   - 实测：服务器把语言模型包了一层（`server/src/context-usage.ts` `meterLanguageModel`），每次模型调用结束记下这一步的输入 + 输出 token，运行结束时写进 RUN_FINISHED 的 `metadata.contextUsage`。用最后一步而不是 AG-UI 自带的 `usage`，因为后者是整轮累加，调了工具会翻倍。
   - 旧对话只有累加 `usage` → 标「约」，说明「含工具步骤，可能偏大」。
   - 提供方没给用量 / 外部机器人 → 按消息文字估算（中日韩 1 字 ≈ 1 token，其余 4 字符 ≈ 1 token），标「约」，说明「不含系统提示与工具定义，可能偏小」。
@@ -662,13 +664,13 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 27. 一轮对话的样子：开场一句 → 结果（2026-10-13，Hark 第二 / 四轮）
 
-机器人聊天（`lib/copilot/turn-compaction.ts`）和频道聊天（`chat-transcript.tsx` `compactTurns`）同一套规则：
+机器人聊天统一由频道 `chat-transcript.tsx` 的 `compactTurns` 呈现，纯规则位于 `lib/conversations/turn-compaction.ts`。本节记录初版回合结构；可见 AI 正文的气泡规则以 §126 的 2026-11-07 修正为准：
 
 - 每轮第一段文字 = 开场一句（气泡，不带复制）。
 - 结果 = 最后一段文字，并且它后面没有再调工具 / 开网页；这一轮还在跑、或被用户停掉时没有结果气泡。
 - 中间的过程话：还在跑或没有结果时是一行淡色小字（13px，`--ink-3`，无气泡、无工具栏）；有了结果就收起（网页小条保留）。
 - 打开网页的小条、「思考了…」每轮只留最后一个。
-- 用户按停止：那一轮末尾挂「◼ 已停止」小胶囊（`--glass-1` 底、`--line` 边、12px、`--ink-3`），不弹红色错误横幅；停止记录在服务器（`GET /api/copilotkit/threads/:id/stopped`），刷新、换设备都在。标记不进对话，不会发给模型。
+- 用户按停止：那一轮末尾挂「◼ 已停止」小胶囊（`--glass-1` 底、`--line` 边、12px、`--ink-3`），不弹红色错误横幅；停止记录在服务器（`GET /api/conversations/threads/:id/stopped`），刷新、换设备都在。标记不进对话，不会发给模型。
 - 计算机状态行：一轮还在跑时保留最后一句（「刚刚打开 example.com」），不在两步之间退回空闲提示；这一轮结束 6 秒后才淡出。
 - 截图缩略图存在服务器（`/api/chat-shots`，按人，≤400KB/张，每人 200 张 / 30 天），任何设备都能看到；不进模型上下文。
 - 面板 / render_ui 里空的 List、Table、repeat 区块不画，连同它前面落单的小标题（`shared/json-render/empty-sections.ts`）；`panel_update` 遇到空区块直接退回。
@@ -691,7 +693,9 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 **渲染这一侧（兜底，对话 render_ui 也适用）**：
 - 一层外壳：外壳是面板卡片（对话里是最外层 Card）。外壳里的 Card 平铺成小节，Metric / 表格 / 列表不再各自带底色、边框、圆角。和卡片头同名的标题不画第二遍（`shared/json-render/panel-title.ts`），Card 的 description 变成一行淡色副标题。
-- 缺外壳时整张界面自己当外壳（2026-11-06，用户：「为啥AI输出的内容，好多不在气泡里」）：对话里模型常直接用 Stack 起头，上面一排卡片、下面一行淡色小字，那行字落在天空 / 壁纸上。从根往下只穿过 Stack / Grid / Carousel / Tabs，遇到 Card 就停；路上碰到自己没有底的东西（Text、Heading、KeyValue、图表、时间线……）时 `.jr-surface` 加上 `.jr-card`，里面的 Card 按上一条平铺成小节。只有自带底的 Metric / List / 按钮 / 商品卡时不加（`shared/json-render/shell.ts`）。流式时如果那行字最后才到，外壳在它到的那一刻出现。
+- 缺外壳时整张界面自己当外壳（2026-11-06，2026-11-08 起 Android 主界面共用 React 手机布局（§80）；以下 P0/P1 中的原生 surface 与解析器描述对应保留的旧客户端兼容路径。
+
+用户：「为啥AI输出的内容，好多不在气泡里」）：对话里模型常直接用 Stack 起头，上面一排卡片、下面一行淡色小字，那行字落在天空 / 壁纸上。从根往下只穿过 Stack / Grid / Carousel / Tabs，遇到 Card 就停；路上碰到自己没有底的东西（Text、Heading、KeyValue、图表、时间线……）时 `.jr-surface` 加上 `.jr-card`，里面的 Card 按上一条平铺成小节。只有自带底的 Metric / List / 按钮 / 商品卡时不加（`shared/json-render/shell.ts`）。流式时如果那行字最后才到，外壳在它到的那一刻出现。
 - Android 原生渲染同一套（`android/.../ui/JsonRender.kt`）：对话卡 `autoShell` 走 `needsShell` 补玻璃壳，壳内由 `LocalInShell` 平铺 Card（标题 13px 淡色小节头）、Metric（tinted 除外）去底去内边距、表格去边框、列表行去横向内边距；面板页卡片本来就是外壳，只补 `dropDuplicatePanelTitle` 去同名标题。
 - 数字永远一行：`.jr-metric-v` nowrap，放不下由 `FitLine` 缩字号（最小 13px）；「26.9℃」拆成数字 + 小一号淡色单位；标签单行省略号。
 - Grid 的 columns 是上限：每格至少 84–88px，放不下自动少一列（窄面板 3 列 → 2 列）。
@@ -713,7 +717,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 31. 聊天富预览：链接卡 · 图片一摞 · 看大图 · 文件卡（2026-10-13）
 
-机器人聊天（`lib/copilot/rich-message-view.tsx`）和频道聊天（`chat-transcript.tsx`）共用 `components/rich-previews/`，样式在 `styles.css` 的 `.rp-*`。预览画在消息根节点里、正文下面，turn-compaction 收起过程话时预览一起收起；开场一句不带预览。
+机器人聊天统一由 `components/channels/chat-transcript.tsx` 调用 `components/rich-previews/`，样式在 `styles.css` 的 `.rp-*`。预览位于消息根节点的正文下方；过程话的收起与最终输出归属遵循 §126。
 
 - **链接卡**（2026-10-14 已由 §48 替换：只有单独一行的链接出卡、紧凑 64px 卡、兜底卡；下面是旧版）：一条消息最多 3 张（`MAX_LINK_CARDS`），代码块里的链接不算。卡宽 `min(320px, 100%)`，`--glass-1` 底、`--stroke` 边、`--r-md` 圆角；有图时图在上（1.91:1，`object-fit: cover`，截图从顶部对齐），下面是「图标 站点名 · 域名」一行（12px，`--ink-3`）+ 标题两行截断（14px，500）；没有图时多一行两行截断的描述。悬停上浮 1px + `--glass-2`。加载中是同尺寸骨架（`sky-skel-*`），不跳版。取不到预览就不画卡，正文里的链接照常可点。
 - **预览数据只走服务器**：`GET /api/link-preview?url=`（`server/src/link-preview/`）抓页面、读 og / twitter / title，图片和图标由服务器下载转存（`/api/link-preview/asset/:id`），浏览器从不直连第三方。og:image 失败会重试一次；再没有就请 agent-computer `POST /preview-shot` 截一张 1200×630（独立无痕 Chromium，所有请求经 `guardedFetch` 代取，内网 / 本机 / 元数据地址一律拒绝，见 `shared/net/ssrf.ts`）。截图期间卡片图位是骨架。
@@ -726,7 +730,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 用户原话：「你这卡片太简单太单一。缺少各种视觉UI等效果。尤其是本身还要适用于生成式UI，内容持续刷新，可以点击跳转浏览器等等。大范围扩展一下」。
 
-对话里的 `render_ui` 和右栏面板共用一套组件（目录 `shared/json-render/catalog.ts`，实现 `app/src/lib/copilot/json-render/`：`registry.tsx` 注册、`charts.tsx` 图表、`rich.tsx` 媒体 / 结构 / 实时、`rich-context.tsx` 点击与刷新动画、`rich-utils.ts` 纯函数、`icons.tsx` 图标）。仍然 300px 窄卡优先、只用 Skyglass 令牌、亮暗自动。
+对话里的 `render_ui` 和右栏面板共用一套组件（目录 `shared/json-render/catalog.ts`，实现 `app/src/lib/conversations/json-render/`：`registry.tsx` 注册、`charts.tsx` 图表、`rich.tsx` 媒体 / 结构 / 实时、`rich-context.tsx` 点击与刷新动画、`rich-utils.ts` 纯函数、`icons.tsx` 图标）。仍然 300px 窄卡优先、只用 Skyglass 令牌、亮暗自动。
 
 **组件（新增 20 个，共 37 个）**
 - 数据可视化：`Chart`（line / area / bar，最多 3 条，渐变填充、单调曲线不冲过头、悬停 / 按住显示数值的玻璃提示、横轴标签抽样、首尾刻度）、`Sparkline`（迷你走势，自动涨绿跌红，末端点呼吸）、`Ring`（进度环 / 甜甜圈 + 图例）、`Gauge`（半圆仪表，warnAt / dangerAt 自动变色）、`HeatStrip`（一条在线率 / 日历格贡献）。`Metric` 新增 `spark`（数字下的迷你走势）。全部手写 SVG，不引图表库。
@@ -814,15 +818,15 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 用户：「AI 输出的时候有时候会跳到聊天记录上面」。
 
-- **根因**：CopilotKit 1.77 的消息列表超过 50 条就虚拟化（`@tanstack/react-virtual`），没量过的行按「已量过行的平均高度」估。行数一变（发消息、回复开始、出现思考 / 工具步骤）就把几十行没量过的行按新平均值重估，长回复把平均值拉高 → 视口上方凭空多出几千像素，scrollTop 不变，眼前换成更早的记录，贴底动画再把它拖回来。实测 64 条历史：发送那一帧 scrollHeight +2958px，视口顶上从第 63 条退到第 61 条。
-- **规则**：机器人聊天的消息列表**不虚拟化**——`RICH_MESSAGE_VIEW.children = renderUnvirtualizedMessageList`（`lib/copilot/message-list.tsx`，CopilotKit 关闭虚拟化的正式写法），结构 / 类名 / 光标与自带的一致。不要删这个 `children`，也不要给机器人聊天换回会估算行高的虚拟列表。
-- **性能**：全挂载后屏幕外旧消息靠 `content-visibility: auto` 跳过样式 / 布局 / 绘制（`styles.css` §35 段，最后 6 条始终渲染）；`contain-intrinsic-size: auto 240px` 对所有消息开着，显示过的消息离开视口后保持真实高度，贴底时上方高度不变。实测 110+ 条消息、4× CPU：流式 36fps、单个长任务 ≤ 206ms（只全挂载不加这条：18fps、长任务累计 11.5s）。
+- **历史根因（2026-10-13）**：CopilotKit 1.77 的消息列表超过 50 条就虚拟化（`@tanstack/react-virtual`），没量过的行按「已量过行的平均高度」估。行数一变（发消息、回复开始、出现思考 / 工具步骤）就把几十行没量过的行按新平均值重估，长回复把平均值拉高 → 视口上方凭空多出几千像素，scrollTop 不变，眼前换成更早的记录，贴底动画再把它拖回来。实测 64 条历史：发送那一帧 scrollHeight +2958px，视口顶上从第 63 条退到第 61 条。
+- **当前实现**：频道 `ChatTranscript` 默认采用尾屏优先挂载（`lib/chat/tail-first-paint.ts`、`use-tail-first-mount.ts`）：超过 48 条先挂最后 36 条，再分批补到 96 条；继续上翻或恢复较早锚点时补更多历史。已挂消息保持稳定 key，追加与回放不拆掉已有节点。可选虚拟模式由 `useVirtualTranscript` 控制，启用时同样必须满足本节的滚动与节点稳定验收。
+- **历史性能记录（2026-10-13）**：当时用 `content-visibility: auto` 跳过屏幕外旧消息的样式 / 布局 / 绘制，`contain-intrinsic-size: auto 240px` 保留量过的行高。110+ 条消息、4× CPU 下测得流式 36fps、单个长任务 ≤ 206ms；只全挂载时是 18fps、长任务累计 11.5s。当前已移除这条消息行优化，采用上述分批挂载；这些数字只描述当时的候选。
 - **贴底**：在底部时整轮流式都贴着底部（`use-stick-to-bottom`，平滑跟随）；用户往上滚（滚轮 / 触摸）就脱离，不被拽回，右下「↓」回到底部。消息末尾的预览卡、图片一摞在回复结束后出现时，贴底状态下平滑跟随下去。
-- **验证**：`tests/chat-scroll/repro.mjs`（假模型 + 60+ 条历史，逐帧记录 scrollTop / 视口里最早一条消息）——贴底时「视口出现更早记录」的帧数必须是 0，上滑后位置不变；桌面 1280×800、手机 390×844、4× CPU 都要过。回归单测 `app/tests/bot-message-list.test.tsx`。
+- **验证**：`tests/chat-scroll/repro.mjs`（假模型 + 60+ 条历史，逐帧记录 scrollTop / 视口里最早一条消息）——贴底时「视口出现更早记录」的帧数必须是 0，上滑后位置不变；桌面 1280×800、手机 390×844、4× CPU 都要过。当前定向回归见 `app/tests/tail-first-paint.test.ts`、`app/tests/tail-first-mount.test.tsx` 与 `app/tests/message-node-identity.test.tsx`。
 
 - **35.4 发送时整段聊天跳一截（2026-10-13 第二次修，用户：「发送消息，聊天记录往回跳的问题依旧存在」）**：
-  - **根因**：不是消息列表，是**滚动区本身被挪了**。聊天顶上的红色提示（「上一轮没有回答的原因」/「较早消息无法加载」）以前是聊天列里的普通块，排在滚动区上面。发送时 `onRunInitialized` 清掉提示 → 滚动区顶边同一帧上移 137px（420px 窄窗 217px），scrollTop 不变，整段聊天在屏幕上跳一截；这一轮再出错时提示重新出现 → 滚动区变矮，最新一条被挤出视口，眼前换成更早的记录（「往回跳」）。而且提示是**陈旧的**：打开会话时 CopilotKit 把历史事件重放给订阅者，一小时前某一轮的 RUN_ERROR 会被重新挂上去，之后几轮明明都答好了——所以用户每次打开、每次发送都会跳。#61 的复现只看「滚动区里面」（scrollTop / 视口最早一条），滚动区整体挪位置量不到，测试数据里也没有出过错的轮次。
-  - **规则**：聊天顶上的提示一律是**浮层**（`.bot-chat-notices`，绝对定位在 `.bot-chat-sky` 里，宽度与消息列一致，最高 `min(40vh, 240px)` 自己滚动，可关），**不占版面**；任何会出现 / 消失的东西都不能放在滚动区的上下方改变它的大小或位置。提示在**任何一轮开始**（包括历史重放里的 `RUN_STARTED`）时清掉，只有最后一轮出错才显示（`stoppedTurnSubscriber`，`lib/copilot/stopped-turn.ts`）。
+  - **根因**：不是消息列表，是**滚动区本身被挪了**。聊天顶上的红色提示（「上一轮没有回答的原因」/「较早消息无法加载」）以前是聊天列里的普通块，排在滚动区上面。发送时 `onRunInitialized` 清掉提示 → 滚动区顶边同一帧上移 137px（420px 窄窗 217px），scrollTop 不变，整段聊天在屏幕上跳一截；这一轮再出错时提示重新出现 → 滚动区变矮，最新一条被挤出视口，眼前换成更早的记录（「往回跳」）。当时的提示还是**陈旧的**：旧客户端打开会话时 把历史事件重放给订阅者，一小时前某一轮的 RUN_ERROR 会被重新挂上去，之后几轮明明都答好了——所以用户每次打开、每次发送都会跳。#61 的复现只看「滚动区里面」（scrollTop / 视口最早一条），滚动区整体挪位置量不到，测试数据里也没有出过错的轮次。
+  - **规则**：临时提示不挤动滚动区；当前频道聊天将历史错误放入现有 notice 插槽，将本轮错误画在对话末尾。停止与历史错误的归并在 `lib/conversations/stopped-turn.ts`，只呈现当前回合实际状态。旧 `/bot` 的 `.bot-chat-notices` / `.bot-chat-sky` 已随 §68 移除，不再作为样式接口。
   - **验证**：`tests/chat-scroll/send-jump.mjs`（真实长会话副本、逐帧记录：滚动区在屏幕上的位置、scrollTop、发送时视口里一条消息的屏幕位置）——发送后任意相邻两帧：滚动区不许移动、scrollTop 不许回退 > 24px、那条消息不许往下跳 > 24px / 往上跳 > 120px；`ASSERT=1` 时不过就退出码 1。场景：宽 1280×800 / 窄 420×860、贴底 / 上滑 700px、短 / 长回复、多行输入、4× CPU、上一轮出错再发（`FAIL=1 TWICE=1`）。单测 `app/tests/stopped-turn.test.ts`（重放后旧错误不显示）。
 
 ## 36. PC 小窗模式与窄窗口整理（2026-10-13）
@@ -872,7 +876,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 - **状态**：queued → read → answered / stopped（用户按了停止）/ owed（那一轮出错或服务重启，下一轮开始时一起读进去）；withdrawn = 用户撤回；merged = 客户端改成普通发送。没有一条消息会被悄悄丢掉。服务器另一个入口：回答中又来一个 `/run` 请求（别的设备、旧客户端），不再 409，它的新用户消息进收件箱，请求接上正在跑的那一轮的流。
 - **界面**：回答中输入框里有字时，「停止」键变成墨色「发送」键（Enter 同样）；清空输入框才是「停止」。发出的消息在消息列表末尾画成「已排队」气泡（同用户气泡的位置和圆角，玻璃底 + 虚线描边，下面一行「已排队 · 当前步骤结束后读取」和「撤回」）；被读到时气泡消失，同一条消息出现在记录里，下面淡出「已读取」（6 秒）。一轮结束时还在排队的（撞上了结束），客户端按普通消息发出去。打开对话时把服务器上还在排队的接回来（另一台设备发的也算）。
 - **提示词**（`shared/bot-prompt.ts`）：过程中收到的补充并进手头的工作、是更正就改方向，结束时回应到每一条。插进 prompt 的那一份带一句「这是过程中的补充」，对话记录里是用户原话。
-- **接口**：`GET/POST/DELETE /api/copilotkit/threads/:id/inbox`（POST `{id,text}` → `{queued:true}` 或 `{queued:false}` = 没在跑、照常发送）。
+- **接口**：`GET/POST/DELETE /api/conversations/threads/:id/inbox`（POST `{id,text}` → `{queued:true}` 或 `{queued:false}` = 没在跑、照常发送）。
 - 计划模型（PlanModel）和网关字符串模型不做步内插话，只在段与段之间读进去。
 
 ### 38.2 后台任务（工人）
@@ -973,9 +977,9 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 42. 全端同步：同一个机器人，所有设备是同一段对话（2026-10-13）
 
-用户：「改，全端同步」。以前机器人聊天用哪条对话只记在浏览器 localStorage（`openbot.bot-thread.<agentId>`），网页、装成应用的 PWA、ChisaBot 桌面客户端、安卓客户端各有各的存储，于是同一个机器人在每台设备上是另一段对话。对话内容本来就在服务器上按人存，缺的只是「现在用的是哪一条」。服务器 `server/src/bot-threads.ts`，网页 `lib/copilot/bot-thread.ts`（`useBotThread`）+ `lib/copilot/use-conversation-sync.ts`。PC / 安卓外壳只加载网页、不自己记对话 id，不用改。
+用户：「改，全端同步」。最初每台客户端只在自己的 localStorage 记当前对话，因此同一个机器人会打开不同对话。当前频道持有 `threadId`，服务器 `server/src/bot-threads.ts` 提供变化戳、历史列表与兼容指针读写；网页由 `lib/conversations/bot-thread.ts` 和 `use-conversation-sync.ts` 消费，已移除旧 `useBotThread`。以下 42.1 的浏览器指针迁移保留为旧客户端兼容记录，频道聊天的当前入口见 §68。
 
-**42.1 当前对话在服务器上**：表 `chisabot_bot_threads`（owner_user_id + agent_id → thread_id，一人一机器人一行，只是指针）。`GET/PUT /api/bot-threads/:agentId`；库里已有这条对话但不是自己的 / 不是这个机器人的 → 404；还没发过消息的新对话（库里没有行）也可以是当前对话——它就是一段空对话，**不再**用「Intelligence 还认不认」去检查服务器给的 id。
+**42.1 当前对话在服务器上**：表 `chisabot_bot_threads`（owner_user_id + agent_id → thread_id，一人一机器人一行，只是指针）。`GET/PUT /api/bot-threads/:agentId`；库里已有这条对话但不是自己的 / 不是这个机器人的 → 404；还没发过消息的新对话（库里没有行）也可以是当前对话——它就是一段空对话，由自有会话服务验证该 id 的所有权与机器人归属。
 - 打开机器人：先问服务器；服务器有 → 用它（localStorage 只当缓存）。
 - 服务器为空（第一次 / 刚升级）：把这台浏览器原来记着的那条交上去（原来的「还认不认」检查照旧），没有就铸一条新的；写入带 `onlyIfNone`，两台设备同时迁移先到的赢、后到的拿回先到的那条。**不删任何对话**：换「新对话」或被别的设备的当前对话取代后，旧对话仍在库里。
 - 「新对话」（Shift+T、上下文圆环里的入口）：铸新对话 → 立刻显示 → 写进服务器（覆盖）。写入失败就在下次同步补写，期间同步不会把它拉回旧的（每次本机换对话 epoch +1，之前发出的同步结论作废）。
@@ -984,7 +988,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 **42.2 同步节奏**：页面在前台时每 **2 秒** `GET /api/bot-threads/:agentId/sync?threadId=<显示中>` 一次（一条 SQL 读当前对话 + 显示中对话的变化戳：最后事件序号、是否在回答、后台任务 / 收件箱最后更新时间）；页面隐藏不问，`visibilitychange` 回到前台、`focus`、`online`、`pageshow` 时马上问。别的设备换了对话 → 这台跟着换（聊天组件按对话 id 重挂，和本机点新对话一样）。
 
 **42.3 拉到这台设备**（`useConversationSync`）：
-- 事件序号变了，或服务器正在回答而这台没在跟 → `copilotkit.connectAgent` 重新接上这条对话：服务器回放已存事件，正在跑的那一轮继续实时推——另一台设备上的回答在这里同样流式出现，输入框进入「回答中」，这时发的消息进收件箱（§38.1）；「停止」停的是服务器上那一轮。**不重挂聊天组件**，输入框里没发的草稿不丢。
+- 事件序号变了，或服务器正在回答而这台没在跟 → `conversationClient.connectAgent` 重新接上这条对话：服务器回放已存事件，正在跑的那一轮继续实时推——另一台设备上的回答在这里同样流式出现，输入框进入「回答中」，这时发的消息进收件箱（§38.1）；「停止」停的是服务器上那一轮。**不重挂聊天组件**，输入框里没发的草稿不丢。
 - **合并式接入**（`onEvent` 拦回放，不照 SDK 原样）：SDK 的 HTTP 重连先发一个空消息快照再逐条重建，每步一次同步渲染，列表几帧里变短又变长，滚动位置被夹到顶上（实测发一条另一台跳 600–1000px）。所以：丢掉开头的空快照；这台已有的消息 / 工具调用，回放里它们的开始 / 正文 / 结束 / 参数 / 结果整组跳过（只跳正文会留下空气泡）；回放里的历史消息快照只「补」这台没有的消息、插在服务器的位置，不删已有的（`mergeSnapshot`）。新消息照常接上、照常流式。测法：`passivejump`——旁观设备逐帧记最后一条旧消息的屏幕位置，不许被卸载、列表不许变短、单帧下跳 ≤ 24px。
 - 本机一轮结束后读一次 `/messages` 比用户消息的先后，和服务器不一样（两台同时发，§42.5）就整段重建一次（这时才用 SDK 原样的清空 + 回放）。**只比两边都有的**（`userOrderDiffers`，见 §42.7）；服务器有、这台没有的用合并式接入补。
 - 后台任务戳变 → 刷新任务卡片；收件箱戳变 → 把别的设备排的消息接过来显示。
@@ -1000,30 +1004,30 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ### 41.4 首屏不带从不执行的库（构建时换成小桩）
 
-- `app/vite.config.ts` 的 `BUNDLE_STUBS`（`resolve.alias`）把三个「只被引用、从不执行」的包换成 `app/src/lib/bundle-stubs/` 里的小桩：`@copilotkit/a2ui-renderer`（A2UI 早被 json-render 取代，服务器 `a2ui: { enabled: false }`）、`@ag-ui/proto`（浏览器只收 SSE，从不解 protobuf）、`rehype-katex`（只有 CopilotKit 自带的旧 streamdown 引用；ChisaBot 的回复走自己的 streamdown，本来就不渲染公式）。
-- 效果（4× CPU 侧边预览，打开长对话）：加载的 JS 4.00→3.43 MB，宽屏到消息 2904→2584 ms。聊天、代码块、表格、json-render 卡片、思考过程、mermaid 代码块与换之前逐项一致（同一份假模型回复对比）。
-- 桩万一被调用会在控制台说明原因（A2UI）或直接报错（protobuf），不会悄悄吞掉。以后真要启用 A2UI / protobuf / 公式，先从 `BUNDLE_STUBS` 删掉对应条目。
+- `app/vite.config.ts` 的 `BUNDLE_STUBS` 目前只将 `@ag-ui/proto` 映射到 `app/src/lib/bundle-stubs/ag-ui-proto.ts`：浏览器消费 SSE，不解 protobuf。旧 A2UI 渲染器与旧 Markdown 依赖的小桩已删除。
+- 历史效果（旧版三个依赖小桩，4× CPU 侧边预览，打开长对话）：加载的 JS 4.00→3.43 MB，宽屏到消息 2904→2584 ms。聊天、代码块、表格、json-render 卡片、思考过程、mermaid 代码块与替换前逐项一致。这是当时的测量，不是当前候选的体积报告。
+- protobuf 桩被实际调用时会抛出明确错误；启用二进制事件传输前，应移除该别名并验证对应协议路径。
 
 ### 41.5 登录后首屏只带首屏要的 JS，长任务不压在首屏（2026-10-29，PR A）
 
 起因：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒（生产冷缓存：LCP 6540ms，最长长任务 2193ms，主包 3.0 MB / gzip 约 950 KB）。
 
 - **路由级拆分 + 手动块**（`app/vite.config.ts`）：
-  - `VENDOR_CHUNKS` 把重的第三方库固定成几块：`vendor-react`（含 `\0commonjsHelpers`，放在叶子块里避免块循环导致的 `forwardRef of undefined`）、`vendor-copilot`（不含 `@copilotkit/web-inspector`，它由 CopilotKit 自己按需加载）、`vendor-markdown`、`vendor-shiki`、`vendor-shiki-wasm`、`vendor-lucide`。MCP SDK（`@modelcontextprotocol`）并进 `vendor-copilot`：单独成块时 Rollup 为了执行顺序给它加一句 `import "./vendor-copilot"`，两块成环。
-  - **故意不分进 vendor 块的**：`katex` 和 `micromark-extension-math`（一旦进手动块，`mathHtml` 会被保留并静态带上 katex）；streamdown 的 `code-block-*`（静态带着 shiki）；所有 `.css`（入口引入 CopilotKit 的 CSS，分进 JS 块会让入口反过来静态依赖整块 JS）。
+  - `VENDOR_CHUNKS` 固定 `vendor-react`（含 `\0commonjsHelpers`）、`vendor-conversation`（`@ag-ui/*` 与 `rxjs`）、`vendor-markdown`、`vendor-shiki`、`vendor-shiki-wasm`、`vendor-lucide`。React 保持为不依赖其它块的叶子块，避免循环导致 `forwardRef of undefined`。
+  - **故意不分进 vendor 块的**：`katex` 和 `micromark-extension-math` 的执行入口（避免将公式运行时代码静态带上）；streamdown 的 `code-block-*`（静态引用 shiki）；所有 `.css`（避免入口为加载样式反过来依赖整块 JS）。
   - **反过来要点名进 `vendor-markdown` 的小模块**：streamdown 的 Mermaid 小包装（一行 re-export）、`vfile-location`、`extend`、公式的语法文件（`micromark-extension-math/lib/{syntax,math-flow,math-text}.js`，不含 `index.js` / `html.js`）。它们 Markdown 和按需的公式块都用，不点名时 Rollup 把它们放进一个共享小块，小块又要从 `vendor-markdown` 拿东西，成环。
-  - `_authed/admin/components/*`（组件库预览）不进 `route-admin`，各自成块；页面里的 CopilotProvider 也是按需加载（`lib/copilot/lazy-provider.tsx`）。否则管理页首屏带上 CopilotKit 和 Markdown（gzip 约 0.5 MB）。
+  - `_authed/admin/components/*`（组件库预览）不进 `route-admin`，各自成块；页面的 `LazyConversationToolsProvider` 按需加载（`lib/conversations/lazy-provider.tsx`），管理首页不因此加载会话与 Markdown。
   - `shell` 块：左栏、设置侧栏、管理侧栏、右栏这四个外壳根的静态闭包（去掉入口和 vendor）；`_authed.tsx` / `_authed/_app.tsx` 的路由组件单独成 `route-shell`，不再和聊天共享 `route-chat-core`（否则设置页也会拖上聊天依赖）。
-  - 手动块很容易造成块循环；`app/tests/router.test.ts` 钉住了上面这些分组。**构建时 `chunkGuard` 插件（`app/scripts/chunk-graph.ts`）检查真实产物**：块之间有静态 import 环、或设置 / 管理首屏（入口闭包 + 该组 modulepreload 闭包）带上 `vendor-copilot` / `vendor-markdown`，构建直接失败（排查时可设 `CHISABOT_CHUNK_GUARD=warn` 只告警）；`app/tests/chunk-graph.test.ts` 在有 `app/dist` 时再对产物查一遍。改了 `VENDOR_CHUNKS` 仍要真机跑一遍。
+  - 手动块很容易造成块循环；`app/tests/router.test.ts` 钉住了上面这些分组。**构建时 `chunkGuard` 插件（`app/scripts/chunk-graph.ts`）检查真实产物**：块之间有静态 import 环、或设置 / 管理首屏（入口闭包 + 该组 modulepreload 闭包）带上 `vendor-conversation` / `vendor-markdown`，构建直接失败（排查时可设 `CHISABOT_CHUNK_GUARD=warn` 只告警）；`app/tests/chunk-graph.test.ts` 在有 `app/dist` 时再对产物查一遍。改了 `VENDOR_CHUNKS` 仍要真机跑一遍。
 - **按需加载**（`app/src/components/ui/lazy-part.tsx`）：`lazyPart(load, fallback)` 是带 `preload()` 的懒组件，fallback 用现有设计系统组件（`Skeleton`、`SidebarSkeleton`、同形状骨架），不另起样式；`AfterIdle` 把首屏用不到的东西（QuickSpotlight、ScheduleNotifier、ProfileSetupGate）推到空闲时再挂。
-  - CopilotProvider 不再包住整个已登录区，只在第一次进聊天时挂上（之后常驻），管理页的组件预览自己包一层（按需加载）。render_ui 的渲染面在 `RenderUiTool` 挂上时（聊天区一出现）就开始预取，打开旧对话时历史里的卡片直接画出来，不先闪骨架、顶跳页面。
-  - 懒加载的：频道页、CopilotProvider、左栏 / 设置侧栏 / 管理侧栏 / 右栏、右栏的电脑面板和实时面板卡片（没有面板时卡片渲染根本不加载，数据在 `live-panels-query.ts`）、对话里 render_ui 的 json-render 渲染（`json-render-surface.tsx`）、Streamdown（加载前先按纯文本显示）、转录缓存的预取。KaTeX、代码高亮、文档预览、图表、工作流编辑器都在各自的按需块里。
+  - `ConversationToolsProvider` 注册会话客户端与工具结果渲染器，只在聊天需要时挂载；管理页的组件预览按需单独加载。`RenderUiTool` 挂载时预取 json-render 渲染面，打开旧对话时可复用卡片渲染代码。
+  - 懒加载的：频道页、ConversationToolsProvider、左栏 / 设置侧栏 / 管理侧栏 / 右栏、右栏的电脑面板和实时面板卡片（没有面板时卡片渲染根本不加载，数据在 `live-panels-query.ts`）、对话里 render_ui 的 json-render 渲染（`json-render-surface.tsx`）、Streamdown（加载前先按纯文本显示）、转录缓存的预取。KaTeX、代码高亮、文档预览、图表、工作流编辑器都在各自的按需块里。
 - **按路径预载首屏块**（`app/scripts/route-preload.ts`）：构建时算出聊天 / 设置 / 管理三类首屏一定会用到的块及其静态依赖，往 `index.html` 放一段小内联脚本，按 `location.pathname` 插 `<link rel="modulepreload">`，和入口并行下载，消除「入口执行完才发现要下频道页」的瀑布。内联脚本的 CSP 哈希由 `shared/content-security-policy.ts` 按最终 HTML 自动算。
 - **天空着色器在后台线程预热**（`sky-background.tsx` 的 `prewarmSkyShaders`）：首屏最长的长任务（1.1–1.4s，RTX 3060 / ANGLE D3D11 实测）是天空引擎 `initGL` 同步编译 ~34KB 的片元着色器。引擎文件不改：宿主先在 Worker 里用 OffscreenCanvas + `KHR_parallel_shader_compile` 以同样源码和上下文参数编译链接一遍，编完再启动引擎，引擎那次编译命中 Chrome 显卡进程的着色器缓存（实测 50–75ms）。必须在 Worker 里且打开并行编译：主线程上光建第一个 WebGL 上下文就要一百多毫秒；不开并行编译则显卡进程主线程被占，页面合成跟着晚（LCP 反而晚 1 秒多）。没有 Worker / OffscreenCanvas、出错或 8 秒超时都直接启动引擎，和以前一样；占位图 `#skyph` 照常显示到第一帧。
 - **分析工具**：`CHISABOT_BUNDLE_REPORT=1 bun run build` 写 `app/dist/bundle-report.json`（首屏块、包大小、为什么被带上、每块最大模块）；`CHISABOT_BUNDLE_TRACE=key1,key2` 列出某模块拖进了哪些块；`CHISABOT_BUNDLE_EDGES=/shell-` 列出块之间的模块级引用。默认不启用。
-- **实测**（Jun 的电脑，本地静态服务器 + gzip + 假 API，独立 headless Chrome、每轮全新临时 profile、CDP 关缓存、40ms RTT / 20 Mbps；各 3 轮取中位数）：
+- **历史实测（2026-10-29 候选）**（Jun 的电脑，本地静态服务器 + gzip + 假 API，独立 headless Chrome、每轮全新临时 profile、CDP 关缓存、40ms RTT / 20 Mbps；各 3 轮取中位数）：
   - 设置页：首屏 JS gzip 1,162,721 → 520,204（−55%），LCP 3832 → 1500 ms，最长长任务 1412 → 54 ms。
-  - 聊天首页（`/` → `/channel/new`）：LCP 4448 → 2236 ms，最长长任务 1667 → 78 ms；首屏 JS gzip 1,128,461 → 1,136,460（持平）——聊天页本身就要 CopilotKit（约 168 KB）和 Markdown（约 189 KB，CopilotKit 静态引用自带的 streamdown），这部分没法再省。
+  - 聊天首页（`/` → `/channel/new`）：LCP 4448 → 2236 ms，最长长任务 1667 → 78 ms；首屏 JS gzip 1,128,461 → 1,136,460（持平）。当时的包包含 CopilotKit（约 168 KB）及其静态引入的 Markdown（约 189 KB）；当前清理已改变依赖图，不能据此断言当前体积或优化上限。
   - 入口块 3,068,525 / gzip 957,529 → 421,343 / gzip 137,944 字节。
 
 ## 43. 面板自己靠得住：定时刻刷新、交还即重刷、不编来源、刷新不叠刷新、重启不卡（2026-10-13，生产实测）
@@ -1040,12 +1044,12 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ## 44. 思考内容收起就不在页面里；删机器人连面板一起删（2026-10-13）
 
-### 44.1 推理只在「思考了 N 秒」点开时存在
+### 44.1 推理与正文分离
 - 推理走独立的 reasoning 消息（服务器把模型的 thinking 块转成 REASONING_* 事件，不进正文）。2026-10-13 实测 muse-spark-1.3 / mimo-v2.6-flash / step-5-preview 都用标准 thinking 块，solar-mini4 / gpt-5.6 不给推理，没有一个把推理写进正文（也没有 `<think>` 标签），所以服务器不剥正文。
-- 但 CopilotKit 自带的折叠只是 grid 0fr + overflow:hidden：英文推理一直在 DOM 里，Ctrl+F 搜得到、全选复制夹在回答中间、读屏会念、读 innerText 的脚本（我们自己的 e2e）当成回答——这就是「推理混进聊天正文」。
-- 而且 CopilotKit 的思考消息在流式时会自动展开、结束后靠 effect 再关；生产实测（muse-spark 建面板，一轮里多次「思考 → 工具」）出现过关不上：「思考了 5 秒」下面直接摊开一段英文，就在正文里。
-- 规则：`messageView.reasoningMessage = ReasoningMessageZh`（lib/copilot/reasoning-zh.tsx，整条自己渲染）。只有用户点了才展开，永远不会自己打开；流式时只显示「正在思考…」。收起时 `inert` + `aria-hidden`，收起动画（200ms）结束后把内容卸掉。回归测试 app/tests/reasoning-hidden.test.tsx。
-- e2e 检查「正文里有没有推理」时读 `.copilotKitMessages` 的 innerText 即可（收起的推理不在里面）。
+- **历史根因（2026-10-13）**：旧 CopilotKit 折叠使用 grid 0fr + overflow:hidden，收起的英文推理仍在 DOM，Ctrl+F、全选复制、读屏和 innerText 会读到；流式自动展开后也曾未能收起。
+- 当时生产实测 muse-spark 建面板，一轮内多次「思考 → 工具」后，「思考了 5 秒」下仍摊开英文推理。这解释了当时的问题，不是现有聊天组件的实现。
+- **当前规则**：推理事件不进入回复正文。`components/channels/chat-messages.ts` 的 `toVisibleChatItems` 跳过 reasoning 角色，`ChatTranscript` 仅用状态提示表示等待；旧的 `ReasoningMessageZh` 已随 §68 删除。回归见 `app/tests/chat-messages.test.ts`。
+- 浏览器检查正文时读取当前可见聊天页的 `[data-testid="chat-transcript"]`，不使用已经移除的第三方 CSS 选择器。
 - 兜底（2026-10-14）：模型若把推理写进正文、用 `<think>…</think>` / `<thinking>…</thinking>` 包着（MiniMax、R1 系等 OpenAI 兼容模型常见；AI SDK 的 OpenAI chat 客户端不认，`reasoning_content` 字段它直接丢弃、不会泄漏），服务器在模型层（server/src/agents/think-tags.ts，`connectionLanguageModel` 两种协议都包）把标签内的内容改成 reasoning 片段，照样走 REASONING_* 事件进「思考」。标签可跨流片段，没闭合的算思考；没标签的输出一字不改。纯文本、无标签的「推理」不猜、不剥（生产历史里没出现过）。测试 server/tests/think-tags.test.ts。
 
 ### 44.2 删机器人 = 它的面板也没了
@@ -1164,7 +1168,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 - **网站登录**沿用已有的「账号与密码」（保存的登录 + `computer_request_sign_in` 的聊天内登录卡片：用户填的账号密码由服务器直接打进机器人的浏览器，机器人只知道成没成功；验证码同一张卡片）。
 - **新增密钥**（`server/src/vault/`，表 `chisabot_vault_secrets` / `chisabot_vault_requests`，开机建表）：API 密钥、令牌。值用部署的 KEY_ENCRYPTION_KEY 加密，列表只给末四位；值永远不进模型、聊天记录、日志。每个密钥绑定「只允许发往」的域名（`*.example.com` 含子域名）。
 - **机器人**：`vault_list`（名字、用途、域名）、`vault_request_secret`（聊天里出安全输入卡片，工具在服务器上等最多 10 分钟，只拿到「存好了 / 取消了」）、`api_request`（https 接口，网址 / 请求头 / 请求体里写 `{{secret:名字}}`，服务器替换；目标域名不在绑定列表就拒绝；不跟随重定向；回来的内容里把值抹成 ••••）。IM、长期任务、后台刷新这些网页不在场的回合不能弹卡片，会让用户去设置里加。
-- **安全输入卡片**（`lib/copilot/vault-tool.tsx`，render-only）：玻璃卡，最宽 480px：琥珀锁图标（40px）· 标题（机器人给的名称）· 一句用途 +「只会发往 …」· 密码输入框（等宽 13px，`autocomplete=off`）+「保存」（按钮状态机）+「取消」。存好后图标变绿 ✓、文字「已加密存进保险箱，机器人看不到值」，输入框收起；取消 / 过期变灰「没有保存」。值只 POST 到 `/api/vault/requests/:id/fill`。
+- **安全输入卡片**（`lib/conversations/vault-tool.tsx`，render-only）：玻璃卡，最宽 480px：琥珀锁图标（40px）· 标题（机器人给的名称）· 一句用途 +「只会发往 …」· 密码输入框（等宽 13px，`autocomplete=off`）+「保存」（按钮状态机）+「取消」。存好后图标变绿 ✓、文字「已加密存进保险箱，机器人看不到值」，输入框收起；取消 / 过期变灰「没有保存」。值只 POST 到 `/api/vault/requests/:id/fill`。
 - **设置 → 密钥**（`/settings/vault`，左栏「账号与密码」下面）：页头「添加密钥」；一行一个：钥匙图标（琥珀）· 名称 · `{{secret:名字}}` 等宽标签 · 末四位 ·「可用于 域名 · N 分钟前用过」· ⋯（编辑… / 删除…）。编辑弹窗：名称、引用名（建后不能改）、只允许发往（逗号分隔，校验格式）、值（已保存时占位「已保存（末四位 xxxx）」，留空不改，从不回显）。删除先确认，不可撤销（值不保留）。
 
 ## 53. GitHub 账号连接：机器人读你的仓库，写之前先问你（2026-10-14）
@@ -1176,7 +1180,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 - **对话里就地连接**（2026-11-05）：没连 / 令牌失效时那几句话让回复末尾附独立一行的链接卡 `[连接 GitHub](/settings/connected-accounts/github)`——`HarkActionPill` 认出这个深链后渲染成白胶囊按钮，点开就地弹设置里同一个 `GithubTokenDialog`（令牌只发往服务器，不进对话）；不跳设置页。其它链接卡照常跳转。
 - **机器人工具**（只在连上后给，每轮开头一句 GitHub 用法）：读 `github_list_repos` / `github_list_issues`（不含 PR）/ `github_list_pulls` / `github_get_issue`（正文 + 最近 20 条评论；PR 加分支、冲突、改动数）/ `github_read_file`（文件或目录，文本 60k 字以内，二进制不读）；写 `github_create_issue` / `github_comment` / `github_create_pr`（只从已有分支开 PR，不推代码）。请求地址固定是 GitHub API、不跟随重定向，回来的内容抹掉令牌，再按外部内容包起来。
 - **写操作先确认**：工具在 `chisabot_github_actions` 记一条 pending，在服务器上等最多 10 分钟；用户点「允许」时**服务器才发请求**（原子地 pending → running，第二次点击 / 另一台设备不会重复发），点「拒绝」工具告诉机器人「不要换别的方式绕过」。IM、长期任务、后台任务这些网页不在场的回合直接拒绝写。
-- **确认卡片**（`lib/copilot/github-tool.tsx`，render-only，样式 `.gh-card`）：玻璃卡最宽 520px：40px 图标（等待 = 琥珀 GitHub / PR 图标，完成 = 绿 ✓，失败 = 红 ✕，拒绝 / 过期 = 灰）· 标题「在 owner/repo 创建 Issue / 创建 Pull Request / #12 发表评论」· 一句状态 · 预览框（标题加粗、`head → base` 等宽标签、草稿、标签、正文最高 180px 可滚）· 「允许」（按钮状态机：发送中… → 已发出 ✓）+「拒绝」；完成后「在 GitHub 查看 ↗」。卡片按结果里的 `⟦github:id⟧` 找记录，重新打开对话也显示最终状态。
+- **确认卡片**（`lib/conversations/github-tool.tsx`，render-only，样式 `.gh-card`）：玻璃卡最宽 520px：40px 图标（等待 = 琥珀 GitHub / PR 图标，完成 = 绿 ✓，失败 = 红 ✕，拒绝 / 过期 = 灰）· 标题「在 owner/repo 创建 Issue / 创建 Pull Request / #12 发表评论」· 一句状态 · 预览框（标题加粗、`head → base` 等宽标签、草稿、标签、正文最高 180px 可滚）· 「允许」（按钮状态机：发送中… → 已发出 ✓）+「拒绝」；完成后「在 GitHub 查看 ↗」。卡片按结果里的 `⟦github:id⟧` 找记录，重新打开对话也显示最终状态。
 - **设置 → 账号连接**（原「账号与密码」改名，路由不变 `/settings/connected-accounts`；最上面一节 GitHub）：没连 = GitHub 黑色标志 · 「未连接 · 用一个 GitHub 访问令牌连接…」·「连接」。连接弹窗两步：① 「打开 GitHub 创建令牌」（预填名称 ChisaBot、90 天、Contents / Issues / Pull requests 读写；仓库范围用户自己选）② 粘贴令牌（密码框、等宽）→「连接」（验证中… → 已连接 ✓）。已连 = 头像 · 名字 `@login` · 绿点「已连接」/ 红点「令牌已失效」· 令牌类型 · 末四位 ·「N 分钟前检查过 · 写操作每次都先问你」·「检查」（失效时换成「更换令牌」）· ⋯（更换令牌… / 在 GitHub 打开 / 断开连接…，断开先确认，并提醒去 GitHub 删除令牌）。
 - 管理员可设 `CHISABOT_GITHUB_API_BASE`（GitHub Enterprise 或测试替身），默认 https://api.github.com。
 
@@ -1196,7 +1200,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 用户原话：「把 hark 的功能，都给 chisabot」——第六项：定时任务 / 提醒。
 
-- **设**：任何对话里说「明早 9 点提醒我…」「每个工作日 18:00 帮我…」「半小时后…」，机器人调用 `schedule_create`。时间按用户时区（默认北京时间，说了别的地方才换）；每轮开头告诉机器人「现在是北京时间 …（星期几）」，一次性写本地时间「YYYY-MM-DD HH:MM」或 `in_minutes`，周期写 daily / weekdays / weekly / monthly / hourly / every_minutes / cron，服务器换算并算出下一次（最密每 15 分钟；时间已过、日期不存在、太密都用中文拒绝）。机器人照工具返回的 confirmation 回一句确认，聊天里同时出一张**确认卡**（`lib/copilot/schedule-tool.tsx`，玻璃卡，最宽 420px：蓝色闹钟图标 40px · 名字 ·「明天 09:00 提醒一次」/「每天 09:00 · 下次 明天 09:00」·「管理」胶囊链接）。
+- **设**：任何对话里说「明早 9 点提醒我…」「每个工作日 18:00 帮我…」「半小时后…」，机器人调用 `schedule_create`。时间按用户时区（默认北京时间，说了别的地方才换）；每轮开头告诉机器人「现在是北京时间 …（星期几）」，一次性写本地时间「YYYY-MM-DD HH:MM」或 `in_minutes`，周期写 daily / weekdays / weekly / monthly / hourly / every_minutes / cron，服务器换算并算出下一次（最密每 15 分钟；时间已过、日期不存在、太密都用中文拒绝）。机器人照工具返回的 confirmation 回一句确认，聊天里同时出一张**确认卡**（`lib/conversations/schedule-tool.tsx`，玻璃卡，最宽 420px：蓝色闹钟图标 40px · 名字 ·「明天 09:00 提醒一次」/「每天 09:00 · 下次 明天 09:00」·「管理」胶囊链接）。
 - **到点**（`server/src/schedules/service.ts`，表 `chisabot_schedules` / `chisabot_schedule_runs`，开机建表）：进程内每 15 秒扫一次；`next_run_at` 的比较交换和插入运行记录在同一条语句里，抢到的进程才触发，新旧容器并存或多副本也不重复。往**原来那段对话**放一条「⟦chisabot:schedule:…⟧」开头的消息，网页画成一行（和后台任务结果同款：闹钟图标 · 「定时任务「x」到点了（今天 09:00）」· 详情展开看说明），机器人照说明做完在下面回复。对话正被一轮占着就排进那一轮的收件箱；来自 IM 的任务用 IM 的回合跑，回复同时推回那个 IM 会话（按最近一条消息的回复信息；QQ 官方机器人 / 企业微信智能机器人的被动回复有时效，过期会失败并记在结果里）。机器人删了 → 任务自动取消；原对话没了 → 用这个机器人最近的对话。
 - **停机错过**：周期任务晚了超过 30 分钟就跳过这一次（记「已跳过」），从现在排下一次，不补发；一次性提醒晚 6 小时以内照发并注明晚了多少，更晚记「错过」。
 - **通知**：任务跑完，网页右下角出一条带「查看」的提示（`components/schedules/notifier.tsx`，每 20 秒问一次，只报打开页面之后的）；页面在后台且允许了浏览器通知时再发系统通知。
@@ -1211,7 +1215,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 - **上传**（机器人聊天）：输入框 ＋（只有这一项时直接打开选文件，不弹一项的菜单）、拖进聊天（中文提示「松手上传」）、粘贴都行，单个 ≤ 20 MB，最多同时传 3 个。文件先 POST `/api/chat-files`，存成一行 `chisabot_chat_files`（字节在库里、按人隔离），同时写进这个机器人工作区 `uploads/<文件名>`（撞名加 `-2`）。消息里只放 `/api/chat-files/<id>`：用户气泡上方按 §31 显示图片（一摞 / 看大图）或文件卡；模型那边由 attachment-parts 当 `cf:` 引用按人读取——图片给原图，小文本给内容，PDF / Office / 压缩包给一句「已保存在工作区 uploads/…，可以用 pdftotext 等处理」。
 - **文件卡**（§31 的 `FileCard` 加强）：本站位图把类型图标换成 36px 缩略图，点缩略图或文件名开看大图（同一个 Lightbox，有下载）；PDF 多一个「预览」（眼睛图标）打开玻璃弹窗，里面是浏览器自带阅读器；下载按钮对聊天文件加 `?download=1` 强制附件。服务端只对 png/jpeg/gif/webp/pdf 内联，其他（含 SVG、HTML）一律 `application/octet-stream` 附件 + `nosniff` + 沙箱 CSP。
 - **机器人工具**（`server/src/chat-files/`）：`file_share {path, title?}` 把工作区文件交给用户（快照一份进库，聊天里出文件卡；不要贴路径或 workspace.local 链接）；`chat_files_recent` 列最近的上传 / 生成；`image_generate {prompt, aspect_ratio?}`、`image_edit {prompt, source?, aspect_ratio?}`（source = 文件 id / `/api/chat-files/…` / 工作区路径，不写 = 这个聊天最近一张图）。生成 / 改好的图存进库 + 工作区 `images/<时间>-<提示词>.png`。工具结果最后一行 `⟦chisabot:files⟧[…]` 给网页画卡，模型读前面那句人话。后台刷新面板的回合不给这些工具。
-- **画图卡**（`lib/copilot/chat-file-tools.tsx`，render-only）：进行中 = 和成图同画幅的玻璃骨架（最宽 320px），一道蓝色光泽从左扫到右（只动 transform，减少动效时不扫）+ 居中小胶囊「🖼 正在画图… / 正在改图…」；完成 = §31 单图卡（点开看大图、下载），失败不画卡，由机器人用话说明。
+- **画图卡**（`lib/conversations/chat-file-tools.tsx`，render-only）：进行中 = 和成图同画幅的玻璃骨架（最宽 320px），一道蓝色光泽从左扫到右（只动 transform，减少动效时不扫）+ 居中小胶囊「🖼 正在画图… / 正在改图…」；完成 = §31 单图卡（点开看大图、下载），失败不画卡，由机器人用话说明。
 - **设置 → 图片生成**（`/admin/images`，管理员，左栏「模型」组）：开关「允许机器人生成图片」（默认关；关着时机器人拿不到画图工具，会告诉用户请管理员打开）；接口类型 MiniMax（image-01，`/v1/image_generation`，修改 = 主体参考图生成，不是逐像素修图）或 OpenAI 兼容（`/v1/images/generations` + `/v1/images/edits`，gpt-image、new-api / One API 等）；接口地址、生成模型、修改模型（留空同生成）、API 密钥（加密存，只显示末四位；留空时 MiniMax 沿用部署环境变量 MINIMAX_API_KEY，或 OPENAI_BASE_URL 指向 minimax 时的 OPENAI_API_KEY）。「检查（不生成图片）」：MiniMax 发空提示词看鉴权，OpenAI 兼容读 /models，都不花钱。
 
 ## 57. 导航收敛：一个私人助手只需要一套导航（2026-10-14）
@@ -1261,7 +1265,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 - 工具：`confirm_action`（category / title / target / details）、`approval_preference_save`（text = 用户原话、category、mode、可选 keywords；不给 keywords 就改整一类）。用户说「以后给张三发邮件不用问我」→ 记成一条规则，一句话告诉用户。
 
 ### 58.5 服务器
-- `server/src/confirmations/`：`classify.ts`（分类、规则判断，纯函数）、`context.ts`（回合 / 工具调用的 AsyncLocalStorage：`local-conversations.ts` 包回合、`copilot.ts` 包每次工具执行）、`service.ts`（表 `chisabot_confirm_prefs` / `chisabot_confirm_rules` / `chisabot_confirm_requests`，开机建，回滚安全；`wrap()` 包住 `loadToolsForActor` 给的所有工具；设备 hub 挂钩；路由 `/api/confirmations/*`）。
+- `server/src/confirmations/`：`classify.ts`（分类、规则判断，纯函数）、`context.ts`（回合 / 工具调用的 AsyncLocalStorage：`local-conversations.ts` 包回合、`conversation-runtime.ts` 包每次工具执行）、`service.ts`（表 `chisabot_confirm_prefs` / `chisabot_confirm_rules` / `chisabot_confirm_requests`，开机建，回滚安全；`wrap()` 包住 `loadToolsForActor` 给的所有工具；设备 hub 挂钩；路由 `/api/confirmations/*`）。
 - 上游 `server/src/approvals`（规则 allow / pre_approved / ask / hand_off、安全规则、审批收件箱）原样保留；`/approvals` 页照旧可用，聊天里上游的审批卡换成这一套外观、文字中文。
 - 其他功能要加「先问一下」：调用 `confirmations.check({ category, tool, title, target, details, matchText, digest, initiator })`，返回 ok 才做。
 ## 59. 生图模型、识图模型：在模型设置里配，每个人可以换成自己的（2026-10-15）
@@ -1283,7 +1287,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 来自成熟度扫查（docs/BACKLOG.md CB-003；问题清单与截图见 PR 描述）。
 
-**60.1 模型额度回退**（`server/src/agents/model-fallback.ts`，接在 `copilot.ts` 的 `fallbackConnectionModel`）。生产实测：默认模型
+**60.1 模型额度回退**（`server/src/agents/model-fallback.ts`，接在 `conversation-runtime.ts` 的 `fallbackConnectionModel`）。生产实测：默认模型
 `clinepass/cline-free/mimo-v2.6-flash` 每日免费额度一用完，每个机器人每一句都要转 14 秒到 2 分钟（AI SDK 重试 3 次），然后弹英文报错，
 一直到第二天。现在模型调用在**还没吐出任何内容之前**被拒（HTTP 429 / 402，或错误里写着 quota / daily limit / 额度），立刻用同一个连接
 换候选模型重发同一个请求；被拒的模型记一个冷却期（错误里有「Try again in 19h 51m」就按它，否则 10 分钟，最多 24 小时），冷却期内后续
@@ -1291,7 +1295,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 （如 `clinepass/`）的其它模型，按目录顺序最多 3 个。全部失败时抛原来的错误。其它错误（400 参数错、500、网络）不回退。服务器日志
 `{"type":"model-fallback","event":"used",…}`。管理员自检（`/api/admin/smoke`）不走回退，测的就是配置的那个模型（§61 起改为走同一套回退，并在结果里写明换了哪个）。
 
-**60.2 一轮出错的提示说人话**（`app/src/lib/copilot/stopped-turn.ts` `friendlyStopReason`）：额度用完（带「约 N 小时 M 分钟后恢复」）、
+**60.2 一轮出错的提示说人话**（`app/src/lib/conversations/stopped-turn.ts` `friendlyStopReason`）：额度用完（带「约 N 小时 M 分钟后恢复」）、
 限流、只能在 OpenCode 里用的免费模型、密钥无效、上下文太长、超时、连不上模型、stall-guard 的「X stopped responding…」都翻成一句中文 +
 下一步（多半是「点输入框右下角的模型名，换一个模型再发」）；不认得的英文前面加「这一轮出错了：」保留原文；中文原样。
 
@@ -1329,7 +1333,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 **61.3 对话里一行淡色小字**：换过模型的那一轮，在这一轮最后一个看得见的元素后面显示「主模型额度用完，已改用 step-5-preview」
 （服务不可用时是「主模型暂时不可用，已改用 X」；模型 id 只留最后一段）。12px、`--ink-3`、不是提示条、不带按钮，在滚动区里面、跟着这一轮走，
 不在滚动区上下增减任何东西（§35）。和「已停止」挂在同一个元素上时合成「◼ 已停止 · 主模型额度用完，已改用 X」。数据：运行时记在这一轮
-`RUN_FINISHED` 的 `metadata.modelFallback`（`context-usage.ts` meterRun），`GET /api/copilotkit/threads/:id/fallbacks` 按开启那一轮的用户消息 id
+`RUN_FINISHED` 的 `metadata.modelFallback`（`context-usage.ts` meterRun），`GET /api/conversations/threads/:id/fallbacks` 按开启那一轮的用户消息 id
 返回；页面每轮结束 1.5 秒后重读（同「已停止」）。还在回答时不显示；刷新、换设备后照样在。只在机器人对话里显示（频道聊天暂不显示）。小字
 不进对话历史，不会发给模型。
 
@@ -1366,9 +1370,9 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 成熟度扫查第二轮（docs/BACKLOG.md CB-041 P0、CB-043）：左栏点机器人进的是频道聊天（`/channel/:id`，`ChannelChat`），§42 的同步只做在 `/bot`。回答写到一半刷新，回来只剩用户那句，等多久都不出来；手机发的桌面看不到。查库后确认**服务器其实写完并存下了**（运行器本来就和 HTTP 连接解耦，`local-conversations.ts`）——丢的是前端：打开时的接入只等 `JOIN_DEADLINE_MS`（1.5 s，不能挡住第一条消息）就截断实时流，接着读一次存档（那时还没写完），之后再也不读。
 
-**64.1 变化戳轮询**（`lib/copilot/thread-activity.ts` `useThreadActivity`）：和 `/bot` 同一个接口 `GET /api/bot-threads/<agentId>/sync?threadId=<channel.threadId>`，只用变化戳那一半（事件序号、是否在回答、后台任务 / 收件箱时间）。前台每 2 s，隐藏时不问，回到前台 / 获得焦点 / 网络恢复 / `kick()` 马上一次；服务器没有这个接口（旧版本）就不再问。
+**64.1 变化戳轮询**（`lib/conversations/thread-activity.ts` `useThreadActivity`）：复用 `GET /api/bot-threads/<agentId>/sync?threadId=<channel.threadId>`，只用变化戳那一半（事件序号、是否在回答、后台任务 / 收件箱时间）。前台每 2 s，隐藏时的降频规则见 §98.3，回到前台 / 获得焦点 / 网络恢复 / `kick()` 马上一次；服务器没有这个接口（旧版本）就不再问。
 
-**64.2 接上正在写的回答**：戳交给 §42 的 `useConversationSync(threadId, agent, copilotkit.connectAgent, onActivity, { liveTail: true })`——服务器在回答而这台没在跟就合并式接入（`connectAgent` 回放已存事件 + 实时推后面的）。`liveTail`：服务器在回答时，最后一条用户消息之后这台手里的几条（截断时收到的半截回答、思考、工具调用）**不算已有**（`knownForMerge`），由回放重建再接着实时往下写，否则会一直停在半截上。`/bot` 不开这个选项，行为不变。
+**64.2 接上正在写的回答**：戳交给 §42 的 `useConversationSync(threadId, agent, conversationClient.connectAgent, onActivity, { liveTail: true })`——服务器在回答而这台没在跟就合并式接入（`connectAgent` 回放已存事件 + 实时推后面的）。`liveTail`：服务器在回答时，最后一条用户消息之后这台手里的几条（截断时收到的半截回答、思考、工具调用）**不算已有**（`knownForMerge`），由回放重建再接着实时往下写，否则会一直停在半截上。`/bot` 已统一跳转到这套频道聊天。
 
 **64.3 截断后马上补接**：打开时的接入一结束（join gate 打开）就 `kick()` 问一次，服务器还在写就立刻重新接上，不等下一个 2 秒。接入结束前收到的戳一律不处理，保证同一时刻只有一个接入。实测刷新后 1 s 内回答接着一个字一个字出来，「停止」按钮可用，停止后有「已停止」。
 
@@ -1417,11 +1421,11 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 - **机器人工具**：`device_agent_list` / `device_agent_run` / `device_agent_status` / `device_agent_stop`，只在有在线电脑、人自己的回合（或结果交回的回合）给；提示词讲清默认用 `device_*`、什么时候交给本地 agent、不要在聊天里先问许可、不能改档位。
 ## 67. 重新生成 / 编辑后重发：服务器截断，所有设备一致（2026-10-15）
 
-成熟度扫查（docs/BACKLOG.md CB-042，maturity C5）：回答下面只有「复制」，用户消息不能改了重发。ChatGPT / Claude / Hark 都有。难点不在按钮，在**跨设备一致**：对话存在服务器上（`openbot_local_threads.messages` + 回放用的 `openbot_local_events`），只在本机删掉几条，刷新或换一台设备它们就回来了。
+成熟度扫查（docs/BACKLOG.md CB-042，maturity C5）：回答下面只有「复制」，用户消息不能改了重发。ChatGPT / Claude / Hark 都有。难点不在按钮，在**跨设备一致**：对话存在服务器上（`chisabot_local_threads.messages` + 回放用的 `chisabot_local_events`），只在本机删掉几条，刷新或换一台设备它们就回来了。
 
-**67.1 截断接口**（`server/src/thread-truncate.ts`，挂在 `/api/copilotkit/threads/<threadId>/truncate`，`POST {fromMessageId, mode: "regenerate" | "edit"}`，走和对话接口一样的登录检查，只认本人的对话（多账号下按 `actor.id`），别人的一律 404）：
+**67.1 截断接口**（`server/src/thread-truncate.ts`，挂在 `/api/conversations/threads/<threadId>/truncate`，`POST {fromMessageId, mode: "regenerate" | "edit"}`，走和对话接口一样的登录检查，只认本人的对话（多账号下按 `actor.id`），别人的一律 404）：
 - 事务里 `FOR UPDATE` 锁住对话行；**对话正在回答（本进程在跑或库里锁没过期）→ 409**。
-- 消息截到这条用户消息之前（它和之后的全去掉）；事件从**这条消息那一轮的 RUN_STARTED**（第一个在 `input.messages` 里带上它的）起全删，那几轮的 `openbot_local_runs` 一起删——回放（刷新、别的设备接入）和截断后的消息列表一致。回答中途插进去的消息（收件箱读进来的）没有自己的 RUN_STARTED，从它截会留下半轮回放 → 409「这条消息是在回答中途插进去的，不能单独重发」。
+- 消息截到这条用户消息之前（它和之后的全去掉）；事件从**这条消息那一轮的 RUN_STARTED**（第一个在 `input.messages` 里带上它的）起全删，那几轮的 `chisabot_local_runs` 一起删——回放（刷新、别的设备接入）和截断后的消息列表一致。回答中途插进去的消息（收件箱读进来的）没有自己的 RUN_STARTED，从它截会留下半轮回放 → 409「这条消息是在回答中途插进去的，不能单独重发」。
 - 截掉的 id 记进 `chisabot_thread_truncations`（开机建表，删对话时级联删；也是这次操作的记录：谁、从哪条、模式、时间）。
 - 收尾：收件箱里排队 / 欠回答的消息撤回；被截那几轮还在等的确认卡片（`chisabot_confirm_requests` 按 tool_call_id）作废成 cancelled，之后点「允许」不会再把机器人叫回来；那几轮派出去还在跑的后台任务安静地停掉（`quiet`，不补「已停止」）。工具卡、确认卡、后台任务卡都画在被删的消息上，跟着消失。
 
@@ -1429,10 +1433,10 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 **67.3 别的设备怎么知道**：截断后事件序号先变小、再随新一轮变大，单看序号不可靠。同步戳（§42 / §64 的 `GET /api/bot-threads/<agentId>/sync`）多一个 `revision` = 这条对话截断过几次。`useConversationSync` 记住版本基线，版本变了就 `join("rebuild")`——清空、按服务器回放重建（截掉的气泡和卡片消失、新的一轮接着流式）；本机正在跑时等它结束再重建。**本机自己截的不重建**：截断接口回的新版本先记下（`noteOwnRevision`），同步看到它就只更新基线，本机不会闪一下。旧服务器没有这个字段 → 不处理（行为和以前一样）。
 
-**67.4 界面**（`components/chat/message-actions.tsx`，频道聊天 `chat-transcript.tsx` 和 `/bot` `rich-message-view.tsx` 共用）：
-- **重新生成**：最后一轮最后一段看得见的回答下面，和「复制」并排，同一种淡色小胶囊（`.chat-msg-action`，悬停 / 聚焦才显，触屏常显）。§2 状态机：↻ 重新生成 → 圈「生成中…」→ 这条回答被新的一轮替换；失败 ✕ + toast 原因（409 / 404 / 网络都是中文）。实现 = 截掉最后一条用户消息那一轮，再把原来的内容（文字 + 附件段）用一个**新 id** 重发（新一轮的 RUN_STARTED 带上它，回放里才看得到）。`/bot` 放在 CopilotKit 工具栏里（`additionalToolbarItems`）。
-- **编辑**：用户自己发的每一条下面一个「✎ 编辑」（靠右；后台任务结果、定时任务、确认后接着做这些「用户角色但不是人发的」不给）。点了气泡**原地**变编辑框（玻璃卡、宽 min(100%, 36rem)、文字框自动长高最多 40vh、淡入 180 ms，减少动态时不动）：一行说明「发送后，这条之后的对话会换成新的回答」+ 取消（幽灵）+ 发送（主按钮，§2：发送中… → 成功后整条被新的替换）。Enter 发送、Shift+Enter 换行、Esc 取消、输入法组字时 Enter 不发；没改或为空时发送禁用。附件留着，只换文字段（`withEditedText`）。`/bot` 用 CopilotKit 自带的编辑按钮（`onEditMessage`，文案「编辑」）打开同一个编辑框。
-- **回答进行中两种按钮都不出现**（频道聊天看 turn 计数 + `agent.isRunning`，`/bot` 订阅运行状态）；模型设置保存中、历史还没读完、机器人已删时也不出现。
+**67.4 界面**（`components/chat/message-actions.tsx`，由频道 `chat-transcript.tsx` 使用；`/bot` 只负责跳转）：
+- **重新生成**：最后一轮最后一段看得见的回答下面，和「复制」并排，同一种淡色小胶囊（`.chat-msg-action`，悬停 / 聚焦才显，触屏常显）。§2 状态机：↻ 重新生成 → 圈「生成中…」→ 这条回答被新的一轮替换；失败 ✕ + toast 原因（409 / 404 / 网络都是中文）。实现 = 截掉最后一条用户消息那一轮，再把原来的内容（文字 + 附件段）用一个**新 id** 重发（新一轮的 RUN_STARTED 带上它，回放里才看得到）。工具栏通过 `RegenerateAction` 显示操作。
+- **编辑**：用户自己发的每一条下面一个「✎ 编辑」（靠右；后台任务结果、定时任务、确认后接着做这些「用户角色但不是人发的」不给）。点了气泡**原地**变编辑框（玻璃卡、宽 min(100%, 36rem)、文字框自动长高最多 40vh、淡入 180 ms，减少动态时不动）：一行说明「发送后，这条之后的对话会换成新的回答」+ 取消（幽灵）+ 发送（主按钮，§2：发送中… → 成功后整条被新的替换）。Enter 发送、Shift+Enter 换行、Esc 取消、输入法组字时 Enter 不发；没改或为空时发送禁用。附件留着，只换文字段（`withEditedText`）。`EditAction` 在原消息位置打开 `MessageEditor`。
+- **回答进行中两种按钮都不出现**（频道聊天看 turn 计数 + `agent.isRunning`）；模型设置保存中、历史还没读完、机器人已删时也不出现。
 - 版面：按钮行本来就在（复制那一行），重新生成只是多一个胶囊；编辑框替换气泡、不改变滚动区大小（§35），发送后照常滚到新的一轮。
 
 
@@ -1464,7 +1468,7 @@ CB-046（ADR-0013）。以前机器人聊天有两条路：左栏点机器人进
 
 **68.5 不变的**：频道聊天的外观、滚动（§35）、刷新续写（§64）、重新生成 / 编辑（§67）。
 
-**68.6 CopilotKit v2 `styles.css` 保留**（`app/src/main.tsx`）：`CopilotChat` 不用了，但去掉这份样式表后频道聊天截图有差异（1280 / 390 两种宽度，对话区整体下移约 1px；设置页无差异），说明频道聊天还依赖它的基础样式，所以不删。
+**68.6 样式依赖已收归应用**：`app/src/main.tsx` 只加载本项目的样式入口，已无 CopilotKit CSS。历史记录（2026-10-15）：当时移除旧样式曾让 1280 / 390 截图的对话区下移约 1px、设置页无差异，因此那版暂留了它；此记录不再是继续保留依赖的要求。
 
 **68.7 删掉实时语音通话**（CB-046 第 2 步，`chore/chat-unify-2`）：输入框的波形按钮、悬浮通话窗、对话里的「语音聊天」卡片、`lib/voice/*`，服务端 `/api/voice/*`（通话、会话记录、总结）、`server/src/voice/`、`shared/voice-session.ts`，`/api/capabilities` 不再有 `voice`，`.env.example` / 文档里的 `VOICE_*` 去掉。生产从没配过语音（没有任何 `VOICE_*` 变量），按钮一直不显示，所以用户看到的界面不变。`voice_sessions` 表结构留着、不迁移、不删数据，只是没有代码再读写。语音听写（`TRANSCRIPTION_*`，输入框的麦克风）不受影响；IM 收到的语音消息仍显示「[语音]」。
 
@@ -1485,7 +1489,7 @@ CB-046（ADR-0013）。以前机器人聊天有两条路：左栏点机器人进
 
 **69.3 机器人怎么说**（`shared/bot-prompt.ts` `WORK_STYLE_GUIDANCE` 第二版，所有内置机器人）：先给答案；一段一个意思、空行分段、每段尽量 60 字、最多 100 字、一般 1–3 段；不说「好问题 / 好啊 / 希望对你有帮助」；不提工具名、不说「我刚查了 / 根据搜索结果」，来源放最后一张链接卡或一行「来源：」；凭自己知识回答而用户会据此行动时，在结论那段带半句「以官网为准」，不单独成段；草稿用 ```draft；代码带语言名、前面一句话；一次只问一件事并给最可能的选项；过程中补充的消息在回应段首 `> 原话`；对方累 / 难过：一句体谅 + 一件能帮的事，不说陪伴的话。`botIdentityGuidance(名字)`：用机器人自己的名字，不自称模型名。
 
-**69.4 验证**：`app/tests/chat-bubbles.test.ts`；`server/tests/copilot.test.ts`（提示词顺序）；预览 + 生产对话审计脚本（同一组 9 个问题，临时机器人，结束删）；`tests/chat-scroll/regression.sh` 7/7 + 链接。
+**69.4 验证**：`app/tests/chat-bubbles.test.ts`；`server/tests/conversation-runtime.test.ts`（提示词顺序）；预览 + 生产对话审计脚本（同一组 9 个问题，临时机器人，结束删）；`tests/chat-scroll/regression.sh` 7/7 + 链接。
 
 ## 70. 干活卡：机器人干活时一行看到它在做什么（2026-10-15，Hark 第五轮）
 
@@ -1543,7 +1547,7 @@ CB-003 第 3 轮（CB-051 起）。新朋友视角走一遍聊天以外的每个
 
 ## 72. 商品 / 地点推荐：带图的卡片网格（2026-10-15，Hark 第五轮）
 
-CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文字清单，没查现价、没有图；Hark 是一排带图的商品卡。现在 render_ui 有 `Products`（`shared/json-render/catalog.ts`，画在 `app/src/lib/copilot/json-render/products.tsx`）。
+CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文字清单，没查现价、没有图；Hark 是一排带图的商品卡。现在 render_ui 有 `Products`（`shared/json-render/catalog.ts`，画在 `app/src/lib/conversations/json-render/products.tsx`）。
 
 - 一张卡 = 1:1 图位 + 名字（最多两行）+ 价格（15px 半粗、等宽数字）+ 一句卖点（单行省略）+ 站点（`source`，没有就写网址的域名）；左上角可选角标（首选 / 最划算，品牌蓝胶囊）。有 `url` 时整张卡是链接（新标签页，不画 ↗，悬停图放大 4%）。
 - 列数：2 / 3 个一排放完，4 个两排两列，5 个以上默认 3 列（这时才听 `columns` 2–4，免得 3 个排成 2 列留个洞）；560px 以下固定 2 列。卡片依次淡入（每张晚 40ms，最多 8 张），减少动态时不动。
@@ -1575,7 +1579,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 职责（左栏副标题）从「它做什么」的第一句取：去掉开头的「你是 / 你负责 / 负责 / 帮我」，最多 18 字（「你是我的英语老师，帮我纠正语法」→「我的英语老师」）；没写就是「私人助手」。
 - 提示词：以「你是」开头的整段原样用；只写了要做的事，前面补「你是「名称」。」、后面补一句基本要求（简体中文、简洁、不确定先说明）；什么都没写就是「你是「名称」。」+ 基本要求。补完超过 1000 字就原样用。都能在机器人资料（§47）里改。
 - 其余照 §46：一步、一律私有、在服务器上运行；Enter 创建、输入法确认字不算；建好直接进它的空聊天。
-- 删掉：上游「在对话里让机器人帮你建机器人」（`save_bot` 卡片 + `list_bots` / `read_bot` / `list_bot_skills` 前端工具，只给装了 `bot-creator` 技能的机器人，中文部署包里没有这个技能 → 从来用不到）：`lib/copilot/bot-tools.tsx`、`components/agents/proposed-bot.tsx`、`lib/agents/proposal.ts`、`lib/agents/answers.ts` 和它们的 3 个测试。
+- 历史删除记录（2026-10-16）：上游「在对话里让机器人帮你建机器人」（`save_bot` 卡片 + `list_bots` / `read_bot` / `list_bot_skills` 前端工具，只给装了 `bot-creator` 技能的机器人，中文部署包里没有这个技能 → 从来用不到）：`lib/copilot/bot-tools.tsx`、`components/agents/proposed-bot.tsx`、`lib/agents/proposal.ts`、`lib/agents/answers.ts` 和它们的 3 个测试。
 
 ### 74.3 刻意没动（需要用户决定 / 归别的线）
 见 PR 描述里的审查表：两个同名「助手」（用户 10-15 说两个都留）、IM 接入（0 个连接）、生图与识图个人页、页面、活动记录、云端浏览器、Magpie 页、`/approvals` 待处理、绑定手机——都留着可见。
@@ -1674,7 +1678,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 
 用户 2026-10-16：「我需要原生的，kotlin实现」。以前的 Android 是 WebView 外壳（约 750 KB）。CB-068。计划和后续阶段见 `docs/android-native.md`。
 
-**80.1 原生的部分（第一阶段）**：登录（扫码绑定为主、账号密码备用，同一套 `/api/devices/agent/pair` + `/auth/device-session` + `/auth/login`）、机器人列表（只列机器人、主机器人置顶带「主机器人」标，ADR-0001）、聊天（读 `/api/copilotkit/threads/<id>/messages` 历史，发送走 `POST /api/copilotkit/agent/<bot>/run` 的 AG-UI 事件流，停止 `…/stop/<thread>`）、右栏面板只读（`/api/live-panels?botId=`）。不新增服务器接口。
+**80.1 原生的部分（第一阶段）**：登录（扫码绑定为主、账号密码备用，同一套 `/api/devices/agent/pair` + `/auth/device-session` + `/auth/login`）、机器人列表（只列机器人、主机器人置顶带「主机器人」标，ADR-0001）、聊天（读 `/api/conversations/threads/<id>/messages` 历史，发送走 `POST /api/conversations/agent/<bot>/run` 的 AG-UI 事件流，停止 `…/stop/<thread>`）、右栏面板只读（`/api/live-panels?botId=`）。不新增服务器接口。
 - 聊天画面和网页同一套规则：一轮一张干活卡画在第一个干活的工具那一行，结束原地换成「✓ 搜索 2 次 · 看了 1 个网页 · 9 秒 ⌄」、高度不变（§75）；准备动作不算一步；一句话停住 0.9 秒出三个小点（§78.2）；换字上下滑 200ms（§78.3）；按空行切短气泡、最多 6 个（§69）；表格、代码卡（语言 + 复制）、草稿卡、文档卡（封顶 300dp、底部淡出、「展开全文」§76）、图片、单独一行链接 → 链接卡（§48）；render_ui / 面板的 json-render spec 原生画（Card、Stack、Grid、Metric、Table、List、Chart、Ring、Products、Tabs、KeyValue、Timeline、Countdown…）。说法（`WorkSteps.kt`）抄 `shared/work-step.ts`，两边改一处要同步。
 - 逐字平滑放出和网页同一规则（docs/streaming.md）；流式时末行半截的图片 / 链接记号先不显示。
 - 列表倒序（最新在底部、`reverseLayout`），行用稳定 key；往上翻时新内容不把画面往下推；离开底部出 36dp 圆形 ↓「回到底部」（§78.4）。
@@ -1794,7 +1798,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 回放本身也重：存下的每一轮 RUN_STARTED 都带着那一刻完整的 input（系统上下文 + 工具定义 + 全部历史消息），n 轮 n 份。35 轮的对话接入一次 3.4 MB。
 
 ### 83.2 规则
-1. **恢复完成前不画回放的半截**（`channel-chat.tsx`）。恢复 = 接入 + 读存储；完成前画：这台设备上次看到的样子（`lib/copilot/transcript-cache.ts`，内存里最多 12 段）→ 没有就等存储读到（读存储和接入同时开始）→ 再没有就是骨架（§6 第②层）。完成后一次换成 agent 手里那份。
+1. **恢复完成前不画回放的半截**（`channel-chat.tsx`）。恢复 = 接入 + 读存储；完成前画：这台设备上次看到的样子（`lib/conversations/transcript-cache.ts`，内存里最多 12 段）→ 没有就等存储读到（读存储和接入同时开始）→ 再没有就是骨架（§6 第②层）。完成后一次换成 agent 手里那份。
 2. **钉在最新一条**（`SettleAtEnd`，`chat-transcript.tsx`）：从打开到恢复完成后 2.5 秒内，内容每变一次（行增减、高度变化）在下一帧绘制前 `scrollToEnd`（不平滑）并切回「跟着底部」。人自己滚（滚轮、手指、翻页键、拖滚动条）或发了新消息立刻停手，交回 §35 的规则。恢复期间和刚恢复完的那一下不平滑滚动。
 3. **切机器人先画上次的样子**：离开对话时记下（恢复完成的才记），切回来第一帧就是它停在底部的样子；对话详情先用左栏列表里那一行（`channelFromRoster`），不再空白等 `/api/channels/:id`。打开后空闲 2.5 秒预取左栏前 4 个机器人正在用的对话；悬停 / 聚焦 / 手指按下左栏某个机器人时也预取。
    - 高度变化（图片加载完撑高最常见）在 ResizeObserver 回调里**当场**回到底部——它在布局之后、绘制之前跑，那一帧画出来就在底部；等下一帧再回去，慢设备上会先画一两帧「被顶上去」（实测切到带图片的长对话离底部 488 px）。行增减仍在下一帧前处理。
@@ -1803,7 +1807,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
      - 读法：只读文件头（PNG / JPEG / GIF / WebP，`server/src/image-dims/image-size.ts`），不解码；JPEG 的 EXIF 方向 5–8 交换宽高（浏览器按转正后的样子画）。读不出就当没有。
      - 存法：独立小表 `chisabot_image_dims(key, width, height)`（开机 / 第一次用时 `CREATE TABLE IF NOT EXISTS`，不动 `attachments` / `chisabot_chat_files` 的结构），键 `a:<附件 id>`、`cf:<聊天文件 id>`、`lp:<链接预览资源 id>`。上传附件、聊天上传 / 机器人画图 / 改图 / file_share、链接预览转存图片时当场记下。
      - 旧图：读对话时缺记录的现算（从原表读前 256 KB，不够再读整张），存上；读不出 / 已删的记 0×0 不再算、不往外给。一次最多现算 64 张。
-     - 给出去（只加字段，旧客户端不看）：附件上传的回答加 `width` / `height`，作曲框写进消息 part 的 `metadata`；读存储（`GET /api/copilotkit/threads/:id/messages`）和接入回放（RUN_STARTED 的消息、MESSAGES_SNAPSHOT、TOOL_CALL_RESULT）里，图片 part 的 `metadata.width/height`、工具结果文件清单（`⟦chisabot:files⟧`）每项的 `width/height` 都补上——只改发给浏览器的那份，存储不改；链接预览回答加 `imageWidth` / `imageHeight`。安卓原生客户端读同样的字段。
+     - 给出去（只加字段，旧客户端不看）：附件上传的回答加 `width` / `height`，作曲框写进消息 part 的 `metadata`；读存储（`GET /api/conversations/threads/:id/messages`）和接入回放（RUN_STARTED 的消息、MESSAGES_SNAPSHOT、TOOL_CALL_RESULT）里，图片 part 的 `metadata.width/height`、工具结果文件清单（`⟦chisabot:files⟧`）每项的 `width/height` 都补上——只改发给浏览器的那份，存储不改；链接预览回答加 `imageWidth` / `imageHeight`。安卓原生客户端读同样的字段。
      - 网页：`ImagePile` 单张图有宽高就直接写 `width`（按 318×300 的上限缩）+ `aspect-ratio`，图片没到时框就在（底色是卡片的玻璃色），到了不推开下面；也记进页面内的尺寸表，正文里同一张图也能留框。没有宽高的（第三方图片没转存成功等）仍走上一条「当场回到底部」。叠成一摞的图卡和链接卡缩略图本来就是固定尺寸，不受影响。
 4. **不重复读**：打开时读存储已经读到左栏「最后一句」时，接入后不再为它连读三遍；机器人资料 / 模型 30 秒、组件 5 秒、插件 15 秒内切回来不重读（mutation 照旧让它失效，轮询照旧）。
 5. **接入回放瘦身**（`slimReplay`，`server/src/local-conversations.ts`）：回放里每一轮 RUN_STARTED 只带前面没出现过的消息，context / tools 发空数组。AG-UI 客户端回放时本来就只用它还没有的消息、不看 context / tools，所以得到的消息列表完全一样（`server/tests/slim-replay.test.ts` 用 `defaultApplyEvents` 对比）。只改接入回放，不改存储，不改正在跑的那一轮的实时事件。
@@ -1840,7 +1844,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 
 **86.3 停止**：回答时发送键变 ■，点了原地转圈「停止中」（`POST …/stop/<thread>`，400ms 后断开本机的流，服务器把这一轮的确认卡片作废）。
 
-**86.4 重新生成 / 编辑后重发（§67）**：和网页同一流程——先 `POST /api/copilotkit/threads/<id>/truncate {fromMessageId, mode}`，成功后本机也截到同一处，再用新 id 发一轮（重新生成 = 原内容含附件段；编辑 = `withEditedText`，只换文字段、附件留着）。409 / 404 / 其他都是中文提示（顶部玻璃小条，3 秒淡出）。
+**86.4 重新生成 / 编辑后重发（§67）**：和网页同一流程——先 `POST /api/conversations/threads/<id>/truncate {fromMessageId, mode}`，成功后本机也截到同一处，再用新 id 发一轮（重新生成 = 原内容含附件段；编辑 = `withEditedText`，只换文字段、附件留着）。409 / 404 / 其他都是中文提示（顶部玻璃小条，3 秒淡出）。
 - 「↻ 重新生成」在最后一轮最后一段看得见的回答下面、「复制」旁边（出错那一行下面也有）；回答进行中不出现。
 - 「✎ 编辑」在最后一条人发的消息下面常显（手机没有悬停），长按任意用户气泡 → 复制 / 编辑。气泡原地变玻璃编辑框（淡入 180ms）：文字框 + 「发送后，这条之后的对话会换成新的回答」+ 取消 / 发送（没改或为空时不可点，§2 状态机）。
 - 服务器放进对话的「用户角色」消息（定时任务到点、后台任务结果、本地 agent 结果、确认后接着做，§68.2）画成居中淡色一行，不给编辑，各自开一轮。
@@ -1915,7 +1919,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 刷新 / 重新打开（回放）走同一个 `compactTurns`：被中断的工具有服务器补的结果（This call produced no result…），过程话照样进卡片。
 
 **90.3 根因（写两遍）**：`useConversationSync` 的 `liveTail` 接入（§64：服务器还在回答、这台没在跟——本机这一轮因断网 / 「暂时连不上模型服务」失败了，服务器其实还在跑）不跳过最后一条用户消息之后那几条，靠服务器回放重建它们。代码注释以为 SDK 在 `TEXT_MESSAGE_START` 时会清空已有的同 id 消息——@ag-ui/client 不会：已有就不新建，`TEXT_MESSAGE_CONTENT` 照样往后接，于是手里那半截（或整段）后面又接了一整段；工具参数同理（两份 JSON 接在一起），工具结果会多插一条同 id 的消息。
-- §89 之后断线会自动走这条路（不用等用户刷新），所以更常见。修：`tailReplayPatch`（`lib/copilot/use-conversation-sync.ts`）在 liveTail 接入回放到这几条时——文字 / 思考的「开始」先把这条正文清空（每次接入每条只清一次），工具调用的「开始」把参数清空，工具结果已经有同 id / 同一个调用的就原地换内容、不再插第二条。之后的实时事件照常往下写。`/bot`（不带 liveTail）不受影响。
+- §89 之后断线会自动走这条路（不用等用户刷新），所以更常见。修：`tailReplayPatch`（`lib/conversations/use-conversation-sync.ts`）在 liveTail 接入回放到这几条时——文字 / 思考的「开始」先把这条正文清空（每次接入每条只清一次），工具调用的「开始」把参数清空，工具结果已经有同 id / 同一个调用的就原地换内容、不再插第二条。之后的实时事件照常往下写。`/bot`（不带 liveTail）不受影响。
 - Android 原生只读自己发起的流（没有回放接入），不会写两遍；过程话规则在 `chat/Turns.kt` 同步改了（后面还有干活的工具时实时也收起；结束后本来就收起）。Android 卡片里暂不列过程话。
 
 **90.4 发送后输入框里还是那句话**（同一张截图「你好?」）：不是草稿没清——旧代码在本机这一轮失败时 `say()` 抛错，输入框按「发送失败」把字放回去当重试；截图里消息其实已经到了服务器、服务器也答了，只是本机的流断了。§89（#184）改成断线先问服务器、还在跑就不报错（也就不放回字），并由接入同步自动接上——那条路正是本节 90.3 修的 liveTail 回放，两者配合：自动接上后不再写两遍。
@@ -2010,7 +2014,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 
 **94.2 规则**（`app/src/lib/chat/send-scroll.ts`）
 - `CONTINUOUS_SEND_MS = 5 * 60 * 1000`，唯一的界限常量。`isContinuousSend(上一条的发送时刻, 现在)`：差 ≥0 且 <5 分钟 → 连续；不知道上一条什么时候发的（这段对话第一句、读不到）、时钟倒了 → 不连续（照旧翻页）。
-- 「上一条」= 这条出现之前最新的那条用户消息。时刻**以服务器为准**：新接口 `GET /api/copilotkit/threads/:id/sent-at`（只读）回 `{ userMessageId, at, now }`——`at` 是那条消息第一次出现在某次运行的 `RUN_STARTED` 输入里的时刻（存的 RUN_STARTED 只带新进来的消息，查最近 40 次运行），`now` 是服务器的现在；浏览器按 `收到回复的本机时刻 − (now − at)` 换算，两边时钟差不进来。打开对话读一次、每轮结束后 1.5 秒再读（同「已停止」）。服务器读数对不上这条 id（还没读到 / 读失败）时用本机记下的发送时刻（恢复完成后新出现一条用户消息时记，只在内存里）。附件行 id `<消息 id>:attachments` 按消息算。新对话（还没有这一行）回空结果，不报 404。
+- 「上一条」= 这条出现之前最新的那条用户消息。时刻**以服务器为准**：新接口 `GET /api/conversations/threads/:id/sent-at`（只读）回 `{ userMessageId, at, now }`——`at` 是那条消息第一次出现在某次运行的 `RUN_STARTED` 输入里的时刻（存的 RUN_STARTED 只带新进来的消息，查最近 40 次运行），`now` 是服务器的现在；浏览器按 `收到回复的本机时刻 − (now − at)` 换算，两边时钟差不进来。打开对话读一次、每轮结束后 1.5 秒再读（同「已停止」）。服务器读数对不上这条 id（还没读到 / 读失败）时用本机记下的发送时刻（恢复完成后新出现一条用户消息时记，只在内存里）。附件行 id `<消息 id>:attachments` 按消息算。新对话（还没有这一行）回空结果，不报 404。
 - 连续：这一条**不带对齐标记**，滚动容器不翻页、不新留 spacer。`SettleAtEnd` 在同一次提交里（layout effect，滚动容器的微任务之前）把滚动容器切回「跟着底部」（`scrollToEnd` 会把它上一轮留的 spacer 清零）；人在底部时，清掉的那块空白改成我们的留白（§88.1 的 slack），先让新那一行吃掉，总高度不变、scrollTop 落回原处，画面不动；空白放不下时就是普通聊天那样：新消息出现在底部、内容往上顶它那么高，之后跟着回答长。人往上翻着时不留白，直接回到底部（发了一句就该看到它）。
 - 不连续（第一句、≥5 分钟、刷新后上一条早就发了）：照旧 §35 / §88.1。
 
@@ -2169,7 +2173,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 
 ### 98.1 原因
 - 聊天（`_app`）、设置、管理以前各自画一个 `GlassShell`。设置 / 管理 → 聊天 = 整个外壳卸载再装一遍；待处理（`/approvals`）→ 聊天虽然同一个外壳，聊天路由也是重新挂载。
-- 聊天一卸载，CopilotKit 的代理（`useAgent` 的 `registerProxiedAgent`）跟着注销。回来时重新注册、重新接入（`connect` 回放）、读五次存储：发送键闪成「■ 停止」约 0.3–0.8 秒、气泡先画缓存再换成回放的版本（中间少一两个气泡）、右栏面板重载；网络慢时更明显。正在写的回答离开时就断了，回来靠回放续上。
+- 历史根因（2026-10-17）：聊天一卸载，旧 CopilotKit 的代理（`useAgent` 的 `registerProxiedAgent`）跟着注销。回来时重新注册、重新接入（`connect` 回放）、读五次存储：发送键闪成「■ 停止」约 0.3–0.8 秒、气泡先画缓存再换成回放的版本（中间少一两个气泡）、右栏面板重载；网络慢时更明显。正在写的回答离开时就断了，回来靠回放续上。
 
 ### 98.2 现在
 - **外壳只有一个**，挂在 `_authed`（`components/layout/authed-shell.tsx`）。换页面只换：左栏内容（聊天左栏 / 设置左栏 / 管理左栏）、顶栏 `scope`、右栏显示与否。引导页、登录授权页照旧没有外壳。`_app`、设置、管理的布局路由只剩 `<Outlet />`（加各自的 `beforeLoad`）。
@@ -2184,7 +2188,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 - 不改地址（`?watch` / `?settings` 的写入都不做）、不标已读（回来时再标）、不登记左栏「⋯」和「新话题」快捷键（`RegisterBotChat` 不挂）、设置窗格的手机抽屉和「历史对话」弹窗关掉（它们画在 body 上）。
 - 回来时 `epoch` 加一：离开期间地址变了（比如回来的地址没带 `?watch`）不当成「浏览器后退关上计算机」（`useBotComputerTab` 的第 4 个参数）。
 - 滚动：不动，§35 / §94 的贴底与无跳动规则在藏着时照常工作（尺寸冻住，不触发重排）。藏着时也关掉滚动锚定（`overflow-anchor: none`，保险）。第一次去设置时对话被挪几十像素的真正原因见 §98.5。
-- **藏着不耗资源**：`KeptVisibleContext`（`lib/kept-visible.ts`）在留着的聊天和藏着的右栏里为 `false`，读它的地方停下——计算机控制权每秒一次的轮询（`useComputerControl`：只剩藏着的订阅者时不问，回来第一个看得见的订阅者马上补读一次）、浏览器标签轮询、计算机画面（直播 / 截图，`usePageVisible`）、面板列表轮询；全局的组件授权轮询（GalleryTools / SandboxedTools）按 `useMarkBotHidden` 登记的机器人停下。对话变化戳（§64 `useThreadActivity`）不停，从 2 秒放慢到 10 秒（藏着时别的设备写的东西藏着时就接上；回来才接会让发送键闪一下「停止」），回来时马上问一次。**不停**的：正在写的回答（CopilotKit 的流）和后台交付收件箱（§38，只在服务器有活时才请求）。
+- **藏着不耗资源**：`KeptVisibleContext`（`lib/kept-visible.ts`）在留着的聊天和藏着的右栏里为 `false`，读它的地方停下——计算机控制权每秒一次的轮询（`useComputerControl`：只剩藏着的订阅者时不问，回来第一个看得见的订阅者马上补读一次）、浏览器标签轮询、计算机画面（直播 / 截图，`usePageVisible`）、面板列表轮询；全局的组件授权轮询（GalleryTools / SandboxedTools）按 `useMarkBotHidden` 登记的机器人停下。对话变化戳（§64 `useThreadActivity`）不停，从 2 秒放慢到 10 秒（藏着时别的设备写的东西藏着时就接上；回来才接会让发送键闪一下「停止」），回来时马上问一次。**不停**的：正在写的回答（自有会话客户端的事件流）和后台交付收件箱（§38，只在服务器有活时才请求）。
 - 手机：在抽屉里点机器人会收起抽屉（以前抽屉留着盖在对话上，main 上就这样）。
 
 ### 98.4 回归
@@ -2237,7 +2241,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 起因（用户 2026-10-17 22:47，PC 0.1.15，机器人「星灵」）：「问题很多，无法操作电脑里的浏览器，操作会断，也不知道是报错了还是啥，也没有提示。」
 截图：让机器人在 Hark 注册页填生日 2000-07-12，第一轮「做了 4 步」、第二轮「做了 3 步」后什么都没有；右栏「计算机」里月份的系统下拉列表展开着。
 生产证据（审计 `computer.action_failed` + 网关日志）：机器人点了月份 `<select>`（有界面的 Chromium 弹出系统列表），之后 `computer_type` 和第二次 `computer_key` 在 agent-computer 里等到超时，
-服务器报「Element f4e36 is not on the page any more」，`POST /api/approvals/computer/:bot` 回 **500**；网页里的工具处理函数一抛错，CopilotKit 的 `executeSpecificTool` 就**不再发起下一轮**
+服务器报「Element f4e36 is not on the page any more」，`POST /api/approvals/computer/:bot` 回 **500**；当时网页工具处理函数一抛错，旧 CopilotKit 的 `executeSpecificTool` 就**不再发起下一轮**
 （它只在处理函数没出错时 follow-up），最后一条是 `Error: …` 工具结果，没有回答、没有提示。同时 `channel-chat` 在一轮的**第一个** run 结束时就放下了 `awaitingReply`，后面接力的 run 出错也不会报。
 
 ### 100.1 原生 `<select>`（agent-computer `native-select.ts`）
@@ -2287,7 +2291,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
   工具结果告诉机器人「已放卡片、等用户确认、不要换办法」；用户之后点「确认」，服务器照 §58 往这段对话发「用户确认了」叫机器人接着做（重试同一工具放行一次）。
   同一段对话同一个工具还没人理的旧卡片作废，只留最新一张。没有对话可挂的后台调用仍是原来的拒绝说明。
 
-### 101.4 工具步数快用完时提醒收尾（`server/src/copilot.ts` `withStepBudgetNote`）
+### 101.4 工具步数快用完时提醒收尾（`server/src/conversation-runtime.ts` `withStepBudgetNote`）
 - 一个 run 最多 12 步工具（`TOOL_STEPS`）。实测备用模型搜了 11 次新闻、到上限时最后一步还在调工具 → 没有回答，只出「这一轮没有做完」。
 - 修复：按这一轮已执行的工具次数，最后三次的工具结果后面加一句「步数快用完了，停止调用工具，用已有信息直接回答」。
 
@@ -2370,7 +2374,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
   底层 agent-computer `/exec` 一直支持 `timeoutMs`（1000–600000）。所有者 10-18 08:17 同意放宽到 10 分钟。
 
 ### 102.1 两套工具都开放超时（`shared/command-timeout.ts`）
-- 网页聊天（`app/src/lib/copilot/computer-tools.tsx`）和无人值守 / 审批网关（`server/src/computer/headless-tools.ts`）的 `computer_run_command` 都多了
+- 网页聊天（`app/src/lib/conversations/computer-tools.tsx`）和无人值守 / 审批网关（`server/src/computer/headless-tools.ts`）的 `computer_run_command` 都多了
   `timeoutSec`（推荐）和 `timeoutMs`。默认仍是 120 秒；上限 600 秒；超出 1–600 秒的收到边界上并在结果里写 `timeoutAdjusted`（不拒绝，拒绝只会让模型绕路）；
   两个都给时 `timeoutSec` 优先；`timeoutMs` 小于 1000 按秒理解（模型常把 300 写进 timeoutMs）；字符串数字也收。别的未知参数照旧拒绝。
 - 工具说明（两边同一段 `COMMAND_TIMEOUT_GUIDE`）：可能超过一分钟的命令一开始就传大一点的 timeoutSec（约 4 分钟的任务传 300），超过 600 秒改后台运行（`nohup … > log 2>&1 &`）再查日志；
@@ -2509,7 +2513,7 @@ BASE=http://127.0.0.1:<预览端口> CHANNEL=<长对话频道 id> ASSERT=1 SCENA
 
 计算机写操作实际经过审批入口。该请求的取消信号依次传到 `frontendAction`、frontend executor 与工具执行 signal，最终终止 shell 进程组。长动作心跳响应被取消时也终止当次未完成动作；持久审批决定与恢复任务使用各自生命周期。
 
-回归：真实 CopilotKit SDK + 独立 PostgreSQL 验证早补话、工具期间补话、另一页面与失败/Stop；Linux 实际计算机服务验证子孙进程停止后不能写出延迟 DONE，并能恢复执行；浏览器验证同一命令的实际日志只有一行、Stop 后只有 START、恢复与刷新持久化。
+历史验收（2026-10-20）：当时使用真实 CopilotKit SDK + 独立 PostgreSQL 验证早补话、工具期间补话、另一页面与失败/Stop；Linux 实际计算机服务验证子孙进程停止后不能写出延迟 DONE，并能恢复执行；浏览器验证同一命令的实际日志只有一行、Stop 后只有 START、恢复与刷新持久化。当前测试已改用官方 AG-UI 客户端与项目协议 fixture；这段历史结果不代表本轮清理候选已通过验收。
 
 ## 108. 聊天可靠性：节点身份、持久暂停与请求期限（2026-10-21，CB-087）
 
@@ -2604,7 +2608,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 ## 116. 机器人之间的往来锚点卡（2026-10-25，CB-093）
 
-当机器人在单聊中调用 `message_bot` 委派或请教另一个机器人时（`app/src/lib/copilot/handoff-tool.tsx`）：
+当机器人在单聊中调用 `message_bot` 委派或请教另一个机器人时（`app/src/lib/conversations/handoff-tool.tsx`）：
 
 - **主对话流展示可展开锚点卡（`BotExchangeCard`）**：步骤抽屉内仍为单行 `ToolLine`，主对话流中画成 `.bot-exchange-card` 锚点卡（折叠态显示 `与「B」往来` + 任务摘要 + 状态徽标 `询问中 / 已转交 / 已达上限 / 对方已删除 / 已阻止`）。
 - **展开查看完整往来信封与跳转**：点开卡片展示委派任务、约束条件、期望输出、中文状态说明，以及直达对方机器人对话的入口（若对方机器人已被删除，徽标与说明如实标注「对方已删除」）。
@@ -2707,6 +2711,6 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 用户：「为啥AI输出的内容，好多不在气泡里」→「能在对话解决的都在对话解决」→「制定完善的计划，深度，全面的彻底优化修复」。审查发现体系成立但靠人肉纪律维持双端一致，分四期修：
 
 - **契约文件（`shared/output-contract.ts`）**：模型能发的每种输出形态（气泡 / 引用 / 表格 / 代码 / draft-doc / brief / :::card / 链接卡两式 / 操作胶囊 / 富预览 / 内联图 / render_ui / ⟦files⟧ / 确认卡 / ⟦github⟧ / ⟦vault⟧ / ⟦page⟧ / 服务端行 / 干活说法）对 web / app / im 三端各写明 native / degraded / none。新增形态必须在清单里为每端做明确决定；`shared/output-contract.test.ts` 校验清单完整性，两端解析测试按 id 对照。
-- **P0 surface 闸门（`audit.ts` `InitiatorSurface`）**：person 加可选 `surface: "web" | "app"`（缺省 = web，兼容旧审计行与 callback token）；copilot 端点按 `User-Agent: ChisaBotAndroid` 标 app。`interactive()` / `canConfirm()` 只认 web person——Android / IM 上的「等人填」卡（⟦vault⟧、⟦github⟧ 写确认）由服务端干净拒绝并指路网页，不再建 pending 卡挂 10 分钟。IM 的 routine im: 确认流不受影响（confirmations 通道照旧）；`interactiveInitiator` 不变——Android 能答通用确认卡。
+- **P0 surface 闸门（`audit.ts` `InitiatorSurface`）**：person 加可选 `surface: "web" | "app"`（缺省 = web，兼容旧审计行与 callback token）；会话端点按 `User-Agent: ChisaBotAndroid` 标 app。`interactive()` / `canConfirm()` 只认 web person——Android / IM 上的「等人填」卡（⟦vault⟧、⟦github⟧ 写确认）由服务端干净拒绝并指路网页，不再建 pending 卡挂 10 分钟。IM 的 routine im: 确认流不受影响（confirmations 通道照旧）；`interactiveInitiator` 不变——Android 能答通用确认卡。
 - **P1 Android 渲染补齐**：`:::card`/`:::group` 与 ```cards 围栏 → `Block.StatusCards` 原生卡组；```brief → `Block.Brief` 晨报卡；独立行 `[label](url)` → `LinkCard`，短标签站内路径 → `ActionPill`（github 深链就地弹 `GithubConnectDialog`，其它走壳内网页）；⟦chisabot:files⟧ 工具结果 → `Row.FileCards`（image_generate / image_edit / file_share）；mermaid/svg/html 代码卡 + 「在网页中打开可预览」显式降级；Icon 画 label/名字不再静默丢；表单兜底文案补原因。
 - **P2 防漂移**：`WORK_STEP_TOOLS` 工具说法词汇表进契约；`shared/work-step.ts` 与 `WorkSteps.kt` 补齐 delegate_task / ask_person / note / schedule_create / bot_factory（两端同款中文说法）。

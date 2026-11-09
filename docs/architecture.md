@@ -1,10 +1,9 @@
 # ChisaBot 架构
 
-ChisaBot 源自 OpenBot，采用**云端机器人（agent）+ 用户设备节点**。当前迁移将执行循环交给独立 DSH Host，账号、Bot、工具权限和交付保留在 ChisaBot。上游原始架构（Intelligence、AG-UI Bot 框架、supervisor、SPIRE 等）见
-[chisabot-architecture.md](chisabot-architecture.md)，其中很多部分正在瘦身（[slimming.md](slimming.md)）。
+ChisaBot 采用**DSH 执行内核 + 自有会话服务 + 用户设备节点**。独立 DSH Host 管理模型循环与 Session；账号、机器人、工具权限、审批、任务成果和交付由 ChisaBot 管理。
 
 关键决定都记在 [ADR](adr/README.md) 里，界面规则在 [DESIGN.md](../DESIGN.md)。一页概览见 [overview.md](overview.md)，全部功能见
-[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。以下会话部分更新于 2026-11-08；DSH 已上线，生产切换与客户端验收状态见[实施记录](pipeline-runs/20261107-dsh-migration.md)。
+[features.md](features.md)，全部数据表见 [data-model.md](data-model.md)。DSH 已上线；本页会话接口与表名按正在实施的 0067 / reader 4 说明，尚未发布。部署状态见[实施记录](pipeline-runs/20261108-assistant-production.md)，升级与旧客户端兼容见[迁移说明](ops/upstream-removal.md)。
 
 ## 1. 总览
 
@@ -20,14 +19,13 @@ ChisaBot 源自 OpenBot，采用**云端机器人（agent）+ 用户设备节点
                              ▼  127.0.0.1:3001
  ┌──────────── ChisaBot 应用容器（chisabot-zh）──────────────────────────────────────────────┐
  │ server（Hono + 自有 Conversation）                  app（React/Vite 构建产物）          │
- │ 独立 Node DSH Host（每账号一实例）+ Session 持久卷                                      │
  │ PostgreSQL（容器内）   agent-computer（Chromium + Xvfb，机器人的云端浏览器 / 工作区）      │
  │ 进程内定时：定时任务 15 s · 面板刷新                                                       │
- └───────────┬─────────────────────────────┬────────────────────────────────────────────────┘
-             │ http://magpie:3425/v1       │ 只写 spool 请求文件
-             ▼                             ▼
-     Magpie 模型网关（可选）        宿主机 chisabot-updater（systemd，root）
-                                     拉 GitHub main → 构建镜像 → 备份 → 切换 → 健康检查 → 失败回滚
+ └───────────┬─────────────────────────────┬───────────────────────────┬────────────────────┘
+             │ http://magpie:3425/v1       │                           │ 只写 spool 请求文件
+             ▼                             ▼                           ▼
+     Magpie 模型网关（可选）    独立 Node DSH Host           宿主机 chisabot-updater
+                               每账号一实例 + Session 卷    构建 → 备份 → 切换 → 健康检查/回滚
 
 ```
 
@@ -39,7 +37,7 @@ ChisaBot 源自 OpenBot，采用**云端机器人（agent）+ 用户设备节点
 - 回合开头注入的上下文：工作方式提示、记忆（§50）、技能目录（§51）、保险箱用法（§52）、GitHub（§53）、当前北京时间（§55）、
   用户的设备情况（§45）。工具按回合类型给：人的回合全量；IM 回合只给文字类（§49）；面板刷新回合只给面板工具（§43）；
   后台任务（§38）有自己的工具集。
-- 产品历史仍在 `openbot_local_threads / _runs / _events`；0063 迁移补齐 DSH binding、command、run、工具账本、交互与旧历史导入表。DSH 模型历史在账号 Session 卷中。应用重启先接回仍在工作的 Host，工具回执未知时不自动重做。
+- 产品历史使用 `chisabot_local_threads / chisabot_local_runs / chisabot_local_events`；0067 原地重命名旧表，保留记录与引用。0063 已登记 DSH binding、command、run、工具账本、交互与旧历史导入表。DSH 模型历史在账号 Session 卷中。应用重启先接回仍在工作的 Host，工具回执未知时不自动重做。
 - 默认是**云端 agent + 设备节点**；也可以把整件活交给设备上的本地 agent（Claude Code / Codex / OpenCode / 内置循环，
   [ADR-0003](adr/0003-cloud-agent-device-nodes.md)、[ADR-0010](adr/0010-local-agent-handoff.md)，§66）。
 - 每轮的权限：确认卡片 + 审批偏好（§58）+ 每个机器人「请求批准 / 完全访问」（§97，`chisabot_bot_permissions`）在服务器端执行；
@@ -47,7 +45,7 @@ ChisaBot 源自 OpenBot，采用**云端机器人（agent）+ 用户设备节点
 
 ### 2.2 网页（`app/`）
 
-React + TanStack Router + 自有会话客户端与呈现注册表。一个应用覆盖聊天、设置、管理；网页、PWA、Electron 和 Android 共用前端，Android 使用手机响应式布局；旧原生客户端的 AG-UI 兼容接口继续保留。服务器前端发布后各端通过网页刷新取得更新；本地预览构建不更新线上网页。右侧常驻栏和窄窗口弹出层共享内容与卡片表面，见 [侧栏与弹出面板一致性](sidebar-panel-parity.md)。界面规范见 DESIGN.md（顶部有章节索引）。消息节点、暂停队列、请求期限与数据库故障恢复见[聊天可靠性](chat-reliability.md)。
+React + TanStack Router + 自有会话客户端与呈现注册表（`app/src/lib/conversations/`）。主动请求统一使用 `/api/conversations`，旧客户端路径集中在服务端兼容入口。一个应用覆盖聊天、设置、管理；网页、PWA、Electron 和 Android 共用前端，Android 使用手机响应式布局；旧原生客户端的 AG-UI 兼容接口继续保留。服务器前端发布后各端通过网页刷新取得更新；本地预览构建不更新线上网页。右侧常驻栏和窄窗口弹出层共享内容与卡片表面，见 [侧栏与弹出面板一致性](sidebar-panel-parity.md)。界面规范见 DESIGN.md（顶部有章节索引）。消息节点、暂停队列、请求期限与数据库故障恢复见[聊天可靠性](chat-reliability.md)。
 
 ### 2.3 公网网关与登录（`deploy/public/`）
 
@@ -83,7 +81,7 @@ Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡
 
 ### 2.7 云端浏览器（`agent-computer/`）
 
-每个机器人一个 Chromium（默认在 Xvfb 里有界面运行，避免被 Cloudflare 拦截）+ `/workspace` 工作区；工作区文件通过虚拟源
+当前应用容器内，云端计算机服务为每个机器人维护独立 Chromium 持久配置，隔离 Cookie、登录和标签；默认在 Xvfb 里有界面运行。服务进程与 `/workspace` 文件区由该容器内的机器人共享，不是每个机器人一个容器或文件系统。工作区文件通过虚拟源
 `https://workspace.local/` 给浏览器看。用户可以在右栏「计算机」接管 / 交还（§23、§39）。真标签最多 8 个、人和机器人同一组，
 每账号一份收藏夹（§95、§96，[browser-tabs.md](browser-tabs.md)）。
 
@@ -97,12 +95,11 @@ Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡
 
 ## 3. 功能 → 代码 → 数据
 
-ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不走迁移，回滚到旧镜像时旧代码直接忽略它们）；
-上游表和少数需要改上游表的变化走 `server/drizzle/` 迁移。每张表的用途见 [data-model.md](data-model.md)。
+业务表沿 `server/drizzle/` 登记版本化变更，部分模块保留幂等初始化。回滚必须检查产品reader，不能仅因新增表或列可被忽略就使用旧镜像。每张表的用途见 [data-model.md](data-model.md)。
 
 | 功能 | DESIGN | 文档 | 代码 | 数据 |
 |---|---|---|---|---|
-| 聊天、流式、富卡片 | §24–§27、§30–§32、§35 | [streaming.md](streaming.md) | `app/src/lib/copilot/`、`server/src/agents/` | `openbot_local_threads/_runs/_events` |
+| 聊天、流式、富卡片 | §24–§27、§30–§32、§35 | [streaming.md](streaming.md) | `app/src/lib/conversations/`、`server/src/conversation-runtime.ts`、`server/src/agents/` | `chisabot_local_threads/_runs/_events` |
 | 聊天截图缩略图 | §27 | — | `server/src/chat-shots.ts` | `chisabot_chat_shots` |
 | 回答中发消息 · 后台任务 | §38 | — | `server/src/thread-inbox.ts`、`server/src/workers/` | `chisabot_thread_inbox`、`chisabot_workers` |
 | 全端同步 · 历史对话 | §42 | — | `server/src/bot-threads.ts` | `chisabot_bot_threads` |
@@ -113,7 +110,7 @@ ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不
 | 图片宽高预留 | §83.2 | — | `server/src/image-dims/` | `chisabot_image_dims` |
 | 链接卡 | §48 | — | `server/src/link-preview/`、`app/src/lib/rich-previews/` | `chisabot_link_previews`、`chisabot_link_preview_assets` |
 | 设备 / PC 节点 · 扫码绑定 | §16、§33、§45 | [pc-node.md](pc-node.md) | `server/src/devices/`、`pc/` | `devices`、`device_audit_events`（迁移 0054；`device_bot_access` 已不用） |
-| 新建机器人 · 资料页 | §46、§47、§81 | [coworkers.md](coworkers.md) | `server/src/agents/` | 上游 agents 表（迁移 0058 一律私有） |
+| 新建机器人 · 资料页 | §46、§47、§81 | [coworkers.md](coworkers.md) | `server/src/agents/` | `agents` 表（迁移 0058 一律私有） |
 | 机器人头像 | §81 | [bot-avatars.md](bot-avatars.md) | `server/src/bot-avatars/` | `chisabot_bot_avatars` |
 | 确认卡片 · 权限与审批 · 每个机器人的权限 | §58、§97 | [confirmations.md](confirmations.md)、[settings-ia.md](settings-ia.md) | `server/src/confirmations/` | `chisabot_confirm_prefs/_rules/_requests`、`chisabot_bot_permissions` |
 | 设备编码工具 · 完全访问 · 无界面节点 | §62 | [pc-node.md](pc-node.md) | `server/src/devices/tools.ts`、`roots.ts`、`node-install.ts` | `devices.full_access_until` |
@@ -122,7 +119,7 @@ ChisaBot 自己的表大多在服务启动时 `CREATE TABLE IF NOT EXISTS`（不
 | 设置分组 · 设置搜索 | §97 | [settings-ia.md](settings-ia.md) | `app/src/lib/settings/registry.ts` | — |
 | IM 接入与持久交付 | §49；DSH §13 | [im.md](im.md) | `server/src/im/`、`shared/im.ts` | `chisabot_im_connections/_chats/_logs`、0064 `_inbox/_outbox`；正文与平台回执独立于模型执行保存 |
 | 长期记忆 | §50 | [memory.md](memory.md) | `server/src/memory-notes/` | `chisabot_memory_notes`、`chisabot_memory_bots` |
-| 技能 | §51 | [skills.md](skills.md) | `server/src/skills-chisa/` | 上游 `skills` 表 |
+| 技能 | §51 | [skills.md](skills.md) | `server/src/skills-chisa/` | `skills` 表 |
 | 密钥保险箱 | §52 | [vault.md](vault.md) | `server/src/vault/` | `chisabot_vault_secrets`、`chisabot_vault_requests` |
 | GitHub 连接 | §53 | [github.md](github.md) | `server/src/github/` | `chisabot_github_connections`、`chisabot_github_actions`（令牌在保险箱 `github`） |
 | 页面 | §54 | [pages.md](pages.md) | `server/src/pages/` | `chisabot_pages/_page_versions/_page_assets/_page_origins` |

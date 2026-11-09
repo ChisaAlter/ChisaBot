@@ -1,15 +1,15 @@
 # 数据模型
 
-ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite（账号、邀请、会话）。启用 DSH 后，每账号的执行历史另存于 `CHISABOT_DSH_ROOT` 持久目录。2026-11-08 增补会话迁移；实施状态见 [DSH 迁移记录](pipeline-runs/20261107-dsh-migration.md)。
+ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite（账号、邀请、会话）。启用 DSH 后，每账号的执行历史另存于 `CHISABOT_DSH_ROOT` 持久目录。本页会话表名按正在实施的 0067 / reader 4 说明；该命名迁移尚未发布。当前版本见[实施记录](pipeline-runs/20261108-assistant-production.md)，升级与兼容见[迁移说明](ops/upstream-removal.md)。
 
 ## 1. 两种建表方式
 
 | 方式 | 用在哪 | 回滚 |
 |---|---|---|
 | **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化 | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本 |
-| **迁移**：`server/drizzle/NNNN_*.sql`（drizzle） | 上游表与显式版本化变更；0063 接管本地会话、DSH 账本、确认卡和历史导入表 | 0063 只加表、列、索引，已有数据原地保留；DSH 回滚必须保留 PostgreSQL 与 Session 卷，并使用兼容 reader |
+| **迁移**：`server/drizzle/NNNN_*.sql`（drizzle） | 当前业务表与显式版本化变更；0063 接管会话账本，0067 原地重命名会话表 | 记录和外键引用保留；0067之后要求reader4，回滚必须同时保留PostgreSQL与Session卷并使用兼容镜像 |
 
-原则：**只加不删**。瘦身移除的功能保留它们的表和数据（P5 才会在稳定 ≥ 2 周后 DROP 空表，见 [slimming.md](slimming.md)）。
+原则：**保留用户数据，显式迁移结构**。命名变更使用原地rename；功能移除不自动删除历史表或业务记录。
 所有用户数据都带 `user_id`（或经机器人 / 设备归属到人），多账号下按人隔离（[accounts.md](accounts.md)）。
 
 ## 2. ChisaBot 自己的表（`chisabot_*`）
@@ -58,7 +58,7 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot_device_agent_settings` | 每台设备的本地 agent 档位（只读 / 工作区 / 完全访问）、隔离方式、网络开关 | `local-agents/service.ts` | §66 |
 | `chisabot_local_agent_tasks` | 交给本地 agent 的任务、输出、diff、状态 | `local-agents/service.ts` | §66 |
 
-设备本身在上游表 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`；`device_bot_access` 已不用（设备属于账号）。
+设备本身在 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`；`device_bot_access` 已不用（设备属于账号）。
 
 ### 云端 Claude Code（已删除，CB-099，2026-10-26）
 
@@ -100,21 +100,21 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot_media_models` | 个人覆盖的生图 / 识图模型（密钥加密，显示末 4 位） | `chat-files/media-models.ts` | §59 |
 | `chisabot_image_descriptions` | 识图模型对上传图片的描述 + OCR 缓存（按文件 + 模型） | `chat-files/media-models.ts` | §59 |
 
-默认模型连接和备用模型存在上游表 `enterprise_settings`（key `model_connection` / `model_fallbacks`）。
+默认模型连接和备用模型存在 `enterprise_settings`（key `model_connection` / `model_fallbacks`）。
 
-## 3. 本地对话表（`openbot_local_*`）
+## 3. 本地对话表（`chisabot_local_*`）
 
-本地会话与 DSH 展示投影共用这些表。0063 将它们登记到正式迁移，`local-conversations.ts` 保留幂等初始化以兼容已有安装。
+本地会话与 DSH 展示投影共用这些表。0063 已登记原始结构；0067 将旧会话表及相关索引、约束和事件序列原地迁入当前命名，保留行、消息ID、执行状态和外键引用。`local-conversations.ts` 使用当前表名并保留幂等初始化。
 
 | 表 | 用途 |
 |---|---|
-| `openbot_local_threads` | 对话线程、展示快照与线程 lease；`snapshot_sequence` 标识快照包含到哪个事件。已有 DSH 执行重启时恢复观察，不能仅清锁重新派发 |
-| `openbot_local_runs` | 每一轮的运行记录（finished / error / interrupted / stopped） |
-| `openbot_local_events` | 持久产品事件和 AG-UI 兼容回放；DSH 源日志仍在 Session 卷 |
+| `chisabot_local_threads` | 对话线程、展示快照与线程 lease；`snapshot_sequence` 标识快照包含到哪个事件。已有 DSH 执行重启时恢复观察，不能仅清锁重新派发 |
+| `chisabot_local_runs` | 每一轮的运行记录（finished / error / interrupted / stopped） |
+| `chisabot_local_events` | 持久产品事件和 AG-UI 兼容回放；DSH 源日志仍在 Session 卷 |
 
-迁移 0063 可在全新数据库和已执行运行时 `ensure()` 的数据库上执行：建表、索引使用 `IF NOT EXISTS`，新增列保留可空状态；旧快照缺失水位时按已存事件回填，新 DSH run 的 `initiator` 默认 `person`。现有非空水位、运行输入、消息 ID、审批状态不会被覆盖。迁移与数据备份命令见 [DSH 运维](ops/dsh-runtime.md)。
+迁移 0063 可在全新数据库和已执行运行时 `ensure()` 的数据库上执行：建表、索引使用 `IF NOT EXISTS`，新增列保留可空状态；旧快照缺失水位时按已存事件回填，新 DSH run 的 `initiator` 默认 `person`。现有非空水位、运行输入、消息 ID、审批状态不会被覆盖。0067检测到新旧两套会话表同时存在时会拒绝猜选；部署者须先核对数据来源。迁移与备份命令见 [DSH 运维](ops/dsh-runtime.md)。
 
-## 4. 仍在用的上游表（节选）
+## 4. 当前业务表（节选）
 
 | 表 | ChisaBot 怎么用 |
 |---|---|
@@ -129,11 +129,11 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `audit_events` | 活动记录 |
 | `saved_logins` · `credentials` | 账号连接里保存的网站登录、模型密钥 |
 | `computer_snapshot` · `computer_page_frame` | 云端浏览器快照 |
-| `attachments` | 上游附件（定时清理 `chisabot-zh-attachments.timer`） |
+| `attachments` | 附件（定时清理 `chisabot-zh-attachments.timer`） |
 
-瘦身后**不再读写但保留**的上游表：`routines` / `routine_runs` / `routine_sweeps`、`responsibilities*`、`learning_*`、`scim_*`、`sso_providers`、
+早期瘦身记录中标记保留的历史表包括：`routines` / `routine_runs` / `routine_sweeps`、`responsibilities*`、`learning_*`、`scim_*`、`sso_providers`、
 `team_bot_*`、`group_*`、`delivery_*`、`push_devices`、`demonstrations`、`personal_memories`、`proactive_*`、`model_usage`、`voice_sessions`、
-`bot_panel_*` / `panel_*`（旧面板系统）等。P5 处理（CB-016）。
+`bot_panel_*` / `panel_*`（旧面板系统）等。后续功能可能复用其中部分表，不能据这份历史列表直接删除；清理前须核对现役消费者与恢复用途。
 
 ## 5. 登录网关（SQLite，`deploy/public/auth/`）
 

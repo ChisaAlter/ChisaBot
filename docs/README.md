@@ -1,7 +1,7 @@
 # ChisaBot 文档
 
-ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务器上的机器人，替你在任何地方管理你所有的设备。
-这一页是**全部文档的总索引**。截至 2026-10-17：服务器 main `0e23321`（PR #192），客户端最新 v0.1.15。
+ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行任务，网页、PC 和 Android 共用界面并连接你的设备。
+这一页是**全部文档的总索引**。当前部署版本、候选与未完成验收见[实施记录](pipeline-runs/20261108-assistant-production.md)。
 
 ## 从这里开始
 
@@ -19,6 +19,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 | 提交改动 | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md) |
 | 自己部署、运维一套 ChisaBot | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
 | 发版、上线、回滚 | [发布流程 release](release.md) · [部署、回滚与上线检查](ops/deploy.md) · [在线更新](online-update.md) · [DSH 运行时与回滚](ops/dsh-runtime.md) · [旧托管历史导入](intelligence-migration.md) |
+| 升级旧接口、会话表和部署资源 | [命名与依赖迁移](ops/upstream-removal.md)（0067 / reader 4，实施中） |
 | 测试 | [测试与验证 testing](testing.md) |
 | 看懂中文术语 | [术语表 glossary](glossary.md) |
 
@@ -36,10 +37,10 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 ## 架构
 
 - [DSH 主内核完整设计与迁移方案](dsh-kernel-migration.md)：已实施的内核迁移设计；实际上线与证据见 [R5 实施记录](pipeline-runs/20261107-dsh-migration.md)。
-- [个人助理生产交付计划](production-assistant-plan.md)：基于当前能力及 OpenBot / DSH Bot 源码的生产收尾，优先桌面端、信息可信、实际成果、外发与恢复；[现有能力核对](research/20261108-assistant-capability-baseline.md) · [开源实现核对](research/20261108-assistant-upstream-patterns.md)。
+- [个人助理生产交付计划](production-assistant-plan.md)：整合现有能力的生产收尾，优先桌面端、信息可信、实际成果、外发与恢复；[现有能力核对](research/20261108-assistant-capability-baseline.md) · [开源实现核对](research/20261108-assistant-upstream-patterns.md)。
 - [ChisaBot 架构](architecture.md)：服务器 agent、公网网关、更新器、PC 节点、Android、云端浏览器，以及每个功能的代码位置、
   数据表和 DESIGN 章节、常用运行时开关。
-- [数据模型](data-model.md)：全部 `chisabot_*` 表、本地对话表、仍在用的上游表、网关 SQLite、浏览器本地存储。
+- [数据模型](data-model.md)：会话与效果账本、当前业务表、网关 SQLite、浏览器本地存储。
 - [流式回复：从模型到屏幕](streaming.md)
 - [分支与能力边界](chisabot.md)：本地模式、第三方推理、数据兼容和客户端状态。
 - [ChisaBot 原始架构](chisabot-architecture.md)（上游参考；其中很多部分已瘦身掉，见 [slimming.md](slimming.md)）
@@ -98,9 +99,9 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 - [切换模型何时生效，运行中的回复使用哪个模型](models.md#目录缓存和运行快照)
 - [模型不可用，怎样定位网关、权限或上游问题](operations.md#模型问题排查)
 
-## 上游技术参考
+## 历史技术参考
 
-以下资料继承自 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot)，用于查阅保留的工具、权限、框架与可选集成。
+以下资料保留早期实现与可选集成的说明。当前运行结构以[架构](architecture.md)为准，代码来源与版权集中列于[第三方许可](THIRD_PARTY_NOTICES.md)。
 
 - [开发参考](development.md)：迁移、分开启动服务与质量检查。
 - [联网研究](parallel-research.md)：Parallel Search 连接器。
@@ -108,7 +109,7 @@ ChisaBot 是 CopilotKit/OpenBot 的中文私人助手分支：一台云端服务
 - [上游容器参考](deployment.md)、[上游发布参考](releasing.md)、[Windows 签名](windows-signing.md)：继承的镜像、发布和签名流程（ChisaBot 的发版看 [release.md](release.md)）。
 - 已在瘦身中删除：Tauri 桌面端 `desktop/`、Expo `mobile/`、Helm chart `charts/`、自动学习、`worker/`（见 [slimming.md](slimming.md)）。
 
-默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。内部 `CHISABOT_*` 环境变量、包名、协议及数据目录保留兼容，展示品牌为 ChisaBot。
+默认中文租户包见 [examples/zh-CN](../examples/zh-CN/README.md)。当前环境变量使用 `CHISABOT_*`；旧设置、客户端和物理数据资源通过[集中兼容入口](ops/upstream-removal.md)迁移。
 
 文档只保存可复用说明与脱敏示例。真实主机、登录密码、模型密钥、客户数据、对话和私人部署资料不写入文档或仓库；
 具体部署的私有运维资料由维护者保存在仓库之外。

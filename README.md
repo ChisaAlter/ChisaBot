@@ -15,7 +15,7 @@
   <a href="https://github.com/ChisaAlter/ChisaBot/releases">下载客户端</a>
 </p>
 
-ChisaBot 基于 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的开源代码开发，保留 AG-UI、多 BOT、工具权限和审计能力，加入中文界面、独立的网页登录、本地会话持久化，以及 Magpie 模型目录与 BOT 模型选择。本分支可通过 `CHISABOT_RUNTIME_MODE=local` 将会话保存在自己的 PostgreSQL 中，无需 CopilotKit Intelligence 项目。模型由管理员接入，可以是自托管模型、兼容 API 或自部署的 [Magpie](https://github.com/yetone/magpie) 网关。使用第三方模型时，推理仍由所选模型服务处理。
+ChisaBot 是以 DSH 为执行内核的中文私人助手。服务器负责会话、任务、权限、审批和交付；PostgreSQL 保存产品历史，独立 DSH Host 保存模型执行 Session。网页、Windows 和 Android 共用聊天界面。模型由管理员接入，可以使用兼容 API 或自部署的 [Magpie](https://github.com/yetone/magpie) 网关；推理由所选模型服务处理。
 
 ## 截图
 
@@ -66,11 +66,11 @@ ChisaBot PC 是无边框窗口，打开后直接进入你服务器上的 ChisaBo
 
 - **中文界面**：聊天、BOT 管理、设置与管理页面中文化，内置中文租户包位于 `examples/zh-CN/`。
 - **网页登录**：登录页面、服务端会话与退出登录，认证网关保护页面及 API。
-- **本地运行与持久化**：本地运行模式使用 PostgreSQL 保存对话，重启后可继续查看会话。
+- **DSH 执行与持久化**：会话命令、展示历史和效果账本保存在 PostgreSQL，DSH Session 使用独立持久存储；重启后接回原执行。
 - **模型配置**：管理员配置协议、API 地址、密钥与部署默认模型，并测试连接；密钥由服务端加密保存。
 - **Magpie 模型目录**：读取网关实际开放的完整模型列表，保留供应商前缀，支持搜索和刷新。
 - **每 BOT 独立选择**：聊天输入框与 BOT 设置修改同一个持久化值，两处及跨标签页同步，下一轮使用新模型。
-- **工具与权限**：继承上游的 AG-UI 接入、BOT 电脑、MCP 工具、审批与审计，按部署配置启用。
+- **工具与权限**：支持 AG-UI 接入、设备与云端浏览器、MCP 工具、审批和审计，按部署配置启用。
 - **面板与云端浏览器**：机器人可以在右栏建面板（可定时刷新），也可以在服务器上的云端浏览器里打开和操作网页，右栏「面板 | 计算机」切换查看。
 - **客户端与在线更新**：Windows PC（Electron）和 Android 客户端连接你自己的服务器；服务器在「管理后台 → 系统更新」一键更新，网页和客户端各自提示新版本。
 
@@ -78,10 +78,10 @@ ChisaBot PC 是无边框窗口，打开后直接进入你服务器上的 ChisaBo
 
 ## 开发与部署
 
-开发依赖：Bun 1.3.14、Docker 和 PostgreSQL。
+开发依赖：Bun 1.3.14、Node.js 24.9 以上、Docker 和 PostgreSQL。DSH 的固定版本与部署接线见 [DSH 运维](docs/ops/dsh-runtime.md)。
 
 ```sh
-bun install --frozen-lockfile
+bun install --frozen-lockfile --omit=peer
 bun run typecheck
 ```
 
@@ -89,7 +89,7 @@ bun run typecheck
 
 项目维护：[路线图（看板）](docs/ROADMAP.md) · [Backlog](docs/BACKLOG.md) · [架构](docs/architecture.md) · [架构决策 ADR](docs/adr/README.md) · [参与开发](CONTRIBUTING.md) · [文档目录](docs/README.md)。
 
-本分支保留上游 `CHISABOT_*` 环境变量、内部包名、协议标识和数据目录，兼容已有部署和数据。产品展示名称为 **ChisaBot**。
+当前源码清理推广入口、旧命名和依赖；会话接口统一为 `/api/conversations`，0067 迁移原地重命名会话表，产品 reader 升至 4。这轮变更正在实施，尚未发布。旧客户端、存储键和部署资源的过渡规则见[迁移说明](docs/ops/upstream-removal.md)，实际版本见[实施记录](docs/pipeline-runs/20261108-assistant-production.md)。
 
 `CHISABOT_SINGLE_USER=true` 只用于本地开发或由认证网关保护的内部服务；对外入口必须配置登录保护。详细能力边界与源码位置见 [分支说明](docs/chisabot.md)。
 
@@ -125,7 +125,7 @@ bun run typecheck
   （`fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`），把 `deploy/updater/config.env`
   的 `BUILD_MEMORY` 调小，必要时在别的机器上构建镜像后 `docker save | ssh <主机> docker load`；不装 Magpie 也能省几百 MB。
 - 磁盘剩余 ≥ 2.5 GB（更新脚本会检查）。
-- Docker Engine + Docker Compose v2（+ buildx 插件）、git、curl、python3（3.6+，第 7 步的 `chisabot-updater` 用；没有 python3 的老系统也能用 python2.7）、systemd、Bun 1.3.14（构建前端）。
+- Docker Engine + Docker Compose v2（+ buildx 插件）、git、curl、python3（3.6+，第 7 步的 `chisabot-updater` 用；没有 python3 的老系统也能用 python2.7）、systemd、Bun 1.3.14（初始化部署配置；前端由镜像内构建）。
 - 域名（A / AAAA 记录指向服务器）与证书：默认在 `/etc/letsencrypt/live/<域名>/{fullchain.pem,privkey.pem}`；
   别的位置就在 `deploy/.env` 设 `CHISABOT_CERT_DIRECTORY`（挂成容器里的 `/etc/letsencrypt`）和 `CHISABOT_CERT_NAME`。
 
@@ -140,7 +140,7 @@ docker --version && docker compose version && docker buildx version && git --ver
 ```sh
 git clone https://github.com/<owner>/<repo>.git /opt/chisabot-src
 cd /opt/chisabot-src
-bun install --frozen-lockfile
+bun install --frozen-lockfile --omit=peer
 ```
 
 ### 3. 环境变量与密钥（只列名字）
@@ -148,7 +148,7 @@ bun install --frozen-lockfile
 ```sh
 cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
 # 只给空字段生成随机值，不打印：
-bun -e 'let t=await Bun.file("deploy/.env").text();for(const n of ["KEY_ENCRYPTION_KEY"]){t=t.replace(new RegExp("^"+n+"=\\s*$","m"),n+"="+require("node:crypto").randomBytes(32).toString("hex"))}await Bun.write("deploy/.env",t)'
+bun -e 'let t=await Bun.file("deploy/.env").text();for(const n of ["KEY_ENCRYPTION_KEY"]){t=t.replace(new RegExp("^"+n+"=\\s*$","m"),n+"="+require("node:crypto").randomBytes(32).toString("base64"))}await Bun.write("deploy/.env",t)'
 ```
 
 `deploy/.env` 里的变量：
@@ -156,14 +156,17 @@ bun -e 'let t=await Bun.file("deploy/.env").text();for(const n of ["KEY_ENCRYPTI
 | 变量 | 必填 | 作用 |
 | --- | --- | --- |
 | `KEY_ENCRYPTION_KEY` | 是 | 加密数据库里的模型密钥；**必须与数据库备份一起保存，已有安装绝不能重置** |
-| `CHISABOT_RUNTIME_MODE` | 是（`local`） | 会话存自己的 PostgreSQL，不需要 CopilotKit Intelligence |
+| `CHISABOT_RUNTIME_MODE` | 是（`local`） | 会话与产品账本存自己的 PostgreSQL |
+| `CHISABOT_AGENT_KERNEL=dsh` | DSH 部署 | 选择 DSH；需同时配置账号 Host、targets 与工具网关，见 [DSH 运维](docs/ops/dsh-runtime.md) |
 | `BOT_PROVIDER`、`BOT_MODEL`、`OPENAI_API_KEY` / `OPENAI_BASE_URL`、`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` | 首次启动用 | 首个模型连接；之后在「管理后台 → 模型设置」改并测试 |
 | `CHISABOT_IMAGE` | 否 | 镜像名，默认 `local/chisabot:latest` |
-| `MAGPIE_NETWORK` | 否 | 与 Magpie 共用的 Docker 网络，默认 `openbot_magpie` |
+| `MAGPIE_NETWORK` | 否 | 与 Magpie 共用的 Docker 网络；新安装默认 `chisabot_magpie`，已有部署沿资源适配器保留实际网络 |
 | `MAGPIE_ADMIN_URL`、`MAGPIE_WEB_KEY_FILE` | 用 Magpie 时 | 内嵌管理控制台：`http://magpie:3430` + 只读 Web key 文件（uid 1002、0400） |
 | `MODEL_CATALOG_REFRESH_MINUTES` | 否 | 模型目录刷新间隔，默认 10 |
-| `SL_ENABLED`、`COPILOTKIT_TELEMETRY_DISABLED`、`DO_NOT_TRACK` | 否 | 关闭上游遥测 |
+| `SL_ENABLED=false`、`DO_NOT_TRACK=1` | 否 | 部署模板中的遥测选择 |
 | `DEPLOYMENT_ID`、`VITE_MAGPIE_MANAGEMENT_URL` | 否 | 部署标识；后者已不用于导航 |
+
+新安装的 Compose 使用 `chisabot-zh_*` 命名卷。已有安装应通过 `start.sh` 或更新器启动：它们先按真实挂载固定现有卷与网络，不会另建空业务库；手工 Compose 前的资源适配见[迁移说明](docs/ops/upstream-removal.md)。
 
 Compose 里固定写好的：`EMBEDDED_POSTGRES=on`（数据库在容器内，卷 `database`）、`CHISABOT_SINGLE_USER=true`（**只因为前面有登录网关才安全**）、`TENANT_PACKAGE_DIR=../examples/zh-CN`、在线更新的两个挂载和 `CHISABOT_UPDATER_DIR`（见第 7 步）。`CHISABOT_SOURCE_DIR`（仓库路径）由 `start.sh` 自动写进 `.env`。
 其他私密文件：`deploy/private/magpie.env`（`MAGPIE_WEB_KEY`）、`deploy/public/auth/config.json`、`deploy/public/magpie-private.conf`。都被 Git 忽略，不要提交。
@@ -172,8 +175,7 @@ Compose 里固定写好的：`EMBEDDED_POSTGRES=on`（数据库在容器内，�
 
 ```sh
 cd /opt/chisabot-src
-TENANT_PACKAGE_DIR=../examples/zh-CN bun run --cwd app build     # start.sh 要求 app/dist 已存在
-sudo sh deploy/start.sh                                           # 装在线更新服务（第 7 步）、建 Magpie 网络，build + up --wait chisabot
+sudo sh deploy/start.sh                                           # 从根 Dockerfile 构建前后端，复用已有卷并启动应用
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/health   # 期望 200
 curl -s http://127.0.0.1:3001/api/version                               # {version, commit, buildId, builtAt}
 ```
@@ -305,7 +307,7 @@ curl -sL https://<更新源>/ChisaBot-Android-<版本>.apk | sha256sum          
 
 ### 9. 回滚
 
-- 网页：管理后台 → 系统更新 →「回滚到上一版」（只换镜像，数据库不回退）。
+- 网页：管理后台 → 系统更新 →「回滚到上一版」（只换兼容镜像，数据库不回退）。0067 / reader 4 生效后，reader 1–3 镜像不能读取新会话表，不能作为回滚目标。
 - 宿主机：每次切换都会留下 `/opt/chisabot-zh/rollback-to-<旧标签>.sh` 和 `compose.yaml.before-<新标签>`：
 
 ```sh
@@ -313,7 +315,7 @@ ls -t /opt/chisabot-zh/rollback-to-*.sh | head -3
 sh /opt/chisabot-zh/rollback-to-<旧标签>.sh
 ```
 
-- 数据：一键更新前的 `pg_dump`、compose、profiles / workspace 卷在 `/opt/chisabot-updater/backups/<时间>-<任务>/`（保留 5 份）。
+- 数据：完整备份包括 PostgreSQL、DSH Session、workspace、profiles、认证数据与必要配置；只轮换更新器自己创建的完整批次，手工保护批次保留。位置、保留策略和恢复条件见 [DSH 运维](docs/ops/dsh-runtime.md)。
 - 客户端：把更新源里的 `latest.yml` / `latest.json` 换回上一版的（不会降级已升级的客户端，只会停止再升级）。
 
 ### 10. 健康检查清单
@@ -336,7 +338,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 - **把 3001 直接暴露到公网**：后端是 `CHISABOT_SINGLE_USER=true`，谁能访问谁就是管理员。只能经 HTTPS 网关。
 - **重置了 `KEY_ENCRYPTION_KEY`**：已保存的模型密钥全部解不开。随数据库备份一起保存。
 - **网关还在用模板 `nginx.conf`**（里面是 `chisabot.example.com`），或 `auth/config.json` 的 `publicOrigin` 与实际入口（含端口）不一致：登录后跨站校验失败、Cookie 不共享。改了域名或端口就重跑 `render-nginx.sh`。
-- **忘了先构建前端**：`start.sh` 直接报 `Build the frontend first`。
+- **已有安装误用新卷**：先经 `start.sh` 或更新器的资源适配固定当前挂载；检测到新旧数据库卷同时存在时应明确选择，不能靠删除旧卷消除冲突。
 - **镜像层数**：反复在旧镜像上叠层会撞到 127 层上限；一键更新基于压平的底座只加固定层，手动发布也应在压平底座上构建。
 - **改了依赖却点一键更新**：会停在「需要完整构建」，这是预期行为，不是故障。
 - **系统更新页是空的 / 显示「未安装」/「更新程序是旧版本」**：老部署，运行一次 `cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh`（第 7 步「老部署怎么升级」）。
@@ -364,7 +366,7 @@ sh /opt/chisabot-updater/smoke.sh                                               
 | `docs/` | 中文使用指南、模型集成与上游技术参考；`docs/images/` 是 README 截图 |
 | `assets/brand/` | 品牌头像原图与生成脚本（`node assets/brand/generate.mjs` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28 |
 
-上游 Intelligence、第三方连接器按需使用；上游的 Tauri 桌面端、Expo 移动端、外部框架适配器、Helm chart 等不发布的目录已在瘦身 P3 删除（见 `docs/slimming.md`）。本仓库不提供 ChisaBot 公共镜像。PC（`pc/`）和 Android（`android/`）客户端的通用安装包在本仓库的 GitHub Releases（CI 构建，首次运行填自己的服务器地址）；也可以自己构建并放到自己的更新源（见上文第 8 步）。
+第三方连接器按需启用；服务器执行由 DSH 和本地会话服务承担。历史托管数据通过明确的导入工具迁移，不再作为在线执行后端。本仓库不提供 ChisaBot 公共镜像。PC（`pc/`）和 Android（`android/`）客户端的通用安装包在本仓库的 GitHub Releases（CI 构建，首次运行填自己的服务器地址）；也可以自己构建并放到自己的更新源（见上文第 8 步）。
 
 ## 来源与许可证
 
@@ -372,4 +374,4 @@ sh /opt/chisabot-updater/smoke.sh                                               
 - 交互协议：[AG-UI](https://github.com/ag-ui-protocol/ag-ui)
 - 模型网关：[yetone/magpie](https://github.com/yetone/magpie)
 
-代码继续使用 [MIT License](LICENSE)，保留上游 `Copyright (c) 2026 CopilotKit` 及原有许可声明。ChisaBot 是在上游基础上定制的分支。
+项目包含来源于上述开源项目的代码，继续遵守 [MIT License](LICENSE)，保留 `Copyright (c) 2026 CopilotKit` 及原有许可声明。组件来源和单独许可证见 [第三方许可](docs/THIRD_PARTY_NOTICES.md)。
