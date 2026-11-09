@@ -90,6 +90,9 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     "slow_bound",
     "slow_dead",
     "slow_stop",
+    "slow_both",
+    "slow_both_b",
+    "slow_alone",
   ].map((id) => ({
     id,
     contextWindow: 32000,
@@ -315,6 +318,31 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       });
       assert.deepEqual(next.calls, ["available"]);
       assertBound(next, ["lookup"], "Bound prompt A7");
+    },
+  );
+  await t.test(
+    "primary and backup both silent: the turn ends with a clear error instead of hanging",
+    async () => {
+      const started = Date.now();
+      const result = await run("both-dead", "slow_both", "slow_both_b", 200);
+      assert.deepEqual(result.calls, ["slow_both", "slow_both_b"]);
+      assert.match(result.text, /备用模型「slow_both_b」请求失败/);
+      assert.match(result.text, /主模型和备用模型都没有回应。这一轮已结束/);
+      assert.ok(Date.now() - started < 10_000);
+      // Both breakers are open now: the next turn still tries (primary first) and still ends.
+      const next = await run("both-dead-2", "slow_both", "slow_both_b", 200);
+      assert.ok(next.calls.length >= 1);
+      assert.match(next.text, /这一轮已结束/);
+    },
+  );
+  await t.test(
+    "a single silent model ends the turn after its longer deadline",
+    async () => {
+      const started = Date.now();
+      const result = await run("alone-dead", "slow_alone", undefined, 200);
+      assert.deepEqual(result.calls, ["slow_alone"]);
+      assert.match(result.text, /0\.8 秒内没有任何输出。这一轮已结束/);
+      assert.ok(Date.now() - started >= 700);
     },
   );
   await t.test(

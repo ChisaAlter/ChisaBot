@@ -21,9 +21,10 @@ const SECRETS = [
   "3096",
   "secret_col",
   "qa_secret_table",
+  "s3cr3tPG",
 ];
 const MSG =
-  "upstream https://qa:hunter2pw@10.20.30.40:3096/v1 failed: Authorization: Bearer sk-qa508FAKEKEY1234567890abcdef; Failed query: select secret_col from qa_secret_table";
+  "upstream https://qa:hunter2pw@10.20.30.40:3096/v1 failed: Authorization: Bearer sk-qa508FAKEKEY1234567890abcdef; db postgres://app:s3cr3tPG@pg.svc.cluster.local:5432/x; Failed query: select secret_col from qa_secret_table";
 
 const leaks = (text: string) =>
   SECRETS.filter((secret) => text.includes(secret));
@@ -57,6 +58,24 @@ describe("shared public error redaction", () => {
         "sessions where",
       ])
         expect(out).not.toContain(bad);
+    }
+    // QA509: URL credentials under any scheme, not only http(s).
+    for (const [url, secret] of [
+      ["postgres://app:s3cr3tPG@db.example.com:5432/app", "s3cr3tPG"],
+      ["postgresql://app:s3cr3tPQ@db.example.com/app", "s3cr3tPQ"],
+      ["redis://:s3cr3tRD@cache.example.com:6379/0", "s3cr3tRD"],
+      ["rediss://default:s3cr3tRS@cache.example.com", "s3cr3tRS"],
+      ["mongodb+srv://u:s3cr3tMG@cluster0.example.net/db", "s3cr3tMG"],
+      ["wss://u:s3cr3tWS@ws.example.com/socket", "s3cr3tWS"],
+      ["ftp://u:s3cr3tFTP@files.example.com/pub", "s3cr3tFTP"],
+      ["amqp://guest:s3cr3tMQ@mq.example.com:5672/vhost", "s3cr3tMQ"],
+      ["mysql://root:p@ss3cr3tMY@db.example.com/app", "ss3cr3tMY"],
+      ["smtp://mailer:s3cr3tSM@smtp.example.com:587", "s3cr3tSM"],
+    ]) {
+      const out = publicErrorMessage(new Error(`connect ${url} failed`));
+      expect(out).not.toContain(secret);
+      expect(out).toContain("••••");
+      expect(out).toContain("connect");
     }
     expect(redactPublicText("模型服务暂时不可用，请稍后再试。")).toBe(
       "模型服务暂时不可用，请稍后再试。",

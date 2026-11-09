@@ -109,6 +109,9 @@ function routeFailure(failure, choice, index) {
   };
 }
 
+/** First-output budget multiplier when a route has no fallback to switch to. */
+const SINGLE_MODEL_DEADLINE_FACTOR = 4;
+
 /** A stable session/model route with run-scoped credentials and retry state. */
 export class ChisaModelRouter extends LlmAdapter {
   constructor(ctx) {
@@ -281,8 +284,17 @@ export class ChisaModelRouter extends LlmAdapter {
           const relay = () => abort.abort(options.signal.reason);
           options.signal?.addEventListener("abort", relay, { once: true });
           if (options.signal?.aborted) relay();
+          // Every candidate has a first-output deadline, the last one too (QA509): with nothing
+          // left to switch to, a silent model ends the turn with a clear error instead of hanging.
+          // A route with a single model gets a longer budget, since no fallback is waiting.
+          const multi = route.candidates.length > 1;
           const wait =
-            route.index + 1 < route.candidates.length ? route.firstOutputMs : 0;
+            route.firstOutputMs > 0
+              ? multi
+                ? route.firstOutputMs
+                : route.firstOutputMs * SINGLE_MODEL_DEADLINE_FACTOR
+              : 0;
+          const last = route.index + 1 >= route.candidates.length;
           const position = route.index;
           let timer =
             wait > 0
@@ -329,8 +341,9 @@ export class ChisaModelRouter extends LlmAdapter {
                       failure: routeFailure(
                         {
                           code: "TIMEOUT",
-                          message:
-                            "Model produced no output within the configured fallback deadline.",
+                          message: last
+                            ? `${Math.round(wait / 100) / 10} 秒内没有任何输出${multi ? "，主模型和备用模型都没有回应" : ""}。这一轮已结束，请稍后重试。`
+                            : "Model produced no output within the configured fallback deadline.",
                         },
                         choice,
                         route.index,
