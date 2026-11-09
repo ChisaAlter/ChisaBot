@@ -255,11 +255,27 @@ function redactPlain(value: string): string {
   return out;
 }
 
+/**
+ * 任意 scheme 的 URL userinfo（QA509：postgres:// redis:// mongodb+srv:// wss:// ftp:// amqp://…）。
+ * redactUrl 只接 http(s)；其余 scheme 的 `user:pass@` / `:pass@` / `user@` 一律整段换成 ••••。
+ * userinfo 贪婪匹配到 host 前最后一个 @，密码里带 @ 也不漏半截。
+ */
+const ANY_SCHEME_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#"'<>]+)@/gi;
+export function redactUserinfo(value: string): string {
+  return value.replace(
+    ANY_SCHEME_USERINFO,
+    (_m, scheme: string, userinfo: string) =>
+      `${scheme}${userinfo.includes(":") ? `${MASK}:${MASK}` : MASK}@`,
+  );
+}
+
 /** 文本（命令、输出）打码：像密钥的串换成 ••••；其中能解析的 URL 也按 redactUrl 处理。 */
 export function redactText(value: string): string {
   const out = redactCommands(value);
   return redactPlain(
-    out.replace(/https?:\/\/[^\s"'<>]+/g, (url) => redactUrl(url)),
+    redactUserinfo(
+      out.replace(/https?:\/\/[^\s"'<>]+/g, (url) => redactUrl(url)),
+    ),
   );
 }
 

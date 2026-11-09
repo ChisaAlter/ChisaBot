@@ -1,4 +1,4 @@
-import { redactText } from "./computer/activity-redact";
+import { redactText, redactUserinfo } from "./computer/activity-redact";
 import { reasonWithoutStatement } from "./db/query-failure";
 
 /**
@@ -44,7 +44,7 @@ const BARE_USERINFO = /(^|[\s(<"'=])[^\s:/@"'<>]+:[^\s@/"'<>]+@(?=[^\s@]+)/g;
 
 /** Redacts already-extracted failure text. Idempotent. */
 export function redactPublicText(text: string): string {
-  let out = redactText(text);
+  let out = redactUserinfo(redactText(text));
   out = out.replace(BARE_USERINFO, "$1••••:••••@");
   for (const shape of SQL_SHAPES) out = out.replace(shape, SQL_MASK);
   for (const shape of HOST_SHAPES) out = out.replace(shape, HOST_MASK);

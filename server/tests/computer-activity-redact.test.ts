@@ -123,6 +123,17 @@ describe("activity redaction", () => {
       "hunter2",
     );
   });
+  test("QA509: masks userinfo under any URL scheme in text", () => {
+    const text = redactText(
+      "psql postgres://app:pgpw123@db:5432/x; redis-cli -u redis://:rdpw456@cache:6379; mongosh mongodb+srv://u:mgpw789@c.example.net; ws wss://u:wspw000@h/s",
+    );
+    for (const secret of ["pgpw123", "rdpw456", "mgpw789", "wspw000"])
+      expect(text).not.toContain(secret);
+    expect(text).toContain("postgres://");
+    expect(redactText("see https://example.com/a@b")).toBe(
+      "see https://example.com/a@b",
+    );
+  });
   test("masks secrets inside command text", () => {
     const text = redactText(
       "curl -H 'Authorization: Bearer abcdefghijklmnop' https://x.dev/?token=t1 && API_KEY=sekrit run --password p4ss",
