@@ -171,8 +171,14 @@ export class ToolLoopGuard {
     this.pending = undefined;
     if (!pending) return;
     const { name, signature } = pending;
-    // Approval pause: call has not run; drop the pending slot without tallying a reject.
-    if (outcome?.deferred) return;
+    // Approval pause: call has not run yet. Drop the pending slot and roll back the admit
+    // that reserved attempts/streak, so a resume of the same call is counted once
+    // (QA513 r2 P2: otherwise rebind + re-admit double-counts and can refuse an approved call).
+    if (outcome?.deferred) {
+      this.attempts -= 1;
+      this.streak -= 1;
+      return;
+    }
     if (outcome?.rejected) {
       this.rejected += 1;
       return;

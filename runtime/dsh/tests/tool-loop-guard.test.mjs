@@ -204,6 +204,61 @@ test("QA513 P3: a deferred approval does not count as a gateway reject", () => {
   guard.observe({ deferred: true });
   assert.equal(guard.rejected, 0);
   assert.equal(guard.succeeded, 0);
+  // QA513 r2 P2: deferred must also free the admit slot.
+  assert.equal(guard.attempts, 0);
+  assert.equal(guard.streak, 0);
+});
+
+test("QA513 r2 P2: deferred approval rolls back attempts so resume counts once", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 40, maxRepeats: 4, grace: 1 });
+  assert.equal(guard.admit(1, "send_email", { to: "a" }).kind, "run");
+  guard.observe({ deferred: true });
+  assert.equal(guard.admit(1, "send_email", { to: "a" }).kind, "run");
+  guard.observe({ result: { content: "sent" } });
+  assert.equal(guard.attempts, 1);
+  assert.equal(guard.streak, 1);
+  assert.equal(guard.succeeded, 1);
+});
+
+test("QA513 r2 P2: many approvals do not burn the per-turn budget twice", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 40, maxRepeats: 4, grace: 1 });
+  for (let i = 0; i < 25; i++) {
+    assert.equal(
+      guard.admit(1, "send_email", { to: `u${i}` }).kind,
+      "run",
+      `pre-approve ${i}`,
+    );
+    guard.observe({ deferred: true });
+    assert.equal(
+      guard.admit(1, "send_email", { to: `u${i}` }).kind,
+      "run",
+      `resume ${i}`,
+    );
+    guard.observe({ result: { content: "sent" } });
+  }
+  assert.equal(guard.attempts, 25);
+  assert.equal(guard.succeeded, 25);
+  assert.equal(guard.isStopped(1), false);
+});
+
+test("QA513 r2 P2: third consecutive same call may resume after approval", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 40, maxRepeats: 4, grace: 1 });
+  for (let i = 0; i < SAME_CALL_REPEATS - 2; i++) {
+    assert.equal(guard.admit(1, "send_email", { to: "same" }).kind, "run");
+    guard.observe({ result: { content: "sent" } });
+  }
+  // 3rd consecutive: admit then approval pause (must not leave streak at 3).
+  assert.equal(guard.admit(1, "send_email", { to: "same" }).kind, "run");
+  guard.observe({ deferred: true });
+  assert.equal(guard.streak, SAME_CALL_REPEATS - 2);
+  assert.equal(guard.attempts, SAME_CALL_REPEATS - 2);
+  const resume = guard.admit(1, "send_email", { to: "same" });
+  assert.equal(resume.kind, "run");
+  guard.observe({ result: { content: "sent" } });
+  assert.equal(guard.succeeded, SAME_CALL_REPEATS - 1);
+  // The next identical call is still the 4th consecutive and must be refused.
+  const stop = guard.admit(1, "send_email", { to: "same" });
+  assert.equal(stop.kind, "refuse");
 });
 
 test("QA513 P3: ensureLoopGuard keeps counts across rebind of the same run", async () => {
