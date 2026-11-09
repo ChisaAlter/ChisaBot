@@ -948,7 +948,20 @@ export function createGroupConversations(deps: {
         throw new GroupRefusedError("Each Bot can be in a group once.");
       if (!deps.createChannel)
         throw new GroupRefusedError("Groups cannot be created here.");
-      const channel = await deps.createChannel(owner, body.agentIds);
+      let channel: Awaited<ReturnType<typeof deps.createChannel>>;
+      try {
+        channel = await deps.createChannel(owner, body.agentIds);
+      } catch (error) {
+        // QA510 P3: a Bot id that does not exist — or is not this caller's — is a bad request,
+        // not a server failure. One sentence for both, so other people's Bots stay unseen.
+        if (
+          error instanceof Error &&
+          (error.name === "AgentNotFoundError" ||
+            error.name === "AgentNotManageableError")
+        )
+          throw new GroupRefusedError("That Bot was not found.");
+        throw error;
+      }
       await deps.store.seedOrder(owner, channel.id, body.agentIds);
       return channel;
     },
