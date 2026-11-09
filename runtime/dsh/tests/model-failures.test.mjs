@@ -27,11 +27,13 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     const body = JSON.parse(Buffer.concat(chunks).toString());
     requests.push(body.model);
     bodies.push(body);
-    if (body.model === "slow") return; // No first byte; the owned client aborts the connection.
+    // No first byte; the owned client aborts the connection.
+    if (body.model.startsWith("slow")) return;
     const status = {
       bad_request: 400,
       invalid: 401,
       missing: 404,
+      missing_bound: 404,
       retired: 410,
       limited: 429,
       backup_limited: 429,
@@ -80,10 +82,14 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     ...Object.keys(scripted),
     "invalid",
     "missing",
+    "missing_bound",
     "retired",
     "limited",
     "backup_limited",
     "slow",
+    "slow_bound",
+    "slow_dead",
+    "slow_stop",
   ].map((id) => ({
     id,
     contextWindow: 32000,
@@ -112,6 +118,8 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       ...process.env,
       CHISABOT_DSH_HOME: home,
       CHISABOT_FAILURE_FIXTURE_KEY: "isolated-fixture",
+      // Short enough for the half-open probe below; the other cases use distinct model ids.
+      CHISABOT_MODEL_BREAKER_COOLDOWN_S: "3",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -247,10 +255,10 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     },
   );
   await t.test(
-    "first-output timeout retries once, then completes through backup",
+    "first-output timeout switches straight to the backup, without retrying the same model",
     async () => {
       const result = await run("timeout", "slow", "available", 200);
-      assert.deepEqual(result.calls, ["slow", "slow", "available"]);
+      assert.deepEqual(result.calls, ["slow", "available"]);
       assert.match(result.text, /TIMEOUT/);
       assert.match(result.text, /verified answer/);
     },
@@ -261,12 +269,12 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       const bound = { tools: [tool("lookup")], prompt: "Bound prompt A7." };
       const missing = await run(
         "bound-missing",
-        "missing",
+        "missing_bound",
         "available",
         0,
         bound,
       );
-      assert.deepEqual(missing.calls, ["missing", "available"]);
+      assert.deepEqual(missing.calls, ["missing_bound", "available"]);
       assertBound(missing, ["lookup"], "Bound prompt A7");
       const stale = await run(
         "bound-stale",
@@ -277,8 +285,14 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       );
       assert.deepEqual(stale.calls, ["available"]);
       assertBound(stale, ["lookup"], "Bound prompt A7");
-      const slow = await run("bound-timeout", "slow", "available", 200, bound);
-      assert.deepEqual(slow.calls, ["slow", "slow", "available"]);
+      const slow = await run(
+        "bound-timeout",
+        "slow_bound",
+        "available",
+        200,
+        bound,
+      );
+      assert.deepEqual(slow.calls, ["slow_bound", "available"]);
       assertBound(slow, ["lookup"], "Bound prompt A7");
       assert.match(slow.text, /verified answer/);
     },
@@ -294,6 +308,56 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       assertBound(result, ["lookup"], "Bound prompt A7");
       assert.match(result.text, /INVALID_REQUEST/);
       assert.match(result.text, /verified answer/);
+      // The breaker keeps the rejecting primary out of the next turn.
+      const next = await run("bad-request-2", "bad_request", "available", 0, {
+        tools: [tool("lookup")],
+        prompt: "Bound prompt A7.",
+      });
+      assert.deepEqual(next.calls, ["available"]);
+      assertBound(next, ["lookup"], "Bound prompt A7");
+    },
+  );
+  await t.test(
+    "a dead primary is skipped while its breaker cools, then probed once",
+    async () => {
+      const bound = { tools: [tool("lookup")], prompt: "Breaker prompt B3." };
+      const first = await run(
+        "breaker-1",
+        "slow_dead",
+        "available",
+        200,
+        bound,
+      );
+      assert.deepEqual(first.calls, ["slow_dead", "available"]);
+      const second = await run(
+        "breaker-2",
+        "slow_dead",
+        "available",
+        200,
+        bound,
+      );
+      assert.deepEqual(second.calls, ["available"]);
+      assert.match(second.text, /MODEL_COOLING/);
+      assertBound(second, ["lookup"], "Breaker prompt B3");
+      assert.match(second.text, /verified answer/);
+      await delay(3_200);
+      const probe = await run(
+        "breaker-3",
+        "slow_dead",
+        "available",
+        200,
+        bound,
+      );
+      assert.deepEqual(probe.calls, ["slow_dead", "available"]);
+      // The failed probe reopens it for longer.
+      const after = await run(
+        "breaker-4",
+        "slow_dead",
+        "available",
+        200,
+        bound,
+      );
+      assert.deepEqual(after.calls, ["available"]);
     },
   );
   await t.test(
@@ -356,7 +420,7 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
         prompt: "Answer.",
         tools: [],
         model: {
-          primary: { provider: "fixture", model: "slow" },
+          primary: { provider: "fixture", model: "slow_stop" },
           fallbacks: [{ provider: "fixture", model: "available" }],
           firstOutputMs: 10000,
         },
@@ -372,7 +436,7 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
         await delay(20);
       await client.stop("stop", "stop");
       await client.wait("stop", { timeoutMs: 10000 });
-      assert.deepEqual(requests.slice(start), ["slow"]);
+      assert.deepEqual(requests.slice(start), ["slow_stop"]);
       assert.doesNotMatch(
         JSON.stringify((await client.events("stop")).records),
         /MODEL_FIRST_OUTPUT_TIMEOUT|TIMEOUT/,
