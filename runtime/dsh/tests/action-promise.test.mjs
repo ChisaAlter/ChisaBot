@@ -60,6 +60,26 @@ test("a finish promised for later is not a report; a permission question is not 
     true,
   );
   assert.equal(actionPromise("第一部分我查完了，第二部分没有问题"), false);
+  // QA510 P3: a promise that waits on the user is an offer, not a skipped step.
+  for (const offer of [
+    "已完成。下次需要我再去查，查完告诉你。",
+    "下次需要我再去查",
+    "如果你需要，我可以再去查一下。",
+    "有需要的话我再去看看。",
+    "你想的话我去搜一下。",
+    "随时叫我，我去查。",
+    "If you want, I'll check the other repo too.",
+    "Next time I'll look into it first.",
+  ])
+    assert.equal(actionPromise(offer), false, offer);
+  // …while plain promises, including ones mentioning a result or a need, still nudge.
+  for (const promise of [
+    "我先去查一下，需要一点时间。",
+    "我先去查，如果有结果告诉你",
+    "我马上去查，查完了告诉你",
+    "I'll check it and tell you once it's done.",
+  ])
+    assert.equal(actionPromise(promise), true, promise);
   assert.equal(
     actionPromise("第一部分查完了，第二部分要我查完告诉你吗？"),
     false,

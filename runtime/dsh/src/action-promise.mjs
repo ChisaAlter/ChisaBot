@@ -25,6 +25,11 @@ const LATER =
 // A question asks permission ("要我先查一下吗？"); a negation declines ("我不会去查").
 const QUESTION =
   /[?？]|吗|呢|\b(?:shall i|should i|do you want me|want me to|would you like me)\b/i;
+// A promise that waits on the user ("下次需要我再去查", "如果你需要，我可以去查", "if you want, I'll
+// check") offers future help; it is not a step this turn skipped (QA510 P3). Kept narrow: a bare
+// 如果 / 需要 ("我需要先去查", "我先去查，如果有结果告诉你") still promises.
+const CONDITIONAL =
+  /下次|下回|改天|以后(?:有需要|需要)|(?:如果|要是|假如|若)(?:你|您)|(?:你|您|有)需要(?:的话|时)?|需要的话|你(?:想|要)的话|随时|\b(?:if you(?:'d| would)? (?:want|need|like|prefer)|next time|whenever you|any ?time you|if needed|if necessary)\b/i;
 const NEGATION =
   /不|没|别|无法|\b(?:won'?t|can'?t|cannot|will not|not going to|don'?t|do not|unable)\b/i;
 
@@ -49,6 +54,7 @@ export function actionPromise(text) {
   return sentences.some(
     (sentence) =>
       PROMISE.test(sentence) &&
+      !CONDITIONAL.test(sentence) &&
       !QUESTION.test(sentence) &&
       !NEGATION.test(sentence),
   );
