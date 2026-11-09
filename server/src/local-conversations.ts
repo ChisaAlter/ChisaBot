@@ -2802,7 +2802,25 @@ export async function createLocalConversations(
   const runner = new PostgresAgentRunner(store, client, inbox);
   let workers: ThreadWorkerRoutes | undefined;
 
+  /**
+   * Inbox reads and writes carry queued and paused message bodies: never cached by the browser or a
+   * proxy (QA508 P3), whichever branch — empty, error or full — answers.
+   */
   const handle = async (
+    request: Request,
+    actorId: string,
+  ): Promise<Response | undefined> => {
+    const response = await handleThreads(request, actorId);
+    if (
+      response &&
+      /\/inbox(?:\/[^/]*)?\/?$/.test(
+        conversationPath(new URL(request.url).pathname),
+      )
+    )
+      response.headers.set("cache-control", "no-store");
+    return response;
+  };
+  const handleThreads = async (
     request: Request,
     actorId: string,
   ): Promise<Response | undefined> => {
