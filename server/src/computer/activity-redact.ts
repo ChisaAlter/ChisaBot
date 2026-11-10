@@ -40,23 +40,28 @@ export function redactUrl(value: string): string {
 }
 
 /**
- * 敏感配置名：按「段」匹配，避免 CLIENT_IDLE / TOKENIZER / KEYBOARD / MAX_TOKENS 被误打。
- * 命中：…_TOKEN / …_SECRET / …_PASSWORD / …_API_KEY / …_CLIENT_ID / …_KEY（OPENAI_KEY）/
- * CLIENTID（无下划线粘写）/ SSHPASS / MYSQL_PWD。
+ * 敏感配置名：按「段」匹配，避免 CLIENT_IDLE / TOKENIZER / KEYBOARD / MAX_TOKENS / CACHE_KEY_PREFIX 被误打。
+ * 命中：…_TOKEN / …_SECRET / …_PASSWORD / …_API_KEY / …_CLIENT_ID / 以 _KEY 结尾（OPENAI_KEY）/
+ * CLIENTID（无下划线粘写）/ SSHPASS / MYSQL_PWD / IMA_OPENAPI_*。
+ * 裸 key 只认结尾：CACHE_KEY_PREFIX 中间的 KEY 不打码（QA514 r2）。
  */
 const SENSITIVE_NAME_SEGMENT =
-  /(?:^|_)(?:api_?key|access_?key|private_?key|client_?id|client_?secret|token|secret|password|passwd|key)(?:_|$)/i;
+  /(?:^|_)(?:api_?key|access_?key|private_?key|client_?id|client_?secret|token|secret|password|passwd)(?:_|$)|(?:^|_)key$/i;
 
 export function isSensitiveConfigName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
   if (/^SSHPASS$/i.test(n)) return true;
   if (/^[A-Z0-9_]+_PWD$/i.test(n)) return true;
+  // ima OpenAPI 凭据前缀：后缀未必是 KEY/SECRET，整族都打码。
+  if (/^IMA_OPENAPI_/i.test(n)) return true;
   return SENSITIVE_NAME_SEGMENT.test(n);
 }
 
-/** 赋值右侧：引号整段，或非空白整段（密码里的 ;|& 也算值的一部分，QA514）。 */
-const ASSIGNED_VALUE = String.raw`("[^"]*"|'[^']*'|[^\s"'=&\\,{}\[\]]+)`;
+/** 赋值右侧：引号整段，或非空白整段（密码里的 ;|& 也算值的一部分，QA514）。
+ * 单独的 & 算值（pa&ss），&& 与「&name=」形态（URL query）仍切开，避免把 ?a=1&b=2 吞成一段（QA514 r2）。
+ */
+const ASSIGNED_VALUE = String.raw`("[^"]*"|'[^']*'|(?:[^\s"'=&\\,{}\[\]]|&(?!&|[A-Za-z_][A-Za-z0-9_]*=))+)`;
 /** 空赋值（含 "" / ''）不算泄漏，原样保留（QA514 empty-value）。 */
 function isEmptyAssignedValue(value: string): boolean {
   return value === "" || value === "''" || value === '""';
@@ -288,6 +293,47 @@ function redactPlain(value: string): string {
       )
         return whole;
       return `$env:${name}=${MASK}`;
+    },
+  );
+  // PowerShell / .NET：[Environment]::SetEnvironmentVariable("NAME","value"[, "Process"|"User"|"Machine"])
+  out = out.replace(
+    /(\[(?:System\.)?Environment\]::SetEnvironmentVariable\s*\(\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\2\s*,\s*)(["'])(?:(?:(?!\4).)*)\4/gi,
+    (whole, prefix: string, _qName: string, name: string, qVal: string) => {
+      if (!isSensitiveConfigName(name)) return whole;
+      return `${prefix}${qVal}${MASK}${qVal}`;
+    },
+  );
+  // cmd setx NAME value / setx NAME "value"
+  out = out.replace(
+    /\bsetx\s+([A-Za-z_][A-Za-z0-9_]*)\s+("[^"]*"|'[^']*'|\S+)/gi,
+    (whole, name: string, value: string) => {
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      return `setx ${name} ${MASK}`;
+    },
+  );
+  // PowerShell：Set-Item env:NAME value / Set-Item -Path Env:NAME -Value value
+  out = out.replace(
+    /\bSet-Item\s+(?:-Path\s+)?(?:["']Env:([A-Za-z_][A-Za-z0-9_]*)["']|Env:([A-Za-z_][A-Za-z0-9_]*))\s+(?:-Value\s+)?("[^"]*"|'[^']*'|\S+)/gi,
+    (
+      whole,
+      nameQuoted: string | undefined,
+      nameBare: string | undefined,
+      value: string,
+    ) => {
+      const name = nameQuoted ?? nameBare ?? "";
+      if (
+        !isSensitiveConfigName(name) ||
+        isEmptyAssignedValue(value) ||
+        alreadyMasked(value)
+      )
+        return whole;
+      // 写法太多，审计摘要统一收成 Set-Item env:NAME ••••。
+      return `Set-Item env:${name} ${MASK}`;
     },
   );
   // shell / .env：NAME=value（= 左边无空格；空值 NAME= 后直接空白不吞下一词）
