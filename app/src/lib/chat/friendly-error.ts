@@ -58,6 +58,20 @@ const RULES: Array<{
     retryable: false,
   },
   {
+    /*
+     * 2026-11-09 线上：ClinePass 返回 403「the user is not subscribed to required model plan」——选的模型
+     * 不在账号订阅的套餐里。以前没有规则认它，落到兜底，用户只看到「这一轮没有收到回答」，不知道是套餐问题。
+     */
+    test: /ClinePass[\s\S]*(not subscribed|required model plan)|(not subscribed|required model plan)[\s\S]*ClinePass/i,
+    title: "这个模型需要 ClinePass 对应套餐",
+    hint: "当前 ClinePass 账号没有订阅这个模型所需的套餐。点输入框右下角的模型名换一个模型，或开通对应套餐后点「重试」。",
+  },
+  {
+    test: /not subscribed|required (model )?plan|subscription (is )?required|未订阅|需要订阅/i,
+    title: "这个模型需要对应的订阅套餐",
+    hint: "当前账号没有订阅这个模型所需的套餐。换一个模型，或开通对应套餐后点「重试」。",
+  },
+  {
     // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」）：换 key 没用，要重新登录。
     test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|登录已失效|登录被撤销/i,
     title: "模型登录已失效",
@@ -75,6 +89,12 @@ const RULES: Array<{
     title: "模型额度不足",
     hint: "账户余额或额度已用完。充值后重试，或切换到其他模型。",
     retryable: false,
+  },
+  {
+    // 其余的 403：凭据没有这个模型的权限（套餐 / 地区 / 实名各有自己的规则，在前面）。
+    test: /\b403\b|forbidden|permission[_ ]?(denied|error)/i,
+    title: "模型服务商拒绝了这次请求（403）",
+    hint: "当前凭据没有使用这个模型的权限。换一个模型，或请管理员检查模型凭据和套餐。",
   },
   {
     test: /\b429\b|rate[_ ]?limit|too many requests|频率|限流/i,

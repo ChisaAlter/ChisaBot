@@ -1,7 +1,8 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ThreadActivity } from "./bot-thread";
+import { createJoinBackoff } from "./join-backoff";
 import { restoreQueue } from "./thread-inbox";
 import { readStoredRows } from "./thread-messages";
 import { workerKeys } from "./workers";
@@ -82,7 +83,70 @@ export function userOrderDiffers(
   return a.some((id, at) => id !== b[at]);
 }
 
-type Connect = (options: { agent: AbstractAgent }) => Promise<unknown>;
+type Role = { id: string; role: string };
+
+/**
+ * 一轮结束后的顺序核对要不要重接、怎么重接（2026-11-09 重连循环事故的根因修复）。
+ *
+ * 只比「这台手里那一段」：服务器的整份历史里，从这台已有的最早一条往后。更早的那些这台本来就没拿
+ * （打开时只取尾部，发消息 / 接入的快照封顶 400 条），不能算「别的设备刚发的」。以前拿整份历史
+ * （1500+ 条里 ~780 条用户消息）去比手里的 ~200 条，永远「缺 578 条」→ 合并式接入 → 快照还是那 400 条
+ * → 还缺 → 再接……一个闲着的对话每秒一次 connect、每次几百 KB，停不下来。
+ *
+ * - "rebuild"：两边都有的用户消息先后不一致（§38.1 两台几乎同时发）。
+ * - "merge"：这段里服务器有、这台没有的用户消息（别的设备刚发的）。
+ * - null：什么都不用做。
+ */
+export function reconcileDecision(
+  local: readonly Role[],
+  server: readonly Role[],
+): { action: "rebuild" | "merge"; key: string } | null {
+  const users = (list: readonly Role[]) =>
+    list
+      .filter((message) => message.role === "user")
+      .map((message) => message.id);
+  const localIds = new Set(local.map((message) => message.id));
+  const start = server.findIndex((message) => localIds.has(message.id));
+  // 这台手里一条服务器上的消息都没有（全是本机还没存下的，或者还没接上）：整份都算。
+  const window = start < 0 ? server : server.slice(start);
+  const serverUsers = users(window);
+  if (!serverUsers.length) return null;
+  const localUsers = users(local);
+  if (userOrderDiffers(localUsers, serverUsers))
+    return { action: "rebuild", key: `rebuild:${serverUsers.join(",")}` };
+  const missing = serverUsers.filter((id) => !localIds.has(id));
+  if (missing.length)
+    return { action: "merge", key: `merge:${missing.join(",")}` };
+  return null;
+}
+
+/**
+ * 合并式接入时告诉服务器「这台已经有到哪了」：最近几条消息的 id，服务器从其中最早一条它也有的开始发，
+ * 不再每次都发最近 400 条（几百 KB）。服务器一条都对不上时照旧发封顶快照。
+ */
+export function snapshotAnchors(
+  messages: readonly { id: string; role: string }[],
+  count = 8,
+): string[] {
+  return messages
+    .filter((message) => message.role !== "system")
+    .slice(-count)
+    .map((message) => message.id);
+}
+
+type Connect = (options: {
+  agent: AbstractAgent;
+  /** 见 snapshotAnchors；不给就要完整（封顶）快照。 */
+  snapshotAfter?: string[];
+}) => Promise<unknown>;
+
+/** 同步自己开的接入（不是一轮回答）在跑时，发消息前可以先把它停掉让路。 */
+export type ConversationSyncControl = {
+  /** sync 自己开的、不是在跟一轮实时回答的接入正在跑。 */
+  idleJoinInFlight(): boolean;
+  /** 发消息前调用：停掉还没开始的核对 / 退避中的重接，正在跑的闲置接入断开并等它收尾。 */
+  yieldForSend(): Promise<void>;
+};
 
 /**
  * 本机自己截断（重新生成 / 编辑后重发，DESIGN.md §67）后服务器回的对话版本。本机已经截好了，同步看到这个
@@ -295,6 +359,10 @@ export function useConversationSync(
   const suppressConnect = options.suppressConnect;
   const skipReconcile = options.skipReconcile;
   const queryClient = useQueryClient();
+  const control = useRef<ConversationSyncControl>({
+    idleJoinInFlight: () => false,
+    yieldForSend: async () => {},
+  });
   useEffect(() => {
     if (!threadId) return;
     let alive = true;
@@ -302,6 +370,14 @@ export function useConversationSync(
     /** 下一次同步只记基线（刚打开 / 本机刚跑完一轮或刚接完）。 */
     let rebase = true;
     let connecting = false;
+    /** 正在跑的这次接入是在跟服务器上正在进行的一轮（不能为发消息让路）。 */
+    let connectingLive = false;
+    const backoff = createJoinBackoff();
+    /** 退避中、等着发起的那次重接（多次请求合成一次；要过重建就按重建）。 */
+    let deferred: { mode: "merge" | "rebuild"; running: boolean } | null = null;
+    let deferTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 上一次由核对发起重接时的判断；同样的判断再来一次说明那次重接没补上，不再重接（防循环）。 */
+    let reconcileJoinedFor: string | null = null;
     /** 合并式接入时，接入前这台已经有的消息 / 工具调用（回放里它们的内容不再追加一遍）。 */
     let merge: { messages: Set<string>; toolCalls: Set<string> } | null = null;
     /** liveTail 接入时要按回放重建的那几条（§90.3）。 */
@@ -324,9 +400,31 @@ export function useConversationSync(
      * mode "merge"（平时）：不清空列表，只把新的接上——见下面的 onEvent。
      * mode "rebuild"（顺序和服务器不一致时）：照 SDK 原样，先清空再按服务器回放重建。
      */
-    const join = (mode: "merge" | "rebuild" = "merge", running = false) => {
-      if (connecting || agent.isRunning || suppressConnect?.()) return;
+    /** 开始了（或排进了退避）就是 true；这台在跑 / 正在接 / 正在发时什么都不做，false。 */
+    const join = (
+      mode: "merge" | "rebuild" = "merge",
+      running = false,
+    ): boolean => {
+      if (connecting || agent.isRunning || suppressConnect?.()) return false;
+      const wait = backoff.wait();
+      if (wait > 0) {
+        deferred = {
+          mode: deferred?.mode === "rebuild" ? "rebuild" : mode,
+          running: running || deferred?.running === true,
+        };
+        if (!deferTimer)
+          deferTimer = setTimeout(() => {
+            deferTimer = undefined;
+            const next = deferred;
+            deferred = null;
+            if (alive && next) join(next.mode, next.running);
+          }, wait);
+        return true;
+      }
+      backoff.started();
+      const before = `${agent.messages.length}:${agent.messages.at(-1)?.id ?? ""}`;
       connecting = true;
+      connectingLive = running;
       merge =
         mode === "merge"
           ? knownForMerge(agent.messages as never, liveTail && running)
@@ -335,14 +433,34 @@ export function useConversationSync(
         mode === "merge" && liveTail && running
           ? liveTailOf(agent.messages as never)
           : null;
-      void connect({ agent })
+      void connect(
+        mode === "merge"
+          ? { agent, snapshotAfter: snapshotAnchors(agent.messages as never) }
+          : { agent },
+      )
         .catch(() => {})
         .finally(() => {
+          const after = `${agent.messages.length}:${agent.messages.at(-1)?.id ?? ""}`;
+          // 跟的是一轮实时回答，或者真接回来了新东西：不是空转，退避清零。
+          if (running || after !== before) backoff.progressed();
           connecting = false;
+          connectingLive = false;
           merge = null;
           tail = null;
           rebase = true;
         });
+      return true;
+    };
+    control.current = {
+      idleJoinInFlight: () => connecting && !connectingLive,
+      yieldForSend: async () => {
+        if (reconcileTimer) clearTimeout(reconcileTimer);
+        reconcileTimer = undefined;
+        if (deferTimer) clearTimeout(deferTimer);
+        deferTimer = undefined;
+        deferred = null;
+        if (connecting && !connectingLive) await agent.detachActiveRun();
+      },
     };
     /*
      * 本机一轮结束后对一次顺序：两台设备几乎同时发时，服务器只开一轮，后到的那条被读进这一轮的中间
@@ -366,16 +484,18 @@ export function useConversationSync(
           fetch(path, { credentials: "include" }),
         ).catch(() => null);
         if (!alive || !rows || agent.isRunning || connecting) return;
-        const userIds = (list: readonly { id: string; role: string }[]) =>
-          list
-            .filter((message) => message.role === "user")
-            .map((message) => message.id);
-        const server = userIds(rows as readonly { id: string; role: string }[]);
-        const local = userIds(agent.messages as never);
-        if (!server.length) return;
-        if (userOrderDiffers(local, server)) join("rebuild");
-        // 服务器有、这台还没有的用户消息（别的设备刚发的）：合并式接上，不清空。
-        else if (server.some((id) => !local.includes(id))) join();
+        const decision = reconcileDecision(
+          agent.messages as never,
+          rows as readonly Role[],
+        );
+        if (!decision) {
+          reconcileJoinedFor = null;
+          return;
+        }
+        // 上一次为同一个判断重接过、接完还是这样：再接也补不上，停（以前就是在这里无限循环）。
+        if (decision.key === reconcileJoinedFor) return;
+        // 顺序不一致：按服务器回放重建；服务器有、这台还没有的用户消息（别的设备刚发的）：合并式接上，不清空。
+        if (join(decision.action)) reconcileJoinedFor = decision.key;
       }, 800);
     };
     const subscription = agent.subscribe({
@@ -511,6 +631,7 @@ export function useConversationSync(
     return () => {
       alive = false;
       if (reconcileTimer) clearTimeout(reconcileTimer);
+      if (deferTimer) clearTimeout(deferTimer);
       off();
       subscription.unsubscribe();
     };
@@ -524,4 +645,5 @@ export function useConversationSync(
     snapshotContinuations,
     suppressConnect,
   ]);
+  return control;
 }
