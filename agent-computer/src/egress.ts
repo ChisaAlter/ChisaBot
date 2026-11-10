@@ -489,6 +489,10 @@ function embeddedIpv4(address: string): string | null {
   if (zeros(0, 5) && g[5] === 0xffff) return v4(high, low);
   // ::ffff:0:a.b.c.d (translated)
   if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(high, low);
+  // ::ffff:ffff:a.b.c.d — illegal/confused writing of IPv4-mapped (e.g.
+  // [::ffff:ffff:127.0.0.1]). Take the last 32 bits as the IPv4 they meant,
+  // so the floor returns 403 rather than letting the connect fail as 502.
+  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0xffff) return v4(high, low);
   // 64:ff9b::/96 NAT64
   if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(high, low);
   // Deprecated compatible ::a.b.c.d — not :: / ::1 (those stay IPv6).

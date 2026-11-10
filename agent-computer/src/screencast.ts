@@ -12,7 +12,7 @@
  * headless. This implementation streams the page and forwards input through the Chrome DevTools
  * Protocol.
  */
-import type { CDPSession, Page, Request } from "playwright";
+import type { CDPSession, Page, Request, Response } from "playwright";
 import {
   classifyEgressTunnel,
   isPrivateEgressHost,
@@ -193,23 +193,29 @@ export async function startScreencast(
    * 其余的直接按失败的那一跳推一条 navigation 错误。不靠等固定时间。
    */
   let inFlight: MainFrameFailure[] | null = null;
+  /** Filter error pages (plain HTTP 403/502/504) committed as documents while goto is in flight. */
+  let inFlightPages: { url: string; error: string }[] | null = null;
   /** Bumped by every navigation the person starts, so a slow late report cannot cover a newer one. */
   let generation = 0;
+  const pushNavigationError = (url: string, error: string, seen: number) => {
+    if (stopped || seen !== generation) return;
+    onFrame({
+      type: "navigation",
+      ok: false,
+      url: pageUrl() ?? url,
+      error,
+    });
+  };
   const reportLateFailure = (failure: MainFrameFailure) => {
     const seen = generation;
     void navigationProblem(
       new Error(`${failure.errorText} at ${failure.url}`),
       failure.url,
       failure.url,
-    ).then((error) => {
-      if (stopped || seen !== generation) return;
-      onFrame({
-        type: "navigation",
-        ok: false,
-        url: pageUrl() ?? failure.url,
-        error,
-      });
-    });
+    ).then((error) => pushNavigationError(failure.url, error, seen));
+  };
+  const reportEgressPage = (page: { url: string; error: string }) => {
+    pushNavigationError(page.url, page.error, generation);
   };
   const onMainFrameFailed = (request: Request) => {
     let failure: MainFrameFailure;
@@ -232,8 +238,29 @@ export async function startScreencast(
     if (inFlight) inFlight.push(failure);
     else if (!stopped) reportLateFailure(failure);
   };
+  const onMainFrameDocument = (response: Response) => {
+    let denied: { url: string; error: string };
+    try {
+      const request = response.request();
+      if (
+        !request.isNavigationRequest() ||
+        request.frame() !== page.mainFrame()
+      )
+        return;
+      const error = egressDocumentProblem(response);
+      if (!error) return;
+      denied = { url: request.url(), error };
+    } catch {
+      return;
+    }
+    if (inFlightPages) inFlightPages.push(denied);
+    else if (!stopped) reportEgressPage(denied);
+  };
   const listening = typeof page.on === "function";
-  if (listening) page.on("requestfailed", onMainFrameFailed);
+  if (listening) {
+    page.on("requestfailed", onMainFrameFailed);
+    page.on("response", onMainFrameDocument);
+  }
 
   type ScreencastFrame = {
     data: string;
@@ -303,7 +330,10 @@ export async function startScreencast(
     async stop() {
       if (stopped) return;
       stopped = true;
-      if (listening) page.off("requestfailed", onMainFrameFailed);
+      if (listening) {
+        page.off("requestfailed", onMainFrameFailed);
+        page.off("response", onMainFrameDocument);
+      }
       await client.send("Page.stopScreencast").catch(() => undefined);
       await client.detach().catch(() => undefined);
     },
@@ -380,32 +410,70 @@ export async function startScreencast(
         const from = pageUrl() ?? "";
         // Main-frame failures while this goto runs belong to it (see `onMainFrameFailed`).
         const failures: MainFrameFailure[] = [];
+        const pages: { url: string; error: string }[] = [];
         inFlight = failures;
+        inFlightPages = pages;
         generation += 1;
         try {
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
-          await whileNavigating(page, async () => {
+          const committed = await whileNavigating(page, async () => {
             if (message.type === "navigate") {
-              await page.goto(message.url, {
+              return await page.goto(message.url, {
                 waitUntil: "commit",
                 timeout: 20_000,
               });
-            } else if (message.action === "back") {
-              await page.goBack({ waitUntil: "commit", timeout: 20_000 });
-            } else if (message.action === "forward") {
-              await page.goForward({ waitUntil: "commit", timeout: 20_000 });
-            } else {
-              await page.reload({ waitUntil: "commit", timeout: 20_000 });
             }
+            if (message.action === "back") {
+              return await page.goBack({
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
+            }
+            if (message.action === "forward") {
+              return await page.goForward({
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
+            }
+            return await page.reload({
+              waitUntil: "commit",
+              timeout: 20_000,
+            });
           });
           inFlight = null;
-          if (!stopped)
-            onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
+          inFlightPages = null;
+          const problem = egressDocumentProblem(committed);
+          const committedUrl = (() => {
+            try {
+              return committed && typeof committed.url === "function"
+                ? committed.url()
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          })();
+          if (!stopped) {
+            if (problem)
+              onFrame({
+                type: "navigation",
+                ok: false,
+                url: pageUrl() ?? from,
+                error: problem,
+              });
+            else
+              onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
+          }
           // `commit` resolves on the first document. A hop that failed after it (a redirect the
           // committed page started) but before goto returned is reported now, after the ok.
           for (const failure of failures) reportLateFailure(failure);
+          for (const denied of pages) {
+            if (problem && committedUrl && denied.url === committedUrl)
+              continue;
+            reportEgressPage(denied);
+          }
         } catch (error) {
           inFlight = null;
+          inFlightPages = null;
           if (!stopped) {
             const url = pageUrl() ?? from;
             const target = message.type === "navigate" ? message.url : url;
@@ -422,6 +490,7 @@ export async function startScreencast(
           }
         } finally {
           if (inFlight === failures) inFlight = null;
+          if (inFlightPages === pages) inFlightPages = null;
         }
         return;
       }
@@ -504,6 +573,53 @@ export async function navigationProblem(
 
 const UNREACHABLE = "连不上这个网址。";
 const NO_ANSWER = "网站没有响应，请稍后再试。";
+
+const EGRESS_CLASS_MESSAGE: Record<string, string> = {
+  private: "出于安全原因不允许访问内网地址。",
+  refused: "网络策略不允许访问这个网址。",
+  unresolved: UNREACHABLE,
+  credentials: "代理凭据不正确，无法出网。",
+  timeout: NO_ANSWER,
+  unreachable: UNREACHABLE,
+};
+
+function headerOf(
+  response: { headers?: () => Record<string, string> },
+  name: string,
+): string {
+  try {
+    const headers = response.headers?.() ?? {};
+    return (headers[name] ?? headers[name.toLowerCase()] ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 纯 HTTP 经过滤器被拦或上游失败时，代理会回 403/502/504 文档（带 x-chisabot-egress-class）。
+ * Chromium 把它当成一次成功的文档提交，goto / requestfailed 都不会失败，所以这里按响应头分类。
+ * 普通网站自己的 403/502/504（没有过滤器的头）不算导航失败。
+ */
+export function egressDocumentProblem(
+  response:
+    | { status?: () => number; headers?: () => Record<string, string> }
+    | null
+    | undefined,
+): string | null {
+  if (!response || typeof response.status !== "function") return null;
+  let status: number;
+  try {
+    status = response.status();
+  } catch {
+    return null;
+  }
+  if (status !== 403 && status !== 502 && status !== 504) return null;
+  const klass = headerOf(response, "x-chisabot-egress-class").toLowerCase();
+  const marked = headerOf(response, "x-chisabot-egress");
+  if (!klass && !marked) return null;
+  if (klass && EGRESS_CLASS_MESSAGE[klass]) return EGRESS_CLASS_MESSAGE[klass];
+  return status === 504 ? NO_ANSWER : UNREACHABLE;
+}
 
 function parseNavigationTarget(
   raw: string | undefined,

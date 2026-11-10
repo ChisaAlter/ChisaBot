@@ -445,23 +445,44 @@ export function wakeControl(computerId?: string) {
  * 所以 window 本身看起来没变，addEventListener 和 document 却换成了新窗口的。只记布尔值，监听就永远挂在
  * 第一个文件的旧窗口上，后面的文件派发 focus / online 叫不醒任何 store（test:app 共享进程里
  * control-poll-single-source 因此失败）。
+ *
+ * 换绑时先卸掉上一组：同一个 EventTarget 上若只换 document 就再 add 一次，focus / online 会唤醒两次，
+ * 共享进程里「马上再读」会多出一次请求。
  */
 let wakeDocument: Document | undefined;
+let wakeBindings: { target: Window; off: () => void } | undefined;
 function listenForWake() {
-  if (typeof window === "undefined" || wakeDocument === window.document) return;
-  wakeDocument = window.document;
-  window.addEventListener("focus", () => wakeControl());
-  window.addEventListener("online", () => wakeControl());
+  if (typeof window === "undefined") return;
+  if (wakeBindings?.target === window && wakeDocument === window.document)
+    return;
+  wakeBindings?.off();
+  const target = window;
+  const onFocus = () => wakeControl();
+  const onOnline = () => wakeControl();
   // CB-107：关页面时主动放下主标签身份，心跳模式下别的标签不用等 3 秒。
-  window.addEventListener("pagehide", () => {
+  const onPageHide = () => {
     for (const store of stores.values()) store.dispose();
-  });
-  window.addEventListener("pageshow", () => {
+  };
+  const onPageShow = () => {
     for (const store of stores.values()) {
       store.sync?.();
       store.wake();
     }
-  });
+  };
+  target.addEventListener("focus", onFocus);
+  target.addEventListener("online", onOnline);
+  target.addEventListener("pagehide", onPageHide);
+  target.addEventListener("pageshow", onPageShow);
+  wakeDocument = window.document;
+  wakeBindings = {
+    target,
+    off: () => {
+      target.removeEventListener("focus", onFocus);
+      target.removeEventListener("online", onOnline);
+      target.removeEventListener("pagehide", onPageHide);
+      target.removeEventListener("pageshow", onPageShow);
+    },
+  };
 }
 onControlRequestOk((computerId) => wakeControl(computerId));
 const noSubscription = () => () => undefined;

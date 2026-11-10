@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright";
 import {
+  egressDocumentProblem,
   type InputMessage,
   navigationProblem,
   startScreencast,
@@ -119,6 +120,12 @@ function castable(
     gotoFails?: string;
     /** Main-frame navigation requests that fail before goto rejects (a redirect chain's hops). */
     failedRequests?: string[];
+    /** Document the committed navigation returns (plain-HTTP filter 403/502/504). */
+    gotoResponse?: {
+      status: number;
+      headers?: Record<string, string>;
+      url?: string;
+    };
   } = {},
 ) {
   const sent: string[] = [];
@@ -138,6 +145,7 @@ function castable(
   let url = "about:blank";
   const mainFrame = {};
   const listeners = new Set<(request: unknown) => void>();
+  const responseListeners = new Set<(response: unknown) => void>();
   /** A main-frame navigation request failing, as Playwright reports it. */
   const failMainFrame = (
     failed: string,
@@ -157,28 +165,74 @@ function castable(
     url: () => url,
     viewportSize: () => ({ width: 1280, height: 800 }),
     mainFrame: () => mainFrame,
-    on: (event: string, listener: (request: unknown) => void) => {
+    on: (event: string, listener: (value: unknown) => void) => {
       if (event === "requestfailed") listeners.add(listener);
+      if (event === "response") responseListeners.add(listener);
     },
-    off: (event: string, listener: (request: unknown) => void) => {
+    off: (event: string, listener: (value: unknown) => void) => {
       if (event === "requestfailed") listeners.delete(listener);
+      if (event === "response") responseListeners.delete(listener);
     },
     listenerCount: () => listeners.size,
     goto: async (target: string) => {
       for (const failed of options.failedRequests ?? []) failMainFrame(failed);
       if (options.gotoFails) throw new Error(options.gotoFails);
       url = target;
+      const documented = options.gotoResponse;
+      if (!documented) return null;
+      const responseUrl = documented.url ?? target;
+      const response = documentResponse(
+        responseUrl,
+        documented.status,
+        documented.headers ?? {},
+        mainFrame,
+      );
+      for (const listener of responseListeners) listener(response);
+      return response;
     },
     goBack: async () => {},
     goForward: async () => {},
     reload: async () => {},
   } as unknown as Page;
+  const emitDocument = (
+    documentUrl: string,
+    status: number,
+    headers: Record<string, string> = {},
+    frame: unknown = mainFrame,
+  ) => {
+    const response = documentResponse(documentUrl, status, headers, frame);
+    for (const listener of responseListeners) listener(response);
+    return response;
+  };
   return {
     page,
     sent,
     emit: (event: unknown) => handler?.(event),
     failMainFrame,
+    emitDocument,
     listenerCount: () => listeners.size,
+  };
+}
+
+/** A Playwright-shaped main-frame document response. */
+function documentResponse(
+  documentUrl: string,
+  status: number,
+  headers: Record<string, string>,
+  frame: unknown,
+) {
+  const lowered = Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+  );
+  return {
+    url: () => documentUrl,
+    status: () => status,
+    headers: () => lowered,
+    request: () => ({
+      url: () => documentUrl,
+      isNavigationRequest: () => true,
+      frame: () => frame,
+    }),
   };
 }
 
@@ -423,5 +477,128 @@ describe("navigationProblem", () => {
         "https://example.com/",
       ),
     ).toBe("出于安全原因不允许访问内网地址。");
+  });
+});
+
+describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
+  test("504 超时页是「没有响应」，不是 ok", async () => {
+    const { page } = castable({
+      gotoResponse: {
+        status: 504,
+        headers: { "x-chisabot-egress-class": "timeout" },
+      },
+    });
+    const messages: unknown[] = [];
+    const cast = await startScreencast(page, (m) => messages.push(m));
+    await cast.send({ type: "navigate", url: "http://slow.example.com/" });
+    expect(messages).toContainEqual({
+      type: "navigation",
+      ok: false,
+      url: "http://slow.example.com/",
+      error: "网站没有响应，请稍后再试。",
+    });
+    await cast.stop();
+  });
+
+  test("502 连不上、403 DNS 失败都说连不上；内网 403 说安全原因", async () => {
+    for (const [status, klass, url, error] of [
+      [502, "unreachable", "http://down.example.com/", "连不上这个网址。"],
+      [403, "unresolved", "http://nope.invalid/", "连不上这个网址。"],
+      [403, "private", "http://10.0.0.1/", "出于安全原因不允许访问内网地址。"],
+    ] as const) {
+      const { page } = castable({
+        gotoResponse: {
+          status,
+          headers: { "x-chisabot-egress-class": klass },
+        },
+      });
+      const messages: unknown[] = [];
+      const cast = await startScreencast(page, (m) => messages.push(m));
+      await cast.send({ type: "navigate", url });
+      expect(messages).toContainEqual({
+        type: "navigation",
+        ok: false,
+        url,
+        error,
+      });
+      await cast.stop();
+    }
+  });
+
+  test("网站自己的 502（没有过滤器的头）仍是成功打开的文档", async () => {
+    const { page } = castable({
+      gotoResponse: { status: 502, headers: { "content-type": "text/html" } },
+    });
+    const messages: unknown[] = [];
+    const cast = await startScreencast(page, (m) => messages.push(m));
+    await cast.send({ type: "navigate", url: "http://example.com/bad" });
+    expect(messages).toContainEqual({
+      type: "navigation",
+      ok: true,
+      url: "http://example.com/bad",
+    });
+    await cast.stop();
+  });
+
+  test("commit 之后再打开过滤器的 HTTP 错误页，补发失败而不是只靠页体", async () => {
+    const { page, emitDocument } = castable();
+    const box = inbox();
+    const cast = await startScreencast(page, (m) => box.push(m));
+    await cast.send({ type: "navigate", url: "http://hop1.example.com/" });
+    expect(box.messages).toContainEqual({
+      type: "navigation",
+      ok: true,
+      url: "http://hop1.example.com/",
+    });
+    emitDocument("http://10.0.0.1/", 403, {
+      "x-chisabot-egress-class": "private",
+    });
+    await box.next((m) => m.type === "navigation" && m.ok === false);
+    const last = box.messages.filter((m) => m.type === "navigation").at(-1);
+    expect(last).toMatchObject({
+      ok: false,
+      error: "出于安全原因不允许访问内网地址。",
+    });
+    await cast.stop();
+  });
+
+  test("子 frame 的过滤器错误页不推导航失败", async () => {
+    const { page, emitDocument } = castable();
+    const box = inbox();
+    const cast = await startScreencast(page, (m) => box.push(m));
+    emitDocument(
+      "http://10.0.0.1/",
+      403,
+      { "x-chisabot-egress-class": "private" },
+      {},
+    );
+    await Promise.resolve();
+    expect(box.messages.filter((m) => m.type === "navigation")).toEqual([]);
+    await cast.stop();
+  });
+});
+
+describe("egressDocumentProblem", () => {
+  test("按 x-chisabot-egress-class 分类；没有过滤器的头则忽略", () => {
+    const headers = (klass?: string) => ({
+      status: () => 502,
+      headers: () =>
+        klass
+          ? { "x-chisabot-egress-class": klass }
+          : { "content-type": "text/plain" },
+    });
+    expect(egressDocumentProblem(headers("timeout"))).toBe(
+      "网站没有响应，请稍后再试。",
+    );
+    expect(egressDocumentProblem(headers("unreachable"))).toBe(
+      "连不上这个网址。",
+    );
+    expect(egressDocumentProblem(headers())).toBeNull();
+    expect(
+      egressDocumentProblem({
+        status: () => 200,
+        headers: () => ({ "x-chisabot-egress-class": "timeout" }),
+      }),
+    ).toBeNull();
   });
 });

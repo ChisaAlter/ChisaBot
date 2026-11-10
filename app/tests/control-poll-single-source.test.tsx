@@ -15,6 +15,7 @@ beforeAll(() => GlobalRegistrator.register());
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  for (const store of [...controlStores.values()]) store.dispose();
   controlStores.clear();
 });
 afterAll(async () => {
@@ -22,12 +23,19 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 
-function server(status: number) {
+function server(status: number, computerId?: string) {
   const reads: number[] = [];
   const state = { status };
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
-    if (url.includes("/control") && (!init?.method || init.method === "GET"))
+    const forThis =
+      !computerId ||
+      url.includes(`/computers/${encodeURIComponent(computerId)}/`);
+    if (
+      forThis &&
+      url.includes("/control") &&
+      (!init?.method || init.method === "GET")
+    )
       reads.push(Date.now());
     if (state.status !== 200)
       return new Response("<html>bad gateway</html>", { status: state.status });
@@ -49,7 +57,7 @@ function server(status: number) {
 const agent = { messages: [], isRunning: false, setMessages: () => undefined };
 
 test("two chat notices and a control button make one poll, and it backs off while unreachable", async () => {
-  const s = server(502);
+  const s = server(502, "bot-1");
   render(
     <>
       <HandoffResumeNotice
@@ -75,9 +83,18 @@ test("two chat notices and a control button make one poll, and it backs off whil
 
 for (const event of ["focus", "online"] as const) {
   test(`window ${event} re-reads right away instead of waiting out the backoff`, async () => {
-    const s = server(502);
-    render(<ComputerControlButton computerId={`bot-${event}`} />);
-    await act(() => Bun.sleep(3200)); // 下一次要到 7 秒
+    const id = `bot-${event}`;
+    const s = server(502, id);
+    render(<ComputerControlButton computerId={id} />);
+    // 等退避的三次读齐（0、1s、3s），不要固定睡 3200ms：共享进程里定时器可能晚于这根线，
+    // 第三拍和窗口事件叠在 50ms 窗口里就会多计一次。
+    await act(async () => {
+      const start = Date.now();
+      while (s.reads.length < 3 && Date.now() - start < 6_000) {
+        await Bun.sleep(25);
+      }
+    });
+    expect(s.reads.length).toBe(3);
     const before = s.reads.length;
     s.state.status = 200;
     await act(async () => {
@@ -85,7 +102,7 @@ for (const event of ["focus", "online"] as const) {
       await Bun.sleep(50);
     });
     expect(s.reads.length).toBe(before + 1);
-    expect(controlStores.get(`bot-${event}`)?.getSnapshot().state).toBe("none");
+    expect(controlStores.get(id)?.getSnapshot().state).toBe("none");
   }, 10_000);
 }
 

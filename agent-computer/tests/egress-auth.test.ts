@@ -135,6 +135,9 @@ describe("addresses no Bot may reach", () => {
       "::ffff:127.0.0.1",
       "::ffff:7f00:1",
       "0:0:0:0:0:ffff:7f00:1",
+      "::ffff:ffff:127.0.0.1",
+      "[::ffff:ffff:127.0.0.1]",
+      "::ffff:ffff:7f00:1",
       "::ffff:10.0.0.1",
       "::ffff:a9fe:a9fe", // 169.254.169.254
       "::7f00:1", // deprecated compatible [::127.0.0.1]
@@ -179,6 +182,7 @@ describe("addresses no Bot may reach", () => {
         "0.0.0.0:80",
         "100.64.0.1:80",
         "100.100.100.100:443",
+        "[::ffff:ffff:127.0.0.1]:80",
       ]) {
         const answer = await raw(
           filter.port,
