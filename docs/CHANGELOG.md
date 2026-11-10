@@ -1,3 +1,8 @@
+## 0.1.139
+
+- #515 长对话重连循环：`use-conversation-sync` 核对只比已加载窗口；`join-backoff` 重接退避、重试必发；`shared/connect-snapshot` 增量快照，`conversations/routes`、`runner`、`local-conversations` 配合下发；`friendly-error` 把 403 套餐限制翻成中文原因；回归测试 `app/tests/connect-loop-regression.test.tsx`。
+- 版本：0.1.139（根、app、server、pc；Android versionCode 321）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.138
 
 - 版本：0.1.138（根、app、server、pc；Android versionCode 320）；PC 外壳不变，Android 应用本体有改动。服务器部署与客户端发布分别记录。
