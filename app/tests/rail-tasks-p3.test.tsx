@@ -1,5 +1,5 @@
 /**
- * PR #516 r3：任务卡片 QA r2 的 5 个 P3，加 main 上既有的两处（抽屉关后焦点、液态玻璃下实心按钮图标）。
+ * PR #516 r4：任务卡片 QA r3 的 P2（步骤审批 409/404）与全部 P3。
  */
 import {
   afterAll,
@@ -37,10 +37,15 @@ import {
 } from "@/components/panels/tasks-rail-card";
 import { ClientError } from "@/lib/client";
 import { taskCenterKeys } from "@/lib/task-center-api";
-import { workflowKeys } from "@/lib/workflows";
+import {
+  WorkflowSaveError,
+  workflowKeys,
+  workflowLibraryQueryOptions,
+} from "@/lib/workflows";
 import type {
   TaskCenterDecision,
   TaskCenterSnapshot,
+  TaskCenterTask,
 } from "../../shared/task-center";
 import type { WorkflowRunView } from "../../shared/workflows";
 import { lastDecl, stylesCss } from "./contrast-model";
@@ -102,6 +107,42 @@ const decision: TaskCenterDecision = {
   decidedAt: null,
   notificationError: null,
 } as TaskCenterDecision;
+
+const runningTask: TaskCenterTask = {
+  id: "task-1",
+  ownerUserId: "u1",
+  agentId: null,
+  title: "整理本周研发进展报告",
+  description: "汇总各仓库 PR 与发布状态",
+  category: "project",
+  level: 3,
+  assessment: "正在汇总",
+  risk: "internal",
+  status: "running",
+  executor: "bot",
+  workspace: null,
+  sourceId: null,
+  sourceRef: null,
+  sourceUrl: null,
+  parentId: null,
+  dependencies: [],
+  planPrepared: true,
+  priority: 1,
+  attempts: 1,
+  maxAttempts: 3,
+  timeoutSeconds: 300,
+  summary: "正在抓取最近提交记录…",
+  artifacts: [],
+  usage: {},
+  error: null,
+  createdAt: "2026-11-06T16:00:00.000Z",
+  updatedAt: "2026-11-06T16:05:00.000Z",
+  startedAt: "2026-11-06T16:01:00.000Z",
+  finishedAt: null,
+  nextAttemptAt: "2026-11-06T16:00:00.000Z",
+  leaseExpiresAt: null,
+  version: 1,
+};
 
 function step(id: string, status: WorkflowRunView["steps"][number]["status"]) {
   return {
@@ -232,12 +273,15 @@ function ruleBody(selector: string) {
 }
 
 describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
-  test("状态字和出错说明都用 --task-tone-text，而不是原色调", () => {
+  test("状态字和出错说明都用 --task-tone-text，图标仍用原色调", () => {
     expect(ruleBody(".task-rail-status")).toContain(
       "color: var(--task-tone-text);",
     );
     expect(ruleBody(".task-rail-description[data-error]")).toContain(
       "color: var(--task-tone-text);",
+    );
+    expect(ruleBody(".task-rail-status svg")).toContain(
+      "color: var(--task-tone);",
     );
   });
 
@@ -263,11 +307,15 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         name: "light",
         root: ":root",
         sel: (p: string) => `html[data-palette="${p}"]`,
-        // QA r2 在 4 种玻璃预设下量到的最暗胶囊底是 (217,229,246)；再往暗处留出余量。
+        // QA r2 默认配色最暗胶囊底是 (217,229,246)；r3 换配色后最暗是 aurora crystal
+        // (195,171,220)、sakura crystal (230,170,187)、ocean liquid (157,205,219)。
         backgrounds: [
           [255, 255, 255],
           [217, 229, 246],
           [200, 212, 230],
+          [195, 171, 220],
+          [230, 170, 187],
+          [157, 205, 219],
         ] as RGB[],
         inks: ["#0f172a", "#111a2b"],
       },
@@ -436,6 +484,92 @@ describe("P3-2 出错后的后台轮询不再闪骨架屏", () => {
     expect(rail.querySelector(".task-rail-notice")).not.toBeNull();
     expect(rail.querySelector(".task-rail-loading")).toBeNull();
   });
+
+  test("工作流库在失败或尚无数据时仍会轮询，好让出错提示自动消失", () => {
+    const interval = workflowLibraryQueryOptions().refetchInterval;
+    expect(typeof interval).toBe("function");
+    const fn = interval as (query: {
+      state: {
+        status: string;
+        data:
+          | { presets: unknown[]; mine: unknown[]; runs: unknown[] }
+          | undefined;
+        errorUpdateCount: number;
+      };
+    }) => number | false;
+    expect(
+      fn({
+        state: { status: "pending", data: undefined, errorUpdateCount: 0 },
+      }),
+    ).toBe(false);
+    expect(
+      fn({ state: { status: "error", data: undefined, errorUpdateCount: 1 } }),
+    ).toBe(5_000);
+    expect(
+      fn({
+        state: { status: "pending", data: undefined, errorUpdateCount: 1 },
+      }),
+    ).toBe(5_000);
+    expect(
+      fn({
+        state: {
+          status: "error",
+          data: { presets: [], mine: [], runs: [] },
+          errorUpdateCount: 1,
+        },
+      }),
+    ).toBe(5_000);
+    expect(
+      fn({
+        state: {
+          status: "success",
+          data: { presets: [], mine: [], runs: [] },
+          errorUpdateCount: 0,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  test("任务和工作流同时 500，恢复成功后提示自动消失、不必点重试", async () => {
+    let fail = true;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/workflows") || url.endsWith("/api/task-center")) {
+        if (fail) return Response.json({ error: "x" }, { status: 500 });
+        if (url.endsWith("/api/workflows")) {
+          return Response.json({ presets: [], mine: [], runs: [] });
+        }
+        return Response.json(emptySnapshot());
+      }
+      return Response.json({}, { status: 404 });
+    }) as typeof fetch;
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    const view = await renderRail(queryClient);
+    const rail = view.getByTestId("tasks-rail-card");
+    await waitFor(() =>
+      expect(rail.querySelector(".task-rail-notice")?.textContent).toContain(
+        "任务和工作流暂时无法刷新",
+      ),
+    );
+    fail = false;
+    await act(async () => {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: taskCenterKeys.snapshot }),
+        queryClient.refetchQueries({ queryKey: workflowKeys.library }),
+      ]);
+    });
+    await waitFor(() =>
+      expect(rail.querySelector(".task-rail-notice")).toBeNull(),
+    );
+  });
 });
 
 describe("P3-3 工作流卡片的可读名称是一句完整的话", () => {
@@ -543,11 +677,25 @@ describe("P3-4 步骤都结束但运行还没收尾", () => {
 });
 
 describe("P3-5 审批返回 409 后卡片立刻消失", () => {
-  test("isStaleActionError 只认 409 / 404", () => {
+  test("isStaleActionError 认 ClientError 和 WorkflowSaveError 的 409 / 404", () => {
     expect(isStaleActionError(new ClientError("已处理", 409))).toBe(true);
     expect(isStaleActionError(new ClientError("不存在", 404))).toBe(true);
     expect(isStaleActionError(new ClientError("坏了", 500))).toBe(false);
     expect(isStaleActionError(new Error("网络"))).toBe(false);
+    expect(
+      isStaleActionError(
+        new WorkflowSaveError("这一步现在不需要审批。", [], 409),
+      ),
+    ).toBe(true);
+    expect(
+      isStaleActionError(new WorkflowSaveError("找不到这次运行。", [], 404)),
+    ).toBe(true);
+    expect(
+      isStaleActionError(new WorkflowSaveError("保存失败", ["缺标题"], 400)),
+    ).toBe(false);
+    expect(isStaleActionError(new WorkflowSaveError("挂了", [], 500))).toBe(
+      false,
+    );
   });
 
   test("点批准拿到 409：不等轮询，卡片马上拿掉并重新拉取", async () => {
@@ -602,6 +750,248 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
         ?.outbox,
     ).toEqual([]);
     expect(snapshotGets).toBeGreaterThanOrEqual(1);
+  });
+
+  test("点批准拿到 404：卡片马上拿掉并重新拉取", async () => {
+    const posts: string[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json(
+          { error: "这条确认请求已经处理。" },
+          { status: 404 },
+        );
+      }
+      if (url.endsWith("/api/task-center")) {
+        return new Promise<Response>(() => {});
+      }
+      return Response.json({ presets: [], mine: [], runs: [] });
+    }) as typeof fetch;
+    const queryClient = staticClient();
+    queryClient.setQueryData(
+      taskCenterKeys.snapshot,
+      emptySnapshot({ outbox: [decision] }),
+    );
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+    const view = await renderRail(queryClient);
+    const approve = [
+      ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.includes("批准"))!;
+    await act(async () => {
+      fireEvent.click(approve);
+    });
+    await waitFor(() =>
+      expect(view.container.textContent).not.toContain("发送周报至研发频道"),
+    );
+    expect(posts[0]).toContain("/api/task-center/outbox/dec-1/decide");
+    expect(
+      queryClient.getQueryData<TaskCenterSnapshot>(taskCenterKeys.snapshot)
+        ?.outbox,
+    ).toEqual([]);
+  });
+
+  test("点批准步骤拿到 409：不等轮询，卡片马上拿掉并重新拉取", async () => {
+    const posts: string[] = [];
+    let libraryGets = 0;
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json(
+          { error: "这一步现在不需要审批。" },
+          { status: 409 },
+        );
+      }
+      if (url.endsWith("/api/workflows")) {
+        libraryGets += 1;
+        return new Promise<Response>(() => {});
+      }
+      return Response.json(emptySnapshot());
+    }) as typeof fetch;
+    const waiting = run({
+      status: "waiting_approval",
+      steps: [step("a", "succeeded"), step("b", "waiting_approval")],
+    });
+    const queryClient = staticClient();
+    queryClient.setQueryData(taskCenterKeys.snapshot, emptySnapshot());
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [waiting],
+    });
+    const view = await renderRail(queryClient);
+    expect(view.container.textContent).toContain("发布前验收流水线");
+    const approve = [
+      ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.includes("批准步骤"))!;
+    await act(async () => {
+      fireEvent.click(approve);
+    });
+    await waitFor(() =>
+      expect(view.container.textContent).not.toContain("发布前验收流水线"),
+    );
+    await settleReactWork();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("/api/workflows/runs/run-1/approve");
+    expect(
+      queryClient.getQueryData<{ runs: { id: string }[] }>(workflowKeys.library)
+        ?.runs,
+    ).toEqual([]);
+    expect(libraryGets).toBeGreaterThanOrEqual(1);
+  });
+
+  test("点批准步骤拿到 404：卡片马上拿掉并重新拉取", async () => {
+    const posts: string[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json({ error: "找不到这次运行。" }, { status: 404 });
+      }
+      if (url.endsWith("/api/workflows")) {
+        return new Promise<Response>(() => {});
+      }
+      return Response.json(emptySnapshot());
+    }) as typeof fetch;
+    const waiting = run({
+      status: "waiting_approval",
+      steps: [step("a", "succeeded"), step("b", "waiting_approval")],
+    });
+    const queryClient = staticClient();
+    queryClient.setQueryData(taskCenterKeys.snapshot, emptySnapshot());
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [waiting],
+    });
+    const view = await renderRail(queryClient);
+    const approve = [
+      ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.includes("批准步骤"))!;
+    await act(async () => {
+      fireEvent.click(approve);
+    });
+    await waitFor(() =>
+      expect(view.container.textContent).not.toContain("发布前验收流水线"),
+    );
+    expect(posts[0]).toContain("/api/workflows/runs/run-1/approve");
+    expect(
+      queryClient.getQueryData<{ runs: { id: string }[] }>(workflowKeys.library)
+        ?.runs,
+    ).toEqual([]);
+  });
+
+  test("点暂停任务拿到 409：立刻重新拉取，卡片从进行中移到最近交付", async () => {
+    const posts: string[] = [];
+    const ended = {
+      ...runningTask,
+      status: "cancelled" as const,
+      finishedAt: "2026-11-06T16:10:00.000Z",
+      summary: "任务已经结束。",
+    };
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json({ error: "任务已经结束。" }, { status: 409 });
+      }
+      if (url.endsWith("/api/task-center")) {
+        return Response.json(
+          emptySnapshot({
+            tasks: [ended],
+            counts: { ...emptySnapshot().counts, cancelled: 1 },
+          }),
+        );
+      }
+      return Response.json({ presets: [], mine: [], runs: [] });
+    }) as typeof fetch;
+    const queryClient = staticClient();
+    queryClient.setQueryData(
+      taskCenterKeys.snapshot,
+      emptySnapshot({ tasks: [runningTask] }),
+    );
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+    const view = await renderRail(queryClient);
+    expect(
+      view.container.querySelector('article[data-kind="task"]'),
+    ).not.toBeNull();
+    const pause = [
+      ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.includes("暂停任务"))!;
+    await act(async () => {
+      fireEvent.click(pause);
+    });
+    await waitFor(() => {
+      expect(
+        view.container.querySelector('article[data-kind="task"]'),
+      ).toBeNull();
+      expect(
+        view.container.querySelector('article[data-kind="recent"]'),
+      ).not.toBeNull();
+    });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain("/api/task-center/tasks/task-1/pause");
+    expect(view.container.textContent).toContain("整理本周研发进展报告");
+  });
+
+  test("点暂停任务拿到 404：立刻重新拉取，进行中卡片消失", async () => {
+    const posts: string[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json({ error: "任务已经不存在。" }, { status: 404 });
+      }
+      if (url.endsWith("/api/task-center")) {
+        return Response.json(emptySnapshot());
+      }
+      return Response.json({ presets: [], mine: [], runs: [] });
+    }) as typeof fetch;
+    const queryClient = staticClient();
+    queryClient.setQueryData(
+      taskCenterKeys.snapshot,
+      emptySnapshot({ tasks: [runningTask] }),
+    );
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+    const view = await renderRail(queryClient);
+    const pause = [
+      ...view.container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.includes("暂停任务"))!;
+    await act(async () => {
+      fireEvent.click(pause);
+    });
+    await waitFor(() =>
+      expect(view.container.textContent).not.toContain("整理本周研发进展报告"),
+    );
+    expect(posts[0]).toContain("/api/task-center/tasks/task-1/pause");
   });
 });
 

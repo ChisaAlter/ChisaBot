@@ -26,8 +26,15 @@ export function workflowLibraryQueryOptions() {
     queryFn: ({ signal }): Promise<WorkflowLibrary> =>
       client("/api/workflows", { fallback: "无法加载工作流", signal }).then((r) => r.json()),
     // 最近运行里有还在跑的，就跟着刷新。
-    refetchInterval: (query) =>
-      query.state.data?.runs.some((run) => ACTIVE_RUN_STATUSES.includes(run.status)) ? 3_000 : false,
+    // 失败或还没有数据时也继续轮询：右栏同时拉任务和工作流，工作流失败后若停掉轮询，
+    // 提示要等用户点「重试」才会消失。
+    refetchInterval: (query) => {
+      const failed =
+        query.state.status === "error" ||
+        (query.state.data === undefined && query.state.errorUpdateCount > 0);
+      if (failed) return 5_000;
+      return query.state.data?.runs.some((run) => ACTIVE_RUN_STATUSES.includes(run.status)) ? 3_000 : false;
+    },
   });
 }
 
@@ -57,6 +64,7 @@ export class WorkflowSaveError extends Error {
   constructor(
     message: string,
     readonly problems: string[],
+    readonly status: number,
   ) {
     super(message);
   }
@@ -70,7 +78,7 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = (await response.json().catch(() => null)) as (T & { error?: string; problems?: string[] }) | null;
-  if (!response.ok) throw new WorkflowSaveError(data?.error ?? "操作失败，请重试", data?.problems ?? []);
+  if (!response.ok) throw new WorkflowSaveError(data?.error ?? "操作失败，请重试", data?.problems ?? [], response.status);
   return data as T;
 }
 

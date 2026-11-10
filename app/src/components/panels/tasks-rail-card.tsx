@@ -37,6 +37,8 @@ import {
   taskCenterSnapshotOptions,
 } from "@/lib/task-center-api";
 import {
+  type WorkflowLibrary,
+  WorkflowSaveError,
   workflowKeys,
   workflowLibraryQueryOptions,
   workflowsApi,
@@ -234,6 +236,7 @@ function TasksRailBody({
             <RailWorkflowRunItem
               key={run.id}
               onChanged={refreshWorkflows}
+              onStale={() => dropStaleRun(queryClient, run.id)}
               run={run}
             />
           ))}
@@ -310,8 +313,19 @@ export function railQueryLoading(
 
 /** 409（已在别处处理）/ 404（已不存在）：这张卡片已过期，要立刻刷新，不等 5 秒轮询。 */
 export function isStaleActionError(err: unknown): boolean {
-  return (
-    err instanceof ClientError && (err.status === 409 || err.status === 404)
+  const status =
+    err instanceof ClientError || err instanceof WorkflowSaveError
+      ? err.status
+      : undefined;
+  return status === 409 || status === 404;
+}
+
+/** 先从缓存里拿掉这条已结束的工作流运行，让卡片马上消失；随后的刷新再以服务端为准。 */
+function dropStaleRun(queryClient: QueryClient, runId: string) {
+  queryClient.setQueryData<WorkflowLibrary>(workflowKeys.library, (prev) =>
+    prev
+      ? { ...prev, runs: prev.runs.filter((item) => item.id !== runId) }
+      : prev,
   );
 }
 
@@ -498,9 +512,11 @@ function RailDecisionItem({
 function RailWorkflowRunItem({
   run,
   onChanged,
+  onStale,
 }: {
   run: WorkflowRunView;
   onChanged: () => void;
+  onStale: () => void;
 }) {
   const totalSteps = run.steps.length;
   const doneSteps = run.steps.filter(
@@ -527,6 +543,8 @@ function RailWorkflowRunItem({
     onSuccess: onChanged,
     onError: (err) => {
       if (isStaleActionError(err)) {
+        // 别处已经处理或运行已不在：卡片立刻拿掉并刷新，提示用中性语气，不当成失败。
+        onStale();
         onChanged();
         toast.info(err instanceof Error ? err.message : "这一步已经处理过了。");
         return;
