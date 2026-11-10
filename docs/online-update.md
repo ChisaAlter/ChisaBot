@@ -130,7 +130,7 @@ GitHub Release（通用版）。配置了仓库变量 `CHISABOT_SERVER_URL` / `C
              └──▶ chisabot-updater（宿主机 root，systemd，python3 / python2.7）──▶ update.sh / rollback.sh
 ```
 
-- 应用更新请求是 `check`、`update`、`rollback`；同一宿主服务另处理独立的 `magpie` 网关更新。宿主机只接受登记的动作，不执行请求里的任意字符串；`update` 只能更新到
+- 应用更新请求是 `check`、`update`、`rollback`；同一宿主服务另处理独立的 `magpie` 网关更新（宿主机还没有 Magpie 时，这个动作就是一键安装，见 [magpie.md](magpie.md#一键安装只装了-chisabot-时)）。宿主机只接受登记的动作，不执行请求里的任意字符串；`update` 只能更新到
   本机镜像 `main` 的最新提交（请求里的 `expectCommit` 必须等于它，否则拒绝「main 已经变了」），可选 `"mode": "full"` 强制完整构建。
 - 发布者通过 `scripts/ops/deploy-serial.sh` 进入同一个宿主队列，页面显示进度、日志与历史。`request.sh` 是该队列的底层接口；直接调用 `update.sh` 会绕过串行发布入口，不能代替 [部署流程](ops/deploy.md)。
 - 认证就是文件系统权限：`spool/requests` 归 uid 1002（镜像里的 API 用户）、700；`spool/state` 归 root、只读挂载。

@@ -44,7 +44,16 @@ fail() { printf 'isolate-sidecar-app: %s\n' "$*" >&2; exit 1; }
 ok() { printf 'ok: %s\n' "$*"; }
 
 command -v docker >/dev/null 2>&1 || fail "need docker"
-command -v iptables >/dev/null 2>&1 || fail "need iptables"
+# systemd / 精简 PATH 经常不含 sbin，iptables 却装在 /usr/sbin。
+if ! command -v iptables >/dev/null 2>&1; then
+  for dir in /usr/sbin /sbin /usr/local/sbin /usr/bin /bin; do
+    if [ -x "$dir/iptables" ]; then
+      PATH="$dir:$PATH"
+      break
+    fi
+  done
+fi
+command -v iptables >/dev/null 2>&1 || fail "need iptables (not in PATH, /usr/sbin or /sbin)"
 
 # Same-bridge traffic only hits DOCKER-USER when br_netfilter is on.
 ensure_bridge_nf() {

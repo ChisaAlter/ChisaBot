@@ -63,6 +63,16 @@ for f in $FILES; do
   fi
 done
 [ -z "$CHANGED" ] || echo "updated:$CHANGED"
+# 一键安装 Magpie（magpie.sh do_install）用的 compose 模板，和装完给新容器补隔离规则的脚本。
+# 跟着版本走：模板在 deploy/，隔离脚本在 scripts/ops/，都不在本目录，所以单独拷。
+for pair in "../magpie.compose.yaml:magpie.compose.yaml:0644" "../../scripts/ops/isolate-sidecar-app.sh:isolate-sidecar-app.sh:0755"; do
+  src="$HERE/${pair%%:*}"; rest="${pair#*:}"; dest="$U/${rest%%:*}"; mode="${rest#*:}"
+  [ -f "$src" ] || continue
+  if ! cmp -s "$src" "$dest"; then
+    put "$src" "$dest" "$mode"
+    echo "updated: ${rest%%:*}"
+  fi
+done
 for f in reader-compatibility.mjs legacy-schema.mjs accounts.mjs; do
   if ! cmp -s "$HERE/../dsh/$f" "$U/$f"; then
     put "$HERE/../dsh/$f" "$U/$f" 0755
