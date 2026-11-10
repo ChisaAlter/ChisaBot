@@ -275,6 +275,57 @@ const SECRET_SHAPES: RegExp[] = [
 ];
 
 /**
+ * 嵌在字母数字后面的密钥前缀（QA514 r5）：`FAKE76sk-…`、`X_ghp_…` 这类 \b 不成立，上面的规则认不出来。
+ * - 前面是数字、大写字母或下划线：照常按前缀 + 长度认（ABC1sk-…、TOKEN_sk-…）。
+ * - 前面是小写字母：多半是普通单词结尾（task-、desk-、risk-、mask-、disk-），只有后面是高熵串才算。
+ * 只把前缀起的那一段换成 ••••，前面的字符原样保留。单次正则扫描，线性。
+ */
+const EMBEDDED_KEY =
+  /(?<=[A-Za-z0-9_])(sk-|ghp_|gho_|github_pat_|xox[abpr]-|AKIA|AIza)([A-Za-z0-9_-]+)/g;
+const EMBEDDED_KEY_TAIL: Record<string, RegExp> = {
+  "sk-": /^[A-Za-z0-9_-]{16,}$/,
+  ghp_: /^[A-Za-z0-9]{20,}$/,
+  gho_: /^[A-Za-z0-9]{20,}$/,
+  github_pat_: /^[A-Za-z0-9_]{20,}$/,
+  xoxa: /^[A-Za-z0-9-]{10,}$/,
+  AKIA: /^[0-9A-Z]{16}/,
+  AIza: /^[0-9A-Za-z_-]{30,}$/,
+};
+
+/**
+ * 高熵：至少 20 个字符；混有字母和数字，或大小写都有；去掉 - 分隔后最长一段至少 16 个字符
+ * （risk-assessment-2024-report 这类由短单词拼成的串不算）。
+ */
+function looksHighEntropy(tail: string): boolean {
+  if (tail.length < 20) return false;
+  const mixed =
+    (/[A-Za-z]/.test(tail) && /\d/.test(tail)) ||
+    (/[a-z]/.test(tail) && /[A-Z]/.test(tail));
+  if (!mixed) return false;
+  let longest = 0;
+  for (const part of tail.split("-")) longest = Math.max(longest, part.length);
+  return longest >= 16;
+}
+
+function redactEmbeddedKeys(text: string): string {
+  return text.replace(
+    EMBEDDED_KEY,
+    (whole, prefix: string, tail: string, offset: number, input: string) => {
+      const rule =
+        EMBEDDED_KEY_TAIL[prefix.startsWith("xox") ? "xoxa" : prefix];
+      if (!rule?.test(tail)) return whole;
+      const before = input[offset - 1] ?? "";
+      if (/[a-z]/.test(before) && !looksHighEntropy(tail)) return whole;
+      if (prefix === "AKIA") {
+        // AKIA 后面固定 16 位，多出来的字符原样保留。
+        return `${MASK}${tail.slice(16)}`;
+      }
+      return MASK;
+    },
+  );
+}
+
+/**
  * 短参数带口令（`-p value` / `-pvalue`）只按**命令**打码。
  *
  * 短参数的意思因命令而异：`mkdir -p dir`、`ssh -p 22`、`curl -k`（insecure，不带值）、`mysql -P 3306`（端口）
@@ -888,6 +939,7 @@ function redactPlain(value: string): string {
     (_m, flag: string) => `${flag}${MASK}`,
   );
   out = out.replace(SECRET_SHAPES[2] as RegExp, MASK);
+  out = redactEmbeddedKeys(out);
   return out;
 }
 
@@ -896,13 +948,51 @@ function redactPlain(value: string): string {
  * redactUrl 只接 http(s)；其余 scheme 的 `user:pass@` / `:pass@` / `user@` 一律整段换成 ••••。
  * userinfo 贪婪匹配到 host 前最后一个 @，密码里带 @ 也不漏半截。
  */
-const ANY_SCHEME_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#"'<>]+)@/gi;
+const SCHEME_CHAR = /[A-Za-z0-9+.-]/;
+const WORD_CHAR = /[A-Za-z0-9_]/;
+const USERINFO_STOP = /[\s/?#"'<>]/;
+/**
+ * 手写线性扫描（QA514 r5）：原来的 /\b([a-z][a-z0-9+.-]*:\/\/)…/ 会在 ask-ask-ask-… 这类长串的每个词边界上
+ * 把 [a-z0-9+.-]* 扫到底再失败，1MB 要几十秒。现在只在 :// 处往回找 scheme、往后找最后一个 @，语义不变：
+ * scheme 从词边界上的字母开始，userinfo 贪婪到 host 前最后一个 @。
+ */
 export function redactUserinfo(value: string): string {
-  return value.replace(
-    ANY_SCHEME_USERINFO,
-    (_m, scheme: string, userinfo: string) =>
-      `${scheme}${userinfo.includes(":") ? `${MASK}:${MASK}` : MASK}@`,
-  );
+  let out = "";
+  let last = 0;
+  let from = 0;
+  for (;;) {
+    const sep = value.indexOf("://", from);
+    if (sep < 0) break;
+    from = sep + 3;
+    // 往回找 scheme：连续的 scheme 字符里，最靠左、前面不是词字符的字母。
+    let runStart = sep;
+    while (runStart > last && SCHEME_CHAR.test(value[runStart - 1] as string))
+      runStart -= 1;
+    let start = -1;
+    for (let i = runStart; i < sep; i++) {
+      if (
+        /[A-Za-z]/.test(value[i] as string) &&
+        (i === 0 || !WORD_CHAR.test(value[i - 1] as string))
+      ) {
+        start = i;
+        break;
+      }
+    }
+    if (start < 0) continue;
+    // 往后找 userinfo 的结尾：停止字符之前最后一个 @。
+    let end = from;
+    let at = -1;
+    while (end < value.length && !USERINFO_STOP.test(value[end] as string)) {
+      if (value[end] === "@") at = end;
+      end += 1;
+    }
+    if (at <= from) continue;
+    const userinfo = value.slice(from, at);
+    out += `${value.slice(last, from)}${userinfo.includes(":") ? `${MASK}:${MASK}` : MASK}@`;
+    last = at + 1;
+    from = last;
+  }
+  return last === 0 ? value : out + value.slice(last);
 }
 
 /** 文本（命令、输出）打码：像密钥的串换成 ••••；其中能解析的 URL 也按 redactUrl 处理。 */

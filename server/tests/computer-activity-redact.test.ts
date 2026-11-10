@@ -1245,3 +1245,55 @@ describe("QA514 r4 linear time on 100KB input", () => {
     expect(out).toBe("API_KEY=•••• node x");
   });
 });
+
+describe("QA514 r5 key prefixes glued to letters or digits", () => {
+  test.each([
+    [
+      "IMA_OPENAPI_BASE_URL=FAKE76sk-abcdefghijklmnopqrstuvwx node x",
+      "FAKE76sk-abcdefghijklmnopqrstuvwx",
+      "IMA_OPENAPI_BASE_URL=FAKE76•••• node x",
+    ],
+    ["TOKEN_sk-abcdefghijklmnopqrstuvwx", "sk-abc", "TOKEN_••••"],
+    ["Xghp_abcdefghijklmnopqrstuvwxyz12", "ghp_abc", "X••••"],
+    ["id9AKIAABCDEFGHIJKLMNOP", "AKIAABCD", "id9••••"],
+    ["mytask-Ab3dEf9GhIjKlMnOpQrStUv", "Ab3dEf9GhIjKlMnOpQrStUv", "myta••••"],
+  ])("masks %s", (input, secret, expected) => {
+    const out = redactText(input);
+    expect(out).not.toContain(secret);
+    expect(out).toBe(expected);
+    expect(redactText(out)).toBe(out);
+  });
+
+  test.each([
+    "task-abcdefghijklmnopqrstuvwx",
+    "desk-reservation-service-prod",
+    "risk-assessment-2024-report-final",
+    "mask-overlay-component-tooltip",
+    "disk-usage-monitor-dashboard-v2",
+    "kiosk-mode-settings-panel-a",
+    "brisk-walking-tracker-app-2025",
+    "git checkout feature/task-management-dashboard-ui",
+    "npm i @ui/desk-calendar-widget-component",
+    "whisk-ab12",
+  ])("keeps ordinary word %s", (input) => {
+    expect(redactText(input)).toBe(input);
+  });
+
+  test("still masks a bare sk- key", () => {
+    expect(redactText("echo sk-abcdefghijklmnopqrstuvwx")).toBe("echo ••••");
+  });
+
+  test("1MB of glued prefixes stays linear", () => {
+    const inputs = [
+      "ask-".repeat(250_000),
+      "Xsk-".repeat(250_000),
+      `a${"sk-".repeat(333_333)}`,
+      `task-${"a".repeat(1_000_000)}`,
+    ];
+    for (const input of inputs) {
+      const started = performance.now();
+      redactText(input);
+      expect(performance.now() - started).toBeLessThan(3000);
+    }
+  });
+});
