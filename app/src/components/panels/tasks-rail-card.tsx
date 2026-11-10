@@ -1,40 +1,59 @@
 import {
-  IconArrowUpRight,
+  IconAlertTriangle,
   IconCheck,
+  IconCircleCheck,
+  IconCircleDashed,
+  IconCircleOff,
+  IconCircleX,
+  IconGitBranch,
+  IconPaperclip,
   IconPlayerPause,
   IconPlayerPlay,
+  IconShieldCheck,
   IconX,
 } from "@tabler/icons-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { type ReactNode, useState } from "react";
 import {
   ACTIVE_STATUSES,
+  CATEGORY_LABELS,
   RISK_LABELS,
   STATUS_LABELS,
   taskDate,
 } from "@/components/task-center/labels";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { ClientError } from "@/lib/client";
 import {
   taskCenterApi,
   taskCenterKeys,
   taskCenterSnapshotOptions,
 } from "@/lib/task-center-api";
-import { cn } from "@/lib/utils";
 import {
+  WorkflowSaveError,
   workflowKeys,
   workflowLibraryQueryOptions,
   workflowsApi,
 } from "@/lib/workflows";
 import type {
   TaskCenterDecision,
+  TaskCenterSnapshot,
   TaskCenterTask,
 } from "../../../../shared/task-center";
 import {
   ACTIVE_RUN_STATUSES,
   RUN_STATUS_LABEL,
   type WorkflowRunView,
+  type WorkflowStepStatus,
 } from "../../../../shared/workflows";
+import "./tasks-rail-card.css";
 
 /**
  * 供右栏顶部「任务」选项卡读取角标状态（是否有待确认审批、是否有进行中任务/工作流）。
@@ -83,7 +102,6 @@ export function TasksRailCard() {
     activeTasks,
     activeRuns,
     approvalCount,
-    activeCount,
   } = useRailTasksSummary();
 
   const data = snapshot.data;
@@ -95,58 +113,41 @@ export function TasksRailCard() {
       .slice(0, 5) ?? [];
 
   return (
-    <div className="flex flex-col gap-3" data-testid="tasks-rail-card">
-      <div className="glass-card live-panel flex flex-col gap-3">
-        <header className="live-panel-head flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="live-panel-title font-medium text-[13px]">
-              {"任务与工作流进度"}
-            </span>
-            {approvalCount > 0 ? (
-              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {`${approvalCount} 待确认`}
-              </span>
-            ) : activeCount > 0 ? (
-              <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
-                {`${activeCount} 进行中`}
-              </span>
-            ) : null}
-          </div>
-          <Link
-            className="inline-flex items-center gap-0.5 text-[11.5px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-            search={{ view: approvalCount > 0 ? "outbox" : "active" }}
-            to="/tasks"
-          >
-            {"任务中心"}
-            <IconArrowUpRight className="size-3" />
-          </Link>
-        </header>
-
-        <TasksRailBody
-          activeRuns={activeRuns}
-          activeTasks={activeTasks}
-          inboxCount={data?.counts.inbox ?? 0}
-          isError={snapshot.isError}
-          isPending={snapshot.isPending && workflows.isPending}
-          pendingDecisions={pendingDecisions}
-          recentTasks={recentTasks}
-        />
-      </div>
+    <div className="task-rail" data-testid="tasks-rail-card">
+      <header className="task-rail-header">
+        <h2>{"任务进度"}</h2>
+        <Link
+          className="task-rail-center-link"
+          search={{ view: approvalCount > 0 ? "outbox" : "active" }}
+          to="/tasks"
+        >
+          {"任务中心"}
+        </Link>
+      </header>
+      <TasksRailBody
+        activeRuns={activeRuns}
+        activeTasks={activeTasks}
+        inboxCount={data?.counts.inbox ?? 0}
+        snapshot={snapshot}
+        workflows={workflows}
+        pendingDecisions={pendingDecisions}
+        recentTasks={recentTasks}
+      />
     </div>
   );
 }
 
 function TasksRailBody({
-  isPending,
-  isError,
+  snapshot,
+  workflows,
   pendingDecisions,
   activeTasks,
   activeRuns,
   recentTasks,
   inboxCount,
 }: {
-  isPending: boolean;
-  isError: boolean;
+  snapshot: ReturnType<typeof useRailTasksSummary>["snapshot"];
+  workflows: ReturnType<typeof useRailTasksSummary>["workflows"];
   pendingDecisions: TaskCenterDecision[];
   activeTasks: TaskCenterTask[];
   activeRuns: WorkflowRunView[];
@@ -154,6 +155,10 @@ function TasksRailBody({
   inboxCount: number;
 }) {
   const queryClient = useQueryClient();
+  const [retrying, setRetrying] = useState(false);
+  const snapshotFailed = railQueryFailed(snapshot);
+  const workflowsFailed = railQueryFailed(workflows);
+  const loading = railQueryLoading(snapshot) || railQueryLoading(workflows);
   const refreshTasks = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
   };
@@ -161,37 +166,71 @@ function TasksRailBody({
     void queryClient.invalidateQueries({ queryKey: workflowKeys.all });
   };
 
-  if (isPending) return null;
-  if (isError && activeRuns.length === 0) {
-    return (
-      <p className="live-panel-error" role="alert">
-        {"暂时无法加载任务进度。"}
-      </p>
-    );
-  }
-
   const hasActiveOrPending =
     pendingDecisions.length > 0 ||
     activeTasks.length > 0 ||
     activeRuns.length > 0;
 
   return (
-    <div className="flex flex-col gap-2.5">
-      {!hasActiveOrPending ? (
-        <p className="live-panel-note">
-          {inboxCount > 0
-            ? `当前没有运行中的任务，Inbox 有 ${inboxCount} 项待安排。`
-            : "当前没有运行中的任务或工作流。"}
-        </p>
-      ) : (
-        <>
+    <div className="task-rail-sections">
+      {snapshotFailed || workflowsFailed ? (
+        <div className="task-rail-notice" role="alert">
+          <p>
+            {snapshotFailed && workflowsFailed
+              ? "任务和工作流暂时无法刷新。"
+              : snapshotFailed
+                ? "任务暂时无法刷新。"
+                : "工作流暂时无法刷新。"}
+          </p>
+          <Button
+            // 只跟着用户点的这次重试转圈；后台 5 秒轮询不让按钮跟着闪。
+            loading={retrying}
+            onClick={() => {
+              setRetrying(true);
+              void Promise.allSettled([
+                snapshotFailed ? snapshot.refetch() : null,
+                workflowsFailed ? workflows.refetch() : null,
+              ]).finally(() => setRetrying(false));
+            }}
+            size="sm"
+            variant="outline"
+          >
+            {"重试"}
+          </Button>
+        </div>
+      ) : null}
+      {loading ? (
+        <div
+          aria-label="正在加载任务进度"
+          className="task-rail-loading"
+          role="status"
+        >
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
+
+      {pendingDecisions.length > 0 ? (
+        <RailSection
+          title="需要你确认"
+          count={`${pendingDecisions.length} 待确认`}
+        >
           {pendingDecisions.map((decision) => (
             <RailDecisionItem
               decision={decision}
               key={decision.id}
               onChanged={refreshTasks}
+              onStale={() => dropStaleDecision(queryClient, decision.id)}
             />
           ))}
+        </RailSection>
+      ) : null}
+      {activeRuns.length > 0 || activeTasks.length > 0 ? (
+        <RailSection
+          title="任务与工作流"
+          count={`${activeRuns.length + activeTasks.length} 项`}
+        >
           {activeRuns.map((run) => (
             <RailWorkflowRunItem
               key={run.id}
@@ -202,44 +241,183 @@ function TasksRailBody({
           {activeTasks.map((task) => (
             <RailTaskItem key={task.id} onChanged={refreshTasks} task={task} />
           ))}
-        </>
-      )}
+        </RailSection>
+      ) : null}
+
+      {!hasActiveOrPending &&
+      !loading &&
+      !snapshotFailed &&
+      !workflowsFailed ? (
+        recentTasks.length > 0 ? (
+          <p className="task-rail-idle-hint" role="status">
+            {"现在没有进行中的任务"}
+          </p>
+        ) : (
+          <div className="task-rail-empty">
+            <IconCircleCheck aria-hidden className="size-5" />
+            <div>
+              <p>{"当前没有待跟进的任务"}</p>
+              {inboxCount > 0 ? (
+                <Link to="/tasks" search={{ view: "inbox" }}>
+                  {`查看 ${inboxCount} 项待安排事项`}
+                </Link>
+              ) : (
+                <span>{"可以在对话中交办，或前往任务中心新建。"}</span>
+              )}
+            </div>
+          </div>
+        )
+      ) : null}
 
       {recentTasks.length > 0 ? (
-        <div className="flex flex-col gap-1.5 border-t border-border/50 pt-2.5">
-          <span className="text-[11px] font-medium text-muted-foreground">
-            {"最近交付"}
-          </span>
-          <ul className="flex flex-col gap-1.5">
-            {recentTasks.map((task) => (
-              <li
-                className="flex items-center justify-between gap-2 text-[12px]"
-                key={task.id}
-              >
-                <Link
-                  className="min-w-0 flex-1 truncate text-foreground/80 hover:text-foreground hover:underline"
-                  search={{ view: "history", task: task.id }}
-                  to="/tasks"
-                >
-                  {task.title}
-                </Link>
-                <span
-                  className={cn(
-                    "shrink-0 text-[11px]",
-                    task.status === "succeeded"
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : task.status === "failed"
-                        ? "text-destructive"
-                        : "text-muted-foreground",
-                  )}
-                >
-                  {STATUS_LABELS[task.status]}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <RailSection title="最近交付" count={`${recentTasks.length} 项`}>
+          {recentTasks.map((task) => (
+            <RailTaskItem
+              key={task.id}
+              onChanged={refreshTasks}
+              task={task}
+              recent
+            />
+          ))}
+        </RailSection>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 这条查询现在算不算「失败」：本身报错，或者报错后后台轮询正在重拉、手上还没有任何数据。
+ *
+ * TanStack Query 在没有数据时重新拉取，会把 status 从 error 改回 pending、清掉 error；
+ * 只看 isError / isPending 的话，每 5 秒轮询一次，提示就会被骨架屏顶掉约 1 秒。
+ */
+export function railQueryFailed(
+  query: Pick<UseQueryResult, "isError" | "data" | "errorUpdateCount">,
+): boolean {
+  return (
+    query.isError || (query.data === undefined && query.errorUpdateCount > 0)
+  );
+}
+
+/** 骨架屏只给「第一次加载、还没失败过」——后台轮询时保留当前内容或错误提示。 */
+export function railQueryLoading(
+  query: Pick<
+    UseQueryResult,
+    "isError" | "isPending" | "data" | "errorUpdateCount"
+  >,
+): boolean {
+  return query.isPending && !railQueryFailed(query);
+}
+
+/** 409（已在别处处理）/ 404（已不存在）：这张卡片已过期，要立刻刷新，不等 5 秒轮询。 */
+export function isStaleActionError(err: unknown): boolean {
+  const status =
+    err instanceof ClientError || err instanceof WorkflowSaveError
+      ? err.status
+      : undefined;
+  return status === 409 || status === 404;
+}
+
+/** 先从缓存里拿掉这条确认请求，让卡片马上消失；随后的刷新再以服务端为准。 */
+function dropStaleDecision(queryClient: QueryClient, decisionId: string) {
+  queryClient.setQueryData<TaskCenterSnapshot>(
+    taskCenterKeys.snapshot,
+    (prev) =>
+      prev
+        ? {
+            ...prev,
+            outbox: prev.outbox.filter((item) => item.id !== decisionId),
+          }
+        : prev,
+  );
+}
+
+function RailSection({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="task-rail-section" aria-label={title}>
+      <div className="task-rail-section-head">
+        <h3>{title}</h3>
+        <span>{count}</span>
+      </div>
+      <div className="task-rail-cards">{children}</div>
+    </section>
+  );
+}
+
+type CardTone = "info" | "warning" | "success" | "danger" | "neutral";
+
+/** 卡片状态语义：图标与色调成对，暂停与取消共用中性色但图标不同。 */
+type StatusKind =
+  | "active"
+  | "attention"
+  | "paused"
+  | "success"
+  | "danger"
+  | "cancelled";
+
+const STATUS_KIND_VISUAL: Record<
+  StatusKind,
+  { tone: CardTone; Icon: typeof IconCircleDashed }
+> = {
+  active: { tone: "info", Icon: IconCircleDashed },
+  attention: { tone: "warning", Icon: IconAlertTriangle },
+  paused: { tone: "neutral", Icon: IconPlayerPause },
+  success: { tone: "success", Icon: IconCircleCheck },
+  danger: { tone: "danger", Icon: IconCircleX },
+  cancelled: { tone: "neutral", Icon: IconCircleOff },
+};
+
+function CardStatus({
+  kind,
+  children,
+}: {
+  kind: StatusKind;
+  children: ReactNode;
+}) {
+  const { tone, Icon } = STATUS_KIND_VISUAL[kind];
+  return (
+    <span className="task-rail-status" data-kind={kind} data-tone={tone}>
+      <Icon
+        aria-hidden
+        className="size-3.5"
+        data-testid={`task-rail-status-icon-${kind}`}
+      />
+      {children}
+    </span>
+  );
+}
+
+function taskStatusKind(
+  status: TaskCenterTask["status"],
+  opts: { recent?: boolean; hasError?: boolean } = {},
+): StatusKind {
+  if (status === "failed") return "danger";
+  if (status === "succeeded") return "success";
+  if (status === "cancelled") return "cancelled";
+  if (status === "paused") return "paused";
+  if (
+    status === "waiting_approval" ||
+    status === "waiting_dependencies" ||
+    (opts.hasError && !opts.recent)
+  ) {
+    return "attention";
+  }
+  return "active";
+}
+
+function CardMeta({ at, children }: { at: string; children?: ReactNode }) {
+  return (
+    <div className="task-rail-meta">
+      <time dateTime={at}>{taskDate(at)}</time>
+      {children}
     </div>
   );
 }
@@ -247,58 +425,76 @@ function TasksRailBody({
 function RailDecisionItem({
   decision,
   onChanged,
+  onStale,
 }: {
   decision: TaskCenterDecision;
   onChanged: () => void;
+  onStale: () => void;
 }) {
   const decide = useMutation({
     mutationFn: (approved: boolean) =>
       taskCenterApi.decide(decision.id, approved),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        // 别处已经处理过：卡片立刻拿掉并刷新，提示用中性语气，不当成失败。
+        onStale();
+        onChanged();
+        toast.info(
+          err instanceof Error ? err.message : "这条确认请求已经处理。",
+        );
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "操作失败");
+    },
   });
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-          {`待确认 · ${RISK_LABELS[decision.proposedAction.risk]}`}
-        </span>
-        <span className="text-[11px] text-muted-foreground">
-          {taskDate(decision.createdAt)}
-        </span>
-      </div>
+    <article
+      className="task-rail-item"
+      data-kind="decision"
+      data-tone="warning"
+    >
       <Link
-        className="text-[12.5px] font-medium text-foreground hover:underline"
+        className="task-rail-item-link"
         search={{ view: "outbox", task: decision.taskId }}
         to="/tasks"
       >
-        {decision.proposedAction.title}
+        <div className="task-rail-item-head">
+          <span className="task-rail-kind">
+            <IconShieldCheck aria-hidden className="size-3.5" />
+            {RISK_LABELS[decision.proposedAction.risk]}
+          </span>
+          <CardStatus kind="attention">{"待确认"}</CardStatus>
+        </div>
+        <h4 className="task-rail-title">{decision.proposedAction.title}</h4>
+        <p className="task-rail-description">{decision.summary}</p>
+        <CardMeta at={decision.createdAt} />
       </Link>
-      <p className="line-clamp-2 text-[11.5px] text-muted-foreground">
-        {decision.summary}
-      </p>
-      <div className="flex items-center gap-1.5 pt-0.5">
+      <div className="task-rail-actions">
         <Button
           disabled={decide.isPending}
+          mutation={decide}
+          mutationWhen={decide.variables === true}
           onClick={() => decide.mutate(true)}
-          size="xs"
+          size="sm"
         >
-          <IconCheck className="size-3.5" />
+          <IconCheck aria-hidden className="size-3.5" />
           {"批准"}
         </Button>
         <Button
           disabled={decide.isPending}
+          mutation={decide}
+          mutationWhen={decide.variables === false}
           onClick={() => decide.mutate(false)}
-          size="xs"
+          size="sm"
           variant="outline"
         >
-          <IconX className="size-3.5" />
+          <IconX aria-hidden className="size-3.5" />
           {"拒绝"}
         </Button>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -316,8 +512,12 @@ function RailWorkflowRunItem({
   const activeStep = run.steps.find(
     (s) => s.status === "running" || s.status === "waiting_approval",
   );
+  const description = workflowRunDescription(run, doneSteps, activeStep);
   const percent =
     totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
+  const kind: StatusKind =
+    run.status === "waiting_approval" ? "attention" : "active";
+  const tone = STATUS_KIND_VISUAL[kind].tone;
 
   const approve = useMutation({
     mutationFn: ({
@@ -328,139 +528,193 @@ function RailWorkflowRunItem({
       decision: "approve" | "reject";
     }) => workflowsApi.approve(run.id, stepId, decision),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "审批操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        // 别处已批准后运行常会继续：先重新拉取，完成后再一次替换缓存，
+        // 不要先从缓存拿掉卡片（否则 3–8ms 后又加回来会闪一下）。
+        onChanged();
+        toast.info(err instanceof Error ? err.message : "这一步已经处理过了。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "审批操作失败");
+    },
   });
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-background/40 p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <Link
-          className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground hover:underline"
-          params={{ runId: run.id }}
-          to="/workflows/runs/$runId"
-        >
-          {`${run.icon ? `${run.icon} ` : ""}${run.workflowName}`}
-        </Link>
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
-            run.status === "waiting_approval"
-              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-              : "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-          )}
-        >
-          {RUN_STATUS_LABEL[run.status]}
-        </span>
-      </div>
-      <div className="flex items-center justify-between gap-2 text-[11.5px] text-muted-foreground">
-        <span className="truncate">
-          {activeStep ? `当前：${activeStep.name}` : "准备执行步骤…"}
-        </span>
-        <span className="shrink-0 tabular-nums">
-          {`${doneSteps}/${totalSteps} 步`}
-        </span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all",
-            run.status === "waiting_approval" ? "bg-amber-500" : "bg-sky-500",
-          )}
-          style={{ width: `${Math.max(8, percent)}%` }}
+    <article className="task-rail-item" data-kind="workflow" data-tone={tone}>
+      <Link
+        className="task-rail-item-link"
+        params={{ runId: run.id }}
+        to="/workflows/runs/$runId"
+      >
+        <div className="task-rail-item-head">
+          <span className="task-rail-kind">
+            <IconGitBranch aria-hidden className="size-3.5" />
+            {"工作流"}
+          </span>
+          <CardStatus kind={kind}>{RUN_STATUS_LABEL[run.status]}</CardStatus>
+        </div>
+        <h4 className="task-rail-title">{`${run.icon ? `${run.icon} ` : ""}${run.workflowName}`}</h4>
+        <p className="task-rail-description">{description}</p>
+        {/* 链接的可读名称只念一句「已完成 2/5 步」；可见的标签行和进度条是同一件事的图示，读屏跳过。 */}
+        <span className="sr-only">{`已完成 ${doneSteps}/${totalSteps} 步`}</span>
+        <div aria-hidden className="task-rail-progress-label">
+          <span>{"步骤进度"}</span>
+          <span>{`${doneSteps}/${totalSteps} 步`}</span>
+        </div>
+        <progress
+          aria-hidden
+          className="task-rail-progress"
+          data-progress={`${doneSteps}/${totalSteps}`}
+          max={100}
+          value={percent}
         />
-      </div>
+        <CardMeta at={run.startedAt ?? run.createdAt} />
+      </Link>
       {run.status === "waiting_approval" && activeStep ? (
-        <div className="flex items-center gap-1.5 pt-1">
+        <div className="task-rail-actions">
           <Button
             disabled={approve.isPending}
+            mutation={approve}
+            mutationWhen={approve.variables?.decision === "approve"}
             onClick={() =>
               approve.mutate({ stepId: activeStep.id, decision: "approve" })
             }
-            size="xs"
+            size="sm"
           >
-            <IconCheck className="size-3.5" />
+            <IconCheck aria-hidden className="size-3.5" />
             {"批准步骤"}
           </Button>
           <Button
             disabled={approve.isPending}
+            mutation={approve}
+            mutationWhen={approve.variables?.decision === "reject"}
             onClick={() =>
               approve.mutate({ stepId: activeStep.id, decision: "reject" })
             }
-            size="xs"
+            size="sm"
             variant="outline"
           >
-            <IconX className="size-3.5" />
+            <IconX aria-hidden className="size-3.5" />
             {"打回/拒绝"}
           </Button>
         </div>
       ) : null}
-    </div>
+    </article>
   );
+}
+
+const FINISHED_STEP_STATUSES: readonly WorkflowStepStatus[] = [
+  "succeeded",
+  "skipped",
+  "failed",
+  "cancelled",
+];
+
+/** 工作流卡片的一句话说明：正在做哪一步 / 还没开始 / 步骤都结束了在收尾 / 还没排出步骤。 */
+export function workflowRunDescription(
+  run: Pick<WorkflowRunView, "status" | "steps">,
+  doneSteps: number,
+  activeStep?: { name: string },
+): string {
+  if (activeStep) return `当前：${activeStep.name}`;
+  if (run.status === "queued") return "等待工作流开始";
+  const total = run.steps.length;
+  if (total > 0 && doneSteps === total) return "步骤已全部完成，正在收尾…";
+  if (
+    total > 0 &&
+    run.steps.every((step) => FINISHED_STEP_STATUSES.includes(step.status))
+  ) {
+    return "步骤已结束，正在收尾…";
+  }
+  return "准备执行步骤…";
 }
 
 function RailTaskItem({
   task,
   onChanged,
+  recent = false,
 }: {
   task: TaskCenterTask;
   onChanged: () => void;
+  recent?: boolean;
 }) {
   const control = useMutation({
     mutationFn: (action: "pause" | "resume") =>
       taskCenterApi.controlTask(task.id, action),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        onChanged();
+        toast.info(err instanceof Error ? err.message : "任务状态已经变化。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "操作失败");
+    },
   });
 
   const isRunning = task.status === "running" || task.status === "planning";
   const isPaused = task.status === "paused";
+  const kind = taskStatusKind(task.status, {
+    recent,
+    hasError: Boolean(task.error),
+  });
+  const tone = STATUS_KIND_VISUAL[kind].tone;
+  const description = task.error || task.summary || task.description;
 
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-background/40 p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <Link
-          className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground hover:underline"
-          search={{ view: "active", task: task.id }}
-          to="/tasks"
-        >
-          {task.title}
-        </Link>
-        <div className="flex shrink-0 items-center gap-1">
-          <span
-            className={cn(
-              "rounded-full px-1.5 py-0.5 text-[11px] font-medium",
-              task.status === "waiting_approval"
-                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                : isPaused
-                  ? "bg-muted text-muted-foreground"
-                  : "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-            )}
-          >
-            {STATUS_LABELS[task.status]}
+    <article
+      className="task-rail-item"
+      data-kind={recent ? "recent" : "task"}
+      data-tone={tone}
+    >
+      <Link
+        className="task-rail-item-link"
+        search={{ view: recent ? "history" : "active", task: task.id }}
+        to="/tasks"
+      >
+        <div className="task-rail-item-head">
+          <span className="task-rail-kind">
+            {CATEGORY_LABELS[task.category]}
           </span>
-          {isRunning || isPaused ? (
-            <button
-              aria-label={isPaused ? "继续任务" : "暂停任务"}
-              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              disabled={control.isPending}
-              onClick={() => control.mutate(isPaused ? "resume" : "pause")}
-              title={isPaused ? "继续任务" : "暂停任务"}
-              type="button"
-            >
-              {isPaused ? (
-                <IconPlayerPlay className="size-3.5" />
-              ) : (
-                <IconPlayerPause className="size-3.5" />
-              )}
-            </button>
-          ) : null}
+          <CardStatus kind={kind}>{STATUS_LABELS[task.status]}</CardStatus>
         </div>
-      </div>
-      <p className="line-clamp-2 text-[11.5px] text-muted-foreground">
-        {task.error ?? task.summary ?? task.description}
-      </p>
-    </div>
+        <h4 className="task-rail-title">{task.title}</h4>
+        {description ? (
+          <p
+            className="task-rail-description"
+            data-error={Boolean(task.error) || undefined}
+          >
+            {description}
+          </p>
+        ) : null}
+        <CardMeta at={task.finishedAt ?? task.updatedAt}>
+          {task.artifacts.length > 0 ? (
+            <span className="task-rail-artifacts">
+              <IconPaperclip aria-hidden className="size-3.5" />
+              {`${task.artifacts.length} 个附件`}
+            </span>
+          ) : null}
+        </CardMeta>
+      </Link>
+      {!recent && (isRunning || isPaused) ? (
+        <div className="task-rail-actions">
+          <Button
+            disabled={control.isPending}
+            mutation={control}
+            onClick={() => control.mutate(isPaused ? "resume" : "pause")}
+            size="sm"
+            variant="outline"
+          >
+            {isPaused ? (
+              <IconPlayerPlay aria-hidden className="size-3.5" />
+            ) : (
+              <IconPlayerPause aria-hidden className="size-3.5" />
+            )}
+            {isPaused ? "继续任务" : "暂停任务"}
+          </Button>
+        </div>
+      ) : null}
+    </article>
   );
 }

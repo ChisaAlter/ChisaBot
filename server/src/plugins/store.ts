@@ -266,6 +266,7 @@ export type SkillActor = { id: string; isAdmin: boolean };
 export type GrantedPlugins = {
   tools: {
     ref: string;
+    effect?: "read" | "write";
     /** The name the model is offered, which is the ref with the separator a tool name allows. */
     toolName: string;
     description: string;
@@ -4657,6 +4658,10 @@ export function createPluginStore(options: PluginStoreOptions) {
           return {
             ref,
             toolName: toolNameFor(ref),
+            effect:
+              row.effect === "read" && !row.destructive
+                ? ("read" as const)
+                : ("write" as const),
             description: row.description,
             inputSchema: row.inputSchema as Record<string, unknown>,
           };

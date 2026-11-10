@@ -106,6 +106,10 @@ ChisaBot 功能入口与实现位置：**做什么 · 入口 · 代码 · 数据
 | 任务成果核验          | 按任务明确要求核对实际文件、交付回执或设备结果；缺产物不误报成功，结果复核不重做效果                                                         | 任务中心 → 任务详情 / 历史                           | `server/src/task-center/`、`app/src/components/task-center/task-detail.tsx`                | 既有任务 payload / events、文件与操作 / 交付记录                                  | —              | **候选**；保留旧纯文本任务合同 · [生产计划](production-assistant-plan.md)   |
 | Google 账号连接       | —                                                                                                                                            | —                                                    | —                                                                                          | —                                                                                 | —              | 未做（CB-013，最后）                                                        |
 
+### 0.1.142 个人助理修复
+
+原对话支持核对未知操作并继续（`channels/tool-outcome-notice.tsx`、`conversations/tool-operations.ts`）；工作流审批、完成、失败和宿主恢复共用本人通知交付（`delivery/personal-notifications.ts`、`delivery/host-notifications.ts`）；邮箱在原账号连接页可配置独立 SMTP 并验证连接。界面规范见 DESIGN §128，实际发布状态见实施记录。上述功能复用已有任务、权限和交付账本。
+
 ## 7. 设置、管理与系统
 
 | 功能               | 做什么                                                                                       | 入口                                     | 代码                                                                          | 数据                                                  | DESIGN          | 状态 · 文档                                                                   |

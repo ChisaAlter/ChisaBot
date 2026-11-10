@@ -73,6 +73,8 @@ export type GrantedTool = {
   name: string;
   description: string;
   parameters: z.ZodType;
+  /** Declared by the tool implementation/catalogue, never inferred from its name. */
+  effect?: "read" | "write";
   /** `ctx.signal` 在用户按停止时 abort（FIX-04）；旧工具可忽略第二参。 */
   execute: (args: unknown, ctx?: ToolExecuteContext) => Promise<string>;
   initiator?: AuditInitiator;
@@ -267,6 +269,7 @@ export async function grantedTools(options: {
   return granted.tools.map((tool) => ({
     name: tool.toolName,
     ref: tool.ref,
+    effect: tool.effect,
     initiator,
     description: tool.description,
     parameters: parametersFor(tool.inputSchema),

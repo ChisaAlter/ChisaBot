@@ -246,6 +246,7 @@ import {
   users,
 } from "./db/schema";
 import { panelTaskRequests } from "./db/schema/panels";
+import { createHostNotifications } from "./delivery/host-notifications";
 import { createPersonalNotifications } from "./delivery/personal-notifications";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
@@ -1703,6 +1704,11 @@ const personalNotifications = createPersonalNotifications({
   sources: personalSources,
   publicUrl: process.env.CHISABOT_PUBLIC_URL,
 });
+const hostNotificationSweep = createHostNotifications({
+  updaterDir: process.env.CHISABOT_UPDATER_DIR,
+  database,
+  deliver: personalNotifications.deliver,
+});
 deliveryNotifications = async (scope, input) => {
   try {
     await personalNotifications.deliver({
@@ -3113,7 +3119,10 @@ const taskCenter = createTaskCenterRuntime({
 const taskCenterRoots = createTaskCenterRoots(database);
 await taskCenterRoots.ensure();
 await taskCenter.ensure();
-personalNotificationSweep = personalNotifications.sweep;
+personalNotificationSweep = async () => {
+  await personalNotifications.sweep();
+  await hostNotificationSweep();
+};
 if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0")
   taskCenter.start();
 
@@ -3426,16 +3435,14 @@ onControlReleased(
 // CHISABOT_LIVE_PANEL_SWEEP=0：不跑后台刷新循环（只给并排的预览容器用，免得它替正式实例刷新面板）。
 if (process.env.CHISABOT_LIVE_PANEL_SWEEP !== "0") livePanelService.start();
 
-void workflowEngineInstance
-  .recover()
-  .catch((error) =>
-    console.error(
-      JSON.stringify({
-        type: "workflow-recover-failed",
-        reason: String(error),
-      }),
-    ),
-  );
+void workflowEngineInstance.recover().catch((error) =>
+  console.error(
+    JSON.stringify({
+      type: "workflow-recover-failed",
+      reason: String(error),
+    }),
+  ),
+);
 
 const actorAgentResolver = createActorAgentResolver({
   loadAgents: loadAgentsForActor,

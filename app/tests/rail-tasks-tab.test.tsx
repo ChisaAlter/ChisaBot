@@ -20,7 +20,8 @@ import {
 import { act, cleanup, render } from "@testing-library/react";
 import { TasksRailCard } from "@/components/panels/tasks-rail-card";
 import { taskCenterKeys } from "@/lib/task-center-api";
-import { workflowKeys } from "@/lib/workflows";
+import { type WorkflowLibrary, workflowKeys } from "@/lib/workflows";
+import type { TaskCenterSnapshot } from "../../shared/task-center";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -211,6 +212,52 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
       ],
     });
 
+    const snapshot = queryClient.getQueryData<TaskCenterSnapshot>(
+      taskCenterKeys.snapshot,
+    )!;
+    const originalTask = snapshot.tasks[0]!;
+    queryClient.setQueryData(taskCenterKeys.snapshot, {
+      ...snapshot,
+      tasks: [
+        originalTask,
+        {
+          ...originalTask,
+          id: "blocked",
+          title: "等待上游交付后整理资料，包含必须完整显示的很长任务标题",
+          status: "waiting_dependencies",
+          error: "前序资料收集失败，需要先修复依赖任务",
+        },
+        {
+          ...originalTask,
+          id: "done",
+          title: "已交付的项目资料",
+          status: "succeeded",
+          finishedAt: "2026-11-06T16:10:00.000Z",
+          summary: "周报与附件已整理",
+          artifacts: [{ name: "周报.md", uri: "/reports/week.md" }],
+        },
+      ],
+    });
+    const library = queryClient.getQueryData<WorkflowLibrary>(
+      workflowKeys.library,
+    )!;
+    queryClient.setQueryData(workflowKeys.library, {
+      ...library,
+      runs: [
+        ...library.runs,
+        {
+          ...library.runs[0],
+          id: "queued-run",
+          workflowName: "尚未开始的工作流",
+          status: "queued",
+          steps: library.runs[0]!.steps.map((step) => ({
+            ...step,
+            status: "pending",
+          })),
+        },
+      ],
+    });
+
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
@@ -246,5 +293,382 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     expect(text).toContain("当前：端到端回归");
     expect(text).toContain("1/2 步");
     expect(text).toContain("整理本周研发进展报告");
+    const rail = view.getByTestId("tasks-rail-card");
+    expect(rail.classList.contains("glass-card")).toBe(false);
+    expect(rail.querySelectorAll("article.task-rail-item")).toHaveLength(6);
+    expect(rail.querySelectorAll("a button")).toHaveLength(0);
+    const blocked = view
+      .getByText("等待上游交付后整理资料，包含必须完整显示的很长任务标题")
+      .closest("article")!;
+    expect(blocked.getAttribute("data-tone")).toBe("warning");
+    expect(blocked.textContent).toContain(
+      "前序资料收集失败，需要先修复依赖任务",
+    );
+    const recent = view.getByText("已交付的项目资料").closest("article")!;
+    expect(recent.getAttribute("data-kind")).toBe("recent");
+    expect(recent.getAttribute("data-tone")).toBe("success");
+    expect(recent.textContent).toContain("1 个附件");
+    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
+      "view=history",
+    );
+    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
+      "task=done",
+    );
+    const runCard = rail.querySelector(
+      'article[data-kind="workflow"]:has(progress[data-progress="1/2"])',
+    )!;
+    expect(
+      runCard
+        .querySelector('progress[data-progress="1/2"]')
+        ?.getAttribute("value"),
+    ).toBe("50");
+    expect(runCard.querySelector(".sr-only")?.textContent).toBe(
+      "已完成 1/2 步",
+    );
+    const queuedCard = rail.querySelector(
+      'article[data-kind="workflow"]:has(progress[data-progress="0/2"])',
+    )!;
+    expect(runCard.textContent).toContain("发布前验收流水线");
+    expect(queuedCard.textContent).toContain("尚未开始的工作流");
+    expect(
+      queuedCard
+        .querySelector('progress[data-progress="0/2"]')
+        ?.getAttribute("value"),
+    ).toBe("0");
+  });
+
+  test("有最近交付时只显示轻量提示，不显示完整空态", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Number.POSITIVE_INFINITY,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    const baseTask = {
+      id: "done",
+      ownerUserId: "u1",
+      agentId: null,
+      title: "已交付的项目资料",
+      description: "汇总",
+      category: "project" as const,
+      level: 3,
+      assessment: "",
+      risk: "internal" as const,
+      status: "succeeded" as const,
+      executor: "bot" as const,
+      workspace: null,
+      sourceId: null,
+      sourceRef: null,
+      sourceUrl: null,
+      parentId: null,
+      dependencies: [],
+      planPrepared: true,
+      priority: 1,
+      attempts: 1,
+      maxAttempts: 3,
+      timeoutSeconds: 300,
+      summary: "周报已整理",
+      artifacts: [],
+      usage: {},
+      error: null,
+      createdAt: "2026-11-06T16:00:00.000Z",
+      updatedAt: "2026-11-06T16:10:00.000Z",
+      startedAt: "2026-11-06T16:01:00.000Z",
+      finishedAt: "2026-11-06T16:10:00.000Z",
+      nextAttemptAt: "2026-11-06T16:00:00.000Z",
+      leaseExpiresAt: null,
+      version: 1,
+    };
+    queryClient.setQueryData(taskCenterKeys.snapshot, {
+      running: true,
+      concurrency: 2,
+      counts: {
+        inbox: 0,
+        queued: 0,
+        planning: 0,
+        running: 0,
+        waiting_dependencies: 0,
+        waiting_approval: 0,
+        paused: 0,
+        succeeded: 1,
+        failed: 0,
+        cancelled: 0,
+      },
+      tasks: [baseTask],
+      outbox: [],
+      sources: [],
+    });
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+
+    const rootRoute = createRootRoute({
+      component: () => (
+        <QueryClientProvider client={queryClient}>
+          <TasksRailCard />
+        </QueryClientProvider>
+      ),
+    });
+    const tasksRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/tasks",
+      component: () => null,
+    });
+    const runRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/workflows/runs/$runId",
+      component: () => null,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([tasksRoute, runRoute]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<RouterProvider router={router} />);
+    });
+    await settleReactWork();
+
+    const rail = view.getByTestId("tasks-rail-card");
+    expect(rail.textContent).toContain("现在没有进行中的任务");
+    expect(rail.textContent).toContain("已交付的项目资料");
+    expect(rail.textContent).not.toContain("当前没有待跟进的任务");
+    expect(rail.querySelector(".task-rail-empty")).toBeNull();
+    expect(rail.querySelector(".task-rail-idle-hint")).not.toBeNull();
+  });
+
+  test("完全没有任何内容时显示完整空态", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Number.POSITIVE_INFINITY,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    queryClient.setQueryData(taskCenterKeys.snapshot, {
+      running: true,
+      concurrency: 2,
+      counts: {
+        inbox: 2,
+        queued: 0,
+        planning: 0,
+        running: 0,
+        waiting_dependencies: 0,
+        waiting_approval: 0,
+        paused: 0,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+      },
+      tasks: [],
+      outbox: [],
+      sources: [],
+    });
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+
+    const rootRoute = createRootRoute({
+      component: () => (
+        <QueryClientProvider client={queryClient}>
+          <TasksRailCard />
+        </QueryClientProvider>
+      ),
+    });
+    const tasksRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/tasks",
+      component: () => null,
+    });
+    const runRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/workflows/runs/$runId",
+      component: () => null,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([tasksRoute, runRoute]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<RouterProvider router={router} />);
+    });
+    await settleReactWork();
+
+    const rail = view.getByTestId("tasks-rail-card");
+    expect(rail.textContent).toContain("当前没有待跟进的任务");
+    expect(rail.textContent).toContain("查看 2 项待安排事项");
+    expect(rail.textContent).not.toContain("现在没有进行中的任务");
+    expect(rail.querySelector(".task-rail-empty")).not.toBeNull();
+    expect(rail.querySelector(".task-rail-idle-hint")).toBeNull();
+  });
+
+  test("已取消用斜杠圆图标且中性色，已暂停用暂停图标，失败用红色 × 圆", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Number.POSITIVE_INFINITY,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    const baseTask = {
+      id: "base",
+      ownerUserId: "u1",
+      agentId: null,
+      title: "基础任务",
+      description: "desc",
+      category: "project" as const,
+      level: 3,
+      assessment: "",
+      risk: "internal" as const,
+      status: "running" as const,
+      executor: "bot" as const,
+      workspace: null,
+      sourceId: null,
+      sourceRef: null,
+      sourceUrl: null,
+      parentId: null,
+      dependencies: [],
+      planPrepared: true,
+      priority: 1,
+      attempts: 1,
+      maxAttempts: 3,
+      timeoutSeconds: 300,
+      summary: null,
+      artifacts: [],
+      usage: {},
+      error: null,
+      createdAt: "2026-11-06T16:00:00.000Z",
+      updatedAt: "2026-11-06T16:10:00.000Z",
+      startedAt: "2026-11-06T16:01:00.000Z",
+      finishedAt: "2026-11-06T16:10:00.000Z",
+      nextAttemptAt: "2026-11-06T16:00:00.000Z",
+      leaseExpiresAt: null,
+      version: 1,
+    };
+    queryClient.setQueryData(taskCenterKeys.snapshot, {
+      running: true,
+      concurrency: 2,
+      counts: {
+        inbox: 0,
+        queued: 0,
+        planning: 0,
+        running: 0,
+        waiting_dependencies: 0,
+        waiting_approval: 0,
+        paused: 1,
+        succeeded: 0,
+        failed: 1,
+        cancelled: 1,
+      },
+      tasks: [
+        {
+          ...baseTask,
+          id: "paused",
+          title: "已暂停的整理任务",
+          status: "paused",
+          finishedAt: null,
+        },
+        {
+          ...baseTask,
+          id: "failed",
+          title: "失败的整理任务",
+          status: "failed",
+          error: "工具超时",
+        },
+        {
+          ...baseTask,
+          id: "cancelled",
+          title: "已取消的整理任务",
+          status: "cancelled",
+        },
+      ],
+      outbox: [],
+      sources: [],
+    });
+    queryClient.setQueryData(workflowKeys.library, {
+      presets: [],
+      mine: [],
+      runs: [],
+    });
+
+    const rootRoute = createRootRoute({
+      component: () => (
+        <QueryClientProvider client={queryClient}>
+          <TasksRailCard />
+        </QueryClientProvider>
+      ),
+    });
+    const tasksRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/tasks",
+      component: () => null,
+    });
+    const runRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/workflows/runs/$runId",
+      component: () => null,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([tasksRoute, runRoute]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<RouterProvider router={router} />);
+    });
+    await settleReactWork();
+
+    const paused = view.getByText("已暂停的整理任务").closest("article")!;
+    expect(paused.getAttribute("data-tone")).toBe("neutral");
+    expect(
+      paused.querySelector('[data-testid="task-rail-status-icon-paused"]'),
+    ).not.toBeNull();
+    expect(
+      paused.querySelector('[data-kind="paused"]')?.getAttribute("data-tone"),
+    ).toBe("neutral");
+
+    const failed = view.getByText("失败的整理任务").closest("article")!;
+    expect(failed.getAttribute("data-tone")).toBe("danger");
+    expect(
+      failed.querySelector('[data-testid="task-rail-status-icon-danger"]'),
+    ).not.toBeNull();
+
+    const cancelled = view.getByText("已取消的整理任务").closest("article")!;
+    expect(cancelled.getAttribute("data-tone")).toBe("neutral");
+    expect(
+      cancelled.querySelector(
+        '[data-testid="task-rail-status-icon-cancelled"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      cancelled
+        .querySelector('[data-kind="cancelled"]')
+        ?.getAttribute("data-tone"),
+    ).toBe("neutral");
+    // 取消与暂停同色不同图标
+    expect(
+      cancelled.querySelector('[data-testid="task-rail-status-icon-paused"]'),
+    ).toBeNull();
   });
 });

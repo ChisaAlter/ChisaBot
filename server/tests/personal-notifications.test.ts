@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { createDatabase } from "../src/db/client";
 import { createPersonalNotifications } from "../src/delivery/personal-notifications";
 import { createPersonalDelivery } from "../src/personal-sources/delivery";
+import { createWorkflowStore } from "../src/workflows/store";
 import { testDatabaseUrl } from "./support/database";
 
 const schema = `notification_${randomUUID().replaceAll("-", "")}`;
@@ -57,6 +58,16 @@ beforeAll(async () => {
     CREATE TABLE approval_requests(id text PRIMARY KEY,owner_user_id text,action jsonb,status text,created_at timestamptz DEFAULT now());
     CREATE TABLE work_items(key text PRIMARY KEY,kind text,payload jsonb,finished_at timestamptz,created_at timestamptz DEFAULT now());
   `);
+  const workflowMigration = await readFile(
+    new URL("../drizzle/0055_workflows.sql", import.meta.url),
+    "utf8",
+  );
+  await sql.unsafe(
+    workflowMigration.replaceAll(
+      '"public"."workflow_runs"',
+      `"${schema}"."workflow_runs"`,
+    ),
+  );
   const migration = await readFile(
     new URL("../drizzle/0065_personal_delivery.sql", import.meta.url),
     "utf8",
@@ -170,4 +181,152 @@ test("legacy JSON-string task payload and one staging failure do not prevent oth
   ).toStartWith("资料报告");
   await relay().sweep();
   expect(sent.at(-1)).toBe("task-event:failed-stage");
+}, 30000);
+
+test("workflow notices recover committed approvals and results without old events or cross-owner delivery", async () => {
+  const before = sent.length;
+  await sql.unsafe(`
+    INSERT INTO workflow_runs(id,owner_user_id,workflow_id,workflow_name,definition,inputs,bindings,status,source,state,output) VALUES
+      ('wf-approval','owner','w','审批流程','{}','{}','{}','waiting_approval','page','{"steps":[{"id":"review","status":"waiting_approval"}]}',NULL),
+      ('wf-human','owner','w','人工裁决','{}','{}','{}','waiting_approval','page','{"steps":[{"id":"gate","status":"waiting_approval"}]}',NULL),
+      ('wf-success','owner','w','完成流程','{}','{}','{}','succeeded','page','{"steps":[]}','交付成果'),
+      ('wf-failure','owner','w','失败流程','{}','{}','{}','failed','page','{"steps":[]}',NULL),
+      ('wf-old','owner','w','历史流程','{}','{}','{}','succeeded','page','{"steps":[]}',NULL),
+      ('wf-other','unconnected','w','他人流程','{}','{}','{}','succeeded','page','{"steps":[]}',NULL),
+      ('wf-handled','owner','w','已处理流程','{}','{}','{}','running','page','{"steps":[{"id":"review","status":"running"}]}',NULL);
+    INSERT INTO workflow_run_events(id,run_id,kind,step_id,message,at) VALUES
+      ('wf-approval-0','wf-approval','approval_requested','review','旧审批',now()-interval '30 seconds'),
+      ('wf-approval-1','wf-approval','approval_requested','review','需要批准',now()),
+      ('wf-human-1','wf-human','approval_requested','gate','需要人工介入',now()),
+      ('wf-success-0','wf-success','run_failed',NULL,'已解决的失败',now()-interval '30 seconds'),
+      ('wf-success-1','wf-success','run_finished',NULL,'完成',now()),
+      ('wf-failure-1','wf-failure','run_failed',NULL,'失败原因',now()),
+      ('wf-old-1','wf-old','run_finished',NULL,'历史完成',now()-interval '1 day'),
+      ('wf-other-1','wf-other','run_finished',NULL,'私有内容',now()),
+      ('wf-handled-1','wf-handled','approval_requested','review','已处理审批',now());
+  `);
+  await relay().sweep();
+  expect(sent.slice(before).sort()).toEqual([
+    "workflow-event:wf-approval-1",
+    "workflow-event:wf-failure-1",
+    "workflow-event:wf-human-1",
+    "workflow-event:wf-success-1",
+  ]);
+  const notice = await deliveries.get(
+    "personal:owner:workflow-event:wf-success-1",
+  );
+  expect(notice?.payload.body).toContain("交付成果");
+  expect(notice?.payload.body).toContain(
+    "https://assistant.example/workflows/runs/wf-success",
+  );
+  await relay().sweep();
+  expect(sent.length).toBe(before + 4);
+}, 30000);
+
+test("queued workflow notices are rechecked before delivery; handled, retried and deleted runs stay quiet", async () => {
+  for (const [suffix, status] of [
+    ["handled", "waiting_approval"],
+    ["retried", "failed"],
+    ["deleted", "succeeded"],
+    ["current", "succeeded"],
+  ]) {
+    await sql.unsafe(
+      `INSERT INTO workflow_runs(id,owner_user_id,workflow_id,workflow_name,definition,inputs,bindings,status,source,state)
+      VALUES($1,'owner','w','通知流程','{}','{}','{}',$2,'page','{"steps":[{"id":"review","status":"waiting_approval"}]}')`,
+      [`queued-${suffix}`, status],
+    );
+    await sql.unsafe(
+      "INSERT INTO workflow_run_events(id,run_id,kind,step_id,message) VALUES($1,$2,$3,'review','通知内容')",
+      [
+        `queued-${suffix}`,
+        `queued-${suffix}`,
+        status === "waiting_approval"
+          ? "approval_requested"
+          : status === "failed"
+            ? "run_failed"
+            : "run_finished",
+      ],
+    );
+    await deliveries.stage(
+      "owner",
+      "notify",
+      "connected",
+      { target: "fixture", title: "通知", body: "通知内容" },
+      { id: `workflow-event:queued-${suffix}` },
+    );
+  }
+  await sql.unsafe(
+    "UPDATE workflow_runs SET status='running' WHERE id='queued-handled'; UPDATE workflow_runs SET status='queued' WHERE id='queued-retried'; DELETE FROM workflow_runs WHERE id='queued-deleted';",
+  );
+  const delivered: string[] = [];
+  for (const suffix of ["handled", "retried", "deleted", "current"]) {
+    const id = `personal:owner:workflow-event:queued-${suffix}`;
+    await deliveries.dispatch(id, async () => ({
+      send: async () => {
+        delivered.push(id);
+        return {
+          type: "personal_delivery",
+          id,
+          channel: "notify",
+          state: "accepted",
+          providerMessageIds: ["local-receipt"],
+          summary: "fixture accepted",
+        };
+      },
+    }));
+    expect((await deliveries.get(id))?.state).toBe(
+      suffix === "current" ? "sent" : "cancelled",
+    );
+  }
+  expect(delivered).toEqual(["personal:owner:workflow-event:queued-current"]);
+}, 30000);
+
+test("workflow status and notice event commit together, including stale-run recovery", async () => {
+  const store = createWorkflowStore(database);
+  await sql.unsafe(`INSERT INTO workflow_runs(id,owner_user_id,workflow_id,workflow_name,definition,inputs,bindings,status,source,state,updated_at)
+    VALUES('atomic','owner','w','原子提交','{}','{}','{}','running','page','{"steps":[]}',now()-interval '10 minutes');
+    ALTER TABLE workflow_run_events ADD CONSTRAINT event_rejected CHECK (kind<>'test_rejected');`);
+  let rejected: unknown;
+  // Await the real transaction directly: Bun 1.3.14's rejects matcher stalls its BEGIN callback.
+  try {
+    await store.saveRun(
+      "atomic",
+      { status: "succeeded", output: "不能独自落库" },
+      { kind: "test_rejected", message: "拒绝事件" },
+    );
+  } catch (error) {
+    rejected = error;
+  }
+  expect(rejected).toBeInstanceOf(Error);
+  expect(String((rejected as Error & { cause?: unknown }).cause)).toContain(
+    "event_rejected",
+  );
+  expect((await store.getRun("atomic"))?.status).toBe("running");
+  await store.saveRun(
+    "atomic",
+    { status: "waiting_approval" },
+    { kind: "approval_requested", message: "审批", stepId: "review" },
+  );
+  expect((await store.events("atomic")).map((e) => e.kind)).toEqual([
+    "approval_requested",
+  ]);
+  await sql.unsafe(
+    "UPDATE workflow_runs SET status='running',updated_at=now()-interval '10 minutes' WHERE id='atomic'",
+  );
+  const recovered = await store.failStaleRun(
+    "atomic",
+    new Date(),
+    {
+      state: { steps: [], tokens: 0, stepsRun: 0, elapsedMs: 0 },
+      error: "重启中断",
+      finishedAt: new Date(),
+    },
+    { kind: "run_failed", message: "重启中断" },
+  );
+  expect(recovered).toBe(true);
+  expect((await store.getRun("atomic"))?.status).toBe("failed");
+  expect((await store.events("atomic")).map((e) => e.kind)).toEqual([
+    "approval_requested",
+    "run_failed",
+  ]);
 }, 30000);

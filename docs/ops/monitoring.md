@@ -74,7 +74,13 @@ ExecStopPost=-/bin/bash /opt/chisabot-updater/host-monitor.sh
 journalctl -u chisabot-dsh-accounts.service --since '30 min ago' -o cat | grep '"type":"host-monitor"'
 ```
 
-这条入口在应用进程退出后仍可给宿主 journal 发信号，不做自动重启、回滚、清理或发送外部消息。本人 Webhook 尚无实际目标，故真实告警收件待接通；宿主整体宕机仍需异机 `/login` 探测。
+这条入口在应用进程退出后仍可给宿主 journal 发信号，不做自动重启、回滚或清理。检查结束会原子写入既有 `spool/state/host-monitor.json`，记录最新检查及当前故障周期的开始和恢复时间；该目录已只读挂载到 API。备份检查维持原有行为，不进入本轮新增的故障通知范围。
+
+需要本人收件时，先在「设置 → 账号连接」绑定现有通知 Webhook，再在宿主 `config.env` 设置 `CHISABOT_MONITOR_NOTIFY_OWNER` 为接收管理员的用户 ID。这里不复制 Webhook 地址或密钥，空值表示仅记录监控状态，并输出 `notification:not_configured`。
+
+API 的既有通知扫描读取监控记录，沿同一条个人交付账本发送故障和恢复通知。当前异常项发生变化时，记录递增修订号并发送新的当次状态；同一修订使用固定 ID，重复扫描不重复发送，发送结果未知时也不自动重发。连接建立之前的异常状态不会在初次绑定后补发。监控只保留当前/最近一个故障周期及其最新异常状态，不充当完整事件归档。
+
+API 不可用期间不能即时投递这条产品通知；宿主仍记录故障，API 恢复后补交仍保留的故障与恢复状态。整台宿主机宕机时，本机代码无法发出通知，即时收件需要部署外部探测。当前尚无实际 Webhook 目标或外部探测资源，收件验收仍待接通；不能以本机 journal 或记录文件代替已送达。
 
 ### 连续失败与未知效果是业务待处理，不触发镜像回滚
 

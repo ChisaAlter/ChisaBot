@@ -15,7 +15,11 @@ import { parseIcsEvents } from "../src/personal-sources/calendar";
 import { createPersonalDelivery } from "../src/personal-sources/delivery";
 import { sendWebhook } from "../src/personal-sources/notify";
 import { createPersonalSources } from "../src/personal-sources/service";
-import { smtpFailure } from "../src/personal-sources/smtp";
+import {
+  type SmtpConnection,
+  type SmtpMessage,
+  smtpFailure,
+} from "../src/personal-sources/smtp";
 import { REFUSAL_MARKER } from "../src/plugins/tools";
 import { testDatabaseUrl } from "./support/database";
 
@@ -429,6 +433,167 @@ describe("transport acceptance", () => {
         ).state,
       ).toBe("failed");
       webhookMode = "accepted";
+    });
+  },
+);
+
+(process.env.TEST_DATABASE_URL ? describe : describe.skip)(
+  "explicit SMTP connection",
+  () => {
+    const owner = `smtp-settings-${randomUUID()}`;
+    const db = createDatabase(testDatabaseUrl(), { max: 2 });
+    const verified: SmtpConnection[] = [];
+    const sent: SmtpMessage[] = [];
+    let rejectVerification = false;
+    const service = createPersonalSources(db, {
+      encryptionKey: "smtp-settings-fixture",
+      readInbox: async () => [],
+      verifyMail: async (connection) => {
+        verified.push(connection);
+        if (rejectVerification) throw new Error("SMTP authentication refused");
+      },
+      sendMail: async (message) => {
+        sent.push(message);
+        return ["fixture-smtp-accepted"];
+      },
+    });
+    const app = service.routes(async (c, next) => {
+      c.set("actor", { id: owner } as never);
+      await next();
+    });
+    const connect = (smtp?: Record<string, unknown>) =>
+      app.request("/email", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "owner@custom.example",
+          imapHost: "imap.mail-provider.example",
+          password: "imap-fixture-password",
+          ...(smtp ? { smtp } : {}),
+        }),
+      });
+    beforeAll(() => service.ensure());
+    afterAll(async () => {
+      await db.$client.unsafe(
+        "DELETE FROM chisabot_personal_deliveries WHERE owner_user_id=$1",
+        [owner],
+      );
+      await db.$client.unsafe(
+        "DELETE FROM chisabot_personal_sources WHERE owner_user_id=$1",
+        [owner],
+      );
+      await db.$client.close();
+    });
+
+    test("legacy IMAP-only callers connect without SMTP authentication", async () => {
+      const response = await connect();
+      expect(response.status).toBe(200);
+      expect(verified).toHaveLength(0);
+      const status = await service.status(owner);
+      expect(status.email?.smtpHost).toBe("smtp.custom.example");
+      expect(status.email?.smtpCheckedAt).toBeUndefined();
+    });
+
+    test("explicit SMTP is authenticated, encrypted and used independently of the from address", async () => {
+      const response = await connect({
+        host: "smtp.mail-provider.example",
+        port: 587,
+        user: "provider-login",
+        password: "smtp-fixture-password",
+      });
+      expect(response.status).toBe(200);
+      expect(verified.at(-1)).toEqual({
+        host: "smtp.mail-provider.example",
+        port: 587,
+        user: "provider-login",
+        pass: "smtp-fixture-password",
+      });
+      expect(sent).toHaveLength(0);
+      const publicResponse = await response.text();
+      expect(publicResponse).not.toContain("smtp-fixture-password");
+      expect(publicResponse).not.toContain("imap-fixture-password");
+      const [stored] = await db.$client.unsafe(
+        "SELECT * FROM chisabot_personal_sources WHERE owner_user_id=$1",
+        [owner],
+      );
+      expect(stored.smtp_pass_enc).not.toContain("smtp-fixture-password");
+      expect(stored.smtp_pass_enc).not.toBe(stored.imap_pass_enc);
+      expect((await service.status(owner)).email?.smtpCheckedAt).toBeTruthy();
+      await service.sendSmtpEmail(
+        owner,
+        {
+          to: "receiver@example.com",
+          subject: "Fixture",
+          body: "Controlled test",
+        },
+        { id: "explicit-smtp" },
+      );
+      expect(sent.at(-1)).toMatchObject({
+        host: "smtp.mail-provider.example",
+        port: 587,
+        user: "provider-login",
+        from: "owner@custom.example",
+        pass: "smtp-fixture-password",
+      });
+    });
+
+    test("failed SMTP verification preserves the existing connection and disallowed ports never authenticate", async () => {
+      const previous = (await service.status(owner)).email;
+      rejectVerification = true;
+      const rejected = await connect({
+        host: "other.mail-provider.example",
+        port: 465,
+      });
+      expect(rejected.status).toBe(400);
+      expect((await service.status(owner)).email).toEqual(previous);
+      rejectVerification = false;
+      const count = verified.length;
+      expect(
+        (await connect({ host: "smtp.mail-provider.example", port: 80 }))
+          .status,
+      ).toBe(400);
+      expect(verified).toHaveLength(count);
+    });
+
+    test("SMTP can reuse the supplied IMAP password and disconnect removes all credentials", async () => {
+      expect(
+        (await connect({ host: "smtp.mail-provider.example", port: 465 }))
+          .status,
+      ).toBe(200);
+      expect(verified.at(-1)).toMatchObject({
+        user: "owner@custom.example",
+        pass: "imap-fixture-password",
+      });
+      await service.sendSmtpEmail(
+        owner,
+        {
+          to: "receiver@example.com",
+          subject: "Fixture",
+          body: "Reused credential",
+        },
+        { id: "shared-smtp-credential" },
+      );
+      expect(sent.at(-1)).toMatchObject({
+        user: "owner@custom.example",
+        pass: "imap-fixture-password",
+        port: 465,
+      });
+      expect((await app.request("/email", { method: "DELETE" })).status).toBe(
+        200,
+      );
+      const [stored] = await db.$client.unsafe(
+        "SELECT * FROM chisabot_personal_sources WHERE owner_user_id=$1",
+        [owner],
+      );
+      for (const field of [
+        "smtp_host",
+        "smtp_port",
+        "smtp_user",
+        "smtp_pass_enc",
+        "smtp_checked_at",
+        "imap_pass_enc",
+      ])
+        expect(stored[field]).toBeNull();
     });
   },
 );

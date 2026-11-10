@@ -1,5 +1,6 @@
 /** Runtime storage is chosen explicitly at the boot boundary. */
 
+import { selectedAgentKernel } from "../../shared/agent-kernel";
 import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
 import { singleUserEnabled } from "./auth/dev-actor";
 import { normalizeDomain } from "./auth/email-domain";
@@ -1251,6 +1252,7 @@ export function loadConfig(
     "",
   );
   const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
+  const kernel = selectedAgentKernel(environment);
   const dshTargetsFile = optional(environment, "CHISABOT_DSH_TARGETS_FILE");
   const dshGatewayUrl = optional(environment, "CHISABOT_DSH_TOOL_GATEWAY_URL");
   if (dshGatewayUrl) {
@@ -1273,7 +1275,7 @@ export function loadConfig(
     transcription: transcriptionConfig(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
-    ...(optional(environment, "CHISABOT_AGENT_KERNEL") === "dsh"
+    ...(kernel === "dsh"
       ? {
           dshKernel: {
             ...(dshTargetsFile
@@ -1289,7 +1291,7 @@ export function loadConfig(
         }
       : {}),
     ...(managedAgent ? { managedAgent } : {}),
-    ...(hermesUrl
+    ...(kernel === "hermes" && hermesUrl
       ? {
           hermesKernel: {
             url: hermesUrl,

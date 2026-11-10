@@ -139,7 +139,19 @@ async function until<T>(
 
     beforeAll(async () => {
       database = createDatabase(address!, { max: 6 });
-      cleanups.push(() => database.$client.close());
+      cleanups.push(async () => {
+        // Direct adapter reattachment is intentionally outside backend.runner, so it can leave
+        // a projecting journal row. Remove this suite's rows after its Hosts have stopped;
+        // later recovery suites must not try to rebuild these fixture agents.
+        try {
+          await database.$client.unsafe(
+            "DELETE FROM chisabot_dsh_runs WHERE owner_user_id IN ($1,$2)",
+            [actor, publisher],
+          );
+        } finally {
+          await database.$client.close();
+        }
+      });
       backend = await createLocalConversations(database);
       confirmations = createConfirmations(database);
       await confirmations.ensure();
@@ -831,12 +843,14 @@ async function until<T>(
           selectedApproval = value;
         });
         stages.push({ tool: "selection_8", answer: "Awaiting decision." });
-        await expect(
-          execute(
-            `${actor}-selection-approval`,
-            "Change fixture after approval.",
-          ),
-        ).rejects.toThrow();
+        const approvalFailure = await execute(
+          `${actor}-selection-approval`,
+          "Change fixture after approval.",
+        ).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect(approvalFailure).toBeInstanceOf(Error);
         expect(selectedApproval).toBeTruthy();
         expect(selectedEffect).toBe(0);
         choice = "read"; // The next relevance result excludes the saved operation.
@@ -866,6 +880,9 @@ async function until<T>(
         expect(stages).toHaveLength(0);
       } finally {
         setAgentKernel(kernelBefore);
+        confirmations.setOnOpened((value) => {
+          approval = value;
+        });
       }
     }, 60_000);
 
@@ -888,8 +905,10 @@ async function until<T>(
         initiator,
         instruction: "Ask the target Bot to check context.",
       });
-      expect((await handoffs.sweep()).delivered).toEqual([target]);
-      expect((await handoffs.sweep()).delivered).toEqual([asker]);
+      const toTarget = await handoffs.sweep();
+      expect(toTarget.delivered).toEqual([target]);
+      const toAsker = await handoffs.sweep();
+      expect(toAsker.delivered).toEqual([asker]);
       expect(probes).toHaveLength(1);
       expect(probes[0]).toMatchObject({
         botId: target,
@@ -1176,12 +1195,16 @@ async function until<T>(
         [thread],
       );
       expect(binding).toMatchObject({ owner_user_id: actor, bot_id: teamBot });
-      await expect(
-        backend.client.getThreadMessages({
+      const hiddenHistory = await backend.client
+        .getThreadMessages({
           threadId: thread,
           userId: publisher,
-        }),
-      ).rejects.toThrow();
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(hiddenHistory).toBeInstanceOf(Error);
       await teamBots.consent(teammate, teamBot, "personal", "allow_once");
       stages.push({ tool: "team_authority_probe", answer: "单次授权已使用。" });
       await runTurn({
@@ -1193,9 +1216,19 @@ async function until<T>(
         instruction: "Use the allowed personal credential once.",
       });
       expect(teamResults[1]!.personalCredential).toBe(actor);
-      await expect(
-        teamBots.credentialActorFor(actor, teamBot)("personal/read"),
-      ).rejects.toThrow("[team-bot-consent]");
+      const consumedConsent = await teamBots
+        .credentialActorFor(
+          actor,
+          teamBot,
+        )("personal/read")
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(consumedConsent).toBeInstanceOf(Error);
+      expect((consumedConsent as Error).message).toContain(
+        "[team-bot-consent]",
+      );
       expect(stages).toHaveLength(0);
     }, 50_000);
 
@@ -1247,7 +1280,11 @@ async function until<T>(
         "running",
       );
       expect(await localAgents.forThread(publisher, thread)).toEqual([]);
-      await expect(localAgents.stop(publisher, frame.taskId)).rejects.toThrow();
+      const deniedStop = await localAgents.stop(publisher, frame.taskId).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(deniedStop).toBeInstanceOf(Error);
       stages.push({ answer: "设备检查结果已收到。" });
       await connection.onMessage(
         JSON.stringify({

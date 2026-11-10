@@ -1,3 +1,9 @@
+## 0.1.142
+
+- 任务面板卡片化，移除多余箭头；未知操作可在原对话核对后继续，只读失败不再误挂起。
+- 修复跨 Bot 交接租约死锁和忙碌状态误清除；工作流与宿主告警接入既有通知账本；SMTP 支持独立连接设置。
+- 新安装默认 DSH，维护和部署探针一致；DSH PostgreSQL/Host 恢复用例进入必跑 CI。Windows 通用版开始强制签名发布并内置公钥。
+- 版本：0.1.142（根、app、server、pc；Android versionCode 324）。服务器部署和客户端发布分别验收。
 ## 0.1.141
 
 - #518 Magpie 一键安装：`admin/magpie` 在未配置 Magpie（无 `MAGPIE_ADMIN_URL`、也无一键装好的）时整页换成 `MagpieInstallSection`；`deploy/updater/magpie.sh` 增 `do_install`（只装 `ghcr.io/yetone/magpie`，核对摘要，有 gh/cosign 时校验构建来源，`MAGPIE_VERIFY=auto|required|off`），`magpie.json` 新增 `installable`/`managed`/`verification`/`isolation`；`install.sh` 随版本拷 `magpie.compose.yaml` 与 `isolate-sidecar-app.sh`；`server/src/magpie.ts` 自动读取宿主机交来的管理密钥，不用重启；更新程序先 `poll_job` 再收请求，失败后可立即重试。

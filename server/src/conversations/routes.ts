@@ -1,8 +1,9 @@
-import type { BaseEvent } from "@ag-ui/client";
+import type { AbstractAgent, BaseEvent } from "@ag-ui/client";
 import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { Hono } from "hono";
 import { Observable, type Subscription } from "rxjs";
 import { connectSnapshotAnchors } from "../../../shared/connect-snapshot";
+import { ToolOutcomeResolutionSchema } from "../../../shared/conversations";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
 import {
   type HeadlessTool,
@@ -15,7 +16,9 @@ import {
 } from "../legacy/protocol";
 import type { LocalConversationBackend } from "../local-conversations";
 import { publicErrorMessage } from "../public-error";
+import type { ConversationCommandRecord } from "./commands";
 import { assertConversationAdmissionOpen } from "./maintenance";
+import type { ToolOperationStore } from "./tool-operations";
 
 /**
  * What a failed conversation may tell the browser or the log: never a raw `error.message`.
@@ -80,6 +83,7 @@ export function createConversationRoutes(options: {
   backend: LocalConversationBackend;
   resolver: ActorAgentResolver;
   identifyActor: IdentifyActor;
+  toolOperations?: ToolOperationStore;
   prepareAgent?: (
     actorId: string,
     agent: import("@ag-ui/client").AbstractAgent,
@@ -93,6 +97,40 @@ export function createConversationRoutes(options: {
   const routes = new Hono();
   mountPreviousConversationRoutes(routes);
   const { backend, resolver, identifyActor } = options;
+  async function dispatch(
+    record: ConversationCommandRecord,
+    agent: AbstractAgent,
+  ) {
+    const dispatchFailed = (error: unknown) => {
+      console.warn(
+        JSON.stringify({
+          type: "conversation-dispatch-error",
+          runId: record.run_id,
+          message: publicConversationError(error),
+        }),
+      );
+    };
+    try {
+      if (options.toolsFor)
+        agent.use(
+          new HeadlessToolsMiddleware(
+            [
+              ...(await options.toolsFor(
+                record.owner_user_id,
+                record.bot_id,
+                record.input,
+              )),
+            ],
+            { kind: "person" },
+          ),
+        );
+      backend.runner
+        .run({ threadId: record.thread_id, agent, input: record.input })
+        .subscribe({ error: dispatchFailed });
+    } catch (error) {
+      dispatchFailed(error);
+    }
+  }
   async function admit(
     request: Request,
     agentId: string,
@@ -123,30 +161,7 @@ export function createConversationRoutes(options: {
     const { record } = admission;
     if (!admission.alreadyAccepted) {
       // Subscribe independently of the response. Losing the admission HTTP reply cannot cancel it.
-      const dispatchFailed = (error: unknown) => {
-        console.warn(
-          JSON.stringify({
-            type: "conversation-dispatch-error",
-            runId: record.run_id,
-            message: publicConversationError(error),
-          }),
-        );
-      };
-      try {
-        // Tool contexts use the persisted server run ID, so setup belongs after admission too.
-        if (options.toolsFor)
-          agent.use(
-            new HeadlessToolsMiddleware(
-              [...(await options.toolsFor(actor.id, agentId, record.input))],
-              { kind: "person" },
-            ),
-          );
-        backend.runner
-          .run({ threadId: input.threadId, agent, input: record.input })
-          .subscribe({ error: dispatchFailed });
-      } catch (error) {
-        dispatchFailed(error);
-      }
+      await dispatch(record, agent);
     }
     return {
       accepted: true,
@@ -168,6 +183,60 @@ export function createConversationRoutes(options: {
     const receipt = await admit(context.req.raw, body.agentId, input);
     return context.json(receipt, receipt.alreadyAccepted ? 200 : 202);
   });
+  routes.get("/api/conversations/:threadId/operations", async (context) => {
+    const actor = await identifyActor(context.req.raw);
+    const threadId = context.req.param("threadId");
+    return context.json({
+      operations: options.toolOperations
+        ? await options.toolOperations.listUnknown(actor.id, threadId)
+        : [],
+    });
+  });
+  routes.post(
+    "/api/conversations/:threadId/operations/:operationId/resolve",
+    async (context) => {
+      const actor = await identifyActor(context.req.raw);
+      const threadId = context.req.param("threadId");
+      const thread = await backend.client.getThread({
+        threadId,
+        userId: actor.id,
+      });
+      if (!options.toolOperations)
+        return context.json({ error: "当前执行内核没有待核对操作。" }, 409);
+      const parsed = ToolOutcomeResolutionSchema.safeParse(
+        await context.req.json(),
+      );
+      if (!parsed.success)
+        return context.json(
+          { error: parsed.error.issues[0]?.message ?? "核对结果不完整。" },
+          400,
+        );
+      const agent = parsed.data.continue
+        ? await resolver.resolveAgentForActor(actor, thread.agentId, {
+            initiator: { kind: "person" },
+          })
+        : undefined;
+      if (agent) {
+        await assertConversationAdmissionOpen();
+        await options.prepareAgent?.(actor.id, agent);
+      }
+      const { record, alreadyAccepted } =
+        await options.toolOperations.resolveOutcome(
+          actor.id,
+          threadId,
+          context.req.param("operationId"),
+          parsed.data,
+        );
+      if (record && agent && !alreadyAccepted) await dispatch(record, agent);
+      return context.json({
+        resolved: true,
+        continued: Boolean(record),
+        ...(record
+          ? { commandId: record.command_id, runId: record.run_id }
+          : {}),
+      });
+    },
+  );
   routes.get(
     "/api/conversations/:threadId/commands/:commandId",
     async (context) => {

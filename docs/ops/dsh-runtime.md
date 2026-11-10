@@ -4,11 +4,13 @@
 
 ## 持久卷随容器重建保留
 
-`deploy/compose.yaml` 新增 `/var/lib/chisabot-dsh`，物理卷默认名为 `openbot-zh_dsh`。原数据库、workspace、profiles 的卷名和网络保持原值。不要用 `docker compose down -v` 更新或回滚。
+`deploy/compose.yaml` 挂载 `/var/lib/chisabot-dsh`，新安装的物理卷默认名为 `chisabot-zh_dsh`；旧安装沿已有配置固定原卷名。原数据库、workspace、profiles 的卷名和网络保持原值。不要用 `docker compose down -v` 更新或回滚。
 
 API 启动脚本先建立 DSH 根目录并设为 `apiuser` 所有、权限 `0700`，然后降权运行。每个账号的目录由 managed runtime 建立；不要把整个卷改成所有人可读。恢复时保留数字 uid/gid（默认 API 为 1002），原账号子目录不会由启动脚本递归改权限。
 
-`CHISABOT_AGENT_KERNEL=dsh` 选择内核；`CHISABOT_DSH_ROOT` 指向持久卷。模型配置仍由 ChisaBot 管理。部署过程不写模型凭据，也不把 Host 的连接文件交给浏览器。
+新安装默认使用 DSH，示例配置明确写入 `CHISABOT_AGENT_KERNEL=dsh`；`CHISABOT_DSH_ROOT` 指向持久卷。本地开发先在 `runtime/dsh` 执行 `npm ci` 安装锁定依赖，API 按账号启动独立 Node Host；生产按下文配置账号 Host 与 targets。缺少运行时或 Host 不可用时直接报告 DSH 错误，不切换到其他内核。模型配置仍由 ChisaBot 管理，Host 的连接文件不交给浏览器。
+
+既有兼容部署可以显式选择 `CHISABOT_AGENT_KERNEL=hermes`（同时配置 `CHISABOT_HERMES_URL`）或 `builtin`。旧配置未设置 kernel 但已设置 Hermes URL 时保留原含义；显式 kernel 优先，拼写错误会阻止启动。
 
 ## 快速更新与完整构建
 

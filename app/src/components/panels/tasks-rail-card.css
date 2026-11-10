@@ -1,0 +1,323 @@
+/* One task, one surface. The rail itself already supplies the outer glass. */
+/* A drawer overlays chat text, not the wallpaper behind the desktop rail.
+   Override the shared !important glass tint only while task cards are visible. */
+.rail-sheet[data-slot="sheet-content"]:has(
+  .rail-pane[data-active="true"] .task-rail
+) {
+  /* biome-ignore lint/complexity/noImportantStyles: 覆盖 styles.css 里 .rail-sheet 的玻璃底（本身也是 !important），任务抽屉要用不透明实底挡住背后聊天正文。 */
+  background: var(--glass-bg-solid) !important;
+}
+.task-rail {
+  --task-card-muted: color-mix(in srgb, var(--ink-1) 76%, var(--glass-1));
+  container-type: inline-size;
+  min-width: 0;
+  padding: 4px 2px;
+  color: var(--ink-1);
+}
+.task-rail-header,
+.task-rail-section-head,
+.task-rail-item-head,
+.task-rail-meta,
+.task-rail-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.task-rail-header {
+  margin-bottom: 16px;
+  padding: 0 4px;
+}
+.task-rail-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.task-rail-center-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  font-size: 12px;
+  color: var(--task-card-muted);
+  border-radius: 6px;
+}
+.task-rail-center-link:hover {
+  color: var(--ink-1);
+}
+.task-rail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.task-rail-section-head {
+  margin: 0 4px 8px;
+}
+.task-rail-section-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--task-card-muted);
+}
+.task-rail-section-head > span {
+  font-size: 12px;
+  color: var(--task-card-muted);
+  font-variant-numeric: tabular-nums;
+}
+.task-rail-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 信息蓝固定用默认 --accent-blue-ink，不跟配色把 accent 改成琥珀 / 绿 / 红，
+   避免 sunset、gold 的 running 和 attention、emerald 的 running 和 success、
+   ruby 的 running 和 danger 撞色（状态字 CIEDE2000 要回到 ≥ 3.7）。 */
+:root {
+  --task-info: #1f5fd6;
+}
+.dark {
+  --task-info: #8ab4ff;
+}
+.task-rail-item {
+  --task-tone: var(--task-info);
+  /* 12–13px 的状态字要过 WCAG AA 4.5:1：色调再掺 60% 正文墨色（浅色压深、深色提亮），
+     色相不变，浅 / 深 × 4 种玻璃预设 × 各配色下均 ≥ 4.5:1。底色、图标和进度条仍用原色调。 */
+  --task-tone-text: color-mix(in srgb, var(--task-tone) 40%, var(--ink-1));
+  /* 图标在标签底上要过图形对比度 3:1：掺 25% 正文墨色，色相仍跟原色调，
+     比状态字（60% 墨）更接近原色。底色和进度条仍用未掺墨的 --task-tone。 */
+  --task-tone-icon: color-mix(in srgb, var(--task-tone) 75%, var(--ink-1));
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--glass-1);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.task-rail-item[data-tone="warning"] {
+  --task-tone: color-mix(in srgb, var(--warn) 75%, var(--ink-1));
+}
+.task-rail-item[data-tone="success"] {
+  --task-tone: color-mix(in srgb, var(--success) 80%, var(--ink-1));
+}
+.task-rail-item[data-tone="danger"] {
+  --task-tone: color-mix(in srgb, var(--danger) 85%, var(--ink-1));
+}
+.task-rail-item[data-tone="neutral"] {
+  --task-tone: var(--task-card-muted);
+}
+.task-rail-item:hover {
+  background: var(--glass-2);
+  border-color: color-mix(in srgb, var(--ink-1) 24%, transparent);
+}
+.task-rail-item:focus-within {
+  border-color: var(--focus-line);
+}
+.task-rail-item-link {
+  display: block;
+  padding: 14px;
+  border-radius: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+.task-rail-item-link:focus-visible,
+.task-rail-center-link:focus-visible,
+.task-rail-empty a:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+.task-rail-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--task-card-muted);
+}
+.task-rail-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--task-tone-text);
+  background: color-mix(in srgb, var(--task-tone) 9%, transparent);
+}
+.task-rail-status svg {
+  /* 图标用 --task-tone-icon，不跟状态字走更深的 --task-tone-text（DESIGN §127）。 */
+  color: var(--task-tone-icon);
+}
+.task-rail-title {
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.6;
+  font-weight: 600;
+}
+.task-rail-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--task-card-muted);
+}
+.task-rail-description[data-error] {
+  color: var(--task-tone-text);
+}
+.task-rail-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--task-card-muted);
+}
+.task-rail-artifacts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.task-rail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+.task-rail-progress-label {
+  margin-top: 12px;
+  color: var(--task-card-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.task-rail-progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  appearance: none;
+  background: var(--line);
+  accent-color: var(--task-tone);
+}
+.task-rail-progress::-webkit-progress-bar {
+  background: var(--line);
+  border-radius: 4px;
+}
+.task-rail-progress::-webkit-progress-value {
+  background: var(--task-tone);
+  border-radius: 4px;
+}
+.task-rail-progress::-moz-progress-bar {
+  background: var(--task-tone);
+  border-radius: 4px;
+}
+.task-rail-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--glass-1);
+}
+.task-rail-notice p {
+  margin: 0;
+  color: var(--task-card-muted);
+  font-size: 13px;
+}
+.task-rail-idle-hint {
+  margin: 0 4px;
+  padding: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--task-card-muted);
+}
+.task-rail-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px 12px;
+  color: var(--task-card-muted);
+}
+.task-rail-empty > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.task-rail-empty p {
+  margin: 0 0 5px;
+  color: var(--ink-1);
+  font-size: 14px;
+  font-weight: 500;
+}
+.task-rail-empty span,
+.task-rail-empty a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.task-rail-empty a {
+  color: var(--accent-blue-ink);
+  border-radius: 4px;
+}
+.task-rail-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+}
+.task-rail-loading span {
+  display: block;
+  width: 80%;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--line);
+}
+.task-rail-loading span:first-child {
+  width: 45%;
+}
+.task-rail-loading span:last-child {
+  width: 60%;
+}
+@container (max-width: 260px) {
+  .task-rail-item-link {
+    padding: 12px;
+  }
+  .task-rail-item-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .task-rail-actions {
+    padding: 10px 12px;
+  }
+}
+@media (pointer: coarse) {
+  .task-rail-actions [data-slot="button"],
+  .task-rail-center-link,
+  .task-rail-empty a {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-rail-item {
+    transition: none;
+  }
+}

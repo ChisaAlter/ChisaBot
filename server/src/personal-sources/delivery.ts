@@ -10,6 +10,7 @@ import {
   type DispatchState,
   dispatchDurable,
 } from "../delivery/durable-dispatch";
+import { workflowNoticeIsCurrent } from "../delivery/workflow-notifications";
 
 export type PersonalSendContext = {
   id?: string;
@@ -129,8 +130,19 @@ export function createPersonalDelivery(database: Database) {
             [id, state, JSON.stringify(receipt ?? null), error ?? null],
           );
         },
-        target: (record) =>
-          record.retry_due === false ? Promise.resolve(null) : target(record),
+        target: async (record, reader) => {
+          if (record.retry_due === false) return null;
+          if (
+            record.kind === "notify" &&
+            !(await workflowNoticeIsCurrent(
+              reader,
+              record.owner_user_id,
+              record.id,
+            ))
+          )
+            return "cancelled";
+          return target(record);
+        },
         retryRejected: async (record, _error, reader) => {
           // Only unattended notifications retry. A chat send stays bound to its original turn's
           // approval and Stop state; SMTP and chat sends require an explicit new decision.
