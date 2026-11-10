@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   clip,
+  isSensitiveConfigName,
   isSensitiveField,
   looksLikeSecret,
   MASK,
@@ -752,6 +753,197 @@ describe("QA514 samples", () => {
       text: 'echo \'{"client_id":"FAKEcid0065"}\' ',
       secrets: ["FAKEcid0065"],
     },
+    // QA514 r3
+    {
+      id: "setitem-backslash-doc",
+      kind: "secret",
+      text: "Set-Item -Path Env:\\IMA_OPENAPI_APIKEY -Value 'FAKEr3k16'",
+      secrets: ["FAKEr3k16"],
+      keep: ["Env:\\IMA_OPENAPI_APIKEY"],
+    },
+    {
+      id: "newitem-backslash-doc",
+      kind: "secret",
+      text: "New-Item -Path Env:\\IMA_OPENAPI_APIKEY -Value 'FAKEr3k20'",
+      secrets: ["FAKEr3k20"],
+      keep: ["New-Item"],
+    },
+    {
+      id: "setitem-backslash-positional",
+      kind: "secret",
+      text: "Set-Item Env:\\IMA_OPENAPI_APIKEY FAKEr3k17",
+      secrets: ["FAKEr3k17"],
+    },
+    {
+      id: "setitem-value-first",
+      kind: "secret",
+      text: "Set-Item -Value 'FAKEr3k18' -Path Env:IMA_OPENAPI_APIKEY",
+      secrets: ["FAKEr3k18"],
+      keep: ["-Path Env:IMA_OPENAPI_APIKEY"],
+    },
+    {
+      id: "setitem-literalpath",
+      kind: "secret",
+      text: "Set-Item -LiteralPath Env:\\DB_PASSWORD -Value FAKEr3k19",
+      secrets: ["FAKEr3k19"],
+    },
+    {
+      id: "setitem-lowercase",
+      kind: "secret",
+      text: "set-item -path env:\\api_key -value 'FAKEr3k19b'",
+      secrets: ["FAKEr3k19b"],
+    },
+    {
+      id: "setitem-value-colon",
+      kind: "secret",
+      text: "Set-Item -Path Env:API_KEY -Value:'FAKEr3k19c' -Force",
+      secrets: ["FAKEr3k19c"],
+      keep: ["-Force"],
+    },
+    {
+      id: "setcontent-env",
+      kind: "secret",
+      text: "Set-Content env:IMA_OPENAPI_APIKEY 'FAKEr3k21'",
+      secrets: ["FAKEr3k21"],
+    },
+    {
+      id: "si-alias",
+      kind: "secret",
+      text: "si env:IMA_OPENAPI_APIKEY 'FAKEr3k22'; node wrap.mjs",
+      secrets: ["FAKEr3k22"],
+      keep: ["node wrap.mjs"],
+    },
+    {
+      id: "newitem-name-param",
+      kind: "secret",
+      text: "New-Item -Path Env:\\ -Name IMA_OPENAPI_APIKEY -Value 'FAKEr3k22b'",
+      secrets: ["FAKEr3k22b"],
+      keep: ["-Name IMA_OPENAPI_APIKEY"],
+    },
+    {
+      id: "setitem-quoted-semicolon",
+      kind: "secret",
+      text: "Set-Item -Path Env:\\DB_PASSWORD -Value 'pa;ssFAKEr3k22c'; echo ok",
+      secrets: ["ssFAKEr3k22c"],
+      keep: ["echo ok"],
+    },
+    {
+      id: "key-mid-qualifier",
+      kind: "secret",
+      text: "OPENAI_KEY_PROD=FAKEr3n33 DEEPSEEK_KEY_2=FAKEr3n34 STRIPE_KEY_LIVE=FAKEr3n36 node x",
+      secrets: ["FAKEr3n33", "FAKEr3n34", "FAKEr3n36"],
+      keep: ["node x"],
+    },
+    {
+      id: "ssh-key-passphrase",
+      kind: "secret",
+      text: "SSH_KEY_PASSPHRASE=FAKEr3n35 GPG_PASSPHRASE=FAKEr3n35b ssh-add k",
+      secrets: ["FAKEr3n35", "FAKEr3n35b"],
+      keep: ["ssh-add k"],
+    },
+    {
+      id: "json-key-mid-qualifier",
+      kind: "secret",
+      text: '{"OPENAI_KEY_PROD":"FAKEr3n37","CACHE_KEY_PREFIX":"app"}',
+      secrets: ["FAKEr3n37"],
+      keep: ['"CACHE_KEY_PREFIX":"app"'],
+    },
+    {
+      id: "flag-passphrase",
+      kind: "secret",
+      text: "tool --passphrase FAKEr3n37b",
+      secrets: ["FAKEr3n37b"],
+    },
+    {
+      id: "setx-M-before",
+      kind: "secret",
+      text: "setx /M IMA_OPENAPI_APIKEY FAKEr3k11",
+      secrets: ["FAKEr3k11"],
+      keep: ["setx /M IMA_OPENAPI_APIKEY"],
+    },
+    {
+      id: "setx-dash-m-before",
+      kind: "secret",
+      text: 'setx -m DB_PASSWORD "pa ss FAKEr3k12"',
+      secrets: ["FAKEr3k12"],
+    },
+    {
+      id: "setx-remote-password",
+      kind: "secret",
+      text: "setx /S host1 /U admin /P FAKEr3k12b API_KEY FAKEr3k12c",
+      secrets: ["FAKEr3k12b", "FAKEr3k12c"],
+      keep: ["/S host1 /U admin"],
+    },
+    {
+      id: "amp-eq-in-value",
+      kind: "secret",
+      text: "DB_PASSWORD=pa&ss=FAKEr3a24 node x",
+      secrets: ["ss=FAKEr3a24", "FAKEr3a24"],
+      keep: ["node x"],
+    },
+    {
+      id: "amp-eq-after-plain",
+      kind: "secret",
+      text: "X=1&API_KEY=FAKEr3a24b&page=2",
+      secrets: ["FAKEr3a24b"],
+      keep: ["X=1&API_KEY=", "&page=2"],
+    },
+    {
+      id: "sev-escaped-sq",
+      kind: "secret",
+      text: `[Environment]::SetEnvironmentVariable("DB_PASSWORD",'pa''ssFAKE06',"User")`,
+      secrets: ["ssFAKE06"],
+      keep: ['"User"'],
+    },
+    {
+      id: "sev-escaped-dq",
+      kind: "secret",
+      text: '[Environment]::SetEnvironmentVariable("DB_PASSWORD","pa`"ssFAKE07","User")',
+      secrets: ["ssFAKE07"],
+      keep: ['"User"'],
+    },
+    {
+      id: "ps-env-escaped-sq",
+      kind: "secret",
+      text: "$env:DB_PASSWORD = 'pa''ssFAKE08'; node x",
+      secrets: ["ssFAKE08"],
+      keep: ["node x"],
+    },
+    {
+      id: "ima-nonsecret",
+      kind: "keep",
+      text: "IMA_OPENAPI_REGION=gz IMA_OPENAPI_ENDPOINT=ima-api node wrap.mjs",
+    },
+    {
+      id: "key-metadata-suffix",
+      kind: "keep",
+      text: "CACHE_KEY_PREFIX=app MY_KEY_ID=abc REDIS_KEY_TTL=60 SSH_KEY_PATH=/k node x",
+    },
+    {
+      id: "setitem-path-env",
+      kind: "keep",
+      text: "Set-Item -Path Env:\\PATH -Value 'C:\\bin'",
+    },
+    {
+      id: "setitem-variable",
+      kind: "keep",
+      text: "Set-Item -Path Env:\\API_KEY -Value $key",
+    },
+    {
+      id: "setx-path",
+      kind: "keep",
+      text: 'setx /M PATH "C:\\bin;%PATH%"',
+    },
+    {
+      id: "sev-null",
+      kind: "keep",
+      text: '[Environment]::SetEnvironmentVariable("API_KEY",$null,"User")',
+    },
+    {
+      id: "url-query-plain",
+      kind: "keep",
+      text: "page=2&lang=zh&sort=asc",
+    },
     // 权衡：| 两侧无空格时，下一命令名会被吞进值一并打码（偏安全）。有空格的 "| grep" 仍保留。
     {
       id: "nospace-pipe-cmd",
@@ -819,5 +1011,75 @@ describe("QA514 samples", () => {
     expect(clippedFirst.startsWith("sk-")).toBe(true);
     expect(clippedFirst).toContain("sk-");
     expect(redactText(clippedFirst)).toBe(clippedFirst);
+  });
+});
+
+describe("QA514 r3 sensitive config names", () => {
+  test.each([
+    "OPENAI_KEY_PROD",
+    "DEEPSEEK_KEY_2",
+    "STRIPE_KEY_LIVE",
+    "SSH_KEY_PASSPHRASE",
+    "GPG_PASSPHRASE",
+    "OPENAI_KEY",
+    "API_KEY",
+    "KEY",
+    "IMA_OPENAPI_CLIENTID",
+    "IMA_OPENAPI_SIGN",
+  ])("masks %s", (name) => {
+    expect(isSensitiveConfigName(name)).toBe(true);
+  });
+  test.each([
+    "CACHE_KEY_PREFIX",
+    "MY_KEY_ID",
+    "REDIS_KEY_TTL",
+    "SSH_KEY_PATH",
+    "KEYBOARD",
+    "MY_KEYBOARD_LAYOUT",
+    "IMA_OPENAPI_BASE_URL",
+    "IMA_OPENAPI_REGION",
+  ])("keeps %s", (name) => {
+    expect(isSensitiveConfigName(name)).toBe(false);
+  });
+
+  test("env: provider keeps the command shape and masks only the value", () => {
+    expect(
+      redactText("Set-Item -Path Env:\\IMA_OPENAPI_APIKEY -Value 'FAKEdoc1'"),
+    ).toBe("Set-Item -Path Env:\\IMA_OPENAPI_APIKEY -Value ••••");
+    expect(redactText("setx /M IMA_OPENAPI_APIKEY FAKEsetx1")).toBe(
+      "setx /M IMA_OPENAPI_APIKEY ••••",
+    );
+    expect(redactText("DB_PASSWORD=pa&ss=FAKEamp1 node x")).toBe(
+      "DB_PASSWORD=•••• node x",
+    );
+    expect(
+      redactText(
+        "[Environment]::SetEnvironmentVariable(\"DB_PASSWORD\",'pa''ssFAKE','User')",
+      ),
+    ).toBe(
+      "[Environment]::SetEnvironmentVariable(\"DB_PASSWORD\",'••••','User')",
+    );
+    expect(
+      redactText(
+        "IMA_OPENAPI_BASE_URL=https://ima.qq.com/ IMA_OPENAPI_REGION=gz",
+      ),
+    ).toBe("IMA_OPENAPI_BASE_URL=https://ima.qq.com/ IMA_OPENAPI_REGION=gz");
+  });
+});
+
+describe("QA514 r3 pathological input stays fast", () => {
+  test("long unterminated quotes and repeated commands finish quickly", () => {
+    const inputs = [
+      `$env:API_KEY="${"\\".repeat(5000)}`,
+      `[Environment]::SetEnvironmentVariable("API_KEY","${"\\".repeat(5000)}`,
+      `$env:API_KEY='${"''".repeat(3000)}`,
+      "a=".repeat(5000),
+      "si ".repeat(5000),
+      "setx API_KEY ".repeat(3000),
+      "Set-Item env:API_KEY ".repeat(3000),
+    ];
+    const started = performance.now();
+    for (const input of inputs) redactText(input);
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });

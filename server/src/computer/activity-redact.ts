@@ -41,27 +41,88 @@ export function redactUrl(value: string): string {
 
 /**
  * 敏感配置名：按「段」匹配，避免 CLIENT_IDLE / TOKENIZER / KEYBOARD / MAX_TOKENS / CACHE_KEY_PREFIX 被误打。
- * 命中：…_TOKEN / …_SECRET / …_PASSWORD / …_API_KEY / …_CLIENT_ID / 以 _KEY 结尾（OPENAI_KEY）/
- * CLIENTID（无下划线粘写）/ SSHPASS / MYSQL_PWD / IMA_OPENAPI_*。
- * 裸 key 只认结尾：CACHE_KEY_PREFIX 中间的 KEY 不打码（QA514 r2）。
+ * 命中：…_TOKEN / …_SECRET / …_PASSWORD / …_PASSPHRASE / …_API_KEY / …_CLIENT_ID / 任意位置的 KEY 段 /
+ * CLIENTID（无下划线粘写）/ SSHPASS / MYSQL_PWD / IMA_OPENAPI_*（BASE_URL、REGION 这类地址配置除外）。
  */
 const SENSITIVE_NAME_SEGMENT =
-  /(?:^|_)(?:api_?key|access_?key|private_?key|client_?id|client_?secret|token|secret|password|passwd)(?:_|$)|(?:^|_)key$/i;
+  /(?:^|_)(?:api_?key|access_?key|private_?key|client_?id|client_?secret|token|secret|password|passwd|passphrase)(?:_|$)/i;
+
+/**
+ * 裸 KEY 段后面跟这些词时，名字说的是「键的元数据」而不是密钥本身：CACHE_KEY_PREFIX、MY_KEY_ID、
+ * REDIS_KEY_TTL、SSH_KEY_PATH。其余后缀（OPENAI_KEY_PROD、DEEPSEEK_KEY_2、STRIPE_KEY_LIVE、
+ * SSH_KEY_PASSPHRASE）一律打码——黑名单只放非敏感后缀，没列到的按密钥处理（QA514 r3）。
+ */
+const KEY_METADATA_SUFFIX = new Set([
+  "PREFIX",
+  "SUFFIX",
+  "ID",
+  "IDS",
+  "TTL",
+  "NAME",
+  "NAMES",
+  "FILE",
+  "PATH",
+  "DIR",
+  "TYPE",
+  "FORMAT",
+  "LENGTH",
+  "LEN",
+  "SIZE",
+  "BITS",
+  "ALG",
+  "ALGORITHM",
+  "VERSION",
+  "COUNT",
+  "FIELD",
+  "COLUMN",
+  "SEPARATOR",
+  "DELIMITER",
+  "PATTERN",
+  "EXPIRY",
+  "TIMEOUT",
+  "SPACE",
+]);
+
+function hasSecretKeySegment(name: string): boolean {
+  const segments = name.split("_");
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i]?.toUpperCase() !== "KEY") continue;
+    const next = segments[i + 1];
+    // 结尾的 KEY（OPENAI_KEY）、或后面不是元数据后缀（OPENAI_KEY_PROD）都算密钥。
+    if (!next || !KEY_METADATA_SUFFIX.has(next.toUpperCase())) return true;
+  }
+  return false;
+}
+
+/** IMA_OPENAPI_ 族里不是凭据的配置：服务地址、区域、超时等（QA514 r3）。 */
+const IMA_OPENAPI_PUBLIC =
+  /^IMA_OPENAPI_(?:BASE_?URL|URL|ENDPOINT|HOST|DOMAIN|REGION|PORT|TIMEOUT|VERSION|LOG_?LEVEL|DEBUG)$/i;
 
 export function isSensitiveConfigName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
   if (/^SSHPASS$/i.test(n)) return true;
   if (/^[A-Z0-9_]+_PWD$/i.test(n)) return true;
-  // ima OpenAPI 凭据前缀：后缀未必是 KEY/SECRET，整族都打码。
-  if (/^IMA_OPENAPI_/i.test(n)) return true;
-  return SENSITIVE_NAME_SEGMENT.test(n);
+  // ima OpenAPI 凭据前缀：后缀未必是 KEY/SECRET（SIGN、CLIENTID），整族打码，只放过地址类配置。
+  if (/^IMA_OPENAPI_/i.test(n)) return !IMA_OPENAPI_PUBLIC.test(n);
+  return SENSITIVE_NAME_SEGMENT.test(n) || hasSecretKeySegment(n);
 }
 
-/** 赋值右侧：引号整段，或非空白整段（密码里的 ;|& 也算值的一部分，QA514）。
+/**
+ * 引号段：双引号认 \" 与 PowerShell 的 `" 转义，单引号认 PowerShell / shell 的 '' 写法，
+ * 避免 'pa''ss' / "pa`"ss" 在第一个内部引号处截断、后半段漏出（QA514 r3）。
+ */
+const QUOTED_VALUE = "\"(?:[\\\\`][\\s\\S]|[^\"\\\\`])*\"|'(?:''|[^'])*'";
+
+/** 赋值右侧（YAML / JSON / $env:）：引号整段，或非空白整段（密码里的 ;|& 也算值的一部分，QA514）。
  * 单独的 & 算值（pa&ss），&& 与「&name=」形态（URL query）仍切开，避免把 ?a=1&b=2 吞成一段（QA514 r2）。
  */
-const ASSIGNED_VALUE = String.raw`("[^"]*"|'[^']*'|(?:[^\s"'=&\\,{}\[\]]|&(?!&|[A-Za-z_][A-Za-z0-9_]*=))+)`;
+const ASSIGNED_VALUE = String.raw`(${QUOTED_VALUE}|(?:[^\s"'=&\\,{}\[\]]|&(?!&|[A-Za-z_][A-Za-z0-9_]*=))+)`;
+/**
+ * shell / .env 的 NAME=value（名字前不是 ? 或 &，即不在 URL query 里）：值里的 & 和 = 都算值
+ * （DB_PASSWORD=pa&ss=x 整段打码，QA514 r3），只有 && 和空白才切开。
+ */
+const SHELL_ASSIGNED_VALUE = String.raw`(${QUOTED_VALUE}|(?:[^\s"'&\\,{}\[\]]|&(?!&))+)`;
 /** 空赋值（含 "" / ''）不算泄漏，原样保留（QA514 empty-value）。 */
 function isEmptyAssignedValue(value: string): boolean {
   return value === "" || value === "''" || value === '""';
@@ -81,7 +142,7 @@ const SECRET_SHAPES: RegExp[] = [
   // Authorization: Bearer xxx / token xxx
   /\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi,
   // 长参数：--password / --client-id / --api-key …（KEY=value / JSON / YAML / 请求头在 redactPlain）
-  /(--(?!no-)(?:[a-z0-9]+-)*(?:password|passwd|pass|token|secret|api-?key|apikey|client-?id|client-?secret|key)(?:-[a-z0-9]+)*(?:=|\s+))("[^"]*"|'[^']*'|[^\s"']+)/gi,
+  /(--(?!no-)(?:[a-z0-9]+-)*(?:password|passwd|passphrase|pass|token|secret|api-?key|apikey|client-?id|client-?secret|key)(?:-[a-z0-9]+)*(?:=|\s+))("[^"]*"|'[^']*'|[^\s"']+)/gi,
   // 常见密钥前缀
   /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g,
 ];
@@ -272,6 +333,234 @@ function redactCommands(value: string): string {
     .join("");
 }
 
+/** 一条命令里的一个参数词（带位置）。引号段按 QUOTED_VALUE 的转义规则整段读。 */
+type ArgToken = { text: string; start: number; end: number };
+
+const ARG_TOKEN = new RegExp(
+  String.raw`(?:${QUOTED_VALUE}|[^\s"';|&()])+`,
+  "y",
+);
+
+/**
+ * 从 `from` 起读到这条命令结束（换行、; | & 或右括号）为止的参数词。
+ * 只用于 setx / Set-Item 这类「命令 + 参数」的场景，值里的引号段（含 ; 与空格）算一个词。
+ * 最多读 MAX_ARGS 个：这两类命令的参数不会更多，也避免一长串重复命令时逐个扫到行尾（平方级）。
+ */
+const MAX_ARGS = 24;
+function readArgs(text: string, from: number): ArgToken[] {
+  const tokens: ArgToken[] = [];
+  let i = from;
+  while (i < text.length && tokens.length < MAX_ARGS) {
+    while (i < text.length && /[ \t]/.test(text[i] as string)) i++;
+    if (i >= text.length || /[\r\n;|&()]/.test(text[i] as string)) break;
+    ARG_TOKEN.lastIndex = i;
+    const m = ARG_TOKEN.exec(text);
+    if (!m?.[0]) break;
+    tokens.push({ text: m[0], start: i, end: i + m[0].length });
+    i += m[0].length;
+  }
+  return tokens;
+}
+
+function unquote(text: string): string {
+  if (/^"[\s\S]*"$/.test(text) && text.length >= 2) return text.slice(1, -1);
+  if (/^'[\s\S]*'$/.test(text) && text.length >= 2) return text.slice(1, -1);
+  return text;
+}
+
+/** 值是一个 PowerShell / cmd 变量引用（$key、$null、%VAR%），不是明文。 */
+function isVariableReference(value: string): boolean {
+  return /^\$[A-Za-z_][\w:]*$/.test(value) || /^%[A-Za-z_]\w*%$/.test(value);
+}
+
+function shouldMaskValue(name: string, value: string): boolean {
+  return (
+    isSensitiveConfigName(name) &&
+    !isEmptyAssignedValue(value) &&
+    !alreadyMasked(unquote(value)) &&
+    !isVariableReference(value)
+  );
+}
+
+function applyEdits(
+  text: string,
+  edits: { start: number; end: number; text: string }[],
+): string {
+  const parts: string[] = [];
+  let last = 0;
+  for (const edit of [...edits].sort((x, y) => x.start - y.start)) {
+    if (edit.start < last) continue;
+    parts.push(text.slice(last, edit.start), edit.text);
+    last = edit.end;
+  }
+  parts.push(text.slice(last));
+  return parts.join("");
+}
+
+/**
+ * cmd setx：`setx NAME value [/M]`、`setx /M NAME value`、`setx /S host /U user /P pw NAME value`
+ * （QA514 r3：/M 写在名字前面也要打）。/P 后面是远程机器的口令，同样打码。/K、/F 模式的值来自注册表或
+ * 文件，不是明文，不动。
+ */
+function redactSetx(text: string): string {
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const m of text.matchAll(/(?:^|(?<=[\s;|&(]))setx(?=[ \t])/gi)) {
+    const tokens = readArgs(text, (m.index ?? 0) + m[0].length);
+    const positional: ArgToken[] = [];
+    let fromRegistryOrFile = false;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i] as ArgToken;
+      const flag = /^[/-]([A-Za-z])$/.exec(token.text)?.[1]?.toLowerCase();
+      if (!flag) {
+        positional.push(token);
+        continue;
+      }
+      if (flag === "k" || flag === "f") fromRegistryOrFile = true;
+      if (["s", "u", "p", "k", "f", "a", "r", "d"].includes(flag)) {
+        const next = tokens[i + 1];
+        if (next && !/^[/-][A-Za-z]$/.test(next.text)) {
+          if (
+            flag === "p" &&
+            !isEmptyAssignedValue(next.text) &&
+            !alreadyMasked(unquote(next.text))
+          )
+            edits.push({ start: next.start, end: next.end, text: MASK });
+          i += 1;
+        }
+      }
+    }
+    if (fromRegistryOrFile) continue;
+    const [name, value] = positional;
+    if (!name || !value) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name.text)) continue;
+    if (shouldMaskValue(name.text, value.text))
+      edits.push({ start: value.start, end: value.end, text: MASK });
+  }
+  return edits.length ? applyEdits(text, edits) : text;
+}
+
+/** env: 驱动器路径：Env:NAME、Env:\NAME、Env:/NAME（大小写不敏感，可带引号）。 */
+function envPathName(path: string): string | undefined {
+  return /^env:[\\/]?([A-Za-z_][A-Za-z0-9_]*)$/i.exec(unquote(path))?.[1];
+}
+
+/** -Path / -LiteralPath / -PSPath / -LP，以及 PowerShell 允许的无歧义缩写（-Pat、-Li、-Va、-N）。 */
+function envProviderParam(
+  flag: string,
+): "path" | "value" | "name" | "other" | "switch" {
+  const f = flag.toLowerCase();
+  if (f.length >= 3 && "path".startsWith(f)) return "path";
+  if (f === "lp" || f === "pspath") return "path";
+  if (f.length >= 2 && "literalpath".startsWith(f)) return "path";
+  if (f.length >= 1 && "value".startsWith(f)) return "value";
+  if (f.length >= 1 && "name".startsWith(f)) return "name";
+  if (
+    [
+      "itemtype",
+      "type",
+      "encoding",
+      "filter",
+      "include",
+      "exclude",
+      "credential",
+      "stream",
+    ].includes(f)
+  )
+    return "other";
+  return "switch";
+}
+
+/**
+ * PowerShell env: 驱动器写环境变量（QA514 r3）：微软文档 about_Environment_Variables 的写法是
+ * `Set-Item -Path Env:\NAME -Value '…'`、`New-Item -Path Env:\NAME -Value '…'`；另有 `Env:NAME`、
+ * `-LiteralPath`、`-Value` 写在前面、`Set-Content`、别名 si / ni、`New-Item -Path Env:\ -Name NAME`。
+ * 参数顺序任意、命令和参数名大小写不敏感。只把值那个词换成 ••••，其余原样保留。
+ */
+function redactEnvProvider(text: string): string {
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const m of text.matchAll(
+    /(?:^|(?<=[\s;|&({]))(?:Set-Item|New-Item|Set-Content|si|ni)(?=[ \t])/gi,
+  )) {
+    const tokens = readArgs(text, (m.index ?? 0) + m[0].length);
+    let path: string | undefined;
+    let nameParam: string | undefined;
+    let value: { text: string; start: number; end: number } | undefined;
+    const positional: ArgToken[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i] as ArgToken;
+      const param = /^-([A-Za-z]+)(?::([\s\S]+))?$/.exec(token.text);
+      if (!param) {
+        positional.push(token);
+        continue;
+      }
+      const kind = envProviderParam(param[1] as string);
+      if (kind === "switch") continue;
+      // -Value:'x' 写法：值贴在冒号后面。
+      let arg: ArgToken | undefined;
+      if (param[2] !== undefined) {
+        const offset = token.text.length - param[2].length;
+        arg = {
+          text: param[2],
+          start: token.start + offset,
+          end: token.end,
+        };
+      } else {
+        arg = tokens[i + 1];
+        i += 1;
+      }
+      if (!arg) continue;
+      if (kind === "path") path = arg.text;
+      else if (kind === "name") nameParam = unquote(arg.text);
+      else if (kind === "value") value = arg;
+    }
+    // 位置参数：第一个是 Path，第二个是 Value。
+    if (path === undefined && positional[0]) path = positional.shift()?.text;
+    if (value === undefined && positional[0]) value = positional[0];
+    if (path === undefined || !value) continue;
+    const name =
+      envPathName(path) ??
+      (/^env:[\\/]?$/i.test(unquote(path)) ? nameParam : undefined);
+    if (!name) continue;
+    if (shouldMaskValue(name, value.text))
+      edits.push({ start: value.start, end: value.end, text: MASK });
+  }
+  return edits.length ? applyEdits(text, edits) : text;
+}
+
+/**
+ * shell / .env 的 NAME=value。名字紧跟在 ? 或 & 后面时是 URL query 的一项，值到下一个 & 为止；
+ * 否则是命令里的赋值，值里的 & 与 = 都算值（DB_PASSWORD=pa&ss=x 不能从 &ss= 起漏出，QA514 r3）。
+ * 不敏感的名字不吞掉它的值，继续往值里找（X=1&API_KEY=… 里的 API_KEY 照样打码）。
+ */
+function redactAssignments(text: string): string {
+  const nameRe = /\b([A-Za-z_][A-Za-z0-9_]*)=/g;
+  let out = "";
+  let last = 0;
+  for (let m = nameRe.exec(text); m; m = nameRe.exec(text)) {
+    const name = m[1] as string;
+    const valueStart = m.index + m[0].length;
+    if (!isSensitiveConfigName(name)) {
+      nameRe.lastIndex = valueStart;
+      continue;
+    }
+    const inQuery = m.index > 0 && /[?&]/.test(text[m.index - 1] as string);
+    const valueRe = new RegExp(
+      inQuery ? ASSIGNED_VALUE : SHELL_ASSIGNED_VALUE,
+      "y",
+    );
+    valueRe.lastIndex = valueStart;
+    const value = valueRe.exec(text)?.[1] ?? "";
+    if (isEmptyAssignedValue(value) || alreadyMasked(value)) {
+      nameRe.lastIndex = valueStart;
+      continue;
+    }
+    out += `${text.slice(last, valueStart)}${MASK}`;
+    last = valueStart + value.length;
+    nameRe.lastIndex = last;
+  }
+  return out + text.slice(last);
+}
+
 /** 文本打码中不碰 URL 的那一半：命令短参数 + 密钥形状。redactUrl 的兜底走这里，不走 redactText。 */
 function redactPlain(value: string): string {
   let out = redactCommands(value);
@@ -297,58 +586,27 @@ function redactPlain(value: string): string {
   );
   // PowerShell / .NET：[Environment]::SetEnvironmentVariable("NAME","value"[, "Process"|"User"|"Machine"])
   out = out.replace(
-    /(\[(?:System\.)?Environment\]::SetEnvironmentVariable\s*\(\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\2\s*,\s*)(["'])(?:(?:(?!\4).)*)\4/gi,
-    (whole, prefix: string, _qName: string, name: string, qVal: string) => {
-      if (!isSensitiveConfigName(name)) return whole;
-      return `${prefix}${qVal}${MASK}${qVal}`;
-    },
-  );
-  // cmd setx NAME value / setx NAME "value"
-  out = out.replace(
-    /\bsetx\s+([A-Za-z_][A-Za-z0-9_]*)\s+("[^"]*"|'[^']*'|\S+)/gi,
-    (whole, name: string, value: string) => {
+    new RegExp(
+      String.raw`(\[(?:System\.)?Environment\]::SetEnvironmentVariable\s*\(\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\2\s*,\s*)(${QUOTED_VALUE})`,
+      "gi",
+    ),
+    (whole, prefix: string, _qName: string, name: string, value: string) => {
       if (
         !isSensitiveConfigName(name) ||
         isEmptyAssignedValue(value) ||
-        alreadyMasked(value)
+        alreadyMasked(value.slice(1))
       )
         return whole;
-      return `setx ${name} ${MASK}`;
+      const quote = value[0] ?? '"';
+      return `${prefix}${quote}${MASK}${quote}`;
     },
   );
-  // PowerShell：Set-Item env:NAME value / Set-Item -Path Env:NAME -Value value
-  out = out.replace(
-    /\bSet-Item\s+(?:-Path\s+)?(?:["']Env:([A-Za-z_][A-Za-z0-9_]*)["']|Env:([A-Za-z_][A-Za-z0-9_]*))\s+(?:-Value\s+)?("[^"]*"|'[^']*'|\S+)/gi,
-    (
-      whole,
-      nameQuoted: string | undefined,
-      nameBare: string | undefined,
-      value: string,
-    ) => {
-      const name = nameQuoted ?? nameBare ?? "";
-      if (
-        !isSensitiveConfigName(name) ||
-        isEmptyAssignedValue(value) ||
-        alreadyMasked(value)
-      )
-        return whole;
-      // 写法太多，审计摘要统一收成 Set-Item env:NAME ••••。
-      return `Set-Item env:${name} ${MASK}`;
-    },
-  );
+  // cmd：setx [/S 机器 [/U 用户 [/P 口令]]] NAME value [/M]
+  out = redactSetx(out);
+  // PowerShell env: 驱动器：Set-Item / New-Item / Set-Content / si / ni，Env:NAME 与 Env:\NAME
+  out = redactEnvProvider(out);
   // shell / .env：NAME=value（= 左边无空格；空值 NAME= 后直接空白不吞下一词）
-  out = out.replace(
-    new RegExp(String.raw`\b([A-Za-z_][A-Za-z0-9_]*)=${ASSIGNED_VALUE}`, "gi"),
-    (whole, name: string, value: string) => {
-      if (
-        !isSensitiveConfigName(name) ||
-        isEmptyAssignedValue(value) ||
-        alreadyMasked(value)
-      )
-        return whole;
-      return `${name}=${MASK}`;
-    },
-  );
+  out = redactAssignments(out);
   // YAML：NAME: value（允许 : 后空白）
   out = out.replace(
     new RegExp(
