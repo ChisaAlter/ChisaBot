@@ -13,6 +13,7 @@ import { TOOL_STOPPED_ZH } from "../confirmations/context";
 import { isMobilePlatform, MOBILE_ONLINE_WINDOW_MS } from "./pairing";
 import { outsideRoots, outsideRootsNote } from "./roots";
 import { type DevicePatch, type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
+import { redactText } from "../computer/activity-redact";
 
 /** 和 store.ts MAX_ROOTS 一致。 */
 const MAX_ALLOWED_ROOTS = 20;
@@ -352,6 +353,9 @@ export function createDeviceHub(options: {
     const createdAt = now();
     const chat = input.actorType !== "user" && (confirm?.linkable() ?? false);
     const ttlMs = chat ? Math.max(approvalTtlMs, CHAT_APPROVAL_TTL_MS) : approvalTtlMs;
+    // 审批视图 / 下发 PC / 确认卡片只展示打码后的摘要；真正执行仍用内存里的 input.args。
+    const displaySummary = redactText(input.summary);
+    const displayDiff = input.diff == null ? null : redactText(input.diff);
     const view: DeviceApprovalView = {
       id,
       deviceId: record.id,
@@ -359,8 +363,8 @@ export function createDeviceHub(options: {
       botId: input.bot.id,
       botName: input.bot.name,
       operation: input.operation,
-      summary: input.summary,
-      diff: input.diff ?? null,
+      summary: displaySummary,
+      diff: displayDiff,
       createdAt: new Date(createdAt).toISOString(),
       expiresAt: new Date(createdAt + ttlMs).toISOString(),
     };
@@ -379,7 +383,7 @@ export function createDeviceHub(options: {
         type: "approval_request",
         id,
         operation: input.operation,
-        summary: input.summary,
+        summary: view.summary,
         botName: input.bot.name,
         expiresAt: view.expiresAt,
         diff: view.diff ?? null,
@@ -394,7 +398,7 @@ export function createDeviceHub(options: {
             botId: input.bot.id,
             deviceName: record.name,
             operationLabel: OPERATION_LABEL[input.operation] ?? input.operation,
-            summary: input.summary,
+            summary: view.summary,
             args: input.args,
             diff: view.diff ?? null,
             expiresAt: view.expiresAt,
