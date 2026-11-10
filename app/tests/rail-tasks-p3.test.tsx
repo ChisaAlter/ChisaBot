@@ -351,7 +351,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
       "color: var(--task-tone-text);",
     );
     expect(ruleBody(".task-rail-status svg")).toContain(
-      "color: var(--task-tone);",
+      "color: var(--task-tone-icon);",
     );
     expect(lastDecl(railCss, ":root", "--task-info")).toBe(
       lastDecl(stylesCss, ":root", "--accent-blue-ink"),
@@ -449,6 +449,97 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     }
     expect(failures).toEqual([]);
     expect(worst).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("状态图标在标签底上对比度均 ≥ 3:1，并保持原色相", () => {
+    const iconMix = mixPercent(
+      ruleBody(".task-rail-item"),
+      "--task-tone-icon",
+      "--task-tone",
+    );
+    expect(iconMix).toBeGreaterThan(0.4);
+    expect(iconMix).toBeLessThan(1);
+    const textMix = mixPercent(
+      ruleBody(".task-rail-item"),
+      "--task-tone-text",
+      "--task-tone",
+    );
+    expect(iconMix).toBeGreaterThan(textMix);
+    const toneMix = (tone: string, token: string) =>
+      mixPercent(
+        ruleBody(`.task-rail-item[data-tone="${tone}"]`),
+        "--task-tone",
+        token,
+      );
+    const modes = [
+      {
+        name: "light",
+        root: ":root",
+        backgrounds: [
+          [255, 255, 255],
+          [217, 229, 246],
+          [200, 212, 230],
+          [195, 171, 220],
+          [230, 170, 187],
+          [157, 205, 219],
+        ] as RGB[],
+        inks: ["#0f172a", "#111a2b"],
+      },
+      {
+        name: "dark",
+        root: ".dark",
+        backgrounds: [
+          [0, 0, 0],
+          [36, 40, 53],
+          [56, 62, 78],
+        ] as RGB[],
+        inks: ["#e9eef8", "#f8fafc"],
+      },
+    ];
+    const failures: string[] = [];
+    let worst = Number.POSITIVE_INFINITY;
+    for (const mode of modes) {
+      const token = (name: string) => {
+        const v = lastDecl(stylesCss, mode.root, name);
+        if (!v) throw new Error(`${mode.root} ${name} missing`);
+        return hex(v);
+      };
+      for (const inkHex of mode.inks) {
+        const ink = hex(inkHex);
+        const muted = mix(
+          ink,
+          mode.name === "light" ? [255, 255, 255] : [16, 25, 44],
+          0.76,
+        );
+        const tones: [string, RGB][] = [
+          ["info", hex(lastDecl(railCss, mode.root, "--task-info")!)],
+          ["warning", mix(token("--warn"), ink, toneMix("warning", "--warn"))],
+          [
+            "success",
+            mix(token("--success"), ink, toneMix("success", "--success")),
+          ],
+          [
+            "danger",
+            mix(token("--danger"), ink, toneMix("danger", "--danger")),
+          ],
+          ["neutral", muted],
+        ];
+        for (const [toneName, tone] of tones) {
+          const icon = mix(tone, ink, iconMix);
+          for (const bg of mode.backgrounds) {
+            const chip = mix(tone, bg, 0.09);
+            const ratio = contrast(icon, chip);
+            worst = Math.min(worst, ratio);
+            if (ratio < 3)
+              failures.push(
+                `${mode.name} ink=${inkHex} ${toneName} bg=${bg.join(",")} ${ratio.toFixed(2)}`,
+              );
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+    expect(worst).toBeGreaterThanOrEqual(3);
   });
 
   test("7 套配色下状态字最小 CIEDE2000 ≥ 3.7（不含 paused/cancelled）", () => {

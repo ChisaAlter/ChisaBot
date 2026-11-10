@@ -84,6 +84,9 @@
   /* 12–13px 的状态字要过 WCAG AA 4.5:1：色调再掺 60% 正文墨色（浅色压深、深色提亮），
      色相不变，浅 / 深 × 4 种玻璃预设 × 各配色下均 ≥ 4.5:1。底色、图标和进度条仍用原色调。 */
   --task-tone-text: color-mix(in srgb, var(--task-tone) 40%, var(--ink-1));
+  /* 图标在标签底上要过图形对比度 3:1：掺 25% 正文墨色，色相仍跟原色调，
+     比状态字（60% 墨）更接近原色。底色和进度条仍用未掺墨的 --task-tone。 */
+  --task-tone-icon: color-mix(in srgb, var(--task-tone) 75%, var(--ink-1));
   min-width: 0;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
@@ -147,8 +150,8 @@
   background: color-mix(in srgb, var(--task-tone) 9%, transparent);
 }
 .task-rail-status svg {
-  /* 图标不跟状态字走更深的 --task-tone-text，保持原色调（DESIGN §127）。 */
-  color: var(--task-tone);
+  /* 图标用 --task-tone-icon，不跟状态字走更深的 --task-tone-text（DESIGN §127）。 */
+  color: var(--task-tone-icon);
 }
 .task-rail-title {
   margin: 10px 0 0;
