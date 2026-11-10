@@ -72,6 +72,9 @@
 }
 .task-rail-item {
   --task-tone: var(--accent-blue-ink);
+  /* 12–13px 的状态字要过 WCAG AA 4.5:1：色调再掺 30% 正文墨色（浅色压深、深色提亮），
+     色相不变，所有主题预设和配色下最差也在 5:1 以上。底色、图标和进度条仍用原色调。 */
+  --task-tone-text: color-mix(in srgb, var(--task-tone) 70%, var(--ink-1));
   min-width: 0;
   border: 1px solid var(--line-strong);
   border-radius: 16px;
@@ -131,7 +134,7 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
-  color: var(--task-tone);
+  color: var(--task-tone-text);
   background: color-mix(in srgb, var(--task-tone) 9%, transparent);
 }
 .task-rail-title {
@@ -153,7 +156,7 @@
   color: var(--task-card-muted);
 }
 .task-rail-description[data-error] {
-  color: var(--task-tone);
+  color: var(--task-tone-text);
 }
 .task-rail-meta {
   justify-content: flex-start;

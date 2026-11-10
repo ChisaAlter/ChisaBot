@@ -314,14 +314,25 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     expect(recent.querySelector("a")?.getAttribute("href")).toContain(
       "task=done",
     );
+    const runCard = rail.querySelector(
+      'article[data-kind="workflow"]:has(progress[data-progress="1/2"])',
+    )!;
     expect(
-      rail
-        .querySelector('progress[aria-label="发布前验收流水线 · 步骤进度 1/2"]')
+      runCard
+        .querySelector('progress[data-progress="1/2"]')
         ?.getAttribute("value"),
     ).toBe("50");
+    expect(runCard.querySelector(".sr-only")?.textContent).toBe(
+      "已完成 1/2 步",
+    );
+    const queuedCard = rail.querySelector(
+      'article[data-kind="workflow"]:has(progress[data-progress="0/2"])',
+    )!;
+    expect(runCard.textContent).toContain("发布前验收流水线");
+    expect(queuedCard.textContent).toContain("尚未开始的工作流");
     expect(
-      rail
-        .querySelector('progress[aria-label="尚未开始的工作流 · 步骤进度 0/2"]')
+      queuedCard
+        .querySelector('progress[data-progress="0/2"]')
         ?.getAttribute("value"),
     ).toBe("0");
   });

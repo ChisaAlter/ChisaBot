@@ -12,9 +12,15 @@ import {
   IconShieldCheck,
   IconX,
 } from "@tabler/icons-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import {
   ACTIVE_STATUSES,
   CATEGORY_LABELS,
@@ -24,6 +30,7 @@ import {
 } from "@/components/task-center/labels";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { ClientError } from "@/lib/client";
 import {
   taskCenterApi,
   taskCenterKeys,
@@ -36,12 +43,14 @@ import {
 } from "@/lib/workflows";
 import type {
   TaskCenterDecision,
+  TaskCenterSnapshot,
   TaskCenterTask,
 } from "../../../../shared/task-center";
 import {
   ACTIVE_RUN_STATUSES,
   RUN_STATUS_LABEL,
   type WorkflowRunView,
+  type WorkflowStepStatus,
 } from "../../../../shared/workflows";
 import "./tasks-rail-card.css";
 
@@ -145,6 +154,10 @@ function TasksRailBody({
   inboxCount: number;
 }) {
   const queryClient = useQueryClient();
+  const [retrying, setRetrying] = useState(false);
+  const snapshotFailed = railQueryFailed(snapshot);
+  const workflowsFailed = railQueryFailed(workflows);
+  const loading = railQueryLoading(snapshot) || railQueryLoading(workflows);
   const refreshTasks = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
   };
@@ -159,20 +172,24 @@ function TasksRailBody({
 
   return (
     <div className="task-rail-sections">
-      {snapshot.isError || workflows.isError ? (
+      {snapshotFailed || workflowsFailed ? (
         <div className="task-rail-notice" role="alert">
           <p>
-            {snapshot.isError && workflows.isError
+            {snapshotFailed && workflowsFailed
               ? "任务和工作流暂时无法刷新。"
-              : snapshot.isError
+              : snapshotFailed
                 ? "任务暂时无法刷新。"
                 : "工作流暂时无法刷新。"}
           </p>
           <Button
-            loading={snapshot.isFetching || workflows.isFetching}
+            // 只跟着用户点的这次重试转圈；后台 5 秒轮询不让按钮跟着闪。
+            loading={retrying}
             onClick={() => {
-              if (snapshot.isError) void snapshot.refetch();
-              if (workflows.isError) void workflows.refetch();
+              setRetrying(true);
+              void Promise.allSettled([
+                snapshotFailed ? snapshot.refetch() : null,
+                workflowsFailed ? workflows.refetch() : null,
+              ]).finally(() => setRetrying(false));
             }}
             size="sm"
             variant="outline"
@@ -181,7 +198,7 @@ function TasksRailBody({
           </Button>
         </div>
       ) : null}
-      {snapshot.isPending || workflows.isPending ? (
+      {loading ? (
         <div
           aria-label="正在加载任务进度"
           className="task-rail-loading"
@@ -203,6 +220,7 @@ function TasksRailBody({
               decision={decision}
               key={decision.id}
               onChanged={refreshTasks}
+              onStale={() => dropStaleDecision(queryClient, decision.id)}
             />
           ))}
         </RailSection>
@@ -226,10 +244,9 @@ function TasksRailBody({
       ) : null}
 
       {!hasActiveOrPending &&
-      !snapshot.isPending &&
-      !workflows.isPending &&
-      !snapshot.isError &&
-      !workflows.isError ? (
+      !loading &&
+      !snapshotFailed &&
+      !workflowsFailed ? (
         recentTasks.length > 0 ? (
           <p className="task-rail-idle-hint" role="status">
             {"现在没有进行中的任务"}
@@ -264,6 +281,51 @@ function TasksRailBody({
         </RailSection>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 这条查询现在算不算「失败」：本身报错，或者报错后后台轮询正在重拉、手上还没有任何数据。
+ *
+ * TanStack Query 在没有数据时重新拉取，会把 status 从 error 改回 pending、清掉 error；
+ * 只看 isError / isPending 的话，每 5 秒轮询一次，提示就会被骨架屏顶掉约 1 秒。
+ */
+export function railQueryFailed(
+  query: Pick<UseQueryResult, "isError" | "data" | "errorUpdateCount">,
+): boolean {
+  return (
+    query.isError || (query.data === undefined && query.errorUpdateCount > 0)
+  );
+}
+
+/** 骨架屏只给「第一次加载、还没失败过」——后台轮询时保留当前内容或错误提示。 */
+export function railQueryLoading(
+  query: Pick<
+    UseQueryResult,
+    "isError" | "isPending" | "data" | "errorUpdateCount"
+  >,
+): boolean {
+  return query.isPending && !railQueryFailed(query);
+}
+
+/** 409（已在别处处理）/ 404（已不存在）：这张卡片已过期，要立刻刷新，不等 5 秒轮询。 */
+export function isStaleActionError(err: unknown): boolean {
+  return (
+    err instanceof ClientError && (err.status === 409 || err.status === 404)
+  );
+}
+
+/** 先从缓存里拿掉这条确认请求，让卡片马上消失；随后的刷新再以服务端为准。 */
+function dropStaleDecision(queryClient: QueryClient, decisionId: string) {
+  queryClient.setQueryData<TaskCenterSnapshot>(
+    taskCenterKeys.snapshot,
+    (prev) =>
+      prev
+        ? {
+            ...prev,
+            outbox: prev.outbox.filter((item) => item.id !== decisionId),
+          }
+        : prev,
   );
 }
 
@@ -360,16 +422,28 @@ function CardMeta({ at, children }: { at: string; children?: ReactNode }) {
 function RailDecisionItem({
   decision,
   onChanged,
+  onStale,
 }: {
   decision: TaskCenterDecision;
   onChanged: () => void;
+  onStale: () => void;
 }) {
   const decide = useMutation({
     mutationFn: (approved: boolean) =>
       taskCenterApi.decide(decision.id, approved),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        // 别处已经处理过：卡片立刻拿掉并刷新，提示用中性语气，不当成失败。
+        onStale();
+        onChanged();
+        toast.info(
+          err instanceof Error ? err.message : "这条确认请求已经处理。",
+        );
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "操作失败");
+    },
   });
 
   return (
@@ -435,6 +509,7 @@ function RailWorkflowRunItem({
   const activeStep = run.steps.find(
     (s) => s.status === "running" || s.status === "waiting_approval",
   );
+  const description = workflowRunDescription(run, doneSteps, activeStep);
   const percent =
     totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
   const kind: StatusKind =
@@ -450,8 +525,14 @@ function RailWorkflowRunItem({
       decision: "approve" | "reject";
     }) => workflowsApi.approve(run.id, stepId, decision),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "审批操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        onChanged();
+        toast.info(err instanceof Error ? err.message : "这一步已经处理过了。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "审批操作失败");
+    },
   });
 
   return (
@@ -469,20 +550,17 @@ function RailWorkflowRunItem({
           <CardStatus kind={kind}>{RUN_STATUS_LABEL[run.status]}</CardStatus>
         </div>
         <h4 className="task-rail-title">{`${run.icon ? `${run.icon} ` : ""}${run.workflowName}`}</h4>
-        <p className="task-rail-description">
-          {activeStep
-            ? `当前：${activeStep.name}`
-            : run.status === "queued"
-              ? "等待工作流开始"
-              : "准备执行步骤…"}
-        </p>
-        <div className="task-rail-progress-label">
+        <p className="task-rail-description">{description}</p>
+        {/* 链接的可读名称只念一句「已完成 2/5 步」；可见的标签行和进度条是同一件事的图示，读屏跳过。 */}
+        <span className="sr-only">{`已完成 ${doneSteps}/${totalSteps} 步`}</span>
+        <div aria-hidden className="task-rail-progress-label">
           <span>{"步骤进度"}</span>
           <span>{`${doneSteps}/${totalSteps} 步`}</span>
         </div>
         <progress
+          aria-hidden
           className="task-rail-progress"
-          aria-label={`${run.workflowName} · 步骤进度 ${doneSteps}/${totalSteps}`}
+          data-progress={`${doneSteps}/${totalSteps}`}
           max={100}
           value={percent}
         />
@@ -521,6 +599,32 @@ function RailWorkflowRunItem({
   );
 }
 
+const FINISHED_STEP_STATUSES: readonly WorkflowStepStatus[] = [
+  "succeeded",
+  "skipped",
+  "failed",
+  "cancelled",
+];
+
+/** 工作流卡片的一句话说明：正在做哪一步 / 还没开始 / 步骤都结束了在收尾 / 还没排出步骤。 */
+export function workflowRunDescription(
+  run: Pick<WorkflowRunView, "status" | "steps">,
+  doneSteps: number,
+  activeStep?: { name: string },
+): string {
+  if (activeStep) return `当前：${activeStep.name}`;
+  if (run.status === "queued") return "等待工作流开始";
+  const total = run.steps.length;
+  if (total > 0 && doneSteps === total) return "步骤已全部完成，正在收尾…";
+  if (
+    total > 0 &&
+    run.steps.every((step) => FINISHED_STEP_STATUSES.includes(step.status))
+  ) {
+    return "步骤已结束，正在收尾…";
+  }
+  return "准备执行步骤…";
+}
+
 function RailTaskItem({
   task,
   onChanged,
@@ -534,8 +638,14 @@ function RailTaskItem({
     mutationFn: (action: "pause" | "resume") =>
       taskCenterApi.controlTask(task.id, action),
     onSuccess: onChanged,
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "操作失败"),
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        onChanged();
+        toast.info(err instanceof Error ? err.message : "任务状态已经变化。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "操作失败");
+    },
   });
 
   const isRunning = task.status === "running" || task.status === "planning";
