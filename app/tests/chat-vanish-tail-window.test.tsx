@@ -348,3 +348,41 @@ test("the earlier-history button appears in the same commit as visible rows", ()
   expect(visibleRows(container).length).toBeGreaterThan(0);
   expect(container.querySelector(".chat-history-more")).not.toBeNull();
 });
+
+test("a stopped tool turn keeps its 已停止 mark after reopening, even though its last row is a hidden tool", () => {
+  // QA #519 r3：隐藏的过程行不进 DOM 以后，挂在最后一个工具行上的「◼ 已停止」跟着没了，
+  // 停下的一轮刷新后只剩人那条消息。用户停止也不算进行中：没有干活卡。
+  const messages = [...history(2), ...deviceTurn(8)];
+  const { container } = render(
+    wrap(
+      <ChatTranscript
+        messages={messages}
+        scrollKey="stopped-hidden-tail"
+        stoppedTurns={new Set(["d-ask"])}
+      />,
+    ),
+  );
+  expect(container.textContent).toContain(ASK);
+  expect(
+    container.querySelector('[data-testid="turn-stopped"]'),
+  ).not.toBeNull();
+  expect(container.querySelector('[data-testid="chat-work-card"]')).toBeNull();
+  expect(container.textContent).not.toContain("这一轮没有回答");
+});
+
+test("a stopped long tool turn past the cap still shows its 已停止 mark", () => {
+  const messages = [...history(40), ...deviceTurn(TAIL_FIRST_CAP + 30)];
+  const { container } = render(
+    wrap(
+      <ChatTranscript
+        messages={messages}
+        scrollKey="stopped-hidden-tail-long"
+        stoppedTurns={new Set(["d-ask"])}
+      />,
+    ),
+  );
+  expect(
+    container.querySelector('[data-testid="turn-stopped"]'),
+  ).not.toBeNull();
+  expect(container.querySelector('[data-testid="chat-work-card"]')).toBeNull();
+});

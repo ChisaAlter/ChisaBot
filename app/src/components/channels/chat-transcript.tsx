@@ -192,7 +192,7 @@ import { ToolLine } from "./tool-line";
 type ChatTranscriptProps = {
   busy?: boolean;
   /**
-   * 服务端说这一段对话还在跑（inbox running、等待审批而暂停等）。
+   * 服务端说这一段对话还在跑（inbox running；用户停止 / 停滞留下的 paused 不算，等审批另看审批收件箱）。
    * 打开一段正在进行的对话时，历史往往先到、`busy` 后变 true：若只靠 busy 和列表形状，
    * 会把这一轮当成已结束，首帧挂「这一轮没有回答 / 重试」，要等下一条事件才出干活卡
    * （QA #519 P2-2）。服务端说还在跑时，首帧就按进行中画，绝不挂「没有回答」。
@@ -3278,7 +3278,7 @@ export function unansweredTurn(
 }
 
 /**
- * 这一轮是不是还在进行。`threadLive` 来自服务端（running / 等待审批）；
+ * 这一轮是不是还在进行。`threadLive` 来自服务端（running）或正在等人审批 / 确认；
  * 没有它时仍用 §68.4：busy 之后列表还没变，不算正在跑（避免发送键刚亮、人那条还没进列表时，
  * 上一轮已完成的结果气泡被当成进行中）。
  */
@@ -3610,7 +3610,16 @@ export function ChatTranscript({
    */
   const rowShows = (index: number): boolean => {
     const item = items[index];
-    if (!item || rowHidden(item.id)) return false;
+    if (!item) return false;
+    // 挂着「已停止」/ 备用说明 / 「这一轮没有回答」的行：标记跟着它画（rowsFor），它本身看不见也得挂上，
+    // 不然用户停止的一轮刷新后只剩人那条消息，「◼ 已停止」跟着隐藏的工具行一起没了（QA #519 r3 自测）。
+    if (
+      compact.stoppedAfter.has(item.id) ||
+      compact.fallbackAfter.has(item.id) ||
+      compact.noAnswerAfter.has(item.id)
+    )
+      return true;
+    if (rowHidden(item.id)) return false;
     if (item.kind === "text" || item.kind === "attachments") return true;
     if (showToolActivity) return true;
     if (compact.work.has(item.id) && !quietWorkOnly.has(item.id)) return true;

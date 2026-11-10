@@ -104,6 +104,7 @@ import {
   withStoredTail,
 } from "@/lib/conversations/thread-activity";
 import {
+  inboxLive,
   inboxState,
   queuedFor,
   queueMessage,
@@ -487,7 +488,7 @@ export function ChannelChat({
   );
   const [early, setEarly] = useState<readonly Message[] | null>(null);
   /**
-   * 服务端说这一段还在跑 / 等审批（QA #519 P2-2）。和读历史同时发起，好让 transcript
+   * 服务端说这一段还在跑（inbox running，QA #519 P2-2；用户停止 / 停滞后的 paused 不算，见 inboxLive）。和读历史同时发起，好让 transcript
    * 在接入结束、`busy` 变 true 之前就能按进行中画，而不是先挂「没有回答」。
    */
   const [threadLive, setThreadLive] = useState(false);
@@ -538,7 +539,7 @@ export function ChannelChat({
     setThreadLive(false);
     let alive = true;
     const apply = (state: { running: boolean; paused?: boolean } | null) => {
-      if (alive) setThreadLive(Boolean(state?.running || state?.paused));
+      if (alive) setThreadLive(inboxLive(state));
     };
     const pending = earlyInbox.current;
     earlyInbox.current = null;
@@ -762,7 +763,8 @@ export function ChannelChat({
    * 补上这台没收到的、把截断的半截换成完整的。
    */
   const activity = useThreadActivity(runtimeAgentId, channel.threadId);
-  // 变化戳带 running：还在跑就立刻标 live；停了再读一次收件箱（等待审批是 paused，戳上没有）。
+  // 变化戳带 running：还在跑就立刻标 live；停了再读一次收件箱。只认 running（inboxLive）：paused 是用户停止 /
+  // 出错 / 停滞后留住补充消息，不是进行中；等审批由 transcript 看审批收件箱。
   useEffect(() => {
     let alive = true;
     const off = activity.onActivity((value) => {
@@ -771,7 +773,7 @@ export function ChannelChat({
       else
         void inboxState(channel.threadId)
           .then((state) => {
-            if (alive) setThreadLive(Boolean(state?.running || state?.paused));
+            if (alive) setThreadLive(inboxLive(state));
           })
           .catch(() => {
             if (alive) setThreadLive(false);
