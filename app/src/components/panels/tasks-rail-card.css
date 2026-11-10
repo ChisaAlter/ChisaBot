@@ -4,6 +4,7 @@
 .rail-sheet[data-slot="sheet-content"]:has(
   .rail-pane[data-active="true"] .task-rail
 ) {
+  /* biome-ignore lint/complexity/noImportantStyles: 覆盖 styles.css 里 .rail-sheet 的玻璃底（本身也是 !important），任务抽屉要用不透明实底挡住背后聊天正文。 */
   background: var(--glass-bg-solid) !important;
 }
 .task-rail {
