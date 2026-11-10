@@ -944,6 +944,140 @@ describe("QA514 samples", () => {
       kind: "keep",
       text: "page=2&lang=zh&sort=asc",
     },
+    // QA514 r4
+    {
+      id: "dq-double-sev",
+      kind: "secret",
+      text: '[Environment]::SetEnvironmentVariable("DB_PASSWORD","pa""ssFAKEr4e04","User")',
+      secrets: ["ssFAKEr4e04"],
+      keep: ['"User"'],
+    },
+    {
+      id: "dq-double-env",
+      kind: "secret",
+      text: '$env:DB_PASSWORD = "pa""ssFAKEr4e05"; node x',
+      secrets: ["ssFAKEr4e05"],
+      keep: ["node x"],
+    },
+    {
+      id: "dq-double-shell",
+      kind: "secret",
+      text: 'DB_PASSWORD="pa""ssFAKEr4e06" node x',
+      secrets: ["ssFAKEr4e06"],
+      keep: ["node x"],
+    },
+    {
+      id: "pipe-setcontent",
+      kind: "secret",
+      text: "'FAKEr4b01' | Set-Content Env:API_KEY",
+      secrets: ["FAKEr4b01"],
+      keep: ["| Set-Content Env:API_KEY"],
+    },
+    {
+      id: "pipe-setitem-dq",
+      kind: "secret",
+      text: 'echo ok; "FAKEr4b01b" | Set-Item -Path Env:\\X_TOKEN',
+      secrets: ["FAKEr4b01b"],
+      keep: ["echo ok"],
+    },
+    {
+      id: "addcontent",
+      kind: "secret",
+      text: "Add-Content Env:API_KEY 'FAKEr4b02'",
+      secrets: ["FAKEr4b02"],
+      keep: ["Add-Content Env:API_KEY"],
+    },
+    {
+      id: "ac-alias",
+      kind: "secret",
+      text: "ac env:DB_PASSWORD FAKEr4b02b",
+      secrets: ["FAKEr4b02b"],
+    },
+    {
+      id: "value-paren",
+      kind: "secret",
+      text: 'Set-Item -Path Env:API_KEY -Value ("FAKEr4b03")',
+      secrets: ["FAKEr4b03"],
+      keep: ["-Value"],
+    },
+    {
+      id: "value-paren-concat",
+      kind: "secret",
+      text: 'Set-Item -Path Env:API_KEY -Value ("a" + "FAKEr4b03b")',
+      secrets: ["FAKEr4b03b"],
+    },
+    {
+      id: "setx-exe",
+      kind: "secret",
+      text: "setx.exe API_KEY FAKEr4c09",
+      secrets: ["FAKEr4c09"],
+      keep: ["setx.exe API_KEY"],
+    },
+    {
+      id: "setx-exe-path",
+      kind: "secret",
+      text: "C:\\Windows\\System32\\setx.exe /M API_KEY FAKEr4c10",
+      secrets: ["FAKEr4c10"],
+    },
+    {
+      id: "key-file-content",
+      kind: "secret",
+      text: "KEY_FILE_CONTENT=FAKEr4f13 SSH_KEY_PATH_DATA=FAKEr4f13b node x",
+      secrets: ["FAKEr4f13", "FAKEr4f13b"],
+      keep: ["node x"],
+    },
+    {
+      id: "api-keys-plural",
+      kind: "secret",
+      text: "API_KEYS=FAKEr4f11,FAKEr4f12 OPENAI_KEYS=FAKEr4f12b node x",
+      secrets: ["FAKEr4f11", "FAKEr4f12", "FAKEr4f12b"],
+      keep: ["node x"],
+    },
+    {
+      id: "env-braced",
+      kind: "secret",
+      text: "\u0024{env:API_KEY} = 'FAKEr4g01'; node x",
+      secrets: ["FAKEr4g01"],
+      keep: ["\u0024{env:API_KEY}", "node x"],
+    },
+    {
+      id: "set-variable",
+      kind: "secret",
+      text: "Set-Variable -Name API_KEY -Value 'FAKEr4g02'",
+      secrets: ["FAKEr4g02"],
+      keep: ["-Name API_KEY"],
+    },
+    {
+      id: "set-variable-positional",
+      kind: "secret",
+      text: 'sv DB_PASSWORD "FAKEr4g03"',
+      secrets: ["FAKEr4g03"],
+    },
+    {
+      id: "pipe-from-file",
+      kind: "keep",
+      text: "Get-Content k.txt | Set-Content Env:API_KEY",
+    },
+    {
+      id: "pipe-variable",
+      kind: "keep",
+      text: "$v | Set-Content Env:API_KEY",
+    },
+    {
+      id: "value-paren-variable",
+      kind: "keep",
+      text: "Set-Item -Path Env:API_KEY -Value ($key)",
+    },
+    {
+      id: "set-variable-nonsensitive",
+      kind: "keep",
+      text: "Set-Variable -Name Path -Value x",
+    },
+    {
+      id: "names-not-keys",
+      kind: "keep",
+      text: "MONKEY=m KEYBOARD=us KMS_KEY_ID=k MY_KEY_ID=abc TURKEY=t node x",
+    },
     // 权衡：| 两侧无空格时，下一命令名会被吞进值一并打码（偏安全）。有空格的 "| grep" 仍保留。
     {
       id: "nospace-pipe-cmd",
@@ -1081,5 +1215,33 @@ describe("QA514 r3 pathological input stays fast", () => {
     const started = performance.now();
     for (const input of inputs) redactText(input);
     expect(performance.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe("QA514 r4 linear time on 100KB input", () => {
+  const size = 100_000;
+  const inputs: Record<string, string> = {
+    'escaped quotes \\"': `echo "${'\\"'.repeat(size / 2)}`,
+    "escaped quotes after a name": `API_KEY="${'\\"'.repeat(size / 2)}`,
+    "bare escaped quotes": '\\"'.repeat(size / 2),
+    "doubled quotes": `DB_PASSWORD="${'""'.repeat(size / 2)}`,
+    "non-sensitive assignments": "a=".repeat(size / 2),
+    "yaml-like colons": "a:".repeat(size / 2),
+    "repeated Set-Item": "Set-Item Env:API_KEY ".repeat(size / 21),
+    "repeated pipes": '"x" | '.repeat(size / 6),
+    "repeated setx.exe": "setx.exe ".repeat(size / 9),
+    "long sensitive value": `API_KEY=${"x".repeat(size)}`,
+  };
+  for (const [name, input] of Object.entries(inputs)) {
+    test(`${name} stays under 1s`, () => {
+      const started = performance.now();
+      const out = redactText(input);
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(typeof out).toBe("string");
+    });
+  }
+  test("a long value is still masked, not skipped", () => {
+    const out = redactText(`API_KEY=${"FAKElong".repeat(size / 8)} node x`);
+    expect(out).toBe("API_KEY=•••• node x");
   });
 });
