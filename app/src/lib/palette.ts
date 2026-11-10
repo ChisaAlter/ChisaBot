@@ -6,8 +6,6 @@
  * 就是用户选的配色，而不是默认蓝天。lib/appearance.ts 照旧 re-export 这里的名字。
  */
 
-import { THEME_STORAGE_KEY } from "./theme";
-
 export type ThemePaletteId =
   | "default"
   | "aurora"
@@ -256,12 +254,11 @@ export const LEGACY_DEFAULT_GLASS_STYLE = "liquid";
 /**
  * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
  * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
- * 含 `chisabot-theme`（深浅主题，{@link THEME_STORAGE_KEY}）以及 appearance.ts 里其余外观键
- * （tests/default-mist-glass.test.tsx 核对）。写在这里而不是 appearance.ts：启动脚本要内联这份列表，
- * palette.ts 是不依赖 DOM 的纯模块。
+ * 不含 `chisabot-theme`：ThemeProvider 挂载时会自动写入，分不出用户有没有主动选过。
+ * 其余键与 appearance.ts 的同名常量对应（tests/default-mist-glass.test.tsx 核对）。
+ * 写在这里而不是 appearance.ts：启动脚本要内联这份列表，palette.ts 是不依赖 DOM 的纯模块。
  */
 export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
-  THEME_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   "chisabot-wallpaper-id",
   "chisabot-wallpaper-custom-url",
@@ -273,8 +270,9 @@ export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
 ];
 
 /**
- * 没存材质时用哪种：存过任何其他外观设置（含只切过深浅主题） → 旧默认 liquid（「已保存过外观的用户不受影响」）；
- * 什么都没存过 → mist。get 读不到（隐私模式抛错）按没存过处理。
+ * 没存材质时用哪种：存过任何其他外观设置（不含会自动写入的深浅主题） → 旧默认 liquid；
+ * 什么都没存过（或只有自动写入的 chisabot-theme） → mist。get 读不到（隐私模式抛错）按没存过处理。
+ * 判定结果由调用方立刻写入 glass-style，避免随后自动写入的主题键在下次加载时改口径。
  */
 export function fallbackGlassStyle(
   get: (key: string) => string | null,
@@ -293,7 +291,7 @@ export function fallbackGlassStyle(
  * index.html 的启动脚本（vite.config.ts 的 chisabot-sky-boot 插件塞在 <body> 第一行、时段天空之后）：
  * - 用户选了非默认配色：在 <html> 上写 data-palette，body 上写和应用一样的 --sky-0..3 / --sky-glow，
  *   启动骨架（骨架读 --sky-1..4）直接是这套配色；
- * - 写 data-glass（没存材质时按 {@link fallbackGlassStyle} 的同一条规则），应用挂载时不用再改一次根属性；
+ * - 写 data-glass（没存材质时按 {@link fallbackGlassStyle} 的同一条规则，并把结果写入 glass-style），应用挂载时不用再改一次根属性；
  * - meta theme-color 按应用自己的深浅色 + 配色写好。
  * 配色表在构建时算好内联（非 default 各 2 个小对象），运行时不用再算。
  */
@@ -318,5 +316,5 @@ export function paletteBootScript(): string {
       td: paletteThemeColor(p.id, true),
     };
   }
-  return `(function(){try{var d=document.documentElement,s=window.localStorage,M=${JSON.stringify(map)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},p=s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)}),g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c=k?${JSON.stringify(DEFAULT_THEME_COLOR.dark)}:${JSON.stringify(DEFAULT_THEME_COLOR.light)},v,i,m;if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}}d.setAttribute("data-glass",g);if(p&&M[p]){d.setAttribute("data-palette",p);v=M[p][k?"d":"l"];for(i in v)document.body.style.setProperty(i,v[i]);c=M[p][k?"td":"tl"]}m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c)}catch(e){}})();`;
+  return `(function(){try{var d=document.documentElement,s=window.localStorage,M=${JSON.stringify(map)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},p=s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)}),g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c=k?${JSON.stringify(DEFAULT_THEME_COLOR.dark)}:${JSON.stringify(DEFAULT_THEME_COLOR.light)},v,i,m;if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);if(p&&M[p]){d.setAttribute("data-palette",p);v=M[p][k?"d":"l"];for(i in v)document.body.style.setProperty(i,v[i]);c=M[p][k?"td":"tl"]}m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c)}catch(e){}})();`;
 }

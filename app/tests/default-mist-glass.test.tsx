@@ -104,10 +104,9 @@ function bootGlass(): string | null {
 }
 
 describe("existing users keep the old default (liquid)", () => {
-  test("the prior-appearance key list is the light/dark theme plus every appearance key except the glass style", () => {
+  test("the prior-appearance key list is every appearance key except the glass style and the auto-written theme", () => {
     expect([...PRIOR_APPEARANCE_STORAGE_KEYS].sort()).toEqual(
       [
-        THEME_STORAGE_KEY,
         PALETTE_STORAGE_KEY,
         WALLPAPER_ID_STORAGE_KEY,
         WALLPAPER_CUSTOM_URL_STORAGE_KEY,
@@ -118,32 +117,79 @@ describe("existing users keep the old default (liquid)", () => {
         HARK_SCENE_STORAGE_KEY,
       ].sort(),
     );
+    expect(PRIOR_APPEARANCE_STORAGE_KEYS).not.toContain(THEME_STORAGE_KEY);
     expect(DEFAULT_GLASS_STYLE).toBe("mist");
     expect(LEGACY_DEFAULT_GLASS_STYLE).toBe("liquid");
   });
 
   for (const key of PRIOR_APPEARANCE_STORAGE_KEYS) {
     test(`only ${key} saved (no glass style) → liquid, in the app and in the boot script`, () => {
+      window.localStorage.clear();
       window.localStorage.setItem(key, key.includes("opacity") ? "21" : "x");
       reloadAppearanceFromStorage();
       expect(getAppearanceState().glassStyle).toBe("liquid");
+      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe(
+        "liquid",
+      );
       expect(bootGlass()).toBe("liquid");
     });
   }
 
-  test("only a light/dark theme toggle saved (no glass style) → liquid, in the app and in the boot script", () => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+  test("only an auto-written light/dark theme (no glass style) → mist, then stays mist after reload", () => {
+    for (const theme of ["dark", "light"]) {
+      window.localStorage.clear();
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassStyle).toBe("mist");
+      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("mist");
+      expect(bootGlass()).toBe("mist");
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassStyle).toBe("mist");
+      expect(bootGlass()).toBe("mist");
+    }
+  });
+
+  test("a new user stays mist across three loads, even after the theme key is auto-written", () => {
+    for (const load of [1, 2, 3]) {
+      if (load === 2) {
+        // 模拟 ThemeProvider 挂载时自动写入 chisabot-theme。
+        window.localStorage.setItem(THEME_STORAGE_KEY, "light");
+      }
+      expect(bootGlass()).toBe("mist");
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassStyle).toBe("mist");
+      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("mist");
+    }
+  });
+
+  test("a prior appearance key (no glass style) → liquid, persisted, and kept after reload", () => {
+    window.localStorage.clear();
+    window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
+    expect(bootGlass()).toBe("liquid");
+    expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("liquid");
     reloadAppearanceFromStorage();
     expect(getAppearanceState().glassStyle).toBe("liquid");
-    expect(bootGlass()).toBe("liquid");
-    window.localStorage.clear();
     window.localStorage.setItem(THEME_STORAGE_KEY, "light");
     reloadAppearanceFromStorage();
     expect(getAppearanceState().glassStyle).toBe("liquid");
     expect(bootGlass()).toBe("liquid");
   });
 
+  test("an already stored glass style is left alone (mist / crystal / liquid)", () => {
+    for (const style of ["mist", "crystal", "liquid"] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
+      window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+      window.localStorage.setItem(GLASS_STYLE_STORAGE_KEY, style);
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassStyle).toBe(style);
+      expect(bootGlass()).toBe(style);
+      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe(style);
+    }
+  });
+
   test("only the haze slider saved: keeps liquid and the saved haze (QA U sliderOnly)", () => {
+    window.localStorage.clear();
     window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "21");
     reloadAppearanceFromStorage();
     expect(getAppearanceState().glassStyle).toBe("liquid");
@@ -174,6 +220,7 @@ describe("existing users keep the old default (liquid)", () => {
   });
 
   test("an old (liquid) user who saves another setting stays liquid; reset still goes to mist", () => {
+    window.localStorage.clear();
     window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
     reloadAppearanceFromStorage();
     setGlassOpacity(30);

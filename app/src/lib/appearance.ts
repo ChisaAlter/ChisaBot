@@ -510,6 +510,13 @@ function readStoredNumber(key: string): number {
   return Number(raw);
 }
 
+function resolveStoredGlassStyle(rawGlass: GlassStyleId | null): GlassStyleId {
+  if (rawGlass && VALID_GLASS_STYLES.has(rawGlass)) return rawGlass;
+  const glass = fallbackGlassStyle(readStoredPreference);
+  writeStoredPreference(GLASS_STYLE_STORAGE_KEY, glass);
+  return glass;
+}
+
 function readInitialAppearance(): AppearanceState {
   const rawPalette = readStoredPreference(
     PALETTE_STORAGE_KEY,
@@ -548,11 +555,9 @@ function readInitialAppearance(): AppearanceState {
   return {
     palette:
       rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
-    // 没存材质：存过任何其他外观设置（含只切过深浅主题）的老用户沿用旧默认 liquid，从没存过的新用户才用 mist。
-    glassStyle:
-      rawGlass && VALID_GLASS_STYLES.has(rawGlass)
-        ? rawGlass
-        : fallbackGlassStyle(readStoredPreference),
+    // 没存材质：按 fallbackGlassStyle 判定一次（不含会自动写入的深浅主题），并立刻写入
+    // glass-style，这样 ThemeProvider 随后写入 chisabot-theme 也不会在下次加载时改口径。
+    glassStyle: resolveStoredGlassStyle(rawGlass),
     glassOpacity,
     // 深色档没存过（或为空）就用浅色档的值，老用户拖过的滑块在深色下照旧生效。
     glassOpacityDark: clampNumber(
