@@ -139,7 +139,19 @@ async function until<T>(
 
     beforeAll(async () => {
       database = createDatabase(address!, { max: 6 });
-      cleanups.push(() => database.$client.close());
+      cleanups.push(async () => {
+        // Direct adapter reattachment is intentionally outside backend.runner, so it can leave
+        // a projecting journal row. Remove this suite's rows after its Hosts have stopped;
+        // later recovery suites must not try to rebuild these fixture agents.
+        try {
+          await database.$client.unsafe(
+            "DELETE FROM chisabot_dsh_runs WHERE owner_user_id IN ($1,$2)",
+            [actor, publisher],
+          );
+        } finally {
+          await database.$client.close();
+        }
+      });
       backend = await createLocalConversations(database);
       confirmations = createConfirmations(database);
       await confirmations.ensure();

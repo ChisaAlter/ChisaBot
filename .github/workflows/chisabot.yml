@@ -238,7 +238,8 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:18-bookworm
+        # Full product migrations require vector; match production's PostgreSQL 16 + pgvector.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
