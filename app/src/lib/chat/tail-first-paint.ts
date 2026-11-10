@@ -122,3 +122,77 @@ export function stepsToFullMount(total: number): number {
   }
   return steps;
 }
+
+/**
+ * 尾窗按「看得见的行」计数（聊天记录消失，2026-11-10）。
+ *
+ * 过程行（设备工具、浏览步骤）默认不画，整格 `display: none`（见 HIDDEN_ACTIVITY_ROW）。以前窗口按条数数：
+ * 一轮里调了几十次工具，尾巴 36 条、补到 96 条全是看不见的行，打开对话就是一片空白，内容不够高也滚不动，
+ * 上面的历史补不出来。现在窗口的单位是「格」：看得见的一行算一格，看不见的行按 HIDDEN_ROW_WEIGHT 折算
+ * （它们照样挂上——审批卡这类异步出现的东西由 CSS 自己露出来——只是便宜得多，实测挂一行约是正文的 1/7）。
+ * 折算而不是算 0：一段几千次工具调用、几乎没有字的对话不会因此一次挂上几千行。
+ */
+export const HIDDEN_ROW_WEIGHT = 1 / 8;
+
+/**
+ * 每一格从哪一条开始（整段列表里的下标，升序）。从末尾往前累加权重，满一格记一次当前下标；
+ * 看得见的行权重是 1，所以每个看得见的行都正好是某一格的起点，最上面不足一格的只可能是看不见的行。
+ */
+export function windowMarks(
+  total: number,
+  isVisible: (index: number) => boolean,
+): number[] {
+  const marks: number[] = [];
+  let acc = 0;
+  for (let i = Math.max(0, Math.floor(total)) - 1; i >= 0; i--) {
+    acc += isVisible(i) ? 1 : HIDDEN_ROW_WEIGHT;
+    if (acc >= 1 - 1e-9) {
+      marks.push(i);
+      acc = Math.max(0, acc - 1);
+    }
+  }
+  return marks.reverse();
+}
+
+/**
+ * 挂 `mounted` 格时的起点（整段列表里的下标）。`marks` 来自 windowMarks。
+ * `pin`：这个下标往后的必须挂上（正在进行的这一轮：人发的那条 → 干活提示所在的行）。
+ */
+export function visibleWindowStart(
+  total: number,
+  marks: readonly number[],
+  mounted: number,
+  pin?: number,
+): number {
+  const n = Math.max(0, Math.floor(total));
+  const m = Math.max(0, Math.floor(mounted));
+  const start =
+    m >= marks.length ? 0 : m <= 0 ? n : (marks[marks.length - m] ?? 0);
+  if (pin === undefined || pin < 0) return start;
+  return Math.max(0, Math.min(start, pin));
+}
+
+/**
+ * 默认藏起来的过程行（和 styles.css 里那条规则同一个选择器）：工具 / 浏览那一格里只剩空 div、没有带 role 的元素。
+ * 尾窗用它在 DOM 上兜底判断「挂着的行里一行看得见的都没有」。
+ */
+export const HIDDEN_ACTIVITY_ROW =
+  '[data-row="activity"]:not(:has(:not(div))):not(:has([role]))';
+
+/** 挂着的消息行里有没有看得见的（不是收起的过程行、不是 `data-folded` 的 0 高行）。选择器不支持 `:has` 时当看得见（那时规则本身也不生效）。 */
+export function hasVisibleRow(root: ParentNode | null | undefined): boolean {
+  if (!root) return true;
+  const rows = root.querySelectorAll<HTMLElement>(
+    '[data-slot="message-scroller-item"]',
+  );
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (!row || row.hasAttribute("data-folded")) continue;
+    try {
+      if (!row.matches(HIDDEN_ACTIVITY_ROW)) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}

@@ -816,7 +816,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 用户：「AI 输出的时候有时候会跳到聊天记录上面」。
 
 - **历史根因（2026-10-13）**：CopilotKit 1.77 的消息列表超过 50 条就虚拟化（`@tanstack/react-virtual`），没量过的行按「已量过行的平均高度」估。行数一变（发消息、回复开始、出现思考 / 工具步骤）就把几十行没量过的行按新平均值重估，长回复把平均值拉高 → 视口上方凭空多出几千像素，scrollTop 不变，眼前换成更早的记录，贴底动画再把它拖回来。实测 64 条历史：发送那一帧 scrollHeight +2958px，视口顶上从第 63 条退到第 61 条。
-- **当前实现**：频道 `ChatTranscript` 默认采用尾屏优先挂载（`lib/chat/tail-first-paint.ts`、`use-tail-first-mount.ts`）：超过 48 条先挂最后 36 条，再分批补到 96 条；继续上翻或恢复较早锚点时补更多历史。已挂消息保持稳定 key，追加与回放不拆掉已有节点。可选虚拟模式由 `useVirtualTranscript` 控制，启用时同样必须满足本节的滚动与节点稳定验收。
+- **当前实现**：频道 `ChatTranscript` 默认采用尾屏优先挂载（`lib/chat/tail-first-paint.ts`、`use-tail-first-mount.ts`）：超过 48 条先挂最后 36 条，再分批补到 96 条；继续上翻或恢复较早锚点时补更多历史。**窗口按看得见的行计数**（2026-11-10，聊天记录「消失」）：默认藏起来的过程行（设备工具、浏览步骤，整格 `display:none`）不占名额，只按 `HIDDEN_ROW_WEIGHT = 1/8` 折算（照样挂上，审批卡等异步出现时由 CSS 露出来）；正在进行的这一轮从开头那条到干活卡所在的行一定挂上；干活卡那一行没挂上 / 没画出来时干活提示画在末尾；挂着的行一行都看不见、上面还有历史时继续补，不受 96 的封顶限制；上面还有历史时列表顶上一直有「显示更早的消息」（内容不够一屏高、滚不动时也能补）。回归见 `app/tests/chat-vanish-tail-window.test.tsx`。已挂消息保持稳定 key，追加与回放不拆掉已有节点。可选虚拟模式由 `useVirtualTranscript` 控制，启用时同样必须满足本节的滚动与节点稳定验收。
 - **历史性能记录（2026-10-13）**：当时用 `content-visibility: auto` 跳过屏幕外旧消息的样式 / 布局 / 绘制，`contain-intrinsic-size: auto 240px` 保留量过的行高。110+ 条消息、4× CPU 下测得流式 36fps、单个长任务 ≤ 206ms；只全挂载时是 18fps、长任务累计 11.5s。当前已移除这条消息行优化，采用上述分批挂载；这些数字只描述当时的候选。
 - **贴底**：在底部时整轮流式都贴着底部（`use-stick-to-bottom`，平滑跟随）；用户往上滚（滚轮 / 触摸）就脱离，不被拽回，右下「↓」回到底部。消息末尾的预览卡、图片一摞在回复结束后出现时，贴底状态下平滑跟随下去。
 - **验证**：`tests/chat-scroll/repro.mjs`（假模型 + 60+ 条历史，逐帧记录 scrollTop / 视口里最早一条消息）——贴底时「视口出现更早记录」的帧数必须是 0，上滑后位置不变；桌面 1280×800、手机 390×844、4× CPU 都要过。当前定向回归见 `app/tests/tail-first-paint.test.ts`、`app/tests/tail-first-mount.test.tsx` 与 `app/tests/message-node-identity.test.tsx`。

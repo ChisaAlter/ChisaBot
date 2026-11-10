@@ -8,12 +8,14 @@ import {
 } from "react";
 import {
   catchUpTarget,
+  hasVisibleRow,
   initialMountedCount,
   MOUNT_ALL_HISTORY_EVENT,
   mountStartIndex,
   nextMountedCount,
   reconcileMountedCount,
   TAIL_BACKFILL_ATTR,
+  visibleWindowStart,
 } from "@/lib/chat/tail-first-paint";
 
 /** 浏览器原生滚动锚定（Chrome / Edge / Firefox）。Safari 没有，走 JS 兜底。 */
@@ -54,7 +56,19 @@ export function useTailFirstMount(
   viewport: RefObject<HTMLElement | null>,
   /** Same first row means new rows were appended, rather than older history prepended. */
   firstId?: string,
-  options?: { uncapped?: boolean },
+  options?: {
+    uncapped?: boolean;
+    /**
+     * 按看得见的行计数（聊天记录消失，2026-11-10）：`marks` 来自 windowMarks（每一格的起点），`total` 传
+     * `marks.length`，`itemCount` 是整段列表的条数。返回的 `startIndex` 是整段列表里的下标。
+     */
+    marks?: readonly number[];
+    itemCount?: number;
+    /** 最上面那个看得见的条目的下标：起点在它后面才算「上面还有历史」。 */
+    firstVisible?: number;
+    /** 这个下标（整段列表里）往后的一定挂上：正在进行的这一轮，从人发的那条到干活提示所在的行。 */
+    pin?: number;
+  },
 ): {
   startIndex: number;
   /** 还在往目标条数补（封顶之内）。 */
@@ -113,8 +127,26 @@ export function useTailFirstMount(
     keyRef.current !== scrollKey
       ? initialMountedCount(total)
       : reconcileMountedCount(totalRef.current, total, mounted, appended);
-  const startIndex = mountStartIndex(total, renderedMounted);
+  const marks = options?.marks;
+  const pin = options?.pin;
+  const startIndex = marks
+    ? visibleWindowStart(
+        options?.itemCount ?? total,
+        marks,
+        renderedMounted,
+        pin,
+      )
+    : Math.min(
+        mountStartIndex(total, renderedMounted),
+        pin === undefined || pin < 0 ? total : pin,
+      );
   const target = catchUpTarget(total, full);
+  /** 上面还有看得见的历史没挂（按看得见的行计数时，最上面那些看不见的行不算）。 */
+  const truncated = marks
+    ? startIndex >
+      (options?.firstVisible ?? marks[0] ?? Number.POSITIVE_INFINITY)
+    : startIndex > 0;
+  const pending = renderedMounted < target;
 
   /** 在改窗口之前调：只有「上滑 + 没有原生锚定」才量一次高度，其余情况零布局读取。 */
   const measureBeforeGrow = useCallback(() => {
@@ -166,6 +198,18 @@ export function useTailFirstMount(
 
   useEffect(() => () => cancelAnimationFrame(pinFrameRef.current), []);
 
+  /*
+   * 兜底（聊天记录消失，2026-11-10）：补完了（或封顶了）、上面还有历史，挂着的行却一行都看不见
+   * （过程行默认整格 display:none，判断看得见的那一份又漏了）——接着往前补，不受 TAIL_FIRST_CAP 限制，
+   * 直到露出一行或者挂到头。只在不补行的时候查一次 DOM，不读布局。
+   */
+  useEffect(() => {
+    if (pending || !truncated) return;
+    if (hasVisibleRow(viewport.current)) return;
+    measureBeforeGrow();
+    setMounted((m) => nextMountedCount(m, total));
+  });
+
   useEffect(() => {
     const el = viewport.current;
     if (!el) return;
@@ -212,8 +256,8 @@ export function useTailFirstMount(
 
   return {
     startIndex,
-    pending: renderedMounted < target,
-    truncated: renderedMounted < total,
+    pending,
+    truncated,
     mountAll,
     prependHistory,
   };

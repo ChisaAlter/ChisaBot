@@ -12,6 +12,8 @@ import {
   TAIL_FIRST_CAP,
   TAIL_FIRST_INITIAL,
   TAIL_FIRST_THRESHOLD,
+  visibleWindowStart,
+  windowMarks,
 } from "@/lib/chat/tail-first-paint";
 
 describe("tail-first-paint (CB-025)", () => {
@@ -108,5 +110,29 @@ describe("tail-first-paint (CB-025)", () => {
     const ms = performance.now() - started;
     // Pure arithmetic; anything over ~50ms on the box means something else is wrong.
     expect(ms).toBeLessThan(50);
+  });
+
+  test("the window counts visible rows; hidden rows count as a fraction", () => {
+    // 0: 人发的一条，1..120: 看不见的过程行。
+    const visible = (i: number) => i === 0;
+    const marks = windowMarks(121, visible);
+    // 120 行看不见的折成 15 格，加上人发的那一条。
+    expect(marks.length).toBe(16);
+    expect(marks[0]).toBe(0);
+    // 首屏 36 格就够把整轮（含人发的那一条）挂上。
+    expect(visibleWindowStart(121, marks, TAIL_FIRST_INITIAL)).toBe(0);
+    // 每个看得见的行都是某一格的起点。
+    const mixed = (i: number) => i % 10 === 0;
+    const m2 = windowMarks(300, mixed);
+    for (let i = 0; i < 300; i += 10) expect(m2).toContain(i);
+  });
+
+  test("the live turn is pinned into the window", () => {
+    const marks = windowMarks(500, () => true);
+    expect(visibleWindowStart(500, marks, 36)).toBe(464);
+    expect(visibleWindowStart(500, marks, 36, 300)).toBe(300);
+    expect(visibleWindowStart(500, marks, 36, 480)).toBe(464);
+    expect(visibleWindowStart(500, marks, 0)).toBe(500);
+    expect(visibleWindowStart(500, marks, 9999)).toBe(0);
   });
 });

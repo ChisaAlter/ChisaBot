@@ -127,6 +127,7 @@ import {
   staysInSameTurn,
   takeSendWhileBusy,
 } from "@/lib/chat/send-scroll";
+import { windowMarks } from "@/lib/chat/tail-first-paint";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
@@ -3533,18 +3534,78 @@ export function ChatTranscript({
     const memo = scrollKey ? threadUi(scrollKey)?.scroll : null;
     return Boolean(memo && !memo.atBottom && memo.anchor);
   }, [scrollKey]);
+  /*
+   * 聊天记录消失（2026-11-10）：尾窗按看得见的行计数（windowMarks），不再按条数。过程行默认整格不画，
+   * 一轮里调几十次工具时，按条数挂的尾巴全是看不见的行——打开对话一片空白。看不见的行照样挂（卡片异步出现时
+   * 由 CSS 露出来），只按 HIDDEN_ROW_WEIGHT 折算名额。判断和真正画的同一套：收起的行、干活卡那一行、
+   * 画卡片的工具（toolDrawsCard，确认还没读到时不先当卡片）；判漏了由 useTailFirstMount 在 DOM 上兜底。
+   */
+  const rowShows = (index: number): boolean => {
+    const item = items[index];
+    if (!item || rowHidden(item.id)) return false;
+    if (item.kind === "text" || item.kind === "attachments") return true;
+    if (showToolActivity) return true;
+    if (compact.work.has(item.id) && !quietWorkOnly.has(item.id)) return true;
+    if (item.kind === "browser") return false;
+    return toolDrawsCard(item, {
+      renderers: toolRenderers,
+      activities: activityRenderers,
+      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
+      asked: confirmed,
+      live: item.kind !== "tool" || compact.liveTools.has(item.id),
+    });
+  };
+  const tailMarks = virtual ? EMPTY_MARKS : windowMarks(items.length, rowShows);
+  // 正在进行的这一轮：开头那条（人发的）→ 干活卡所在的行，一定挂上（不然干活提示和问题都不在屏幕上）。
+  const liveAnchorId = live
+    ? [...compact.work].find(([, work]) => work.live)?.[0]
+    : undefined;
+  const livePin = live
+    ? Math.min(
+        ...[
+          // 这一轮的开头（人发的那条，或定时任务等接着跑一轮的那条）：compactTurns 的 liveKey。
+          compact.liveKey
+            ? items.findIndex((item) => item.id === compact.liveKey)
+            : -1,
+          liveAnchorId
+            ? items.findIndex((item) => item.id === liveAnchorId)
+            : -1,
+        ].filter((index) => index >= 0),
+      )
+    : Number.POSITIVE_INFINITY;
   const {
     startIndex: tailStart,
     pending: tailPending,
     truncated: tailTruncated,
     mountAll,
+    prependHistory,
   } = useTailFirstMount(
-    virtual ? 0 : items.length,
+    tailMarks.length,
     scrollKey,
     viewportRef,
     items[0]?.id,
-    { uncapped: needsHistory },
+    {
+      uncapped: needsHistory,
+      marks: tailMarks,
+      itemCount: virtual ? 0 : items.length,
+      firstVisible: virtual
+        ? 0
+        : items.findIndex((_, index) => rowShows(index)),
+      ...(Number.isFinite(livePin) ? { pin: livePin } : {}),
+    },
   );
+  /*
+   * 兜底：这一轮的干活卡那一行没挂上 / 没画出来（窗口外、被收起），干活提示改画在末尾，别让「正在干活」凭空消失。
+   */
+  const liveAnchorIndex = liveAnchorId
+    ? items.findIndex((item) => item.id === liveAnchorId)
+    : -1;
+  const liveWorkInTail =
+    !virtual &&
+    liveWorking &&
+    liveWork !== undefined &&
+    liveAnchorId !== undefined &&
+    (liveAnchorIndex < tailStart || rowHidden(liveAnchorId));
   useKeepBottomOnPrepend(viewportRef, items[0]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
@@ -3793,6 +3854,15 @@ export function ChatTranscript({
                   onRetry={stopped ? onRetry : onRetryUnanswered}
                   reason={tailStop}
                 />
+              ) : liveWorkInTail && liveWork ? (
+                <WorkRow
+                  calls={liveWork.calls}
+                  agentId={agentId}
+                  live
+                  notes={liveWork.notes}
+                  since={liveSince}
+                  turnKey={liveWork.key}
+                />
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
@@ -3853,6 +3923,23 @@ export function ChatTranscript({
             {topNotice ? (
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
+            {/*
+             * 「显示更早的消息」（聊天记录消失，2026-11-10）：上面还有没挂的历史时一直在。以前只靠滚到顶附近补，
+             * 挂着的内容不够一屏高时根本滚不动，上面的历史就再也出不来。外层 `contents` 的 div 一直在
+             * （content.children 里固定占一格，滚动容器按位置找新行，见上面 chat-tail 的说明）；
+             * 按钮自己不参与滚动锚定，补上来的行出现在它下面、看着的那一行不动。
+             */}
+            <div className="contents" data-testid="transcript-history-more">
+              {tailTruncated && !virtual ? (
+                <button
+                  className="chat-history-more"
+                  onClick={prependHistory}
+                  type="button"
+                >
+                  {"显示更早的消息"}
+                </button>
+              ) : null}
+            </div>
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
             {virtual ? (
               <VirtualTranscriptRows
@@ -4080,6 +4167,7 @@ export function findTextOf(item: TranscriptItem): string | null {
   return item.kind === "text" ? item.text : null;
 }
 const EMPTY_ANCHORS: ReadonlySet<string> = new Set();
+const EMPTY_MARKS: readonly number[] = [];
 
 /** 刚发出去的那条用户消息带对齐标记多久（毫秒）。对齐在它出现的那一刻就做完了，之后留着只会被误用。 */
 export const FRESH_ANCHOR_MS = 3000;
