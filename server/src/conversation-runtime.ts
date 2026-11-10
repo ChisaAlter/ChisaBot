@@ -2901,6 +2901,10 @@ export function mountConversationRuntime(
       backend,
       resolver,
       identifyActor,
+      toolOperations:
+        agentKernel.kind === "dsh"
+          ? agentKernel.binding.gateway.operations
+          : undefined,
       prepareAgent: async (actorId, agent) => {
         if (agentKernel.kind !== "dsh" || !config.dshKernel?.targetsFile)
           return;
@@ -2927,9 +2931,13 @@ export function mountConversationRuntime(
         runId: string;
         userId: string;
         agentId: string;
+        runnerOwnsLease?: boolean;
       }) => {
         try {
           await backend.client.getOrCreateThread(input);
+          // Background admission must acquire the lease itself; a pre-acquired lease makes
+          // its capacity claim wait on the same run indefinitely.
+          if (input.runnerOwnsLease) return { runId: input.runId };
           const held = await backend.leases.acquire(input);
           announce(input.threadId, true);
           return { runId: held.runId };

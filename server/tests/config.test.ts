@@ -19,6 +19,38 @@ const baseEnvironment = {
   MANAGED_AGENT_TOKEN: "managed-agent-token",
 };
 
+describe("agent kernel selection", () => {
+  test("new installs use DSH with a persistent managed Host root", () => {
+    const config = loadConfig(baseEnvironment);
+    expect(config.dshKernel).toEqual({ root: ".data/dsh" });
+    expect(config.hermesKernel).toBeUndefined();
+  });
+  test("existing Hermes URL keeps its meaning until an explicit kernel is selected", () => {
+    const legacy = {
+      ...baseEnvironment,
+      CHISABOT_HERMES_URL: "http://localhost:4100/ag-ui",
+    };
+    expect(loadConfig(legacy).hermesKernel?.url).toBe(
+      legacy.CHISABOT_HERMES_URL,
+    );
+    expect(loadConfig(legacy).dshKernel).toBeUndefined();
+    const dsh = loadConfig({ ...legacy, CHISABOT_AGENT_KERNEL: "dsh" });
+    expect(dsh.dshKernel).toBeDefined();
+    expect(dsh.hermesKernel).toBeUndefined();
+    const builtin = loadConfig({ ...legacy, CHISABOT_AGENT_KERNEL: "builtin" });
+    expect(builtin.dshKernel).toBeUndefined();
+    expect(builtin.hermesKernel).toBeUndefined();
+  });
+  test("invalid selections and an unconfigured Hermes kernel cannot silently use another engine", () => {
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_AGENT_KERNEL: "ds" }),
+    ).toThrow("CHISABOT_AGENT_KERNEL");
+    expect(() =>
+      loadConfig({ ...baseEnvironment, CHISABOT_AGENT_KERNEL: "hermes" }),
+    ).toThrow("CHISABOT_HERMES_URL");
+  });
+});
+
 /**
  * The same deployment with nothing signing anybody in.
  *

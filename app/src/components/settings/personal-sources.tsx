@@ -16,8 +16,11 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
+  type EmailConnectionInput,
+  type EmailConnectionView,
   IMAP_PRESETS,
   type PersonalSourcesStatusView,
+  SMTP_PRESETS,
 } from "../../../../shared/personal-sources";
 
 const LazyBotBubbles = lazy(() =>
@@ -28,6 +31,7 @@ const LazyBotBubbles = lazy(() =>
 
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { confirmDialog } from "@/components/ui/confirm";
 import {
   Dialog,
@@ -248,7 +252,7 @@ export function PersonalSourcesSection() {
 
   return (
     <PageSection
-      description="轻量接入你的日历（ICS/WebCal）、邮箱（IMAP 收件箱读取 + SMTP 审批发信）、随身通知推送（飞书/钉钉/Bark Webhook）与外部事件触发器，并支持一键生成每日晨报卡片。"
+      description="连接只读日历（ICS/WebCal）、邮件头摘要与 SMTP 发信、随身通知推送，以及每日晨报。"
       settingItem="connected-accounts.personal-calendar connected-accounts.personal-email connected-accounts.notify-webhook connected-accounts.morning-brief"
       title="日程、收件箱、通知推送与每日晨报"
     >
@@ -260,6 +264,8 @@ export function PersonalSourcesSection() {
         open={calOpen}
       />
       <EmailConnectDialog
+        key={mail?.connectedAt ?? "new-email"}
+        connection={mail}
         onOpenChange={setMailOpen}
         onSaved={(next) =>
           queryClient.setQueryData(personalSourcesKeys.all, next)
@@ -430,8 +436,22 @@ export function PersonalSourcesSection() {
                           <span className="device-cap-chip">
                             <T>{`${mail.imapHost}:${mail.imapPort}`}</T>
                           </span>
+                          <span
+                            className={
+                              mail.smtpCheckedAt
+                                ? "gh-state is-ok"
+                                : "device-cap-chip"
+                            }
+                          >
+                            {mail.smtpCheckedAt
+                              ? "SMTP 连接已验证"
+                              : "SMTP 连接未验证"}
+                          </span>
                         </span>
-                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 发信按审批偏好确认，接收结果记录在下方`}</span>
+                        <span className="mem-by">{`${agoText(mail.checkedAt)}检查过 · 读取标题、发件人与时间；发信按审批偏好确认`}</span>
+                        {mail.smtpCheckedAt ? (
+                          <span className="mem-by">{`发信：${mail.smtpHost}:${mail.smtpPort}`}</span>
+                        ) : null}
                       </>
                     ) : (
                       "未连接 · 用应用专用密码连接 QQ / 163 / Gmail / Outlook / iCloud（支持收件箱摘要与确认后发信）"
@@ -451,7 +471,7 @@ export function PersonalSourcesSection() {
                   size="sm"
                   variant={mail ? "outline" : "default"}
                 >
-                  {mail ? "更换邮箱" : "连接邮箱"}
+                  {mail ? "配置邮箱" : "连接邮箱"}
                 </Button>
                 {mail ? (
                   <Button
@@ -853,15 +873,37 @@ function EmailConnectDialog({
   open,
   onOpenChange,
   onSaved,
+  connection,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: (next: PersonalSourcesStatusView) => void;
+  connection: EmailConnectionView | null;
 }) {
-  const [email, setEmail] = useState("");
-  const [imapHost, setImapHost] = useState("");
-  const [imapPort, setImapPort] = useState("993");
+  const [email, setEmail] = useState(connection?.email ?? "");
+  const [imapHost, setImapHost] = useState(connection?.imapHost ?? "");
+  const [imapPort, setImapPort] = useState(String(connection?.imapPort ?? 993));
   const [password, setPassword] = useState("");
+  const [configureSmtp, setConfigureSmtp] = useState(
+    Boolean(connection?.smtpCheckedAt),
+  );
+  const [smtpHost, setSmtpHost] = useState(connection?.smtpHost ?? "");
+  const [smtpPort, setSmtpPort] = useState(String(connection?.smtpPort ?? 465));
+  const [smtpUser, setSmtpUser] = useState(connection?.smtpUser ?? "");
+  const [smtpPassword, setSmtpPassword] = useState("");
+
+  useEffect(() => {
+    if (!open) {
+      setPassword("");
+      setSmtpPassword("");
+    }
+  }, [open]);
+
+  function setSmtpPreset(domain: string) {
+    const preset = SMTP_PRESETS[domain];
+    setSmtpHost(preset?.host ?? "");
+    setSmtpPort(String(preset?.port ?? 465));
+  }
 
   function handleEmailChange(val: string) {
     setEmail(val);
@@ -870,6 +912,7 @@ function EmailConnectDialog({
       setImapHost(IMAP_PRESETS[domain].host);
       setImapPort(String(IMAP_PRESETS[domain].port));
     }
+    if (domain) setSmtpPreset(domain);
   }
 
   const save = useAsyncAction(
@@ -883,7 +926,17 @@ function EmailConnectDialog({
           imapHost: imapHost.trim(),
           imapPort: Number(imapPort) || 993,
           password: password.trim(),
-        }),
+          ...(configureSmtp
+            ? {
+                smtp: {
+                  host: smtpHost.trim(),
+                  port: Number(smtpPort),
+                  ...(smtpUser.trim() ? { user: smtpUser.trim() } : {}),
+                  ...(smtpPassword ? { password: smtpPassword } : {}),
+                },
+              }
+            : {}),
+        } satisfies EmailConnectionInput),
       });
       const data = (await res.json()) as PersonalSourcesStatusView & {
         error?: string;
@@ -891,7 +944,10 @@ function EmailConnectDialog({
       if (!res.ok) throw new Error(data.error || "连接邮箱失败");
       onSaved(data);
       setPassword("");
-      toast.success("邮箱收件箱已连接");
+      setSmtpPassword("");
+      toast.success(
+        configureSmtp ? "收信与发信连接已验证" : "邮箱收件箱已连接",
+      );
       onOpenChange(false);
     },
     { errorToast: (err) => err.message },
@@ -900,7 +956,8 @@ function EmailConnectDialog({
   const valid =
     email.includes("@") &&
     password.trim().length >= 4 &&
-    imapHost.trim().length > 0;
+    imapHost.trim().length > 0 &&
+    (!configureSmtp || smtpHost.trim().length > 0);
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -909,12 +966,10 @@ function EmailConnectDialog({
         data-testid="email-connect-dialog"
       >
         <DialogHeader>
-          <DialogTitle>
-            {"连接电子邮箱（IMAP 收件箱 + SMTP 审批发信）"}
-          </DialogTitle>
+          <DialogTitle>{"连接电子邮箱"}</DialogTitle>
           <DialogDescription>
             {
-              "请使用邮箱后台生成的「应用专用密码 / 客户端授权码」。密码会加密保存，仅在此表单输入。发信按审批偏好确认，平台接收结果会单独记录。"
+              "使用邮箱后台的应用专用密码或客户端授权码，密码会加密保存。收件箱读取邮件标题、发件人和时间，不读取正文或附件。"
             }
           </DialogDescription>
         </DialogHeader>
@@ -944,6 +999,7 @@ function EmailConnectDialog({
                       if (info) {
                         setImapHost(info.host);
                         setImapPort(String(info.port));
+                        setSmtpPreset(preset.domain);
                         if (!email.includes("@")) {
                           setEmail(`user@${preset.domain}`);
                         }
@@ -999,6 +1055,71 @@ function EmailConnectDialog({
                 value={password}
               />
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={configureSmtp}
+                onCheckedChange={(checked) => setConfigureSmtp(checked)}
+                data-testid="email-configure-smtp"
+              />
+              配置并验证 SMTP 发信连接
+            </label>
+            {configureSmtp ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted-foreground">
+                  验证时只登录发信服务器，不发送邮件。
+                </p>
+                <div className="grid grid-cols-[minmax(0,1fr)_10rem] gap-2">
+                  <label className="im-field">
+                    <span className="gh-step-t">SMTP 发信服务器</span>
+                    <Input
+                      data-testid="email-smtp-host-input"
+                      onChange={(e) => setSmtpHost(e.target.value)}
+                      placeholder="smtp.example.com"
+                      value={smtpHost}
+                    />
+                  </label>
+                  <label className="im-field">
+                    <span className="gh-step-t">端口</span>
+                    <select
+                      className="h-10 rounded-md border border-input bg-transparent px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+                      value={smtpPort}
+                      onChange={(e) => setSmtpPort(e.target.value)}
+                      data-testid="email-smtp-port-input"
+                    >
+                      <option value="465">465 · TLS</option>
+                      <option value="587">587 · STARTTLS</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="im-field">
+                  <span className="gh-step-t">SMTP 用户名</span>
+                  <Input
+                    data-testid="email-smtp-user-input"
+                    value={smtpUser}
+                    onChange={(e) => setSmtpUser(e.target.value)}
+                    placeholder={email || "默认使用邮箱地址"}
+                    autoComplete="username"
+                  />
+                </label>
+                <label className="im-field">
+                  <span className="gh-step-t">
+                    SMTP 专用密码 / 授权码（可选）
+                  </span>
+                  <Input
+                    data-testid="email-smtp-password-input"
+                    type="password"
+                    value={smtpPassword}
+                    onChange={(e) => setSmtpPassword(e.target.value)}
+                    placeholder="留空使用上面的收信密码"
+                    autoComplete="new-password"
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                本次只验证收件箱；需要发信时，可在这里填写 SMTP 参数并验证连接。
+              </p>
+            )}
           </DialogBody>
           <DialogFooter className="mt-3">
             <Button

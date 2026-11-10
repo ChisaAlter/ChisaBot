@@ -22,7 +22,11 @@ test("new account mappings publish into an existing API owner resolver without a
   await writeFile(index, JSON.stringify([admin]));
   const resolve = await loadDshTargets(index);
   expect(await resolve("admin")).toEqual(admin);
-  await expect(resolve("new-account")).rejects.toMatchObject({
+  const unprovisioned = await resolve("new-account").then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(unprovisioned).toMatchObject({
     name: "DshAccountPreparingError",
     status: 503,
   });
@@ -36,7 +40,11 @@ test("new account mappings publish into an existing API owner resolver without a
   expect(await resolve("new-account")).toEqual(newcomer);
   await writeFile(`${index}.tmp`, JSON.stringify([newcomer]));
   await rename(`${index}.tmp`, index);
-  await expect(resolve("admin")).rejects.toMatchObject({ status: 503 });
+  const removed = await resolve("admin").then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(removed).toMatchObject({ status: 503 });
 });
 
 test("a conflicting updated index is refused instead of using an old authorized mapping", async () => {
@@ -56,5 +64,12 @@ test("a conflicting updated index is refused instead of using an old authorized 
       { id: "two", ownerUserId: "one", connectionFile },
     ]),
   );
-  await expect(resolve("one")).rejects.toThrow("must be unique");
+  const conflict = await resolve("one").then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(conflict).toBeInstanceOf(Error);
+  expect(() => {
+    throw conflict;
+  }).toThrow("must be unique");
 });

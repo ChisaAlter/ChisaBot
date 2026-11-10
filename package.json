@@ -1,7 +1,7 @@
 {
   "name": "chisabot",
   "description": "ChisaBot 中文自托管 AI 助手与 Magpie 模型集成",
-  "version": "0.1.141",
+  "version": "0.1.142",
   "license": "MIT",
   "private": true,
   "packageManager": "bun@1.3.14",
@@ -19,6 +19,7 @@
     "test": "bun test",
     "typecheck": "bun run --cwd server typecheck && bun run --cwd app typecheck",
     "test:ci": "bun scripts/test-ci.ts",
+    "test:dsh": "bun scripts/run-dsh-tests.ts",
     "pretest": "bun run generate:app-config",
     "test:smoke": "CHISABOT_SMOKE=1 bun test tests/smoke",
     "test:live-screen": "CHISABOT_LIVE_SCREEN=1 bun test agent-computer/tests/live-screen.test.ts agent-computer/tests/browser-close-announcement.test.ts agent-computer/tests/reset-run.test.ts",

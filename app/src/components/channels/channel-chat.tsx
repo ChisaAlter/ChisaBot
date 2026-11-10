@@ -18,6 +18,7 @@ import {
   toAgentOptions,
 } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
+import { ToolOutcomeNotice } from "@/components/channels/tool-outcome-notice";
 import {
   seedMessage,
   takeFirstMessage,
@@ -2271,6 +2272,17 @@ export function ChannelChat({
                       } finally {
                         setRunsInFlight((count) => count - 1);
                       }
+                    }}
+                  />
+                  <ToolOutcomeNotice
+                    agent={agent}
+                    ready={isReady && !restoring}
+                    onResolved={(continued) => {
+                      if (continued) {
+                        turnFailure.current = null;
+                        setRunError(null);
+                      }
+                      activity.kick();
                     }}
                   />
                   {channel.active ? null : (

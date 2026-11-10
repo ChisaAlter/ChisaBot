@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
+import type { Message, RunAgentInput } from "@ag-ui/client";
+import type {
+  ToolOutcomeResolution,
+  UnknownToolOperation,
+} from "../../../shared/conversations";
+import { detailsFromArgs } from "../confirmations/classify";
 import type { Database } from "../db/client";
+import { publicErrorMessage, redactPublicText } from "../public-error";
+import type { ConversationCommandRecord } from "./commands";
 
 export type ToolOperationInput = {
   ownerUserId: string;
@@ -12,7 +20,11 @@ export type ToolOperationInput = {
   name: string;
   args: unknown;
 };
-export type ToolOperationResult = { content: string; error?: string };
+export type ToolOperationResult = {
+  content: string;
+  error?: string;
+  reconciliation?: ToolOutcomeResolution;
+};
 export type ToolOperationClaim =
   | { kind: "claimed"; id: string }
   | { kind: "completed"; id: string; result: ToolOperationResult }
@@ -73,7 +85,10 @@ export function createToolOperationStore(database: Database) {
           ],
         );
         if (!row?.matches) return { kind: "conflict" };
-        if (row.status === "completed" && row.result)
+        if (
+          (row.status === "completed" || row.status === "failed") &&
+          row.result
+        )
           return { kind: "completed", id: row.id, result: row.result };
         if (row.status !== "waiting_approval")
           return { kind: "pending", id: row.id, state: row.status };
@@ -132,7 +147,10 @@ export function createToolOperationStore(database: Database) {
         ],
       );
       if (!existing?.matches) return { kind: "conflict" };
-      if (existing.status === "completed" && existing.result)
+      if (
+        (existing.status === "completed" || existing.status === "failed") &&
+        existing.result
+      )
         return { kind: "completed", id: existing.id, result: existing.result };
       return {
         kind: "pending",
@@ -150,6 +168,169 @@ export function createToolOperationStore(database: Database) {
         [id],
       );
     },
+    async listUnknown(
+      owner: string,
+      threadId: string,
+    ): Promise<UnknownToolOperation[]> {
+      const rows = await sql.unsafe<
+        {
+          id: string;
+          tool_name: string;
+          result: ToolOperationResult | null;
+          created_at: Date;
+          can_continue: boolean;
+          args: unknown;
+        }[]
+      >(
+        `SELECT o.id,o.tool_name,o.result,o.created_at,o.args,
+          (d.status='waiting' AND NOT d.stop_requested AND b.active AND b.revision=d.binding_revision
+            AND t.run_id IS NULL
+            AND (SELECT r.run_id FROM chisabot_local_runs r WHERE r.thread_id=b.thread_id ORDER BY r.created_at DESC,r.run_id DESC LIMIT 1)=d.run_id
+            AND NOT EXISTS(SELECT 1 FROM chisabot_tool_operations other WHERE other.binding_id=o.binding_id AND other.run_id=o.run_id AND other.status='outcome_unknown' AND other.id<>o.id)) AS can_continue
+         FROM chisabot_tool_operations o
+         JOIN chisabot_runtime_bindings b ON b.id=o.binding_id AND b.owner_user_id=o.owner_user_id
+         JOIN chisabot_dsh_runs d ON d.thread_id=b.thread_id AND d.run_id=o.run_id AND d.owner_user_id=o.owner_user_id
+         JOIN chisabot_local_threads t ON t.id=b.thread_id AND t.owner_user_id=o.owner_user_id
+         WHERE o.owner_user_id=$1 AND b.thread_id=$2 AND o.status='outcome_unknown'
+         ORDER BY o.created_at,o.id`,
+        [owner, threadId],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        toolName: row.tool_name,
+        error: row.result?.error
+          ? publicErrorMessage(new Error(row.result.error))
+          : null,
+        createdAt: new Date(row.created_at).toISOString(),
+        canContinue: row.can_continue,
+        details: detailsFromArgs(row.args).map(({ label, value }) => ({
+          label,
+          value: redactPublicText(value),
+        })),
+      }));
+    },
+    /** The human's observation and its follow-up command commit together; no tool is executed here. */
+    async resolveOutcome(
+      owner: string,
+      threadId: string,
+      id: string,
+      resolution: ToolOutcomeResolution,
+    ) {
+      return sql.begin(async (tx) => {
+        const [operation] = await tx.unsafe<
+          {
+            id: string;
+            tool_name: string;
+            status: string;
+            result: ToolOperationResult | null;
+            run_id: string;
+            bot_id: string;
+            messages: Message[];
+            state: unknown;
+            can_continue: boolean;
+          }[]
+        >(
+          `SELECT o.id,o.tool_name,o.status,o.result,o.run_id,d.bot_id,t.messages,t.state,
+            (d.status='waiting' AND NOT d.stop_requested AND b.active AND b.revision=d.binding_revision
+              AND t.run_id IS NULL
+              AND (SELECT r.run_id FROM chisabot_local_runs r WHERE r.thread_id=b.thread_id ORDER BY r.created_at DESC,r.run_id DESC LIMIT 1)=d.run_id
+              AND NOT EXISTS(SELECT 1 FROM chisabot_tool_operations other WHERE other.binding_id=o.binding_id AND other.run_id=o.run_id AND other.status='outcome_unknown' AND other.id<>o.id)) AS can_continue
+           FROM chisabot_tool_operations o
+           JOIN chisabot_runtime_bindings b ON b.id=o.binding_id AND b.owner_user_id=o.owner_user_id
+           JOIN chisabot_dsh_runs d ON d.thread_id=b.thread_id AND d.run_id=o.run_id AND d.owner_user_id=o.owner_user_id
+           JOIN chisabot_local_threads t ON t.id=b.thread_id AND t.owner_user_id=o.owner_user_id
+           WHERE o.id=$1 AND o.owner_user_id=$2 AND b.thread_id=$3 FOR UPDATE OF o,t,d`,
+          [id, owner, threadId],
+        );
+        if (!operation)
+          throw Object.assign(new Error("找不到这项待核对操作。"), {
+            status: 404,
+          });
+        const commandId = `tool-outcome:${id}`;
+        const saved = operation.result?.reconciliation;
+        if (saved) {
+          if (
+            saved.outcome !== resolution.outcome ||
+            saved.note !== resolution.note ||
+            saved.continue !== resolution.continue
+          )
+            throw Object.assign(
+              new Error("这项操作已经记录了另一份核对结果，请刷新对话。"),
+              { status: 409 },
+            );
+          const [record] = await tx.unsafe<ConversationCommandRecord[]>(
+            "SELECT * FROM chisabot_conversation_commands WHERE owner_user_id=$1 AND thread_id=$2 AND command_id=$3",
+            [owner, threadId, commandId],
+          );
+          return { record, alreadyAccepted: true };
+        }
+        if (operation.status !== "outcome_unknown")
+          throw Object.assign(new Error("这项操作已不需要核对，请刷新对话。"), {
+            status: 409,
+          });
+        if (resolution.continue && !operation.can_continue)
+          throw Object.assign(
+            new Error(
+              "原任务已停止、对话已变更或正在执行。请刷新后只记录核对结果。",
+            ),
+            { status: 409 },
+          );
+        const outcomeText = {
+          completed: "操作已经完成",
+          not_executed: "操作没有执行",
+          failed: "操作未完成，已核对实际产生的影响",
+        }[resolution.outcome];
+        const content = `用户核对「${operation.tool_name}」的实际结果：${outcomeText}。\n${resolution.note}`;
+        const result: ToolOperationResult = {
+          content,
+          reconciliation: resolution,
+        };
+        await tx.unsafe(
+          "UPDATE chisabot_tool_operations SET status=$2,result=$3::text::jsonb,updated_at=now() WHERE id=$1",
+          [
+            id,
+            resolution.outcome === "completed" ? "completed" : "failed",
+            JSON.stringify(result),
+          ],
+        );
+        if (!resolution.continue)
+          return { record: undefined, alreadyAccepted: false };
+
+        const message: Message = {
+          id: commandId,
+          role: "user",
+          content: `${content}\n请根据这个核对结果继续本次任务。不要重新执行刚核对的操作；若确实需要重试，先向我确认。`,
+        };
+        const input: RunAgentInput = {
+          threadId,
+          runId: randomUUID(),
+          messages: [...operation.messages, message],
+          tools: [],
+          context: [],
+          state: operation.state,
+          forwardedProps: {},
+        };
+        const [record] = await tx.unsafe<ConversationCommandRecord[]>(
+          `INSERT INTO chisabot_conversation_commands(thread_id,command_id,run_id,owner_user_id,bot_id,payload,input)
+           VALUES($1,$2,$3,$4,$5,$6::text::jsonb,$7::text::jsonb) RETURNING *`,
+          [
+            threadId,
+            commandId,
+            input.runId,
+            owner,
+            operation.bot_id,
+            JSON.stringify({ message, forwardedProps: {} }),
+            JSON.stringify(input),
+          ],
+        );
+        await tx.unsafe(
+          "UPDATE chisabot_dsh_runs SET status='settled',updated_at=now() WHERE thread_id=$1 AND run_id=$2 AND status='waiting'",
+          [threadId, operation.run_id],
+        );
+        return { record, alreadyAccepted: false };
+      });
+    },
+
     async settle(
       id: string,
       status: "completed" | "failed" | "waiting_approval" | "outcome_unknown",

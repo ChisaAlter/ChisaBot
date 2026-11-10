@@ -82,6 +82,7 @@ ChisaBot PC 是无边框窗口，打开后直接进入你服务器上的 ChisaBo
 
 ```sh
 bun install --frozen-lockfile --omit=peer
+npm ci --prefix runtime/dsh
 bun run typecheck
 ```
 

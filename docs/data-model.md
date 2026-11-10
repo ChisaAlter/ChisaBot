@@ -14,6 +14,8 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 
 ## 2. ChisaBot 自己的表（`chisabot_*`）
 
+0.1.142 的个人连接沿现有 `ensure()` 增加可空字段 `smtp_host / smtp_port / smtp_user / smtp_pass_enc / smtp_checked_at`，旧连接保持原值与 IMAP 用法。操作核对写入 `chisabot_tool_operations.result.reconciliation`，与对应会话后续命令同事务提交；工作流通知复用 `workflow_run_events` 与既有个人交付账本，不新增队列表。宿主状态保存于更新器的只读 `state/host-monitor.json`，通知交付仍由数据库账本去重。
+
 按功能分组。「代码」是建表所在文件（`server/src/` 下）。
 
 ### 聊天与对话

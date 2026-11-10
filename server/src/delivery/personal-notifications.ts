@@ -1,5 +1,6 @@
 import type { Database } from "../db/client";
 import type { PersonalSourcesService } from "../personal-sources/service";
+import { WORKFLOW_NOTICE_CURRENT } from "./workflow-notifications";
 
 type Notice = {
   id: string;
@@ -11,7 +12,7 @@ type Notice = {
   path?: string | null;
 };
 
-/** Recover the gap between a committed task result and its durable notification intent. */
+/** Recover committed task/workflow results into their durable notification intents. */
 export function createPersonalNotifications(options: {
   database: Database;
   sources: Pick<PersonalSourcesService, "notify" | "flushNotifications">;
@@ -82,6 +83,19 @@ export function createPersonalNotifications(options: {
           'task-center:' || t.id, t.body->>'agentId', '/tasks?view=outbox&task=' || t.id, d.created_at
         FROM chisabot_task_center_decisions d JOIN tasks t ON t.id=d.task_id AND t.owner_user_id=d.owner_user_id
         WHERE d.status='pending' AND t.status='waiting_approval' AND t.version=d.task_version
+        UNION ALL
+        SELECT 'workflow-event:' || e.id, r.owner_user_id,
+          CASE r.status WHEN 'waiting_approval' THEN '工作流等待确认'
+            WHEN 'succeeded' THEN '工作流完成' ELSE '工作流需要处理' END,
+          r.workflow_name || E'\n' || CASE WHEN r.status='succeeded' THEN coalesce(nullif(r.output,''),e.message) ELSE e.message END,
+          NULL::text, NULL::text, '/workflows/runs/' || r.id, e.at
+        FROM workflow_runs r
+        JOIN LATERAL (
+          SELECT * FROM workflow_run_events
+          WHERE run_id=r.id AND kind IN ('approval_requested','run_finished','run_failed')
+          ORDER BY at DESC,id DESC LIMIT 1
+        ) e ON true
+        WHERE ${WORKFLOW_NOTICE_CURRENT}
         UNION ALL
         SELECT 'confirmation:' || c.id, c.owner_user_id, '操作等待确认',
           c.title || E'\n请在 ChisaBot 中查看完整内容并批准或拒绝。', c.thread_id, c.agent_id, '/approvals', c.created_at
