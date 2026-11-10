@@ -83,7 +83,7 @@ beforeAll(async () => {
       return document.body;
     },
   });
-  patch(Element.prototype, "getBoundingClientRect", {
+  const rectDesc: PropertyDescriptor = {
     value(this: Element) {
       const [x, y, w, h] = (this.getAttribute("data-rect") ?? "0,0,0,0")
         .split(",")
@@ -100,6 +100,21 @@ beforeAll(async () => {
         toJSON() {},
       } as DOMRect;
     },
+  };
+  // 同进程里别的测试可能在 HTMLElement.prototype 上换过 getBoundingClientRect，两层都换。
+  patch(Element.prototype, "getBoundingClientRect", rectDesc);
+  patch(HTMLElement.prototype, "getBoundingClientRect", rectDesc);
+  // 「减少透明度」查询一律不命中（别的测试可能把 matchMedia 换成恒 true 的替身）。
+  patch(window, "matchMedia", {
+    value: (query: string) =>
+      ({
+        matches: false,
+        media: query,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+      }) as unknown as MediaQueryList,
   });
   if (typeof globalThis.ResizeObserver === "undefined") {
     globalThis.ResizeObserver = class {
@@ -121,8 +136,10 @@ afterAll(async () => {
 beforeEach(() => {
   gray = 200;
   window.localStorage.clear();
-  document.documentElement.className = "";
-  document.documentElement.setAttribute("data-glass", "liquid");
+  // 同进程里别的测试会留下 data-perf / data-palette 等根属性（性能模式会让液态玻璃整套撤掉）。
+  const de = document.documentElement;
+  for (const name of de.getAttributeNames()) de.removeAttribute(name);
+  de.setAttribute("data-glass", "liquid");
   document.body.innerHTML = "";
 });
 
