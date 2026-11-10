@@ -12,6 +12,7 @@ import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { DeviceRefusedError, type DeviceHub } from "./hub";
 import { type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
+import { redactText } from "../computer/activity-redact";
 
 /** 机器人工作区（服务器上的云端电脑）：device_upload / device_download 用它读写。 */
 export type DeviceWorkspace = {
@@ -493,7 +494,7 @@ export function deviceTools(options: {
               "exec_start",
               args.deviceId,
               { command: args.command, cwd: args.cwd, session: args.session, elevated: args.elevated === true, timeoutSec: args.timeoutSec && args.timeoutSec > 600 ? args.timeoutSec : undefined },
-              `后台运行：${clip(args.command, 300)}${where}`,
+              `后台运行：${clip(redactText(args.command), 300)}${where}`,
               60_000,
             );
           const timeoutSec = args.timeoutSec ?? 60;
@@ -501,7 +502,7 @@ export function deviceTools(options: {
             "shell",
             args.deviceId,
             { command: args.command, cwd: args.cwd, timeoutSec, session: args.session, elevated: args.elevated === true },
-            `运行命令：${clip(args.command, 300)}${where}`,
+            `运行命令：${clip(redactText(args.command), 300)}${where}`,
             (timeoutSec + 20) * 1000,
           );
           // 超时（PC 端 timedOut，或连结果都没回来）时把下一步写进结果：不然机器人会原样重跑同一条命令。

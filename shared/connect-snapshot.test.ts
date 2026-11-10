@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   capConnectMessages,
+  connectSnapshotAnchors,
   DEFAULT_CONNECT_MAX_JSON_BYTES,
   DEFAULT_CONNECT_MAX_MESSAGES,
+  snapshotSince,
 } from "./connect-snapshot";
 
 type Msg = { id: string; role: string; content: string };
@@ -62,5 +64,35 @@ describe("capConnectMessages", () => {
     expect(JSON.stringify(result.messages).length).toBeLessThanOrEqual(
       DEFAULT_CONNECT_MAX_JSON_BYTES + 4_000,
     );
+  });
+});
+
+describe("snapshotSince（增量接入快照）", () => {
+  const rows = Array.from({ length: 1500 }, (_, at) => ({
+    id: `m${at}`,
+    role: at % 2 ? "assistant" : "user",
+    content: "x",
+  }));
+  test("从锚点里最早一条存档也有的开始发，不再发最近 400 条", () => {
+    const since = snapshotSince(rows, ["local-only", "m1495", "m1497"]);
+    expect(since?.map((row) => row.id)).toEqual([
+      "m1495",
+      "m1496",
+      "m1497",
+      "m1498",
+      "m1499",
+    ]);
+  });
+  test("一条都对不上 / 没给锚点：null，调用方退回封顶快照", () => {
+    expect(snapshotSince(rows, ["gone"])).toBeNull();
+    expect(snapshotSince(rows, undefined)).toBeNull();
+    expect(snapshotSince(rows, [])).toBeNull();
+  });
+  test("请求体里的锚点只收字符串、最多 16 个", () => {
+    expect(connectSnapshotAnchors(undefined)).toBeUndefined();
+    expect(connectSnapshotAnchors("m1")).toBeUndefined();
+    expect(connectSnapshotAnchors([1, "", "a"])).toEqual(["a"]);
+    const many = Array.from({ length: 40 }, (_, at) => `id${at}`);
+    expect(connectSnapshotAnchors(many)).toEqual(many.slice(-16));
   });
 });
