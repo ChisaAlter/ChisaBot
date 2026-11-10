@@ -3648,17 +3648,21 @@ export function ChatTranscript({
   const mountedRows: [TranscriptItem, number][] = [];
   if (!virtual) {
     const from = tailStart > 0 ? tailStart : 0;
+    const keepRow = (index: number) =>
+      showToolActivity ||
+      rowShows(index) ||
+      // 这一页亲眼见过、后来收起的行留在 DOM 里做 0 高折叠（§82.9），不能卸掉。
+      foldedRef.current.has(items[index]!.id);
     // 这一轮看得见、但还在尾巴上面的行（已结束轮次的问题 / 卡片）。
     if (lastTurnStart >= 0 && lastTurnStart < from) {
       for (let index = lastTurnStart; index < from; index++) {
-        if (rowShows(index)) mountedRows.push([items[index]!, index]);
+        if (keepRow(index)) mountedRows.push([items[index]!, index]);
       }
     }
     for (let index = from; index < items.length; index++) {
-      // 看不见的过程行不进 DOM：它们本来就是 display:none，挂上千百条只会拉长首帧。
+      // 从没见过的过程行不进 DOM：它们本来就是 display:none，挂上千百条只会拉长首帧。
       // 调试「显示工具调用」时全部挂上；活的干活卡、卡片仍由 rowShows 留着。
-      if (showToolActivity || rowShows(index))
-        mountedRows.push([items[index]!, index]);
+      if (keepRow(index)) mountedRows.push([items[index]!, index]);
     }
   }
   const firstMountedVisible = mountedRows.length > 0;
