@@ -239,6 +239,44 @@ describe("material tokens in styles.css", () => {
     ];
     expect(contrast(hex(ink!), hex(dark!))).toBeGreaterThanOrEqual(4.5);
   });
+
+  test("dark-under selected rail tab, segmented item, and appearance cards stay ≥4.5 on a forced dark wall", () => {
+    const block =
+      /data-lg-ink="dark"\]\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    const token = (name: string) => {
+      const m = new RegExp(`${name}:\\s*([^;]+);`).exec(block);
+      if (!m?.[1]) throw new Error(`missing ${name} in dark-ink block`);
+      return color(m[1].trim());
+    };
+    const color = (v: string): RGBA => {
+      const hex = /^#([0-9a-f]{6})$/i.exec(v);
+      if (hex) {
+        const n = Number.parseInt(hex[1], 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+      }
+      const rgb = /^rgba?\(([^)]*)\)$/.exec(v);
+      if (rgb) {
+        const p = rgb[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean)
+          .map(Number);
+        return [p[0], p[1], p[2], p[3] ?? 1];
+      }
+      throw new Error(`unsupported color: ${v}`);
+    };
+    // 强制不透明深釉：真实使用里几乎碰不到，但修的就是这个状态下选中态发白。
+    const wall: RGBA = [16, 18, 22, 1];
+    const ink = token("--ink-1");
+    const paper = over(token("--accent-fill-paper"), wall);
+    const glass1 = over(token("--glass-1"), wall);
+    const glass3 = over(token("--glass-3"), wall);
+    const solid = token("--glass-dark");
+    const solidInk = token("--glass-dark-ink");
+    expect(contrast(ink, paper)).toBeGreaterThanOrEqual(4.5); // rail tab / 分段选中
+    expect(contrast(ink, glass3)).toBeGreaterThanOrEqual(4.5); // palette-card.is-active
+    expect(contrast(ink, glass1)).toBeGreaterThanOrEqual(4.5); // wallpaper-card.is-active
+    expect(contrast(solidInk, solid)).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe("uniform panel ink (no mixed light/dark modules)", () => {

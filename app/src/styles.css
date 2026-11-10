@@ -9805,6 +9805,15 @@ html[data-wallpaper="on"] {
    * 压在深釉上对比约 1.4；改成和深色主题一样的浅底深字，对比 ≥4.5。 */
   --glass-dark: #e8ecf3;
   --glass-dark-ink: #10161f;
+  /* 选中态（rail tab / 分段滑块用 --accent-fill-paper !important，配色卡和壁纸卡用 --glass-3 /
+   * --glass-1）在浅色主题里是浅底，字已经翻成浅墨，对比只有 1.4–1.9。改成深色主题那档浅纱，
+   * 让浅字压在深底上。 */
+  --accent-fill-paper: rgba(255, 255, 255, 0.14);
+  --accent-fill-veil: rgba(15, 23, 42, 0.34);
+  --fill-tertiary: rgba(255, 255, 255, 0.08);
+  --glass-1: rgba(255, 255, 255, 0.06);
+  --glass-2: rgba(255, 255, 255, 0.09);
+  --glass-3: rgba(255, 255, 255, 0.14);
   --muted-foreground: #97a1b2;
   --side-sec-main-ink: #f2c14e;
   --side-sub-ink: #b4bfcf;
