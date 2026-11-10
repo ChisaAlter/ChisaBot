@@ -34,6 +34,22 @@ magpie web --addr 0.0.0.0:3430 --no-open
 
 服务端容器与 Magpie 位于同一网络时，可使用 `http://magpie:3425/v1`。服务名 `magpie` 只是模板示例，按自己的网络调整。容器内的 `127.0.0.1` 指容器自身，通常不能用它访问另一容器。
 
+### 一键安装（只装了 ChisaBot 时）
+
+服务器上还没有 Magpie 时，打开「管理后台 → 模型平台 Magpie」，页面会显示「这台服务器还没有 Magpie」和「一键安装」按钮。应用容器没有 docker socket，按钮只是排队一个 `magpie` 请求，真正安装的是宿主机更新程序（`deploy/updater/magpie.sh`，见 [online-update.md](online-update.md)）。前提：装了宿主机更新程序，并且更新程序已经升级到带安装模板的版本（做一次「系统更新」即可）。
+
+安装做这些事，每一步都显示在页面上，失败时写明原因，可以直接重试（已下载的镜像和安装目录会保留）：
+
+1. **准备**：在 `MAGPIE_DIR`（默认 `/opt/magpie`）写入随版本发布的 `compose.yaml`（即 `deploy/magpie.compose.yaml`，端口只绑 `127.0.0.1`），生成随机的 Web 管理密钥，只写进 root `600` 的 `private/magpie.env`。已有的文件一律不覆盖。
+2. **拉取官方镜像**：只认 `ghcr.io/yetone/magpie`（`MAGPIE_IMAGE` 指向别的仓库时拒绝安装，确实需要时设 `MAGPIE_INSTALL_ALLOW_CUSTOM=1`）。先向镜像仓库查询标签当前的摘要，拉下来的镜像必须是同一个摘要。
+3. **校验来源**：上游 CI 为每个镜像推送了 GitHub 构建来源证明（`actions/attest-build-provenance`）。宿主机有 `gh` 时运行 `gh attestation verify oci://ghcr.io/yetone/magpie@<摘要> --repo yetone/magpie --bundle-from-oci`，有 `cosign` 时用 `cosign verify-attestation` 校验同一份证明；不通过就不启动。两个工具都没有时如实记为「只核对了官方仓库与摘要」（页面与 `magpie.json` 的 `verification: "digest"`）。`MAGPIE_VERIFY=required` 时没有校验工具也不装，`MAGPIE_VERIFY=off` 跳过校验。
+4. **启动 / 健康检查**：`docker compose up -d`，等 Web 端口有响应。超时会停掉这个容器并把容器日志末尾带进任务日志。
+5. **接入 ChisaBot**：把同一把 Web 管理密钥写到更新程序的 `spool/state/magpie-web.key`（`0400`，属主为应用容器的 API 用户 uid 1002；这个目录本来就只读挂载在应用容器里），并补上 Magpie → 应用 3001 的隔离规则。应用没有配置 `MAGPIE_ADMIN_URL` 时，每隔几秒检查一次这个文件，读到就以 `http://magpie:3430` 接上状态页和内嵌控制台，不用重启。
+
+已经手动配置了 `MAGPIE_ADMIN_URL` 的部署完全按原配置运行，不读这些文件；服务器上已有一个不是这里装的 Magpie 容器时，页面只说明怎么接入，不会去覆盖它。
+
+装好后 Magpie 里还没有提供方，所以安装**不会**替你把 ChisaBot 的模型接口切到 Magpie。页面顶部会提示接下来的两步：在内嵌控制台添加提供方；在「网关 → 网关密钥」为 ChisaBot 创建密钥，再到「模型设置」把接口地址改为 `http://magpie:3425/v1` 并填上这把密钥。
+
 ### ChisaBot 管理入口（遗留可选项）
 
 > 自带内嵌管理控制台（管理后台 → 模型平台 Magpie → `/magpie-admin/`）后，本节的独立入口已不再是推荐做法，仅为兼容仍用它构建的旧部署而保留。新部署不需要设置。

@@ -1,0 +1,178 @@
+/*
+ * 一键安装 Magpie（DESIGN.md §15「一键安装」）。进度条、命令块、错误条沿用系统更新页的
+ * .sysupd-steps / .sysupd-cmd / .sysupd-error，这里只排版这张卡自己的结构。浅色、深色都只用令牌。
+ */
+.magpie-install {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+}
+.magpie-install-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.magpie-install-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--accent-blue);
+  background: var(--accent-blue-soft);
+}
+.magpie-install[data-state="failed"] .magpie-install-ic {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.magpie-install[data-state="connecting"] .magpie-install-ic {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.magpie-install[data-state="outdated"] .magpie-install-ic,
+.magpie-install[data-state="offline"] .magpie-install-ic,
+.magpie-install[data-state="busy"] .magpie-install-ic,
+.magpie-install[data-state="external"] .magpie-install-ic,
+.magpie-install[data-state="no-updater"] .magpie-install-ic {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.magpie-install-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.magpie-install-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.magpie-install-cta {
+  flex: none;
+  align-self: center;
+}
+
+.magpie-install-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.magpie-install-facts > div {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--glass-2);
+  border: 1px solid var(--line);
+}
+.magpie-install-facts dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.magpie-install-facts dt svg {
+  color: var(--success);
+}
+.magpie-install-facts dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.magpie-install-steps {
+  margin: 0;
+}
+.magpie-install-meta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.magpie-install-fail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.magpie-install-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+.magpie-install-link:hover {
+  text-decoration: underline;
+}
+.magpie-install-link:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.magpie-install-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 装好之后的「接入还差两步」 */
+.magpie-next .sysupd-note-ic {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.magpie-next h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.magpie-next-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+.magpie-next-steps li[data-done] {
+  color: var(--success);
+}
+.magpie-next-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  align-self: center;
+}
+
+@media (max-width: 720px) {
+  .magpie-install {
+    padding: 16px;
+  }
+  .magpie-install-head {
+    flex-wrap: wrap;
+  }
+  .magpie-install-cta {
+    width: 100%;
+    justify-content: center;
+  }
+  .magpie-install-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .magpie-next {
+    flex-wrap: wrap;
+  }
+  .magpie-next-actions {
+    width: 100%;
+    flex-direction: row;
+  }
+}

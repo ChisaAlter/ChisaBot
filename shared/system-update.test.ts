@@ -159,3 +159,39 @@ test("magpie gateway state: digests decide, and a missing digest never claims an
   // 查询失败的原因照原样给页面。
   expect(projectMagpieGatewayState({ installed: true, error: "registry 不可达" })?.error).toBe("registry 不可达");
 });
+
+test("magpie.json: 一键安装相关字段只认白名单值", () => {
+  // 新 magpie.sh 写的：会装、是 ChisaBot 装的、校验过签名。
+  expect(
+    projectMagpieGatewayState({
+      installed: true,
+      installable: true,
+      managed: true,
+      verification: "attested",
+    }),
+  ).toEqual({
+    installed: true,
+    updateAvailable: false,
+    installable: true,
+    managed: true,
+    verification: "attested",
+  });
+  // 旧 magpie.sh 不写 installable：页面据此提示先系统更新，不给按钮。
+  expect(
+    projectMagpieGatewayState({ installed: false })?.installable,
+  ).toBeUndefined();
+  // 不是 true 的值、不认识的校验方式：丢掉。
+  expect(
+    projectMagpieGatewayState({
+      installed: false,
+      installable: "yes",
+      managed: 1,
+      verification: "trust-me",
+    }),
+  ).toEqual({ installed: false, updateAvailable: false });
+  for (const verification of ["attested", "digest", "off"] as const)
+    expect(
+      projectMagpieGatewayState({ installed: true, verification })
+        ?.verification,
+    ).toBe(verification);
+});
