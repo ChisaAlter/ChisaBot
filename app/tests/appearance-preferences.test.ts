@@ -64,7 +64,7 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
   test("resolves built-in and custom wallpaper CSS backgrounds, glass opacity, and resets cleanly", () => {
     resetAppearanceDefaults();
     expect(getAppearanceState().palette).toBe("default");
-    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(resolveActiveWallpaperCss(getAppearanceState())).toBeNull();
 
@@ -97,7 +97,7 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
 
     resetAppearanceDefaults();
     expect(getAppearanceState().palette).toBe("default");
-    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(getAppearanceState().harkScene).toBe("auto");
     expect(getAppearanceState().wallpaperId).toBe("none");

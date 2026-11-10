@@ -9628,7 +9628,7 @@ html[data-wallpaper="on"] {
 /* 3.1 液态玻璃（liquid）· 浅色：清透厚玻璃板——颜色取自背后场景（白釉 6–22% 起），
  * 边缘一圈 1.5px 折射高光 + 左上角内光，blur 只有 2px，弯折交给边缘透镜
  * （lib/liquid-glass.ts 把 url(#id) 挂进 --lg-lens-url，追加在滤镜链尾）。 */
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :where(
     .glass-side-card,
     .acct-card,
@@ -9698,7 +9698,7 @@ html[data-wallpaper="on"] {
     linear-gradient(135deg, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 0%, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 100%);
 }
 
-:where(html.dark[data-glass="liquid"], html.dark:not([data-glass]))
+:where(html.dark[data-glass="liquid"])
   :where(
     .glass-side-card,
     .acct-card,
@@ -9759,7 +9759,7 @@ html[data-wallpaper="on"] {
 
 /* 浅色液态玻璃压在深色背景上（lib/liquid-glass.ts 采样判定后挂 data-lg-ink="dark"）：
  * 换深釉 + 浅墨 + 暗边，整套墨色令牌翻成深色档让子元素直接继承。 */
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(
     .glass-side-card,
     .acct-card,
@@ -9808,12 +9808,12 @@ html[data-wallpaper="on"] {
 }
 
 /* 深釉档里的行底色也翻成深色档的值：白釉 76% 的行配浅墨会读不到字。 */
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
   :is(.glass-bot-row:hover, .glass-mini-bot:hover, .nav-row:hover) {
   background: rgba(10, 12, 18, 0.2);
 }
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
   :is(.glass-bot-row.is-on, .glass-mini-bot.is-on, .nav-row.is-on) {
   background: rgba(10, 12, 18, 0.5) !important;
@@ -9974,7 +9974,7 @@ html[data-wallpaper="on"] {
 
 /* 3.4 薄雾玻璃（mist）：液态玻璃重写前（0.1.128 及更早）的默认材质——20px 柔焦 +
  * 白釉/深釉渐变底，没有边缘透镜与背景自适应，给想要旧观感的用户留的选择。 */
-:where(html[data-glass="mist"])
+:where(html[data-glass="mist"], html:not([data-glass]))
   :where(
     .glass-side-card,
     .acct-card,
@@ -10013,7 +10013,7 @@ html[data-wallpaper="on"] {
   --lg-ink-2: var(--glass-ink-2);
   --lg-blend: multiply;
 }
-:where(html.dark[data-glass="mist"])
+:where(html.dark[data-glass="mist"], html.dark:not([data-glass]))
   :where(
     .glass-side-card,
     .acct-card,
@@ -10241,12 +10241,12 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
 
 /* 液态玻璃上的图标用不透明色画、以 blend 融进背后场景：浅色 multiply、深色 plus-lighter；
  * 彩色图表 / 头像 / 媒体不融（会被底色吞掉）。 */
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
   :where(svg) {
   mix-blend-mode: var(--lg-blend, multiply);
 }
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
   :where(.recharts svg, .recharts-wrapper svg, svg.sa, .mermaid svg, .agent-orb svg, canvas, img, video) {
   mix-blend-mode: normal;

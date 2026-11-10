@@ -530,7 +530,7 @@ function readInitialAppearance(): AppearanceState {
     palette:
       rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
     glassStyle:
-      rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
+      rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "mist",
     glassOpacity: clampNumber(
       rawGlassOpacity,
       GLASS_OPACITY_MIN,
@@ -1107,7 +1107,7 @@ export function setWallpaperDim(wallpaperDim: number) {
 export function resetAppearanceDefaults() {
   updateAppearance({
     palette: "default",
-    glassStyle: "liquid",
+    glassStyle: "mist",
     glassOpacity: 16,
     glassOpacityDark: 16,
     harkScene: "auto",

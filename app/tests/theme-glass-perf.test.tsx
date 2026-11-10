@@ -543,7 +543,7 @@ describe("5) 启动骨架用用户选的配色", () => {
     }
   });
 
-  test("默认配色或存的值不认识：不改天空，只按应用深浅色写地址栏颜色", () => {
+  test("默认配色或存的值不认识：不改天空，玻璃回落到 mist，只按应用深浅色写地址栏颜色", () => {
     runBoot(
       {
         [palette.PALETTE_STORAGE_KEY]: "nope",
@@ -552,7 +552,7 @@ describe("5) 启动骨架用用户选的配色", () => {
       false,
     );
     expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
-    expect(document.documentElement.hasAttribute("data-glass")).toBe(false);
+    expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
     expect(document.body.style.getPropertyValue("--sky-1")).toBe("");
     for (const m of document.querySelectorAll<HTMLMetaElement>(
       'meta[name="theme-color"]',

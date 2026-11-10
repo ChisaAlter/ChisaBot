@@ -116,7 +116,7 @@ export function AppearancePreferences() {
           {appearance.harkScene !== "auto" ||
           appearance.palette !== "default" ||
           appearance.wallpaperId !== "none" ||
-          appearance.glassStyle !== "liquid" ||
+          appearance.glassStyle !== "mist" ||
           appearance.glassOpacity !== 16 ||
           appearance.glassOpacityDark !== 16 ? (
             <Button

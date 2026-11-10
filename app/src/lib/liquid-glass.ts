@@ -1,7 +1,7 @@
 /**
  * 液态玻璃（liquid）的边缘透镜与背景自适应（DESIGN.md §10.6）。
  *
- * 两件互补的事，都只对 html[data-glass="liquid"]（或不设 data-glass，liquid 是默认）生效：
+ * 两件互补的事，都只对 html[data-glass="liquid"] 生效（默认材质是 mist；未设 data-glass 也按 mist）：
  *
  * 1. 边缘透镜（rim lens）：给每个仍在跑 backdrop-filter 的玻璃面生成一张位移图
  *    （红 = 水平弯折、绿 = 垂直弯折、128 = 不动），灌进 svg <filter> 的 feImage +
@@ -375,8 +375,19 @@ function lensUrlSupported(): boolean {
 }
 
 function liquidActive(): boolean {
-  const glass = document.documentElement.getAttribute("data-glass");
-  return glass === null || glass === "liquid";
+  return document.documentElement.getAttribute("data-glass") === "liquid";
+}
+
+/**
+ * 整屏统一墨色：浅色主题下要么全浅釉、要么在壁纸整体偏暗时全深釉；
+ * 不再按行/按面板各自翻转，避免同屏有的模块深、有的模块浅。
+ */
+export function panelInkForWallpaper(
+  scheme: "light" | "dark",
+  wallpaperGloballyDark: boolean,
+): GlassInkState {
+  if (scheme === "dark" || wallpaperGloballyDark) return "dark";
+  return "light";
 }
 
 function darkScheme(): boolean {
@@ -705,58 +716,21 @@ class LiquidGlass {
     if (els.length === 0) return;
     const raster = this.raster();
     const scheme = darkScheme() ? "dark" : "light";
-    // 全屏否决：整体底色不算暗就不许任何面板翻深釉（半深半浅的壁纸不该把整屏翻暗）。
-    const globalDark =
-      scheme === "dark" ||
-      (raster !== null && rasterMeanLum(raster.data) < LG_INK_LINE);
-    // 同一行（中心 y 差 < 24px）的面板共享一次判定。
-    const rows = new Map<number, GlassInkState[]>();
-    const decided = new Map<Element, { stats: BgStats; ink: GlassInkState }>();
+    // 壁纸整体偏暗才允许浅色主题翻深釉；翻的话整屏一起翻，不再按行/按面板各自判定。
+    const wallpaperGloballyDark =
+      raster !== null && rasterMeanLum(raster.data) < LG_INK_LINE;
+    const unified = panelInkForWallpaper(scheme, wallpaperGloballyDark);
     for (const el of els) {
-      const stats = raster ? this.sampleUnder(el, raster) : null;
-      const prev = this.lastInk.get(el) ?? null;
-      const lum = stats?.lum ?? 0.5;
-      const ink = stats
-        ? decideInk(scheme, lum, prev)
-        : scheme === "dark"
-          ? "dark"
-          : "light";
-      decided.set(el, {
-        stats: stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 },
-        ink,
-      });
-      const rowKey = Math.round(el.getBoundingClientRect().top / 24);
-      const list = rows.get(rowKey) ?? [];
-      list.push(ink);
-      rows.set(rowKey, list);
+      const stats = raster
+        ? this.sampleUnder(el, raster)
+        : { lum: 0.5, texture: 0.4, chroma: 0.4 };
+      this.applyAdapt(el, unified, stats, scheme);
+      this.lastInk.set(el, unified);
     }
-    let darkCount = 0;
-    let lightCount = 0;
-    for (const el of els) {
-      const rowKey = Math.round(el.getBoundingClientRect().top / 24);
-      const row = rows.get(rowKey) ?? [];
-      const rowDark = row.filter((i) => i === "dark").length;
-      const rowLight = row.length - rowDark;
-      // 同一行共享一个判定：要过半共识才统一翻；两边都不过半保留这块面板自己的判定。
-      let ink: GlassInkState;
-      if (scheme === "dark") ink = "dark";
-      else if (!globalDark) ink = "light";
-      else if (rowDark * 2 > row.length) ink = "dark";
-      else if (rowLight * 2 > row.length) ink = "light";
-      else ink = decided.get(el)?.ink ?? "light";
-      if (ink === "dark") darkCount++;
-      else lightCount++;
-      const decision = decided.get(el);
-      if (decision) this.applyAdapt(el, ink, decision.stats, scheme);
-      this.lastInk.set(el, ink);
-    }
-    // 记住浅色模式下多数面板的墨，下次加载直接打开在它。
+    // 记住浅色模式下整屏墨色，下次加载先按它画，避免闪一下。
     try {
       if (scheme === "light") {
-        window.localStorage.setItem(
-          LG_INK_STORAGE_KEY,
-          darkCount > lightCount ? "dark" : "light",
-        );
+        window.localStorage.setItem(LG_INK_STORAGE_KEY, unified);
       }
     } catch {
       /* 存储不可用跳过 */

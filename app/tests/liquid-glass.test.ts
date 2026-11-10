@@ -26,6 +26,7 @@ import {
   rimWidthPx,
   sampleStats,
   satKeepOf,
+  panelInkForWallpaper,
   type RGBA,
 } from "../src/lib/liquid-glass";
 
@@ -220,5 +221,36 @@ describe("material tokens in styles.css", () => {
   test("the dark-under state flip rule exists for every glass surface", () => {
     expect(css).toContain('[data-lg-ink="dark"]');
     expect(css).toMatch(/data-lg-ink="dark"\]\s*\{[\s\S]*--lg-tint-rgb: 16 18 22/);
+  });
+});
+
+describe("uniform panel ink (no mixed light/dark modules)", () => {
+  test("light scheme stays light on a bright wallpaper", () => {
+    expect(panelInkForWallpaper("light", false)).toBe("light");
+  });
+  test("light scheme flips the whole screen together on a dark wallpaper", () => {
+    expect(panelInkForWallpaper("light", true)).toBe("dark");
+  });
+  test("dark scheme is always dark glaze", () => {
+    expect(panelInkForWallpaper("dark", false)).toBe("dark");
+    expect(panelInkForWallpaper("dark", true)).toBe("dark");
+  });
+  test("liquid CSS no longer treats unset data-glass as liquid", () => {
+    expect(css).not.toMatch(
+      /:where\(html\[data-glass="liquid"\],\s*html:not\(\[data-glass\]\)\)/,
+    );
+    expect(css).toMatch(
+      /:where\(html\[data-glass="mist"\],\s*html:not\(\[data-glass\]\)\)/,
+    );
+  });
+  test("liquidActive source only matches liquid, not null", () => {
+    const src = readFileSync(
+      path.join(import.meta.dir, "../src/lib/liquid-glass.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(
+      /function liquidActive\(\)[^{]*\{[^}]*getAttribute\("data-glass"\) === "liquid"/s,
+    );
+    expect(src).not.toMatch(/glass === null \|\| glass === "liquid"/);
   });
 });
