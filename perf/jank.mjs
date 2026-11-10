@@ -36,6 +36,7 @@ const { values: o } = parseArgs({
     cpuprofile: { type: "boolean", default: false },
     react: { type: "boolean", default: false },
     screenshots: { type: "boolean", default: false },
+    glass: { type: "string" },
     chrome: {
       type: "string",
       default: process.env.CHROME_PATH || "/usr/bin/google-chrome",
@@ -49,7 +50,7 @@ const { values: o } = parseArgs({
 });
 if (o.help) {
   console.log(`node perf/jank.mjs [--scenario=${SCENARIOS.join(",")}|all] [--runs=3] [--out=dir] [--dist=app/dist]
-  [--cpu=4] [--lat=ms] [--net] [--trace] [--cpuprofile] [--react] [--screenshots] [--chrome=path] [--tag=name]`);
+  [--glass=liquid|mist|crystal|frosted] [--cpu=4] [--lat=ms] [--net] [--trace] [--cpuprofile] [--react] [--screenshots] [--chrome=path] [--tag=name]`);
   process.exit(0);
 }
 const ONLY =
@@ -57,6 +58,11 @@ const ONLY =
 for (const s of ONLY)
   if (!SCENARIOS.includes(s))
     throw new Error(`unknown scenario ${s}; known: ${SCENARIOS.join(",")}`);
+const GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"];
+if (o.glass && !GLASS_STYLES.includes(o.glass))
+  throw new Error(
+    `unknown --glass ${o.glass}; known: ${GLASS_STYLES.join(",")}`,
+  );
 const OUT = path.resolve(o.out);
 const DIST = path.resolve(o.dist);
 if (!fs.existsSync(path.join(DIST, "index.html")))
@@ -394,6 +400,15 @@ async function runOnce(runIdx) {
   };
   try {
     await ctx.addInitScript(initProbes, { react: o.react });
+    // Default glass follows the build (new users get mist). --glass=liquid
+    // forces the liquid path so CI covers snapshot sampling and the lens.
+    if (o.glass) {
+      await ctx.addInitScript((g) => {
+        try {
+          localStorage.setItem("chisabot-glass-style", g);
+        } catch {}
+      }, o.glass);
+    }
     const page = ctx.pages()[0] || (await ctx.newPage());
     page.on("pageerror", (e) =>
       console.error("pageerror", String(e).slice(0, 200)),

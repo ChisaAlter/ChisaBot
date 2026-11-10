@@ -223,6 +223,22 @@ describe("material tokens in styles.css", () => {
     expect(css).toContain('[data-lg-ink="dark"]');
     expect(css).toMatch(/data-lg-ink="dark"\]\s*\{[\s\S]*--lg-tint-rgb: 16 18 22/);
   });
+
+  test("dark-under glass-seg selected tab and solid glass controls flip to a ≥4.5 pair", () => {
+    const block =
+      /data-lg-ink="dark"\]\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    const dark = /--glass-dark:\s*(#[0-9a-fA-F]{6})/.exec(block)?.[1];
+    const ink = /--glass-dark-ink:\s*(#[0-9a-fA-F]{6})/.exec(block)?.[1];
+    expect(dark).toBe("#e8ecf3");
+    expect(ink).toBe("#10161f");
+    const hex = (h: string): RGBA => [
+      Number.parseInt(h.slice(1, 3), 16),
+      Number.parseInt(h.slice(3, 5), 16),
+      Number.parseInt(h.slice(5, 7), 16),
+      1,
+    ];
+    expect(contrast(hex(ink!), hex(dark!))).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe("uniform panel ink (no mixed light/dark modules)", () => {

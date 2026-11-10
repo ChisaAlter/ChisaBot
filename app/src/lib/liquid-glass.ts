@@ -398,6 +398,8 @@ const HTML_WATCHED_ATTRS = [
 /** 玻璃面「背景重采样 / 透镜重建」的间隔下限。 */
 const ADAPT_THROTTLE_MS = 160;
 const RESCAN_DEBOUNCE_MS = 240;
+/** 滚动停稳后再采样：滚动中不跑快照拷贝和墨色判定，避免拖低帧率。 */
+const SCROLL_IDLE_MS = 150;
 
 interface LensEntry {
   id: string;
@@ -457,8 +459,15 @@ class LiquidGlass {
   private readonly wallpaperImg = new Map<string, HTMLImageElement>();
   private pendingRescan = 0;
   private pendingSample = 0;
+  private pendingIdleSample = 0;
+  private idleViaTimeout = false;
+  private scrollEndTimer = 0;
+  private scrolling = false;
+  private wallpaperObs: MutationObserver | null = null;
+  private watchedWallpaper: Element | null = null;
+  private lastWallpaperUrl = "";
   private unsubscribeSky: (() => void) | null = null;
-  private readonly onScroll = () => this.scheduleSample(false);
+  private readonly onScroll = () => this.markScrolling();
 
   start() {
     if (this.destroyed || this.enabled || typeof window === "undefined") return;
@@ -495,6 +504,11 @@ class LiquidGlass {
     this.enabled = false;
     window.clearTimeout(this.pendingRescan);
     window.clearTimeout(this.pendingSample);
+    window.clearTimeout(this.scrollEndTimer);
+    this.cancelIdleSample();
+    this.wallpaperObs?.disconnect();
+    this.wallpaperObs = null;
+    this.watchedWallpaper = null;
     this.unsubscribeSky?.();
     this.unsubscribeSky = null;
     window.removeEventListener("scroll", this.onScroll, {
@@ -513,6 +527,7 @@ class LiquidGlass {
   private refresh() {
     this.rasterDirty = true;
     this.syncSkySubscription();
+    this.syncWallpaperWatch();
     this.scheduleSample(true);
     this.scheduleRescan();
   }
@@ -555,6 +570,7 @@ class LiquidGlass {
       }
       if (added) break;
     }
+    this.syncWallpaperWatch();
     if (!added || !liquidActive() || glassSuppressed()) return;
     if (!darkScheme() && this.screenInk === "dark") {
       for (const el of this.surfaces()) {
@@ -573,8 +589,57 @@ class LiquidGlass {
     }, RESCAN_DEBOUNCE_MS);
   }
 
+  /** 滚动开始：取消已排队的采样，等停稳后再采。天空快照若在滚动中到达，只记 dirty。 */
+  private markScrolling() {
+    if (this.destroyed) return;
+    this.scrolling = true;
+    if (this.pendingSample) {
+      window.clearTimeout(this.pendingSample);
+      this.pendingSample = 0;
+    }
+    this.cancelIdleSample();
+    window.clearTimeout(this.scrollEndTimer);
+    this.scrollEndTimer = window.setTimeout(
+      () => this.onScrollIdle(),
+      SCROLL_IDLE_MS,
+    );
+  }
+
+  private onScrollIdle() {
+    this.scrollEndTimer = 0;
+    this.scrolling = false;
+    if (this.destroyed) return;
+    // 面板位置可能变了，但视口背景通常没变：不强制重建光栅（那是滚动卡顿的主因）。
+    // 若滚动期间天空出了新快照或壁纸变了，rasterDirty 已是 true，idle 采样会重建。
+    this.scheduleIdleSample();
+  }
+
+  private cancelIdleSample() {
+    if (!this.pendingIdleSample) return;
+    if (this.idleViaTimeout) window.clearTimeout(this.pendingIdleSample);
+    else cancelIdleCallback(this.pendingIdleSample);
+    this.pendingIdleSample = 0;
+  }
+
+  private scheduleIdleSample() {
+    if (this.pendingIdleSample || this.destroyed) return;
+    const run = () => {
+      this.pendingIdleSample = 0;
+      this.sample(true);
+    };
+    if (typeof requestIdleCallback === "function") {
+      this.idleViaTimeout = false;
+      this.pendingIdleSample = requestIdleCallback(run, { timeout: 200 });
+    } else {
+      this.idleViaTimeout = true;
+      this.pendingIdleSample = window.setTimeout(run, 0);
+    }
+  }
+
   private scheduleSample(full: boolean) {
-    if (this.pendingSample || this.destroyed) return;
+    if (this.destroyed) return;
+    if (this.scrolling) return;
+    if (this.pendingSample) return;
     this.pendingSample = window.setTimeout(
       () => {
         this.pendingSample = 0;
@@ -582,6 +647,47 @@ class LiquidGlass {
       },
       full ? ADAPT_THROTTLE_MS : ADAPT_THROTTLE_MS * 2,
     );
+  }
+
+  /**
+   * 自定义壁纸只换图片时，根上的 data-wallpaper 仍是 "on"，html 观察器不会触发。
+   * 盯 .chisabot-wallpaper-img 的 style / 节点装卸，图片一变就重采。
+   */
+  private wallpaperCssUrl(): string {
+    const layer = document.querySelector<HTMLElement>(
+      ".chisabot-wallpaper-img",
+    );
+    if (!layer) return "";
+    const bg =
+      layer.style.backgroundImage || getComputedStyle(layer).backgroundImage;
+    return /^url\((['"]?)(.*)\1\)$/.exec(bg)?.[2] ?? bg;
+  }
+
+  private syncWallpaperWatch() {
+    const layer = document.querySelector(".chisabot-wallpaper-img");
+    if (layer !== this.watchedWallpaper) {
+      this.wallpaperObs?.disconnect();
+      this.wallpaperObs = null;
+      this.watchedWallpaper = layer;
+      if (layer) {
+        this.wallpaperObs = new MutationObserver(() => {
+          this.onWallpaperChanged();
+        });
+        this.wallpaperObs.observe(layer, {
+          attributes: true,
+          attributeFilter: ["style", "class"],
+        });
+      }
+    }
+    this.onWallpaperChanged();
+  }
+
+  private onWallpaperChanged() {
+    const url = this.wallpaperCssUrl();
+    if (url === this.lastWallpaperUrl) return;
+    this.lastWallpaperUrl = url;
+    this.rasterDirty = true;
+    this.scheduleSample(true);
   }
 
   /** 透镜 + 自适应都挂在「此刻真正在跑 backdrop-filter」的元素上。 */

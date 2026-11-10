@@ -9801,6 +9801,10 @@ html[data-wallpaper="on"] {
   --glass-ink-2: #c7cedb;
   --glass-ink-3: #97a1b2;
   --glass-ink-4: #6f7a8c;
+  /* 实心控件（顶栏分段选中态、.glass-dark 按钮、停止生成等）在浅色主题里是深底白字，
+   * 压在深釉上对比约 1.4；改成和深色主题一样的浅底深字，对比 ≥4.5。 */
+  --glass-dark: #e8ecf3;
+  --glass-dark-ink: #10161f;
   --muted-foreground: #97a1b2;
   --side-sec-main-ink: #f2c14e;
   --side-sub-ink: #b4bfcf;

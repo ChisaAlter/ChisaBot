@@ -34,6 +34,7 @@ import {
   WALLPAPER_ID_STORAGE_KEY,
 } from "@/lib/appearance";
 import { paletteBootScript } from "@/lib/palette";
+import { THEME_STORAGE_KEY } from "@/lib/theme";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -103,9 +104,10 @@ function bootGlass(): string | null {
 }
 
 describe("existing users keep the old default (liquid)", () => {
-  test("the prior-appearance key list is exactly every appearance key except the glass style", () => {
+  test("the prior-appearance key list is the light/dark theme plus every appearance key except the glass style", () => {
     expect([...PRIOR_APPEARANCE_STORAGE_KEYS].sort()).toEqual(
       [
+        THEME_STORAGE_KEY,
         PALETTE_STORAGE_KEY,
         WALLPAPER_ID_STORAGE_KEY,
         WALLPAPER_CUSTOM_URL_STORAGE_KEY,
@@ -128,6 +130,18 @@ describe("existing users keep the old default (liquid)", () => {
       expect(bootGlass()).toBe("liquid");
     });
   }
+
+  test("only a light/dark theme toggle saved (no glass style) → liquid, in the app and in the boot script", () => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(bootGlass()).toBe("liquid");
+    window.localStorage.clear();
+    window.localStorage.setItem(THEME_STORAGE_KEY, "light");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(bootGlass()).toBe("liquid");
+  });
 
   test("only the haze slider saved: keeps liquid and the saved haze (QA U sliderOnly)", () => {
     window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "21");

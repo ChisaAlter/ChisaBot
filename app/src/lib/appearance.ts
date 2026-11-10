@@ -548,7 +548,7 @@ function readInitialAppearance(): AppearanceState {
   return {
     palette:
       rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
-    // 没存材质：存过任何其他外观设置的老用户沿用旧默认 liquid，从没存过的新用户才用 mist。
+    // 没存材质：存过任何其他外观设置（含只切过深浅主题）的老用户沿用旧默认 liquid，从没存过的新用户才用 mist。
     glassStyle:
       rawGlass && VALID_GLASS_STYLES.has(rawGlass)
         ? rawGlass

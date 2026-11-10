@@ -6,6 +6,8 @@
  * 就是用户选的配色，而不是默认蓝天。lib/appearance.ts 照旧 re-export 这里的名字。
  */
 
+import { THEME_STORAGE_KEY } from "./theme";
+
 export type ThemePaletteId =
   | "default"
   | "aurora"
@@ -252,11 +254,14 @@ export const DEFAULT_GLASS_STYLE = "mist";
 /** 0.1.138 以前的默认材质：存过任何外观设置、但没存过材质的老用户沿用它。 */
 export const LEGACY_DEFAULT_GLASS_STYLE = "liquid";
 /**
- * 材质以外的外观设置键（与 appearance.ts 的同名常量一一对应，tests/default-mist-glass.test.tsx 核对）。
- * 只要存过其中任何一个，就算「已保存过外观」的老用户，材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
- * 写在这里而不是 appearance.ts：启动脚本要内联这份列表，palette.ts 是不依赖 DOM 的纯模块。
+ * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
+ * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
+ * 含 `chisabot-theme`（深浅主题，{@link THEME_STORAGE_KEY}）以及 appearance.ts 里其余外观键
+ * （tests/default-mist-glass.test.tsx 核对）。写在这里而不是 appearance.ts：启动脚本要内联这份列表，
+ * palette.ts 是不依赖 DOM 的纯模块。
  */
 export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
+  THEME_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   "chisabot-wallpaper-id",
   "chisabot-wallpaper-custom-url",
@@ -268,7 +273,7 @@ export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
 ];
 
 /**
- * 没存材质时用哪种：存过任何其他外观设置 → 旧默认 liquid（「已保存过外观的用户不受影响」）；
+ * 没存材质时用哪种：存过任何其他外观设置（含只切过深浅主题） → 旧默认 liquid（「已保存过外观的用户不受影响」）；
  * 什么都没存过 → mist。get 读不到（隐私模式抛错）按没存过处理。
  */
 export function fallbackGlassStyle(

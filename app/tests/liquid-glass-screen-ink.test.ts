@@ -260,3 +260,66 @@ describe("liquid glass installer: one ink for the whole screen", () => {
     expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
   });
 });
+
+function mountWallpaper(url: string) {
+  mountShell();
+  const img = document.createElement("div");
+  img.className = "chisabot-wallpaper-img";
+  img.style.backgroundImage = `url("${url}")`;
+  document.body.appendChild(img);
+  document.documentElement.setAttribute("data-wallpaper", "on");
+}
+
+describe("liquid glass installer: wallpaper image change and scroll sampling", () => {
+  test("changing only the custom wallpaper image retriggers sampling (data-wallpaper stays on)", async () => {
+    mountWallpaper("https://example.test/a.jpg");
+    uninstall = installLiquidGlass();
+    await wait(260);
+    expect(new Set(inks())).toEqual(new Set(["light"]));
+
+    // 只换图片 URL，根属性 data-wallpaper 仍是 on：以前不会重采。
+    gray = 60;
+    const img = document.querySelector<HTMLElement>(".chisabot-wallpaper-img");
+    expect(img).toBeTruthy();
+    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
+    img!.style.backgroundImage = 'url("https://example.test/b.jpg")';
+    await wait(260);
+    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
+    expect(new Set(inks())).toEqual(new Set(["dark"]));
+  });
+
+  test("inserting a wallpaper node after start also retriggers sampling", async () => {
+    mountShell();
+    document.documentElement.setAttribute("data-wallpaper", "on");
+    uninstall = installLiquidGlass();
+    await wait(260);
+    expect(new Set(inks())).toEqual(new Set(["light"]));
+    gray = 60;
+    const img = document.createElement("div");
+    img.className = "chisabot-wallpaper-img";
+    img.style.backgroundImage = 'url("https://example.test/c.jpg")';
+    document.body.appendChild(img);
+    await wait(260);
+    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
+    expect(new Set(inks())).toEqual(new Set(["dark"]));
+  });
+
+  test("sampling is paused while scroll events keep arriving and runs after scroll settles", async () => {
+    mountShell();
+    uninstall = installLiquidGlass();
+    await wait(260);
+    expect(new Set(inks())).toEqual(new Set(["light"]));
+
+    gray = 60;
+    const ticking = window.setInterval(() => {
+      window.dispatchEvent(new Event("scroll"));
+    }, 40);
+    // 同步改一个被观察的根属性，按修前逻辑 160ms 后就会重采。
+    document.documentElement.setAttribute("data-resizing", "1");
+    await wait(400);
+    expect(new Set(inks())).toEqual(new Set(["light"]));
+    window.clearInterval(ticking);
+    await wait(500);
+    expect(new Set(inks())).toEqual(new Set(["dark"]));
+  });
+});
