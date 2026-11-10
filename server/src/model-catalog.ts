@@ -109,7 +109,8 @@ export function knownContextWindowOf(modelId: string): number | undefined {
   return KNOWN_CONTEXT_WINDOWS.get(modelId) ?? KNOWN_CONTEXT_WINDOWS.get(modelId.split("/").pop() ?? "");
 }
 function visionOf(row: Record<string, unknown>): boolean | undefined {
-  const id = typeof row.id === "string" ? row.id : "";
+  // Case-insensitive: gateways re-case ids (QA508 vision check of the production DeepSeek id).
+  const id = typeof row.id === "string" ? row.id.toLowerCase() : "";
   if (KNOWN_VISION_MODELS.has(id) || KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")) return true;
   return imageInputOf(row);
 }

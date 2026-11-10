@@ -477,9 +477,15 @@ export async function apply(ctx, config) {
           await removeKey(keyRef);
           throw error;
         }
-        binding.model.primary.provider = provider;
-        for (const candidate of binding.model.fallbacks ?? [])
+        // The provider id is per binding; the model breaker keys on the real endpoint and model
+        // so a dead model stays skipped across turns, sessions and bots of this Host.
+        for (const candidate of [
+          binding.model.primary,
+          ...(binding.model.fallbacks ?? []),
+        ]) {
+          candidate.breakerKey = `${connection.baseURL}\u0000${connection.target ?? ""}\u0000${candidate.model}`;
           candidate.provider = provider;
+        }
         delete binding.connection;
       }
       try {

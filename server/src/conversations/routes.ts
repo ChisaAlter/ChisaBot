@@ -3,34 +3,25 @@ import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { Hono } from "hono";
 import { Observable, type Subscription } from "rxjs";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
-import { redactText } from "../computer/activity-redact";
 import {
   type HeadlessTool,
   HeadlessToolsMiddleware,
 } from "../computer/headless-tools";
 import type { IdentifyActor } from "../conversation-runtime";
-import { reasonWithoutStatement } from "../db/query-failure";
 import {
   mountPreviousConversationRoutes,
   normalizeRunInput,
 } from "../legacy/protocol";
 import type { LocalConversationBackend } from "../local-conversations";
+import { publicErrorMessage } from "../public-error";
 import { assertConversationAdmissionOpen } from "./maintenance";
-
-const PUBLIC_ERROR_MAX = 300;
 
 /**
  * What a failed conversation may tell the browser or the log: never a raw `error.message`.
- * Query failures lose their statement and bound values, secret-shaped text and URL credentials
- * are masked, and the result is capped. A non-Error throw gets a fixed sentence.
+ * Delegates to the one shared redaction (public-error.ts).
  */
 export function publicConversationError(error: unknown): string {
-  if (!(error instanceof Error)) return "会话执行失败。";
-  const text = redactText(reasonWithoutStatement(error)).trim();
-  if (!text) return "会话执行失败。";
-  return text.length > PUBLIC_ERROR_MAX
-    ? `${text.slice(0, PUBLIC_ERROR_MAX)}…`
-    : text;
+  return publicErrorMessage(error);
 }
 
 /** Subscription lifetime controls delivery only. The runner owns execution and persistence. */

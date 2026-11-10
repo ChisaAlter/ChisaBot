@@ -185,6 +185,26 @@ test("catalog rows missing context metadata fall back to the known-window table"
   ]);
 });
 
+test("the production DeepSeek id is image-capable however the gateway prefixes or cases it", async () => {
+  const catalog = catalogWith(async () =>
+    response({
+      data: [
+        { id: "deepseek-v4.1-flash-1017" },
+        { id: "clinepass/deepseek-v4.1-flash-1017", supports_vision: false },
+        { id: "magpie/DeepSeek-V4.1-Flash-1017" },
+        { id: "vendor/text-model" },
+      ],
+    }),
+  );
+  const models = (await catalog.list()).models;
+  expect(models.map((m) => m.supportsImages)).toEqual([
+    true,
+    true,
+    true,
+    undefined,
+  ]);
+});
+
 test("missing saved credentials do not issue a gateway request", async () => {
   let calls = 0;
   const catalog = createModelCatalogService({

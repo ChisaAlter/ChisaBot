@@ -16,6 +16,84 @@ const fallbackCodes = new Set([
   "INVALID_REQUEST",
 ]);
 
+/**
+ * Model breaker (parity with the Hermes adapter, #466 / QA1102-06): a candidate that just failed
+ * as unusable — down, timing out, rate limited, missing, rejecting requests — is skipped by every
+ * later turn of this Host for a cooldown, so a dead primary does not cost each reply its full
+ * timeout again. After the cooldown one turn probes it (half-open); success closes the breaker,
+ * another failure reopens it for twice as long, up to the cap. A turn with no healthy candidate
+ * still tries its primary rather than failing outright.
+ */
+const breakerCodes = new Set([
+  "QUOTA",
+  "RATE_LIMIT",
+  "SERVER",
+  "TIMEOUT",
+  "TRANSPORT",
+  "EMPTY_RESPONSE",
+  "UNKNOWN_MODEL",
+  "INVALID_REQUEST",
+]);
+const PROBE_STALE_MS = 300_000;
+const seconds = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
+export class ModelBreakers {
+  constructor(now = () => Date.now()) {
+    this.now = now;
+    this.entries = new Map();
+  }
+  get baseMs() {
+    return seconds("CHISABOT_MODEL_BREAKER_COOLDOWN_S", 60) * 1000;
+  }
+  get maxMs() {
+    return seconds("CHISABOT_MODEL_BREAKER_MAX_COOLDOWN_S", 600) * 1000;
+  }
+  /** The open entry while it still gates this key, else undefined. */
+  cooling(key) {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    const now = this.now();
+    if (entry.probing) {
+      if (now - entry.probeStarted < PROBE_STALE_MS) return entry;
+      entry.probing = false;
+    }
+    return entry.openUntil > now ? entry : undefined;
+  }
+  /** An expired breaker lets exactly one turn probe the model; others keep skipping it. */
+  probe(key) {
+    const entry = this.entries.get(key);
+    if (!entry || entry.probing) return;
+    entry.probing = true;
+    entry.probeStarted = this.now();
+  }
+  fail(key, reason) {
+    const entry = this.entries.get(key) ?? {
+      opens: 0,
+      openUntil: 0,
+      probing: false,
+      probeStarted: 0,
+    };
+    entry.reason = reason;
+    entry.probing = false;
+    const now = this.now();
+    if (entry.openUntil <= now) {
+      entry.openUntil =
+        now + Math.min(this.baseMs * 2 ** entry.opens, this.maxMs);
+      entry.opens++;
+    }
+    this.entries.set(key, entry);
+  }
+  ok(key) {
+    this.entries.delete(key);
+  }
+}
+
+const breakerKey = (candidate) =>
+  candidate.breakerKey ?? `${candidate.provider}\u0000${candidate.model}`;
+
 function routeFailure(failure, choice, index) {
   // PiAi leaves HTTP 404/410 as PI_AI_ERROR. A stale-but-explicit model route is a
   // missing candidate, so another configured candidate may still answer this request.
@@ -31,12 +109,16 @@ function routeFailure(failure, choice, index) {
   };
 }
 
+/** First-output budget multiplier when a route has no fallback to switch to. */
+const SINGLE_MODEL_DEADLINE_FACTOR = 4;
+
 /** A stable session/model route with run-scoped credentials and retry state. */
 export class ChisaModelRouter extends LlmAdapter {
   constructor(ctx) {
     super();
     this.ctx = ctx;
     this.routes = new Map();
+    this.breakers = new ModelBreakers();
   }
 
   bind(id, input, runId) {
@@ -49,15 +131,35 @@ export class ChisaModelRouter extends LlmAdapter {
     ) {
       throw new Error("Model routes require a concrete provider and model.");
     }
+    const keys = candidates.map(breakerKey);
+    const clean = candidates.map(
+      ({ breakerKey: _key, ...candidate }) => candidate,
+    );
+    // Primary first while its breaker is closed; while it cools, the first healthy fallback.
+    let index = 0;
+    const skipped = [];
+    const cooling = this.breakers.cooling(keys[0]);
+    if (cooling) {
+      const healthy = keys.findIndex(
+        (key, position) => position > 0 && !this.breakers.cooling(key),
+      );
+      if (healthy > 0) {
+        index = healthy;
+        for (let position = 0; position < healthy; position++)
+          skipped.push({ ...clean[position], code: "MODEL_COOLING" });
+      }
+    } else this.breakers.probe(keys[0]);
     this.routes.set(id, {
       runId,
-      candidates,
-      index: 0,
+      candidates: clean,
+      keys,
+      index,
       firstOutputMs: input.firstOutputMs ?? 0,
       contextWindow: input.contextWindow,
-      skipped: [],
+      skipped,
       retryStep: "",
       sameModelRetries: 0,
+      firstOutputExpired: -1,
     });
   }
 
@@ -148,6 +250,7 @@ export class ChisaModelRouter extends LlmAdapter {
     }
     const choice = route.candidates[route.index];
     const ctx = this.ctx;
+    const router = this;
     return {
       model: this.metadata(provider, id, prepared),
       stream: (options) =>
@@ -181,13 +284,25 @@ export class ChisaModelRouter extends LlmAdapter {
           const relay = () => abort.abort(options.signal.reason);
           options.signal?.addEventListener("abort", relay, { once: true });
           if (options.signal?.aborted) relay();
-          const wait = route.candidates.length > 1 ? route.firstOutputMs : 0;
+          // Every candidate has a first-output deadline, the last one too (QA509): with nothing
+          // left to switch to, a silent model ends the turn with a clear error instead of hanging.
+          // A route with a single model gets a longer budget, since no fallback is waiting.
+          const multi = route.candidates.length > 1;
+          const wait =
+            route.firstOutputMs > 0
+              ? multi
+                ? route.firstOutputMs
+                : route.firstOutputMs * SINGLE_MODEL_DEADLINE_FACTOR
+              : 0;
+          const last = route.index + 1 >= route.candidates.length;
+          const position = route.index;
           let timer =
             wait > 0
-              ? setTimeout(
-                  () => abort.abort(new Error("MODEL_FIRST_OUTPUT_TIMEOUT")),
-                  wait,
-                )
+              ? setTimeout(() => {
+                  // Read by retry(): no output by the deadline goes straight to the next model.
+                  route.firstOutputExpired = position;
+                  abort.abort(new Error("MODEL_FIRST_OUTPUT_TIMEOUT"));
+                }, wait)
               : undefined;
           try {
             // Native replay state belongs to the actual provider, never to a logical route.
@@ -226,8 +341,9 @@ export class ChisaModelRouter extends LlmAdapter {
                       failure: routeFailure(
                         {
                           code: "TIMEOUT",
-                          message:
-                            "Model produced no output within the configured fallback deadline.",
+                          message: last
+                            ? `${Math.round(wait / 100) / 10} 秒内没有任何输出${multi ? "，主模型和备用模型都没有回应" : ""}。这一轮已结束，请稍后重试。`
+                            : "Model produced no output within the configured fallback deadline.",
                         },
                         choice,
                         route.index,
@@ -235,6 +351,8 @@ export class ChisaModelRouter extends LlmAdapter {
                     },
                   };
                 } else {
+                  if (chunk.reason?.kind !== "error")
+                    router.breakers.ok(route.keys[position]);
                   const { replayState: _privateReplay, ...safe } = chunk;
                   yield safe.reason.kind === "error"
                     ? {
@@ -270,7 +388,11 @@ export class ChisaModelRouter extends LlmAdapter {
       route.sameModelRetries = 0;
     }
     route.lastFailure = { code: failure.code, message: failure.message };
+    // A first-output deadline already waited the whole budget on this model: switch now.
+    const deadline = route.firstOutputExpired === route.index;
+    route.firstOutputExpired = -1;
     if (
+      !deadline &&
       ["SERVER", "TIMEOUT", "TRANSPORT", "EMPTY_RESPONSE"].includes(
         failure.code,
       ) &&
@@ -280,6 +402,8 @@ export class ChisaModelRouter extends LlmAdapter {
       await delay(500, undefined, { signal });
       return true;
     }
+    if (breakerCodes.has(failure.code))
+      this.breakers.fail(route.keys[route.index], failure.code);
     if (
       !fallbackCodes.has(failure.code) ||
       route.index + 1 >= route.candidates.length
