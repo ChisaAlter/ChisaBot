@@ -932,7 +932,10 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
   });
 
   test("断网时工作流请求给出中文提示，不露 Failed to fetch", async () => {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> => {
       throw new TypeError("Failed to fetch");
     }) as typeof fetch;
     try {
