@@ -113,7 +113,39 @@ export type MagpieGatewayUpdate = {
   checkedAt?: string;
   /** 查询失败的原因（网络或 registry 不可达）。 */
   error?: string;
+  /**
+   * 宿主机上的 magpie.sh 会「一键安装」（更新程序目录里有随版本发布的 compose 模板）。
+   * 旧更新程序不写这个字段：页面据此提示先做一次系统更新，而不是给一个按了必然失败的按钮。
+   */
+  installable?: boolean;
+  /** 这套 Magpie 是 ChisaBot 一键安装的（宿主机有标记），管理密钥由宿主机交给应用，不用手动配置。 */
+  managed?: boolean;
+  /**
+   * 安装时镜像来源怎么核对的：attested = 校验过官方 CI 的签名构建证明；digest = 宿主机没有校验工具，
+   * 只核对了官方仓库与摘要；off = 部署者关掉了校验。
+   */
+  verification?: MagpieVerification;
+  /**
+   * 装好后有没有补上 Magpie → ChisaBot 的隔离规则：applied = 已补上；
+   * no-iptables = 宿主机找不到 iptables；failed = 调用 isolate 失败；skipped = 不是 root 或没有脚本。
+   * 除 applied 以外，页面都要给出警告（不能再静默跳过）。
+   */
+  isolation?: MagpieIsolation;
 };
+
+export type MagpieVerification = "attested" | "digest" | "off";
+
+export type MagpieIsolation = "applied" | "failed" | "no-iptables" | "skipped";
+
+/** 一键安装的步骤（magpie.sh do_install 的 ::step::），页面按这个顺序画进度。 */
+export const MAGPIE_INSTALL_STEPS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: "prepare", label: "准备" },
+  { key: "pull", label: "拉取官方镜像" },
+  { key: "verify", label: "校验来源" },
+  { key: "swap", label: "启动" },
+  { key: "health", label: "健康检查" },
+  { key: "connect", label: "接入 ChisaBot" },
+];
 
 export type SystemUpdateOverview = {
   /** 宿主机更新程序是否在线（state.json 最近 2 分钟内写过）。 */
@@ -442,6 +474,12 @@ export function projectMagpieGatewayState(raw: unknown): MagpieGatewayUpdate | u
   if (checkedAt) out.checkedAt = checkedAt;
   const error = safeText(raw.error, 300);
   if (error) out.error = error;
+  if (raw.installable === true) out.installable = true;
+  if (raw.managed === true) out.managed = true;
+  if (raw.verification === "attested" || raw.verification === "digest" || raw.verification === "off")
+    out.verification = raw.verification;
+  if (raw.isolation === "applied" || raw.isolation === "failed" || raw.isolation === "no-iptables" || raw.isolation === "skipped")
+    out.isolation = raw.isolation;
   // 摘要不齐就不宣称有新版：说「不知道」比说错好。两边摘要相同就是同一份镜像，宿主机写错了也不能说有新版。
   if (!out.currentDigest || !out.latestDigest || out.currentDigest === out.latestDigest) out.updateAvailable = false;
   return out;

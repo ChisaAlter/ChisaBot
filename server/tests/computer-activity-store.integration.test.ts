@@ -68,11 +68,12 @@ const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 suite("computer activity store", () => {
   let store: ActivityStore;
+  let database: ReturnType<typeof createDatabase>;
   const bot = `bot-${randomUUID()}`;
   const user = `user-${randomUUID()}`;
 
   beforeAll(async () => {
-    const database = createDatabase(testDatabaseUrl(), TEST_POOL);
+    database = createDatabase(testDatabaseUrl(), TEST_POOL);
     // 测试库不跑 drizzle 迁移；直接用 0060 迁移文件建表，保证测的就是要上线的那份 DDL。
     const ddl = readFileSync(
       new URL("../drizzle/0060_computer_activity_steps.sql", import.meta.url),
@@ -114,6 +115,34 @@ suite("computer activity store", () => {
     const row = await store.get(bot, user, id as string);
     expect(JSON.stringify(row)).not.toContain("hunter2");
     expect(row?.subject).toBe("sshpass -p •••• ssh root@h");
+  });
+
+  test("QA514: read path redacts legacy plaintext subject/detail/output", async () => {
+    // 模拟写入前规则尚未覆盖的存量行：绕过 store.begin，直接插明文。
+    const id = randomUUID();
+    await database.$client.unsafe(
+      `insert into computer_activity_steps (
+        id, computer_id, actor_user_id, actor_kind, kind, status,
+        subject, detail, output, output_truncated, has_frame, started_at
+      ) values (
+        $1, $2, $3, 'agent', 'run_command', 'ok',
+        $4, $5::jsonb, $6, false, false, now()
+      )`,
+      [
+        id,
+        bot,
+        user,
+        "IMA_OPENAPI_APIKEY='FAKEoldACT01' OPENAI_KEY=FAKEoldACT02",
+        JSON.stringify({ echo: "client_secret=FAKEoldACT03" }),
+        "DB_PASSWORD=pa;ssOLD04",
+      ],
+    );
+    const row = await store.get(bot, user, id);
+    expect(row).toBeTruthy();
+    expect(JSON.stringify(row)).not.toContain("FAKEoldACT01");
+    expect(JSON.stringify(row)).not.toContain("FAKEoldACT02");
+    expect(JSON.stringify(row)).not.toContain("FAKEoldACT03");
+    expect(JSON.stringify(row)).not.toContain("pa;ssOLD04");
   });
 
   test("begin, finish, list and duplicate tool calls", async () => {

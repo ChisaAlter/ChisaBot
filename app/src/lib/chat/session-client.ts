@@ -129,10 +129,30 @@ export class ConversationSession extends HttpAgent {
       };
     });
   }
+  private nextSnapshotAfter?: string[];
+  /**
+   * 下一次 connect 只要「这几条之后」的快照（sync 合并式接入用，见 snapshotAnchors）；用一次就清掉。
+   * 服务器一条都对不上时照旧回封顶快照。
+   */
+  setConnectSnapshotAfter(ids: readonly string[] | undefined) {
+    this.nextSnapshotAfter = ids?.length ? ids.slice(-16) : undefined;
+  }
   protected override connect(input: RunAgentInput) {
+    const snapshotAfter = this.nextSnapshotAfter;
+    this.nextSnapshotAfter = undefined;
     const observer = new HttpAgent({
       url: `/api/conversations/agent/${encodeURIComponent(this.runtimeAgentId)}/connect`,
-      fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
+      // 服务器的 connect 只读 threadId：不再把这台手里的整段消息（长对话几百 KB）每次都上传一遍。
+      fetch: (url, init) =>
+        fetch(url, {
+          ...init,
+          credentials: "include",
+          body: JSON.stringify({
+            threadId: input.threadId,
+            runId: input.runId,
+            ...(snapshotAfter ? { snapshotAfter } : {}),
+          }),
+        }),
     });
     return observer.run(input);
   }

@@ -265,7 +265,7 @@ import {
   type LocalAgentService,
 } from "./local-agents/service";
 import { createLocalConversations } from "./local-conversations";
-import { createMagpieService, readMagpieWebKey } from "./magpie";
+import { createAutoMagpieService } from "./magpie";
 import { createMemoryNotes } from "./memory-notes/service";
 import { createModelCatalogService } from "./model-catalog";
 import {
@@ -1495,11 +1495,12 @@ const probeConfiguredDsh = dshTargetFor
 /*
  * Magpie, the model gateway. MAGPIE_ADMIN_URL (e.g. http://magpie:3430) plus its web key
  * (MAGPIE_WEB_KEY_FILE, readable only by the API user) turn on 管理后台 → 模型平台 Magpie and the
- * embedded console. The model list syncs on start and every MODEL_CATALOG_REFRESH_MINUTES (10).
+ * embedded console; without them, a Magpie installed from that page is picked up on its own. The model list syncs on start and every MODEL_CATALOG_REFRESH_MINUTES (10).
  */
-const magpie = createMagpieService({
-  adminUrl: process.env.MAGPIE_ADMIN_URL?.trim() || undefined,
-  webKey: readMagpieWebKey(process.env),
+const magpie = createAutoMagpieService({
+  environment: process.env,
+  // 一键安装（管理后台 → 模型平台 Magpie）由宿主机把管理密钥放进更新程序的 state 目录，不用重启就接上。
+  updaterDir: process.env.CHISABOT_UPDATER_DIR,
 });
 magpie.onChange(() => modelCatalog.invalidate());
 

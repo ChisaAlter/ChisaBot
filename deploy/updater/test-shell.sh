@@ -159,4 +159,165 @@ SH
 r=$(run_magpie MAGPIE_UP_TIMEOUT_SEC=5)
 case "$r" in "2|"*"超过 5 秒"*"::result:: failed"*) pass "up -d 超时 → 带秒数的失败" ;; *) fail "up -d 超时未判失败：$r" ;; esac
 
+
+# ---------- 4. magpie.sh 一键安装：只装官方镜像、摘要一致、签名校验、失败可重试、装完交出密钥 ----------
+I="$TMP/i"; mkdir -p "$I/bin" "$I/updater/spool/state"
+for c in date sleep timeout mkdir chmod chown cp mv base64 id python3 touch; do ln -s "$(command -v "$c")" "$I/bin/$c"; done
+printf 'services:\n  magpie:\n    image: ${MAGPIE_IMAGE:-ghcr.io/yetone/magpie:latest}\n' > "$I/updater/magpie.compose.yaml"
+cat > "$I/bin/curl" <<'SH'
+#!/bin/bash
+printf '%s' "${FAKE_HTTP:-200}"
+SH
+# 假 docker：容器在不在看 $I/running；所有调用记进 $I/docker.log。
+cat > "$I/bin/docker" <<'SH'
+#!/bin/bash
+echo "$*" >> "$FAKE_DIR/docker.log"
+case "$*" in
+  "buildx imagetools inspect"*)
+    [ "${FAKE_BUILDX:-ok}" = ok ] || exit 1
+    printf '%s\n' "${FAKE_REMOTE:-sha256:1111111111111111111111111111111111111111111111111111111111111111}" ;;
+  "image inspect"*) printf 'ghcr.io/yetone/magpie@%s\n' "${FAKE_LOCAL:-sha256:1111111111111111111111111111111111111111111111111111111111111111}" ;;
+  "inspect "*) [ -f "$FAKE_DIR/running" ] ;;
+  "network inspect"*) exit 0 ;;
+  "logs "*) echo "magpie: listening" ;;
+  *" pull "*) printf 'Pulled\n' ;;
+  *" up -d "*) [ "${FAKE_UP:-ok}" = ok ] && touch "$FAKE_DIR/running" ;;
+  *" down"*) rm -f "$FAKE_DIR/running" ;;
+esac
+SH
+chmod +x "$I/bin/curl" "$I/bin/docker"
+run_install() { # 追加的 env 覆盖；输出 "rc|输出"
+  local out rc
+  out=$(env CHISABOT_UPDATER_DIR="$I/updater" MAGPIE_DIR="$I/magpie" FAKE_DIR="$I" \
+    MAGPIE_PULL_TIMEOUT_SEC=30 MAGPIE_PULL_HEARTBEAT_SEC=5 MAGPIE_UP_TIMEOUT_SEC=10 MAGPIE_HEALTH_TIMEOUT_SEC=4 \
+    PATH="$I/bin:$BASE" "$@" bash "$HERE/magpie.sh" --update --job magpie-test123 2>&1)
+  rc=$?
+  printf '%s|%s' "$rc" "$out"
+}
+reset_install() { rm -rf "$I/magpie" "$I/running" "$I/docker.log" "$I/isolate.log" "$I/iptables.log" "$I/updater/spool/state/"*; rm -f "$I/bin/gh" "$I/bin/cosign" "$I/updater/isolate-sidecar-app.sh"; }
+
+# 4a. 不是官方镜像：一个文件都不写，不拉也不起（只看过一眼容器在不在）
+reset_install
+r=$(run_install MAGPIE_IMAGE=docker.io/someone/magpie:latest)
+case "$r" in "2|"*"不是官方镜像"*"::result:: failed"*) pass "非官方镜像 → 拒绝安装" ;; *) fail "非官方镜像没拒：$r" ;; esac
+[ ! -e "$I/magpie" ] && ! grep -qE "pull|up -d|network create" "$I/docker.log" 2>/dev/null && pass "拒绝时不写目录、不拉不起" || fail "拒绝时动了东西"
+
+# 4b. 没有校验工具（auto）：核对摘要后装好；密钥只在 root 文件和交给应用的 0400 文件里
+reset_install
+r=$(run_install)
+case "$r" in "0|"*"::result:: succeeded"*) pass "一键安装成功" ;; *) fail "一键安装没成功：$r" ;; esac
+for st in prepare pull verify swap health connect done; do
+  case "$r" in *"::step:: $st"*) ;; *) fail "安装缺步骤 $st：$r" ;; esac
+done
+pass "安装步骤 prepare→pull→verify→swap→health→connect→done 齐全"
+case "$r" in *"跳过签名校验"*"官方仓库"*) pass "没有 gh/cosign 时如实说明只核对了摘要" ;; *) fail "缺「跳过签名校验」说明：$r" ;; esac
+[ -f "$I/magpie/compose.yaml" ] && pass "写了 compose（来自模板）" || fail "没写 compose"
+key=$(sed -n 's/^MAGPIE_WEB_KEY=//p' "$I/magpie/private/magpie.env")
+printf '%s' "$key" | grep -Eq '^[A-Za-z0-9_-]{40,}$' && pass "生成了随机管理密钥" || fail "管理密钥格式不对：$key"
+[ "$(stat -c %a "$I/magpie/private/magpie.env")" = 600 ] && [ "$(stat -c %a "$I/magpie/private")" = 700 ] \
+  && pass "密钥文件 600、目录 700" || fail "密钥文件权限不对"
+[ "$(cat "$I/updater/spool/state/magpie-web.key")" = "$key" ] && [ "$(stat -c %a "$I/updater/spool/state/magpie-web.key")" = 400 ] \
+  && pass "密钥交给应用：同一把、0400" || fail "交给应用的密钥不对"
+case "$r" in *"$key"*) fail "任务日志里出现了密钥" ;; *) pass "任务日志不含密钥" ;; esac
+st=$(cat "$I/updater/spool/state/magpie.json")
+case "$st" in *'"installed": true'*'"installable": true'*'"managed": true'*'"verification": "digest"'*) pass "magpie.json: installed/installable/managed/verification=digest" ;; *) fail "magpie.json 不对：$st" ;; esac
+grep -q "pull magpie" "$I/docker.log" && grep -q "up -d magpie" "$I/docker.log" && pass "按 compose 拉取并启动" || fail "docker 调用不对"
+
+# 4c. 再点一次（已装好）：走更新路径，不重新生成密钥
+r=$(run_install)
+[ "$(sed -n 's/^MAGPIE_WEB_KEY=//p' "$I/magpie/private/magpie.env")" = "$key" ] && pass "已装好时不换密钥" || fail "已装好时密钥被换了"
+case "$r" in *"::step:: verify"*) fail "已装好还走了安装：$r" ;; *) pass "已装好 → 走更新路径" ;; esac
+
+# 4d. 拉下来的摘要和仓库公布的不一致：不启动
+reset_install
+r=$(run_install FAKE_LOCAL=sha256:2222222222222222222222222222222222222222222222222222222222222222)
+case "$r" in "2|"*"不一致"*"::result:: failed"*) pass "摘要不一致 → 不启动" ;; *) fail "摘要不一致没拦：$r" ;; esac
+grep -q "up -d" "$I/docker.log" && fail "摘要不一致还启动了" || pass "摘要不一致时没有 up -d"
+
+# 4e. 有 gh：校验通过记 attested；校验不过不启动
+reset_install
+printf '#!/bin/bash\necho "$*" >> "$FAKE_DIR/gh.log"\nexit 0\n' > "$I/bin/gh"; chmod +x "$I/bin/gh"
+r=$(run_install)
+case "$r" in "0|"*"签名校验通过"*) pass "gh attestation 通过 → 安装" ;; *) fail "gh 通过没装上：$r" ;; esac
+grep -q "attestation verify oci://ghcr.io/yetone/magpie@sha256:1111" "$I/gh.log" && grep -q -- "--repo yetone/magpie" "$I/gh.log" \
+  && pass "按摘要、按官方仓库校验" || fail "gh 参数不对：$(cat "$I/gh.log")"
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"verification": "attested"'*) pass "magpie.json 记 attested" ;; *) fail "没记 attested" ;; esac
+reset_install
+printf '#!/bin/bash\necho "Error: no matching attestations" >&2\nexit 1\n' > "$I/bin/gh"; chmod +x "$I/bin/gh"
+r=$(run_install)
+case "$r" in "2|"*"签名校验没有通过"*"::result:: failed"*) pass "签名校验不过 → 失败" ;; *) fail "签名校验不过没拦：$r" ;; esac
+grep -q "up -d" "$I/docker.log" && fail "校验不过还启动了" || pass "校验不过时没有 up -d"
+
+# 4f. required 且没有校验工具：不装
+reset_install
+r=$(run_install MAGPIE_VERIFY=required)
+case "$r" in "2|"*"做不了签名校验"*) pass "MAGPIE_VERIFY=required 无工具 → 不装" ;; *) fail "required 没生效：$r" ;; esac
+
+# 4g. 健康检查不过：停掉容器、留目录；修好后重试直接成功，密钥不变
+reset_install
+r=$(run_install FAKE_HTTP=000)
+case "$r" in "2|"*"没有响应"*"可以直接重试"*) pass "健康检查不过 → 带原因的失败" ;; *) fail "健康检查失败信息不对：$r" ;; esac
+case "$r" in *"magpie: listening"*) pass "失败时把容器日志尾巴带进任务日志" ;; *) fail "缺容器日志：$r" ;; esac
+[ ! -f "$I/running" ] && pass "失败后容器已停掉" || fail "失败后容器还在"
+[ ! -f "$I/updater/spool/state/magpie-web.key" ] && pass "没装好不交密钥" || fail "没装好就交了密钥"
+key1=$(sed -n 's/^MAGPIE_WEB_KEY=//p' "$I/magpie/private/magpie.env")
+r=$(run_install)
+case "$r" in "0|"*"::step:: verify"*"::result:: succeeded"*) pass "重试接着安装并成功" ;; *) fail "重试没成功：$r" ;; esac
+[ "$(sed -n 's/^MAGPIE_WEB_KEY=//p' "$I/magpie/private/magpie.env")" = "$key1" ] && pass "重试沿用同一把密钥" || fail "重试换了密钥"
+
+# 4h. 别人自己装的 Magpie（有容器、没有 compose、没有标记）：不去动它
+reset_install; touch "$I/running"
+r=$(run_install)
+case "$r" in "2|"*"找不到 Magpie 的 compose 文件"*) pass "外部 Magpie → 照旧报错，不覆盖" ;; *) fail "外部 Magpie 被动了：$r" ;; esac
+[ ! -e "$I/magpie" ] && pass "外部 Magpie 时不建目录" || fail "外部 Magpie 时建了目录"
+
+# 4i. --check：新脚本报 installable，旧更新程序没有模板时不报
+reset_install
+env CHISABOT_UPDATER_DIR="$I/updater" MAGPIE_DIR="$I/magpie" FAKE_DIR="$I" PATH="$I/bin:$BASE" bash "$HERE/magpie.sh" --check >/dev/null 2>&1
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"installed": false'*'"installable": true'*) pass "--check 报 installable" ;; *) fail "--check 没报 installable" ;; esac
+env CHISABOT_UPDATER_DIR="$I/updater" MAGPIE_DIR="$I/magpie" MAGPIE_TEMPLATE="$I/none.yaml" FAKE_DIR="$I" PATH="$I/bin:$BASE" bash "$HERE/magpie.sh" --check >/dev/null 2>&1
+case "$(cat "$I/updater/spool/state/magpie.json")" in *installable*) fail "没有模板却报了 installable" ;; *) pass "没有模板时不报 installable" ;; esac
+
+# 4j. buildx 拿不到摘要：不启动（fail closed），不能只凭仓库名就装
+reset_install
+r=$(run_install FAKE_BUILDX=fail)
+case "$r" in "2|"*"查不到"*"摘要"*"::result:: failed"*) pass "仓库没给出摘要 → 不启动" ;; *) fail "没摘要却装了：$r" ;; esac
+grep -qE "pull|up -d" "$I/docker.log" 2>/dev/null && fail "没摘要还拉取或启动了" || pass "没摘要时不 pull、不 up -d"
+
+# 4k. 镜像引用已经钉了 @sha256：不依赖 buildx，摘要一致就装
+reset_install
+PIN=sha256:1111111111111111111111111111111111111111111111111111111111111111
+r=$(run_install FAKE_BUILDX=fail MAGPIE_IMAGE="ghcr.io/yetone/magpie@$PIN")
+case "$r" in "0|"*"::result:: succeeded"*) pass "钉摘要的引用在 buildx 失败时仍能安装" ;; *) fail "钉摘要的引用没装上：$r" ;; esac
+
+# 4l / 4m. 隔离：假成 root（chown 成功），iptables 不在 PATH 里
+fake_root() {
+  # 原来的 id/chown 是指向系统命令的符号链接，直接覆盖会写到系统文件。先拆掉再写假命令。
+  rm -f "$I/bin/id" "$I/bin/chown"
+  printf '#!/bin/bash\n[ "$1" = -u ] && { echo 0; exit 0; }\nexit 0\n' > "$I/bin/id"
+  printf '#!/bin/bash\nexit 0\n' > "$I/bin/chown"
+  chmod +x "$I/bin/id" "$I/bin/chown"
+  printf '#!/bin/sh\ncommand -v iptables >/dev/null 2>&1 || exit 1\necho "$*" >> "$FAKE_DIR/isolate.log"\nexit 0\n'     > "$I/updater/isolate-sidecar-app.sh"
+  chmod +x "$I/updater/isolate-sidecar-app.sh"
+}
+# 4l. iptables 只在常见 sbin 路径：能找到并补上规则
+reset_install; fake_root
+mkdir -p "$I/sbin"
+printf '#!/bin/bash\necho iptables >> "$FAKE_DIR/iptables.log"\nexit 0\n' > "$I/sbin/iptables"
+chmod +x "$I/sbin/iptables"
+r=$(run_install MAGPIE_IPTABLES_DIRS="$I/sbin")
+case "$r" in "0|"*"已补上隔离规则"*"::result:: succeeded"*) pass "iptables 不在 PATH、在 sbin 时仍补上隔离" ;; *) fail "sbin 里的 iptables 没被用上：$r" ;; esac
+[ -f "$I/isolate.log" ] && pass "调用了 isolate-sidecar-app.sh --apply" || fail "没调用 isolate"
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"isolation": "applied"'*) pass "magpie.json 记 isolation=applied" ;; *) fail "没记 applied：$(cat "$I/updater/spool/state/magpie.json")" ;; esac
+# 密钥仍然交出
+[ -f "$I/updater/spool/state/magpie-web.key" ] && pass "补隔离成功时密钥已交出" || fail "补隔离后没交密钥"
+
+# 4m. 哪儿都找不到 iptables：安装成功、警告、页面字段 no-iptables、密钥照交
+reset_install; fake_root
+r=$(run_install MAGPIE_IPTABLES_DIRS="$I/missing-iptables")
+case "$r" in "0|"*"找不到 iptables"*"::result:: succeeded"*) pass "没有 iptables 时安装成功并警告" ;; *) fail "没有 iptables 时行为不对：$r" ;; esac
+[ ! -f "$I/isolate.log" ] && pass "找不到 iptables 时不调用 isolate" || fail "没 iptables 还调了 isolate"
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"isolation": "no-iptables"'*) pass "magpie.json 记 isolation=no-iptables" ;; *) fail "没记 no-iptables：$(cat "$I/updater/spool/state/magpie.json")" ;; esac
+[ -f "$I/updater/spool/state/magpie-web.key" ] && pass "没有 iptables 时密钥仍交出" || fail "警告隔离时没交密钥"
+
 [ "$FAIL" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }

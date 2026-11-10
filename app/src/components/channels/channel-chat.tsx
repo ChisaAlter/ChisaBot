@@ -750,12 +750,17 @@ export function ChannelChat({
     [activity.onActivity],
   );
   const connectChat = useCallback(
-    (options: { agent: typeof agent }) =>
-      conversationClient.connectAgent(options),
+    (options: { agent: typeof agent; snapshotAfter?: string[] }) => {
+      // 合并式重接只要这台还没有的那一段（服务器从这几条之后开始发），不再每次都拉 400 条。
+      options.agent.setConnectSnapshotAfter?.(options.snapshotAfter);
+      return conversationClient.connectAgent({ agent: options.agent });
+    },
     [conversationClient],
   );
+  /** 「重试 / 重新生成」从截断到 say 接手之间：这段空档里 sync 也不许重接（会和马上要发的那一轮抢 agent）。 */
+  const resendingRef = useRef(false);
   const suppressConnectDuringSend = useCallback(
-    () => sendInFlightRef.current,
+    () => sendInFlightRef.current || resendingRef.current,
     [],
   );
   // 打开时的接入（上面的 joinWithin）结束前不核对顺序：那边已经读过一次历史，不再整份拉第二遍。
@@ -763,7 +768,7 @@ export function ChannelChat({
     () => !joinGateSettledRef.current,
     [],
   );
-  useConversationSync(
+  const syncControl = useConversationSync(
     channel.threadId,
     agent,
     connectChat as never,
@@ -1565,6 +1570,18 @@ export function ChannelChat({
     // Seeds and component actions share the same gate as the composer.
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
 
+    /*
+     * sync 自己开的闲置接入（补消息 / 核对顺序，不是在跟一轮回答）不算「在处理另一个请求」：先断开它、
+     * 等它收尾再发。以前这里直接抛错，重试按钮的 catch 又把错吞了——长对话里 sync 重接一刻不停时，
+     * 点「重试」截断成功、消息却永远发不出去（2026-11-09）。
+     */
+    if (
+      turnsRef.current === 0 &&
+      joinGateSettledRef.current &&
+      agentRef.current.isRunning &&
+      syncControl.current.idleJoinInFlight()
+    )
+      await syncControl.current.yieldForSend();
     // Every request shares this turn boundary, including gaps between frontend tools.
     if (
       turnsRef.current > 0 ||
@@ -1835,8 +1852,23 @@ export function ChannelChat({
     mode: TruncateMode,
     content: Message["content"],
   ) => {
-    if (turnsRef.current > 0 || agentRef.current.isRunning)
-      throw new Error("机器人正在回答，等它说完再试。");
+    if (turnsRef.current > 0) throw new Error("机器人正在回答，等它说完再试。");
+    // 从这里到 say 接手：sync 不许再开接入；正在跑的闲置接入先让路（见 say）。
+    resendingRef.current = true;
+    try {
+      await syncControl.current.yieldForSend();
+      if (turnsRef.current > 0 || agentRef.current.isRunning)
+        throw new Error("机器人正在回答，等它说完再试。");
+      await resendAfterYield(fromMessageId, mode, content);
+    } finally {
+      resendingRef.current = false;
+    }
+  };
+  const resendAfterYield = async (
+    fromMessageId: string,
+    mode: TruncateMode,
+    content: Message["content"],
+  ) => {
     await truncateConversation(channel.threadId, fromMessageId, mode);
     const target = agentRef.current;
     const at = target.messages.findIndex(
@@ -1858,6 +1890,18 @@ export function ChannelChat({
   };
   const resendRef = useRef(resendFrom);
   resendRef.current = resendFrom;
+  /**
+   * 「重试」点了却没发出去（还没轮到 say 就被拒了）要说出来：以前 `.catch(() => undefined)` 把它吞了，
+   * 按钮没反应、也没有任何提示。say 自己失败时已经写好了 runError（turnFailure），不重复。
+   */
+  const reportRetryRefusal = useCallback((error: unknown) => {
+    if (turnFailure.current) return;
+    setRunError(
+      error instanceof Error && error.message
+        ? error.message
+        : "重试没有发出去，请再点一次。",
+    );
+  }, []);
   const regenerate = useCallback(async () => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
@@ -1880,8 +1924,8 @@ export function ChannelChat({
     const user = list[at]!;
     void resendRef
       .current(user.id, "regenerate", user.content as Message["content"])
-      .catch(() => undefined);
-  }, []);
+      .catch(reportRetryRefusal);
+  }, [reportRetryRefusal]);
   const editAndResend = useCallback(async (messageId: string, text: string) => {
     const user = agentRef.current.messages.find(
       (message) => message.id === messageId,
@@ -2353,7 +2397,7 @@ export function ChannelChat({
                   !(lastUser && current.isCommandAccepted(lastUser.id))
                 )
                   return false;
-                void regenerate().catch(() => undefined);
+                void regenerate().catch(reportRetryRefusal);
                 return true;
               }}
               onRetryUnanswered={retryUnanswered}

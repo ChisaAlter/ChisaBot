@@ -130,7 +130,7 @@ jobs:
           bun test server/tests/schedules-runs-param.test.ts
           bun test server/tests/schedules.test.ts
           bun test server/tests/channel-search-hit-meta.test.ts
-          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
+          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts server/tests/devices-store-audit-redact.integration.test.ts
           bun test server/tests/multi-user-unified-admin.test.ts server/tests/bot-avatars.test.ts
           bun test server/tests/im-service.integration.test.ts server/tests/confirmations.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
@@ -139,6 +139,9 @@ jobs:
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
+      - name: Computer egress floor and screencast
+        working-directory: agent-computer
+        run: bun test tests/egress-auth.test.ts tests/egress-policy.test.ts tests/egress.test.ts tests/screencast.test.ts tests/webrtc-proxy.test.ts
       - name: SSRF red-line (PRD-P1-06)
         run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts server/tests/personal-imap-egress.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
@@ -147,6 +150,9 @@ jobs:
         run: bun test server/tests/log-scrub-redline.test.ts server/tests/conversation-public-error.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
+      # 2026-11-09 重连循环：增量接入快照（snapshotSince）与封顶快照。应用侧的回归测试在 test:app 里。
+      - name: Connect snapshot checks (reconnect loop)
+        run: bun test shared/connect-snapshot.test.ts server/tests/connect-snapshot.test.ts
       - name: Schedule honesty / partition (non-tram re-verify)
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks

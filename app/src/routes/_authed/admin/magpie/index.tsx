@@ -16,6 +16,7 @@ import { useState } from "react";
 import type { MagpieOverview } from "../../../../../../shared/model-selection";
 import type { SystemUpdateOverview } from "../../../../../../shared/system-update";
 import { ProviderMark } from "@/components/agents/model-picker";
+import { MagpieInstallSection, MagpieIsolationWarning, MagpieNextSteps } from "@/components/magpie/magpie-install";
 import { PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
@@ -94,12 +95,30 @@ function MagpiePage() {
 }
 
 function Overview({ data, onSync }: { data: MagpieOverview; onSync: () => Promise<void> }) {
+  const update = useQuery(systemUpdateQueryOptions());
   const enabled = data.providers.filter((provider) => provider.enabled);
   const ready = enabled.filter((provider) => provider.ready).length;
   const disabled = data.providers.length - enabled.length;
   const catalog = data.catalog;
+  /*
+   * 这个部署还没接上 Magpie（没配 MAGPIE_ADMIN_URL，也没有一键装好的）：整页换成安装卡片，
+   * 只留「ChisaBot 接入」看当前模型接口。网关状态、提供方、版本更新这些此时都没有意义。
+   */
+  if (!data.configured)
+    return (
+      <>
+        <MagpieInstallSection />
+        <ConnectionSection data={data} onSync={onSync} />
+      </>
+    );
   return (
     <>
+      {update.data?.magpie?.managed && data.reachable && !data.connection?.viaMagpie ? (
+        <MagpieNextSteps providers={data.providers.length} />
+      ) : null}
+      {update.data?.magpie?.managed ? (
+        <MagpieIsolationWarning isolation={update.data.magpie.isolation} />
+      ) : null}
       {!data.reachable ? (
         <ErrorCard
           className="mt-2"
@@ -139,46 +158,7 @@ function Overview({ data, onSync }: { data: MagpieOverview; onSync: () => Promis
 
       <GatewayUpdateSection magpieVersion={data.version} />
 
-      <PageSection
-        action={
-          <RefreshButton feedback={SYNC_FEEDBACK} onRefresh={onSync} size="sm" variant="outline">
-            {"立即同步模型"}
-          </RefreshButton>
-        }
-        description="ChisaBot 通过这个接口调用模型，并从它同步机器人可选的模型列表。"
-        title="ChisaBot 接入"
-      >
-        <Card>
-          <SettingRow
-            description={data.connection?.viaMagpie ? "聊天、长期任务和面板的模型请求都经由 Magpie 转发。" : "当前模型接口不是 Magpie，可在模型设置中改为 http://magpie:3425/v1。"}
-            title="模型网关"
-          >
-            <span className={data.connection?.viaMagpie ? "magpie-badge is-ok" : "magpie-badge is-warn"}>
-              {data.connection?.viaMagpie ? "经由 Magpie" : "其他接口"}
-            </span>
-          </SettingRow>
-          <SettingRow description={data.connection ? `${data.connection.protocol === "anthropic" ? "Anthropic 协议" : "OpenAI 兼容协议"} · ${data.connection.source === "saved" ? "设置中保存" : "环境变量"}` : undefined} title="接口地址">
-            <code className="magpie-code">{data.connection?.baseUrl ?? "—"}</code>
-          </SettingRow>
-          <SettingRow description="没有单独选择模型的机器人使用它；每个机器人也可以在聊天输入框里切换。" title="部署默认模型">
-            <code className="magpie-code">{data.connection?.defaultModel ?? "—"}</code>
-          </SettingRow>
-          <SettingRow
-            description={catalog.lastError ? `上次同步失败：${catalog.lastError}` : "启动时、点「刷新」时和定时任务都会重新读取模型列表；网关暂时不可用时继续使用上次的列表。"}
-            title="模型同步"
-          >
-            <span className={catalog.lastError ? "magpie-badge is-warn" : "magpie-badge is-ok"}>
-              {catalog.lastError ? "同步异常" : `${agoText(catalog.fetchedAt)}同步`}
-            </span>
-          </SettingRow>
-          <SettingRow description="更换协议、接口地址、默认模型或调用密钥（密钥只保存在服务器）。" title="模型设置">
-            <Button nativeButton={false} render={<Link to="/admin/models" />} size="sm" variant="ghost">
-              {"前往"}
-              <IconArrowRight />
-            </Button>
-          </SettingRow>
-        </Card>
-      </PageSection>
+      <ConnectionSection data={data} onSync={onSync} />
 
       <PageSection
         description="在 Magpie 里添加的提供方与勾选的模型，会同步到机器人的模型选择器。"
@@ -237,6 +217,53 @@ function Overview({ data, onSync }: { data: MagpieOverview; onSync: () => Promis
         </Card>
       </PageSection>
     </>
+  );
+}
+
+/** 「ChisaBot 接入」：当前模型接口、默认模型和模型同步。装没装 Magpie 都显示。 */
+function ConnectionSection({ data, onSync }: { data: MagpieOverview; onSync: () => Promise<void> }) {
+  const catalog = data.catalog;
+  return (
+    <PageSection
+      action={
+        <RefreshButton feedback={SYNC_FEEDBACK} onRefresh={onSync} size="sm" variant="outline">
+          {"立即同步模型"}
+        </RefreshButton>
+      }
+      description="ChisaBot 通过这个接口调用模型，并从它同步机器人可选的模型列表。"
+      title="ChisaBot 接入"
+    >
+      <Card>
+        <SettingRow
+          description={data.connection?.viaMagpie ? "聊天、长期任务和面板的模型请求都经由 Magpie 转发。" : "当前模型接口不是 Magpie，可在模型设置中改为 http://magpie:3425/v1。"}
+          title="模型网关"
+        >
+          <span className={data.connection?.viaMagpie ? "magpie-badge is-ok" : "magpie-badge is-warn"}>
+            {data.connection?.viaMagpie ? "经由 Magpie" : "其他接口"}
+          </span>
+        </SettingRow>
+        <SettingRow description={data.connection ? `${data.connection.protocol === "anthropic" ? "Anthropic 协议" : "OpenAI 兼容协议"} · ${data.connection.source === "saved" ? "设置中保存" : "环境变量"}` : undefined} title="接口地址">
+          <code className="magpie-code">{data.connection?.baseUrl ?? "—"}</code>
+        </SettingRow>
+        <SettingRow description="没有单独选择模型的机器人使用它；每个机器人也可以在聊天输入框里切换。" title="部署默认模型">
+          <code className="magpie-code">{data.connection?.defaultModel ?? "—"}</code>
+        </SettingRow>
+        <SettingRow
+          description={catalog.lastError ? `上次同步失败：${catalog.lastError}` : "启动时、点「刷新」时和定时任务都会重新读取模型列表；网关暂时不可用时继续使用上次的列表。"}
+          title="模型同步"
+        >
+          <span className={catalog.lastError ? "magpie-badge is-warn" : "magpie-badge is-ok"}>
+            {catalog.lastError ? "同步异常" : `${agoText(catalog.fetchedAt)}同步`}
+          </span>
+        </SettingRow>
+        <SettingRow description="更换协议、接口地址、默认模型或调用密钥（密钥只保存在服务器）。" title="模型设置">
+          <Button nativeButton={false} render={<Link to="/admin/models" />} size="sm" variant="ghost">
+            {"前往"}
+            <IconArrowRight />
+          </Button>
+        </SettingRow>
+      </Card>
+    </PageSection>
   );
 }
 

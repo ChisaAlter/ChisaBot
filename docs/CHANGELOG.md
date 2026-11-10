@@ -1,9 +1,26 @@
-## 0.1.138（待发布）
+## 0.1.141
 
-- 客户端版本统一为 0.1.138，Android versionCode 为 320；桌面安装包已本地构建，真实更新链路验收与正式更新源发布待完成。服务器已部署不代表桌面更新已发布。
+- #518 Magpie 一键安装：`admin/magpie` 在未配置 Magpie（无 `MAGPIE_ADMIN_URL`、也无一键装好的）时整页换成 `MagpieInstallSection`；`deploy/updater/magpie.sh` 增 `do_install`（只装 `ghcr.io/yetone/magpie`，核对摘要，有 gh/cosign 时校验构建来源，`MAGPIE_VERIFY=auto|required|off`），`magpie.json` 新增 `installable`/`managed`/`verification`/`isolation`；`install.sh` 随版本拷 `magpie.compose.yaml` 与 `isolate-sidecar-app.sh`；`server/src/magpie.ts` 自动读取宿主机交来的管理密钥，不用重启；更新程序先 `poll_job` 再收请求，失败后可立即重试。
+- 版本：0.1.141（根、app、server、pc；Android versionCode 323）；PC 外壳、Android 应用本体不变。
+
+## 0.1.140
+
+- #512 浏览器匿名出口：`agent-computer/src/egress.ts` 在本机全部 Bot 为 `allow_all` 时匿名同样 `allow_all`（受 `ALWAYS_DENIED`），否则保持原匿名策略；`normalizeHost` 去 IPv6 zone，`ALWAYS_DENIED` 增 `fec0::/10`、`64:ff9b:1::/48`、`2002::/16`，策略变更掐断在途 CONNECT，HTTP/502 中文拒绝页；`screencast.ts` `navigationProblem` 把隧道/代理/DNS 失败归为「连不上」；`profiles.ts` 启动只传 `{server}`；`use-control.ts` 轮询单一来源。
+- 版本：0.1.140（根、app、server、pc；Android versionCode 322）；PC 外壳、Android 应用本体不变。
+
+## 0.1.139
+
+- #515 长对话重连循环：`use-conversation-sync` 核对只比已加载窗口；`join-backoff` 重接退避、重试必发；`shared/connect-snapshot` 增量快照，`conversations/routes`、`runner`、`local-conversations` 配合下发；`friendly-error` 把 403 套餐限制翻成中文原因；回归测试 `app/tests/connect-loop-regression.test.tsx`。
+- 版本：0.1.139（根、app、server、pc；Android versionCode 321）；PC 外壳、Android 应用本体不变。
+
+## 0.1.138
+
+- 版本：0.1.138（根、app、server、pc；Android versionCode 320）；PC 外壳不变，Android 应用本体有改动。服务器部署与客户端发布分别记录。
 - Android 主界面改为桌面共用 React 前端的手机布局，保留原生登录、文件选择、导出、键盘及返回键能力。
 - 正式服务器已完成 DSH 与 conversation reader 4 迁移，保留原会话、消息、任务和审批；移除 OpenBot 产品入口与现役接线。
 - CB-114（`fix/chat-reliability`）：流式正文使用聊天气泡，普通 Markdown 不再自动转文档，修复残留空白与滚动突跳；早期 Hermes 回退实现已由 DSH 运行时替代。正式部署与恢复记录见 `pipeline-runs/20261108-assistant-production.md`。
+- #514 设备审计打码：`devices/store`、`devices/hub`、`computer/activity-store` 写审计摘要前统一走 `computer/activity-redact`（环境变量写法、JSON/YAML 值、URL userinfo、密钥前缀高熵判定、先打后截、线性扫描）；`confirmations/service` 复用同一 `redactText`。
+- #509/#510：运行失败统一脱敏、任意 scheme URL 凭据打码、`/api/groups` 管理员限定与 inbox `no-store`；DSH 首输出超时换备用模型 + 失效模型熔断、最后候选保留首输出期限、只承诺不行动催办边界。
 
 ## 0.1.137
 
