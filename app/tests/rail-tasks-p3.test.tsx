@@ -41,6 +41,7 @@ import {
   WorkflowSaveError,
   workflowKeys,
   workflowLibraryQueryOptions,
+  workflowsApi,
 } from "@/lib/workflows";
 import type {
   TaskCenterDecision,
@@ -928,6 +929,24 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
     expect(isStaleActionError(new WorkflowSaveError("挂了", [], 500))).toBe(
       false,
     );
+  });
+
+  test("断网时工作流请求给出中文提示，不露 Failed to fetch", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+    try {
+      await workflowsApi.approve("run-1", "step-1", "approve");
+      throw new Error("should have failed");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WorkflowSaveError);
+      expect((err as WorkflowSaveError).message).toBe(
+        "无法连接到服务器，请重试。",
+      );
+      expect((err as WorkflowSaveError).message).not.toMatch(
+        /Failed to fetch/i,
+      );
+    }
   });
 
   test("点批准拿到 409：不等轮询，卡片马上拿掉并重新拉取", async () => {
