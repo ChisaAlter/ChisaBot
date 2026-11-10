@@ -12,8 +12,8 @@ import { act, cleanup, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 import {
   flushAppearanceWrites,
-  getAppearanceState,
   GLASS_STYLE_STORAGE_KEY,
+  getAppearanceState,
   reloadAppearanceFromStorage,
   resetAppearanceDefaults,
   setGlassStyle,
