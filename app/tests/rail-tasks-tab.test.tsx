@@ -20,7 +20,8 @@ import {
 import { act, cleanup, render } from "@testing-library/react";
 import { TasksRailCard } from "@/components/panels/tasks-rail-card";
 import { taskCenterKeys } from "@/lib/task-center-api";
-import { workflowKeys } from "@/lib/workflows";
+import { type WorkflowLibrary, workflowKeys } from "@/lib/workflows";
+import type { TaskCenterSnapshot } from "../../shared/task-center";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -211,6 +212,52 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
       ],
     });
 
+    const snapshot = queryClient.getQueryData<TaskCenterSnapshot>(
+      taskCenterKeys.snapshot,
+    )!;
+    const originalTask = snapshot.tasks[0]!;
+    queryClient.setQueryData(taskCenterKeys.snapshot, {
+      ...snapshot,
+      tasks: [
+        originalTask,
+        {
+          ...originalTask,
+          id: "blocked",
+          title: "等待上游交付后整理资料，包含必须完整显示的很长任务标题",
+          status: "waiting_dependencies",
+          error: "前序资料收集失败，需要先修复依赖任务",
+        },
+        {
+          ...originalTask,
+          id: "done",
+          title: "已交付的项目资料",
+          status: "succeeded",
+          finishedAt: "2026-11-06T16:10:00.000Z",
+          summary: "周报与附件已整理",
+          artifacts: [{ name: "周报.md", uri: "/reports/week.md" }],
+        },
+      ],
+    });
+    const library = queryClient.getQueryData<WorkflowLibrary>(
+      workflowKeys.library,
+    )!;
+    queryClient.setQueryData(workflowKeys.library, {
+      ...library,
+      runs: [
+        ...library.runs,
+        {
+          ...library.runs[0],
+          id: "queued-run",
+          workflowName: "尚未开始的工作流",
+          status: "queued",
+          steps: library.runs[0]!.steps.map((step) => ({
+            ...step,
+            status: "pending",
+          })),
+        },
+      ],
+    });
+
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
@@ -246,5 +293,36 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     expect(text).toContain("当前：端到端回归");
     expect(text).toContain("1/2 步");
     expect(text).toContain("整理本周研发进展报告");
+    const rail = view.getByTestId("tasks-rail-card");
+    expect(rail.classList.contains("glass-card")).toBe(false);
+    expect(rail.querySelectorAll("article.task-rail-item")).toHaveLength(6);
+    expect(rail.querySelectorAll("a button")).toHaveLength(0);
+    const blocked = view
+      .getByText("等待上游交付后整理资料，包含必须完整显示的很长任务标题")
+      .closest("article")!;
+    expect(blocked.getAttribute("data-tone")).toBe("warning");
+    expect(blocked.textContent).toContain(
+      "前序资料收集失败，需要先修复依赖任务",
+    );
+    const recent = view.getByText("已交付的项目资料").closest("article")!;
+    expect(recent.getAttribute("data-kind")).toBe("recent");
+    expect(recent.getAttribute("data-tone")).toBe("success");
+    expect(recent.textContent).toContain("1 个附件");
+    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
+      "view=history",
+    );
+    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
+      "task=done",
+    );
+    expect(
+      rail
+        .querySelector('progress[aria-label="发布前验收流水线步骤进度"]')
+        ?.getAttribute("value"),
+    ).toBe("50");
+    expect(
+      rail
+        .querySelector('progress[aria-label="尚未开始的工作流步骤进度"]')
+        ?.getAttribute("value"),
+    ).toBe("0");
   });
 });

@@ -115,6 +115,7 @@
 | [123](#123-气泡只要正文胶囊只在干活时出现2026-11-04)                                                     | 气泡只要正文，胶囊只在干活时出现                                                                                 | 2026-11-04                                                                 |
 | [124](#124-到点触发的行折叠给模型的脚手架收进详情2026-11-04)                                             | 到点触发的行折叠：给模型的脚手架收进「详情」                                                                     | 2026-11-04                                                                 |
 | [125](#125-车队模型审计机器人评估每个-bot-的模型配得对不对2026-11-04)                                    | 车队模型审计：机器人评估每个 bot 的模型配得对不对                                                                | 2026-11-04                                                                 |
+| [127](#127-右栏任务一项一卡2026-11-09) | 右栏任务：一项一卡 | 2026-11-09 |
 
 ## 0. 总原则
 
@@ -2799,3 +2800,14 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **P0 surface 闸门（`audit.ts` `InitiatorSurface`）**：person 加可选 `surface: "web" | "app"`（缺省 = web，兼容旧审计行与 callback token）；会话端点按 `User-Agent: ChisaBotAndroid` 标 app。`interactive()` / `canConfirm()` 只认 web person——Android / IM 上的「等人填」卡（⟦vault⟧、⟦github⟧ 写确认）由服务端干净拒绝并指路网页，不再建 pending 卡挂 10 分钟。IM 的 routine im: 确认流不受影响（confirmations 通道照旧）；`interactiveInitiator` 不变——Android 能答通用确认卡。
 - **P1 Android 渲染补齐**：`:::card`/`:::group` 与 ``cards 围栏 → `Block.StatusCards` 原生卡组；``brief → `Block.Brief` 晨报卡；独立行 `[label](url)` → `LinkCard`，短标签站内路径 → `ActionPill`（github 深链就地弹 `GithubConnectDialog`，其它走壳内网页）；⟦chisabot:files⟧ 工具结果 → `Row.FileCards`（image_generate / image_edit / file_share）；mermaid/svg/html 代码卡 + 「在网页中打开可预览」显式降级；Icon 画 label/名字不再静默丢；表单兜底文案补原因。
 - **P2 防漂移**：`WORK_STEP_TOOLS` 工具说法词汇表进契约；`shared/work-step.ts` 与 `WorkSteps.kt` 补齐 delegate_task / ask_person / note / schedule_create / bot_factory（两端同款中文说法）。
+
+## 127. 右栏任务：一项一卡（2026-11-09）
+
+右栏「任务」是聊天旁的快速跟进区，不在窄侧栏里另建多列看板。沿用现有任务中心、工作流接口和刷新逻辑；桌面常驻栏与手机抽屉共用同一组件。
+
+- **一项一卡**：移除包住全部内容的第二层玻璃卡，按「需要你确认 / 任务与工作流 / 最近交付」分组；卡片依次呈现类别与状态、完整标题、两行摘要、时间与附件数。整张内容区链接到相应任务或工作流，操作按钮在独立页脚，不嵌套于链接中。
+- **状态真实可辨**：运行蓝、需确认或依赖异常琥珀、成功绿、失败红、暂停或取消中性，同时保留文字与图标。工作流用已完成（含跳过）步骤 / 总步骤的真实进度，零完成即零进度，不补假进度。任务本身没有百分比数据，不添加虚构进度条。
+- **操作沿用既有能力**：审批、步骤审批、暂停与继续使用原 API 和共用 Button 的原位异步反馈。任务与工作流加载失败分别提示并可重试；另一数据源的已加载卡片仍显示，失败不当空状态。
+- **手机可读**：任务抽屉使用既有实底玻璃令牌，盖住背后的聊天正文；桌面仍为玻璃外壳。触摸按钮至少 44px，窄卡标题自然换行，键盘链接有可见焦点。
+- **参考**：[Vibe Kanban](https://github.com/BloopAI/vibe-kanban/blob/main/packages/ui/src/components/KanbanCardContent.tsx) 的标题、状态、摘要与元信息分层；[Planka](https://github.com/plankanban/planka/blob/master/client/src/components/cards/Card/InlineContent.jsx) 的独立任务单元和内容 / 操作分离。仅参考交互与层次，未引入依赖或复制其实现。
+- **验证范围**：定向 React 渲染回归、前端类型检查与生产构建；自有 headless Edge 中检查桌面 / 手机、浅色 / 深色、长标题、成功与失败、真实点击触发的暂停 / 继续 / 审批请求、部分刷新失败与空态。页面使用隔离 API 数据；未对生产任务、真实 IM 或设备执行操作。
