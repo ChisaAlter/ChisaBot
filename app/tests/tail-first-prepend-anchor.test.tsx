@@ -52,11 +52,12 @@ function attachViewport(
   el: HTMLDivElement,
   probe: Probe,
   rowCount: () => number,
+  viewportHeight = VIEW,
 ) {
   probe.el = el;
   Object.defineProperty(el, "clientHeight", {
     configurable: true,
-    get: () => VIEW,
+    get: () => viewportHeight,
   });
   Object.defineProperty(el, "scrollHeight", {
     configurable: true,
@@ -70,18 +71,20 @@ function attachViewport(
       probe.writes.push(value);
     },
   });
-  el.getBoundingClientRect = () => box(0, VIEW);
+  el.getBoundingClientRect = () => box(0, viewportHeight);
 }
 
 function Harness({
   total,
   probe,
   firstOffset = 0,
+  viewportHeight = VIEW,
 }: {
   total: number;
   probe: Probe;
   /** 在行前面垫一段（模拟「显示更早的消息」按钮占的高度）。 */
   firstOffset?: number;
+  viewportHeight?: number;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const startRef = useRef(0);
@@ -99,6 +102,7 @@ function Harness({
       el,
       probe,
       () => el.querySelectorAll("[data-slot='message-scroller-item']").length,
+      viewportHeight,
     );
     if (firstOffset) {
       Object.defineProperty(el, "scrollHeight", {
@@ -229,7 +233,8 @@ async function clickMore(probe: Probe) {
 test("clicking show-earlier at scrollTop 0 keeps the visible row in place", async () => {
   const probe: Probe = { el: null, top: 0, writes: [] };
   render(<Harness total={200} probe={probe} />);
-  expect(probe.top).toBe(0);
+  // 首帧会钉到底；这里模拟人先翻到顶再点按钮（QA 复现就是 scrollTop=0）。
+  probe.top = 0;
   const { id, before } = await clickMore(probe);
   expect(Math.abs(rowOffset(probe, id) - before)).toBeLessThanOrEqual(2);
   await rAF();
@@ -271,14 +276,16 @@ test("short content (scrollTop 0 and at bottom) stays on the same row, with no l
   // 行高合计不够一屏：scrollTop=0 也算在底部。这是 QA 复现的场景。
   const probe: Probe = { el: null, top: 0, writes: [] };
   const shortView = 3000;
-  // 临时把视口变高：改 attach 里的常量不方便，直接在渲染后覆盖。
-  render(<Harness total={200} probe={probe} firstOffset={136} />);
-  Object.defineProperty(probe.el!, "clientHeight", {
-    configurable: true,
-    get: () => shortView,
-  });
-  probe.el!.getBoundingClientRect = () => box(0, shortView);
-  expect(probe.top).toBe(0);
+  render(
+    <Harness
+      firstOffset={136}
+      probe={probe}
+      total={200}
+      viewportHeight={shortView}
+    />,
+  );
+  // 真实浏览器里内容不够一屏时 scrollTop=scrollHeight 会被夹成 0。
+  probe.top = 0;
   const { id, before } = await clickMore(probe);
   expect(before).toBe(136);
   expect(Math.abs(rowOffset(probe, id) - 136)).toBeLessThanOrEqual(2);

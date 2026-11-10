@@ -18,7 +18,9 @@ import {
   restoreScrollAnchor,
   type ScrollAnchor,
   TAIL_BACKFILL_ATTR,
+  TAIL_FIRST_THRESHOLD,
   visibleWindowStart,
+  withoutSmoothScroll,
 } from "@/lib/chat/tail-first-paint";
 
 /** 浏览器原生滚动锚定（Chrome / Edge / Firefox）。Safari 没有，走 JS 兜底。 */
@@ -74,6 +76,11 @@ export function useTailFirstMount(
     firstVisible?: number;
     /** 这个下标（整段列表里）往后的一定挂上：正在进行的这一轮，从人发的那条到干活提示所在的行。 */
     pin?: number;
+    /**
+     * 打开时如果人跟着底部（默认 true），首帧就在 layout 里钉到底，不要等下一帧
+     * （QA #519 P3：先在顶部停约 200ms）。恢复上次停在中间的位置时传 false。
+     */
+    followBottom?: boolean;
   },
 ): {
   startIndex: number;
@@ -99,6 +106,8 @@ export function useTailFirstMount(
   const userAnchorRef = useRef<ScrollAnchor | null>(null);
   const atBottomRef = useRef(true);
   const pinFrameRef = useRef(0);
+  /** 这个频道是否已经在首帧（或内容第一次到时）钉过底。 */
+  const firstPinnedRef = useRef(false);
   const nativeAnchorRef = useRef<boolean | null>(null);
   const nativeAnchor = () => {
     nativeAnchorRef.current ??= supportsOverflowAnchor();
@@ -119,6 +128,7 @@ export function useTailFirstMount(
       heightBeforeRef.current = 0;
       userAnchorRef.current = null;
       atBottomRef.current = true;
+      firstPinnedRef.current = false;
       setExpanded(false);
       setMounted(next);
       return;
@@ -173,7 +183,28 @@ export function useTailFirstMount(
     heightBeforeRef.current = 0;
     const userAnchor = userAnchorRef.current;
     userAnchorRef.current = null;
-    if (!el || startIndex >= prevStart) return;
+    if (!el || startIndex >= prevStart) {
+      // 这个频道的首帧（或内容第一次到时）跟着底部的话，当场钉到底，不要等 rAF。
+      // 只钉一次，避免流式输出每帧都读 scrollHeight。恢复中间位置不钉。
+      // 短对话全挂、高度往往不够一屏：不必读 scrollHeight（scroll-reads 回归也靠这一点）。
+      const needsPin =
+        startIndex > 0 ||
+        pending ||
+        (options?.marks?.length ?? 0) > TAIL_FIRST_THRESHOLD;
+      if (
+        el &&
+        !firstPinnedRef.current &&
+        needsPin &&
+        atBottomRef.current &&
+        options?.followBottom !== false
+      ) {
+        withoutSmoothScroll(el, () => {
+          el.scrollTop = el.scrollHeight;
+        });
+        firstPinnedRef.current = true;
+      }
+      return;
+    }
     // 主动补行（或有原生锚定的空闲补行）期间告诉贴底观察器别当场量布局。
     if (userAnchor || nativeAnchor()) {
       // 这次提交的 MutationObserver 回调（微任务，排在 DOM 变动时）先于下面这个微任务跑：

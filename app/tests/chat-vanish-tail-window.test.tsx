@@ -315,3 +315,36 @@ test("busy going true on a finished turn does not revive it as live", () => {
   ).toBeNull();
   expect(view.container.textContent).not.toContain("这一轮没有回答");
 });
+
+test("an ended tool-heavy turn shows this turn's question on the first frame", () => {
+  const question = "把桌面上的截图归档";
+  const messages: Message[] = [
+    ...history(40),
+    ...deviceTurn(TAIL_FIRST_CAP + 40, "p"),
+    { id: "p-done", role: "assistant", content: "上一轮整理好了" },
+    { id: "q-ask", role: "user", content: question },
+    ...deviceTurn(TAIL_FIRST_CAP + 40, "q").slice(1),
+    { id: "q-done", role: "assistant", content: "截图已归档" },
+  ];
+  const { container } = render(
+    wrap(<ChatTranscript messages={messages} scrollKey="vanish-ended-ask" />),
+  );
+  expect(container.textContent).toContain(question);
+  expect(container.textContent).toContain("截图已归档");
+  // 更早的历史还是要靠按钮，这一轮的问题不用点。
+  expect(container.textContent).not.toContain("早先的问题 0");
+  expect(container.querySelector(".chat-history-more")).not.toBeNull();
+});
+
+test("the earlier-history button appears in the same commit as visible rows", () => {
+  const { container } = render(
+    wrap(
+      <ChatTranscript
+        messages={history(150)}
+        scrollKey="vanish-button-timing"
+      />,
+    ),
+  );
+  expect(visibleRows(container).length).toBeGreaterThan(0);
+  expect(container.querySelector(".chat-history-more")).not.toBeNull();
+});

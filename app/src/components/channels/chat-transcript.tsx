@@ -3627,6 +3627,7 @@ export function ChatTranscript({
     items[0]?.id,
     {
       uncapped: needsHistory,
+      followBottom: !needsHistory,
       marks: tailMarks,
       itemCount: virtual ? 0 : items.length,
       firstVisible: virtual
@@ -3635,6 +3636,32 @@ export function ChatTranscript({
       ...(Number.isFinite(livePin) ? { pin: livePin } : {}),
     },
   );
+  /*
+   * 已结束的超长工具轮（QA #519 P3）：尾窗往往只挂到最后的回答，「这一轮的问题」在窗口上面。
+   * 不要为了它把中间几百条看不见的过程行全部挂上（那会拉长首帧任务）；只把这一轮看得见的行
+   * （问题、卡片）缝在尾巴前面。进行中的一轮仍靠 pin 保证干活卡所在的行在窗口里。
+   */
+  const lastTurnStart =
+    !live && newestUserMessageId
+      ? items.findIndex((item) => item.id === newestUserMessageId)
+      : -1;
+  const mountedRows: [TranscriptItem, number][] = [];
+  if (!virtual) {
+    const from = tailStart > 0 ? tailStart : 0;
+    // 这一轮看得见、但还在尾巴上面的行（已结束轮次的问题 / 卡片）。
+    if (lastTurnStart >= 0 && lastTurnStart < from) {
+      for (let index = lastTurnStart; index < from; index++) {
+        if (rowShows(index)) mountedRows.push([items[index]!, index]);
+      }
+    }
+    for (let index = from; index < items.length; index++) {
+      // 看不见的过程行不进 DOM：它们本来就是 display:none，挂上千百条只会拉长首帧。
+      // 调试「显示工具调用」时全部挂上；活的干活卡、卡片仍由 rowShows 留着。
+      if (showToolActivity || rowShows(index))
+        mountedRows.push([items[index]!, index]);
+    }
+  }
+  const firstMountedVisible = mountedRows.length > 0;
   /*
    * 兜底：这一轮的干活卡那一行没挂上 / 没画出来（窗口外、被收起），干活提示改画在末尾，别让「正在干活」凭空消失。
    */
@@ -3971,7 +3998,7 @@ export function ChatTranscript({
              * 按钮自己不参与滚动锚定，补上来的行出现在它下面、看着的那一行不动。
              */}
             <div className="contents" data-testid="transcript-history-more">
-              {tailTruncated && !virtual ? (
+              {tailTruncated && !virtual && firstMountedVisible ? (
                 <button
                   className="chat-history-more"
                   onClick={prependHistory}
@@ -3993,9 +4020,7 @@ export function ChatTranscript({
             ) : null}
             {virtual
               ? tailNodes
-              : (tailStart > 0 ? items.slice(tailStart) : items).flatMap(
-                  (item, offset) => rowsFor(item, tailStart + offset),
-                )}
+              : mountedRows.flatMap(([item, index]) => rowsFor(item, index))}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         {virtual ? (
