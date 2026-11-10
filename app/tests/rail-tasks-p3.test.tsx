@@ -1030,9 +1030,12 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
     ).toEqual([]);
   });
 
-  test("点批准步骤拿到 409：不等轮询，卡片马上拿掉并重新拉取", async () => {
+  test("点批准步骤拿到 409：卡片先留着，重新拉取后再一次换成运行中，中间不卸卡", async () => {
     const posts: string[] = [];
-    let libraryGets = 0;
+    let releaseLibrary: ((value: Response) => void) | undefined;
+    const libraryPending = new Promise<Response>((resolve) => {
+      releaseLibrary = resolve;
+    });
     globalThis.fetch = (async (
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -1046,14 +1049,17 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
         );
       }
       if (url.endsWith("/api/workflows")) {
-        libraryGets += 1;
-        return new Promise<Response>(() => {});
+        return libraryPending;
       }
       return Response.json(emptySnapshot());
     }) as typeof fetch;
     const waiting = run({
       status: "waiting_approval",
       steps: [step("a", "succeeded"), step("b", "waiting_approval")],
+    });
+    const continued = run({
+      status: "running",
+      steps: [step("a", "succeeded"), step("b", "running")],
     });
     const queryClient = staticClient();
     queryClient.setQueryData(taskCenterKeys.snapshot, emptySnapshot());
@@ -1063,28 +1069,45 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
       runs: [waiting],
     });
     const view = await renderRail(queryClient);
-    expect(view.container.textContent).toContain("发布前验收流水线");
+    const card = view.container.querySelector('article[data-kind="workflow"]')!;
+    expect(card.textContent).toContain("等待审批");
     const approve = [
       ...view.container.querySelectorAll<HTMLButtonElement>("button"),
     ].find((b) => b.textContent?.includes("批准步骤"))!;
     await act(async () => {
       fireEvent.click(approve);
     });
-    await waitFor(() =>
-      expect(view.container.textContent).not.toContain("发布前验收流水线"),
-    );
-    await settleReactWork();
-    expect(posts).toHaveLength(1);
+    await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toContain("/api/workflows/runs/run-1/approve");
+    // 刷新还没回来：卡片必须还在，不能先从缓存拿掉。
+    expect(card.isConnected).toBe(true);
+    expect(view.container.textContent).toContain("发布前验收流水线");
     expect(
-      queryClient.getQueryData<{ runs: { id: string }[] }>(workflowKeys.library)
-        ?.runs,
-    ).toEqual([]);
-    expect(libraryGets).toBeGreaterThanOrEqual(1);
+      queryClient
+        .getQueryData<{ runs: { id: string }[] }>(workflowKeys.library)
+        ?.runs.map((item) => item.id),
+    ).toEqual(["run-1"]);
+    await act(async () => {
+      releaseLibrary!(
+        Response.json({ presets: [], mine: [], runs: [continued] }),
+      );
+    });
+    await waitFor(() => {
+      expect(view.container.textContent).toContain("运行中");
+      expect(view.container.textContent).not.toContain("等待审批");
+    });
+    expect(card.isConnected).toBe(true);
+    expect(view.container.querySelector('article[data-kind="workflow"]')).toBe(
+      card,
+    );
   });
 
-  test("点批准步骤拿到 404：卡片马上拿掉并重新拉取", async () => {
+  test("点批准步骤拿到 404：等重新拉取完成后再拿掉卡片，中间不闪", async () => {
     const posts: string[] = [];
+    let releaseLibrary: ((value: Response) => void) | undefined;
+    const libraryPending = new Promise<Response>((resolve) => {
+      releaseLibrary = resolve;
+    });
     globalThis.fetch = (async (
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -1095,7 +1118,7 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
         return Response.json({ error: "找不到这次运行。" }, { status: 404 });
       }
       if (url.endsWith("/api/workflows")) {
-        return new Promise<Response>(() => {});
+        return libraryPending;
       }
       return Response.json(emptySnapshot());
     }) as typeof fetch;
@@ -1111,6 +1134,7 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
       runs: [waiting],
     });
     const view = await renderRail(queryClient);
+    const card = view.container.querySelector('article[data-kind="workflow"]')!;
     const approve = [
       ...view.container.querySelectorAll<HTMLButtonElement>("button"),
     ].find((b) => b.textContent?.includes("批准步骤"))!;
@@ -1118,9 +1142,17 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
       fireEvent.click(approve);
     });
     await waitFor(() =>
+      expect(posts[0]).toContain("/api/workflows/runs/run-1/approve"),
+    );
+    expect(card.isConnected).toBe(true);
+    expect(view.container.textContent).toContain("发布前验收流水线");
+    await act(async () => {
+      releaseLibrary!(Response.json({ presets: [], mine: [], runs: [] }));
+    });
+    await waitFor(() =>
       expect(view.container.textContent).not.toContain("发布前验收流水线"),
     );
-    expect(posts[0]).toContain("/api/workflows/runs/run-1/approve");
+    expect(card.isConnected).toBe(false);
     expect(
       queryClient.getQueryData<{ runs: { id: string }[] }>(workflowKeys.library)
         ?.runs,

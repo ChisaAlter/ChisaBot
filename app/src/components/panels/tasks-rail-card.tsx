@@ -37,7 +37,6 @@ import {
   taskCenterSnapshotOptions,
 } from "@/lib/task-center-api";
 import {
-  type WorkflowLibrary,
   WorkflowSaveError,
   workflowKeys,
   workflowLibraryQueryOptions,
@@ -236,7 +235,6 @@ function TasksRailBody({
             <RailWorkflowRunItem
               key={run.id}
               onChanged={refreshWorkflows}
-              onStale={() => dropStaleRun(queryClient, run.id)}
               run={run}
             />
           ))}
@@ -318,15 +316,6 @@ export function isStaleActionError(err: unknown): boolean {
       ? err.status
       : undefined;
   return status === 409 || status === 404;
-}
-
-/** 先从缓存里拿掉这条已结束的工作流运行，让卡片马上消失；随后的刷新再以服务端为准。 */
-function dropStaleRun(queryClient: QueryClient, runId: string) {
-  queryClient.setQueryData<WorkflowLibrary>(workflowKeys.library, (prev) =>
-    prev
-      ? { ...prev, runs: prev.runs.filter((item) => item.id !== runId) }
-      : prev,
-  );
 }
 
 /** 先从缓存里拿掉这条确认请求，让卡片马上消失；随后的刷新再以服务端为准。 */
@@ -512,11 +501,9 @@ function RailDecisionItem({
 function RailWorkflowRunItem({
   run,
   onChanged,
-  onStale,
 }: {
   run: WorkflowRunView;
   onChanged: () => void;
-  onStale: () => void;
 }) {
   const totalSteps = run.steps.length;
   const doneSteps = run.steps.filter(
@@ -543,8 +530,8 @@ function RailWorkflowRunItem({
     onSuccess: onChanged,
     onError: (err) => {
       if (isStaleActionError(err)) {
-        // 别处已经处理或运行已不在：卡片立刻拿掉并刷新，提示用中性语气，不当成失败。
-        onStale();
+        // 别处已批准后运行常会继续：先重新拉取，完成后再一次替换缓存，
+        // 不要先从缓存拿掉卡片（否则 3–8ms 后又加回来会闪一下）。
         onChanged();
         toast.info(err instanceof Error ? err.message : "这一步已经处理过了。");
         return;
