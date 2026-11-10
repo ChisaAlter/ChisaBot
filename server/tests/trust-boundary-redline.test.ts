@@ -7,7 +7,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   assertTrustedOriginsLoopbackOnly,
@@ -202,4 +203,105 @@ describe("sidecar isolate (PRD-P0-02 / v0.1.39)", () => {
       /isolate-sidecar-app/,
     );
   });
+
+  for (const probe of [
+    {
+      name: "reachable HTTP 401",
+      exit: 0,
+      http: "401",
+      ok: false,
+      message: "can still reach",
+    },
+    {
+      name: "connection timeout",
+      exit: 28,
+      http: "000",
+      ok: true,
+      message: "connection refused or timed out",
+    },
+    {
+      name: "connection refused",
+      exit: 7,
+      http: "000",
+      ok: true,
+      message: "connection refused or timed out",
+    },
+    {
+      name: "missing curl",
+      exit: 127,
+      http: "",
+      ok: false,
+      message: "probe failed",
+    },
+    {
+      name: "container exec failure",
+      exit: 126,
+      http: "",
+      ok: false,
+      message: "probe failed",
+    },
+    {
+      name: "DNS failure",
+      exit: 6,
+      http: "000",
+      ok: false,
+      message: "probe failed",
+    },
+    {
+      name: "HTTP response before timeout",
+      exit: 28,
+      http: "200",
+      ok: false,
+      message: "can still reach",
+    },
+  ]) {
+    test(`live isolation probe distinguishes ${probe.name}`, () => {
+      const source = read("scripts/ops/isolate-sidecar-app.sh").replace(
+        /\r\n/g,
+        "\n",
+      );
+      const start = source.indexOf("verify_live() {");
+      const end = source.indexOf('\ncase "$MODE" in', start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const gitShell = join(
+        process.env.ProgramFiles || "C:/Program Files",
+        "Git/bin/sh.exe",
+      );
+      const shell =
+        process.platform === "win32" && existsSync(gitShell) ? gitShell : "sh";
+      const result = spawnSync(shell, ["-s"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PROBE_EXIT: String(probe.exit),
+          PROBE_HTTP: probe.http,
+        },
+        input: `set -eu
+APP=chisabot-zh
+MAGPIE=magpie
+PORT=3001
+fail() { echo "$*" >&2; exit 1; }
+ok() { echo "$*"; }
+check_rules() { :; }
+docker() {
+  case "$1:$2" in
+    inspect:magpie) return 0 ;;
+    exec:magpie)
+      printf '%s' "$PROBE_HTTP"
+      return "$PROBE_EXIT"
+      ;;
+    exec:chisabot-zh) echo 401 ;;
+    *) return 64 ;;
+  esac
+}
+${source.slice(start, end)}
+verify_live
+`,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(probe.ok ? 0 : 1);
+      expect(result.stdout + result.stderr).toContain(probe.message);
+    });
+  }
 });

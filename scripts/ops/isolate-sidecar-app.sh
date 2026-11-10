@@ -232,10 +232,14 @@ verify_live() {
     ok "Magpie container $MAGPIE not running - skip live probe"
     return 0
   fi
-  if docker exec "$MAGPIE" wget -q -T 2 -O /dev/null "http://$APP:$PORT/api/version" 2>/dev/null; then
-    fail "Magpie can still reach $APP:$PORT - isolation not effective"
-  fi
-  ok "Magpie!-$APP:$PORT (blocked or unreachable)"
+  probe_exit=0
+  probe_http=$(docker exec "$MAGPIE" curl --noproxy '*' -sS --connect-timeout 2 --max-time 3 \
+    -o /dev/null -w '%{http_code}' "http://$APP:$PORT/api/version") || probe_exit=$?
+  case "$probe_exit:$probe_http" in
+    7:000|28:000) ok "Magpie!-$APP:$PORT (connection refused or timed out)" ;;
+    0:*|*:[1-5][0-9][0-9]) fail "Magpie can still reach $APP:$PORT (HTTP $probe_http) - isolation not effective" ;;
+    *) fail "Magpie isolation probe failed (curl/exec exit $probe_exit); isolation was not verified" ;;
+  esac
   if out=$(docker exec "$APP" node -e "fetch('http://magpie:3425/v1/models').then(r=>{console.log(r.status);process.exit(0)}).catch(e=>{console.error(String(e));process.exit(1)})" 2>&1); then
     ok "App->magpie:3425 still reachable (HTTP $(printf '%s' "$out" | head -1))"
   else
