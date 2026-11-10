@@ -8,6 +8,7 @@ import {
   ANONYMOUS_LOG_WINDOW_MS,
   botProxyKey,
   classifyEgressTunnel,
+  egressClassHeaders,
   egressDecision,
   egressFor,
   egressShellEnvironmentForBot,
@@ -22,6 +23,7 @@ import {
   setEgressTimeouts,
   startEgressFilter,
   stopEgressFilter,
+  trustedEgressClass,
 } from "../src/egress";
 import { navigationProblem } from "../src/screencast";
 
@@ -138,6 +140,9 @@ describe("addresses no Bot may reach", () => {
       "::ffff:ffff:127.0.0.1",
       "[::ffff:ffff:127.0.0.1]",
       "::ffff:ffff:7f00:1",
+      "::ffff:fffe:127.0.0.1",
+      "::1:ffff:127.0.0.1",
+      "::ffff:0:ffff:7f00:1",
       "::ffff:10.0.0.1",
       "::ffff:a9fe:a9fe", // 169.254.169.254
       "::7f00:1", // deprecated compatible [::127.0.0.1]
@@ -183,6 +188,9 @@ describe("addresses no Bot may reach", () => {
         "100.64.0.1:80",
         "100.100.100.100:443",
         "[::ffff:ffff:127.0.0.1]:80",
+        "[::ffff:fffe:127.0.0.1]:80",
+        "[::1:ffff:127.0.0.1]:80",
+        "[::ffff:0:ffff:7f00:1]:80",
       ]) {
         const answer = await raw(
           filter.port,
@@ -1018,5 +1026,77 @@ describe("the anonymous log's throttle", () => {
     expect(next.suppressedSinceLastLine).toBe(5);
     expect(next.target).toBe("x.test:443");
     expect(next.from).toBe("127.0.0.1:5000");
+  });
+});
+
+describe("a site cannot pose as the filter", () => {
+  afterEach(async () => {
+    await stopEgressFilter();
+    setEgressResolver(null);
+  });
+
+  test("forwarded responses lose x-chisabot-egress*; filter pages carry the process token", async () => {
+    const upstream = createServer((_request, response) => {
+      response.writeHead(403, {
+        "content-type": "text/plain",
+        "x-chisabot-egress-class": "private",
+        "x-chisabot-egress-token": "0".repeat(32),
+        "x-chisabot-egress": "refused",
+      });
+      response.end("site says no");
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const address = upstream.address();
+    const upPort = typeof address === "object" && address ? address.port : 0;
+    const filter = await startEgressFilter({
+      env: { EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upPort}` },
+    });
+    setEgressPolicy("a", { mode: "allow_all", rules: [] });
+    setEgressResolver(async (host) =>
+      host === "site.example.test" ? ["203.0.113.10"] : [],
+    );
+    const key = egressFor("a", {})?.password ?? "";
+    try {
+      const forwarded = await raw(
+        filter.port,
+        `GET http://site.example.test/ HTTP/1.1\r\nHost: site.example.test\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(forwarded.split("\r\n")[0]).toContain("403");
+      expect(forwarded).toContain("site says no");
+      expect(forwarded.toLowerCase()).not.toContain("x-chisabot-egress");
+
+      const denied = await raw(
+        filter.port,
+        `GET http://10.0.0.1/ HTTP/1.1\r\nHost: 10.0.0.1\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\nConnection: close\r\n\r\n`,
+      );
+      const head = denied.split("\r\n\r\n")[0] ?? "";
+      const headers = Object.fromEntries(
+        head
+          .split("\r\n")
+          .slice(1)
+          .map((line) => {
+            const colon = line.indexOf(":");
+            return [line.slice(0, colon), line.slice(colon + 1).trim()];
+          }),
+      );
+      expect(trustedEgressClass(headers)).toBe("private");
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  test("a class header without the process token is not trusted", () => {
+    expect(trustedEgressClass(egressClassHeaders("timeout"))).toBe("timeout");
+    expect(
+      trustedEgressClass({ "x-chisabot-egress-class": "private" }),
+    ).toBeNull();
+    expect(
+      trustedEgressClass({
+        "x-chisabot-egress-class": "private",
+        "x-chisabot-egress-token": "f".repeat(32),
+      }),
+    ).toBeNull();
   });
 });

@@ -17,6 +17,7 @@ import {
   classifyEgressTunnel,
   isPrivateEgressHost,
   recentEgressOutcome,
+  trustedEgressClass,
 } from "./egress";
 import { whileNavigating } from "./start-page";
 
@@ -481,11 +482,9 @@ export async function startScreencast(
               type: "navigation",
               ok: false,
               url,
-              error: await navigationProblem(
-                error,
-                target,
-                failures.at(-1)?.url,
-              ),
+              error:
+                pages.at(-1)?.error ??
+                (await navigationProblem(error, target, failures.at(-1)?.url)),
             });
           }
         } finally {
@@ -568,6 +567,24 @@ export async function navigationProblem(
     return UNREACHABLE;
   }
   if (/ERR_CERT|SSL/i.test(text)) return "网站的安全证书有问题。";
+  // Unrecognized errors (including Playwright "Not attached to an active page" on an
+  // immediate reload) still take the destination: a blocked address should not become
+  // a generic 「打不开」.
+  const parsed =
+    parseNavigationTarget(failedHop) ??
+    parseNavigationTarget(
+      /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1],
+    ) ??
+    parseNavigationTarget(targetUrl);
+  if (parsed) {
+    if (isPrivateEgressHost(parsed.host))
+      return "出于安全原因不允许访问内网地址。";
+    const kind = await classifyEgressTunnel(parsed.host, parsed.port);
+    if (kind === "private") return "出于安全原因不允许访问内网地址。";
+    if (kind === "refused") return "网络策略不允许访问这个网址。";
+    if (kind === "timeout") return NO_ANSWER;
+    if (kind === "unreachable") return UNREACHABLE;
+  }
   return "这个网址打不开。";
 }
 
@@ -583,22 +600,10 @@ const EGRESS_CLASS_MESSAGE: Record<string, string> = {
   unreachable: UNREACHABLE,
 };
 
-function headerOf(
-  response: { headers?: () => Record<string, string> },
-  name: string,
-): string {
-  try {
-    const headers = response.headers?.() ?? {};
-    return (headers[name] ?? headers[name.toLowerCase()] ?? "").trim();
-  } catch {
-    return "";
-  }
-}
-
 /**
- * 纯 HTTP 经过滤器被拦或上游失败时，代理会回 403/502/504 文档（带 x-chisabot-egress-class）。
- * Chromium 把它当成一次成功的文档提交，goto / requestfailed 都不会失败，所以这里按响应头分类。
- * 普通网站自己的 403/502/504（没有过滤器的头）不算导航失败。
+ * 纯 HTTP 经过滤器被拦或上游失败时，代理会回 403/502/504 文档。Chromium 把它当成一次成功的
+ * 文档提交，goto / requestfailed 都不会失败，所以这里按响应头分类。只认带过滤器进程令牌的
+ * 头：网站自己写的 x-chisabot-egress-class（尤其在 HTTPS 隧道里过滤器看不见）不能假造文案。
  */
 export function egressDocumentProblem(
   response:
@@ -614,10 +619,15 @@ export function egressDocumentProblem(
     return null;
   }
   if (status !== 403 && status !== 502 && status !== 504) return null;
-  const klass = headerOf(response, "x-chisabot-egress-class").toLowerCase();
-  const marked = headerOf(response, "x-chisabot-egress");
-  if (!klass && !marked) return null;
-  if (klass && EGRESS_CLASS_MESSAGE[klass]) return EGRESS_CLASS_MESSAGE[klass];
+  let headers: Record<string, string> = {};
+  try {
+    headers = response.headers?.() ?? {};
+  } catch {
+    return null;
+  }
+  const klass = trustedEgressClass(headers);
+  if (!klass) return null;
+  if (EGRESS_CLASS_MESSAGE[klass]) return EGRESS_CLASS_MESSAGE[klass];
   return status === 504 ? NO_ANSWER : UNREACHABLE;
 }
 

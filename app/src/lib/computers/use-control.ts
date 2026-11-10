@@ -79,6 +79,11 @@ const realClock: ControlClock = {
   setInterval: (fn, ms) => setInterval(fn, ms),
   clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
 };
+let controlClock: ControlClock = realClock;
+/** 测试用：给 store 接上假时钟，这样轮询和退避不再跟真实的 1 秒拍子抢。 */
+export function setControlClock(clock: ControlClock | null) {
+  controlClock = clock ?? realClock;
+}
 /** CB-107：给 store 接上多标签协调；不给就是每个标签自己轮询。 */
 export type ControlTabsFactory = (handlers: ControlTabsHandlers) => ControlTabs;
 export function createControlStore(
@@ -423,11 +428,11 @@ function storeKey(computerId: string) {
   return controlAccount ? `${controlAccount}:${computerId}` : computerId;
 }
 function makeStore(computerId: string) {
-  const env = tabsEnv?.(realClock);
+  const env = tabsEnv?.(controlClock);
   const scope = controlTabsScope(controlAccount, computerId);
   return createControlStore(
     computerId,
-    realClock,
+    controlClock,
     env ? (handlers) => createControlTabs(scope, handlers, env) : undefined,
   );
 }

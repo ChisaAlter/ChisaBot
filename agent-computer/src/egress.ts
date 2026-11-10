@@ -23,6 +23,7 @@ import { lookup } from "node:dns/promises";
 import {
   createServer,
   request as httpRequest,
+  type IncomingHttpHeaders,
   type IncomingMessage,
   type Server,
 } from "node:http";
@@ -470,10 +471,11 @@ function expandIpv6Groups(address: string): number[] | null {
 /**
  * The IPv4 address an IPv6 literal is carrying, if any.
  *
- * Same three prefixes as navigation (`checkNavigationTarget`): `::ffff:0:0/96` (mapped),
- * `64:ff9b::/96` (NAT64), and the deprecated compatible `::/96` form. `::` and `::1` are left
- * alone — their low bits look like 0.0.0.0 / 0.0.0.1 but they are the IPv6 unspecified / loopback
- * addresses and are listed in ALWAYS_DENIED directly.
+ * Official prefixes (`::ffff:0:0/96` mapped, `64:ff9b::/96` NAT64, deprecated compatible
+ * `::/96`), plus malformed writings in the reserved `0000::/16` whose last 32 bits are an
+ * IPv4 (`::ffff:fffe:127.0.0.1` and similar). `::` and `::1` are left alone — their low bits
+ * look like 0.0.0.0 / 0.0.0.1 but they are the IPv6 unspecified / loopback addresses and are
+ * listed in ALWAYS_DENIED directly.
  */
 function embeddedIpv4(address: string): string | null {
   if (isIP(address) !== 6) return null;
@@ -485,18 +487,14 @@ function embeddedIpv4(address: string): string | null {
     [high >> 8, high & 255, low >> 8, low & 255].join(".");
   const high = g[6] ?? 0;
   const low = g[7] ?? 0;
-  // ::ffff:a.b.c.d and ::ffff:XXXX:YYYY
-  if (zeros(0, 5) && g[5] === 0xffff) return v4(high, low);
-  // ::ffff:0:a.b.c.d (translated)
-  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0) return v4(high, low);
-  // ::ffff:ffff:a.b.c.d — illegal/confused writing of IPv4-mapped (e.g.
-  // [::ffff:ffff:127.0.0.1]). Take the last 32 bits as the IPv4 they meant,
-  // so the floor returns 403 rather than letting the connect fail as 502.
-  if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0xffff) return v4(high, low);
   // 64:ff9b::/96 NAT64
   if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(high, low);
-  // Deprecated compatible ::a.b.c.d — not :: / ::1 (those stay IPv6).
-  if (zeros(0, 6) && (high !== 0 || low > 1)) return v4(high, low);
+  // Official mapped / translated / compatible forms, and malformed writings
+  // in 0000::/16 (inside the IETF-reserved 0000::/8): the last 32 bits are
+  // the IPv4 they meant, so ::ffff:fffe:127.0.0.1 and ::1:ffff:127.0.0.1
+  // are refused as loopback rather than failing as a 502 on the wire.
+  // :: and ::1 stay IPv6 (listed in ALWAYS_DENIED directly).
+  if (g[0] === 0 && !(zeros(1, 7) && low <= 1)) return v4(high, low);
   return null;
 }
 
@@ -1143,19 +1141,80 @@ function chineseDenyBody(kind: EgressDenyClass): string {
   }
 }
 
+/**
+ * A per-process secret put on pages this filter itself wrote. A website can set
+ * `x-chisabot-egress-class` (especially on HTTPS, where the filter cannot strip
+ * headers inside the tunnel); only a response that also carries this token is ours.
+ */
+const EGRESS_DOCUMENT_TOKEN = randomBytes(16).toString("hex");
+
+function tokenMatches(offered: string): boolean {
+  const a = createHash("sha256").update(offered).digest();
+  const b = createHash("sha256").update(EGRESS_DOCUMENT_TOKEN).digest();
+  return timingSafeEqual(a, b);
+}
+
+function headerValue(
+  headers: Record<string, unknown> | IncomingHttpHeaders,
+  name: string,
+): string {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== wanted) continue;
+    const first = Array.isArray(value) ? value[0] : value;
+    return typeof first === "string" ? first.trim() : "";
+  }
+  return "";
+}
+
+/** Class header plus the unguessable token, for filter-written responses and tests. */
+export function egressClassHeaders(kind: string): Record<string, string> {
+  return {
+    "x-chisabot-egress-class": kind,
+    "x-chisabot-egress-token": EGRESS_DOCUMENT_TOKEN,
+  };
+}
+
+/** The filter's class on this response, if the proof token matches. Otherwise null. */
+export function trustedEgressClass(
+  headers: Record<string, unknown> | IncomingHttpHeaders | undefined,
+): string | null {
+  if (!headers) return null;
+  const token = headerValue(headers, "x-chisabot-egress-token");
+  if (!token || !tokenMatches(token)) return null;
+  return headerValue(headers, "x-chisabot-egress-class").toLowerCase() || null;
+}
+
+/** Drop any x-chisabot-egress* header a site put on a forwarded response. */
+function withoutSpoofedEgress(
+  headers: IncomingHttpHeaders,
+): IncomingHttpHeaders {
+  const out: IncomingHttpHeaders = { ...headers };
+  for (const key of Object.keys(out)) {
+    if (key.toLowerCase().startsWith("x-chisabot-egress")) delete out[key];
+  }
+  return out;
+}
+
 function denyHeaders(kind: EgressDenyClass): Record<string, string> {
   return {
     "content-type": "text/plain; charset=utf-8",
     "x-chisabot-egress": "refused",
-    "x-chisabot-egress-class": kind,
+    ...egressClassHeaders(kind),
   };
+}
+
+function headerLines(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([name, value]) => `${name}: ${value}\r\n`)
+    .join("");
 }
 
 function refuse(socket: Socket, kind: EgressDenyClass) {
   const body = chineseDenyBody(kind);
   const headers = denyHeaders(kind);
   socket.end(
-    `HTTP/1.1 403 Forbidden\r\ncontent-type: ${headers["content-type"]}\r\nx-chisabot-egress: ${headers["x-chisabot-egress"]}\r\nx-chisabot-egress-class: ${headers["x-chisabot-egress-class"]}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    `HTTP/1.1 403 Forbidden\r\n${headerLines(headers)}content-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
 }
 
@@ -1205,8 +1264,12 @@ function failureStatus(kind: EgressFailure): string {
 
 function badGateway(socket: Socket, kind: EgressFailure = "unreachable") {
   const body = failureBody(kind);
+  const headers = {
+    "content-type": "text/plain; charset=utf-8",
+    ...egressClassHeaders(kind),
+  };
   socket.end(
-    `HTTP/1.1 ${failureStatus(kind)}\r\ncontent-type: text/plain; charset=utf-8\r\nx-chisabot-egress-class: ${kind}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    `HTTP/1.1 ${failureStatus(kind)}\r\n${headerLines(headers)}content-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
 }
 
@@ -1611,7 +1674,10 @@ function forwardPlain(
         answer.resume();
         return;
       }
-      response.writeHead(answer.statusCode ?? 502, answer.headers);
+      response.writeHead(
+        answer.statusCode ?? 502,
+        withoutSpoofedEgress(answer.headers),
+      );
       answer.pipe(response);
     },
   );
@@ -1626,7 +1692,7 @@ function forwardPlain(
       noteOutcome(target.hostname, Number(target.port || 80), kind);
       response.writeHead(kind === "timeout" ? 504 : 502, {
         "content-type": "text/plain; charset=utf-8",
-        "x-chisabot-egress-class": kind,
+        ...egressClassHeaders(kind),
         // The request may still be streaming its body to an outbound that is gone; end this one.
         connection: "close",
       });

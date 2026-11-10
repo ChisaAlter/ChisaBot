@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright";
+import { egressClassHeaders } from "../src/egress";
 import {
   egressDocumentProblem,
   type InputMessage,
@@ -126,6 +127,8 @@ function castable(
       headers?: Record<string, string>;
       url?: string;
     };
+    /** What page.reload throws, if anything. */
+    reloadFails?: string;
   } = {},
 ) {
   const sent: string[] = [];
@@ -192,7 +195,9 @@ function castable(
     },
     goBack: async () => {},
     goForward: async () => {},
-    reload: async () => {},
+    reload: async () => {
+      if (options.reloadFails) throw new Error(options.reloadFails);
+    },
   } as unknown as Page;
   const emitDocument = (
     documentUrl: string,
@@ -485,7 +490,7 @@ describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
     const { page } = castable({
       gotoResponse: {
         status: 504,
-        headers: { "x-chisabot-egress-class": "timeout" },
+        headers: egressClassHeaders("timeout"),
       },
     });
     const messages: unknown[] = [];
@@ -509,7 +514,7 @@ describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
       const { page } = castable({
         gotoResponse: {
           status,
-          headers: { "x-chisabot-egress-class": klass },
+          headers: egressClassHeaders(klass),
         },
       });
       const messages: unknown[] = [];
@@ -550,9 +555,7 @@ describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
       ok: true,
       url: "http://hop1.example.com/",
     });
-    emitDocument("http://10.0.0.1/", 403, {
-      "x-chisabot-egress-class": "private",
-    });
+    emitDocument("http://10.0.0.1/", 403, egressClassHeaders("private"));
     await box.next((m) => m.type === "navigation" && m.ok === false);
     const last = box.messages.filter((m) => m.type === "navigation").at(-1);
     expect(last).toMatchObject({
@@ -566,12 +569,7 @@ describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
     const { page, emitDocument } = castable();
     const box = inbox();
     const cast = await startScreencast(page, (m) => box.push(m));
-    emitDocument(
-      "http://10.0.0.1/",
-      403,
-      { "x-chisabot-egress-class": "private" },
-      {},
-    );
+    emitDocument("http://10.0.0.1/", 403, egressClassHeaders("private"), {});
     await Promise.resolve();
     expect(box.messages.filter((m) => m.type === "navigation")).toEqual([]);
     await cast.stop();
@@ -579,26 +577,79 @@ describe("纯 HTTP 过滤器错误页要记成导航失败", () => {
 });
 
 describe("egressDocumentProblem", () => {
-  test("按 x-chisabot-egress-class 分类；没有过滤器的头则忽略", () => {
-    const headers = (klass?: string) => ({
+  test("只认带过滤器令牌的分类头；网站自己写的头不能假造文案", () => {
+    const headers = (hdrs: Record<string, string>) => ({
       status: () => 502,
-      headers: () =>
-        klass
-          ? { "x-chisabot-egress-class": klass }
-          : { "content-type": "text/plain" },
+      headers: () => hdrs,
     });
-    expect(egressDocumentProblem(headers("timeout"))).toBe(
+    expect(egressDocumentProblem(headers(egressClassHeaders("timeout")))).toBe(
       "网站没有响应，请稍后再试。",
     );
-    expect(egressDocumentProblem(headers("unreachable"))).toBe(
-      "连不上这个网址。",
-    );
-    expect(egressDocumentProblem(headers())).toBeNull();
+    expect(
+      egressDocumentProblem(headers(egressClassHeaders("unreachable"))),
+    ).toBe("连不上这个网址。");
+    expect(
+      egressDocumentProblem(headers({ "x-chisabot-egress-class": "private" })),
+    ).toBeNull();
+    expect(
+      egressDocumentProblem(
+        headers({
+          "x-chisabot-egress-class": "timeout",
+          "x-chisabot-egress-token": "0".repeat(32),
+        }),
+      ),
+    ).toBeNull();
     expect(
       egressDocumentProblem({
         status: () => 200,
-        headers: () => ({ "x-chisabot-egress-class": "timeout" }),
+        headers: () => egressClassHeaders("timeout"),
       }),
     ).toBeNull();
+  });
+});
+
+describe("立刻重载被拦的页仍按目的地分类", () => {
+  test("reload 抛出 Not attached 时仍说安全原因，不说成通用「打不开」", async () => {
+    const { page } = castable({
+      gotoResponse: {
+        status: 403,
+        headers: egressClassHeaders("private"),
+      },
+      reloadFails:
+        "reload: Protocol error (Page.reload): Not attached to an active page",
+    });
+    const messages: unknown[] = [];
+    const cast = await startScreencast(page, (m) => messages.push(m));
+    await cast.send({ type: "navigate", url: "http://10.0.0.1/" });
+    await cast.send({ type: "history", action: "reload" });
+    const navs = messages.filter(
+      (m) => (m as { type?: string }).type === "navigation",
+    );
+    expect(navs).toEqual([
+      {
+        type: "navigation",
+        ok: false,
+        url: "http://10.0.0.1/",
+        error: "出于安全原因不允许访问内网地址。",
+      },
+      {
+        type: "navigation",
+        ok: false,
+        url: "http://10.0.0.1/",
+        error: "出于安全原因不允许访问内网地址。",
+      },
+    ]);
+    await cast.stop();
+  });
+
+  test("无法识别的错误也按目的地分类", async () => {
+    expect(
+      await navigationProblem(
+        new Error(
+          "reload: Protocol error (Page.reload): Not attached to an active page",
+        ),
+        "http://10.0.0.1/",
+      ),
+    ).toBe("出于安全原因不允许访问内网地址。");
   });
 });
