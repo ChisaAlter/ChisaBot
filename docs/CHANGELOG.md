@@ -1,3 +1,8 @@
+## 0.1.140
+
+- #512 浏览器匿名出口：`agent-computer/src/egress.ts` 在本机全部 Bot 为 `allow_all` 时匿名同样 `allow_all`（受 `ALWAYS_DENIED`），否则保持原匿名策略；`normalizeHost` 去 IPv6 zone，`ALWAYS_DENIED` 增 `fec0::/10`、`64:ff9b:1::/48`、`2002::/16`，策略变更掐断在途 CONNECT，HTTP/502 中文拒绝页；`screencast.ts` `navigationProblem` 把隧道/代理/DNS 失败归为「连不上」；`profiles.ts` 启动只传 `{server}`；`use-control.ts` 轮询单一来源。
+- 版本：0.1.140（根、app、server、pc；Android versionCode 322）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.139
 
 - #515 长对话重连循环：`use-conversation-sync` 核对只比已加载窗口；`join-backoff` 重接退避、重试必发；`shared/connect-snapshot` 增量快照，`conversations/routes`、`runner`、`local-conversations` 配合下发；`friendly-error` 把 403 套餐限制翻成中文原因；回归测试 `app/tests/connect-loop-regression.test.tsx`。
