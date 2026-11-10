@@ -70,8 +70,17 @@
   flex-direction: column;
   gap: 10px;
 }
+/* 信息蓝固定用默认 --accent-blue-ink，不跟配色把 accent 改成琥珀 / 绿 / 红，
+   避免 sunset、gold 的 running 和 attention、emerald 的 running 和 success、
+   ruby 的 running 和 danger 撞色（状态字 CIEDE2000 要回到 ≥ 3.7）。 */
+:root {
+  --task-info: #1f5fd6;
+}
+.dark {
+  --task-info: #8ab4ff;
+}
 .task-rail-item {
-  --task-tone: var(--accent-blue-ink);
+  --task-tone: var(--task-info);
   /* 12–13px 的状态字要过 WCAG AA 4.5:1：色调再掺 60% 正文墨色（浅色压深、深色提亮），
      色相不变，浅 / 深 × 4 种玻璃预设 × 各配色下均 ≥ 4.5:1。底色、图标和进度条仍用原色调。 */
   --task-tone-text: color-mix(in srgb, var(--task-tone) 40%, var(--ink-1));

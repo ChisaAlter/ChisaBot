@@ -255,6 +255,73 @@ function contrast(a: RGB, b: RGB) {
   const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m);
   return (x + 0.05) / (y + 0.05);
 }
+function lab([r, g, b]: RGB): [number, number, number] {
+  const lin = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const R = lin(r),
+    G = lin(g),
+    B = lin(b);
+  const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+  const y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  const z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+  const f = (t: number) => (t > 0.008856 ? t ** (1 / 3) : 7.787 * t + 16 / 116);
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+}
+/** CIEDE2000，与 QA r4 contrast4.py 同一套公式。 */
+function deltaE2000(c1: RGB, c2: RGB) {
+  const [L1, a1, b1] = lab(c1);
+  const [L2, a2, b2] = lab(c2);
+  const C1 = Math.hypot(a1, b1);
+  const C2 = Math.hypot(a2, b2);
+  const Cb = (C1 + C2) / 2;
+  const G = 0.5 * (1 - Math.sqrt(Cb ** 7 / (Cb ** 7 + 25 ** 7)));
+  const a1p = (1 + G) * a1;
+  const a2p = (1 + G) * a2;
+  const C1p = Math.hypot(a1p, b1);
+  const C2p = Math.hypot(a2p, b2);
+  const h1p = (Math.atan2(b1, a1p) * 180) / Math.PI;
+  const h2p = (Math.atan2(b2, a2p) * 180) / Math.PI;
+  const h1 = (h1p + 360) % 360;
+  const h2 = (h2p + 360) % 360;
+  const dLp = L2 - L1;
+  const dCp = C2p - C1p;
+  let dhp = 0;
+  if (C1p * C2p !== 0) {
+    dhp =
+      Math.abs(h2 - h1) <= 180
+        ? h2 - h1
+        : h2 - h1 > 180
+          ? h2 - h1 - 360
+          : h2 - h1 + 360;
+  }
+  const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin((dhp / 2) * (Math.PI / 180));
+  const Lbp = (L1 + L2) / 2;
+  const Cbp = (C1p + C2p) / 2;
+  let hbp = h1 + h2;
+  if (C1p * C2p === 0) hbp = h1 + h2;
+  else if (Math.abs(h1 - h2) <= 180) hbp = (h1 + h2) / 2;
+  else hbp = h1 + h2 < 360 ? (h1 + h2 + 360) / 2 : (h1 + h2 - 360) / 2;
+  const T =
+    1 -
+    0.17 * Math.cos(((hbp - 30) * Math.PI) / 180) +
+    0.24 * Math.cos((2 * hbp * Math.PI) / 180) +
+    0.32 * Math.cos(((3 * hbp + 6) * Math.PI) / 180) -
+    0.2 * Math.cos(((4 * hbp - 63) * Math.PI) / 180);
+  const dth = 30 * Math.exp(-(((hbp - 275) / 25) ** 2));
+  const Rc = 2 * Math.sqrt(Cbp ** 7 / (Cbp ** 7 + 25 ** 7));
+  const Sl = 1 + (0.015 * (Lbp - 50) ** 2) / Math.sqrt(20 + (Lbp - 50) ** 2);
+  const Sc = 1 + 0.045 * Cbp;
+  const Sh = 1 + 0.015 * Cbp * T;
+  const Rt = -Math.sin((2 * dth * Math.PI) / 180) * Rc;
+  return Math.sqrt(
+    (dLp / Sl) ** 2 +
+      (dCp / Sc) ** 2 +
+      (dHp / Sh) ** 2 +
+      Rt * (dCp / Sc) * (dHp / Sh),
+  );
+}
 /** `color-mix(in srgb, var(--x) N%, var(--ink-1))` 里的百分比。 */
 function mixPercent(body: string, prop: string, source: string) {
   const m = body.match(
@@ -274,6 +341,9 @@ function ruleBody(selector: string) {
 
 describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
   test("状态字和出错说明都用 --task-tone-text，图标仍用原色调", () => {
+    expect(ruleBody(".task-rail-item")).toContain(
+      "--task-tone: var(--task-info);",
+    );
     expect(ruleBody(".task-rail-status")).toContain(
       "color: var(--task-tone-text);",
     );
@@ -282,6 +352,12 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     );
     expect(ruleBody(".task-rail-status svg")).toContain(
       "color: var(--task-tone);",
+    );
+    expect(lastDecl(railCss, ":root", "--task-info")).toBe(
+      lastDecl(stylesCss, ":root", "--accent-blue-ink"),
+    );
+    expect(lastDecl(railCss, ".dark", "--task-info")).toBe(
+      lastDecl(stylesCss, ".dark", "--accent-blue-ink"),
     );
   });
 
@@ -297,11 +373,6 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         "--task-tone",
         token,
       );
-    const palettes = [
-      ...stylesCss.matchAll(/html\[data-palette="([a-z]+)"\]\s*\{/g),
-    ].map((m) => m[1]);
-    expect(palettes.length).toBeGreaterThanOrEqual(7);
-
     const modes = [
       {
         name: "light",
@@ -347,18 +418,10 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
           mode.name === "light" ? [255, 255, 255] : [16, 25, 44],
           0.76,
         );
-        const accents: [string, RGB][] = [
-          ["default", token("--accent-blue-ink")],
-          ...palettes.map(
-            (p) =>
-              [
-                p,
-                hex(lastDecl(stylesCss, mode.sel(p), "--accent-blue-ink")!),
-              ] as [string, RGB],
-          ),
-        ];
+        // 信息蓝固定用 --task-info，不跟配色改写 --accent-blue-ink。
+        const info = hex(lastDecl(railCss, mode.root, "--task-info")!);
         const tones: [string, RGB][] = [
-          ...accents.map(([p, c]) => [`info/${p}`, c] as [string, RGB]),
+          ["info", info],
           ["warning", mix(token("--warn"), ink, toneMix("warning", "--warn"))],
           [
             "success",
@@ -386,6 +449,84 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     }
     expect(failures).toEqual([]);
     expect(worst).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("7 套配色下状态字最小 CIEDE2000 ≥ 3.7（不含 paused/cancelled）", () => {
+    const textMix = mixPercent(
+      ruleBody(".task-rail-item"),
+      "--task-tone-text",
+      "--task-tone",
+    );
+    const toneMix = (tone: string, token: string) =>
+      mixPercent(
+        ruleBody(`.task-rail-item[data-tone="${tone}"]`),
+        "--task-tone",
+        token,
+      );
+    const palettes = [
+      ...stylesCss.matchAll(/html\[data-palette="([a-z]+)"\]\s*\{/g),
+    ].map((m) => m[1]);
+    expect(palettes.length).toBeGreaterThanOrEqual(7);
+
+    const modes = [
+      { name: "light", root: ":root", inks: ["#0f172a", "#111a2b"] },
+      { name: "dark", root: ".dark", inks: ["#e9eef8", "#f8fafc"] },
+    ];
+    const pairs: { de: number; label: string }[] = [];
+    for (const mode of modes) {
+      const token = (name: string) => {
+        const v = lastDecl(stylesCss, mode.root, name);
+        if (!v) throw new Error(`${mode.root} ${name} missing`);
+        return hex(v);
+      };
+      for (const inkHex of mode.inks) {
+        const ink = hex(inkHex);
+        const muted = mix(
+          ink,
+          mode.name === "light" ? [255, 255, 255] : [16, 25, 44],
+          0.76,
+        );
+        const tones: [string, RGB][] = [
+          ["active", hex(lastDecl(railCss, mode.root, "--task-info")!)],
+          [
+            "attention",
+            mix(token("--warn"), ink, toneMix("warning", "--warn")),
+          ],
+          [
+            "success",
+            mix(token("--success"), ink, toneMix("success", "--success")),
+          ],
+          [
+            "danger",
+            mix(token("--danger"), ink, toneMix("danger", "--danger")),
+          ],
+          ["paused", muted],
+          ["cancelled", muted],
+        ];
+        const texts = tones.map(
+          ([n, c]) => [n, mix(c, ink, textMix)] as [string, RGB],
+        );
+        for (let i = 0; i < texts.length; i++) {
+          for (let j = i + 1; j < texts.length; j++) {
+            const [a, ca] = texts[i]!;
+            const [b, cb] = texts[j]!;
+            if (
+              (a === "paused" && b === "cancelled") ||
+              (a === "cancelled" && b === "paused")
+            ) {
+              continue;
+            }
+            const de = deltaE2000(ca, cb);
+            pairs.push({
+              de,
+              label: `${mode.name} ink=${inkHex} ${a}/${b}`,
+            });
+          }
+        }
+      }
+    }
+    const min = pairs.reduce((m, p) => (p.de < m.de ? p : m));
+    expect(min.de).toBeGreaterThanOrEqual(3.7);
   });
 });
 
