@@ -259,9 +259,62 @@ describe("addresses no Bot may reach", () => {
     ]) {
       expect(isAlwaysDenied(address)).toBe(true);
     }
+    // 6to4 carrying a public IPv4 is not on the floor (only the embedded IPv4 decides).
+    for (const address of [
+      "2002:0808:0808::1", // 8.8.8.8
+      "2002:808:808::",
+      "2002:0101:0101::1", // 1.1.1.1
+      "2002:5db8:d822::1",
+    ]) {
+      expect(isAlwaysDenied(address)).toBe(false);
+    }
     // Well-known NAT64 to a public IPv4 stays allowed (embedded check, not the local /48).
     expect(isAlwaysDenied("64:ff9b::808:808")).toBe(false);
     expect(isAlwaysDenied("2001:4860:4860::8888")).toBe(false);
+  });
+
+  test("6to4 is judged by the IPv4 it carries: private / reserved refused, public allowed", async () => {
+    for (const address of [
+      "2002:0a00:0001::1", // 10.0.0.1
+      "2002:7f00:0001::", // 127.0.0.1
+      "2002:a9fe:a9fe::1", // 169.254.169.254 (metadata)
+      "2002:6440:0001::1", // 100.64.0.1
+      "2002:ac10:0001::1", // 172.16.0.1
+      "2002:6464:64c8::", // 100.100.100.200
+      "2002:c000:0201::1", // 192.0.2.1 (TEST-NET-1)
+      "2002:c058:6301::1", // 192.88.99.1 (6to4 relay)
+      "2002:e000:0001::1", // 224.0.0.1 (multicast)
+      "2002:ffff:ffff::1", // 255.255.255.255
+      "2002:C0A8:0001:0000:0000:0000:0000:0001", // upper-case, full form
+      "2002:7f00:1::%lo", // zone id
+    ]) {
+      expect(isAlwaysDenied(address)).toBe(true);
+    }
+    const allowAll = { mode: "allow_all" as const, rules: [] };
+    expect(egressDecision(allowAll, "2002:808:808::1", 443).allowed).toBe(true);
+    expect(egressDecision(allowAll, "[2002:808:808::1]", 443).allowed).toBe(
+      true,
+    );
+    expect(egressDecision(allowAll, "2002:a00:1::1", 443).denyClass).toBe(
+      "private",
+    );
+    // A name resolving to private-carrying 6to4 is refused too.
+    expect(
+      egressDecision(allowAll, "sixtofour.test", 443, ["2002:c0a8:1::1"])
+        .allowed,
+    ).toBe(false);
+    const filter = await startEgressFilter({ env: {} });
+    try {
+      setEgressPolicy("a", allowAll);
+      const answer = await raw(
+        filter.port,
+        "CONNECT [2002:a00:1::1]:443 HTTP/1.1\r\nHost: [2002:a00:1::1]:443\r\n\r\n",
+      );
+      expect(answer.split("\r\n")[0]).toContain("403");
+      expect(answer).toContain("x-chisabot-egress-class: private");
+    } finally {
+      await stopEgressFilter();
+    }
   });
 
   test("HTTP deny pages are Chinese and unresolved is not called policy", async () => {
@@ -388,6 +441,163 @@ describe("addresses no Bot may reach", () => {
       await new Promise<void>((r) => upstream.close(() => r()));
       await new Promise<void>((r) => origin.close(() => r()));
     }
+  });
+});
+
+/**
+ * A policy change cuts only the tunnels it now refuses: the Bot whose policy changed, to targets
+ * the new policy refuses; anonymous only when the strictest-Bot fallback itself got stricter.
+ */
+describe("policy changes cut only the tunnels they now refuse", () => {
+  let upstream: Server | null = null;
+  let upstreamPort = 0;
+
+  afterEach(async () => {
+    setEgressResolver(null);
+    setEgressLogger(null);
+    await stopEgressFilter();
+    if (upstream) await new Promise<void>((r) => upstream?.close(() => r()));
+    upstream = null;
+  });
+
+  /** An upstream that holds every CONNECT open, so a tunnel only closes when the filter cuts it. */
+  async function holdingUpstream() {
+    upstream = createServer();
+    upstream.on("connect", (_req, client: Socket) => {
+      client.on("error", () => undefined);
+      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    });
+    await new Promise<void>((r) => upstream?.listen(0, "127.0.0.1", r));
+    const address = upstream.address();
+    upstreamPort = typeof address === "object" && address ? address.port : 0;
+  }
+
+  type Open = { closed: () => boolean; head: string; socket: Socket };
+
+  function open(port: number, target: string, auth?: string): Promise<Open> {
+    return new Promise((resolve, reject) => {
+      let closed = false;
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(
+          `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${auth ? `Proxy-Authorization: ${auth}\r\n` : ""}\r\n`,
+        );
+      });
+      let seen = "";
+      socket.on("data", (chunk) => {
+        seen += chunk.toString();
+        if (seen.includes("\r\n\r\n"))
+          resolve({ closed: () => closed, head: seen, socket });
+      });
+      socket.on("close", () => {
+        closed = true;
+      });
+      socket.on("error", () => undefined);
+      socket.setTimeout(5_000, () => reject(new Error("tunnel timeout")));
+    });
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 60));
+
+  async function filterWithBots() {
+    await holdingUpstream();
+    setEgressLogger(() => undefined);
+    // Public addresses, so the private-net floor never decides these cases.
+    setEgressResolver(async () => ["93.184.215.14"]);
+    const filter = await startEgressFilter({
+      env: { EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upstreamPort}` },
+    });
+    setEgressPolicy("bot-a", { mode: "allow_all", rules: [] });
+    setEgressPolicy("bot-b", { mode: "allow_all", rules: [] });
+    const a = basic(`bot-a:${egressFor("bot-a", {})?.password ?? ""}`);
+    const b = basic(`bot-b:${egressFor("bot-b", {})?.password ?? ""}`);
+    const tunnelTo = async (target: string, auth?: string) => {
+      const t = await open(filter.port, target, auth);
+      expect(t.head.split("\r\n")[0]).toContain("200");
+      return t;
+    };
+    return { filter, a, b, tunnelTo };
+  }
+
+  test("tightening bot-a cuts bot-a's tunnels and anonymous (strictest got stricter), not bot-b's", async () => {
+    const { a, b, tunnelTo } = await filterWithBots();
+    const ta = await tunnelTo("example.com:443", a);
+    const tb = await tunnelTo("example.com:443", b);
+    const anon = await tunnelTo("example.com:443");
+    setEgressPolicy("bot-a", { mode: "deny_all", rules: [] });
+    await settle();
+    expect(ta.closed()).toBe(true);
+    expect(tb.closed()).toBe(false);
+    expect(anon.closed()).toBe(true);
+    tb.socket.destroy();
+  });
+
+  test("loosening or rewriting the same policy cuts nobody", async () => {
+    const { a, b, tunnelTo } = await filterWithBots();
+    setEgressPolicy("bot-a", {
+      mode: "defaults_plus_allowlist",
+      rules: [{ type: "domain", value: "keep.test" }],
+    });
+    const ta = await tunnelTo("keep.test:443", a);
+    const tb = await tunnelTo("example.com:443", b);
+    const anon = await tunnelTo("registry.npmjs.org:443");
+    // Same policy again, then looser: nothing may close.
+    setEgressPolicy("bot-a", {
+      mode: "defaults_plus_allowlist",
+      rules: [{ type: "domain", value: "keep.test" }],
+    });
+    setEgressPolicy("bot-a", { mode: "allow_all", rules: [] });
+    setEgressPolicy("bot-b", { mode: "allow_all", rules: [] });
+    await settle();
+    expect([ta.closed(), tb.closed(), anon.closed()]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    for (const t of [ta, tb, anon]) t.socket.destroy();
+  });
+
+  test("a tighter allowlist cuts only the targets it no longer allows", async () => {
+    const { a, b, tunnelTo } = await filterWithBots();
+    const keep = await tunnelTo("keep.test:443", a);
+    const drop = await tunnelTo("other.test:443", a);
+    const tb = await tunnelTo("other.test:443", b);
+    setEgressPolicy("bot-a", {
+      mode: "allowlist_only",
+      rules: [{ type: "domain", value: "keep.test" }],
+    });
+    await settle();
+    expect(keep.closed()).toBe(false);
+    expect(drop.closed()).toBe(true);
+    expect(tb.closed()).toBe(false);
+    for (const t of [keep, tb]) t.socket.destroy();
+  });
+
+  test("anonymous is judged again only when the strictest result changes", async () => {
+    const { a, b, tunnelTo } = await filterWithBots();
+    // bot-a → defaults_plus_allowlist: anonymous drops to the package registries.
+    const registry = await tunnelTo("registry.npmjs.org:443");
+    const site = await tunnelTo("example.com:443");
+    setEgressPolicy("bot-a", { mode: "defaults_plus_allowlist", rules: [] });
+    await settle();
+    expect(registry.closed()).toBe(false);
+    expect(site.closed()).toBe(true);
+    // bot-b tightens too, but anonymous is still "registries only": its tunnel stays, bot-a's too.
+    const ta = await tunnelTo("github.com:443", a);
+    setEgressPolicy("bot-b", {
+      mode: "defaults_plus_allowlist",
+      rules: [{ type: "domain", value: "b.test" }],
+    });
+    await settle();
+    expect(registry.closed()).toBe(false);
+    expect(ta.closed()).toBe(false);
+    // b's own tunnel opened under the new policy, then b's policy deleted: only b's is cut.
+    const tb = await tunnelTo("b.test:443", b);
+    setEgressPolicy("bot-b", null);
+    await settle();
+    expect(tb.closed()).toBe(true);
+    expect(ta.closed()).toBe(false);
+    expect(registry.closed()).toBe(false);
+    for (const t of [registry, ta]) t.socket.destroy();
   });
 });
 

@@ -112,39 +112,64 @@ describe("a key a person presses while they hold the wheel", () => {
   });
 });
 
-describe("开场帧与地址栏", () => {
-  /** A CDP session that answers a screenshot, and a page that can navigate. */
-  function castable(options: { screenshot?: string; gotoFails?: string } = {}) {
-    const sent: string[] = [];
-    let handler: ((event: unknown) => void) | undefined;
-    const client = {
-      on(_event: string, listener: (event: unknown) => void) {
-        handler = listener;
-      },
-      async send(method: string) {
-        sent.push(method);
-        if (method === "Page.captureScreenshot")
-          return options.screenshot ? { data: options.screenshot } : {};
-        return {};
-      },
-      async detach() {},
-    };
-    let url = "about:blank";
-    const page = {
-      context: () => ({ newCDPSession: async () => client }),
-      url: () => url,
-      viewportSize: () => ({ width: 1280, height: 800 }),
-      goto: async (target: string) => {
-        if (options.gotoFails) throw new Error(options.gotoFails);
-        url = target;
-      },
-      goBack: async () => {},
-      goForward: async () => {},
-      reload: async () => {},
-    } as unknown as Page;
-    return { page, sent, emit: (event: unknown) => handler?.(event) };
-  }
+/** A CDP session that answers a screenshot, and a page that can navigate. */
+function castable(
+  options: {
+    screenshot?: string;
+    gotoFails?: string;
+    /** Main-frame navigation requests that fail before goto rejects (a redirect chain's hops). */
+    failedRequests?: string[];
+  } = {},
+) {
+  const sent: string[] = [];
+  let handler: ((event: unknown) => void) | undefined;
+  const client = {
+    on(_event: string, listener: (event: unknown) => void) {
+      handler = listener;
+    },
+    async send(method: string) {
+      sent.push(method);
+      if (method === "Page.captureScreenshot")
+        return options.screenshot ? { data: options.screenshot } : {};
+      return {};
+    },
+    async detach() {},
+  };
+  let url = "about:blank";
+  const mainFrame = {};
+  const listeners = new Set<(request: unknown) => void>();
+  const page = {
+    context: () => ({ newCDPSession: async () => client }),
+    url: () => url,
+    viewportSize: () => ({ width: 1280, height: 800 }),
+    mainFrame: () => mainFrame,
+    on: (event: string, listener: (request: unknown) => void) => {
+      if (event === "requestfailed") listeners.add(listener);
+    },
+    off: (event: string, listener: (request: unknown) => void) => {
+      if (event === "requestfailed") listeners.delete(listener);
+    },
+    listenerCount: () => listeners.size,
+    goto: async (target: string) => {
+      for (const failed of options.failedRequests ?? []) {
+        for (const listener of listeners)
+          listener({
+            url: () => failed,
+            isNavigationRequest: () => true,
+            frame: () => mainFrame,
+          });
+      }
+      if (options.gotoFails) throw new Error(options.gotoFails);
+      url = target;
+    },
+    goBack: async () => {},
+    goForward: async () => {},
+    reload: async () => {},
+  } as unknown as Page;
+  return { page, sent, emit: (event: unknown) => handler?.(event) };
+}
 
+describe("开场帧与地址栏", () => {
   test("开播后先发一张截图，静止的页面也有画面", async () => {
     const { page } = castable({ screenshot: "SHOT" });
     const frames: unknown[] = [];
@@ -202,6 +227,45 @@ describe("开场帧与地址栏", () => {
       url: "about:blank",
       error: "连不上这个网址。",
     });
+  });
+});
+
+describe("跳转到内网时按实际被拦的那一跳说明", () => {
+  test("Chromium 的 at 是起始网址；按失败的那个请求（跳转目标）说安全原因", async () => {
+    const { page } = castable({
+      // What real Chromium reports for a public page that 302s to https://10.0.0.1/.
+      gotoFails:
+        "page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://redir.example.com/start",
+      failedRequests: ["https://10.0.0.1/"],
+    });
+    const messages: unknown[] = [];
+    const cast = await startScreencast(page, (m) => messages.push(m));
+    await cast.send({
+      type: "navigate",
+      url: "https://redir.example.com/start",
+    });
+    expect(messages).toContainEqual({
+      type: "navigation",
+      ok: false,
+      url: "about:blank",
+      error: "出于安全原因不允许访问内网地址。",
+    });
+    // The listener is removed again, so navigations do not pile them up.
+    expect(
+      (page as unknown as { listenerCount: () => number }).listenerCount(),
+    ).toBe(0);
+  });
+
+  test("失败的那一跳比错误里的起始网址优先", async () => {
+    expect(
+      await navigationProblem(
+        new Error(
+          "net::ERR_TUNNEL_CONNECTION_FAILED at https://redir.example.com/start",
+        ),
+        "https://redir.example.com/start",
+        "https://[2002:c0a8:1::1]/",
+      ),
+    ).toBe("出于安全原因不允许访问内网地址。");
   });
 });
 

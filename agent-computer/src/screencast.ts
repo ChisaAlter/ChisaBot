@@ -12,7 +12,7 @@
  * headless. This implementation streams the page and forwards input through the Chrome DevTools
  * Protocol.
  */
-import type { CDPSession, Page } from "playwright";
+import type { CDPSession, Page, Request } from "playwright";
 import { classifyEgressTunnel, isPrivateEgressHost } from "./egress";
 import { whileNavigating } from "./start-page";
 
@@ -319,6 +319,22 @@ export async function startScreencast(
 
       if (message.type === "navigate" || message.type === "history") {
         const from = pageUrl() ?? "";
+        // Chromium names the URL it started from in the error, not the hop that failed. A public
+        // page that redirects to an internal address fails on the redirected request, so remember
+        // the main-frame navigation requests that failed and explain the last one.
+        const failedHops: string[] = [];
+        const onRequestFailed = (request: Request) => {
+          try {
+            if (
+              request.isNavigationRequest() &&
+              request.frame() === page.mainFrame()
+            )
+              failedHops.push(request.url());
+          } catch {
+            // A request with no frame (a service worker's) is not this navigation.
+          }
+        };
+        page.on("requestfailed", onRequestFailed);
         try {
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
           await whileNavigating(page, async () => {
@@ -345,9 +361,11 @@ export async function startScreencast(
               type: "navigation",
               ok: false,
               url,
-              error: await navigationProblem(error, target),
+              error: await navigationProblem(error, target, failedHops.at(-1)),
             });
           }
+        } finally {
+          page.off("requestfailed", onRequestFailed);
         }
         return;
       }
@@ -366,29 +384,38 @@ export async function startScreencast(
  * Chromium 对代理 CONNECT 的 403（策略）和 502（上游连不上）都报 ERR_TUNNEL。这里用目标地址
  * 和出口过滤代理的一次探测区分：内网 / SSRF 底线 → 安全提示；其它策略拒绝 → 策略提示；
  * 连不上 → 如实说连不上。
+ *
+ * 判哪一跳：`failedHop`（实际失败的那个请求，跳转后就是跳转目标）优先；没有时退回错误里
+ * `at …` 的网址和导航目标。Chromium 错误里的 `at` 是起始网址，不是失败的那一跳，所以公网页
+ * 302 到内网时只靠它会被说成「连不上」。
  */
 export async function navigationProblem(
   error: unknown,
   targetUrl?: string,
+  failedHop?: string,
 ): Promise<string> {
   const text = error instanceof Error ? error.message : String(error);
   const tunnel = /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_BLOCKED/i.test(
     text,
   );
   if (tunnel) {
-    // Prefer the URL named in the error (the hop that failed) over the original navigate
-    // target — a public page that 302s to an internal address otherwise looks like "连不上".
-    const failedHop = /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1];
-    const parsed =
-      parseNavigationTarget(failedHop) ?? parseNavigationTarget(targetUrl);
-    if (parsed && isPrivateEgressHost(parsed.host))
+    const namedInError = /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1];
+    const hop = parseNavigationTarget(failedHop);
+    // The hop that failed decides when it is known. Otherwise any internal address among the
+    // candidates is the likely reason: the error's `at` and the navigate target can disagree.
+    const candidates = hop
+      ? [hop]
+      : [namedInError, targetUrl].flatMap((raw) => {
+          const parsed = parseNavigationTarget(raw);
+          return parsed ? [parsed] : [];
+        });
+    if (candidates.some((candidate) => isPrivateEgressHost(candidate.host)))
       return "出于安全原因不允许访问内网地址。";
+    const parsed = candidates[0];
     if (parsed) {
       const kind = await classifyEgressTunnel(parsed.host, parsed.port);
       if (kind === "private") return "出于安全原因不允许访问内网地址。";
       if (kind === "refused") return "网络策略不允许访问这个网址。";
-      if (kind === "unreachable" || kind === "unknown" || kind === "allowed")
-        return "连不上这个网址。";
     }
     return "连不上这个网址。";
   }

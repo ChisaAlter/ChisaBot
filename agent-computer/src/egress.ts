@@ -407,13 +407,33 @@ const ALWAYS_DENIED: readonly [string, number, "ipv4" | "ipv6"][] = [
   ["fc00::", 7, "ipv6"],
   ["fec0::", 10, "ipv6"], // deprecated site-local (aligned with shared/net/ssrf)
   ["64:ff9b:1::", 48, "ipv6"], // local-use NAT64 (RFC 8215)
-  ["2002::", 16, "ipv6"], // 6to4 — whole prefix (deprecated tunnel)
+  // 6to4 (2002::/16) is not listed whole: the IPv4 it carries is checked instead (see
+  // `sixToFourIpv4`), so 6to4 of a public address still works and 6to4 of a private one does not.
   ["fd00:ec2::254", 128, "ipv6"],
   ["fd20:ce::254", 128, "ipv6"],
 ];
 const alwaysDenied = new BlockList();
 for (const [address, prefix, family] of ALWAYS_DENIED)
   alwaysDenied.addSubnet(address, prefix, family);
+
+/**
+ * IPv4 ranges a 6to4 address may not carry, on top of {@link ALWAYS_DENIED}: special-purpose and
+ * reserved space (RFC 6890) that is never a real public host. Same list as shared/net/ssrf. Kept
+ * to the 6to4 path, so the plain IPv4 floor (and fake-IP setups on 198.18/15) is unchanged.
+ */
+const SIX_TO_FOUR_RESERVED: readonly [string, number][] = [
+  ["192.0.0.0", 24], // IETF protocol assignments
+  ["192.0.2.0", 24], // TEST-NET-1
+  ["192.88.99.0", 24], // 6to4 relay anycast
+  ["198.18.0.0", 15], // benchmarking
+  ["198.51.100.0", 24], // TEST-NET-2
+  ["203.0.113.0", 24], // TEST-NET-3
+  ["224.0.0.0", 4], // multicast
+  ["240.0.0.0", 4], // reserved + broadcast
+];
+const sixToFourReserved = new BlockList();
+for (const [address, prefix] of SIX_TO_FOUR_RESERVED)
+  sixToFourReserved.addSubnet(address, prefix, "ipv4");
 
 /** Expand an IPv6 address into eight 16-bit groups, or null. */
 function expandIpv6Groups(address: string): number[] | null {
@@ -432,7 +452,7 @@ function expandIpv6Groups(address: string): number[] | null {
     const d = parts[3] ?? 0;
     const hi = ((a << 8) | b).toString(16);
     const lo = ((c << 8) | d).toString(16);
-    hex = hex.slice(0, dotted.index) + `${hi}:${lo}`;
+    hex = `${hex.slice(0, dotted.index)}${hi}:${lo}`;
   }
   const halves = hex.split("::");
   if (halves.length > 2) return null;
@@ -477,11 +497,33 @@ function embeddedIpv4(address: string): string | null {
 }
 
 /**
+ * The IPv4 a 6to4 address (RFC 3056, `2002:AABB:CCDD::/48`) is built from, or null.
+ *
+ * Groups 2–3 are the IPv4 of the site's 6to4 router; that is where the packet really goes.
+ */
+function sixToFourIpv4(address: string): string | null {
+  if (isIP(address) !== 6) return null;
+  const g = expandIpv6Groups(address);
+  if (g?.length !== 8 || g[0] !== 0x2002) return null;
+  const high = g[1] ?? 0;
+  const low = g[2] ?? 0;
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+/**
  * True for a private, loopback, metadata or link-local address, including one written as
- * IPv4-mapped / compatible IPv6 or reached through the NAT64 prefix.
+ * IPv4-mapped / compatible IPv6, reached through the NAT64 prefix, or carried by a 6to4 address
+ * (6to4 of a private or reserved IPv4 is refused; 6to4 of a public IPv4 is not).
  */
 export function isAlwaysDenied(addressInput: string): boolean {
   const address = normalizeHost(addressInput);
+  const sixToFour = sixToFourIpv4(address);
+  if (sixToFour !== null) {
+    return (
+      alwaysDenied.check(sixToFour, "ipv4") ||
+      sixToFourReserved.check(sixToFour, "ipv4")
+    );
+  }
   const candidate = embeddedIpv4(address) ?? address;
   const version = isIP(candidate);
   if (version === 0) return false;
@@ -649,29 +691,108 @@ type RunningFilter = { port: number; masterKey: Buffer; server: Server };
 let filter: RunningFilter | null = null;
 const policies = new Map<string, EgressPolicy>();
 let policyRequired = true;
-/** Live CONNECT tunnels; destroyed when any Bot's policy changes so a tighten cannot keep an old pipe. */
-const openTunnels = new Set<Socket>();
+/** Who opened a CONNECT tunnel, as {@link decide} judged it. */
+type TunnelCaller = { kind: "bot"; botId: string } | { kind: "anonymous" };
 
-function trackTunnel(client: Socket, remote: Socket) {
-  openTunnels.add(client);
-  openTunnels.add(remote);
-  const forget = () => {
-    openTunnels.delete(client);
-    openTunnels.delete(remote);
-  };
+/** One live CONNECT tunnel and what it was judged on, so a policy change can judge it again. */
+type OpenTunnel = {
+  caller: TunnelCaller;
+  host: string;
+  port: number;
+  /** The addresses the name resolved to when it was allowed (empty for an IP literal). */
+  resolved: readonly string[];
+  sockets: readonly Socket[];
+};
+
+/**
+ * Live CONNECT tunnels. When a policy changes, only the tunnels that policy judges are looked at
+ * again, and only those the new policy would refuse are cut (see {@link dropTunnelsRefusedBy}).
+ */
+const openTunnels = new Set<OpenTunnel>();
+
+function trackTunnel(
+  entry: Omit<OpenTunnel, "sockets">,
+  client: Socket,
+  remote: Socket,
+) {
+  const tracked: OpenTunnel = { ...entry, sockets: [client, remote] };
+  openTunnels.add(tracked);
+  const forget = () => openTunnels.delete(tracked);
   client.on("close", forget);
   remote.on("close", forget);
 }
 
-function dropOpenTunnels() {
-  for (const socket of openTunnels) {
+function destroyTunnel(tracked: OpenTunnel) {
+  openTunnels.delete(tracked);
+  for (const socket of tracked.sockets) {
     try {
       socket.destroy();
     } catch {
       // ignore
     }
   }
-  openTunnels.clear();
+}
+
+function dropOpenTunnels() {
+  for (const tracked of [...openTunnels]) destroyTunnel(tracked);
+}
+
+/**
+ * Why these policies would refuse this tunnel now, or null when they still allow it. Same rules as
+ * {@link decide}, judged on the addresses the tunnel was opened with, so nothing is resolved again.
+ */
+function refusalFor(
+  judging: EgressPolicy[] | "refuse",
+  tracked: Omit<OpenTunnel, "sockets">,
+): EgressDenyClass | null {
+  if (judging === "refuse") return "refused";
+  for (const policy of judging.length > 0 ? judging : [ALLOW_ALL_FALLBACK]) {
+    const decision = egressDecision(
+      policy,
+      tracked.host,
+      tracked.port,
+      tracked.resolved,
+    );
+    if (!decision.allowed) return decision.denyClass ?? "refused";
+  }
+  return null;
+}
+
+/**
+ * Cut the open tunnels the policy now in force no longer allows.
+ *
+ * - A Bot's tunnels are judged again only when that Bot's own policy changed.
+ * - Anonymous tunnels follow the strictest Bot (see {@link anonymousPolicies}), so they are judged
+ *   again only when that anonymous fallback itself changed.
+ * - A tunnel the new policy still allows stays open, so loosening (or rewriting the same policy)
+ *   cuts nothing, and one Bot's change never touches another Bot's tunnels.
+ */
+function dropTunnelsRefusedBy(
+  botId: string,
+  anonymousBefore: EgressPolicy[] | "refuse",
+) {
+  const anonymousAfter = anonymousPolicies();
+  const anonymousChanged = !samePolicies(anonymousBefore, anonymousAfter);
+  const botNow = policiesForBot(botId);
+  for (const tracked of [...openTunnels]) {
+    const judging =
+      tracked.caller.kind === "bot"
+        ? tracked.caller.botId === botId
+          ? botNow
+          : null
+        : anonymousChanged
+          ? anonymousAfter
+          : null;
+    if (judging === null) continue;
+    if (refusalFor(judging, tracked) !== null) destroyTunnel(tracked);
+  }
+}
+
+function samePolicies(
+  a: EgressPolicy[] | "refuse",
+  b: EgressPolicy[] | "refuse",
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 type Resolver = (host: string) => Promise<string[]>;
@@ -686,10 +807,11 @@ export function setEgressResolver(next: Resolver | null) {
 
 /** Install (or with null, remove) the policy one Bot's connections are judged by. */
 export function setEgressPolicy(botId: string, policy: EgressPolicy | null) {
+  const anonymousBefore = anonymousPolicies();
   if (policy) policies.set(botId, policy);
   else policies.delete(botId);
-  // Drop already-open CONNECT tunnels so a tighter policy takes effect immediately.
-  dropOpenTunnels();
+  // A tighter policy applies to tunnels already open too, but only to the ones it now refuses.
+  dropTunnelsRefusedBy(botId, anonymousBefore);
 }
 
 export function egressPolicyFor(botId: string): EgressPolicy | undefined {
@@ -730,6 +852,9 @@ export const ANONYMOUS_EGRESS_POLICY: EgressPolicy = Object.freeze({
 const ANONYMOUS_ALLOW_ALL: EgressPolicy = { mode: "allow_all", rules: [] };
 
 const ANONYMOUS_DENY: EgressPolicy = { mode: "deny_all", rules: [] };
+
+/** What a connection is judged by when there is no policy to judge it (EGRESS_POLICY_REQUIRED=0). */
+const ALLOW_ALL_FALLBACK: EgressPolicy = { mode: "allow_all", rules: [] };
 
 /**
  * The policy an anonymous connection is judged by. One function on purpose, so the fallback can be
@@ -880,7 +1005,7 @@ async function decide(
   caller: { kind: "bot"; botId: string } | { kind: "anonymous" },
   host: string,
   port: number,
-): Promise<EgressDecision & { addresses?: string[] }> {
+): Promise<EgressDecision & { addresses?: string[]; resolved?: string[] }> {
   const judging =
     caller.kind === "bot" ? policiesForBot(caller.botId) : anonymousPolicies();
   if (judging === "refuse") {
@@ -911,9 +1036,7 @@ async function decide(
     }
   }
   // Checked even with no policy to judge by, which EGRESS_POLICY_REQUIRED=0 allows.
-  for (const policy of judging.length > 0
-    ? judging
-    : [{ mode: "allow_all" as const, rules: [] }]) {
+  for (const policy of judging.length > 0 ? judging : [ALLOW_ALL_FALLBACK]) {
     const decision = egressDecision(policy, host, port, resolved);
     if (!decision.allowed) return decision;
   }
@@ -922,6 +1045,7 @@ async function decide(
     allowed: true,
     reason: "Allowed.",
     ...(resolved.length > 0 ? { addresses: resolved } : {}),
+    resolved,
   };
 }
 
@@ -1236,12 +1360,32 @@ export async function startEgressFilter(
         },
         upstream,
         (remote) => {
+          const entry = {
+            caller:
+              caller.kind === "bot"
+                ? ({ kind: "bot", botId: caller.botId } as const)
+                : ({ kind: "anonymous" } as const),
+            host,
+            port,
+            resolved: decision.resolved ?? [],
+          };
+          // The policy may have tightened while the tunnel was being dialled.
+          const judging =
+            entry.caller.kind === "bot"
+              ? policiesForBot(entry.caller.botId)
+              : anonymousPolicies();
+          const refusal = refusalFor(judging, entry);
+          if (refusal !== null) {
+            remote.destroy();
+            refuse(client, refusal);
+            return;
+          }
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
           if (head.length > 0) remote.write(head);
           remote.pipe(client);
           client.pipe(remote);
           remote.on("error", () => client.destroy());
-          trackTunnel(client, remote);
+          trackTunnel(entry, client, remote);
         },
         () => {
           badGateway(client);
