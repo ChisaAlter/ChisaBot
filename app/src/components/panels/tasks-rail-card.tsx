@@ -3,6 +3,7 @@ import {
   IconCheck,
   IconCircleCheck,
   IconCircleDashed,
+  IconCircleOff,
   IconCircleX,
   IconGitBranch,
   IconPaperclip,
@@ -229,19 +230,25 @@ function TasksRailBody({
       !workflows.isPending &&
       !snapshot.isError &&
       !workflows.isError ? (
-        <div className="task-rail-empty">
-          <IconCircleCheck aria-hidden className="size-5" />
-          <div>
-            <p>{"当前没有待跟进的任务"}</p>
-            {inboxCount > 0 ? (
-              <Link to="/tasks" search={{ view: "inbox" }}>
-                {`查看 ${inboxCount} 项待安排事项`}
-              </Link>
-            ) : (
-              <span>{"可以在对话中交办，或前往任务中心新建。"}</span>
-            )}
+        recentTasks.length > 0 ? (
+          <p className="task-rail-idle-hint" role="status">
+            {"现在没有进行中的任务"}
+          </p>
+        ) : (
+          <div className="task-rail-empty">
+            <IconCircleCheck aria-hidden className="size-5" />
+            <div>
+              <p>{"当前没有待跟进的任务"}</p>
+              {inboxCount > 0 ? (
+                <Link to="/tasks" search={{ view: "inbox" }}>
+                  {`查看 ${inboxCount} 项待安排事项`}
+                </Link>
+              ) : (
+                <span>{"可以在对话中交办，或前往任务中心新建。"}</span>
+              )}
+            </div>
           </div>
-        </div>
+        )
       ) : null}
 
       {recentTasks.length > 0 ? (
@@ -282,29 +289,63 @@ function RailSection({
 
 type CardTone = "info" | "warning" | "success" | "danger" | "neutral";
 
+/** 卡片状态语义：图标与色调成对，暂停与取消共用中性色但图标不同。 */
+type StatusKind =
+  | "active"
+  | "attention"
+  | "paused"
+  | "success"
+  | "danger"
+  | "cancelled";
+
+const STATUS_KIND_VISUAL: Record<
+  StatusKind,
+  { tone: CardTone; Icon: typeof IconCircleDashed }
+> = {
+  active: { tone: "info", Icon: IconCircleDashed },
+  attention: { tone: "warning", Icon: IconAlertTriangle },
+  paused: { tone: "neutral", Icon: IconPlayerPause },
+  success: { tone: "success", Icon: IconCircleCheck },
+  danger: { tone: "danger", Icon: IconCircleX },
+  cancelled: { tone: "neutral", Icon: IconCircleOff },
+};
+
 function CardStatus({
-  tone,
+  kind,
   children,
 }: {
-  tone: CardTone;
+  kind: StatusKind;
   children: ReactNode;
 }) {
-  const Icon =
-    tone === "warning"
-      ? IconAlertTriangle
-      : tone === "success"
-        ? IconCircleCheck
-        : tone === "danger"
-          ? IconCircleX
-          : tone === "neutral"
-            ? IconPlayerPause
-            : IconCircleDashed;
+  const { tone, Icon } = STATUS_KIND_VISUAL[kind];
   return (
-    <span className="task-rail-status" data-tone={tone}>
-      <Icon aria-hidden className="size-3.5" />
+    <span className="task-rail-status" data-kind={kind} data-tone={tone}>
+      <Icon
+        aria-hidden
+        className="size-3.5"
+        data-testid={`task-rail-status-icon-${kind}`}
+      />
       {children}
     </span>
   );
+}
+
+function taskStatusKind(
+  status: TaskCenterTask["status"],
+  opts: { recent?: boolean; hasError?: boolean } = {},
+): StatusKind {
+  if (status === "failed") return "danger";
+  if (status === "succeeded") return "success";
+  if (status === "cancelled") return "cancelled";
+  if (status === "paused") return "paused";
+  if (
+    status === "waiting_approval" ||
+    status === "waiting_dependencies" ||
+    (opts.hasError && !opts.recent)
+  ) {
+    return "attention";
+  }
+  return "active";
 }
 
 function CardMeta({ at, children }: { at: string; children?: ReactNode }) {
@@ -347,7 +388,7 @@ function RailDecisionItem({
             <IconShieldCheck aria-hidden className="size-3.5" />
             {RISK_LABELS[decision.proposedAction.risk]}
           </span>
-          <CardStatus tone="warning">{"待确认"}</CardStatus>
+          <CardStatus kind="attention">{"待确认"}</CardStatus>
         </div>
         <h4 className="task-rail-title">{decision.proposedAction.title}</h4>
         <p className="task-rail-description">{decision.summary}</p>
@@ -396,7 +437,9 @@ function RailWorkflowRunItem({
   );
   const percent =
     totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
-  const tone = run.status === "waiting_approval" ? "warning" : "info";
+  const kind: StatusKind =
+    run.status === "waiting_approval" ? "attention" : "active";
+  const tone = STATUS_KIND_VISUAL[kind].tone;
 
   const approve = useMutation({
     mutationFn: ({
@@ -423,7 +466,7 @@ function RailWorkflowRunItem({
             <IconGitBranch aria-hidden className="size-3.5" />
             {"工作流"}
           </span>
-          <CardStatus tone={tone}>{RUN_STATUS_LABEL[run.status]}</CardStatus>
+          <CardStatus kind={kind}>{RUN_STATUS_LABEL[run.status]}</CardStatus>
         </div>
         <h4 className="task-rail-title">{`${run.icon ? `${run.icon} ` : ""}${run.workflowName}`}</h4>
         <p className="task-rail-description">
@@ -439,7 +482,7 @@ function RailWorkflowRunItem({
         </div>
         <progress
           className="task-rail-progress"
-          aria-label={`${run.workflowName}步骤进度`}
+          aria-label={`${run.workflowName} · 步骤进度 ${doneSteps}/${totalSteps}`}
           max={100}
           value={percent}
         />
@@ -497,18 +540,11 @@ function RailTaskItem({
 
   const isRunning = task.status === "running" || task.status === "planning";
   const isPaused = task.status === "paused";
-  const tone: CardTone =
-    task.status === "failed"
-      ? "danger"
-      : task.status === "succeeded"
-        ? "success"
-        : task.status === "waiting_approval" ||
-            task.status === "waiting_dependencies" ||
-            (task.error && !recent)
-          ? "warning"
-          : isPaused || task.status === "cancelled"
-            ? "neutral"
-            : "info";
+  const kind = taskStatusKind(task.status, {
+    recent,
+    hasError: Boolean(task.error),
+  });
+  const tone = STATUS_KIND_VISUAL[kind].tone;
   const description = task.error || task.summary || task.description;
 
   return (
@@ -526,7 +562,7 @@ function RailTaskItem({
           <span className="task-rail-kind">
             {CATEGORY_LABELS[task.category]}
           </span>
-          <CardStatus tone={tone}>{STATUS_LABELS[task.status]}</CardStatus>
+          <CardStatus kind={kind}>{STATUS_LABELS[task.status]}</CardStatus>
         </div>
         <h4 className="task-rail-title">{task.title}</h4>
         {description ? (

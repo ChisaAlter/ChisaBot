@@ -221,6 +221,13 @@
   color: var(--task-card-muted);
   font-size: 13px;
 }
+.task-rail-idle-hint {
+  margin: 0 4px;
+  padding: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--task-card-muted);
+}
 .task-rail-empty {
   display: flex;
   align-items: flex-start;
