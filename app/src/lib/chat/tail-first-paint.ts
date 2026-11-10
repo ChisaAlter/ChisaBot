@@ -196,3 +196,95 @@ export function hasVisibleRow(root: ParentNode | null | undefined): boolean {
   }
   return false;
 }
+
+/** 「显示更早的消息」补行前记下的锚：正在看的那一行，以及它相对视口顶的偏移。 */
+export type ScrollAnchor = {
+  id: string;
+  node: HTMLElement;
+  offset: number;
+};
+
+function rowIsHidden(row: HTMLElement): boolean {
+  if (row.hasAttribute("data-folded")) return true;
+  try {
+    return row.matches(HIDDEN_ACTIVITY_ROW);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 视口里正在看的那一行：第一条底边还在视口顶下面的可见消息行，以及它相对视口顶的偏移。
+ * 给补行前用。scrollTop 为 0 时浏览器不做原生滚动锚定，必须靠这个在 layout 里同步恢复。
+ */
+export function captureScrollAnchor(
+  viewport: HTMLElement,
+): ScrollAnchor | null {
+  const top = viewport.getBoundingClientRect().top;
+  const rows = viewport.querySelectorAll<HTMLElement>(
+    '[data-slot="message-scroller-item"]',
+  );
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || rowIsHidden(row)) continue;
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= top + 0.5) continue;
+    return {
+      id: row.getAttribute("data-message-id") ?? "",
+      node: row,
+      offset: rect.top - top,
+    };
+  }
+  return null;
+}
+
+function findAnchorNode(
+  viewport: HTMLElement,
+  anchor: ScrollAnchor,
+): HTMLElement | null {
+  if (anchor.id) {
+    try {
+      const escaped =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function"
+          ? CSS.escape(anchor.id)
+          : anchor.id.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const found = viewport.querySelector<HTMLElement>(
+        `[data-message-id="${escaped}"]`,
+      );
+      if (found) return found;
+    } catch {
+      // 选择器写不出就退回节点引用
+    }
+  }
+  return anchor.node.isConnected ? anchor.node : null;
+}
+
+/** 立刻改 scrollTop，不走平滑滚动。 */
+export function withoutSmoothScroll(
+  viewport: HTMLElement,
+  write: () => void,
+): void {
+  const behavior = viewport.style.scrollBehavior;
+  viewport.style.scrollBehavior = "auto";
+  write();
+  viewport.style.scrollBehavior = behavior;
+}
+
+/**
+ * 把锚点行移回捕获时的偏移。成功返回 true。必须在 layout effect 里同步调用，屏幕上才不会闪。
+ */
+export function restoreScrollAnchor(
+  viewport: HTMLElement,
+  anchor: ScrollAnchor,
+): boolean {
+  const node = findAnchorNode(viewport, anchor);
+  if (!node) return false;
+  const top = viewport.getBoundingClientRect().top;
+  const current = node.getBoundingClientRect().top - top;
+  const delta = current - anchor.offset;
+  if (Math.abs(delta) < 0.5) return true;
+  withoutSmoothScroll(viewport, () => {
+    viewport.scrollTop += delta;
+  });
+  return true;
+}
