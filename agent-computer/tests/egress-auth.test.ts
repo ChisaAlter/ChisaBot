@@ -15,12 +15,15 @@ import {
   isPrivateEgressHost,
   noteAnonymousEgress,
   proxyCallerFrom,
+  recentEgressOutcome,
   setEgressLogger,
   setEgressPolicy,
   setEgressResolver,
+  setEgressTimeouts,
   startEgressFilter,
   stopEgressFilter,
 } from "../src/egress";
+import { navigationProblem } from "../src/screencast";
 
 function basic(userinfo: string) {
   return `Basic ${Buffer.from(userinfo).toString("base64")}`;
@@ -598,6 +601,138 @@ describe("policy changes cut only the tunnels they now refuse", () => {
     expect(ta.closed()).toBe(false);
     expect(registry.closed()).toBe(false);
     for (const t of [registry, ta]) t.socket.destroy();
+  });
+});
+
+/**
+ * A DNS failure and a timeout are different answers: "连不上" for a name that does not resolve (or a
+ * lookup that never answers), "网站没有响应" only when dialling / the response really timed out.
+ */
+describe("DNS failure vs timeout", () => {
+  const servers: Server[] = [];
+  afterEach(async () => {
+    setEgressResolver(null);
+    setEgressTimeouts(null);
+    setEgressLogger(null);
+    await stopEgressFilter();
+    for (const server of servers.splice(0))
+      await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  /** An upstream proxy that accepts the connection and never answers anything. */
+  async function silentUpstream() {
+    const held: Socket[] = [];
+    const server = createServer();
+    server.on("connect", (_req, client: Socket) => {
+      client.on("error", () => undefined);
+      held.push(client);
+    });
+    server.on("request", () => undefined);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    servers.push(server);
+    server.on("close", () => {
+      for (const socket of held) socket.destroy();
+    });
+    const address = server.address();
+    return typeof address === "object" && address ? address.port : 0;
+  }
+
+  async function filterFor(env: Record<string, string> = {}) {
+    setEgressLogger(() => undefined);
+    const filter = await startEgressFilter({ env });
+    setEgressPolicy("a", { mode: "allow_all", rules: [] });
+    const auth = basic(`a:${egressFor("a", {})?.password ?? ""}`);
+    return { filter, auth };
+  }
+
+  test("a name that does not resolve: 403 unresolved, and the live screen says 连不上", async () => {
+    setEgressResolver(async () => {
+      throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" });
+    });
+    const { filter, auth } = await filterFor();
+    const answer = await raw(
+      filter.port,
+      `CONNECT nope.invalid:443 HTTP/1.1\r\nHost: nope.invalid:443\r\nProxy-Authorization: ${auth}\r\n\r\n`,
+    );
+    expect(answer).toContain("x-chisabot-egress-class: unresolved");
+    expect(recentEgressOutcome("nope.invalid", 443)).toBe("unresolved");
+    expect(
+      await navigationProblem(
+        new Error("net::ERR_TUNNEL_CONNECTION_FAILED at https://nope.invalid/"),
+        "https://nope.invalid/",
+      ),
+    ).toBe("连不上这个网址。");
+  });
+
+  test("a lookup that never answers is a DNS failure (unresolved), not a timeout page", async () => {
+    setEgressTimeouts({ lookupMs: 50 });
+    setEgressResolver(() => new Promise<string[]>(() => undefined));
+    const { filter, auth } = await filterFor();
+    const answer = await raw(
+      filter.port,
+      `CONNECT slow-dns.test:443 HTTP/1.1\r\nHost: slow-dns.test:443\r\nProxy-Authorization: ${auth}\r\n\r\n`,
+    );
+    expect(answer.split("\r\n")[0]).toContain("403");
+    expect(answer).toContain("x-chisabot-egress-class: unresolved");
+    expect(answer).toContain("连不上这个网址。");
+  });
+
+  test("an upstream that never answers the CONNECT: 504 timeout, and the live screen says 没有响应", async () => {
+    setEgressTimeouts({ connectMs: 80 });
+    setEgressResolver(async () => ["93.184.215.14"]);
+    const upstream = await silentUpstream();
+    const { filter, auth } = await filterFor({
+      EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upstream}`,
+    });
+    const answer = await raw(
+      filter.port,
+      `CONNECT slow.test:443 HTTP/1.1\r\nHost: slow.test:443\r\nProxy-Authorization: ${auth}\r\n\r\n`,
+    );
+    expect(answer.split("\r\n")[0]).toContain("504");
+    expect(answer).toContain("x-chisabot-egress-class: timeout");
+    expect(answer).toContain("网站没有响应，请稍后再试。");
+    expect(recentEgressOutcome("slow.test", 443)).toBe("timeout");
+    expect(
+      await navigationProblem(
+        new Error("net::ERR_TUNNEL_CONNECTION_FAILED at https://slow.test/"),
+        "https://slow.test/",
+      ),
+    ).toBe("网站没有响应，请稍后再试。");
+  });
+
+  test("an upstream that is down: 502 unreachable, 连不上", async () => {
+    setEgressResolver(async () => ["93.184.215.14"]);
+    const closed = createServer();
+    await new Promise<void>((r) => closed.listen(0, "127.0.0.1", r));
+    const address = closed.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    await new Promise<void>((r) => closed.close(() => r()));
+    const { filter, auth } = await filterFor({
+      EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${port}`,
+    });
+    const answer = await raw(
+      filter.port,
+      `CONNECT down.test:443 HTTP/1.1\r\nHost: down.test:443\r\nProxy-Authorization: ${auth}\r\n\r\n`,
+    );
+    expect(answer.split("\r\n")[0]).toContain("502");
+    expect(answer).toContain("x-chisabot-egress-class: unreachable");
+    expect(answer).toContain("连不上这个网址。");
+    expect(await classifyEgressTunnel("down.test", 443)).toBe("unreachable");
+  });
+
+  test("plain HTTP with no response head in time: 504 没有响应", async () => {
+    setEgressTimeouts({ responseMs: 80 });
+    setEgressResolver(async () => ["93.184.215.14"]);
+    const upstream = await silentUpstream();
+    const { filter, auth } = await filterFor({
+      EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upstream}`,
+    });
+    const answer = await raw(
+      filter.port,
+      `GET http://slow.test/ HTTP/1.1\r\nHost: slow.test\r\nProxy-Authorization: ${auth}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(answer.split("\r\n")[0]).toContain("504");
+    expect(answer).toContain("网站没有响应，请稍后再试。");
   });
 });
 

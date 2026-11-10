@@ -15,6 +15,7 @@ export function visiblePageText(): string {
   const live = body.innerText ?? "";
   if (live.trim()) return live;
   const clone = body.cloneNode(true) as HTMLElement;
-  for (const node of clone.querySelectorAll("script, style, noscript, svg")) node.remove();
+  for (const node of clone.querySelectorAll("script, style, noscript, svg"))
+    node.remove();
   return clone.innerText ?? "";
 }

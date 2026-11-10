@@ -542,6 +542,7 @@ export type EgressTunnelClass =
   | "private"
   | "refused"
   | "unreachable"
+  | "timeout"
   | "allowed"
   | "unknown";
 
@@ -559,6 +560,10 @@ export async function classifyEgressTunnel(
   if (isPrivateEgressHost(host)) return "private";
   const running = filter;
   if (!running) return "unknown";
+  // What the filter itself just saw for this destination beats a second attempt.
+  const recent = recentEgressOutcome(host, port);
+  if (recent === "timeout") return "timeout";
+  if (recent === "unresolved" || recent === "unreachable") return "unreachable";
   const authority = isIP(host) === 6 ? `[${host}]` : host;
   const head = await new Promise<string>((resolve) => {
     const socket = connect(running.port, "127.0.0.1", () => {
@@ -582,6 +587,7 @@ export async function classifyEgressTunnel(
   const status = /^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1];
   if (status === "200") return "allowed";
   if (status === "502") return "unreachable";
+  if (status === "504") return "timeout";
   if (status === "403") {
     const klass = /x-chisabot-egress-class:\s*(\w+)/i.exec(head)?.[1];
     if (klass === "private") return "private";
@@ -1026,8 +1032,14 @@ async function decide(
   const named = isIP(normalizeHost(host)) === 0;
   if (named) {
     try {
-      resolved = await resolver(normalizeHost(host));
+      resolved = await withTimeout(
+        resolver(normalizeHost(host)),
+        timeouts.lookupMs,
+      );
+      if (resolved.length === 0) throw new Error("No addresses.");
     } catch {
+      // A lookup that fails or never answers is the name not resolving: "连不上", not "没有响应".
+      noteOutcome(host, port, "unresolved");
       return {
         allowed: false,
         denyClass: "unresolved",
@@ -1047,6 +1059,22 @@ async function decide(
     ...(resolved.length > 0 ? { addresses: resolved } : {}),
     resolved,
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(timeoutError("Lookup")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function orderedEntries(addresses: readonly string[]) {
@@ -1127,11 +1155,95 @@ function refuse(socket: Socket, kind: EgressDenyClass) {
   );
 }
 
-function badGateway(socket: Socket) {
-  const body = "连不上这个网址。";
+/** Why a connection the policy allowed still did not go through. Drives the 502 / 504 pages. */
+export type EgressFailure = "unreachable" | "timeout";
+
+/**
+ * How long each step may take. Dialling the target (or the upstream proxy, through its CONNECT
+ * answer) and waiting for a plain-HTTP response head are timeouts ("没有响应"); a name lookup that
+ * does not answer is a DNS failure ("连不上").
+ */
+const DEFAULT_TIMEOUTS = {
+  connectMs: 15_000,
+  lookupMs: 5_000,
+  responseMs: 30_000,
+};
+let timeouts = { ...DEFAULT_TIMEOUTS };
+
+/** For tests: shorten the filter's timeouts. Null puts the defaults back. */
+export function setEgressTimeouts(
+  next: Partial<typeof DEFAULT_TIMEOUTS> | null,
+) {
+  timeouts = { ...DEFAULT_TIMEOUTS, ...(next ?? {}) };
+}
+
+function timeoutError(what: string): Error {
+  return Object.assign(new Error(`${what} timed out.`), { code: "ETIMEDOUT" });
+}
+
+/** A connection error that means "no answer in time", as opposed to "refused / reset / no route". */
+function isTimeout(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT";
+}
+
+function failureOf(error: unknown): EgressFailure {
+  return isTimeout(error) ? "timeout" : "unreachable";
+}
+
+function failureBody(kind: EgressFailure): string {
+  return kind === "timeout" ? "网站没有响应，请稍后再试。" : "连不上这个网址。";
+}
+
+function failureStatus(kind: EgressFailure): string {
+  return kind === "timeout" ? "504 Gateway Timeout" : "502 Bad Gateway";
+}
+
+function badGateway(socket: Socket, kind: EgressFailure = "unreachable") {
+  const body = failureBody(kind);
   socket.end(
-    `HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    `HTTP/1.1 ${failureStatus(kind)}\r\ncontent-type: text/plain; charset=utf-8\r\nx-chisabot-egress-class: ${kind}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
+}
+
+/*
+ * What happened the last time the filter tried a destination, for the live screen.
+ *
+ * Chromium reports a refused tunnel, a DNS failure and a timeout all as ERR_TUNNEL (and a tunnel that
+ * opened and then dropped as ERR_CONNECTION_CLOSED). Only network outcomes are kept here (the name did
+ * not resolve, the dial timed out, the target was unreachable), never a policy verdict, so one Bot's
+ * policy never colours another Bot's message. Short-lived and bounded.
+ */
+type NetworkOutcome = "unresolved" | EgressFailure;
+const OUTCOME_TTL_MS = 30_000;
+const OUTCOME_LIMIT = 256;
+const recentOutcomes = new Map<string, { kind: NetworkOutcome; at: number }>();
+
+function outcomeKey(host: string, port: number): string {
+  return `${normalizeHost(host)}:${port}`;
+}
+
+function noteOutcome(host: string, port: number, kind: NetworkOutcome | null) {
+  const key = outcomeKey(host, port);
+  recentOutcomes.delete(key);
+  if (kind === null) return;
+  recentOutcomes.set(key, { kind, at: Date.now() });
+  while (recentOutcomes.size > OUTCOME_LIMIT) {
+    const oldest = recentOutcomes.keys().next().value;
+    if (oldest === undefined) break;
+    recentOutcomes.delete(oldest);
+  }
+}
+
+/** The filter's last network outcome for host:port within the last 30 seconds, if any. */
+export function recentEgressOutcome(
+  host: string,
+  port: number,
+  now = Date.now(),
+): NetworkOutcome | null {
+  const seen = recentOutcomes.get(outcomeKey(host, port));
+  if (!seen || now - seen.at > OUTCOME_TTL_MS) return null;
+  return seen.kind;
 }
 
 /** Open a tunnel to host:port, through the upstream proxy when there is one. */
@@ -1158,9 +1270,14 @@ function tunnel(
         return;
       }
       const handleAttemptError = (err: Error) => {
+        clearTimeout(timer);
         socket.destroy();
         tryNext(err);
       };
+      const timer = setTimeout(
+        () => handleAttemptError(timeoutError("Connecting")),
+        timeouts.connectMs,
+      );
       const socket = connect(
         {
           host: entry.address,
@@ -1169,6 +1286,7 @@ function tunnel(
           autoSelectFamily: false,
         },
         () => {
+          clearTimeout(timer);
           socket.off("error", handleAttemptError);
           onReady(socket);
         },
@@ -1179,6 +1297,18 @@ function tunnel(
     return;
   }
   const via = upstreamAddress(upstream);
+  let settled = false;
+  const fail = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    socket.destroy();
+    onError(error);
+  };
+  const timer = setTimeout(
+    () => fail(timeoutError("The upstream proxy")),
+    timeouts.connectMs,
+  );
   const socket = connect(via.port, via.host, () => {
     const auth = basic(upstream.username, upstream.password);
     // An IPv6 host is bracketed in an authority: `CONNECT ::1:443` cannot be read.
@@ -1193,17 +1323,25 @@ function tunnel(
     const end = head.indexOf("\r\n\r\n");
     if (end === -1) return;
     socket.off("data", onData);
-    if (!/^HTTP\/1\.[01] 200/.test(head.subarray(0, end).toString())) {
-      socket.destroy();
-      onError(new Error("The upstream proxy refused the tunnel."));
+    const status = head.subarray(0, end).toString();
+    if (!/^HTTP\/1\.[01] 200/.test(status)) {
+      // An upstream that answers 504 timed out reaching the target itself.
+      fail(
+        /^HTTP\/1\.[01] 504/.test(status)
+          ? timeoutError("The upstream proxy's tunnel")
+          : new Error("The upstream proxy refused the tunnel."),
+      );
       return;
     }
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
     const rest = head.subarray(end + 4);
     if (rest.length > 0) socket.unshift(rest);
     onReady(socket);
   };
   socket.on("data", onData);
-  socket.once("error", onError);
+  socket.once("error", fail);
 }
 
 export type EgressFilterOptions = {
@@ -1386,9 +1524,12 @@ export async function startEgressFilter(
           client.pipe(remote);
           remote.on("error", () => client.destroy());
           trackTunnel(entry, client, remote);
+          noteOutcome(host, port, null);
         },
-        () => {
-          badGateway(client);
+        (error) => {
+          const kind = failureOf(error);
+          noteOutcome(host, port, kind);
+          badGateway(client, kind);
         },
       );
     },
@@ -1409,6 +1550,7 @@ export async function startEgressFilter(
 
 export async function stopEgressFilter(): Promise<void> {
   const running = filter;
+  recentOutcomes.clear();
   filter = null;
   shellProxy = null;
   policies.clear();
@@ -1460,17 +1602,25 @@ function forwardPlain(
       headers: { ...headers, ...(auth ? { "proxy-authorization": auth } : {}) },
     },
     (answer) => {
+      clearTimeout(timer);
       response.writeHead(answer.statusCode ?? 502, answer.headers);
       answer.pipe(response);
     },
   );
-  outbound.on("error", () => {
+  const timer = setTimeout(
+    () => outbound.destroy(timeoutError("The response")),
+    timeouts.responseMs,
+  );
+  outbound.on("error", (error) => {
+    clearTimeout(timer);
     if (!response.headersSent) {
-      const body = "连不上这个网址。";
-      response.writeHead(502, {
+      const kind = failureOf(error);
+      noteOutcome(target.hostname, Number(target.port || 80), kind);
+      response.writeHead(kind === "timeout" ? 504 : 502, {
         "content-type": "text/plain; charset=utf-8",
+        "x-chisabot-egress-class": kind,
       });
-      response.end(body);
+      response.end(failureBody(kind));
       return;
     }
     response.end();

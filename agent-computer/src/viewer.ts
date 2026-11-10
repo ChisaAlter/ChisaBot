@@ -226,7 +226,11 @@ export function createViewerSlot(): ViewerSlot {
     },
 
     broadcast(frame) {
-      if (frame && typeof frame === "object" && (frame as { type?: unknown }).type === "frame")
+      if (
+        frame &&
+        typeof frame === "object" &&
+        (frame as { type?: unknown }).type === "frame"
+      )
         lastFrame = frame;
       for (const viewer of [...watching.values()]) deliver(viewer, frame);
     },

@@ -138,6 +138,20 @@ function castable(
   let url = "about:blank";
   const mainFrame = {};
   const listeners = new Set<(request: unknown) => void>();
+  /** A main-frame navigation request failing, as Playwright reports it. */
+  const failMainFrame = (
+    failed: string,
+    errorText = "net::ERR_TUNNEL_CONNECTION_FAILED",
+    frame: unknown = mainFrame,
+  ) => {
+    for (const listener of listeners)
+      listener({
+        url: () => failed,
+        isNavigationRequest: () => true,
+        frame: () => frame,
+        failure: () => ({ errorText }),
+      });
+  };
   const page = {
     context: () => ({ newCDPSession: async () => client }),
     url: () => url,
@@ -151,14 +165,7 @@ function castable(
     },
     listenerCount: () => listeners.size,
     goto: async (target: string) => {
-      for (const failed of options.failedRequests ?? []) {
-        for (const listener of listeners)
-          listener({
-            url: () => failed,
-            isNavigationRequest: () => true,
-            frame: () => mainFrame,
-          });
-      }
+      for (const failed of options.failedRequests ?? []) failMainFrame(failed);
       if (options.gotoFails) throw new Error(options.gotoFails);
       url = target;
     },
@@ -166,7 +173,38 @@ function castable(
     goForward: async () => {},
     reload: async () => {},
   } as unknown as Page;
-  return { page, sent, emit: (event: unknown) => handler?.(event) };
+  return {
+    page,
+    sent,
+    emit: (event: unknown) => handler?.(event),
+    failMainFrame,
+    listenerCount: () => listeners.size,
+  };
+}
+
+/** Collect messages, and wait for the next one that matches without a fixed sleep. */
+function inbox() {
+  const messages: { type?: string; ok?: boolean; error?: string }[] = [];
+  const waiters: { match: (m: unknown) => boolean; resolve: () => void }[] = [];
+  return {
+    messages,
+    push(message: unknown) {
+      messages.push(message as { type?: string });
+      for (const waiter of [...waiters])
+        if (waiter.match(message)) {
+          waiters.splice(waiters.indexOf(waiter), 1);
+          waiter.resolve();
+        }
+    },
+    next(
+      match: (m: { type?: string; ok?: boolean; error?: string }) => boolean,
+    ) {
+      if (messages.some(match)) return Promise.resolve();
+      return new Promise<void>((resolve) =>
+        waiters.push({ match: match as (m: unknown) => boolean, resolve }),
+      );
+    },
+  };
 }
 
 describe("开场帧与地址栏", () => {
@@ -250,10 +288,59 @@ describe("跳转到内网时按实际被拦的那一跳说明", () => {
       url: "about:blank",
       error: "出于安全原因不允许访问内网地址。",
     });
-    // The listener is removed again, so navigations do not pile them up.
+    // One listener for the whole cast, gone when it stops, so navigations do not pile them up.
+    expect(
+      (page as unknown as { listenerCount: () => number }).listenerCount(),
+    ).toBe(1);
+    await cast.stop();
     expect(
       (page as unknown as { listenerCount: () => number }).listenerCount(),
     ).toBe(0);
+  });
+
+  test("goto 在中间页 commit 成功后，下一跳被代理拦到内网：再推一条安全原因", async () => {
+    const { page, failMainFrame } = castable();
+    const box = inbox();
+    const cast = await startScreencast(page, (m) => box.push(m));
+    await cast.send({ type: "navigate", url: "https://hop1.example.com/" });
+    expect(box.messages).toContainEqual({
+      type: "navigation",
+      ok: true,
+      url: "https://hop1.example.com/",
+    });
+    // The committed page then does location.replace('https://10.0.0.1/'), and the proxy refuses it.
+    failMainFrame("https://10.0.0.1/");
+    await box.next((m) => m.type === "navigation" && m.ok === false);
+    const last = box.messages.filter((m) => m.type === "navigation").at(-1);
+    expect(last).toMatchObject({
+      ok: false,
+      error: "出于安全原因不允许访问内网地址。",
+    });
+    await cast.stop();
+  });
+
+  test("commit 之后、goto 返回之前失败的一跳，在 ok 之后补发", async () => {
+    const { page } = castable({ failedRequests: ["https://[::1]/"] });
+    const box = inbox();
+    const cast = await startScreencast(page, (m) => box.push(m));
+    await cast.send({ type: "navigate", url: "https://hop1.example.com/" });
+    await box.next((m) => m.type === "navigation" && m.ok === false);
+    const navigations = box.messages.filter((m) => m.type === "navigation");
+    expect(navigations.map((m) => m.ok)).toEqual([true, false]);
+    expect(navigations[1]?.error).toBe("出于安全原因不允许访问内网地址。");
+    await cast.stop();
+  });
+
+  test("ERR_ABORTED、子 frame 的失败和停播之后的失败都不推", async () => {
+    const { page, failMainFrame } = castable();
+    const box = inbox();
+    const cast = await startScreencast(page, (m) => box.push(m));
+    failMainFrame("https://10.0.0.1/", "net::ERR_ABORTED");
+    failMainFrame("https://10.0.0.1/", "net::ERR_TUNNEL_CONNECTION_FAILED", {});
+    await cast.stop();
+    failMainFrame("https://10.0.0.1/");
+    await Promise.resolve();
+    expect(box.messages.filter((m) => m.type === "navigation")).toEqual([]);
   });
 
   test("失败的那一跳比错误里的起始网址优先", async () => {
@@ -266,6 +353,21 @@ describe("跳转到内网时按实际被拦的那一跳说明", () => {
         "https://[2002:c0a8:1::1]/",
       ),
     ).toBe("出于安全原因不允许访问内网地址。");
+  });
+});
+
+describe("跳到 DNS 失败的域名：连不上，不是没有响应", () => {
+  test("经代理的隧道被对端关掉（ERR_CONNECTION_CLOSED）说连不上", async () => {
+    expect(
+      await navigationProblem(
+        new Error("net::ERR_CONNECTION_CLOSED at https://nope.invalid/"),
+        "https://redir.example.com/to-dns",
+        "https://nope.invalid/",
+      ),
+    ).toBe("连不上这个网址。");
+    expect(await navigationProblem(new Error("net::ERR_EMPTY_RESPONSE"))).toBe(
+      "连不上这个网址。",
+    );
   });
 });
 
@@ -300,6 +402,14 @@ describe("navigationProblem", () => {
     ).toBe("找不到这个网址。");
     expect(
       await navigationProblem(new Error("net::ERR_CONNECTION_REFUSED")),
+    ).toBe("连不上这个网址。");
+    expect(
+      await navigationProblem(new Error("net::ERR_CONNECTION_TIMED_OUT")),
+    ).toBe("网站没有响应，请稍后再试。");
+    expect(
+      await navigationProblem(
+        new Error("page.goto: Timeout 20000ms exceeded."),
+      ),
     ).toBe("网站没有响应，请稍后再试。");
     expect(
       await navigationProblem(new Error("net::ERR_CERT_AUTHORITY_INVALID")),

@@ -178,7 +178,10 @@ export function parseInputMessage(input: unknown): InputMessageParseResult {
       body.action !== "forward" &&
       body.action !== "reload"
     ) {
-      return { ok: false, error: "A history message needs back, forward or reload." };
+      return {
+        ok: false,
+        error: "A history message needs back, forward or reload.",
+      };
     }
     return { ok: true, message: { type: "history", action: body.action } };
   }

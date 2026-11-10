@@ -55,7 +55,9 @@ const asNumber = (text: string): number | null => {
 /** 一个月份写法 → 1–12；认不出 → null。 */
 const monthOf = (text: string): number | null => {
   const t = norm(text).replace(/\.$/, "");
-  const index = MONTHS.findIndex((names) => names.includes(t) || (t.length >= 3 && names[1]!.startsWith(t)));
+  const index = MONTHS.findIndex(
+    (names) => names.includes(t) || (t.length >= 3 && names[1]!.startsWith(t)),
+  );
   return index >= 0 ? index + 1 : null;
 };
 
@@ -68,12 +70,17 @@ const monthOf = (text: string): number | null => {
  * 5. 选项文字以它开头且只有一项这样（「Jul」→「July」）。
  * 禁用的选项不选。返回下标；找不到返回 -1。
  */
-export function pickOption(options: readonly NativeOption[], wanted: string): number {
+export function pickOption(
+  options: readonly NativeOption[],
+  wanted: string,
+): number {
   const usable = (index: number) => index >= 0 && !options[index]!.disabled;
   const w = norm(wanted);
   if (!w) return -1;
   const find = (test: (option: NativeOption) => boolean) => {
-    const index = options.findIndex((option) => !option.disabled && test(option));
+    const index = options.findIndex(
+      (option) => !option.disabled && test(option),
+    );
     return usable(index) ? index : -1;
   };
 
@@ -83,9 +90,11 @@ export function pickOption(options: readonly NativeOption[], wanted: string): nu
   // 月份：这一组选项的文字是月份名（Jan / July / 七月 / 7月），想要的是月份写法或 1–12 的数字。
   // 放在按值匹配之前：有的网站月份的值从 0 开始（Jul 的值是 "6"），按值找「7」会选成 Aug。
   const n = asNumber(w);
-  const wantedMonth = monthOf(w) ?? (n !== null && n >= 1 && n <= 12 ? n : null);
+  const wantedMonth =
+    monthOf(w) ?? (n !== null && n >= 1 && n <= 12 ? n : null);
   if (wantedMonth !== null) {
-    const monthish = options.filter((o) => monthOf(o.label) !== null).length >= 6;
+    const monthish =
+      options.filter((o) => monthOf(o.label) !== null).length >= 6;
     if (monthish) {
       index = find((o) => monthOf(o.label) === wantedMonth);
       if (index >= 0) return index;
@@ -113,7 +122,8 @@ export function describeOptions(options: readonly NativeOption[]): string[] {
     const extra = o.value && o.value !== label ? `（值 ${o.value}）` : "";
     return `${label}${extra}${o.disabled ? "（不可选）" : ""}`;
   });
-  if (options.length > OPTION_LIST_LIMIT) shown.push(`……共 ${options.length} 项`);
+  if (options.length > OPTION_LIST_LIMIT)
+    shown.push(`……共 ${options.length} 项`);
   return shown;
 }
 
@@ -126,7 +136,8 @@ export async function nativeSelectKind(
     .evaluate(
       (el) => {
         const name = el.tagName.toLowerCase();
-        if (name === "select") return (el as HTMLSelectElement).multiple ? "multi" : "select";
+        if (name === "select")
+          return (el as HTMLSelectElement).multiple ? "multi" : "select";
         if (name === "option" && el.closest("select")) return "option";
         return "";
       },
@@ -161,7 +172,9 @@ export async function readNativeOptions(
 
 /** 关掉可能已经弹出来的系统选项列表：失焦就会收起。 */
 async function closePopup(select: Locator, timeout: number) {
-  await select.evaluate((el) => (el as HTMLElement).blur(), undefined, { timeout }).catch(() => undefined);
+  await select
+    .evaluate((el) => (el as HTMLElement).blur(), undefined, { timeout })
+    .catch(() => undefined);
 }
 
 /**
@@ -183,7 +196,11 @@ export async function chooseNativeOption(
   await closePopup(select, acting.timeout);
   await select.selectOption({ index }, acting);
   const chosen = options[index]!;
-  return { label: chosen.label, value: chosen.value, options: describeOptions(options) };
+  return {
+    label: chosen.label,
+    value: chosen.value,
+    options: describeOptions(options),
+  };
 }
 
 /** 点了下拉框里的某个 option：选中它所在的下拉框里的这一项。 */
@@ -194,7 +211,11 @@ export async function chooseClickedOption(
   const picked = await option.evaluate(
     (el) => {
       const o = el as HTMLOptionElement;
-      return { index: o.index, label: (o.label || o.textContent || "").trim(), value: o.value };
+      return {
+        index: o.index,
+        label: (o.label || o.textContent || "").trim(),
+        value: o.value,
+      };
     },
     undefined,
     { timeout: acting.timeout },
@@ -212,8 +233,12 @@ export async function focusNativeSelect(
 ): Promise<{ options: string[]; selected?: string }> {
   await select.focus({ timeout }).catch(() => undefined);
   const { options, selectedIndex } = await readNativeOptions(select, timeout);
-  const selected = selectedIndex >= 0 ? options[selectedIndex]?.label : undefined;
-  return { options: describeOptions(options), ...(selected ? { selected } : {}) };
+  const selected =
+    selectedIndex >= 0 ? options[selectedIndex]?.label : undefined;
+  return {
+    options: describeOptions(options),
+    ...(selected ? { selected } : {}),
+  };
 }
 
 /** 给机器人的提示：怎么选原生下拉框。点下拉框 / 按键之后都附上。 */

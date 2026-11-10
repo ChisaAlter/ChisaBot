@@ -13,7 +13,11 @@
  * Protocol.
  */
 import type { CDPSession, Page, Request } from "playwright";
-import { classifyEgressTunnel, isPrivateEgressHost } from "./egress";
+import {
+  classifyEgressTunnel,
+  isPrivateEgressHost,
+  recentEgressOutcome,
+} from "./egress";
 import { whileNavigating } from "./start-page";
 
 /** What the surface sends us. */
@@ -146,6 +150,9 @@ function virtualKeyCode(key: string): number {
   return 0;
 }
 
+/** A main-frame navigation request that failed, as Playwright reported it. */
+type MainFrameFailure = { url: string; errorText: string };
+
 export type Screencast = {
   /** Stop the cast and detach. Safe to call twice. */
   stop: () => Promise<void>;
@@ -176,6 +183,57 @@ export async function startScreencast(
       return undefined;
     }
   };
+
+  /*
+   * 主 frame 的导航失败（含 goto 返回之后才发生的那一跳）。
+   *
+   * goto 用 `waitUntil: "commit"`，第一个文档一提交就返回。之后页面自己再跳（302 链里晚到的一跳、
+   * `location.replace`、点链接）被代理拒绝时，goto 早已成功，不会再抛错。所以整场直播都听着主
+   * frame 的 requestfailed：goto 进行中的失败交给 goto 自己（失败时按最后一跳说明，成功时补发）；
+   * 其余的直接按失败的那一跳推一条 navigation 错误。不靠等固定时间。
+   */
+  let inFlight: MainFrameFailure[] | null = null;
+  /** Bumped by every navigation the person starts, so a slow late report cannot cover a newer one. */
+  let generation = 0;
+  const reportLateFailure = (failure: MainFrameFailure) => {
+    const seen = generation;
+    void navigationProblem(
+      new Error(`${failure.errorText} at ${failure.url}`),
+      failure.url,
+      failure.url,
+    ).then((error) => {
+      if (stopped || seen !== generation) return;
+      onFrame({
+        type: "navigation",
+        ok: false,
+        url: pageUrl() ?? failure.url,
+        error,
+      });
+    });
+  };
+  const onMainFrameFailed = (request: Request) => {
+    let failure: MainFrameFailure;
+    try {
+      if (
+        !request.isNavigationRequest() ||
+        request.frame() !== page.mainFrame()
+      )
+        return;
+      failure = {
+        url: request.url(),
+        errorText: request.failure()?.errorText ?? "",
+      };
+    } catch {
+      // A request with no frame (a service worker's) is not a navigation of this page.
+      return;
+    }
+    // Superseded navigations and downloads end as ERR_ABORTED; nothing failed that a person must see.
+    if (/ERR_ABORTED/i.test(failure.errorText)) return;
+    if (inFlight) inFlight.push(failure);
+    else if (!stopped) reportLateFailure(failure);
+  };
+  const listening = typeof page.on === "function";
+  if (listening) page.on("requestfailed", onMainFrameFailed);
 
   type ScreencastFrame = {
     data: string;
@@ -245,6 +303,7 @@ export async function startScreencast(
     async stop() {
       if (stopped) return;
       stopped = true;
+      if (listening) page.off("requestfailed", onMainFrameFailed);
       await client.send("Page.stopScreencast").catch(() => undefined);
       await client.detach().catch(() => undefined);
     },
@@ -319,22 +378,10 @@ export async function startScreencast(
 
       if (message.type === "navigate" || message.type === "history") {
         const from = pageUrl() ?? "";
-        // Chromium names the URL it started from in the error, not the hop that failed. A public
-        // page that redirects to an internal address fails on the redirected request, so remember
-        // the main-frame navigation requests that failed and explain the last one.
-        const failedHops: string[] = [];
-        const onRequestFailed = (request: Request) => {
-          try {
-            if (
-              request.isNavigationRequest() &&
-              request.frame() === page.mainFrame()
-            )
-              failedHops.push(request.url());
-          } catch {
-            // A request with no frame (a service worker's) is not this navigation.
-          }
-        };
-        page.on("requestfailed", onRequestFailed);
+        // Main-frame failures while this goto runs belong to it (see `onMainFrameFailed`).
+        const failures: MainFrameFailure[] = [];
+        inFlight = failures;
+        generation += 1;
         try {
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
           await whileNavigating(page, async () => {
@@ -351,9 +398,14 @@ export async function startScreencast(
               await page.reload({ waitUntil: "commit", timeout: 20_000 });
             }
           });
+          inFlight = null;
           if (!stopped)
             onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
+          // `commit` resolves on the first document. A hop that failed after it (a redirect the
+          // committed page started) but before goto returned is reported now, after the ok.
+          for (const failure of failures) reportLateFailure(failure);
         } catch (error) {
+          inFlight = null;
           if (!stopped) {
             const url = pageUrl() ?? from;
             const target = message.type === "navigate" ? message.url : url;
@@ -361,11 +413,15 @@ export async function startScreencast(
               type: "navigation",
               ok: false,
               url,
-              error: await navigationProblem(error, target, failedHops.at(-1)),
+              error: await navigationProblem(
+                error,
+                target,
+                failures.at(-1)?.url,
+              ),
             });
           }
         } finally {
-          page.off("requestfailed", onRequestFailed);
+          if (inFlight === failures) inFlight = null;
         }
         return;
       }
@@ -416,15 +472,38 @@ export async function navigationProblem(
       const kind = await classifyEgressTunnel(parsed.host, parsed.port);
       if (kind === "private") return "出于安全原因不允许访问内网地址。";
       if (kind === "refused") return "网络策略不允许访问这个网址。";
+      if (kind === "timeout") return NO_ANSWER;
     }
-    return "连不上这个网址。";
+    return UNREACHABLE;
   }
   if (/ERR_NAME_NOT_RESOLVED/i.test(text)) return "找不到这个网址。";
-  if (/ERR_CONNECTION|ERR_ADDRESS|ERR_TIMED_OUT|Timeout/i.test(text))
-    return "网站没有响应，请稍后再试。";
+  // Only a real timeout is "没有响应". Refused / reset / closed is "连不上": through the filter a name
+  // that did not resolve, or a tunnel the far side dropped, ends as ERR_CONNECTION_CLOSED.
+  if (
+    /ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|Timeout \d+ms exceeded/i.test(text)
+  )
+    return NO_ANSWER;
+  if (
+    /ERR_CONNECTION_(CLOSED|RESET|REFUSED|FAILED)|ERR_EMPTY_RESPONSE|ERR_ADDRESS_(UNREACHABLE|INVALID)/i.test(
+      text,
+    )
+  ) {
+    const parsed =
+      parseNavigationTarget(failedHop) ??
+      parseNavigationTarget(
+        /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1],
+      ) ??
+      parseNavigationTarget(targetUrl);
+    if (parsed && recentEgressOutcome(parsed.host, parsed.port) === "timeout")
+      return NO_ANSWER;
+    return UNREACHABLE;
+  }
   if (/ERR_CERT|SSL/i.test(text)) return "网站的安全证书有问题。";
   return "这个网址打不开。";
 }
+
+const UNREACHABLE = "连不上这个网址。";
+const NO_ANSWER = "网站没有响应，请稍后再试。";
 
 function parseNavigationTarget(
   raw: string | undefined,
