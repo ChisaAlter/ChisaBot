@@ -7,14 +7,41 @@
 
 ## 1. 更新源
 
-| 更新源                 | 目录（示例）                                    | 内容                                                            |
-| ---------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
-| PC 公开更新源          | `<PUBLIC_WEB_ROOT>/downloads/chisabot-pc/`      | `latest.yml` + `ChisaBot-<版本>-x64-setup.exe` + `.blockmap`    |
-| Android 公开更新源     | `<PUBLIC_WEB_ROOT>/downloads/chisabot-android/` | `latest.json` + 签名 APK                                        |
-| 登录后的下载页（可选） | `/opt/chisabot-zh/public/downloads/pc/`         | `latest.json`（带 sha256 / 字节数），旧版移到 `archive-<版本>/` |
-| CI 产物工作目录        | `/opt/chisabot-release/ci-<版本>/`              | 每次下载下来的 artifact，留作重建更新源的来源                   |
+| 更新源                 | 目录（示例）                                       | 内容                                                              |
+| ---------------------- | -------------------------------------------------- | ----------------------------------------------------------------- |
+| PC 公开更新源          | `<PUBLIC_WEB_ROOT>/downloads/chisabot-pc/`         | `latest.yml` + `ChisaBot-<版本>-x64-setup.exe` + `.blockmap`      |
+| Android 公开更新源     | `<PUBLIC_WEB_ROOT>/downloads/chisabot-android/`    | `latest.json` + 签名 APK                                          |
+| 登录后的设备页下载入口 | `/opt/chisabot-zh/public/downloads/pc/latest.json` | 安装清单；文件 URL 可直接指向 GitHub Release 资产，无须镜像安装包 |
+| CI 产物工作目录        | `/opt/chisabot-release/ci-<版本>/`                 | 每次下载下来的 artifact，留作重建更新源的来源                     |
 
 不自建更新源也可以：通用版直接从 GitHub Releases 更新（首次运行让用户填服务器地址）。
+
+### 设备页安装清单
+
+「设置 → 设备」单独读取 `/downloads/pc/latest.json`。正式 Release 发布后，用资产的名称、大小和公开 URL 更新该文件；这不会改变 PC 自动更新使用的 `latest.yml`。格式如下，`sha256` 可省略：
+
+```json
+{
+  "version": "X.Y.Z",
+  "publishedAt": "2026-11-10T16:19:12Z",
+  "files": [
+    {
+      "kind": "installer",
+      "name": "ChisaBot-X.Y.Z-x64-setup.exe",
+      "url": "https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/ChisaBot-X.Y.Z-x64-setup.exe",
+      "bytes": 123456
+    },
+    {
+      "kind": "portable",
+      "name": "ChisaBot-X.Y.Z-x64-portable.zip",
+      "url": "https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/ChisaBot-X.Y.Z-x64-portable.zip",
+      "bytes": 234567
+    }
+  ]
+}
+```
+
+先写同目录临时文件并校验 JSON，再原子替换 `latest.json`。网关模板只开放这个精确路径，沿用现有登录验证和 `no-store` 响应头；不会开放整个旧下载目录。首次接线按 [网关维护手册 §2.1](gateway.md) 用当前仓库的 `sync-nginx.sh --apply` 渲染并 reload。宿主机 `/opt/chisabot-ops` 中的脚本与 `deploy/public/nginx.conf`、`render-nginx.sh` 应同步来自同一候选，避免串行发布读到旧模板。验收时确认未登录请求返回认证要求，登录后返回 `application/json`、当前版本及有效的正式资产链接。
 
 ## 2. 签名
 
