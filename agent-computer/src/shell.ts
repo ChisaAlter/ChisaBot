@@ -83,11 +83,7 @@ const PATH_NAMES = ["PATH"] as const;
  * Appended, never prepended: a package a Bot installs must not shadow the image's own `node` or
  * `bun`. An entry an operator already put on PATH keeps the position they chose.
  */
-const WORKSPACE_BIN_DIRS = [
-  ".npm-global/bin",
-  ".bun/bin",
-  ".local/bin",
-] as const;
+const WORKSPACE_BIN_DIRS = [".npm-global/bin", ".bun/bin", ".local/bin"] as const;
 
 const LOCALE_NAMES = ["LANG", "LANGUAGE"] as const;
 const TERMINAL_NAMES = ["TERM", "TERMINFO", "COLORTERM"] as const;

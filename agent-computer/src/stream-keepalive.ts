@@ -36,10 +36,7 @@ export function isKeepAlivePong(value: unknown): boolean {
   );
 }
 
-export function keepAlivePingPayload(now = Date.now()): {
-  type: "ping";
-  t: number;
-} {
+export function keepAlivePingPayload(now = Date.now()): { type: "ping"; t: number } {
   return { type: "ping", t: now };
 }
 

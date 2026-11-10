@@ -65,10 +65,7 @@ export function classifySiteBlock(signal: Signal): SiteBlock | undefined {
   )
     return { kind: "cloudflare-block", site, notice: noticeFor(site) };
   // 一般性的「Access Denied」页很短；长页面里出现这几个词多半只是正文的一部分。
-  if (
-    text.length < 3000 &&
-    (GENERIC_DENIED.test(text) || /^access denied$/i.test(title.trim()))
-  )
+  if (text.length < 3000 && (GENERIC_DENIED.test(text) || /^access denied$/i.test(title.trim())))
     return { kind: "access-denied", site, notice: noticeFor(site) };
   return undefined;
 }

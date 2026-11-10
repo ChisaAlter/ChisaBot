@@ -162,7 +162,5 @@ export async function forgetControlState(
 ): Promise<void> {
   if (!isPlainBotId(botId)) return;
   const { rm } = await import("node:fs/promises");
-  await rm(join(profilesDirectory, ".control", `${botId}.json`), {
-    force: true,
-  });
+  await rm(join(profilesDirectory, ".control", `${botId}.json`), { force: true });
 }

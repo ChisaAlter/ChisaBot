@@ -13,10 +13,7 @@ import { join } from "node:path";
 import { numberFromEnv } from "./env";
 
 /** 一个机器人最多同时开几个标签。每个标签都是常驻内存的渲染进程，所以要有上限。 */
-export const MAX_TABS = Math.max(
-  1,
-  Math.min(20, numberFromEnv("COMPUTER_MAX_TABS", 8)),
-);
+export const MAX_TABS = Math.max(1, Math.min(20, numberFromEnv("COMPUTER_MAX_TABS", 8)));
 
 /** 超过上限时给人 / 机器人看的话。 */
 export const TAB_LIMIT_MESSAGE = `最多同时打开 ${MAX_TABS} 个标签页，先关掉一个再开新的。`;
@@ -52,10 +49,7 @@ export function openTabs<T extends TabPage>(pages: readonly T[]): T[] {
   return pages.filter((page) => !page.isClosed());
 }
 
-export function findTab<T extends TabPage>(
-  pages: readonly T[],
-  id: string,
-): T | undefined {
+export function findTab<T extends TabPage>(pages: readonly T[], id: string): T | undefined {
   return openTabs(pages).find((page) => tabIdOf(page) === id);
 }
 
@@ -95,8 +89,7 @@ export type TabsView = {
 /** 标签标题：空白页叫「新标签页」，没有标题时用主机名。 */
 export function tabTitle(url: string, title: string): string {
   const trimmed = title.trim();
-  if (url === "about:blank" || url === "")
-    return trimmed && trimmed !== "about:blank" ? trimmed : "新标签页";
+  if (url === "about:blank" || url === "") return trimmed && trimmed !== "about:blank" ? trimmed : "新标签页";
   if (trimmed) return trimmed.slice(0, 200);
   try {
     return new URL(url).host || url.slice(0, 200);
@@ -109,10 +102,7 @@ export function tabTitle(url: string, title: string): string {
 
 export const TABS_FILE = "chisabot-tabs.json";
 
-export type SavedTabs = {
-  tabs: { url: string; title: string }[];
-  active: number;
-};
+export type SavedTabs = { tabs: { url: string; title: string }[]; active: number };
 
 /** 只恢复真网页（http/https）；空白页、chrome:// 错误页不存。 */
 export function restorableUrl(url: string): boolean {
@@ -127,9 +117,7 @@ export function savedTabsFrom(
     .slice(0, MAX_TABS)
     .map((tab) => ({ url: tab.url, title: tab.title.slice(0, 200) }));
   const activeTab = tabs.find((tab) => tab.active);
-  const active = activeTab
-    ? kept.findIndex((tab) => tab.url === activeTab.url)
-    : -1;
+  const active = activeTab ? kept.findIndex((tab) => tab.url === activeTab.url) : -1;
   return { tabs: kept, active: Math.max(0, active) };
 }
 
@@ -140,43 +128,28 @@ export function parseSavedTabs(raw: unknown): SavedTabs | null {
   const tabs = value.tabs
     .filter(
       (tab): tab is { url: string; title?: unknown } =>
-        !!tab &&
-        typeof tab === "object" &&
-        typeof (tab as { url?: unknown }).url === "string",
+        !!tab && typeof tab === "object" && typeof (tab as { url?: unknown }).url === "string",
     )
     .filter((tab) => restorableUrl(tab.url))
     .slice(0, MAX_TABS)
-    .map((tab) => ({
-      url: tab.url,
-      title: typeof tab.title === "string" ? tab.title.slice(0, 200) : "",
-    }));
+    .map((tab) => ({ url: tab.url, title: typeof tab.title === "string" ? tab.title.slice(0, 200) : "" }));
   const active =
-    typeof value.active === "number" &&
-    Number.isInteger(value.active) &&
-    value.active >= 0 &&
-    value.active < tabs.length
+    typeof value.active === "number" && Number.isInteger(value.active) && value.active >= 0 && value.active < tabs.length
       ? value.active
       : 0;
   return { tabs, active };
 }
 
-export async function readSavedTabs(
-  profileDir: string,
-): Promise<SavedTabs | null> {
+export async function readSavedTabs(profileDir: string): Promise<SavedTabs | null> {
   try {
-    return parseSavedTabs(
-      JSON.parse(await readFile(join(profileDir, TABS_FILE), "utf8")),
-    );
+    return parseSavedTabs(JSON.parse(await readFile(join(profileDir, TABS_FILE), "utf8")));
   } catch {
     return null;
   }
 }
 
 /** 先写临时文件再改名，写到一半断电也不会留下半个 JSON。 */
-export async function writeSavedTabs(
-  profileDir: string,
-  saved: SavedTabs,
-): Promise<void> {
+export async function writeSavedTabs(profileDir: string, saved: SavedTabs): Promise<void> {
   const target = join(profileDir, TABS_FILE);
   const temporary = `${target}.tmp`;
   await writeFile(temporary, JSON.stringify(saved));
@@ -184,15 +157,10 @@ export async function writeSavedTabs(
 }
 
 /** 是否在启动时恢复上次的标签。COMPUTER_RESTORE_TABS=0 关掉。 */
-export const RESTORE_TABS =
-  (process.env.COMPUTER_RESTORE_TABS ?? "1").trim() !== "0";
+export const RESTORE_TABS = (process.env.COMPUTER_RESTORE_TABS ?? "1").trim() !== "0";
 
 /** 等 `work` 最多 `ms` 毫秒，超时或出错就给 `fallback`。 */
-export async function within<T>(
-  work: Promise<T>,
-  ms: number,
-  fallback: T,
-): Promise<T> {
+export async function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

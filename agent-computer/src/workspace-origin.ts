@@ -67,9 +67,7 @@ export function workspaceUrlFor(input: string): string {
   }
   let path: string;
   try {
-    path = decodeURIComponent(
-      `${parsed.hostname ? `/${parsed.hostname}` : ""}${parsed.pathname}`,
-    );
+    path = decodeURIComponent(`${parsed.hostname ? `/${parsed.hostname}` : ""}${parsed.pathname}`);
   } catch {
     return input;
   }
