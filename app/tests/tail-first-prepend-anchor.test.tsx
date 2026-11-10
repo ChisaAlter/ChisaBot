@@ -3,8 +3,11 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { useRef } from "react";
 import {
+  anchorShortfall,
   captureScrollAnchor,
+  requestAnchorSlack,
   restoreScrollAnchor,
+  TAIL_ANCHOR_SLACK_EVENT,
 } from "@/lib/chat/tail-first-paint";
 import { useTailFirstMount } from "@/lib/chat/use-tail-first-mount";
 import { settleReactWork } from "./settle-react-work";
@@ -31,6 +34,11 @@ type Probe = {
   el: HTMLDivElement | null;
   top: number;
   writes: number[];
+  /** 像真浏览器一样把 scrollTop 夹在 [0, scrollHeight - clientHeight]。 */
+  clamp?: boolean;
+  /** 最后一条下面的留白（模拟 SettleAtEnd 接 TAIL_ANCHOR_SLACK_EVENT）；undefined = 没人接。 */
+  slack?: number;
+  slackRequests?: number[];
 };
 
 const box = (top: number, height: number): DOMRect =>
@@ -67,11 +75,24 @@ function attachViewport(
     configurable: true,
     get: () => probe.top,
     set: (value: number) => {
-      probe.top = value;
-      probe.writes.push(value);
+      const max = Math.max(0, el.scrollHeight - viewportHeight);
+      const next = probe.clamp ? Math.min(max, Math.max(0, value)) : value;
+      probe.top = next;
+      probe.writes.push(next);
     },
   });
   el.getBoundingClientRect = () => box(0, viewportHeight);
+}
+
+/** 模拟 SettleAtEnd：接住「还差多少」，在最后一条下面垫这么多。 */
+function onAnchorSlack(probe: Probe) {
+  return (event: Event) => {
+    const px = (event as CustomEvent<number>).detail;
+    probe.slackRequests?.push(px);
+    if (probe.slack === undefined) return;
+    event.preventDefault();
+    probe.slack += px;
+  };
 }
 
 function Harness({
@@ -87,6 +108,7 @@ function Harness({
   viewportHeight?: number;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const listening = useRef(false);
   const startRef = useRef(0);
   const { startIndex, prependHistory, truncated } = useTailFirstMount(
     total,
@@ -104,14 +126,23 @@ function Harness({
       () => el.querySelectorAll("[data-slot='message-scroller-item']").length,
       viewportHeight,
     );
-    if (firstOffset) {
+    if (firstOffset || probe.slack !== undefined) {
       Object.defineProperty(el, "scrollHeight", {
         configurable: true,
         get: () =>
-          firstOffset +
-          el.querySelectorAll("[data-slot='message-scroller-item']").length *
-            ROW,
+          Math.max(
+            viewportHeight,
+            firstOffset +
+              el.querySelectorAll("[data-slot='message-scroller-item']")
+                .length *
+                ROW +
+              (probe.slack ?? 0),
+          ),
       });
+    }
+    if (!listening.current) {
+      listening.current = true;
+      el.addEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack(probe));
     }
   };
   return (
@@ -295,4 +326,100 @@ test("short content (scrollTop 0 and at bottom) stays on the same row, with no l
   // 同步恢复只应写一次（或等价的最终值），不能先写到底再改回来。
   expect(probe.writes.length).toBeGreaterThan(0);
   expect(probe.writes.at(-1)).toBe(probe.top);
+});
+
+test("anchorShortfall reports how far a clamped restore left the row below its offset", () => {
+  const root = document.createElement("div");
+  root.getBoundingClientRect = () => box(0, VIEW);
+  const row = document.createElement("div");
+  row.setAttribute("data-message-id", "keep");
+  row.getBoundingClientRect = () => box(544, ROW);
+  root.appendChild(row);
+  expect(anchorShortfall(root, { id: "keep", node: row, offset: 136 })).toBe(
+    408,
+  );
+  expect(anchorShortfall(root, { id: "keep", node: row, offset: 544 })).toBe(0);
+  // 没人接：返回 false，调用方保持原样。
+  expect(requestAnchorSlack(root, 408)).toBe(false);
+  root.addEventListener(TAIL_ANCHOR_SLACK_EVENT, (event) =>
+    event.preventDefault(),
+  );
+  expect(requestAnchorSlack(root, 408)).toBe(true);
+});
+
+test("short content in a real (clamping) viewport: the read row stays put, the shortfall becomes slack below (QA #519 r2 P2-1)", async () => {
+  // QA 复现：ended800 打开只挂问题 + 回答，内容不够一屏，scrollTop=0，问题在 136px。点「显示更早的消息」后
+  // 新的高度全在上面，恢复要的 scrollTop 比能滚到的大，被浏览器夹在最底：问题掉到 544px（偏 408px）。
+  const probe: Probe = {
+    el: null,
+    top: 0,
+    writes: [],
+    clamp: true,
+    slack: 0,
+    slackRequests: [],
+  };
+  const view = 3000;
+  render(
+    <Harness
+      firstOffset={136}
+      probe={probe}
+      total={200}
+      viewportHeight={view}
+    />,
+  );
+  probe.top = 0;
+  const { id, before } = await clickMore(probe);
+  expect(before).toBe(136);
+  expect(Math.abs(rowOffset(probe, id) - 136)).toBeLessThanOrEqual(2);
+  // 请了一次留白，垫完后「最底」正好就是锚点位置。
+  expect(probe.slackRequests?.length).toBe(1);
+  expect(probe.slack ?? 0).toBeGreaterThan(0);
+  expect(probe.top).toBe(probe.el!.scrollHeight - view);
+  await rAF();
+  await pause();
+  // 之后的贴底（rAF 钉底 / 空闲补行）不会再挪它：底就是这里。
+  expect(Math.abs(rowOffset(probe, id) - 136)).toBeLessThanOrEqual(2);
+});
+
+test("without anyone to add slack, a clamped restore leaves the viewport as the browser put it", async () => {
+  const probe: Probe = {
+    el: null,
+    top: 0,
+    writes: [],
+    clamp: true,
+    slackRequests: [],
+  };
+  const view = 3000;
+  render(
+    <Harness
+      firstOffset={136}
+      probe={probe}
+      total={200}
+      viewportHeight={view}
+    />,
+  );
+  probe.top = 0;
+  await clickMore(probe);
+  expect(probe.slackRequests?.length).toBe(1);
+  expect(probe.top).toBe(probe.el!.scrollHeight - view);
+});
+
+test("long content already at the bottom: a clamping viewport keeps the read row at 0 drift and asks for no slack", async () => {
+  const probe: Probe = {
+    el: null,
+    top: 0,
+    writes: [],
+    clamp: true,
+    slack: 0,
+    slackRequests: [],
+  };
+  render(<Harness total={200} probe={probe} />);
+  probe.top = probe.el!.scrollHeight - VIEW;
+  const { id, before } = await clickMore(probe);
+  expect(rowOffset(probe, id)).toBe(before);
+  await rAF();
+  await pause();
+  expect(rowOffset(probe, id)).toBe(before);
+  expect(probe.slackRequests).toEqual([]);
+  expect(probe.slack).toBe(0);
 });

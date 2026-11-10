@@ -127,7 +127,10 @@ import {
   staysInSameTurn,
   takeSendWhileBusy,
 } from "@/lib/chat/send-scroll";
-import { windowMarks } from "@/lib/chat/tail-first-paint";
+import {
+  TAIL_ANCHOR_SLACK_EVENT,
+  windowMarks,
+} from "@/lib/chat/tail-first-paint";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
@@ -783,6 +786,11 @@ function SettleAtEnd({
     floor: null as number | null,
     /** 正在把留白收掉（§93.3）：这段时间里变矮不再补留白。 */
     releasing: false,
+    /**
+     * 现在的留白是「显示更早的消息」为了让正在看的行不动垫的（TAIL_ANCHOR_SLACK_EVENT，QA #519 r2 P2-1）。
+     * 人动滚动之前 §93.3 不收它——收了正在看的行就慢慢落到视口底部。人一动 / 别处改留白就作废。
+     */
+    anchorHold: false,
     busy,
     /** 上一次量到的位置（§94 连续发消息时用）：scrollTop、是不是在底部、消息行本身的高度（不算两块留白）。 */
     lastTop: 0,
@@ -900,6 +908,7 @@ function SettleAtEnd({
     const el = slack.current;
     const next = Math.max(0, Math.round(px));
     state.current.slackPx = next;
+    state.current.anchorHold = false;
     // 设固定高度：先退出「跟着变」（§94.6）。
     state.current.floor = null;
     if (el?.parentElement?.parentElement)
@@ -1023,6 +1032,7 @@ function SettleAtEnd({
     const release = () => {
       s.released = true;
       s.restore = null;
+      s.anchorHold = false;
       touchedAt = performance.now();
       window.cancelAnimationFrame(frame);
     };
@@ -1349,6 +1359,8 @@ function SettleAtEnd({
         return why(
           `skip:${s.busy ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`,
         );
+      // 「显示更早的消息」垫的留白：人动滚动之前不收（收了正在看的行就落到底部，QA #519 r2 P2-1）。
+      if (s.anchorHold) return why("skip:anchor");
       const spacer = content.querySelector<HTMLElement>(
         "[data-message-scroller-spacer]",
       );
@@ -1485,7 +1497,22 @@ function SettleAtEnd({
     element.addEventListener("keydown", onKey);
     element.addEventListener("pointerdown", onPointer);
     element.addEventListener("scroll", onScroll, { passive: true });
+    /*
+     * 「显示更早的消息」恢复锚点时底下不够滚（内容原本不够一屏）：在最后一条下面垫出差的那一截，
+     * 「最底」就正好是正在看的行原来的位置（QA #519 r2 P2-1）。同步处理：补行方马上再恢复一次锚点。
+     * 高度记成垫完的，ResizeObserver 不会把这截当成「长出来的」再吃掉。
+     */
+    const onAnchorSlack = (event: Event) => {
+      const px = (event as CustomEvent<number>).detail;
+      if (!(typeof px === "number" && px > 0)) return;
+      event.preventDefault();
+      setSlack(s.slack + px);
+      s.anchorHold = true;
+      lastHeight = content.offsetHeight;
+    };
+    element.addEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
     return () => {
+      element.removeEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
       if (s.floor !== null) setSlack(s.slack);
       if (saveTimer !== null) clearTimeout(saveTimer);
       window.clearTimeout(touchedRetry);

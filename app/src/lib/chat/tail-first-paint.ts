@@ -57,6 +57,14 @@ export const TAIL_FIRST_CAP = 96;
  */
 export const MOUNT_ALL_HISTORY_EVENT = "chisabot:mount-all-history";
 
+/**
+ * 主动补行（「显示更早的消息」）恢复锚点时，底下不够滚（内容原本不够一屏，正在看的行在视口上半截）：
+ * 浏览器把 scrollTop 夹在最底，正在看的行被拽到视口底部（QA #519 r2 P2-1：偏 408px）。
+ * 派发在滚动容器上，`detail` 是还差的像素；谁在最后一条下面管留白（SettleAtEnd）就垫这么多并
+ * `preventDefault()`，补行的一方再恢复一次锚点。没人接（没有留白）就保持原样。
+ */
+export const TAIL_ANCHOR_SLACK_EVENT = "chisabot:tail-anchor-slack";
+
 /** 自动补到多少条：封顶，除非要全部（跳转 / 恢复位置）。 */
 export function catchUpTarget(total: number, full: boolean): number {
   const n = Math.max(0, Math.floor(total));
@@ -257,6 +265,30 @@ function findAnchorNode(
     }
   }
   return anchor.node.isConnected ? anchor.node : null;
+}
+
+/**
+ * 恢复之后锚点行还比记下的位置低多少（px，>0）。只有底下不够滚、scrollTop 被夹住时才会是正数。
+ */
+export function anchorShortfall(
+  viewport: HTMLElement,
+  anchor: ScrollAnchor,
+): number {
+  const node = findAnchorNode(viewport, anchor);
+  if (!node) return 0;
+  const top = viewport.getBoundingClientRect().top;
+  const short = node.getBoundingClientRect().top - top - anchor.offset;
+  return short > 0.5 ? short : 0;
+}
+
+/** 请留白的一方在最后一条下面垫 `px`；有人接了返回 true。 */
+export function requestAnchorSlack(viewport: HTMLElement, px: number): boolean {
+  const event = new CustomEvent<number>(TAIL_ANCHOR_SLACK_EVENT, {
+    cancelable: true,
+    detail: px,
+  });
+  viewport.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 /** 立刻改 scrollTop，不走平滑滚动。 */

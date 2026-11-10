@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import {
+  anchorShortfall,
   captureScrollAnchor,
   catchUpTarget,
   hasVisibleRow,
@@ -15,6 +16,7 @@ import {
   mountStartIndex,
   nextMountedCount,
   reconcileMountedCount,
+  requestAnchorSlack,
   restoreScrollAnchor,
   type ScrollAnchor,
   TAIL_BACKFILL_ATTR,
@@ -214,7 +216,16 @@ export function useTailFirstMount(
     }
     // 点「显示更早的消息」：按记下的锚同步恢复，不要走贴底（内容不够一屏时 atBottom 也是 true，
     // 以前会在下一帧把视口动画钉回底部，正在看的行飞出屏幕约 1 秒）。
-    if (userAnchor && restoreScrollAnchor(el, userAnchor)) return;
+    if (userAnchor && restoreScrollAnchor(el, userAnchor)) {
+      // 内容原本不够一屏（scrollTop 0 也算贴底）：新的高度全在上面，恢复要的 scrollTop 比能滚到的还大，
+      // 被夹在最底，正在看的行掉到视口底部（QA #519 r2 P2-1：偏 408px）。差多少请留白垫多少，再恢复一次。
+      // 垫完之后「最底」正好就是锚点位置，后面任何贴底都不会再挪它。
+      const short = anchorShortfall(el, userAnchor);
+      if (short > 0 && requestAnchorSlack(el, short)) {
+        restoreScrollAnchor(el, userAnchor);
+      }
+      return;
+    }
     if (atBottomRef.current) {
       // 原生锚定在补行时已经让底部那几行不动；补完那一批钉一次底。没有原生锚定就每批当场钉。
       if (!nativeAnchor()) el.scrollTop = el.scrollHeight;
