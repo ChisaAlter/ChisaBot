@@ -194,4 +194,25 @@ test("magpie.json: 一键安装相关字段只认白名单值", () => {
       projectMagpieGatewayState({ installed: true, verification })
         ?.verification,
     ).toBe(verification);
+  // 隔离结果只认白名单：页面据此提示「没补上规则」，不认识的值丢掉。
+  expect(
+    projectMagpieGatewayState({
+      installed: true,
+      managed: true,
+      isolation: "no-iptables",
+    }),
+  ).toEqual({
+    installed: true,
+    updateAvailable: false,
+    managed: true,
+    isolation: "no-iptables",
+  });
+  for (const isolation of ["applied", "failed", "no-iptables", "skipped"] as const)
+    expect(
+      projectMagpieGatewayState({ installed: true, isolation })?.isolation,
+    ).toBe(isolation);
+  expect(
+    projectMagpieGatewayState({ installed: true, isolation: "maybe" })
+      ?.isolation,
+  ).toBeUndefined();
 });

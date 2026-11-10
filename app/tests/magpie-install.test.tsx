@@ -18,8 +18,10 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import {
   installStepIndex,
+  isolationWarning,
   MagpieInstallCard,
   type MagpieInstallView,
+  MagpieIsolationWarning,
   magpieInstallView,
 } from "@/components/magpie/magpie-install";
 import type {
@@ -349,6 +351,17 @@ describe("MagpieInstallCard", () => {
     expect(
       second.getByText("前往系统更新").closest("a")?.getAttribute("href"),
     ).toBe("/admin/system-update");
+  });
+
+  test("隔离没补上时在页面上给出中文原因；已补上时不提示", async () => {
+    expect(isolationWarning("applied")).toBeNull();
+    expect(isolationWarning(undefined)).toBeNull();
+    expect(isolationWarning("no-iptables")).toMatch(/找不到 iptables/);
+    expect(isolationWarning("failed")).toMatch(/隔离规则没有补上/);
+    expect(isolationWarning("skipped")).toMatch(/没能补上隔离规则/);
+    const view = render(<MagpieIsolationWarning isolation="no-iptables" />);
+    expect(view.getByText("网络隔离没有补上")).toBeTruthy();
+    expect(view.getByRole("alert").textContent).toMatch(/找不到 iptables/);
   });
 
   test("装好等接入：最后一步在转", async () => {

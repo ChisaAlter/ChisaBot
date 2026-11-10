@@ -173,7 +173,9 @@ cat > "$I/bin/docker" <<'SH'
 #!/bin/bash
 echo "$*" >> "$FAKE_DIR/docker.log"
 case "$*" in
-  "buildx imagetools inspect"*) printf '%s\n' "${FAKE_REMOTE:-sha256:1111111111111111111111111111111111111111111111111111111111111111}" ;;
+  "buildx imagetools inspect"*)
+    [ "${FAKE_BUILDX:-ok}" = ok ] || exit 1
+    printf '%s\n' "${FAKE_REMOTE:-sha256:1111111111111111111111111111111111111111111111111111111111111111}" ;;
   "image inspect"*) printf 'ghcr.io/yetone/magpie@%s\n' "${FAKE_LOCAL:-sha256:1111111111111111111111111111111111111111111111111111111111111111}" ;;
   "inspect "*) [ -f "$FAKE_DIR/running" ] ;;
   "network inspect"*) exit 0 ;;
@@ -192,7 +194,7 @@ run_install() { # 追加的 env 覆盖；输出 "rc|输出"
   rc=$?
   printf '%s|%s' "$rc" "$out"
 }
-reset_install() { rm -rf "$I/magpie" "$I/running" "$I/docker.log" "$I/updater/spool/state/"*; rm -f "$I/bin/gh" "$I/bin/cosign"; }
+reset_install() { rm -rf "$I/magpie" "$I/running" "$I/docker.log" "$I/isolate.log" "$I/iptables.log" "$I/updater/spool/state/"*; rm -f "$I/bin/gh" "$I/bin/cosign" "$I/updater/isolate-sidecar-app.sh"; }
 
 # 4a. 不是官方镜像：一个文件都不写，不拉也不起（只看过一眼容器在不在）
 reset_install
@@ -275,5 +277,47 @@ env CHISABOT_UPDATER_DIR="$I/updater" MAGPIE_DIR="$I/magpie" FAKE_DIR="$I" PATH=
 case "$(cat "$I/updater/spool/state/magpie.json")" in *'"installed": false'*'"installable": true'*) pass "--check 报 installable" ;; *) fail "--check 没报 installable" ;; esac
 env CHISABOT_UPDATER_DIR="$I/updater" MAGPIE_DIR="$I/magpie" MAGPIE_TEMPLATE="$I/none.yaml" FAKE_DIR="$I" PATH="$I/bin:$BASE" bash "$HERE/magpie.sh" --check >/dev/null 2>&1
 case "$(cat "$I/updater/spool/state/magpie.json")" in *installable*) fail "没有模板却报了 installable" ;; *) pass "没有模板时不报 installable" ;; esac
+
+# 4j. buildx 拿不到摘要：不启动（fail closed），不能只凭仓库名就装
+reset_install
+r=$(run_install FAKE_BUILDX=fail)
+case "$r" in "2|"*"查不到"*"摘要"*"::result:: failed"*) pass "仓库没给出摘要 → 不启动" ;; *) fail "没摘要却装了：$r" ;; esac
+grep -qE "pull|up -d" "$I/docker.log" 2>/dev/null && fail "没摘要还拉取或启动了" || pass "没摘要时不 pull、不 up -d"
+
+# 4k. 镜像引用已经钉了 @sha256：不依赖 buildx，摘要一致就装
+reset_install
+PIN=sha256:1111111111111111111111111111111111111111111111111111111111111111
+r=$(run_install FAKE_BUILDX=fail MAGPIE_IMAGE="ghcr.io/yetone/magpie@$PIN")
+case "$r" in "0|"*"::result:: succeeded"*) pass "钉摘要的引用在 buildx 失败时仍能安装" ;; *) fail "钉摘要的引用没装上：$r" ;; esac
+
+# 4l / 4m. 隔离：假成 root（chown 成功），iptables 不在 PATH 里
+fake_root() {
+  # 原来的 id/chown 是指向系统命令的符号链接，直接覆盖会写到系统文件。先拆掉再写假命令。
+  rm -f "$I/bin/id" "$I/bin/chown"
+  printf '#!/bin/bash\n[ "$1" = -u ] && { echo 0; exit 0; }\nexit 0\n' > "$I/bin/id"
+  printf '#!/bin/bash\nexit 0\n' > "$I/bin/chown"
+  chmod +x "$I/bin/id" "$I/bin/chown"
+  printf '#!/bin/sh\ncommand -v iptables >/dev/null 2>&1 || exit 1\necho "$*" >> "$FAKE_DIR/isolate.log"\nexit 0\n'     > "$I/updater/isolate-sidecar-app.sh"
+  chmod +x "$I/updater/isolate-sidecar-app.sh"
+}
+# 4l. iptables 只在常见 sbin 路径：能找到并补上规则
+reset_install; fake_root
+mkdir -p "$I/sbin"
+printf '#!/bin/bash\necho iptables >> "$FAKE_DIR/iptables.log"\nexit 0\n' > "$I/sbin/iptables"
+chmod +x "$I/sbin/iptables"
+r=$(run_install MAGPIE_IPTABLES_DIRS="$I/sbin")
+case "$r" in "0|"*"已补上隔离规则"*"::result:: succeeded"*) pass "iptables 不在 PATH、在 sbin 时仍补上隔离" ;; *) fail "sbin 里的 iptables 没被用上：$r" ;; esac
+[ -f "$I/isolate.log" ] && pass "调用了 isolate-sidecar-app.sh --apply" || fail "没调用 isolate"
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"isolation": "applied"'*) pass "magpie.json 记 isolation=applied" ;; *) fail "没记 applied：$(cat "$I/updater/spool/state/magpie.json")" ;; esac
+# 密钥仍然交出
+[ -f "$I/updater/spool/state/magpie-web.key" ] && pass "补隔离成功时密钥已交出" || fail "补隔离后没交密钥"
+
+# 4m. 哪儿都找不到 iptables：安装成功、警告、页面字段 no-iptables、密钥照交
+reset_install; fake_root
+r=$(run_install MAGPIE_IPTABLES_DIRS="$I/missing-iptables")
+case "$r" in "0|"*"找不到 iptables"*"::result:: succeeded"*) pass "没有 iptables 时安装成功并警告" ;; *) fail "没有 iptables 时行为不对：$r" ;; esac
+[ ! -f "$I/isolate.log" ] && pass "找不到 iptables 时不调用 isolate" || fail "没 iptables 还调了 isolate"
+case "$(cat "$I/updater/spool/state/magpie.json")" in *'"isolation": "no-iptables"'*) pass "magpie.json 记 isolation=no-iptables" ;; *) fail "没记 no-iptables：$(cat "$I/updater/spool/state/magpie.json")" ;; esac
+[ -f "$I/updater/spool/state/magpie-web.key" ] && pass "没有 iptables 时密钥仍交出" || fail "警告隔离时没交密钥"
 
 [ "$FAIL" = 0 ] && echo "全部通过" || { echo "有失败"; exit 1; }

@@ -29,6 +29,7 @@ import type { MagpieOverview } from "../../../../shared/model-selection";
 import {
   installUpdaterCommand,
   MAGPIE_INSTALL_STEPS,
+  type MagpieIsolation,
   type SystemUpdateJob,
   type SystemUpdateOverview,
 } from "../../../../shared/system-update";
@@ -427,6 +428,41 @@ function InstallSteps({ view }: { view: MagpieInstallView }) {
         );
       })}
     </ol>
+  );
+}
+
+/** 隔离没补上时给管理员看的原因。applied 或没有记录就不提示。 */
+export function isolationWarning(isolation?: MagpieIsolation) {
+  switch (isolation) {
+    case "no-iptables":
+      return "宿主机上找不到 iptables（PATH、/usr/sbin、/sbin 都没有），没能补上隔离规则：Magpie 现在可能主动连上 ChisaBot。请在宿主机装上 iptables，再按 docs/ops/trust-boundary.md §5.1 运行 isolate-sidecar-app.sh --apply。";
+    case "failed":
+      return "隔离规则没有补上（见 docs/ops/trust-boundary.md §5.1）。Magpie 本身已经可用，但现在可能主动连上 ChisaBot。";
+    case "skipped":
+      return "安装时没能补上隔离规则（不是以 root 运行，或更新程序目录里没有隔离脚本）。Magpie 本身已经可用，请按 docs/ops/trust-boundary.md §5.1 补跑 isolate-sidecar-app.sh --apply。";
+    default:
+      return null;
+  }
+}
+
+/** 装好后的隔离警告：没补上规则时出现在「模型平台 Magpie」页。 */
+export function MagpieIsolationWarning({
+  isolation,
+}: {
+  isolation?: MagpieIsolation;
+}) {
+  const text = isolationWarning(isolation);
+  if (!text) return null;
+  return (
+    <Card className={cn("sysupd-note magpie-isolation-warn mt-2")} role="alert">
+      <span aria-hidden className="sysupd-note-ic">
+        <IconAlertTriangle className="size-[18px]" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h4>{"网络隔离没有补上"}</h4>
+        <p>{text}</p>
+      </div>
+    </Card>
   );
 }
 

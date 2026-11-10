@@ -181,6 +181,53 @@ def main():
         assert "--update" in started[0] and "--job" in started[0], started
         assert u.internal["job"]["action"] == "magpie", u.internal["job"]
         assert u.internal["job"]["status"] == "running", u.internal["job"]
+
+        # 健康检查刚失败、子进程已退出、poll 还没跑到：立刻再发安装请求应收下上一轮并启动重试。
+        class FinishedChild(object):
+            def __init__(self):
+                self.returncode = 2
+
+            def poll(self):
+                return self.returncode
+
+        old_id = "magpie-r1bbbbbb"
+        with io.open(os.path.join(home, "jobs", old_id + ".log"), "w", encoding="utf-8") as f:
+            f.write("::step:: health\n::error:: Magpie 启动后没有响应，可以直接重试\n::result:: failed\n")
+        u.internal["job"] = {"id": old_id, "action": "magpie", "status": "running", "step": "health",
+                             "startedAt": m.now_iso(), "actor": "管理员", "log": []}
+        u.child = FinishedChild()
+        started[:] = []
+        m.subprocess.Popen = fake_popen
+        if original_setsid is None:
+            m.os.setsid = lambda: None
+        try:
+            u.handle({"id": "magpie-r2cccccc", "action": "magpie", "actor": "管理员"})
+        finally:
+            m.subprocess.Popen = original_popen
+            if original_setsid is None:
+                del m.os.setsid
+        assert started and "magpie-r2cccccc" in started[0], started
+        assert u.internal["job"]["id"] == "magpie-r2cccccc" and u.internal["job"]["status"] == "running", u.internal["job"]
+        assert any(h.get("id") == old_id and h.get("status") == "failed" for h in u.internal.get("history", [])), u.internal.get("history")
+
+        # 上一轮进程还在跑：拒绝，并给出 Magpie 专用的中文说明（密钥会保留）。
+        class LiveChild(object):
+            returncode = None
+
+            def poll(self):
+                return None
+
+        u.internal["job"] = {"id": "magpie-r2cccccc", "action": "magpie", "status": "running", "step": "health",
+                             "startedAt": m.now_iso(), "actor": "管理员", "log": []}
+        u.child = LiveChild()
+        started[:] = []
+        u.handle({"id": "magpie-r3dddddd", "action": "magpie", "actor": "管理员"})
+        assert not started, started
+        rejected = u.internal["history"][0]
+        assert rejected["id"] == "magpie-r3dddddd" and rejected["status"] == "rejected", rejected
+        assert "还在进行" in rejected.get("error", "") and "密钥" in rejected.get("error", ""), rejected
+        assert u.internal["job"]["id"] == "magpie-r2cccccc", u.internal["job"]
+        u.child = None
         u.internal["job"]["status"] = "succeeded"
         print("chisabot-updater self-test OK on python %d.%d" % sys.version_info[:2])
     finally:

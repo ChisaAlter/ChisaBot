@@ -462,7 +462,13 @@ class Updater(object):
             # 「检查更新」也顺手刷一次 Magpie 的镜像摘要，否则页面上的「有没有新版」要等下一个 30 分钟。
             self.start_magpie_check()
             return
+        # 上一轮脚本已经退出时，先记下结果再决定能不能接新请求。
+        # 否则健康检查刚失败、poll 还没跑到，立刻重试会被拒「已经有一个更新或回滚在进行」。
+        self.poll_job()
         if self.busy():
+            job = self.internal.get("job") or {}
+            if job.get("action") == "magpie":
+                return self.reject(req, u"上一轮 Magpie 安装还在进行，等它结束后即可重试（已生成的密钥会保留）")
             return self.reject(req, u"已经有一个更新或回滚在进行")
         if self.lock_held():
             return self.reject(req, u"宿主机上有人正在手动运行更新或回滚，等它结束再试")
@@ -651,8 +657,9 @@ class Updater(object):
                     sys.stderr.write("chisabot-updater: scripts upgraded, re-exec\n")
                     sys.stderr.flush()
                     os.execv(sys.executable, [sys.executable, SELF] + sys.argv[1:])
-                self.take_requests()
+                # 先收下已结束的任务，再处理新请求：健康检查失败后立刻点「重试」才不会撞上过期的 running。
                 self.poll_job()
+                self.take_requests()
                 if time.time() - self.last_check > CHECK_EVERY:
                     self.start_check()
                 if time.time() - self.last_magpie_check > MAGPIE_CHECK_EVERY:

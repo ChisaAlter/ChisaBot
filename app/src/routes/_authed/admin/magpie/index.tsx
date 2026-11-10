@@ -16,7 +16,7 @@ import { useState } from "react";
 import type { MagpieOverview } from "../../../../../../shared/model-selection";
 import type { SystemUpdateOverview } from "../../../../../../shared/system-update";
 import { ProviderMark } from "@/components/agents/model-picker";
-import { MagpieInstallSection, MagpieNextSteps } from "@/components/magpie/magpie-install";
+import { MagpieInstallSection, MagpieIsolationWarning, MagpieNextSteps } from "@/components/magpie/magpie-install";
 import { PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
@@ -115,6 +115,9 @@ function Overview({ data, onSync }: { data: MagpieOverview; onSync: () => Promis
     <>
       {update.data?.magpie?.managed && data.reachable && !data.connection?.viaMagpie ? (
         <MagpieNextSteps providers={data.providers.length} />
+      ) : null}
+      {update.data?.magpie?.managed ? (
+        <MagpieIsolationWarning isolation={update.data.magpie.isolation} />
       ) : null}
       {!data.reachable ? (
         <ErrorCard

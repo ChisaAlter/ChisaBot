@@ -125,9 +125,17 @@ export type MagpieGatewayUpdate = {
    * 只核对了官方仓库与摘要；off = 部署者关掉了校验。
    */
   verification?: MagpieVerification;
+  /**
+   * 装好后有没有补上 Magpie → ChisaBot 的隔离规则：applied = 已补上；
+   * no-iptables = 宿主机找不到 iptables；failed = 调用 isolate 失败；skipped = 不是 root 或没有脚本。
+   * 除 applied 以外，页面都要给出警告（不能再静默跳过）。
+   */
+  isolation?: MagpieIsolation;
 };
 
 export type MagpieVerification = "attested" | "digest" | "off";
+
+export type MagpieIsolation = "applied" | "failed" | "no-iptables" | "skipped";
 
 /** 一键安装的步骤（magpie.sh do_install 的 ::step::），页面按这个顺序画进度。 */
 export const MAGPIE_INSTALL_STEPS: ReadonlyArray<{ key: string; label: string }> = [
@@ -470,6 +478,8 @@ export function projectMagpieGatewayState(raw: unknown): MagpieGatewayUpdate | u
   if (raw.managed === true) out.managed = true;
   if (raw.verification === "attested" || raw.verification === "digest" || raw.verification === "off")
     out.verification = raw.verification;
+  if (raw.isolation === "applied" || raw.isolation === "failed" || raw.isolation === "no-iptables" || raw.isolation === "skipped")
+    out.isolation = raw.isolation;
   // 摘要不齐就不宣称有新版：说「不知道」比说错好。两边摘要相同就是同一份镜像，宿主机写错了也不能说有新版。
   if (!out.currentDigest || !out.latestDigest || out.currentDigest === out.latestDigest) out.updateAvailable = false;
   return out;

@@ -74,9 +74,35 @@ local_digest() {
 
 # 仓库里这个标签现在指向的摘要。buildx 是更新器的硬依赖（config.env 会检查），所以优先用它；
 # 拿不到就退回 docker manifest inspect（多架构清单本身不带自己的摘要，只作为兜底判空）。
+# 兜底时输出为空：--check 据此说「不知道」；一键安装不接受空摘要（见 install_want_digest）。
 remote_digest() {
   docker buildx imagetools inspect "$MAGPIE_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null && return 0
   docker manifest inspect "$MAGPIE_IMAGE" >/dev/null 2>&1 && echo "" && return 0
+  return 1
+}
+
+# 一键安装要核对的摘要：引用本身钉了 @sha256 就用它；否则必须从仓库拿到，拿不到（只有空的兜底）就失败，
+# 不能在没核对摘要的情况下启动（fail closed）。
+install_want_digest() {
+  local pinned want
+  case "$MAGPIE_IMAGE" in
+    *@sha256:*)
+      pinned="sha256:${MAGPIE_IMAGE##*@sha256:}"
+      printf '%s' "$pinned" | grep -Eq '^sha256:[0-9a-f]{64}$' && { printf '%s' "$pinned"; return 0; }
+      return 1 ;;
+  esac
+  want=$(docker buildx imagetools inspect "$MAGPIE_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null | tr -d '[:space:]')
+  printf '%s' "$want" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
+  printf '%s' "$want"
+}
+
+# iptables 常在 /usr/sbin、/sbin：systemd 或精简环境的 PATH 里可能没有。找到就输出完整路径。
+find_iptables() {
+  local p d
+  p=$(command -v iptables 2>/dev/null) && [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+  for d in ${MAGPIE_IPTABLES_DIRS:-/usr/sbin /sbin /usr/local/sbin /usr/bin /bin}; do
+    [ -x "$d/iptables" ] && { printf '%s' "$d/iptables"; return 0; }
+  done
   return 1
 }
 
@@ -93,13 +119,15 @@ write_state() {
   local installable=0 managed=0 verification=""
   # 这一版 magpie.sh 会装：页面据此才给「一键安装」按钮（旧更新程序没有这个字段 → 提示先系统更新）。
   [ -f "$MAGPIE_TEMPLATE" ] && installable=1
+  local isolation=""
   if [ -f "$MAGPIE_MARKER" ]; then
     managed=1
     verification=$(sed -n 's/^verification=//p' "$MAGPIE_MARKER" 2>/dev/null | tail -n 1)
+    isolation=$(sed -n 's/^isolation=//p' "$MAGPIE_MARKER" 2>/dev/null | tail -n 1)
   fi
   CURRENT="$current" LATEST="$latest" AVAILABLE="$available" ERR="$err" \
     IMAGE="$MAGPIE_IMAGE" CONTAINER="$MAGPIE_CONTAINER" INSTALLED="$5" \
-    INSTALLABLE="$installable" MANAGED="$managed" VERIFICATION="$verification" \
+    INSTALLABLE="$installable" MANAGED="$managed" VERIFICATION="$verification" ISOLATION="$isolation" \
     python3 - "$STATE" <<'PY'
 import json, os, sys, tempfile
 path = sys.argv[1]
@@ -119,6 +147,8 @@ if os.environ.get("MANAGED") == "1":
     body["managed"] = True
 if os.environ.get("VERIFICATION") in ("attested", "digest", "off"):
     body["verification"] = os.environ["VERIFICATION"]
+if os.environ.get("ISOLATION") in ("applied", "failed", "no-iptables", "skipped"):
+    body["isolation"] = os.environ["ISOLATION"]
 error = os.environ["ERR"]
 if error:
     body["error"] = error[:300]
@@ -304,14 +334,25 @@ handoff() {
   ( umask 077; printf '%s\n' "$key" > "$tmp" ) && chmod 400 "$tmp" && own "$MAGPIE_APP_UID:$MAGPIE_APP_UID" "$tmp" \
     && mv -f "$tmp" "$KEY_OUT" || { rm -f "$tmp"; return 1; }
   # PRD-P0-02：Magpie 不能主动连应用的 3001。规则按对端 IP 下，新容器要补一次（start.sh 也是这么做的）。
-  local iso="$U/isolate-sidecar-app.sh"
-  if [ -f "$iso" ] && [ "$(id -u)" = 0 ] && command -v iptables >/dev/null 2>&1; then
-    if CHISABOT_APP_CONTAINER="${CONTAINER:-chisabot-zh}" sh "$iso" --apply >/dev/null 2>&1; then
-      log "已补上隔离规则：Magpie 不能主动连 ChisaBot"
-    else
-      log "警告：隔离规则没有补上（见 docs/ops/trust-boundary.md §5.1），Magpie 本身已经可用"
-    fi
+  # 没补上一律写警告并记进标记（magpie.json 的 isolation），页面据此提示；不再静默跳过。
+  local iso="$U/isolate-sidecar-app.sh" ipt isolation
+  if [ ! -f "$iso" ]; then
+    isolation=skipped
+    log "警告：更新程序目录里没有 isolate-sidecar-app.sh，隔离规则没有补上（见 docs/ops/trust-boundary.md §5.1），Magpie 本身已经可用"
+  elif [ "$(id -u)" != 0 ]; then
+    isolation=skipped
+    log "警告：不是以 root 运行，隔离规则没有补上（见 docs/ops/trust-boundary.md §5.1），Magpie 本身已经可用"
+  elif ! ipt=$(find_iptables); then
+    isolation=no-iptables
+    log "警告：宿主机上找不到 iptables（PATH、/usr/sbin、/sbin 都没有），隔离规则没有补上：Magpie 现在能主动连 ChisaBot。装上 iptables 后运行 sh $iso --apply（见 docs/ops/trust-boundary.md §5.1）"
+  elif PATH="$(dirname "$ipt"):$PATH" CHISABOT_APP_CONTAINER="${CONTAINER:-chisabot-zh}" sh "$iso" --apply >/dev/null 2>&1; then
+    isolation=applied
+    log "已补上隔离规则：Magpie 不能主动连 ChisaBot"
+  else
+    isolation=failed
+    log "警告：隔离规则没有补上（见 docs/ops/trust-boundary.md §5.1），Magpie 本身已经可用"
   fi
+  [ -f "$MAGPIE_MARKER" ] && set_marker isolation "$isolation"
   return 0
 }
 
@@ -331,18 +372,21 @@ do_install() {
 
   step pull "拉取官方镜像"
   # 先问镜像仓库这个标签现在的摘要，拉下来的必须就是它：中途被换掉的镜像不启动。
-  want=$(remote_digest 2>/dev/null) || want=""
+  # 拿不到摘要就不装（fail closed）：不能在没核对摘要的情况下启动。
+  want=$(install_want_digest) \
+    || fail "查不到镜像仓库公布的 $MAGPIE_IMAGE 摘要（docker buildx imagetools inspect 没有返回摘要：buildx 缺失、网络或镜像仓库不可达），无法核对拉下来的镜像；还没有启动任何东西，检查后可以重试"
   pull_image "；还没有启动任何东西，可以重试"
   got=$(local_digest)
-  if [ -n "$want" ] && [ -n "$got" ] && [ "$want" != "$got" ]; then
+  [ -n "$got" ] || fail "拿不到拉下来的镜像摘要，无法和镜像仓库公布的核对；没有启动 Magpie，可以重试"
+  if [ "$want" != "$got" ]; then
     fail "拉下来的镜像摘要（${got#sha256:}）和镜像仓库公布的（${want#sha256:}）不一致；没有启动 Magpie，可以重试"
   fi
-  echo "::to:: ${repo}@${got:-$MAGPIE_IMAGE}"
+  echo "::to:: ${repo}@${got}"
 
   step verify "校验镜像来源"
   verify_image "$got"
   set_marker verification "$VERIFIED"
-  [ -n "$got" ] && set_marker digest "$got"
+  set_marker digest "$got"
 
   step swap "启动 Magpie"
   if ! timeout "$MAGPIE_UP_TIMEOUT_SEC" docker compose -f "$MAGPIE_COMPOSE" up -d magpie >/dev/null 2>&1; then
@@ -362,7 +406,7 @@ do_install() {
   set_marker installedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   step done "完成"
-  write_state "$got" "${want:-$got}" 0 "" 1
+  write_state "$got" "$want" 0 "" 1
   echo "::duration:: $(( $(date +%s) - STARTED ))"
   echo "::result:: succeeded"
 }
