@@ -637,6 +637,34 @@ describe("DNS failure vs timeout", () => {
     return typeof address === "object" && address ? address.port : 0;
   }
 
+  /**
+   * Read one answer up to its Content-Length. Bun 1.3.x keeps the client connection open after
+   * `response.end()` while the request is still piped, so waiting for close would hang.
+   */
+  function completeAnswer(port: number, request: string) {
+    return new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () => socket.write(request));
+      let seen = Buffer.alloc(0);
+      const done = () => {
+        socket.destroy();
+        resolve(seen.toString());
+      };
+      socket.setTimeout(5_000, () => socket.destroy(new Error("timed out")));
+      socket.on("data", (chunk: Buffer) => {
+        seen = Buffer.concat([seen, chunk]);
+        const end = seen.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const length = /content-length:\s*(\d+)/i.exec(
+          seen.subarray(0, end).toString(),
+        )?.[1];
+        if (length !== undefined && seen.length - end - 4 >= Number(length))
+          done();
+      });
+      socket.on("close", () => resolve(seen.toString()));
+      socket.on("error", reject);
+    });
+  }
+
   async function filterFor(env: Record<string, string> = {}) {
     setEgressLogger(() => undefined);
     const filter = await startEgressFilter({ env });
@@ -727,7 +755,7 @@ describe("DNS failure vs timeout", () => {
     const { filter, auth } = await filterFor({
       EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upstream}`,
     });
-    const answer = await raw(
+    const answer = await completeAnswer(
       filter.port,
       `GET http://slow.test/ HTTP/1.1\r\nHost: slow.test\r\nProxy-Authorization: ${auth}\r\nConnection: close\r\n\r\n`,
     );

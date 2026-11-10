@@ -1603,28 +1603,39 @@ function forwardPlain(
     },
     (answer) => {
       clearTimeout(timer);
+      if (failed) {
+        answer.resume();
+        return;
+      }
       response.writeHead(answer.statusCode ?? 502, answer.headers);
       answer.pipe(response);
     },
   );
-  const timer = setTimeout(
-    () => outbound.destroy(timeoutError("The response")),
-    timeouts.responseMs,
-  );
-  outbound.on("error", (error) => {
+  // Answer the browser ourselves: Bun's `destroy(error)` on a client request does not reliably emit
+  // `error` (1.3.x), so the timeout must not depend on it.
+  let failed = false;
+  const fail = (kind: EgressFailure) => {
+    if (failed) return;
+    failed = true;
     clearTimeout(timer);
     if (!response.headersSent) {
-      const kind = failureOf(error);
       noteOutcome(target.hostname, Number(target.port || 80), kind);
       response.writeHead(kind === "timeout" ? 504 : 502, {
         "content-type": "text/plain; charset=utf-8",
         "x-chisabot-egress-class": kind,
+        // The request may still be streaming its body to an outbound that is gone; end this one.
+        connection: "close",
       });
       response.end(failureBody(kind));
       return;
     }
     response.end();
-  });
+  };
+  const timer = setTimeout(() => {
+    fail("timeout");
+    outbound.destroy();
+  }, timeouts.responseMs);
+  outbound.on("error", (error) => fail(failureOf(error)));
   request.pipe(outbound);
 }
 
