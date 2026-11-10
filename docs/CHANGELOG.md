@@ -1,3 +1,8 @@
+## 0.1.141
+
+- #518 Magpie 一键安装：`admin/magpie` 在未配置 Magpie（无 `MAGPIE_ADMIN_URL`、也无一键装好的）时整页换成 `MagpieInstallSection`；`deploy/updater/magpie.sh` 增 `do_install`（只装 `ghcr.io/yetone/magpie`，核对摘要，有 gh/cosign 时校验构建来源，`MAGPIE_VERIFY=auto|required|off`），`magpie.json` 新增 `installable`/`managed`/`verification`/`isolation`；`install.sh` 随版本拷 `magpie.compose.yaml` 与 `isolate-sidecar-app.sh`；`server/src/magpie.ts` 自动读取宿主机交来的管理密钥，不用重启；更新程序先 `poll_job` 再收请求，失败后可立即重试。
+- 版本：0.1.141（根、app、server、pc；Android versionCode 323）；PC 外壳、Android 应用本体不变。
+
 ## 0.1.140
 
 - #512 浏览器匿名出口：`agent-computer/src/egress.ts` 在本机全部 Bot 为 `allow_all` 时匿名同样 `allow_all`（受 `ALWAYS_DENIED`），否则保持原匿名策略；`normalizeHost` 去 IPv6 zone，`ALWAYS_DENIED` 增 `fec0::/10`、`64:ff9b:1::/48`、`2002::/16`，策略变更掐断在途 CONNECT，HTTP/502 中文拒绝页；`screencast.ts` `navigationProblem` 把隧道/代理/DNS 失败归为「连不上」；`profiles.ts` 启动只传 `{server}`；`use-control.ts` 轮询单一来源。
