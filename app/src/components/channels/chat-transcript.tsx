@@ -188,6 +188,18 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
+  /**
+   * 服务端说这一段对话还在跑（inbox running、等待审批而暂停等）。
+   * 打开一段正在进行的对话时，历史往往先到、`busy` 后变 true：若只靠 busy 和列表形状，
+   * 会把这一轮当成已结束，首帧挂「这一轮没有回答 / 重试」，要等下一条事件才出干活卡
+   * （QA #519 P2-2）。服务端说还在跑时，首帧就按进行中画，绝不挂「没有回答」。
+   */
+  threadLive?: boolean;
+  /**
+   * 这段对话还在接入。接入期间 `busy` 为 false（connect 的 isRunning 不算在回答），
+   * 不要把这时的列表记成「已结束」，否则接入结束、服务器其实还在跑时 live 会卡住。
+   */
+  joining?: boolean;
   /** 这段对话的机器人：在想 / 在干活那一行用它的形象头像代替三个点（DESIGN.md §81）。 */
   agentId?: string;
   /** 滚动位置记在哪（DESIGN.md §88）：频道 id。 */
@@ -3238,9 +3250,31 @@ export function unansweredTurn(
   return last;
 }
 
+/**
+ * 这一轮是不是还在进行。`threadLive` 来自服务端（running / 等待审批）；
+ * 没有它时仍用 §68.4：busy 之后列表还没变，不算正在跑（避免发送键刚亮、人那条还没进列表时，
+ * 上一轮已完成的结果气泡被当成进行中）。
+ */
+export function turnIsLive(
+  busy: boolean,
+  shape: { length: number; last: string | null },
+  settled: { length: number; last: string | null } | null,
+  threadLive = false,
+): boolean {
+  if (threadLive) return true;
+  if (!busy) return false;
+  return !(
+    settled !== null &&
+    settled.length === shape.length &&
+    settled.last === shape.last
+  );
+}
+
 export function ChatTranscript({
   agentId,
   busy = false,
+  threadLive = false,
+  joining = false,
   scrollKey,
   commandNames = "",
   messages,
@@ -3282,21 +3316,15 @@ export function ChatTranscript({
   const settledRef = useRef<{ length: number; last: string | null } | null>(
     null,
   );
+  const settledKeyRef = useRef(scrollKey);
+  if (settledKeyRef.current !== scrollKey) {
+    settledKeyRef.current = scrollKey;
+    settledRef.current = null;
+  }
   const shape = { length: items.length, last: items.at(-1)?.id ?? null };
-  if (!busy) settledRef.current = shape;
+  // 服务端还在跑、或还在接入时不要把当前形状记成「已结束」：否则随后 busy 变 true、列表没变，live 会一直是 false。
+  if (!busy && !threadLive && !joining) settledRef.current = shape;
   const settled = settledRef.current;
-  const live =
-    busy &&
-    !(
-      settled !== null &&
-      settled.length === shape.length &&
-      settled.last === shape.last
-    );
-  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
-  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
-  const liveSinceRef = useRef<number | null>(null);
-  if (!live) liveSinceRef.current = null;
-  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
   /*
    * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
    * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
@@ -3336,6 +3364,19 @@ export function ChatTranscript({
   const toolRenderers = useToolRenderers();
   const activityRenderers = useActivityRenderers();
   const asking = confirmations.isLoading || approvals.isLoading;
+  const awaitingPerson =
+    (confirmations.data ?? []).some(
+      (request) => request.status === "pending",
+    ) ||
+    (approvals.data?.requests ?? []).some(
+      (request) => request.status === "pending",
+    );
+  const live = turnIsLive(busy, shape, settled, threadLive || awaitingPerson);
+  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
+  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
+  const liveSinceRef = useRef<number | null>(null);
+  if (!live) liveSinceRef.current = null;
+  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
   const drawsCard: DrawsCard = (item, turnLive) =>
     (asking && item.kind === "tool") ||
     toolDrawsCard(item, {

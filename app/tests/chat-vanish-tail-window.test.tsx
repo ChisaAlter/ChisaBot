@@ -4,7 +4,10 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { type ReactNode, useRef } from "react";
-import { ChatTranscript } from "@/components/channels/chat-transcript";
+import {
+  ChatTranscript,
+  turnIsLive,
+} from "@/components/channels/chat-transcript";
 import {
   HIDDEN_ACTIVITY_ROW,
   hasVisibleRow,
@@ -242,4 +245,73 @@ test("a mounted window with no visible row keeps backfilling past the cap", asyn
   // 末尾 250 条全是看不见的行，远超 96：兜底一直补到露出看得见的那几条。
   expect(container.textContent).toContain("看得见的 149");
   expect(hasVisibleRow(container)).toBe(true);
+});
+
+test("turnIsLive follows the server, and the settled-shape rule when the server is idle", () => {
+  const shape = { length: 10, last: "x" };
+  expect(turnIsLive(false, shape, shape)).toBe(false);
+  // §68.4：按下发送后列表还没变，不算正在跑。
+  expect(turnIsLive(true, shape, shape)).toBe(false);
+  expect(turnIsLive(true, shape, shape, true)).toBe(true);
+  expect(turnIsLive(false, shape, shape, true)).toBe(true);
+  expect(turnIsLive(true, { length: 11, last: "y" }, shape)).toBe(true);
+  expect(turnIsLive(true, shape, null)).toBe(true);
+});
+
+test("a running tool turn stays live when busy arrives after an idle paint of the same messages", async () => {
+  // 真实打开：先以 busy=false 画出历史（接入还没结束），再 busy=true、列表不变。
+  const messages = [...history(2), ...deviceTurn(120)];
+  const view = render(
+    wrap(
+      <ChatTranscript joining messages={messages} scrollKey="live-late-busy" />,
+    ),
+  );
+  view.rerender(
+    wrap(
+      <ChatTranscript busy messages={messages} scrollKey="live-late-busy" />,
+    ),
+  );
+  expectAskAndWork(view.container);
+  expect(view.container.textContent).not.toContain("这一轮没有回答");
+});
+
+test("threadLive shows the work hint on the first frame, even while still joining", () => {
+  const messages = [...history(2), ...deviceTurn(120)];
+  const { container } = render(
+    wrap(
+      <ChatTranscript
+        joining
+        threadLive
+        messages={messages}
+        scrollKey="live-server"
+      />,
+    ),
+  );
+  expectAskAndWork(container);
+  expect(container.textContent).not.toContain("这一轮没有回答");
+  expect(container.textContent).not.toContain("重试");
+});
+
+test("busy going true on a finished turn does not revive it as live", () => {
+  const messages: Message[] = [
+    ...history(2),
+    { id: "last-ask", role: "user", content: "上一轮的问题" },
+    { id: "last-ans", role: "assistant", content: "上一轮的回答" },
+  ];
+  const view = render(
+    wrap(<ChatTranscript messages={messages} scrollKey="settled-send" />),
+  );
+  expect(view.container.textContent).toContain("上一轮的回答");
+  expect(
+    view.container.querySelector('[data-testid="chat-work-card"]'),
+  ).toBeNull();
+  view.rerender(
+    wrap(<ChatTranscript busy messages={messages} scrollKey="settled-send" />),
+  );
+  // 人那条还没进列表：上一轮必须仍是已完成，不能变成干活卡、也不能丢掉回答。
+  expect(view.container.textContent).toContain("上一轮的回答");
+  expect(
+    view.container.querySelector('[data-testid="chat-work-card"]'),
+  ).toBeNull();
+  expect(view.container.textContent).not.toContain("这一轮没有回答");
 });
