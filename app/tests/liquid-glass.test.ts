@@ -6,6 +6,7 @@ import {
   buildDisplacementMap,
   contrast,
   decideInk,
+  decideScreenInk,
   densityKOf,
   densityOf,
   displacementScale,
@@ -26,7 +27,7 @@ import {
   rimWidthPx,
   sampleStats,
   satKeepOf,
-  panelInkForWallpaper,
+  screenBackdropLum,
   type RGBA,
 } from "../src/lib/liquid-glass";
 
@@ -225,15 +226,75 @@ describe("material tokens in styles.css", () => {
 });
 
 describe("uniform panel ink (no mixed light/dark modules)", () => {
-  test("light scheme stays light on a bright wallpaper", () => {
-    expect(panelInkForWallpaper("light", false)).toBe("light");
+  const panels = (lum: number) => [
+    { lum, area: 280 * 860 },
+    { lum, area: 320 * 860 },
+    { lum, area: 800 * 120 },
+  ];
+  test("screen backdrop is the area-weighted mean of the panels' own backdrops", () => {
+    expect(
+      screenBackdropLum([
+        { lum: 0.2, area: 300 },
+        { lum: 0.8, area: 100 },
+      ]),
+    ).toBeCloseTo(0.35);
+    expect(screenBackdropLum([])).toBeNull();
+    // 不在视口里（面积 0）或量不到（NaN）的面板不算。
+    expect(
+      screenBackdropLum([
+        { lum: 0.1, area: 0 },
+        { lum: Number.NaN, area: 500 },
+        { lum: 0.7, area: 10 },
+      ]),
+    ).toBeCloseTo(0.7);
   });
-  test("light scheme flips the whole screen together on a dark wallpaper", () => {
-    expect(panelInkForWallpaper("light", true)).toBe("dark");
+  test("a bright Hark sky (0.6–0.9 behind the panels) keeps the whole screen light", () => {
+    for (const lum of [0.6, 0.7, 0.79, 0.9]) {
+      expect(decideScreenInk("light", panels(lum), null).ink).toBe("light");
+      expect(decideScreenInk("light", panels(lum), "dark").ink).toBe("light");
+    }
+  });
+  test("light scheme flips the whole screen dark only when the backdrop is really dark (<0.40)", () => {
+    expect(decideScreenInk("light", panels(0.39), null).ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.41), null).ink).toBe("light");
+  });
+  test("hysteresis: dark below 0.40, back to light only at ≥0.50; in between keeps the last ink", () => {
+    expect(decideScreenInk("light", panels(0.45), "light").ink).toBe("light");
+    expect(decideScreenInk("light", panels(0.45), "dark").ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.49), "dark").ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.5), "dark").ink).toBe("light");
+    // 一块面板落在暗角上，整屏平均仍亮：整屏不翻。
+    expect(
+      decideScreenInk(
+        "light",
+        [
+          { lum: 0.15, area: 800 * 120 },
+          { lum: 0.85, area: 280 * 860 },
+          { lum: 0.85, area: 320 * 860 },
+        ],
+        null,
+      ).ink,
+    ).toBe("light");
+  });
+  test("nothing measurable keeps the previous ink (default light)", () => {
+    expect(decideScreenInk("light", [], null).ink).toBe("light");
+    expect(decideScreenInk("light", [], "dark").ink).toBe("dark");
   });
   test("dark scheme is always dark glaze", () => {
-    expect(panelInkForWallpaper("dark", false)).toBe("dark");
-    expect(panelInkForWallpaper("dark", true)).toBe("dark");
+    expect(decideScreenInk("dark", panels(0.9), null).ink).toBe("dark");
+    expect(decideScreenInk("dark", panels(0.1), "light").ink).toBe("dark");
+  });
+  test("the ink is not persisted and the WebGL sky is read from the in-frame snapshot", () => {
+    const src = readFileSync(
+      path.join(import.meta.dir, "../src/lib/liquid-glass.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/localStorage\.setItem\(\s*LG_INK_STORAGE_KEY/);
+    expect(src).toMatch(/localStorage\.removeItem\(LG_INK_STORAGE_KEY\)/);
+    // 帧外读 #gl 只会读到全黑：drawSky 只画快照。
+    const drawSky = /private drawSky\([\s\S]*?\n {2}\}\n/.exec(src)?.[0] ?? "";
+    expect(drawSky).toContain("getSkySnapshot()");
+    expect(drawSky).not.toMatch(/drawImage\(gl\b/);
   });
   test("liquid CSS no longer treats unset data-glass as liquid", () => {
     expect(css).not.toMatch(

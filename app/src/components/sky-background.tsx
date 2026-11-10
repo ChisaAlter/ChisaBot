@@ -18,6 +18,12 @@ import { installLiquidGlass } from "@/lib/liquid-glass";
 import { usePerfMode } from "@/lib/perf-mode";
 import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
 import {
+  captureSkySnapshot,
+  invalidateSkySnapshot,
+  setSkySnapshotRedraw,
+  skySnapshotWanted,
+} from "@/lib/sky-snapshot";
+import {
   isResizing,
   resizeInProgress,
   subscribeResizing,
@@ -279,6 +285,14 @@ function runSkyFrame(realTs: number, force: boolean) {
   if (sky.draws > 0) {
     sky.engineLast = ts;
     noteSkyFrameCost(sky, performance.now() - started);
+    // 同一任务里缓冲还没被清：给液态玻璃拷一张小快照（帧外读 #gl 只会读到全黑）。
+    if (skySnapshotWanted()) {
+      captureSkySnapshot(
+        document.getElementById("gl") as HTMLCanvasElement | null,
+        realTs,
+        force,
+      );
+    }
   }
   // 换场景的渐变还在画：醒着直到画完，别停在半路（停在半路的样子再被下一次唤醒接上，看起来就是一跳）。
   noteSkyFrame(sky, sky.draws, performance.now());
@@ -322,6 +336,9 @@ function drawSkyNow() {
   if (sky.mode === "off" || document.hidden || sky.queue.length === 0) return;
   runSkyFrame(performance.now(), true);
 }
+
+// 液态玻璃的天空快照被节流掉最后一帧时，靠这里补画一帧来拷（lib/sky-snapshot.ts）。
+setSkySnapshotRedraw(drawSkyNow);
 
 /** 预热最多等多久（毫秒）：显卡驱动特别慢时也别让天空一直停在占位图上。 */
 const SKY_PREWARM_MAX_MS = 8000;
@@ -424,6 +441,7 @@ function setSkyMode(mode: SkyMode) {
   sky.mode = mode;
   if (mode === "off") {
     sky.wakeUntil = 0;
+    invalidateSkySnapshot();
     document.documentElement.setAttribute("data-sky-off", "");
     return;
   }

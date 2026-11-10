@@ -543,7 +543,11 @@ describe("5) 启动骨架用用户选的配色", () => {
     }
   });
 
-  test("默认配色或存的值不认识：不改天空，玻璃回落到 mist，只按应用深浅色写地址栏颜色", () => {
+  test("默认配色或存的值不认识：不改天空，玻璃按「存过外观就是老用户」回落，只按应用深浅色写地址栏颜色", () => {
+    // 只存了个不认识的材质、别的外观都没存过：新用户 → mist。
+    runBoot({ [palette.GLASS_STYLE_STORAGE_KEY]: "bogus" }, false);
+    expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
+    // 存过配色键（哪怕值不认识）：算存过外观的老用户 → 旧默认 liquid。
     runBoot(
       {
         [palette.PALETTE_STORAGE_KEY]: "nope",
@@ -552,7 +556,7 @@ describe("5) 启动骨架用用户选的配色", () => {
       false,
     );
     expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
-    expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
+    expect(document.documentElement.getAttribute("data-glass")).toBe("liquid");
     expect(document.body.style.getPropertyValue("--sky-1")).toBe("");
     for (const m of document.querySelectorAll<HTMLMetaElement>(
       'meta[name="theme-color"]',

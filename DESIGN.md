@@ -349,7 +349,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ### 10.6 液态玻璃材质（liquid）
 
-`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃的深釉翻转为整屏统一，不再按面板/按行各自翻转。
+`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃整屏只用一种墨：各面板背后亮度按视口内面积加权平均，低于 0.40 整屏翻深釉、回到 0.50 以上才翻回（迟滞防闪），不再按面板/按行各自翻转；判定只在内存里，不持久化。Hark WebGL 天空没有 preserveDrawingBuffer，帧外读 `#gl` 只会读到全黑，所以背景光栅改读天空宿主在出帧当下拷的小快照（`lib/sky-snapshot.ts`，液态玻璃在用时才拷，最多每秒一张）。后渲染的玻璃面当场挂上整屏墨色并排一次采样。没存过材质时：存过任何其他外观设置的老用户按旧默认 liquid，从没存过外观的新用户才是 mist（`fallbackGlassStyle`，启动脚本同一规则）；默认雾度只在 `DEFAULT_GLASS_OPACITY` 一处。
 
 **令牌与状态**
 

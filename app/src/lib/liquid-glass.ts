@@ -14,18 +14,21 @@
  * 2. 背景自适应：把玻璃背后的背景（自定义壁纸 / WebGL 天空 / 天空渐变 + 薄幕）
  *    画进一张缩小 4 倍的离屏画布，对每个玻璃面取 5×3 采样网格——去掉最暗两个和最亮两个
  *    点后取均值得亮度，纹理 = 最亮点减最暗点，色度 = 平均通道饱和度。按亮度决定这块玻璃
- *    用浅釉深墨还是深釉浅墨（浅色模式下 ±0.05 迟滞防闪；深色模式恒浅墨），
- *    按密度公式推釉色浓淡，色度高时压低 saturate() 免得背景染色。
- *    两道保险防「整屏翻暗」：浅色档先按全屏光栅平均亮度一票否决（整体不暗就一律浅釉，
- *    压在暗角上的面板靠升密度保可读）；过闸后同一行的面板要过半共识才统一翻深釉。
+ *    整屏只用一种墨：把每块面板背后的亮度按面积加权平均成「整屏背后亮度」，浅色模式下
+ *    低于 0.40 整屏翻深釉浅墨、回到 0.50 以上才翻回浅釉（迟滞防闪；深色模式恒浅墨），
+ *    不再按行 / 按面板各自翻。判定只在内存里，不写存储（以前记住的墨会把错判带到下次加载）。
+ *    按密度公式推釉色浓淡，色度高时压低 saturate() 免得背景染色；压在局部暗角上的面板靠升密度保可读。
+ *    Hark WebGL 天空从 lib/sky-snapshot.ts 的小快照读（帧外直接读 #gl 只会读到全黑）。
  *    墨色写进 data-lg-ink 属性（样式表规则翻整套墨色令牌），密度 / 对比补偿 /
- *    保饱和写成行内数值变量；性能模式 / 减少透明度下撤掉全部行内值。
+ *    保饱和写成行内数值变量；后渲染出来的面板当场挂上整屏墨色并排一次采样；
+ *    性能模式 / 减少透明度下撤掉全部行内值。
  *
  * 上半部分的纯函数被 tests/contrast-model.ts 与 tests/liquid-glass.test.ts 复用——
  * 对比度模型跑的就是这里同一份判定和求解，不是另一份近似。
  */
 
 import { GLASS_SURFACE_SELECTOR } from "@/lib/appearance";
+import { getSkySnapshot, subscribeSkySnapshot } from "@/lib/sky-snapshot";
 
 /* ------------------------------------------------------------------ *
  * 常量（与 styles.css「3.1 液态玻璃」一节一一对应，模型测试按这些算）。 *
@@ -45,12 +48,15 @@ export const LG_SPLIT_R = 1.15;
 export const LG_SPLIT_B = 0.85;
 /** 小于 32px 的面不上透镜。 */
 export const LG_MIN_SIDE = 32;
-/** 浅墨 / 深釉的分界与迟滞：浅色档采到 <0.40 才翻深釉，回到 ≥0.50 翻回浅釉。 */
+/** 浅墨 / 深釉的分界与迟滞：浅色档整屏背后亮度 <0.40 才翻深釉，回到 ≥0.50 翻回浅釉。 */
 export const LG_INK_LINE = 0.45;
 export const LG_INK_HYST = 0.05;
 /** 文字对比度目标（WCAG AA 正文）。 */
 export const LG_AA_TARGET = 4.5;
-/** 记住上一次浅色的墨，下次加载直接打开在它。 */
+/**
+ * 旧版本「记住上一次浅色的墨」用的键。判定不再持久化：启动时把它删掉，
+ * 免得以前错判存下的 dark 留在用户存储里。
+ */
 export const LG_INK_STORAGE_KEY = "chisabot-lg-ink";
 
 export type RGBA = [number, number, number, number];
@@ -196,8 +202,8 @@ export function sampleStats(points: readonly RGBA[]): BgStats {
 
 /**
  * 整屏光栅的平均亮度（隔 step 个像素抽样，weighted sRGB 与 sampleStats 同公式）。
- * 浅色档的全屏否决线：均值 ≥ LG_INK_LINE 就一块面板都不许翻深釉——半深半浅的壁纸
- * 整体是亮背景，不该把整个界面翻暗；面板压在局部暗角上靠升密度保证读得清。
+ * 运行时的整屏墨色改按面板背后亮度判（{@link decideScreenInk}）；这个只留给测试 / 诊断
+ * 看光栅整体亮度。
  */
 export function rasterMeanLum(data: Uint8ClampedArray, step = 16): number {
   let sum = 0;
@@ -225,6 +231,44 @@ export function decideInk(
   if (prev === "dark" && lum < LG_INK_LINE + LG_INK_HYST) return "dark";
   if (lum < LG_INK_LINE - LG_INK_HYST) return "dark";
   return "light";
+}
+
+/** 一块面板背后的亮度和它在视口里的面积（px²）。 */
+export interface PanelBackdrop {
+  lum: number;
+  area: number;
+}
+
+/**
+ * 整屏背后亮度：各面板背后亮度按视口内面积加权平均。大面板（侧栏、右栏、输入框）说了算，
+ * 小按钮 / 胶囊不会把整屏带偏。没有可用面板返回 null。
+ */
+export function screenBackdropLum(
+  panels: readonly PanelBackdrop[],
+): number | null {
+  let sum = 0;
+  let weight = 0;
+  for (const p of panels) {
+    if (!Number.isFinite(p.lum) || !(p.area > 0)) continue;
+    sum += p.lum * p.area;
+    weight += p.area;
+  }
+  return weight > 0 ? sum / weight : null;
+}
+
+/**
+ * 整屏墨色（同屏所有液态玻璃面板共用一个）：深色模式恒深釉；浅色模式按整屏背后亮度走
+ * decideInk 的迟滞（<0.40 翻深，≥0.50 翻回）。量不到亮度时保持上次（没有上次就浅釉）。
+ */
+export function decideScreenInk(
+  scheme: "light" | "dark",
+  panels: readonly PanelBackdrop[],
+  prev: GlassInkState | null,
+): { ink: GlassInkState; lum: number | null } {
+  const lum = screenBackdropLum(panels);
+  if (scheme === "dark") return { ink: "dark", lum };
+  if (lum === null) return { ink: prev ?? "light", lum };
+  return { ink: decideInk(scheme, lum, prev), lum };
 }
 
 /** 密度 0..1：0.55 × 背景与墨色亮度的接近度 + 0.7 × 纹理 + 0.3 × 色度。 */
@@ -354,7 +398,6 @@ const HTML_WATCHED_ATTRS = [
 /** 玻璃面「背景重采样 / 透镜重建」的间隔下限。 */
 const ADAPT_THROTTLE_MS = 160;
 const RESCAN_DEBOUNCE_MS = 240;
-const LIVE_SKY_RESAMPLE_MS = 12_000;
 
 interface LensEntry {
   id: string;
@@ -376,18 +419,6 @@ function lensUrlSupported(): boolean {
 
 function liquidActive(): boolean {
   return document.documentElement.getAttribute("data-glass") === "liquid";
-}
-
-/**
- * 整屏统一墨色：浅色主题下要么全浅釉、要么在壁纸整体偏暗时全深釉；
- * 不再按行/按面板各自翻转，避免同屏有的模块深、有的模块浅。
- */
-export function panelInkForWallpaper(
-  scheme: "light" | "dark",
-  wallpaperGloballyDark: boolean,
-): GlassInkState {
-  if (scheme === "dark" || wallpaperGloballyDark) return "dark";
-  return "light";
 }
 
 function darkScheme(): boolean {
@@ -421,26 +452,20 @@ class LiquidGlass {
   private rasterData: ImageData | null = null;
   private rasterScale = 4;
   private rasterDirty = true;
-  private readonly lastInk = new Map<Element, GlassInkState>();
+  /** 整屏墨色（只在内存里；浅色模式迟滞的「上一次」）。null = 还没判过。 */
+  private screenInk: GlassInkState | null = null;
   private readonly wallpaperImg = new Map<string, HTMLImageElement>();
   private pendingRescan = 0;
   private pendingSample = 0;
-  private liveSkyTimer = 0;
+  private unsubscribeSky: (() => void) | null = null;
   private readonly onScroll = () => this.scheduleSample(false);
 
   start() {
     if (this.destroyed || this.enabled || typeof window === "undefined") return;
     this.enabled = true;
-    // 「记住上次的墨」：浅色模式下上次是深釉，先给已存在的面板挂上深釉，第一次采样再纠正。
+    // 墨色判定不持久化：清掉旧版本存下的「上次的墨」。
     try {
-      if (
-        !darkScheme() &&
-        window.localStorage.getItem(LG_INK_STORAGE_KEY) === "dark"
-      ) {
-        for (const el of document.querySelectorAll(GLASS_SURFACE_SELECTOR)) {
-          el.setAttribute("data-lg-ink", "dark");
-        }
-      }
+      window.localStorage.removeItem(LG_INK_STORAGE_KEY);
     } catch {
       /* 存储不可用时跳过 */
     }
@@ -449,7 +474,9 @@ class LiquidGlass {
       attributes: true,
       attributeFilter: HTML_WATCHED_ATTRS,
     });
-    this.mutationObs = new MutationObserver(() => this.scheduleRescan());
+    this.mutationObs = new MutationObserver((records) =>
+      this.onMutations(records),
+    );
     this.mutationObs.observe(document.documentElement, {
       subtree: true,
       childList: true,
@@ -468,7 +495,8 @@ class LiquidGlass {
     this.enabled = false;
     window.clearTimeout(this.pendingRescan);
     window.clearTimeout(this.pendingSample);
-    window.clearInterval(this.liveSkyTimer);
+    this.unsubscribeSky?.();
+    this.unsubscribeSky = null;
     window.removeEventListener("scroll", this.onScroll, {
       capture: true,
     } as EventListenerOptions);
@@ -484,20 +512,57 @@ class LiquidGlass {
   /** 属性 / 结构 / 尺寸有变化：重采样 + 重挂透镜（各自有节流）。 */
   private refresh() {
     this.rasterDirty = true;
+    this.syncSkySubscription();
     this.scheduleSample(true);
     this.scheduleRescan();
-    this.armLiveSkyTimer();
   }
 
-  private armLiveSkyTimer() {
-    window.clearInterval(this.liveSkyTimer);
-    this.liveSkyTimer = window.setInterval(() => {
-      const gl = document.getElementById("gl");
-      if (gl && document.documentElement.hasAttribute("data-sky-painted")) {
+  /**
+   * 液态玻璃在用时才订阅天空快照：天空每出一张新快照（live 天空最多每秒一张，
+   * 换场景的渐变画完那一帧也有一张）就重采一次，整屏墨色跟着天空走。
+   */
+  private syncSkySubscription() {
+    const want = !this.destroyed && liquidActive() && !glassSuppressed();
+    if (want && !this.unsubscribeSky) {
+      this.unsubscribeSky = subscribeSkySnapshot(() => {
         this.rasterDirty = true;
         this.scheduleSample(true);
+      });
+    } else if (!want && this.unsubscribeSky) {
+      this.unsubscribeSky();
+      this.unsubscribeSky = null;
+    }
+  }
+
+  /**
+   * 结构变化：重挂透镜（防抖）。新出现的玻璃面（后渲染的卡片 / 气泡 / 首屏晚到的面板）
+   * 当场挂上整屏墨色，再排一次采样让它参与下一次整屏判定——以前只 rescan 不采样，
+   * 晚到的面板会一直停在默认浅釉，首屏一块面板都没有时第一次采样也就落空了。
+   */
+  private onMutations(records: MutationRecord[]) {
+    this.scheduleRescan();
+    let added = false;
+    for (const r of records) {
+      for (const node of r.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (
+          node.matches(GLASS_SURFACE_SELECTOR) ||
+          node.querySelector(GLASS_SURFACE_SELECTOR)
+        ) {
+          added = true;
+          break;
+        }
       }
-    }, LIVE_SKY_RESAMPLE_MS);
+      if (added) break;
+    }
+    if (!added || !liquidActive() || glassSuppressed()) return;
+    if (!darkScheme() && this.screenInk === "dark") {
+      for (const el of this.surfaces()) {
+        if (!el.hasAttribute("data-lg-ink"))
+          el.setAttribute("data-lg-ink", "dark");
+      }
+    }
+    this.scheduleSample(true);
   }
 
   private scheduleRescan() {
@@ -716,24 +781,32 @@ class LiquidGlass {
     if (els.length === 0) return;
     const raster = this.raster();
     const scheme = darkScheme() ? "dark" : "light";
-    // 壁纸整体偏暗才允许浅色主题翻深釉；翻的话整屏一起翻，不再按行/按面板各自判定。
-    const wallpaperGloballyDark =
-      raster !== null && rasterMeanLum(raster.data) < LG_INK_LINE;
-    const unified = panelInkForWallpaper(scheme, wallpaperGloballyDark);
-    for (const el of els) {
-      const stats = raster
-        ? this.sampleUnder(el, raster)
-        : { lum: 0.5, texture: 0.4, chroma: 0.4 };
-      this.applyAdapt(el, unified, stats, scheme);
-      this.lastInk.set(el, unified);
-    }
-    // 记住浅色模式下整屏墨色，下次加载先按它画，避免闪一下。
-    try {
-      if (scheme === "light") {
-        window.localStorage.setItem(LG_INK_STORAGE_KEY, unified);
-      }
-    } catch {
-      /* 存储不可用跳过 */
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // 每块面板背后的真实亮度（按它在屏上的位置取样）→ 面积加权成整屏背后亮度 → 整屏一种墨。
+    const measured = els.map((el) => {
+      const rect = el.getBoundingClientRect();
+      const w = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+      const h = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+      const stats = raster ? this.sampleUnder(el, raster) : null;
+      return { el, stats, area: w * h };
+    });
+    const { ink } = decideScreenInk(
+      scheme,
+      measured.flatMap((m) =>
+        m.stats ? [{ lum: m.stats.lum, area: m.area }] : [],
+      ),
+      this.screenInk,
+    );
+    // 迟滞只对浅色有意义；深色模式恒深釉，切回浅色时从头判。
+    this.screenInk = scheme === "light" ? ink : null;
+    for (const m of measured) {
+      this.applyAdapt(
+        m.el,
+        ink,
+        m.stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 },
+        scheme,
+      );
     }
   }
 
@@ -743,9 +816,11 @@ class LiquidGlass {
     stats: BgStats,
     scheme: "light" | "dark",
   ) {
-    if (ink === "dark" && scheme === "light")
-      el.setAttribute("data-lg-ink", "dark");
-    else el.removeAttribute("data-lg-ink");
+    if (ink === "dark" && scheme === "light") {
+      if (el.getAttribute("data-lg-ink") !== "dark")
+        el.setAttribute("data-lg-ink", "dark");
+    } else if (el.hasAttribute("data-lg-ink"))
+      el.removeAttribute("data-lg-ink");
     const density = densityOf(ink, stats);
     const densityK = densityKOf(density);
     const satKeep = satKeepOf(stats.chroma);
@@ -766,9 +841,9 @@ class LiquidGlass {
       inkColor: LG_WORST_INK[ink],
     });
     const boost = raw > 0 ? Math.min(4, needed / raw) : 1;
-    el.style.setProperty("--lg-density-k", densityK.toFixed(3));
-    el.style.setProperty("--lg-aa-boost", boost.toFixed(3));
-    el.style.setProperty("--lg-sat-keep", satKeep.toFixed(3));
+    setInlineVar(el, "--lg-density-k", densityK.toFixed(3));
+    setInlineVar(el, "--lg-aa-boost", boost.toFixed(3));
+    setInlineVar(el, "--lg-sat-keep", satKeep.toFixed(3));
   }
 
   /** 元素当前的 --lg-alpha 计算值（滑块实时值），行内数值变量以它为底。 */
@@ -805,7 +880,7 @@ class LiquidGlass {
       el.style.removeProperty("--lg-aa-boost");
       el.style.removeProperty("--lg-sat-keep");
     }
-    this.lastInk.clear();
+    this.screenInk = null;
   }
 
   /* --------------------------- 背景光栅 --------------------------- */
@@ -918,30 +993,28 @@ class LiquidGlass {
     return true;
   }
 
-  /** WebGL 天空画布（#gl）直接拷；读不了（缓冲被清 / 未上屏）返回 false。 */
+  /**
+   * WebGL 天空：画天空宿主在出帧当下拷的小快照（lib/sky-snapshot.ts）。
+   * 不直接读 #gl——没有 preserveDrawingBuffer，帧外读到的是不透明全黑，会把亮天空判成暗底。
+   * 还没有快照（天空没画过 / 刚关掉）返回 false，退回占位渐变。
+   */
   private drawSky(
     ctx: CanvasRenderingContext2D,
     vw: number,
     vh: number,
   ): boolean {
-    const gl = document.getElementById("gl") as HTMLCanvasElement | null;
     if (
-      !gl ||
+      !document.getElementById("gl") ||
       !document.documentElement.hasAttribute("data-sky-painted") ||
       document.documentElement.hasAttribute("data-sky-off")
     ) {
       return false;
     }
+    const snap = getSkySnapshot();
+    if (!snap) return false;
     try {
-      ctx.drawImage(gl, 0, 0, vw, vh);
-      const px = ctx.getImageData(
-        Math.floor(ctx.canvas.width / 2),
-        Math.floor(ctx.canvas.height / 2),
-        1,
-        1,
-      ).data;
-      // 全透明说明 WebGL 缓冲不可读，退回占位渐变。
-      return px[3] > 8;
+      ctx.drawImage(snap.canvas, 0, 0, vw, vh);
+      return true;
     } catch {
       return false;
     }
@@ -1050,6 +1123,12 @@ class LiquidGlass {
 }
 
 /* ------------------------------ 工具 ------------------------------ */
+
+/** 行内数值变量没变就不写（live 天空每秒重采一次，同值重写也会让样式重算）。 */
+function setInlineVar(el: HTMLElement, name: string, value: string) {
+  if (el.style.getPropertyValue(name) !== value)
+    el.style.setProperty(name, value);
+}
 
 function drawCover(
   ctx: CanvasRenderingContext2D,

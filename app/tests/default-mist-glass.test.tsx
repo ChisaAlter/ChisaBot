@@ -7,16 +7,31 @@ import {
   expect,
   test,
 } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 import {
+  DEFAULT_GLASS_OPACITY,
+  DEFAULT_GLASS_STYLE,
   flushAppearanceWrites,
+  GLASS_OPACITY_DARK_STORAGE_KEY,
+  GLASS_OPACITY_STORAGE_KEY,
   GLASS_STYLE_STORAGE_KEY,
   getAppearanceState,
+  HARK_SCENE_STORAGE_KEY,
+  LEGACY_DEFAULT_GLASS_STYLE,
+  PALETTE_STORAGE_KEY,
+  PRIOR_APPEARANCE_STORAGE_KEYS,
   reloadAppearanceFromStorage,
   resetAppearanceDefaults,
+  setGlassOpacity,
   setGlassStyle,
+  WALLPAPER_BLUR_STORAGE_KEY,
+  WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+  WALLPAPER_DIM_STORAGE_KEY,
+  WALLPAPER_ID_STORAGE_KEY,
 } from "@/lib/appearance";
 import { paletteBootScript } from "@/lib/palette";
 import { settleReactWork } from "./settle-react-work";
@@ -59,7 +74,7 @@ describe("default glass is mist", () => {
 
   test("boot script writes mist when localStorage has no glass style", () => {
     const boot = paletteBootScript();
-    expect(boot).toContain('indexOf(g)>=0?g:"mist"');
+    expect(boot).toContain('"mist"');
     // Evaluate the boot snippet against an empty storage.
     document.documentElement.removeAttribute("data-glass");
     Function(boot)();
@@ -77,5 +92,146 @@ describe("default glass is mist", () => {
     });
     view.rerender(<AppearancePreferences />);
     expect(view.getByRole("button", { name: "恢复默认" })).toBeTruthy();
+  });
+});
+
+/** 在空 <html> 上跑一遍启动脚本，返回它写的 data-glass。 */
+function bootGlass(): string | null {
+  document.documentElement.removeAttribute("data-glass");
+  Function(paletteBootScript())();
+  return document.documentElement.getAttribute("data-glass");
+}
+
+describe("existing users keep the old default (liquid)", () => {
+  test("the prior-appearance key list is exactly every appearance key except the glass style", () => {
+    expect([...PRIOR_APPEARANCE_STORAGE_KEYS].sort()).toEqual(
+      [
+        PALETTE_STORAGE_KEY,
+        WALLPAPER_ID_STORAGE_KEY,
+        WALLPAPER_CUSTOM_URL_STORAGE_KEY,
+        WALLPAPER_BLUR_STORAGE_KEY,
+        WALLPAPER_DIM_STORAGE_KEY,
+        GLASS_OPACITY_STORAGE_KEY,
+        GLASS_OPACITY_DARK_STORAGE_KEY,
+        HARK_SCENE_STORAGE_KEY,
+      ].sort(),
+    );
+    expect(DEFAULT_GLASS_STYLE).toBe("mist");
+    expect(LEGACY_DEFAULT_GLASS_STYLE).toBe("liquid");
+  });
+
+  for (const key of PRIOR_APPEARANCE_STORAGE_KEYS) {
+    test(`only ${key} saved (no glass style) → liquid, in the app and in the boot script`, () => {
+      window.localStorage.setItem(key, key.includes("opacity") ? "21" : "x");
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassStyle).toBe("liquid");
+      expect(bootGlass()).toBe("liquid");
+    });
+  }
+
+  test("only the haze slider saved: keeps liquid and the saved haze (QA U sliderOnly)", () => {
+    window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "21");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassOpacity).toBe(21);
+    expect(getAppearanceState().glassOpacityDark).toBe(21);
+  });
+
+  test("nothing saved at all → mist in both; an explicit saved style always wins", () => {
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    expect(bootGlass()).toBe("mist");
+    window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "21");
+    window.localStorage.setItem(GLASS_STYLE_STORAGE_KEY, "mist");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    expect(bootGlass()).toBe("mist");
+  });
+
+  test("a new (mist) user who then saves any setting stays mist on the next load", () => {
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    setGlassOpacity(30);
+    flushAppearanceWrites();
+    expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("mist");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    expect(bootGlass()).toBe("mist");
+  });
+
+  test("an old (liquid) user who saves another setting stays liquid; reset still goes to mist", () => {
+    window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
+    reloadAppearanceFromStorage();
+    setGlassOpacity(30);
+    flushAppearanceWrites();
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("liquid");
+    resetAppearanceDefaults();
+    flushAppearanceWrites();
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    expect(bootGlass()).toBe("mist");
+  });
+});
+
+describe("haze default lives in one constant", () => {
+  test("empty / blank stored haze falls back to DEFAULT_GLASS_OPACITY, not the 5% floor", () => {
+    for (const raw of ["", "  "]) {
+      window.localStorage.clear();
+      window.localStorage.setItem(GLASS_STYLE_STORAGE_KEY, "mist");
+      window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, raw);
+      window.localStorage.setItem(GLASS_OPACITY_DARK_STORAGE_KEY, raw);
+      reloadAppearanceFromStorage();
+      expect(getAppearanceState().glassOpacity).toBe(DEFAULT_GLASS_OPACITY);
+      expect(getAppearanceState().glassOpacityDark).toBe(DEFAULT_GLASS_OPACITY);
+    }
+  });
+
+  test("blank dark haze follows the saved light haze", () => {
+    window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "30");
+    window.localStorage.setItem(GLASS_OPACITY_DARK_STORAGE_KEY, "");
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassOpacityDark).toBe(30);
+  });
+
+  test("fresh state, reset and the settings dirty check all use the constant (no stray 16)", async () => {
+    reloadAppearanceFromStorage();
+    expect(getAppearanceState().glassOpacity).toBe(DEFAULT_GLASS_OPACITY);
+    setGlassOpacity(DEFAULT_GLASS_OPACITY + 9);
+    resetAppearanceDefaults();
+    flushAppearanceWrites();
+    expect(getAppearanceState().glassOpacity).toBe(DEFAULT_GLASS_OPACITY);
+    expect(getAppearanceState().glassOpacityDark).toBe(DEFAULT_GLASS_OPACITY);
+    const root = path.join(import.meta.dir, "..");
+    const appearance = readFileSync(
+      path.join(root, "src/lib/appearance.ts"),
+      "utf8",
+    );
+    const prefs = readFileSync(
+      path.join(root, "src/components/settings/appearance-preferences.tsx"),
+      "utf8",
+    );
+    expect(appearance).toMatch(/export const DEFAULT_GLASS_OPACITY = \d+;/);
+    expect(appearance).not.toMatch(/glassOpacity(Dark)?: 16\b/);
+    expect(appearance).not.toMatch(/GLASS_OPACITY_MAX,\s*16,/);
+    expect(prefs).not.toMatch(/glassOpacity(Dark)? !== 16/);
+  });
+});
+
+describe("CHANGELOG", () => {
+  test("this PR's 0.1.138 entries sit in the list without a blank line breaking it", () => {
+    const log = readFileSync(
+      path.join(import.meta.dir, "../../CHANGELOG.md"),
+      "utf8",
+    );
+    const section =
+      /## 0\.1\.138[^\n]*\n\n([\s\S]*?)\n## /.exec(log)?.[1] ?? "";
+    const lines = section.split("\n");
+    const mist = lines.findIndex((l) => l.includes("薄雾玻璃"));
+    const liquid = lines.findIndex((l) => l.startsWith("- 液态玻璃"));
+    expect(mist).toBe(0);
+    expect(liquid).toBe(1);
+    // 紧跟着就是下一条（以前这里多一个空行，把列表断成两个）。
+    expect(lines[2]?.startsWith("- ")).toBe(true);
   });
 });
