@@ -323,7 +323,10 @@ export async function startScreencast(
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
           await whileNavigating(page, async () => {
             if (message.type === "navigate") {
-              await page.goto(message.url, { waitUntil: "commit", timeout: 20_000 });
+              await page.goto(message.url, {
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
             } else if (message.action === "back") {
               await page.goBack({ waitUntil: "commit", timeout: 20_000 });
             } else if (message.action === "forward") {
@@ -373,7 +376,11 @@ export async function navigationProblem(
     text,
   );
   if (tunnel) {
-    const parsed = parseNavigationTarget(targetUrl);
+    // Prefer the URL named in the error (the hop that failed) over the original navigate
+    // target — a public page that 302s to an internal address otherwise looks like "连不上".
+    const failedHop = /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1];
+    const parsed =
+      parseNavigationTarget(failedHop) ?? parseNavigationTarget(targetUrl);
     if (parsed && isPrivateEgressHost(parsed.host))
       return "出于安全原因不允许访问内网地址。";
     if (parsed) {

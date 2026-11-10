@@ -206,6 +206,189 @@ describe("addresses no Bot may reach", () => {
       await stopEgressFilter();
     }
   });
+
+  test("IPv6 zone ids cannot bypass the floor (CONNECT and isAlwaysDenied)", async () => {
+    // QA512 r2 P2: Bun BlockList.check misses `::1%lo`; strip zone before judging/connecting.
+    for (const address of [
+      "::1%lo",
+      "::1%25lo",
+      "::%lo",
+      "[::1%lo]",
+      "fe80::1%eth0",
+      "fd00::1%eth0",
+      "0:0:0:0:0:0:0:1%lo",
+    ]) {
+      expect(isAlwaysDenied(address)).toBe(true);
+    }
+    const filter = await startEgressFilter({ env: {} });
+    try {
+      setEgressPolicy("a", { mode: "allow_all", rules: [] });
+      const key = egressFor("a", {})?.password ?? "";
+      for (const host of [
+        "[::1%lo]",
+        "[::1%25lo]",
+        "[::%lo]",
+        "[fe80::1%eth0]",
+        "[fd00::1%eth0]",
+        "[0:0:0:0:0:0:0:1%lo]",
+      ]) {
+        for (const auth of [undefined, basic(`a:${key}`)]) {
+          const header = auth ? `Proxy-Authorization: ${auth}\r\n` : "";
+          const answer = await raw(
+            filter.port,
+            `CONNECT ${host}:80 HTTP/1.1\r\nHost: ${host}:80\r\n${header}\r\n`,
+          );
+          expect(answer.split("\r\n")[0]).toContain("403");
+          expect(answer).toContain("x-chisabot-egress-class: private");
+          expect(answer).toContain("出于安全原因不允许访问内网地址。");
+        }
+      }
+    } finally {
+      await stopEgressFilter();
+    }
+  });
+
+  test("local NAT64, 6to4 and deprecated site-local are on the floor", () => {
+    for (const address of [
+      "64:ff9b:1::1",
+      "64:ff9b:1:0:0:0:7f00:1",
+      "2002:c0a8:0001::1",
+      "2002::",
+      "fec0::1",
+      "fed0::1",
+    ]) {
+      expect(isAlwaysDenied(address)).toBe(true);
+    }
+    // Well-known NAT64 to a public IPv4 stays allowed (embedded check, not the local /48).
+    expect(isAlwaysDenied("64:ff9b::808:808")).toBe(false);
+    expect(isAlwaysDenied("2001:4860:4860::8888")).toBe(false);
+  });
+
+  test("HTTP deny pages are Chinese and unresolved is not called policy", async () => {
+    const filter = await startEgressFilter({ env: {} });
+    try {
+      setEgressPolicy("a", { mode: "deny_all", rules: [] });
+      const key = egressFor("a", {})?.password ?? "";
+      const policy = await raw(
+        filter.port,
+        `GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(policy.split("\r\n")[0]).toContain("403");
+      expect(policy).toContain("网络策略不允许访问这个网址。");
+      expect(policy).toContain("x-chisabot-egress-class: refused");
+
+      setEgressPolicy("a", { mode: "allow_all", rules: [] });
+      const priv = await raw(
+        filter.port,
+        `GET http://10.0.0.1/ HTTP/1.1\r\nHost: 10.0.0.1\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(priv).toContain("出于安全原因不允许访问内网地址。");
+      expect(priv).toContain("x-chisabot-egress-class: private");
+
+      setEgressResolver(async () => {
+        throw new Error("ENOTFOUND");
+      });
+      const miss = await raw(
+        filter.port,
+        `GET http://nope.invalid/ HTTP/1.1\r\nHost: nope.invalid\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(miss).toContain("连不上这个网址。");
+      expect(miss).toContain("x-chisabot-egress-class: unresolved");
+      expect(await classifyEgressTunnel("nope.invalid", 80)).toBe(
+        "unreachable",
+      );
+    } finally {
+      setEgressResolver(null);
+      await stopEgressFilter();
+    }
+  });
+
+  test("tightening policy drops an already-open CONNECT tunnel", async () => {
+    const origin = createServer((_req, res) => {
+      res.writeHead(200);
+      res.write("keep");
+    });
+    await new Promise<void>((resolve) =>
+      origin.listen(0, "127.0.0.1", resolve),
+    );
+    const originPort =
+      typeof origin.address() === "object" && origin.address()
+        ? (origin.address() as { port: number }).port
+        : 0;
+    // Public doc address via mock: serve on 127.0.0.1 but tell filter the name resolves to a
+    // non-ALWAYS_DENIED address we pin... actually ALWAYS_DENIED blocks loopback. Use an upstream
+    // mock: start filter with EGRESS_POLICY_REQUIRED=0 and allow_all, connect to a reachable public
+    // host is flaky. Instead open a CONNECT that succeeds to a local TCP we expose by temporarily
+    // allowing through a name pinned to 127.0.0.1 — that is refused by floor.
+    //
+    // So: run a second plain TCP echo on a non-loopback? Simplest: use allow_all + connect to the
+    // filter's own ability by tunneling to example.com is network-dependent.
+    // Unit-level: open CONNECT to 203.0.113.1 (TEST-NET, will 502) is not an open tunnel.
+    // Better: listen on 127.0.0.1, set EGRESS_POLICY_REQUIRED=0, and patch is not available.
+    // Track by connecting through an upstream that accepts CONNECT to anything.
+    const upstreamHits: string[] = [];
+    const upstream = createServer();
+    upstream.on("connect", (req, client, head) => {
+      upstreamHits.push(req.url ?? "");
+      // Bridge to the origin.
+      const remote = connect(originPort, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) remote.write(head);
+        remote.pipe(client);
+        client.pipe(remote);
+      });
+      remote.on("error", () => client.destroy());
+      client.on("error", () => remote.destroy());
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", resolve),
+    );
+    const upPort =
+      typeof upstream.address() === "object" && upstream.address()
+        ? (upstream.address() as { port: number }).port
+        : 0;
+
+    const filter = await startEgressFilter({
+      env: { EGRESS_PROXY_DEFAULT: `http://127.0.0.1:${upPort}` },
+    });
+    try {
+      setEgressPolicy("a", { mode: "allow_all", rules: [] });
+      const key = egressFor("a", {})?.password ?? "";
+      const tunnel = await new Promise<{
+        socket: ReturnType<typeof connect>;
+        head: string;
+      }>((resolve, reject) => {
+        const socket = connect(filter.port, "127.0.0.1", () => {
+          socket.write(
+            `CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nProxy-Authorization: ${basic(`a:${key}`)}\r\n\r\n`,
+          );
+        });
+        let seen = "";
+        socket.on("data", (chunk) => {
+          seen += chunk.toString();
+          if (seen.includes("\r\n\r\n")) {
+            resolve({ socket, head: seen });
+          }
+        });
+        socket.on("error", reject);
+        socket.setTimeout(5_000, () => reject(new Error("tunnel timeout")));
+      });
+      expect(tunnel.head.split("\r\n")[0]).toContain("200");
+      expect(upstreamHits.length).toBe(1);
+
+      let closed = false;
+      tunnel.socket.on("close", () => {
+        closed = true;
+      });
+      setEgressPolicy("a", { mode: "deny_all", rules: [] });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(closed).toBe(true);
+    } finally {
+      await stopEgressFilter();
+      await new Promise<void>((r) => upstream.close(() => r()));
+      await new Promise<void>((r) => origin.close(() => r()));
+    }
+  });
 });
 
 /** Send one raw request to the filter and read the answer. */

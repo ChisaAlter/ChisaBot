@@ -234,11 +234,16 @@ const DOMAIN =
 const PORTS = /^\d{1,5}(-\d{1,5})?(,\d{1,5}(-\d{1,5})?)*$/;
 
 function normalizeHost(host: string): string {
-  return host
+  let value = host
     .trim()
     .toLowerCase()
     .replace(/\.$/, "")
     .replace(/^\[|\]$/g, "");
+  // Bun's BlockList.check returns false for zone ids (`::1%lo`), so strip before any IP check
+  // or connect. Chromium never sends them; shell could.
+  const zone = value.indexOf("%");
+  if (zone >= 0) value = value.slice(0, zone);
+  return value;
 }
 
 function parseCidr(
@@ -355,7 +360,18 @@ function addressMatches(rule: EgressRule, address: string, port: number) {
   return list.check(address, version === 4 ? "ipv4" : "ipv6");
 }
 
-export type EgressDecision = { allowed: boolean; reason: string };
+export type EgressDenyClass =
+  | "private"
+  | "refused"
+  | "unresolved"
+  | "credentials";
+
+export type EgressDecision = {
+  allowed: boolean;
+  reason: string;
+  /** Present when allowed is false; drives Chinese HTTP pages and tunnel classification. */
+  denyClass?: EgressDenyClass;
+};
 
 /**
  * Addresses no Bot may reach, whatever its policy says, allow_all included.
@@ -389,6 +405,9 @@ const ALWAYS_DENIED: readonly [string, number, "ipv4" | "ipv6"][] = [
   ["::1", 128, "ipv6"],
   ["fe80::", 10, "ipv6"],
   ["fc00::", 7, "ipv6"],
+  ["fec0::", 10, "ipv6"], // deprecated site-local (aligned with shared/net/ssrf)
+  ["64:ff9b:1::", 48, "ipv6"], // local-use NAT64 (RFC 8215)
+  ["2002::", 16, "ipv6"], // 6to4 — whole prefix (deprecated tunnel)
   ["fd00:ec2::254", 128, "ipv6"],
   ["fd20:ce::254", 128, "ipv6"],
 ];
@@ -522,7 +541,13 @@ export async function classifyEgressTunnel(
   if (status === "200") return "allowed";
   if (status === "502") return "unreachable";
   if (status === "403") {
-    if (/own network|cloud metadata|loopback|private/i.test(head))
+    const klass = /x-chisabot-egress-class:\s*(\w+)/i.exec(head)?.[1];
+    if (klass === "private") return "private";
+    if (klass === "unresolved") return "unreachable";
+    if (klass === "refused" || klass === "credentials") return "refused";
+    // Fallback for older English bodies / in-process probes before headers existed.
+    if (/could not be resolved/i.test(head)) return "unreachable";
+    if (/own network|cloud metadata|loopback|private|内网/i.test(head))
       return "private";
     return "refused";
   }
@@ -548,6 +573,7 @@ export function egressDecision(
   if (denied !== undefined) {
     return {
       allowed: false,
+      denyClass: "private",
       reason: `${host} is inside this deployment's own network (or a cloud metadata address), which no Bot may reach.`,
     };
   }
@@ -560,6 +586,7 @@ export function egressDecision(
   if (policy.mode === "deny_all") {
     return {
       allowed: false,
+      denyClass: "refused",
       reason: "Network access is turned off for this Bot's computer.",
     };
   }
@@ -591,6 +618,7 @@ export function egressDecision(
   }
   return {
     allowed: false,
+    denyClass: "refused",
     reason: `${host}:${port} is not on this deployment's network allowlist.`,
   };
 }
@@ -621,6 +649,30 @@ type RunningFilter = { port: number; masterKey: Buffer; server: Server };
 let filter: RunningFilter | null = null;
 const policies = new Map<string, EgressPolicy>();
 let policyRequired = true;
+/** Live CONNECT tunnels; destroyed when any Bot's policy changes so a tighten cannot keep an old pipe. */
+const openTunnels = new Set<Socket>();
+
+function trackTunnel(client: Socket, remote: Socket) {
+  openTunnels.add(client);
+  openTunnels.add(remote);
+  const forget = () => {
+    openTunnels.delete(client);
+    openTunnels.delete(remote);
+  };
+  client.on("close", forget);
+  remote.on("close", forget);
+}
+
+function dropOpenTunnels() {
+  for (const socket of openTunnels) {
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
+  }
+  openTunnels.clear();
+}
 
 type Resolver = (host: string) => Promise<string[]>;
 const systemResolver: Resolver = async (host) =>
@@ -636,6 +688,8 @@ export function setEgressResolver(next: Resolver | null) {
 export function setEgressPolicy(botId: string, policy: EgressPolicy | null) {
   if (policy) policies.set(botId, policy);
   else policies.delete(botId);
+  // Drop already-open CONNECT tunnels so a tighter policy takes effect immediately.
+  dropOpenTunnels();
 }
 
 export function egressPolicyFor(botId: string): EgressPolicy | undefined {
@@ -832,6 +886,7 @@ async function decide(
   if (judging === "refuse") {
     return {
       allowed: false,
+      denyClass: "refused",
       reason:
         "No network policy has reached this computer yet, so nothing may leave it.",
     };
@@ -848,7 +903,11 @@ async function decide(
     try {
       resolved = await resolver(normalizeHost(host));
     } catch {
-      return { allowed: false, reason: `${host} could not be resolved.` };
+      return {
+        allowed: false,
+        denyClass: "unresolved",
+        reason: `${host} could not be resolved.`,
+      };
     }
   }
   // Checked even with no policy to judge by, which EGRESS_POLICY_REQUIRED=0 allows.
@@ -915,9 +974,39 @@ function upstreamAddress(upstream: Egress): { host: string; port: number } {
   return { host: unbracketed(url.hostname), port: Number(url.port || 80) };
 }
 
-function refuse(socket: Socket, reason: string) {
+function chineseDenyBody(kind: EgressDenyClass): string {
+  switch (kind) {
+    case "private":
+      return "出于安全原因不允许访问内网地址。";
+    case "refused":
+      return "网络策略不允许访问这个网址。";
+    case "unresolved":
+      return "连不上这个网址。";
+    case "credentials":
+      return "代理凭据不正确，无法出网。";
+  }
+}
+
+function denyHeaders(kind: EgressDenyClass): Record<string, string> {
+  return {
+    "content-type": "text/plain; charset=utf-8",
+    "x-chisabot-egress": "refused",
+    "x-chisabot-egress-class": kind,
+  };
+}
+
+function refuse(socket: Socket, kind: EgressDenyClass) {
+  const body = chineseDenyBody(kind);
+  const headers = denyHeaders(kind);
   socket.end(
-    `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-chisabot-egress: refused\r\ncontent-length: ${Buffer.byteLength(reason)}\r\n\r\n${reason}`,
+    `HTTP/1.1 403 Forbidden\r\ncontent-type: ${headers["content-type"]}\r\nx-chisabot-egress: ${headers["x-chisabot-egress"]}\r\nx-chisabot-egress-class: ${headers["x-chisabot-egress-class"]}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+  );
+}
+
+function badGateway(socket: Socket) {
+  const body = "连不上这个网址。";
+  socket.end(
+    `HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
 }
 
@@ -1077,12 +1166,8 @@ export async function startEgressFilter(
       target.port || (target.protocol === "https:" ? 443 : 80),
     );
     if (caller.kind === "rejected") {
-      response
-        .writeHead(403, {
-          "content-type": "text/plain",
-          "x-chisabot-egress": "refused",
-        })
-        .end(caller.reason);
+      const body = chineseDenyBody("credentials");
+      response.writeHead(403, denyHeaders("credentials")).end(body);
       return;
     }
     if (caller.kind === "anonymous") {
@@ -1099,12 +1184,9 @@ export async function startEgressFilter(
     );
     const decision = await decide(caller, target.hostname, port);
     if (!decision.allowed) {
-      response
-        .writeHead(403, {
-          "content-type": "text/plain",
-          "x-chisabot-egress": "refused",
-        })
-        .end(decision.reason);
+      const kind = decision.denyClass ?? "refused";
+      const body = chineseDenyBody(kind);
+      response.writeHead(403, denyHeaders(kind)).end(body);
       return;
     }
     forwardPlain(request, response, target, upstream, decision.addresses);
@@ -1113,7 +1195,9 @@ export async function startEgressFilter(
   server.on(
     "connect",
     async (request: IncomingMessage, client: Socket, head: Buffer) => {
-      const [host = "", portText = "443"] = splitHostPort(request.url ?? "");
+      const [rawHost = "", portText = "443"] = splitHostPort(request.url ?? "");
+      // Strip zone ids before decide/connect — BlockList misses them, net.connect would honour them.
+      const host = normalizeHost(rawHost);
       const port = Number(portText);
       const caller = proxyCallerFrom(
         request.headers["proxy-authorization"] as string | undefined,
@@ -1121,11 +1205,11 @@ export async function startEgressFilter(
       );
       client.on("error", () => undefined);
       if (caller.kind === "rejected") {
-        refuse(client, caller.reason);
+        refuse(client, "credentials");
         return;
       }
       if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
-        refuse(client, "A CONNECT names host:port.");
+        refuse(client, "refused");
         return;
       }
       if (caller.kind === "anonymous") {
@@ -1141,7 +1225,7 @@ export async function startEgressFilter(
       );
       const decision = await decide(caller, host, port);
       if (!decision.allowed) {
-        refuse(client, decision.reason);
+        refuse(client, decision.denyClass ?? "refused");
         return;
       }
       tunnel(
@@ -1157,9 +1241,10 @@ export async function startEgressFilter(
           remote.pipe(client);
           client.pipe(remote);
           remote.on("error", () => client.destroy());
+          trackTunnel(client, remote);
         },
         () => {
-          client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+          badGateway(client);
         },
       );
     },
@@ -1183,6 +1268,7 @@ export async function stopEgressFilter(): Promise<void> {
   filter = null;
   shellProxy = null;
   policies.clear();
+  dropOpenTunnels();
   if (running) {
     await new Promise<void>((resolve) => running.server.close(() => resolve()));
   }
@@ -1222,7 +1308,7 @@ function forwardPlain(
     {
       // Reached through the checked addresses only (see `pinnedTo`): a second lookup could answer
       // something else. The Host header still names the site.
-      host: via ? via.host : unbracketed(target.hostname),
+      host: via ? via.host : normalizeHost(target.hostname),
       port: via ? via.port : Number(target.port || 80),
       ...(via ? {} : (pinnedTo(addresses) as object)),
       method: request.method,
@@ -1235,7 +1321,14 @@ function forwardPlain(
     },
   );
   outbound.on("error", () => {
-    if (!response.headersSent) response.writeHead(502);
+    if (!response.headersSent) {
+      const body = "连不上这个网址。";
+      response.writeHead(502, {
+        "content-type": "text/plain; charset=utf-8",
+      });
+      response.end(body);
+      return;
+    }
     response.end();
   });
   request.pipe(outbound);
