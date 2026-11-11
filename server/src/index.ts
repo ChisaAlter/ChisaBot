@@ -257,6 +257,7 @@ import { createImService, type ImService, imConnectionOf } from "./im/service";
 import { createLinkPreviews } from "./link-preview/service";
 import { createLivePanelService } from "./live-panels/service";
 import { createLivePanelStore } from "./live-panels/store";
+import { DirectSubagentRuntimeAgent } from "./local-agents/direct-agent";
 import {
   createLocalAgentService,
   type LocalAgentService,
@@ -2781,6 +2782,8 @@ try {
     database,
     hub: deviceHub,
     deviceStore,
+    encryptionKey: config.keyEncryptionKey,
+    enableServerHost: process.env.NODE_ENV !== "test",
     ...(localBackend
       ? { inbox: localBackend.inbox, control: localBackend.control }
       : {}),
@@ -2990,6 +2993,51 @@ const schedules = createSchedules(database, {
   },
   isSuspension: (error) => error instanceof HeadlessToolSuspension,
   isPaused: (error) => error instanceof BotPausedError,
+  ...(localAgents
+    ? {
+        runAgentInstance: async (input) => {
+          if (!localAgents) throw new Error("localAgents unavailable");
+          const botName = await agentProfileStore
+            .get(await actorFor(input.ownerUserId), input.botId)
+            .then((profile) => profile?.name ?? null)
+            .catch(() => null);
+          const { task, timedOut } = await localAgents.runSubagent({
+            ownerUserId: input.ownerUserId,
+            botId: input.botId,
+            botName,
+            threadId: input.threadId,
+            instance: input.instanceRef,
+            title: input.title,
+            task: input.instruction,
+            mode: "wait",
+            waitTimeoutMs: 15 * 60_000,
+            bypassBotGrant: true,
+          });
+          if (timedOut) {
+            return {
+              ok: true,
+              text: `子代理任务「${task.title}」（#${task.id.slice(0, 8)}）仍在后台运行，完成后会回到对话。`,
+            };
+          }
+          if (task.status === "done") {
+            return {
+              ok: true,
+              text:
+                task.summary?.trim() ||
+                `子代理「${task.instanceName || task.agent}」已完成任务。`,
+            };
+          }
+          return {
+            ok: false,
+            text:
+              task.error ||
+              task.summary ||
+              `子代理执行结束（状态：${task.status}）`,
+            error: task.error || `子代理状态：${task.status}`,
+          };
+        },
+      }
+    : {}),
 });
 await schedules.ensure();
 if (
@@ -3068,6 +3116,8 @@ const taskCenter = createTaskCenterRuntime({
             (await agentProfileStore.get(await actorFor(ownerUserId), agentId))
               ?.name ?? null,
         }),
+        listAgentInstances: (ownerUserId: string) =>
+          localAgents!.instances.listInstances(ownerUserId),
       }
     : {}),
 });
@@ -3483,9 +3533,9 @@ const actorAgentResolver = createActorAgentResolver({
             )()),
           ]
         : delegated;
-      // 本地 agent（docs/local-agents.md）：人自己的回合和结果交回的回合（同委派），有在线电脑时才给。
+      // 本地 agent 与可配置子代理提供方（docs/local-agents.md）：人自己的回合、IM、定时巡检和交付回合可用。
       const localAgentTools =
-        localAgents && delegating
+        localAgents && (delegating || scheduling)
           ? await restrictNamedToolsForWorkflow(initiator, async () => {
               const botName = await agentProfileStore
                 .get(await actorFor(actorId), botId)
@@ -3495,7 +3545,8 @@ const actorAgentResolver = createActorAgentResolver({
                 .agentOwner(botId)
                 .catch(() => undefined);
               if (typeof owner === "string" && owner !== actorId) return [];
-              return localAgents!.tools({
+              if (!localAgents) return [];
+              return localAgents.tools({
                 ownerUserId: actorId,
                 botId,
                 botName,
@@ -3543,6 +3594,33 @@ const conversationRuntime = mountConversationRuntime(
       void channelStore.signalBusy(input.threadId, input.busy).catch(() => {});
     },
     localBackend,
+    overrideAgent: async (actorId, botId, input) => {
+      if (!localAgents) return null;
+      const props = input.forwardedProps as
+        | { subagentInstanceId?: unknown; subagentCwd?: unknown }
+        | undefined;
+      const instanceRef =
+        typeof props?.subagentInstanceId === "string"
+          ? props.subagentInstanceId.trim()
+          : "";
+      if (!instanceRef) return null;
+      const botName = await agentProfileStore
+        .get(await actorFor(actorId), botId)
+        .then((profile) => profile?.name ?? null)
+        .catch(() => null);
+      const cwd =
+        typeof props?.subagentCwd === "string" && props.subagentCwd.trim()
+          ? props.subagentCwd.trim()
+          : undefined;
+      return new DirectSubagentRuntimeAgent({
+        ownerUserId: actorId,
+        botId,
+        botName,
+        instanceRef,
+        cwd,
+        localAgents,
+      });
+    },
   },
 );
 

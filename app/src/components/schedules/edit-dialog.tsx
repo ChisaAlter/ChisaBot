@@ -22,6 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
+import type { AgentInstanceView } from "@/lib/local-agents";
 import {
   type EditRepeat,
   editFormOf,
@@ -42,19 +43,25 @@ const REPEAT_ZH: Record<EditRepeat, string> = {
   cron: "自定义（cron）",
 };
 
+const BOT_EXECUTOR_VALUE = "__bot__";
+
 /** CB-106 §2：编辑已有定时任务的名字、时间和内容，走已有的 PATCH /api/schedules/:id。 */
 export function ScheduleEditDialog({
   schedule: s,
+  instances = [],
   onOpenChange,
   save: send = patchSchedule,
 }: {
   schedule: ScheduleView | null;
+  /** 可选绑定的子代理实例列表；未传时仅在当前已绑定实例时展示解绑项。 */
+  instances?: AgentInstanceView[];
   onOpenChange: (open: boolean) => void;
   /** 测试里换掉；默认走 PATCH /api/schedules/:id。 */
   save?: typeof patchSchedule;
 }) {
   return s ? (
     <ScheduleEditor
+      instances={instances}
       key={s.id}
       schedule={s}
       onOpenChange={onOpenChange}
@@ -65,10 +72,12 @@ export function ScheduleEditDialog({
 
 function ScheduleEditor({
   schedule: s,
+  instances,
   onOpenChange,
   save: send,
 }: {
   schedule: ScheduleView;
+  instances: AgentInstanceView[];
   onOpenChange: (open: boolean) => void;
   save: typeof patchSchedule;
 }) {
@@ -123,6 +132,19 @@ function ScheduleEditor({
   }
   const set = (patch: Partial<ScheduleEditForm>) =>
     setForm({ ...form, ...patch });
+  const selectableInstances = instances.filter(
+    (inst) => inst.enabled || inst.id === form.agentInstanceId,
+  );
+  const selectedInstance = selectableInstances.find(
+    (inst) => inst.id === form.agentInstanceId,
+  );
+  const showExecutorSelect =
+    selectableInstances.length > 0 || Boolean(form.agentInstanceId);
+  const currentExecutorLabel = !form.agentInstanceId
+    ? "由对话机器人处理（默认）"
+    : selectedInstance
+      ? `${selectedInstance.name}（${selectedInstance.environmentName}）`
+      : `子代理（${form.agentInstanceId}）`;
   return (
     <Dialog
       onOpenChange={(open, details) => {
@@ -219,6 +241,48 @@ function ScheduleEditor({
               value={form.instruction}
             />
           </label>
+          {showExecutorSelect ? (
+            <label className="im-field" htmlFor="sch-edit-agent-instance">
+              <span className="im-field-l">{"执行智能体"}</span>
+              <Select
+                disabled={saving}
+                onValueChange={(value) =>
+                  set({
+                    agentInstanceId:
+                      !value || value === BOT_EXECUTOR_VALUE ? "" : value,
+                  })
+                }
+                value={form.agentInstanceId || BOT_EXECUTOR_VALUE}
+              >
+                <SelectTrigger
+                  aria-label={"执行智能体"}
+                  className="w-full"
+                  data-testid="sch-edit-agent-instance"
+                  id="sch-edit-agent-instance"
+                >
+                  <SelectValue>{currentExecutorLabel}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={BOT_EXECUTOR_VALUE}>
+                    {"由对话机器人处理（默认）"}
+                  </SelectItem>
+                  {selectableInstances.map((inst) => (
+                    <SelectItem key={inst.id} value={inst.id}>
+                      {`${inst.name}（${inst.environmentName}）`}
+                    </SelectItem>
+                  ))}
+                  {form.agentInstanceId && !selectedInstance ? (
+                    <SelectItem value={form.agentInstanceId}>
+                      {`子代理（${form.agentInstanceId}）`}
+                    </SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
+              <span className="im-field-h">
+                {"指定子代理实例后，到点将直接把指令派发给该智能体执行。"}
+              </span>
+            </label>
+          ) : null}
           {error ? (
             <p className="img-probe is-bad" role="alert">
               {error}

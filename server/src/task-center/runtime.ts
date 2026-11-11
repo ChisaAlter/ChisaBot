@@ -151,6 +151,17 @@ export type TaskCenterRuntimeOptions = {
     agentId: string,
     context: TaskExecutionContext,
   ) => Promise<TaskExecutionResult>;
+  listAgentInstances?: (ownerUserId: string) => Promise<
+    ReadonlyArray<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      enabled: boolean;
+      environmentName: string;
+      environmentOnline: boolean;
+    }>
+  >;
   concurrency?: number;
   globalConcurrency?: number;
 };
@@ -543,10 +554,27 @@ export function createTaskCenterRuntime(
         kind: "executor",
         available: Boolean(options.localAgentRun),
         detail: options.localAgentRun
-          ? "经设备节点委派执行：权限档位、隔离与审批沿用设备设置；executor 用 local-agent:<kind> 指定 agent（codex/claude/…）"
+          ? "经设备节点委派执行：权限档位、隔离与审批沿用设备设置；executor 用 local-agent:<kind> 或 agent:<instance> 指定智能体"
           : "需要设备子系统在线；当前部署未启用。",
       },
     ];
+    if (options.localAgentRun && options.listAgentInstances) {
+      const instances = await options
+        .listAgentInstances(ownerUserId)
+        .catch(() => []);
+      for (const inst of instances) {
+        if (!inst.enabled) continue;
+        executors.push({
+          id: `executor:agent:${inst.id}`,
+          name: `智能体 · ${inst.name}（${inst.environmentName}）`,
+          kind: "executor",
+          available: inst.environmentOnline,
+          detail:
+            inst.description ||
+            `委派给已配置的「${inst.name}」实例（executor = agent:${inst.id} 或 agent:${inst.slug}）`,
+        });
+      }
+    }
     return [...executors, ...sourceCaps];
   }
 

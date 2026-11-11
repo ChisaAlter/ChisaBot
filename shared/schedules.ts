@@ -43,6 +43,8 @@ export type ScheduleRunView = {
 export type ScheduleView = {
   id: string;
   agentId: string;
+  /** 可选：到期直接派发给指定的智能体提供方实例执行（null/省略则由 agentId 机器人执行）。 */
+  agentInstanceId?: string | null;
   threadId: string;
   source: "web" | "im";
   title: string;
@@ -100,7 +102,6 @@ export function failStreakShouldPause(
   return recentStatuses.slice(0, streak).every((s) => s === "failed");
 }
 
-
 /**
  * 设置页分区（Track B + v0.1.34 复验）：需要关注 / 进行中 / 暂停 / 结束 / 孤儿。
  * 纯函数，便于单测；UI 与策略文档共用同一规则。
@@ -121,9 +122,7 @@ export function partitionScheduleList(
   orphanAll: ScheduleView[];
 } {
   const bots =
-    knownAgentIds instanceof Set
-      ? knownAgentIds
-      : new Set(knownAgentIds);
+    knownAgentIds instanceof Set ? knownAgentIds : new Set(knownAgentIds);
   const active = items.filter((s) => s.status === "active");
   const paused = items.filter((s) => s.status === "paused");
   const ended = items.filter(
@@ -152,13 +151,17 @@ export function partitionScheduleList(
   };
 }
 
-
 /**
  * 运行器 / 工具自己写的固定开头（不是模型的话）。只认开头，正文里出现这些字不算。
  * - 「运行失败：」：fire() 捕获运行器异常时写的结果。
  * - 「没有执行：」：工具拒绝（计算机被接管、定时任务里需要人在场）原样回给模型的开头。
  */
-export const SCHEDULE_RUNNER_FAILURE_PREFIXES = ["运行失败：", "运行失败:", "没有执行：", "没有执行:"] as const;
+export const SCHEDULE_RUNNER_FAILURE_PREFIXES = [
+  "运行失败：",
+  "运行失败:",
+  "没有执行：",
+  "没有执行:",
+] as const;
 
 /** 运行器给的硬信号（M1）：工具报错 / 运行器异常。不看模型正文。 */
 export type ScheduleRunSignals = {
@@ -189,10 +192,10 @@ export function classifyScheduleReply(
     )
   )
     return "waiting";
-  if (SCHEDULE_RUNNER_FAILURE_PREFIXES.some((p) => t.startsWith(p))) return "failed";
+  if (SCHEDULE_RUNNER_FAILURE_PREFIXES.some((p) => t.startsWith(p)))
+    return "failed";
   return "ok";
 }
-
 
 /**
  * 设置页「上次…」一行（狗粮 0.1.40）。
@@ -388,9 +391,7 @@ export function describeSchedule(
 }
 
 /** 「⟦chisabot:schedule:<id>:<runId>⟧\n定时任务「标题」到点了（…）。\n…\n说明：…」拆开。 */
-export function parseScheduleMessage(
-  text: string,
-): {
+export function parseScheduleMessage(text: string): {
   scheduleId: string;
   runId: string;
   headline: string;

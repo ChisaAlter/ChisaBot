@@ -21,12 +21,14 @@ import {
 import {
   TASK_LEVEL_LABELS,
   type TaskArtifact,
+  type TaskCapability,
   type TaskCenterTask,
   type TaskTraceEvent,
 } from "../../../../shared/task-center";
 import {
   ACTIVE_STATUSES,
   CATEGORY_LABELS,
+  formatExecutorLabel,
   RISK_LABELS,
   STATUS_LABELS,
   safeTaskUrl,
@@ -90,6 +92,9 @@ export function TaskDetail({
               : []
     : [];
   const events = query.data?.events ?? [];
+  const capabilities = queryClient.getQueryData<{
+    capabilities: TaskCapability[];
+  }>(taskCenterKeys.capabilities)?.capabilities;
   return (
     <section className="tc-detail" aria-labelledby="tc-detail-title">
       <div className="tc-detail-heading">
@@ -120,7 +125,8 @@ export function TaskDetail({
             <TaskStatusBadge task={task} />
             <h3>{task.title}</h3>
             <p className="tc-meta">
-              {CATEGORY_LABELS[task.category]} · {task.executor} ·{" "}
+              {CATEGORY_LABELS[task.category]} ·{" "}
+              {formatExecutorLabel(task.executor, capabilities)} ·{" "}
               {taskDate(task.updatedAt)} 更新
             </p>
           </div>
@@ -277,7 +283,8 @@ export function TaskDetail({
                         >
                           <strong>{child.title}</strong>
                           <span>
-                            {STATUS_LABELS[child.status]} · {child.executor}
+                            {STATUS_LABELS[child.status]} ·{" "}
+                            {formatExecutorLabel(child.executor, capabilities)}
                             {child.dependencies.length
                               ? ` · ${child.dependencies.length} 项前序依赖`
                               : ""}

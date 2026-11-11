@@ -153,6 +153,7 @@ import { useRenderUiPreload } from "@/lib/conversations/render-ui-preload";
 import { useReadMark } from "@/lib/conversations/thread-inbox";
 import {
   type CardChecks,
+  getCardCheck,
   isLineOnlyRender,
   pickToolRenderer,
   registeredCardChecks,
@@ -3076,7 +3077,7 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
         <ToolTurnEndedContext.Provider value={turnEnded}>
           {turnEnded &&
           result === undefined &&
-          registeredCardChecks.has(name) ? (
+          getCardCheck(registeredCardChecks, name) ? (
             <UnfinishedTool name={name} />
           ) : (
             (drawn ?? <ServerToolLine name={name} result={result} />)
@@ -4429,7 +4430,10 @@ export function toolDrawsCard(
     if (isLineOnlyRender(renderer.render)) return false;
     // 失败时会返回 null 的渲染器由它自己的判断说了算。还没有结果：这一轮还在跑时画骨架，算卡片；
     // 这一轮结束了（没按停止，工具也一直没回）骨架换成「没有完成」（TranscriptToolCall），不算卡片（复审 #404 第四轮）。
-    const check = renderer.name === name ? checks.get(name) : undefined;
+    const check =
+      renderer.name === name || renderer.match?.(name)
+        ? getCardCheck(checks, name)
+        : undefined;
     if (!check) return true;
     if (tool.result === undefined) return live;
     return check({
