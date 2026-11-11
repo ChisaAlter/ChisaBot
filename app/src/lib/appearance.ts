@@ -9,11 +9,11 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import { compressWallpaperImage } from "@/lib/wallpaper-compress";
 import {
   getWallpaperBackend,
   WALLPAPER_IDB_MARKER,
 } from "@/lib/wallpaper-store";
-import { compressWallpaperImage } from "@/lib/wallpaper-compress";
 
 // 配色表搬到了纯模块 lib/palette.ts（构建时要内联进 index.html 的启动脚本），这里照旧导出。
 export {
@@ -158,285 +158,185 @@ export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
   },
 ] as const;
 
-export type WallpaperPresetId =
-  | "none"
-  | "aurora-mesh"
-  | "cyber-neon"
-  | "mountain-mist"
-  | "ocean-abyss"
-  | "sakura-dream"
-  | "sunset-dunes"
-  | "starlight-cosmos"
-  | "custom";
+export type WallpaperCategoryId = "all" | "impression" | "eastern" | "modern";
+
+export const WALLPAPER_CATEGORIES: readonly {
+  id: WallpaperCategoryId;
+  label: string;
+}[] = [
+  { id: "all", label: "全部" },
+  { id: "impression", label: "印象油画" },
+  { id: "eastern", label: "东方意境" },
+  { id: "modern", label: "现代光影" },
+] as const;
+
+export type ArtisticWallpaperPresetId =
+  | "waterlily-pond"
+  | "starry-rhone"
+  | "tuscan-golden"
+  | "qinglv-shanhe"
+  | "fuji-sakura"
+  | "ink-bamboo-mist"
+  | "arch-sunbeam"
+  | "mineral-agate"
+  | "nordic-fjord";
+
+export type WallpaperPresetId = "none" | ArtisticWallpaperPresetId | "custom";
 
 export type WallpaperPresetMeta = {
   id: Exclude<WallpaperPresetId, "custom">;
+  category: Exclude<WallpaperCategoryId, "all"> | null;
+  tag: string | null;
   name: string;
   subtitle: string;
   previewBackground: string;
+  thumbUrl: string | null;
+  imageUrl: string | null;
   cssImage: string | null;
 };
 
-function svgDataUri(svg: string): string {
-  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg.trim().replace(/\s+/g, " "))}")`;
+export type ArtisticWallpaperPresetMeta = WallpaperPresetMeta & {
+  id: ArtisticWallpaperPresetId;
+  category: Exclude<WallpaperCategoryId, "all">;
+  tag: string;
+  thumbUrl: string;
+  imageUrl: string;
+  cssImage: string;
+};
+
+function artPreset(meta: {
+  id: ArtisticWallpaperPresetId;
+  category: Exclude<WallpaperCategoryId, "all">;
+  tag: string;
+  name: string;
+  subtitle: string;
+  previewBackground: string;
+}): ArtisticWallpaperPresetMeta {
+  const imageUrl = `/wallpapers/${meta.id}.webp`;
+  return {
+    ...meta,
+    thumbUrl: `/wallpapers/${meta.id}-thumb.webp`,
+    imageUrl,
+    cssImage: `url("${imageUrl}")`,
+  };
 }
+
+export const ARTISTIC_WALLPAPER_PRESETS: readonly ArtisticWallpaperPresetMeta[] =
+  [
+    // ── 印象油画 ──
+    artPreset({
+      id: "waterlily-pond",
+      category: "impression",
+      tag: "印象派油画",
+      name: "睡莲晨光 · 莫奈印象",
+      subtitle: "吉维尼晨雾池塘、柔紫倒影与垂柳厚涂笔触",
+      previewBackground:
+        "linear-gradient(135deg, #6e8f82 0%, #94a69d 50%, #405e52 100%)",
+    }),
+    artPreset({
+      id: "starry-rhone",
+      category: "impression",
+      tag: "后印象油画",
+      name: "星夜罗纳 · 旋流夜曲",
+      subtitle: "群青旋流夜空与洒满河湾的暖金星辉波光",
+      previewBackground:
+        "linear-gradient(135deg, #1d3564 0%, #324f82 52%, #171e30 100%)",
+    }),
+    artPreset({
+      id: "tuscan-golden",
+      category: "impression",
+      tag: "田园油画",
+      name: "暮色麦浪 · 托斯卡纳",
+      subtitle: "鎏金起伏麦田、丝柏小径与杏粉晚霞油彩",
+      previewBackground:
+        "linear-gradient(135deg, #dba473 0%, #c98856 52%, #7c4922 100%)",
+    }),
+    // ── 东方意境 ──
+    artPreset({
+      id: "qinglv-shanhe",
+      category: "eastern",
+      tag: "宋韵青绿",
+      name: "千里青绿 · 宋韵烟岚",
+      subtitle: "古绢石青石绿重峦叠嶂与云海平湖长卷",
+      previewBackground:
+        "linear-gradient(135deg, #c5ad74 0%, #6f9478 52%, #3a686e 100%)",
+    }),
+    artPreset({
+      id: "fuji-sakura",
+      category: "eastern",
+      tag: "浮世绘木版",
+      name: "浮世沧浪 · 樱雪远富士",
+      subtitle: "普鲁士蓝千重海浪、春樱飞瓣与暮霞远山",
+      previewBackground:
+        "linear-gradient(135deg, #2b4c6b 0%, #d9b8a9 52%, #1d3b58 100%)",
+    }),
+    artPreset({
+      id: "ink-bamboo-mist",
+      category: "eastern",
+      tag: "禅意水墨",
+      name: "烟雨空山 · 水墨留白",
+      subtitle: "宣纸淡墨远岫、青瓷烟霭与孤舟清竹留白",
+      previewBackground:
+        "linear-gradient(135deg, #efece0 0%, #cbd3cb 52%, #59605d 100%)",
+    }),
+    // ── 现代光影 ──
+    artPreset({
+      id: "arch-sunbeam",
+      category: "modern",
+      tag: "极简建筑",
+      name: "光影回廊 · 极简几何",
+      subtitle: "暖陶拱廊、斜射夕照金光与静水几何倒影",
+      previewBackground:
+        "linear-gradient(135deg, #d7b196 0%, #a06b65 52%, #6e6378 100%)",
+    }),
+    artPreset({
+      id: "mineral-agate",
+      category: "modern",
+      tag: "流体矿物",
+      name: "流金玛瑙 · 矿物肌理",
+      subtitle: "孔雀青蓝丝绸层理、珠母流光与金缮细脉",
+      previewBackground:
+        "linear-gradient(135deg, #162a38 0%, #2f5b55 52%, #b9ae95 100%)",
+    }),
+    artPreset({
+      id: "nordic-fjord",
+      category: "modern",
+      tag: "极地绘境",
+      name: "极昼冰峡 · 幻彩静谧",
+      subtitle: "薄荷粉紫极光丝带与镜面冰川峡湾雪峰",
+      previewBackground:
+        "linear-gradient(135deg, #2d3e56 0%, #73998f 50%, #243b55 100%)",
+    }),
+  ] as const;
 
 export const WALLPAPER_PRESETS: readonly WallpaperPresetMeta[] = [
   {
     id: "none",
+    category: null,
+    tag: null,
     name: "Hark 动态天空（默认）",
     subtitle: "使用 Hark 原生 WebGL 实时大气散射与流云引擎",
     previewBackground:
       "linear-gradient(180deg, #1d57a9 0%, #3e7bd1 40%, #6da7ec 76%, #b0d5f7 100%)",
+    thumbUrl: null,
+    imageUrl: null,
     cssImage: null,
   },
-  {
-    id: "aurora-mesh",
-    name: "极光流彩星云",
-    subtitle: "柔焦紫青极光丝带与深邃星芒",
-    previewBackground:
-      "radial-gradient(circle at 20% 20%, #8b5cf6 0%, transparent 55%), radial-gradient(circle at 80% 30%, #06b6d4 0%, transparent 55%), radial-gradient(circle at 50% 80%, #ec4899 0%, transparent 60%), linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #090d16 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#0b1120"/>
-            <stop offset="50%" stop-color="#1e1b4b"/>
-            <stop offset="100%" stop-color="#090d16"/>
-          </linearGradient>
-          <radialGradient id="g1" cx="22%" cy="24%" r="52%">
-            <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.78"/>
-            <stop offset="55%" stop-color="#6366f1" stop-opacity="0.28"/>
-            <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="g2" cx="82%" cy="28%" r="48%">
-            <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.72"/>
-            <stop offset="55%" stop-color="#0ea5e9" stop-opacity="0.25"/>
-            <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="g3" cx="54%" cy="82%" r="55%">
-            <stop offset="0%" stop-color="#ec4899" stop-opacity="0.62"/>
-            <stop offset="55%" stop-color="#a855f7" stop-opacity="0.2"/>
-            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="g4" cx="18%" cy="78%" r="42%">
-            <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.5"/>
-            <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#bg)"/>
-        <rect width="1600" height="1000" fill="url(#g1)"/>
-        <rect width="1600" height="1000" fill="url(#g2)"/>
-        <rect width="1600" height="1000" fill="url(#g3)"/>
-        <rect width="1600" height="1000" fill="url(#g4)"/>
-        <path d="M-100,620 C320,420 680,780 1120,500 C1360,350 1520,480 1720,390 L1720,1050 L-100,1050 Z" fill="#ffffff" fill-opacity="0.04"/>
-        <path d="M-100,320 C380,540 820,160 1280,420 C1480,530 1600,380 1720,440 L1720,1050 L-100,1050 Z" fill="#38bdf8" fill-opacity="0.06"/>
-      </svg>
-    `),
-  },
-  {
-    id: "mountain-mist",
-    name: "远山云海晨雾",
-    subtitle: "层叠水墨青峦与清晨柔光云海",
-    previewBackground:
-      "linear-gradient(180deg, #93c5fd 0%, #e0f2fe 45%, #64748b 78%, #1e293b 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#38bdf8"/>
-            <stop offset="38%" stop-color="#bae6fd"/>
-            <stop offset="68%" stop-color="#f8fafc"/>
-            <stop offset="100%" stop-color="#cbd5e1"/>
-          </linearGradient>
-          <radialGradient id="sun" cx="72%" cy="26%" r="36%">
-            <stop offset="0%" stop-color="#fef08a" stop-opacity="0.85"/>
-            <stop offset="50%" stop-color="#fde047" stop-opacity="0.28"/>
-            <stop offset="100%" stop-color="#fde047" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#sky)"/>
-        <rect width="1600" height="1000" fill="url(#sun)"/>
-        <path d="M0,560 L220,430 L460,520 L740,370 L1020,490 L1310,360 L1600,470 L1600,1000 L0,1000 Z" fill="#64748b" fill-opacity="0.35"/>
-        <path d="M0,650 L180,540 L420,610 L690,480 L980,590 L1240,460 L1460,550 L1600,510 L1600,1000 L0,1000 Z" fill="#475569" fill-opacity="0.52"/>
-        <path d="M0,760 L260,640 L520,720 L840,590 L1140,700 L1410,610 L1600,670 L1600,1000 L0,1000 Z" fill="#334155" fill-opacity="0.74"/>
-        <path d="M0,850 L310,770 L640,830 L960,740 L1290,820 L1600,750 L1600,1000 L0,1000 Z" fill="#1e293b" fill-opacity="0.9"/>
-      </svg>
-    `),
-  },
-  {
-    id: "ocean-abyss",
-    name: "蔚蓝珊瑚海湾",
-    subtitle: "阳光穿透清澈海水的丁达尔波光",
-    previewBackground:
-      "radial-gradient(circle at 50% 0%, #67e8f9 0%, #0284c7 52%, #0c4a6e 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#22d3ee"/>
-            <stop offset="35%" stop-color="#0284c7"/>
-            <stop offset="75%" stop-color="#075985"/>
-            <stop offset="100%" stop-color="#082f49"/>
-          </linearGradient>
-          <radialGradient id="topGlow" cx="50%" cy="6%" r="58%">
-            <stop offset="0%" stop-color="#cffafe" stop-opacity="0.9"/>
-            <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.35"/>
-            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#sea)"/>
-        <rect width="1600" height="1000" fill="url(#topGlow)"/>
-        <polygon points="800,-40 280,1000 480,1000" fill="#ffffff" fill-opacity="0.07"/>
-        <polygon points="800,-40 620,1000 840,1000" fill="#ffffff" fill-opacity="0.09"/>
-        <polygon points="800,-40 980,1000 1240,1000" fill="#ffffff" fill-opacity="0.07"/>
-        <path d="M0,720 Q400,640 800,720 T1600,700 L1600,1000 L0,1000 Z" fill="#0369a1" fill-opacity="0.45"/>
-        <path d="M0,840 Q400,780 800,840 T1600,820 L1600,1000 L0,1000 Z" fill="#082f49" fill-opacity="0.65"/>
-      </svg>
-    `),
-  },
-  {
-    id: "sakura-dream",
-    name: "绯樱暮色天际",
-    subtitle: "柔和暮春粉霞与梦幻流光光斑",
-    previewBackground:
-      "radial-gradient(circle at 25% 25%, #fbcfe8 0%, transparent 50%), radial-gradient(circle at 75% 70%, #f43f5e 0%, transparent 55%), linear-gradient(135deg, #4c1d95 0%, #831843 55%, #be185d 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="sbg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#3b0764"/>
-            <stop offset="48%" stop-color="#831843"/>
-            <stop offset="100%" stop-color="#fb7185"/>
-          </linearGradient>
-          <radialGradient id="sp1" cx="25%" cy="30%" r="45%">
-            <stop offset="0%" stop-color="#f9a8d4" stop-opacity="0.72"/>
-            <stop offset="100%" stop-color="#f9a8d4" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="sp2" cx="78%" cy="24%" r="42%">
-            <stop offset="0%" stop-color="#c084fc" stop-opacity="0.65"/>
-            <stop offset="100%" stop-color="#c084fc" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="sp3" cx="65%" cy="78%" r="50%">
-            <stop offset="0%" stop-color="#fda4af" stop-opacity="0.68"/>
-            <stop offset="100%" stop-color="#fda4af" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#sbg)"/>
-        <rect width="1600" height="1000" fill="url(#sp1)"/>
-        <rect width="1600" height="1000" fill="url(#sp2)"/>
-        <rect width="1600" height="1000" fill="url(#sp3)"/>
-        <circle cx="320" cy="240" r="90" fill="#ffffff" fill-opacity="0.1"/>
-        <circle cx="1180" cy="360" r="140" fill="#ffffff" fill-opacity="0.08"/>
-        <circle cx="860" cy="680" r="110" fill="#ffffff" fill-opacity="0.09"/>
-      </svg>
-    `),
-  },
-  {
-    id: "sunset-dunes",
-    name: "落日余晖沙丘",
-    subtitle: "温暖琥珀金霞与丝绸曲线沙丘",
-    previewBackground:
-      "linear-gradient(160deg, #7c2d12 0%, #ea580c 42%, #f59e0b 75%, #fef08a 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="dsky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#431407"/>
-            <stop offset="36%" stop-color="#9a3412"/>
-            <stop offset="70%" stop-color="#ea580c"/>
-            <stop offset="100%" stop-color="#fbbf24"/>
-          </linearGradient>
-          <radialGradient id="dsun" cx="62%" cy="44%" r="32%">
-            <stop offset="0%" stop-color="#fef9c3" stop-opacity="0.92"/>
-            <stop offset="45%" stop-color="#fb923c" stop-opacity="0.45"/>
-            <stop offset="100%" stop-color="#fb923c" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#dsky)"/>
-        <rect width="1600" height="1000" fill="url(#dsun)"/>
-        <circle cx="992" cy="440" r="115" fill="#fef08a" fill-opacity="0.72"/>
-        <path d="M0,680 Q420,560 920,700 T1600,640 L1600,1000 L0,1000 Z" fill="#9a3412" fill-opacity="0.68"/>
-        <path d="M0,780 Q560,670 1080,810 T1600,760 L1600,1000 L0,1000 Z" fill="#7c2d12" fill-opacity="0.82"/>
-        <path d="M0,880 Q380,810 860,900 T1600,860 L1600,1000 L0,1000 Z" fill="#431407" fill-opacity="0.92"/>
-      </svg>
-    `),
-  },
-  {
-    id: "cyber-neon",
-    name: "赛博霓虹棱镜",
-    subtitle: "未来感几何光栅与品红青蓝折射",
-    previewBackground:
-      "radial-gradient(circle at 80% 20%, #f43f5e 0%, transparent 48%), radial-gradient(circle at 20% 80%, #06b6d4 0%, transparent 52%), linear-gradient(135deg, #090d16 0%, #1e1b4b 52%, #311042 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#060913"/>
-            <stop offset="50%" stop-color="#17153b"/>
-            <stop offset="100%" stop-color="#2e1035"/>
-          </linearGradient>
-          <radialGradient id="cn1" cx="78%" cy="22%" r="48%">
-            <stop offset="0%" stop-color="#f43f5e" stop-opacity="0.7"/>
-            <stop offset="60%" stop-color="#a855f7" stop-opacity="0.24"/>
-            <stop offset="100%" stop-color="#a855f7" stop-opacity="0"/>
-          </radialGradient>
-          <radialGradient id="cn2" cx="20%" cy="76%" r="50%">
-            <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.72"/>
-            <stop offset="60%" stop-color="#3b82f6" stop-opacity="0.24"/>
-            <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#cbg)"/>
-        <rect width="1600" height="1000" fill="url(#cn1)"/>
-        <rect width="1600" height="1000" fill="url(#cn2)"/>
-        <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="1.5" fill="none">
-          <circle cx="800" cy="500" r="220"/>
-          <circle cx="800" cy="500" r="380"/>
-          <circle cx="800" cy="500" r="560"/>
-          <line x1="0" y1="500" x2="1600" y2="500"/>
-          <line x1="800" y1="0" x2="800" y2="1000"/>
-        </g>
-      </svg>
-    `),
-  },
-  {
-    id: "starlight-cosmos",
-    name: "深空星河静夜",
-    subtitle: "静谧银河星尘与深邃午夜蓝黑",
-    previewBackground:
-      "radial-gradient(circle at 65% 35%, #3b82f6 0%, transparent 45%), radial-gradient(circle at 30% 65%, #6366f1 0%, transparent 50%), linear-gradient(180deg, #030712 0%, #0f172a 60%, #1e293b 100%)",
-    cssImage: svgDataUri(`
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
-        <defs>
-          <linearGradient id="stbg" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#030712"/>
-            <stop offset="55%" stop-color="#0f172a"/>
-            <stop offset="100%" stop-color="#1e293b"/>
-          </linearGradient>
-          <radialGradient id="neb" cx="62%" cy="38%" r="48%">
-            <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.42"/>
-            <stop offset="55%" stop-color="#6366f1" stop-opacity="0.16"/>
-            <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <rect width="1600" height="1000" fill="url(#stbg)"/>
-        <rect width="1600" height="1000" fill="url(#neb)"/>
-        <g fill="#ffffff">
-          <circle cx="220" cy="180" r="2" fill-opacity="0.8"/>
-          <circle cx="480" cy="120" r="1.5" fill-opacity="0.6"/>
-          <circle cx="760" cy="240" r="2.2" fill-opacity="0.85"/>
-          <circle cx="1080" cy="160" r="1.8" fill-opacity="0.7"/>
-          <circle cx="1390" cy="280" r="2.4" fill-opacity="0.9"/>
-          <circle cx="340" cy="420" r="1.6" fill-opacity="0.55"/>
-          <circle cx="920" cy="460" r="2" fill-opacity="0.75"/>
-          <circle cx="1260" cy="520" r="1.5" fill-opacity="0.6"/>
-          <circle cx="620" cy="680" r="1.8" fill-opacity="0.65"/>
-        </g>
-      </svg>
-    `),
-  },
+  ...ARTISTIC_WALLPAPER_PRESETS,
 ] as const;
+
+/** 旧版本曾用过的几何 SVG 预设名平滑映射到风格最接近的艺术画作。 */
+export const LEGACY_WALLPAPER_ID_MAP: Readonly<
+  Record<string, ArtisticWallpaperPresetId>
+> = {
+  "aurora-mesh": "nordic-fjord",
+  "mountain-mist": "qinglv-shanhe",
+  "ocean-abyss": "waterlily-pond",
+  "sakura-dream": "fuji-sakura",
+  "sunset-dunes": "tuscan-golden",
+  "cyber-neon": "mineral-agate",
+  "starlight-cosmos": "starry-rhone",
+};
 
 export type AppearanceState = {
   palette: ThemePaletteId;
@@ -504,8 +404,11 @@ function readInitialAppearance(): AppearanceState {
   const rawHarkScene = readStoredPreference(
     HARK_SCENE_STORAGE_KEY,
   ) as HarkSkySceneId | null;
-  const rawWallpaperId = readStoredPreference(
-    WALLPAPER_ID_STORAGE_KEY,
+  const rawWallpaperKey = readStoredPreference(WALLPAPER_ID_STORAGE_KEY);
+  const rawWallpaperId = (
+    rawWallpaperKey && rawWallpaperKey in LEGACY_WALLPAPER_ID_MAP
+      ? LEGACY_WALLPAPER_ID_MAP[rawWallpaperKey]
+      : rawWallpaperKey
   ) as WallpaperPresetId | null;
   const storedCustomUrl =
     readStoredPreference(WALLPAPER_CUSTOM_URL_STORAGE_KEY) ?? "";
@@ -540,8 +443,7 @@ function readInitialAppearance(): AppearanceState {
     // 深色档没存过就用浅色档的值，老用户拖过的滑块在深色下照旧生效。
     glassOpacityDark: clampNumber(
       Number(
-        readStoredPreference(GLASS_OPACITY_DARK_STORAGE_KEY) ??
-          rawGlassOpacity,
+        readStoredPreference(GLASS_OPACITY_DARK_STORAGE_KEY) ?? rawGlassOpacity,
       ),
       GLASS_OPACITY_MIN,
       GLASS_OPACITY_MAX,
@@ -825,8 +727,9 @@ function readGlassAlphaRule(index: number): string | null {
   const fromRule = rule?.style?.getPropertyValue?.("--lg-alpha")?.trim();
   if (fromRule) return fromRule;
   return (
-    [...(el.textContent ?? "").matchAll(/--lg-alpha:\s*([\d.]+)/g)][index]?.[1] ??
-    null
+    [...(el.textContent ?? "").matchAll(/--lg-alpha:\s*([\d.]+)/g)][
+      index
+    ]?.[1] ?? null
   );
 }
 
@@ -1167,7 +1070,9 @@ export function resolveActiveWallpaperCss(
  * 不启动 Hark WebGL：引擎只有固定的蓝天 / 夜空场景、没有色相参数，会把主题色盖掉；不跑 WebGL 也更省。
  * 设置页场景选择处会提示「彩色主题下使用主题天空」。
  */
-export function usesPaletteGradientSky(state: Pick<AppearanceState, "palette">): boolean {
+export function usesPaletteGradientSky(
+  state: Pick<AppearanceState, "palette">,
+): boolean {
   return state.palette !== "default";
 }
 

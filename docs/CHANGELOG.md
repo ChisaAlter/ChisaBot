@@ -1,3 +1,7 @@
+## 未发版
+
+- 预设艺术壁纸图库（DESIGN §131）：`app/public/wallpapers/` 内置印象油画、东方意境、现代光影三大系列共 9 幅 16:9 WebP 画作与轻量缩略图；`appearance.ts` 新增 `ARTISTIC_WALLPAPER_PRESETS`、`WALLPAPER_CATEGORIES` 与 `LEGACY_WALLPAPER_ID_MAP` 平滑迁移并移除内联几何 SVG；`AppearancePreferences` 支持按分类分段筛选、画作卡片预览及已上传自定义壁纸保留一键重启用。
+
 ## 0.1.145
 
 - 右栏任务原位交互与卡片质感升级（DESIGN §130）：升级 Skyglass 卡片内高光、语义微光晕、柔和阴影与悬浮/按压反馈（保持全部主题/配色 WCAG AA 对比度与无 `:has()` / 无额外 `backdrop-filter` 约束）；新增右上角 `⋯` 菜单（查看详情、开始/暂停/继续/重试/批准/拒绝、置顶/取消置顶、上移/下移、取消任务/停止工作流）、置顶与排序持久化（`task-rail-order.ts` + `POST /api/task-center/tasks/:id/priority`）、阻塞任务直出取消按钮、「+ 新建」弹窗入口与机器报错人话化；点击卡片改为原位弹出 `TaskRailDetailDialog`（支持任务/审批/工作流详情、交付物预览下载、报错折叠复制与依赖任务栈内返回），不再整页跳走。
