@@ -599,7 +599,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 5. 服务器分段计时：`agents/run-timing.ts`。`/api/copilotkit/*` 进门时用 AsyncLocalStorage 记下时刻，Hermes 每轮结束打一行 `{"type":"run-timing",...}`，字段有 queueMs（进门到 agent.run，含会话守卫、建线程、个人记忆）、memoryMs、assembleMs、prepareMs、remoteStartMs、firstTokenMs、firstToolMs、firstTextMs、totalMs、toolCalls，只有毫秒数和计数，不含内容。
 6. 可插拔搜索 provider 没动。
 
-**测量（页面内 SSE，cbtest，线上 ayase.cn:8443，2026-10-29 17:17–17:44 北京时间，三类各 5 次）**：
+**测量（页面内 SSE，cbtest，私人公网 HTTPS 入口（地址不入公开仓库），2026-10-29 17:17–17:44 北京时间，三类各 5 次）**：
 
 | 中位数 | 新话题 前→后 | 已有话题 前→后 | 搜索类 前→后 |
 |---|---|---|---|
@@ -1241,7 +1241,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ## 回复来源结构化（feat/reply-sources-stability）
 
-**动机**：Hark 把来源画成回复下方一组叠起来的链接卡；ChisaBot 让模型在正文最后写「来源：[站点](网址)」（#5、#12 对比），来源和正文混在一起，也没法统一排版。要先把数据格式定下来，前端再画。
+**动机**：Hark 把来源画成回复下方一组叠起来的链接卡；ChisaBot 让模型在正文最后写「`来源：[站点](网址)`」（#5、#12 对比），来源和正文混在一起，也没法统一排版。要先把数据格式定下来，前端再画。
 
 **为什么不新增存储 / 事件 / 工具**：会话历史在 Intelligence 网关里，不在我们的库里；而 web_fetch 的调用和结果本来就随消息流式下发、也在历史里。从它们读来源，实时和翻历史一致，旧会话也有来源。让模型调一个「cite_sources」工具也考虑过：模型在工具之后不再说话时，客户端会把这一轮判成「做完…之后没有接着做」（stopped-turn.ts），风险大。
 

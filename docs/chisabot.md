@@ -1,45 +1,41 @@
-# ChisaBot 分支与能力边界
+# ChisaBot 自托管架构与能力边界
 
-[文档首页](README.md) · [快速开始](getting-started.md) · [模型配置](models.md) · [Magpie](magpie.md)
+[文档首页](README.md) · [快速开始](getting-started.md) · [系统架构](architecture.md) · [模型配置](models.md) · [Magpie](magpie.md)
 
-ChisaBot 是 [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) 的中文自托管分支。产品展示名称统一为 ChisaBot，继续保留 MIT 许可证和上游版权声明。
+ChisaBot 是以 **DSH 为执行内核**的全中文自托管私人助手，覆盖网页端、Windows PC 客户端（Electron + 设备节点）、Android 客户端（Kotlin 壳 + 同源手机布局）以及主流 IM 渠道。项目基于 [MIT License](../LICENSE) 开源，第三方开源组件与早期代码来源说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## 软件自托管与模型推理
+## 1. 自托管软件与模型推理边界
 
-自托管软件与运行模型是两个独立选择。
+软件部署位置与模型推理服务是两个相互独立的选择：
 
-| 组件 | 本分支的选择 |
+| 层次 | ChisaBot 的运行方式 |
 | --- | --- |
-| 网页、API、网页登录 | 部署在自己的服务器或电脑 |
-| 对话与 BOT 配置 | `local` 模式保存在自己的 PostgreSQL |
-| 模型推理 | 自托管兼容服务，或自己选择的第三方 API |
-| Magpie | 可自部署；统一管理模型服务、账户和调用密钥 |
-| CopilotKit Intelligence | 可选；本地运行模式不需要项目或托管服务 |
+| 网页、API 服务与认证网关 | 部署在你自己的服务器或电脑上，不依赖任何官方托管云端控制面 |
+| 会话、记忆与业务账本 | `CHISABOT_RUNTIME_MODE=local`，完整保存在你自己的 PostgreSQL（`chisabot_*` 表）与 DSH Session 持久卷中 |
+| 执行内核 | `CHISABOT_AGENT_KERNEL=dsh`，每账号独立 DSH Host 进程驱动模型/工具循环，经内部工具网关受控执行操作与审批 |
+| 模型推理网关 | 可接入自部署 Magpie 统一管理多家供应商与密钥，也可直连 OpenAI / Anthropic / Google 或本地 Ollama 等兼容接口 |
+| 云端浏览器与设备节点 | 容器内 `agent-computer` 提供隔离浏览器与 `/workspace`；PC 客户端与 `chisabot-node` 通过 WSS 连接受控操作你的电脑与服务器 |
 
-设置 `CHISABOT_RUNTIME_MODE=local` 后，服务端使用本地会话实现，不要求 `INTELLIGENCE_API_KEY`、`INTELLIGENCE_API_URL` 或 `INTELLIGENCE_GATEWAY_WS_URL`。本地模式不提供依赖 Intelligence 的自动学习及云端管理功能。
+当接入第三方云端大模型 API 时，当前回合所需的上下文与工具定义会发送至你所配置的模型服务商；若希望推理过程同样完全留在受控硬件内，可将模型地址指向内网自建的兼容推理服务端，并按需关闭联网搜索与外部连接器。
 
-`CHISABOT_RUNTIME_MODE=intelligence` 保留上游运行方式，需要配置 Intelligence 项目连接。不要把上游文档中的要求当作本地模式的要求。
+## 2. 中文部署包与公网登录边界
 
-如果模型通过第三方 API 推理，对话请求会发送到所选模型服务。要将推理也留在自己控制的设备上，可接入 Ollama 等提供 OpenAI 兼容接口的自托管服务，并按需要关闭外部连接器、遥测与依赖联网的界面能力。模型本身的权重许可和硬件要求由所选模型决定。
+`examples/zh-CN/` 提供默认中文品牌、共享技能与初始配置模板。`deploy/` 提供容器编排与 `deploy/public/` 前置 HTTPS 登录网关模板：
 
-## 中文与网页登录
+- 公网访问统一经前置认证网关完成 Argon2id 密码会话校验，再向仅监听回环地址（`127.0.0.1:3001`）的应用后端签发身份请求头。
+- `CHISABOT_SINGLE_USER=true` 仅用于本机回环开发调试，或处在已启用前置 HTTPS 登录网关保护的内部后端；严禁将未受网关保护的单用户端口直接暴露到公网（详见 [安全信任边界](ops/trust-boundary.md) 与 [自托管部署](../deploy/README.zh-CN.md)）。
 
-`examples/zh-CN/` 包含中文品牌、BOT、频道与技能配置。`deploy/` 提供登录服务与认证网关模板，由网关验证登录后访问应用内部服务；登录会话、模型密钥和数据库保留在部署环境中。
+## 3. 命名空间与存量数据兼容
 
-`CHISABOT_SINGLE_USER=true` 仅适用于本地开发或由认证网关保护的内部服务。完整步骤见 [部署说明](../deploy/README.zh-CN.md)。
+现役代码、HTTP 路由（`/api/conversations`）、请求头（`x-chisabot-*`）、环境变量（`CHISABOT_*`）与数据库会话表（`chisabot_local_*`、`chisabot_channel_mappings`）均已统一收敛至 ChisaBot 自有命名空间：
 
-## 改名与数据兼容
+- 中文租户包的 `tenant.id` 保持为 `chisabot`，展示名称为 `ChisaBot`。
+- 已部署实例升级时，启动脚本通过 `deploy/pin-resources.sh` 与数据库卷内的 `identity` 文件（`docker/s6/scripts/database-identity.sh`）保留原物理卷、网络与内置 PostgreSQL 角色身份，确保历史会话、保险箱密钥与工作区文件零丢失（详见 [命名切换与存量资源兼容](ops/upstream-removal.md)）。
 
-以下内部名称继续保留，避免改名影响已有数据或接口：
+## 4. 客户端与分发说明
 
-- `CHISABOT_*` 环境变量、`@chisabot/*` 内部包名及协议标识。
-- 现有租户 ID、数据库、Docker 服务、存储卷与本地数据目录。
-- 桌面 Tauri 标识、二进制名称、移动应用标识与深层链接协议。
+- **网页 / PWA**：随服务端镜像同步更新，支持桌面三栏与手机单栏布局。
+- **Windows PC（`pc/`）与无界面节点（`chisabot-node`）**：集成聊天窗口与本地文件/终端/编程代理节点能力，支持签名在线更新（见 [PC 更新签名](pc-update-signing.md) 与 [发布流程](release.md)）。
+- **Android（`android/`）**：原生壳提供扫码绑定、相机/文件选择、通知与 APK 更新，主界面复用服务器手机端 React 布局。
 
-这些内部名称与 ChisaBot 展示品牌分别维护。中文租户包的 `tenant.id` 保留为 `chisabot`，`product_name` 为 `ChisaBot`。
-
-## 客户端与上游资料
-
-桌面和移动源码保留上游的安装、OAuth、遥测和发布集成。桌面安装流程中部分软件下载仍使用上游来源，分发前应检查自己的配置、构建与签名。私有源码仓库不表示已有 ChisaBot 公共镜像、桌面安装器或移动安装包。
-
-[上游技术参考](README.md#上游技术参考) 保留架构、工具权限、插件和发布资料。涉及上游发布基础设施、Intelligence 及自动学习的步骤只在选用相应能力时适用。
+自行构建或二次分发客户端安装包前，请替换为你自己的更新源地址、应用签名证书与服务器域名配置。

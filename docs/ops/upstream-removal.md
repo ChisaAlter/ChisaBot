@@ -1,46 +1,44 @@
-# 升级到自有 Conversation 命名
+# 命名空间切换与存量资源兼容
 
-本次清理删除聊天中的上游推广横幅、销售链接和相关配置，现役会话接口、模块、协议与新部署资源统一使用 ChisaBot 命名。清理后的 reader 4 版本已于 2026-11-09 正式部署；版本身份、数据保留结果和恢复位置见[个人助理实施记录](../pipeline-runs/20261108-assistant-production.md)。
+ChisaBot 已完成产品命名空间统一与历史过渡代码清理：现役会话接口（`/api/conversations`）、请求头（`x-chisabot-*`）、前端状态模块、执行内核（DSH）与数据库表名均统一使用自有命名，同时通过原地数据库迁移与宿主机挂载卷固定机制保障存量部署零数据丢失。
 
-## 更新会话表时保留原数据
+## 1. 数据库原地迁移与废弃空表清理（`0067` / `0068`）
 
-迁移 `0067_conversation_namespace` 将三张表原地改名：
+命名切换与历史表收尾通过两次显式 Drizzle 迁移在原库上原地完成，保留全部用户记录、消息 ID、外键约束与序列水位：
 
-| 原表                    | 当前表                   |
-| ----------------------- | ------------------------ |
-| `openbot_local_threads` | `chisabot_local_threads` |
-| `openbot_local_runs`    | `chisabot_local_runs`    |
-| `openbot_local_events`  | `chisabot_local_events`  |
+1. **迁移 `0067_conversation_namespace`（会话三表改名，reader 升至 4）**：
+   - `openbot_local_threads` → `chisabot_local_threads`
+   - `openbot_local_runs` → `chisabot_local_runs`
+   - `openbot_local_events` → `chisabot_local_events`
+   - 同步重命名主键、外键、索引与事件自增序列。升级后产品 reader 固定为 **4**，禁止再用 reader 1–3 的旧镜像挂载同一数据库。
+2. **迁移 `0068`（频道映射表改名、事件载荷键名归一与废弃空表清理）**：
+   - 将频道线程映射表 `intelligence_channel_mappings` 原地重命名为 `chisabot_channel_mappings`；
+   - 将历史会话事件 JSONB 载荷中的遗留兼容键名原地归一为现役字段；
+   - 清理移除早已下线且无现役消费者的废弃空表（包括已下线的云端 Claude Code `chisabot_cloud_workspaces` / `chisabot_cc_*`、`chisabot_legacy_imports`、`team_bot_*`、`proactive_*`、`demonstrations`、`organization_settings`、`memory_sources` 等历史遗留表）。
 
-迁移同步约束、索引和事件序列名称，保留表对象、记录、外键、原始消息和待决输入；不创建空库替换历史。旧迁移及旧快照继续保留，以便新安装完整重放迁移。若两代同名用途的表同时存在，迁移会拒绝猜选，需要先核对数据来源。
+早期迁移 SQL 文件与快照继续保留在 `server/drizzle/` 中，供全新安装按序完整重放。
 
-产品 reader 升为 **4**，可从 1、2、3 升级；升级后禁止用 reader 1–3 镜像读取该数据库。更新器在候选启动、可能执行迁移之前，先持久保存最低 reader 要求；即使随后健康检查失败，旧进程的快照和健康检查也不能降低该要求，回滚及账号替换仍须满足 reader 4。
+## 2. 代码层旧路由、旧请求头与过渡内核彻底移除
 
-部署本次迁移前，先安装随版本提供的宿主更新器 helper，并保留 reader 4 兼容恢复镜像。若迁移后的候选不健康，保持新执行暂停，使用兼容镜像恢复。发布仍沿串行更新器，在备份、排空与隔离升级验收完成后执行。
+随着自有命名迁移与 DSH 内核稳定运行，代码层历史过渡垫片已全部退役下线：
 
-## 原安装的登录、草稿和设备继续使用
+- **移除旧路由与请求头兼容层**：服务端旧 `/api/copilotkit` 适配路由、`x-openbot-*` 旧请求头、环境变量旧前缀兼容层及前端旧垫片模块已彻底删除；Web、PC、Android 客户端统一调用 `/api/conversations` 与自有认证会话。
+- **退役旧执行内核与云端连接代码**：早期过渡用的 Hermes ACP 桥接内核、Intelligence 云端托管连接模式、Mastra 协议桥接及上游推广横幅逻辑均已从代码库与依赖树中彻底移除；`CHISABOT_AGENT_KERNEL=dsh` 为唯一内置执行内核。
+- **纯净依赖产物**：开发、CI 与容器构建统一使用 `bun install --frozen-lockfile --omit=peer` 与 `npm ci --prefix runtime/dsh`，实际安装产物中不含任何已移除的上游包。
 
-新客户端主动请求 `/api/conversations`。旧 `/api/copilotkit` URL 只在服务端集中适配入口转换，仍经过相同的账号鉴权与权限检查。旧保存事件、签名续执行输入和未知效果记录只在读取边界转换，不改写原历史或重新产生效果。
+## 3. 存量容器卷固定与数据库身份兼容（零数据丢失防线）
 
-认证网关改用当前产品 Cookie 和 `chisabotAuthRequired`。旧 Cookie 的读取、续期和撤销集中在认证兼容模块；旧桌面收到的登录失效响应仍可正常跳转。登录 Cookie 迁移后，回退核心服务时仍需使用支持两代 Cookie 的认证网关及当前会话库；直接恢复只识别旧 Cookie 的网关会让已迁移的客户端失去登录。旧浏览器主题、草稿和设置在首次读取前迁移，已有的新设置优先。
+为防止已有部署在容器名称或默认前缀更新后误建空白卷，部署与容器启动层保留两项物理资源兼容机制：
 
-已安装 Agent 的旧 header 和环境变量只在 `shared/legacy-headers.ts`、`shared/legacy-compat.ts` 读取。发送给旧 Agent 的必要双 header 也集中于该模块；业务代码使用当前名称。
+1. **挂载卷与网络自动固定（`deploy/pin-resources.sh`）**：
+   - 新安装默认使用 `chisabot-zh`（或 `chisabot`）卷与网络命名；
+   - 存量部署在运行 `deploy/start.sh`、宿主机更新器或安装脚本时，自动调用 `deploy/pin-resources.sh` 检测当前容器实际挂载的物理卷与网络并写入 `.env` 固定；若需手工直接执行 `docker compose`，请先执行：
+     ```sh
+     . ./pin-resources.sh
+     pin_existing_resources .env chisabot-zh
+     ```
+2. **内置 PostgreSQL 集群身份读取（`docker/s6/scripts/database-identity.sh`）**：
+   - 容器内嵌入式 PostgreSQL 将初始角色与库名记录在数据卷的 `identity` 文件中；
+   - `database-identity.sh` 在启动时优先读取既有数据卷中的 `identity` 标记，使存量数据库集群继续沿用原有底层角色与库名平滑启动，仅在初始化全新空卷时写入当前默认名称。
 
-## 现有卷和数据库身份不能按名字重建
-
-新部署默认使用 `chisabot` 卷、网络和内置数据库身份。已有部署仍需挂载原来的物理资源。`deploy/start.sh`、更新器与安装入口会调用 `deploy/legacy-resources.sh`，把运行中容器的真实挂载和网络固定到部署配置；无运行容器时识别旧资源，并在新旧数据库卷同时存在时要求明确选择。
-
-使用原入口启动或更新。若必须直接调用 Compose，先在部署目录执行以下兼容准备，再使用原 `.env` 和 Compose 命令：
-
-```sh
-. ./legacy-resources.sh
-pin_existing_resources .env chisabot-zh
-```
-
-内置 PG 的身份标记保存在原数据库卷。已有集群保留原角色和数据库，新集群才采用当前名称。发布前的排空检查通过集中 schema 适配读取旧表，迁移后改读新表；不得先把维护脚本中的 SQL 改为新表再去排空尚未升级的实例。
-
-## 依赖使用现有独立协议入口
-
-项目已移除直接 CopilotKit 依赖。官方 `@ag-ui/mastra` 的主入口继续承担 Mastra 协议转换；它不加载单独的 CopilotKit 集成入口。开发、CI 和 Docker 安装统一使用 `--omit=peer`，实际干净安装中没有 CopilotKit 包。Bun 锁文件仍记录官方包声明的可选 peer 解析元数据；这些记录不进入安装产物。
-
-AG-UI、MCP、DSH 和现有界面组件继续使用。必要的来源与许可证见项目 [LICENSE](../../LICENSE) 和 [README](../../README.md)；历史迁移、研究资料及已有用户消息中的原名称不作为运行时依赖，也不因产品清理而删除。
+升级已有实例时，请始终保留原数据库卷、DSH Session 卷与原 `KEY_ENCRYPTION_KEY`，切勿为追求卷名统一而删除旧卷重建。

@@ -144,4 +144,4 @@ Android 安装包位于 `android/app/build/outputs/apk/debug/app-debug.apk`，�
 
 最终 Android 源码、APK 与文档随同一部署批次单独归档；已发布网页资源没有新增变动，无需为壳修复重建服务端。A15 中尚未覆盖的真实 provider 故障组合、A13 精确丢失等待回执窗口仍按表中范围记录；真实外部 IM 维持用户暂缓。
 
-运维使用入口：[DSH 部署与回滚](../ops/dsh-runtime.md)、[账号独立运行时](../ops/dsh-accounts.md)、[Intelligence 历史迁移](../intelligence-migration.md)。运行命令、临时资源和恢复所有者留在工作记录中，不把私有部署信息写入公开文档。
+运维使用入口：[DSH 部署与回滚](../ops/dsh-runtime.md)、[账号独立运行时](../ops/dsh-accounts.md)、[命名切换与存量资源兼容](../ops/upstream-removal.md)。运行命令、临时资源和恢复所有者留在工作记录中，不把私有部署信息写入公开文档。

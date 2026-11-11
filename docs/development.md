@@ -1,137 +1,84 @@
-# Development
+# 本地开发参考
 
-Start with [Quick start](getting-started.md) for the current DSH, database, encryption and login setup. The maintained system layout is [Architecture](architecture.md); first installation uses the [self-hosting guide](../deploy/README.zh-CN.md), and existing deployments use [serial release and recovery](ops/deploy.md).
+首次配置数据库、加密密钥与模型连接可先阅读 [快速开始](getting-started.md)。现役系统结构以 [ChisaBot 架构](architecture.md) 为准；生产容器部署见 [自托管部署](../deploy/README.zh-CN.md)，线上更新与回滚见 [串行部署](ops/deploy.md)。
 
-## Setup
+## 1. 环境与依赖安装
 
-Install Docker, [Bun](https://bun.sh) 1.3.14, Node.js 24.9 or later, `lsof`, `openssl`, and `curl`.
-Configure your own environment and encryption key as described in Quick start before starting services.
+本地开发需准备：Docker（用于运行本地 PostgreSQL + `pgvector` 或 `agent-computer`）、[Bun](https://bun.sh) `1.3.14`、Node.js `24.9+`（运行 DSH Host）、`openssl` 与 `curl`。
+
+在仓库根目录执行：
 
 ```sh
 cp .env.example .env
 bun install --frozen-lockfile --omit=peer
+npm ci --prefix runtime/dsh
 ```
 
-`CHISABOT_RUNTIME_MODE=local` keeps product conversations in PostgreSQL. DSH also needs its account Host, targets and tool gateway configured; a model connection alone does not start that runtime. Follow [DSH operations](ops/dsh-runtime.md) for that wiring.
+- 根工作区统一使用 `--omit=peer` 安装锁定依赖；`runtime/dsh` 为独立锁文件的 Node.js 子包，需单独执行 `npm ci --prefix runtime/dsh`。
+- `.env.example` 默认开启本地免登录单用户模式（`CHISABOT_SINGLE_USER=true`、`TRUSTED_ORIGINS=http://localhost:3010`）与 `CHISABOT_AGENT_KERNEL=dsh`。切勿将公开示例 `KEY_ENCRYPTION_KEY` 用于生产部署。
 
-## Running services
+## 2. 启动本地开发服务
 
-Run `bun run dev` for the frontend and API (app 3010, server 3001); prepare the database and DSH Host separately. For an installed deployment, `deploy/start.sh` builds the root Dockerfile's `chisabot` target; upgrades follow [the serial release path](ops/deploy.md).
+确保本地 PostgreSQL（`postgres://chisabot:chisabot@localhost:5432/chisabot`）已启动并执行迁移后，运行：
 
-Historical note: the upstream laptop stack (`scripts/start.sh`, `stop.sh` and the root `docker-compose.yml`, including agent-bot, agent-langgraph, supervisor and SPIRE) was removed in slimming P3 on 2026-10-15. These are not current startup entrypoints.
+```sh
+bun run dev
+```
 
-**Nothing here sweeps staged attachments.** A file dropped into the composer is stored before the
-message is sent, and the only thing that reclaims the ones never sent is
-`bun scripts/cull-staged-attachments.ts` from `server/`. The local `bun run dev` process does not schedule it.
-It needs only `DATABASE_URL`, and takes a
-retention window in hours as its one optional argument, defaulting to 24. On a laptop that is
-usually nothing, because the rows are small and the database is yours. It stops being nothing at
-thirty-two: one person may hold that many unsent files across every channel at once, the refusal on
-the next one promises they are cleared within a day, and where nothing sweeps they are not, so a
-long-lived local deployment can reach a state where attaching anything is refused. Removing a file
-in the composer deletes it outright, so it takes abandoned drafts rather than ordinary use.
-For a persistent deployment, use the attachment timer described in the [self-hosting guide](../deploy/README.zh-CN.md#数据与兼容性) and the [operations guide](ops/deploy.md).
+- 前端 Vite 开发服务器默认监听 `http://localhost:3010`，API 服务端监听 `http://localhost:3001`。
+- 本地开发下，服务端会按 `CHISABOT_DSH_ROOT=.data/dsh` 自动按需拉起本机 DSH Host 进程；生产多账号独立 Host 与工具网关接线见 [DSH 运行时与恢复](ops/dsh-runtime.md)。
+- **未发送草稿附件清理**：聊天输入框暂存但未发送的附件在单人累计达到 32 个时会拦截新上传。`bun run dev` 不内置定时清扫，长期本地开发如需手动回收超过 24 小时的弃用草稿附件，可在 `server/` 下执行 `bun scripts/cull-staged-attachments.ts`。生产部署由 systemd 附件清理定时器自动处理。
 
-## Migrations
+## 3. 数据库迁移（Drizzle）
 
-After changing the Drizzle schema:
+修改 `server/src/db/` 下的 Drizzle Schema 后，生成并应用迁移：
 
 ```sh
 bun run --filter server db:generate
 bun run --filter server db:migrate
 ```
 
-Review generated migration files before sharing them. `start.sh` applies existing migrations when it starts the stack.
+遵循以下迁移安全规范：
 
-**Do not hand-edit a generated migration.** It leaves a file that no longer matches what the
-generator produced. If the generated SQL will not work — `ADD COLUMN ... NOT NULL` fails on a table
-that already has rows — split it instead: generate the column nullable, add the data step, then
-generate the constraint.
+1. **禁止手改自动生成的结构迁移 SQL**：若生成的 `ADD COLUMN ... NOT NULL` 在已有数据的表上无法直接执行，应拆分为「新增可空列 → 独立数据回填迁移 → 后续版本收紧约束」。
+2. **自定义数据迁移 / 原地重命名使用 `--custom`**：
+   ```sh
+   bun run --filter server db:generate -- --custom --name=your_migration_name
+   ```
+   仅在 `--custom` 生成的已登记空白迁移文件中手写幂等 SQL。
+3. **保持 `meta/_journal.json` 与 `server/drizzle/*.sql` 严格对应**：CI 会运行 `drizzle-kit check` 与脏 Schema 检测；合并或变基后若 `drizzle-kit migrate` 异常退出，请核对 `_journal.json` 中记录的文件名是否与磁盘 SQL 文件完全一致。
 
-**A constraint that tightens an existing column belongs to a later release**, not to the release that
-adds the column. A rolling deploy runs the migrations and then serves from old and new replicas at
-once, and an old replica writes rows without the new column: under `NOT NULL` its writes start
-failing, so the release that added the column breaks for everybody who lands on a replica that has
-not been replaced yet. Ship the column nullable, let the fleet turn over, then tighten it. `issuer`
-on `accounts` is the worked example: the column is nullable and no migration tightens it.
+## 4. 代码质量检查与测试
 
-**A data step is its own migration**, created with the flag that exists for it:
+提交 PR 前请按 [`.github/workflows/chisabot.yml`](../.github/workflows/chisabot.yml) 执行质量检查：
 
 ```sh
-bun run --filter server db:generate -- --custom --name=backfill_something
-```
-
-A generator diffs schema against schema, so a rule like "the rows whose provider is Google get
-Google's issuer" can never come out of one: it is not in the schema. `--custom` writes an empty file
-registered in the journal, and it is the only migration anybody should be writing by hand.
-
-CI enforces two things about this: `drizzle-kit check` for collisions and gaps between migrations,
-and a generate-and-fail-if-dirty probe that refuses a schema change with no migration written for it.
-
-**If `drizzle-kit migrate` hangs and then exits non-zero with no error**, the journal names a
-migration file that is not there. A rebase does this: `meta/_journal.json` is a checked-in file, so
-restoring it can reinstate entries for migrations that were renamed. `drizzle-kit check` reports
-"Everything's fine" in that state, because it compares schemas rather than checking that the journal
-and the directory agree. Compare `meta/_journal.json` against `ls server/drizzle/*.sql`.
-
-## Quality checks
-
-Run these before opening a pull request:
-
-```sh
+node scripts/check-zh-localization.cjs
 bun run format:check
 bun run lint
 bun run typecheck
 bun run test
+bun run test:app
 bun run build
 ```
 
-Integration tests expect a PostgreSQL database with pgvector. Point `TEST_DATABASE_URL` at a dedicated database such as `postgres://openbot:openbot@localhost:5432/openbot_test` before running them.
+### 数据库集成测试隔离红线
 
-They refuse to use the application `chisabot` database. `DATABASE_URL` is still the application setting, and the database client removes it from the process environment after opening a connection to preserve the Windows Bun connection fix, so tests use `TEST_DATABASE_URL` as their immutable fixture address. Running them against a deployment you are using puts test Bots in its audit trail and its activity reports, so create a separate database and migrate that before running the integration suite.
-
-CI uses `bun run test:ci` to verify the expected test count in addition to normal tests.
-
-`bun run test:smoke` is separate and needs a deployment that is up, and a session on it:
+服务端数据库集成测试要求独立的 PostgreSQL（带 `pgvector`）测试库，通过 `TEST_DATABASE_URL` 指定：
 
 ```sh
-# 先用 deploy/start.sh 起一个部署
-export CHISABOT_SMOKE_COOKIE='better-auth.session_token=...'
-bun run test:smoke
+export TEST_DATABASE_URL=postgres://chisabot:chisabot@localhost:5432/chisabot_test
 ```
 
-It drives one journey over HTTP against the running stack, so it covers the joins the rest of the
-suite cannot reach: server to supervisor to computer, the gateway deciding before the browser acts,
-and the audit row landing. Point it elsewhere with `CHISABOT_API_URL`. Without a deployment it is
-skipped by `bun run test` and says what to start when asked for by name.
+测试框架拒绝连接应用日常使用的 `chisabot` 库，以防测试产生的临时机器人与审计记录污染真实数据；**严禁**对生产数据库运行任何集成测试（详见 [测试与验证](testing.md)）。CI 中使用 `bun run test:ci` 额外校验预期用例数量。
 
-The session is not optional and not a convenience. Every route the journey proves is behind
-`requireUser`, so without one the three tests that act on a computer answer 401 and the run reports
-a broken deployment when nothing is broken. Take the cookie from a browser already signed in to the
-deployment under test, from DevTools under Application, Cookies. It is a credential with that
-person's reach: it belongs in the environment of the run, not in a file or a pull request comment.
-Asked for without it, the run stops before the first test and names the variable.
+### 可选专项测试
 
-`bun run test:live-screen` is separate for a related reason and needs no deployment, only this
-directory's own dependencies:
+- **运行栈冒烟测试（`bun run test:smoke`）**：针对已通过 `deploy/start.sh` 启动的实例验证完整 HTTP 链路，需在环境变量中提供有效登录 Cookie（`CHISABOT_SMOKE_COOKIE`，切勿写入代码或 PR 评论）。
+- **云端浏览器实时画面测试（`bun run test:live-screen`）**：需先在 `agent-computer/` 下执行 `bun install` 安装 Playwright 与 Chromium，再设置 `CHISABOT_LIVE_SCREEN=1` 运行。
 
-```sh
-cd agent-computer && bun install
-cd .. && bun run test:live-screen
-```
+## 5. 提交检查清单
 
-It drives the live screen against the real computer process with a real Chromium: a socket closing
-while the browser is still starting, a second connection taking the screen from the first, the wheel
-refusing input from the socket that owns it, and a browser closing by request or by the idle sweep.
-Those need `agent-computer/src/index.ts`, which imports Playwright at module scope, and `playwright`
-is declared only in `agent-computer/package.json`, which `bun install` at the root does not reach. So
-without `CHISABOT_LIVE_SCREEN=1` the files skip before importing anything, which is what keeps
-`bun run test` and CI working where that dependency was never installed.
-
-## Contribution checklist
-
-- Keep changes focused.
-- Keep credentials, service-account JSON, customer data, and transcripts out of source control.
-- Put sensitive behavior on the server, not only in the browser.
-- Update [configuration](configuration.md), [architecture](architecture.md), or the root [README](../README.md) when behavior changes.
-- Run the quality checks above and include the results in the pull request.
+- 保持改动聚焦，敏感权限与安全边界必须在服务端强制校验，不能仅靠前端隐藏。
+- 严禁将任何真实密钥、Cookie、私人服务器域名、本机绝对路径（含个人用户名）或用户对话内容提交进版本库。
+- 涉及配置项、架构或功能入口变更时，同步更新 [环境变量参考](configuration.md)、[架构说明](architecture.md) 或 [功能目录](features.md)。

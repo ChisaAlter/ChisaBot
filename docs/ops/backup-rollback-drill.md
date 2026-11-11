@@ -76,9 +76,9 @@ bash /opt/chisabot-updater/post-deploy-smoke.sh
 
 ```sh
 BK=/opt/chisabot-updater/backups/<时间>-<任务>
-# 停写或停应用后：
-# pg_restore --clean --if-exists -d openbot "$BK/chisabot.dump"
-# 具体库名/角色以 compose 为准；恢复前对当前库再 pg_dump 一次。
+# 停写或停应用后（库名/角色以容器 /var/lib/postgresql/identity 或 compose 为准，新集群默认 chisabot）：
+# pg_restore --clean --if-exists -d chisabot "$BK/chisabot.dump"
+# 恢复前务必对当前库再 pg_dump 一次。
 ```
 
 ## 6. 下次演练建议

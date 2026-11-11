@@ -35,7 +35,7 @@
 | [`plugins/mcp.ts`](../../server/src/plugins/mcp.ts)、[`plugins/composio.ts`](../../server/src/plugins/composio.ts) | MCP 经统一 Streamable HTTP 客户端；Composio 用户身份来自服务端连接，不来自模型参数 | 巡检仅调用本用户已授权的读工具；外部写操作经批准再调用相同连接器 |
 | [`memory-notes/service.ts`](../../server/src/memory-notes/service.ts) | 已有按用户保存、检索、整理、遗忘的个人记忆 | 以来源、更新时间与用户明确偏好补全工作上下文；推测性兴趣与确认事实分开保存 |
 | [`agents/handoff-*`](../../server/src/agents/) | 已有 BOT 交接及后台交付路径 | 专业 BOT 可承担子任务；统一任务中心增加依赖和父任务验收，不把一次回合结束等同于目标达成 |
-| [`examples/acp-agent/README.md`](../../examples/acp-agent/README.md)、[`agents/hermes-runtime.ts`](../../server/src/agents/hermes-runtime.ts) | 当前生产 Hermes 路径保留宿主身份、模型、工具权限与审批，使用运行工具网关和稳定执行账本 | 新任务执行应复用这条宿主集成。旧 `docs/agent-capability.md` 中“桥默认 allow_once、状态只在内存”的描述不能作为当前生产路径依据 |
+| `examples/acp-agent/README.md`、`server/src/agents/hermes-runtime.ts`（历史过渡实现，后已由 DSH 替代） | 当时生产 Hermes 路径保留宿主身份、模型、工具权限与审批，使用运行工具网关和稳定执行账本 | 新任务执行应复用这条宿主集成。旧 `docs/agent-capability.md` 中“桥默认 allow_once、状态只在内存”的描述不能作为当前生产路径依据 |
 
 **连接可见性与后台可用性必须分开。** Codex 当前会话看得到 Gmail、日历或 Drive 工具，不意味着 ChisaBot 进程拥有可续期的同一授权。后台连接必须在 ChisaBot 内登记、授权、探测，并显示连接健康和失效原因；不读取或复制 Codex 的私有令牌。
 

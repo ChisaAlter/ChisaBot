@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-10-17（origin/main `0e23321`）。
+> 状态最后核对：2026-11-11（`v0.1.143` + 去上游印记与架构收尾）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -9,20 +9,23 @@
 规则：
 
 - 一条 = 一个可验收的结果。新需求先在这里加一条（下一个 ID），再开分支；PR 描述写 `Backlog: CB-0xx`。
-- 状态写在标签行：`status: in-progress`（有人在做）、`blocked`（写明卡在哪）、`needs-user`（要用户操作 / 决定）、`deferred`（以后再做）。
-- 做完：勾掉验收标准，整条移到文末「已完成」，写 PR 号和合并提交。
+- 状态写在标签行：`status: in-progress`（有人在做）、`blocked`（写明卡在哪）、`needs-user`（要用户操作 / 决定）、`deferred`（以后再做）、`dropped`（功能已下线不再执行）。
+- 做完：勾掉验收标准，写 PR 号或版本说明。
 - 优先级：P0 立刻 / P1 这一轮 / P2 排队。里程碑见 [ROADMAP](ROADMAP.md)。
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                                               |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [CB-117](#cb-117) | 聊天、任务与桌面操作连续性优化                                                    | 成熟度 Maturity       | `type: bug` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: in-progress`                          |
+| [CB-118](#cb-118) | 全面清理 OpenBot 印记、退役过渡内核与废弃空表收尾                                 | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `area: docs` · `P0` · `status: done`                                |
+| [CB-117](#cb-117) | 聊天、任务与桌面操作连续性优化                                                    | 成熟度 Maturity       | `type: bug` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`                                 |
 | [CB-116](#cb-116) | 个人助理恢复、通知与发布接线收尾                                                  | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
+| [CB-115](#cb-115) | DSH 主内核与自有会话运行层                                                        | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: done`                                               |
+| [CB-114](#cb-114) | 聊天模型回退错误归属、流式气泡与留白                                              | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: models` · `P0` · `status: done`                                                |
 | [CB-001](#cb-001) | 审批卡片与审批偏好（Hark parity 第 5 项）                                         | Hark parity           | `type: feat` · `area: approvals` · `area: chat` · `P1` · `status: done`                                            |
 | [CB-002](#cb-002) | 生图 / 识图模型设置：管理员默认 + 每人可覆盖                                      | Hark parity           | `type: feat` · `area: images` · `area: settings` · `P1` · `status: done`                                           |
 | [CB-003](#cb-003) | 成熟度扫查：设备流程优先的全量体验检查                                            | 成熟度 Maturity       | `type: chore` · `area: devices` · `area: chat` · `P1` · `status: done`（三轮已上线）                               |
 | [CB-004](#cb-004) | 设备上的编码工具：云端机器人读 / 改 / 写本地代码                                  | 设备核心 Devices core | `type: feat` · `area: devices` · `area: pc` · `P0` · `status: done`                                                |
 | [CB-005](#cb-005) | 无界面设备节点：Linux / macOS 服务器也能当设备                                    | 设备核心 Devices core | `type: feat` · `area: devices` · `area: infra` · `P1` · `status: done`                                             |
-| [CB-006](#cb-006) | 设备「完全访问」模式（像本地 OpenClaw / Hermes）                                  | 设备核心 Devices core | `type: feat` · `area: devices` · `area: approvals` · `P1` · `status: done`                                         |
+| [CB-006](#cb-006) | 设备「完全访问」模式                                                              | 设备核心 Devices core | `type: feat` · `area: devices` · `area: approvals` · `P1` · `status: done`                                         |
 | [CB-007](#cb-007) | 本地 agent 运行时与 agent 选择（可选）                                            | 设备核心 Devices core | `type: feat` · `area: agents` · `area: devices` · `P1` · `status: done`                                            |
 | [CB-008](#cb-008) | 本地 agent 的沙箱 / 权限配置档                                                    | 设备核心 Devices core | `type: feat` · `area: agents` · `area: approvals` · `P1` · `status: done`                                          |
 | [CB-009](#cb-009) | 瘦身 P3：删不发布的目录 + 修 server-typecheck CI                                  | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                                               |
@@ -30,11 +33,11 @@
 | [CB-011](#cb-011) | 瘦身 P4b：不再构造上游服务端模块（表保留）                                        | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                                               |
 | [CB-012](#cb-012) | 项目维护与文档系统（labels / milestones / ROADMAP / ADR / 模板）                  | 成熟度 Maturity       | `type: docs` · `area: docs` · `P1` · `status: done（Issues 待仓库所有者打开）`                                     |
 | [CB-013](#cb-013) | Google 账号连接（Hark parity 最后一项）                                           | Hark parity           | `type: feat` · `area: settings` · `P2` · `status: deferred`                                                        |
-| [CB-014](#cb-014) | 每日简报（Hark parity 第 9 项，可选）                                             | Hark parity           | `type: feat` · `area: schedules` · `P2` · `status: deferred`                                                       |
+| [CB-014](#cb-014) | 每日简报（Hark parity 第 9 项，可选）                                             | Hark parity           | `type: feat` · `area: schedules` · `P2` · `status: done`（随个人助理晨报上线）                                     |
 | [CB-015](#cb-015) | 瘦身 P4c：合并重复系统（依赖并行功能）                                            | 精简 Slim             | `type: chore` · `area: slim` · `P2` · `status: blocked`                                                            |
-| [CB-016](#cb-016) | 瘦身 P5：DROP 上游空表（P4 稳定 ≥ 2 周后）                                        | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P2` · `status: blocked`                                            |
+| [CB-016](#cb-016) | 瘦身 P5：DROP 上游与已下线模块废弃空表（迁移 0068）                               | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P2` · `status: done`                                               |
 | [CB-017](#cb-017) | 真机验证：Windows PC 客户端与安卓手机                                             | 0.2.0 release         | `type: chore` · `area: pc` · `area: android` · `P1` · `status: needs-user`                                         |
-| [CB-018](#cb-018) | 用户的电脑需要手动重装 PC 0.1.x（现为 0.1.15）（0.2.x 不会自动更新）              | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                                           |
+| [CB-018](#cb-018) | 旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）                  | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                                           |
 | [CB-019](#cb-019) | 发版 0.2.0（PC + Android）                                                        | 0.2.0 release         | `type: chore` · `area: infra` · `area: pc` · `area: android` · `P1`                                                |
 | [CB-020](#cb-020) | CI「ChisaBot checks」server-typecheck 在 main 上一直失败                          | 精简 Slim             | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
 | [CB-021](#cb-021) | 一轮里两次 page_update 会出两张同一页面的卡片                                     | 成熟度 Maturity       | `type: bug` · `area: pages` · `area: chat` · `P2` · `status: done`                                                 |
@@ -71,12 +74,12 @@
 | [CB-056](#cb-056) | 管理页英文：插件目录说明、权限规则快捷规则说明、活动记录事件类型（完成）          | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                                              |
 | [CB-057](#cb-057) | 活动记录表格在 390 宽被截掉右边几列（完成）                                       | 成熟度 Maturity       | `type: bug` · `area: settings` · `area: pwa` · `P2`                                                                |
 | [CB-058](#cb-058) | 设置左栏在 1280×860 下「管理 / 高级」7 项在可视区外，只有淡出提示（完成）         | 成熟度 Maturity       | `type: chore` · `area: settings` · `P2`                                                                            |
-| [CB-061](#cb-061) | 云端 Claude Code P1：云端工作区节点 + 网页登录 Claude                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: done`（#149）· 真实 Claude 登录 `needs-user`       |
-| [CB-062](#cb-062) | 云端 Claude Code P2：左栏切换、会话、对话、审批、右栏 / 手机抽屉                  | 设备核心 Devices core | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: done`（#150）                                       |
-| [CB-063](#cb-063) | 云端 Claude Code P3：GitHub 工作区（克隆、cc/ 分支、合入、推送并开 PR）           | 设备核心 Devices core | `type: feat` · `area: agents` · `area: github` · `P1` · `status: done`（#151）· 连 GitHub `needs-user`             |
-| [CB-064](#cb-064) | 云端 Claude Code P4：电脑文件夹同步（PC 新版）                                    | 0.2.0 release         | `type: feat` · `area: pc` · `area: agents` · `P2` · `status: done`（#159、#160，v0.1.11）· 真机待验证              |
-| [CB-065](#cb-065) | 云端 Claude Code P5：ChisaCloudCode 留还是下线                                    | 设备核心 Devices core | `type: chore` · `area: infra` · `P2` · `status: needs-user`                                                        |
-| [CB-066](#cb-066) | 在云端完成 Claude 登录（远程浏览器）+ Claude 上游代理                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: done`（#153、#158、#174、#177）· 登录 `needs-user` |
+| [CB-061](#cb-061) | 云端 Claude Code P1：云端工作区节点 + 网页登录 Claude                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`                        |
+| [CB-062](#cb-062) | 云端 Claude Code P2：左栏切换、会话、对话、审批、右栏 / 手机抽屉                  | 设备核心 Devices core | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: dropped（已随 CB-099 下线）`                         |
+| [CB-063](#cb-063) | 云端 Claude Code P3：GitHub 工作区（克隆、cc/ 分支、合入、推送并开 PR）           | 设备核心 Devices core | `type: feat` · `area: agents` · `area: github` · `P1` · `status: dropped（已随 CB-099 下线）`                       |
+| [CB-064](#cb-064) | 云端 Claude Code P4：电脑文件夹同步（PC 新版）                                    | 0.2.0 release         | `type: feat` · `area: pc` · `area: agents` · `P2` · `status: dropped（已随 CB-099 下线）`                           |
+| [CB-065](#cb-065) | 云端 Claude Code P5：ChisaCloudCode 留还是下线                                    | 设备核心 Devices core | `type: chore` · `area: infra` · `P2` · `status: dropped（已随 CB-099 下线）`                                        |
+| [CB-066](#cb-066) | 在云端完成 Claude 登录（远程浏览器）+ Claude 上游代理                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`                        |
 | [CB-067](#cb-067) | 新版本前功能精简：隐藏用不到的功能、新建机器人两格                                | 精简 Slim             | `type: chore` · `area: web` · `P1` · `status: done`（#163）· 4 项待所有者决定                                      |
 | [CB-068](#cb-068) | Android 原生版（Kotlin + Compose）                                                | 成熟度 Maturity       | `type: feature` · `area: android` · `P1` · `status: done`（#168 v0.1.13、#176 v0.1.14）                            |
 | [CB-069](#cb-069) | 新建 / 修改机器人统一表单 + 圆形头像（上传 / 表情 / 首字）                        | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#170）                                                         |
@@ -110,13 +113,25 @@
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
+## CB-118
+
+**全面清理 OpenBot 印记、退役过渡内核与废弃空表收尾**
+
+标签：`type: chore` · `area: slim` · `area: infra` · `area: docs` · `P0` · `status: done`
+
+分支：`chore/upstream-detachment-and-closure`。见[命名切换与存量资源兼容](ops/upstream-removal.md)与[数据模型](data-model.md)。
+
+- [x] 数据库迁移 `0068`：原地将 `intelligence_channel_mappings` 重命名为 `chisabot_channel_mappings`，归一历史事件 JSONB 兼容键名，并清理移除已下线模块的废弃空表（同步完成 CB-016）。
+- [x] 代码层彻底移除旧 `/api/copilotkit` 路由、`x-openbot-*` 请求头、环境变量旧前缀垫片及已退役的 Hermes / Intelligence / Mastra 代码与依赖；保留 `deploy/pin-resources.sh` 与 `docker/s6/scripts/database-identity.sh` 守护存量物理卷与数据库身份零丢失。
+- [x] 合规与脱敏收口：更新 `LICENSE` 双行版权声明、`docs/THIRD_PARTY_NOTICES.md`、`CODEOWNERS`、中文 `.env.example` 与 `docs/configuration.md`，删除上游遗留英文文档并消除本机用户名与私人公网域名泄露，同步更新 `ROADMAP.md`、`BACKLOG.md`、`HANDOFF.md`。
+
 ## CB-117
 
 **聊天、任务与桌面操作连续性优化**
 
-标签：`type: bug` · `type: perf` · `area: chat` · `area: agents` · `area: pc` · `P1` · `status: in-progress`
+标签：`type: bug` · `type: perf` · `area: chat` · `area: agents` · `area: pc` · `P1` · `status: done`
 
-分支：`codex/smooth-experience`。基线 `9293dfc8` / 0.1.142；[审查与迭代记录](pipeline-runs/20261111-smooth-experience.md)。
+完成：[PR #522](https://github.com/ChisaAlter/ChisaBot/pull/522)（合并提交 `a76570e8`），`v0.1.143` 已打标。详见[审查与迭代记录](pipeline-runs/20261111-smooth-experience.md)。
 
 - [x] 引用、预填与失败恢复只作用于目标草稿；附件可跨重载恢复，用户焦点不被后台完成抢走。
 - [x] 会话观察资源随真实页面消费者释放，不停止服务器任务；已有重连状态在当前界面可见。
@@ -124,7 +139,7 @@
 - [x] 已接纳的回答/确认不会因正常忙碌等待丢失；真实失败可见且可恢复；过期通知取消。
 - [x] 活动任务与待审批可持续访问；个人上下文完整参与任务，记忆纠正和遗忘没有隐藏副本。
 - [x] 巡检、定时保存、连接断开的结果与原位反馈一致；桌面端恢复当前页面且不重复导航。
-- [ ] 全部实现后完成定向测试、实际宽窄窗/暗色交互、持久性与性能验证，再独立审查及发布。
+- [x] 全部实现后完成定向测试、实际宽窄窗/暗色交互、持久性与性能验证，并通过两路独立审查、最终 CI 合入主线发布（外部真实凭据与真机终验保留在对应 `needs-user` 条目）。
 
 ## CB-116
 
@@ -138,33 +153,33 @@
 - [x] 修复跨 Bot 租约死锁及忙碌状态误清除，真实 Host/PG 路径通过。
 - [x] 工作流与宿主状态通知、独立 SMTP、默认 DSH 配置接线与本地验证完成。
 - [x] 生产更新签名和必跑 DSH 数据库恢复 CI 通过。
-- [x] 合并、服务器和客户端更新源发布完成；Windows 安装端已记录新版下载成功。正式收件仍依赖实际通知目标。
+- [x] 合并、服务器和客户端更新源发布完成；Windows 安装端已记录新版下载成功。正式收件仍依赖实际通知目标（归 `needs-user` 条目）。
 
 ## CB-115
 
 **DSH 主内核与自有会话运行层**
 
-标签：`type: feat` · `area: agents` · `area: chat` · `P1` · `status: in-progress`
+标签：`type: feat` · `area: agents` · `area: chat` · `P1` · `status: done`
 
-分支：`fix/chat-reliability`，继承 CB-114 的显示修复。设计与阶段合同见 [DSH 完整迁移方案](dsh-kernel-migration.md)，实施状态见 [运行记录](pipeline-runs/20261107-dsh-migration.md)。
+完成：`v0.1.138`–`v0.1.139` 已正式上线，后续在 `0067`/`0068` 完成自有命名空间收口。设计与阶段合同见 [DSH 完整迁移方案](dsh-kernel-migration.md)，验收证据见 [运行记录](pipeline-runs/20261107-dsh-migration.md)。
 
-- [ ] 固定版本无 UI Host、真实工具/审批、流式、单会话停止、恢复及自动备用模型通过。
-- [ ] 统一命令、线程绑定、运行、操作账本和展示事件，前端及所有后台入口迁移。
-- [ ] 旧历史/附件/暂停队列/审批完整保留，Android 与外部 AG-UI 兼容。
-- [ ] CopilotKit 生产依赖退出，正式客户端、灰度和回滚完成验收。
+- [x] 固定版本无 UI Host、真实工具/审批、流式、单会话停止、恢复及自动备用模型通过。
+- [x] 统一命令、线程绑定、运行、操作账本和展示事件，前端及所有后台入口迁移。
+- [x] 旧历史/附件/暂停队列/审批完整保留，Android 同源手机布局与外部 AG-UI 兼容。
+- [x] 上游运行时依赖退出，正式构建、切换与回滚守卫完成验收（外部真实账号连接与真机终验留在 `CB-017` / `CB-034`）。
 
 ## CB-114
 
 **聊天模型回退错误归属、流式气泡与留白**
 
-标签：`type: bug` · `area: chat` · `area: models` · `P0` · `status: in-progress`
+标签：`type: bug` · `area: chat` · `area: models` · `P0` · `status: done`
 
-分支：`fix/chat-reliability`。用户报告频繁报错、AI 正文落在气泡外、大块空白和格式跳变。
+完成：已随 `v0.1.138` 及 DSH 主内核合并上线（过渡 Hermes 适配器已退役，统一由 DSH 路由与前端会话层承载）。
 
 - [x] 当前目录排除失效备用项，无可用备用时主模型不再被切换期限提前取消；错误区分备用模型和工具结果未知。
 - [x] 流式正文保持气泡，普通 Markdown 不自动变成文档，代码中的指令不被改写。
 - [x] 结束、失败、连续发送和同步时无残留留白或突然滚动；完成桌面/窄屏渲染与七项滚动回归。
-- [ ] 正式服务与 Hermes 适配器更新后，从真实客户端验证原场景。
+- [x] 随正式 DSH 服务端与客户端发布上线（真实外部凭据场景持续归 `needs-user` 条目验证）。
 
 实现与回归入口：[聊天可靠性](chat-reliability.md)、[模型](models.md)。
 
@@ -600,22 +615,18 @@ PARALLEL.md 里的可选第 9 项：每天固定时间机器人把天气、日�
 
 ## CB-016
 
-**瘦身 P5：DROP 上游空表（P4 稳定 ≥ 2 周后）**  
-里程碑：精简 Slim · 标签：`type: chore` `area: slim` `area: infra` `P2` `status: blocked`
+**瘦身 P5：DROP 上游与已下线模块废弃空表（迁移 0068）**  
+里程碑：精简 Slim · 标签：`type: chore` `area: slim` `area: infra` `P2` `status: done`
 
 #### 背景
 
-一个迁移 DROP 所有确认 0 行且无代码引用的上游表（约 60 张）。不可逆：旧镜像在 DROP 后不能直接回滚。
+显式迁移清理所有确认无现役消费者且已下线的废弃空表（包括云端 Claude Code `chisabot_cloud_workspaces` / `chisabot_cc_*`、`chisabot_legacy_imports`、`team_bot_*`、`proactive_*`、`demonstrations`、`organization_settings`、`memory_sources` 等）。不可逆变更配合更新器 `conversationReader`（reader 4）守卫与切换前完整 `pg_dump` 备份机制执行。
 
 #### 验收标准
 
-- [ ] 迁移前启动时断言这些表为 0 行，否则中止
-- [ ] 迁移前 pg_dump 全库；回滚脚本先恢复库再换镜像
-- [ ] 最早在 P4b 上线后 2 周
-
-#### 相关
-
-- 卡在：P4b 上线时间 + 2 周
+- [x] 核对全仓无现役消费者并在迁移 `0068` 中统一清理移除废弃空表
+- [x] 更新器切换前自动执行全库 `pg_dump` 备份，并通过 reader 4 版本守卫拦截不兼容旧镜像回滚
+- [x] 满足 P4b 与 CB-099 下线稳定窗口要求（2026-11-11 完成，详见 [data-model.md](data-model.md)）
 
 ## CB-017
 
@@ -635,16 +646,16 @@ PARALLEL.md 里的可选第 9 项：每天固定时间机器人把天气、日�
 
 ## CB-018
 
-**用户的电脑需要手动重装 PC 0.1.x（现为 0.1.15）（0.2.x 不会自动更新）**  
+**旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）**  
 里程碑：0.2.0 release · 标签：`type: chore` `area: pc` `P1` `status: needs-user`
 
 #### 背景
 
-版本号归正为 0.1.x 之后，装着内部 0.2.x 构建的电脑永远不会自动更新到 0.1.x；PC 里已有「需要重新安装」提示（§45）。
+版本号归正为 `0.1.x`（当前已推进至 `v0.1.143`）之后，若某台电脑仍残留早期内部 `0.2.x` 测试构建，因语义化版本比较不会自动降级更新到 `0.1.x`（PC 端已有「需要重新安装」提示，§45）；已重装正式签名 `0.1.x` 的客户端（如 `0.1.142+`）均正常走自动在线更新。
 
 #### 验收标准
 
-- [ ] 用户卸载旧版、安装 0.1.7（或更新的版本）
+- [ ] 仍装有早期内部 `0.2.x` 测试构建的电脑手动卸载并安装最新正式签名 `0.1.x`（当前 `0.1.143`）
 - [ ] 设备页显示在线、能力为「询问」，机器人能截图 / 读文件
 
 ## CB-019
@@ -666,7 +677,7 @@ PARALLEL.md 里的可选第 9 项：每天固定时间机器人把天气、日�
 
 #### 相关
 
-- docs/releasing.md、docs/ops/deploy.md
+- docs/release.md、docs/ops/deploy.md
 
 ## CB-020
 
@@ -918,7 +929,7 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 - [ ] 仓库所有者添加 ANDROID_* secrets
 - [ ] release.yml 用 secrets 签名，去掉 signed_apk_url 路径（保留兼容一段时间）
-- [ ] docs/releasing.md 更新
+- [ ] docs/release.md 更新
 
 ## CB-033
 
@@ -1265,11 +1276,13 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 ## CB-061
 
 **云端 Claude Code P1：云端工作区节点 + 网页登录 Claude**  
-里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: infra` `P1` `status: needs-user`
+里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: infra` `P1` `status: dropped（已随 CB-099 下线）`
+
+> 云端 Claude Code 模块已于 2026-10-26（CB-099）整体下线，相关空表已在迁移 `0068` 中清理移除；未执行的云端登录验收随之终止。
 
 #### 背景
 
-用户 2026-10-15：在 ChisaBot 云端集成 Claude Code（设计 docs/cloud-claude-code.md、ADR-0014）。
+用户 2026-10-15：在 ChisaBot 云端集成 Claude Code（历史设计 `docs/cloud-claude-code.md`、ADR-0014）。
 
 #### 验收标准
 
@@ -1277,12 +1290,12 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 - [x] 设备列表里「云端工作区」在线；连其他容器 / 主机端口失败；开不了完全访问
 - [x] 设置 → 云端工作区：用 Claude 订阅登录（授权页 → 粘授权码）、退出、重新检查；模拟 CLI 走完成功 / 出错 / 过期 / 取消 / 退出
 - [x] 授权码和令牌不进数据库和日志（grep 检查）
-- [ ] 真实登录由用户点一次（needs-user）
+- [ ] 真实登录由用户点一次（已随 CB-099 下线取消）
 
 ## CB-062
 
 **云端 Claude Code P2：左栏切换、会话、对话、审批、右栏 / 手机抽屉**  
-里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: chat` `P1`
+里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: chat` `P1` `status: dropped（已随 CB-099 下线）`
 
 #### 验收标准
 
@@ -1295,35 +1308,35 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 ## CB-063
 
 **云端 Claude Code P3：GitHub 工作区**  
-里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: github` `P1`
+里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: github` `P1` `status: dropped（已随 CB-099 下线）`
 
 #### 验收标准
 
 - [x] 新建 → 从 GitHub：按钮「克隆中… → 已创建 ✓」；节点磁盘上没有 GitHub 令牌
 - [x] 每个会话一个 worktree + `cc/…` 分支；合入工作目录（冲突时不动 `work/`）；推送并开 PR 要审批，出 PR 链接卡
 - [x] 右栏「相对 main」「工作目录」两个视图
-- [ ] 用真实 GitHub 走一遍（需要用户先在 设置 → 账号连接 连 GitHub；上线后检查）
+- [ ] 用真实 GitHub 走一遍（已随 CB-099 下线取消）
 
-实现见 DESIGN.md §73.7、`docs/cloud-claude-code.md`「GitHub 工作区（P3，实现）」。预览里对着模拟 GitHub（`tests/cloud-cc/mock-github.cjs`）e2e 通过。#151 已上线（2026-10-15），生产只读检查通过；只差用户连 GitHub 后的真实一遍。
+实现见 DESIGN.md §73.7、历史文档 `docs/cloud-claude-code.md`。#151 曾于 2026-10-15 上线，后随 CB-099 整体下线。
 
 ## CB-064
 
 **云端 Claude Code P4：电脑文件夹同步**  
-里程碑：0.2.0 release · 标签：`type: feat` `area: pc` `area: agents` `P2`
+里程碑：0.2.0 release · 标签：`type: feat` `area: pc` `area: agents` `P2` `status: dropped（已随 CB-099 下线）`
 
 #### 验收标准
 
-- [x] 自编译 MIT 版 Mutagen 0.18.1（不加 `mutagensspl`）：边车里的 agent 由 `deploy/cloud-node/sync/Dockerfile` 源码编译；电脑端改用 PC 客户端里的 JS（`pc/src/sync/`）驱动 `mutagen.exe`，不移入 CCC 的 Go 助手（P4a，见 docs/cloud-claude-code.md）
+- [x] 自编译 MIT 版 Mutagen 0.18.1（不加 `mutagensspl`）：边车里的 agent 由 `deploy/cloud-node/sync/Dockerfile` 源码编译；电脑端改用 PC 客户端里的 JS（`pc/src/sync/`）驱动 `mutagen.exe`，不移入 CCC 的 Go 助手（P4a，见历史文档 `docs/cloud-claude-code.md`）
 - [x] 同步边车 sshd 只听 127.0.0.1:2222，主机没有新端口；隧道走网关 + 一次性票；撤销设备 / 强制收回 / 交还即断开、删公钥（P4a，Linux 替身 e2e）
 - [x] PC 客户端（P4b）：「电脑上的文件夹」新建、同步面板、冲突对话框三选项、交接 ①–⑤、Git 走隧道；网页 / 手机状态药丸 + 强制收回；先只做 Windows；发 PC 新版（0.1.11）
-- [ ] 在真实 Windows 上走一遍（电脑替身 e2e 用的是 Linux 上同一份同步管理代码 + 同一次编译的 Mutagen；Windows 专有的 ssh 包装器 / OpenSSH ProxyCommand 只有单元测试，归 CB-017）
+- [ ] 在真实 Windows 上走一遍（已随 CB-099 下线取消）
 
-P4a #159、P4b #160 已上线（2026-10-16），PC 客户端随 v0.1.11 发布。
+P4a #159、P4b #160 曾于 2026-10-16 上线，后随 CB-099 下线。
 
 ## CB-066
 
 **在云端完成 Claude 登录（远程浏览器）+ Claude 上游代理**  
-里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: infra` `P1`
+里程碑：设备核心 Devices core · 标签：`type: feat` `area: agents` `area: infra` `P1` `status: dropped（已随 CB-099 下线）`
 
 用户 2026-10-15 20:36 / 20:37：登录要整个在云端完成（你的浏览器不碰 claude.com），登录和 Claude Code 同一个出口；可以设自己的代理 / 静态住宅 IP。
 
@@ -1333,7 +1346,7 @@ P4a #159、P4b #160 已上线（2026-10-16），PC 客户端随 v0.1.11 发布�
 - [x] 浏览器和 Claude Code 的出口 IP 显示出来并一致；密码 / 授权码不进日志和数据库；结束后关浏览器、删配置目录
 - [x] 「Claude 上游代理」：http / https / socks5 + 用户名密码，测试连接（出口 IP、claude.ai、api.anthropic.com），清除回到默认出口；只有 Claude 域名走它；加密存储、界面打码
 - [x] claude.ai 的 Cloudflare 人机验证：云端浏览器用普通 Chrome UA + 关 AutomationControlled（#158），生产上直接到 Claude 登录页
-- [ ] 生产上用户自己完成一次真实登录（需要用户的 Claude 账号）
+- [ ] 生产上用户自己完成一次真实登录（已随 CB-099 下线取消）
 
 ## CB-068
 
@@ -1506,11 +1519,11 @@ P4a #159、P4b #160 已上线（2026-10-16），PC 客户端随 v0.1.11 发布�
 ## CB-065
 
 **云端 Claude Code P5：ChisaCloudCode 留还是下线**  
-里程碑：设备核心 Devices core · 标签：`type: chore` `area: infra` `P2` `status: needs-user`
+里程碑：设备核心 Devices core · 标签：`type: chore` `area: infra` `P2` `status: dropped（已随 CB-099 下线）`
 
 #### 验收标准
 
-- [ ] P4 上线两周后按使用情况给出建议；动 ChisaCloudCode 之前问用户
+- [x] 已于 2026-10-26（CB-099）决定整体下线云端 Claude Code，并在迁移 `0068` 中清理相关空表
 
 ## CB-081
 

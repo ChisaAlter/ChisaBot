@@ -162,7 +162,7 @@ ChisaBot 把自托管的 [Magpie](https://github.com/yetone/magpie)（`ghcr.io/y
                                               └─ 模型请求            → magpie:3425/v1（网关 API）
 ```
 
-- **网关 API**：ChisaBot 容器通过 Docker 网络 `openbot_magpie` 访问 `http://magpie:3425/v1`，使用 Magpie 中名为 `ChisaBot` 的调用密钥（caller key）。该密钥加密保存在 ChisaBot 数据库（「管理后台 → 模型设置」），不会出现在浏览器里。
+- **网关 API**：ChisaBot 容器通过 Docker 网络 `chisabot_magpie`（存量部署通过 `pin-resources.sh` 保留原固定网络名）访问 `http://magpie:3425/v1`，使用 Magpie 中名为 `ChisaBot` 的调用密钥（caller key）。该密钥加密保存在 ChisaBot 数据库（「管理后台 → 模型设置」），不会出现在浏览器里。
 - **管理控制台**：ChisaBot 服务器在 `/magpie-admin/` 下反向代理 `http://magpie:3430`。代理在服务端注入 Magpie 的 Web key（Cookie `magpie_web_3430`），并把控制台里的 `/api/…` 调用改写到 `/magpie-admin/api/…`。
 
 ## 部署配置

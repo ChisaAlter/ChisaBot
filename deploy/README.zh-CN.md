@@ -25,7 +25,7 @@ sh deploy/start.sh
 
 主服务默认只监听 `127.0.0.1:3001`。公网使用需要继续配置 [HTTPS 登录网关](public/README.zh-CN.md)。网关保护下的后端沿用单管理员工作空间；不要将该单用户后端端口直接对外开放。
 
-`start.sh` 先检查 `.env`，通过 `legacy-resources.sh` 固定已有卷与网络，再检查 Compose 配置。它会**安装或升级宿主机在线更新服务 `chisabot-updater`**（`install-updater.sh`，需要 root + systemd；不满足时只提示，照常启动），创建共享模型网络，最后完整构建并启动容器。前端在镜像构建内生成，无须预先准备 `app/dist`。默认镜像名为 `local/chisabot:latest`，可通过 `CHISABOT_IMAGE` 修改；镜像会记下来源提交（工作区没有未提交改动时），系统更新页据此显示落后多少个提交。
+`start.sh` 先检查 `.env`，通过 `pin-resources.sh` 固定已有卷与网络，再检查 Compose 配置。它会**安装或升级宿主机在线更新服务 `chisabot-updater`**（`install-updater.sh`，需要 root + systemd；不满足时只提示，照常启动），创建共享模型网络，最后完整构建并启动容器。前端在镜像构建内生成，无须预先准备 `app/dist`。默认镜像名为 `local/chisabot:latest`，可通过 `CHISABOT_IMAGE` 修改；镜像会记下来源提交（工作区没有未提交改动时），系统更新页据此显示落后多少个提交。
 
 ## 在线更新（管理后台 → 系统更新）
 
@@ -64,9 +64,9 @@ API 端口 `3425`、管理端口 `3430` 只绑定 loopback。ChisaBot 容器通�
 
 ## 数据与兼容性
 
-首次安装使用 Compose 项目和容器名 `chisabot-zh`，卷默认为 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles`、`chisabot-zh_dsh`，内部网络为 `chisabot-zh_default`。配置与主动请求使用 `CHISABOT_*`、`/api/conversations` 等产品命名；旧配置和旧客户端只在集中兼容入口处理。
+首次安装使用 Compose 项目和容器名 `chisabot-zh`，卷默认为 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles`、`chisabot-zh_dsh`，内部网络为 `chisabot-zh_default`。现役配置、HTTP 请求与数据库表统一使用 `CHISABOT_*`、`/api/conversations` 与 `chisabot_*` 自有命名空间。
 
-已有安装必须通过 `start.sh` 或更新器升级：资源适配会优先采用现有容器挂载，并在 `.env` 固定实际卷名和网络名；旧数据库身份沿专用兼容入口使用。不要为了改名重建空卷、删除旧库或覆盖加密密钥。0067 将三张会话表原地改名，产品 reader 升至 4，完成后不能把 reader 1–3 的镜像重新挂到同一数据上。此次清理尚未发布，具体迁移与恢复约束见 [命名与资源迁移](../docs/ops/upstream-removal.md)。
+已有安装必须通过 `start.sh` 或更新器升级：`deploy/pin-resources.sh` 会优先采用现有容器挂载并在 `.env` 固定实际卷名和网络名，内置 PostgreSQL 启动脚本（`docker/s6/scripts/database-identity.sh`）会读取数据卷中的 `identity` 标记保持原有数据库角色与库名兼容。不要为了改名重建空卷、删除旧库或覆盖加密密钥。迁移 `0067` / `0068` 已完成会话表与频道映射表原地重命名（`chisabot_local_*`、`chisabot_channel_mappings`）及废弃空表清理，产品 reader 固定为 4，升级后不能再将 reader 1–3 的旧镜像挂回同一数据库。具体兼容与恢复边界见 [命名切换与存量资源兼容](../docs/ops/upstream-removal.md)。
 
 `KEY_ENCRYPTION_KEY` 加密持久化的模型密钥，必须随数据库备份保存；更新已有安装时不可重置它。`.env`、Magpie 私密配置、网页登录配置、会话数据库、证书与备份不能提交 Git。
 
@@ -96,4 +96,4 @@ bun run --cwd server typecheck
 docker compose --env-file deploy/.env -p chisabot-zh -f deploy/compose.yaml config --quiet
 ```
 
-这些命令检查本地源码与配置；发布还需对应候选的迁移、资源兼容和健康/恢复检查，以及桌面与手机布局的实际验收。按 [测试指南](../docs/testing.md) 先完成本地定向 QA，再执行最终 CI。当前候选的已通过项和未完成项见 [实施记录](../docs/pipeline-runs/20261108-assistant-production.md)。
+这些命令检查本地源码与配置；发布还需完成数据库迁移、资源兼容和健康/恢复检查，以及桌面与手机布局的实际验收。按 [测试指南](../docs/testing.md) 先完成本地定向 QA，再执行最终 CI。历史生产交付记录见 [实施记录](../docs/pipeline-runs/20261108-assistant-production.md)。

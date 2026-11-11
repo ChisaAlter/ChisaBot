@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 上游模型平台 → Magpie | 在宿主机 tcpdump 抓 Magpie 收到的 TLS 记录 | 每 ~180–200ms 到一批 |
 | Magpie → ChisaBot 服务器 | 同一次抓包，Magpie 发出的明文 SSE | 与上一行逐批对齐（Magpie 不缓冲） |
-| ChisaBot 服务器 | `POST /api/copilotkit/agent/<bot>/run` 直连 `127.0.0.1:3001` | AG-UI `TEXT_MESSAGE_CONTENT` 每个约 3 字，按上游节奏成批到达 |
+| ChisaBot 服务器 | `POST /api/conversations/agent/<bot>/run` 直连 `127.0.0.1:3001` | AG-UI `TEXT_MESSAGE_CONTENT` 每个约 3 字，按上游节奏成批到达 |
 | 自带网关（nginx :8443） | 同一请求经网关 | 与直连一致：无 gzip，`proxy_buffering off` |
 | Cloudflare | 从外网经公网网关（TLS 端口） | 与直连一致（无 `Content-Encoding`，无攒批） |
 | 浏览器 DOM | Playwright 每帧记录最后一条回复的文字长度 | **约 6 次/秒更新，每次跳 9–30 字** |
@@ -21,9 +21,9 @@
 
 - `app/src/lib/chat/smooth-reveal.ts`（纯函数）：每帧按积压量放字——速度 = 积压 / 180ms（指数追赶），最少 40 字/秒；硬上限：收到的字最多 400ms 内显示。切口不落在 Markdown 记号中间（`- `、`1. `、`## `、`**`、` ``` ` 和后面第一个字一起放出），不拆 emoji 代理对。新内容不是旧内容的延续就整段显示。
 - `app/src/lib/chat/use-smooth-text.ts`：requestAnimationFrame 驱动，只在有积压时跑；挂载时已有的内容（历史消息）直接显示；标签页在后台或系统「减少动态效果」时立刻整段显示；超过 6000 字时最多 30 帧/秒重画。
-- `app/src/components/chat/smooth-markdown.tsx`：`SmoothStreamdown`（频道聊天、群聊、工作流步骤输出）。机器人聊天只有频道聊天一套（CB-046，DESIGN.md §68，ADR-0013），以前给 `/bot`（CopilotChat）用的 `SmoothMarkdownRenderer` / `reasoning-zh.tsx` 已删。Streamdown 仍负责把未闭合的 `**` / ` ``` ` 先补上。复制按钮读消息原文，不受影响。
+- `app/src/components/chat/smooth-markdown.tsx`：`SmoothStreamdown`（频道聊天、群聊、工作流步骤输出）。机器人聊天只有频道聊天一套（CB-046，DESIGN.md §68，ADR-0013），以前给旧 `/bot` 页面用的 `SmoothMarkdownRenderer` / `reasoning-zh.tsx` 已删。Streamdown 仍负责把未闭合的 `**` / ` ``` ` 先补上。复制按钮读消息原文，不受影响。
 - 「开场一句 → 结果」的收起规则（DESIGN.md §27）照旧：它读的是 DOM 里的文字，最多晚 400ms 看到。
-- 服务器给 `/api/copilotkit/*` 的 SSE 响应加 `X-Accel-Buffering: no` 和 `Cache-Control: no-cache, no-transform`（`server/src/app.ts` `markEventStreamUnbuffered`）。自带网关本来就不缓冲、不压缩 SSE（`deploy/public/nginx.conf`：`gzip_types` 不含 `text/event-stream`，`proxy_buffering off`）；这两个头是给自己部署、前面再套一层 nginx / CDN 的人用的。
+- 服务器给 `/api/conversations/*` 的 SSE 响应加 `X-Accel-Buffering: no` 和 `Cache-Control: no-cache, no-transform`（`server/src/app.ts` `markEventStreamUnbuffered`）。自带网关本来就不缓冲、不压缩 SSE（`deploy/public/nginx.conf`：`gzip_types` 不含 `text/event-stream`，`proxy_buffering off`）；这两个头是给自己部署、前面再套一层 nginx / CDN 的人用的。
 
 ## 自己部署时的检查清单
 
@@ -33,7 +33,7 @@
 # 直连服务器 vs 经过你的代理，比较 TEXT_MESSAGE_CONTENT 的到达时间
 curl -N -s -X POST -H 'content-type: application/json' -H 'accept: text/event-stream' \
   -d '{"threadId":"probe-1","runId":"r1","messages":[{"id":"m1","role":"user","content":"写三百字"}],"tools":[],"context":[],"state":{},"forwardedProps":{}}' \
-  https://你的域名/api/copilotkit/agent/<机器人 id>/run | while IFS= read -r l; do printf '%s %s\n' "$(date +%s.%N)" "${l:0:60}"; done
+  https://你的域名/api/conversations/agent/<机器人 id>/run | while IFS= read -r l; do printf '%s %s\n' "$(date +%s.%N)" "${l:0:60}"; done
 ```
 
 - nginx：`proxy_buffering off;`，`gzip_types` 里不要有 `text/event-stream`（或尊重 `X-Accel-Buffering`）。

@@ -42,7 +42,7 @@
 ## 3. 数据库访问（只读排查）
 
 ```sh
-docker exec -it chisabot-zh sh -c 'PGPASSWORD=$(cat /var/lib/postgresql/pgpassword) psql -h 127.0.0.1 -U openbot openbot'
+docker exec -it chisabot-zh sh -c '. /etc/s6-overlay/scripts/database-identity.sh && PGPASSWORD=$(cat /var/lib/postgresql/pgpassword) psql -h 127.0.0.1 -U "$DB_USER" "$DB_NAME"'
 ```
 
 排查时默认只读（`SELECT`）。需要写的操作先 `pg_dump` 一份，并优先通过网页或 API 完成。
