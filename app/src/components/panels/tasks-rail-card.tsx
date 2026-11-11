@@ -1,14 +1,23 @@
 import {
   IconAlertTriangle,
+  IconArrowDown,
+  IconArrowUp,
   IconCheck,
   IconCircleCheck,
   IconCircleDashed,
   IconCircleOff,
   IconCircleX,
+  IconDots,
+  IconEye,
   IconGitBranch,
   IconPaperclip,
+  IconPinned,
+  IconPinnedOff,
   IconPlayerPause,
   IconPlayerPlay,
+  IconPlayerStop,
+  IconPlus,
+  IconRefresh,
   IconShieldCheck,
   IconX,
 } from "@tabler/icons-react";
@@ -20,7 +29,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
+import { CreateTask } from "@/components/task-center/create-task";
 import {
   ACTIVE_STATUSES,
   CATEGORY_LABELS,
@@ -29,13 +39,31 @@ import {
   taskDate,
 } from "@/components/task-center/labels";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
 import { ClientError } from "@/lib/client";
 import {
+  type TaskControl,
   taskCenterApi,
   taskCenterKeys,
   taskCenterSnapshotOptions,
 } from "@/lib/task-center-api";
+import {
+  getItemOrderMeta,
+  type ItemOrderMeta,
+  moveRailItem,
+  type RailOrderSection,
+  sortSectionItems,
+  toggleRailItemPin,
+  useTaskRailOrder,
+} from "@/lib/task-rail-order";
 import {
   WorkflowSaveError,
   workflowKeys,
@@ -54,6 +82,13 @@ import {
   type WorkflowRunView,
   type WorkflowStepStatus,
 } from "../../../../shared/workflows";
+import {
+  CATEGORY_ICONS,
+  formatRailErrorSummary,
+  type RailDetailTarget,
+  TaskRailDetailDialog,
+} from "./task-rail-detail-dialog";
+import "../task-center/task-center.css";
 import "./tasks-rail-card.css";
 
 /**
@@ -95,9 +130,11 @@ export function useRailTasksSummary() {
 }
 
 /**
- * 右栏「任务」选项卡内容：集中展示待确认审批、进行中的任务与工作流步骤进度、近期交付记录。
+ * 右栏「任务」选项卡内容：集中展示待确认审批、进行中的任务与工作流步骤进度、近期交付记录，
+ * 支持原位操作（三点菜单：取消、置顶、上移、下移、暂停/继续/重试）与点击卡片丝滑弹窗查看详情。
  */
 export function TasksRailCard() {
+  const queryClient = useQueryClient();
   const {
     snapshot,
     workflows,
@@ -106,41 +143,68 @@ export function TasksRailCard() {
     activeRuns,
     approvalCount,
   } = useRailTasksSummary();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<RailDetailTarget | null>(
+    null,
+  );
 
   const data = snapshot.data;
-  const recentTasks =
-    data?.tasks
-      .filter((task) =>
-        ["succeeded", "failed", "cancelled"].includes(task.status),
-      )
-      .slice(0, 5) ?? [];
+  const finishedTasks =
+    data?.tasks.filter((task) =>
+      ["succeeded", "failed", "cancelled"].includes(task.status),
+    ) ?? [];
 
   return (
     <div className="task-rail" data-testid="tasks-rail-card">
       <header className="task-rail-header">
         <h2>{"任务进度"}</h2>
-        <Link
-          className="task-rail-center-link"
-          search={{ view: approvalCount > 0 ? "outbox" : "active" }}
-          to="/tasks"
-        >
-          {"任务中心"}
-        </Link>
+        <div className="task-rail-header-actions">
+          <button
+            className="task-rail-new-btn"
+            onClick={() => setCreateOpen(true)}
+            type="button"
+          >
+            <IconPlus aria-hidden className="size-3.5" />
+            {"新建"}
+          </button>
+          <Link
+            className="task-rail-center-link"
+            search={{ view: approvalCount > 0 ? "outbox" : "active" }}
+            to="/tasks"
+          >
+            {"任务中心"}
+          </Link>
+        </div>
       </header>
       <TasksRailBody
         activeRuns={activeRuns}
         activeTasks={activeTasks}
+        detailTarget={detailTarget}
+        finishedTasks={finishedTasks}
         inboxCount={data?.counts.inbox ?? 0}
-        snapshot={snapshot}
-        workflows={workflows}
-        pendingDecisions={pendingDecisions}
-        recentTasks={recentTasks}
+        onOpenDetail={setDetailTarget}
         pendingCount={data?.decisionCounts?.pending ?? pendingDecisions.length}
+        pendingDecisions={pendingDecisions}
+        snapshot={snapshot}
         taskCount={data ? activeTaskCount(data.counts) : 0}
+        workflows={workflows}
+      />
+      <CreateTask
+        onCreated={(createdId) => {
+          setCreateOpen(false);
+          void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
+          setDetailTarget({ kind: "task", taskId: createdId });
+        }}
+        onOpenChange={setCreateOpen}
+        open={createOpen}
       />
     </div>
   );
 }
+
+type ActiveRailEntry =
+  | { kind: "run"; itemId: string; run: WorkflowRunView }
+  | { kind: "task"; itemId: string; task: TaskCenterTask };
 
 function TasksRailBody({
   snapshot,
@@ -148,26 +212,32 @@ function TasksRailBody({
   pendingDecisions,
   activeTasks,
   activeRuns,
-  recentTasks,
+  finishedTasks,
   pendingCount,
   taskCount,
   inboxCount,
+  detailTarget,
+  onOpenDetail,
 }: {
   snapshot: ReturnType<typeof useRailTasksSummary>["snapshot"];
   workflows: ReturnType<typeof useRailTasksSummary>["workflows"];
   pendingDecisions: TaskCenterDecision[];
   activeTasks: TaskCenterTask[];
   activeRuns: WorkflowRunView[];
-  recentTasks: TaskCenterTask[];
+  finishedTasks: TaskCenterTask[];
   pendingCount: number;
   taskCount: number;
   inboxCount: number;
+  detailTarget: RailDetailTarget | null;
+  onOpenDetail: (target: RailDetailTarget | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const orderMap = useTaskRailOrder();
   const [retrying, setRetrying] = useState(false);
   const snapshotFailed = railQueryFailed(snapshot);
   const workflowsFailed = railQueryFailed(workflows);
   const loading = railQueryLoading(snapshot) || railQueryLoading(workflows);
+
   const refreshTasks = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
   };
@@ -175,148 +245,299 @@ function TasksRailBody({
     void queryClient.invalidateQueries({ queryKey: workflowKeys.all });
   };
 
+  const sortedDecisions = useMemo(
+    () =>
+      sortSectionItems(
+        pendingDecisions,
+        (d) => `decision:${d.id}`,
+        orderMap.decisions,
+      ),
+    [pendingDecisions, orderMap.decisions],
+  );
+  const sortedDecisionIds = useMemo(
+    () => sortedDecisions.map((d) => `decision:${d.id}`),
+    [sortedDecisions],
+  );
+
+  const sortedActiveEntries = useMemo(() => {
+    const raw: ActiveRailEntry[] = [
+      ...activeRuns.map(
+        (run): ActiveRailEntry => ({
+          kind: "run",
+          itemId: `run:${run.id}`,
+          run,
+        }),
+      ),
+      ...activeTasks.map(
+        (task): ActiveRailEntry => ({
+          kind: "task",
+          itemId: `task:${task.id}`,
+          task,
+        }),
+      ),
+    ];
+    return sortSectionItems(raw, (entry) => entry.itemId, orderMap.active);
+  }, [activeRuns, activeTasks, orderMap.active]);
+
+  const sortedActiveIds = useMemo(
+    () => sortedActiveEntries.map((entry) => entry.itemId),
+    [sortedActiveEntries],
+  );
+
+  const recentTasks = useMemo(
+    () =>
+      sortSectionItems(
+        finishedTasks,
+        (task) => `task:${task.id}`,
+        orderMap.recent,
+      ).slice(0, 5),
+    [finishedTasks, orderMap.recent],
+  );
+  const sortedRecentIds = useMemo(
+    () => recentTasks.map((task) => `task:${task.id}`),
+    [recentTasks],
+  );
+
+  const sortedSectionIds: Record<RailOrderSection, string[]> = {
+    decisions: sortedDecisionIds,
+    active: sortedActiveIds,
+    recent: sortedRecentIds,
+  };
+
   const hasActiveOrPending =
-    pendingDecisions.length > 0 ||
-    activeTasks.length > 0 ||
-    activeRuns.length > 0;
+    sortedDecisions.length > 0 || sortedActiveEntries.length > 0;
 
   return (
-    <div className="task-rail-sections">
-      {snapshotFailed || workflowsFailed ? (
-        <div className="task-rail-notice" role="alert">
-          <p>
-            {snapshotFailed && workflowsFailed
-              ? "任务和工作流暂时无法刷新。"
-              : snapshotFailed
-                ? "任务暂时无法刷新。"
-                : "工作流暂时无法刷新。"}
-          </p>
-          <Button
-            // 只跟着用户点的这次重试转圈；后台 5 秒轮询不让按钮跟着闪。
-            loading={retrying}
-            onClick={() => {
-              setRetrying(true);
-              void Promise.allSettled([
-                snapshotFailed ? snapshot.refetch() : null,
-                workflowsFailed ? workflows.refetch() : null,
-              ]).finally(() => setRetrying(false));
-            }}
-            size="sm"
-            variant="outline"
-          >
-            {"重试"}
-          </Button>
-        </div>
-      ) : null}
-      {loading ? (
-        <div
-          aria-label="正在加载任务进度"
-          className="task-rail-loading"
-          role="status"
-        >
-          <span />
-          <span />
-          <span />
-        </div>
-      ) : null}
-
-      {pendingDecisions.length > 0 ? (
-        <RailSection
-          title="需要你确认"
-          count={
-            pendingCount > pendingDecisions.length
-              ? `${pendingDecisions.length} / ${pendingCount} 待确认`
-              : `${pendingCount} 待确认`
-          }
-        >
-          {pendingDecisions.map((decision) => (
-            <RailDecisionItem
-              decision={decision}
-              key={decision.id}
-              onChanged={refreshTasks}
-              onStale={() => dropStaleDecision(queryClient, decision.id)}
-            />
-          ))}
-          {pendingCount > pendingDecisions.length ? (
-            <Link
-              className="task-rail-center-link"
-              to="/tasks"
-              search={{ view: "outbox" }}
+    <>
+      <div className="task-rail-sections">
+        {snapshotFailed || workflowsFailed ? (
+          <div className="task-rail-notice" role="alert">
+            <p>
+              {snapshotFailed && workflowsFailed
+                ? "任务和工作流暂时无法刷新。"
+                : snapshotFailed
+                  ? "任务暂时无法刷新。"
+                  : "工作流暂时无法刷新。"}
+            </p>
+            <Button
+              // 只跟着用户点的这次重试转圈；后台 5 秒轮询不让按钮跟着闪。
+              loading={retrying}
+              onClick={() => {
+                setRetrying(true);
+                void Promise.allSettled([
+                  snapshotFailed ? snapshot.refetch() : null,
+                  workflowsFailed ? workflows.refetch() : null,
+                ]).finally(() => setRetrying(false));
+              }}
+              size="sm"
+              variant="outline"
             >
-              查看全部 {pendingCount} 项待确认
-            </Link>
-          ) : null}
-        </RailSection>
-      ) : null}
-      {activeRuns.length > 0 || activeTasks.length > 0 ? (
-        <RailSection
-          title="任务与工作流"
-          count={
-            taskCount > activeTasks.length
-              ? `${activeRuns.length + activeTasks.length} / ${activeRuns.length + taskCount} 项`
-              : `${activeRuns.length + activeTasks.length} 项`
-          }
-        >
-          {activeRuns.map((run) => (
-            <RailWorkflowRunItem
-              key={run.id}
-              onChanged={refreshWorkflows}
-              run={run}
-            />
-          ))}
-          {activeTasks.map((task) => (
-            <RailTaskItem key={task.id} onChanged={refreshTasks} task={task} />
-          ))}
-          {taskCount > activeTasks.length ? (
-            <Link
-              className="task-rail-center-link"
-              to="/tasks"
-              search={{ view: "active" }}
-            >
-              查看全部 {taskCount} 项任务
-            </Link>
-          ) : null}
-        </RailSection>
-      ) : null}
-
-      {!hasActiveOrPending &&
-      !loading &&
-      !snapshotFailed &&
-      !workflowsFailed ? (
-        recentTasks.length > 0 ? (
-          <p className="task-rail-idle-hint" role="status">
-            {"现在没有进行中的任务"}
-          </p>
-        ) : (
-          <div className="task-rail-empty">
-            <IconCircleCheck aria-hidden className="size-5" />
-            <div>
-              <p>{"当前没有待跟进的任务"}</p>
-              {inboxCount > 0 ? (
-                <Link to="/tasks" search={{ view: "inbox" }}>
-                  {`查看 ${inboxCount} 项待安排事项`}
-                </Link>
-              ) : (
-                <span>{"可以在对话中交办，或前往任务中心新建。"}</span>
-              )}
-            </div>
+              {"重试"}
+            </Button>
           </div>
-        )
-      ) : null}
+        ) : null}
+        {loading ? (
+          <div
+            aria-label="正在加载任务进度"
+            className="task-rail-loading"
+            role="status"
+          >
+            <span />
+            <span />
+            <span />
+          </div>
+        ) : null}
 
-      {recentTasks.length > 0 ? (
-        <RailSection title="最近交付" count={`${recentTasks.length} 项`}>
-          {recentTasks.map((task) => (
-            <RailTaskItem
-              key={task.id}
-              onChanged={refreshTasks}
-              task={task}
-              recent
-            />
-          ))}
-        </RailSection>
-      ) : null}
-    </div>
+        {sortedDecisions.length > 0 ? (
+          <RailSection
+            count={
+              pendingCount > sortedDecisions.length
+                ? `${sortedDecisions.length} / ${pendingCount} 待确认`
+                : `${pendingCount} 待确认`
+            }
+            title="需要你确认"
+          >
+            {sortedDecisions.map((decision) => {
+              const itemId = `decision:${decision.id}`;
+              const matchedTask = snapshot.data?.tasks.find(
+                (t) => t.id === decision.taskId,
+              );
+              return (
+                <RailDecisionItem
+                  decision={decision}
+                  itemId={itemId}
+                  key={decision.id}
+                  onChanged={refreshTasks}
+                  onOpenDetail={() =>
+                    onOpenDetail({
+                      kind: "task",
+                      taskId: decision.taskId,
+                      initialTask: matchedTask,
+                      decision,
+                      section: "decisions",
+                      orderItemId: itemId,
+                    })
+                  }
+                  onStale={() => dropStaleDecision(queryClient, decision.id)}
+                  orderMeta={getItemOrderMeta(
+                    orderMap.decisions,
+                    sortedDecisionIds,
+                    itemId,
+                  )}
+                  sectionIds={sortedDecisionIds}
+                />
+              );
+            })}
+            {pendingCount > sortedDecisions.length ? (
+              <Link
+                className="task-rail-center-link"
+                search={{ view: "outbox" }}
+                to="/tasks"
+              >
+                查看全部 {pendingCount} 项待确认
+              </Link>
+            ) : null}
+          </RailSection>
+        ) : null}
+
+        {sortedActiveEntries.length > 0 ? (
+          <RailSection
+            count={
+              taskCount > activeTasks.length
+                ? `${activeRuns.length + activeTasks.length} / ${activeRuns.length + taskCount} 项`
+                : `${activeRuns.length + activeTasks.length} 项`
+            }
+            title="任务与工作流"
+          >
+            {sortedActiveEntries.map((entry) =>
+              entry.kind === "run" ? (
+                <RailWorkflowRunItem
+                  itemId={entry.itemId}
+                  key={entry.itemId}
+                  onChanged={refreshWorkflows}
+                  onOpenDetail={() =>
+                    onOpenDetail({
+                      kind: "workflow",
+                      runId: entry.run.id,
+                      initialRun: entry.run,
+                      section: "active",
+                      orderItemId: entry.itemId,
+                    })
+                  }
+                  orderMeta={getItemOrderMeta(
+                    orderMap.active,
+                    sortedActiveIds,
+                    entry.itemId,
+                  )}
+                  run={entry.run}
+                  sectionIds={sortedActiveIds}
+                />
+              ) : (
+                <RailTaskItem
+                  itemId={entry.itemId}
+                  key={entry.itemId}
+                  onChanged={refreshTasks}
+                  onOpenDetail={() =>
+                    onOpenDetail({
+                      kind: "task",
+                      taskId: entry.task.id,
+                      initialTask: entry.task,
+                      section: "active",
+                      orderItemId: entry.itemId,
+                    })
+                  }
+                  orderMeta={getItemOrderMeta(
+                    orderMap.active,
+                    sortedActiveIds,
+                    entry.itemId,
+                  )}
+                  section="active"
+                  sectionIds={sortedActiveIds}
+                  task={entry.task}
+                />
+              ),
+            )}
+            {taskCount > activeTasks.length ? (
+              <Link
+                className="task-rail-center-link"
+                search={{ view: "active" }}
+                to="/tasks"
+              >
+                查看全部 {taskCount} 项任务
+              </Link>
+            ) : null}
+          </RailSection>
+        ) : null}
+
+        {!hasActiveOrPending &&
+        !loading &&
+        !snapshotFailed &&
+        !workflowsFailed ? (
+          recentTasks.length > 0 ? (
+            <p className="task-rail-idle-hint" role="status">
+              {"现在没有进行中的任务"}
+            </p>
+          ) : (
+            <div className="task-rail-empty">
+              <IconCircleCheck aria-hidden className="size-5" />
+              <div>
+                <p>{"当前没有待跟进的任务"}</p>
+                {inboxCount > 0 ? (
+                  <Link search={{ view: "inbox" }} to="/tasks">
+                    {`查看 ${inboxCount} 项待安排事项`}
+                  </Link>
+                ) : (
+                  <span>
+                    {"可以在对话中交办，或点右上角「新建」直接创建。"}
+                  </span>
+                )}
+              </div>
+            </div>
+          )
+        ) : null}
+
+        {recentTasks.length > 0 ? (
+          <RailSection count={`${recentTasks.length} 项`} title="最近交付">
+            {recentTasks.map((task) => {
+              const itemId = `task:${task.id}`;
+              return (
+                <RailTaskItem
+                  itemId={itemId}
+                  key={task.id}
+                  onChanged={refreshTasks}
+                  onOpenDetail={() =>
+                    onOpenDetail({
+                      kind: "task",
+                      taskId: task.id,
+                      initialTask: task,
+                      section: "recent",
+                      orderItemId: itemId,
+                    })
+                  }
+                  orderMeta={getItemOrderMeta(
+                    orderMap.recent,
+                    sortedRecentIds,
+                    itemId,
+                  )}
+                  recent
+                  section="recent"
+                  sectionIds={sortedRecentIds}
+                  task={task}
+                />
+              );
+            })}
+          </RailSection>
+        ) : null}
+      </div>
+
+      <TaskRailDetailDialog
+        allDecisions={snapshot.data?.outbox ?? []}
+        allTasks={snapshot.data?.tasks ?? []}
+        onClose={() => onOpenDetail(null)}
+        sortedSectionIds={sortedSectionIds}
+        target={detailTarget}
+      />
+    </>
   );
 }
 
@@ -388,7 +609,7 @@ function RailSection({
   children: ReactNode;
 }) {
   return (
-    <section className="task-rail-section" aria-label={title}>
+    <section aria-label={title} className="task-rail-section">
       <div className="task-rail-section-head">
         <h3>{title}</h3>
         <span>{count}</span>
@@ -468,12 +689,150 @@ function CardMeta({ at, children }: { at: string; children?: ReactNode }) {
   );
 }
 
+type CardMenuAction = {
+  key: string;
+  label: string;
+  Icon: typeof IconEye;
+  onSelect: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+};
+
+function CardMoreMenu({
+  title,
+  section,
+  sectionIds,
+  itemId,
+  orderMeta,
+  onOpenDetail,
+  primaryActions = [],
+  destructiveAction,
+}: {
+  title: string;
+  section: RailOrderSection;
+  sectionIds: readonly string[];
+  itemId: string;
+  orderMeta: ItemOrderMeta;
+  onOpenDetail: () => void;
+  primaryActions?: CardMenuAction[];
+  destructiveAction?: CardMenuAction;
+}) {
+  return (
+    <div className="task-rail-more-slot">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              aria-label={`「${title}」的更多操作`}
+              className="task-rail-more-btn"
+              data-testid="task-rail-more-trigger"
+              type="button"
+            />
+          }
+        >
+          <IconDots aria-hidden className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="glass-pop sg-menu w-[196px]"
+          side="bottom"
+          sideOffset={6}
+        >
+          <DropdownMenuGroup>
+            <DropdownMenuItem className="glass-mi" onClick={onOpenDetail}>
+              <IconEye className="size-4" />
+              <span className="min-w-0 flex-1">{"查看详情"}</span>
+            </DropdownMenuItem>
+            {primaryActions.map((actItem) => (
+              <DropdownMenuItem
+                className="glass-mi"
+                disabled={actItem.disabled}
+                key={actItem.key}
+                onClick={actItem.onSelect}
+              >
+                <actItem.Icon className="size-4" />
+                <span className="min-w-0 flex-1">{actItem.label}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+
+          <DropdownMenuSeparator className="glass-sep" />
+
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              className="glass-mi"
+              onClick={() => {
+                const pinned = toggleRailItemPin(section, sectionIds, itemId);
+                toast.info(pinned ? "已置顶" : "已取消置顶");
+              }}
+            >
+              {orderMeta.pinned ? (
+                <IconPinnedOff className="size-4" />
+              ) : (
+                <IconPinned className="size-4" />
+              )}
+              <span className="min-w-0 flex-1">
+                {orderMeta.pinned ? "取消置顶" : "置顶"}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="glass-mi"
+              disabled={!orderMeta.canMoveUp}
+              onClick={() => {
+                moveRailItem(section, sectionIds, itemId, -1);
+              }}
+            >
+              <IconArrowUp className="size-4" />
+              <span className="min-w-0 flex-1">{"上移"}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="glass-mi"
+              disabled={!orderMeta.canMoveDown}
+              onClick={() => {
+                moveRailItem(section, sectionIds, itemId, 1);
+              }}
+            >
+              <IconArrowDown className="size-4" />
+              <span className="min-w-0 flex-1">{"下移"}</span>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+
+          {destructiveAction ? (
+            <>
+              <DropdownMenuSeparator className="glass-sep" />
+              <DropdownMenuItem
+                className="glass-mi"
+                disabled={destructiveAction.disabled}
+                onClick={destructiveAction.onSelect}
+                variant="destructive"
+              >
+                <destructiveAction.Icon className="size-4" />
+                <span className="min-w-0 flex-1">
+                  {destructiveAction.label}
+                </span>
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 function RailDecisionItem({
   decision,
+  itemId,
+  sectionIds,
+  orderMeta,
+  onOpenDetail,
   onChanged,
   onStale,
 }: {
   decision: TaskCenterDecision;
+  itemId: string;
+  sectionIds: readonly string[];
+  orderMeta: ItemOrderMeta;
+  onOpenDetail: () => void;
   onChanged: () => void;
   onStale: () => void;
 }) {
@@ -495,28 +854,85 @@ function RailDecisionItem({
     },
   });
 
+  const cancelTask = useMutation({
+    mutationFn: () => taskCenterApi.controlTask(decision.taskId, "cancel"),
+    onSuccess: () => {
+      onChanged();
+      toast.success("已取消该任务");
+    },
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        onStale();
+        onChanged();
+        toast.info("任务状态已更新。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "取消失败");
+    },
+  });
+
   return (
     <article
       className="task-rail-item"
       data-kind="decision"
+      data-pinned={orderMeta.pinned || undefined}
       data-tone="warning"
     >
-      <Link
+      <button
         className="task-rail-item-link"
-        search={{ view: "outbox", task: decision.taskId }}
-        to="/tasks"
+        onClick={onOpenDetail}
+        type="button"
       >
         <div className="task-rail-item-head">
           <span className="task-rail-kind">
-            <IconShieldCheck aria-hidden className="size-3.5" />
+            <span aria-hidden className="task-rail-kind-icon">
+              <IconShieldCheck className="size-3.5" />
+            </span>
             {RISK_LABELS[decision.proposedAction.risk]}
+            {orderMeta.pinned ? (
+              <span className="task-rail-pin-chip">
+                <IconPinned aria-hidden className="size-3" />
+                {"置顶"}
+              </span>
+            ) : null}
           </span>
           <CardStatus kind="attention">{"待确认"}</CardStatus>
         </div>
         <h4 className="task-rail-title">{decision.proposedAction.title}</h4>
         <p className="task-rail-description">{decision.summary}</p>
         <CardMeta at={decision.createdAt} />
-      </Link>
+      </button>
+      <CardMoreMenu
+        destructiveAction={{
+          key: "cancel",
+          label: "取消任务",
+          Icon: IconCircleOff,
+          disabled: cancelTask.isPending,
+          onSelect: () => cancelTask.mutate(),
+        }}
+        itemId={itemId}
+        onOpenDetail={onOpenDetail}
+        orderMeta={orderMeta}
+        primaryActions={[
+          {
+            key: "approve",
+            label: "批准执行",
+            Icon: IconCheck,
+            disabled: decide.isPending,
+            onSelect: () => decide.mutate(true),
+          },
+          {
+            key: "reject",
+            label: "拒绝操作",
+            Icon: IconX,
+            disabled: decide.isPending,
+            onSelect: () => decide.mutate(false),
+          },
+        ]}
+        section="decisions"
+        sectionIds={sectionIds}
+        title={decision.proposedAction.title}
+      />
       <div className="task-rail-actions">
         <Button
           disabled={decide.isPending}
@@ -546,9 +962,17 @@ function RailDecisionItem({
 
 function RailWorkflowRunItem({
   run,
+  itemId,
+  sectionIds,
+  orderMeta,
+  onOpenDetail,
   onChanged,
 }: {
   run: WorkflowRunView;
+  itemId: string;
+  sectionIds: readonly string[];
+  orderMeta: ItemOrderMeta;
+  onOpenDetail: () => void;
   onChanged: () => void;
 }) {
   const totalSteps = run.steps.length;
@@ -586,23 +1010,54 @@ function RailWorkflowRunItem({
     },
   });
 
+  const cancelRun = useMutation({
+    mutationFn: () => workflowsApi.cancel(run.id),
+    onSuccess: () => {
+      onChanged();
+      toast.success("已停止工作流运行");
+    },
+    onError: (err) => {
+      if (isStaleActionError(err)) {
+        onChanged();
+        toast.info("该工作流运行已经结束。");
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : "停止失败");
+    },
+  });
+
+  const displayTitle = `${run.icon ? `${run.icon} ` : ""}${run.workflowName}`;
+
   return (
-    <article className="task-rail-item" data-kind="workflow" data-tone={tone}>
-      <Link
+    <article
+      className="task-rail-item"
+      data-kind="workflow"
+      data-pinned={orderMeta.pinned || undefined}
+      data-tone={tone}
+    >
+      <button
         className="task-rail-item-link"
-        params={{ runId: run.id }}
-        to="/workflows/runs/$runId"
+        onClick={onOpenDetail}
+        type="button"
       >
         <div className="task-rail-item-head">
           <span className="task-rail-kind">
-            <IconGitBranch aria-hidden className="size-3.5" />
+            <span aria-hidden className="task-rail-kind-icon">
+              <IconGitBranch className="size-3.5" />
+            </span>
             {"工作流"}
+            {orderMeta.pinned ? (
+              <span className="task-rail-pin-chip">
+                <IconPinned aria-hidden className="size-3" />
+                {"置顶"}
+              </span>
+            ) : null}
           </span>
           <CardStatus kind={kind}>{RUN_STATUS_LABEL[run.status]}</CardStatus>
         </div>
-        <h4 className="task-rail-title">{`${run.icon ? `${run.icon} ` : ""}${run.workflowName}`}</h4>
+        <h4 className="task-rail-title">{displayTitle}</h4>
         <p className="task-rail-description">{description}</p>
-        {/* 链接的可读名称只念一句「已完成 2/5 步」；可见的标签行和进度条是同一件事的图示，读屏跳过。 */}
+        {/* 按钮的可读名称只念一句「已完成 2/5 步」；可见的标签行和进度条是同一件事的图示，读屏跳过。 */}
         <span className="sr-only">{`已完成 ${doneSteps}/${totalSteps} 步`}</span>
         <div aria-hidden className="task-rail-progress-label">
           <span>{"步骤进度"}</span>
@@ -616,7 +1071,54 @@ function RailWorkflowRunItem({
           value={percent}
         />
         <CardMeta at={run.startedAt ?? run.createdAt} />
-      </Link>
+      </button>
+      <CardMoreMenu
+        destructiveAction={
+          ACTIVE_RUN_STATUSES.includes(run.status)
+            ? {
+                key: "stop",
+                label: "停止工作流",
+                Icon: IconPlayerStop,
+                disabled: cancelRun.isPending,
+                onSelect: () => cancelRun.mutate(),
+              }
+            : undefined
+        }
+        itemId={itemId}
+        onOpenDetail={onOpenDetail}
+        orderMeta={orderMeta}
+        primaryActions={
+          run.status === "waiting_approval" && activeStep
+            ? [
+                {
+                  key: "approve-step",
+                  label: "批准步骤",
+                  Icon: IconCheck,
+                  disabled: approve.isPending,
+                  onSelect: () =>
+                    approve.mutate({
+                      stepId: activeStep.id,
+                      decision: "approve",
+                    }),
+                },
+                {
+                  key: "reject-step",
+                  label: "打回/拒绝",
+                  Icon: IconX,
+                  disabled: approve.isPending,
+                  onSelect: () =>
+                    approve.mutate({
+                      stepId: activeStep.id,
+                      decision: "reject",
+                    }),
+                },
+              ]
+            : []
+        }
+        section="active"
+        sectionIds={sectionIds}
+        title={run.workflowName}
+      />
       {run.status === "waiting_approval" && activeStep ? (
         <div className="task-rail-actions">
           <Button
@@ -678,15 +1180,25 @@ export function workflowRunDescription(
 
 function RailTaskItem({
   task,
+  itemId,
+  section,
+  sectionIds,
+  orderMeta,
+  onOpenDetail,
   onChanged,
   recent = false,
 }: {
   task: TaskCenterTask;
+  itemId: string;
+  section: RailOrderSection;
+  sectionIds: readonly string[];
+  orderMeta: ItemOrderMeta;
+  onOpenDetail: () => void;
   onChanged: () => void;
   recent?: boolean;
 }) {
   const control = useMutation({
-    mutationFn: (action: "pause" | "resume") =>
+    mutationFn: (action: TaskControl) =>
       taskCenterApi.controlTask(task.id, action),
     onSuccess: onChanged,
     onError: (err) => {
@@ -701,27 +1213,84 @@ function RailTaskItem({
 
   const isRunning = task.status === "running" || task.status === "planning";
   const isPaused = task.status === "paused";
+  const isBlockedWithError =
+    (task.status === "queued" || task.status === "waiting_dependencies") &&
+    Boolean(task.error);
+  const isTerminal =
+    task.status === "succeeded" ||
+    task.status === "failed" ||
+    task.status === "cancelled";
+
   const kind = taskStatusKind(task.status, {
     recent,
     hasError: Boolean(task.error),
   });
   const tone = STATUS_KIND_VISUAL[kind].tone;
-  const description = task.error || task.summary || task.description;
+  const rawDescription = task.error || task.summary || task.description;
+  const description = task.error
+    ? formatRailErrorSummary(task.error)
+    : rawDescription;
+  const CategoryIcon = CATEGORY_ICONS[task.category];
+
+  const primaryMenuActions: CardMenuAction[] = [];
+  if (task.status === "inbox") {
+    primaryMenuActions.push({
+      key: "start",
+      label: "开始任务",
+      Icon: IconPlayerPlay,
+      disabled: control.isPending,
+      onSelect: () => control.mutate("start"),
+    });
+  } else if (ACTIVE_STATUSES.includes(task.status)) {
+    primaryMenuActions.push({
+      key: "pause",
+      label: "暂停任务",
+      Icon: IconPlayerPause,
+      disabled: control.isPending,
+      onSelect: () => control.mutate("pause"),
+    });
+  } else if (task.status === "paused") {
+    primaryMenuActions.push({
+      key: "resume",
+      label: "继续任务",
+      Icon: IconPlayerPlay,
+      disabled: control.isPending,
+      onSelect: () => control.mutate("resume"),
+    });
+  } else if (task.status === "failed") {
+    primaryMenuActions.push({
+      key: "retry",
+      label: "重试任务",
+      Icon: IconRefresh,
+      disabled: control.isPending,
+      onSelect: () => control.mutate("retry"),
+    });
+  }
 
   return (
     <article
       className="task-rail-item"
       data-kind={recent ? "recent" : "task"}
+      data-pinned={orderMeta.pinned || undefined}
       data-tone={tone}
     >
-      <Link
+      <button
         className="task-rail-item-link"
-        search={{ view: recent ? "history" : "active", task: task.id }}
-        to="/tasks"
+        onClick={onOpenDetail}
+        type="button"
       >
         <div className="task-rail-item-head">
           <span className="task-rail-kind">
+            <span aria-hidden className="task-rail-kind-icon">
+              <CategoryIcon className="size-3.5" />
+            </span>
             {CATEGORY_LABELS[task.category]}
+            {orderMeta.pinned ? (
+              <span className="task-rail-pin-chip">
+                <IconPinned aria-hidden className="size-3" />
+                {"置顶"}
+              </span>
+            ) : null}
           </span>
           <CardStatus kind={kind}>{STATUS_LABELS[task.status]}</CardStatus>
         </div>
@@ -742,23 +1311,63 @@ function RailTaskItem({
             </span>
           ) : null}
         </CardMeta>
-      </Link>
-      {!recent && (isRunning || isPaused) ? (
+      </button>
+
+      <CardMoreMenu
+        destructiveAction={
+          !isTerminal
+            ? {
+                key: "cancel",
+                label: "取消任务",
+                Icon: IconCircleOff,
+                disabled: control.isPending,
+                onSelect: () => control.mutate("cancel"),
+              }
+            : undefined
+        }
+        itemId={itemId}
+        onOpenDetail={onOpenDetail}
+        orderMeta={orderMeta}
+        primaryActions={primaryMenuActions}
+        section={section}
+        sectionIds={sectionIds}
+        title={task.title}
+      />
+
+      {!recent && (isRunning || isPaused || isBlockedWithError) ? (
         <div className="task-rail-actions">
-          <Button
-            disabled={control.isPending}
-            mutation={control}
-            onClick={() => control.mutate(isPaused ? "resume" : "pause")}
-            size="sm"
-            variant="outline"
-          >
-            {isPaused ? (
-              <IconPlayerPlay aria-hidden className="size-3.5" />
-            ) : (
-              <IconPlayerPause aria-hidden className="size-3.5" />
-            )}
-            {isPaused ? "继续任务" : "暂停任务"}
-          </Button>
+          {isRunning || isPaused ? (
+            <Button
+              disabled={control.isPending}
+              mutation={control}
+              mutationWhen={
+                control.variables === (isPaused ? "resume" : "pause")
+              }
+              onClick={() => control.mutate(isPaused ? "resume" : "pause")}
+              size="sm"
+              variant="outline"
+            >
+              {isPaused ? (
+                <IconPlayerPlay aria-hidden className="size-3.5" />
+              ) : (
+                <IconPlayerPause aria-hidden className="size-3.5" />
+              )}
+              {isPaused ? "继续任务" : "暂停任务"}
+            </Button>
+          ) : null}
+          {isBlockedWithError ? (
+            <Button
+              disabled={control.isPending}
+              mutation={control}
+              mutationWhen={control.variables === "cancel"}
+              onClick={() => control.mutate("cancel")}
+              size="sm"
+              variant="outline"
+            >
+              <IconX aria-hidden className="size-3.5" />
+              {"取消任务"}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </article>

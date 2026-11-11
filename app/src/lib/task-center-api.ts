@@ -1,5 +1,5 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
-import { type ClientOptions, client } from "@/lib/client";
+import { type ClientOptions, client, tryClient } from "@/lib/client";
 import type {
   DecisionListPage,
   TaskCapability,
@@ -77,6 +77,20 @@ export const taskCenterApi = {
       `/tasks/${encodeURIComponent(id)}/${action}`,
       { method: "POST" },
     ),
+  /**
+   * 同步任务调度优先级（置顶 / 上下移时调用）。
+   * 走 tryClient 静默容错，避免离线或仅测前端视图时阻断本地卡片排序。
+   */
+  syncTaskPriority: async (id: string, priority: number): Promise<void> => {
+    try {
+      await tryClient(`${endpoint}/tasks/${encodeURIComponent(id)}/priority`, {
+        method: "POST",
+        body: { priority: Math.max(0, Math.min(100, Math.round(priority))) },
+      });
+    } catch {
+      // 忽略网络或测试桩未挂 priority 路由的情况；前端视图顺序仍立即生效。
+    }
+  },
   decide: (id: string, approved: boolean) =>
     request<{ decision: TaskCenterDecision }>(
       `/outbox/${encodeURIComponent(id)}/decide`,

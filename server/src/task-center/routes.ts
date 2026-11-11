@@ -16,6 +16,9 @@ const resourceId = z.string().trim().min(1).max(128);
 const decisionInput = z.object({ approved: z.boolean() }).strict();
 const sourcePatchInput = sourceInputSchema.partial().strict();
 const rootPathInput = z.object({ path: z.string().min(1).max(1000) }).strict();
+const priorityInput = z
+  .object({ priority: z.number().int().min(0).max(100) })
+  .strict();
 const taskActions = ["start", "pause", "resume", "retry", "cancel"] as const;
 const pagingInput = z.object({
   offset: z.coerce.number().int().min(0).default(0),
@@ -114,6 +117,15 @@ export function createTaskCenterRoutes(
       return context.json({ task });
     });
   }
+  app.post("/tasks/:id/priority", async (context) => {
+    const { priority } = priorityInput.parse(await context.req.json());
+    const task = await service.setTaskPriority(
+      context.var.actor.id,
+      resourceId.parse(context.req.param("id")),
+      priority,
+    );
+    return context.json({ task });
+  });
 
   app.get("/outbox", async (context) => {
     const query = context.req.query();

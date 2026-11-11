@@ -1,3 +1,8 @@
+## 0.1.145
+
+- 右栏任务原位交互与卡片质感升级（DESIGN §130）：升级 Skyglass 卡片内高光、语义微光晕、柔和阴影与悬浮/按压反馈（保持全部主题/配色 WCAG AA 对比度与无 `:has()` / 无额外 `backdrop-filter` 约束）；新增右上角 `⋯` 菜单（查看详情、开始/暂停/继续/重试/批准/拒绝、置顶/取消置顶、上移/下移、取消任务/停止工作流）、置顶与排序持久化（`task-rail-order.ts` + `POST /api/task-center/tasks/:id/priority`）、阻塞任务直出取消按钮、「+ 新建」弹窗入口与机器报错人话化；点击卡片改为原位弹出 `TaskRailDetailDialog`（支持任务/审批/工作流详情、交付物预览下载、报错折叠复制与依赖任务栈内返回），不再整页跳走。
+- 版本：0.1.145（根、app、server、agent-computer、runtime/dsh、pc；Android versionCode 327）；PC 外壳不变。
+
 ## 0.1.144
 
 - 修复独立 DSH 账号运行时隔离误伤：`scripts/ops/isolate-sidecar-app.sh` 按 `chisabot.runtime-owner` + `chisabot.runtime-family` 放行专属点对点网络上的 DSH 容器访问内部工具与模型网关 `:3001`、清理陈旧 `DROP` 规则并在 `--verify` 增加 `:3001/health` 活探，继续严格阻断 Magpie / `new-api` 等边车。
