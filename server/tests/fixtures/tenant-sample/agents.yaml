@@ -76,11 +76,7 @@ agents:
   # That is what makes registration need no API: the choice becomes a setting, and seeding does the
   # rest.
   #
-  # The KIND is interpolated too, and that is not a flourish. Written as a literal `remote-mastra`
-  # row it made this whole package fail to load on any server that predates that kind — the loader
-  # refuses an unknown `agent.type`, and refusing one Bot means refusing the file, so the deployment
-  # would not start at all. Interpolated, an older server sees `remote-ag-ui` and loads normally
-  # unless somebody actually picks Mastra.
+  # The KIND is interpolated too, defaulting to `remote-ag-ui`.
   - id: picked-harness
     name: ${PICKED_HARNESS_NAME:-Your Bot}
     title: ${PICKED_HARNESS_NAME:-Your Bot}
@@ -88,5 +84,5 @@ agents:
     avatar_seed: picked-harness
     type: ${PICKED_HARNESS_KIND:-remote-ag-ui}
     endpoint: ${PICKED_HARNESS_URL:-}
-    # Which agent on that server, for a Mastra roster. Blank means the only one there.
+    # Optional remote agent identifier. Blank means the only one there.
     remote_agent_id: ${PICKED_HARNESS_AGENT_ID:-}

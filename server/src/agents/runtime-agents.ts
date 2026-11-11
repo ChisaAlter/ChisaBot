@@ -14,7 +14,6 @@ import {
   channelMemberships,
   channels,
 } from "../db/schema";
-import { teamBotAccess } from "../team-bots/access";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
 
@@ -128,8 +127,6 @@ function selectActiveAgents(database: Database, actor: AgentActor) {
           : or(
               eq(agentProfiles.visibility, "public"),
               eq(agentProfiles.ownerUserId, actor.id),
-              // The same Team Bot rule as the roster: see team-bots/access.ts.
-              teamBotAccess(actor.id, agentProfiles.agentId),
             ),
       ),
     );

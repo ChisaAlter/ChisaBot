@@ -1,8 +1,3 @@
-import {
-  authenticationRequired,
-  isConversationPath,
-  runAssertionValue,
-} from "./conversations/protocol";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -23,7 +18,7 @@ import {
 } from "../../shared/skill-authoring";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
-import { createAdminSmokeRoutes, resolveSmokeHermesProbe } from "./admin-smoke";
+import { createAdminSmokeRoutes } from "./admin-smoke";
 import {
   CoworkerUnavailableError,
   createActorAgentResolver,
@@ -56,8 +51,6 @@ import {
   createCoordinationTools,
   readCoordinationHandoffClaim,
 } from "./agents/handoff-tool";
-import { probeHermesHealth } from "./agents/hermes-health";
-import { hermesRuntimeTools } from "./agents/hermes-runtime";
 import {
   createPgHistorySummaryStore,
   lastMeasuredUsage,
@@ -83,7 +76,6 @@ import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createAgentPurge } from "./agents/purge";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
-import { createRuntimeToolsRoutes } from "./agents/runtime-tools";
 import { createCoworkerService } from "./agents/service";
 import {
   createWakeUpRunner,
@@ -223,6 +215,11 @@ import { createConfirmationResumer } from "./conversations/confirmation-resume";
 import { dispatchContinuationWork } from "./conversations/continuation-work";
 import { createConversationInteractions } from "./conversations/interactions";
 import { conversationAdmissionClosed } from "./conversations/maintenance";
+import {
+  authenticationRequired,
+  isConversationPath,
+  runAssertionValue,
+} from "./conversations/protocol";
 import { recoverConversations } from "./conversations/recovery";
 import { createDshRunJournal } from "./conversations/run-journal";
 import { loadDshTargets } from "./conversations/runtime-targets";
@@ -310,12 +307,6 @@ import {
   createPrivateShareCheck,
   PRIVATE_SHARE_TOOL_REF,
 } from "./proactive/private-share";
-import {
-  createReadOnlyClassifier,
-  guardProactiveCallback,
-  restrictCoordinationForRun,
-  restrictToolsForRun,
-} from "./proactive/restriction";
 import { createProviderOAuthProxy } from "./provider-oauth";
 import { createResponsibilityBindingStore } from "./responsibilities/bindings";
 import {
@@ -349,7 +340,6 @@ import {
 import { createLocalAgentRun } from "./task-center/local-agent-runner";
 import { createTaskCenterRoots } from "./task-center/roots";
 import { createTaskCenterRuntime } from "./task-center/runtime";
-import { createTeamBots } from "./team-bots/team-bots";
 import {
   createPackageStatusReader,
   loadTenantPackage,
@@ -1315,109 +1305,106 @@ const conversationInteractions = createConversationInteractions(database, {
   },
 });
 await conversationInteractions.ensure();
-const runtimeToolBinding: import("./agents/hermes-runtime").HermesRuntimeBinding =
-  {
-    toolGatewayUrl:
-      process.env.CHISABOT_HERMES_TOOL_GATEWAY_URL?.trim() ||
-      `http://127.0.0.1:${config.port}/api/internal/runtime-tools`,
-    readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
-    loadSurfaceTools: async (scope) => {
-      const actor = await actorFor(scope.actorId);
-      const profile = await agentProfileStore.get(actor, scope.botId);
-      if (!profile)
-        throw new Error("That Bot is no longer available to this actor.");
-      const initiator = scope.initiator ?? PERSON_INITIATOR;
-      const imConnection = imConnectionOf(initiator);
-      const allowDevices =
-        !imConnection || imService?.allowsDevices(imConnection) === true;
-      const computer =
-        computerGateway && allowDevices && canUseComputer(profile, actor)
-          ? createHeadlessComputerTools({
-              gateway: computerGateway,
-              botId: scope.botId,
-              actor: { id: actor.id, userId: actor.id, initiator },
-              auditStore: bootAuditStore,
-              ...(signInService ? { signIn: signInService } : {}),
-            })
-          : [];
-      const components = !imConnection
-        ? await createHeadlessComponentTools({
-            store: componentStore,
+const runtimeToolBinding: import("./agents/dsh-runtime").RuntimeToolBinding = {
+  toolGatewayUrl:
+    config.dshKernel?.gatewayUrl ??
+    `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+  readRun: (value) => readRunAssertion(value, config.keyEncryptionKey),
+  loadSurfaceTools: async (scope) => {
+    const actor = await actorFor(scope.actorId);
+    const profile = await agentProfileStore.get(actor, scope.botId);
+    if (!profile)
+      throw new Error("That Bot is no longer available to this actor.");
+    const initiator = scope.initiator ?? PERSON_INITIATOR;
+    const imConnection = imConnectionOf(initiator);
+    const allowDevices =
+      !imConnection || imService?.allowsDevices(imConnection) === true;
+    const computer =
+      computerGateway && allowDevices && canUseComputer(profile, actor)
+        ? createHeadlessComputerTools({
+            gateway: computerGateway,
             botId: scope.botId,
-            ownerUserId: scope.actorId,
-            initiator,
+            actor: { id: actor.id, userId: actor.id, initiator },
             auditStore: bootAuditStore,
+            ...(signInService ? { signIn: signInService } : {}),
           })
         : [];
-      const surfaces = !imConnection
-        ? await createConversationSurfaceTools({
-            actor,
-            botId: scope.botId,
-            plugins: pluginStore,
-            components: componentStore,
-            sandboxed: sandboxedStore,
-            interactions: conversationInteractions,
-            ...(computerGateway &&
-            allowDevices &&
-            canUseComputer(profile, actor)
-              ? {
-                  computer: {
-                    gateway: computerGateway,
-                    bookmarks: browserBookmarks,
-                    initiator,
-                  },
-                }
-              : {}),
-          })
+    const components = !imConnection
+      ? await createHeadlessComponentTools({
+          store: componentStore,
+          botId: scope.botId,
+          ownerUserId: scope.actorId,
+          initiator,
+          auditStore: bootAuditStore,
+        })
+      : [];
+    const surfaces = !imConnection
+      ? await createConversationSurfaceTools({
+          actor,
+          botId: scope.botId,
+          plugins: pluginStore,
+          components: componentStore,
+          sandboxed: sandboxedStore,
+          interactions: conversationInteractions,
+          ...(computerGateway && allowDevices && canUseComputer(profile, actor)
+            ? {
+                computer: {
+                  gateway: computerGateway,
+                  bookmarks: browserBookmarks,
+                  initiator,
+                },
+              }
+            : {}),
+        })
+      : [];
+    const worker =
+      scope.threadId?.startsWith("worker-") &&
+      initiator.kind === "routine" &&
+      initiator.id === `worker:${scope.threadId.slice(7)}`
+        ? (workerService?.workerTools(scope.threadId.slice(7)) ?? [])
         : [];
-      const worker =
-        scope.threadId?.startsWith("worker-") &&
-        initiator.kind === "routine" &&
-        initiator.id === `worker:${scope.threadId.slice(7)}`
-          ? (workerService?.workerTools(scope.threadId.slice(7)) ?? [])
-          : [];
-      const allowed = filterHeadlessForWorkflow(initiator, [
-        ...computer,
-        ...components,
-        ...surfaces,
-        ...worker,
-      ]);
-      return allowed.map((tool) => ({
-        ...tool,
-        execute: async (args, context) => {
-          if (!workflowToolAllowed(initiator, tool.definition.name))
-            throw new ApprovalRefusedError(
-              "This workflow no longer permits that tool.",
-            );
-          const fresh = await agentProfileStore.get(actor, scope.botId);
-          if (
-            !fresh ||
-            (tool.definition.name.startsWith("computer_") &&
-              !canUseComputer(fresh, actor))
-          )
-            throw new ApprovalRefusedError(
-              "That Bot or computer is no longer available to this actor.",
-            );
-          const result = await tool.execute(args, context);
-          if (
-            tool.definition.name === "computer_screenshot" &&
-            result &&
-            typeof result === "object" &&
-            "base64" in result &&
-            typeof result.base64 === "string"
-          ) {
-            return chatShots.saveScreenshot(
-              scope.actorId,
-              scope.botId,
-              context.toolCallId,
-              result as { base64: string; url?: string },
-            );
-          }
-          return result;
-        },
-      }));
-    },
-  };
+    const allowed = filterHeadlessForWorkflow(initiator, [
+      ...computer,
+      ...components,
+      ...surfaces,
+      ...worker,
+    ]);
+    return allowed.map((tool) => ({
+      ...tool,
+      execute: async (args, context) => {
+        if (!workflowToolAllowed(initiator, tool.definition.name))
+          throw new ApprovalRefusedError(
+            "This workflow no longer permits that tool.",
+          );
+        const fresh = await agentProfileStore.get(actor, scope.botId);
+        if (
+          !fresh ||
+          (tool.definition.name.startsWith("computer_") &&
+            !canUseComputer(fresh, actor))
+        )
+          throw new ApprovalRefusedError(
+            "That Bot or computer is no longer available to this actor.",
+          );
+        const result = await tool.execute(args, context);
+        if (
+          tool.definition.name === "computer_screenshot" &&
+          result &&
+          typeof result === "object" &&
+          "base64" in result &&
+          typeof result.base64 === "string"
+        ) {
+          return chatShots.saveScreenshot(
+            scope.actorId,
+            scope.botId,
+            context.toolCallId,
+            result as { base64: string; url?: string },
+          );
+        }
+        return result;
+      },
+    }));
+  },
+};
 let dshToolGateway: ReturnType<typeof createDshToolGateway> | undefined;
 let dshTargetFor:
   | import("./agents/dsh-runtime").DshRuntimeBinding["targetFor"]
@@ -1462,24 +1449,8 @@ if (config.dshKernel) {
     },
   });
 } else {
-  setAgentKernel(
-    config.hermesKernel
-      ? {
-          kind: "hermes",
-          url: config.hermesKernel.url,
-          ...(config.hermesKernel.token
-            ? { token: config.hermesKernel.token }
-            : {}),
-          binding: runtimeToolBinding,
-        }
-      : { kind: "builtin", binding: runtimeToolBinding },
-  );
+  setAgentKernel({ kind: "builtin", binding: runtimeToolBinding });
 }
-// One probe, shared by the settings status row and the informational ops-health entry.
-const hermesKernelUrl = config.hermesKernel?.url;
-const probeConfiguredHermes = hermesKernelUrl
-  ? () => probeHermesHealth(hermesKernelUrl)
-  : undefined;
 const probeConfiguredDsh = dshTargetFor
   ? createDshHealthProbe({
       targetFor: dshTargetFor,
@@ -1663,8 +1634,6 @@ const deviceToolsFor = async (
 // grant, the policy and the audit row are exactly where they were. Host-folder tools are also
 // server-dispatched: the selected Bot and the signed-in owner are bound here, then the desktop worker
 // receives only opaque grant ids and relative paths.
-// Proactive research may only read; see proactive/restriction.ts. Read from the catalogue per call.
-const proactiveReadOnlyRefs = createReadOnlyClassifier(pluginStore);
 /** 长期记忆（DESIGN.md §50）：每轮开头的记忆用法 + 笔记；上游 personal_memories 不再给机器人。 */
 const memoryNotes = createMemoryNotes(database, { timeZone: USER_TIME_ZONE });
 await memoryNotes.ensure();
@@ -1875,17 +1844,6 @@ const loadPersonalMemoryForActor =
       .join("\n\n");
 // Follow-ups a Bot schedules for itself, on the shared work queue. See agents/wake-up.ts.
 const wakeUpStore = createWakeUpStore(database, { auditStore: bootAuditStore });
-/** Team Bots: published Bots, their audiences, and teammates' consent to their own accounts. */
-const teamBots = createTeamBots({
-  database,
-  connectedServers: async (userId) =>
-    new Set(
-      [
-        ...(await pluginStore.connectionsFor(userId)),
-        ...(await pluginStore.brokeredConnectionsFor(userId)),
-      ].map((connection) => connection.serverId),
-    ),
-});
 
 /** IM 接入（server/src/im，DESIGN.md §49）：下面才建；IM 回合的工具按连接的开关裁剪。 */
 let imService: ImService | undefined;
@@ -1946,8 +1904,6 @@ const loadToolsForActor =
         botId,
         actorId,
         initiator,
-        // A Team Bot reaches its owner's accounts, and a teammate's own only with their consent.
-        credentialActorFor: teamBots.credentialActorFor(actorId, botId),
       })),
       ...(imDevices ? await deviceToolsFor(actorId, botId, initiator) : []),
       // 生成式界面（json-render，取代 A2UI）：与 /api/capabilities 的 generativeUi 同一个开关。
@@ -3451,14 +3407,7 @@ const actorAgentResolver = createActorAgentResolver({
   resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
   stallGuard,
   loadToolsForActor: (actorId, initiator) =>
-    restrictToolsForWorkflow(
-      initiator,
-      restrictToolsForRun(
-        initiator,
-        loadToolsForActor(actorId, initiator),
-        proactiveReadOnlyRefs,
-      ),
-    ),
+    restrictToolsForWorkflow(initiator, loadToolsForActor(actorId, initiator)),
   signRunForActor,
   computerGuidance: config.computer ? COMPUTER_GUIDANCE : undefined,
   loadVendors,
@@ -3467,10 +3416,7 @@ const actorAgentResolver = createActorAgentResolver({
   handoffForActor: (actorId, initiator, depth) => {
     const coordination = restrictNamedToolsForWorkflow(
       initiator,
-      restrictCoordinationForRun(
-        initiator,
-        coordinationForActor(actorId, initiator, depth),
-      ),
+      coordinationForActor(actorId, initiator, depth),
     );
     return async (botId, input) => {
       const coordinated = await coordination(botId, input);
@@ -3804,8 +3750,7 @@ const executeApprovedAction = createApprovedActionExecutor({
   gate: approvalService.gate,
   computerTools: approvalComputerTools,
   callTool: (input) => pluginStore.callTool(input),
-  credentialActorFor: (actorId, botId, ref) =>
-    teamBots.credentialActorFor(actorId, botId)(ref),
+  credentialActorFor: async (actorId) => actorId,
   coordinationCall: (input) => coordination.call(input),
   readRun: (value) => readApprovedRunAssertion(value, config.keyEncryptionKey),
   answer: vendorAnswer,
@@ -4223,9 +4168,6 @@ const groupConversations = createGroupConversations({
     channelStore.create(await actorFor(ownerUserId), agentIds),
   // The owner says whether a Bot's words may reach the other people in a group.
   privateShare: createPrivateShareCheck({ approvals: approvalService.store }),
-  // A Team Bot's consent card raised in a group turn is drawn in the shared transcript.
-  listenForConsent: (ownerUserId, agentId) =>
-    teamBots.listenForConsent(ownerUserId, agentId),
 });
 const groupSweep = repeatAfterEach(async () => {
   try {
@@ -4643,11 +4585,6 @@ const app = createApp(
   undefined,
   process.env.CHISABOT_DESKTOP_HOST_TOKEN,
   async (input) => {
-    const proactiveRefusal = await guardProactiveCallback(
-      input,
-      proactiveReadOnlyRefs,
-    );
-    if (proactiveRefusal) return proactiveRefusal;
     const workflowRefusal = guardWorkflowCallback(input.initiator, input.name);
     if (workflowRefusal) return workflowRefusal;
     const coordinated = await coordination.call(input);
@@ -4798,10 +4735,6 @@ const app = createApp(
         }
       : {}),
     extraRoutes: ({ requireUser }) => [
-      [
-        "/api/internal/runtime-tools",
-        createRuntimeToolsRoutes(hermesRuntimeTools),
-      ],
       ...(dshToolGateway
         ? [
             ["/api/internal/dsh-tools", dshToolGateway.routes] as [
@@ -4816,23 +4749,6 @@ const app = createApp(
           requireUser,
           resolveConnection: resolveRuntimeConnection,
           resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
-          // CB-100: the release smoke must reach Hermes, not only the model.
-          ...(() => {
-            const probeHermes = resolveSmokeHermesProbe({
-              agentKernel: process.env.CHISABOT_AGENT_KERNEL,
-              hermesUrl: hermesKernelUrl,
-              probe: probeConfiguredHermes
-                ? async () => {
-                    const probe = await probeConfiguredHermes();
-                    return {
-                      reachable: probe.reachable === true,
-                      ...(probe.error ? { error: probe.error } : {}),
-                    };
-                  }
-                : undefined,
-            });
-            return probeHermes ? { probeHermes } : {};
-          })(),
         }),
       ],
       ["/api/ops/budget", createOpsBudgetRoutes({ requireUser })],
@@ -4844,10 +4760,6 @@ const app = createApp(
           probeAssistant: createAssistantSignalsProbe(database),
           magpie,
           gatewayMode: gatewaySecret ? "on" : "off",
-          // Informational: Hermes being down does not turn /api/admin/health red or roll back a release.
-          ...(probeConfiguredHermes
-            ? { probeHermes: probeConfiguredHermes }
-            : {}),
           dshRequired: !!config.dshKernel,
           ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
           ...(computerProvider
@@ -4904,12 +4816,7 @@ const app = createApp(
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({
           requireUser,
-          kernel: config.dshKernel
-            ? "dsh"
-            : probeConfiguredHermes
-              ? "hermes"
-              : "builtin",
-          ...(probeConfiguredHermes ? { probe: probeConfiguredHermes } : {}),
+          kernel: config.dshKernel ? "dsh" : "builtin",
           ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
         }),
       ],
@@ -5067,11 +4974,8 @@ serve<SocketData>({
     // §102：网页聊天里的计算机动作（含最长 600 秒的前台命令）经审批网关同步执行，同样不设空闲超时。
     if (url.pathname.startsWith("/api/approvals/computer/"))
       server.timeout(request, 0);
-    // Hermes waits on the same governed long-running tools and approvals; the run owns cancellation.
-    if (
-      url.pathname.startsWith("/api/internal/runtime-tools/") ||
-      url.pathname.startsWith("/api/internal/dsh-tools/")
-    )
+    // DSH waits on governed long-running tools and approvals; the run owns cancellation.
+    if (url.pathname.startsWith("/api/internal/dsh-tools/"))
       server.timeout(request, 0);
     // IM 接入：微信扫码状态是长轮询（约 25 秒），「测试连接」要等平台握手（最多 15 秒），超过 Bun 默认的 10 秒空闲。
     if (url.pathname.startsWith("/api/im/") && !request.headers.get("upgrade"))

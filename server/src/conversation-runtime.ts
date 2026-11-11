@@ -20,18 +20,12 @@ import {
   ClassicRuntimeAgent as BuiltInAgent,
   type ClassicAgentConfiguration as BuiltInAgentConfiguration,
 } from "./agents/classic-runtime";
-import type { DshRuntimeBinding } from "./agents/dsh-runtime";
+import type {
+  DshRuntimeBinding,
+  RuntimeToolBinding,
+} from "./agents/dsh-runtime";
 import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import {
-  HERMES_MAX_FALLBACKS,
-  HermesRuntimeAgent,
-  type HermesRuntimeBinding,
-} from "./agents/hermes-runtime";
-import {
-  compactHistory,
-  HISTORY_SUMMARY_ID,
-  type HistoryCompaction,
-  HistoryPlanMemo,
   type HistorySummaryStore,
   type MeasuredUsage,
   type Summarize,
@@ -73,11 +67,10 @@ import {
   TOOL_STOPPED_ZH,
   withConfirmToolCall,
 } from "./confirmations/context";
-import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
-import { createConversationRoutes } from "./conversations/routes";
-import { reasonWithoutStatement } from "./db/query-failure";
-import { observeModelConnection } from "./desktop-connection-failure";
+import { meterLanguageModel, meterRun } from "./context-usage";
 import { runAssertionValue } from "./conversations/protocol";
+import { createConversationRoutes } from "./conversations/routes";
+import { observeModelConnection } from "./desktop-connection-failure";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import type { LocalConversationBackend } from "./local-conversations";
 import {
@@ -210,21 +203,11 @@ export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 /**
  * 机器人用哪个内核回答。
  *
- * `builtin` 是保留旧绑定的 AI SDK 工具循环。`hermes` 把所有 built-in 机器人转成
- * remote-ag-ui，指向 `examples/acp-agent` 的桥；Hermes 的 ACP session 就是新的循环。
- *
- * 这是部署级开关，不是每个机器人的字段：现有机器人都有 `built_in` 行，逐个改会漏掉新建的；
- * 一个开关让「以后新建的机器人」也自动走新内核。
+ * `dsh` 为默认生产执行内核；`builtin` 为保留旧绑定的 AI SDK 工具循环（供单测与回退）。
  */
 export type AgentKernel =
-  | { kind: "builtin"; binding?: HermesRuntimeBinding }
-  | { kind: "dsh"; binding: DshRuntimeBinding }
-  | {
-      kind: "hermes";
-      url: string;
-      token?: string;
-      binding?: HermesRuntimeBinding;
-    };
+  | { kind: "builtin"; binding?: RuntimeToolBinding }
+  | { kind: "dsh"; binding: DshRuntimeBinding };
 let agentKernel: AgentKernel = { kind: "builtin" };
 export function setAgentKernel(kernel: AgentKernel): void {
   agentKernel = kernel;
@@ -417,67 +400,19 @@ export async function resolveModelFileSupport(
 }
 
 /**
- * Hermes 长对话压缩前文用的摘要缓存和「摘要模型」（设置 → 模型；index.ts 接上）。
+ * 长对话压缩前文用的摘要缓存和「摘要模型」（设置 → 模型；index.ts 接上）。
  * 摘要模型没配置（null）就用这一轮的主模型，不在代码里写死。
  */
-let historySummaryStore: HistorySummaryStore | undefined;
 let historySummaryModel: () => Promise<string | null> = async () => null;
 export function setHistorySummaries(options: {
   store?: HistorySummaryStore;
   model?: () => Promise<string | null>;
 }): void {
-  historySummaryStore = options.store;
   if (options.model) historySummaryModel = options.model;
 }
-/** 上一轮 provider 返回的真实用量（index.ts 接上 lastMeasuredUsage），用来校准估算；没有就按安全系数。 */
-let previousRunUsage: (threadId: string) => Promise<MeasuredUsage | null> =
-  async () => null;
 export function setPreviousRunUsageResolver(
-  resolver: (threadId: string) => Promise<MeasuredUsage | null>,
-): void {
-  previousRunUsage = resolver;
-}
-async function resolvePreviousRunUsage(
-  threadId: string,
-): Promise<MeasuredUsage | null> {
-  try {
-    return await Promise.race([
-      previousRunUsage(threadId),
-      new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), 1000).unref?.(),
-      ),
-    ]);
-  } catch {
-    return null;
-  }
-}
-const historyPlans = new HistoryPlanMemo();
-/** 回复结束后在后台写摘要的任务（按 runId；RUN_FINISHED 时取出来跑，不等它）。 */
-const historyRefreshes = new Map<string, () => Promise<void>>();
-function rememberRefresh(runId: string, refresh: (() => Promise<void>) | null) {
-  historyRefreshes.delete(runId);
-  if (refresh) historyRefreshes.set(runId, refresh);
-  while (historyRefreshes.size > 200)
-    historyRefreshes.delete(historyRefreshes.keys().next().value as string);
-}
-/** 这次运行的回复结束了：后台写摘要（下一轮用），失败只记日志。 */
-export function runHistoryRefresh(runId: string): void {
-  const refresh = historyRefreshes.get(runId);
-  if (!refresh) return;
-  historyRefreshes.delete(runId);
-  void refresh().catch(() => {});
-}
-/** 每次运行压缩了什么，RUN_FINISHED 时附上（HermesRuntimeAgent finishedMetadata）。 */
-const historyCompactions = new Map<string, HistoryCompaction>();
-function rememberCompaction(
-  runId: string,
-  compaction: HistoryCompaction | null,
-) {
-  historyCompactions.delete(runId);
-  if (compaction) historyCompactions.set(runId, compaction);
-  while (historyCompactions.size > 200)
-    historyCompactions.delete(historyCompactions.keys().next().value as string);
-}
+  _resolver: (threadId: string) => Promise<MeasuredUsage | null>,
+): void {}
 
 /** 用同一个连接上的摘要模型（没配置就是主模型）写较早对话的摘要。 */
 export function connectionSummarizer(
@@ -1323,219 +1258,6 @@ async function inlineAttachments(
   return inlined;
 }
 
-/** The host still owns tools, identity, memory and settings; Hermes owns the execution loop. */
-async function hermesKernelAgent(options: {
-  agent: RegisteredBuiltInAgent;
-  kernel: Extract<AgentKernel, { kind: "hermes" }>;
-  model: RuntimeModel;
-  /** 只给压缩前文时写摘要用（同一个连接）；Hermes 自己的模型调用不经过这里。 */
-  apiKey?: string | null;
-  tools: GrantedTool[];
-  signRun?: SignRun;
-  standingInstructions: string | null;
-  computerGuidance?: string;
-  connectedVendors: readonly string[];
-  stallGuard?: StallGuard;
-  agentFetch?: AgentFetch;
-  initiator?: AuditInitiator;
-  loadAttachment?: LoadAttachment;
-  markAttachmentsSent?: MarkAttachmentsSent;
-  handoff?: HandoffForRun;
-  audience?: BotAudience;
-}): Promise<AbstractAgent> {
-  const { agent, kernel, signRun } = options;
-  if (!kernel.binding || !signRun)
-    throw new Error(
-      "Hermes requires an authenticated host tool binding before it can run.",
-    );
-  const transport = remoteTransport(
-    {
-      id: agent.id,
-      name: agent.name,
-      type: "remote_ag_ui",
-      endpoint: kernel.url,
-      ...(kernel.token
-        ? { headers: { authorization: `Bearer ${kernel.token}` } }
-        : {}),
-      standingMessage: standingRoleMessage({
-        id: agent.id,
-        name: agent.name,
-        title: "ChisaBot assistant",
-        roleDescription: agent.systemPrompt,
-      }),
-    },
-    options.stallGuard,
-    options.agentFetch,
-    options.initiator,
-  );
-  return new HermesRuntimeAgent(transport, {
-    botId: agent.id,
-    modelId: options.model.defaultModel,
-    binding: kernel.binding,
-    signRun: (runId, threadId, previous) =>
-      signRun(agent.id, runId, threadId, previous),
-    // 备用模型 / 输出上限与内置路径同源：管理员列表 → CHISABOT_MODEL_FALLBACKS → 同平台自动挑选；模型目录的输出上限。
-    modelControls: async (modelId) => {
-      const [fallbacks, maxOutputTokens, supportsImages, contextWindow] =
-        await Promise.all([
-          fallbackCandidates(
-            () => fallbackCatalog(),
-            process.env,
-            () => fallbackConfigured(),
-          )(modelId).catch(() => [] as string[]),
-          resolveOutputLimit(modelId),
-          resolveModelVisionSupport(modelId),
-          resolveContextWindow(modelId),
-        ]);
-      return {
-        fallbacks: fallbacks.slice(0, HERMES_MAX_FALLBACKS),
-        ...(maxOutputTokens ? { maxOutputTokens } : {}),
-        ...(supportsImages === undefined ? {} : { supportsImages }),
-        ...(contextWindow ? { contextWindow } : {}),
-      };
-    },
-    finishedMetadata: (runId) => {
-      // 回复已经结束：这时才在后台写摘要（这一轮只裁剪，首字时间不变）。
-      runHistoryRefresh(runId);
-      const compaction = historyCompactions.get(runId);
-      return compaction ? { historyCompaction: compaction } : undefined;
-    },
-    // 我们已经压缩过前文的运行，Hermes 自带的上下文压缩关掉，免得二次压缩。
-    hostCompacted: (runId) => historyCompactions.has(runId),
-    toolsFor: async (input, signal) => {
-      const passing = (await options.handoff?.(agent.id, input)) ?? [];
-      signal.throwIfAborted();
-      return [...options.tools, ...passing];
-    },
-    prepare: async (input, tools) => {
-      // Reuse the shipped prompt and host tool guidance; no provider client is constructed here.
-      const configured = builtInAgentConfiguration(
-        agent,
-        { ...options.model, useApiKey: false },
-        null,
-        [...tools],
-        options.computerGuidance,
-        options.connectedVendors,
-        options.standingInstructions,
-        undefined,
-        undefined,
-        options.audience,
-      );
-      const prompt = "prompt" in configured ? configured.prompt : undefined;
-      if (typeof prompt !== "string")
-        throw new Error("The Hermes host instructions could not be prepared.");
-      const answeredByResume = new Set(
-        (input.resume ?? []).map((entry) => entry.interruptId),
-      );
-      const existingResults = new Set(
-        input.messages.flatMap((message) =>
-          message.role === "tool" ? [message.toolCallId] : [],
-        ),
-      );
-      const resumed: Message[] = (input.resume ?? [])
-        .filter(
-          (entry) =>
-            entry.status === "resolved" &&
-            !existingResults.has(entry.interruptId),
-        )
-        .map((entry) => ({
-          id: `hermes-resume:${entry.interruptId}`,
-          role: "tool" as const,
-          toolCallId: entry.interruptId,
-          content:
-            typeof entry.payload === "string"
-              ? entry.payload
-              : JSON.stringify(entry.payload ?? null),
-        }));
-      const history = sanitizeSeededHistory(
-        [
-          ...input.messages.filter(
-            (message) =>
-              message.id !== `hermes-role:${agent.id}` &&
-              message.id !== HISTORY_SUMMARY_ID,
-          ),
-          ...resumed,
-        ],
-        answeredByResume,
-      );
-      const messages = options.loadAttachment
-        ? await inlineAttachments(
-            history,
-            options.loadAttachment,
-            input.threadId,
-            options.markAttachmentsSent,
-          )
-        : history;
-      // 长对话：按上下文窗口估算，>70% 裁剪旧工具结果 / 超长旧消息，>85% 用缓存的摘要代替较早轮次（agents/history-budget.ts）。
-      // 这一轮从不等摘要模型：没有现成摘要就只裁剪，回复结束后后台写摘要。只改这一次发出去的副本，数据库里的完整历史不动。
-      let budget: Awaited<ReturnType<typeof compactHistory>> = {
-        summary: null,
-        messages,
-        compaction: null,
-        refresh: null,
-      };
-      try {
-        let toolTokens = 0;
-        try {
-          toolTokens = Math.round(
-            JSON.stringify(
-              tools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                parameters: z.toJSONSchema(tool.parameters, { io: "input" }),
-              })),
-            ).length / 4,
-          );
-        } catch {
-          toolTokens = 0;
-        }
-        const [contextWindow, previousUsage] = await Promise.all([
-          resolveContextWindow(options.model.defaultModel),
-          historyPlans.get(input.runId)
-            ? null
-            : resolvePreviousRunUsage(input.threadId),
-        ]);
-        budget = await compactHistory({
-          threadId: input.threadId,
-          runId: input.runId,
-          history: messages,
-          overheadTokens: estimateTokens([{ content: prompt }]) + toolTokens,
-          contextWindow,
-          store: historySummaryStore,
-          summarize: connectionSummarizer(
-            options.model,
-            options.apiKey ?? null,
-          ),
-          memo: historyPlans,
-          previousUsage,
-          log: (line) => console.log(JSON.stringify(line)),
-        });
-      } catch (error) {
-        console.warn(
-          JSON.stringify({
-            type: "history-budget",
-            event: "failed",
-            error:
-              error instanceof Error
-                ? reasonWithoutStatement(error).slice(0, 200)
-                : "unknown",
-          }),
-        );
-      }
-      rememberCompaction(input.runId, budget.compaction);
-      if (budget.refresh) rememberRefresh(input.runId, budget.refresh);
-      return {
-        ...input,
-        messages: [
-          { id: `hermes-role:${agent.id}`, role: "system", content: prompt },
-          ...(budget.summary ? [budget.summary] : []),
-          ...budget.messages,
-        ],
-      };
-    },
-  });
-}
-
 async function buildAgent(
   agent: RegisteredAgent,
   model: RuntimeModel,
@@ -1563,26 +1285,6 @@ async function buildAgent(
   }
 
   const granted = await loadTools(agent.id);
-  if (agentKernel.kind === "hermes" && agent.type === "built_in") {
-    return hermesKernelAgent({
-      agent,
-      kernel: agentKernel,
-      model,
-      apiKey,
-      tools: granted,
-      signRun,
-      standingInstructions,
-      computerGuidance,
-      connectedVendors,
-      stallGuard,
-      agentFetch,
-      initiator,
-      loadAttachment,
-      markAttachmentsSent,
-      handoff,
-      audience,
-    });
-  }
 
   /*
    * Whether narrowing can do anything here at all.

@@ -70,6 +70,7 @@ function interruptWaitingKind(
     ? (waiting as { kind?: unknown }).kind
     : undefined;
 }
+
 import type { ThreadActivity } from "@/lib/conversations/bot-thread";
 import { readSync } from "@/lib/conversations/bot-thread";
 import { reportChatRunning } from "@/lib/conversations/computer-activity";
@@ -1674,9 +1675,8 @@ export function ChannelChat({
         noteRunProgress.current();
         if (
           stopRequestedRef.current ||
-          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(
-            String((event as { code?: unknown } | undefined)?.code),
-          ) ||
+          String((event as { code?: unknown } | undefined)?.code) ===
+            "DSH_RUN_CANCELLED" ||
           event?.message === "This run was stopped."
         ) {
           awaitingReply.current = false;

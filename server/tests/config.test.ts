@@ -19,31 +19,26 @@ describe("agent kernel selection", () => {
   test("new installs use DSH with a persistent managed Host root", () => {
     const config = loadConfig(baseEnvironment);
     expect(config.dshKernel).toEqual({ root: ".data/dsh" });
-    expect(config.hermesKernel).toBeUndefined();
   });
-  test("existing Hermes URL keeps its meaning until an explicit kernel is selected", () => {
-    const legacy = {
+  test("explicit DSH or builtin selection is honoured", () => {
+    const dsh = loadConfig({
       ...baseEnvironment,
-      CHISABOT_HERMES_URL: "http://localhost:4100/ag-ui",
-    };
-    expect(loadConfig(legacy).hermesKernel?.url).toBe(
-      legacy.CHISABOT_HERMES_URL,
-    );
-    expect(loadConfig(legacy).dshKernel).toBeUndefined();
-    const dsh = loadConfig({ ...legacy, CHISABOT_AGENT_KERNEL: "dsh" });
+      CHISABOT_AGENT_KERNEL: "dsh",
+    });
     expect(dsh.dshKernel).toBeDefined();
-    expect(dsh.hermesKernel).toBeUndefined();
-    const builtin = loadConfig({ ...legacy, CHISABOT_AGENT_KERNEL: "builtin" });
+    const builtin = loadConfig({
+      ...baseEnvironment,
+      CHISABOT_AGENT_KERNEL: "builtin",
+    });
     expect(builtin.dshKernel).toBeUndefined();
-    expect(builtin.hermesKernel).toBeUndefined();
   });
-  test("invalid selections and an unconfigured Hermes kernel cannot silently use another engine", () => {
+  test("invalid or retired kernel selections are rejected", () => {
     expect(() =>
       loadConfig({ ...baseEnvironment, CHISABOT_AGENT_KERNEL: "ds" }),
     ).toThrow("CHISABOT_AGENT_KERNEL");
     expect(() =>
       loadConfig({ ...baseEnvironment, CHISABOT_AGENT_KERNEL: "hermes" }),
-    ).toThrow("CHISABOT_HERMES_URL");
+    ).toThrow("CHISABOT_AGENT_KERNEL");
   });
 });
 
@@ -85,24 +80,6 @@ describe("deployment configuration", () => {
         CHISABOT_ORGANIZATION_AUTH_URL: "https://chisabot.company.example",
       }),
     ).toThrow(/CHISABOT_ORGANIZATION_AUTH_URL/);
-  });
-  test("the Hermes kernel is opt-in and normalises its URL", () => {
-    expect(loadConfig(baseEnvironment).hermesKernel).toBeUndefined();
-
-    expect(
-      loadConfig({
-        ...baseEnvironment,
-        CHISABOT_HERMES_URL: "http://127.0.0.1:4100/ag-ui/",
-      }).hermesKernel,
-    ).toEqual({ url: "http://127.0.0.1:4100/ag-ui" });
-
-    expect(
-      loadConfig({
-        ...baseEnvironment,
-        CHISABOT_HERMES_URL: "http://127.0.0.1:4100/ag-ui",
-        CHISABOT_HERMES_TOKEN: "bridge-secret",
-      }).hermesKernel,
-    ).toEqual({ url: "http://127.0.0.1:4100/ag-ui", token: "bridge-secret" });
   });
 
   test("resolves local durable storage without hosted runtime credentials", () => {

@@ -2,9 +2,7 @@
 export const CONVERSATION_BASE = "/api/conversations";
 
 export function isConversationPath(path: string): boolean {
-  return (
-    path === CONVERSATION_BASE || path.startsWith(`${CONVERSATION_BASE}/`)
-  );
+  return path === CONVERSATION_BASE || path.startsWith(`${CONVERSATION_BASE}/`);
 }
 
 /** Read saved continuations without rewriting their signed assertion or original payload. */

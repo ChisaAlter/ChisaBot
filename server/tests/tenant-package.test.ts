@@ -380,9 +380,9 @@ describe("tenant YAML validation", () => {
     });
   });
 
-  test("loads the mounted fintech package without a theme file", async () => {
+  test("loads the mounted sample package without a theme file", async () => {
     const tenantPackage = await loadTenantPackage(
-      fileURLToPath(new URL("../../examples/fintech", import.meta.url)),
+      fileURLToPath(new URL("./fixtures/tenant-sample", import.meta.url)),
     );
 
     expect(tenantPackage.tenantId).toBe("chisabot");
@@ -1547,7 +1547,9 @@ test("blank package endpoint disables only its owned agent and restores it when 
   try {
     process.env.MANAGED_AGENT_AG_UI_URL = "http://127.0.0.1:4201/ag-ui";
     process.env.PICKED_HARNESS_URL = "http://127.0.0.1:4206/ag-ui";
-    const source = new URL("../../examples/fintech", import.meta.url).pathname;
+    const source = fileURLToPath(
+      new URL("./fixtures/tenant-sample", import.meta.url),
+    );
     const configured = await loadTenantPackage(source);
     const rename = (id: string) => `${id}-${suffix}`;
     const isolate = (loaded: LoadedTenantPackage): LoadedTenantPackage => ({

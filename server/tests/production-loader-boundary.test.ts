@@ -27,7 +27,7 @@ async function runProductionEntry() {
       "COMPUTER_TOKEN=synthetic-computer-token",
       "WORKER_SHARED_SECRET=synthetic-worker-secret",
       "AGENT_TOOL_TOKEN=synthetic-tool-token",
-      "TENANT_PACKAGE_DIR=../examples/fintech",
+      "TENANT_PACKAGE_DIR=../examples/zh-CN",
       "PORT=39999",
       "",
     ].join("\n"),
@@ -55,7 +55,7 @@ async function runProductionEntry() {
     stderr: "pipe",
   });
 
-  const timeout = setTimeout(() => proc.kill(), 5_000);
+  const timeout = setTimeout(() => proc.kill(), 10_000);
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),

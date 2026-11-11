@@ -11,7 +11,6 @@ import {
   type RunAssertion,
   readRunAssertion,
 } from "../src/agents/callback-token";
-import { computerAccessCheck } from "../src/agents/computer-access";
 import {
   DshRuntimeAgent,
   type DshRuntimeBinding,
@@ -53,7 +52,6 @@ import { createDeviceHub } from "../src/devices/hub";
 import type { DeviceRecord } from "../src/devices/store";
 import { createLocalAgentService } from "../src/local-agents/service";
 import { createLocalConversations } from "../src/local-conversations";
-import { createTeamBots } from "../src/team-bots/team-bots";
 import { createTurnRunner } from "../src/turns/run-turn";
 import type { TurnRunner } from "../src/turns/types";
 import { createWorkQueue } from "../src/work/queue";
@@ -115,15 +113,6 @@ async function until<T>(
     let device: DeviceRecord;
     let connection: ReturnType<ReturnType<typeof createDeviceHub>["attach"]>;
     const sent: Record<string, unknown>[] = [];
-    let teamBot = "";
-    let teamBots: ReturnType<typeof createTeamBots>;
-    const teamResults: {
-      actor: string;
-      computer: boolean;
-      sharedCredential: string;
-      personalCredential: string;
-      initiator?: AuditInitiator;
-    }[] = [];
     let requests = 0;
     const providerBodies: WireBody[] = [];
     let selectionBinding: DshRuntimeBinding;
@@ -229,13 +218,6 @@ async function until<T>(
             delegationFor: (claim, run) =>
               readCoordinationHandoffClaim(database, claim, run),
           }),
-      });
-      teamBots = createTeamBots({
-        database,
-        connectedServers: async (id) =>
-          new Set(
-            id === publisher ? ["shared"] : id === actor ? ["personal"] : [],
-          ),
       });
       const runtime = resolve("runtime/dsh");
       await mkdir(join(runtime, ".runtime"), { recursive: true });
@@ -431,36 +413,6 @@ async function until<T>(
                   initiator: context?.initiator,
                 });
                 return "Actor context recorded.";
-              },
-            },
-            {
-              name: "team_authority_probe",
-              ref: "test/team",
-              description:
-                "Check Team Bot permissions through the production authority services.",
-              parameters: z.object({}),
-              execute: async () => {
-                const credentials = teamBots.credentialActorFor(
-                  input.actorId,
-                  input.botId,
-                );
-                let personalCredential: string;
-                try {
-                  personalCredential = await credentials("personal/read");
-                } catch (error) {
-                  personalCredential = (error as Error).message;
-                }
-                teamResults.push({
-                  actor: input.actorId,
-                  computer: await computerAccessCheck(profiles)(
-                    { id: input.actorId, role: "user" },
-                    input.botId,
-                  ),
-                  sharedCredential: await credentials("shared/read"),
-                  personalCredential,
-                  initiator: currentApprovalContext()?.initiator,
-                });
-                return "Team authority recorded.";
               },
             },
           ],
@@ -1153,84 +1105,6 @@ async function until<T>(
       );
       expect(stages).toHaveLength(0);
     }, 45_000);
-
-    test("a Team Bot runs in the teammate's Host and keeps computer and personal credential boundaries", async () => {
-      const owner = { id: publisher, role: "user" as const },
-        teammate = { id: actor, role: "user" as const };
-      teamBot = (
-        await profiles.create(owner, {
-          name: "Team Acceptance",
-          title: "Acceptance",
-          roleDescription: "Test shared team authority",
-          visibility: "private",
-        })
-      ).id;
-      await teamBots.publish(owner, teamBot, {
-        audience: "team",
-        emails: [],
-        groups: [],
-      });
-      const thread = `${actor}-team`,
-        initiator = { kind: "person" as const, surface: "web" as const };
-      stages.push({ tool: "team_authority_probe", answer: "团队权限已核对。" });
-      await runTurn({
-        ownerUserId: actor,
-        agentId: teamBot,
-        threadId: thread,
-        routineId: "team",
-        initiator,
-        instruction: "Check Team Bot authority.",
-      });
-      expect(teamResults[0]).toMatchObject({
-        actor,
-        computer: false,
-        sharedCredential: publisher,
-        initiator,
-      });
-      expect(teamResults[0]!.personalCredential).toContain(
-        "[team-bot-consent]",
-      );
-      const [binding] = await database.$client.unsafe(
-        "SELECT owner_user_id,bot_id FROM chisabot_runtime_bindings WHERE thread_id=$1",
-        [thread],
-      );
-      expect(binding).toMatchObject({ owner_user_id: actor, bot_id: teamBot });
-      const hiddenHistory = await backend.client
-        .getThreadMessages({
-          threadId: thread,
-          userId: publisher,
-        })
-        .then(
-          () => null,
-          (error: unknown) => error,
-        );
-      expect(hiddenHistory).toBeInstanceOf(Error);
-      await teamBots.consent(teammate, teamBot, "personal", "allow_once");
-      stages.push({ tool: "team_authority_probe", answer: "单次授权已使用。" });
-      await runTurn({
-        ownerUserId: actor,
-        agentId: teamBot,
-        threadId: thread,
-        routineId: "team",
-        initiator,
-        instruction: "Use the allowed personal credential once.",
-      });
-      expect(teamResults[1]!.personalCredential).toBe(actor);
-      const consumedConsent = await teamBots
-        .credentialActorFor(
-          actor,
-          teamBot,
-        )("personal/read")
-        .then(
-          () => null,
-          (error: unknown) => error,
-        );
-      expect(consumedConsent).toBeInstanceOf(Error);
-      expect((consumedConsent as Error).message).toContain(
-        "[team-bot-consent]",
-      );
-      expect(stages).toHaveLength(0);
-    }, 50_000);
 
     test("DSH launches a device agent through approval and the device protocol returns to the original thread", async () => {
       const thread = `${actor}-device-thread`;

@@ -36,16 +36,22 @@ import { createEventLifecycles } from "../conversations/runner";
 import type { createDshToolGateway } from "../conversations/tool-gateway";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
-import type { HermesRuntimeBinding } from "./hermes-runtime";
+import type { RunAssertion } from "./callback-token";
 import { PLAN_RUN_COMPLETED, type PlanModelConfig } from "./plan-model";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
+
+export type RuntimeToolBinding = {
+  toolGatewayUrl: string;
+  readRun: (assertion: unknown) => RunAssertion | null;
+  loadSurfaceTools?: (scope: RunAssertion) => Promise<readonly HeadlessTool[]>;
+};
 
 export type DshRuntimeTarget = {
   id: string;
   ownerUserId: string;
   connectionFile: string;
 };
-export type DshRuntimeBinding = HermesRuntimeBinding & {
+export type DshRuntimeBinding = RuntimeToolBinding & {
   targetFor(actorId: string): Promise<DshRuntimeTarget>;
   bindings: ConversationBindings;
   gateway: ReturnType<typeof createDshToolGateway>;

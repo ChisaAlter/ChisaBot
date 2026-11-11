@@ -69,9 +69,6 @@ done
 
 RESULT=failed
 PROTO_STOPPED=""
-HERMES_TRANSACTION_COMMITTED=0
-HERMES_ROLLBACK_ATTEMPTED=0
-HERMES_PENDING_FILE=""
 DSH_ADMISSION_HELD=0
 DSH_RELEASE_ALLOWED=1
 RB=""
@@ -90,15 +87,6 @@ pause_proto() {
   done
 }
 finish() {
-  # swap holds .deploy.lock only in its subshell; by EXIT it has been released. The existing
-  # rollback script can therefore restore image+Hermes without contending with update.lock.
-  if [ -n "$HERMES_PENDING_FILE" ] && [ -f "$HERMES_PENDING_FILE" ] \
-    && [ "$HERMES_TRANSACTION_COMMITTED" != 1 ] && [ "$HERMES_ROLLBACK_ATTEMPTED" != 1 ] && [ -f "$RB" ]; then
-    HERMES_ROLLBACK_ATTEMPTED=1
-    echo "::error:: 发布在 Hermes 环境切换后中断，恢复上一版镜像与运行时"
-    if sh "$RB"; then RESULT=rolled_back; DSH_RELEASE_ALLOWED=1
-    else echo "::error:: 中断恢复失败，请使用已记录的回滚脚本"; fi
-  fi
   resume_proto
   if [ "$DSH_ADMISSION_HELD" = 1 ] && [ "$DSH_RELEASE_ALLOWED" = 1 ]; then
     dsh_release_admission "$JOB" || echo "::error:: DSH 接纳仍暂停，请检查持久卷中的 .maintenance 后恢复"
@@ -206,12 +194,6 @@ if [ "$BUILD_ONLY" != 1 ] && [ "$DRY" != 1 ] && [ "$(image_mode)" = env ]; then
 fi
 VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$B/src/package.json" | head -n 1)
 BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-# A build-only/dry-run never installs host runtime files or changes private configuration.
-# Normal releases stage Hermes from this exact export before the application image is swapped.
-if [ "$BUILD_ONLY" != 1 ] && [ "$DRY" != 1 ]; then
-  prepare_hermes_release "$B/src" "$TARGET" || fail "Hermes 运行时准备失败；当前应用和服务未切换"
-fi
 
 if [ "$MODE" = full ]; then
   # ---------- build（完整）----------
@@ -402,45 +384,22 @@ sed -e "s#@NEW@#$NEW_IMAGE#g" -e "s#@NEW_TAG@#$TAG#g" -e "s#@PREV@#$CUR_IMAGE#g"
   -e "s#@SERVICE@#$SERVICE#g" -e "s#@CONTAINER@#$CONTAINER#g" \
   -e "s#@LOCAL_URL@#${LOCAL_URL:-http://127.0.0.1:3001}#g" -e "s#@PUBLIC_HEALTH_URL@#${PUBLIC_HEALTH_URL:-}#g" "$U/rollback.template.sh" > "$RB.tmp" && chmod 755 "$RB.tmp" && mv "$RB.tmp" "$RB" \
   || fail "写回滚脚本失败"
-# Keep generated manual rollbacks on the same helper path as admin rollback.sh. The helper runs
-# before the old image restarts, and restores only Hermes configuration, never its run ledger.
-if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then
-  case "$U:$COMPOSE_DIR:$COMPOSE_FILE:$IMAGE_REPO" in *[\ \"\']*) fail "Hermes 回滚配置路径不能含空白或引号" ;; esac
-  awk -v helper="$U/compose-image.sh" -v compose="$COMPOSE_DIR" -v file="$COMPOSE_FILE" -v repo="$IMAGE_REPO" -v tag="$TAG" \
-    -v python="$(hermes_update_python)" '
-    /^docker compose / && !inserted++ {
-      print "# Restore the matching Hermes runtime and private environment before the image."
-      print "bash -c '\''COMPOSE_DIR=\"$1\"; COMPOSE_FILE=\"$2\"; IMAGE_REPO=\"$3\"; CHISABOT_HERMES_UPDATE_PYTHON=\"$5\"; . \"$4\"; restore_hermes_release \"$6\"'\'' -- \"" compose "\" \"" file "\" \"" repo "\" \"" helper "\" \"" python "\" \"" tag "\""
-    }
-    { print }
-  ' "$RB" > "$RB.hermes.tmp" && chmod 755 "$RB.hermes.tmp" && mv -f "$RB.hermes.tmp" "$RB" \
-    || fail "写 Hermes 回滚 hook 失败"
-fi
 echo "回滚脚本 $RB"
 echo "::rollback:: $RB"
-if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DIR/.hermes.before-$TAG/transaction-pending"; fi
 (
   cd "$COMPOSE_DIR" || exit 1
   exec 8>.deploy.lock
   flock -w 60 8 || { echo "拿不到 $COMPOSE_DIR/.deploy.lock"; exit 1; }
-  snapshot_hermes_release "$TAG" || { echo "Hermes 回滚快照失败；没有切换"; exit 1; }
-  # The generated rollback uses this record to identify env mode. Commit it before changing
-  # Hermes env so an interruption cannot send rollback through the compose-file branch.
   if [ "$IMAGE_MODE" = env ]; then
     printf '%s\n' "$CUR_IMAGE" > ".image.before-$TAG" || exit 1
   fi
-  if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then
-    # Create the record before the atomic env replacement so SIGTERM cannot lose the transaction.
-    : > "$HERMES_PENDING_FILE" || exit 1
-  fi
-  configure_hermes_release || { restore_hermes_release "$TAG"; echo "Hermes 应用环境配置失败"; exit 1; }
   if [ "$IMAGE_MODE" = env ]; then
     # 仓库自带的 compose.yaml 不改，镜像写进同目录 .env 的 CHISABOT_IMAGE。
-    restore() { set_image "$CUR_IMAGE" && restore_hermes_release "$TAG"; }
+    restore() { set_image "$CUR_IMAGE"; }
     set_image "$NEW_IMAGE" || { restore; echo "无法把 CHISABOT_IMAGE 写进 $COMPOSE_DIR/.env"; exit 1; }
   else
     cp -p "$COMPOSE_FILE" "$COMPOSE_FILE.before-$TAG"
-    restore() { cp -p "$COMPOSE_FILE.before-$TAG" "$COMPOSE_FILE" && restore_hermes_release "$TAG"; }
+    restore() { cp -p "$COMPOSE_FILE.before-$TAG" "$COMPOSE_FILE"; }
     set_image "$NEW_IMAGE" || { restore; echo "compose 里没有找到镜像行"; exit 1; }
   fi
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" config --quiet || { restore; exit 1; }
@@ -456,36 +415,15 @@ if [ "${HERMES_RELEASE_ENABLED:-0}" = 1 ]; then HERMES_PENDING_FILE="$COMPOSE_DI
 )
 SWAP=$?
 
-# 激活后的桥接可能要几秒才开始监听：最多等 HERMES_REACH_WAIT 秒（默认 30），每 3 秒连一次。
-hermes_reachable_after_activation() {
-  local waited=0 limit=${HERMES_REACH_WAIT:-30}
-  while :; do
-    bash "$U/hermes-reach.sh" && return 0
-    [ "$waited" -ge "$limit" ] && return 1
-    sleep 3; waited=$((waited + 3))
-  done
-}
-
 # ---------- health ----------
 step health "健康检查"
 OK=0
-# CB-100：Hermes 运行时由这次发布激活时，桥接要等镜像健康后才（重新）启动，所以健康检查里的 Hermes 连通性
-# 只记录，激活之后再从应用容器里连一次；连不上和激活失败一样走下面的回滚。
-DEFER_HERMES=0
-[ "${HERMES_RELEASE_ENABLED:-0}" = 1 ] && DEFER_HERMES=1
-if [ "$SWAP" = 0 ] && CHISABOT_SMOKE_DEFER_HERMES=$DEFER_HERMES bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
-  # Initialize/restart the matching host adapter only after the new image passed its own health.
-  # Installer readiness failure returns to the existing image+runtime rollback below.
-  if activate_hermes_release; then
-    if [ "$DEFER_HERMES" != 1 ] || [ ! -f "$U/hermes-reach.sh" ]; then OK=1
-    elif hermes_reachable_after_activation; then OK=1
-    else echo "::error:: 应用容器在 Hermes 激活后仍连不上 CHISABOT_HERMES_URL（hermes=unreachable）"; fi
-  else echo "::error:: Hermes 运行时激活或就绪检查失败"; fi
+if [ "$SWAP" = 0 ] && bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
+  OK=1
 fi
 if [ "$OK" != 1 ]; then
   echo "::error:: 新版本健康检查没通过；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
   docker logs --tail 15 "$CONTAINER" 2>&1 | cut -c1-240 | sed 's/^/  容器日志 | /'
-  HERMES_ROLLBACK_ATTEMPTED=1
   if sh "$RB" && bash "$U/health.sh" "$CUR_IMAGE" ""; then
     DSH_RELEASE_ALLOWED=1
     echo "已回滚到 $CUR_IMAGE"
@@ -496,9 +434,6 @@ if [ "$OK" != 1 ]; then
   exit 4
 fi
 
-# Runtime readiness and image health both passed; later cleanup/self-upgrade failures must not
-# roll a healthy release back. The immutable snapshot remains available for an explicit rollback.
-HERMES_TRANSACTION_COMMITTED=1
 DSH_RELEASE_ALLOWED=1
 
 # ---------- done ----------

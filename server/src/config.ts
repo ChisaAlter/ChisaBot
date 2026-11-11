@@ -209,14 +209,6 @@ export type DeploymentConfig = {
    * where a key that was revoked last week would have surfaced regardless.
    */
   composioApiKey: string | undefined;
-  /**
-   * 全面换内核：设置后，所有 built-in 机器人改由 Hermes 的 ACP 桥回答。
-   *
-   * `url` 是 `examples/acp-agent` 桥的 AG-UI 地址；`token` 是它的 `ACP_BRIDGE_TOKEN`。未设置时
-   * 行为不变（conversation runtime + AI SDK 的内置循环）。这是一个部署级开关，不是每个机器人的字段：
-   * 现有的和以后新建的 `built_in` 机器人都会走新内核，不会漏掉某一个。
-   */
-  hermesKernel?: { url: string; token?: string };
   dshKernel?: { targetsFile?: string; root?: string; gatewayUrl?: string };
   /**
    * Where this deployment is reached from outside, with no trailing slash.
@@ -1221,11 +1213,6 @@ export function loadConfig(
   }
   const managedAgent = managedAgentConfig(environment);
   const runtime = runtimeCapabilities(environment);
-  const hermesUrl = optional(environment, "CHISABOT_HERMES_URL")?.replace(
-    /\/+$/,
-    "",
-  );
-  const hermesToken = optional(environment, "CHISABOT_HERMES_TOKEN");
   const kernel = selectedAgentKernel(environment);
   const dshTargetsFile = optional(environment, "CHISABOT_DSH_TARGETS_FILE");
   const dshGatewayUrl = optional(environment, "CHISABOT_DSH_TOOL_GATEWAY_URL");
@@ -1265,14 +1252,6 @@ export function loadConfig(
         }
       : {}),
     ...(managedAgent ? { managedAgent } : {}),
-    ...(kernel === "hermes" && hermesUrl
-      ? {
-          hermesKernel: {
-            url: hermesUrl,
-            ...(hermesToken ? { token: hermesToken } : {}),
-          },
-        }
-      : {}),
     agentEndpointAllowedHosts: agentEndpointAllowedHosts(environment),
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     composioApiKey: optional(environment, "COMPOSIO_API_KEY"),
