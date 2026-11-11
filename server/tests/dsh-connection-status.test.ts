@@ -205,6 +205,9 @@ async function until(check: () => boolean, message: string) {
         tools: [],
         context: [],
       };
+      // This fixture runs the agent directly, without the conversation runner that
+      // acknowledges a completed projection. Retire only its own journal record.
+      resources.push(() => journal.status(threadId, input.runId, "settled"));
       const events: BaseEvent[] = [];
       const done = new Promise<void>((resolve, reject) =>
         agent.run(input).subscribe({
