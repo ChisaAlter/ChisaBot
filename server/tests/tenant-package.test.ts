@@ -202,7 +202,7 @@ describe("tenant theme validation", () => {
   });
 });
 
-describe("a seeded Mastra Bot", () => {
+describe("remote agent configuration validation", () => {
   const withAgent = (agent: string) =>
     validateTenantPackage({
       brand: "tenant: { id: fintech, product_name: Ledgerline }",
@@ -214,29 +214,7 @@ describe("a seeded Mastra Bot", () => {
       themeCss: "",
     });
 
-  test("is seeded as its own kind, carrying the agent it names", () => {
-    const [agent] = withAgent(
-      "{ id: research, name: Research, title: Research, role_description: Look things up., type: remote-mastra, endpoint: http://mastra.internal, remote_agent_id: chisabot }",
-    ).agents;
-    expect(agent?.type).toBe("remote_mastra");
-    expect(agent?.configuration).toEqual({
-      endpoint: "http://mastra.internal",
-      remoteAgentId: "chisabot",
-    });
-  });
-
-  test("naming no agent is allowed, and means the only one there", () => {
-    const [agent] = withAgent(
-      "{ id: research, name: Research, title: Research, role_description: Look things up., type: remote-mastra, endpoint: http://mastra.internal }",
-    ).agents;
-    expect(agent?.configuration).toEqual({
-      endpoint: "http://mastra.internal",
-    });
-  });
-
-  test("an AG-UI Bot never picks up a remote agent id", () => {
-    // The field is Mastra's alone. Carried onto an AG-UI Bot it would be stored, read back, and
-    // mean nothing, which is the kind of dead configuration somebody later tries to honour.
+  test("an AG-UI Bot never picks up an extra remote agent id", () => {
     const [agent] = withAgent(
       "{ id: risk, name: Risk, title: Risk, role_description: Check things., type: remote-ag-ui, endpoint: http://risk.internal, remote_agent_id: ignored }",
     ).agents;
@@ -248,7 +226,12 @@ describe("a seeded Mastra Bot", () => {
       withAgent(
         "{ id: x, name: X, title: X, role_description: Y., type: remote-whatever, endpoint: http://x.test }",
       ),
-    ).toThrow("agent.type must be built-in, remote-ag-ui or remote-mastra");
+    ).toThrow("agent.type must be built-in or remote-ag-ui");
+    expect(() =>
+      withAgent(
+        "{ id: x, name: X, title: X, role_description: Y., type: remote-mastra, endpoint: http://x.test }",
+      ),
+    ).toThrow("agent.type must be built-in or remote-ag-ui");
   });
 });
 

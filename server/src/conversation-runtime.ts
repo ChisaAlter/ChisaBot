@@ -120,31 +120,15 @@ type RegisteredBuiltInAgent = {
   model?: string;
 };
 
-type RegisteredRemoteAgentFacts = {
+type RegisteredRemoteAgent = {
   id: string;
   name: string;
+  type: "remote_ag_ui";
   endpoint: string;
-  /** Which agent on the endpoint, for a server that serves a roster. See `remoteTransport`. */
-  remoteAgentId?: string;
   standingMessage: StandingRoleMessage;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
 };
-
-/**
- * A Bot at somebody else's endpoint, in the two ways this deployment knows how to dial one.
- *
- * The kinds differ in transport and in nothing else: the difference ends at `remoteTransport`, which
- * returns an `AbstractAgent` either way, and every control after that is written against that
- * interface. What is deliberate here is the SHAPE. This is a union of two single-literal variants
- * rather than one type whose `type` is `"remote_ag_ui" | "remote_mastra"`, because TypeScript will
- * not eliminate a union member whose discriminant is itself a union: excluding both literals narrows
- * the property and keeps the member, so the built-in path below would silently stop being narrowed
- * to a built-in Bot. Verified against tsc 5.x; collapsing these two back into one costs that.
- */
-type RegisteredRemoteAgent =
-  | (RegisteredRemoteAgentFacts & { type: "remote_ag_ui" })
-  | (RegisteredRemoteAgentFacts & { type: "remote_mastra" });
 
 /**
  * A coworker the caller may see but may not run: its profile was deleted while a channel it worked
@@ -165,7 +149,6 @@ export type RegisteredAgent =
 
 type AgentRunInput = Parameters<AbstractAgent["run"]>[0];
 type AgentMessage = AgentRunInput["messages"][number];
-type AgentContext = NonNullable<AgentRunInput["context"]>[number];
 export type StandingRoleMessage = Extract<AgentMessage, { role: "system" }>;
 type AgentHeaders = Record<string, string>;
 type HeaderBearingAgent = AbstractAgent & { headers?: AgentHeaders };
@@ -641,24 +624,16 @@ export function registeredAgentFromRow(
       : null;
   }
 
+  if (row.type !== "remote_ag_ui") {
+    return null;
+  }
   const endpoint = configuration?.endpoint;
-  /*
-   * Which agent on that endpoint, when the endpoint serves more than one.
-   *
-   * Mastra servers are rosters rather than single agents, so a Bot row has to say which one it is.
-   * Absent falls back to this Bot's own id and then, on a single-agent server, to the only one
-   * there: see `remoteTransport`.
-   */
-  const remoteAgentId = configuration?.remoteAgentId;
   return typeof endpoint === "string" && isHttpUrl(endpoint)
     ? {
         id: row.id,
         name: row.name,
-        type: row.type === "remote_mastra" ? "remote_mastra" : "remote_ag_ui",
+        type: "remote_ag_ui",
         endpoint,
-        ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
-          ? { remoteAgentId }
-          : {}),
         standingMessage: standingRoleMessage(row),
       }
     : null;
@@ -1374,7 +1349,7 @@ async function hermesKernelAgent(options: {
     throw new Error(
       "Hermes requires an authenticated host tool binding before it can run.",
     );
-  const transport = await remoteTransport(
+  const transport = remoteTransport(
     {
       id: agent.id,
       name: agent.name,
@@ -1753,7 +1728,7 @@ async function buildAgent(
         )(model.defaultModel),
     });
   }
-  if (agent.type === "remote_ag_ui" || agent.type === "remote_mastra") {
+  if (agent.type === "remote_ag_ui") {
     /*
      * The remote path narrows inside its own middleware rather than by being wrapped.
      *
@@ -1773,7 +1748,7 @@ async function buildAgent(
      */
     return remoteAgentWithStandingRole(
       agent,
-      await remoteTransport(agent, stallGuard, agentFetch, initiator),
+      remoteTransport(agent, stallGuard, agentFetch, initiator),
       granted,
       signRun,
       connectedVendors,
@@ -1904,32 +1879,16 @@ export type ToolSelection = {
  * AG-UI events and a stall is the absence of one, so the thing that has to be watched is the
  * response body, and the fetch is where this deployment still holds it.
  */
-/** The client `@ag-ui/mastra` asks for, taken from its own signature. See `remoteTransport`. */
-type MastraClientForBridge = Parameters<
-  typeof import("@ag-ui/mastra").getRemoteAgents
->[0]["mastraClient"];
-
 /**
- * How this deployment dials a remote Bot's endpoint.
- *
- * Both kinds come back as an `AbstractAgent`, which is the whole point of putting them here. Every
- * control the wrapper below adds — the standing role, the holdings message, the offered tools, the
- * signed run assertion — is written against that interface, so a Mastra Bot is governed by exactly
- * the same code as an AG-UI one and cannot skip a control by being a different kind. A second
- * wrapper per transport is how that stops being true, silently, three months later.
- *
- * Mastra is reached through `@ag-ui/mastra`, the bridge Mastra and AG-UI maintain between them,
- * rather than through anything written here. A Mastra server speaks its own client protocol, and the
- * mapping from that protocol to AG-UI events belongs to the people who change both ends of it.
- * Imported dynamically so a deployment that registers no Mastra Bot never loads it.
+ * How this deployment dials a remote Bot's AG-UI endpoint.
  */
-async function remoteTransport(
+function remoteTransport(
   agent: RegisteredRemoteAgent,
   stallGuard: StallGuard | undefined,
   agentFetch?: AgentFetch,
   /** Who or what started this run, so a stall is reported against them rather than nobody. */
   initiator?: AuditInitiator,
-): Promise<AbstractAgent> {
+): AbstractAgent {
   // The watch wraps whichever fetch is underneath, so a deployment gets both the stall timeout and
   // the redirect check rather than having to choose.
   const dial = stallGuard
@@ -1939,105 +1898,21 @@ async function remoteTransport(
       )
     : agentFetch;
 
-  if (agent.type === "remote_ag_ui") {
-    // CB-100: a connect failure before the first event becomes a terminal RUN_ERROR, not a hang.
-    return new FailFastTransport(
-      new HttpAgent({
-        url: agent.endpoint,
-        agentId: agent.id,
-        // The customer's own key, if their agent sits behind one. `HttpAgentConfig` is
-        // `{ url, headers?, fetch? }`, verified against @ag-ui/client 0.0.57.
-        ...(agent.headers ? { headers: agent.headers } : {}),
-        ...(dial ? { fetch: dial } : {}),
-      }),
-    );
-  }
-
-  const [{ MastraClient }, { getRemoteAgents }] = await Promise.all([
-    import("@mastra/client-js"),
-    import("@ag-ui/mastra"),
-  ]);
-
-  const client = new MastraClient({
-    baseUrl: agent.endpoint,
-    ...(agent.headers ? { headers: agent.headers } : {}),
-    // `MastraClient` types this as the global `fetch`, which carries `preconnect`; the watched fetch
-    // is a call signature only, and is never used as anything but a fetch.
-    ...(dial ? { fetch: dial as unknown as typeof fetch } : {}),
-  });
-
-  const roster = await getRemoteAgents({
-    /*
-     * The same class, twice, under two names.
-     *
-     * This server runs zod 4 and `@ag-ui/mastra` depends on zod 3, so the package manager resolves
-     * two peer variants of `@mastra/client-js` — identical code at identical version 1.43.0, but
-     * two nominal types to TypeScript, which tells them apart by a private field. The cast crosses
-     * that and nothing else. It is deliberately written against the bridge's own parameter type, so
-     * the day the two versions really do diverge this stops compiling instead of lying.
-     *
-     * The alternative, forcing zod 4 onto `@ag-ui/mastra` with an override, makes the type error go
-     * away by risking a real one at runtime in somebody else's package. Not worth it for a private
-     * field.
-     */
-    mastraClient: client as unknown as MastraClientForBridge,
-    /*
-     * Mastra scopes its memory by `resourceId`, and this deployment hands it the Bot rather than the
-     * person deliberately. History here is ours: it is restored from Intelligence and sanitised
-     * before every run, so nothing depends on the endpoint remembering anything. Sending the
-     * person's identity would put it on a server this deployment does not run, to drive a feature it
-     * does not use, which is the same reason standing instructions stop at the built-in path.
-     */
-    resourceId: agent.id,
-  });
-
-  const picked = pickFromRoster(Object.keys(roster), agent);
-  return new FailFastTransport(roster[picked] as AbstractAgent);
-}
-
-/**
- * Which agent on a Mastra server a Bot means.
- *
- * Pure and separate from the dialling so it can be tested without a server, because the failure it
- * prevents is not one a live test would show: picking the wrong agent produces a Bot that answers
- * confidently as somebody else, which reads as a bad model rather than as the misconfiguration it
- * is. Throws rather than guessing, and names what the endpoint does serve, because that is the one
- * fact whoever is reading the error does not have.
- */
-export function pickFromRoster(
-  served: readonly string[],
-  agent: { id: string; remoteAgentId?: string },
-): string {
-  const wanted = agent.remoteAgentId ?? agent.id;
-  if (served.includes(wanted)) {
-    return wanted;
-  }
-  /*
-   * One agent and no name asked for is the ordinary single-agent server, and taking it is what was
-   * meant. A name that was asked for and is not there is never silently replaced by the only agent
-   * present: that turns a typo into a Bot that works and is wrong.
-   */
-  const only = served.length === 1 ? served[0] : undefined;
-  if (!agent.remoteAgentId && only) {
-    return only;
-  }
-  throw new Error(
-    `Mastra endpoint for Bot "${agent.id}" serves no agent named "${wanted}". It serves: ${
-      served.join(", ") || "none"
-    }.`,
+  // CB-100: a connect failure before the first event becomes a terminal RUN_ERROR, not a hang.
+  return new FailFastTransport(
+    new HttpAgent({
+      url: agent.endpoint,
+      agentId: agent.id,
+      // The customer's own key, if their agent sits behind one.
+      ...(agent.headers ? { headers: agent.headers } : {}),
+      ...(dial ? { fetch: dial } : {}),
+    }),
   );
 }
 
 function remoteAgentWithStandingRole(
   agent: RegisteredRemoteAgent,
-  /**
-   * The dialled endpoint, already built. See {@link remoteTransport}.
-   *
-   * Passed in rather than constructed here because building a Mastra transport is asynchronous and
-   * this function is not, but the better reason is that it makes the governance below indifferent
-   * to the transport: there is one wrapper, and no kind of remote Bot has its own copy of it to
-   * drift from.
-   */
+  /** The dialled endpoint, already built. See {@link remoteTransport}. */
   remote: AbstractAgent,
   /**
    * What this Bot was granted. Governed vendor and host tools execute through the AG-UI client
@@ -2226,19 +2101,7 @@ function remoteAgentWithStandingRole(
               >,
             })),
           ],
-          context:
-            agent.type === "remote_mastra"
-              ? [
-                  ...callerMastraContext(input.context ?? []),
-                  ...mastraChisaBotContext({
-                    standingMessage: agent.standingMessage,
-                    holdingsMessage,
-                    botId: agent.id,
-                    deploymentTools,
-                    runAssertion,
-                  }),
-                ]
-              : input.context,
+          context: input.context,
           // Who the Bot is calling back as, so the audit row names it rather than "an agent".
           forwardedProps,
         };
@@ -2296,66 +2159,6 @@ function remoteAgentWithStandingRole(
       return owned ? observeModelConnection(stream) : stream;
     });
   });
-}
-
-const RESERVED_MASTRA_CONTEXT_DESCRIPTIONS = new Set([
-  "ChisaBot standing role",
-  "ChisaBot granted tools guidance",
-  "ChisaBot Bot id",
-  "ChisaBot deployment tools",
-  "ChisaBot signed run assertion",
-  "ChisaBot learned skills",
-]);
-
-function callerMastraContext(context: AgentContext[]): AgentContext[] {
-  return context.filter(
-    (entry) => !RESERVED_MASTRA_CONTEXT_DESCRIPTIONS.has(entry.description),
-  );
-}
-
-function mastraChisaBotContext({
-  standingMessage,
-  holdingsMessage,
-  botId,
-  deploymentTools,
-  runAssertion,
-}: {
-  standingMessage: StandingRoleMessage;
-  holdingsMessage: StandingRoleMessage | null;
-  botId: string;
-  deploymentTools: string[];
-  runAssertion: string | undefined;
-}): AgentContext[] {
-  return [
-    {
-      description: "ChisaBot standing role",
-      value: standingMessage.content,
-    },
-    ...(holdingsMessage
-      ? [
-          {
-            description: "ChisaBot granted tools guidance",
-            value: holdingsMessage.content,
-          },
-        ]
-      : []),
-    {
-      description: "ChisaBot Bot id",
-      value: botId,
-    },
-    {
-      description: "ChisaBot deployment tools",
-      value: JSON.stringify(deploymentTools),
-    },
-    ...(runAssertion
-      ? [
-          {
-            description: "ChisaBot signed run assertion",
-            value: runAssertion,
-          },
-        ]
-      : []),
-  ];
 }
 
 class CloningRemoteAgent extends AbstractAgent {

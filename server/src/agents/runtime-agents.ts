@@ -44,8 +44,7 @@ export function createRuntimeAgentLoader(
     for (const row of active) {
       const agent = registeredAgentFromRow(row);
       if (!agent) continue;
-      const isRemoteAgent =
-        agent.type === "remote_ag_ui" || agent.type === "remote_mastra";
+      const isRemoteAgent = agent.type === "remote_ag_ui";
       // The key is resolved per load, rather than being cached on the row: revoking a
       // credential then takes effect on the next run rather than on the next restart.
       if (isRemoteAgent && vault) {
