@@ -22,9 +22,12 @@ export function redactUrl(value: string): string {
      */
     return redactPlain(value);
   }
-  if (parsed.username || parsed.password) {
+  // 同 redactUserinfo 的策略：有密码时两者都打码；只有用户名时，像令牌才打码。
+  if (parsed.password) {
     parsed.username = parsed.username ? MASK : "";
-    parsed.password = parsed.password ? MASK : "";
+    parsed.password = MASK;
+  } else if (parsed.username && userLooksSecret(parsed.username)) {
+    parsed.username = MASK;
   }
   for (const name of [...parsed.searchParams.keys()]) {
     if (SENSITIVE_PARAM.test(name)) parsed.searchParams.set(name, MASK);
@@ -266,8 +269,8 @@ function alreadyMasked(value: string): boolean {
 }
 
 const SECRET_SHAPES: RegExp[] = [
-  // Authorization: Bearer xxx / token xxx
-  /\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  // Authorization: Bearer xxx / token xxx. `Basic authentication` is prose (QA511 P3).
+  /\b(bearer|token|basic)\s+(?!authentication\b)[A-Za-z0-9._~+/=-]{12,}/gi,
   // 长参数：--password / --client-id / --api-key …（KEY=value / JSON / YAML / 请求头在 redactPlain）
   /(--(?!no-)(?:[a-z0-9]+-)*(?:password|passwd|passphrase|pass|token|secret|api-?key|apikey|client-?id|client-?secret|key)(?:-[a-z0-9]+)*(?:=|\s+))("[^"]*"|'[^']*'|[^\s"']+)/gi,
   // 常见密钥前缀
@@ -944,17 +947,34 @@ function redactPlain(value: string): string {
 }
 
 /**
- * 任意 scheme 的 URL userinfo（QA509：postgres:// redis:// mongodb+srv:// wss:// ftp:// amqp://…）。
- * redactUrl 只接 http(s)；其余 scheme 的 `user:pass@` / `:pass@` / `user@` 一律整段换成 ••••。
- * userinfo 贪婪匹配到 host 前最后一个 @，密码里带 @ 也不漏半截。
+ * URL userinfo 打码策略（QA509 / QA510 P3），redactUrl 和 redactUserinfo 共用：
+ * - 带密码（包括空用户名的 `:pass@`）：用户名和密码一起打码。连接串里两者成对出现，
+ *   只藏密码、留用户名，等于给撞库留一半线索。
+ * - 只有用户名：保留（`ssh://git@github.com`、`postgres://app@db` 里的用户名不是秘密）。
+ *   例外：用户名本身像令牌时打码，`https://<token>@github.com` 正是把令牌放在用户名位置。
+ *   判断依据是已知密钥前缀、20 位以上，或者 looksLikeSecret。
  */
+function userLooksSecret(user: string): boolean {
+  let decoded = user;
+  try {
+    decoded = decodeURIComponent(user);
+  } catch {
+    // 坏的百分号编码按原样判断。
+  }
+  return (
+    decoded.length >= 20 ||
+    new RegExp((SECRET_SHAPES[2] as RegExp).source).test(decoded) ||
+    looksLikeSecret(decoded)
+  );
+}
+
 const SCHEME_CHAR = /[A-Za-z0-9+.-]/;
 const WORD_CHAR = /[A-Za-z0-9_]/;
-const USERINFO_STOP = /[\s/?#"'<>]/;
+const USERINFO_STOP = /[\s"'<>]/;
 /**
- * 手写线性扫描（QA514 r5）：原来的 /\b([a-z][a-z0-9+.-]*:\/\/)…/ 会在 ask-ask-ask-… 这类长串的每个词边界上
- * 把 [a-z0-9+.-]* 扫到底再失败，1MB 要几十秒。现在只在 :// 处往回找 scheme、往后找最后一个 @，语义不变：
- * scheme 从词边界上的字母开始，userinfo 贪婪到 host 前最后一个 @。
+ * 手写线性扫描（QA514 r5 + QA510 P3）：不在每个词边界跑回溯正则，只在 `://` 处往回找 scheme、往后扫到空白/引号为止：
+ * - 带密码（冒号前不含 `/?#@`）：密码段贪婪到最后一个 `@`（兼容未编码的 `@ / # ?`）；`host:8080/@scope` 端口加路径原样保留。
+ * - 只有用户名（第一个 `@` 前不含 `/?#:`）：仅在用户名像令牌时打码，普通用户名（`ssh://git@github.com`）原样保留。
  */
 export function redactUserinfo(value: string): string {
   let out = "";
@@ -979,18 +999,42 @@ export function redactUserinfo(value: string): string {
       }
     }
     if (start < 0) continue;
-    // 往后找 userinfo 的结尾：停止字符之前最后一个 @。
     let end = from;
-    let at = -1;
+    let atLast = -1;
+    let firstAtBeforePath = -1;
+    let sawPathOrColon = false;
     while (end < value.length && !USERINFO_STOP.test(value[end] as string)) {
-      if (value[end] === "@") at = end;
+      const ch = value[end] as string;
+      if (ch === "@") {
+        atLast = end;
+        if (!sawPathOrColon && firstAtBeforePath < 0) firstAtBeforePath = end;
+      } else if (ch === "/" || ch === "?" || ch === "#" || ch === ":") {
+        sawPathOrColon = true;
+      }
       end += 1;
     }
-    if (at <= from) continue;
-    const userinfo = value.slice(from, at);
-    out += `${value.slice(last, from)}${userinfo.includes(":") ? `${MASK}:${MASK}` : MASK}@`;
-    last = at + 1;
-    from = last;
+    if (atLast > from) {
+      const candidate = value.slice(from, atLast);
+      const colon = candidate.indexOf(":");
+      if (colon >= 0 && !/[/?#@]/.test(candidate.slice(0, colon))) {
+        const password = candidate.slice(colon + 1);
+        if (!/^\d{1,5}(?:[/?#]|$)/.test(password)) {
+          out += `${value.slice(last, from)}${MASK}:${MASK}@`;
+          last = atLast + 1;
+          from = last;
+          continue;
+        }
+      }
+    }
+    if (firstAtBeforePath > from) {
+      const user = value.slice(from, firstAtBeforePath);
+      if (user !== MASK && userLooksSecret(user)) {
+        out += `${value.slice(last, from)}${MASK}@`;
+        last = firstAtBeforePath + 1;
+        from = last;
+        continue;
+      }
+    }
   }
   return last === 0 ? value : out + value.slice(last);
 }

@@ -23,7 +23,7 @@ openssl x509 -enddate -noout -in /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.p
 外部探活（从别的机器）：`curl -sI https://<YOUR_DOMAIN>:8443/login` 返回 200。可以接任何你习惯的监控（Uptime Kuma、
 云厂商探测等），探 `/login` 即可，不要探需要登录的接口。
 
-**聚合健康面（本机 / 值班）**：`GET /api/admin/health`（管理员会话或 `X-ChisaBot-Local-Caller`）一次看 app / DB / Magpie / 电脑节点 / 当前 DSH 内核。选用 DSH 时，其身份、版本和历史读取失败会使整体返回 503；未选中的旧 Hermes 不影响整体结果。
+**聚合健康面（本机 / 值班）**：`GET /api/admin/health`（管理员会话或 `X-ChisaBot-Local-Caller`）一次看 app / DB / Magpie / 电脑节点 / 当前 DSH 内核。DSH Host 的身份、版本和历史读取失败会使整体返回 503。
 部署后自动跑 `post-deploy-smoke.sh`（见 [production-checklist.md](../production-checklist.md)）。手动：`sh /opt/chisabot-updater/request.sh smoke`。
 
 ## 2. 关注的信号

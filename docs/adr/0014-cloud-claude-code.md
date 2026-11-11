@@ -61,6 +61,6 @@ Claude 上游代理（`shared/proxy-links.ts`）。
 ## 考虑过的其他方案
 
 - 做一个「Claude Code」机器人放进左栏：v1 设计；用户要更像 Claude Code 桌面版的独立视图（v2）。
-- 会话记录存成机器人聊天线程（thread kind `claude_code`）：要伪造一个机器人、走 CopilotKit runtime 的整套 agent 解析和权限；
+- 会话记录存成机器人聊天线程（thread kind `claude_code`）：要伪造一个机器人、走 旧聊天前端框架 runtime 的整套 agent 解析和权限；
   Claude Code 的事件（工具、审批、改动）和机器人消息结构不同。单独存更简单，展示组件照样复用。
 - 直接复用 ChisaCloudCode：root + docker.sock + bypass，且 UI 是 AGPL 派生，不能进 MIT 仓库。

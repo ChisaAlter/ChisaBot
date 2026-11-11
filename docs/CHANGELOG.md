@@ -1,3 +1,8 @@
+## 未发版
+
+- CB-118 / CB-016 去上游印记与架构收尾：移除旧兼容路由、旧前缀请求头/环境变量、前端与网关历史垫片、旧托管云会话模式、Mastra/Twilio 死依赖并净化 `bun.lock`；`pin-resources.sh` 与 `database-identity.sh` 通用化保留存量卷与数据库身份；退役 Hermes 过渡内核、孤儿模块（`demonstrations`、`team-bots`、`supervisor`、`work/culler` 等）与 `examples/fintech`；新增迁移 `0068_detachment_and_cleanup` 重命名 `chisabot_channel_mappings`、原地归一历史 JSONB 信封键并清理 14 张零引用废弃表；更新 `LICENSE`、`docs/THIRD_PARTY_NOTICES.md`、`.env.example`、看板文档与 CI `agent-computer` typecheck 门禁。
+- #511 QA510/511 P3 收尾：密码含未编码 `/ # ? @` 贪婪打码、单用户名令牌识别、Docker `service:port` 与裸内网 IPv6 脱敏；DSH 总等待时间文案、单模型超时不重发、会话事件写盘前脱敏（`runtime/dsh/src/redact.mjs`）；条件式承诺不触发催办；`/api/groups` 未知 Bot 回 400。
+
 ## 0.1.143
 
 - 聊天草稿、会话观察释放、重连状态、流式检查点、续执行、任务分页、记忆与设置操作修复；未知接纳不自动重发，失败草稿跨重载保留完整内容。
@@ -29,7 +34,7 @@
 
 - 版本：0.1.138（根、app、server、pc；Android versionCode 320）；PC 外壳不变，Android 应用本体有改动。服务器部署与客户端发布分别记录。
 - Android 主界面改为桌面共用 React 前端的手机布局，保留原生登录、文件选择、导出、键盘及返回键能力。
-- 正式服务器已完成 DSH 与 conversation reader 4 迁移，保留原会话、消息、任务和审批；移除 OpenBot 产品入口与现役接线。
+- 正式服务器已完成 DSH 与 conversation reader 4 迁移，保留原会话、消息、任务和审批；移除 早期上游模板 产品入口与现役接线。
 - CB-114（`fix/chat-reliability`）：流式正文使用聊天气泡，普通 Markdown 不再自动转文档，修复残留空白与滚动突跳；早期 Hermes 回退实现已由 DSH 运行时替代。正式部署与恢复记录见 `pipeline-runs/20261108-assistant-production.md`。
 - #514 设备审计打码：`devices/store`、`devices/hub`、`computer/activity-store` 写审计摘要前统一走 `computer/activity-redact`（环境变量写法、JSON/YAML 值、URL userinfo、密钥前缀高熵判定、先打后截、线性扫描）；`confirmations/service` 复用同一 `redactText`。
 - #509/#510：运行失败统一脱敏、任意 scheme URL 凭据打码、`/api/groups` 管理员限定与 inbox `no-store`；DSH 首输出超时换备用模型 + 失效模型熔断、最后候选保留首输出期限、只承诺不行动催办边界。
@@ -207,7 +212,7 @@
 
 ## 0.1.114
 
-- 公网网关下会话过期：收到网关 401（`openbotAuthRequired`）整页去 `/login?next=`，不再停在 `/sign` 加载；30 秒内又碰到就显示「登录状态异常」和「退出重新登录」，不再来回跳（#442）。
+- 公网网关下会话过期：收到网关 401（`chisabotAuthRequired`）整页去 `/login?next=`，不再停在 `/sign` 加载；30 秒内又碰到就显示「登录状态异常」和「退出重新登录」，不再来回跳（#442）。
 
 - Service Worker 升到 5：导航拿到网关 401 去 `/login?next=`，从 `/login` 回来的 401 原样交给浏览器（#442）。
 
@@ -286,7 +291,7 @@
 
 - 回复过程照 Hark 改：等待时只在机器人一侧显示一行状态胶囊（转圈 + 当前动作 + 秒数），替代原来的「思考中」三点气泡和停顿时的占位气泡；一轮做完后干活卡自动收起（从历史打开的也默认收起），不再留在对话里；正文里只有「---」、空白或标点的过程话 / 步骤不再画成一项。胶囊用现有设计 token（`--r-pill`、`--glass-strong`、`--glass-shadow-sm`、`--dur-2`），不用模糊，动画只动 transform / opacity；减少动态效果时转圈静止，减少透明度 / 性能模式下为不透明底色。样式在组件自己的 `app/src/components/chat/status-capsule.css`（只有 `rs-` 开头的新类），styles.css 未改。新增 `app/tests/reply-steps.test.tsx`。未升级版本号。
 - 回复过程按审查修正：只有代码块的回复不再整段消失（`isBlankNote` 只认整段都是 `---`、`***`、`…` 这类分隔符，可以夹空白）；工具失败后没有文字、或只回了 `---` 的一轮不再是一片空白：干活那一行不收起（「N 步失败」），下面一句「这一轮没有回答」和重试（走现有的重发入口）。读屏：干活卡按钮名字里带上当前动作，对话末尾保留一个一直挂着的 `role="status"`，「思考中」换成干活卡时照样读出；键盘点开步骤后这一轮收起时焦点移到收起后的那一行；停顿时的胶囊和以前的占位等高（22px）；切换频道回来秒数不归零；胶囊换成干活卡不再播一次淡入；深色的不透明底色改用 `--glass-bg-solid` token。未升级版本号。
-- 回复过程第二轮审查修正（#404）：以卡片收尾、后面没有字的一轮（生成图片、分享文件、问人、确认卡 / 审批卡、宿主提示、活动卡）不再被当成「这一轮没有回答」挂重试——判断和真正画卡片用同一份 CopilotKit 渲染器表，只画一行过程的计算机工具注册时标 `lineOnly`；窄屏（≤ 560px）上没有回答的那一行仍显示「N 步失败」（`data-unanswered`，样式在 `status-capsule.css`，没改 `styles.css`）；同一轮重新开始跑（重试、确认后接着跑）时胶囊和干活卡的秒数从 0 算，切换频道回来仍不归零。
+- 回复过程第二轮审查修正（#404）：以卡片收尾、后面没有字的一轮（生成图片、分享文件、问人、确认卡 / 审批卡、宿主提示、活动卡）不再被当成「这一轮没有回答」挂重试——判断和真正画卡片用同一份 旧聊天前端框架 渲染器表，只画一行过程的计算机工具注册时标 `lineOnly`；窄屏（≤ 560px）上没有回答的那一行仍显示「N 步失败」（`data-unanswered`，样式在 `status-capsule.css`，没改 `styles.css`）；同一轮重新开始跑（重试、确认后接着跑）时胶囊和干活卡的秒数从 0 算，切换频道回来仍不归零。
 - 回复过程第三轮审查修正（#404）：生成图片 / 分享文件没拿到文件、定时任务被拒或报错、生成界面画不出东西时，渲染器什么都不画，这一轮改为算「没有回答」并给重试；判断由各渲染器自己导出（和它决定画不画用同一个函数）。
 - 工具步骤显示按审查（模块 7）修正：后台任务卡（`delegate_task`）不再在这一轮结束、任务还在跑时跟着干活卡一起收起，刷新后也在——`delegate_task` 不算干活步骤，干活卡的锚点自己画卡片时只收干活那一行；在跑时点开干活卡，还没返回的步骤写「正在…」，不再标「（失败）」；停止后这一轮的步骤留着（收起，可以点开），没返回的标「已停止」，不计进「N 步失败」；同时在跑的几步写「正在搜索 N 项」「正在读取 N 个网页」，点开每一项都在；读网页那一步写主机名 + 短路径（`httpbin.org/status/500`），HTTP 4xx / 5xx 算失败；后台任务卡收起的清单 / 结果正文 `inert`，展开按钮的 `aria-expanded` 跟着真实状态，进度用 `role=status` 播报；调试模式下的工具输出改成纯文本、超过 4000 字截断、点开才画。依赖 #404。
 - 回复过程第四轮审查修正（#404）：电脑上的 agent（`device_agent_run`）、后台任务（`delegate_task`）被拒时不再算有回答，后台任务也不再一直挂着等待卡；一轮结束后工具一直没有结果时，骨架换成「…没有完成」，这一轮算没有回答、可以重试；`render_ui` 格式有误时，这一轮已经结束就写「界面格式有误，没能显示」，不再说会重新生成。
@@ -349,7 +354,7 @@
 - CI 门禁加固：`scripts/biome-new-issues.ts` 在 Biome 自身出错（退出码非 0 且没有可解析的 JSON，例如 biome.json 写坏）时一律失败；改用 `process.exitCode`、正常返回，确保 `biome-base-*` 临时目录被清理；用法注释与 workflow 实际传的基线一致；新增 `scripts/biome-new-issues.test.ts`。修默认 `error` 输出自己调自己（有新增问题或 Biome 出错、又没传回调时——CI 正是这样调用——脚本卡死），找不到 Biome / git 可执行文件改为退出 2（#366）。
 - CI：新增 Biome「只拦新增问题」检查（`scripts/biome-new-issues.ts`，与基线逐文件按规则比诊断数）、完整 `bun run test:app`、pc/ 独立安装 + chisabot-node 打包检查（审查清单第 3 项）（#366）。
 
-- 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `@copilotkit/core` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
+- 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `旧聊天运行时包` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
 
 ## Unreleased
@@ -467,11 +472,11 @@
 
 ## 0.1.76
 
-- 固定 compose 默认网络为 `openbot-zh_default`（`172.19.0.0/16`），Hermes 不可达时快速失败并纳入发布自检（`CB-100`）；彻底下线云端 Claude Code 工作区、云端节点与电脑文件夹同步，`/cc` 重定向到 `/`，相关数据表保留不 drop（`CB-099`）（versionCode 273）
+- 固定 compose 默认网络为 `早期上游模板-zh_default`（`172.19.0.0/16`），Hermes 不可达时快速失败并纳入发布自检（`CB-100`）；彻底下线云端 Claude Code 工作区、云端节点与电脑文件夹同步，`/cc` 重定向到 `/`，相关数据表保留不 drop（`CB-099`）（versionCode 273）
 
 ## 0.1.75
 
-- OpenBot → ChisaBot 统一命名：代码、文档、界面、包名、环境变量（兼容旧 `OPENBOT_*`）、请求头（新旧双认）、本地存储（自动迁移）、部署容器与目录；数据库/表/Cookie/数据卷等持久化名字保留
+- 早期上游模板 → ChisaBot 统一命名：代码、文档、界面、包名、环境变量（兼容旧 `旧前缀环境变量`）、请求头（新旧双认）、本地存储（自动迁移）、部署容器与目录；数据库/表/Cookie/数据卷等持久化名字保留
 
 ## 0.1.74
 

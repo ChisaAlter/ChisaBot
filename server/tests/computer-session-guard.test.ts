@@ -6,9 +6,9 @@ import {
   createComputerGateway,
 } from "../src/computer/gateway";
 import type { ActionPolicy } from "../src/computer/policy";
+import { createSharedComputerProvider } from "../src/computer/provider";
 import type { SnapshotResult } from "../src/computer/schema";
 import { createInMemorySnapshotStore } from "../src/computer/snapshot-store";
-import { createDockerSupervisorProvider } from "../src/computer/supervisor";
 
 /**
  * A ref is only meaningful for the run of the computer that produced it.
@@ -37,41 +37,10 @@ const SNAPSHOT: SnapshotResult = {
   ],
 };
 
-/**
- * The supervisor, answering for whatever container exists now.
- *
- * Both endpoints report the same run, because a real supervisor does: `/ensure` and `/computers`
- * read the same container. A stub that lists nothing would let these tests pass on an absence the
- * deployment does not have, and `sessionOf` falls back to listing when it has not located a Bot
- * itself. So every Bot named here is listed, whether or not this process ensured it.
- */
-function fakeSupervisor(startedAt: () => string, known: string[] = []) {
-  const ensured = new Set(known);
-  const describe = (botId: string) => ({
-    botId,
-    container: `chisabot-computer-${botId}`,
-    status: "running",
-    url: "http://chisabot-computer:4100",
-    startedAt: startedAt(),
-  });
+function fakeComputerFetch(startedAt: () => string) {
   return (async (url: string) => {
     const path = new URL(url).pathname;
-    if (path.endsWith("/ensure")) {
-      const asked = decodeURIComponent(
-        path.slice("/computers/".length, -"/ensure".length),
-      );
-      ensured.add(asked);
-      return Response.json(describe(asked));
-    }
-    return Response.json({
-      computers: [...ensured].map((botId) => describe(botId)),
-    });
-  }) as unknown as typeof fetch;
-}
-
-function fakeComputerFetch() {
-  return (async (url: string) => {
-    const path = new URL(url).pathname;
+    if (path === "/run") return Response.json({ run: startedAt() });
     if (path === "/snapshot") return Response.json(SNAPSHOT);
     if (path === "/click")
       return Response.json({
@@ -93,17 +62,18 @@ function fakeAudit() {
 function stack(
   startedAt: () => string,
   policy: ActionPolicy = PERMISSIVE,
-  known: string[] = [],
+  _known: string[] = [],
 ) {
   const snapshots = createInMemorySnapshotStore();
-  const provider = createDockerSupervisorProvider({
-    baseUrl: "http://supervisor:4300",
-    fetchImpl: fakeSupervisor(startedAt, known),
+  const fetchImpl = fakeComputerFetch(startedAt);
+  const provider = createSharedComputerProvider({
+    baseUrl: "http://chisabot-computer:4100",
+    fetchImpl,
   });
   const { store, rows } = fakeAudit();
   const gateway = createComputerGateway({
     provider,
-    fetchImpl: fakeComputerFetch(),
+    fetchImpl,
     auditStore: store,
     policy: () => policy,
     snapshots,
@@ -180,15 +150,13 @@ describe("a ref outliving the computer that produced it", () => {
   });
 
   test("the run is read per provider, not once per process", async () => {
-    // The map was module-scope, so two providers in one process answered each other's question about
-    // which run a Bot is on, and the answer was whichever located last.
-    const replicaA = createDockerSupervisorProvider({
-      baseUrl: "http://supervisor-a:4300",
-      fetchImpl: fakeSupervisor(() => FIRST_RUN, ["bot-e"]),
+    const replicaA = createSharedComputerProvider({
+      baseUrl: "http://computer-a:4100",
+      fetchImpl: fakeComputerFetch(() => FIRST_RUN),
     });
-    const replicaB = createDockerSupervisorProvider({
-      baseUrl: "http://supervisor-b:4300",
-      fetchImpl: fakeSupervisor(() => SECOND_RUN, ["bot-e"]),
+    const replicaB = createSharedComputerProvider({
+      baseUrl: "http://computer-b:4100",
+      fetchImpl: fakeComputerFetch(() => SECOND_RUN),
     });
 
     await replicaA.locate("bot-e");

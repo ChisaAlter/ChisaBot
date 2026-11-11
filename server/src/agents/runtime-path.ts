@@ -1,10 +1,9 @@
-import { conversationPath } from "../legacy/protocol";
+import { CONVERSATION_BASE } from "../conversations/protocol";
 
 /**
  * Recognising a Bot run on the conversation runtime path (moved out of the removed upstream enterprise
  * gate in slimming P6-1; behaviour unchanged).
  */
-const CONVERSATION_BASE = "/api/conversations";
 
 /**
  * A run or connect of a Bot through the conversation runtime, matched the way the runtime matches it.
@@ -18,7 +17,6 @@ const CONVERSATION_BASE = "/api/conversations";
 export function runtimeRun(
   path: string,
 ): { agentId: string; action: "run" | "connect" | "suggest" } | null {
-  path = conversationPath(path);
   if (path !== CONVERSATION_BASE && !path.startsWith(`${CONVERSATION_BASE}/`))
     return null;
   const segments = path.split("/").filter(Boolean);

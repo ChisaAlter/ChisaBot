@@ -1,6 +1,6 @@
 /**
  * `GET /api/admin/runtime-kernel` — which loop actually runs a Bot's turns, and whether the host
- * Hermes bridge behind it is ready.
+ * DSH runtime behind it is ready.
  *
  * Deployment-level configuration, not a per-Bot setting: every built-in Bot uses the same kernel.
  * Administrators only, like the rest of 管理后台 → 系统更新.
@@ -9,18 +9,15 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { type AppVariables, requireAdmin } from "../auth/guards";
 import type { DshHealthCheck } from "./dsh-health";
-import type { HermesHealthCheck } from "./hermes-health";
 
 export type RuntimeKernelStatus = {
-  kernel: "hermes" | "builtin" | "dsh";
-  hermes: HermesHealthCheck | null;
+  kernel: "builtin" | "dsh";
   dsh?: DshHealthCheck | null;
 };
 
 export function createRuntimeKernelRoutes(options: {
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
-  kernel: "hermes" | "builtin" | "dsh";
-  probe?: () => Promise<HermesHealthCheck>;
+  kernel: "builtin" | "dsh";
   probeDsh?: (
     actorId: string,
   ) => Promise<NonNullable<RuntimeKernelStatus["dsh"]>>;
@@ -35,7 +32,6 @@ export function createRuntimeKernelRoutes(options: {
     context.header("Cache-Control", "no-store");
     const status: RuntimeKernelStatus = {
       kernel: options.kernel,
-      hermes: options.probe ? await options.probe() : null,
       ...(options.probeDsh
         ? { dsh: await options.probeDsh(context.var.actor.id) }
         : {}),

@@ -15,7 +15,6 @@
   "dependencies": {
     "@ag-ui/client": "1.0.2",
     "@ag-ui/core": "1.0.2",
-    "@ag-ui/mastra": "2.0.1",
     "@ai-sdk/anthropic": "3.0.111",
     "@ai-sdk/openai": "3.0.99",
     "@ai-sdk/provider": "3.0.15",
@@ -23,8 +22,6 @@
     "@composio/core": "^0.27.0",
     "@json-render/core": "0.21.3",
     "@json-render/react": "0.21.3",
-    "@mastra/client-js": "^1.56.0",
-    "@mastra/core": "^1.64.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ai": "6.0.264",
     "better-auth": "^1.7.7",
@@ -38,7 +35,6 @@
     "postgres": "^3.4.9",
     "rxjs": "7.8.1",
     "sharp": "^0.35.5",
-    "twilio": "6.2.0",
     "yaml": "^2.9.1",
     "zod": "^4.6.6"
   },

@@ -27,7 +27,7 @@ const RULES: Array<{
   retryable?: boolean;
 }> = [
   {
-    test: /Hermes fallback model call failed:|备用模型「[^」]+」请求失败：/i,
+    test: /fallback model call failed:|备用模型「[^」]+」请求失败：/i,
     title: "备用模型也未能完成回答",
     hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
   },
@@ -38,11 +38,11 @@ const RULES: Array<{
     retryable: false,
   },
   {
-    // CB-100：服务器在流开始前就连不上智能体运行时（Hermes 桥接 / 远程 AG-UI），发来的 RUN_ERROR。
+    // CB-100：服务器在流开始前就连不上智能体运行时（DSH / 远程 AG-UI），发来的 RUN_ERROR。
     // 放在最前面：原因里带的 ConnectionRefused / ECONN 不能被当成「网络连接中断」（那是浏览器这边的网络）。
     test: /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/,
     title: "智能体运行时无法连接",
-    hint: "服务器连不上智能体运行时（例如 Hermes 桥接没在监听）。请管理员检查运行时服务后点「重试」。",
+    hint: "服务器连不上智能体运行时。请管理员检查运行时服务后点「重试」。",
   },
   {
     test: /实名|real[-_ ]?name|identity verification|realname|未认证|身份认证/i,

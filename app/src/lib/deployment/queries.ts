@@ -5,11 +5,11 @@ import { client } from "@/lib/client";
  * What this deployment can do, as the server is willing to say it.
  *
  * A projection, not the runtime. `/api/capabilities` is reachable before anybody has signed in, so
- * only fields somebody may know unauthenticated appear on it; the Intelligence contract and every
- * deployment secret stay on the server. See server/src/app.ts.
+ * only fields somebody may know unauthenticated appear on it; deployment secrets stay on the
+ * server. See server/src/app.ts.
  */
 export type DeploymentCapabilities = {
-  mode?: "local" | "intelligence";
+  mode?: "local";
   durableHistory?: boolean;
   learning?: boolean;
   /**
@@ -60,7 +60,7 @@ export function deploymentCapabilitiesQueryOptions() {
           fallback: "此部署的能力无法加载。",
         })
       ).json()) as {
-        mode?: "local" | "intelligence";
+        mode?: "local";
         durableHistory?: boolean;
         learning?: boolean;
         generativeUi?: boolean;
@@ -70,10 +70,7 @@ export function deploymentCapabilitiesQueryOptions() {
       };
 
       return {
-        mode:
-          body.mode === "local" || body.mode === "intelligence"
-            ? body.mode
-            : undefined,
+        mode: body.mode === "local" ? "local" : undefined,
         durableHistory: body.durableHistory === true,
         learning:
           typeof body.learning === "boolean" ? body.learning : undefined,

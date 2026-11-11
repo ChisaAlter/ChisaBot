@@ -263,32 +263,8 @@ cd /opt/chisabot-src && git pull && sudo sh deploy/install-updater.sh
 
 依赖或底座变了（指纹不符）：更新器会选择完整构建；页面可点「一键完整更新」，发布者仍通过 [串行部署入口](ops/deploy.md) 请求更新。
 
-回滚完整更新与快速更新使用同一条受保护的恢复路径：管理后台「回滚到上一版」，或核对过 reader 守卫的当前生成脚本。保留现有数据库与 Session；若旧版不兼容，使用兼容镜像恢复。`base.env` 是之后构建的底座记录，不用于绕过数据读取器要求；不要通过修改指纹伪装依赖兼容。登录 Cookie 已迁移时保留支持两代 Cookie 的网关与当前会话库，详见 [迁移说明](ops/upstream-removal.md)。
+回滚完整更新与快速更新使用同一条受保护的恢复路径：管理后台「回滚到上一版」，或核对过 reader 守卫的当前生成脚本。保留现有数据库与 Session；若旧版不兼容，使用兼容镜像恢复。`base.env` 是之后构建的底座记录，不用于绕过数据读取器要求；不要通过修改指纹伪装依赖兼容。存量卷固定与数据库身份兼容见 [命名切换与存量资源兼容](ops/upstream-removal.md)。
 
 ### 当前 Compose 网络
 
-新安装默认网络为 `${CHISABOT_NETWORK_NAME:-chisabot-zh_default}`，默认子网 `172.19.0.0/16`、网关 `172.19.0.1`。旧安装由 `legacy-resources.sh` 固定实际卷和网络，DSH Host / targets 按 [DSH 运维](ops/dsh-runtime.md) 接线；不要将下面旧 Hermes 部署的端口或资源名套到当前 DSH 环境。
-
-### compose 默认网络与 Hermes 桥接（CB-100）
-
-**历史记录，针对旧 Hermes 部署。** 当时 `deploy/compose.yaml` 把默认网络固定为 `${CHISABOT_NETWORK_NAME:-openbot-zh_default}`，子网 `${CHISABOT_NETWORK_SUBNET:-172.19.0.0/16}`，网关 `${CHISABOT_NETWORK_GATEWAY:-172.19.0.1}`。宿主机上的 Hermes 桥接从容器里经这个网关访问，下面四处必须一致；这些值记录事故条件，不是当前新安装默认值：
-
-| 位置                                                             | 值                                                 |
-| ---------------------------------------------------------------- | -------------------------------------------------- |
-| compose 默认网络网关                                             | `172.19.0.1`（子网 `172.19.0.0/16`）               |
-| `hermes-acp-bridge.service` 的 `ACP_BRIDGE_HOST`                 | `172.19.0.1`                                       |
-| `.env` 的 `CHISABOT_HERMES_URL` / `AGENT_ENDPOINT_ALLOWED_HOSTS` | `http://172.19.0.1:4100/ag-ui` / `172.19.0.1:4100` |
-| ufw                                                              | `allow from 172.19.0.0/16 to any port 4100`        |
-
-改网络名或子网时四处要一起改。更新程序发现正在运行的容器不在 compose 声明的默认网络上（名字或子网不一致）时，会自动用 `--force-recreate`。部署后自检（`post-deploy-smoke.sh` → `hermes-reach.sh`）会从应用容器里按 `CHISABOT_HERMES_URL` 真的连一次 Hermes（任意 HTTP 状态都算连得上），`/api/admin/smoke` 也会报告 `hermes=ok|unreachable|skipped`；连不上就让部署失败并走自动回滚。Hermes 运行时由这次发布激活时，这一步放在激活之后做。
-
-**几项补充（CB-100b）：**
-
-- **内核是 hermes 却没配 URL 算失败。** 选 Hermes 内核的标记是 `.env` 里的 `CHISABOT_AGENT_KERNEL=hermes`（`compose-image.sh` 的 `hermes_release_enabled` 认它）；服务器本身只看 `CHISABOT_HERMES_URL`。两者不一致时，`hermes-reach.sh` 报 `hermes=unreachable` 并让部署失败，`/api/admin/smoke` 也报 `hermes=unreachable`（HTTP 502），不再报 `skipped`。只有内核不是 hermes 且没配 URL 时才是 `skipped`。
-- **连接超时。** 应用连智能体运行时（Hermes、远程 AG-UI / Mastra）时，从发请求到收到第一个事件最多等 `CHISABOT_AGENT_CONNECT_TIMEOUT_MS`（默认 `20000`，`0` 关闭）。对端接受连接却不回、或 SYN 被防火墙丢掉时，这一轮在这个时间后以「智能体运行时无法连接（ETIMEDOUT …）」结束，不会一直「思考中」。流开始后不再计时。
-- **网络漂移检查不再依赖 python3。** 依次用 python3 / python / jq / bun / node 解析 `docker compose config --format json`；主机上一个都没有时 stderr 报 `::error::`，并保守地按漂移处理（`--force-recreate`）。
-
-**回滚到 CB-100 之前的 compose 会让 Hermes 再次连不上。** CB-100 之前的 `compose.yaml` 没有固定默认网络：compose 会建一个名字/子网由 Docker 自动分配的网络（通常不是 `172.19.0.0/16`），容器出口网关就不再是 `172.19.0.1`，而 `ACP_BRIDGE_HOST`、`CHISABOT_HERMES_URL`、ufw 规则都还指向 `172.19.0.1`，于是每一轮都是「智能体运行时无法连接」。
-
-- 当时 env 模式的网络配置保留在 Compose 文件中，切换镜像不改变该网络；恢复 CB-100 之前的旧 Compose 文件则会重新引入网络漂移。此结论只针对网络，当前镜像恢复还须通过 reader 与运行时兼容检查。
-- 当时的修复原则是保留已对齐的网络，或同步调整 Compose 网关、桥接监听地址、运行时 URL 与防火墙，并以 `hermes-reach.sh` 检查连通性。当前 DSH 恢复必须先经过上述 reader / Session / 账号 Host 守卫；直接修改镜像变量后执行 Compose 会绕过这些步骤，不能作为当前回滚方法。
+新安装默认网络为 `${CHISABOT_NETWORK_NAME:-chisabot-zh_default}`，默认子网 `172.19.0.0/16`、网关 `172.19.0.1`。存量安装由 `deploy/pin-resources.sh` 固定实际卷和网络，DSH Host / targets 按 [DSH 运维](ops/dsh-runtime.md) 接线。更新程序发现运行中容器不在 Compose 声明的默认网络上时会自动执行 `--force-recreate`；当前 DSH 恢复必须先经过上述 reader / Session / 账号 Host 守卫，不能直接修改镜像变量后裸跑 `docker compose` 绕过检查。

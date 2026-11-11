@@ -12,7 +12,7 @@ server. It fires on new screens, new endpoints, new query keys, and on any diff 
 `fetch` anywhere but `app/src/lib/client.ts`.
 
 It does not cover server handlers under `server/`, zod form schemas (`lib/<entity>/form.ts`), or page
-layout. It does cover `lib/copilot/`: the conversation itself streams over AG-UI, but the tool calls a
+layout. It does cover `lib/conversations/`: the conversation itself streams over AG-UI, but the tool calls a
 Bot makes during a turn are ordinary authenticated requests and go through the client like everything
 else.
 
@@ -62,7 +62,7 @@ Not everything crossing the wire is cached state, and the shape follows from whi
 The third kind still lives under `lib/`. It is not licence to call the server from a component.
 
 There are thirteen of these today — `agents`, `audit`, `auth`, `channels`, `components`, `computers`,
-`connectors`, `credentials`, `package`, `plugins`, `sandboxed`, `skills`, `copilot`. They all look the
+`connectors`, `credentials`, `package`, `plugins`, `sandboxed`, `skills`, `conversations`. They all look the
 same on purpose. `lib/agents/queries.ts` and `lib/agents/mutations.ts` are the reference pair; read them
 before writing a new one.
 
@@ -232,7 +232,7 @@ before writing a new one.
 - Filtering or paginating an existing list → Procedure 1, step 5: a new parameter goes in the
   trailing object of the list key, not into a second key factory.
 - The data is form input rather than server state → not this skill; `lib/<entity>/form.ts`.
-- The data arrives over the CopilotKit runtime → not this skill; `lib/copilot/`.
+- The data arrives over the Conversations / DSH runtime → not this skill; `lib/conversations/`.
 
 ## Red Flags
 

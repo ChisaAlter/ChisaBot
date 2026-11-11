@@ -102,7 +102,7 @@ async function runPicked(options: {
     try {
       Object.assign(process.env, publicEnvironment);
       const tenant = await loadTenantPackage(
-        fileURLToPath(new URL("../../examples/fintech", import.meta.url)),
+        fileURLToPath(new URL("./fixtures/tenant-sample", import.meta.url)),
       );
       const picked = tenant.agents.find(
         (agent) => agent.id === "picked-harness",

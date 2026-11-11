@@ -35,9 +35,25 @@ const HOST_SHAPES: RegExp[] = [
   new RegExp(`\\b${OCTET}\\.${OCTET}\\.${OCTET}\\.${OCTET}:\\d{1,5}\\b`, "g"),
   new RegExp(`\\b${PRIVATE_V4}\\b`, "g"),
   /\[(?:::1|f[cd][0-9a-f]{2}:[0-9a-f:]*|fe80:[0-9a-f:]*)\](?::\d{1,5})?/gi,
-  /\blocalhost(?::\d{1,5})?\b/gi,
+  // `localhost` alone or with a port — not `localhost.example.com` (QA511 P3).
+  /\blocalhost(?::\d{1,5})?(?![\w.-])/gi,
   /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:internal|local|lan|svc|cluster\.local|intranet|corp)(?::\d{1,5})?\b/gi,
+  // Usual Docker / compose service names with a port (QA510 P3): `redis:6379`, `db:5432`.
+  /(?<![\w.:-])(?:postgres(?:ql)?|pg|redis|valkey|mysql|mariadb|mongo(?:db)?|db|database|rabbitmq|amqp|minio|kafka|zookeeper|elasticsearch|opensearch|memcached|nginx|magpie|backend|gateway|api|app|server|worker|web)\d*:\d{2,5}\b/gi,
+  // Bare (unbracketed) private / link-local / loopback IPv6 (QA510 P3): fd00::12, fe80::1%eth0, ::1.
+  // Require a compressed `::` so `fdfe:12` / `fc00:1` parameter-like tokens stay (QA511 P3).
+  /(?<![\w:])(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f])(?::[0-9a-f]{1,4}){0,6}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?:%[\w.-]+)?(?![\w:])/gi,
+  /(?<![\w:])::1(?![\w:])/g,
 ];
+
+/** `name-with-dash:port` only when the surrounding text looks like a connection failure (QA511 P3). */
+const DOCKER_SERVICE_PORT =
+  /(?<![\w.:-])[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+\d*:\d{2,5}\b/gi;
+const CONNECTION_CONTEXT =
+  /(?:connect|dial|upstream|proxy|peer|host|refused|unreachable|timed?\s*out|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ECONNRESET)/i;
+/** Header / parameter / locale names that must never look like Docker hosts. */
+const NOT_SERVICE_HOST =
+  /^(?:max[_-]tokens|context[_-]length|rate[_-]limit|retry[_-]after|timeout[_-]ms|x[_-]request[_-]id|x-ratelimit-[a-z0-9-]+|utf-8|en-[a-z]{2}|gpt-[a-z0-9.-]+|deepseek-[a-z0-9.-]+|err[_-]?\d+|step-\d+|page[_-]count|content-type|user-agent)$/i;
 
 /** Bare `user:password@host` without a scheme (redactText only parses full URLs). */
 const BARE_USERINFO = /(^|[\s(<"'=])[^\s:/@"'<>]+:[^\s@/"'<>]+@(?=[^\s@]+)/g;
@@ -48,6 +64,16 @@ export function redactPublicText(text: string): string {
   out = out.replace(BARE_USERINFO, "$1••••:••••@");
   for (const shape of SQL_SHAPES) out = out.replace(shape, SQL_MASK);
   for (const shape of HOST_SHAPES) out = out.replace(shape, HOST_MASK);
+  // Hyphen/underscore Docker hosts: only inside connection-ish wording, and never param names.
+  out = out.replace(DOCKER_SERVICE_PORT, (match, offset, full) => {
+    const name = match.slice(0, match.lastIndexOf(":"));
+    if (NOT_SERVICE_HOST.test(name)) return match;
+    const before = full.slice(Math.max(0, offset - 80), offset);
+    const after = full.slice(offset, offset + match.length + 40);
+    return CONNECTION_CONTEXT.test(before) || CONNECTION_CONTEXT.test(after)
+      ? HOST_MASK
+      : match;
+  });
   return out.trim();
 }
 

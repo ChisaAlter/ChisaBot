@@ -19,7 +19,7 @@ import { Observable, type Subscription } from "rxjs";
 import { SendDeliveryUnknownError } from "../conversations/connection-drop";
 import { draftFilesAccepted, draftFilesSubmitting } from "./ui-memory";
 
-const ConversationTransport = createContext<"commands" | "legacy">("commands");
+const ConversationTransport = createContext<"commands">("commands");
 export type ConversationConnection = "online" | "reconnecting";
 
 async function readAdmissionReceipt(response: Response, commandId: string) {
@@ -66,7 +66,7 @@ export class ConversationSession extends HttpAgent {
     readonly runtimeAgentId: string,
     threadId: string,
     agentId: string,
-    readonly transport: "commands" | "legacy" = "commands",
+    readonly transport: "commands" = "commands",
   ) {
     super({
       agentId,
@@ -105,7 +105,6 @@ export class ConversationSession extends HttpAgent {
     return this.acceptedCommands.has(commandId);
   }
   override run(input: RunAgentInput): Observable<BaseEvent> {
-    if (this.transport === "legacy") return super.run(input);
     return new Observable((observer) => {
       const abort = new AbortController();
       let subscription: Subscription | undefined;
@@ -262,7 +261,7 @@ export function ConversationSessionProvider({
   transport = "commands",
 }: {
   children: ReactNode;
-  transport?: "commands" | "legacy";
+  transport?: "commands";
 }) {
   return createElement(
     ConversationTransport.Provider,

@@ -34,19 +34,24 @@ import { createPlanModelProxy } from "../conversations/plan-model-proxy";
 import type { DshRunJournal } from "../conversations/run-journal";
 import { createEventLifecycles } from "../conversations/runner";
 import type { createDshToolGateway } from "../conversations/tool-gateway";
-import { normalizeRunInput } from "../legacy/protocol";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
-import type { HermesRuntimeBinding } from "./hermes-runtime";
+import type { RunAssertion } from "./callback-token";
 import { PLAN_RUN_COMPLETED, type PlanModelConfig } from "./plan-model";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
+
+export type RuntimeToolBinding = {
+  toolGatewayUrl: string;
+  readRun: (assertion: unknown) => RunAssertion | null;
+  loadSurfaceTools?: (scope: RunAssertion) => Promise<readonly HeadlessTool[]>;
+};
 
 export type DshRuntimeTarget = {
   id: string;
   ownerUserId: string;
   connectionFile: string;
 };
-export type DshRuntimeBinding = HermesRuntimeBinding & {
+export type DshRuntimeBinding = RuntimeToolBinding & {
   targetFor(actorId: string): Promise<DshRuntimeTarget>;
   bindings: ConversationBindings;
   gateway: ReturnType<typeof createDshToolGateway>;
@@ -292,11 +297,11 @@ export class DshRuntimeAgent extends AbstractAgent {
     snapshot: ApprovalContinuation;
     signal: AbortSignal;
   }) {
-    const saved: RunAgentInput = normalizeRunInput({
+    const saved: RunAgentInput = {
       ...input.snapshot,
       forwardedProps: input.snapshot.forwardedProps ?? {},
       tools: [],
-    });
+    };
     const scope = this.configuration.binding.readRun(
       this.configuration.signRun(saved),
     );
@@ -575,7 +580,11 @@ export class DshRuntimeAgent extends AbstractAgent {
           model: {
             primary,
             fallbacks,
-            firstOutputMs: 30_000,
+            // Tests may shrink this via CHISABOT_DSH_FIRST_OUTPUT_MS (QA511 P2 server path).
+            firstOutputMs: Math.max(
+              1,
+              Number(process.env.CHISABOT_DSH_FIRST_OUTPUT_MS) || 30_000,
+            ),
             contextWindow,
           },
           connection: {

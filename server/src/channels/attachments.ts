@@ -29,7 +29,7 @@ import {
   attachments,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
 } from "../db/schema";
 import { imageDimsFor } from "../image-dims";
 import { sniffMimeType } from "./attachment-mime";
@@ -75,7 +75,7 @@ function isUuidShaped(value: string): boolean {
  *
  * AND IT DEGRADES WHEN THE THREAD MAPS TO NO CHANNEL, which is the half that took evidence to get
  * right rather than reasoning. The tempting shape is an INNER JOIN on
- * `intelligence_channel_mappings`: no mapping, no attachment. That is wrong, because three real
+ * `chisabot_channel_mappings`: no mapping, no attachment. That is wrong, because three real
  * surfaces run turns on threads this deployment deliberately keeps no channel for:
  *
  *  - A FORWARD AGENT HOP. `handoff-delivery.ts` mints a scratch thread of the addressed Bot's own
@@ -105,9 +105,9 @@ function isUuidShaped(value: string): boolean {
 function inTheTurnsChannel(database: Database, threadId: string) {
   const channelOfThisThread = () =>
     database
-      .select({ channelId: intelligenceChannelMappings.channelId })
-      .from(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.threadId, threadId));
+      .select({ channelId: chisabotChannelMappings.channelId })
+      .from(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.threadId, threadId));
   return or(
     inArray(attachments.channelId, channelOfThisThread()),
     notExists(channelOfThisThread()),

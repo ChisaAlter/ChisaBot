@@ -23,13 +23,13 @@ git worktree add ../wt-<名字> -b <类型>/<名字> origin/main     # 类型：
 
 在部署宿主机上每个分支用自己的一套名字，避免互相杀掉：
 
-| 东西 | 命名 |
-|---|---|
-| 目录 | `/opt/cb-<名字>/` |
-| 预览容器 / 卷 | `cb-<名字>-preview`，卷 `cb-<名字>-preview-{db,ws,prof}` |
-| 测试容器 / 网络 | `cb<名字>-test`、`cb<名字>-pg`、网络 `cb<名字>-net` |
-| 端口 | 每人一个未占用的 loopback 端口（在 ROADMAP 那一行写上） |
-| 日志 | `/tmp/cb<名字>-test.log` |
+| 东西            | 命名                                                     |
+| --------------- | -------------------------------------------------------- |
+| 目录            | `/opt/cb-<名字>/`                                        |
+| 预览容器 / 卷   | `cb-<名字>-preview`，卷 `cb-<名字>-preview-{db,ws,prof}` |
+| 测试容器 / 网络 | `cb<名字>-test`、`cb<名字>-pg`、网络 `cb<名字>-net`      |
+| 端口            | 每人一个未占用的 loopback 端口（在 ROADMAP 那一行写上）  |
+| 日志            | `/tmp/cb<名字>-test.log`                                 |
 
 内存有限：预览 `--memory 3g`、测试 `--memory 5g`，同时构建的测试最多约 3 个。做完 `preview.sh down` 拆掉。
 

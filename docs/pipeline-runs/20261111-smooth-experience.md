@@ -4,7 +4,7 @@
 
 ## 当前决定与阶段
 
-聊天、任务/设置、运行时的源码诊断和上游源码对照已完成，18 项接受项均已实现。本地统一验证及两路独立审查已完成，审查发现的三项 P2 已修复。当前候选为 0.1.143，Android versionCode 325，待最终 CI、合并及发布。全部产品修改完成后才开始测试与独立审查。
+**状态更新（2026-11-11）**：PR #522 已合并至主线（`a76570e8`），`v0.1.143`（Android `versionCode 325`）已打标。聊天、任务/设置、运行时的源码诊断和上游源码对照已完成，18 项接受项均已实现并通过本地统一验证、两路独立审查（三项 P2 修复均已并入）及最终 CI。
 
 保留 DSH、Conversation、审批/操作账本、现有任务中心、memoryNotes、Streamdown、virtua、KeepAlive 与原位按钮反馈。保留用户选定的界面和任务卡片；不新增重试框架、第二个队列、第二套长期记忆、额外备份或外部依赖。真实模型、设备、IM 和用户桌面操作的既有停止范围不因本目标自动解除。
 
@@ -49,9 +49,9 @@
 
 ## 借鉴与取舍
 
-[上游源码对照](../research/20261111-smooth-experience-upstreams.md)固定了 OpenBot、dsh-bot、OpenMausBot 候选以及 Tobs 的版本和许可。采用 dsh-bot 的附件草稿持续性、会话连接所有权原则；以 OpenMausBot 的阅读位置和状态恢复入口作为检查标准。用户提供的 `openmuasebot` 名称没有精确匹配，OpenMausBot 是已注明的近名候选。
+[上游源码对照](../research/20261111-smooth-experience-upstreams.md)固定了 早期上游模板、dsh-bot、OpenMausBot 候选以及 Tobs 的版本和许可。采用 dsh-bot 的附件草稿持续性、会话连接所有权原则；以 OpenMausBot 的阅读位置和状态恢复入口作为检查标准。用户提供的 `openmuasebot` 名称没有精确匹配，OpenMausBot 是已注明的近名候选。
 
-ChisaBot 已有可用的增量 Markdown、虚拟历史和滚动锚点，不替换为上游简化实现。原 OpenBot 仅作源码参考，不恢复其依赖、品牌或部署拓扑。
+ChisaBot 已有可用的增量 Markdown、虚拟历史和滚动锚点，不替换为上游简化实现。原 早期上游模板 仅作源码参考，不恢复其依赖、品牌或部署拓扑。
 
 ## 完成边界
 

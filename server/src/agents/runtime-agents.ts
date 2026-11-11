@@ -1,5 +1,5 @@
 import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
-import { managedAgentHeaders } from "../../../shared/legacy-headers";
+import { managedAgentHeaders } from "../../../shared/protocol-headers";
 import type { ManagedAgentConfig } from "../config";
 import {
   type RegisteredAgent,
@@ -14,7 +14,6 @@ import {
   channelMemberships,
   channels,
 } from "../db/schema";
-import { teamBotAccess } from "../team-bots/access";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
 
@@ -44,8 +43,7 @@ export function createRuntimeAgentLoader(
     for (const row of active) {
       const agent = registeredAgentFromRow(row);
       if (!agent) continue;
-      const isRemoteAgent =
-        agent.type === "remote_ag_ui" || agent.type === "remote_mastra";
+      const isRemoteAgent = agent.type === "remote_ag_ui";
       // The key is resolved per load, rather than being cached on the row: revoking a
       // credential then takes effect on the next run rather than on the next restart.
       if (isRemoteAgent && vault) {
@@ -129,8 +127,6 @@ function selectActiveAgents(database: Database, actor: AgentActor) {
           : or(
               eq(agentProfiles.visibility, "public"),
               eq(agentProfiles.ownerUserId, actor.id),
-              // The same Team Bot rule as the roster: see team-bots/access.ts.
-              teamBotAccess(actor.id, agentProfiles.agentId),
             ),
       ),
     );

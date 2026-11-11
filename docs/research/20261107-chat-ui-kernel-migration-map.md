@@ -1,4 +1,6 @@
-# ChisaBot 聊天前端迁移清单：DSH 与去除 CopilotKit
+# ChisaBot 聊天前端迁移清单：DSH 与去除 旧聊天前端框架
+
+> **状态：已完成迁移（历史调研档案）**。旧 `app/src/lib/copilot/*` 目录已彻底移除并替换为自有会话层 `app/src/lib/conversations/*`。下文提及的旧文件路径仅作为迁移前基线对照保留。
 
 核对日期：2026-11-07。对象为 `fix/chat-reliability` 工作树中的实际前端及共享类型，包含本轮尚未提交的气泡与滚动修复。本笔记给主设计提供前端事实、替换面和验收场景；服务端执行与 DSH 官方契约由主设计及其他资料负责。
 
@@ -6,14 +8,14 @@
 
 推荐保留现有 React `ConversationView`、`ChatTranscript`、Composer、Markdown、工具卡片和滚动实现，把它们接到 ChisaBot 自有会话状态模块。该模块订阅后端映射后的 DSH 会话事件，并把用户操作提交给 ChisaBot 后端。浏览器负责展示、输入和明确需要前端完成的交互；工具执行、审批决议和续跑归服务器。
 
-当前 CopilotKit 不只是一个聊天组件。它承担消息数组、运行状态、工具执行接力、审批停顿、附件状态、工具渲染器注册和沙箱组件展示。仅将 `useAgent` 换成新的 Hook，仍会留下多条依赖链和两套执行所有者。
+当前 旧聊天前端框架 不只是一个聊天组件。它承担消息数组、运行状态、工具执行接力、审批停顿、附件状态、工具渲染器注册和沙箱组件展示。仅将 `useAgent` 换成新的 Hook，仍会留下多条依赖链和两套执行所有者。
 
 ## 1. 入口与状态所有者
 
 | 现有入口                                                                                                          | 当前职责                                                                                                             | 迁移处置                                                                 |
 | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [`app/src/components/layout/authed-shell.tsx`](../../app/src/components/layout/authed-shell.tsx) 的 `ChatCopilot` | 在已认证应用中懒加载全局聊天 Provider                                                                                | 换为自有聊天作用域/渲染器 Provider；继续保持聊天代码按需加载             |
-| [`app/src/lib/copilot/provider.tsx:52`](../../app/src/lib/copilot/provider.tsx) 的 `CopilotProvider`              | `/api/copilotkit`、cookie 凭据、错误回调、所有工具注册、ActiveBot                                                    | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
+| `app/src/lib/copilot/provider.tsx:52` 的 `CopilotProvider`                                                        | `/api/conversations（原旧兼容路由）`、cookie 凭据、错误回调、所有工具注册、ActiveBot                                 | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
 | [`channel-chat.tsx:393`](../../app/src/components/channels/channel-chat.tsx) 的 `ChannelChat`                     | `channel:${channel.id}` 本地 agent、`runtimeAgentId`、`threadId`；发消息、同步、恢复、停止、编辑重发、队列和状态补偿 | 改为消费一份 thread-scoped 会话状态；容器协调 UI，不再直接改 SDK Agent   |
 | [`conversation-view.tsx:28`](../../app/src/components/channels/conversation-view.tsx) 的 `ConversationView`       | 接收 messages、busy/pending/stopping、提交/停止、草稿与队列回调；组织输入与转录区                                    | 保留为呈现入口，去掉 `Message`、`Attachment` 的 SDK 类型依赖             |
 | [`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx)                                    | 消息投影、过程折叠、气泡、工具/活动卡、确认/审批、无回答状态、历史挂载与滚动                                         | 继续使用现有呈现算法；把 chat context、工具注册和活动渲染替换为自有接口  |
@@ -25,7 +27,7 @@
 
 ### 发送有明确的已接收语义
 
-`say()` → `deliver()` 等 runtime readiness 和 history join → 组装技能 system message、用户内容及附件 → 乐观加入消息 → 修补旧工具缺失结果 → `copilotkit.runAgent()`。模型选择保存和目录缺失检查也在这条路径。
+`say()` → `deliver()` 等 runtime readiness 和 history join → 组装技能 system message、用户内容及附件 → 乐观加入消息 → 修补旧工具缺失结果 → `旧聊天前端框架.runAgent()`。模型选择保存和目录缺失检查也在这条路径。
 
 当前 `runAgent()` 对运行失败可能返回 resolved Promise，因此页面另行订阅终态，再由 `turnFailure` 决定草稿是否恢复。发送超时还要同时检查历史和 inbox，判断是“没到服务器”“已入队”还是“已收到但尚未回答”。迁移后应由后端提供稳定 `requestId` 的 admission receipt 和可查询状态，前端不再通过三个间接来源猜是否接收。
 
@@ -36,7 +38,7 @@
 - 只有卡片而没有文字也可能是完整交付，不能一律报“没有回答”；失败或消失的卡片不能算成功。
 - 新话题首条消息和卡片按钮的提问走同一个 admission 模块；不允许它们绕过正在执行/排队语义。
 
-证据：[`channel-chat.tsx:1180`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1260`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1440`](../../app/src/components/channels/channel-chat.tsx)、[`tool-renderers.ts`](../../app/src/lib/copilot/tool-renderers.ts)。
+证据：[`channel-chat.tsx:1180`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1260`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1440`](../../app/src/components/channels/channel-chat.tsx)、`app/src/lib/copilot/tool-renderers.ts`。
 
 ### 恢复不能重复拼接流
 
@@ -51,7 +53,7 @@
 
 具体 DSH envelope 字段由后端 Adapter 固定，浏览器不直接 import DSH runtime 类型。现有 AG-UI 回放补丁保留在旧历史/旧内核 Adapter 内，完成 DSH 切换后从主聊天路径退休。
 
-证据：[`use-conversation-sync.ts:109`](../../app/src/lib/copilot/use-conversation-sync.ts)、[`thread-sync.ts`](../../app/src/lib/copilot/thread-sync.ts)、[`thread-messages.ts:90`](../../app/src/lib/copilot/thread-messages.ts)、[`transcript-cache.ts`](../../app/src/lib/copilot/transcript-cache.ts)。
+证据：`app/src/lib/copilot/use-conversation-sync.ts:109`、`app/src/lib/copilot/thread-sync.ts`、`app/src/lib/copilot/thread-messages.ts:90`、`app/src/lib/copilot/transcript-cache.ts`。
 
 ## 3. 工具执行与卡片展示必须拆开
 
@@ -61,11 +63,11 @@
 
 `ToolRendererRegistry` 应按 wire tool name 注册可见呈现，输入稳定的 `{ callId, name, arguments, result, phase, threadId, botId, attemptId }`。展示契约要包括：是否仅为过程行、能否形成有效交付卡、结束后无结果时如何显示、未知工具的通用行。已有 `pickToolRenderer`、`registeredCardChecks`、`ToolTurnEndedContext` 与 `ToolRenderBoundary` 提供可复用逻辑。
 
-来源：[`provider.tsx:68`](../../app/src/lib/copilot/provider.tsx)、[`tool-renderers.ts:90`](../../app/src/lib/copilot/tool-renderers.ts)、[`chat-transcript.tsx:2889`](../../app/src/components/channels/chat-transcript.tsx)。
+来源：`app/src/lib/copilot/provider.tsx:68`、`app/src/lib/copilot/tool-renderers.ts:90`、[`chat-transcript.tsx:2889`](../../app/src/components/channels/chat-transcript.tsx)。
 
 ### 3.2 前端工具执行会影响“整轮结束”的定义
 
-计算机工具经 `approval-tools.tsx` 的包装 Hook 注册为前端工具。一次用户要求可能分为多段 wire run，中间浏览器执行工具，再由 CopilotKit续跑。所以目前页面不能以 SDK run idle 判断整轮结束，也不能据此自动清空队列。
+计算机工具经 `approval-tools.tsx` 的包装 Hook 注册为前端工具。一次用户要求可能分为多段 wire run，中间浏览器执行工具，再由 旧聊天前端框架续跑。所以目前页面不能以 SDK run idle 判断整轮结束，也不能据此自动清空队列。
 
 已有 Hermes 分支会声明 `chisabot.backend-owned-tools`；`approval-context.ts` 跟踪声明和实际 tool call，在终态前阻止前端重复执行。这证明“浏览器展示了工具调用”与“浏览器获准执行工具”已是需要显式区分的两个事实。
 
@@ -73,7 +75,7 @@
 
 必须保留调用归属 `actor/bot/thread/run/toolCall`，不能使用“当前屏幕上的 Bot”作为执行身份；切换对话后，原来的工具仍属于原 Bot。
 
-来源：[`approval-tools.tsx:85`](../../app/src/lib/copilot/approval-tools.tsx)、[`approval-context.ts:18`](../../app/src/lib/copilot/approval-context.ts)、[`computer-tools.tsx`](../../app/src/lib/copilot/computer-tools.tsx)、[`channel-chat.tsx:1000`](../../app/src/components/channels/channel-chat.tsx)。
+来源：`app/src/lib/copilot/approval-tools.tsx:85`、`app/src/lib/copilot/approval-context.ts:18`、`app/src/lib/copilot/computer-tools.tsx`、[`channel-chat.tsx:1000`](../../app/src/components/channels/channel-chat.tsx)。
 
 ### 3.3 Gallery、技能创作和 HTML 沙箱不是纯工具卡
 
@@ -83,11 +85,11 @@
 
 建议让已发布 HTML 组件使用专门的 sandbox iframe 呈现模块，沿用现有发布和组件授权；明确来源校验与消息协议，不让沙箱直接调用主页面的模型/工具。该模块必须覆盖聊天、组件列表预览、单组件管理预览三个消费者。json-render 的 `render_ui` 保留现有校验与 React 注册表，无需换成 DSH 的网页组件。
 
-来源：[`gallery-tools.tsx:141`](../../app/src/lib/copilot/gallery-tools.tsx)、[`skill-tools.tsx:165`](../../app/src/lib/copilot/skill-tools.tsx)、[`sandboxed-tools.tsx:118`](../../app/src/lib/copilot/sandboxed-tools.tsx)、[`component-preview.tsx:80`](../../app/src/components/component-preview.tsx)、[`routes/_authed/admin/components/index.tsx`](../../app/src/routes/_authed/admin/components/index.tsx)、[`routes/_authed/admin/components/$name.tsx`](../../app/src/routes/_authed/admin/components/$name.tsx)。
+来源：`app/src/lib/copilot/gallery-tools.tsx:141`、`app/src/lib/copilot/skill-tools.tsx:165`、`app/src/lib/copilot/sandboxed-tools.tsx:118`、[`component-preview.tsx:80`](../../app/src/components/component-preview.tsx)、[`routes/_authed/admin/components/index.tsx`](../../app/src/routes/_authed/admin/components/index.tsx)、[`routes/_authed/admin/components/$name.tsx`](../../app/src/routes/_authed/admin/components/$name.tsx)。
 
 ## 4. 审批、确认和队列的产品契约
 
-审批 UI 与 SDK 状态分离后，`ConversationScope` 至少提供稳定 `threadId`、`botId` 和用户操作接口。`confirm-card.tsx`、`queued-messages.tsx`、`worker-card.tsx`、`local-agent-card.tsx` 目前用 `useCopilotChatConfiguration()` 只为获取会话身份；无需继续依赖 CopilotKit 才能展示它们。
+审批 UI 与 SDK 状态分离后，`ConversationScope` 至少提供稳定 `threadId`、`botId` 和用户操作接口。`confirm-card.tsx`、`queued-messages.tsx`、`worker-card.tsx`、`local-agent-card.tsx` 目前用 `use旧内置聊天组件Configuration()` 只为获取会话身份；无需继续依赖 旧聊天前端框架 才能展示它们。
 
 现有确认分两类：绑定 toolCall 的确认卡，以及未绑定 toolCall 的普通/后台确认。后者在聊天尾部显示，决议后由持久的恢复记录接替，避免同一次决议重复显示。新模型必须保留 `interactionId` 与可选 `callId`，不能强制所有确认都有工具调用。
 
@@ -103,7 +105,7 @@
 
 迁移推荐让新发送合同同时支持文本、附件引用和技能引用，队列持久归服务器；本地只保存尚未提交的草稿和失败项。这是明确的目标改进，不是当前已具备的行为。停止后的 paused 队列保留为产品语义，不能直接照搬 DSH cancel 默认行为。
 
-来源：[`confirm-card.tsx:235`](../../app/src/components/chat/confirm-card.tsx)、[`approval-tools.tsx:170`](../../app/src/lib/copilot/approval-tools.tsx)、[`use-thread-inbox.ts:14`](../../app/src/lib/copilot/use-thread-inbox.ts)、[`queued-messages.tsx:11`](../../app/src/components/chat/queued-messages.tsx)、[`conversation-view.tsx:70`](../../app/src/components/channels/conversation-view.tsx)、[`channel-chat.tsx:1836`](../../app/src/components/channels/channel-chat.tsx)。
+来源：[`confirm-card.tsx:235`](../../app/src/components/chat/confirm-card.tsx)、`app/src/lib/copilot/approval-tools.tsx:170`、`app/src/lib/copilot/use-thread-inbox.ts:14`、[`queued-messages.tsx:11`](../../app/src/components/chat/queued-messages.tsx)、[`conversation-view.tsx:70`](../../app/src/components/channels/conversation-view.tsx)、[`channel-chat.tsx:1836`](../../app/src/components/channels/channel-chat.tsx)。
 
 ## 5. 停止、重试和编辑必须以服务端事实驱动
 
@@ -111,7 +113,7 @@
 
 重试区分未接收、已接收但未完成、已发生外部副作用三类。最后一类不自动重演工具。普通重新生成和编辑目前先由服务端截断旧版本，再同步本地消息，附件仍保留；其他设备按 revision 重建。DSH 的编辑/分支实现须由主设计确定，但前端保留“原记录可追溯、当前分支显示一致、旧流不能写入新版本”的契约。
 
-来源：[`channel-chat.tsx:1699`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1732`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1770`](../../app/src/components/channels/channel-chat.tsx)、[`regenerate.ts`](../../app/src/lib/copilot/regenerate.ts)、[`connection-drop.ts`](../../app/src/lib/copilot/connection-drop.ts)。
+来源：[`channel-chat.tsx:1699`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1732`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1770`](../../app/src/components/channels/channel-chat.tsx)、`app/src/lib/copilot/regenerate.ts`、`app/src/lib/copilot/connection-drop.ts`。
 
 ## 6. 附件、Markdown 和历史形态
 
@@ -123,7 +125,7 @@
 
 本轮修复应成为新前端的初始基线：所有可见 assistant 正文进入同一套气泡；普通多标题 Markdown 不自动变 doc 卡；围栏中的指令示例按代码保留；标题与代码组合仍有气泡底；idle 时不创建弹性留白；跟底平滑滚动遵守 reduced motion。换内核不会替代这些修复。
 
-来源：[`composer/attachments.ts`](../../app/src/components/channels/composer/attachments.ts)、[`composer/composer.tsx`](../../app/src/components/channels/composer/composer.tsx)、[`chat-messages.ts`](../../app/src/components/channels/chat-messages.ts)、[`thread-messages.ts`](../../app/src/lib/copilot/thread-messages.ts)、[`bot-bubbles.tsx`](../../app/src/components/chat/bot-bubbles.tsx)、[`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx) 当前 diff。
+来源：[`composer/attachments.ts`](../../app/src/components/channels/composer/attachments.ts)、[`composer/composer.tsx`](../../app/src/components/channels/composer/composer.tsx)、[`chat-messages.ts`](../../app/src/components/channels/chat-messages.ts)、`app/src/lib/copilot/thread-messages.ts`、[`bot-bubbles.tsx`](../../app/src/components/chat/bot-bubbles.tsx)、[`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx) 当前 diff。
 
 ## 7. 建议的前端模块
 
@@ -143,11 +145,11 @@
 
 ## 8. 依赖移除范围
 
-1. 替换所有 `@copilotkit/react-core/v2` Hook、Context、types、SDK sandbox renderer 后，删除 `app/package.json` 的 `@copilotkit/react-core` 以及 `main.tsx` 中 SDK CSS。
-2. 删除/重写 `app/vite.config.ts` 的 CopilotKit vendor 分包、a2ui stub、管理预览分包特例；逐项判断其他包仍有消费者再删，不能把 Markdown/Streamdown/json-render 一并删掉。
+1. 替换所有 `旧聊天运行时包/v2` Hook、Context、types、SDK sandbox renderer 后，删除 `app/package.json` 的 `旧聊天运行时包` 以及 `main.tsx` 中 SDK CSS。
+2. 删除/重写 `app/vite.config.ts` 的 旧聊天前端框架 vendor 分包、a2ui stub、管理预览分包特例；逐项判断其他包仍有消费者再删，不能把 Markdown/Streamdown/json-render 一并删掉。
 3. 清理专门隐藏 SDK Inspector、推广弹窗及 SDK drag label 的 CSS，同时保留 ChisaBot 自有气泡和 Markdown 样式。
 4. 管理组件两页及全局 shell 都需完成迁移，不能以聊天页能打开作为删包完成证据。
-5. `@ag-ui/*` 与 CopilotKit 不等价。前端可以在自有类型覆盖全部消费者后移除直接运行依赖；旧历史 Adapter 和远程 AG-UI Bot 协议兼容仍有价值。服务器的外部 AG-UI 能力是否保留由主设计确认，不能因 DSH 成为内置内核便删除外部 Agent 产品入口。前端配置文案及 `lib/agents/form.ts` 明确仍允许填写外部 AG-UI endpoint。
+5. `@ag-ui/*` 与 旧聊天前端框架 不等价。前端可以在自有类型覆盖全部消费者后移除直接运行依赖；旧历史 Adapter 和远程 AG-UI Bot 协议兼容仍有价值。服务器的外部 AG-UI 能力是否保留由主设计确认，不能因 DSH 成为内置内核便删除外部 Agent 产品入口。前端配置文案及 `lib/agents/form.ts` 明确仍允许填写外部 AG-UI endpoint。
 6. `shared/reply-sources.ts` 使用 Message 子集，`shared/task-center.ts` 的 trace 仍描述 AG-UI event type；应改成产品层事件或明确 legacy variant，而不是导入 DSH 内部事件类型污染共享协议。
 
 来源：[`app/package.json`](../../app/package.json)、[`app/src/main.tsx`](../../app/src/main.tsx)、[`app/vite.config.ts:163`](../../app/vite.config.ts)、[`app/src/styles.css`](../../app/src/styles.css)、[`app/src/lib/agents/form.ts`](../../app/src/lib/agents/form.ts)、[`shared/reply-sources.ts`](../../shared/reply-sources.ts)、[`shared/task-center.ts:200`](../../shared/task-center.ts)。
@@ -181,6 +183,6 @@
 ## 10. 给主设计的决策点
 
 - DSH Session 事件需要由服务器映射为稳定产品事件；前端从 receipt/状态事实驱动，不以自然语言或 Promise resolve 代替完成。
-- 工具执行应统一到服务器；纯渲染注册表是前端去 CopilotKit 的核心工作，Gallery/HITL/沙箱预览必须作为同一迁移范围。
+- 工具执行应统一到服务器；纯渲染注册表是前端去 旧聊天前端框架 的核心工作，Gallery/HITL/沙箱预览必须作为同一迁移范围。
 - 新内核一上线就要覆盖 Stop 的 paused 补话语义、审批恢复和后台交付；这些不是后续 polish。
-- AG-UI 的保留范围应按外部 Agent/旧记录兼容确定。删除 CopilotKit 与废除 AG-UI 不能混为同一决定。
+- AG-UI 的保留范围应按外部 Agent/旧记录兼容确定。删除 旧聊天前端框架 与废除 AG-UI 不能混为同一决定。

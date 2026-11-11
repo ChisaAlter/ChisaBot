@@ -15,7 +15,7 @@ import type { Database } from "../db/client";
 import {
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   workItems,
 } from "../db/schema";
 import { DEFAULT_MAX_ATTEMPTS, type WorkQueue } from "../work/queue";
@@ -222,14 +222,14 @@ async function summariseOne(
   const [owner] = await options.database
     .select({
       userId: channelMemberships.userId,
-      threadId: intelligenceChannelMappings.threadId,
+      threadId: chisabotChannelMappings.threadId,
     })
     .from(channelMemberships)
     .innerJoin(
-      intelligenceChannelMappings,
+      chisabotChannelMappings,
       and(
-        eq(intelligenceChannelMappings.channelId, channelMemberships.channelId),
-        eq(intelligenceChannelMappings.userId, channelMemberships.userId),
+        eq(chisabotChannelMappings.channelId, channelMemberships.channelId),
+        eq(chisabotChannelMappings.userId, channelMemberships.userId),
       ),
     )
     .where(eq(channelMemberships.channelId, channelId))

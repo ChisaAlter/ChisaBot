@@ -1,12 +1,31 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { DshHostClient } from "../src/client.mjs";
+
+const LEAKY_400 = `Invalid input: messages[370].content SECRET-sk-qa510 Authorization: Bearer sk-live0123456789abcdefABCDEF via https://ops:pw0rdLEAK@10.1.2.3:8080/v1 ${"PADDING".repeat(400)}`;
+const LEAKS = [
+  "sk-qa510",
+  "sk-live0123456789abcdefABCDEF",
+  "pw0rdLEAK",
+  "10.1.2.3",
+  "PADDING".repeat(40),
+];
+async function filesUnder(dir) {
+  let text = "";
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) text += await filesUnder(path);
+    else if (entry.isFile())
+      text += await readFile(path, "utf8").catch(() => "");
+  }
+  return text;
+}
 
 test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion, first-output timeout, rebinding and the action nudge", {
   timeout: 180_000,
@@ -38,6 +57,16 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       limited: 429,
       backup_limited: 429,
     }[body.model];
+    if (body.model === "bad_request_leaky") {
+      // QA510 P3: an upstream 400 that echoes request content and credentials, and is long.
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: { message: LEAKY_400, type: "invalid_request_error" },
+        }),
+      );
+      return;
+    }
     if (status) {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(
@@ -93,6 +122,7 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     "slow_both",
     "slow_both_b",
     "slow_alone",
+    "bad_request_leaky",
   ].map((id) => ({
     id,
     contextWindow: 32000,
@@ -321,13 +351,29 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
     },
   );
   await t.test(
+    "an upstream 400 body is redacted and capped before the session stores it",
+    async () => {
+      const result = await run("leaky-400", "bad_request_leaky", "available");
+      assert.deepEqual(result.calls, ["bad_request_leaky", "available"]);
+      assert.match(result.text, /INVALID_REQUEST/);
+      assert.match(result.text, /verified answer/);
+      const stored = `${result.text}\n${await filesUnder(home)}\n${logs}`;
+      for (const leak of LEAKS)
+        assert.ok(!stored.includes(leak), `stored ${leak.slice(0, 24)}`);
+    },
+  );
+  await t.test(
     "primary and backup both silent: the turn ends with a clear error instead of hanging",
     async () => {
       const started = Date.now();
       const result = await run("both-dead", "slow_both", "slow_both_b", 200);
       assert.deepEqual(result.calls, ["slow_both", "slow_both_b"]);
       assert.match(result.text, /备用模型「slow_both_b」请求失败/);
-      assert.match(result.text, /主模型和备用模型都没有回应。这一轮已结束/);
+      // The sentence names the real wait: both deadlines (0.2 s + 0.2 s), and the per-model cap.
+      assert.match(
+        result.text,
+        /共等了约 0\.4 秒仍没有任何输出（主模型和备用模型都没有回应，每个模型最多等 0\.2 秒）。这一轮已结束/,
+      );
       assert.ok(Date.now() - started < 10_000);
       // Both breakers are open now: the next turn still tries (primary first) and still ends.
       const next = await run("both-dead-2", "slow_both", "slow_both_b", 200);
@@ -341,7 +387,7 @@ test("real Host: invalid auth, stale catalog, missing model, bounded exhaustion,
       const started = Date.now();
       const result = await run("alone-dead", "slow_alone", undefined, 200);
       assert.deepEqual(result.calls, ["slow_alone"]);
-      assert.match(result.text, /0\.8 秒内没有任何输出。这一轮已结束/);
+      assert.match(result.text, /共等了约 0\.8 秒仍没有任何输出。这一轮已结束/);
       assert.ok(Date.now() - started >= 700);
     },
   );

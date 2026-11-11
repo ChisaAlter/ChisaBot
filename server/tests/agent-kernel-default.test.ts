@@ -5,14 +5,10 @@ import { join } from "node:path";
 import { selectedAgentKernel } from "../../shared/agent-kernel";
 import { conversationAdmissionClosed } from "../src/conversations/maintenance";
 
-test("default DSH observes the same maintenance marker as explicit DSH; legacy Hermes remains available", () => {
+test("default DSH observes the same maintenance marker as explicit DSH; builtin ignores it", () => {
   const folder = mkdtempSync(join(tmpdir(), "chisabot-kernel-"));
   const cwd = process.cwd();
-  const keys = [
-    "CHISABOT_DSH_ROOT",
-    "CHISABOT_AGENT_KERNEL",
-    "CHISABOT_HERMES_URL",
-  ] as const;
+  const keys = ["CHISABOT_DSH_ROOT", "CHISABOT_AGENT_KERNEL"] as const;
   const old = keys.map((key) => process.env[key]);
   try {
     process.chdir(folder);
@@ -24,9 +20,8 @@ test("default DSH observes the same maintenance marker as explicit DSH; legacy H
     expect(conversationAdmissionClosed()).toBe(true);
     process.env.CHISABOT_AGENT_KERNEL = "dsh";
     expect(conversationAdmissionClosed()).toBe(true);
-    delete process.env.CHISABOT_AGENT_KERNEL;
-    process.env.CHISABOT_HERMES_URL = "http://localhost:4100/ag-ui";
-    expect(selectedAgentKernel(process.env)).toBe("hermes");
+    process.env.CHISABOT_AGENT_KERNEL = "builtin";
+    expect(selectedAgentKernel(process.env)).toBe("builtin");
     expect(conversationAdmissionClosed()).toBe(false);
   } finally {
     process.chdir(cwd);

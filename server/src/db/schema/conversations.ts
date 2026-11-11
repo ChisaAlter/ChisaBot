@@ -283,24 +283,3 @@ export const confirmRequests = pgTable(
       .where(sql`${table.external} IS NOT NULL`),
   ],
 );
-
-export const legacyImports = pgTable(
-  "chisabot_legacy_imports",
-  {
-    threadId: text("thread_id").primaryKey(),
-    ownerUserId: text("owner_user_id").notNull(),
-    botId: text("bot_id").notNull(),
-    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
-    source: jsonb("source").notNull(),
-    importedAt: timestamp("imported_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    foreignKey({
-      name: "chisabot_legacy_imports_thread_id_fkey",
-      columns: [table.threadId],
-      foreignColumns: [localThreads.id],
-    }).onDelete("cascade"),
-  ],
-);

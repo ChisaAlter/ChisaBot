@@ -8,7 +8,7 @@
 
 | 项目                                                                                                                      | 本次固定提交           | 许可与采用范围                                                                                                                                                                |
 | ------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot/tree/795f619bbc0f1da454adbf9194b8e065dc0de684)                 | `795f619b`，2026-11-10 | [MIT](https://github.com/CopilotKit/OpenBot/blob/795f619bbc0f1da454adbf9194b8e065dc0de684/LICENSE)。参考消息身份和历史呈现；不恢复 CopilotKit 生产依赖。                      |
+| [早期上游基础模板](https://github.com/ChisaAlter/ChisaBot/blob/main/docs/THIRD_PARTY_NOTICES.md)                          | `795f619b`，2026-11-10 | [MIT](https://github.com/ChisaAlter/ChisaBot/blob/main/docs/THIRD_PARTY_NOTICES.md)。参考消息身份和历史呈现；不恢复 旧聊天前端框架 生产依赖。                                 |
 | [aibot-fans/dsh-bot](https://github.com/aibot-fans/dsh-bot/tree/fa15588fb62b7605d00c63bf23fa55b1ac54bb70)                 | `fa15588f`，2026-11-05 | [Apache-2.0 及组件许可](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/README.md#许可)。参考草稿、事件和任务状态；不复制美术或捆绑组件。 |
 | [milind-soni/OpenMausBot](https://github.com/milind-soni/OpenMausBot/tree/6b0cead52530ad6038aacc5dfacc66ce12f35926)       | `6b0cead5`，2026-11-10 | [Apache-2.0](https://github.com/milind-soni/OpenMausBot/blob/6b0cead52530ad6038aacc5dfacc66ce12f35926/LICENSE)。参考阅读位置和错误恢复入口。                                  |
 | [BotHarness/DeepSeekBot（Tobs）](https://github.com/BotHarness/DeepSeekBot/tree/1a6ae707449a864193a02757f1ffe261cb36fd8a) | `1a6ae707`，2026-11-10 | [MIT](https://github.com/BotHarness/DeepSeekBot/blob/1a6ae707449a864193a02757f1ffe261cb36fd8a/LICENSE)。参考增量 Markdown 与可见窗口，作为补充对照。                          |
@@ -27,7 +27,7 @@
 
 ## 2. 阅读位置由用户动作决定，消息身份不能随历史插入变化
 
-**上游事实。** OpenMausBot 区分用户向上滚动与内容增长造成的离底变化；加载更早消息前记录当前高度，提交后补偿滚动位置；状态带会话身份，切换会话丢弃旧补偿。OpenBot 的分页边界保存行 ID，而非只保存数组下标，避免前缀恢复使同一行换父节点后重新播放出现动画。[OpenMausBot 视口](https://github.com/milind-soni/OpenMausBot/blob/6b0cead52530ad6038aacc5dfacc66ce12f35926/src/hooks/use-transcript-viewport.ts#L50-L139)、[OpenBot 历史分页](https://github.com/CopilotKit/OpenBot/blob/795f619bbc0f1da454adbf9194b8e065dc0de684/app/src/components/channels/transcript-pages.ts#L37-L131)。
+**上游事实。** OpenMausBot 区分用户向上滚动与内容增长造成的离底变化；加载更早消息前记录当前高度，提交后补偿滚动位置；状态带会话身份，切换会话丢弃旧补偿。早期上游模板 的分页边界保存行 ID，而非只保存数组下标，避免前缀恢复使同一行换父节点后重新播放出现动画。[OpenMausBot 视口](https://github.com/milind-soni/OpenMausBot/blob/6b0cead52530ad6038aacc5dfacc66ce12f35926/src/hooks/use-transcript-viewport.ts#L50-L139)、[早期上游模板 历史分页](https://github.com/ChisaAlter/ChisaBot/blob/main/docs/THIRD_PARTY_NOTICES.md)。
 
 **本地对应。** `chat-transcript.tsx`、`virtual-transcript.tsx`、`send-scroll.ts` 和 `ui-memory.ts` 已提供虚拟列表、发送定位、消息锚点及恢复状态。0.1.142 的七项滚动验收已有通过证据。
 

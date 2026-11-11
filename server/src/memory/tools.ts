@@ -5,24 +5,7 @@ import {
   type RunAgentInput,
 } from "@ag-ui/client";
 import { defer, from, type Observable, switchMap } from "rxjs";
-import { z } from "zod";
 import { markRequest } from "../agents/run-timing";
-import type { GrantedTool } from "../plugins/tools";
-import {
-  formedMemorySchema,
-  MemoryNotFoundError,
-  MemoryRefusedError,
-  memoryInputSchema,
-} from "./types";
-
-/*
- * What the model is offered for an observed memory. The store's schema coerces `observedAt` to a
- * Date, which JSON Schema cannot describe, and a remote Bot's tool list is sent as JSON Schema: that
- * conversion threw and failed every remote run holding this tool. The model sends an ISO string.
- */
-const observedMemoryToolSchema = formedMemorySchema.extend({
-  observedAt: z.string().datetime({ offset: true }).optional(),
-});
 
 /** `question`：这一轮用户最后说的那句话（纯文字），按需预置内容用（如研究类问题的技能）；可以不看。 */
 export type LoadPersonalMemory = (

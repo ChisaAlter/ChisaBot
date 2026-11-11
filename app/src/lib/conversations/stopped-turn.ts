@@ -53,17 +53,17 @@ export function friendlyStopReason(said: string): string {
     const n = /^\d/.test(stalled[2]) ? Number.parseInt(stalled[2], 10) : 1;
     return `「${stalled[1]}」${n} ${/minute/i.test(stalled[3]) ? "分钟" : "秒"}没有任何回应，这一轮已结束。再发一次试试；一直这样就换一个模型。`;
   }
-  // CB-100：服务器在流开始前连不上智能体运行时（Hermes 桥接等）。放在 ECONNREFUSED 那条前面，免得说成「连不上模型服务」。
+  // CB-100：服务器在流开始前连不上智能体运行时。放在 ECONNREFUSED 那条前面，免得说成「连不上模型服务」。
   if (
     /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/.test(
       text,
     )
   )
-    return "智能体运行时无法连接，这一轮没有开始。请管理员检查运行时服务（Hermes 桥接）后再发一次。";
-  // Hermes 调宿主工具时拿不到确定结果（网关 409 / 5xx / 断开），为了不重复执行副作用主动停下这一轮。
+    return "智能体运行时无法连接，这一轮没有开始。请管理员检查运行时服务后再发一次。";
+  // 调宿主工具时拿不到确定结果（网关 409 / 5xx / 断开），为了不重复执行副作用主动停下这一轮。
   // 以前落到「这一轮出错了：<英文>」，标题又成了「这一轮没有收到回答」，可前面的回答明明在（2026-11-06）。
   if (
-    /host gateway outcome is unknown|HERMES_MISSING_TOOL_RECEIPT|ended before a host tool returned/i.test(
+    /host gateway outcome is unknown|ended before a host tool returned/i.test(
       text,
     )
   )
@@ -113,7 +113,7 @@ export function friendlyStopReason(said: string): string {
     return "这个模型已经下线了（服务商不再提供）。点输入框右下角的模型名换一个再发。";
   // 浏览器 AbortError 或运行被取消的原话：这一轮是被中断的，不是模型出错，别让人以为是程序坏了。
   if (
-    /aborted without reason|AbortError|signal is aborted|This run was stopped|HERMES_RUN_CANCELLED/i.test(
+    /aborted without reason|AbortError|signal is aborted|This run was stopped|DSH_RUN_CANCELLED/i.test(
       text,
     )
   )
@@ -168,9 +168,7 @@ export function isAbortFailure(error: unknown): boolean {
       : typeof error === "string"
         ? error
         : "";
-  return /\babort(ed)?\b|This run was stopped|HERMES_RUN_CANCELLED/i.test(
-    message,
-  );
+  return /\babort(ed)?\b|This run was stopped|DSH_RUN_CANCELLED/i.test(message);
 }
 
 /**
@@ -280,7 +278,6 @@ export function stoppedTurnSubscriber(
     }) => {
       if (
         stoppedByUser() ||
-        event?.code === "HERMES_RUN_CANCELLED" ||
         event?.code === "DSH_RUN_CANCELLED" ||
         event?.message === "This run was stopped."
       ) {

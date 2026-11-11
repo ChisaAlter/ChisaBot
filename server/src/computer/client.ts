@@ -1,5 +1,5 @@
 import type { HandoffRequest } from "../../../shared/computer-control";
-import { computerHeaders } from "../../../shared/legacy-headers";
+import { computerHeaders } from "../../../shared/protocol-headers";
 import type { NavigateResult } from "./schema";
 import { checkNavigationTarget } from "./target";
 

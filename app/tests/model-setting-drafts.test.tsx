@@ -45,7 +45,6 @@ function draw(kind: "fallback" | "summary") {
   });
   client.setQueryData(runtimeKernelKeys.status, {
     kernel: "builtin",
-    hermes: null,
   });
   const view = render(
     <QueryClientProvider client={client}>

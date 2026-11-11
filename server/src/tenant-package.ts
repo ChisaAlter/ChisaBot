@@ -179,7 +179,7 @@ type TenantAgent = {
   title: string;
   roleDescription: string;
   avatarSeed?: string;
-  type: "built_in" | "remote_ag_ui" | "remote_mastra";
+  type: "built_in" | "remote_ag_ui";
   configuration: Record<string, unknown>;
   /**
    * The package skills this coworker is given, by slug.
@@ -368,16 +368,9 @@ function parseAgents(
         ? "built_in"
         : agent.type === "remote-ag-ui"
           ? "remote_ag_ui"
-          : // A Mastra server, dialled through `@ag-ui/mastra` rather than an AG-UI route of its
-            // own. Seedable like the others: it is an address, and the same one this deployment
-            // would have been given by hand.
-            agent.type === "remote-mastra"
-            ? "remote_mastra"
-            : undefined;
+          : undefined;
     if (!type) {
-      throw new Error(
-        `${source}: agent.type must be built-in, remote-ag-ui or remote-mastra`,
-      );
+      throw new Error(`${source}: agent.type must be built-in or remote-ag-ui`);
     }
     const id = requiredString(agent.id, "agent.id");
     /*
@@ -394,7 +387,7 @@ function parseAgents(
         `${source}: agent.id "${id}" is reserved for a deployment route and cannot name a Bot`,
       );
     }
-    if (type === "remote_ag_ui" || type === "remote_mastra") {
+    if (type === "remote_ag_ui") {
       const endpoint =
         typeof agent.endpoint === "string" ? agent.endpoint.trim() : "";
       if (!endpoint) {
@@ -426,19 +419,6 @@ function parseAgents(
               }
             : {
                 endpoint: requiredString(agent.endpoint, "agent.endpoint"),
-                /*
-                 * Which agent on that server, when the server is a roster.
-                 *
-                 * Optional, and only meaningful for Mastra: a package naming one gets that one,
-                 * and a package naming none gets the only agent there or a refusal. Carried here
-                 * so a seeded Mastra Bot is as specific as one added by hand. See
-                 * `pickFromRoster`.
-                 */
-                ...(type === "remote_mastra" &&
-                typeof agent.remote_agent_id === "string" &&
-                agent.remote_agent_id.trim().length > 0
-                  ? { remoteAgentId: agent.remote_agent_id.trim() }
-                  : {}),
               },
         skills:
           agent.skills === undefined || agent.skills === null

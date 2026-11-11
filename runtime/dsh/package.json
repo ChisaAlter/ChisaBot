@@ -1,6 +1,8 @@
 {
   "name": "@chisabot/dsh-runtime",
-  "version": "0.1.0",
+  "description": "ChisaBot DSH 会话内核运行时",
+  "license": "MIT",
+  "version": "0.1.143",
   "private": true,
   "type": "module",
   "engines": {

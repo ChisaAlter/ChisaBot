@@ -19,34 +19,7 @@ for dll in /usr/bin/msys-*.dll /usr/bin/lib*.dll; do
   [ -f "$dll" ] && cp -f "$dll" "$BASE/"
 done
 
-# ---------- 1. hermes-reach.sh：CHISABOT_AGENT_KERNEL 的规范化 ----------
-mkdir -p "$TMP/h/bin" "$TMP/h/compose"
-printf 'CONTAINER=fake-app\n' > "$TMP/h/config.env"
-cat > "$TMP/h/bin/docker" <<'SH'
-#!/bin/bash
-# 假 docker exec：HERMES_URL 永远为空；KERNEL 取 FAKE_KERNEL（可能为空）。
-case "$*" in
-  *CHISABOT_HERMES_URL*) exit 0 ;;
-  *CHISABOT_AGENT_KERNEL*) printf '%s\n' "${FAKE_KERNEL:-}" ;;
-esac
-SH
-chmod +x "$TMP/h/bin/docker"
-run_reach() { # $1=容器值 $2=.env 行；输出退出码
-  if [ -n "$2" ]; then printf '%s\n' "$2" > "$TMP/h/compose/.env"; else rm -f "$TMP/h/compose/.env"; fi
-  FAKE_KERNEL=$1 CHISABOT_UPDATER_CONFIG="$TMP/h/config.env" COMPOSE_DIR="$TMP/h/compose" \
-    PATH="$TMP/h/bin:$BASE" bash "$HERE/hermes-reach.sh" >/dev/null 2>&1
-  echo $?
-}
-for v in 'hermes' 'hermes # prod' '  hermes  ' '"hermes"' "'hermes'" '"Hermes" # prod' 'HERMES' $'hermes\r'; do
-  [ "$(run_reach "$v" '')" = 1 ] && pass "容器值 [$v] 识别为 hermes" || fail "容器值 [$v] 应识别为 hermes"
-  [ "$(run_reach '' "CHISABOT_AGENT_KERNEL=$v")" = 1 ] && pass ".env 值 [$v] 识别为 hermes" || fail ".env 值 [$v] 应识别为 hermes"
-done
-
-for v in 'builtin' '# hermes' 'hermesx' '"builtin # hermes"' ''; do
-  [ "$(run_reach "$v" '')" = 0 ] && pass "容器值 [$v] 不是 hermes（skipped）" || fail "容器值 [$v] 不应识别为 hermes"
-done
-
-# ---------- 2. compose_network_drift：工具执行失败时回退 ----------
+# ---------- 1. compose_network_drift：工具执行失败时回退 ----------
 D="$TMP/d"; mkdir -p "$D/bin"
 cat > "$D/bin/docker" <<'SH'
 #!/bin/bash

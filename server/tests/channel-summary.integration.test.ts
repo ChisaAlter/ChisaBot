@@ -19,7 +19,7 @@ import {
   agents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
   workItems,
 } from "../src/db/schema";
@@ -48,8 +48,8 @@ afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database.delete(workItems).where(eq(workItems.key, channelId));
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const agentId of createdAgentIds.splice(0)) {

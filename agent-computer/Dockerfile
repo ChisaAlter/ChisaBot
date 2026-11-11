@@ -30,7 +30,6 @@ RUN bun install --frozen-lockfile
 COPY agent-computer/src ./src
 # Shared runtime boundaries resolve at /shared from /app/src.
 COPY shared/file-download.ts /shared/file-download.ts
-COPY shared/env-compat.ts shared/legacy-compat.ts shared/legacy-headers.ts /shared/
 COPY shared/net /shared/net
 COPY shared/ops-codes.ts shared/ops-counters.ts /shared/
 

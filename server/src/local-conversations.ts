@@ -53,12 +53,6 @@ import {
 import type { Database } from "./db/client";
 import { imageDimsFor } from "./image-dims";
 import {
-  assertConversationNamespace,
-  conversationPath,
-  normalizeConversationEvent,
-  normalizeRunInput,
-} from "./legacy/protocol";
-import {
   GENERIC_FAILURE,
   publicError,
   publicErrorMessage,
@@ -355,10 +349,7 @@ class ConversationStore {
       "SELECT sequence, event FROM chisabot_local_events WHERE thread_id = $1 ORDER BY sequence",
       [threadId],
     );
-    return rows.map((row) => ({
-      ...row,
-      event: normalizeConversationEvent(row.event),
-    }));
+    return rows;
   }
 
   /** 只要最大序号，接入时不必把整段事件日志读进内存（长对话可达数千条 / 上 MB）。 */
@@ -483,8 +474,7 @@ export async function closeInterruptedRun(
     );
     if (!rows.length) return false;
     const finalizer = createRunEventFinalizer();
-    for (const row of rows)
-      finalizer.observe(normalizeConversationEvent(row.event));
+    for (const row of rows) finalizer.observe(row.event);
     const appended = finalizer.finalize({
       interruptionMessage: RESTART_INTERRUPTED_MESSAGE,
     });
@@ -506,7 +496,7 @@ export async function closeInterruptedRun(
       });
       await replay.restore(
         runId,
-        suffix.map((row) => normalizeConversationEvent(row.event)),
+        suffix.map((row) => row.event),
       );
       await tx.unsafe(
         "UPDATE chisabot_local_threads SET messages=$2::text::jsonb,state=$3::text::jsonb,snapshot_sequence=$4::bigint,updated_at=now() WHERE id=$1",
@@ -1028,7 +1018,6 @@ class PostgresAgentRunner implements ConversationRunner {
   }
 
   run(request: AgentRunnerRunRequest): Observable<BaseEvent> {
-    request = { ...request, input: normalizeRunInput(request.input) };
     if (!request.recover) assertConversationAdmissionOpen();
     if (request.input.threadId !== request.threadId || !request.input.runId)
       throw new LocalConversationError(
@@ -2236,7 +2225,7 @@ class PostgresAgentRunner implements ConversationRunner {
           ).includes(item.event.type)
         )
           return;
-        const event = normalizeConversationEvent(item.event);
+        const event = item.event;
         if (lifecycles.accept(event)) subscriber.next(event);
       };
       const selectRun = (runId: string | undefined) => {
@@ -2306,7 +2295,7 @@ class PostgresAgentRunner implements ConversationRunner {
           for (const item of uncovered)
             publish({
               sequence: BigInt(item.sequence),
-              event: normalizeConversationEvent(item.event),
+              event: item.event,
             });
           const commandPending =
             command &&
@@ -2321,7 +2310,7 @@ class PostgresAgentRunner implements ConversationRunner {
               [request.threadId, run.run_id],
             );
             if (terminal) {
-              const event = normalizeConversationEvent(terminal.event);
+              const event = terminal.event;
               subscriber.next(
                 event.type === EventType.RUN_FINISHED
                   ? ({
@@ -2435,8 +2424,7 @@ class PostgresAgentRunner implements ConversationRunner {
               JSON.stringify(lifecycles.eventTypes),
             ],
           );
-          for (const item of before)
-            lifecycles.accept(normalizeConversationEvent(item.event));
+          for (const item of before) lifecycles.accept(item.event);
           for (const opening of lifecycles.openings()) subscriber.next(opening);
         }
         // Fill the snapshot suffix before releasing buffered live frames.
@@ -2650,7 +2638,6 @@ export type LocalConversationBackend = {
 export async function createLocalConversations(
   database: Database,
 ): Promise<LocalConversationBackend> {
-  await assertConversationNamespace(database.$client);
   const commands = createConversationCommands(database);
   await commands.ensure();
   await createDshRunJournal(database).ensure();
@@ -2922,9 +2909,7 @@ export async function createLocalConversations(
     const response = await handleThreads(request, actorId);
     if (
       response &&
-      /\/inbox(?:\/[^/]*)?\/?$/.test(
-        conversationPath(new URL(request.url).pathname),
-      )
+      /\/inbox(?:\/[^/]*)?\/?$/.test(new URL(request.url).pathname)
     )
       response.headers.set("cache-control", "no-store");
     return response;
@@ -2935,7 +2920,7 @@ export async function createLocalConversations(
   ): Promise<Response | undefined> => {
     const url = new URL(request.url);
     const matched = /^\/api\/conversations\/threads(?:\/(.*))?\/?$/.exec(
-      conversationPath(url.pathname),
+      url.pathname,
     );
     if (!matched) return undefined;
     try {

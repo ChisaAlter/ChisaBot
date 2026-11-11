@@ -27,7 +27,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
 } from "../db/schema";
 import { parsePageLimit } from "../paging";
 import {
@@ -360,7 +360,7 @@ export function createChannelStore(
     await transaction
       .insert(channelAgents)
       .values(agentIds.map((agentId) => ({ channelId: id, agentId })));
-    await transaction.insert(intelligenceChannelMappings).values({
+    await transaction.insert(chisabotChannelMappings).values({
       userId: actor.id,
       channelId: id,
       threadId,
@@ -463,11 +463,11 @@ export function createChannelStore(
           );
           const [mapped] = await transaction
             .select({
-              channelId: intelligenceChannelMappings.channelId,
-              userId: intelligenceChannelMappings.userId,
+              channelId: chisabotChannelMappings.channelId,
+              userId: chisabotChannelMappings.userId,
             })
-            .from(intelligenceChannelMappings)
-            .where(eq(intelligenceChannelMappings.threadId, threadId))
+            .from(chisabotChannelMappings)
+            .where(eq(chisabotChannelMappings.threadId, threadId))
             .limit(1);
           if (mapped) {
             if (mapped.userId !== actor.id) return null;
@@ -527,7 +527,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: chisabotChannelMappings.threadId,
           lastMessageAt: channels.lastMessageAt,
           deletedAt: agentProfiles.deletedAt,
         })
@@ -540,10 +540,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          chisabotChannelMappings,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(chisabotChannelMappings.channelId, channels.id),
+            eq(chisabotChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -635,7 +635,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: chisabotChannelMappings.threadId,
           deletedAt: agentProfiles.deletedAt,
           channelSummary: channels.summary,
           lastMessage: channels.lastMessage,
@@ -654,10 +654,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          chisabotChannelMappings,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(chisabotChannelMappings.channelId, channels.id),
+            eq(chisabotChannelMappings.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -979,9 +979,9 @@ export function createChannelStore(
       // The channel this thread is shown in, if any. A scratch thread maps to nothing, so a hop
       // running there signals nowhere and the branch below returns without announcing.
       const [mapped] = await database
-        .select({ channelId: intelligenceChannelMappings.channelId })
-        .from(intelligenceChannelMappings)
-        .where(eq(intelligenceChannelMappings.threadId, threadId))
+        .select({ channelId: chisabotChannelMappings.channelId })
+        .from(chisabotChannelMappings)
+        .where(eq(chisabotChannelMappings.threadId, threadId))
         .limit(1);
       if (!mapped) return;
 
