@@ -36,6 +36,9 @@ export function stoppedReason(reported: unknown): string {
  */
 export function friendlyStopReason(said: string): string {
   if (!said) return "";
+  // Keep DSH route attribution ("主模型/备用模型「…」请求失败：…") intact so friendlyError
+  // can classify the failure while preserving the failing model name in expandable details.
+  if (/^(?:主模型|备用模型)「[^」]+」请求失败：/.test(said)) return said;
   const text = said.replace(
     /^Failed after \d+ attempts?\.\s*(Last error:\s*)?/i,
     "",
@@ -75,6 +78,8 @@ export function friendlyStopReason(said: string): string {
     )
   )
     return text;
+  if (/\bprivacy-gate:|cannot be masked locally/i.test(text))
+    return "当前模型网关开启了本地隐私脱敏，不能直接发送图片（本轮内容未发出）。请撤回这条消息或移除图片后再继续对话，或在网关设置（Settings → Privacy）中调整隐私策略。";
   if (/only be used from within OpenCode/i.test(text))
     return "这个模型只能在 OpenCode 客户端里用。点输入框右下角的模型名，换一个模型再发。";
   if (

@@ -119,6 +119,25 @@ peers_on() {
       done
 }
 
+net_runtime_owner() {
+  docker network inspect -f '{{if .Labels}}{{index .Labels "chisabot.runtime-owner"}}{{end}}' "$1" 2>/dev/null | tr -d '\r'
+}
+
+# Per-account DSH runtimes (deploy/dsh/accounts.mjs) sit on dedicated point-to-point
+# networks labelled chisabot.runtime-owner=<owner> and must call back into
+# http://chisabot-api:$PORT/api/internal/dsh-tools for host tools and model gateways.
+# Sidecars (magpie, new-api, etc.) never carry matching runtime-owner + runtime-family labels.
+is_authorized_runtime_peer() {
+  r_net=$1
+  r_peer=$2
+  r_net_owner=$(net_runtime_owner "$r_net")
+  case "$r_net_owner" in ""|"<no value>") return 1 ;; esac
+  r_peer_owner=$(docker inspect -f '{{if .Config.Labels}}{{index .Config.Labels "chisabot.runtime-owner"}}{{end}}' "$r_peer" 2>/dev/null | tr -d '\r') || return 1
+  r_peer_family=$(docker inspect -f '{{if .Config.Labels}}{{index .Config.Labels "chisabot.runtime-family"}}{{end}}' "$r_peer" 2>/dev/null | tr -d '\r') || return 1
+  case "$r_peer_family" in ""|"<no value>") return 1 ;; esac
+  [ "$r_peer_owner" = "$r_net_owner" ]
+}
+
 rule_exists() { iptables -t filter -C DOCKER-USER "$@" 2>/dev/null; }
 
 rule_add() {
@@ -138,31 +157,47 @@ apply_or_remove() {
     ok "no user networks on $APP - nothing to isolate"
     return 0
   fi
-  echo "$NETS" | while IFS= read -r net; do
+  while IFS= read -r net; do
     [ -n "$net" ] || continue
     app_ip=$(app_ip_on "$net")
     case "$app_ip" in
       [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
       *) continue ;;
     esac
-    if [ "$action" = apply ]; then
+    net_peers=$(peers_on "$net")
+    has_sidecar=0
+    if [ -n "$net_peers" ]; then
+      while IFS= read -r pline; do
+        [ -n "$pline" ] || continue
+        peer_name=${pline%% *}
+        peer_ip=${pline#* }
+        if is_authorized_runtime_peer "$net" "$peer_name"; then
+          rule_del -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
+          if [ "$action" = apply ]; then
+            ok "ALLOW $peer_name($peer_ip) -> $APP($app_ip):$PORT on $net (account runtime)"
+          fi
+          continue
+        fi
+        has_sidecar=1
+        if [ "$action" = apply ]; then
+          rule_add -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
+          ok "DROP $peer_name($peer_ip) -> $APP($app_ip):$PORT on $net"
+        else
+          rule_del -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
+          ok "removed DROP $peer_name -> $APP:$PORT on $net"
+        fi
+      done <<EOF
+$net_peers
+EOF
+    fi
+    if [ "$action" = apply ] && [ "$has_sidecar" = 1 ]; then
       rule_add -d "$app_ip" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN
     else
       rule_del -d "$app_ip" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN
     fi
-    peers_on "$net" | while IFS= read -r pline; do
-      [ -n "$pline" ] || continue
-      peer_name=${pline%% *}
-      peer_ip=${pline#* }
-      if [ "$action" = apply ]; then
-        rule_add -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
-        ok "DROP $peer_name($peer_ip) -> $APP($app_ip):$PORT on $net"
-      else
-        rule_del -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
-        ok "removed DROP $peer_name -> $APP:$PORT on $net"
-      fi
-    done
-  done
+  done <<EOF
+$NETS
+EOF
   ok "$action done (comment=$COMMENT port=$PORT)"
 }
 
@@ -173,61 +208,98 @@ check_rules() {
   else
     fail "br_netfilter not loaded — run --apply"
   fi
-  tmp=$(mktemp)
-  trap 'rm -f "$tmp"' EXIT
   peers_seen=0
   missing=0
   if [ -z "$NETS" ]; then
     ok "no user networks on $APP - isolation N/A"
     return 0
   fi
-  # Use a single loop without nested pipe-state loss: dump pairs first.
-  : > "$tmp.peers"
-  echo "$NETS" | while IFS= read -r net; do
+  while IFS= read -r net; do
     [ -n "$net" ] || continue
     app_ip=$(app_ip_on "$net")
     case "$app_ip" in
       [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
       *) continue ;;
     esac
-    printf '%s %s\n' "$net" "$app_ip" >> "$tmp.nets"
-    peers_on "$net" | while IFS= read -r pline; do
-      [ -n "$pline" ] || continue
-      printf '%s %s %s\n' "$net" "$app_ip" "$pline" >> "$tmp.peers"
-    done
-  done
-  if [ ! -s "$tmp.peers" ]; then
-    ok "no sidecar peers on app networks - isolation N/A"
-    rm -f "$tmp.nets" "$tmp.peers"
-    trap - EXIT
-    return 0
-  fi
-  if [ -f "$tmp.nets" ]; then
-    while read -r net app_ip; do
-      [ -n "$app_ip" ] || continue
+    net_peers=$(peers_on "$net")
+    has_sidecar=0
+    if [ -n "$net_peers" ]; then
+      while IFS= read -r pline; do
+        [ -n "$pline" ] || continue
+        peer_name=${pline%% *}
+        peer_ip=${pline#* }
+        if is_authorized_runtime_peer "$net" "$peer_name"; then
+          if rule_exists -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP; then
+            printf 'unexpected DROP blocking account runtime %s(%s) -> %s:%s on %s\n' "$peer_name" "$peer_ip" "$APP" "$PORT" "$net" >&2
+            missing=$((missing + 1))
+          else
+            ok "runtime allowed: $peer_name -> $APP:$PORT ($net)"
+          fi
+          continue
+        fi
+        has_sidecar=1
+        peers_seen=$((peers_seen + 1))
+        if ! rule_exists -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP; then
+          printf 'missing DROP %s(%s) -> %s:%s on %s\n' "$peer_name" "$peer_ip" "$APP" "$PORT" "$net" >&2
+          missing=$((missing + 1))
+        else
+          ok "rule present: $peer_name -> $APP:$PORT ($net)"
+        fi
+      done <<EOF
+$net_peers
+EOF
+    fi
+    if [ "$has_sidecar" = 1 ]; then
       if ! rule_exists -d "$app_ip" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN; then
         printf 'missing ESTABLISHED RETURN for app %s on %s\n' "$app_ip" "$net" >&2
         missing=$((missing + 1))
       fi
-    done < "$tmp.nets"
-  fi
-  while read -r net app_ip peer_name peer_ip; do
-    peers_seen=$((peers_seen + 1))
-    if ! rule_exists -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP; then
-      printf 'missing DROP %s(%s) -> %s:%s on %s\n' "$peer_name" "$peer_ip" "$APP" "$PORT" "$net" >&2
-      missing=$((missing + 1))
-    else
-      ok "rule present: $peer_name -> $APP:$PORT ($net)"
     fi
-  done < "$tmp.peers"
-  rm -f "$tmp.nets" "$tmp.peers"
-  trap - EXIT
-  [ "$missing" = 0 ] || fail "$missing isolation rule(s) missing - run: sh scripts/ops/isolate-sidecar-app.sh --apply"
+  done <<EOF
+$NETS
+EOF
+  [ "$missing" = 0 ] || fail "$missing isolation rule(s) missing or misconfigured - run: sh scripts/ops/isolate-sidecar-app.sh --apply"
+  if [ "$peers_seen" = 0 ]; then
+    ok "no sidecar peers on app networks - isolation N/A"
+    return 0
+  fi
   ok "all $peers_seen sidecar->app:$PORT DROP rules present"
+}
+
+verify_runtime_reachability() {
+  [ -n "${NETS:-}" ] || return 0
+  while IFS= read -r net; do
+    [ -n "$net" ] || continue
+    app_ip=$(app_ip_on "$net")
+    case "$app_ip" in
+      [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+      *) continue ;;
+    esac
+    net_peers=$(peers_on "$net")
+    [ -n "$net_peers" ] || continue
+    while IFS= read -r pline; do
+      [ -n "$pline" ] || continue
+      peer_name=${pline%% *}
+      is_authorized_runtime_peer "$net" "$peer_name" || continue
+      if out=$(docker exec "$peer_name" /usr/local/bin/node -e "fetch('http://$app_ip:$PORT/health',{signal:AbortSignal.timeout(3000)}).then(r=>{console.log(r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(String(e));process.exit(1)})" 2>&1); then
+        ok "Runtime $peer_name->$APP($app_ip):$PORT/health reachable (HTTP $(printf '%s' "$out" | head -1))"
+      else
+        printf '%s\n' "$out" >&2
+        fail "Runtime $peer_name->$APP($app_ip):$PORT/health blocked or unreachable"
+      fi
+    done <<EOF
+$net_peers
+EOF
+  done <<EOF
+$NETS
+EOF
 }
 
 verify_live() {
   check_rules
+  if command -v verify_runtime_reachability >/dev/null 2>&1; then
+    verify_runtime_reachability
+  fi
   if ! docker inspect "$MAGPIE" >/dev/null 2>&1; then
     ok "Magpie container $MAGPIE not running - skip live probe"
     return 0

@@ -3068,7 +3068,9 @@ export async function createLocalConversations(
         if (!fromMessageId || fromMessageId.length > 200)
           throw new LocalConversationError("Message id is required", 400);
         const mode =
-          body.mode === "regenerate" || body.mode === "edit"
+          body.mode === "regenerate" ||
+          body.mode === "edit" ||
+          body.mode === "withdraw"
             ? body.mode
             : "resend";
         if (runner.isActive(threadId))

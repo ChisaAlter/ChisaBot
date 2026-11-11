@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.144 — 2026-11-11
 
+全端版本 0.1.144，Android versionCode 326。修复独立 DSH 账号运行时被宿主机边车隔离规则误拦截导致对话报「模型太久没有回应」、以及图片被隐私门禁拦截后无法撤回锁死会话的问题，并包含自有命名空间收尾。PC 外壳与 Android 原生壳无破坏性改动，不强制重装。
+
+- **边车网络隔离精准放行独立 DSH 账号容器**：`scripts/ops/isolate-sidecar-app.sh` 校验网络 `chisabot.runtime-owner` 与容器 `chisabot.runtime-owner` / `chisabot.runtime-family` 标签，放行专属点对点网络上的受控 DSH 运行时访问内部工具与模型网关（`:3001`）并自动清理陈旧 `DROP` 规则，`--verify` 新增运行时到 `:3001/health` 活探；Magpie、`new-api` 及任何未授权容器访问 `:3001` 仍被严格 `DROP`。
+- **图片隐私门禁拦截与一键撤回逃生口**：修复开启隐私脱敏或模型不支持看图时发送图片卡死整条对话的问题；`POST /api/conversations/threads/:id/truncate` 支持 `mode: "withdraw"` 并兼容前置独立 `RUN_ERROR` 截断；错误卡片提供「撤回这条消息」，纯图片与带文字消息统一提供「编辑（可移除附件）」与「撤回（带文字自动回填输入框）」；`runtime/dsh` 对本地 `privacy-gate` 不触发模型熔断冷却、不空转同网关备用模型，并在后续纯文本轮次自动将历史被拒图片降级为说明文本。
+- **错误归属与登录失效提示**：`friendlyStopReason` 保留「主模型 / 备用模型『…』请求失败」前缀与详情折叠入口；识别 Magpie OAuth `refresh_token_invalidated` / `session has ended` 为不可原地重试的「模型登录已失效」。
 - 去上游印记与架构收尾（CB-118 / CB-016）：彻底移除旧会话兼容路由、旧前缀请求头、旧前缀环境变量别名、前端/网关历史兼容垫片、旧托管云会话客户端、Mastra 远程运行时与死依赖（锁文件清零相关上游包），将 `deploy/pin-resources.sh` 与 `docker/s6/scripts/database-identity.sh` 重构为通用存量卷与数据库身份保留逻辑，保障线上数据零丢失；退役旧 Hermes 过渡内核与孤儿死模块/示例包，收敛至唯一内置执行内核 DSH；新增数据库迁移 `0068_detachment_and_cleanup`，将 `intelligence_channel_mappings` 原地重命名为 `chisabot_channel_mappings`、清洗历史 JSONB 结构信封键名（不改用户消息正文）并清理 14 张零引用废弃表；更新 `LICENSE` 与 `docs/THIRD_PARTY_NOTICES.md`、重写 `.env.example`、脱敏隐私路径与域名、清理过时英文文档并补齐 CI `agent-computer` 类型检查门禁。
 - QA510/511 P3 收尾（#511）：统一错误脱敏（密码内未编码 `/ # ? @` 贪婪打码、只有用户名时仅在用户名像令牌时打码、Docker `service:port` 连接上下文与裸内网 IPv6 打码、`Basic authentication` / 参数名 / locale / `localhost.example.com` 不误打码）；DSH 首输出超时文案写出实际总等待时间，单模型请求超时与首输出期限对齐且不再同模型重试；DSH 会话事件写盘前先脱敏截断；催办跳过条件式承诺；建群 Bot 不存在统一回 400。
 
