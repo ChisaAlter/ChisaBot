@@ -1,4 +1,3 @@
-import "../shared/env-compat";
 import { access, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createServer } from "node:net";

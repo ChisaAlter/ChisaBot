@@ -3,15 +3,11 @@ import { HttpAgent, type Message, type RunAgentInput } from "@ag-ui/client";
 import { EventSchemas } from "@ag-ui/core/schemas";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Subscription } from "rxjs";
-import { managedAgentHeaders } from "../../../shared/legacy-headers";
+import { managedAgentHeaders } from "../../../shared/protocol-headers";
 import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,
 } from "../desktop-connection-failure";
-import {
-  PREVIOUS_MODEL_AUTH_ERROR,
-  previousManagedImage,
-} from "../legacy/protocol";
 
 // The same provider contract used by the deployment model adapters.
 export type PlanLanguageModel = LanguageModelV3;
@@ -41,8 +37,7 @@ export function planModelForEnvironment(
   const harness = claude ? "agent-claude-sdk" : "agent-langgraph-agui";
   if (
     environment.PICKED_HARNESS_SOURCE?.trim() === "byo" ||
-    (!new RegExp(`(?:^|/)(?:chisabot-)?${harness}(?::|@|$)`).test(image) &&
-      !previousManagedImage(image, harness))
+    !new RegExp(`(?:^|/)(?:chisabot-)?${harness}(?::|@|$)`).test(image)
   ) {
     throw new Error(
       `The selected plan requires the installed ${harness} harness for built-in Bots.`,
@@ -406,10 +401,7 @@ export class PlanModel implements PlanLanguageModel {
                   }
                   case "RUN_ERROR": {
                     const error = new Error(event.message);
-                    if (
-                      event.code === "CHISABOT_MODEL_AUTH_REQUIRED" ||
-                      event.code === PREVIOUS_MODEL_AUTH_ERROR
-                    ) {
+                    if (event.code === "CHISABOT_MODEL_AUTH_REQUIRED") {
                       error.name = "ChisaBotModelAuthenticationError";
                       recordDesktopConnectionFailure({
                         connection: "model",

@@ -8,7 +8,6 @@ import {
   CSP_REPORT_ONLY_HEADER,
   createAppCspReader,
 } from "../../shared/content-security-policy";
-import { readCompatibleHeader } from "../../shared/legacy-headers";
 import type { MagpieOverview } from "../../shared/model-selection";
 import {
   authoriseAgentCall,
@@ -80,7 +79,6 @@ import { mountDesktopConnectionFailure } from "./desktop-connection-failure";
 import { createTranscriptionProvider } from "./dictation/provider";
 import { createDictationRoutes } from "./dictation/routes";
 import { markEventStreamUnbuffered } from "./event-stream-headers";
-import { mountPreviousConversationRoutes } from "./legacy/protocol";
 import type { LocalConversationBackend } from "./local-conversations";
 import { MAGPIE_MOUNT, type MagpieService } from "./magpie";
 import { ModelCatalogError, type ModelCatalogService } from "./model-catalog";
@@ -380,7 +378,6 @@ export function createApp(
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
-  mountPreviousConversationRoutes(app);
   app.use("*", async (_context, next) => withModelConnectionScope(next));
   /*
    * 慢请求日志：只记耗时超过 1 秒的 API 请求（一行 JSON：method/path/耗时），正常请求零开销。
@@ -1452,11 +1449,7 @@ export function createApp(
       } | null;
 
       const verdict = await authoriseAgentCall({
-        presented:
-          readCompatibleHeader(
-            context.req.raw.headers,
-            "x-chisabot-agent-token",
-          ) ?? "",
+        presented: context.req.raw.headers.get("x-chisabot-agent-token") ?? "",
         run: body?.run,
         encryptionKey: config.keyEncryptionKey,
         legacyToken,

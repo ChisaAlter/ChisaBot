@@ -34,7 +34,6 @@ import { createPlanModelProxy } from "../conversations/plan-model-proxy";
 import type { DshRunJournal } from "../conversations/run-journal";
 import { createEventLifecycles } from "../conversations/runner";
 import type { createDshToolGateway } from "../conversations/tool-gateway";
-import { normalizeRunInput } from "../legacy/protocol";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
 import type { HermesRuntimeBinding } from "./hermes-runtime";
@@ -292,11 +291,11 @@ export class DshRuntimeAgent extends AbstractAgent {
     snapshot: ApprovalContinuation;
     signal: AbortSignal;
   }) {
-    const saved: RunAgentInput = normalizeRunInput({
+    const saved: RunAgentInput = {
       ...input.snapshot,
       forwardedProps: input.snapshot.forwardedProps ?? {},
       tools: [],
-    });
+    };
     const scope = this.configuration.binding.readRun(
       this.configuration.signRun(saved),
     );

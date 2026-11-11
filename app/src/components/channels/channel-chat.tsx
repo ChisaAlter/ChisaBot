@@ -60,8 +60,16 @@ import {
   useConversationSession,
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
-import { interruptWaitingKind } from "@/lib/compat/legacy-client";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+
+function interruptWaitingKind(
+  metadata: Record<string, unknown> | undefined,
+): unknown {
+  const waiting = metadata?.chisabotWaiting;
+  return waiting && typeof waiting === "object"
+    ? (waiting as { kind?: unknown }).kind
+    : undefined;
+}
 import type { ThreadActivity } from "@/lib/conversations/bot-thread";
 import { readSync } from "@/lib/conversations/bot-thread";
 import { reportChatRunning } from "@/lib/conversations/computer-activity";

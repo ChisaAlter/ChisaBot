@@ -17,6 +17,4 @@
  * This compatibility shim is narrow enough to delete when the SDK ships an ESM-safe require or Bun
  * handles it.
  */
-import "../../shared/env-compat";
-
 import "eventsource";

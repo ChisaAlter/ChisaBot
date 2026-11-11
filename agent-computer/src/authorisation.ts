@@ -1,5 +1,3 @@
-import { readCompatibleHeader } from "../../shared/legacy-headers";
-
 /**
  * Who may speak to a computer at all.
  *
@@ -37,10 +35,7 @@ export function offeredToken(headers: Headers, url: URL): string {
   // value in a header succeeds and the failure looks stream-specific.
   if (url.pathname === "/stream")
     return url.searchParams.get("token")?.trim() ?? "";
-  const header = readCompatibleHeader(
-    headers,
-    "x-chisabot-computer-token",
-  )?.trim();
+  const header = headers.get("x-chisabot-computer-token")?.trim();
   if (header) return header;
   const authorization = headers.get("authorization")?.trim() ?? "";
   // The remainder needs trimming too: `Bearer   SECRET  ` left leading spaces behind.

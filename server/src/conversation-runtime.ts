@@ -12,7 +12,6 @@ import {
   selfMapGuidance,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
-import { readCompatibleHeader } from "../../shared/legacy-headers";
 import {
   type ActorAgentResolver,
   CoworkerUnavailableError,
@@ -78,7 +77,7 @@ import { estimateTokens, meterLanguageModel, meterRun } from "./context-usage";
 import { createConversationRoutes } from "./conversations/routes";
 import { reasonWithoutStatement } from "./db/query-failure";
 import { observeModelConnection } from "./desktop-connection-failure";
-import { runAssertionValue } from "./legacy/protocol";
+import { runAssertionValue } from "./conversations/protocol";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import type { LocalConversationBackend } from "./local-conversations";
 import {
@@ -2145,10 +2144,8 @@ function remoteAgentWithStandingRole(
       );
       const owned =
         !!process.env.MANAGED_AGENT_TOKEN &&
-        readCompatibleHeader(
-          new Headers(agent.headers),
-          "x-chisabot-agent-token",
-        ) === process.env.MANAGED_AGENT_TOKEN &&
+        new Headers(agent.headers).get("x-chisabot-agent-token") ===
+          process.env.MANAGED_AGENT_TOKEN &&
         [
           process.env.PICKED_HARNESS_URL,
           process.env.MANAGED_AGENT_AG_UI_URL,

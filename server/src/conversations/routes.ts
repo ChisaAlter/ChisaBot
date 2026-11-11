@@ -10,10 +10,6 @@ import {
   HeadlessToolsMiddleware,
 } from "../computer/headless-tools";
 import type { IdentifyActor } from "../conversation-runtime";
-import {
-  mountPreviousConversationRoutes,
-  normalizeRunInput,
-} from "../legacy/protocol";
 import type { LocalConversationBackend } from "../local-conversations";
 import { publicErrorMessage } from "../public-error";
 import type { ConversationCommandRecord } from "./commands";
@@ -95,7 +91,6 @@ export function createConversationRoutes(options: {
   ) => Promise<readonly HeadlessTool[]>;
 }) {
   const routes = new Hono();
-  mountPreviousConversationRoutes(routes);
   const { backend, resolver, identifyActor } = options;
   async function dispatch(
     record: ConversationCommandRecord,
@@ -136,7 +131,6 @@ export function createConversationRoutes(options: {
     agentId: string,
     input: import("@ag-ui/client").RunAgentInput,
   ) {
-    input = normalizeRunInput(input);
     await assertConversationAdmissionOpen();
     const actor = await identifyActor(request);
     const agent = await resolver.resolveAgentForActor(actor, agentId, {

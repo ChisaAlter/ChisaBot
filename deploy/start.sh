@@ -7,7 +7,7 @@ if ! test -f .env; then
   exit 1
 fi
 
-. ./legacy-resources.sh
+. ./pin-resources.sh
 pin_existing_resources .env chisabot-zh
 
 # Track D + 网络隔离：内部口 deny-by-default —— 拒绝 0.0.0.0 / 无主机绑定发布。

@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { chown, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { conversationTables } from "./legacy-schema.mjs";
 import { canReadDshState } from "./reader-compatibility.mjs";
 
 const execute = promisify(execFile);
@@ -259,7 +258,6 @@ if (!image?.Id)
   throw new Error("The configured candidate image is not present.");
 const index = [];
 const report = { ready: 0, preparing: 0, updateRequired: 0 };
-const tablesProgram = `const conversationTables=${conversationTables.toString()};`;
 const healthProgram = `const fs=require('node:fs/promises'); const {pathToFileURL}=require('node:url');
 (async()=>{const {DshHostClient}=await import(pathToFileURL('/app/runtime/dsh/src/client.mjs')); const address=JSON.parse(await fs.readFile('/state/connection.json','utf8'));
 const endpoint=new URL(address.endpoint);
@@ -292,9 +290,7 @@ if (command === "snapshot") {
     "apiuser",
     "/usr/local/bin/bun",
     "-e",
-    tablesProgram +
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: program text run by node -e inside the API container; its own template fills ${tables.*} there.
-      "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const tables=await conversationTables(sql);const [r]=await sql.unsafe(`select (select count(*) from ${tables.threads} where lock_expires_at>now())+(select count(*) from chisabot_dsh_runs where status in ('admitting','observing','projecting'))+(select count(*) from chisabot_tool_operations where status='dispatching') as count`);console.log(r.count)}finally{await sql.end({timeout:5})}",
+    "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const [r]=await sql.unsafe(\"select (select count(*) from chisabot_local_threads where lock_expires_at>now())+(select count(*) from chisabot_dsh_runs where status in ('admitting','observing','projecting'))+(select count(*) from chisabot_tool_operations where status='dispatching') as count\");console.log(r.count)}finally{await sql.end({timeout:5})}",
   );
   if (busy !== "0")
     throw new Error(
@@ -322,9 +318,7 @@ if (command === "snapshot") {
       "apiuser",
       "/usr/local/bin/bun",
       "-e",
-      tablesProgram +
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: program text run by node -e inside the API container; its own template fills ${tables.*} there.
-        "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const tables=await conversationTables(sql);const [projection]=await sql.unsafe(`select coalesce(max(sequence),0)::text as cursor from ${tables.events}`);const bindings=await sql`select id,thread_id,revision,owner_user_id,runtime_id,session_id,active from chisabot_runtime_bindings where kernel='dsh' order by owner_user_id,thread_id,revision`;console.log(JSON.stringify({cursor:projection.cursor,bindings}))}finally{await sql.end({timeout:5})}",
+      "const postgres=require('/app/node_modules/postgres');const sql=postgres(process.env.DATABASE_URL,{max:1});try{const [projection]=await sql.unsafe('select coalesce(max(sequence),0)::text as cursor from chisabot_local_events');const bindings=await sql`select id,thread_id,revision,owner_user_id,runtime_id,session_id,active from chisabot_runtime_bindings where kernel='dsh' order by owner_user_id,thread_id,revision`;console.log(JSON.stringify({cursor:projection.cursor,bindings}))}finally{await sql.end({timeout:5})}",
     ),
   );
   if (

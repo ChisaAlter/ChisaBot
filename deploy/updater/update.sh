@@ -201,7 +201,7 @@ fi
 rm -rf "$B" && mkdir -p "$B/src" || fail "无法准备构建目录"
 G archive "$TARGET" | tar -x -C "$B/src" || fail "导出源码失败"
 if [ "$BUILD_ONLY" != 1 ] && [ "$DRY" != 1 ] && [ "$(image_mode)" = env ]; then
-  . "$B/src/deploy/legacy-resources.sh"
+  . "$B/src/deploy/pin-resources.sh"
   pin_existing_resources "$COMPOSE_DIR/.env" "$CONTAINER" || fail "无法保留现有部署资源"
 fi
 VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$B/src/package.json" | head -n 1)
@@ -354,8 +354,12 @@ if [ "$DSH_ENABLED" = 1 ]; then
   dsh_hold_admission "$JOB" || fail "无法暂停新执行：检查已有 .maintenance 记录"
   DSH_ADMISSION_HELD=1
 fi
-. "$U/legacy-schema.sh"
-busy_threads() { conversation_busy_threads; }
+busy_threads() {
+  docker exec "$CONTAINER" sh -c '
+    database_url=$(cat /run/s6/container_environment/DATABASE_URL)
+    psql "$database_url" -Atc "select count(*) from chisabot_local_threads where lock_expires_at > now()"
+  '
+}
 if [ "$DRAIN_SECONDS" -gt 0 ] 2>/dev/null || [ "$DSH_ADMISSION_HELD" = 1 ]; then
   step drain "等正在回答的对话结束再切换（最多 $DRAIN_SECONDS 秒）"
   WAITED=0

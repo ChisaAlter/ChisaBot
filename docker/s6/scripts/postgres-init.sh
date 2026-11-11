@@ -14,7 +14,7 @@ set -eu
 DATA=/var/lib/postgresql/data
 PW_FILE=/var/lib/postgresql/pgpassword
 BIN=/usr/lib/postgresql/16/bin
-. "$(dirname "$0")/legacy-database-identity.sh"
+. "$(dirname "$0")/database-identity.sh"
 select_database_identity /var/lib/postgresql/identity
 
 if [ ! -s "$DATA/PG_VERSION" ]; then

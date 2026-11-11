@@ -1,10 +1,8 @@
 import {
   authenticationRequired,
   isConversationPath,
-  PREVIOUS_WAITING_EVENT,
   runAssertionValue,
-} from "./legacy/protocol";
-import "../../shared/env-compat";
+} from "./conversations/protocol";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -3208,8 +3206,8 @@ const panelTaskService = createNormalPanelTaskService({
       transportStatus = runs[0]?.status;
       const events = await database.$client.unsafe<{ waiting: boolean }[]>(
         `SELECT EXISTS(SELECT 1 FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2
-          AND event->>'type'='CUSTOM' AND event->>'name' IN ('chisabot.headless.waiting', $3::text)) AS waiting`,
-        [threadId, task.runId, PREVIOUS_WAITING_EVENT],
+          AND event->>'type'='CUSTOM' AND event->>'name'='chisabot.headless.waiting') AS waiting`,
+        [threadId, task.runId],
       );
       waiting ||= events[0]?.waiting === true;
     }

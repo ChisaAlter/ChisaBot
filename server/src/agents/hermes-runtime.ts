@@ -12,7 +12,7 @@ import { Observable, type Subscription } from "rxjs";
 import { z } from "zod";
 import type { HeadlessTool } from "../computer/headless-tools";
 import { currentToolAbort } from "../confirmations/context";
-import { runAssertionValue } from "../legacy/protocol";
+import { runAssertionValue } from "../conversations/protocol";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
 import type { RunAssertion } from "./callback-token";

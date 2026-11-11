@@ -31,7 +31,6 @@ import {
   executionDeadline,
 } from "../conversations/capacity";
 import { assertConversationAdmissionOpen } from "../conversations/maintenance";
-import { normalizeConversationEvent } from "../legacy/protocol";
 import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
@@ -608,7 +607,6 @@ export function createTurnRunner(options: {
              * answered with nothing.
              */
             next: (event) => {
-              event = normalizeConversationEvent(event);
               if (
                 event.type === EventType.CUSTOM &&
                 "name" in event &&

@@ -5,10 +5,6 @@ import { runInNewContext } from "node:vm";
 
 /** DF-13：导航失败要区分「真断网」和「服务器慢 / 部署重启 / 502」。直接在沙箱里跑 app/public/sw.js。 */
 const source = readFileSync(join(import.meta.dir, "../public/sw.js"), "utf8");
-const legacySource = readFileSync(
-  join(import.meta.dir, "../public/compat/legacy-browser.js"),
-  "utf8",
-);
 
 type Timer = { at: number; fn: () => void; id: number };
 function fakeClock() {
@@ -74,7 +70,7 @@ function loadSw(opts: {
     clearTimeout: clock.clearTimeout,
   };
   const ctx = runInNewContext(
-    `${legacySource}\n${source}\n;({ retryMain: (env) => retryMain({ ...env, gatewayLoginRequired: ChisaLegacyBrowser.gatewayLoginRequired }), RETRY_DELAYS_MS, RETRY_STATUSES: [...RETRY_STATUSES] })`,
+    `${source}\n;({ retryMain: (env) => retryMain({ ...env, gatewayLoginRequired }), RETRY_DELAYS_MS, RETRY_STATUSES: [...RETRY_STATUSES] })`,
     sandbox,
   );
   /** 派发一个导航 fetch 事件；返回 respondWith 拿到的 Promise（没调用就是 undefined）。 */

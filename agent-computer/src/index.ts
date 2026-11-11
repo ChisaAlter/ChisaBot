@@ -1,10 +1,8 @@
-import "../../shared/env-compat";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "bun";
 import type { BrowserContext, Page } from "playwright";
 import { downloadHeaders } from "../../shared/file-download";
-import { readCompatibleHeader } from "../../shared/legacy-headers";
 import type { Release } from "./action-barrier";
 import {
   cutAtCodeUnits,
@@ -255,7 +253,7 @@ function actionLeaseMs(pathname: string): number {
  */
 function botIdOf(request: Request, fallback?: string | null): string {
   return (
-    readCompatibleHeader(request.headers, "x-chisabot-bot-id")?.trim() ||
+    request.headers.get("x-chisabot-bot-id")?.trim() ||
     fallback?.trim() ||
     DEFAULT_BOT_ID
   );
@@ -1652,10 +1650,7 @@ serve<StreamData>({
           typeof body.botId === "string" && body.botId.trim()
             ? body.botId.trim()
             : url.searchParams.get("botId")?.trim() ||
-              readCompatibleHeader(
-                request.headers,
-                "x-chisabot-bot-id",
-              )?.trim() ||
+              request.headers.get("x-chisabot-bot-id")?.trim() ||
               undefined;
         try {
           return json(

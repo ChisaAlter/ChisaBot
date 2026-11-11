@@ -1,5 +1,5 @@
 import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
-import { managedAgentHeaders } from "../../../shared/legacy-headers";
+import { managedAgentHeaders } from "../../../shared/protocol-headers";
 import type { ManagedAgentConfig } from "../config";
 import {
   type RegisteredAgent,

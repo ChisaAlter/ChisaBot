@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client";
-import { runAssertionValue } from "../legacy/protocol";
+import { runAssertionValue } from "../conversations/protocol";
 import { readDurableTurn } from "../turns/durable-outcome";
 import type { RunAssertion } from "./callback-token";
 import { HANDOFF_KIND } from "./handoff";

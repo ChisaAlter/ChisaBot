@@ -39,7 +39,7 @@ export function testDatabaseUrlFrom(
   if (!database) {
     throw new Error("TEST_DATABASE_URL must name a database.");
   }
-  if (database === "openbot" || database === "chisabot") {
+  if (database === "chisabot") {
     throw new Error(
       "TEST_DATABASE_URL must not point at the live chisabot database. Use a dedicated database such as chisabot_test.",
     );

@@ -5,7 +5,7 @@ import type { AuditInitiator } from "../audit";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { createConfirmations } from "../confirmations/service";
 import type { Database } from "../db/client";
-import { runAssertionValue } from "../legacy/protocol";
+import { runAssertionValue } from "./protocol";
 import type { LocalConversationBackend } from "../local-conversations";
 import type { TurnRunner } from "../turns/types";
 import {

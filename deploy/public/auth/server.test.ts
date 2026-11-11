@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LEGACY_SESSION_COOKIE } from "./legacy-compat";
 import { createAuthApp, safeNext } from "./server";
 
 const origin = "https://chisabot.example.com:8443";
@@ -143,86 +142,28 @@ describe("public cookie login", () => {
     ).toBe(401);
     service.close();
   });
-  test("persisted session cookies migrate names without extending or losing their sessions", async () => {
-    for (const remember of [false, true]) {
-      let time = 1_000_000;
-      const file = join(directory, "cookie-upgrade-" + remember + ".sqlite");
-      let service = app(file, () => time);
-      const current = cookie(await login(service, remember));
-      const legacy =
-        LEGACY_SESSION_COOKIE + current.slice(current.indexOf("="));
-      service.close();
-      time += 3600_000;
-      service = app(file, () => time);
-      expect(
-        (await service.fetch(request("/_internal/check", undefined, legacy)))
-          .status,
-      ).toBe(200);
-      const upgraded = await service.fetch(
-        request("/auth/session", undefined, legacy),
-      );
-      expect((await upgraded.json()).authenticated).toBe(true);
-      const cookies = upgraded.headers.getSetCookie();
-      expect(cookies).toHaveLength(2);
-      expect(cookies[0]!.split(";")[0]).toBe(current);
-      expect(cookies[1]).toContain(
-        LEGACY_SESSION_COOKIE +
-          "=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
-      );
-      if (remember) expect(cookies[0]).toContain("Max-Age=2588400");
-      else expect(cookies[0]).not.toContain("Max-Age=");
-      expect(
-        (await service.fetch(request("/_internal/check", undefined, current)))
-          .status,
-      ).toBe(200);
-      expect(
-        (
-          await service.fetch(
-            request("/_internal/check", undefined, current + "; " + legacy),
-          )
-        ).status,
-      ).toBe(200);
-      time += (remember ? 30 * 24 : 12) * 3600_000;
-      expect(
-        (await service.fetch(request("/_internal/check", undefined, current)))
-          .status,
-      ).toBe(401);
-      service.close();
-    }
-  });
-  test("logout revokes both cookie generations and malformed canonical cookies cannot fall back", async () => {
+  test("logout revokes the canonical session cookie and rejects malformed cookies", async () => {
     const service = app();
     const current = cookie(await login(service));
-    const another = cookie(await login(service));
-    const legacy = LEGACY_SESSION_COOKIE + another.slice(another.indexOf("="));
     const malformed = current.slice(0, current.indexOf("=") + 1) + "invalid";
     expect(
-      (
-        await service.fetch(
-          request("/_internal/check", undefined, malformed + "; " + legacy),
-        )
-      ).status,
-    ).toBe(401);
-    expect(
-      (
-        await service.fetch(
-          request("/_internal/check", undefined, legacy + "; " + legacy),
-        )
-      ).status,
-    ).toBe(401);
-    const logout = await service.fetch(
-      request("/auth/logout", {}, current + "; " + legacy),
-    );
-    expect(logout.status).toBe(200);
-    const cleared = logout.headers.getSetCookie();
-    expect(cleared).toHaveLength(2);
-    expect(cleared.every((value) => value.includes("Max-Age=0"))).toBe(true);
-    expect(
-      (await service.fetch(request("/_internal/check", undefined, current)))
+      (await service.fetch(request("/_internal/check", undefined, malformed)))
         .status,
     ).toBe(401);
     expect(
-      (await service.fetch(request("/_internal/check", undefined, legacy)))
+      (
+        await service.fetch(
+          request("/_internal/check", undefined, current + "; " + current),
+        )
+      ).status,
+    ).toBe(401);
+    const logout = await service.fetch(request("/auth/logout", {}, current));
+    expect(logout.status).toBe(200);
+    const cleared = logout.headers.getSetCookie();
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toContain("Max-Age=0");
+    expect(
+      (await service.fetch(request("/_internal/check", undefined, current)))
         .status,
     ).toBe(401);
     service.close();

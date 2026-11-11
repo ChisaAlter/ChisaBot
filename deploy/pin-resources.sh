@@ -1,5 +1,5 @@
 #!/bin/sh
-# Adopt existing physical resources before applying the canonical Compose defaults.
+# Adopt existing physical resources from the running container before applying Compose defaults.
 # Source this file; only explicit deployment entry points call the function below.
 pin_existing_resources() (
   set -eu
@@ -23,23 +23,11 @@ pin_existing_resources() (
       resource_name=$(docker inspect -f "{{range .Mounts}}{{if and (eq .Type \"volume\") (eq .Destination \"$resource_path\")}}{{.Name}}{{end}}{{end}}" "$resource_container")
       resource_set "CHISABOT_${resource_kind}_VOLUME" "$resource_name"
     done
-    resource_network=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' "$resource_container" | sed -n '/_default$/p' | head -n 1)
+    resource_networks=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' "$resource_container")
+    resource_network=$(printf '%s\n' "$resource_networks" | sed -n '/_default$/p' | head -n 1)
     resource_set CHISABOT_NETWORK_NAME "$resource_network"
-  elif [ -z "$(resource_value CHISABOT_DATABASE_VOLUME)" ] && [ -z "$(resource_value CHISABOT_VOLUME_PREFIX)" ] && docker volume inspect openbot-zh_database >/dev/null 2>&1; then
-    if docker volume inspect chisabot-zh_database >/dev/null 2>&1; then
-      echo 'Both legacy and canonical database volumes exist. Set CHISABOT_DATABASE_VOLUME to the intended existing data before starting.' >&2
-      exit 1
-    fi
-    for resource_kind in database workspace profiles dsh; do
-      resource_key=$(printf '%s' "$resource_kind" | tr '[:lower:]' '[:upper:]')
-      resource_set "CHISABOT_${resource_key}_VOLUME" "openbot-zh_$resource_kind"
-    done
-  fi
-  if [ -z "$(resource_value CHISABOT_NETWORK_NAME)" ] && docker network inspect openbot-zh_default >/dev/null 2>&1; then
-    resource_set CHISABOT_NETWORK_NAME openbot-zh_default
-  fi
-  if [ "$(resource_value CHISABOT_NETWORK_NAME)" = openbot-zh_default ]; then
-    resource_set CHISABOT_SERVICE_ALIAS openbot-zh
+    magpie_network=$(printf '%s\n' "$resource_networks" | sed '/_default$/d;/^$/d' | head -n 1)
+    resource_set MAGPIE_NETWORK "$magpie_network"
   fi
   resource_network=$(resource_value CHISABOT_NETWORK_NAME)
   if [ -n "$resource_network" ] && docker network inspect "$resource_network" >/dev/null 2>&1; then
@@ -51,11 +39,5 @@ pin_existing_resources() (
       case "$resource_name" in *[!0-9./]*|"") echo 'Invalid existing IPv4 network configuration' >&2; exit 1 ;; esac
       printf '%s=%s\n' "$resource_key" "$resource_name" >> "$resource_env"
     done
-  fi
-  if [ -z "$(resource_value MAGPIE_NETWORK)" ] && docker network inspect openbot_magpie >/dev/null 2>&1; then
-    resource_set MAGPIE_NETWORK openbot_magpie
-  fi
-  if [ -z "$(resource_value CHISABOT_RUNTIME_MODE)" ]; then
-    resource_set CHISABOT_RUNTIME_MODE "$(resource_value OPENBOT_RUNTIME_MODE)"
   fi
 )

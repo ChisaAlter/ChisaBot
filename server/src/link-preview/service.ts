@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import { computerHeaders } from "../../../shared/legacy-headers";
+import { computerHeaders } from "../../../shared/protocol-headers";
 import {
   BlockedUrlError,
   guardedFetch,

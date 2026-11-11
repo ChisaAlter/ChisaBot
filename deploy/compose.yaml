@@ -60,7 +60,7 @@ services:
         max-size: 20m
         max-file: "3"
 
-# Existing deployments are pinned by legacy-resources.sh before startup; new installs use these names.
+# Existing deployments are pinned by pin-resources.sh before startup; new installs use these names.
 volumes:
   database:
     name: ${CHISABOT_DATABASE_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_database}
