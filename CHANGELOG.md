@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- QA510/511 P3 收尾（#511）：统一错误脱敏（密码内未编码 `/ # ? @` 贪婪打码、只有用户名时仅在用户名像令牌时打码、Docker `service:port` 连接上下文与裸内网 IPv6 打码、`Basic authentication` / 参数名 / locale / `localhost.example.com` 不误打码）；DSH 首输出超时文案写出实际总等待时间，单模型请求超时与首输出期限对齐且不再同模型重试；DSH 会话事件写盘前先脱敏截断；催办跳过条件式承诺；建群 Bot 不存在统一回 400。
+
 ## 0.1.143 — 2026-11-11
 
 全端版本 0.1.143，Android versionCode 325。服务器更新生效于网页及两端的共用界面；Windows 客户端同时包含恢复和认证修复。
