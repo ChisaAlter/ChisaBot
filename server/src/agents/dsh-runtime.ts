@@ -675,13 +675,17 @@ export class DshRuntimeAgent extends AbstractAgent {
         let streamError: unknown;
         let projectionFailures = 0;
         let reconnecting: Promise<void> | undefined;
+        let awaitingCatchup = false;
         const reconnect = () =>
           (reconnecting ??= (async () => {
-            emit({
-              type: EventType.CUSTOM,
-              name: "chisabot.connection",
-              value: { status: "reconnecting" },
-            } as BaseEvent);
+            if (!awaitingCatchup) {
+              awaitingCatchup = true;
+              emit({
+                type: EventType.CUSTOM,
+                name: "chisabot.connection",
+                value: { status: "reconnecting" },
+              } as BaseEvent);
+            }
             let delay = 250;
             while (!follow.signal.aborted) {
               try {
@@ -714,11 +718,6 @@ export class DshRuntimeAgent extends AbstractAgent {
                 const old = client;
                 client = active.client = next;
                 await old.close();
-                emit({
-                  type: EventType.CUSTOM,
-                  name: "chisabot.connection",
-                  value: { status: "online" },
-                } as BaseEvent);
                 return;
               } catch (error) {
                 if (
@@ -738,12 +737,13 @@ export class DshRuntimeAgent extends AbstractAgent {
         const observing = (async () => {
           while (!follow.signal.aborted) {
             try {
-              for await (const frame of client.follow(
+              const followedClient = client;
+              for await (const frame of followedClient.follow(
                 binding.sessionId,
                 follow.signal,
               )) {
                 if (frame.type === "snapshot") {
-                  const missing = await client.eventsAfter(
+                  const missing = await followedClient.eventsAfter(
                     binding.sessionId,
                     projection.cursor,
                     frame.cursor,
@@ -761,12 +761,22 @@ export class DshRuntimeAgent extends AbstractAgent {
                       emit(opening);
                     replaying = false;
                   }
+                  // A live transport alone is not a recovered transcript. Announce recovery
+                  // only after this connection's persisted prefix and live snapshot are applied.
+                  if (awaitingCatchup && followedClient === client) {
+                    awaitingCatchup = false;
+                    emit({
+                      type: EventType.CUSTOM,
+                      name: "chisabot.connection",
+                      value: { status: "online" },
+                    } as BaseEvent);
+                  }
                   openedResolve();
                 } else if (frame.type === "event") {
                   // Session event notifications precede persistence's bounded flush. Project only
                   // a checkpointed prefix so a killed Host cannot reuse a committed source seq.
                   if (frame.event.seq > projection.cursor) {
-                    const missing = await client.eventsAfter(
+                    const missing = await followedClient.eventsAfter(
                       binding.sessionId,
                       projection.cursor,
                       frame.event.seq,

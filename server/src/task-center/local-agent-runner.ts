@@ -23,6 +23,7 @@ import { reportCapacityState } from "../conversations/capacity";
 import type { Database } from "../db/client";
 import type { LocalAgentService } from "../local-agents/service";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { taskContextBrief } from "./context";
 import { TaskResultNeedsReview } from "./outcome";
 import { TaskCenterError } from "./service";
 
@@ -150,10 +151,15 @@ export function createLocalAgentRun(options: {
         threadId,
         ...(agent ? { agent } : {}),
         title: task.title,
-        task: clip(
-          `任务中心委派的任务：${task.title}\n\n${task.description}`,
-          8000,
-        ),
+        task: [
+          clip(
+            `任务中心委派的任务：${task.title}\n\n${task.description}`,
+            8000,
+          ),
+          taskContextBrief(context.context),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       }));
     const stop = () =>
       void options.localAgents.stop(task.ownerUserId, view.id).catch(() => {});

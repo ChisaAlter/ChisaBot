@@ -1,24 +1,44 @@
-import { IconCreditCard, IconDeviceDesktop, IconDots, IconLock, IconPlugConnected, IconSend2, IconTrash } from "@tabler/icons-react";
+import {
+  IconCreditCard,
+  IconDeviceDesktop,
+  IconDots,
+  IconLock,
+  IconPlugConnected,
+  IconSend2,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import {
-  CONFIRM_CATEGORIES,
-  CONFIRM_CATEGORY_INFO,
-  CONFIRM_MODE_LABEL,
-  type ConfirmCategory,
-  type ConfirmMode,
-  type ConfirmPrefView,
-} from "../../../../../shared/confirmations";
-import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
-import { BotPermissionsAbout, BotPermissionsSection } from "@/components/settings/bot-permissions";
 import { ConfirmRow } from "@/components/approvals/confirm-row";
+import { ConfirmationPages } from "@/components/approvals/confirmation-pages";
+import {
+  PageEmpty,
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
+import {
+  BotPermissionsAbout,
+  BotPermissionsSection,
+} from "@/components/settings/bot-permissions";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, ErrorCard, ListRow } from "@/components/ui/skyglass";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
@@ -28,10 +48,18 @@ import {
   confirmKeys,
   confirmPrefsQueryOptions,
   deleteConfirmRule,
-  recentConfirmationsQueryOptions,
   setConfirmPref,
+  useConfirmationPage,
 } from "@/lib/confirmations";
 import { agoText } from "@/lib/im";
+import {
+  CONFIRM_CATEGORIES,
+  CONFIRM_CATEGORY_INFO,
+  CONFIRM_MODE_LABEL,
+  type ConfirmCategory,
+  type ConfirmMode,
+  type ConfirmPrefView,
+} from "../../../../../shared/confirmations";
 
 export const Route = createFileRoute("/_authed/settings/approvals")({
   component: ApprovalPrefsPage,
@@ -45,7 +73,9 @@ const ICON: Record<ConfirmCategory, typeof IconSend2> = {
   admin: IconPlugConnected,
 };
 
-const CATEGORY_ITEMS = Object.fromEntries(CONFIRM_CATEGORIES.map((c) => [c, CONFIRM_CATEGORY_INFO[c].label])) as Record<ConfirmCategory, string>;
+const CATEGORY_ITEMS = Object.fromEntries(
+  CONFIRM_CATEGORIES.map((c) => [c, CONFIRM_CATEGORY_INFO[c].label]),
+) as Record<ConfirmCategory, string>;
 const MODE_ITEMS = CONFIRM_MODE_LABEL;
 
 /**
@@ -55,14 +85,28 @@ const MODE_ITEMS = CONFIRM_MODE_LABEL;
 function ApprovalPrefsPage() {
   const queryClient = useQueryClient();
   const data = useQuery(confirmPrefsQueryOptions());
-  const recent = useQuery(recentConfirmationsQueryOptions());
+  const pages = useConfirmationPage("recent");
+  const recent = pages.query;
+  const refreshHistory = useAsyncAction(
+    () => recent.refetch({ throwOnError: true }),
+    { errorToast: (error) => error.message },
+  );
   const bots = useQuery(agentListQueryOptions());
-  const botName = useMemo(() => new Map((bots.data ?? []).map((bot) => [bot.id, bot.name])), [bots.data]);
+  const botName = useMemo(
+    () => new Map((bots.data ?? []).map((bot) => [bot.id, bot.name])),
+    [bots.data],
+  );
   const [hiddenRule, setHiddenRule] = useState<string | null>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: confirmKeys.all });
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: confirmKeys.all });
 
   async function removeRule(id: string, text: string) {
-    const ok = await confirmDialog({ title: "删除这条规则？", description: `「${text}」删除后，机器人按这一类的偏好处理。`, confirmLabel: "删除", destructive: true });
+    const ok = await confirmDialog({
+      title: "删除这条规则？",
+      description: `「${text}」删除后，机器人按这一类的偏好处理。`,
+      confirmLabel: "删除",
+      destructive: true,
+    });
     if (!ok) return;
     setHiddenRule(id);
     try {
@@ -76,7 +120,9 @@ function ApprovalPrefsPage() {
     }
   }
 
-  const rules = (data.data?.rules ?? []).filter((rule) => rule.id !== hiddenRule);
+  const rules = (data.data?.rules ?? []).filter(
+    (rule) => rule.id !== hiddenRule,
+  );
   return (
     <PageShell
       description="机器人做有后果的事之前——对外发消息、删除东西、付款购买、操作你的电脑——按这里决定先问你还是直接做。问的时候聊天里会出一张确认卡片，点「确认」它才继续；若通过微信 / QQ / 飞书 / Telegram 对话，也可直接回复「允许」或「拒绝」远程审批。你在聊天里说「以后 X 不用问我」，机器人也会记到这里。"
@@ -88,7 +134,12 @@ function ApprovalPrefsPage() {
       ) : data.isError ? (
         <ErrorCard
           action={
-            <Button className="mt-2" onClick={() => void data.refetch()} size="sm" variant="outline">
+            <Button
+              className="mt-2"
+              onClick={() => void data.refetch()}
+              size="sm"
+              variant="outline"
+            >
               {"重试"}
             </Button>
           }
@@ -97,7 +148,11 @@ function ApprovalPrefsPage() {
         />
       ) : (
         <>
-          <PageSection description="所有机器人共用。单独设过权限的机器人，「操作你的电脑」按它自己的权限来。" settingItem="permissions.confirm-prefs" title="哪些事先问我">
+          <PageSection
+            description="所有机器人共用。单独设过权限的机器人，「操作你的电脑」按它自己的权限来。"
+            settingItem="permissions.confirm-prefs"
+            title="哪些事先问我"
+          >
             <Card className="mem-card">
               {(data.data?.prefs ?? []).map((pref) => (
                 <PrefRow key={pref.category} pref={pref} onSaved={refresh} />
@@ -105,11 +160,18 @@ function ApprovalPrefsPage() {
             </Card>
           </PageSection>
 
-          <PageSection settingItem="permissions.confirm-rules" title={rules.length ? `你的规则 · ${rules.length}` : "你的规则"}>
+          <PageSection
+            settingItem="permissions.confirm-rules"
+            title={rules.length ? `你的规则 · ${rules.length}` : "你的规则"}
+          >
             <Card className="mem-card">
               <RuleForm onAdded={refresh} />
               {rules.map((rule) => (
-                <div className="im-row ap-row" data-testid="confirm-rule" key={rule.id}>
+                <div
+                  className="im-row ap-row"
+                  data-testid="confirm-rule"
+                  key={rule.id}
+                >
                   <div className="im-row-main">
                     <ListRow
                       icon={
@@ -126,8 +188,14 @@ function ApprovalPrefsPage() {
                             <span className="ap-chip" data-mode={rule.mode}>
                               {CONFIRM_MODE_LABEL[rule.mode]}
                             </span>
-                            <span className="ap-chip">{CONFIRM_CATEGORY_INFO[rule.category].label}</span>
-                            {rule.keywords.length ? <span className="device-cap-chip"><T>{`涉及 ${rule.keywords.join("、")}`}</T></span> : null}
+                            <span className="ap-chip">
+                              {CONFIRM_CATEGORY_INFO[rule.category].label}
+                            </span>
+                            {rule.keywords.length ? (
+                              <span className="device-cap-chip">
+                                <T>{`涉及 ${rule.keywords.join("、")}`}</T>
+                              </span>
+                            ) : null}
                           </span>
                           <span className="mem-by">
                             {`${rule.source === "bot" ? `${botName.get(rule.agentId ?? "") ?? "机器人"}记下的` : "你写的"} · ${agoText(rule.createdAt)}`}
@@ -138,11 +206,26 @@ function ApprovalPrefsPage() {
                     />
                   </div>
                   <DropdownMenu>
-                    <DropdownMenuTrigger render={<button aria-label="这条规则的更多操作" className="device-row-more" title={"更多操作"} type="button" />}>
+                    <DropdownMenuTrigger
+                      render={
+                        <button
+                          aria-label="这条规则的更多操作"
+                          className="device-row-more"
+                          title={"更多操作"}
+                          type="button"
+                        />
+                      }
+                    >
                       <IconDots className="size-4" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="glass-pop w-[160px] p-1.5">
-                      <DropdownMenuItem className="glass-mi is-danger" onClick={() => void removeRule(rule.id, rule.text)}>
+                    <DropdownMenuContent
+                      align="end"
+                      className="glass-pop w-[160px] p-1.5"
+                    >
+                      <DropdownMenuItem
+                        className="glass-mi is-danger"
+                        onClick={() => void removeRule(rule.id, rule.text)}
+                      >
                         <IconTrash className="size-[18px] shrink-0 opacity-80" />
                         <span className="min-w-0 flex-1">{"删除…"}</span>
                       </DropdownMenuItem>
@@ -153,18 +236,47 @@ function ApprovalPrefsPage() {
             </Card>
           </PageSection>
 
-          <PageSection settingItem="permissions.confirm-recent" title="最近的确认">
+          <PageSection
+            settingItem="permissions.confirm-recent"
+            title="最近的确认"
+          >
             {recent.isPending ? (
               <PageSkeleton rows={2} />
-            ) : (recent.data ?? []).length ? (
+            ) : recent.isError && !recent.data ? (
+              <ErrorCard
+                title="确认记录暂时读不到"
+                detail={recent.error.message}
+                action={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    feedback="refresh"
+                    state={refreshHistory.state}
+                    onClick={() => void refreshHistory.run()}
+                  >
+                    重试
+                  </Button>
+                }
+              />
+            ) : (recent.data?.requests ?? []).length ? (
               <Card className="mem-card">
-                {(recent.data ?? []).map((request) => (
-                  <ConfirmRow botName={botName.get(request.agentId) ?? "机器人"} key={request.id} onDecided={refresh} request={request} />
+                {(recent.data?.requests ?? []).map((request) => (
+                  <ConfirmRow
+                    botName={botName.get(request.agentId) ?? "机器人"}
+                    key={request.id}
+                    onDecided={refresh}
+                    request={request}
+                  />
                 ))}
               </Card>
             ) : (
-              <PageEmpty>{"还没有确认过什么。机器人要做有后果的事时，卡片会出现在聊天里，也会记在这里。"}</PageEmpty>
+              <PageEmpty>
+                {
+                  "还没有确认过什么。机器人要做有后果的事时，卡片会出现在聊天里，也会记在这里。"
+                }
+              </PageEmpty>
             )}
+            <ConfirmationPages {...pages} />
           </PageSection>
         </>
       )}
@@ -173,7 +285,13 @@ function ApprovalPrefsPage() {
   );
 }
 
-function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Promise<unknown> }) {
+function PrefRow({
+  pref,
+  onSaved,
+}: {
+  pref: ConfirmPrefView;
+  onSaved: () => Promise<unknown>;
+}) {
   const [optimistic, setOptimistic] = useState<ConfirmMode | null>(null);
   const mode = optimistic ?? pref.mode;
   const Icon = ICON[pref.category];
@@ -191,7 +309,11 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
     }
   }
   return (
-    <div className="im-row ap-row ap-pref" data-category={pref.category} data-testid="confirm-pref">
+    <div
+      className="im-row ap-row ap-pref"
+      data-category={pref.category}
+      data-testid="confirm-pref"
+    >
       <div className="im-row-main">
         <ListRow
           icon={
@@ -216,7 +338,11 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
         />
       </div>
       {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
-      <div aria-label={`${pref.label}：先问我还是直接做`} className="ap-seg" role="group">
+      <div
+        aria-label={`${pref.label}：先问我还是直接做`}
+        className="ap-seg"
+        role="group"
+      >
         {(["ask", "auto"] as const).map((value) => (
           <button
             aria-pressed={mode === value}
@@ -224,7 +350,11 @@ function PrefRow({ pref, onSaved }: { pref: ConfirmPrefView; onSaved: () => Prom
             disabled={pref.locked && value === "auto"}
             key={value}
             onClick={() => void choose(value)}
-            title={pref.locked && value === "auto" ? `${pref.label}一律先问你` : undefined}
+            title={
+              pref.locked && value === "auto"
+                ? `${pref.label}一律先问你`
+                : undefined
+            }
             type="button"
           >
             <T>{CONFIRM_MODE_LABEL[value]}</T>
@@ -244,10 +374,16 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
     .split(/[\s,，、]+/)
     .map((k) => k.trim())
     .filter(Boolean);
-  const blocked = CONFIRM_CATEGORY_INFO[category].locked === true && mode === "auto";
+  const blocked =
+    CONFIRM_CATEGORY_INFO[category].locked === true && mode === "auto";
   const add = useAsyncAction(
     async () => {
-      await addConfirmRule({ text: text.trim(), category, mode, ...(words.length ? { keywords: words } : {}) });
+      await addConfirmRule({
+        text: text.trim(),
+        category,
+        mode,
+        ...(words.length ? { keywords: words } : {}),
+      });
       setText("");
       setKeywords("");
       await onAdded();
@@ -270,16 +406,26 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
         maxLength={300}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing
+          ) {
             event.preventDefault();
             if (valid && add.state !== "pending") void add.run();
           }
         }}
-        placeholder={"用你自己的话写，比如「给张三发微信不用问我」「删除下载文件夹里的东西不用问」"}
+        placeholder={
+          "用你自己的话写，比如「给张三发微信不用问我」「删除下载文件夹里的东西不用问」"
+        }
         value={text}
       />
       <div className="ap-form-row">
-        <Select items={CATEGORY_ITEMS} onValueChange={(next) => next && setCategory(next as ConfirmCategory)} value={category}>
+        <Select
+          items={CATEGORY_ITEMS}
+          onValueChange={(next) => next && setCategory(next as ConfirmCategory)}
+          value={category}
+        >
           <SelectTrigger aria-label="属于哪一类" className="w-[140px]">
             <SelectValue />
           </SelectTrigger>
@@ -291,7 +437,11 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
             ))}
           </SelectContent>
         </Select>
-        <Select items={MODE_ITEMS} onValueChange={(next) => next && setMode(next as ConfirmMode)} value={mode}>
+        <Select
+          items={MODE_ITEMS}
+          onValueChange={(next) => next && setMode(next as ConfirmMode)}
+          value={mode}
+        >
           <SelectTrigger aria-label="先问我还是直接做" className="w-[112px]">
             <SelectValue />
           </SelectTrigger>
@@ -312,7 +462,13 @@ function RuleForm({ onAdded }: { onAdded: () => Promise<unknown> }) {
           placeholder={"涉及（可选）：张三、下载文件夹"}
           value={keywords}
         />
-        <Button data-testid="rule-add" disabled={!valid} feedback="add" state={add.state} type="submit">
+        <Button
+          data-testid="rule-add"
+          disabled={!valid}
+          feedback="add"
+          state={add.state}
+          type="submit"
+        >
           {"添加"}
         </Button>
       </div>

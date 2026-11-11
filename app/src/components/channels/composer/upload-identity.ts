@@ -29,6 +29,8 @@ export type UploadIdentity = {
   bind(attachments: readonly AttachmentLike[]): void;
   /** The key an attachment card's upload is recorded under. */
   keyOf(attachment: AttachmentLike): string;
+  /** Reuse a persisted file and its existing staged upload without uploading it again. */
+  restore(file: File, id: string, attachmentId: string): void;
 };
 
 type AttachmentLike = { id: string; filename?: string; size?: number };
@@ -41,6 +43,10 @@ export function createUploadIdentity(mint: () => string): UploadIdentity {
   const bound = new Map<string, string>();
 
   return {
+    restore(file, id, attachmentId) {
+      ids.set(file, id);
+      bound.set(attachmentId, id);
+    },
     assign(file) {
       const id = mint();
       ids.set(file, id);

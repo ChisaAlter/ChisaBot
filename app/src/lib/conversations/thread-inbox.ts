@@ -1,5 +1,6 @@
 import type { Message } from "@ag-ui/core";
 import { useSyncExternalStore } from "react";
+import { draftFilesAccepted, draftFilesSubmitting } from "../chat/ui-memory";
 import { type ClientOptions, tryClient } from "../client";
 
 export type InboxMessage = Message & {
@@ -191,6 +192,7 @@ export async function queueMessage(
       ),
     );
   try {
+    await draftFilesSubmitting(item.message?.content, threadId);
     const post = async () => {
       const response = await tryClient(api(threadId), {
         ...options,
@@ -239,6 +241,7 @@ export async function queueMessage(
           ? "paused"
           : "queued",
       );
+    draftFilesAccepted(item.message?.content);
     return "queued";
   } catch {
     update("failed");

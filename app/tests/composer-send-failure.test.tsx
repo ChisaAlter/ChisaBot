@@ -1,8 +1,25 @@
-import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { Composer } from "@/components/channels/composer/composer";
-import { sendLanded } from "@/lib/chat/ui-memory";
+import {
+  clearComposerInputs,
+  dispatchComposerQuote,
+} from "@/lib/chat/quote-event";
+import {
+  flushUiMemory,
+  resetUiMemory,
+  sendLanded,
+  threadUi,
+} from "@/lib/chat/ui-memory";
+import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -28,6 +45,12 @@ import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
 afterEach(cleanup);
+beforeEach(() => {
+  clearComposerInputs();
+  resetUiMemory();
+  window.localStorage.clear();
+  window.history.replaceState({}, "", "/channel/new");
+});
 afterAll(async () => {
   await settleReactWork();
   GlobalRegistrator.unregister();
@@ -57,8 +80,8 @@ function deferredSend() {
   return {
     onSubmit: () => settled,
     /** Fail the send, and let the composer's own `catch` and `finally` run before returning. */
-    async reject() {
-      fail(new Error("the turn could not be started"));
+    async reject(error = new Error("the turn could not be started")) {
+      fail(error);
       await act(async () => {
         await settled.catch(() => undefined);
       });
@@ -203,4 +226,176 @@ test("words typed after the restore survive the landed retraction", async () => 
   const after = typedText(container);
   expect(after).toContain("second");
   expect(after).not.toContain("first");
+});
+
+test("a blocked send retains its quote and a failed send restores the same quote", async () => {
+  const send = deferredSend();
+  const props = {
+    compact: true,
+    initialValue: "answer this",
+    onSubmit: send.onSubmit,
+  };
+  const view = render(<Composer {...props} sendBlocked />);
+  await act(async () => {
+    dispatchComposerQuote({ text: "quoted source", source: "引用回复" });
+  });
+  await act(async () => {
+    fireEvent.submit(view.container.querySelector("form")!);
+  });
+  expect(
+    view.container.querySelector(".composer-reply-text")?.textContent,
+  ).toBe("quoted source");
+  view.rerender(<Composer {...props} />);
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  expect(view.queryByLabelText("取消引用")).toBeNull();
+  await send.reject();
+  expect(
+    view.container.querySelector(".composer-reply-text")?.textContent,
+  ).toBe("quoted source");
+  expect(typedText(view.container)).toBe("answer this");
+});
+
+test("a new quote selected during a failed send survives beside the restored old quote text", async () => {
+  const send = deferredSend();
+  const view = render(
+    <Composer compact initialValue="first body" onSubmit={send.onSubmit} />,
+  );
+  await act(async () => {
+    dispatchComposerQuote({ text: "old quote" });
+  });
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  await act(async () => {
+    dispatchComposerQuote({ text: "new quote" });
+    typeInto(view.container, "new body");
+  });
+  await send.reject();
+  expect(
+    view.container.querySelector(".composer-reply-text")?.textContent,
+  ).toBe("new quote");
+  expect(typedText(view.container)).toContain("> old quote");
+  expect(typedText(view.container)).toContain("first body");
+  expect(typedText(view.container)).toContain("new body");
+});
+
+test("late admission retracts the restored quoted draft without removing a later selected quote", async () => {
+  const send = deferredSend();
+  const view = render(
+    <Composer
+      compact
+      draftKey="late-quote"
+      initialValue="first body"
+      onSubmit={send.onSubmit}
+    />,
+  );
+  await act(async () => {
+    dispatchComposerQuote({ text: "old quote" });
+  });
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  await send.reject();
+  await act(async () => {
+    dispatchComposerQuote({ text: "new quote" });
+  });
+  await act(async () => {
+    sendLanded("late-quote", "> old quote\n\nfirst body");
+  });
+  expect(typedText(view.container)).toBe("");
+  expect(
+    view.container.querySelector(".composer-reply-text")?.textContent,
+  ).toBe("new quote");
+});
+
+test("finishing a send leaves focus on the control selected while it ran", async () => {
+  const send = deferredSend();
+  const view = render(
+    <>
+      <Composer compact initialValue="first" onSubmit={send.onSubmit} />
+      <input aria-label="other control" />
+    </>,
+  );
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  const other = view.getByLabelText("other control");
+  other.focus();
+  await send.reject();
+  expect(document.activeElement).toBe(other);
+});
+
+test("confirmed rejection restores complete text and quote after reload, and late acceptance keeps newer edits", async () => {
+  const send = deferredSend();
+  const view = render(
+    <Composer
+      compact
+      draftKey="reload-failed"
+      initialValue="failed body"
+      onSubmit={send.onSubmit}
+    />,
+  );
+  await act(async () => {
+    dispatchComposerQuote({ text: "quoted origin" });
+  });
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  await send.reject();
+  expect(threadUi("reload-failed")?.sent).toBeUndefined();
+  view.unmount();
+  flushUiMemory();
+  resetUiMemory();
+  const again = render(
+    <Composer compact draftKey="reload-failed" onSubmit={() => {}} />,
+  );
+  expect(typedText(again.container)).toBe("failed body");
+  expect(
+    again.container.querySelector(".composer-reply-text")?.textContent,
+  ).toBe("quoted origin");
+  await act(async () => {
+    typeInto(again.container, " newer body");
+  });
+  await act(async () => {
+    sendLanded("reload-failed", "> quoted origin\n\nfailed body");
+  });
+  expect(typedText(again.container).trim()).toBe("newer body");
+  expect(again.queryByLabelText("取消引用")).toBeNull();
+  expect(JSON.stringify(threadUi("reload-failed")?.draft)).toContain(
+    "newer body",
+  );
+});
+
+test("unknown delivery does not persist its quoted retry copy but keeps a newer draft", async () => {
+  const send = deferredSend();
+  const view = render(
+    <Composer
+      compact
+      draftKey="reload-unknown"
+      initialValue="unknown body"
+      onSubmit={send.onSubmit}
+    />,
+  );
+  await act(async () => {
+    dispatchComposerQuote({ text: "unknown quote" });
+  });
+  await act(async () => {
+    fireEvent.click(view.getByLabelText("发送消息"));
+  });
+  await act(async () => {
+    typeInto(view.container, "newer body");
+  });
+  await send.reject(new SendDeliveryUnknownError("admission unknown"));
+  expect(typedText(view.container)).toContain("unknown body");
+  expect(threadUi("reload-unknown")?.sent).toContain("unknown body");
+  view.unmount();
+  flushUiMemory();
+  resetUiMemory();
+  const again = render(
+    <Composer compact draftKey="reload-unknown" onSubmit={() => {}} />,
+  );
+  expect(typedText(again.container)).toBe("newer body");
+  expect(again.queryByLabelText("取消引用")).toBeNull();
 });

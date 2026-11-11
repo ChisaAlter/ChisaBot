@@ -2,6 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createDatabase } from "../src/db/client";
+import { DeliveryRejectedError } from "../src/delivery/durable-dispatch";
+import type { PersonalNotificationSource } from "../src/delivery/personal-notification-state";
 import { createPersonalNotifications } from "../src/delivery/personal-notifications";
 import { createPersonalDelivery } from "../src/personal-sources/delivery";
 import { createWorkflowStore } from "../src/workflows/store";
@@ -329,4 +331,283 @@ test("workflow status and notice event commit together, including stale-run reco
     "approval_requested",
     "run_failed",
   ]);
+}, 30000);
+
+test("resolved, expired, superseded and deleted notices cancel before retrying a rejected send", async () => {
+  await sql.unsafe(`
+    INSERT INTO chisabot_task_center_tasks(id,owner_user_id,payload,status,summary) VALUES
+      ('retry-decision','owner','{}','waiting_approval',NULL),
+      ('retry-version','owner','{}','waiting_approval',NULL),
+      ('retry-failure','owner','{}','failed',NULL);
+    INSERT INTO chisabot_task_center_decisions(id,owner_user_id,task_id,task_version,summary,status) VALUES
+      ('retry-decision','owner','retry-decision',1,'确认','pending'),
+      ('retry-version','owner','retry-version',1,'旧版本','pending');
+    INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message) VALUES
+      ('retry-failure','owner','retry-failure','failed','失败');
+    INSERT INTO chisabot_confirm_requests(id,owner_user_id,title,status,expires_at) VALUES
+      ('retry-expired','owner','确认','pending',now()+interval '1 hour'),
+      ('retry-confirmed','owner','确认','pending',now()+interval '1 hour');
+    INSERT INTO approval_requests(id,owner_user_id,action,status) VALUES
+      ('retry-approved','owner','{}','pending'),('retry-deleted','owner','{}','pending');
+    INSERT INTO work_items(key,kind,payload) VALUES
+      ('retry-question','person.question','{"actorId":"owner","question":"哪一个？"}');
+    INSERT INTO chisabot_schedules VALUES ('retry-plan','owner','重试计划','thread','bot','active');
+    INSERT INTO chisabot_schedule_runs(id,schedule_id,owner_user_id,status,result,finished_at) VALUES
+      ('retry-schedule','retry-plan','owner','failed','暂时失败',now()-interval '1 minute');
+  `);
+  const cases: {
+    id: string;
+    source?: PersonalNotificationSource;
+    change: string;
+  }[] = [
+    {
+      id: "task-decision:retry-decision",
+      change:
+        "UPDATE chisabot_task_center_decisions SET status='approved' WHERE id='retry-decision'",
+    },
+    {
+      id: "task-decision:retry-version",
+      change:
+        "UPDATE chisabot_task_center_tasks SET version=2 WHERE id='retry-version'",
+    },
+    {
+      id: "task-event:retry-failure",
+      change:
+        "UPDATE chisabot_task_center_tasks SET status='running' WHERE id='retry-failure'",
+    },
+    {
+      id: "confirmation:retry-expired",
+      change:
+        "UPDATE chisabot_confirm_requests SET expires_at=now()-interval '1 second' WHERE id='retry-expired'",
+    },
+    {
+      id: "confirmation:retry-confirmed",
+      change:
+        "UPDATE chisabot_confirm_requests SET status='approved' WHERE id='retry-confirmed'",
+    },
+    {
+      id: "retry-approved",
+      source: "approval",
+      change:
+        "UPDATE approval_requests SET status='approved' WHERE id='retry-approved'",
+    },
+    {
+      id: "retry-deleted",
+      source: "approval",
+      change: "DELETE FROM approval_requests WHERE id='retry-deleted'",
+    },
+    {
+      id: "retry-question",
+      source: "question",
+      change:
+        "UPDATE work_items SET finished_at=now() WHERE key='retry-question'",
+    },
+    {
+      id: "schedule:retry-schedule",
+      change: `INSERT INTO chisabot_schedule_runs(id,schedule_id,owner_user_id,status,result)
+        VALUES('retry-schedule-success','retry-plan','owner','ok','已恢复')`,
+    },
+  ];
+  for (const item of cases) {
+    const id = await deliveries.stage(
+      "owner",
+      "notify",
+      "connected",
+      { target: "isolated transport", title: "待处理", body: item.id },
+      { id: item.id, notificationSource: item.source },
+    );
+    let sends = 0;
+    const dispatch = () =>
+      deliveries.dispatch(id, async () => ({
+        send: async () => {
+          sends++;
+          throw new DeliveryRejectedError("HTTP 429", true);
+        },
+      }));
+    expect(await dispatch()).toBe("queued");
+    expect((await deliveries.get(id))?.attempts).toBe(1);
+    await sql.unsafe(item.change);
+    // Advance only this saved retry's due time; the production dispatcher still owns admission.
+    await sql.unsafe(
+      "UPDATE chisabot_personal_deliveries SET next_attempt_at=now() WHERE id=$1",
+      [id],
+    );
+    expect(await dispatch()).toBe("cancelled");
+    expect(sends).toBe(1);
+    expect((await deliveries.get(id))?.attempts).toBe(1);
+  }
+}, 30000);
+
+test("valid notifications and past successful results survive later harmless activity", async () => {
+  await sql.unsafe(`
+    INSERT INTO chisabot_task_center_tasks(id,owner_user_id,payload,status,summary) VALUES
+      ('fresh-decision','owner','{}','waiting_approval',NULL),
+      ('fresh-result','owner','{}','succeeded','成果'),
+      ('fresh-failure','owner','{}','failed',NULL);
+    INSERT INTO chisabot_task_center_decisions(id,owner_user_id,task_id,task_version,summary,status) VALUES
+      ('fresh-decision','owner','fresh-decision',1,'确认','pending');
+    INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message,created_at) VALUES
+      ('fresh-result','owner','fresh-result','delivered','已交付',now()-interval '1 minute'),
+      ('fresh-failure-old','owner','fresh-failure','failed','旧失败',now()-interval '1 minute'),
+      ('fresh-failure-new','owner','fresh-failure','failed','新失败',now());
+    INSERT INTO chisabot_confirm_requests(id,owner_user_id,title,status,expires_at) VALUES
+      ('fresh-confirmation','owner','确认','pending',now()+interval '1 hour');
+    INSERT INTO approval_requests(id,owner_user_id,action,status) VALUES
+      ('fresh-approval','owner','{}','pending');
+    INSERT INTO work_items(key,kind,payload) VALUES
+      ('fresh-question','person.question','{"actorId":"owner","question":"哪一个？"}');
+    INSERT INTO chisabot_schedule_runs(id,schedule_id,owner_user_id,status,result,finished_at) VALUES
+      ('fresh-past-success','schedule','owner','ok','上次成果',now()-interval '1 hour'),
+      ('fresh-later-success','schedule','owner','ok','这次成果',now());
+  `);
+  const cases: {
+    id: string;
+    source?: PersonalNotificationSource;
+    current: boolean;
+  }[] = [
+    { id: "task-decision:fresh-decision", current: true },
+    { id: "task-event:fresh-result", current: true },
+    { id: "task-event:fresh-failure-old", current: false },
+    { id: "task-event:fresh-failure-new", current: true },
+    { id: "confirmation:fresh-confirmation", current: true },
+    { id: "fresh-approval", source: "approval", current: true },
+    { id: "fresh-question", source: "question", current: true },
+    { id: "schedule:fresh-past-success", current: true },
+    { id: "host:timestamped-observation:failed:1", current: true },
+    { id: "inbound:retained-event", current: true },
+    { id: "direct-notice", current: true },
+  ];
+  for (const item of cases) {
+    const id = await deliveries.stage(
+      "owner",
+      "notify",
+      "connected",
+      { target: "isolated transport", title: "结果", body: item.id },
+      { id: item.id, notificationSource: item.source },
+    );
+    let sends = 0;
+    expect(
+      await deliveries.dispatch(id, async () => ({
+        send: async () => {
+          sends++;
+          return {
+            type: "personal_delivery" as const,
+            id,
+            channel: "notify" as const,
+            state: "accepted" as const,
+            providerMessageIds: [id],
+            summary: "isolated receipt",
+          };
+        },
+      })),
+    ).toBe(item.current ? "sent" : "cancelled");
+    expect(sends).toBe(item.current ? 1 : 0);
+  }
+}, 30000);
+
+test("legacy answered intents acquire their source before recovery flush without changing text or target", async () => {
+  await sql.unsafe(`
+    INSERT INTO approval_requests(id,owner_user_id,action,status) VALUES
+      ('legacy-approved','owner','{}','approved');
+    INSERT INTO work_items(key,kind,payload,finished_at) VALUES
+      ('legacy-answered','person.question','{"actorId":"owner","question":"已回答"}',now());
+  `);
+  const ids: string[] = [];
+  for (const sourceId of ["legacy-approved", "legacy-answered"]) {
+    ids.push(
+      await deliveries.stage(
+        "owner",
+        "notify",
+        "connected",
+        {
+          target: "original recipient",
+          title: "original title",
+          body: "original body",
+        },
+        { id: sourceId },
+      ),
+    );
+  }
+  let sends = 0;
+  const recovery = createPersonalNotifications({
+    database,
+    sources: {
+      ...sources,
+      flushNotifications: async () => {
+        for (const id of ids)
+          await deliveries.dispatch(id, async () => ({
+            send: async () => {
+              sends++;
+              throw new Error("An answered notice must never reach transport.");
+            },
+          }));
+      },
+    },
+  });
+  await recovery.sweep();
+  expect(sends).toBe(0);
+  for (const [index, id] of ids.entries()) {
+    expect(await deliveries.get(id)).toMatchObject({
+      state: "cancelled",
+      payload: {
+        target: "original recipient",
+        title: "original title",
+        body: "original body",
+        notificationSource: index === 0 ? "approval" : "question",
+      },
+    });
+  }
+}, 30000);
+
+test("notice source ownership and uncertain delivery remain fenced before transport", async () => {
+  const contexts = [
+    { id: "fresh-approval", notificationSource: "approval" as const },
+    { id: "fresh-question", notificationSource: "question" as const },
+    { id: "task-decision:fresh-decision" },
+    { id: "confirmation:fresh-confirmation" },
+    { id: "task-event:fresh-result" },
+    { id: "schedule:fresh-past-success" },
+  ];
+  let sends = 0;
+  for (const context of contexts) {
+    const id = await deliveries.stage(
+      "unconnected",
+      "notify",
+      "connected",
+      {
+        target: "isolated recipient",
+        title: "not this owner",
+        body: "private",
+      },
+      context,
+    );
+    expect(
+      await deliveries.dispatch(id, async () => ({
+        send: async () => {
+          sends++;
+          throw new Error("Cross-owner notice reached transport.");
+        },
+      })),
+    ).toBe("cancelled");
+  }
+  for (const state of ["sending", "outcome_unknown"] as const) {
+    const id = await deliveries.stage(
+      "owner",
+      "notify",
+      "connected",
+      { target: "isolated recipient", title: "uncertain", body: "retained" },
+      { id: `uncertain-${state}`, notificationSource: "approval" },
+    );
+    await sql.unsafe(
+      "UPDATE chisabot_personal_deliveries SET state=$2 WHERE id=$1",
+      [id, state],
+    );
+    expect(
+      await deliveries.dispatch(id, async () => {
+        sends++;
+        throw new Error("Unknown effects must not resolve a fresh target.");
+      }),
+    ).toBe("outcome_unknown");
+  }
+  expect(sends).toBe(0);
 }, 30000);

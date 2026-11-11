@@ -1447,6 +1447,7 @@ export function createPersonalSources(
       threadId?: string;
       runId?: string;
       agentId?: string;
+      notificationSource?: PersonalSendContext["notificationSource"];
     },
   ) {
     const id = await stageNotification(actorId, input, input);

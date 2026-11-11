@@ -15,32 +15,38 @@ import {
   IconUser,
   IconX,
 } from "@tabler/icons-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { AgentsRailCard } from "@/components/panels/agents-rail-card";
+import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  decisionListOptions,
   taskCenterApi,
   taskCenterCapabilityOptions,
   taskCenterKeys,
   taskCenterSnapshotOptions,
+  taskListOptions,
 } from "@/lib/task-center-api";
 import { cn } from "@/lib/utils";
 import {
+  activeTaskCount,
   TASK_CATEGORIES,
+  type TaskCategory,
   type TaskCenterDecision,
   type TaskCenterTask,
+  type TaskListView,
 } from "../../../../shared/task-center";
 import { ContextSettings } from "./context-settings";
 import { CreateTask } from "./create-task";
-import {
-  ACTIVE_STATUSES,
-  CATEGORY_LABELS,
-  RISK_LABELS,
-  taskDate,
-} from "./labels";
+import { CATEGORY_LABELS, RISK_LABELS, taskDate } from "./labels";
 import { SourceSettings } from "./source-settings";
 import { TaskDetail, TaskStatusBadge } from "./task-detail";
 import "./task-center.css";
@@ -92,6 +98,23 @@ export function TaskCenter({
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
+  const taskView = ["inbox", "active", "history"].includes(view);
+  const tasks = useInfiniteQuery(
+    taskListOptions(
+      {
+        view: taskView ? (view as TaskListView) : "inbox",
+        ...(category ? { category: category as TaskCategory } : {}),
+        ...(search.trim() ? { search: search.trim() } : {}),
+      },
+      taskView,
+    ),
+  );
+  const decisions = useInfiniteQuery(
+    decisionListOptions("pending", view === "outbox"),
+  );
+  const resolved = useInfiniteQuery(
+    decisionListOptions("resolved", view === "outbox"),
+  );
   const navigation = useRef<HTMLElement>(null);
   useEffect(() => {
     navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
@@ -100,37 +123,41 @@ export function TaskCenter({
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
   };
-  const pending =
-    data?.outbox.filter((decision) => decision.status === "pending") ?? [];
-  const activeCount = data
-    ? ACTIVE_STATUSES.reduce((sum, status) => sum + data.counts[status], 0) +
-      data.counts.paused
-    : 0;
-  const displayed =
-    data?.tasks.filter((task) => {
-      const inView =
-        view === "inbox"
-          ? task.status === "inbox"
-          : view === "active"
-            ? ACTIVE_STATUSES.includes(task.status) ||
-              task.status === "paused" ||
-              task.status === "waiting_approval"
-            : view === "history"
-              ? ["succeeded", "failed", "cancelled"].includes(task.status)
-              : false;
-      return (
-        inView &&
-        (!category || task.category === category) &&
-        (!search.trim() ||
-          `${task.title}\n${task.description}\n${task.summary ?? ""}`
-            .toLocaleLowerCase()
-            .includes(search.toLocaleLowerCase()))
-      );
-    }) ?? [];
+  const pending = [
+    ...new Map(
+      decisions.data?.pages
+        .flatMap((page) => page.outbox)
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const handled = [
+    ...new Map(
+      resolved.data?.pages
+        .flatMap((page) => page.outbox)
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const activeCount = data ? activeTaskCount(data.counts) : 0;
+  const displayed = [
+    ...new Map(
+      tasks.data?.pages
+        .flatMap((page) => page.tasks)
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  const pendingCount =
+    data?.decisionCounts?.pending ??
+    data?.outbox.filter((item) => item.status === "pending").length ??
+    0;
   const sourceErrors =
     data?.sources.filter((source) => source.lastStatus === "failed").length ??
     0;
-  const taskView = ["inbox", "active", "history"].includes(view);
+  const tasksFailed =
+    tasks.isError || (!tasks.data && tasks.errorUpdateCount > 0);
+  const decisionsFailed =
+    decisions.isError || (!decisions.data && decisions.errorUpdateCount > 0);
+  const resolvedFailed =
+    resolved.isError || (!resolved.data && resolved.errorUpdateCount > 0);
   return (
     <PageShell
       title="任务中心"
@@ -164,7 +191,7 @@ export function TaskCenter({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void snapshot.refetch()}
+          onClick={refresh}
           state={snapshot.isFetching ? "pending" : "idle"}
           feedback={{
             pending: "刷新中…",
@@ -187,7 +214,7 @@ export function TaskCenter({
             id === "inbox"
               ? data?.counts.inbox
               : id === "outbox"
-                ? pending.length
+                ? pendingCount
                 : id === "active"
                   ? activeCount
                   : id === "sources"
@@ -243,6 +270,7 @@ export function TaskCenter({
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
                       placeholder="搜索任务和交付结果"
+                      maxLength={500}
                     />
                   </label>
                   <select
@@ -259,7 +287,15 @@ export function TaskCenter({
                     ))}
                   </select>
                 </div>
-                {displayed.length ? (
+                {tasksFailed ? (
+                  <ListError
+                    error={tasks.error}
+                    retry={() => tasks.refetch({ throwOnError: true })}
+                  />
+                ) : null}
+                {tasks.isPending && !tasksFailed ? (
+                  <PageSkeleton rows={3} />
+                ) : displayed.length ? (
                   <ul className="tc-task-list">
                     {displayed.map((task) => (
                       <TaskRow
@@ -270,7 +306,7 @@ export function TaskCenter({
                       />
                     ))}
                   </ul>
-                ) : (
+                ) : !tasksFailed ? (
                   <div className="tc-empty">
                     <IconInbox size={30} aria-hidden />
                     <h3>
@@ -301,11 +337,29 @@ export function TaskCenter({
                       </Button>
                     ) : null}
                   </div>
-                )}
+                ) : null}
+                {tasks.data ? (
+                  <ListMore
+                    shown={displayed.length}
+                    total={tasks.data.pages[0]?.total ?? 0}
+                    hasMore={tasks.hasNextPage}
+                    loading={tasks.isFetchingNextPage}
+                    onMore={() => void tasks.fetchNextPage()}
+                  />
+                ) : null}
               </>
             ) : null}
             {view === "outbox" ? (
               <>
+                {decisionsFailed ? (
+                  <ListError
+                    error={decisions.error}
+                    retry={() => decisions.refetch({ throwOnError: true })}
+                  />
+                ) : null}
+                {decisions.isPending && !decisionsFailed ? (
+                  <PageSkeleton rows={2} />
+                ) : null}
                 <div className="tc-decisions">
                   {pending.map((decision) => (
                     <Decision
@@ -316,37 +370,55 @@ export function TaskCenter({
                     />
                   ))}
                 </div>
-                {!pending.length ? (
+                {!pending.length && decisions.isSuccess ? (
                   <div className="tc-empty">
                     <IconCircleCheck size={30} aria-hidden />
                     <h3>暂时没有待确认事项</h3>
                     <p>重要决策、对外沟通与敏感操作会集中到这里。</p>
                   </div>
                 ) : null}
-                {data.outbox.some(
-                  (decision) => decision.status !== "pending",
-                ) ? (
+                {decisions.data ? (
+                  <ListMore
+                    shown={pending.length}
+                    total={decisions.data.pages[0]?.total ?? 0}
+                    hasMore={decisions.hasNextPage}
+                    loading={decisions.isFetchingNextPage}
+                    onMore={() => void decisions.fetchNextPage()}
+                  />
+                ) : null}
+                {resolvedFailed ? (
+                  <ListError
+                    error={resolved.error}
+                    retry={() => resolved.refetch({ throwOnError: true })}
+                  />
+                ) : null}
+                {handled.length ? (
                   <details className="tc-decision-history">
                     <summary>已处理的决定</summary>
-                    {data.outbox
-                      .filter((decision) => decision.status !== "pending")
-                      .map((decision) => (
-                        <button
-                          key={decision.id}
-                          type="button"
-                          onClick={() => onNavigate("outbox", decision.taskId)}
-                        >
-                          <span>{decision.proposedAction.title}</span>
-                          <span>
-                            {decision.status === "approved"
-                              ? "已批准"
-                              : decision.status === "rejected"
-                                ? "已拒绝"
-                                : "已替代"}{" "}
-                            · {taskDate(decision.decidedAt)}
-                          </span>
-                        </button>
-                      ))}
+                    {handled.map((decision) => (
+                      <button
+                        key={decision.id}
+                        type="button"
+                        onClick={() => onNavigate("outbox", decision.taskId)}
+                      >
+                        <span>{decision.proposedAction.title}</span>
+                        <span>
+                          {decision.status === "approved"
+                            ? "已批准"
+                            : decision.status === "rejected"
+                              ? "已拒绝"
+                              : "已替代"}{" "}
+                          · {taskDate(decision.decidedAt)}
+                        </span>
+                      </button>
+                    ))}
+                    <ListMore
+                      shown={handled.length}
+                      total={resolved.data?.pages[0]?.total ?? 0}
+                      hasMore={resolved.hasNextPage}
+                      loading={resolved.isFetchingNextPage}
+                      onMore={() => void resolved.fetchNextPage()}
+                    />
                   </details>
                 ) : null}
               </>
@@ -361,7 +433,7 @@ export function TaskCenter({
             <TaskDetail
               key={taskId}
               id={taskId}
-              allTasks={data.tasks}
+              allTasks={[...data.tasks, ...displayed]}
               onClose={() => onNavigate(view)}
               onSelect={(id) => onNavigate(view, id)}
             />
@@ -378,6 +450,58 @@ export function TaskCenter({
         }}
       />
     </PageShell>
+  );
+}
+
+function ListError({
+  error,
+  retry,
+}: {
+  error: Error | null;
+  retry: () => Promise<unknown>;
+}) {
+  const lastError = useRef(error);
+  if (error) lastError.current = error;
+  const reload = useAsyncAction(retry, { errorToast: false });
+  return (
+    <div className="tc-error" role="alert">
+      <p>{lastError.current?.message ?? "列表暂时无法加载。"}</p>
+      <Button
+        variant="ghost"
+        state={reload.state}
+        feedback="refresh"
+        onClick={() => void reload.run()}
+      >
+        重新加载
+      </Button>
+    </div>
+  );
+}
+function ListMore({
+  shown,
+  total,
+  hasMore,
+  loading,
+  onMore,
+}: {
+  shown: number;
+  total: number;
+  hasMore: boolean;
+  loading: boolean;
+  onMore: () => void;
+}) {
+  if (!total) return null;
+  return (
+    <div className="tc-actions">
+      <span className="tc-meta">
+        已显示 {shown} / {total} 项
+      </span>
+      {hasMore ? (
+        <Button variant="outline" size="sm" loading={loading} onClick={onMore}>
+          加载更多
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

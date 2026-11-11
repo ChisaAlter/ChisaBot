@@ -428,6 +428,7 @@ class FinishedAgent extends AbstractAgent {
         expect(await (await routes.request(`/${callId}`)).json()).toEqual({
           status: "answered",
           answer: "saved once",
+          continuation: { state: "queued" },
         });
         const [work] = await database.$client.unsafe<{ count: number }[]>(
           "SELECT count(*)::int AS count FROM work_items WHERE kind='conversation.interaction-response' AND key=$1",

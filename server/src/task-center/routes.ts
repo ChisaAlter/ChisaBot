@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   contextInputSchema,
   sourceInputSchema,
+  TASK_CATEGORIES,
   taskInputSchema,
 } from "../../../shared/task-center";
 import type { AppVariables } from "../auth/guards";
@@ -16,6 +17,18 @@ const decisionInput = z.object({ approved: z.boolean() }).strict();
 const sourcePatchInput = sourceInputSchema.partial().strict();
 const rootPathInput = z.object({ path: z.string().min(1).max(1000) }).strict();
 const taskActions = ["start", "pause", "resume", "retry", "cancel"] as const;
+const pagingInput = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const taskListInput = pagingInput.extend({
+  view: z.enum(["inbox", "active", "history"]).optional(),
+  category: z.enum(TASK_CATEGORIES).optional(),
+  search: z.string().max(500).optional(),
+});
+const decisionListInput = pagingInput.extend({
+  status: z.enum(["pending", "resolved"]).optional(),
+});
 
 /**
  * Injected collaborators beyond the queue service: the owner's filesystem whitelist
@@ -52,9 +65,16 @@ export function createTaskCenterRoutes(
   app.get("/", async (context) =>
     context.json(await service.snapshot(context.var.actor.id)),
   );
-  app.get("/tasks", async (context) =>
-    context.json({ tasks: await service.listTasks(context.var.actor.id) }),
-  );
+  app.get("/tasks", async (context) => {
+    const query = context.req.query();
+    if (!Object.keys(query).length)
+      return context.json({
+        tasks: await service.listTasks(context.var.actor.id),
+      });
+    return context.json(
+      await service.taskPage(context.var.actor.id, taskListInput.parse(query)),
+    );
+  });
   app.post("/tasks", async (context) => {
     const input = taskInputSchema.parse(await context.req.json());
     const task = await service.createTask(context.var.actor.id, input);
@@ -67,7 +87,7 @@ export function createTaskCenterRoutes(
     if (!task) return context.json({ error: "找不到这个任务。" }, 404);
     const [events, tasks] = await Promise.all([
       service.taskEvents(owner, id),
-      service.listTasks(owner),
+      service.listTasks(owner, { parentId: id }),
     ]);
     return context.json({
       task,
@@ -95,9 +115,20 @@ export function createTaskCenterRoutes(
     });
   }
 
-  app.get("/outbox", async (context) =>
-    context.json({ outbox: await service.listDecisions(context.var.actor.id) }),
-  );
+  app.get("/outbox", async (context) => {
+    const query = context.req.query();
+    if (!Object.keys(query).length)
+      return context.json({
+        outbox: await service.listDecisions(context.var.actor.id),
+      });
+    const { status, ...page } = decisionListInput.parse(query);
+    return context.json(
+      await service.decisionPage(context.var.actor.id, {
+        ...page,
+        ...(status ? { pending: status === "pending" } : {}),
+      }),
+    );
+  });
   app.post("/outbox/:id/decide", async (context) => {
     const { approved } = decisionInput.parse(await context.req.json());
     const decision = await service.decide(
@@ -130,7 +161,18 @@ export function createTaskCenterRoutes(
       context.var.actor.id,
       resourceId.parse(context.req.param("id")),
     );
-    return context.json({ source }, 202);
+    if (source.lastStatus === "failed")
+      return context.json(
+        {
+          source,
+          error: source.lastError || "巡检失败，请检查信息源配置后重试。",
+        },
+        502,
+      );
+    return context.json(
+      { source },
+      source.lastStatus === "running" ? 202 : 200,
+    );
   });
 
   app.get("/context", async (context) =>

@@ -17,6 +17,8 @@ export type AgentRunnerRunRequest = {
   join?: boolean;
   execution?: ExecutionClass;
   capacityReserved?: boolean;
+  /** The full input now has a durable recovery owner, independently of stream delivery. */
+  onAdmitted?: () => void;
 };
 export type AgentRunnerConnectRequest = {
   threadId: string;
@@ -65,6 +67,7 @@ export function createEventLifecycles() {
     SUBAGENT_ERROR: subagent,
   };
   return {
+    eventTypes: [...Object.keys(starts), ...Object.keys(ends)],
     accept(event: BaseEvent): boolean {
       const e = event as BaseEvent & Record<string, unknown>;
       const pair = starts[e.type] ?? ends[e.type];

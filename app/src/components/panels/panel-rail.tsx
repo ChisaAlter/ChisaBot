@@ -35,6 +35,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
 import { setBotUi } from "@/lib/chat/ui-memory";
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import {
@@ -602,11 +603,7 @@ function PanelRailBody({
                         data-testid={`rail-empty-preset-${preset.label.slice(0, 2)}`}
                         key={preset.label}
                         onClick={() => {
-                          window.dispatchEvent(
-                            new CustomEvent("chisabot-prefill", {
-                              detail: preset.prompt,
-                            }),
-                          );
+                          dispatchComposerPrefill(preset.prompt);
                           if (drawer) onCollapse();
                         }}
                         type="button"
@@ -841,9 +838,7 @@ function RailAddPanelMenu({
   const [batch, setBatch] = useState(0);
   const presets = panelPresetBatch(batch);
   const prefill = (prompt: string) => {
-    window.dispatchEvent(
-      new CustomEvent("chisabot-prefill", { detail: prompt }),
-    );
+    dispatchComposerPrefill(prompt);
     if (drawer && onCloseDrawer) onCloseDrawer();
   };
   return (

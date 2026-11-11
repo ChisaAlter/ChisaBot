@@ -31,6 +31,7 @@ export function ConversationView({
   agentId,
   messages,
   busy = false,
+  reconnecting = false,
   notice,
   transcriptNotice,
   agents = NO_AGENTS,
@@ -68,6 +69,7 @@ export function ConversationView({
   agentId?: string;
   messages: readonly Message[];
   busy?: boolean;
+  reconnecting?: boolean;
   /** 换了备用模型的轮次（用户消息 id → 说明），那一轮末尾一行小字（DESIGN.md §61）。 */
   fallbacks?: ReadonlyMap<string, string>;
   /** 最新一条用户消息的服务器发送时刻（本机时钟，DESIGN.md §94）。 */
@@ -601,6 +603,7 @@ export function ConversationView({
         <ChatTranscript
           agentId={agentId}
           busy={busy}
+          reconnecting={reconnecting}
           commandNames={commandNames}
           messages={messages}
           onRemoveQueued={removeQueued}

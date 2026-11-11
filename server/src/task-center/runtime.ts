@@ -9,9 +9,8 @@
  *   线程前缀让 messages 巡检不会再把它扫成「未回复消息」。
  * - notify：Outbox 出现待确认时，在主机器人的对话里记一行活动；通知失败只写在 decision 上，
  *   不阻塞审批本身（decisions.notification_error 在页面上可见）。
- * - learn：任务到达终态后把结果写进「已学到」上下文（appendLearned/learnEntry），
- *   同时沉淀一条 memory-notes 长期记忆（kind=project，按标题合并）——履历给人看，
- *   记忆给机器人检索；执行回合本身也握着 memory_* 工具，可以当场记细节。
+ * - learn：任务到达终态后沉淀一条可纠正、删除的 memory-notes 记忆；
+ *   每轮通过既有运行器加载当前记忆，历史 learned 字段仅保留，不再写入或注入。
  *   交付物包含经实际文件/交付账本验证的引用与回合组件；用量读取原 RUN_FINISHED。
  * - localAgentRun：executor=local-agent 时把任务委派给设备上的本地 agent
  *   （local-agents 子系统做审批 / 隔离 / 并发），任务侧心跳续租约，等它终态。
@@ -47,6 +46,7 @@ import {
 } from "../turns/durable-outcome";
 import { drawnComponents } from "../turns/run-turn";
 import type { DrawnComponent, TurnRunner } from "../turns/types";
+import { taskContextBrief } from "./context";
 import { isLocalAgentExecutor, localAgentThreadId } from "./local-agent-runner";
 import {
   assertTaskEvidence,
@@ -73,7 +73,6 @@ export const taskThreadId = (task: TaskCenterTask, tag: string) =>
   `${TASK_THREAD_PREFIX}${task.id}:${tag}:${task.version > 1 ? `v${task.version}:` : ""}${task.attempts}`;
 const MAX_PLAN_STEPS = 6;
 const INSTRUCTION_LIMIT = 12_000;
-const LEARNED_LIMIT = 5000;
 const clip = (text: string, n: number) =>
   text.length > n ? `${text.slice(0, n)}…` : text;
 
@@ -101,7 +100,7 @@ export function componentArtifacts(
   });
 }
 
-/** 「已学到」是一行一行的执行履历：日期 + 标题 + 结果；超限时丢最旧的行，只进不出人工编写的字段。 */
+/** 可在既有记忆页纠正的任务摘要；完整执行履历保留在任务与事件记录中。 */
 export function learnEntry(
   task: Pick<TaskCenterTask, "title">,
   outcome: { status: "succeeded" | "failed"; detail: string },
@@ -113,18 +112,6 @@ export function learnEntry(
     220,
   );
   return `[${date}] 「${clip(task.title, 80)}」${mark}：${detail}`;
-}
-
-export function appendLearned(
-  existing: string,
-  entry: string,
-  limit = LEARNED_LIMIT,
-): string {
-  const merged = existing.trim() ? `${existing.trim()}\n${entry}` : entry;
-  if (merged.length <= limit) return merged;
-  const lines = merged.split("\n");
-  while (lines.length > 1 && lines.join("\n").length > limit) lines.shift();
-  return lines.join("\n");
 }
 
 export type TaskCenterRuntimeOptions = {
@@ -150,8 +137,11 @@ export type TaskCenterRuntimeOptions = {
   /** 部署策略 + 用户设置的授权巡检目录（按 owner 查）；缺省 = 不允许读任何本机目录。 */
   localRoots?: (ownerUserId: string) => string[] | Promise<string[]>;
   localConversationsAvailable?: boolean;
-  /** 长期记忆：终态沉淀 + 执行时检索；缺省则不写记忆。 */
-  memoryNotes?: Pick<ReturnType<typeof createMemoryNotes>, "create" | "search">;
+  /** 终态写入现有长期记忆；每轮的读取由 governedTurnRunner 负责。 */
+  memoryNotes?: Pick<
+    ReturnType<typeof createMemoryNotes>,
+    "create" | "botEnabled"
+  >;
   /**
    * executor=local-agent 的执行路径（index.ts 接 local-agents 子系统）：
    * 给设备上的 Codex / Claude 等派发任务，返回其终态结果；缺省 = 该执行器不可用。
@@ -184,17 +174,6 @@ const RISK_GUIDANCE: Record<string, string> = {
   publish: "任务涉及公开发布，且已获得人工批准；只执行已批准的内容与渠道。",
 };
 
-function contextBrief(context: TaskContext): string {
-  const parts = [
-    context.responsibilities && `职责：${context.responsibilities}`,
-    context.projects && `进行中的项目：${context.projects}`,
-    context.goals && `目标：${context.goals}`,
-    context.preferences && `偏好：${context.preferences}`,
-    context.learned && `已知情况：${context.learned}`,
-  ].filter(Boolean);
-  return parts.join("\n").slice(0, 4000);
-}
-
 function dependenciesBrief(dependencies: TaskCenterTask[]): string {
   if (!dependencies.length) return "";
   const lines = dependencies.map(
@@ -213,7 +192,7 @@ export function frameTask(
   task: TaskCenterTask,
   context: TaskExecutionContext,
 ): string {
-  const brief = contextBrief(context.context);
+  const brief = taskContextBrief(context.context);
   return [
     `你正在任务中心执行一项交给你的任务，这不是对话闲聊；完成后结果会记入任务历史。`,
     `任务：${task.title}`,
@@ -376,7 +355,7 @@ export function createTaskCenterRuntime(
     try {
       const outcome = await runTaskTurn(
         task,
-        `${PLAN_PROMPT}${task.level <= 2 ? "\n本次只确认完成条件，steps 必须为空，不拆分任务。" : ""}\n\n目标：${task.title}\n\n${clip(task.description, INSTRUCTION_LIMIT)}\n\n${contextBrief(context)}`,
+        `${PLAN_PROMPT}${task.level <= 2 ? "\n本次只确认完成条件，steps 必须为空，不拆分任务。" : ""}\n\n目标：${task.title}\n\n${clip(task.description, INSTRUCTION_LIMIT)}\n\n${taskContextBrief(context)}`,
         signal,
         "plan",
       );
@@ -422,28 +401,6 @@ export function createTaskCenterRuntime(
     }
   }
 
-  /** 按标题 + 类目检索长期记忆，给执行回合当背景；检索失败不给任务加戏。 */
-  async function memoryBrief(task: TaskCenterTask): Promise<string> {
-    if (!options.memoryNotes) return "";
-    try {
-      const rows = await options.memoryNotes.search(
-        task.ownerUserId,
-        `${task.title} ${task.category}`,
-        undefined,
-        6,
-      );
-      const lines = rows
-        .map(
-          (row) =>
-            `- [${row.kind}${row.subject ? `·${row.subject}` : ""}] ${clip(String(row.content).replace(/\s+/g, " "), 220)}`,
-        )
-        .slice(0, 6);
-      return lines.length ? `\n\n相关记忆：\n${lines.join("\n")}` : "";
-    } catch {
-      return "";
-    }
-  }
-
   async function execute(
     task: TaskCenterTask,
     context: TaskExecutionContext,
@@ -474,7 +431,7 @@ export function createTaskCenterRuntime(
       throw new TaskCenterError("此操作仍在等待人工确认。", 409);
     const outcome = await runTaskTurn(
       task,
-      `${frameTask(task, context)}${await memoryBrief(task)}`,
+      frameTask(task, context),
       context.signal,
       "run",
     );
@@ -593,7 +550,6 @@ export function createTaskCenterRuntime(
     return [...executors, ...sourceCaps];
   }
 
-  let serviceRef: TaskCenterService | undefined;
   const service = createTaskCenter(options.database, {
     hasDurableExecution: async (task) => {
       if (isLocalAgentExecutor(task.executor) && task.status !== "planning") {
@@ -615,19 +571,13 @@ export function createTaskCenterRuntime(
     execute,
     plan,
     notify,
-    // 任务终态（成功/失败）回写「已学到」履历；人工编写的六个字段永远不动。
+    // 任务历史留在任务记录；可用于后续推理的内容只写到已有、可纠正的记忆中。
     learn: async (ownerUserId, task, outcome) => {
-      const service = serviceRef;
-      if (!service) return;
-      const context = await service.getContext(ownerUserId);
-      await service.setLearned(
-        ownerUserId,
-        appendLearned(context.learned, learnEntry(task, outcome)),
-      );
-      // 同时沉淀进长期记忆：project 按主题合并，同一任务反复执行只涨一条；
-      // 写不进去（记忆满等）不影响履历本身。
+      if (!options.memoryNotes) return;
+      const agentId = await resolveAgent(task);
+      if (!(await options.memoryNotes.botEnabled(ownerUserId, agentId))) return;
       try {
-        await options.memoryNotes?.create(
+        await options.memoryNotes.create(
           ownerUserId,
           {
             kind: "project",
@@ -635,7 +585,7 @@ export function createTaskCenterRuntime(
             content: clip(learnEntry(task, outcome), 1500),
             context: "任务中心执行履历",
           },
-          task.agentId ?? null,
+          agentId,
         );
       } catch {
         // 记忆写入失败不阻断 learn
@@ -648,7 +598,6 @@ export function createTaskCenterRuntime(
       ? { globalConcurrency: options.globalConcurrency }
       : {}),
   });
-  serviceRef = service;
 
   /**
    * service.ts 的 routes 组装点不开放协作者入口，这里在 runtime 层把它接上：

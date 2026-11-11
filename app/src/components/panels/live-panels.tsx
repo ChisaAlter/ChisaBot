@@ -43,6 +43,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
+import {
+  dispatchChatAsk,
+  dispatchComposerPrefill,
+} from "@/lib/chat/quote-event";
 import { client } from "@/lib/client";
 import { jsonRenderRegistry } from "@/lib/conversations/json-render/registry";
 import {
@@ -77,9 +81,7 @@ import { buildStepText, groupSources, panelEditPrompt } from "./panel-meta";
 
 /** 面板里的「问一句」发到当前机器人的对话（bot.tsx 监听）。 */
 function askBot(text: string) {
-  const said = text.trim();
-  if (said)
-    window.dispatchEvent(new CustomEvent("chisabot-ask", { detail: said }));
+  dispatchChatAsk(text);
 }
 
 /**
@@ -87,9 +89,7 @@ function askBot(text: string) {
  * `chisabot-prefill`），**不发送**——用户自己补完要改什么再按发送。
  */
 function prefillPanelEdit(title: string) {
-  window.dispatchEvent(
-    new CustomEvent("chisabot-prefill", { detail: panelEditPrompt(title) }),
-  );
+  dispatchComposerPrefill(panelEditPrompt(title));
 }
 
 /**

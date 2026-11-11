@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorCard } from "@/components/ui/skyglass";
 import { openCreateBot } from "@/lib/agents/create-bot";
 import { useLanding } from "@/lib/agents/landing";
+import {
+  composerTargetPath,
+  currentChatTargetPath,
+  transferComposerInputs,
+} from "@/lib/chat/quote-event";
 import { queryClient } from "@/query-client";
 import { agentKeys } from "@/lib/agents/queries";
 
@@ -24,7 +29,13 @@ export function LandingRedirect() {
   const key = target ? JSON.stringify(target) : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the stable identity of `target`
   useEffect(() => {
-    if (target) void navigate({ ...target, replace: true });
+    if (!target) return;
+    const destination =
+      target.to === "/channel/$channelId"
+        ? composerTargetPath(target.params.channelId)
+        : composerTargetPath(undefined, `new:${target.search.agent}`);
+    transferComposerInputs(currentChatTargetPath(), destination);
+    void navigate({ ...target, replace: true });
   }, [key, navigate]);
 
   if (landing.state === "empty")
