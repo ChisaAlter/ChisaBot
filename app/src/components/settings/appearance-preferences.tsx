@@ -1,6 +1,7 @@
 import {
   IconCheck,
   IconCloud,
+  IconPhoto,
   IconRefresh,
   IconTrash,
   IconUpload,
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import {
+  ARTISTIC_WALLPAPER_PRESETS,
   compressUploadedWallpaper,
   GLASS_OPACITY_MAX,
   GLASS_OPACITY_MIN,
@@ -29,8 +31,11 @@ import {
   setWallpaperDim,
   setWallpaperPreset,
   THEME_PALETTES,
+  updateAppearance,
   useAppearance,
   validateWallpaperFile,
+  WALLPAPER_CATEGORIES,
+  type WallpaperCategoryId,
 } from "@/lib/appearance";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +51,8 @@ const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
   "crystal",
   "frosted",
 ];
+const WALLPAPER_CATEGORY_VALUES: readonly WallpaperCategoryId[] =
+  WALLPAPER_CATEGORIES.map((c) => c.id);
 
 export function AppearancePreferences() {
   const appearance = useAppearance();
@@ -54,13 +61,26 @@ export function AppearancePreferences() {
     values: GLASS_STYLE_VALUES,
     onChange: (next) => setGlassStyle(next),
   });
+  const [wallpaperCategory, setWallpaperCategory] =
+    useState<WallpaperCategoryId>("all");
+  const categoryKeys = useSegmentedKeys<WallpaperCategoryId>({
+    value: wallpaperCategory,
+    values: WALLPAPER_CATEGORY_VALUES,
+    onChange: (next) => setWallpaperCategory(next),
+  });
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const hasCustomWallpaper =
-    appearance.wallpaperId === "custom" &&
-    Boolean(appearance.customWallpaperUrl);
+  const hasStoredCustomImage = Boolean(appearance.customWallpaperUrl);
+  const isCustomActive =
+    appearance.wallpaperId === "custom" && hasStoredCustomImage;
+  const filteredArtWallpapers =
+    wallpaperCategory === "all"
+      ? ARTISTIC_WALLPAPER_PRESETS
+      : ARTISTIC_WALLPAPER_PRESETS.filter(
+          (item) => item.category === wallpaperCategory,
+        );
 
   const processWallpaperFile = async (file: File) => {
     // 先校验类型和大小，超限的文件不读进内存
@@ -104,9 +124,7 @@ export function AppearancePreferences() {
       <div className="appearance-block" data-setting-item="主题配色">
         <div className="appearance-block-head">
           <div>
-            <div className="appearance-block-title">
-              {"主题配色与动态天象"}
-            </div>
+            <div className="appearance-block-title">{"主题配色与动态天象"}</div>
             <div className="appearance-block-desc">
               {
                 "精选 8 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
@@ -175,7 +193,9 @@ export function AppearancePreferences() {
         </div>
 
         {appearance.palette !== "default" ? (
-          <p className="appearance-palette-sub" data-testid="palette-sky-hint">彩色主题下使用主题天空</p>
+          <p className="appearance-palette-sub" data-testid="palette-sky-hint">
+            彩色主题下使用主题天空
+          </p>
         ) : null}
         <div
           aria-label="Hark 动态天空场景选择"
@@ -284,7 +304,9 @@ export function AppearancePreferences() {
           </label>
           <label className="appearance-slider-row">
             <span className="appearance-slider-label">
-              <span>{"面板雾度 · 深色（浅色和深色各存一档，切换时滑行到各自的值）"}</span>
+              <span>
+                {"面板雾度 · 深色（浅色和深色各存一档，切换时滑行到各自的值）"}
+              </span>
               <span className="appearance-slider-val">
                 {`${appearance.glassOpacityDark}%（透光率 ${100 - appearance.glassOpacityDark}%）`}
               </span>
@@ -303,16 +325,16 @@ export function AppearancePreferences() {
         </div>
       </div>
 
-      {/* 3. 自定义图片壁纸上传 */}
+      {/* 3. 艺术壁纸图库与自定义图片壁纸 */}
       <div className="appearance-block" data-setting-item="背景壁纸">
         <div className="appearance-block-head">
           <div>
             <div className="appearance-block-title">
-              {"自定义图片壁纸"}
+              {"艺术壁纸图库与自定义壁纸"}
             </div>
             <div className="appearance-block-desc">
               {
-                "上传本地图片作为工作台背景，透过半透明玻璃面板呈现专属壁纸景深"
+                "精选 9 幅印象油画、东方意境与现代光影画作，或上传本地图片，透过液态玻璃呈现通透景深"
               }
             </div>
           </div>
@@ -324,11 +346,33 @@ export function AppearancePreferences() {
               ref={fileInputRef}
               type="file"
             />
+            <div
+              aria-label="艺术壁纸分类"
+              className="sg-segmented"
+              {...categoryKeys.groupProps}
+              ref={categoryKeys.groupRef}
+              role="radiogroup"
+            >
+              {WALLPAPER_CATEGORIES.map(({ id, label }) => (
+                // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+                <button
+                  aria-checked={wallpaperCategory === id}
+                  className="sg-segmented-item"
+                  data-testid={`wallpaper-cat-${id}`}
+                  key={id}
+                  onClick={() => setWallpaperCategory(id)}
+                  role="radio"
+                  tabIndex={categoryKeys.itemTabIndex(id)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             {appearance.wallpaperId !== "none" ? (
               <Button
                 onClick={() => {
                   setWallpaperPreset("none");
-                  setCustomWallpaperUrl("");
                   toast.success("已切回 Hark 动态天空");
                 }}
                 size="sm"
@@ -342,13 +386,62 @@ export function AppearancePreferences() {
           </div>
         </div>
 
+        {/* 精选艺术壁纸图库网格 */}
+        <div
+          aria-label="艺术壁纸图库选择"
+          className="appearance-wallpaper-grid"
+          role="radiogroup"
+        >
+          {filteredArtWallpapers.map((item) => {
+            const active = appearance.wallpaperId === item.id;
+            return (
+              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
+              <button
+                aria-checked={active}
+                className={cn(
+                  "appearance-wallpaper-card",
+                  active && "is-active",
+                )}
+                data-testid={`wallpaper-preset-${item.id}`}
+                key={item.id}
+                onClick={() => setWallpaperPreset(item.id)}
+                role="radio"
+                type="button"
+              >
+                <div
+                  className="appearance-wallpaper-thumb appearance-art-thumb"
+                  style={{ background: item.previewBackground }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="appearance-art-img"
+                    style={{ backgroundImage: `url("${item.thumbUrl}")` }}
+                  />
+                  <span className="appearance-art-badge">{item.tag}</span>
+                  {active ? (
+                    <span className="appearance-swatch-check">
+                      <IconCheck className="size-3.5 stroke-[2.6]" />
+                    </span>
+                  ) : null}
+                </div>
+                <div className="appearance-wallpaper-meta">
+                  <span className="appearance-palette-name">{item.name}</span>
+                  <span className="appearance-palette-sub">
+                    {item.subtitle}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
         {/* 本地图片拖拽 / 点击上传横幅 */}
         {/* biome-ignore lint/a11y/useSemanticElements: 拖放区里还嵌着按钮，外层不能是 <button>（按钮不能嵌套） */}
         <div
           className={cn(
             "appearance-upload-dropzone",
             dragOver && "is-dragover",
-            hasCustomWallpaper && "has-custom",
+            isCustomActive && "has-custom",
           )}
           data-testid="wallpaper-upload-dropzone"
           onClick={() => fileInputRef.current?.click()}
@@ -374,7 +467,7 @@ export function AppearancePreferences() {
           role="button"
           tabIndex={0}
         >
-          {hasCustomWallpaper ? (
+          {hasStoredCustomImage ? (
             <div
               className="appearance-upload-preview"
               style={{
@@ -390,15 +483,34 @@ export function AppearancePreferences() {
             <div className="appearance-upload-title">
               {uploading
                 ? "正在处理并压缩壁纸图片…"
-                : hasCustomWallpaper
+                : isCustomActive
                   ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
-                  : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
+                  : hasStoredCustomImage
+                    ? "已保存本地自定义壁纸（点击右侧按钮即可重新启用）"
+                    : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
             </div>
             <div className="appearance-upload-sub">
-              {"支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），自动高清压缩并保存在当前设备"}
+              {
+                "支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），自动高清压缩并保存在当前设备"
+              }
             </div>
           </div>
           <div className="appearance-upload-actions">
+            {hasStoredCustomImage && !isCustomActive ? (
+              <Button
+                data-testid="wallpaper-custom-activate"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setWallpaperPreset("custom");
+                }}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                <IconPhoto className="size-3.5" />
+                {"启用此图片"}
+              </Button>
+            ) : null}
             <Button
               disabled={uploading}
               onClick={(e) => {
@@ -408,17 +520,22 @@ export function AppearancePreferences() {
               }}
               size="sm"
               type="button"
-              variant="secondary"
+              variant={
+                hasStoredCustomImage && !isCustomActive ? "ghost" : "secondary"
+              }
             >
               <IconUpload className="size-3.5" />
-              {hasCustomWallpaper ? "更换图片" : "选择图片上传"}
+              {hasStoredCustomImage ? "更换图片" : "选择图片上传"}
             </Button>
-            {hasCustomWallpaper ? (
+            {hasStoredCustomImage ? (
               <Button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setWallpaperPreset("none");
-                  setCustomWallpaperUrl("");
+                  if (appearance.wallpaperId === "custom") {
+                    setCustomWallpaperUrl("");
+                  } else {
+                    updateAppearance({ customWallpaperUrl: "" });
+                  }
                   toast.success("已移除自定义壁纸");
                 }}
                 size="sm"

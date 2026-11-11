@@ -10470,6 +10470,40 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
   place-items: center;
   overflow: hidden;
 }
+.appearance-art-thumb {
+  height: 100px;
+}
+.appearance-art-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  transition: transform 0.28s ease;
+}
+.appearance-wallpaper-card:hover .appearance-art-img {
+  transform: scale(1.04);
+}
+.appearance-art-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.appearance-art-thumb .appearance-swatch-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
 .appearance-wallpaper-glass-demo {
   position: absolute;
   inset: 10px 12px;
