@@ -26,6 +26,7 @@ import {
   transcriptMessages,
 } from "@/components/channels/transcript-messages";
 import { PermissionChip } from "@/components/chat/permission-chip";
+import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,7 @@ import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
 import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useKeptVisibility } from "@/lib/kept-visible";
+import { useAgentInstances } from "@/lib/local-agents";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import {
@@ -1162,9 +1164,10 @@ export function ChannelChat({
     /** 重新生成 / 编辑后重发（§67）：原样发这份内容（带着原来的附件段），不再从文字和附件拼。 */
     contentOverride?: Message["content"],
     inboxSourceId?: string,
+    subagentInstanceId?: string,
   ) => {
-    // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）。
-    if (modelMissingRef.current)
+    // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）；直连子代理跳过主模型。
+    if (modelMissingRef.current && !subagentInstanceId)
       throw new Error(
         "这个模型已下线（不在模型列表里），这一条没有发出去。点输入框右下角的模型名换一个再发。",
       );
@@ -1284,7 +1287,7 @@ export function ChannelChat({
       runEventSeenRef.current = false;
       const runPromise = conversationClient.runAgent({
         agent: target,
-        ...(panelAuthoring || inboxSourceId
+        ...(panelAuthoring || inboxSourceId || subagentInstanceId
           ? {
               forwardedProps: {
                 ...panelAuthoring,
@@ -1296,6 +1299,7 @@ export function ChannelChat({
                       },
                     }
                   : {}),
+                ...(subagentInstanceId ? { subagentInstanceId } : {}),
               },
             }
           : {}),
@@ -1584,6 +1588,7 @@ export function ChannelChat({
     attachments: Attachment[] = [],
     contentOverride?: Message["content"],
     inboxSourceId?: string,
+    subagentInstanceId?: string,
   ) => {
     const trimmed = text.trim();
     // A pasted screenshot with no caption is still a message to send: `canSendDraft` already
@@ -1630,6 +1635,7 @@ export function ChannelChat({
         attachments,
         contentOverride,
         inboxSourceId,
+        subagentInstanceId,
       );
     } finally {
       // 停止会把计数直接清零，这里无条件减会变成负数，导致 sendInFlight 永远卡住（CHAT-02）。
@@ -2281,9 +2287,26 @@ export function ChannelChat({
     ),
     [runtimeAgentId, channelActive],
   );
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
+    null,
+  );
+  const subagentInstancesQuery = useAgentInstances();
+  const enabledSubagents = useMemo(
+    () => (subagentInstancesQuery.data ?? []).filter((inst) => inst.enabled),
+    [subagentInstancesQuery.data],
+  );
   const leadingControl = useMemo(
-    () => <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />,
-    [runtimeAgentId, channelActive],
+    () => (
+      <span className="inline-flex items-center gap-1">
+        <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />
+        <SubagentPickerChip
+          disabled={!channelActive}
+          onSelect={setSelectedSubagentId}
+          selectedId={selectedSubagentId}
+        />
+      </span>
+    ),
+    [runtimeAgentId, channelActive, selectedSubagentId],
   );
   const contextControl = useMemo(
     () => (
@@ -2296,8 +2319,15 @@ export function ChannelChat({
     [runtimeAgentId, chatBusy, channelThreadId],
   );
   const agentOptions = useMemo(
-    () => toAgentOptions(agentProfiles, channel.agentIds),
-    [agentProfiles, channel.agentIds],
+    () => [
+      ...toAgentOptions(agentProfiles, channel.agentIds),
+      ...enabledSubagents.map((inst) => ({
+        id: `subagent:${inst.id}`,
+        name: inst.name,
+        description: `${inst.environmentName} · 子代理`,
+      })),
+    ],
+    [agentProfiles, channel.agentIds, enabledSubagents],
   );
 
   return (
@@ -2451,7 +2481,21 @@ export function ChannelChat({
                     });
                   });
                 }
-                await say(draft.text, skillInstructions, draft.attachments);
+                const mentionedSubagentId = draft.agentId?.startsWith(
+                  "subagent:",
+                )
+                  ? draft.agentId.slice("subagent:".length)
+                  : null;
+                const targetSubagentId =
+                  mentionedSubagentId || selectedSubagentId || undefined;
+                await say(
+                  draft.text,
+                  skillInstructions,
+                  draft.attachments,
+                  undefined,
+                  undefined,
+                  targetSubagentId,
+                );
               }}
               /**
                * Stop through the core so the abort signal reaches frontend tools; `say` repairs any

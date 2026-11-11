@@ -1,21 +1,35 @@
 "use strict";
 /**
- * 本地 agent 运行时（docs/local-agents.md）：接服务器发来的 agent_run / agent_stop / agent_apply…，
- * 在这台电脑上准备工作目录（worktree / 副本 / 沙盒），启动选定的 agent（Claude Code、Codex、OpenCode…
- * 或 ChisaBot 内置循环），把输出一行行流回服务器（聊天里的任务卡片），结束时报告改动。
+ * 本地 agent 运行时（docs/local-agents.md）：接服务器发来的 agent_run / agent_stop / agent_apply / agent_probe…，
+ * 在这台电脑（或服务器本机受控工作区）上准备工作目录（worktree / 副本 / 沙盒）、影子 Home 与子代理互调桥，
+ * 启动选定的智能体驱动（Codex、Claude Code、Antigravity、通用 ACP、OpenCode、Gemini、Aider、自定义命令或内置循环），
+ * 把输出流回服务器，结束时报告改动。
  *
  * 和设备节点（agent/core.js）共用同一条 WebSocket：core 把不认识的消息交给 handle()，
  * 这里用 core 的 send 回消息；断线期间的消息先存着，重连后补发。
  */
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { detectAll, which } = require("./detect");
+const { detectAll, probeInstance, resolveExecutable, resolveAcpCommand, AGENT_BINARIES, which } = require("./detect");
 const sandbox = require("./sandbox");
 const { buildCommand, cmdSafe } = require("./cli-agents");
 const { runBuiltin, localModel } = require("./builtin");
 const { isInside } = require("./profile");
+const { prepareShadowHome } = require("./shadow-home");
+const { runAcpSession, sanitizeAntigravityEnv } = require("./acp-client");
+const { createSubagentBridge } = require("./subagent-bridge");
 
-const HANDLED = new Set(["agent_detect", "agent_run", "agent_stop", "agent_apply", "agent_discard", "agent_llm_result", "agent_approval_result"]);
+const HANDLED = new Set([
+  "agent_detect",
+  "agent_probe",
+  "agent_run",
+  "agent_stop",
+  "agent_apply",
+  "agent_discard",
+  "agent_llm_result",
+  "agent_approval_result",
+  "agent_subcall_result",
+]);
 const MAX_LINES = 3000;
 const LINE_CAP = 2000;
 
@@ -63,6 +77,7 @@ function createAgentRuntime(options) {
   const prepared = new Map(); // taskId -> prep（等用户应用 / 放弃）
   const llmPending = new Map();
   const approvalPending = new Map();
+  const subcallPending = new Map();
   const outbox = [];
   let detection = null;
   let counter = 0;
@@ -86,6 +101,26 @@ function createAgentRuntime(options) {
       out({ type: "agents_detected", detection });
     } catch (error) {
       log(`检测本地 agent 失败：${error.message}`);
+    }
+  }
+
+  async function probe(message) {
+    try {
+      const result = await probeInstance(message.instance || {});
+      out({ type: "agent_probe_result", reqId: message.reqId, probe: result });
+    } catch (error) {
+      out({
+        type: "agent_probe_result",
+        reqId: message.reqId,
+        probe: {
+          status: "error",
+          version: null,
+          resolvedPath: null,
+          authenticated: null,
+          authLabel: null,
+          message: error && error.message ? error.message : String(error),
+        },
+      });
     }
   }
 
@@ -113,14 +148,22 @@ function createAgentRuntime(options) {
     });
   }
 
-  async function runCli(message, prep, emit, controller) {
+  async function runCli(message, prep, emit, controller, ctx) {
     const win = process.platform === "win32";
     const isolation = message.isolation;
-    const name = message.agent;
-    // WSL：agent 装在 WSL 里，用名字调；其它在本机找到可执行文件。
-    const file = isolation === "wsl" ? name : which(name);
-    if (!file) throw new Error(`这台电脑上没有找到 ${name}（重新检测或先安装）。`);
-    const viaStdin = win && /\.(cmd|bat)$/i.test(file) && (name === "claude" || name === "codex");
+    const name = ctx.driver;
+    const cfg = ctx.cfg || {};
+    const customEnv = ctx.env || {};
+    const defaults = AGENT_BINARIES[name] || [name];
+    // WSL：agent 装在 WSL 里，用名字或自定义路径调；其它在本机找到可执行文件。
+    const file =
+      isolation === "wsl"
+        ? (cfg.commandPath && String(cfg.commandPath).trim()) || name
+        : resolveExecutable(cfg.commandPath, defaults, customEnv) || (name !== "custom" ? which(name, customEnv) : null);
+    if (!file) {
+      throw new Error(`没有找到可执行文件 ${cfg.commandPath || name}（请检查提供方路径配置或先安装）。`);
+    }
+    const viaStdin = win && /\.(cmd|bat)$/i.test(file) && (name === "claude" || name === "codex" || name === "custom");
     const prompt = win && /\.(cmd|bat)$/i.test(file) && !viaStdin ? cmdSafe(message.prompt) : message.prompt;
     const root = typeof process.getuid === "function" && process.getuid() === 0;
     const command = buildCommand(name, {
@@ -131,15 +174,32 @@ function createAgentRuntime(options) {
       workdir: prep.workdir,
       root,
       viaStdin,
+      model: cfg.model,
+      extraArgs: cfg.extraArgs,
+      claudeMcpConfigPath: ctx.bridge ? ctx.bridge.claudeMcpConfigPath : null,
+      codexConfigArgs: ctx.bridge ? ctx.bridge.codexConfigArgs : null,
+      stdinPrompt: cfg.stdinPrompt,
+      outputFormat: cfg.outputFormat,
     });
     const wrapped = sandbox.wrap({ isolation, workdir: prep.workdir, network: message.network, file, args: command.args });
     emit("status", `启动 ${path.basename(file)}${isolation !== "none" && isolation !== "worktree" && isolation !== "copy" ? `（${isolation}）` : ""}`);
+    let mergedEnv = {
+      ...process.env,
+      ...command.env,
+      ...customEnv,
+      CHISABOT_TASK: message.taskId,
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    };
+    if (name === "antigravity") {
+      mergedEnv = sanitizeAntigravityEnv(mergedEnv, cfg.fixProxy !== false);
+    }
     return new Promise((resolve, reject) => {
       let child;
       try {
         child = spawn(wrapped.file, wrapped.args, {
           cwd: prep.workdir,
-          env: { ...process.env, ...command.env, CHISABOT_TASK: message.taskId, NO_COLOR: "1", FORCE_COLOR: "0" },
+          env: mergedEnv,
           windowsHide: true,
           detached: !win,
           shell: win && /\.(cmd|bat)$/i.test(wrapped.file),
@@ -149,7 +209,8 @@ function createAgentRuntime(options) {
         reject(error);
         return;
       }
-      tasks.get(message.taskId).child = child;
+      const taskState = tasks.get(message.taskId);
+      if (taskState) taskState.child = child;
       if (command.stdin) child.stdin.end(command.stdin);
       const stdout = lineSplitter((line) => command.parser.line(line, emit));
       let stderrLines = 0;
@@ -195,6 +256,7 @@ function createAgentRuntime(options) {
       out({ type: "agent_event", taskId, kind, text: value.length > LINE_CAP ? `${value.slice(0, LINE_CAP)}…` : value, ...(step ? { step: String(step).slice(0, 200) } : {}) });
     };
     let prep = null;
+    let bridge = null;
     try {
       if (options.isPaused && options.isPaused()) throw new Error("这台电脑已紧急停止，拒绝启动本地 agent。");
       // 本机再检查一次：工作目录要在工作区文件夹里（完全访问除外）。
@@ -204,10 +266,56 @@ function createAgentRuntime(options) {
       prep = await sandbox.prepare({ taskId, cwd: message.cwd, isolation: message.isolation });
       controller.signal.throwIfAborted();
       for (const note of prep.notes) emit("status", note);
+
+      const inst = message.instance || null;
+      const driver = (inst && inst.driver) || message.agent;
+      const cfg = (inst && inst.config) || {};
+      const instEnv = (inst && inst.env) || {};
+
+      // 准备账号隔离的影子 Home（如 Codex shadowHomePath / Claude configDir）
+      const shadow = prepareShadowHome({
+        driver,
+        homePath: cfg.homePath,
+        shadowHomePath: cfg.shadowHomePath,
+      });
+      for (const note of shadow.notes) emit("status", note);
+
+      // 准备外部 Agent 嵌套互调本地桥（当允许嵌套且未达最大深度时）
+      if (message.subagentBridge && message.subagentBridge.enabled) {
+        bridge = await createSubagentBridge({
+          taskId,
+          depth: message.subagentBridge.depth,
+          maxDepth: message.subagentBridge.maxDepth,
+          enabled: true,
+          onSubcall: async (action, params) => {
+            const reply = await request(
+              subcallPending,
+              { type: "agent_subcall", taskId, action, params },
+              600_000,
+              controller.signal,
+            );
+            if (!reply.ok) throw new Error(reply.error || "子代理调用失败");
+            return reply.data;
+          },
+        });
+      }
+
+      const mergedCustomEnv = {
+        ...shadow.env,
+        ...instEnv,
+        ...(bridge ? bridge.env : {}),
+      };
+
+      const approveStep = async (operation, summary) => {
+        const reply = await request(approvalPending, { type: "agent_approval", taskId, operation, summary }, 150_000, controller.signal).catch(() => ({ approved: false }));
+        return !!reply.approved;
+      };
+
       out({ type: "agent_started", taskId, workdir: prep.workdir });
       emit("status", prep.mode === "direct" ? `在 ${prep.workdir} 里工作` : `在一次性${prep.mode === "worktree" ? " worktree " : "副本"}里工作：${prep.workdir}`, "agent 开始工作");
+
       let result;
-      if (message.agent === "builtin") {
+      if (driver === "builtin") {
         const model =
           message.builtinModel && message.builtinModel.kind === "local"
             ? (messages, system) => localModel(message.builtinModel, system, messages, controller.signal)
@@ -230,18 +338,48 @@ function createAgentRuntime(options) {
             origin: message.cwd,
             signal: controller.signal,
             model,
-            approve: async (operation, summary) => {
-              const reply = await request(approvalPending, { type: "agent_approval", taskId, operation, summary }, 150_000, controller.signal).catch(() => ({ approved: false }));
-              return !!reply.approved;
-            },
+            approve: approveStep,
             emit,
           });
           result = { exitCode: 0, summary: outcome.summary, isError: false };
         } finally {
           clearTimeout(timer);
         }
+      } else if (driver === "acp" || driver === "antigravity") {
+        let acpEnv = { ...process.env, ...mergedCustomEnv };
+        if (driver === "antigravity") {
+          acpEnv = sanitizeAntigravityEnv(acpEnv, cfg.fixProxy !== false);
+        }
+        const resolved = resolveAcpCommand(driver, cfg, acpEnv);
+        if (resolved.mode === "acp") {
+          if (!resolved.file) {
+            throw new Error(resolved.missingReason || `没有找到 ACP 智能体可执行文件（${driver}）`);
+          }
+          emit("status", `启动 ACP 进程 ${path.basename(resolved.file)}`);
+          result = await runAcpSession({
+            file: resolved.file,
+            args: resolved.args,
+            env: acpEnv,
+            workdir: prep.workdir,
+            origin: message.cwd,
+            disposable: prep.mode !== "direct",
+            roots: message.roots,
+            profile: message.profile,
+            skipPermissions: message.skipPermissions,
+            prompt: message.prompt,
+            model: cfg.model || null,
+            authMethodId: cfg.authMethodId || null,
+            mcpServers: bridge ? bridge.acpMcpServers : [],
+            timeoutMs: message.timeoutMs,
+            signal: controller.signal,
+            approve: approveStep,
+            emit,
+          });
+        } else {
+          result = await runCli(message, prep, emit, controller, { driver, cfg, env: mergedCustomEnv, bridge });
+        }
       } else {
-        result = await runCli(message, prep, emit, controller);
+        result = await runCli(message, prep, emit, controller, { driver, cfg, env: mergedCustomEnv, bridge });
       }
       if (controller.signal.aborted) throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error("已停止");
       emit("status", "正在统计改动", "正在统计改动");
@@ -271,6 +409,7 @@ function createAgentRuntime(options) {
       }
       out({ type: "agent_done", taskId, ok: false, error: reason.slice(0, 1200), diff, stopped: controller.signal.aborted && reason !== "超时，已停止。" });
     } finally {
+      if (bridge) await bridge.close().catch(() => {});
       tasks.delete(taskId);
     }
   }
@@ -303,6 +442,9 @@ function createAgentRuntime(options) {
         case "agent_detect":
           void detect();
           break;
+        case "agent_probe":
+          void probe(message);
+          break;
         case "agent_run":
           void run(message);
           break;
@@ -332,6 +474,14 @@ function createAgentRuntime(options) {
           const pending = approvalPending.get(message.reqId);
           if (pending) {
             approvalPending.delete(message.reqId);
+            pending.resolve(message);
+          }
+          break;
+        }
+        case "agent_subcall_result": {
+          const pending = subcallPending.get(message.reqId);
+          if (pending) {
+            subcallPending.delete(message.reqId);
             pending.resolve(message);
           }
           break;

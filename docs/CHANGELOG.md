@@ -1,6 +1,8 @@
-## 未发版
+## 0.1.146
 
+- 智能体提供方多实例、子代理直连与 Bot 工具派发（DESIGN §132）：新增 `shared/agent-providers.ts`、同构运行时影子 Home（`shadow-home.js`）、原生 stdio ACP 客户端（`acp-client.js`）与嵌套子代理本地 MCP 桥（`subagent-bridge.js` / `subagent-mcp-stdio.js`）；服务端新增 `chisabot_agent_instances`（AES-GCM 敏感环境变量加密）与 `chisabot_bot_agent_grants`、服务器本机受控宿主（`server-host.ts`）、ACP Registry 检索（`acp-registry.ts`）与 `DirectSubagentRuntimeAgent`；支持 `subagent_*` 与具名工具 `agent_<slug>` 的 `wait` / `async` 双模调用、聊天框 `@智能体` / `SubagentPickerChip` 直连唤起、任务中心 `agent:<id>` 执行器及定时任务 `agentInstanceId` 绑定。
 - 预设艺术壁纸图库（DESIGN §131）：`app/public/wallpapers/` 内置印象油画、东方意境、现代光影三大系列共 9 幅 16:9 WebP 画作与轻量缩略图；`appearance.ts` 新增 `ARTISTIC_WALLPAPER_PRESETS`、`WALLPAPER_CATEGORIES` 与 `LEGACY_WALLPAPER_ID_MAP` 平滑迁移并移除内联几何 SVG；`AppearancePreferences` 支持按分类分段筛选、画作卡片预览及已上传自定义壁纸保留一键重启用。
+- 版本：0.1.146（根、app、server、agent-computer、runtime/dsh、pc；Android versionCode 328）；PC 外壳不变。
 
 ## 0.1.145
 

@@ -2378,6 +2378,11 @@ export function mountConversationRuntime(
     basePath?: string;
     onRunBusy?: (input: { threadId: string; busy: boolean }) => void;
     localBackend?: LocalConversationBackend;
+    overrideAgent?: (
+      actorId: string,
+      botId: string,
+      input: import("@ag-ui/client").RunAgentInput,
+    ) => Promise<import("@ag-ui/client").AbstractAgent | null>;
   } = {},
 ) {
   const backend = options.localBackend;
@@ -2403,6 +2408,7 @@ export function mountConversationRuntime(
       backend,
       resolver,
       identifyActor,
+      overrideAgent: options.overrideAgent,
       toolOperations:
         agentKernel.kind === "dsh"
           ? agentKernel.binding.gateway.operations

@@ -84,6 +84,11 @@ export function createConversationRoutes(options: {
     actorId: string,
     agent: import("@ag-ui/client").AbstractAgent,
   ) => Promise<void>;
+  overrideAgent?: (
+    actorId: string,
+    botId: string,
+    input: import("@ag-ui/client").RunAgentInput,
+  ) => Promise<import("@ag-ui/client").AbstractAgent | null>;
   toolsFor?: (
     actorId: string,
     botId: string,
@@ -95,6 +100,7 @@ export function createConversationRoutes(options: {
   async function dispatch(
     record: ConversationCommandRecord,
     agent: AbstractAgent,
+    skipHeadlessTools = false,
   ) {
     const dispatchFailed = (error: unknown) => {
       console.warn(
@@ -106,7 +112,7 @@ export function createConversationRoutes(options: {
       );
     };
     try {
-      if (options.toolsFor)
+      if (options.toolsFor && !skipHeadlessTools)
         agent.use(
           new HeadlessToolsMiddleware(
             [
@@ -133,10 +139,14 @@ export function createConversationRoutes(options: {
   ) {
     await assertConversationAdmissionOpen();
     const actor = await identifyActor(request);
-    const agent = await resolver.resolveAgentForActor(actor, agentId, {
+    const baseAgent = await resolver.resolveAgentForActor(actor, agentId, {
       initiator: { kind: "person" },
     });
-    if (options.prepareAgent) {
+    const customAgent = options.overrideAgent
+      ? await options.overrideAgent(actor.id, agentId, input)
+      : null;
+    const agent = customAgent ?? baseAgent;
+    if (options.prepareAgent && !customAgent) {
       const messageId = input.messages.findLast(
         (message) => message.role === "user",
       )?.id;
@@ -155,7 +165,7 @@ export function createConversationRoutes(options: {
     const { record } = admission;
     if (!admission.alreadyAccepted) {
       // Subscribe independently of the response. Losing the admission HTTP reply cannot cancel it.
-      await dispatch(record, agent);
+      await dispatch(record, agent, Boolean(customAgent));
     }
     return {
       accepted: true,

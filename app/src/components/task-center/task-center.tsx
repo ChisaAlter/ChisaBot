@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 import {
   activeTaskCount,
   TASK_CATEGORIES,
+  type TaskCapability,
   type TaskCategory,
   type TaskCenterDecision,
   type TaskCenterTask,
@@ -46,7 +47,12 @@ import {
 } from "../../../../shared/task-center";
 import { ContextSettings } from "./context-settings";
 import { CreateTask } from "./create-task";
-import { CATEGORY_LABELS, RISK_LABELS, taskDate } from "./labels";
+import {
+  CATEGORY_LABELS,
+  formatExecutorLabel,
+  RISK_LABELS,
+  taskDate,
+} from "./labels";
 import { SourceSettings } from "./source-settings";
 import { TaskDetail, TaskStatusBadge } from "./task-detail";
 import "./task-center.css";
@@ -514,6 +520,10 @@ function TaskRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const capabilities = queryClient.getQueryData<{
+    capabilities: TaskCapability[];
+  }>(taskCenterKeys.capabilities)?.capabilities;
   return (
     <li>
       <button
@@ -531,7 +541,8 @@ function TaskRow({
             {task.error ?? task.summary ?? task.description}
           </span>
           <span className="tc-meta">
-            {CATEGORY_LABELS[task.category]} · {task.executor}
+            {CATEGORY_LABELS[task.category]} ·{" "}
+            {formatExecutorLabel(task.executor, capabilities)}
             {task.parentId ? " · 子任务" : ""}
             <span className="tc-task-date">{taskDate(task.updatedAt)}</span>
           </span>
@@ -550,6 +561,10 @@ function Decision({
   onChanged: () => void;
   onTask: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const capabilities = queryClient.getQueryData<{
+    capabilities: TaskCapability[];
+  }>(taskCenterKeys.capabilities)?.capabilities;
   const decide = useMutation({
     mutationFn: (approved: boolean) =>
       taskCenterApi.decide(decision.id, approved),
@@ -570,7 +585,10 @@ function Decision({
       <details open>
         <summary>拟执行的内容</summary>
         <p className="tc-prose">{decision.proposedAction.description}</p>
-        <p className="tc-meta">执行方式：{decision.proposedAction.executor}</p>
+        <p className="tc-meta">
+          执行方式：
+          {formatExecutorLabel(decision.proposedAction.executor, capabilities)}
+        </p>
       </details>
       {decision.notificationError ? (
         <p className="tc-error">通知未送达：{decision.notificationError}</p>

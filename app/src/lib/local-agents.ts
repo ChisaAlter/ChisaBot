@@ -8,6 +8,20 @@ import {
 import { useCallback } from "react";
 import { client } from "@/lib/client";
 import {
+  type AcpRegistryEntry,
+  AGENT_DRIVER_SPECS,
+  AGENT_PROVIDER_PRESETS,
+  type AgentDriverConfig,
+  type AgentDriverKind,
+  type AgentEnvironmentSummary,
+  type AgentEnvVarInput,
+  type AgentInstanceView,
+  type AgentProviderPreset,
+  type BotAgentGrant,
+  type BotAgentGrantMode,
+  SERVER_ENVIRONMENT_ID,
+} from "../../../shared/agent-providers";
+import {
   ACTIVE_LOCAL_TASK,
   type DeviceAgentSettings,
   LOCAL_AGENT_RESULT_MARKER,
@@ -15,12 +29,26 @@ import {
   type LocalAgentTaskView,
 } from "../../../shared/local-agents";
 
+export type {
+  AcpRegistryEntry,
+  AgentDriverConfig,
+  AgentDriverKind,
+  AgentEnvironmentSummary,
+  AgentEnvVarInput,
+  AgentInstanceView,
+  AgentProviderPreset,
+  BotAgentGrant,
+  BotAgentGrantMode,
+};
+export { AGENT_DRIVER_SPECS, AGENT_PROVIDER_PRESETS, SERVER_ENVIRONMENT_ID };
+
 /**
- * 本地 agent（docs/local-agents.md；服务器 server/src/local-agents/service.ts）在界面上的数据：
- * 对话里的任务卡片（有任务在跑时每 1.2 秒取一次）、设备的档位 / 本地 agent 设置。
+ * 本地 agent 与智能体提供方（docs/local-agents.md；server/src/local-agents/service.ts）在界面上的数据：
+ * 对话里的任务卡片（有任务在跑时每 1.2 秒取一次）、环境的档位 / 工作区设置、提供方实例管理及 Bot 子代理授权。
  */
 
 const FALLBACK = "本地 agent 暂时不可用，请重试。";
+const PROVIDER_FALLBACK = "智能体提供方服务暂时不可用，请重试。";
 
 export const localAgentKeys = {
   all: ["local-agents"] as const,
@@ -29,6 +57,17 @@ export const localAgentKeys = {
   devices: () => ["local-agents", "device"] as const,
   device: (deviceId: string) => ["local-agents", "device", deviceId] as const,
   task: (taskId: string) => ["local-agents", "task", taskId] as const,
+  presets: () => ["local-agents", "presets"] as const,
+  acpRegistry: (query: string) =>
+    ["local-agents", "acp-registry", query] as const,
+  environments: () => ["local-agents", "environments"] as const,
+  environmentSettings: (envId: string) =>
+    ["local-agents", "environment-settings", envId] as const,
+  instancesAll: () => ["local-agents", "instances"] as const,
+  instances: (envId?: string) =>
+    ["local-agents", "instances", envId ?? "all"] as const,
+  botGrantsAll: () => ["local-agents", "bot-grant"] as const,
+  botGrant: (botId: string) => ["local-agents", "bot-grant", botId] as const,
 };
 
 export function useThreadLocalTasks(threadId: string | null | undefined) {
@@ -215,3 +254,237 @@ export function parseLocalAgentResult(
 }
 
 export { LOCAL_AGENT_RESULT_MARKER };
+
+// ── 智能体提供方实例、环境与 Bot 授权 API ─────────────────────────────
+
+export type EnvironmentSettingsState = {
+  settings: DeviceAgentSettings;
+  effectiveRoots: string[];
+  envRoots: string[];
+  online: boolean;
+  tasks: LocalAgentTaskView[];
+};
+
+export function agentEnvironmentsQueryOptions() {
+  return queryOptions({
+    queryKey: localAgentKeys.environments(),
+    queryFn: (): Promise<AgentEnvironmentSummary[]> =>
+      client("/api/local-agents/environments", "environments", {
+        fallback: PROVIDER_FALLBACK,
+      }),
+    staleTime: 5000,
+  });
+}
+
+export function useAgentEnvironments() {
+  return useQuery(agentEnvironmentsQueryOptions());
+}
+
+export function environmentSettingsQueryOptions(envId: string) {
+  return queryOptions({
+    queryKey: localAgentKeys.environmentSettings(envId),
+    queryFn: async (): Promise<EnvironmentSettingsState> =>
+      (
+        await client(
+          `/api/local-agents/environments/${encodeURIComponent(envId)}/settings`,
+          { fallback: PROVIDER_FALLBACK },
+        )
+      ).json(),
+    staleTime: 3000,
+  });
+}
+
+export function useEnvironmentSettings(envId: string | null | undefined) {
+  return useQuery({
+    ...environmentSettingsQueryOptions(envId ?? ""),
+    enabled: Boolean(envId),
+  });
+}
+
+export async function saveEnvironmentSettings(
+  envId: string,
+  patch: DeviceAgentPatch,
+): Promise<DeviceAgentSettings> {
+  return client<DeviceAgentSettings>(
+    `/api/local-agents/environments/${encodeURIComponent(envId)}/settings`,
+    "settings",
+    { method: "PUT", body: patch, fallback: PROVIDER_FALLBACK },
+  );
+}
+
+export async function probeAllEnvironmentInstances(
+  envId: string,
+): Promise<AgentInstanceView[]> {
+  return client<AgentInstanceView[]>(
+    `/api/local-agents/environments/${encodeURIComponent(envId)}/probe-all`,
+    "instances",
+    { method: "POST", fallback: PROVIDER_FALLBACK, timeoutMs: 60_000 },
+  );
+}
+
+export function agentInstancesQueryOptions(environmentId?: string) {
+  const qs = environmentId
+    ? `?environmentId=${encodeURIComponent(environmentId)}`
+    : "";
+  return queryOptions({
+    queryKey: localAgentKeys.instances(environmentId),
+    queryFn: (): Promise<AgentInstanceView[]> =>
+      client(`/api/local-agents/instances${qs}`, "instances", {
+        fallback: PROVIDER_FALLBACK,
+      }),
+    staleTime: 4000,
+  });
+}
+
+export function useAgentInstances(environmentId?: string) {
+  return useQuery(agentInstancesQueryOptions(environmentId));
+}
+
+export type CreateAgentInstanceInput = {
+  environmentId: string;
+  driver: AgentDriverKind;
+  name: string;
+  slug?: string;
+  description?: string;
+  enabled?: boolean;
+  exposeAsTool?: boolean;
+  config?: AgentDriverConfig;
+  envVars?: AgentEnvVarInput[];
+};
+
+export type UpdateAgentInstancePatch = {
+  name?: string;
+  slug?: string;
+  description?: string;
+  enabled?: boolean;
+  exposeAsTool?: boolean;
+  sortOrder?: number;
+  config?: AgentDriverConfig;
+  envVars?: AgentEnvVarInput[];
+};
+
+export async function createAgentInstance(
+  input: CreateAgentInstanceInput,
+): Promise<AgentInstanceView> {
+  return client<AgentInstanceView>("/api/local-agents/instances", "instance", {
+    method: "POST",
+    body: input,
+    fallback: PROVIDER_FALLBACK,
+    timeoutMs: 60_000,
+  });
+}
+
+export async function updateAgentInstance(
+  id: string,
+  patch: UpdateAgentInstancePatch,
+): Promise<AgentInstanceView> {
+  return client<AgentInstanceView>(
+    `/api/local-agents/instances/${encodeURIComponent(id)}`,
+    "instance",
+    { method: "PUT", body: patch, fallback: PROVIDER_FALLBACK },
+  );
+}
+
+export async function deleteAgentInstance(id: string): Promise<void> {
+  await client(`/api/local-agents/instances/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    fallback: PROVIDER_FALLBACK,
+  });
+}
+
+export async function probeAgentInstance(
+  id: string,
+): Promise<AgentInstanceView> {
+  return client<AgentInstanceView>(
+    `/api/local-agents/instances/${encodeURIComponent(id)}/probe`,
+    "instance",
+    { method: "POST", fallback: PROVIDER_FALLBACK, timeoutMs: 60_000 },
+  );
+}
+
+export type AcpRegistryResponse = {
+  entries: AcpRegistryEntry[];
+  fromRemote: boolean;
+};
+
+export function acpRegistryQueryOptions(query: string, refresh = false) {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set("q", query.trim());
+  if (refresh) params.set("refresh", "1");
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return queryOptions({
+    queryKey: localAgentKeys.acpRegistry(query.trim()),
+    queryFn: async (): Promise<AcpRegistryResponse> =>
+      (
+        await client(`/api/local-agents/acp-registry${qs}`, {
+          fallback: "无法加载 ACP 智能体目录。",
+          timeoutMs: 15_000,
+        })
+      ).json(),
+    staleTime: 60_000,
+  });
+}
+
+export type BotAgentGrantState = {
+  grant: BotAgentGrant;
+  instances: AgentInstanceView[];
+};
+
+export function botAgentGrantQueryOptions(botId: string) {
+  return queryOptions({
+    queryKey: localAgentKeys.botGrant(botId),
+    queryFn: async (): Promise<BotAgentGrantState> =>
+      (
+        await client(
+          `/api/local-agents/bots/${encodeURIComponent(botId)}/grants`,
+          { fallback: PROVIDER_FALLBACK },
+        )
+      ).json(),
+    staleTime: 4000,
+  });
+}
+
+export function useBotAgentGrant(botId: string | null | undefined) {
+  return useQuery({
+    ...botAgentGrantQueryOptions(botId ?? ""),
+    enabled: Boolean(botId),
+  });
+}
+
+export async function saveBotAgentGrant(
+  botId: string,
+  patch: Partial<
+    Pick<
+      BotAgentGrant,
+      | "mode"
+      | "instanceIds"
+      | "exposeNamedTools"
+      | "allowNestedSubagents"
+      | "maxDepth"
+    >
+  >,
+): Promise<BotAgentGrant> {
+  return client<BotAgentGrant>(
+    `/api/local-agents/bots/${encodeURIComponent(botId)}/grants`,
+    "grant",
+    { method: "PUT", body: patch, fallback: PROVIDER_FALLBACK },
+  );
+}
+
+export async function invalidateAgentProviderQueries(
+  queryClient: QueryClient,
+  environmentId?: string,
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: localAgentKeys.instancesAll() }),
+    queryClient.invalidateQueries({ queryKey: localAgentKeys.environments() }),
+    queryClient.invalidateQueries({ queryKey: localAgentKeys.botGrantsAll() }),
+    ...(environmentId
+      ? [
+          queryClient.invalidateQueries({
+            queryKey: localAgentKeys.environmentSettings(environmentId),
+          }),
+        ]
+      : []),
+  ]);
+}

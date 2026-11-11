@@ -16,7 +16,20 @@ import {
  * - 没有渲染器时 `ServerToolLine` 只有桌面宿主被拒（`isHostAccessRefusal`）会画成提示，其余是过程行。
  */
 
-export type ToolRenderer = { name: string; agentId?: string; render: unknown };
+export type ToolRenderer = {
+  name: string;
+  match?: (toolName: string) => boolean;
+  agentId?: string;
+  render: unknown;
+};
+
+export function isSubagentRunToolName(name: string): boolean {
+  return (
+    name === "device_agent_run" ||
+    name === "subagent_run" ||
+    /^agent_[a-z0-9_-]+$/i.test(name)
+  );
+}
 
 const lineOnly = new WeakSet<object>();
 
@@ -61,6 +74,19 @@ export function registerCardCheck(
  */
 export const ToolTurnEndedContext = createContext(false);
 
+/** 按工具名读取卡片判断函数（含具名子代理工具 `agent_<slug>` 映射到 `subagent_run`）。 */
+export function getCardCheck(
+  checks: CardChecks,
+  name: string,
+): CardCheck | undefined {
+  const direct = checks.get(name);
+  if (direct) return direct;
+  if (isSubagentRunToolName(name)) {
+    return checks.get("subagent_run") ?? checks.get("device_agent_run");
+  }
+  return undefined;
+}
+
 const UNFINISHED: Record<string, string> = {
   image_generate: "画图",
   image_edit: "改图",
@@ -69,10 +95,12 @@ const UNFINISHED: Record<string, string> = {
   render_ui: "生成界面",
   delegate_task: "交给后台",
   device_agent_run: "交给电脑",
+  subagent_run: "交给子代理",
 };
 
 /** 这一轮结束了、结果一直没来时，代替骨架的那一句。 */
 export function unfinishedToolText(name: string): string {
+  if (name.startsWith("agent_")) return "交给子代理没有完成";
   return `${UNFINISHED[name] ?? "这一步"}没有完成`;
 }
 
@@ -90,7 +118,9 @@ export function pickToolRenderer(
   name: string,
   agentId?: string,
 ): ToolRenderer | undefined {
-  const exact = renderers.filter((renderer) => renderer.name === name);
+  const exact = renderers.filter(
+    (renderer) => renderer.name === name || renderer.match?.(name) === true,
+  );
   return (
     exact.find((renderer) => renderer.agentId === agentId) ??
     exact.find((renderer) => !renderer.agentId) ??

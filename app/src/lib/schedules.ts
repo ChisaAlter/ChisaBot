@@ -1,33 +1,52 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { ScheduleEvent, ScheduleView } from "../../../shared/schedules";
 import { client } from "@/lib/client";
 import type { ScheduleEditPatch } from "@/lib/schedule-edit";
+import type { ScheduleEvent, ScheduleView } from "../../../shared/schedules";
 
 /** 定时任务 / 提醒（DESIGN.md §55，docs/schedules.md）。 */
 export const scheduleKeys = { all: ["schedules"] as const };
 
 /** 要显示的「下次运行」：只有在跑的任务才有。暂停 / 结束的即使旧数据里还留着 next_run_at 也不显示（CB-105）。 */
-export function shownNextRun(s: Pick<ScheduleView, "status" | "nextRunAt">): string | null {
+export function shownNextRun(
+  s: Pick<ScheduleView, "status" | "nextRunAt">,
+): string | null {
   return s.status === "active" ? s.nextRunAt : null;
 }
 
 export function schedulesQueryOptions() {
   return queryOptions({
     queryKey: scheduleKeys.all,
-    queryFn: ({ signal }): Promise<ScheduleView[]> => client("/api/schedules", "schedules", { fallback: "无法加载定时任务", signal }),
+    queryFn: ({ signal }): Promise<ScheduleView[]> =>
+      client("/api/schedules", "schedules", {
+        fallback: "无法加载定时任务",
+        signal,
+      }),
     refetchOnWindowFocus: "always",
     // 有任务在跑时勤快一点，看得到「运行中 → 已完成」。
-    refetchInterval: (query) => ((query.state.data ?? []).some((s) => s.running || s.lastStatus === "running") ? 3000 : 30_000),
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some(
+        (s) => s.running || s.lastStatus === "running",
+      )
+        ? 3000
+        : 30_000,
   });
 }
 
 /** 单个任务详情 + 运行记录（对话里到点行用）。CB-106 P3：超过 60s 的数据在挂载 / 窗口回到前台时重拉（全局默认关了 focus 重拉）。 */
 export const SCHEDULE_RUNS_STALE_MS = 60_000;
-export function scheduleRunsQueryOptions(scheduleId: string, runs: number, runsDefault = 20) {
+export function scheduleRunsQueryOptions(
+  scheduleId: string,
+  runs: number,
+  runsDefault = 20,
+) {
   return queryOptions({
     queryKey: [...scheduleKeys.all, scheduleId, "runs", runs] as const,
     queryFn: ({ signal }): Promise<ScheduleView> =>
-      client(`/api/schedules/${encodeURIComponent(scheduleId)}${runs > runsDefault ? `?runs=${runs}` : ""}`, "schedule", { fallback: "", signal }),
+      client(
+        `/api/schedules/${encodeURIComponent(scheduleId)}${runs > runsDefault ? `?runs=${runs}` : ""}`,
+        "schedule",
+        { fallback: "", signal },
+      ),
     enabled: Boolean(scheduleId),
     staleTime: SCHEDULE_RUNS_STALE_MS,
     refetchOnMount: true,
@@ -37,24 +56,52 @@ export function scheduleRunsQueryOptions(scheduleId: string, runs: number, runsD
   });
 }
 
-export function patchSchedule(id: string, body: { paused?: boolean; title?: string; instruction?: string; when?: ScheduleEditPatch["when"] }): Promise<ScheduleView> {
-  return client(`/api/schedules/${encodeURIComponent(id)}`, "schedule", { method: "PATCH", body, fallback: "保存失败，请重试" });
+export function patchSchedule(
+  id: string,
+  body: {
+    paused?: boolean;
+    title?: string;
+    instruction?: string;
+    agentInstanceId?: string | null;
+    when?: ScheduleEditPatch["when"];
+  },
+): Promise<ScheduleView> {
+  return client(`/api/schedules/${encodeURIComponent(id)}`, "schedule", {
+    method: "PATCH",
+    body,
+    fallback: "保存失败，请重试",
+  });
 }
 
 export async function runScheduleNow(id: string) {
-  await client(`/api/schedules/${encodeURIComponent(id)}/run`, { method: "POST", fallback: "运行失败，请重试" });
+  await client(`/api/schedules/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+    fallback: "运行失败，请重试",
+  });
 }
 
 export function skipScheduleNext(id: string): Promise<ScheduleView> {
-  return client(`/api/schedules/${encodeURIComponent(id)}/skip`, "schedule", { method: "POST", fallback: "跳过失败，请重试" });
+  return client(`/api/schedules/${encodeURIComponent(id)}/skip`, "schedule", {
+    method: "POST",
+    fallback: "跳过失败，请重试",
+  });
 }
 
 export async function deleteSchedule(id: string) {
-  await client(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE", fallback: "删除失败，请重试" });
+  await client(`/api/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    fallback: "删除失败，请重试",
+  });
 }
 
-export async function scheduleEvents(after: string, signal?: AbortSignal): Promise<{ events: ScheduleEvent[]; now: string }> {
-  const response = await client(`/api/schedules/events?after=${encodeURIComponent(after)}`, { fallback: "", ...(signal ? { signal } : {}) });
+export async function scheduleEvents(
+  after: string,
+  signal?: AbortSignal,
+): Promise<{ events: ScheduleEvent[]; now: string }> {
+  const response = await client(
+    `/api/schedules/events?after=${encodeURIComponent(after)}`,
+    { fallback: "", ...(signal ? { signal } : {}) },
+  );
   return (await response.json()) as { events: ScheduleEvent[]; now: string };
 }
 

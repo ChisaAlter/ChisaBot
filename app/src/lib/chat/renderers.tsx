@@ -26,6 +26,7 @@ export type ToolRenderProps<T = Record<string, unknown>> = {
 };
 export type RegisteredToolRenderer = {
   name: string;
+  match?: (toolName: string) => boolean;
   agentId?: string;
   /** Method syntax on purpose: each renderer narrows its own args; the registry holds them all. */
   render(props: ToolRenderProps): ReactNode;
@@ -72,6 +73,7 @@ export function useRegisteredToolRenderers() {
 }
 export function useRenderTool<S extends z.ZodType>(tool: {
   name: string;
+  match?: (toolName: string) => boolean;
   agentId?: string;
   parameters?: S;
   render: (props: ToolRenderProps<z.infer<S>>) => ReactNode;
@@ -80,7 +82,7 @@ export function useRenderTool<S extends z.ZodType>(tool: {
   const key = useMemo(() => Symbol(tool.name), [tool.name]);
   useEffect(
     () => registry?.register(key, tool as RegisteredToolRenderer),
-    [registry, key, tool.name, tool.agentId, tool.render],
+    [registry, key, tool.name, tool.match, tool.agentId, tool.render],
   );
 }
 function DrawTool({
@@ -137,7 +139,9 @@ export function useRenderToolCall() {
     };
   }) => {
     const exact = registry.filter(
-      (entry) => entry.name === toolCall.function.name,
+      (entry) =>
+        entry.name === toolCall.function.name ||
+        entry.match?.(toolCall.function.name) === true,
     );
     const renderer =
       exact.find((entry) => entry.agentId === scope?.agentId) ??
