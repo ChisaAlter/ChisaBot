@@ -1,18 +1,18 @@
 # 数据模型
 
-ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite（账号、邀请、会话）。启用 DSH 后，每账号的执行历史另存于 `CHISABOT_DSH_ROOT` 持久目录。本页会话表名按正在实施的 0067 / reader 4 说明；该命名迁移尚未发布。当前版本见[实施记录](pipeline-runs/20261108-assistant-production.md)，升级与兼容见[迁移说明](ops/upstream-removal.md)。
+ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite（账号、邀请、会话）。启用 DSH 后，每账号的执行源日志另存于 `CHISABOT_DSH_ROOT` 持久目录。数据库已完成 `0067` / `0068` 自有命名空间迁移（核心表名统一为 `chisabot_*`，reader 4）与废弃空表清理，存量卷与数据库身份兼容规则见[命名切换与存量资源兼容](ops/upstream-removal.md)。
 
 ## 1. 两种建表方式
 
-| 方式                                                                                             | 用在哪                                                                 | 回滚                                                                                         |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化 | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本                               |
-| **迁移**：`server/drizzle/NNNN_*.sql`（drizzle）                                                 | 当前业务表与显式版本化变更；0063 接管会话账本，0067 原地重命名会话表   | 记录和外键引用保留；0067之后要求reader4，回滚必须同时保留PostgreSQL与Session卷并使用兼容镜像 |
+| 方式                                                                                             | 用在哪                                                                                 | 回滚                                                                                           |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化                 | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本                                 |
+| **迁移**：`server/drizzle/NNNN_*.sql`（Drizzle）                                                 | 当前业务表与显式版本化变更；0063 接管会话账本，0067 / 0068 原地重命名表并清理废弃空表 | 记录和外键引用保留；0067 之后要求 reader 4，回滚必须同时保留 PostgreSQL 与 Session 卷并使用兼容镜像 |
 
-原则：**保留用户数据，显式迁移结构**。命名变更使用原地rename；功能移除不自动删除历史表或业务记录。
+原则：**保留现役用户数据，显式版本化迁移结构**。命名变更采用原地 `RENAME`，仅对确认已下线且无现役消费者的废弃空表通过显式迁移清理。
 所有用户数据都带 `user_id`（或经机器人 / 设备归属到人），多账号下按人隔离（[accounts.md](accounts.md)）。
 
-## 2. ChisaBot 自己的表（`chisabot_*`）
+## 2. ChisaBot 业务表（`chisabot_*`）
 
 0.1.142 的个人连接沿现有 `ensure()` 增加可空字段 `smtp_host / smtp_port / smtp_user / smtp_pass_enc / smtp_checked_at`，旧连接保持原值与 IMAP 用法。操作核对写入 `chisabot_tool_operations.result.reconciliation`，与对应会话后续命令同事务提交；工作流通知复用 `workflow_run_events` 与既有个人交付账本，不新增队列表。宿主状态保存于更新器的只读 `state/host-monitor.json`，通知交付仍由数据库账本去重。
 
@@ -27,7 +27,6 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot_dsh_runs`                                       | 运行来源、Host generation、源日志 baseline、分段 request ID、停止状态和恢复状态                    | `conversations/run-journal.ts`；迁移 0063     | DSH §7–8                                               |
 | `chisabot_tool_operations`                                | 工具调用身份、不可变参数、审批 ID、实际结果；回执未知时禁止自动重做                                | `conversations/tool-operations.ts`；迁移 0063 | DSH §9                                                 |
 | `chisabot_conversation_interactions`                      | 卡片问题、原 continuation、答复及原始答复输入；答复与后续工作入队同事务                            | `conversations/interactions.ts`；迁移 0063    | DSH §10                                                |
-| `chisabot_legacy_imports`                                 | 托管旧历史导入来源、原 thread 元数据和事件，关联保持原 ID 的本地线程                               | `conversations/legacy-import.ts`；迁移 0063   | DSH §14                                                |
 | `chisabot_bot_threads`                                    | 每个 (用户, 机器人) 当前的对话指针 + 历史对话；全端同步的依据                                      | `bot-threads.ts`                              | §42                                                    |
 | `chisabot_thread_inbox`                                   | 回答期间的消息与后台结果队列；Stop/失败后持久暂停，用户显式发送或撤回；HTTP 撤回预留终态防晚到提交 | `thread-inbox.ts`                             | §38、§108                                              |
 | `chisabot_thread_inbox_control`                           | 每线程暂停状态；行锁串行暂停、晚入队、认领和单条恢复；删线程/机器人一并清理                        | `thread-inbox.ts`                             | §108                                                   |
@@ -60,26 +59,9 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot_device_agent_settings` | 每台设备的本地 agent 档位（只读 / 工作区 / 完全访问）、隔离方式、网络开关 | `local-agents/service.ts` | §66    |
 | `chisabot_local_agent_tasks`     | 交给本地 agent 的任务、输出、diff、状态                                   | `local-agents/service.ts` | §66    |
 
-设备本身在 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`；`device_bot_access` 已不用（设备属于账号）。
+设备本身在 `devices`（迁移 0054；开机加列 `full_access_until`）和 `device_audit_events`。
 
-### 云端 Claude Code（已删除，CB-099，2026-10-26）
-
-功能代码已删除，下面这些表**没有 drop**（`CREATE TABLE IF NOT EXISTS` 也不会再执行），留着旧数据，以后可以手工清理。
-
-| 表                                                       | 用途                                                                                         | 代码                  | DESIGN   |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------- | -------- |
-| `chisabot_cloud_workspaces`                              | 云端工作区节点（哪台设备是云端节点、登录状态）                                               | `cloud-cc/service.ts` | §73      |
-| `chisabot_cc_workspaces`                                 | Claude Code 工作区（草稿 / GitHub 克隆 / 电脑文件夹；开机加列 `clone_state`、`clone_error`） | `cloud-cc/service.ts` | §73      |
-| `chisabot_cc_sessions`                                   | 会话（`cc/…` 分支；开机加列 `merged_at`、`pr_number`、`pr_url`）                             | `cloud-cc/service.ts` | §73      |
-| `chisabot_cc_messages` · `chisabot_cc_events`            | 会话消息与事件流                                                                             | `cloud-cc/service.ts` | §73      |
-| `chisabot_cc_permission_rules`                           | Claude Code 工具审批规则                                                                     | `cloud-cc/service.ts` | §73      |
-| `chisabot_cc_sync_bindings`                              | 电脑文件夹 ↔ 云端工作区的同步绑定                                                            | `cloud-cc/sync.ts`    | §73、§87 |
-| `chisabot_cc_leases`                                     | 同步租约（谁在写：电脑 / 云端；交接）                                                        | `cloud-cc/sync.ts`    | §73      |
-| `chisabot_cc_sync_conflicts` · `chisabot_cc_sync_events` | 冲突与同步事件                                                                               | `cloud-cc/sync.ts`    | §73      |
-
-开机清理：工作区行已不存在的同步绑定 / 租约 / 冲突会被删掉（#181）。
-
-### Hark 同款能力
+### 个人助理能力
 
 | 表                                                                                             | 用途                                                                                                                                                           | 代码                           | DESIGN  |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------- |
@@ -92,7 +74,8 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot_schedules` · `chisabot_schedule_runs`                                                | 定时任务与每次触发（`next_run_at` 比较并交换，多容器不重复触发）                                                                                               | `schedules/service.ts`         | §55     |
 | `chisabot_im_connections` · `chisabot_im_chats` · `chisabot_im_logs`                           | IM 连接（凭据加密）、每个 IM 会话（开机加列 `last_inbound`）、最近 100 条日志                                                                                  | `im/service.ts`                | §49     |
 | `chisabot_im_inbox` · `chisabot_im_outbox`                                                     | 0064 持久收发账本：账号/Bot/thread 身份、原消息信封、回复正文/分片、平台回执和状态；发送结果未知时保留记录供核对，不自动重发。连接删除后仍可按账号查询交付记录 | `im/delivery.ts`；迁移 0064    | DSH §13 |
-| `chisabot_browser_bookmarks` · `chisabot_browser_bookmark_seeds`                               | 每账号的浏览器收藏夹；种子行记录「已用旧起始页 5 个链接初始化过」（第一次 GET 会写入）                                                                         | `browser-bookmarks/service.ts` | §95     |
+| `chisabot_personal_sources` · `chisabot_personal_deliveries`                                   | 个人日历（ICS）、邮箱（IMAP/SMTP）数据源与本人通知持久去重交付账本（迁移 0065）                                                                                | `personal-sources/`            | §128    |
+| `chisabot_browser_bookmarks` · `chisabot_browser_bookmark_seeds`                               | 每账号的浏览器收藏夹；种子行记录「已用起始页默认链接初始化过」（第一次 GET 会写入）                                                                            | `browser-bookmarks/service.ts` | §95     |
 
 ### 模型与图片
 
@@ -106,36 +89,41 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 
 ## 3. 本地对话表（`chisabot_local_*`）
 
-本地会话与 DSH 展示投影共用这些表。0063 已登记原始结构；0067 将旧会话表及相关索引、约束和事件序列原地迁入当前命名，保留行、消息ID、执行状态和外键引用。`local-conversations.ts` 使用当前表名并保留幂等初始化。
+本地会话与 DSH 展示投影共用这些表。0063 已登记原始结构；0067 将旧会话表及相关索引、约束和事件序列原地迁入当前命名，0068 进一步将历史事件 JSONB 载荷中的遗留兼容键名归一。`server/src/conversations/` 使用当前表名并保留幂等初始化。
 
 | 表                       | 用途                                                                                                                        |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | `chisabot_local_threads` | 对话线程、展示快照与线程 lease；`snapshot_sequence` 标识快照包含到哪个事件。已有 DSH 执行重启时恢复观察，不能仅清锁重新派发 |
 | `chisabot_local_runs`    | 每一轮的运行记录（finished / error / interrupted / stopped）                                                                |
-| `chisabot_local_events`  | 持久产品事件和 AG-UI 兼容回放；DSH 源日志仍在 Session 卷                                                                    |
+| `chisabot_local_events`  | 持久产品事件和 AG-UI 流回放；DSH 源日志仍在 Session 卷                                                                      |
 
-迁移 0063 可在全新数据库和已执行运行时 `ensure()` 的数据库上执行：建表、索引使用 `IF NOT EXISTS`，新增列保留可空状态；旧快照缺失水位时按已存事件回填，新 DSH run 的 `initiator` 默认 `person`。现有非空水位、运行输入、消息 ID、审批状态不会被覆盖。0067检测到新旧两套会话表同时存在时会拒绝猜选；部署者须先核对数据来源。迁移与备份命令见 [DSH 运维](ops/dsh-runtime.md)。
+迁移 0063 可在全新数据库和已执行运行时 `ensure()` 的数据库上执行：建表、索引使用 `IF NOT EXISTS`，新增列保留可空状态；旧快照缺失水位时按已存事件回填，新 DSH run 的 `initiator` 默认 `person`。现有非空水位、运行输入、消息 ID、审批状态不会被覆盖。迁移与备份命令见 [DSH 运维](ops/dsh-runtime.md)。
 
-## 4. 当前业务表（节选）
+## 4. 核心基础业务表（节选）
 
-| 表                                                                                      | ChisaBot 怎么用                                            |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `users` · `user_roles` · `sessions`                                                     | 应用用户（单用户时 = 管理员；网关身份模式下朋友自动建行）  |
-| `agents` · `agent_profiles`                                                             | 机器人（迁移 0058 起用户建的一律私有）                     |
-| `channels` · `channel_agents` · `channel_memberships` · `intelligence_channel_mappings` | 频道聊天（唯一聊天路径；旧 `/bot` 线程第一次打开时建频道） |
-| `live_panels`                                                                           | 实时面板（迁移 0056；0057 加 `refresh_at`）                |
-| `devices` · `device_audit_events`                                                       | 设备与审计（迁移 0054）                                    |
-| `skills`                                                                                | 技能（ChisaBot 技能直接用这张表）                          |
-| `workflows` · `workflow_runs` · `workflow_run_events`                                   | 工作流（迁移 0055；默认隐藏）                              |
-| `enterprise_settings`                                                                   | 默认模型连接、备用模型                                     |
-| `audit_events`                                                                          | 活动记录                                                   |
-| `saved_logins` · `credentials`                                                          | 账号连接里保存的网站登录、模型密钥                         |
-| `computer_snapshot` · `computer_page_frame`                                             | 云端浏览器快照                                             |
-| `attachments`                                                                           | 附件（定时清理 `chisabot-zh-attachments.timer`）           |
+| 表                                                                                   | ChisaBot 怎么用                                                               |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `users` · `user_roles` · `sessions`                                                  | 应用用户（单用户时 = 管理员；网关身份模式下朋友自动建行）                     |
+| `agents` · `agent_profiles` · `agent_preferences`                                    | 机器人定义、提示词与默认偏好（迁移 0058 起用户新建的一律私有）                |
+| `channels` · `channel_agents` · `channel_memberships` · `chisabot_channel_mappings`  | 频道聊天与对话线程映射（唯一聊天路径；`chisabot_channel_mappings` 由 0068 重命名） |
+| `live_panels`                                                                        | 实时面板（迁移 0056；0057 加 `refresh_at`；0059 加直连数据源）                |
+| `devices` · `device_audit_events`                                                    | 设备与审计（迁移 0054）                                                       |
+| `skills`                                                                             | 技能（ChisaBot 技能直接用这张表）                                             |
+| `workflows` · `workflow_runs` · `workflow_run_events`                                | 工作流（迁移 0055；默认隐藏）                                                 |
+| `enterprise_settings`                                                                | 默认模型连接、备用模型                                                        |
+| `audit_events`                                                                       | 活动记录                                                                      |
+| `saved_logins` · `credentials`                                                       | 账号连接里保存的网站登录、模型密钥                                            |
+| `computer_snapshot` · `computer_page_frame`                                          | 云端浏览器快照                                                                |
+| `attachments`                                                                        | 附件（定时清理 `chisabot-zh-attachments.timer`）                              |
 
-早期瘦身记录中标记保留的历史表包括：`routines` / `routine_runs` / `routine_sweeps`、`responsibilities*`、`learning_*`、`scim_*`、`sso_providers`、
-`team_bot_*`、`group_*`、`delivery_*`、`push_devices`、`demonstrations`、`personal_memories`、`proactive_*`、`model_usage`、`voice_sessions`、
-`bot_panel_*` / `panel_*`（旧面板系统）等。后续功能可能复用其中部分表，不能据这份历史列表直接删除；清理前须核对现役消费者与恢复用途。
+### 已在 `0068` 迁移中清理移除的废弃空表
+
+以下早期遗留或已下线功能的废弃空表，已在迁移 `0068` 中统一清理移除（`DROP TABLE`）：
+
+- **已下线的云端 Claude Code（CB-099 下线）**：`chisabot_cloud_workspaces`、`chisabot_cc_workspaces`、`chisabot_cc_sessions`、`chisabot_cc_messages`、`chisabot_cc_events`、`chisabot_cc_permission_rules`、`chisabot_cc_sync_bindings`、`chisabot_cc_leases`、`chisabot_cc_sync_conflicts`、`chisabot_cc_sync_events`。
+- **早期过渡与上游遗留空表**：`chisabot_legacy_imports`（旧托管历史导入表）、`team_bot_*`、`proactive_*`、`demonstrations`、`organization_settings`、`memory_sources` 等无现役消费者的历史空表。
+
+其余被现役模块复用的早期表（如 `routines` 等）按实际消费者保留，不在未经核对前删除。
 
 ## 5. 登录网关（SQLite，`deploy/public/auth/`）
 

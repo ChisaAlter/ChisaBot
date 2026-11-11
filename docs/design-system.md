@@ -422,7 +422,7 @@ box-shadow: inset 0 0 0 1px var(--stroke-primary), /* 细描边，用 inset 不�
 - 用 main 的构建（`d2387db0`，界面和 `3856d360` 相同），在本机 Chrome 无头模式下跑，1440×900，所有 `/api` 都由本地假数据回答。
 - 从聊天页点账号卡，再点「设置」，用 CDP `Tracing`（`devtools.timeline`）录下来。
 - 「出现」= 外观设置的 DOM 插进页面；「画完」= 再等两帧 `requestAnimationFrame`。
-- 每种情况跑 3 次。脚本在 `C:\Users\48818\hark-redesign-shots\harness\settings-trace.mjs`，汇总在 `trace-sum.mjs`。
+- 每种情况跑 3 次。脚本在 `<本地工作目录>\hark-redesign-shots\harness\settings-trace.mjs`，汇总在 `trace-sum.mjs`。
 
 | 情况 | 点击 → 出现 | 点击 → 画完 | 主线程：脚本 / 样式 / 布局 / 绘制（ms） | 长任务 |
 |---|---|---|---|---|
@@ -527,7 +527,7 @@ box-shadow: inset 0 0 0 1px var(--stroke-primary), /* 细描边，用 inset 不�
 
 **怎么做的**：
 - 用同一个页面：桌面聊天页，有左栏、气泡、输入框，开着「个人资料」弹窗，1440×900。
-- 原型是在截图时往页面里注入 CSS，再在 localStorage 里设一张自定义壁纸，**没有提交进仓库**。第四版的原型 CSS 和主题数据在 Ayase 的 `C:\Users\48818\hark-redesign-shots\theme\proto4\v4\`（`proto.css`、`themes.json`；第三版在 `proto3\v3\`，第二版在 `proto2\v2\`），截图脚本是同目录上两级的 `harness\theme-shot.mjs`。
+- 原型是在截图时往页面里注入 CSS，再在 localStorage 里设一张自定义壁纸，**没有提交进仓库**。第四版的原型 CSS 和主题数据在本地 `<本地工作目录>\hark-redesign-shots\theme\proto4\v4\`（`proto.css`、`themes.json`；第三版在 `proto3\v3\`，第二版在 `proto2\v2\`），截图脚本是同目录上两级的 `harness\theme-shot.mjs`。
 
 **放在哪**：
 - 拼好的图在 `docs/images/theme-proposal/`，就是下面这 5 张，整个目录约 390 KB（391,522 字节）。2、3、4、5 都换成了第四版的图，1 没变。旧图已经替换掉，要看可以查 git 历史。

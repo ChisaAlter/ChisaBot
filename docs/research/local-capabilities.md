@@ -25,7 +25,7 @@
 已确认的本机执行入口（部署配置应允许替换，不能写死进产品代码）：
 
 ```text
-Codex: C:\Users\48818\Tools\codex\bin\codex.exe
+Codex: <用户目录>\Tools\codex\bin\codex.exe
 DSH Node: C:\软件\Whale Isle\resources\runtime\primary-runtime\dependencies\node\bin\node.exe
 DSH CLI: C:\软件\Whale Isle\resources\vendor\deepseek-harness\apps\cli\lib\bin.js
 Python: C:\AI\tools\python-3.12.7\python.exe
@@ -39,7 +39,7 @@ DSH CLI 的发行包名为 `@deepseek-ai/dsh`；当前安装的 launcher 提供 
 - Whale Isle 运行中的 Node 服务监听 loopback 3080；T3 Code 运行中的 3773/9223 属于该应用。不要把 9223 当作可供本次任务接管的 Chrome。
 - 盘点时 ChisaBot 3001、PostgreSQL 5432 未监听。新服务启动前仍须重新检查端口占用。
 - 仓库 `.env` 已配置数据库与加密键；`OPENAI_API_KEY`、`COMPOSIO_API_KEY` 为空。未读取数据库中的连接记录，因为数据库不可达。
-- `.env` 使用旧 `OPENBOT_*` 名称；[`shared/env-compat.ts`](../../shared/env-compat.ts) 在 [`server/src/index.ts`](../../server/src/index.ts) 最先加载，会映射为 `CHISABOT_*`。旧名称不是启动故障，不需要为了本任务迁移现有配置。
+- 盘点时 `.env` 曾含旧前缀名称，当时由 `shared/env-compat.ts`（后已在去上游印记收尾中移除）在 [`server/src/index.ts`](../../server/src/index.ts) 最先加载映射为 `CHISABOT_*`。
 - 实际数据库客户端是 Bun SQL + Drizzle，见 [`server/src/db/client.ts`](../../server/src/db/client.ts)。新任务中心应与既有数据库生命周期一致。
 
 本次只检查本机服务。仓库已有云端部署、Hermes 安装、设备节点与远程 Agent 代码；没有连接云端主机验证当前服务、数据或权限，不能据文档认定它们已为新任务中心就绪。
@@ -57,7 +57,7 @@ DSH CLI 的发行包名为 `@deepseek-ai/dsh`；当前安装的 launcher 提供 
 | 外部 SaaS | [`server/src/plugins/composio.ts`](../../server/src/plugins/composio.ts) | 已有 SDK 接入；当前本地环境未配置 Composio key，需实际账号授权后才能巡检 |
 | 技能与长期记忆 | [`docs/skills.md`](../skills.md)；[`server/src/memory-notes/service.ts`](../../server/src/memory-notes/service.ts) | 技能和个人记忆已有用户归属与存储；任务中心应引用这些存储，不新增相互漂移的个人档案副本 |
 | 定时与异常恢复 | [`server/src/schedules/service.ts`](../../server/src/schedules/service.ts)；[`docs/schedules.md`](../schedules.md) | 已有扫描、比较交换与失败暂停；主动感知可接入相同生命周期；已暂停任务不能随功能部署恢复 |
-| Hermes/ACP | [`examples/acp-agent/README.md`](../../examples/acp-agent/README.md) | 当前生产桥使用可信宿主上下文、运行绑定工具网关和稳定账本；通用 ACP 的权限回答不等于沙箱或完整宿主集成 |
+| Hermes/ACP（历史过渡） | `examples/acp-agent/README.md`（后已退役下线） | 当时生产桥使用可信宿主上下文、运行绑定工具网关和稳定账本；通用 ACP 的权限回答不等于沙箱或完整宿主集成 |
 
 工作树与副本用于变更隔离，不能当作 OS 安全沙箱。新执行器需要分别声明能做的事、所需权限、可用工具、实际认证和网络边界，不能只凭安装存在就判为 L5。
 

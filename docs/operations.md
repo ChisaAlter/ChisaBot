@@ -4,7 +4,7 @@
 
 ## 发布前与升级后
 
-按部署说明备份数据库、凭据加密密钥及必要配置，记录当前镜像版本。构建并验证自己的 ChisaBot 镜像，使用版本或摘要固定发布；上游 ChisaBot 镜像不包含本分支全部中文、自托管和模型选择改动。
+按部署说明备份数据库、DSH Session 持久目录、凭据加密密钥及必要配置，记录当前镜像版本。构建并验证自己的 ChisaBot 镜像，使用版本标签或镜像摘要固定发布。
 
 至少验证以下实际流程：
 
@@ -56,13 +56,13 @@
 
 ## 遥测与外部能力
 
-自托管并不自动关闭所有外部访问。按环境设置 `COPILOTKIT_TELEMETRY_DISABLED=true`、`DO_NOT_TRACK=1`，按需关闭联网插件及生成界面能力。`CHISABOT_GENERATIVE_UI=false` 可关闭可能从 CDN 加载库的生成界面功能。
+自托管并不自动关闭所有外部访问。按环境设置 `SL_ENABLED=false`、`DO_NOT_TRACK=1`，按需关闭联网插件及生成界面能力。`CHISABOT_GENERATIVE_UI=false` 可关闭生成式卡片界面能力。
 
 当模型本身来自第三方 API，其推理请求会离开服务器；如需本地推理，接入自己运行的兼容模型服务。参见 [能力边界](chisabot.md)。
 
 ## 验证代码
 
-自动 [ChisaBot checks](../.github/workflows/chisabot.yml) 检查汉化、Web 构建、前后端类型、模型/权限/运行相关测试、模型选择器和网页登录网关。它是明确范围的检查，不代表整个上游测试集已通过。继承的 [完整上游 CI](../.github/workflows/ci.yml) 与 [桌面检查](../.github/workflows/desktop.yml) 保留为手动检查；上游发布流程限制在原上游仓库，不会因私有分支推送而发布公共镜像。
+自动 [ChisaBot CI](../.github/workflows/chisabot.yml) 检查中文化规范、Web 构建、前后端与 DSH 类型/单测、数据库迁移集成测试、信任边界红线以及网页登录网关；客户端安装包构建与签名发布由 [Release 工作流](../.github/workflows/release.yml) 执行。
 
 模型相关验证入口：
 

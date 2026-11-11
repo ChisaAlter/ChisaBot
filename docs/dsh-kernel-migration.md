@@ -1,6 +1,8 @@
 # ChisaBot 采用 DSH 主内核的完整设计与迁移方案
 
-日期：2026-11-07 · 设计基线：v1 · 状态更新 2026-11-08：DSH 已上线；客户端进度与证据见[实施记录](pipeline-runs/20261107-dsh-migration.md)。
+> **状态：已实施完成（`v0.1.138`–`v0.1.143`）**。DSH 已作为 ChisaBot 唯一内置执行内核正式上线，旧 `/api/copilotkit` 兼容路由与过渡内核已在后续收尾中彻底移除；上线验收证据见[实施记录](pipeline-runs/20261107-dsh-migration.md)。本文档作为架构设计与迁移历史档案保留。
+
+日期：2026-11-07 · 设计基线：v1 · 状态更新：已实施完成（v0.1.138–v0.1.143）。
 
 用户发出一个请求后，应能持续看到正文、工具进度和需要自己决定的事项；关闭窗口、换设备或短暂断网不会让任务重新执行；点击停止后，当前执行结束，尚未处理的补话留在原处。旧对话、设备、文件、记忆、模型设置和主动任务仍然可用。
 
@@ -920,7 +922,7 @@ Hermes/builtin 旧执行路径只有在所有活动绑定、审批恢复、后�
 
 ### 当前项目源码与既有合同
 
-- [当前运行器](../server/src/local-conversations.ts)、[内核装配](../server/src/copilot.ts)、[无头回合](../server/src/turns/run-turn.ts)、[服务装配入口](../server/src/index.ts)。
+- [当前会话运行器](../server/src/conversations/)、原内核装配 `server/src/copilot.ts`（已移除）、[无头回合](../server/src/turns/run-turn.ts)、[服务装配入口](../server/src/index.ts)。
 - [宿主工具桥](../server/src/agents/runtime-tools.ts)、[补话队列](../server/src/thread-inbox.ts)、[历史编辑](../server/src/thread-truncate.ts)、[通用审批类型](../server/src/approvals/types.ts)、[确认卡片](confirmations.md)。
 - [任务中心运行](../server/src/task-center/runtime.ts)、[任务中心合同](../shared/task-center.ts)、[后台 worker](../server/src/workers/service.ts)。
 - [模型设置](models.md)、[账号](accounts.md)、[单聊天路径 ADR](adr/0013-single-chat-path.md)、[聊天可靠性](chat-reliability.md)、[在线更新](online-update.md)、[部署 Compose](../deploy/compose.yaml)。

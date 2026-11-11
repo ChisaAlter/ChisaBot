@@ -46,7 +46,7 @@ ChisaBot 需求多、并行开发多，所以每个改动都按同一套流程�
 2. 只对自己的分支 `--force-with-lease`；**永远不要 force-push `main`**，不要删别人的分支 / tag。
 3. GitHub 上 merge commit 合并。
 4. 需要上线的：`deploy-serial.sh <合并提交>`，然后冒烟检查（[docs/ops/deploy.md](docs/ops/deploy.md)）。纯文档 PR 不部署。
-5. 客户端（PC / Android）发版见 [docs/releasing.md](docs/releasing.md)。
+5. 客户端（PC / Android）发版见 [docs/release.md](docs/release.md)。
 
 ## 4. 标签
 

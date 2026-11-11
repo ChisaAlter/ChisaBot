@@ -1,5 +1,7 @@
 # ChisaBot 聊天前端迁移清单：DSH 与去除 CopilotKit
 
+> **状态：已完成迁移（历史调研档案）**。旧 `app/src/lib/copilot/*` 目录已彻底移除并替换为自有会话层 `app/src/lib/conversations/*`。下文提及的旧文件路径仅作为迁移前基线对照保留。
+
 核对日期：2026-11-07。对象为 `fix/chat-reliability` 工作树中的实际前端及共享类型，包含本轮尚未提交的气泡与滚动修复。本笔记给主设计提供前端事实、替换面和验收场景；服务端执行与 DSH 官方契约由主设计及其他资料负责。
 
 ## 结论：保留界面，替换状态和执行归属
@@ -13,7 +15,7 @@
 | 现有入口                                                                                                          | 当前职责                                                                                                             | 迁移处置                                                                 |
 | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [`app/src/components/layout/authed-shell.tsx`](../../app/src/components/layout/authed-shell.tsx) 的 `ChatCopilot` | 在已认证应用中懒加载全局聊天 Provider                                                                                | 换为自有聊天作用域/渲染器 Provider；继续保持聊天代码按需加载             |
-| [`app/src/lib/copilot/provider.tsx:52`](../../app/src/lib/copilot/provider.tsx) 的 `CopilotProvider`              | `/api/copilotkit`、cookie 凭据、错误回调、所有工具注册、ActiveBot                                                    | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
+| `app/src/lib/copilot/provider.tsx:52` 的 `CopilotProvider`                                                        | `/api/copilotkit`、cookie 凭据、错误回调、所有工具注册、ActiveBot                                                    | 后端接口仍走同源登录态；将执行注册移到服务器，将纯展示注册移到本地注册表 |
 | [`channel-chat.tsx:393`](../../app/src/components/channels/channel-chat.tsx) 的 `ChannelChat`                     | `channel:${channel.id}` 本地 agent、`runtimeAgentId`、`threadId`；发消息、同步、恢复、停止、编辑重发、队列和状态补偿 | 改为消费一份 thread-scoped 会话状态；容器协调 UI，不再直接改 SDK Agent   |
 | [`conversation-view.tsx:28`](../../app/src/components/channels/conversation-view.tsx) 的 `ConversationView`       | 接收 messages、busy/pending/stopping、提交/停止、草稿与队列回调；组织输入与转录区                                    | 保留为呈现入口，去掉 `Message`、`Attachment` 的 SDK 类型依赖             |
 | [`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx)                                    | 消息投影、过程折叠、气泡、工具/活动卡、确认/审批、无回答状态、历史挂载与滚动                                         | 继续使用现有呈现算法；把 chat context、工具注册和活动渲染替换为自有接口  |
@@ -36,7 +38,7 @@
 - 只有卡片而没有文字也可能是完整交付，不能一律报“没有回答”；失败或消失的卡片不能算成功。
 - 新话题首条消息和卡片按钮的提问走同一个 admission 模块；不允许它们绕过正在执行/排队语义。
 
-证据：[`channel-chat.tsx:1180`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1260`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1440`](../../app/src/components/channels/channel-chat.tsx)、[`tool-renderers.ts`](../../app/src/lib/copilot/tool-renderers.ts)。
+证据：[`channel-chat.tsx:1180`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1260`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1440`](../../app/src/components/channels/channel-chat.tsx)、`app/src/lib/copilot/tool-renderers.ts`。
 
 ### 恢复不能重复拼接流
 
@@ -51,7 +53,7 @@
 
 具体 DSH envelope 字段由后端 Adapter 固定，浏览器不直接 import DSH runtime 类型。现有 AG-UI 回放补丁保留在旧历史/旧内核 Adapter 内，完成 DSH 切换后从主聊天路径退休。
 
-证据：[`use-conversation-sync.ts:109`](../../app/src/lib/copilot/use-conversation-sync.ts)、[`thread-sync.ts`](../../app/src/lib/copilot/thread-sync.ts)、[`thread-messages.ts:90`](../../app/src/lib/copilot/thread-messages.ts)、[`transcript-cache.ts`](../../app/src/lib/copilot/transcript-cache.ts)。
+证据：`app/src/lib/copilot/use-conversation-sync.ts:109`、`app/src/lib/copilot/thread-sync.ts`、`app/src/lib/copilot/thread-messages.ts:90`、`app/src/lib/copilot/transcript-cache.ts`。
 
 ## 3. 工具执行与卡片展示必须拆开
 
@@ -61,7 +63,7 @@
 
 `ToolRendererRegistry` 应按 wire tool name 注册可见呈现，输入稳定的 `{ callId, name, arguments, result, phase, threadId, botId, attemptId }`。展示契约要包括：是否仅为过程行、能否形成有效交付卡、结束后无结果时如何显示、未知工具的通用行。已有 `pickToolRenderer`、`registeredCardChecks`、`ToolTurnEndedContext` 与 `ToolRenderBoundary` 提供可复用逻辑。
 
-来源：[`provider.tsx:68`](../../app/src/lib/copilot/provider.tsx)、[`tool-renderers.ts:90`](../../app/src/lib/copilot/tool-renderers.ts)、[`chat-transcript.tsx:2889`](../../app/src/components/channels/chat-transcript.tsx)。
+来源：`app/src/lib/copilot/provider.tsx:68`、`app/src/lib/copilot/tool-renderers.ts:90`、[`chat-transcript.tsx:2889`](../../app/src/components/channels/chat-transcript.tsx)。
 
 ### 3.2 前端工具执行会影响“整轮结束”的定义
 
@@ -73,7 +75,7 @@
 
 必须保留调用归属 `actor/bot/thread/run/toolCall`，不能使用“当前屏幕上的 Bot”作为执行身份；切换对话后，原来的工具仍属于原 Bot。
 
-来源：[`approval-tools.tsx:85`](../../app/src/lib/copilot/approval-tools.tsx)、[`approval-context.ts:18`](../../app/src/lib/copilot/approval-context.ts)、[`computer-tools.tsx`](../../app/src/lib/copilot/computer-tools.tsx)、[`channel-chat.tsx:1000`](../../app/src/components/channels/channel-chat.tsx)。
+来源：`app/src/lib/copilot/approval-tools.tsx:85`、`app/src/lib/copilot/approval-context.ts:18`、`app/src/lib/copilot/computer-tools.tsx`、[`channel-chat.tsx:1000`](../../app/src/components/channels/channel-chat.tsx)。
 
 ### 3.3 Gallery、技能创作和 HTML 沙箱不是纯工具卡
 
@@ -83,7 +85,7 @@
 
 建议让已发布 HTML 组件使用专门的 sandbox iframe 呈现模块，沿用现有发布和组件授权；明确来源校验与消息协议，不让沙箱直接调用主页面的模型/工具。该模块必须覆盖聊天、组件列表预览、单组件管理预览三个消费者。json-render 的 `render_ui` 保留现有校验与 React 注册表，无需换成 DSH 的网页组件。
 
-来源：[`gallery-tools.tsx:141`](../../app/src/lib/copilot/gallery-tools.tsx)、[`skill-tools.tsx:165`](../../app/src/lib/copilot/skill-tools.tsx)、[`sandboxed-tools.tsx:118`](../../app/src/lib/copilot/sandboxed-tools.tsx)、[`component-preview.tsx:80`](../../app/src/components/component-preview.tsx)、[`routes/_authed/admin/components/index.tsx`](../../app/src/routes/_authed/admin/components/index.tsx)、[`routes/_authed/admin/components/$name.tsx`](../../app/src/routes/_authed/admin/components/$name.tsx)。
+来源：`app/src/lib/copilot/gallery-tools.tsx:141`、`app/src/lib/copilot/skill-tools.tsx:165`、`app/src/lib/copilot/sandboxed-tools.tsx:118`、[`component-preview.tsx:80`](../../app/src/components/component-preview.tsx)、[`routes/_authed/admin/components/index.tsx`](../../app/src/routes/_authed/admin/components/index.tsx)、[`routes/_authed/admin/components/$name.tsx`](../../app/src/routes/_authed/admin/components/$name.tsx)。
 
 ## 4. 审批、确认和队列的产品契约
 
@@ -103,7 +105,7 @@
 
 迁移推荐让新发送合同同时支持文本、附件引用和技能引用，队列持久归服务器；本地只保存尚未提交的草稿和失败项。这是明确的目标改进，不是当前已具备的行为。停止后的 paused 队列保留为产品语义，不能直接照搬 DSH cancel 默认行为。
 
-来源：[`confirm-card.tsx:235`](../../app/src/components/chat/confirm-card.tsx)、[`approval-tools.tsx:170`](../../app/src/lib/copilot/approval-tools.tsx)、[`use-thread-inbox.ts:14`](../../app/src/lib/copilot/use-thread-inbox.ts)、[`queued-messages.tsx:11`](../../app/src/components/chat/queued-messages.tsx)、[`conversation-view.tsx:70`](../../app/src/components/channels/conversation-view.tsx)、[`channel-chat.tsx:1836`](../../app/src/components/channels/channel-chat.tsx)。
+来源：[`confirm-card.tsx:235`](../../app/src/components/chat/confirm-card.tsx)、`app/src/lib/copilot/approval-tools.tsx:170`、`app/src/lib/copilot/use-thread-inbox.ts:14`、[`queued-messages.tsx:11`](../../app/src/components/chat/queued-messages.tsx)、[`conversation-view.tsx:70`](../../app/src/components/channels/conversation-view.tsx)、[`channel-chat.tsx:1836`](../../app/src/components/channels/channel-chat.tsx)。
 
 ## 5. 停止、重试和编辑必须以服务端事实驱动
 
@@ -111,7 +113,7 @@
 
 重试区分未接收、已接收但未完成、已发生外部副作用三类。最后一类不自动重演工具。普通重新生成和编辑目前先由服务端截断旧版本，再同步本地消息，附件仍保留；其他设备按 revision 重建。DSH 的编辑/分支实现须由主设计确定，但前端保留“原记录可追溯、当前分支显示一致、旧流不能写入新版本”的契约。
 
-来源：[`channel-chat.tsx:1699`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1732`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1770`](../../app/src/components/channels/channel-chat.tsx)、[`regenerate.ts`](../../app/src/lib/copilot/regenerate.ts)、[`connection-drop.ts`](../../app/src/lib/copilot/connection-drop.ts)。
+来源：[`channel-chat.tsx:1699`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1732`](../../app/src/components/channels/channel-chat.tsx)、[`channel-chat.tsx:1770`](../../app/src/components/channels/channel-chat.tsx)、`app/src/lib/copilot/regenerate.ts`、`app/src/lib/copilot/connection-drop.ts`。
 
 ## 6. 附件、Markdown 和历史形态
 
@@ -123,7 +125,7 @@
 
 本轮修复应成为新前端的初始基线：所有可见 assistant 正文进入同一套气泡；普通多标题 Markdown 不自动变 doc 卡；围栏中的指令示例按代码保留；标题与代码组合仍有气泡底；idle 时不创建弹性留白；跟底平滑滚动遵守 reduced motion。换内核不会替代这些修复。
 
-来源：[`composer/attachments.ts`](../../app/src/components/channels/composer/attachments.ts)、[`composer/composer.tsx`](../../app/src/components/channels/composer/composer.tsx)、[`chat-messages.ts`](../../app/src/components/channels/chat-messages.ts)、[`thread-messages.ts`](../../app/src/lib/copilot/thread-messages.ts)、[`bot-bubbles.tsx`](../../app/src/components/chat/bot-bubbles.tsx)、[`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx) 当前 diff。
+来源：[`composer/attachments.ts`](../../app/src/components/channels/composer/attachments.ts)、[`composer/composer.tsx`](../../app/src/components/channels/composer/composer.tsx)、[`chat-messages.ts`](../../app/src/components/channels/chat-messages.ts)、`app/src/lib/copilot/thread-messages.ts`、[`bot-bubbles.tsx`](../../app/src/components/chat/bot-bubbles.tsx)、[`chat-transcript.tsx`](../../app/src/components/channels/chat-transcript.tsx) 当前 diff。
 
 ## 7. 建议的前端模块
 

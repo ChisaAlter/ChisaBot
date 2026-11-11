@@ -173,7 +173,7 @@ rather than handed an empty string it would fill in from memory.
 
 ## See also
 
-- [Architecture](../chisabot-architecture.md) — where plugins, grants, policy and audit sit.
+- [Architecture](../architecture.md) — where plugins, grants, policy and audit sit.
 - [Configuration](../configuration.md) — `CHISABOT_PUBLIC_URL`, `CHISABOT_APP_URL`,
   `KEY_ENCRYPTION_KEY`.
 - [Google Drive API](https://developers.google.com/workspace/drive/api/reference/rest/v3) — the REST

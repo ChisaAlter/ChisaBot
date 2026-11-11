@@ -88,7 +88,7 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 
 好友包 `TRUSTED_ORIGINS`：**仅** `http://localhost…` / `http://127.0.0.1…`；禁止 https 公网与局域网 Origin（公网 Origin 在网关层）。
 
-共享 Docker 网（`openbot_magpie`、以及应用挂上的其它用户网如 `newapi_*`）：同网容器**默认**可 TCP 到应用容器 `:3001`。
+共享 Docker 网（`chisabot_magpie`、以及应用挂上的其它用户网如 `newapi_*`）：同网容器**默认**可 TCP 到应用容器 `:3001`。
 
 | 方向 | 策略（v0.1.39） |
 |------|----------------|
@@ -112,7 +112,7 @@ sh scripts/ops/isolate-sidecar-app.sh --verify   # Magpie!-app 超时；App->mag
 1. **同桥流量要进 iptables**：必须 `br_netfilter` + `net.bridge.bridge-nf-call-iptables=1`（`--apply` 会 modprobe 并写 `/etc/sysctl.d/99-chisabot-sidecar-iso.conf`）。未开时 DROP 规则存在但计数永远为 0。
 2. **部署**：`deploy-serial.sh` 在镜像切换后默认 `--apply` + `--verify`（失败退出 8）。`CHISABOT_ISOLATE_SIDECAR=skip` 可跳过（不推荐）。
 3. **开机**：安装 `deploy/magpie-isolate.service`（`systemctl enable --now chisabot-magpie-isolate`）；规则在 Docker 重启后会丢，靠该 oneshot / 每次 deploy-serial 重放。
-4. **可选更硬拓扑（人工）**：把应用从 `openbot_magpie` 卸下，改用 `host.docker.internal:3425/3430` 打 Magpie 的 loopback 发布口——要改生产 `.env` / 库内模型 URL，本批**不**强制，以免打断 live Magpie↔ChisaBot。
+4. **可选更硬拓扑（人工）**：把应用从 `chisabot_magpie` 卸下，改用 `host.docker.internal:3425/3430` 打 Magpie 的 loopback 发布口——要改生产 `.env` / 库内模型 URL，本批**不**强制，以免打断 live Magpie↔ChisaBot。
 
 ## 6. 部署时别踩的坑
 
