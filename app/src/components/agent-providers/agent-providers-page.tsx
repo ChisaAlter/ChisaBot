@@ -565,7 +565,10 @@ export function AgentProvidersPage() {
           </div>
 
           {/* T3 Code 风格双栏主体卡片 */}
-          <div className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-2xl border border-border/80 bg-card/75 shadow-xs backdrop-blur-md md:grid-cols-[270px_minmax(0,1fr)]">
+          <div
+            className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-2xl border border-border/80 bg-card/75 shadow-xs backdrop-blur-md md:grid-cols-[270px_minmax(0,1fr)]"
+            data-setting-item="agent-providers.agent-provider-instances"
+          >
             {/* 左栏：提供方实例列表 */}
             <div className="flex flex-col justify-between border-b border-border/70 bg-muted/25 md:border-r md:border-b-0">
               <div className="flex flex-col divide-y divide-border/50">
@@ -1509,7 +1512,10 @@ function InstanceDetailPane({
         </div>
 
         {/* 环境变量区块（对齐 T3 Code 底部「环境」，支持 AES-GCM 敏感加密存储） */}
-        <div className="flex flex-col gap-3 py-5">
+        <div
+          className="flex flex-col gap-3 py-5"
+          data-setting-item="agent-providers.agent-provider-env"
+        >
           <div className="flex items-center justify-between">
             <div>
               <h4 className="text-sm font-semibold">{"环境"}</h4>
