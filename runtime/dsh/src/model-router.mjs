@@ -95,6 +95,41 @@ export class ModelBreakers {
 const breakerKey = (candidate) =>
   candidate.breakerKey ?? `${candidate.provider}\u0000${candidate.model}`;
 
+export const isLocalPrivacyGateFailure = (failure) =>
+  /\bprivacy-gate:/i.test(String(failure?.message ?? ""));
+
+function stripPriorRejectedImages(messages) {
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "user") {
+      lastUserIndex = i;
+      break;
+    }
+  }
+  if (lastUserIndex <= 0) return messages;
+  return messages.map((message, index) => {
+    if (
+      index >= lastUserIndex ||
+      message?.role !== "user" ||
+      !Array.isArray(message.content) ||
+      !message.content.some((part) => part?.type === "image")
+    ) {
+      return message;
+    }
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part?.type === "image"
+          ? {
+              type: "text",
+              text: "[上一轮图片未发送：网关本地隐私脱敏仅支持文字]",
+            }
+          : part,
+      ),
+    };
+  });
+}
+
 function routeFailure(failure, choice, index) {
   // PiAi leaves HTTP 404/410 as PI_AI_ERROR. A stale-but-explicit model route is a
   // missing candidate, so another configured candidate may still answer this request.
@@ -126,6 +161,7 @@ export class ChisaModelRouter extends LlmAdapter {
     this.ctx = ctx;
     this.routes = new Map();
     this.breakers = new ModelBreakers();
+    this.privacyBlockedSessions = new Set();
   }
 
   bind(id, input, runId) {
@@ -276,6 +312,15 @@ export class ChisaModelRouter extends LlmAdapter {
               : prepared;
           const session =
             options.sessionId && ctx.sessions.get(options.sessionId);
+          const privacyBlocked = Boolean(
+            (options.sessionId &&
+              router.privacyBlockedSessions.has(options.sessionId)) ||
+              session
+                ?.snapshotEvents?.()
+                .some((event) => event.type === "plugin:chisabot/privacy-gate"),
+          );
+          if (privacyBlocked && options.sessionId)
+            router.privacyBlockedSessions.add(options.sessionId);
           if (session) {
             appendPluginRecord(session, "plugin:chisabot/model-route", {
               routeId: id,
@@ -315,7 +360,10 @@ export class ChisaModelRouter extends LlmAdapter {
               : undefined;
           try {
             // Native replay state belongs to the actual provider, never to a logical route.
-            const messages = options.messages.map((message) =>
+            const sourceMessages = privacyBlocked
+              ? stripPriorRejectedImages(options.messages)
+              : options.messages;
+            const messages = sourceMessages.map((message) =>
               message.role === "assistant" && message.source?.replayState
                 ? {
                     ...message,
@@ -365,6 +413,21 @@ export class ChisaModelRouter extends LlmAdapter {
                 } else {
                   if (chunk.reason?.kind !== "error")
                     router.breakers.ok(route.keys[position]);
+                  else if (isLocalPrivacyGateFailure(chunk.reason.failure)) {
+                    if (options.sessionId)
+                      router.privacyBlockedSessions.add(options.sessionId);
+                    if (session && !privacyBlocked) {
+                      appendPluginRecord(
+                        session,
+                        "plugin:chisabot/privacy-gate",
+                        {
+                          routeId: id,
+                          runId: route.runId,
+                        },
+                      );
+                      await ctx.sessions.flush(session);
+                    }
+                  }
                   const { replayState: _privateReplay, ...safe } = chunk;
                   yield safe.reason.kind === "error"
                     ? {
@@ -406,6 +469,9 @@ export class ChisaModelRouter extends LlmAdapter {
     // A first-output deadline already waited the whole budget on this model: switch now.
     const deadline = route.firstOutputExpired === route.index;
     route.firstOutputExpired = -1;
+    // Shared gateway local policy refusal (e.g. Magpie privacy-gate on image_url):
+    // neither penalize the healthy model's breaker nor loop over backup models on the same gateway.
+    if (isLocalPrivacyGateFailure(failure)) return false;
     // TIMEOUT never retries the same model (QA511 P2): a silent hang must end on the
     // first-output deadline, not burn another provider request timeout on the same candidate.
     if (

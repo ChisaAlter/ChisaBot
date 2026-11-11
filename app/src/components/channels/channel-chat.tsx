@@ -13,6 +13,7 @@ import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { splitChatOrigin } from "@/components/channels/chat-origin";
 import {
   type ComposerDraft,
   toAgentOptions,
@@ -52,6 +53,7 @@ import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
 import {
   composerTargetPath,
   currentChatTargetPath,
+  dispatchComposerPrefill,
 } from "@/lib/chat/quote-event";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import {
@@ -102,6 +104,7 @@ import {
 import { afterMs, joinWithin } from "@/lib/conversations/join-thread";
 import {
   contentText,
+  isEditableUserText,
   lastUserIndex,
   MessageActionsContext,
   type TruncateMode,
@@ -1950,16 +1953,83 @@ export function ChannelChat({
       .current(user.id, "regenerate", user.content as Message["content"])
       .catch(reportRetryRefusal);
   }, [reportRetryRefusal]);
-  const editAndResend = useCallback(async (messageId: string, text: string) => {
-    const user = agentRef.current.messages.find(
-      (message) => message.id === messageId,
-    );
-    if (!user || user.role !== "user")
-      throw new Error("这条消息已经不在了，刷新看看。");
-    const content = withEditedText(user.content, text);
-    if (content === null) throw new Error("消息不能是空的。");
-    await resendRef.current(messageId, "edit", content as Message["content"]);
+  const editAndResend = useCallback(
+    async (
+      messageId: string,
+      text: string,
+      removedPartIndices?: ReadonlySet<number>,
+    ) => {
+      const user = agentRef.current.messages.find(
+        (message) => message.id === messageId,
+      );
+      if (!user || user.role !== "user")
+        throw new Error("这条消息已经不在了，刷新看看。");
+      const content = withEditedText(user.content, text, removedPartIndices);
+      if (content === null) throw new Error("消息不能是空的。");
+      await resendRef.current(messageId, "edit", content as Message["content"]);
+    },
+    [],
+  );
+  const withdrawFrom = async (fromMessageId: string) => {
+    if (turnsRef.current > 0) throw new Error("机器人正在回答，等它说完再试。");
+    resendingRef.current = true;
+    try {
+      await syncControl.current.yieldForSend();
+      if (turnsRef.current > 0 || agentRef.current.isRunning)
+        throw new Error("机器人正在回答，等它说完再试。");
+      const target = agentRef.current;
+      const at = target.messages.findIndex(
+        (message) => message.id === fromMessageId,
+      );
+      const user = at >= 0 ? target.messages[at] : undefined;
+      const rawText =
+        user && user.role === "user" ? contentText(user.content) : "";
+      const restoredText = isEditableUserText(rawText)
+        ? (splitChatOrigin(rawText)?.text ?? rawText).trim()
+        : "";
+      try {
+        await truncateConversation(channel.threadId, fromMessageId, "withdraw");
+      } catch (error) {
+        const missingOnServer =
+          error instanceof Error && /不在对话里|已经不在了/.test(error.message);
+        if (!missingOnServer || at < 0) throw error;
+      }
+      const latestTarget = agentRef.current;
+      const latestAt = latestTarget.messages.findIndex(
+        (message) => message.id === fromMessageId,
+      );
+      if (latestAt >= 0)
+        latestTarget.setMessages(
+          latestTarget.messages.slice(
+            0,
+            latestAt,
+          ) as typeof latestTarget.messages,
+        );
+      turnFailure.current = null;
+      setRunError(null);
+      setLocalStops((previous) => {
+        if (!previous.has(fromMessageId)) return previous;
+        const next = new Set(previous);
+        next.delete(fromMessageId);
+        return next;
+      });
+      if (restoredText) dispatchComposerPrefill(restoredText);
+    } finally {
+      resendingRef.current = false;
+    }
+  };
+  const withdrawRef = useRef(withdrawFrom);
+  withdrawRef.current = withdrawFrom;
+  const withdraw = useCallback(async (messageId: string) => {
+    await withdrawRef.current(messageId);
   }, []);
+  const withdrawUnanswered = useCallback(async () => {
+    const list = agentRef.current.messages;
+    const at = lastUserIndex(list);
+    const target = at >= 0 ? list[at] : undefined;
+    if (!target) return;
+    await withdrawRef.current(target.id).catch(reportRetryRefusal);
+  }, [reportRetryRefusal]);
 
   // 主模型额度用完、这一轮换了备用模型：那一轮末尾一行淡色小字（DESIGN.md §61）。
   const fallbackTurns = useFallbackTurns(channel.threadId);
@@ -2186,9 +2256,13 @@ export function ChannelChat({
     [runtimeAgentId, liveActivity],
   );
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
+  const canWithdrawLast =
+    canResend &&
+    !turnAnswered(heldView.messages) &&
+    lastUserIndex(heldView.messages) >= 0;
   const messageActions = useMemo(
-    () => ({ canAct: canResend, regenerate, edit: editAndResend }),
-    [canResend, regenerate, editAndResend],
+    () => ({ canAct: canResend, regenerate, edit: editAndResend, withdraw }),
+    [canResend, regenerate, editAndResend, withdraw],
   );
   /*
    * 流式时这个组件每个 token 都重渲（它订阅 agent.messages）。输入框那一排控件只认这几个原始值，
@@ -2448,6 +2522,7 @@ export function ChannelChat({
                 return true;
               }}
               onRetryUnanswered={retryUnanswered}
+              onWithdrawTurn={canWithdrawLast ? withdrawUnanswered : undefined}
               onBeforeRetry={() => {
                 const target = agentRef.current;
                 const list = target.messages;

@@ -52,6 +52,7 @@ export function ConversationView({
   onBeforeRetry,
   onRetryTurn,
   onRetryUnanswered,
+  onWithdrawTurn,
   stoppable,
   stopping = false,
   stopFailed,
@@ -134,6 +135,8 @@ export function ConversationView({
   onRetryTurn?: () => boolean;
   /** 重发一条「发出去但没有回答」的历史消息（刷新后才认出来的那种，P1）。 */
   onRetryUnanswered?: () => void;
+  /** 撤回最后一轮没有收到回答的用户消息。 */
+  onWithdrawTurn?: () => Promise<void> | void;
   /**
    * There is a run for Stop to abort, which is a narrower fact than `pending` and is the honest one
    * to draw a Stop button from. Defaults to `pending` for a caller with no gap between the two.
@@ -528,6 +531,7 @@ export function ConversationView({
     onRetryStop,
     onRetryTurn,
     onBeforeRetry,
+    onWithdrawTurn,
     queueToServer,
     submit,
     apply,
@@ -539,6 +543,7 @@ export function ConversationView({
       onRetryStop,
       onRetryTurn,
       onBeforeRetry,
+      onWithdrawTurn,
       queueToServer,
       submit,
       apply,
@@ -588,6 +593,7 @@ export function ConversationView({
       ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
       ?.focus();
   }, []);
+  const withdrawTurn = useCallback(() => latest.current.onWithdrawTurn?.(), []);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -619,6 +625,7 @@ export function ConversationView({
           {...(stoppedTurns ? { stoppedTurns } : {})}
           {...(stopped ? { stopped, onRetry: retry } : {})}
           {...(onRetryUnanswered ? { onRetryUnanswered } : {})}
+          {...(onWithdrawTurn ? { onWithdraw: withdrawTurn } : {})}
         />
       </div>
       {/* 输入框列：和消息列同宽同心，左右至少 16px、窄窗口有「面板」把手时右边让开把手（DESIGN.md §24 / §92，styles.css `.chat-composer-box`）。 */}

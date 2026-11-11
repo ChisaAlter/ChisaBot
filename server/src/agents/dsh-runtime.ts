@@ -442,13 +442,21 @@ export class DshRuntimeAgent extends AbstractAgent {
           contributed,
           !recovered,
         );
-        const preparedInput = this.configuration.prepareInput
+        const rawPreparedInput = this.configuration.prepareInput
           ? await this.configuration.prepareInput(input)
           : input;
-        const needsImages = preparedInput.messages.some(
-          (message) =>
-            Array.isArray(message.content) &&
-            message.content.some((part) => part.type === "image"),
+        const messageHasImages = (message: Message | undefined) =>
+          Boolean(
+            message &&
+              Array.isArray(message.content) &&
+              message.content.some((part) => part.type === "image"),
+          );
+        const latestUserInPrepared = rawPreparedInput.messages.findLast(
+          (message) => message.role === "user",
+        );
+        const latestNeedsImages = messageHasImages(latestUserInPrepared);
+        const anyNeedsImages = rawPreparedInput.messages.some((message) =>
+          messageHasImages(message),
         );
         const requestedModels = this.configuration.plan
           ? [this.configuration.plan.provider]
@@ -473,14 +481,39 @@ export class DshRuntimeAgent extends AbstractAgent {
             };
           }),
         );
-        const definitions = needsImages
-          ? catalog.filter((model) => model.input.includes("image"))
-          : catalog;
-        const models = definitions.map((model) => model.id);
-        if (!models.length)
+        const imageCapable = catalog.filter((model) =>
+          model.input.includes("image"),
+        );
+        if (latestNeedsImages && !imageCapable.length)
           throw new Error(
             "当前主模型和备用模型都不能读取这段对话中的图片，请选择支持图片的模型。",
           );
+        const definitions =
+          anyNeedsImages && imageCapable.length ? imageCapable : catalog;
+        const stripHistoricalImages = anyNeedsImages && !imageCapable.length;
+        const preparedInput = stripHistoricalImages
+          ? {
+              ...rawPreparedInput,
+              messages: rawPreparedInput.messages.map((message) =>
+                message.id !== latestUserInPrepared?.id &&
+                Array.isArray(message.content) &&
+                message.content.some((part) => part.type === "image")
+                  ? ({
+                      ...message,
+                      content: message.content.map((part) =>
+                        part.type === "image"
+                          ? {
+                              type: "text",
+                              text: "[历史图片附件：当前模型不支持读取图片]",
+                            }
+                          : part,
+                      ),
+                    } as Message)
+                  : message,
+              ),
+            }
+          : rawPreparedInput;
+        const models = definitions.map((model) => model.id);
         const contextWindow = Math.min(
           ...definitions.map((model) => model.contextWindow),
         );
@@ -827,7 +860,22 @@ export class DshRuntimeAgent extends AbstractAgent {
           }
         })();
         await opened;
-        const content = dshUserContent(inputs.length ? inputs : [latest]);
+        const admittedUserIds = new Set<string>();
+        for (const record of page.records) {
+          if (record.event.type !== "user/message") continue;
+          const rpcId = (
+            record.event.data as
+              | { source?: { kind?: unknown; rpcId?: unknown } }
+              | undefined
+          )?.source?.rpcId;
+          if (typeof rpcId === "string" && rpcId) admittedUserIds.add(rpcId);
+        }
+        const pendingInputs = inputs.filter(
+          (message) => !admittedUserIds.has(message.id),
+        );
+        const content = dshUserContent(
+          pendingInputs.length ? pendingInputs : [latest],
+        );
         if (resolved.length)
           content.splice(0, content.length, {
             type: "text",

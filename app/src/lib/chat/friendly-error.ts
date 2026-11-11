@@ -27,6 +27,18 @@ const RULES: Array<{
   retryable?: boolean;
 }> = [
   {
+    test: /\bprivacy-gate:|cannot be masked locally|本地隐私脱敏/i,
+    title: "当前模型网关开启了本地隐私脱敏，不能直接发送图片",
+    hint: "本地隐私脱敏仅处理文字，这张图片没有发出去。请点「撤回这条消息」移除图片后再继续对话，或在网关设置（Settings → Privacy）中调整隐私策略。",
+    retryable: false,
+  },
+  {
+    test: /不能读取这段对话中的图片/,
+    title: "当前所选模型不支持读取图片",
+    hint: "点输入框右下角的模型名切换到支持看图的模型后再试，或点「撤回这条消息」改用文字描述。",
+    retryable: false,
+  },
+  {
     test: /fallback model call failed:|备用模型「[^」]+」请求失败：/i,
     title: "备用模型也未能完成回答",
     hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
@@ -72,10 +84,10 @@ const RULES: Array<{
     hint: "当前账号没有订阅这个模型所需的套餐。换一个模型，或开通对应套餐后点「重试」。",
   },
   {
-    // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」）：换 key 没用，要重新登录。
-    test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|登录已失效|登录被撤销/i,
+    // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」或 Magpie OAuth「refresh_token_invalidated / Your session has ended」）：换 key 没用，要重新登录。
+    test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|refresh_token_invalidated|token_invalidated|session has ended|登录已失效|登录被撤销/i,
     title: "模型登录已失效",
-    hint: "服务商撤销了当前登录，请到管理后台重新登录后再试，或先切换到其他模型。",
+    hint: "服务商登录已过期或被撤销，请到管理后台（模型 / Magpie）重新登录后再试，或先切换到其他模型。",
     retryable: false,
   },
   {

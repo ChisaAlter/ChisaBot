@@ -304,4 +304,102 @@ verify_live
       expect(result.stdout + result.stderr).toContain(probe.message);
     });
   }
+
+  test("allows matching per-account DSH runtimes while still dropping sidecars and unlabeled peers", () => {
+    const source = read("scripts/ops/isolate-sidecar-app.sh").replace(
+      /\r\n/g,
+      "\n",
+    );
+    const start = source.indexOf("net_runtime_owner() {");
+    const end = source.indexOf("\nverify_live() {", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const gitShell = join(
+      process.env.ProgramFiles || "C:/Program Files",
+      "Git/bin/sh.exe",
+    );
+    const shell =
+      process.platform === "win32" && existsSync(gitShell) ? gitShell : "sh";
+    const result = spawnSync(shell, ["-s"], {
+      encoding: "utf8",
+      input: `set -eu
+APP=chisabot-zh
+PORT=3001
+COMMENT=chisabot-sidecar-iso
+NETS=$(printf 'chisabot-dsh-u1-net\nopenbot_magpie\n')
+RULES_FILE=$(mktemp)
+trap 'rm -f "$RULES_FILE"' EXIT
+# Seed a stale DROP rule on the DSH runtime (regression for 0.1.143)
+printf '%s\n' "-s 10.250.1.3 -d 10.250.1.2 -p tcp --dport 3001 -m comment --comment chisabot-sidecar-iso -j DROP" > "$RULES_FILE"
+fail() { echo "FAIL: $*" >&2; exit 1; }
+ok() { echo "OK: $*"; }
+app_ip_on() {
+  case "$1" in
+    chisabot-dsh-u1-net) echo 10.250.1.2 ;;
+    openbot_magpie) echo 172.20.0.3 ;;
+  esac
+}
+peers_on() {
+  case "$1" in
+    chisabot-dsh-u1-net)
+      printf 'chisabot-dsh-u1 10.250.1.3\nrogue-on-dsh 10.250.1.4\n'
+      ;;
+    openbot_magpie)
+      printf 'magpie 172.20.0.2\nchisabot-dsh-u1 172.20.0.9\n'
+      ;;
+  esac
+}
+docker() {
+  case "$1:$2:$*" in
+    network:inspect:*chisabot-dsh-u1-net) echo "user-1" ;;
+    network:inspect:*openbot_magpie) echo "" ;;
+    inspect:-f:*runtime-owner*chisabot-dsh-u1) echo "user-1" ;;
+    inspect:-f:*runtime-family*chisabot-dsh-u1) echo "chisabot-dsh" ;;
+    inspect:-f:*rogue-on-dsh) echo "" ;;
+    exec:chisabot-dsh-u1:*) echo "200"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+iptables() {
+  # Args: -t filter -C|-I|-D DOCKER-USER <rule...>
+  op=$3
+  shift 4
+  rule="$*"
+  case "$op" in
+    -C) grep -Fxq -- "$rule" "$RULES_FILE" ;;
+    -I) printf '%s\n' "$rule" >> "$RULES_FILE" ;;
+    -D)
+      grep -Fxv -- "$rule" "$RULES_FILE" > "$RULES_FILE.tmp" || true
+      mv "$RULES_FILE.tmp" "$RULES_FILE"
+      ;;
+  esac
+}
+${source.slice(start, end)}
+apply_or_remove apply
+verify_runtime_reachability
+echo "=== FINAL RULES ==="
+cat "$RULES_FILE"
+`,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    // Stale DROP rule on legitimate DSH runtime peer on its dedicated network was removed:
+    expect(result.stdout).toContain(
+      "ALLOW chisabot-dsh-u1(10.250.1.3) -> chisabot-zh(10.250.1.2):3001 on chisabot-dsh-u1-net",
+    );
+    expect(result.stdout).not.toContain("-s 10.250.1.3 -d 10.250.1.2");
+    // Unlabeled rogue container on DSH net AND sidecars/shared-net peers are still DROPPED:
+    expect(result.stdout).toContain(
+      "-s 10.250.1.4 -d 10.250.1.2 -p tcp --dport 3001 -m comment --comment chisabot-sidecar-iso -j DROP",
+    );
+    expect(result.stdout).toContain(
+      "-s 172.20.0.2 -d 172.20.0.3 -p tcp --dport 3001 -m comment --comment chisabot-sidecar-iso -j DROP",
+    );
+    expect(result.stdout).toContain(
+      "-s 172.20.0.9 -d 172.20.0.3 -p tcp --dport 3001 -m comment --comment chisabot-sidecar-iso -j DROP",
+    );
+    expect(result.stdout).toContain(
+      "Runtime chisabot-dsh-u1->chisabot-zh(10.250.1.2):3001/health reachable (HTTP 200)",
+    );
+  });
 });

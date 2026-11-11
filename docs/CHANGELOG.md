@@ -1,7 +1,10 @@
-## 未发版
+## 0.1.144
 
+- 修复独立 DSH 账号运行时隔离误伤：`scripts/ops/isolate-sidecar-app.sh` 按 `chisabot.runtime-owner` + `chisabot.runtime-family` 放行专属点对点网络上的 DSH 容器访问内部工具与模型网关 `:3001`、清理陈旧 `DROP` 规则并在 `--verify` 增加 `:3001/health` 活探，继续严格阻断 Magpie / `new-api` 等边车。
+- 图片隐私门禁拦截与撤回：`POST /api/conversations/threads/:id/truncate` 新增 `mode: "withdraw"` 并兼容独立 `RUN_ERROR` 截断；前端错误卡片、纯图片消息与图文消息支持一键撤回与编辑移除附件；`runtime/dsh` 本地 `privacy-gate` 不触发熔断，后续纯文本轮次自动降级历史被拒图片；保留模型归属前缀并识别 `refresh_token_invalidated` 登录失效。
 - CB-118 / CB-016 去上游印记与架构收尾：移除旧兼容路由、旧前缀请求头/环境变量、前端与网关历史垫片、旧托管云会话模式、Mastra/Twilio 死依赖并净化 `bun.lock`；`pin-resources.sh` 与 `database-identity.sh` 通用化保留存量卷与数据库身份；退役 Hermes 过渡内核、孤儿模块（`demonstrations`、`team-bots`、`supervisor`、`work/culler` 等）与 `examples/fintech`；新增迁移 `0068_detachment_and_cleanup` 重命名 `chisabot_channel_mappings`、原地归一历史 JSONB 信封键并清理 14 张零引用废弃表；更新 `LICENSE`、`docs/THIRD_PARTY_NOTICES.md`、`.env.example`、看板文档与 CI `agent-computer` typecheck 门禁。
 - #511 QA510/511 P3 收尾：密码含未编码 `/ # ? @` 贪婪打码、单用户名令牌识别、Docker `service:port` 与裸内网 IPv6 脱敏；DSH 总等待时间文案、单模型超时不重发、会话事件写盘前脱敏（`runtime/dsh/src/redact.mjs`）；条件式承诺不触发催办；`/api/groups` 未知 Bot 回 400。
+- 版本：0.1.144（根、app、server、agent-computer、runtime/dsh、pc；Android versionCode 326）；PC 外壳不变。
 
 ## 0.1.143
 
