@@ -43,7 +43,6 @@ import {
   channels,
   computerActivitySteps,
   groupBotThreads,
-  learningThreadBindings,
   livePanels,
   panelAuthoringSessions,
   panelCapabilityGrants,
@@ -206,9 +205,6 @@ export function createAgentPurge(options: {
       await tx
         .delete(groupBotThreads)
         .where(eq(groupBotThreads.agentId, agentId));
-      await tx
-        .delete(learningThreadBindings)
-        .where(eq(learningThreadBindings.agentId, agentId));
       // Rules for a Bot that no longer exists protect nothing.
       await tx.delete(approvalRules).where(eq(approvalRules.botId, agentId));
 

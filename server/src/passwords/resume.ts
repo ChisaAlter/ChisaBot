@@ -4,7 +4,7 @@ import {
   parseApprovalContinuation,
 } from "../approvals/types";
 import type { Database } from "../db/client";
-import { intelligenceChannelMappings, routineRuns } from "../db/schema";
+import { chisabotChannelMappings, routineRuns } from "../db/schema";
 import { responsibilityRuns } from "../db/schema/responsibilities";
 import type { DeliveryScope } from "../delivery/types";
 import { signInToolResult } from "./service";
@@ -109,12 +109,12 @@ async function channelFor(
   threadId: string,
 ) {
   const [source] = await database
-    .select({ channelId: intelligenceChannelMappings.channelId })
-    .from(intelligenceChannelMappings)
+    .select({ channelId: chisabotChannelMappings.channelId })
+    .from(chisabotChannelMappings)
     .where(
       and(
-        eq(intelligenceChannelMappings.userId, ownerUserId),
-        eq(intelligenceChannelMappings.threadId, threadId),
+        eq(chisabotChannelMappings.userId, ownerUserId),
+        eq(chisabotChannelMappings.threadId, threadId),
       ),
     )
     .limit(1);

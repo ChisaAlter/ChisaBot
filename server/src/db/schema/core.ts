@@ -486,8 +486,8 @@ export const auditEvents = pgTable(
   ],
 );
 
-export const intelligenceChannelMappings = pgTable(
-  "intelligence_channel_mappings",
+export const chisabotChannelMappings = pgTable(
+  "chisabot_channel_mappings",
   {
     userId: text("user_id")
       .notNull()
@@ -501,7 +501,7 @@ export const intelligenceChannelMappings = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.channelId] }),
-    uniqueIndex("intelligence_channel_mappings_thread_idx").on(table.threadId),
+    uniqueIndex("chisabot_channel_mappings_thread_idx").on(table.threadId),
   ],
 );
 

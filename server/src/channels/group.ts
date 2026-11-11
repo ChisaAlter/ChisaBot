@@ -38,7 +38,7 @@ import { reasonWithoutStatement } from "../db/query-failure";
 import {
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
 } from "../db/schema/core";
 import { groupBotThreads, groupMessages } from "../db/schema/group";
@@ -357,11 +357,11 @@ export function createGroupStore(
             ),
           );
         await tx
-          .delete(intelligenceChannelMappings)
+          .delete(chisabotChannelMappings)
           .where(
             and(
-              eq(intelligenceChannelMappings.channelId, channelId),
-              eq(intelligenceChannelMappings.userId, userId),
+              eq(chisabotChannelMappings.channelId, channelId),
+              eq(chisabotChannelMappings.userId, userId),
             ),
           );
       });
@@ -383,7 +383,7 @@ export function createGroupStore(
           .onConflictDoNothing();
         // The channel store reads a member's channel through their own mapping row.
         await tx
-          .insert(intelligenceChannelMappings)
+          .insert(chisabotChannelMappings)
           .values({ userId: person.id, channelId, threadId: mintThread() })
           .onConflictDoNothing();
       });
@@ -396,7 +396,7 @@ export function createGroupStore(
  * Which group a Bot's group thread belongs to, for a run that thread is carrying.
  *
  * The coordination callbacks (`message_bot`, `ask_person`) authorise a run by its source thread, and a
- * group thread is in `group_bot_threads` rather than `intelligence_channel_mappings`. Resolved with the
+ * group thread is in `group_bot_threads` rather than `chisabot_channel_mappings`. Resolved with the
  * same checks: the run's actor still a member of a live channel, and the thread that Bot's own, unless
  * the run is a signed delegation whose claim proves a different Bot's authority.
  */

@@ -237,7 +237,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   responsibilityRuns,
   users,
 } from "./db/schema";
@@ -2246,8 +2246,8 @@ const channelSourceForRun = async (run: RunAssertion) => {
   if (!run.threadId) return null;
   const sources = await database
     .select({ channelId: channels.id, botId: channelAgents.agentId })
-    .from(intelligenceChannelMappings)
-    .innerJoin(channels, eq(channels.id, intelligenceChannelMappings.channelId))
+    .from(chisabotChannelMappings)
+    .innerJoin(channels, eq(channels.id, chisabotChannelMappings.channelId))
     .innerJoin(
       channelMemberships,
       and(
@@ -2258,8 +2258,8 @@ const channelSourceForRun = async (run: RunAssertion) => {
     .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
     .where(
       and(
-        eq(intelligenceChannelMappings.threadId, run.threadId),
-        eq(intelligenceChannelMappings.userId, run.actorId),
+        eq(chisabotChannelMappings.threadId, run.threadId),
+        eq(chisabotChannelMappings.userId, run.actorId),
         isNull(channels.deletedAt),
       ),
     );
@@ -2727,12 +2727,12 @@ confirmations.setResume(
     const replyText = result.replyText?.trim();
     if (replyText) {
       const [source] = await database
-        .select({ channelId: intelligenceChannelMappings.channelId })
-        .from(intelligenceChannelMappings)
+        .select({ channelId: chisabotChannelMappings.channelId })
+        .from(chisabotChannelMappings)
         .where(
           and(
-            eq(intelligenceChannelMappings.userId, ownerUserId),
-            eq(intelligenceChannelMappings.threadId, threadId),
+            eq(chisabotChannelMappings.userId, ownerUserId),
+            eq(chisabotChannelMappings.threadId, threadId),
           ),
         )
         .limit(1);
@@ -2817,7 +2817,7 @@ try {
 const isGroupChannelThread = async (threadId: string) =>
   (
     await database.$client.unsafe(
-      "SELECT 1 FROM intelligence_channel_mappings m JOIN channel_agents a ON a.channel_id = m.channel_id WHERE m.thread_id = $1 GROUP BY m.channel_id HAVING count(*) > 1 LIMIT 1",
+      "SELECT 1 FROM chisabot_channel_mappings m JOIN channel_agents a ON a.channel_id = m.channel_id WHERE m.thread_id = $1 GROUP BY m.channel_id HAVING count(*) > 1 LIMIT 1",
       [threadId],
     )
   ).length > 0;
@@ -2882,11 +2882,11 @@ imService = createImService({
   recordChannelActivity: async (threadId, actorOrAgentId, text) => {
     const [source] = await database
       .select({
-        channelId: intelligenceChannelMappings.channelId,
-        userId: intelligenceChannelMappings.userId,
+        channelId: chisabotChannelMappings.channelId,
+        userId: chisabotChannelMappings.userId,
       })
-      .from(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.threadId, threadId))
+      .from(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.threadId, threadId))
       .limit(1);
     if (!source) return;
     const actor = await actorFor(source.userId);
@@ -3944,12 +3944,12 @@ const approvalSweep = repeatAfterEach(async () => {
               }),
           );
           const [source] = await database
-            .select({ channelId: intelligenceChannelMappings.channelId })
-            .from(intelligenceChannelMappings)
+            .select({ channelId: chisabotChannelMappings.channelId })
+            .from(chisabotChannelMappings)
             .where(
               and(
-                eq(intelligenceChannelMappings.userId, input.ownerUserId),
-                eq(intelligenceChannelMappings.threadId, snapshot.threadId),
+                eq(chisabotChannelMappings.userId, input.ownerUserId),
+                eq(chisabotChannelMappings.threadId, snapshot.threadId),
               ),
             )
             .limit(1);
@@ -4361,9 +4361,9 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
        */
       announce: async (input) => {
         const [mapped] = await database
-          .select({ channelId: intelligenceChannelMappings.channelId })
-          .from(intelligenceChannelMappings)
-          .where(eq(intelligenceChannelMappings.threadId, input.threadId))
+          .select({ channelId: chisabotChannelMappings.channelId })
+          .from(chisabotChannelMappings)
+          .where(eq(chisabotChannelMappings.threadId, input.threadId))
           .limit(1);
         // A Bot's group thread maps to no channel; its answer goes to the shared transcript.
         if (!mapped) {

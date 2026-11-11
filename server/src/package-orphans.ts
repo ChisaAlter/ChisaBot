@@ -5,8 +5,8 @@ import {
   channelAgents,
   channelMemberships,
   channels as channelTable,
+  chisabotChannelMappings,
   deploymentPackages,
-  intelligenceChannelMappings,
   pluginGrants,
   skills as skillTable,
   skillTools,
@@ -34,8 +34,12 @@ export async function sweepPackageOrphans(
 ) {
   if (process.env.CHISABOT_ORPHAN_SWEEP === "0") return null;
 
-  const packages = await executor.select({ id: deploymentPackages.id }).from(deploymentPackages).limit(2);
-  const onlyPackage = packages.length === 1 && packages[0]?.id === input.packageId;
+  const packages = await executor
+    .select({ id: deploymentPackages.id })
+    .from(deploymentPackages)
+    .limit(2);
+  const onlyPackage =
+    packages.length === 1 && packages[0]?.id === input.packageId;
 
   const staleSkills = onlyPackage
     ? await executor
@@ -45,7 +49,9 @@ export async function sweepPackageOrphans(
           and(
             eq(skillTable.origin, "catalogue"),
             isNull(skillTable.ownerUserId),
-            input.skillSlugs.length > 0 ? notInArray(skillTable.slug, input.skillSlugs) : undefined,
+            input.skillSlugs.length > 0
+              ? notInArray(skillTable.slug, input.skillSlugs)
+              : undefined,
           ),
         )
     : [];
@@ -53,14 +59,23 @@ export async function sweepPackageOrphans(
   if (staleSkillIds.length > 0) {
     await executor
       .delete(pluginGrants)
-      .where(and(eq(pluginGrants.kind, "skill"), inArray(pluginGrants.ref, staleSkillIds)));
-    await executor.delete(skillTools).where(inArray(skillTools.skillId, staleSkillIds));
-    await executor.delete(skillTable).where(inArray(skillTable.id, staleSkillIds));
+      .where(
+        and(
+          eq(pluginGrants.kind, "skill"),
+          inArray(pluginGrants.ref, staleSkillIds),
+        ),
+      );
+    await executor
+      .delete(skillTools)
+      .where(inArray(skillTools.skillId, staleSkillIds));
+    await executor
+      .delete(skillTable)
+      .where(inArray(skillTable.id, staleSkillIds));
   }
 
   const used = or(
     sql`exists (select 1 from ${channelMemberships} where ${channelMemberships.channelId} = ${channelTable.id})`,
-    sql`exists (select 1 from ${intelligenceChannelMappings} where ${intelligenceChannelMappings.channelId} = ${channelTable.id})`,
+    sql`exists (select 1 from ${chisabotChannelMappings} where ${chisabotChannelMappings.channelId} = ${channelTable.id})`,
   );
   const staleChannels = onlyPackage
     ? await executor
@@ -69,15 +84,21 @@ export async function sweepPackageOrphans(
         .where(
           and(
             eq(channelTable.packageId, input.packageId),
-            input.channelIds.length > 0 ? notInArray(channelTable.id, input.channelIds) : undefined,
+            input.channelIds.length > 0
+              ? notInArray(channelTable.id, input.channelIds)
+              : undefined,
             sql`not (${used})`,
           ),
         )
     : [];
   const staleChannelIds = staleChannels.map((channel) => channel.id);
   if (staleChannelIds.length > 0) {
-    await executor.delete(channelAgents).where(inArray(channelAgents.channelId, staleChannelIds));
-    await executor.delete(channelTable).where(inArray(channelTable.id, staleChannelIds));
+    await executor
+      .delete(channelAgents)
+      .where(inArray(channelAgents.channelId, staleChannelIds));
+    await executor
+      .delete(channelTable)
+      .where(inArray(channelTable.id, staleChannelIds));
   }
 
   const grants = await executor
@@ -93,11 +114,15 @@ export async function sweepPackageOrphans(
     channels: staleChannelIds,
     grants: grants.length,
   };
-  if (result.skills.length || result.channels.length || result.grants) console.log(JSON.stringify(result));
+  if (result.skills.length || result.channels.length || result.grants)
+    console.log(JSON.stringify(result));
   return result;
 }
 
 /** 删机器人时顺手收回它的插件 / 技能授权（软删除的机器人用不到它们）。 */
-export async function deleteGrantsForAgent(executor: Executor, agentId: string) {
+export async function deleteGrantsForAgent(
+  executor: Executor,
+  agentId: string,
+) {
   await executor.delete(pluginGrants).where(eq(pluginGrants.agentId, agentId));
 }

@@ -92,7 +92,7 @@ export async function searchChannelMessages(
     `SELECT c.id AS channel_id, c.name, c.summary, m.thread_id, t.agent_id, t.updated_at, t.messages
      FROM channels c
      INNER JOIN channel_memberships cm ON cm.channel_id = c.id AND cm.user_id = $1
-     INNER JOIN intelligence_channel_mappings m ON m.channel_id = c.id AND m.user_id = $1
+     INNER JOIN chisabot_channel_mappings m ON m.channel_id = c.id AND m.user_id = $1
      INNER JOIN chisabot_local_threads t ON t.id = m.thread_id AND t.owner_user_id = $1
      WHERE c.deleted_at IS NULL
        AND t.messages::text ILIKE $2 ESCAPE '\\'

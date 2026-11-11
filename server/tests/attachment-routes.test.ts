@@ -28,7 +28,7 @@ import {
   attachments,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -104,7 +104,7 @@ async function harness() {
    */
   const threadId = `${testPrefix}-thread-${randomUUID()}`;
   await database
-    .insert(intelligenceChannelMappings)
+    .insert(chisabotChannelMappings)
     .values({ channelId, userId: memberId, threadId });
 
   const member = actorMiddleware(memberId);
@@ -2789,7 +2789,7 @@ async function secondChannelFor(
   await db.insert(channelMemberships).values({ channelId, userId: memberId });
   const threadId = `${testPrefix}-thread-${randomUUID()}`;
   await db
-    .insert(intelligenceChannelMappings)
+    .insert(chisabotChannelMappings)
     .values({ channelId, userId: memberId, threadId });
   return { channelId, threadId };
 }
