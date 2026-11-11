@@ -13,116 +13,116 @@
 - 做完：勾掉验收标准，写 PR 号或版本说明。
 - 优先级：P0 立刻 / P1 这一轮 / P2 排队。里程碑见 [ROADMAP](ROADMAP.md)。
 
-| ID                | 标题                                                                              | 里程碑                | 标签                                                                                                               |
-| ----------------- | --------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [CB-118](#cb-118) | 全面清理 OpenBot 印记、退役过渡内核与废弃空表收尾                                 | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `area: docs` · `P0` · `status: done`                                |
-| [CB-117](#cb-117) | 聊天、任务与桌面操作连续性优化                                                    | 成熟度 Maturity       | `type: bug` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`                                 |
-| [CB-116](#cb-116) | 个人助理恢复、通知与发布接线收尾                                                  | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
-| [CB-115](#cb-115) | DSH 主内核与自有会话运行层                                                        | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: done`                                               |
-| [CB-114](#cb-114) | 聊天模型回退错误归属、流式气泡与留白                                              | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: models` · `P0` · `status: done`                                                |
-| [CB-001](#cb-001) | 审批卡片与审批偏好（Hark parity 第 5 项）                                         | Hark parity           | `type: feat` · `area: approvals` · `area: chat` · `P1` · `status: done`                                            |
-| [CB-002](#cb-002) | 生图 / 识图模型设置：管理员默认 + 每人可覆盖                                      | Hark parity           | `type: feat` · `area: images` · `area: settings` · `P1` · `status: done`                                           |
-| [CB-003](#cb-003) | 成熟度扫查：设备流程优先的全量体验检查                                            | 成熟度 Maturity       | `type: chore` · `area: devices` · `area: chat` · `P1` · `status: done`（三轮已上线）                               |
-| [CB-004](#cb-004) | 设备上的编码工具：云端机器人读 / 改 / 写本地代码                                  | 设备核心 Devices core | `type: feat` · `area: devices` · `area: pc` · `P0` · `status: done`                                                |
-| [CB-005](#cb-005) | 无界面设备节点：Linux / macOS 服务器也能当设备                                    | 设备核心 Devices core | `type: feat` · `area: devices` · `area: infra` · `P1` · `status: done`                                             |
-| [CB-006](#cb-006) | 设备「完全访问」模式                                                              | 设备核心 Devices core | `type: feat` · `area: devices` · `area: approvals` · `P1` · `status: done`                                         |
-| [CB-007](#cb-007) | 本地 agent 运行时与 agent 选择（可选）                                            | 设备核心 Devices core | `type: feat` · `area: agents` · `area: devices` · `P1` · `status: done`                                            |
-| [CB-008](#cb-008) | 本地 agent 的沙箱 / 权限配置档                                                    | 设备核心 Devices core | `type: feat` · `area: agents` · `area: approvals` · `P1` · `status: done`                                          |
-| [CB-009](#cb-009) | 瘦身 P3：删不发布的目录 + 修 server-typecheck CI                                  | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                                               |
-| [CB-010](#cb-010) | 瘦身 P4a：删前端死页                                                              | 精简 Slim             | `type: chore` · `area: slim` · `area: settings` · `P1` · `status: done`                                            |
-| [CB-011](#cb-011) | 瘦身 P4b：不再构造上游服务端模块（表保留）                                        | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                                               |
-| [CB-012](#cb-012) | 项目维护与文档系统（labels / milestones / ROADMAP / ADR / 模板）                  | 成熟度 Maturity       | `type: docs` · `area: docs` · `P1` · `status: done（Issues 待仓库所有者打开）`                                     |
-| [CB-013](#cb-013) | Google 账号连接（Hark parity 最后一项）                                           | Hark parity           | `type: feat` · `area: settings` · `P2` · `status: deferred`                                                        |
-| [CB-014](#cb-014) | 每日简报（Hark parity 第 9 项，可选）                                             | Hark parity           | `type: feat` · `area: schedules` · `P2` · `status: done`（随个人助理晨报上线）                                     |
-| [CB-015](#cb-015) | 瘦身 P4c：合并重复系统（依赖并行功能）                                            | 精简 Slim             | `type: chore` · `area: slim` · `P2` · `status: blocked`                                                            |
-| [CB-016](#cb-016) | 瘦身 P5：DROP 上游与已下线模块废弃空表（迁移 0068）                               | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P2` · `status: done`                                               |
-| [CB-017](#cb-017) | 真机验证：Windows PC 客户端与安卓手机                                             | 0.2.0 release         | `type: chore` · `area: pc` · `area: android` · `P1` · `status: needs-user`                                         |
-| [CB-018](#cb-018) | 旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）                  | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                                           |
-| [CB-019](#cb-019) | 发版 0.2.0（PC + Android）                                                        | 0.2.0 release         | `type: chore` · `area: infra` · `area: pc` · `area: android` · `P1`                                                |
-| [CB-020](#cb-020) | CI「ChisaBot checks」server-typecheck 在 main 上一直失败                          | 精简 Slim             | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
-| [CB-021](#cb-021) | 一轮里两次 page_update 会出两张同一页面的卡片                                     | 成熟度 Maturity       | `type: bug` · `area: pages` · `area: chat` · `P2` · `status: done`                                                 |
-| [CB-022](#cb-022) | 只读工具的结果没有卡片（只有文字）                                                | 成熟度 Maturity       | `type: feat` · `area: chat` · `P2` · `status: done`                                                                |
-| [CB-023](#cb-023) | 后台任务卡片在参数流完前显示笼统的「正在交给后台…」                               | 成熟度 Maturity       | `type: bug` · `area: chat` · `P2` · `status: done`                                                                 |
-| [CB-024](#cb-024) | 切换暗色外观卡约 400ms（毛玻璃重绘已修，长对话主线程见 CB-025）                   | 成熟度 Maturity       | `type: perf` · `area: chat` · `area: settings` · `P2` · `status: done`                                             |
-| [CB-025](#cb-025) | 打开长对话首屏渲染约 1 秒                                                         | 成熟度 Maturity       | `type: perf` · `area: chat` · `P2` · `status: done`                                                                |
-| [CB-026](#cb-026) | chisabot_bot_threads：确认没有孤儿指针行                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                                                |
-| [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制                                                 | 成熟度 Maturity       | `type: bug` · `area: im` · `area: schedules` · `P2`                                                                |
-| [CB-028](#cb-028) | 「开场一句」只在显示时折叠，事件历史里仍保存                                      | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                                                |
-| [CB-029](#cb-029) | 弹窗打开动画仍有毛玻璃开销                                                        | 成熟度 Maturity       | `type: perf` · `area: settings` · `P2` · ✅ 0.1.38                                                                 |
-| [CB-030](#cb-030) | 设备能力「打开」实际可执行任意命令，却标为非危险                                  | 设备核心 Devices core | `type: bug` · `area: devices` · `area: pc` · `P1` · `status: done`                                                 |
-| [CB-031](#cb-031) | 本地对话事件表无上限增长                                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `area: infra` · `P2`                                                                |
-| [CB-032](#cb-032) | 安卓签名改为 CI 内签名（需要仓库 Actions secrets）                                | 0.2.0 release         | `type: chore` · `area: android` · `area: infra` · `P2` · `status: needs-user`                                      |
-| [CB-033](#cb-033) | 生产跨部署 stale-chunk 测试待跑                                                   | 成熟度 Maturity       | `type: chore` · `area: infra` · `P2`                                                                               |
-| [CB-034](#cb-034) | 用真实账号验证 GitHub 连接与 IM 接入                                              | 成熟度 Maturity       | `type: chore` · `area: github` · `area: im` · `P2` · `status: needs-user`                                          |
-| [CB-035](#cb-035) | 备用模型：管理员排序的回退列表 + 对话里说明换了模型 + 自检走回退                  | 成熟度 Maturity       | `type: bug` · `area: models` · `area: chat` · `P0` · `status: done`                                                |
-| [CB-040](#cb-040) | 多用户：管理员给朋友开账号（每人独立的机器人 / 记忆 / 密钥 / 设备）               | 成熟度 Maturity       | `type: feat` · `area: infra` · `area: settings` · `P0` · `status: done（入口默认隐藏）`                            |
-| [CB-041](#cb-041) | 真实聊天路径（频道聊天）刷新 / 断网后正在写的回答丢失                             | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                                                 |
-| [CB-042](#cb-042) | 重新生成 / 编辑后重发                                                             | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: done`                                                                |
-| [CB-043](#cb-043) | 频道聊天的跨设备实时同步（手机发的桌面看不到）                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: pwa` · `P1` · `status: done`                                                   |
-| [CB-044](#cb-044) | 登录页预填管理员账号名                                                            | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
-| [CB-045](#cb-045) | 每人模型额度 / 用量上限                                                           | 成熟度 Maturity       | `type: feat` · `area: models` · `P2`                                                                               |
-| [CB-046](#cb-046) | 两套聊天实现（/bot 与 /channel）收成一套                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P1` · `status: done`                                                               |
-| [CB-047](#cb-047) | 很长的对话打开时历史晚到，画面停在上面                                            | 成熟度 Maturity       | `type: bug` · `area: chat` · `P2` · `status: done`（#146，继续观察）                                               |
-| [CB-048](#cb-048) | 对话像发短信：先答、短气泡、不讲方法、草稿卡 / 代码卡 / 回复引用（完成）          | Hark parity           | `type: feature` · `area: chat` · `P1`                                                                              |
-| [CB-049](#cb-049) | 主对话干活卡：当前步骤 + 用时，结束收成一行（完成）                               | Hark parity           | `type: feature` · `area: chat` · `P1`                                                                              |
-| [CB-050](#cb-050) | 商品 / 地点推荐用带图的卡片网格（完成）                                           | Hark parity           | `type: feature` · `area: chat` · `P2`                                                                              |
-| [CB-051](#cb-051) | 「待处理」页是上游审批页：重复的开关、英文、已不存在的桌面应用、团队规则（完成）  | 成熟度 Maturity       | `type: bug` · `area: approvals` · `area: settings` · `P1`                                                          |
-| [CB-052](#cb-052) | 手机上设备「完全访问」时长按钮一个字一行（完成）                                  | 成熟度 Maturity       | `type: bug` · `area: devices` · `area: pwa` · `P1`                                                                 |
-| [CB-053](#cb-053) | 找不到 / 读不到：机器人、对话只有一行红字没有出路；连接器页标题是原始 key（完成） | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                                              |
-| [CB-054](#cb-054) | 机翻 / 上游行话残留：账号连接空状态、「AI 同事」（完成）                          | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                                              |
-| [CB-055](#cb-055) | 机器人资料页模型下拉显示原始模型 id（完成）                                       | 成熟度 Maturity       | `type: bug` · `area: models` · `P2`                                                                                |
-| [CB-056](#cb-056) | 管理页英文：插件目录说明、权限规则快捷规则说明、活动记录事件类型（完成）          | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                                              |
-| [CB-057](#cb-057) | 活动记录表格在 390 宽被截掉右边几列（完成）                                       | 成熟度 Maturity       | `type: bug` · `area: settings` · `area: pwa` · `P2`                                                                |
-| [CB-058](#cb-058) | 设置左栏在 1280×860 下「管理 / 高级」7 项在可视区外，只有淡出提示（完成）         | 成熟度 Maturity       | `type: chore` · `area: settings` · `P2`                                                                            |
-| [CB-061](#cb-061) | 云端 Claude Code P1：云端工作区节点 + 网页登录 Claude                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`                        |
-| [CB-062](#cb-062) | 云端 Claude Code P2：左栏切换、会话、对话、审批、右栏 / 手机抽屉                  | 设备核心 Devices core | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: dropped（已随 CB-099 下线）`                         |
-| [CB-063](#cb-063) | 云端 Claude Code P3：GitHub 工作区（克隆、cc/ 分支、合入、推送并开 PR）           | 设备核心 Devices core | `type: feat` · `area: agents` · `area: github` · `P1` · `status: dropped（已随 CB-099 下线）`                       |
-| [CB-064](#cb-064) | 云端 Claude Code P4：电脑文件夹同步（PC 新版）                                    | 0.2.0 release         | `type: feat` · `area: pc` · `area: agents` · `P2` · `status: dropped（已随 CB-099 下线）`                           |
-| [CB-065](#cb-065) | 云端 Claude Code P5：ChisaCloudCode 留还是下线                                    | 设备核心 Devices core | `type: chore` · `area: infra` · `P2` · `status: dropped（已随 CB-099 下线）`                                        |
-| [CB-066](#cb-066) | 在云端完成 Claude 登录（远程浏览器）+ Claude 上游代理                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`                        |
-| [CB-067](#cb-067) | 新版本前功能精简：隐藏用不到的功能、新建机器人两格                                | 精简 Slim             | `type: chore` · `area: web` · `P1` · `status: done`（#163）· 4 项待所有者决定                                      |
-| [CB-068](#cb-068) | Android 原生版（Kotlin + Compose）                                                | 成熟度 Maturity       | `type: feature` · `area: android` · `P1` · `status: done`（#168 v0.1.13、#176 v0.1.14）                            |
-| [CB-069](#cb-069) | 新建 / 修改机器人统一表单 + 圆形头像（上传 / 表情 / 首字）                        | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#170）                                                         |
-| [CB-070](#cb-070) | 全站 UI 文字对齐 + 干活卡上下间距                                                 | 成熟度 Maturity       | `type: fix` · `area: web` · `P1` · `status: done`（#172、#178、#182）                                              |
-| [CB-071](#cb-071) | 打开对话落在最新一条、不跳；切机器人秒开；接入回放瘦身                            | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                                                 |
-| [CB-072](#cb-072) | 机器人 ↔ Claude Code 切换整屏刷新 → 原地切换                                      | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                                                  |
-| [CB-073](#cb-073) | Claude 上游代理支持 trojan / vless 等节点链接（sing-box 转换）                    | 云端 Claude Code      | `type: feature` · `area: cloud-cc` · `P1` · `status: done`                                                         |
-| [CB-074](#cb-074) | 电脑文件夹导入失败后残留、移除后无法重新导入                                      | 成熟度 Maturity       | `type: bug` · `area: pc` · `area: agents` · `P0` · `status: done`                                                  |
-| [CB-077](#cb-077) | 中途说明文字没折叠进步骤；断线重接同一段话出现两遍                                | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                                                 |
-| [CB-075](#cb-075) | 每个机器人记住我的操作状态；消息记录仍会往回跳                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                                                 |
-| [CB-076](#cb-076) | 「模型老断」：长命令 / 断线 / 部署重启时这一轮被误报成「连不上模型服务」          | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                                                 |
-| [CB-078](#cb-078) | 窄窗口里输入框两边没有间距                                                        | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                                                  |
-| [CB-079](#cb-079) | 简单回合隐藏步骤卡；回答下面的空气泡和多余空白                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`                                                                 |
-| [CB-080](#cb-080) | 连续聊天时发消息整页上跳                                                          | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`                                                                 |
-| [CB-081](#cb-081) | 机器人浏览器多标签 + 收藏夹                                                       | 成熟度 Maturity       | `type: feat` · `area: computer` · `P1` · `status: done`                                                            |
-| [CB-082](#cb-082) | 浏览器暗色图标 + 外侧去掉标签 + 放大页重排 + 旧测试                               | 成熟度 Maturity       | `type: bug` · `area: computer` · `P1` · `status: done`                                                             |
-| [CB-083](#cb-083) | 设置重新整合 + 设置搜索；输入框权限（请求批准 / 完全访问）                        | 成熟度 Maturity       | `type: feat` · `area: web` · `area: devices` · `P1` · `status: done`                                               |
-| [CB-084](#cb-084) | 从其他页面切回机器人页总要刷新一次                                                | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: web` · `P1` · `status: done`                                                   |
-| [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致                                          | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                                                  |
-| [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done`                                              |
-| [CB-087](#cb-087) | 聊天可靠性全面修复：滚动、队列恢复、请求与编码                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done`                                              |
-| [CB-088](#cb-088) | 面板级模型：刷新回合可以用面板自己选的模型                                        | 成熟度 Maturity       | `type: feat` · `area: web` · `area: models` · `P2` · `status: planned`                                             |
-| [CB-089](#cb-089) | Word（.docx）文件在线预览                                                         | Hark parity           | `type: feat` · `area: chat` · `P0` · `status: done`                                                                |
-| [CB-090](#cb-090) | 对话里的选项卡片：选完就定、不能重复点                                            | Hark parity           | `type: feat` · `area: chat` · `P0` · `status: done`                                                                |
-| [CB-091](#cb-091) | 主机器人不能直接删除；菜单里可以更换主机器人                                      | 成熟度 Maturity       | `type: bug` · `area: agents` · `P1` · `status: done`                                                               |
-| [CB-092](#cb-092) | 机器人资料页加「文件与页面」                                                      | 成熟度 Maturity       | `type: feat` · `area: agents` · `P1` · `status: done`                                                              |
-| [CB-093](#cb-093) | 机器人之间的往来视图（单聊里 @另一个机器人）                                      | Hark parity           | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: done`                                               |
-| [CB-094](#cb-094) | 有面板以后也能从右栏快速新建                                                      | 成熟度 Maturity       | `type: feat` · `area: web` · `P2` · `status: done`                                                                 |
-| [CB-095](#cb-095) | 账号连接页分标签（全部 / 连接 / 登录信息 / 密钥）                                 | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: vault` · `P2` · `status: done`                                            |
-| [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                                                  |
+| ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-118](#cb-118) | 全面清理 早期上游模板 印记、退役过渡内核与废弃空表收尾                            | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `area: docs` · `P0` · `status: done`           |
+| [CB-117](#cb-117) | 聊天、任务与桌面操作连续性优化                                                    | 成熟度 Maturity       | `type: bug` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`            |
+| [CB-116](#cb-116) | 个人助理恢复、通知与发布接线收尾                                                  | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                           |
+| [CB-115](#cb-115) | DSH 主内核与自有会话运行层                                                        | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: done`                          |
+| [CB-114](#cb-114) | 聊天模型回退错误归属、流式气泡与留白                                              | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: models` · `P0` · `status: done`                           |
+| [CB-001](#cb-001) | 审批卡片与审批偏好（Hark parity 第 5 项）                                         | Hark parity           | `type: feat` · `area: approvals` · `area: chat` · `P1` · `status: done`                       |
+| [CB-002](#cb-002) | 生图 / 识图模型设置：管理员默认 + 每人可覆盖                                      | Hark parity           | `type: feat` · `area: images` · `area: settings` · `P1` · `status: done`                      |
+| [CB-003](#cb-003) | 成熟度扫查：设备流程优先的全量体验检查                                            | 成熟度 Maturity       | `type: chore` · `area: devices` · `area: chat` · `P1` · `status: done`（三轮已上线）          |
+| [CB-004](#cb-004) | 设备上的编码工具：云端机器人读 / 改 / 写本地代码                                  | 设备核心 Devices core | `type: feat` · `area: devices` · `area: pc` · `P0` · `status: done`                           |
+| [CB-005](#cb-005) | 无界面设备节点：Linux / macOS 服务器也能当设备                                    | 设备核心 Devices core | `type: feat` · `area: devices` · `area: infra` · `P1` · `status: done`                        |
+| [CB-006](#cb-006) | 设备「完全访问」模式                                                              | 设备核心 Devices core | `type: feat` · `area: devices` · `area: approvals` · `P1` · `status: done`                    |
+| [CB-007](#cb-007) | 本地 agent 运行时与 agent 选择（可选）                                            | 设备核心 Devices core | `type: feat` · `area: agents` · `area: devices` · `P1` · `status: done`                       |
+| [CB-008](#cb-008) | 本地 agent 的沙箱 / 权限配置档                                                    | 设备核心 Devices core | `type: feat` · `area: agents` · `area: approvals` · `P1` · `status: done`                     |
+| [CB-009](#cb-009) | 瘦身 P3：删不发布的目录 + 修 server-typecheck CI                                  | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                          |
+| [CB-010](#cb-010) | 瘦身 P4a：删前端死页                                                              | 精简 Slim             | `type: chore` · `area: slim` · `area: settings` · `P1` · `status: done`                       |
+| [CB-011](#cb-011) | 瘦身 P4b：不再构造上游服务端模块（表保留）                                        | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P1` · `status: done`                          |
+| [CB-012](#cb-012) | 项目维护与文档系统（labels / milestones / ROADMAP / ADR / 模板）                  | 成熟度 Maturity       | `type: docs` · `area: docs` · `P1` · `status: done（Issues 待仓库所有者打开）`                |
+| [CB-013](#cb-013) | Google 账号连接（Hark parity 最后一项）                                           | Hark parity           | `type: feat` · `area: settings` · `P2` · `status: deferred`                                   |
+| [CB-014](#cb-014) | 每日简报（Hark parity 第 9 项，可选）                                             | Hark parity           | `type: feat` · `area: schedules` · `P2` · `status: done`（随个人助理晨报上线）                |
+| [CB-015](#cb-015) | 瘦身 P4c：合并重复系统（依赖并行功能）                                            | 精简 Slim             | `type: chore` · `area: slim` · `P2` · `status: blocked`                                       |
+| [CB-016](#cb-016) | 瘦身 P5：DROP 上游与已下线模块废弃空表（迁移 0068）                               | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P2` · `status: done`                          |
+| [CB-017](#cb-017) | 真机验证：Windows PC 客户端与安卓手机                                             | 0.2.0 release         | `type: chore` · `area: pc` · `area: android` · `P1` · `status: needs-user`                    |
+| [CB-018](#cb-018) | 旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）                  | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                      |
+| [CB-019](#cb-019) | 发版 0.2.0（PC + Android）                                                        | 0.2.0 release         | `type: chore` · `area: infra` · `area: pc` · `area: android` · `P1`                           |
+| [CB-020](#cb-020) | CI「ChisaBot checks」server-typecheck 在 main 上一直失败                          | 精简 Slim             | `type: bug` · `area: infra` · `P1` · `status: done`                                           |
+| [CB-021](#cb-021) | 一轮里两次 page_update 会出两张同一页面的卡片                                     | 成熟度 Maturity       | `type: bug` · `area: pages` · `area: chat` · `P2` · `status: done`                            |
+| [CB-022](#cb-022) | 只读工具的结果没有卡片（只有文字）                                                | 成熟度 Maturity       | `type: feat` · `area: chat` · `P2` · `status: done`                                           |
+| [CB-023](#cb-023) | 后台任务卡片在参数流完前显示笼统的「正在交给后台…」                               | 成熟度 Maturity       | `type: bug` · `area: chat` · `P2` · `status: done`                                            |
+| [CB-024](#cb-024) | 切换暗色外观卡约 400ms（毛玻璃重绘已修，长对话主线程见 CB-025）                   | 成熟度 Maturity       | `type: perf` · `area: chat` · `area: settings` · `P2` · `status: done`                        |
+| [CB-025](#cb-025) | 打开长对话首屏渲染约 1 秒                                                         | 成熟度 Maturity       | `type: perf` · `area: chat` · `P2` · `status: done`                                           |
+| [CB-026](#cb-026) | chisabot_bot_threads：确认没有孤儿指针行                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                           |
+| [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制                                                 | 成熟度 Maturity       | `type: bug` · `area: im` · `area: schedules` · `P2`                                           |
+| [CB-028](#cb-028) | 「开场一句」只在显示时折叠，事件历史里仍保存                                      | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                           |
+| [CB-029](#cb-029) | 弹窗打开动画仍有毛玻璃开销                                                        | 成熟度 Maturity       | `type: perf` · `area: settings` · `P2` · ✅ 0.1.38                                            |
+| [CB-030](#cb-030) | 设备能力「打开」实际可执行任意命令，却标为非危险                                  | 设备核心 Devices core | `type: bug` · `area: devices` · `area: pc` · `P1` · `status: done`                            |
+| [CB-031](#cb-031) | 本地对话事件表无上限增长                                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `area: infra` · `P2`                                           |
+| [CB-032](#cb-032) | 安卓签名改为 CI 内签名（需要仓库 Actions secrets）                                | 0.2.0 release         | `type: chore` · `area: android` · `area: infra` · `P2` · `status: needs-user`                 |
+| [CB-033](#cb-033) | 生产跨部署 stale-chunk 测试待跑                                                   | 成熟度 Maturity       | `type: chore` · `area: infra` · `P2`                                                          |
+| [CB-034](#cb-034) | 用真实账号验证 GitHub 连接与 IM 接入                                              | 成熟度 Maturity       | `type: chore` · `area: github` · `area: im` · `P2` · `status: needs-user`                     |
+| [CB-035](#cb-035) | 备用模型：管理员排序的回退列表 + 对话里说明换了模型 + 自检走回退                  | 成熟度 Maturity       | `type: bug` · `area: models` · `area: chat` · `P0` · `status: done`                           |
+| [CB-040](#cb-040) | 多用户：管理员给朋友开账号（每人独立的机器人 / 记忆 / 密钥 / 设备）               | 成熟度 Maturity       | `type: feat` · `area: infra` · `area: settings` · `P0` · `status: done（入口默认隐藏）`       |
+| [CB-041](#cb-041) | 真实聊天路径（频道聊天）刷新 / 断网后正在写的回答丢失                             | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
+| [CB-042](#cb-042) | 重新生成 / 编辑后重发                                                             | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: done`                                           |
+| [CB-043](#cb-043) | 频道聊天的跨设备实时同步（手机发的桌面看不到）                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: pwa` · `P1` · `status: done`                              |
+| [CB-044](#cb-044) | 登录页预填管理员账号名                                                            | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                           |
+| [CB-045](#cb-045) | 每人模型额度 / 用量上限                                                           | 成熟度 Maturity       | `type: feat` · `area: models` · `P2`                                                          |
+| [CB-046](#cb-046) | 两套聊天实现（/bot 与 /channel）收成一套                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P1` · `status: done`                                          |
+| [CB-047](#cb-047) | 很长的对话打开时历史晚到，画面停在上面                                            | 成熟度 Maturity       | `type: bug` · `area: chat` · `P2` · `status: done`（#146，继续观察）                          |
+| [CB-048](#cb-048) | 对话像发短信：先答、短气泡、不讲方法、草稿卡 / 代码卡 / 回复引用（完成）          | Hark parity           | `type: feature` · `area: chat` · `P1`                                                         |
+| [CB-049](#cb-049) | 主对话干活卡：当前步骤 + 用时，结束收成一行（完成）                               | Hark parity           | `type: feature` · `area: chat` · `P1`                                                         |
+| [CB-050](#cb-050) | 商品 / 地点推荐用带图的卡片网格（完成）                                           | Hark parity           | `type: feature` · `area: chat` · `P2`                                                         |
+| [CB-051](#cb-051) | 「待处理」页是上游审批页：重复的开关、英文、已不存在的桌面应用、团队规则（完成）  | 成熟度 Maturity       | `type: bug` · `area: approvals` · `area: settings` · `P1`                                     |
+| [CB-052](#cb-052) | 手机上设备「完全访问」时长按钮一个字一行（完成）                                  | 成熟度 Maturity       | `type: bug` · `area: devices` · `area: pwa` · `P1`                                            |
+| [CB-053](#cb-053) | 找不到 / 读不到：机器人、对话只有一行红字没有出路；连接器页标题是原始 key（完成） | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                         |
+| [CB-054](#cb-054) | 机翻 / 上游行话残留：账号连接空状态、「AI 同事」（完成）                          | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                         |
+| [CB-055](#cb-055) | 机器人资料页模型下拉显示原始模型 id（完成）                                       | 成熟度 Maturity       | `type: bug` · `area: models` · `P2`                                                           |
+| [CB-056](#cb-056) | 管理页英文：插件目录说明、权限规则快捷规则说明、活动记录事件类型（完成）          | 成熟度 Maturity       | `type: bug` · `area: settings` · `P2`                                                         |
+| [CB-057](#cb-057) | 活动记录表格在 390 宽被截掉右边几列（完成）                                       | 成熟度 Maturity       | `type: bug` · `area: settings` · `area: pwa` · `P2`                                           |
+| [CB-058](#cb-058) | 设置左栏在 1280×860 下「管理 / 高级」7 项在可视区外，只有淡出提示（完成）         | 成熟度 Maturity       | `type: chore` · `area: settings` · `P2`                                                       |
+| [CB-061](#cb-061) | 云端 Claude Code P1：云端工作区节点 + 网页登录 Claude                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`  |
+| [CB-062](#cb-062) | 云端 Claude Code P2：左栏切换、会话、对话、审批、右栏 / 手机抽屉                  | 设备核心 Devices core | `type: feat` · `area: agents` · `area: chat` · `P1` · `status: dropped（已随 CB-099 下线）`   |
+| [CB-063](#cb-063) | 云端 Claude Code P3：GitHub 工作区（克隆、cc/ 分支、合入、推送并开 PR）           | 设备核心 Devices core | `type: feat` · `area: agents` · `area: github` · `P1` · `status: dropped（已随 CB-099 下线）` |
+| [CB-064](#cb-064) | 云端 Claude Code P4：电脑文件夹同步（PC 新版）                                    | 0.2.0 release         | `type: feat` · `area: pc` · `area: agents` · `P2` · `status: dropped（已随 CB-099 下线）`     |
+| [CB-065](#cb-065) | 云端 Claude Code P5：ChisaCloudCode 留还是下线                                    | 设备核心 Devices core | `type: chore` · `area: infra` · `P2` · `status: dropped（已随 CB-099 下线）`                  |
+| [CB-066](#cb-066) | 在云端完成 Claude 登录（远程浏览器）+ Claude 上游代理                             | 设备核心 Devices core | `type: feat` · `area: agents` · `area: infra` · `P1` · `status: dropped（已随 CB-099 下线）`  |
+| [CB-067](#cb-067) | 新版本前功能精简：隐藏用不到的功能、新建机器人两格                                | 精简 Slim             | `type: chore` · `area: web` · `P1` · `status: done`（#163）· 4 项待所有者决定                 |
+| [CB-068](#cb-068) | Android 原生版（Kotlin + Compose）                                                | 成熟度 Maturity       | `type: feature` · `area: android` · `P1` · `status: done`（#168 v0.1.13、#176 v0.1.14）       |
+| [CB-069](#cb-069) | 新建 / 修改机器人统一表单 + 圆形头像（上传 / 表情 / 首字）                        | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#170）                                    |
+| [CB-070](#cb-070) | 全站 UI 文字对齐 + 干活卡上下间距                                                 | 成熟度 Maturity       | `type: fix` · `area: web` · `P1` · `status: done`（#172、#178、#182）                         |
+| [CB-071](#cb-071) | 打开对话落在最新一条、不跳；切机器人秒开；接入回放瘦身                            | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
+| [CB-072](#cb-072) | 机器人 ↔ Claude Code 切换整屏刷新 → 原地切换                                      | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                             |
+| [CB-073](#cb-073) | Claude 上游代理支持 trojan / vless 等节点链接（sing-box 转换）                    | 云端 Claude Code      | `type: feature` · `area: cloud-cc` · `P1` · `status: done`                                    |
+| [CB-074](#cb-074) | 电脑文件夹导入失败后残留、移除后无法重新导入                                      | 成熟度 Maturity       | `type: bug` · `area: pc` · `area: agents` · `P0` · `status: done`                             |
+| [CB-077](#cb-077) | 中途说明文字没折叠进步骤；断线重接同一段话出现两遍                                | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
+| [CB-075](#cb-075) | 每个机器人记住我的操作状态；消息记录仍会往回跳                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
+| [CB-076](#cb-076) | 「模型老断」：长命令 / 断线 / 部署重启时这一轮被误报成「连不上模型服务」          | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
+| [CB-078](#cb-078) | 窄窗口里输入框两边没有间距                                                        | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                             |
+| [CB-079](#cb-079) | 简单回合隐藏步骤卡；回答下面的空气泡和多余空白                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`                                            |
+| [CB-080](#cb-080) | 连续聊天时发消息整页上跳                                                          | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`                                            |
+| [CB-081](#cb-081) | 机器人浏览器多标签 + 收藏夹                                                       | 成熟度 Maturity       | `type: feat` · `area: computer` · `P1` · `status: done`                                       |
+| [CB-082](#cb-082) | 浏览器暗色图标 + 外侧去掉标签 + 放大页重排 + 旧测试                               | 成熟度 Maturity       | `type: bug` · `area: computer` · `P1` · `status: done`                                        |
+| [CB-083](#cb-083) | 设置重新整合 + 设置搜索；输入框权限（请求批准 / 完全访问）                        | 成熟度 Maturity       | `type: feat` · `area: web` · `area: devices` · `P1` · `status: done`                          |
+| [CB-084](#cb-084) | 从其他页面切回机器人页总要刷新一次                                                | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: web` · `P1` · `status: done`                              |
+| [CB-085](#cb-085) | 搜索旁新建机器人；弹出面板与常驻面板一致                                          | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`                                             |
+| [CB-086](#cb-086) | 连续补话不重复执行；停止按钮终止当次计算机命令                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done`                         |
+| [CB-087](#cb-087) | 聊天可靠性全面修复：滚动、队列恢复、请求与编码                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: computer` · `P1` · `status: done`                         |
+| [CB-088](#cb-088) | 面板级模型：刷新回合可以用面板自己选的模型                                        | 成熟度 Maturity       | `type: feat` · `area: web` · `area: models` · `P2` · `status: planned`                        |
+| [CB-089](#cb-089) | Word（.docx）文件在线预览                                                         | Hark parity           | `type: feat` · `area: chat` · `P0` · `status: done`                                           |
+| [CB-090](#cb-090) | 对话里的选项卡片：选完就定、不能重复点                                            | Hark parity           | `type: feat` · `area: chat` · `P0` · `status: done`                                           |
+| [CB-091](#cb-091) | 主机器人不能直接删除；菜单里可以更换主机器人                                      | 成熟度 Maturity       | `type: bug` · `area: agents` · `P1` · `status: done`                                          |
+| [CB-092](#cb-092) | 机器人资料页加「文件与页面」                                                      | 成熟度 Maturity       | `type: feat` · `area: agents` · `P1` · `status: done`                                         |
+| [CB-093](#cb-093) | 机器人之间的往来视图（单聊里 @另一个机器人）                                      | Hark parity           | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: done`                          |
+| [CB-094](#cb-094) | 有面板以后也能从右栏快速新建                                                      | 成熟度 Maturity       | `type: feat` · `area: web` · `P2` · `status: done`                                            |
+| [CB-095](#cb-095) | 账号连接页分标签（全部 / 连接 / 登录信息 / 密钥）                                 | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: vault` · `P2` · `status: done`                       |
+| [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
 ## CB-118
 
-**全面清理 OpenBot 印记、退役过渡内核与废弃空表收尾**
+**全面清理 早期上游模板 印记、退役过渡内核与废弃空表收尾**
 
 标签：`type: chore` · `area: slim` · `area: infra` · `area: docs` · `P0` · `status: done`
 
 分支：`chore/upstream-detachment-and-closure`。见[命名切换与存量资源兼容](ops/upstream-removal.md)与[数据模型](data-model.md)。
 
 - [x] 数据库迁移 `0068`：原地将 `intelligence_channel_mappings` 重命名为 `chisabot_channel_mappings`，归一历史事件 JSONB 兼容键名，并清理移除已下线模块的废弃空表（同步完成 CB-016）。
-- [x] 代码层彻底移除旧 `/api/copilotkit` 路由、`x-openbot-*` 请求头、环境变量旧前缀垫片及已退役的 Hermes / Intelligence / Mastra 代码与依赖；保留 `deploy/pin-resources.sh` 与 `docker/s6/scripts/database-identity.sh` 守护存量物理卷与数据库身份零丢失。
+- [x] 代码层彻底移除旧 `/api/conversations（原旧兼容路由）` 路由、`旧前缀请求头` 请求头、环境变量旧前缀垫片及已退役的 Hermes / Intelligence / Mastra 代码与依赖；保留 `deploy/pin-resources.sh` 与 `docker/s6/scripts/database-identity.sh` 守护存量物理卷与数据库身份零丢失。
 - [x] 合规与脱敏收口：更新 `LICENSE` 双行版权声明、`docs/THIRD_PARTY_NOTICES.md`、`CODEOWNERS`、中文 `.env.example` 与 `docs/configuration.md`，删除上游遗留英文文档并消除本机用户名与私人公网域名泄露，同步更新 `ROADMAP.md`、`BACKLOG.md`、`HANDOFF.md`。
 
 ## CB-117
@@ -1040,10 +1040,10 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 
 - [x] 最后一条回答「重新生成」；用户消息「编辑」后重发，旧的后续消息被替换（所有设备一致）（频道聊天 + `/bot`；截断接口 + 墓碑 + 同步版本号，DESIGN.md §67；e2e：两台设备、刷新后一致）
 
-#### 方案（2026-10-15 成熟度扫查记下；已按此实现，见 DESIGN.md §67——截断接口挂在 `/api/copilotkit/threads/<id>/truncate`，版本号用 `chisabot_thread_truncations` 行数）
+#### 方案（2026-10-15 成熟度扫查记下；已按此实现，见 DESIGN.md §67——截断接口挂在 `/api/conversations（原旧兼容路由）/threads/<id>/truncate`，版本号用 `chisabot_thread_truncations` 行数）
 
-- 服务器：`POST /api/bot-threads/:agentId/truncate {threadId, fromMessageId}`——只允许截最后一条用户消息那一轮、且对话没在跑；`openbot_local_threads.messages` 截到这条之前，`openbot_local_events` 删掉从第一个提到这条用户消息的事件（它那一轮的 RUN_STARTED）起的全部事件，写审计。重新生成 = 截掉最后一条用户消息再原样重发（换新 id，这样新一轮的 RUN_STARTED 带上它，回放里才看得到）；编辑 = 截掉后发新内容。
-- 别的设备：截断后事件序号会变小再变大，单靠 `seq` 不可靠——同步戳里加一个对话版本（截断时 +1，如 `openbot_local_threads.updated_at` 或新列），版本变了就 `join("rebuild")`。
+- 服务器：`POST /api/bot-threads/:agentId/truncate {threadId, fromMessageId}`——只允许截最后一条用户消息那一轮、且对话没在跑；`chisabot_local_threads（原早期线程表）.messages` 截到这条之前，`chisabot_local_events（原早期事件表）` 删掉从第一个提到这条用户消息的事件（它那一轮的 RUN_STARTED）起的全部事件，写审计。重新生成 = 截掉最后一条用户消息再原样重发（换新 id，这样新一轮的 RUN_STARTED 带上它，回放里才看得到）；编辑 = 截掉后发新内容。
+- 别的设备：截断后事件序号会变小再变大，单靠 `seq` 不可靠——同步戳里加一个对话版本（截断时 +1，如 `chisabot_local_threads（原早期线程表）.updated_at` 或新列），版本变了就 `join("rebuild")`。
 - 界面：最后一条回答下面「重新生成」，最后一条用户消息悬停「编辑」→ 气泡原地变输入框（发送 / 取消，§6 按钮状态机），频道聊天和 /bot 都要；回答进行中不显示。
 
 ## CB-043
@@ -1092,7 +1092,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 
 #### 背景
 
-机器人聊天有两条路：`/channel/*`（ChannelChat，左栏、用户日常用）和 `/bot?agent=`（CopilotChat，只有定时任务提醒的「查看」会进）。§42 跨设备同步、历史对话、刷新续写、各功能 e2e 都在 `/bot` 上；用户日常用的是频道聊天。功能、测试和修复都在分叉。
+机器人聊天有两条路：`/channel/*`（ChannelChat，左栏、用户日常用）和 `/bot?agent=`（旧内置聊天组件，只有定时任务提醒的「查看」会进）。§42 跨设备同步、历史对话、刷新续写、各功能 e2e 都在 `/bot` 上；用户日常用的是频道聊天。功能、测试和修复都在分叉。
 
 #### 验收标准
 
@@ -1627,7 +1627,7 @@ P4a #159、P4b #160 曾于 2026-10-16 上线，后随 CB-099 下线。
 标签：`type: bug` `area: chat` `P0` `status: done`
 
 用户 2026-10-16 15:4x：「模型老断」——让机器人在电脑上用 winget 装 Node.js，一轮做到一半就是「暂时连不上模型服务」，「正在操作你的设备 第 3 步 · 401 秒」还在转。DESIGN.md §89。
-线上证据（FRA 网关日志 + `openbot_local_runs` / `openbot_local_events`）：3 天里 0 条 RUN_ERROR（模型 / 上游没出过错）；用户可见的两次断都不是模型——
+线上证据（FRA 网关日志 + `chisabot_local_runs（原早期运行表）` / `chisabot_local_events（原早期事件表）`）：3 天里 0 条 RUN_ERROR（模型 / 上游没出过错）；用户可见的两次断都不是模型——
 15:37:43 部署（`auto-202610160737-125cd05`）重启了应用，nginx「upstream prematurely closed」，那一轮被标 interrupted、事件停在 TOOL_CALL_END；
 15:44:39 用户电脑到 Cloudflare 的连接整条断了（/run 流和频道 WebSocket 同一秒断，2 秒后换边缘节点重连），服务器那一轮照常跑到 15:54:06 RUN_FINISHED（一条 388 秒 + 一条 436 秒没有任何事件的 device_run_shell）。
 

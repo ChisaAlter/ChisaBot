@@ -13,10 +13,10 @@ The tool names match Google's MCP server exactly, so a later swap back to it wou
 
 Setting it up takes two people, and neither can do the other's half:
 
-| Who               | Does                                                    | Where                                    |
-| ----------------- | ------------------------------------------------------- | ---------------------------------------- |
-| An administrator  | Registers the OAuth client and enables the connector    | Google Cloud console, then `/admin/plugins/google-drive` |
-| Each person       | Consents with their own Google account                  | `/settings/connected-accounts/google-drive`              |
+| Who              | Does                                                 | Where                                                    |
+| ---------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| An administrator | Registers the OAuth client and enables the connector | Google Cloud console, then `/admin/plugins/google-drive` |
+| Each person      | Consents with their own Google account               | `/settings/connected-accounts/google-drive`              |
 
 There is deliberately no endpoint for an administrator to connect an account on somebody's behalf.
 
@@ -68,7 +68,7 @@ That completes setup. No personal account is needed to get this far — the tool
 connector is ChisaBot's own code rather than an answer from a remote server, so there is nothing to
 authenticate in order to read it.
 
-To check it actually works, use **Your account** on the same page: it connects *your* Google account
+To check it actually works, use **Your account** on the same page: it connects _your_ Google account
 and returns you here. That is a personal grant like anybody else's, reaching your documents only, and
 it is not part of configuring the connector — a deployment is correctly set up whether or not the
 administrator ever connects.
@@ -106,14 +106,14 @@ refused", and those have completely different fixes.
 **Look at the audit trail first.** Every call leaves one row, written after the attempt, and the
 event type is the answer to "whose problem is this":
 
-| Row                  | Means                                                                  |
-| -------------------- | ---------------------------------------------------------------------- |
+| Row                  | Means                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------ |
 | `mcp.call_rejected`  | This deployment declined. A missing grant, or a policy rule — `decision.rule` names which. |
-| `mcp.call_failed`    | Permitted here, failed at the vendor. `failure` carries the vendor's own sentence. |
-| `mcp.call_succeeded` | The vendor answered.                                                    |
+| `mcp.call_failed`    | Permitted here, failed at the vendor. `failure` carries the vendor's own sentence.         |
+| `mcp.call_succeeded` | The vendor answered.                                                                       |
 
 A Bot that appears to have no access and leaves **no rows at all** never called the tool, which is a
-grant problem rather than a connection problem: check that the tool is granted to *that* Bot at
+grant problem rather than a connection problem: check that the tool is granted to _that_ Bot at
 `/admin/plugins/google-drive`. Enabling the connector and connecting your account both being done
 still leaves each tool ungranted.
 

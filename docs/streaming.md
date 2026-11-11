@@ -6,14 +6,14 @@
 
 同一个问题（约 300–800 字中文、不调工具），逐层打时间戳（脚本见本文末尾）：
 
-| 层 | 测法 | 结果 |
-| --- | --- | --- |
-| 上游模型平台 → Magpie | 在宿主机 tcpdump 抓 Magpie 收到的 TLS 记录 | 每 ~180–200ms 到一批 |
-| Magpie → ChisaBot 服务器 | 同一次抓包，Magpie 发出的明文 SSE | 与上一行逐批对齐（Magpie 不缓冲） |
-| ChisaBot 服务器 | `POST /api/conversations/agent/<bot>/run` 直连 `127.0.0.1:3001` | AG-UI `TEXT_MESSAGE_CONTENT` 每个约 3 字，按上游节奏成批到达 |
-| 自带网关（nginx :8443） | 同一请求经网关 | 与直连一致：无 gzip，`proxy_buffering off` |
-| Cloudflare | 从外网经公网网关（TLS 端口） | 与直连一致（无 `Content-Encoding`，无攒批） |
-| 浏览器 DOM | Playwright 每帧记录最后一条回复的文字长度 | **约 6 次/秒更新，每次跳 9–30 字** |
+| 层                       | 测法                                                            | 结果                                                         |
+| ------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------ |
+| 上游模型平台 → Magpie    | 在宿主机 tcpdump 抓 Magpie 收到的 TLS 记录                      | 每 ~180–200ms 到一批                                         |
+| Magpie → ChisaBot 服务器 | 同一次抓包，Magpie 发出的明文 SSE                               | 与上一行逐批对齐（Magpie 不缓冲）                            |
+| ChisaBot 服务器          | `POST /api/conversations/agent/<bot>/run` 直连 `127.0.0.1:3001` | AG-UI `TEXT_MESSAGE_CONTENT` 每个约 3 字，按上游节奏成批到达 |
+| 自带网关（nginx :8443）  | 同一请求经网关                                                  | 与直连一致：无 gzip，`proxy_buffering off`                   |
+| Cloudflare               | 从外网经公网网关（TLS 端口）                                    | 与直连一致（无 `Content-Encoding`，无攒批）                  |
+| 浏览器 DOM               | Playwright 每帧记录最后一条回复的文字长度                       | **约 6 次/秒更新，每次跳 9–30 字**                           |
 
 结论：传输链路是逐事件直通的，没有任何一层在缓冲。「一段一段」来自上游免费模型本身的出字节奏（约 5 批/秒，每批 10–25 个汉字，有时停顿 0.5–3 秒），界面原样一批一批画上去。服务器改不了上游节奏，所以在界面上把字匀速放出来。
 

@@ -40,16 +40,16 @@ flowchart TB
 
 ## 2. 谁可直连谁
 
-| 来源 | 可直连 | 不可直连 | 身份怎么证明 |
-|------|--------|----------|--------------|
-| 公网浏览器 | 仅网关 `:8443` | `3001` / `3002` / Magpie / 节点 | Cookie 会话 → 网关 `auth_request` → `X-ChisaBot-Identity` |
-| PC / 手机客户端 | 网关 `/api/devices/agent/`（**免浏览器登录**） | 应用 loopback | 设备令牌；网关在该路径**清空**身份头与 Local-Caller |
-| IM 适配器 | 网关 `/api/im/onebot/` | 同上 | `Authorization`；仅此处允许无 Origin 的 WS 升级 |
-| 宿主机脚本 / 烟雾 | `127.0.0.1:3001` | 公网 URL 刮管理员面 | `X-ChisaBot-Local-Caller: $CHISABOT_GATEWAY_SECRET`（**禁止**经网关；无会话时 `/api/admin/health` 必须 401） |
-| 应用 → Magpie | Docker 网 `magpie:3425` / `:3430` | 公网直连 Magpie 管理口 | 管理口经网关 `:2053` + admin 角色头 |
-| Magpie / 边车 → 应用 | **无**（DOCKER-USER DROP） | 应用 `:3001` | 不依赖身份头；网络层拒绝发起 |
-| 应用 → 电脑节点 | 节点桥接 IP（经 `locate` + 地址检查） | 节点任意出网打私网（防火墙丢） | `COMPUTER_TOKEN`；`checkComputerAddress` 拒外站 |
-| 云端节点出站 | 公网（可选经出口代理） | 私网 / 元数据 / 宿主机（`DOCKER-USER`） | 节点防火墙；浏览器导航另有 SSRF 地板 |
+| 来源                 | 可直连                                         | 不可直连                                | 身份怎么证明                                                                                                 |
+| -------------------- | ---------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 公网浏览器           | 仅网关 `:8443`                                 | `3001` / `3002` / Magpie / 节点         | Cookie 会话 → 网关 `auth_request` → `X-ChisaBot-Identity`                                                    |
+| PC / 手机客户端      | 网关 `/api/devices/agent/`（**免浏览器登录**） | 应用 loopback                           | 设备令牌；网关在该路径**清空**身份头与 Local-Caller                                                          |
+| IM 适配器            | 网关 `/api/im/onebot/`                         | 同上                                    | `Authorization`；仅此处允许无 Origin 的 WS 升级                                                              |
+| 宿主机脚本 / 烟雾    | `127.0.0.1:3001`                               | 公网 URL 刮管理员面                     | `X-ChisaBot-Local-Caller: $CHISABOT_GATEWAY_SECRET`（**禁止**经网关；无会话时 `/api/admin/health` 必须 401） |
+| 应用 → Magpie        | Docker 网 `magpie:3425` / `:3430`              | 公网直连 Magpie 管理口                  | 管理口经网关 `:2053` + admin 角色头                                                                          |
+| Magpie / 边车 → 应用 | **无**（DOCKER-USER DROP）                     | 应用 `:3001`                            | 不依赖身份头；网络层拒绝发起                                                                                 |
+| 应用 → 电脑节点      | 节点桥接 IP（经 `locate` + 地址检查）          | 节点任意出网打私网（防火墙丢）          | `COMPUTER_TOKEN`；`checkComputerAddress` 拒外站                                                              |
+| 云端节点出站         | 公网（可选经出口代理）                         | 私网 / 元数据 / 宿主机（`DOCKER-USER`） | 节点防火墙；浏览器导航另有 SSRF 地板                                                                         |
 
 ## 3. 身份头规则（硬）
 
@@ -80,21 +80,21 @@ Local-Caller 只给**宿主机 → `127.0.0.1:3001`** 的刮数 / 烟雾 / 更�
 
 ## 5. 内部口 deny-by-default
 
-| 端口 | 绑定 | 谁控制 |
-|------|------|--------|
-| `3001` 应用 | **仅** `127.0.0.1` | `deploy/compose.yaml`；`start.sh` / `friend-up.sh` 拒 `0.0.0.0` 与裸 `端口:端口` |
-| `3002` 登录 | **仅** `127.0.0.1`（Bun `hostname`） | `deploy/public/auth/server.ts`；compose `network_mode: host` |
-| `3425` / `3430` Magpie | **仅** `127.0.0.1` | `deploy/magpie.compose.yaml`；同上脚本检查 |
+| 端口                   | 绑定                                 | 谁控制                                                                           |
+| ---------------------- | ------------------------------------ | -------------------------------------------------------------------------------- |
+| `3001` 应用            | **仅** `127.0.0.1`                   | `deploy/compose.yaml`；`start.sh` / `friend-up.sh` 拒 `0.0.0.0` 与裸 `端口:端口` |
+| `3002` 登录            | **仅** `127.0.0.1`（Bun `hostname`） | `deploy/public/auth/server.ts`；compose `network_mode: host`                     |
+| `3425` / `3430` Magpie | **仅** `127.0.0.1`                   | `deploy/magpie.compose.yaml`；同上脚本检查                                       |
 
 好友包 `TRUSTED_ORIGINS`：**仅** `http://localhost…` / `http://127.0.0.1…`；禁止 https 公网与局域网 Origin（公网 Origin 在网关层）。
 
 共享 Docker 网（`chisabot_magpie`、以及应用挂上的其它用户网如 `newapi_*`）：同网容器**默认**可 TCP 到应用容器 `:3001`。
 
-| 方向 | 策略（v0.1.39） |
-|------|----------------|
-| 应用 → Magpie `:3425` / `:3430` | **允许**（模型 API + 内嵌管理反代；DNS 名 `magpie`） |
+| 方向                             | 策略（v0.1.39）                                             |
+| -------------------------------- | ----------------------------------------------------------- |
+| 应用 → Magpie`:3425` / `:3430`   | **允许**（模型 API + 内嵌管理反代；DNS 名 `magpie`）        |
 | Magpie / 其它边车 → 应用 `:3001` | **拒绝**（`DOCKER-USER` DROP，注释 `chisabot-sidecar-iso`） |
-| 宿主机刮数 → `127.0.0.1:3001` | **允许**（不经 DOCKER-USER；仍需 Local-Caller） |
+| 宿主机刮数 → `127.0.0.1:3001`    | **允许**（不经 DOCKER-USER；仍需 Local-Caller）             |
 
 网关密钥开启后边车即便打通 TCP 也当不了管理员（无 Local-Caller → 401）。网络 DROP 是第二层，挡住探测 / DoS / 单用户无密钥部署。
 
@@ -124,13 +124,13 @@ sh scripts/ops/isolate-sidecar-app.sh --verify   # Magpie!-app 超时；App->mag
 
 ## 7. 自动化红线
 
-| 检查 | 位置 |
-|------|------|
-| SSRF 地址 / 重定向 | `server/tests/ssrf-redline.test.ts`（CI） |
-| Local-Caller 经网关拒绝、compose loopback、nginx 清头、friend origins | `server/tests/trust-boundary-redline.test.ts` + `shared/trust-boundary.test.ts`（CI） |
-| 宿主机一键 | `sh scripts/ops/check-trust-boundary.sh`（含 sync-nginx --check-repo + isolate 脚本存在） |
-| Magpie/边车隔离 | `scripts/ops/isolate-sidecar-app.sh` `--apply`/`--check`/`--verify`；`deploy-serial` 失败退出 8（v0.1.39） |
-| 部署后 | `post-deploy-smoke.sh`：匿名 admin health 401 + Local-Caller 聚合绿 |
-| nginx 模板同步 | `scripts/ops/sync-nginx.sh`：`--check-repo` / `--check` / `--apply`；`deploy-serial` 默认 check，漂移失败退出 7（v0.1.34） |
+| 检查                                                                  | 位置                                                                                                                       |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| SSRF 地址 / 重定向                                                    | `server/tests/ssrf-redline.test.ts`（CI）                                                                                  |
+| Local-Caller 经网关拒绝、compose loopback、nginx 清头、friend origins | `server/tests/trust-boundary-redline.test.ts` + `shared/trust-boundary.test.ts`（CI）                                      |
+| 宿主机一键                                                            | `sh scripts/ops/check-trust-boundary.sh`（含 sync-nginx --check-repo + isolate 脚本存在）                                  |
+| Magpie/边车隔离                                                       | `scripts/ops/isolate-sidecar-app.sh` `--apply`/`--check`/`--verify`；`deploy-serial` 失败退出 8（v0.1.39）                 |
+| 部署后                                                                | `post-deploy-smoke.sh`：匿名 admin health 401 + Local-Caller 聚合绿                                                        |
+| nginx 模板同步                                                        | `scripts/ops/sync-nginx.sh`：`--check-repo` / `--check` / `--apply`；`deploy-serial` 默认 check，漂移失败退出 7（v0.1.34） |
 
 纯函数：`shared/trust-boundary.ts`。网关改法见 [gateway.md](gateway.md) §2.1。

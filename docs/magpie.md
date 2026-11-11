@@ -4,11 +4,11 @@
 
 Magpie 将多个模型服务、账户和路由规则放在一个网关后面。ChisaBot 保存一个网关连接，获取它开放的模型目录，再为每个 BOT 保存独立模型 ID。两边职责如下：
 
-| ChisaBot | Magpie |
-| --- | --- |
-| 网页登录、BOT、对话与数据持久化 | 供应商连接、上游账户和访问密钥 |
-| 聊天框及 BOT 设置中的模型选择 | 模型开放范围、账户路由与协议转换 |
-| BOT 选择权限、工具权限和审计 | 上游额度、故障、模型可用状态与请求用量 |
+| ChisaBot                        | Magpie                                 |
+| ------------------------------- | -------------------------------------- |
+| 网页登录、BOT、对话与数据持久化 | 供应商连接、上游账户和访问密钥         |
+| 聊天框及 BOT 设置中的模型选择   | 模型开放范围、账户路由与协议转换       |
+| BOT 选择权限、工具权限和审计    | 上游额度、故障、模型可用状态与请求用量 |
 | 本轮 BOT 模型快照与模型权限判断 | 将完整模型 ID 路由到相应供应商或路由组 |
 
 ChisaBot 不去修改 Magpie 的每个客户端配置，也不从其私人配置文件读取上游密钥。模型目录与推理都使用 ChisaBot 保存的同一个网关连接。
@@ -17,10 +17,10 @@ ChisaBot 不去修改 Magpie 的每个客户端配置，也不从其私人配置
 
 Magpie 支持官方镜像、CLI 与 Web 界面。优先按本仓库 [部署模板](../deploy/README.zh-CN.md) 连接内部网络和登录网关，安装与版本细节参考 [Magpie 官方 Docker 说明](https://github.com/yetone/magpie/blob/main/docs/reference.md#docker) 与 [官方项目](https://github.com/yetone/magpie)。发布或长期运行时固定自己验证过的版本或镜像摘要。
 
-| 接口 | 默认端口 | 用途 |
-| --- | --- | --- |
-| 模型网关 | `3425` | 模型目录与推理 API |
-| Web 管理界面 | `3430` | 供应商、账户、调用密钥和设置 |
+| 接口         | 默认端口 | 用途                         |
+| ------------ | -------- | ---------------------------- |
+| 模型网关     | `3425`   | 模型目录与推理 API           |
+| Web 管理界面 | `3430`   | 供应商、账户、调用密钥和设置 |
 
 这两个接口不同。ChisaBot 的模型 API 地址应填写 `3425` 的网关前缀，管理入口应指向受到登录保护的 Web 界面，不能把 `3430` 的网页地址当作模型 API。
 
@@ -73,10 +73,10 @@ magpie web --addr 0.0.0.0:3430 --no-open
 
 ChisaBot 的协议表示**它向网关发送的协议**，不要求所有上游都使用相同协议。Magpie 可以在支持的接口间转换，但具体上游是否支持工具、流式输出或某种内容，仍需要实际验证。
 
-| ChisaBot 协议 | 推荐 API 基址示例 | 目录请求 | 测试连接 / 推理入口 |
-| --- | --- | --- | --- |
-| OpenAI 兼容 | `http://magpie:3425/v1` | `GET /v1/models` | `POST /v1/chat/completions` |
-| Anthropic | `http://magpie:3425/v1` | `GET /v1/models` | `POST /v1/messages` |
+| ChisaBot 协议 | 推荐 API 基址示例       | 目录请求         | 测试连接 / 推理入口         |
+| ------------- | ----------------------- | ---------------- | --------------------------- |
+| OpenAI 兼容   | `http://magpie:3425/v1` | `GET /v1/models` | `POST /v1/chat/completions` |
+| Anthropic     | `http://magpie:3425/v1` | `GET /v1/models` | `POST /v1/messages`         |
 
 OpenAI 兼容请求使用 `Authorization: Bearer …`。Anthropic 请求使用 `x-api-key` 和 `anthropic-version: 2023-06-01`。它们由 ChisaBot 服务端按保存的连接生成，用户浏览器不直接携带这些密钥请求 Magpie。
 
@@ -134,16 +134,16 @@ Magpie 可能将请求在协议之间转换；确认实际模型 ID 比只查看
 
 ## 常见问题
 
-| 现象 | 检查顺序 |
-| --- | --- |
+| 现象                                 | 检查顺序                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------ |
 | Magpie 有很多模型，ChisaBot 只有一个 | 供应商启用状态 → 开放模型 → ChisaBot 专用调用密钥是否限制为单模型 → 选择器刷新 |
-| 模型列表 `401` / `403` | 是否用了网关调用密钥 → 该密钥是否启用 → 允许范围与网关访问限制 |
-| 列表正常，某个模型 `403` | 完整 ID → 上游账户是否授权该模型 → Magpie 请求记录；目录出现不代表上游授权通过 |
-| 找不到接口或模型 | API 基址是否为网关 `/v1` → 是否错误指向 GUI → 是否缺供应商前缀 |
-| `429` 或间歇失败 | 调用密钥限额、上游账户额度、路由组规则与服务商状态 |
-| 更换供应商后 BOT 仍用旧模型 | BOT 有独立覆盖值；重新选当前目录中的 ID，或选择“部署默认” |
-| 列表加载失败但需要恢复默认 | 选择“部署默认”；清除覆盖值不依赖目录请求成功 |
-| GUI 能打开，但应用连不到网关 | ChisaBot 服务端容器的网络/DNS/端口，不能以用户浏览器连通来代替服务端连通 |
+| 模型列表 `401` / `403`               | 是否用了网关调用密钥 → 该密钥是否启用 → 允许范围与网关访问限制                 |
+| 列表正常，某个模型 `403`             | 完整 ID → 上游账户是否授权该模型 → Magpie 请求记录；目录出现不代表上游授权通过 |
+| 找不到接口或模型                     | API 基址是否为网关 `/v1` → 是否错误指向 GUI → 是否缺供应商前缀                 |
+| `429` 或间歇失败                     | 调用密钥限额、上游账户额度、路由组规则与服务商状态                             |
+| 更换供应商后 BOT 仍用旧模型          | BOT 有独立覆盖值；重新选当前目录中的 ID，或选择“部署默认”                      |
+| 列表加载失败但需要恢复默认           | 选择“部署默认”；清除覆盖值不依赖目录请求成功                                   |
+| GUI 能打开，但应用连不到网关         | ChisaBot 服务端容器的网络/DNS/端口，不能以用户浏览器连通来代替服务端连通       |
 
 一般运维检查、备份与升级见 [维护与排错](operations.md)。
 
@@ -170,13 +170,13 @@ ChisaBot 把自托管的 [Magpie](https://github.com/yetone/magpie)（`ghcr.io/y
 `/opt/chisabot-zh/compose.yaml`（ChisaBot 服务）：
 
 ```yaml
-    volumes:
-      # Magpie web key，仅容器内的 API 用户（uid 1002）可读。
-      - ./secrets/magpie-web.key:/etc/chisabot/magpie-web.key:ro
-    environment:
-      MAGPIE_ADMIN_URL: http://magpie:3430
-      MAGPIE_WEB_KEY_FILE: /etc/chisabot/magpie-web.key
-      MODEL_CATALOG_REFRESH_MINUTES: "10"
+volumes:
+  # Magpie web key，仅容器内的 API 用户（uid 1002）可读。
+  - ./secrets/magpie-web.key:/etc/chisabot/magpie-web.key:ro
+environment:
+  MAGPIE_ADMIN_URL: http://magpie:3430
+  MAGPIE_WEB_KEY_FILE: /etc/chisabot/magpie-web.key
+  MODEL_CATALOG_REFRESH_MINUTES: "10"
 ```
 
 Web key 文件从 Magpie 的私密配置复制，权限 `0400`、属主 `1002:1002`：
@@ -188,11 +188,11 @@ install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/chisabot-zh/secr
 
 > 使用文件而不是环境变量：容器内的环境变量对机器人计算机的用户可读，文件只给 API 用户读。重新生成 Magpie Web key 后需要重新复制文件并重启 ChisaBot。
 
-| 变量 | 作用 | 默认 |
-| --- | --- | --- |
-| `MAGPIE_ADMIN_URL` | Magpie 管理端地址（容器网络内）。未设置时「模型平台 Magpie」页显示未配置。 | 无 |
-| `MAGPIE_WEB_KEY_FILE` / `MAGPIE_WEB_KEY` | Magpie Web key（16+ 位 `A-Za-z0-9-._~`）。缺少时只能显示连接信息，不能读取提供方状态或内嵌控制台。 | 无 |
-| `MODEL_CATALOG_REFRESH_MINUTES` | 模型列表后台自动同步间隔（分钟），`0` 关闭。 | `10` |
+| 变量                                     | 作用                                                                                               | 默认 |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------- | ---- |
+| `MAGPIE_ADMIN_URL`                       | Magpie 管理端地址（容器网络内）。未设置时「模型平台 Magpie」页显示未配置。                         | 无   |
+| `MAGPIE_WEB_KEY_FILE` / `MAGPIE_WEB_KEY` | Magpie Web key（16+ 位 `A-Za-z0-9-._~`）。缺少时只能显示连接信息，不能读取提供方状态或内嵌控制台。 | 无   |
+| `MODEL_CATALOG_REFRESH_MINUTES`          | 模型列表后台自动同步间隔（分钟），`0` 关闭。                                                       | `10` |
 
 ## 模型接口（默认走 Magpie）
 
@@ -257,10 +257,10 @@ install -m 400 -o 1002 -g 1002 /opt/magpie/private/web.key /opt/chisabot-zh/secr
 
 配置项（`deploy/updater/config.env`）：
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `MAGPIE_DIR` | `/opt/magpie` | 目录里要有 `compose.yaml` |
-| `MAGPIE_IMAGE` | `ghcr.io/yetone/magpie:latest` | 镜像引用；想钉版本就写摘要 |
-| `MAGPIE_CONTAINER` | `magpie` | 容器名 |
-| `MAGPIE_PROBE_URL` | `http://127.0.0.1:3430/` | 健康探测地址（有 HTTP 响应就算活着） |
-| `MAGPIE_HEALTH_TIMEOUT_SEC` | `60` | 健康检查等多久才判失败并回退 |
+| 变量                        | 默认                           | 说明                                 |
+| --------------------------- | ------------------------------ | ------------------------------------ |
+| `MAGPIE_DIR`                | `/opt/magpie`                  | 目录里要有 `compose.yaml`            |
+| `MAGPIE_IMAGE`              | `ghcr.io/yetone/magpie:latest` | 镜像引用；想钉版本就写摘要           |
+| `MAGPIE_CONTAINER`          | `magpie`                       | 容器名                               |
+| `MAGPIE_PROBE_URL`          | `http://127.0.0.1:3430/`       | 健康探测地址（有 HTTP 响应就算活着） |
+| `MAGPIE_HEALTH_TIMEOUT_SEC` | `60`                           | 健康检查等多久才判失败并回退         |

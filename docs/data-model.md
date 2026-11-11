@@ -4,9 +4,9 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 
 ## 1. 两种建表方式
 
-| 方式                                                                                             | 用在哪                                                                                 | 回滚                                                                                           |
-| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化                 | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本                                 |
+| 方式                                                                                             | 用在哪                                                                                | 回滚                                                                                                |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **开机自建**：服务启动时 `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` | 多数 `chisabot_*` 表及少数扩展列；已登记迁移的会话模块仍保留幂等初始化                | 旧代码可忽略新增表、列；能否继续执行还须符合内核与日志读取版本                                      |
 | **迁移**：`server/drizzle/NNNN_*.sql`（Drizzle）                                                 | 当前业务表与显式版本化变更；0063 接管会话账本，0067 / 0068 原地重命名表并清理废弃空表 | 记录和外键引用保留；0067 之后要求 reader 4，回滚必须同时保留 PostgreSQL 与 Session 卷并使用兼容镜像 |
 
 原则：**保留现役用户数据，显式版本化迁移结构**。命名变更采用原地 `RENAME`，仅对确认已下线且无现役消费者的废弃空表通过显式迁移清理。
@@ -101,29 +101,29 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 
 ## 4. 核心基础业务表（节选）
 
-| 表                                                                                   | ChisaBot 怎么用                                                               |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `users` · `user_roles` · `sessions`                                                  | 应用用户（单用户时 = 管理员；网关身份模式下朋友自动建行）                     |
-| `agents` · `agent_profiles` · `agent_preferences`                                    | 机器人定义、提示词与默认偏好（迁移 0058 起用户新建的一律私有）                |
-| `channels` · `channel_agents` · `channel_memberships` · `chisabot_channel_mappings`  | 频道聊天与对话线程映射（唯一聊天路径；`chisabot_channel_mappings` 由 0068 重命名） |
-| `live_panels`                                                                        | 实时面板（迁移 0056；0057 加 `refresh_at`；0059 加直连数据源）                |
-| `devices` · `device_audit_events`                                                    | 设备与审计（迁移 0054）                                                       |
-| `skills`                                                                             | 技能（ChisaBot 技能直接用这张表）                                             |
-| `workflows` · `workflow_runs` · `workflow_run_events`                                | 工作流（迁移 0055；默认隐藏）                                                 |
-| `enterprise_settings`                                                                | 默认模型连接、备用模型                                                        |
-| `audit_events`                                                                       | 活动记录                                                                      |
-| `saved_logins` · `credentials`                                                       | 账号连接里保存的网站登录、模型密钥                                            |
-| `computer_snapshot` · `computer_page_frame`                                          | 云端浏览器快照                                                                |
-| `attachments`                                                                        | 附件（定时清理 `chisabot-zh-attachments.timer`）                              |
+| 表                                                                                  | ChisaBot 怎么用                                                                    |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `users` · `user_roles` · `sessions`                                                 | 应用用户（单用户时 = 管理员；网关身份模式下朋友自动建行）                          |
+| `agents` · `agent_profiles` · `agent_preferences`                                   | 机器人定义、提示词与默认偏好（迁移 0058 起用户新建的一律私有）                     |
+| `channels` · `channel_agents` · `channel_memberships` · `chisabot_channel_mappings` | 频道聊天与对话线程映射（唯一聊天路径；`chisabot_channel_mappings` 由 0068 重命名） |
+| `live_panels`                                                                       | 实时面板（迁移 0056；0057 加 `refresh_at`；0059 加直连数据源）                     |
+| `devices` · `device_audit_events`                                                   | 设备与审计（迁移 0054）                                                            |
+| `skills`                                                                            | 技能（ChisaBot 技能直接用这张表）                                                  |
+| `workflows` · `workflow_runs` · `workflow_run_events`                               | 工作流（迁移 0055；默认隐藏）                                                      |
+| `enterprise_settings`                                                               | 默认模型连接、备用模型                                                             |
+| `audit_events`                                                                      | 活动记录                                                                           |
+| `saved_logins` · `credentials`                                                      | 账号连接里保存的网站登录、模型密钥                                                 |
+| `computer_snapshot` · `computer_page_frame`                                         | 云端浏览器快照                                                                     |
+| `attachments`                                                                       | 附件（定时清理 `chisabot-zh-attachments.timer`）                                   |
 
 ### 已在 `0068` 迁移中清理移除的废弃空表
 
-以下早期遗留或已下线功能的废弃空表，已在迁移 `0068` 中统一清理移除（`DROP TABLE`）：
+以下确认已下线且无任何现役消费者的 14 张历史 Drizzle 表，已在迁移 `0068_detachment_and_cleanup` 中统一清理移除（`DROP TABLE IF EXISTS ... CASCADE`）：
 
-- **已下线的云端 Claude Code（CB-099 下线）**：`chisabot_cloud_workspaces`、`chisabot_cc_workspaces`、`chisabot_cc_sessions`、`chisabot_cc_messages`、`chisabot_cc_events`、`chisabot_cc_permission_rules`、`chisabot_cc_sync_bindings`、`chisabot_cc_leases`、`chisabot_cc_sync_conflicts`、`chisabot_cc_sync_events`。
-- **早期过渡与上游遗留空表**：`chisabot_legacy_imports`（旧托管历史导入表）、`team_bot_*`、`proactive_*`、`demonstrations`、`organization_settings`、`memory_sources` 等无现役消费者的历史空表。
+- **历史会话导入与语音残留**：`chisabot_legacy_imports`、`voice_sessions`。
+- **早期已下线模块空表**：`demonstrations`、`learning_settings`、`learning_thread_bindings`、`memory_sources`、`personal_memories`、`proactive_settings`、`proactive_suggestions`、`team_bot_assignments`、`team_bot_audience`、`team_bot_consent_defaults`、`team_bot_consents`、`team_bot_publications`。
 
-其余被现役模块复用的早期表（如 `routines` 等）按实际消费者保留，不在未经核对前删除。
+其余仍有现役模块复用的表（如 `components` / `sandboxed_components`、`delivery_*` / `push_devices`、`routines` / `routine_*`、`sso_providers` / `scim_*` 等）按实际消费者保留。
 
 ## 5. 登录网关（SQLite，`deploy/public/auth/`）
 

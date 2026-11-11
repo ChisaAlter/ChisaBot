@@ -4,12 +4,11 @@ ChisaBot 的网页版可以直接在手机浏览器里用，也可以「安装�
 
 ## 布局由设备决定
 
-| 设备 | 怎么判断 | 布局 |
-| --- | --- | --- |
-| 手机（竖屏、横屏都算） | 主要指针是触屏且屏幕短边 < 600px，或浏览器的 UA-CH 说 `mobile` | 窄（竖屏）布局：左栏是抽屉、面板是抽屉、输入框贴底 |
-| 平板、电脑浏览器、ChisaBot 桌面客户端 | 看窗口宽度 | < 768px 窄布局，≥ 768px 宽布局（≥ 1280 带右侧面板栏） |
-| 安装后的应用（PWA） | 同上 | Windows / macOS 默认宽屏（第一次打开把窗口开到最多 1440×920），手机默认竖屏 |
-
+| 设备                                  | 怎么判断                                                       | 布局                                                                        |
+| ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 手机（竖屏、横屏都算）                | 主要指针是触屏且屏幕短边 < 600px，或浏览器的 UA-CH 说 `mobile` | 窄（竖屏）布局：左栏是抽屉、面板是抽屉、输入框贴底                          |
+| 平板、电脑浏览器、ChisaBot 桌面客户端 | 看窗口宽度                                                     | < 768px 窄布局，≥ 768px 宽布局（≥ 1280 带右侧面板栏）                       |
+| 安装后的应用（PWA）                   | 同上                                                           | Windows / macOS 默认宽屏（第一次打开把窗口开到最多 1440×920），手机默认竖屏 |
 - 判断在 `app/index.html` 的内联脚本里，第一帧之前把 `data-phone` / `data-ios` / `data-standalone` / `data-android-app` 写到 `<html>` 上；完整说明在 `app/src/lib/device.ts`。
 - 手机横屏宽 844px 也用窄布局：`lib/device.ts` 在手机上把样式表里 `max-width ≥ 760px` 的媒体查询改成永远成立、`min-width ≥ 768px` 的改成永远不成立。
 - 手动覆盖（调试或用户偏好）：浏览器控制台 `localStorage.setItem("chisabot-layout", "phone")` 或 `"wide"`，刷新生效；`removeItem` 恢复自动。
@@ -40,7 +39,9 @@ ChisaBot 桌面客户端（Electron）和安卓客户端里不注册（已经注
 
 ```js
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.registration.unregister()));
+self.addEventListener("activate", (event) =>
+  event.waitUntil(self.registration.unregister()),
+);
 ```
 
 ## 图标

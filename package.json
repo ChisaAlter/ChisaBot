@@ -21,7 +21,7 @@
     "format:check": "bunx biome format .",
     "lint": "bunx biome lint --error-on-warnings .",
     "test": "bun test",
-    "typecheck": "bun run --cwd server typecheck && bun run --cwd app typecheck",
+    "typecheck": "bun run --cwd server typecheck && bun run --cwd agent-computer typecheck && bun run --cwd app typecheck",
     "test:ci": "bun scripts/test-ci.ts",
     "test:dsh": "bun scripts/run-dsh-tests.ts",
     "pretest": "bun run generate:app-config",

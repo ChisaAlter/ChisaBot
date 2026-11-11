@@ -42,9 +42,11 @@ bun run --filter server db:migrate
 
 1. **禁止手改自动生成的结构迁移 SQL**：若生成的 `ADD COLUMN ... NOT NULL` 在已有数据的表上无法直接执行，应拆分为「新增可空列 → 独立数据回填迁移 → 后续版本收紧约束」。
 2. **自定义数据迁移 / 原地重命名使用 `--custom`**：
+
    ```sh
    bun run --filter server db:generate -- --custom --name=your_migration_name
    ```
+
    仅在 `--custom` 生成的已登记空白迁移文件中手写幂等 SQL。
 3. **保持 `meta/_journal.json` 与 `server/drizzle/*.sql` 严格对应**：CI 会运行 `drizzle-kit check` 与脏 Schema 检测；合并或变基后若 `drizzle-kit migrate` 异常退出，请核对 `_journal.json` 中记录的文件名是否与磁盘 SQL 文件完全一致。
 

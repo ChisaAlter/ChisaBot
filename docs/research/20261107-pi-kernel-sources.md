@@ -4,7 +4,7 @@
 
 ## 推荐的包与接法
 
-**Pi 值得成为 ChisaBot 替换 CopilotKit 执行循环的首要候选；优先采用 `pi-agent-core` + `pi-ai` 的进程内接法，沿用 ChisaBot 的数据库历史、权限、审批、工作流和工具执行器。** 这是接口适配判断；此轮没有完成 Bun 运行、Magpie 协议或任务质量验证。
+**Pi 值得成为 ChisaBot 替换 旧聊天前端框架 执行循环的首要候选；优先采用 `pi-agent-core` + `pi-ai` 的进程内接法，沿用 ChisaBot 的数据库历史、权限、审批、工作流和工具执行器。** 这是接口适配判断；此轮没有完成 Bun 运行、Magpie 协议或任务质量验证。
 
 包名已有变化：npm 的旧 `@mariozechner/pi-agent-core`、`@mariozechner/pi-ai` 当前为 0.73.1，均标记 deprecated 并指向新 scope。当前包是 **`@earendil-works/pi-agent-core@1.5.0` 和 `@earendil-works/pi-ai@1.5.0`**。源码 package.json 与 npm latest 一致。新 core 的依赖为同版本 `pi-ai`、`pi-schema`，声明 Node `>=22.19.0`。[core package](https://github.com/earendil-works/pi/blob/085c84e98e7f4c950f2be606466fff4f75d8fe7c/packages/agent/package.json)、[npm core](https://registry.npmjs.org/@earendil-works%2fpi-agent-core/latest)、[旧包废弃说明](https://registry.npmjs.org/@mariozechner%2fpi-agent-core/latest)
 

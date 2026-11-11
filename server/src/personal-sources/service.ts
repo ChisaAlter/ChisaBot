@@ -229,7 +229,7 @@ function demoInboxSummary(limit: number): ScannedEmailSummary[] {
     {
       seq: 103,
       subject: "【架构评审】ChisaBot v2.4 晨报与卡片交互上线确认",
-      from: "产品团队 <team@ayase.cn>",
+      from: "产品团队 <team@chisabot.example>",
       date: now.toISOString(),
       unread: true,
     },
@@ -1164,7 +1164,8 @@ export function createPersonalSources(
 
   function inferImapHost(email: string): string {
     const clean = email.trim().toLowerCase();
-    if (clean === "demo" || clean === "demo@ayase.cn") return "demo.imap.local";
+    if (clean === "demo" || clean === "demo@chisabot.example")
+      return "demo.imap.local";
     const domain = clean.split("@")[1] ?? "";
     if (domain === "gmail.com" || domain === "googlemail.com")
       return "imap.gmail.com";

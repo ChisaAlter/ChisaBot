@@ -49,9 +49,9 @@
 
 ## 借鉴与取舍
 
-[上游源码对照](../research/20261111-smooth-experience-upstreams.md)固定了 OpenBot、dsh-bot、OpenMausBot 候选以及 Tobs 的版本和许可。采用 dsh-bot 的附件草稿持续性、会话连接所有权原则；以 OpenMausBot 的阅读位置和状态恢复入口作为检查标准。用户提供的 `openmuasebot` 名称没有精确匹配，OpenMausBot 是已注明的近名候选。
+[上游源码对照](../research/20261111-smooth-experience-upstreams.md)固定了 早期上游模板、dsh-bot、OpenMausBot 候选以及 Tobs 的版本和许可。采用 dsh-bot 的附件草稿持续性、会话连接所有权原则；以 OpenMausBot 的阅读位置和状态恢复入口作为检查标准。用户提供的 `openmuasebot` 名称没有精确匹配，OpenMausBot 是已注明的近名候选。
 
-ChisaBot 已有可用的增量 Markdown、虚拟历史和滚动锚点，不替换为上游简化实现。原 OpenBot 仅作源码参考，不恢复其依赖、品牌或部署拓扑。
+ChisaBot 已有可用的增量 Markdown、虚拟历史和滚动锚点，不替换为上游简化实现。原 早期上游模板 仅作源码参考，不恢复其依赖、品牌或部署拓扑。
 
 ## 完成边界
 

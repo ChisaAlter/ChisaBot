@@ -13,12 +13,12 @@ ChisaBot 需求多、并行开发多，所以每个改动都按同一套流程�
 2. 标上 `status: in-progress`，在 ROADMAP「现在」写上分支名。
 3. 从最新 `origin/main` 开分支（并行时用 worktree，见 [docs/dev/parallel-work.md](docs/dev/parallel-work.md)）：
 
-| 类型 | 分支 | 例子 |
-|---|---|---|
-| 新功能 | `feat/<名字>` | `feat/approvals` |
-| 修缺陷 | `fix/<名字>` | `fix/pages-h1` |
+| 类型             | 分支           | 例子              |
+| ---------------- | -------------- | ----------------- |
+| 新功能           | `feat/<名字>`  | `feat/approvals`  |
+| 修缺陷           | `fix/<名字>`   | `fix/pages-h1`    |
 | 维护 / 瘦身 / CI | `chore/<名字>` | `chore/pm-system` |
-| 只改文档 | `docs/<名字>` | `docs/adr-vault` |
+| 只改文档         | `docs/<名字>`  | `docs/adr-vault`  |
 
 提交信息用 `类型(范围): 说明`，例如 `feat(devices): 设备上的精确替换编辑`，中文说明即可。
 
@@ -50,11 +50,11 @@ ChisaBot 需求多、并行开发多，所以每个改动都按同一套流程�
 
 ## 4. 标签
 
-| 组 | 标签 |
-|---|---|
-| 类型 | `type: feat` `type: bug` `type: chore` `type: docs` `type: perf` |
-| 范围 | `area: chat` `devices` `pc` `android` `settings` `memory` `skills` `vault` `github` `pages` `schedules` `images` `im` `approvals` `agents` `infra` `slim` `docs` |
-| 优先级 | `P0`（线上坏了 / 阻塞发布）`P1`（这一轮）`P2`（排队） |
-| 状态 | `status: in-progress` `status: blocked` `status: needs-user` `status: deferred` |
+| 组     | 标签                                                                                                                                                             |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 类型   | `type: feat` `type: bug` `type: chore` `type: docs` `type: perf`                                                                                                 |
+| 范围   | `area: chat` `devices` `pc` `android` `settings` `memory` `skills` `vault` `github` `pages` `schedules` `images` `im` `approvals` `agents` `infra` `slim` `docs` |
+| 优先级 | `P0`（线上坏了 / 阻塞发布）`P1`（这一轮）`P2`（排队）                                                                                                            |
+| 状态   | `status: in-progress` `status: blocked` `status: needs-user` `status: deferred`                                                                                  |
 
 里程碑：Hark parity · 精简 Slim · 设备核心 Devices core · 成熟度 Maturity · 0.2.0 release。

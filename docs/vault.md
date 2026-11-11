@@ -8,6 +8,7 @@
 - 网站账号密码不放这里，用「账号与密码」和登录卡片（`computer_request_sign_in`）。
 
 ## 接口
+
 - `GET /api/vault` → `{ secrets }`（无值）
 - `POST /api/vault` `{ name, label, domains, value? }`（同名覆盖；value 留空 = 不改）
 - `DELETE /api/vault/:id`

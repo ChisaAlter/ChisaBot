@@ -9,10 +9,10 @@ plugin tool.
 
 Setting it up takes two people, and neither can do the other's half:
 
-| Who               | Does                                       | Where                        |
-| ----------------- | ------------------------------------------- | ----------------------------- |
-| An administrator  | Enables the connector                       | `/admin/plugins/notion`        |
-| Each person       | Consents with their own Notion account      | `/settings/connected-accounts` |
+| Who              | Does                                   | Where                          |
+| ---------------- | -------------------------------------- | ------------------------------ |
+| An administrator | Enables the connector                  | `/admin/plugins/notion`        |
+| Each person      | Consents with their own Notion account | `/settings/connected-accounts` |
 
 There is deliberately no endpoint for an administrator to connect an account on somebody's behalf.
 

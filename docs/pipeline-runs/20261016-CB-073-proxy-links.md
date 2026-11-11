@@ -6,6 +6,7 @@
 - Plan: merge after own regression (standing approval); web/server via main updater; cloud-node image needs manual rebuild
 
 ## Status log
+
 - 2026-10-16 ~14:11 CST: PR opened as CB-072 / §84 (feat/cc-proxy-links)
 - 2026-10-16 ~14:33 CST: #175 (mode-switch, also CB-072 / §84) merged to main → #174 CONFLICTING
 - 2026-10-16 ~14:50 CST: merged main into PR; renumbered this work to CB-073 / §85
@@ -14,5 +15,6 @@
 - 2026-10-16 14:56 CST: merged to main (`b38f0d81`); no client bump (PC unchanged; cloud-node image rebuild is manual)
 
 ## Notes
+
 - ID clash with #175 resolved in merge commit docs only.
 - Prod still needs `deploy/cloud-node` image rebuild for sing-box; old image keeps plain proxies.

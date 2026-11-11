@@ -9,6 +9,7 @@
 - `CHISABOT_GITHUB_API_BASE`：GitHub Enterprise 或测试替身（默认 https://api.github.com）。
 
 ## 接口
+
 - `GET /api/github` → `{ connection }`（无令牌）
 - `POST /api/github/connect` `{ token }`、`POST /api/github/check`、`DELETE /api/github`
 - `GET /api/github/actions/latest?kind=&repo=`、`GET /api/github/actions/:id`

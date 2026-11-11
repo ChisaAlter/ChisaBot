@@ -20,29 +20,29 @@ grep -E '^BASE_IMAGE=' /opt/chisabot-updater/base.env
 
 ## 2. 必须保留
 
-| 什么 | 为什么 |
-|---|---|
-| 当前运行的应用镜像（`docker inspect -f '{{.Config.Image}}' chisabot-zh`） | 生产 |
-| 最近 1–2 个回滚镜像（最新几个 `rollback-to-*.sh` 指向的） | 能一步回滚 |
-| 更新器底座镜像（`base.env` 的 `BASE_IMAGE`） | 删了下次部署会走完整构建（不致命，但更慢、更吃内存） |
-| 登录服务 `chisabot-web-auth` 使用的镜像 | 它不随更新换镜像，删了无法重建登录服务 |
-| 所有**运行中**容器的镜像，包括同机其他项目的 | 别动别人的东西 |
-| 卷 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles` | 生产数据 |
-| `/opt/chisabot-updater/backups/`（更新器自己保留 5 份） | 数据恢复 |
-| 发版的 CI 产物目录（至少最近几版） | 更新源损坏时的重建来源 |
+| 什么                                                                       | 为什么                                               |
+| -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 当前运行的应用镜像（`docker inspect -f '{{.Config.Image}}' chisabot-zh`）  | 生产                                                 |
+| 最近 1–2 个回滚镜像（最新几个 `rollback-to-*.sh` 指向的）                  | 能一步回滚                                           |
+| 更新器底座镜像（`base.env` 的 `BASE_IMAGE`）                               | 删了下次部署会走完整构建（不致命，但更慢、更吃内存） |
+| 登录服务 `chisabot-web-auth` 使用的镜像                                    | 它不随更新换镜像，删了无法重建登录服务               |
+| 所有**运行中**容器的镜像，包括同机其他项目的                               | 别动别人的东西                                       |
+| 卷 `chisabot-zh_database`、`chisabot-zh_workspace`、`chisabot-zh_profiles` | 生产数据                                             |
+| `/opt/chisabot-updater/backups/`（更新器自己保留 5 份）                    | 数据恢复                                             |
+| 发版的 CI 产物目录（至少最近几版）                                         | 更新源损坏时的重建来源                               |
 
 ## 3. 可以删
 
-| 什么 | 怎么删 |
-|---|---|
-| 已停止的预览容器、假模型容器 | `docker rm <容器>`，连同它们的卷和临时网络 |
-| 不再需要的可交互原型 / 模拟器容器 | 先用它自己的 down 脚本拆，再删它独占的镜像 |
-| 旧应用镜像（保留名单之外的 `local/chisabot:*`） | `docker rmi <镜像>` |
-| 旧的云端节点 / 同步边车镜像 | 同上（删之前确认 `Dockerfile.bak-*` 还在，需要时能重建） |
-| 超过 24 小时的构建缓存 | `docker builder prune -f --filter until=24h`；buildx 构建器：`docker buildx prune --builder chisabot-builder -f --filter until=24h` |
-| 无主的匿名卷 | `docker volume prune -f`（只删没有容器引用的**匿名**卷；先 `docker volume ls -f dangling=true` 看一眼） |
-| 对应镜像已不存在的 `rollback-to-*.sh` / `compose.yaml.before-*` | 可以移到 `archive/` 目录，避免误用 |
-| 过期的 `*.bak-*`、更新源的 `downloads-backup-*` | 保留最近几份，其余删除 |
+| 什么                                                            | 怎么删                                                                                                                              |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 已停止的预览容器、假模型容器                                    | `docker rm <容器>`，连同它们的卷和临时网络                                                                                          |
+| 不再需要的可交互原型 / 模拟器容器                               | 先用它自己的 down 脚本拆，再删它独占的镜像                                                                                          |
+| 旧应用镜像（保留名单之外的 `local/chisabot:*`）                 | `docker rmi <镜像>`                                                                                                                 |
+| 旧的云端节点 / 同步边车镜像                                     | 同上（删之前确认 `Dockerfile.bak-*` 还在，需要时能重建）                                                                            |
+| 超过 24 小时的构建缓存                                          | `docker builder prune -f --filter until=24h`；buildx 构建器：`docker buildx prune --builder chisabot-builder -f --filter until=24h` |
+| 无主的匿名卷                                                    | `docker volume prune -f`（只删没有容器引用的**匿名**卷；先 `docker volume ls -f dangling=true` 看一眼）                             |
+| 对应镜像已不存在的 `rollback-to-*.sh` / `compose.yaml.before-*` | 可以移到 `archive/` 目录，避免误用                                                                                                  |
+| 过期的 `*.bak-*`、更新源的 `downloads-backup-*`                 | 保留最近几份，其余删除                                                                                                              |
 
 **不要用** `docker system prune -a --volumes`：它会删掉所有当前没在运行的镜像（包括回滚镜像、底座镜像）和所有没挂载的卷。
 
