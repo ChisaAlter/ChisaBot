@@ -516,7 +516,7 @@ async function until<T>(
         });
       };
       runTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor: (input) =>
           build({
@@ -774,7 +774,7 @@ async function until<T>(
           ],
           () =>
             createTurnRunner({
-              intelligence: backend.client,
+              conversations: backend.client,
               runner: backend.runner,
               buildAgentFor: construct,
             })({
@@ -863,7 +863,7 @@ async function until<T>(
           confirmations,
           buildAgentFor: construct,
           runTurn: createTurnRunner({
-            intelligence: backend.client,
+            conversations: backend.client,
             runner: backend.runner,
             buildAgentFor: construct,
           }),

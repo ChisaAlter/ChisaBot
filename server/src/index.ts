@@ -746,7 +746,7 @@ const approvalService = createApprovalService(
     // Intelligence saves a streaming run's messages a moment behind the stream, and the browser runs
     // the tool as soon as the call arrives. A call that is not saved yet is waited for briefly; one
     // that never appears is refused below.
-    let history = await routineIntelligence.getThreadMessages({
+    let history = await conversationClient.getThreadMessages({
       threadId: snapshot.threadId,
       userId: ownerUserId,
     });
@@ -757,7 +757,7 @@ const approvalService = createApprovalService(
     for (let attempt = 0; !findCall() && attempt < 10; attempt++) {
       await Bun.sleep(500);
       signal.throwIfAborted();
-      history = await routineIntelligence.getThreadMessages({
+      history = await conversationClient.getThreadMessages({
         threadId: snapshot.threadId,
         userId: ownerUserId,
       });
@@ -2614,7 +2614,7 @@ const buildAgentFor = async ({
 };
 
 // Browser and background work share one execution owner and the same owner-scoped history.
-const routineIntelligence = localBackend.client;
+const conversationClient = localBackend.client;
 const routineAgentRunner = localBackend.runner;
 
 const dshRecoverySweep =
@@ -2640,7 +2640,7 @@ const dshRecoverySweep =
     : undefined;
 
 const governedTurnRunner = createTurnRunner({
-  intelligence: routineIntelligence,
+  conversations: conversationClient,
   runner: routineAgentRunner,
   components: { store: componentStore, auditStore: bootAuditStore },
   buildAgentFor,
@@ -2688,7 +2688,7 @@ const workerComputerTools = async ({
 let workerService: WorkerService | undefined;
 if (localBackend) {
   const workerTurnRunner = createTurnRunner({
-    intelligence: routineIntelligence,
+    conversations: conversationClient,
     runner: routineAgentRunner,
     components: { store: componentStore, auditStore: bootAuditStore },
     buildAgentFor,
@@ -2873,7 +2873,7 @@ const isGroupChannelThread = async (threadId: string) =>
  * 交给连接选的机器人回答。回合用自己的运行器：电脑工具只在连接打开「允许使用电脑和设备」时给，单轮最长 10 分钟。
  */
 const imTurnRunner = createTurnRunner({
-  intelligence: routineIntelligence,
+  conversations: conversationClient,
   runner: routineAgentRunner,
   components: { store: componentStore, auditStore: bootAuditStore },
   buildAgentFor,
@@ -3225,7 +3225,7 @@ const panelTaskService = createNormalPanelTaskService({
     if (!threadId) return { status };
     let replyText: string | undefined;
     try {
-      const history = await routineIntelligence.getThreadMessages({
+      const history = await conversationClient.getThreadMessages({
         threadId,
         userId: request.actorId,
       });
@@ -3620,7 +3620,7 @@ const responsibilityEngine: ResponsibilityEngine = createResponsibilityEngine({
       responsibilityRunId: context.runId,
     });
     const runner = createTurnRunner({
-      intelligence: routineIntelligence,
+      conversations: conversationClient,
       runner: routineAgentRunner,
       components: { store: componentStore, auditStore: bootAuditStore },
       buildAgentFor: (input) => buildAgentFor({ ...input, initiator }),
@@ -3733,7 +3733,7 @@ const responsibilityAnswerTurn = ({
     ...(responsibilityRunId ? { responsibilityRunId } : {}),
   });
   return createTurnRunner({
-    intelligence: routineIntelligence,
+    conversations: conversationClient,
     runner: routineAgentRunner,
     components: { store: componentStore, auditStore: bootAuditStore },
     buildAgentFor: (input) => buildAgentFor({ ...input, initiator }),
@@ -3816,7 +3816,7 @@ const executeApprovedAction = createApprovedActionExecutor({
   personInitiator: PERSON_INITIATOR,
 });
 const approvalTurnRunner = createTurnRunner({
-  intelligence: routineIntelligence,
+  conversations: conversationClient,
   runner: routineAgentRunner,
   components: { store: componentStore, auditStore: bootAuditStore },
   buildAgentFor,
@@ -4118,7 +4118,7 @@ const wakeUpRunner = createWakeUpRunner({
   actorFor,
   channels: channelStore,
   runTurn: createTurnRunner({
-    intelligence: routineIntelligence,
+    conversations: conversationClient,
     runner: routineAgentRunner,
     components: { store: componentStore, auditStore: bootAuditStore },
     buildAgentFor,
@@ -4181,7 +4181,7 @@ const groupConversations = createGroupConversations({
     return bots;
   },
   runTurn: createTurnRunner({
-    intelligence: routineIntelligence,
+    conversations: conversationClient,
     runner: routineAgentRunner,
     components: { store: componentStore, auditStore: bootAuditStore },
     buildAgentFor,
@@ -4553,7 +4553,7 @@ repeatAfterEach(
 const channelSummaries = {
   database,
   queue: createWorkQueue(database),
-  transcript: routineIntelligence,
+  transcript: conversationClient,
   title: createChannelTitler({
     model: runtimeModel.defaultModel,
     resolveApiKey: resolveRuntimeModelApiKey,

@@ -306,7 +306,7 @@ run(
     }).toThrow("找不到");
     await restartedConfirmations.decide(actorId, card.id, "approve");
     const runTurn = createTurnRunner({
-      intelligence: backend.client,
+      conversations: backend.client,
       runner: backend.runner,
       buildAgentFor: async () => agent.clone(),
     });

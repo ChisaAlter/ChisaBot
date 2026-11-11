@@ -305,7 +305,7 @@ async function until<T>(
         confirmations,
         buildAgentFor: async () => agent(),
         runTurn: createTurnRunner({
-          intelligence: backend.client,
+          conversations: backend.client,
           runner: backend.runner,
           buildAgentFor: async () => agent(),
         }),
@@ -536,7 +536,7 @@ async function until<T>(
       // Autonomous approval gaps release their slot. A durable decision must re-enter the same
       // account budget before executing the original effect, including Stop/Edit during that wait.
       const autonomous = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor: async (input) => agent(input.initiator),
       });

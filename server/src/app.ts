@@ -80,7 +80,6 @@ import { mountDesktopConnectionFailure } from "./desktop-connection-failure";
 import { createTranscriptionProvider } from "./dictation/provider";
 import { createDictationRoutes } from "./dictation/routes";
 import { markEventStreamUnbuffered } from "./event-stream-headers";
-import { createIntelligenceClient } from "./intelligence-client";
 import { mountPreviousConversationRoutes } from "./legacy/protocol";
 import type { LocalConversationBackend } from "./local-conversations";
 import { MAGPIE_MOUNT, type MagpieService } from "./magpie";
@@ -429,15 +428,14 @@ export function createApp(
       ...(options.singleUserGuard ? { gatewayIdentity: true } : {}),
     });
   });
-  // Projected, never the raw runtime. config.runtime carries the Intelligence contract, including
-  // INTELLIGENCE_API_KEY and the licence token, and this endpoint is reachable by anyone. Returning
-  // the object wholesale would serve deployment secrets to the browser. Add fields here explicitly.
+  // Projected, never the raw config object: this endpoint is reachable before sign-in, so only
+  // public capability flags belong here. Add fields explicitly.
   app.get("/api/capabilities", async (context) =>
     context.json({
       mode: config.runtime.mode,
       durableHistory: config.runtime.durableHistory,
-      // Automatic Learning was removed in slimming P4b-3; a local runtime still says "off" for old clients.
-      ...(config.runtime.mode === "local" ? { learning: false } : {}),
+      // Automatic Learning was removed in slimming P4b-3; local runtime reports "off" for callers.
+      learning: false,
       /*
        * Whether a Bot may answer with an interface it wrote itself.
        *
@@ -1595,22 +1593,15 @@ export function createApp(
   }
 
   if (threadIdentity) {
+    if (!localBackend) {
+      throw new Error("The local conversation backend is required.");
+    }
     app.route(
       "/api/threads",
       createThreadRoutes(
         threadIdentity,
         requireUser,
-        createThreadReader(
-          config.runtime.mode === "local"
-            ? (() => {
-                if (!localBackend)
-                  throw new Error(
-                    "The local conversation backend is required.",
-                  );
-                return localBackend.client;
-              })()
-            : createIntelligenceClient(config.runtime.intelligence),
-        ),
+        createThreadReader(localBackend.client),
       ),
     );
   }

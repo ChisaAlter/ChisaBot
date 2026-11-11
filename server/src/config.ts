@@ -11,24 +11,9 @@ import {
   transcriptionConfig,
 } from "./dictation/config";
 
-export type RuntimeCapabilities =
-  | {
-      mode: "intelligence";
-      durableHistory: true;
-      intelligence: IntelligenceSettings;
-    }
-  | {
-      mode: "local";
-      durableHistory: true;
-      intelligence?: never;
-    };
-
-/** Legacy configuration accepted by migration readers; hosted execution has retired. */
-export type IntelligenceSettings = {
-  apiUrl: string;
-  gatewayWsUrl: string;
-  apiKey: string;
-  licenseToken?: string;
+export type RuntimeCapabilities = {
+  mode: "local";
+  durableHistory: true;
 };
 
 export type SharedComputerConfig = {
@@ -905,22 +890,11 @@ function oktaAuth(
   return { ...client, issuer };
 }
 
-/** Local PostgreSQL owns execution; hosted history is moved through the explicit migration command. */
+/** Local PostgreSQL owns conversation execution and durable history. */
 function runtimeCapabilities(environment: Environment): RuntimeCapabilities {
   const configured = optional(environment, "CHISABOT_RUNTIME_MODE");
-  const legacyConfigured = Boolean(
-    optional(environment, "INTELLIGENCE_API_URL") ||
-      optional(environment, "INTELLIGENCE_API_KEY"),
-  );
-  if (configured === "intelligence" || (!configured && legacyConfigured)) {
-    throw new Error(
-      "Intelligence execution has retired. Export existing history with `bun server/scripts/migrate-intelligence.ts inventory --user <owner-id> --agent <bot-id> --out <snapshot.json>`, then import it with `bun server/scripts/migrate-intelligence.ts import --snapshot <snapshot.json>` while admission is paused. Set CHISABOT_RUNTIME_MODE=local after migration; existing data is not moved automatically.",
-    );
-  }
   if (configured && configured !== "local")
-    throw new Error(
-      "CHISABOT_RUNTIME_MODE must be local; intelligence requires history migration.",
-    );
+    throw new Error("CHISABOT_RUNTIME_MODE must be local.");
   return { mode: "local", durableHistory: true };
 }
 /**

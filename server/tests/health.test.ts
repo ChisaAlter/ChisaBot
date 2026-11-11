@@ -35,15 +35,16 @@ describe("runtime capabilities", () => {
     expect(JSON.parse(body).transcription).toBe(true);
     expect(body).not.toContain("private");
   });
-  test("reports the Intelligence runtime without exposing configuration secrets", async () => {
+  test("reports the local runtime without exposing configuration secrets", async () => {
     const response = await app.request(
       "http://chisabot.local/api/capabilities",
     );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      mode: "intelligence",
+      mode: "local",
       durableHistory: true,
+      learning: false,
       // Default-on. The browser reads this to decide whether to offer the tool that generates an
       // interface, so it has to be here and not only in the runtime.
       generativeUi: true,
@@ -58,21 +59,20 @@ describe("runtime capabilities", () => {
     });
   });
 
-  // The runtime object holds the Intelligence API key and licence token. This endpoint has no
-  // authentication, so a projection bug here publishes deployment secrets to anyone who asks.
-  test("never serves the Intelligence credentials", async () => {
+  // This endpoint has no authentication, so a projection bug here publishes deployment secrets.
+  test("never serves deployment credentials", async () => {
     const response = await app.request(
       "http://chisabot.local/api/capabilities",
     );
     const body = await response.text();
     const parsed = (await new Response(body).json()) as Record<string, unknown>;
 
-    expect(body).not.toContain("tenant-api-key");
-    expect(body).not.toContain("license-token");
+    expect(body).not.toContain("managed-agent-token");
     // The settings object itself must not be projected, whatever it happens to hold today.
     expect(Object.keys(parsed)).toEqual([
       "mode",
       "durableHistory",
+      "learning",
       "generativeUi",
       "replySources",
       "accountsUi",

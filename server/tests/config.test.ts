@@ -2,7 +2,6 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { configuredAuthProviders, loadConfig } from "../src/config";
 
-// The runtime is explicit: legacy credentials may coexist until operator inventory is complete.
 const baseEnvironment = {
   CHISABOT_RUNTIME_MODE: "local",
   DATABASE_URL: "postgres://chisabot:chisabot@localhost:5432/chisabot",
@@ -12,9 +11,6 @@ const baseEnvironment = {
   BETTER_AUTH_SECRET: "a-long-enough-local-development-auth-secret",
   BETTER_AUTH_URL: "http://localhost:3001",
   INITIAL_ADMIN_EMAILS: "admin@chisabot.test",
-  INTELLIGENCE_API_URL: "http://localhost:7100",
-  INTELLIGENCE_GATEWAY_WS_URL: "ws://localhost:7103",
-  INTELLIGENCE_API_KEY: "tenant-api-key",
   MANAGED_AGENT_AG_UI_URL: " http://localhost:4200/ag-ui ",
   MANAGED_AGENT_TOKEN: "managed-agent-token",
 };
@@ -118,21 +114,16 @@ describe("deployment configuration", () => {
     });
   });
 
-  test("new deployments default to local while old implicit hosted configuration requires migration", () => {
+  test("new deployments default to local and reject non-local runtime modes", () => {
     expect(
       loadConfig({
         ...baseEnvironment,
         CHISABOT_RUNTIME_MODE: undefined,
-        INTELLIGENCE_API_URL: undefined,
-        INTELLIGENCE_API_KEY: undefined,
       }).runtime.mode,
     ).toBe("local");
     expect(() =>
-      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: undefined }),
-    ).toThrow("migrate-intelligence.ts inventory");
-    expect(() =>
-      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: "intelligence" }),
-    ).toThrow("existing data is not moved automatically");
+      loadConfig({ ...baseEnvironment, CHISABOT_RUNTIME_MODE: "hosted" }),
+    ).toThrow("CHISABOT_RUNTIME_MODE must be local.");
   });
 
   test("local mode has no licence prerequisite", () => {

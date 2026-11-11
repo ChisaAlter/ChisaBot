@@ -266,7 +266,7 @@ const available = Boolean(process.env.TEST_DATABASE_URL);
         }
       }
       const run = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor: async () => new ControlledAgent({ agentId: bot }),
         turnTimeoutMs: 10_000,

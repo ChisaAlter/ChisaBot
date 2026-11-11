@@ -271,12 +271,12 @@ class ProtocolSocket implements WsLike {
           fallbacks: async () => [],
         });
       runTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor,
       });
       shortTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor,
         turnTimeoutMs: 700,
