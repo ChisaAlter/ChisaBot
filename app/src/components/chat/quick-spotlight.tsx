@@ -20,7 +20,6 @@ import { toast } from "@/components/ui/toast";
 import {
   CHISABOT_QUOTE_EVENT,
   CHISABOT_SPOTLIGHT_EVENT,
-  type ComposerQuotePayload,
   dispatchComposerQuote,
   openQuickSpotlight,
   sendPromptToChat,
@@ -40,7 +39,8 @@ export function QuickSpotlight() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // Alt+Space summons Quick Spotlight (Ctrl+K is reserved for sidebar conversation search)
-      const isAltSpace = e.altKey && !e.ctrlKey && !e.metaKey && e.code === "Space";
+      const isAltSpace =
+        e.altKey && !e.ctrlKey && !e.metaKey && e.code === "Space";
       if (isAltSpace) {
         e.preventDefault();
         setOpen((prev) => !prev);
@@ -51,28 +51,14 @@ export function QuickSpotlight() {
     const onCustomOpen = () => {
       setOpen(true);
     };
-    const onQuote = (ev: Event) => {
-      const detail = (ev as CustomEvent<ComposerQuotePayload & { __forwarded?: boolean }>).detail;
+    const onQuote = () => {
       if (open) {
         setOpen(false);
         setBriefMarkdown(null);
       }
-      if (
-        detail &&
-        !detail.__forwarded &&
-        !document.querySelector(".glass-composer") &&
-        !isBotsChatPath(window.location.pathname)
-      ) {
-        const target = botsTarget();
-        void navigate(target as never);
-        window.setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent(CHISABOT_QUOTE_EVENT, {
-              detail: { ...detail, __forwarded: true },
-            }),
-          );
-        }, 140);
-      }
+      // The quote is already addressed and pending; navigation never replays it.
+      if (!isBotsChatPath(window.location.pathname))
+        void navigate(botsTarget() as never);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener(CHISABOT_SPOTLIGHT_EVENT, onCustomOpen);
@@ -170,7 +156,10 @@ export function QuickSpotlight() {
         </form>
 
         {briefMarkdown ? (
-          <div className="chat-spotlight-brief" data-testid="quick-spotlight-brief">
+          <div
+            className="chat-spotlight-brief"
+            data-testid="quick-spotlight-brief"
+          >
             <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-border/50 pb-2">
               <button
                 className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -210,7 +199,9 @@ export function QuickSpotlight() {
               <IconSun className="size-4 text-amber-500" />
               <span className="chat-spotlight-action-main">
                 <span className="chat-spotlight-action-title">
-                  {loadingBrief ? "正在生成今日晨报卡片…" : "🌅 立即生成今日晨报卡片（Morning Brief）"}
+                  {loadingBrief
+                    ? "正在生成今日晨报卡片…"
+                    : "🌅 立即生成今日晨报卡片（Morning Brief）"}
                 </span>
                 <span className="chat-spotlight-action-sub">
                   {"汇总实时天气、今日日历安排、重要未读邮件与待办记忆"}
@@ -273,10 +264,14 @@ export function QuickSpotlight() {
                   if (clip) {
                     submitToComposer(clip.slice(0, 2000), "剪贴板上下文");
                   } else {
-                    submitToComposer("请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析");
+                    submitToComposer(
+                      "请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析",
+                    );
                   }
                 } catch {
-                  submitToComposer("请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析");
+                  submitToComposer(
+                    "请调用 device_desktop_context 读取我电脑当前的剪贴板内容并帮我分析",
+                  );
                 }
               }}
               type="button"
@@ -296,7 +291,11 @@ export function QuickSpotlight() {
             <button
               className="chat-spotlight-action"
               data-testid="spotlight-action-calendar"
-              onClick={() => submitToComposer("请调用 calendar_list_events 查看我未来 7 天的日程安排")}
+              onClick={() =>
+                submitToComposer(
+                  "请调用 calendar_list_events 查看我未来 7 天的日程安排",
+                )
+              }
               type="button"
             >
               <IconCalendarEvent className="size-4 text-emerald-500" />
@@ -314,7 +313,11 @@ export function QuickSpotlight() {
             <button
               className="chat-spotlight-action"
               data-testid="spotlight-action-email"
-              onClick={() => submitToComposer("请调用 email_list_recent 查看我最近的收件箱邮件并总结重点")}
+              onClick={() =>
+                submitToComposer(
+                  "请调用 email_list_recent 查看我最近的收件箱邮件并总结重点",
+                )
+              }
               type="button"
             >
               <IconMail className="size-4 text-violet-500" />
@@ -333,7 +336,9 @@ export function QuickSpotlight() {
               className="chat-spotlight-action"
               data-testid="spotlight-action-connectors"
               onClick={() =>
-                submitToComposer("请调用 connect_service (action='list') 查看我当前所有连接器与插件状态")
+                submitToComposer(
+                  "请调用 connect_service (action='list') 查看我当前所有连接器与插件状态",
+                )
               }
               type="button"
             >
@@ -364,7 +369,9 @@ export function QuickSpotlight() {
                   {"✨ 精选技能库与 SKILL.md 导入"}
                 </span>
                 <span className="chat-spotlight-action-sub">
-                  {"前往设置 → 技能，一键安装 8 款个人助理技能或导入 GitHub 技能"}
+                  {
+                    "前往设置 → 技能，一键安装 8 款个人助理技能或导入 GitHub 技能"
+                  }
                 </span>
               </span>
               <IconArrowRight className="size-3.5 opacity-55" />

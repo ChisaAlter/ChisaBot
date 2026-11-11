@@ -222,6 +222,7 @@ import {
 } from "./conversation-runtime";
 import { createConversationBindings } from "./conversations/bindings";
 import { createConfirmationResumer } from "./conversations/confirmation-resume";
+import { dispatchContinuationWork } from "./conversations/continuation-work";
 import { createConversationInteractions } from "./conversations/interactions";
 import { conversationAdmissionClosed } from "./conversations/maintenance";
 import { recoverConversations } from "./conversations/recovery";
@@ -3851,25 +3852,25 @@ const confirmationSweep = repeatAfterEach(async () => {
     limit: 1,
   });
   if (!item) return;
-  try {
-    const payload = z
-      .object({ ownerUserId: z.string().min(1), requestId: z.string().min(1) })
-      .parse(item.payload);
-    await resumeConfirmation(payload.ownerUserId, payload.requestId);
-    await approvalQueue.finish({
-      kind: item.kind,
-      key: item.key,
-      owner: confirmationOwner,
-    });
-  } catch (error) {
-    await approvalQueue.release({
-      kind: item.kind,
-      key: item.key,
-      owner: confirmationOwner,
-      delayMs: 5000,
-      reason: reasonWithoutStatement(error),
-    });
-  }
+  await dispatchContinuationWork(
+    database,
+    approvalQueue,
+    item,
+    confirmationOwner,
+    async (onAdmitted) => {
+      const payload = z
+        .object({
+          ownerUserId: z.string().min(1),
+          requestId: z.string().min(1),
+        })
+        .parse(item.payload);
+      await resumeConfirmation(
+        payload.ownerUserId,
+        payload.requestId,
+        onAdmitted,
+      );
+    },
+  );
 }, 1000);
 const interactionOwner = workOwner("conversation-interaction");
 const interactionSweep = repeatAfterEach(async () => {
@@ -3881,22 +3882,18 @@ const interactionSweep = repeatAfterEach(async () => {
     limit: 1,
   });
   if (!item) return;
-  try {
-    await conversationInteractions.resume(item.key, approvalContinuationRunner);
-    await approvalQueue.finish({
-      kind: item.kind,
-      key: item.key,
-      owner: interactionOwner,
-    });
-  } catch (error) {
-    await approvalQueue.release({
-      kind: item.kind,
-      key: item.key,
-      owner: interactionOwner,
-      delayMs: 5000,
-      reason: reasonWithoutStatement(error),
-    });
-  }
+  await dispatchContinuationWork(
+    database,
+    approvalQueue,
+    item,
+    interactionOwner,
+    (onAdmitted) =>
+      conversationInteractions.resume(
+        item.key,
+        approvalContinuationRunner,
+        onAdmitted,
+      ),
+  );
 }, 1000);
 const approvalSweep = repeatAfterEach(async () => {
   if (conversationAdmissionClosed()) return;

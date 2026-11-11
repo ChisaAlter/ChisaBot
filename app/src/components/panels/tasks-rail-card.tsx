@@ -47,6 +47,7 @@ import type {
   TaskCenterSnapshot,
   TaskCenterTask,
 } from "../../../../shared/task-center";
+import { activeTaskCount } from "../../../../shared/task-center";
 import {
   ACTIVE_RUN_STATUSES,
   RUN_STATUS_LABEL,
@@ -86,8 +87,10 @@ export function useRailTasksSummary() {
     pendingDecisions,
     activeTasks,
     activeRuns,
-    approvalCount: pendingDecisions.length + waitingApprovalRuns.length,
-    activeCount: activeTasks.length + activeRuns.length,
+    approvalCount:
+      (data?.decisionCounts?.pending ?? pendingDecisions.length) +
+      waitingApprovalRuns.length,
+    activeCount: (data ? activeTaskCount(data.counts) : 0) + activeRuns.length,
   };
 }
 
@@ -132,6 +135,8 @@ export function TasksRailCard() {
         workflows={workflows}
         pendingDecisions={pendingDecisions}
         recentTasks={recentTasks}
+        pendingCount={data?.decisionCounts?.pending ?? pendingDecisions.length}
+        taskCount={data ? activeTaskCount(data.counts) : 0}
       />
     </div>
   );
@@ -144,6 +149,8 @@ function TasksRailBody({
   activeTasks,
   activeRuns,
   recentTasks,
+  pendingCount,
+  taskCount,
   inboxCount,
 }: {
   snapshot: ReturnType<typeof useRailTasksSummary>["snapshot"];
@@ -152,6 +159,8 @@ function TasksRailBody({
   activeTasks: TaskCenterTask[];
   activeRuns: WorkflowRunView[];
   recentTasks: TaskCenterTask[];
+  pendingCount: number;
+  taskCount: number;
   inboxCount: number;
 }) {
   const queryClient = useQueryClient();
@@ -214,7 +223,11 @@ function TasksRailBody({
       {pendingDecisions.length > 0 ? (
         <RailSection
           title="需要你确认"
-          count={`${pendingDecisions.length} 待确认`}
+          count={
+            pendingCount > pendingDecisions.length
+              ? `${pendingDecisions.length} / ${pendingCount} 待确认`
+              : `${pendingCount} 待确认`
+          }
         >
           {pendingDecisions.map((decision) => (
             <RailDecisionItem
@@ -224,12 +237,25 @@ function TasksRailBody({
               onStale={() => dropStaleDecision(queryClient, decision.id)}
             />
           ))}
+          {pendingCount > pendingDecisions.length ? (
+            <Link
+              className="task-rail-center-link"
+              to="/tasks"
+              search={{ view: "outbox" }}
+            >
+              查看全部 {pendingCount} 项待确认
+            </Link>
+          ) : null}
         </RailSection>
       ) : null}
       {activeRuns.length > 0 || activeTasks.length > 0 ? (
         <RailSection
           title="任务与工作流"
-          count={`${activeRuns.length + activeTasks.length} 项`}
+          count={
+            taskCount > activeTasks.length
+              ? `${activeRuns.length + activeTasks.length} / ${activeRuns.length + taskCount} 项`
+              : `${activeRuns.length + activeTasks.length} 项`
+          }
         >
           {activeRuns.map((run) => (
             <RailWorkflowRunItem
@@ -241,6 +267,15 @@ function TasksRailBody({
           {activeTasks.map((task) => (
             <RailTaskItem key={task.id} onChanged={refreshTasks} task={task} />
           ))}
+          {taskCount > activeTasks.length ? (
+            <Link
+              className="task-rail-center-link"
+              to="/tasks"
+              search={{ view: "active" }}
+            >
+              查看全部 {taskCount} 项任务
+            </Link>
+          ) : null}
         </RailSection>
       ) : null}
 
@@ -327,6 +362,17 @@ function dropStaleDecision(queryClient: QueryClient, decisionId: string) {
         ? {
             ...prev,
             outbox: prev.outbox.filter((item) => item.id !== decisionId),
+            ...(prev.decisionCounts &&
+            prev.outbox.some(
+              (item) => item.id === decisionId && item.status === "pending",
+            )
+              ? {
+                  decisionCounts: {
+                    ...prev.decisionCounts,
+                    pending: Math.max(0, prev.decisionCounts.pending - 1),
+                  },
+                }
+              : {}),
           }
         : prev,
   );

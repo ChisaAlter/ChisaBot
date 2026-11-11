@@ -15,6 +15,8 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                                               |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [CB-117](#cb-117) | 聊天、任务与桌面操作连续性优化                                                    | 成熟度 Maturity       | `type: bug` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: in-progress`                          |
+| [CB-116](#cb-116) | 个人助理恢复、通知与发布接线收尾                                                  | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                                                |
 | [CB-001](#cb-001) | 审批卡片与审批偏好（Hark parity 第 5 项）                                         | Hark parity           | `type: feat` · `area: approvals` · `area: chat` · `P1` · `status: done`                                            |
 | [CB-002](#cb-002) | 生图 / 识图模型设置：管理员默认 + 每人可覆盖                                      | Hark parity           | `type: feat` · `area: images` · `area: settings` · `P1` · `status: done`                                           |
 | [CB-003](#cb-003) | 成熟度扫查：设备流程优先的全量体验检查                                            | 成熟度 Maturity       | `type: chore` · `area: devices` · `area: chat` · `P1` · `status: done`（三轮已上线）                               |
@@ -108,19 +110,35 @@
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
+## CB-117
+
+**聊天、任务与桌面操作连续性优化**
+
+标签：`type: bug` · `type: perf` · `area: chat` · `area: agents` · `area: pc` · `P1` · `status: in-progress`
+
+分支：`codex/smooth-experience`。基线 `9293dfc8` / 0.1.142；[审查与迭代记录](pipeline-runs/20261111-smooth-experience.md)。
+
+- [x] 引用、预填与失败恢复只作用于目标草稿；附件可跨重载恢复，用户焦点不被后台完成抢走。
+- [x] 会话观察资源随真实页面消费者释放，不停止服务器任务；已有重连状态在当前界面可见。
+- [x] 有序事件保留，合并中间全历史快照并保存准确覆盖水位；恢复与最终历史完整。
+- [x] 已接纳的回答/确认不会因正常忙碌等待丢失；真实失败可见且可恢复；过期通知取消。
+- [x] 活动任务与待审批可持续访问；个人上下文完整参与任务，记忆纠正和遗忘没有隐藏副本。
+- [x] 巡检、定时保存、连接断开的结果与原位反馈一致；桌面端恢复当前页面且不重复导航。
+- [ ] 全部实现后完成定向测试、实际宽窄窗/暗色交互、持久性与性能验证，再独立审查及发布。
+
 ## CB-116
 
 **个人助理恢复、通知与发布接线收尾**
 
-标签：`type: bug` · `area: agents` · `area: infra` · `P1` · `status: in-progress`
+标签：`type: bug` · `area: agents` · `area: infra` · `P1` · `status: done`
 
-分支：`codex/assistant-production-closure`。版本候选 0.1.142，具体证据见个人助理实施记录。
+[PR #520](https://github.com/ChisaAlter/ChisaBot/pull/520)、[PR #521](https://github.com/ChisaAlter/ChisaBot/pull/521) 已合并；0.1.142 服务器及正式客户端已发布。证据见[个人助理实施记录](pipeline-runs/20261108-assistant-production.md#当前状态)。
 
 - [x] 只读失败正常返回，未知效果可按账号核对并继续，原操作不重放。
 - [x] 修复跨 Bot 租约死锁及忙碌状态误清除，真实 Host/PG 路径通过。
 - [x] 工作流与宿主状态通知、独立 SMTP、默认 DSH 配置接线与本地验证完成。
-- [x] 生产更新签名和必跑 DSH 数据库恢复 CI 接线完成，相关本地验证通过。
-- [ ] 合并、服务器发布与客户端更新源发布完成；正式收件仍依赖实际通知目标。
+- [x] 生产更新签名和必跑 DSH 数据库恢复 CI 通过。
+- [x] 合并、服务器和客户端更新源发布完成；Windows 安装端已记录新版下载成功。正式收件仍依赖实际通知目标。
 
 ## CB-115
 

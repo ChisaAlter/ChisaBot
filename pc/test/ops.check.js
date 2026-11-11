@@ -69,8 +69,10 @@ test("shell cancel via signal", async () => {
 });
 
 test("clipboard fallback and system info", async () => {
-  await ops.run("clipboard_write", { text: "剪贴板" }, {});
-  assert.equal((await ops.run("clipboard_read", {}, {})).text, "剪贴板");
+  // Exercise the documented headless fallback without changing the developer's clipboard.
+  const headless = createOps({ platform: "linux", clientVersion: "test" });
+  await headless.run("clipboard_write", { text: "剪贴板" }, {});
+  assert.equal((await headless.run("clipboard_read", {}, {})).text, "剪贴板");
   const info = await ops.run("system_info", {}, {});
   assert.equal(info.platform, process.platform);
   assert.ok(info.cpus > 0);

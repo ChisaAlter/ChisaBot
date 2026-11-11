@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { ConfirmRow } from "@/components/approvals/confirm-row";
+import { ConfirmationPages } from "@/components/approvals/confirmation-pages";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -19,10 +20,7 @@ import {
   dismissPersonQuestion,
 } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
-import {
-  confirmKeys,
-  recentConfirmationsQueryOptions,
-} from "@/lib/confirmations";
+import { confirmKeys, useConfirmationPage } from "@/lib/confirmations";
 import { botFactoryApprovalSpec } from "@/lib/conversations/bot-factory-tool";
 import { agoText } from "@/lib/im";
 
@@ -34,7 +32,8 @@ import { agoText } from "@/lib/im";
 export function PendingInbox() {
   const cache = useQueryClient();
   const upstream = useQuery(approvalInboxOptions());
-  const recent = useQuery(recentConfirmationsQueryOptions());
+  const pages = useConfirmationPage("actionable");
+  const recent = pages.query;
   const bots = useQuery(agentListQueryOptions());
   const botName = useMemo(() => {
     const names = new Map((bots.data ?? []).map((bot) => [bot.id, bot.name]));
@@ -47,9 +46,7 @@ export function PendingInbox() {
       cache.invalidateQueries({ queryKey: botLifecycleKeys.all }),
     ]);
 
-  const confirms = (recent.data ?? []).filter(
-    (request) => request.status === "pending",
-  );
+  const confirms = recent.data?.requests ?? [];
   const requests = (upstream.data?.requests ?? []).filter(
     (request) => request.status === "pending",
   );
@@ -57,6 +54,15 @@ export function PendingInbox() {
   const loading = recent.isPending || upstream.isPending;
   const failed = recent.error || upstream.error;
   const total = confirms.length + requests.length + questions.length;
+  const reload = useAsyncAction(
+    async () => {
+      await Promise.all([
+        recent.refetch({ throwOnError: true }),
+        upstream.refetch({ throwOnError: true }),
+      ]);
+    },
+    { errorToast: (error) => error.message },
+  );
 
   return (
     <div className="pending-inbox space-y-6" data-testid="pending-inbox">
@@ -67,7 +73,9 @@ export function PendingInbox() {
           action={
             <Button
               className="mt-2"
-              onClick={() => void refresh()}
+              onClick={() => void reload.run()}
+              state={reload.state}
+              feedback="refresh"
               size="sm"
               variant="outline"
             >
@@ -89,7 +97,7 @@ export function PendingInbox() {
       ) : (
         <>
           {confirms.length ? (
-            <PageSection title={`等你确认 · ${confirms.length}`}>
+            <PageSection title={`待跟进的确认 · ${confirms.length}`}>
               <Card className="mem-card">
                 {confirms.map((request) => (
                   <ConfirmRow
@@ -132,6 +140,7 @@ export function PendingInbox() {
           ) : null}
         </>
       )}
+      <ConfirmationPages {...pages} />
       <Link className="pending-prefs-link" to="/settings/approvals">
         <span>
           <span className="pending-prefs-t">{"哪些事先问我"}</span>

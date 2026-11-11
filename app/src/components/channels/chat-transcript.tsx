@@ -187,6 +187,7 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
+  reconnecting?: boolean;
   /** 这段对话的机器人：在想 / 在干活那一行用它的形象头像代替三个点（DESIGN.md §81）。 */
   agentId?: string;
   /** 滚动位置记在哪（DESIGN.md §88）：频道 id。 */
@@ -380,15 +381,11 @@ function RestoringTranscript() {
  * It borrows the shimmer a running tool line uses, so "working on it" reads the same whether the
  * work is a tool call or a model that has not spoken yet.
  */
-function Thinking({ since }: { since: number }) {
+function Thinking({ since, label }: { since: number; label: string }) {
   // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
   // 读屏读到的「思考中」在对话末尾那个一直挂着的 role=status 里（transcript-live-status），胶囊自己不带。
   return (
-    <StatusCapsule
-      label={"思考中"}
-      since={since}
-      testId="transcript-thinking"
-    />
+    <StatusCapsule label={label} since={since} testId="transcript-thinking" />
   );
 }
 
@@ -3240,6 +3237,7 @@ export function unansweredTurn(
 export function ChatTranscript({
   agentId,
   busy = false,
+  reconnecting = false,
   scrollKey,
   commandNames = "",
   messages,
@@ -3479,13 +3477,15 @@ export function ChatTranscript({
   const liveWork = live
     ? [...compact.work.values()].find((work) => work.live)
     : undefined;
+  const connectionLabel = reconnecting ? "正在恢复连接" : undefined;
   const liveStatus = !live
     ? ""
-    : liveWork
-      ? (summarizeWork(liveWork.calls)?.current ?? "")
-      : waitingOnFirstToken
-        ? "思考中"
-        : "";
+    : (connectionLabel ??
+      (liveWork
+        ? (summarizeWork(liveWork.calls)?.current ?? "")
+        : waitingOnFirstToken
+          ? "思考中"
+          : ""));
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
     live &&
@@ -3797,10 +3797,17 @@ export function ChatTranscript({
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
                 liveWorking ? null : (
-                  <Thinking since={liveSince} />
+                  <Thinking
+                    since={liveSince}
+                    label={connectionLabel ?? "思考中"}
+                  />
                 )
               ) : pausedAfterText !== null ? (
-                <PausedCapsule since={liveSince} watch={pausedAfterText} />
+                <PausedCapsule
+                  since={liveSince}
+                  watch={pausedAfterText}
+                  label={connectionLabel}
+                />
               ) : null}
               <LooseConfirmCards
                 resumed={resumedCards}
@@ -3961,6 +3968,7 @@ export function ChatTranscript({
         calls={work.calls}
         agentId={agentId}
         live={work.live}
+        statusLabel={work.live ? connectionLabel : undefined}
         notes={work.notes}
         since={work.live ? liveSince : undefined}
         turnKey={work.key}

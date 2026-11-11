@@ -289,6 +289,7 @@ export function createTurnRunner(options: {
     runId: suppliedRunId,
     depth,
     onText,
+    onAdmitted,
     forwardedProps: suppliedForwardedProps,
   }) => {
     if (signal?.aborted) throw new Error("The headless turn was cancelled.");
@@ -588,6 +589,7 @@ export function createTurnRunner(options: {
             agent,
             input,
             persistedInputMessages,
+            ...(onAdmitted ? { onAdmitted } : {}),
             join: false,
             execution: executionClass(
               initiator,

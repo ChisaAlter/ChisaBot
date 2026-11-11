@@ -276,7 +276,18 @@ function openDeviceSettings(tab) {
 
 let chatOffline = false;
 let chatRetryTimer = null;
+let chatRetry = null;
 let lastWebPath = "/";
+
+function cancelChatRetry() {
+  chatRetry?.controller.abort();
+  chatRetry = null;
+}
+
+function rememberWebPath(url) {
+  const parsed = new URL(url);
+  lastWebPath = parsed.pathname + parsed.search + parsed.hash;
+}
 
 function serverOrigin() {
   try {
@@ -358,20 +369,22 @@ function openChat(pathname) {
   win.webContents.on("did-navigate", (_event, url) => {
     if (loginUrl(url)) return setImmediate(sessionExpired);
     if (isServerUrl(url)) {
+      rememberWebPath(url);
       chatOffline = false;
       clearInterval(chatRetryTimer);
+      cancelChatRetry();
       // 网页刚从服务器加载成功 = 网络和服务器都通：节点如果还在退避等待，马上重连（服务器重启 / 更新之后尤其如此）。
       agent?.reconnectNow();
     }
   });
   win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-    if (isMainFrame && isServerUrl(url)) lastWebPath = new URL(url).pathname + new URL(url).search;
+    if (isMainFrame && isServerUrl(url)) rememberWebPath(url);
   });
   // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
     try {
-      lastWebPath = new URL(url).pathname + new URL(url).search;
+      rememberWebPath(url);
     } catch {}
     showOffline(win, description || String(code));
   });
@@ -399,6 +412,7 @@ function openChat(pathname) {
   win.on("closed", () => {
     windows.chat = null;
     clearInterval(chatRetryTimer);
+    cancelChatRetry();
   });
   windows.chat = win;
   return win;
@@ -406,6 +420,7 @@ function openChat(pathname) {
 
 function showOffline(win, reason) {
   if (win.isDestroyed()) return;
+  cancelChatRetry();
   chatOffline = true;
   win.loadFile(path.join(UI, "offline.html"), { query: { error: String(reason).slice(0, 80) } });
   clearInterval(chatRetryTimer);
@@ -414,19 +429,32 @@ function showOffline(win, reason) {
   }, 15000);
 }
 
-async function probeServer() {
-  const response = await net.fetch(`${serverOrigin()}/`, { method: "HEAD", cache: "no-store" });
+async function probeServer(origin, signal) {
+  const response = await net.fetch(`${origin}/`, { method: "HEAD", cache: "no-store", signal });
   return response.status < 500;
 }
 
-async function retryChat() {
+function retryChat() {
   const win = windows.chat;
-  if (!win || win.isDestroyed() || !chatOffline) return true;
-  if (!(await probeServer().catch(() => false))) throw new Error("仍然连不上服务器。");
-  chatOffline = false;
-  clearInterval(chatRetryTimer);
-  win.loadURL(`${serverOrigin()}${lastWebPath || "/"}`);
-  return true;
+  if (!win || win.isDestroyed() || !chatOffline) return Promise.resolve(true);
+  if (chatRetry) return chatRetry.promise;
+  const request = { origin: serverOrigin(), controller: new AbortController(), promise: null };
+  chatRetry = request;
+  request.promise = (async () => {
+    // Use the same bounded wait as login probing; timer and button share this request.
+    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(8000)]);
+    const reachable = await probeServer(request.origin, signal).catch(() => false);
+    // Closing, logging out or navigating replaces the owner of this recovery attempt.
+    if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
+    if (!reachable) throw new Error("仍然连不上服务器。");
+    chatOffline = false;
+    clearInterval(chatRetryTimer);
+    await win.loadURL(`${request.origin}${lastWebPath || "/"}`);
+    return true;
+  })().finally(() => {
+    if (chatRetry === request) chatRetry = null;
+  });
+  return request.promise;
 }
 
 // ---------- 托盘 ----------
@@ -1086,6 +1114,8 @@ function handleChatWindow(channel, fn) {
 
 /** 作废这台电脑在 serverUrl 上的设备令牌并清掉本机记录（退出登录、换服务器时用）。 */
 async function dropDevice(serverUrl) {
+  clearInterval(chatRetryTimer);
+  cancelChatRetry();
   clearTimeout(enrollRetryTimer);
   enrollIssue = "";
   agentDetail = "";
@@ -1099,13 +1129,15 @@ async function dropDevice(serverUrl) {
 
 /** 退出登录：网页会话作废 + 设备令牌作废 + 清 Cookie。保留服务器地址和账号，登录页直接预填。 */
 async function logout() {
+  clearInterval(chatRetryTimer);
+  cancelChatRetry();
   const local = config.get();
   if (local.serverUrl) {
     const origin = serverOrigin();
     await auth.logoutSession({ fetchImpl: netFetch, serverUrl: origin, cookieHeader: await cookieHeaderFor(origin).catch(() => "") }).catch(() => false);
   }
   await dropDevice(local.serverUrl);
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "logout", outcome: "succeeded", summary: "退出登录（会话和设备令牌已作废）" });
+  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "logout", outcome: "succeeded", summary: "已退出本机登录并清除设备记录" });
   await session.fromPartition(PARTITION).clearStorageData({ storages: ["cookies"] });
   if (windows.chat && !windows.chat.isDestroyed()) windows.chat.destroy();
   windows.chat = null;

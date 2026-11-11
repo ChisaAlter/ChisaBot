@@ -1361,7 +1361,7 @@ function ifNoneMatchHolds(header: string | undefined, etag: string): boolean {
  * than no probe at all.
  */
 function attachmentHeaders(
-  row: { name: string; mimeType: string },
+  row: { name: string; mimeType: string; attachedAt: Date | null },
   etag: string,
 ): Record<string, string> {
   const kind = classifyAttachment(row.mimeType);
@@ -1389,6 +1389,8 @@ function attachmentHeaders(
     // Paired with that: the ask is cheap, because a client that still holds this id's bytes gets
     // a 304 instead of them.
     ETag: etag,
+    "X-ChisaBot-Attachment-State":
+      row.attachedAt === null ? "staged" : "attached",
   };
 }
 
@@ -1608,12 +1610,11 @@ export function createAttachmentRoutes(
 
     const etag = width === null ? `"${id}"` : `"${id}-w${width}"`;
     if (ifNoneMatchHolds(context.req.header("If-None-Match"), etag)) {
-      // One column, and it is the id the WHERE has already fixed: this statement is asked whether a
-      // row comes back, never for anything in it. A `select` naming no field at all is not a
-      // statement Postgres would take, so "nothing" has to be spelled as the cheapest something.
+      // The state can change after upload even though the bytes and ETag are immutable.
+      // Read only that metadata so draft restoration never offers an already sent file again.
       const visible = await readOrNull(
         database
-          .select({ id: attachments.id })
+          .select({ attachedAt: attachments.attachedAt })
           .from(attachments)
           .where(visibleToActor(database, actor.id, id)),
         actor.id,
@@ -1625,6 +1626,8 @@ export function createAttachmentRoutes(
       return context.body(null, 304, {
         ETag: etag,
         "Cache-Control": ATTACHMENT_CACHE_CONTROL,
+        "X-ChisaBot-Attachment-State":
+          visible[0].attachedAt === null ? "staged" : "attached",
       });
     }
 
@@ -1664,6 +1667,7 @@ export function createAttachmentRoutes(
             name: attachments.name,
             mimeType: attachments.mimeType,
             sizeBytes: attachments.sizeBytes,
+            attachedAt: attachments.attachedAt,
           })
           .from(attachments)
           .where(visibleToActor(database, actor.id, id)),
@@ -1699,7 +1703,11 @@ export function createAttachmentRoutes(
       if (hit?.kind === "thumb") {
         const visible = await readOrNull(
           database
-            .select({ name: attachments.name, mimeType: attachments.mimeType })
+            .select({
+              name: attachments.name,
+              mimeType: attachments.mimeType,
+              attachedAt: attachments.attachedAt,
+            })
             .from(attachments)
             .where(visibleToActor(database, actor.id, id)),
           actor.id,
@@ -1721,6 +1729,7 @@ export function createAttachmentRoutes(
           name: attachments.name,
           mimeType: attachments.mimeType,
           bytes: attachments.bytes,
+          attachedAt: attachments.attachedAt,
         })
         .from(attachments)
         .where(visibleToActor(database, actor.id, id)),

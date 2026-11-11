@@ -1,6 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { clearRememberedShots } from "@/components/computer/screenshot-card";
 import { mdCache } from "@/lib/chat/md-cache";
+import { clearComposerInputs } from "@/lib/chat/quote-event";
+import { setDraftFileAccount } from "@/lib/chat/ui-memory";
 import { client } from "@/lib/client";
 import { setControlAccount } from "@/lib/computers/use-control";
 import { resetScheduleFiredState } from "@/lib/schedule-fired";
@@ -19,10 +21,12 @@ export function signOutMutationOptions(queryClient: QueryClient) {
     onSuccess: () => {
       // CB-107：退出后关掉这个账号的 control 轮询频道和锁。
       setControlAccount(null);
+      setDraftFileAccount(null);
       clearRememberedShots();
       resetScheduleFiredState();
       // 解析缓存里是消息原文，换账号前清掉。
       mdCache.clear();
+      clearComposerInputs();
       queryClient.removeQueries({ queryKey: authKeys.all });
     },
   });

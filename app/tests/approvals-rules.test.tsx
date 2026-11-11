@@ -210,7 +210,7 @@ test("待处理：聊天里没点的确认卡片带机器人名字，能直接�
   const view = draw();
   await view.findByText("给张三发邮件");
   expect(view.getByText(/邮件助手 · /)).toBeTruthy();
-  expect(view.getByText("等你确认 · 1")).toBeTruthy();
+  expect(view.getByText("待跟进的确认 · 1")).toBeTruthy();
   fireEvent.click(view.getByRole("button", { name: "确认" }));
   await waitFor(() => expect(sent.some((s) => s.path.includes("/api/confirmations/") && s.method === "POST")).toBe(true));
 });

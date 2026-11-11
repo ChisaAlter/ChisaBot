@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
+import { ContinuationDeferred } from "../src/conversations/continuation-work";
 import { createDatabase } from "../src/db/client";
 import { panelTaskRequests } from "../src/db/schema/panels";
 import { createNormalPanelTaskService } from "../src/panels/normal-task-service";
@@ -187,12 +188,19 @@ test("approval suspension remains waiting and approved continuation tracks a new
   expect(row.runId).toBe(input.runId);
   expect(initial).toBe(1);
   expect(resumed).toBe(1);
-  await expect(
-    service.runContinuation(input, async () => {
+  const duplicate = await service
+    .runContinuation(input, async () => {
       resumed++;
       return { replyText: "duplicate" };
-    }),
-  ).rejects.toThrow("task_resume_refused");
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+  expect(duplicate).toBeInstanceOf(Error);
+  expect(() => {
+    throw duplicate;
+  }).toThrow("task_resume_refused");
   expect(resumed).toBe(1);
 });
 
@@ -242,8 +250,8 @@ test("restart recovers persisted approval waiting; cancellation refuses subseque
     .update(panelTaskRequests)
     .set({ status: "cancelled" })
     .where(eq(panelTaskRequests.id, r.id));
-  await expect(
-    restarted.runContinuation(
+  const refused = await restarted
+    .runContinuation(
       {
         ownerUserId: r.actorId,
         agentId: r.botId,
@@ -255,7 +263,68 @@ test("restart recovers persisted approval waiting; cancellation refuses subseque
         resumed++;
         return { replyText: "forbidden" };
       },
-    ),
-  ).rejects.toThrow("task_resume_refused");
+    )
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+  expect(refused).toBeInstanceOf(Error);
+  expect(() => {
+    throw refused;
+  }).toThrow("task_resume_refused");
   expect(resumed).toBe(1);
+});
+
+test("busy continuation retains the panel's original waiting identity until it can execute", async () => {
+  const r = await request();
+  const threadId = `panel-task:${r.id}`;
+  await db
+    .update(panelTaskRequests)
+    .set({ status: "waiting", runId: "source-run", threadId })
+    .where(eq(panelTaskRequests.id, r.id));
+  const service = createNormalPanelTaskService({
+    database: db,
+    createConversation: async () => ({ channelId: "unused", threadId }),
+    run: async () => {
+      throw new Error("must not restart original instruction");
+    },
+    read: async () => ({ status: "waiting" }),
+    stop: async () => {},
+    isWaiting: () => false,
+  });
+  const input = {
+    ownerUserId: r.actorId,
+    agentId: r.botId,
+    routineId: "approval",
+    threadId,
+    instruction: "",
+    runId: "continuation-run",
+  };
+  const busy = await service
+    .runContinuation(input, async () => {
+      throw new ContinuationDeferred("previous run is active");
+    })
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+  expect(busy).toBeInstanceOf(ContinuationDeferred);
+  const [waiting] = await db
+    .select()
+    .from(panelTaskRequests)
+    .where(eq(panelTaskRequests.id, r.id));
+  expect(waiting.status).toBe("waiting");
+  expect(waiting.runId).toBe("source-run");
+  let executions = 0;
+  await service.runContinuation(input, async () => {
+    executions++;
+    return { replyText: "continued" };
+  });
+  const [finished] = await db
+    .select()
+    .from(panelTaskRequests)
+    .where(eq(panelTaskRequests.id, r.id));
+  expect(finished.status).toBe("succeeded");
+  expect(finished.runId).toBe("continuation-run");
+  expect(executions).toBe(1);
 });

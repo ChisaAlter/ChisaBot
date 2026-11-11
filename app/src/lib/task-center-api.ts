@@ -1,6 +1,7 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { type ClientOptions, client } from "@/lib/client";
 import type {
+  DecisionListPage,
   TaskCapability,
   TaskCenterDecision,
   TaskCenterEvent,
@@ -9,6 +10,8 @@ import type {
   TaskCenterTask,
   TaskContext,
   TaskInput,
+  TaskListFilter,
+  TaskListPage,
   TaskSourceInput,
   TaskTrace,
 } from "../../../shared/task-center";
@@ -21,6 +24,9 @@ export const taskCenterKeys = {
   roots: ["task-center", "roots"] as const,
   context: ["task-center", "context"] as const,
   capabilities: ["task-center", "capabilities"] as const,
+  tasks: (filter: TaskListFilter) => ["task-center", "tasks", filter] as const,
+  decisions: (status: "pending" | "resolved") =>
+    ["task-center", "decisions", status] as const,
 };
 
 export type TaskDetail = {
@@ -46,6 +52,21 @@ export const taskCenterApi = {
     request<TaskCenterSnapshot>("", { signal }),
   detail: (id: string, signal?: AbortSignal) =>
     request<TaskDetail>(`/tasks/${encodeURIComponent(id)}`, { signal }),
+  tasks: (filter: TaskListFilter, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filter))
+      if (value !== undefined && value !== "") params.set(key, String(value));
+    return request<TaskListPage>(`/tasks?${params}`, { signal });
+  },
+  decisions: (
+    status: "pending" | "resolved",
+    offset: number,
+    signal?: AbortSignal,
+  ) =>
+    request<DecisionListPage>(
+      `/outbox?status=${status}&offset=${offset}&limit=50`,
+      { signal },
+    ),
   createTask: (input: TaskInput) =>
     request<{ task: TaskCenterTask }>("/tasks", {
       method: "POST",
@@ -71,11 +92,23 @@ export const taskCenterApi = {
       `/sources/${encodeURIComponent(id)}`,
       { method: "PATCH", body: input },
     ),
-  scanSource: (id: string) =>
-    request<unknown>(`/sources/${encodeURIComponent(id)}/scan`, {
-      method: "POST",
-      timeoutMs: 120_000,
-    }),
+  scanSource: async (id: string) => {
+    const result = await request<{ source: TaskCenterSource }>(
+      `/sources/${encodeURIComponent(id)}/scan`,
+      {
+        method: "POST",
+        timeoutMs: 120_000,
+      },
+    );
+    if (result.source.lastStatus !== "succeeded")
+      throw new Error(
+        result.source.lastError ||
+          (result.source.lastStatus === "running"
+            ? "巡检仍在执行，请查看来源状态。"
+            : "巡检尚未完成，请稍后查看来源状态。"),
+      );
+    return result;
+  },
   getContext: (signal?: AbortSignal) =>
     request<{ context: TaskContext }>("/context", { signal }),
   setContext: (
@@ -102,6 +135,32 @@ export const taskCenterApi = {
       body: { path },
     }),
 };
+
+export function taskListOptions(filter: TaskListFilter, enabled = true) {
+  return infiniteQueryOptions({
+    queryKey: taskCenterKeys.tasks(filter),
+    queryFn: ({ signal, pageParam }) =>
+      taskCenterApi.tasks({ ...filter, offset: pageParam }, signal),
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.nextOffset,
+    refetchInterval: 5_000,
+    enabled,
+  });
+}
+export function decisionListOptions(
+  status: "pending" | "resolved",
+  enabled = true,
+) {
+  return infiniteQueryOptions({
+    queryKey: taskCenterKeys.decisions(status),
+    queryFn: ({ signal, pageParam }) =>
+      taskCenterApi.decisions(status, pageParam, signal),
+    initialPageParam: 0,
+    getNextPageParam: (page) => page.nextOffset,
+    refetchInterval: 5_000,
+    enabled,
+  });
+}
 
 export function taskCenterSnapshotOptions() {
   return queryOptions({

@@ -49,9 +49,14 @@ import {
 } from "@/lib/channels/queries";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
+import {
+  composerTargetPath,
+  currentChatTargetPath,
+} from "@/lib/chat/quote-event";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import {
   conversationClient,
+  isConversationProgressEvent,
   useConversationSession,
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
@@ -71,6 +76,7 @@ import {
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  SendDeliveryUnknownError,
   sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
@@ -129,6 +135,7 @@ import {
 import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
 import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import {
@@ -434,6 +441,7 @@ export function ChannelChat({
   channel: AgentChannel;
   runtimeAgentId: string;
 }) {
+  const keptVisibility = useKeptVisibility();
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
   /*
@@ -455,7 +463,7 @@ export function ChannelChat({
     (profile) => profile.id === channel.agentIds[0],
   );
   const channelAgentId = `channel:${channel.id}`;
-  const { agent, isReady } = useConversationSession({
+  const { agent, isReady, connectionStatus } = useConversationSession({
     agentId: channelAgentId,
     runtimeAgentId,
     threadId: channel.threadId,
@@ -1327,6 +1335,10 @@ export function ChannelChat({
                 : null,
           });
         }
+        // A commands POST may still be preparing its agent before it writes either witness.
+        // Negative history/inbox reads cannot authorize a new command while admission is pending.
+        if (persisted === false && target.transport === "commands")
+          persisted = null;
         // First-bound decision without reply race yet.
         // Only abort the agent if the message never reached the server (`hang`). Calling
         // `stopAgent` unconditionally after 12s killed active backend tool runs (e.g. a 14s
@@ -1373,7 +1385,9 @@ export function ChannelChat({
           );
           // Let runPromise settle so the session counters clear.
           void runPromise.catch(() => undefined);
-          throw new Error(first.reason);
+          throw first.kind === "unverified"
+            ? new SendDeliveryUnknownError(first.reason)
+            : new Error(first.reason);
         }
         // Message reached the server; wait longer for a slow model, but still bound
         // (CR-P1-03): unbounded await here wedged runsInFlight / composer forever.
@@ -1633,10 +1647,11 @@ export function ChannelChat({
     failRef.current = fail;
     const subscription = agent.subscribe?.({
       /*
-       * 任何事件都算「这一轮在动」，看门狗只对静默报警（见 runProgressAt）。文案在写、工具调用在长、
-       * 工具结果回来了，都在这里刷新；浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
+       * 文本、工具和执行状态变化代表进展；传输重连通知不续期，避免重连循环掩盖静默。
+       * 浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
        */
-      onEvent: () => {
+      onEvent: ({ event }) => {
+        if (!isConversationProgressEvent(event)) return;
         runEventSeenRef.current = true;
         noteRunProgress.current();
       },
@@ -2026,12 +2041,23 @@ export function ChannelChat({
   // 右栏面板（不在这棵组件树里）里的「问一句」发 chisabot-ask 事件（DESIGN.md §29）：发到当前对话。
   useEffect(() => {
     const on = (event: Event) => {
-      const text = (event as CustomEvent<unknown>).detail;
-      if (typeof text === "string") askFromComponent(text);
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const { text, targetPath } = detail as {
+        text?: unknown;
+        targetPath?: unknown;
+      };
+      if (
+        typeof text === "string" &&
+        targetPath === composerTargetPath(channel.id) &&
+        targetPath === currentChatTargetPath() &&
+        keptVisibility.get()
+      )
+        askFromComponent(text);
     };
     window.addEventListener("chisabot-ask", on);
     return () => window.removeEventListener("chisabot-ask", on);
-  }, [askFromComponent]);
+  }, [askFromComponent, channel.id, keptVisibility]);
 
   /**
    * Send the create-channel seed once. No waiting of its own: `say` owns that for every turn, and a
@@ -2232,6 +2258,7 @@ export function ChannelChat({
                * "Thinking" line exists for. Same value as `pending`, deliberately.
                */
               busy={chatBusy}
+              reconnecting={connectionStatus === "reconnecting"}
               // The `/` menu exposes only skills granted to this Bot.
               commands={skillCommands}
               // Readiness is handled by `say`; deletion is the only disabled-chat state.

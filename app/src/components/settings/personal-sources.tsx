@@ -45,6 +45,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
+import { client } from "@/lib/client";
 import { agoText } from "@/lib/im";
 
 export const personalSourcesKeys = {
@@ -171,6 +172,40 @@ export function PersonalSourcesSection() {
     { errorToast: (err) => err.message },
   );
 
+  const disconnectCalendarAction = useAsyncAction(
+    async () => {
+      const res = await client("/api/personal-sources/calendar", {
+        method: "DELETE",
+        fallback: "断开日历失败，请重试",
+      });
+      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      toast.success("已断开日历");
+    },
+    { errorToast: (err) => `断开日历失败：${err.message}` },
+  );
+  const disconnectEmailAction = useAsyncAction(
+    async () => {
+      const res = await client("/api/personal-sources/email", {
+        method: "DELETE",
+        fallback: "断开收件箱失败，请重试",
+      });
+      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      toast.success("已断开收件箱");
+    },
+    { errorToast: (err) => `断开收件箱失败：${err.message}` },
+  );
+  const disconnectNotifyAction = useAsyncAction(
+    async () => {
+      const res = await client("/api/personal-sources/notify-webhook", {
+        method: "DELETE",
+        fallback: "断开通知推送失败，请重试",
+      });
+      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      toast.success("已断开随身通知推送");
+    },
+    { errorToast: (err) => `断开通知推送失败：${err.message}` },
+  );
+
   async function disconnectCalendar() {
     const ok = await confirmDialog({
       title: "断开日历？",
@@ -180,14 +215,7 @@ export function PersonalSourcesSection() {
       destructive: true,
     });
     if (!ok) return;
-    const res = await fetch("/api/personal-sources/calendar", {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (res.ok) {
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
-      toast.success("已断开日历");
-    }
+    await disconnectCalendarAction.run();
   }
 
   async function disconnectEmail() {
@@ -199,14 +227,7 @@ export function PersonalSourcesSection() {
       destructive: true,
     });
     if (!ok) return;
-    const res = await fetch("/api/personal-sources/email", {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (res.ok) {
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
-      toast.success("已断开收件箱");
-    }
+    await disconnectEmailAction.run();
   }
 
   async function disconnectNotifyWebhook() {
@@ -217,14 +238,7 @@ export function PersonalSourcesSection() {
       destructive: true,
     });
     if (!ok) return;
-    const res = await fetch("/api/personal-sources/notify-webhook", {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (res.ok) {
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
-      toast.success("已断开随身通知推送");
-    }
+    await disconnectNotifyAction.run();
   }
 
   const testNotify = useAsyncAction(
@@ -393,6 +407,7 @@ export function PersonalSourcesSection() {
               <div className="flex items-center gap-2">
                 <Button
                   data-testid="connect-calendar-btn"
+                  disabled={disconnectCalendarAction.state === "pending"}
                   onClick={() => setCalOpen(true)}
                   size="sm"
                   variant={cal ? "outline" : "default"}
@@ -402,8 +417,15 @@ export function PersonalSourcesSection() {
                 {cal ? (
                   <Button
                     aria-label="断开日历"
+                    className="w-10 rounded-full"
+                    feedback={{
+                      pending: "断开中…",
+                      success: "已断开",
+                      error: "断开失败",
+                    }}
                     onClick={() => void disconnectCalendar()}
-                    size="sm"
+                    size="icon"
+                    state={disconnectCalendarAction.state}
                     variant="ghost"
                   >
                     <IconPlugConnectedX className="size-4" />
@@ -467,6 +489,7 @@ export function PersonalSourcesSection() {
               <div className="flex items-center gap-2">
                 <Button
                   data-testid="connect-email-btn"
+                  disabled={disconnectEmailAction.state === "pending"}
                   onClick={() => setMailOpen(true)}
                   size="sm"
                   variant={mail ? "outline" : "default"}
@@ -476,8 +499,15 @@ export function PersonalSourcesSection() {
                 {mail ? (
                   <Button
                     aria-label="断开收件箱"
+                    className="w-10 rounded-full"
+                    feedback={{
+                      pending: "断开中…",
+                      success: "已断开",
+                      error: "断开失败",
+                    }}
                     onClick={() => void disconnectEmail()}
-                    size="sm"
+                    size="icon"
+                    state={disconnectEmailAction.state}
                     variant="ghost"
                   >
                     <IconPlugConnectedX className="size-4" />
@@ -576,6 +606,7 @@ export function PersonalSourcesSection() {
                 {notifyWh ? (
                   <Button
                     data-testid="test-notify-webhook-btn"
+                    disabled={disconnectNotifyAction.state === "pending"}
                     feedback={{
                       pending: "推送中…",
                       success: "已推送",
@@ -591,6 +622,7 @@ export function PersonalSourcesSection() {
                 ) : null}
                 <Button
                   data-testid="connect-notify-webhook-btn"
+                  disabled={disconnectNotifyAction.state === "pending"}
                   onClick={() => setNotifyOpen(true)}
                   size="sm"
                   variant={notifyWh ? "outline" : "default"}
@@ -600,8 +632,15 @@ export function PersonalSourcesSection() {
                 {notifyWh ? (
                   <Button
                     aria-label="断开通知推送"
+                    className="w-10 rounded-full"
+                    feedback={{
+                      pending: "断开中…",
+                      success: "已断开",
+                      error: "断开失败",
+                    }}
                     onClick={() => void disconnectNotifyWebhook()}
-                    size="sm"
+                    size="icon"
+                    state={disconnectNotifyAction.state}
                     variant="ghost"
                   >
                     <IconPlugConnectedX className="size-4" />

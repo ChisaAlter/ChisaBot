@@ -105,6 +105,11 @@ suite("a run cut off by a restart is closed on the next boot", () => {
         [thread, runId, JSON.stringify(event)],
       );
     }
+    // The fixture's messages already include all events above, as a real checkpoint would.
+    await database.$client.unsafe(
+      "UPDATE chisabot_local_threads SET snapshot_sequence=(SELECT max(sequence) FROM chisabot_local_events WHERE thread_id=$1) WHERE id=$1",
+      [thread],
+    );
   });
 
   afterAll(async () => {

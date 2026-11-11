@@ -593,6 +593,7 @@ async function until<T>(
           await backend.capacity.releaseReservation(threadId, runId);
           await backend.capacity.stop(threadId, runId);
         });
+        resources.push(release.at(-1)!);
       }
       for (const item of waiting)
         await confirmations.decide(actorId, item.requestId, "approve");

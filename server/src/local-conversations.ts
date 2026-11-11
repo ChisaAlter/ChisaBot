@@ -1,14 +1,15 @@
 import {
-  type AbstractAgent,
+  AbstractAgent,
   type AgentSubscriber,
   type BaseEvent,
   compactEvents,
+  defaultApplyEvents,
   EventType,
   type Message,
 } from "@ag-ui/client";
 import { MessageSchema } from "@ag-ui/core/schemas";
-import { Observable, ReplaySubject, Subject } from "rxjs";
-import { concatMap, filter } from "rxjs/operators";
+import { EMPTY, from, Observable, ReplaySubject, Subject } from "rxjs";
+import { concatMap, filter, take } from "rxjs/operators";
 import {
   capConnectMessages,
   snapshotSince,
@@ -377,12 +378,19 @@ class ConversationStore {
     runId: string,
     messages: readonly Message[],
     state: unknown,
+    sequence: bigint,
   ) {
     const rows = await this.database.$client.unsafe(
       `UPDATE chisabot_local_threads SET messages = $3::text::jsonb, state = $4::text::jsonb,
-       snapshot_sequence=(SELECT coalesce(max(sequence),0) FROM chisabot_local_events WHERE thread_id=$1), updated_at = now()
+       snapshot_sequence=$5::bigint, updated_at = now()
        WHERE id = $1 AND run_id = $2 AND lock_expires_at > now() RETURNING id`,
-      [threadId, runId, JSON.stringify(messages), JSON.stringify(state ?? {})],
+      [
+        threadId,
+        runId,
+        JSON.stringify(messages),
+        JSON.stringify(state ?? {}),
+        String(sequence),
+      ],
     );
     if (rows.length === 0)
       throw new LocalConversationError(
@@ -425,88 +433,93 @@ class ConversationStore {
 export const RESTART_INTERRUPTED_MESSAGE =
   "ChisaBot 服务刚才重启了（多半是在更新），这一轮做到一半被打断。再发一次，机器人会接着做。";
 
+/** Apply only saved wire events; this agent has no execution or tool transport. */
+class SavedConversationReplay extends AbstractAgent {
+  run() {
+    return EMPTY;
+  }
+
+  async restore(runId: string, events: BaseEvent[]) {
+    await new Promise<void>((resolve, reject) =>
+      defaultApplyEvents(
+        {
+          threadId: this.threadId,
+          runId,
+          messages: this.messages,
+          state: this.state,
+          tools: [],
+          context: [],
+          forwardedProps: {},
+        },
+        from(compactEvents(events)),
+        this,
+        [],
+      ).subscribe({
+        next: (change) => {
+          if (change.messages) this.messages = change.messages;
+          if (change.state !== undefined) this.state = change.state;
+        },
+        error: reject,
+        complete: resolve,
+      }),
+    );
+  }
+}
+
 export async function closeInterruptedRun(
   database: Database,
   threadId: string,
   runId: string,
 ): Promise<boolean> {
-  const rows = await database.$client.unsafe<{ event: BaseEvent }[]>(
-    "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
-    [threadId, runId],
-  );
-  if (!rows.length) return false;
-  const events = rows.map((row) => normalizeConversationEvent(row.event));
-  if (
-    events.some(
-      (event) =>
-        event.type === EventType.RUN_FINISHED ||
-        event.type === EventType.RUN_ERROR,
-    )
-  )
-    return false;
-  const finalizer = createRunEventFinalizer();
-  for (const event of events) finalizer.observe(event);
-  const appended = finalizer.finalize({
-    interruptionMessage: RESTART_INTERRUPTED_MESSAGE,
-  });
-  if (!appended.length) return false;
-  for (const event of appended) {
-    await database.$client.unsafe(
-      "INSERT INTO chisabot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
-      [threadId, runId, JSON.stringify(event)],
-    );
-  }
-  const results = appended.filter(
-    (event) => event.type === EventType.TOOL_CALL_RESULT,
-  ) as Array<
-    BaseEvent & { toolCallId: string; messageId: string; content: string }
-  >;
-  if (results.length) {
-    const thread = await database.$client.unsafe<{ messages: Message[] }[]>(
-      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
+  return database.$client.begin(async (tx) => {
+    const [thread] = await tx.unsafe<ThreadRow[]>(
+      "SELECT * FROM chisabot_local_threads WHERE id=$1 AND run_id IS NULL FOR UPDATE",
       [threadId],
     );
-    const messages = thread[0]?.messages;
-    if (Array.isArray(messages)) {
-      const answered = new Set(
-        messages
-          .filter((m) => m.role === "tool")
-          .map((m) => (m as { toolCallId?: string }).toolCallId),
+    if (!thread) return false;
+    const rows = await tx.unsafe<EventRow[]>(
+      "SELECT sequence,event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 ORDER BY sequence",
+      [threadId, runId],
+    );
+    if (!rows.length) return false;
+    const finalizer = createRunEventFinalizer();
+    for (const row of rows)
+      finalizer.observe(normalizeConversationEvent(row.event));
+    const appended = finalizer.finalize({
+      interruptionMessage: RESTART_INTERRUPTED_MESSAGE,
+    });
+    for (const event of appended) {
+      const written = await tx.unsafe<EventRow[]>(
+        "INSERT INTO chisabot_local_events(thread_id,run_id,event) VALUES($1,$2,$3::text::jsonb) RETURNING sequence,event",
+        [threadId, runId, JSON.stringify(event)],
       );
-      let next = messages;
-      for (const result of results) {
-        if (answered.has(result.toolCallId)) continue;
-        const at = next.findIndex(
-          (m) =>
-            m.role === "assistant" &&
-            ((m as { toolCalls?: { id: string }[] }).toolCalls ?? []).some(
-              (call) => call.id === result.toolCallId,
-            ),
-        );
-        if (at < 0) continue;
-        let insertAt = at + 1;
-        while (insertAt < next.length && next[insertAt]?.role === "tool")
-          insertAt++;
-        next = [
-          ...next.slice(0, insertAt),
-          {
-            id: result.messageId,
-            role: "tool",
-            toolCallId: result.toolCallId,
-            content: result.content,
-          } as Message,
-          ...next.slice(insertAt),
-        ];
-      }
-      if (next !== messages) {
-        await database.$client.unsafe(
-          "UPDATE chisabot_local_threads SET messages = $2::text::jsonb WHERE id = $1",
-          [threadId, JSON.stringify(next)],
-        );
-      }
+      rows.push(...written);
     }
-  }
-  return true;
+    const coverage = BigInt(thread.snapshot_sequence ?? 0);
+    const suffix = rows.filter((row) => BigInt(row.sequence) > coverage);
+    const last = suffix.at(-1);
+    if (last) {
+      const replay = new SavedConversationReplay({
+        threadId,
+        initialMessages: thread.messages,
+        initialState: thread.state,
+      });
+      await replay.restore(
+        runId,
+        suffix.map((row) => normalizeConversationEvent(row.event)),
+      );
+      await tx.unsafe(
+        "UPDATE chisabot_local_threads SET messages=$2::text::jsonb,state=$3::text::jsonb,snapshot_sequence=$4::bigint,updated_at=now() WHERE id=$1",
+        [
+          threadId,
+          JSON.stringify(replay.messages),
+          JSON.stringify(replay.state),
+          String(last.sequence),
+        ],
+      );
+    }
+    return appended.length > 0;
+  });
 }
 
 export class LocalConversationClient {
@@ -769,6 +782,9 @@ function quietAgUiFailure(error: Error): boolean {
   );
 }
 const MAX_SEGMENTS = 8;
+
+/** Events remain durable individually; the full transcript is checkpointed at most four times/s. */
+const SNAPSHOT_CHECKPOINT_MS = 250;
 
 /**
  * Track B：交互回合墙钟上限。锁心跳每 30s 续 120s，挂死的 agent 会一直占着锁 → 永久 busy。
@@ -1136,7 +1152,16 @@ class PostgresAgentRunner implements ConversationRunner {
   ): Observable<BaseEvent> {
     const key = `${request.threadId}:${request.input.runId}`;
     let stream = this.capacityWaits.get(key);
-    if (stream) return withRunStartedAck(request, request.input.runId, stream);
+    if (stream) {
+      // The shared wait is created before its INSERT. Its first real frame follows durable
+      // enqueue; the synthetic subscriber acknowledgement must not complete the handoff.
+      if (request.onAdmitted)
+        stream.pipe(take(1)).subscribe({
+          next: request.onAdmitted,
+          error: () => {},
+        });
+      return withRunStartedAck(request, request.input.runId, stream);
+    }
     stream = new ReplaySubject<BaseEvent>();
     this.capacityWaits.set(key, stream);
     const pending = stream;
@@ -1158,6 +1183,7 @@ class PostgresAgentRunner implements ConversationRunner {
           ? { continuationRunId: request.continuationRunId }
           : {}),
       });
+      request.onAdmitted?.();
       let announced = false;
       for (;;) {
         if (
@@ -1193,7 +1219,11 @@ class PostgresAgentRunner implements ConversationRunner {
           } as BaseEvent);
           this.capacityWaits.delete(key);
           try {
-            this.run({ ...request, capacityReserved: true }).subscribe(pending);
+            this.run({
+              ...request,
+              capacityReserved: true,
+              onAdmitted: undefined,
+            }).subscribe(pending);
           } catch (error) {
             await capacity.releaseReservation(
               request.threadId,
@@ -1295,6 +1325,17 @@ class PostgresAgentRunner implements ConversationRunner {
     let runStarted = false;
     let failed = false;
     let durableWrites = Promise.resolve();
+    let lastSequence = 0n;
+    let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
+    let checkpointing = true;
+    let pendingCheckpoint:
+      | {
+          messages: Message[];
+          state: unknown;
+          sequence: bigint;
+          injections: TranscriptInjection[];
+        }
+      | undefined;
     const finalizer = createRunEventFinalizer();
     const newMessages: Message[] = [];
     let prepared = prepareConversationMessages([], [], []);
@@ -1387,12 +1428,22 @@ class PostgresAgentRunner implements ConversationRunner {
         entry.runId,
         published,
       );
-      if (published.type === EventType.RUN_STARTED)
+      lastSequence = sequence;
+      if (published.type === EventType.RUN_STARTED) {
         await createConversationCommands(this.store.database).status(
           threadId,
           entry.runId,
           "dispatched",
         );
+        if (
+          request.onAdmitted &&
+          (await createDshRunJournal(this.store.database).get(
+            threadId,
+            entry.runId,
+          ))
+        )
+          request.onAdmitted();
+      }
       if (published.type !== EventType.RUN_STARTED) {
         segFinalizer.observe(published);
       }
@@ -1425,6 +1476,27 @@ class PostgresAgentRunner implements ConversationRunner {
       });
       return durableWrites;
     };
+    const clearCheckpoint = () => {
+      clearTimeout(checkpointTimer);
+      checkpointTimer = undefined;
+      pendingCheckpoint = undefined;
+    };
+    const flushCheckpoint = () => {
+      const checkpoint = pendingCheckpoint;
+      clearCheckpoint();
+      if (!checkpoint) return durableWrites;
+      return guarded(() =>
+        this.store.snapshot(
+          threadId,
+          entry.runId,
+          prepared.project(
+            weaveMessages(checkpoint.messages, checkpoint.injections),
+          ),
+          prepared.sanitize(checkpoint.state),
+          checkpoint.sequence,
+        ),
+      );
+    };
     /** 推一张带插话的完整快照给界面（幂等：同 id 的消息替换，不会重复）。 */
     const pushSnapshot = (messages: readonly Message[]) => {
       const snapshot = structuredClone(woven(messages)) as Message[];
@@ -1435,8 +1507,8 @@ class PostgresAgentRunner implements ConversationRunner {
         } as BaseEvent),
       );
     };
-    // AG-UI invokes these callbacks without awaiting them. Freeze each snapshot and queue it
-    // with event writes so an earlier partial snapshot cannot overwrite the completed transcript.
+    // Keep a frozen Stop boundary, but coalesce the expensive projection and database update.
+    // Coverage belongs to the captured messages, never to a later SELECT max(sequence).
     const capture = (
       messages: readonly Readonly<Message>[],
       state: unknown,
@@ -1444,11 +1516,20 @@ class PostgresAgentRunner implements ConversationRunner {
       if (dropLate("messages")) return Promise.resolve();
       latest = structuredClone(messages) as Message[];
       latestState = structuredClone(state);
-      const savedMessages = prepared.project(woven(latest));
-      const savedState = prepared.sanitize(structuredClone(state));
-      const write = guarded(() =>
-        this.store.snapshot(threadId, entry.runId, savedMessages, savedState),
-      );
+      if (checkpointing) {
+        pendingCheckpoint = {
+          messages: latest,
+          state: latestState,
+          sequence: lastSequence,
+          injections: [...entry.injections],
+        };
+        if (!checkpointTimer) {
+          checkpointTimer = setTimeout(() => {
+            void flushCheckpoint();
+          }, SNAPSHOT_CHECKPOINT_MS);
+          checkpointTimer.unref?.();
+        }
+      }
       if (
         pendingNotices.length &&
         pendingNotices.every((anchors) => anchorsPresent(latest, anchors))
@@ -1456,7 +1537,7 @@ class PostgresAgentRunner implements ConversationRunner {
         pendingNotices = [];
         void pushSnapshot(latest);
       }
-      return write;
+      return durableWrites;
     };
     const steering = () =>
       newSteerSession(
@@ -1474,6 +1555,8 @@ class PostgresAgentRunner implements ConversationRunner {
         },
       );
     const finalize = async (interruptionMessage?: string) => {
+      checkpointing = false;
+      clearCheckpoint();
       // A stopped run closes on what was accepted before Stop, not on whatever the runtime added later.
       let closed = entry.stopped
         ? (structuredClone(latest) as Message[])
@@ -1524,6 +1607,7 @@ class PostgresAgentRunner implements ConversationRunner {
           entry.runId,
           prepared.project(woven(closed ?? agent.messages)),
           prepared.sanitize(entry.stopped ? latestState : agent.state),
+          lastSequence,
         );
       if (lateDropped)
         console.warn(
@@ -1537,6 +1621,7 @@ class PostgresAgentRunner implements ConversationRunner {
     };
     try {
       const identity = await this.store.thread(threadId);
+      lastSequence = BigInt(identity.snapshot_sequence ?? 0);
       if (agent.agentId && agent.agentId !== identity.agent_id)
         throw new LocalConversationError(
           "Thread belongs to a different agent",
@@ -1586,14 +1671,16 @@ class PostgresAgentRunner implements ConversationRunner {
         const previous = await this.store.database.$client.unsafe<
           { event: BaseEvent }[]
         >(
-          "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 ORDER BY sequence",
-          [threadId, entry.runId],
+          "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND event->>'type' IN (SELECT jsonb_array_elements_text($3::text::jsonb)) ORDER BY sequence",
+          [threadId, entry.runId, JSON.stringify(lifecycles.eventTypes)],
         );
         for (const { event } of previous) lifecycles.accept(event);
         for (const event of lifecycles.closeStreams()) await emit(event);
       }
       // Read after claiming so a prior run finishing during acquisition cannot leave stale history.
       const row = await this.store.thread(threadId);
+      const snapshotSequence = BigInt(row.snapshot_sequence ?? 0);
+      if (snapshotSequence > lastSequence) lastSequence = snapshotSequence;
       // 重新生成 / 编辑后重发截掉的消息（DESIGN.md §67）：还没收到截断的旧设备会把它们一起发上来，滤掉，不让它们复活。
       const dead = await tombstones(this.store.database, threadId);
       const held = await this.inbox.heldIds(threadId);
@@ -1795,6 +1882,7 @@ class PostgresAgentRunner implements ConversationRunner {
         entry.runId,
         prepared.project(woven(prepared.visible)),
         prepared.sanitize(agent.state),
+        snapshotSequence,
       );
       let renewing = false;
       const runStartedAt = Date.now();
@@ -1932,7 +2020,7 @@ class PostgresAgentRunner implements ConversationRunner {
           entry.abort.signal.removeEventListener("abort", onRunAbort);
           if (entry.segmentAbort === segAbort) entry.segmentAbort = undefined;
         }
-        await durableWrites;
+        await flushCheckpoint();
         const wasInterrupted =
           Boolean(entry.segmentInterrupted) && !entry.stopped;
         entry.segmentInterrupted = false;
@@ -2008,6 +2096,7 @@ class PostgresAgentRunner implements ConversationRunner {
             entry.runId,
             prepared.project(base),
             prepared.sanitize(agent.state),
+            lastSequence,
           ),
         );
       }
@@ -2040,6 +2129,8 @@ class PostgresAgentRunner implements ConversationRunner {
         entry.live.error(failure);
       }
     } finally {
+      checkpointing = false;
+      clearCheckpoint();
       if (heartbeat) clearInterval(heartbeat);
       if (started) {
         try {
@@ -2336,8 +2427,13 @@ class PostgresAgentRunner implements ConversationRunner {
           const before = await this.store.database.$client.unsafe<
             { event: BaseEvent }[]
           >(
-            "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND sequence<=$3::bigint ORDER BY sequence",
-            [request.threadId, observedRunId, String(lastSequence)],
+            "SELECT event FROM chisabot_local_events WHERE thread_id=$1 AND run_id=$2 AND sequence<=$3::bigint AND event->>'type' IN (SELECT jsonb_array_elements_text($4::text::jsonb)) ORDER BY sequence",
+            [
+              request.threadId,
+              observedRunId,
+              String(lastSequence),
+              JSON.stringify(lifecycles.eventTypes),
+            ],
           );
           for (const item of before)
             lifecycles.accept(normalizeConversationEvent(item.event));
