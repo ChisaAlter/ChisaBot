@@ -308,12 +308,8 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     expect(recent.getAttribute("data-kind")).toBe("recent");
     expect(recent.getAttribute("data-tone")).toBe("success");
     expect(recent.textContent).toContain("1 个附件");
-    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
-      "view=history",
-    );
-    expect(recent.querySelector("a")?.getAttribute("href")).toContain(
-      "task=done",
-    );
+    expect(recent.querySelector("a")).toBeNull();
+    expect(recent.querySelector("button.task-rail-item-link")).not.toBeNull();
     const runCard = rail.querySelector(
       'article[data-kind="workflow"]:has(progress[data-progress="1/2"])',
     )!;

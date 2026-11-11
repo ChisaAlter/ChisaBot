@@ -637,6 +637,19 @@ export function createTaskCenter(
     await Promise.all(requested.map(notify));
     return mustTask(owner, id);
   }
+  async function setTaskPriority(
+    owner: string,
+    id: string,
+    priority: number,
+  ): Promise<TaskCenterTask> {
+    const clamped = Math.max(0, Math.min(100, Math.round(priority)));
+    const [row] = await sql.unsafe<Row[]>(
+      "UPDATE chisabot_task_center_tasks SET priority=$3 WHERE owner_user_id=$1 AND id=$2 RETURNING *",
+      [owner, id, clamped],
+    );
+    if (!row) throw new TaskCenterError("找不到这个任务。", 404);
+    return taskView(row);
+  }
   async function decide(
     owner: string,
     id: string,
@@ -1424,6 +1437,7 @@ export function createTaskCenter(
     getTask,
     createTask,
     controlTask,
+    setTaskPriority,
     listDecisions,
     decisionPage,
     decide,

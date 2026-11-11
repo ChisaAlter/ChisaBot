@@ -825,8 +825,8 @@ describe("P3-3 工作流卡片的可读名称是一句完整的话", () => {
       ],
     });
     const view = await renderRail(queryClient);
-    const link = view.container.querySelector<HTMLAnchorElement>(
-      'article[data-kind="workflow"] a',
+    const link = view.container.querySelector<HTMLButtonElement>(
+      'article[data-kind="workflow"] button.task-rail-item-link',
     )!;
     expect(link.querySelector(".sr-only")?.textContent).toBe("已完成 2/5 步");
     const label = link.querySelector(".task-rail-progress-label")!;
