@@ -118,10 +118,13 @@ test("at bottom with native anchoring: backfill reads scrollHeight once, then pi
   const total = 400;
   const probe: Probe = { el: null, reads: 0, top: 0 };
   render(<Harness total={total} probe={probe} />);
-  expect(probe.el?.children.length).toBe(initialMountedCount(total));
+  const first = initialMountedCount(total);
+  expect(probe.el?.children.length).toBe(first);
+  // 首帧就已经在底部，不必等下一帧 / rAF（QA #519 P3）。
+  expect(probe.top).toBe(first * ROW);
   await untilFull(probe, total);
-  // 以前每批一次（400 条 13 批）；现在只有补完钉底那一次。
-  expect(probe.reads).toBeLessThanOrEqual(1);
+  // 以前每批一次（400 条 13 批）；现在是首帧钉底 + 补完再钉一次。
+  expect(probe.reads).toBeLessThanOrEqual(2);
   // 打开即在底部。
   expect(probe.top).toBe(total * ROW);
 });

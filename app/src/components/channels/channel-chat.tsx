@@ -124,6 +124,7 @@ import {
   withStoredTail,
 } from "@/lib/conversations/thread-activity";
 import {
+  inboxLive,
   inboxState,
   queuedFor,
   queueMessage,
@@ -509,11 +510,25 @@ export function ChannelChat({
     seed === null && !freshDraft ? cachedTranscript(channel.threadId) : null,
   );
   const [early, setEarly] = useState<readonly Message[] | null>(null);
+  /**
+   * 服务端说这一段还在跑（inbox running，QA #519 P2-2；用户停止 / 停滞后的 paused 不算，见 inboxLive）。和读历史同时发起，好让 transcript
+   * 在接入结束、`busy` 变 true 之前就能按进行中画，而不是先挂「没有回答」。
+   */
+  const [threadLive, setThreadLive] = useState(false);
   const earlyRead = useRef<Promise<StoredThread> | null | undefined>(undefined);
   if (earlyRead.current === undefined) {
     earlyRead.current =
       seed === null && !freshDraft
         ? readThreadMessages(channel.threadId, runtimeAgentId)
+        : null;
+  }
+  const earlyInbox = useRef<
+    Promise<{ running: boolean; paused?: boolean } | null> | null | undefined
+  >(undefined);
+  if (earlyInbox.current === undefined) {
+    earlyInbox.current =
+      seed === null && !freshDraft
+        ? inboxState(channel.threadId).catch(() => null)
         : null;
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
@@ -541,6 +556,25 @@ export function ChannelChat({
       alive = false;
     };
   }, []);
+
+  // 打开时就问收件箱这一段还在不在跑 / 等审批（和读历史同时发起，上面 earlyInbox）。
+  useEffect(() => {
+    setThreadLive(false);
+    let alive = true;
+    const apply = (state: { running: boolean; paused?: boolean } | null) => {
+      if (alive) setThreadLive(inboxLive(state));
+    };
+    const pending = earlyInbox.current;
+    earlyInbox.current = null;
+    if (pending) void pending.then(apply);
+    else
+      void inboxState(channel.threadId)
+        .then(apply)
+        .catch(() => apply(null));
+    return () => {
+      alive = false;
+    };
+  }, [channel.threadId]);
 
   /** Cleared by the send-on-mount effect without restarting it. */
   const seedRef = useRef(seed);
@@ -752,6 +786,27 @@ export function ChannelChat({
    * 补上这台没收到的、把截断的半截换成完整的。
    */
   const activity = useThreadActivity(runtimeAgentId, channel.threadId);
+  // 变化戳带 running：还在跑就立刻标 live；停了再读一次收件箱。只认 running（inboxLive）：paused 是用户停止 /
+  // 出错 / 停滞后留住补充消息，不是进行中；等审批由 transcript 看审批收件箱。
+  useEffect(() => {
+    let alive = true;
+    const off = activity.onActivity((value) => {
+      if (!alive) return;
+      if (value.running) setThreadLive(true);
+      else
+        void inboxState(channel.threadId)
+          .then((state) => {
+            if (alive) setThreadLive(inboxLive(state));
+          })
+          .catch(() => {
+            if (alive) setThreadLive(false);
+          });
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [activity, channel.threadId]);
   const joinedRef = useRef(false);
   useEffect(() => {
     joinedRef.current = false;
@@ -2370,6 +2425,8 @@ export function ChannelChat({
                * "Thinking" line exists for. Same value as `pending`, deliberately.
                */
               busy={chatBusy}
+              threadLive={threadLive}
+              joining={joining}
               reconnecting={connectionStatus === "reconnecting"}
               // The `/` menu exposes only skills granted to this Bot.
               commands={skillCommands}

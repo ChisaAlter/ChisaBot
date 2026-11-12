@@ -31,6 +31,8 @@ export function ConversationView({
   agentId,
   messages,
   busy = false,
+  threadLive = false,
+  joining = false,
   reconnecting = false,
   notice,
   transcriptNotice,
@@ -70,6 +72,10 @@ export function ConversationView({
   agentId?: string;
   messages: readonly Message[];
   busy?: boolean;
+  /** 服务端说这一段对话还在跑（running / 等待审批）。见 ChatTranscript.threadLive。 */
+  threadLive?: boolean;
+  /** 这段对话还在接入。见 ChatTranscript.joining。 */
+  joining?: boolean;
   reconnecting?: boolean;
   /** 换了备用模型的轮次（用户消息 id → 说明），那一轮末尾一行小字（DESIGN.md §61）。 */
   fallbacks?: ReadonlyMap<string, string>;
@@ -609,6 +615,8 @@ export function ConversationView({
         <ChatTranscript
           agentId={agentId}
           busy={busy}
+          threadLive={threadLive}
+          joining={joining}
           reconnecting={reconnecting}
           commandNames={commandNames}
           messages={messages}

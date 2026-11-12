@@ -413,6 +413,20 @@ export function applyInboxState(threadId: string, state: InboxState) {
   else if (unmarked) emit();
 }
 
+/**
+ * 收件箱读数里「这一段还在进行」只认 `running`（QA #519 r2 P2-2）。
+ *
+ * `paused` 不是「等人续」：服务端只在用户按停止、或这一轮出错 / 被 watchdog 判停滞时把收件箱暂停
+ * （`inbox.pause`，留住没读的补充消息）。把它当进行中，停下的那一轮会一直挂着干活卡、计时还在走，
+ * 停滞的那一轮同时出现干活卡和「重试」。真正等人的三种情况不靠它：等待一步 / 工具续来时 running 为 true，
+ * 等审批 / 确认由 transcript 自己看审批收件箱（awaitingPerson）。
+ */
+export function inboxLive(
+  state: Pick<InboxState, "running" | "paused"> | null | undefined,
+): boolean {
+  return state?.running === true;
+}
+
 export async function inboxState(
   threadId: string,
   options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},

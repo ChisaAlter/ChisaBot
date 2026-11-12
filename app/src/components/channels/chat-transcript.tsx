@@ -129,6 +129,10 @@ import {
   staysInSameTurn,
   takeSendWhileBusy,
 } from "@/lib/chat/send-scroll";
+import {
+  TAIL_ANCHOR_SLACK_EVENT,
+  windowMarks,
+} from "@/lib/chat/tail-first-paint";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 import type { TranscriptDataLayer } from "@/lib/chat/transcript-data-layer";
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
@@ -193,6 +197,18 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
+  /**
+   * 服务端说这一段对话还在跑（inbox running；用户停止 / 停滞留下的 paused 不算，等审批另看审批收件箱）。
+   * 打开一段正在进行的对话时，历史往往先到、`busy` 后变 true：若只靠 busy 和列表形状，
+   * 会把这一轮当成已结束，首帧挂「这一轮没有回答 / 重试」，要等下一条事件才出干活卡
+   * （QA #519 P2-2）。服务端说还在跑时，首帧就按进行中画，绝不挂「没有回答」。
+   */
+  threadLive?: boolean;
+  /**
+   * 这段对话还在接入。接入期间 `busy` 为 false（connect 的 isRunning 不算在回答），
+   * 不要把这时的列表记成「已结束」，否则接入结束、服务器其实还在跑时 live 会卡住。
+   */
+  joining?: boolean;
   reconnecting?: boolean;
   /** 这段对话的机器人：在想 / 在干活那一行用它的形象头像代替三个点（DESIGN.md §81）。 */
   agentId?: string;
@@ -807,6 +823,11 @@ function SettleAtEnd({
     floor: null as number | null,
     /** 正在把留白收掉（§93.3）：这段时间里变矮不再补留白。 */
     releasing: false,
+    /**
+     * 现在的留白是「显示更早的消息」为了让正在看的行不动垫的（TAIL_ANCHOR_SLACK_EVENT，QA #519 r2 P2-1）。
+     * 人动滚动之前 §93.3 不收它——收了正在看的行就慢慢落到视口底部。人一动 / 别处改留白就作废。
+     */
+    anchorHold: false,
     busy,
     /** 上一次量到的位置（§94 连续发消息时用）：scrollTop、是不是在底部、消息行本身的高度（不算两块留白）。 */
     lastTop: 0,
@@ -924,6 +945,7 @@ function SettleAtEnd({
     const el = slack.current;
     const next = Math.max(0, Math.round(px));
     state.current.slackPx = next;
+    state.current.anchorHold = false;
     // 设固定高度：先退出「跟着变」（§94.6）。
     state.current.floor = null;
     if (el?.parentElement?.parentElement)
@@ -1047,6 +1069,7 @@ function SettleAtEnd({
     const release = () => {
       s.released = true;
       s.restore = null;
+      s.anchorHold = false;
       touchedAt = performance.now();
       window.cancelAnimationFrame(frame);
     };
@@ -1373,6 +1396,8 @@ function SettleAtEnd({
         return why(
           `skip:${s.busy ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`,
         );
+      // 「显示更早的消息」垫的留白：人动滚动之前不收（收了正在看的行就落到底部，QA #519 r2 P2-1）。
+      if (s.anchorHold) return why("skip:anchor");
       const spacer = content.querySelector<HTMLElement>(
         "[data-message-scroller-spacer]",
       );
@@ -1509,7 +1534,22 @@ function SettleAtEnd({
     element.addEventListener("keydown", onKey);
     element.addEventListener("pointerdown", onPointer);
     element.addEventListener("scroll", onScroll, { passive: true });
+    /*
+     * 「显示更早的消息」恢复锚点时底下不够滚（内容原本不够一屏）：在最后一条下面垫出差的那一截，
+     * 「最底」就正好是正在看的行原来的位置（QA #519 r2 P2-1）。同步处理：补行方马上再恢复一次锚点。
+     * 高度记成垫完的，ResizeObserver 不会把这截当成「长出来的」再吃掉。
+     */
+    const onAnchorSlack = (event: Event) => {
+      const px = (event as CustomEvent<number>).detail;
+      if (!(typeof px === "number" && px > 0)) return;
+      event.preventDefault();
+      setSlack(s.slack + px);
+      s.anchorHold = true;
+      lastHeight = content.offsetHeight;
+    };
+    element.addEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
     return () => {
+      element.removeEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
       if (s.floor !== null) setSlack(s.slack);
       if (saveTimer !== null) clearTimeout(saveTimer);
       window.clearTimeout(touchedRetry);
@@ -3336,9 +3376,31 @@ export function unansweredTurn(
   return last;
 }
 
+/**
+ * 这一轮是不是还在进行。`threadLive` 来自服务端（running）或正在等人审批 / 确认；
+ * 没有它时仍用 §68.4：busy 之后列表还没变，不算正在跑（避免发送键刚亮、人那条还没进列表时，
+ * 上一轮已完成的结果气泡被当成进行中）。
+ */
+export function turnIsLive(
+  busy: boolean,
+  shape: { length: number; last: string | null },
+  settled: { length: number; last: string | null } | null,
+  threadLive = false,
+): boolean {
+  if (threadLive) return true;
+  if (!busy) return false;
+  return !(
+    settled !== null &&
+    settled.length === shape.length &&
+    settled.last === shape.last
+  );
+}
+
 export function ChatTranscript({
   agentId,
   busy = false,
+  threadLive = false,
+  joining = false,
   reconnecting = false,
   scrollKey,
   commandNames = "",
@@ -3382,21 +3444,15 @@ export function ChatTranscript({
   const settledRef = useRef<{ length: number; last: string | null } | null>(
     null,
   );
+  const settledKeyRef = useRef(scrollKey);
+  if (settledKeyRef.current !== scrollKey) {
+    settledKeyRef.current = scrollKey;
+    settledRef.current = null;
+  }
   const shape = { length: items.length, last: items.at(-1)?.id ?? null };
-  if (!busy) settledRef.current = shape;
+  // 服务端还在跑、或还在接入时不要把当前形状记成「已结束」：否则随后 busy 变 true、列表没变，live 会一直是 false。
+  if (!busy && !threadLive && !joining) settledRef.current = shape;
   const settled = settledRef.current;
-  const live =
-    busy &&
-    !(
-      settled !== null &&
-      settled.length === shape.length &&
-      settled.last === shape.last
-    );
-  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
-  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
-  const liveSinceRef = useRef<number | null>(null);
-  if (!live) liveSinceRef.current = null;
-  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
   /*
    * 刷新后照样认得出「发出去但没人回答」的那一轮（P1，2026-10-20）：重开对话时 RUN_ERROR 早没了，
    * 只剩人那条消息。卡片跟着这一条重建，别让它凭空消失、也没有重试的入口。
@@ -3436,6 +3492,19 @@ export function ChatTranscript({
   const toolRenderers = useToolRenderers();
   const activityRenderers = useActivityRenderers();
   const asking = confirmations.isLoading || approvals.isLoading;
+  const awaitingPerson =
+    (confirmations.data ?? []).some(
+      (request) => request.status === "pending",
+    ) ||
+    (approvals.data?.requests ?? []).some(
+      (request) => request.status === "pending",
+    );
+  const live = turnIsLive(busy, shape, settled, threadLive || awaitingPerson);
+  // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
+  // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
+  const liveSinceRef = useRef<number | null>(null);
+  if (!live) liveSinceRef.current = null;
+  else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
   const drawsCard: DrawsCard = (item, turnLive) =>
     (asking && item.kind === "tool") ||
     toolDrawsCard(item, {
@@ -3636,18 +3705,125 @@ export function ChatTranscript({
     const memo = scrollKey ? threadUi(scrollKey)?.scroll : null;
     return Boolean(memo && !memo.atBottom && memo.anchor);
   }, [scrollKey]);
+  /*
+   * 聊天记录消失（2026-11-10）：尾窗按看得见的行计数（windowMarks），不再按条数。过程行默认整格不画，
+   * 一轮里调几十次工具时，按条数挂的尾巴全是看不见的行——打开对话一片空白。看不见的行照样挂（卡片异步出现时
+   * 由 CSS 露出来），只按 HIDDEN_ROW_WEIGHT 折算名额。判断和真正画的同一套：收起的行、干活卡那一行、
+   * 画卡片的工具（toolDrawsCard，确认还没读到时不先当卡片）；判漏了由 useTailFirstMount 在 DOM 上兜底。
+   */
+  const rowShows = (index: number): boolean => {
+    const item = items[index];
+    if (!item) return false;
+    // 挂着「已停止」/ 备用说明 / 「这一轮没有回答」的行：标记跟着它画（rowsFor），它本身看不见也得挂上，
+    // 不然用户停止的一轮刷新后只剩人那条消息，「◼ 已停止」跟着隐藏的工具行一起没了（QA #519 r3 自测）。
+    if (
+      compact.stoppedAfter.has(item.id) ||
+      compact.fallbackAfter.has(item.id) ||
+      compact.noAnswerAfter.has(item.id)
+    )
+      return true;
+    if (rowHidden(item.id)) return false;
+    if (item.kind === "text" || item.kind === "attachments") return true;
+    if (showToolActivity) return true;
+    if (compact.work.has(item.id) && !quietWorkOnly.has(item.id)) return true;
+    if (item.kind === "browser") return false;
+    return toolDrawsCard(item, {
+      renderers: toolRenderers,
+      activities: activityRenderers,
+      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
+      asked: confirmed,
+      live: item.kind !== "tool" || compact.liveTools.has(item.id),
+    });
+  };
+  const tailMarks = virtual ? EMPTY_MARKS : windowMarks(items.length, rowShows);
+  // 正在进行的这一轮：开头那条（人发的）→ 干活卡所在的行，一定挂上（不然干活提示和问题都不在屏幕上）。
+  const liveAnchorId = live
+    ? [...compact.work].find(([, work]) => work.live)?.[0]
+    : undefined;
+  const livePin = live
+    ? Math.min(
+        ...[
+          // 这一轮的开头（人发的那条，或定时任务等接着跑一轮的那条）：compactTurns 的 liveKey。
+          compact.liveKey
+            ? items.findIndex((item) => item.id === compact.liveKey)
+            : -1,
+          liveAnchorId
+            ? items.findIndex((item) => item.id === liveAnchorId)
+            : -1,
+        ].filter((index) => index >= 0),
+      )
+    : Number.POSITIVE_INFINITY;
   const {
     startIndex: tailStart,
     pending: tailPending,
     truncated: tailTruncated,
     mountAll,
+    prependHistory,
   } = useTailFirstMount(
-    virtual ? 0 : items.length,
+    tailMarks.length,
     scrollKey,
     viewportRef,
     items[0]?.id,
-    { uncapped: needsHistory },
+    {
+      uncapped: needsHistory,
+      followBottom: !needsHistory,
+      marks: tailMarks,
+      itemCount: virtual ? 0 : items.length,
+      firstVisible: virtual
+        ? 0
+        : items.findIndex((_, index) => rowShows(index)),
+      ...(Number.isFinite(livePin) ? { pin: livePin } : {}),
+    },
   );
+  /*
+   * 已结束的超长工具轮（QA #519 P3）：尾窗往往只挂到最后的回答，「这一轮的问题」在窗口上面。
+   * 不要为了它把中间几百条看不见的过程行全部挂上（那会拉长首帧任务）；只把这一轮看得见的行
+   * （问题、卡片）缝在尾巴前面。进行中的一轮仍靠 pin 保证干活卡所在的行在窗口里。
+   */
+  const lastTurnStart =
+    !live && newestUserMessageId
+      ? items.findIndex((item) => item.id === newestUserMessageId)
+      : -1;
+  const mountedRows: [TranscriptItem, number][] = [];
+  if (!virtual) {
+    const from = Math.max(0, tailStart);
+    const keepRow = (index: number) => {
+      const item = items[index];
+      return (
+        !!item &&
+        (showToolActivity ||
+          rowShows(index) ||
+          // 这一页亲眼见过、后来收起的行留在 DOM 里做 0 高折叠（§82.9），不能卸掉。
+          foldedRef.current.has(item.id))
+      );
+    };
+    // 这一轮看得见、但还在尾巴上面的行（已结束轮次的问题 / 卡片）。
+    if (lastTurnStart >= 0 && lastTurnStart < from) {
+      for (let index = lastTurnStart; index < from; index++) {
+        const item = items[index];
+        if (item && keepRow(index)) mountedRows.push([item, index]);
+      }
+    }
+    for (let index = from; index < items.length; index++) {
+      // 从没见过的过程行不进 DOM：它们本来就是 display:none，挂上千百条只会拉长首帧。
+      // 调试「显示工具调用」时全部挂上；活的干活卡、卡片仍由 rowShows 留着。
+      const item = items[index];
+      if (item && keepRow(index)) mountedRows.push([item, index]);
+    }
+  }
+  const firstMountedVisible = mountedRows.length > 0;
+  /*
+   * 兜底：这一轮的干活卡那一行没挂上 / 没画出来（窗口外、被收起），干活提示改画在末尾，别让「正在干活」凭空消失。
+   */
+  const liveAnchorIndex = liveAnchorId
+    ? items.findIndex((item) => item.id === liveAnchorId)
+    : -1;
+  const liveWorkInTail =
+    !virtual &&
+    liveWorking &&
+    liveWork !== undefined &&
+    liveAnchorId !== undefined &&
+    (liveAnchorIndex < tailStart || rowHidden(liveAnchorId));
   useKeepBottomOnPrepend(viewportRef, items[0]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
@@ -3897,6 +4073,15 @@ export function ChatTranscript({
                   onWithdraw={onWithdraw}
                   reason={tailStop}
                 />
+              ) : liveWorkInTail && liveWork ? (
+                <WorkRow
+                  calls={liveWork.calls}
+                  agentId={agentId}
+                  live
+                  notes={liveWork.notes}
+                  since={liveSince}
+                  turnKey={liveWork.key}
+                />
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
@@ -3964,6 +4149,23 @@ export function ChatTranscript({
             {topNotice ? (
               <div className="chat-top-notice">{topNotice}</div>
             ) : null}
+            {/*
+             * 「显示更早的消息」（聊天记录消失，2026-11-10）：上面还有没挂的历史时一直在。以前只靠滚到顶附近补，
+             * 挂着的内容不够一屏高时根本滚不动，上面的历史就再也出不来。外层 `contents` 的 div 一直在
+             * （content.children 里固定占一格，滚动容器按位置找新行，见上面 chat-tail 的说明）；
+             * 按钮自己不参与滚动锚定，补上来的行出现在它下面、看着的那一行不动。
+             */}
+            <div className="contents" data-testid="transcript-history-more">
+              {tailTruncated && !virtual && firstMountedVisible ? (
+                <button
+                  className="chat-history-more"
+                  onClick={prependHistory}
+                  type="button"
+                >
+                  {"显示更早的消息"}
+                </button>
+              ) : null}
+            </div>
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
             {virtual ? (
               <VirtualTranscriptRows
@@ -3976,9 +4178,7 @@ export function ChatTranscript({
             ) : null}
             {virtual
               ? tailNodes
-              : (tailStart > 0 ? items.slice(tailStart) : items).flatMap(
-                  (item, offset) => rowsFor(item, tailStart + offset),
-                )}
+              : mountedRows.flatMap(([item, index]) => rowsFor(item, index))}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         {virtual ? (
@@ -4217,6 +4417,7 @@ export function findTextOf(item: TranscriptItem): string | null {
   return item.kind === "text" ? item.text : null;
 }
 const EMPTY_ANCHORS: ReadonlySet<string> = new Set();
+const EMPTY_MARKS: readonly number[] = [];
 
 /** 刚发出去的那条用户消息带对齐标记多久（毫秒）。对齐在它出现的那一刻就做完了，之后留着只会被误用。 */
 export const FRESH_ANCHOR_MS = 3000;

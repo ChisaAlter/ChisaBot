@@ -12,6 +12,7 @@ import { type Observable, of } from "rxjs";
 import {
   applyInboxState,
   type InboxState,
+  inboxLive,
   inboxState,
   queuedFor,
   queueMessage,
@@ -319,4 +320,16 @@ test("the explicit per-row action requires a mounted handler and never auto-prom
   } finally {
     window.removeEventListener("chisabot-send-paused", handler);
   }
+});
+
+test("only a running inbox counts as a live turn; the pause left by Stop or a stall does not (QA #519 r2 P2-2)", () => {
+  // 用户按停止 / 出错 / 被判停滞后服务端是 running=false, paused=true：不能再当进行中（一直转圈、计时还在走）。
+  expect(inboxLive({ running: false, paused: true })).toBe(false);
+  expect(inboxLive({ running: false, paused: false })).toBe(false);
+  expect(inboxLive({ running: false })).toBe(false);
+  // 等待一步、工具续来、等审批时服务端都还在跑。
+  expect(inboxLive({ running: true, paused: false })).toBe(true);
+  expect(inboxLive({ running: true, paused: true })).toBe(true);
+  expect(inboxLive(null)).toBe(false);
+  expect(inboxLive(undefined)).toBe(false);
 });

@@ -2171,6 +2171,7 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 /*
  * 过程行默认隐藏（lib/chat/tool-activity.ts）后，工具 / 浏览那一格里可能只剩空的包裹 div。
  * 只有空 div、没有任何带 role 的元素（界面卡片、审批卡片都有）时整格不占位，免得 gap-6 留下空隙。
+ * 选择器和 lib/chat/tail-first-paint.ts 的 HIDDEN_ACTIVITY_ROW 是同一条：尾窗靠它判断「挂着的行看不看得见」，改一处要改两处。
  */
 [data-row="activity"]:not(:has(:not(div))):not(:has([role])) {
   display: none;
@@ -2189,6 +2190,32 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
   color: var(--ink-3);
   font-size: 13px;
+}
+
+/*
+ * 「显示更早的消息」（chat-transcript.tsx，聊天记录消失 2026-11-10）：长对话只挂了尾巴、上面还有历史时，
+ * 列表最上面一枚小胶囊。不参与滚动锚定：点了以后补上来的行出现在它下面，正在看的那一行不动。
+ */
+.chat-history-more {
+  align-self: center;
+  overflow-anchor: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
+  box-shadow: var(--glass-shadow-sm);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.chat-history-more:hover {
+  background: var(--glass-strong);
+}
+.chat-history-more:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent);
 }
 
 /* 桌面宿主工具被拒绝时的一句提示（chat-transcript.tsx HostAccessHint）。 */
