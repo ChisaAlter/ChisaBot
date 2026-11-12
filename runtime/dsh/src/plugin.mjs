@@ -10,6 +10,7 @@ import {
   ChisaModelRouter,
   SINGLE_MODEL_DEADLINE_FACTOR,
 } from "./model-router.mjs";
+import { ensureLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
 export const name = "chisabot-runtime";
 export const inject = [
@@ -35,6 +36,7 @@ const requiredText = (value, label) => {
 
 export async function apply(ctx, config) {
   const generation = randomUUID();
+  const loopLimits = toolLoopLimits(config.toolLoop);
   // References only, never key values. A crash must not leave temporary run credentials forever.
   const keyJournal = join(config.home, "route-keys.json");
   const keyRefs = new Set();
@@ -225,6 +227,9 @@ export async function apply(ctx, config) {
     state.toolTurns = new Set();
     state.nudgedTurns = new Set();
     state.reply = undefined;
+    // Bounds each turn's tool loop. Keep the same guard across rebinds of this run
+    // (approval resume must not clear the per-turn counters — QA513 P3).
+    ensureLoopGuard(state, loopLimits);
     state.disposers.push(
       agentCtx.systemPrompt.section({
         name: "chisabot:prompt",
@@ -269,20 +274,51 @@ export async function apply(ctx, config) {
               throw new Error(
                 "The invocation has no committed DSH tool-call identity.",
               );
-            const result = await invokeGateway(
-              state,
-              "execute",
-              {
-                callId: execution.callId,
-                turn: call.turn,
-                step: call.step,
-                throughSeq: call.seq,
-                name: tool.name,
-                args,
-              },
-              execution.signal,
-            );
+            const verdict = state.loopGuard.admit(call.turn, tool.name, args);
+            if (verdict.kind === "conclude") {
+              // The model ignored the stop notice. End the turn here with a plain account of what
+              // happened (projected to the person as the turn's answer) instead of spinning on.
+              if (state.loopConcluded !== call.turn) {
+                state.loopConcluded = call.turn;
+                appendPluginRecord(agent.session, "plugin:chisabot/loop-stop", {
+                  turn: call.turn,
+                  step: call.step,
+                  text: verdict.text,
+                });
+                await ctx.sessions.flush(agent.session);
+              }
+              execution.concludeTurn();
+              return {
+                content:
+                  "Not executed: ChisaBot stopped this turn's tool loop and answered the user.",
+                stopped: true,
+              };
+            }
+            // Refused calls never reach the gateway; the model is told to stop and answer.
+            if (verdict.kind === "refuse") throw new Error(verdict.message);
+            let result;
+            try {
+              result = await invokeGateway(
+                state,
+                "execute",
+                {
+                  callId: execution.callId,
+                  turn: call.turn,
+                  step: call.step,
+                  throughSeq: call.seq,
+                  name: tool.name,
+                  args,
+                },
+                execution.signal,
+              );
+            } catch (error) {
+              // Gateway 409 / transport failure: not an actual execution (QA513 P3).
+              state.loopGuard.observe({ rejected: true });
+              throw error;
+            }
             if (result.waiting) {
+              // Approval pause: the call has not run yet; do not count it as executed.
+              state.loopGuard.observe({ deferred: true });
               state.waiting = result.waiting;
               appendPluginRecord(agent.session, "plugin:chisabot/waiting", {
                 callId: execution.callId,
@@ -299,6 +335,7 @@ export async function apply(ctx, config) {
                 "Waiting for a ChisaBot approval; the operation has not executed.",
               );
             }
+            state.loopGuard.observe({ result });
             return result;
           },
         }),
@@ -353,6 +390,7 @@ export async function apply(ctx, config) {
           state.binding.tools.length === 0 ||
           state.toolTurns.has(turn) ||
           state.nudgedTurns.has(turn) ||
+          state.loopGuard.isStopped(turn) ||
           reply?.turn !== turn ||
           reply.failed ||
           !actionPromise(reply.text)

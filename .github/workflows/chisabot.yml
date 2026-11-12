@@ -74,6 +74,11 @@ jobs:
           server/tests/compose-network-drift.test.ts
           server/tests/admin-smoke.test.ts
           server/tests/im-adapters.test.ts
+      # The DSH → AG-UI projection imports runtime/dsh (its own Node project), so install it first.
+      - name: DSH projection checks
+        run: |
+          npm ci --prefix runtime/dsh --no-audit --no-fund
+          bun test server/tests/dsh-loop-stop-projection.test.ts server/tests/dsh-reasoning-projection.test.ts
       # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
       # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
       - name: Chat UI checks
@@ -232,7 +237,7 @@ jobs:
       - run: cp .env.example .env
       - run: bun run test:app
 
-  # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办。
+  # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办、工具循环上限。
   dsh-runtime:
     name: DSH Host and PostgreSQL recovery
     runs-on: ubuntu-latest
