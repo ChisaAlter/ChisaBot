@@ -62,6 +62,7 @@ assert_security_markers() {
     'auth_request /_chisabot/auth-check;' \
     'location ^~ /api/devices/agent/' \
     'location ^~ /api/im/onebot/' \
+    'location = /downloads/pc/latest.json {' \
     'location ^~ /p/'
   do
     grep -F "$needle" "$conf" >/dev/null || fail "$label missing marker: $needle"

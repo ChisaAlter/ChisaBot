@@ -17,12 +17,19 @@ export type AgentRunnerRunRequest = {
   join?: boolean;
   execution?: ExecutionClass;
   capacityReserved?: boolean;
+  /** The full input now has a durable recovery owner, independently of stream delivery. */
+  onAdmitted?: () => void;
 };
 export type AgentRunnerConnectRequest = {
   threadId: string;
   agentId?: string;
   commandId?: string;
   runId?: string;
+  /**
+   * 浏览器 sync 合并式接入时手里最近几条消息的 id：快照从其中最早一条服务器也有的开始发，
+   * 不再每次都发最近 400 条。一条都对不上时照旧发封顶快照。
+   */
+  snapshotAfter?: readonly string[];
 };
 export type AgentRunnerStopRequest = { threadId: string; runId?: string };
 export interface ConversationRunner {
@@ -60,6 +67,7 @@ export function createEventLifecycles() {
     SUBAGENT_ERROR: subagent,
   };
   return {
+    eventTypes: [...Object.keys(starts), ...Object.keys(ends)],
     accept(event: BaseEvent): boolean {
       const e = event as BaseEvent & Record<string, unknown>;
       const pair = starts[e.type] ?? ends[e.type];

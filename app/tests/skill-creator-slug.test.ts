@@ -17,7 +17,7 @@ import { SKILL_CREATOR_SLUG } from "@/lib/skills/proposal";
  */
 
 const packageDir = fileURLToPath(
-  new URL("../../examples/fintech", import.meta.url),
+  new URL("../../server/tests/fixtures/tenant-sample", import.meta.url),
 );
 
 const shipped = parse(readFileSync(`${packageDir}/skills.yaml`, "utf8")) as {

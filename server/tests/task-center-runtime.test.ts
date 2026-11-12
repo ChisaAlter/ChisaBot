@@ -3,12 +3,12 @@ import type {
   TaskCenterTask,
   TaskExecutionContext,
 } from "../../shared/task-center";
+import { contextInputSchema } from "../../shared/task-center";
 import {
   isLocalAgentExecutor,
   localAgentKindOf,
 } from "../src/task-center/local-agent-runner";
 import {
-  appendLearned,
   componentArtifacts,
   extractJson,
   frameTask,
@@ -129,6 +129,31 @@ describe("task instruction framing", () => {
     );
     expect(text.length).toBeLessThan(20_000);
   });
+
+  test("all six accepted context fields reach execution, including trailing conditions; legacy learned does not", () => {
+    const saved = contextInputSchema.parse({
+      responsibilities: "责".repeat(7995) + "职责末尾",
+      projects: "项".repeat(11995) + "项目末尾",
+      goals: "目".repeat(7995) + "目标末尾",
+      interests: "趣".repeat(3995) + "兴趣末尾",
+      habits: "惯".repeat(3995) + "习惯末尾",
+      preferences: "偏".repeat(7995) + "禁止外发",
+    });
+    const text = frameTask(
+      task(),
+      context({
+        context: {
+          ...saved,
+          updatedAt: null,
+          learned: "已删除的旧履历",
+          learnedAt: null,
+        },
+      }),
+    );
+    for (const value of Object.values(saved)) expect(text).toContain(value);
+    expect(text).not.toContain("已删除的旧履历");
+    expect(text.length).toBeLessThan(47_000);
+  });
 });
 
 describe("task thread identity", () => {
@@ -157,7 +182,7 @@ describe("execution bookkeeping", () => {
     expect(componentArtifacts(undefined)).toEqual([]);
   });
 
-  test("learned log appends entries and drops the oldest beyond the cap", () => {
+  test("the editable memory entry retains dated outcome and normalized summary", () => {
     const entry = learnEntry(
       { title: "整理本周进展" },
       { status: "succeeded", detail: "  产出 3 项\n结论 " },
@@ -165,12 +190,9 @@ describe("execution bookkeeping", () => {
     expect(entry).toMatch(
       /\[\d{4}-\d{2}-\d{2}\] 「整理本周进展」完成：产出 3 项 结论/,
     );
-    const merged = appendLearned("", entry, 30);
-    expect(merged).toBe(entry);
-    const long = appendLearned("x".repeat(40), "new-line", 30);
-    expect(long).toBe("new-line");
-    const kept = appendLearned("line1\nline2", "line3", 12);
-    expect(kept).toBe("line2\nline3");
+    expect(
+      learnEntry({ title: "核对结果" }, { status: "failed", detail: "" }),
+    ).toContain("失败：（无说明）");
   });
 });
 

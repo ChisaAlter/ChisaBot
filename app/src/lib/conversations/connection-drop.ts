@@ -21,6 +21,17 @@
  * 所以另加 SEND_WATCHDOG_MS：发消息后若 run 既未落库也未结束，超时后可见失败并恢复草稿。
  */
 
+/** Submission may have reached durable admission, but its receipt could not be read. */
+export class SendDeliveryUnknownError extends Error {
+  constructor(
+    message = "消息是否送达尚未确认，恢复连接后会继续核对。",
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "SendDeliveryUnknownError";
+  }
+}
+
 /** 浏览器发起的请求 / 读流时连接断了（不是服务器发来的 RUN_ERROR，也不是用户按停止）。 */
 export function isConnectionDrop(error: unknown): boolean {
   if (!error) return false;

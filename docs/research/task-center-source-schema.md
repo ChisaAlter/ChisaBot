@@ -4,11 +4,11 @@
 
 ## 消息：直接读取当前会话快照
 
-`server/src/local-conversations.ts:1669` 建立 `openbot_local_threads`：`id`、`owner_user_id`、`agent_id`、`name`、`archived`、`messages jsonb`、`state jsonb`、`run_id`、`lock_expires_at`、`created_at`、`updated_at`。`messages` 是 AG-UI Message 数组，带稳定 `id`、`role`、`content`。当前快照已经体现截断/重发，优先它而不是事件回放表。
+`server/src/local-conversations.ts:1669` 建立 `chisabot_local_threads（原早期线程表）`：`id`、`owner_user_id`、`agent_id`、`name`、`archived`、`messages jsonb`、`state jsonb`、`run_id`、`lock_expires_at`、`created_at`、`updated_at`。`messages` 是 AG-UI Message 数组，带稳定 `id`、`role`、`content`。当前快照已经体现截断/重发，优先它而不是事件回放表。
 
 ```sql
 SELECT id, agent_id, name, messages, updated_at
-FROM openbot_local_threads
+FROM chisabot_local_threads（原早期线程表）
 WHERE owner_user_id = $1 AND archived = false
   AND updated_at >= $2::timestamptz
 ORDER BY updated_at DESC, id
@@ -18,7 +18,7 @@ LIMIT $3;
 - `sourceRef = message:<thread-id>:<message-id>`；不要用数组下标或会话更新时间作为消息身份。
 - 只提取用户文本；工具结果、系统消息、后台任务生成的 user 消息不能作为新的用户授权。调用者应排除任务中心自己的执行会话，防止自触发。
 - 会话忙碌时可读，但助手内容可能仍在流式更新。消息本身没有统一持久化时间戳；时间窗口只能先筛会话，再用稳定消息 id 去重。
-- `openbot_local_events` / `openbot_local_runs` 自身没有 owner 字段；必须先 JOIN `openbot_local_threads` 再限定 owner，不能按传入 thread id 直接读。
+- `chisabot_local_events（原早期事件表）` / `chisabot_local_runs（原早期运行表）` 自身没有 owner 字段；必须先 JOIN `chisabot_local_threads（原早期线程表）` 再限定 owner，不能按传入 thread id 直接读。
 - 该表仅本地运行模式存在。Intelligence 模式缺少表时应报告来源不可用，而不是声称无消息。
 
 ## IM：复用同一会话，或只读最近入站摘要

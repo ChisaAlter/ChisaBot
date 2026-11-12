@@ -6,6 +6,7 @@ import {
   buildDisplacementMap,
   contrast,
   decideInk,
+  decideScreenInk,
   densityKOf,
   densityOf,
   displacementScale,
@@ -26,6 +27,7 @@ import {
   rimWidthPx,
   sampleStats,
   satKeepOf,
+  screenBackdropLum,
   type RGBA,
 } from "../src/lib/liquid-glass";
 
@@ -220,5 +222,150 @@ describe("material tokens in styles.css", () => {
   test("the dark-under state flip rule exists for every glass surface", () => {
     expect(css).toContain('[data-lg-ink="dark"]');
     expect(css).toMatch(/data-lg-ink="dark"\]\s*\{[\s\S]*--lg-tint-rgb: 16 18 22/);
+  });
+
+  test("dark-under glass-seg selected tab and solid glass controls flip to a ≥4.5 pair", () => {
+    const block =
+      /data-lg-ink="dark"\]\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    const dark = /--glass-dark:\s*(#[0-9a-fA-F]{6})/.exec(block)?.[1];
+    const ink = /--glass-dark-ink:\s*(#[0-9a-fA-F]{6})/.exec(block)?.[1];
+    expect(dark).toBe("#e8ecf3");
+    expect(ink).toBe("#10161f");
+    const hex = (h: string): RGBA => [
+      Number.parseInt(h.slice(1, 3), 16),
+      Number.parseInt(h.slice(3, 5), 16),
+      Number.parseInt(h.slice(5, 7), 16),
+      1,
+    ];
+    expect(contrast(hex(ink!), hex(dark!))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("dark-under selected rail tab, segmented item, and appearance cards stay ≥4.5 on a forced dark wall", () => {
+    const block =
+      /data-lg-ink="dark"\]\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+    const token = (name: string) => {
+      const m = new RegExp(`${name}:\\s*([^;]+);`).exec(block);
+      if (!m?.[1]) throw new Error(`missing ${name} in dark-ink block`);
+      return color(m[1].trim());
+    };
+    const color = (v: string): RGBA => {
+      const hex = /^#([0-9a-f]{6})$/i.exec(v);
+      if (hex) {
+        const n = Number.parseInt(hex[1], 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+      }
+      const rgb = /^rgba?\(([^)]*)\)$/.exec(v);
+      if (rgb) {
+        const p = rgb[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean)
+          .map(Number);
+        return [p[0], p[1], p[2], p[3] ?? 1];
+      }
+      throw new Error(`unsupported color: ${v}`);
+    };
+    // 强制不透明深釉：真实使用里几乎碰不到，但修的就是这个状态下选中态发白。
+    const wall: RGBA = [16, 18, 22, 1];
+    const ink = token("--ink-1");
+    const paper = over(token("--accent-fill-paper"), wall);
+    const glass1 = over(token("--glass-1"), wall);
+    const glass3 = over(token("--glass-3"), wall);
+    const solid = token("--glass-dark");
+    const solidInk = token("--glass-dark-ink");
+    expect(contrast(ink, paper)).toBeGreaterThanOrEqual(4.5); // rail tab / 分段选中
+    expect(contrast(ink, glass3)).toBeGreaterThanOrEqual(4.5); // palette-card.is-active
+    expect(contrast(ink, glass1)).toBeGreaterThanOrEqual(4.5); // wallpaper-card.is-active
+    expect(contrast(solidInk, solid)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("uniform panel ink (no mixed light/dark modules)", () => {
+  const panels = (lum: number) => [
+    { lum, area: 280 * 860 },
+    { lum, area: 320 * 860 },
+    { lum, area: 800 * 120 },
+  ];
+  test("screen backdrop is the area-weighted mean of the panels' own backdrops", () => {
+    expect(
+      screenBackdropLum([
+        { lum: 0.2, area: 300 },
+        { lum: 0.8, area: 100 },
+      ]),
+    ).toBeCloseTo(0.35);
+    expect(screenBackdropLum([])).toBeNull();
+    // 不在视口里（面积 0）或量不到（NaN）的面板不算。
+    expect(
+      screenBackdropLum([
+        { lum: 0.1, area: 0 },
+        { lum: Number.NaN, area: 500 },
+        { lum: 0.7, area: 10 },
+      ]),
+    ).toBeCloseTo(0.7);
+  });
+  test("a bright Hark sky (0.6–0.9 behind the panels) keeps the whole screen light", () => {
+    for (const lum of [0.6, 0.7, 0.79, 0.9]) {
+      expect(decideScreenInk("light", panels(lum), null).ink).toBe("light");
+      expect(decideScreenInk("light", panels(lum), "dark").ink).toBe("light");
+    }
+  });
+  test("light scheme flips the whole screen dark only when the backdrop is really dark (<0.40)", () => {
+    expect(decideScreenInk("light", panels(0.39), null).ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.41), null).ink).toBe("light");
+  });
+  test("hysteresis: dark below 0.40, back to light only at ≥0.50; in between keeps the last ink", () => {
+    expect(decideScreenInk("light", panels(0.45), "light").ink).toBe("light");
+    expect(decideScreenInk("light", panels(0.45), "dark").ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.49), "dark").ink).toBe("dark");
+    expect(decideScreenInk("light", panels(0.5), "dark").ink).toBe("light");
+    // 一块面板落在暗角上，整屏平均仍亮：整屏不翻。
+    expect(
+      decideScreenInk(
+        "light",
+        [
+          { lum: 0.15, area: 800 * 120 },
+          { lum: 0.85, area: 280 * 860 },
+          { lum: 0.85, area: 320 * 860 },
+        ],
+        null,
+      ).ink,
+    ).toBe("light");
+  });
+  test("nothing measurable keeps the previous ink (default light)", () => {
+    expect(decideScreenInk("light", [], null).ink).toBe("light");
+    expect(decideScreenInk("light", [], "dark").ink).toBe("dark");
+  });
+  test("dark scheme is always dark glaze", () => {
+    expect(decideScreenInk("dark", panels(0.9), null).ink).toBe("dark");
+    expect(decideScreenInk("dark", panels(0.1), "light").ink).toBe("dark");
+  });
+  test("the ink is not persisted and the WebGL sky is read from the in-frame snapshot", () => {
+    const src = readFileSync(
+      path.join(import.meta.dir, "../src/lib/liquid-glass.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/localStorage\.setItem\(\s*LG_INK_STORAGE_KEY/);
+    expect(src).toMatch(/localStorage\.removeItem\(LG_INK_STORAGE_KEY\)/);
+    // 帧外读 #gl 只会读到全黑：drawSky 只画快照。
+    const drawSky = /private drawSky\([\s\S]*?\n {2}\}\n/.exec(src)?.[0] ?? "";
+    expect(drawSky).toContain("getSkySnapshot()");
+    expect(drawSky).not.toMatch(/drawImage\(gl\b/);
+  });
+  test("liquid CSS no longer treats unset data-glass as liquid", () => {
+    expect(css).not.toMatch(
+      /:where\(html\[data-glass="liquid"\],\s*html:not\(\[data-glass\]\)\)/,
+    );
+    expect(css).toMatch(
+      /:where\(html\[data-glass="mist"\],\s*html:not\(\[data-glass\]\)\)/,
+    );
+  });
+  test("liquidActive source only matches liquid, not null", () => {
+    const src = readFileSync(
+      path.join(import.meta.dir, "../src/lib/liquid-glass.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(
+      /function liquidActive\(\)[^{]*\{[^}]*getAttribute\("data-glass"\) === "liquid"/s,
+    );
+    expect(src).not.toMatch(/glass === null \|\| glass === "liquid"/);
   });
 });

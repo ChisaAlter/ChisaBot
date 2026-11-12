@@ -10,17 +10,23 @@ import {
   type DispatchState,
   dispatchDurable,
 } from "../delivery/durable-dispatch";
+import {
+  type PersonalNotificationSource,
+  personalNoticeIsCurrent,
+} from "../delivery/personal-notification-state";
 
 export type PersonalSendContext = {
   id?: string;
   threadId?: string;
   runId?: string;
   agentId?: string;
+  notificationSource?: PersonalNotificationSource;
 };
 export type PersonalDeliveryPayload = {
   target: string;
   title: string;
   body: string;
+  notificationSource?: PersonalNotificationSource;
 };
 export type PersonalDeliveryRecord = {
   id: string;
@@ -65,7 +71,12 @@ export function createPersonalDelivery(database: Database) {
       const id = context.id
         ? `personal:${owner}:${context.id}`
         : `personal:${randomUUID()}`;
-      const encoded = JSON.stringify(payload);
+      const encoded = JSON.stringify({
+        ...payload,
+        ...(context.notificationSource
+          ? { notificationSource: context.notificationSource }
+          : {}),
+      });
       await sql.unsafe(
         `INSERT INTO chisabot_personal_deliveries(id,owner_user_id,kind,connection_version,payload,thread_id,run_id,agent_id)
         VALUES($1,$2,$3,$4,$5::text::jsonb,$6,$7,$8) ON CONFLICT(id) DO NOTHING`,
@@ -129,8 +140,20 @@ export function createPersonalDelivery(database: Database) {
             [id, state, JSON.stringify(receipt ?? null), error ?? null],
           );
         },
-        target: (record) =>
-          record.retry_due === false ? Promise.resolve(null) : target(record),
+        target: async (record, reader) => {
+          if (record.retry_due === false) return null;
+          if (
+            record.kind === "notify" &&
+            !(await personalNoticeIsCurrent(
+              reader,
+              record.owner_user_id,
+              record.id,
+              record.payload.notificationSource,
+            ))
+          )
+            return "cancelled";
+          return target(record);
+        },
         retryRejected: async (record, _error, reader) => {
           // Only unattended notifications retry. A chat send stays bound to its original turn's
           // approval and Stop state; SMTP and chat sends require an explicit new decision.

@@ -22,8 +22,8 @@ import {
   agents,
   channelMemberships,
   channels,
+  chisabotChannelMappings,
   deploymentPackages,
-  intelligenceChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -154,8 +154,8 @@ const createdPackageIds: string[] = [];
 afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const packageId of createdPackageIds.splice(0)) {
@@ -268,7 +268,7 @@ async function createSharedChannel(owner: AgentActor, other: AgentActor) {
     channelId: channel.id,
     userId: other.id,
   });
-  await database.insert(intelligenceChannelMappings).values({
+  await database.insert(chisabotChannelMappings).values({
     userId: other.id,
     channelId: channel.id,
     // thread_id is globally unique, so the second member's mapping needs one of its own.

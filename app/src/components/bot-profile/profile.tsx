@@ -83,13 +83,9 @@ const NOTIFY_LABEL: Record<BotNotify, string> = {
 function resetLines(plan: ResetPlan): string[] {
   const lines: [number, string][] = [
     [plan.conversations, "个对话"],
-    [plan.memorySources, "个记忆来源"],
-    [plan.memories, "条导入的记忆"],
     [plan.schedules, "个定时任务"],
     [plan.responsibilities, "项职责"],
     [plan.followUps, "个定时跟进"],
-    [plan.formedMemories, "条它自己记下的记忆"],
-    [plan.backgroundResearch, "项后台调研"],
     [plan.standingApprovals, "条长期授权"],
   ];
   return lines

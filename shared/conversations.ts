@@ -86,3 +86,20 @@ export type RuntimeToolIdentity = {
   revision: number;
   generation: string;
 };
+
+export const ToolOutcomeResolutionSchema = z
+  .object({
+    outcome: z.enum(["completed", "not_executed", "failed"]),
+    note: z.string().trim().min(1, "请填写你核对到的实际结果。").max(2000),
+    continue: z.boolean(),
+  })
+  .strict();
+export type ToolOutcomeResolution = z.infer<typeof ToolOutcomeResolutionSchema>;
+export type UnknownToolOperation = {
+  id: string;
+  toolName: string;
+  error: string | null;
+  createdAt: string;
+  canContinue: boolean;
+  details: { label: string; value: string }[];
+};

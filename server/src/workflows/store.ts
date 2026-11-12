@@ -60,6 +60,9 @@ export type RunEvent = {
   data: Record<string, unknown> | null;
 };
 
+export type RunEventInput = Pick<RunEvent, "kind" | "message"> &
+  Partial<Pick<RunEvent, "stepId" | "data">>;
+
 function asRun(row: typeof workflowRuns.$inferSelect): StoredRun {
   return {
     ...row,
@@ -206,20 +209,30 @@ export function createWorkflowStore(database: Database) {
     async saveRun(
       id: string,
       patch: Partial<Pick<StoredRun, "status" | "state" | "bindings" | "output" | "error" | "startedAt" | "finishedAt">>,
+      noticeEvent?: RunEventInput,
     ): Promise<void> {
-      await database
-        .update(workflowRuns)
-        .set({
-          ...(patch.status ? { status: patch.status } : {}),
-          ...(patch.state ? { state: json(patch.state) } : {}),
-          ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
-          ...(patch.output !== undefined ? { output: patch.output } : {}),
-          ...(patch.error !== undefined ? { error: patch.error } : {}),
-          ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-          ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
-          updatedAt: new Date(),
-        })
-        .where(eq(workflowRuns.id, id));
+      const values = {
+        ...(patch.status ? { status: patch.status } : {}),
+        ...(patch.state ? { state: json(patch.state) } : {}),
+        ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
+        ...(patch.output !== undefined ? { output: patch.output } : {}),
+        ...(patch.error !== undefined ? { error: patch.error } : {}),
+        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+        ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
+        updatedAt: new Date(),
+      };
+      if (!noticeEvent) {
+        await database.update(workflowRuns).set(values).where(eq(workflowRuns.id, id));
+        return;
+      }
+      // Notification recovery reads events: the state and its notice must commit together.
+      await database.transaction(async (tx) => {
+        await tx.update(workflowRuns).set(values).where(eq(workflowRuns.id, id));
+        await tx.insert(workflowRunEvents).values({
+          id: eventId(), runId: id, kind: noticeEvent.kind, message: noticeEvent.message,
+          stepId: noticeEvent.stepId ?? null, data: noticeEvent.data ? json(noticeEvent.data) : null,
+        });
+      });
     },
     /**
      * 条件更新（CAS）：只有当前状态还在 from 里才写入，返回是否写成功。并发的两次审批只有一个能过。
@@ -269,19 +282,28 @@ export function createWorkflowStore(database: Database) {
       id: string,
       staleBefore: Date,
       patch: Pick<StoredRun, "state" | "error" | "finishedAt">,
+      noticeEvent?: RunEventInput,
     ): Promise<boolean> {
-      const rows = await database
-        .update(workflowRuns)
-        .set({ status: "failed", state: json(patch.state), error: patch.error, finishedAt: patch.finishedAt, updatedAt: new Date() })
-        .where(
-          and(
-            eq(workflowRuns.id, id),
-            inArray(workflowRuns.status, ["queued", "running"]),
-            lt(workflowRuns.updatedAt, staleBefore),
-          ),
-        )
-        .returning({ id: workflowRuns.id });
-      return rows.length > 0;
+      return database.transaction(async (tx) => {
+        const rows = await tx
+          .update(workflowRuns)
+          .set({ status: "failed", state: json(patch.state), error: patch.error, finishedAt: patch.finishedAt, updatedAt: new Date() })
+          .where(
+            and(
+              eq(workflowRuns.id, id),
+              inArray(workflowRuns.status, ["queued", "running"]),
+              lt(workflowRuns.updatedAt, staleBefore),
+            ),
+          )
+          .returning({ id: workflowRuns.id });
+        if (rows.length > 0 && noticeEvent) {
+          await tx.insert(workflowRunEvents).values({
+            id: eventId(), runId: id, kind: noticeEvent.kind, message: noticeEvent.message,
+            stepId: noticeEvent.stepId ?? null, data: noticeEvent.data ? json(noticeEvent.data) : null,
+          });
+        }
+        return rows.length > 0;
+      });
     },
     async deleteRun(ownerUserId: string, id: string): Promise<boolean> {
       const rows = await database

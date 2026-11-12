@@ -825,7 +825,7 @@ test("delivery keeps the original initiator when building the addressed Bot", as
   });
 });
 
-test("a DSH timeout waits for execution termination before releasing the lease and presence", async () => {
+test("a DSH timeout waits for termination and leaves lease/presence cleanup to its runner", async () => {
   const agent = Object.assign(stubAgent(), { acknowledgesStop: true });
   const order: string[] = [];
   let end: () => void = () => {};
@@ -860,7 +860,60 @@ test("a DSH timeout waits for execution termination before releasing the lease a
   await expect(
     deliver.deliver({ work: WORK, message: "m", assertion: "s" }),
   ).rejects.toThrow("did not finish");
-  expect(order).toEqual(["stop-requested", "kernel-stopped", "outer-release"]);
+  expect(order).toEqual(["stop-requested", "kernel-stopped"]);
+});
+
+test("an occupied backwards relay does not clear another run's busy presence", async () => {
+  let busy = true;
+  let released = 0;
+  const prepared: { threadId: string; runnerOwnsLease?: boolean }[] = [];
+  const deliver = createHandoffDelivery({
+    agentFor: async () => stubAgent(),
+    history: async () => PRIOR,
+    newRunId: () => "relay-run",
+    mintThreadId: () => "unused",
+    lock: {
+      acquire: async (input) => {
+        prepared.push(input);
+        return { runId: input.runId };
+      },
+      renew: async () => {},
+      release: async () => {
+        released++;
+        busy = false;
+      },
+    },
+    runner: {
+      ownsThreadLease: true,
+      run: (request) => {
+        expect(request.join).toBe(false);
+        throw new Error("Thread already running");
+      },
+    },
+  });
+  const failure = await deliver
+    .deliver({
+      work: { ...WORK, answerIn: WORK.threadId },
+      message: "result",
+      assertion: "signed",
+    })
+    .then(
+      () => null,
+      (error: unknown) => error,
+    );
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe("Thread already running");
+  expect(prepared).toEqual([
+    {
+      threadId: WORK.threadId,
+      runId: "relay-run",
+      userId: WORK.actorId,
+      agentId: WORK.toBotId,
+      runnerOwnsLease: true,
+    },
+  ]);
+  expect(released).toBe(0);
+  expect(busy).toBe(true);
 });
 
 /**

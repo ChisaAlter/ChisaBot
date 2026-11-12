@@ -16,7 +16,6 @@
  * that could not be parsed. A staged attachment that is a minute past the window and swept on the
  * next run instead has lost nothing.
  */
-import "../../shared/env-compat";
 import { and, isNull, lt, sql } from "drizzle-orm";
 import { createDatabase, type Database } from "../src/db/client";
 import { attachments } from "../src/db/schema";

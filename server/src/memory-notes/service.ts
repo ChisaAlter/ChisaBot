@@ -394,8 +394,9 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
       };
     };
 
-    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
+    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>, effect: "read" | "write" = "write"): GrantedTool => ({
       name,
+      effect,
       ref: `memory/${name}`,
       description,
       parameters,
@@ -423,6 +424,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           const rows = await search(owner, query, kind, 30);
           return rows.length ? rows.map((row) => line(view(row))).join("\n") : "没有找到相关笔记。";
         },
+        "read",
       ),
       tool(
         "memory_save",

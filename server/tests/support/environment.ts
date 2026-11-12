@@ -20,10 +20,6 @@ export function testEnvironment(
     BETTER_AUTH_URL: "http://localhost:3001",
     // Required whenever a provider is configured: nothing else grants the administrator role.
     INITIAL_ADMIN_EMAILS: "admin@chisabot.test",
-    // Required. See server/src/config.ts: there is no runtime without Intelligence.
-    INTELLIGENCE_API_URL: "http://localhost:7100",
-    INTELLIGENCE_GATEWAY_WS_URL: "ws://localhost:7103",
-    INTELLIGENCE_API_KEY: "tenant-api-key",
     MANAGED_AGENT_AG_UI_URL: "http://localhost:4200/ag-ui",
     MANAGED_AGENT_TOKEN: "managed-agent-token",
     ...overrides,

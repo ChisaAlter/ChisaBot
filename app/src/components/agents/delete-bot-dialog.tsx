@@ -36,12 +36,9 @@ type DeletableBot = { id: string; name: string };
 function deletionLines(plan: ResetPlan): string[] {
   const lines: [number, string][] = [
     [plan.conversations, "个私人会话"],
-    [plan.memorySources, "个记忆来源"],
-    [plan.memories + plan.formedMemories, "条记忆"],
     [plan.schedules, "个定时任务"],
     [plan.responsibilities, "个长期职责"],
     [plan.followUps, "个待办跟进"],
-    [plan.backgroundResearch, "项后台研究"],
     [plan.standingApprovals, "条常驻授权"],
   ];
   return lines

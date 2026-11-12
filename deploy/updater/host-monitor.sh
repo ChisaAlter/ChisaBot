@@ -1,5 +1,6 @@
 #!/bin/bash
-# Read-only host checks. Reuse the existing account timer; never restart or repair services here.
+# Host checks and a persisted observation for the existing notification sweep.
+# Reuse the account timer; never restart or repair services here.
 set -uo pipefail
 U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 if ! . "$U/config.env" 2>/dev/null; then
@@ -8,8 +9,13 @@ if ! . "$U/config.env" 2>/dev/null; then
 fi
 export U CONTAINER COMPOSE_DIR
 RESULT=0
+ROWS=""
+record() {
+  printf '%s\n' "$1"
+  ROWS+="$1"$'\n'
+}
 emit() {
-  printf '{"type":"host-monitor","check":"%s","ok":%s,"state":"%s"}\n' "$1" "$2" "$3"
+  record "$(printf '{"type":"host-monitor","check":"%s","ok":%s,"state":"%s"}' "$1" "$2" "$3")"
   [ "$2" = true ] || RESULT=1
 }
 
@@ -31,7 +37,7 @@ case "$DSH" in
     SIGNALS_EXIT=$?
     if [[ "$SIGNALS" = \{*\} ]]; then
       if [ "$SIGNALS_EXIT" = 0 ]; then OK=true; else OK=false; RESULT=1; fi
-      printf '{"type":"host-monitor","check":"assistant","ok":%s,"details":%s}\n' "$OK" "$SIGNALS"
+      record "$(printf '{"type":"host-monitor","check":"assistant","ok":%s,"details":%s}' "$OK" "$SIGNALS")"
     else emit assistant false unreadable; fi ;;
   0) emit dsh true not_selected ;;
   *) emit dsh false unreadable ;;
@@ -42,7 +48,7 @@ BACKUP=$(timeout 15 bash "$U/complete-backup.sh" --status 2>/dev/null)
 BACKUP_EXIT=$?
 if [[ "$BACKUP" = \{*\} ]]; then
   if [ "$BACKUP_EXIT" = 0 ]; then OK=true; else OK=false; RESULT=1; fi
-  printf '{"type":"host-monitor","check":"backup","ok":%s,"details":%s}\n' "$OK" "$BACKUP"
+  record "$(printf '{"type":"host-monitor","check":"backup","ok":%s,"details":%s}' "$OK" "$BACKUP")"
 else emit backup false unreadable; fi
 
 LIMIT=${CHISABOT_MONITOR_DISK_PERCENT:-80}
@@ -50,7 +56,7 @@ if [[ "$LIMIT" =~ ^([1-9][0-9]?|100)$ ]]; then
   USED=$(df -P / 2>/dev/null | awk 'END {value=$(NF-1); gsub(/%/, "", value); print value}')
   if [[ "$USED" =~ ^[0-9]+$ ]]; then
     if [ "$USED" -lt "$LIMIT" ]; then OK=true; else OK=false; RESULT=1; fi
-    printf '{"type":"host-monitor","check":"disk","ok":%s,"usedPercent":%s,"limitPercent":%s}\n' "$OK" "$USED" "$LIMIT"
+    record "$(printf '{"type":"host-monitor","check":"disk","ok":%s,"usedPercent":%s,"limitPercent":%s}' "$OK" "$USED" "$LIMIT")"
   else emit disk false unreadable; fi
 else emit disk false invalid_config; fi
 
@@ -63,4 +69,10 @@ elif ! openssl x509 -in "$CERT" -noout >/dev/null 2>&1; then emit certificate fa
 elif openssl x509 -in "$CERT" -noout -checkend "$((DAYS * 86400))" >/dev/null 2>&1; then emit certificate true ready
 else emit certificate false expiring; fi
 
+# No webhook secrets or sending code on the host. The API consumes this observation through
+# its existing read-only updater mount and uses the configured owner's durable delivery ledger.
+if ! printf '%s' "$ROWS" | CHISABOT_MONITOR_NOTIFY_OWNER="${CHISABOT_MONITOR_NOTIFY_OWNER:-}" \
+  "${CHISABOT_DSH_NODE:-node}" "$U/host-monitor-state.mjs" "$U/spool/state/host-monitor.json"; then
+  emit observation false unwritable
+fi
 exit "$RESULT"

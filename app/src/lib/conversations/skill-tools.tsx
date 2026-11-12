@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { useInteractionRenderer } from "@/lib/chat/renderers";
+import {
+  type InteractionRenderProps,
+  useInteractionRenderer,
+} from "@/lib/chat/renderers";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
 import {
   agentPluginsQueryOptions,
@@ -73,11 +76,9 @@ export function SkillTools() {
    */
   const Card = useMemo(
     () =>
-      function ProposedSkillRender(props: {
-        args: Partial<ProposedSkill>;
-        respond?: (result: unknown) => Promise<void>;
-        result?: string;
-      }) {
+      function ProposedSkillRender(
+        props: InteractionRenderProps<ProposedSkill>,
+      ) {
         const slug = props.args.slug;
         const existing = slug
           ? skills.find((candidate) => candidate.slug === slug)
@@ -95,6 +96,8 @@ export function SkillTools() {
             }
             respond={props.respond}
             result={props.result}
+            continuation={props.continuation}
+            retryContinuation={props.retryContinuation}
           />
         );
       },

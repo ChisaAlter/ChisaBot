@@ -31,6 +31,12 @@ import {
   recordAuditEvent,
 } from "../audit";
 import type { AppVariables } from "../auth/guards";
+import { redactText } from "../computer/activity-redact";
+import {
+  continuationView,
+  continuationViews,
+  retryContinuation,
+} from "../conversations/continuation-work";
 import { createDshRunJournal } from "../conversations/run-journal";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -831,7 +837,7 @@ export function createConfirmations(
   ) {
     const row = await requestById(owner, id);
     if (!row) throw new ConfirmError("找不到这张确认卡片。");
-    if (row.status !== "pending") return requestView(row);
+    if (row.status !== "pending") return requestWithContinuation(row);
     if (new Date(row.expires_at).getTime() < Date.now()) {
       await setStatus(id, ["pending"], "expired");
       throw new ConfirmError("这张确认卡片已经过期了，操作没有执行。");
@@ -873,7 +879,9 @@ export function createConfirmations(
           );
         return saved;
       });
-      return requestView(updated ?? (await requestById(owner, id))!);
+      return requestWithContinuation(
+        updated ?? (await requestById(owner, id))!,
+      );
     }
     const updated = await setStatus(
       id,
@@ -914,17 +922,87 @@ export function createConfirmations(
     owner: string,
     options: { threadId?: string; limit?: number } = {},
   ) {
+    return (await listPage(owner, options)).requests;
+  }
+
+  async function listPage(
+    owner: string,
+    options: {
+      threadId?: string;
+      limit?: number;
+      actionable?: boolean;
+      cursor?: string;
+    } = {},
+  ) {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const rows = options.threadId
-      ? await sql.unsafe<RequestRow[]>(
-          "SELECT * FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 ORDER BY created_at DESC LIMIT $3",
-          [owner, options.threadId, limit],
-        )
-      : await sql.unsafe<RequestRow[]>(
-          "SELECT * FROM chisabot_confirm_requests WHERE owner_user_id = $1 ORDER BY created_at DESC LIMIT $2",
-          [owner, limit],
-        );
-    return rows.map(requestView);
+    const page = await sql.unsafe<RequestRow[]>(
+      `SELECT c.* FROM chisabot_confirm_requests c
+       WHERE c.owner_user_id=$1 AND ($2::text IS NULL OR c.thread_id=$2)
+       AND ${
+         options.actionable
+           ? `((c.status='pending' AND c.expires_at>now()) OR (
+         c.continuation IS NOT NULL AND c.status IN ('approved','denied') AND EXISTS (
+           SELECT 1 FROM work_items w
+           LEFT JOIN chisabot_local_runs r ON r.thread_id=c.thread_id AND r.run_id='confirmation:'||c.id
+           LEFT JOIN chisabot_dsh_runs d ON d.thread_id=c.thread_id AND d.run_id='confirmation:'||c.id
+           WHERE w.kind='conversation.confirmation-response' AND w.key=c.id AND (
+             d.status IN ('admitting','observing','projecting')
+             OR r.status IN ('capacity_wait','reserved','running')
+             OR (w.finished_at IS NULL AND r.run_id IS NULL AND d.run_id IS NULL))
+         )
+       ))`
+           : "true"
+       }
+       AND ($3::text IS NULL OR (c.created_at,c.id)<(
+         SELECT created_at,id FROM chisabot_confirm_requests WHERE id=$3 AND owner_user_id=$1
+       )) ORDER BY c.created_at DESC,c.id DESC LIMIT $4`,
+      [owner, options.threadId ?? null, options.cursor ?? null, limit + 1],
+    );
+    const rows = page.slice(0, limit);
+    const continuations = await continuationViews(
+      database,
+      rows.flatMap((row) =>
+        row.continuation &&
+        row.thread_id &&
+        ["approved", "denied"].includes(row.status)
+          ? [
+              {
+                kind: "conversation.confirmation-response" as const,
+                key: row.id,
+                threadId: row.thread_id,
+                runId: `confirmation:${row.id}`,
+              },
+            ]
+          : [],
+      ),
+    );
+    const requests = rows.map((row) => {
+      const continuation = continuations.get(row.id);
+      return { ...requestView(row), ...(continuation ? { continuation } : {}) };
+    });
+    return {
+      requests,
+      nextCursor: page.length > limit ? (rows.at(-1)?.id ?? null) : null,
+    };
+  }
+
+  async function requestWithContinuation(
+    row: RequestRow,
+  ): Promise<ConfirmRequestView> {
+    const view = requestView(row);
+    if (
+      !row.continuation ||
+      !row.thread_id ||
+      !["approved", "denied"].includes(row.status)
+    )
+      return view;
+    const continuation = await continuationView(database, {
+      kind: "conversation.confirmation-response",
+      key: row.id,
+      threadId: row.thread_id,
+      runId: `confirmation:${row.id}`,
+    });
+    return { ...view, ...(continuation ? { continuation } : {}) };
   }
 
   /** 在网页上确认过付款（confirm_action 类别 purchase）之后，这段对话里一段时间内云端浏览器的操作直接放行。 */
@@ -1028,17 +1106,18 @@ export function createConfirmations(
         tool: call?.toolName ?? "device",
         title: `在你的电脑上${input.operationLabel}`,
         target: input.deviceName,
+        // 库里和审批视图只存打码后的摘要；真正执行的命令仍在 hub 内存的 input.args 里。
         details: [
           {
             label: "要做的事",
-            value: input.summary.slice(0, 600),
+            value: redactText(input.summary).slice(0, 600),
             code: /命令|shell|路径/.test(input.operationLabel),
           },
           ...(input.diff
             ? [
                 {
                   label: "改动",
-                  value: input.diff.slice(0, 8000),
+                  value: redactText(input.diff).slice(0, 8000),
                   code: true,
                   diff: true,
                 },
@@ -1419,12 +1498,15 @@ export function createConfirmations(
     app.get("/requests", async (c) => {
       const threadId = c.req.query("thread") || undefined;
       const limit = Number(c.req.query("limit") ?? "") || undefined;
-      return c.json({
-        requests: await list(c.var.actor.id, {
+      const cursor = c.req.query("cursor");
+      return c.json(
+        await listPage(c.var.actor.id, {
           ...(threadId ? { threadId } : {}),
           ...(limit ? { limit } : {}),
+          actionable: c.req.query("view") === "actionable",
+          ...(cursor ? { cursor } : {}),
         }),
-      });
+      );
     });
     app.post("/requests/:id", async (c) => {
       const body = z
@@ -1434,6 +1516,34 @@ export function createConfirmations(
       return c.json({
         request: await decide(c.var.actor.id, c.req.param("id"), body.decision),
       });
+    });
+    app.post("/requests/:id/retry", async (c) => {
+      const row = await requestById(c.var.actor.id, c.req.param("id"));
+      if (
+        !row?.continuation ||
+        !row.thread_id ||
+        !["approved", "denied"].includes(row.status)
+      )
+        return c.json({ error: "找不到已决定的确认卡片。" }, 404);
+      const snapshot = parseApprovalContinuation(row.continuation);
+      const refusal = await createDshRunJournal(database).continuationRefusal(
+        snapshot.threadId,
+        snapshot.runId,
+      );
+      if (refusal) return c.json({ error: refusal }, 409);
+      if (
+        !(await retryContinuation(database, {
+          kind: "conversation.confirmation-response",
+          key: row.id,
+          threadId: row.thread_id,
+          runId: `confirmation:${row.id}`,
+        }))
+      )
+        return c.json(
+          { error: "这次续执行已开始或仍在排队，请在对话中查看结果。" },
+          409,
+        );
+      return c.json({ request: await requestWithContinuation(row) });
     });
     return app;
   }

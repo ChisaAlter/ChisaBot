@@ -16,7 +16,6 @@
  */
 import { readFile } from "node:fs/promises";
 import { reasonWithoutStatement } from "../db/query-failure";
-import { previousBotAnnotation } from "../legacy/protocol";
 import type {
   ComputerLocation,
   ComputerProvider,
@@ -582,10 +581,6 @@ export function createSandboxComputerProvider(
         const botId =
           (sandbox.metadata as { annotations?: Record<string, string> })
             ?.annotations?.["chisabot.dev/bot-id"] ??
-          previousBotAnnotation(
-            (sandbox.metadata as { annotations?: Record<string, string> })
-              ?.annotations,
-          ) ??
           sandbox.metadata?.name ??
           "";
         return {

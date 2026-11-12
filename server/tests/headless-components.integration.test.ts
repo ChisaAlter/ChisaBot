@@ -205,7 +205,7 @@ function harness(agent: AbstractAgent, botId: string) {
     stop: async () => true,
   };
   const run = createTurnRunner({
-    intelligence: {
+    conversations: {
       getOrCreateThread: async () => undefined,
       getThreadMessages: async () => ({ messages: [] }),
       acquireThreadLease: async () => undefined,

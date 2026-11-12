@@ -61,6 +61,12 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
       setAttachments((items) => items.filter((item) => item.id !== id)),
     [],
   );
+  const restoreAttachments = useCallback((restored: readonly Attachment[]) => {
+    setAttachments((current) => {
+      const ids = new Set(current.map((item) => item.id));
+      return [...current, ...restored.filter((item) => !ids.has(item.id))];
+    });
+  }, []);
   const processFiles = useCallback(
     async (files: File[] | FileList) => {
       const selected = settings.current;
@@ -134,6 +140,7 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
     fileInputRef,
     processFiles,
     removeAttachment,
+    restoreAttachments,
     handleDragOver: useCallback((event: DragEvent) => {
       event.preventDefault();
       setDragOver(true);

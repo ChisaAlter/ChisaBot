@@ -12,7 +12,6 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   PageEmpty,
   PageSection,
@@ -49,7 +48,9 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { agentKeys, agentListQueryOptions } from "@/lib/agents/queries";
 import { useOpenThread } from "@/lib/channels/open-thread";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { agoText } from "@/lib/im";
+import { agentInstancesQueryOptions } from "@/lib/local-agents";
 import { scheduleZone } from "@/lib/schedule-edit";
 import {
   deleteSchedule,
@@ -65,9 +66,9 @@ import { cn } from "@/lib/utils";
 import {
   formatWhen,
   partitionScheduleList,
+  type ScheduleView,
   scheduleLastLineZh,
   scheduleLastTone,
-  type ScheduleView,
 } from "../../../../../shared/schedules";
 
 export const Route = createFileRoute("/_authed/settings/schedules")({
@@ -92,6 +93,20 @@ function SchedulesPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
   const items = (list.data ?? []).filter((s) => !hidden.has(s.id));
+  const agentInstances = useQuery({
+    ...agentInstancesQueryOptions(),
+    enabled: Boolean(editing) || items.some((s) => Boolean(s.agentInstanceId)),
+  });
+  const instanceName = new Map(
+    (agentInstances.data ?? []).map((inst) => [
+      inst.id,
+      `${inst.name}（${inst.environmentName}）`,
+    ]),
+  );
+  const instanceLabelOf = (s: ScheduleView | null) =>
+    s?.agentInstanceId
+      ? (instanceName.get(s.agentInstanceId) ?? `子代理 · ${s.agentInstanceId}`)
+      : null;
   // 可见 + 隐藏机器人都算「还在」：只把真删除的标成孤儿（0.1.40），避免隐藏机器人任务被误清。
   const botsReady = bots.isSuccess && hiddenBots.isSuccess;
   const knownBotIds = botsReady
@@ -143,6 +158,7 @@ function SchedulesPage() {
       {group.map((s) => (
         <ScheduleRow
           botName={botName.get(s.agentId) ?? "已删除的机器人"}
+          instanceLabel={instanceLabelOf(s)}
           key={s.id}
           onHide={(id) => setHidden((h) => new Set([...h, id]))}
           onUnhide={(id) =>
@@ -164,6 +180,7 @@ function SchedulesPage() {
     <>
       <ScheduleDialog
         botName={shown ? (botName.get(shown.agentId) ?? "已删除的机器人") : ""}
+        instanceLabel={instanceLabelOf(shown)}
         onEdit={(id) => {
           setDetail(null);
           setEditing(id);
@@ -172,6 +189,7 @@ function SchedulesPage() {
         schedule={shown}
       />
       <ScheduleEditDialog
+        instances={agentInstances.data ?? []}
         onOpenChange={(open) => !open && setEditing(null)}
         schedule={editingSchedule}
       />
@@ -281,6 +299,7 @@ const RUN_BUSY_HINT = "这次还没跑完，跑完才能再运行。";
 function ScheduleRow({
   schedule: s,
   botName,
+  instanceLabel,
   onOpen,
   onEdit,
   onHide,
@@ -288,6 +307,7 @@ function ScheduleRow({
 }: {
   schedule: ScheduleView;
   botName: string;
+  instanceLabel: string | null;
   onOpen: () => void;
   onEdit: () => void;
   onHide: (id: string) => void;
@@ -404,6 +424,15 @@ function ScheduleRow({
                 <span className="device-cap-chip">
                   <T>{botName}</T>
                 </span>
+                {instanceLabel ? (
+                  <span
+                    className="device-cap-chip"
+                    data-testid="schedule-agent-instance"
+                    title="到点直接派发给该子代理执行"
+                  >
+                    <T>{instanceLabel}</T>
+                  </span>
+                ) : null}
                 {s.source === "im" ? (
                   <span className="device-cap-chip">
                     <IconBrandWechat className="size-3" />
@@ -414,7 +443,9 @@ function ScheduleRow({
                   <span
                     className="device-cap-chip sch-thread-gone"
                     data-testid="schedule-thread-deleted"
-                    title={"原来那段对话已删除，这个任务已自动取消，不会发到别的对话"}
+                    title={
+                      "原来那段对话已删除，这个任务已自动取消，不会发到别的对话"
+                    }
                   >
                     {"原对话已删除"}
                   </span>
@@ -552,11 +583,13 @@ function ScheduleRow({
 function ScheduleDialog({
   schedule: s,
   botName,
+  instanceLabel,
   onEdit,
   onOpenChange,
 }: {
   schedule: ScheduleView | null;
   botName: string;
+  instanceLabel: string | null;
   onEdit: (id: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -568,7 +601,7 @@ function ScheduleDialog({
           <>
             <DialogHeader>
               <DialogTitle>{s.title}</DialogTitle>
-              <DialogDescription>{`${s.schedule} · ${scheduleZone(s)} · ${botName}${s.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
+              <DialogDescription>{`${s.schedule} · ${scheduleZone(s)} · ${botName}${instanceLabel ? ` · ${instanceLabel}` : ""}${s.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
             </DialogHeader>
             <DialogBody className="im-form mt-2">
               {!ended ? (

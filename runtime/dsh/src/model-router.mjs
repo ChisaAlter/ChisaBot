@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { LlmAdapter, LlmError } from "@deepseek-ai/dsh-llm";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
+import { redactFailureText } from "./redact.mjs";
 
 const fallbackCodes = new Set([
   "QUOTA",
@@ -94,6 +95,41 @@ export class ModelBreakers {
 const breakerKey = (candidate) =>
   candidate.breakerKey ?? `${candidate.provider}\u0000${candidate.model}`;
 
+export const isLocalPrivacyGateFailure = (failure) =>
+  /\bprivacy-gate:/i.test(String(failure?.message ?? ""));
+
+function stripPriorRejectedImages(messages) {
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "user") {
+      lastUserIndex = i;
+      break;
+    }
+  }
+  if (lastUserIndex <= 0) return messages;
+  return messages.map((message, index) => {
+    if (
+      index >= lastUserIndex ||
+      message?.role !== "user" ||
+      !Array.isArray(message.content) ||
+      !message.content.some((part) => part?.type === "image")
+    ) {
+      return message;
+    }
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part?.type === "image"
+          ? {
+              type: "text",
+              text: "[上一轮图片未发送：网关本地隐私脱敏仅支持文字]",
+            }
+          : part,
+      ),
+    };
+  });
+}
+
 function routeFailure(failure, choice, index) {
   // PiAi leaves HTTP 404/410 as PI_AI_ERROR. A stale-but-explicit model route is a
   // missing candidate, so another configured candidate may still answer this request.
@@ -102,15 +138,21 @@ function routeFailure(failure, choice, index) {
     /\b(?:404|410)\b|model.{0,80}(?:not found|does not exist|retired|deprecated)/i.test(
       failure.message,
     );
+  // LlmFailure's other fields are structured (status, retry-after, request id, offload count);
+  // the upstream text is masked and capped (QA510 P3): this object is what the session stores.
   return {
     ...failure,
     code: missing ? "UNKNOWN_MODEL" : failure.code,
-    message: `${index ? "备用模型" : "主模型"}「${choice.model}」请求失败：${failure.message}`,
+    message: `${index ? "备用模型" : "主模型"}「${choice.model}」请求失败：${redactFailureText(failure.message)}`,
   };
 }
 
+/** Seconds for a user-facing sentence: one decimal under ten, whole above. */
+const spokenSeconds = (ms) =>
+  ms < 10_000 ? Math.round(ms / 100) / 10 : Math.round(ms / 1000);
+
 /** First-output budget multiplier when a route has no fallback to switch to. */
-const SINGLE_MODEL_DEADLINE_FACTOR = 4;
+export const SINGLE_MODEL_DEADLINE_FACTOR = 4;
 
 /** A stable session/model route with run-scoped credentials and retry state. */
 export class ChisaModelRouter extends LlmAdapter {
@@ -119,6 +161,7 @@ export class ChisaModelRouter extends LlmAdapter {
     this.ctx = ctx;
     this.routes = new Map();
     this.breakers = new ModelBreakers();
+    this.privacyBlockedSessions = new Set();
   }
 
   bind(id, input, runId) {
@@ -160,6 +203,7 @@ export class ChisaModelRouter extends LlmAdapter {
       retryStep: "",
       sameModelRetries: 0,
       firstOutputExpired: -1,
+      waitedMs: 0,
     });
   }
 
@@ -268,6 +312,15 @@ export class ChisaModelRouter extends LlmAdapter {
               : prepared;
           const session =
             options.sessionId && ctx.sessions.get(options.sessionId);
+          const privacyBlocked = Boolean(
+            (options.sessionId &&
+              router.privacyBlockedSessions.has(options.sessionId)) ||
+              session
+                ?.snapshotEvents?.()
+                .some((event) => event.type === "plugin:chisabot/privacy-gate"),
+          );
+          if (privacyBlocked && options.sessionId)
+            router.privacyBlockedSessions.add(options.sessionId);
           if (session) {
             appendPluginRecord(session, "plugin:chisabot/model-route", {
               routeId: id,
@@ -301,12 +354,16 @@ export class ChisaModelRouter extends LlmAdapter {
               ? setTimeout(() => {
                   // Read by retry(): no output by the deadline goes straight to the next model.
                   route.firstOutputExpired = position;
+                  route.waitedMs += wait;
                   abort.abort(new Error("MODEL_FIRST_OUTPUT_TIMEOUT"));
                 }, wait)
               : undefined;
           try {
             // Native replay state belongs to the actual provider, never to a logical route.
-            const messages = options.messages.map((message) =>
+            const sourceMessages = privacyBlocked
+              ? stripPriorRejectedImages(options.messages)
+              : options.messages;
+            const messages = sourceMessages.map((message) =>
               message.role === "assistant" && message.source?.replayState
                 ? {
                     ...message,
@@ -331,6 +388,7 @@ export class ChisaModelRouter extends LlmAdapter {
               ) {
                 clearTimeout(timer);
                 timer = undefined;
+                route.waitedMs = 0;
               }
               if (chunk.type === "finish") {
                 if (abort.signal.aborted && !options.signal?.aborted) {
@@ -341,8 +399,10 @@ export class ChisaModelRouter extends LlmAdapter {
                       failure: routeFailure(
                         {
                           code: "TIMEOUT",
+                          // The real wait (QA510 P3): every deadline that expired in this step,
+                          // e.g. 30 s on the primary plus 30 s on the backup, not just the last one.
                           message: last
-                            ? `${Math.round(wait / 100) / 10} 秒内没有任何输出${multi ? "，主模型和备用模型都没有回应" : ""}。这一轮已结束，请稍后重试。`
+                            ? `共等了约 ${spokenSeconds(route.waitedMs)} 秒仍没有任何输出${multi ? `（主模型和备用模型都没有回应，每个模型最多等 ${spokenSeconds(wait)} 秒）` : ""}。这一轮已结束，请稍后重试。`
                             : "Model produced no output within the configured fallback deadline.",
                         },
                         choice,
@@ -353,6 +413,21 @@ export class ChisaModelRouter extends LlmAdapter {
                 } else {
                   if (chunk.reason?.kind !== "error")
                     router.breakers.ok(route.keys[position]);
+                  else if (isLocalPrivacyGateFailure(chunk.reason.failure)) {
+                    if (options.sessionId)
+                      router.privacyBlockedSessions.add(options.sessionId);
+                    if (session && !privacyBlocked) {
+                      appendPluginRecord(
+                        session,
+                        "plugin:chisabot/privacy-gate",
+                        {
+                          routeId: id,
+                          runId: route.runId,
+                        },
+                      );
+                      await ctx.sessions.flush(session);
+                    }
+                  }
                   const { replayState: _privateReplay, ...safe } = chunk;
                   yield safe.reason.kind === "error"
                     ? {
@@ -387,15 +462,21 @@ export class ChisaModelRouter extends LlmAdapter {
       route.retryStep = position;
       route.sameModelRetries = 0;
     }
-    route.lastFailure = { code: failure.code, message: failure.message };
+    route.lastFailure = {
+      code: failure.code,
+      message: redactFailureText(failure.message),
+    };
     // A first-output deadline already waited the whole budget on this model: switch now.
     const deadline = route.firstOutputExpired === route.index;
     route.firstOutputExpired = -1;
+    // Shared gateway local policy refusal (e.g. Magpie privacy-gate on image_url):
+    // neither penalize the healthy model's breaker nor loop over backup models on the same gateway.
+    if (isLocalPrivacyGateFailure(failure)) return false;
+    // TIMEOUT never retries the same model (QA511 P2): a silent hang must end on the
+    // first-output deadline, not burn another provider request timeout on the same candidate.
     if (
       !deadline &&
-      ["SERVER", "TIMEOUT", "TRANSPORT", "EMPTY_RESPONSE"].includes(
-        failure.code,
-      ) &&
+      ["SERVER", "TRANSPORT", "EMPTY_RESPONSE"].includes(failure.code) &&
       route.sameModelRetries < 1
     ) {
       route.sameModelRetries++;

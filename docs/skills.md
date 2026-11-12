@@ -7,6 +7,7 @@
 - 设置 → 技能：新建、编辑、删除（8 秒内可撤销）；共享技能只读（管理员在「技能管理」里维护）。
 
 ## 接口
+
 - `GET /api/chisa-skills` → `{ skills: [{ slug, title, summary, instructions, mine }] }`
 - `PUT /api/chisa-skills/:slug` `{ title, summary, instructions, create? }`（只能写自己的；名字被占用 409）
 - `DELETE /api/chisa-skills/:slug`（只能删自己的）

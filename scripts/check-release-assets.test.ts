@@ -20,8 +20,8 @@ import { parse } from "yaml";
  * 前半部分用临时目录模拟 download-artifact 的 merge-multiple：generic 和 custom 产物同名，
  * 谁后写谁覆盖——证明把关脚本在干净 generic、整包被 custom 覆盖、latest.yml 与安装包分属两个
  * flavor 这三种情况下给出正确判定。后半部分直接解析 .github/workflows/release.yml，固定住
- * 工作流上的几个不变量（回退只取 pc-generic-unsigned、不验签开关是仓库级
- * vars.CHISABOT_PC_UPDATE_UNSIGNED（config 输出 pc_sign）、上传前一定先跑把关脚本）。
+ * 工作流上的几个不变量（通用版必须完成签名、只下载通用签名产物、
+ * 上传前一定先跑把关脚本）。
  */
 
 const SCRIPT = join(import.meta.dir, "check-release-assets.mjs");
@@ -205,25 +205,20 @@ function needsOf(job: Job) {
 }
 
 describe("release.yml invariants", () => {
-  test("pc-sign 跳过时回退只下载 pc-generic-unsigned（RV-03）", () => {
-    const downloads = (jobs.release.steps ?? []).filter(
-      (s) =>
-        typeof s.uses === "string" &&
-        (s.uses as string).includes("download-artifact"),
+  test("generic release requires signing success and never downloads unsigned artifacts", () => {
+    expect(needsOf(jobs.release)).toContain("pc-sign");
+    expect(String(jobs.release.if)).toContain(
+      "needs.pc-sign.result == 'success'",
     );
-    const fallback = downloads.find((s) =>
-      String(s.if ?? "").includes("pc-sign.result == 'skipped'"),
+    expect(String(jobs.release.if)).not.toContain("skipped");
+    const downloads = (jobs.release.steps ?? []).filter((s) =>
+      String(s.uses ?? "").includes("download-artifact"),
     );
-    expect(fallback).toBeDefined();
-    const withBlock = fallback?.with as Record<string, unknown>;
-    expect(withBlock?.pattern).toBe("pc-generic-unsigned");
-    // 任何地方都不允许再把两种 flavor 的产物合到同一目录
-    for (const s of downloads)
-      expect(String((s.with as Record<string, unknown>)?.pattern)).not.toBe(
-        "pc-*-unsigned",
-      );
+    expect(downloads).toHaveLength(1);
+    expect((downloads[0]?.with as Record<string, unknown>)?.pattern).toBe(
+      "*-generic",
+    );
   });
-
   test("上传前一定先跑 check-release-assets.mjs", () => {
     const steps = jobs.release.steps ?? [];
     const checkAt = steps.findIndex((s) =>
@@ -237,56 +232,31 @@ describe("release.yml invariants", () => {
     expect(checkAt).toBeLessThan(uploadAt);
   });
 
-  test("CHISABOT_PC_UPDATE_UNSIGNED 是仓库级变量，在 config job 里读成 pc_sign", () => {
-    // PC 端不签名由仓库级 vars 决定（origin/main 行为），没有 release-gate / Environment 变量这一层
-    expect(jobs["release-gate"]).toBeUndefined();
-    expect(jobs.config.outputs ?? {}).toHaveProperty("pc_sign");
-    expect(JSON.stringify(jobs.config)).toContain(
-      "vars.CHISABOT_PC_UPDATE_UNSIGNED",
+  test("generic signing cannot be disabled by a repository variable", () => {
+    expect(JSON.stringify(jobs)).not.toContain("CHISABOT_PC_UPDATE_UNSIGNED");
+    expect(jobs["pc-sign"].environment).toBe("pc-release");
+    expect(String(jobs["pc-sign"].if)).toBe("needs.config.outputs.tag != ''");
+    const verification = (jobs["pc-sign"].steps ?? []).find((step) =>
+      String(step.run ?? "").includes("--verify"),
     );
+    expect(String(verification?.run)).toContain("--tamper-check");
+    const check = (jobs.release.steps ?? []).find((step) =>
+      String(step.run ?? "").includes("check-release-assets.mjs"),
+    );
+    expect(String(check?.run)).toContain("--expect-signed");
+    expect(String(check?.run)).not.toContain("--expect-unsigned");
   });
 
-  test("pc_sign 判定来自 config 输出，pc-sign / release 都用它", () => {
-    for (const name of ["pc", "pc-sign", "release"])
-      expect(needsOf(jobs[name] ?? {})).not.toContain("release-gate");
-    expect(String(jobs["pc-sign"].if)).toContain(
-      "needs.config.outputs.pc_sign == 'true'",
+  test("generic public keys are retained while custom builds keep their existing key source", () => {
+    const step = (jobs.pc.steps ?? []).find(
+      (step) => step.name === "Update keys",
     );
-    // pc 的 Update keys 步骤直接读仓库级 vars
-    const updateKeys = (jobs.pc.steps ?? []).find(
-      (s) => s.name === "Update keys",
-    ) as { env?: Record<string, string> } | undefined;
-    expect(String(updateKeys?.env?.PC_UNSIGNED)).toContain(
-      "vars.CHISABOT_PC_UPDATE_UNSIGNED",
-    );
-    // release 的把关步骤拿 config 的 pc_sign 输出决定 --expect-signed / --expect-unsigned
-    const gate = (jobs.release.steps ?? []).find((s) =>
-      String(s.run ?? "").includes("check-release-assets.mjs"),
-    ) as { env?: Record<string, string> } | undefined;
-    expect(String(gate?.env?.PC_SIGN)).toContain(
-      "needs.config.outputs.pc_sign",
-    );
+    const run = String(step?.run ?? "");
+    expect(run).toContain('if [ "$FLAVOR" = custom ]');
+    expect(run).toContain("--keys-from-env");
+    expect(run).toContain("--require-keys");
+    expect(run).not.toContain('CHISABOT_UPDATE_PUBKEYS=""');
   });
-
-  test("Update keys：不签名发布（PC_UNSIGNED=1）时两个 flavor 都写空公钥表（RV-26）", () => {
-    // pc-sign 在 unsigned 开关下整个跳过，latest.yml 没有 chisabotSig——
-    // 自建版如果还按 CHISABOT_UPDATE_PUBKEYS 内置公钥，客户端会永远拒绝更新。
-    // 所以 unsigned 判定必须包在 flavor 分支外面：先命中、强制写空表、有 warning。
-    const updateKeys = (jobs.pc.steps ?? []).find(
-      (s) => s.name === "Update keys",
-    ) as { run?: string } | undefined;
-    const run = String(updateKeys?.run ?? "");
-    const unsignedAt = run.indexOf('PC_UNSIGNED" = "1"');
-    const customAt = run.indexOf('FLAVOR" = custom');
-    expect(unsignedAt).toBeGreaterThanOrEqual(0);
-    expect(customAt).toBeGreaterThanOrEqual(0);
-    expect(unsignedAt).toBeLessThan(customAt);
-    const unsignedBranch = run.slice(unsignedAt, customAt);
-    expect(unsignedBranch).toContain('CHISABOT_UPDATE_PUBKEYS=""');
-    expect(unsignedBranch).toContain("--keys-from-env");
-    expect(unsignedBranch).toContain("::warning::");
-  });
-
   test("flavor 标记随产物走，update-keys.json 不进签名产物", () => {
     const pcJob = JSON.stringify(jobs.pc);
     expect(pcJob).toContain("flavor.txt");

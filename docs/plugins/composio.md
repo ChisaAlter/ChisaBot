@@ -10,8 +10,8 @@ people asking the same question get the answers their own accounts can see.
 
 Setting it up takes three hands, and none of them can do another's:
 
-| Who              | Does                                   | Where                                                            |
-| ---------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| Who              | Does                                   | Where                                                             |
+| ---------------- | -------------------------------------- | ----------------------------------------------------------------- |
 | Whoever deploys  | Sets `COMPOSIO_API_KEY`                | The deployment's environment. There is no screen for it           |
 | An administrator | Enables an app                         | `/admin/plugins/composio`                                         |
 | An administrator | Grants its actions to a Bot            | `/admin/plugins/composio-<slug>`, then that page's per-Bot screen |
@@ -36,7 +36,7 @@ is how an operator asks that question deliberately rather than by watching someb
 
 Unset is a supported, fully described state rather than a degraded one: it is what every deployment
 is today. What is on screen with no key is exactly one row, on `/admin/plugins` under the **More
-apps** heading, titled *Composio* and reading *Add your Composio key to enable a catalogue of tools.
+apps** heading, titled _Composio_ and reading *Add your Composio key to enable a catalogue of tools.
 Set COMPOSIO_API_KEY on this deployment.* It has no chevron and it is not a link, because there is
 nowhere to go until the key is set. It names the setting rather than hiding the feature, so an
 administrator who has heard of Composio can find out what it wants — and because the heading above
@@ -57,7 +57,7 @@ COMPOSIO_API_KEY=... bun run composio:smoke -- --user <id> [--call]
 
 `scripts/composio-smoke.ts` is the one command to run when Composio misbehaves and nothing on screen
 says why. It ships inside the container image, so it is run where the key is — in the deployment,
-not on a laptop — and it answers the question no page can: whether *this* key opens *this* project. A
+not on a laptop — and it answers the question no page can: whether _this_ key opens _this_ project. A
 key with no project behind it, a project with no authorization config for the app, and a person who
 never finished the consent page all leave a product that looks configured and answers nothing.
 
@@ -81,7 +81,7 @@ here, so a diagnostic can never disagree with the product about how an app conne
 lines is a tally: `Kinds: consent 121, self-registering 86, fields 1243, no auth 34, unsupported
 56.` Every known kind is seeded at zero so the zeros print, which is the whole point of it —
 resolution reads a malformed `auth_schemes` as an empty list, so a vendor renaming or reshaping
-that field resolves *every* app to `unsupported`, and the picker hides unsupported apps. From
+that field resolves _every_ app to `unsupported`, and the picker hides unsupported apps. From
 every other angle that failure says nothing: the catalogue lists its usual four figures, the
 directory answers 200, not one app is offered. `Kinds: consent 0, self-registering 0, fields 0,
 no auth 0, unsupported 1540` is that state, and it reads as one without anybody scrolling. The
@@ -156,7 +156,7 @@ a grant nobody made is the one thing this codebase is most consistently careful 
 
 Enabling the app gives no Bot access to it. From the app's page at `/admin/plugins/composio-<slug>`,
 open one Bot to get a screen listing every action with a switch each — searchable, split into reads
-and writes, with *turn on every read-only action* as the one bulk action, which says how many tools
+and writes, with _turn on every read-only action_ as the one bulk action, which says how many tools
 that Bot will then carry before it does it. Every call then checks the grant, evaluates the action
 policy, and writes an audit row.
 
@@ -170,13 +170,13 @@ Composio's catalogue is not one flow wearing one name. Some apps end at a consen
 has seen a hundred times; most end at a box asking for an API key they have to go and find; a few
 ask nothing of anybody at all. Measured against the live catalogue on 2026-09-13, 1540 apps:
 
-| Apps | How it connects                                 | What it asks, and of whom                                      |
-| ---: | ----------------------------------------------- | -------------------------------------------------------------- |
-|  121 | Composio's own consent screen                   | Nothing of anybody here. Composio holds the credentials        |
-|   86 | OAuth that registers itself                     | Nothing of anybody at all. A client is minted during consent    |
-| 1243 | A secret the person already holds               | One to three boxes, typed by the person connecting             |
-|   34 | No authentication at all                        | Nothing, ever. There is no account to make                     |
-|   56 | An OAuth application registered by the operator | Not offered here at all — see the last section below           |
+| Apps | How it connects                                 | What it asks, and of whom                                    |
+| ---: | ----------------------------------------------- | ------------------------------------------------------------ |
+|  121 | Composio's own consent screen                   | Nothing of anybody here. Composio holds the credentials      |
+|   86 | OAuth that registers itself                     | Nothing of anybody at all. A client is minted during consent |
+| 1243 | A secret the person already holds               | One to three boxes, typed by the person connecting           |
+|   34 | No authentication at all                        | Nothing, ever. There is no account to make                   |
+|   56 | An OAuth application registered by the operator | Not offered here at all — see the last section below         |
 
 **Only the first row of that table used to work.** Every authorization config was created as
 `use_composio_managed_auth`, which is the right object for the apps Composio itself holds developer
@@ -194,7 +194,7 @@ the connect screen both read that one answer rather than each guessing for thems
 config for an app that needs none, so nothing else an app publishes beside it can be acted on. Then
 managed OAuth, because it asks the person for nothing; then self-registering OAuth, which asks
 nobody for anything; then a scheme whose secret the person already holds. Linear publishes managed
-OAuth *and* an API key, and resolves to the consent flow for exactly that reason.
+OAuth _and_ an API key, and resolves to the consent flow for exactly that reason.
 
 The resolved answer is written onto the app's row (`mcp_servers.auth_scheme`) when an administrator
 enables it, and every later step — the form, the connect call, the disconnect sentence, the call
@@ -231,7 +231,7 @@ subdomain for Shopify, two values for Firecrawl — and the names are sent back 
 because a name renamed on the way through is a box somebody filled in that no app ever reads. A
 field Composio marks as not user-visible is not drawn. A field of any type other than text, or one
 with no name at all, is a refusal rather than a box drawn blind: somebody typing a path into a box
-labelled *Certificate* and being told they are connected is the failure that guard exists to stop.
+labelled _Certificate_ and being told they are connected is the failure that guard exists to stop.
 A submitted name the app does not publish is refused too, rather than dropped — a stale form
 connected with the half that still matches is an account every screen here draws as working.
 
@@ -239,7 +239,7 @@ connected with the half that still matches is an account every screen here draws
 request, travel to Composio in the next call, and are gone when the handler returns. They are not
 written to a table — `composio_connections` goes on being a row that names an app and a person and
 nothing else — not to a log line, not into an error body, and not into the audit row, which records
-the field *names* that were filled and never a value. The one rule this connector reverses for them
+the field _names_ that were filled and never a value. The one rule this connector reverses for them
 is its own: everywhere else a vendor's thrown object is carried along as `cause` because it holds
 the request it was made for, and on this one call that request is somebody's key, so the adapter
 reads the vendor's sentence and drops the object entirely. What that costs is the diagnostic trail
@@ -259,7 +259,7 @@ never from anything a request said. Both conditions are load-bearing and neither
 Read, because a probe must not change anything — and "read" here means Composio labelled the action
 `readOnlyHint`, since everything unlabelled is recorded as a write. Argument-less, because at that
 moment nothing is known about the account beyond the key, so any required argument would have to be
-invented, and an invented one turns *is this key good* into *does this identifier exist*. The two
+invented, and an invented one turns _is this key good_ into _does this identifier exist_. The two
 together are not belt and braces: the first argument-less action on Stripe's own list is
 `STRIPE_CREATE_BILLING_METER_EVENT_SESSION`, so a probe chosen on "takes no arguments" alone would
 write to somebody's account to find out whether their key works. An identity-shaped name is
@@ -275,12 +275,12 @@ also what leaves content inspection nothing to inspect. A probe that ran leaves 
 `mcp.connection_verified` row naming the action and the verdict, so the calls that happened are
 readable; the single exception is a bad key on a first connection, which is undone completely —
 no account, no row, nothing for anybody to do — and files nothing, so that the rows which do exist
-keep meaning *something is still standing here*. The consequence to accept knowingly is that this is
+keep meaning _something is still standing here_. The consequence to accept knowingly is that this is
 the first vendor call in this deployment attributable to a person rather than to a Bot, and queries
 over that trail were written assuming otherwise.
 
-What the page then says is the moment it last looked, never a present tense: *Connected with a key
-you provided, last checked 13 Sep.* Three outcomes are possible and the page keeps them apart. The
+What the page then says is the moment it last looked, never a present tense: _Connected with a key
+you provided, last checked 13 Sep._ Three outcomes are possible and the page keeps them apart. The
 probe ran and answered, and the row is verified as of that instant. The probe ran and the vendor
 refused, and the account this connect just made is deleted at Composio **by its id** — not by app,
 because ending every account somebody holds for an app is what disconnect means and the intent here
@@ -300,9 +300,9 @@ anything, deliberately: that account predates the press and is the person's own,
 in order to report a bad key would destroy the thing they came to repair.
 
 Either way the row is written unverified and the person is told all three facts rather than left to
-conclude their key might be fine: *Your key was checked against Perplexity and rejected, and the
+conclude their key might be fine: _Your key was checked against Perplexity and rejected, and the
 account it was checked in still stands at Composio, so disconnect it here, or fix the key at
-Perplexity and press Re-check.* What the sentence does not do is say **why** the account stands,
+Perplexity and press Re-check._ What the sentence does not do is say **why** the account stands,
 and the omission is deliberate rather than vague. Blaming a failed withdrawal is true on the connect
 path and false on the re-check, where nothing ever attempted a removal; the standing account is the
 actionable half on both, and which path wrote the row is not recoverable from it afterwards. Both
@@ -313,8 +313,8 @@ state for whoever reads the trail a week later, because a sentence one person re
 nothing.
 
 **Which of the three a row is in is a fact about the action a check actually spent, and the page
-keeps it across a reload.** The flag alone cannot say: `false` is both *this app published nothing
-safe to try a key on* and *your key was checked and rejected and the account is still standing*.
+keeps it across a reload.** The flag alone cannot say: `false` is both _this app published nothing
+safe to try a key on_ and _your key was checked and rejected and the account is still standing_.
 So the connections read carries two fields beside the flag and the date, and they answer two
 different questions. `probe` is the action the last check SPENT, written down by that check and read
 back off the row — a fact about the past, and what the row's sentence is drawn from. `checkable` is
@@ -358,20 +358,20 @@ Disconnect promises that an account ends at Composio and not only here, and for 
 is the whole truth: the grant dies at the provider. For a key app there is nothing upstream to end.
 The account goes at Composio, and the key is still live at the vendor and still works for anyone
 holding it — including whoever else it was already pasted into. So the sentence differs and names
-the step this deployment cannot take: *Removed from Composio. Your key still works at Perplexity —
-rotate it there if you meant to end its access.*
+the step this deployment cannot take: _Removed from Composio. Your key still works at Perplexity —
+rotate it there if you meant to end its access._
 
 The audit row says the same thing in its own half of the sentence. `vendorRevocationRequested` is
 `false` for a key connection by construction rather than by what the vendor found, because
-`revoke_on_delete` asks a *provider* to end a grant and there is no grant behind a key to withdraw.
+`revoke_on_delete` asks a _provider_ to end a grant and there is no grant behind a key to withdraw.
 Recording otherwise would be the one thing that field exists not to do: claim a withdrawal nobody
 asked for and nobody could have made.
 
 ### An app that needs no authentication has no account, and the gate has to know
 
 Thirty-four apps need no authentication at all, and Composio refuses to hold an authorization config
-for one of them — *"Cannot create an auth config for toolkit hackernews because it does not require
-authentication."* Enabling such an app is therefore the `mcp_servers` row and its actions and
+for one of them — _"Cannot create an auth config for toolkit hackernews because it does not require
+authentication."_ Enabling such an app is therefore the `mcp_servers` row and its actions and
 nothing else: no config, no consent, no account. Its row on a connected-accounts page says the app
 needs none and carries no button, not even a disabled one, because there is no act to offer and a
 greyed control announces a step somebody is missing when they are not.
@@ -380,8 +380,8 @@ greyed control announces a step somebody is missing when they are not.
 call is decided on one row: `(toolkit, user_id)` in `composio_connections` is the whole of the
 permission. A no-auth app can never have one, so the gate reads the app's recorded scheme beside the
 row it already loads and lets a `NO_AUTH` app through with none. Writing a row anyway would have
-been the easy fix and would have poisoned the table: every row in it means *this person granted this
-deployment access to their account at this app*, and that is how offboarding, the audit trail and
+been the easy fix and would have poisoned the table: every row in it means _this person granted this
+deployment access to their account at this app_, and that is how offboarding, the audit trail and
 disconnect all read it. Rows where nobody consented and no account exists are indistinguishable, a
 year later, from rows where somebody did.
 
@@ -422,7 +422,7 @@ consent screen in front of it, which is the same reason this deployment's own OA
 on Composio's page having just granted access to their mailbox.
 
 **The link is yours alone.** It is minted for the session's own id and can be asked for on nobody
-else's behalf. It is a bearer capability — whoever opens it binds *their* account to the id it was
+else's behalf. It is a bearer capability — whoever opens it binds _their_ account to the id it was
 minted for — so it is handed to the browser that asked and is never stored, logged, audited, or put
 anywhere a second person could read it. Do not forward it.
 
@@ -433,7 +433,7 @@ the source of truth and the row here is a cache of it.
 
 **A failure at Composio arrives as Composio's own sentence.** A wrong key, a revoked one, an app
 whose authorization config was deleted at the dashboard: each of those comes back as the one
-sentence the vendor wrote — *Invalid API key provided.* — with everything that travelled beside it
+sentence the vendor wrote — _Invalid API key provided._ — with everything that travelled beside it
 left where it was. The key never appears anywhere, nor the connect link, nor the vendor's thrown
 object, which is an entire HTTP response including headers and trace ids. Where the vendor reported
 a failure and said nothing about it, the sentence is this deployment's own and names the step to
@@ -443,15 +443,15 @@ take rather than echoing a placeholder.
 accounts for one person and one app, but the call that runs an action names the person and not the
 account — so with two Gmail accounts connected, which mailbox a Bot reads would be Composio's
 choice, and neither the table here nor the audit row could say which one it was. Connect therefore
-refuses while a live connection for that app already exists, and names the way to switch: *You
+refuses while a live connection for that app already exists, and names the way to switch: _You
 already have an account connected to Slack. Disconnect it first if you want to connect a different
-one.* The app's own title, never the row's id. It is per app and nothing more — Gmail and Linear and Notion connected alongside each other are untouched.
+one._ The app's own title, never the row's id. It is per app and nothing more — Gmail and Linear and Notion connected alongside each other are untouched.
 
 ### Disconnecting
 
 **Disconnect**, on the same page, revokes at Composio first and deletes the row second. The account
 ends at Composio, not just here — which, for an app whose secret somebody typed, is all it can end,
-and the page says so rather than letting *disconnected* be read as *revoked*. Revoke-then-delete is
+and the page says so rather than letting _disconnected_ be read as _revoked_. Revoke-then-delete is
 the ordering everywhere in this connector, so a failure between the two leaves access dead rather
 than live and unreachable; pressing Disconnect again is the whole recovery. Audited as
 `mcp.account_disconnected`.
@@ -506,7 +506,7 @@ is why an app's action count is worth reading before it is enabled rather than a
 
 ## See also
 
-- [Architecture](../chisabot-architecture.md) — where plugins, grants, policy and audit sit.
+- [Architecture](../architecture.md) — where plugins, grants, policy and audit sit.
 - [Configuration](../configuration.md) — `COMPOSIO_API_KEY`, and that it is optional.
 - [Notion](notion.md) and [Google Drive](google-drive.md) — the same per-person shape, with the
   OAuth client registered here instead of held by a broker.

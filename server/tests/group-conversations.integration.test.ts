@@ -20,12 +20,11 @@ import {
   agentProfiles,
   agents,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
   workItems,
 } from "../src/db/schema";
 import { createPrivateShareCheck } from "../src/proactive/private-share";
-import { createTeamBots } from "../src/team-bots/team-bots";
 import type { TurnRunner } from "../src/turns/types";
 import { createWorkQueue } from "../src/work/queue";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -46,8 +45,8 @@ afterEach(async () => {
   await database.delete(workItems).where(like(workItems.key, `${prefix}%`));
   for (const id of createdChannels.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, id));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, id));
     await database.delete(channels).where(eq(channels.id, id));
   }
   if (createdAgents.length) {
@@ -770,65 +769,6 @@ describe("group conversations in PostgreSQL", () => {
       "agent.handoff_refused",
     ]);
     expect(toAda[0]?.payload).toMatchObject({ reason: "depth_cap", depth: 1 });
-  });
-
-  test("a Team Bot's consent card in a group turn is a line in the shared transcript", async () => {
-    const owner = await person();
-    const teammate = await person();
-    const teamBot = await bot(owner, "Mailer");
-    const own = await bot(teammate, "Helper");
-    const teamBots = createTeamBots({
-      database,
-      connectedServers: async (userId) =>
-        new Set(userId === teammate.id ? ["gmail"] : []),
-    });
-    await database
-      .update(agentProfiles)
-      .set({ roleDescription: "Sends mail." })
-      .where(eq(agentProfiles.agentId, teamBot));
-    await teamBots.publish(owner, teamBot, {
-      audience: "team",
-      emails: [],
-      groups: [],
-    });
-    const { conversations } = service({
-      replies: {
-        // Standing in for the granted tool the Bot would call during its turn.
-        [teamBot]: async (input) => {
-          const said = await teamBots
-            .credentialActorFor(
-              input.ownerUserId,
-              teamBot,
-            )("gmail/send")
-            .then(
-              () => "sent",
-              () => "I need your permission to use your mail.",
-            );
-          return said;
-        },
-        [own]: () => "ok",
-      },
-      listenForConsent: (ownerUserId, agentId) =>
-        teamBots.listenForConsent(ownerUserId, agentId),
-    });
-    const channel = await conversations.create(teammate.id, {
-      agentIds: [teamBot, own],
-    });
-    await conversations.send(teammate.id, channel.id, {
-      id: `${prefix}-consent`,
-      text: "mail the team",
-      agentId: teamBot,
-    });
-    await drain(conversations);
-    const { messages, people } = await conversations.list(
-      teammate.id,
-      channel.id,
-    );
-    expect(messages.at(-1)).toMatchObject({
-      agentId: teamBot,
-      consent: { botId: teamBot, serverId: "gmail" },
-    });
-    expect(people.map((row) => row.userId)).toEqual([teammate.id]);
   });
 
   test("the person who made a group can take someone out; others can only leave", async () => {

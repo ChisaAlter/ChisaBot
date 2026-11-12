@@ -1,8 +1,8 @@
 import {
   IconAdjustments,
-  IconPencil,
   IconPlugConnected,
   IconPuzzle,
+  IconRobot,
   IconUser,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
+import { BotSubagentsSection } from "@/components/agents/bot-subagents-section";
 import { DeleteBotDialog } from "@/components/agents/delete-bot-dialog";
 import { IdentityCard } from "@/components/bot-profile/profile";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,9 @@ export function AgentDialog({
           max-h-[85svh] still caps it on a short display, where the main pane scrolls. */}
       <DialogContent className="overflow-hidden p-0 md:max-h-[680px] md:max-w-[700px] lg:max-w-[800px]">
         {/* Keyed by coworker so the section and edit state never carry over from another one. */}
-        {agentId ? <AgentDialogBody agentId={agentId} key={agentId} /> : null}
+        {agentId ? (
+          <AgentDialogBody agentId={agentId} key={agentId} onClose={onClose} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -84,13 +87,20 @@ export function AgentDialog({
 const SECTIONS = [
   { id: "general", name: "通用", icon: IconUser },
   { id: "access", name: "权限", icon: IconPuzzle },
+  { id: "subagents", name: "子代理", icon: IconRobot },
   { id: "connection", name: "连接", icon: IconPlugConnected },
   { id: "manage", name: "管理", icon: IconAdjustments },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
-function AgentDialogBody({ agentId }: { agentId: string }) {
+function AgentDialogBody({
+  agentId,
+  onClose,
+}: {
+  agentId: string;
+  onClose: () => void;
+}) {
   const [section, setSection] = useState<SectionId>("general");
   const agent = useQuery(agentQueryOptions(agentId));
 
@@ -198,6 +208,12 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <GeneralSection agentId={agentId} profile={profile} />
             ) : section === "access" ? (
               <AccessSection agentId={agentId} />
+            ) : section === "subagents" ? (
+              <BotSubagentsSection
+                agentId={agentId}
+                canManage={Boolean(profile.canManage)}
+                onNavigateAway={onClose}
+              />
             ) : section === "connection" ? (
               <ConnectionSection agentId={agentId} profile={profile} />
             ) : (

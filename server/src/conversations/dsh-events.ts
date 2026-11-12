@@ -58,7 +58,12 @@ type DurableData = {
   };
   usage?: Record<string, unknown>;
   reason?: DshTurnReason;
+  /** `plugin:chisabot/loop-stop`: the person-facing account of a stopped tool loop. */
+  text?: string;
 };
+
+/** Upper bound for a runtime-authored conclusion; the runtime writes a short sentence. */
+const LOOP_STOP_TEXT_MAX = 2000;
 
 type Attempt = {
   id: string;
@@ -81,6 +86,8 @@ export class DshEventProjection {
   private readonly presentations = new Map<string, Attempt>();
   private readonly settled = new Set<string>();
   private readonly waitingCalls = new Set<string>();
+  /** A stopped tool loop's conclusion, shown as the turn's last message when the turn ends. */
+  private loopStop: { id: string; text: string } | undefined;
   lastReason: DshTurnReason | undefined;
   model: { provider: string; model: string; candidate: number } | undefined;
   usage: Record<string, unknown> | undefined;
@@ -399,6 +406,16 @@ export class DshEventProjection {
     if (event.surfaceOp && typeof event.surfaceOp === "object") return;
     if (event.type === "plugin:chisabot/waiting") {
       this.waitingCalls.add(this.toolId(data, data.callId));
+    } else if (event.type === "plugin:chisabot/loop-stop") {
+      const text =
+        typeof data.text === "string"
+          ? data.text.trim().slice(0, LOOP_STOP_TEXT_MAX)
+          : "";
+      if (text)
+        this.loopStop = {
+          id: `${this.sessionId}:loop-stop:${event.seq}`,
+          text,
+        };
     } else if (event.type === "plugin:chisabot/model-route") {
       this.model = {
         provider: data.provider,
@@ -538,7 +555,26 @@ export class DshEventProjection {
           .map((block) => block.text)
           .join("\n"),
       });
-    } else if (event.type === "turn/end") this.lastReason = data.reason;
+    } else if (event.type === "turn/end") {
+      // The runtime ended a runaway tool loop: its plain account is this turn's answer, after
+      // every tool result, so the person never waits on a turn that has nothing more to say.
+      const stop = this.loopStop;
+      this.loopStop = undefined;
+      if (stop && !this.messages.has(stop.id)) {
+        this.send({
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: stop.id,
+          role: "assistant",
+        });
+        this.send({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: stop.id,
+          delta: stop.text,
+        });
+        this.send({ type: EventType.TEXT_MESSAGE_END, messageId: stop.id });
+      }
+      this.lastReason = data.reason;
+    }
   }
 
   get cursor() {

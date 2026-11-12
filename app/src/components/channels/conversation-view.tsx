@@ -33,6 +33,7 @@ export function ConversationView({
   busy = false,
   threadLive = false,
   joining = false,
+  reconnecting = false,
   notice,
   transcriptNotice,
   agents = NO_AGENTS,
@@ -53,6 +54,7 @@ export function ConversationView({
   onBeforeRetry,
   onRetryTurn,
   onRetryUnanswered,
+  onWithdrawTurn,
   stoppable,
   stopping = false,
   stopFailed,
@@ -74,6 +76,7 @@ export function ConversationView({
   threadLive?: boolean;
   /** 这段对话还在接入。见 ChatTranscript.joining。 */
   joining?: boolean;
+  reconnecting?: boolean;
   /** 换了备用模型的轮次（用户消息 id → 说明），那一轮末尾一行小字（DESIGN.md §61）。 */
   fallbacks?: ReadonlyMap<string, string>;
   /** 最新一条用户消息的服务器发送时刻（本机时钟，DESIGN.md §94）。 */
@@ -138,6 +141,8 @@ export function ConversationView({
   onRetryTurn?: () => boolean;
   /** 重发一条「发出去但没有回答」的历史消息（刷新后才认出来的那种，P1）。 */
   onRetryUnanswered?: () => void;
+  /** 撤回最后一轮没有收到回答的用户消息。 */
+  onWithdrawTurn?: () => Promise<void> | void;
   /**
    * There is a run for Stop to abort, which is a narrower fact than `pending` and is the honest one
    * to draw a Stop button from. Defaults to `pending` for a caller with no gap between the two.
@@ -532,6 +537,7 @@ export function ConversationView({
     onRetryStop,
     onRetryTurn,
     onBeforeRetry,
+    onWithdrawTurn,
     queueToServer,
     submit,
     apply,
@@ -543,6 +549,7 @@ export function ConversationView({
       onRetryStop,
       onRetryTurn,
       onBeforeRetry,
+      onWithdrawTurn,
       queueToServer,
       submit,
       apply,
@@ -592,6 +599,7 @@ export function ConversationView({
       ?.querySelector<HTMLElement>('[contenteditable="true"], textarea')
       ?.focus();
   }, []);
+  const withdrawTurn = useCallback(() => latest.current.onWithdrawTurn?.(), []);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -609,6 +617,7 @@ export function ConversationView({
           busy={busy}
           threadLive={threadLive}
           joining={joining}
+          reconnecting={reconnecting}
           commandNames={commandNames}
           messages={messages}
           onRemoveQueued={removeQueued}
@@ -624,6 +633,7 @@ export function ConversationView({
           {...(stoppedTurns ? { stoppedTurns } : {})}
           {...(stopped ? { stopped, onRetry: retry } : {})}
           {...(onRetryUnanswered ? { onRetryUnanswered } : {})}
+          {...(onWithdrawTurn ? { onWithdraw: withdrawTurn } : {})}
         />
       </div>
       {/* 输入框列：和消息列同宽同心，左右至少 16px、窄窗口有「面板」把手时右边让开把手（DESIGN.md §24 / §92，styles.css `.chat-composer-box`）。 */}

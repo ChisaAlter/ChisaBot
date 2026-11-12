@@ -35,6 +35,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
 import { setBotUi } from "@/lib/chat/ui-memory";
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
 import {
@@ -238,6 +239,18 @@ export function PanelRail({ className }: { className?: string }) {
 
   const wide = useWideForRail();
   const sheetOpen = usePanelSheetOpen();
+  // 谁打开的抽屉：关掉后把焦点还给它。右边缘把手打开时它自己已被卸载，这里会是 null，回落到把手。
+  const sheetOpener = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (!sheetOpen || wide) return;
+    const active = document.activeElement;
+    sheetOpener.current =
+      active instanceof HTMLElement && active !== document.body ? active : null;
+  }, [sheetOpen, wide]);
+  const sheetFinalFocus = useCallback(
+    () => panelSheetFinalFocus(sheetOpener.current),
+    [],
+  );
   // 关掉抽屉后窗口又变宽：抽屉的状态不带过去。
   useEffect(() => {
     if (wide) setPanelSheetOpen(false);
@@ -359,6 +372,7 @@ export function PanelRail({ className }: { className?: string }) {
           <SheetContent
             className={cn(PANEL_CARD_CLASS, "rail-sheet")}
             id="chisabot-panel-sheet"
+            finalFocus={sheetFinalFocus}
             initialFocus={panelSheetInitialFocus}
             showCloseButton={false}
             side="right"
@@ -589,11 +603,7 @@ function PanelRailBody({
                         data-testid={`rail-empty-preset-${preset.label.slice(0, 2)}`}
                         key={preset.label}
                         onClick={() => {
-                          window.dispatchEvent(
-                            new CustomEvent("chisabot-prefill", {
-                              detail: preset.prompt,
-                            }),
-                          );
+                          dispatchComposerPrefill(preset.prompt);
                           if (drawer) onCollapse();
                         }}
                         type="button"
@@ -649,6 +659,24 @@ export function panelSheetInitialFocus(
   const sheet = document.getElementById("chisabot-panel-sheet");
   if (openType === "touch") return sheet;
   return sheet?.querySelector<HTMLElement>(PANEL_SHEET_HEAD_FOCUSABLE) ?? true;
+}
+
+/**
+ * 面板抽屉关闭后焦点落到哪里。打开时抽屉把右边缘的「打开面板」把手卸载了，Base UI 默认想还给的
+ * 触发元素已经不在文档里，焦点就掉到 BODY。这里：打开者还在、且不在抽屉里 → 还给它；
+ * 否则还给关闭后重新挂上的把手；都没有再交回 Base UI 默认逻辑。
+ */
+export function panelSheetFinalFocus(
+  opener: HTMLElement | null,
+): HTMLElement | boolean {
+  if (opener?.isConnected && !opener.closest("#chisabot-panel-sheet")) {
+    return opener;
+  }
+  return (
+    document.querySelector<HTMLElement>(
+      'button[aria-controls="chisabot-panel-sheet"]',
+    ) ?? true
+  );
 }
 
 type RailTab = "panels" | "tasks" | "computer";
@@ -810,9 +838,7 @@ function RailAddPanelMenu({
   const [batch, setBatch] = useState(0);
   const presets = panelPresetBatch(batch);
   const prefill = (prompt: string) => {
-    window.dispatchEvent(
-      new CustomEvent("chisabot-prefill", { detail: prompt }),
-    );
+    dispatchComposerPrefill(prompt);
     if (drawer && onCloseDrawer) onCloseDrawer();
   };
   return (

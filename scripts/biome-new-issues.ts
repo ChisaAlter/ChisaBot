@@ -21,7 +21,13 @@
  * 失败即失败：git 出错、Biome 退出码非 0 却给不出能解析的 JSON（例如 biome.json 写坏、二进制缺失）→ 退出 2，
  * 绝不当成「没有问题」放行。退出码通过 process.exitCode 设置、正常返回，临时目录总会被清理。
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -132,14 +138,26 @@ export function run(options: RunOptions): number {
       return 0;
     }
 
+    const winNativeBiome =
+      process.platform === "win32"
+        ? join(
+            root,
+            "node_modules",
+            "@biomejs",
+            `cli-win32-${process.arch}`,
+            "biome.exe",
+          )
+        : "";
     const biome =
       options.biome ??
-      join(
-        root,
-        "node_modules",
-        ".bin",
-        process.platform === "win32" ? "biome.exe" : "biome",
-      );
+      (winNativeBiome && existsSync(winNativeBiome)
+        ? winNativeBiome
+        : join(
+            root,
+            "node_modules",
+            ".bin",
+            process.platform === "win32" ? "biome.exe" : "biome",
+          ));
 
     const normalize = (path: string) =>
       path.replaceAll("\\", "/").replace(/^\.\//, "");

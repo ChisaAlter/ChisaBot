@@ -95,6 +95,7 @@ export function hostProfile(home, options, pluginPath) {
             gatewayUrl: options.gatewayUrl,
             gatewayTokenEnv: options.gatewayTokenEnv,
             providers: options.providers,
+            ...(options.toolLoop ? { toolLoop: options.toolLoop } : {}),
           },
         },
       ],

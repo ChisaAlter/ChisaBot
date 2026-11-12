@@ -156,7 +156,7 @@ export async function truncateThread(
     threadId: string;
     ownerUserId: string;
     fromMessageId: string;
-    mode: "regenerate" | "edit" | "resend";
+    mode: "regenerate" | "edit" | "resend" | "withdraw";
   },
 ) {
   return await database.$client.begin(async (transaction) => {
@@ -189,13 +189,56 @@ export async function truncateThread(
        FROM chisabot_local_events WHERE thread_id = $1 AND event->>'type' = 'RUN_STARTED' ORDER BY sequence`,
       [input.threadId],
     );
+    const mappedStarts = starts.map((start) => ({
+      sequence: start.sequence,
+      runId: start.run_id,
+      ids: (start.ids ?? []).map(String),
+    }));
+    // Early pre-stream failures emit RUN_ERROR without RUN_STARTED; allow cutting a trailing
+    // unanswered user turn backed by such a standalone failed run so it can still be withdrawn/edited.
+    const lastStarted = mappedStarts.at(-1);
+    if (
+      lastStarted &&
+      !mappedStarts.some((start) => start.ids.includes(input.fromMessageId))
+    ) {
+      const targetIndex = row.messages.findIndex(
+        (message) => message.id === input.fromMessageId,
+      );
+      const trailingUsersOnly =
+        targetIndex >= 0 &&
+        row.messages
+          .slice(targetIndex)
+          .every((message) => message.role === "user");
+      if (trailingUsersOnly) {
+        const lastStartedSeq = lastStarted.sequence;
+        const earlyErrors = await transaction.unsafe<
+          { sequence: string; run_id: string }[]
+        >(
+          `SELECT min(sequence)::text AS sequence, run_id
+           FROM chisabot_local_events e
+           WHERE e.thread_id = $1
+             AND e.sequence > $2::bigint
+             AND NOT EXISTS (
+               SELECT 1 FROM chisabot_local_events s
+               WHERE s.thread_id = e.thread_id AND s.run_id = e.run_id AND s.event->>'type' = 'RUN_STARTED'
+             )
+           GROUP BY run_id
+           ORDER BY min(sequence) ASC
+           LIMIT 1`,
+          [input.threadId, lastStartedSeq],
+        );
+        if (earlyErrors[0]) {
+          mappedStarts.push({
+            sequence: earlyErrors[0].sequence,
+            runId: earlyErrors[0].run_id,
+            ids: row.messages.slice(targetIndex).map((message) => message.id),
+          });
+        }
+      }
+    }
     const plan = planTruncation(
       row.messages,
-      starts.map((start) => ({
-        sequence: start.sequence,
-        runId: start.run_id,
-        ids: (start.ids ?? []).map(String),
-      })),
+      mappedStarts,
       input.fromMessageId,
     );
     if (!plan.ok) throw new TruncateError(plan.error, plan.status);

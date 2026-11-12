@@ -1,6 +1,7 @@
 # Pipeline run: dogfood friction after v0.1.39 smoke (2026-10-19)
 
 ## Scope
+
 v0.1.39 线上冒烟狗粮摩擦（baseline **v0.1.39** → **v0.1.40**），弥斯爱 / 千咲：
 1. Computer screenshot 503：面板仍像健康 + 接管，控制台 503（对齐 DOG-05）
 2. 暂停电车仍显示「在等你确认 · N小时前」+ 立即运行
@@ -10,6 +11,7 @@ v0.1.39 线上冒烟狗粮摩擦（baseline **v0.1.39** → **v0.1.40**），弥
 实现：`/workspace/ChisaBot/repo`（**不用** Cursor cloud agents）。**未** resume 电车定时「和 Claude 聊电车」。
 
 ## What changed
+
 - `screenshot-poll.ts`：退避上限 30s；连续 5 次失败暂停轮询
 - `computer-view.tsx`：大屏展开停 HTTP 截图轮询（LiveScreen 出图）
 - `shared/schedules.ts`：`scheduleLastLineZh` / `scheduleLastTone`；paused+waiting 改写
@@ -19,10 +21,12 @@ v0.1.39 线上冒烟狗粮摩擦（baseline **v0.1.39** → **v0.1.40**），弥
 - readiness / requirements / dogfood-log / pipeline-run
 
 ## Not in this PR
+
 - 未 resume 电车；无 cloud agents；无表结构变更；PC / Android 外壳未变
 - 多用户默认仍需 `CHISABOT_ACCOUNTS_UI=1`；CB-017/018 → 0.2.0
 
 ## Verify
+
 1. `bun test app/tests/browser-presence.test.ts shared/schedules.test.ts`
 2. 硬刷新 → 芯片 0.1.40；计算机大屏展开时 Network 无刷屏 `/screenshot` 503
 3. 设置→定时：暂停电车不再写「打开对话处理」；孤儿按钮清零或一键清空

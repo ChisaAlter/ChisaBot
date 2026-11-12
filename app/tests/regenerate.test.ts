@@ -35,6 +35,17 @@ describe("regenerate helpers", () => {
     expect(withEditedText([{ type: "text", text: "old" }, image], "")).toEqual([
       image,
     ]);
+    expect(
+      withEditedText(
+        [{ type: "text", text: "keep text" }, image],
+        "keep text",
+        new Set([1]),
+      ),
+    ).toEqual([{ type: "text", text: "keep text" }]);
+    expect(withEditedText([image], "", new Set([0]))).toBeNull();
+    expect(withEditedText([image], "now text only", new Set([0]))).toEqual([
+      { type: "text", text: "now text only" },
+    ]);
     expect(contentText([{ type: "text", text: "x" }, image])).toBe("x");
   });
 

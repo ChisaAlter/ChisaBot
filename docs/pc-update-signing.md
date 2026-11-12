@@ -1,17 +1,17 @@
 # PC 更新验签（审查第 7 项 / M7）
 
-> 状态：已实现（`fix/pc-update-signing`）。**Windows 端到端（§7.3）跑完之前不合并、不发版。**
-> 合并前还要 Jun 先做 §4.3 的密钥操作，并把两个公钥写进 `pc/src/update-keys.json`，否则通用版发布会在 CI 失败。
+> 2026-11-10 实施状态：候选已内置生产公钥 `efcef1f2`，对应私钥已安装到只允许 `v*` 标签的 GitHub Environment `pc-release`。私钥不进入源码或发布产物。
+> 正式客户端 v0.1.141 仍未启用更新验签；候选发布流程已要求通用版完成签名，旧的未签名开关不再覆盖该规则。签名与 Windows 更新路径仍须通过统一验证，才能发布带公钥的版本。
 
 ## 0. 已定决定
 
-| # | 决定 |
-|---|------|
-| ① | 主钥放 GitHub Actions secret，**CI 自动签名，不加人工审批**。签名 job 绑定 Environment `pc-release`：这个 Environment **只允许 `v*` 标签**，**不配审批人**。备用钥离线保存。客户端内置「主 + 备」两个公钥。 |
-| ② | **不买代码签名证书**，第二阶段（Authenticode / publisherName）暂缓，见 §3.4。 |
-| ③ | 自建版没配公钥：**保持旧行为（只有 sha512）并提示**「此版本未启用更新验签」。自建版可以用 `CHISABOT_UPDATE_PUBKEYS` 提供自己的公钥。 |
-| ④ | 检查间隔保持 30 分钟。这个分支不改版本号；第一个带验签的版本（下文 vK）用哪个版本号，合并时定。 |
-| ⑤ | **不加「只告警不拦截」开关**。通用版验签失败一律拒装。 |
+| #   | 决定                                                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ①   | 发布私钥放 GitHub Actions secret，**CI 自动签名，不加人工审批**。签名 job 绑定 Environment `pc-release`：这个 Environment **只允许 `v*` 标签**，**不配审批人**。客户端内置公钥；轮换时按 §4 先加入新公钥，再更换签名私钥。 |
+| ②   | **不买代码签名证书**，第二阶段（Authenticode / publisherName）暂缓，见 §3.4。                                                                                                                                              |
+| ③   | 自建版没配公钥：**保持旧行为（只有 sha512）并提示**「此版本未启用更新验签」。自建版可以用 `CHISABOT_UPDATE_PUBKEYS` 提供自己的公钥。                                                                                       |
+| ④   | 检查间隔保持 30 分钟。这个分支不改版本号；第一个带验签的版本（下文 vK）用哪个版本号，合并时定。                                                                                                                            |
+| ⑤   | **不加「只告警不拦截」开关**。通用版验签失败一律拒装。                                                                                                                                                                     |
 
 签名做成独立脚本 `pc/scripts/sign-update.js`（带 `--verify`），CI 只是调用它，以后换成离线手签只要改调用方式（`--key-file`）。
 
@@ -112,10 +112,10 @@ fullInstall=<true|false>
   - `--keys-from-env`：自建版按 `CHISABOT_UPDATE_PUBKEYS`（逗号或空白分隔的 base64 公钥）写公钥表；变量为空 → 空表 → 这个自建版不验签。
 - `pc/scripts/shell-fingerprint.js --stamp` 会顺手去掉旧的 `chisabotSig`（盖章后签名一定失效）：**签名永远是发布的最后一步**。
 - `.github/workflows/release.yml`：
-  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。读仓库变量 `CHISABOT_PC_UPDATE_UNSIGNED` 输出 `pc_sign`（`=1` → `false`）。
-  - `pc`（windows，跑 electron-builder）：「Update keys」步骤——通用版发布时 `--require-keys`（公钥表为空直接失败，`CHISABOT_PC_UPDATE_UNSIGNED=1` 时告警放行空表），只构建不发布时只告警；自建版 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物改名为 `pc-<flavor>-unsigned`，附带 `update-keys.json` 和 `flavor.txt`（flavor 标记，release 上传前校验用）。**这个 job 拿不到签名私钥。**
-  - `pc-sign`（ubuntu，只在发布时跑，`environment: pc-release`，`pc_sign=true` 才跑）：`npm ci --ignore-scripts --omit=dev`（只为 js-yaml，不跑安装脚本）→ 下载未签名产物 → 用 secret `PC_UPDATE_SIGNING_KEY` 签名 → `--verify --tamper-check` → 上传 `pc-<flavor>`（含 `flavor.txt`）。自建版没配公钥时跳过签名并告警。
-  - `release` 依赖 `pc-sign`：签名路径只下载 `*-generic`；`pc-sign` 跳过时回退也只下载 `pc-generic-unsigned`——两个 flavor 产物文件名相同，合到同一目录会互相覆盖。上传前跑 `scripts/check-release-assets.mjs`：验 `flavor.txt` 是 generic、latest.yml 的 path/sha512/size/files[] 与安装包一致、没有白名单外文件、签名在场性和 `pc_sign` 一致，并把 `flavor.txt` / `update-keys.json` 剔出上传清单。
+  - `config`：发布（有标签）时必须从这个标签运行（`github.ref` 是 `refs/tags/vX`）。手动发布要在「Use workflow from」里选标签——Environment 只允许 `v*` 标签，从分支跑签名 job 会被 GitHub 拒绝，这里提前给出明确报错。
+  - `pc`（windows，跑 electron-builder）：「Update keys」步骤——通用版发布时 `--require-keys`，公钥表为空直接失败；只构建不发布时只告警。自建版使用 `--keys-from-env`（仓库变量 `CHISABOT_UPDATE_PUBKEYS`）。产物为 `pc-<flavor>-unsigned`，附带 `update-keys.json` 和 `flavor.txt`。这个 job 拿不到签名私钥。
+  - `pc-sign`（ubuntu，只在发布时跑，`environment: pc-release`）：安装签名脚本依赖、下载未签名产物、用 secret `PC_UPDATE_SIGNING_KEY` 签名，执行 `--verify --tamper-check` 后上传 `pc-<flavor>`。自建版未配公钥时保留只产出自建 artifact 的旧行为。
+  - `release` 必须等 `pc-sign` 成功，只下载 `*-generic`；签名失败或跳过都不发布，也不下载未签名包补位。上传前用 `scripts/check-release-assets.mjs --expect-signed` 核对通用版清单、安装包和签名，并把 `flavor.txt` / `update-keys.json` 从上传清单剔除。
 - 以后改成离线手签：去掉 `pc-sign` 的 secret，发版时下载 `pc-generic-unsigned`，本机 `node scripts/sign-update.js latest.yml --key-file <私钥>`，再上传 `latest.yml`；脚本不用改。
 
 ### 3.4 Windows 代码签名（第二阶段，暂缓）
@@ -127,55 +127,29 @@ fullInstall=<true|false>
 
 ## 4. 密钥
 
-### 4.1 生成和保管
+### 4.1 当前密钥与保管
 
-- 生成：`pc/scripts/gen-update-key.js --out <仓库外的路径.pem> [--label primary]`，用 Node `crypto.generateKeyPairSync('ed25519')`。
-  - 私钥（PKCS8 PEM）写到 `--out`（权限 0600），**不打印**；拒绝写进仓库目录、拒绝覆盖已有文件。
-  - 终端只输出 keyId、公钥（base64 raw，32 字节）和要放进 `update-keys.json` 的那一项。
-- 两把钥匙：
-  - **主钥**：放 GitHub Environment `pc-release` 的 secret `PC_UPDATE_SIGNING_KEY`，CI 自动签。
-  - **备用钥**：离线保存（U 盘 / 密码管理器，至少两份），平时不用；公钥从 vK 起就内置进客户端。
-- 公钥表 `pc/src/update-keys.json`：
+候选内置生产公钥 `efcef1f2`。对应发布私钥已配置到 GitHub Environment `pc-release` 的 `PC_UPDATE_SIGNING_KEY`，该 Environment 只允许 `v*` 标签，不设人工审批人。私钥不进入源码、构建产物或日志。
 
-  ```json
-  {
-    "keys": [
-      { "keyId": "<8 位>", "publicKey": "<base64>", "label": "primary" },
-      { "keyId": "<8 位>", "publicKey": "<base64>", "label": "backup (offline)" }
-    ]
-  }
-  ```
+以后生成新发布钥使用 `pc/scripts/gen-update-key.js --out <仓库外的路径.pem> --label <用途>`。脚本只输出公钥与 keyId，不打印私钥，也不覆盖现有文件。Windows 上应同时限制保存目录的访问权限；POSIX 使用文件权限 0600。
 
-  仓库里现在是空表（`"keys": []`）：这个分支**没有生成、也没有提交任何真实密钥**，测试用的都是测试时现生成的临时钥。
-- **绝对不进仓库**：私钥、私钥文件路径都不进。`.gitignore` 加了 `*.pem`、`update-signing*`。
+当前公钥表只有实际配置的发布公钥，没有假定存在离线备用钥。用户已排除本轮备份工作，不把增加备用钥列为本轮完成条件。
 
 ### 4.2 轮换
 
-- 正常轮换：版本 N 内置「旧 + 新」两个公钥，仍用旧钥签；N+1 起用新钥签（换 secret）；N+2 去掉旧公钥。
-- 主钥泄露：立即删掉 secret；用离线备用钥（`--key-file`，本机签）签一个紧急版本，这个版本只内置「备用公钥 + 一把新主钥的公钥」；新主钥填进 secret；检查 Releases 里有没有被替换的文件。已经装了 vK 之后版本的客户端只认表里的钥匙，拿旧主钥签的东西在紧急版本之后就装不上了。
+正常轮换时，版本 N 内置旧、新两个公钥并继续用旧钥签名；用户升级后，N+1 起改用新钥签名，再在后续版本移除旧公钥。
 
-### 4.3 Jun 要做的（约 30 分钟，合并前）
+如果唯一受信任的私钥泄露，应停止使用该钥发布并检查更新源；不能靠同一把泄露的钥证明新版本可信。恢复时需要通过独立可信渠道重新安装带新公钥的版本。
 
-1. **生成密钥**：在自己电脑上（仓库目录之外）运行两次：
-   ```
-   cd pc
-   node scripts/gen-update-key.js --out D:\keys\chisabot-update-primary.pem --label primary
-   node scripts/gen-update-key.js --out E:\offline\chisabot-update-backup.pem --label "backup (offline)"
-   ```
-   记下两次输出的 `update-keys.json entry` 那一行（只有公钥，可以公开）。
-2. **配 Environment**：仓库 Settings → Environments → New environment `pc-release`：
-   - Deployment branches and tags → **Selected branches and tags** → 添加规则，类型选 **Tag**，模式 `v*`（不要加任何分支）；
-   - **不勾 Required reviewers**（决定①：不加人工审批）；
-   - 不需要其它保护规则。
-3. **填 secret**：同一个 Environment `pc-release` → Environment secrets → `PC_UPDATE_SIGNING_KEY`，值是主钥 `.pem` 文件的全文（含 `-----BEGIN PRIVATE KEY-----` 两行）。只放 Environment secret，不要放仓库级 secret。
-4. **离线备份**：备用钥 `.pem` 存两份离线（U 盘 + 密码管理器），然后删掉电脑上的备用钥文件；主钥 `.pem` 填进 secret 后也删掉（或同样离线保存一份以便以后本机重签）。
-5. **把两个公钥发给开发者**，写进 `pc/src/update-keys.json`（主 + 备两项）。没有这一步，通用版发布会在「Update keys」步骤失败。
-6. （自建版，可选）要让自建版也验签：仓库变量 `CHISABOT_UPDATE_PUBKEYS` 填公钥（逗号分隔；用同一把主钥签就填同样两个公钥）。不填 = 自建版不验签、照旧更新，网页提示「此版本未启用更新验签」。
-7. 以后发版和以前一样推 `v*` 标签，不用点审批。手动重跑发布要在「Use workflow from」里选这个标签。
+### 4.3 下一次正式发布
+
+先合并带生产公钥和强制签名流程的候选，再从对应版本标签发布。当前主线在合并前保持原发布配置；候选已不读取旧的未签名开关。
+
+通用版必须完成签名、安装包校验和旧版更新路径验收。自建版可通过 `CHISABOT_UPDATE_PUBKEYS` 配置自己的公钥；未配置的自建 artifact 保持原行为，并在客户端显示未启用验签。发布私钥只交给签名 job，构建 job 只接触公钥。
 
 ## 5. 改动文件
 
-- 新增：`pc/src/update-signature.js`（规范化消息、签名、验签、公钥表）、`pc/src/update-keys.json`（空公钥表）、`pc/scripts/sign-update.js`、`pc/scripts/gen-update-key.js`、`pc/test/update-signature.check.js`、`pc/test/update-verify.check.js`、本文。
+- 新增：`pc/src/update-signature.js`（规范化消息、签名、验签、公钥表）、`pc/src/update-keys.json`（生产公钥表）、`pc/scripts/sign-update.js`、`pc/scripts/gen-update-key.js`、`pc/test/update-signature.check.js`、`pc/test/update-verify.check.js`、本文。
 - 修改：
   - `pc/src/updater.js`：`updateKeys` / `verifyDownload` / `onRejected`；`verifying` 状态；验签通过前不安装；启用验签时自己负责退出安装；文件头更新 §1.1 的结论。
   - `pc/src/main.js`：传入公钥表、`update_rejected` 审计、退出安装的审计文案。

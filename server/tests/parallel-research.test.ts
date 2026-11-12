@@ -70,7 +70,7 @@ describe("Parallel public-web research", () => {
   test("ships a Research Desk declaration referencing catalogue tools without granting access", () => {
     const skills = parse(
       readFileSync(
-        new URL("../../examples/fintech/skills.yaml", import.meta.url),
+        new URL("./fixtures/tenant-sample/skills.yaml", import.meta.url),
         "utf8",
       ),
     ).skills;
@@ -86,7 +86,7 @@ describe("Parallel public-web research", () => {
     const desk = parse(
       readFileSync(
         new URL(
-          "../../examples/fintech/agents/research-desk.yaml",
+          "./fixtures/tenant-sample/agents/research-desk.yaml",
           import.meta.url,
         ),
         "utf8",

@@ -1,8 +1,26 @@
 import type {
+  TaskCapability,
   TaskCategory,
   TaskRisk,
   TaskStatus,
 } from "../../../../shared/task-center";
+
+export function formatExecutorLabel(
+  executor: string,
+  capabilities?: readonly TaskCapability[],
+): string {
+  if (!executor || executor === "bot") return "ChisaBot 机器人";
+  if (executor === "local-agent") return "本地 Agent";
+  const matched = capabilities?.find(
+    (cap) => cap.kind === "executor" && cap.id === executor,
+  );
+  if (matched) return matched.name;
+  if (executor.startsWith("agent:")) {
+    const ref = executor.slice("agent:".length).trim();
+    return ref ? `子代理 · ${ref}` : "子代理";
+  }
+  return executor;
+}
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
   inbox: "待安排",

@@ -18,24 +18,46 @@ export const workflowKeys = {
   runs: ["workflows", "runs"] as const,
 };
 
-export type WorkflowLibrary = { presets: WorkflowSummary[]; mine: WorkflowSummary[]; runs: WorkflowRunView[] };
+export type WorkflowLibrary = {
+  presets: WorkflowSummary[];
+  mine: WorkflowSummary[];
+  runs: WorkflowRunView[];
+};
 
 export function workflowLibraryQueryOptions() {
   return queryOptions({
     queryKey: workflowKeys.library,
     queryFn: ({ signal }): Promise<WorkflowLibrary> =>
-      client("/api/workflows", { fallback: "无法加载工作流", signal }).then((r) => r.json()),
+      client("/api/workflows", { fallback: "无法加载工作流", signal }).then(
+        (r) => r.json(),
+      ),
     // 最近运行里有还在跑的，就跟着刷新。
-    refetchInterval: (query) =>
-      query.state.data?.runs.some((run) => ACTIVE_RUN_STATUSES.includes(run.status)) ? 3_000 : false,
+    // 失败或还没有数据时也继续轮询：右栏同时拉任务和工作流，工作流失败后若停掉轮询，
+    // 提示要等用户点「重试」才会消失。
+    refetchInterval: (query) => {
+      const failed =
+        query.state.status === "error" ||
+        (query.state.data === undefined && query.state.errorUpdateCount > 0);
+      if (failed) return 5_000;
+      return query.state.data?.runs.some((run) =>
+        ACTIVE_RUN_STATUSES.includes(run.status),
+      )
+        ? 3_000
+        : false;
+    },
   });
 }
 
 export function workflowDetailQueryOptions(id: string) {
   return queryOptions({
     queryKey: workflowKeys.detail(id),
-    queryFn: ({ signal }): Promise<{ workflow: WorkflowDetail; warnings: string[] }> =>
-      client(`/api/workflows/${encodeURIComponent(id)}`, { fallback: "无法加载这个工作流", signal }).then((r) => r.json()),
+    queryFn: ({
+      signal,
+    }): Promise<{ workflow: WorkflowDetail; warnings: string[] }> =>
+      client(`/api/workflows/${encodeURIComponent(id)}`, {
+        fallback: "无法加载这个工作流",
+        signal,
+      }).then((r) => r.json()),
   });
 }
 
@@ -43,11 +65,18 @@ export function workflowRunQueryOptions(id: string) {
   return queryOptions({
     queryKey: workflowKeys.run(id),
     queryFn: ({ signal }): Promise<WorkflowRunView> =>
-      client(`/api/workflows/runs/${encodeURIComponent(id)}`, "run", { fallback: "无法加载这次运行", signal }),
+      client(`/api/workflows/runs/${encodeURIComponent(id)}`, "run", {
+        fallback: "无法加载这次运行",
+        signal,
+      }),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       if (!status) return 3_000;
-      return status === "running" || status === "queued" ? 1_500 : status === "waiting_approval" ? 5_000 : false;
+      return status === "running" || status === "queued"
+        ? 1_500
+        : status === "waiting_approval"
+          ? 5_000
+          : false;
     },
   });
 }
@@ -57,38 +86,83 @@ export class WorkflowSaveError extends Error {
   constructor(
     message: string,
     readonly problems: string[],
+    readonly status: number,
   ) {
     super(message);
   }
 }
 
-async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: "include",
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = (await response.json().catch(() => null)) as (T & { error?: string; problems?: string[] }) | null;
-  if (!response.ok) throw new WorkflowSaveError(data?.error ?? "操作失败，请重试", data?.problems ?? []);
+async function send<T>(
+  path: string,
+  method: string,
+  body?: unknown,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: "include",
+      headers:
+        body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new WorkflowSaveError("无法连接到服务器，请重试。", [], 0);
+  }
+  const data = (await response.json().catch(() => null)) as
+    | (T & { error?: string; problems?: string[] })
+    | null;
+  if (!response.ok)
+    throw new WorkflowSaveError(
+      data?.error ?? "操作失败，请重试",
+      data?.problems ?? [],
+      response.status,
+    );
   return data as T;
 }
 
 export const workflowsApi = {
   create: (definition: WorkflowDefinition) =>
-    send<{ workflow: WorkflowDetail }>("/api/workflows", "POST", { definition }),
+    send<{ workflow: WorkflowDetail }>("/api/workflows", "POST", {
+      definition,
+    }),
   update: (id: string, definition: WorkflowDefinition) =>
-    send<{ workflow: WorkflowDetail; warnings: string[] }>(`/api/workflows/${encodeURIComponent(id)}`, "PUT", { definition }),
-  remove: (id: string) => send<{ ok: true }>(`/api/workflows/${encodeURIComponent(id)}`, "DELETE"),
-  duplicate: (id: string) => send<{ workflow: WorkflowDetail }>(`/api/workflows/${encodeURIComponent(id)}/duplicate`, "POST"),
-  import: (markdown: string) => send<{ workflow: WorkflowDetail }>("/api/workflows/import", "POST", { markdown }),
+    send<{ workflow: WorkflowDetail; warnings: string[] }>(
+      `/api/workflows/${encodeURIComponent(id)}`,
+      "PUT",
+      { definition },
+    ),
+  remove: (id: string) =>
+    send<{ ok: true }>(`/api/workflows/${encodeURIComponent(id)}`, "DELETE"),
+  duplicate: (id: string) =>
+    send<{ workflow: WorkflowDetail }>(
+      `/api/workflows/${encodeURIComponent(id)}/duplicate`,
+      "POST",
+    ),
+  import: (markdown: string) =>
+    send<{ workflow: WorkflowDetail }>("/api/workflows/import", "POST", {
+      markdown,
+    }),
   validate: (input: { markdown: string } | { definition: unknown }) =>
     send<
-      | { ok: true; definition: WorkflowDefinition; markdown: string; warnings: string[] }
+      | {
+          ok: true;
+          definition: WorkflowDefinition;
+          markdown: string;
+          warnings: string[];
+        }
       | { ok: false; error: string; problems?: string[] }
     >("/api/workflows/validate", "POST", input),
-  run: (id: string, inputs: Record<string, unknown>, bindings: Record<string, string>) =>
-    send<{ run: WorkflowRunView }>(`/api/workflows/${encodeURIComponent(id)}/runs`, "POST", { inputs, bindings }),
+  run: (
+    id: string,
+    inputs: Record<string, unknown>,
+    bindings: Record<string, string>,
+  ) =>
+    send<{ run: WorkflowRunView }>(
+      `/api/workflows/${encodeURIComponent(id)}/runs`,
+      "POST",
+      { inputs, bindings },
+    ),
   approve: (
     runId: string,
     stepId: string,
@@ -96,13 +170,17 @@ export const workflowsApi = {
     comment?: string,
     options?: { rejectTo?: string; retryMode?: "targeted_fix" | "full_redo" },
   ) =>
-    send<{ run: WorkflowRunView | null }>(`/api/workflows/runs/${encodeURIComponent(runId)}/approve`, "POST", {
-      stepId,
-      decision,
-      ...(comment ? { comment } : {}),
-      ...(options?.rejectTo ? { rejectTo: options.rejectTo } : {}),
-      ...(options?.retryMode ? { retryMode: options.retryMode } : {}),
-    }),
+    send<{ run: WorkflowRunView | null }>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}/approve`,
+      "POST",
+      {
+        stepId,
+        decision,
+        ...(comment ? { comment } : {}),
+        ...(options?.rejectTo ? { rejectTo: options.rejectTo } : {}),
+        ...(options?.retryMode ? { retryMode: options.retryMode } : {}),
+      },
+    ),
   retry: (
     runId: string,
     options?: {
@@ -112,14 +190,29 @@ export const workflowsApi = {
       bindings?: Record<string, string>;
     },
   ) =>
-    send<{ run: WorkflowRunView | null }>(`/api/workflows/runs/${encodeURIComponent(runId)}/retry`, "POST", options ?? {}),
-  cancel: (runId: string) => send<{ ok: true }>(`/api/workflows/runs/${encodeURIComponent(runId)}/cancel`, "POST"),
-  removeRun: (runId: string) => send<{ ok: true }>(`/api/workflows/runs/${encodeURIComponent(runId)}`, "DELETE"),
+    send<{ run: WorkflowRunView | null }>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}/retry`,
+      "POST",
+      options ?? {},
+    ),
+  cancel: (runId: string) =>
+    send<{ ok: true }>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}/cancel`,
+      "POST",
+    ),
+  removeRun: (runId: string) =>
+    send<{ ok: true }>(
+      `/api/workflows/runs/${encodeURIComponent(runId)}`,
+      "DELETE",
+    ),
 };
 
 /** 下载导出的 WORKFLOW.md（走浏览器下载，带登录 cookie）。 */
 export async function downloadWorkflow(id: string, slug: string) {
-  const response = await client(`/api/workflows/${encodeURIComponent(id)}/export`, { fallback: "导出失败" });
+  const response = await client(
+    `/api/workflows/${encodeURIComponent(id)}/export`,
+    { fallback: "导出失败" },
+  );
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -139,5 +232,7 @@ export function durationText(ms: number): string {
 }
 
 export function tokensText(n: number): string {
-  return n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+  return n >= 10_000
+    ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`
+    : String(n);
 }

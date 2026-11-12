@@ -91,15 +91,15 @@
 **根因**：
 - 抽屉：`Channel` 行、搜索结果行、`BotMenuContent` 里的跳转都没有调用关闭抽屉，只有机器人行自己关。会话行的 `<Link>` 上带了 `type="button"`（`<a>` 上无效）。
 - `/channel/new`：路由 loader 用 `latestChannelFor` 找到最近的一对一对话就重定向过去，不管里面有没有消息。
-- 401：网关 `auth_request` 失败时，非导航请求（`/api/me`）拿到 JSON 401（`openbotAuthRequired: true`），导航拿到 302 到 `/login?next=`。应用收到 401 后在页面里转到 `/sign`，但网关不提供 `/sign`（nginx 把它 302 到 `/login`，SPA 内跳转不会经过它），页面就停在加载。网关注入的 `workspace.js` 有 fetch 401 拦截，但它看到应用自己的 `#chisabot-account-control` 就提前退出，所以从没生效。SW 这边：导航超过 20 秒给 503 慢卡片；卡片的重试探测是普通 fetch，拿到 JSON 401（< 500）就当成「好了」刷新页面，刷新后又走同一条路，循环。线上「先卡 5 分钟」的确切时长没有在本地复现，上面是能解释现象的路径，已用假网关验证修复后不再出现。
+- 401：网关 `auth_request` 失败时，非导航请求（`/api/me`）拿到 JSON 401（`chisabotAuthRequired: true`），导航拿到 302 到 `/login?next=`。应用收到 401 后在页面里转到 `/sign`，但网关不提供 `/sign`（nginx 把它 302 到 `/login`，SPA 内跳转不会经过它），页面就停在加载。网关注入的 `workspace.js` 有 fetch 401 拦截，但它看到应用自己的 `#chisabot-account-control` 就提前退出，所以从没生效。SW 这边：导航超过 20 秒给 503 慢卡片；卡片的重试探测是普通 fetch，拿到 JSON 401（< 500）就当成「好了」刷新页面，刷新后又走同一条路，循环。线上「先卡 5 分钟」的确切时长没有在本地复现，上面是能解释现象的路径，已用假网关验证修复后不再出现。
 
 **改法**：
 - `components/ui/sidebar.tsx` 新增 `useCloseMobileDrawer()`（手机且抽屉打开时关掉）。`channel.tsx` 会话行 `onClick` 关抽屉、去掉 `type="button"`；`app-sidebar.tsx` 搜索结果行、机器人行、`BotMenuContent` 的「机器人资料」「历史对话」「新话题」「面板」做完都关抽屉；打开对话框的菜单项（电脑操作、主机器人、恢复、删除）不关，对话框挂在抽屉里。`BotChatMenuItems` 加可选 `onDone`。
-- `lib/channels/latest.ts` 加 `reusableEmptyChannelFor`：只在最近的一对一对话没有任何消息时复用。`/channel/new` 改用它。原来依赖重定向「接着聊」的入口（资料页、agent-profile、agent-dialog、`/bot`、open-thread 兜底、删除后回主机器人、交接卡片）改用新的 `lib/channels/open-bot-chat.ts`（`botChatChannelId` / `useOpenBotChat`）直接去最近的对话，没有才去 `/channel/new`，行为不变。
-- `lib/auth/login-redirect.ts`：`isGatewayLoginRequired`（401 + `openbotAuthRequired`）、`goToLogin`（`location.replace("/login?next=…")`，只跳一次，已在 `/login` 不跳）、`installLoginRedirect`（包一层同源 fetch，任何接口拿到网关 401 都去登录）。`auth/queries.ts` 的 `/api/me` 401 也走它；`_authed.tsx` 在已经去登录页时不再转 `/sign`。没有网关的部署（普通 401，无 `openbotAuthRequired`）照旧去应用自己的 `/sign`。
-- 审查修复：SW 的导航和重试卡片探测原来一见 401 就跳 `/login`，没网关的部署没有 `/login`。改成和前端 `isGatewayLoginRequired` 同一判断（JSON 响应体 `openbotAuthRequired: true`）；探测脚本会被 toString 进页面，只能内联同一段判断。其它 401：导航原样交给浏览器，探测照旧刷新。四种情况都有测试。截图不进仓库，推送后贴在 PR 描述里。自测：typecheck 0、app build 0、test:app 1825 pass 0 fail；改动文件 Biome 无新增。
+- `lib/channels/latest.ts` 加 `reusableEmptyChannelFor`：只在最近的一对一对话没有任何消息时复用。`/channel/new` 改用它。原来依赖重定向「接着聊」的入口（资料页、agent-profile、agent-dialog、`/bot`、open-thread 兜底、删除后回主机器人、交接卡片）改用新的 `lib/channels/open-bot-chat.ts`（`botChatChannelId` / `use早期上游模板Chat`）直接去最近的对话，没有才去 `/channel/new`，行为不变。
+- `lib/auth/login-redirect.ts`：`isGatewayLoginRequired`（401 + `chisabotAuthRequired`）、`goToLogin`（`location.replace("/login?next=…")`，只跳一次，已在 `/login` 不跳）、`installLoginRedirect`（包一层同源 fetch，任何接口拿到网关 401 都去登录）。`auth/queries.ts` 的 `/api/me` 401 也走它；`_authed.tsx` 在已经去登录页时不再转 `/sign`。没有网关的部署（普通 401，无 `chisabotAuthRequired`）照旧去应用自己的 `/sign`。
+- 审查修复：SW 的导航和重试卡片探测原来一见 401 就跳 `/login`，没网关的部署没有 `/login`。改成和前端 `isGatewayLoginRequired` 同一判断（JSON 响应体 `chisabotAuthRequired: true`）；探测脚本会被 toString 进页面，只能内联同一段判断。其它 401：导航原样交给浏览器，探测照旧刷新。四种情况都有测试。截图不进仓库，推送后贴在 PR 描述里。自测：typecheck 0、app build 0、test:app 1825 pass 0 fail；改动文件 Biome 无新增。
 - `public/sw.js`（`SW_VERSION` 4）：导航拿到 401 返回 302 到 `/login?next=`；慢卡片探测拿到 401 直接 `location.replace` 去登录页，不再刷新；`/login` 加进 `SKIP_NAV`。
-- 审查修复 2（登录跳转死循环）：后端在会话有效时也会回 401 + `openbotAuthRequired`（`server/src/index.ts` 身份头重放、`server/auth/gateway-identity.ts` 签名校验失败）。这时 `/login` 的 login.js 查 `/auth/session` 看到已登录，立刻 `replace(next)` 回来，又 401，循环。
+- 审查修复 2（登录跳转死循环）：后端在会话有效时也会回 401 + `chisabotAuthRequired`（`server/src/index.ts` 身份头重放、`server/auth/gateway-identity.ts` 签名校验失败）。这时 `/login` 的 login.js 查 `/auth/session` 看到已登录，立刻 `replace(next)` 回来，又 401，循环。
   - `login-redirect.ts`：`goToLogin` 跳之前在 sessionStorage 记 `chisabot:login-redirect-at`；30 秒（`LOGIN_LOOP_WINDOW_MS`）内又要跳就不跳，置 `isLoginLoopDetected()` 并通知订阅者。时间戳在未来、不是数字、sessionStorage 抛错都按「没跳过」处理。`signOutAndReLogin`：POST `/api/auth/sign-out`（失败也继续）、重记时间戳、`replace("/login")`。`loginHref` 在 `/sign` 上不带 `next`。
   - 新组件 `components/auth/auth-loop-notice.tsx`：「登录状态异常」卡片 + 「退出重新登录」按钮（设计系统 `Button`，沿用 `page-loader-*` 卡片样式，没有新的 backdrop-filter）。挂在 `main.tsx` 路由外面，因为 `_authed` 这时停在启动骨架上（`isGoingToLogin() || isLoginLoopDetected()`）不转 `/sign`。
   - `sw.js`（`SW_VERSION` 5）：导航分支 `request.referrer` 是同源 `/login` 时，网关 401 原样交给浏览器（真没登录的导航网关自己回 302，这个分支碰到的基本都是「已登录但被拒」）。重试卡片探测和应用共用同一个 sessionStorage 时间戳：30 秒内已经去过 `/login` 又是网关 401，就停下、显示「登录状态异常」和「退出重新登录」按钮，否则记时间戳再去 `/login?next=`。
@@ -111,13 +111,13 @@
 
 **截图**（390×844 触屏，独立 headless Chrome 和临时 profile，假网关静态服务器）：
 
-| 场景 | 改前（c99ee37e） | 改后 |
-|---|---|---|
-| 抽屉搜索「论文」后点结果 | 进了 `/channel/c2`，抽屉仍盖在页面上 | 进 `/channel/c2`，抽屉已收起 |
-| 机器人「⋯」→「机器人资料」 | 进了 `/bots/a1`，抽屉仍开着 | 进 `/bots/a1`，抽屉已收起 |
-| 打开 `/channel/new?agent=a1` | 被转到旧对话 `/channel/c1` | 停在 `/channel/new?agent=a1`（新话题） |
-| 页面开着时会话过期（SW 已控制页面） | 8 秒后仍停在 `/settings` | 约 0.2–0.4 秒跳到 `/login?next=%2Fsettings` |
-| 过期后重新打开 `/channel/c1?x=1`（经 SW） | 页面直接显示网关的 JSON 401 | 跳到 `/login?next=%2Fchannel%2Fc1%3Fx%3D1` |
+| 场景                                      | 改前（c99ee37e）                     | 改后                                        |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------- |
+| 抽屉搜索「论文」后点结果                  | 进了 `/channel/c2`，抽屉仍盖在页面上 | 进 `/channel/c2`，抽屉已收起                |
+| 机器人「⋯」→「机器人资料」                | 进了 `/bots/a1`，抽屉仍开着          | 进 `/bots/a1`，抽屉已收起                   |
+| 打开 `/channel/new?agent=a1`              | 被转到旧对话 `/channel/c1`           | 停在 `/channel/new?agent=a1`（新话题）      |
+| 页面开着时会话过期（SW 已控制页面）       | 8 秒后仍停在 `/settings`             | 约 0.2–0.4 秒跳到 `/login?next=%2Fsettings` |
+| 过期后重新打开 `/channel/c1?x=1`（经 SW） | 页面直接显示网关的 JSON 401          | 跳到 `/login?next=%2Fchannel%2Fc1%3Fx%3D1`  |
 
 截图首轮还发现一个真问题：触屏点会话后抽屉关了，导航却被抽屉的返回记录清理（`history.back()`）退回去。原因是路由的 push 在微任务里才落地。`useCloseMobileDrawer` 改为推迟一拍再关抽屉（167cfd6f），并补了一个回归测试：手机模式、真实 browser history，不修时失败。上表是修复后的结果。
 
@@ -139,10 +139,10 @@
 
 main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better/worse
 
-| scenario | fps | p95 frame ms | long-task ms | max long task | style ms | layout ms | script ms |
-|---|---|---|---|---|---|---|---|
-| idle | 60.2 → 60 (0%) | 16.8 → 16.8 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 0 → 0 (0%) | 28 → 47 (+68%) ⚠️ |
-| orb | 58.5 → 60 (+3%) | 16.8 → 16.7 (-1%) | 0 → 0 (0%) | 0 → 0 (0%) | 636 → 11 (-98%) ✅ | 4 → 4 (0%) | 127 → 168 (+32%) ⚠️ |
+| scenario | fps             | p95 frame ms      | long-task ms | max long task | style ms           | layout ms  | script ms           |
+| -------- | --------------- | ----------------- | ------------ | ------------- | ------------------ | ---------- | ------------------- |
+| idle     | 60.2 → 60 (0%)  | 16.8 → 16.8 (0%)  | 0 → 0 (0%)   | 0 → 0 (0%)    | 0 → 0 (0%)         | 0 → 0 (0%) | 28 → 47 (+68%) ⚠️   |
+| orb      | 58.5 → 60 (+3%) | 16.8 → 16.7 (-1%) | 0 → 0 (0%)   | 0 → 0 (0%)    | 636 → 11 (-98%) ✅ | 4 → 4 (0%) | 127 → 168 (+32%) ⚠️ |
 
 script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光球无关的 408 ms 长任务，三次运行分别是 21 / 168 / 407 ms。
 
@@ -188,8 +188,8 @@ script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光�
 - 修复后、性能模式开：全部页面 0，合成卡片 filter none、opacity 0.36。减少透明度：同样全 0。
 - 修复后、性能模式关（对照）：和修复前一样（/sign 2 个，合成卡片照旧模糊），正常模式不变。
 
-| 修复前（性能模式） | 修复后（性能模式） | 修复后（正常模式） |
-| --- | --- | --- |
+| 修复前（性能模式）                                                                                                             | 修复后（性能模式）                                                                                                            | 修复后（正常模式）                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-sign.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-sign.png) |
 
 **壁纸模糊（小爱 #432 决定：也关）**：
@@ -199,8 +199,8 @@ script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光�
 - 复测（壁纸模糊 20px，8 个页面）：性能模式开、减少透明度：computed filter 含 blur 的可见元素全部 0，壁纸 filter none、遮罩 opacity 0.275；性能模式关：每页都有壁纸 blur(20px)（/sign 另有 orb 两个），正常模式照旧。修复前性能模式开：每页壁纸 blur(20px)。
 - typecheck ✅、build ✅、test:app ✅（1857 pass / 0 fail），相关测试 30 pass；Biome lint 1 error / 800 warnings / 143 infos，和 main 相同。
 
-| 修复前（性能模式，壁纸模糊 20px） | 修复后（性能模式，同设置） | 修复后（正常模式，同设置） |
-| --- | --- | --- |
+| 修复前（性能模式，壁纸模糊 20px）                                                                                                   | 修复后（性能模式，同设置）                                                                                                         | 修复后（正常模式，同设置）                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/before-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-perf-wallpaper.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/perf-mode-blur/docs/images/perf-mode-blur/after-off-wallpaper.png) |
 
 ## 例程数据安全：不误停、不发错地方、不误删（分支 dev2/routines-safety，审查模块 13 必修 M1/M2/M3 + 应修 S2/S6）
@@ -268,16 +268,16 @@ script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光�
 
 实测（headless Chrome，4000×2500 JPEG 4.57 MB，设置页上传，3 次取中位数）：
 
-| 屏幕 | CPU | 版本 | 最长主线程长任务 | 最长掉帧间隔 | 从选文件到应用 | 输出 |
-|---|---|---|---|---|---|---|
-| 1440×900 @1 | 1× | main | 411 ms | 417 ms | 641 ms | 1920×1200，182 K 字符 |
-| 1440×900 @1 | 1× | 本分支 | 0 | 17 ms | 302 ms | 1440×900，100 K 字符 |
-| 1440×900 @1 | 4× | main | 1267 ms | 1283 ms | 1955 ms | 同上 |
-| 1440×900 @1 | 4× | 本分支 | 144 ms | 150 ms | 622 ms | 同上 |
-| 1440×900 @2 | 1× | main | 364 ms | 367 ms | 530 ms | 1920×1200，182 K 字符 |
-| 1440×900 @2 | 1× | 本分支 | 112 ms | 33 ms | 975 ms | 2880×1800，1.43 M 字符 |
-| 2560×1440 @2 | 4× | main | 1361 ms | 1383 ms | 1965 ms | 1920×1200，182 K 字符 |
-| 2560×1440 @2 | 4× | 本分支 | 221 ms | 333 ms | 1950 ms | 3840×2400，2.44 M 字符 |
+| 屏幕         | CPU | 版本   | 最长主线程长任务 | 最长掉帧间隔 | 从选文件到应用 | 输出                   |
+| ------------ | --- | ------ | ---------------- | ------------ | -------------- | ---------------------- |
+| 1440×900 @1  | 1×  | main   | 411 ms           | 417 ms       | 641 ms         | 1920×1200，182 K 字符  |
+| 1440×900 @1  | 1×  | 本分支 | 0                | 17 ms        | 302 ms         | 1440×900，100 K 字符   |
+| 1440×900 @1  | 4×  | main   | 1267 ms          | 1283 ms      | 1955 ms        | 同上                   |
+| 1440×900 @1  | 4×  | 本分支 | 144 ms           | 150 ms       | 622 ms         | 同上                   |
+| 1440×900 @2  | 1×  | main   | 364 ms           | 367 ms       | 530 ms         | 1920×1200，182 K 字符  |
+| 1440×900 @2  | 1×  | 本分支 | 112 ms           | 33 ms        | 975 ms         | 2880×1800，1.43 M 字符 |
+| 2560×1440 @2 | 4×  | main   | 1361 ms          | 1383 ms      | 1965 ms        | 1920×1200，182 K 字符  |
+| 2560×1440 @2 | 4×  | 本分支 | 221 ms           | 333 ms       | 1950 ms        | 3840×2400，2.44 M 字符 |
 
 本分支剩下的长任务是应用壁纸本身（解码、绘制更大的背景图），不是压缩。高 DPR 下输出更大、总耗时更长，换来的是按屏幕物理分辨率显示。
 
@@ -307,12 +307,12 @@ script ms 的差异是 box 噪声：本分支第 3 次运行里有一个与光�
 
 Token 对比（`server/tests/history-budget.test.ts`，30 轮长话题夹具，每轮带一段长工具结果；字符估算 × 1.15 安全系数）：
 
-| 情况 | 窗口 | 发给模型的估算 token |
-|---|---|---|
-| 改前 | — | 164,250（字符估算 142,826） |
-| >70% 裁剪 | 200k（约 82%） | 48,736 |
-| >85%，当轮（还没有摘要） | 160k | 48,736（只裁剪，后台写摘要） |
-| >85%，下一轮（31 轮，改前 168,116） | 160k | 33,212（较早 26 轮由摘要代替） |
+| 情况                                | 窗口           | 发给模型的估算 token           |
+| ----------------------------------- | -------------- | ------------------------------ |
+| 改前                                | —              | 164,250（字符估算 142,826）    |
+| >70% 裁剪                           | 200k（约 82%） | 48,736                         |
+| >85%，当轮（还没有摘要）            | 160k           | 48,736（只裁剪，后台写摘要）   |
+| >85%，下一轮（31 轮，改前 168,116） | 160k           | 33,212（较早 26 轮由摘要代替） |
 
 测试：`server/tests/history-budget.test.ts`（两个阈值、当轮不调用摘要模型 / 后台写好下一轮用、前缀摘要 + 增量续写、5 次 / 600 字整段重摘、编辑失效 / 截断失效、后台失败和超时不影响当轮、真实用量校准与安全系数、同一运行方案稳定、建表与索引、token 对比）、`hermes-runtime.test.ts`（wire model 含压缩开关、回报校验、metadata 合并）、`hermes-health.test.ts`、`history-summary-settings.test.ts`、`examples/acp-agent/bridge.test.ts`（透传、health、非法输入、不支持时 false/false）、Python `examples/hermes-agent/tests`（备用链和 `max_tokens`、mock 429 切换备用、宿主压缩过的运行关掉 Hermes 压缩、下一轮恢复）、`app/tests/chat-unify.test.ts` 和 `hermes-history-notes.test.ts`。
 
@@ -328,14 +328,14 @@ Token 对比（`server/tests/history-budget.test.ts`，30 轮长话题夹具，�
 
 **前后对比**（dev4 harness #443 @671f6ac9，4x 降速，各 3 次取中位数，main c99ee37e → 本 PR；带 trace 与不带 trace 分开）：
 
-| 场景 | 指标 | main | PR |
-|---|---|---|---|
-| stream（trace） | forced 合计 | 1311ms | 198ms（−85%） |
-| stream（trace） | 4b MO 读 offsetHeight | 709–720ms / 39–42 次 | 0 |
-| stream（trace） | 4c DocCard 读 scrollHeight | 285–371ms / 15–19 次 | 0 |
-| stream（无 trace） | long-task ms / 最长 | 338 / 127 | 131 / 74 |
-| scroll（trace） | 4a keep-alive 读 scrollTop | 311–350ms / 78–79 次 | 0 |
-| scroll（trace） | forced 合计 | 324ms | 386ms |
+| 场景                     | 指标                       | main                               | PR                                 |
+| ------------------------ | -------------------------- | ---------------------------------- | ---------------------------------- |
+| stream（trace）          | forced 合计                | 1311ms                             | 198ms（−85%）                      |
+| stream（trace）          | 4b MO 读 offsetHeight      | 709–720ms / 39–42 次               | 0                                  |
+| stream（trace）          | 4c DocCard 读 scrollHeight | 285–371ms / 15–19 次               | 0                                  |
+| stream（无 trace）       | long-task ms / 最长        | 338 / 127                          | 131 / 74                           |
+| scroll（trace）          | 4a keep-alive 读 scrollTop | 311–350ms / 78–79 次               | 0                                  |
+| scroll（trace）          | forced 合计                | 324ms                              | 386ms                              |
 | scroll（无 trace，两轮） | fps / style ms / script ms | 56.2 / 409 / 581；50.7 / 438 / 674 | 46.4 / 479 / 783；46.8 / 464 / 733 |
 
 scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不读之后，同样 79 次重算改由 `@shadcn/react` message-scroller 自己的 scroll 处理（`TPt → vF → getComputedStyle/getBoundingClientRect` 遍历全部行）付掉，总量不变（差值在噪声范围内，box 同时有其他任务）。要让滚动真正变快得改 message-scroller 的边缘计算（FIX-PLAN §1.2「补充」），不在本 PR 范围。原始数据：box `/workspace/dev5-p15-perf/`。
@@ -358,20 +358,20 @@ scroll 没有变好：每次滚动前样式本来就是脏的，keep-alive 不�
 
 main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better/worse
 
-| scenario | fps | p95 frame ms | long-task ms | max long task | worst INP | worst first frame | style ms | layout ms | script ms |
-|---|---|---|---|---|---|---|---|---|---|
-| switch | 22.2 → 34.5 (+55%) ✅ | 350 → 16.8 (-95%) ✅ | 9747 → 5997 (-38%) ✅ | 859 → 876 (+2%) | 912 → 912 (0%) | 889 → 884 (-1%) | 4281 → 2669 (-38%) ✅ | 483 → 429 (-11%) ✅ | 4619 → 2695 (-42%) ✅ |
-| scroll | 45.7 → 47 (+3%) | 33.4 → 33.4 (0%) | 204 → 89 (-56%) ✅ | 52 → 66 (+27%) ⚠️ | – | 59 → 88 (+49%) ⚠️ | 471 → 476 (+1%) | 53 → 59 (+11%) ⚠️ | 755 → 755 (0%) |
-| stream | 48.2 → 41 (-15%) ⚠️ | 50 → 66.7 (+33%) ⚠️ | 464 → 1557 (+236%) ⚠️ | 96 → 121 (+26%) ⚠️ | 128 → 152 (+19%) ⚠️ | 94 → 131 (+39%) ⚠️ | 1302 → 2002 (+54%) ⚠️ | 199 → 157 (-21%) ✅ | 2034 → 1751 (-14%) ✅ |
+| scenario | fps                   | p95 frame ms         | long-task ms          | max long task      | worst INP           | worst first frame  | style ms              | layout ms           | script ms             |
+| -------- | --------------------- | -------------------- | --------------------- | ------------------ | ------------------- | ------------------ | --------------------- | ------------------- | --------------------- |
+| switch   | 22.2 → 34.5 (+55%) ✅ | 350 → 16.8 (-95%) ✅ | 9747 → 5997 (-38%) ✅ | 859 → 876 (+2%)    | 912 → 912 (0%)      | 889 → 884 (-1%)    | 4281 → 2669 (-38%) ✅ | 483 → 429 (-11%) ✅ | 4619 → 2695 (-42%) ✅ |
+| scroll   | 45.7 → 47 (+3%)       | 33.4 → 33.4 (0%)     | 204 → 89 (-56%) ✅    | 52 → 66 (+27%) ⚠️  | –                   | 59 → 88 (+49%) ⚠️  | 471 → 476 (+1%)       | 53 → 59 (+11%) ⚠️   | 755 → 755 (0%)        |
+| stream   | 48.2 → 41 (-15%) ⚠️   | 50 → 66.7 (+33%) ⚠️  | 464 → 1557 (+236%) ⚠️ | 96 → 121 (+26%) ⚠️ | 128 → 152 (+19%) ⚠️ | 94 → 131 (+39%) ⚠️ | 1302 → 2002 (+54%) ⚠️ | 199 → 157 (-21%) ✅ | 2034 → 1751 (-14%) ✅ |
 
-| interaction | INP | input delay | processing | presentation | first frame | dropped (1s) |
-|---|---|---|---|---|---|---|
-| switch / to-c1-first | 912 → 912 (0%) | 12 → 14 (+17%) ⚠️ | 838 → 834 (0%) | 67 → 64 (-4%) | 889 → 884 (-1%) | 49 → 47 (-4%) |
-| switch / to-c2-first | 384 → 256 (-33%) ✅ | 10 → 9 (-10%) ✅ | 331 → 213 (-36%) ✅ | 41 → 29 (-29%) ✅ | 357 → 223 (-38%) ✅ | 24 → 12 (-50%) ✅ |
-| switch / to-c1-again | 576 → 760 (+32%) ⚠️ | 9 → 9 (0%) | 500 → 600 (+20%) ⚠️ | 68 → 117 (+72%) ⚠️ | 543 → 739 (+36%) ⚠️ | 51 → 43 (-16%) ✅ |
-| switch / to-c2-again | 336 → 232 (-31%) ✅ | 8 → 9 (+13%) ⚠️ | 285 → 198 (-31%) ✅ | 42 → 27 (-36%) ✅ | 307 → 206 (-33%) ✅ | 19 → 11 (-42%) ✅ |
-| scroll / wheel | – | – | – | – | 59 → 88 (+49%) ⚠️ | 18 → 12 (-33%) ✅ |
-| stream / send | 128 → 152 (+19%) ⚠️ | 1 → 4 (+300%) ⚠️ | 96 → 118 (+23%) ⚠️ | 31 → 32 (+3%) | 94 → 131 (+39%) ⚠️ | 21 → 31 (+48%) ⚠️ |
+| interaction          | INP                 | input delay       | processing          | presentation       | first frame         | dropped (1s)      |
+| -------------------- | ------------------- | ----------------- | ------------------- | ------------------ | ------------------- | ----------------- |
+| switch / to-c1-first | 912 → 912 (0%)      | 12 → 14 (+17%) ⚠️ | 838 → 834 (0%)      | 67 → 64 (-4%)      | 889 → 884 (-1%)     | 49 → 47 (-4%)     |
+| switch / to-c2-first | 384 → 256 (-33%) ✅ | 10 → 9 (-10%) ✅  | 331 → 213 (-36%) ✅ | 41 → 29 (-29%) ✅  | 357 → 223 (-38%) ✅ | 24 → 12 (-50%) ✅ |
+| switch / to-c1-again | 576 → 760 (+32%) ⚠️ | 9 → 9 (0%)        | 500 → 600 (+20%) ⚠️ | 68 → 117 (+72%) ⚠️ | 543 → 739 (+36%) ⚠️ | 51 → 43 (-16%) ✅ |
+| switch / to-c2-again | 336 → 232 (-31%) ✅ | 8 → 9 (+13%) ⚠️   | 285 → 198 (-31%) ✅ | 42 → 27 (-36%) ✅  | 307 → 206 (-33%) ✅ | 19 → 11 (-42%) ✅ |
+| scroll / wheel       | –                   | –                 | –                   | –                  | 59 → 88 (+49%) ⚠️   | 18 → 12 (-33%) ✅ |
+| stream / send        | 128 → 152 (+19%) ⚠️ | 1 → 4 (+300%) ⚠️  | 96 → 118 (+23%) ⚠️  | 31 → 32 (+3%)      | 94 → 131 (+39%) ⚠️  | 21 → 31 (+48%) ⚠️ |
 
 **状态**：draft。依赖 P1-5（#445）、P1-1、P3-3，合入后用同一 harness 复测，switch、stream、长对话切回都不比 main 差才转正式；P3-3 之后若 LRU 收益不大就关掉。
 
@@ -379,7 +379,7 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 - **切回 240 条长对话那一下 INP 变高**（576 → 760 ms）：main 上是挂载 + 分批补行（后面 3 s 里还有约 2.9 s 长任务），现在是一次性把藏着的整段（约 15k 元素）重做样式和布局，总量少但集中在点击那一帧。P1-1（切会话 `startTransition`）会把它移出 INP，P3-3 虚拟化把元素降到 <3k 后这一下随之变小。
 - **流式场景变差**（长任务 464 → 1557 ms，样式 1302 → 2002 ms）：流式时 240 条那段藏着留在 DOM 里，热路径上的强制样式（4b MutationObserver 读 offsetHeight、4c DocCard 读 scrollHeight，trace 里同样两处）每次更贵，content-visibility 挡不住全部。带 --trace 的单轮对比：强制重算 2163 → 1952 ms、样式自身 841 → 1800 ms、布局 1342 → 176 ms。4b / 4c（P1-5）合入后应基本消失；需要在那之后复测。
 - 试过「单段超过 8k 元素藏起来就放掉」：c2 也超了被放掉，A→B→A 切回 INP 反而 301 → 727 ms，已撤回，不在本 PR 里。
-- `tests/` 下 20 个 Playwright 脚本里取聊天区元素的选择器（chat-transcript、`[data-message-id]`、composer-*、queued-*、worker-*、`.glass-composer` 等）前面加了 `[data-testid=kept-page][data-visible=true] `，免得取到藏着的段（`closest` / 已移除节点上的 `matches` 不加）。在假 /api + PR 构建上验过：A→B→A 后不加限定取到 2 个 transcript、243 条消息，加了只剩当前的 1 个、3 条。
+- `tests/` 下 20 个 Playwright 脚本里取聊天区元素的选择器（chat-transcript、`[data-message-id]`、composer-_、queued-_、worker-*、`.glass-composer` 等）前面加了 `[data-testid=kept-page][data-visible=true] `，免得取到藏着的段（`closest` / 已移除节点上的 `matches` 不加）。在假 /api + PR 构建上验过：A→B→A 后不加限定取到 2 个 transcript、243 条消息，加了只剩当前的 1 个、3 条。
 - styles.css 只删了 `.kept-chat[data-visible="false"] *` 这一条（`overflow-anchor:none`），容器自身那条保留。main 和 PR 的 dist 在假 /api、无头 Chrome 1024×673@1.25 下截 c2 → c1 → c2 三个画面，default 主题亮 / 暗各一组，像素 diff 全部 0（背景天空 canvas 两边都先隐藏掉，它随时间动）。
 
 ## Unreleased — render_ui 渲染面空闲预载（分支 dev4/render-ui-idle-preload，基于 #414）
@@ -394,7 +394,7 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 问题：登录后第一次进来卡在「正在加载 ChisaBot…」约 2 秒。审计基线（生产冷缓存）：LCP 6540ms、最长长任务 2193ms、主包 3.0 MB（gzip 约 950 KB）。
 
 做法（设计见 DESIGN.md §41.5）：
-1. `CHISABOT_BUNDLE_REPORT=1` 的构建报告找出大块和「为什么被带上」：入口一个 3 MB 的块里装着 CopilotKit、Markdown、shiki、lucide、所有外壳。
+1. `CHISABOT_BUNDLE_REPORT=1` 的构建报告找出大块和「为什么被带上」：入口一个 3 MB 的块里装着 旧聊天前端框架、Markdown、shiki、lucide、所有外壳。
 2. 固定 vendor 块 + `shell` / `route-shell` 手动块；修掉过程中踩到的块循环（React 必须在叶子块）、CSS 把整块 JS 拖上入口、katex 被 micromark 数学扩展静态带上、web-inspector 被并进 vendor-copilot。
 3. `lazyPart` / `AfterIdle`：外壳各部分、CopilotProvider（只在聊天区挂）、电脑面板、实时面板卡片、render_ui 渲染、Streamdown、转录缓存都按需。
 4. `route-preload` 插件：按路径 modulepreload 首屏块。
@@ -402,22 +402,22 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 
 测量方法：Jun 的电脑上，main 和分支分别 `bun run build`，本地 gzip 静态服务器（/api、/auth 用固定假数据），playwright-core 驱动独立 headless Chrome，每轮全新 `%TEMP%\dev4-chrome-*` profile、CDP `Network.setCacheDisabled`、40ms RTT / 20 Mbps；ready = 启动骨架消失且 #root 有内容；LCP 取 PerformanceObserver 最后一个 largest-contentful-paint；长任务取 ready 后再等 4 秒内的 longtask 最大值；首屏 JS = ready 之前开始请求的 .js 资源（gzip 为传输大小，raw 为解压后大小）。
 
-| 页面 | 指标 | main 1 / 2 / 3（中位） | 分支 1 / 2 / 3（中位） |
-|---|---|---|---|
-| /settings | LCP ms | 3912 / 3832 / 3716（3832） | 1408 / 1500 / 1712（1500） |
-| /settings | 最长长任务 ms | 1318 / 1432 / 1412（1412） | 53 / 54 / 67（54） |
-| /settings | 首屏 JS gzip | 1,162,721 ×3 | 520,204 ×3 |
-| / | LCP ms | 4088 / 4860 / 4448（4448） | 2172 / 2308 / 2236（2236） |
-| / | 最长长任务 ms | 1319 / 1667 / 1764（1667） | 73 / 84 / 78（78） |
-| / | 首屏 JS gzip | 1,128,461 ×3 | 1,140,504 / 1,136,460 / 1,136,460（1,136,460） |
-| — | 入口块 raw / gzip | 3,068,525 / 957,529 | 421,343 / 137,944 |
+| 页面      | 指标              | main 1 / 2 / 3（中位）     | 分支 1 / 2 / 3（中位）                         |
+| --------- | ----------------- | -------------------------- | ---------------------------------------------- |
+| /settings | LCP ms            | 3912 / 3832 / 3716（3832） | 1408 / 1500 / 1712（1500）                     |
+| /settings | 最长长任务 ms     | 1318 / 1432 / 1412（1412） | 53 / 54 / 67（54）                             |
+| /settings | 首屏 JS gzip      | 1,162,721 ×3               | 520,204 ×3                                     |
+| /         | LCP ms            | 4088 / 4860 / 4448（4448） | 2172 / 2308 / 2236（2236）                     |
+| /         | 最长长任务 ms     | 1319 / 1667 / 1764（1667） | 73 / 84 / 78（78）                             |
+| /         | 首屏 JS gzip      | 1,128,461 ×3               | 1,140,504 / 1,136,460 / 1,136,460（1,136,460） |
+| —         | 入口块 raw / gzip | 3,068,525 / 957,529        | 421,343 / 137,944                              |
 
-没达到的：聊天首页首屏 JS 没减半（持平）。聊天页本身需要 CopilotKit（vendor-copilot gzip 约 168 KB）和 Markdown（vendor-markdown 约 189 KB——CopilotKit react-core 静态引用它自带的 streamdown 1.6.11），加上入口和 React 已经约 600 KB；再往下要动 CopilotKit 本身，不在这次范围。
+没达到的：聊天首页首屏 JS 没减半（持平）。聊天页本身需要 旧聊天前端框架（vendor-copilot gzip 约 168 KB）和 Markdown（vendor-markdown 约 189 KB——旧聊天前端框架 react-core 静态引用它自带的 streamdown 1.6.11），加上入口和 React 已经约 600 KB；再往下要动 旧聊天前端框架 本身，不在这次范围。
 
 审查跟进（#414 有条件通过后追加的提交）：
 - 块循环：`vendor-mcp` 里有一句 Rollup 为执行顺序加的 `import "./vendor-copilot"`，而 copilot 又引用 mcp —— 把 MCP SDK 并进 `vendor-copilot`。`vendor-markdown` 和 streamdown 的 Mermaid 包装块互相引用 —— 实际是 Markdown 和按需公式块共用的几个小模块（`vfile-location`、`extend`、公式语法文件）被放进了共享小块；把它们和包装一起点名进 `vendor-markdown`（公式的 `html.js` 仍不点名，KaTeX 仍按需）。
 - 新增 `app/scripts/chunk-graph.ts`：从产物还原块图，查环（Tarjan）和各组首屏闭包；构建插件 `chunkGuard` 出问题就失败，`app/tests/chunk-graph.test.ts` 有合成图单测，并在有 `app/dist` 时检查真实产物。
-- 管理页首屏：`_authed/admin/components/*` 原来被归进 `route-admin`，它静态引入 CopilotProvider，把 CopilotKit + Markdown 带上了整个管理区首屏。现在这两个路由各自成块，Provider 用 `LazyCopilotProvider`。
+- 管理页首屏：`_authed/admin/components/*` 原来被归进 `route-admin`，它静态引入 CopilotProvider，把 旧聊天前端框架 + Markdown 带上了整个管理区首屏。现在这两个路由各自成块，Provider 用 `LazyCopilotProvider`。
 - render_ui：`RenderUiTool`（聊天 Provider 里注册）挂上就 `JsonRenderSurface.preload()`，旧对话的卡片不再先显示骨架。没走 modulepreload（那样会让所有聊天首屏都多下 json-render 的依赖）。
 - 产物（gzip，入口闭包 + 该组预载闭包）：管理 1,030,798 → 506,073；设置 516,706 → 518,270；聊天 1,098,781 → 1,100,544（MCP 并进来后 vendor-copilot 167,483 → 182,102，聊天首屏本来就带这两块，总量持平）。
 - 可选项「未登录时 / 不预取聊天块」没做：客户端没有现成的、内联脚本能读的登录标记，判断不了；要做得先加一个标记，留给后续。
@@ -472,7 +472,7 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 **改法**：
 - `server/src/web/tools.ts`：认出 DuckDuckGo 的 anomaly 反爬页（`isDuckDuckGoChallenge`），记一行 `web-search-engine-miss`（reason=challenge），之后 10 分钟内不再请求 DuckDuckGo，直接走 Bing，省掉每次白等的一个来回。DuckDuckGo 不可用且 Bing 没有相关结果时，工具结果直接说「当前搜索源不可用」，让模型这一轮别再搜（读确定的网址，或说明没有联网核实）；DuckDuckGo 正常回页面只是没结果，仍按「没搜到」处理。Bing 结果过相关性（`relevantHits`，规则见下面「返修」），全都不相关就当没搜到；只过滤 Bing，DuckDuckGo 的结果原样保留。`unwrapBingUrl` 把 `ck/a` 跳转还原成真实网址。没搜到的提示（`NO_SEARCH_HITS`）改成最多再换一次关键词，之后读确定的网址或说明没有联网核实。web_search 描述加一句「多条新闻 / 推荐尽量来自不同网站，每条注明来源网站」。DuckDuckGo 失败时日志记一行（每 10 分钟最多一行，不含查询和网址）。
 - `app/src/lib/copilot/json-render/registry.tsx`：`List` 和 `Card` 先用 `iconFor` 判断图标名认不认得，认不出就不画图标位。样式未改。
-**返修（小爱审查 aa92289b，2026-10-29）**：
+  **返修（小爱审查 aa92289b，2026-10-29）**：
 - 相关性对中文太严：原来要求至少命中两个关键词（中文按相邻两字），「科技新闻 今天」会丢掉「IT之家 科技资讯」（只命中「科技」）。改成：查询里任一按空格分开的完整词（`queryWords`，去掉 site: 语法、泛词、年份日期和纯数字）出现在结果里就保留；都没出现时按关键词兜底，命中一个就保留；英文 / 数字按整词匹配（「AI」不算命中 `mail.qq.com`）；留下的按命中多少排序（完整词权重 10，关键词 1），同分保持原顺序。测试用真实查询：「科技新闻 今天」「漫步者 W820NB 价格」「上海 咖啡店」「小米 手环」，以及 hark 对比 #3 #5 #8 #11 线上真实发出的查询，相关的保留、Plus500 / QQ 邮箱 / LEO 词典 / 维基这类无关页丢掉。代价：「上海 咖啡店」这类查询里只命中「上海」的泛泛页面（如上海市百科）也会留下，只是排在后面。
 - 过滤后为空不再报「搜索源不可用」：`sourceDown` 只在 DuckDuckGo 失败、并且 Bing 也失败或一条结果都没解析出来时为真；Bing 给了结果但全被过滤掉，按「没搜到相关结果」（`NO_SEARCH_HITS`）处理。
 - 「最多再换一次词」以前只在提示词里：现在在 web_search 里按轮计数（键是这一轮的取消信号，每轮一个；没有就用确认上下文里的这一轮），一轮已有 2 次没搜到相关结果后，下一次直接返回「本轮不再搜索」（`SEARCH_TURN_STOPPED`），不联网；某次返回了「搜索源不可用」后，本轮后面的搜索也直接返回「本轮不再搜索」（`SEARCH_TURN_STOPPED_DOWN`）。有结果的搜索不计数。
@@ -481,6 +481,7 @@ main (3 run, cpu 4x) → PR (3 run, cpu 4x); medians; ✅/⚠️ = ≥10% better
 - 没改的：SSRF 名单（安全边界）、PROVENANCE_GUIDANCE（安全相关提示词，测试按 sha256 钉住）。真正让结果变好的是一个线上能用的搜索源：代码里目前不支持任何搜索 API（没有 Brave / Tavily / SearXNG 之类的配置），需要另行决定是否接入；这次的改动保证搜不到时不拿无关页面当结果、不再连搜。
 
 ## 流式回复时打字不再乱序、不再残留（分支 dev2/stream-composer，随 0.1.111 发布）
+
 ## Unreleased — 流式输出与输入框空闲时的卡顿（分支 dev2/stream-perf，叠在 dev2/stream-composer / #408 上）
 
 来源：性能审查 01-chat-streaming 第 2–6 项，加上审查 04 的一项：4x 降速下输入框空闲（没有流式输出）时，Shift+Enter 换行要 190–230ms，其中有一个 182ms 的长任务。主题、玻璃、模糊、天空相关的样式都没动。
@@ -530,21 +531,21 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 输入框空闲，4x，5 轮（审查 04 的方法：打一句英文、6 次「字 + Shift+Enter」）：
 
-| | 打字 INP 最大 / 中位 | 换行 INP 最大 / 中位 | 最长长任务 |
-| --- | --- | --- | --- |
-| main | 136 (2/134) / 120 | 176 (1/159) / 144 | 154 |
-| 修后 | 80 (8/72) / 64 | 96 (0/96) / 88 | 65 |
+|      | 打字 INP 最大 / 中位 | 换行 INP 最大 / 中位 | 最长长任务 |
+| ---- | -------------------- | -------------------- | ---------- |
+| main | 136 (2/134) / 120    | 176 (1/159) / 144    | 154        |
+| 修后 | 80 (8/72) / 64       | 96 (0/96) / 88       | 65         |
 
 流式（x1：3 条文档卡长回复；x1L：10 条普通回复；x4：4x 降速、1 条文档卡）：
 
-| 场景 | | 长任务数 | TBT | 最长长任务 | 发送 INP | 流式中打字 INP | 打字正确 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| x1 | main | 1 | 19 | 69 | 80 (1/77) | 40 (25/15) | 3/3 |
-| x1 | 修后 | 1 | 2 | 52 | 72 (1/70) | 24 (9/15) | 3/3 |
-| x1L | main | 1 | 7 | 57 | 72 (1/70) | 40 (31/9) | 10/10 |
-| x1L | 修后 | 1 | 9 | 59 | 72 (1/69) | 24 (12/12) | 10/10 |
-| x4 | main | 60 | 1655 | 427 | 304 (7/286) | 176 (153/20) | 1/6 |
-| x4 | 修后 | 27 | 786 | 378 | 200 (8/183) | 120 (1/96) | 6/6 |
+| 场景 |      | 长任务数 | TBT  | 最长长任务 | 发送 INP    | 流式中打字 INP | 打字正确 |
+| ---- | ---- | -------- | ---- | ---------- | ----------- | -------------- | -------- |
+| x1   | main | 1        | 19   | 69         | 80 (1/77)   | 40 (25/15)     | 3/3      |
+| x1   | 修后 | 1        | 2    | 52         | 72 (1/70)   | 24 (9/15)      | 3/3      |
+| x1L  | main | 1        | 7    | 57         | 72 (1/70)   | 40 (31/9)      | 10/10    |
+| x1L  | 修后 | 1        | 9    | 59         | 72 (1/69)   | 24 (12/12)     | 10/10    |
+| x4   | main | 60       | 1655 | 427        | 304 (7/286) | 176 (153/20)   | 1/6      |
+| x4   | 修后 | 27       | 786  | 378        | 200 (8/183) | 120 (1/96)     | 6/6      |
 
 点击（1x，x1 里测）：新话题 176 → 88，机器人菜单 136 → 72；x1L 里新话题 152 → 120。4x（单独脚本，3 轮最大 / 中位）：菜单 456/336 → 368/248，新话题 688/616 → 496/480，发送 216/136 → 208/120。
 
@@ -580,10 +581,10 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 4x 降速，文档卡流式时连打 6 轮 `abcdefghij` 再退格 10 次：
 
-| | 打字正确 | 典型错误 |
-| --- | --- | --- |
-| main | 1/6 | `bcdefghija`、`abcdefgijh`，退格后残留 1 个字 |
-| 修后 | 6/6 | 无 |
+|      | 打字正确 | 典型错误                                      |
+| ---- | -------- | --------------------------------------------- |
+| main | 1/6      | `bcdefghija`、`abcdefgijh`，退格后残留 1 个字 |
+| 修后 | 6/6      | 无                                            |
 
 这一项只修正确性，不改性能；流式时的长任务和 INP 在 dev2/stream-perf 里处理。
 
@@ -596,18 +597,17 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 2. 发送后立刻有状态（前端）：新建页把 `busy={sent !== null}` 交给 ConversationView；新对话用 `seedSending`（seed 发出去之前一直为真）并进 `chatBusy`。原因：ChatTranscript 只在「忙之后列表变了」才算这一轮在跑，第一帧不忙就会把带着 seed 的列表记成「已答完」。用的是现有的「思考中」，样式一个没改。
 3. 先一句再动手、按需搜索（提示词，`WORK_STYLE_GUIDANCE`）：动手前先写一句 15 字以内的话，紧接着调工具，不复述问题、不列计划；能直接答的（常识、解释、计算、写作、翻译、出主意、闲聊）不调工具，只有取决于最新或具体事实的才搜。没改 web/tools.ts，免得和 #407 冲突。
 4. 研究技能按需预置：`looksLikeResearch` 认出新闻、价格、推荐、对比、天气、汇率之类的问题，只有这时、而且共享技能 research-public-web 对这个人可见，才把它的方法附在技能目录后（约 250 字），省掉一轮 skill_load。普通对话一个字不加；宁可漏判，所以不收「今天」「现在」「比较」这类日常词。个人记忆加载器多收一个参数（这一轮用户最后说的话）。另外，个人记忆、技能目录、GitHub、文件、待确认这几段原来一段等一段，现在用 Promise.all 同时读，拼接顺序不变。
-5. 服务器分段计时：`agents/run-timing.ts`。`/api/copilotkit/*` 进门时用 AsyncLocalStorage 记下时刻，Hermes 每轮结束打一行 `{"type":"run-timing",...}`，字段有 queueMs（进门到 agent.run，含会话守卫、建线程、个人记忆）、memoryMs、assembleMs、prepareMs、remoteStartMs、firstTokenMs、firstToolMs、firstTextMs、totalMs、toolCalls，只有毫秒数和计数，不含内容。
+5. 服务器分段计时：`agents/run-timing.ts`。`/api/conversations（原旧兼容路由）/*` 进门时用 AsyncLocalStorage 记下时刻，Hermes 每轮结束打一行 `{"type":"run-timing",...}`，字段有 queueMs（进门到 agent.run，含会话守卫、建线程、个人记忆）、memoryMs、assembleMs、prepareMs、remoteStartMs、firstTokenMs、firstToolMs、firstTextMs、totalMs、toolCalls，只有毫秒数和计数，不含内容。
 6. 可插拔搜索 provider 没动。
 
-**测量（页面内 SSE，cbtest，线上 ayase.cn:8443，2026-10-29 17:17–17:44 北京时间，三类各 5 次）**：
+**测量（页面内 SSE，cbtest，私人公网 HTTPS 入口（地址不入公开仓库），2026-10-29 17:17–17:44 北京时间，三类各 5 次）**：
 
-| 中位数 | 新话题 前→后 | 已有话题 前→后 | 搜索类 前→后 |
-|---|---|---|---|
-| 「思考中」出现 | 1.80 s → 0.044 s | 0.046 → 0.046 s | 1.78 s → 0.044 s |
-| `/run` 发出 | 2.17 → 0.84 s | 0.37 → 0.40 s | 2.15 → 0.84 s |
-| 第一个字（SSE） | 4.79 → 2.96 s（2.44–4.53） | 3.08 → 3.47 s（模型波动） | 见下 |
-| 第一次工具调用 | — | — | 5.76 → 3.36 s |
-
+| 中位数          | 新话题 前→后               | 已有话题 前→后            | 搜索类 前→后     |
+| --------------- | -------------------------- | ------------------------- | ---------------- |
+| 「思考中」出现  | 1.80 s → 0.044 s           | 0.046 → 0.046 s           | 1.78 s → 0.044 s |
+| `/run` 发出     | 2.17 → 0.84 s              | 0.37 → 0.40 s             | 2.15 → 0.84 s    |
+| 第一个字（SSE） | 4.79 → 2.96 s（2.44–4.53） | 3.08 → 3.47 s（模型波动） | 见下             |
+| 第一次工具调用  | —                          | —                         | 5.76 → 3.36 s    |
 - 「后」是用 Playwright 的 route 把线上页面的前端换成这个分支本地构建的 `app/dist`，接口仍然走线上服务器。所以「后」**只包含前端的改动（1、2）**；服务器的改动（3、4、5 和记忆并行读）没部署，不在这组数字里，只有单元测试覆盖。合并部署后可以看 `run-timing` 日志和再跑一次同样的探针。
 - 新话题首字中位数降到 3 秒以下，但单次仍有 4.5 秒的：`/run` 到第一个字这段（中位 2.1–2.6 秒）基本是远端 Hermes 和模型的时间，前端已经没剩多少可省。
 - 搜索类的「第一个字」前后都是几十秒（2.6–122 秒），因为线上提示词下模型在调工具前不说话，第一个字要等全部搜完。这正是第 3 条要改的，但这次测不到。
@@ -652,14 +652,14 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 - typecheck、build、test:app 全过；Biome 全仓 1082 errors / 800 warnings / 143 infos，与 main 相同，无新增。
 - 实机（box 上独立 headless Chrome、临时 profile、本地生产构建、API 打桩）：打开 `/settings/connected-accounts#find=connected-accounts.morning-brief`（搜索「晨报」回车后就是这个地址）。
 
-| 改前：停在页面顶部 | 改后：滚到「日程、收件箱、通知推送与每日晨报」并高亮 |
-|---|---|
+| 改前：停在页面顶部                                                                                                               | 改后：滚到「日程、收件箱、通知推送与每日晨报」并高亮                                                                            |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/before-morning-brief.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-morning-brief.png) |
 
 其它抽查（改前都定位不到）：已保存的登录、主题配色、一键整理记忆。
 
-| 已保存的登录 | 主题配色 | 一键整理记忆 |
-|---|---|---|
+| 已保存的登录                                                                                                                   | 主题配色                                                                                                                  | 一键整理记忆                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-saved-logins.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-palette.png) | ![](https://raw.githubusercontent.com/ChisaAlter/ChisaBot/dev2/settings-find/docs/images/settings-find/after-memory-dream.png) |
 
 ## Unreleased — 侧栏小字 / 字母头像对比度，强制颜色与增加对比度（分支 dev5/a11y-contrast）
@@ -686,14 +686,14 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 实测数据：本地服务、单用户模式、headless Chrome 1440×900。对比度是把文字设成透明后，取元素背景像素的中位数，和文字颜色计算；范围是 6 个主题色里的最小到最大。
 
-| 元素 | 方案 | 改动前 | 改动后 |
-|---|---|---|---|
-| 主机器人标题 | 浅色 | 2.02–2.52 | 7.35–9.14 |
+| 元素         | 方案 | 改动前     | 改动后                 |
+| ------------ | ---- | ---------- | ---------------------- |
+| 主机器人标题 | 浅色 | 2.02–2.52  | 7.35–9.14              |
 | 主机器人标题 | 深色 | 9.66–10.57 | 9.53–10.49（颜色未变） |
-| 侧栏副标题 | 浅色 | 6.65–7.15 | 9.65–10.36 |
-| 侧栏副标题 | 深色 | 4.02–4.54 | 5.45–6.20 |
-| 字母头像 | 浅色 | 1.62 | 8.73–8.75 |
-| 字母头像 | 深色 | 1.65 | 8.58 |
+| 侧栏副标题   | 浅色 | 6.65–7.15  | 9.65–10.36             |
+| 侧栏副标题   | 深色 | 4.02–4.54  | 5.45–6.20              |
+| 字母头像     | 浅色 | 1.62       | 8.73–8.75              |
+| 字母头像     | 深色 | 1.65       | 8.58                   |
 
 模糊层数：数的是 computed `backdrop-filter` 不是 none 的可见元素。
 - 强制颜色下，`/settings` 从 17 降到 0，`/bots` 从 4 降到 0；增加对比度下也一样，浅色、深色都是。
@@ -707,9 +707,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 ## Unreleased — 输入框与附件（审查模块 4，分支 dev3/composer-audit）
 
 ### 动机
+
 审查报告 `04-composer.md`：手机上回车直接发送、软键盘打不出第二行（M4-1）；慢网上传 20 秒只有灰块、发送键变灰也没说为什么（M4-2）；上传失败文件直接消失、不能重试，断网显示英文「Failed to fetch」，500 时文件名出现两次（M4-3、M4-7）；拖文件过来没有高亮（M4-6）；× 和手机工具栏按钮太小（M4-9）；「队列消息」「驳回此拒绝」「再次记录」等文案和语音功能五种叫法（M4-10）；长粘贴不会折成附件（M4-11，对齐 Hark）。
 
 ### 改动
+
 1. **触屏回车换行**：`useCoarsePointer()`（`pointer: coarse`）为真时给 PromptArea 传 `submitOnEnter={false}`，只有发送按钮能发；编辑区的 `enterkeyhint` 设成 `enter`（鼠标设备是 `send`）。PromptArea 不转发这个属性，所以在 effect 里直接写到 contenteditable 上。
 2. **真实上传进度**：`attachments.ts` 的上传从 `fetch` 换成 XHR（`postWithProgress`），`xhr.upload.onprogress` 写进 `upload-progress.ts` 的外部 store（按附件自己的本地 id 记，只在整数百分比变化时通知）。只有图块上的百分比和发送键旁的「上传中 63%」订阅它，进度跳动不会让整个 Composer 重渲染。
 3. **上传失败保留卡片**：SDK 的 `onUploadFailed` 里 `reason === "upload-failed"` 的，不再进拒绝列表，而是作为失败卡片留在附件栏，带「重试」（同一个 `File` 重新走 `stageFiles`）和 ×。断网（XHR `onerror` 且 `navigator.onLine === false`）显示「网络已断开，没能上传。联网后点「重试」。」，其他网络错误「网络出错，没能上传。请点「重试」。」。500 没有服务端原因时是「上传失败，请重试。」，不再带文件名。
@@ -720,6 +722,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 8. **上传中删附件会取消请求**：`postWithProgress` 接 `AbortSignal`，请求体还没发完时 × 掉卡片就 `xhr.abort()`；已经发完（`upload.onprogress` 到 100% 或 `upload.onload`）就让它落地，由对账逻辑把行还回去。每个上传的 AbortController、进度、粘贴预览都按附件的本地 id 记（`upload-identity.ts`：`stageFiles` 交给 SDK 前给每个 `File` 发一个 id；SDK 的占位卡只带文件名和大小，所以只在「占位卡对上哪个上传」这一步按文件名+大小、先进先出匹配）。两个同名同大小的文件一起上传时（SDK 默认一次只传一个，第二个在排队），删排队的第二个不会再取消正在传的第一个，第一个失败也照样显示；被删的排队文件不会再发出请求。删第一个也只取消第一个。上传成功或失败后都清掉对应记录。
 
 ### 测试
+
 - 新增 `app/tests/composer-audit-m4.test.tsx`（13 个用例，在 main 上全部失败）：触屏回车不发送 + enterkeyhint、鼠标回车仍发送；进度回调 0.5→1、上传中显示「上传中 50%」且发送键禁用；500 不带文件名、断网中文提示；失败卡片 + 重试成功；拒绝原因不含文件名；拖放高亮且移到子元素不闪；× 有 touch-target、样式表有 44px 规则；文案；长粘贴变卡片、上传内容是原文、能预览，短粘贴不变。
 - 新增 `app/tests/fetch-backed-xhr.ts`：上传改走 XHR 后，原来打桩 `global.fetch` 的 10 个附件测试文件改为先装这个转发到 `fetch` 的 XHR 替身，测试内容没改。改了文案的旧断言同步更新。
 - 不在范围：Shift+Enter 4× 降速下的重渲染耗时（M4-5，另有人做）、PDF 支持（M4-8）。
@@ -736,14 +739,14 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 **证据**（无头 Chromium，box 上，每段 2–3 s；`document.getAnimations()` 里 target 在 `.sa` 里且 `playState === "running"` 的个数）：
 
-| 场景 | 阶段 | 改前：头像动画 / 变形帧 / rAF | 改后：头像动画 / 变形帧 / rAF |
-| --- | --- | --- | --- |
-| 左栏 24 个（3 干活 + 3 在想 + 1 选中） | 性能模式关 | 0 / 120 / 120 | 0 / 120 / 120 |
-| | 性能模式开 | **24** / 0 / 0 | **0 / 0 / 0** |
-| | 开着时再换状态 | **12** / 0 / 0 | **0 / 0 / 0** |
-| | 再关 | 0 / 120 / 120 | 0 / 120 / 120 |
-| 四种状态各一个 120px | 性能模式开 | **8** / 0 / 0 | **0 / 0 / 0** |
-| | 再关 | 0 / 120 / 120 | 0 / 120 / 120 |
+| 场景                                   | 阶段           | 改前：头像动画 / 变形帧 / rAF | 改后：头像动画 / 变形帧 / rAF |
+| -------------------------------------- | -------------- | ----------------------------- | ----------------------------- |
+| 左栏 24 个（3 干活 + 3 在想 + 1 选中） | 性能模式关     | 0 / 120 / 120                 | 0 / 120 / 120                 |
+|                                        | 性能模式开     | **24** / 0 / 0                | **0 / 0 / 0**                 |
+|                                        | 开着时再换状态 | **12** / 0 / 0                | **0 / 0 / 0**                 |
+|                                        | 再关           | 0 / 120 / 120                 | 0 / 120 / 120                 |
+| 四种状态各一个 120px                   | 性能模式开     | **8** / 0 / 0                 | **0 / 0 / 0**                 |
+|                                        | 再关           | 0 / 120 / 120                 | 0 / 120 / 120                 |
 
 关着时 0 个 CSS 动画是因为变形引擎在管（`data-morph="on"` 时 CSS 动画让位），帧都在 rAF 里；开着时改后 CSS 和 JS 都是 0，关掉恢复原样。
 
@@ -820,15 +823,15 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 1. **尖括号**：Streamdown 把 `Vec<String>` 里的 `<String>` 当未知 HTML 标签，harden 后整段文字消失。`SmoothStreamdown` 现在先过 `escapeUnknownTags`：标签名不是全小写的标准 HTML 元素就把 `<` 转成 `&lt;`。另外，紧跟在标识符字符（`[A-Za-z0-9_]`）后面的开标签一律转义：真 HTML 前面总有空格或标点，而 `Vec<option>`、`List<object>` 不转义会丢字，`Result<a>` 会变成链接吞掉后文，`Vec<i>` 会让后文全斜体。例外是 `br`、`wbr`、`sub`、`sup`：表格里的 `a<br>b`、`H<sub>2</sub>O`、`10<sup>3</sup>` 很常见，也没人拿它们当泛型名。这条规则只管开标签，闭合标签不受影响；`[A-Za-z0-9_]` 不含中文，所以 `按<kbd>Ctrl</kbd>` 这种中文后直接跟的真 HTML 照旧。围栏代码块、缩进代码块（前一行是空行、比所在列表项正文多缩进 4 格；制表符按 4 列算）和行内代码跳过。`<https://…>`、`<a@b.co>` 自动链接不符合标签形式，不受影响。标准元素原样交给 Streamdown，所以 `<script>`、`onerror` 等清洗规则不变（测试里经真实 Streamdown 验证）。
 2. **mermaid-lite**：原来按行用正则切 `-->`，`A --> B --> C`、`-->|标签|`、`A & B` 都会把剩下的整串当成节点名，subgraph 的 `end` 也变成节点。改成逐字符扫描：节点 id + 形状（`[]` `()` `([])` `[[]]` `[()]` `(())` `{}` `{{}}` `>]` `[//]`）、`&` 组、各种连线（含 `|标签|` 和 `-- 标签 -->` 写法），链式按笛卡尔积展开成边；`;` 分句。subgraph 用分带布局：每个顶层 subgraph 一条带，画成带标题的虚线框；嵌套 subgraph 合并到最外层那条带。分层用最长路径（忽略回边，有环也不会无限加深），层内按父节点平均位置排一遍减少交叉。节点文字按宽度折行（中文按字、英文按词），节点框按折行后的尺寸画；层间距按相邻层连线标签的宽度撑开。另外支持 `stateDiagram(-v2)`。
-   任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``` 没到时不画，避免半张图。超过 `MAX_GRAPH_NODES = 500` 个节点的图，以及解析、布局中抛出的任何异常，也都返回空串回退成代码。状态图的转移原来用 `/^(.+?)\s*-->\s*(.+?)(?:\s*:\s*(.*))?$/` 整句匹配，对“大量空格但没有 `-->`”的输入是二次复杂度（10 万个空格约 2.9 秒）；现在先 `indexOf("-->")` 切出两侧，再按第一个 `:` 切标签，同样的输入在 300 毫秒以内（测试里实际约 10 毫秒）。回退时代码按 ```text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
+   任何一句看不懂、括号 / 引号没配对、subgraph 没 `end` 都返回空串，卡片显示原文代码；只有 `flowchart` / `graph` / `stateDiagram` / `sequenceDiagram` / `pie` 会画，其它类型直接回退。流式中结尾的 ``没到时不画，避免半张图。超过 `MAX_GRAPH_NODES = 500` 个节点的图，以及解析、布局中抛出的任何异常，也都返回空串回退成代码。状态图的转移原来用 `/^(.+?)\s*-->\s*(.+?)(?:\s*:\s*(.*))?$/` 整句匹配，对“大量空格但没有 `-->`”的输入是二次复杂度（10 万个空格约 2.9 秒）；现在先 `indexOf("-->")` 切出两侧，再按第一个 `:` 切标签，同样的输入在 300 毫秒以内（测试里实际约 10 毫秒）。回退时代码按``text 交给 Streamdown，因为 ```mermaid 会走 Streamdown 自带的 Mermaid 组件（另一套库，认不出的图是一块空白）。
 3. **手机卡片头**：按钮组原来只在 `:hover` / `:focus-within` 时 `opacity: 1`，触屏上一直是 0 且 `pointer-events: none`，全屏按钮点不到。`@media (hover: none)` 下按钮组改成常显、跟在标题后面换行。全屏弹窗里的图包了一层 `DiagramZoom`：按钮 50%–800% 缩放、Ctrl / ⌘ + 滚轮（原生非 passive 监听），放大后框内滚动，缩放时保持中心。按钮都用设计系统的 `Button`，没有新增 backdrop-filter。
 
 截图（独立 headless Chrome + 临时 profile，桌面 1100×900 和手机 390×844 触屏，`docs/images/render-must-fix/`）：
 
-| 改前 | 改后 |
-| --- | --- |
+| 改前                                                                                                                 | 改后                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | ![改前：泛型文字消失，流程图节点名里混着 `-->`、`\|是\|`，gantt 画成乱图](images/render-must-fix/before-desktop.png) | ![改后：泛型原样显示，连线标签、`&`、subgraph 正确，长标签折行](images/render-must-fix/after-desktop.png) |
-| ![改前手机：卡片头没有按钮](images/render-must-fix/before-mobile-card.png) | ![改后手机：预览 / 源码、追问、复制、全屏常显](images/render-must-fix/after-mobile-card.png) |
+| ![改前手机：卡片头没有按钮](images/render-must-fix/before-mobile-card.png)                                           | ![改后手机：预览 / 源码、追问、复制、全屏常显](images/render-must-fix/after-mobile-card.png)              |
 
 改后手机全屏放大到 225%（缩放时保持视野中心）：![](images/render-must-fix/after-mobile-fullscreen-zoomed.png)　认不出的 gantt 和流式中没写完的图显示原文代码：![](images/render-must-fix/after-fallback-code.png)
 
@@ -838,7 +841,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 - 必修 1：`app/tests/escape-unknown-tags.test.tsx`（9 个，经真实 Streamdown 渲染：泛型不丢、和 HTML 同名的小写泛型不丢字 / 不变链接 / 不变斜体、代码不动、缩进代码块（含列表里的、制表符）不动、段落续行和列表第二段照常转义、自动链接不动、标准 HTML 照旧、危险 HTML 仍被清洗）。把实现换回改前版本，新增的两个用例失败。
 - 必修 2：`app/tests/mermaid-lite.test.ts`（29 个：连线标签、链、`&`、分号、各种连线、subgraph 框包住成员、形状、带 `-` / `.` 的 id、长标签折行不溢出、连线标签不压节点、`<br>`、环、500 节点性能和超过上限回退、10 万空格长输入不卡、12 种认不出 / 没写完的图返回空串、状态图、流式未闭合标记）。
 - 必修 3：`app/tests/chat-card-touch.test.tsx`（8 个：`@media (hover: none)` 里按钮组 `opacity: 1` / `pointer-events: auto` / `position: static`，且排在默认隐藏规则之后、之后没有规则再藏起来、没有新增 backdrop-filter；卡片头里有全屏按钮；别的测试留下没有 `location` 的 `window` 时卡片照样渲染；`DiagramZoom` 的缩放条、画布宽度、缩放范围）。
-返修（小爱审 d7697b34 后）：
+  返修（小爱审 d7697b34 后）：
 - 全量 `test:app` 里 `chat-card-touch.test.tsx` 失败、单跑通过：前面的测试文件留下一个没有 `location` 的 `window`，`SmoothStreamdown` 读 `window.location.origin` 抛错。改成 `window.location?.origin ?? ""`，并加了对应用例（去掉修复时这个用例失败）。
 - 上面第 1、2 项里的同名小写泛型、缩进代码块、状态转移二次复杂度、节点上限、意外异常回退。
 - Biome：`escape-unknown-tags.ts`、`mermaid-lite.ts` 饼图解析里的非空断言改成 `?? ""` 和显式判断，删掉 `bot-bubbles.tsx` 弹窗分支里没用上的 `biome-ignore`。
@@ -938,7 +941,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 1. **藏起来就回收太激进。** 返修把草稿对话的保活时长一律设成 0，于是在草稿页选好图、去设置看一眼再回来，页面已经卸载、草稿已经删了，图没了（字放回了新话题页，但这时用户不在那里）。真正需要立刻回收的只有「去新话题页」这一种：那边要重新开始，留着一段空草稿没有意义。
 2. **回收后用返回键回到它是一张错误卡。** 草稿删了以后浏览器历史里还留着 `/channel/<id>`，返回键回去拿到 404，显示「对话不存在」。`client()` 抛出的错误又不带状态码，页面分不出 404 和别的错误。
-3. **按表探测运行模式不可靠。** `drafts.ts` 用 `to_regclass` 看库里有没有 `openbot_local_threads` / `openbot_local_runs` 来决定能不能删。表在不等于消息存在本库：切过运行模式的库表还在，但新消息在 Intelligence 后端，这时判断「线程是空的」是错的。
+3. **按表探测运行模式不可靠。** `drafts.ts` 用 `to_regclass` 看库里有没有 `chisabot_local_threads（原早期线程表）` / `chisabot_local_runs（原早期运行表）` 来决定能不能删。表在不等于消息存在本库：切过运行模式的库表还在，但新消息在 Intelligence 后端，这时判断「线程是空的」是错的。
 4. **跳转那一下里加的文件会丢。** 草稿建好、`stashDraftFiles` 已经取走队列，到地址真正换过去之间（路由在加载），新话题页的输入框还在，再选的文件进了 `queued` 但没人再取。
 
 ### 改动
@@ -953,7 +956,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 返修：
 
-- **带条件删除**（`server/src/channels/drafts.ts` 新，`routes.ts`）：`DELETE /api/channels/:id?draft=1` 只在这段对话**仍是空草稿**时软删除：description 是草稿标记、`last_message_at` 为空、未删除，并且它的线程（`intelligence_channel_mappings.thread_id` → `openbot_local_threads`）里没有消息、也没有跑过一轮（`openbot_local_runs`）。否则回 409、什么都不动。这种删除不写 `channel.deleted` 审计、不发通知（草稿从没出现在任何列表里）。非成员照旧 404。客户端 `draft-channel.ts` 的删除改成带 `?draft=1`，不管结果。
+- **带条件删除**（`server/src/channels/drafts.ts` 新，`routes.ts`）：`DELETE /api/channels/:id?draft=1` 只在这段对话**仍是空草稿**时软删除：description 是草稿标记、`last_message_at` 为空、未删除，并且它的线程（`intelligence_channel_mappings.thread_id` → `chisabot_local_threads（原早期线程表）`）里没有消息、也没有跑过一轮（`chisabot_local_runs（原早期运行表）`）。否则回 409、什么都不动。这种删除不写 `channel.deleted` 审计、不发通知（草稿从没出现在任何列表里）。非成员照旧 404。客户端 `draft-channel.ts` 的删除改成带 `?draft=1`，不管结果。
 - **24 小时清理**（`sweepAbandonedDrafts` + `startDraftSweeps`，在 `server/src/index.ts` 和 `startRetentionSweeps` 一起启动、一起停）：启动 60 秒后跑一次，之后每小时一次，每批最多 500 段，只删同时满足上面全部条件且 `created_at` 早于 24 小时前的。条件写在一条 `UPDATE … WHERE` 里，可以重复执行（删过的不再满足 `deleted_at is null`）。
 - **保守处理**：消息不存在本库（只用 Intelligence 后端的部署）时无法确认线程是空的，条件删除和定时清理都**一律不删**（条件删除回 409）。这类部署的草稿只是看不见，不会被回收。二轮复审后改为直接由启动处传 `config.runtime.mode === "local"`（`DraftStorage.localConversations`），不再探测表在不在。
 - **发送与建草稿互斥**（`channel/new.tsx`）：`attaching` 改成 state，并进输入框的 `pending`（发送键不可用），`start` 在建草稿时直接返回；反过来第一条消息正在发或已发出时不建草稿。
@@ -1028,6 +1031,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 1. **第 1 次提交：路由 `pathname` 变了。** `AuthedShell` 用 `useRouterState` 读到 pathname 从 `/settings/…` 变回 `/channel/…`，作为 prop 传给 `ShellFrame` → `ChatStage`。`ChatStage` 重渲染时重建了 `idleVisible` / `renderKept` 闭包，`KeepAliveStage` 跟着重渲染，重新生成 `<ChannelPage …>`。`ChannelPage` **没有 memo**，props 完全相同也会整棵重画。
 2. **第 3 次提交：`ChatStage` 的 `useChatAddress` 地址 state 变了。** `KeepAliveStage` 把这一页的 `visible` 从 false 改成 true，`epoch` 变成 1，所以 `ChannelPage` 的 `visible` / `epoch` 变了。`ChannelBody` 也**没有 memo**；`ChannelChat` 里的 `useThreadActivity` 又用 `useContext(KeptVisibleContext)` 读可见性。context 值一变，整段聊天就再重画一遍，其实只是为了让 `useThreadActivity` 知道回到屏幕上了、该补一次 /sync。
 3. **左栏：** `ShellFrame` 按 scope 二选一渲染 `LeftRail` 或 `SettingsSidebar` / `AdminSidebar`，进出设置都会卸载 / 重新挂载 `LeftRail`。
+
 - profiling 构建、4× 降速下，main 这次点击的各次提交合计渲染 948 个组件、约 82ms；只做 memo + 可见性订阅后是 717 个、约 48ms。聊天正文的组件 0 次重渲染，只剩 `ChannelPage` 外壳 1.1ms。
 
 ### 改动
@@ -1063,12 +1067,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 格式：INP / 点击处理（input delay + processing）/ 呈现延迟，单位 ms。
 
-| 交互 | main（63914d8d） | 完整 #403 | INP 变化 |
-|---|---|---|---|
-| 打开设置 | 280 / 203 / 77 | 128 / 98 / 30 | −54% |
-| 关闭设置 | 584 / 486 / 98 | 304 / 179 / 125 | −48% |
-| 切分类 | 320 / 123 / 190 | 224 / 87 / 150 | −30% |
-
+| 交互     | main（63914d8d） | 完整 #403       | INP 变化 |
+| -------- | ---------------- | --------------- | -------- |
+| 打开设置 | 280 / 203 / 77   | 128 / 98 / 30   | −54%     |
+| 关闭设置 | 584 / 486 / 98   | 304 / 179 / 125 | −48%     |
+| 切分类   | 320 / 123 / 190  | 224 / 87 / 150  | −30%     |
 - 各轮 INP：打开设置 main 280/304/216/448/264，#403 168/168/128/120/96；关闭设置 main 504/624/584/728/464，#403 296/392/304/312/288。
 - 测量时负载：整机 CPU 占用（每秒采样，含被测 Chrome 自身）main 各轮平均 55–64%（均值 61%），#403 各轮 38–63%（均值 54%）。测前确认没有别的 headless Chrome / bun 构建在跑，并放了测量锁文件。
 - 结论：关闭设置的点击处理 486 → 179ms，聊天页不再重渲染、左栏不再重挂载。关闭设置还没到 150ms：剩下的是外壳和设置侧栏卸载、呈现延迟约 125ms。
@@ -1077,12 +1080,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 格式同上。
 
-| 交互 | main（218dd6ec） | 仅本 PR 的核心改动（叠在 main 上） | #395 + #398 + 本 PR 核心改动 |
-|---|---|---|---|
-| 打开设置 | 256 / 131 / 125 | 240 / 119 / 120 | 352 / 59 / 300（4 轮） |
-| 关闭设置 | 536 / 337 / 189 | 480 / 285 / 176 | 468 / 179 / 275 |
-| 切分类 | 220 / 70 / 142 | 220 / 60 / 141 | 224 / 63 / 154 |
-
+| 交互     | main（218dd6ec） | 仅本 PR 的核心改动（叠在 main 上） | #395 + #398 + 本 PR 核心改动 |
+| -------- | ---------------- | ---------------------------------- | ---------------------------- |
+| 打开设置 | 256 / 131 / 125  | 240 / 119 / 120                    | 352 / 59 / 300（4 轮）       |
+| 关闭设置 | 536 / 337 / 189  | 480 / 285 / 176                    | 468 / 179 / 275              |
+| 切分类   | 220 / 70 / 142   | 220 / 60 / 141                     | 224 / 63 / 154               |
 - 旧数据在 box 上测，时间 10/29 11:59–12:18（UTC+8），机器上同时有别的 agent 在跑，1 分钟 loadavg 1.19–15，瞬时 CPU 16–81%。用 SwiftShader 软件渲染，玻璃 / blur 合成很慢，呈现延迟偏高、波动大。当时还没有左栏常驻和审查意见 a/b/c 的改动。
 - 当时的结论：关闭设置的点击处理时间 main 337 → 本 PR 单独 285 → 三个 PR 叠加 179ms（−47%）。
 - 测法同 #395：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，用 `PerformanceObserver('event')` 取最长那次交互；点击处理 = `max(processingEnd) − startTime`，呈现延迟 = `startTime + duration − max(processingEnd)`。
@@ -1103,12 +1105,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ### 前后 INP（4× CPU 降速，生产构建，Chrome 1440×900，5 轮取中位数，相对 main）
 
-| 交互 | main | 本改动 | 变化 |
-|---|---|---|---|
-| 打开设置 | 316ms | 240ms | −24% |
-| 切分类（每轮各分类中位数，再取 5 轮中位数） | 250ms | 216ms | −14% |
-| 关闭设置 | 548ms | 464ms | −15% |
-
+| 交互                                        | main  | 本改动 | 变化 |
+| ------------------------------------------- | ----- | ------ | ---- |
+| 打开设置                                    | 316ms | 240ms  | −24% |
+| 切分类（每轮各分类中位数，再取 5 轮中位数） | 250ms | 216ms  | −14% |
+| 关闭设置                                    | 548ms | 464ms  | −15% |
 - 点击「按下到处理完」（`processingEnd − startTime`，INP 去掉呈现延迟的那部分）：打开 135→127ms，切分类 79→64ms，**关闭 348→201ms（−42%）**。
 - 和 ①（#395，去掉 `body:has()`）合起来：处理时间 打开 59ms / 切分类 58ms / 关闭 197ms。剩下的 INP 主要是呈现延迟（测量机用 SwiftShader 软件渲染，玻璃 / blur 合成很慢，这部分不在本次范围内），以及关闭时聊天页本身的 React 重渲染（约 190ms，下一步）。
 - 测法同 ①：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，`PerformanceObserver('event')`，同一后端和数据，只换前端 dist。
@@ -1129,13 +1130,12 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ### 前后 INP（4× CPU 降速，生产构建，Chrome 1440×900，5 轮取中位数）
 
-| 交互 | main（6d91044） | 本改动 | 变化 |
-|---|---|---|---|
-| 打开设置 | 316ms | 184ms | −42% |
-| 切分类（每轮各分类 INP 的中位数，再取 5 轮中位数） | 250ms | 200ms | −20% |
-| 关闭设置（返回聊天） | 548ms | 464ms | −15% |
-| （参考）展开侧栏 | 224ms | 144ms | −36% |
-
+| 交互                                               | main（6d91044） | 本改动 | 变化 |
+| -------------------------------------------------- | --------------- | ------ | ---- |
+| 打开设置                                           | 316ms           | 184ms  | −42% |
+| 切分类（每轮各分类 INP 的中位数，再取 5 轮中位数） | 250ms           | 200ms  | −20% |
+| 关闭设置（返回聊天）                               | 548ms           | 464ms  | −15% |
+| （参考）展开侧栏                                   | 224ms           | 144ms  | −36% |
 - 补充：点击事件「从按下到处理完」（INP 去掉呈现延迟的那部分，`processingEnd − startTime`，同样 5 轮中位数）：打开设置 135→74ms，切分类 79→73ms，关闭设置 348→270ms。
 - 测法：Playwright + CDP `Emulation.setCPUThrottlingRate=4`，`PerformanceObserver('event', durationThreshold 16)` 取每次点击的交互时长；同一后端、同一数据（两个机器人、长对话），只换前端 dist。
 - 还没到验收线（打开 <120 / 关闭 <150 / 切分类 <100）。关闭剩下的大头是聊天页 React 重渲染和 keep-alive / section-rail 的强制同步布局，在下一个 PR（`dev2/settings-perf-2`）里处理。
@@ -1176,17 +1176,19 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 - 读取失败、没有记录：退回天空；
 - 永远不返回：200ms 时仍是纯色，约 1.5s 后退回天空；
 - 边界：超时后才读回照样补上；读取中改选别的壁纸立即结束，迟到的结果不覆盖。
-把 `sky-background.tsx` 换回改动前的版本，这 4 个主用例全部失败。
+  把 `sky-background.tsx` 换回改动前的版本，这 4 个主用例全部失败。
 
 ## Unreleased — 语音输入：重试重新录音 / 断网提示（审查模块 4，分支 dev3/dictation-audit）
 
 ### 动机
+
 审查报告 `04-composer.md`（语音部分）：
 - 浏览器识别返回的是一段文本 Blob，结果为空就报「未检测到语音」。之后点「重试」，`session.retry` 拿来重新「转写」的还是这段空文本，所以一定再失败（`recording.ts:209-215`、`session.ts:121-124`）。
 - 断网时浏览器识别会以空结果结束，用户看到的是「未检测到语音」，而不是没网。`onerror` 的 `network` 被归到「语音速记中断」（`recording.ts:88-93`）。
 - 麦克风被拒时只说「浏览器未授予麦克风权限」，没告诉用户去哪里打开；功能叫法也不统一（口述、听写、速记、转录）。
 
 ### 改动
+
 1. **重试走对路径**：新增 `DictationError(message, rerecord)`。
    - 「没听到声音」「录音为空」「浏览器识别结果为空」这几种情况 `rerecord = true`：session 丢掉手里的音频，`canRetry = false`，按钮走 `start()` 重新录音。`session.retry()` 在没有可复用的音频时也改成重新录音，不再什么都不做。
    - 上传断网、网络错误、服务端报错仍然 `canRetry = true`，用同一段录音重新上传。
@@ -1200,6 +1202,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 4. **叫法**：这两个文件里剩下的「口述」「语音速记」「转录」统一成「语音输入」「识别」。按钮文案在输入框 PR（dev3/composer-audit）里改，这个 PR 不碰 `dictation-controls.tsx`，两个 PR 互不冲突。
 
 ### 测试
+
 - 新增 `app/tests/dictation-audit-m4.test.ts`，8 个用例在 main 上全部失败：
   - 浏览器识别为空后重试会重新录音，并且能录成功；
   - 服务端没听到声音时重试是重新录音；
@@ -1241,7 +1244,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ## 回复来源结构化（feat/reply-sources-stability）
 
-**动机**：Hark 把来源画成回复下方一组叠起来的链接卡；ChisaBot 让模型在正文最后写「来源：[站点](网址)」（#5、#12 对比），来源和正文混在一起，也没法统一排版。要先把数据格式定下来，前端再画。
+**动机**：Hark 把来源画成回复下方一组叠起来的链接卡；ChisaBot 让模型在正文最后写「`来源：[站点](网址)`」（#5、#12 对比），来源和正文混在一起，也没法统一排版。要先把数据格式定下来，前端再画。
 
 **为什么不新增存储 / 事件 / 工具**：会话历史在 Intelligence 网关里，不在我们的库里；而 web_fetch 的调用和结果本来就随消息流式下发、也在历史里。从它们读来源，实时和翻历史一致，旧会话也有来源。让模型调一个「cite_sources」工具也考虑过：模型在工具之后不再说话时，客户端会把这一轮判成「做完…之后没有接着做」（stopped-turn.ts），风险大。
 
@@ -1287,7 +1290,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
   - 只记宽高比会丢掉自然尺寸，`reservedImageBox` 就不知道图本来多大，小图会被放大到上限宽度去预留，反而引入新的跳动；
   - 服务器对 `?w=` 回原图（窄图、GIF、sharp 不可用、队列满）时，记在缩略图地址下的就是原图的真实尺寸，同样正确，不需要区分；
   - 原图地址名下只有原图（或调用方给出的 `width` / `height`）的尺寸，不再被缩略图污染。
-  消息里已带的 `width` / `height` 仍记在原图地址下（那是原图的真实尺寸）。
+    消息里已带的 `width` / `height` 仍记在原图地址下（那是原图的真实尺寸）。
 
 ### sharp 在各部署下的可用性
 
@@ -1373,7 +1376,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ### 改动
 
-- 服务器 `server/src/thread-messages-delta.ts` + `app.ts` 在 `/api/copilotkit/*` 上加一层中间件（本地后端和 Intelligence 两条路都会经过）：`GET …/threads/:id/messages` **带 `since` / `cursor` 参数时**改写响应：
+- 服务器 `server/src/thread-messages-delta.ts` + `app.ts` 在 `/api/conversations（原旧兼容路由）/*` 上加一层中间件（本地后端和 Intelligence 两条路都会经过）：`GET …/threads/:id/messages` **带 `since` / `cursor` 参数时**改写响应：
   - `version` = 条数 + 逐条前缀哈希（按消息内容算，不依赖 `updated_at`，因为并非每个写入点都会更新它）；`since` 等于当前 version → 只回 `{ unchanged: true, version, cursor }`。
   - `cursor` 指向「除最后一条外」的前缀（最后一条可能还在流式增长）；带回来的 cursor 前缀仍吻合 → 只回 `{ start, messages: 尾部 }`；中间有编辑 / 删除 / 插入对不上 → 回整份（`start: 0`）。
   - 原始响应体哈希 → 前缀指纹做了 64 条的小缓存（只存哈希不存内容），「没变」的轮询不用再解析、逐条哈希。
@@ -1392,13 +1395,12 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ### 性能（本机 Bun 1.3.14 微基准，经真实中间件；客户端只算解析 + 比较）
 
-| 场景 | 每次轮询传输 | 服务器 | 客户端 |
-| --- | --- | --- | --- |
-| 600 条 / 415 KiB，没变化：旧 → 新 | 425 KB → 83 B | 0.18 → 0.85 ms | 0.87 → 0.004 ms |
-| 600 条，最后一条流式增长：旧 → 新 | 425 KB → 1.3 KB | 0.19 → 2.37 ms | 1.59 → 0.008 ms |
-| 2000 条 / 1.4 MiB，没变化：旧 → 新 | 1.42 MB → 85 B | 0.88 → 6.09 ms | 6.24 → 0.011 ms |
-| 2000 条，流式增长：旧 → 新 | 1.42 MB → 1.3 KB | 1.11 → 6.39 ms | 5.54 → 0.012 ms |
-
+| 场景                               | 每次轮询传输     | 服务器         | 客户端          |
+| ---------------------------------- | ---------------- | -------------- | --------------- |
+| 600 条 / 415 KiB，没变化：旧 → 新  | 425 KB → 83 B    | 0.18 → 0.85 ms | 0.87 → 0.004 ms |
+| 600 条，最后一条流式增长：旧 → 新  | 425 KB → 1.3 KB  | 0.19 → 2.37 ms | 1.59 → 0.008 ms |
+| 2000 条 / 1.4 MiB，没变化：旧 → 新 | 1.42 MB → 85 B   | 0.88 → 6.09 ms | 6.24 → 0.011 ms |
+| 2000 条，流式增长：旧 → 新         | 1.42 MB → 1.3 KB | 1.11 → 6.39 ms | 5.54 → 0.012 ms |
 - 轮询路径的 React 更新次数：旧实现在内容没变时也不调 setMessages，所以两边一样（没变 0 次、变了 1 次）；测试锁住「没变化不触发更新」。
 - 卡片计时器：N 张在跑的卡片从 N 个 interval（N 次独立提交）变成 1 个 interval（同一 tick 里一起更新）。
 
@@ -1423,14 +1425,13 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
   - 服务器不回 version（旧服务器）→ 不存基准，每次照旧整份。编辑 / 删除由服务器前缀对不上回整份，调用方拿到的始终是整份，合并 / 重建逻辑一行没改；流式仍走 connect / run 的事件流，不经过这里。
 - **请求大小**（本机，真实 `readThreadMessages` + 真实服务器中间件，600 条对话）：
 
-| 步骤 | 旧（整份） | 新 |
-| --- | --- | --- |
-| 挂载首读 | 532.6 KiB | 532.7 KiB（`since=`） |
-| 之后没变化的每次读 | 532.6 KiB | 83 B（返回同一对象，不 setMessages） |
-| Bot 新增一条回复 | 532.6 KiB | 3.2 KiB |
-| 最后一条变长 | 532.6 KiB | 1.6 KiB |
-| 较早消息被编辑 / 删除 | 532.6 KiB | 约 534 KiB（整份） |
-
+| 步骤                  | 旧（整份） | 新                                   |
+| --------------------- | ---------- | ------------------------------------ |
+| 挂载首读              | 532.6 KiB  | 532.7 KiB（`since=`）                |
+| 之后没变化的每次读    | 532.6 KiB  | 83 B（返回同一对象，不 setMessages） |
+| Bot 新增一条回复      | 532.6 KiB  | 3.2 KiB                              |
+| 最后一条变长          | 532.6 KiB  | 1.6 KiB                              |
+| 较早消息被编辑 / 删除 | 532.6 KiB  | 约 534 KiB（整份）                   |
 - **共享时钟测试**：`shared-clock.test.tsx` 单跑能过、在 `bun run test:app` 共享进程里挂（前面文件留下的 `jest.useFakeTimers` 和没卸载、仍订阅着模块级时钟的卡片）。`use-now.ts` 加仅测试用的 `resetClockForTests()`，测试每个用例前后 `jest.useRealTimers()` + 卸载 + 还原时钟；共享进程里已通过，不需要加进 ISOLATED。
 - **新测试**：`app/tests/stored-thread-sync.test.ts`（since → since+cursor、unchanged 返回同一对象、尾部、编辑 / 删除整份、对不上重读、401 清基准、旧服务器、顺序核对不带 agentId）；`app/tests/channel-history-incremental.test.tsx`（真 `ChannelChat` + 按协议回答的假服务器：挂载发 `since=`，Bot 在别处说话后的拉取都带 since+cursor、只拿到 unchanged、`setMessages` 0 次；存储新增一条后只传尾部、界面补上新回复且不重复）。
 
@@ -1466,11 +1467,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 - 应用：新增 `gatewayClientIp`（`server/src/auth/gateway-identity.ts`）：X-Real-IP 优先，其次 X-Forwarded-For 第一段，从不读 CF-Connecting-IP；直连（不经网关）为 null。设备令牌限速（原 `devices/routes.ts` 自己的 `clientIp`）和 IM OneBot 失败限速都改用它，不再各写一份。
 - 检查：`check-trust-boundary.sh` 用 awk 逐个 location 检查「有 proxy_pass 就必须两条都有」；`trust-boundary-redline` 测试用 `nginxPinsClientIpHeaders`（`shared/trust-boundary.ts`）做同样的检查，另有一条反例。
 - 测试：`server/tests/im-onebot-rate-limit.test.ts`：换着伪造 `CF-Connecting-IP` 绕不过限速，伪造别人的 IP 也不会把别人拖进限速，计数键始终是网关给的真实 IP。
-**防重放。** 身份头本来只靠 ±2 分钟时间窗：窗内截获的头（日志、代理、调试抓包）可以原样重放。
+  **防重放。** 身份头本来只靠 ±2 分钟时间窗：窗内截获的头（日志、代理、调试抓包）可以原样重放。
 
 - 网关（`deploy/public/auth/server.ts` 的 `signIdentity`）和应用里的 `signGatewayIdentity` 在 payload 里加 `j`（16 字节随机数，base64url）。没有它的话，同一用户同一毫秒的两个并发请求会签出完全相同的头，按签名去重就会误拒正常请求。
 - `GatewayReplayCache`：键 = 整个头的 SHA-256，过期 = 签发时间 + 2 分钟（之后 verify 本身就拒绝），上限 10 万条。满了先清过期的，仍满就丢最早的：宁可极端洪峰下少记几条，也不让内存无限涨或误拒正常用户。
-- **在哪里消费**：只在 `serve()` 的 `fetch` 入口每个 HTTP 请求消费一次（含 WebSocket 升级）。应用内同一个请求会被 resolve 好几次（守卫中间件、CopilotKit 的身份和权限各一次、WebSocket 手动守卫），如果在 `resolveGatewayRequest` 里消费，第二次就会把自己当重放。`resolveGatewayRequest` 保持无状态。
+- **在哪里消费**：只在 `serve()` 的 `fetch` 入口每个 HTTP 请求消费一次（含 WebSocket 升级）。应用内同一个请求会被 resolve 好几次（守卫中间件、旧聊天前端框架 的身份和权限各一次、WebSocket 手动守卫），如果在 `resolveGatewayRequest` 里消费，第二次就会把自己当重放。`resolveGatewayRequest` 保持无状态。
 - **兼容**：网关每个请求都是现签的（nginx `auth_request` 每个请求一次），正常请求不会出现同一个头两次。不带 `j` 的旧格式（升级前的网关签的）照旧放行、不去重，滚动升级不会断；网关升级后旧头最多 2 分钟就全部过期。
 - **窗口没缩短**：有了一次性检查，窗口长短只影响缓存大小，不再决定重放面；网关和应用在同一台机器上，2 分钟留给时钟漂移和慢请求足够也不算多，缩短反而可能误拒长排队的请求。
 - **防重放的边界（运维须知）**：
@@ -1522,7 +1523,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
     - 有新增问题 → 退出 1，stderr 列出文件和 `noDebugger`；
     - 假 Biome 出错 → 退出 2，stderr 带原因；
     - 找不到 Biome → 退出 2。
-    三个用例都断言没有残留的 `biome-base-*`。原「二进制不存在」用例改为断言 2。用旧脚本跑：前两个超时（退出码 null），后两个退出码 1；新脚本 8 个全过。
+      三个用例都断言没有残留的 `biome-base-*`。原「二进制不存在」用例改为断言 2。用旧脚本跑：前两个超时（退出码 null），后两个退出码 1；新脚本 8 个全过。
 
 ## Unreleased — test:app 测试干扰与过时测试（审查清单第 3 项第二部分）
 
@@ -1542,7 +1543,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
   - approvals-frontend：报错文案已改成中文「活跃会话」。
   - self-host-banner：横幅不再是 createApp 的最后一个参数，改为按参数名找位置。
   - bot-lifecycle-audit：**测试过时，不是代码 bug**。a1b235fd 起机器人一律私有（`server/src/agents/routes.ts` 固定 `visibility = "private"`，DESIGN.md「所有的机器人都是私有」），审计记录存下来的值 private 是对的。
-- **server/package.json**：`local-conversations-inbox.integration.test.ts` 直接 import `@copilotkit/core`，补成 devDependency，版本取 lock 里已有的 1.77.0。
+- **server/package.json**：`local-conversations-inbox.integration.test.ts` 直接 import `旧聊天运行时包`，补成 devDependency，版本取 lock 里已有的 1.77.0。
 - **app/vite.config.ts**：chisabot-node 打包失败时，在 CI（环境变量 CI 非空）里直接让构建失败，其他地方照旧只告警。默认 isolated linker 下 `ws` 解析不到会静默跳过；CI 与镜像一样用 hoisted，在这里失败就说明镜像也会缺文件。本机和 Docker 构建行为不变。
 - db-client-address 需要真实数据库，按要求跳过。
 
@@ -1613,7 +1614,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
   - `anonymousPolicies` / `ANONYMOUS_EGRESS_POLICY`：无凭据的独立兜底，只放行 `DEFAULT_EGRESS_DESTINATIONS`；只读各 Bot 的 mode 做上限（任一 `allowlist_only` / `deny_all` 即拒绝），从不读任何 Bot 的 rules，不用 Bot 的上游代理。集中在一个函数里，方便以后改成直接拒绝。
   - `noteAnonymousEgress`：节流日志 `EGRESS_ANONYMOUS`（每 60 秒逐条最多 5 条，其余计数），只记来源 socket 与目标 host:port，不记凭据。
   - `ALWAYS_DENIED` 新增 `0.0.0.0/8`、`100.64.0.0/10`。
-- `agent-computer/src/index.ts`：`/exec` 在 body / query 无 botId 时回退到 `x-chisabot-bot-id` / `x-openbot-bot-id` 头，不回退到 `DEFAULT_BOT_ID`。
+- `agent-computer/src/index.ts`：`/exec` 在 body / query 无 botId 时回退到 `x-chisabot-bot-id` / `旧前缀请求头` 头，不回退到 `DEFAULT_BOT_ID`。
 - `server/src/computer/gateway.ts`：`runCommand` 发往 `/exec` 的 body 带上网关自己的 `botId`。
 - 测试：新增 `agent-computer/tests/egress-auth.test.ts`；更新 `egress-policy.test.ts`、`server/tests/command-timeout.test.ts`。
 
@@ -1685,25 +1686,25 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 **实测**（Chrome，真手机 390×844 触屏 2x、PC 小窗 420×860 带窗口按钮，本地假数据）：
 
-| | 改前 | 改后 |
-|---|---|---|
-| 面板 | 0,0,288×844（PC 0,40,288×820），直角，内边距 12 / 16px | 0,0,320×844（PC 320×860），右侧 20px 圆角，内边距 0 |
-| 模糊层 | 3（抽屉、列表卡、账号卡） | 1（抽屉 `.glass`） |
-| 遮罩 | `rgba(40,60,90,.16)` + `blur(4px)` | `rgba(0,0,0,.32)` / 深色 `.5`，无模糊 |
-| 顶部一行 | 关闭按钮单独一行（y=6 / PC 50），搜索在 y=84 / PC 120 | 搜索 + 新建 + 关闭同一行，手机 y=6（与菜单按钮同一条中线），PC y=44（窗口按钮下面） |
-| 账号 | 浮在卡片下面（12,776,263×56） | 面板底部整宽（0,784,320×60），上方分隔线 |
-| 性能模式 / 减少透明度 | — | 不透明底，0 层模糊 |
+|                       | 改前                                                   | 改后                                                                                |
+| --------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| 面板                  | 0,0,288×844（PC 0,40,288×820），直角，内边距 12 / 16px | 0,0,320×844（PC 320×860），右侧 20px 圆角，内边距 0                                 |
+| 模糊层                | 3（抽屉、列表卡、账号卡）                              | 1（抽屉 `.glass`）                                                                  |
+| 遮罩                  | `rgba(40,60,90,.16)` + `blur(4px)`                     | `rgba(0,0,0,.32)` / 深色 `.5`，无模糊                                               |
+| 顶部一行              | 关闭按钮单独一行（y=6 / PC 50），搜索在 y=84 / PC 120  | 搜索 + 新建 + 关闭同一行，手机 y=6（与菜单按钮同一条中线），PC y=44（窗口按钮下面） |
+| 账号                  | 浮在卡片下面（12,776,263×56）                          | 面板底部整宽（0,784,320×60），上方分隔线                                            |
+| 性能模式 / 减少透明度 | —                                                      | 不透明底，0 层模糊                                                                  |
 
 点遮罩关闭：手机（减少动态效果）和 PC 小窗都关上了。
 
 截图（`docs/images/mobile-drawer/`）：
 
-| | 改前 | 改后 |
-|---|---|---|
-| 手机 浅色 | ![](images/mobile-drawer/before-phone-light.webp) | ![](images/mobile-drawer/after-phone-light.webp) |
-| 手机 深色 | ![](images/mobile-drawer/before-phone-dark.webp) | ![](images/mobile-drawer/after-phone-dark.webp) |
+|              | 改前                                                | 改后                                               |
+| ------------ | --------------------------------------------------- | -------------------------------------------------- |
+| 手机 浅色    | ![](images/mobile-drawer/before-phone-light.webp)   | ![](images/mobile-drawer/after-phone-light.webp)   |
+| 手机 深色    | ![](images/mobile-drawer/before-phone-dark.webp)    | ![](images/mobile-drawer/after-phone-dark.webp)    |
 | PC 小窗 浅色 | ![](images/mobile-drawer/before-pcsmall-light.webp) | ![](images/mobile-drawer/after-pcsmall-light.webp) |
-| PC 小窗 深色 | ![](images/mobile-drawer/before-pcsmall-dark.webp) | ![](images/mobile-drawer/after-pcsmall-dark.webp) |
+| PC 小窗 深色 | ![](images/mobile-drawer/before-pcsmall-dark.webp)  | ![](images/mobile-drawer/after-pcsmall-dark.webp)  |
 
 **测试**：新增 `app/tests/mobile-drawer.test.tsx`（面板只有一层 `.glass`、遮罩存在、点遮罩关抽屉、抽屉规则不写模糊 / 里面卡片关掉旧玻璃层 / 遮罩不模糊、只动 transform 200ms、减少动态效果无动画、性能模式和减少透明度不透明）；`render-budget.test.ts` 的模糊名单删掉两条已经不模糊的旧抽屉选择器。
 
@@ -1717,7 +1718,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 **镜像**：当前（BASE_IMAGE）3856d36、上一版回滚目标 `auto-202610282010-ed93b05`、`keep-d6cd2ec`、`keep-628d527`。
 
-**待办**：`deploy/public/auth/server.ts`（网关签身份头时加 `j`）属于登录服务，不随一键更新，这次没有手工部署 `chisabot-web-auth`；在它更新前，网关签的仍是不带 `j` 的旧格式，应用照旧放行，防重放实际上还没生效。另外宿主机 `/opt/chisabot-ops/scripts/ops/sync-nginx.sh` 是旧版（要求 `/_openbot/auth-check` 标记），`--check` 读的是 10-18 生成、未挂载的 `nginx.generated.conf`，没有反映线上真实配置，建议之后把宿主机 ops 脚本同步成 main 版。
+**待办**：`deploy/public/auth/server.ts`（网关签身份头时加 `j`）属于登录服务，不随一键更新，这次没有手工部署 `chisabot-web-auth`；在它更新前，网关签的仍是不带 `j` 的旧格式，应用照旧放行，防重放实际上还没生效。另外宿主机 `/opt/chisabot-ops/scripts/ops/sync-nginx.sh` 是旧版（要求 `/_早期上游模板/auth-check` 标记），`--check` 读的是 10-18 生成、未挂载的 `nginx.generated.conf`，没有反映线上真实配置，建议之后把宿主机 ops 脚本同步成 main 版。
 
 ## 2026-10-29 发版 0.1.106
 
@@ -1855,7 +1856,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 ## 2026-10-29 回复过程第二轮审查修正（feat/hark-reply-steps，#404 复审 7d064048）
 
-- 「这一轮没有回答」以前只认文字和 `render_ui`：以 `image_generate`、`file_share`、`ask_person`、`github_create_issue`（确认卡）这类卡片收尾的一轮会被挂重试，点了会重新生成图片、重新建 issue。现在 `compactTurns` 多一个 `drawsCard` 参数，`ChatTranscript` 传 `toolDrawsCard`：读 CopilotKit 注册的渲染器（新文件 `lib/copilot/tool-renderers.ts`，挑法和 `useRenderToolCall` 一样；不在 Provider 里返回空，不抛错），有渲染器就算卡片，注册时标了 `lineOnly`（计算机工具那些只画一行过程 / 什么都不画的，经 `approval-tools.tsx` 的 `useFrontendTool` 打标）的不算；没有渲染器时只有宿主被拒（`isHostAccessRefusal`，和 `ServerToolLine` 共用）算；确认卡（`useThreadConfirmations`）和行内审批卡（审批收件箱）挂着的工具也算，两份列表都和卡片共用缓存，还没读到时先当有卡片；有渲染器的活动消息也算。
+- 「这一轮没有回答」以前只认文字和 `render_ui`：以 `image_generate`、`file_share`、`ask_person`、`github_create_issue`（确认卡）这类卡片收尾的一轮会被挂重试，点了会重新生成图片、重新建 issue。现在 `compactTurns` 多一个 `drawsCard` 参数，`ChatTranscript` 传 `toolDrawsCard`：读 旧聊天前端框架 注册的渲染器（新文件 `lib/copilot/tool-renderers.ts`，挑法和 `useRenderToolCall` 一样；不在 Provider 里返回空，不抛错），有渲染器就算卡片，注册时标了 `lineOnly`（计算机工具那些只画一行过程 / 什么都不画的，经 `approval-tools.tsx` 的 `useFrontendTool` 打标）的不算；没有渲染器时只有宿主被拒（`isHostAccessRefusal`，和 `ServerToolLine` 共用）算；确认卡（`useThreadConfirmations`）和行内审批卡（审批收件箱）挂着的工具也算，两份列表都和卡片共用缓存，还没读到时先当有卡片；有渲染器的活动消息也算。
 - 窄屏：`styles.css` 在 ≤ 560px 把做完的干活行的 `.chat-work-meta` 藏了，手机上看不到「N 步失败」。`WorkRow` 多一个 `unanswered`，没有回答的那一行带 `data-unanswered`，`status-capsule.css` 用属性选择器（多一级优先级）在窄屏重新显示；没改 `styles.css`，那条规则也不在 #376 的范围里。
 - 计时：`turnStartedAt` 以前按这一轮的 key 只记一次，同一轮重新跑时接着上一次算。现在 `ChatTranscript`（和 `WorkRow`）在这一页亲眼看着这一轮从「跑着」变成「停了」时 `markTurnRunEnded`，下次 `turnStartedAt` 清掉开始时间、结束时间和记下的用时，从 0 算；切频道回来重挂时还在跑、没经过「停了」，秒数照旧接着算。
 - 测试（`reply-steps.test.tsx`）：图片 / 文件 / 问人 / 等确认 / 宿主提示 / 活动卡收尾都不挂；只画一行过程的渲染器和普通工具失败照常挂；末尾已有错误卡时不重复挂重试（挂载 `ChatTranscript` 对照）；重跑归零、重挂不归零；`data-unanswered` 和窄屏 CSS 规则。合了 main 0.1.109（merge commit）。
@@ -1888,7 +1889,7 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
   - 不用 `!important`：`:not(#id)` 给选择器加一个 id 的优先级，压过所有类 / 属性规则，引入顺序也不要紧；旧「三档玻璃」层的 `backdrop-filter: var(--lg-blur) !important` 不去比，直接把 `--lg-blur` 设成 `none`。
   - 不透明底色 `--glass-bg-opaque`（浅 `rgb(246 247 250)`、深 `rgb(29 31 36)`）：原来模糊的元素（左右栏、账号卡、输入框、顶栏搜索、菜单 / 选择框 / 浮层 / 对话框 / 抽屉、手机侧栏、提示条、代码块 / 图表操作条、外观设置的玻璃预览）都换成它；旧玻璃层改 `--lg-surface`。色板上的勾用实心深色。
   - 全屏遮罩、agent-orb 点阵层、电脑画面上的小标签只去掉模糊，保留自己的半透明底（压暗 / 装饰，不该变成不透明）。
-- **审计**：`styles.css` 里所有会模糊的规则、Tailwind 的 `backdrop-blur-*`（dialog / sheet 遮罩、avatar-picker、chat-transcript、computer-view）、内联样式（无）、组件内嵌 `<style>`（agent-orb）、第三方样式（streamdown 2.6.0 的代码块 / 图表操作条和缩放按钮；copilotkit、prompt-area、tw-animate、shadcn 没有 `backdrop-filter`）。`agent-computer/`、`server/` 的页面不在 app 里，不受影响。
+- **审计**：`styles.css` 里所有会模糊的规则、Tailwind 的 `backdrop-blur-*`（dialog / sheet 遮罩、avatar-picker、chat-transcript、computer-view）、内联样式（无）、组件内嵌 `<style>`（agent-orb）、第三方样式（streamdown 2.6.0 的代码块 / 图表操作条和缩放按钮；旧聊天前端框架、prompt-area、tw-animate、shadcn 没有 `backdrop-filter`）。`agent-computer/`、`server/` 的页面不在 app 里，不受影响。
 - **`app/tests/no-backdrop.test.ts`（新）**：引入顺序；两种开关都覆盖 `*` / `::before` / `::after` 且设了 `--lg-blur: none`；`perf-noblur.css` 不含 `!important`、页面上没有 `chisabot-no-blur` 这个 id；`app/src` 里不许内联 `backdropFilter`、Tailwind important 模糊类、新的 `backdrop-filter … !important`；两种开关的不透明名单一致；`styles.css` 里每条会模糊的规则都在不透明名单里，或者在豁免名单里写了原因（桌面左栏外层、平常就不模糊的小按钮 / 气泡 / 对话里的卡片 / 设置页卡片）。
 - **`DESIGN.md` §10.3.1** 写下这条规则。
 - 没改 `styles.css` 和 #374 改过的代码文件；没改版本号。
@@ -1897,13 +1898,13 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 浏览器审计（`noblur.mjs`，和之前一样数可见且 computed `backdrop-filter` 不为 none 的元素，含伪元素；减少透明度用 CDP `Emulation.setEmulatedMedia` 模拟）：
 
-| 场景 | 普通（main） | 普通（本分支） | 性能模式（main → 本分支） | 减少透明度（main → 本分支） |
-| --- | --- | --- | --- | --- |
-| 桌面 聊天 / 代码块 / 账号菜单 | 5 | 5 | 1 → 0 | 1 → 0 |
-| 桌面 设置页 | 16 | 16 | 14 → 0 | 14 → 0 |
-| 手机 聊天 / 代码块 / 菜单 | 2 | 2 | 1 → 0 | 1 → 0 |
-| 手机 设置页 | 1 | 1 | 1 → 0 | 1 → 0 |
-| 手机 抽屉 | 6 | 6 | 2 → 0 | 2 → 0 |
+| 场景                          | 普通（main） | 普通（本分支） | 性能模式（main → 本分支） | 减少透明度（main → 本分支） |
+| ----------------------------- | ------------ | -------------- | ------------------------- | --------------------------- |
+| 桌面 聊天 / 代码块 / 账号菜单 | 5            | 5              | 1 → 0                     | 1 → 0                       |
+| 桌面 设置页                   | 16           | 16             | 14 → 0                    | 14 → 0                      |
+| 手机 聊天 / 代码块 / 菜单     | 2            | 2              | 1 → 0                     | 1 → 0                       |
+| 手机 设置页                   | 1            | 1              | 1 → 0                     | 1 → 0                       |
+| 手机 抽屉                     | 6            | 6              | 2 → 0                     | 2 → 0                       |
 
 深浅色结果相同。性能模式下原来模糊的元素底色 alpha 都是 1（遮罩除外，见上）。
 
@@ -1940,11 +1941,11 @@ main = 0.1.109（不含 #408）；修后 = 本分支（含 #408）。INP 格式�
 
 改前是 `main`，改后是本分支。截图用本地静态服务和 mock 的 `/api` 生成，没有连后端。
 
-| | 改前 | 改后 |
-|---|---|---|
-| 桌面 深 | ![](images/hark-topbar/before-desk-dark.webp) | ![](images/hark-topbar/after-desk-dark.webp) |
-| 桌面 浅 | ![](images/hark-topbar/before-desk-light.webp) | ![](images/hark-topbar/after-desk-light.webp) |
-| 手机 深 | ![](images/hark-topbar/before-phone-dark.webp) | ![](images/hark-topbar/after-phone-dark.webp) |
+|         | 改前                                            | 改后                                           |
+| ------- | ----------------------------------------------- | ---------------------------------------------- |
+| 桌面 深 | ![](images/hark-topbar/before-desk-dark.webp)   | ![](images/hark-topbar/after-desk-dark.webp)   |
+| 桌面 浅 | ![](images/hark-topbar/before-desk-light.webp)  | ![](images/hark-topbar/after-desk-light.webp)  |
+| 手机 深 | ![](images/hark-topbar/before-phone-dark.webp)  | ![](images/hark-topbar/after-phone-dark.webp)  |
 | 手机 浅 | ![](images/hark-topbar/before-phone-light.webp) | ![](images/hark-topbar/after-phone-light.webp) |
 
 PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名是 `*-pcwin-*.webp`。
@@ -2034,7 +2035,7 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 
 - #442 `dev4/sidebar-m3-1`（head `e74f503`）→ `545a7e3`：网关 401 直接去 `/login?next=`（带 30 秒防死循环）、SW 5、手机抽屉导航后收起、`/channel/new` 总开新话题。
 
-**范围**：只改 `app/`（含 `app/public/sw.js`）和文档；不需要改网关 nginx（它本来就对导航回 302 `/login?next=`、对 `/api` 回 JSON 401 带 `openbotAuthRequired`，`/sign` 302 到 `/login`）、web-auth、`pc/`、`android/`。
+**范围**：只改 `app/`（含 `app/public/sw.js`）和文档；不需要改网关 nginx（它本来就对导航回 302 `/login?next=`、对 `/api` 回 JSON 401 带 `chisabotAuthRequired`，`/sign` 302 到 `/login`）、web-auth、`pc/`、`android/`。
 
 **流程**：核对 head 未变；从 origin/main（`27e7c0f`）开临时 worktree `--no-ff` 合并。`bun install --frozen-lockfile`、`typecheck`、`build`、`test:app` 结果见部署记录。
 
@@ -2043,6 +2044,7 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 **版本**：根、`app`、`server` 升到 `0.1.114`；PC / Android 不变。不打 tag、不建 Release。
 
 ### 0.1.114 部署记录（2026-10-30 12:30 北京时间）
+
 - 镜像 local/chisabot:auto-202610300420-dc40343，/api/version commit = dc40343e；回滚镜像 auto-202610300316-c9509f4。
 - 测试：test:app 1900 pass / 0 fail / 251 files；typecheck、build 通过。
 - 发版前备份 pre-release/v0.1.114-20261030T042002Z.dump（pg_restore -l 767 条）。
@@ -2091,15 +2093,15 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 
 **截图**：本地构建 main 和本分支，mock `/api`，1280×800。
 
-| | 改前 | 改后 |
-|---|---|---|
+|                                | 改前                                                      | 改后                                                     |
+| ------------------------------ | --------------------------------------------------------- | -------------------------------------------------------- |
 | 常驻指令未保存，点左栏「技能」 | ![](images/settings-audit/before-leave-instructions.webp) | ![](images/settings-audit/after-leave-instructions.webp) |
-| 新建技能写了一半按 Esc | ![](images/settings-audit/before-skill-esc.webp) | ![](images/settings-audit/after-skill-esc.webp) |
-| 中文标题的名字 | ![](images/settings-audit/before-skill-slug.webp) | ![](images/settings-audit/after-skill-slug.webp) |
-| 左栏 | ![](images/settings-audit/before-sidebar.webp) | ![](images/settings-audit/after-sidebar.webp) |
-| 搜「配色」 | ![](images/settings-audit/before-search-palette.webp) | ![](images/settings-audit/after-search-palette.webp) |
-| 搜「壁纸」 | ![](images/settings-audit/before-search-wallpaper.webp) | ![](images/settings-audit/after-search-wallpaper.webp) |
-| 搜「精选技能」 | ![](images/settings-audit/before-search-hub.webp) | ![](images/settings-audit/after-search-hub.webp) |
+| 新建技能写了一半按 Esc         | ![](images/settings-audit/before-skill-esc.webp)          | ![](images/settings-audit/after-skill-esc.webp)          |
+| 中文标题的名字                 | ![](images/settings-audit/before-skill-slug.webp)         | ![](images/settings-audit/after-skill-slug.webp)         |
+| 左栏                           | ![](images/settings-audit/before-sidebar.webp)            | ![](images/settings-audit/after-sidebar.webp)            |
+| 搜「配色」                     | ![](images/settings-audit/before-search-palette.webp)     | ![](images/settings-audit/after-search-palette.webp)     |
+| 搜「壁纸」                     | ![](images/settings-audit/before-search-wallpaper.webp)   | ![](images/settings-audit/after-search-wallpaper.webp)   |
+| 搜「精选技能」                 | ![](images/settings-audit/before-search-hub.webp)         | ![](images/settings-audit/after-search-hub.webp)         |
 
 浏览器后退的确认：`images/settings-audit/after-back-confirm.webp`；打开 /settings/vault 后的左栏：`images/settings-audit/after-vault-active.webp`。
 
@@ -2205,12 +2207,12 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 
 **截图**（本地单用户模式 + 临时数据库实拍，`docs/images/memory-tidy/`；整理后的提示已按「0 项不显示」的新文案重拍）：
 
-| 「更多」菜单 | 确认弹窗 | 整理后「撤销」 | 菜单里的「撤销上次整理」 |
-| --- | --- | --- | --- |
+| 「更多」菜单                           | 确认弹窗                                    | 整理后「撤销」                                | 菜单里的「撤销上次整理」                    |
+| -------------------------------------- | ------------------------------------------- | --------------------------------------------- | ------------------------------------------- |
 | ![](images/memory-tidy/more-menu.webp) | ![](images/memory-tidy/confirm-dialog.webp) | ![](images/memory-tidy/after-undo-toast.webp) | ![](images/memory-tidy/more-menu-undo.webp) |
 
-| 聊天里的撤销链接（`?undoTidy=`）先确认 | 撤销后的提示 |
-| --- | --- |
+| 聊天里的撤销链接（`?undoTidy=`）先确认         | 撤销后的提示                                |
+| ---------------------------------------------- | ------------------------------------------- |
 | ![](images/memory-tidy/undo-link-confirm.webp) | ![](images/memory-tidy/undo-link-done.webp) |
 
 
@@ -2241,13 +2243,12 @@ PC 窗口（深 / 浅）的截图也在 `docs/images/hark-topbar/`，文件名�
 
 main `c99ee37e` 对本分支（已合 main），同一个排队位里交替各跑 3 轮（23:45–23:48 北京时间，box 负载 1 分钟均值 14–31，box 没有 GPU，WebGL 走软件渲染）。设置页，每轮新的临时 Chrome profile，`/api` 和 `/auth` 本地 mock。INP 取该场景所有交互的最大值，样式重算是 CDP `RecalcStyleDuration` 在该场景里的增量。
 
-| 操作（4x CPU） | main INP 1 / 2 / 3 | main 中位 | 本分支 INP 1 / 2 / 3 | 本分支中位 | 样式重算 main → 本分支（ms，3 轮） |
-|---|---|---|---|---|---|
-| 配色 极光 / 樱花 / 默认（点 3 次） | 360 / 248 / 720 | 360 | 88 / 88 / 96 | **88** | 177 / 139 / 296 → 174 / 158 / 147 |
-| 材质 晶莹 / 磨砂 / 液态（点 3 次） | 120 / 144 / 112 | 120 | 72 / 136 / 96 | **96** | 117 / 120 / 105 → 52 / 58 / 81 |
-| 雾度滑块 方向键 20 步 | 96 / 104 / 120 | 104 | 80 / 80 / 88 | **80** | 655 / 614 / 685 → 183 / 190 / 167 |
-| 雾度滑块 鼠标拖 20 步 | 64 / 72 / 72 | 72 | 56 / 48 / 56 | **56** | 475 / 401 / 405 → 237 / 168 / 195 |
-
+| 操作（4x CPU）                     | main INP 1 / 2 / 3 | main 中位 | 本分支 INP 1 / 2 / 3 | 本分支中位 | 样式重算 main → 本分支（ms，3 轮） |
+| ---------------------------------- | ------------------ | --------- | -------------------- | ---------- | ---------------------------------- |
+| 配色 极光 / 樱花 / 默认（点 3 次） | 360 / 248 / 720    | 360       | 88 / 88 / 96         | **88**     | 177 / 139 / 296 → 174 / 158 / 147  |
+| 材质 晶莹 / 磨砂 / 液态（点 3 次） | 120 / 144 / 112    | 120       | 72 / 136 / 96        | **96**     | 117 / 120 / 105 → 52 / 58 / 81     |
+| 雾度滑块 方向键 20 步              | 96 / 104 / 120     | 104       | 80 / 80 / 88         | **80**     | 655 / 614 / 685 → 183 / 190 / 167  |
+| 雾度滑块 鼠标拖 20 步              | 64 / 72 / 72       | 72        | 56 / 48 / 56         | **56**     | 475 / 401 / 405 → 237 / 168 / 195  |
 - 本分支所有场景 3 轮都 < 200ms。
 - 配色那一行：main 的 INP 主要不是样式重算，而是天空渐变帧挤进点击要上屏的那一帧（见上面「天空出帧让着输入」）。只做到「换场景挪到点击上屏之后」那一步时测过一轮，配色还是 240 / 264 / 296。
 - 雾度滑块 main 在这台机器上 INP 不高（约 100ms），但 20 步样式重算合计约 650ms；本分支约 180ms。审计在 Jun 电脑上测到的 2.6s 是另一台机器，数字不直接可比。
@@ -2286,12 +2287,12 @@ main `c99ee37e` 对本分支（已合 main），同一个排队位里交替各�
 
 改前是 `3d65ef4c`（#404），改后是本分支。用临时页面挂真实的 `ChatTranscript` / `WorkerCard`，`/api` 全部 404，没连后端；临时页面没提交。
 
-| 情况 | 改前 | 改后 |
-|---|---|---|
-| 后台任务（这一轮写完、任务还在跑） | ![](images/tool-steps/before-worker.webp) | ![](images/tool-steps/after-worker.webp) |
-| 运行中展开 | ![](images/tool-steps/before-running.webp) | ![](images/tool-steps/after-running.webp) |
-| 并行调用 | ![](images/tool-steps/before-parallel.webp) | ![](images/tool-steps/after-parallel.webp) |
-| 停止后（展开） | ![](images/tool-steps/before-stopped.webp) | ![](images/tool-steps/after-stopped.webp) |
-| 读网页（短路径、HTTP 500 算失败） | ![](images/tool-steps/before-fetch.webp) | ![](images/tool-steps/after-fetch.webp) |
+| 情况                               | 改前                                        | 改后                                       |
+| ---------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| 后台任务（这一轮写完、任务还在跑） | ![](images/tool-steps/before-worker.webp)   | ![](images/tool-steps/after-worker.webp)   |
+| 运行中展开                         | ![](images/tool-steps/before-running.webp)  | ![](images/tool-steps/after-running.webp)  |
+| 并行调用                           | ![](images/tool-steps/before-parallel.webp) | ![](images/tool-steps/after-parallel.webp) |
+| 停止后（展开）                     | ![](images/tool-steps/before-stopped.webp)  | ![](images/tool-steps/after-stopped.webp)  |
+| 读网页（短路径、HTTP 500 算失败）  | ![](images/tool-steps/before-fetch.webp)    | ![](images/tool-steps/after-fetch.webp)    |
 
 图片在 `docs/images/tool-steps/`，10 张 webp 共约 50KB，640px 宽、浅色。

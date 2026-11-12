@@ -13,17 +13,20 @@ import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { splitChatOrigin } from "@/components/channels/chat-origin";
 import {
   type ComposerDraft,
   toAgentOptions,
 } from "@/components/channels/composer";
 import { ConversationView } from "@/components/channels/conversation-view";
+import { ToolOutcomeNotice } from "@/components/channels/tool-outcome-notice";
 import {
   seedMessage,
   takeFirstMessage,
   transcriptMessages,
 } from "@/components/channels/transcript-messages";
 import { PermissionChip } from "@/components/chat/permission-chip";
+import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -48,14 +51,29 @@ import {
 } from "@/lib/channels/queries";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import { ConversationScopeProvider } from "@/lib/chat/conversation-scope";
+import {
+  composerTargetPath,
+  currentChatTargetPath,
+  dispatchComposerPrefill,
+} from "@/lib/chat/quote-event";
 import { noteSendWhileBusy } from "@/lib/chat/send-scroll";
 import {
   conversationClient,
+  isConversationProgressEvent,
   useConversationSession,
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
-import { interruptWaitingKind } from "@/lib/compat/legacy-client";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+
+function interruptWaitingKind(
+  metadata: Record<string, unknown> | undefined,
+): unknown {
+  const waiting = metadata?.chisabotWaiting;
+  return waiting && typeof waiting === "object"
+    ? (waiting as { kind?: unknown }).kind
+    : undefined;
+}
+
 import type { ThreadActivity } from "@/lib/conversations/bot-thread";
 import { readSync } from "@/lib/conversations/bot-thread";
 import { reportChatRunning } from "@/lib/conversations/computer-activity";
@@ -70,6 +88,7 @@ import {
   SEND_REPLY_WATCHDOG_MS,
   SEND_UNREACHABLE_REASON,
   SEND_WATCHDOG_MS,
+  SendDeliveryUnknownError,
   sendReachedServer,
   settleDroppedTurn,
   storedTurnAnswered,
@@ -86,6 +105,7 @@ import {
 import { afterMs, joinWithin } from "@/lib/conversations/join-thread";
 import {
   contentText,
+  isEditableUserText,
   lastUserIndex,
   MessageActionsContext,
   type TruncateMode,
@@ -129,6 +149,8 @@ import {
 import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
 import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
+import { useKeptVisibility } from "@/lib/kept-visible";
+import { useAgentInstances } from "@/lib/local-agents";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import {
@@ -434,6 +456,7 @@ export function ChannelChat({
   channel: AgentChannel;
   runtimeAgentId: string;
 }) {
+  const keptVisibility = useKeptVisibility();
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
   /*
@@ -455,7 +478,7 @@ export function ChannelChat({
     (profile) => profile.id === channel.agentIds[0],
   );
   const channelAgentId = `channel:${channel.id}`;
-  const { agent, isReady } = useConversationSession({
+  const { agent, isReady, connectionStatus } = useConversationSession({
     agentId: channelAgentId,
     runtimeAgentId,
     threadId: channel.threadId,
@@ -805,12 +828,17 @@ export function ChannelChat({
     [activity.onActivity],
   );
   const connectChat = useCallback(
-    (options: { agent: typeof agent }) =>
-      conversationClient.connectAgent(options),
+    (options: { agent: typeof agent; snapshotAfter?: string[] }) => {
+      // 合并式重接只要这台还没有的那一段（服务器从这几条之后开始发），不再每次都拉 400 条。
+      options.agent.setConnectSnapshotAfter?.(options.snapshotAfter);
+      return conversationClient.connectAgent({ agent: options.agent });
+    },
     [conversationClient],
   );
+  /** 「重试 / 重新生成」从截断到 say 接手之间：这段空档里 sync 也不许重接（会和马上要发的那一轮抢 agent）。 */
+  const resendingRef = useRef(false);
   const suppressConnectDuringSend = useCallback(
-    () => sendInFlightRef.current,
+    () => sendInFlightRef.current || resendingRef.current,
     [],
   );
   // 打开时的接入（上面的 joinWithin）结束前不核对顺序：那边已经读过一次历史，不再整份拉第二遍。
@@ -818,7 +846,7 @@ export function ChannelChat({
     () => !joinGateSettledRef.current,
     [],
   );
-  useConversationSync(
+  const syncControl = useConversationSync(
     channel.threadId,
     agent,
     connectChat as never,
@@ -1191,9 +1219,10 @@ export function ChannelChat({
     /** 重新生成 / 编辑后重发（§67）：原样发这份内容（带着原来的附件段），不再从文字和附件拼。 */
     contentOverride?: Message["content"],
     inboxSourceId?: string,
+    subagentInstanceId?: string,
   ) => {
-    // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）。
-    if (modelMissingRef.current)
+    // 模型已经不在列表里：这一轮必失败，先挡下来，别让消息堆在对话里没人回答（P1，2026-10-20）；直连子代理跳过主模型。
+    if (modelMissingRef.current && !subagentInstanceId)
       throw new Error(
         "这个模型已下线（不在模型列表里），这一条没有发出去。点输入框右下角的模型名换一个再发。",
       );
@@ -1313,7 +1342,7 @@ export function ChannelChat({
       runEventSeenRef.current = false;
       const runPromise = conversationClient.runAgent({
         agent: target,
-        ...(panelAuthoring || inboxSourceId
+        ...(panelAuthoring || inboxSourceId || subagentInstanceId
           ? {
               forwardedProps: {
                 ...panelAuthoring,
@@ -1325,6 +1354,7 @@ export function ChannelChat({
                       },
                     }
                   : {}),
+                ...(subagentInstanceId ? { subagentInstanceId } : {}),
               },
             }
           : {}),
@@ -1376,6 +1406,10 @@ export function ChannelChat({
                 : null,
           });
         }
+        // A commands POST may still be preparing its agent before it writes either witness.
+        // Negative history/inbox reads cannot authorize a new command while admission is pending.
+        if (persisted === false && target.transport === "commands")
+          persisted = null;
         // First-bound decision without reply race yet.
         // Only abort the agent if the message never reached the server (`hang`). Calling
         // `stopAgent` unconditionally after 12s killed active backend tool runs (e.g. a 14s
@@ -1422,7 +1456,9 @@ export function ChannelChat({
           );
           // Let runPromise settle so the session counters clear.
           void runPromise.catch(() => undefined);
-          throw new Error(first.reason);
+          throw first.kind === "unverified"
+            ? new SendDeliveryUnknownError(first.reason)
+            : new Error(first.reason);
         }
         // Message reached the server; wait longer for a slow model, but still bound
         // (CR-P1-03): unbounded await here wedged runsInFlight / composer forever.
@@ -1607,6 +1643,7 @@ export function ChannelChat({
     attachments: Attachment[] = [],
     contentOverride?: Message["content"],
     inboxSourceId?: string,
+    subagentInstanceId?: string,
   ) => {
     const trimmed = text.trim();
     // A pasted screenshot with no caption is still a message to send: `canSendDraft` already
@@ -1620,6 +1657,18 @@ export function ChannelChat({
     // Seeds and component actions share the same gate as the composer.
     assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
 
+    /*
+     * sync 自己开的闲置接入（补消息 / 核对顺序，不是在跟一轮回答）不算「在处理另一个请求」：先断开它、
+     * 等它收尾再发。以前这里直接抛错，重试按钮的 catch 又把错吞了——长对话里 sync 重接一刻不停时，
+     * 点「重试」截断成功、消息却永远发不出去（2026-11-09）。
+     */
+    if (
+      turnsRef.current === 0 &&
+      joinGateSettledRef.current &&
+      agentRef.current.isRunning &&
+      syncControl.current.idleJoinInFlight()
+    )
+      await syncControl.current.yieldForSend();
     // Every request shares this turn boundary, including gaps between frontend tools.
     if (
       turnsRef.current > 0 ||
@@ -1641,6 +1690,7 @@ export function ChannelChat({
         attachments,
         contentOverride,
         inboxSourceId,
+        subagentInstanceId,
       );
     } finally {
       // 停止会把计数直接清零，这里无条件减会变成负数，导致 sendInFlight 永远卡住（CHAT-02）。
@@ -1670,10 +1720,11 @@ export function ChannelChat({
     failRef.current = fail;
     const subscription = agent.subscribe?.({
       /*
-       * 任何事件都算「这一轮在动」，看门狗只对静默报警（见 runProgressAt）。文案在写、工具调用在长、
-       * 工具结果回来了，都在这里刷新；浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
+       * 文本、工具和执行状态变化代表进展；传输重连通知不续期，避免重连循环掩盖静默。
+       * 浏览器里的工具执行没有事件，由 frontend-tool-activity 代言。
        */
-      onEvent: () => {
+      onEvent: ({ event }) => {
+        if (!isConversationProgressEvent(event)) return;
         runEventSeenRef.current = true;
         noteRunProgress.current();
       },
@@ -1688,9 +1739,8 @@ export function ChannelChat({
         noteRunProgress.current();
         if (
           stopRequestedRef.current ||
-          ["HERMES_RUN_CANCELLED", "DSH_RUN_CANCELLED"].includes(
-            String((event as { code?: unknown } | undefined)?.code),
-          ) ||
+          String((event as { code?: unknown } | undefined)?.code) ===
+            "DSH_RUN_CANCELLED" ||
           event?.message === "This run was stopped."
         ) {
           awaitingReply.current = false;
@@ -1890,8 +1940,23 @@ export function ChannelChat({
     mode: TruncateMode,
     content: Message["content"],
   ) => {
-    if (turnsRef.current > 0 || agentRef.current.isRunning)
-      throw new Error("机器人正在回答，等它说完再试。");
+    if (turnsRef.current > 0) throw new Error("机器人正在回答，等它说完再试。");
+    // 从这里到 say 接手：sync 不许再开接入；正在跑的闲置接入先让路（见 say）。
+    resendingRef.current = true;
+    try {
+      await syncControl.current.yieldForSend();
+      if (turnsRef.current > 0 || agentRef.current.isRunning)
+        throw new Error("机器人正在回答，等它说完再试。");
+      await resendAfterYield(fromMessageId, mode, content);
+    } finally {
+      resendingRef.current = false;
+    }
+  };
+  const resendAfterYield = async (
+    fromMessageId: string,
+    mode: TruncateMode,
+    content: Message["content"],
+  ) => {
     await truncateConversation(channel.threadId, fromMessageId, mode);
     const target = agentRef.current;
     const at = target.messages.findIndex(
@@ -1913,6 +1978,18 @@ export function ChannelChat({
   };
   const resendRef = useRef(resendFrom);
   resendRef.current = resendFrom;
+  /**
+   * 「重试」点了却没发出去（还没轮到 say 就被拒了）要说出来：以前 `.catch(() => undefined)` 把它吞了，
+   * 按钮没反应、也没有任何提示。say 自己失败时已经写好了 runError（turnFailure），不重复。
+   */
+  const reportRetryRefusal = useCallback((error: unknown) => {
+    if (turnFailure.current) return;
+    setRunError(
+      error instanceof Error && error.message
+        ? error.message
+        : "重试没有发出去，请再点一次。",
+    );
+  }, []);
   const regenerate = useCallback(async () => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
@@ -1935,18 +2012,85 @@ export function ChannelChat({
     const user = list[at]!;
     void resendRef
       .current(user.id, "regenerate", user.content as Message["content"])
-      .catch(() => undefined);
+      .catch(reportRetryRefusal);
+  }, [reportRetryRefusal]);
+  const editAndResend = useCallback(
+    async (
+      messageId: string,
+      text: string,
+      removedPartIndices?: ReadonlySet<number>,
+    ) => {
+      const user = agentRef.current.messages.find(
+        (message) => message.id === messageId,
+      );
+      if (!user || user.role !== "user")
+        throw new Error("这条消息已经不在了，刷新看看。");
+      const content = withEditedText(user.content, text, removedPartIndices);
+      if (content === null) throw new Error("消息不能是空的。");
+      await resendRef.current(messageId, "edit", content as Message["content"]);
+    },
+    [],
+  );
+  const withdrawFrom = async (fromMessageId: string) => {
+    if (turnsRef.current > 0) throw new Error("机器人正在回答，等它说完再试。");
+    resendingRef.current = true;
+    try {
+      await syncControl.current.yieldForSend();
+      if (turnsRef.current > 0 || agentRef.current.isRunning)
+        throw new Error("机器人正在回答，等它说完再试。");
+      const target = agentRef.current;
+      const at = target.messages.findIndex(
+        (message) => message.id === fromMessageId,
+      );
+      const user = at >= 0 ? target.messages[at] : undefined;
+      const rawText =
+        user && user.role === "user" ? contentText(user.content) : "";
+      const restoredText = isEditableUserText(rawText)
+        ? (splitChatOrigin(rawText)?.text ?? rawText).trim()
+        : "";
+      try {
+        await truncateConversation(channel.threadId, fromMessageId, "withdraw");
+      } catch (error) {
+        const missingOnServer =
+          error instanceof Error && /不在对话里|已经不在了/.test(error.message);
+        if (!missingOnServer || at < 0) throw error;
+      }
+      const latestTarget = agentRef.current;
+      const latestAt = latestTarget.messages.findIndex(
+        (message) => message.id === fromMessageId,
+      );
+      if (latestAt >= 0)
+        latestTarget.setMessages(
+          latestTarget.messages.slice(
+            0,
+            latestAt,
+          ) as typeof latestTarget.messages,
+        );
+      turnFailure.current = null;
+      setRunError(null);
+      setLocalStops((previous) => {
+        if (!previous.has(fromMessageId)) return previous;
+        const next = new Set(previous);
+        next.delete(fromMessageId);
+        return next;
+      });
+      if (restoredText) dispatchComposerPrefill(restoredText);
+    } finally {
+      resendingRef.current = false;
+    }
+  };
+  const withdrawRef = useRef(withdrawFrom);
+  withdrawRef.current = withdrawFrom;
+  const withdraw = useCallback(async (messageId: string) => {
+    await withdrawRef.current(messageId);
   }, []);
-  const editAndResend = useCallback(async (messageId: string, text: string) => {
-    const user = agentRef.current.messages.find(
-      (message) => message.id === messageId,
-    );
-    if (!user || user.role !== "user")
-      throw new Error("这条消息已经不在了，刷新看看。");
-    const content = withEditedText(user.content, text);
-    if (content === null) throw new Error("消息不能是空的。");
-    await resendRef.current(messageId, "edit", content as Message["content"]);
-  }, []);
+  const withdrawUnanswered = useCallback(async () => {
+    const list = agentRef.current.messages;
+    const at = lastUserIndex(list);
+    const target = at >= 0 ? list[at] : undefined;
+    if (!target) return;
+    await withdrawRef.current(target.id).catch(reportRetryRefusal);
+  }, [reportRetryRefusal]);
 
   // 主模型额度用完、这一轮换了备用模型：那一轮末尾一行淡色小字（DESIGN.md §61）。
   const fallbackTurns = useFallbackTurns(channel.threadId);
@@ -2036,12 +2180,23 @@ export function ChannelChat({
   // 右栏面板（不在这棵组件树里）里的「问一句」发 chisabot-ask 事件（DESIGN.md §29）：发到当前对话。
   useEffect(() => {
     const on = (event: Event) => {
-      const text = (event as CustomEvent<unknown>).detail;
-      if (typeof text === "string") askFromComponent(text);
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const { text, targetPath } = detail as {
+        text?: unknown;
+        targetPath?: unknown;
+      };
+      if (
+        typeof text === "string" &&
+        targetPath === composerTargetPath(channel.id) &&
+        targetPath === currentChatTargetPath() &&
+        keptVisibility.get()
+      )
+        askFromComponent(text);
     };
     window.addEventListener("chisabot-ask", on);
     return () => window.removeEventListener("chisabot-ask", on);
-  }, [askFromComponent]);
+  }, [askFromComponent, channel.id, keptVisibility]);
 
   /**
    * Send the create-channel seed once. No waiting of its own: `say` owns that for every turn, and a
@@ -2162,9 +2317,13 @@ export function ChannelChat({
     [runtimeAgentId, liveActivity],
   );
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
+  const canWithdrawLast =
+    canResend &&
+    !turnAnswered(heldView.messages) &&
+    lastUserIndex(heldView.messages) >= 0;
   const messageActions = useMemo(
-    () => ({ canAct: canResend, regenerate, edit: editAndResend }),
-    [canResend, regenerate, editAndResend],
+    () => ({ canAct: canResend, regenerate, edit: editAndResend, withdraw }),
+    [canResend, regenerate, editAndResend, withdraw],
   );
   /*
    * 流式时这个组件每个 token 都重渲（它订阅 agent.messages）。输入框那一排控件只认这几个原始值，
@@ -2183,9 +2342,26 @@ export function ChannelChat({
     ),
     [runtimeAgentId, channelActive],
   );
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
+    null,
+  );
+  const subagentInstancesQuery = useAgentInstances();
+  const enabledSubagents = useMemo(
+    () => (subagentInstancesQuery.data ?? []).filter((inst) => inst.enabled),
+    [subagentInstancesQuery.data],
+  );
   const leadingControl = useMemo(
-    () => <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />,
-    [runtimeAgentId, channelActive],
+    () => (
+      <span className="inline-flex items-center gap-1">
+        <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />
+        <SubagentPickerChip
+          disabled={!channelActive}
+          onSelect={setSelectedSubagentId}
+          selectedId={selectedSubagentId}
+        />
+      </span>
+    ),
+    [runtimeAgentId, channelActive, selectedSubagentId],
   );
   const contextControl = useMemo(
     () => (
@@ -2198,8 +2374,15 @@ export function ChannelChat({
     [runtimeAgentId, chatBusy, channelThreadId],
   );
   const agentOptions = useMemo(
-    () => toAgentOptions(agentProfiles, channel.agentIds),
-    [agentProfiles, channel.agentIds],
+    () => [
+      ...toAgentOptions(agentProfiles, channel.agentIds),
+      ...enabledSubagents.map((inst) => ({
+        id: `subagent:${inst.id}`,
+        name: inst.name,
+        description: `${inst.environmentName} · 子代理`,
+      })),
+    ],
+    [agentProfiles, channel.agentIds, enabledSubagents],
   );
 
   return (
@@ -2244,6 +2427,7 @@ export function ChannelChat({
               busy={chatBusy}
               threadLive={threadLive}
               joining={joining}
+              reconnecting={connectionStatus === "reconnecting"}
               // The `/` menu exposes only skills granted to this Bot.
               commands={skillCommands}
               // Readiness is handled by `say`; deletion is the only disabled-chat state.
@@ -2284,6 +2468,17 @@ export function ChannelChat({
                       } finally {
                         setRunsInFlight((count) => count - 1);
                       }
+                    }}
+                  />
+                  <ToolOutcomeNotice
+                    agent={agent}
+                    ready={isReady && !restoring}
+                    onResolved={(continued) => {
+                      if (continued) {
+                        turnFailure.current = null;
+                        setRunError(null);
+                      }
+                      activity.kick();
                     }}
                   />
                   {channel.active ? null : (
@@ -2343,7 +2538,21 @@ export function ChannelChat({
                     });
                   });
                 }
-                await say(draft.text, skillInstructions, draft.attachments);
+                const mentionedSubagentId = draft.agentId?.startsWith(
+                  "subagent:",
+                )
+                  ? draft.agentId.slice("subagent:".length)
+                  : null;
+                const targetSubagentId =
+                  mentionedSubagentId || selectedSubagentId || undefined;
+                await say(
+                  draft.text,
+                  skillInstructions,
+                  draft.attachments,
+                  undefined,
+                  undefined,
+                  targetSubagentId,
+                );
               }}
               /**
                * Stop through the core so the abort signal reaches frontend tools; `say` repairs any
@@ -2410,10 +2619,11 @@ export function ChannelChat({
                   !(lastUser && current.isCommandAccepted(lastUser.id))
                 )
                   return false;
-                void regenerate().catch(() => undefined);
+                void regenerate().catch(reportRetryRefusal);
                 return true;
               }}
               onRetryUnanswered={retryUnanswered}
+              onWithdrawTurn={canWithdrawLast ? withdrawUnanswered : undefined}
               onBeforeRetry={() => {
                 const target = agentRef.current;
                 const list = target.messages;

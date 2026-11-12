@@ -23,8 +23,8 @@ import {
   agents,
   channelAgents,
   channels,
+  chisabotChannelMappings,
   deploymentPackages,
-  intelligenceChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -722,7 +722,7 @@ describe("agent profile store integration", () => {
       channelId,
       agentId: source.agentId,
     });
-    await database.insert(intelligenceChannelMappings).values({
+    await database.insert(chisabotChannelMappings).values({
       userId: owner.id,
       channelId,
       threadId: id("thread"),
@@ -736,16 +736,16 @@ describe("agent profile store integration", () => {
       .select()
       .from(channelAgents)
       .innerJoin(
-        intelligenceChannelMappings,
-        eq(channelAgents.channelId, intelligenceChannelMappings.channelId),
+        chisabotChannelMappings,
+        eq(channelAgents.channelId, chisabotChannelMappings.channelId),
       )
       .where(eq(channelAgents.agentId, source.agentId));
     const duplicateMappings = await database
       .select()
       .from(channelAgents)
       .innerJoin(
-        intelligenceChannelMappings,
-        eq(channelAgents.channelId, intelligenceChannelMappings.channelId),
+        chisabotChannelMappings,
+        eq(channelAgents.channelId, chisabotChannelMappings.channelId),
       )
       .where(eq(channelAgents.agentId, duplicate.id));
     const duplicateChannelAgents = await database

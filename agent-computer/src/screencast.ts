@@ -12,7 +12,13 @@
  * headless. This implementation streams the page and forwards input through the Chrome DevTools
  * Protocol.
  */
-import type { CDPSession, Page } from "playwright";
+import type { CDPSession, Page, Request, Response } from "playwright";
+import {
+  classifyEgressTunnel,
+  isPrivateEgressHost,
+  recentEgressOutcome,
+  trustedEgressClass,
+} from "./egress";
 import { whileNavigating } from "./start-page";
 
 /** What the surface sends us. */
@@ -145,6 +151,9 @@ function virtualKeyCode(key: string): number {
   return 0;
 }
 
+/** A main-frame navigation request that failed, as Playwright reported it. */
+type MainFrameFailure = { url: string; errorText: string };
+
 export type Screencast = {
   /** Stop the cast and detach. Safe to call twice. */
   stop: () => Promise<void>;
@@ -175,6 +184,84 @@ export async function startScreencast(
       return undefined;
     }
   };
+
+  /*
+   * 主 frame 的导航失败（含 goto 返回之后才发生的那一跳）。
+   *
+   * goto 用 `waitUntil: "commit"`，第一个文档一提交就返回。之后页面自己再跳（302 链里晚到的一跳、
+   * `location.replace`、点链接）被代理拒绝时，goto 早已成功，不会再抛错。所以整场直播都听着主
+   * frame 的 requestfailed：goto 进行中的失败交给 goto 自己（失败时按最后一跳说明，成功时补发）；
+   * 其余的直接按失败的那一跳推一条 navigation 错误。不靠等固定时间。
+   */
+  let inFlight: MainFrameFailure[] | null = null;
+  /** Filter error pages (plain HTTP 403/502/504) committed as documents while goto is in flight. */
+  let inFlightPages: { url: string; error: string }[] | null = null;
+  /** Bumped by every navigation the person starts, so a slow late report cannot cover a newer one. */
+  let generation = 0;
+  const pushNavigationError = (url: string, error: string, seen: number) => {
+    if (stopped || seen !== generation) return;
+    onFrame({
+      type: "navigation",
+      ok: false,
+      url: pageUrl() ?? url,
+      error,
+    });
+  };
+  const reportLateFailure = (failure: MainFrameFailure) => {
+    const seen = generation;
+    void navigationProblem(
+      new Error(`${failure.errorText} at ${failure.url}`),
+      failure.url,
+      failure.url,
+    ).then((error) => pushNavigationError(failure.url, error, seen));
+  };
+  const reportEgressPage = (page: { url: string; error: string }) => {
+    pushNavigationError(page.url, page.error, generation);
+  };
+  const onMainFrameFailed = (request: Request) => {
+    let failure: MainFrameFailure;
+    try {
+      if (
+        !request.isNavigationRequest() ||
+        request.frame() !== page.mainFrame()
+      )
+        return;
+      failure = {
+        url: request.url(),
+        errorText: request.failure()?.errorText ?? "",
+      };
+    } catch {
+      // A request with no frame (a service worker's) is not a navigation of this page.
+      return;
+    }
+    // Superseded navigations and downloads end as ERR_ABORTED; nothing failed that a person must see.
+    if (/ERR_ABORTED/i.test(failure.errorText)) return;
+    if (inFlight) inFlight.push(failure);
+    else if (!stopped) reportLateFailure(failure);
+  };
+  const onMainFrameDocument = (response: Response) => {
+    let denied: { url: string; error: string };
+    try {
+      const request = response.request();
+      if (
+        !request.isNavigationRequest() ||
+        request.frame() !== page.mainFrame()
+      )
+        return;
+      const error = egressDocumentProblem(response);
+      if (!error) return;
+      denied = { url: request.url(), error };
+    } catch {
+      return;
+    }
+    if (inFlightPages) inFlightPages.push(denied);
+    else if (!stopped) reportEgressPage(denied);
+  };
+  const listening = typeof page.on === "function";
+  if (listening) {
+    page.on("requestfailed", onMainFrameFailed);
+    page.on("response", onMainFrameDocument);
+  }
 
   type ScreencastFrame = {
     data: string;
@@ -244,6 +331,10 @@ export async function startScreencast(
     async stop() {
       if (stopped) return;
       stopped = true;
+      if (listening) {
+        page.off("requestfailed", onMainFrameFailed);
+        page.off("response", onMainFrameDocument);
+      }
       await client.send("Page.stopScreencast").catch(() => undefined);
       await client.detach().catch(() => undefined);
     },
@@ -318,29 +409,87 @@ export async function startScreencast(
 
       if (message.type === "navigate" || message.type === "history") {
         const from = pageUrl() ?? "";
+        // Main-frame failures while this goto runs belong to it (see `onMainFrameFailed`).
+        const failures: MainFrameFailure[] = [];
+        const pages: { url: string; error: string }[] = [];
+        inFlight = failures;
+        inFlightPages = pages;
+        generation += 1;
         try {
           // 导航途中网址还是 about:blank，标记一下，别让起始页和这次导航抢文档。
-          await whileNavigating(page, async () => {
+          const committed = await whileNavigating(page, async () => {
             if (message.type === "navigate") {
-              await page.goto(message.url, { waitUntil: "commit", timeout: 20_000 });
-            } else if (message.action === "back") {
-              await page.goBack({ waitUntil: "commit", timeout: 20_000 });
-            } else if (message.action === "forward") {
-              await page.goForward({ waitUntil: "commit", timeout: 20_000 });
-            } else {
-              await page.reload({ waitUntil: "commit", timeout: 20_000 });
+              return await page.goto(message.url, {
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
             }
+            if (message.action === "back") {
+              return await page.goBack({
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
+            }
+            if (message.action === "forward") {
+              return await page.goForward({
+                waitUntil: "commit",
+                timeout: 20_000,
+              });
+            }
+            return await page.reload({
+              waitUntil: "commit",
+              timeout: 20_000,
+            });
           });
-          if (!stopped)
-            onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
+          inFlight = null;
+          inFlightPages = null;
+          const problem = egressDocumentProblem(committed);
+          const committedUrl = (() => {
+            try {
+              return committed && typeof committed.url === "function"
+                ? committed.url()
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          })();
+          if (!stopped) {
+            if (problem)
+              onFrame({
+                type: "navigation",
+                ok: false,
+                url: pageUrl() ?? from,
+                error: problem,
+              });
+            else
+              onFrame({ type: "navigation", ok: true, url: pageUrl() ?? from });
+          }
+          // `commit` resolves on the first document. A hop that failed after it (a redirect the
+          // committed page started) but before goto returned is reported now, after the ok.
+          for (const failure of failures) reportLateFailure(failure);
+          for (const denied of pages) {
+            if (problem && committedUrl && denied.url === committedUrl)
+              continue;
+            reportEgressPage(denied);
+          }
         } catch (error) {
-          if (!stopped)
+          inFlight = null;
+          inFlightPages = null;
+          if (!stopped) {
+            const url = pageUrl() ?? from;
+            const target = message.type === "navigate" ? message.url : url;
             onFrame({
               type: "navigation",
               ok: false,
-              url: pageUrl() ?? from,
-              error: navigationProblem(error),
+              url,
+              error:
+                pages.at(-1)?.error ??
+                (await navigationProblem(error, target, failures.at(-1)?.url)),
             });
+          }
+        } finally {
+          if (inFlight === failures) inFlight = null;
+          if (inFlightPages === pages) inFlightPages = null;
         }
         return;
       }
@@ -353,14 +502,150 @@ export async function startScreencast(
   };
 }
 
-/** 打不开网址时给人看的一句话（中文），不带 Playwright 的调用日志。 */
-export function navigationProblem(error: unknown): string {
+/**
+ * 打不开网址时给人看的一句话（中文），不带 Playwright 的调用日志。
+ *
+ * Chromium 对代理 CONNECT 的 403（策略）和 502（上游连不上）都报 ERR_TUNNEL。这里用目标地址
+ * 和出口过滤代理的一次探测区分：内网 / SSRF 底线 → 安全提示；其它策略拒绝 → 策略提示；
+ * 连不上 → 如实说连不上。
+ *
+ * 判哪一跳：`failedHop`（实际失败的那个请求，跳转后就是跳转目标）优先；没有时退回错误里
+ * `at …` 的网址和导航目标。Chromium 错误里的 `at` 是起始网址，不是失败的那一跳，所以公网页
+ * 302 到内网时只靠它会被说成「连不上」。
+ */
+export async function navigationProblem(
+  error: unknown,
+  targetUrl?: string,
+  failedHop?: string,
+): Promise<string> {
   const text = error instanceof Error ? error.message : String(error);
-  if (/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_BLOCKED/i.test(text))
-    return "网络策略不允许访问这个网址。";
+  const tunnel = /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY|ERR_BLOCKED/i.test(
+    text,
+  );
+  if (tunnel) {
+    const namedInError = /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1];
+    const hop = parseNavigationTarget(failedHop);
+    // The hop that failed decides when it is known. Otherwise any internal address among the
+    // candidates is the likely reason: the error's `at` and the navigate target can disagree.
+    const candidates = hop
+      ? [hop]
+      : [namedInError, targetUrl].flatMap((raw) => {
+          const parsed = parseNavigationTarget(raw);
+          return parsed ? [parsed] : [];
+        });
+    if (candidates.some((candidate) => isPrivateEgressHost(candidate.host)))
+      return "出于安全原因不允许访问内网地址。";
+    const parsed = candidates[0];
+    if (parsed) {
+      const kind = await classifyEgressTunnel(parsed.host, parsed.port);
+      if (kind === "private") return "出于安全原因不允许访问内网地址。";
+      if (kind === "refused") return "网络策略不允许访问这个网址。";
+      if (kind === "timeout") return NO_ANSWER;
+    }
+    return UNREACHABLE;
+  }
   if (/ERR_NAME_NOT_RESOLVED/i.test(text)) return "找不到这个网址。";
-  if (/ERR_CONNECTION|ERR_ADDRESS|ERR_TIMED_OUT|Timeout/i.test(text))
-    return "网站没有响应，请稍后再试。";
+  // Only a real timeout is "没有响应". Refused / reset / closed is "连不上": through the filter a name
+  // that did not resolve, or a tunnel the far side dropped, ends as ERR_CONNECTION_CLOSED.
+  if (
+    /ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|Timeout \d+ms exceeded/i.test(text)
+  )
+    return NO_ANSWER;
+  if (
+    /ERR_CONNECTION_(CLOSED|RESET|REFUSED|FAILED)|ERR_EMPTY_RESPONSE|ERR_ADDRESS_(UNREACHABLE|INVALID)/i.test(
+      text,
+    )
+  ) {
+    const parsed =
+      parseNavigationTarget(failedHop) ??
+      parseNavigationTarget(
+        /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1],
+      ) ??
+      parseNavigationTarget(targetUrl);
+    if (parsed && recentEgressOutcome(parsed.host, parsed.port) === "timeout")
+      return NO_ANSWER;
+    return UNREACHABLE;
+  }
   if (/ERR_CERT|SSL/i.test(text)) return "网站的安全证书有问题。";
+  // Unrecognized errors (including Playwright "Not attached to an active page" on an
+  // immediate reload) still take the destination: a blocked address should not become
+  // a generic 「打不开」.
+  const parsed =
+    parseNavigationTarget(failedHop) ??
+    parseNavigationTarget(
+      /\bat\s+(https?:\/\/\S+?)(?:\s|$)/i.exec(text)?.[1],
+    ) ??
+    parseNavigationTarget(targetUrl);
+  if (parsed) {
+    if (isPrivateEgressHost(parsed.host))
+      return "出于安全原因不允许访问内网地址。";
+    const kind = await classifyEgressTunnel(parsed.host, parsed.port);
+    if (kind === "private") return "出于安全原因不允许访问内网地址。";
+    if (kind === "refused") return "网络策略不允许访问这个网址。";
+    if (kind === "timeout") return NO_ANSWER;
+    if (kind === "unreachable") return UNREACHABLE;
+  }
   return "这个网址打不开。";
+}
+
+const UNREACHABLE = "连不上这个网址。";
+const NO_ANSWER = "网站没有响应，请稍后再试。";
+
+const EGRESS_CLASS_MESSAGE: Record<string, string> = {
+  private: "出于安全原因不允许访问内网地址。",
+  refused: "网络策略不允许访问这个网址。",
+  unresolved: UNREACHABLE,
+  credentials: "代理凭据不正确，无法出网。",
+  timeout: NO_ANSWER,
+  unreachable: UNREACHABLE,
+};
+
+/**
+ * 纯 HTTP 经过滤器被拦或上游失败时，代理会回 403/502/504 文档。Chromium 把它当成一次成功的
+ * 文档提交，goto / requestfailed 都不会失败，所以这里按响应头分类。只认带过滤器进程令牌的
+ * 头：网站自己写的 x-chisabot-egress-class（尤其在 HTTPS 隧道里过滤器看不见）不能假造文案。
+ */
+export function egressDocumentProblem(
+  response:
+    | { status?: () => number; headers?: () => Record<string, string> }
+    | null
+    | undefined,
+): string | null {
+  if (!response || typeof response.status !== "function") return null;
+  let status: number;
+  try {
+    status = response.status();
+  } catch {
+    return null;
+  }
+  if (status !== 403 && status !== 502 && status !== 504) return null;
+  let headers: Record<string, string> = {};
+  try {
+    headers = response.headers?.() ?? {};
+  } catch {
+    return null;
+  }
+  const klass = trustedEgressClass(headers);
+  if (!klass) return null;
+  if (EGRESS_CLASS_MESSAGE[klass]) return EGRESS_CLASS_MESSAGE[klass];
+  return status === 504 ? NO_ANSWER : UNREACHABLE;
+}
+
+function parseNavigationTarget(
+  raw: string | undefined,
+): { host: string; port: number } | null {
+  if (!raw?.trim()) return null;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!host) return null;
+    const port = Number(
+      url.port ||
+        (url.protocol === "https:" ? 443 : url.protocol === "http:" ? 80 : 0),
+    );
+    if (!Number.isInteger(port) || port < 1) return null;
+    return { host, port };
+  } catch {
+    return null;
+  }
 }

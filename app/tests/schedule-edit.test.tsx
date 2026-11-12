@@ -8,8 +8,9 @@ import {
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ConfirmHost } from "@/components/ui/confirm";
 import type { ScheduleView } from "../../shared/schedules";
 import { settleReactWork } from "./settle-react-work";
 
@@ -134,5 +135,148 @@ describe("ScheduleEditDialog", () => {
       },
     });
     await waitFor(() => expect(open).toBe(false));
+  });
+
+  test("pending save locks draft and dismissal; same-task refresh keeps the draft", async () => {
+    const { ScheduleEditDialog } = await import(
+      "@/components/schedules/edit-dialog"
+    );
+    let finish!: (value: ScheduleView) => void;
+    const saved = new Promise<ScheduleView>((resolve) => {
+      finish = resolve;
+    });
+    const requests: unknown[] = [];
+    const closes: boolean[] = [];
+    const client = new QueryClient();
+    const draw = (schedule: ScheduleView) => (
+      <QueryClientProvider client={client}>
+        <ScheduleEditDialog
+          schedule={schedule}
+          onOpenChange={(open) => closes.push(open)}
+          save={async (_id, patch) => {
+            requests.push(patch);
+            return saved;
+          }}
+        />
+        <ConfirmHost />
+      </QueryClientProvider>
+    );
+    const view = render(draw(base));
+    const user = userEvent.setup({ document: globalThis.document });
+    const title = view.getByTestId("sch-edit-title") as HTMLInputElement;
+    await user.clear(title);
+    await user.type(title, "我的草稿");
+    view.rerender(draw({ ...base, title: "刷新得到的原名称" }));
+    expect(title.value).toBe("我的草稿");
+    await user.click(view.getByTestId("sch-edit-save"));
+    await waitFor(() => expect(requests).toEqual([{ title: "我的草稿" }]));
+    expect(title.disabled).toBe(true);
+    expect((view.getByTestId("sch-edit-at") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (view.getByTestId("sch-edit-instruction") as HTMLTextAreaElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (view.getByRole("button", { name: "取消" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(closes).toEqual([]);
+    await act(async () => {
+      finish(base);
+      await saved;
+    });
+    await waitFor(() => expect(closes).toEqual([false]));
+    client.clear();
+  });
+
+  test.each(["success", "failure"] as const)(
+    "late %s from task A cannot close or change task B",
+    async (outcome) => {
+      const { ScheduleEditDialog } = await import(
+        "@/components/schedules/edit-dialog"
+      );
+      let finish!: (value: ScheduleView) => void;
+      let fail!: (error: Error) => void;
+      const pending = new Promise<ScheduleView>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      let started = false;
+      const closes: boolean[] = [];
+      const client = new QueryClient();
+      const draw = (schedule: ScheduleView) => (
+        <QueryClientProvider client={client}>
+          <ScheduleEditDialog
+            schedule={schedule}
+            onOpenChange={(open) => closes.push(open)}
+            save={async () => {
+              started = true;
+              return pending;
+            }}
+          />
+        </QueryClientProvider>
+      );
+      const view = render(draw(base));
+      const user = userEvent.setup({ document: globalThis.document });
+      await user.type(view.getByTestId("sch-edit-title"), " A");
+      await user.click(view.getByTestId("sch-edit-save"));
+      await waitFor(() => expect(started).toBe(true));
+      view.rerender(draw({ ...base, id: "sch_b", title: "晚报" }));
+      const nextTitle = view.getByTestId("sch-edit-title") as HTMLInputElement;
+      await user.type(nextTitle, " B 草稿");
+      await act(async () => {
+        if (outcome === "success") finish(base);
+        else fail(new Error("A 保存失败"));
+        try {
+          await pending;
+        } catch {
+          /* production callback owns the error */
+        }
+      });
+      expect(nextTitle.value).toBe("晚报 B 草稿");
+      expect(nextTitle.disabled).toBe(false);
+      expect(closes).toEqual([]);
+      expect(view.queryByRole("alert")).toBeNull();
+      client.clear();
+    },
+  );
+
+  test("failed save keeps the edited draft and exposes retry without closing", async () => {
+    const { ScheduleEditDialog } = await import(
+      "@/components/schedules/edit-dialog"
+    );
+    let attempt = 0;
+    const closes: boolean[] = [];
+    const client = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ScheduleEditDialog
+          schedule={base}
+          onOpenChange={(open) => closes.push(open)}
+          save={async () => {
+            if (++attempt === 1) throw new Error("服务暂时不可用");
+            return base;
+          }}
+        />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup({ document: globalThis.document });
+    const title = view.getByTestId("sch-edit-title") as HTMLInputElement;
+    await user.type(title, "草稿");
+    await user.click(view.getByTestId("sch-edit-save"));
+    await waitFor(() =>
+      expect(view.getByRole("alert").textContent).toContain("服务暂时不可用"),
+    );
+    await waitFor(() => expect(title.disabled).toBe(false));
+    expect(title.value).toBe("晨报草稿");
+    expect(closes).toEqual([]);
+    await user.click(view.getByTestId("sch-edit-save"));
+    await waitFor(() => expect(closes).toEqual([false]));
+    expect(attempt).toBe(2);
+    client.clear();
   });
 });

@@ -8,7 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const fp = require("../scripts/shell-fingerprint");
-const { createUpdater, isInstalledBuild, requiresFullInstall } = require("../src/updater");
+const { createUpdater, isInstalledBuild, requiresFullInstall, requiresClientDownload } = require("../src/updater");
 const shellRefresh = require("../src/shell-refresh");
 
 const PC = path.join(__dirname, "..");
@@ -30,11 +30,15 @@ function editPkg(dir, fn) {
   fs.writeFileSync(file, JSON.stringify(pkg, null, 2));
 }
 
-test("committed src/shell-fingerprint.json matches the current shell inputs", () => {
+test("committed src/shell-fingerprint.json matches the current shell and client inputs", () => {
   const committed = JSON.parse(fs.readFileSync(path.join(PC, "src", "shell-fingerprint.json"), "utf8"));
-  assert.strictEqual(committed.hash, fp.compute().hash, "改了图标 / 安装配置后要运行 npm run fingerprint");
+  const current = fp.compute();
+  assert.strictEqual(committed.hash, current.hash, "改了图标 / 安装配置后要运行 npm run fingerprint");
+  assert.strictEqual(committed.clientHash, current.clientHash, "改了 PC 客户端代码后要运行 npm run fingerprint");
   assert.match(committed.hash, /^[0-9a-f]{16}$/);
+  assert.match(committed.clientHash, /^[0-9a-f]{16}$/);
   assert.strictEqual(shellRefresh.loadFingerprint(), committed.hash);
+  assert.strictEqual(shellRefresh.loadClientFingerprint(), committed.clientHash);
 });
 
 test("fingerprint changes with icons, installer script, Electron and shell config — not with version, publish or JS deps", () => {
@@ -88,6 +92,86 @@ test("requiresFullInstall: only a different shell hash or an explicit fullInstal
   assert.strictEqual(requiresFullInstall({ version: "0.1.3", chisabotShell: "bbbb" }, ""), true, "本机没有指纹 = 外壳未知，重新安装");
   assert.strictEqual(requiresFullInstall({ version: "0.1.3", chisabotShell: "aaaa", fullInstall: true }, "aaaa"), true, "发布者强制");
   assert.strictEqual(requiresFullInstall(null, "aaaa"), false);
+});
+
+test("clientHash ignores version bumps, changes on src/ or runtime deps, and gates web-refresh vs installer download", async () => {
+  const dir = sandboxCopy();
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "src", "sample.js"), "module.exports = 1;\n");
+  const base = fp.compute(dir);
+  editPkg(dir, (p) => (p.version = "0.1.999"));
+  editPkg(dir, (p) => (p.build.publish = [{ provider: "generic", url: "https://example.org/feed/" }]));
+  assert.strictEqual(fp.compute(dir).clientHash, base.clientHash, "纯升版本号不改变 clientHash");
+  fs.writeFileSync(path.join(dir, "src", "sample.js"), "module.exports = 2;\n");
+  const afterSrc = fp.compute(dir).clientHash;
+  assert.notStrictEqual(afterSrc, base.clientHash, "改了 src 代码后 clientHash 必变");
+  editPkg(dir, (p) => (p.dependencies.ws = "9.9.9"));
+  assert.notStrictEqual(fp.compute(dir).clientHash, afterSrc, "改了运行时依赖后 clientHash 必变");
+
+  assert.strictEqual(
+    requiresClientDownload({ version: "0.1.200", chisabotShell: "aaaa", chisabotClient: "cccc" }, { localShell: "aaaa", localClient: "cccc" }),
+    false,
+    "外壳与客户端代码均未变：不下载安装包，走网页直接刷新",
+  );
+  assert.strictEqual(
+    requiresClientDownload({ version: "0.1.200", chisabotShell: "aaaa", chisabotClient: "dddd" }, { localShell: "aaaa", localClient: "cccc" }),
+    true,
+    "客户端代码变了：下载并走普通重启安装",
+  );
+  assert.strictEqual(
+    requiresClientDownload({ version: "0.1.200", chisabotShell: "bbbb", chisabotClient: "cccc" }, { localShell: "aaaa", localClient: "cccc" }),
+    true,
+    "外壳变了：必须下载并重新安装",
+  );
+
+  // 三档路由端到端验证（传入 clientHash 时 autoDownload=false，按指纹决定是否调用 downloadUpdate）
+  function makeGated(remoteInfo) {
+    const e = new EventEmitter();
+    e.downloads = 0;
+    e.installerPath = "C:\\pending\\ChisaBot-setup.exe";
+    e.checkForUpdates = async () => {
+      e.emit("checking-for-update");
+      e.emit("update-available", remoteInfo);
+      return { updateInfo: remoteInfo };
+    };
+    e.downloadUpdate = async () => {
+      e.downloads++;
+      e.emit("update-downloaded", remoteInfo);
+    };
+    e.quitAndInstall = () => {};
+    let notified = 0;
+    const u = createUpdater({
+      autoUpdater: e,
+      isPackaged: true,
+      platform: "win32",
+      execPath,
+      productName: "ChisaBot",
+      shellHash: "aaaa",
+      clientHash: "cccc",
+      getAutoUpdate: () => true,
+      onDownloaded: () => notified++,
+      timers: { setTimeout: () => 0, setInterval: () => 0, clearTimeout() {}, clearInterval() {} },
+    });
+    return { e, u, notified: () => notified };
+  }
+
+  const webOnly = makeGated({ version: "0.1.201", chisabotShell: "aaaa", chisabotClient: "cccc" });
+  const webState = await webOnly.u.check();
+  assert.strictEqual(webOnly.e.autoDownload, false);
+  assert.strictEqual(webOnly.e.downloads, 0, "仅网页/服务端发版时不下载安装包");
+  assert.strictEqual(webState.status, "none");
+  assert.strictEqual(webOnly.notified(), 0);
+
+  const normalUpdate = makeGated({ version: "0.1.201", chisabotShell: "aaaa", chisabotClient: "dddd" });
+  await normalUpdate.u.check();
+  assert.strictEqual(normalUpdate.e.downloads, 1, "PC 代码改动时后台下载");
+  assert.strictEqual(normalUpdate.u.state.status, "downloaded");
+  assert.ok(!normalUpdate.u.state.fullInstall, "外壳未变时不走重新安装");
+
+  const fullReinstall = makeGated({ version: "0.1.201", chisabotShell: "bbbb", chisabotClient: "dddd" });
+  await fullReinstall.u.check();
+  assert.strictEqual(fullReinstall.e.downloads, 1);
+  assert.strictEqual(fullReinstall.u.state.fullInstall, true, "外壳变化时走重新安装");
 });
 
 // ---------- 客户端安装方式 ----------

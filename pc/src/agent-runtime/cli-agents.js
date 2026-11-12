@@ -8,6 +8,8 @@
  *   （root 运行时它要求 IS_SANDBOX=1，ChisaCloudCode 踩过）。
  * - Codex CLI：只读 → --sandbox read-only；工作区 → --sandbox workspace-write（联网开关映射到
  *   sandbox_workspace_write.network_access）；完全访问 → --dangerously-bypass-approvals-and-sandbox。
+ * - Antigravity CLI 回退：无 agy_acp_server 时通过命令行执行。
+ * - 自定义命令（custom）：支持 {{prompt}} / {{workdir}} / {{model}} 占位符或 stdin 传入提示词。
  * - OpenCode / Gemini CLI / Aider 没有可靠的只读模式：服务器只在完全访问、一次性副本或系统级沙盒里交给它们。
  */
 
@@ -125,6 +127,48 @@ function codexParser() {
   };
 }
 
+/** 通用 JSONL 解析器（给自定义命令 outputFormat='jsonl' 使用）。 */
+function genericJsonlParser(label = "Custom") {
+  let summary = "";
+  let isError = false;
+  const tail = [];
+  return {
+    line(raw, emit) {
+      let event;
+      try {
+        event = JSON.parse(raw);
+      } catch {
+        const clean = raw.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "").trimEnd();
+        if (clean.trim()) {
+          tail.push(clean);
+          if (tail.length > 40) tail.shift();
+          emit("text", clean);
+        }
+        return;
+      }
+      if (!event || typeof event !== "object") return;
+      if (event.type === "tool" || event.tool) {
+        const toolText = String(event.title || event.tool || event.name || "工具操作");
+        emit("tool", toolText, toolText);
+        return;
+      }
+      if (event.type === "error" || event.is_error) {
+        isError = true;
+        emit("stderr", String(event.error || event.message || raw));
+        return;
+      }
+      const text = event.result || event.summary || event.text || event.message || event.content;
+      if (typeof text === "string" && text.trim()) {
+        summary = text.trim();
+        emit("text", summary);
+      }
+    },
+    result() {
+      return { summary: summary || tail.join("\n").slice(-4000), isError, label };
+    },
+  };
+}
+
 /** 纯文字输出的 agent：最后 40 行当结果。 */
 function textParser(label) {
   const tail = [];
@@ -145,41 +189,108 @@ function textParser(label) {
 /**
  * 组装命令。返回 { name, args, env, stdin, parser }；name 是可执行文件名（由调用方换成检测到的路径）。
  */
-function buildCommand(kind, { prompt, profile, skipPermissions, network, workdir, root, viaStdin }) {
+function buildCommand(
+  kind,
+  {
+    prompt,
+    profile,
+    skipPermissions,
+    network,
+    workdir,
+    root,
+    viaStdin,
+    model,
+    extraArgs,
+    claudeMcpConfigPath,
+    codexConfigArgs,
+    stdinPrompt,
+    outputFormat,
+  },
+) {
+  const extra = Array.isArray(extraArgs) ? extraArgs.map(String).filter((s) => s.length > 0) : [];
+  const trimmedModel = typeof model === "string" && model.trim() ? model.trim() : null;
+
   switch (kind) {
     case "claude": {
       const args = ["-p"];
       if (!viaStdin) args.push(prompt);
       args.push("--output-format", "stream-json", "--verbose");
+      if (trimmedModel) args.push("--model", trimmedModel);
+      if (claudeMcpConfigPath) args.push("--mcp-config", claudeMcpConfigPath);
       if (skipPermissions) args.push("--dangerously-skip-permissions");
       else if (profile === "readonly") args.push("--permission-mode", "plan");
       else args.push("--permission-mode", "acceptEdits");
+      if (extra.length) args.push(...extra);
       const env = root && skipPermissions ? { IS_SANDBOX: "1" } : {};
       return { name: "claude", args, env, stdin: viaStdin ? prompt : null, parser: claudeParser() };
     }
     case "codex": {
       const args = ["exec", "--json", "--skip-git-repo-check", "-C", workdir];
+      if (trimmedModel) args.push("-m", trimmedModel);
+      if (Array.isArray(codexConfigArgs) && codexConfigArgs.length) args.push(...codexConfigArgs);
       if (skipPermissions && profile === "full") args.push("--dangerously-bypass-approvals-and-sandbox");
       else if (profile === "readonly") args.push("--sandbox", "read-only");
       else {
         args.push("--sandbox", "workspace-write");
         if (network) args.push("-c", "sandbox_workspace_write.network_access=true");
       }
+      if (extra.length) args.push(...extra);
       args.push(viaStdin ? "-" : prompt);
       return { name: "codex", args, env: {}, stdin: viaStdin ? prompt : null, parser: codexParser() };
     }
-    case "opencode":
-      return { name: "opencode", args: ["run", prompt], env: {}, stdin: null, parser: textParser("OpenCode") };
-    case "gemini":
-      return { name: "gemini", args: ["-p", prompt, ...(skipPermissions ? ["--yolo"] : [])], env: {}, stdin: null, parser: textParser("Gemini CLI") };
-    case "aider":
+    case "antigravity": {
+      const args = ["chat", "-m", prompt];
+      if (trimmedModel) args.push("--model", trimmedModel);
+      if (extra.length) args.push(...extra);
+      return { name: "agy", args, env: {}, stdin: null, parser: textParser("Antigravity") };
+    }
+    case "opencode": {
+      const args = ["run"];
+      if (trimmedModel) args.push("-m", trimmedModel);
+      if (extra.length) args.push(...extra);
+      args.push(prompt);
+      return { name: "opencode", args, env: {}, stdin: null, parser: textParser("OpenCode") };
+    }
+    case "gemini": {
+      const args = ["-p", prompt];
+      if (trimmedModel) args.push("-m", trimmedModel);
+      if (skipPermissions) args.push("--yolo");
+      if (extra.length) args.push(...extra);
+      return { name: "gemini", args, env: {}, stdin: null, parser: textParser("Gemini CLI") };
+    }
+    case "aider": {
+      const args = ["--message", prompt, "--yes-always", "--no-pretty", "--no-auto-commits", "--no-check-update"];
+      if (trimmedModel) args.push("--model", trimmedModel);
+      if (extra.length) args.push(...extra);
       return {
         name: "aider",
-        args: ["--message", prompt, "--yes-always", "--no-pretty", "--no-auto-commits", "--no-check-update"],
+        args,
         env: {},
         stdin: null,
         parser: textParser("Aider"),
       };
+    }
+    case "custom": {
+      let usedPromptTemplate = false;
+      const renderedArgs = extra.map((item) => {
+        if (item.includes("{{prompt}}")) usedPromptTemplate = true;
+        return item
+          .replace(/\{\{prompt\}\}/g, prompt)
+          .replace(/\{\{workdir\}\}/g, workdir || "")
+          .replace(/\{\{model\}\}/g, trimmedModel || "");
+      });
+      const useStdin = stdinPrompt !== false && !usedPromptTemplate;
+      if (!useStdin && !usedPromptTemplate) {
+        renderedArgs.push(prompt);
+      }
+      return {
+        name: "custom",
+        args: renderedArgs,
+        env: {},
+        stdin: useStdin ? prompt : null,
+        parser: outputFormat === "jsonl" ? genericJsonlParser("Custom") : textParser("Custom"),
+      };
+    }
     default:
       throw new Error(`不认识的本地 agent：${kind}`);
   }
@@ -190,4 +301,12 @@ function cmdSafe(text) {
   return String(text).replace(/[\r\n]+/g, " ").replace(/["%^&|<>]/g, " ");
 }
 
-module.exports = { buildCommand, claudeParser, codexParser, textParser, describeToolUse, cmdSafe };
+module.exports = {
+  buildCommand,
+  claudeParser,
+  codexParser,
+  genericJsonlParser,
+  textParser,
+  describeToolUse,
+  cmdSafe,
+};

@@ -5,9 +5,9 @@ import type { AuditEventInput, AuditStore } from "../src/audit";
 import { StaleSnapshotError } from "../src/computer/client";
 import { createComputerGateway } from "../src/computer/gateway";
 import type { ActionPolicy } from "../src/computer/policy";
+import { createSharedComputerProvider } from "../src/computer/provider";
 import type { SnapshotResult } from "../src/computer/schema";
 import { createSnapshotStore } from "../src/computer/snapshot-store";
-import { createDockerSupervisorProvider } from "../src/computer/supervisor";
 import { createDatabase } from "../src/db/client";
 import { computerSnapshot } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -39,33 +39,10 @@ const SNAPSHOT: SnapshotResult = {
   elements: [{ ref: "e9", role: "button", name: "Submit order" }],
 };
 
-function fakeSupervisor(startedAt: () => string, known: string[] = []) {
-  const ensured = new Set(known);
-  const describe = (id: string) => ({
-    botId: id,
-    container: `chisabot-computer-${id}`,
-    status: "running",
-    url: "http://chisabot-computer:4100",
-    startedAt: startedAt(),
-  });
+function fakeComputerFetch(startedAt: () => string) {
   return (async (url: string) => {
     const path = new URL(url).pathname;
-    if (path.endsWith("/ensure")) {
-      const asked = decodeURIComponent(
-        path.slice("/computers/".length, -"/ensure".length),
-      );
-      ensured.add(asked);
-      return Response.json(describe(asked));
-    }
-    return Response.json({
-      computers: [...ensured].map((id) => describe(id)),
-    });
-  }) as unknown as typeof fetch;
-}
-
-function fakeComputerFetch() {
-  return (async (url: string) => {
-    const path = new URL(url).pathname;
+    if (path === "/run") return Response.json({ run: startedAt() });
     if (path === "/snapshot") return Response.json(SNAPSHOT);
     if (path === "/click")
       return Response.json({
@@ -78,16 +55,17 @@ function fakeComputerFetch() {
 }
 
 /** One server replica: its own provider and gateway, sharing only Postgres. */
-function replica(startedAt: () => string, known: string[] = []) {
+function replica(startedAt: () => string, _known: string[] = []) {
   const rows: AuditEventInput[] = [];
   const store: AuditStore = { insert: async (e) => void rows.push(e) };
-  const provider = createDockerSupervisorProvider({
-    baseUrl: "http://supervisor:4300",
-    fetchImpl: fakeSupervisor(startedAt, known),
+  const fetchImpl = fakeComputerFetch(startedAt);
+  const provider = createSharedComputerProvider({
+    baseUrl: "http://chisabot-computer:4100",
+    fetchImpl,
   });
   const gateway = createComputerGateway({
     provider,
-    fetchImpl: fakeComputerFetch(),
+    fetchImpl,
     auditStore: store,
     policy: () => PERMISSIVE,
     // The real store, against the real database.

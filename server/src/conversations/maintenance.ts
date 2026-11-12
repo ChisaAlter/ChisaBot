@@ -1,5 +1,6 @@
 import { accessSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { selectedAgentKernel } from "../../../shared/agent-kernel";
 
 export class ConversationMaintenanceError extends Error {
   readonly status = 503;
@@ -13,7 +14,7 @@ export class ConversationMaintenanceError extends Error {
 export function conversationAdmissionClosed(): boolean {
   const root =
     process.env.CHISABOT_DSH_ROOT?.trim() ||
-    (process.env.CHISABOT_AGENT_KERNEL === "dsh" ? ".data/dsh" : undefined);
+    (selectedAgentKernel(process.env) === "dsh" ? ".data/dsh" : undefined);
   if (!root) return false;
   try {
     accessSync(join(resolve(root), ".maintenance"));

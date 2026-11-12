@@ -16,7 +16,7 @@ import {
   agentProfiles,
   agents,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -41,8 +41,8 @@ const createdChannelIds: string[] = [];
 afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const agentId of createdAgentIds.splice(0)) {

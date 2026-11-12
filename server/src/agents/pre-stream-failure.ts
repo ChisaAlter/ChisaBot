@@ -3,10 +3,10 @@ import { AbstractAgent, type BaseEvent, EventType, type RunAgentInput } from "@a
 import { Observable } from "rxjs";
 
 /**
- * CB-100：智能体运行时（Hermes、远程 AG-UI / Mastra）在流开始之前就连不上时，给这一轮一个终止错误。
+ * CB-100：智能体运行时（DSH、远程 AG-UI）在流开始之前就连不上时，给这一轮一个终止错误。
  *
  * 以前 `fetch` 抛出的 ConnectionRefused 会作为 observable 的 `error` 往上冒：@ag-ui/client 只打印
- * 「Agent execution failed」，Intelligence 运行器收不到 RUN_ERROR，前端一直停在「思考中」，这一轮也不会被
+ * 「Agent execution failed」，会话运行器收不到 RUN_ERROR，前端一直停在「思考中」，这一轮也不会被
  * 标记为失败。RUN_ERROR 通过 `next` 发出再 complete，是运行器认得的「这一轮失败了」（见 turns/run-turn.ts）。
  *
  * 只管「一个事件都还没收到」的失败。流一旦开始，之后的错误原样透传，既有行为不变。
@@ -65,7 +65,7 @@ export function agentConnectTimeoutMs(env: Record<string, string | undefined> = 
 }
 
 export class FailFastTransport extends AbstractAgent {
-  /** `inner` is the real transport (HttpAgent / Mastra agent); readable so tests can inspect it. */
+  /** `inner` is the real transport (`HttpAgent`); readable so tests can inspect it. */
   constructor(
     readonly inner: AbstractAgent,
     readonly connectTimeoutMs: number = agentConnectTimeoutMs(),

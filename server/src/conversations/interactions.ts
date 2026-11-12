@@ -11,6 +11,13 @@ import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { Database } from "../db/client";
 import type { TurnRunner } from "../turns/types";
 import {
+  assertContinuationAvailable,
+  ContinuationCancelled,
+  continuationView,
+  existingContinuation,
+  retryContinuation,
+} from "./continuation-work";
+import {
   assertConversationAdmissionOpen,
   ConversationMaintenanceError,
 } from "./maintenance";
@@ -87,7 +94,8 @@ export function createConversationInteractions(
         [threadId, runId ?? null],
       );
     },
-    async resume(callId: string, runTurn: TurnRunner) {
+    async resume(callId: string, runTurn: TurnRunner, onAdmitted?: () => void) {
+      assertConversationAdmissionOpen();
       const [row] = await sql.unsafe<
         (Row & { continuation: unknown; agent_id: string })[]
       >(
@@ -97,27 +105,25 @@ export function createConversationInteractions(
       );
       if (!row) return;
       const runId = `interaction:${callId}`;
-      const [existing] = await sql.unsafe<{ status: string }[]>(
-        "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
-        [row.thread_id, runId],
+      const existing = await existingContinuation(
+        database,
+        row.thread_id,
+        runId,
       );
-      if (existing) {
-        if (
-          ["finished", "stopped", "error", "interrupted"].includes(
-            existing.status,
-          )
-        )
-          return;
-        throw new Error("The interaction continuation is still active.");
+      if (existing !== "new") {
+        if (existing === "accepted") onAdmitted?.();
+        return;
       }
       const snapshot = parseApprovalContinuation(row.continuation);
-      if (
-        await createDshRunJournal(database).continuationRefusal(
-          snapshot.threadId,
-          snapshot.runId,
-        )
-      )
+      const refusal = await createDshRunJournal(database).continuationRefusal(
+        snapshot.threadId,
+        snapshot.runId,
+      );
+      if (refusal) {
+        if (onAdmitted) throw new ContinuationCancelled(refusal);
         return;
+      }
+      await assertContinuationAvailable(database, row.thread_id);
       const content =
         typeof row.answer === "string"
           ? row.answer
@@ -135,6 +141,7 @@ export function createConversationInteractions(
           messageId: `${runId}:answer`,
           result: { content },
         },
+        ...(onAdmitted ? { onAdmitted } : {}),
       });
     },
     routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
@@ -146,8 +153,45 @@ export function createConversationInteractions(
           [context.req.param("callId"), context.var.actor.id],
         );
         return row
-          ? context.json({ status: row.status, answer: row.answer })
+          ? context.json({
+              status: row.status,
+              answer: row.answer,
+              ...(row.status === "answered"
+                ? {
+                    continuation: await continuationView(database, {
+                      kind: "conversation.interaction-response",
+                      key: row.call_id,
+                      threadId: row.thread_id,
+                      runId: `interaction:${row.call_id}`,
+                    }),
+                  }
+                : {}),
+            })
           : context.json({ status: "unavailable" });
+      });
+      routes.post("/:callId/retry", async (context) => {
+        const [row] = await sql.unsafe<Row[]>(
+          "SELECT * FROM chisabot_conversation_interactions WHERE call_id=$1 AND owner_user_id=$2 AND status='answered'",
+          [context.req.param("callId"), context.var.actor.id],
+        );
+        if (!row) return context.json({ error: "找不到已回答的卡片。" }, 404);
+        const refusal = await createDshRunJournal(database).continuationRefusal(
+          row.thread_id,
+          row.run_id,
+        );
+        if (refusal) return context.json({ error: refusal }, 409);
+        const retried = await retryContinuation(database, {
+          kind: "conversation.interaction-response",
+          key: row.call_id,
+          threadId: row.thread_id,
+          runId: `interaction:${row.call_id}`,
+        });
+        return retried
+          ? context.json({ accepted: true })
+          : context.json(
+              { error: "这次续执行已开始或仍在排队，请在对话中查看结果。" },
+              409,
+            );
       });
       routes.post("/:callId", async (context) => {
         const body = z

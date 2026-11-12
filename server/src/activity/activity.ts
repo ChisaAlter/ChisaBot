@@ -19,7 +19,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   responsibilities,
   responsibilityEvents,
   responsibilityRuns,
@@ -107,11 +107,11 @@ export function createActivityStore(database: Database) {
     if (unique.length === 0) return new Map();
     const rows = await database
       .select({
-        threadId: intelligenceChannelMappings.threadId,
-        channelId: intelligenceChannelMappings.channelId,
+        threadId: chisabotChannelMappings.threadId,
+        channelId: chisabotChannelMappings.channelId,
       })
-      .from(intelligenceChannelMappings)
-      .where(inArray(intelligenceChannelMappings.threadId, unique));
+      .from(chisabotChannelMappings)
+      .where(inArray(chisabotChannelMappings.threadId, unique));
     return new Map(rows.map((row) => [row.threadId, row.channelId]));
   }
 

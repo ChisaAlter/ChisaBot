@@ -1,5 +1,5 @@
 import { checkNavigationTarget } from "../computer/target";
-import { withoutRunAssertion } from "../legacy/protocol";
+import { withoutRunAssertion } from "../conversations/protocol";
 
 /**
  * Where an external agent lives, and whether we are willing to talk to it.

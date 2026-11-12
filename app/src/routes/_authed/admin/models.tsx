@@ -88,7 +88,7 @@ function ModelSettingsPage() {
           <PageSection description="主模型额度用完或暂时不可用时，按这个顺序换下一个，对话里会有一行小字说明。" settingItem="models.fallback-models" title="备用模型">
             <FallbackModelsCard mainModel={settings.data.model} />
           </PageSection>
-          <PageSection description="Hermes 内核下对话很长时，较早的轮次由这个模型写成摘要再发给主模型；不选就用主模型。摘要失败只会裁剪旧内容，不影响回答。" title="摘要模型">
+          <PageSection description="对话很长时，较早的轮次由这个模型写成摘要再发给主模型；不选就用主模型。摘要失败只会裁剪旧内容，不影响回答。" title="摘要模型">
             <HistorySummaryModelCard />
           </PageSection>
         </div>

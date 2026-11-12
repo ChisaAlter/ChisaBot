@@ -61,7 +61,7 @@ const build = (initiator: Initiator = { kind: "person" }) =>
   });
 const app = new Hono();
 const runTurn = createTurnRunner({
-  intelligence: backend.client,
+  conversations: backend.client,
   runner: backend.runner,
   buildAgentFor: async (input) => build(input.initiator),
 });

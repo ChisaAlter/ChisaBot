@@ -35,7 +35,7 @@ import {
 } from "../../../shared/workflows";
 import { clearStepPolicy, registerStepPolicy, SUBMIT_GATE_RESULT_TOOL } from "./policy";
 import { presetById, PRESET_PREFIX } from "./presets";
-import type { RunEvent, RunSource, RunState, StoredRun, WorkflowStore } from "./store";
+import type { RunEvent, RunEventInput, RunSource, RunState, StoredRun, WorkflowStore } from "./store";
 
 /** 一个人同时最多跑几个工作流（不含等待审批的）。 */
 export const MAX_ACTIVE_RUNS_PER_USER = 3;
@@ -474,12 +474,17 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
 
     let persistTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPersist = 0;
-    const persistNow = async (patch: Partial<Pick<StoredRun, "status" | "output" | "error" | "startedAt" | "finishedAt">> = {}) => {
+    const persistNow = async (
+      patch: Partial<Pick<StoredRun, "status" | "output" | "error" | "startedAt" | "finishedAt">> = {},
+      noticeEvent?: RunEventInput,
+    ) => {
       if (persistTimer) clearTimeout(persistTimer);
       persistTimer = undefined;
       lastPersist = Date.now();
       state.elapsedMs = elapsed();
-      await store.saveRun(runId, { ...patch, state }).catch((error) => log(`[workflows] save failed: ${String(error)}`));
+      const saved = store.saveRun(runId, { ...patch, state }, noticeEvent);
+      if (noticeEvent) await saved;
+      else await saved.catch((error) => log(`[workflows] save failed: ${String(error)}`));
     };
     const persistSoon = () => {
       if (persistTimer) return;
@@ -834,8 +839,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         const gateState = stateOf(gate.id);
         if ((gate.approval || gateState.approval?.required) && gateState.approval?.decision !== "approve") {
           gateState.status = "waiting_approval";
-          await persistNow({ status: "waiting_approval" });
-          await event(runId, "approval_requested", `「${gate.name}」开始前需要你批准`, gate.id);
+          await persistNow({ status: "waiting_approval" }, {
+            kind: "approval_requested", message: `「${gate.name}」开始前需要你批准`, stepId: gate.id,
+          });
           return;
         }
         const hasReworks = state.steps.some((s) => (s.reworkCount ?? 0) > 0);
@@ -854,8 +860,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         if (rejected) {
           const reason = rejected.reason;
           if (reason instanceof GateHumanEscalation) {
-            await persistNow({ status: "waiting_approval" });
-            await event(runId, "approval_requested", `「${reason.stepName}」请求你介入审批：${reason.note}`, reason.stepId);
+            await persistNow({ status: "waiting_approval" }, {
+              kind: "approval_requested", message: `「${reason.stepName}」请求你介入审批：${reason.note}`, stepId: reason.stepId,
+            });
             return;
           }
           if (reason instanceof StepReworkRequested) {
@@ -893,11 +900,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         output = `${output.slice(0, limits.maxChars)}\n\n…（按约束截断到 ${limits.maxChars} 字）`;
         await event(runId, "output_truncated", `最终输出超过 ${limits.maxChars} 字，已截断`, null);
       }
-      await persistNow({ status: "succeeded", output, error: null, finishedAt: now() });
-      await event(runId, "run_finished", `运行完成：${state.stepsRun} 步，约 ${state.tokens} token，用时 ${Math.round(elapsed() / 1000)} 秒`, null, {
-        tokens: state.tokens,
-        steps: state.stepsRun,
-        elapsedMs: elapsed(),
+      await persistNow({ status: "succeeded", output, error: null, finishedAt: now() }, {
+        kind: "run_finished",
+        message: `运行完成：${state.stepsRun} 步，约 ${state.tokens} token，用时 ${Math.round(elapsed() / 1000)} 秒`,
+        data: { tokens: state.tokens, steps: state.stepsRun, elapsedMs: elapsed() },
       });
       await audit(run, "workflow.run_finished", { status: "succeeded", tokens: state.tokens, steps: state.stepsRun, elapsedMs: elapsed() });
     } catch (thrown) {
@@ -915,8 +921,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         await event(runId, "constraint_blocked", message, null, { constraint: reason.constraint });
         await audit(run, "workflow.constraint_blocked", { constraint: reason.constraint, message });
       }
-      await persistNow({ status: cancelled ? "cancelled" : "failed", error: message, finishedAt: now() });
-      await event(runId, cancelled ? "run_cancelled" : "run_failed", cancelled ? "运行已停止" : `运行失败：${message}`, null);
+      await persistNow({ status: cancelled ? "cancelled" : "failed", error: message, finishedAt: now() }, {
+        kind: cancelled ? "run_cancelled" : "run_failed",
+        message: cancelled ? "运行已停止" : `运行失败：${message}`,
+      });
       await audit(run, "workflow.run_finished", { status: cancelled ? "cancelled" : "failed", reason: message, tokens: state.tokens, steps: state.stepsRun });
     } finally {
       clearTimeout(deadline);
@@ -1192,10 +1200,11 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         state: run.state,
         error: "服务器重启，运行中断了。可以重新运行。",
         finishedAt: now(),
+      }, {
+        kind: "run_failed", message: "服务器重启，运行中断了",
       });
       if (!marked) continue;
       failed += 1;
-      await event(run.id, "run_failed", "服务器重启，运行中断了", null);
     }
     if (failed) log(`[workflows] marked ${failed} interrupted run(s) as failed`);
     if (deferred) {

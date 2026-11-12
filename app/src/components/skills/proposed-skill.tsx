@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { ContinuationStatus } from "@/components/chat/continuation-status";
 import { Badge, GalleryFrame } from "@/components/gallery/frame";
 import { Button } from "@/components/ui/button";
+import { continuationError } from "@/lib/chat/continuation";
 import type { SkillFormValues } from "@/lib/skills/form";
 import {
   checkProposal,
@@ -9,6 +11,7 @@ import {
   skillCardAnswer,
   wasSaved,
 } from "@/lib/skills/proposal";
+import type { ContinuationView } from "../../../../shared/confirmations";
 
 /**
  * The skill a Bot has written, put in front of the person before it is saved.
@@ -37,6 +40,8 @@ export type ProposedSkillCardProps = {
   respond?: (result: unknown) => Promise<void>;
   /** The recorded answer, once there is one. Completed cards show it instead of controls. */
   result?: string;
+  continuation?: ContinuationView;
+  retryContinuation?: () => Promise<unknown>;
   save?: (values: SkillFormValues) => Promise<void>;
 };
 
@@ -45,6 +50,8 @@ export function ProposedSkillCard({
   replaces,
   respond,
   result,
+  continuation,
+  retryContinuation,
   save,
 }: ProposedSkillCardProps) {
   const [sending, setSending] = useState<"save" | "decline" | null>(null);
@@ -60,7 +67,19 @@ export function ProposedSkillCard({
   if (result !== undefined) {
     return (
       <GalleryFrame
-        action={<Badge tone="neutral">{"完成"}</Badge>}
+        action={
+          continuation ? (
+            <ContinuationStatus
+              value={continuation}
+              onRetry={retryContinuation}
+            />
+          ) : (
+            <Badge tone="neutral">
+              {wasSaved(result) ? "已保存" : "已记录"}
+            </Badge>
+          )
+        }
+        caption={continuationError(continuation)}
         title={titleFor(args.slug, replaces)}
       >
         <p className="text-sm">{result}</p>

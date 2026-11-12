@@ -12,6 +12,8 @@ import {
 } from "react";
 import type { z } from "zod";
 import { client } from "@/lib/client";
+import type { ContinuationView } from "../../../../shared/confirmations";
+import { continuationIsActive } from "./continuation";
 import { useConversationScope } from "./conversation-scope";
 import { type SandboxContent, SandboxSurface } from "./sandbox-surface";
 
@@ -24,6 +26,7 @@ export type ToolRenderProps<T = Record<string, unknown>> = {
 };
 export type RegisteredToolRenderer = {
   name: string;
+  match?: (toolName: string) => boolean;
   agentId?: string;
   /** Method syntax on purpose: each renderer narrows its own args; the registry holds them all. */
   render(props: ToolRenderProps): ReactNode;
@@ -70,6 +73,7 @@ export function useRegisteredToolRenderers() {
 }
 export function useRenderTool<S extends z.ZodType>(tool: {
   name: string;
+  match?: (toolName: string) => boolean;
   agentId?: string;
   parameters?: S;
   render: (props: ToolRenderProps<z.infer<S>>) => ReactNode;
@@ -78,7 +82,7 @@ export function useRenderTool<S extends z.ZodType>(tool: {
   const key = useMemo(() => Symbol(tool.name), [tool.name]);
   useEffect(
     () => registry?.register(key, tool as RegisteredToolRenderer),
-    [registry, key, tool.name, tool.agentId, tool.render],
+    [registry, key, tool.name, tool.match, tool.agentId, tool.render],
   );
 }
 function DrawTool({
@@ -135,7 +139,9 @@ export function useRenderToolCall() {
     };
   }) => {
     const exact = registry.filter(
-      (entry) => entry.name === toolCall.function.name,
+      (entry) =>
+        entry.name === toolCall.function.name ||
+        entry.match?.(toolCall.function.name) === true,
     );
     const renderer =
       exact.find((entry) => entry.agentId === scope?.agentId) ??
@@ -166,7 +172,16 @@ export function useRenderActivityMessage() {
 }
 
 export type InteractionRenderProps<T = Record<string, unknown>> =
-  ToolRenderProps<T> & { respond?: (answer: unknown) => Promise<void> };
+  ToolRenderProps<T> & {
+    respond?: (answer: unknown) => Promise<void>;
+    continuation?: ContinuationView;
+    retryContinuation?: () => Promise<void>;
+  };
+type InteractionState = {
+  status: string;
+  answer: unknown;
+  continuation?: ContinuationView;
+};
 function InteractionCard({
   render: Render,
   ...props
@@ -175,16 +190,21 @@ function InteractionCard({
 }) {
   const cache = useQueryClient();
   const key = ["conversation-interaction", props.toolCallId];
-  const interaction = useQuery({
+  const interaction = useQuery<InteractionState>({
     queryKey: key,
-    enabled: props.result === undefined && props.status !== "inProgress",
-    refetchInterval: props.result === undefined ? 1000 : false,
-    queryFn: async () =>
+    enabled: props.status !== "inProgress",
+    refetchInterval: (query) =>
+      (query.state.data?.status !== "answered" && props.result === undefined) ||
+      continuationIsActive(query.state.data?.continuation)
+        ? 1000
+        : false,
+    queryFn: async ({ signal }): Promise<InteractionState> =>
       (
         await client(
           `/api/conversation-interactions/${encodeURIComponent(props.toolCallId)}`,
+          { signal, fallback: "无法读取这张卡片的处理状态" },
         )
-      ).json() as Promise<{ status: string; answer: unknown }>,
+      ).json(),
   });
   const result =
     props.result ??
@@ -194,16 +214,50 @@ function InteractionCard({
         : JSON.stringify(interaction.data.answer)
       : undefined);
   const respond =
-    interaction.data?.status === "pending"
+    props.result === undefined && interaction.data?.status === "pending"
       ? async (answer: unknown) => {
           await client(
             `/api/conversation-interactions/${encodeURIComponent(props.toolCallId)}`,
-            { method: "POST", body: { answer } },
+            {
+              method: "POST",
+              body: { answer },
+              fallback: "回答未能提交，请重试",
+            },
           );
           await cache.invalidateQueries({ queryKey: key });
         }
       : undefined;
-  return <Render {...props} result={result} respond={respond} />;
+  const retryContinuation =
+    interaction.data?.continuation?.state === "failed" &&
+    interaction.data.continuation.retryable
+      ? async () => {
+          try {
+            await client(
+              `/api/conversation-interactions/${encodeURIComponent(props.toolCallId)}/retry`,
+              { method: "POST", fallback: "继续处理未能提交，请重试" },
+            );
+            cache.setQueryData<InteractionState>(key, (current) =>
+              current
+                ? {
+                    ...current,
+                    continuation: { state: "queued" },
+                  }
+                : current,
+            );
+          } finally {
+            await cache.invalidateQueries({ queryKey: key });
+          }
+        }
+      : undefined;
+  return (
+    <Render
+      {...props}
+      result={result}
+      respond={respond}
+      continuation={interaction.data?.continuation}
+      retryContinuation={retryContinuation}
+    />
+  );
 }
 export function useInteractionRenderer<S extends z.ZodType>(tool: {
   name: string;

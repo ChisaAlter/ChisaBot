@@ -30,15 +30,9 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  memorySources,
-  personalMemories,
-  proactiveSettings,
-  proactiveSuggestions,
   responsibilities,
   workItems,
 } from "../db/schema";
-/** Work kind the removed upstream proactive engine queued (slimming P4b); reset still clears old rows. */
-const PROACTIVE_RUN_KIND = "proactive.run";
 import type { AgentActor } from "./profile-types";
 import { WAKE_UP_KIND } from "./wake-up";
 
@@ -81,16 +75,10 @@ export type ResetPlan = {
   conversations: number;
   /** Conversations with this Bot that are shared with others, and so are kept. */
   sharedConversationsKept: number;
-  memorySources: number;
-  memories: number;
   /** Active or paused schedules (§55) this Bot runs for this person; a reset cancels them. */
   schedules: number;
   responsibilities: number;
   followUps: number;
-  /** Memories the Bot formed itself from what it read for this person. */
-  formedMemories: number;
-  /** This person's background research by the Bot, with its suggestions. */
-  backgroundResearch: number;
   /** "Always allow" and pre-approved rules this person gave the Bot. */
   standingApprovals: number;
 };
@@ -147,20 +135,6 @@ export function createBotReset(options: {
       sql`${workItems.payload}->>'agentId' = ${agentId}`,
     );
 
-  const formedMemories = (ownerUserId: string, agentId: string) =>
-    and(
-      eq(personalMemories.ownerUserId, ownerUserId),
-      eq(personalMemories.formedByAgentId, agentId),
-      isNull(personalMemories.sourceId),
-      isNull(personalMemories.deletedAt),
-    );
-
-  const research = (ownerUserId: string, agentId: string) =>
-    and(
-      eq(proactiveSettings.ownerUserId, ownerUserId),
-      eq(proactiveSettings.agentId, agentId),
-    );
-
   /** Grants only: a rule that makes the Bot ask first or hand back is the person's protection. */
   const standingApprovals = (ownerUserId: string, agentId: string) =>
     and(
@@ -180,38 +154,10 @@ export function createBotReset(options: {
     agentId: string,
   ): Promise<ResetPlan> {
     const conversationsFound = await conversations(ownerUserId, agentId);
-    const sources = await database
-      .select({ id: memorySources.id })
-      .from(memorySources)
-      .where(
-        and(
-          eq(memorySources.ownerUserId, ownerUserId),
-          eq(memorySources.agentId, agentId),
-        ),
-      );
     const total = sql<number>`count(*)::int`;
     return {
       conversations: conversationsFound.mine.length,
       sharedConversationsKept: conversationsFound.kept,
-      memorySources: sources.length,
-      memories:
-        sources.length === 0
-          ? 0
-          : await count(
-              database
-                .select({ total })
-                .from(personalMemories)
-                .where(
-                  and(
-                    eq(personalMemories.ownerUserId, ownerUserId),
-                    inArray(
-                      personalMemories.sourceId,
-                      sources.map((source) => source.id),
-                    ),
-                    isNull(personalMemories.deletedAt),
-                  ),
-                ),
-            ),
       schedules: await countSchedules(database, ownerUserId, agentId),
       responsibilities: await count(
         database
@@ -229,18 +175,6 @@ export function createBotReset(options: {
           .select({ total })
           .from(workItems)
           .where(pendingFollowUps(ownerUserId, agentId)),
-      ),
-      formedMemories: await count(
-        database
-          .select({ total })
-          .from(personalMemories)
-          .where(formedMemories(ownerUserId, agentId)),
-      ),
-      backgroundResearch: await count(
-        database
-          .select({ total })
-          .from(proactiveSettings)
-          .where(research(ownerUserId, agentId)),
       ),
       standingApprovals: await count(
         database
@@ -262,40 +196,6 @@ export function createBotReset(options: {
         await softDeleteChannel(actor, channelId);
 
       return database.transaction(async (transaction) => {
-        const sources = await transaction
-          .select({ id: memorySources.id })
-          .from(memorySources)
-          .where(
-            and(
-              eq(memorySources.ownerUserId, ownerUserId),
-              eq(memorySources.agentId, agentId),
-            ),
-          );
-        const memories =
-          sources.length === 0
-            ? []
-            : await transaction
-                .select({ id: personalMemories.id })
-                .from(personalMemories)
-                .where(
-                  and(
-                    eq(personalMemories.ownerUserId, ownerUserId),
-                    inArray(
-                      personalMemories.sourceId,
-                      sources.map((source) => source.id),
-                    ),
-                    isNull(personalMemories.deletedAt),
-                  ),
-                );
-        // Memories go with their source through the foreign key.
-        await transaction
-          .delete(memorySources)
-          .where(
-            and(
-              eq(memorySources.ownerUserId, ownerUserId),
-              eq(memorySources.agentId, agentId),
-            ),
-          );
         const cancelledSchedules = await cancelSchedules(
           transaction,
           ownerUserId,
@@ -321,41 +221,6 @@ export function createBotReset(options: {
           })
           .where(pendingFollowUps(ownerUserId, agentId))
           .returning({ key: workItems.key });
-        const formed = await transaction
-          .delete(personalMemories)
-          .where(formedMemories(ownerUserId, agentId))
-          .returning({ id: personalMemories.id });
-        const settings = await transaction
-          .select({ id: proactiveSettings.id })
-          .from(proactiveSettings)
-          .where(research(ownerUserId, agentId));
-        if (settings.length > 0) {
-          const ids = settings.map((setting) => setting.id);
-          // A run already queued for the setting would find it gone; cancel it rather than fail it.
-          await transaction
-            .update(workItems)
-            .set({
-              finishedAt: sql`now()`,
-              claimedBy: null,
-              leaseUntil: null,
-              lastError: "Cancelled by reset",
-              updatedAt: sql`now()`,
-            })
-            .where(
-              and(
-                eq(workItems.kind, PROACTIVE_RUN_KIND),
-                isNull(workItems.finishedAt),
-                inArray(sql<string>`${workItems.payload}->>'settingId'`, ids),
-              ),
-            );
-          // Suggestions go with their setting through the foreign key.
-          await transaction
-            .delete(proactiveSuggestions)
-            .where(inArray(proactiveSuggestions.settingId, ids));
-          await transaction
-            .delete(proactiveSettings)
-            .where(inArray(proactiveSettings.id, ids));
-        }
         const revoked = await transaction
           .update(approvalRules)
           .set({ revokedAt: sql`now()` })
@@ -364,13 +229,9 @@ export function createBotReset(options: {
         return {
           conversations: found.mine.length,
           sharedConversationsKept: found.kept,
-          memorySources: sources.length,
-          memories: memories.length,
           schedules: cancelledSchedules,
           responsibilities: deletedGoals.length,
           followUps: followUps.length,
-          formedMemories: formed.length,
-          backgroundResearch: settings.length,
           standingApprovals: revoked.length,
         };
       });

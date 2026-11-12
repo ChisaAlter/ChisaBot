@@ -2332,6 +2332,37 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   color: var(--glass-ink-2);
 }
 .dark .chat-error-detail { background: rgba(0, 0, 0, 0.25); }
+.chat-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.chat-error-withdraw {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(220, 80, 60, 0.22);
+  color: var(--glass-ink);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+.dark .chat-error-withdraw {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 120, 110, 0.24);
+}
+.chat-error-withdraw:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.92); }
+.dark .chat-error-withdraw:hover { background: rgba(255, 255, 255, 0.14); }
+.chat-error-withdraw:active { transform: none; opacity: 0.85; }
+.chat-error-withdraw:disabled,
+.chat-error-retry:disabled { opacity: 0.6; cursor: progress; transform: none; }
 .chat-error-retry {
   display: inline-flex;
   align-items: center;
@@ -2351,6 +2382,7 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 .chat-error-retry:active { transform: none; opacity: 0.85; }
 @media (max-width: 520px) {
   .chat-error-card { flex-wrap: wrap; }
+  .chat-error-actions,
   .chat-error-retry { margin-left: 42px; }
 }
 
@@ -2600,6 +2632,10 @@ button.chat-bottom-pill:hover {
 }
 [data-slot="button"][data-variant="link"][data-btn-state="success"],
 [data-slot="button"][data-variant="link"][data-btn-state="error"] { background-color: transparent; border-color: transparent; }
+/* 实心按钮的图标画在按钮自己的不透明底上，不参与液态玻璃图标的 mix-blend（浅色 multiply 会把白色 ✓ 吞成底色）。
+ * 选择器优先级 (0,2,1) 高于液态玻璃那条 :is(.rail-card…) :where(svg) 的 (0,1,0)。 */
+[data-slot="button"][data-variant="default"] svg,
+[data-slot="button"][data-variant="destructive"][data-btn-state="error"] svg { mix-blend-mode: normal; }
 
 /* Glass pills that cannot be Button still run the same machine (AsyncContent inside). */
 .async-raw { transition: color 0.2s ease-out, background-color 0.2s ease-out, opacity 0.2s; }
@@ -2622,6 +2658,40 @@ button.chat-bottom-pill:hover {
   background: var(--glass-2, rgba(255, 255, 255, 0.55));
   border: 1px solid var(--line-strong, rgba(120, 140, 170, 0.28));
   animation: chat-msg-editor-in 0.18s ease-out both;
+}
+.chat-msg-editor-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-msg-editor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 16rem;
+  height: 26px;
+  padding: 0 6px 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line-strong, rgba(120, 140, 170, 0.24));
+  font-size: 12px;
+  color: var(--glass-ink-2);
+}
+.dark .chat-msg-editor-chip {
+  background: rgba(255, 255, 255, 0.08);
+}
+.chat-msg-editor-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: var(--glass-ink-3);
+  cursor: pointer;
+}
+.chat-msg-editor-chip-remove:hover {
+  background: rgba(220, 80, 60, 0.14);
+  color: var(--destructive);
 }
 .chat-msg-editor-input { min-height: 3.5rem; max-height: 40vh; resize: none; background: transparent; }
 .chat-msg-editor-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
@@ -9655,7 +9725,7 @@ html[data-wallpaper="on"] {
 /* 3.1 液态玻璃（liquid）· 浅色：清透厚玻璃板——颜色取自背后场景（白釉 6–22% 起），
  * 边缘一圈 1.5px 折射高光 + 左上角内光，blur 只有 2px，弯折交给边缘透镜
  * （lib/liquid-glass.ts 把 url(#id) 挂进 --lg-lens-url，追加在滤镜链尾）。 */
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :where(
     .glass-side-card,
     .acct-card,
@@ -9725,7 +9795,7 @@ html[data-wallpaper="on"] {
     linear-gradient(135deg, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 0%, rgb(var(--lg-tint-rgb) / min(calc(var(--lg-tint-a) * 1.4), 0.9)) 100%);
 }
 
-:where(html.dark[data-glass="liquid"], html.dark:not([data-glass]))
+:where(html.dark[data-glass="liquid"])
   :where(
     .glass-side-card,
     .acct-card,
@@ -9786,7 +9856,7 @@ html[data-wallpaper="on"] {
 
 /* 浅色液态玻璃压在深色背景上（lib/liquid-glass.ts 采样判定后挂 data-lg-ink="dark"）：
  * 换深釉 + 浅墨 + 暗边，整套墨色令牌翻成深色档让子元素直接继承。 */
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(
     .glass-side-card,
     .acct-card,
@@ -9828,6 +9898,19 @@ html[data-wallpaper="on"] {
   --glass-ink-2: #c7cedb;
   --glass-ink-3: #97a1b2;
   --glass-ink-4: #6f7a8c;
+  /* 实心控件（顶栏分段选中态、.glass-dark 按钮、停止生成等）在浅色主题里是深底白字，
+   * 压在深釉上对比约 1.4；改成和深色主题一样的浅底深字，对比 ≥4.5。 */
+  --glass-dark: #e8ecf3;
+  --glass-dark-ink: #10161f;
+  /* 选中态（rail tab / 分段滑块用 --accent-fill-paper !important，配色卡和壁纸卡用 --glass-3 /
+   * --glass-1）在浅色主题里是浅底，字已经翻成浅墨，对比只有 1.4–1.9。改成深色主题那档浅纱，
+   * 让浅字压在深底上。 */
+  --accent-fill-paper: rgba(255, 255, 255, 0.14);
+  --accent-fill-veil: rgba(15, 23, 42, 0.34);
+  --fill-tertiary: rgba(255, 255, 255, 0.08);
+  --glass-1: rgba(255, 255, 255, 0.06);
+  --glass-2: rgba(255, 255, 255, 0.09);
+  --glass-3: rgba(255, 255, 255, 0.14);
   --muted-foreground: #97a1b2;
   --side-sec-main-ink: #f2c14e;
   --side-sub-ink: #b4bfcf;
@@ -9835,12 +9918,12 @@ html[data-wallpaper="on"] {
 }
 
 /* 深釉档里的行底色也翻成深色档的值：白釉 76% 的行配浅墨会读不到字。 */
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
   :is(.glass-bot-row:hover, .glass-mini-bot:hover, .nav-row:hover) {
   background: rgba(10, 12, 18, 0.2);
 }
-:where(html[data-glass="liquid"]:not(.dark), html:not([data-glass]):not(.dark))
+:where(html[data-glass="liquid"]:not(.dark))
   :where(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)[data-lg-ink="dark"]
   :is(.glass-bot-row.is-on, .glass-mini-bot.is-on, .nav-row.is-on) {
   background: rgba(10, 12, 18, 0.5) !important;
@@ -10001,7 +10084,7 @@ html[data-wallpaper="on"] {
 
 /* 3.4 薄雾玻璃（mist）：液态玻璃重写前（0.1.128 及更早）的默认材质——20px 柔焦 +
  * 白釉/深釉渐变底，没有边缘透镜与背景自适应，给想要旧观感的用户留的选择。 */
-:where(html[data-glass="mist"])
+:where(html[data-glass="mist"], html:not([data-glass]))
   :where(
     .glass-side-card,
     .acct-card,
@@ -10040,7 +10123,7 @@ html[data-wallpaper="on"] {
   --lg-ink-2: var(--glass-ink-2);
   --lg-blend: multiply;
 }
-:where(html.dark[data-glass="mist"])
+:where(html.dark[data-glass="mist"], html.dark:not([data-glass]))
   :where(
     .glass-side-card,
     .acct-card,
@@ -10268,12 +10351,12 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
 
 /* 液态玻璃上的图标用不透明色画、以 blend 融进背后场景：浅色 multiply、深色 plus-lighter；
  * 彩色图表 / 头像 / 媒体不融（会被底色吞掉）。 */
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
   :where(svg) {
   mix-blend-mode: var(--lg-blend, multiply);
 }
-:where(html[data-glass="liquid"], html:not([data-glass]))
+:where(html[data-glass="liquid"])
   :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
   :where(.recharts svg, .recharts-wrapper svg, svg.sa, .mermaid svg, .agent-orb svg, canvas, img, video) {
   mix-blend-mode: normal;
@@ -10426,6 +10509,40 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
   display: grid;
   place-items: center;
   overflow: hidden;
+}
+.appearance-art-thumb {
+  height: 100px;
+}
+.appearance-art-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  transition: transform 0.28s ease;
+}
+.appearance-wallpaper-card:hover .appearance-art-img {
+  transform: scale(1.04);
+}
+.appearance-art-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.appearance-art-thumb .appearance-swatch-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
 }
 .appearance-wallpaper-glass-demo {
   position: absolute;
