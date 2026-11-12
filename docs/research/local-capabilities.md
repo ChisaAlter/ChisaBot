@@ -10,22 +10,22 @@
 
 ## CLI 与实际运行状态
 
-| 能力 | 直接观察 | 接入决定 |
-| --- | --- | --- |
-| Bun | `bun --version`：1.3.14；仓库依赖已存在 | 使用现有 Bun workspace |
-| Node.js | `node --version`：24.20.0 | 可运行 CLI 与无界面设备节点 |
-| Git | 2.55.0.windows.5 | 工作树隔离与变更交付可复用 |
-| GitHub CLI | 2.102.0；`gh auth status` 显示 keyring 登录有效 | 以 CLI 正常认证机制读取仓库；不提取 token |
-| Codex CLI | 0.162.1；`codex login status` 显示 ChatGPT 登录 | 可进行独立工作区的实际任务验证；模型额度与单次任务结果仍由执行回执判定 |
-| Claude Code | PATH 有 npm shim；`--version` 报目标 exe 不是当前 OS 的有效应用程序 | 当前不能列为可用执行器；需要修复安装后重测 |
-| DSH | PATH 无 `dsh`；安装版 CLI `--version` 成功：0.2.1-rc.4 | 使用明确的 Node 与 CLI 路径，独立 `DSH_HOME`/profile；尚未验证新 profile 的模型认证 |
-| Pi、uv、Docker、psql | PATH 未找到 | 展示未配置，不自动猜测执行路径 |
-| Python | PATH 指向 WindowsApps alias；另有独立 Python 3.12.7 可执行文件，`--version` 成功 | 文档处理使用明确的运行时路径，不能把 alias 当成已验证 Python |
+| 能力                 | 直接观察                                                                         | 接入决定                                                                            |
+| -------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Bun                  | `bun --version`：1.3.14；仓库依赖已存在                                          | 使用现有 Bun workspace                                                              |
+| Node.js              | `node --version`：24.20.0                                                        | 可运行 CLI 与无界面设备节点                                                         |
+| Git                  | 2.55.0.windows.5                                                                 | 工作树隔离与变更交付可复用                                                          |
+| GitHub CLI           | 2.102.0；`gh auth status` 显示 keyring 登录有效                                  | 以 CLI 正常认证机制读取仓库；不提取 token                                           |
+| Codex CLI            | 0.162.1；`codex login status` 显示 ChatGPT 登录                                  | 可进行独立工作区的实际任务验证；模型额度与单次任务结果仍由执行回执判定              |
+| Claude Code          | PATH 有 npm shim；`--version` 报目标 exe 不是当前 OS 的有效应用程序              | 当前不能列为可用执行器；需要修复安装后重测                                          |
+| DSH                  | PATH 无 `dsh`；安装版 CLI `--version` 成功：0.2.1-rc.4                           | 使用明确的 Node 与 CLI 路径，独立 `DSH_HOME`/profile；尚未验证新 profile 的模型认证 |
+| Pi、uv、Docker、psql | PATH 未找到                                                                      | 展示未配置，不自动猜测执行路径                                                      |
+| Python               | PATH 指向 WindowsApps alias；另有独立 Python 3.12.7 可执行文件，`--version` 成功 | 文档处理使用明确的运行时路径，不能把 alias 当成已验证 Python                        |
 
 已确认的本机执行入口（部署配置应允许替换，不能写死进产品代码）：
 
 ```text
-Codex: C:\Users\48818\Tools\codex\bin\codex.exe
+Codex: <用户目录>\Tools\codex\bin\codex.exe
 DSH Node: C:\软件\Whale Isle\resources\runtime\primary-runtime\dependencies\node\bin\node.exe
 DSH CLI: C:\软件\Whale Isle\resources\vendor\deepseek-harness\apps\cli\lib\bin.js
 Python: C:\AI\tools\python-3.12.7\python.exe
@@ -39,25 +39,25 @@ DSH CLI 的发行包名为 `@deepseek-ai/dsh`；当前安装的 launcher 提供 
 - Whale Isle 运行中的 Node 服务监听 loopback 3080；T3 Code 运行中的 3773/9223 属于该应用。不要把 9223 当作可供本次任务接管的 Chrome。
 - 盘点时 ChisaBot 3001、PostgreSQL 5432 未监听。新服务启动前仍须重新检查端口占用。
 - 仓库 `.env` 已配置数据库与加密键；`OPENAI_API_KEY`、`COMPOSIO_API_KEY` 为空。未读取数据库中的连接记录，因为数据库不可达。
-- `.env` 使用旧 `OPENBOT_*` 名称；[`shared/env-compat.ts`](../../shared/env-compat.ts) 在 [`server/src/index.ts`](../../server/src/index.ts) 最先加载，会映射为 `CHISABOT_*`。旧名称不是启动故障，不需要为了本任务迁移现有配置。
+- 盘点时 `.env` 曾含旧前缀名称，当时由 `shared/env-compat.ts`（后已在去上游印记收尾中移除）在 [`server/src/index.ts`](../../server/src/index.ts) 最先加载映射为 `CHISABOT_*`。
 - 实际数据库客户端是 Bun SQL + Drizzle，见 [`server/src/db/client.ts`](../../server/src/db/client.ts)。新任务中心应与既有数据库生命周期一致。
 
 本次只检查本机服务。仓库已有云端部署、Hermes 安装、设备节点与远程 Agent 代码；没有连接云端主机验证当前服务、数据或权限，不能据文档认定它们已为新任务中心就绪。
 
 ## 应优先复用的 ChisaBot 能力
 
-| 需求 | 当前实现入口 | 接入注意事项 |
-| --- | --- | --- |
-| 本地编码 Agent | [`pc/src/agent-runtime/`](../../pc/src/agent-runtime/)；[`server/src/local-agents/service.ts`](../../server/src/local-agents/service.ts) | 已有检测、CLI 输出、停止、工作树/副本、权限档位与设备回执；扩展执行器目录时保留现有入口 |
-| CLI 检测 | [`detect.js`](../../pc/src/agent-runtime/detect.js) | 当前识别 Claude/Codex/OpenCode/Gemini/Aider，不含 Pi/DSH；应以实际退出状态判定可运行 |
-| 远程节点 | [`pc/src/cli.js`](../../pc/src/cli.js) | 无界面 `login/run/logout`；通过既有设备配对与 WebSocket，不能绕过设备审批 |
-| 日历、邮件、通知 | [`server/src/personal-sources/service.ts`](../../server/src/personal-sources/service.ts) | 已有 ICS、只读 IMAP、加密存储、晨报、入站/通知 Webhook、`checkProactiveUpdates`；发送邮件与推送通知有独立副作用，应纳入 Outbox |
-| GitHub 信息 | [`server/src/github/service.ts`](../../server/src/github/service.ts)；[`responsibilities/github.ts`](../../server/src/responsibilities/github.ts) | 已有账号连接、按 owner/repository 绑定并校验 HMAC 的事件接收；事件不能自行选择执行身份 |
-| MCP | [`server/src/plugins/mcp.ts`](../../server/src/plugins/mcp.ts) | 采用 MCP SDK Streamable HTTP、调用取消、认证放置和内网访问控制；本机 stdio server 不能只填 URL 就复用 |
-| 外部 SaaS | [`server/src/plugins/composio.ts`](../../server/src/plugins/composio.ts) | 已有 SDK 接入；当前本地环境未配置 Composio key，需实际账号授权后才能巡检 |
-| 技能与长期记忆 | [`docs/skills.md`](../skills.md)；[`server/src/memory-notes/service.ts`](../../server/src/memory-notes/service.ts) | 技能和个人记忆已有用户归属与存储；任务中心应引用这些存储，不新增相互漂移的个人档案副本 |
-| 定时与异常恢复 | [`server/src/schedules/service.ts`](../../server/src/schedules/service.ts)；[`docs/schedules.md`](../schedules.md) | 已有扫描、比较交换与失败暂停；主动感知可接入相同生命周期；已暂停任务不能随功能部署恢复 |
-| Hermes/ACP | [`examples/acp-agent/README.md`](../../examples/acp-agent/README.md) | 当前生产桥使用可信宿主上下文、运行绑定工具网关和稳定账本；通用 ACP 的权限回答不等于沙箱或完整宿主集成 |
+| 需求                   | 当前实现入口                                                                                                                                      | 接入注意事项                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 本地编码 Agent         | [`pc/src/agent-runtime/`](../../pc/src/agent-runtime/)；[`server/src/local-agents/service.ts`](../../server/src/local-agents/service.ts)          | 已有检测、CLI 输出、停止、工作树/副本、权限档位与设备回执；扩展执行器目录时保留现有入口                                        |
+| CLI 检测               | [`detect.js`](../../pc/src/agent-runtime/detect.js)                                                                                               | 当前识别 Claude/Codex/OpenCode/Gemini/Aider，不含 Pi/DSH；应以实际退出状态判定可运行                                           |
+| 远程节点               | [`pc/src/cli.js`](../../pc/src/cli.js)                                                                                                            | 无界面 `login/run/logout`；通过既有设备配对与 WebSocket，不能绕过设备审批                                                      |
+| 日历、邮件、通知       | [`server/src/personal-sources/service.ts`](../../server/src/personal-sources/service.ts)                                                          | 已有 ICS、只读 IMAP、加密存储、晨报、入站/通知 Webhook、`checkProactiveUpdates`；发送邮件与推送通知有独立副作用，应纳入 Outbox |
+| GitHub 信息            | [`server/src/github/service.ts`](../../server/src/github/service.ts)；[`responsibilities/github.ts`](../../server/src/responsibilities/github.ts) | 已有账号连接、按 owner/repository 绑定并校验 HMAC 的事件接收；事件不能自行选择执行身份                                         |
+| MCP                    | [`server/src/plugins/mcp.ts`](../../server/src/plugins/mcp.ts)                                                                                    | 采用 MCP SDK Streamable HTTP、调用取消、认证放置和内网访问控制；本机 stdio server 不能只填 URL 就复用                          |
+| 外部 SaaS              | [`server/src/plugins/composio.ts`](../../server/src/plugins/composio.ts)                                                                          | 已有 SDK 接入；当前本地环境未配置 Composio key，需实际账号授权后才能巡检                                                       |
+| 技能与长期记忆         | [`docs/skills.md`](../skills.md)；[`server/src/memory-notes/service.ts`](../../server/src/memory-notes/service.ts)                                | 技能和个人记忆已有用户归属与存储；任务中心应引用这些存储，不新增相互漂移的个人档案副本                                         |
+| 定时与异常恢复         | [`server/src/schedules/service.ts`](../../server/src/schedules/service.ts)；[`docs/schedules.md`](../schedules.md)                                | 已有扫描、比较交换与失败暂停；主动感知可接入相同生命周期；已暂停任务不能随功能部署恢复                                         |
+| Hermes/ACP（历史过渡） | `examples/acp-agent/README.md`（后已退役下线）                                                                                                    | 当时生产桥使用可信宿主上下文、运行绑定工具网关和稳定账本；通用 ACP 的权限回答不等于沙箱或完整宿主集成                          |
 
 工作树与副本用于变更隔离，不能当作 OS 安全沙箱。新执行器需要分别声明能做的事、所需权限、可用工具、实际认证和网络边界，不能只凭安装存在就判为 L5。
 

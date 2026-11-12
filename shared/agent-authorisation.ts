@@ -1,5 +1,3 @@
-import { readCompatibleHeader } from "./legacy-headers";
-
 /** Compare the caller's Bot token without leaking its contents through timing. */
 export function matchesToken(expected: string, offered: string): boolean {
   if (expected.length === 0 || offered.length !== expected.length) return false;
@@ -17,7 +15,6 @@ export function hasManagedAgentToken(
 ): boolean {
   return matchesToken(
     expected,
-    readCompatibleHeader(request.headers, "x-chisabot-agent-token")?.trim() ??
-      "",
+    request.headers.get("x-chisabot-agent-token")?.trim() ?? "",
   );
 }

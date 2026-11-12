@@ -13,17 +13,17 @@ test("verified inbound person message keeps canonical run ID and persists exact 
   const locks: string[] = [];
   const persisted: Message[][] = [];
   const initiators: unknown[] = [];
-  const intelligence = {
+  const conversations = {
     getOrCreateThread: async () => ({}),
     getThreadMessages: async () => ({
       messages: [{ id: "old", role: "user", content: "Earlier" }],
     }),
-    acquireThreadLease: async (input: { runId: string; threadId: string }) => {
+    acquire: async (input: { runId: string; threadId: string }) => {
       locks.push(input.runId);
       return { ...input, joinToken: "token" };
     },
-    renewThreadLease: async () => ({ ttlSeconds: 20 }),
-    releaseThreadLease: async (input: { runId: string }) => {
+    renew: async () => ({ ttlSeconds: 20 }),
+    release: async (input: { runId: string }) => {
       locks.push(input.runId);
     },
   };
@@ -46,7 +46,8 @@ test("verified inbound person message keeps canonical run ID and persists exact 
     stop: async () => true,
   };
   const turn = createTurnRunner({
-    intelligence,
+    conversations,
+    leases: conversations,
     runner,
     buildAgentFor: async (input) => {
       initiators.push(input.initiator);

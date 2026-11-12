@@ -3,11 +3,9 @@
  *
  * `GET /api/admin/health` — administrators only (gateway session or X-ChisaBot-Local-Caller).
  * Combines app/version, database ping, Magpie status (when configured), computer node (when
- * configured), the host Hermes bridge (informational), and a local-caller / gateway-mode marker.
+ * configured), DSH runtime health (when configured), and a local-caller / gateway-mode marker.
  * Overall `ok` is false when any REQUIRED configured check fails; unconfigured optional deps are
- * `ok: null` and do not fail the aggregate. Hermes is deliberately informational: a deployment may
- * restart or upgrade the bridge on its own schedule, and that must not turn the image health red or
- * roll a release back.
+ * `ok: null` and do not fail the aggregate.
  *
  * HTTP 200 when overall ok, 503 otherwise. Never returns secrets. Cache-Control: no-store.
  *
@@ -26,7 +24,6 @@ import {
 } from "../../shared/ops-counters";
 import type { BuildVersion } from "../../shared/system-update";
 import type { DshHealthCheck } from "./agents/dsh-health";
-import type { HermesHealthCheck } from "./agents/hermes-health";
 import {
   type AssistantSignals,
   readAssistantSignals,
@@ -80,8 +77,6 @@ export type OpsHealthReport = {
     database: DatabaseCheck;
     magpie: MagpieCheck;
     computer: ComputerCheck;
-    /** Informational only: never part of the aggregate verdict. */
-    hermes: HermesHealthCheck;
     dsh:
       | (DshHealthCheck & { configured: true })
       | { ok: null; configured: false };
@@ -102,7 +97,6 @@ export type ProbeComputer = () => Promise<ComputerCheck>;
 const DB_TIMEOUT_MS = 5_000;
 const MAGPIE_BUDGET_MS = 8_000;
 const COMPUTER_BUDGET_MS = 8_000;
-const HERMES_BUDGET_MS = 5_000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -132,8 +126,6 @@ export async function collectOpsHealth(options: {
   pingDatabase: PingDatabase;
   magpie?: MagpieService | null;
   probeComputer?: ProbeComputer | null;
-  /** Informational: its result never changes the aggregate `ok`. */
-  probeHermes?: (() => Promise<HermesHealthCheck>) | null;
   /** Required only when DSH is the selected execution kernel. */
   dshRequired?: boolean;
   probeDsh?: (() => Promise<DshHealthCheck>) | null;
@@ -214,26 +206,7 @@ export async function collectOpsHealth(options: {
     }
   };
 
-  // 三个检查互相独立，并行跑：最坏耗时从 21s（5+8+8 串行）降到 8s（取最慢的那个）。
-  // 各自的超时和返回结构不变。Hermes 健康只提示：超时或失败都不参与 overall。
-  const checkHermes = async (): Promise<HermesHealthCheck> => {
-    if (!options.probeHermes) return { ok: null, configured: false };
-    try {
-      return await withTimeout(
-        options.probeHermes(),
-        HERMES_BUDGET_MS,
-        "hermes",
-      );
-    } catch {
-      // Fixed sentence: an unexpected throw may name an internal host or upstream body.
-      return {
-        ok: false,
-        configured: true,
-        reachable: false,
-        error: "Hermes 健康检查失败",
-      };
-    }
-  };
+  // 各检查互相独立，并行跑：最坏耗时降到 8s（取最慢的那个）。
   const checkDsh = async (): Promise<OpsHealthReport["checks"]["dsh"]> => {
     if (!options.dshRequired) return { ok: null, configured: false };
     if (!options.probeDsh)
@@ -265,15 +238,13 @@ export async function collectOpsHealth(options: {
       return { ok: false, state: "unavailable" };
     }
   };
-  const [database, magpie, computer, hermes, dsh, assistant] =
-    await Promise.all([
-      checkDatabase(),
-      checkMagpie(),
-      checkComputer(),
-      checkHermes(),
-      checkDsh(),
-      checkAssistant(),
-    ]);
+  const [database, magpie, computer, dsh, assistant] = await Promise.all([
+    checkDatabase(),
+    checkMagpie(),
+    checkComputer(),
+    checkDsh(),
+    checkAssistant(),
+  ]);
 
   const required: Array<{ name: string; ok: CheckOk }> = [
     { name: "app", ok: app.ok },
@@ -316,7 +287,6 @@ export async function collectOpsHealth(options: {
       database,
       magpie,
       computer,
-      hermes,
       dsh,
       assistant,
       localCaller,
@@ -347,8 +317,6 @@ export function createOpsHealthRoutes(options: {
   pingDatabase: PingDatabase;
   magpie?: MagpieService | null;
   probeComputer?: ProbeComputer | null;
-  /** Informational: forwarded to {@link collectOpsHealth}, never part of the aggregate. */
-  probeHermes?: (() => Promise<HermesHealthCheck>) | null;
   dshRequired?: boolean;
   probeDsh?: ((actorId: string) => Promise<DshHealthCheck>) | null;
   probeAssistant?: ((actorId: string) => Promise<AssistantSignals>) | null;
@@ -370,7 +338,6 @@ export function createOpsHealthRoutes(options: {
       pingDatabase: options.pingDatabase,
       magpie: options.magpie,
       probeComputer: options.probeComputer,
-      probeHermes: options.probeHermes,
       dshRequired: options.dshRequired,
       probeDsh: probeDsh ? () => probeDsh(context.var.actor.id) : undefined,
       probeAssistant: probeAssistant

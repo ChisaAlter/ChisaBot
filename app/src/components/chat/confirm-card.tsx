@@ -11,13 +11,16 @@ import {
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ContinuationStatus } from "@/components/chat/continuation-status";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { continuationError } from "@/lib/chat/continuation";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   confirmKeys,
   decideConfirmation,
+  retryConfirmation,
   setConfirmPref,
   useThreadConfirmations,
 } from "@/lib/confirmations";
@@ -30,6 +33,7 @@ import {
   type ConfirmDetail,
   type ConfirmRequestView,
   type ConfirmStatus,
+  type ContinuationView,
 } from "../../../../shared/confirmations";
 
 /**
@@ -64,6 +68,7 @@ export type ConfirmCardModel = {
   status: ConfirmStatus;
   /** 决定后那一行的补充（「在电脑上确认」「按偏好直接执行」）。 */
   decidedNote?: string | null;
+  continuation?: ContinuationView;
 };
 
 export function ConfirmCardView({
@@ -71,6 +76,7 @@ export function ConfirmCardView({
   onApprove,
   onDeny,
   onAlways,
+  onRetry,
   approveLabel = "确认",
   denyLabel = "取消",
   testId = "confirm-card",
@@ -80,6 +86,7 @@ export function ConfirmCardView({
   onDeny?: () => Promise<unknown>;
   /** 「以后这类直接做」：改偏好再确认。付款没有这个。 */
   onAlways?: () => Promise<unknown>;
+  onRetry?: () => Promise<unknown>;
   approveLabel?: string;
   denyLabel?: string;
   testId?: string;
@@ -101,6 +108,7 @@ export function ConfirmCardView({
   const Icon = ICON[model.category];
   const info = CONFIRM_CATEGORY_INFO[model.category];
   const details = model.details ?? [];
+  const failure = continuationError(model.continuation);
   return (
     <section
       aria-label={`${pending ? "需要你确认" : DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]}：${model.title}`}
@@ -122,17 +130,19 @@ export function ConfirmCardView({
           )}
         </span>
         <div className="cf-main">
-          <div className="cf-eyebrow">
+          <div className="cf-eyebrow" role={failure ? "status" : undefined}>
             {pending
               ? (model.eyebrow ?? `需要你确认 · ${info.label}`)
-              : `${DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]} · ${info.label}`}
+              : `${DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]} · ${failure ?? info.label}`}
           </div>
           <div className="cf-title">{model.title}</div>
           {model.target ? (
             <div className="cf-target">{model.target}</div>
           ) : null}
         </div>
-        {!pending && model.decidedNote ? (
+        {!pending && model.continuation ? (
+          <ContinuationStatus value={model.continuation} onRetry={onRetry} />
+        ) : !pending && model.decidedNote ? (
           <span className="cf-note">{model.decidedNote}</span>
         ) : null}
       </div>
@@ -245,6 +255,19 @@ export function ConfirmRequestCard({
       );
     await refresh();
   };
+  const retry = async () => {
+    try {
+      const updated = await retryConfirmation(request.id);
+      if (threadId)
+        queryClient.setQueryData<ConfirmRequestView[]>(
+          confirmKeys.thread(threadId),
+          (list) =>
+            list?.map((item) => (item.id === updated.id ? updated : item)),
+        );
+    } finally {
+      await refresh();
+    }
+  };
   return (
     <ConfirmCardView
       model={{
@@ -254,6 +277,7 @@ export function ConfirmRequestCard({
         details: request.details,
         status: request.status,
         decidedNote: viaNote(request),
+        continuation: request.continuation,
       }}
       onAlways={async () => {
         await setConfirmPref(
@@ -268,6 +292,7 @@ export function ConfirmRequestCard({
       }}
       onApprove={() => decide("approve")}
       onDeny={() => decide("deny")}
+      onRetry={request.continuation?.retryable ? retry : undefined}
     />
   );
 }
@@ -362,8 +387,9 @@ export function looseConfirmations(
     .filter(
       (request) =>
         !request.toolCallId &&
-        !resumed.has(request.id) &&
-        (request.status === "pending" || seen.has(request.id)),
+        ((request.continuation && request.continuation.state !== "completed") ||
+          (!resumed.has(request.id) &&
+            (request.status === "pending" || seen.has(request.id)))),
     )
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }

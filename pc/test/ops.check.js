@@ -69,8 +69,10 @@ test("shell cancel via signal", async () => {
 });
 
 test("clipboard fallback and system info", async () => {
-  await ops.run("clipboard_write", { text: "剪贴板" }, {});
-  assert.equal((await ops.run("clipboard_read", {}, {})).text, "剪贴板");
+  // Exercise the documented headless fallback without changing the developer's clipboard.
+  const headless = createOps({ platform: "linux", clientVersion: "test" });
+  await headless.run("clipboard_write", { text: "剪贴板" }, {});
+  assert.equal((await headless.run("clipboard_read", {}, {})).text, "剪贴板");
   const info = await ops.run("system_info", {}, {});
   assert.equal(info.platform, process.platform);
   assert.ok(info.cpus > 0);
@@ -84,16 +86,16 @@ test("windows path rules (win32 api)", async () => {
 });
 
 test("windows default folders: C:\\AI is outside (message lists the roots); Chinese / slash / drive-root paths", async () => {
-  const roots = ["C:\\Users\\48818\\Desktop", "C:\\Users\\48818\\Documents", "C:\\Users\\48818\\Downloads"];
+  const roots = ["C:\\Users\\alice\\Desktop", "C:\\Users\\alice\\Documents", "C:\\Users\\alice\\Downloads"];
   await assert.rejects(resolveInRoots("C:\\AI", roots, "win32"), (error) => {
     assert.match(error.message, /路径不在允许的文件夹内：C:\\AI/);
-    assert.match(error.message, /C:\\Users\\48818\\Desktop、/);
+    assert.match(error.message, /C:\\Users\\alice\\Desktop、/);
     return true;
   });
-  assert.match(await resolveInRoots("C:/Users/48818/Documents/报告/周报.md", roots, "win32"), /周报\.md$/);
+  assert.match(await resolveInRoots("C:/Users/alice/Documents/报告/周报.md", roots, "win32"), /周报\.md$/);
   assert.match(await resolveInRoots("C:\\AI\\笔记", [...roots, "C:\\AI"], "win32"), /^C:\\AI\\笔记$/);
   assert.match(await resolveInRoots("C:\\AI", ["C:\\"], "win32"), /^C:\\AI$/);
-  assert.match(await resolveInRoots("报告", roots, "win32"), /^C:\\Users\\48818\\Desktop\\报告$/);
+  assert.match(await resolveInRoots("报告", roots, "win32"), /^C:\\Users\\alice\\Desktop\\报告$/);
 });
 
 test("powershell encoding and input scripts", () => {

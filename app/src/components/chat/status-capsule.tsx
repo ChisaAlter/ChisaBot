@@ -64,9 +64,11 @@ export function StatusCapsule({
 export function PausedCapsule({
   watch,
   since,
+  label = "思考中",
 }: {
   watch: string;
   since: number;
+  label?: string | undefined;
 }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -77,7 +79,7 @@ export function PausedCapsule({
   if (!shown) return null;
   return (
     <StatusCapsule
-      label="思考中"
+      label={label}
       since={since}
       testId="transcript-pause-capsule"
       variant="pause"

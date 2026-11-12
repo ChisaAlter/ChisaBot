@@ -109,7 +109,7 @@ function turnHarness(
     stop: async () => true,
   };
   const run = createTurnRunner({
-    intelligence: {
+    conversations: {
       getOrCreateThread: async () => undefined,
       getThreadMessages: async () => ({ messages: [] }),
       acquireThreadLease: async () => {

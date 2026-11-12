@@ -116,23 +116,6 @@ function skyBoot(): Plugin {
   };
 }
 
-/** Keep the pre-paint storage upgrade synchronous without adding a blocking network request. */
-function legacyBrowserBoot(): Plugin {
-  const source = readFileSync(
-    path.resolve(__dirname, "public/compat/legacy-browser.js"),
-    "utf8",
-  );
-  return {
-    name: "chisabot-legacy-browser-boot",
-    transformIndexHtml(html) {
-      return html.replace(
-        '<script src="/compat/legacy-browser.js"></script>',
-        () => `<script>${source}</script>`,
-      );
-    },
-  };
-}
-
 type RouteSplitGroupings = Array<
   Array<
     "component" | "pendingComponent" | "errorComponent" | "notFoundComponent"
@@ -400,7 +383,6 @@ const appViteConfig = {
   envDir: path.resolve(__dirname, ".."),
   plugins: [
     announceServerPort(apiPort.port),
-    legacyBrowserBoot(),
     skyBoot(),
     tanstackRouter({
       autoCodeSplitting: true,

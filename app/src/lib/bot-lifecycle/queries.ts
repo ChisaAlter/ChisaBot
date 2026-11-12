@@ -59,14 +59,10 @@ export type BotActivity = {
 export type ResetPlan = {
   conversations: number;
   sharedConversationsKept: number;
-  memorySources: number;
-  memories: number;
   /** Active or paused schedules (定时任务) the reset cancels. */
   schedules: number;
   responsibilities: number;
   followUps: number;
-  formedMemories: number;
-  backgroundResearch: number;
   standingApprovals: number;
 };
 

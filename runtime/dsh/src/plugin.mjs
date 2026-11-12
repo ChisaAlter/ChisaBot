@@ -6,7 +6,10 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
 import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
-import { ChisaModelRouter } from "./model-router.mjs";
+import {
+  ChisaModelRouter,
+  SINGLE_MODEL_DEADLINE_FACTOR,
+} from "./model-router.mjs";
 import { ensureLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
 export const name = "chisabot-runtime";
@@ -503,12 +506,25 @@ export async function apply(ctx, config) {
           await ctx.credentials.set(keyRef, connection.apiKey);
         }
         try {
+          // Provider request timeout must outlast the first-output deadline (QA511 P2):
+          // a single-model route waits firstOutputMs×4; the old 90s default fired first,
+          // then same-model-retried, for ~181s of "Request timed out." instead of the
+          // Chinese deadline copy. Explicit connection.timeoutMs still wins.
+          const firstOutputMs = binding.model?.firstOutputMs ?? 0;
+          const firstOutputWait =
+            firstOutputMs > 0
+              ? binding.model?.fallbacks?.length
+                ? firstOutputMs
+                : firstOutputMs * SINGLE_MODEL_DEADLINE_FACTOR
+              : 0;
           await updateProvider(provider, {
             api: connection.api,
             baseURL: connection.baseURL,
             models: connection.models,
             ...(keyRef ? { apiKeyEnv: keyRef } : {}),
-            timeoutMs: connection.timeoutMs ?? 90_000,
+            timeoutMs:
+              connection.timeoutMs ??
+              Math.max(90_000, firstOutputWait + 30_000),
           });
           routeFiber = { dispose: () => updateProvider(provider, undefined) };
         } catch (error) {

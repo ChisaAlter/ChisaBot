@@ -9,10 +9,10 @@ plugin tool.
 
 Setting it up takes two people, and neither can do the other's half:
 
-| Who               | Does                                       | Where                        |
-| ----------------- | ------------------------------------------- | ----------------------------- |
-| An administrator  | Enables the connector                       | `/admin/plugins/notion`        |
-| Each person       | Consents with their own Notion account      | `/settings/connected-accounts` |
+| Who              | Does                                   | Where                          |
+| ---------------- | -------------------------------------- | ------------------------------ |
+| An administrator | Enables the connector                  | `/admin/plugins/notion`        |
+| Each person      | Consents with their own Notion account | `/settings/connected-accounts` |
 
 There is deliberately no endpoint for an administrator to connect an account on somebody's behalf.
 
@@ -73,7 +73,7 @@ expires.
 
 ## See also
 
-- [Architecture](../chisabot-architecture.md) — where plugins, grants, policy and audit sit.
+- [Architecture](../architecture.md) — where plugins, grants, policy and audit sit.
 - [Configuration](../configuration.md) — `CHISABOT_PUBLIC_URL`, `CHISABOT_APP_URL`, `KEY_ENCRYPTION_KEY`.
 - [Notion's own guide](https://developers.notion.com/guides/mcp/build-mcp-client) to building an MCP
   client against its hosted server.

@@ -7,6 +7,7 @@ import type { DshHostClient } from "../../../runtime/dsh/src/client.mjs";
 import type { RuntimeToolIdentity } from "../../../shared/conversations";
 import {
   type ApprovalContinuation,
+  ApprovalRefusedError,
   withApprovalContext,
 } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
@@ -18,7 +19,9 @@ import {
   withDurableConfirmation,
   withToolAbort,
 } from "../confirmations/context";
+import { PluginRefusedError } from "../plugins/store";
 import type { GrantedTool } from "../plugins/tools";
+import { publicErrorMessage } from "../public-error";
 import type { SteerSession } from "../thread-inbox";
 import {
   assertConversationAdmissionOpen,
@@ -218,6 +221,7 @@ export function createDshToolGateway(
         `Tool outcome requires reconciliation (${claim.state === "dispatching" ? "outcome_unknown" : claim.state}); it was not executed again.`,
       );
     }
+    let invoked = false;
     try {
       run.signal.throwIfAborted();
       const content = await withConfirmTurn(turn, () =>
@@ -227,7 +231,10 @@ export function createDshToolGateway(
               withApprovalContext(continuation, () =>
                 withDurableConfirmation(
                   { suspend: suspendConfirmation(claim.id, continuation) },
-                  () => tool.execute(parsed.data, { signal: run.signal }),
+                  () => {
+                    invoked = true;
+                    return tool.execute(parsed.data, { signal: run.signal });
+                  },
                 ),
               ),
             ),
@@ -238,8 +245,7 @@ export function createDshToolGateway(
       await operations.settle(claim.id, "completed", result);
       return result;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Tool execution failed.";
+      const message = publicErrorMessage(error, "工具执行失败。");
       if (error instanceof HeadlessToolSuspension) {
         error.waiting.continuation ??= continuation;
         await operations.settle(claim.id, "waiting_approval", {
@@ -247,6 +253,16 @@ export function createDshToolGateway(
           error: message,
         });
         throw error;
+      }
+      if (
+        !invoked ||
+        tool.effect === "read" ||
+        error instanceof ApprovalRefusedError ||
+        error instanceof PluginRefusedError
+      ) {
+        const result = { content: `工具未完成：${message}`, error: message };
+        await operations.settle(claim.id, "failed", result);
+        return result;
       }
       // A thrown executor may already have changed an external system. Preserve that uncertainty.
       await operations.settle(claim.id, "outcome_unknown", {
@@ -392,6 +408,7 @@ export function createDshToolGateway(
     }
   });
   return {
+    operations,
     register,
     routes,
     async resumeConfirmation(input: {
@@ -433,6 +450,7 @@ export function createDshToolGateway(
           throw unknownEffect(claim.id, snapshot);
         throw new Error("这项操作的结果尚待核对，未再次执行。");
       }
+      let invoked = false;
       try {
         const content = !input.approved
           ? "用户取消了这一步，操作没有执行。"
@@ -464,6 +482,7 @@ export function createDshToolGateway(
                               if (stopped) return stopped;
                               signal.throwIfAborted();
                               assertConversationAdmissionOpen();
+                              invoked = true;
                               return tool.execute(args, { signal });
                             },
                           ),
@@ -479,6 +498,18 @@ export function createDshToolGateway(
         const deferred =
           error instanceof HeadlessToolSuspension ||
           error instanceof ConversationMaintenanceError;
+        const message = publicErrorMessage(error, "工具执行失败。");
+        if (
+          !deferred &&
+          (!invoked ||
+            tool.effect === "read" ||
+            error instanceof ApprovalRefusedError ||
+            error instanceof PluginRefusedError)
+        ) {
+          const result = { content: `工具未完成：${message}`, error: message };
+          await operations.settle(claim.id, "failed", result);
+          return result;
+        }
         await operations.settle(
           claim.id,
           deferred ? "waiting_approval" : "outcome_unknown",
@@ -486,7 +517,7 @@ export function createDshToolGateway(
             content: deferred
               ? "Waiting for a decision."
               : "操作结果尚待核对。",
-            error: error instanceof Error ? error.message : "unknown",
+            error: message,
           },
         );
         if (!deferred) throw unknownEffect(claim.id, snapshot);

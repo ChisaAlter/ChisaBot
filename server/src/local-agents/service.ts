@@ -4,6 +4,21 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
+  AGENT_DRIVER_KINDS,
+  AGENT_DRIVER_SPECS,
+  AGENT_PROVIDER_PRESETS,
+  type AgentDriverConfig,
+  type AgentDriverKind,
+  type AgentEnvironmentSummary,
+  type AgentInstanceView,
+  type AgentProbeState,
+  agentToolName,
+  BOT_AGENT_GRANT_MODES,
+  isAgentDriverKind,
+  type RuntimeInstanceSpec,
+  SERVER_ENVIRONMENT_ID,
+} from "../../../shared/agent-providers";
+import {
   type DeviceOperation,
   isMobilePlatform,
 } from "../../../shared/devices";
@@ -63,6 +78,13 @@ import type { LocalRunControl } from "../local-conversations";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import type { ThreadInbox } from "../thread-inbox";
 import type { TurnRunner } from "../turns/types";
+import { listAcpRegistryEntries } from "./acp-registry";
+import { createAgentInstancesStore, type InstanceRow } from "./instances-store";
+import {
+  buildServerDeviceRecord,
+  createServerAgentHost,
+  parseEnvServerRoots,
+} from "./server-host";
 
 /**
  * 本地 agent 与权限档位（docs/local-agents.md，DESIGN.md「本地 agent」）。
@@ -195,6 +217,12 @@ type TaskRow = {
   bot_name: string | null;
   thread_id: string | null;
   agent: string;
+  instance_id?: string | null;
+  instance_name?: string | null;
+  environment_id?: string | null;
+  parent_task_id?: string | null;
+  depth?: number;
+  invocation_mode?: string | null;
   title: string;
   task: string;
   profile: string;
@@ -235,6 +263,9 @@ export type LocalAgentServiceOptions = {
   database: Database;
   hub: DeviceHub;
   deviceStore: Pick<DeviceStore, "get" | "forOwner" | "audit">;
+  encryptionKey?: string;
+  /** 是否启用服务端本机智能体宿主（environmentId = "server"）。 */
+  enableServerHost?: boolean;
   inbox?: ThreadInbox;
   control?: LocalRunControl;
   deliverTurn?: TurnRunner;
@@ -274,7 +305,106 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     string,
     { controller: AbortController; done: Promise<unknown> }
   >();
+  const probePending = new Map<
+    string,
+    (probe: Omit<AgentProbeState, "checkedAt">) => void
+  >();
+  const waiters = new Map<string, Set<(row: TaskRow) => void>>();
+  const deliveredInline = new Set<string>();
   const timeoutMs = options.timeoutMs ?? TASK_TIMEOUT_MS;
+
+  const serverHost = options.enableServerHost
+    ? createServerAgentHost({
+        onMessage: (message) => {
+          void (async () => {
+            if (
+              message.type === "agents_detected" ||
+              message.type === "agent_probe_result"
+            ) {
+              await handleNodeMessage(
+                buildServerDeviceRecord("system", parseEnvServerRoots()),
+                message,
+              );
+              return;
+            }
+            const taskId = String(message.taskId ?? "");
+            const row = taskId ? await taskRow(taskId) : null;
+            const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+            const roots = serverAllowedRoots(sSettings);
+            await handleNodeMessage(
+              buildServerDeviceRecord(row?.owner_user_id ?? "system", roots),
+              message,
+            );
+          })().catch((err) => {
+            console.warn(
+              "server host message error",
+              reasonWithoutStatement(err),
+            );
+          });
+        },
+      })
+    : null;
+
+  function serverAllowedRoots(settings: DeviceAgentSettings): string[] {
+    return [...new Set([...parseEnvServerRoots(), ...settings.workspaceRoots])];
+  }
+
+  function isEnvironmentOnline(environmentId: string): boolean {
+    if (environmentId === SERVER_ENVIRONMENT_ID) return Boolean(serverHost);
+    return hub.isOnline(environmentId);
+  }
+
+  function sendToEnvironment(
+    environmentId: string,
+    message: { type: string } & Record<string, unknown>,
+  ): boolean {
+    if (environmentId === SERVER_ENVIRONMENT_ID) {
+      return serverHost ? serverHost.sendRaw(message) : false;
+    }
+    return hub.sendRaw(environmentId, message);
+  }
+
+  async function resolveTargetDevice(
+    ownerUserId: string,
+    environmentId: string,
+  ): Promise<DeviceRecord | null> {
+    if (environmentId === SERVER_ENVIRONMENT_ID) {
+      if (!serverHost) return null;
+      const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+      return buildServerDeviceRecord(
+        ownerUserId,
+        serverAllowedRoots(sSettings),
+      );
+    }
+    const dev = await deviceStore.get(environmentId);
+    if (!dev || dev.ownerUserId !== ownerUserId || dev.revoked) return null;
+    return dev;
+  }
+
+  const instancesStore = createAgentInstancesStore({
+    database,
+    encryptionKey: options.encryptionKey,
+    resolveEnvMeta: async (ownerUserId, environmentId) => {
+      if (environmentId === SERVER_ENVIRONMENT_ID) {
+        return { name: "服务器本机", online: Boolean(serverHost) };
+      }
+      const dev = await deviceStore.get(environmentId);
+      if (!dev || dev.ownerUserId !== ownerUserId || dev.revoked) {
+        return { name: environmentId, online: false };
+      }
+      return { name: dev.name, online: hub.isOnline(dev.id) };
+    },
+  });
+
+  function notifyTaskWaiters(row: TaskRow) {
+    const set = waiters.get(row.id);
+    if (!set || set.size === 0) return;
+    for (const fn of [...set]) {
+      try {
+        fn(row);
+      } catch {}
+    }
+  }
 
   async function ensure() {
     await sql.unsafe(`
@@ -329,6 +459,23 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         UPDATE chisabot_local_agent_tasks SET capacity_active=true WHERE status IN ('starting','running');
       END IF;
     END $$`);
+    await sql.unsafe(`
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS instance_id text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS instance_name text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS environment_id text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS parent_task_id text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS depth integer NOT NULL DEFAULT 0;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS invocation_mode text;
+    `);
+    await instancesStore.ensure();
+    if (serverHost) {
+      void serverHost.detect().catch((err) => {
+        console.warn(
+          "server host initial detect failed",
+          reasonWithoutStatement(err),
+        );
+      });
+    }
   }
 
   /** Never resend an already dispatched task. Its device receipt releases uncertain occupancy. */
@@ -342,7 +489,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     for (const row of await sql.unsafe<TaskRow[]>(
       "SELECT * FROM chisabot_local_agent_tasks WHERE capacity_active AND status='failed'",
     ))
-      hub.sendRaw(row.device_id, { type: "agent_stop", taskId: row.id });
+      sendToEnvironment(row.device_id, { type: "agent_stop", taskId: row.id });
     for (const row of await sql.unsafe<TaskRow[]>(
       "SELECT * FROM chisabot_local_agent_tasks WHERE status='starting' AND NOT capacity_active",
     )) {
@@ -464,11 +611,19 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     deviceId: string,
     patch: z.infer<typeof settingsPatch>,
   ) {
-    const device = await deviceStore.get(deviceId);
-    if (!device || device.ownerUserId !== actorId)
-      throw new LocalAgentError("没有这台设备。", 404);
-    if (isMobilePlatform(device.platform))
-      throw new LocalAgentError("手机不能运行本地 agent。", 400);
+    let device: DeviceRecord;
+    if (deviceId === SERVER_ENVIRONMENT_ID) {
+      if (!serverHost)
+        throw new LocalAgentError("当前部署未启用服务器本机智能体宿主。", 400);
+      device = buildServerDeviceRecord("system", parseEnvServerRoots());
+    } else {
+      const found = await deviceStore.get(deviceId);
+      if (!found || found.ownerUserId !== actorId)
+        throw new LocalAgentError("没有这台设备。", 404);
+      if (isMobilePlatform(found.platform))
+        throw new LocalAgentError("手机不能运行本地 agent。", 400);
+      device = found;
+    }
     if (patch.profile === "full")
       throw new LocalAgentError(
         "「完全访问」在 设置 → 设备 → 权限 里打开（有时限，到期自动回到这里选的档位）。",
@@ -503,18 +658,20 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         `内置 agent 模型：${next.builtinModel.kind === "server" ? "服务器" : `本地 ${next.builtinModel.model}`}`,
       );
     if (changes.length)
-      await deviceStore.audit({
-        deviceId,
-        ownerUserId: device.ownerUserId,
-        actorType: "user",
-        actorId,
-        actorName: null,
-        action: "agent_profile_changed",
-        summary: changes.join("；"),
-        outcome: "succeeded",
-        detail: null,
-        durationMs: null,
-      });
+      await deviceStore
+        .audit({
+          deviceId,
+          ownerUserId: device.ownerUserId,
+          actorType: "user",
+          actorId,
+          actorName: null,
+          action: "agent_profile_changed",
+          summary: changes.join("；"),
+          outcome: "succeeded",
+          detail: null,
+          durationMs: null,
+        })
+        .catch(() => {});
     return settingsFor(deviceId);
   }
 
@@ -598,6 +755,17 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       id: row.id,
       deviceId: row.device_id,
       deviceName: row.device_name,
+      environmentId: row.environment_id ?? row.device_id,
+      instanceId: row.instance_id ?? null,
+      instanceName: row.instance_name ?? null,
+      parentTaskId: row.parent_task_id ?? null,
+      depth: Number(row.depth ?? 0),
+      invocationMode:
+        row.invocation_mode === "wait" ||
+        row.invocation_mode === "async" ||
+        row.invocation_mode === "direct"
+          ? row.invocation_mode
+          : undefined,
       agent: row.agent as LocalAgentKind,
       title: row.title,
       profile: row.profile as AgentProfile,
@@ -739,7 +907,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     // Order Stop after the durable transition, serialized with dispatch's final row lock.
     // Otherwise an unknown-task Stop can overtake the first agent_run and be lost by old nodes.
     if (fields.requestDeviceStop)
-      hub.sendRaw(fields.requestDeviceStop, { type: "agent_stop", taskId: id });
+      sendToEnvironment(fields.requestDeviceStop, {
+        type: "agent_stop",
+        taskId: id,
+      });
     live.delete(id);
     const row = rows[0] ?? null;
     if (fields.deviceConfirmed && (model || !row)) {
@@ -749,7 +920,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         [id],
       );
     }
-    if (row)
+    if (row) {
+      notifyTaskWaiters(row);
+      const label =
+        row.instance_name ||
+        LOCAL_AGENT_INFO[row.agent as LocalAgentKind]?.label ||
+        row.agent;
       await deviceStore
         .audit({
           deviceId: row.device_id,
@@ -759,7 +935,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           actorName: row.bot_name,
           action: "local_agent_done",
           summary: clip(
-            `${LOCAL_AGENT_INFO[row.agent as LocalAgentKind]?.label ?? row.agent}：${row.title}${row.diff?.files.length ? `（${row.diff.files.length} 个文件 +${row.diff.added} −${row.diff.removed}）` : ""}`,
+            `${label}：${row.title}${row.diff?.files.length ? `（${row.diff.files.length} 个文件 +${row.diff.added} −${row.diff.removed}）` : ""}`,
             400,
           ),
           outcome:
@@ -774,10 +950,13 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
             : null,
         })
         .catch(() => {});
-    if (row)
-      await deliver(row).catch((error) =>
-        console.warn("local agent delivery failed", error),
-      );
+      if (!deliveredInline.has(id) && !row.parent_task_id) {
+        await deliver(row).catch((error) =>
+          console.warn("local agent delivery failed", error),
+        );
+      }
+      deliveredInline.delete(id);
+    }
     return row;
   }
 
@@ -805,7 +984,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       return;
     const messageId = `local-agent-result-${row.id}`;
     const agentLabel =
-      LOCAL_AGENT_INFO[row.agent as LocalAgentKind]?.label ?? row.agent;
+      row.instance_name ||
+      LOCAL_AGENT_INFO[row.agent as LocalAgentKind]?.label ||
+      row.agent;
     const statusZh =
       row.status === "done"
         ? "已完成"
@@ -958,10 +1139,36 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     return parts;
   }
 
+  async function ensureServerSeedsForOwner(ownerUserId: string) {
+    if (!serverHost) return;
+    const existing = await instancesStore.listRows(
+      ownerUserId,
+      SERVER_ENVIRONMENT_ID,
+    );
+    if (existing.length > 0) return;
+    const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+    if (sSettings.detected?.agents?.length) {
+      await instancesStore.syncDetectedAgents(
+        ownerUserId,
+        SERVER_ENVIRONMENT_ID,
+        sSettings.detected.agents,
+      );
+    }
+  }
+
   async function handleNodeMessage(
     record: DeviceRecord,
     message: { type: string } & Record<string, unknown>,
   ) {
+    if (message.type === "agent_probe_result") {
+      const reqId = String(message.reqId ?? "");
+      const pending = probePending.get(reqId);
+      if (pending && message.probe && typeof message.probe === "object") {
+        probePending.delete(reqId);
+        pending(message.probe as Omit<AgentProbeState, "checkedAt">);
+      }
+      return;
+    }
     if (message.type === "agents_detected") {
       const detection = message.detection as
         | Omit<DeviceAgentDetection, "checkedAt">
@@ -1000,6 +1207,27 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       };
       // 检测结果不算用户改设置：保持 saved 原值（没保存过的设备只存检测结果、其余仍是默认值）。
       await writeSettings(record, { ...settings, detected: clean });
+      if (record.id === SERVER_ENVIRONMENT_ID) {
+        const owners = await sql
+          .unsafe<{ owner_user_id: string }[]>(
+            "SELECT DISTINCT owner_user_id FROM chisabot_agent_instances WHERE environment_id = $1",
+            [SERVER_ENVIRONMENT_ID],
+          )
+          .catch(() => []);
+        for (const item of owners) {
+          await instancesStore
+            .syncDetectedAgents(
+              item.owner_user_id,
+              SERVER_ENVIRONMENT_ID,
+              clean.agents,
+            )
+            .catch(() => {});
+        }
+      } else if (record.ownerUserId) {
+        await instancesStore
+          .syncDetectedAgents(record.ownerUserId, record.id, clean.agents)
+          .catch(() => {});
+      }
       return;
     }
     const taskId = String(message.taskId ?? "");
@@ -1082,7 +1310,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       case "agent_llm": {
         const reqId = String(message.reqId ?? "");
         const reply = (body: Record<string, unknown>) =>
-          hub.sendRaw(record.id, { type: "agent_llm_result", reqId, ...body });
+          sendToEnvironment(record.id, {
+            type: "agent_llm_result",
+            reqId,
+            ...body,
+          });
         if (!active || !row.capacity_active || row.agent !== "builtin")
           return void reply({
             ok: false,
@@ -1138,13 +1370,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       case "agent_approval": {
         const reqId = String(message.reqId ?? "");
         const reply = (approved: boolean) =>
-          hub.sendRaw(record.id, {
+          sendToEnvironment(record.id, {
             type: "agent_approval_result",
             reqId,
             approved,
           });
         if (!active || !row.capacity_active) return void reply(false);
-        const fresh = (await deviceStore.get(record.id)) ?? record;
+        const fresh =
+          (await resolveTargetDevice(row.owner_user_id, record.id)) ?? record;
         if (fresh.paused || fresh.revoked) return void reply(false);
         const summary = clip(
           `本地 agent 任务「${row.title}」：${String(message.summary ?? "")}`,
@@ -1153,8 +1386,8 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         const state = liveOf(taskId);
         // Existing nodes time out approvals locally and can resume planning without a receipt.
         // Keep their original slot until a device terminal confirms they have really stopped.
-        const parked = await sql.unsafe(
-          "UPDATE chisabot_local_agent_tasks SET status='pending_approval',step='等待你批准（设备仍保留执行位）',updated_at=now() WHERE id=$1 AND capacity_active AND status IN ('starting','running') RETURNING id",
+        const parked = await sql.unsafe<TaskRow[]>(
+          "UPDATE chisabot_local_agent_tasks SET status='pending_approval',step='等待你批准（设备仍保留执行位）',updated_at=now() WHERE id=$1 AND capacity_active AND status IN ('starting','running') RETURNING *",
           [taskId],
         );
         if (!parked.length) return void reply(false);
@@ -1169,21 +1402,22 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           (approvalId) => {
             state.approvalId = approvalId;
             state.approvalSummary = summary;
+            if (parked[0]) notifyTaskWaiters(parked[0]);
           },
         );
         state.approvalId = null;
         state.approvalSummary = null;
-        const current = await deviceStore.get(record.id);
+        const current = await resolveTargetDevice(row.owner_user_id, record.id);
         const currentTask = await taskRow(taskId);
         if (
           !current ||
           current.paused ||
           current.revoked ||
-          !hub.isOnline(record.id) ||
+          !isEnvironmentOnline(record.id) ||
           !currentTask ||
           !ACTIVE_LOCAL_TASK.includes(currentTask.status)
         ) {
-          hub.sendRaw(record.id, { type: "agent_stop", taskId });
+          sendToEnvironment(record.id, { type: "agent_stop", taskId });
           await finish(taskId, "failed", {
             error:
               "等待批准或执行位期间设备不可用或任务已停止，未继续；设备确认前保留执行位。",
@@ -1203,7 +1437,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
               current.platform,
             ))
         ) {
-          hub.sendRaw(record.id, { type: "agent_stop", taskId });
+          sendToEnvironment(record.id, { type: "agent_stop", taskId });
           await finish(taskId, "failed", {
             error:
               "设备权限或允许目录已更改，已请求停止原任务；设备确认前保留执行位。",
@@ -1227,6 +1461,149 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         );
         reply(decision.approved);
         return;
+      }
+      case "agent_subcall": {
+        const reqId = String(message.reqId ?? "");
+        const action = String(message.action ?? "");
+        const params =
+          message.params && typeof message.params === "object"
+            ? (message.params as Record<string, unknown>)
+            : {};
+        const reply = (body: Record<string, unknown>) =>
+          sendToEnvironment(record.id, {
+            type: "agent_subcall_result",
+            reqId,
+            ...body,
+          });
+        if (!active || !row.capacity_active) {
+          return void reply({ ok: false, error: "父任务未在运行状态。" });
+        }
+        try {
+          await ensureServerSeedsForOwner(row.owner_user_id);
+          const { grant, instances } =
+            await instancesStore.listGrantedInstances(
+              row.owner_user_id,
+              row.agent_id,
+              { onlineOnly: true },
+            );
+          const parentDepth = Number(row.depth ?? 0);
+          if (!grant.allowNestedSubagents) {
+            return void reply({
+              ok: false,
+              error: "当前机器人未允许外部智能体嵌套调用子代理。",
+            });
+          }
+          if (parentDepth >= grant.maxDepth) {
+            return void reply({
+              ok: false,
+              error: `已达到子代理嵌套上限（maxDepth = ${grant.maxDepth}）。`,
+            });
+          }
+          if (action === "list") {
+            return void reply({
+              ok: true,
+              data: {
+                depth: parentDepth,
+                maxDepth: grant.maxDepth,
+                instances: instances.map((inst) => ({
+                  id: inst.id,
+                  slug: inst.slug,
+                  name: inst.name,
+                  driver: inst.driver,
+                  environmentId: inst.environmentId,
+                  environmentName: inst.environmentName,
+                  description: inst.description,
+                })),
+              },
+            });
+          }
+          if (action === "run") {
+            const subTaskText = String(params.task ?? "").trim();
+            const subInstance = String(params.instance ?? "").trim();
+            if (!subTaskText || !subInstance) {
+              return void reply({
+                ok: false,
+                error: "subagent_run 需要提供 instance 与 task。",
+              });
+            }
+            const subMode = params.mode === "async" ? "async" : "wait";
+            const outcome = await runSubagent({
+              ownerUserId: row.owner_user_id,
+              botId: row.agent_id,
+              botName: row.bot_name,
+              threadId: row.thread_id,
+              instance: subInstance,
+              task: subTaskText,
+              title:
+                typeof params.title === "string" ? params.title : undefined,
+              cwd:
+                typeof params.cwd === "string" && params.cwd.trim()
+                  ? params.cwd.trim()
+                  : (row.cwd ?? undefined),
+              profile: row.profile as AgentProfile,
+              mode: subMode,
+              parentTaskId: row.id,
+              depth: parentDepth + 1,
+            });
+            const t = outcome.task;
+            return void reply({
+              ok: true,
+              data: {
+                taskId: t.id,
+                status: t.status,
+                instanceName: t.instanceName,
+                device: t.deviceName,
+                summary: t.summary,
+                diff: t.diff
+                  ? {
+                      files: t.diff.files.map((f) => f.path),
+                      added: t.diff.added,
+                      removed: t.diff.removed,
+                      pending: t.diff.pending,
+                    }
+                  : null,
+                error: t.error,
+                timedOut: outcome.timedOut,
+              },
+            });
+          }
+          if (action === "status") {
+            const subId = String(params.taskId ?? "").trim();
+            if (!subId) {
+              return void reply({ ok: false, error: "需要提供 taskId。" });
+            }
+            const subRow = await owned(row.owner_user_id, subId);
+            const t = view(subRow);
+            return void reply({
+              ok: true,
+              data: {
+                taskId: t.id,
+                status: t.status,
+                step: t.step,
+                summary: t.summary,
+                recent: t.lines.slice(-10).map((l) => l.text),
+                error: t.error,
+              },
+            });
+          }
+          if (action === "stop") {
+            const subId = String(params.taskId ?? "").trim();
+            if (!subId) {
+              return void reply({ ok: false, error: "需要提供 taskId。" });
+            }
+            const t = await stop(row.owner_user_id, subId, "bot");
+            return void reply({
+              ok: true,
+              data: { taskId: t.id, status: t.status },
+            });
+          }
+          return void reply({ ok: false, error: `未知嵌套操作：${action}` });
+        } catch (error) {
+          return void reply({
+            ok: false,
+            error: reasonWithoutStatement(error),
+          });
+        }
       }
       default:
     }
@@ -1265,6 +1642,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     threadId: string | null;
     device?: string;
     agent?: LocalAgentKind;
+    instance?: string;
+    parentTaskId?: string | null;
+    depth?: number;
+    invocationMode?: "wait" | "async" | "direct";
+    bypassBotGrant?: boolean;
     task: string;
     title?: string;
     cwd?: string;
@@ -1273,19 +1655,75 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     network?: boolean;
   };
 
-  /** 交一个任务给电脑上的 agent。返回任务（启动在后台继续：审批 → 发给电脑）。被拒绝时抛 LocalAgentError。 */
+  /** 交一个任务给宿主上的 agent。返回任务（启动在后台继续：审批 → 发给宿主）。被拒绝时抛 LocalAgentError。 */
   async function start(input: StartInput): Promise<LocalAgentTaskView> {
-    const picked = await resolveDevice(
-      deviceStore,
-      input.ownerUserId,
-      input.device,
-      (id) => hub.isOnline(id),
-    );
-    if (typeof picked === "string") throw new LocalAgentError(picked);
-    const device = picked;
-    if (isMobilePlatform(device.platform))
+    let instanceRow: InstanceRow | null = null;
+    let device: DeviceRecord;
+    const depth = Math.max(0, Math.floor(input.depth ?? 0));
+
+    if (input.instance?.trim()) {
+      await ensureServerSeedsForOwner(input.ownerUserId);
+      instanceRow = await instancesStore.resolveInstanceRow(
+        input.ownerUserId,
+        input.instance,
+        input.device,
+      );
+      if (!instanceRow) {
+        throw new LocalAgentError(
+          `找不到智能体实例「${input.instance}」。请在 设置 → 智能体提供方 中添加或检查标识。`,
+          404,
+        );
+      }
+      if (!instanceRow.enabled) {
+        throw new LocalAgentError(
+          `智能体实例「${instanceRow.name}」当前已禁用，请先在 设置 → 智能体提供方 中启用。`,
+          400,
+        );
+      }
+      if (!input.bypassBotGrant) {
+        const grant = await instancesStore.getBotGrant(
+          input.ownerUserId,
+          input.botId,
+        );
+        if (
+          grant.mode === "none" ||
+          (grant.mode === "selected" &&
+            !grant.instanceIds.includes(instanceRow.id))
+        ) {
+          throw new LocalAgentError(
+            `当前机器人未被授权调用子代理「${instanceRow.name}」。可在机器人设置 → 子代理中开启授权。`,
+            403,
+          );
+        }
+      }
+      const target = await resolveTargetDevice(
+        input.ownerUserId,
+        instanceRow.environment_id,
+      );
+      if (!target) {
+        throw new LocalAgentError(
+          `智能体「${instanceRow.name}」所属的运行环境不可用。`,
+          404,
+        );
+      }
+      device = target;
+    } else {
+      const picked = await resolveDevice(
+        deviceStore,
+        input.ownerUserId,
+        input.device,
+        (id) => hub.isOnline(id),
+      );
+      if (typeof picked === "string") throw new LocalAgentError(picked);
+      device = picked;
+    }
+
+    if (
+      device.id !== SERVER_ENVIRONMENT_ID &&
+      isMobilePlatform(device.platform)
+    )
       throw new LocalAgentError("手机不能运行本地 agent。");
-    if (!hub.isOnline(device.id))
+    if (!isEnvironmentOnline(device.id))
       throw new LocalAgentError(`「${device.name}」现在离线。`);
     if (device.paused)
       throw new LocalAgentError(`「${device.name}」已紧急停止。`);
@@ -1294,9 +1732,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         `「${device.name}」的「命令行」能力是关闭的，本地 agent 要运行程序，需要先在 设置 → 设备 → 权限 把它设为「询问」或「允许」。`,
       );
     const settings = await settingsFor(device.id);
-    const agent = input.agent ?? settings.defaultAgent;
+    const agent: LocalAgentKind = instanceRow
+      ? ((isAgentDriverKind(instanceRow.driver)
+          ? instanceRow.driver
+          : "custom") as LocalAgentKind)
+      : (input.agent ?? settings.defaultAgent);
     const detected = settings.detected?.agents ?? [];
     if (
+      !instanceRow &&
       agent !== "builtin" &&
       settings.detected &&
       !detected.some((a) => a.kind === agent)
@@ -1308,11 +1751,28 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         `「${device.name}」上没有检测到 ${LOCAL_AGENT_INFO[agent].label}。已安装：${have || "只有 ChisaBot 内置"}。`,
       );
     }
-    const profile = narrowerProfile(
+    let profile = narrowerProfile(
       effectiveProfile(settings, device),
       input.profile,
     );
-    const isolation = input.isolation ?? settings.isolation;
+    if (instanceRow?.config?.maxProfile) {
+      profile = narrowerProfile(profile, instanceRow.config.maxProfile);
+    }
+    const sandboxes = settings.detected?.sandboxes ?? {};
+    let isolation =
+      input.isolation ??
+      instanceRow?.config?.defaultIsolation ??
+      settings.isolation;
+    if (
+      instanceRow &&
+      !input.isolation &&
+      !instanceRow.config?.defaultIsolation &&
+      isolation === "worktree" &&
+      settings.detected &&
+      sandboxes.worktree !== true
+    ) {
+      isolation = "copy";
+    }
     const network =
       input.network === undefined
         ? settings.network
@@ -1321,13 +1781,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const cwd = input.cwd?.trim() || roots[0] || null;
     if (!cwd)
       throw new LocalAgentError(
-        `「${device.name}」还没有工作区文件夹。请在 设置 → 设备 → 本地 agent（或 权限 → 允许的文件夹）里选一个，或者告诉我具体在哪个文件夹做。`,
+        device.id === SERVER_ENVIRONMENT_ID
+          ? "「服务器本机」还没有配置受控工作区文件夹。请管理员在 设置 → 智能体提供方 顶部设置服务器工作区路径（或配置 CHISABOT_SERVER_AGENT_ROOTS）。"
+          : `「${device.name}」还没有工作区文件夹。请在 设置 → 设备 → 本地 agent（或 权限 → 允许的文件夹）里选一个，或者告诉我具体在哪个文件夹做。`,
       );
     if (profile !== "full" && !isInsideRoots(cwd, roots, device.platform))
       throw new LocalAgentError(
-        `「${cwd}」不在这台电脑的工作区文件夹里（${roots.join("、") || "还没有"}）。可以换一个文件夹，或者请用户在 设置 → 设备 → 本地 agent 里加上它。`,
+        `「${cwd}」不在「${device.name}」允许的工作区文件夹里（${roots.join("、") || "还没有"}）。可以换一个文件夹，或者在设置里加上它。`,
       );
-    const sandboxes = settings.detected?.sandboxes ?? {};
     if (
       isolation !== "none" &&
       isolation !== "copy" &&
@@ -1348,19 +1809,16 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       throw new LocalAgentError(
         "容器隔离只给 ChisaBot 内置 agent 用（命令行 agent 要用它自己的登录，在容器里拿不到）。可以改用 worktree / 临时副本 / bubblewrap。",
       );
-    if (
-      isolation === "none" &&
-      profile === "readonly" &&
-      agent !== "builtin" &&
-      agent !== "claude" &&
-      agent !== "codex"
-    )
+    const supportsReadOnly =
+      AGENT_DRIVER_SPECS[agent as AgentDriverKind]?.fields.supportsReadOnly ??
+      (agent === "builtin" || agent === "claude" || agent === "codex");
+    if (isolation === "none" && profile === "readonly" && !supportsReadOnly)
       throw new LocalAgentError(
-        `${LOCAL_AGENT_INFO[agent].label} 没有只读模式。请用 Claude Code、Codex 或内置 agent，或者在一次性副本里做。`,
+        `${instanceRow?.name ?? LOCAL_AGENT_INFO[agent].label} 没有直接只读模式。请用 Claude Code、Codex、ACP 提供方或内置 agent，或者在一次性副本（worktree / copy）里做。`,
       );
     if (!network && agent !== "builtin")
       throw new LocalAgentError(
-        `${LOCAL_AGENT_INFO[agent].label} 要联网访问它自己的模型服务，断网时只能用 ChisaBot 内置 agent（配合电脑上的本地模型）。`,
+        `${instanceRow?.name ?? LOCAL_AGENT_INFO[agent].label} 要联网访问它自己的模型服务，断网时只能用 ChisaBot 内置 agent（配合电脑上的本地模型）。`,
       );
     if (
       !network &&
@@ -1380,13 +1838,16 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       agent !== "builtin" &&
       agent !== "claude" &&
       agent !== "codex" &&
+      agent !== "acp" &&
+      agent !== "antigravity" &&
       profile !== "full" &&
       !sandboxed &&
       !disposable
     )
       throw new LocalAgentError(
-        `${LOCAL_AGENT_INFO[agent].label} 没有逐条确认，只在「完全访问」档位、一次性副本或系统级沙盒里使用。`,
+        `${instanceRow?.name ?? LOCAL_AGENT_INFO[agent].label} 没有逐条确认，只在「完全访问」档位、一次性副本或系统级沙盒里使用。`,
       );
+    const nestedBonus = input.parentTaskId ? Math.min(depth, 5) : 0;
     const [deviceActive, userActive] = await Promise.all([
       sql.unsafe<{ n: number }[]>(
         "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE device_id = $1 AND status IN ('pending_approval','starting','running')",
@@ -1397,12 +1858,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         [input.ownerUserId],
       ),
     ]);
-    if ((deviceActive[0]?.n ?? 0) >= PER_DEVICE_ACTIVE)
+    if ((deviceActive[0]?.n ?? 0) >= PER_DEVICE_ACTIVE + nestedBonus)
       throw new LocalAgentError(
         `「${device.name}」上已经有 ${PER_DEVICE_ACTIVE} 个本地 agent 任务在跑，等一个结束再交新的。`,
         409,
       );
-    if ((userActive[0]?.n ?? 0) >= PER_USER_ACTIVE)
+    if ((userActive[0]?.n ?? 0) >= PER_USER_ACTIVE + nestedBonus)
       throw new LocalAgentError(
         `已经有 ${PER_USER_ACTIVE} 个本地 agent 任务在跑。`,
         409,
@@ -1413,12 +1874,37 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       (input.title || input.task).replace(/\s+/g, " ").trim(),
       60,
     );
-    const skipPermissions = profile === "full" || sandboxed;
-    // 完全访问（ADR-0009：所有能力按「允许」）才直接开始；其余都先在网页 / 手机 / PC 上批准。
-    const needsApproval = profile !== "full";
+    const skipPermissions =
+      profile === "full" || sandboxed || Boolean(instanceRow && disposable);
+    // 旧版裸调用保持非 full 必先弹确认卡；已配置的提供方实例在授权工作区与隔离沙盒内默认直接启动，除非实例显式开启 requireStartApproval。
+    const needsApproval = instanceRow
+      ? profile !== "full" && instanceRow.config?.requireStartApproval === true
+      : profile !== "full";
+
+    const displayLabel = instanceRow?.name ?? LOCAL_AGENT_INFO[agent].label;
+    const grant = await instancesStore.getBotGrant(
+      input.ownerUserId,
+      input.botId,
+    );
+    const runtimeInstance: RuntimeInstanceSpec | undefined = instanceRow
+      ? await instancesStore.toRuntimeSpec(instanceRow)
+      : undefined;
+    const subagentBridge = {
+      enabled: grant.allowNestedSubagents && depth < grant.maxDepth,
+      depth,
+      maxDepth: grant.maxDepth,
+    };
+
     await sql.unsafe(
-      `INSERT INTO chisabot_local_agent_tasks (id, owner_user_id, device_id, device_name, agent_id, bot_name, thread_id, agent, title, task, profile, isolation, network, cwd, status, step)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      `INSERT INTO chisabot_local_agent_tasks (
+         id, owner_user_id, device_id, device_name, agent_id, bot_name, thread_id,
+         agent, instance_id, instance_name, environment_id, parent_task_id, depth, invocation_mode,
+         title, task, profile, isolation, network, cwd, status, step
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,
+         $8,$9,$10,$11,$12,$13,$14,
+         $15,$16,$17,$18,$19,$20,$21,$22
+       )`,
       [
         id,
         input.ownerUserId,
@@ -1428,6 +1914,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         input.botName,
         input.threadId,
         agent,
+        instanceRow?.id ?? null,
+        instanceRow?.name ?? null,
+        device.id,
+        input.parentTaskId ?? null,
+        depth,
+        input.invocationMode ?? null,
         title,
         input.task,
         profile,
@@ -1443,23 +1935,25 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     pushLine(
       id,
       "status",
-      `交给「${device.name}」上的 ${LOCAL_AGENT_INFO[agent].label}：${profileLine({ profile, isolation, network })}，文件夹 ${cwd}`,
+      `交给「${device.name}」上的 ${displayLabel}：${profileLine({ profile, isolation, network })}，文件夹 ${cwd}`,
     );
-    await deviceStore.audit({
-      deviceId: device.id,
-      ownerUserId: device.ownerUserId,
-      actorType: "bot",
-      actorId: input.botId,
-      actorName: input.botName,
-      action: "local_agent_task",
-      summary: clip(
-        `交给 ${LOCAL_AGENT_INFO[agent].label}：${title}（${profileLine({ profile, isolation, network })}，${cwd}）`,
-        400,
-      ),
-      outcome: "succeeded",
-      detail: null,
-      durationMs: null,
-    });
+    await deviceStore
+      .audit({
+        deviceId: device.id,
+        ownerUserId: device.ownerUserId,
+        actorType: "bot",
+        actorId: input.botId,
+        actorName: input.botName,
+        action: "local_agent_task",
+        summary: clip(
+          `交给 ${displayLabel}：${title}（${profileLine({ profile, isolation, network })}，${cwd}）`,
+          400,
+        ),
+        outcome: "succeeded",
+        detail: null,
+        durationMs: null,
+      })
+      .catch(() => {});
 
     const run: LocalAgentRunMessage = {
       type: "agent_run",
@@ -1475,11 +1969,13 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       builtinModel: settings.builtinModel,
       containerImage: settings.containerImage,
       timeoutMs,
+      ...(runtimeInstance ? { instance: runtimeInstance } : {}),
+      subagentBridge,
     };
     void (async () => {
       if (needsApproval) {
         const summary = clip(
-          `用 ${LOCAL_AGENT_INFO[agent].label} 做：${title}（${profileLine({ profile, isolation, network })}，文件夹 ${cwd}${skipPermissions && agent !== "builtin" ? "，agent 跳过它自己的逐条确认" : ""}）`,
+          `用 ${displayLabel} 做：${title}（${profileLine({ profile, isolation, network })}，文件夹 ${cwd}${skipPermissions && agent !== "builtin" ? "，agent 跳过它自己的逐条确认" : ""}）`,
           400,
         );
         const decision = await hub.requestUserApproval(
@@ -1505,12 +2001,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           });
           return;
         }
-        const fresh = await deviceStore.get(device.id);
+        const fresh = await resolveTargetDevice(input.ownerUserId, device.id);
         if (
           !fresh ||
           fresh.paused ||
           fresh.revoked ||
-          !hub.isOnline(device.id)
+          !isEnvironmentOnline(device.id)
         ) {
           await finish(id, "failed", {
             error: "批准期间电脑停止、离线或被撤销，任务没有开始。",
@@ -1525,12 +2021,88 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         state.step = "正在发给电脑";
         pushLine(id, "approval", "已批准");
       }
-      await dispatchQueued((await savedTaskRow(id)), run);
+      await dispatchQueued(await savedTaskRow(id), run);
     })().catch((error) => {
       console.warn("local agent start failed", error);
       void finish(id, "failed", { error: "启动失败。" });
     });
-    return view((await savedTaskRow(id)));
+    return view(await savedTaskRow(id));
+  }
+
+  /**
+   * 运行子代理任务，支持 `mode: "wait"`（阻塞等待结果直接返回当前回合，不触发二次收件箱回流）
+   * 与 `mode: "async"`（立即返回任务卡片，结束后经收件箱回流）。
+   */
+  async function runSubagent(
+    input: StartInput & {
+      mode?: "wait" | "async";
+      waitTimeoutMs?: number;
+    },
+  ): Promise<{ task: LocalAgentTaskView; timedOut: boolean }> {
+    const mode = input.mode === "wait" ? "wait" : "async";
+    const initial = await start({
+      ...input,
+      invocationMode: input.invocationMode ?? mode,
+    });
+    if (
+      mode !== "wait" ||
+      initial.status === "pending_approval" ||
+      !ACTIVE_LOCAL_TASK.includes(initial.status)
+    ) {
+      return { task: initial, timedOut: false };
+    }
+
+    const maxWait = Math.min(
+      timeoutMs,
+      Math.max(1000, input.waitTimeoutMs ?? 180_000),
+    );
+    return new Promise<{ task: LocalAgentTaskView; timedOut: boolean }>(
+      (resolve) => {
+        let settled = false;
+        const cleanup = () => {
+          const set = waiters.get(initial.id);
+          if (set) {
+            set.delete(onUpdate);
+            if (set.size === 0) waiters.delete(initial.id);
+          }
+          clearTimeout(timer);
+        };
+        const onUpdate = (updated: TaskRow) => {
+          if (settled) return;
+          if (!ACTIVE_LOCAL_TASK.includes(updated.status)) {
+            settled = true;
+            deliveredInline.add(initial.id);
+            cleanup();
+            resolve({ task: view(updated), timedOut: false });
+          } else if (updated.status === "pending_approval") {
+            settled = true;
+            cleanup();
+            resolve({ task: view(updated), timedOut: false });
+          }
+        };
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          void savedTaskRow(initial.id)
+            .then((cur) => resolve({ task: view(cur), timedOut: true }))
+            .catch(() => resolve({ task: initial, timedOut: true }));
+        }, maxWait);
+        timer.unref?.();
+
+        let set = waiters.get(initial.id);
+        if (!set) {
+          set = new Set();
+          waiters.set(initial.id, set);
+        }
+        set.add(onUpdate);
+
+        // 二次检查，防止在注册监听前任务已极速完成
+        void taskRow(initial.id).then((latest) => {
+          if (latest) onUpdate(latest);
+        });
+      },
+    );
   }
 
   async function claimDeviceCapacity(
@@ -1554,6 +2126,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           return "stopped";
         if (current.capacity_active) return "stopped"; // Another dispatcher already owns this row.
         if (
+          !row.parent_task_id &&
           (await backgroundCount(tx, row.owner_user_id)) >= BACKGROUND_CAPACITY
         )
           return "waiting";
@@ -1590,12 +2163,15 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     state.dispatching = true;
     try {
       if (!(await claimDeviceCapacity(row, "starting"))) return;
-      const device = await deviceStore.get(row.device_id);
+      const device = await resolveTargetDevice(
+        row.owner_user_id,
+        row.device_id,
+      );
       if (
         !device ||
         device.paused ||
         device.revoked ||
-        !hub.isOnline(row.device_id)
+        !isEnvironmentOnline(row.device_id)
       ) {
         await sql.unsafe(
           "UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1",
@@ -1625,6 +2201,20 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         });
         return;
       }
+      let recoveredInstance: RuntimeInstanceSpec | undefined;
+      if (!supplied && row.instance_id) {
+        const instRow = await instancesStore.getRow(
+          row.owner_user_id,
+          row.instance_id,
+        );
+        if (instRow) {
+          recoveredInstance = await instancesStore.toRuntimeSpec(instRow);
+        }
+      }
+      const grant = !supplied
+        ? await instancesStore.getBotGrant(row.owner_user_id, row.agent_id)
+        : null;
+      const rowDepth = Number(row.depth ?? 0);
       const run: LocalAgentRunMessage = {
         ...(supplied ?? {
           type: "agent_run",
@@ -1638,10 +2228,25 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           roots,
           skipPermissions:
             row.profile === "full" ||
-            ISOLATION_INFO[row.isolation as Isolation].sandbox,
+            ISOLATION_INFO[row.isolation as Isolation].sandbox ||
+            Boolean(
+              row.instance_id &&
+                ISOLATION_INFO[row.isolation as Isolation].disposable,
+            ),
           builtinModel: settings.builtinModel,
           containerImage: settings.containerImage,
           timeoutMs,
+          ...(recoveredInstance ? { instance: recoveredInstance } : {}),
+          ...(grant
+            ? {
+                subagentBridge: {
+                  enabled:
+                    grant.allowNestedSubagents && rowDepth < grant.maxDepth,
+                  depth: rowDepth,
+                  maxDepth: grant.maxDepth,
+                },
+              }
+            : {}),
         }),
         roots,
       };
@@ -1658,7 +2263,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           !current.capacity_active
         )
           return "stopped";
-        return hub.sendRaw(
+        return sendToEnvironment(
           row.device_id,
           run as unknown as { type: string } & Record<string, unknown>,
         )
@@ -1672,12 +2277,15 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         );
         if (dispatched === "stopped") return;
         await finish(row.id, "failed", {
-          error: "电脑离线，没能把任务发过去。",
+          error: "宿主离线，没能把任务发过去。",
         });
         return;
       }
       state.deadline = executionDeadline(timeoutMs + 60_000, () => {
-        hub.sendRaw(row.device_id, { type: "agent_stop", taskId: row.id });
+        sendToEnvironment(row.device_id, {
+          type: "agent_stop",
+          taskId: row.id,
+        });
         void finish(row.id, "failed", {
           error: `超过 ${Math.round(timeoutMs / 60_000)} 分钟没有结束，已请求停止；设备确认前保留执行位。`,
         });
@@ -1702,7 +2310,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const row = await owned(actorId, id);
     if (!ACTIVE_LOCAL_TASK.includes(row.status)) {
       if (row.capacity_active)
-        hub.sendRaw(row.device_id, { type: "agent_stop", taskId: id });
+        sendToEnvironment(row.device_id, { type: "agent_stop", taskId: id });
       return view(row);
     }
     const state = live.get(id);
@@ -1724,7 +2332,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       throw new LocalAgentError(
         discard ? "没有要放弃的改动。" : "没有待应用的改动。",
       );
-    if (!hub.isOnline(row.device_id))
+    if (!isEnvironmentOnline(row.device_id))
       throw new LocalAgentError(
         `「${row.device_name}」现在离线，改动还在那台电脑的临时目录里。`,
         409,
@@ -1732,7 +2340,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const result = await new Promise<string | null>((resolve) => {
       const timer = setTimeout(() => {
         pendingApply.delete(id);
-        resolve("电脑没有及时回应。");
+        resolve("宿主没有及时回应。");
       }, 60_000);
       pendingApply.set(id, (error) => {
         clearTimeout(timer);
@@ -1740,32 +2348,34 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         resolve(error);
       });
       if (
-        !hub.sendRaw(row.device_id, {
+        !sendToEnvironment(row.device_id, {
           type: discard ? "agent_discard" : "agent_apply",
           taskId: id,
         })
       ) {
         clearTimeout(timer);
         pendingApply.delete(id);
-        resolve("电脑离线。");
+        resolve("宿主离线。");
       }
     });
-    const device = await deviceStore.get(row.device_id);
+    const device = await resolveTargetDevice(row.owner_user_id, row.device_id);
     if (device)
-      await deviceStore.audit({
-        deviceId: row.device_id,
-        ownerUserId: row.owner_user_id,
-        actorType: "user",
-        actorId,
-        actorName: null,
-        action: discard ? "local_agent_discard" : "local_agent_apply",
-        summary: clip(`${row.title}：${row.diff.files.length} 个文件`, 300),
-        outcome: result ? "failed" : "succeeded",
-        detail: result,
-        durationMs: null,
-      });
+      await deviceStore
+        .audit({
+          deviceId: row.device_id,
+          ownerUserId: row.owner_user_id,
+          actorType: "user",
+          actorId,
+          actorName: null,
+          action: discard ? "local_agent_discard" : "local_agent_apply",
+          summary: clip(`${row.title}：${row.diff.files.length} 个文件`, 300),
+          outcome: result ? "failed" : "succeeded",
+          detail: result,
+          durationMs: null,
+        })
+        .catch(() => {});
     if (result) throw new LocalAgentError(result, 409);
-    return view((await savedTaskRow(id)));
+    return view(await savedTaskRow(id));
   }
 
   async function forThread(actorId: string, threadId: string) {
@@ -1791,12 +2401,171 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       "DELETE FROM chisabot_device_agent_settings WHERE device_id = $1",
       [deviceId],
     );
+    await sql.unsafe(
+      "DELETE FROM chisabot_agent_instances WHERE environment_id = $1",
+      [deviceId],
+    );
+  }
+
+  // ── 环境列表与实例探活 ─────────────────────────────────────────────────
+
+  async function listEnvironments(
+    actorId: string,
+  ): Promise<AgentEnvironmentSummary[]> {
+    await ensureServerSeedsForOwner(actorId);
+    const [devices, allInstances] = await Promise.all([
+      deviceStore.forOwner(actorId),
+      instancesStore.listRows(actorId),
+    ]);
+    const countsByEnv = new Map<string, { total: number; enabled: number }>();
+    for (const r of allInstances) {
+      const cur = countsByEnv.get(r.environment_id) ?? { total: 0, enabled: 0 };
+      cur.total++;
+      if (r.enabled) cur.enabled++;
+      countsByEnv.set(r.environment_id, cur);
+    }
+
+    const list: AgentEnvironmentSummary[] = [];
+    if (serverHost) {
+      const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+      const sRoots = serverAllowedRoots(sSettings);
+      const sRecord = buildServerDeviceRecord(actorId, sRoots);
+      const c = countsByEnv.get(SERVER_ENVIRONMENT_ID) ?? {
+        total: 0,
+        enabled: 0,
+      };
+      list.push({
+        id: SERVER_ENVIRONMENT_ID,
+        name: "服务器本机",
+        kind: "server",
+        online: true,
+        platform: process.platform,
+        profile: effectiveProfile(sSettings, sRecord),
+        isolation: sSettings.isolation,
+        network: sSettings.network,
+        workspaceRoots: sRoots,
+        detectedAt: sSettings.detected?.checkedAt ?? null,
+        instanceCount: c.total,
+        enabledCount: c.enabled,
+      });
+    }
+
+    for (const dev of devices) {
+      if (isMobilePlatform(dev.platform) || dev.revoked) continue;
+      const dSettings = await settingsFor(dev.id);
+      const c = countsByEnv.get(dev.id) ?? { total: 0, enabled: 0 };
+      list.push({
+        id: dev.id,
+        name: dev.name,
+        kind: "device",
+        online: hub.isOnline(dev.id),
+        platform: dev.platform,
+        profile: effectiveProfile(dSettings, dev),
+        isolation: dSettings.isolation,
+        network: dSettings.network,
+        workspaceRoots: effectiveRoots(dSettings, dev.allowedRoots),
+        detectedAt: dSettings.detected?.checkedAt ?? null,
+        instanceCount: c.total,
+        enabledCount: c.enabled,
+      });
+    }
+    return list;
+  }
+
+  async function probeInstance(
+    actorId: string,
+    instanceId: string,
+  ): Promise<AgentInstanceView> {
+    const row = await instancesStore.getRow(actorId, instanceId);
+    if (!row) throw new LocalAgentError("没有这个智能体实例。", 404);
+    if (!isEnvironmentOnline(row.environment_id)) {
+      const offlineProbe: AgentProbeState = {
+        status: "unknown",
+        version: row.probe?.version ?? null,
+        resolvedPath: row.probe?.resolvedPath ?? null,
+        authenticated: row.probe?.authenticated ?? null,
+        authLabel: row.probe?.authLabel ?? null,
+        message: "宿主当前离线，无法检测",
+        checkedAt: new Date().toISOString(),
+      };
+      const saved = await instancesStore.saveProbe(
+        actorId,
+        row.id,
+        offlineProbe,
+      );
+      if (!saved) throw new LocalAgentError("没有这个智能体实例。", 404);
+      return saved;
+    }
+    const spec = await instancesStore.toRuntimeSpec(row);
+    const reqId = `probe_${randomUUID().slice(0, 12)}`;
+    const result = await new Promise<Omit<AgentProbeState, "checkedAt">>(
+      (resolve) => {
+        const timer = setTimeout(() => {
+          probePending.delete(reqId);
+          resolve({
+            status: "error",
+            version: null,
+            resolvedPath: null,
+            authenticated: null,
+            authLabel: null,
+            message: "检测超时（15 秒未响应）",
+          });
+        }, 15_000);
+        timer.unref?.();
+        probePending.set(reqId, (probe) => {
+          clearTimeout(timer);
+          resolve(probe);
+        });
+        if (
+          !sendToEnvironment(row.environment_id, {
+            type: "agent_probe",
+            reqId,
+            instance: spec,
+          })
+        ) {
+          clearTimeout(timer);
+          probePending.delete(reqId);
+          resolve({
+            status: "unknown",
+            version: null,
+            resolvedPath: null,
+            authenticated: null,
+            authLabel: null,
+            message: "宿主离线",
+          });
+        }
+      },
+    );
+    const fullProbe: AgentProbeState = {
+      ...result,
+      checkedAt: new Date().toISOString(),
+    };
+    const updated = await instancesStore.saveProbe(actorId, row.id, fullProbe);
+    if (!updated) throw new LocalAgentError("没有这个智能体实例。", 404);
+    return updated;
+  }
+
+  async function probeEnvironment(
+    actorId: string,
+    environmentId: string,
+  ): Promise<AgentInstanceView[]> {
+    const target = await resolveTargetDevice(actorId, environmentId);
+    if (!target) throw new LocalAgentError("没有这个运行环境。", 404);
+    sendToEnvironment(environmentId, { type: "agent_detect" });
+    await ensureServerSeedsForOwner(actorId);
+    const rows = await instancesStore.listRows(actorId, environmentId);
+    const updated: AgentInstanceView[] = [];
+    for (const row of rows) {
+      updated.push(await probeInstance(actorId, row.id));
+    }
+    return updated;
   }
 
   // ── 机器人工具 ────────────────────────────────────────────────────────
 
   function guidanceText(
     devices: Array<{ device: DeviceRecord; settings: DeviceAgentSettings }>,
+    grantedInstances: readonly AgentInstanceView[],
   ) {
     const lines = devices.map(({ device, settings }) => {
       const agents = (
@@ -1804,12 +2573,21 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       )
         .map((a) => LOCAL_AGENT_INFO[a.kind]?.label ?? a.kind)
         .join("、");
-      return `- 「${device.name}」：档位 ${PROFILE_INFO[effectiveProfile(settings, device)].label}，默认隔离 ${ISOLATION_INFO[settings.isolation].label}，本地 agent：${agents}（默认 ${LOCAL_AGENT_INFO[settings.defaultAgent].label}）`;
+      return `- 电脑「${device.name}」：档位 ${PROFILE_INFO[effectiveProfile(settings, device)].label}，默认隔离 ${ISOLATION_INFO[settings.isolation].label}，已检测：${agents}`;
     });
+    const instLines = grantedInstances.map(
+      (inst) =>
+        `- 子代理实例「${inst.name}」（标识 \`${inst.slug}\`，宿主「${inst.environmentName}」${inst.exposeAsTool ? `，专属工具 \`${inst.toolName}\`` : ""}）：${inst.description || AGENT_DRIVER_SPECS[inst.driver].description}`,
+    );
     return [
-      "Local agents on the person's computer (本地 agent). The default way to work on their computer is still the device_* tools (you drive each step from the cloud; nothing needs to be installed). Use device_agent_run instead when the person asks for a specific local agent (「用 Claude Code 在我电脑上修这个 bug」「让 Codex 跑一下测试」) or for a longer self-contained coding job on their machine. It returns at once with a task card in chat (live output, stop button, diff); the result comes back later as a message starting with 「⟦chisabot:local-agent-result:」, then summarise it in one or two sentences and mention 应用改动 when the changes are in a disposable copy.",
-      "Starting a task shows the person an approval prompt (unless the computer has 完全访问 switched on) — say in one short line they will see it; never ask for permission in chat first. You cannot change a computer's permission profile (只读 / 工作区) or switch on 完全访问, or change its folders: only the person can, in 设置 → 设备 → the computer. A task can ask for a narrower profile than the computer's, never a wider one. Give the agent a clear, complete instruction (it does not see this chat).",
-      ...lines,
+      "Subagents & Configured Agent Providers (可调用的子代理与本地智能体)：",
+      "- 当需要把代码检索、工程实现、重构修复、专项审查或独立子任务委派给已配置好的智能体时，优先使用 `subagent_run` 或对应的 `agent_<slug>` 专属工具。",
+      "- 调用模式：`mode = 'wait'`（默认推荐用于分析、问答、中短耗时编程任务）会等待子代理执行完毕并在当前回合直接返回 `{ summary, diff, error }`，拿到结果后直接向用户汇报，无需再等后台消息；`mode = 'async'` 用于耗时较长的大型任务，会立即返回并在聊天里展示实时任务卡片，结束后作为 `⟦chisabot:local-agent-result:...⟧` 消息回到对话。",
+      "- 子代理看不到当前聊天上下文，调用时务必在 `task` 参数中写清楚完整背景、目标文件、约束条件与验收标准。",
+      ...(instLines.length
+        ? ["当前已授权在线的子代理实例：", ...instLines]
+        : []),
+      ...(lines.length ? ["当前在线设备宿主：", ...lines] : []),
     ].join("\n");
   }
 
@@ -1819,203 +2597,571 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     botName: string | null;
     threadId: string;
   }): Promise<GrantedTool[]> {
+    await ensureServerSeedsForOwner(input.ownerUserId);
+    const { grant, instances: grantedInstances } =
+      await instancesStore.listGrantedInstances(
+        input.ownerUserId,
+        input.botId,
+        {
+          onlineOnly: true,
+        },
+      );
+    if (grant.mode === "none") return [];
+
     const devices = (await deviceStore.forOwner(input.ownerUserId)).filter(
       (d) => !isMobilePlatform(d.platform) && !d.revoked,
     );
     const online = devices.filter((d) => hub.isOnline(d.id));
-    if (!online.length) return [];
+    if (!online.length && !grantedInstances.length) return [];
+
     const withSettings = await Promise.all(
       online.map(async (device) => ({
         device,
         settings: await settingsFor(device.id),
       })),
     );
-    const guidance = guidanceText(withSettings);
+    const guidance = guidanceText(withSettings, grantedInstances);
     const refuse = (error: unknown) =>
       `${REFUSAL_MARKER} ${reasonWithoutStatement(error)}`;
-    const runSchema = z.object({
-      deviceId: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("目标电脑：设备 id 或名称。只有一台在线时可以省略。"),
-      agent: z
-        .enum(LOCAL_AGENT_KINDS)
-        .optional()
-        .describe(
-          "builtin = ChisaBot 内置；claude = Claude Code；codex = Codex CLI；opencode / gemini / aider。省略 = 这台电脑的默认 agent。",
-        ),
-      task: z
-        .string()
-        .min(1)
-        .max(20_000)
-        .describe(
-          "交给本地 agent 的完整指令（它看不到这段聊天，要写清楚目标、文件、验收方法）",
-        ),
-      title: z.string().max(60).optional().describe("卡片标题，十来个字"),
-      cwd: z
-        .string()
-        .max(1000)
-        .optional()
-        .describe("在哪个文件夹做（绝对路径）；省略 = 工作区第一个文件夹"),
-      profile: z
-        .enum(AGENT_PROFILES)
-        .optional()
-        .describe("这次任务的档位，只能比电脑的档位更严（例如只读分析）"),
-      isolation: z
-        .enum(ISOLATIONS)
-        .optional()
-        .describe(
-          "worktree / copy = 一次性副本（改动要用户点「应用改动」）；none = 直接改；bwrap / sandbox-exec / docker = 系统级沙盒。省略 = 电脑的默认设置",
-        ),
-      network: z
-        .boolean()
-        .optional()
-        .describe("false = 这次任务断网（只在电脑允许时有效）"),
-    });
-    return [
-      {
-        name: "device_agent_list",
-        ref: "local-agents/list",
-        description:
-          "列出用户在线电脑上的本地 agent（已安装的 Claude Code / Codex / OpenCode… 和 ChisaBot 内置）、权限档位、可用的沙盒和工作区文件夹。",
-        parameters: z.object({}),
-        guidance,
-        execute: async () => {
-          const fresh = await Promise.all(
-            online.map(async (device) => {
-              const settings = await settingsFor(device.id);
-              return {
-                deviceId: device.id,
-                name: device.name,
-                profile: effectiveProfile(settings, device),
-                profileLabel:
-                  PROFILE_INFO[effectiveProfile(settings, device)].label,
-                workspaceRoots: effectiveRoots(settings, device.allowedRoots),
-                defaultIsolation: settings.isolation,
-                network: settings.network,
-                defaultAgent: settings.defaultAgent,
-                agents: (
-                  settings.detected?.agents ?? [
-                    { kind: "builtin", version: null, path: null },
-                  ]
-                ).map((a) => ({
-                  agent: a.kind,
-                  label: LOCAL_AGENT_INFO[a.kind]?.label,
-                  version: a.version,
-                })),
-                sandboxes: Object.entries(settings.detected?.sandboxes ?? {})
-                  .filter(([, v]) => v)
-                  .map(([k]) => k),
-                shellCapability: device.capabilities.shell,
-              };
-            }),
-          );
-          return JSON.stringify({ devices: fresh });
-        },
-      },
-      {
-        name: "device_agent_run",
-        ref: "local-agents/run",
-        description:
-          "把一件事交给用户电脑上的本地 agent（Claude Code、Codex、ChisaBot 内置…）去做，立刻返回并在聊天里显示任务卡片（实时输出、停止、改动）。结果之后作为一条消息回到这里。",
-        parameters: runSchema,
-        execute: async (raw) => {
-          try {
-            const args = runSchema.parse(raw);
-            const task = await start({
-              ownerUserId: input.ownerUserId,
-              botId: input.botId,
-              botName: input.botName,
-              threadId: input.threadId,
-              device: args.deviceId,
-              agent: args.agent,
-              task: args.task,
-              title: args.title,
-              cwd: args.cwd,
-              profile: args.profile,
-              isolation: args.isolation,
-              network: args.network,
-            });
-            return JSON.stringify({
-              taskId: task.id,
-              status: task.status,
-              device: task.deviceName,
-              agent: LOCAL_AGENT_INFO[task.agent].label,
-              profile: profileLine(task),
-              cwd: task.cwd,
-              note:
-                task.status === "pending_approval"
-                  ? "已在网页 / 手机 / 电脑上弹出审批，用户批准后开始。结果会作为一条消息回到这里，现在不用等。"
-                  : "已经开始，结果会作为一条消息回到这里，现在不用等。",
-            });
-          } catch (error) {
-            return refuse(error);
-          }
-        },
-      },
-      {
-        name: "device_agent_status",
-        ref: "local-agents/status",
-        description:
-          "看本地 agent 任务的状态和最近的输出（不给 taskId = 这段对话里最近的任务）。",
-        parameters: z.object({ taskId: z.string().optional() }),
-        execute: async (raw) => {
-          try {
-            const { taskId } = z
-              .object({ taskId: z.string().optional() })
-              .parse(raw);
-            const list = taskId
-              ? [view(await owned(input.ownerUserId, taskId))]
-              : (await forThread(input.ownerUserId, input.threadId)).slice(-3);
-            return JSON.stringify(
-              list.map((t) => ({
-                taskId: t.id,
-                title: t.title,
-                status: t.status,
-                step: t.step,
-                recent: t.lines.slice(-8).map((l) => l.text),
-                diff: t.diff
-                  ? {
-                      files: t.diff.files.length,
-                      added: t.diff.added,
-                      removed: t.diff.removed,
-                      pending: t.diff.pending,
-                    }
-                  : null,
-                error: t.error,
-              })),
+
+    const formatOutcome = (outcome: {
+      task: LocalAgentTaskView;
+      timedOut: boolean;
+    }) => {
+      const { task, timedOut } = outcome;
+      const label =
+        task.instanceName || LOCAL_AGENT_INFO[task.agent]?.label || task.agent;
+      if (
+        task.status === "done" ||
+        task.status === "failed" ||
+        task.status === "cancelled"
+      ) {
+        return JSON.stringify({
+          taskId: task.id,
+          status: task.status,
+          instanceName: label,
+          device: task.deviceName,
+          profile: profileLine(task),
+          cwd: task.cwd,
+          summary: task.summary,
+          diff: task.diff
+            ? {
+                files: task.diff.files,
+                added: task.diff.added,
+                removed: task.diff.removed,
+                pending: task.diff.pending,
+              }
+            : null,
+          error: task.error,
+        });
+      }
+      return JSON.stringify({
+        taskId: task.id,
+        status: task.status,
+        timedOut,
+        instanceName: label,
+        device: task.deviceName,
+        profile: profileLine(task),
+        cwd: task.cwd,
+        note:
+          task.status === "pending_approval"
+            ? "已在任务卡片弹出审批，用户批准后开始执行，完成后结果会回到对话。"
+            : timedOut
+              ? "子代理仍在后台继续执行，完成后结果会作为消息回到当前对话。"
+              : "子代理已开始后台执行，进度在聊天任务卡片实时更新，完成后结果会回到当前对话。",
+      });
+    };
+
+    const result: GrantedTool[] = [];
+
+    if (grantedInstances.length > 0) {
+      const subRunSchema = z.object({
+        instance: z
+          .string()
+          .min(1)
+          .describe(
+            `目标子代理实例标识（slug 或 id），可选：${grantedInstances
+              .map((i) => `${i.slug}（${i.name}@${i.environmentName}）`)
+              .join("、")}`,
+          ),
+        task: z
+          .string()
+          .min(1)
+          .max(20_000)
+          .describe(
+            "交给子代理执行的完整任务说明（子代理看不到当前对话历史，请写清目标、相关路径与验收要求）",
+          ),
+        title: z
+          .string()
+          .max(60)
+          .optional()
+          .describe("任务简短标题（十来个字）"),
+        mode: z
+          .enum(["wait", "async"])
+          .optional()
+          .describe(
+            "wait（默认）= 等待子代理完成并直接拿回结果继续回答；async = 立即返回任务卡片，后台跑完再回流通知",
+          ),
+        cwd: z
+          .string()
+          .max(1000)
+          .optional()
+          .describe("工作目录绝对路径；省略则使用宿主默认工作区目录"),
+        profile: z
+          .enum(AGENT_PROFILES)
+          .optional()
+          .describe("本次任务权限档位（如 readonly 只读分析），只能比宿主更严"),
+        isolation: z
+          .enum(ISOLATIONS)
+          .optional()
+          .describe("worktree / copy = 一次性副本；none = 直接修改工作目录"),
+      });
+
+      result.push(
+        {
+          name: "subagent_list",
+          ref: "local-agents/subagent-list",
+          description:
+            "列出当前已配置且获授权在线的所有子代理实例（Codex、Claude、Antigravity、Codebuddy 等）、所属运行环境与各自擅长的职责。",
+          parameters: z.object({}),
+          guidance,
+          execute: async () => {
+            const latest = await instancesStore.listGrantedInstances(
+              input.ownerUserId,
+              input.botId,
+              { onlineOnly: true },
             );
-          } catch (error) {
-            return refuse(error);
-          }
+            return JSON.stringify({
+              instances: latest.instances.map((i) => ({
+                id: i.id,
+                slug: i.slug,
+                name: i.name,
+                driver: i.driver,
+                toolName: i.exposeAsTool ? i.toolName : null,
+                environmentId: i.environmentId,
+                environmentName: i.environmentName,
+                description: i.description,
+                version: i.probe?.version ?? null,
+              })),
+            });
+          },
         },
-      },
-      {
-        name: "device_agent_stop",
-        ref: "local-agents/stop",
-        description: "停止一个本地 agent 任务。",
-        parameters: z.object({ taskId: z.string().min(1) }),
-        execute: async (raw) => {
-          try {
-            const { taskId } = z
-              .object({ taskId: z.string().min(1) })
-              .parse(raw);
-            const task = await stop(input.ownerUserId, taskId, "bot");
-            return JSON.stringify({ taskId: task.id, status: task.status });
-          } catch (error) {
-            return refuse(error);
-          }
+        {
+          name: "subagent_run",
+          ref: "local-agents/subagent-run",
+          description:
+            "调用指定的已配置智能体实例作为子代理执行任务。支持同步等待结果（mode='wait'）或后台异步执行（mode='async'）。",
+          parameters: subRunSchema,
+          ...(online.length === 0 ? { guidance } : {}),
+          execute: async (raw) => {
+            try {
+              const args = subRunSchema.parse(raw);
+              const outcome = await runSubagent({
+                ownerUserId: input.ownerUserId,
+                botId: input.botId,
+                botName: input.botName,
+                threadId: input.threadId,
+                instance: args.instance,
+                task: args.task,
+                title: args.title,
+                cwd: args.cwd,
+                profile: args.profile,
+                isolation: args.isolation,
+                mode: args.mode ?? "wait",
+              });
+              return formatOutcome(outcome);
+            } catch (error) {
+              return refuse(error);
+            }
+          },
         },
-      },
-    ];
+        {
+          name: "subagent_status",
+          ref: "local-agents/subagent-status",
+          description: "查询子代理任务的当前状态、最近输出与文件改动摘要。",
+          parameters: z.object({ taskId: z.string().optional() }),
+          execute: async (raw) => {
+            try {
+              const { taskId } = z
+                .object({ taskId: z.string().optional() })
+                .parse(raw);
+              const list = taskId
+                ? [view(await owned(input.ownerUserId, taskId))]
+                : (await forThread(input.ownerUserId, input.threadId)).slice(
+                    -3,
+                  );
+              return JSON.stringify(
+                list.map((t) => ({
+                  taskId: t.id,
+                  instanceName: t.instanceName,
+                  title: t.title,
+                  status: t.status,
+                  step: t.step,
+                  summary: t.summary,
+                  recent: t.lines.slice(-8).map((l) => l.text),
+                  diff: t.diff
+                    ? {
+                        files: t.diff.files.length,
+                        added: t.diff.added,
+                        removed: t.diff.removed,
+                        pending: t.diff.pending,
+                      }
+                    : null,
+                  error: t.error,
+                })),
+              );
+            } catch (error) {
+              return refuse(error);
+            }
+          },
+        },
+        {
+          name: "subagent_stop",
+          ref: "local-agents/subagent-stop",
+          description: "停止一个正在运行的子代理任务。",
+          parameters: z.object({ taskId: z.string().min(1) }),
+          execute: async (raw) => {
+            try {
+              const { taskId } = z
+                .object({ taskId: z.string().min(1) })
+                .parse(raw);
+              const task = await stop(input.ownerUserId, taskId, "bot");
+              return JSON.stringify({ taskId: task.id, status: task.status });
+            } catch (error) {
+              return refuse(error);
+            }
+          },
+        },
+      );
+
+      if (grant.exposeNamedTools) {
+        const usedNames = new Set(result.map((t) => t.name));
+        const namedSchema = z.object({
+          task: z
+            .string()
+            .min(1)
+            .max(20_000)
+            .describe(
+              "派发给该智能体的完整任务说明（包含背景、目标文件路径与验收标准）",
+            ),
+          title: z.string().max(60).optional().describe("卡片简短标题"),
+          mode: z
+            .enum(["wait", "async"])
+            .optional()
+            .describe(
+              "wait（默认）= 同步等待结果并在本轮直接拿到输出；async = 后台异步运行",
+            ),
+          cwd: z
+            .string()
+            .max(1000)
+            .optional()
+            .describe("工作目录绝对路径（可选）"),
+          profile: z
+            .enum(AGENT_PROFILES)
+            .optional()
+            .describe("权限档位覆盖（如 readonly）"),
+        });
+
+        for (const inst of grantedInstances) {
+          if (!inst.exposeAsTool) continue;
+          let fnName = agentToolName(inst.slug);
+          if (usedNames.has(fnName)) {
+            fnName = agentToolName(
+              `${inst.slug}_${inst.environmentId.slice(0, 8)}`,
+            );
+          }
+          if (usedNames.has(fnName)) continue;
+          usedNames.add(fnName);
+
+          const specDesc =
+            inst.description || AGENT_DRIVER_SPECS[inst.driver].description;
+          result.push({
+            name: fnName,
+            ref: `local-agents/instance/${inst.slug}`,
+            description: `将任务派发给智能体「${inst.name}」（运行于「${inst.environmentName}」）。${specDesc}`,
+            parameters: namedSchema,
+            execute: async (raw) => {
+              try {
+                const args = namedSchema.parse(raw);
+                const outcome = await runSubagent({
+                  ownerUserId: input.ownerUserId,
+                  botId: input.botId,
+                  botName: input.botName,
+                  threadId: input.threadId,
+                  instance: inst.id,
+                  task: args.task,
+                  title: args.title,
+                  cwd: args.cwd,
+                  profile: args.profile,
+                  mode: args.mode ?? "wait",
+                });
+                return formatOutcome(outcome);
+              } catch (error) {
+                return refuse(error);
+              }
+            },
+          });
+        }
+      }
+    }
+
+    if (online.length > 0) {
+      const runSchema = z.object({
+        deviceId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("目标电脑：设备 id 或名称。只有一台在线时可以省略。"),
+        agent: z
+          .enum(LOCAL_AGENT_KINDS)
+          .optional()
+          .describe(
+            "builtin = ChisaBot 内置；claude = Claude Code；codex = Codex CLI；antigravity / acp / opencode / gemini / aider / custom。省略 = 这台电脑的默认 agent。",
+          ),
+        task: z
+          .string()
+          .min(1)
+          .max(20_000)
+          .describe(
+            "交给本地 agent 的完整指令（它看不到这段聊天，要写清楚目标、文件、验收方法）",
+          ),
+        title: z.string().max(60).optional().describe("卡片标题，十来个字"),
+        cwd: z
+          .string()
+          .max(1000)
+          .optional()
+          .describe("在哪个文件夹做（绝对路径）；省略 = 工作区第一个文件夹"),
+        profile: z
+          .enum(AGENT_PROFILES)
+          .optional()
+          .describe("这次任务的档位，只能比电脑的档位更严（例如只读分析）"),
+        isolation: z
+          .enum(ISOLATIONS)
+          .optional()
+          .describe(
+            "worktree / copy = 一次性副本（改动要用户点「应用改动」）；none = 直接改；bwrap / sandbox-exec / docker = 系统级沙盒。省略 = 电脑的默认设置",
+          ),
+        network: z
+          .boolean()
+          .optional()
+          .describe("false = 这次任务断网（只在电脑允许时有效）"),
+      });
+      result.push(
+        {
+          name: "device_agent_list",
+          ref: "local-agents/list",
+          description:
+            "列出用户在线电脑上的本地 agent（已安装的 Claude Code / Codex / OpenCode… 和 ChisaBot 内置）、权限档位、可用的沙盒和工作区文件夹。",
+          parameters: z.object({}),
+          ...(grantedInstances.length === 0 ? { guidance } : {}),
+          execute: async () => {
+            const fresh = await Promise.all(
+              online.map(async (device) => {
+                const settings = await settingsFor(device.id);
+                return {
+                  deviceId: device.id,
+                  name: device.name,
+                  profile: effectiveProfile(settings, device),
+                  profileLabel:
+                    PROFILE_INFO[effectiveProfile(settings, device)].label,
+                  workspaceRoots: effectiveRoots(settings, device.allowedRoots),
+                  defaultIsolation: settings.isolation,
+                  network: settings.network,
+                  defaultAgent: settings.defaultAgent,
+                  agents: (
+                    settings.detected?.agents ?? [
+                      { kind: "builtin", version: null, path: null },
+                    ]
+                  ).map((a) => ({
+                    agent: a.kind,
+                    label: LOCAL_AGENT_INFO[a.kind]?.label,
+                    version: a.version,
+                  })),
+                  sandboxes: Object.entries(settings.detected?.sandboxes ?? {})
+                    .filter(([, v]) => v)
+                    .map(([k]) => k),
+                  shellCapability: device.capabilities.shell,
+                };
+              }),
+            );
+            return JSON.stringify({ devices: fresh });
+          },
+        },
+        {
+          name: "device_agent_run",
+          ref: "local-agents/run",
+          description:
+            "把一件事交给用户电脑上的本地 agent（Claude Code、Codex、ChisaBot 内置…）去做，立刻返回并在聊天里显示任务卡片（实时输出、停止、改动）。结果之后作为一条消息回到这里。",
+          parameters: runSchema,
+          execute: async (raw) => {
+            try {
+              const args = runSchema.parse(raw);
+              const task = await start({
+                ownerUserId: input.ownerUserId,
+                botId: input.botId,
+                botName: input.botName,
+                threadId: input.threadId,
+                device: args.deviceId,
+                agent: args.agent,
+                task: args.task,
+                title: args.title,
+                cwd: args.cwd,
+                profile: args.profile,
+                isolation: args.isolation,
+                network: args.network,
+              });
+              return JSON.stringify({
+                taskId: task.id,
+                status: task.status,
+                device: task.deviceName,
+                agent: LOCAL_AGENT_INFO[task.agent].label,
+                profile: profileLine(task),
+                cwd: task.cwd,
+                note:
+                  task.status === "pending_approval"
+                    ? "已在网页 / 手机 / 电脑上弹出审批，用户批准后开始。结果会作为一条消息回到这里，现在不用等。"
+                    : "已经开始，结果会作为一条消息回到这里，现在不用等。",
+              });
+            } catch (error) {
+              return refuse(error);
+            }
+          },
+        },
+        {
+          name: "device_agent_status",
+          ref: "local-agents/status",
+          description:
+            "看本地 agent 任务的状态和最近的输出（不给 taskId = 这段对话里最近的任务）。",
+          parameters: z.object({ taskId: z.string().optional() }),
+          execute: async (raw) => {
+            try {
+              const { taskId } = z
+                .object({ taskId: z.string().optional() })
+                .parse(raw);
+              const list = taskId
+                ? [view(await owned(input.ownerUserId, taskId))]
+                : (await forThread(input.ownerUserId, input.threadId)).slice(
+                    -3,
+                  );
+              return JSON.stringify(
+                list.map((t) => ({
+                  taskId: t.id,
+                  title: t.title,
+                  status: t.status,
+                  step: t.step,
+                  recent: t.lines.slice(-8).map((l) => l.text),
+                  diff: t.diff
+                    ? {
+                        files: t.diff.files.length,
+                        added: t.diff.added,
+                        removed: t.diff.removed,
+                        pending: t.diff.pending,
+                      }
+                    : null,
+                  error: t.error,
+                })),
+              );
+            } catch (error) {
+              return refuse(error);
+            }
+          },
+        },
+        {
+          name: "device_agent_stop",
+          ref: "local-agents/stop",
+          description: "停止一个本地 agent 任务。",
+          parameters: z.object({ taskId: z.string().min(1) }),
+          execute: async (raw) => {
+            try {
+              const { taskId } = z
+                .object({ taskId: z.string().min(1) })
+                .parse(raw);
+              const task = await stop(input.ownerUserId, taskId, "bot");
+              return JSON.stringify({ taskId: task.id, status: task.status });
+            } catch (error) {
+              return refuse(error);
+            }
+          },
+        },
+      );
+    }
+
+    return result;
   }
 
   // ── 接口 ──────────────────────────────────────────────────────────────
 
+  const driverConfigSchema: z.ZodType<AgentDriverConfig> = z
+    .object({
+      commandPath: z.string().max(600).nullable().optional(),
+      homePath: z.string().max(600).nullable().optional(),
+      shadowHomePath: z.string().max(600).nullable().optional(),
+      extraArgs: z.array(z.string().max(500)).max(40).optional(),
+      model: z.string().max(200).nullable().optional(),
+      fixProxy: z.boolean().optional(),
+      protocolMode: z.enum(["auto", "acp", "cli"]).optional(),
+      acpSource: z.enum(["registry", "local"]).optional(),
+      acpAgentId: z.string().max(120).nullable().optional(),
+      acpLauncher: z.enum(["npx", "uvx", "binary", "custom"]).optional(),
+      acpPackage: z.string().max(300).nullable().optional(),
+      authMethodId: z.string().max(120).nullable().optional(),
+      stdinPrompt: z.boolean().optional(),
+      outputFormat: z.enum(["text", "jsonl"]).optional(),
+      defaultIsolation: z.enum(ISOLATIONS).nullable().optional(),
+      maxProfile: z.enum(AGENT_PROFILES).nullable().optional(),
+      requireStartApproval: z.boolean().optional(),
+    })
+    .strict();
+
+  const envVarInputSchema = z
+    .object({
+      name: z.string().min(1).max(120),
+      value: z.string().max(8000).optional(),
+      sensitive: z.boolean().optional(),
+      keepExisting: z.boolean().optional(),
+    })
+    .strict();
+
+  const instanceCreateSchema = z
+    .object({
+      environmentId: z.string().min(1).max(120),
+      driver: z.enum(AGENT_DRIVER_KINDS),
+      name: z.string().min(1).max(80),
+      slug: z.string().max(60).optional(),
+      description: z.string().max(1000).optional(),
+      enabled: z.boolean().optional(),
+      exposeAsTool: z.boolean().optional(),
+      config: driverConfigSchema.optional(),
+      envVars: z.array(envVarInputSchema).max(50).optional(),
+    })
+    .strict();
+
+  const instancePatchSchema = z
+    .object({
+      name: z.string().min(1).max(80).optional(),
+      slug: z.string().max(60).optional(),
+      description: z.string().max(1000).optional(),
+      enabled: z.boolean().optional(),
+      exposeAsTool: z.boolean().optional(),
+      sortOrder: z.number().int().min(0).max(10_000).optional(),
+      config: driverConfigSchema.optional(),
+      envVars: z.array(envVarInputSchema).max(50).optional(),
+    })
+    .strict();
+
+  const botGrantPatchSchema = z
+    .object({
+      mode: z.enum(BOT_AGENT_GRANT_MODES).optional(),
+      instanceIds: z.array(z.string().min(1).max(120)).max(200).optional(),
+      exposeNamedTools: z.boolean().optional(),
+      allowNestedSubagents: z.boolean().optional(),
+      maxDepth: z.number().int().min(1).max(5).optional(),
+    })
+    .strict();
+
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
-    app.use("*", requireUser, bodyLimit({ maxSize: 32_768 }));
+    app.use("*", requireUser, bodyLimit({ maxSize: 65_536 }));
     app.onError((error, c) => {
       if (error instanceof LocalAgentError)
         return c.json({ error: error.message }, error.status);
@@ -2031,34 +3177,196 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       );
       return c.json({ error: "本地 agent 暂时不可用，请重试。" }, 503);
     });
+
+    const assertServerAdminIfNeeded = (
+      actor: AppVariables["actor"],
+      environmentId: string,
+    ) => {
+      if (environmentId === SERVER_ENVIRONMENT_ID && actor.role !== "admin") {
+        throw new LocalAgentError(
+          "只有管理员可以修改服务器本机的智能体提供方与受控目录设置。",
+          403,
+        );
+      }
+    };
+
+    const ownEnvironment = async (actorId: string, envId: string) => {
+      const target = await resolveTargetDevice(actorId, envId);
+      if (!target) throw new LocalAgentError("没有这个运行环境。", 404);
+      return target;
+    };
+
     const ownDevice = async (actorId: string, deviceId: string) => {
+      if (deviceId === SERVER_ENVIRONMENT_ID) {
+        return ownEnvironment(actorId, deviceId);
+      }
       const device = await deviceStore.get(deviceId);
       if (!device || device.ownerUserId !== actorId)
         throw new LocalAgentError("没有这台设备。", 404);
       return device;
     };
+
+    app.get("/presets", (c) =>
+      c.json({
+        presets: AGENT_PROVIDER_PRESETS,
+        specs: AGENT_DRIVER_SPECS,
+      }),
+    );
+
+    app.get("/acp-registry", async (c) => {
+      const query = c.req.query("q") ?? "";
+      const refresh = c.req.query("refresh") === "1";
+      const result = await listAcpRegistryEntries({ query, refresh });
+      return c.json(result);
+    });
+
+    app.get("/environments", async (c) =>
+      c.json({ environments: await listEnvironments(c.var.actor.id) }),
+    );
+
+    app.get("/environments/:id/settings", async (c) => {
+      const envId = c.req.param("id");
+      const target = await ownEnvironment(c.var.actor.id, envId);
+      const settings = await settingsFor(target.id);
+      return c.json({
+        settings,
+        effectiveRoots: effectiveRoots(settings, target.allowedRoots),
+        envRoots: envId === SERVER_ENVIRONMENT_ID ? parseEnvServerRoots() : [],
+        online: isEnvironmentOnline(target.id),
+        tasks: await forDevice(c.var.actor.id, target.id),
+      });
+    });
+
+    app.put("/environments/:id/settings", async (c) => {
+      const envId = c.req.param("id");
+      assertServerAdminIfNeeded(c.var.actor, envId);
+      const patch = settingsPatch.parse(await c.req.json());
+      const settings = await saveSettings(c.var.actor.id, envId, patch);
+      return c.json({ settings });
+    });
+
+    app.post("/environments/:id/probe-all", async (c) => {
+      const envId = c.req.param("id");
+      const instances = await probeEnvironment(c.var.actor.id, envId);
+      return c.json({ instances });
+    });
+
+    app.get("/instances", async (c) => {
+      const envId = c.req.query("environmentId") || undefined;
+      await ensureServerSeedsForOwner(c.var.actor.id);
+      const instances = await instancesStore.listInstances(
+        c.var.actor.id,
+        envId,
+      );
+      return c.json({ instances });
+    });
+
+    app.post("/instances", async (c) => {
+      const body = instanceCreateSchema.parse(await c.req.json());
+      assertServerAdminIfNeeded(c.var.actor, body.environmentId);
+      await ownEnvironment(c.var.actor.id, body.environmentId);
+      const created = await instancesStore.createInstance({
+        ownerUserId: c.var.actor.id,
+        ...body,
+      });
+      // 若宿主在线，创建后顺手异步探活一次更新版本与认证状态
+      if (isEnvironmentOnline(body.environmentId)) {
+        const probed = await probeInstance(c.var.actor.id, created.id).catch(
+          () => created,
+        );
+        return c.json({ instance: probed }, 201);
+      }
+      return c.json({ instance: created }, 201);
+    });
+
+    app.get("/instances/:id", async (c) => {
+      const inst = await instancesStore.getInstance(
+        c.var.actor.id,
+        c.req.param("id"),
+      );
+      if (!inst) throw new LocalAgentError("没有这个智能体实例。", 404);
+      return c.json({ instance: inst });
+    });
+
+    const updateHandler = async (c: {
+      var: { actor: AppVariables["actor"] };
+      req: { param: (k: string) => string; json: () => Promise<unknown> };
+      json: (body: unknown, status?: number) => Response;
+    }) => {
+      const id = c.req.param("id");
+      const existing = await instancesStore.getRow(c.var.actor.id, id);
+      if (!existing) throw new LocalAgentError("没有这个智能体实例。", 404);
+      assertServerAdminIfNeeded(c.var.actor, existing.environment_id);
+      const patch = instancePatchSchema.parse(await c.req.json());
+      const updated = await instancesStore.updateInstance(
+        c.var.actor.id,
+        id,
+        patch,
+      );
+      if (!updated) throw new LocalAgentError("没有这个智能体实例。", 404);
+      return c.json({ instance: updated });
+    };
+
+    app.put("/instances/:id", (c) => updateHandler(c as never));
+    app.patch("/instances/:id", (c) => updateHandler(c as never));
+
+    app.delete("/instances/:id", async (c) => {
+      const id = c.req.param("id");
+      const existing = await instancesStore.getRow(c.var.actor.id, id);
+      if (!existing) throw new LocalAgentError("没有这个智能体实例。", 404);
+      assertServerAdminIfNeeded(c.var.actor, existing.environment_id);
+      await instancesStore.deleteInstance(c.var.actor.id, id);
+      return c.json({ deleted: true });
+    });
+
+    app.post("/instances/:id/probe", async (c) => {
+      const instance = await probeInstance(c.var.actor.id, c.req.param("id"));
+      return c.json({ instance });
+    });
+
+    app.get("/bots/:botId/grants", async (c) => {
+      await ensureServerSeedsForOwner(c.var.actor.id);
+      const botId = c.req.param("botId");
+      const [grant, instances] = await Promise.all([
+        instancesStore.getBotGrant(c.var.actor.id, botId),
+        instancesStore.listInstances(c.var.actor.id),
+      ]);
+      return c.json({ grant, instances });
+    });
+
+    app.put("/bots/:botId/grants", async (c) => {
+      const botId = c.req.param("botId");
+      const patch = botGrantPatchSchema.parse(await c.req.json());
+      const grant = await instancesStore.saveBotGrant(
+        c.var.actor.id,
+        botId,
+        patch,
+      );
+      return c.json({ grant });
+    });
+
     app.get("/devices/:id", async (c) => {
       const device = await ownDevice(c.var.actor.id, c.req.param("id"));
       const settings = await settingsFor(device.id);
       return c.json({
         settings,
         effectiveRoots: effectiveRoots(settings, device.allowedRoots),
-        online: hub.isOnline(device.id),
+        online: isEnvironmentOnline(device.id),
         tasks: await forDevice(c.var.actor.id, device.id),
       });
     });
     app.put("/devices/:id", async (c) => {
+      const devId = c.req.param("id");
+      assertServerAdminIfNeeded(c.var.actor, devId);
       const patch = settingsPatch.parse(await c.req.json());
-      const settings = await saveSettings(
-        c.var.actor.id,
-        c.req.param("id"),
-        patch,
-      );
+      const settings = await saveSettings(c.var.actor.id, devId, patch);
       return c.json({ settings });
     });
     app.post("/devices/:id/detect", async (c) => {
       const device = await ownDevice(c.var.actor.id, c.req.param("id"));
-      return c.json({ sent: hub.sendRaw(device.id, { type: "agent_detect" }) });
+      return c.json({
+        sent: sendToEnvironment(device.id, { type: "agent_detect" }),
+      });
     });
     app.get("/threads/:threadId/tasks", async (c) =>
       c.json({
@@ -2090,14 +3398,19 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     ensure,
     recover,
     extension,
+    instances: instancesStore,
     settingsFor,
     saveSettings,
     start,
+    runSubagent,
     stop,
     applyChanges,
     forThread,
     forDevice,
     forgetDevice,
+    listEnvironments,
+    probeInstance,
+    probeEnvironment,
     tools,
     routes,
     handleNodeMessage,

@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { PanelError } from "../../../shared/panels/types";
+import { isContinuationDeferred } from "../conversations/continuation-work";
 import type { Database } from "../db/client";
 import { panelTaskRequests } from "../db/schema/panels";
 import type { TurnRunner } from "../turns/types";
@@ -57,7 +58,12 @@ export function createNormalPanelTaskService(options: {
     } catch (error) {
       await db
         .update(panelTaskRequests)
-        .set({ status: options.isWaiting(error) ? "waiting" : "failed" })
+        .set({
+          status:
+            options.isWaiting(error) || isContinuationDeferred(error)
+              ? "waiting"
+              : "failed",
+        })
         .where(
           and(
             eq(panelTaskRequests.id, id),
@@ -203,7 +209,22 @@ export function createNormalPanelTaskService(options: {
           .set({ status: "running", runId })
           .where(eq(panelTaskRequests.id, task.id));
       });
-      return turn(task.id, { ...input, runId }, runner);
+      try {
+        return await turn(task.id, { ...input, runId }, runner);
+      } catch (error) {
+        if (isContinuationDeferred(error))
+          await db
+            .update(panelTaskRequests)
+            .set({ status: "waiting", runId: task.runId })
+            .where(
+              and(
+                eq(panelTaskRequests.id, task.id),
+                eq(panelTaskRequests.runId, runId),
+                eq(panelTaskRequests.status, "waiting"),
+              ),
+            );
+        throw error;
+      }
     },
     async query(request: FrozenPanelTask): Promise<NormalPanelTaskResult> {
       return options.read(request);

@@ -64,13 +64,9 @@
       html[data-phone] .boot-cols { top: calc(76px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
       @media (prefers-reduced-motion: reduce) { .boot .sh, .boot-spin { animation: none; } .boot-loading { animation: none; opacity: 1; } }
     </style>
-    <script src="/compat/legacy-browser.js"></script>
     <!-- Sets the theme before the first paint. Must stay inline and classic: `defer` or `type="module"` runs too late. -->
     <script>
       // localStorage throws in some privacy modes; a theme is not worth taking the app down for.
-      try {
-        window.ChisaLegacyBrowser.migrateStorage(window.localStorage);
-      } catch {}
       try {
         const dark = window.localStorage.getItem("chisabot-theme") === "dark";
         document.documentElement.classList.toggle("dark", dark);
@@ -107,8 +103,6 @@
          app draws its own account control (sign-out lives in the avatar menu), so it adds no
          floating "退出登录" button of its own. -->
     <div id="chisabot-account-control" hidden></div>
-    <!-- Older gateway scripts must also see the app-owned account control before mounting. -->
-    <script>window.ChisaLegacyBrowser.mountAccountMarker(document);</script>
     <div id="root">
       <div id="chisabot-startup" class="boot" role="status" aria-label="正在加载 ChisaBot">
         <div class="boot-top">

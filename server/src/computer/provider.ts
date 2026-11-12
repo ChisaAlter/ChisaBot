@@ -1,4 +1,4 @@
-import { computerHeaders } from "../../../shared/legacy-headers";
+import { computerHeaders } from "../../../shared/protocol-headers";
 import type { ComputerConfig } from "../config";
 import {
   createSandboxComputerProvider,

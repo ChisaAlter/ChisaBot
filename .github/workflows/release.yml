@@ -12,8 +12,7 @@ name: Client release
 # PC 更新验签（docs/pc-update-signing.md）：发布时 pc-sign job（Environment pc-release，只允许 v* 标签）用
 # Environment Secret PC_UPDATE_SIGNING_KEY 给 latest.yml 签名；通用版必须内置公钥（pc/src/update-keys.json），
 # 自建版用仓库变量 CHISABOT_UPDATE_PUBKEYS 提供公钥（不配 = 自建版不验签）。发布只能从标签运行。
-# 明确不验签：仓库变量 CHISABOT_PC_UPDATE_UNSIGNED=1 → 通用版空公钥表也放行、pc-sign 整个跳过（latest.yml 不签名，
-# 和旧版本一致，客户端不验签照样更新）。删掉这个变量后空公钥表会拦发布。
+# 通用版正式发布必须完成签名；旧的 CHISABOT_PC_UPDATE_UNSIGNED 不再改变发布行为。
 on:
   push:
     tags: ["v*"]
@@ -60,7 +59,6 @@ jobs:
       version: ${{ steps.c.outputs.version }}
       version_code: ${{ steps.c.outputs.version_code }}
       flavors: ${{ steps.c.outputs.flavors }}
-      pc_sign: ${{ steps.c.outputs.pc_sign }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +71,6 @@ jobs:
           SERVER_URL: ${{ inputs.server_url || vars.CHISABOT_SERVER_URL }}
           PC_FEED: ${{ inputs.update_feed || vars.CHISABOT_UPDATE_FEED }}
           ANDROID_FEED: ${{ inputs.android_update_feed || vars.CHISABOT_ANDROID_UPDATE_FEED }}
-          PC_UNSIGNED: ${{ vars.CHISABOT_PC_UPDATE_UNSIGNED }}
         run: |
           tag="$INPUT_TAG"
           if [ -z "$tag" ] && [ "$REF_TYPE" = tag ]; then tag="$REF_NAME"; fi
@@ -86,7 +83,7 @@ jobs:
           if [ -n "$tag" ] && { [ "$REF_TYPE" != tag ] || [ "$REF_NAME" != "$tag" ]; }; then echo "::error::发布 $tag 必须从标签 $tag 运行（现在是 $REF_TYPE $REF_NAME）"; exit 1; fi
           flavors='["generic"]'
           if [ -n "$SERVER_URL$PC_FEED$ANDROID_FEED" ]; then flavors='["generic","custom"]'; fi
-          { echo "tag=$tag"; echo "version=$version"; echo "version_code=$code"; echo "flavors=$flavors"; echo "pc_sign=$([ "$PC_UNSIGNED" = 1 ] && echo false || echo true)"; } >> "$GITHUB_OUTPUT"
+          { echo "tag=$tag"; echo "version=$version"; echo "version_code=$code"; echo "flavors=$flavors"; } >> "$GITHUB_OUTPUT"
           echo "版本 $version（$code），标签 ${tag:-（不发布）}，构建 $flavors"
 
   # PC 单元测试是 POSIX 的（本机操作的 shell 测试用 /bin/sh），在 Linux 上跑；Windows 只负责打包。
@@ -145,18 +142,12 @@ jobs:
       - name: Update keys
         # 客户端内置的更新公钥（src/update-keys.json，打进 asar）。通用版用仓库里的公钥表，发布时必须非空；
         # 自建版按仓库变量 CHISABOT_UPDATE_PUBKEYS 生成（为空 = 这个自建版不验签，保持旧行为）。
-        # 例外：CHISABOT_PC_UPDATE_UNSIGNED=1 时 pc-sign 整个跳过、latest.yml 没有 chisabotSig，
-        # 两个 flavor 都写空公钥表——内置了公钥的客户端会永远拒绝没有签名的更新（RV-26）。
         env:
           FLAVOR: ${{ matrix.flavor }}
           TAG: ${{ needs.config.outputs.tag }}
           CHISABOT_UPDATE_PUBKEYS: ${{ vars.CHISABOT_UPDATE_PUBKEYS }}
-          PC_UNSIGNED: ${{ vars.CHISABOT_PC_UPDATE_UNSIGNED }}
         run: |
-          if [ "$PC_UNSIGNED" = "1" ]; then
-            CHISABOT_UPDATE_PUBKEYS="" node scripts/sign-update.js --keys-from-env
-            echo "::warning::CHISABOT_PC_UPDATE_UNSIGNED=1：不签名发布，$FLAVOR 版写空公钥表（客户端不验签，和旧版本一致）"
-          elif [ "$FLAVOR" = custom ]; then
+          if [ "$FLAVOR" = custom ]; then
             node scripts/sign-update.js --keys-from-env
           elif [ -n "$TAG" ]; then
             node scripts/sign-update.js --require-keys
@@ -203,7 +194,7 @@ jobs:
   # Secret PC_UPDATE_SIGNING_KEY 只在这个 job 的签名步骤里出现。签完立刻验签 + 篡改自检，再交给 release。
   pc-sign:
     needs: [config, pc]
-    if: needs.config.outputs.tag != '' && needs.config.outputs.pc_sign == 'true'
+    if: needs.config.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pc-release
@@ -345,14 +336,7 @@ jobs:
 
   release:
     needs: [config, pc, pc-sign, android]
-    # pc-sign 在 CHISABOT_PC_UPDATE_UNSIGNED=1 时按设计跳过（needs 的 skipped 不算失败，但默认
-    # success() 条件会把本 job 一并跳过），所以显式放行 skipped 并逐条校验真正需要的产物。
-    if: >-
-      always() &&
-      needs.config.outputs.tag != '' &&
-      needs.pc.result == 'success' &&
-      needs.android.result == 'success' &&
-      (needs.pc-sign.result == 'success' || needs.pc-sign.result == 'skipped')
+    if: needs.config.outputs.tag != '' && needs.pc-sign.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -364,15 +348,6 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "*-generic"
-          path: release-assets
-          merge-multiple: true
-      # pc-sign 跳过时没有 pc-generic 签名产物，回退拉取 pc job 的未签名产物——只取通用版：
-      # 两个 flavor 的产物文件名完全相同，pc-*-unsigned 会把 custom 也合进来互相覆盖，
-      # 可能把内置了自建服务器地址的包传上公开 Release。
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.pc-sign.result == 'skipped'
-        with:
-          pattern: "pc-generic-unsigned"
           path: release-assets
           merge-multiple: true
       - name: Externally signed APK
@@ -420,17 +395,11 @@ jobs:
       - name: Assert release assets are generic
         # 上传前最后一道闸：确认待上传文件确实来自 generic flavor——flavor.txt 标记、latest.yml 的
         # path/sha512/size/files[] 与目录里的安装包一致、没有白名单外的文件；并顺带把 flavor.txt、
-        # update-keys.json 这两个构建过程文件剔出上传清单。pc_sign=false 时还必须没有 chisabotSig。
+        # update-keys.json 这两个构建过程文件剔出上传清单。通用版清单必须有签名。
         env:
-          PC_SIGN: ${{ needs.config.outputs.pc_sign }}
           VERSION: ${{ needs.config.outputs.version }}
         run: |
-          case "$PC_SIGN" in
-            true) flag="--expect-signed" ;;
-            false) flag="--expect-unsigned" ;;
-            *) echo "::error::config 没有给出 pc_sign 判定"; exit 1 ;;
-          esac
-          node scripts/check-release-assets.mjs release-assets "$flag" --version "$VERSION"
+          node scripts/check-release-assets.mjs release-assets --expect-signed --version "$VERSION"
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}

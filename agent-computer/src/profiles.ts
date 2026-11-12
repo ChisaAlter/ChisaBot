@@ -639,6 +639,13 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           await keepWebRtcInsideProxy(dir);
         }
         const proxy = egressFor(botId, process.env);
+        // Playwright's proxy username/password make Chromium wait on an authenticating-proxy path.
+        // Our filter accepts anonymous CONNECTs (no 407), and with credentials configured some
+        // sites — notably accounts.google.com — hang until timeout even through a dumb passthrough
+        // proxy that never sees Proxy-Authorization (QA512). Server-only keeps traffic on the
+        // anonymous fallback (allow_all when every Bot is allow_all; ALWAYS_DENIED still applies).
+        // Shell commands still carry the per-Bot key via HTTP(S)_PROXY.
+        const browserProxy = proxy ? { server: proxy.server } : null;
         const context = await chromium.launchPersistentContext(dir, {
           channel: BROWSER_RUNTIME.channel,
           headless: BROWSER_RUNTIME.mode === "headless",
@@ -659,7 +666,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           handleSIGINT: false,
           handleSIGHUP: false,
           timeout: CHROMIUM_LAUNCH_TIMEOUT_MS,
-          ...(proxy ? { proxy } : {}),
+          ...(browserProxy ? { proxy: browserProxy } : {}),
         });
         if (abandoned) {
           // Too late: callers were told it failed and a newer launch may already own the profile.

@@ -318,7 +318,7 @@ test("plan selection requires the matching deployment-owned harness and does not
     CHATGPT_AUTH_FILE: "/owned/auth.json",
     PICKED_HARNESS_SOURCE: "installed",
     PICKED_HARNESS_IMAGE:
-      "ghcr.io/copilotkit/openbot/agent-langgraph-agui:0.0.13",
+      "ghcr.io/chisaalter/chisabot/agent-langgraph-agui:0.1.143",
     PICKED_HARNESS_URL: "http://127.0.0.1:9876/ag-ui",
     MANAGED_AGENT_TOKEN: "owned",
   };
@@ -327,7 +327,7 @@ test("plan selection requires the matching deployment-owned harness and does not
     planModelForEnvironment({
       ...selected,
       PICKED_HARNESS_IMAGE:
-        "ghcr.io/copilotkit/openbot-agent-langgraph-agui@sha256:6489cdcff5dc1b4f4d8fd34f0bd1b3e68019fd6c6249e8327097c16b5faac183",
+        "ghcr.io/chisaalter/chisabot-agent-langgraph-agui@sha256:6489cdcff5dc1b4f4d8fd34f0bd1b3e68019fd6c6249e8327097c16b5faac183",
     })?.provider,
   ).toBe("chatgpt");
   expect(() =>

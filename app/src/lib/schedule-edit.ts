@@ -10,11 +10,14 @@ export type ScheduleEditForm = {
   /** daily / weekdays：「HH:MM」；once：「YYYY-MM-DDTHH:MM」（datetime-local 的格式）。 */
   at: string;
   cron: string;
+  /** 绑定的智能体实例 ID；空串代表交由原对话机器人执行。 */
+  agentInstanceId: string;
 };
 
 export type ScheduleEditPatch = {
   title?: string;
   instruction?: string;
+  agentInstanceId?: string | null;
   when?:
     | { repeat: "once" | "daily" | "weekdays"; at: string }
     | { repeat: "cron"; cron: string };
@@ -32,12 +35,13 @@ export function editFormOf(
   s: Pick<
     ScheduleView,
     "title" | "instruction" | "kind" | "cron" | "runAt" | "timezone"
-  >,
+  > & { agentInstanceId?: string | null },
 ): ScheduleEditForm {
   const base = {
     title: s.title,
     instruction: s.instruction,
     cron: s.cron ?? "",
+    agentInstanceId: s.agentInstanceId ?? "",
   };
   if (s.kind === "once" && s.runAt) {
     const p = partsIn(new Date(s.runAt), s.timezone);
@@ -70,6 +74,9 @@ export function editPatchOf(
   if (title !== original.title.trim()) patch.title = title;
   if (instruction !== original.instruction.trim())
     patch.instruction = instruction;
+  if (form.agentInstanceId !== original.agentInstanceId) {
+    patch.agentInstanceId = form.agentInstanceId || null;
+  }
   const timeChanged =
     form.repeat !== original.repeat ||
     (form.repeat === "cron"

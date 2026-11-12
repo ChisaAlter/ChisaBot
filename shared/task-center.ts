@@ -22,6 +22,19 @@ export const TASK_STATUSES = [
   "cancelled",
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+export const TASK_LIST_STATUSES = {
+  inbox: ["inbox"],
+  active: [
+    "queued",
+    "planning",
+    "running",
+    "waiting_dependencies",
+    "waiting_approval",
+    "paused",
+  ],
+  history: ["succeeded", "failed", "cancelled"],
+} as const satisfies Record<string, readonly TaskStatus[]>;
+export type TaskListView = keyof typeof TASK_LIST_STATUSES;
 export const TASK_CATEGORIES = [
   "research",
   "development",
@@ -88,7 +101,7 @@ export type TaskCapability = {
   kind: "executor" | "source" | "tool" | "workspace";
   risks?: TaskRisk[];
 };
-/** The six fields are the person's own words. `learned` is compiled by the task center and never overwrites them. */
+/** The six fields are the person's own words. Legacy `learned` history is retained but not used for reasoning. */
 export type TaskContext = {
   responsibilities: string;
   projects: string;
@@ -208,9 +221,34 @@ export type TaskCenterSnapshot = {
   outbox: TaskCenterDecision[];
   sources: TaskCenterSource[];
   counts: Record<TaskStatus, number>;
+  /** All decisions, independent of the bounded preview in outbox. */
+  decisionCounts?: Record<TaskCenterDecision["status"], number>;
   running: boolean;
   concurrency: number;
 };
+export type TaskListPage = {
+  tasks: TaskCenterTask[];
+  total: number;
+  nextOffset: number | null;
+};
+export type DecisionListPage = {
+  outbox: TaskCenterDecision[];
+  total: number;
+  nextOffset: number | null;
+};
+export type TaskListFilter = {
+  view?: TaskListView;
+  category?: TaskCategory;
+  search?: string;
+  offset?: number;
+  limit?: number;
+};
+export function activeTaskCount(counts: Record<TaskStatus, number>): number {
+  return TASK_LIST_STATUSES.active.reduce(
+    (sum, status) => sum + counts[status],
+    0,
+  );
+}
 /**
  * One projected line of a task's execution trace (server/src/task-center/trace.ts).
  * `type` is the AG-UI event type, or "TEXT_MESSAGE" for an aggregated reply.

@@ -53,6 +53,7 @@ jobs:
         run: >-
           bun test
           server/tests/config.test.ts
+          server/tests/agent-kernel-default.test.ts
           server/tests/agent-model-policy.test.ts
           server/tests/agent-model-runtime.test.ts
           server/tests/agent-profile-policy.test.ts
@@ -120,6 +121,7 @@ jobs:
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile --omit=peer
+      - run: bun run --cwd agent-computer typecheck
       - name: Durable inbox and database recovery checks
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
@@ -135,7 +137,7 @@ jobs:
           bun test server/tests/schedules-runs-param.test.ts
           bun test server/tests/schedules.test.ts
           bun test server/tests/channel-search-hit-meta.test.ts
-          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts
+          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts server/tests/devices-store-audit-redact.integration.test.ts
           bun test server/tests/multi-user-unified-admin.test.ts server/tests/bot-avatars.test.ts
           bun test server/tests/im-service.integration.test.ts server/tests/confirmations.test.ts
       # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
@@ -144,6 +146,9 @@ jobs:
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
+      - name: Computer egress floor and screencast
+        working-directory: agent-computer
+        run: bun test tests/egress-auth.test.ts tests/egress-policy.test.ts tests/egress.test.ts tests/screencast.test.ts tests/webrtc-proxy.test.ts
       - name: SSRF red-line (PRD-P1-06)
         run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts server/tests/personal-imap-egress.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
@@ -152,6 +157,9 @@ jobs:
         run: bun test server/tests/log-scrub-redline.test.ts server/tests/conversation-public-error.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
+      # 2026-11-09 重连循环：增量接入快照（snapshotSince）与封顶快照。应用侧的回归测试在 test:app 里。
+      - name: Connect snapshot checks (reconnect loop)
+        run: bun test shared/connect-snapshot.test.ts server/tests/connect-snapshot.test.ts
       - name: Schedule honesty / partition (non-tram re-verify)
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway checks
@@ -231,9 +239,22 @@ jobs:
 
   # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办、工具循环上限。
   dsh-runtime:
-    name: DSH runtime tests
+    name: DSH Host and PostgreSQL recovery
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      postgres:
+        # Full product migrations require vector; match production's PostgreSQL 16 + pgvector.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: chisabot_dsh_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d chisabot_dsh_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: runtime/dsh
@@ -245,8 +266,19 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Install product dependencies
+        working-directory: .
+        run: bun install --frozen-lockfile --omit=peer --linker hoisted
       - run: npm ci --no-audit --no-fund
       - run: npm test
+      - name: Durable commands, approval gaps and process recovery
+        working-directory: .
+        env:
+          CHISABOT_DSH_TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_dsh_test
+        run: bun run test:dsh
 
   # PC 客户端（pc/）的 node 测试；和 release.yml 的 pc-test 同一套（CB-113：以前只有发版时才跑）。
   pc-test:

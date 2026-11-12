@@ -34,19 +34,24 @@ import { createPlanModelProxy } from "../conversations/plan-model-proxy";
 import type { DshRunJournal } from "../conversations/run-journal";
 import { createEventLifecycles } from "../conversations/runner";
 import type { createDshToolGateway } from "../conversations/tool-gateway";
-import { normalizeRunInput } from "../legacy/protocol";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
-import type { HermesRuntimeBinding } from "./hermes-runtime";
+import type { RunAssertion } from "./callback-token";
 import { PLAN_RUN_COMPLETED, type PlanModelConfig } from "./plan-model";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
+
+export type RuntimeToolBinding = {
+  toolGatewayUrl: string;
+  readRun: (assertion: unknown) => RunAssertion | null;
+  loadSurfaceTools?: (scope: RunAssertion) => Promise<readonly HeadlessTool[]>;
+};
 
 export type DshRuntimeTarget = {
   id: string;
   ownerUserId: string;
   connectionFile: string;
 };
-export type DshRuntimeBinding = HermesRuntimeBinding & {
+export type DshRuntimeBinding = RuntimeToolBinding & {
   targetFor(actorId: string): Promise<DshRuntimeTarget>;
   bindings: ConversationBindings;
   gateway: ReturnType<typeof createDshToolGateway>;
@@ -292,11 +297,11 @@ export class DshRuntimeAgent extends AbstractAgent {
     snapshot: ApprovalContinuation;
     signal: AbortSignal;
   }) {
-    const saved: RunAgentInput = normalizeRunInput({
+    const saved: RunAgentInput = {
       ...input.snapshot,
       forwardedProps: input.snapshot.forwardedProps ?? {},
       tools: [],
-    });
+    };
     const scope = this.configuration.binding.readRun(
       this.configuration.signRun(saved),
     );
@@ -437,13 +442,21 @@ export class DshRuntimeAgent extends AbstractAgent {
           contributed,
           !recovered,
         );
-        const preparedInput = this.configuration.prepareInput
+        const rawPreparedInput = this.configuration.prepareInput
           ? await this.configuration.prepareInput(input)
           : input;
-        const needsImages = preparedInput.messages.some(
-          (message) =>
-            Array.isArray(message.content) &&
-            message.content.some((part) => part.type === "image"),
+        const messageHasImages = (message: Message | undefined) =>
+          Boolean(
+            message &&
+              Array.isArray(message.content) &&
+              message.content.some((part) => part.type === "image"),
+          );
+        const latestUserInPrepared = rawPreparedInput.messages.findLast(
+          (message) => message.role === "user",
+        );
+        const latestNeedsImages = messageHasImages(latestUserInPrepared);
+        const anyNeedsImages = rawPreparedInput.messages.some((message) =>
+          messageHasImages(message),
         );
         const requestedModels = this.configuration.plan
           ? [this.configuration.plan.provider]
@@ -468,14 +481,39 @@ export class DshRuntimeAgent extends AbstractAgent {
             };
           }),
         );
-        const definitions = needsImages
-          ? catalog.filter((model) => model.input.includes("image"))
-          : catalog;
-        const models = definitions.map((model) => model.id);
-        if (!models.length)
+        const imageCapable = catalog.filter((model) =>
+          model.input.includes("image"),
+        );
+        if (latestNeedsImages && !imageCapable.length)
           throw new Error(
             "当前主模型和备用模型都不能读取这段对话中的图片，请选择支持图片的模型。",
           );
+        const definitions =
+          anyNeedsImages && imageCapable.length ? imageCapable : catalog;
+        const stripHistoricalImages = anyNeedsImages && !imageCapable.length;
+        const preparedInput = stripHistoricalImages
+          ? {
+              ...rawPreparedInput,
+              messages: rawPreparedInput.messages.map((message) =>
+                message.id !== latestUserInPrepared?.id &&
+                Array.isArray(message.content) &&
+                message.content.some((part) => part.type === "image")
+                  ? ({
+                      ...message,
+                      content: message.content.map((part) =>
+                        part.type === "image"
+                          ? {
+                              type: "text",
+                              text: "[历史图片附件：当前模型不支持读取图片]",
+                            }
+                          : part,
+                      ),
+                    } as Message)
+                  : message,
+              ),
+            }
+          : rawPreparedInput;
+        const models = definitions.map((model) => model.id);
         const contextWindow = Math.min(
           ...definitions.map((model) => model.contextWindow),
         );
@@ -575,7 +613,11 @@ export class DshRuntimeAgent extends AbstractAgent {
           model: {
             primary,
             fallbacks,
-            firstOutputMs: 30_000,
+            // Tests may shrink this via CHISABOT_DSH_FIRST_OUTPUT_MS (QA511 P2 server path).
+            firstOutputMs: Math.max(
+              1,
+              Number(process.env.CHISABOT_DSH_FIRST_OUTPUT_MS) || 30_000,
+            ),
             contextWindow,
           },
           connection: {
@@ -675,13 +717,17 @@ export class DshRuntimeAgent extends AbstractAgent {
         let streamError: unknown;
         let projectionFailures = 0;
         let reconnecting: Promise<void> | undefined;
+        let awaitingCatchup = false;
         const reconnect = () =>
           (reconnecting ??= (async () => {
-            emit({
-              type: EventType.CUSTOM,
-              name: "chisabot.connection",
-              value: { status: "reconnecting" },
-            } as BaseEvent);
+            if (!awaitingCatchup) {
+              awaitingCatchup = true;
+              emit({
+                type: EventType.CUSTOM,
+                name: "chisabot.connection",
+                value: { status: "reconnecting" },
+              } as BaseEvent);
+            }
             let delay = 250;
             while (!follow.signal.aborted) {
               try {
@@ -714,11 +760,6 @@ export class DshRuntimeAgent extends AbstractAgent {
                 const old = client;
                 client = active.client = next;
                 await old.close();
-                emit({
-                  type: EventType.CUSTOM,
-                  name: "chisabot.connection",
-                  value: { status: "online" },
-                } as BaseEvent);
                 return;
               } catch (error) {
                 if (
@@ -738,12 +779,13 @@ export class DshRuntimeAgent extends AbstractAgent {
         const observing = (async () => {
           while (!follow.signal.aborted) {
             try {
-              for await (const frame of client.follow(
+              const followedClient = client;
+              for await (const frame of followedClient.follow(
                 binding.sessionId,
                 follow.signal,
               )) {
                 if (frame.type === "snapshot") {
-                  const missing = await client.eventsAfter(
+                  const missing = await followedClient.eventsAfter(
                     binding.sessionId,
                     projection.cursor,
                     frame.cursor,
@@ -761,12 +803,22 @@ export class DshRuntimeAgent extends AbstractAgent {
                       emit(opening);
                     replaying = false;
                   }
+                  // A live transport alone is not a recovered transcript. Announce recovery
+                  // only after this connection's persisted prefix and live snapshot are applied.
+                  if (awaitingCatchup && followedClient === client) {
+                    awaitingCatchup = false;
+                    emit({
+                      type: EventType.CUSTOM,
+                      name: "chisabot.connection",
+                      value: { status: "online" },
+                    } as BaseEvent);
+                  }
                   openedResolve();
                 } else if (frame.type === "event") {
                   // Session event notifications precede persistence's bounded flush. Project only
                   // a checkpointed prefix so a killed Host cannot reuse a committed source seq.
                   if (frame.event.seq > projection.cursor) {
-                    const missing = await client.eventsAfter(
+                    const missing = await followedClient.eventsAfter(
                       binding.sessionId,
                       projection.cursor,
                       frame.event.seq,
@@ -808,7 +860,22 @@ export class DshRuntimeAgent extends AbstractAgent {
           }
         })();
         await opened;
-        const content = dshUserContent(inputs.length ? inputs : [latest]);
+        const admittedUserIds = new Set<string>();
+        for (const record of page.records) {
+          if (record.event.type !== "user/message") continue;
+          const rpcId = (
+            record.event.data as
+              | { source?: { kind?: unknown; rpcId?: unknown } }
+              | undefined
+          )?.source?.rpcId;
+          if (typeof rpcId === "string" && rpcId) admittedUserIds.add(rpcId);
+        }
+        const pendingInputs = inputs.filter(
+          (message) => !admittedUserIds.has(message.id),
+        );
+        const content = dshUserContent(
+          pendingInputs.length ? pendingInputs : [latest],
+        );
         if (resolved.length)
           content.splice(0, content.length, {
             type: "text",

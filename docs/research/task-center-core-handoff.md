@@ -33,7 +33,7 @@ All list envelopes `{tasks}`, `{outbox}`, `{sources}`, `{context}`, `{capabiliti
 ### 第二轮补齐（`d37eadf2` + `1702da69`，已上线 `auto-202611060641-1702da6`）
 
 - 交付物：`execute` 把回合画出的组件映射成 `TaskArtifact`（`componentArtifacts`），生产验证 `showBarChart` → 可预览/下载 artifact。
-- 用量：从 `openbot_local_events` 的 `RUN_FINISHED` → `metadata.contextUsage` 读真实 token（`sum(...)::int`，bigint 会吐字符串）；生产验证 `{modelCalls:1, inputTokens:46571, outputTokens:314}` 全 number。
+- 用量：从 `chisabot_local_events（原早期事件表）` 的 `RUN_FINISHED` → `metadata.contextUsage` 读真实 token（`sum(...)::int`，bigint 会吐字符串）；生产验证 `{modelCalls:1, inputTokens:46571, outputTokens:314}` 全 number。
 - 已学到：`learn` 终态回调（成功 + 终态失败）→ `appendLearned` 追加履历行（超 5000 字丢最旧），人工六字段不动；生产验证两行正确累积。
 - 注：Bun SQL `unsafe` 对 `JSON.stringify` 过的 jsonb 参数存在双重编码（库存 `"[]"`/`"{}"` 字符串），`taskView` 的 `json()` 双向解析恰好抵消——无功能影响，未动。
 
@@ -52,6 +52,6 @@ All list envelopes `{tasks}`, `{outbox}`, `{sources}`, `{context}`, `{capabiliti
 - **B local-agent 执行器**：`task-center/local-agent-runner.ts`（`executor=local-agent` 或 `local-agent:codex` 指定 agent → `localAgents.start` 委派 → 轮询 `chisabot_local_agent_tasks` 终态 → diff 文件映射 artifacts；取消信号触发 stop；设备挑选/权限档位/隔离/审批/并发全走 local-agents 既有闸门）。UI：面板栏首位内置卡 `agents-rail-card.tsx`（折叠态存 preference-storage），设备在线/档位三档/agent 检测徽标/重新检测，复用 `/api/local-agents` 与 `/api/devices`。
 - **C 真记忆**：`learn` 终态回调同时往 memory-notes 写 `project` 笔记（subject=`任务·<标题>`，同名自动合并）；`memoryBrief` 按标题+类目 `memoryNotes.search` 取 6 条注入执行指令；frameTask 加一句引导执行回合自己用 memory_save。
 - **D IM 触达**：`recordNotice` 站内行之外，查 `chisabot_im_chats`（owner+agent、private、有 last_inbound）最近活跃私聊，`imService.pushToThread(privateOnly)` 推送；无 IM 会话静默跳过。
-- **E 执行轨迹**：`task-center/trace.ts`（`task-center:<id>:*` 线程 → openbot_local_events → 按尝试分组投影工具调用/文本/用量，`GET /tasks/:id/trace`）；任务详情页第三 tab「执行轨迹」运行中 30s 轮询。
+- **E 执行轨迹**：`task-center/trace.ts`（`task-center:<id>:*` 线程 → chisabot_local_events（原早期事件表） → 按尝试分组投影工具调用/文本/用量，`GET /tasks/:id/trace`）；任务详情页第三 tab「执行轨迹」运行中 30s 轮询。
 - 测试：roots 6 例 + trace 6 例 + executor 路由 2 例，共 31/31；双 typecheck 绿。
 - 仍未接：委派任务的设备上 codex/claude 凭据需各自有效（生产 Ayase 上 codex oauth 过期）；预算门 / 线程清理 / 机会研判 / 源健康告警是下一阶段。

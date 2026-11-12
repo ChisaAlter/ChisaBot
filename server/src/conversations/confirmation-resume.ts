@@ -5,7 +5,6 @@ import type { AuditInitiator } from "../audit";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import type { createConfirmations } from "../confirmations/service";
 import type { Database } from "../db/client";
-import { runAssertionValue } from "../legacy/protocol";
 import type { LocalConversationBackend } from "../local-conversations";
 import type { TurnRunner } from "../turns/types";
 import {
@@ -13,7 +12,14 @@ import {
   executionDeadline,
   withCapacityFeedback,
 } from "./capacity";
+import {
+  assertContinuationAvailable,
+  ContinuationCancelled,
+  ContinuationDeferred,
+  existingContinuation,
+} from "./continuation-work";
 import { assertConversationAdmissionOpen } from "./maintenance";
+import { runAssertionValue } from "./protocol";
 import { createDshRunJournal } from "./run-journal";
 
 /** Resume the saved effect once, then continue the conversation from its real receipt. */
@@ -36,7 +42,11 @@ export function createConfirmationResumer(options: {
 }) {
   const { database, backend } = options;
   const journal = createDshRunJournal(database);
-  return async (ownerUserId: string, requestId: string) => {
+  return async (
+    ownerUserId: string,
+    requestId: string,
+    onAdmitted?: () => void,
+  ) => {
     assertConversationAdmissionOpen();
     const decision = await options.confirmations.durableDecision(
       ownerUserId,
@@ -45,21 +55,28 @@ export function createConfirmationResumer(options: {
     if (!decision) return;
     const { snapshot } = decision;
     const runId = `confirmation:${requestId}`;
-    const [existing] = await database.$client.unsafe<{ status: string }[]>(
-      "SELECT status FROM chisabot_local_runs WHERE thread_id=$1 AND run_id=$2",
-      [snapshot.threadId, runId],
+    const existing = await existingContinuation(
+      database,
+      snapshot.threadId,
+      runId,
     );
-    if (existing) {
-      if (existing.status === "running")
-        throw new Error("The confirmation continuation is still running.");
+    if (existing !== "new") {
+      if (existing === "accepted") onAdmitted?.();
       return;
     }
-    if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId))
+    const refusal = await journal.continuationRefusal(
+      snapshot.threadId,
+      snapshot.runId,
+    );
+    if (refusal) {
+      if (onAdmitted) throw new ContinuationCancelled(refusal);
       return;
+    }
     if (backend.control.isActive(snapshot.threadId))
-      throw new Error(
+      throw new ContinuationDeferred(
         "The conversation is still settling its previous execution.",
       );
+    await assertContinuationAvailable(database, snapshot.threadId);
     const forwarded =
       snapshot.forwardedProps &&
       typeof snapshot.forwardedProps === "object" &&
@@ -89,7 +106,11 @@ export function createConfirmationResumer(options: {
     );
     try {
       await withCapacityFeedback(
-        (state) => deadline.state(state),
+        (state) => {
+          deadline.state(state);
+          if (state === "waiting" && onAdmitted)
+            throw new ContinuationDeferred("等待后台执行位，已保留你的决定。");
+        },
         () =>
           backend.leases.acquire({
             threadId: snapshot.threadId,
@@ -137,8 +158,14 @@ export function createConfirmationResumer(options: {
     let result: Awaited<ReturnType<typeof agent.resumeConfirmation>>;
     try {
       assertConversationAdmissionOpen();
-      if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId))
+      const refusal = await journal.continuationRefusal(
+        snapshot.threadId,
+        snapshot.runId,
+      );
+      if (refusal) {
+        if (onAdmitted) throw new ContinuationCancelled(refusal);
         return;
+      }
       result = await agent.resumeConfirmation({ ...decision, signal });
     } catch (error) {
       // A new approval belongs to its own durable decision, not a retry of this one.
@@ -183,8 +210,14 @@ export function createConfirmationResumer(options: {
         runId: snapshot.runId,
       });
     }
-    if (await journal.continuationRefusal(snapshot.threadId, snapshot.runId))
+    const afterEffectRefusal = await journal.continuationRefusal(
+      snapshot.threadId,
+      snapshot.runId,
+    );
+    if (afterEffectRefusal) {
+      if (onAdmitted) throw new ContinuationCancelled(afterEffectRefusal);
       return;
+    }
     await options.runTurn({
       ownerUserId,
       agentId: decision.agentId,
@@ -194,6 +227,7 @@ export function createConfirmationResumer(options: {
       initiator: snapshot.initiator ?? { kind: "person" },
       instruction: "",
       continuation: { snapshot, messageId: `${runId}:result`, result },
+      ...(onAdmitted ? { onAdmitted } : {}),
     });
   };
 }

@@ -3,7 +3,6 @@ import { Hono } from "hono";
 import { OPS_CODES } from "../../shared/ops-codes";
 import { resetOpsCountersForTests } from "../../shared/ops-counters";
 import type { DshHealthCheck } from "../src/agents/dsh-health";
-import type { HermesHealthCheck } from "../src/agents/hermes-health";
 import type { AssistantSignals } from "../src/assistant-signals";
 import type { AppVariables } from "../src/auth/guards";
 import type { MagpieService, MagpieStatus } from "../src/magpie";
@@ -37,7 +36,6 @@ test("collectOpsHealth: all green when optional deps skipped", async () => {
   expect(report.checks.database).toEqual({ ok: true, latencyMs: 2 });
   expect(report.checks.magpie).toEqual({ ok: null, configured: false });
   expect(report.checks.computer).toEqual({ ok: null, configured: false });
-  expect(report.checks.hermes).toEqual({ ok: null, configured: false });
   expect(report.checks.localCaller).toEqual({
     ok: true,
     authenticated: true,
@@ -50,38 +48,6 @@ test("collectOpsHealth: all green when optional deps skipped", async () => {
   expect(report.budgets.rates.last1h.SSRF_DENIED).toBe(0);
   expect(report.budgets.series.bucketMs).toBe(60_000);
   expect(Array.isArray(report.budgets.series.points)).toBe(true);
-});
-
-test("collectOpsHealth: Hermes is reported but never fails the aggregate", async () => {
-  const report = await collectOpsHealth({
-    pingDatabase: async () => ({ ok: true, latencyMs: 1 }),
-    probeHermes: async () => ({
-      ok: false,
-      configured: true,
-      reachable: false,
-      error: "连接不上 Hermes 桥接（可能没有启动或端口不对）",
-    }),
-    gatewayMode: "on",
-  });
-  expect(report.ok).toBe(true);
-  expect(report.checks.hermes).toMatchObject({
-    ok: false,
-    configured: true,
-    reachable: false,
-  });
-});
-
-test("collectOpsHealth: a throwing Hermes probe is contained", async () => {
-  const report = await collectOpsHealth({
-    pingDatabase: async () => ({ ok: true, latencyMs: 1 }),
-    probeHermes: async () => {
-      throw new Error("boom 10.0.0.9");
-    },
-    gatewayMode: "off",
-  });
-  expect(report.ok).toBe(true);
-  expect(report.checks.hermes.ok).toBe(false);
-  expect(JSON.stringify(report.checks.hermes)).not.toContain("10.0.0.9");
 });
 
 test("collectOpsHealth: database failure fails overall and logs OPS code", async () => {
@@ -177,7 +143,6 @@ function app(
   deps: {
     pingDatabase?: () => Promise<DatabaseCheck>;
     probeComputer?: () => Promise<ComputerCheck>;
-    probeHermes?: () => Promise<HermesHealthCheck>;
     dshRequired?: boolean;
     probeDsh?: (actorId: string) => Promise<DshHealthCheck>;
     probeAssistant?: (actorId: string) => Promise<AssistantSignals>;
@@ -203,7 +168,6 @@ function app(
       pingDatabase:
         deps.pingDatabase ?? (async () => ({ ok: true, latencyMs: 1 })),
       probeComputer: deps.probeComputer,
-      probeHermes: deps.probeHermes,
       dshRequired: deps.dshRequired,
       probeDsh: deps.probeDsh,
       probeAssistant: deps.probeAssistant,
@@ -272,7 +236,7 @@ test("DSH probe exceptions are reported without private connection details", asy
   expect(JSON.stringify(report.checks.dsh)).not.toContain("sensitive");
 });
 
-test("DSH health reports validated storage while an unused Hermes bridge is down", async () => {
+test("DSH health reports validated storage", async () => {
   const response = await app("admin", {
     dshRequired: true,
     probeDsh: async () => ({
@@ -282,12 +246,10 @@ test("DSH health reports validated storage while an unused Hermes bridge is down
       checkedSessions: 1,
       running: 0,
     }),
-    probeHermes: async () => ({ ok: false, configured: true }),
   }).request("/api/admin/health");
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.checks.dsh.checkedSessions).toBe(1);
-  expect(body.checks.hermes.ok).toBe(false);
 });
 
 test("GET /api/admin/health: 200 + no-store when healthy", async () => {
@@ -301,25 +263,6 @@ test("GET /api/admin/health: 200 + no-store when healthy", async () => {
   expect(text).not.toContain("sk-");
   expect(text).not.toContain("password");
   expect(text).not.toContain("DATABASE_URL");
-});
-
-test("GET /api/admin/health: a down Hermes bridge is reported but keeps HTTP 200", async () => {
-  const response = await app("admin", {
-    probeHermes: async () => ({
-      ok: false,
-      configured: true,
-      reachable: false,
-      error: "连接不上 Hermes 桥接（可能没有启动或端口不对）",
-    }),
-  }).request("/api/admin/health");
-  expect(response.status).toBe(200);
-  const body = await response.json();
-  expect(body.ok).toBe(true);
-  expect(body.checks.hermes).toMatchObject({
-    ok: false,
-    configured: true,
-    reachable: false,
-  });
 });
 
 test("GET /api/admin/health: 503 when database down", async () => {

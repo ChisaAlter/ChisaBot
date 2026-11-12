@@ -248,3 +248,240 @@ test("runtime protocol: agent_run with a fake CLI agent streams events and repor
     process.env.PATH = oldPath;
   }
 });
+
+test("shadow home: links shared dirs via junction/symlink while isolating auth.json", () => {
+  const { prepareShadowHome, inspectHomeAuth } = require("../src/agent-runtime/shadow-home");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-home-"));
+  const baseHome = path.join(root, "main-codex");
+  const shadowHome = path.join(root, "shadow-personal");
+  fs.mkdirSync(path.join(baseHome, "skills"), { recursive: true });
+  fs.writeFileSync(path.join(baseHome, "skills", "demo.md"), "# skill\n");
+  fs.writeFileSync(path.join(baseHome, "config.toml"), "model = 'o3'\n");
+  fs.writeFileSync(path.join(baseHome, "auth.json"), JSON.stringify({ tokens: { access: "main-account" } }));
+
+  const res = prepareShadowHome({ driver: "codex", homePath: baseHome, shadowHomePath: shadowHome });
+  assert.equal(res.env.CODEX_HOME, shadowHome);
+  // 共享目录可读到主目录里的 skill
+  assert.equal(fs.readFileSync(path.join(shadowHome, "skills", "demo.md"), "utf8"), "# skill\n");
+  // config.toml 初始拷贝，auth.json 严格隔离不拷贝
+  assert.equal(fs.readFileSync(path.join(shadowHome, "config.toml"), "utf8"), "model = 'o3'\n");
+  assert.equal(fs.existsSync(path.join(shadowHome, "auth.json")), false);
+  assert.equal(inspectHomeAuth({ driver: "codex", homePath: baseHome, shadowHomePath: shadowHome }).authenticated, null);
+
+  // 在影子目录独立写入自己的 auth.json，不影响主目录
+  fs.writeFileSync(path.join(shadowHome, "auth.json"), JSON.stringify({ tokens: { access: "shadow-account" } }));
+  assert.equal(inspectHomeAuth({ driver: "codex", homePath: baseHome, shadowHomePath: shadowHome }).authenticated, true);
+  assert.match(fs.readFileSync(path.join(baseHome, "auth.json"), "utf8"), /main-account/);
+
+  // 禁止父子嵌套
+  assert.throws(() => prepareShadowHome({ driver: "codex", homePath: baseHome, shadowHomePath: path.join(baseHome, "nested") }), /父子目录/);
+});
+
+test("antigravity proxy sanitizer & custom/codex driver command builder", () => {
+  const { sanitizeAntigravityEnv } = require("../src/agent-runtime/acp-client");
+  const { genericJsonlParser } = require("../src/agent-runtime/cli-agents");
+
+  const cleaned = sanitizeAntigravityEnv({
+    ELECTRON_RUN_AS_NODE: "1",
+    HTTP_PROXY: "127.0.0.1:7890",
+    HTTPS_PROXY: "http://127.0.0.1:7890",
+  });
+  assert.equal(cleaned.ELECTRON_RUN_AS_NODE, undefined);
+  assert.equal(cleaned.HTTP_PROXY, "http://127.0.0.1:7890");
+  assert.equal(cleaned.HTTPS_PROXY, "http://127.0.0.1:7890");
+
+  const codexCmd = buildCommand("codex", {
+    prompt: "fix bug",
+    profile: "workspace",
+    skipPermissions: false,
+    network: true,
+    workdir: "/repo",
+    model: "gpt-5-codex",
+    extraArgs: ["--full-auto"],
+    codexConfigArgs: ["-c", 'mcp_servers.chisabot_subagents.command="node"'],
+  });
+  assert.equal(codexCmd.args[codexCmd.args.length - 1], "fix bug", "prompt must stay at the end of codex exec args");
+  assert.ok(codexCmd.args.includes("gpt-5-codex"));
+  assert.ok(codexCmd.args.includes("--full-auto"));
+
+  const customCmd = buildCommand("custom", {
+    prompt: "hello",
+    workdir: "/repo",
+    model: "m1",
+    extraArgs: ["--cwd", "{{workdir}}", "--ask", "{{prompt}}"],
+    stdinPrompt: false,
+    outputFormat: "jsonl",
+  });
+  assert.deepEqual(customCmd.args, ["--cwd", "/repo", "--ask", "hello"]);
+  assert.equal(customCmd.stdin, null);
+
+  const parser = genericJsonlParser();
+  const emitted = [];
+  parser.line(JSON.stringify({ type: "tool", title: "检索代码" }), (k, t) => emitted.push(`${k}:${t}`));
+  parser.line(JSON.stringify({ summary: "自定义完成" }), (k, t) => emitted.push(`${k}:${t}`));
+  assert.equal(parser.result().summary, "自定义完成");
+  assert.deepEqual(emitted, ["tool:检索代码", "text:自定义完成"]);
+});
+
+test("ACP session & nested subagent MCP bridge end-to-end (cross-platform)", async () => {
+  const dir = repo();
+  const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-acp-"));
+  const mockAcpScript = path.join(tmpBin, "mock-acp-agent.js");
+
+  // 一个纯 Node 编写的标准 ACP 智能体：验证 initialize、接收 mcpServers 并通过 stdio MCP 调一次嵌套 subagent_list，再写文件并返回结果
+  fs.writeFileSync(
+    mockAcpScript,
+    `"use strict";
+const { spawn } = require("node:child_process");
+let buf = "";
+let mcpServers = [];
+function send(msg) { process.stdout.write(JSON.stringify(msg) + "\\n"); }
+let reqSeq = 100;
+const pending = new Map();
+
+function callMcpList(serverSpec) {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    for (const item of serverSpec.env || []) env[item.name] = item.value;
+    const child = spawn(serverSpec.command, serverSpec.args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (c) => {
+      out += String(c);
+      for (const line of out.split("\\n")) {
+        if (!line.trim()) continue;
+        try {
+          const m = JSON.parse(line);
+          if (m.id === 2) { child.kill(); resolve(m.result); }
+        } catch {}
+      }
+    });
+    child.on("error", reject);
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\\n");
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "subagent_list", arguments: {} } }) + "\\n");
+  });
+}
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buf += chunk;
+  let idx;
+  while ((idx = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, idx).trim();
+    buf = buf.slice(idx + 1);
+    if (!line) continue;
+    const msg = JSON.parse(line);
+    if (msg.id !== undefined && !msg.method) {
+      const fn = pending.get(msg.id);
+      if (fn) { pending.delete(msg.id); fn(msg.result); }
+      continue;
+    }
+    if (msg.method === "initialize") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentInfo: { name: "mock-acp", title: "Mock ACP", version: "2.4.0" }, authMethods: [] } });
+    } else if (msg.method === "session/new") {
+      mcpServers = msg.params.mcpServers || [];
+      send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "sess_1" } });
+    } else if (msg.method === "session/prompt") {
+      (async () => {
+        let subInfo = "none";
+        if (mcpServers.length > 0) {
+          const mcpRes = await callMcpList(mcpServers[0]);
+          subInfo = mcpRes.content[0].text;
+        }
+        const writeId = ++reqSeq;
+        await new Promise((r) => {
+          pending.set(writeId, r);
+          send({ jsonrpc: "2.0", id: writeId, method: "fs/write_text_file", params: { sessionId: "sess_1", path: "README.md", content: "hello acp\\n" } });
+        });
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "sess_1", update: { sessionUpdate: "tool_call", toolCallId: "tc1", title: "调用子代理目录" } } });
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "sess_1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ACP 完成，子代理：" + subInfo } } } });
+        send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+      })();
+    }
+  }
+});
+`,
+  );
+
+  const sent = [];
+  let runtime;
+  runtime = createAgentRuntime({
+    send: (m) => {
+      sent.push(m);
+      if (m.type === "agent_subcall" && m.action === "list") {
+        setImmediate(() => {
+          runtime.handle({
+            type: "agent_subcall_result",
+            reqId: m.reqId,
+            ok: true,
+            data: [{ slug: "codebuddy", name: "Codebuddy" }],
+          });
+        });
+      }
+      return true;
+    },
+  });
+
+  // 1. 测试单实例 ACP 探活
+  runtime.handle({
+    type: "agent_probe",
+    reqId: "probe-1",
+    instance: {
+      id: "inst-acp",
+      slug: "mock-acp",
+      name: "Mock ACP",
+      driver: "acp",
+      config: { commandPath: process.execPath, extraArgs: [mockAcpScript] },
+      env: {},
+    },
+  });
+  const p0 = Date.now();
+  while (!sent.some((m) => m.type === "agent_probe_result") && Date.now() - p0 < 10_000) {
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  const probeMsg = sent.find((m) => m.type === "agent_probe_result");
+  assert.ok(probeMsg);
+  assert.equal(probeMsg.probe.status, "available");
+  assert.equal(probeMsg.probe.version, "2.4.0");
+
+  // 2. 测试 ACP 运行 + fs/write_text_file 回调 + 嵌套 MCP 互调桥
+  runtime.handle({
+    type: "agent_run",
+    taskId: "task-acp-1",
+    agent: "acp",
+    prompt: "用 ACP 修改 README 并列出可用子代理",
+    cwd: dir,
+    profile: "workspace",
+    isolation: "none",
+    network: true,
+    roots: [dir],
+    skipPermissions: false,
+    builtinModel: { kind: "server" },
+    containerImage: "x",
+    timeoutMs: 30_000,
+    instance: {
+      id: "inst-acp",
+      slug: "mock-acp",
+      name: "Mock ACP",
+      driver: "acp",
+      config: { commandPath: process.execPath, extraArgs: [mockAcpScript] },
+      env: {},
+    },
+    subagentBridge: { enabled: true, depth: 0, maxDepth: 3 },
+  });
+
+  const t0 = Date.now();
+  while (!sent.some((m) => m.type === "agent_done" && m.taskId === "task-acp-1") && Date.now() - t0 < 15_000) {
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  const done = sent.find((m) => m.type === "agent_done" && m.taskId === "task-acp-1");
+  assert.ok(done, JSON.stringify(sent.slice(-4)));
+  assert.equal(done.ok, true, JSON.stringify(done));
+  assert.match(done.summary, /codebuddy/);
+  assert.equal(fs.readFileSync(path.join(dir, "README.md"), "utf8"), "hello acp\n");
+
+  // 3. 验证递归深度上限拦截（depth >= maxDepth 时不启动互调桥）
+  const { createSubagentBridge } = require("../src/agent-runtime/subagent-bridge");
+  const blockedBridge = await createSubagentBridge({ taskId: "deep", depth: 3, maxDepth: 3, onSubcall: async () => ({}) });
+  assert.equal(blockedBridge, null);
+});
+

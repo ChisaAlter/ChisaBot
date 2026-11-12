@@ -60,6 +60,49 @@ test("a finish promised for later is not a report; a permission question is not 
     true,
   );
   assert.equal(actionPromise("第一部分我查完了，第二部分没有问题"), false);
+  // QA510 P3 / QA511 P2: a promise that waits on the user is an offer, not a skipped step.
+  for (const offer of [
+    "已完成。下次需要我再去查，查完告诉你。",
+    "下次需要我再去查",
+    "下次需要我再去查，查完告诉你。",
+    "如果你需要，我可以再去查一下。",
+    "如果你需要，我可以去查一下。",
+    "要是你想的话，我去帮你看看",
+    "你需要的话我再去查",
+    "有需要的话我再去看看。",
+    "你想的话我去搜一下。",
+    "随时叫我，我去查。",
+    "随时找我，我去帮你查",
+    "改天我再去看看",
+    "以后有需要我再去处理",
+    "假如您需要，我来帮你查",
+    "If you want, I'll check the other repo too.",
+    "If you want, I'll check it.",
+    "Next time I'll look into it first.",
+    "Next time I'll search for it first.",
+    "Whenever you're ready, I'll look into it.",
+    "If needed, I can check the logs.",
+  ])
+    assert.equal(actionPromise(offer), false, offer);
+  // …while plain promises, including ones with a trailing courtesy, still nudge (QA511 P2).
+  for (const promise of [
+    "我先去查一下，需要一点时间。",
+    "我先去查，如果有结果告诉你",
+    "我马上去查，查完了告诉你",
+    "我先查一下，稍等。",
+    "我这就去搜索 ima 的接入文档。",
+    "我去查查，需要一点时间",
+    "我需要先去查一下",
+    "我去确认一下你需要的那个文件",
+    "我先去查，有问题随时告诉你",
+    "我先去下载，你需要的话我稍后发你",
+    "好的，我去看看有没有需要更新的地方",
+    "I'll check it now.",
+    "Let me look into it.",
+    "I'll check it and tell you once it's done.",
+    "I'll look into it; if needed I'll ask you.",
+  ])
+    assert.equal(actionPromise(promise), true, promise);
   assert.equal(
     actionPromise("第一部分查完了，第二部分要我查完告诉你吗？"),
     false,

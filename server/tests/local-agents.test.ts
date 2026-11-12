@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { firstValueFrom, toArray } from "rxjs";
+import {
+  AGENT_DRIVER_SPECS,
+  AGENT_PROVIDER_PRESETS,
+  agentToolName,
+  normalizeInstanceSlug,
+} from "../../shared/agent-providers";
 import { defaultCapabilities } from "../../shared/devices";
 import {
   isInsideRoots,
@@ -10,7 +17,20 @@ import {
 import { createDatabase } from "../src/db/client";
 import { createDeviceHub } from "../src/devices/hub";
 import type { DeviceRecord } from "../src/devices/store";
+import {
+  FALLBACK_ACP_REGISTRY,
+  listAcpRegistryEntries,
+} from "../src/local-agents/acp-registry";
+import { DirectSubagentRuntimeAgent } from "../src/local-agents/direct-agent";
+import {
+  buildServerDeviceRecord,
+  parseEnvServerRoots,
+} from "../src/local-agents/server-host";
 import { createLocalAgentService } from "../src/local-agents/service";
+import {
+  agentInstanceOf,
+  isLocalAgentExecutor,
+} from "../src/task-center/local-agent-runner";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
 /** 本地 agent 与权限档位（docs/local-agents.md）。 */
@@ -313,6 +333,14 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
       "DELETE FROM chisabot_device_agent_settings WHERE owner_user_id = $1",
       [owner],
     );
+    await sql.unsafe(
+      "DELETE FROM chisabot_agent_instances WHERE owner_user_id = $1",
+      [owner],
+    );
+    await sql.unsafe(
+      "DELETE FROM chisabot_bot_agent_grants WHERE owner_user_id = $1",
+      [owner],
+    );
   });
 
   test("detection is stored; defaults are workspace + worktree + builtin", async () => {
@@ -597,5 +625,246 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
       error: "boom",
     });
     expect((await service.forThread(owner, "t4"))[0]!.status).toBe("failed");
+  });
+
+  test("provider instances, secret env encryption, bot grants, sync wait & nested subcalls", async () => {
+    await service.saveSettings(owner, device.id, { profile: "full" });
+    const created = await service.instances.createInstance({
+      ownerUserId: owner,
+      environmentId: device.id,
+      driver: "codex",
+      name: "Codex (个人号)",
+      slug: "codex_personal",
+      description: "擅长前端与测试重构",
+      exposeAsTool: true,
+      config: {
+        commandPath: "codex",
+        homePath: "~/.codex",
+        shadowHomePath: "~/.codex-t3/personal",
+      },
+      envVars: [
+        { name: "OPENAI_API_KEY", value: "sk-secret-123", sensitive: true },
+        { name: "CODEX_ENV", value: "personal", sensitive: false },
+      ],
+    });
+    expect(created.slug).toBe("codex-personal");
+    const secretView = created.envVars.find((e) => e.name === "OPENAI_API_KEY");
+    expect(secretView?.value).toBe("");
+    expect(secretView?.hasValue).toBe(true);
+
+    // keepExisting 保留原密文且支持解密回运行时
+    const updated = await service.instances.updateInstance(owner, created.id, {
+      envVars: [
+        {
+          name: "OPENAI_API_KEY",
+          value: "",
+          sensitive: true,
+          keepExisting: true,
+        },
+        { name: "CODEX_ENV", value: "updated", sensitive: false },
+      ],
+    });
+    expect(
+      updated?.envVars.find((e) => e.name === "OPENAI_API_KEY")?.hasValue,
+    ).toBe(true);
+    const rawRow = await service.instances.getRow(owner, created.id);
+    const runtimeSpec = await service.instances.toRuntimeSpec(rawRow!);
+    expect(runtimeSpec.env.OPENAI_API_KEY).toBe("sk-secret-123");
+    expect(runtimeSpec.env.CODEX_ENV).toBe("updated");
+
+    // Bot 子代理授权：none -> 无工具；selected -> 具名工具 agent_codex_personal
+    await service.instances.saveBotGrant(owner, "bot_grant_test", {
+      mode: "none",
+    });
+    const toolsWhenNone = await service.tools({
+      ownerUserId: owner,
+      botId: "bot_grant_test",
+      botName: "Bot",
+      threadId: "t_grant",
+    });
+    expect(toolsWhenNone.some((t) => t.name === "subagent_run")).toBe(false);
+
+    await service.instances.saveBotGrant(owner, "bot_grant_test", {
+      mode: "selected",
+      instanceIds: [created.id],
+      exposeNamedTools: true,
+      allowNestedSubagents: true,
+      maxDepth: 2,
+    });
+    const toolsWhenSelected = await service.tools({
+      ownerUserId: owner,
+      botId: "bot_grant_test",
+      botName: "Bot",
+      threadId: "t_grant",
+    });
+    expect(toolsWhenSelected.some((t) => t.name === "subagent_run")).toBe(true);
+    expect(
+      toolsWhenSelected.some((t) => t.name === "agent_codex_personal"),
+    ).toBe(true);
+
+    // mode: "wait" 同步等待完成，不触发二次 deliverTurn 回流
+    const deliveredBefore = delivered.length;
+    sent.length = 0;
+    const waitPromise = service.runSubagent({
+      ownerUserId: owner,
+      botId: "bot_grant_test",
+      botName: "Bot",
+      threadId: "t_wait",
+      instance: "codex_personal",
+      cwd: "/home/u/code",
+      task: "同步修复单测",
+      mode: "wait",
+      waitTimeoutMs: 5000,
+    });
+
+    let parentRunMsg: Record<string, unknown> | undefined;
+    for (let i = 0; i < 200 && !parentRunMsg; i++) {
+      parentRunMsg = sent.find((m) => m.type === "agent_run");
+      if (!parentRunMsg) await Bun.sleep(10);
+    }
+    expect(parentRunMsg).toBeTruthy();
+    const parentTaskId = String(parentRunMsg!.taskId);
+    await node({ type: "agent_started", taskId: parentTaskId });
+
+    // 测试外部 Agent 嵌套互调 agent_subcall + maxDepth 保护
+    const subcallPromise = node({
+      type: "agent_subcall",
+      taskId: parentTaskId,
+      reqId: "sub_1",
+      action: "list",
+    });
+    await subcallPromise;
+    const listReply = sent.find(
+      (m) => m.type === "agent_subcall_result" && m.reqId === "sub_1",
+    );
+    expect(listReply?.ok).toBe(true);
+
+    // 完成父任务
+    await node({
+      type: "agent_done",
+      taskId: parentTaskId,
+      ok: true,
+      summary: "同步修复完毕",
+    });
+    const waitOutcome = await waitPromise;
+    expect(waitOutcome.timedOut).toBe(false);
+    expect(waitOutcome.task.status).toBe("done");
+    expect(waitOutcome.task.summary).toBe("同步修复完毕");
+    await settle();
+    expect(delivered.length).toBe(deliveredBefore);
+  });
+});
+
+describe("agent providers & subagent orchestration (unit)", () => {
+  test("provider presets, driver specs and slugify cover T3 Code matrix", () => {
+    expect(AGENT_PROVIDER_PRESETS.some((p) => p.driver === "codex")).toBe(true);
+    expect(AGENT_PROVIDER_PRESETS.some((p) => p.driver === "antigravity")).toBe(
+      true,
+    );
+    expect(AGENT_PROVIDER_PRESETS.some((p) => p.key === "codebuddy")).toBe(
+      true,
+    );
+    expect(AGENT_DRIVER_SPECS.codex.fields.supportsShadowHome).toBe(true);
+    expect(normalizeInstanceSlug("Codex (个人号)")).toBe("codex");
+    expect(normalizeInstanceSlug("Antigravity #2")).toBe("antigravity-2");
+    expect(agentToolName("codex-personal")).toBe("agent_codex_personal");
+  });
+
+  test("ACP registry fallback search & task-center executor parser", async () => {
+    expect(FALLBACK_ACP_REGISTRY.some((item) => item.id === "devin")).toBe(
+      true,
+    );
+    const devin = await listAcpRegistryEntries({
+      query: "devin",
+      offlineOnly: true,
+    });
+    expect(devin.entries.some((item) => item.id === "devin")).toBe(true);
+
+    expect(isLocalAgentExecutor("local-agent")).toBe(true);
+    expect(isLocalAgentExecutor("agent:codex_personal")).toBe(true);
+    expect(isLocalAgentExecutor("bot")).toBe(false);
+    expect(agentInstanceOf("agent:codex_personal")).toBe("codex_personal");
+    expect(agentInstanceOf("local-agent")).toBeUndefined();
+  });
+
+  test("server host virtual device record & env root parser", () => {
+    const roots = parseEnvServerRoots(" /srv/ws_a ; /srv/ws_b ");
+    expect(roots).toEqual(["/srv/ws_a", "/srv/ws_b"]);
+    const rec = buildServerDeviceRecord("u_admin", ["/srv/ws_a"]);
+    expect(rec.id).toBe("server");
+    expect(rec.allowedRoots).toEqual(["/srv/ws_a"]);
+  });
+
+  test("DirectSubagentRuntimeAgent emits AG-UI tool events in both async and wait modes", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const mockLocalAgents = {
+      runSubagent: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return {
+          timedOut: false,
+          task: {
+            id: "task_direct_1",
+            deviceId: "server",
+            deviceName: "服务器本机",
+            agent: "codex",
+            instanceId: "inst_1",
+            instanceName: "Codex (个人号)",
+            title: "检查代码",
+            profile: "workspace",
+            isolation: "worktree",
+            network: true,
+            cwd: "/srv/ws",
+            status: input.mode === "wait" ? "done" : "running",
+            step: "完成",
+            summary: input.mode === "wait" ? "已检查无误" : null,
+            diff: null,
+            error: null,
+          },
+        };
+      },
+    };
+    const agent = new DirectSubagentRuntimeAgent({
+      ownerUserId: "u1",
+      botId: "b1",
+      botName: "Chisa",
+      instanceRef: "inst_1",
+      localAgents: mockLocalAgents as never,
+    });
+
+    const asyncEvents = await firstValueFrom(
+      agent
+        .run({
+          threadId: "th_1",
+          runId: "run_1",
+          messages: [{ id: "m1", role: "user", content: "帮我检查一下代码" }],
+          tools: [],
+          context: [],
+          forwardedProps: {},
+        })
+        .pipe(toArray()),
+    );
+    expect(calls[0]?.mode).toBe("async");
+    expect(asyncEvents.some((e) => e.type === "TOOL_CALL_START")).toBe(true);
+    expect(asyncEvents.some((e) => e.type === "TOOL_CALL_RESULT")).toBe(true);
+    expect(asyncEvents.some((e) => e.type === "RUN_FINISHED")).toBe(true);
+
+    const waitEvents = await firstValueFrom(
+      agent
+        .run({
+          threadId: "th_1",
+          runId: "run_2",
+          messages: [{ id: "m2", role: "user", content: "巡检仓库" }],
+          tools: [],
+          context: [],
+          forwardedProps: { subagentWait: true },
+        })
+        .pipe(toArray()),
+    );
+    expect(calls[1]?.mode).toBe("wait");
+    const textDelta = waitEvents
+      .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
+      .map((e) => (e as { delta?: string }).delta ?? "")
+      .join("");
+    expect(textDelta).toContain("已检查无误");
   });
 });

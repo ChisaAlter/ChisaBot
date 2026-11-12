@@ -134,7 +134,7 @@ function harness(options: {
   const agent = new FakeAgent({ agentId: AGENT_ID });
   const drive = options.drive ?? answers;
 
-  const intelligence = {
+  const conversations = {
     getOrCreateThread: async (params: {
       threadId: string;
       userId: string;
@@ -203,8 +203,8 @@ function harness(options: {
   const builtFor: { initiator: { kind: string; id?: string } }[] = [];
   const runTurn = createTurnRunner({
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
-    intelligence: intelligence as any,
-    leases: intelligence,
+    conversations: conversations as any,
+    leases: conversations,
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
     runner: runner as any,
     buildAgentFor: async (input) => {

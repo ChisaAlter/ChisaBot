@@ -383,6 +383,66 @@ describe("task completion evidence", () => {
 });
 
 describe("existing local-agent result adapter", () => {
+  test("new device delegation preserves all saved context after its task excerpt", async () => {
+    const context = {
+      responsibilities: "职责".repeat(3000),
+      projects: "项目",
+      goals: "目标",
+      interests: "兴趣",
+      habits: "北京时间工作日",
+      preferences: "末尾：不要发布",
+      updatedAt: null,
+      learned: "已删除旧副本",
+      learnedAt: null,
+    };
+    let dispatched = "";
+    const run = createLocalAgentRun({
+      database: {
+        $client: {
+          unsafe: async (q: string) =>
+            q.includes("thread_id=$2")
+              ? []
+              : [
+                  {
+                    status: "done",
+                    summary: "完成",
+                    diff: null,
+                    device_id: "device",
+                  },
+                ],
+        },
+      } as unknown as Database,
+      localAgents: {
+        start: async (input: { task: string }) => {
+          dispatched = input.task;
+          return { id: "device-task" };
+        },
+        stop: async () => {},
+      } as never,
+      botNameFor: async () => "Bot",
+    });
+    await run(
+      task({ executor: "local-agent", description: "文".repeat(9000) }),
+      "bot",
+      {
+        context,
+        dependencies: [],
+        approval: null,
+        signal: new AbortController().signal,
+        onEvent: async () => {},
+      },
+    );
+    for (const key of [
+      "responsibilities",
+      "projects",
+      "goals",
+      "interests",
+      "habits",
+      "preferences",
+    ] as const)
+      expect(dispatched).toContain(context[key]);
+    expect(dispatched).not.toContain("已删除旧副本");
+  });
   test("a resumed task reattaches to the original owned result without dispatching", async () => {
     let starts = 0;
     const db = {

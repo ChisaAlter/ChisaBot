@@ -15,7 +15,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -23,7 +23,9 @@ import { TEST_POOL, testDatabaseUrl } from "./support/database";
 const databaseUrl = testDatabaseUrl();
 const database = createDatabase(databaseUrl, TEST_POOL);
 const managedEndpoint = new URL("https://managed.example.test/ag-ui");
-const mastraManagedEndpoint = new URL("https://managed.example.test/mastra");
+const secondaryManagedEndpoint = new URL(
+  "https://managed.example.test/secondary-ag-ui",
+);
 const profileStore = createAgentProfileStore(database, managedEndpoint);
 const channelStore = createChannelStore(
   database,
@@ -35,7 +37,7 @@ const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const loadAgents = createRuntimeAgentLoader(database, undefined, {
   endpoint: managedEndpoint,
   token: managedAgentToken,
-  alsoRun: mastraManagedEndpoint,
+  alsoRun: secondaryManagedEndpoint,
 });
 
 const testPrefix = `runtime-agents-${randomUUID()}`;
@@ -46,8 +48,8 @@ const createdChannelIds: string[] = [];
 afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const agentId of createdAgentIds.splice(0)) {
@@ -94,7 +96,7 @@ async function createCoworker(
 async function setAgentRun(
   id: string,
   run: {
-    type: "remote_ag_ui" | "remote_mastra";
+    type: "remote_ag_ui";
     configuration: Record<string, unknown>;
   },
 ) {
@@ -133,14 +135,13 @@ describe("runtime agent loading", () => {
     });
   });
 
-  test("carries the managed deployment token to a Mastra endpoint this deployment runs", async () => {
+  test("carries the managed deployment token to a secondary endpoint this deployment runs", async () => {
     const owner = await createUser();
     const profile = await createCoworker(owner);
     await setAgentRun(profile.id, {
-      type: "remote_mastra",
+      type: "remote_ag_ui",
       configuration: {
-        endpoint: mastraManagedEndpoint.toString(),
-        remoteAgentId: "chisabot",
+        endpoint: secondaryManagedEndpoint.toString(),
       },
     });
 
@@ -149,9 +150,8 @@ describe("runtime agent loading", () => {
     expect(loaded).toContainEqual({
       id: profile.id,
       name: "Expense Manager",
-      type: "remote_mastra",
-      endpoint: mastraManagedEndpoint.toString(),
-      remoteAgentId: "chisabot",
+      type: "remote_ag_ui",
+      endpoint: secondaryManagedEndpoint.toString(),
       headers: { "x-chisabot-agent-token": managedAgentToken },
       standingMessage: standingRoleMessage({
         id: profile.id,
@@ -163,9 +163,9 @@ describe("runtime agent loading", () => {
     });
   });
 
-  test("resolves vault auth headers for a Mastra endpoint that names a credential", async () => {
+  test("resolves vault auth headers for a remote endpoint that names a credential", async () => {
     const owner = await createUser();
-    const profile = await createCoworker(owner, { name: "Research Mastra" });
+    const profile = await createCoworker(owner, { name: "Research Remote" });
     const vaultReads: string[] = [];
     const credentialId = `credential-${randomUUID()}`;
     const reader: CredentialSecretReader = {
@@ -175,7 +175,7 @@ describe("runtime agent loading", () => {
           ? {
               encryptedValue: await encryptSecret(
                 encryptionKey,
-                "Bearer mastra-secret",
+                "Bearer remote-secret",
               ),
               revokedAt: null,
             }
@@ -183,10 +183,9 @@ describe("runtime agent loading", () => {
       },
     };
     await setAgentRun(profile.id, {
-      type: "remote_mastra",
+      type: "remote_ag_ui",
       configuration: {
-        endpoint: "https://customer-mastra.example.test",
-        remoteAgentId: "research",
+        endpoint: "https://customer-agent.example.test",
         auth: {
           header: "Authorization",
           credentialId,
@@ -203,14 +202,13 @@ describe("runtime agent loading", () => {
     expect(vaultReads).toEqual([credentialId]);
     expect(loaded).toContainEqual({
       id: profile.id,
-      name: "Research Mastra",
-      type: "remote_mastra",
-      endpoint: "https://customer-mastra.example.test",
-      remoteAgentId: "research",
-      headers: { Authorization: "Bearer mastra-secret" },
+      name: "Research Remote",
+      type: "remote_ag_ui",
+      endpoint: "https://customer-agent.example.test",
+      headers: { Authorization: "Bearer remote-secret" },
       standingMessage: standingRoleMessage({
         id: profile.id,
-        name: "Research Mastra",
+        name: "Research Remote",
         title: "Finance Operations",
         roleDescription:
           "Review receipts, categorize expenses, and prepare reimbursement reports.",

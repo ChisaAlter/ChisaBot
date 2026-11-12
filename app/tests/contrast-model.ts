@@ -208,16 +208,16 @@ export function veilStops(scheme: Scheme): Stop[] {
  * 样式表变（theme-glass-perf 守它和 GLASS_SURFACE_SELECTOR 一致），这里只认外层那一节 :where。
  */
 const GLASS_SCOPE: Record<string, RegExp> = {
-  "liquid-light":
-    /^:where\(html\[data-glass="liquid"\], html:not\(\[data-glass\]\)\)/,
-  "liquid-dark":
-    /^:where\(html\.dark\[data-glass="liquid"\], html\.dark:not\(\[data-glass\]\)\)/,
+  "liquid-light": /^:where\(html\[data-glass="liquid"\]\)/,
+  "liquid-dark": /^:where\(html\.dark\[data-glass="liquid"\]\)/,
   "crystal-light": /^:where\(html\[data-glass="crystal"\]\)/,
   "crystal-dark": /^:where\(html\.dark\[data-glass="crystal"\]\)/,
   "frosted-light": /^:where\(html\[data-glass="frosted"\]\)/,
   "frosted-dark": /^:where\(html\.dark\[data-glass="frosted"\]\)/,
-  "mist-light": /^:where\(html\[data-glass="mist"\]\)/,
-  "mist-dark": /^:where\(html\.dark\[data-glass="mist"\]\)/,
+  "mist-light":
+    /^:where\(html\[data-glass="mist"\], html:not\(\[data-glass\]\)\)/,
+  "mist-dark":
+    /^:where\(html\.dark\[data-glass="mist"\], html\.dark:not\(\[data-glass\]\)\)/,
 };
 
 /** 某档材质某个 scheme 的材质规则里 token 的值（取最后一条命中的规则）。 */

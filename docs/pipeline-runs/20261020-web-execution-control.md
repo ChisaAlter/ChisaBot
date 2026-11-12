@@ -2,7 +2,7 @@
 
 - PR：[278](https://github.com/ChisaAlter/ChisaBot/pull/278)，合并提交 `e36fb3e239cd078b566a598da0b401a34e1c89fc`。正式 Web `0.1.51` / `auto-202610201516-e36fb3e` 已核对该提交及服务端源码哈希。
 - 串行更新器任务 `update-host-20261020151654` 成功，完整构建同时更新计算机服务；健康检查、数据库与模型自检通过。无依赖或数据迁移。
-- Linux 106 项相关测试、300 个断言通过；覆盖独立 PostgreSQL、真实 CopilotKit SDK、实际 agent-computer HTTP 与 shell 子孙进程取消。前端并发 4 项、邻近同步/断线/停止 65 项通过；server/app 类型检查、生产构建、PR CI 通过。
+- Linux 106 项相关测试、300 个断言通过；覆盖独立 PostgreSQL、真实 旧聊天前端框架 SDK、实际 agent-computer HTTP 与 shell 子孙进程取消。前端并发 4 项、邻近同步/断线/停止 65 项通过；server/app 类型检查、生产构建、PR CI 通过。
 - 隔离真实 Chrome 的早补话、工具期间补话、实际一次执行、Stop 后无延迟 DONE、恢复与刷新全部通过。
 - 正式 Web 真实模型 `codex/gpt-6-luna` 连续 12 条消息（2026-10-20 23:36–23:41 Asia/Shanghai）：Excel 创建/修改、Word、Python 创建/修改、6 项 unittest、补话、Stop、恢复、下载和刷新完成。原命令单一调用 ID，实际 once.log 只有一行；Stop 后等待超过 30 秒，stop.log 只有 START；后续 RECOVERY_OK。
 - 24 个文件卡下载请求 HTTP 200（6 个唯一文件）。本机重开 Excel 验证数据、公式和说明表，读取 Word 正文/表格；UTF-8 模式重新运行下载的 Python CLI 与 6 项测试通过。新版预算 26,000，实际 26,200，差额 +200，负责人林晓。

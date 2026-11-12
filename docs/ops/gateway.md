@@ -26,12 +26,12 @@
 
 网关 **不**随应用一键更新；以前手工改过 `/opt/chisabot-zh/public/nginx.conf` 后，仓库模板与生产会漂移（v0.1.33 曾因此漏清 Local-Caller）。现用脚本强制对齐：
 
-| 命令 | 场景 |
-|---|---|
-| `sh scripts/ops/sync-nginx.sh --check-repo` | CI / 合并前：模板 + 合成渲染仍含 Local-Caller 清头与安全标记 |
-| `sh scripts/ops/sync-nginx.sh --check` | 宿主机：对照 live `nginx.conf` / `nginx.generated.conf`；漂移 → **非 0**（不要忽略） |
-| `sh scripts/ops/sync-nginx.sh --apply` | 宿主机：按 `deploy/.env` 的 `CHISABOT_DOMAIN` 渲染；若 `.env` 无域名则从 **live nginx** 的 `server_name`/`listen` 推导 → 备份 → 安装 → `nginx -t` → reload |
-| `sh scripts/ops/sync-nginx.sh --apply --dry-run` | 只渲染校验，不写盘 |
+| 命令                                             | 场景                                                                                                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sh scripts/ops/sync-nginx.sh --check-repo`      | CI / 合并前：模板 + 合成渲染仍含 Local-Caller 清头与安全标记                                                                                               |
+| `sh scripts/ops/sync-nginx.sh --check`           | 宿主机：对照 live `nginx.conf` / `nginx.generated.conf`；漂移 → **非 0**（不要忽略）                                                                       |
+| `sh scripts/ops/sync-nginx.sh --apply`           | 宿主机：按 `deploy/.env` 的 `CHISABOT_DOMAIN` 渲染；若 `.env` 无域名则从 **live nginx** 的 `server_name`/`listen` 推导 → 备份 → 安装 → `nginx -t` → reload |
+| `sh scripts/ops/sync-nginx.sh --apply --dry-run` | 只渲染校验，不写盘                                                                                                                                         |
 
 `deploy-serial.sh` 在镜像切换成功后默认跑 `--check`（`CHISABOT_SYNC_NGINX=check`）。若要随发版自动套模板：`CHISABOT_SYNC_NGINX=apply sh deploy-serial.sh …`。脚本找不到时跳过并打日志；**有**脚本而 check 失败则部署退出码 **7**。
 
@@ -51,18 +51,18 @@ docker exec chisabot-public-gateway nginx -t && docker exec chisabot-public-gate
 
 **模板里的特殊规则**（改之前先理解它们为什么存在）：
 
-| 规则 | 原因 |
-|---|---|
-| `/api/devices/agent/` 不要求登录 | PC / 节点用设备令牌连接，不带浏览器 Cookie |
-| `/api/im/onebot/` 转发 `Authorization`，且只在这里允许没有 Origin 的 WebSocket 升级 | IM 机器人（OneBot）从服务器端连接 |
-| `^~ /p/`：公开、只允许 GET / HEAD、不转发 Cookie、`X-Frame-Options SAMEORIGIN` | 公开页面不能读到登录态；跨站子资源 GET 用 `$fetch_allowed` 放行 |
-| 带哈希的 `/assets/*` 可长缓存 | 文件名随内容变化 |
-| `auth_request_set $cb_identity` → `X-ChisaBot-Identity` | 多账号时把签名身份传给应用；在 `/api/devices/agent/`、`/api/im/onebot/`、`/p/` 上**清空**，防伪造 |
-| 502 / 503 / 504 → `/auth/updating.html` | 更新切换的十几秒里显示「正在更新」，页面自动重试 |
-| 访问日志带 User-Agent 和 `CF-Connecting-IP` | 套 CDN 时能看到真实来源 |
-| 2053 的 auth-check 带 `X-ChisaBot-Require-Role admin` | Magpie 管理只给管理员 |
-| 跨站写入、外站 Origin、缺 Origin 的 WebSocket 一律拒绝 | CSRF 防护 |
-| 聊天 SSE 不缓存、不缓冲 | 流式回复 |
+| 规则                                                                                | 原因                                                                                              |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `/api/devices/agent/` 不要求登录                                                    | PC / 节点用设备令牌连接，不带浏览器 Cookie                                                        |
+| `/api/im/onebot/` 转发 `Authorization`，且只在这里允许没有 Origin 的 WebSocket 升级 | IM 机器人（OneBot）从服务器端连接                                                                 |
+| `^~ /p/`：公开、只允许 GET / HEAD、不转发 Cookie、`X-Frame-Options SAMEORIGIN`      | 公开页面不能读到登录态；跨站子资源 GET 用 `$fetch_allowed` 放行                                   |
+| 带哈希的 `/assets/*` 可长缓存                                                       | 文件名随内容变化                                                                                  |
+| `auth_request_set $cb_identity` → `X-ChisaBot-Identity`                             | 多账号时把签名身份传给应用；在 `/api/devices/agent/`、`/api/im/onebot/`、`/p/` 上**清空**，防伪造 |
+| 502 / 503 / 504 → `/auth/updating.html`                                             | 更新切换的十几秒里显示「正在更新」，页面自动重试                                                  |
+| 访问日志带 User-Agent 和 `CF-Connecting-IP`                                         | 套 CDN 时能看到真实来源                                                                           |
+| 2053 的 auth-check 带 `X-ChisaBot-Require-Role admin`                               | Magpie 管理只给管理员                                                                             |
+| 跨站写入、外站 Origin、缺 Origin 的 WebSocket 一律拒绝                              | CSRF 防护                                                                                         |
+| 聊天 SSE 不缓存、不缓冲                                                             | 流式回复                                                                                          |
 
 ## 3. 登录服务
 
@@ -77,10 +77,10 @@ docker exec chisabot-public-gateway nginx -t && docker exec chisabot-public-gate
 
 详见 [accounts.md](../accounts.md)。开关有两个，**生产默认都关**：
 
-| 开关 | 位置 | 作用 |
-|---|---|---|
-| `"invites": true` | 网关 `auth/config.json`，改后重启登录服务 | 允许管理员发邀请、新账号注册 |
-| `CHISABOT_ACCOUNTS_UI=1` | 应用 `.env`，改后重建应用容器 | 设置里显示「账号」页 |
+| 开关                     | 位置                                      | 作用                         |
+| ------------------------ | ----------------------------------------- | ---------------------------- |
+| `"invites": true`        | 网关 `auth/config.json`，改后重启登录服务 | 允许管理员发邀请、新账号注册 |
+| `CHISABOT_ACCOUNTS_UI=1` | 应用 `.env`，改后重建应用容器             | 设置里显示「账号」页         |
 
 启用顺序：① 登录服务新版本 + `config.json` 的 `identitySecret` + nginx 新模板 ② 应用 `.env` 加同值的 `CHISABOT_GATEWAY_SECRET`
 ③ 部署 / 重建应用。回滚网关时**先把 `.env` 里 `CHISABOT_GATEWAY_SECRET` 去掉并重建应用**，再换回旧网关。

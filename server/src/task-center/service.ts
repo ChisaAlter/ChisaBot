@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import {
   contextInputSchema,
+  type DecisionListPage,
   needsTaskApproval,
   sourceInputSchema,
+  TASK_LIST_STATUSES,
   TASK_STATUSES,
   type TaskCapability,
   type TaskCenterDecision,
@@ -16,6 +18,8 @@ import {
   type TaskExecutionContext,
   type TaskExecutionResult,
   type TaskInput,
+  type TaskListFilter,
+  type TaskListPage,
   type TaskPlan,
   type TaskSourceInput,
   type TaskStatus,
@@ -59,7 +63,7 @@ export type TaskCenterOptions = {
     signal: AbortSignal,
   ) => Promise<TaskPlan>;
   notify?: (ownerUserId: string, decision: TaskCenterDecision) => Promise<void>;
-  /** 任务到达终态（成功或失败）后回写「已学到」的个人上下文；记账失败不影响任务结果。 */
+  /** 任务到达终态后写入既有可纠正的记忆；记账失败不影响任务结果。 */
   learn?: (
     ownerUserId: string,
     task: TaskCenterTask,
@@ -250,13 +254,61 @@ export function createTaskCenter(
     if (!task) throw new TaskCenterError("找不到这个任务。", 404);
     return task;
   }
-  async function listTasks(owner: string): Promise<TaskCenterTask[]> {
+  async function listTasks(
+    owner: string,
+    options: {
+      statuses?: readonly TaskStatus[];
+      limit?: number;
+      parentId?: string;
+    } = {},
+  ): Promise<TaskCenterTask[]> {
     return (
       await sql.unsafe<Row[]>(
-        "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 ORDER BY created_at DESC LIMIT 500",
-        [owner],
+        `SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1
+         AND ($2::text IS NULL OR status=ANY(string_to_array($2, ',')))
+         AND ($3::text IS NULL OR parent_id=$3)
+         ORDER BY created_at DESC,id DESC LIMIT $4`,
+        [
+          owner,
+          options.statuses?.join(",") ?? null,
+          options.parentId ?? null,
+          options.limit ?? 500,
+        ],
       )
     ).map(taskView);
+  }
+  async function taskPage(
+    owner: string,
+    filter: TaskListFilter = {},
+  ): Promise<TaskListPage> {
+    const offset = filter.offset ?? 0;
+    const limit = filter.limit ?? 50;
+    const values = [
+      owner,
+      filter.view ? TASK_LIST_STATUSES[filter.view].join(",") : null,
+      filter.category ?? null,
+      filter.search?.trim() ?? "",
+    ];
+    const where = `owner_user_id=$1
+      AND ($2::text IS NULL OR status=ANY(string_to_array($2, ',')))
+      AND ($3::text IS NULL OR payload->>'category'=$3)
+      AND ($4='' OR strpos(lower(concat_ws(E'\\n',payload->>'title',payload->>'description',summary)),lower($4))>0)`;
+    const [rows, [count]] = await Promise.all([
+      sql.unsafe<Row[]>(
+        `SELECT * FROM chisabot_task_center_tasks WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6`,
+        [...values, limit, offset],
+      ),
+      sql.unsafe<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM chisabot_task_center_tasks WHERE ${where}`,
+        values,
+      ),
+    ]);
+    const total = count?.count ?? 0;
+    return {
+      tasks: rows.map(taskView),
+      total,
+      nextOffset: offset + rows.length < total ? offset + rows.length : null,
+    };
   }
   async function taskEvents(
     owner: string,
@@ -352,13 +404,44 @@ export function createTaskCenter(
     if (!task) throw new TaskCenterError("任务没有创建成功，请重试。");
     return task;
   }
-  async function listDecisions(owner: string): Promise<TaskCenterDecision[]> {
+  async function listDecisions(
+    owner: string,
+    options: { pending?: boolean; limit?: number } = {},
+  ): Promise<TaskCenterDecision[]> {
     return (
       await sql.unsafe<Row[]>(
-        "SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1 ORDER BY created_at DESC LIMIT 300",
-        [owner],
+        `SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1
+         AND ($2::boolean IS NULL OR (status='pending')=$2)
+         ORDER BY created_at DESC,id DESC LIMIT $3`,
+        [owner, options.pending ?? null, options.limit ?? 300],
       )
     ).map(decisionView);
+  }
+  async function decisionPage(
+    owner: string,
+    filter: { pending?: boolean; offset?: number; limit?: number } = {},
+  ): Promise<DecisionListPage> {
+    const offset = filter.offset ?? 0;
+    const limit = filter.limit ?? 50;
+    const values = [owner, filter.pending ?? null];
+    const where =
+      "owner_user_id=$1 AND ($2::boolean IS NULL OR (status='pending')=$2)";
+    const [rows, [count]] = await Promise.all([
+      sql.unsafe<Row[]>(
+        `SELECT * FROM chisabot_task_center_decisions WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4`,
+        [...values, limit, offset],
+      ),
+      sql.unsafe<{ count: number }[]>(
+        `SELECT count(*)::int AS count FROM chisabot_task_center_decisions WHERE ${where}`,
+        values,
+      ),
+    ]);
+    const total = count?.count ?? 0;
+    return {
+      outbox: rows.map(decisionView),
+      total,
+      nextOffset: offset + rows.length < total ? offset + rows.length : null,
+    };
   }
   async function approvedDecision(
     task: TaskCenterTask,
@@ -554,6 +637,19 @@ export function createTaskCenter(
     await Promise.all(requested.map(notify));
     return mustTask(owner, id);
   }
+  async function setTaskPriority(
+    owner: string,
+    id: string,
+    priority: number,
+  ): Promise<TaskCenterTask> {
+    const clamped = Math.max(0, Math.min(100, Math.round(priority)));
+    const [row] = await sql.unsafe<Row[]>(
+      "UPDATE chisabot_task_center_tasks SET priority=$3 WHERE owner_user_id=$1 AND id=$2 RETURNING *",
+      [owner, id, clamped],
+    );
+    if (!row) throw new TaskCenterError("找不到这个任务。", 404);
+    return taskView(row);
+  }
   async function decide(
     owner: string,
     id: string,
@@ -621,17 +717,6 @@ export function createTaskCenter(
     await sql.unsafe(
       "INSERT INTO chisabot_task_center_context(owner_user_id,content) VALUES($1,$2::text::jsonb) ON CONFLICT(owner_user_id) DO UPDATE SET content=excluded.content,updated_at=now()",
       [owner, JSON.stringify(content)],
-    );
-    return getContext(owner);
-  }
-  /** The compiled section only; what the person wrote stays exactly as they wrote it. */
-  async function setLearned(
-    owner: string,
-    learned: string,
-  ): Promise<TaskContext> {
-    await sql.unsafe(
-      "INSERT INTO chisabot_task_center_context(owner_user_id,content,learned,learned_at) VALUES($1,'{}'::jsonb,$2,now()) ON CONFLICT(owner_user_id) DO UPDATE SET learned=excluded.learned,learned_at=now()",
-      [owner, learned.slice(0, 6000)],
     );
     return getContext(owner);
   }
@@ -1292,12 +1377,28 @@ export function createTaskCenter(
     return options.capabilities ? options.capabilities(owner) : [];
   }
   async function snapshot(owner: string): Promise<TaskCenterSnapshot> {
-    const [tasks, outbox, sources, rows] = await Promise.all([
-      listTasks(owner),
-      listDecisions(owner),
+    const [
+      active,
+      inbox,
+      history,
+      pending,
+      resolved,
+      sources,
+      rows,
+      decisions,
+    ] = await Promise.all([
+      listTasks(owner, { statuses: TASK_LIST_STATUSES.active, limit: 50 }),
+      listTasks(owner, { statuses: TASK_LIST_STATUSES.inbox, limit: 50 }),
+      listTasks(owner, { statuses: TASK_LIST_STATUSES.history, limit: 10 }),
+      listDecisions(owner, { pending: true, limit: 50 }),
+      listDecisions(owner, { pending: false, limit: 10 }),
       listSources(owner),
       sql.unsafe<{ status: TaskStatus; count: number }[]>(
         "SELECT status,count(*)::int AS count FROM chisabot_task_center_tasks WHERE owner_user_id=$1 GROUP BY status",
+        [owner],
+      ),
+      sql.unsafe<{ status: TaskCenterDecision["status"]; count: number }[]>(
+        "SELECT status,count(*)::int AS count FROM chisabot_task_center_decisions WHERE owner_user_id=$1 GROUP BY status",
         [owner],
       ),
     ]);
@@ -1305,11 +1406,22 @@ export function createTaskCenter(
       TASK_STATUSES.map((s) => [s, 0]),
     ) as Record<TaskStatus, number>;
     for (const row of rows) counts[row.status] = row.count;
+    const decisionCounts = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      superseded: 0,
+    };
+    for (const row of decisions) decisionCounts[row.status] = row.count;
     return {
-      tasks,
-      outbox,
+      tasks: [...active, ...inbox, ...history].sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+      ),
+      outbox: [...pending, ...resolved],
       sources,
       counts,
+      decisionCounts,
       running: Boolean(timer),
       concurrency,
     };
@@ -1321,10 +1433,13 @@ export function createTaskCenter(
     sweep,
     snapshot,
     listTasks,
+    taskPage,
     getTask,
     createTask,
     controlTask,
+    setTaskPriority,
     listDecisions,
+    decisionPage,
     decide,
     listSources,
     createSource,
@@ -1332,7 +1447,6 @@ export function createTaskCenter(
     scanSource,
     getContext,
     setContext,
-    setLearned,
     taskEvents,
     capabilities,
     routes: (requireUser: MiddlewareHandler<{ Variables: AppVariables }>) =>

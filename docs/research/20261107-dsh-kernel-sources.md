@@ -47,13 +47,13 @@
 
 ## 与当前 ChisaBot、Whale Isle 的对照
 
-主评估只读了本地 Whale Isle 的 vendor 和 ChisaBot 当前工作树。Whale Isle 的 [pin](C:/AI/Deepseek-Harness-Desktop/vendor/harness-upstream.json) 指向 `dsh-v0.2.1-rc.4` / `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`；该 vendor 含下游扩展，pin 不是逐文件等同上游的证明。
+主评估只读了本地 Whale Isle 的 vendor 和 ChisaBot 当时工作树。Whale Isle 的 `vendor/harness-upstream.json` 指向 `dsh-v0.2.1-rc.4` / `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`；该 vendor 含下游扩展，pin 不是逐文件等同上游的证明。
 
-- 本地旧版 [SDK client](C:/AI/Deepseek-Harness-Desktop/vendor/deepseek-harness/packages/sdk/client/README.md) 明确尚未实现服务端审批请求；这条限制不应外推到上文已经支持审批回传的官方 `0.2.2-rc.1`。
-- 本地 [Agent](C:/AI/Deepseek-Harness-Desktop/vendor/deepseek-harness/packages/core/agent/README.md) 已有 `create/resume`、`followup/steer/inject/cancel` 和按 Agent 注册工具的作用域；[工具指南](C:/AI/Deepseek-Harness-Desktop/vendor/deepseek-harness/docs/cookbook/adding-a-tool.md) 规定工具观察 `exec.signal`。作用域能隔离注册，不等于自动完成 ChisaBot 的用户鉴权或进程隔离。
-- 本地 [Session cancel](C:/AI/Deepseek-Harness-Desktop/vendor/deepseek-harness/packages/api/session-controller/src/commands.ts:638) 请求取消当前活动并保留待处理 inbox；返回值只是接受取消请求。ChisaBot 的“停止”还须对应其队列和后台任务语义，确认执行终止后再显示已停止。
-- ChisaBot 的 [Hermes adapter](C:/Users/48818/.codex/worktrees/chat-reliability/ChisaBot/server/src/agents/hermes-runtime.ts:175) 当前组装 actor/bot/thread/run 身份及工具执行器；[内核入口](C:/Users/48818/.codex/worktrees/chat-reliability/ChisaBot/server/src/copilot.ts:1232) 每轮传完整历史并由宿主压缩。换成完整 DSH runtime 时，应保留身份、权限与工具执行契约，并明确改由 DSH Session 管理执行历史和压缩。
-- 前端 [channel-chat](C:/Users/48818/.codex/worktrees/chat-reliability/ChisaBot/app/src/components/channels/channel-chat.tsx:421) 仍使用 CopilotKit `useAgent`，transcript 也依赖其工具渲染上下文。因此替换后端内核不会自动移除 CopilotKit；完整方案还包括把聊天状态和工具卡片注册迁到自有事件适配层，保留现有 React 界面及已修复的气泡/滚动行为。
+- 本地旧版 SDK client（`packages/sdk/client/README.md`）明确尚未实现服务端审批请求；这条限制不应外推到上文已经支持审批回传的官方 `0.2.2-rc.1`。
+- 本地 Agent（`packages/core/agent/README.md`）已有 `create/resume`、`followup/steer/inject/cancel` 和按 Agent 注册工具的作用域；工具指南（`docs/cookbook/adding-a-tool.md`）规定工具观察 `exec.signal`。作用域能隔离注册，不等于自动完成 ChisaBot 的用户鉴权或进程隔离。
+- 本地 Session cancel（`packages/api/session-controller/src/commands.ts:638`）请求取消当前活动并保留待处理 inbox；返回值只是接受取消请求。ChisaBot 的“停止”还须对应其队列和后台任务语义，确认执行终止后再显示已停止。
+- ChisaBot 当时的旧适配器（`server/src/agents/hermes-runtime.ts:175`）组装 actor/bot/thread/run 身份及工具执行器；旧内核入口（`server/src/copilot.ts:1232`）每轮传完整历史并由宿主压缩。换成完整 DSH runtime（现已实现于 `runtime/dsh/` 与 `server/src/conversations/`）后，保留身份、权限与工具执行契约，改由 DSH Session 管理执行历史和压缩。
+- 当时前端 `app/src/components/channels/channel-chat.tsx` 仍使用旧 `useAgent`，transcript 也依赖其工具渲染上下文。因此替换后端内核不会自动移除旧前端依赖；完整方案已将聊天状态和工具卡片注册迁到自有事件适配层（`app/src/lib/conversations/`），保留现有 React 界面及已修复的气泡/滚动行为。
 
 建议分工：DSH 管执行循环、执行日志、上下文压缩与 Agent 生命周期；ChisaBot 管账号、Bot、渠道、长期记忆、产品任务及业务权限；ChisaBot 插件把授权工具和记忆接入 DSH，适配层将会话事件供给前端。按用户/工作区确定 runtime 隔离范围，不能把不同用户凭据放入一个无隔离的共享默认 profile。
 

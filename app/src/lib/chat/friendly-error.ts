@@ -27,7 +27,19 @@ const RULES: Array<{
   retryable?: boolean;
 }> = [
   {
-    test: /Hermes fallback model call failed:|备用模型「[^」]+」请求失败：/i,
+    test: /\bprivacy-gate:|cannot be masked locally|本地隐私脱敏/i,
+    title: "当前模型网关开启了本地隐私脱敏，不能直接发送图片",
+    hint: "本地隐私脱敏仅处理文字，这张图片没有发出去。请点「撤回这条消息」移除图片后再继续对话，或在网关设置（Settings → Privacy）中调整隐私策略。",
+    retryable: false,
+  },
+  {
+    test: /不能读取这段对话中的图片/,
+    title: "当前所选模型不支持读取图片",
+    hint: "点输入框右下角的模型名切换到支持看图的模型后再试，或点「撤回这条消息」改用文字描述。",
+    retryable: false,
+  },
+  {
+    test: /fallback model call failed:|备用模型「[^」]+」请求失败：/i,
     title: "备用模型也未能完成回答",
     hint: "主模型未能继续，切换备用模型后仍然失败。请重试或切换模型；管理员可在模型设置中检查备用模型。",
   },
@@ -38,11 +50,11 @@ const RULES: Array<{
     retryable: false,
   },
   {
-    // CB-100：服务器在流开始前就连不上智能体运行时（Hermes 桥接 / 远程 AG-UI），发来的 RUN_ERROR。
+    // CB-100：服务器在流开始前就连不上智能体运行时（DSH / 远程 AG-UI），发来的 RUN_ERROR。
     // 放在最前面：原因里带的 ConnectionRefused / ECONN 不能被当成「网络连接中断」（那是浏览器这边的网络）。
     test: /智能体运行时无法连接|智能体运行时在开始回答前出错|AGENT_RUNTIME_UNREACHABLE/,
     title: "智能体运行时无法连接",
-    hint: "服务器连不上智能体运行时（例如 Hermes 桥接没在监听）。请管理员检查运行时服务后点「重试」。",
+    hint: "服务器连不上智能体运行时。请管理员检查运行时服务后点「重试」。",
   },
   {
     test: /实名|real[-_ ]?name|identity verification|realname|未认证|身份认证/i,
@@ -58,10 +70,24 @@ const RULES: Array<{
     retryable: false,
   },
   {
-    // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」）：换 key 没用，要重新登录。
-    test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|登录已失效|登录被撤销/i,
+    /*
+     * 2026-11-09 线上：ClinePass 返回 403「the user is not subscribed to required model plan」——选的模型
+     * 不在账号订阅的套餐里。以前没有规则认它，落到兜底，用户只看到「这一轮没有收到回答」，不知道是套餐问题。
+     */
+    test: /ClinePass[\s\S]*(not subscribed|required model plan)|(not subscribed|required model plan)[\s\S]*ClinePass/i,
+    title: "这个模型需要 ClinePass 对应套餐",
+    hint: "当前 ClinePass 账号没有订阅这个模型所需的套餐。点输入框右下角的模型名换一个模型，或开通对应套餐后点「重试」。",
+  },
+  {
+    test: /not subscribed|required (model )?plan|subscription (is )?required|未订阅|需要订阅/i,
+    title: "这个模型需要对应的订阅套餐",
+    hint: "当前账号没有订阅这个模型所需的套餐。换一个模型，或开通对应套餐后点「重试」。",
+  },
+  {
+    // 服务商撤掉了登录态（如「sign-in was revoked; sign in again」或 Magpie OAuth「refresh_token_invalidated / Your session has ended」）：换 key 没用，要重新登录。
+    test: /sign-in was revoked|revoked.*sign[-_ ]?in|sign in again|refresh_token_invalidated|token_invalidated|session has ended|登录已失效|登录被撤销/i,
     title: "模型登录已失效",
-    hint: "服务商撤销了当前登录，请到管理后台重新登录后再试，或先切换到其他模型。",
+    hint: "服务商登录已过期或被撤销，请到管理后台（模型 / Magpie）重新登录后再试，或先切换到其他模型。",
     retryable: false,
   },
   {
@@ -75,6 +101,12 @@ const RULES: Array<{
     title: "模型额度不足",
     hint: "账户余额或额度已用完。充值后重试，或切换到其他模型。",
     retryable: false,
+  },
+  {
+    // 其余的 403：凭据没有这个模型的权限（套餐 / 地区 / 实名各有自己的规则，在前面）。
+    test: /\b403\b|forbidden|permission[_ ]?(denied|error)/i,
+    title: "模型服务商拒绝了这次请求（403）",
+    hint: "当前凭据没有使用这个模型的权限。换一个模型，或请管理员检查模型凭据和套餐。",
   },
   {
     test: /\b429\b|rate[_ ]?limit|too many requests|频率|限流/i,

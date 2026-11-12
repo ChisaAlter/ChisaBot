@@ -1,16 +1,16 @@
-# 脱离 CopilotKit 的执行内核选择
+# 脱离 旧聊天前端框架 的执行内核选择
 
-2026-11-07。用户明确不希望继续以从 OpenBot 继承的 CopilotKit 为内核。本轮为方案评估，未修改产品代码或运行配置；前轮聊天修复仍待发布。
+2026-11-07。用户明确不希望继续以从 早期上游模板 继承的 旧聊天前端框架 为内核。本轮为方案评估，未修改产品代码或运行配置；前轮聊天修复仍待发布。
 
 ## 推荐：直接使用 AI SDK
 
-直接依赖 Vercel AI SDK 的 `ToolLoopAgent` 或在需要逐步控制的路径使用 `streamText`，替换 CopilotKit `BuiltInAgent`。ChisaBot 保留账号、bot/thread、PostgreSQL 历史、工具授权、审批、记忆、任务与恢复，模型接入继续使用 Magpie。
+直接依赖 Vercel AI SDK 的 `ToolLoopAgent` 或在需要逐步控制的路径使用 `streamText`，替换 旧聊天前端框架 `BuiltInAgent`。ChisaBot 保留账号、bot/thread、PostgreSQL 历史、工具授权、审批、记忆、任务与恢复，模型接入继续使用 Magpie。
 
-这是基于已有工程资产的选择：`server/src/copilot.ts` 已使用 `@ai-sdk/openai` 和 `@ai-sdk/anthropic`；`server/src/agents/model-fallback.ts` 已包装 AI SDK 模型的 `doStream` / `doGenerate`；工具 schema 使用 Zod。可以复用这些能力，减少协议和状态转换。AI SDK 是独立项目，无需保留 CopilotKit 才能使用。
+这是基于已有工程资产的选择：`server/src/copilot.ts` 已使用 `@ai-sdk/openai` 和 `@ai-sdk/anthropic`；`server/src/agents/model-fallback.ts` 已包装 AI SDK 模型的 `doStream` / `doGenerate`；工具 schema 使用 Zod。可以复用这些能力，减少协议和状态转换。AI SDK 是独立项目，无需保留 旧聊天前端框架 才能使用。
 
 ### 版本与能力
 
-锁文件当前解析 `ai@6.0.264`，来自 CopilotKit 的传递依赖。核对该版本官方源码：`ToolLoopAgent` 已有工具循环、`stopWhen`、`prepareStep`、生命周期回调，`generate` / `stream` 接受取消信号与期限。默认 20 步是可配置策略，不能在迁移中又引入一个不适合长任务的固定上限。
+锁文件当前解析 `ai@6.0.264`，来自 旧聊天前端框架 的传递依赖。核对该版本官方源码：`ToolLoopAgent` 已有工具循环、`stopWhen`、`prepareStep`、生命周期回调，`generate` / `stream` 接受取消信号与期限。默认 20 步是可配置策略，不能在迁移中又引入一个不适合长任务的固定上限。
 
 - [6.0.264 ToolLoopAgent](https://github.com/vercel/ai/blob/ai%406.0.264/packages/ai/src/agent/tool-loop-agent.ts)
 - [6.0.264 配置](https://github.com/vercel/ai/blob/ai%406.0.264/packages/ai/src/agent/tool-loop-agent-settings.ts)
@@ -28,6 +28,6 @@ SDK 的循环不是可持久恢复的完整业务运行器。ChisaBot 仍要接�
 ## 完整脱离需要两步
 
 1. 替换服务端 `BuiltInAgent` / runtime 运行路径，复用现有模型连接、工具、数据库与消息格式，验证长任务、审批续跑、取消和不重复执行。
-2. 替换前端 `CopilotKitProvider` / `useAgent` 及工具渲染注册依赖，再移除相关包。已有气泡、卡片和历史数据不必因替换会话驱动而重做。
+2. 替换前端 `旧聊天前端框架Provider` / `useAgent` 及工具渲染注册依赖，再移除相关包。已有气泡、卡片和历史数据不必因替换会话驱动而重做。
 
-只做第一步仍保留 CopilotKit 的前端会话层，不能称为彻底脱离。当前未执行任何内核迁移，也没有以同任务对照证明候选更快或成功率更高。
+只做第一步仍保留 旧聊天前端框架 的前端会话层，不能称为彻底脱离。当前未执行任何内核迁移，也没有以同任务对照证明候选更快或成功率更高。

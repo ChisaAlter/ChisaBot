@@ -109,30 +109,32 @@ async function probe({ serverUrl, cookieHeader = "", fetchImpl = fetch, timeoutM
   throw lastError || loginError("invalid", "这个地址能打开，但不像 ChisaBot 服务器，请检查地址。");
 }
 
-async function login({ serverUrl, username, password, remember = true, fetchImpl = fetch }) {
+async function login({ serverUrl, username, password, remember = true, fetchImpl = fetch, timeoutMs = 8000 }) {
   const origin = normalizeServerUrl(serverUrl);
   if (!username || !password) throw loginError("auth", "请填写账号和密码。");
   const headers = { "Content-Type": "application/json", Origin: origin, Accept: "application/json" };
   let response;
+  let mode = "gateway";
   try {
     response = await fetchImpl(`${origin}/auth/login`, {
       method: "POST",
       headers,
       body: JSON.stringify({ username, password, remember: remember === true }),
       redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status === 404 || response.status === 405) {
+      response = await fetchImpl(`${origin}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ email: username, password, rememberMe: remember === true }),
+        redirect: "manual",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      mode = "better-auth";
+    }
   } catch (error) {
     throw networkError(error);
-  }
-  let mode = "gateway";
-  if (response.status === 404 || response.status === 405) {
-    mode = "better-auth";
-    response = await fetchImpl(`${origin}/api/auth/sign-in/email`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ email: username, password, rememberMe: remember === true }),
-      redirect: "manual",
-    });
   }
   if (response.status === 429) throw loginError("rate", "尝试次数过多，请稍后再试。");
   if (response.status === 401 || response.status === 400) throw loginError("auth", "账号或密码错误。");
@@ -145,17 +147,18 @@ async function login({ serverUrl, username, password, remember = true, fetchImpl
 }
 
 /** 退出网页登录（网关会话作废）。失败不影响本机清除。 */
-async function logoutSession({ serverUrl, cookieHeader, fetchImpl = fetch }) {
+async function logoutSession({ serverUrl, cookieHeader, fetchImpl = fetch, timeoutMs = 8000 }) {
   const origin = normalizeServerUrl(serverUrl);
   const response = await fetchImpl(`${origin}/auth/logout`, {
     method: "POST",
     headers: { Origin: origin, Accept: "application/json", ...(cookieHeader ? { Cookie: cookieHeader } : {}) },
     redirect: "manual",
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return response.ok;
 }
 
-async function enroll({ serverUrl, cookieHeader, info, fetchImpl = fetch }) {
+async function enroll({ serverUrl, cookieHeader, info, fetchImpl = fetch, timeoutMs = 8000 }) {
   const origin = normalizeServerUrl(serverUrl);
   const response = await fetchImpl(`${origin}/api/devices/enroll`, {
     method: "POST",
@@ -167,6 +170,7 @@ async function enroll({ serverUrl, cookieHeader, info, fetchImpl = fetch }) {
     },
     body: JSON.stringify(info || {}),
     redirect: "manual",
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status === 401) throw new Error("登录已失效，请重新登录。");
   if (response.status === 404) throw new Error("这台服务器的 ChisaBot 版本还不支持 PC 设备，请先升级服务器。");
@@ -176,10 +180,11 @@ async function enroll({ serverUrl, cookieHeader, info, fetchImpl = fetch }) {
   return body;
 }
 
-async function checkToken({ serverUrl, token, fetchImpl = fetch }) {
+async function checkToken({ serverUrl, token, fetchImpl = fetch, timeoutMs = 8000 }) {
   const origin = normalizeServerUrl(serverUrl);
   const response = await fetchImpl(`${origin}/api/devices/agent/self`, {
     headers: { "X-Device-Token": token, Origin: origin, Accept: "application/json" },
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status === 401) {
     const body = await response.json().catch(() => ({}));
@@ -189,11 +194,12 @@ async function checkToken({ serverUrl, token, fetchImpl = fetch }) {
   return { ok: true, device: (await response.json()).device };
 }
 
-async function unenroll({ serverUrl, token, fetchImpl = fetch }) {
+async function unenroll({ serverUrl, token, fetchImpl = fetch, timeoutMs = 8000 }) {
   const origin = normalizeServerUrl(serverUrl);
   const response = await fetchImpl(`${origin}/api/devices/agent/unenroll`, {
     method: "POST",
     headers: { "X-Device-Token": token, Origin: origin, Accept: "application/json" },
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return response.ok;
 }

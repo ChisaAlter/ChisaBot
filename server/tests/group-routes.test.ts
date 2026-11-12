@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
+import { AgentNotFoundError } from "../src/agents/profile-store";
 import type { AppVariables } from "../src/auth/guards";
 import {
+  createGroupConversations,
   createGroupRoutes,
   type GroupConversations,
   GroupNotFoundError,
@@ -165,5 +167,37 @@ describe("/api/groups", () => {
         })
       ).status,
     ).toBe(400);
+  });
+
+  test("QA510 P3: creating a group with a Bot id that does not exist is 400, not 500", async () => {
+    let seeded = false;
+    const service = createGroupConversations({
+      createChannel: async () => {
+        throw new AgentNotFoundError("a1-secret-id");
+      },
+      store: {
+        seedOrder: async () => {
+          seeded = true;
+        },
+      },
+    } as never);
+    const app = createGroupRoutes(service, async (context, next) => {
+      context.set("actor", {
+        id: "u-1",
+        email: "t@chisabot.test",
+        role: "admin",
+      } as never);
+      await next();
+    });
+    const response = await app.request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentIds: ["a1-secret-id", "a2"] }),
+    });
+    expect(response.status).toBe(400);
+    const body = await response.text();
+    expect(body).toContain("That Bot was not found.");
+    expect(body).not.toContain("a1-secret-id");
+    expect(seeded).toBe(false);
   });
 });

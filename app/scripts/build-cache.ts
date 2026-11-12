@@ -117,7 +117,7 @@ async function collectFiles(
 
 function tenantPackageDir(rootDir: string, env: BuildCacheEnv): string {
   const configured = env.TENANT_PACKAGE_DIR;
-  if (!configured) return join(rootDir, "examples", "fintech");
+  if (!configured) return join(rootDir, "examples", "zh-CN");
   return resolve(rootDir, "server", configured);
 }
 

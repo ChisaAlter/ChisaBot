@@ -228,6 +228,96 @@ describe("PausedCapsule", () => {
   });
 });
 
+describe("重连文字复用现有状态位置", () => {
+  const user: Message = {
+    id: "reconnect-user",
+    role: "user",
+    content: "查东京天气",
+  };
+  const tool: Message = {
+    id: "reconnect-tool",
+    role: "assistant",
+    toolCalls: [
+      {
+        id: "reconnect-search",
+        type: "function",
+        function: {
+          name: "web_search",
+          arguments: JSON.stringify({ query: "东京天气" }),
+        },
+      },
+    ],
+  };
+  const text: Message = {
+    id: "reconnect-text",
+    role: "assistant",
+    content: "我先查一下天气。",
+  };
+
+  for (const scenario of [
+    { name: "首字前", messages: [user], testId: "transcript-thinking" },
+    {
+      name: "工具正在执行",
+      messages: [user, tool],
+      testId: "chat-work-card",
+    },
+    {
+      name: "文字后的停顿",
+      messages: [user, text],
+      testId: "transcript-pause-capsule",
+    },
+  ]) {
+    test(`${scenario.name}：胶囊和读屏节点保持不变，恢复后回到原动作`, async () => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const transcript = (reconnecting: boolean) => (
+        <QueryClientProvider client={client}>
+          <ChatTranscript
+            busy
+            messages={scenario.messages}
+            reconnecting={reconnecting}
+            scrollKey={`rs-reconnect-${scenario.testId}`}
+          />
+        </QueryClientProvider>
+      );
+      const view = render(transcript(false));
+      if (scenario.testId === "transcript-pause-capsule") {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 950));
+        });
+      }
+      const capsule = view.getByTestId(scenario.testId);
+      const caption = () =>
+        scenario.testId === "chat-work-card"
+          ? capsule
+              .getAttribute("aria-label")
+              ?.replace(/，(?:展开|收起)步骤$/, "")
+          : capsule.querySelector(".rs-capsule-label")?.textContent;
+      const originalLabel = caption();
+      const screenReader = view.getByTestId("transcript-live-status");
+      const slot = capsule.parentElement;
+      const rowCount = view.container.querySelectorAll(".rs-capsule").length;
+      expect(rowCount).toBe(1);
+      await act(async () => view.rerender(transcript(true)));
+      expect(view.getByTestId(scenario.testId)).toBe(capsule);
+      expect(capsule.parentElement).toBe(slot);
+      expect(view.container.querySelectorAll(".rs-capsule")).toHaveLength(
+        rowCount,
+      );
+      expect(caption()).toBe("正在恢复连接");
+      expect(capsule.textContent).toContain("正在恢复连接");
+      expect(view.getByTestId("transcript-live-status")).toBe(screenReader);
+      expect(screenReader.textContent).toBe("正在恢复连接");
+      expect(view.getAllByRole("status")).toHaveLength(1);
+      await act(async () => view.rerender(transcript(false)));
+      expect(view.getByTestId(scenario.testId)).toBe(capsule);
+      expect(caption()).toBe(originalLabel);
+      expect(screenReader.textContent).not.toContain("正在恢复连接");
+    });
+  }
+});
+
 describe("秒数切回来不归零", () => {
   test("同一轮的开始时间只记一次：胶囊、干活卡、重挂都用它", () => {
     const first = turnStartedAt("rs-since-1", 1_000);

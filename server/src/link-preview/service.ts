@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import { computerHeaders } from "../../../shared/legacy-headers";
 import {
   BlockedUrlError,
   guardedFetch,
 } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
+import { computerHeaders } from "../../../shared/protocol-headers";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { imageDimsFor, imageKeyForUrl } from "../image-dims";

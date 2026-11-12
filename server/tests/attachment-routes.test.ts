@@ -28,7 +28,7 @@ import {
   attachments,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -104,7 +104,7 @@ async function harness() {
    */
   const threadId = `${testPrefix}-thread-${randomUUID()}`;
   await database
-    .insert(intelligenceChannelMappings)
+    .insert(chisabotChannelMappings)
     .values({ channelId, userId: memberId, threadId });
 
   const member = actorMiddleware(memberId);
@@ -1576,6 +1576,64 @@ describe("GET /:id", () => {
     expect((await colleague.request(`http://test/${id}`)).status).toBe(200);
   });
 
+  test("authorized reads report current draft state even when the immutable bytes revalidate", async () => {
+    const {
+      database: db,
+      channelId,
+      memberId,
+      threadId,
+      member,
+      stranger,
+    } = await harness();
+    const id = await uploadText(db, {
+      channelId,
+      uploadedBy: memberId,
+      name: "draft.txt",
+      text: "original file",
+    });
+    const selected: string[][] = [];
+    const app = attachmentApp(
+      databaseRecordingSelections(db, selected),
+      member,
+    );
+    const outsider = attachmentApp(db, stranger);
+
+    for (const attached of [false, true]) {
+      if (attached)
+        await markAttachmentsSent(db, { actorId: memberId, threadId }, [id]);
+      for (const method of ["GET", "HEAD"]) {
+        for (const conditional of [false, true]) {
+          selected.length = 0;
+          const response = await app.request(`http://test/${id}`, {
+            method,
+            ...(conditional ? { headers: { "If-None-Match": `"${id}"` } } : {}),
+          });
+          expect(response.status).toBe(conditional ? 304 : 200);
+          expect(response.headers.get("X-ChisaBot-Attachment-State")).toBe(
+            attached ? "attached" : "staged",
+          );
+          expect(response.headers.get("Cache-Control")).toBe(
+            "private, no-cache",
+          );
+          if (method === "HEAD" || conditional) {
+            expect(selected.flat()).not.toContain("bytes");
+            expect((await response.arrayBuffer()).byteLength).toBe(0);
+          } else {
+            expect(await response.text()).toBe("original file");
+          }
+          const forbidden = await outsider.request(`http://test/${id}`, {
+            method,
+            headers: { "If-None-Match": `"${id}"` },
+          });
+          expect(forbidden.status).toBe(404);
+          expect(
+            forbidden.headers.get("X-ChisaBot-Attachment-State"),
+          ).toBeNull();
+        }
+      }
+    }
+  });
+
   /*
    * The revalidation has to be decided on the same rule as the fetch, or a colleague holding a
    * staged id from before the send keeps a 304 that says "your copy is still good" for a file this
@@ -2731,7 +2789,7 @@ async function secondChannelFor(
   await db.insert(channelMemberships).values({ channelId, userId: memberId });
   const threadId = `${testPrefix}-thread-${randomUUID()}`;
   await db
-    .insert(intelligenceChannelMappings)
+    .insert(chisabotChannelMappings)
     .values({ channelId, userId: memberId, threadId });
   return { channelId, threadId };
 }
@@ -2897,18 +2955,23 @@ describe("loadAttachmentForTurn", () => {
 
     // Null is not a quiet skip: `resolveAttachmentParts` fails the whole turn on it rather than
     // letting the Bot answer as if the file were not there.
-    await expect(
-      resolveAttachmentParts(
-        [
-          {
-            type: "image",
-            source: { type: "url", value: attachmentUrl(id) },
-          },
-        ],
-        (partId) =>
-          loadAttachmentForTurn(db, { actorId: strangerId, threadId }, partId),
-      ),
-    ).rejects.toThrow(`Attachment "${id}" could not be loaded`);
+    const refusal = await resolveAttachmentParts(
+      [
+        {
+          type: "image",
+          source: { type: "url", value: attachmentUrl(id) },
+        },
+      ],
+      (partId) =>
+        loadAttachmentForTurn(db, { actorId: strangerId, threadId }, partId),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toContain(
+      `Attachment "${id}" could not be loaded`,
+    );
 
     // And a refused load stamps nothing: the row is still staged as far as the sweeper is
     // concerned, because nobody entitled to it has been shown it.
@@ -3476,9 +3539,12 @@ describe("markAttachmentsSent", () => {
       text: "staged by the person sending this message",
     });
 
-    await expect(
-      markAttachmentsSent(db, { actorId: memberId, threadId }, [theirs, mine]),
-    ).resolves.toBeUndefined();
+    expect(
+      await markAttachmentsSent(db, { actorId: memberId, threadId }, [
+        theirs,
+        mine,
+      ]),
+    ).toBeUndefined();
 
     expect(await attachedAtOf(db, mine)).toBeInstanceOf(Date);
     // Untouched rather than merely unrefused: the colleague's stamp still says when THEY sent it.
@@ -3514,22 +3580,22 @@ describe("markAttachmentsSent", () => {
     });
 
     // Every shape `attachmentIdFor` can produce that no `uuid` column could hold.
-    await expect(
-      markAttachmentsSent(
+    expect(
+      await markAttachmentsSent(
         untouchable,
         { actorId: "nobody", threadId: "nobody" },
         ["not-a-uuid", "", `${randomUUID()}?download=1`],
       ),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
 
     // And an empty list, which is the case the early return is named for.
-    await expect(
-      markAttachmentsSent(
+    expect(
+      await markAttachmentsSent(
         untouchable,
         { actorId: "nobody", threadId: "nobody" },
         [],
       ),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 
   /*
@@ -3548,9 +3614,16 @@ describe("markAttachmentsSent", () => {
     );
 
     const applicationName = `never_blocks_${randomUUID()}`;
-    await expect(
-      waitForBlockedSession(applicationName, () => false, 50),
-    ).rejects.toThrow(applicationName);
+    const refusal = await waitForBlockedSession(
+      applicationName,
+      () => false,
+      50,
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as Error).message).toContain(applicationName);
   });
 });
 

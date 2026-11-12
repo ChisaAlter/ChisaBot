@@ -1,4 +1,9 @@
-import { IconPencil, IconRefresh } from "@tabler/icons-react";
+import {
+  IconArrowBackUp,
+  IconPencil,
+  IconRefresh,
+  IconX,
+} from "@tabler/icons-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -9,7 +14,10 @@ import {
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, StatusGlyph } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useMessageActions } from "@/lib/conversations/regenerate";
+import {
+  type EditableAttachment,
+  useMessageActions,
+} from "@/lib/conversations/regenerate";
 
 /**
  * 消息下面的「重新生成」「编辑」和原地编辑框（DESIGN.md §67，CB-042）。频道聊天用。
@@ -123,21 +131,43 @@ export function EditAction({ onEdit }: { onEdit: () => void }) {
   );
 }
 
+/** 用户消息下面的「撤回」：从这条消息起撤掉，不立即重发。 */
+export function WithdrawAction({ messageId }: { messageId: string }) {
+  const actions = useMessageActions();
+  if (!actions?.withdraw) return null;
+  const withdraw = actions.withdraw;
+  return (
+    <PillAction
+      held={!actions.canAct}
+      icon={<IconArrowBackUp className="size-3.5" />}
+      label="撤回"
+      pending="撤回中…"
+      run={() => withdraw(messageId)}
+      testId="msg-withdraw"
+    />
+  );
+}
+
 /**
- * 用户气泡原地变成的编辑框：文字框（自动长高）+ 一行说明 + 取消 / 发送（§2 状态机：发送中… → 成功后这条
+ * 用户气泡原地变成的编辑框：文字框（自动长高）+ 已有附件移除条 + 一行说明 + 取消 / 发送（§2 状态机：发送中… → 成功后这条
  * 就被新的一条替换，编辑框随之卸载）。Enter 发送、Shift+Enter 换行、Esc 取消；输入法组字时 Enter 不发。
  */
 export function MessageEditor({
+  attachments,
   initial,
   messageId,
   onClose,
 }: {
+  attachments?: readonly EditableAttachment[] | undefined;
   initial: string;
   messageId: string;
   onClose: () => void;
 }) {
   const actions = useMessageActions();
   const [text, setText] = useState(initial);
+  const [removedIndices, setRemovedIndices] = useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
   const ref = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     const element = ref.current;
@@ -145,16 +175,24 @@ export function MessageEditor({
     element.focus();
     element.setSelectionRange(element.value.length, element.value.length);
   }, []);
+  const keptAttachments = (attachments ?? []).filter(
+    (item) => !removedIndices.has(item.partIndex),
+  );
   const send = useAsyncAction(
     async () => {
       if (!actions) throw new Error("现在不能重发。");
-      await actions.edit(messageId, text);
+      await actions.edit(
+        messageId,
+        text,
+        removedIndices.size > 0 ? removedIndices : undefined,
+      );
       onClose();
     },
     { errorToast: FAILED },
   );
-  const blocked =
-    !text.trim() || text.trim() === initial.trim() || !actions?.canAct;
+  const hasContent = Boolean(text.trim()) || keptAttachments.length > 0;
+  const hasChanges = text.trim() !== initial.trim() || removedIndices.size > 0;
+  const blocked = !hasContent || !hasChanges || !actions?.canAct;
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -172,6 +210,33 @@ export function MessageEditor({
   };
   return (
     <div className="chat-msg-editor" data-testid="msg-editor">
+      {keptAttachments.length > 0 ? (
+        <div
+          className="chat-msg-editor-attachments"
+          data-testid="msg-editor-attachments"
+        >
+          {keptAttachments.map((item) => (
+            <span className="chat-msg-editor-chip" key={item.partIndex}>
+              <span className="truncate">{item.label}</span>
+              <button
+                aria-label={`移除附件 ${item.label}`}
+                className="chat-msg-editor-chip-remove"
+                data-testid="msg-editor-remove-attachment"
+                onClick={() =>
+                  setRemovedIndices((previous) => {
+                    const next = new Set(previous);
+                    next.add(item.partIndex);
+                    return next;
+                  })
+                }
+                type="button"
+              >
+                <IconX className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {/* 刷新会丢掉正在改的这一版：`lib/activity.ts` 的「有新版本」确认只认带这个标记的输入。 */}
       <Textarea
         aria-label="编辑消息"
@@ -179,13 +244,20 @@ export function MessageEditor({
         data-unsent-watch
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
+        placeholder={
+          keptAttachments.length === 0 && (attachments?.length ?? 0) > 0
+            ? "输入文字后发送，或取消后点「撤回」…"
+            : undefined
+        }
         ref={ref}
         rows={2}
         value={text}
       />
       <div className="chat-msg-editor-bar">
         <span className="chat-msg-editor-hint">
-          {"发送后，这条之后的对话会换成新的回答"}
+          {!hasContent && (attachments?.length ?? 0) > 0
+            ? "补一句文字后发送，或取消后点「撤回」删除整条消息"
+            : "发送后，这条之后的对话会换成新的回答"}
         </span>
         <Button
           onClick={onClose}

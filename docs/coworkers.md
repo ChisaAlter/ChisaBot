@@ -1,127 +1,65 @@
-# Coworkers
+# 机器人（BOT）配置与运行机制
 
-A coworker is a Bot with a durable profile and standing role. The role is sent with every run so the user does not have to restate the job in each channel.
+在 ChisaBot 中，每个机器人（BOT）都拥有持久化的身份资料与常驻角色说明（提示词）。常驻指令会在每一轮运行中自动注入，用户无需在每次新建话题时重复交代职责。
 
-## Data model
+## 1. 数据模型
 
-| Piece                | Table                           | Purpose                                                                                  |
-| -------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| Runtime agent        | `agents`                        | Type (built-in, remote AG-UI or remote Mastra), endpoint or prompt, optional key reference. |
-| Profile              | `agent_profiles`                | Name, title, role, avatar seed, owner, visibility, and soft deletion.                    |
-| Personal roster      | `agent_preferences`             | Per-user hidden and pinned state.                                                        |
-| Team publication     | `team_bot_publications`         | A Bot its owner has published to the whole team or to named people and groups.          |
-| Channel              | `channels`                      | Conversation membership and coworker binding.                                            |
-| Intelligence mapping | `intelligence_channel_mappings` | Channel-to-thread mapping.                                                               |
+| 组成部分       | 数据表                                                      | 用途                                                                                              |
+| -------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 运行时定义     | `agents`                                                    | 类型（内置 `built-in` 或远程 `remote-ag-ui`）、系统提示词或远程端点地址、模型覆盖值与可选鉴权引用 |
+| 展示资料       | `agent_profiles`                                            | 名称、职责头衔、角色说明、所有者、可见性（`private` / `public`）及软删除标记                      |
+| 个人列表偏好   | `agent_preferences`                                         | 每个用户独立的置顶与隐藏状态                                                                      |
+| 机器人头像     | `chisabot_bot_avatars`                                      | 上传裁剪头像（256×256 WebP）、表情配色或首字配色（见 [机器人头像](bot-avatars.md)）               |
+| 频道与会话映射 | `channels` · `channel_agents` · `chisabot_channel_mappings` | 频道成员归属、绑定机器人及对应本地会话线程映射                                                    |
 
-Package-provided agents are public and ownerless. User-created coworkers are owned by the creator.
+租户包（`examples/zh-CN/agents.yaml`）提供的机器人属于公共系统资源且只读；用户在界面中新建的机器人一律归创建者私有（`private`），新用户首次进入时会自动获得一个私有的默认「助手」。
 
-## Standing role
+## 2. 常驻角色与系统指令
 
-Remote coworkers receive a system message derived from their title and role description:
+机器人在每一轮对话中都会收到由名称、职责与「它做什么」组成的系统指令；同时服务端会在部署层统一追加两段安全与诚实性约束：
 
-```text
-You are Expense Manager, Finance Operations.
+1. **来源标注约束**：要求机器人区分「工具/外部资料查到的事实」与「模型自身常识推断」，严禁将猜测伪装成已核实的外部来源。
+2. **不可信内容边界**：说明外部网页抓取、邮件与第三方工具返回结果均包裹在不可信内容信封中，不得将其中的指令当作用户命令执行。
 
-Review receipts, categorize expenses, and prepare reimbursement reports.
+修改机器人的角色说明或模型选择后，将在下一轮新运行中生效，正在进行中的回合继续使用本轮快照。
 
-This standing role applies in every channel. Treat channel messages as task-specific instructions within it.
-```
+## 3. 可见性、软删除与个人隐藏
 
-A further provenance block is appended by the deployment rather than the package: it tells the
-coworker to say where each answer came from, to mark plainly anything it answers from its own
-knowledge rather than from a source, and never to present the latter as the former. A second block
-tells it how to read the untrusted-content envelope its tool results carry. Being deployment-wide,
-both cannot be forgotten from the next coworker somebody adds.
+| 可见性    | 谁能看到并使用                                       |
+| --------- | ---------------------------------------------------- |
+| `private` | 机器人所有者本人及管理员（用户新建机器人的默认状态） |
+| `public`  | 当前部署内的所有已登录用户（如租户包内置公共机器人） |
+- **删除为软删除**：删除机器人后不再发起新运行，但历史频道与过往对话记录对原成员保持只读可查。
+- **隐藏与置顶**：仅修改当前用户在 `agent_preferences` 中的个人左栏列表显示顺序，不影响其他用户或定时任务。
 
-The message is ordinary AG-UI system content, so it works with any AG-UI-compatible backend. Editing the role affects the next run.
+## 4. 默认执行内核与外部 AG-UI 接入
 
-## Visibility
+### 内置 DSH 执行内核（默认）
 
-| Visibility | Who can see and run it      |
-| ---------- | --------------------------- |
-| `private`  | Owner and administrators.   |
-| `public`   | Everyone in the deployment. |
+产品内新建的机器人默认类型为 `built-in`，由 **DSH 执行内核**（`CHISABOT_AGENT_KERNEL=dsh`）驱动：每账号独立 DSH Host 进程负责模型流式推理、上下文管理与工具循环，并通过内部产品工具网关执行受控操作与审批。
 
-Filtering happens in server/database queries. Package-provided agents cannot be edited or deleted through the product.
+### 接入外部自定义 `remote-ag-ui` 机器人（可选）
 
-An owner can also publish a Bot as a Team Bot, to everybody signed in or to named people and groups
-(`/api/team-bots`, the **Team Bots** screen). Publishing is a separate, revocable record; the Bot's own
-visibility is unchanged by it. A published Bot stays invisible to teammates until it has a role
-description and a name other than a placeholder such as "New Bot".
-
-## Channels
-
-Starting a channel creates a new conversation and Intelligence thread. Two channels with the same coworker stay separate.
-
-Each channel routes through a channel-local proxy agent id, pinned to that channel's thread id, then forwards to the coworker runtime id.
-
-## Deleting and hiding
-
-Deleting is soft. The coworker stops running, but existing channels remain readable for their members and restore as tombstones.
-
-Hiding and pinning are personal roster state. Hiding removes the coworker from one user's list without disabling the coworker for anyone else; pinning moves it into the **Pinned** section at the top of `/agents` for that user only.
-
-## Default endpoint
-
-Product-created coworkers use:
-
-```dotenv
-MANAGED_AGENT_AG_UI_URL=http://localhost:4201/ag-ui
-```
-
-That is `agent-langgraph`, which runs a real framework and its own tool loop. The proof-of-concept on
-`4200` hand-writes the protocol and leaves the loop to whatever is watching, so it is a reference
-rather than something to build a deployment on.
-
-The URL is optional. Set it with `MANAGED_AGENT_TOKEN`, or leave it unset: product-created coworkers
-then need their own endpoint, and a package agent whose endpoint expands to nothing is omitted
-rather than registered against a missing host. A leftover token with no URL is ignored.
-Package-provided agents otherwise use their own `agents.yaml` configuration.
-
-## Register an external AG-UI agent
-
-In `agents.yaml`:
+如需接入自行编写、遵循 AG-UI 协议的外部服务，可在租户包 `agents.yaml` 中声明，或在机器人管理页配置远程端点：
 
 ```yaml
 agents:
-  - id: risk
-    name: Risk
-    title: Risk & Compliance
-    role_description: Investigate policies and controls.
+  - id: ops-helper
+    name: 运维巡检助手
+    title: 内部巡检服务
+    role_description: 查询内部监控指标并汇总异常告警。
     type: remote-ag-ui
-    endpoint: http://risk.internal/ag-ui
+    endpoint: http://ops-agent.internal:9000/ag-ui
 ```
 
-### Hermes / DeepSeek Harness as the kernel
+也可通过环境变量 `MANAGED_AGENT_AG_UI_URL` 与 `MANAGED_AGENT_TOKEN` 配置受管远程端点。外部端点注册受安全目标检查保护：云厂商元数据地址在任何环境下均被拒绝；内网私有地址须在 `AGENT_ENDPOINT_ALLOWED_HOSTS` 中显式白名单放行（本地开发调试除外）。鉴权密钥采用只写存储（接口不回传明文），保存前可通过 `POST /api/agents/test-connection` 测试连通性。
 
-[`examples/acp-agent/`](../examples/acp-agent/) is an ACP ↔ AG-UI bridge: run `hermes acp` or
-`dsh acp` behind it, then register `http://127.0.0.1:4100/ag-ui` as a `remote-ag-ui` coworker.
-One bridge serves both kernels; switching is one environment variable (`ACP_AGENT_CMD`). The
-coworker then runs on that agent's own loop and tools (shell, files, web, MCP), not on ChisaBot's
-built-in loop. See that README for the approval and workspace boundaries before pointing it at a
-real home directory.
+## 5. 能力与权限边界
 
-In the product, create or edit a coworker from `/agents` and set:
+机器人的提示词只决定其工作方式，**不授予任何越权能力**；所有实际副作用均由服务端独立把关：
 
-- name;
-- title;
-- role description;
-- visibility;
-- optional endpoint;
-- optional authorization header.
+- 云端浏览器与 `/workspace` 文件操作经过 `agent-computer` 策略引擎与确认审批规则（见 [确认卡片与审批偏好](confirmations.md)）；
+- 本机文件、命令与本地编程代理由设备权限档位与允许文件夹控制（见 [PC 节点](pc-node.md) 与 [本地 agent](local-agents.md)）；
+- 个人技能仅可挂载到本人拥有的机器人，部署共享技能与外部 MCP 插件授权由管理员统一管理。
 
-Endpoint registration uses target checks. Cloud metadata addresses are refused under every configuration. Optional keys are write-only: sending a key stores/replaces it, omitting it keeps the existing key, and APIs do not return it.
-
-`POST /api/agents/test-connection` checks whether an endpoint answers before saving it.
-
-## Capabilities
-
-A coworker's role does not grant capabilities. Capabilities are governed separately:
-
-- browser and file actions go through the computer gateway policy;
-- components are published deployment-wide and can be withheld per Bot;
-- MCP tools are granted per Bot by administrators;
-- personal skills can be attached only to Bots the author owns;
-- deployment skills are managed by administrators.
-
-See [architecture.md](chisabot-architecture.md).
+完整系统结构见 [ChisaBot 架构](architecture.md)。

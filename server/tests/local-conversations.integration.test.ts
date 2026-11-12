@@ -546,9 +546,14 @@ suite("local conversations on a dedicated PostgreSQL database", () => {
     expect(await backend.runner.isRunning({ threadId: pausedThread })).toBe(
       false,
     );
-    await expect(
-      collect(backend.runner.run({ threadId: pausedThread, agent, input })),
-    ).rejects.toMatchObject({ status: 409 });
+    // Await the runner directly so Bun's async matcher does not hold the SQL rollback open.
+    const reusedRun = await collect(
+      backend.runner.run({ threadId: pausedThread, agent, input }),
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(reusedRun).toMatchObject({ status: 409 });
     expect(await backend.runner.isRunning({ threadId: pausedThread })).toBe(
       false,
     );

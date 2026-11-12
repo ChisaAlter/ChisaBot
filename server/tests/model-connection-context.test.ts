@@ -125,7 +125,7 @@ test("routine turns retain their built connection through asynchronous execution
     return active;
   };
   const run = createTurnRunner({
-    intelligence: {
+    conversations: {
       getOrCreateThread: async () => ({}),
       getThreadMessages: async () => ({ messages: [] }),
       acquireThreadLease: async () => ({}),

@@ -160,6 +160,39 @@ const everyIndexName = (snapshot: Snapshot) =>
  * snapshot pair moves has to be named by a statement in the file, and every statement in the file
  * has to show up in the snapshot pair.
  */
+const tableRenames = (sql: string): Array<[string, string]> => {
+  const direct = quoted(
+    sql,
+    /ALTER TABLE (?:IF EXISTS )?(?:"?public"?\.)?"([^"]+)" RENAME TO "([^"]+)"/gi,
+  ).map(([from, to]) => [from!, to!] as [string, string]);
+  if (!/ALTER TABLE public\.%I RENAME TO %I/i.test(sql)) return direct;
+  const valuesBlock = sql.match(
+    /VALUES\s*([\s\S]*?)\)\s*AS\s*names\s*\(\s*previous_name\s*,\s*current_name\s*\)/i,
+  )?.[1];
+  if (!valuesBlock) return direct;
+  const looped = [
+    ...valuesBlock.matchAll(/\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)/g),
+  ].map((match) => [match[1]!, match[2]!] as [string, string]);
+  return [...direct, ...looped];
+};
+
+const indexPrefixRenames = (sql: string): Array<[string, string]> =>
+  [
+    ...sql.matchAll(
+      /ALTER INDEX public\.%I RENAME TO %I[\s\S]*?replace\(\s*[^,]+\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)/gi,
+    ),
+  ].map((match) => [match[1]!, match[2]!]);
+
+const applyPrefixRename = (
+  name: string,
+  prefixes: Array<[string, string]>,
+): string => {
+  for (const [from, to] of prefixes) {
+    if (name.startsWith(from)) return `${to}${name.slice(from.length)}`;
+  }
+  return name;
+};
+
 const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
   const created = quoted(
     sql,
@@ -168,6 +201,10 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
   const dropped = quoted(sql, /DROP TABLE (?:IF EXISTS )?"([^"]+)"/gi).map(
     ([table]) => table!,
   );
+  const renamed = tableRenames(sql);
+  const renamedFrom = new Set(renamed.map(([from]) => from));
+  const renamedTo = new Set(renamed.map(([, to]) => to));
+  const indexPrefixes = indexPrefixRenames(sql);
   /*
    * The third capture is everything the statement says after the name — the type, and whatever
    * `DEFAULT` and `NOT NULL` follow it. See {@link declared}: the name alone says a column arrived
@@ -194,8 +231,19 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
   const is = tableNames(after);
   const problems: string[] = [];
 
+  for (const [from, to] of renamed) {
+    if (!was.has(from) || is.has(from))
+      problems.push(
+        `the migration renames "${from}" to "${to}", the snapshot does not drop "${from}"`,
+      );
+    if (!is.has(to) || was.has(to))
+      problems.push(
+        `the migration renames "${from}" to "${to}", the snapshot does not add "${to}"`,
+      );
+  }
+
   for (const table of is)
-    if (!was.has(table) && !created.includes(table))
+    if (!was.has(table) && !created.includes(table) && !renamedTo.has(table))
       problems.push(
         `the snapshot adds "${table}", the migration never creates it`,
       );
@@ -205,7 +253,7 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
         `the migration creates "${table}", the snapshot does not add it`,
       );
   for (const table of was)
-    if (!is.has(table) && !dropped.includes(table))
+    if (!is.has(table) && !dropped.includes(table) && !renamedFrom.has(table))
       problems.push(
         `the snapshot drops "${table}", the migration never drops it`,
       );
@@ -216,14 +264,25 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
       );
 
   /*
-   * Only tables that survive the migration. Dropping a table takes its columns and indexes with it
-   * without a statement naming any of them, and demanding one would be demanding SQL nobody writes.
+   * Tables that survive the migration — either under the same name or renamed in place. Dropping a
+   * table takes its columns and indexes with it without a statement naming any of them, whereas an
+   * in-place rename must keep its columns and indexes accounted for.
    */
-  for (const table of [...is].filter((name) => was.has(name))) {
-    const columnsWas = columnNames(before, table);
+  const survivingPairs: Array<[string, string]> = [
+    ...[...is]
+      .filter((name) => was.has(name))
+      .map((name) => [name, name] as [string, string]),
+    ...renamed.filter(([from, to]) => was.has(from) && is.has(to)),
+  ];
+
+  for (const [beforeTable, table] of survivingPairs) {
+    const columnsWas = columnNames(before, beforeTable);
     const columnsIs = columnNames(after, table);
     const named = (list: string[][], column: string) =>
-      list.some(([on, which]) => on === table && which === column);
+      list.some(
+        ([on, which]) =>
+          (on === table || on === beforeTable) && which === column,
+      );
 
     for (const column of columnsIs)
       if (!columnsWas.has(column) && !named(columnsAdded, column))
@@ -236,12 +295,18 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
           `the snapshot drops "${table}"."${column}", the migration never drops it`,
         );
     for (const [on, column] of columnsAdded)
-      if (on === table && !(columnsIs.has(column!) && !columnsWas.has(column!)))
+      if (
+        (on === table || on === beforeTable) &&
+        !(columnsIs.has(column!) && !columnsWas.has(column!))
+      )
         problems.push(
           `the migration adds "${table}"."${column}", the snapshot does not add it`,
         );
     for (const [on, column] of columnsDropped)
-      if (on === table && !(columnsWas.has(column!) && !columnsIs.has(column!)))
+      if (
+        (on === table || on === beforeTable) &&
+        !(columnsWas.has(column!) && !columnsIs.has(column!))
+      )
         problems.push(
           `the migration drops "${table}"."${column}", the snapshot does not drop it`,
         );
@@ -252,7 +317,7 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
      * twice would name a single mistake in two sentences.
      */
     for (const [on, column, tail] of columnsAdded) {
-      if (on !== table) continue;
+      if (on !== table && on !== beforeTable) continue;
       const added = columnIn(after, table, column!);
       if (!added) continue;
       const statement = declared(tail ?? "");
@@ -266,18 +331,31 @@ const disagreements = (sql: string, before: Snapshot, after: Snapshot) => {
         );
     }
 
-    const indexesWas = indexNames(before, table);
+    const indexesWas = indexNames(before, beforeTable);
     const indexesIs = indexNames(after, table);
+    const renamedWas = new Set(
+      [...indexesWas].map((idx) => applyPrefixRename(idx, indexPrefixes)),
+    );
     for (const index of indexesIs)
-      if (!indexesWas.has(index) && !indexesCreated.includes(index))
+      if (
+        !indexesWas.has(index) &&
+        !renamedWas.has(index) &&
+        !indexesCreated.includes(index)
+      )
         problems.push(
           `the snapshot adds index "${index}" on "${table}", the migration never creates it`,
         );
-    for (const index of indexesWas)
-      if (!indexesIs.has(index) && !indexesDropped.includes(index))
+    for (const index of indexesWas) {
+      const mapped = applyPrefixRename(index, indexPrefixes);
+      if (
+        !indexesIs.has(index) &&
+        !indexesIs.has(mapped) &&
+        !indexesDropped.includes(index)
+      )
         problems.push(
-          `the snapshot drops index "${index}" on "${table}", the migration never drops it`,
+          `the snapshot drops index "${index}" on "${beforeTable}", the migration never drops it`,
         );
+    }
   }
 
   const indexes = everyIndexName(after);

@@ -70,6 +70,12 @@ export function AgentsRailCard() {
             <span className="live-panel-title">{"Agent 管理"}</span>
           </button>
         </h3>
+        <Link
+          className="text-[12px] font-medium text-primary underline-offset-2 hover:underline"
+          to="/settings/agent-providers"
+        >
+          {"提供方设置"}
+        </Link>
       </header>
       {collapsed ? null : <AgentsRailBody />}
     </article>

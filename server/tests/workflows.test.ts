@@ -27,6 +27,7 @@ import {
 } from "../src/workflows/policy";
 import { loadPresets } from "../src/workflows/presets";
 import type {
+  RunEventInput,
   RunState,
   StoredRun,
   WorkflowStore,
@@ -271,13 +272,23 @@ function memoryStore() {
       [...runs.values()].filter(
         (r) => r.status === "queued" || r.status === "running",
       ).length,
-    saveRun: async (id: string, patch: Partial<StoredRun>) => {
+    saveRun: async (
+      id: string,
+      patch: Partial<StoredRun>,
+      noticeEvent?: RunEventInput,
+    ) => {
       const run = runs.get(id)!;
       runs.set(id, {
         ...run,
         ...structuredClone(patch),
         updatedAt: new Date(),
       });
+      if (noticeEvent)
+        events.push({
+          runId: id,
+          ...noticeEvent,
+          stepId: noticeEvent.stepId ?? null,
+        });
     },
     transitionRun: async (
       id: string,
@@ -308,6 +319,7 @@ function memoryStore() {
       id: string,
       staleBefore: Date,
       patch: Partial<StoredRun>,
+      noticeEvent?: RunEventInput,
     ) => {
       const run = runs.get(id);
       if (
@@ -322,6 +334,12 @@ function memoryStore() {
         status: "failed",
         updatedAt: new Date(),
       });
+      if (noticeEvent)
+        events.push({
+          runId: id,
+          ...noticeEvent,
+          stepId: noticeEvent.stepId ?? null,
+        });
       return true;
     },
     deleteRun: async (_o: string, id: string) => runs.delete(id),
@@ -407,6 +425,9 @@ describe("engine", () => {
     expect(seen[0]!.split("|")[1]).toBe("workflow");
     expect(t.deleted).toEqual(["c1", "c2"]);
     expect(done.state.stepsRun).toBe(2);
+    expect(
+      t.events.filter((e) => e.runId === run.id && e.kind === "run_finished"),
+    ).toHaveLength(1);
   });
 
   test("unknown bot is refused before anything runs", async () => {
@@ -476,6 +497,16 @@ describe("engine", () => {
     const waiting = await settle(t.runs, run.id);
     expect(waiting.status).toBe("waiting_approval");
     expect(waiting.state.steps[1]!.status).toBe("waiting_approval");
+    expect(
+      t.events.filter(
+        (e) => e.runId === run.id && e.kind === "approval_requested",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        stepId: "two",
+        message: "「第二步」开始前需要你批准",
+      }),
+    ]);
     await t.engine.approve({
       ownerUserId: "u",
       runId: run.id,
@@ -813,6 +844,9 @@ describe("engine concurrency (S5)", () => {
     expect(result).toEqual({ failed: 1, deferred: 1 });
     expect(t.runs.get(alive)!.status).toBe("running");
     expect(t.runs.get(dead)!.status).toBe("failed");
+    expect(
+      t.events.filter((e) => e.runId === dead && e.kind === "run_failed"),
+    ).toHaveLength(1);
   });
 });
 
@@ -991,6 +1025,51 @@ describe("rework loops, stateful retry, gates, and chat control tools", () => {
     expect(done.output).toBe("带引用的终稿");
     expect(stepTwoTurns).toBe(2);
     expect(done.state.steps[1]!.gateResult?.decision).toBe("pass");
+  });
+
+  test("human Gate escalation persists the same actionable approval event as a normal approval", async () => {
+    const t = engineWith(async (input) => {
+      if (input.initiator?.id.endsWith("/two")) {
+        const tools = await restrictToolsForWorkflow(
+          input.initiator,
+          async () => [],
+        )();
+        const gateTool = tools.find(
+          (tool) => tool.name === "submit_gate_result",
+        );
+        if (!gateTool) throw new Error("Gate tool missing");
+        await gateTool.execute({
+          decision: "human",
+          summary: "需要确认发布范围",
+          actionRequired: "请确认接收人",
+        });
+      }
+      return { replyText: "已整理内容" };
+    });
+    const run = await t.engine.start({
+      ownerUserId: "u",
+      workflowId: "w",
+      source: "page",
+      fallbackBotId: "bot1",
+      inputs: { topic: "发布" },
+      definition: workflowDefinitionSchema.parse({
+        ...base,
+        steps: [base.steps[0], { ...base.steps[1], gate: { enabled: true } }],
+      }),
+    });
+    const waiting = await settle(t.runs, run.id);
+    expect(waiting.status).toBe("waiting_approval");
+    expect(waiting.state.steps[1]?.status).toBe("waiting_approval");
+    expect(
+      t.events.filter(
+        (e) => e.runId === run.id && e.kind === "approval_requested",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        stepId: "two",
+        message: "「第二步」请求你介入审批：请确认接收人",
+      }),
+    ]);
   });
 
   test("onFailure: continue allows downstream steps to proceed when a step fails", async () => {

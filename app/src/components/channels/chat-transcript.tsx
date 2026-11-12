@@ -1,6 +1,7 @@
 import type { ActivityMessage, Message } from "@ag-ui/core";
 import {
   IconAlertTriangle,
+  IconArrowBackUp,
   IconBox,
   IconChevronDown,
   IconClock,
@@ -48,6 +49,7 @@ import {
   EditAction,
   MessageEditor,
   RegenerateAction,
+  WithdrawAction,
 } from "@/components/chat/message-actions";
 import { QueuedMessages } from "@/components/chat/queued-messages";
 import { ScheduleFiredRow } from "@/components/chat/schedule-row";
@@ -143,11 +145,15 @@ import {
   workCallInterrupted,
 } from "@/lib/chat/work-steps";
 import { useThreadConfirmations } from "@/lib/confirmations";
-import { isEditableUserText } from "@/lib/conversations/regenerate";
+import {
+  type EditableAttachment,
+  isEditableUserText,
+} from "@/lib/conversations/regenerate";
 import { useRenderUiPreload } from "@/lib/conversations/render-ui-preload";
 import { useReadMark } from "@/lib/conversations/thread-inbox";
 import {
   type CardChecks,
+  getCardCheck,
   isLineOnlyRender,
   pickToolRenderer,
   registeredCardChecks,
@@ -187,6 +193,7 @@ import { ToolLine } from "./tool-line";
 
 type ChatTranscriptProps = {
   busy?: boolean;
+  reconnecting?: boolean;
   /** 这段对话的机器人：在想 / 在干活那一行用它的形象头像代替三个点（DESIGN.md §81）。 */
   agentId?: string;
   /** 滚动位置记在哪（DESIGN.md §88）：频道 id。 */
@@ -235,6 +242,8 @@ type ChatTranscriptProps = {
    * 和 `onRetry` 分开：那条消息已经在历史里，重试是「从它那里重发」，不是把草稿里的字再发一次。
    */
   onRetryUnanswered?: () => void;
+  /** 撤回最后一轮没有收到回答的用户消息（尤其是图片被网关隐私策略拦截、重试无效时的一键逃生口）。 */
+  onWithdraw?: () => Promise<void> | void;
   /** 会话最上方的一句提示（例如较早的消息读不到），在第一条消息之前。 */
   topNotice?: React.ReactNode;
   /** 换了备用模型的轮次（开启那一轮的用户消息 id → 一句说明），那一轮末尾一行淡色小字（DESIGN.md §61）。 */
@@ -380,15 +389,11 @@ function RestoringTranscript() {
  * It borrows the shimmer a running tool line uses, so "working on it" reads the same whether the
  * work is a tool call or a model that has not spoken yet.
  */
-function Thinking({ since }: { since: number }) {
+function Thinking({ since, label }: { since: number; label: string }) {
   // 回复显示①：不再是带三个跳点的「思考中」气泡，而是和干活卡同一个状态胶囊（转圈 + 动作 + 已用秒数）。
   // 读屏读到的「思考中」在对话末尾那个一直挂着的 role=status 里（transcript-live-status），胶囊自己不带。
   return (
-    <StatusCapsule
-      label={"思考中"}
-      since={since}
-      testId="transcript-thinking"
-    />
+    <StatusCapsule label={label} since={since} testId="transcript-thinking" />
   );
 }
 
@@ -407,13 +412,25 @@ function Thinking({ since }: { since: number }) {
  */
 function Stopped({
   onRetry,
+  onWithdraw,
   reason,
 }: {
   onRetry?: () => void;
+  onWithdraw?: () => Promise<void> | void;
   reason: string;
 }) {
   const friendly = friendlyError(reason);
   const [open, setOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const showRetry = Boolean(onRetry && friendly.retryable);
+  const handleWithdraw = () => {
+    if (!onWithdraw || withdrawing) return;
+    const result = onWithdraw();
+    if (result && typeof (result as Promise<unknown>).finally === "function") {
+      setWithdrawing(true);
+      void (result as Promise<unknown>).finally(() => setWithdrawing(false));
+    }
+  };
   return (
     <div
       className="chat-error-card"
@@ -444,11 +461,31 @@ function Stopped({
           </>
         ) : null}
       </div>
-      {onRetry && friendly.retryable ? (
-        <button className="chat-error-retry" onClick={onRetry} type="button">
-          <IconRefresh className="size-3.5" />
-          {"重试"}
-        </button>
+      {onWithdraw || showRetry ? (
+        <div className="chat-error-actions">
+          {onWithdraw ? (
+            <button
+              className={showRetry ? "chat-error-withdraw" : "chat-error-retry"}
+              data-testid="transcript-withdraw"
+              disabled={withdrawing}
+              onClick={handleWithdraw}
+              type="button"
+            >
+              <IconArrowBackUp className="size-3.5" />
+              {withdrawing ? "撤回中…" : showRetry ? "撤回" : "撤回这条消息"}
+            </button>
+          ) : null}
+          {showRetry ? (
+            <button
+              className="chat-error-retry"
+              onClick={onRetry}
+              type="button"
+            >
+              <IconRefresh className="size-3.5" />
+              {"重试"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -2006,6 +2043,7 @@ type TranscriptMessageProps = {
   delay: number;
   /** 用户自己发的一条：下面带「编辑」，点了气泡原地变编辑框（DESIGN.md §67）。 */
   editable?: boolean;
+  attachments?: readonly SentAttachment[] | undefined;
   memories?: readonly MemoryPillItem[] | undefined;
   messageId?: string;
   /** Hark 式回复引用（`╭─` + 原话胶囊）：多条消息插话或跨步骤回应时指向对应的用户消息。 */
@@ -2016,6 +2054,47 @@ type TranscriptMessageProps = {
   /** compactTurns：开场一句 / 过程话 / 结果。过程话画成一行淡色小字，开场和过程都没有复制。 */
   tone?: "lead" | "step" | "final" | undefined;
 };
+
+function sameSentAttachments(
+  a: readonly SentAttachment[] | undefined,
+  b: readonly SentAttachment[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return (a?.length ?? 0) === (b?.length ?? 0);
+  if (a.length !== b.length) return false;
+  return a.every((attachment, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      attachment.id === other.id &&
+      attachment.attachmentId === other.attachmentId &&
+      attachment.url === other.url &&
+      attachment.filename === other.filename &&
+      attachment.modality === other.modality &&
+      attachment.width === other.width &&
+      attachment.height === other.height
+    );
+  });
+}
+
+function toEditableAttachments(
+  attachments: readonly SentAttachment[] | undefined,
+): EditableAttachment[] | undefined {
+  if (!attachments || attachments.length === 0) return undefined;
+  const items: EditableAttachment[] = [];
+  for (const attachment of attachments) {
+    const colon = attachment.id.lastIndexOf(":");
+    const partIndex = colon >= 0 ? Number(attachment.id.slice(colon + 1)) : NaN;
+    if (!Number.isInteger(partIndex) || partIndex < 0) continue;
+    items.push({
+      partIndex,
+      label:
+        attachment.filename ??
+        (attachment.modality === "image" ? "图片附件" : "文件附件"),
+    });
+  }
+  return items.length > 0 ? items : undefined;
+}
 
 function sameMemories(
   a: readonly MemoryPillItem[] | undefined,
@@ -2054,12 +2133,14 @@ function sameTranscriptMessage(
     prev.role === next.role &&
     prev.text === next.text &&
     prev.tone === next.tone &&
+    sameSentAttachments(prev.attachments, next.attachments) &&
     sameMemories(prev.memories, next.memories)
   );
 }
 
 const TranscriptMessage = memo(function TranscriptMessage({
   animate = false,
+  attachments,
   canRegenerate = false,
   commandNames = "",
   delay,
@@ -2117,6 +2198,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
       <MessageRow align={align}>
         <MessageContent className="w-full">
           <MessageEditor
+            attachments={toEditableAttachments(attachments)}
             initial={rawSaid}
             messageId={messageId}
             onClose={() => setEditing(false)}
@@ -2223,6 +2305,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
                   text={said}
                 />
                 <EditAction onEdit={() => setEditing(true)} />
+                <WithdrawAction messageId={messageId} />
               </div>
             ) : null
           ) : !text.trim() ? null : tone === "lead" ? (
@@ -2334,6 +2417,8 @@ const ATTACHMENT_URL_PREFIX = attachmentUrl("");
 type AttachmentRowProps = {
   attachments: readonly SentAttachment[];
   delay: number;
+  messageId?: string | undefined;
+  standalone?: boolean | undefined;
 };
 
 /**
@@ -2359,37 +2444,51 @@ export function sameAttachmentRow(
   previous: AttachmentRowProps,
   next: AttachmentRowProps,
 ): boolean {
-  if (previous.delay !== next.delay) {
+  if (
+    previous.delay !== next.delay ||
+    previous.messageId !== next.messageId ||
+    previous.standalone !== next.standalone
+  ) {
     return false;
   }
-  if (previous.attachments.length !== next.attachments.length) {
-    return false;
-  }
-
-  return previous.attachments.every((attachment, index) => {
-    const other = next.attachments[index];
-    return (
-      other !== undefined &&
-      attachment.id === other.id &&
-      attachment.attachmentId === other.attachmentId &&
-      attachment.url === other.url &&
-      attachment.filename === other.filename &&
-      attachment.modality === other.modality &&
-      attachment.width === other.width &&
-      attachment.height === other.height
-    );
-  });
+  return sameSentAttachments(previous.attachments, next.attachments);
 }
 
 export const TranscriptAttachments = memo(function TranscriptAttachments({
   attachments,
   delay,
+  messageId,
+  standalone = false,
 }: AttachmentRowProps) {
+  const [editing, setEditing] = useState(false);
+  if (standalone && editing && messageId) {
+    return (
+      <MessageRow align="end">
+        <MessageContent className="w-full">
+          <MessageEditor
+            attachments={toEditableAttachments(attachments)}
+            initial=""
+            messageId={messageId}
+            onClose={() => setEditing(false)}
+          />
+        </MessageContent>
+      </MessageRow>
+    );
+  }
   return (
     <MessageRow align="end">
       <MessageContent>
         <Arriving delay={delay}>
           <AttachmentTiles attachments={attachments} />
+          {standalone && messageId ? (
+            <>
+              <ReadMark messageId={messageId} />
+              <div className="chat-msg-actions" data-align="end">
+                <EditAction onEdit={() => setEditing(true)} />
+                <WithdrawAction messageId={messageId} />
+              </div>
+            </>
+          ) : null}
         </Arriving>
       </MessageContent>
     </MessageRow>
@@ -2978,7 +3077,7 @@ const TranscriptToolCall = memo(function TranscriptToolCall({
         <ToolTurnEndedContext.Provider value={turnEnded}>
           {turnEnded &&
           result === undefined &&
-          registeredCardChecks.has(name) ? (
+          getCardCheck(registeredCardChecks, name) ? (
             <UnfinishedTool name={name} />
           ) : (
             (drawn ?? <ServerToolLine name={name} result={result} />)
@@ -3240,6 +3339,7 @@ export function unansweredTurn(
 export function ChatTranscript({
   agentId,
   busy = false,
+  reconnecting = false,
   scrollKey,
   commandNames = "",
   messages,
@@ -3253,6 +3353,7 @@ export function ChatTranscript({
   stoppedTurns,
   onRetry,
   onRetryUnanswered,
+  onWithdraw,
   topNotice,
   fallbacks,
   lastSentAt = null,
@@ -3479,13 +3580,15 @@ export function ChatTranscript({
   const liveWork = live
     ? [...compact.work.values()].find((work) => work.live)
     : undefined;
+  const connectionLabel = reconnecting ? "正在恢复连接" : undefined;
   const liveStatus = !live
     ? ""
-    : liveWork
-      ? (summarizeWork(liveWork.calls)?.current ?? "")
-      : waitingOnFirstToken
-        ? "思考中"
-        : "";
+    : (connectionLabel ??
+      (liveWork
+        ? (summarizeWork(liveWork.calls)?.current ?? "")
+        : waitingOnFirstToken
+          ? "思考中"
+          : ""));
   // 机器人说了一句、还在想下一步（还没有干活卡）：§78.2 的小点。
   const pausedAfterText =
     live &&
@@ -3791,16 +3894,24 @@ export function ChatTranscript({
               {tailStop ? (
                 <Stopped
                   onRetry={stopped ? onRetry : onRetryUnanswered}
+                  onWithdraw={onWithdraw}
                   reason={tailStop}
                 />
               ) : waitingOnFirstToken ? (
                 // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
                 // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
                 liveWorking ? null : (
-                  <Thinking since={liveSince} />
+                  <Thinking
+                    since={liveSince}
+                    label={connectionLabel ?? "思考中"}
+                  />
                 )
               ) : pausedAfterText !== null ? (
-                <PausedCapsule since={liveSince} watch={pausedAfterText} />
+                <PausedCapsule
+                  since={liveSince}
+                  watch={pausedAfterText}
+                  label={connectionLabel}
+                />
               ) : null}
               <LooseConfirmCards
                 resumed={resumedCards}
@@ -3961,6 +4072,7 @@ export function ChatTranscript({
         calls={work.calls}
         agentId={agentId}
         live={work.live}
+        statusLabel={work.live ? connectionLabel : undefined}
         notes={work.notes}
         since={work.live ? liveSince : undefined}
         turnKey={work.key}
@@ -4037,6 +4149,18 @@ export function ChatTranscript({
       >
         <TranscriptMessage
           animate={delays.animateFor(item.id)}
+          attachments={
+            index > 0 &&
+            items[index - 1]?.kind === "attachments" &&
+            items[index - 1]?.id === `${item.id}:attachments`
+              ? (
+                  items[index - 1] as Extract<
+                    TranscriptItem,
+                    { kind: "attachments" }
+                  >
+                ).attachments
+              : undefined
+          }
           canRegenerate={item.id === regenerateId}
           commandNames={commandNames}
           delay={delays.delayFor(item.id, index, items.length)}
@@ -4059,10 +4183,23 @@ export function ChatTranscript({
         messageId={item.id}
         scrollAnchor={anchorRows.has(item.id)}
       >
-        <TranscriptAttachments
-          attachments={item.attachments}
-          delay={delays.delayFor(item.id, index, items.length)}
-        />
+        {(() => {
+          const parentId = item.id.endsWith(":attachments")
+            ? item.id.slice(0, -":attachments".length)
+            : undefined;
+          const next = items[index + 1];
+          const standalone = Boolean(
+            parentId && !(next?.kind === "text" && next.id === parentId),
+          );
+          return (
+            <TranscriptAttachments
+              attachments={item.attachments}
+              delay={delays.delayFor(item.id, index, items.length)}
+              messageId={parentId}
+              standalone={standalone}
+            />
+          );
+        })()}
       </MessageScrollerItem>
     ) : (
       // Every member of the union is handled above. `assertNever` types `item` as
@@ -4293,7 +4430,10 @@ export function toolDrawsCard(
     if (isLineOnlyRender(renderer.render)) return false;
     // 失败时会返回 null 的渲染器由它自己的判断说了算。还没有结果：这一轮还在跑时画骨架，算卡片；
     // 这一轮结束了（没按停止，工具也一直没回）骨架换成「没有完成」（TranscriptToolCall），不算卡片（复审 #404 第四轮）。
-    const check = renderer.name === name ? checks.get(name) : undefined;
+    const check =
+      renderer.name === name || renderer.match?.(name)
+        ? getCardCheck(checks, name)
+        : undefined;
     if (!check) return true;
     if (tool.result === undefined) return live;
     return check({

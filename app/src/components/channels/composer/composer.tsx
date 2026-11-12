@@ -28,6 +28,7 @@ import {
   useState,
 } from "react";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { toast } from "@/components/ui/toast";
 import { useReportPendingAttachments } from "@/lib/activity";
 import {
   attachmentUrl,
@@ -44,22 +45,40 @@ import {
   type AttachmentsConfig,
   useAttachments,
 } from "@/lib/chat/attachment-state";
+import { useConversationScope } from "@/lib/chat/conversation-scope";
+import {
+  type PersistedDraftFile,
+  readDraftAttachments,
+  writeDraftAttachments,
+} from "@/lib/chat/draft-attachment-store";
 import { sendTargetsStaleChannel } from "@/lib/chat/pending-switch";
 import {
-  CHISABOT_QUOTE_EVENT,
   type ComposerQuotePayload,
+  composerTargetPath,
+  currentChatTargetPath,
+  receiveComposerInputs,
 } from "@/lib/chat/quote-event";
 import {
+  attachmentIdsInContent,
+  currentDraftFileAccount,
+  listenDraftFileSubmissions,
   listenDraftFiles,
+  listenDraftFilesAccepted,
   listenSendLanded,
+  markDraftRejected,
   markDraftSent,
   rememberedDraft,
   setThreadUi,
   stashDraftFiles,
   takeDraftFiles,
+  threadUi,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
+import { tryClient } from "@/lib/client";
+import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
+import { inboxState } from "@/lib/conversations/thread-inbox";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { newId } from "@/lib/new-id";
 import { presenceRef } from "@/lib/presence-flag";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
@@ -264,7 +283,7 @@ export type ComposerProps = {
   initialValue?: string;
   /**
    * 这段对话的草稿记在哪（DESIGN.md §88）：通常是频道 id。给了它，输入框的字（含 @ / 命令小块）离开再回来、刷新后
-   * 还在，选好的附件离开再回来会重新放上（附件只在内存里，刷新就没了）。不给就和以前一样，什么都不记。
+   * 还在，选好的附件按账号保存在本机，回来或刷新后恢复。不给就和以前一样，什么都不记。
    */
   draftKey?: string;
   /**
@@ -414,6 +433,32 @@ function ComposerImpl({
   // Nothing parked is the right answer for every caller without a queue, which is most of them.
   queuedAttachmentCount = 0,
 }: ComposerProps) {
+  const accountId = currentDraftFileAccount();
+  const conversationScope = useConversationScope();
+  const fileDraft = useRef(new Map<string, PersistedDraftFile>());
+  const fileDraftRevision = useRef(0);
+  const fileDraftRead = useRef(false);
+  const fileDraftAlive = useRef(true);
+  const restoringFiles = useRef(false);
+  const acceptedDuringRestore = useRef(new Set<string>());
+  useEffect(() => {
+    fileDraftAlive.current = true;
+    return () => {
+      fileDraftAlive.current = false;
+    };
+  }, []);
+  const storageErrorShown = useRef(false);
+  const reportFileStorageError = useCallback(() => {
+    if (storageErrorShown.current) return;
+    storageErrorShown.current = true;
+    toast.error("附件草稿未能保存在本机，请先发送或保留原文件后再刷新。");
+  }, []);
+  const saveFileDraft = useCallback(() => {
+    if (!accountId || !draftKey) return;
+    void writeDraftAttachments(accountId, draftKey, [
+      ...fileDraft.current.values(),
+    ]).catch(reportFileStorageError);
+  }, [accountId, draftKey, reportFileStorageError]);
   const [value, setValue] = useState<Segment[]>(
     () =>
       rememberedDraft(
@@ -430,10 +475,15 @@ function ComposerImpl({
   useEffect(() => {
     if (!draftKey || draftWritten.current === value) return;
     draftWritten.current = value;
-    // 发送失败放回来的字（和刚发出去的那句一样）只留在这个输入框里，不当草稿记：离开再回来不会再冒出来（§88.4）。
+    const restored = restoredQuotedSend.current;
+    const persisted =
+      uncertainDraft.current && restored
+        ? (retractRestoredDraft(value, restored.bodyText) ?? value)
+        : value;
     const keep =
-      !isSegmentsEmpty(value) && !wasJustSent(draftKey, toDraft(value).text);
-    setThreadUi(draftKey, { draft: keep ? value : undefined });
+      !isSegmentsEmpty(persisted) &&
+      !wasJustSent(draftKey, toDraft(persisted).text);
+    setThreadUi(draftKey, { draft: keep ? persisted : undefined });
   }, [draftKey, value]);
   /*
    * 「没发出去」判错、这句其实落地了（channel-chat 的迟到对账 → sendLanded）：失败时塞回来的
@@ -443,7 +493,22 @@ function ComposerImpl({
   useEffect(() => {
     if (!draftKey) return;
     return listenSendLanded(draftKey, (landed) => {
-      setValue((current) => retractRestoredDraft(current, landed) ?? current);
+      const restored = restoredQuotedSend.current;
+      if (restored && landed.trim() === restored.fullText.trim()) {
+        setValue(
+          (current) =>
+            retractRestoredDraft(current, restored.bodyText) ?? current,
+        );
+        if (restored.quote && replyQuoteRef.current === restored.quote) {
+          replyQuoteRef.current = null;
+          setReplyQuote(null);
+        }
+        restoredQuotedSend.current = null;
+        uncertainDraft.current = false;
+        setThreadUi(draftKey, { restoredSend: undefined });
+      } else {
+        setValue((current) => retractRestoredDraft(current, landed) ?? current);
+      }
     });
   }, [draftKey]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -463,65 +528,73 @@ function ComposerImpl({
   }, []);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
-    null,
+    () => {
+      const draft = threadUi(draftKey);
+      if (!draft?.quote) return null;
+      // JSON restored these as separate objects; share identity only for the same saved quote.
+      return draft.restoredSend?.quote &&
+        JSON.stringify(draft.quote) === JSON.stringify(draft.restoredSend.quote)
+        ? draft.restoredSend.quote
+        : draft.quote;
+    },
   );
+  const replyQuoteRef = useRef(replyQuote);
+  replyQuoteRef.current = replyQuote;
+  const quoteRevision = useRef(0);
+  const restoredQuotedSend = useRef<{
+    fullText: string;
+    bodyText: string;
+    quote: ComposerQuotePayload | null;
+  } | null>(threadUi(draftKey)?.restoredSend ?? null);
+  const uncertainDraft = useRef(false);
   useEffect(() => {
-    const onQuote = (event: Event) => {
-      const detail = (event as CustomEvent<ComposerQuotePayload>).detail;
-      if (!detail || !detail.text || disabled) return;
-      setReplyQuote(detail);
-      if (detail.prompt) {
-        const addition = detail.prompt.trim();
+    if (!draftKey) return;
+    const restored = restoredQuotedSend.current;
+    const quote =
+      uncertainDraft.current && restored?.quote === replyQuote
+        ? null
+        : replyQuote;
+    setThreadUi(draftKey, { quote: quote ?? undefined });
+  }, [draftKey, replyQuote]);
+  const visibility = useKeptVisibility();
+  const targetPath = composerTargetPath(channelId, draftKey);
+  const activeComposer = () =>
+    visibility.get() && currentChatTargetPath() === targetPath;
+  const activeComposerRef = useRef(activeComposer);
+  activeComposerRef.current = activeComposer;
+  useEffect(() => {
+    const receiver = receiveComposerInputs({
+      targetPath,
+      active: () => !disabled && activeComposerRef.current(),
+      consume: (input) => {
+        const addition =
+          input.kind === "quote" ? input.quote.prompt?.trim() : input.text;
+        if (input.kind === "quote") {
+          quoteRevision.current++;
+          replyQuoteRef.current = input.quote;
+          setReplyQuote(input.quote);
+        }
         if (addition) {
           setValue((current) =>
             mergeAdjacentTextSegments([
               ...current,
-              text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
+              text(isSegmentsEmpty(current) ? addition : "\n" + addition),
             ]),
           );
         }
-      }
-      const placeCaret = () => {
-        promptAreaRef.current?.focus();
-        promptAreaRef.current?.setCursorToEnd();
-      };
-      if (typeof requestAnimationFrame === "function")
-        requestAnimationFrame(placeCaret);
-      else setTimeout(placeCaret, 0);
+        requestAnimationFrame(() => {
+          if (!activeComposerRef.current()) return;
+          promptAreaRef.current?.focus();
+          promptAreaRef.current?.setCursorToEnd();
+        });
+      },
+    });
+    const off = visibility.subscribe(receiver.flush);
+    return () => {
+      off();
+      receiver.dispose();
     };
-    window.addEventListener(CHISABOT_QUOTE_EVENT, onQuote);
-    return () => window.removeEventListener(CHISABOT_QUOTE_EVENT, onQuote);
-  }, [disabled]);
-  /**
-   * 右栏面板 ⋯ →「让 AI 修改…」：把提示词填进输入框（`components/panels/live-panels.tsx` 发
-   * `chisabot-prefill`），**不发送**——用户补完要改什么再自己按发送。
-   *
-   * 追加在现有草稿的末尾（已有内容先换行）：不清空正在写的字，光标也放到最后。
-   * 直接改 `value` 而不是 PromptArea 的 imperative `appendText`，因为草稿的记忆（§88）与受控值都以
-   * 这里为准；写完把焦点交回输入框，接着打字即可。没有输入框的页面（长期任务、设置…）收不到事件。
-   */
-  useEffect(() => {
-    const onPrefill = (event: Event) => {
-      const detail = (event as CustomEvent<unknown>).detail;
-      const addition = typeof detail === "string" ? detail.trim() : "";
-      if (!addition || disabled) return;
-      setValue((current) =>
-        mergeAdjacentTextSegments([
-          ...current,
-          text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
-        ]),
-      );
-      const placeCaret = () => {
-        promptAreaRef.current?.focus();
-        promptAreaRef.current?.setCursorToEnd();
-      };
-      if (typeof requestAnimationFrame === "function")
-        requestAnimationFrame(placeCaret);
-      else setTimeout(placeCaret, 0);
-    };
-    window.addEventListener("chisabot-prefill", onPrefill);
-    return () => window.removeEventListener("chisabot-prefill", onPrefill);
-  }, [disabled]);
+  }, [disabled, targetPath, visibility]);
   /*
    * IME state, kept outside React.
    *
@@ -570,7 +643,7 @@ function ComposerImpl({
     const editor = containerRef.current?.querySelector("[contenteditable]");
     editor?.setAttribute("enterkeyhint", coarsePointer ? "enter" : "send");
   }, [coarsePointer, compact]);
-  /** A send has completed and the caret is owed back, as soon as the editor will take it. */
+  /** Dictation returns the caret once the editor can accept it. */
   const wantsFocus = useRef(false);
   const sendDictatedDraft = useRef(false);
   const dictation = useDictation((transcript, intent) => {
@@ -612,7 +685,7 @@ function ComposerImpl({
   const pastedSources = useRef(new WeakMap<File, string>());
   /** Uploads that failed on the way to the server, kept as tiles with a retry (audit M4-3). */
   const [failedUploads, setFailedUploads] = useState<
-    (Omit<FailedUpload, "name"> & { file: File })[]
+    (Omit<FailedUpload, "name"> & { file: File; saved?: PersistedDraftFile })[]
   >([]);
 
   /**
@@ -625,36 +698,42 @@ function ComposerImpl({
    * would leave the strip the way a failed upload always does, and the sentence explaining it
    * would never arrive. Every upload refusal in the app comes through here.
    */
-  const recordRejection = useCallback((failure: UploadFailure) => {
-    const failedKey = uploadIdentity.keyOfFile(failure.file);
-    uploadIdentity.forget(failure.file);
-    progressStore.clear(failedKey);
-    uploadAborts.current.delete(failedKey);
-    pastedTexts.current.delete(failedKey);
-    if (abortedUploads.current.delete(failedKey)) return;
-    /*
-     * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
-     * strip, but the `File` is still in hand here, so it goes back on as a failed tile with the
-     * reason and a retry rather than vanishing and leaving the person to find the file again.
-     * Refusals of the file itself (type, size) are still news about a file that will never go, so
-     * they stay in the refusal list.
-     */
-    if (failure.reason === "upload-failed") {
-      setFailedUploads((current) => [
+  const recordRejection = useCallback(
+    (failure: UploadFailure) => {
+      const failedKey = uploadIdentity.keyOfFile(failure.file);
+      uploadIdentity.forget(failure.file);
+      progressStore.clear(failedKey);
+      uploadAborts.current.delete(failedKey);
+      pastedTexts.current.delete(failedKey);
+      if (abortedUploads.current.delete(failedKey)) return;
+      /*
+       * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
+       * strip, but the `File` is still in hand here, so it goes back on as a failed tile with the
+       * reason and a retry rather than vanishing and leaving the person to find the file again.
+       * Refusals of the file itself (type, size) are still news about a file that will never go, so
+       * they stay in the refusal list.
+       */
+      if (failure.reason === "upload-failed") {
+        setFailedUploads((current) => [
+          ...current,
+          { id: failedKey, file: failure.file, reason: failure.message },
+        ]);
+        return;
+      }
+      fileDraftRevision.current++;
+      fileDraft.current.delete(failedKey);
+      saveFileDraft();
+      setRejected((current) => [
         ...current,
-        { id: newId(), file: failure.file, reason: failure.message },
+        {
+          id: newId(),
+          name: failure.file.name,
+          reason: failure.message,
+        },
       ]);
-      return;
-    }
-    setRejected((current) => [
-      ...current,
-      {
-        id: newId(),
-        name: failure.file.name,
-        reason: failure.message,
-      },
-    ]);
-  }, []);
+    },
+    [uploadIdentity, progressStore, saveFileDraft],
+  );
 
   /**
    * THIS COMPOSER'S UPLOAD GROUP: one key, minted once, sent with every upload it makes.
@@ -667,9 +746,8 @@ function ComposerImpl({
    * channel until the sweeper's 24-hour window expired. Grouping the rows by the composer that
    * staged them is what makes both sides count the same set.
    *
-   * NOT A DRAFT ID. Nothing about the message is saved anywhere by this, and nothing survives a
-   * reload: a remount mints a new key and the rows the old one staged become somebody else's
-   * problem, which is to say the sweeper's.
+   * The upload group is per mount. Draft persistence separately retains originals and uploaded
+   * references, so a reload can reuse surviving staged rows without reusing this upload group.
    *
    * `newId()` rather than `crypto.randomUUID()`, which does not exist outside a secure context —
    * on a deployment reached at plain `http://<address>` the call is not merely wrong, it throws,
@@ -716,7 +794,7 @@ function ComposerImpl({
    * that a queued message is still waiting to send.
    */
   const releaseStagedRows = useCallback(
-    (released: readonly Attachment[]) => {
+    (released: readonly Attachment[], accepted = true) => {
       for (const attachment of released) {
         const rowId = stagedRowId(attachment);
         if (rowId !== undefined) {
@@ -724,8 +802,18 @@ function ComposerImpl({
         }
         pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
       }
+      if (accepted) {
+        fileDraftRevision.current++;
+        const releasedIds = new Set(
+          released.map((attachment) => attachment.id),
+        );
+        for (const [key, saved] of fileDraft.current)
+          if (saved.attachment && releasedIds.has(saved.attachment.id))
+            fileDraft.current.delete(key);
+        saveFileDraft();
+      }
     },
-    [uploadIdentity],
+    [uploadIdentity, saveFileDraft],
   );
 
   const attachmentsConfig = useMemo(
@@ -772,6 +860,7 @@ function ComposerImpl({
       return;
     }
     const reason = DROPPED_REASON[droppedAttachments.cause];
+    releaseStagedRows(droppedAttachments.attachments);
     setRejected((current) => [
       ...current,
       ...droppedAttachments.attachments.map((attachment) => ({
@@ -784,7 +873,7 @@ function ComposerImpl({
         reason,
       })),
     ]);
-  }, [droppedAttachments]);
+  }, [droppedAttachments, releaseStagedRows]);
 
   /**
    * Called unconditionally, with a config only when there is a channel to upload to. The hook
@@ -801,6 +890,7 @@ function ComposerImpl({
     handleDragOver,
     handleDragLeave,
     removeAttachment,
+    restoreAttachments,
   } = useAttachments({ config: attachmentsConfig });
   // Every render, before anything reads a card's key: match new placeholders to their uploads.
   uploadIdentity.bind(attachments);
@@ -862,8 +952,7 @@ function ComposerImpl({
   );
 
   /**
-   * 这些附件只在内存里（`stashDraftFiles`，`takeDraftFiles` 也只在内存里）：刷新就没了，不像聊天草稿会记回来。
-   * 「有新版本，点此刷新」靠这个登记知道输入框上还挂着东西（`lib/activity.ts`），发出去 / 移走了就清零。
+   * 「有新版本，点此刷新」靠这个登记知道输入框还有未发送附件；本机存储失败时也保留刷新前的提醒。
    */
   useReportPendingAttachments(draftKey ?? channelId, staged.length);
 
@@ -901,9 +990,13 @@ function ComposerImpl({
           controller?.abort();
         }
       }
+      fileDraftRevision.current++;
+      if (attachment)
+        fileDraft.current.delete(uploadIdentity.keyOf(attachment));
+      saveFileDraft();
       removeAttachment(id);
     },
-    [attachments, removeAttachment, uploadIdentity],
+    [attachments, removeAttachment, uploadIdentity, saveFileDraft],
   );
 
   /**
@@ -971,8 +1064,6 @@ function ComposerImpl({
    * state update is.
    */
   const stagedCount = useRef(0);
-  /** 这个输入框收过的文件（§88：离开对话时据此找回还在输入框上的那几个）。 */
-  const pickedFiles = useRef<File[]>([]);
 
   /**
    * How many accepted files are between `stageFiles` and their placeholders.
@@ -1039,22 +1130,30 @@ function ComposerImpl({
       staging.current += screened.accepted.length;
       // Each file gets its own local id here, before the SDK draws its placeholder (see
       // `upload-identity.ts`); a long paste's preview text is filed under that id.
+      fileDraftRevision.current++;
       const outgoing = screened.accepted.map((file) => {
         const sent = withMediaTypeOnly(file);
         const id = uploadIdentity.assign(sent);
+        fileDraft.current.set(id, { id, file });
         const pasted = pastedSources.current.get(file);
         if (pasted !== undefined) pastedTexts.current.set(id, pasted);
         return sent;
       });
-      // 离开对话时按文件名 + 大小找回还在输入框上的那几个文件（§88）。
-      if (draftKey) pickedFiles.current.push(...screened.accepted);
+      saveFileDraft();
       try {
         await processFiles(outgoing);
       } finally {
         staging.current -= screened.accepted.length;
       }
     },
-    [disabled, processFiles, queuedAttachmentCount, draftKey, uploadIdentity],
+    [
+      disabled,
+      processFiles,
+      queuedAttachmentCount,
+      draftKey,
+      uploadIdentity,
+      saveFileDraft,
+    ],
   );
 
   /** Put a failed upload back through the same door it came in by — screening, cap and all. */
@@ -1064,20 +1163,86 @@ function ComposerImpl({
     (id: string) => {
       const failed = failedUploads.find((upload) => upload.id === id);
       if (!failed || retried.current.has(id)) return;
+      const original = fileDraft.current.get(id);
+      if (!original) return;
+      const stillOwned = () =>
+        fileDraftAlive.current && fileDraft.current.get(id) === original;
       retried.current.add(id);
+      fileDraftRevision.current++;
+      void (async () => {
+        let status: "staged" | "accepted" | "missing" | "interrupted" =
+          "interrupted";
+        if (failed.saved) {
+          const rowId = stagedRowId(failed.saved.attachment);
+          const state = conversationScope?.threadId
+            ? await inboxState(conversationScope.threadId)
+            : undefined;
+          if (rowId && conversationScope?.threadId && !state)
+            throw new Error("尚未确认附件的排队状态，联网后点重试。");
+          const queued =
+            rowId &&
+            state?.items.some((item) =>
+              attachmentIdsInContent(item.message.content).includes(rowId),
+            );
+          status = queued
+            ? "accepted"
+            : await restoreSavedRef.current(failed.saved);
+        }
+        if (!stillOwned()) return;
+        setFailedUploads((current) =>
+          current.filter((upload) => upload.id !== id),
+        );
+        const saved = failed.saved;
+        const restoredAttachment = saved?.attachment;
+        if (status === "staged" && saved && restoredAttachment) {
+          uploadIdentity.restore(saved.file, saved.id, restoredAttachment.id);
+          const rowId = stagedRowId(restoredAttachment);
+          if (rowId) uploadedRows.current.add(rowId);
+          stagedCount.current++;
+          restoreAttachments([restoredAttachment]);
+        } else {
+          fileDraft.current.delete(id);
+          saveFileDraft();
+          if (status !== "accepted") await stageFiles([failed.file]);
+        }
+      })()
+        .catch((error) => {
+          if (!stillOwned()) return;
+          setFailedUploads((current) =>
+            current.map((upload) =>
+              upload.id === id
+                ? {
+                    ...upload,
+                    reason:
+                      error instanceof Error
+                        ? error.message
+                        : "附件状态暂时无法核对，请重试。",
+                  }
+                : upload,
+            ),
+          );
+        })
+        .finally(() => retried.current.delete(id));
+    },
+    [
+      failedUploads,
+      stageFiles,
+      conversationScope?.threadId,
+      uploadIdentity,
+      restoreAttachments,
+      saveFileDraft,
+    ],
+  );
+  const dismissFailedUpload = useCallback(
+    (id: string) => {
+      fileDraftRevision.current++;
+      fileDraft.current.delete(id);
+      saveFileDraft();
       setFailedUploads((current) =>
         current.filter((upload) => upload.id !== id),
       );
-      void stageFiles([failed.file]);
     },
-    [failedUploads, stageFiles],
-  );
-  const dismissFailedUpload = useCallback(
-    (id: string) =>
-      setFailedUploads((current) =>
-        current.filter((upload) => upload.id !== id),
-      ),
-    [],
+    [saveFileDraft],
   );
   const failedTiles = useMemo(
     () =>
@@ -1158,50 +1323,243 @@ function ComposerImpl({
    * — swallowed exactly this paste in silence. `composer-paste.test.tsx` renders that branch for
    * no other reason.
    */
-  /*
-   * 选好还没发的附件：离开对话时收起来，回来时重新放上（DESIGN.md §88）。
-   *
-   * SDK 的附件列表是它自己的 state，没有办法把一个已经上传好的附件塞回去，所以回来时用同一个 `File` 再走一遍
-   * `stageFiles`（同样的检查、同样的上限）。离开时把这几个已经上传的行交还服务器（和点 ✕ 一样），免得占着
-   * 这个频道「待发送」的名额；文件本身在内存里，刷新就没了。
-   */
-  const latestStaged = useRef<readonly Attachment[]>([]);
-  latestStaged.current = staged;
+  // Persist original files as soon as picked, then replace their upload references when ready.
+  // A reload reuses a staged row; it never uploads another copy to discover whether Send landed.
   useEffect(() => {
-    if (!draftKey) return;
-    return () => {
-      const pool = [...pickedFiles.current];
-      const keep: File[] = [];
-      for (const attachment of latestStaged.current) {
-        const at = pool.findIndex(
-          (file) =>
-            file.name === attachment.filename &&
-            (attachment.size === undefined || file.size === attachment.size),
-        );
-        if (at < 0) continue;
-        keep.push(pool[at]!);
-        pool.splice(at, 1);
-        const rowId = stagedRowId(attachment);
-        if (rowId !== undefined && uploadedRows.current.has(rowId)) {
+    let changed = false;
+    for (const attachment of attachments) {
+      const key = uploadIdentity.keyOf(attachment);
+      const saved = fileDraft.current.get(key);
+      if (
+        !saved ||
+        attachment.status !== "ready" ||
+        saved.attachment === attachment
+      )
+        continue;
+      fileDraft.current.set(key, { ...saved, attachment });
+      changed = true;
+    }
+    if (changed) saveFileDraft();
+  }, [attachments, uploadIdentity, saveFileDraft]);
+  useEffect(
+    () =>
+      listenDraftFilesAccepted((ids) => {
+        let changed = false;
+        const accepted = new Set(ids);
+        if (restoringFiles.current)
+          for (const id of ids) acceptedDuringRestore.current.add(id);
+        for (const [key, saved] of fileDraft.current) {
+          const rowId = stagedRowId(saved.attachment);
+          if (!rowId || !accepted.has(rowId)) continue;
+          fileDraft.current.delete(key);
           uploadedRows.current.delete(rowId);
-          discardStagedAttachment(rowId);
+          changed = true;
+        }
+        if (changed) {
+          fileDraftRevision.current++;
+          saveFileDraft();
+        }
+      }),
+    [saveFileDraft],
+  );
+  useEffect(
+    () =>
+      listenDraftFileSubmissions(async (ids, submission) => {
+        if (!accountId || !draftKey) return;
+        const matching = new Set(ids);
+        let changed = false;
+        for (const [key, saved] of fileDraft.current) {
+          const rowId = stagedRowId(saved.attachment);
+          if (!rowId || !matching.has(rowId)) continue;
+          fileDraft.current.set(key, { ...saved, submission });
+          changed = true;
+        }
+        if (changed) {
+          fileDraftRevision.current++;
+          await writeDraftAttachments(accountId, draftKey, [
+            ...fileDraft.current.values(),
+          ]).catch(reportFileStorageError);
+        }
+      }),
+    [accountId, draftKey, reportFileStorageError],
+  );
+
+  const restoreSavedFile = useCallback(
+    async (saved: PersistedDraftFile, signal?: AbortSignal) => {
+      if (saved.submission?.commandId) {
+        const { threadId, commandId } = saved.submission;
+        const receipt = await tryClient(
+          `/api/conversations/${encodeURIComponent(threadId)}/commands/${encodeURIComponent(commandId)}`,
+          { signal },
+        );
+        if (receipt.ok) return "accepted" as const;
+        // The original POST can still be committing while this independent lookup returns 404.
+        throw new Error("尚未确认这条消息是否已接纳，联网后点重试。");
+      }
+      if (saved.submission)
+        throw new Error("尚未确认附件的排队状态，联网后点重试。");
+      const attachment = saved.attachment;
+      if (!attachment) return "interrupted" as const;
+      const rowId = stagedRowId(attachment);
+      if (!rowId) return "interrupted" as const;
+      const response = await tryClient(attachmentUrl(rowId), {
+        method: "HEAD",
+        signal,
+      });
+      if (response.status === 404) return "missing" as const;
+      if (!response.ok)
+        throw new Error("尚未确认附件的发送状态，联网后点重试。");
+      const status = response.headers.get("X-ChisaBot-Attachment-State");
+      if (status === "attached") return "accepted" as const;
+      if (status !== "staged")
+        throw new Error("服务器尚未提供附件状态，请更新服务器后重试。");
+      return "staged" as const;
+    },
+    [],
+  );
+  const restoreSavedRef = useRef(restoreSavedFile);
+  restoreSavedRef.current = restoreSavedFile;
+  useEffect(() => {
+    if (!draftKey || !canAttach || fileDraftRead.current) return;
+    fileDraftRead.current = true;
+    if (fileDraftRevision.current > 0) return;
+    const stagedInMemory = takeDraftFiles(draftKey);
+    if (stagedInMemory.length) {
+      void stageFiles(stagedInMemory);
+      return;
+    }
+    if (!accountId) return;
+    let alive = true;
+    let completed = false;
+    restoringFiles.current = true;
+    const abort = new AbortController();
+    const revision = fileDraftRevision.current;
+    const current = () => alive && revision === fileDraftRevision.current;
+    void (async () => {
+      const saved = await readDraftAttachments(accountId, draftKey);
+      if (!current() || !saved?.files.length) return;
+      // Queued supplements can still be staged: consult the existing inbox before restoring.
+      const state = conversationScope?.threadId
+        ? await inboxState(conversationScope.threadId, { signal: abort.signal })
+        : undefined;
+      if (!current()) return;
+      const queuedIds = new Set(
+        state?.items.flatMap((item) =>
+          attachmentIdsInContent(item.message.content),
+        ) ?? [],
+      );
+      const restored: Attachment[] = [];
+      const restoredDraft = new Map<string, PersistedDraftFile>();
+      const interrupted: (Omit<FailedUpload, "name"> & {
+        file: File;
+        saved?: PersistedDraftFile;
+      })[] = [];
+      for (const entry of saved.files) {
+        if (!current()) return;
+        const rowId = stagedRowId(entry.attachment);
+        if (rowId && queuedIds.has(rowId)) continue;
+        try {
+          if (rowId && conversationScope?.threadId && !state)
+            throw new Error("尚未确认附件的排队状态，联网后点重试。");
+          const status = await restoreSavedFile(entry, abort.signal);
+          if (!current()) return;
+          if (status === "accepted") continue;
+          restoredDraft.set(entry.id, entry);
+          if (status === "staged" && entry.attachment) {
+            restored.push(entry.attachment);
+          } else {
+            interrupted.push({
+              id: entry.id,
+              file: entry.file,
+              reason: "上传尚未完成，点击重试。",
+            });
+          }
+        } catch (error) {
+          if (!current()) return;
+          restoredDraft.set(entry.id, entry);
+          interrupted.push({
+            id: entry.id,
+            file: entry.file,
+            saved: entry,
+            reason:
+              error instanceof Error
+                ? error.message
+                : "附件状态暂时无法核对，请重试。",
+          });
         }
       }
-      stashDraftFiles(draftKey, keep);
+      if (!current()) return;
+      for (const [key, entry] of restoredDraft) {
+        const rowId = stagedRowId(entry.attachment);
+        if (rowId && acceptedDuringRestore.current.has(rowId))
+          restoredDraft.delete(key);
+      }
+      fileDraft.current = restoredDraft;
+      const ready = restored.filter((attachment) => {
+        const rowId = stagedRowId(attachment);
+        return !rowId || !acceptedDuringRestore.current.has(rowId);
+      });
+      for (const entry of restoredDraft.values()) {
+        if (!entry.attachment || !ready.includes(entry.attachment)) continue;
+        uploadIdentity.restore(entry.file, entry.id, entry.attachment.id);
+        const rowId = stagedRowId(entry.attachment);
+        if (rowId) uploadedRows.current.add(rowId);
+      }
+      if (ready.length) {
+        stagedCount.current += ready.length;
+        restoreAttachments(ready);
+      }
+      if (interrupted.length)
+        setFailedUploads((old) => [
+          ...old,
+          ...interrupted.filter((entry) => restoredDraft.has(entry.id)),
+        ]);
+      saveFileDraft();
+    })()
+      .catch(() => {
+        if (alive) reportFileStorageError();
+      })
+      .finally(() => {
+        if (!alive) return;
+        completed = true;
+        restoringFiles.current = false;
+        acceptedDuringRestore.current.clear();
+      });
+    return () => {
+      alive = false;
+      abort.abort();
+      restoringFiles.current = false;
+      acceptedDuringRestore.current.clear();
+      if (!completed) fileDraftRead.current = false;
     };
-  }, [draftKey]);
-  const restoredFiles = useRef(false);
-  useEffect(() => {
-    if (!draftKey || restoredFiles.current || !canAttach) return;
-    restoredFiles.current = true;
-    const files = takeDraftFiles(draftKey);
-    if (files.length > 0) void stageFiles(files);
-  }, [draftKey, canAttach, stageFiles]);
-  // 挂着以后别处追加的文件（新话题页跳过来那一下里又加的，`addDraftFiles`）：同样走 `stageFiles`。
+  }, [
+    accountId,
+    draftKey,
+    canAttach,
+    conversationScope?.threadId,
+    stageFiles,
+    restoreSavedFile,
+    restoreAttachments,
+    uploadIdentity,
+    saveFileDraft,
+    reportFileStorageError,
+  ]);
   useEffect(() => {
     if (!draftKey || !canAttach) return;
     return listenDraftFiles(draftKey, (files) => void stageFiles(files));
   }, [draftKey, canAttach, stageFiles]);
+  useEffect(
+    () => () => {
+      // Account-scoped persistence owns the files; old in-memory handoffs must not replay them.
+      if (accountId) return;
+      if (draftKey)
+        stashDraftFiles(
+          draftKey,
+          [...fileDraft.current.values()].map((item) => item.file),
+        );
+    },
+    [accountId, draftKey],
+  );
 
   const stagePastedImage = useCallback(
     (file: File) => {
@@ -1734,6 +2092,11 @@ function ComposerImpl({
       ) {
         return;
       }
+      for (const attachment of rawSubmitted.attachments) {
+        const key = uploadIdentity.keyOf(attachment);
+        const original = fileDraft.current.get(key);
+        if (original) fileDraft.current.set(key, { ...original, attachment });
+      }
 
       const quoteLine = replyQuote
         ? `> ${replyQuote.source && replyQuote.source !== "引用回复" && replyQuote.source !== "我的消息" && replyQuote.source !== "机器人回复" ? `[${replyQuote.source}] ` : ""}${replyQuote.text.replace(/\s+/g, " ").trim()}\n\n`
@@ -1741,9 +2104,14 @@ function ComposerImpl({
       const submitted = quoteLine
         ? { ...rawSubmitted, text: `${quoteLine}${rawSubmitted.text}` }
         : rawSubmitted;
-      if (replyQuote) {
+      const submittedQuote = replyQuote;
+      const submittedQuoteRevision = quoteRevision.current;
+      const clearSubmittedQuote = () => {
+        uncertainDraft.current = false;
+        restoredQuotedSend.current = null;
+        replyQuoteRef.current = null;
         setReplyQuote(null);
-      }
+      };
 
       /*
        * A TURN IS IN FLIGHT, AND THIS IS THE FORK THE WHOLE AFFORDANCE HANGS ON.
@@ -1761,6 +2129,7 @@ function ComposerImpl({
         if (!onQueue) {
           return;
         }
+        clearSubmittedQuote();
         setValue([]);
         markDraftSent(draftKey, submitted.text);
         dismissRejections();
@@ -1776,7 +2145,7 @@ function ComposerImpl({
         // these rows now and will send them later, so the reconciler must be told before it sees
         // the chips disappear — otherwise it reads a queued message's attachments as abandoned and
         // deletes the rows out from under it.
-        releaseStagedRows(submitted.attachments);
+        releaseStagedRows(submitted.attachments, false);
         for (const attachment of submitted.attachments) {
           removeAttachment(attachment.id);
         }
@@ -1788,7 +2157,9 @@ function ComposerImpl({
         return;
       }
 
+      fileDraftRevision.current++;
       submitInFlight.current = true;
+      clearSubmittedQuote();
       setIsSubmitting(true);
       // Clear optimistically; restore if the send fails before becoming a message.
       setValue([]);
@@ -1801,7 +2172,7 @@ function ComposerImpl({
        */
       dismissRejections();
       /*
-       * 焦点立刻交回输入框，而不是等整轮回答结束（`:1411` 那笔「欠一次光标」照旧保留，给失败重来用）。
+       * 点发送后立刻交回焦点；回答结束时不再重新抢回光标。
        *
        * 以前点发送按钮：焦点留在按钮上，编辑器失焦 → prompt-area 150ms 后把高度收成一行，输入框整块塌一下；
        * 回答跑完再 focus 一次又弹回来。人在这段时间里是想接着打字的（排队补话 / 下一句），光标就该在这里。
@@ -1825,7 +2196,7 @@ function ComposerImpl({
         for (const id of riding) {
           removeAttachment(id);
         }
-      } catch {
+      } catch (error) {
         /*
          * THE WORDS COME BACK IN FRONT OF WHATEVER ARRIVED WHILE THE SEND WAS OUT, NOT OVER IT.
          *
@@ -1836,17 +2207,48 @@ function ComposerImpl({
          * nothing said about either. Both are somebody's words, so neither may be dropped; the
          * restored ones go ahead of the newer ones and the person edits the join.
          */
+        const restoreQuote =
+          submittedQuote !== null &&
+          quoteRevision.current === submittedQuoteRevision;
+        if (restoreQuote && submittedQuote) {
+          replyQuoteRef.current = submittedQuote;
+          setReplyQuote(submittedQuote);
+        }
+        // A newer quote belongs to the next draft; retain the failed quote inline instead.
+        const restoredSegments =
+          quoteLine && !restoreQuote
+            ? mergeAdjacentTextSegments([text(quoteLine), ...segments])
+            : segments;
+        const restored = {
+          fullText: submitted.text,
+          bodyText: toDraft(restoredSegments).text,
+          quote: restoreQuote ? submittedQuote : null,
+        };
+        restoredQuotedSend.current = restored;
+        uncertainDraft.current = error instanceof SendDeliveryUnknownError;
+        if (!uncertainDraft.current) {
+          markDraftRejected(draftKey, submitted.text);
+          setThreadUi(draftKey, { restoredSend: restored });
+          const rejectedIds = new Set(riding);
+          for (const [key, saved] of fileDraft.current) {
+            if (!saved.attachment || !rejectedIds.has(saved.attachment.id))
+              continue;
+            const { submission: _submission, ...draftFile } = saved;
+            fileDraft.current.set(key, draftFile);
+          }
+          saveFileDraft();
+        }
         setValue((current) => {
           // An attachment-only message has no words to restore, and putting an empty segment list
           // back would clear a box somebody has since typed into.
-          if (isSegmentsEmpty(segments)) {
+          if (isSegmentsEmpty(restoredSegments)) {
             return current;
           }
           if (isSegmentsEmpty(current)) {
-            return segments;
+            return restoredSegments;
           }
           return mergeAdjacentTextSegments([
-            ...segments,
+            ...restoredSegments,
             text(" "),
             ...current,
           ]);
@@ -1874,9 +2276,8 @@ function ComposerImpl({
         setSending([]);
         submitInFlight.current = false;
         setIsSubmitting(false);
-        // Asked for here, performed in the effect below, which runs after the commit that clears
-        // `isSubmitting` and so after the render the caret would otherwise be placed against.
-        wantsFocus.current = true;
+        // Sending already returned focus synchronously. Completion must not steal it back
+        // after the person has moved to another input or conversation.
       }
     },
     [
@@ -1893,6 +2294,8 @@ function ComposerImpl({
       replyQuote,
       staged,
       draftKey,
+      uploadIdentity,
+      saveFileDraft,
     ],
   );
 
@@ -1912,15 +2315,13 @@ function ComposerImpl({
    * whatever the parent does with `pending` in between — and it runs after the commit, which is the
    * only point at which the element is enabled and focusable.
    *
-   * Two different debts, and only one of them recurs. A finished send owes the caret back every
-   * time. `autoFocus` owes it exactly once, at the start: it used to be re-owed on every
-   * disabled/busy transition, so every completed turn stole the caret back from wherever the person
-   * had moved it, and a composer that had never been sent from would grab focus mid-conversation.
+   * Dictation may return focus when it finishes; `autoFocus` runs once for this visible composer.
+   * Completion of an ordinary send does not move focus away from the person's current control.
    */
   useEffect(() => {
     if (wasDictating.current && !dictation.busy) wantsFocus.current = true;
     wasDictating.current = dictation.busy;
-    if (disabled || isBusy || dictation.busy) {
+    if (disabled || isBusy || dictation.busy || !activeComposerRef.current()) {
       return;
     }
     const owed = wantsFocus.current || (autoFocus && !claimedAutoFocus.current);
@@ -2194,7 +2595,11 @@ function ComposerImpl({
         aria-label="取消引用"
         className="composer-reply-clear"
         data-testid="composer-reply-quote-clear"
-        onClick={() => setReplyQuote(null)}
+        onClick={() => {
+          quoteRevision.current++;
+          replyQuoteRef.current = null;
+          setReplyQuote(null);
+        }}
         title="取消引用"
         type="button"
       >

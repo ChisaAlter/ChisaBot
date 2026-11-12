@@ -35,6 +35,7 @@ Options for `perf:jank` (`node perf/jank.mjs --help`):
 | `--runs=N` | 1 | independent runs; `summary.json` takes the median per metric |
 | `--out=dir` | `perf/out/run` | output directory (gitignored under `perf/out/`) |
 | `--dist=dir` | `app/dist` | the build to serve |
+| `--glass=style` | (build default) | force `chisabot-glass-style` (`liquid` / `mist` / `crystal` / `frosted`) before load |
 | `--cpu=N` | 4 | CPU throttling rate |
 | `--lat=ms` | 0 | extra latency on every mock `/api` response |
 | `--net` | off | Chrome network emulation (60 ms RTT, 2.5 MB/s) |
@@ -83,6 +84,8 @@ Every perf PR body has a before/after table at 4x:
 
 CI (`.github/workflows/perf.yml`) does the same on pull requests with 1 run and puts the table in the
 job summary, plus the outputs as an artifact. It is `continue-on-error` and never blocks a PR.
+It also runs `idle,scroll,stream` a second time with `--glass=liquid` on both base and head, so the
+liquid snapshot / lens path is measured even when the head default is mist.
 
 ## Files
 

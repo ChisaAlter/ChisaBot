@@ -1,7 +1,7 @@
 {
   "name": "chisabot-pc",
   "productName": "ChisaBot",
-  "version": "0.1.138",
+  "version": "0.1.146",
   "description": "ChisaBot 桌面客户端：远程聊天 + 让机器人在授权范围内操作这台电脑",
   "main": "src/main.js",
   "author": "ChisaBot",
@@ -80,7 +80,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://chisabot.example.com/downloads/chisabot-pc/",
+        "url": "https://github.com/ChisaAlter/ChisaBot/releases/latest/download/",
         "channel": "latest"
       }
     ]

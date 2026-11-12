@@ -17,21 +17,21 @@ YAML 前言放完整定义，正文是给人看的说明。导入、导出、预
 ```yaml
 ---
 format: chisabot.workflow/v1
-slug: code-review              # 小写字母、数字、连字符
+slug: code-review # 小写字母、数字、连字符
 name: 代码审查
 description: 一句话说明
 icon: 🧑‍💻
-bots:                          # 角色，1–8 个；运行时每个角色交给一个机器人（可重复）
+bots: # 角色，1–8 个；运行时每个角色交给一个机器人（可重复）
   - key: security
     name: 安全审查员
     description: 职责
     botId: optional-default-bot-id
-skills:                        # 内置技能（跟着文件走），步骤也可以引用「技能」页里的技能 slug
+skills: # 内置技能（跟着文件走），步骤也可以引用「技能」页里的技能 slug
   - slug: review-format
     title: 审查意见格式
     instructions: |-
       ……
-inputs:                        # 运行时填的参数：text / textarea / number / select / boolean / url
+inputs: # 运行时填的参数：text / textarea / number / select / boolean / url
   - key: code
     label: 代码或 diff
     type: textarea
@@ -39,22 +39,22 @@ inputs:                        # 运行时填的参数：text / textarea / numbe
 steps:
   - id: security
     name: 安全审查
-    bot: security              # 角色 key
-    group: review              # 相邻且 group 相同的步骤并行
-    handoff: none              # previous（默认）/ all / none：前面步骤的输出怎么带进来
+    bot: security # 角色 key
+    group: review # 相邻且 group 相同的步骤并行
+    handoff: none # previous（默认）/ all / none：前面步骤的输出怎么带进来
     skills: [review-format]
-    approval: false            # true = 这一步开始前要人批准
+    approval: false # true = 这一步开始前要人批准
     approvalNote: 给审批人看的话
-    panel: false               # true = 这一步可以把面板直接存进机器人的右栏
-    tools: { allow: [...], deny: [...] }   # 只对这一步生效
-    output: markdown           # markdown / text / json
+    panel: false # true = 这一步可以把面板直接存进机器人的右栏
+    tools: { allow: [...], deny: [...] } # 只对这一步生效
+    output: markdown # markdown / text / json
     prompt: |-
       审查 {{inputs.code}}，参考 {{steps.其他步骤}}
 constraints:
-  maxSteps: 3                  # 最多执行几个步骤（每步 = 一个机器人回合）
-  maxTokens: 60000             # token 预算（估算，见下）
-  timeLimitMinutes: 15         # 整个运行的时间上限（不含等待审批）
-  stepTimeoutMinutes: 4        # 单步上限（1–5）
+  maxSteps: 3 # 最多执行几个步骤（每步 = 一个机器人回合）
+  maxTokens: 60000 # token 预算（估算，见下）
+  timeLimitMinutes: 15 # 整个运行的时间上限（不含等待审批）
+  stepTimeoutMinutes: 4 # 单步上限（1–5）
   tools:
     deny: [computer, devices, host, apps, memory, schedule, handoff]
   output:
@@ -82,15 +82,15 @@ constraints:
 
 ## 约束（服务器强制）
 
-| 约束 | 怎么执行 |
-| --- | --- |
-| 最多步骤数 | 每个阶段开始前检查已执行步数，超出即失败 |
-| Token 预算 | 估算（中日韩字符 1 个 = 1 token，其他每 4 字符 1 token；包含提示和输出，不含工具调用内容）。每步开始前检查；流式输出时实时累计，超出立即中止这个回合 |
-| 时间上限 | 整个运行一个计时器（等待审批时暂停计时），超时中止当前回合 |
-| 单步时间上限 | 每步一个计时器，超时中止 |
+| 约束            | 怎么执行                                                                                                                                                                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 最多步骤数      | 每个阶段开始前检查已执行步数，超出即失败                                                                                                                                                                                                                                           |
+| Token 预算      | 估算（中日韩字符 1 个 = 1 token，其他每 4 字符 1 token；包含提示和输出，不含工具调用内容）。每步开始前检查；流式输出时实时累计，超出立即中止这个回合                                                                                                                               |
+| 时间上限        | 整个运行一个计时器（等待审批时暂停计时），超时中止当前回合                                                                                                                                                                                                                         |
+| 单步时间上限    | 每步一个计时器，超时中止                                                                                                                                                                                                                                                           |
 | 工具允许 / 禁止 | 步骤回合的发起者是 `{ kind: "workflow", id: "<运行>/<步骤>" }`；装工具时（`loadToolsForActor`、找别的机器人、面板工具、无头的 computer_* 和组件）按规则过滤，被禁止的工具不出现在模型面前；执行时再复核一次，硬调会被拒绝并记审计。工作流步骤永远拿不到 `run_workflow`（不能套娃） |
-| 人工审批 | 步骤 `approval: true` 时，运行停在 `waiting_approval`，运行页显示「批准并继续 / 拒绝」；批准后从这一步继续，拒绝则运行结束 |
-| 输出格式 | `json`：从回复里提取 JSON，失败就让机器人修正一次，仍失败则运行失败；`maxChars`：超出截断并记录 |
+| 人工审批        | 步骤 `approval: true` 时，运行停在 `waiting_approval`，运行页显示「批准并继续 / 拒绝」；批准后从这一步继续，拒绝则运行结束                                                                                                                                                         |
+| 输出格式        | `json`：从回复里提取 JSON，失败就让机器人修正一次，仍失败则运行失败；`maxChars`：超出截断并记录                                                                                                                                                                                    |
 
 审计：运行内的事件写在 `workflow_run_events`（运行页「运行记录」）；开始、结束、审批决定、约束拦截另外写进全局审计（`workflow.run_started` / `workflow.run_finished` / `workflow.approval_decided` / `workflow.constraint_blocked`，发起者 `workflow`）。工作流的增删改记 `configuration.changed`。
 
@@ -100,20 +100,20 @@ constraints:
 
 `/api/workflows`（需要登录，只看得到预设、自己的工作流和自己的运行）：
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/` | 预设、我的工作流、最近 12 次运行 |
-| GET / PUT / DELETE | `/:id` | 详情（含 WORKFLOW.md）/ 保存 / 删除（预设只读） |
-| POST | `/` | 新建（`{ definition }`） |
-| POST | `/import` | 导入（`{ markdown }`） |
-| POST | `/validate` | 校验并生成 WORKFLOW.md |
-| GET | `/:id/export` | 下载 `<slug>.workflow.md` |
-| POST | `/:id/duplicate` | 复制为我的工作流 |
-| POST | `/:id/runs` | 运行（`{ inputs, bindings: { 角色key: 机器人id } }`） |
-| GET | `/runs`、`/runs/:runId` | 运行列表 / 运行详情（含事件） |
-| POST | `/runs/:runId/approve` | `{ stepId, decision: "approve" | "reject", comment? }` |
-| POST | `/runs/:runId/cancel` | 停止 |
-| DELETE | `/runs/:runId` | 删除运行记录（会先停止） |
+| 方法               | 路径                    | 说明                                                  |
+| ------------------ | ----------------------- | ----------------------------------------------------- |
+| GET                | `/`                     | 预设、我的工作流、最近 12 次运行                      |
+| GET / PUT / DELETE | `/:id`                  | 详情（含 WORKFLOW.md）/ 保存 / 删除（预设只读）       |
+| POST               | `/`                     | 新建（`{ definition }`）                              |
+| POST               | `/import`               | 导入（`{ markdown }`）                                |
+| POST               | `/validate`             | 校验并生成 WORKFLOW.md                                |
+| GET                | `/:id/export`           | 下载 `<slug>.workflow.md`                             |
+| POST               | `/:id/duplicate`        | 复制为我的工作流                                      |
+| POST               | `/:id/runs`             | 运行（`{ inputs, bindings: { 角色key: 机器人id } }`） |
+| GET                | `/runs`、`/runs/:runId` | 运行列表 / 运行详情（含事件）                         |
+| POST               | `/runs/:runId/approve`  | `{ stepId, decision: "approve"                        | "reject", comment? }` |
+| POST               | `/runs/:runId/cancel`   | 停止                                                  |
+| DELETE             | `/runs/:runId`          | 删除运行记录（会先停止）                              |
 
 ## 预设
 

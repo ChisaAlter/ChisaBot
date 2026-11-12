@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT
 export FIXTURE_ROOT=$TMP
 mkdir -p "$TMP"/{updater,compose,bin,full/batch}
-cp "$HERE"/{host-monitor.sh,complete-backup.sh,backup-state.mjs,dsh-release.sh} "$TMP/updater/"
+cp "$HERE"/{host-monitor.sh,host-monitor-state.mjs,complete-backup.sh,backup-state.mjs,dsh-release.sh} "$TMP/updater/"
 NODE=$(command -v node)
 REAL_CURL=$(command -v curl)
 export REAL_CURL
@@ -81,11 +81,15 @@ if [ "${1:-}" = --signals ]; then
 fi
 run 0
 grep -q '"check":"backup","ok":true.*"local":"ready","offsite":"missing"' "$TMP/result"
+grep -q '"check":"notification","ok":true,"state":"not_configured"' "$TMP/result"
+"$NODE" -e 'const fs=require("fs"),s=JSON.parse(fs.readFileSync(process.argv[1]));if(s.owner!==null||s.incident!==null)process.exit(1)' "$TMP/updater/spool/state/host-monitor.json"
 echo 'ok - real backup status keeps offsite missing distinct from local ready'
+printf 'CHISABOT_MONITOR_NOTIFY_OWNER=fixture-owner\n' >> "$TMP/updater/config.env"
 run 1 APP_DOWN=1
 grep -q '"check":"app","ok":false' "$TMP/result"
 grep -q '"check":"dsh","ok":true' "$TMP/result"
 grep -q '"check":"certificate","ok":true' "$TMP/result"
+"$NODE" -e 'const fs=require("fs"),s=JSON.parse(fs.readFileSync(process.argv[1]));if(s.owner!=="fixture-owner"||s.incident.failures.join(",")!=="app")process.exit(1)' "$TMP/updater/spool/state/host-monitor.json"
 echo 'ok - real connection refusal is visible while independent checks continue'
 run 1 DSH_DOWN=1
 grep -q '"check":"app","ok":true' "$TMP/result"

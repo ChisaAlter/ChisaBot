@@ -16,7 +16,12 @@ import { WORKER_RESULT_MARKER } from "./workers";
 type Content = unknown;
 type Row = { id: string; role: string; content?: Content };
 
-export type TruncateMode = "regenerate" | "edit";
+export type TruncateMode = "regenerate" | "edit" | "withdraw";
+
+export type EditableAttachment = {
+  partIndex: number;
+  label: string;
+};
 
 /** 最后一条用户消息的位置；没有为 -1。 */
 export function lastUserIndex(messages: readonly Row[]): number {
@@ -51,21 +56,26 @@ export function contentText(content: Content): string {
 }
 
 /**
- * 编辑后的内容：纯文字直接换；带附件的分段只换文字段（第一段文字的位置放新文字，其余文字段去掉），附件原样保留。
- * 新文字为空且没有附件时返回 null（不能发空消息）。
+ * 编辑后的内容：纯文字直接换；带附件的分段换文字段（第一段文字的位置放新文字，其余文字段去掉），
+ * 未被 `removedPartIndices` 标记移除的附件原样保留。新文字为空且没有剩余附件时返回 null（不能发空消息）。
  */
-export function withEditedText(content: Content, text: string): Content | null {
+export function withEditedText(
+  content: Content,
+  text: string,
+  removedPartIndices?: ReadonlySet<number>,
+): Content | null {
   const said = text.trim();
   if (!Array.isArray(content)) return said ? said : null;
   const parts: unknown[] = [];
   let placed = false;
-  for (const part of content) {
+  for (let index = 0; index < content.length; index += 1) {
+    const part = content[index];
     const isText =
       part &&
       typeof part === "object" &&
       (part as { type?: unknown }).type === "text";
     if (!isText) {
-      parts.push(part);
+      if (!removedPartIndices?.has(index)) parts.push(part);
       continue;
     }
     if (!placed && said) parts.push({ ...(part as object), text: said });
@@ -131,7 +141,12 @@ export async function truncateConversation(
 export type MessageActions = {
   canAct: boolean;
   regenerate: () => Promise<void>;
-  edit: (messageId: string, text: string) => Promise<void>;
+  edit: (
+    messageId: string,
+    text: string,
+    removedPartIndices?: ReadonlySet<number>,
+  ) => Promise<void>;
+  withdraw?: (messageId: string) => Promise<void>;
 };
 
 export const MessageActionsContext = createContext<MessageActions | null>(null);

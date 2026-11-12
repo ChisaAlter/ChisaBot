@@ -6,10 +6,11 @@ import { inspectDshRuntime } from "../../runtime/dsh/src/readiness.mjs";
 import { readAssistantSignals } from "../../server/src/assistant-signals";
 import { createManagedDshRuntimes } from "../../server/src/conversations/managed-runtime";
 import { loadDshTargets } from "../../server/src/conversations/runtime-targets";
+import { selectedAgentKernel } from "../../shared/agent-kernel";
 
 // Run with the API's environment and uid. Never print endpoints, owner IDs or connection tokens.
 const command = process.argv[2] ?? "health";
-const kernel = process.env.CHISABOT_AGENT_KERNEL?.trim().toLowerCase();
+const kernel = selectedAgentKernel(process.env);
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is not set.");
 const db = postgres(databaseUrl, { max: 1, connect_timeout: 10 });

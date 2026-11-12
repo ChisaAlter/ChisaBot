@@ -17,15 +17,15 @@
 - 连接页能看到每个连接的状态（已连接 / 连接中 / 出错 + 原因 / 已停用 / 等待协议端连入）、最后一条消息的时间、「测试连接」和最近 100 条日志。断线会自动重连（1 秒起，指数退避，最长 1 分钟）。
 - 运维开关：环境变量 `CHISABOT_IM=0` 让服务器开机时不连任何平台。
 
-| 平台 | 方式 | 需要公网地址吗 | 官方？ |
-| --- | --- | --- | --- |
-| 飞书 / Lark | 自建应用 · 长连接 | 不需要 | 官方 |
-| QQ 官方机器人 | QQ 开放平台 · WebSocket 网关 | 不需要 | 官方 |
-| QQ 个人号 | OneBot 11（NapCat / LLOneBot） | 正向不需要；反向要能访问 ChisaBot | **非官方，有封号风险** |
-| 企业微信 | 智能机器人 API 模式 · 长连接 | 不需要 | 官方 |
-| 个人微信 | 微信 ClawBot（iLink）· 扫码授权 | 不需要 | 官方（灰度中） |
-| 钉钉 | 企业内部应用机器人 · Stream 模式 | 不需要 | 官方 |
-| Telegram | Bot API · 长轮询 | 不需要（服务器要能访问 api.telegram.org） | 官方 |
+| 平台          | 方式                             | 需要公网地址吗                            | 官方？                 |
+| ------------- | -------------------------------- | ----------------------------------------- | ---------------------- |
+| 飞书 / Lark   | 自建应用 · 长连接                | 不需要                                    | 官方                   |
+| QQ 官方机器人 | QQ 开放平台 · WebSocket 网关     | 不需要                                    | 官方                   |
+| QQ 个人号     | OneBot 11（NapCat / LLOneBot）   | 正向不需要；反向要能访问 ChisaBot         | **非官方，有封号风险** |
+| 企业微信      | 智能机器人 API 模式 · 长连接     | 不需要                                    | 官方                   |
+| 个人微信      | 微信 ClawBot（iLink）· 扫码授权  | 不需要                                    | 官方（灰度中）         |
+| 钉钉          | 企业内部应用机器人 · Stream 模式 | 不需要                                    | 官方                   |
+| Telegram      | Bot API · 长轮询                 | 不需要（服务器要能访问 api.telegram.org） | 官方                   |
 
 ---
 
@@ -62,7 +62,6 @@
 ## QQ 个人号（OneBot 11）
 
 > ⚠️ 这不是 QQ 官方接口。协议端模拟 QQ 客户端登录，腾讯可能限制或封禁这个号。**请用小号**，不要用常用号，不要在大群里刷屏。
-
 1. 在一台能常开的电脑 / 服务器上安装 [NapCat](https://github.com/NapNeko/NapCatQQ)（推荐）或 [LLOneBot](https://github.com/LLOneBot/LuckyLilliaBot)，用要当机器人的 QQ 号扫码登录。
 2. 二选一：
    - **正向 WebSocket**：在协议端网络配置里新建「WebSocket 服务端」，监听 `0.0.0.0:3001`，设置 token。ChisaBot 里连接方式选「正向」，地址填 `ws://协议端IP:3001`，Access Token 填同一个 token。ChisaBot 服务器要能访问这个地址。**注意**：地址指向本机 / 内网 / Docker 兄弟容器（`ws://127.0.0.1:3001`、`ws://192.168.x.x:3001`、`ws://napcat:3001`）时，需要管理员在这个连接里打开「允许内网地址」开关才连得上——开关只对这个连接自己配置的协议端主机名生效，云元数据地址照样拦；没有管理员改不了开关时，请改用反向。
@@ -114,11 +113,11 @@
 
 参考过的开源项目（只借鉴设计和公开协议格式，**没有复制 GPL / AGPL 代码**）：
 
-| 项目 | 许可 | 借鉴了什么 |
-| --- | --- | --- |
-| [LangBot](https://github.com/langbot-app/LangBot) | Apache-2.0 | 平台清单和每个平台的配置项；飞书长连接、QQ 官方 WebSocket、企业微信智能机器人长连接（`aibot_*` 帧）、个人微信 ClawBot / iLink 接口（扫码、getupdates、sendmessage、context_token）的消息格式与流程 |
-| [飞书 Node SDK](https://github.com/larksuite/node-sdk) | MIT | 长连接 `/callback/ws/endpoint` 握手、pbbp2 帧字段号、ping / pong、分片合并和回执 |
-| [OneBot 11 标准](https://github.com/botuniverse/onebot-11) · [NapCat](https://github.com/NapNeko/NapCatQQ) | 标准文档 | 正向 / 反向 WebSocket、消息段、CQ 码、`send_*_msg` 动作 |
-| [AstrBot](https://github.com/AstrBotDevs/AstrBot) | AGPL-3.0 | 只参考产品形态（一个连接对一个机器人、群里 @ 才回），未使用代码 |
-| [cc-connect](https://github.com/chenhg5/cc-connect) | 未声明许可 | 只参考产品形态（会话命令 `/new`），未使用代码 |
-| [Koishi](https://github.com/koishijs/koishi) · [NoneBot2](https://github.com/nonebot/nonebot2) 适配器 | MIT | 适配器抽象（平台无关的入站消息 + 回复接口）的思路 |
+| 项目                                                                                                       | 许可       | 借鉴了什么                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [LangBot](https://github.com/langbot-app/LangBot)                                                          | Apache-2.0 | 平台清单和每个平台的配置项；飞书长连接、QQ 官方 WebSocket、企业微信智能机器人长连接（`aibot_*` 帧）、个人微信 ClawBot / iLink 接口（扫码、getupdates、sendmessage、context_token）的消息格式与流程 |
+| [飞书 Node SDK](https://github.com/larksuite/node-sdk)                                                     | MIT        | 长连接 `/callback/ws/endpoint` 握手、pbbp2 帧字段号、ping / pong、分片合并和回执                                                                                                                   |
+| [OneBot 11 标准](https://github.com/botuniverse/onebot-11) · [NapCat](https://github.com/NapNeko/NapCatQQ) | 标准文档   | 正向 / 反向 WebSocket、消息段、CQ 码、`send_*_msg` 动作                                                                                                                                            |
+| [AstrBot](https://github.com/AstrBotDevs/AstrBot)                                                          | AGPL-3.0   | 只参考产品形态（一个连接对一个机器人、群里 @ 才回），未使用代码                                                                                                                                    |
+| [cc-connect](https://github.com/chenhg5/cc-connect)                                                        | 未声明许可 | 只参考产品形态（会话命令 `/new`），未使用代码                                                                                                                                                      |
+| [Koishi](https://github.com/koishijs/koishi) · [NoneBot2](https://github.com/nonebot/nonebot2) 适配器      | MIT        | 适配器抽象（平台无关的入站消息 + 回复接口）的思路                                                                                                                                                  |

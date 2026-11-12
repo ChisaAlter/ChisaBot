@@ -5,15 +5,14 @@ DESIGN.md §54。机器人把行程、邀请函、报告、作品集这类内容
 
 ## 机器人工具（`server/src/pages/service.ts`）
 
-| 工具 | 作用 |
-|---|---|
-| `page_create` | 标题 + 正文 HTML（+ 追加 CSS + 素材），默认直接发布；聊天里出页面卡片 |
-| `page_update` | 小改用 `edits`（原文 → 新文，原文须唯一），大改给整份 `html`；每次改动一版 |
-| `page_get` | 读当前版正文 / CSS / 素材，改之前用 |
-| `page_list` | 列出用户的页面 |
-| `page_publish` | 发布 / 下线（下线后链接 404，内容保留） |
-| `page_delete` | 删除（只在用户明确要求时） |
-
+| 工具           | 作用                                                                       |
+| -------------- | -------------------------------------------------------------------------- |
+| `page_create`  | 标题 + 正文 HTML（+ 追加 CSS + 素材），默认直接发布；聊天里出页面卡片      |
+| `page_update`  | 小改用 `edits`（原文 → 新文，原文须唯一），大改给整份 `html`；每次改动一版 |
+| `page_get`     | 读当前版正文 / CSS / 素材，改之前用                                        |
+| `page_list`    | 列出用户的页面                                                             |
+| `page_publish` | 发布 / 下线（下线后链接 404，内容保留）                                    |
+| `page_delete`  | 删除（只在用户明确要求时）                                                 |
 - 默认外观：`server/src/pages/template.ts`，ChisaBot 蓝天毛玻璃，亮 / 暗跟随系统、手机自适应。机器人只写正文，
   用模板类名（`page` / `hero` / `card` / `grid` / `stats` / `timeline` / `item` / `badge` / `btn` / `callout` / `gallery` …）；
   写完整文档（`<!doctype html>` 开头）就原样发布。外壳在打开时才套，所以模板改进对老页面也生效。
