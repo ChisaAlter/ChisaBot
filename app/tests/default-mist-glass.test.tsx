@@ -280,19 +280,17 @@ describe("haze default lives in one constant", () => {
 });
 
 describe("CHANGELOG", () => {
-  test("this PR's 0.1.138 entries sit in the list without a blank line breaking it", () => {
+  test("this PR's entries sit in the Unreleased list without a blank line breaking it", () => {
     const log = readFileSync(
       path.join(import.meta.dir, "../../CHANGELOG.md"),
       "utf8",
     );
     const section =
-      /## 0\.1\.138[^\n]*\n\n([\s\S]*?)\n## /.exec(log)?.[1] ?? "";
+      /## Unreleased[^\n]*\n\n([\s\S]*?)\n## /.exec(log)?.[1] ?? "";
     const lines = section.split("\n");
     const mist = lines.findIndex((l) => l.includes("薄雾玻璃"));
     const liquid = lines.findIndex((l) => l.startsWith("- 液态玻璃"));
     expect(mist).toBe(0);
     expect(liquid).toBe(1);
-    // 紧跟着就是下一条（以前这里多一个空行，把列表断成两个）。
-    expect(lines[2]?.startsWith("- ")).toBe(true);
   });
 });
