@@ -241,7 +241,7 @@ test("DSH health reports validated storage", async () => {
     dshRequired: true,
     probeDsh: async () => ({
       ok: true,
-      version: "0.2.2-rc.2",
+      version: "0.2.2-rc.1",
       historyReadable: true,
       checkedSessions: 1,
       running: 0,
