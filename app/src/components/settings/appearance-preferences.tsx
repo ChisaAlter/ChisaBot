@@ -31,6 +31,7 @@ import {
   setThemePalette,
   setWallpaperBlur,
   setWallpaperDim,
+  setWallpaperScrim,
   setWallpaperPreset,
   THEME_PALETTES,
   updateAppearance,
@@ -588,6 +589,24 @@ export function AppearancePreferences() {
                 step={1}
                 type="range"
                 value={appearance.wallpaperDim}
+              />
+            </label>
+            <label className="appearance-slider-row">
+              <span className="appearance-slider-label">
+                <span>{"壁纸薄幕浓度"}</span>
+                <span className="appearance-slider-val">
+                  {`${appearance.wallpaperScrim}%`}
+                </span>
+              </span>
+              <Input
+                aria-label="壁纸薄幕浓度"
+                className="appearance-range"
+                max={100}
+                min={0}
+                onChange={(e) => setWallpaperScrim(Number(e.target.value))}
+                step={1}
+                type="range"
+                value={appearance.wallpaperScrim}
               />
             </label>
           </div>

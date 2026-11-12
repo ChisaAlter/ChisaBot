@@ -36,6 +36,7 @@ export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
 export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
 export const WALLPAPER_BLUR_STORAGE_KEY = "chisabot-wallpaper-blur";
 export const WALLPAPER_DIM_STORAGE_KEY = "chisabot-wallpaper-dim";
+export const WALLPAPER_SCRIM_STORAGE_KEY = "chisabot-wallpaper-scrim";
 export const GLASS_OPACITY_STORAGE_KEY = "chisabot-glass-opacity";
 /** 深色模式自己的一档釉色浓度（和浅色档分开存，切主题时各自滑行到各自的值）。 */
 export const GLASS_OPACITY_DARK_STORAGE_KEY = "chisabot-glass-opacity-dark";
@@ -363,6 +364,8 @@ export type AppearanceState = {
   customWallpaperUrl: string;
   wallpaperBlur: number;
   wallpaperDim: number;
+  /** 壁纸薄幕浓度（%，0–100）：.chisabot-wallpaper::after 那一层统一纱罩的透明度。 */
+  wallpaperScrim: number;
 };
 
 const VALID_PALETTES = new Set<ThemePaletteId>(THEME_PALETTES.map((p) => p.id));
@@ -448,6 +451,7 @@ function readInitialAppearance(): AppearanceState {
     storedCustomUrl === WALLPAPER_IDB_MARKER ? "" : storedCustomUrl;
   const rawBlur = readStoredNumber(WALLPAPER_BLUR_STORAGE_KEY);
   const rawDim = readStoredNumber(WALLPAPER_DIM_STORAGE_KEY);
+  const rawScrim = readStoredNumber(WALLPAPER_SCRIM_STORAGE_KEY);
   const glassOpacity = clampNumber(
     rawGlassOpacity,
     GLASS_OPACITY_MIN,
@@ -480,6 +484,7 @@ function readInitialAppearance(): AppearanceState {
     customWallpaperUrl,
     wallpaperBlur: clampNumber(rawBlur, 0, 40, 0),
     wallpaperDim: clampNumber(rawDim, 0, 75, 18),
+    wallpaperScrim: clampNumber(rawScrim, 0, 100, 53),
   };
 }
 
@@ -820,6 +825,12 @@ export function applyAppearanceToDocument(
     "data-wallpaper",
     resolveActiveWallpaperCss(state) !== null ? "on" : null,
   );
+  // 薄幕浓度：色在 styles.css 的深浅两条规则里，alpha 从根变量读，拖滑块只重算这一个值。
+  // liquid-glass 画合成层时也从 documentElement 读 --wallpaper-scrim，两处自动一致。
+  root.style.setProperty(
+    "--wallpaper-scrim-alpha",
+    (state.wallpaperScrim / 100).toFixed(2),
+  );
 }
 
 export function updateAppearance(patch: Partial<AppearanceState>) {
@@ -871,6 +882,10 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
       patch.wallpaperDim !== undefined
         ? clampNumber(patch.wallpaperDim, 0, 75, prev.wallpaperDim)
         : prev.wallpaperDim,
+    wallpaperScrim:
+      patch.wallpaperScrim !== undefined
+        ? clampNumber(patch.wallpaperScrim, 0, 100, prev.wallpaperScrim)
+        : prev.wallpaperScrim,
   };
 
   currentState = next;
@@ -903,6 +918,7 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
     ],
     [WALLPAPER_BLUR_STORAGE_KEY, prev.wallpaperBlur, next.wallpaperBlur],
     [WALLPAPER_DIM_STORAGE_KEY, prev.wallpaperDim, next.wallpaperDim],
+    [WALLPAPER_SCRIM_STORAGE_KEY, prev.wallpaperScrim, next.wallpaperScrim],
   ];
   for (const [key, before, after] of sliderWrites) {
     if (before !== after) scheduleSliderWrite(key, String(after));
@@ -939,6 +955,7 @@ const SYNCED_APPEARANCE_KEYS = new Set<string>([
   WALLPAPER_CUSTOM_URL_STORAGE_KEY,
   WALLPAPER_BLUR_STORAGE_KEY,
   WALLPAPER_DIM_STORAGE_KEY,
+  WALLPAPER_SCRIM_STORAGE_KEY,
   GLASS_STYLE_STORAGE_KEY,
   GLASS_OPACITY_STORAGE_KEY,
   GLASS_OPACITY_DARK_STORAGE_KEY,
@@ -1035,6 +1052,10 @@ export function setWallpaperDim(wallpaperDim: number) {
   updateAppearance({ wallpaperDim });
 }
 
+export function setWallpaperScrim(wallpaperScrim: number) {
+  updateAppearance({ wallpaperScrim });
+}
+
 export function resetAppearanceDefaults() {
   updateAppearance({
     palette: "default",
@@ -1046,6 +1067,7 @@ export function resetAppearanceDefaults() {
     customWallpaperUrl: "",
     wallpaperBlur: 0,
     wallpaperDim: 18,
+    wallpaperScrim: 53,
   });
   // 天空引擎的地点 / 天气快照：下次加载按默认场景重新取，不再沿用之前搜过或定位到的城市。
   for (const key of HARK_ENGINE_STORAGE_KEYS) {

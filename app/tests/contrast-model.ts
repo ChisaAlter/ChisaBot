@@ -463,7 +463,10 @@ export function wallpaperScrim(scheme: Scheme): RGBA {
     "--wallpaper-scrim",
   );
   if (!value) throw new Error(`--wallpaper-scrim for ${scheme}`);
-  return parseColor(value);
+  // alpha 是用户滑块变量（var(--wallpaper-scrim-alpha, 默认)）：模型按默认值算最差情况。
+  return parseColor(
+    value.replace(/var\(--wallpaper-scrim-alpha,\s*([^)]+)\)/, "$1").trim(),
+  );
 }
 
 /** 壁纸 → 压暗遮罩 → 壁纸薄幕 → 天幕薄纱 叠好后的所有不透明底色（直接落在壁纸上的字就在它上面）。 */
