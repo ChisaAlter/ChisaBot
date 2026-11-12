@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import {
+  DEFAULT_GLASS_STYLE,
+  fallbackGlassStyle,
   GLASS_STYLE_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
   THEME_PALETTES,
@@ -19,7 +21,11 @@ import {
 export {
   applyThemeColor,
   computePaletteSky,
+  DEFAULT_GLASS_STYLE,
+  fallbackGlassStyle,
   GLASS_STYLE_STORAGE_KEY,
+  LEGACY_DEFAULT_GLASS_STYLE,
+  PRIOR_APPEARANCE_STORAGE_KEYS,
   PALETTE_STORAGE_KEY,
   paletteThemeColor,
   THEME_PALETTES,
@@ -46,6 +52,12 @@ export const HARK_ENGINE_STORAGE_KEYS: readonly string[] = [
 /** 面板雾度（玻璃不透明度，%）允许的范围：存储、读取和设置页滑块共用。 */
 export const GLASS_OPACITY_MIN = 5;
 export const GLASS_OPACITY_MAX = 55;
+/**
+ * 默认雾度（%，浅 / 深两档同值）：新用户、「恢复默认」、存储值为空或非法时都回到它。
+ * 要换默认值只改这一个常量（styles.css 里 var(--lg-alpha, 0.16) 只是 JS 写入前的兜底，
+ * 运行时 --lg-alpha 总由 writeGlassAlpha 按这里的值写好）。
+ */
+export const DEFAULT_GLASS_OPACITY = 16;
 
 export type GlassStyleId = "liquid" | "mist" | "crystal" | "frosted";
 
@@ -341,7 +353,7 @@ export const LEGACY_WALLPAPER_ID_MAP: Readonly<
 export type AppearanceState = {
   palette: ThemePaletteId;
   glassStyle: GlassStyleId;
-  /** 玻璃面板不透明度（8 ~ 55，默认 16，即 84% 透光率）——浅色档 */
+  /** 玻璃面板不透明度（GLASS_OPACITY_MIN ~ MAX，默认 DEFAULT_GLASS_OPACITY）——浅色档 */
   glassOpacity: number;
   /** 深色档（同上；未存过时跟随浅色档的值） */
   glassOpacityDark: number;
@@ -391,6 +403,20 @@ function clampNumber(
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+/** 存储里的数字：没存、空串、纯空白都当「没有值」（NaN），交给 clampNumber 回默认，不当 0。 */
+function readStoredNumber(key: string): number {
+  const raw = readStoredPreference(key);
+  if (raw === null || raw.trim() === "") return Number.NaN;
+  return Number(raw);
+}
+
+function resolveStoredGlassStyle(rawGlass: GlassStyleId | null): GlassStyleId {
+  if (rawGlass && VALID_GLASS_STYLES.has(rawGlass)) return rawGlass;
+  const glass = fallbackGlassStyle(readStoredPreference);
+  writeStoredPreference(GLASS_STYLE_STORAGE_KEY, glass);
+  return glass;
+}
+
 function readInitialAppearance(): AppearanceState {
   const rawPalette = readStoredPreference(
     PALETTE_STORAGE_KEY,
@@ -398,9 +424,7 @@ function readInitialAppearance(): AppearanceState {
   const rawGlass = readStoredPreference(
     GLASS_STYLE_STORAGE_KEY,
   ) as GlassStyleId | null;
-  const rawGlassOpacity = Number(
-    readStoredPreference(GLASS_OPACITY_STORAGE_KEY) ?? "16",
-  );
+  const rawGlassOpacity = readStoredNumber(GLASS_OPACITY_STORAGE_KEY);
   const rawHarkScene = readStoredPreference(
     HARK_SCENE_STORAGE_KEY,
   ) as HarkSkySceneId | null;
@@ -422,32 +446,28 @@ function readInitialAppearance(): AppearanceState {
         : null;
   const customWallpaperUrl =
     storedCustomUrl === WALLPAPER_IDB_MARKER ? "" : storedCustomUrl;
-  const rawBlur = Number(
-    readStoredPreference(WALLPAPER_BLUR_STORAGE_KEY) ?? "0",
-  );
-  const rawDim = Number(
-    readStoredPreference(WALLPAPER_DIM_STORAGE_KEY) ?? "18",
+  const rawBlur = readStoredNumber(WALLPAPER_BLUR_STORAGE_KEY);
+  const rawDim = readStoredNumber(WALLPAPER_DIM_STORAGE_KEY);
+  const glassOpacity = clampNumber(
+    rawGlassOpacity,
+    GLASS_OPACITY_MIN,
+    GLASS_OPACITY_MAX,
+    DEFAULT_GLASS_OPACITY,
   );
 
   return {
     palette:
       rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
-    glassStyle:
-      rawGlass && VALID_GLASS_STYLES.has(rawGlass) ? rawGlass : "liquid",
-    glassOpacity: clampNumber(
-      rawGlassOpacity,
-      GLASS_OPACITY_MIN,
-      GLASS_OPACITY_MAX,
-      16,
-    ),
-    // 深色档没存过就用浅色档的值，老用户拖过的滑块在深色下照旧生效。
+    // 没存材质：按 fallbackGlassStyle 判定一次（不含会自动写入的深浅主题），并立刻写入
+    // glass-style，这样 ThemeProvider 随后写入 chisabot-theme 也不会在下次加载时改口径。
+    glassStyle: resolveStoredGlassStyle(rawGlass),
+    glassOpacity,
+    // 深色档没存过（或为空）就用浅色档的值，老用户拖过的滑块在深色下照旧生效。
     glassOpacityDark: clampNumber(
-      Number(
-        readStoredPreference(GLASS_OPACITY_DARK_STORAGE_KEY) ?? rawGlassOpacity,
-      ),
+      readStoredNumber(GLASS_OPACITY_DARK_STORAGE_KEY),
       GLASS_OPACITY_MIN,
       GLASS_OPACITY_MAX,
-      clampNumber(rawGlassOpacity, GLASS_OPACITY_MIN, GLASS_OPACITY_MAX, 16),
+      glassOpacity,
     ),
     harkScene:
       rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene)
@@ -866,6 +886,14 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   for (const [key, before, after] of writes) {
     if (before !== after) writeStoredPreference(key, after);
   }
+  // 第一次存任何外观设置时把当前材质一起钉进存储：不然新用户（mist）只拖一下雾度，
+  // 下次加载会因为「存过外观设置」被当成老用户落回 liquid。
+  if (
+    prev.glassStyle === next.glassStyle &&
+    readStoredPreference(GLASS_STYLE_STORAGE_KEY) === null
+  ) {
+    writeStoredPreference(GLASS_STYLE_STORAGE_KEY, next.glassStyle);
+  }
   const sliderWrites: Array<[string, number, number]> = [
     [GLASS_OPACITY_STORAGE_KEY, prev.glassOpacity, next.glassOpacity],
     [
@@ -1010,9 +1038,9 @@ export function setWallpaperDim(wallpaperDim: number) {
 export function resetAppearanceDefaults() {
   updateAppearance({
     palette: "default",
-    glassStyle: "liquid",
-    glassOpacity: 16,
-    glassOpacityDark: 16,
+    glassStyle: DEFAULT_GLASS_STYLE,
+    glassOpacity: DEFAULT_GLASS_OPACITY,
+    glassOpacityDark: DEFAULT_GLASS_OPACITY,
     harkScene: "auto",
     wallpaperId: "none",
     customWallpaperUrl: "",

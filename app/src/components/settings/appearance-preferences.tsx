@@ -14,6 +14,8 @@ import { toast } from "@/components/ui/toast";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
   compressUploadedWallpaper,
+  DEFAULT_GLASS_OPACITY,
+  DEFAULT_GLASS_STYLE,
   GLASS_OPACITY_MAX,
   GLASS_OPACITY_MIN,
   type GlassStyleId,
@@ -134,9 +136,9 @@ export function AppearancePreferences() {
           {appearance.harkScene !== "auto" ||
           appearance.palette !== "default" ||
           appearance.wallpaperId !== "none" ||
-          appearance.glassStyle !== "liquid" ||
-          appearance.glassOpacity !== 16 ||
-          appearance.glassOpacityDark !== 16 ? (
+          appearance.glassStyle !== DEFAULT_GLASS_STYLE ||
+          appearance.glassOpacity !== DEFAULT_GLASS_OPACITY ||
+          appearance.glassOpacityDark !== DEFAULT_GLASS_OPACITY ? (
             <Button
               onClick={() => {
                 resetAppearanceDefaults();

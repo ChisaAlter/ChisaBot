@@ -61,6 +61,12 @@ jobs:
             node perf/jank.mjs --dist="$RUNNER_TEMP/base/app/dist" --scenario="$SCENARIOS" --runs=1 --out=perf/out/base
           fi
           node perf/jank.mjs --dist=app/dist --scenario="$SCENARIOS" --runs=1 --out=perf/out/head
+          # Liquid glass path (idle / scroll / stream): default head is mist, so
+          # the pass above does not exercise snapshot sampling or the lens.
+          if [ -d "$RUNNER_TEMP/base/app/dist" ]; then
+            node perf/jank.mjs --dist="$RUNNER_TEMP/base/app/dist" --glass=liquid --scenario=idle,scroll,stream --runs=1 --out=perf/out/base-liquid --tag=base-liquid
+          fi
+          node perf/jank.mjs --dist=app/dist --glass=liquid --scenario=idle,scroll,stream --runs=1 --out=perf/out/head-liquid --tag=head-liquid
       - name: Summary
         if: always()
         run: |
@@ -72,6 +78,15 @@ jobs:
               node perf/compare.mjs perf/out/head perf/out/head --label-before=head --label-after=head
             else
               echo "harness did not produce a summary"
+            fi
+            echo
+            echo "## Jank harness (liquid glass: idle, scroll, stream)"
+            if [ -f perf/out/base-liquid/summary.json ] && [ -f perf/out/head-liquid/summary.json ]; then
+              node perf/compare.mjs perf/out/base-liquid perf/out/head-liquid --label-before=base-liquid --label-after=head-liquid --interactions
+            elif [ -f perf/out/head-liquid/summary.json ]; then
+              node perf/compare.mjs perf/out/head-liquid perf/out/head-liquid --label-before=head-liquid --label-after=head-liquid
+            else
+              echo "liquid harness did not produce a summary"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
