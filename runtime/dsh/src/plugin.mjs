@@ -738,7 +738,7 @@ export async function apply(ctx, config) {
         Response.json({
           ok: true,
           protocol: 1,
-          version: "0.2.2-rc.1",
+          version: "0.2.2-rc.2",
           generation,
           ownerUserId: config.ownerUserId,
           sessions: [...sessions.values()].map((x) => ({
