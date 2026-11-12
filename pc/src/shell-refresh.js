@@ -27,6 +27,15 @@ function loadFingerprint(file = path.join(__dirname, "shell-fingerprint.json")) 
   }
 }
 
+function loadClientFingerprint(file = path.join(__dirname, "shell-fingerprint.json")) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    return typeof data.clientHash === "string" && data.clientHash ? data.clientHash : "";
+  } catch {
+    return "";
+  }
+}
+
 /** resources\icons 里按内容哈希命名的图标（打包时 build/icons → resources/icons）；没有就返回 ""。 */
 function findIcon({ resourcesPath, readdir = fs.readdirSync } = {}) {
   if (!resourcesPath) return "";
@@ -174,4 +183,4 @@ function refreshShell({ shell, exists = fs.existsSync, execPath, icon = "", appU
   return { updated, cacheRefreshed };
 }
 
-module.exports = { loadFingerprint, shortcutCandidates, scanShortcuts, findIcon, staleShortcuts, needsShellRefresh, refreshShell, samePath, pointsAtUs };
+module.exports = { loadFingerprint, loadClientFingerprint, shortcutCandidates, scanShortcuts, findIcon, staleShortcuts, needsShellRefresh, refreshShell, samePath, pointsAtUs };

@@ -14,12 +14,17 @@
  *   - NATIVE_DEPENDENCIES 里列出的原生依赖的版本（现在没有；加了带 .node 的依赖要写进来）
  * 新旧版本的哈希不同 = 这次更新要走「重新安装」（不带 --updated，重建快捷方式、刷新图标缓存）。
  *
+ * 同时计算 clientHash（chisabotClient，客户端代码指纹）：覆盖外壳指纹 + package.json 的 dependencies +
+ * src/ 下打包进客户端的代码与界面资源（不含 shell-fingerprint.json / build-config.json / update-keys.json，
+ * 也不含纯版本号）。当远端版本更高但 chisabotShell 与 chisabotClient 均未变化时，说明本次发版只改了网页或
+ * 服务器，桌面端无需下载安装包，直接走网页「有新版本，点此刷新」即可。
+ *
  * 用法：
  *   node scripts/shell-fingerprint.js            打印指纹 JSON
  *   node scripts/shell-fingerprint.js --write    写 src/shell-fingerprint.json（打进 asar，客户端拿来比较）
  *   node scripts/shell-fingerprint.js --check    src/shell-fingerprint.json 过期就退出码 1（CI / 测试用）
  *   node scripts/shell-fingerprint.js --stamp dist/latest.yml [--full]
- *        给 latest.yml 加上 chisabotShell: <哈希>（--full 时再加 fullInstall: true，强制所有客户端重新安装）。
+ *        给 latest.yml 加上 chisabotShell 与 chisabotClient（--full 时再加 fullInstall: true，强制所有客户端重新安装）。
  *        latest.yml 里的 sha512 是安装包的，改 yml 不影响校验。
  */
 const crypto = require("node:crypto");
@@ -83,10 +88,50 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
+const CLIENT_GENERATED_FILES = new Set([
+  "src/shell-fingerprint.json",
+  "src/build-config.json",
+  "src/update-keys.json",
+]);
+
+function walkClientFiles(dir, prefix, out) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const rel = `${prefix}/${entry.name}`;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkClientFiles(full, rel, out);
+    } else if (entry.isFile() && !CLIENT_GENERATED_FILES.has(rel)) {
+      out.push([rel, full]);
+    }
+  }
+}
+
+/** 客户端代码输入：外壳哈希 + 运行时 JS 依赖 + src/ 代码与本机 UI（排除版本号与构建期注入文件）。 */
+function collectClientInputs(root = ROOT, shellHash = "") {
+  const pkgFile = path.join(root, "package.json");
+  const pkg = fs.existsSync(pkgFile) ? JSON.parse(fs.readFileSync(pkgFile, "utf8")) : {};
+  const clientInputs = {
+    shell: shellHash,
+    "package.json#dependencies": sha256(canonical(pkg.dependencies || {})),
+  };
+  const files = [];
+  walkClientFiles(path.join(root, "src"), "src", files);
+  for (const [rel, full] of files) {
+    const raw = /\.(js|cjs|mjs|json|html|css|svg|txt)$/i.test(rel)
+      ? Buffer.from(fs.readFileSync(full, "utf8").replace(/\r\n/g, "\n"), "utf8")
+      : fs.readFileSync(full);
+    clientInputs[rel] = sha256(raw);
+  }
+  return clientInputs;
+}
+
 function compute(root = ROOT) {
   const inputs = collectInputs(root);
   const hash = sha256(canonical({ schema: SCHEMA, inputs })).slice(0, 16);
-  return { schema: SCHEMA, hash, inputs };
+  const clientInputs = collectClientInputs(root, hash);
+  const clientHash = sha256(canonical({ schema: SCHEMA, clientInputs })).slice(0, 16);
+  return { schema: SCHEMA, hash, clientHash, inputs };
 }
 
 function readCommitted(file = OUT) {
@@ -97,15 +142,16 @@ function readCommitted(file = OUT) {
   }
 }
 
-/** 给 latest.yml 写（或替换）chisabotShell / fullInstall 两行。返回新文本。 */
-function stampYaml(text, { hash, full = false }) {
+/** 给 latest.yml 写（或替换）chisabotShell / chisabotClient / fullInstall 行。返回新文本。 */
+function stampYaml(text, { hash, clientHash = "", full = false }) {
   const kept = text
     .split(/\r?\n/)
     // chisabotSig 签的是旧的字段，盖章以后一定失效：去掉，签名永远是发布的最后一步（scripts/sign-update.js）。
-    .filter((line) => !/^(chisabotShell|fullInstall|chisabotSig):/.test(line))
+    .filter((line) => !/^(chisabotShell|chisabotClient|fullInstall|chisabotSig):/.test(line))
     .join("\n")
     .replace(/\n+$/, "");
   let out = `${kept}\nchisabotShell: ${hash}\n`;
+  if (clientHash) out += `chisabotClient: ${clientHash}\n`;
   if (full) out += "fullInstall: true\n";
   return out;
 }
@@ -114,19 +160,19 @@ function main(argv) {
   const fp = compute();
   if (argv.includes("--write")) {
     fs.writeFileSync(OUT, `${JSON.stringify(fp, null, 2)}\n`);
-    console.log(`shell fingerprint ${fp.hash} → ${path.relative(process.cwd(), OUT)}`);
+    console.log(`shell fingerprint ${fp.hash} (client ${fp.clientHash}) → ${path.relative(process.cwd(), OUT)}`);
     return 0;
   }
   if (argv.includes("--check")) {
     const committed = readCommitted();
-    if (!committed || committed.hash !== fp.hash) {
+    if (!committed || committed.hash !== fp.hash || committed.clientHash !== fp.clientHash) {
       console.error(
-        `src/shell-fingerprint.json 过期（文件里 ${committed?.hash || "没有"}，现在算出 ${fp.hash}）。` +
-          "改了图标 / 安装配置 / Electron 版本后运行：node scripts/shell-fingerprint.js --write",
+        `src/shell-fingerprint.json 过期（文件里 shell=${committed?.hash || "没有"} client=${committed?.clientHash || "没有"}，` +
+          `现在算出 shell=${fp.hash} client=${fp.clientHash}）。改了 PC 客户端代码 / 图标 / 安装配置后运行：node scripts/shell-fingerprint.js --write`,
       );
       return 1;
     }
-    console.log(`shell fingerprint ${fp.hash} ok`);
+    console.log(`shell fingerprint ${fp.hash} (client ${fp.clientHash}) ok`);
     return 0;
   }
   const at = argv.indexOf("--stamp");
@@ -135,12 +181,18 @@ function main(argv) {
     if (!file) throw new Error("--stamp 需要 latest.yml 路径");
     const committed = readCommitted();
     // 打包用的是 asar 里的 src/shell-fingerprint.json；两者不一致说明打包前没 --write，宁可失败也不发错的指纹。
-    if (!committed || committed.hash !== fp.hash) {
-      console.error(`打进安装包的指纹（${committed?.hash || "没有"}）和现在算出的（${fp.hash}）不一致，先 --write 再打包。`);
+    if (!committed || committed.hash !== fp.hash || committed.clientHash !== fp.clientHash) {
+      console.error(
+        `打进安装包的指纹（shell=${committed?.hash || "没有"} client=${committed?.clientHash || "没有"}）` +
+          `和现在算出的（shell=${fp.hash} client=${fp.clientHash}）不一致，先 --write 再打包。`,
+      );
       return 1;
     }
-    fs.writeFileSync(file, stampYaml(fs.readFileSync(file, "utf8"), { hash: fp.hash, full: argv.includes("--full") }));
-    console.log(`stamped ${file}: chisabotShell ${fp.hash}${argv.includes("--full") ? " + fullInstall" : ""}`);
+    fs.writeFileSync(
+      file,
+      stampYaml(fs.readFileSync(file, "utf8"), { hash: fp.hash, clientHash: fp.clientHash, full: argv.includes("--full") }),
+    );
+    console.log(`stamped ${file}: chisabotShell ${fp.hash} chisabotClient ${fp.clientHash}${argv.includes("--full") ? " + fullInstall" : ""}`);
     return 0;
   }
   console.log(JSON.stringify(fp, null, 2));
@@ -149,4 +201,4 @@ function main(argv) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { compute, collectInputs, canonical, stampYaml, readCommitted, NATIVE_DEPENDENCIES, SCHEMA };
+module.exports = { compute, collectInputs, collectClientInputs, canonical, stampYaml, readCommitted, NATIVE_DEPENDENCIES, SCHEMA };

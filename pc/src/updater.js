@@ -57,6 +57,21 @@ function requiresFullInstall(info, localShell) {
   return remote !== String(localShell || "");
 }
 
+/**
+ * 远端版本更高时，要不要下载并安装 PC 客户端安装包：
+ *  - 需要重新安装（外壳指纹变了或 fullInstall: true）→ 需要下载；
+ *  - 远端或本机缺少客户端指纹（chisabotClient / localClient）→ 兼容旧版本，照常下载；
+ *  - chisabotClient 与本机一致 → 本次发布只改了网页或服务器，PC 客户端未变，不下载安装包，直接走网页刷新。
+ */
+function requiresClientDownload(info, { localShell = "", localClient = "" } = {}) {
+  if (!info || typeof info !== "object") return false;
+  if (requiresFullInstall(info, localShell)) return true;
+  const remoteClient = typeof info.chisabotClient === "string" ? info.chisabotClient.trim() : "";
+  const currentClient = String(localClient || "").trim();
+  if (!remoteClient || !currentClient) return true;
+  return remoteClient !== currentClient;
+}
+
 /** 语义化版本比较（0.1.131 > 0.1.9）：只比数字段，非数字段按字典序。返回 <0 / 0 / >0。 */
 function compareVersion(a, b) {
   const pa = String(a || "").replace(/^v/i, "").split(".");
@@ -102,8 +117,9 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
   const supported = Boolean(isPackaged && platform === "win32" && autoUpdater && isInstalledBuild({ execPath, productName }));
+  const gateByClient = Boolean(String(clientHash || "").trim());
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
   const signing = Boolean(updateKeys && updateKeys.enforce);
   const verify = verifyDownload || ((info, file) => updateSignature.verifyDownloadedUpdate({ info, file, keys: updateKeys.keys }));
@@ -111,6 +127,7 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   const state = { supported, status: "idle", feedUrl: activeFeed };
   if (updateKeys) state.signing = signing;
   let installing = false;
+  let downloading = null;
   let verifySeq = 0;
   let verifying = Promise.resolve();
   let firstTimer = null;
@@ -127,7 +144,8 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   }
 
   if (supported) {
-    autoUpdater.autoDownload = true;
+    // 传入 clientHash 时先检查清单指纹再决定要不要下安装包：PC 代码没变的版本留给网页「点此刷新」通道。
+    autoUpdater.autoDownload = !gateByClient;
     // 验签时退出安装由 installOnQuit 负责：electron-updater 在 update-downloaded 之后才挂退出安装，那时还没验完。
     autoUpdater.autoInstallOnAppQuit = !signing;
     autoUpdater.allowPrerelease = false;
@@ -141,9 +159,25 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
       autoUpdater.verifyUpdateCodeSignature = async () => null;
     } catch {}
     autoUpdater.on("checking-for-update", () => set({ status: "checking" }));
-    autoUpdater.on("update-available", (info) =>
-      set({ status: "downloading", version: info?.version, percent: 0, fullInstall: requiresFullInstall(info, shellHash) }),
-    );
+    autoUpdater.on("update-available", (info) => {
+      if (gateByClient && !requiresClientDownload(info, { localShell: shellHash, localClient: clientHash })) {
+        logger?.info?.(`远端版本 ${info?.version || ""} 客户端指纹未变（${clientHash}），跳过下载安装包，由网页刷新生效`);
+        set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
+        return;
+      }
+      set({ status: "downloading", version: info?.version, percent: 0, fullInstall: requiresFullInstall(info, shellHash) });
+      if (gateByClient && typeof autoUpdater.downloadUpdate === "function" && !downloading) {
+        downloading = Promise.resolve()
+          .then(() => autoUpdater.downloadUpdate())
+          .catch((error) => {
+            if (state.status === "downloaded" || state.status === "verifying") return;
+            set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
+          })
+          .finally(() => {
+            downloading = null;
+          });
+      }
+    });
     autoUpdater.on("update-not-available", () => set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() }));
     autoUpdater.on("download-progress", (progress) => {
       if (state.status === "downloaded" || state.status === "verifying") return;
@@ -295,4 +329,4 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, schedule, stop, install, installOnQuit, settled: () => verifying };
 }
 
-module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };
+module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };
