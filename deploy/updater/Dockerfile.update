@@ -21,7 +21,7 @@ WORKDIR /app
 EXPOSE 3001
 ENTRYPOINT ["/init"]
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 CMD bun -e "const r = await fetch('http://127.0.0.1:3001/health'); process.exit(r.ok ? 0 : 1)"
-RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/examples/zh-CN /app/agent-computer/src /app/runtime/dsh/src /app/deploy/dsh
+RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/examples/zh-CN /app/agent-computer/src /app/pc/src/agent-runtime /app/runtime/dsh/src /app/deploy/dsh
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server
 COPY --chown=apiuser:apiuser shared /app/shared
@@ -33,6 +33,7 @@ RUN node /app/deploy/dsh/compatibility.mjs --print > /app/deploy/dsh/runtime-com
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 # 服务器直接 import agent-computer/src/egress.ts（网络策略同一份代码），计算机服务也从这里跑：和代码层一起换。
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
+COPY --chown=apiuser:apiuser pc/src/agent-runtime /app/pc/src/agent-runtime
 COPY --chown=apiuser:apiuser build-info.json /app/build-info.json
 LABEL org.opencontainers.image.title=ChisaBot \
       org.opencontainers.image.revision=@COMMIT@ \

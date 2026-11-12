@@ -179,6 +179,7 @@ RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
 RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
 ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 COPY agent-computer/src agent-computer/src
+COPY pc/src/agent-runtime pc/src/agent-runtime
 COPY agent-computer/package.json agent-computer/package.json
 
 # `bun run composio:smoke`, because the manifest copied above carries that entry and the question it

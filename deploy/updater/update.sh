@@ -295,6 +295,8 @@ exit $code
   cp -a "$B/src/shared" "$C/shared"
   cp -a "$B/src/examples/zh-CN" "$C/examples/zh-CN"
   cp -a "$B/src/agent-computer/src" "$C/agent-computer/src"
+  mkdir -p "$C/pc/src"
+  cp -a "$B/src/pc/src/agent-runtime" "$C/pc/src/agent-runtime"
   mkdir -p "$C/runtime/dsh"
   cp -a "$B/src/runtime/dsh/src" "$C/runtime/dsh/src"
   cp -p "$B/src/runtime/dsh/package.json" "$B/src/runtime/dsh/package-lock.json" "$C/runtime/dsh/"
