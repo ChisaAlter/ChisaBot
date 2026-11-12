@@ -1184,15 +1184,24 @@ class LiquidGlass {
     vh: number,
     dark: boolean,
   ) {
+    // 薄纱浓度跟着 --wallpaper-scrim-alpha（薄幕滑块）走，DOM 那边用 ::after 的
+    // opacity 缩放；合成层按同一 opacity 缩各色标，两块画布保持一致。
+    const skyRoot = document.getElementById("sky-root");
+    const veilK = skyRoot
+      ? Number.parseFloat(getComputedStyle(skyRoot, "::after").opacity) || 0
+      : 1;
+    if (veilK <= 0) return;
     const g = ctx.createLinearGradient(0, 0, 0, vh);
+    const stop = (r: number, g_: number, b: number, a: number) =>
+      `rgba(${r}, ${g_}, ${b}, ${(a * veilK).toFixed(3)})`;
     if (dark) {
-      g.addColorStop(0, "rgba(5, 9, 18, 0.5)");
-      g.addColorStop(0.55, "rgba(7, 12, 24, 0.58)");
-      g.addColorStop(1, "rgba(9, 15, 28, 0.66)");
+      g.addColorStop(0, stop(5, 9, 18, 0.5));
+      g.addColorStop(0.55, stop(7, 12, 24, 0.58));
+      g.addColorStop(1, stop(9, 15, 28, 0.66));
     } else {
-      g.addColorStop(0, "rgba(220, 237, 255, 0.44)");
-      g.addColorStop(0.52, "rgba(232, 244, 255, 0.38)");
-      g.addColorStop(1, "rgba(244, 250, 255, 0.34)");
+      g.addColorStop(0, stop(220, 237, 255, 0.44));
+      g.addColorStop(0.52, stop(232, 244, 255, 0.38));
+      g.addColorStop(1, stop(244, 250, 255, 0.34));
     }
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, vw, vh);

@@ -9392,6 +9392,8 @@ html:not(.dark) #sky-root::after {
   inset: 0;
   z-index: 2;
   pointer-events: none;
+  /* 薄幕滑块同时罩这层天幕：alpha=默认 0.53 → 1（原样），0 → 完全无罩 */
+  opacity: calc(var(--wallpaper-scrim-alpha, 0.53) / 0.53);
   background: linear-gradient(
     180deg,
     rgba(220, 237, 255, 0.44) 0%,
@@ -9408,6 +9410,7 @@ html[data-theme="dark"] #sky-root::after {
   inset: 0;
   z-index: 2;
   pointer-events: none;
+  opacity: calc(var(--wallpaper-scrim-alpha, 0.54) / 0.54);
   background: linear-gradient(
     180deg,
     rgba(5, 9, 18, 0.5) 0%,
