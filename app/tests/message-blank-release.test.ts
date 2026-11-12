@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { contentGap, nextBlankHeight } from "@/lib/chat/blank-release";
+import {
+  blankCoversViewport,
+  contentGap,
+  nextBlankHeight,
+} from "@/lib/chat/blank-release";
 
 test("a delayed layout frame never catches up by snapping away the trailing blank", () => {
   for (const gap of [16.7, 33, 100, 500, 2000]) {
@@ -33,4 +37,17 @@ test("contentGap: trailing blank (spacer/slack) is not distance from the end", (
   expect(contentGap(2000, 100, 800, 600)).toBe(500);
   // 一点没留白的老路径：和普通算法一样。
   expect(contentGap(2000, 1180, 800, 0)).toBe(20);
+});
+
+test("blankCoversViewport: a blank that fills the viewport hides all content and is dropped at once", () => {
+  // 接入快照把内容列压矮后 floor 撑出来的留白（实测 44k px）：整屏空白，按 480px/s 收要 ~90 秒。
+  expect(blankCoversViewport(44029, 686)).toBe(true);
+  // 正好一屏：贴底时视口里只有留白。
+  expect(blankCoversViewport(686, 686)).toBe(true);
+  // 差一像素：最后一行还露着边——留白在干它的本职（§88.1 把行钉在视口顶）。
+  expect(blankCoversViewport(685, 686)).toBe(false);
+  expect(blankCoversViewport(0, 686)).toBe(false);
+  // 视口没量出来（没挂上 / 隐藏）：不判。
+  expect(blankCoversViewport(44029, 0)).toBe(false);
+  expect(blankCoversViewport(Number.NaN, 686)).toBe(false);
 });

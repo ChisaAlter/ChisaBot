@@ -110,7 +110,11 @@ import { readWakeUpTurn } from "@/lib/channels/follow-up-turn";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
 import type { Attachment } from "@/lib/chat/attachment-state";
-import { contentGap, nextBlankHeight } from "@/lib/chat/blank-release";
+import {
+  blankCoversViewport,
+  contentGap,
+  nextBlankHeight,
+} from "@/lib/chat/blank-release";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   friendlyError,
@@ -1156,7 +1160,38 @@ function SettleAtEnd({
      * 画面不动。行长到超出这块地方时这一列照常变高，滚动容器跟着底部往上长，下一次 look 再把最小高度抬上去。
      * 条件一不满足（人往上翻了、在恢复、在收留白）：按现在的实际高度冻成固定的（画面不变），交回原来的规则。
      */
+    /*
+     * 接入快照把整段消息换掉的那一刻：内容列一下矮了几万像素（实测 50k→5.8k），§94.6 的 floor
+     * 还按旧总高撑着，留白 flex 涨到几十屏（实测 84k px），贴底的视口整屏落在留白里——按 §93.3
+     * 的 480px/s 收要几分钟，人看着就是「发消息全消失、空白半天」。两块留白加起来占满一屏
+     * 不是「垫在最后一条下面」是「盖住全部内容」：当场收掉（视口在留白上面时收掉也不动画面），
+     * 塌缩后的真实尾部露出来。收掉时把正在走的 §93.3 释放也停掉——不然下一帧它又把剩下的
+     * 几十屏留白写回去。
+     *
+     * floor 模式下内容总高不变：内容 ResizeObserver 与滚动事件都不会来，elastic() 根本跑不到——
+     * 这个判定由留白自己的 ResizeObserver（slackSizes）在撑大的那一帧调用，elastic / releaseRef
+     * 的入口只是多一重防线。
+     */
+    const dropOversizedBlank = () => {
+      const spacer = content.querySelector<HTMLElement>(
+        "[data-message-scroller-spacer]",
+      );
+      const spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
+      if (!blankCoversViewport(s.slack + spacerPx, element.clientHeight))
+        return false;
+      window.cancelAnimationFrame(releaseFrame);
+      if (spacer && spacerPx > 0) {
+        spacer.hidden = true;
+        spacer.style.height = "0px";
+        spacer.style.marginTop = "";
+      }
+      setSlack(0);
+      s.releasing = false;
+      lastHeight = content.offsetHeight;
+      return true;
+    };
     const elastic = () => {
+      if (dropOversizedBlank()) return;
       const el = slack.current;
       if (!el || el.parentElement?.parentElement !== content) return;
       const spacer = content.querySelector<HTMLElement>(
@@ -1403,6 +1438,8 @@ function SettleAtEnd({
       );
       const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
       const total = spacerHeight + s.slack;
+      // 占满一屏的空白不走 §93.3 的逐帧收（480px/s 对几十屏要几分钟）：当场收掉露出真实尾部。
+      if (dropOversizedBlank()) return why("drop:covers-viewport");
       if (performance.now() - touchedAt < 400) {
         // 人刚滚完：等手停下来再试一次（滚到底部那一下正好撞上 touched，空白就永远留下了）。
         window.clearTimeout(touchedRetry);
@@ -1496,7 +1533,8 @@ function SettleAtEnd({
       typeof ResizeObserver === "undefined" || !slack.current
         ? null
         : new ResizeObserver(() => {
-            releaseRef.current?.();
+            // 留白一下涨到占满一屏（floor 撑着旧总高、挂载窗塌缩）：当场收掉，别走逐帧释放的判定。
+            if (!dropOversizedBlank()) releaseRef.current?.();
           });
     if (slack.current) slackSizes?.observe(slack.current);
     /*
