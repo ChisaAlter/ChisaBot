@@ -48,6 +48,7 @@ COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 # 地址栏、标签）它不认识，接管大屏直接显示「That input message has an unknown type.」。
 RUN rm -rf /app/agent-computer/src
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
+COPY --chown=apiuser:apiuser pc/src/agent-runtime /app/pc/src/agent-runtime
 
 RUN cd /app \
     && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs"); console.log("conversation_runtime_import_ok")'

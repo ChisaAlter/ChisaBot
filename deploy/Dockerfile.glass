@@ -16,6 +16,7 @@ RUN node /app/deploy/dsh/compatibility.mjs --print > /app/deploy/dsh/runtime-com
 # The browser/server and the computer must use the same cancellation protocol.
 RUN rm -rf /app/agent-computer/src
 COPY --chown=apiuser:apiuser agent-computer/src /app/agent-computer/src
+COPY --chown=apiuser:apiuser pc/src/agent-runtime /app/pc/src/agent-runtime
 COPY --chown=apiuser:apiuser examples/zh-CN /app/examples/zh-CN
 RUN cd /app/server \
     && bun -e 'await import("@ag-ui/client"); await import("../runtime/dsh/src/client.mjs"); await import("./src/panels/routes.ts"); console.log("runtime_and_panels_import_ok")'
