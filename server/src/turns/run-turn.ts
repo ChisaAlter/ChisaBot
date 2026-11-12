@@ -31,7 +31,6 @@ import {
   executionDeadline,
 } from "../conversations/capacity";
 import { assertConversationAdmissionOpen } from "../conversations/maintenance";
-import { normalizeConversationEvent } from "../legacy/protocol";
 import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
@@ -235,7 +234,7 @@ export function drawnComponents(messages: Message[]): DrawnComponent[] {
 export { frameFiring };
 
 export function createTurnRunner(options: {
-  intelligence: ConversationHistory;
+  conversations: ConversationHistory;
   leases?: ConversationLeases;
   runner: RunnerLike;
   /** The owner's coworkers, resolved as the owner. Built per turn, keyed by registry id. */
@@ -265,7 +264,7 @@ export function createTurnRunner(options: {
   abortGraceMs?: number;
 }): TurnRunner {
   const {
-    intelligence,
+    conversations,
     runner,
     buildAgentFor,
     toolsForTurn,
@@ -289,6 +288,7 @@ export function createTurnRunner(options: {
     runId: suppliedRunId,
     depth,
     onText,
+    onAdmitted,
     forwardedProps: suppliedForwardedProps,
   }) => {
     if (signal?.aborted) throw new Error("The headless turn was cancelled.");
@@ -326,7 +326,7 @@ export function createTurnRunner(options: {
      * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
      */
     assertConversationAdmissionOpen();
-    await intelligence.getOrCreateThread({
+    await conversations.getOrCreateThread({
       threadId,
       userId: ownerUserId,
       agentId,
@@ -345,7 +345,7 @@ export function createTurnRunner(options: {
      * between a routine that survives one interrupted chat turn and one that never fires again.
      */
     const history = await historyOrEmpty(
-      () => intelligence.getThreadMessages({ threadId, userId: ownerUserId }),
+      () => conversations.getThreadMessages({ threadId, userId: ownerUserId }),
       { messages: [] as ThreadHistoryMessage[] },
     );
 
@@ -588,6 +588,7 @@ export function createTurnRunner(options: {
             agent,
             input,
             persistedInputMessages,
+            ...(onAdmitted ? { onAdmitted } : {}),
             join: false,
             execution: executionClass(
               initiator,
@@ -606,7 +607,6 @@ export function createTurnRunner(options: {
              * answered with nothing.
              */
             next: (event) => {
-              event = normalizeConversationEvent(event);
               if (
                 event.type === EventType.CUSTOM &&
                 "name" in event &&

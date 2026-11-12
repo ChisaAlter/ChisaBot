@@ -6,7 +6,7 @@
 
 1. **使用独立、固定版本的 DSH Host，运行自定义 `chisabot` profile。** ChisaBot 后端通过 Host 的 Connection、Gateway 和 Session Controller 驱动会话；工具和审批由 ChisaBot 插件接入。`headless` 是执行一次任务后退出的 profile，不能拿它的名字代替常驻无界面 Host。[CLI][cli]
 2. **复用官方 Host 连接契约，浏览器仍只连接 ChisaBot。** DSH API 默认使用启动 token 换 API Cookie 和 Peer，并非 `Authorization: Bearer`。Cookie 不交给浏览器用户，DSH 监听受控内部地址。[Connection][connection]
-3. **保留旧聊天记录，首次继续时创建新的 DSH 执行段。** 通过明确标记的迁移上下文承接旧对话；完整原记录继续展示和检索。官方有合法 DSH event seed，没有 AG-UI/OpenBot 历史导入器。[Agent create][agent-index]
+3. **保留旧聊天记录，首次继续时创建新的 DSH 执行段。** 通过明确标记的迁移上下文承接旧对话；完整原记录继续展示和检索。官方有合法 DSH event seed，没有 AG-UI/早期上游模板 历史导入器。[Agent create][agent-index]
 4. **把流式展示和持久历史分开。** `follow` 每次开流先给 snapshot，再给持久事件和可选 assistant frames；它没有 `afterSeq` 参数。重连不能把上一次 transient revision 当新进程的持久游标。[Session types][session-types]
 5. **审批的待答状态属于活跃 runtime。** 重启后不能继续向旧审批 Promise 回答或自动重放批准；业务 Outbox 可保留用户决定，但再次执行必须绑定新请求、复核权限与参数。[Approval][approval]
 6. **停止当前轮、清空输入队列、终止后台任务是不同动作。** 官方 `session.cancel` 保留 inbox，返回接受取消请求；ChisaBot 必须在自己的停止语义里显式决定另外两项。[Session commands][session-commands]

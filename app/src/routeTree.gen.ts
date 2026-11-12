@@ -43,6 +43,7 @@ import { Route as AuthedAdminPlaygroundRouteImport } from './routes/_authed/admi
 import { Route as AuthedAdminSkillsRouteImport } from './routes/_authed/admin/skills'
 import { Route as AuthedAdminSystemUpdateRouteImport } from './routes/_authed/admin/system-update'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed/settings/index'
+import { Route as AuthedSettingsAgentProvidersRouteImport } from './routes/_authed/settings/agent-providers'
 import { Route as AuthedSettingsApprovalsRouteImport } from './routes/_authed/settings/approvals'
 import { Route as AuthedSettingsComponentsGalleryRouteImport } from './routes/_authed/settings/components-gallery'
 import { Route as AuthedSettingsImRouteImport } from './routes/_authed/settings/im'
@@ -251,6 +252,12 @@ const AuthedSettingsIndexRoute = AuthedSettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
+const AuthedSettingsAgentProvidersRoute =
+  AuthedSettingsAgentProvidersRouteImport.update({
+    id: '/agent-providers',
+    path: '/agent-providers',
+    getParentRoute: () => AuthedSettingsRouteRoute,
+  } as any)
 const AuthedSettingsApprovalsRoute = AuthedSettingsApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
@@ -483,6 +490,7 @@ export interface FileRoutesByFullPath {
   '/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/admin/system-update': typeof AuthedAdminSystemUpdateRoute
+  '/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
@@ -552,6 +560,7 @@ export interface FileRoutesByTo {
   '/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/admin/skills': typeof AuthedAdminSkillsRoute
   '/admin/system-update': typeof AuthedAdminSystemUpdateRoute
+  '/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/settings/im': typeof AuthedSettingsImRoute
@@ -625,6 +634,7 @@ export interface FileRoutesById {
   '/_authed/admin/playground': typeof AuthedAdminPlaygroundRoute
   '/_authed/admin/skills': typeof AuthedAdminSkillsRoute
   '/_authed/admin/system-update': typeof AuthedAdminSystemUpdateRoute
+  '/_authed/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/_authed/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/_authed/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
   '/_authed/settings/im': typeof AuthedSettingsImRoute
@@ -699,6 +709,7 @@ export interface FileRouteTypes {
     | '/admin/playground'
     | '/admin/skills'
     | '/admin/system-update'
+    | '/settings/agent-providers'
     | '/settings/approvals'
     | '/settings/components-gallery'
     | '/settings/im'
@@ -768,6 +779,7 @@ export interface FileRouteTypes {
     | '/admin/playground'
     | '/admin/skills'
     | '/admin/system-update'
+    | '/settings/agent-providers'
     | '/settings/approvals'
     | '/settings/components-gallery'
     | '/settings/im'
@@ -840,6 +852,7 @@ export interface FileRouteTypes {
     | '/_authed/admin/playground'
     | '/_authed/admin/skills'
     | '/_authed/admin/system-update'
+    | '/_authed/settings/agent-providers'
     | '/_authed/settings/approvals'
     | '/_authed/settings/components-gallery'
     | '/_authed/settings/im'
@@ -1125,6 +1138,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/settings/'
       preLoaderRoute: typeof AuthedSettingsIndexRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
+    '/_authed/settings/agent-providers': {
+      id: '/_authed/settings/agent-providers'
+      path: '/agent-providers'
+      fullPath: '/settings/agent-providers'
+      preLoaderRoute: typeof AuthedSettingsAgentProvidersRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
     '/_authed/settings/approvals': {
@@ -1451,6 +1471,7 @@ const AuthedAdminRouteRouteWithChildren =
   AuthedAdminRouteRoute._addFileChildren(AuthedAdminRouteRouteChildren)
 
 interface AuthedSettingsRouteRouteChildren {
+  AuthedSettingsAgentProvidersRoute: typeof AuthedSettingsAgentProvidersRoute
   AuthedSettingsApprovalsRoute: typeof AuthedSettingsApprovalsRoute
   AuthedSettingsComponentsGalleryRoute: typeof AuthedSettingsComponentsGalleryRoute
   AuthedSettingsImRoute: typeof AuthedSettingsImRoute
@@ -1470,6 +1491,7 @@ interface AuthedSettingsRouteRouteChildren {
 }
 
 const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
+  AuthedSettingsAgentProvidersRoute: AuthedSettingsAgentProvidersRoute,
   AuthedSettingsApprovalsRoute: AuthedSettingsApprovalsRoute,
   AuthedSettingsComponentsGalleryRoute: AuthedSettingsComponentsGalleryRoute,
   AuthedSettingsImRoute: AuthedSettingsImRoute,

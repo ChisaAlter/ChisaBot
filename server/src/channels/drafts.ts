@@ -34,7 +34,7 @@ export type DraftStorage = { localConversations: boolean };
  * - `description` 是草稿标记；
  * - `last_message_at` 为空（列表里没有任何一句）；
  * - 没被删过；
- * - 对应的线程（`intelligence_channel_mappings.thread_id`，所有成员的）里没有消息，也没有跑过一轮
+ * - 对应的线程（`chisabot_channel_mappings.thread_id`，所有成员的）里没有消息，也没有跑过一轮
  *   （机器人主动发、或者一轮正在跑但还没记 activity，都算有内容）。
  *
  * `channel` 是外层查询里频道表的别名或表名。
@@ -46,7 +46,7 @@ function emptyDraftPredicate(channel: SQL): SQL {
     and ${channel}.deleted_at is null
     and not exists (
       select 1
-      from intelligence_channel_mappings m
+      from chisabot_channel_mappings m
       join chisabot_local_threads t on t.id = m.thread_id
       where m.channel_id = ${channel}.id
         and (

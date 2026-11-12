@@ -344,3 +344,111 @@ export function createMagpieService(options: {
     },
   };
 }
+
+/** Where a one-click install puts Magpie: the `magpie` service on the shared `chisabot_magpie` network. */
+export const MANAGED_MAGPIE_ADMIN_URL = "http://magpie:3430";
+const MANAGED_RECHECK_MS = 3_000;
+const MAX_MANAGED_STATE_BYTES = 64 * 1024;
+
+/**
+ * The Magpie service the server actually uses: the deployment's own configuration when it has one,
+ * otherwise whatever the host's one-click install (deploy/updater/magpie.sh do_install) handed over.
+ *
+ *  - `MAGPIE_ADMIN_URL` set → exactly `createMagpieService` with the configured key, as before. A
+ *    deployment that wired Magpie by hand (Haupt included) never looks at the updater's files.
+ *  - Not set → the updater's read-only state directory (`CHISABOT_UPDATER_DIR/state`) is checked
+ *    every few seconds: once `magpie.json` says a ChisaBot-managed Magpie is installed and
+ *    `magpie-web.key` (mode 0400, owned by the API user) holds a valid key, the console and status
+ *    page turn on against `MANAGED_MAGPIE_ADMIN_URL`. No restart: that is the whole point, since the
+ *    person who clicked 「一键安装」 has no shell on the server.
+ *
+ * The admin URL is never read from the state file: a host file decides *whether* to enable the
+ * console, not *where* the server sends its key.
+ */
+export function createAutoMagpieService(options: {
+  environment: NodeJS.ProcessEnv;
+  /** `CHISABOT_UPDATER_DIR` inside the container (requests/ + state/). */
+  updaterDir?: string;
+  fetch?: typeof fetch;
+  now?: () => number;
+}): MagpieService {
+  const env = options.environment;
+  const configuredUrl = env.MAGPIE_ADMIN_URL?.trim();
+  if (configuredUrl)
+    return createMagpieService({
+      adminUrl: configuredUrl,
+      webKey: readMagpieWebKey(env),
+      fetch: options.fetch,
+    });
+
+  const now = options.now ?? Date.now;
+  const stateDir = options.updaterDir?.trim()
+    ? `${options.updaterDir.trim().replace(/\/+$/u, "")}/state`
+    : "";
+  const listeners = new Set<() => void>();
+  const unconfigured = createMagpieService({ fetch: options.fetch });
+  let current: MagpieService = unconfigured;
+  let currentKey: string | undefined;
+  let checkedAt = Number.NEGATIVE_INFINITY;
+
+  function managedKey(): string | undefined {
+    if (!stateDir) return undefined;
+    try {
+      const raw = readFileSync(`${stateDir}/magpie.json`, "utf8");
+      if (raw.length > MAX_MANAGED_STATE_BYTES) return undefined;
+      const state: unknown = JSON.parse(raw);
+      if (!object(state) || state.managed !== true || state.installed !== true)
+        return undefined;
+      const key = readFileSync(`${stateDir}/magpie-web.key`, "utf8").trim();
+      return KEY_PATTERN.test(key) ? key : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function resolve(): MagpieService {
+    const at = now();
+    if (at - checkedAt < MANAGED_RECHECK_MS) return current;
+    checkedAt = at;
+    const key = managedKey();
+    if (key === currentKey) return current;
+    currentKey = key;
+    current = key
+      ? createMagpieService({
+          adminUrl: MANAGED_MAGPIE_ADMIN_URL,
+          webKey: key,
+          fetch: options.fetch,
+        })
+      : unconfigured;
+    current.onChange(() => {
+      for (const listener of listeners) listener();
+    });
+    // A gateway that just appeared (or went away) changes the model catalog's provider names.
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        /* never let a listener break the switch */
+      }
+    }
+    return current;
+  }
+
+  return {
+    get configured() {
+      return resolve().configured;
+    },
+    get managementAvailable() {
+      return resolve().managementAvailable;
+    },
+    onChange(listener) {
+      listeners.add(listener);
+    },
+    status(input) {
+      return resolve().status(input);
+    },
+    proxy(request, path) {
+      return resolve().proxy(request, path);
+    },
+  };
+}

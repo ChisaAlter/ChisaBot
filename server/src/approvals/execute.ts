@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { RunAssertion } from "../agents/callback-token";
 import type { AuditInitiator } from "../audit";
 import type { HeadlessTool } from "../computer/headless-tools";
-import { runAssertionValue } from "../legacy/protocol";
+import { runAssertionValue } from "../conversations/protocol";
 import { PluginRefusedError } from "../plugins/store";
 import { isApprovalRecheck } from "./service";
 import {

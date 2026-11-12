@@ -11,7 +11,6 @@ import {
   type RunAssertion,
   readRunAssertion,
 } from "../src/agents/callback-token";
-import { computerAccessCheck } from "../src/agents/computer-access";
 import {
   DshRuntimeAgent,
   type DshRuntimeBinding,
@@ -53,7 +52,6 @@ import { createDeviceHub } from "../src/devices/hub";
 import type { DeviceRecord } from "../src/devices/store";
 import { createLocalAgentService } from "../src/local-agents/service";
 import { createLocalConversations } from "../src/local-conversations";
-import { createTeamBots } from "../src/team-bots/team-bots";
 import { createTurnRunner } from "../src/turns/run-turn";
 import type { TurnRunner } from "../src/turns/types";
 import { createWorkQueue } from "../src/work/queue";
@@ -115,15 +113,6 @@ async function until<T>(
     let device: DeviceRecord;
     let connection: ReturnType<ReturnType<typeof createDeviceHub>["attach"]>;
     const sent: Record<string, unknown>[] = [];
-    let teamBot = "";
-    let teamBots: ReturnType<typeof createTeamBots>;
-    const teamResults: {
-      actor: string;
-      computer: boolean;
-      sharedCredential: string;
-      personalCredential: string;
-      initiator?: AuditInitiator;
-    }[] = [];
     let requests = 0;
     const providerBodies: WireBody[] = [];
     let selectionBinding: DshRuntimeBinding;
@@ -139,7 +128,19 @@ async function until<T>(
 
     beforeAll(async () => {
       database = createDatabase(address!, { max: 6 });
-      cleanups.push(() => database.$client.close());
+      cleanups.push(async () => {
+        // Direct adapter reattachment is intentionally outside backend.runner, so it can leave
+        // a projecting journal row. Remove this suite's rows after its Hosts have stopped;
+        // later recovery suites must not try to rebuild these fixture agents.
+        try {
+          await database.$client.unsafe(
+            "DELETE FROM chisabot_dsh_runs WHERE owner_user_id IN ($1,$2)",
+            [actor, publisher],
+          );
+        } finally {
+          await database.$client.close();
+        }
+      });
       backend = await createLocalConversations(database);
       confirmations = createConfirmations(database);
       await confirmations.ensure();
@@ -217,13 +218,6 @@ async function until<T>(
             delegationFor: (claim, run) =>
               readCoordinationHandoffClaim(database, claim, run),
           }),
-      });
-      teamBots = createTeamBots({
-        database,
-        connectedServers: async (id) =>
-          new Set(
-            id === publisher ? ["shared"] : id === actor ? ["personal"] : [],
-          ),
       });
       const runtime = resolve("runtime/dsh");
       await mkdir(join(runtime, ".runtime"), { recursive: true });
@@ -421,36 +415,6 @@ async function until<T>(
                 return "Actor context recorded.";
               },
             },
-            {
-              name: "team_authority_probe",
-              ref: "test/team",
-              description:
-                "Check Team Bot permissions through the production authority services.",
-              parameters: z.object({}),
-              execute: async () => {
-                const credentials = teamBots.credentialActorFor(
-                  input.actorId,
-                  input.botId,
-                );
-                let personalCredential: string;
-                try {
-                  personalCredential = await credentials("personal/read");
-                } catch (error) {
-                  personalCredential = (error as Error).message;
-                }
-                teamResults.push({
-                  actor: input.actorId,
-                  computer: await computerAccessCheck(profiles)(
-                    { id: input.actorId, role: "user" },
-                    input.botId,
-                  ),
-                  sharedCredential: await credentials("shared/read"),
-                  personalCredential,
-                  initiator: currentApprovalContext()?.initiator,
-                });
-                return "Team authority recorded.";
-              },
-            },
           ],
           toolsFor: async (value) => {
             const signed = readRunAssertion(
@@ -504,7 +468,7 @@ async function until<T>(
         });
       };
       runTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor: (input) =>
           build({
@@ -762,7 +726,7 @@ async function until<T>(
           ],
           () =>
             createTurnRunner({
-              intelligence: backend.client,
+              conversations: backend.client,
               runner: backend.runner,
               buildAgentFor: construct,
             })({
@@ -831,12 +795,14 @@ async function until<T>(
           selectedApproval = value;
         });
         stages.push({ tool: "selection_8", answer: "Awaiting decision." });
-        await expect(
-          execute(
-            `${actor}-selection-approval`,
-            "Change fixture after approval.",
-          ),
-        ).rejects.toThrow();
+        const approvalFailure = await execute(
+          `${actor}-selection-approval`,
+          "Change fixture after approval.",
+        ).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect(approvalFailure).toBeInstanceOf(Error);
         expect(selectedApproval).toBeTruthy();
         expect(selectedEffect).toBe(0);
         choice = "read"; // The next relevance result excludes the saved operation.
@@ -849,7 +815,7 @@ async function until<T>(
           confirmations,
           buildAgentFor: construct,
           runTurn: createTurnRunner({
-            intelligence: backend.client,
+            conversations: backend.client,
             runner: backend.runner,
             buildAgentFor: construct,
           }),
@@ -866,6 +832,9 @@ async function until<T>(
         expect(stages).toHaveLength(0);
       } finally {
         setAgentKernel(kernelBefore);
+        confirmations.setOnOpened((value) => {
+          approval = value;
+        });
       }
     }, 60_000);
 
@@ -888,8 +857,10 @@ async function until<T>(
         initiator,
         instruction: "Ask the target Bot to check context.",
       });
-      expect((await handoffs.sweep()).delivered).toEqual([target]);
-      expect((await handoffs.sweep()).delivered).toEqual([asker]);
+      const toTarget = await handoffs.sweep();
+      expect(toTarget.delivered).toEqual([target]);
+      const toAsker = await handoffs.sweep();
+      expect(toAsker.delivered).toEqual([asker]);
       expect(probes).toHaveLength(1);
       expect(probes[0]).toMatchObject({
         botId: target,
@@ -1135,70 +1106,6 @@ async function until<T>(
       expect(stages).toHaveLength(0);
     }, 45_000);
 
-    test("a Team Bot runs in the teammate's Host and keeps computer and personal credential boundaries", async () => {
-      const owner = { id: publisher, role: "user" as const },
-        teammate = { id: actor, role: "user" as const };
-      teamBot = (
-        await profiles.create(owner, {
-          name: "Team Acceptance",
-          title: "Acceptance",
-          roleDescription: "Test shared team authority",
-          visibility: "private",
-        })
-      ).id;
-      await teamBots.publish(owner, teamBot, {
-        audience: "team",
-        emails: [],
-        groups: [],
-      });
-      const thread = `${actor}-team`,
-        initiator = { kind: "person" as const, surface: "web" as const };
-      stages.push({ tool: "team_authority_probe", answer: "团队权限已核对。" });
-      await runTurn({
-        ownerUserId: actor,
-        agentId: teamBot,
-        threadId: thread,
-        routineId: "team",
-        initiator,
-        instruction: "Check Team Bot authority.",
-      });
-      expect(teamResults[0]).toMatchObject({
-        actor,
-        computer: false,
-        sharedCredential: publisher,
-        initiator,
-      });
-      expect(teamResults[0]!.personalCredential).toContain(
-        "[team-bot-consent]",
-      );
-      const [binding] = await database.$client.unsafe(
-        "SELECT owner_user_id,bot_id FROM chisabot_runtime_bindings WHERE thread_id=$1",
-        [thread],
-      );
-      expect(binding).toMatchObject({ owner_user_id: actor, bot_id: teamBot });
-      await expect(
-        backend.client.getThreadMessages({
-          threadId: thread,
-          userId: publisher,
-        }),
-      ).rejects.toThrow();
-      await teamBots.consent(teammate, teamBot, "personal", "allow_once");
-      stages.push({ tool: "team_authority_probe", answer: "单次授权已使用。" });
-      await runTurn({
-        ownerUserId: actor,
-        agentId: teamBot,
-        threadId: thread,
-        routineId: "team",
-        initiator,
-        instruction: "Use the allowed personal credential once.",
-      });
-      expect(teamResults[1]!.personalCredential).toBe(actor);
-      await expect(
-        teamBots.credentialActorFor(actor, teamBot)("personal/read"),
-      ).rejects.toThrow("[team-bot-consent]");
-      expect(stages).toHaveLength(0);
-    }, 50_000);
-
     test("DSH launches a device agent through approval and the device protocol returns to the original thread", async () => {
       const thread = `${actor}-device-thread`;
       stages.push({
@@ -1247,7 +1154,11 @@ async function until<T>(
         "running",
       );
       expect(await localAgents.forThread(publisher, thread)).toEqual([]);
-      await expect(localAgents.stop(publisher, frame.taskId)).rejects.toThrow();
+      const deniedStop = await localAgents.stop(publisher, frame.taskId).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(deniedStop).toBeInstanceOf(Error);
       stages.push({ answer: "设备检查结果已收到。" });
       await connection.onMessage(
         JSON.stringify({

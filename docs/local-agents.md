@@ -4,24 +4,23 @@
 
 ## 1. 两条路，默认不变
 
-| | 云端 agent 控制电脑（默认） | 本地 agent |
-| --- | --- | --- |
-| 谁在想 | 服务器上的机器人（你给它配的模型） | 电脑上的 agent：Claude Code / Codex CLI / OpenCode / Gemini CLI / Aider，或 ChisaBot 内置循环 |
-| 怎么动手 | 每一步一个 `device_*` 工具调用，经 WebSocket 发到电脑执行（docs/pc-node.md） | agent 在电脑上自己读写文件、跑命令；服务器只收进度 |
-| 电脑上要装什么 | 只要 ChisaBot 桌面客户端 / 无界面节点 | 再加上想用的 CLI agent（内置循环不用装） |
-| 适合 | 零散操作、看看文件、点点鼠标、截图 | 一整件编码活儿（修 bug、跑测试、重构），或指定「用 Claude Code」 |
-| 进度 | 聊天里的工具调用 | 聊天里的任务卡片（实时输出、停止、改动、应用改动） |
+|                | 云端 agent 控制电脑（默认）                                                  | 本地 agent                                                                                    |
+| -------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 谁在想         | 服务器上的机器人（你给它配的模型）                                           | 电脑上的 agent：Claude Code / Codex CLI / OpenCode / Gemini CLI / Aider，或 ChisaBot 内置循环 |
+| 怎么动手       | 每一步一个 `device_*` 工具调用，经 WebSocket 发到电脑执行（docs/pc-node.md） | agent 在电脑上自己读写文件、跑命令；服务器只收进度                                            |
+| 电脑上要装什么 | 只要 ChisaBot 桌面客户端 / 无界面节点                                        | 再加上想用的 CLI agent（内置循环不用装）                                                      |
+| 适合           | 零散操作、看看文件、点点鼠标、截图                                           | 一整件编码活儿（修 bug、跑测试、重构），或指定「用 Claude Code」                              |
+| 进度           | 聊天里的工具调用                                                             | 聊天里的任务卡片（实时输出、停止、改动、应用改动）                                            |
 
 用户问「本地不装 agent，让云端的 agent 控制本地也可以吧？」——可以，而且这就是默认路径：什么都不装，机器人照样用 `device_*` 操作电脑。本地 agent 是加法：当你想让 Claude Code 这类专门的编程 agent（用它自己的账号）在你的电脑上干一整件活儿时才用。
 
 ## 2. 权限档位（每台设备一个，任务可以更严）
 
-| 档位 | 档位之内（按能力开关执行） | 档位之外（能力是「允许」也要你批准） |
-| --- | --- | --- |
-| **只读** | 读文件、列目录、搜索、截图、系统信息、git 状态 / diff / log | 改文件、运行命令、鼠标键盘、打开程序、写剪贴板 |
-| **工作区**（默认） | 上面这些 + 在工作区文件夹里写文件、工作目录在工作区里的命令、打开网址、写剪贴板 | 工作区外的写入和命令、鼠标键盘、打开文件 |
-| **完全访问**（= 设备的完全访问开关，有时限） | 一切（ADR-0009：能力按「允许」、不弹审批；仍审计、紧急停止立即关闭） | — |
-
+| 档位                                         | 档位之内（按能力开关执行）                                                      | 档位之外（能力是「允许」也要你批准）           |
+| -------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **只读**                                     | 读文件、列目录、搜索、截图、系统信息、git 状态 / diff / log                     | 改文件、运行命令、鼠标键盘、打开程序、写剪贴板 |
+| **工作区**（默认）                           | 上面这些 + 在工作区文件夹里写文件、工作目录在工作区里的命令、打开网址、写剪贴板 | 工作区外的写入和命令、鼠标键盘、打开文件       |
+| **完全访问**（= 设备的完全访问开关，有时限） | 一切（ADR-0009：能力按「允许」、不弹审批；仍审计、紧急停止立即关闭）            | —                                              |
 - 档位**只收紧**：它挂在设备 hub 上（`DeviceHubExtension.gate`），能力是「允许」的操作若在档位之外就改成「询问」，走原来的审批（PC 弹窗 + 网页 / 手机「等待你审批」卡片 + 本地 agent 卡片里的「允许 / 拒绝」），审批摘要写明原因（「要改的文件不在工作区文件夹里，档位「工作区」」）。「关闭」的能力仍然关闭，「询问」仍然询问。
 - **只有用户能改档位**：设置 → 设备 → 某台电脑 → 本地 agent。机器人没有改档位、改文件夹的工具；`device_agent_run` 的 `profile` 参数只能比设备的档位更严（`narrowerProfile`）。
 - 工作区文件夹：没单独设置时沿用设备的「允许的文件夹」。
@@ -40,26 +39,25 @@
 
 ## 4. 隔离方式（任务的工作目录）
 
-| 方式 | 做法 | 改动什么时候生效 |
-| --- | --- | --- |
-| `worktree`（默认） | `git stash create` 拍下未提交的已跟踪改动，`git worktree add --detach` 到临时目录 | 你在卡片上点「应用改动」：`git apply --check` 通过后 `git apply` 到原仓库；「放弃」删掉 worktree |
-| `copy` | 不是 git 仓库时 worktree 自动退成它；复制文件夹（上限 6 万个文件 / 800 MB） | 同上（补丁应用到原文件夹） |
-| `none` | 直接在原文件夹里做（只读档位下只给有只读模式的 agent） | 立即 |
-| `bwrap` | Linux：整个系统只读挂载，只有工作目录和 agent 自己的配置目录（`~/.claude` `~/.codex` …）可写，`--unshare-net` 断网 | 立即（写在工作目录里） |
-| `sandbox-exec` | macOS：`(deny file-write*)` 只放行工作目录、临时目录和 agent 配置目录，可 `(deny network*)` | 立即 |
-| `docker` / `podman` | 只给内置 agent：每条命令在一次性容器里跑（只挂载工作目录，`--network none`，镜像可配，默认 `debian:bookworm-slim`） | 立即 |
-| `wsl` | Windows：在 WSL 里运行（agent 要装在 WSL 里） | 立即 |
+| 方式                | 做法                                                                                                                | 改动什么时候生效                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `worktree`（默认）  | `git stash create` 拍下未提交的已跟踪改动，`git worktree add --detach` 到临时目录                                   | 你在卡片上点「应用改动」：`git apply --check` 通过后 `git apply` 到原仓库；「放弃」删掉 worktree |
+| `copy`              | 不是 git 仓库时 worktree 自动退成它；复制文件夹（上限 6 万个文件 / 800 MB）                                         | 同上（补丁应用到原文件夹）                                                                       |
+| `none`              | 直接在原文件夹里做（只读档位下只给有只读模式的 agent）                                                              | 立即                                                                                             |
+| `bwrap`             | Linux：整个系统只读挂载，只有工作目录和 agent 自己的配置目录（`~/.claude` `~/.codex` …）可写，`--unshare-net` 断网  | 立即（写在工作目录里）                                                                           |
+| `sandbox-exec`      | macOS：`(deny file-write*)` 只放行工作目录、临时目录和 agent 配置目录，可 `(deny network*)`                         | 立即                                                                                             |
+| `docker` / `podman` | 只给内置 agent：每条命令在一次性容器里跑（只挂载工作目录，`--network none`，镜像可配，默认 `debian:bookworm-slim`） | 立即                                                                                             |
+| `wsl`               | Windows：在 WSL 里运行（agent 要装在 WSL 里）                                                                       | 立即                                                                                             |
 
 改动统计：电脑在临时目录里建一个独立的 `GIT_DIR` 给工作树拍快照（不碰用户自己的 `.git` 和暂存区），结束时 `git diff --numstat` 得到文件列表和 +/-，补丁预览最多 24 KB 回到卡片。没有 git 的电脑不统计改动（卡片如实说）。临时目录三天后自动清理；电脑上的客户端重启后，还没应用的副本仍在临时目录里，但卡片上不能再一键应用（如实提示）。
 
 ## 5. CLI agent 怎么跑
 
-| agent | 命令 | 档位映射 |
-| --- | --- | --- |
-| Claude Code | `claude -p <指令> --output-format stream-json --verbose` | 只读 → `--permission-mode plan`；工作区 → `--permission-mode acceptEdits`（改文件直接做，没预先允许的命令会被它拒绝并说明）；完全访问或系统级沙盒（bwrap / sandbox-exec）里 → `--dangerously-skip-permissions`，root 时加 `IS_SANDBOX=1`（ChisaCloudCode 2026-10-14 踩过：root 下不加它直接拒绝） |
-| Codex CLI | `codex exec --json --skip-git-repo-check -C <目录> <指令>` | 只读 → `--sandbox read-only`；工作区 → `--sandbox workspace-write`（联网开关映射 `sandbox_workspace_write.network_access`）；完全访问 → `--dangerously-bypass-approvals-and-sandbox` |
-| OpenCode / Gemini CLI / Aider | `opencode run` / `gemini -p`（完全访问加 `--yolo`）/ `aider --message … --yes-always --no-auto-commits` | 没有可靠的只读模式：只在完全访问、一次性副本或系统级沙盒里交给它们 |
-
+| agent                         | 命令                                                                                                    | 档位映射                                                                                                                                                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code                   | `claude -p <指令> --output-format stream-json --verbose`                                                | 只读 → `--permission-mode plan`；工作区 → `--permission-mode acceptEdits`（改文件直接做，没预先允许的命令会被它拒绝并说明）；完全访问或系统级沙盒（bwrap / sandbox-exec）里 → `--dangerously-skip-permissions`，root 时加 `IS_SANDBOX=1`（ChisaCloudCode 2026-10-14 踩过：root 下不加它直接拒绝） |
+| Codex CLI                     | `codex exec --json --skip-git-repo-check -C <目录> <指令>`                                              | 只读 → `--sandbox read-only`；工作区 → `--sandbox workspace-write`（联网开关映射 `sandbox_workspace_write.network_access`）；完全访问 → `--dangerously-bypass-approvals-and-sandbox`                                                                                                              |
+| OpenCode / Gemini CLI / Aider | `opencode run` / `gemini -p`（完全访问加 `--yolo`）/ `aider --message … --yes-always --no-auto-commits` | 没有可靠的只读模式：只在完全访问、一次性副本或系统级沙盒里交给它们                                                                                                                                                                                                                                |
 - 用的是 agent **自己登录的账号**（Claude Pro / API key / ChatGPT 账号），ChisaBot 不碰它们的凭据。
 - 输出解析：Claude 的 stream-json（文字、工具调用「修改 a.ts」「运行 npm test」、结束时轮数和费用）、Codex 的 JSONL（新旧两种格式都认），其余按行。stderr 前 200 行也进卡片（黄色）。
 - Windows 上 npm 装的 `.cmd` 要经过 cmd.exe：Claude / Codex 的指令走标准输入，其余去掉 cmd 特殊字符后走参数。
@@ -97,13 +95,13 @@
 
 `/api/local-agents`（需登录，只看自己的设备 / 任务）：`GET|PUT /devices/:id`（设置 + 检测结果 + 最近任务）、`POST /devices/:id/detect`、`GET /threads/:threadId/tasks`、`GET /tasks/:id`（完整记录）、`POST /tasks/:id/stop|apply|discard`。审批沿用 `POST /api/devices/approvals/:id`。
 
-## 10. ChisaBot 服务器 agent vs Claude Code / Codex（老实说）
+## 10. ChisaBot 服务器 agent（DSH） vs Claude Code / Codex（职责分工）
 
-ChisaBot 的服务器 agent 来自 CopilotKit ChisaBot：**AG-UI 协议 + AI SDK 的通用工具循环**，强项是生成式界面（卡片、表单、页面）、审批与审计、定时任务、记忆 / 技能、MCP 和各种连接、IM 渠道、多机器人——它是个「私人助理 + 平台」。它**不是**专门的编程循环：没有针对大仓库的上下文管理（自动摘要、按需检索代码、文件树快照），编辑工具是通用的文件读写 / 补丁，没有专门调过的「改代码 → 跑测试 → 再改」提示词和工具集，也不会像 Claude Code 那样维护待办清单、自动压缩长会话。用户自己配的模型也决定上限。
+ChisaBot 的服务器机器人运行在 **DSH 执行内核**（独立 Host 持久会话、上下文自动压缩、产品工具网关与权限审批账本）之上：强项是全端同步对话、生成式界面（卡片、实时面板、单页网页）、确认与审计、定时任务、长期记忆与技能、云端浏览器、IM 渠道以及跨设备调度——定位是全天候在线的「私人助理与总控入口」。虽然它可以通过 `device_*` 工具读写电脑文件、搜代码和跑命令，但它使用的是你在服务端配置的通用模型连接，并非专门针对单一超大型代码仓库深度定制的本地 CLI 编码器。
 
-Claude Code 和 Codex CLI 是**专门为写代码调过的 agent**：模型（Claude / GPT-5 系列）和工具、提示词一起优化，长时间在一个仓库里工作很稳，权限模式和沙盒也是为改代码设计的；代价是要装在电脑上、用它们自己的账号和额度，也没有 ChisaBot 的界面、记忆和渠道。
+Claude Code 和 Codex CLI 是**专门面向代码仓库调优的本机编程代理**：模型、专用文件编辑/测试工具链、本机沙盒与权限模式围绕「读仓库 → 改代码 → 跑测试 → 修报错」闭环深度耦合；代价是必须安装在目标电脑上、消耗它们各自绑定的账号额度，且不具备 ChisaBot 的跨端界面、长期记忆、IM 投递与日常助理能力。
 
-所以分工是：日常和跨应用的事、要在聊天里看见卡片和审批的事 → 服务器 agent（默认，`device_*`）；一整件编码活儿 → 交给电脑上的 Claude Code / Codex（`device_agent_run`），ChisaBot 负责下达、权限、进度、改动审阅和把结果带回对话。内置循环介于两者之间：在电脑上低延迟地跑同一套简单工具，可以用本地模型做私密 / 离线的小活儿，但编码能力不如前两者。
+因此两者的最佳分工是：日常事务、跨应用协作、零散看改文件以及需要卡片/审批/定时触达的任务 → 直接交给服务器 DSH 机器人（默认路径，`device_*`）；一整块重度仓库编码与重构任务 → 由服务器机器人通过 `device_agent_run` 派发给电脑上的 Claude Code / Codex，由 ChisaBot 统一负责任务下达、权限档位把关、实时进度卡片、改动 diff 审阅以及结果回流总结。内置本地循环则介于两者之间：在电脑本机低延迟运行轻量工具循环，可搭配本机 Ollama 等本地模型处理离线或私密小任务。
 
 ## 11. 已知限制
 

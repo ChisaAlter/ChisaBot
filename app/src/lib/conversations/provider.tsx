@@ -32,11 +32,7 @@ export function ConversationToolsProvider({
   return (
     <>
       {/* Computer tools target the Bot declared by the mounted surface. */}
-      <ConversationSessionProvider
-        transport={
-          capabilities?.mode === "intelligence" ? "legacy" : "commands"
-        }
-      >
+      <ConversationSessionProvider>
         <ToolRendererProvider>
           <ActiveBotProvider>
             <ComputerTools />

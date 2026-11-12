@@ -76,6 +76,8 @@ export type ThreadLock = {
     runId: string;
     userId: string;
     agentId: string;
+    /** Prepare ownership only when the runner acquires its own lease during admission. */
+    runnerOwnsLease?: boolean;
   }) => Promise<{ runId: string } | null>;
   /** Keep it while the addressed Bot works. The lock expires on its own otherwise. */
   renew: (input: { threadId: string; runId: string }) => Promise<void>;
@@ -309,6 +311,7 @@ export function createHandoffDelivery(options: {
           runId: work.execution?.runId ?? newRunId(),
           userId: work.actorId,
           agentId: work.toBotId,
+          ...(runner.ownsThreadLease ? { runnerOwnsLease: true } : {}),
         });
         if (!held) {
           /*
@@ -438,10 +441,12 @@ export function createHandoffDelivery(options: {
            * lapses: the person cannot type in it and the next hop to the same Bot is refused, while a
            * lock somebody else may be holding on the asking side is dropped from under them.
            */
-          // The runner stream settles after its own cleanup. The adapter also clears presence.
-          await lock
-            .release({ threadId: where.threadId, runId })
-            .catch(() => {});
+          // A lease-owning runner also owns presence. This adapter may only have prepared the
+          // thread before a rejected relay; it must not clear the user's active run.
+          if (!runner.ownsThreadLease)
+            await lock
+              .release({ threadId: where.threadId, runId })
+              .catch(() => {});
         }
       } finally {
         if (lightsAskingChannel) {

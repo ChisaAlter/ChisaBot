@@ -20,14 +20,11 @@ function configuration() {
   return loadConfig(
     testEnvironment({
       CHISABOT_RUNTIME_MODE: "local",
-      INTELLIGENCE_API_URL: undefined,
-      INTELLIGENCE_GATEWAY_WS_URL: undefined,
-      INTELLIGENCE_API_KEY: undefined,
     }),
   );
 }
 
-test("local OSS configuration has durable history and no Intelligence credentials", () => {
+test("local configuration has durable history and rejects non-local runtime modes", () => {
   expect(configuration().runtime).toEqual({
     mode: "local",
     durableHistory: true,

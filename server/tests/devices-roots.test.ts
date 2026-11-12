@@ -5,9 +5,9 @@ import { insideRoot, outsideRoots } from "../src/devices/roots";
 import type { DeviceRecord } from "../src/devices/store";
 
 const ROOTS = [
-  "C:\\Users\\48818\\Desktop",
-  "C:\\Users\\48818\\Documents",
-  "C:\\Users\\48818\\Downloads",
+  "C:\\Users\\alice\\Desktop",
+  "C:\\Users\\alice\\Documents",
+  "C:\\Users\\alice\\Downloads",
 ];
 
 function record(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
@@ -43,15 +43,15 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 describe("allowed folders: windows paths (server side)", () => {
   test("inside / outside with drive letters, case, slashes and Chinese names", () => {
     expect(
-      insideRoot("win32", "c:\\users\\48818\\DESKTOP\\报告\\a.txt", ROOTS[0]!),
+      insideRoot("win32", "c:\\users\\alice\\DESKTOP\\报告\\a.txt", ROOTS[0]!),
     ).toBe(true);
-    expect(insideRoot("win32", "C:/Users/48818/Desktop/报告", ROOTS[0]!)).toBe(
+    expect(insideRoot("win32", "C:/Users/alice/Desktop/报告", ROOTS[0]!)).toBe(
       true,
     );
-    expect(insideRoot("win32", "C:\\Users\\48818\\Desktop2", ROOTS[0]!)).toBe(
+    expect(insideRoot("win32", "C:\\Users\\alice\\Desktop2", ROOTS[0]!)).toBe(
       false,
     );
-    expect(insideRoot("win32", "D:\\Users\\48818\\Desktop", ROOTS[0]!)).toBe(
+    expect(insideRoot("win32", "D:\\Users\\alice\\Desktop", ROOTS[0]!)).toBe(
       false,
     );
     expect(insideRoot("win32", "C:\\AI\\x", "C:\\")).toBe(true);
@@ -90,7 +90,7 @@ describe("allowed folders: windows paths (server side)", () => {
     // 里面的、相对路径、没给路径、不是文件类操作：都不算在外面。
     expect(
       outsideRoots("win32", ROOTS, "list_files", {
-        path: "c:\\users\\48818\\documents\\项目",
+        path: "c:\\users\\alice\\documents\\项目",
       }),
     ).toBeNull();
     expect(
@@ -216,7 +216,7 @@ describe("allowed folders: approval adds the folder, then runs", () => {
     const pending = h.hub.invoke({
       device: record({ capabilities: caps }),
       operation: "read_file",
-      args: { path: "C:\\Users\\48818\\Desktop\\a.txt" },
+      args: { path: "C:\\Users\\alice\\Desktop\\a.txt" },
       bot: { id: "b", name: "B" },
       summary: "读取",
     });

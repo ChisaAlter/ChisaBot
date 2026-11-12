@@ -1,10 +1,12 @@
 # ChisaBot 采用 DSH 主内核的完整设计与迁移方案
 
-日期：2026-11-07 · 设计基线：v1 · 状态更新 2026-11-08：DSH 已上线；客户端进度与证据见[实施记录](pipeline-runs/20261107-dsh-migration.md)。
+> **状态：已实施完成（`v0.1.138`–`v0.1.143`）**。DSH 已作为 ChisaBot 唯一内置执行内核正式上线，旧 `/api/conversations（原旧兼容路由）` 兼容路由与过渡内核已在后续收尾中彻底移除；上线验收证据见[实施记录](pipeline-runs/20261107-dsh-migration.md)。本文档作为架构设计与迁移历史档案保留。
+
+日期：2026-11-07 · 设计基线：v1 · 状态更新：已实施完成（v0.1.138–v0.1.143）。
 
 用户发出一个请求后，应能持续看到正文、工具进度和需要自己决定的事项；关闭窗口、换设备或短暂断网不会让任务重新执行；点击停止后，当前执行结束，尚未处理的补话留在原处。旧对话、设备、文件、记忆、模型设置和主动任务仍然可用。
 
-本方案选择 **独立 DSH Host + ChisaBot 插件 + ChisaBot 自有聊天状态层**。DSH 接管模型与工具循环、执行会话和上下文压缩；ChisaBot 保留产品、身份、业务权限与交付。聊天前后端移除对 CopilotKit 的运行依赖，已有远程 AG-UI Bot 和原生客户端通过兼容接口继续工作。
+本方案选择 **独立 DSH Host + ChisaBot 插件 + ChisaBot 自有聊天状态层**。DSH 接管模型与工具循环、执行会话和上下文压缩；ChisaBot 保留产品、身份、业务权限与交付。聊天前后端移除对 旧聊天前端框架 的运行依赖，已有远程 AG-UI Bot 和原生客户端通过兼容接口继续工作。
 
 这是实施依据。文中新增的模块名、表名、接口和阈值均为设计约定；现有事实、上游能力与待验证项分别标明。正文中的“必须”是目标契约，不表示当前代码已经达到。
 
@@ -23,7 +25,7 @@
 - [9. 工具执行和副作用](#9-工具执行和副作用)
 - [10. 审批与用户问题](#10-审批与用户问题)
 - [11. 模型、凭据与上下文](#11-模型凭据与上下文)
-- [12. 前端去除 CopilotKit，保留交互和视觉质量](#12-前端去除-copilotkit保留交互和视觉质量)
+- [12. 前端去除旧聊天框架，保留交互和视觉质量](#12-前端去除旧聊天框架保留交互和视觉质量)
 - [13. 后台任务、主动能力与其他入口](#13-后台任务主动能力与其他入口)
 - [14. 数据迁移、旧对话与编辑](#14-数据迁移旧对话与编辑)
 - [15. 部署、版本、健康与运维](#15-部署版本健康与运维)
@@ -56,7 +58,7 @@
 3. 工具权限、付款约束、设备能力开关、接管状态、账号隔离、审批偏好及审计不被 DSH 默认工具绕过。
 4. 旧历史可读、旧链接有效、原对话可继续；所有待处理审批、补话、任务和附件都有明确迁移处置。
 5. 停止、断线、进程退出、模型切换和结果未知的副作用有真实验收证据。
-6. `@copilotkit/*` 不再是 ChisaBot 生产聊天与后台执行的依赖；兼容路由名称和 AG-UI 协议可按消费者需要保留。
+6. `@旧聊天前端框架/*` 不再是 ChisaBot 生产聊天与后台执行的依赖；兼容路由名称和 AG-UI 协议可按消费者需要保留。
 7. 已接收的 DSH 对话在发布回滚后仍可读取；回滚不倒退工具执行账本或丢弃新历史。
 
 ### 1.3 本次架构不扩大的范围
@@ -80,7 +82,7 @@
 
 ```mermaid
 flowchart LR
-  UI[网页聊天 / Android] --> CK[CopilotKit 路由与运行器]
+  UI[网页聊天 / Android] --> CK[旧聊天前端框架 路由与运行器]
   BG[定时 / IM / worker / 任务中心] --> TURN[createTurnRunner]
   TURN --> PG
   CK --> PG[PostgresAgentRunner / 本地历史]
@@ -94,13 +96,13 @@ flowchart LR
 
 关键现状：
 
-- `server/src/copilot.ts` 同时负责模型构造、提示、工具组装、内核选择、远程 Bot 和 CopilotKit 挂载。
-- `server/src/local-conversations.ts` 继承 CopilotKit `AgentRunner`，管理 PostgreSQL 历史、运行、事件、锁、流式接力和停止。
+- `server/src/copilot.ts` 同时负责模型构造、提示、工具组装、内核选择、远程 Bot 和 旧聊天前端框架 挂载。
+- `server/src/local-conversations.ts` 继承 旧聊天前端框架 `AgentRunner`，管理 PostgreSQL 历史、运行、事件、锁、流式接力和停止。
 - `server/src/turns/run-turn.ts` 复制了上游未公开的无头回合流程，并调用 `ɵ` 开头的锁接口；后台消费者也必须迁移。
 - `server/src/agents/hermes-runtime.ts` 每轮准备宿主身份和工具，`copilot.ts` 在 Hermes 路径裁剪或压缩整段历史后再次发送。
 - `server/src/agents/runtime-tools.ts` 的执行授权与真实调用捕获相关；目前调用去重主要是存活运行内的 Promise 复用，不能直接视为跨进程副作用恢复账本。
-- 前端 `useAgent`、工具渲染上下文、运行接力与 UI 聚合状态相连；换服务器模型循环不会自行移除 CopilotKit。
-- 原生 Android 直接使用 `/api/copilotkit/...` 和 AG-UI 事件，不能随前端网页一起删除这些接口。
+- 前端 `useAgent`、工具渲染上下文、运行接力与 UI 聚合状态相连；换服务器模型循环不会自行移除 旧聊天前端框架。
+- 原生 Android 直接使用 `/api/conversations（原旧兼容路由）/...` 和 AG-UI 事件，不能随前端网页一起删除这些接口。
 
 现有总览[architecture.md](architecture.md)部分段落日期早于当前源码。具体调用关系以以上入口及本轮研究清单为准。
 
@@ -120,15 +122,15 @@ flowchart LR
 
 ### 3.2 不选择的实现方式
 
-| 方式                                     | 本项目不采用的原因                                                                      |
-| ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| 保持现有所有权不变，只把 Python 换成 DSH | 历史、压缩、运行和工具接力仍有两套管理者，维护成本没有实质下降                          |
-| 直接把 DSH `run()` 套进聊天接口          | 缺实时流、单会话停止，且区间结果不能准确绑定产品任务                                    |
-| 只抽 DSH agent-loop 到 Bun 进程          | 需要重组其服务依赖、持久化和插件装配，失去采用完整 runtime 的主要收益；Bun 兼容也未验证 |
-| 全量替换成 DSH 自带网页                  | 不能自然保留 ChisaBot 的 Bot、渠道、任务中心、设备和既有交互                            |
-| 将 Whale Isle vendor 整体复制进来        | 带入桌面补丁和升级耦合；插件和公开接口能完成的部分不应变成私有 fork                     |
-| 继续保留 CopilotKit 为所有内核的总运行器 | 用户明确要摆脱该依赖，且后台的私有接口耦合仍然存在                                      |
-| 同一请求双跑 Hermes 和 DSH 比较效果      | 会重复工具副作用和模型费用；比较使用受控独立样本或纯事件回放                            |
+| 方式                                         | 本项目不采用的原因                                                                      |
+| -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 保持现有所有权不变，只把 Python 换成 DSH     | 历史、压缩、运行和工具接力仍有两套管理者，维护成本没有实质下降                          |
+| 直接把 DSH `run()` 套进聊天接口              | 缺实时流、单会话停止，且区间结果不能准确绑定产品任务                                    |
+| 只抽 DSH agent-loop 到 Bun 进程              | 需要重组其服务依赖、持久化和插件装配，失去采用完整 runtime 的主要收益；Bun 兼容也未验证 |
+| 全量替换成 DSH 自带网页                      | 不能自然保留 ChisaBot 的 Bot、渠道、任务中心、设备和既有交互                            |
+| 将 Whale Isle vendor 整体复制进来            | 带入桌面补丁和升级耦合；插件和公开接口能完成的部分不应变成私有 fork                     |
+| 继续保留 旧聊天前端框架 为所有内核的总运行器 | 用户明确要摆脱该依赖，且后台的私有接口耦合仍然存在                                      |
+| 同一请求双跑 Hermes 和 DSH 比较效果          | 会重复工具副作用和模型费用；比较使用受控独立样本或纯事件回放                            |
 
 直接 AI SDK / Pi core 更适合“只换循环、其余自行维护”的目标；本次选择 DSH 是为了接替完整执行职责。若第 17 章的最小整合验证无法满足关键契约，再按证据收窄，而不是静默降级成另一个方案。
 
@@ -291,7 +293,7 @@ Stop 携带用户所见的 run 身份；晚到 Stop 不停止后来建立的另�
 
 SSE 的 `id` 只对应已提交的 viewRevision；live 帧和心跳不推进它。客户端断线后恢复的是 ChisaBot 显示游标，Adapter 再按 DSH opening snapshot 的合同恢复上游，二者不是同一个 afterSeq。
 
-保留 `/api/copilotkit/threads/...` 及原生 Android 使用的 run/stop/truncate 路由，由兼容 Adapter 转到 Conversation 模块并输出旧协议。名称保留不要求继续加载 CopilotKit 包。远程 AG-UI Bot 的输入输出由单独 Adapter 处理。
+保留 `/api/conversations（原旧兼容路由）/threads/...` 及原生 Android 使用的 run/stop/truncate 路由，由兼容 Adapter 转到 Conversation 模块并输出旧协议。名称保留不要求继续加载 旧聊天前端框架 包。远程 AG-UI Bot 的输入输出由单独 Adapter 处理。
 
 ### 6.3 一条消息的接纳顺序
 
@@ -528,19 +530,19 @@ DSH Session 管理模型可见历史和压缩。ChisaBot 的 `history-budget.ts`
 
 图片、文档和音视频继续以 ChisaBot attachment ID 作为产品标识，DSH 只拿经授权解析的模型输入或 runtime 媒体引用。压缩可改变模型上下文，不能删除用户原文件或改变历史展示。
 
-## 12. 前端去除 CopilotKit，保留交互和视觉质量
+## 12. 前端去除旧聊天框架，保留交互和视觉质量
 
 ### 12.1 前端模块分工
 
-| 目标模块                                  | 责任                                   | 主要替换对象                             |
-| ----------------------------------------- | -------------------------------------- | ---------------------------------------- |
-| `app/src/lib/chat/session-client.ts`      | 同源命令、snapshot、SSE、重连          | CopilotKit transport 与 run/connect 调用 |
-| `app/src/lib/chat/session-store.ts`       | 单线程消息投影、运行、交互、队列、游标 | `agent.messages` 及分散的运行补偿状态    |
-| `app/src/lib/chat/conversation-scope.tsx` | 给卡片提供 thread/bot 和操作回调       | `useCopilotChatConfiguration`            |
-| `app/src/lib/chat/renderers/`             | 工具、活动、产物的纯渲染注册表         | `useRenderTool`、`useRenderToolCall`     |
-| `app/src/lib/chat/sandbox-surface.tsx`    | 已发布 HTML 组件和管理预览             | `OpenGenerativeUIActivityRenderer`       |
-| Composer 的 attachment state              | 上传、取消、重试、草稿与已接纳引用     | SDK `useAttachments`                     |
-| 兼容 Adapter                              | 旧历史、旧协议转产品消息               | 旧 AG-UI 回放与字段正规化逻辑            |
+| 目标模块                                  | 责任                                   | 主要替换对象                                 |
+| ----------------------------------------- | -------------------------------------- | -------------------------------------------- |
+| `app/src/lib/chat/session-client.ts`      | 同源命令、snapshot、SSE、重连          | 旧聊天前端框架 transport 与 run/connect 调用 |
+| `app/src/lib/chat/session-store.ts`       | 单线程消息投影、运行、交互、队列、游标 | `agent.messages` 及分散的运行补偿状态        |
+| `app/src/lib/chat/conversation-scope.tsx` | 给卡片提供 thread/bot 和操作回调       | `use旧内置聊天组件Configuration`             |
+| `app/src/lib/chat/renderers/`             | 工具、活动、产物的纯渲染注册表         | `useRenderTool`、`useRenderToolCall`         |
+| `app/src/lib/chat/sandbox-surface.tsx`    | 已发布 HTML 组件和管理预览             | `OpenGenerativeUIActivityRenderer`           |
+| Composer 的 attachment state              | 上传、取消、重试、草稿与已接纳引用     | SDK `useAttachments`                         |
+| 兼容 Adapter                              | 旧历史、旧协议转产品消息               | 旧 AG-UI 回放与字段正规化逻辑                |
 
 `ConversationView`、`ChatTranscript`、Composer、Markdown、现有卡片、滚动与 UI 记忆继续作为呈现层。`ChannelChat` 只组合会话状态和用户操作，退出“自己修补 SDK 执行过程”的职责。
 
@@ -579,7 +581,7 @@ HTML 沙箱模块覆盖聊天、组件列表预览、单组件预览三个入口
 
 ### 12.6 删包的结束条件
 
-替换所有 Hook、Context、types、渲染器和管理页后，再删除生产依赖 `@copilotkit/react-core`、`@copilotkit/runtime` 及没有剩余消费者的相关包。同步清理 Vite 分包、a2ui stub、SDK CSS、Inspector 隐藏规则和旧 SDK 专用补偿。
+替换所有 Hook、Context、types、渲染器和管理页后，再删除生产依赖 `旧聊天运行时包`、`旧聊天运行时包` 及没有剩余消费者的相关包。同步清理 Vite 分包、a2ui stub、SDK CSS、Inspector 隐藏规则和旧 SDK 专用补偿。
 
 AG-UI 保留在远程 Bot、旧历史和兼容入口的 Adapter 中；shared 类型改为产品契约，不能改成导入 DSH 内部类型。依赖清理通过生产依赖图、实际入口构建和各消费者验收确认，不能只检查 package.json 字面删除。
 
@@ -790,28 +792,28 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 | P4 后台消费者            | TurnRunner、IM、worker、任务中心、工作流、handoff                  | P1/P2        | 每类真实入口及交付可用                    |
 | P5 数据连续性            | 盘点、legacy reader、续接、编辑分支、迁移工具                      | P1–P4        | 旧对话和未决对象逐项对上，能回滚          |
 | P6 部署灰度              | 新卷、runtime 映射、健康、更新器、备份与回滚                       | P0–P5        | 隔离环境和指定真实客户端验收              |
-| P7 依赖退休              | 删除 CopilotKit 生产依赖、旧接力、私有锁接口和残留配置             | P3–P6        | 依赖图与消费者证明已完成替换              |
+| P7 依赖退休              | 删除 旧聊天前端框架 生产依赖、旧接力、私有锁接口和残留配置         | P3–P6        | 依赖图与消费者证明已完成替换              |
 
 同一状态机和协议由一个实施负责人维护。工具/审批、前端呈现和部署可在接口确定后分工；不能由多个并行负责人分别发明 run、终态或恢复语义。
 
 ### 17.3 主要代码迁移地图
 
-| 当前位置                                                      | 改动方向                                                                                |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `server/src/copilot.ts`                                       | 提取模型/提示/工具的产品逻辑；DSH Adapter 不继承 BuiltInAgent；最终退出 CopilotKit 挂载 |
-| `server/src/local-conversations.ts`                           | 分离旧历史 reader 与新 Conversation 模块；移除 AgentRunner 继承和前端续跑               |
-| `server/src/turns/run-turn.ts`                                | 改为统一执行接口的消费者，退出 `ɵ` 锁调用与上游私有流程复制                             |
-| `server/src/agents/hermes-runtime.ts` / `runtime-tools.ts`    | 旧绑定期间保留；提取可复用授权/executor，DSH 不继续使用 capture 等待桥                  |
-| `server/src/thread-inbox.ts` / `thread-truncate.ts`           | 保留产品队列、暂停和编辑合同，改为命令与 binding revision 驱动                          |
-| `server/src/approvals/` / `confirmations/`                    | 保留政策和记录，接 operation 与 runtime interaction                                     |
-| `server/src/index.ts`                                         | 将各 `createTurnRunner`、copilotRuntime.history/lock/runner 调用改到统一入口            |
-| `server/src/task-center/` / `workers/` / `schedules/` / `im/` | 保留业务状态机，替换执行与终态订阅                                                      |
-| `app/src/lib/copilot/`                                        | 分拆成新 chat 状态、渲染器和 legacy Adapter，逐项退休原模块                             |
-| `channel-chat.tsx` / `chat-transcript.tsx` / Composer         | 接新状态，保留气泡、滚动、附件及草稿行为                                                |
-| `app/src/components/component-preview.tsx` / 管理组件路由     | 替换 SDK 沙箱 renderer，保留预览与授权                                                  |
-| `shared/task-center.ts` / `reply-sources.ts`                  | 用产品事件与明确 legacy variant 表达，退出 SDK 类型扩散                                 |
-| `android/.../AppViewModel.kt` / `chat/Model.kt`               | 第一阶段由兼容路由保证可用；后续原生接新协议仍独立验收                                  |
-| `deploy/compose.yaml` / 更新器 / 健康与内核状态               | 添加独立 runtime 版本与存储，保持旧物理卷和可回滚读取版本                               |
+| 当前位置                                                      | 改动方向                                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `server/src/copilot.ts`                                       | 提取模型/提示/工具的产品逻辑；DSH Adapter 不继承 BuiltInAgent；最终退出 旧聊天前端框架 挂载 |
+| `server/src/local-conversations.ts`                           | 分离旧历史 reader 与新 Conversation 模块；移除 AgentRunner 继承和前端续跑                   |
+| `server/src/turns/run-turn.ts`                                | 改为统一执行接口的消费者，退出 `ɵ` 锁调用与上游私有流程复制                                 |
+| `server/src/agents/hermes-runtime.ts` / `runtime-tools.ts`    | 旧绑定期间保留；提取可复用授权/executor，DSH 不继续使用 capture 等待桥                      |
+| `server/src/thread-inbox.ts` / `thread-truncate.ts`           | 保留产品队列、暂停和编辑合同，改为命令与 binding revision 驱动                              |
+| `server/src/approvals/` / `confirmations/`                    | 保留政策和记录，接 operation 与 runtime interaction                                         |
+| `server/src/index.ts`                                         | 将各 `createTurnRunner`、copilotRuntime.history/lock/runner 调用改到统一入口                |
+| `server/src/task-center/` / `workers/` / `schedules/` / `im/` | 保留业务状态机，替换执行与终态订阅                                                          |
+| `app/src/lib/copilot/`                                        | 分拆成新 chat 状态、渲染器和 legacy Adapter，逐项退休原模块                                 |
+| `channel-chat.tsx` / `chat-transcript.tsx` / Composer         | 接新状态，保留气泡、滚动、附件及草稿行为                                                    |
+| `app/src/components/component-preview.tsx` / 管理组件路由     | 替换 SDK 沙箱 renderer，保留预览与授权                                                      |
+| `shared/task-center.ts` / `reply-sources.ts`                  | 用产品事件与明确 legacy variant 表达，退出 SDK 类型扩散                                     |
+| `android/.../AppViewModel.kt` / `chat/Model.kt`               | 第一阶段由兼容路由保证可用；后续原生接新协议仍独立验收                                      |
+| `deploy/compose.yaml` / 更新器 / 健康与内核状态               | 添加独立 runtime 版本与存储，保持旧物理卷和可回滚读取版本                                   |
 
 ## 18. 需要在实施中判定的具体契约
 
@@ -866,7 +868,7 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 | A20  | 切换后回滚，再打开新旧对话                                     | 新历史、工具结果、审批、暂停输入和附件全部可访问                                                                           |
 | A21  | 第二账号越权读取/停止/回答审批；Team Bot调用                   | 服务端拒绝越权；实例和工具授权均符合实际 actor                                                                             |
 | A22  | 原生 Android 原版本兼容、新 Android Web 主界面与远程 AG-UI Bot | 旧路由和事件仍可用；未偷偷要求所有客户端同时升级；新 Android 实机呈现同一 Web 手机布局并保留系统文件、返回、键盘与恢复能力 |
-| A23  | 聊天与管理页 HTML/json-render 预览                             | 组件正常展示；授权撤销有效；不依赖 CopilotKit 包                                                                           |
+| A23  | 聊天与管理页 HTML/json-render 预览                             | 组件正常展示；授权撤销有效；不依赖 旧聊天前端框架 包                                                                       |
 | A24  | DSH 源日志可用但投影缺失/落后                                  | 可重建至相同消息和状态；不触发模型或工具重执行                                                                             |
 | A25  | ChisaBot 重启/派发 lease 到期，而 DSH 仍在工作                 | 重新接管观察；不释放成可重跑请求；原 run 只执行一次                                                                        |
 | A26  | 源日志已 flush 与未 flush 尾部的故障恢复                       | 水位差异可解释；丢失尾部不复用冲突 sourceSeq；副作用先对账                                                                 |
@@ -898,7 +900,7 @@ ChisaBot 服务端继续使用现有 Bun；DSH 使用独立满足官方要求的
 3. 独立可用的健康诊断、运行监控、备份与回滚说明，及一次真实回滚证据。
 4. 第 19 章验收矩阵结果；失败项必须说明影响的入口和下一责任方，不能把“接口接通”记作全项目完成。
 5. 更新后的架构、模型、审批、运行维护和客户端兼容文档；旧 Hermes 文档按仍有的绑定标记用途。
-6. CopilotKit 生产依赖与私有运行器耦合已移除的证据，保留必要 AG-UI 兼容并说明消费者。
+6. 旧聊天前端框架 生产依赖与私有运行器耦合已移除的证据，保留必要 AG-UI 兼容并说明消费者。
 
 Hermes/builtin 旧执行路径只有在所有活动绑定、审批恢复、后台消费者和回滚需求均已退出后才退休。之后仍可保留独立远程 Agent 适配能力，不能把历史数据清理和删除用户记录混成依赖清理。
 
@@ -920,7 +922,7 @@ Hermes/builtin 旧执行路径只有在所有活动绑定、审批恢复、后�
 
 ### 当前项目源码与既有合同
 
-- [当前运行器](../server/src/local-conversations.ts)、[内核装配](../server/src/copilot.ts)、[无头回合](../server/src/turns/run-turn.ts)、[服务装配入口](../server/src/index.ts)。
+- [当前会话运行器](../server/src/conversations/)、原内核装配 `server/src/copilot.ts`（已移除）、[无头回合](../server/src/turns/run-turn.ts)、[服务装配入口](../server/src/index.ts)。
 - [宿主工具桥](../server/src/agents/runtime-tools.ts)、[补话队列](../server/src/thread-inbox.ts)、[历史编辑](../server/src/thread-truncate.ts)、[通用审批类型](../server/src/approvals/types.ts)、[确认卡片](confirmations.md)。
 - [任务中心运行](../server/src/task-center/runtime.ts)、[任务中心合同](../shared/task-center.ts)、[后台 worker](../server/src/workers/service.ts)。
 - [模型设置](models.md)、[账号](accounts.md)、[单聊天路径 ADR](adr/0013-single-chat-path.md)、[聊天可靠性](chat-reliability.md)、[在线更新](online-update.md)、[部署 Compose](../deploy/compose.yaml)。

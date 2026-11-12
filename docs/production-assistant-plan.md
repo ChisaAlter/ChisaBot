@@ -1,6 +1,8 @@
 # ChisaBot 个人助理生产交付计划
 
-日期：2026-11-08（Asia/Shanghai） · 状态：用户已授权实施；进度与证据见[实施记录](pipeline-runs/20261108-assistant-production.md)。
+> **状态：已实施完成（`v0.1.138`–`v0.1.143`）**。计划内的产品契约修补、桌面与手机布局对齐、持久交付恢复及连续操作体验收口均已合入主线并发布；详细验收记录见[个人助理实施记录](pipeline-runs/20261108-assistant-production.md)与[连续操作体验记录](pipeline-runs/20261111-smooth-experience.md)。
+
+日期：2026-11-08（Asia/Shanghai） · 状态：已实施完成（v0.1.138–v0.1.143）。
 
 目标：让 Chisa 在已安装桌面客户端中，长期使用一个可靠的个人助理；服务器能够持续执行、准确交付、发现故障并恢复。首个生产范围是单用户私人部署，保留现有 React 界面和 DSH 内核。
 
@@ -22,7 +24,7 @@
 
 | 项目         | 当前事实                                                                                                                 | 对计划的影响                                           |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| 核心执行     | 生产使用 DSH `0.2.2-rc.1`，Chisa 独立 Host；生产执行依赖已移除 CopilotKit                                                | 固定现版本，沿公开 Host/Session 接口改进；不再迁移内核 |
+| 核心执行     | 生产使用 DSH `0.2.2-rc.1`，Chisa 独立 Host；生产执行依赖已移除 旧聊天前端框架                                            | 固定现版本，沿公开 Host/Session 接口改进；不再迁移内核 |
 | 单用户       | 用户要求清理后，只保留 Chisa 和一个生产 DSH Host                                                                         | 不重建测试账号；功能保持单用户易用，保留现有权限边界   |
 | 用户数据     | Chisa 的 426 条对话、87 个聊天文件保留；七条记忆笔记                                                                     | 迁移、更新、清理不得以删除历史换稳定性                 |
 | 个人连接     | 日历、邮箱、通知 Webhook 尚未连接；IM 未连接                                                                             | 连接是启用任务；对应可靠性缺陷另列为代码工作           |
@@ -70,18 +72,18 @@
 
 ## 4. 借鉴开源项目时保留清晰职责
 
-外部资料以 [开源实现核对](research/20261108-assistant-upstream-patterns.md) 中的仓库身份、固定提交和原始源码为准。本轮确认 OpenBot 是 `CopilotKit/OpenBot`；`aibot-fans/dsh-bot` 是社区 DSH 插件；`BotHarness/DeepSeekBot`（Tobs）是另一个社区产品。它们均不能混称为 DeepSeek 官方 Bot。
+外部资料以 [开源实现核对](research/20261108-assistant-upstream-patterns.md) 中的仓库身份、固定提交和原始源码为准。本轮确认 早期上游模板 是 `早期上游基础模板`；`aibot-fans/dsh-bot` 是社区 DSH 插件；`BotHarness/DeepSeekBot`（Tobs）是另一个社区产品。它们均不能混称为 DeepSeek 官方 Bot。
 
 | 参考及固定提交                       | 借鉴的具体做法                                                     | 在 ChisaBot 的落点                                     | 保留的取舍                                                               |
 | ------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| OpenBot `e49a0a9f`                   | 完整交付目标/正文持久化、发送前复核权限、发送中断后的 unknown      | P2：扩展既有 IM 交付合同到邮件/本人通知                | 不重新接回 Intelligence，不整体恢复已精简的企业通知系统                  |
+| 早期上游模板 `e49a0a9f`              | 完整交付目标/正文持久化、发送前复核权限、发送中断后的 unknown      | P2：扩展既有 IM 交付合同到邮件/本人通知                | 不重新接回 Intelligence，不整体恢复已精简的企业通知系统                  |
 | dsh-bot `fa15588f`                   | 无变化/失败不触发模型，触发水位与任务建立同事务；交互/后台容量分配 | P1/P3：复用来源去重与任务队列，补前台可用性与等待原因  | 不搬它的群协作 UI；必要持久接口缺失时不静默降级去重                      |
 | dsh-bot `fa15588f` / Tobs `e421ab46` | 记忆可审阅、来源可追溯、用户更正优先；队列失败与等待时间可见       | P4：验证现有记忆更正/遗忘；P3：沿现有健康入口呈现      | 不换成 Git 记忆权威或新增向量库                                          |
 | Tobs 的备份设计与当前实现差异        | 备份清单要明确真正支持的数据范围；暂存校验后再激活恢复             | P3：把 ChisaBot 已有 DB/Session 卷备份扩为周期完整备份 | Tobs 当前代码把 DSH Session 标为 unsupported，不能当它已经完成的能力照搬 |
 
-原始依据：[OpenBot 交付恢复](https://github.com/CopilotKit/OpenBot/blob/e49a0a9fdfe13ea3062bd2c3dc427e337889cf5d/server/src/delivery/router.ts#L530-L690)、[dsh-bot 触发器](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/engine/triggers.ts#L208-L360)、[交互容量与投递](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/effects/delivery.ts)、[记忆合并](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/memory/service.ts#L120-L160)、[Tobs 外发决策](https://github.com/BotHarness/DeepSeekBot/blob/e421ab46416475bda9738ba81ea5df669d4d8749/docs/adr/0039-external-outbox-is-idempotent-but-not-exactly-once.md)、[实际备份 manifest](https://github.com/BotHarness/DeepSeekBot/blob/e421ab46416475bda9738ba81ea5df669d4d8749/packages/core/src/portability/package.ts#L495-L515)。表中“落点”为本计划的采用决策。
+原始依据：[早期上游模板 交付恢复](https://github.com/ChisaAlter/ChisaBot/blob/main/docs/THIRD_PARTY_NOTICES.md)、[dsh-bot 触发器](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/engine/triggers.ts#L208-L360)、[交互容量与投递](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/effects/delivery.ts)、[记忆合并](https://github.com/aibot-fans/dsh-bot/blob/fa15588fb62b7605d00c63bf23fa55b1ac54bb70/packages/runtime/src/memory/service.ts#L120-L160)、[Tobs 外发决策](https://github.com/BotHarness/DeepSeekBot/blob/e421ab46416475bda9738ba81ea5df669d4d8749/docs/adr/0039-external-outbox-is-idempotent-but-not-exactly-once.md)、[实际备份 manifest](https://github.com/BotHarness/DeepSeekBot/blob/e421ab46416475bda9738ba81ea5df669d4d8749/packages/core/src/portability/package.ts#L495-L515)。表中“落点”为本计划的采用决策。
 
-采用原则：吸收可靠的状态与交付模式，保持 ChisaBot 现有身份、权限、数据、桌面入口和 DSH 适配。上游 README 的功能清单不能作为本部署验收结果，复制代码前检查固定版本许可证与依赖。OpenBot/Tobs 根许可证为 MIT，dsh-bot 代码为 Apache-2.0，但其美术与部分组件另有许可；本计划不复制这些资产或打包组件，详细来源见开源核对笔记。
+采用原则：吸收可靠的状态与交付模式，保持 ChisaBot 现有身份、权限、数据、桌面入口和 DSH 适配。上游 README 的功能清单不能作为本部署验收结果，复制代码前检查固定版本许可证与依赖。早期上游模板/Tobs 根许可证为 MIT，dsh-bot 代码为 Apache-2.0，但其美术与部分组件另有许可；本计划不复制这些资产或打包组件，详细来源见开源核对笔记。
 
 ```mermaid
 flowchart LR

@@ -294,12 +294,19 @@ run(
     // A new approval-service instance has no in-memory waiter. The same durable request must
     // still resume the exact original call, without another model-selected operation.
     const restartedConfirmations = createConfirmations(database);
-    await expect(
-      restartedConfirmations.decide("another-account", card.id, "approve"),
-    ).rejects.toThrow("找不到");
+    const foreignApproval = await restartedConfirmations
+      .decide("another-account", card.id, "approve")
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(foreignApproval).toBeInstanceOf(Error);
+    expect(() => {
+      throw foreignApproval;
+    }).toThrow("找不到");
     await restartedConfirmations.decide(actorId, card.id, "approve");
     const runTurn = createTurnRunner({
-      intelligence: backend.client,
+      conversations: backend.client,
       runner: backend.runner,
       buildAgentFor: async () => agent.clone(),
     });
@@ -314,7 +321,14 @@ run(
     try {
       globalThis.process.env.CHISABOT_DSH_ROOT = home;
       await writeFile(join(home, ".maintenance"), "draining");
-      await expect(resume(actorId, card.id)).rejects.toThrow("服务正在更新");
+      const maintenance = await resume(actorId, card.id).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(maintenance).toBeInstanceOf(Error);
+      expect(() => {
+        throw maintenance;
+      }).toThrow("服务正在更新");
       expect(executed).toBe(0);
       await unlink(join(home, ".maintenance"));
     } finally {
@@ -419,9 +433,16 @@ run(
         runId: receipt.runId,
       }),
     ).toBe(true);
-    await expect(
-      restartedConfirmations.decide(actorId, card.id, "approve"),
-    ).rejects.toThrow("已被停止");
+    const stoppedApproval = await restartedConfirmations
+      .decide(actorId, card.id, "approve")
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(stoppedApproval).toBeInstanceOf(Error);
+    expect(() => {
+      throw stoppedApproval;
+    }).toThrow("已被停止");
     expect(executed).toBe(1);
     const reopened = await routes.request(
       `http://localhost/api/conversations/${stoppedThread}/events`,

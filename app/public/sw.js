@@ -34,7 +34,7 @@ const LOGIN_LOOP_WINDOW_MS = 30_000;
 const SKIP_NAV =
   /^\/(api|auth|login|magpie-admin|downloads|workspace|sign-in)(\/|$)/;
 
-importScripts("/compat/legacy-browser.js");
+const gatewayLoginRequired = (body) => body?.chisabotAuthRequired === true;
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -137,7 +137,7 @@ async function isGatewayLoginRequired(response) {
     return false;
   try {
     const body = await response.clone().json();
-    return ChisaLegacyBrowser.gatewayLoginRequired(body);
+    return gatewayLoginRequired(body);
   } catch {
     return false;
   }
@@ -366,7 +366,7 @@ function offline() {
 }
 
 function slow() {
-  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])},loopKey:${JSON.stringify(LOGIN_REDIRECT_KEY)},loopWindowMs:${LOGIN_LOOP_WINDOW_MS},gatewayLoginRequired:${ChisaLegacyBrowser.gatewayLoginRequired.toString()}}`;
+  const env = `{win:window,delays:${JSON.stringify(RETRY_DELAYS_MS)},retryStatuses:${JSON.stringify([...RETRY_STATUSES])},loopKey:${JSON.stringify(LOGIN_REDIRECT_KEY)},loopWindowMs:${LOGIN_LOOP_WINDOW_MS},gatewayLoginRequired:${gatewayLoginRequired.toString()}}`;
   return card(
     "slow",
     "服务器响应慢",

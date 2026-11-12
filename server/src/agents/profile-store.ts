@@ -8,13 +8,7 @@ import {
   deploymentPackages,
   users,
 } from "../db/schema";
-import { teamBotPublications } from "../db/schema/team-bots";
 import { deleteGrantsForAgent } from "../package-orphans";
-import {
-  assignedCondition,
-  assignedToActor,
-  teamBotAccess,
-} from "../team-bots/access";
 import {
   authFromConfiguration,
   retireReplacedKey,
@@ -195,11 +189,7 @@ const joinedProjection = {
 
 function joinedProfiles(executor: DatabaseExecutor, actor: AgentActor) {
   return executor
-    .select({
-      ...joinedProjection,
-      // A Team Bot an administrator put in this person's sidebar.
-      assignedToMe: sql<boolean>`${assignedToActor(actor.id, agents.id)}`,
-    })
+    .select(joinedProjection)
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))
     .leftJoin(
@@ -218,8 +208,6 @@ function accessFilter(actor: AgentActor) {
   return or(
     eq(agentProfiles.visibility, "public"),
     eq(agentProfiles.ownerUserId, actor.id),
-    // A private Bot its owner published to the team, to this person, or to a group they are in.
-    teamBotAccess(actor.id, agentProfiles.agentId),
   );
 }
 
@@ -240,7 +228,7 @@ function mapProfile(
     hasCallbackToken: row.callbackTokenHash !== null,
     hidden: row.hiddenAt !== null,
     pinned: row.pinnedAt !== null,
-    assignedToMe: Boolean(row.assignedToMe),
+    assignedToMe: false,
     deletedAt: row.deletedAt,
     createdByAgentId: row.createdByAgentId,
     createdDepth: row.createdDepth,
@@ -265,13 +253,6 @@ function endpointOf(configuration: unknown): string | null {
   return typeof endpoint === "string" ? endpoint : null;
 }
 
-/** Which agent on a Mastra server this Bot means, when the row names one. */
-function remoteAgentIdOf(configuration: unknown): string | null {
-  if (!configuration || typeof configuration !== "object") return null;
-  const named = (configuration as { remoteAgentId?: unknown }).remoteAgentId;
-  return typeof named === "string" && named.length > 0 ? named : null;
-}
-
 /**
  * The instruction a Bot in the box runs on, read back out of its stored configuration.
  *
@@ -290,7 +271,7 @@ function systemPromptOf(configuration: unknown): string | null {
 
 /** What a coworker is, and what it runs on: the two `agents` columns a copy has to reproduce. */
 export type AgentRun = {
-  type: "built_in" | "remote_ag_ui" | "remote_mastra";
+  type: "built_in" | "remote_ag_ui";
   configuration: Record<string, unknown>;
 };
 
@@ -334,27 +315,12 @@ export function runForDuplicate(
     return { type: "built_in", configuration: { systemPrompt } };
   }
 
+  if (source.type === "remote_mastra") {
+    return null;
+  }
+
   const endpoint = endpointOf(source.configuration);
   if (endpoint) {
-    /*
-     * The copy is dialled the way the original was, and that is not cosmetic. A Mastra endpoint
-     * speaks Mastra's client protocol and has no AG-UI route, so a duplicate written as
-     * `remote_ag_ui` would carry the right address and be unable to say anything to it. The Bot
-     * would appear, accept a grant, and answer nothing.
-     *
-     * Which agent on that server comes with it for the same reason: a Mastra endpoint is a roster,
-     * and a copy that forgets the name falls back to a different agent, or refuses. See
-     * `pickFromRoster`.
-     */
-    if (source.type === "remote_mastra") {
-      const remoteAgentId = remoteAgentIdOf(source.configuration);
-      return {
-        type: "remote_mastra",
-        configuration: remoteAgentId
-          ? { endpoint, remoteAgentId }
-          : { endpoint },
-      };
-    }
     return { type: "remote_ag_ui", configuration: { endpoint } };
   }
 
@@ -463,16 +429,6 @@ async function findByTokenHash(
   const row = rows[0];
   if (!row?.hash) return null;
   return sameToken(row.hash, hash) ? { id: row.agentId } : null;
-}
-
-/** Hiding a Team Bot an administrator assigned to this person, which they cannot do. */
-export class AgentAssignedError extends Error {
-  constructor(id: string) {
-    super(
-      `Agent ${id} was assigned to you by an administrator and cannot be hidden.`,
-    );
-    this.name = "AgentAssignedError";
-  }
 }
 
 export function createAgentProfileStore(
@@ -818,20 +774,6 @@ export function createAgentProfileStore(
       return database.transaction(async (transaction) => {
         const profile = await findAccessibleProfile(transaction, actor, id);
         if (!profile) throw new AgentNotFoundError(id);
-        // An administrator put this Team Bot in this person's sidebar; it stays there.
-        if (hidden) {
-          const [assigned] = await transaction
-            .select({ agentId: teamBotPublications.agentId })
-            .from(teamBotPublications)
-            .where(
-              and(
-                eq(teamBotPublications.agentId, id),
-                sql`${assignedCondition(actor.id)}`,
-              ),
-            )
-            .limit(1);
-          if (assigned) throw new AgentAssignedError(id);
-        }
 
         await transaction
           .insert(agentPreferences)

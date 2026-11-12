@@ -12,7 +12,11 @@
  */
 
 import { mdCache } from "@/lib/chat/md-cache";
-import { gatewayLoginRequired } from "@/lib/compat/legacy-client";
+
+function gatewayLoginRequired(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  return (body as Record<string, unknown>).chisabotAuthRequired === true;
+}
 
 type LoginWindow = Pick<Window, "location" | "fetch"> & {
   sessionStorage?: Pick<Storage, "getItem" | "setItem">;

@@ -38,8 +38,8 @@ import {
   channelAgents,
   channelMemberships,
   channels,
+  chisabotChannelMappings,
   deploymentPackages,
-  intelligenceChannelMappings,
   users,
 } from "../src/db/schema";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -867,8 +867,8 @@ const createdPackageIds: string[] = [];
 afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const packageId of createdPackageIds.splice(0)) {
@@ -946,8 +946,8 @@ async function persistedChannel(channelId: string) {
     .where(eq(channelAgents.channelId, channelId));
   const mappings = await database
     .select()
-    .from(intelligenceChannelMappings)
-    .where(eq(intelligenceChannelMappings.channelId, channelId));
+    .from(chisabotChannelMappings)
+    .where(eq(chisabotChannelMappings.channelId, channelId));
   return { channelRow, memberships, linkedAgents, mappings };
 }
 
@@ -979,11 +979,11 @@ async function channelTableSnapshot() {
     mappings: (
       await database
         .select({
-          channelId: intelligenceChannelMappings.channelId,
-          threadId: intelligenceChannelMappings.threadId,
-          userId: intelligenceChannelMappings.userId,
+          channelId: chisabotChannelMappings.channelId,
+          threadId: chisabotChannelMappings.threadId,
+          userId: chisabotChannelMappings.userId,
         })
-        .from(intelligenceChannelMappings)
+        .from(chisabotChannelMappings)
     )
       .map(
         ({ channelId, threadId, userId }) =>
@@ -1087,8 +1087,8 @@ describe("channel store integration", () => {
     const created = await persistentStore.create(actor, [agentId]);
     createdChannelIds.push(created.id);
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, created.id));
+      .delete(chisabotChannelMappings)
+      .where(eq(chisabotChannelMappings.channelId, created.id));
 
     expect(await persistentStore.get(actor, created.id)).toBeNull();
   });
@@ -1320,7 +1320,7 @@ describe("channel pinning", () => {
       channelId: created.id,
       userId: other.id,
     });
-    await database.insert(intelligenceChannelMappings).values({
+    await database.insert(chisabotChannelMappings).values({
       userId: other.id,
       channelId: created.id,
       // thread_id is globally unique; the pinner's own mapping row already claimed
@@ -1371,7 +1371,7 @@ describe("channel read markers", () => {
       channelId: created.id,
       userId: other.id,
     });
-    await database.insert(intelligenceChannelMappings).values({
+    await database.insert(chisabotChannelMappings).values({
       userId: other.id,
       channelId: created.id,
       // thread_id is globally unique; the reader's own mapping row already claimed
@@ -1760,7 +1760,7 @@ describe("channel soft delete", () => {
       channelId: created.id,
       userId: other.id,
     });
-    await database.insert(intelligenceChannelMappings).values({
+    await database.insert(chisabotChannelMappings).values({
       userId: other.id,
       channelId: created.id,
       // thread_id is globally unique; the actor's own mapping row already claimed

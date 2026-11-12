@@ -85,3 +85,37 @@ export function capConnectMessages<
   }
   return { messages: [note, ...kept], truncated: true, dropped };
 }
+
+/** 浏览器最多带多少个锚点 id（见 snapshotSince）。 */
+export const MAX_SNAPSHOT_ANCHORS = 16;
+
+/** 请求体里的 `snapshotAfter`：只收字符串 id，最多 MAX_SNAPSHOT_ANCHORS 个；别的形状当没给。 */
+export function connectSnapshotAnchors(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = value
+    .filter(
+      (id): id is string =>
+        typeof id === "string" && id.length > 0 && id.length <= 512,
+    )
+    .slice(-MAX_SNAPSHOT_ANCHORS);
+  return ids.length ? ids : undefined;
+}
+
+/**
+ * 增量接入快照（2026-11-09 重连循环事故）：浏览器手里已经有到哪了，就从那里开始发。
+ *
+ * 以前每次 connect（打开、sync 重接、每发一句）都发最近 400 条（长对话 ~330–410 KB）；sync 重接只是
+ * 为了补几条新的，也照样整段下发。浏览器在合并式接入时带上手里最近几条的 id，这里从其中最早一条也在
+ * 存档里的开始切；一条都对不上（被截断过、id 是本机还没存下的）返回 null，由调用方退回封顶快照。
+ */
+export function snapshotSince<T extends { id?: unknown }>(
+  messages: readonly T[],
+  anchors: readonly string[] | undefined,
+): T[] | null {
+  if (!anchors?.length) return null;
+  const wanted = new Set(anchors);
+  const at = messages.findIndex(
+    (message) => typeof message.id === "string" && wanted.has(message.id),
+  );
+  return at < 0 ? null : messages.slice(at);
+}

@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { MiddlewareHandler } from "hono";
-import { authenticationRequired } from "../legacy/protocol";
+import { authenticationRequired } from "../conversations/protocol";
 import { DEV_ACTOR } from "./dev-actor";
 import type { AppVariables, AuthenticatedActor } from "./guards";
 import type { ChisaBotRole } from "./roles";

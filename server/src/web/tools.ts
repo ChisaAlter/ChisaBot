@@ -418,6 +418,7 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
     {
       name: "web_search",
       ref: "web/web_search",
+      effect: "read",
       description:
         "联网搜索（只读，不带用户身份）。返回标题、网址和摘要。查事实、新闻、价格、天气、某个网站的地址，或者查一个外部服务（腾讯 ima、Notion、Gmail……）怎么接入、有没有官方 API / MCP / 开放平台时，先用它；需要细节再用 web_fetch 读其中一个网址。比打开浏览器快得多。同一个问题最多搜 2 次（要换角度就一次并行发两个），搜到够用就停：推荐类问题（买什么、去哪家）直接用结果里的名字、地址或价格给 2–3 个选项并附来源网址，不要反复换关键词重搜。",
       parameters: searchParameters,
@@ -447,6 +448,7 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
     {
       name: "web_fetch",
       ref: "web/web_fetch",
+      effect: "read",
       description:
         "读取一个公开网址的内容（只读，不带用户身份，不执行脚本）。网页返回标题和正文文字，接口返回原始 JSON。适合读文章、文档、公开数据接口（行情、天气等）。需要登录、点击或脚本渲染的页面才用浏览器。",
       parameters: fetchParameters,

@@ -36,6 +36,7 @@ services:
     environment:
       EMBEDDED_POSTGRES: "on"
       CHISABOT_RUNTIME_MODE: ${CHISABOT_RUNTIME_MODE:-local}
+      # Kernel defaults to DSH in server config; an explicit value in env_file remains authoritative.
       CHISABOT_DSH_ROOT: /var/lib/chisabot-dsh
       SL_ENABLED: "false"
       DO_NOT_TRACK: "1"
@@ -59,7 +60,7 @@ services:
         max-size: 20m
         max-file: "3"
 
-# Existing deployments are pinned by legacy-resources.sh before startup; new installs use these names.
+# Existing deployments are pinned by pin-resources.sh before startup; new installs use these names.
 volumes:
   database:
     name: ${CHISABOT_DATABASE_VOLUME:-${CHISABOT_VOLUME_PREFIX:-chisabot-zh}_database}

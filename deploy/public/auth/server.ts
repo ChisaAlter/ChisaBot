@@ -1,14 +1,10 @@
 import { Database } from "bun:sqlite";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync } from "node:fs";
-import {
-  applyLegacyAuthEnvironment,
-  clientAddress,
-  LEGACY_SESSION_COOKIE,
-  legacyAuthRequired,
-} from "./legacy-compat";
 
 const COOKIE = "__Host-chisabot_session";
+const clientAddress = (headers: Headers): string =>
+  headers.get("X-ChisaBot-Client") || "unknown";
 const SHORT_LIFETIME = 12 * 3600;
 const LONG_LIFETIME = 30 * 24 * 3600;
 const WINDOW = 15 * 60 * 1000;
@@ -65,10 +61,7 @@ function cookieToken(
 }
 
 function sessionToken(request: Request): string | null {
-  const current = cookieToken(request, COOKIE);
-  return current.present
-    ? current.token
-    : cookieToken(request, LEGACY_SESSION_COOKIE).token;
+  return cookieToken(request, COOKIE).token;
 }
 
 function cookieHeader(token: string, lifetime?: number, name = COOKIE): string {
@@ -81,15 +74,8 @@ function cookieHeader(token: string, lifetime?: number, name = COOKIE): string {
   );
 }
 
-function sessionHeaders(
-  token: string,
-  lifetime: number | undefined,
-  clearLegacy: boolean,
-): Headers {
-  const headers = new Headers({ "Set-Cookie": cookieHeader(token, lifetime) });
-  if (clearLegacy)
-    headers.append("Set-Cookie", cookieHeader("", 0, LEGACY_SESSION_COOKIE));
-  return headers;
+function sessionHeaders(token: string, lifetime: number | undefined): Headers {
+  return new Headers({ "Set-Cookie": cookieHeader(token, lifetime) });
 }
 function json(
   data: unknown,
@@ -107,7 +93,6 @@ const unauthorized = () =>
       ok: false,
       error: "请先登录。",
       chisabotAuthRequired: true,
-      ...legacyAuthRequired(),
     },
     401,
   );
@@ -549,13 +534,9 @@ export function createAuthApp(config: AuthConfig) {
     return now() - verifiedAt < DEVICE_GRACE_MS ? principal : null;
   }
   function revoke(request: Request) {
-    for (const name of [COOKIE, LEGACY_SESSION_COOKIE]) {
-      const token = cookieToken(request, name).token;
-      if (token)
-        db.query("DELETE FROM sessions WHERE token_hash = ?").run(
-          digest(token),
-        );
-    }
+    const token = cookieToken(request, COOKIE).token;
+    if (token)
+      db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token));
   }
   function attempt(key: string) {
     db.query(`INSERT INTO attempts (client_key, count, expires_at) VALUES (?, 1, ?)
@@ -785,11 +766,7 @@ export function createAuthApp(config: AuthConfig) {
         },
       },
       200,
-      sessionHeaders(
-        token,
-        LONG_LIFETIME,
-        cookieToken(request, LEGACY_SESSION_COOKIE).present,
-      ),
+      sessionHeaders(token, LONG_LIFETIME),
     );
   }
 
@@ -1263,11 +1240,7 @@ export function createAuthApp(config: AuthConfig) {
     return json(
       { ok: true, next: "/" },
       200,
-      sessionHeaders(
-        token,
-        remember ? LONG_LIFETIME : undefined,
-        cookieToken(request, LEGACY_SESSION_COOKIE).present,
-      ),
+      sessionHeaders(token, remember ? LONG_LIFETIME : undefined),
     );
   }
 
@@ -1327,22 +1300,7 @@ export function createAuthApp(config: AuthConfig) {
       }
       if (path === "/auth/session" && request.method === "GET") {
         const principal = await authenticated(request);
-        let headers: HeadersInit = {};
-        const legacy = cookieToken(request, LEGACY_SESSION_COOKIE);
-        if (principal && legacy.present) {
-          const token = sessionToken(request)!;
-          const row = db
-            .query(
-              "SELECT expires_at, created_at FROM sessions WHERE token_hash = ?",
-            )
-            .get(digest(token)) as { expires_at: number; created_at: number };
-          // Preserve session-vs-persistent cookies and the original expiry while renaming them.
-          const lifetime =
-            row.expires_at - row.created_at > SHORT_LIFETIME * 1000
-              ? Math.max(0, Math.floor((row.expires_at - now()) / 1000))
-              : undefined;
-          headers = sessionHeaders(token, lifetime, true);
-        }
+        const headers: HeadersInit = {};
         return json(
           principal
             ? {
@@ -1430,7 +1388,7 @@ export function createAuthApp(config: AuthConfig) {
         );
       if (path === "/auth/logout") {
         revoke(request);
-        return json({ ok: true }, 200, sessionHeaders("", 0, true));
+        return json({ ok: true }, 200, sessionHeaders("", 0));
       }
       clean();
       const text = await request.text();
@@ -1507,11 +1465,7 @@ export function createAuthApp(config: AuthConfig) {
       return json(
         { ok: true, next: safeNext(body.next) },
         200,
-        sessionHeaders(
-          token,
-          body.remember === true ? lifetime : undefined,
-          cookieToken(request, LEGACY_SESSION_COOKIE).present,
-        ),
+        sessionHeaders(token, body.remember === true ? lifetime : undefined),
       );
     } catch {
       // Never log request bodies, password hashes, cookies, or session tokens.
@@ -1526,7 +1480,6 @@ export function createAuthApp(config: AuthConfig) {
 
 if (import.meta.main) {
   process.umask(0o077);
-  applyLegacyAuthEnvironment(process.env);
   const stored = await Bun.file(
     process.env.CHISABOT_AUTH_CONFIG || "/auth/config.json",
   ).json();

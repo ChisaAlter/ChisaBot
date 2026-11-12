@@ -12,7 +12,7 @@ import type {
   EgressPolicy,
   EgressRule,
 } from "../../../agent-computer/src/egress";
-import { computerHeaders } from "../../../shared/legacy-headers";
+import { computerHeaders } from "../../../shared/protocol-headers";
 import { reasonWithoutStatement } from "../db/query-failure";
 import type { ComputerProvider } from "./provider";
 

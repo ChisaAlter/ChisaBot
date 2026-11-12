@@ -81,7 +81,7 @@ dsh_record_reader # old image observation after the readiness failure; floor mus
 grep -q '"conversationReader":4' "$COMPOSE_DIR/.dsh-reader.json"
 AVAILABLE=0 IMAGE_FAILURE=0 CANDIDATE=$READER3
 if dsh_require_compatible_image fixture:reader-3; then
-  printf '%s\n' 'openbot_local_threads:empty' > "$TMP/canonical-state"
+  printf '%s\n' 'corrupted_threads:empty' > "$TMP/canonical-state"
   echo 'Old reader was allowed to start after the schema migration' >&2
   exit 1
 fi

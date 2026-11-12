@@ -19,6 +19,10 @@ import { reclaimDraftText } from "@/lib/channels/draft-channel";
 import { reusableEmptyChannelFor } from "@/lib/channels/latest";
 import { channelListQueryOptions } from "@/lib/channels/queries";
 import { useStartChannel } from "@/lib/channels/start";
+import {
+  composerTargetPath,
+  transferComposerInputs,
+} from "@/lib/chat/quote-event";
 import { addDraftFiles } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
@@ -109,14 +113,19 @@ function BotChat({
       ? undefined
       : reusableEmptyChannelFor(agent, channels.data)?.id;
   useEffect(() => {
-    if (existing)
+    if (existing) {
+      transferComposerInputs(
+        composerTargetPath(undefined, `new:${agent}`),
+        composerTargetPath(existing),
+      );
       void navigate({
         to: "/channel/$channelId",
         params: { channelId: existing },
         search: watch ? { watch: true } : {},
         replace: true,
       });
-  }, [existing, navigate, watch]);
+    }
+  }, [agent, existing, navigate, watch]);
 
   // 右栏「计算机」开关（DESIGN.md §79）：和对话页一样记在 `watch` 搜索参数里（刷新保留、后退关闭）。
   // 按机器人记住选的是哪个标签（DESIGN.md §88）：地址里没有 `watch` 时用上次的。

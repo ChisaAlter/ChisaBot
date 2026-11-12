@@ -198,11 +198,13 @@ describe("中途断的一轮不把字放回输入框（§88.4）", () => {
   test("接线：回复看门狗超时（reply_hang）不直接抛——已落库的一轮交给统一出口判定", () => {
     const chat = src("components/channels/channel-chat.tsx");
     /*
-     * 消息没落库（hang）照旧直接抛：屏幕上什么都没有，回填草稿重发是唯一补救。
+     * 第一阶段失败仍向 Composer 抛出原因；交付未知必须保留专用类型，不能误当成明确拒收。
      * 已落库（reply_hang）只记 turnFailure——曾经在这里 throw new Error(second.reason)，
      * 绕过了下面 turnAnswered 判定：屏上气泡一份、输入框又塞回一份，重试时同一句话发两遍。
      */
-    expect(chat).toContain("throw new Error(first.reason)");
+    expect(chat).toMatch(
+      /throw first\.kind === "unverified"\s*\? new SendDeliveryUnknownError\(first\.reason\)\s*: new Error\(first\.reason\);/,
+    );
     expect(chat).toContain("failRef.current(second.reason)");
     expect(chat).not.toContain("throw new Error(second.reason)");
     // 刚被停掉的 run 也不能 await：HERMES_RUN_CANCELLED 抛到 composer 殊途同归，照样回填。

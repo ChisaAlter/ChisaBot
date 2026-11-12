@@ -2305,6 +2305,37 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   color: var(--glass-ink-2);
 }
 .dark .chat-error-detail { background: rgba(0, 0, 0, 0.25); }
+.chat-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.chat-error-withdraw {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(220, 80, 60, 0.22);
+  color: var(--glass-ink);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+.dark .chat-error-withdraw {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 120, 110, 0.24);
+}
+.chat-error-withdraw:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.92); }
+.dark .chat-error-withdraw:hover { background: rgba(255, 255, 255, 0.14); }
+.chat-error-withdraw:active { transform: none; opacity: 0.85; }
+.chat-error-withdraw:disabled,
+.chat-error-retry:disabled { opacity: 0.6; cursor: progress; transform: none; }
 .chat-error-retry {
   display: inline-flex;
   align-items: center;
@@ -2324,6 +2355,7 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 .chat-error-retry:active { transform: none; opacity: 0.85; }
 @media (max-width: 520px) {
   .chat-error-card { flex-wrap: wrap; }
+  .chat-error-actions,
   .chat-error-retry { margin-left: 42px; }
 }
 
@@ -2573,6 +2605,10 @@ button.chat-bottom-pill:hover {
 }
 [data-slot="button"][data-variant="link"][data-btn-state="success"],
 [data-slot="button"][data-variant="link"][data-btn-state="error"] { background-color: transparent; border-color: transparent; }
+/* 实心按钮的图标画在按钮自己的不透明底上，不参与液态玻璃图标的 mix-blend（浅色 multiply 会把白色 ✓ 吞成底色）。
+ * 选择器优先级 (0,2,1) 高于液态玻璃那条 :is(.rail-card…) :where(svg) 的 (0,1,0)。 */
+[data-slot="button"][data-variant="default"] svg,
+[data-slot="button"][data-variant="destructive"][data-btn-state="error"] svg { mix-blend-mode: normal; }
 
 /* Glass pills that cannot be Button still run the same machine (AsyncContent inside). */
 .async-raw { transition: color 0.2s ease-out, background-color 0.2s ease-out, opacity 0.2s; }
@@ -2595,6 +2631,40 @@ button.chat-bottom-pill:hover {
   background: var(--glass-2, rgba(255, 255, 255, 0.55));
   border: 1px solid var(--line-strong, rgba(120, 140, 170, 0.28));
   animation: chat-msg-editor-in 0.18s ease-out both;
+}
+.chat-msg-editor-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-msg-editor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 16rem;
+  height: 26px;
+  padding: 0 6px 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line-strong, rgba(120, 140, 170, 0.24));
+  font-size: 12px;
+  color: var(--glass-ink-2);
+}
+.dark .chat-msg-editor-chip {
+  background: rgba(255, 255, 255, 0.08);
+}
+.chat-msg-editor-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: var(--glass-ink-3);
+  cursor: pointer;
+}
+.chat-msg-editor-chip-remove:hover {
+  background: rgba(220, 80, 60, 0.14);
+  color: var(--destructive);
 }
 .chat-msg-editor-input { min-height: 3.5rem; max-height: 40vh; resize: none; background: transparent; }
 .chat-msg-editor-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
@@ -10412,6 +10482,40 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
   display: grid;
   place-items: center;
   overflow: hidden;
+}
+.appearance-art-thumb {
+  height: 100px;
+}
+.appearance-art-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  transition: transform 0.28s ease;
+}
+.appearance-wallpaper-card:hover .appearance-art-img {
+  transform: scale(1.04);
+}
+.appearance-art-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.appearance-art-thumb .appearance-swatch-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
 }
 .appearance-wallpaper-glass-demo {
   position: absolute;

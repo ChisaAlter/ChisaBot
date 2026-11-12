@@ -54,7 +54,6 @@ DSH_RELEASE_ALLOWED=0
   exec 8>.deploy.lock
   flock -w 60 8 || exit 1
   dsh_require_compatible_image "$PREV" || exit 1
-  restore_hermes_release "$CUR_TAG" || exit 1
   if [ "$(image_mode)" = env ]; then
     set_image "$PREV" || exit 1
   else

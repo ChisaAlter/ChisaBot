@@ -41,6 +41,12 @@ export type ConfirmDetail = { label: string; value: string; code?: boolean; /** 
 
 export type ConfirmStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
+export type ContinuationView = {
+  state: "queued" | "running" | "failed" | "completed";
+  error?: string;
+  retryable?: boolean;
+};
+
 export type ConfirmRequestView = {
   id: string;
   agentId: string;
@@ -57,6 +63,7 @@ export type ConfirmRequestView = {
   createdAt: string;
   decidedAt: string | null;
   expiresAt: string;
+  continuation?: ContinuationView;
 };
 
 export type ConfirmPrefView = {

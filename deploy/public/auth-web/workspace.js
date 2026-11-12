@@ -1,17 +1,8 @@
 (() => {
-  // Compatibility stays here for gateways serving cached application bundles.
-  const legacy = {
-    drawsAccountControl: () =>
-      !!document.getElementById("openbot-account-control"),
-    authRequired: (data) => data?.openbotAuthRequired === true,
-  };
-  // The app marks that it draws its own account control. Accept the pre-rename id too (CB-100c), so a
-  // newer gateway in front of an older app image does not float a second sign-out button over the app.
+  // The app marks that it draws its own account control, so the gateway does not float a second
+  // sign-out button over the app.
   const appDrawsAccountControl = () =>
-    !!(
-      document.getElementById("chisabot-account-control") ||
-      legacy.drawsAccountControl()
-    );
+    !!document.getElementById("chisabot-account-control");
   if (
     window.location.pathname === "/login" ||
     window.location.pathname.startsWith("/auth/") ||
@@ -70,8 +61,7 @@
         .clone()
         .json()
         .catch(() => null);
-      if (data?.chisabotAuthRequired === true || legacy.authRequired(data))
-        goToLogin();
+      if (data?.chisabotAuthRequired === true) goToLogin();
     }
     return response;
   };

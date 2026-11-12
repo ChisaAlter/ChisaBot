@@ -3,6 +3,7 @@
 设计规范：DESIGN.md §81。代码：`app/src/components/agents/bot-profile-form.tsx`（表单）、`avatar-picker.tsx`（头像窗 + 圆形取景）、`bot-avatar.tsx`（显示）、`app/src/lib/agents/avatars.ts`；服务器 `server/src/bot-avatars/service.ts`；共用约定 `shared/bot-avatars.ts`。
 
 ## 一张表，新建和编辑一样
+
 字段固定四格、顺序固定：**头像 · 名称（必填）· 职责 · 它做什么**。
 
 - 职责：显示在名字下面的一句话。新建时跟着「它做什么」的第一句自动写（看得见、能改；一改就不再跟），清空也会回到自动；两样都没写 =「私人助手」。
@@ -11,10 +12,12 @@
 - 模型、暂停、通知不属于「它是谁」，在资料页「运行」卡和输入框的模型选择里，表单里没有，所以也没有「更多设置」。
 
 ## 头像
+
 - 四种：**形象**（形状 + 颜色，带表情）、上传图片、表情 + 底色、名字首字 + 底色。没设置 = 以前的花纹头像（按机器人 id 生成），老机器人看起来不变。新建默认是名字首字（底色按名字挑）；打开头像窗时停在「形象」页。
 - 图片 / 表情 / 首字处处是圆形：左栏（宽 / 窄）、聊天页、新聊天、资料页、机器人列表、管理弹窗、工作流里的机器人选择。形象保持自己的形状，不裁成圆。
 
 ## 形象（shape）
+
 - 14 个形状（`AVATAR_SHAPES`）× 11 种颜色（`SHAPE_COLORS`），库里只存两个键名（`chisabot_bot_avatars.shape` / `color`）。形状和颜色值只在前端：`app/src/lib/agents/avatar-shapes.ts`。
 - 形状是自己画的：每个形状是围着中心的 32 个半径，转成**结构完全一样**的闭合平滑曲线，所以任意两个形状之间直接逐点插值就能变形（换形状时用 `motion` 的弹簧驱动），不需要路径插值库。眼睛（一对竖条）的位置、间距、倾斜、大小跟着形状一起插值。
 - 表情（`app/src/components/agents/shape-avatar.tsx`，样式 `styles.css` 的 `.sa-*`）：**在跑 > 刚做完 > 被选中 > 待机**。
@@ -29,17 +32,19 @@
 - 图片读不出来时显示名字首字。
 
 ## 接口（全部要登录）
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/bot-avatars` | `{ avatars: { [agentId]: BotAvatar } }`，只含设置过的、你看得到的机器人 |
-| GET | `/api/bot-avatars/:agentId/image?v=<version>` | 图片字节；版本对得上时 `immutable` 长缓存，`nosniff` + 沙箱 CSP |
-| PUT | `/api/bot-avatars/:agentId` | JSON `{kind:"emoji", emoji, color}` 或 `{kind:"monogram", color}` |
-| PUT | `/api/bot-avatars/:agentId/image` | 原始字节，PNG / JPEG / WebP（看文件头），≤ 256 KB |
-| DELETE | `/api/bot-avatars/:agentId` | 回到默认花纹 |
+
+| 方法   | 路径                                          | 说明                                                                    |
+| ------ | --------------------------------------------- | ----------------------------------------------------------------------- |
+| GET    | `/api/bot-avatars`                            | `{ avatars: { [agentId]: BotAvatar } }`，只含设置过的、你看得到的机器人 |
+| GET    | `/api/bot-avatars/:agentId/image?v=<version>` | 图片字节；版本对得上时 `immutable` 长缓存，`nosniff` + 沙箱 CSP         |
+| PUT    | `/api/bot-avatars/:agentId`                   | JSON `{kind:"emoji", emoji, color}` 或 `{kind:"monogram", color}`       |
+| PUT    | `/api/bot-avatars/:agentId/image`             | 原始字节，PNG / JPEG / WebP（看文件头），≤ 256 KB                       |
+| DELETE | `/api/bot-avatars/:agentId`                   | 回到默认花纹                                                            |
 
 `BotAvatar` = `{kind:"image", url, version}` | `{kind:"emoji", emoji, color}` | `{kind:"monogram", color}`。`color` ∈ sky, ocean, mint, lime, amber, coral, rose, violet, slate（颜色值只在前端）。读：能看到这个机器人的人；写：能修改它的人（部署包自带的机器人不能改）。
 
 ## 存储与回滚
+
 - 表 `chisabot_bot_avatars`（开机 `CREATE TABLE IF NOT EXISTS`；一个机器人一行，图片字节存库里，跟着数据库卷和备份走）。没有改任何已有表。
 - 回滚到旧镜像：旧镜像不读这张表，所有机器人回到花纹头像；表和数据留着，再升级就回来。
 - 机器人删除时头像行留着（软删除可恢复）；孤儿行留给以后的数据清理（BACKLOG）。

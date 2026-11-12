@@ -74,8 +74,9 @@ const WINDOW_ICON = (() => {
 })();
 const UI = path.join(__dirname, "ui");
 const HIDDEN = process.argv.includes("--hidden");
-/** 外壳指纹（scripts/shell-fingerprint.js 打包前写入）：和更新源比，决定普通更新还是重新安装。 */
+/** 外壳指纹与客户端代码指纹（scripts/shell-fingerprint.js 打包前写入）：决定直接网页刷新、普通更新还是重新安装。 */
 const SHELL_HASH = shellRefresh.loadFingerprint();
+const CLIENT_HASH = shellRefresh.loadClientFingerprint();
 const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
 
 /**
@@ -276,7 +277,18 @@ function openDeviceSettings(tab) {
 
 let chatOffline = false;
 let chatRetryTimer = null;
+let chatRetry = null;
 let lastWebPath = "/";
+
+function cancelChatRetry() {
+  chatRetry?.controller.abort();
+  chatRetry = null;
+}
+
+function rememberWebPath(url) {
+  const parsed = new URL(url);
+  lastWebPath = parsed.pathname + parsed.search + parsed.hash;
+}
 
 function serverOrigin() {
   try {
@@ -358,20 +370,22 @@ function openChat(pathname) {
   win.webContents.on("did-navigate", (_event, url) => {
     if (loginUrl(url)) return setImmediate(sessionExpired);
     if (isServerUrl(url)) {
+      rememberWebPath(url);
       chatOffline = false;
       clearInterval(chatRetryTimer);
+      cancelChatRetry();
       // 网页刚从服务器加载成功 = 网络和服务器都通：节点如果还在退避等待，马上重连（服务器重启 / 更新之后尤其如此）。
       agent?.reconnectNow();
     }
   });
   win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-    if (isMainFrame && isServerUrl(url)) lastWebPath = new URL(url).pathname + new URL(url).search;
+    if (isMainFrame && isServerUrl(url)) rememberWebPath(url);
   });
   // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
     try {
-      lastWebPath = new URL(url).pathname + new URL(url).search;
+      rememberWebPath(url);
     } catch {}
     showOffline(win, description || String(code));
   });
@@ -399,6 +413,7 @@ function openChat(pathname) {
   win.on("closed", () => {
     windows.chat = null;
     clearInterval(chatRetryTimer);
+    cancelChatRetry();
   });
   windows.chat = win;
   return win;
@@ -406,6 +421,7 @@ function openChat(pathname) {
 
 function showOffline(win, reason) {
   if (win.isDestroyed()) return;
+  cancelChatRetry();
   chatOffline = true;
   win.loadFile(path.join(UI, "offline.html"), { query: { error: String(reason).slice(0, 80) } });
   clearInterval(chatRetryTimer);
@@ -414,19 +430,32 @@ function showOffline(win, reason) {
   }, 15000);
 }
 
-async function probeServer() {
-  const response = await net.fetch(`${serverOrigin()}/`, { method: "HEAD", cache: "no-store" });
+async function probeServer(origin, signal) {
+  const response = await net.fetch(`${origin}/`, { method: "HEAD", cache: "no-store", signal });
   return response.status < 500;
 }
 
-async function retryChat() {
+function retryChat() {
   const win = windows.chat;
-  if (!win || win.isDestroyed() || !chatOffline) return true;
-  if (!(await probeServer().catch(() => false))) throw new Error("仍然连不上服务器。");
-  chatOffline = false;
-  clearInterval(chatRetryTimer);
-  win.loadURL(`${serverOrigin()}${lastWebPath || "/"}`);
-  return true;
+  if (!win || win.isDestroyed() || !chatOffline) return Promise.resolve(true);
+  if (chatRetry) return chatRetry.promise;
+  const request = { origin: serverOrigin(), controller: new AbortController(), promise: null };
+  chatRetry = request;
+  request.promise = (async () => {
+    // Use the same bounded wait as login probing; timer and button share this request.
+    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(8000)]);
+    const reachable = await probeServer(request.origin, signal).catch(() => false);
+    // Closing, logging out or navigating replaces the owner of this recovery attempt.
+    if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
+    if (!reachable) throw new Error("仍然连不上服务器。");
+    chatOffline = false;
+    clearInterval(chatRetryTimer);
+    await win.loadURL(`${request.origin}${lastWebPath || "/"}`);
+    return true;
+  })().finally(() => {
+    if (chatRetry === request) chatRetry = null;
+  });
+  return request.promise;
 }
 
 // ---------- 托盘 ----------
@@ -858,6 +887,7 @@ function startUpdater() {
     execPath: process.execPath,
     productName: pkg.productName || "ChisaBot",
     shellHash: SHELL_HASH,
+    clientHash: CLIENT_HASH,
     // 内置更新公钥（docs/pc-update-signing.md）：为空 = 这个构建不验签（自建版没配公钥），保持旧行为。
     updateKeys: updateSignature.loadKeys(),
     getAutoUpdate: () => config.get().autoUpdate !== false,
@@ -878,6 +908,14 @@ function startUpdater() {
   updater.schedule();
 }
 
+function currentUpdateBounds() {
+  const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
+  const chatVisible = Boolean(chat && chat.isVisible() && !chat.isMinimized());
+  const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
+  const b = computeUpdateBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea, contentHeight: updateContentHeight });
+  return { ...b, chat: b.attached ? chat : null };
+}
+
 function openUpdateWindow() {
   if (!updater || updater.state.status !== "downloaded") return false;
   if (updateWindow && !updateWindow.isDestroyed()) {
@@ -887,17 +925,25 @@ function openUpdateWindow() {
     return true;
   }
   updateContentHeight = updater.state.fullInstall ? 280 : 260;
+  const initial = currentUpdateBounds();
   updateWindow = new BrowserWindow({
-    width: 440,
-    height: updateContentHeight,
+    x: initial.x,
+    y: initial.y,
+    width: initial.width,
+    height: initial.height,
     ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
+    parent: initial.chat || undefined,
+    alwaysOnTop: !initial.attached,
     show: false,
     title: "ChisaBot · 新版本",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
   });
-  placeUpdateWindow();
+  dialogWidth.set(updateWindow, initial.width);
   updateWindow.loadFile(path.join(UI, "update.html"), { query: windowChrome.frameQuery(FRAME) });
-  updateWindow.once("ready-to-show", () => updateWindow?.showInactive());
+  showAfterFit(updateWindow, () => {
+    placeUpdateWindow();
+    updateWindow?.showInactive();
+  });
   updateWindow.on("closed", () => {
     updateWindow = null;
   });
@@ -908,23 +954,30 @@ function openUpdateWindow() {
 let updateContentHeight = 260;
 
 /**
- * 提示窗位置（DESIGN.md §36.5，update-placement.js）：主窗口看得见就挂在主窗口里（子窗口、顶栏下居中、跟着走）；
+ * 提示窗位置（DESIGN.md §36.5，update-placement.js）：主窗口看得见就挂在主窗口里（子窗口、正中央居中、跟着走）；
  * 主窗口在托盘里 / 最小化就放到它所在显示器的右下角并置顶。主窗口移动、改大小、显示 / 隐藏、进出小窗时都会重新调用。
  */
 function placeUpdateWindow() {
   if (!updateWindow || updateWindow.isDestroyed()) return;
-  const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
-  const chatVisible = Boolean(chat && chat.isVisible() && !chat.isMinimized());
-  const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
-  const b = computeUpdateBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea, contentHeight: updateContentHeight });
+  const b = currentUpdateBounds();
   if (b.attached) {
-    if (updateWindow.getParentWindow() !== chat) updateWindow.setParentWindow(chat);
+    if (updateWindow.getParentWindow() !== b.chat) updateWindow.setParentWindow(b.chat);
     updateWindow.setAlwaysOnTop(false);
   } else {
     if (updateWindow.getParentWindow()) updateWindow.setParentWindow(null);
     updateWindow.setAlwaysOnTop(true);
   }
+  dialogWidth.set(updateWindow, b.width);
   updateWindow.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+  // 小数缩放（125% / 150%）下 Win32 实际分配宽高可能差几 px：按真实尺寸二次对齐中心，消除视觉偏斜。
+  if (b.attached) {
+    const actual = updateWindow.getBounds();
+    const cx = Math.round(b.x + b.width / 2 - actual.width / 2);
+    const cy = Math.round(b.y + b.height / 2 - actual.height / 2);
+    if (Math.abs(actual.x - cx) > 1 || Math.abs(actual.y - cy) > 1) {
+      updateWindow.setPosition(cx, cy);
+    }
+  }
 }
 
 function installUpdateNow() {
@@ -1086,6 +1139,8 @@ function handleChatWindow(channel, fn) {
 
 /** 作废这台电脑在 serverUrl 上的设备令牌并清掉本机记录（退出登录、换服务器时用）。 */
 async function dropDevice(serverUrl) {
+  clearInterval(chatRetryTimer);
+  cancelChatRetry();
   clearTimeout(enrollRetryTimer);
   enrollIssue = "";
   agentDetail = "";
@@ -1099,13 +1154,15 @@ async function dropDevice(serverUrl) {
 
 /** 退出登录：网页会话作废 + 设备令牌作废 + 清 Cookie。保留服务器地址和账号，登录页直接预填。 */
 async function logout() {
+  clearInterval(chatRetryTimer);
+  cancelChatRetry();
   const local = config.get();
   if (local.serverUrl) {
     const origin = serverOrigin();
     await auth.logoutSession({ fetchImpl: netFetch, serverUrl: origin, cookieHeader: await cookieHeaderFor(origin).catch(() => "") }).catch(() => false);
   }
   await dropDevice(local.serverUrl);
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "logout", outcome: "succeeded", summary: "退出登录（会话和设备令牌已作废）" });
+  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "logout", outcome: "succeeded", summary: "已退出本机登录并清除设备记录" });
   await session.fromPartition(PARTITION).clearStorageData({ storages: ["cookies"] });
   if (windows.chat && !windows.chat.isDestroyed()) windows.chat.destroy();
   windows.chat = null;
@@ -1254,6 +1311,7 @@ function registerIpc() {
   handleLocal("update:fit", ({ height } = {}) => {
     if (typeof height === "number" && Number.isFinite(height)) updateContentHeight = Math.ceil(height);
     placeUpdateWindow();
+    if (updateWindow) pendingShow.get(updateWindow)?.();
     return true;
   });
   handleLocal("update:answer", ({ restart } = {}) => {

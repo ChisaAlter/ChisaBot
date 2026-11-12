@@ -13,7 +13,10 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { DshRuntimeAgent } from "../src/agents/dsh-runtime";
 import { createConversationBindings } from "../src/conversations/bindings";
-import { backgroundCount } from "../src/conversations/capacity";
+import {
+  backgroundCount,
+  withCapacityFeedback,
+} from "../src/conversations/capacity";
 import { createDshRunJournal } from "../src/conversations/run-journal";
 import { createDshToolGateway } from "../src/conversations/tool-gateway";
 import { createToolOperationStore } from "../src/conversations/tool-operations";
@@ -110,6 +113,7 @@ class ProtocolSocket implements WsLike {
     const held = new Map<string, () => void>();
     const holdMarkers = new Set<string>();
     let shortTurn: TurnRunner;
+    const shortTimeline: { stage: string; at: number }[] = [];
 
     beforeAll(async () => {
       database = createDatabase(address!, { max: 6 });
@@ -134,6 +138,8 @@ class ProtocolSocket implements WsLike {
             return gateway.routes.fetch(request);
           const body = (await request.json()) as WireBody;
           modelRequests.push(body);
+          if (JSON.stringify(body.messages).includes("CAPACITY_SHORT"))
+            shortTimeline.push({ stage: "model-request", at: Date.now() });
           const marker = [...holdMarkers].find((value) =>
             JSON.stringify(body.messages).includes(value),
           );
@@ -152,7 +158,13 @@ class ProtocolSocket implements WsLike {
           const hasResult = body.messages
             .slice(latestUser + 1)
             .some((message: WireMessage) => message.role === "tool");
-          const delta = hasResult
+          // This path isolates queue-time accounting under the short execution budget.
+          // Worker/schedule/task-center paths below still exercise the tool round trip.
+          const shortCapacity = JSON.stringify(body.messages).includes(
+            "CAPACITY_SHORT",
+          );
+          const directAnswer = hasResult || shortCapacity;
+          const delta = directAnswer
             ? { role: "assistant", content: answer }
             : {
                 role: "assistant",
@@ -169,7 +181,7 @@ class ProtocolSocket implements WsLike {
             `data: ${JSON.stringify({ id: "background", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta: value, finish_reason }] })}\n\n`;
           return new Response(
             chunk(delta, null) +
-              chunk({}, hasResult ? "stop" : "tool_calls") +
+              chunk({}, directAnswer ? "stop" : "tool_calls") +
               "data: [DONE]\n\n",
             { headers: { "content-type": "text/event-stream" } },
           );
@@ -259,12 +271,12 @@ class ProtocolSocket implements WsLike {
           fallbacks: async () => [],
         });
       runTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor,
       });
       shortTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor,
         turnTimeoutMs: 700,
@@ -397,12 +409,29 @@ class ProtocolSocket implements WsLike {
       expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_CANCEL");
       held.get("CAPACITY_FOREGROUND")!();
       await foreground;
-      const short = shortTurn({
-        ownerUserId: owner,
-        agentId: bot,
-        threadId: `${owner}-short-queue`,
-        routineId: "short",
-        instruction: "CAPACITY_SHORT",
+      shortTimeline.push({ stage: "start", at: Date.now() });
+      const short = withCapacityFeedback(
+        (stage) => shortTimeline.push({ stage, at: Date.now() }),
+        () =>
+          shortTurn({
+            ownerUserId: owner,
+            agentId: bot,
+            threadId: `${owner}-short-queue`,
+            routineId: "short",
+            instruction: "CAPACITY_SHORT",
+          }),
+      ).catch((error) => {
+        shortTimeline.push({ stage: "failed", at: Date.now() });
+        console.error(
+          JSON.stringify({
+            type: "short-capacity-timeline",
+            trace: shortTimeline.map((event) => ({
+              ...event,
+              at: event.at - shortTimeline[0].at,
+            })),
+          }),
+        );
+        throw error;
       });
       await until(
         async () =>
@@ -419,6 +448,16 @@ class ProtocolSocket implements WsLike {
       held.get("CAPACITY_WORKER")!();
       held.get("CAPACITY_SCHEDULE")!();
       expect((await short).replyText).toBe(answer);
+      shortTimeline.push({ stage: "completed", at: Date.now() });
+      console.log(
+        JSON.stringify({
+          type: "short-capacity-timeline",
+          trace: shortTimeline.map((event) => ({
+            ...event,
+            at: event.at - shortTimeline[0].at,
+          })),
+        }),
+      );
       await until(
         async () =>
           (await center.getTask(owner, task.id))?.status === "succeeded",

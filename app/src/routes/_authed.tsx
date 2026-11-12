@@ -6,6 +6,7 @@ import {
   isLoginLoopDetected,
 } from "../lib/auth/login-redirect";
 import { currentUserQueryOptions, needsOnboarding } from "../lib/auth/queries";
+import { setDraftFileAccount } from "../lib/chat/ui-memory";
 import { setControlAccount } from "../lib/computers/use-control";
 import { AppHotkeys } from "../lib/hotkeys/app-hotkeys";
 
@@ -38,6 +39,7 @@ export const Route = createFileRoute("/_authed")({
     }
     // CB-107：多标签 control 轮询按账号隔离（锁名 / 频道名 / store）。
     setControlAccount(user.id);
+    setDraftFileAccount(user.id);
     /*
      * Somebody who has not finished onboarding goes there and nowhere else. Here rather than in
      * `_app`, so admin and settings are behind the same gate; checked against the destination so

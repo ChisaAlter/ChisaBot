@@ -21,6 +21,7 @@ import { checkPublicUrl, isBlockedHostname } from "../../../shared/net/ssrf";
 import type {
   CalendarConnectionView,
   CalendarEventItem,
+  EmailConnectionInput,
   EmailConnectionView,
   EmailSummaryItem,
   InboundWebhookView,
@@ -44,7 +45,11 @@ import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { parseIcsEvents } from "./calendar";
 import { createPersonalDelivery, type PersonalSendContext } from "./delivery";
 import { sendWebhook } from "./notify";
-import { type SmtpMessage, sendSmtpMessage } from "./smtp";
+import {
+  type SmtpMessage,
+  sendSmtpMessage,
+  verifySmtpConnection,
+} from "./smtp";
 
 export { parseIcsEvents } from "./calendar";
 
@@ -54,6 +59,7 @@ export type PersonalSourcesOptions = {
   allowDemo?: boolean;
   readInbox?: typeof fetchImapInboxSummary;
   sendMail?: (message: SmtpMessage) => Promise<string[]>;
+  verifyMail?: typeof verifySmtpConnection;
 };
 
 type PersonalSourceRow = {
@@ -70,6 +76,11 @@ type PersonalSourceRow = {
   imap_port: number | null;
   imap_pass_enc: string | null;
   imap_pass_hint: string | null;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_user: string | null;
+  smtp_pass_enc: string | null;
+  smtp_checked_at: string | Date | null;
   email_connected_at: string | Date | null;
   email_checked_at: string | Date | null;
   weather_city: string;
@@ -218,7 +229,7 @@ function demoInboxSummary(limit: number): ScannedEmailSummary[] {
     {
       seq: 103,
       subject: "【架构评审】ChisaBot v2.4 晨报与卡片交互上线确认",
-      from: "产品团队 <team@ayase.cn>",
+      from: "产品团队 <team@chisabot.example>",
       date: now.toISOString(),
       unread: true,
     },
@@ -513,6 +524,11 @@ export function createPersonalSources(
         updated_at timestamptz NOT NULL DEFAULT now()
       );
       ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS calendar_timezone text NOT NULL DEFAULT 'Asia/Shanghai';
+      ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS smtp_host text;
+      ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS smtp_port integer;
+      ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS smtp_user text;
+      ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS smtp_pass_enc text;
+      ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS smtp_checked_at timestamptz;
       ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS notify_webhook_enc text;
       ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS notify_webhook_kind text;
       ALTER TABLE chisabot_personal_sources ADD COLUMN IF NOT EXISTS notify_webhook_label text;
@@ -586,7 +602,11 @@ export function createPersonalSources(
         }
       : null;
     const emails = parseJsonArray<EmailSummaryItem>(row.cached_emails);
-    const smtp = row.email_address ? inferSmtpServer(row.email_address) : null;
+    const smtp = row.smtp_host
+      ? { host: row.smtp_host, port: Number(row.smtp_port) }
+      : row.email_address
+        ? inferSmtpServer(row.email_address)
+        : null;
     const email: EmailConnectionView | null =
       row.email_address && row.imap_host && row.imap_pass_enc
         ? {
@@ -594,6 +614,10 @@ export function createPersonalSources(
             imapHost: row.imap_host,
             imapPort: Number(row.imap_port ?? 993),
             ...(smtp ? { smtpHost: smtp.host, smtpPort: smtp.port } : {}),
+            ...(row.smtp_user ? { smtpUser: row.smtp_user } : {}),
+            ...(row.smtp_checked_at
+              ? { smtpCheckedAt: toIso(row.smtp_checked_at) }
+              : {}),
             hint: "已加密保存",
             unreadCount: emails.filter((e) => e.unread).length,
             connectedAt: toIso(row.email_connected_at),
@@ -761,12 +785,7 @@ export function createPersonalSources(
 
   async function connectEmail(
     actorId: string,
-    input: {
-      email: string;
-      imapHost: string;
-      imapPort?: number;
-      password: string;
-    },
+    input: EmailConnectionInput,
   ): Promise<{
     status: PersonalSourcesStatusView;
     emails: EmailSummaryItem[];
@@ -785,6 +804,22 @@ export function createPersonalSources(
       (host === "demo.imap.local" || pass === "demo-inbox")
     )
       throw new Error("请连接真实邮箱；演示连接只在隔离验收环境使用。");
+    const smtp =
+      input.smtp === undefined
+        ? undefined
+        : z
+            .object({
+              host: z.string().trim().min(1, "请填写 SMTP 发信服务器。"),
+              port: z.union([z.literal(465), z.literal(587)], {
+                error: "SMTP 端口请选择 465（TLS）或 587（STARTTLS）。",
+              }),
+              user: z.string().trim().min(1, "请填写 SMTP 用户名。").optional(),
+              password: z
+                .string()
+                .min(1, "请填写 SMTP 专用密码，或留空使用收信密码。")
+                .optional(),
+            })
+            .parse(input.smtp);
     const emails = await readInbox({
       host,
       port,
@@ -794,23 +829,52 @@ export function createPersonalSources(
     });
     const enc = encryptText(pass, options.encryptionKey);
     const hint = "已加密保存";
+    if (smtp) {
+      await (options.verifyMail ?? verifySmtpConnection)({
+        host: smtp.host,
+        port: smtp.port,
+        user: smtp.user ?? email,
+        pass: smtp.password ?? pass,
+      });
+    }
 
     await sql.unsafe(
       `INSERT INTO chisabot_personal_sources (
         owner_user_id, email_address, imap_host, imap_port, imap_pass_enc, imap_pass_hint,
-        email_connected_at, email_checked_at, cached_emails, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, now(), now(), $7::text::jsonb, now())
+        email_connected_at, email_checked_at, cached_emails,
+        smtp_host, smtp_port, smtp_user, smtp_pass_enc, smtp_checked_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, now(), now(), $7::text::jsonb,
+        $8, $9, $10, $11, CASE WHEN $8::text IS NOT NULL THEN now() ELSE NULL END, now())
       ON CONFLICT (owner_user_id) DO UPDATE SET
         email_address = EXCLUDED.email_address,
         imap_host = EXCLUDED.imap_host,
         imap_port = EXCLUDED.imap_port,
         imap_pass_enc = EXCLUDED.imap_pass_enc,
         imap_pass_hint = EXCLUDED.imap_pass_hint,
+        smtp_host = EXCLUDED.smtp_host,
+        smtp_port = EXCLUDED.smtp_port,
+        smtp_user = EXCLUDED.smtp_user,
+        smtp_pass_enc = EXCLUDED.smtp_pass_enc,
+        smtp_checked_at = EXCLUDED.smtp_checked_at,
         email_connected_at = now(),
         email_checked_at = now(),
         cached_emails = EXCLUDED.cached_emails,
         updated_at = now()`,
-      [actorId, email, host, port, enc, hint, JSON.stringify(emails)],
+      [
+        actorId,
+        email,
+        host,
+        port,
+        enc,
+        hint,
+        JSON.stringify(emails),
+        smtp?.host ?? null,
+        smtp?.port ?? null,
+        smtp ? (smtp.user ?? email) : null,
+        smtp?.password
+          ? encryptText(smtp.password, options.encryptionKey)
+          : null,
+      ],
     );
     return { status: toStatusView(await getRow(actorId)), emails };
   }
@@ -822,6 +886,8 @@ export function createPersonalSources(
       `UPDATE chisabot_personal_sources SET
         email_address = NULL, imap_host = NULL, imap_port = NULL,
         imap_pass_enc = NULL, imap_pass_hint = NULL,
+        smtp_host = NULL, smtp_port = NULL, smtp_user = NULL,
+        smtp_pass_enc = NULL, smtp_checked_at = NULL,
         email_connected_at = NULL, email_checked_at = NULL,
         cached_emails = '[]'::jsonb, updated_at = now()
       WHERE owner_user_id = $1`,
@@ -1098,7 +1164,8 @@ export function createPersonalSources(
 
   function inferImapHost(email: string): string {
     const clean = email.trim().toLowerCase();
-    if (clean === "demo" || clean === "demo@ayase.cn") return "demo.imap.local";
+    if (clean === "demo" || clean === "demo@chisabot.example")
+      return "demo.imap.local";
     const domain = clean.split("@")[1] ?? "";
     if (domain === "gmail.com" || domain === "googlemail.com")
       return "imap.gmail.com";
@@ -1148,7 +1215,14 @@ export function createPersonalSources(
       // What this send may use, read once from the row whose connection version was checked.
       const mailbox =
         record.kind === "smtp" && row?.email_address && row.imap_pass_enc
-          ? { address: row.email_address, passEnc: row.imap_pass_enc }
+          ? {
+              address: row.email_address,
+              passEnc: row.smtp_pass_enc ?? row.imap_pass_enc,
+              user: row.smtp_user ?? row.email_address,
+              ...(row.smtp_host
+                ? { host: row.smtp_host, port: Number(row.smtp_port) }
+                : inferSmtpServer(row.email_address)),
+            }
           : null;
       const webhook =
         record.kind === "notify" && row?.notify_webhook_enc
@@ -1162,11 +1236,15 @@ export function createPersonalSources(
           if (signal?.aborted || currentConfirmTurn()?.stopped())
             throw new DeliveryRejectedError("用户已停止，未发送。");
           if (mailbox) {
-            const smtp = inferSmtpServer(mailbox.address);
-            if (isBlockedHostname(smtp.host) || smtp.host === "demo.smtp.local")
+            if (
+              isBlockedHostname(mailbox.host) ||
+              mailbox.host === "demo.smtp.local"
+            )
               throw new DeliveryRejectedError("SMTP 连接地址无效，未发送。");
             providerMessageIds = await (options.sendMail ?? sendSmtpMessage)({
-              ...smtp,
+              host: mailbox.host,
+              port: mailbox.port,
+              user: mailbox.user,
               from: mailbox.address,
               pass: decryptText(mailbox.passEnc, options.encryptionKey),
               to: record.payload.target,
@@ -1370,6 +1448,7 @@ export function createPersonalSources(
       threadId?: string;
       runId?: string;
       agentId?: string;
+      notificationSource?: PersonalSendContext["notificationSource"];
     },
   ) {
     const id = await stageNotification(actorId, input, input);
@@ -1868,6 +1947,7 @@ export function createPersonalSources(
         imapHost?: string;
         imapPort?: number;
         password?: string;
+        smtp?: EmailConnectionInput["smtp"];
       };
       try {
         const emailAddr = (body.email ?? "").trim();
@@ -1878,6 +1958,7 @@ export function createPersonalSources(
           imapHost,
           imapPort: body.imapPort,
           password: body.password ?? "",
+          smtp: body.smtp,
         });
         return c.json({
           ...res.status,

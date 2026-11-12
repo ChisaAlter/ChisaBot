@@ -12,10 +12,6 @@ import {
 } from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
-import {
-  hermesFallbackUnsupportedNote,
-  runtimeKernelQueryOptions,
-} from "@/lib/runtime-kernel";
 
 /**
  * 设置 → 模型 →「备用模型」（DESIGN.md §61）：主模型额度用完或暂时不可用时，按这个顺序换下一个。
@@ -78,12 +74,6 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
   const queryClient = useQueryClient();
   const saved = useQuery(fallbackModelsQueryOptions());
   const catalog = useQuery(modelCatalogQueryOptions());
-  // 只在适配器明确检测到不支持时才说「不生效」（有依据，不猜）。
-  const kernel = useQuery({
-    ...runtimeKernelQueryOptions(),
-    refetchInterval: false,
-  });
-  const unsupported = hermesFallbackUnsupportedNote(kernel.data);
   const [draft, setDraft] = useState<string[] | null>(null);
   const list = draft ?? saved.data?.models ?? [];
   const [pick, setPick] = useState<string>("");
@@ -130,14 +120,6 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
 
   return (
     <div className="fb-models" data-testid="fallback-models">
-      {unsupported ? (
-        <p
-          className="mb-3 text-muted-foreground text-sm"
-          data-testid="fallback-hermes-unsupported"
-        >
-          {unsupported}
-        </p>
-      ) : null}
       {checked && list.length > 0 && list.every((id) => !available.has(id)) ? (
         <p className="mb-3 text-muted-foreground text-sm" role="status">
           {"当前指定的备用模型都不可用，暂时只使用主模型。请移除后重新选择。"}

@@ -13,9 +13,9 @@ import {
   channelAgents,
   channelMemberships,
   channels,
+  chisabotChannelMappings,
   credentialKind,
   credentials,
-  intelligenceChannelMappings,
   mcpUserCredentials,
   sessions,
   userInstructions,
@@ -39,7 +39,7 @@ describe("ChisaBot database schema", () => {
         channelAgents,
         credentials,
         auditEvents,
-        intelligenceChannelMappings,
+        chisabotChannelMappings,
         userInstructions,
       ].map(getTableName),
     ).toEqual([
@@ -54,7 +54,7 @@ describe("ChisaBot database schema", () => {
       "channel_agents",
       "credentials",
       "audit_events",
-      "intelligence_channel_mappings",
+      "chisabot_channel_mappings",
       "user_instructions",
     ]);
   });

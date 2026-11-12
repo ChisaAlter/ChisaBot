@@ -126,6 +126,7 @@ export function WorkRow({
   calls,
   turnKey,
   live,
+  statusLabel,
   agentId: _agentId,
   notes,
   since,
@@ -134,6 +135,8 @@ export function WorkRow({
   calls: readonly WorkCall[];
   turnKey: string;
   live: boolean;
+  /** Transport recovery replaces the current action text in the same status capsule. */
+  statusLabel?: string | undefined;
   /** 有形象头像时保留签名兼容。 */
   agentId?: string;
   /**
@@ -209,7 +212,7 @@ export function WorkRow({
     : doneSeconds;
   // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
   const steps = open ? workTimeline(calls, notes, live) : [];
-  const text = live ? summary!.current : done!.label;
+  const text = live ? (statusLabel ?? summary!.current) : done!.label;
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
   // 网页类的摘要自己已经写了「N 步失败」（审查模块 7：4xx/5xx 算失败），后面不再重复一遍。
   const metaFailed =

@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  ARTISTIC_WALLPAPER_PRESETS,
   computePaletteSky,
   getAppearanceState,
   HARK_SKY_SCENES,
+  LEGACY_WALLPAPER_ID_MAP,
+  reloadAppearanceFromStorage,
   resetAppearanceDefaults,
   resolveActiveWallpaperCss,
   resolveEffectiveHarkScene,
@@ -17,10 +20,15 @@ import {
   setWallpaperDim,
   setWallpaperPreset,
   THEME_PALETTES,
+  WALLPAPER_CATEGORIES,
+  WALLPAPER_ID_STORAGE_KEY,
   WALLPAPER_PRESETS,
 } from "../src/lib/appearance";
 
-const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
+const css = readFileSync(
+  path.join(import.meta.dir, "../src/styles.css"),
+  "utf8",
+);
 
 describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
   test("provides 8 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
@@ -40,7 +48,10 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
   });
 
   test("provides Hark WebGL wallpaper_core.html and 8 curated sky scene options plus backward-compatible scene resolution", () => {
-    const wallpaperHtmlPath = path.join(import.meta.dir, "../public/wallpaper_core.html");
+    const wallpaperHtmlPath = path.join(
+      import.meta.dir,
+      "../public/wallpaper_core.html",
+    );
     expect(existsSync(wallpaperHtmlPath)).toBe(true);
     const wallpaperHtml = readFileSync(wallpaperHtmlPath, "utf8");
     expect(wallpaperHtml).toContain("window.hark");
@@ -61,12 +72,35 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe("live");
   });
 
-  test("resolves built-in and custom wallpaper CSS backgrounds, glass opacity, and resets cleanly", () => {
+  test("resolves curated artistic gallery wallpapers (with verified WebP assets), custom URLs, legacy IDs, and resets cleanly", () => {
     resetAppearanceDefaults();
     expect(getAppearanceState().palette).toBe("default");
     expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(resolveActiveWallpaperCss(getAppearanceState())).toBeNull();
+
+    expect(ARTISTIC_WALLPAPER_PRESETS.length).toBe(9);
+    expect(WALLPAPER_CATEGORIES.map((c) => c.id)).toEqual([
+      "all",
+      "impression",
+      "eastern",
+      "modern",
+    ]);
+    for (const cat of ["impression", "eastern", "modern"] as const) {
+      expect(
+        ARTISTIC_WALLPAPER_PRESETS.filter((w) => w.category === cat).length,
+      ).toBe(3);
+    }
+
+    const publicDir = path.join(import.meta.dir, "../public");
+    for (const art of ARTISTIC_WALLPAPER_PRESETS) {
+      const fullPath = path.join(publicDir, art.imageUrl);
+      const thumbPath = path.join(publicDir, art.thumbUrl);
+      expect(existsSync(fullPath)).toBe(true);
+      expect(existsSync(thumbPath)).toBe(true);
+      expect(statSync(fullPath).size).toBeGreaterThan(20_000);
+      expect(statSync(thumbPath).size).toBeGreaterThan(4_000);
+    }
 
     for (const wp of WALLPAPER_PRESETS) {
       setWallpaperPreset(wp.id);
@@ -74,7 +108,17 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
       if (wp.id === "none") {
         expect(resolved).toBeNull();
       } else {
-        expect(resolved).toContain("data:image/svg+xml");
+        expect(resolved).toBe(`url("/wallpapers/${wp.id}.webp")`);
+      }
+    }
+
+    if (typeof window !== "undefined" && window.localStorage) {
+      for (const [legacyId, mappedId] of Object.entries(
+        LEGACY_WALLPAPER_ID_MAP,
+      )) {
+        window.localStorage.setItem(WALLPAPER_ID_STORAGE_KEY, legacyId);
+        void reloadAppearanceFromStorage();
+        expect(getAppearanceState().wallpaperId).toBe(mappedId);
       }
     }
 
@@ -111,11 +155,15 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(css).toContain('html[data-glass="mist"]');
     expect(css).toContain('html[data-glass="crystal"]');
     expect(css).toContain('html[data-glass="frosted"]');
-    expect(css).toMatch(/@property --lg-alpha \{[^}]*inherits: false; initial-value: 0\.16;/);
+    expect(css).toMatch(
+      /@property --lg-alpha \{[^}]*inherits: false; initial-value: 0\.16;/,
+    );
     expect(css).toContain("--lg-border: transparent");
     expect(css).toContain("border: 0 !important");
     expect(css).toContain(".chisabot-wallpaper");
-    expect(css).toContain(":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)");
+    expect(css).toContain(
+      ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)",
+    );
     expect(css).not.toContain("-webkit-backdrop-filter:");
   });
 });

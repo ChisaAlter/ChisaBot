@@ -9,6 +9,7 @@
 - 每个人可以在 设置 → 生图与识图（`/settings/media`）换成自己的生图 / 识图接口、密钥、模型，不设就用默认。密钥加密，只显示末四位；普通用户只能填公网接口。
 
 ## 接口
+
 - `POST /api/chat-files`（multipart：`file`、`agentId`）→ `{ file }`
 - `GET /api/chat-files?agentId=&images=1&limit=` → `{ files }`
 - `GET /api/chat-files/:id`（本人；`?download=1` 强制下载）、`DELETE /api/chat-files/:id`
@@ -16,5 +17,6 @@
 - 生图 / 识图设置：`GET /api/media-models/default`、`PUT /api/media-models/default/image|vision`（管理员）；`GET /api/media-models/me`、`PUT /api/media-models/me/image|vision`；`POST /api/media-models/test/image|vision`（`scope: default | personal`）
 
 ## 环境变量
+
 - `MINIMAX_API_KEY`：MiniMax 图片接口的密钥（设置页没填密钥时用）；`OPENAI_BASE_URL` 指向 minimax 时也会沿用 `OPENAI_API_KEY`。
 - `IMAGE_API_KEY`：OpenAI 兼容图片接口的密钥（设置页没填时用）。

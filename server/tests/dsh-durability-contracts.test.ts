@@ -374,11 +374,16 @@ class FinishedAgent extends AbstractAgent {
         args: { slug },
         forwardedProps: {},
       };
-      await expect(
-        withApprovalContext(snapshot, () =>
-          interactions.ask(owner, new AbortController().signal),
-        ),
-      ).rejects.toThrow("等待你回答卡片");
+      const waiting = await withApprovalContext(snapshot, () =>
+        interactions.ask(owner, new AbortController().signal),
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(waiting).toBeInstanceOf(Error);
+      expect(() => {
+        throw waiting;
+      }).toThrow("等待你回答卡片");
       const routes = interactions.routes(async (context, next) => {
         context.set("actor", { id: owner, role: "user" });
         await next();
@@ -423,6 +428,7 @@ class FinishedAgent extends AbstractAgent {
         expect(await (await routes.request(`/${callId}`)).json()).toEqual({
           status: "answered",
           answer: "saved once",
+          continuation: { state: "queued" },
         });
         const [work] = await database.$client.unsafe<{ count: number }[]>(
           "SELECT count(*)::int AS count FROM work_items WHERE kind='conversation.interaction-response' AND key=$1",
@@ -538,11 +544,16 @@ class FinishedAgent extends AbstractAgent {
         args: { question: "Continue?" },
         forwardedProps: {},
       };
-      await expect(
-        withApprovalContext(snapshot, () =>
-          interactions.ask(owner, new AbortController().signal),
-        ),
-      ).rejects.toThrow("等待你回答卡片");
+      const waiting = await withApprovalContext(snapshot, () =>
+        interactions.ask(owner, new AbortController().signal),
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(waiting).toBeInstanceOf(Error);
+      expect(() => {
+        throw waiting;
+      }).toThrow("等待你回答卡片");
       const cards = interactions.routes(async (context, next) => {
         context.set("actor", {
           id: context.req.header("x-actor") ?? owner,
@@ -653,16 +664,18 @@ class FinishedAgent extends AbstractAgent {
           throughSeq: 1,
         };
         const exited = once(child, "exit");
-        await expect(
-          fetch(`${ready!.origin}/execute`, {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${ready!.capability}`,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify(body),
-          }),
-        ).rejects.toThrow();
+        const disconnected = await fetch(`${ready!.origin}/execute`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${ready!.capability}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(disconnected).toBeInstanceOf(Error);
         await exited;
         expect(child.exitCode).toBe(78);
         expect(await readFile(effectFile, "utf8")).toBe("effect\n");

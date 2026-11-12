@@ -142,7 +142,7 @@ describe("reading the agents directory from disk", () => {
   async function packageWith(files: Record<string, string>) {
     const directory = await mkdtemp(join(tmpdir(), "chisabot-package-"));
     await cp(
-      fileURLToPath(new URL("../../examples/fintech", import.meta.url)),
+      fileURLToPath(new URL("./fixtures/tenant-sample", import.meta.url)),
       directory,
       { recursive: true },
     );
@@ -156,7 +156,7 @@ describe("reading the agents directory from disk", () => {
   test("a package with no agents directory loads exactly as it did", async () => {
     const directory = await mkdtemp(join(tmpdir(), "chisabot-package-"));
     await cp(
-      fileURLToPath(new URL("../../examples/fintech", import.meta.url)),
+      fileURLToPath(new URL("./fixtures/tenant-sample", import.meta.url)),
       directory,
       { recursive: true },
     );

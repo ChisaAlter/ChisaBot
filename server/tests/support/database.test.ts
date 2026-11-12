@@ -10,7 +10,7 @@ describe("TEST_DATABASE_URL", () => {
     expect(() =>
       testDatabaseUrlFrom({
         TEST_DATABASE_URL:
-          "postgres://chisabot:chisabot@localhost:5432/openbot",
+          "postgres://chisabot:chisabot@localhost:5432/chisabot",
         DATABASE_URL:
           "postgres://chisabot:chisabot@localhost:5432/chisabot_test",
       }),

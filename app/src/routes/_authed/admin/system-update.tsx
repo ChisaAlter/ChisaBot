@@ -563,19 +563,12 @@ function Overview({ data }: { data: SystemUpdateOverview }) {
 
 /**
  * 执行内核：这一版由什么循环跑机器人的回合。部署级配置，所有内置机器人一样，不按机器人切换。
- *
- * Hermes 在网页之外（服务器上）运行，所以这里读的是桥接自己公开的健康快照，不含 token，也不会
- * 触发生成或工具调用。它只作提示：桥接没起来时聊天会报错，但整体健康、更新和回滚都不受影响。
  */
 function KernelSection() {
   const kernel = useQuery(runtimeKernelQueryOptions());
   const data = kernel.data;
-  const hermes = data?.hermes;
-  const hermesMode = data?.kernel === "hermes";
   const dshMode = data?.kernel === "dsh";
-  const connected = dshMode
-    ? data?.dsh?.ok === true
-    : hermesMode && hermes?.ok === true;
+  const connected = dshMode && data?.dsh?.ok === true;
   const label = kernel.isError
     ? "状态不可用"
     : !data
@@ -584,17 +577,9 @@ function KernelSection() {
         ? connected
           ? "DSH 已连接"
           : "DSH 未连接"
-        : !hermesMode
-          ? "内置循环"
-          : connected
-            ? "Hermes 已连接"
-            : "Hermes 未连接";
+        : "内置循环";
   const tone =
-    kernel.isError || !data || (!hermesMode && !dshMode)
-      ? "muted"
-      : connected
-        ? "ok"
-        : "warn";
+    kernel.isError || !data || !dshMode ? "muted" : connected ? "ok" : "warn";
   const details = kernel.isError
     ? "无法读取执行内核状态：需要管理员权限，或服务器暂时没有回应。"
     : !data
@@ -603,24 +588,7 @@ function KernelSection() {
         ? connected
           ? `DSH ${data?.dsh?.version ?? ""} · ${data?.dsh?.sessions ?? 0} 个会话 · ${data?.dsh?.running ?? 0} 个正在运行`
           : (data?.dsh?.error ?? "正在读取 DSH 状态。")
-        : !hermesMode
-          ? "这个部署没有配置 Hermes，机器人使用应用内置的执行循环。"
-          : !hermes
-            ? "已配置 Hermes，但还没有健康状态。"
-            : connected
-              ? [
-                  hermes.hostTools ? "工具回调已注册" : "工具回调未注册",
-                  hermes.persistentState ? "持久去重账本正常" : "没有持久账本",
-                  typeof hermes.sessions === "number"
-                    ? `${hermes.sessions} 个会话`
-                    : "",
-                  typeof hermes.generation === "number"
-                    ? `第 ${hermes.generation} 代`
-                    : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-              : `${hermes.error ?? "Hermes 桥接没有响应。"} 在服务器上运行 systemctl status hermes-acp-bridge 查看。`;
+        : "当前部署使用应用内置的执行循环。";
   return (
     <PageSection
       description="部署级设置：所有内置机器人共用同一个执行循环，不在每个机器人上单独切换。"

@@ -438,7 +438,7 @@ const cardSpec = JSON.stringify({
       expect(response?.status).toBe(200);
       expect(await bindings.get(thread)).toBeNull();
       const runTurn = createTurnRunner({
-        intelligence: backend.client,
+        conversations: backend.client,
         runner: backend.runner,
         buildAgentFor: async () => agent.clone(),
       });

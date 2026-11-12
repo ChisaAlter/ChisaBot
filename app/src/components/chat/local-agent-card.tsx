@@ -6,6 +6,7 @@ import {
   IconGitMerge,
   IconLoader2,
   IconPlayerStopFilled,
+  IconServer,
   IconShieldCheck,
   IconTerminal2,
   IconTrash,
@@ -70,10 +71,8 @@ export function LocalAgentCard({
           <span className="worker-icon is-running">
             <IconLoader2 className="size-4" />
           </span>
-          <span className="worker-title">
-            {pendingTitle || "本地 agent 任务"}
-          </span>
-          <span className="worker-chip">{"正在交给电脑…"}</span>
+          <span className="worker-title">{pendingTitle || "子代理任务"}</span>
+          <span className="worker-chip">{"正在交给子代理…"}</span>
         </div>
       </div>
     );
@@ -285,12 +284,14 @@ function LocalAgentCardBody({
     : Date.parse(task.createdAt);
   const ended = task.finishedAt ? Date.parse(task.finishedAt) : now;
   const elapsed = formatElapsed(ended - started);
-  const agentLabel = LOCAL_AGENT_INFO[task.agent]?.label ?? task.agent;
+  const agentLabel =
+    task.instanceName || LOCAL_AGENT_INFO[task.agent]?.label || task.agent;
   const ok = task.status === "done";
   const pendingDiff = Boolean(task.diff?.pending);
+  const HostIcon = task.deviceId === "server" ? IconServer : IconDeviceDesktop;
   const meta = (
     <div className="la-meta" data-testid="local-agent-meta">
-      <IconDeviceDesktop className="size-3.5 flex-none" />
+      <HostIcon className="size-3.5 flex-none" />
       <span>{task.deviceName}</span>
       <span className="la-dot">{"·"}</span>
       <IconTerminal2 className="size-3.5 flex-none" />

@@ -23,6 +23,7 @@ import { reportCapacityState } from "../conversations/capacity";
 import type { Database } from "../db/client";
 import type { LocalAgentService } from "../local-agents/service";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
+import { taskContextBrief } from "./context";
 import { TaskResultNeedsReview } from "./outcome";
 import { TaskCenterError } from "./service";
 
@@ -32,9 +33,11 @@ const POLL_MS = 3000;
 const clip = (text: string, n: number) =>
   text.length > n ? `${text.slice(0, n)}…` : text;
 
-/** executor=local-agent 或 local-agent:<kind> 都走本地 agent 委派。 */
+/** executor=local-agent、local-agent:<kind> 或 agent:<instanceRef> 都走本地/提供方智能体委派。 */
 export const isLocalAgentExecutor = (executor: string) =>
-  executor === "local-agent" || executor.startsWith("local-agent:");
+  executor === "local-agent" ||
+  executor.startsWith("local-agent:") ||
+  executor.startsWith("agent:");
 
 /** Stored by the existing device task service, so a recovered attempt observes the same execution. */
 export const localAgentThreadId = (
@@ -43,10 +46,18 @@ export const localAgentThreadId = (
 
 /** executor 后缀指定 agent：local-agent → 设备默认；local-agent:codex → 指定。 */
 export function localAgentKindOf(executor: string): LocalAgentKind | undefined {
+  if (!executor.startsWith("local-agent:")) return undefined;
   const wanted = executor.split(":")[1]?.trim().toLowerCase();
   return wanted && (LOCAL_AGENT_KINDS as readonly string[]).includes(wanted)
     ? (wanted as LocalAgentKind)
     : undefined;
+}
+
+/** executor=agent:<instanceRef> 时解析目标智能体实例引用。 */
+export function agentInstanceOf(executor: string): string | undefined {
+  if (!executor.startsWith("agent:")) return undefined;
+  const ref = executor.slice("agent:".length).trim();
+  return ref || undefined;
 }
 
 export function createLocalAgentRun(options: {
@@ -135,6 +146,7 @@ export function createLocalAgentRun(options: {
     context: TaskExecutionContext,
   ): Promise<TaskExecutionResult> {
     const agent = localAgentKindOf(task.executor);
+    const instance = agentInstanceOf(task.executor);
     context.signal.throwIfAborted();
     const threadId = localAgentThreadId(task);
     const [existing] = await sql.unsafe<{ id: string }[]>(
@@ -148,12 +160,18 @@ export function createLocalAgentRun(options: {
         botId: agentId,
         botName: await options.botNameFor(task.ownerUserId, agentId),
         threadId,
+        ...(instance ? { instance, bypassBotGrant: true } : {}),
         ...(agent ? { agent } : {}),
         title: task.title,
-        task: clip(
-          `任务中心委派的任务：${task.title}\n\n${task.description}`,
-          8000,
-        ),
+        task: [
+          clip(
+            `任务中心委派的任务：${task.title}\n\n${task.description}`,
+            8000,
+          ),
+          taskContextBrief(context.context),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       }));
     const stop = () =>
       void options.localAgents.stop(task.ownerUserId, view.id).catch(() => {});

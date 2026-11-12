@@ -8,14 +8,14 @@
 
 以前面板只能靠机器人回合刷新（最少 60 分钟，一次一轮，花 token）。现在可以给面板挂 **最多 3 个数据源**：
 
-| 字段 | 说明 |
-|---|---|
-| `id` | 稳定 id（`src_` 前缀）。规范里 `{"$state": "/live/<id>"}` 用它，改 id 等于改绑定 |
-| `kind` | `http` 或 `command` |
-| `name` | 卡片底部「来源」写的名字（如 CoinGecko、本机 uptime） |
-| `intervalSec` | 轮询间隔，2–3600 |
+| 字段                                            | 说明                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `id`                                            | 稳定 id（`src_` 前缀）。规范里 `{"$state": "/live/<id>"}` 用它，改 id 等于改绑定                                    |
+| `kind`                                          | `http` 或 `command`                                                                                                 |
+| `name`                                          | 卡片底部「来源」写的名字（如 CoinGecko、本机 uptime）                                                               |
+| `intervalSec`                                   | 轮询间隔，2–3600                                                                                                    |
 | `url` / `method` / `headers` / `body` / `parse` | http：只允许 https、不带账号密码、不跟随重定向；`parse` 为 `json`（整段）/ `text`（原文）/ `number`（原文里一个数） |
-| `command` | command：本机命令（仅管理员，且部署设了 `CHISABOT_PANEL_COMMANDS=1`） |
+| `command`                                       | command：本机命令（仅管理员，且部署设了 `CHISABOT_PANEL_COMMANDS=1`）                                               |
 
 **回填方式**：前端在规范 state 里放一份 `live`（`{ [sourceId]: value }`），值变了用 `store.update` 写进去；
 规范里绑 `/live/<id>` 或 `/live/<id>/字段` 的 Metric / List / Table 原地更新，布局不动（与 §32、§77 同一条路）。
@@ -44,13 +44,13 @@
 
 ## 3. ⋯ 菜单
 
-| 项 | 行为 |
-|---|---|
-| 立即刷新 | 不变（机器人回合刷新） |
-| 自动刷新 | 不变 |
-| 让 AI 修改… | 把「帮我改一下右栏这张「标题」面板：」填进输入框（不自动发送） |
-| 数据来源… | 列出每个来源：名字、网址 / 命令、间隔、最近一次取数结果与时间、失败原因；带「立即取数」 |
-| 撤销上次修改 / 删除面板 | 不变 |
+| 项                      | 行为                                                                                    |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| 立即刷新                | 不变（机器人回合刷新）                                                                  |
+| 自动刷新                | 不变                                                                                    |
+| 让 AI 修改…             | 把「帮我改一下右栏这张「标题」面板：」填进输入框（不自动发送）                          |
+| 数据来源…               | 列出每个来源：名字、网址 / 命令、间隔、最近一次取数结果与时间、失败原因；带「立即取数」 |
+| 撤销上次修改 / 删除面板 | 不变                                                                                    |
 
 「面板模型」需要给无头回合加模型覆盖（`TurnRunner` 目前没有这个入参），这一版不做，记在 BACKLOG。
 
@@ -68,11 +68,14 @@ PATCH /api/live-panels/:id               → 不变（刷新频率）
 
 ```ts
 dataSources: {
-  id: string; kind: "http" | "command"; name: string;
+  id: string;
+  kind: "http" | "command";
+  name: string;
   intervalSec: number;
   /** 展示用：http 写 host + path（不含 query 里的密钥），command 写命令原文（截断 200 字）。 */
   label: string;
-}[];
+}
+[];
 ```
 
 `Reading = { ok: boolean; value: unknown; error?: string; at: string; ms: number }`。

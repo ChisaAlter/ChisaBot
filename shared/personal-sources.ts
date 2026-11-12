@@ -17,10 +17,25 @@ export type EmailConnectionView = {
   imapPort: number;
   smtpHost?: string;
   smtpPort?: number;
+  smtpUser?: string;
+  smtpCheckedAt?: string;
   hint: string;
   unreadCount: number;
   connectedAt: string;
   checkedAt: string;
+};
+
+export type EmailConnectionInput = {
+  email: string;
+  imapHost: string;
+  imapPort?: number;
+  password: string;
+  smtp?: {
+    host: string;
+    port: number;
+    user?: string;
+    password?: string;
+  };
 };
 
 export type NotifyWebhookView = {
@@ -138,4 +153,15 @@ export const IMAP_PRESETS: Record<
   "outlook.com": { host: "outlook.office365.com", port: 993, label: "Outlook" },
   "hotmail.com": { host: "outlook.office365.com", port: 993, label: "Hotmail" },
   "icloud.com": { host: "imap.mail.me.com", port: 993, label: "iCloud Mail" },
+};
+
+export const SMTP_PRESETS: Record<string, { host: string; port: number }> = {
+  "qq.com": { host: "smtp.qq.com", port: 465 },
+  "foxmail.com": { host: "smtp.qq.com", port: 465 },
+  "163.com": { host: "smtp.163.com", port: 465 },
+  "126.com": { host: "smtp.126.com", port: 465 },
+  "gmail.com": { host: "smtp.gmail.com", port: 465 },
+  "outlook.com": { host: "smtp.office365.com", port: 587 },
+  "hotmail.com": { host: "smtp.office365.com", port: 587 },
+  "icloud.com": { host: "smtp.mail.me.com", port: 465 },
 };

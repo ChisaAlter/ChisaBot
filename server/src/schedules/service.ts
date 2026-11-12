@@ -146,6 +146,7 @@ type Row = {
   id: string;
   owner_user_id: string;
   agent_id: string;
+  agent_instance_id?: string | null;
   thread_id: string;
   im_connection_id: string | null;
   title: string;
@@ -428,6 +429,15 @@ export type ScheduleDeps = {
   isPaused?: (error: unknown) => boolean;
   /** 回合结束后释放对话锁（防定时挂起后输入框一直灰）。 */
   releaseThread?: (threadId: string) => Promise<void>;
+  /** 可选：定时任务绑定了 agentInstanceId 时直接调用该智能体提供方实例执行。 */
+  runAgentInstance?: (input: {
+    ownerUserId: string;
+    botId: string;
+    threadId: string;
+    instanceRef: string;
+    title: string;
+    instruction: string;
+  }) => Promise<{ ok: boolean; text: string; error?: string | null }>;
   now?: () => Date;
   /** 测试用：覆盖 BUSY_RETRY_MS。 */
   retryDelayMs?: number;
@@ -542,6 +552,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_sched ON chisabot_schedule_runs (schedule_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_owner ON chisabot_schedule_runs (owner_user_id, finished_at DESC);
+      ALTER TABLE chisabot_schedules ADD COLUMN IF NOT EXISTS agent_instance_id text;
     `);
     // CB-105b：CB-105 之前暂停的任务库里还留着 next_run_at；一次性、幂等地清掉（之后暂停时就置空）。
     await sql.unsafe(
@@ -570,6 +581,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   const view = (r: Row, runs?: RunRow[]): ScheduleView => ({
     id: r.id,
     agentId: r.agent_id,
+    agentInstanceId: r.agent_instance_id ?? null,
     threadId: r.thread_id,
     source: r.im_connection_id ? "im" : "web",
     title: r.title,
@@ -678,6 +690,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   async function create(input: {
     owner: string;
     agentId: string;
+    agentInstanceId?: string | null;
     threadId: string;
     imConnectionId?: string | null;
     title: string;
@@ -700,13 +713,15 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         `最多 ${MAX_ACTIVE} 个没结束的定时任务，先删掉一些。`,
       );
     const id = `sch_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const agentInstanceId = input.agentInstanceId?.trim() || null;
     const rows = await sql.unsafe<Row[]>(
-      `INSERT INTO chisabot_schedules (id, owner_user_id, agent_id, thread_id, im_connection_id, title, instruction, kind, cron, run_at, timezone, status, next_run_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active',$12) RETURNING *`,
+      `INSERT INTO chisabot_schedules (id, owner_user_id, agent_id, agent_instance_id, thread_id, im_connection_id, title, instruction, kind, cron, run_at, timezone, status, next_run_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13) RETURNING *`,
       [
         id,
         input.owner,
         input.agentId,
+        agentInstanceId,
         input.threadId,
         input.imConnectionId ?? null,
         title,
@@ -730,6 +745,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       when?: WhenInput;
       timezone?: string;
       paused?: boolean;
+      agentInstanceId?: string | null;
     },
   ): Promise<ScheduleView> {
     const row = await need(owner, id);
@@ -744,6 +760,10 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       ? patch.instruction.trim().slice(0, 4000)
       : row.instruction;
     const timezone = patch.timezone?.trim() || row.timezone;
+    const agentInstanceId =
+      patch.agentInstanceId !== undefined
+        ? patch.agentInstanceId?.trim() || null
+        : (row.agent_instance_id ?? null);
     let kind = row.kind;
     let cron = row.cron;
     let runAt = row.run_at ? new Date(row.run_at) : null;
@@ -777,7 +797,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     // CB-105：暂停 / 结束的任务没有「下次运行」；恢复时上面重新算。
     if (status !== "active") next = null;
     const rows = await sql.unsafe<Row[]>(
-      `UPDATE chisabot_schedules SET title=$3, instruction=$4, timezone=$5, kind=$6, cron=$7, run_at=$8, status=$9, next_run_at=$10, updated_at=now()
+      `UPDATE chisabot_schedules SET title=$3, instruction=$4, timezone=$5, kind=$6, cron=$7, run_at=$8, status=$9, next_run_at=$10, agent_instance_id=$11, updated_at=now()
        WHERE id=$1 AND owner_user_id=$2 RETURNING *`,
       [
         row.id,
@@ -790,6 +810,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         isoOrNull(runAt),
         status,
         isoOrNull(next),
+        agentInstanceId,
       ],
     );
     return view(written(rows));
@@ -1318,17 +1339,37 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           return;
         }
         try {
-          const result = await runTurn({
-            ownerUserId: row.owner_user_id,
-            routineId: `schedule:${row.id}`,
-            runId: `schedule:${runId}`,
-            agentId: row.agent_id,
-            threadId,
-            instruction: (message as { content: string }).content,
-            initiator,
-            userMessage: message,
-            forwardedProps: { chisabotSchedule: { id: row.id, runId } },
-          });
+          const instanceRef = row.agent_instance_id;
+          const runAgentInstance = deps.runAgentInstance;
+          const result =
+            instanceRef && runAgentInstance
+              ? await (async () => {
+                  const sub = await runAgentInstance({
+                    ownerUserId: row.owner_user_id,
+                    botId: row.agent_id,
+                    threadId,
+                    instanceRef,
+                    title: row.title,
+                    instruction: row.instruction,
+                  });
+                  return {
+                    replyText: sub.text,
+                    toolErrors: sub.ok
+                      ? undefined
+                      : [sub.error || sub.text || "子代理执行失败"],
+                  };
+                })()
+              : await runTurn({
+                  ownerUserId: row.owner_user_id,
+                  routineId: `schedule:${row.id}`,
+                  runId: `schedule:${runId}`,
+                  agentId: row.agent_id,
+                  threadId,
+                  instruction: (message as { content: string }).content,
+                  initiator,
+                  userMessage: message,
+                  forwardedProps: { chisabotSchedule: { id: row.id, runId } },
+                });
           let text = result.replyText?.trim() || "（机器人这次没有文字回复）";
           const replyStatus = classifyScheduleReply(text, {
             toolErrors: result.toolErrors,
@@ -1801,14 +1842,23 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
               .max(60)
               .optional()
               .describe("IANA 时区，用户没说就不填（默认 Asia/Shanghai）"),
+            agentInstanceId: z
+              .string()
+              .max(120)
+              .optional()
+              .describe(
+                "可选：到点直接交给指定的智能体实例（id 或 slug，如 codex / claude）执行任务；省略则由当前机器人自己执行",
+              ),
             ...whenFields,
           })
           .strict(),
         async (args) => {
-          const { title, instruction, timezone, ...when } = args;
+          const { title, instruction, timezone, agentInstanceId, ...when } =
+            args;
           const created = await create({
             owner,
             agentId,
+            agentInstanceId: agentInstanceId ?? null,
             threadId,
             imConnectionId: input.imConnectionId ?? null,
             title,
@@ -1851,6 +1901,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             instruction: z.string().max(4000).optional(),
             timezone: z.string().max(60).optional(),
             paused: z.boolean().optional().describe("true 暂停，false 恢复"),
+            agentInstanceId: z
+              .string()
+              .max(120)
+              .nullable()
+              .optional()
+              .describe("改派给指定智能体实例（传 null 恢复为机器人自己执行）"),
             repeat: whenFields.repeat.optional(),
             at: whenFields.at,
             in_minutes: whenFields.in_minutes,
@@ -1861,14 +1917,23 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           })
           .strict(),
         async (args) => {
-          const { id, title, instruction, timezone, paused, repeat, ...rest } =
-            args;
+          const {
+            id,
+            title,
+            instruction,
+            timezone,
+            paused,
+            agentInstanceId,
+            repeat,
+            ...rest
+          } = args;
           const when = repeat ? ({ repeat, ...rest } as WhenInput) : undefined;
           const updated = await update(owner, id, {
             ...(title ? { title } : {}),
             ...(instruction ? { instruction } : {}),
             ...(timezone ? { timezone } : {}),
             ...(paused !== undefined ? { paused } : {}),
+            ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
             ...(when ? { when } : {}),
           });
           return result(
@@ -1971,6 +2036,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           instruction: z.string().max(4000).optional(),
           paused: z.boolean().optional(),
           timezone: z.string().max(60).optional(),
+          agentInstanceId: z.string().max(120).nullable().optional(),
           when: whenSchema.optional(),
         })
         .strict()

@@ -1,3 +1,9 @@
 {
-  "keys": []
+  "keys": [
+    {
+      "keyId": "efcef1f2",
+      "publicKey": "mDqoZw0ZNVznZppICS19LY1neH1p/RR01LwvwNxJgX0=",
+      "label": "production-20261110"
+    }
+  ]
 }

@@ -6,13 +6,13 @@
 
 ## 1. 窗口与 RTO
 
-| 项 | 值 |
-|----|-----|
-| 回滚窗口 | 最近 **`KEEP_IMAGES`** 个 `local/chisabot:auto-*` 镜像仍在本机（默认 **5**，见 `deploy/updater/config.env`） |
-| 双标签保底 | 更新器清理时**不删**当前镜像与上一版（`CUR_IMAGE`）；即使 `KEEP_IMAGES` 被改小，至少能回一步 |
-| **RTO（切镜像）** | **约 2–5 分钟**：`compose up --wait`（≤180s）+ `health.sh` / `post-deploy-smoke.sh` |
-| **RPO（数据）** | 本路径**不回退数据库**；需要数据恢复另用 `backups/*/chisabot.dump`（破坏性，另开变更窗口） |
-| 默认安全姿势 | `scripts/ops/cutback.sh` **不执行**回滚，只证明镜像在、脚本语法对、打印 would_run |
+| 项                | 值                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| 回滚窗口          | 最近 **`KEEP_IMAGES`** 个 `local/chisabot:auto-*` 镜像仍在本机（默认 **5**，见 `deploy/updater/config.env`） |
+| 双标签保底        | 更新器清理时**不删**当前镜像与上一版（`CUR_IMAGE`）；即使 `KEEP_IMAGES` 被改小，至少能回一步                 |
+| **RTO（切镜像）** | **约 2–5 分钟**：`compose up --wait`（≤180s）+ `health.sh` / `post-deploy-smoke.sh`                          |
+| **RPO（数据）**   | 本路径**不回退数据库**；需要数据恢复另用 `backups/*/chisabot.dump`（破坏性，另开变更窗口）                   |
+| 默认安全姿势      | `scripts/ops/cutback.sh` **不执行**回滚，只证明镜像在、脚本语法对、打印 would_run                            |
 
 超过窗口（镜像已被 prune）：走 revert PR + 正常 `deploy-serial.sh`，或 `request.sh update --full` 检出旧提交。
 
@@ -46,20 +46,20 @@ bash /opt/chisabot-updater/post-deploy-smoke.sh
 
 ## 3. <PROD_HOST> dry-run 记录（2026-10-19）
 
-| 项 | 值 |
-|----|-----|
-| 主机 | <PROD_HOST>（生产；本文不写公网 IP） |
-| 当时运行 | `local/chisabot:auto-202610181759-7132ff3` · **v0.1.31** |
-| 上一版脚本 | `rollback-to-auto-202610181747-eb83b73.sh`（v0.1.30） |
-| `docker image inspect` 上一版 | **存在** |
-| `cutback.sh`（无 EXECUTE） | DRY-RUN 通过；**未**切流量 |
-| 当时 `KEEP_IMAGES` | 演练后主机改为 **5**（与本版默认一致） |
+| 项                            | 值                                                       |
+| ----------------------------- | -------------------------------------------------------- |
+| 主机                          | <PROD_HOST>（生产；本文不写公网 IP）                     |
+| 当时运行                      | `local/chisabot:auto-202610181759-7132ff3` · **v0.1.31** |
+| 上一版脚本                    | `rollback-to-auto-202610181747-eb83b73.sh`（v0.1.30）    |
+| `docker image inspect` 上一版 | **存在**                                                 |
+| `cutback.sh`（无 EXECUTE）    | DRY-RUN 通过；**未**切流量                               |
+| 当时 `KEEP_IMAGES`            | 演练后主机改为 **5**（与本版默认一致）                   |
 
 完整备份转储演练见 [backup-rollback-drill.md](backup-rollback-drill.md)。
 
 ## 4. 值班检查清单
 
-1. `sh cutback.sh --list` → 至少看到当前 + 上一 `auto-` 镜像。  
-2. `sh cutback.sh` → DRY-RUN 绿（image present、syntax ok）。  
-3. 真故障且在窗口内 → 变更窗口 + `CUTBACK_EXECUTE=1`；切完看 `/api/version` 与烟雾。  
+1. `sh cutback.sh --list` → 至少看到当前 + 上一 `auto-` 镜像。
+2. `sh cutback.sh` → DRY-RUN 绿（image present、syntax ok）。
+3. 真故障且在窗口内 → 变更窗口 + `CUTBACK_EXECUTE=1`；切完看 `/api/version` 与烟雾。
 4. 磁盘紧时优先保回滚镜像，再砍 build cache（[cleanup.md](cleanup.md)）。

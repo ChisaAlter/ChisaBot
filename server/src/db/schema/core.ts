@@ -30,8 +30,7 @@ export const role = pgEnum("role", ["admin", "user"]);
 export const agentType = pgEnum("agent_type", [
   "built_in",
   "remote_ag_ui",
-  // A Mastra server, reached through `@ag-ui/mastra` rather than an AG-UI route of its own. Governed
-  // identically: the difference ends at `remoteTransport`. See migration 0028.
+  // 历史数据库枚举值保留（来自 0029 迁移），运行时已不再支持该类型，仅保留枚举兼容。
   "remote_mastra",
 ]);
 export const credentialKind = pgEnum("credential_kind", [
@@ -487,8 +486,8 @@ export const auditEvents = pgTable(
   ],
 );
 
-export const intelligenceChannelMappings = pgTable(
-  "intelligence_channel_mappings",
+export const chisabotChannelMappings = pgTable(
+  "chisabot_channel_mappings",
   {
     userId: text("user_id")
       .notNull()
@@ -502,7 +501,7 @@ export const intelligenceChannelMappings = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.channelId] }),
-    uniqueIndex("intelligence_channel_mappings_thread_idx").on(table.threadId),
+    uniqueIndex("chisabot_channel_mappings_thread_idx").on(table.threadId),
   ],
 );
 

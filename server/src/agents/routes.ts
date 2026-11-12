@@ -8,7 +8,6 @@ import { canDeleteAgent, canManageAgent } from "./profile-policy";
 import type { AgentPurge } from "./purge";
 import {
   AgentNotFoundError,
-  AgentAssignedError,
   AgentNotManageableError,
   type AgentProfileStore,
   ManagedAgentUnavailableError,
@@ -618,9 +617,6 @@ function mapStoreError(context: Context, error: unknown): Response {
   }
   if (error instanceof ManagedAgentUnavailableError) {
     return context.json({ error: error.message }, 400);
-  }
-  if (error instanceof AgentAssignedError) {
-    return context.json({ error: error.message }, 409);
   }
   throw error;
 }

@@ -22,7 +22,7 @@ import {
   attachments,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  chisabotChannelMappings,
   skills,
   users,
 } from "../src/db/schema";
@@ -323,7 +323,7 @@ const deferred = () => {
       { channelId: wrongChannel, userId: owner },
     ]);
     await database
-      .insert(intelligenceChannelMappings)
+      .insert(chisabotChannelMappings)
       .values({ channelId: channel, userId: owner, threadId: thread });
     const upload = async (uploadedBy: string, channelId = channel) => {
       const bytes = Buffer.from("CHANNEL_ATTACHMENT_BYTES");

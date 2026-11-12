@@ -30,11 +30,6 @@ import {
   users,
 } from "../src/db/schema/core";
 import { agentProfiles } from "../src/db/schema/coworker";
-import { memorySources, personalMemories } from "../src/db/schema/memory";
-import {
-  proactiveSettings,
-  proactiveSuggestions,
-} from "../src/db/schema/proactive";
 import { responsibilities } from "../src/db/schema/responsibilities";
 import { workItems } from "../src/db/schema/work";
 import { createSchedules } from "../src/schedules/service";
@@ -123,29 +118,6 @@ beforeAll(async () => {
       instruction: "Watch CI",
       successCriteria: "Green",
     });
-    await database.insert(memorySources).values({
-      id: `${prefix}-source-${person}`,
-      ownerUserId: person,
-      agentId: bot,
-      toolRef: "docs/read",
-      title: "Docs",
-    });
-    await database.insert(personalMemories).values([
-      {
-        id: `${prefix}-memory-${person}-1`,
-        ownerUserId: person,
-        sourceId: `${prefix}-source-${person}`,
-        content: "Launch is Tuesday",
-        provenance: "Docs",
-      },
-      // A memory of the person's own, from no source: not this Bot's, so a reset keeps it.
-      {
-        id: `${prefix}-memory-${person}-own`,
-        ownerUserId: person,
-        content: "Prefers mornings",
-        provenance: "You",
-      },
-    ]);
   }
   await database.insert(workItems).values([
     {
@@ -465,8 +437,6 @@ describe("reset", () => {
     expect(plan).toMatchObject({
       conversations: 1,
       sharedConversationsKept: 1,
-      memorySources: 1,
-      memories: 1,
       schedules: 1,
       responsibilities: 1,
     });
@@ -477,29 +447,17 @@ describe("reset", () => {
     expect(softDeleted).toEqual([direct]);
     expect(await reset.plan(owner, bot)).toMatchObject({
       conversations: 0,
-      memories: 0,
       schedules: 0,
       responsibilities: 0,
       followUps: 0,
     });
 
-    // The other person's identical data survives, and so does the owner's own memory.
+    // The other person's identical data survives.
     expect(await reset.plan(other, bot)).toMatchObject({
       conversations: 1,
-      memories: 1,
       schedules: 1,
       responsibilities: 1,
     });
-    const kept = await database
-      .select({ id: personalMemories.id })
-      .from(personalMemories)
-      .where(
-        and(
-          eq(personalMemories.ownerUserId, owner),
-          eq(personalMemories.id, `${prefix}-memory-${owner}-own`),
-        ),
-      );
-    expect(kept).toHaveLength(1);
     const [sharedRow] = await database
       .select({ deletedAt: channels.deletedAt })
       .from(channels)
@@ -518,32 +476,8 @@ describe("reset", () => {
     expect(remaining).toHaveLength(0);
   });
 
-  test("a reset also takes what the Bot formed, its research and the permissions it was given", async () => {
+  test("a reset revokes standing permissions given to the Bot while keeping protective ask rules", async () => {
     for (const person of [owner, other]) {
-      await database.insert(personalMemories).values({
-        id: `${prefix}-formed-${person}`,
-        ownerUserId: person,
-        content: "Owns the billing service",
-        provenance: "Read from GitHub",
-        formedBy: "bot",
-        formedByAgentId: bot,
-      });
-      await database.insert(proactiveSettings).values({
-        id: `${prefix}-research-${person}`,
-        ownerUserId: person,
-        agentId: bot,
-        channelId: person === owner ? direct : othersDirect,
-        threadId: `${prefix}-research-thread-${person}`,
-      });
-      await database.insert(proactiveSuggestions).values({
-        id: `${prefix}-suggestion-${person}`,
-        ownerUserId: person,
-        agentId: bot,
-        settingId: `${prefix}-research-${person}`,
-        runId: "run-1",
-        title: "Review the PR",
-        detail: "It waits on you",
-      });
       await database.insert(approvalRules).values([
         {
           id: `${prefix}-allow-${person}`,
@@ -569,52 +503,29 @@ describe("reset", () => {
 
     const plan = await reset.plan(owner, bot);
     expect(plan).toMatchObject({
-      formedMemories: 1,
-      backgroundResearch: 1,
       standingApprovals: 1,
     });
     expect(await reset.execute({ id: owner, role: "user" }, bot)).toEqual(plan);
     expect(await reset.plan(owner, bot)).toMatchObject({
-      formedMemories: 0,
-      backgroundResearch: 0,
       standingApprovals: 0,
     });
 
-    const left = async (
-      table: "memory" | "research" | "rules",
-      person: string,
-    ) =>
-      table === "memory"
-        ? database
-            .select({ id: personalMemories.id })
-            .from(personalMemories)
-            .where(eq(personalMemories.id, `${prefix}-formed-${person}`))
-        : table === "research"
-          ? database
-              .select({ id: proactiveSuggestions.id })
-              .from(proactiveSuggestions)
-              .where(eq(proactiveSuggestions.ownerUserId, person))
-          : database
-              .select({ id: approvalRules.id })
-              .from(approvalRules)
-              .where(
-                and(
-                  eq(approvalRules.ownerUserId, person),
-                  sql`${approvalRules.revokedAt} is null`,
-                ),
-              );
-    expect(await left("memory", owner)).toHaveLength(0);
-    expect(await left("research", owner)).toHaveLength(0);
-    expect((await left("rules", owner)).map((row) => row.id)).toEqual([
+    const leftRules = (person: string) =>
+      database
+        .select({ id: approvalRules.id })
+        .from(approvalRules)
+        .where(
+          and(
+            eq(approvalRules.ownerUserId, person),
+            sql`${approvalRules.revokedAt} is null`,
+          ),
+        );
+    expect((await leftRules(owner)).map((row) => row.id)).toEqual([
       `${prefix}-ask-${owner}`,
     ]);
     // The other person's identical rows survive.
-    expect(await left("memory", other)).toHaveLength(1);
-    expect(await left("research", other)).toHaveLength(1);
-    expect(await left("rules", other)).toHaveLength(2);
+    expect(await leftRules(other)).toHaveLength(2);
     expect(await reset.plan(other, bot)).toMatchObject({
-      formedMemories: 1,
-      backgroundResearch: 1,
       standingApprovals: 1,
     });
   });

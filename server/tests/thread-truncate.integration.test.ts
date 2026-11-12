@@ -68,6 +68,16 @@ class PausedAgent extends AbstractAgent {
   }
 }
 
+class EarlyErrorAgent extends AbstractAgent {
+  protected run(_input: RunAgentInput): Observable<BaseEvent> {
+    return of({
+      type: EventType.RUN_ERROR,
+      message:
+        'privacy-gate: a content part of type "image_url" cannot be masked locally',
+    } as BaseEvent);
+  }
+}
+
 suite("thread truncation on a dedicated PostgreSQL database", () => {
   let database: ReturnType<typeof createDatabase>;
   let backend: LocalConversationBackend;
@@ -223,5 +233,49 @@ suite("thread truncation on a dedicated PostgreSQL database", () => {
     expect(((await response!.json()) as { revision: string }).revision).toBe(
       "2",
     );
+  });
+
+  test("withdraw cuts a trailing pre-RUN_STARTED failed user turn and records withdraw mode", async () => {
+    const agent = new EarlyErrorAgent({ agentId: bot, threadId: thread });
+    await collect(
+      backend.runner.run({
+        threadId: thread,
+        agent,
+        input: input("r-early-err", [
+          { id: "u1", role: "user", content: "one" } as Message,
+          { id: "answer-r1", role: "assistant", content: "ok" } as Message,
+          { id: "u5-img", role: "user", content: "[image]" } as Message,
+        ]),
+      }),
+    );
+    expect(await stored()).toEqual(["u1", "answer-r1", "u5-img"]);
+
+    const response = await truncate({
+      fromMessageId: "u5-img",
+      mode: "withdraw",
+    });
+    expect(response?.status).toBe(200);
+    const body = (await response!.json()) as {
+      removed: string[];
+      revision: string;
+    };
+    expect(body.removed).toEqual(["u5-img"]);
+    expect(body.revision).toBe("3");
+    expect(await stored()).toEqual(["u1", "answer-r1"]);
+
+    const rows = await database.$client.unsafe<
+      { from_message_id: string; mode: string }[]
+    >(
+      "SELECT from_message_id, mode FROM chisabot_thread_truncations WHERE thread_id = $1 ORDER BY id DESC LIMIT 1",
+      [thread],
+    );
+    expect(rows[0]).toEqual({ from_message_id: "u5-img", mode: "withdraw" });
+
+    const replay = await collect(
+      backend.runner.connect({ threadId: thread, agentId: bot }),
+    );
+    expect(
+      replay.filter((event) => event.type === EventType.RUN_ERROR),
+    ).toHaveLength(0);
   });
 });
