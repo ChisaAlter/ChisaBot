@@ -6,7 +6,13 @@ import {
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
-import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type DragEvent,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSegmentedKeys } from "@/components/ui/segmented";
@@ -56,6 +62,13 @@ const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
 ];
 const WALLPAPER_CATEGORY_VALUES: readonly WallpaperCategoryId[] =
   WALLPAPER_CATEGORIES.map((c) => c.id);
+
+const rangeFillStyle = (
+  value: number,
+  min: number,
+  max: number,
+): CSSProperties =>
+  ({ "--pct": `${((value - min) / (max - min)) * 100}%` }) as CSSProperties;
 
 export function AppearancePreferences() {
   const appearance = useAppearance();
@@ -301,6 +314,11 @@ export function AppearancePreferences() {
               min={GLASS_OPACITY_MIN}
               onChange={(e) => setGlassOpacity(Number(e.target.value))}
               step={1}
+              style={rangeFillStyle(
+                appearance.glassOpacity,
+                GLASS_OPACITY_MIN,
+                GLASS_OPACITY_MAX,
+              )}
               type="range"
               value={appearance.glassOpacity}
             />
@@ -321,6 +339,11 @@ export function AppearancePreferences() {
               min={GLASS_OPACITY_MIN}
               onChange={(e) => setGlassOpacityDark(Number(e.target.value))}
               step={1}
+              style={rangeFillStyle(
+                appearance.glassOpacityDark,
+                GLASS_OPACITY_MIN,
+                GLASS_OPACITY_MAX,
+              )}
               type="range"
               value={appearance.glassOpacityDark}
             />
@@ -569,6 +592,7 @@ export function AppearancePreferences() {
                 min={0}
                 onChange={(e) => setWallpaperBlur(Number(e.target.value))}
                 step={1}
+                style={rangeFillStyle(appearance.wallpaperBlur, 0, 40)}
                 type="range"
                 value={appearance.wallpaperBlur}
               />
@@ -587,6 +611,7 @@ export function AppearancePreferences() {
                 min={0}
                 onChange={(e) => setWallpaperDim(Number(e.target.value))}
                 step={1}
+                style={rangeFillStyle(appearance.wallpaperDim, 0, 75)}
                 type="range"
                 value={appearance.wallpaperDim}
               />
@@ -605,6 +630,7 @@ export function AppearancePreferences() {
                 min={0}
                 onChange={(e) => setWallpaperScrim(Number(e.target.value))}
                 step={1}
+                style={rangeFillStyle(appearance.wallpaperScrim, 0, 100)}
                 type="range"
                 value={appearance.wallpaperScrim}
               />
