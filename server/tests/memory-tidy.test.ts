@@ -181,8 +181,8 @@ function memorySql(initial: TidyRow[], options: { failOnWrite?: number } = {}) {
         string,
         string | null,
         string | null,
-        Date,
-        Date,
+        string,
+        string,
       ];
       state.notes.push({
         id,
@@ -193,8 +193,8 @@ function memorySql(initial: TidyRow[], options: { failOnWrite?: number } = {}) {
         context,
         agent_id,
         shared: false,
-        created_at: created_at.toISOString(),
-        updated_at: updated_at.toISOString(),
+        created_at,
+        updated_at,
       });
       return [{ id }];
     }
@@ -209,7 +209,7 @@ function memorySql(initial: TidyRow[], options: { failOnWrite?: number } = {}) {
       if (!row) return [];
       Object.assign(row, {
         content: p3,
-        updated_at: (p5 as unknown as Date).toISOString(),
+        updated_at: p5 as string,
       });
       return [{ id: row.id }];
     }

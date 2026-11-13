@@ -17,8 +17,7 @@ export const SERVER_TEST_QUARANTINE: Record<string, string> = {
     "Cannot find module '../../app/src/components/gallery/activity' — 目标组件已删除 (2026-11 measurement)",
   "server/tests/headless-components.integration.test.ts":
     "Cannot find module '../../app/src/components/gallery/charts' — 目标组件已删除 (2026-11 measurement)",
-  "server/tests/memory-tidy.test.ts":
-    "TypeError: p5.toISOString is not a function (:212) — 内存 SQL fixture 与 src/memory-notes/tidy.ts:411 不一致 (2026-11 measurement)",
+  "server/tests/headless-tools.test.ts":
   "server/tests/headless-tools.test.ts":
     "Expected promise that resolves / Received rejected (:196) — This conversation runner requires a lease adapter. (src/turns/run-turn.ts:497) (2026-11 measurement)",
   "server/tests/passwords-sign-in.test.ts":
