@@ -325,9 +325,7 @@ export function AppearancePreferences() {
           </label>
           <label className="appearance-slider-row">
             <span className="appearance-slider-label">
-              <span>
-                {"面板雾度 · 深色（浅色和深色各存一档，切换时滑行到各自的值）"}
-              </span>
+              <span>{"面板雾度 · 深色"}</span>
               <span className="appearance-slider-val">
                 {`${appearance.glassOpacityDark}%（透光率 ${100 - appearance.glassOpacityDark}%）`}
               </span>
