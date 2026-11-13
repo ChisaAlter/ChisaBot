@@ -26,9 +26,10 @@
 | app DOM 测试               | `bun run test:app`                | 会把替换全局模块的用例放进独立进程，不要改成直接 `bun test app/tests` |
 | DSH 恢复测试               | `bun run test:dsh`                | 需要 `CHISABOT_DSH_TEST_DATABASE_URL`（pgvector）                     |
 | 格式                       | `bun run format` / `format:check` |                                                                       |
-- **数据库测试**需要 `TEST_DATABASE_URL`（CI：`postgres://test:test@127.0.0.1:5432/chisabot_test`）。没有时 `*.integration.test.ts` 会直接报错，这是环境缺失，不是缺陷。
-- **Windows 本机**：`compose-network-drift`、`provider-oauth` 依赖 symlink（需开发者模式），`im-net-ssrf` 的 socket 关闭时序在 Windows 上不稳；以 Linux CI 为准。
+- **数据库测试**需要 `TEST_DATABASE_URL`（CI：`postgres://test:test@127.0.0.1:5432/chisabot_test`）。库必须先迁移：`DATABASE_URL=<test-url> bun server/scripts/migrate.ts`（CI 由 `Migrate test database` 步骤做，service 镜像用 `pgvector` 因为 0000 迁移要 `vector` 扩展）。没有库时 `*.integration.test.ts` 会直接报错，这是环境缺失，不是缺陷。
+- **Windows 本机**：`compose-network-drift`、`provider-oauth` 依赖 symlink（需开发者模式），其余平台差异以 Linux CI 为准。
 - **Bun 定时器陷阱**：测试里如果 `AbortSignal.timeout` 是进程里唯一挂着的定时器，它不会触发，测试会挂死（生产里总有 socket 撑着，不受影响）。假模型 / 假服务要模拟超时时，额外挂一个 `setTimeout`（见 `server/tests/approvals-policy.test.ts`）。
+- **Bun#9882 陷阱**：`node:http` 服务器 `upgrade` 事件给出的 socket 是僵尸——`write` 返回 true 但字节不上线，无 upgrade 监听时请求甚至不进 handler。测试里要做 WS / Upgrade 的 HTTP 服务，用 `node:net` 手写头（见 `server/tests/im-net-ssrf.test.ts`）。
 - `bun run test` / `test:ci` 是全仓联合跑，单机 20 分钟以上，日常不要用。
 - CI 另有 Biome 增量门禁（`scripts/biome-new-issues.ts`）：改动文件的 error+warning 数不得增加。
 
