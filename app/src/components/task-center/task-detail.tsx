@@ -62,6 +62,7 @@ export function TaskDetail({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: taskCenterKeys.all }),
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 换任务是有意的触发——聚焦新详情页标题
   useEffect(() => {
     heading.current?.focus();
   }, [id]);
@@ -313,6 +314,7 @@ export function TaskDetail({
                   <div className="tc-artifacts">
                     {task.artifacts.map((artifact, index) => (
                       <Artifact
+                        // biome-ignore lint/suspicious/noArrayIndexKey: 附件可以同名，序号是唯一区分
                         key={`${artifact.name}-${index}`}
                         artifact={artifact}
                       />

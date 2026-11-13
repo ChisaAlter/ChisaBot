@@ -71,6 +71,7 @@ export function PausedCapsule({
   label?: string | undefined;
 }) {
   const [shown, setShown] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: watch 是有意的重置触发——盯的东西换了就重新数 900ms
   useEffect(() => {
     setShown(false);
     const timer = window.setTimeout(() => setShown(true), 900);

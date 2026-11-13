@@ -205,6 +205,7 @@ export function TaskRailDetailDialog({
 
   const [navStack, setNavStack] = useState<RailDetailTarget[]>([]);
   const outerKey = targetKey(target);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: outerKey 是有意的重置触发——外层目标变了导航栈清零
   useEffect(() => {
     setNavStack([]);
   }, [outerKey]);
@@ -302,6 +303,7 @@ function TaskDetailModalContent({
   const queryClient = useQueryClient();
   const orderMap = useTaskRailOrder();
   const [tab, setTab] = useState<"overview" | "events" | "trace">("overview");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 换任务是有意的重置触发——回到总览页
   useEffect(() => {
     setTab("overview");
   }, [target.taskId]);
@@ -704,6 +706,7 @@ function TaskDetailModalContent({
                       {task.artifacts.map((artifact, index) => (
                         <ModalArtifact
                           artifact={artifact}
+                          // biome-ignore lint/suspicious/noArrayIndexKey: 附件可以同名，序号是唯一区分
                           key={`${artifact.name}-${index}`}
                         />
                       ))}
@@ -1063,6 +1066,7 @@ function WorkflowRunModalContent({
   const orderMap = useTaskRailOrder();
   const [tab, setTab] = useState<"steps" | "events">("steps");
   const [comment, setComment] = useState("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 换运行是有意的重置触发——回 steps 页并清评论草稿
   useEffect(() => {
     setTab("steps");
     setComment("");

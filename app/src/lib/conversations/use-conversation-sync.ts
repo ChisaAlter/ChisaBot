@@ -363,6 +363,7 @@ export function useConversationSync(
     idleJoinInFlight: () => false,
     yieldForSend: async () => {},
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: skipReconcile 只在接入时取一次；中途换值不该拆掉整条同步重建
   useEffect(() => {
     if (!threadId) return;
     let alive = true;

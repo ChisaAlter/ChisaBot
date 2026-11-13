@@ -130,6 +130,7 @@ export function ImageDefaultCard({ current }: { current: ImageSettingsView }) {
   const [enabled, setEnabled] = useState(current.enabled);
   const [form, setForm] = useState<ImageForm>({ provider: current.provider, baseUrl: current.baseUrl, model: current.model, editModel: current.editModel, apiKey: "" });
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
   const valid = validUrl(form.baseUrl) && form.model.trim() !== "";
   const save = useAsyncAction(
@@ -201,6 +202,7 @@ export function ImagePersonalCard({ current, defaults }: { current: PersonalImag
     apiKey: "",
   });
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
   const hasKey = form.apiKey.trim() !== "" || current.keySource === "saved";
   const valid = mode === "default" || (validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey);
@@ -292,6 +294,7 @@ const VISION_EXPLAIN = "识图模型只在聊天模型看不了图时用：先�
 
 function useVisionActions(scope: "default" | "personal", mode: string, form: VisionForm, hasKey: boolean, onSave: () => Promise<void>) {
   const [probe, setProbe] = useState<Probe>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setProbe(null), [form.baseUrl, form.model, form.apiKey]);
   const fieldsOk = validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey;
   const save = useAsyncAction(onSave, { errorToast: (error) => error.message });

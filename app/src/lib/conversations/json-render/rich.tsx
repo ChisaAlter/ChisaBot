@@ -60,6 +60,7 @@ export function SafeImg({
 }) {
   const url = safeHttps(src);
   const [failed, setFailed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: url 变了是有意的复位触发——新地址重新允许加载
   useEffect(() => setFailed(false), [url]);
   if (!url || failed) return null;
   return (
@@ -369,6 +370,7 @@ export function Tabs({
             aria-selected={i === current}
             className={cn("jr-tab", i === current && "is-on")}
             id={`${id}-t${i}`}
+            // biome-ignore lint/suspicious/noArrayIndexKey: 选项卡按位置编号，顺序是身份
             key={i}
             onClick={() => setActive(i)}
             onKeyDown={(event) => {
@@ -415,6 +417,7 @@ export function Carousel({
       end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2,
     });
   };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: update 每次渲染新建，列上会让观察器每帧重建；effect 只在挂载时装订
   useEffect(() => {
     update();
     const el = track.current;
@@ -545,6 +548,7 @@ export function Timeline({
       {(Array.isArray(items) ? items : []).map((item, i) => (
         <li
           className={cn("jr-tl-item", toneClass(item.tone))}
+          // biome-ignore lint/suspicious/noArrayIndexKey: 时间线条目没有 id，序是身份
           key={i}
           style={{ "--jr-i": String(i) } as CSSProperties}
         >
@@ -599,6 +603,7 @@ export function KeyValue({
           affordance="inline"
           className="jr-kv-row"
           item={item}
+          // biome-ignore lint/suspicious/noArrayIndexKey: 模型生成的键值行没有 id，行序是身份
           key={i}
           label={item.label}
         >

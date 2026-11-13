@@ -321,6 +321,7 @@ export function Lightbox({
             <span className="rp-lightbox-count">{`${index + 1} / ${count}`}</span>
             <div aria-hidden className="rp-lightbox-dots">
               {images.map((_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 圆点只按位置区分
                 <span data-active={i === index || undefined} key={i} />
               ))}
             </div>

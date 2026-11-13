@@ -362,6 +362,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
         <CardBody className="wf-list">
           {def.inputs.length === 0 ? <p className="wf-muted">{"没有参数：运行时直接开始。"}</p> : null}
           {def.inputs.map((input, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
             <div className="wf-item" key={`${input.key}-${index}`}>
               <div className="wf-item-h">
                 <span className="wf-item-no">{index + 1}</span>
@@ -437,6 +438,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
               count={def.steps.length}
               def={def}
               index={index}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 步骤顺序就是身份：key 里带了 step.id，下标只用来区分重复的 id
               key={`${step.id}-${index}`}
               onChange={(patch) => setStep(index, patch)}
               onDuplicate={() => {
@@ -480,6 +482,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
         <CardBody className="wf-list">
           {(def.skills ?? []).length === 0 ? <p className="wf-muted">{"没有内置技能。"}</p> : null}
           {(def.skills ?? []).map((skill, index, list) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
             <div className="wf-item" key={`${skill.slug}-${index}`}>
               <div className="wf-item-h">
                 <code className="wf-key">{"/"}</code>

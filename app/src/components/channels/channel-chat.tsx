@@ -533,6 +533,7 @@ export function ChannelChat({
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
   const mountReadOk = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时读一次；cached 是 useState 初始化后不再变的常量，earlyRead 是 ref
   useEffect(() => {
     const read = earlyRead.current;
     if (!read) return;
@@ -678,6 +679,7 @@ export function ChannelChat({
   const freshThread = useRef(seed !== null);
 
   // Join the gateway socket, restore durable history, then release the first-message gate.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: agent / threadId 换了接入目标就变了，必须整段重跑
   useEffect(() => {
     if (!isReady) return;
     let current = true;
@@ -826,6 +828,7 @@ export function ChannelChat({
       }),
     [activity.onActivity],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationClient 是模块级网关对象，列上只是声明「这个回调靠它」，不变
   const connectChat = useCallback(
     (options: { agent: typeof agent; snapshotAfter?: string[] }) => {
       // 合并式重接只要这台还没有的那一段（服务器从这几条之后开始发），不再每次都拉 400 条。
@@ -2111,6 +2114,7 @@ export function ChannelChat({
       }),
     [channel.threadId],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationClient 是模块级网关对象，列上只是声明「这个回调靠它」，不变
   const runInboxTurn = useCallback(
     async (options: { agent: typeof agent }) => {
       turnsRef.current += 1;

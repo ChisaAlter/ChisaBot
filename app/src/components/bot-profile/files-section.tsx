@@ -90,6 +90,7 @@ export function BotFilesAndPagesSection({ agentId }: { agentId: string }) {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const firstBatch = initialFiles.data ?? [];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     setExtraFiles([]);
     setHasMore(firstBatch.length > PAGE_SIZE);

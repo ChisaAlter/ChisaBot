@@ -331,6 +331,7 @@ export function ImagePile({
               className="rp-pile-card"
               data-dimmed={isDimmed ? "" : undefined}
               data-focused={isFocused ? "" : undefined}
+              // biome-ignore lint/suspicious/noArrayIndexKey: 同一地址可以出现两次（两个附件指向同一份文件），位置才是唯一的
               key={`${i}:${image.src}`}
               onBlur={() => setHoveredIndex(null)}
               onClick={() => {

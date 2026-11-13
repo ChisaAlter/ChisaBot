@@ -25,6 +25,15 @@
       "style": {
         "noNonNullAssertion": "info"
       },
+      "security": {
+        "noDangerouslySetInnerHtml": "error"
+      },
+      "suspicious": {
+        "noArrayIndexKey": "warn"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "warn"
+      },
       "a11y": {
         "noLabelWithoutControl": {
           "level": "error",

@@ -211,6 +211,7 @@ export function useLiveValues(
   }, []);
 
   // 换了一张面板：上一张的读数不能跟着漂过去。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 面板 id 变了要清空，effect 里读到的就是它。
   useEffect(() => {
     setReadings({});
     setError(null);

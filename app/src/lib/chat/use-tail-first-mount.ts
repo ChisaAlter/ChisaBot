@@ -170,12 +170,14 @@ export function useTailFirstMount(
   const pending = renderedMounted < target;
 
   /** 在改窗口之前调：只有「上滑 + 没有原生锚定」才量一次高度，其余情况零布局读取。 */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nativeAnchor 量高那一刻才调用，拿的是当时的答案，不该让回调随它重建
   const measureBeforeGrow = useCallback(() => {
     const el = viewport.current;
     heightBeforeRef.current =
       el && !atBottomRef.current && !nativeAnchor() ? el.scrollHeight : 0;
   }, [viewport]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: target 只用于判断当前批次是否已追完
   useLayoutEffect(() => {
     const el = viewport.current;
     const prevStart = startRef.current;

@@ -236,6 +236,7 @@ function EditRow({ entry }: { entry: DeviceAuditEntry }) {
                 line.startsWith("-") && !line.startsWith("---") && "is-del",
                 line.startsWith("@@") && "is-hunk",
               )}
+              // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
               key={index}
             >
               {`${line}\n`}

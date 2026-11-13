@@ -24,6 +24,7 @@ export function useSettingsSearch(viewer: SettingsViewer) {
   const navigate = useNavigate();
   const sidebar = useOptionalSidebar();
   const hits = useMemo(() => searchSettings(query, viewer), [query, viewer]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setActive(0), [query]);
 
   useEffect(() => {
@@ -155,6 +156,7 @@ export function SettingsSearchResults({ search }: { search: SettingsSearch }) {
 export function SettingsFind() {
   const hash = useRouterState({ select: (state) => state.location.hash });
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (!hash) return;
     const raw = decodeURIComponent(hash.replace(/^#/, ""));

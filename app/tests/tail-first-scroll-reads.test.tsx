@@ -94,6 +94,7 @@ function Harness({
   return (
     <div ref={attach} data-pending={pending ? "" : undefined}>
       {Array.from({ length: total - startIndex }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: 生成的消息槽位没有 id，位置编号就是身份
         <p key={`m-${startIndex + i}`} />
       ))}
     </div>

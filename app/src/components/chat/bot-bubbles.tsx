@@ -129,6 +129,7 @@ export const BotBubbles = memo(function BotBubbles({
                 : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }
             }
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
+            // biome-ignore lint/suspicious/noArrayIndexKey: 见上
             key={i}
             transition={{
               delay:
@@ -1233,6 +1234,7 @@ export function ArtifactCard({
         <DiagramZoom naturalWidth={svgNaturalWidth(renderedSvg)}>
           <div
             className="chat-artifact-svg chat-artifact-svg-modal"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: 同下——sanitizedMermaidSvg 过 DOMPurify 的输出，正则是删字不是注入
             dangerouslySetInnerHTML={{
               __html: renderedSvg.replace(/max-width:\s*[\d.]+px;?\s*/, ""),
             }}
@@ -1249,6 +1251,7 @@ export function ArtifactCard({
               ? "chat-artifact-svg chat-artifact-svg-modal"
               : "chat-artifact-svg"
           }
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: Mermaid 矢量预览：本地渲染器输出且已过 DOMPurify（sanitizedMermaidSvg）；用户 SVG 走上面的 <img>
           dangerouslySetInnerHTML={{ __html: renderedSvg }}
           data-testid="artifact-svg-preview"
         />
@@ -1512,6 +1515,7 @@ export function BriefCard({
               <div
                 className="chat-brief-tile"
                 data-brief-kind={sec.kind}
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
                 key={idx}
               >
                 <div className="chat-brief-tile-head">
@@ -1535,6 +1539,7 @@ export function BriefCard({
                 </div>
                 <ul className="chat-brief-tile-list">
                   {sec.items.slice(0, 3).map((item, j) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
                     <li key={j}>{item}</li>
                   ))}
                 </ul>
@@ -1675,6 +1680,7 @@ export function StatusCardGroup({
           aria-label={card.title}
           className="chat-draft-card chat-doc-card w-full"
           data-testid="chat-status-card"
+          // biome-ignore lint/suspicious/noArrayIndexKey: 静态卡片组顺序
           key={idx}
         >
           <header className="chat-doc-head items-start">

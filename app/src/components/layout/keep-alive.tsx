@@ -304,6 +304,7 @@ function KeptSlotInner<T>({ entryId, slotKey, value, visible, switching = false,
   // 藏起来那一刻：交给页面自己的 save()、数一下元素数。变回看得见时还原滚动位置。
   const savedScroll = useRef(new Map<KeptScrollHandler, unknown>());
   const firstLayout = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: report 和 entryId 是稳定标识，只在 visible 切换时执行
   useLayoutEffect(() => {
     const el = box.current;
     const first = firstLayout.current;

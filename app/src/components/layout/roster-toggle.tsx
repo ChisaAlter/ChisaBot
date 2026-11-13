@@ -37,6 +37,7 @@ export function RosterToggle({
   const ref = useRef<HTMLButtonElement>(null);
   const open = sidebar?.open;
   // open 变了（切换刚发生）就重跑一次，看要不要接焦点。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: open 是有意的重跑触发，focusRequested 是模块级标志不用列
   useLayoutEffect(() => {
     const el = ref.current;
     if (!focusRequested || !el?.isConnected) return;

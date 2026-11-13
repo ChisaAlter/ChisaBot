@@ -195,6 +195,7 @@ test("同一段（keyOf 相同）地址别的部分变了：更新那段，不�
   type A = { id: string; settings?: boolean };
   const log: string[] = [];
   function P({ a }: { a: A }) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 测试就是要验证 keyOf 不变时只挂一次，mount 日志只记首渲染
     useEffect(() => {
       log.push(`mount ${a.id}`);
     }, []);
@@ -221,6 +222,7 @@ test("元素预算：藏着的合计超了，从最久没看的开始提前放�
     return (
       <div data-testid="page">
         {Array.from({ length: n }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: n 个无身份槽位，序号就是身份
           <i key={i} />
         ))}
       </div>

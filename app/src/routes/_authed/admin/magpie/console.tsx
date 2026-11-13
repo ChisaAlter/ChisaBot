@@ -21,6 +21,7 @@ function MagpieConsolePage() {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [nonce, setNonce] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => setLoaded(false), [nonce]);
   const available = overview.data?.managementAvailable !== false;
 

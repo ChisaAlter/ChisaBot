@@ -82,6 +82,7 @@ function DottedText({ text: value }: { text: string }) {
   return (
     <>
       {parts.map((part, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: 点分隔的文本片段可重复，位置就是身份
         <span key={index}>
           {index > 0 ? " · " : ""}
           <span className="jr-text-seg">{part}</span>
@@ -135,6 +136,7 @@ function FitLine({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: children 变了内容可能变宽，要重算字号
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -232,6 +234,7 @@ function CompactRows({
       {rows.map((row, index) => (
         // biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义
         // biome-ignore lint/a11y/useFocusableInteractive: 表格行 / 列头角色只表达语义，不是交互控件
+        // biome-ignore lint/suspicious/noArrayIndexKey: 模型生成的表格行没有 id，行序是身份
         <div className="jr-rows-r" key={index} role="row">
           {/* biome-ignore lint/a11y/useSemanticElements: 模型生成的表格用 div 渲染，用 ARIA 表格角色保住语义 */}
           <span className="jr-rows-p" role="cell">
@@ -310,6 +313,7 @@ function ListMark({
 }) {
   const url = safeHttps(image);
   const [failed, setFailed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: url 变了是有意的复位触发——新地址重新允许加载
   useEffect(() => setFailed(false), [url]);
   const name = typeof title === "string" ? title : "";
   if (url) {
@@ -541,6 +545,7 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
                 </thead>
                 <tbody>
                   {rows.map((row, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 模型生成的表格行没有 id，行序是身份
                     <tr key={index}>
                       {columns.map((column) => (
                         <td
@@ -578,6 +583,7 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
               return (
                 <li
                   className={cn("jr-list-item", toneOf(item.tone))}
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 模型生成的列表项没有 id，项序是身份
                   key={index}
                   style={{ "--jr-i": String(index) } as CSSProperties}
                 >

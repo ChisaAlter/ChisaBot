@@ -418,6 +418,7 @@ export function WorkerCardBody({
               {worker.plan.map((step, index) => (
                 <li
                   className={cn("worker-plan-step", `is-${step.status}`)}
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
                   key={`${index}-${step.text}`}
                 >
                   <span className="worker-plan-mark" aria-hidden>

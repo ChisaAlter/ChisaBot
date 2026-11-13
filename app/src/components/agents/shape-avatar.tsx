@@ -219,6 +219,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
     };
   }, [still]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: still 是有意的重跑条件：换底图也要把当前状态重灌进新 morph
   useLayoutEffect(() => {
     morph.current?.setState({
       selected: state.selected,

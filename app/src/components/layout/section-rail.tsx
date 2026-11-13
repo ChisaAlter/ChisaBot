@@ -79,6 +79,7 @@ export function SectionRail({
   const anyHere = groups.some((group) => group.collapsible && inGroup(group, pathname));
   const scrollRef = useRef<HTMLDivElement>(null);
   // 当前页那一行在可视区外（矮屏、组都展开着）时，打开设置先把它滚进来。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     // 只滚左栏自己（§98.5）：原生 scrollIntoView 会连藏在下面的聊天一起挪。
     // 不当场读布局（§41 ④）：等浏览器排完版再算，切分类时不再多一次整页强制布局。

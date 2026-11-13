@@ -62,6 +62,7 @@ export function JsonRenderSurface({
   const shell = useMemo(() => needsShell(spec), [spec]);
 
   // 每张界面一个状态仓库；表单输入写在这里，不会影响别的消息里的界面。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
   const store = useMemo(() => createStateStore({ ...(spec.state ?? {}) }), []);
   const settled = useRef(!streaming);
   useEffect(() => {

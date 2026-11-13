@@ -843,6 +843,7 @@ function SettleAtEnd({
   /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
   const releaseRef = useRef<(() => boolean) | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息等输入变化时重跑；ref 与 setter 不用列
   useLayoutEffect(() => {
     const s = state.current;
     s.hydrating = hydrating;
@@ -1004,6 +1005,7 @@ function SettleAtEnd({
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
   // 回来时在底部、底下有留白：第一帧之前就把留白放回去（§88.3）。没在恢复、也没在回答：不放（§93.3）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!memo?.atBottom || memo.spacer <= 0 || !element) return;
@@ -1011,6 +1013,7 @@ function SettleAtEnd({
     setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载时建立观察器；里面读的都是 ref，不随渲染变化
   useEffect(() => {
     const element = viewport.current;
     const content = element?.querySelector<HTMLElement>(

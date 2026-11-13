@@ -23,6 +23,7 @@ export function SidebarSearchField() {
   const input = useRef<HTMLInputElement>(null);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
   // 换了关键词，结果列表就换了：旧高亮作废。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: search 是触发条件，换关键词就要清高亮。
   useEffect(() => {
     clearSearchActive();
     setActiveId(undefined);

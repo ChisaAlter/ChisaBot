@@ -402,6 +402,7 @@ export function approvalDeadline(
 export function useApprovalCountdown(approval: Pick<DeviceApprovalView, "id" | "createdAt" | "expiresAt"> & { remainingMs?: number | null }) {
   const [deadline] = useState(() => approvalDeadline(approval));
   const [left, setLeft] = useState(() => Math.max(0, deadline - performance.now()));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在跨过 0 的边界重建 interval，不是每秒重设
   useEffect(() => {
     if (left <= 0) return;
     const timer = setInterval(() => {
@@ -504,6 +505,7 @@ export function DiffBlock({ diff }: { diff: string }) {
             line.startsWith("-") && !line.startsWith("---") && "is-del",
             line.startsWith("@@") && "is-hunk",
           )}
+          // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
           key={index}
         >
           {`${line}\n`}

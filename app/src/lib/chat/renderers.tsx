@@ -80,6 +80,7 @@ export function useRenderTool<S extends z.ZodType>(tool: {
 }) {
   const registry = useContext(Registry);
   const key = useMemo(() => Symbol(tool.name), [tool.name]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tool 的字段已逐项列出，对象本身身份不用算
   useEffect(
     () => registry?.register(key, tool as RegisteredToolRenderer),
     [registry, key, tool.name, tool.match, tool.agentId, tool.render],

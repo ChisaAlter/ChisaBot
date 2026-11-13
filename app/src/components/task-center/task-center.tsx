@@ -122,6 +122,7 @@ export function TaskCenter({
     decisionListOptions("resolved", view === "outbox"),
   );
   const navigation = useRef<HTMLElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切视图是有意的触发——回到列表顶
   useEffect(() => {
     navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
   }, [view]);

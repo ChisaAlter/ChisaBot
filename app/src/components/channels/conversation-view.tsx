@@ -456,6 +456,7 @@ export function ConversationView({
    *
    * AND IT REFUSES ONCE A DRAIN HAS FAILED, until a turn starts. See `heldBack`.
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: inFlight 起落与 sendBlocked/queued 都是放行条件的组成，每一个都要触发重估
   useEffect(() => {
     const started = inFlight && !wasInFlight.current;
     wasInFlight.current = inFlight;

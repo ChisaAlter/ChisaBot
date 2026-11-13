@@ -765,6 +765,7 @@ export function LinkCardStack({
         {shown.map((item, i) => (
           <LinkCard
             // 同一个网址可能出现两次（来源列表不一定去重），带上序号免得 key 撞。
+            // biome-ignore lint/suspicious/noArrayIndexKey: 同上——位置序是唯一能区分开重复 URL 的部分
             key={`${i}:${item.url}`}
             layer={isStack ? layers[i] : undefined}
             meta={item.meta}

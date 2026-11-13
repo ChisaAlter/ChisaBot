@@ -89,6 +89,7 @@ export function VirtualTranscriptRows({
   // 虚拟列表顶上到滚动内容顶上的距离（上面有 padding / 置顶提示）。只在挂上和上面变了时量。
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [startMargin, setStartMargin] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutKey 变了布局可能挪动，要重测顶部偏移
   useLayoutEffect(() => {
     const box = boxRef.current;
     const viewport = viewportRef.current;

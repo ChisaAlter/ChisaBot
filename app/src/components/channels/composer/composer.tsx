@@ -639,6 +639,7 @@ function ComposerImpl({
    * set on the editable element directly.
    */
   const coarsePointer = useCoarsePointer();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: compact 变了编辑区容器会重渲染，enterkeyhint 要重新写回
   useEffect(() => {
     const editor = containerRef.current?.querySelector("[contenteditable]");
     editor?.setAttribute("enterkeyhint", coarsePointer ? "enter" : "send");
@@ -1096,6 +1097,7 @@ function ComposerImpl({
    * sentence naming the file and the limit it hit. Anything this refuses never reaches the SDK, so
    * a refused file produces exactly one reason, in our words.
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftKey / uploadIdentity 等是有意的回调重建条件（上传身份换了筛文件的逻辑也换）
   const stageFiles = useCallback(
     async (picked: readonly File[]) => {
       // The last gate, and the only one `onImagePaste` passes: PromptArea decides on its own when

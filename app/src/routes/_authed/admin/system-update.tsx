@@ -855,6 +855,7 @@ function JobCard({
 function JobLog({ lines }: { lines: string[] }) {
   const [node, setNode] = useState<HTMLPreElement | null>(null);
   const last = lines[lines.length - 1];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (!node) return;
     const nearBottom =

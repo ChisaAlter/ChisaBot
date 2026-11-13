@@ -207,6 +207,7 @@ function ProfileForm({
       setPickError(e instanceof Error ? e.message : "图片无法读取");
     }
   }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 按 src 释放 blob URL；crop 的其他字段变化不需要重新释放
   useEffect(() => () => (crop ? URL.revokeObjectURL(crop.src) : undefined), [crop?.src]);
 
   const trimmed = name.trim();

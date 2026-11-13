@@ -300,6 +300,7 @@ function ConnectDialog({
             <DialogBody className="im-form mt-2">
               <ol className="list-decimal space-y-2 pl-4 text-sm">
                 {entry.pathway.map((line, index) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 步骤行是纯文本、可重复，顺序是身份
                   <li key={index} className="whitespace-pre-wrap">
                     {line}
                   </li>

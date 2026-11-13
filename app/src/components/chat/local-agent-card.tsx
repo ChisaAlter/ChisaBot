@@ -83,6 +83,7 @@ export function LocalAgentCard({
 function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -101,6 +102,7 @@ function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
         lines.map((line, index) => (
           <div
             className={cn("la-line", `is-${line.kind}`)}
+            // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
             key={`${line.at}-${index}`}
           >
             {line.kind === "tool" ? (

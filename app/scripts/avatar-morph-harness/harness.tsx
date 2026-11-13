@@ -51,6 +51,7 @@ function Sidebar({ children }: { children?: React.ReactNode }) {
       {children}
       {Array.from({ length: 24 }, (_, i) => (
         <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: 24 个固定槽位，位置本身就是身份
           key={i}
           style={{ display: "flex", alignItems: "center", gap: 10, height: 40 }}
         >

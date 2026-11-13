@@ -11,6 +11,7 @@ function Banner({ n }: { n: number }) {
   return (
     <>
       {Array.from({ length: n }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: n 个无身份槽位，序号就是身份
         <div key={i} ref={presenceRef("has-test-banner")} />
       ))}
     </>

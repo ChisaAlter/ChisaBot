@@ -89,6 +89,7 @@ export function Products({
           <div
             className="jr-product"
             data-testid="jr-product"
+            // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
             key={index}
             style={{ "--jr-i": String(index) } as CSSProperties}
           >
