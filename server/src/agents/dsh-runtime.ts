@@ -613,11 +613,8 @@ export class DshRuntimeAgent extends AbstractAgent {
           model: {
             primary,
             fallbacks,
-            // Tests may shrink this via CHISABOT_DSH_FIRST_OUTPUT_MS (QA511 P2 server path).
-            firstOutputMs: Math.max(
-              1,
-              Number(process.env.CHISABOT_DSH_FIRST_OUTPUT_MS) || 30_000,
-            ),
+            // Silence is not failure. The user decides when to stop waiting.
+            firstOutputMs: 0,
             contextWindow,
           },
           connection: {

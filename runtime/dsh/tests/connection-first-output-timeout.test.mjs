@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -9,10 +16,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { DshHostClient } from "../src/client.mjs";
 
 /**
- * QA511 P2: the production server path always binds with `connection`, which used to default
- * the provider request timeout to 90s — shorter than the single-model first-output deadline
- * (30s×4=120s). That path must end on the Chinese deadline copy, not "Request timed out."
- * after a same-model retry.
+ * Explicit caller deadlines remain supported. Ordinary chat no longer supplies one.
  */
 test("binding.connection: single silent model ends on the first-output deadline, not a request-timeout retry", {
   timeout: 60_000,
@@ -57,6 +61,8 @@ test("binding.connection: single silent model ends on the first-output deadline,
       host.kill();
       await exit;
     }
+    assert.equal(await realpath(home), home);
+    await rm(home, { recursive: true });
   });
   for (let n = 0; n < 1200 && !logs.includes("chisabot-runtime-ready"); n++) {
     if (host.exitCode !== null) throw new Error(logs);
@@ -83,7 +89,7 @@ test("binding.connection: single silent model ends on the first-output deadline,
       primary: { provider: "x", model: "slow_alone" },
       firstOutputMs,
     },
-    // No timeoutMs: exercises the default that must outlast firstOutputMs×4.
+    // No HTTP deadline: the explicitly requested first-output deadline wins.
     connection: {
       api: "openai-completions",
       baseURL,
@@ -157,6 +163,8 @@ test("binding.connection: an explicit short request timeout on the last model do
       host.kill();
       await exit;
     }
+    assert.equal(await realpath(home), home);
+    await rm(home, { recursive: true });
   });
   for (let n = 0; n < 1200 && !logs.includes("chisabot-runtime-ready"); n++) {
     if (host.exitCode !== null) throw new Error(logs);

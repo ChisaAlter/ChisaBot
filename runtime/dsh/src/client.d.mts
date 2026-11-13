@@ -33,11 +33,13 @@ export type DshBindingInput = {
     modelProxy?: boolean;
     target?: { provider: string; baseUrl: string };
     models: Record<string, unknown>[];
+    /** HTTP deadline; omitted or 0 waits until completion, failure, or user stop. */
     timeoutMs?: number;
   };
   model: {
     primary: DshModelChoice;
     fallbacks?: DshModelChoice[];
+    /** Optional caller deadline; omitted or 0 does not time out silent models. */
     firstOutputMs?: number;
     contextWindow?: number;
   };
