@@ -215,6 +215,7 @@ function ChatStage({ pathname }: { pathname: string }) {
   const address = switching ? deferredAddress : routeAddress;
   // 地址变了、新对话也换上了（它登记的机器人控件已经到位）才清掉左栏的「正在切过去」，
   // 不然延后渲染那一段旧对话的机器人会跟着又亮起来。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 是路由切换触发器；即使 switching 仍为 false，也要清掉新地址的待切换状态。
   useEffect(() => {
     if (!switching) clearPendingBot();
   }, [switching, pathname]);

@@ -280,7 +280,7 @@ describe("haze default lives in one constant", () => {
 });
 
 describe("CHANGELOG", () => {
-  test("this PR's entries sit in the Unreleased list without a blank line breaking it", () => {
+  test("glass entries stay adjacent in the Unreleased list, allowing newer entries above", () => {
     const log = readFileSync(
       path.join(import.meta.dir, "../../CHANGELOG.md"),
       "utf8",
@@ -290,7 +290,10 @@ describe("CHANGELOG", () => {
     const lines = section.split("\n");
     const mist = lines.findIndex((l) => l.includes("薄雾玻璃"));
     const liquid = lines.findIndex((l) => l.startsWith("- 液态玻璃"));
-    expect(mist).toBe(0);
-    expect(liquid).toBe(1);
+    expect(mist).toBeGreaterThanOrEqual(0);
+    expect(liquid).toBe(mist + 1);
+    expect(
+      lines.slice(0, liquid + 1).every((line) => line.startsWith("- ")),
+    ).toBe(true);
   });
 });

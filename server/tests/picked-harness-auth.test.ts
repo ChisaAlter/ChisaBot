@@ -22,7 +22,7 @@ async function runPicked(options: {
   installed: boolean;
   target?: "picked" | "bundled" | "customer";
   customerAuth?: boolean;
-  spelling?: "uppercase";
+  spelling?: "uppercase" | "ipv6";
   configuredQuery?: string;
   rowEndpoint?: (endpoint: string) => string;
   expectedManaged?: boolean;
@@ -37,7 +37,8 @@ async function runPicked(options: {
     status: number;
   }[] = [];
   const server = Bun.serve({
-    hostname: "127.0.0.1",
+    // Uppercase URLs use LOCALHOST: accept both ::1 and 127.0.0.1 resolutions.
+    hostname: "::",
     port: 0,
     async fetch(request) {
       const path = new URL(request.url).pathname;
@@ -83,13 +84,18 @@ async function runPicked(options: {
   const endpoint = (name: string) => {
     const value = new URL(
       `/${name}/ag-ui${options.configuredQuery ?? ""}`,
-      server.url,
+      `http://127.0.0.1:${server.port}`,
     ).toString();
     return options.spelling === "uppercase"
       ? value.replace("http://127.0.0.1", "HTTP://LOCALHOST")
-      : value;
+      : options.spelling === "ipv6"
+        ? value.replace("127.0.0.1", "[::1]")
+        : value;
   };
   let storedEndpoint = endpoint(options.target ?? "picked");
+  if (options.spelling === "uppercase") {
+    expect(storedEndpoint).toStartWith("HTTP://LOCALHOST:");
+  }
   if (options.packageProducer) {
     const publicEnvironment = {
       MANAGED_AGENT_AG_UI_URL: options.bundled ? endpoint("bundled") : "",
@@ -189,7 +195,8 @@ async function runPicked(options: {
       : rows;
   });
   let credentialReads = 0;
-  let failed = false;
+  const runErrors: { code?: string; message: string }[] = [];
+  let finished = 0;
   try {
     const app = createApp(
       config,
@@ -254,14 +261,22 @@ async function runPicked(options: {
     if (!agent)
       throw new Error("Expected picked harness from production loader");
     agent.threadId = "synthetic-auth-thread";
-    const quietFailure = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await agent.runAgent({ runId: "synthetic-auth-run" });
-    } catch {
-      failed = true;
-    } finally {
-      quietFailure.mockRestore();
-    }
+    await agent.runAgent(
+      { runId: "synthetic-auth-run" },
+      {
+        onRunErrorEvent({ event }) {
+          runErrors.push({ code: event.code, message: event.message });
+        },
+        onRunFinishedEvent() {
+          finished++;
+        },
+      },
+    );
+    // FailFastTransport emits RUN_ERROR instead of rejecting on connection failure.
+    // Keep its diagnostic visible rather than swallowing it before the request assertion.
+    expect(runErrors).toEqual([]);
+    expect(finished).toBe(1);
+    const failed = runErrors.length > 0;
     expect(sqlCalls).toBe(2);
     expect(refuseDatabase).not.toHaveBeenCalled();
     expect(requests).toHaveLength(1);
@@ -363,6 +378,20 @@ test.each(["picked", "bundled"] as const)(
       installed: true,
       target,
       spelling: "uppercase",
+    });
+    expect(result.requests.map((request) => request.status)).toEqual([200]);
+    expect(result.failed).toBe(false);
+  },
+);
+
+test.each(["picked", "bundled"] as const)(
+  "managed %s endpoints authenticate over IPv6 loopback",
+  async (target) => {
+    const result = await runPicked({
+      bundled: true,
+      installed: true,
+      target,
+      spelling: "ipv6",
     });
     expect(result.requests.map((request) => request.status)).toEqual([200]);
     expect(result.failed).toBe(false);

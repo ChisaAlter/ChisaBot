@@ -209,7 +209,10 @@ test("M3-11 接线：资料 / 历史对话 / 新话题 / 面板 收起抽屉；�
     "utf8",
   );
   const start = src.indexOf("function BotMenuContent(");
-  const menu = src.slice(start, src.indexOf("\n}\n", start));
+  // Biome may wrap JSX attributes; wiring must not depend on its line breaks.
+  const menu = src
+    .slice(start, src.indexOf("\n}\n", start))
+    .replace(/\s+/g, " ");
   expect(menu).toContain("const closeDrawer = useCloseMobileDrawer();");
   expect(menu).toContain(
     '<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />',
