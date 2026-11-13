@@ -28,7 +28,6 @@ import {
   withApprovalContext,
 } from "../src/approvals/types";
 import { HeadlessToolSuspension } from "../src/computer/headless-tools";
-import { createHostAccessBroker } from "../src/host-access/broker";
 import { createPrivateShareCheck } from "../src/proactive/private-share";
 
 const candidate = (
@@ -332,9 +331,12 @@ describe("auto-review", () => {
   test("an unreachable reviewer times out closed", async () => {
     const verdict = await reviewAction({
       model: (_prompt, signal) =>
-        new Promise((_, reject) =>
-          signal?.addEventListener("abort", () => reject(signal.reason)),
-        ),
+        new Promise((_, reject) => {
+          // 真实模型调用会一直握着 socket；这里也要给事件循环留一件活计，
+          // 否则 Bun 里仅剩的 AbortSignal.timeout 定时器不触发，测试挂死。
+          setTimeout(() => {}, 100);
+          signal?.addEventListener("abort", () => reject(signal.reason));
+        }),
       candidate: candidate(),
       request: "",
       timeoutMs: 20,
@@ -889,55 +891,4 @@ describe("a question that would reach somebody besides the owner checks private 
   });
 });
 
-describe("host commands", () => {
-  const grant = {
-    id: "grant-1",
-    botId: "bot",
-    actorId: "owner",
-    displayName: "Project",
-    revoked: false,
-  };
-  test("never is refused before anything reaches the computer", async () => {
-    const broker = createHostAccessBroker(Date.now, {
-      commandPolicy: async () => "never",
-    });
-    broker.rememberGrant(grant);
-    await expect(
-      broker.callHost({
-        kind: "run_command",
-        botId: "bot",
-        actorId: "owner",
-        grantId: "grant-1",
-        command: "ls",
-      }),
-    ).rejects.toThrow("set to never run");
-    expect(broker.nextDesktopOperation()).toBeNull();
-  });
 
-  test("the effective policy travels with the command to the native dialog", async () => {
-    const broker = createHostAccessBroker(Date.now, {
-      commandPolicy: async () => "allow",
-    });
-    broker.rememberGrant(grant);
-    const call = broker.callHost({
-      kind: "run_command",
-      botId: "bot",
-      actorId: "owner",
-      grantId: "grant-1",
-      command: "ls",
-    });
-    await Bun.sleep(0);
-    const lease = broker.nextDesktopOperation();
-    expect(lease?.operations[0]).toMatchObject({
-      kind: "run_command",
-      command: "ls",
-      commandPolicy: "allow",
-    });
-    broker.resolveDesktopOperation({
-      operationId: lease?.operations[0]?.operationId as string,
-      ok: true,
-      result: { stdout: "" },
-    });
-    await expect(call).resolves.toEqual({ stdout: "" });
-  });
-});

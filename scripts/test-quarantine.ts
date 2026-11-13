@@ -9,14 +9,6 @@
  * 名单不会悄悄烂掉。
  */
 export const SERVER_TEST_QUARANTINE: Record<string, string> = {
-  "server/tests/approvals-frontend.test.ts":
-    "Cannot find module '../../app/src/lib/chat/approval-context' — 模块在 a98a4889 删除，测试没跟上 (2026-11 measurement)",
-  "server/tests/approvals-policy.test.ts":
-    "Cannot find module '../src/host-access/broker' — 模块在 a98a4889 删除，测试没跟上 (2026-11 measurement)",
-  "server/tests/headless-components.test.ts":
-    "Cannot find module '../../app/src/components/gallery/activity' — 目标组件已删除 (2026-11 measurement)",
-  "server/tests/headless-components.integration.test.ts":
-    "Cannot find module '../../app/src/components/gallery/charts' — 目标组件已删除 (2026-11 measurement)",
   "server/tests/headless-tools.test.ts":
     "Expected promise that resolves / Received rejected (:196) — This conversation runner requires a lease adapter. (src/turns/run-turn.ts:497) (2026-11 measurement)",
   "server/tests/passwords-sign-in.test.ts":
