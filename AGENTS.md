@@ -29,6 +29,7 @@
 
 - **数据库测试**需要 `TEST_DATABASE_URL`（CI：`postgres://test:test@127.0.0.1:5432/chisabot_test`）。没有时 `*.integration.test.ts` 会直接报错，这是环境缺失，不是缺陷。
 - **Windows 本机**：`compose-network-drift`、`provider-oauth` 依赖 symlink（需开发者模式），`im-net-ssrf` 的 socket 关闭时序在 Windows 上不稳；以 Linux CI 为准。
+- **Bun 定时器陷阱**：测试里如果 `AbortSignal.timeout` 是进程里唯一挂着的定时器，它不会触发，测试会挂死（生产里总有 socket 撑着，不受影响）。假模型 / 假服务要模拟超时时，额外挂一个 `setTimeout`（见 `server/tests/approvals-policy.test.ts`）。
 - `bun run test` / `test:ci` 是全仓联合跑，单机 20 分钟以上，日常不要用。
 - CI 另有 Biome 增量门禁（`scripts/biome-new-issues.ts`）：改动文件的 error+warning 数不得增加。
 
