@@ -131,8 +131,8 @@
 - [x] `shell-fingerprint.js` 排除 `build.mac` / `build.dmg` / `build.mas`：加 mac 配置不改变 Windows 外壳指纹，现存 Windows 客户端不做无谓的「重新安装」。
 - [x] `release.yml` 新增 `pc-mac`（macos-latest，generic / custom matrix）；`pc-sign` 给 `latest-mac.yml` 同样签 `chisabotSig`；`check-release-assets.mjs` 校验 mac 清单 / 资产并把 mac 资产挡在「没有 latest-mac.yml」之外。
 - [x] darwin 更新单元测试（`test/update.check.js`）；本机构建 + 启动验证通过。
-- [ ] 实机验收：登录页 / 主窗口 / 菜单 / Dock / 托盘截图， dmg 安装与在线更新链路在真机验证。
-- [ ] 后续（不在本条目）：Apple Developer 签名 + notarize；「设备」页下载卡片列出 mac 资产。
+- [x] 实机验收（macOS arm64）：登录页 / 主窗口 / 应用菜单 / Dock / 托盘截图；dmg 装到 /Applications 启动正常；本地假更新源（自签证书 HTTPS + 测试 Ed25519 钥）端到端跑通 `latest-mac.yml` 验签 → 整包下载 → 「立即重启」触发 `quitAndInstall`；并实机确认 Squirrel 对 adhoc .app 永远拒装（requirement=cdhash）→ `updater.js` 按 `codesign -dv` 结果对未签名构建 `supported=false`。
+- [ ] 后续（不在本条目）：Apple Developer 签名 + notarize（**mac 在线更新的前提**——Squirrel.Mac 要求证书签名）；「设备」页下载卡片列出 mac 资产。
 
 ## CB-122
 

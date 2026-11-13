@@ -107,6 +107,29 @@ function defaultQuit() {
   } catch {}
 }
 
+/**
+ * macOS 只有带证书签名的 .app 才能吃在线更新：Squirrel.Mac 按运行中 app 的 designated
+ * requirement 校验新包——adhoc 签名的 requirement 是 cdhash 本身，换一个构建 hash 就变，
+ * ShipIt 永远拒装（实机验证：「code failed to satisfy specified code requirement(s)」）。
+ * `codesign -dv` 输出 Signature=adhoc ⇒ 不启用更新链，免得每次检查白下一遍整包再装不上。
+ */
+function defaultSpawnSync(cmd, args) {
+  try {
+    return require("node:child_process").spawnSync(cmd, args, { encoding: "utf8" });
+  } catch {
+    return null;
+  }
+}
+
+function hasStableMacSignature({ execPath, spawnSync = defaultSpawnSync }) {
+  const appRoot = path.join(path.dirname(execPath), "..", "..");
+  const res = spawnSync("codesign", ["-dv", "--verbose=2", appRoot]);
+  if (!res || res.error || res.status !== 0) return false;
+  const out = `${res.stdout || ""}\n${res.stderr || ""}`;
+  const sigLine = out.split(/\r?\n/).find((l) => l.startsWith("Signature="));
+  return Boolean(sigLine) && !/^Signature=adhoc\b/i.test(sigLine);
+}
+
 /** NSIS 安装版：安装目录里有卸载程序。免安装 zip 解压出来的没有。 */
 function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   const dir = path.dirname(execPath);
@@ -117,11 +140,13 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, spawnSync = defaultSpawnSync, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
   // Windows：只有 NSIS 安装版能更新（安装目录里有卸载程序）；开发运行、免安装 zip 不行。
-  // macOS：打包好的 .app 就能更新——Squirrel.Mac 每次更新都是整包替换，无所谓「安装版 / 免安装版」。
+  // macOS：打包好的 .app 还得带证书签名——adhoc 签名过不了 Squirrel 的 requirement 校验。
   const supported = Boolean(
-    isPackaged && autoUpdater && (platform === "darwin" || (platform === "win32" && isInstalledBuild({ execPath, productName }))),
+    isPackaged &&
+      autoUpdater &&
+      (platform === "win32" ? isInstalledBuild({ execPath, productName }) : platform === "darwin" ? hasStableMacSignature({ execPath, spawnSync }) : false),
   );
   const gateByClient = Boolean(String(clientHash || "").trim());
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
@@ -350,4 +375,4 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, schedule, stop, install, installOnQuit, settled: () => verifying };
 }
 
-module.exports = { createUpdater, cleanMessage, isInstalledBuild, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };
+module.exports = { createUpdater, cleanMessage, isInstalledBuild, hasStableMacSignature, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };

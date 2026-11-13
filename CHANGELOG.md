@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **PC 客户端新增 macOS 版**（CB-123）：Electron 外壳适配 macOS——应用菜单（⌘C/⌘V/⌘Q 生效）、Dock 图标点击召回主窗口、关闭窗口常驻；打包产出 dmg（arm64 + x64）与 Squirrel.Mac 更新 zip + `latest-mac.yml`，在线更新复用同一条验签 / 指纹链（整包替换 `.app`，「稍后」退出时由 Squirrel 完成安装）。CI `release.yml` 新增 `pc-mac` job，`latest-mac.yml` 随 `pc-sign` 一起签名；`check-release-assets` 同步校验 mac 资产。mac 打包配置不计入外壳指纹，现存 Windows 客户端不会因此被要求重新安装。dmg 目前无 Apple 代码签名，首次安装需 Gatekeeper 例外。Windows 安装包无变化。
+- **PC 客户端新增 macOS 版**（CB-123）：Electron 外壳适配 macOS——应用菜单（⌘C/⌘V/⌘Q 生效）、Dock 图标点击召回主窗口、关闭窗口常驻；打包产出 dmg（arm64 + x64）与 Squirrel.Mac 更新 zip + `latest-mac.yml`，在线更新复用同一条验签 / 指纹链（整包替换 `.app`，「稍后」退出时由 Squirrel 完成安装）。CI `release.yml` 新增 `pc-mac` job，`latest-mac.yml` 随 `pc-sign` 一起签名；`check-release-assets` 同步校验 mac 资产。mac 打包配置不计入外壳指纹，现存 Windows 客户端不会因此被要求重新安装。dmg 目前无 Apple 代码签名，首次安装需 Gatekeeper 例外；Squirrel.Mac 要求证书签名，未签名构建的在线更新自动停用，Apple 签名落地后即生效。Windows 安装包无变化。
 - UI 布局稳定性：附件拒绝详情限高滚动，长名称/路径/文件名可收缩断行；异步按钮和任务数量不再挤动周边布局。修复独立授权页/404背景遮挡、小节标题竖排、短窗口弹窗按钮越界、嵌套任务遮罩、机器人文件卡和常驻指令错误布局。账号弹窗跨宽窄屏保留未保存内容；任务中心继续原位弹出。更新前端即可，无需数据库迁移或原生壳升级。
 
 ## 0.1.147 — 2026-11-14

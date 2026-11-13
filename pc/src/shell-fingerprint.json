@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "hash": "7314f9105596bec5",
-  "clientHash": "f4838b025d6ab3d8",
+  "clientHash": "15e6542831a992ce",
   "inputs": {
     "build/icon.ico": "810490cc1a521e659a2d3ada6808de6456a5fd3b9e5cb79f1ebe3cbfdc003a2a",
     "build/installer.nsh": "6ffde3df308ff1d4ebd20b4b4df3c06157c7c60139345b697e4961b4d66dd921",

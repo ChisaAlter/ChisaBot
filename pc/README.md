@@ -24,7 +24,7 @@ npm run dist:mac                                              # → dist/ChisaBo
 
 mac 打包说明：`build/icon.icns` 由 `node scripts/mac-icon.mjs` 从 `assets/icon.png` 生成（圆角同 Android 图标），已入库；
 dmg 手动安装，`*-mac.zip` 是 Squirrel.Mac 更新包；`latest-mac.yml` 由 `shell-fingerprint.js --stamp` 加指纹。
-构建目前不做 Apple 代码签名（`build.mac.identity: null`），Release 装的 dmg 首次打开要走 Gatekeeper 例外（右键 → 打开）。
+构建目前不做 Apple 代码签名（`build.mac.identity: null`），Release 装的 dmg 首次打开要走 Gatekeeper 例外（右键 → 打开）；且 Squirrel.Mac 要求证书签名才能替换 .app，未签名构建的在线更新自动停用（`supported=false`），Apple 签名落地后即刻生效。
 
 构建期默认值在 `src/build-config.json`（仓库里为空 = 通用版：首次运行在本机登录页里填自己的服务器地址）。登录页 `src/ui/login.*`（Android 0.1.13 起是原生登录页，不再共用）。
 CI 从仓库变量 `CHISABOT_SERVER_URL`、`CHISABOT_UPDATE_FEED` 写入；自建打包可以手动改这个文件，或

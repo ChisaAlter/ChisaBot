@@ -64,6 +64,7 @@ function make(options = {}) {
     updateKeys: options.updateKeys,
     verifyDownload: options.verifyDownload,
     spawn: options.spawn,
+    spawnSync: options.spawnSync ?? (() => ({ status: 0, stdout: "", stderr: "Signature=Developer ID Application: ChisaBot (TESTTEAM)\n" })),
     quitApp: options.quitApp,
     getAutoUpdate: () => auto,
     onState: (s) => states.push(s),
@@ -212,6 +213,14 @@ test("macOS: any packaged .app updates; fullInstall still uses quitAndInstall (S
   assert.strictEqual(result.status, "downloaded");
   assert.strictEqual(updater.install(), true);
   assert.deepStrictEqual(autoUpdater.installs, [[true, true]], "quitAndInstall(true, true)");
+
+  // adhoc 签名过不了 Squirrel 的 requirement 校验（cdhash 随构建变化），不启用更新链
+  const adhoc = () => ({ status: 0, stdout: "", stderr: "Identifier=Electron\nSignature=adhoc\nTeamIdentifier=not set\n" });
+  assert.strictEqual(
+    make({ platform: "darwin", execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot", spawnSync: adhoc }).updater.supported,
+    false,
+    "adhoc 签名的 .app 不启用在线更新",
+  );
 
   // 外壳指纹变了在 mac 上照常整包替换，不走 runFullInstaller / spawn
   const spawns = [];
