@@ -218,7 +218,7 @@ test("logout_and_policy_revocation_refuse_old_bridge", async () => {
   ).toBe(403);
   expect((await f.req(f.a, "/authoring", "POST", {})).status).toBe(403);
 });
-test("trusted_http_rejects_actor_forgery_and_tools_only_make_drafts", async () => {
+test("trusted_http_rejects_actor_forgery_and_tools_save_to_rail", async () => {
   const f = fixture();
   expect(
     (await f.req(f.a, "/authoring", "POST", { actorId: f.bob })).status,
@@ -234,6 +234,10 @@ test("trusted_http_rejects_actor_forgery_and_tools_only_make_drafts", async () =
   const event = JSON.parse(
     await tools[0].execute({ expectedDraftRevision: 0, definition }),
   );
-  expect(event.status).toBe("ready");
-  expect((await (await f.req(f.a)).json()).result.items).toHaveLength(0);
+  // 9464e141 起面板工具直接保存进面板栏（可撤销），返回 saved + instanceId。
+  expect(event.status).toBe("saved");
+  const items = (await (await f.req(f.a)).json()).result.items;
+  expect(items.map((item: { id: string }) => item.id)).toEqual([
+    event.instanceId,
+  ]);
 });

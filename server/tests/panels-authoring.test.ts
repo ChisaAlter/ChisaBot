@@ -1,5 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/db/client";
+import { panelCapabilityGrants } from "../src/db/schema/panels";
 import { createPanelAuthoring } from "../src/panels/authoring";
 import { createPanelStore } from "../src/panels/store";
 import { testDatabaseUrl } from "./support/database";
@@ -38,7 +40,7 @@ function fixture() {
     },
   };
 }
-test("tools_cannot_publish_or_grant", async () => {
+test("tools_save_to_rail_but_never_grant", async () => {
   const f = fixture();
   const session = await f.service.beginPanelAuthoring(f.ctx);
   const tools = await f.service.tools(f.ctx, session.sessionId);
@@ -49,8 +51,17 @@ test("tools_cannot_publish_or_grant", async () => {
   const result = JSON.parse(
     await tools[0].execute({ definition, expectedDraftRevision: 0 }),
   );
-  expect(result.status).toBe("ready");
-  expect(await store.list(f.ctx)).toHaveLength(0);
+  // 9464e141 起工具直接把面板存进面板栏（可在卡片上撤销），不再停在草稿；
+  // 能力授予仍只能走面板实例的 grants 流程——这里不该出现任何 grant 行。
+  expect(result.status).toBe("saved");
+  const items = await store.list(f.ctx);
+  expect(items.map((item) => item.id)).toEqual([result.instanceId]);
+  expect(
+    await db
+      .select({ id: panelCapabilityGrants.instanceId })
+      .from(panelCapabilityGrants)
+      .where(eq(panelCapabilityGrants.instanceId, result.instanceId)),
+  ).toEqual([]);
 });
 test("late_result_keeps_original_bot_and_rechecks_permission", async () => {
   const f = fixture();
@@ -62,7 +73,11 @@ test("late_result_keeps_original_bot_and_rechecks_permission", async () => {
   const result = JSON.parse(
     await tools[0].execute({ definition, expectedDraftRevision: 0 }),
   );
-  expect((await store.getDraft(f.ctx, result.draftId)).botId).toBe(f.ctx.botId);
+  // 工具自动保存进面板栏，返回 saved + instanceId；实例必须绑在最开始的 Bot 上。
+  expect(result.status).toBe("saved");
+  expect((await store.getInstance(f.ctx, result.instanceId)).botId).toBe(
+    f.ctx.botId,
+  );
   f.revoke();
   await expect(
     tools[1].execute({ definition, expectedDraftRevision: 1 }),
@@ -72,39 +87,25 @@ test("stale_versions_keep_draft_and_previous_instance", async () => {
   const f = fixture();
   const session = await f.service.beginPanelAuthoring(f.ctx);
   const tools = await f.service.tools(f.ctx, session.sessionId);
-  const result = JSON.parse(
+  // 首个工具调用直接保存进面板栏（9464e141），返回 saved + instanceId。
+  const saved = JSON.parse(
     await tools[0].execute({ definition, expectedDraftRevision: 0 }),
   );
-  const saved = await f.service.commit(f.ctx, {
-    draftId: result.draftId,
-    expectedDraftRevision: 1,
-    mode: "first",
-    idempotencyKey: crypto.randomUUID(),
-    resetState: false,
-  });
   const edit = await f.service.beginPanelAuthoring(f.ctx, saved.instanceId);
   const editing = await f.service.tools(f.ctx, edit.sessionId);
+  // 会话建立后实例被别人改过：工具自动提交按 baseInstanceVersion 冲突退回，草稿留下。
+  await store.updateLayout(f.ctx, {
+    instanceId: saved.instanceId,
+    expectedVersion: 1,
+    title: "并发修改",
+  });
   const proposed = JSON.parse(
     await editing[0].execute({
       definition: { ...definition, name: "新版" },
       expectedDraftRevision: 0,
     }),
   );
-  await store.updateLayout(f.ctx, {
-    instanceId: saved.instanceId,
-    expectedVersion: 1,
-    title: "并发修改",
-  });
-  await expect(
-    f.service.commit(f.ctx, {
-      draftId: proposed.draftId,
-      expectedDraftRevision: 1,
-      baseInstanceVersion: 1,
-      mode: "instance",
-      idempotencyKey: crypto.randomUUID(),
-      resetState: false,
-    }),
-  ).rejects.toThrow("version");
+  expect(proposed.status).toBe("ready");
   expect((await store.getDraft(f.ctx, proposed.draftId)).status).toBe("ready");
   expect(
     (await store.getInstance(f.ctx, saved.instanceId)).definition.name,
