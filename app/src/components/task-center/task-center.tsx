@@ -102,6 +102,7 @@ export function TaskCenter({
   const snapshot = useQuery(taskCenterSnapshotOptions());
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const createTrigger = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const taskView = ["inbox", "active", "history"].includes(view);
@@ -172,7 +173,7 @@ export function TaskCenter({
       className="tc-page"
       description="把目标交给机器人，在这里掌握进展与关键决策。"
       action={
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button ref={createTrigger} onClick={() => setCreateOpen(true)}>
           <IconPlus />
           新建任务
         </Button>
@@ -448,6 +449,7 @@ export function TaskCenter({
         </div>
       ) : null}
       <CreateTask
+        finalFocus={createTrigger}
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={(id) => {

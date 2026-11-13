@@ -2,6 +2,29 @@
   gap: 0;
   padding-bottom: 48px;
 }
+.tc-dialog[data-slot="dialog-content"] {
+  padding: 0;
+}
+.tc-dialog .ph {
+  padding-right: 32px;
+}
+@media (max-width: 639px) {
+  .tc-dialog[data-slot="dialog-content"] {
+    border-radius: 0;
+    padding: var(--safe-t, 0px) var(--safe-r, 0px) var(--safe-b, 0px)
+      var(--safe-l, 0px);
+  }
+  .tc-dialog > [data-slot="dialog-close"] {
+    top: calc(0.75rem + var(--safe-t, 0px));
+    right: calc(0.75rem + var(--safe-r, 0px));
+  }
+  html[data-phone] .tc-dialog[data-slot="dialog-content"] {
+    max-width: 100%;
+    height: var(--app-h, 100dvh);
+    max-height: var(--app-h, 100dvh);
+    overflow: hidden;
+  }
+}
 .tc-page .ph {
   margin-bottom: 20px;
 }

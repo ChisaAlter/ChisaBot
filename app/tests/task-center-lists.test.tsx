@@ -22,6 +22,7 @@ import {
   TaskCenter,
   type TaskCenterView,
 } from "@/components/task-center/task-center";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { taskCenterApi } from "@/lib/task-center-api";
 import {
   TASK_STATUSES,
@@ -115,7 +116,9 @@ function mount(rail = false) {
   function Surface() {
     const [view, setView] = useState<TaskCenterView>("active");
     return rail ? (
-      <TasksRailCard />
+      <TaskCenterProvider>
+        <TasksRailCard />
+      </TaskCenterProvider>
     ) : (
       <TaskCenter view={view} onNavigate={setView} />
     );
@@ -132,7 +135,7 @@ function mount(rail = false) {
     routeTree: root.addChildren([route]),
     history: createMemoryHistory({ initialEntries: ["/tasks"] }),
   });
-  return render(<RouterProvider router={router} />);
+  return { ...render(<RouterProvider router={router} />), router };
 }
 function serve() {
   const paths: string[] = [];
@@ -198,22 +201,46 @@ test("task and approval lists load beyond the snapshot; search is sent to the se
   await waitFor(() => expect(ui.getByText("审批 64")).toBeTruthy());
   expect(ui.getByText("已显示 65 / 65 项")).toBeTruthy();
 });
-test("rail previews retain card structure and expose total-count links", async () => {
+test("rail totals open task center in place, switch tabs locally and close without navigating", async () => {
   serve();
   const ui = mount(true);
   await waitFor(() =>
-    expect(ui.getByRole("link", { name: "查看全部 65 项待确认" })).toBeTruthy(),
+    expect(
+      ui.getByRole("button", { name: "查看全部 65 项待确认" }),
+    ).toBeTruthy(),
   );
-  expect(
-    ui.getByRole("link", { name: "查看全部 65 项任务" }).getAttribute("href"),
-  ).toContain("view=active");
-  expect(
-    ui.getByRole("link", { name: "查看全部 65 项待确认" }).getAttribute("href"),
-  ).toContain("view=outbox");
   expect(ui.getByText("50 / 65 待确认")).toBeTruthy();
   expect(ui.getByText("50 / 65 项")).toBeTruthy();
   expect(ui.queryByText("当前没有待跟进的任务")).toBeNull();
-});
+  const rail = ui.getByTestId("tasks-rail-card");
+  const url = ui.router.state.location.href;
+  await act(async () =>
+    fireEvent.click(ui.getByRole("button", { name: "查看全部 65 项待确认" })),
+  );
+  const dialog = await ui.findByRole("dialog", { name: "任务中心" });
+  await waitFor(() => expect(dialog.textContent).toContain("需要你确认"));
+  await act(async () =>
+    fireEvent.click(ui.getByRole("button", { name: /进行中/ })),
+  );
+  await waitFor(() => expect(dialog.textContent).toContain("正在推进"));
+  expect(ui.router.state.location.href).toBe(url);
+  expect(ui.getByTestId("tasks-rail-card")).toBe(rail);
+  await act(async () =>
+    fireEvent.click(ui.getByRole("button", { name: /^关闭$/ })),
+  );
+  await waitFor(() =>
+    expect(ui.queryByRole("dialog", { name: "任务中心" })).toBeNull(),
+  );
+  expect(ui.getByTestId("tasks-rail-card")).toBe(rail);
+  await act(async () =>
+    fireEvent.click(ui.getByRole("button", { name: "查看全部 65 项任务" })),
+  );
+  await waitFor(() =>
+    expect(ui.getByRole("dialog", { name: "任务中心" }).textContent).toContain(
+      "正在推进",
+    ),
+  );
+}, 15000);
 test("manual scan rejects persisted failures and in-progress responses, and accepts actual success", async () => {
   for (const status of ["failed", "running", "succeeded"]) {
     globalThis.fetch = Object.assign(

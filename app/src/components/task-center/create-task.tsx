@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { type RefObject, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,15 +32,18 @@ export function CreateTask({
   open,
   onOpenChange,
   onCreated,
+  finalFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (id: string) => void;
+  finalFocus?: RefObject<HTMLElement | null>;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open ? (
         <CreateTaskForm
+          finalFocus={finalFocus}
           onCreated={onCreated}
           onClose={() => onOpenChange(false)}
         />
@@ -51,9 +54,11 @@ export function CreateTask({
 function CreateTaskForm({
   onCreated,
   onClose,
+  finalFocus,
 }: {
   onCreated: (id: string) => void;
   onClose: () => void;
+  finalFocus?: RefObject<HTMLElement | null>;
 }) {
   const agents = useQuery(agentListQueryOptions());
   const capabilities = useQuery(taskCenterCapabilityOptions());
@@ -89,7 +94,7 @@ function CreateTaskForm({
     onSuccess: onCreated,
   });
   return (
-    <DialogContent className="tc-create-dialog">
+    <DialogContent className="tc-create-dialog" finalFocus={finalFocus}>
       <DialogHeader>
         <DialogTitle>新建任务</DialogTitle>
         <DialogDescription>

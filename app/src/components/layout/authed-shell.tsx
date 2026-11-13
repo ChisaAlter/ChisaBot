@@ -12,6 +12,7 @@ import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import type { ShellScope } from "@/components/layout/glass-topbar";
 import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { lazyPart } from "@/components/ui/lazy-part";
 import { useLanding } from "@/lib/agents/landing";
 import { draftKeptTtl } from "@/lib/channels/draft-channel";
@@ -118,21 +119,23 @@ function ShellFrame({ pathname }: { pathname: string }) {
   }
   const sidebar = <ShellSidebar scope={scope} />;
   return (
-    <GlassShell
-      // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
-      right={<KeptPanelRail />}
-      rightHidden={scope !== "app" || pathname === "/tasks"}
-      scope={scope}
-      sidebar={sidebar}
-    >
-      {conversationMounted ? (
-        <ChatConversation>
+    <TaskCenterProvider>
+      <GlassShell
+        // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
+        right={<KeptPanelRail />}
+        rightHidden={scope !== "app"}
+        scope={scope}
+        sidebar={sidebar}
+      >
+        {conversationMounted ? (
+          <ChatConversation>
+            <ChatStage pathname={pathname} />
+          </ChatConversation>
+        ) : (
           <ChatStage pathname={pathname} />
-        </ChatConversation>
-      ) : (
-        <ChatStage pathname={pathname} />
-      )}
-    </GlassShell>
+        )}
+      </GlassShell>
+    </TaskCenterProvider>
   );
 }
 
@@ -236,8 +239,9 @@ function ChatStage({ pathname }: { pathname: string }) {
       address={address}
       switching={switching}
       idleVisible={(kept) =>
-        pathname === "/" &&
-        (landing.state === "loading" || landingChannel === kept.channelId)
+        pathname === "/tasks" ||
+        (pathname === "/" &&
+          (landing.state === "loading" || landingChannel === kept.channelId))
       }
       ttlMs={keptTtl}
       renderKept={(kept, { visible, epoch }) => (
