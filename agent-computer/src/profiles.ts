@@ -42,6 +42,11 @@ import { browserRuntimeFromEnv } from "./browser-runtime";
 import { egressFor, egressLabel } from "./egress";
 import { numberFromEnv, settleWithin, withDeadline } from "./env";
 import { chooseLivePage } from "./live-page";
+import { botIdsIn } from "./profile-listing";
+import {
+  type SessionCookieKeeper,
+  sessionCookieKeeper,
+} from "./session-cookies";
 import { whileNavigating } from "./start-page";
 import {
   findTab,
@@ -62,11 +67,6 @@ import {
   within,
   writeSavedTabs,
 } from "./tabs";
-import { botIdsIn } from "./profile-listing";
-import {
-  type SessionCookieKeeper,
-  sessionCookieKeeper,
-} from "./session-cookies";
 
 // Re-exported so callers that already import it from here do not change, while the test imports it
 // from the playwright-free `./env` instead of pulling this module's browser driver in with it.
@@ -479,9 +479,11 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     );
   };
 
-
   /** 恢复保存的标签：第一页用启动时那张空白页，其余新开；最后切到上次的当前标签。 */
-  async function restoreTabs(record: LiveBrowser, saved: SavedTabs): Promise<void> {
+  async function restoreTabs(
+    record: LiveBrowser,
+    saved: SavedTabs,
+  ): Promise<void> {
     const go = (target: Page, url: string) =>
       void whileNavigating(target, () =>
         target.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }),
@@ -553,17 +555,27 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     icons.set(href, null);
     void (async () => {
       try {
-        const response = await page.context().request.get(href as string, { timeout: 4_000, maxRedirects: 3 });
+        const response = await page
+          .context()
+          .request.get(href as string, { timeout: 4_000, maxRedirects: 3 });
         if (!response.ok()) return;
         const body = await response.body();
         if (body.length === 0 || body.length > 64 * 1024) return;
-        const type = (response.headers()["content-type"] ?? "").split(";")[0]?.trim() ?? "";
-        const mime = /^image\/(png|x-icon|vnd\.microsoft\.icon|svg\+xml|gif|jpeg|webp)$/.test(type)
-          ? type
-          : body[0] === 0x89
-            ? "image/png"
-            : "image/x-icon";
-        icons.set(href as string, `data:${mime};base64,${body.toString("base64")}`);
+        const type =
+          (response.headers()["content-type"] ?? "").split(";")[0]?.trim() ??
+          "";
+        const mime =
+          /^image\/(png|x-icon|vnd\.microsoft\.icon|svg\+xml|gif|jpeg|webp)$/.test(
+            type,
+          )
+            ? type
+            : body[0] === 0x89
+              ? "image/png"
+              : "image/x-icon";
+        icons.set(
+          href as string,
+          `data:${mime};base64,${body.toString("base64")}`,
+        );
       } catch {
         // 拿不到就画首字母。
       }
@@ -627,7 +639,10 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           // Bounded: a browser that went away can leave a cookie read or a close that never answers,
           // and this sits inside `starting`, which every caller for this Bot is waiting on.
           live.delete(botId);
-          await settleWithin(existing.sessionCookies?.stop(), TEARDOWN_BUDGET_MS);
+          await settleWithin(
+            existing.sessionCookies?.stop(),
+            TEARDOWN_BUDGET_MS,
+          );
           await settleWithin(existing.context.close(), TEARDOWN_BUDGET_MS);
         }
 
@@ -714,7 +729,11 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
             if (live.get(botId) !== record) return;
             const pages = openTabs(context.pages());
             const saved = savedTabsFrom(
-              pages.map((p) => ({ url: p.url(), title: "", active: p === record.page })),
+              pages.map((p) => ({
+                url: p.url(),
+                title: "",
+                active: p === record.page,
+              })),
             );
             void writeSavedTabs(dir, saved).catch(() => undefined);
           }, 800);
@@ -727,7 +746,9 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         watchPage(page);
         record.retarget = () => {
           const pinned =
-            record.pinned && !record.pinned.isClosed() ? record.pinned : undefined;
+            record.pinned && !record.pinned.isClosed()
+              ? record.pinned
+              : undefined;
           if (!pinned) record.pinned = undefined;
           const next = pinned ?? chooseLivePage(context.pages());
           if (!next || next === record.page) return;
@@ -814,9 +835,14 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       const running = live.get(botId);
       if (!running) return;
       live.delete(botId);
-      console.info(JSON.stringify({ type: "computer-browser-closed", botId, reason }));
+      console.info(
+        JSON.stringify({ type: "computer-browser-closed", botId, reason }),
+      );
       void (async () => {
-        await settleWithin(Promise.resolve(onClosed(botId)), ANNOUNCE_BUDGET_MS);
+        await settleWithin(
+          Promise.resolve(onClosed(botId)),
+          ANNOUNCE_BUDGET_MS,
+        );
         await keepSessionCookies(running);
         await closeAndWait(running.context);
       })().catch(() => undefined);
@@ -925,7 +951,9 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     async tabs(botId: string): Promise<TabsView> {
       const record = live.get(botId);
       if (!record?.context.browser()?.isConnected()) {
-        const saved = LOCAL_CHROME ? null : await readSavedTabs(directoryFor(botId));
+        const saved = LOCAL_CHROME
+          ? null
+          : await readSavedTabs(directoryFor(botId));
         return {
           running: false,
           max: MAX_TABS,
@@ -940,7 +968,9 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       }
       record.retarget();
       const pages = openTabs(record.context.pages());
-      const tabs = await Promise.all(pages.map((p) => describeTab(p, p === record.page)));
+      const tabs = await Promise.all(
+        pages.map((p) => describeTab(p, p === record.page)),
+      );
       return {
         running: true,
         max: MAX_TABS,
@@ -1003,7 +1033,8 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       record.retarget();
       record.usedAt = Date.now();
       record.tabsChanged();
-      if (!record.page.isClosed()) await record.page.bringToFront().catch(() => undefined);
+      if (!record.page.isClosed())
+        await record.page.bringToFront().catch(() => undefined);
       return record.page;
     },
   };

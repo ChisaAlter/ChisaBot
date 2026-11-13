@@ -360,15 +360,13 @@ async function chat(page, vtag, bot) {
     liveGapFlags: liveGap.length,
   });
   if (liveGap.length)
-    results.pages
-      .at(-1)
-      .flags.push({
-        kind: "GAP",
-        d: "干活卡（进行中）",
-        why: `进行中有 ${liveGap.length} 次采样间距 < 6px（最小 上 ${worstAbove} / 下 ${worstBelow}）`,
-      });
-    results.pages.at(-1).counts.GAP =
-      (results.pages.at(-1).counts.GAP || 0) + liveGap.length;
+    results.pages.at(-1).flags.push({
+      kind: "GAP",
+      d: "干活卡（进行中）",
+      why: `进行中有 ${liveGap.length} 次采样间距 < 6px（最小 上 ${worstAbove} / 下 ${worstBelow}）`,
+    });
+  results.pages.at(-1).counts.GAP =
+    (results.pages.at(-1).counts.GAP || 0) + liveGap.length;
   // 展开步骤
   const done = page
     .locator(

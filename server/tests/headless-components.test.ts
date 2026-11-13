@@ -10,7 +10,6 @@ import type {
   ComponentStore,
 } from "../src/components/store";
 
-
 function fakeStore(decision: ComponentDecision): ComponentStore {
   return {
     listForAgent: async () =>

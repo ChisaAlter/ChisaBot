@@ -97,7 +97,10 @@ import {
   ConversationProvider,
   replyAfterToolCall,
 } from "@/lib/conversations/conversation";
-import { frontendToolProgressAt, reportFrontendResultsFinished } from "@/lib/conversations/frontend-tool-activity";
+import {
+  frontendToolProgressAt,
+  reportFrontendResultsFinished,
+} from "@/lib/conversations/frontend-tool-activity";
 import {
   hideHeldSupplements,
   useStopRequest,

@@ -156,10 +156,7 @@ export type ImService = ReturnType<typeof createImService>;
 export function imConnectionOf(
   initiator: { kind: string; id?: string } | undefined | null,
 ): string | null {
-  if (
-    initiator?.kind !== "routine" ||
-    typeof initiator.id !== "string"
-  )
+  if (initiator?.kind !== "routine" || typeof initiator.id !== "string")
     return null;
   return initiator.id.startsWith(IM_INITIATOR_PREFIX)
     ? initiator.id.slice(IM_INITIATOR_PREFIX.length)

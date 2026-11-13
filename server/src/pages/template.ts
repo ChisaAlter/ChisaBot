@@ -111,29 +111,53 @@ export const PAGE_TEMPLATE_GUIDE = [
 ].join("");
 
 const escapeHtml = (text: string) =>
-  text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  text.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
+  );
 
 /** 是不是一整份文档（这种就不套外壳）。 */
 export function isFullDocument(html: string) {
-  return /^\s*(?:<!--[\s\S]*?-->\s*)*(?:<!doctype\s+html|<html[\s>])/i.test(html);
+  return /^\s*(?:<!--[\s\S]*?-->\s*)*(?:<!doctype\s+html|<html[\s>])/i.test(
+    html,
+  );
 }
 
 /** 正文里没有 .page 外层时自动包一层，免得内容贴着屏幕边。 */
 function wrapBody(html: string) {
-  return /class\s*=\s*["'][^"']*\bpage\b/.test(html) ? html : `<main class="page">\n${html}\n</main>`;
+  return /class\s*=\s*["'][^"']*\bpage\b/.test(html)
+    ? html
+    : `<main class="page">\n${html}\n</main>`;
 }
 
-export function composePage(input: { title: string; description?: string | null; html: string; css?: string | null; footer?: boolean }) {
+export function composePage(input: {
+  title: string;
+  description?: string | null;
+  html: string;
+  css?: string | null;
+  footer?: boolean;
+}) {
   const title = escapeHtml(input.title);
   const description = input.description ? escapeHtml(input.description) : "";
-  const extraCss = input.css?.trim() ? `\n<style>\n${input.css.replace(/<\/style/gi, "<\\/style")}\n</style>` : "";
+  const extraCss = input.css?.trim()
+    ? `\n<style>\n${input.css.replace(/<\/style/gi, "<\\/style")}\n</style>`
+    : "";
   if (isFullDocument(input.html)) {
     // 完整文档原样发，只在 <head> 里补上 viewport / 额外样式（没有 head 就不动）。
     let html = input.html;
-    if (extraCss) html = /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${extraCss}\n</head>`) : html + extraCss;
+    if (extraCss)
+      html = /<\/head>/i.test(html)
+        ? html.replace(/<\/head>/i, `${extraCss}\n</head>`)
+        : html + extraCss;
     return html;
   }
-  const foot = input.footer === false ? "" : `\n<footer class="page-foot">用 ChisaBot 制作</footer>`;
+  const foot =
+    input.footer === false
+      ? ""
+      : `\n<footer class="page-foot">用 ChisaBot 制作</footer>`;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>

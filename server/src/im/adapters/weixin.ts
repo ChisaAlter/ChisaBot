@@ -1,5 +1,11 @@
 import { errorText, readJson } from "../text";
-import type { AdapterContext, FetchLike, ImInbound, ImReply, TestResult } from "../types";
+import type {
+  AdapterContext,
+  FetchLike,
+  ImInbound,
+  ImReply,
+  TestResult,
+} from "../types";
 import { LoopAdapter, randomId } from "./base";
 
 /**
@@ -38,10 +44,14 @@ function headers(token: string) {
   };
 }
 
-export async function weixinFetchQr(fetcher: FetchLike, base: string): Promise<{ qrcode: string; url: string }> {
+export async function weixinFetchQr(
+  fetcher: FetchLike,
+  base: string,
+): Promise<{ qrcode: string; url: string }> {
   const response = await fetcher(`${base}/ilink/bot/get_bot_qrcode?bot_type=3`);
   const body = await readJson(response, "获取微信授权二维码");
-  if (!body.qrcode || !body.qrcode_img_content) throw new Error("微信没有返回二维码");
+  if (!body.qrcode || !body.qrcode_img_content)
+    throw new Error("微信没有返回二维码");
   return { qrcode: String(body.qrcode), url: String(body.qrcode_img_content) };
 }
 
@@ -50,12 +60,21 @@ export async function weixinQrStatus(
   base: string,
   qrcode: string,
   timeoutMs = 25_000,
-): Promise<{ status: string; token?: string; baseUrl?: string; botId?: string; userId?: string }> {
+): Promise<{
+  status: string;
+  token?: string;
+  baseUrl?: string;
+  botId?: string;
+  userId?: string;
+}> {
   try {
-    const response = await fetcher(`${base}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`, {
-      headers: { "iLink-App-ClientVersion": "1" },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    const response = await fetcher(
+      `${base}/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
+      {
+        headers: { "iLink-App-ClientVersion": "1" },
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
     const body = await readJson(response, "查询微信扫码状态");
     return {
       status: String(body.status ?? "wait"),
@@ -65,7 +84,11 @@ export async function weixinQrStatus(
       userId: body.ilink_user_id ? String(body.ilink_user_id) : undefined,
     };
   } catch (error) {
-    if ((error as Error)?.name === "TimeoutError" || (error as Error)?.name === "AbortError") return { status: "wait" };
+    if (
+      (error as Error)?.name === "TimeoutError" ||
+      (error as Error)?.name === "AbortError"
+    )
+      return { status: "wait" };
     throw error;
   }
 }
@@ -82,7 +105,9 @@ export function parseWeixinMessage(msg: any): ImInbound | null {
   for (const item of msg.item_list ?? []) {
     if (item.type === 1 && item.text_item?.text) {
       const quoted = item.ref_msg?.message_item?.text_item?.text;
-      text += quoted ? `「${quoted}」\n${item.text_item.text}` : item.text_item.text;
+      text += quoted
+        ? `「${quoted}」\n${item.text_item.text}`
+        : item.text_item.text;
     } else if (item.type === 2) attachments.push({ kind: "image" });
     else if (item.type === 3) {
       if (item.voice_item?.text) text += item.voice_item.text;
@@ -129,18 +154,28 @@ export class WeixinAdapter extends LoopAdapter {
     return super.retryDelay(attempt);
   }
 
-  private async post(endpoint: string, payload: Record<string, unknown>, timeoutMs = 15_000) {
+  private async post(
+    endpoint: string,
+    payload: Record<string, unknown>,
+    timeoutMs = 15_000,
+  ) {
     if (this.stopped) throw new Error("连接已停止");
     const controller = new AbortController();
     this.requests.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await this.ctx.fetch(`${weixinBase(this.ctx.config)}/${endpoint}`, {
-        method: "POST",
-        headers: headers(this.token),
-        body: JSON.stringify({ ...payload, base_info: { channel_version: "1.0.0" } }),
-        signal: controller.signal,
-      });
+      const response = await this.ctx.fetch(
+        `${weixinBase(this.ctx.config)}/${endpoint}`,
+        {
+          method: "POST",
+          headers: headers(this.token),
+          body: JSON.stringify({
+            ...payload,
+            base_info: { channel_version: "1.0.0" },
+          }),
+          signal: controller.signal,
+        },
+      );
       return await readJson(response, `微信 ${endpoint}`);
     } finally {
       clearTimeout(timer);
@@ -159,7 +194,11 @@ export class WeixinAdapter extends LoopAdapter {
       // biome-ignore lint/suspicious/noExplicitAny: ilink 接口回包 JSON 形状按协议字段取用
       let body: any;
       try {
-        body = await this.post("ilink/bot/getupdates", { get_updates_buf: this.cursor }, 45_000);
+        body = await this.post(
+          "ilink/bot/getupdates",
+          { get_updates_buf: this.cursor },
+          45_000,
+        );
       } catch (error) {
         if (this.stopped) return;
         if ((error as Error)?.name === "AbortError") continue;
@@ -171,13 +210,21 @@ export class WeixinAdapter extends LoopAdapter {
         this.expired = true;
         throw new Error("微信授权已过期，请在连接里重新「扫码授权」");
       }
-      if (code && code !== 0) throw new Error(`微信 getupdates 出错：${code} ${body.errmsg ?? ""}`.trim());
+      if (code && code !== 0)
+        throw new Error(
+          `微信 getupdates 出错：${code} ${body.errmsg ?? ""}`.trim(),
+        );
       if (first) {
-        this.markConnected(this.ctx.config.accountId ? `微信 ${this.ctx.config.accountId}` : "个人微信");
+        this.markConnected(
+          this.ctx.config.accountId
+            ? `微信 ${this.ctx.config.accountId}`
+            : "个人微信",
+        );
         this.ctx.log("info", "已连上微信 ClawBot 接口");
         first = false;
       }
-      if (typeof body.get_updates_buf === "string" && body.get_updates_buf) this.cursor = body.get_updates_buf;
+      if (typeof body.get_updates_buf === "string" && body.get_updates_buf)
+        this.cursor = body.get_updates_buf;
       for (const msg of body.msgs ?? []) {
         const inbound = parseWeixinMessage(msg);
         if (inbound) this.emit(inbound);
@@ -187,14 +234,31 @@ export class WeixinAdapter extends LoopAdapter {
 
   async typing(inbound: ImInbound) {
     try {
-      const contextToken = String((inbound.reply as { contextToken?: string }).contextToken ?? "");
-      const config = await this.post("ilink/bot/getconfig", { ilink_user_id: inbound.userId, context_token: contextToken || null }, 8000);
-      if (config.typing_ticket) await this.post("ilink/bot/sendtyping", { ilink_user_id: inbound.userId, typing_ticket: config.typing_ticket, status: 1 }, 8000);
+      const contextToken = String(
+        (inbound.reply as { contextToken?: string }).contextToken ?? "",
+      );
+      const config = await this.post(
+        "ilink/bot/getconfig",
+        { ilink_user_id: inbound.userId, context_token: contextToken || null },
+        8000,
+      );
+      if (config.typing_ticket)
+        await this.post(
+          "ilink/bot/sendtyping",
+          {
+            ilink_user_id: inbound.userId,
+            typing_ticket: config.typing_ticket,
+            status: 1,
+          },
+          8000,
+        );
     } catch {}
   }
 
   async send(reply: ImReply): Promise<undefined> {
-    const contextToken = String((reply.inbound.reply as { contextToken?: string }).contextToken ?? "");
+    const contextToken = String(
+      (reply.inbound.reply as { contextToken?: string }).contextToken ?? "",
+    );
     for (const chunk of reply.chunks) {
       const body = await this.post("ilink/bot/sendmessage", {
         msg: {
@@ -208,23 +272,39 @@ export class WeixinAdapter extends LoopAdapter {
         },
       });
       const code = body.errcode ?? body.ret;
-      if (code && code !== 0) throw new Error(`微信发送失败：${code} ${body.errmsg ?? ""}`.trim());
+      if (code && code !== 0)
+        throw new Error(`微信发送失败：${code} ${body.errmsg ?? ""}`.trim());
     }
   }
 }
 
-export async function testWeixin(ctx: AdapterContext, running?: WeixinAdapter): Promise<TestResult> {
-  if (!(ctx.secrets.token ?? "").trim()) return { ok: false, detail: "还没有扫码授权" };
-  if (running) return { ok: true, detail: "已授权，正在收消息（测试不另开轮询，免得抢消息）" };
+export async function testWeixin(
+  ctx: AdapterContext,
+  running?: WeixinAdapter,
+): Promise<TestResult> {
+  if (!(ctx.secrets.token ?? "").trim())
+    return { ok: false, detail: "还没有扫码授权" };
+  if (running)
+    return {
+      ok: true,
+      detail: "已授权，正在收消息（测试不另开轮询，免得抢消息）",
+    };
   try {
-    const response = await ctx.fetch(`${weixinBase(ctx.config)}/ilink/bot/getconfig`, {
-      method: "POST",
-      headers: headers(ctx.secrets.token ?? ""),
-      body: JSON.stringify({ ilink_user_id: "", base_info: { channel_version: "1.0.0" } }),
-    });
+    const response = await ctx.fetch(
+      `${weixinBase(ctx.config)}/ilink/bot/getconfig`,
+      {
+        method: "POST",
+        headers: headers(ctx.secrets.token ?? ""),
+        body: JSON.stringify({
+          ilink_user_id: "",
+          base_info: { channel_version: "1.0.0" },
+        }),
+      },
+    );
     const body = await readJson(response, "微信 getconfig");
     const code = body.errcode ?? body.ret;
-    if (code === SESSION_EXPIRED) return { ok: false, detail: "授权已过期，请重新扫码" };
+    if (code === SESSION_EXPIRED)
+      return { ok: false, detail: "授权已过期，请重新扫码" };
     return { ok: true, detail: "授权有效" };
   } catch (error) {
     return { ok: false, detail: errorText(error) };

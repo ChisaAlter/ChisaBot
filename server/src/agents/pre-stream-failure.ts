@@ -1,4 +1,9 @@
-import { AbstractAgent, type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/client";
+import {
+  AbstractAgent,
+  type BaseEvent,
+  EventType,
+  type RunAgentInput,
+} from "@ag-ui/client";
 // RUN_ERROR 可以是第一个事件（@ag-ui/client 的 verify 允许），所以不补一个假的 RUN_STARTED。
 import { Observable } from "rxjs";
 
@@ -22,8 +27,15 @@ function describe(error: unknown): { text: string; code?: string } {
     const code = (error as { code?: unknown }).code;
     const cause = (error as { cause?: unknown }).cause;
     const causeCode =
-      cause && typeof cause === "object" ? (cause as { code?: unknown }).code : undefined;
-    const resolved = typeof code === "string" ? code : typeof causeCode === "string" ? causeCode : undefined;
+      cause && typeof cause === "object"
+        ? (cause as { code?: unknown }).code
+        : undefined;
+    const resolved =
+      typeof code === "string"
+        ? code
+        : typeof causeCode === "string"
+          ? causeCode
+          : undefined;
     return { text: error.message, ...(resolved ? { code: resolved } : {}) };
   }
   return { text: String(error) };
@@ -56,7 +68,9 @@ export function preStreamFailureMessage(error: unknown): string {
  */
 export const DEFAULT_AGENT_CONNECT_TIMEOUT_MS = 20_000;
 
-export function agentConnectTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+export function agentConnectTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
   const raw = env.CHISABOT_AGENT_CONNECT_TIMEOUT_MS?.trim();
   if (!raw) return DEFAULT_AGENT_CONNECT_TIMEOUT_MS;
   const value = Number(raw);
@@ -72,7 +86,9 @@ export class FailFastTransport extends AbstractAgent {
   ) {
     super({
       ...(inner.agentId !== undefined ? { agentId: inner.agentId } : {}),
-      ...(inner.description !== undefined ? { description: inner.description } : {}),
+      ...(inner.description !== undefined
+        ? { description: inner.description }
+        : {}),
     });
   }
 
@@ -91,11 +107,19 @@ export class FailFastTransport extends AbstractAgent {
         const message = preStreamFailureMessage(error);
         console.error({
           error: "agent_runtime_pre_stream_failure",
-          context: { agentId: this.inner.agentId, threadId: input.threadId, runId: input.runId },
+          context: {
+            agentId: this.inner.agentId,
+            threadId: input.threadId,
+            runId: input.runId,
+          },
           message,
           timestamp: new Date().toISOString(),
         });
-        subscriber.next({ type: EventType.RUN_ERROR, code: AGENT_RUNTIME_UNREACHABLE, message } as BaseEvent);
+        subscriber.next({
+          type: EventType.RUN_ERROR,
+          code: AGENT_RUNTIME_UNREACHABLE,
+          message,
+        } as BaseEvent);
         subscriber.complete();
       };
       const subscription = this.inner.run(input).subscribe({
@@ -131,7 +155,9 @@ export class FailFastTransport extends AbstractAgent {
           } catch {
             // 取消失败不影响把这一轮标成失败。
           }
-          const timeout = new Error(`ETIMEDOUT: no response within ${this.connectTimeoutMs}ms`);
+          const timeout = new Error(
+            `ETIMEDOUT: no response within ${this.connectTimeoutMs}ms`,
+          );
           (timeout as { code?: string }).code = "ETIMEDOUT";
           failBeforeStream(timeout);
         }, this.connectTimeoutMs);

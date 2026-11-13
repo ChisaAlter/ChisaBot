@@ -49,8 +49,13 @@ function rawCallsIn(source: string): string[] {
 test("app/src 里不许有裸 fetch / XMLHttpRequest（一律走 lib/client.ts）", () => {
   const root = path.join(import.meta.dir, "../src");
   const offenders = files(root)
-    .map((file) => ({ rel: path.relative(root, file).replaceAll("\\", "/"), source: readFileSync(file, "utf8") }))
-    .filter(({ rel, source }) => !(rel in ALLOWED) && rawCallsIn(source).length > 0)
+    .map((file) => ({
+      rel: path.relative(root, file).replaceAll("\\", "/"),
+      source: readFileSync(file, "utf8"),
+    }))
+    .filter(
+      ({ rel, source }) => !(rel in ALLOWED) && rawCallsIn(source).length > 0,
+    )
     .map(({ rel, source }) => `${rel}（${rawCallsIn(source).join("、")}）`);
   expect(offenders).toEqual([]);
 });

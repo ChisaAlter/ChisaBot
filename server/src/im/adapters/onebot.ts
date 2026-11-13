@@ -257,7 +257,7 @@ export class OneBotAdapter extends LoopAdapter {
     action: string,
     params: Record<string, unknown>,
     timeoutMs = 15_000,
-  // biome-ignore lint/suspicious/noExplicitAny: 应答 data 形状随 action 变化，调用方按协议取用
+    // biome-ignore lint/suspicious/noExplicitAny: 应答 data 形状随 action 变化，调用方按协议取用
   ): Promise<any> {
     const echo = randomId();
     return new Promise((resolve, reject) => {

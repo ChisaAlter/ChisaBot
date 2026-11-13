@@ -368,7 +368,7 @@ export function createApp(
      */
     extraRoutes?: (deps: {
       requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
-    // biome-ignore lint/suspicious/noExplicitAny: 各路由组 Env 不一致（有的挂了 AppVariables），any 是协变逃生口
+      // biome-ignore lint/suspicious/noExplicitAny: 各路由组 Env 不一致（有的挂了 AppVariables），any 是协变逃生口
     }) => Array<[path: string, routes: Hono<any>]>;
     /**
      * 多账号（CB-040）：单用户部署前面有登录网关时，用网关签名的身份认人（auth/gateway-identity.ts）。

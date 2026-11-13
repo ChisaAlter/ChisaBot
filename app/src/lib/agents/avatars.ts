@@ -1,4 +1,5 @@
-import { queryOptions, type QueryClient } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { client, tryClient } from "@/lib/client";
 import {
   AVATAR_COLORS,
   AVATAR_SHAPES,
@@ -10,7 +11,6 @@ import {
   SHAPE_COLORS,
   type ShapeColor,
 } from "../../../../shared/bot-avatars";
-import { client, tryClient } from "@/lib/client";
 
 export type { AvatarColor, AvatarShape, BotAvatar, ShapeColor };
 export { AVATAR_COLORS, AVATAR_SHAPES, SHAPE_COLORS };
@@ -30,7 +30,9 @@ export function botAvatarsQueryOptions() {
       const response = await tryClient("/api/bot-avatars");
       if (response.status === 404) return {};
       if (!response.ok) throw new Error("无法加载头像");
-      const body = (await response.json()) as { avatars?: Record<string, BotAvatar> };
+      const body = (await response.json()) as {
+        avatars?: Record<string, BotAvatar>;
+      };
       return body.avatars ?? {};
     },
     staleTime: 5 * 60_000,
@@ -52,15 +54,22 @@ export type AvatarDraft =
   | { kind: "image"; blob: Blob; previewUrl: string };
 
 /** 把表单里的头像改动写到服务器；keep 什么都不做。 */
-export async function saveAvatarDraft(queryClient: QueryClient, agentId: string, draft: AvatarDraft): Promise<void> {
+export async function saveAvatarDraft(
+  queryClient: QueryClient,
+  agentId: string,
+  draft: AvatarDraft,
+): Promise<void> {
   const path = `/api/bot-avatars/${encodeURIComponent(agentId)}`;
   const fallback = "头像没能保存";
   if (draft.kind === "keep") return;
-  if (draft.kind === "default") await client(path, { method: "DELETE", fallback });
+  if (draft.kind === "default")
+    await client(path, { method: "DELETE", fallback });
   else if (draft.kind === "image") {
     await client(`${path}/image`, {
       method: "PUT",
-      headers: { "content-type": draft.blob.type || "application/octet-stream" },
+      headers: {
+        "content-type": draft.blob.type || "application/octet-stream",
+      },
       body: draft.blob,
       fallback,
       timeoutMs: 0,
@@ -78,7 +87,9 @@ const AVATAR_CHANNEL = "chisabot:bot-avatars";
 
 function openAvatarChannel(): BroadcastChannel | null {
   try {
-    return typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(AVATAR_CHANNEL);
+    return typeof BroadcastChannel === "undefined"
+      ? null
+      : new BroadcastChannel(AVATAR_CHANNEL);
   } catch {
     return null;
   }
@@ -104,7 +115,8 @@ export function subscribeAvatarSync(queryClient: QueryClient): () => void {
     syncChannel = openAvatarChannel();
     if (syncChannel)
       syncChannel.onmessage = (event: MessageEvent<{ type?: string }>) => {
-        if (event.data?.type === "avatar-changed") void queryClient.invalidateQueries({ queryKey: avatarKeys.all });
+        if (event.data?.type === "avatar-changed")
+          void queryClient.invalidateQueries({ queryKey: avatarKeys.all });
       };
   }
   return () => {
@@ -119,18 +131,48 @@ export function subscribeAvatarSync(queryClient: QueryClient): () => void {
 /** 新建时的默认头像：名字首字 + 一种底色（按名字挑，打开表单时就能看到，建好后和看到的一样）。 */
 export function colorFor(text: string): AvatarColor {
   let hash = 0;
-  for (const char of text) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  for (const char of text)
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
   return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
 }
 
 export const AVATAR_EMOJIS = [
-  "🤖", "🐱", "🐶", "🦊", "🐼", "🐧", "🦉", "🐳",
-  "🌸", "🌿", "☀️", "🌙", "⭐", "🔥", "💡", "🎯",
-  "📚", "✍️", "💼", "📈", "🧮", "🧑‍💻", "🛠️", "🔍",
-  "🎨", "🎵", "🍳", "☕", "✈️", "🏃", "🩺", "❤️",
+  "🤖",
+  "🐱",
+  "🐶",
+  "🦊",
+  "🐼",
+  "🐧",
+  "🦉",
+  "🐳",
+  "🌸",
+  "🌿",
+  "☀️",
+  "🌙",
+  "⭐",
+  "🔥",
+  "💡",
+  "🎯",
+  "📚",
+  "✍️",
+  "💼",
+  "📈",
+  "🧮",
+  "🧑‍💻",
+  "🛠️",
+  "🔍",
+  "🎨",
+  "🎵",
+  "🍳",
+  "☕",
+  "✈️",
+  "🏃",
+  "🩺",
+  "❤️",
 ] as const;
 
-export const ACCEPTED_AVATAR_TYPES = "image/png,image/jpeg,image/webp,image/gif,image/bmp";
+export const ACCEPTED_AVATAR_TYPES =
+  "image/png,image/jpeg,image/webp,image/gif,image/bmp";
 export const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 /** 给用户看的格式说明，和上面 accept、下面 loadAvatarSource 的放行范围一致（审查 10-6）。 */
 export const ACCEPTED_AVATAR_HINT = "PNG / JPEG / WebP / GIF / BMP，最大 15 MB";
@@ -140,7 +182,9 @@ export const SMALL_AVATAR_SOURCE = 128;
 /** 图片太小时的提示；够大返回 null。 */
 export function smallSourceHint(width: number, height: number): string | null {
   const side = Math.min(width, height);
-  return side < SMALL_AVATAR_SOURCE ? `这张图只有 ${width}×${height}，放大成头像可能会糊；可以换一张更清晰的。` : null;
+  return side < SMALL_AVATAR_SOURCE
+    ? `这张图只有 ${width}×${height}，放大成头像可能会糊；可以换一张更清晰的。`
+    : null;
 }
 
 /**
@@ -157,9 +201,21 @@ export async function renderAvatar(
   const context = canvas.getContext("2d");
   if (!context) throw new Error("这台设备不能处理图片。");
   context.imageSmoothingQuality = "high";
-  context.drawImage(image, crop.x, crop.y, crop.size, crop.size, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+  context.drawImage(
+    image,
+    crop.x,
+    crop.y,
+    crop.size,
+    crop.size,
+    0,
+    0,
+    AVATAR_SIZE,
+    AVATAR_SIZE,
+  );
   const encode = (type: string, quality: number) =>
-    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+    new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, type, quality),
+    );
   // 透明 PNG 保持透明（审查 10-8）：WebP 带 alpha。只有退到 JPEG（没有 alpha，透明处会变黑）时才垫白底。
   let flattened = false;
   for (const quality of [0.86, 0.75, 0.6, 0.45]) {
@@ -180,12 +236,17 @@ export async function renderAvatar(
 }
 
 /** 读一张本地图片；不是图片、太大、读不出来都说人话。 */
-export async function loadAvatarSource(file: File): Promise<{ image: HTMLImageElement; url: string }> {
+export async function loadAvatarSource(
+  file: File,
+): Promise<{ image: HTMLImageElement; url: string }> {
   // 只收 ACCEPTED_AVATAR_TYPES 里的格式（审查 10-6：以前 image/* 全放行，SVG 也进得来，和提示对不上）。
   const accepted = ACCEPTED_AVATAR_TYPES.split(",");
-  const typeOk = file.type ? accepted.includes(file.type) : /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name);
+  const typeOk = file.type
+    ? accepted.includes(file.type)
+    : /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name);
   if (!typeOk) throw new Error(`请选一张图片（${ACCEPTED_AVATAR_HINT}）。`);
-  if (file.size > MAX_SOURCE_BYTES) throw new Error("图片超过 15 MB，请换一张小一点的。");
+  if (file.size > MAX_SOURCE_BYTES)
+    throw new Error("图片超过 15 MB，请换一张小一点的。");
   const url = URL.createObjectURL(file);
   const image = new Image();
   image.decoding = "async";
@@ -194,7 +255,9 @@ export async function loadAvatarSource(file: File): Promise<{ image: HTMLImageEl
     await image.decode();
   } catch {
     URL.revokeObjectURL(url);
-    throw new Error("这张图片打不开（可能是这台设备不支持的格式），请换一张 PNG 或 JPEG。");
+    throw new Error(
+      "这张图片打不开（可能是这台设备不支持的格式），请换一张 PNG 或 JPEG。",
+    );
   }
   if (!image.naturalWidth || !image.naturalHeight) {
     URL.revokeObjectURL(url);

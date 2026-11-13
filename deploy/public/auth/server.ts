@@ -476,8 +476,7 @@ export function createAuthApp(config: AuthConfig) {
       /* 下面按上次结果 */
     }
     return (
-      identityKnown?.ok === true &&
-      now() - identityKnown.at < DEVICE_GRACE_MS
+      identityKnown?.ok === true && now() - identityKnown.at < DEVICE_GRACE_MS
     );
   }
   /** 这个请求是谁（会话有效时）；否则 null。 */

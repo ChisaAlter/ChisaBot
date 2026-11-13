@@ -1,11 +1,11 @@
+import { tryClient } from "@/lib/client";
+import { isAndroidApp } from "@/lib/device";
 import {
   DICTATION_TIMEOUT_MS,
   dictationExtension,
   dictationMediaType,
   MAX_DICTATION_BYTES,
 } from "../../../../shared/dictation";
-import { tryClient } from "@/lib/client";
-import { isAndroidApp } from "@/lib/device";
 
 export interface Recording {
   /** Shared with the visualizer; the recorder owns this stream's lifetime. */

@@ -132,12 +132,10 @@ test("换一段对话：新的那段看得见，原来那段藏着留下（LRU�
 });
 
 function pages(view: ReturnType<typeof render>) {
-  return view
-    .getAllByTestId("page")
-    .map((el) => ({
-      id: el.textContent,
-      instance: el.getAttribute("data-instance"),
-    }));
+  return view.getAllByTestId("page").map((el) => ({
+    id: el.textContent,
+    instance: el.getAttribute("data-instance"),
+  }));
 }
 
 test("A→B→A：切回最近看过的那段是同一个实例（不重挂、不重新解析），epoch 加一", () => {

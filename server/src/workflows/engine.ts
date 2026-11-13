@@ -11,10 +11,7 @@
  * 每一步开一个只有该机器人的新对话（并行步骤因此不会抢同一个线程锁），步骤结束就删掉
  * （软删除），所以不会出现在任何人的会话里；步骤的产出存在运行记录里，运行页面读它。
  */
-import type { AuditStore } from "../audit";
-import { recordAuditEvent } from "../audit";
-import { HeadlessToolSuspension } from "../computer/headless-tools";
-import type { TurnRunner } from "../turns/types";
+
 import {
   ACTIVE_RUN_STATUSES,
   effectiveConstraints,
@@ -33,9 +30,24 @@ import {
   type WorkflowStepState,
   workflowStages,
 } from "../../../shared/workflows";
-import { clearStepPolicy, registerStepPolicy, SUBMIT_GATE_RESULT_TOOL } from "./policy";
-import { presetById, PRESET_PREFIX } from "./presets";
-import type { RunEvent, RunEventInput, RunSource, RunState, StoredRun, WorkflowStore } from "./store";
+import type { AuditStore } from "../audit";
+import { recordAuditEvent } from "../audit";
+import { HeadlessToolSuspension } from "../computer/headless-tools";
+import type { TurnRunner } from "../turns/types";
+import {
+  clearStepPolicy,
+  registerStepPolicy,
+  SUBMIT_GATE_RESULT_TOOL,
+} from "./policy";
+import { PRESET_PREFIX, presetById } from "./presets";
+import type {
+  RunEvent,
+  RunEventInput,
+  RunSource,
+  RunState,
+  StoredRun,
+  WorkflowStore,
+} from "./store";
 
 /** 一个人同时最多跑几个工作流（不含等待审批的）。 */
 export const MAX_ACTIVE_RUNS_PER_USER = 3;
@@ -50,7 +62,12 @@ const RUN_LEASE_MS = 3 * HEARTBEAT_MS;
 
 /** 机器人在工作流里永远拿不到的工具：不能在工作流里再启动或操控工作流。 */
 const ALWAYS_DENIED: ToolRule = {
-  deny: ["run_workflow", "list_workflows", "get_workflow_run", "control_workflow_run"],
+  deny: [
+    "run_workflow",
+    "list_workflows",
+    "get_workflow_run",
+    "control_workflow_run",
+  ],
 };
 
 export class WorkflowRunError extends Error {
@@ -107,13 +124,20 @@ class GateHumanEscalation extends Error {
 }
 
 export type BotInfo = { id: string; name: string };
-export type LibrarySkill = { slug: string; title: string; instructions: string };
+export type LibrarySkill = {
+  slug: string;
+  title: string;
+  instructions: string;
+};
 
 export type WorkflowEngineDeps = {
   store: WorkflowStore;
   runTurn: TurnRunner;
   /** 给这一步开一个只有这个机器人的新对话。 */
-  createConversation: (ownerUserId: string, botId: string) => Promise<{ channelId: string; threadId: string }>;
+  createConversation: (
+    ownerUserId: string,
+    botId: string,
+  ) => Promise<{ channelId: string; threadId: string }>;
   /** 步骤结束后删掉它（软删除）。失败只记日志。 */
   deleteConversation: (ownerUserId: string, channelId: string) => Promise<void>;
   /** 这个人能不能用这个机器人；能就返回名字。 */
@@ -121,7 +145,10 @@ export type WorkflowEngineDeps = {
   /** 这个人能用的技能（技能页里的）。 */
   librarySkills: (ownerUserId: string) => Promise<LibrarySkill[]>;
   /** 开一个面板创作会话，让这一步能把面板存进机器人的右栏。 */
-  beginPanelSession?: (ownerUserId: string, botId: string) => Promise<string | null>;
+  beginPanelSession?: (
+    ownerUserId: string,
+    botId: string,
+  ) => Promise<string | null>;
   audit?: AuditStore;
   now?: () => Date;
   log?: (line: string) => void;
@@ -132,32 +159,53 @@ export type WorkflowEngineDeps = {
 
 type RawInputs = Record<string, unknown>;
 
-export function normalizeInputs(def: WorkflowDefinition, raw: RawInputs | undefined): Record<string, string | number | boolean> {
+export function normalizeInputs(
+  def: WorkflowDefinition,
+  raw: RawInputs | undefined,
+): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {};
   const source = raw ?? {};
   for (const input of def.inputs) {
     let value = source[input.key];
-    if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) value = input.default;
-    const empty = value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && value.trim() === "")
+    )
+      value = input.default;
+    const empty =
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && value.trim() === "");
     if (empty) {
-      if (input.required && input.type !== "boolean") throw new WorkflowRunError(`请填写「${input.label}」。`);
+      if (input.required && input.type !== "boolean")
+        throw new WorkflowRunError(`请填写「${input.label}」。`);
       if (input.type === "boolean") out[input.key] = false;
       continue;
     }
     switch (input.type) {
       case "number": {
-        const n = typeof value === "number" ? value : Number(String(value).trim());
-        if (!Number.isFinite(n)) throw new WorkflowRunError(`「${input.label}」需要是数字。`);
+        const n =
+          typeof value === "number" ? value : Number(String(value).trim());
+        if (!Number.isFinite(n))
+          throw new WorkflowRunError(`「${input.label}」需要是数字。`);
         out[input.key] = n;
         break;
       }
       case "boolean":
-        out[input.key] = value === true || value === "true" || value === "是" || value === "1" || value === 1;
+        out[input.key] =
+          value === true ||
+          value === "true" ||
+          value === "是" ||
+          value === "1" ||
+          value === 1;
         break;
       case "select": {
         const text = String(value).trim();
         if (input.options?.length && !input.options.includes(text))
-          throw new WorkflowRunError(`「${input.label}」只能选：${input.options.join(" / ")}。`);
+          throw new WorkflowRunError(
+            `「${input.label}」只能选：${input.options.join(" / ")}。`,
+          );
         out[input.key] = text;
         break;
       }
@@ -168,13 +216,17 @@ export function normalizeInputs(def: WorkflowDefinition, raw: RawInputs | undefi
           const url = new URL(text);
           ok = url.protocol === "http:" || url.protocol === "https:";
         } catch {}
-        if (!ok) throw new WorkflowRunError(`「${input.label}」需要是 http(s) 网址。`);
+        if (!ok)
+          throw new WorkflowRunError(`「${input.label}」需要是 http(s) 网址。`);
         out[input.key] = text;
         break;
       }
       default: {
         const text = String(value);
-        if (text.length > 40_000) throw new WorkflowRunError(`「${input.label}」太长了（最多 40000 字）。`);
+        if (text.length > 40_000)
+          throw new WorkflowRunError(
+            `「${input.label}」太长了（最多 40000 字）。`,
+          );
         out[input.key] = text;
       }
     }
@@ -193,13 +245,19 @@ export function renderTemplate(
   inputs: Record<string, string | number | boolean>,
   outputs: Record<string, string>,
 ): string {
-  return text.replace(/\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g, (_, kind: string, key: string) =>
-    kind === "inputs" ? inputText(inputs[key]) : (outputs[key] ?? "（该步骤还没有输出）"),
+  return text.replace(
+    /\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
+    (_, kind: string, key: string) =>
+      kind === "inputs"
+        ? inputText(inputs[key])
+        : (outputs[key] ?? "（该步骤还没有输出）"),
   );
 }
 
 function clip(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max)}\n…（后面还有 ${text.length - max} 字，已省略）` : text;
+  return text.length > max
+    ? `${text.slice(0, max)}\n…（后面还有 ${text.length - max} 字，已省略）`
+    : text;
 }
 
 /** 从回复里取出 JSON：整段、```json 代码块、或第一个 { … } / [ … ]。 */
@@ -220,15 +278,32 @@ export function extractJson(text: string): string | null {
 }
 
 function ruleText(rules: ToolRule[]): string[] {
-  const label = (item: string) => (item in TOOL_GROUP_INFO ? TOOL_GROUP_INFO[item as keyof typeof TOOL_GROUP_INFO].label : item);
+  const label = (item: string) =>
+    item in TOOL_GROUP_INFO
+      ? TOOL_GROUP_INFO[item as keyof typeof TOOL_GROUP_INFO].label
+      : item;
   const deny = [...new Set(rules.flatMap((r) => r.deny ?? []))].filter(
-    (d) => !["run_workflow", "list_workflows", "get_workflow_run", "control_workflow_run"].includes(d),
+    (d) =>
+      ![
+        "run_workflow",
+        "list_workflows",
+        "get_workflow_run",
+        "control_workflow_run",
+      ].includes(d),
   );
-  const allows = rules.filter((r) => r.allow && r.allow.length > 0).map((r) => r.allow!);
+  const allows = rules
+    .filter((r) => r.allow && r.allow.length > 0)
+    .map((r) => r.allow!);
   const lines: string[] = [];
   if (allows.length > 0) {
-    const allowed = allows.reduce((acc, list) => acc.filter((x) => list.includes(x)));
-    lines.push(allowed.length ? `只能使用这些工具：${allowed.map(label).join("、")}。` : "这一步不能使用任何工具。");
+    const allowed = allows.reduce((acc, list) =>
+      acc.filter((x) => list.includes(x)),
+    );
+    lines.push(
+      allowed.length
+        ? `只能使用这些工具：${allowed.map(label).join("、")}。`
+        : "这一步不能使用任何工具。",
+    );
   }
   if (deny.length) lines.push(`禁止使用：${deny.map(label).join("、")}。`);
   return lines;
@@ -244,7 +319,9 @@ function formatFeedbackSection(feedback: WorkflowStepFeedback): string[] {
   if (feedback.findings?.length) {
     lines.push("- 具体问题清单：");
     for (const f of feedback.findings) {
-      lines.push(`  - [${f.severity.toUpperCase()}] ${f.title}${f.evidence ? ` — ${f.evidence}` : ""}`);
+      lines.push(
+        `  - [${f.severity.toUpperCase()}] ${f.title}${f.evidence ? ` — ${f.evidence}` : ""}`,
+      );
     }
   }
   return lines;
@@ -261,18 +338,32 @@ function applyReworkReset(
   feedback: WorkflowStepFeedback,
   retryMode?: WorkflowRetryStrategy,
 ):
-  | { ok: true; targetStageIndex: number; reworkCount: number; maxReworks: number; targetName: string; resetStepIds: string[] }
+  | {
+      ok: true;
+      targetStageIndex: number;
+      reworkCount: number;
+      maxReworks: number;
+      targetName: string;
+      resetStepIds: string[];
+    }
   | { ok: false; error: string } {
   const stages = workflowStages(def.steps);
-  const fromStageIndex = stages.findIndex((stage) => stage.some((s) => s.id === fromStepId));
-  const targetStageIndex = stages.findIndex((stage) => stage.some((s) => s.id === targetStepId));
+  const fromStageIndex = stages.findIndex((stage) =>
+    stage.some((s) => s.id === fromStepId),
+  );
+  const targetStageIndex = stages.findIndex((stage) =>
+    stage.some((s) => s.id === targetStepId),
+  );
   const targetDef = def.steps.find((s) => s.id === targetStepId);
   const targetState = state.steps.find((s) => s.id === targetStepId);
   if (!targetDef || !targetState || targetStageIndex < 0) {
     return { ok: false, error: `找不到打回的目标步骤「${targetStepId}」。` };
   }
   if (fromStageIndex >= 0 && targetStageIndex >= fromStageIndex) {
-    return { ok: false, error: `只能打回给前面的阶段（「${targetDef.name}」不在当前步骤前面）。` };
+    return {
+      ok: false,
+      error: `只能打回给前面的阶段（「${targetDef.name}」不在当前步骤前面）。`,
+    };
   }
   const maxReworks = targetDef.maxReworks ?? DEFAULT_MAX_REWORKS;
   const currentReworks = targetState.reworkCount ?? 0;
@@ -296,7 +387,10 @@ function applyReworkReset(
       delete st.finishedAt;
       delete st.gateResult;
       if (stepDef.approval) {
-        st.approval = { required: true, ...(stepDef.approvalNote ? { note: stepDef.approvalNote } : {}) };
+        st.approval = {
+          required: true,
+          ...(stepDef.approvalNote ? { note: stepDef.approvalNote } : {}),
+        };
       } else {
         delete st.approval;
       }
@@ -328,12 +422,28 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? ((line: string) => console.info(line));
   /** 正在这个进程里跑的运行。 */
-  const active = new Map<string, { controller: AbortController; resumedAt: number; baseElapsed: number; rerun?: boolean }>();
+  const active = new Map<
+    string,
+    {
+      controller: AbortController;
+      resumedAt: number;
+      baseElapsed: number;
+      rerun?: boolean;
+    }
+  >();
   const heartbeatMs = deps.heartbeatMs ?? HEARTBEAT_MS;
   const runLeaseMs = deps.runLeaseMs ?? RUN_LEASE_MS;
   let recoverTimer: ReturnType<typeof setTimeout> | undefined;
 
-  async function audit(run: Pick<StoredRun, "id" | "ownerUserId" | "workflowId" | "workflowName">, eventType: "workflow.run_started" | "workflow.run_finished" | "workflow.approval_decided" | "workflow.constraint_blocked", payload: Record<string, unknown>) {
+  async function audit(
+    run: Pick<StoredRun, "id" | "ownerUserId" | "workflowId" | "workflowName">,
+    eventType:
+      | "workflow.run_started"
+      | "workflow.run_finished"
+      | "workflow.approval_decided"
+      | "workflow.constraint_blocked",
+    payload: Record<string, unknown>,
+  ) {
     if (!deps.audit) return;
     try {
       await recordAuditEvent(deps.audit, {
@@ -342,22 +452,40 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         targetId: run.id,
         actorUserId: run.ownerUserId,
         initiator: { kind: "workflow", id: run.id },
-        payload: { workflowId: run.workflowId, workflow: run.workflowName, ...payload },
+        payload: {
+          workflowId: run.workflowId,
+          workflow: run.workflowName,
+          ...payload,
+        },
       });
     } catch (error) {
-      log(`[workflows] audit failed: ${error instanceof Error ? error.message : String(error)}`);
+      log(
+        `[workflows] audit failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
-  async function event(runId: string, kind: string, message: string, stepId?: string | null, data?: Record<string, unknown>) {
+  async function event(
+    runId: string,
+    kind: string,
+    message: string,
+    stepId?: string | null,
+    data?: Record<string, unknown>,
+  ) {
     try {
       await store.addEvent(runId, kind, message, stepId, data);
     } catch (error) {
-      log(`[workflows] event failed: ${error instanceof Error ? error.message : String(error)}`);
+      log(
+        `[workflows] event failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
-  function initialState(def: WorkflowDefinition, bindings: Record<string, string>, bots: Map<string, BotInfo>): RunState {
+  function initialState(
+    def: WorkflowDefinition,
+    bindings: Record<string, string>,
+    bots: Map<string, BotInfo>,
+  ): RunState {
     return {
       tokens: 0,
       stepsRun: 0,
@@ -379,7 +507,14 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           skills: step.skills ?? [],
           ...(step.rejectTo ? { rejectTo: step.rejectTo } : {}),
           ...(step.maxReworks ? { maxReworks: step.maxReworks } : {}),
-          ...(step.approval ? { approval: { required: true, ...(step.approvalNote ? { note: step.approvalNote } : {}) } } : {}),
+          ...(step.approval
+            ? {
+                approval: {
+                  required: true,
+                  ...(step.approvalNote ? { note: step.approvalNote } : {}),
+                },
+              }
+            : {}),
         };
       }),
     };
@@ -402,13 +537,20 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     const bots = new Map<string, BotInfo>();
     for (const role of def.bots) {
       const raw = input.bindings?.[role.key];
-      const candidates = [typeof raw === "string" ? raw.trim() : "", role.botId ?? "", input.fallbackBotId ?? ""].filter(Boolean);
+      const candidates = [
+        typeof raw === "string" ? raw.trim() : "",
+        role.botId ?? "",
+        input.fallbackBotId ?? "",
+      ].filter(Boolean);
       let chosen: BotInfo | null = null;
       for (const candidate of candidates) {
-        chosen = bots.get(candidate) ?? (await deps.botInfo(input.ownerUserId, candidate));
+        chosen =
+          bots.get(candidate) ??
+          (await deps.botInfo(input.ownerUserId, candidate));
         if (chosen) break;
       }
-      if (!chosen) throw new WorkflowRunError(`请为角色「${role.name}」选一个机器人。`);
+      if (!chosen)
+        throw new WorkflowRunError(`请为角色「${role.name}」选一个机器人。`);
       bots.set(chosen.id, chosen);
       bindings[role.key] = chosen.id;
     }
@@ -425,13 +567,31 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       },
       MAX_ACTIVE_RUNS_PER_USER,
     );
-    if (!run) throw new WorkflowRunError(`同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`, 429);
+    if (!run)
+      throw new WorkflowRunError(
+        `同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`,
+        429,
+      );
     const limits = effectiveConstraints(def);
-    await event(run.id, "run_started", `开始运行（${{ page: "工作流页面", chat: "聊天", routine: "长期任务", api: "接口" }[input.source]}）`, null, {
+    await event(
+      run.id,
+      "run_started",
+      `开始运行（${{ page: "工作流页面", chat: "聊天", routine: "长期任务", api: "接口" }[input.source]}）`,
+      null,
+      {
+        bindings,
+        limits: {
+          maxSteps: limits.maxSteps,
+          maxTokens: limits.maxTokens,
+          timeLimitMinutes: limits.timeLimitMinutes,
+        },
+      },
+    );
+    await audit(run, "workflow.run_started", {
+      source: input.source,
       bindings,
-      limits: { maxSteps: limits.maxSteps, maxTokens: limits.maxTokens, timeLimitMinutes: limits.timeLimitMinutes },
+      steps: def.steps.length,
     });
-    await audit(run, "workflow.run_started", { source: input.source, bindings, steps: def.steps.length });
     void execute(run.id);
     return run;
   }
@@ -445,7 +605,12 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       return;
     }
     const controller = new AbortController();
-    const slot: { controller: AbortController; resumedAt: number; baseElapsed: number; rerun?: boolean } = {
+    const slot: {
+      controller: AbortController;
+      resumedAt: number;
+      baseElapsed: number;
+      rerun?: boolean;
+    } = {
       controller,
       resumedAt: Date.now(),
       baseElapsed: 0,
@@ -467,7 +632,11 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     slot.resumedAt = Date.now();
     slot.baseElapsed = state.elapsedMs;
     const heartbeat = setInterval(() => {
-      void store.touchRun(runId).catch((error) => log(`[workflows] heartbeat failed: ${String(error)}`));
+      void store
+        .touchRun(runId)
+        .catch((error) =>
+          log(`[workflows] heartbeat failed: ${String(error)}`),
+        );
     }, heartbeatMs);
     heartbeat.unref?.();
     const elapsed = () => slot.baseElapsed + (Date.now() - slot.resumedAt);
@@ -475,7 +644,12 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     let persistTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPersist = 0;
     const persistNow = async (
-      patch: Partial<Pick<StoredRun, "status" | "output" | "error" | "startedAt" | "finishedAt">> = {},
+      patch: Partial<
+        Pick<
+          StoredRun,
+          "status" | "output" | "error" | "startedAt" | "finishedAt"
+        >
+      > = {},
       noticeEvent?: RunEventInput,
     ) => {
       if (persistTimer) clearTimeout(persistTimer);
@@ -484,7 +658,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       state.elapsedMs = elapsed();
       const saved = store.saveRun(runId, { ...patch, state }, noticeEvent);
       if (noticeEvent) await saved;
-      else await saved.catch((error) => log(`[workflows] save failed: ${String(error)}`));
+      else
+        await saved.catch((error) =>
+          log(`[workflows] save failed: ${String(error)}`),
+        );
     };
     const persistSoon = () => {
       if (persistTimer) return;
@@ -494,27 +671,41 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
 
     const remainingMs = limits.timeLimitMinutes * 60_000 - state.elapsedMs;
     const deadline = setTimeout(
-      () => controller.abort(new ConstraintError(`超过时间上限（${limits.timeLimitMinutes} 分钟）。`, "timeLimitMinutes")),
+      () =>
+        controller.abort(
+          new ConstraintError(
+            `超过时间上限（${limits.timeLimitMinutes} 分钟）。`,
+            "timeLimitMinutes",
+          ),
+        ),
       Math.max(0, remainingMs),
     );
     const outputs: Record<string, string> = {};
-    for (const step of state.steps) if (step.status === "succeeded") outputs[step.id] = step.output;
+    for (const step of state.steps)
+      if (step.status === "succeeded") outputs[step.id] = step.output;
     let library: LibrarySkill[] | null = null;
     const stages = workflowStages(def.steps);
 
     const stateOf = (id: string) => state.steps.find((s) => s.id === id)!;
 
-    async function runStep(step: WorkflowStep, stageIndex: number): Promise<void> {
+    async function runStep(
+      step: WorkflowStep,
+      stageIndex: number,
+    ): Promise<void> {
       const st = stateOf(step.id);
       const role = def.bots.find((b) => b.key === step.bot)!;
       const botId = run!.bindings[role.key]!;
       const isLast = stageIndex === stages.length - 1;
-      const format: WorkflowOutputFormat | undefined = step.output ?? (isLast ? limits.outputFormat : undefined);
+      const format: WorkflowOutputFormat | undefined =
+        step.output ?? (isLast ? limits.outputFormat : undefined);
       const rules: ToolRule[] = [limits.tools, step.tools ?? {}, ALWAYS_DENIED];
       const attempt = (st.attempt ?? 0) + 1;
       st.attempt = attempt;
-      const retryMode: WorkflowRetryStrategy = st.retryMode ?? step.retryStrategy ?? "targeted_fix";
-      const reuseConversation = Boolean(st.threadId && retryMode === "targeted_fix");
+      const retryMode: WorkflowRetryStrategy =
+        st.retryMode ?? step.retryStrategy ?? "targeted_fix";
+      const reuseConversation = Boolean(
+        st.threadId && retryMode === "targeted_fix",
+      );
       st.botId = botId;
 
       // 技能：工作流自带的优先，其次技能页里的。
@@ -522,17 +713,32 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       for (const slug of step.skills ?? []) {
         const embedded = def.skills?.find((s) => s.slug === slug);
         if (embedded) {
-          skillTexts.push(`### /${slug} ${embedded.title}\n${embedded.instructions}`);
+          skillTexts.push(
+            `### /${slug} ${embedded.title}\n${embedded.instructions}`,
+          );
           continue;
         }
         library ??= await deps.librarySkills(run!.ownerUserId).catch(() => []);
         const found = library.find((s) => s.slug === slug);
-        if (found) skillTexts.push(`### /${slug} ${found.title}\n${found.instructions}`);
-        else await event(runId, "skill_missing", `技能 /${slug} 找不到，这一步不带它继续。`, step.id);
+        if (found)
+          skillTexts.push(`### /${slug} ${found.title}\n${found.instructions}`);
+        else
+          await event(
+            runId,
+            "skill_missing",
+            `技能 /${slug} 找不到，这一步不带它继续。`,
+            step.id,
+          );
       }
 
       // 交接：前面步骤的输出。
-      const referenced = new Set([...step.prompt.matchAll(/\{\{\s*steps\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g)].map((m) => m[1]!));
+      const referenced = new Set(
+        [
+          ...step.prompt.matchAll(
+            /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
+          ),
+        ].map((m) => m[1]!),
+      );
       const handoff = step.handoff ?? "previous";
       const priorSteps =
         handoff === "none"
@@ -550,7 +756,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         });
 
       const remaining = limits.maxTokens - state.tokens;
-      const inputLines = def.inputs.map((i) => `- ${i.label}：${clip(inputText(run!.inputs[i.key]), 4000)}`);
+      const inputLines = def.inputs.map(
+        (i) => `- ${i.label}：${clip(inputText(run!.inputs[i.key]), 4000)}`,
+      );
       const constraintLines = [
         "只完成本步骤，直接给出本步骤的产出；不要寒暄，不要复述要求，不要替后面的步骤做事。",
         "这是自动运行的工作流，中途没有人会回复你：不要向用户提问，信息不足时按合理假设完成并写明假设。",
@@ -563,38 +771,52 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           : format
             ? `输出格式：${OUTPUT_FORMAT_LABEL[format]}。`
             : "",
-        isLast && limits.outputInstructions ? `对最终输出的要求：${limits.outputInstructions}` : "",
-        isLast && limits.maxChars ? `最终输出不超过 ${limits.maxChars} 字。` : "",
+        isLast && limits.outputInstructions
+          ? `对最终输出的要求：${limits.outputInstructions}`
+          : "",
+        isLast && limits.maxChars
+          ? `最终输出不超过 ${limits.maxChars} 字。`
+          : "",
         `预算：这次运行还剩约 ${Math.max(0, remaining)} token，回答尽量控制在 ${Math.max(500, Math.min(8000, Math.floor(remaining / 2)))} token 以内。`,
       ].filter(Boolean);
 
-      const instruction = reuseConversation && st.feedback
-        ? [
-            `[工作流步骤「${step.name}」第 #${attempt} 次执行 — 基于原对话继续修正]`,
-            ...formatFeedbackSection(st.feedback),
-            ...(handoffBlocks.length ? ["", "## 最新上游步骤输出", ...handoffBlocks] : []),
-            "",
-            "请结合你在此对话中已有的上下文和工具结果，直接针对上述反馈完成修改，并输出完整的更新后产物。",
-          ].join("\n")
-        : [
-            `你正在执行工作流「${def.name}」的第 ${def.steps.indexOf(step) + 1}/${def.steps.length} 步「${step.name}」。`,
-            `你在这个工作流里的角色：${role.name}${role.description ? ` —— ${role.description}` : ""}`,
-            `当前时间：${now().toISOString()}（UTC）`,
-            "",
-            "## 本步骤要求",
-            renderTemplate(step.prompt, run!.inputs, outputs),
-            ...(st.feedback ? formatFeedbackSection(st.feedback) : []),
-            ...(inputLines.length ? ["", "## 输入参数", ...inputLines] : []),
-            ...(skillTexts.length ? ["", "## 本步骤使用的技能（照做）", ...skillTexts] : []),
-            ...(handoffBlocks.length ? ["", "## 前面步骤的输出", ...handoffBlocks] : []),
-            "",
-            "## 约束",
-            ...constraintLines.map((line) => `- ${line}`),
-          ].join("\n");
+      const instruction =
+        reuseConversation && st.feedback
+          ? [
+              `[工作流步骤「${step.name}」第 #${attempt} 次执行 — 基于原对话继续修正]`,
+              ...formatFeedbackSection(st.feedback),
+              ...(handoffBlocks.length
+                ? ["", "## 最新上游步骤输出", ...handoffBlocks]
+                : []),
+              "",
+              "请结合你在此对话中已有的上下文和工具结果，直接针对上述反馈完成修改，并输出完整的更新后产物。",
+            ].join("\n")
+          : [
+              `你正在执行工作流「${def.name}」的第 ${def.steps.indexOf(step) + 1}/${def.steps.length} 步「${step.name}」。`,
+              `你在这个工作流里的角色：${role.name}${role.description ? ` —— ${role.description}` : ""}`,
+              `当前时间：${now().toISOString()}（UTC）`,
+              "",
+              "## 本步骤要求",
+              renderTemplate(step.prompt, run!.inputs, outputs),
+              ...(st.feedback ? formatFeedbackSection(st.feedback) : []),
+              ...(inputLines.length ? ["", "## 输入参数", ...inputLines] : []),
+              ...(skillTexts.length
+                ? ["", "## 本步骤使用的技能（照做）", ...skillTexts]
+                : []),
+              ...(handoffBlocks.length
+                ? ["", "## 前面步骤的输出", ...handoffBlocks]
+                : []),
+              "",
+              "## 约束",
+              ...constraintLines.map((line) => `- ${line}`),
+            ].join("\n");
 
       const instructionTokens = estimateTokens(instruction);
       if (state.tokens + instructionTokens > limits.maxTokens)
-        throw new ConstraintError(`超出 token 预算（${limits.maxTokens}）：开始「${step.name}」之前预算已不够。`, "maxTokens");
+        throw new ConstraintError(
+          `超出 token 预算（${limits.maxTokens}）：开始「${step.name}」之前预算已不够。`,
+          "maxTokens",
+        );
 
       st.status = "running";
       st.startedAt = now().toISOString();
@@ -614,8 +836,17 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       registerStepPolicy(initiatorId, {
         rules,
         onBlocked: (name) => {
-          void event(runId, "tool_blocked", `拦下了被约束禁止的工具调用：${name}`, step.id);
-          void audit(run!, "workflow.constraint_blocked", { step: step.id, constraint: "tools", tool: name });
+          void event(
+            runId,
+            "tool_blocked",
+            `拦下了被约束禁止的工具调用：${name}`,
+            step.id,
+          );
+          void audit(run!, "workflow.constraint_blocked", {
+            step: step.id,
+            constraint: "tools",
+            tool: name,
+          });
         },
         ...(step.gate?.enabled
           ? {
@@ -627,18 +858,28 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           : {}),
       });
       const stepController = new AbortController();
-      const onParentAbort = () => stepController.abort(controller.signal.reason);
+      const onParentAbort = () =>
+        stepController.abort(controller.signal.reason);
       controller.signal.addEventListener("abort", onParentAbort);
       if (controller.signal.aborted) onParentAbort();
       const stepTimer = setTimeout(
-        () => stepController.abort(new ConstraintError(`「${step.name}」超过单步时间上限（${limits.stepTimeoutMinutes} 分钟）。`, "stepTimeoutMinutes")),
+        () =>
+          stepController.abort(
+            new ConstraintError(
+              `「${step.name}」超过单步时间上限（${limits.stepTimeoutMinutes} 分钟）。`,
+              "stepTimeoutMinutes",
+            ),
+          ),
         limits.stepTimeoutMinutes * 60_000,
       );
 
       let conversation: { channelId: string; threadId: string } | null = null;
       let createdFreshConversation = false;
       let turnCount = 0;
-      const turn = async (text: string, forwardedProps?: Record<string, unknown>) => {
+      const turn = async (
+        text: string,
+        forwardedProps?: Record<string, unknown>,
+      ) => {
         turnCount += 1;
         const base = state.tokens;
         const inTokens = estimateTokens(text);
@@ -650,13 +891,25 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           instruction: text,
           initiator: { kind: "workflow", id: initiatorId },
           signal: stepController.signal,
-          userMessage: { id: `${runId}:${step.id}:a${attempt}:${turnCount}`, role: "user", content: text },
+          userMessage: {
+            id: `${runId}:${step.id}:a${attempt}:${turnCount}`,
+            role: "user",
+            content: text,
+          },
           ...(forwardedProps ? { forwardedProps } : {}),
           onText: (partial) => {
             st.output = partial;
             st.tokens = inTokens + estimateTokens(partial);
-            if (base + st.tokens > limits.maxTokens && !stepController.signal.aborted)
-              stepController.abort(new ConstraintError(`超出 token 预算（${limits.maxTokens}），「${step.name}」被中途停止。`, "maxTokens"));
+            if (
+              base + st.tokens > limits.maxTokens &&
+              !stepController.signal.aborted
+            )
+              stepController.abort(
+                new ConstraintError(
+                  `超出 token 预算（${limits.maxTokens}），「${step.name}」被中途停止。`,
+                  "maxTokens",
+                ),
+              );
             persistSoon();
           },
         });
@@ -667,7 +920,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
 
       try {
         if (reuseConversation && st.threadId) {
-          conversation = { channelId: st.channelId ?? "", threadId: st.threadId };
+          conversation = {
+            channelId: st.channelId ?? "",
+            threadId: st.threadId,
+          };
         } else {
           conversation = await deps.createConversation(run!.ownerUserId, botId);
           createdFreshConversation = true;
@@ -676,9 +932,17 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         }
         let forwarded: Record<string, unknown> | undefined;
         if (step.panel && deps.beginPanelSession) {
-          const sessionId = await deps.beginPanelSession(run!.ownerUserId, botId).catch(() => null);
+          const sessionId = await deps
+            .beginPanelSession(run!.ownerUserId, botId)
+            .catch(() => null);
           if (sessionId) forwarded = { panelAuthoring: { sessionId } };
-          else await event(runId, "panel_unavailable", "没能打开面板创作会话，这一步只能输出文字。", step.id);
+          else
+            await event(
+              runId,
+              "panel_unavailable",
+              "没能打开面板创作会话，这一步只能输出文字。",
+              step.id,
+            );
         }
         const { replyText, used } = await turn(instruction, forwarded);
         let stepTokens = used;
@@ -687,7 +951,12 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         // 结构化验证门（Gate）处理
         if (step.gate?.enabled) {
           if (!gateSubmitted) {
-            await event(runId, "gate_retry", `「${step.name}」未调用 ${SUBMIT_GATE_RESULT_TOOL}，要求补充裁决。`, step.id);
+            await event(
+              runId,
+              "gate_retry",
+              `「${step.name}」未调用 ${SUBMIT_GATE_RESULT_TOOL}，要求补充裁决。`,
+              step.id,
+            );
             const reminded = await turn(
               `你还没有调用 ${SUBMIT_GATE_RESULT_TOOL} 工具。请立即调用 ${SUBMIT_GATE_RESULT_TOOL} 提交你的裁决（pass / rework / fail / human），并保留你的最终结论。`,
             );
@@ -697,16 +966,34 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           // 若未配置 rejectTo 且裁决为 rework，支持在当前步骤内按 maxLoops 自我修正
           const maxLoops = step.gate.maxLoops ?? 2;
           let loops = 0;
-          while (gateSubmitted && (gateSubmitted as WorkflowGateResult).decision === "rework" && !step.rejectTo && loops < maxLoops) {
+          while (
+            gateSubmitted &&
+            (gateSubmitted as WorkflowGateResult).decision === "rework" &&
+            !step.rejectTo &&
+            loops < maxLoops
+          ) {
             loops += 1;
             const prevGate = gateSubmitted as WorkflowGateResult;
             gateSubmitted = null;
-            await event(runId, "gate_self_rework", `「${step.name}」验证门自修正（第 ${loops}/${maxLoops} 次）：${prevGate.reason}`, step.id);
+            await event(
+              runId,
+              "gate_self_rework",
+              `「${step.name}」验证门自修正（第 ${loops}/${maxLoops} 次）：${prevGate.reason}`,
+              step.id,
+            );
             const selfFixPrompt = [
               `验证门未通过（rework）：${prevGate.reason}`,
-              ...(prevGate.actionRequired ? [`需要修正：${prevGate.actionRequired}`] : []),
+              ...(prevGate.actionRequired
+                ? [`需要修正：${prevGate.actionRequired}`]
+                : []),
               ...(prevGate.findings?.length
-                ? ["具体问题：", ...prevGate.findings.map((f) => `- [${f.severity}] ${f.title}${f.evidence ? `：${f.evidence}` : ""}`)]
+                ? [
+                    "具体问题：",
+                    ...prevGate.findings.map(
+                      (f) =>
+                        `- [${f.severity}] ${f.title}${f.evidence ? `：${f.evidence}` : ""}`,
+                    ),
+                  ]
                 : []),
               `请直接修正上述问题，完成后再次调用 ${SUBMIT_GATE_RESULT_TOOL} 提交最新裁决，并输出修正后的完整结果。`,
             ].join("\n");
@@ -716,25 +1003,43 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           }
           if (gateSubmitted) {
             const finalGate = gateSubmitted as WorkflowGateResult;
-            await event(runId, "gate_decided", `「${step.name}」验证门裁决：${finalGate.decision} —— ${finalGate.reason}`, step.id, {
-              decision: finalGate.decision,
-              findings: finalGate.findings?.length ?? 0,
-            });
+            await event(
+              runId,
+              "gate_decided",
+              `「${step.name}」验证门裁决：${finalGate.decision} —— ${finalGate.reason}`,
+              step.id,
+              {
+                decision: finalGate.decision,
+                findings: finalGate.findings?.length ?? 0,
+              },
+            );
             if (finalGate.decision === "fail") {
               throw new Error(`验证门未通过（fail）：${finalGate.reason}`);
             }
             if (finalGate.decision === "human") {
               st.output = output;
               st.tokens = stepTokens;
-              throw new GateHumanEscalation(step.id, step.name, finalGate.actionRequired || finalGate.reason);
+              throw new GateHumanEscalation(
+                step.id,
+                step.name,
+                finalGate.actionRequired || finalGate.reason,
+              );
             }
             if (finalGate.decision === "rework") {
               st.output = output;
               st.tokens = stepTokens;
               if (step.rejectTo) {
-                throw new StepReworkRequested(step.id, step.rejectTo, st.botName, finalGate.actionRequired || finalGate.reason, finalGate.findings);
+                throw new StepReworkRequested(
+                  step.id,
+                  step.rejectTo,
+                  st.botName,
+                  finalGate.actionRequired || finalGate.reason,
+                  finalGate.findings,
+                );
               }
-              throw new Error(`验证门经过 ${maxLoops} 次自修正后仍未通过：${finalGate.reason}`);
+              throw new Error(
+                `验证门经过 ${maxLoops} 次自修正后仍未通过：${finalGate.reason}`,
+              );
             }
           }
         }
@@ -742,13 +1047,27 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         if (format === "json" && output) {
           let json = extractJson(output);
           if (!json) {
-            await event(runId, "format_retry", "输出不是合法 JSON，要求机器人修正一次。", step.id);
+            await event(
+              runId,
+              "format_retry",
+              "输出不是合法 JSON，要求机器人修正一次。",
+              step.id,
+            );
             if (state.tokens + estimateTokens(output) * 2 > limits.maxTokens)
-              throw new ConstraintError(`超出 token 预算（${limits.maxTokens}）：没有余量修正 JSON。`, "maxTokens");
-            const fixed = await turn("你上一条输出不是合法的 JSON。只输出修正后的 JSON（可以放在 ```json 代码块里），不要任何其他文字。");
+              throw new ConstraintError(
+                `超出 token 预算（${limits.maxTokens}）：没有余量修正 JSON。`,
+                "maxTokens",
+              );
+            const fixed = await turn(
+              "你上一条输出不是合法的 JSON。只输出修正后的 JSON（可以放在 ```json 代码块里），不要任何其他文字。",
+            );
             stepTokens += fixed.used;
             json = extractJson(fixed.replyText);
-            if (!json) throw new ConstraintError("输出格式约束：最终输出不是合法的 JSON。", "output.format");
+            if (!json)
+              throw new ConstraintError(
+                "输出格式约束：最终输出不是合法的 JSON。",
+                "output.format",
+              );
           }
           output = JSON.stringify(JSON.parse(json), null, 2);
         }
@@ -761,11 +1080,20 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         state.stepsRun += 1;
         outputs[step.id] = output;
         await persistNow();
-        await event(runId, "step_finished", `「${step.name}」完成（约 ${stepTokens} token）`, step.id, { tokens: stepTokens });
+        await event(
+          runId,
+          "step_finished",
+          `「${step.name}」完成（约 ${stepTokens} token）`,
+          step.id,
+          { tokens: stepTokens },
+        );
       } catch (error) {
         if (error instanceof GateHumanEscalation) {
           st.status = "waiting_approval";
-          st.approval = { required: true, note: `验证门请求人工介入：${error.note}` };
+          st.approval = {
+            required: true,
+            note: `验证门请求人工介入：${error.note}`,
+          };
           await persistNow();
           throw error;
         }
@@ -776,7 +1104,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           await persistNow();
           throw error;
         }
-        const reason = stepController.signal.aborted ? stepController.signal.reason : error;
+        const reason = stepController.signal.aborted
+          ? stepController.signal.reason
+          : error;
         st.finishedAt = now().toISOString();
         if (reason instanceof UserCancelled) {
           st.status = "cancelled";
@@ -794,21 +1124,36 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         }
         // 非致命单步失败时，按 step.onFailure 策略分流（但运行级超预算/超时/手动取消除外）
         const isRunLevelConstraint =
-          reason instanceof ConstraintError && (reason.constraint === "maxTokens" || reason.constraint === "timeLimitMinutes" || reason.constraint === "maxSteps");
+          reason instanceof ConstraintError &&
+          (reason.constraint === "maxTokens" ||
+            reason.constraint === "timeLimitMinutes" ||
+            reason.constraint === "maxSteps");
         if (!(reason instanceof UserCancelled) && !isRunLevelConstraint) {
           if (step.onFailure === "continue") {
-            outputs[step.id] = `（步骤「${step.name}」执行失败已按容错规则跳过：${st.error}）`;
+            outputs[step.id] =
+              `（步骤「${step.name}」执行失败已按容错规则跳过：${st.error}）`;
             await persistNow();
-            await event(runId, "step_failed_continued", `「${step.name}」失败但按容错规则继续下一步：${st.error}`, step.id);
+            await event(
+              runId,
+              "step_failed_continued",
+              `「${step.name}」失败但按容错规则继续下一步：${st.error}`,
+              step.id,
+            );
             return;
           }
           if (step.onFailure === "reject" && step.rejectTo) {
             await persistNow();
-            throw new StepReworkRequested(step.id, step.rejectTo, st.botName, `步骤「${step.name}」执行失败：${st.error}`);
+            throw new StepReworkRequested(
+              step.id,
+              step.rejectTo,
+              st.botName,
+              `步骤「${step.name}」执行失败：${st.error}`,
+            );
           }
         }
         await persistNow();
-        throw reason instanceof ConstraintError || reason instanceof UserCancelled
+        throw reason instanceof ConstraintError ||
+          reason instanceof UserCancelled
           ? reason
           : new Error(st.error ?? "步骤失败。");
       } finally {
@@ -817,19 +1162,28 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         clearStepPolicy(initiatorId);
         // 新建的步骤会话立即软删除以从用户左侧列表隐藏，但底层 threadId 保留在数据库里供 targeted_fix 续跑。
         if (conversation && createdFreshConversation)
-          await deps.deleteConversation(run!.ownerUserId, conversation.channelId).catch((error) =>
-            log(`[workflows] conversation cleanup failed: ${String(error)}`),
-          );
+          await deps
+            .deleteConversation(run!.ownerUserId, conversation.channelId)
+            .catch((error) =>
+              log(`[workflows] conversation cleanup failed: ${String(error)}`),
+            );
       }
     }
 
     try {
-      await persistNow({ status: "running", ...(run.startedAt ? {} : { startedAt: now() }) });
+      await persistNow({
+        status: "running",
+        ...(run.startedAt ? {} : { startedAt: now() }),
+      });
       for (let index = 0; index < stages.length; index++) {
         const stage = stages[index]!;
         const pending = stage.filter((s) => {
           const st = stateOf(s.id);
-          return st.status !== "succeeded" && st.status !== "skipped" && !(st.status === "failed" && s.onFailure === "continue");
+          return (
+            st.status !== "succeeded" &&
+            st.status !== "skipped" &&
+            !(st.status === "failed" && s.onFailure === "continue")
+          );
         });
         if (pending.length === 0) continue;
         if (controller.signal.aborted) throw controller.signal.reason;
@@ -837,11 +1191,19 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         // 审批关卡：阶段第一步要求审批且还没批准，就停在这里。
         const gate = stage[0]!;
         const gateState = stateOf(gate.id);
-        if ((gate.approval || gateState.approval?.required) && gateState.approval?.decision !== "approve") {
+        if (
+          (gate.approval || gateState.approval?.required) &&
+          gateState.approval?.decision !== "approve"
+        ) {
           gateState.status = "waiting_approval";
-          await persistNow({ status: "waiting_approval" }, {
-            kind: "approval_requested", message: `「${gate.name}」开始前需要你批准`, stepId: gate.id,
-          });
+          await persistNow(
+            { status: "waiting_approval" },
+            {
+              kind: "approval_requested",
+              message: `「${gate.name}」开始前需要你批准`,
+              stepId: gate.id,
+            },
+          );
           return;
         }
         const hasReworks = state.steps.some((s) => (s.reworkCount ?? 0) > 0);
@@ -852,27 +1214,45 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
               ? def.steps.length * (DEFAULT_MAX_REWORKS + 1)
               : limits.maxSteps;
         if (state.stepsRun + pending.length > stepCap) {
-          throw new ConstraintError(`超过最多步骤数（${stepCap}）。`, "maxSteps");
+          throw new ConstraintError(
+            `超过最多步骤数（${stepCap}）。`,
+            "maxSteps",
+          );
         }
 
-        const results = await Promise.allSettled(pending.map((step) => runStep(step, index)));
-        const rejected = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        const results = await Promise.allSettled(
+          pending.map((step) => runStep(step, index)),
+        );
+        const rejected = results.find(
+          (r): r is PromiseRejectedResult => r.status === "rejected",
+        );
         if (rejected) {
           const reason = rejected.reason;
           if (reason instanceof GateHumanEscalation) {
-            await persistNow({ status: "waiting_approval" }, {
-              kind: "approval_requested", message: `「${reason.stepName}」请求你介入审批：${reason.note}`, stepId: reason.stepId,
-            });
+            await persistNow(
+              { status: "waiting_approval" },
+              {
+                kind: "approval_requested",
+                message: `「${reason.stepName}」请求你介入审批：${reason.note}`,
+                stepId: reason.stepId,
+              },
+            );
             return;
           }
           if (reason instanceof StepReworkRequested) {
-            const rework = applyReworkReset(def, state, reason.fromStepId, reason.targetStepId, {
-              fromStepId: reason.fromStepId,
-              by: reason.by,
-              reason: reason.reason,
-              at: now().toISOString(),
-              ...(reason.findings ? { findings: reason.findings } : {}),
-            });
+            const rework = applyReworkReset(
+              def,
+              state,
+              reason.fromStepId,
+              reason.targetStepId,
+              {
+                fromStepId: reason.fromStepId,
+                by: reason.by,
+                reason: reason.reason,
+                at: now().toISOString(),
+                ...(reason.findings ? { findings: reason.findings } : {}),
+              },
+            );
             if (!rework.ok) {
               throw new Error(`${rework.error}（原因：${reason.reason}）`);
             }
@@ -895,37 +1275,77 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       let output =
         last.length === 1
           ? (outputs[last[0]!.id] ?? "")
-          : last.map((s) => `## ${s.name}\n\n${outputs[s.id] ?? ""}`).join("\n\n");
+          : last
+              .map((s) => `## ${s.name}\n\n${outputs[s.id] ?? ""}`)
+              .join("\n\n");
       if (limits.maxChars && output.length > limits.maxChars) {
         output = `${output.slice(0, limits.maxChars)}\n\n…（按约束截断到 ${limits.maxChars} 字）`;
-        await event(runId, "output_truncated", `最终输出超过 ${limits.maxChars} 字，已截断`, null);
+        await event(
+          runId,
+          "output_truncated",
+          `最终输出超过 ${limits.maxChars} 字，已截断`,
+          null,
+        );
       }
-      await persistNow({ status: "succeeded", output, error: null, finishedAt: now() }, {
-        kind: "run_finished",
-        message: `运行完成：${state.stepsRun} 步，约 ${state.tokens} token，用时 ${Math.round(elapsed() / 1000)} 秒`,
-        data: { tokens: state.tokens, steps: state.stepsRun, elapsedMs: elapsed() },
+      await persistNow(
+        { status: "succeeded", output, error: null, finishedAt: now() },
+        {
+          kind: "run_finished",
+          message: `运行完成：${state.stepsRun} 步，约 ${state.tokens} token，用时 ${Math.round(elapsed() / 1000)} 秒`,
+          data: {
+            tokens: state.tokens,
+            steps: state.stepsRun,
+            elapsedMs: elapsed(),
+          },
+        },
+      );
+      await audit(run, "workflow.run_finished", {
+        status: "succeeded",
+        tokens: state.tokens,
+        steps: state.stepsRun,
+        elapsedMs: elapsed(),
       });
-      await audit(run, "workflow.run_finished", { status: "succeeded", tokens: state.tokens, steps: state.stepsRun, elapsedMs: elapsed() });
     } catch (thrown) {
-      const reason = controller.signal.aborted && !(thrown instanceof ConstraintError) ? controller.signal.reason : thrown;
+      const reason =
+        controller.signal.aborted && !(thrown instanceof ConstraintError)
+          ? controller.signal.reason
+          : thrown;
       const cancelled = reason instanceof UserCancelled;
       const message = reason instanceof Error ? reason.message : String(reason);
       for (const step of state.steps) {
-        if (step.status === "pending" || step.status === "waiting_approval") step.status = "skipped";
+        if (step.status === "pending" || step.status === "waiting_approval")
+          step.status = "skipped";
         if (step.status === "running") {
           step.status = cancelled ? "cancelled" : "failed";
           step.error ??= message;
         }
       }
       if (reason instanceof ConstraintError) {
-        await event(runId, "constraint_blocked", message, null, { constraint: reason.constraint });
-        await audit(run, "workflow.constraint_blocked", { constraint: reason.constraint, message });
+        await event(runId, "constraint_blocked", message, null, {
+          constraint: reason.constraint,
+        });
+        await audit(run, "workflow.constraint_blocked", {
+          constraint: reason.constraint,
+          message,
+        });
       }
-      await persistNow({ status: cancelled ? "cancelled" : "failed", error: message, finishedAt: now() }, {
-        kind: cancelled ? "run_cancelled" : "run_failed",
-        message: cancelled ? "运行已停止" : `运行失败：${message}`,
+      await persistNow(
+        {
+          status: cancelled ? "cancelled" : "failed",
+          error: message,
+          finishedAt: now(),
+        },
+        {
+          kind: cancelled ? "run_cancelled" : "run_failed",
+          message: cancelled ? "运行已停止" : `运行失败：${message}`,
+        },
+      );
+      await audit(run, "workflow.run_finished", {
+        status: cancelled ? "cancelled" : "failed",
+        reason: message,
+        tokens: state.tokens,
+        steps: state.stepsRun,
       });
-      await audit(run, "workflow.run_finished", { status: cancelled ? "cancelled" : "failed", reason: message, tokens: state.tokens, steps: state.stepsRun });
     } finally {
       clearTimeout(deadline);
       clearInterval(heartbeat);
@@ -949,16 +1369,24 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     const run = await store.getOwnRun(input.ownerUserId, input.runId);
     if (!run) throw new WorkflowRunError("找不到这次运行。", 404);
     const step = run.state.steps.find((s) => s.id === input.stepId);
-    if (run.status !== "waiting_approval" || !step || step.status !== "waiting_approval")
+    if (
+      run.status !== "waiting_approval" ||
+      !step ||
+      step.status !== "waiting_approval"
+    )
       throw new WorkflowRunError("这一步现在不需要审批。", 409);
 
     const stepDef = run.definition.steps.find((s) => s.id === input.stepId);
     const rejected = input.decision === "reject";
     // 支持显式传入 rejectTo="__cancel__" 强制终止运行，否则优先取 input.rejectTo 或 stepDef.rejectTo
-    const rawTarget = input.rejectTo === "__cancel__" ? undefined : (input.rejectTo?.trim() || stepDef?.rejectTo);
+    const rawTarget =
+      input.rejectTo === "__cancel__"
+        ? undefined
+        : input.rejectTo?.trim() || stepDef?.rejectTo;
 
     if (rejected && rawTarget) {
-      const reasonText = input.comment?.trim() || `「${step.name}」审批未通过，请按要求修改。`;
+      const reasonText =
+        input.comment?.trim() || `「${step.name}」审批未通过，请按要求修改。`;
       const rework = applyReworkReset(
         run.definition,
         run.state,
@@ -1005,7 +1433,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       ...(input.comment ? { comment: input.comment.slice(0, 500) } : {}),
     };
     if (rejected) {
-      for (const s of run.state.steps) if (s.status === "pending" || s.status === "waiting_approval") s.status = "skipped";
+      for (const s of run.state.steps)
+        if (s.status === "pending" || s.status === "waiting_approval")
+          s.status = "skipped";
       step.status = "cancelled";
     } else step.status = "pending";
     // CAS：只有状态还是 waiting_approval 时才写入；并发的两次审批只有一个能过，另一个得到 409。
@@ -1013,15 +1443,32 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       run.id,
       ["waiting_approval"],
       rejected
-        ? { status: "cancelled", state: run.state, error: `「${step.name}」的审批没有通过。`, finishedAt: now() }
+        ? {
+            status: "cancelled",
+            state: run.state,
+            error: `「${step.name}」的审批没有通过。`,
+            finishedAt: now(),
+          }
         : { status: "queued", state: run.state },
     );
     if (!won) throw new WorkflowRunError("这一步已经被处理过了。", 409);
-    await event(run.id, "approval_decided", `${rejected ? "拒绝" : "批准"}了「${step.name}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`, step.id, { by: input.by });
-    await audit(run, "workflow.approval_decided", { step: step.id, decision: input.decision });
+    await event(
+      run.id,
+      "approval_decided",
+      `${rejected ? "拒绝" : "批准"}了「${step.name}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`,
+      step.id,
+      { by: input.by },
+    );
+    await audit(run, "workflow.approval_decided", {
+      step: step.id,
+      decision: input.decision,
+    });
     if (rejected) {
       await event(run.id, "run_cancelled", "审批没有通过，运行结束", null);
-      await audit(run, "workflow.run_finished", { status: "cancelled", reason: "approval rejected" });
+      await audit(run, "workflow.run_finished", {
+        status: "cancelled",
+        reason: "approval rejected",
+      });
       return;
     }
     void execute(run.id);
@@ -1048,8 +1495,13 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     if (run.status !== "failed" && run.status !== "cancelled") {
       throw new WorkflowRunError("只有失败或已停止的运行才能重试。", 409);
     }
-    if ((await store.countActive(input.ownerUserId)) >= MAX_ACTIVE_RUNS_PER_USER) {
-      throw new WorkflowRunError(`同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`, 429);
+    if (
+      (await store.countActive(input.ownerUserId)) >= MAX_ACTIVE_RUNS_PER_USER
+    ) {
+      throw new WorkflowRunError(
+        `同时最多运行 ${MAX_ACTIVE_RUNS_PER_USER} 个工作流，等前面的跑完再试。`,
+        429,
+      );
     }
 
     // overlayLatestNodeBindings：读取最新工作流定义的角色默认绑定（如果存在）并叠加
@@ -1061,15 +1513,27 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     const nextBindings: Record<string, string> = { ...run.bindings };
     const botNames = new Map<string, string>();
     for (const role of run.definition.bots) {
-      const explicit = typeof input.bindings?.[role.key] === "string" ? String(input.bindings[role.key]).trim() : "";
-      const latestRoleBot = latestWorkflow?.bots.find((b) => b.key === role.key)?.botId?.trim() ?? "";
-      const candidates = [explicit, latestRoleBot, run.bindings[role.key] ?? ""].filter(Boolean);
+      const explicit =
+        typeof input.bindings?.[role.key] === "string"
+          ? String(input.bindings[role.key]).trim()
+          : "";
+      const latestRoleBot =
+        latestWorkflow?.bots.find((b) => b.key === role.key)?.botId?.trim() ??
+        "";
+      const candidates = [
+        explicit,
+        latestRoleBot,
+        run.bindings[role.key] ?? "",
+      ].filter(Boolean);
       let chosen: BotInfo | null = null;
       for (const candidate of candidates) {
         chosen = await deps.botInfo(input.ownerUserId, candidate);
         if (chosen) break;
       }
-      if (!chosen) throw new WorkflowRunError(`角色「${role.name}」绑定的机器人已不可用，请先在工作流里更新角色绑定。`);
+      if (!chosen)
+        throw new WorkflowRunError(
+          `角色「${role.name}」绑定的机器人已不可用，请先在工作流里更新角色绑定。`,
+        );
       nextBindings[role.key] = chosen.id;
       botNames.set(role.key, chosen.name);
     }
@@ -1078,8 +1542,11 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     let targetStageIndex = -1;
     let targetStepId = input.stepId?.trim();
     if (targetStepId) {
-      targetStageIndex = stages.findIndex((stage) => stage.some((s) => s.id === targetStepId));
-      if (targetStageIndex < 0) throw new WorkflowRunError(`找不到步骤「${targetStepId}」。`, 400);
+      targetStageIndex = stages.findIndex((stage) =>
+        stage.some((s) => s.id === targetStepId),
+      );
+      if (targetStageIndex < 0)
+        throw new WorkflowRunError(`找不到步骤「${targetStepId}」。`, 400);
     } else {
       targetStageIndex = stages.findIndex((stage) =>
         stage.some((s) => {
@@ -1106,7 +1573,10 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         delete st.finishedAt;
         delete st.gateResult;
         if (stepDef.approval) {
-          st.approval = { required: true, ...(stepDef.approvalNote ? { note: stepDef.approvalNote } : {}) };
+          st.approval = {
+            required: true,
+            ...(stepDef.approvalNote ? { note: stepDef.approvalNote } : {}),
+          };
         }
         if (i === targetStageIndex) {
           st.retryMode = effectiveMode;
@@ -1117,7 +1587,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           if (input.comment?.trim() || previousError) {
             st.feedback = {
               by: actorBy,
-              reason: input.comment?.trim() || `上一次执行未完成（${previousError ?? "已中断"}），请继续完成。`,
+              reason:
+                input.comment?.trim() ||
+                `上一次执行未完成（${previousError ?? "已中断"}），请继续完成。`,
               at: now().toISOString(),
             };
           }
@@ -1136,7 +1608,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     });
     if (!won) throw new WorkflowRunError("运行状态已改变，请刷新后再试。", 409);
 
-    const targetStepName = run.definition.steps.find((s) => s.id === targetStepId)?.name ?? targetStepId;
+    const targetStepName =
+      run.definition.steps.find((s) => s.id === targetStepId)?.name ??
+      targetStepId;
     await event(
       run.id,
       "run_retried",
@@ -1157,18 +1631,34 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       slot.controller.abort(new UserCancelled());
       return;
     }
-    for (const s of run.state.steps) if (s.status === "pending" || s.status === "waiting_approval" || s.status === "running") s.status = "cancelled";
-    await store.saveRun(run.id, { status: "cancelled", state: run.state, error: "已被手动停止。", finishedAt: now() });
+    for (const s of run.state.steps)
+      if (
+        s.status === "pending" ||
+        s.status === "waiting_approval" ||
+        s.status === "running"
+      )
+        s.status = "cancelled";
+    await store.saveRun(run.id, {
+      status: "cancelled",
+      state: run.state,
+      error: "已被手动停止。",
+      finishedAt: now(),
+    });
     await event(run.id, "run_cancelled", "运行已停止", null);
-    await audit(run, "workflow.run_finished", { status: "cancelled", reason: "cancelled" });
+    await audit(run, "workflow.run_finished", {
+      status: "cancelled",
+      reason: "cancelled",
+    });
   }
 
   async function remove(ownerUserId: string, runId: string) {
     const run = await store.getOwnRun(ownerUserId, runId);
     if (!run) throw new WorkflowRunError("找不到这次运行。", 404);
-    if (ACTIVE_RUN_STATUSES.includes(run.status)) await cancel(ownerUserId, runId);
+    if (ACTIVE_RUN_STATUSES.includes(run.status))
+      await cancel(ownerUserId, runId);
     // 等后台把「已停止」写完再删，避免删完又被写回。
-    for (let i = 0; i < 50 && active.has(runId); i++) await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 50 && active.has(runId); i++)
+      await new Promise((r) => setTimeout(r, 100));
     await store.deleteRun(ownerUserId, runId);
   }
 
@@ -1196,22 +1686,33 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           s.error = "服务器重启，这一步被中断了。";
         } else if (s.status === "pending") s.status = "skipped";
       }
-      const marked = await store.failStaleRun(run.id, staleBefore, {
-        state: run.state,
-        error: "服务器重启，运行中断了。可以重新运行。",
-        finishedAt: now(),
-      }, {
-        kind: "run_failed", message: "服务器重启，运行中断了",
-      });
+      const marked = await store.failStaleRun(
+        run.id,
+        staleBefore,
+        {
+          state: run.state,
+          error: "服务器重启，运行中断了。可以重新运行。",
+          finishedAt: now(),
+        },
+        {
+          kind: "run_failed",
+          message: "服务器重启，运行中断了",
+        },
+      );
       if (!marked) continue;
       failed += 1;
     }
-    if (failed) log(`[workflows] marked ${failed} interrupted run(s) as failed`);
+    if (failed)
+      log(`[workflows] marked ${failed} interrupted run(s) as failed`);
     if (deferred) {
-      log(`[workflows] ${deferred} run(s) still have a fresh heartbeat; re-checking after the lease`);
+      log(
+        `[workflows] ${deferred} run(s) still have a fresh heartbeat; re-checking after the lease`,
+      );
       recoverTimer = setTimeout(() => {
         recoverTimer = undefined;
-        void recover().catch((error) => log(`[workflows] recover re-check failed: ${String(error)}`));
+        void recover().catch((error) =>
+          log(`[workflows] recover re-check failed: ${String(error)}`),
+        );
       }, runLeaseMs + 1_000);
       recoverTimer.unref?.();
     }
@@ -1233,7 +1734,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       usage: {
         tokens: run.state.tokens,
         steps: run.state.stepsRun,
-        elapsedMs: slot ? slot.baseElapsed + (Date.now() - slot.resumedAt) : run.state.elapsedMs,
+        elapsedMs: slot
+          ? slot.baseElapsed + (Date.now() - slot.resumedAt)
+          : run.state.elapsedMs,
       },
       limits: {
         maxTokens: limits.maxTokens,
@@ -1250,13 +1753,29 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       tools: limits.tools,
       ...(events
         ? {
-            events: events.map((e) => ({ id: e.id, at: e.at.toISOString(), kind: e.kind, stepId: e.stepId, message: e.message })),
+            events: events.map((e) => ({
+              id: e.id,
+              at: e.at.toISOString(),
+              kind: e.kind,
+              stepId: e.stepId,
+              message: e.message,
+            })),
           }
         : {}),
     };
   }
 
-  return { start, execute, approve, retry, cancel, remove, recover, view, isActive: (id: string) => active.has(id) };
+  return {
+    start,
+    execute,
+    approve,
+    retry,
+    cancel,
+    remove,
+    recover,
+    view,
+    isActive: (id: string) => active.has(id),
+  };
 }
 
 export type WorkflowEngine = ReturnType<typeof createWorkflowEngine>;

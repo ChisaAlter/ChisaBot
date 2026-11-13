@@ -1,4 +1,9 @@
-import { decodeFrame, encodeFrame, type FeishuFrame, headerOf } from "../feishu-proto";
+import {
+  decodeFrame,
+  encodeFrame,
+  type FeishuFrame,
+  headerOf,
+} from "../feishu-proto";
 import { errorText, readJson } from "../text";
 import type { AdapterContext, ImInbound, ImReply, TestResult } from "../types";
 import { dataBytes, LoopAdapter } from "./base";
@@ -20,28 +25,51 @@ import { dataBytes, LoopAdapter } from "./base";
 export function feishuBase(config: Record<string, string>) {
   // __apiBase：只给测试工具用（接口不接受这个字段），把请求指到本地假服务器。
   if (config.__apiBase) return config.__apiBase;
-  return config.domain === "lark" ? "https://open.larksuite.com" : "https://open.feishu.cn";
+  return config.domain === "lark"
+    ? "https://open.larksuite.com"
+    : "https://open.feishu.cn";
 }
 
-export async function feishuTenantToken(ctx: Pick<AdapterContext, "fetch" | "config" | "secrets">) {
+export async function feishuTenantToken(
+  ctx: Pick<AdapterContext, "fetch" | "config" | "secrets">,
+) {
   const appId = (ctx.config.appId ?? "").trim();
   const appSecret = (ctx.secrets.appSecret ?? "").trim();
   if (!appId || !appSecret) throw new Error("请填写 App ID 和 App Secret");
-  const response = await ctx.fetch(`${feishuBase(ctx.config)}/open-apis/auth/v3/tenant_access_token/internal`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-  });
+  const response = await ctx.fetch(
+    `${feishuBase(ctx.config)}/open-apis/auth/v3/tenant_access_token/internal`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    },
+  );
   const body = await readJson(response, "获取飞书 tenant_access_token");
-  if (body.code !== 0 || !body.tenant_access_token) throw new Error(`飞书凭据无效：${body.code} ${body.msg ?? ""}`.trim());
-  return { token: String(body.tenant_access_token), expiresAt: Date.now() + (Number(body.expire) || 7200) * 1000 };
+  if (body.code !== 0 || !body.tenant_access_token)
+    throw new Error(`飞书凭据无效：${body.code} ${body.msg ?? ""}`.trim());
+  return {
+    token: String(body.tenant_access_token),
+    expiresAt: Date.now() + (Number(body.expire) || 7200) * 1000,
+  };
 }
 
-export async function feishuBotInfo(ctx: Pick<AdapterContext, "fetch" | "config">, token: string) {
-  const response = await ctx.fetch(`${feishuBase(ctx.config)}/open-apis/bot/v3/info`, { headers: { Authorization: `Bearer ${token}` } });
+export async function feishuBotInfo(
+  ctx: Pick<AdapterContext, "fetch" | "config">,
+  token: string,
+) {
+  const response = await ctx.fetch(
+    `${feishuBase(ctx.config)}/open-apis/bot/v3/info`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
   const body = await readJson(response, "读取飞书机器人信息");
-  if (body.code !== 0) throw new Error(`读取飞书机器人信息失败：${body.code} ${body.msg ?? ""}（应用是否已添加「机器人」能力并发布？）`);
-  return { openId: String(body.bot?.open_id ?? ""), name: String(body.bot?.app_name ?? "") };
+  if (body.code !== 0)
+    throw new Error(
+      `读取飞书机器人信息失败：${body.code} ${body.msg ?? ""}（应用是否已添加「机器人」能力并发布？）`,
+    );
+  return {
+    openId: String(body.bot?.open_id ?? ""),
+    name: String(body.bot?.app_name ?? ""),
+  };
 }
 
 /** 富文本（post）内容 → 文字。 */
@@ -53,33 +81,50 @@ function postText(content: any): string {
   const lines = rows.map((row) =>
     (Array.isArray(row) ? row : [])
       // biome-ignore lint/suspicious/noExplicitAny: 段落元素按 tag 分派，形状随 tag 变化
-      .map((item: any) => (item.tag === "text" || item.tag === "md" ? item.text : item.tag === "a" ? `${item.text}（${item.href}）` : item.tag === "at" ? `@${item.user_name ?? ""}` : ""))
+      .map((item: any) =>
+        item.tag === "text" || item.tag === "md"
+          ? item.text
+          : item.tag === "a"
+            ? `${item.text}（${item.href}）`
+            : item.tag === "at"
+              ? `@${item.user_name ?? ""}`
+              : "",
+      )
       .join(""),
   );
   return [body?.title, ...lines].filter(Boolean).join("\n");
 }
 
 /** im.message.receive_v1 事件 → ImInbound。 */
-// biome-ignore lint/suspicious/noExplicitAny: 飞书 im.message.receive_v1 事件载荷无官方类型
-export function parseFeishuMessage(event: any, botOpenId: string | null): ImInbound | null {
+export function parseFeishuMessage(
+  // biome-ignore lint/suspicious/noExplicitAny: 飞书 im.message.receive_v1 事件载荷无官方类型
+  event: any,
+  botOpenId: string | null,
+): ImInbound | null {
   const message = event?.message;
   if (!message?.message_id) return null;
-  if (event.sender?.sender_type && event.sender.sender_type !== "user") return null;
+  if (event.sender?.sender_type && event.sender.sender_type !== "user")
+    return null;
   // biome-ignore lint/suspicious/noExplicitAny: message.content 是按 msg_type 变化的 JSON 字符串
   let content: any = {};
   try {
     content = JSON.parse(message.content ?? "{}");
   } catch {}
   // biome-ignore lint/suspicious/noExplicitAny: mentions 元素形状按官方文档字段取用
-  const mentions: any[] = Array.isArray(message.mentions) ? message.mentions : [];
+  const mentions: any[] = Array.isArray(message.mentions)
+    ? message.mentions
+    : [];
   let text = "";
   const attachments: ImInbound["attachments"] = [];
   if (message.message_type === "text") text = String(content.text ?? "");
   else if (message.message_type === "post") text = postText(content);
-  else if (message.message_type === "image") attachments.push({ kind: "image" });
+  else if (message.message_type === "image")
+    attachments.push({ kind: "image" });
   else if (message.message_type === "file") attachments.push({ kind: "file" });
-  else if (message.message_type === "audio") attachments.push({ kind: "voice" });
-  else if (message.message_type === "media") attachments.push({ kind: "video" });
+  else if (message.message_type === "audio")
+    attachments.push({ kind: "voice" });
+  else if (message.message_type === "media")
+    attachments.push({ kind: "video" });
   let mentioned = message.chat_type === "p2p";
   for (const mention of mentions) {
     const isBot = botOpenId ? mention.id?.open_id === botOpenId : false;
@@ -88,14 +133,18 @@ export function parseFeishuMessage(event: any, botOpenId: string | null): ImInbo
   }
   // 不知道机器人自己的 open_id 时：群里有任何 @ 都当作 @ 了机器人（飞书默认只把 @ 机器人的群消息推过来）。
   if (!botOpenId && mentions.length) mentioned = true;
-  const userId = String(event.sender?.sender_id?.open_id ?? event.sender?.sender_id?.user_id ?? "");
+  const userId = String(
+    event.sender?.sender_id?.open_id ?? event.sender?.sender_id?.user_id ?? "",
+  );
   const group = message.chat_type !== "p2p";
   return {
     messageId: String(message.message_id),
     chatType: group ? "group" : "private",
     chatId: group ? String(message.chat_id) : userId,
     userId,
-    text: text.replace(/\s+/g, (space) => (space.includes("\n") ? "\n" : " ")).trim(),
+    text: text
+      .replace(/\s+/g, (space) => (space.includes("\n") ? "\n" : " "))
+      .trim(),
     mentioned,
     reply: { messageId: message.message_id, chatId: message.chat_id },
     attachments: attachments.length ? attachments : undefined,
@@ -118,7 +167,8 @@ export class FeishuAdapter extends LoopAdapter {
   }
 
   private async tenantToken() {
-    if (!this.token || this.token.expiresAt - Date.now() < 120_000) this.token = await feishuTenantToken(this.ctx);
+    if (!this.token || this.token.expiresAt - Date.now() < 120_000)
+      this.token = await feishuTenantToken(this.ctx);
     return this.token.token;
   }
 
@@ -137,22 +187,35 @@ export class FeishuAdapter extends LoopAdapter {
     } catch (error) {
       this.ctx.log("warn", errorText(error));
     }
-    const response = await this.ctx.fetch(`${feishuBase(this.ctx.config)}/callback/ws/endpoint`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", locale: "zh" },
-      body: JSON.stringify({ AppID: this.ctx.config.appId ?? "", AppSecret: this.ctx.secrets.appSecret ?? "" }),
-    });
+    const response = await this.ctx.fetch(
+      `${feishuBase(this.ctx.config)}/callback/ws/endpoint`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", locale: "zh" },
+        body: JSON.stringify({
+          AppID: this.ctx.config.appId ?? "",
+          AppSecret: this.ctx.secrets.appSecret ?? "",
+        }),
+      },
+    );
     const body = await readJson(response, "获取飞书长连接地址");
-    if (body.code !== 0 || !body.data?.URL) throw new Error(`获取飞书长连接地址失败：${body.code} ${body.msg ?? ""}`.trim());
+    if (body.code !== 0 || !body.data?.URL)
+      throw new Error(
+        `获取飞书长连接地址失败：${body.code} ${body.msg ?? ""}`.trim(),
+      );
     const url = String(body.data.URL);
     const query = new URL(url).searchParams;
     this.serviceId = Number(query.get("service_id")) || 0;
-    this.pingInterval = (Number(body.data.ClientConfig?.PingInterval) || 120) * 1000;
+    this.pingInterval =
+      (Number(body.data.ClientConfig?.PingInterval) || 120) * 1000;
     await this.openSocket(url, {
       binary: true,
       onOpen: () => {
         this.markConnected(account);
-        this.ctx.log("info", `已连上飞书长连接${account ? `（${account}）` : ""}`);
+        this.ctx.log(
+          "info",
+          `已连上飞书长连接${account ? `（${account}）` : ""}`,
+        );
         this.schedulePing();
       },
       onMessage: (data) => this.handle(dataBytes(data)),
@@ -163,7 +226,13 @@ export class FeishuAdapter extends LoopAdapter {
     if (this.pingTimer) clearTimeout(this.pingTimer);
     this.pingTimer = setTimeout(() => {
       try {
-        this.sendFrame({ SeqID: 0n, LogID: 0n, service: this.serviceId, method: 0, headers: [{ key: "type", value: "ping" }] });
+        this.sendFrame({
+          SeqID: 0n,
+          LogID: 0n,
+          service: this.serviceId,
+          method: 0,
+          headers: [{ key: "type", value: "ping" }],
+        });
       } catch {}
       this.schedulePing();
     }, this.pingInterval);
@@ -182,7 +251,8 @@ export class FeishuAdapter extends LoopAdapter {
       if (type === "pong" && frame.payload) {
         try {
           const config = JSON.parse(new TextDecoder().decode(frame.payload));
-          if (Number(config.PingInterval)) this.pingInterval = Number(config.PingInterval) * 1000;
+          if (Number(config.PingInterval))
+            this.pingInterval = Number(config.PingInterval) * 1000;
         } catch {}
       }
       return;
@@ -194,10 +264,14 @@ export class FeishuAdapter extends LoopAdapter {
     const seq = Number(headerOf(frame, "seq") ?? "0") || 0;
     let payload = frame.payload ?? new Uint8Array();
     if (sum > 1) {
-      const entry = this.fragments.get(messageId) ?? { parts: new Array<Uint8Array>(sum), at: Date.now() };
+      const entry = this.fragments.get(messageId) ?? {
+        parts: new Array<Uint8Array>(sum),
+        at: Date.now(),
+      };
       entry.parts[seq] = payload;
       this.fragments.set(messageId, entry);
-      for (const [key, value] of this.fragments) if (Date.now() - value.at > 10_000) this.fragments.delete(key);
+      for (const [key, value] of this.fragments)
+        if (Date.now() - value.at > 10_000) this.fragments.delete(key);
       if (entry.parts.filter(Boolean).length < sum) return;
       this.fragments.delete(messageId);
       const total = entry.parts.reduce((n, part) => n + part.length, 0);
@@ -222,28 +296,49 @@ export class FeishuAdapter extends LoopAdapter {
     }
     this.sendFrame({
       ...frame,
-      headers: [...frame.headers, { key: "biz_rt", value: String(Date.now() - started) }],
+      headers: [
+        ...frame.headers,
+        { key: "biz_rt", value: String(Date.now() - started) },
+      ],
       payload: new TextEncoder().encode(JSON.stringify({ code })),
     });
   }
 
   private async reply(messageId: string, msgType: string, content: unknown) {
-    const response = await this.ctx.fetch(`${feishuBase(this.ctx.config)}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${await this.tenantToken()}`, "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ msg_type: msgType, content: JSON.stringify(content) }),
-    });
+    const response = await this.ctx.fetch(
+      `${feishuBase(this.ctx.config)}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/reply`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${await this.tenantToken()}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          msg_type: msgType,
+          content: JSON.stringify(content),
+        }),
+      },
+    );
     const body = await readJson(response, "飞书回复");
-    if (body.code !== 0) throw new Error(`飞书回复失败：${body.code} ${body.msg ?? ""}`.trim());
+    if (body.code !== 0)
+      throw new Error(`飞书回复失败：${body.code} ${body.msg ?? ""}`.trim());
   }
 
   async send(reply: ImReply): Promise<undefined> {
-    const messageId = String((reply.inbound.reply as { messageId?: string }).messageId ?? reply.inbound.messageId);
+    const messageId = String(
+      (reply.inbound.reply as { messageId?: string }).messageId ??
+        reply.inbound.messageId,
+    );
     for (const chunk of reply.chunks) {
       try {
-        await this.reply(messageId, "post", { zh_cn: { content: [[{ tag: "md", text: chunk }]] } });
+        await this.reply(messageId, "post", {
+          zh_cn: { content: [[{ tag: "md", text: chunk }]] },
+        });
       } catch (error) {
-        this.ctx.log("warn", `Markdown 回复失败（${errorText(error)}），改用纯文本`);
+        this.ctx.log(
+          "warn",
+          `Markdown 回复失败（${errorText(error)}），改用纯文本`,
+        );
         await this.reply(messageId, "text", { text: chunk });
       }
     }
@@ -257,16 +352,32 @@ export async function testFeishu(ctx: AdapterContext): Promise<TestResult> {
     try {
       name = (await feishuBotInfo(ctx, token)).name;
     } catch (error) {
-      return { ok: false, detail: `App ID / Secret 正确，但${errorText(error)}` };
+      return {
+        ok: false,
+        detail: `App ID / Secret 正确，但${errorText(error)}`,
+      };
     }
-    const response = await ctx.fetch(`${feishuBase(ctx.config)}/callback/ws/endpoint`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", locale: "zh" },
-      body: JSON.stringify({ AppID: ctx.config.appId ?? "", AppSecret: ctx.secrets.appSecret ?? "" }),
-    });
+    const response = await ctx.fetch(
+      `${feishuBase(ctx.config)}/callback/ws/endpoint`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", locale: "zh" },
+        body: JSON.stringify({
+          AppID: ctx.config.appId ?? "",
+          AppSecret: ctx.secrets.appSecret ?? "",
+        }),
+      },
+    );
     const body = await readJson(response, "获取飞书长连接地址");
-    if (body.code !== 0) return { ok: false, detail: `凭据正确，但长连接不可用：${body.code} ${body.msg ?? ""}` };
-    return { ok: true, detail: `凭据有效，机器人「${name || "未命名"}」，长连接可用` };
+    if (body.code !== 0)
+      return {
+        ok: false,
+        detail: `凭据正确，但长连接不可用：${body.code} ${body.msg ?? ""}`,
+      };
+    return {
+      ok: true,
+      detail: `凭据有效，机器人「${name || "未命名"}」，长连接可用`,
+    };
   } catch (error) {
     return { ok: false, detail: errorText(error) };
   }

@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import {
   assertBoundedJson,
   canonicalJson,
@@ -7,29 +7,30 @@ import {
   validateStateSchema,
 } from "../../../shared/panels/state-schema";
 import {
-  PanelError,
   type ActorContext,
   type CommitInput,
   type CommitResult,
   type DraftWrite,
   type PanelDefinition,
   type PanelDraft,
+  PanelError,
   type PanelInstance,
   type StateWrite,
 } from "../../../shared/panels/types";
-import type { Database } from "../db/client";
 import { validatePanelDefinition } from "../../../shared/panels/validate";
+import type { Database } from "../db/client";
 import {
-  botPanelInstances as instances,
-  botPanelInstanceVersions as versions,
-  panelAuthoringSessions as sessions,
   panelDrafts as drafts,
+  panelCapabilityGrants as grants,
+  botPanelInstances as instances,
   panelLibraryEntries as libraries,
   panelLibraryVersions as libraryVersions,
   panelOperations as operations,
+  panelAuthoringSessions as sessions,
   panelStates as states,
-  panelCapabilityGrants as grants,
+  botPanelInstanceVersions as versions,
 } from "../db/schema/panels";
+
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Connection = Database | Tx;
 function actor(ctx: ActorContext) {
@@ -119,18 +120,16 @@ async function newInstance(
     .from(instances)
     .where(eq(instances.botId, ctx.botId));
   const id = crypto.randomUUID();
-  await tx
-    .insert(instances)
-    .values({
-      id,
-      botId: ctx.botId,
-      currentVersion: 1,
-      sourceLibraryId: libraryId,
-      sourceVersion,
-      title: definition.name,
-      position: rows.reduce((max, r) => Math.max(max, r.position), -1) + 1,
-      size: definition.size,
-    });
+  await tx.insert(instances).values({
+    id,
+    botId: ctx.botId,
+    currentVersion: 1,
+    sourceLibraryId: libraryId,
+    sourceVersion,
+    title: definition.name,
+    position: rows.reduce((max, r) => Math.max(max, r.position), -1) + 1,
+    size: definition.size,
+  });
   await tx.insert(versions).values({ instanceId: id, version: 1, definition });
   return id;
 }
@@ -164,15 +163,13 @@ export function createPanelStore(db: Database) {
         return previous.result;
       }
       const result = await run(tx);
-      await tx
-        .insert(operations)
-        .values({
-          actorId: ctx.actorId,
-          botId: ctx.botId,
-          idempotencyKey: key,
-          requestHash: hash,
-          result,
-        });
+      await tx.insert(operations).values({
+        actorId: ctx.actorId,
+        botId: ctx.botId,
+        idempotencyKey: key,
+        requestHash: hash,
+        result,
+      });
       return result;
     });
   }
@@ -299,13 +296,11 @@ export function createPanelStore(db: Database) {
         if (instance.instanceVersion !== input.expectedVersion)
           throw new PanelError("instance_version_conflict");
         const version = instance.instanceVersion + 1;
-        await tx
-          .insert(versions)
-          .values({
-            instanceId: instance.id,
-            version,
-            definition: instance.definition,
-          });
+        await tx.insert(versions).values({
+          instanceId: instance.id,
+          version,
+          definition: instance.definition,
+        });
         await tx
           .update(instances)
           .set({
@@ -356,13 +351,11 @@ export function createPanelStore(db: Database) {
           const row = rows.find((r) => r.id === id)!;
           if (row.position === position) continue;
           const instance = await bound(tx, ctx, id);
-          await tx
-            .insert(versions)
-            .values({
-              instanceId: id,
-              version: row.currentVersion + 1,
-              definition: instance.definition,
-            });
+          await tx.insert(versions).values({
+            instanceId: id,
+            version: row.currentVersion + 1,
+            definition: instance.definition,
+          });
           await tx
             .update(instances)
             .set({ position, currentVersion: row.currentVersion + 1 })
@@ -421,13 +414,11 @@ export function createPanelStore(db: Database) {
               });
           }
           const version = instance.instanceVersion + 1;
-          await tx
-            .insert(versions)
-            .values({
-              instanceId: instance.id,
-              version,
-              definition: target.definition,
-            });
+          await tx.insert(versions).values({
+            instanceId: instance.id,
+            version,
+            definition: target.definition,
+          });
           await tx
             .update(instances)
             .set({ currentVersion: version })
@@ -470,16 +461,14 @@ export function createPanelStore(db: Database) {
               .where(eq(libraries.id, instance.sourceLibraryId))
           : [];
         const sessionId = crypto.randomUUID();
-        await tx
-          .insert(sessions)
-          .values({
-            id: sessionId,
-            actorId: ctx.actorId,
-            botId: ctx.botId,
-            targetInstanceId: targetInstanceId ?? null,
-            baseInstanceVersion: instance?.instanceVersion ?? null,
-            baseLibraryVersion: source?.currentVersion ?? null,
-          });
+        await tx.insert(sessions).values({
+          id: sessionId,
+          actorId: ctx.actorId,
+          botId: ctx.botId,
+          targetInstanceId: targetInstanceId ?? null,
+          baseInstanceVersion: instance?.instanceVersion ?? null,
+          baseLibraryVersion: source?.currentVersion ?? null,
+        });
         return { sessionId };
       });
     },
@@ -615,13 +604,11 @@ export function createPanelStore(db: Database) {
             if (draft.targetInstanceId)
               throw new PanelError("invalid_commit_mode", 400);
             const libraryId = crypto.randomUUID();
-            await tx
-              .insert(libraries)
-              .values({
-                id: libraryId,
-                creatorActorId: ctx.actorId,
-                currentVersion: 1,
-              });
+            await tx.insert(libraries).values({
+              id: libraryId,
+              creatorActorId: ctx.actorId,
+              currentVersion: 1,
+            });
             await tx
               .insert(libraryVersions)
               .values({ libraryId, version: 1, definition: draft.definition });
@@ -668,13 +655,11 @@ export function createPanelStore(db: Database) {
                 });
             }
             const version = instance.instanceVersion + 1;
-            await tx
-              .insert(versions)
-              .values({
-                instanceId: instance.id,
-                version,
-                definition: draft.definition,
-              });
+            await tx.insert(versions).values({
+              instanceId: instance.id,
+              version,
+              definition: draft.definition,
+            });
             await tx
               .update(instances)
               .set({ currentVersion: version })
@@ -695,20 +680,16 @@ export function createPanelStore(db: Database) {
               throw new PanelError("instance_version_conflict");
             if (input.mode === "new-library") {
               const libraryId = crypto.randomUUID();
-              await tx
-                .insert(libraries)
-                .values({
-                  id: libraryId,
-                  creatorActorId: ctx.actorId,
-                  currentVersion: 1,
-                });
-              await tx
-                .insert(libraryVersions)
-                .values({
-                  libraryId,
-                  version: 1,
-                  definition: draft.definition,
-                });
+              await tx.insert(libraries).values({
+                id: libraryId,
+                creatorActorId: ctx.actorId,
+                currentVersion: 1,
+              });
+              await tx.insert(libraryVersions).values({
+                libraryId,
+                version: 1,
+                definition: draft.definition,
+              });
               result = { libraryId, libraryVersion: 1 };
             } else {
               if (
@@ -733,13 +714,11 @@ export function createPanelStore(db: Database) {
               )
                 throw new PanelError("library_version_conflict");
               const version = library.currentVersion + 1;
-              await tx
-                .insert(libraryVersions)
-                .values({
-                  libraryId: library.id,
-                  version,
-                  definition: draft.definition,
-                });
+              await tx.insert(libraryVersions).values({
+                libraryId: library.id,
+                version,
+                definition: draft.definition,
+              });
               await tx
                 .update(libraries)
                 .set({ currentVersion: version })

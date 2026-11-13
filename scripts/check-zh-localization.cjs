@@ -126,9 +126,7 @@ for (const filename of verifiedFiles) {
   if (required) {
     for (const token of required) {
       if (!actual.includes(token)) {
-        throw new Error(
-          `Missing required contract "${token}" in ${filename}`,
-        );
+        throw new Error(`Missing required contract "${token}" in ${filename}`);
       }
     }
   }

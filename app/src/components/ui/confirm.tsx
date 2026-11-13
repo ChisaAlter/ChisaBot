@@ -134,7 +134,10 @@ export function ConfirmHost() {
           ) : null}
         </DialogHeader>
         {pending?.items?.length ? (
-          <ul className="max-h-56 list-disc space-y-1 overflow-y-auto pl-5 text-sm" data-testid="confirm-items">
+          <ul
+            className="max-h-56 list-disc space-y-1 overflow-y-auto pl-5 text-sm"
+            data-testid="confirm-items"
+          >
             {pending.items.map((item, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: 待确认条目是纯文本、可重复，顺序就是身份
               <li key={index}>{item}</li>

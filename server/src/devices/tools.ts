@@ -8,11 +8,11 @@ import {
   GIT_SUBCOMMANDS,
 } from "../../../shared/devices";
 import type { AuditInitiator } from "../audit";
-import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
-import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
-import { DeviceRefusedError, type DeviceHub } from "./hub";
-import { type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
 import { redactText } from "../computer/activity-redact";
+import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
+import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
+import { type DeviceHub, DeviceRefusedError } from "./hub";
+import { type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
 
 /** 机器人工作区（服务器上的云端电脑）：device_upload / device_download 用它读写。 */
 export type DeviceWorkspace = {
@@ -35,37 +35,110 @@ const deviceId = z
   .string()
   .min(1)
   .optional()
-  .describe("目标设备：设备 id 或设备名称（见 device_list）。只有一台在线设备时可以省略；多台在线时必须指定。");
+  .describe(
+    "目标设备：设备 id 或设备名称（见 device_list）。只有一台在线设备时可以省略；多台在线时必须指定。",
+  );
 
 const schemas = {
   list: z.object({}),
   info: z.object({ deviceId }),
   shell: z.object({
     deviceId,
-    command: z.string().min(1).max(20_000).describe("要运行的命令：Windows 上是 PowerShell，Linux / macOS 上是 bash（没有 bash 时 sh）"),
+    command: z
+      .string()
+      .min(1)
+      .max(20_000)
+      .describe(
+        "要运行的命令：Windows 上是 PowerShell，Linux / macOS 上是 bash（没有 bash 时 sh）",
+      ),
     cwd: z.string().optional().describe("工作目录（绝对路径，可选）"),
-    timeoutSec: z.number().int().min(1).max(600).optional().describe("前台等待的超时秒数，默认 60，最多 600；更久的（编译、测试、开发服务器）用 background: true；会等输入的交互式程序放前台只会空等到超时"),
-    background: z.boolean().optional().describe("true = 后台运行，立刻返回 jobId 和开头的输出；之后用 device_shell_output 看输出、device_shell_kill 结束。适合构建、测试、开发服务器、长时间任务，以及会等输入的交互式程序"),
-    session: z.string().max(64).optional().describe("持久会话名（例如 \"main\"）：同名会话里 cd、export / $env: 设置的目录和环境变量会保留到下一条命令"),
-    elevated: z.boolean().optional().describe("以管理员 / root 身份运行（只在完全访问模式下可用；Windows 首次会弹一次 UAC，Linux/macOS 需要节点是 root 或有免密 sudo）"),
+    timeoutSec: z
+      .number()
+      .int()
+      .min(1)
+      .max(600)
+      .optional()
+      .describe(
+        "前台等待的超时秒数，默认 60，最多 600；更久的（编译、测试、开发服务器）用 background: true；会等输入的交互式程序放前台只会空等到超时",
+      ),
+    background: z
+      .boolean()
+      .optional()
+      .describe(
+        "true = 后台运行，立刻返回 jobId 和开头的输出；之后用 device_shell_output 看输出、device_shell_kill 结束。适合构建、测试、开发服务器、长时间任务，以及会等输入的交互式程序",
+      ),
+    session: z
+      .string()
+      .max(64)
+      .optional()
+      .describe(
+        '持久会话名（例如 "main"）：同名会话里 cd、export / $env: 设置的目录和环境变量会保留到下一条命令',
+      ),
+    elevated: z
+      .boolean()
+      .optional()
+      .describe(
+        "以管理员 / root 身份运行（只在完全访问模式下可用；Windows 首次会弹一次 UAC，Linux/macOS 需要节点是 root 或有免密 sudo）",
+      ),
   }),
   shellOutput: z.object({
     deviceId,
-    jobId: z.string().optional().describe("后台命令的 jobId；省略时列出这台设备上的全部后台命令"),
-    since: z.number().int().min(0).optional().describe("从第几个字节开始（上次返回的 nextOffset），省略 = 从头"),
-    waitSec: z.number().int().min(0).max(25).optional().describe("没有新输出时最多等几秒（默认 0）"),
+    jobId: z
+      .string()
+      .optional()
+      .describe("后台命令的 jobId；省略时列出这台设备上的全部后台命令"),
+    since: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("从第几个字节开始（上次返回的 nextOffset），省略 = 从头"),
+    waitSec: z
+      .number()
+      .int()
+      .min(0)
+      .max(25)
+      .optional()
+      .describe("没有新输出时最多等几秒（默认 0）"),
   }),
   shellKill: z.object({ deviceId, jobId: z.string().min(1) }),
   search: z.object({
     deviceId,
-    path: z.string().optional().describe("从哪里开始搜（文件夹或文件；省略 = 第一个允许的文件夹）"),
-    pattern: z.string().max(1000).optional().describe("要搜索的内容（正则；按字面搜索设 literal: true）。省略 = 只按 glob 列文件名"),
-    glob: z.union([z.string(), z.array(z.string()).max(20)]).optional().describe("文件名过滤，例如 \"*.ts\"、\"src/**/*.py\"、\"*.{js,jsx}\""),
+    path: z
+      .string()
+      .optional()
+      .describe("从哪里开始搜（文件夹或文件；省略 = 第一个允许的文件夹）"),
+    pattern: z
+      .string()
+      .max(1000)
+      .optional()
+      .describe(
+        "要搜索的内容（正则；按字面搜索设 literal: true）。省略 = 只按 glob 列文件名",
+      ),
+    glob: z
+      .union([z.string(), z.array(z.string()).max(20)])
+      .optional()
+      .describe('文件名过滤，例如 "*.ts"、"src/**/*.py"、"*.{js,jsx}"'),
     literal: z.boolean().optional(),
     ignoreCase: z.boolean().optional(),
-    contextLines: z.number().int().min(0).max(5).optional().describe("每个匹配前后带几行上下文"),
-    maxResults: z.number().int().min(1).max(1000).optional().describe("最多返回多少条，默认 100"),
-    includeIgnored: z.boolean().optional().describe("true = 也搜 node_modules、.git、dist 等通常跳过的目录"),
+    contextLines: z
+      .number()
+      .int()
+      .min(0)
+      .max(5)
+      .optional()
+      .describe("每个匹配前后带几行上下文"),
+    maxResults: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .optional()
+      .describe("最多返回多少条，默认 100"),
+    includeIgnored: z
+      .boolean()
+      .optional()
+      .describe("true = 也搜 node_modules、.git、dist 等通常跳过的目录"),
   }),
   edit: z.object({
     deviceId,
@@ -73,9 +146,17 @@ const schemas = {
     edits: z
       .array(
         z.object({
-          oldText: z.string().min(1).describe("要替换的原文，必须和文件里逐字一致（含缩进），并且在文件里唯一；带上前后几行让它唯一"),
+          oldText: z
+            .string()
+            .min(1)
+            .describe(
+              "要替换的原文，必须和文件里逐字一致（含缩进），并且在文件里唯一；带上前后几行让它唯一",
+            ),
           newText: z.string().describe("替换成的内容"),
-          replaceAll: z.boolean().optional().describe("true = 替换所有出现的地方"),
+          replaceAll: z
+            .boolean()
+            .optional()
+            .describe("true = 替换所有出现的地方"),
         }),
       )
       .min(1)
@@ -85,20 +166,46 @@ const schemas = {
   }),
   patch: z.object({
     deviceId,
-    patch: z.string().min(1).max(1_000_000).describe("unified diff（git diff 格式：--- a/路径、+++ b/路径、@@ -行,数 +行,数 @@），可以包含多个文件；新建文件用 --- /dev/null"),
-    cwd: z.string().optional().describe("补丁里的相对路径相对于哪个目录（通常是仓库根目录）"),
+    patch: z
+      .string()
+      .min(1)
+      .max(1_000_000)
+      .describe(
+        "unified diff（git diff 格式：--- a/路径、+++ b/路径、@@ -行,数 +行,数 @@），可以包含多个文件；新建文件用 --- /dev/null",
+      ),
+    cwd: z
+      .string()
+      .optional()
+      .describe("补丁里的相对路径相对于哪个目录（通常是仓库根目录）"),
     dryRun: z.boolean().optional(),
   }),
   git: z.object({
     deviceId,
-    cwd: z.string().min(1).describe("仓库目录（clone / init 时是目标目录的上级或目标目录）"),
-    subcommand: z.enum(GIT_SUBCOMMANDS).describe("status / diff / log / show / branch… 是只读；add / commit / checkout / pull / push… 会改动（push 每次都要用户批准）"),
-    args: z.array(z.string().max(2000)).max(50).optional().describe("其余参数，例如 [\"-m\", \"修复测试\"]、[\"--stat\"]、[\"https://github.com/x/y.git\", \"y\"]"),
+    cwd: z
+      .string()
+      .min(1)
+      .describe("仓库目录（clone / init 时是目标目录的上级或目标目录）"),
+    subcommand: z
+      .enum(GIT_SUBCOMMANDS)
+      .describe(
+        "status / diff / log / show / branch… 是只读；add / commit / checkout / pull / push… 会改动（push 每次都要用户批准）",
+      ),
+    args: z
+      .array(z.string().max(2000))
+      .max(50)
+      .optional()
+      .describe(
+        '其余参数，例如 ["-m", "修复测试"]、["--stat"]、["https://github.com/x/y.git", "y"]',
+      ),
   }),
   processes: z.object({
     deviceId,
     action: z.enum(["list", "kill"]),
-    filter: z.string().max(200).optional().describe("list：按名称 / 命令行过滤"),
+    filter: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("list：按名称 / 命令行过滤"),
     limit: z.number().int().min(1).max(300).optional(),
     pid: z.number().int().optional().describe("kill：进程号"),
     signal: z.enum(["SIGTERM", "SIGKILL", "SIGINT", "SIGHUP"]).optional(),
@@ -107,7 +214,10 @@ const schemas = {
     deviceId,
     from: z.string().min(1).describe("你工作区（云端电脑）里的文件路径"),
     to: z.string().min(1).describe("设备上的目标路径"),
-    overwrite: z.boolean().optional().describe("目标已存在时是否覆盖（覆盖前备份），默认 true"),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe("目标已存在时是否覆盖（覆盖前备份），默认 true"),
   }),
   download: z.object({
     deviceId,
@@ -116,30 +226,67 @@ const schemas = {
   }),
   listFiles: z.object({
     deviceId,
-    path: z.string().optional().describe("绝对路径，或相对于第一个允许文件夹的路径；省略时列出允许的文件夹"),
+    path: z
+      .string()
+      .optional()
+      .describe(
+        "绝对路径，或相对于第一个允许文件夹的路径；省略时列出允许的文件夹",
+      ),
   }),
   readFile: z.object({
     deviceId,
     path: z.string().min(1),
-    startLine: z.number().int().min(1).optional().describe("从第几行开始（1 起）。给了 startLine / endLine 就按行读取并带行号，适合大文件；一次最多 2000 行"),
+    startLine: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "从第几行开始（1 起）。给了 startLine / endLine 就按行读取并带行号，适合大文件；一次最多 2000 行",
+      ),
     endLine: z.number().int().min(1).optional().describe("读到第几行（含）"),
-    maxBytes: z.number().int().min(1).max(1_048_576).optional().describe("不按行读时最多读取的字节数，默认 262144"),
+    maxBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(1_048_576)
+      .optional()
+      .describe("不按行读时最多读取的字节数，默认 262144"),
   }),
   writeFile: z.object({
     deviceId,
     path: z.string().min(1),
     content: z.string().max(2_000_000),
-    append: z.boolean().optional().describe("true 时追加到末尾，否则覆盖（覆盖前 PC 会备份原文件）"),
+    append: z
+      .boolean()
+      .optional()
+      .describe("true 时追加到末尾，否则覆盖（覆盖前 PC 会备份原文件）"),
   }),
   screenshot: z.object({
     deviceId,
-    maxWidth: z.number().int().min(320).max(3840).optional().describe("缩放后的最大宽度，默认 1600"),
+    maxWidth: z
+      .number()
+      .int()
+      .min(320)
+      .max(3840)
+      .optional()
+      .describe("缩放后的最大宽度，默认 1600"),
   }),
   input: z.object({
     deviceId,
     action: z
-      .enum(["move", "click", "double_click", "right_click", "scroll", "type", "key"])
-      .describe("move/click/double_click/right_click 需要 x,y；scroll 用 amount（正数向上）；type 输入 text；key 发送按键，如 {ENTER}、^c、%{F4}（SendKeys 语法）"),
+      .enum([
+        "move",
+        "click",
+        "double_click",
+        "right_click",
+        "scroll",
+        "type",
+        "key",
+      ])
+      .describe(
+        "move/click/double_click/right_click 需要 x,y；scroll 用 amount（正数向上）；type 输入 text；key 发送按键，如 {ENTER}、^c、%{F4}（SendKeys 语法）",
+      ),
     x: z.number().int().optional(),
     y: z.number().int().optional(),
     amount: z.number().int().optional(),
@@ -148,7 +295,13 @@ const schemas = {
   }),
   open: z.object({
     deviceId,
-    target: z.string().min(1).max(2000).describe("http/https 网址，或允许的文件夹里的文件 / 文件夹路径，例如 https://example.com、D:\\报告\\周报.pdf；文件夹以 \\ 或 / 结尾，例如 D:\\报告\\"),
+    target: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe(
+        "http/https 网址，或允许的文件夹里的文件 / 文件夹路径，例如 https://example.com、D:\\报告\\周报.pdf；文件夹以 \\ 或 / 结尾，例如 D:\\报告\\",
+      ),
   }),
   clipboard: z.object({
     deviceId,
@@ -157,7 +310,10 @@ const schemas = {
   }),
   desktopContext: z.object({
     deviceId,
-    includeClipboard: z.boolean().optional().describe("是否一并读取当前剪贴板文字，默认 true"),
+    includeClipboard: z
+      .boolean()
+      .optional()
+      .describe("是否一并读取当前剪贴板文字，默认 true"),
   }),
   mcpCall: z.object({
     deviceId,
@@ -165,10 +321,23 @@ const schemas = {
       .string()
       .min(1)
       .max(2000)
-      .describe("在用户电脑上启动本地 stdio MCP 服务的命令，例如 \"npx -y @modelcontextprotocol/server-filesystem D:/work\""),
-    action: z.enum(["list_tools", "call_tool"]).describe("list_tools=列出该本地 MCP 服务的全部工具；call_tool=调用其中一个工具"),
-    toolName: z.string().max(200).optional().describe("action=call_tool 时要调用的 MCP 工具名"),
-    toolArgs: z.record(z.string(), z.unknown()).optional().describe("action=call_tool 时传给工具的 JSON 参数对象"),
+      .describe(
+        '在用户电脑上启动本地 stdio MCP 服务的命令，例如 "npx -y @modelcontextprotocol/server-filesystem D:/work"',
+      ),
+    action: z
+      .enum(["list_tools", "call_tool"])
+      .describe(
+        "list_tools=列出该本地 MCP 服务的全部工具；call_tool=调用其中一个工具",
+      ),
+    toolName: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("action=call_tool 时要调用的 MCP 工具名"),
+    toolArgs: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe("action=call_tool 时传给工具的 JSON 参数对象"),
   }),
   windows: z.object({
     deviceId,
@@ -181,15 +350,33 @@ const schemas = {
       .string()
       .max(500)
       .optional()
-      .describe("按窗口标题、进程名或应用路径匹配（例如 Chrome、Visual Studio Code、WeChat、notepad）"),
-    title: z.string().max(200).optional().describe("focus / close：按窗口标题关键词匹配（不区分大小写）"),
-    processName: z.string().max(120).optional().describe("focus / close：按进程名匹配，例如 chrome、msedge、Code、WeChat、notepad"),
-    pid: z.number().int().optional().describe("focus / close：按进程号 PID 精确指定"),
+      .describe(
+        "按窗口标题、进程名或应用路径匹配（例如 Chrome、Visual Studio Code、WeChat、notepad）",
+      ),
+    title: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("focus / close：按窗口标题关键词匹配（不区分大小写）"),
+    processName: z
+      .string()
+      .max(120)
+      .optional()
+      .describe(
+        "focus / close：按进程名匹配，例如 chrome、msedge、Code、WeChat、notepad",
+      ),
+    pid: z
+      .number()
+      .int()
+      .optional()
+      .describe("focus / close：按进程号 PID 精确指定"),
     app: z
       .string()
       .max(500)
       .optional()
-      .describe("launch：要启动的本地软件名、协议或可执行路径（例如 chrome、msedge、notepad、calc、code、explorer）"),
+      .describe(
+        "launch：要启动的本地软件名、协议或可执行路径（例如 chrome、msedge、notepad、calc、code、explorer）",
+      ),
     maximize: z.boolean().optional().describe("focus 时是否同时最大化该窗口"),
     args: z
       .union([z.string().max(1000), z.array(z.string().max(1000)).max(20)])
@@ -215,7 +402,9 @@ export async function resolveDevice(
     if (byId) return byId;
     const key = wanted.toLowerCase();
     const byName = owned.filter((device) => device.name.toLowerCase() === key);
-    const matches = byName.length ? byName : owned.filter((device) => device.hostname?.toLowerCase() === key);
+    const matches = byName.length
+      ? byName
+      : owned.filter((device) => device.hostname?.toLowerCase() === key);
     if (matches.length === 1) return matches[0] as DeviceRecord;
     if (matches.length > 1) {
       const online = matches.filter((device) => isOnline(device.id));
@@ -255,12 +444,21 @@ function diffPath(path: string) {
 }
 
 /** 审批卡片里看的改动预览：edit_file 的每处 oldText → newText（不读文件，所以不带行号）。 */
-export function editsPreview(path: string, edits: readonly { oldText: string; newText: string; replaceAll?: boolean | undefined }[]): string {
+export function editsPreview(
+  path: string,
+  edits: readonly {
+    oldText: string;
+    newText: string;
+    replaceAll?: boolean | undefined;
+  }[],
+): string {
   const lines = [`--- a/${diffPath(path)}`, `+++ b/${diffPath(path)}`];
   for (const edit of edits.slice(0, 20)) {
     lines.push(`@@ ${edit.replaceAll ? "全部替换" : "替换"} @@`);
-    for (const l of edit.oldText.split(/\r?\n/).slice(0, 60)) lines.push(`-${l}`);
-    for (const l of edit.newText.split(/\r?\n/).slice(0, 60)) lines.push(`+${l}`);
+    for (const l of edit.oldText.split(/\r?\n/).slice(0, 60))
+      lines.push(`-${l}`);
+    for (const l of edit.newText.split(/\r?\n/).slice(0, 60))
+      lines.push(`+${l}`);
   }
   if (edits.length > 20) lines.push(`…另外 ${edits.length - 20} 处`);
   const text = lines.join("\n");
@@ -268,10 +466,20 @@ export function editsPreview(path: string, edits: readonly { oldText: string; ne
 }
 
 /** write_file 的预览：新内容的开头（覆盖时旧内容不在服务器上，看不到删了什么）。 */
-function contentPreview(path: string, content: string, append: boolean): string {
+function contentPreview(
+  path: string,
+  content: string,
+  append: boolean,
+): string {
   const lines = content.split(/\r?\n/);
   const head = lines.slice(0, 80).map((l) => `+${l}`);
-  return [`--- a/${diffPath(path)}`, `+++ b/${diffPath(path)}`, `@@ ${append ? "追加到末尾" : "整个文件写成"}（${lines.length} 行）@@`, ...head, ...(lines.length > 80 ? [`…另外 ${lines.length - 80} 行`] : [])].join("\n");
+  return [
+    `--- a/${diffPath(path)}`,
+    `+++ b/${diffPath(path)}`,
+    `@@ ${append ? "追加到末尾" : "整个文件写成"}（${lines.length} 行）@@`,
+    ...head,
+    ...(lines.length > 80 ? [`…另外 ${lines.length - 80} 行`] : []),
+  ].join("\n");
 }
 
 /** 「3 分钟前」「约 15 小时前」「2 天前」；没有记录时「从未连接过」。服务器不知道用户时区，所以只说相对时间。 */
@@ -288,7 +496,13 @@ export function agoText(iso: string | null, now = Date.now()) {
 }
 
 function platformName(platform: string) {
-  return platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : platform === "linux" ? "Linux" : platform;
+  return platform === "win32"
+    ? "Windows"
+    : platform === "darwin"
+      ? "macOS"
+      : platform === "linux"
+        ? "Linux"
+        : platform;
 }
 
 /**
@@ -297,7 +511,16 @@ function platformName(platform: string) {
  * 设备列表为空时返回空字符串（什么都不说，和以前一样）。
  */
 export function deviceGuidance(
-  devices: readonly (Pick<DeviceRecord, "id" | "name" | "platform" | "osVersion" | "paused" | "capabilities" | "lastSeenAt"> &
+  devices: readonly (Pick<
+    DeviceRecord,
+    | "id"
+    | "name"
+    | "platform"
+    | "osVersion"
+    | "paused"
+    | "capabilities"
+    | "lastSeenAt"
+  > &
     Partial<Pick<DeviceRecord, "fullAccessUntil" | "revoked">>)[],
   isOnline: (id: string) => boolean,
   now = Date.now(),
@@ -306,8 +529,18 @@ export function deviceGuidance(
   const describe = (device: (typeof devices)[number]) => {
     const enabled = Object.entries(device.capabilities)
       .filter(([, policy]) => policy !== "off")
-      .map(([cap, policy]) => `${CAPABILITY_INFO[cap as keyof typeof CAPABILITY_INFO]?.label ?? cap}${policy === "ask" ? "（每次需用户批准）" : ""}`);
-    const full = fullAccessActive({ fullAccessUntil: device.fullAccessUntil ?? null, paused: device.paused, revoked: device.revoked ?? false }, now);
+      .map(
+        ([cap, policy]) =>
+          `${CAPABILITY_INFO[cap as keyof typeof CAPABILITY_INFO]?.label ?? cap}${policy === "ask" ? "（每次需用户批准）" : ""}`,
+      );
+    const full = fullAccessActive(
+      {
+        fullAccessUntil: device.fullAccessUntil ?? null,
+        paused: device.paused,
+        revoked: device.revoked ?? false,
+      },
+      now,
+    );
     if (full && isOnline(device.id))
       return `- 「${device.name}」 (${device.osVersion || platformName(device.platform)}, deviceId ${device.id}): ONLINE now, 完全访问 FULL ACCESS is ON (the person turned it on${device.fullAccessUntil?.startsWith("9999") ? ", no expiry" : ` until ${device.fullAccessUntil}`}): every device_* tool runs without approval, any path on the whole computer, long/background commands without the 10-minute cap, elevated: true allowed. Everything is still logged and the person can hit 紧急停止 at any time.`;
     const state = isOnline(device.id)
@@ -328,8 +561,8 @@ export function deviceGuidance(
       "Capabilities marked 每次需用户批准 (the default for a newly linked computer) work right away: just call the device_* tool; ChisaBot shows the person an approval prompt on that computer and on the web/phone, and the call returns once they approve (or is refused if they deny or nobody answers within 2 minutes). Say in one short line that they will see a prompt to approve; do not ask for permission in chat first. File tools work inside the computer's 允许的文件夹 (listed by device_list as allowedRoots). For an absolute path outside them (e.g. C:\\AI) just call the file tool with that path: the approval prompt tells the person the folder will be added to 允许的文件夹, and once they approve it is added and the call runs. Do not tell them to add the folder by hand first.",
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
-      "Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: \"main\") when later commands depend on cd / env from earlier ones. Never wait in the foreground on a program that is itself waiting for input (login prompts, REPLs, y/n confirmations): it will not exit, every retry burns the whole timeout, and the turn looks dead. Feed input through a stdin pipe (`echo CODE | cmd`) or a non-interactive flag, or run it with background: true and poll device_shell_output.",
-      "Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: \"list\") to inspect all open desktop windows, the currently active foreground window, and each window's exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: \"focus\" or \"launch\") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_call.",
+      'Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: "main") when later commands depend on cd / env from earlier ones. Never wait in the foreground on a program that is itself waiting for input (login prompts, REPLs, y/n confirmations): it will not exit, every retry burns the whole timeout, and the turn looks dead. Feed input through a stdin pipe (`echo CODE | cmd`) or a non-interactive flag, or run it with background: true and poll device_shell_output.',
+      'Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: "list") to inspect all open desktop windows, the currently active foreground window, and each window\'s exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: "focus" or "launch") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_call.',
     );
   } else {
     lines.push(
@@ -338,7 +571,6 @@ export function deviceGuidance(
   }
   return lines.join("\n");
 }
-
 
 export function deviceTools(options: {
   store: DeviceStore;
@@ -354,7 +586,9 @@ export function deviceTools(options: {
   const { store, hub, botId, actorId } = options;
   if (!options.devices.length) return [];
   const botName = options.botName ?? null;
-  const onlineDevices = options.devices.filter((device) => hub.isOnline(device.id));
+  const onlineDevices = options.devices.filter((device) =>
+    hub.isOnline(device.id),
+  );
   const guidance = deviceGuidance(options.devices, (id) => hub.isOnline(id));
 
   const roster = options.devices
@@ -375,7 +609,14 @@ export function deviceTools(options: {
     timeoutMs?: number,
     diff?: string | null,
   ): Promise<string> {
-    const result = await raw(operation, selector, args, summary, timeoutMs, diff);
+    const result = await raw(
+      operation,
+      selector,
+      args,
+      summary,
+      timeoutMs,
+      diff,
+    );
     return typeof result === "string" ? result : JSON.stringify(result ?? {});
   }
 
@@ -390,9 +631,12 @@ export function deviceTools(options: {
   ): Promise<unknown> {
     const signal = currentToolAbort();
     if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-    const picked = await resolveDevice(store, actorId, selector, (id) => hub.isOnline(id));
+    const picked = await resolveDevice(store, actorId, selector, (id) =>
+      hub.isOnline(id),
+    );
     if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-    if (typeof picked === "string") return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
+    if (typeof picked === "string")
+      return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
     const device = picked;
     try {
       const result = await hub.invoke({
@@ -406,7 +650,12 @@ export function deviceTools(options: {
         ...(signal ? { signal } : {}),
       });
       if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-      if (operation === "screenshot" && result && typeof result === "object" && "url" in result) {
+      if (
+        operation === "screenshot" &&
+        result &&
+        typeof result === "object" &&
+        "url" in result
+      ) {
         const shot = result as { url: string; width?: number; height?: number };
         return JSON.stringify({
           ...shot,
@@ -423,9 +672,18 @@ export function deviceTools(options: {
     }
   }
 
-  const enabledAnywhere = (operation: DeviceOperation, args: Record<string, unknown> = {}) => {
+  const enabledAnywhere = (
+    operation: DeviceOperation,
+    args: Record<string, unknown> = {},
+  ) => {
     const capability = capabilityFor(operation, args);
-    return !capability || onlineDevices.some((device) => fullAccessActive(device) || device.capabilities[capability] !== "off");
+    return (
+      !capability ||
+      onlineDevices.some(
+        (device) =>
+          fullAccessActive(device) || device.capabilities[capability] !== "off",
+      )
+    );
   };
 
   const tools: GrantedTool[] = [
@@ -445,16 +703,25 @@ export function deviceTools(options: {
             hostname: device.hostname,
             online: hub.isOnline(device.id),
             lastSeenAt: device.lastSeenAt,
-            lastSeen: hub.isOnline(device.id) ? "在线" : agoText(device.lastSeenAt),
+            lastSeen: hub.isOnline(device.id)
+              ? "在线"
+              : agoText(device.lastSeenAt),
             paused: device.paused,
             allowedRoots: device.allowedRoots,
             capabilities: device.capabilities,
             fullAccess: fullAccessActive(device),
-            fullAccessUntil: fullAccessActive(device) ? device.fullAccessUntil : null,
-            codingTools: hub.isOnline(device.id) ? (hub.supports?.(device.id, "edit_file") ?? false) : undefined,
+            fullAccessUntil: fullAccessActive(device)
+              ? device.fullAccessUntil
+              : null,
+            codingTools: hub.isOnline(device.id)
+              ? (hub.supports?.(device.id, "edit_file") ?? false)
+              : undefined,
           })),
           legend: Object.fromEntries(
-            Object.entries(CAPABILITY_INFO).map(([key, info]) => [key, info.label]),
+            Object.entries(CAPABILITY_INFO).map(([key, info]) => [
+              key,
+              info.label,
+            ]),
           ),
         });
       },
@@ -462,7 +729,8 @@ export function deviceTools(options: {
     {
       name: "device_system_info",
       ref: "devices/system_info",
-      description: "读取设备的系统信息（系统版本、主机名、用户、CPU、内存、屏幕分辨率）。",
+      description:
+        "读取设备的系统信息（系统版本、主机名、用户、CPU、内存、屏幕分辨率）。",
       parameters: schemas.info,
       execute: async (input) => {
         const args = schemas.info.parse(input ?? {});
@@ -493,7 +761,16 @@ export function deviceTools(options: {
             return run(
               "exec_start",
               args.deviceId,
-              { command: args.command, cwd: args.cwd, session: args.session, elevated: args.elevated === true, timeoutSec: args.timeoutSec && args.timeoutSec > 600 ? args.timeoutSec : undefined },
+              {
+                command: args.command,
+                cwd: args.cwd,
+                session: args.session,
+                elevated: args.elevated === true,
+                timeoutSec:
+                  args.timeoutSec && args.timeoutSec > 600
+                    ? args.timeoutSec
+                    : undefined,
+              },
               `后台运行：${clip(redactText(args.command), 300)}${where}`,
               60_000,
             );
@@ -501,7 +778,13 @@ export function deviceTools(options: {
           const result = await raw(
             "shell",
             args.deviceId,
-            { command: args.command, cwd: args.cwd, timeoutSec, session: args.session, elevated: args.elevated === true },
+            {
+              command: args.command,
+              cwd: args.cwd,
+              timeoutSec,
+              session: args.session,
+              elevated: args.elevated === true,
+            },
             `运行命令：${clip(redactText(args.command), 300)}${where}`,
             (timeoutSec + 20) * 1000,
           );
@@ -511,7 +794,9 @@ export function deviceTools(options: {
               ? `${result} ${deviceShellTimeoutNote(timeoutSec)}`
               : result;
           const out =
-            result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+            result && typeof result === "object"
+              ? (result as Record<string, unknown>)
+              : {};
           return JSON.stringify(
             out.timedOut === true
               ? { ...out, timeoutSec, note: deviceShellTimeoutNote(timeoutSec) }
@@ -522,12 +807,24 @@ export function deviceTools(options: {
       {
         name: "device_shell_output",
         ref: "devices/shell_output",
-        description: "查看后台命令（device_run_shell background: true 启动的）的状态和新输出：带上上次的 nextOffset 只拿新增部分；waitSec 可以等新输出。省略 jobId = 列出全部后台命令。",
+        description:
+          "查看后台命令（device_run_shell background: true 启动的）的状态和新输出：带上上次的 nextOffset 只拿新增部分；waitSec 可以等新输出。省略 jobId = 列出全部后台命令。",
         parameters: schemas.shellOutput,
         execute: async (input) => {
           const args = schemas.shellOutput.parse(input ?? {});
-          if (!args.jobId) return run("exec_list", args.deviceId, {}, "列出后台命令", 30_000);
-          return run("exec_poll", args.deviceId, { jobId: args.jobId, since: args.since ?? 0, waitMs: (args.waitSec ?? 0) * 1000 }, `查看输出：${args.jobId}`, ((args.waitSec ?? 0) + 30) * 1000);
+          if (!args.jobId)
+            return run("exec_list", args.deviceId, {}, "列出后台命令", 30_000);
+          return run(
+            "exec_poll",
+            args.deviceId,
+            {
+              jobId: args.jobId,
+              since: args.since ?? 0,
+              waitMs: (args.waitSec ?? 0) * 1000,
+            },
+            `查看输出：${args.jobId}`,
+            ((args.waitSec ?? 0) + 30) * 1000,
+          );
         },
       },
       {
@@ -537,21 +834,41 @@ export function deviceTools(options: {
         parameters: schemas.shellKill,
         execute: async (input) => {
           const args = schemas.shellKill.parse(input ?? {});
-          return run("exec_kill", args.deviceId, { jobId: args.jobId }, `结束后台命令：${args.jobId}`, 30_000);
+          return run(
+            "exec_kill",
+            args.deviceId,
+            { jobId: args.jobId },
+            `结束后台命令：${args.jobId}`,
+            30_000,
+          );
         },
       },
       {
         name: "device_processes",
         ref: "devices/processes",
-        description: "查看设备上正在运行的进程（按 CPU 排序，可按名称过滤），或按进程号结束一个进程。",
+        description:
+          "查看设备上正在运行的进程（按 CPU 排序，可按名称过滤），或按进程号结束一个进程。",
         parameters: schemas.processes,
         execute: async (input) => {
           const args = schemas.processes.parse(input ?? {});
           if (args.action === "kill") {
-            if (!args.pid) return `${REFUSAL_MARKER} 结束进程需要 pid（先 action: list 查）。`;
-            return run("process_kill", args.deviceId, { pid: args.pid, signal: args.signal }, `结束进程 ${args.pid}`, 30_000);
+            if (!args.pid)
+              return `${REFUSAL_MARKER} 结束进程需要 pid（先 action: list 查）。`;
+            return run(
+              "process_kill",
+              args.deviceId,
+              { pid: args.pid, signal: args.signal },
+              `结束进程 ${args.pid}`,
+              30_000,
+            );
           }
-          return run("process_list", args.deviceId, { filter: args.filter, limit: args.limit }, `查看进程${args.filter ? `（${args.filter}）` : ""}`, 45_000);
+          return run(
+            "process_list",
+            args.deviceId,
+            { filter: args.filter, limit: args.limit },
+            `查看进程${args.filter ? `（${args.filter}）` : ""}`,
+            45_000,
+          );
         },
       },
     );
@@ -561,11 +878,17 @@ export function deviceTools(options: {
       {
         name: "device_list_files",
         ref: "devices/list_files",
-        description: "列出【用户电脑】上的文件和子文件夹（不是云端工作区）。不给 path 列出「允许的文件夹」；给允许的文件夹之外的绝对路径时，用户批准后会把它加入允许的文件夹。机器人自己的云端目录请用 computer_list_files。",
+        description:
+          "列出【用户电脑】上的文件和子文件夹（不是云端工作区）。不给 path 列出「允许的文件夹」；给允许的文件夹之外的绝对路径时，用户批准后会把它加入允许的文件夹。机器人自己的云端目录请用 computer_list_files。",
         parameters: schemas.listFiles,
         execute: async (input) => {
           const args = schemas.listFiles.parse(input ?? {});
-          return run("list_files", args.deviceId, { path: args.path }, `列出：${args.path ?? "允许的文件夹"}`);
+          return run(
+            "list_files",
+            args.deviceId,
+            { path: args.path },
+            `列出：${args.path ?? "允许的文件夹"}`,
+          );
         },
       },
       {
@@ -576,11 +899,18 @@ export function deviceTools(options: {
         parameters: schemas.readFile,
         execute: async (input) => {
           const args = schemas.readFile.parse(input ?? {});
-          const ranged = args.startLine !== undefined || args.endLine !== undefined;
+          const ranged =
+            args.startLine !== undefined || args.endLine !== undefined;
           return run(
             "read_file",
             args.deviceId,
-            ranged ? { path: args.path, startLine: args.startLine ?? 1, endLine: args.endLine } : { path: args.path, maxBytes: args.maxBytes },
+            ranged
+              ? {
+                  path: args.path,
+                  startLine: args.startLine ?? 1,
+                  endLine: args.endLine,
+                }
+              : { path: args.path, maxBytes: args.maxBytes },
             `读取：${args.path}${ranged ? `（第 ${args.startLine ?? 1}–${args.endLine ?? "…"} 行）` : ""}`,
           );
         },
@@ -593,8 +923,15 @@ export function deviceTools(options: {
         parameters: schemas.search,
         execute: async (input) => {
           const args = schemas.search.parse(input ?? {});
-          if (!args.pattern && !args.glob) return `${REFUSAL_MARKER} 至少给 pattern 或 glob 之一。`;
-          return run("search", args.deviceId, { ...args, deviceId: undefined }, `搜索：${args.pattern ? clip(args.pattern, 100) : ""}${args.glob ? ` ${JSON.stringify(args.glob)}` : ""}${args.path ? ` 于 ${args.path}` : ""}`, 70_000);
+          if (!args.pattern && !args.glob)
+            return `${REFUSAL_MARKER} 至少给 pattern 或 glob 之一。`;
+          return run(
+            "search",
+            args.deviceId,
+            { ...args, deviceId: undefined },
+            `搜索：${args.pattern ? clip(args.pattern, 100) : ""}${args.glob ? ` ${JSON.stringify(args.glob)}` : ""}${args.path ? ` 于 ${args.path}` : ""}`,
+            70_000,
+          );
         },
       },
     );
@@ -603,14 +940,19 @@ export function deviceTools(options: {
     tools.push({
       name: "device_write_file",
       ref: "devices/write_file",
-      description: "在用户设备上写入整个文本文件（新建文件或整体重写；覆盖前自动备份为 .chisabot-bak）。改已有代码请用 device_edit_file。可能需要用户审批。",
+      description:
+        "在用户设备上写入整个文本文件（新建文件或整体重写；覆盖前自动备份为 .chisabot-bak）。改已有代码请用 device_edit_file。可能需要用户审批。",
       parameters: schemas.writeFile,
       execute: async (input) => {
         const args = schemas.writeFile.parse(input ?? {});
         return run(
           "write_file",
           args.deviceId,
-          { path: args.path, content: args.content, append: args.append === true },
+          {
+            path: args.path,
+            content: args.content,
+            append: args.append === true,
+          },
           `${args.append ? "追加" : "写入"}：${args.path}（${Buffer.byteLength(args.content)} 字节）`,
           60_000,
           contentPreview(args.path, args.content, args.append === true),
@@ -631,7 +973,11 @@ export function deviceTools(options: {
           return run(
             "edit_file",
             args.deviceId,
-            { path: args.path, edits: args.edits, dryRun: args.dryRun === true },
+            {
+              path: args.path,
+              edits: args.edits,
+              dryRun: args.dryRun === true,
+            },
             `修改：${args.path}（${args.edits.length} 处）`,
             60_000,
             editsPreview(args.path, args.edits),
@@ -646,14 +992,18 @@ export function deviceTools(options: {
         parameters: schemas.patch,
         execute: async (input) => {
           const args = schemas.patch.parse(input ?? {});
-          const files = [...args.patch.matchAll(/^\+\+\+ (?:b\/)?(.+)$/gm)].map((m) => m[1]?.trim()).filter(Boolean);
+          const files = [...args.patch.matchAll(/^\+\+\+ (?:b\/)?(.+)$/gm)]
+            .map((m) => m[1]?.trim())
+            .filter(Boolean);
           return run(
             "apply_patch",
             args.deviceId,
             { patch: args.patch, cwd: args.cwd, dryRun: args.dryRun === true },
             `应用补丁：${files.slice(0, 5).join("、") || "（无文件名）"}${files.length > 5 ? ` 等 ${files.length} 个文件` : ""}${args.cwd ? `（目录 ${args.cwd}）` : ""}`,
             90_000,
-            args.patch.length > 60_000 ? `${args.patch.slice(0, 60_000)}\n…` : args.patch,
+            args.patch.length > 60_000
+              ? `${args.patch.slice(0, 60_000)}\n…`
+              : args.patch,
           );
         },
       },
@@ -668,7 +1018,9 @@ export function deviceTools(options: {
       parameters: schemas.git,
       execute: async (input) => {
         const args = schemas.git.parse(input ?? {});
-        const long = ["pull", "push", "fetch", "clone"].includes(args.subcommand);
+        const long = ["pull", "push", "fetch", "clone"].includes(
+          args.subcommand,
+        );
         return run(
           "git",
           args.deviceId,
@@ -683,7 +1035,8 @@ export function deviceTools(options: {
     tools.push({
       name: "device_upload",
       ref: "devices/upload",
-      description: "把你工作区（云端电脑）里的文件传到用户设备上（最大 200MB；覆盖前备份）。",
+      description:
+        "把你工作区（云端电脑）里的文件传到用户设备上（最大 200MB；覆盖前备份）。",
       parameters: schemas.upload,
       execute: async (input) => {
         const args = schemas.upload.parse(input ?? {});
@@ -693,7 +1046,8 @@ export function deviceTools(options: {
         } catch (error) {
           return `${REFUSAL_MARKER} 读不到工作区文件 ${args.from}：${error instanceof Error ? error.message : String(error)}`;
         }
-        if (file.bytes.length > 200 * 1024 * 1024) return `${REFUSAL_MARKER} 文件超过 200MB。`;
+        if (file.bytes.length > 200 * 1024 * 1024)
+          return `${REFUSAL_MARKER} 文件超过 200MB。`;
         const sha256 = createHash("sha256").update(file.bytes).digest("hex");
         const chunk = 3 * 1024 * 1024;
         let last: unknown = null;
@@ -703,8 +1057,17 @@ export function deviceTools(options: {
           last = await raw(
             "file_upload",
             args.deviceId,
-            { path: args.to, offset, base64: part.toString("base64"), final, overwrite: args.overwrite !== false, ...(final ? { sha256 } : {}) },
-            offset === 0 ? `传文件到设备：${args.from} → ${args.to}（${file.bytes.length} 字节）` : `传文件到设备（续 ${Math.round(offset / chunk) + 1}）：${args.to}`,
+            {
+              path: args.to,
+              offset,
+              base64: part.toString("base64"),
+              final,
+              overwrite: args.overwrite !== false,
+              ...(final ? { sha256 } : {}),
+            },
+            offset === 0
+              ? `传文件到设备：${args.from} → ${args.to}（${file.bytes.length} 字节）`
+              : `传文件到设备（续 ${Math.round(offset / chunk) + 1}）：${args.to}`,
             120_000,
           );
           if (typeof last === "string") return last;
@@ -718,7 +1081,8 @@ export function deviceTools(options: {
     tools.push({
       name: "device_download",
       ref: "devices/download",
-      description: "把用户设备上的文件取回你的工作区（云端电脑），之后可以处理它或用 file_share 交给用户（最大 200MB）。",
+      description:
+        "把用户设备上的文件取回你的工作区（云端电脑），之后可以处理它或用 file_share 交给用户（最大 200MB）。",
       parameters: schemas.download,
       execute: async (input) => {
         const args = schemas.download.parse(input ?? {});
@@ -726,10 +1090,24 @@ export function deviceTools(options: {
         let offset = 0;
         let name = args.from;
         for (let i = 0; i < 100; i++) {
-          const result = await raw("file_download", args.deviceId, { path: args.from, offset }, i === 0 ? `从设备取文件：${args.from}` : `从设备取文件（续 ${i + 1}）：${args.from}`, 120_000);
+          const result = await raw(
+            "file_download",
+            args.deviceId,
+            { path: args.from, offset },
+            i === 0
+              ? `从设备取文件：${args.from}`
+              : `从设备取文件（续 ${i + 1}）：${args.from}`,
+            120_000,
+          );
           if (typeof result === "string") return result;
-          const r = result as { base64?: string; size?: number; done?: boolean; name?: string };
-          if ((r.size ?? 0) > 200 * 1024 * 1024) return `${REFUSAL_MARKER} 文件超过 200MB。`;
+          const r = result as {
+            base64?: string;
+            size?: number;
+            done?: boolean;
+            name?: string;
+          };
+          if ((r.size ?? 0) > 200 * 1024 * 1024)
+            return `${REFUSAL_MARKER} 文件超过 200MB。`;
           const bytes = Buffer.from(r.base64 ?? "", "base64");
           parts.push(bytes);
           offset += bytes.length;
@@ -742,7 +1120,12 @@ export function deviceTools(options: {
         } catch (error) {
           return `${REFUSAL_MARKER} 写入工作区失败：${error instanceof Error ? error.message : String(error)}`;
         }
-        return JSON.stringify({ from: args.from, to: args.to, bytes: all.length, name });
+        return JSON.stringify({
+          from: args.from,
+          to: args.to,
+          bytes: all.length,
+          name,
+        });
       },
     });
 
@@ -754,7 +1137,13 @@ export function deviceTools(options: {
       parameters: schemas.screenshot,
       execute: async (input) => {
         const args = schemas.screenshot.parse(input ?? {});
-        return run("screenshot", args.deviceId, { maxWidth: args.maxWidth ?? 1600 }, "截取屏幕", 60_000);
+        return run(
+          "screenshot",
+          args.deviceId,
+          { maxWidth: args.maxWidth ?? 1600 },
+          "截取屏幕",
+          60_000,
+        );
       },
     });
 
@@ -790,7 +1179,13 @@ export function deviceTools(options: {
         // CB-030：只做安全的打开，发给设备前先拦（旧版 PC 客户端还接受程序名和参数，靠这里挡住）。
         const refused = checkOpenTarget(args.target);
         if (refused) return `${REFUSAL_MARKER} ${refused}`;
-        return run("open", args.deviceId, { target: args.target.trim() }, `打开：${clip(args.target, 200)}`, 60_000);
+        return run(
+          "open",
+          args.deviceId,
+          { target: args.target.trim() },
+          `打开：${clip(args.target, 200)}`,
+          60_000,
+        );
       },
     });
 
@@ -824,9 +1219,21 @@ export function deviceTools(options: {
       execute: async (input) => {
         const args = schemas.desktopContext.parse(input ?? {});
         if (args.includeClipboard === false) {
-          return run("system_info", args.deviceId, {}, "读取设备上下文信息", 30_000);
+          return run(
+            "system_info",
+            args.deviceId,
+            {},
+            "读取设备上下文信息",
+            30_000,
+          );
         }
-        return run("clipboard_read", args.deviceId, {}, "读取桌面剪贴板上下文", 30_000);
+        return run(
+          "clipboard_read",
+          args.deviceId,
+          {},
+          "读取桌面剪贴板上下文",
+          30_000,
+        );
       },
     });
 
@@ -852,17 +1259,28 @@ export function deviceTools(options: {
             clientInfo: { name: "chisabot-device-bridge", version: "1.0.0" },
           },
         });
-        const notifyMsg = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+        const notifyMsg = JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        });
         const reqMsg =
           args.action === "list_tools"
-            ? JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
+            ? JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/list",
+                params: {},
+              })
             : JSON.stringify({
                 jsonrpc: "2.0",
                 id: 2,
                 method: "tools/call",
                 params: { name: args.toolName, arguments: args.toolArgs ?? {} },
               });
-        const payloadB64 = Buffer.from(`${initMsg}\n${notifyMsg}\n${reqMsg}\n`, "utf8").toString("base64");
+        const payloadB64 = Buffer.from(
+          `${initMsg}\n${notifyMsg}\n${reqMsg}\n`,
+          "utf8",
+        ).toString("base64");
         const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\"id\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
         return run(
           "shell",
@@ -883,19 +1301,36 @@ export function deviceTools(options: {
       parameters: schemas.windows,
       execute: async (input) => {
         const args = schemas.windows.parse(input ?? {});
-        const effectiveQuery = (args.query ?? args.title ?? args.processName ?? args.app ?? "").trim();
-        if ((args.action === "focus" || args.action === "close") && !effectiveQuery && !args.pid) {
+        const effectiveQuery = (
+          args.query ??
+          args.title ??
+          args.processName ??
+          args.app ??
+          ""
+        ).trim();
+        if (
+          (args.action === "focus" || args.action === "close") &&
+          !effectiveQuery &&
+          !args.pid
+        ) {
           return `${REFUSAL_MARKER} action 为 ${args.action} 时必须提供 query/title/processName（窗口标题或进程名关键词）或 pid。`;
         }
         if (args.action === "launch" && !effectiveQuery) {
           return `${REFUSAL_MARKER} action 为 launch 时必须提供 query 或 app（要启动的软件名、可执行路径或网址）。`;
         }
-        const picked = await resolveDevice(store, actorId, args.deviceId, (id) => hub.isOnline(id));
+        const picked = await resolveDevice(
+          store,
+          actorId,
+          args.deviceId,
+          (id) => hub.isOnline(id),
+        );
         const platform = typeof picked === "string" ? "win32" : picked.platform;
         const q = effectiveQuery;
         const pid = args.pid ?? 0;
         const max = Boolean(args.maximize);
-        const launchArgs = Array.isArray(args.args) ? args.args.join(" ").trim() : (args.args ?? "").trim();
+        const launchArgs = Array.isArray(args.args)
+          ? args.args.join(" ").trim()
+          : (args.args ?? "").trim();
 
         let cmd: string;
         if (platform === "win32") {
@@ -912,7 +1347,9 @@ export function deviceTools(options: {
           } else {
             psScript = `${win32Def};$q=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${qB64}'));$t=[W32]::All()|?{(${pid} -gt 0 -and $_['pid'] -eq ${pid}) -or ($q -and ($_['title'] -like "*$q*" -or $_['processName'] -like "*$q*"))}|Select -First 1;if(-not $t){@{ok=$false;error='未找到匹配窗口'}|ConvertTo-Json -Compress;exit 0};$h=[IntPtr][long]$t['hwnd'];[void][W32]::PostMessage($h,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);@{ok=$true;closed=$t}|ConvertTo-Json -Compress -Depth 5`;
           }
-          const encodedCommand = Buffer.from(psScript, "utf16le").toString("base64");
+          const encodedCommand = Buffer.from(psScript, "utf16le").toString(
+            "base64",
+          );
           cmd = `powershell -NoProfile -NonInteractive -EncodedCommand ${encodedCommand}`;
         } else if (platform === "darwin") {
           const safeQ = q.replace(/"/g, '\\"');
@@ -939,12 +1376,20 @@ export function deviceTools(options: {
         }
 
         const labelMap: Record<typeof args.action, string> = {
-          list: q ? `列出窗口（筛选：${clip(q, 40)}）` : "列出当前打开的桌面窗口",
+          list: q
+            ? `列出窗口（筛选：${clip(q, 40)}）`
+            : "列出当前打开的桌面窗口",
           focus: `聚焦窗口：${clip(q || `PID ${pid}`, 60)}`,
           launch: `启动应用：${clip(`${q} ${launchArgs}`.trim(), 60)}`,
           close: `关闭窗口：${clip(q || `PID ${pid}`, 60)}`,
         };
-        return run("shell", args.deviceId, { command: cmd, timeoutSec: 20 }, labelMap[args.action], 25_000);
+        return run(
+          "shell",
+          args.deviceId,
+          { command: cmd, timeoutSec: 20 },
+          labelMap[args.action],
+          25_000,
+        );
       },
     });
 

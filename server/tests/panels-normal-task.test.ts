@@ -4,8 +4,8 @@ import { ContinuationDeferred } from "../src/conversations/continuation-work";
 import { createDatabase } from "../src/db/client";
 import { panelTaskRequests } from "../src/db/schema/panels";
 import { createNormalPanelTaskService } from "../src/panels/normal-task-service";
-import type { TurnRunner } from "../src/turns/types";
 import { createPanelStore } from "../src/panels/store";
+import type { TurnRunner } from "../src/turns/types";
 import { testDatabaseUrl } from "./support/database";
 
 const db = createDatabase(testDatabaseUrl(), { max: 2 });

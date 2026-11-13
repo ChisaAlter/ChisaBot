@@ -384,14 +384,12 @@ describe("coding tools", () => {
 
   test("run_shell background goes to exec_start; output polls; session passes through", async () => {
     const h = harness(record());
-    await h
-      .tool("device_run_shell")
-      .execute({
-        command: "npm test",
-        cwd: "/srv/app",
-        background: true,
-        session: "main",
-      });
+    await h.tool("device_run_shell").execute({
+      command: "npm test",
+      cwd: "/srv/app",
+      background: true,
+      session: "main",
+    });
     expect(h.calls[0]?.operation).toBe("exec_start");
     expect(h.calls[0]?.args.session).toBe("main");
     await h
@@ -438,13 +436,11 @@ describe("coding tools", () => {
     await h.tool("device_windows").execute({ action: "list", query: "Chrome" });
     expect(h.calls[0]?.operation).toBe("shell");
     expect(String(h.calls[0]?.args.command)).toContain("-EncodedCommand");
-    await h
-      .tool("device_windows")
-      .execute({
-        action: "focus",
-        query: "Visual Studio Code",
-        maximize: true,
-      });
+    await h.tool("device_windows").execute({
+      action: "focus",
+      query: "Visual Studio Code",
+      maximize: true,
+    });
     expect(h.calls[1]?.operation).toBe("shell");
     expect(h.calls[1]?.summary).toContain("聚焦窗口");
   });

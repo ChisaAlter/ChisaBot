@@ -12,9 +12,13 @@
       .catch(later);
   }
   function later() {
-    if (tries === 45 && text) text.textContent = "比平时久了一点。服务器可能在重启，稍后会自动回来；也可以点下面的按钮重试。";
+    if (tries === 45 && text)
+      text.textContent =
+        "比平时久了一点。服务器可能在重启，稍后会自动回来；也可以点下面的按钮重试。";
     setTimeout(probe, tries < 45 ? 2000 : 6000);
   }
-  document.getElementById("u-retry").addEventListener("click", () => { location.reload(); });
+  document.getElementById("u-retry").addEventListener("click", () => {
+    location.reload();
+  });
   setTimeout(probe, 1500);
 })();

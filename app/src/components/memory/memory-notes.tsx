@@ -14,27 +14,41 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import {
-  MEMORY_KIND_LABELS,
-  MEMORY_KINDS,
-  type MemoryKind,
-  type MemoryNoteView,
-  SUBJECT_KINDS,
-} from "../../../../shared/memory-notes";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
-import { formDirty } from "@/lib/unsaved";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { tryClient } from "@/lib/client";
 import { agoText } from "@/lib/im";
 import {
   createMemoryNote,
@@ -44,8 +58,15 @@ import {
   setMemoryBot,
   updateMemoryNote,
 } from "@/lib/memory-notes";
-import { tryClient } from "@/lib/client";
+import { formDirty } from "@/lib/unsaved";
 import { cn } from "@/lib/utils";
+import {
+  MEMORY_KIND_LABELS,
+  MEMORY_KINDS,
+  type MemoryKind,
+  type MemoryNoteView,
+  SUBJECT_KINDS,
+} from "../../../../shared/memory-notes";
 
 /**
  * 设置 → 记忆（DESIGN.md §50）。按种类分组的笔记列表 + 搜索 + 编辑 / 删除（撤销）+ 每个机器人的开关。
@@ -66,7 +87,9 @@ export const KIND_ICON: Record<MemoryKind, typeof IconUser> = {
 export function matches(note: MemoryNoteView, query: string) {
   const q = query.trim().toLocaleLowerCase();
   if (!q) return true;
-  return [note.subject, note.content, note.context].some((part) => part?.toLocaleLowerCase().includes(q));
+  return [note.subject, note.content, note.context].some((part) =>
+    part?.toLocaleLowerCase().includes(q),
+  );
 }
 
 export function MemoryKindIcon({ kind }: { kind: MemoryKind }) {
@@ -92,32 +115,57 @@ export function NoteRow({
   onDelete: () => void;
 }) {
   const title = note.subject ?? note.content.split("\n")[0]!;
-  const body = note.subject ? note.content : note.content.split("\n").slice(1).join(" ");
-  const isKnowledge = Boolean(note.subject?.startsWith("[知识库]") || note.subject?.startsWith("📚") || note.context?.includes("知识库"));
+  const body = note.subject
+    ? note.content
+    : note.content.split("\n").slice(1).join(" ");
+  const isKnowledge = Boolean(
+    note.subject?.startsWith("[知识库]") ||
+      note.subject?.startsWith("📚") ||
+      note.context?.includes("知识库"),
+  );
   const readOnly = Boolean(note.shared && !isAdmin);
   return (
     <div className="im-row mem-row">
-      <button className="im-row-main" disabled={readOnly} onClick={readOnly ? undefined : onEdit} type="button">
+      <button
+        className="im-row-main"
+        disabled={readOnly}
+        onClick={readOnly ? undefined : onEdit}
+        type="button"
+      >
         <ListRow
           icon={<MemoryKindIcon kind={note.kind} />}
           sub={
             <>
-              {body ? <span className="mem-body">{body.replace(/\n+/g, " · ")}</span> : null}
+              {body ? (
+                <span className="mem-body">{body.replace(/\n+/g, " · ")}</span>
+              ) : null}
               <span className="device-row-meta">
-                {note.shared ? <span className="device-cap-chip"><T>{"🌐 公共知识库"}</T></span> : null}
-                {isKnowledge && !note.shared ? <span className="device-cap-chip"><T>{"📚 个人知识库"}</T></span> : null}
-                {note.context ? <span className="device-cap-chip"><T>{`情境：${note.context}`}</T></span> : null}
+                {note.shared ? (
+                  <span className="device-cap-chip">
+                    <T>{"🌐 公共知识库"}</T>
+                  </span>
+                ) : null}
+                {isKnowledge && !note.shared ? (
+                  <span className="device-cap-chip">
+                    <T>{"📚 个人知识库"}</T>
+                  </span>
+                ) : null}
+                {note.context ? (
+                  <span className="device-cap-chip">
+                    <T>{`情境：${note.context}`}</T>
+                  </span>
+                ) : null}
                 <span className="mem-by">
-                  {note.shared
-                    ? "管理员共享"
-                    : note.author === "bot"
-                      ? (
-                          <>
-                            <IconRobot aria-hidden className="size-3.5" />
-                            {botName ?? "机器人"}
-                          </>
-                        )
-                      : "你写的"}
+                  {note.shared ? (
+                    "管理员共享"
+                  ) : note.author === "bot" ? (
+                    <>
+                      <IconRobot aria-hidden className="size-3.5" />
+                      {botName ?? "机器人"}
+                    </>
+                  ) : (
+                    "你写的"
+                  )}
                   {` · ${agoText(note.updatedAt)}更新`}
                 </span>
               </span>
@@ -132,10 +180,22 @@ export function NoteRow({
         </span>
       ) : (
         <DropdownMenu>
-          <DropdownMenuTrigger render={<button aria-label={`「${title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
+          <DropdownMenuTrigger
+            render={
+              <button
+                aria-label={`「${title}」的更多操作`}
+                className="device-row-more"
+                title={"更多操作"}
+                type="button"
+              />
+            }
+          >
             <IconDots className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
+          <DropdownMenuContent
+            align="end"
+            className="glass-pop w-[180px] p-1.5"
+          >
             <DropdownMenuItem className="glass-mi" onClick={onEdit}>
               <IconPencil className="size-[18px] shrink-0 opacity-80" />
               <span className="min-w-0 flex-1">{"编辑…"}</span>
@@ -152,7 +212,13 @@ export function NoteRow({
   );
 }
 
-type Form = { kind: MemoryKind; subject: string; content: string; context: string; shared: boolean };
+type Form = {
+  kind: MemoryKind;
+  subject: string;
+  content: string;
+  context: string;
+  shared: boolean;
+};
 
 export function NoteDialog({
   open,
@@ -163,12 +229,23 @@ export function NoteDialog({
 }: {
   open: boolean;
   note: MemoryNoteView | null;
-  preset?: { kind?: MemoryKind; subject?: string; context?: string; shared?: boolean } | null;
+  preset?: {
+    kind?: MemoryKind;
+    subject?: string;
+    context?: string;
+    shared?: boolean;
+  } | null;
   isAdmin?: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Form>({ kind: "preference", subject: "", content: "", context: "", shared: false });
+  const [form, setForm] = useState<Form>({
+    kind: "preference",
+    subject: "",
+    content: "",
+    context: "",
+    shared: false,
+  });
   const [initial, setInitial] = useState<Form>(form);
   const needsSubject = SUBJECT_KINDS.includes(form.kind);
   const save = useAsyncAction(
@@ -191,7 +268,13 @@ export function NoteDialog({
   useEffect(() => {
     if (!open) return;
     const next: Form = note
-      ? { kind: note.kind, subject: note.subject ?? "", content: note.content, context: note.context ?? "", shared: Boolean(note.shared) }
+      ? {
+          kind: note.kind,
+          subject: note.subject ?? "",
+          content: note.content,
+          context: note.context ?? "",
+          shared: Boolean(note.shared),
+        }
       : {
           kind: preset?.kind ?? "preference",
           subject: preset?.subject ?? "",
@@ -203,15 +286,33 @@ export function NoteDialog({
     setInitial(next);
     resetSave();
   }, [open, note, preset, resetSave]);
-  const valid = form.content.trim().length > 0 && (!needsSubject || form.subject.trim().length > 0);
-  const isKnowledgePreset = Boolean(!note && preset?.subject?.startsWith("[知识库]"));
+  const valid =
+    form.content.trim().length > 0 &&
+    (!needsSubject || form.subject.trim().length > 0);
+  const isKnowledgePreset = Boolean(
+    !note && preset?.subject?.startsWith("[知识库]"),
+  );
   /* 写了一半按 Esc / 点外面先确认（审查模块 12 第 3 条）。 */
-  const guardedOpenChange = useGuardedOpenChange(save.state !== "success" && formDirty(initial, form), onOpenChange);
+  const guardedOpenChange = useGuardedOpenChange(
+    save.state !== "success" && formDirty(initial, form),
+    onOpenChange,
+  );
   return (
     <Dialog onOpenChange={guardedOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg" data-testid="memory-note-dialog">
+      <DialogContent
+        className="im-dialog max-w-lg"
+        data-testid="memory-note-dialog"
+      >
         <DialogHeader>
-          <DialogTitle>{note ? "编辑记忆" : isKnowledgePreset ? (form.shared ? "🌐 录入公共知识库" : "📚 录入个人知识库") : "添加记忆"}</DialogTitle>
+          <DialogTitle>
+            {note
+              ? "编辑记忆"
+              : isKnowledgePreset
+                ? form.shared
+                  ? "🌐 录入公共知识库"
+                  : "📚 录入个人知识库"
+                : "添加记忆"}
+          </DialogTitle>
           <DialogDescription>
             {form.shared
               ? "公共知识库条目对本实例中所有成员与所有机器人可见（普通成员只读），适合存放团队规范、公共文档与共享参考资料。"
@@ -231,7 +332,12 @@ export function NoteDialog({
             <div className="im-grid">
               <label className="im-field" htmlFor="mem-kind">
                 <span className="im-field-l">{"种类"}</span>
-                <Select onValueChange={(next) => setForm({ ...form, kind: String(next) as MemoryKind })} value={form.kind}>
+                <Select
+                  onValueChange={(next) =>
+                    setForm({ ...form, kind: String(next) as MemoryKind })
+                  }
+                  value={form.kind}
+                >
                   <SelectTrigger className="w-full" id="mem-kind">
                     <SelectValue>{MEMORY_KIND_LABELS[form.kind]}</SelectValue>
                   </SelectTrigger>
@@ -249,13 +355,27 @@ export function NoteDialog({
               <label className="im-field" htmlFor="mem-subject">
                 <span className="im-field-l">
                   {form.kind === "daily" ? "日期" : "主题"}
-                  <span className="im-req">{needsSubject ? "必填" : "可选"}</span>
+                  <span className="im-req">
+                    {needsSubject ? "必填" : "可选"}
+                  </span>
                 </span>
                 <Input
                   id="mem-subject"
                   maxLength={80}
-                  onChange={(event) => setForm({ ...form, subject: event.target.value })}
-                  placeholder={form.kind === "person" ? "名字或称呼" : form.kind === "place" ? "地名" : form.kind === "project" ? "项目名" : form.kind === "daily" ? "YYYY-MM-DD，留空 = 今天" : "留空也行"}
+                  onChange={(event) =>
+                    setForm({ ...form, subject: event.target.value })
+                  }
+                  placeholder={
+                    form.kind === "person"
+                      ? "名字或称呼"
+                      : form.kind === "place"
+                        ? "地名"
+                        : form.kind === "project"
+                          ? "项目名"
+                          : form.kind === "daily"
+                            ? "YYYY-MM-DD，留空 = 今天"
+                            : "留空也行"
+                  }
                   value={form.subject}
                 />
               </label>
@@ -265,30 +385,66 @@ export function NoteDialog({
                 {"内容"}
                 <span className="im-req">{"必填"}</span>
               </span>
-              <Textarea id="mem-content" maxLength={4000} onChange={(event) => setForm({ ...form, content: event.target.value })} rows={5} value={form.content} />
+              <Textarea
+                id="mem-content"
+                maxLength={4000}
+                onChange={(event) =>
+                  setForm({ ...form, content: event.target.value })
+                }
+                rows={5}
+                value={form.content}
+              />
             </label>
             <label className="im-field" htmlFor="mem-context">
               <span className="im-field-l">
                 {"情境"}
                 <span className="im-req">{"可选"}</span>
               </span>
-              <Input id="mem-context" maxLength={300} onChange={(event) => setForm({ ...form, context: event.target.value })} placeholder={"什么时候成立，比如「工作日在公司午饭」"} value={form.context} />
+              <Input
+                id="mem-context"
+                maxLength={300}
+                onChange={(event) =>
+                  setForm({ ...form, context: event.target.value })
+                }
+                placeholder={"什么时候成立，比如「工作日在公司午饭」"}
+                value={form.context}
+              />
             </label>
             {isAdmin ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
                 <div className="min-w-0">
-                  <div className="font-medium text-sm">{"设为公共知识库（全员共享）"}</div>
-                  <div className="text-muted-foreground text-xs">{"开启后，所有成员的机器人都可检索并引用该条目，普通成员只读。"}</div>
+                  <div className="font-medium text-sm">
+                    {"设为公共知识库（全员共享）"}
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    {
+                      "开启后，所有成员的机器人都可检索并引用该条目，普通成员只读。"
+                    }
+                  </div>
                 </div>
-                <Switch checked={form.shared} onCheckedChange={(checked) => setForm({ ...form, shared: Boolean(checked) })} />
+                <Switch
+                  checked={form.shared}
+                  onCheckedChange={(checked) =>
+                    setForm({ ...form, shared: Boolean(checked) })
+                  }
+                />
               </div>
             ) : null}
           </DialogBody>
           <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
-            <Button disabled={!valid} feedback="save" state={save.state} type="submit">
+            <Button
+              disabled={!valid}
+              feedback="save"
+              state={save.state}
+              type="submit"
+            >
               {"保存"}
             </Button>
           </DialogFooter>
@@ -312,18 +468,26 @@ export function MemoryBots({ disabled }: { disabled: ReadonlySet<string> }) {
         return (
           <div className="mem-bot" key={bot.id}>
             <span className="min-w-0 flex-1 truncate">{bot.name}</span>
-            <span className="mem-bot-s">{on ? "读写共用记忆" : "不读也不写"}</span>
+            <span className="mem-bot-s">
+              {on ? "读写共用记忆" : "不读也不写"}
+            </span>
             <Switch
-              aria-label={on ? `关掉「${bot.name}」的记忆` : `打开「${bot.name}」的记忆`}
+              aria-label={
+                on ? `关掉「${bot.name}」的记忆` : `打开「${bot.name}」的记忆`
+              }
               checked={on}
               onCheckedChange={async (next) => {
                 setLocal((current) => ({ ...current, [bot.id]: next }));
                 try {
                   await setMemoryBot(bot.id, next);
-                  await queryClient.invalidateQueries({ queryKey: memoryNoteKeys.all });
+                  await queryClient.invalidateQueries({
+                    queryKey: memoryNoteKeys.all,
+                  });
                 } catch (error) {
                   setLocal((current) => ({ ...current, [bot.id]: !next }));
-                  toast.error(error instanceof Error ? error.message : "保存失败");
+                  toast.error(
+                    error instanceof Error ? error.message : "保存失败",
+                  );
                 }
               }}
             />
@@ -341,7 +505,11 @@ export function MemoryBots({ disabled }: { disabled: ReadonlySet<string> }) {
  */
 export const MEMORY_GROUP_LIMIT = 50;
 
-export function visibleNotes<T>(notes: readonly T[], expanded: boolean, limit = MEMORY_GROUP_LIMIT): readonly T[] {
+export function visibleNotes<T>(
+  notes: readonly T[],
+  expanded: boolean,
+  limit = MEMORY_GROUP_LIMIT,
+): readonly T[] {
   return expanded || notes.length <= limit ? notes : notes.slice(0, limit);
 }
 
@@ -355,7 +523,11 @@ export const MEMORY_UNDO_MS = 8000;
  * 放在模块级而不是页面 state 里：离开设置页（组件卸载）不取消、也不提前删，计时照走，8 秒到了照删；
  * 回到页面时仍然隐藏着。关标签页/刷新（pagehide）时窗口没法再撤销，立刻用 keepalive 请求把待删的发出去。
  */
-type PendingDelete = { ids: string[]; timer: ReturnType<typeof setTimeout>; refresh: () => Promise<unknown> };
+type PendingDelete = {
+  ids: string[];
+  timer: ReturnType<typeof setTimeout>;
+  refresh: () => Promise<unknown>;
+};
 const pendingDeletes = new Map<number, PendingDelete>();
 const flushedIds = new Set<string>();
 const flushedRefreshes = new Set<() => Promise<unknown>>();
@@ -364,13 +536,19 @@ let pendingHidden: ReadonlySet<string> = new Set();
 const pendingListeners = new Set<() => void>();
 
 function emitPending() {
-  pendingHidden = new Set([...[...pendingDeletes.values()].flatMap((entry) => entry.ids), ...flushedIds]);
+  pendingHidden = new Set([
+    ...[...pendingDeletes.values()].flatMap((entry) => entry.ids),
+    ...flushedIds,
+  ]);
   for (const listener of pendingListeners) listener();
 }
 
 /** 删除失败的提示文案：断网（fetch 抛 TypeError，如 Failed to fetch）给中文，不露英文原文。 */
 export function deleteErrorText(error: unknown) {
-  if (error instanceof TypeError || (typeof navigator !== "undefined" && navigator.onLine === false))
+  if (
+    error instanceof TypeError ||
+    (typeof navigator !== "undefined" && navigator.onLine === false)
+  )
     return "网络连不上，这条记忆没删";
   return error instanceof Error && error.message ? error.message : "删除失败";
 }
@@ -378,9 +556,12 @@ export function deleteErrorText(error: unknown) {
 /** 撤销提示文案：带上记忆标题（主题，没有就用正文），太长截断。 */
 export function undoToastText(notes: MemoryNoteView[]) {
   if (notes.length !== 1) return `已删除 ${notes.length} 条记忆`;
-  const raw = (notes[0]?.subject || notes[0]?.content || "").replace(/\s+/g, " ").trim();
+  const raw = (notes[0]?.subject || notes[0]?.content || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!raw) return "已删除 1 条记忆";
-  const title = [...raw].length > 16 ? `${[...raw].slice(0, 16).join("")}…` : raw;
+  const title =
+    [...raw].length > 16 ? `${[...raw].slice(0, 16).join("")}…` : raw;
   return `已删除记忆「${title}」`;
 }
 
@@ -440,10 +621,12 @@ function refreshAfterPageShow() {
   if (!flushedRefreshes.size && !flushedIds.size) return;
   const refreshes = [...flushedRefreshes];
   flushedRefreshes.clear();
-  void Promise.all(refreshes.map((fn) => fn().catch(() => undefined))).finally(() => {
-    flushedIds.clear();
-    emitPending();
-  });
+  void Promise.all(refreshes.map((fn) => fn().catch(() => undefined))).finally(
+    () => {
+      flushedIds.clear();
+      emitPending();
+    },
+  );
 }
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", flushOnPageHide);
@@ -454,20 +637,28 @@ if (typeof window !== "undefined") {
  * 删掉（可撤销）。立刻隐藏并弹「撤销」，{@link MEMORY_UNDO_MS} 后才真删；连删几次各自独立计时、各自撤销。
  * 返回这次待删除的 key（测试用）。
  */
-export function deleteWithUndo(notes: MemoryNoteView[], refresh: () => Promise<unknown>) {
+export function deleteWithUndo(
+  notes: MemoryNoteView[],
+  refresh: () => Promise<unknown>,
+) {
   const ids = notes.map((note) => note.id);
   const key = ++pendingSeq;
   const timer = setTimeout(() => void commitDelete(key), MEMORY_UNDO_MS);
   pendingDeletes.set(key, { ids, timer, refresh });
   emitPending();
   // 同时最多 MEMORY_UNDO_TOAST_LIMIT 条单独的「撤销」；再多的并进一条「已删除 N 条记忆 · 全部撤销」（CB-111）。
-  for (const [toastKey, toastId] of singleToasts) if (!toast.isOpen(toastId)) singleToasts.delete(toastKey);
+  for (const [toastKey, toastId] of singleToasts)
+    if (!toast.isOpen(toastId)) singleToasts.delete(toastKey);
   if (singleToasts.size >= MEMORY_UNDO_TOAST_LIMIT) {
     mergedKeys.add(key);
     syncMergedToast();
     return key;
   }
-  const toastId = toast.undo(undoToastText(notes), () => cancelPending(key), MEMORY_UNDO_MS);
+  const toastId = toast.undo(
+    undoToastText(notes),
+    () => cancelPending(key),
+    MEMORY_UNDO_MS,
+  );
   singleToasts.set(key, toastId);
   return key;
 }
@@ -498,7 +689,10 @@ function forgetToast(key: number) {
 
 /** 合并提示：数的是合并进来的记忆条数；「全部撤销」只撤合并进来的，单独显示的各自撤销。 */
 function syncMergedToast() {
-  const count = [...mergedKeys].reduce((sum, key) => sum + (pendingDeletes.get(key)?.ids.length ?? 0), 0);
+  const count = [...mergedKeys].reduce(
+    (sum, key) => sum + (pendingDeletes.get(key)?.ids.length ?? 0),
+    0,
+  );
   if (!mergedKeys.size || !count) {
     mergedKeys.clear();
     if (mergedToastId) toast.dismiss(mergedToastId);
@@ -560,11 +754,25 @@ export async function confirmBulkDelete(count: number, query: string) {
   });
 }
 
-export function SearchBox({ value, onChange, placeholder = "搜索记忆" }: { value: string; onChange: (value: string) => void; placeholder?: string }) {
+export function SearchBox({
+  value,
+  onChange,
+  placeholder = "搜索记忆",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="mem-search">
       <IconSearch aria-hidden className="size-4" />
-      <input aria-label={placeholder} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} type="search" value={value} />
+      <input
+        aria-label={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        type="search"
+        value={value}
+      />
     </label>
   );
 }

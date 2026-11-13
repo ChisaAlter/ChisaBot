@@ -1,6 +1,6 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import type { PersonalSourcesStatusView } from "../../../../shared/personal-sources";
 import { client, tryClient } from "@/lib/client";
+import type { PersonalSourcesStatusView } from "../../../../shared/personal-sources";
 import { personalSourcesKeys } from "./queries";
 
 function setStatus(queryClient: QueryClient) {

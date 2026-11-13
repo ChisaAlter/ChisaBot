@@ -26,17 +26,29 @@ export type GatewayInvite = {
   expiresAt: number;
 };
 export type AccountsState =
-  | { available: true; me: string; accounts: GatewayAccount[]; invites: GatewayInvite[]; invitesEnabled: boolean }
+  | {
+      available: true;
+      me: string;
+      accounts: GatewayAccount[];
+      invites: GatewayInvite[];
+      invitesEnabled: boolean;
+    }
   | { available: false; reason: string };
 
-async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+async function call<T>(
+  path: string,
+  init?: { method?: string; body?: unknown },
+): Promise<T> {
   const response = await tryClient(path, {
     method: init?.method,
     body: init?.body,
     headers: { Accept: "application/json" },
   });
-  const data = (await response.json().catch(() => null)) as ({ ok?: boolean; error?: string } & T) | null;
-  if (!response.ok || !data || data.ok === false) throw new Error(data?.error || `请求失败（${response.status}）`);
+  const data = (await response.json().catch(() => null)) as
+    | ({ ok?: boolean; error?: string } & T)
+    | null;
+  if (!response.ok || !data || data.ok === false)
+    throw new Error(data?.error || `请求失败（${response.status}）`);
   return data;
 }
 
@@ -50,46 +62,117 @@ export function accountsQueryOptions() {
         headers: { Accept: "application/json" },
       });
       const type = response.headers.get("Content-Type") || "";
-      if (!type.includes("application/json")) return { available: false, reason: "这个部署前面没有 ChisaBot 登录网关，账号由部署方式决定。" };
-      const data = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; multiAccount?: boolean; me?: string; accounts?: GatewayAccount[]; invites?: GatewayInvite[]; invitesEnabled?: boolean }
-        | null;
+      if (!type.includes("application/json"))
+        return {
+          available: false,
+          reason: "这个部署前面没有 ChisaBot 登录网关，账号由部署方式决定。",
+        };
+      const data = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        multiAccount?: boolean;
+        me?: string;
+        accounts?: GatewayAccount[];
+        invites?: GatewayInvite[];
+        invitesEnabled?: boolean;
+      } | null;
       if (response.status === 404 && data?.multiAccount === false)
-        return { available: false, reason: "登录网关还没开启多账号（服务器上的 identitySecret 没有配置），见 docs/accounts.md。" };
-      if (!response.ok || !data?.accounts) throw new Error(data?.error || `读取失败（${response.status}）`);
+        return {
+          available: false,
+          reason:
+            "登录网关还没开启多账号（服务器上的 identitySecret 没有配置），见 docs/accounts.md。",
+        };
+      if (!response.ok || !data?.accounts)
+        throw new Error(data?.error || `读取失败（${response.status}）`);
       // 网关 config.json 的 invites 默认关（2026-10-15）：关着时不显示「邀请朋友」。旧网关没有这个字段 = 开着。
-      return { available: true, me: data.me ?? "", accounts: data.accounts, invites: data.invites ?? [], invitesEnabled: data.invitesEnabled !== false };
+      return {
+        available: true,
+        me: data.me ?? "",
+        accounts: data.accounts,
+        invites: data.invites ?? [],
+        invitesEnabled: data.invitesEnabled !== false,
+      };
     },
     staleTime: 10_000,
   });
 }
 
 export async function setInvitesEnabled(enabled: boolean) {
-  return (await call<{ invitesEnabled: boolean }>("/auth/admin/invites-enabled", { method: "PUT", body: { enabled } })).invitesEnabled;
+  return (
+    await call<{ invitesEnabled: boolean }>("/auth/admin/invites-enabled", {
+      method: "PUT",
+      body: { enabled },
+    })
+  ).invitesEnabled;
 }
-export async function createInvite(input: { note?: string; hours?: number; role?: "admin" | "user" }) {
-  return (await call<{ invite: { id: string; url: string; expiresAt: number; role?: "admin" | "user" } }>("/auth/admin/invites", { method: "POST", body: input })).invite;
+export async function createInvite(input: {
+  note?: string;
+  hours?: number;
+  role?: "admin" | "user";
+}) {
+  return (
+    await call<{
+      invite: {
+        id: string;
+        url: string;
+        expiresAt: number;
+        role?: "admin" | "user";
+      };
+    }>("/auth/admin/invites", { method: "POST", body: input })
+  ).invite;
 }
-export async function createAccount(input: { username: string; displayName?: string; password: string; role?: "admin" | "user" }) {
-  return (await call<{ account: GatewayAccount }>("/auth/admin/accounts", { method: "POST", body: input })).account;
+export async function createAccount(input: {
+  username: string;
+  displayName?: string;
+  password: string;
+  role?: "admin" | "user";
+}) {
+  return (
+    await call<{ account: GatewayAccount }>("/auth/admin/accounts", {
+      method: "POST",
+      body: input,
+    })
+  ).account;
 }
 export async function revokeInvite(id: string) {
-  await call(`/auth/admin/invites/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await call(`/auth/admin/invites/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 export async function setAccountDisabled(id: string, disabled: boolean) {
-  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { disabled } });
+  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: { disabled },
+  });
 }
 export async function setAccountRole(id: string, role: "admin" | "user") {
-  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { role } })).account;
+  return (
+    await call<{ account: GatewayAccount }>(
+      `/auth/admin/accounts/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: { role } },
+    )
+  ).account;
 }
 export async function setAccountPassword(id: string, password: string) {
-  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { password } })).account;
+  return (
+    await call<{ account: GatewayAccount }>(
+      `/auth/admin/accounts/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: { password } },
+    )
+  ).account;
 }
 export async function resetAccount(id: string) {
-  return (await call<{ invite: { id: string; url: string; expiresAt: number } }>(`/auth/admin/accounts/${encodeURIComponent(id)}/reset`, { method: "POST", body: {} })).invite;
+  return (
+    await call<{ invite: { id: string; url: string; expiresAt: number } }>(
+      `/auth/admin/accounts/${encodeURIComponent(id)}/reset`,
+      { method: "POST", body: {} },
+    )
+  ).invite;
 }
 export async function deleteAccount(id: string) {
-  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 /** 「3 天后过期」这类说明。 */

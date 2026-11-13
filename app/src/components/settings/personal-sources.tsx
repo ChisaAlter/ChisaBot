@@ -10,11 +10,7 @@ import {
   IconSparkles,
   IconSun,
 } from "@tabler/icons-react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
@@ -54,9 +50,9 @@ import { Card, ListRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import { agoText } from "@/lib/im";
 import {
+  bindNotifyWebhookMutationOptions,
   connectCalendarMutationOptions,
   connectEmailMutationOptions,
-  bindNotifyWebhookMutationOptions,
   disconnectCalendarMutationOptions,
   disconnectEmailMutationOptions,
   disconnectNotifyWebhookMutationOptions,

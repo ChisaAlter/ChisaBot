@@ -890,5 +890,3 @@ describe("a question that would reach somebody besides the owner checks private 
     expect(asked).toEqual(["Which budget?"]);
   });
 });
-
-

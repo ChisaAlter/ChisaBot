@@ -54,7 +54,9 @@ function requestSignal(options: ClientOptions): AbortSignal | undefined {
   if (timeoutMs === 0) return options.signal;
   const deadline = AbortSignal.timeout(timeoutMs);
   // Keep the native deadline alive after headers: callers may read the Response body later.
-  return options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+  return options.signal
+    ? AbortSignal.any([options.signal, deadline])
+    : deadline;
 }
 
 /** Every request in this app is authenticated; bodies are JSON, or a FormData/Blob sent raw. */
@@ -76,7 +78,9 @@ async function send(path: string, options: ClientOptions): Promise<Response> {
           : JSON.stringify(body),
     signal: requestSignal(options),
     ...(options.cache !== undefined ? { cache: options.cache } : {}),
-    ...(options.keepalive !== undefined ? { keepalive: options.keepalive } : {}),
+    ...(options.keepalive !== undefined
+      ? { keepalive: options.keepalive }
+      : {}),
   });
 }
 

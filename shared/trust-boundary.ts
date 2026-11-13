@@ -19,7 +19,11 @@ const LOOPBACK_HOST =
 
 /** Hostname (no brackets) is loopback. */
 export function isLoopbackHostname(host: string): boolean {
-  const bare = host.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+  const bare = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
   return LOOPBACK_HOST.test(bare);
 }
 
@@ -50,7 +54,10 @@ export function assertTrustedOriginsLoopbackOnly(
     .map((s) => s.trim())
     .filter(Boolean);
   if (parts.length === 0) {
-    return { ok: false, reason: "TRUSTED_ORIGINS is empty; friend-pack expects loopback origins." };
+    return {
+      ok: false,
+      reason: "TRUSTED_ORIGINS is empty; friend-pack expects loopback origins.",
+    };
   }
   for (const origin of parts) {
     if (origin.toLowerCase().startsWith("https://")) {
@@ -75,7 +82,10 @@ export function assertTrustedOriginsLoopbackOnly(
  * Rejects: "0.0.0.0:3001:3001", "3001:3001", "::3001:3001", "[::]:3001:3001"
  */
 export function composeHostBindIsLoopback(portLine: string): boolean {
-  const trimmed = portLine.trim().replace(/^-\s*/, "").replace(/^["']|["']$/g, "");
+  const trimmed = portLine
+    .trim()
+    .replace(/^-\s*/, "")
+    .replace(/^["']|["']$/g, "");
   // host:container or ip:host:container
   const m = trimmed.match(
     /^(?:(\[?[0-9a-fA-F:.]+\]?|0\.0\.0\.0|localhost):)?(\d+):(\d+)(?:\/(?:tcp|udp))?$/,
@@ -124,7 +134,8 @@ export function nginxClearsLocalCallerForAppProxies(nginxConf: string): {
   for (const block of blocks) {
     if (!/proxy_pass\s+http:\/\/127\.0\.0\.1:3001/.test(block)) continue;
     if (!/proxy_set_header\s+X-ChisaBot-Local-Caller\s+""\s*;/.test(block)) {
-      const loc = /^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location";
+      const loc =
+        /^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location";
       missingNear.push(loc);
     }
   }
@@ -144,12 +155,19 @@ export function nginxPinsClientIpHeaders(nginxConf: string): {
   const missingNear: string[] = [];
   let proxies = 0;
   for (const block of nginxConf.split(/(?=location\s)/)) {
-    if (!/^\s*location\s/.test(block) || !/^\s*proxy_pass\s/m.test(block)) continue;
+    if (!/^\s*location\s/.test(block) || !/^\s*proxy_pass\s/m.test(block))
+      continue;
     proxies++;
-    const clears = /^\s*proxy_set_header\s+CF-Connecting-IP\s+""\s*;/m.test(block);
-    const pins = /^\s*proxy_set_header\s+X-Real-IP\s+\$remote_addr\s*;/m.test(block);
+    const clears = /^\s*proxy_set_header\s+CF-Connecting-IP\s+""\s*;/m.test(
+      block,
+    );
+    const pins = /^\s*proxy_set_header\s+X-Real-IP\s+\$remote_addr\s*;/m.test(
+      block,
+    );
     if (!clears || !pins)
-      missingNear.push(/^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location");
+      missingNear.push(
+        /^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location",
+      );
   }
   return { ok: proxies > 0 && missingNear.length === 0, proxies, missingNear };
 }

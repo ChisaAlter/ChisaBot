@@ -175,13 +175,13 @@ import { markdownComponents } from "@/lib/markdown";
 import { forgetMemoryNote } from "@/lib/memory-notes";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
-import { probeRemoteFile } from "@/lib/rich-previews/files";
 import {
   asText,
   forDisplay,
   REFUSAL_MARKER,
   toolResultFailed,
 } from "@/lib/plugins/tool-result";
+import { probeRemoteFile } from "@/lib/rich-previews/files";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { cn } from "@/lib/utils";
 import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
@@ -2685,12 +2685,11 @@ function probeDocument(url: string): Promise<DocumentProbe> {
   if (existing) return existing;
 
   // 同一个 HEAD 顺便读 content-length，文件卡显示大小，不再另发一次请求（DESIGN.md §31）。
-  const probe = probeRemoteFile(url)
-    .finally(() => {
-      // Cleared however it settled, so the next mount asks again rather than inheriting an answer
-      // that has had time to stop being true.
-      probesInFlight.delete(url);
-    });
+  const probe = probeRemoteFile(url).finally(() => {
+    // Cleared however it settled, so the next mount asks again rather than inheriting an answer
+    // that has had time to stop being true.
+    probesInFlight.delete(url);
+  });
 
   probesInFlight.set(url, probe);
   return probe;
@@ -4810,8 +4809,9 @@ export function compactTurns(
     const personUsers = personTextsOf(turn.users);
     const prevTurn = index > 0 ? turns[index - 1] : undefined;
     const prevUsers = prevTurn ? personTextsOf(prevTurn.users) : [];
-    const prevTurnStopped =
-      prevTurn?.users.some((user) => stopped.has(turnOf(user)));
+    const prevTurnStopped = prevTurn?.users.some((user) =>
+      stopped.has(turnOf(user)),
+    );
     const prevInterjected =
       prevTurn !== undefined &&
       !prevTurnStopped &&

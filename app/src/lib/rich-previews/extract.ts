@@ -75,7 +75,9 @@ const MD_IMAGE = new RegExp(String.raw`!\[([^\]]*)\]${MD_TARGET}`, "g");
 export type LinkRef = { url: string; label?: string };
 
 const LINE_TRAILING = /[.,;:!?'"*_~，。、；：！？…]+$/u;
-const LINE_MD_LINK = new RegExp(String.raw`^\[((?:[^\[\]\n]|\[[^\]\n]*\])*)\]${MD_TARGET}$`);
+const LINE_MD_LINK = new RegExp(
+  String.raw`^\[((?:[^\[\]\n]|\[[^\]\n]*\])*)\]${MD_TARGET}$`,
+);
 const LINE_AUTOLINK = /^<(https?:\/\/[^>\s]+)>$/i;
 const LINE_BARE = /^https?:\/\/\S+$/i;
 const MAX_LABEL = 40;
@@ -95,10 +97,14 @@ function cleanLabel(raw: string, url: string): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   if (!label) return undefined;
-  if (/^https?:\/\//i.test(label) || /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(label))
+  if (
+    /^https?:\/\//i.test(label) ||
+    /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(label)
+  )
     return undefined;
   const host = hostOfUrl(url);
-  if (host && label.toLowerCase().replace(/^www\./, "") === host) return undefined;
+  if (host && label.toLowerCase().replace(/^www\./, "") === host)
+    return undefined;
   return label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 1)}…` : label;
 }
 
@@ -128,7 +134,11 @@ export function parseLinkLine(line: string): LinkRef | null {
   if (LINE_BARE.test(t)) {
     const trimmed = trimUrl(t);
     // 网址后面只允许跟标点（「https://a.cn/x。」），跟着别的字就是句子。
-    if (!/^[\s.,;:!?'"*_~\]}>，。、；：！？…）】》」』”’)]*$/u.test(t.slice(trimmed.length)))
+    if (
+      !/^[\s.,;:!?'"*_~\]}>，。、；：！？…）】》」』”’)]*$/u.test(
+        t.slice(trimmed.length),
+      )
+    )
       return null;
     const url = normalizeLink(trimmed);
     return url ? { url } : null;
@@ -140,8 +150,12 @@ export function parseLinkLine(line: string): LinkRef | null {
 export function looksLikePartialLinkLine(line: string): boolean {
   const t = line.trim().replace(/^(\*\*|__)/, "");
   if (!t) return false;
-  if (/^(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/\S*)$/i.test(t)) return true;
-  if (/^<(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/[^>\s]*)>?$/i.test(t)) return true;
+  if (/^(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/\S*)$/i.test(t))
+    return true;
+  if (
+    /^<(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/[^>\s]*)>?$/i.test(t)
+  )
+    return true;
   // [标签](网址 —— 标签写完、网址还在写；只写了「[标签」时还看不出是不是链接，先不藏。
   if (/^\[[^[\]\n]{0,80}\]\((<?https?:?\/{0,2}\S*)?$/i.test(t)) return true;
   return parseLinkLine(t) !== null;
@@ -240,10 +254,15 @@ export function splitLinkLines(
         .replace(/\n{3,}/g, "\n\n")
         .replace(/\s+$/, "")
     : text;
-  return pendingUrl ? { links, display, pending, pendingUrl } : { links, display, pending };
+  return pendingUrl
+    ? { links, display, pending, pendingUrl }
+    : { links, display, pending };
 }
 
-const MD_LINK = new RegExp(String.raw`(!?)\[((?:[^\[\]\n]|\[[^\]\n]*\])*)\]${MD_TARGET}`, "g");
+const MD_LINK = new RegExp(
+  String.raw`(!?)\[((?:[^\[\]\n]|\[[^\]\n]*\])*)\]${MD_TARGET}`,
+  "g",
+);
 /** Slack 转过来的 `<网址|文字>` / `<网址>`。 */
 const ANGLE_LINK = /<(https?:\/\/[^>\s|]+)(?:\|([^>\n]*))?>/gi;
 // 只认网址里会出现的 ASCII 字符：中文句子里网址后面紧跟的字（「…/x这个」）不算进去。
@@ -259,24 +278,30 @@ export function extractUserLinks(text: string): LinkRef[] {
   const found: { at: number; ref: LinkRef }[] = [];
   let rest = stripCode(text);
   const blank = (m: string) => " ".repeat(m.length);
-  rest = rest.replace(MD_LINK, (match, bang: string, label: string, target: string, at: number) => {
-    if (!bang) {
-      const url = normalizeLink(target.replace(/^<|>$/g, ""));
+  rest = rest.replace(
+    MD_LINK,
+    (match, bang: string, label: string, target: string, at: number) => {
+      if (!bang) {
+        const url = normalizeLink(target.replace(/^<|>$/g, ""));
+        if (url) {
+          const clean = cleanLabel(label, url);
+          found.push({ at, ref: clean ? { url, label: clean } : { url } });
+        }
+      }
+      return blank(match);
+    },
+  );
+  rest = rest.replace(
+    ANGLE_LINK,
+    (match, raw: string, label: string | undefined, at: number) => {
+      const url = normalizeLink(raw);
       if (url) {
-        const clean = cleanLabel(label, url);
+        const clean = label ? cleanLabel(label, url) : undefined;
         found.push({ at, ref: clean ? { url, label: clean } : { url } });
       }
-    }
-    return blank(match);
-  });
-  rest = rest.replace(ANGLE_LINK, (match, raw: string, label: string | undefined, at: number) => {
-    const url = normalizeLink(raw);
-    if (url) {
-      const clean = label ? cleanLabel(label, url) : undefined;
-      found.push({ at, ref: clean ? { url, label: clean } : { url } });
-    }
-    return blank(match);
-  });
+      return blank(match);
+    },
+  );
   rest.replace(BARE_LINK, (match, at: number) => {
     const url = normalizeLink(trimUrl(match));
     if (url) found.push({ at, ref: { url } });

@@ -10,8 +10,15 @@ import {
   DropdownMenuItem,
   DropdownMenuShortcut,
 } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { type BotChatContext, publishBotChat } from "@/lib/agents/bot-chat-context";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  type BotChatContext,
+  publishBotChat,
+} from "@/lib/agents/bot-chat-context";
 import { getHotkey } from "@/lib/hotkeys/hotkeys";
 import { useHotkey } from "@/lib/hotkeys/use-hotkey";
 import { cn } from "@/lib/utils";
@@ -50,13 +57,30 @@ export function RegisterBotChat({
   fallbackName,
 }: RegisterProps) {
   const noop = useCallback(() => {}, []);
-  const needsYou = useComputerAttention(onComputerChange ? agentId : undefined, onComputerChange ?? noop);
+  const needsYou = useComputerAttention(
+    onComputerChange ? agentId : undefined,
+    onComputerChange ?? noop,
+  );
   useHotkey("new-topic", () => {
     if (!freshTopic && onNewTopic) onNewTopic();
   });
   // Handlers change identity every render; the published snapshot only changes with the state.
-  const latest = useRef({ settingsOpen, onSettingsChange, computerOpen, onComputerChange, onNewTopic, onHistory });
-  latest.current = { settingsOpen, onSettingsChange, computerOpen, onComputerChange, onNewTopic, onHistory };
+  const latest = useRef({
+    settingsOpen,
+    onSettingsChange,
+    computerOpen,
+    onComputerChange,
+    onNewTopic,
+    onHistory,
+  });
+  latest.current = {
+    settingsOpen,
+    onSettingsChange,
+    computerOpen,
+    onComputerChange,
+    onNewTopic,
+    onHistory,
+  };
   const canHistory = Boolean(onHistory);
   const canSettings = Boolean(onSettingsChange);
   const canComputer = Boolean(onComputerChange);
@@ -76,21 +100,41 @@ export function RegisterBotChat({
             canNewTopic,
             canHistory,
             openHistory: () => latest.current.onHistory?.(),
-            toggleSettings: () => latest.current.onSettingsChange?.(!latest.current.settingsOpen),
-            toggleComputer: () => latest.current.onComputerChange?.(!latest.current.computerOpen),
+            toggleSettings: () =>
+              latest.current.onSettingsChange?.(!latest.current.settingsOpen),
+            toggleComputer: () =>
+              latest.current.onComputerChange?.(!latest.current.computerOpen),
             newTopic: () => latest.current.onNewTopic?.(),
           }
         : null,
-    [agentId, fallbackName, settingsOpen, computerOpen, needsYou, freshTopic, canSettings, canComputer, canNewTopic, canHistory],
+    [
+      agentId,
+      fallbackName,
+      settingsOpen,
+      computerOpen,
+      needsYou,
+      freshTopic,
+      canSettings,
+      canComputer,
+      canNewTopic,
+      canHistory,
+    ],
   );
-  useEffect(() => (snapshot ? publishBotChat(snapshot) : undefined), [snapshot]);
+  useEffect(
+    () => (snapshot ? publishBotChat(snapshot) : undefined),
+    [snapshot],
+  );
   return null;
 }
 
 /** 左栏机器人行里的计算机提示：只在计算机已打开或需要你时出现（琥珀色圆点 = 需要你）。 */
 export function BotRowComputerChip({ chat }: { chat: BotChatContext | null }) {
   if (!chat?.canComputer || !(chat.computerOpen || chat.needsYou)) return null;
-  const label = chat.needsYou ? "计算机需要你" : chat.computerOpen ? "关闭计算机" : "打开计算机";
+  const label = chat.needsYou
+    ? "计算机需要你"
+    : chat.computerOpen
+      ? "关闭计算机"
+      : "打开计算机";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -105,7 +149,9 @@ export function BotRowComputerChip({ chat }: { chat: BotChatContext | null }) {
         }
       >
         <IconDeviceDesktop className="size-4" />
-        {chat.needsYou ? <span aria-hidden className="glass-bot-comp-dot" /> : null}
+        {chat.needsYou ? (
+          <span aria-hidden className="glass-bot-comp-dot" />
+        ) : null}
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
         {label}
@@ -137,7 +183,9 @@ export function BotChatMenuItems({
   return (
     <>
       {chat?.canHistory ? (
-        <DropdownMenuItem className="glass-mi" onClick={() => {
+        <DropdownMenuItem
+          className="glass-mi"
+          onClick={() => {
             chat.openHistory?.();
             onDone?.();
           }}
@@ -151,7 +199,11 @@ export function BotChatMenuItems({
         disabled={Boolean(chat?.freshTopic)}
         onClick={() => {
           if (chat?.canNewTopic) chat.newTopic();
-          else void navigate({ to: "/channel/new", search: { agent: agentId, topic: "new" } });
+          else
+            void navigate({
+              to: "/channel/new",
+              search: { agent: agentId, topic: "new" },
+            });
           onDone?.();
         }}
       >

@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { PersonalSourcesStatusView } from "../../../../shared/personal-sources";
 import { client } from "@/lib/client";
+import type { PersonalSourcesStatusView } from "../../../../shared/personal-sources";
 
 /** 设置 → 个人助理 → 日程、收件箱、通知推送与每日晨报。 */
 export const personalSourcesKeys = {

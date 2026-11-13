@@ -16,8 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { client } from "@/lib/client";
 import { authKeys, currentUserQueryOptions } from "@/lib/auth/queries";
+import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,7 +33,14 @@ import { cn } from "@/lib/utils";
 const OUTPUT = 256;
 const STAGE = 200;
 
-type Crop = { src: string; w: number; h: number; zoom: number; x: number; y: number };
+type Crop = {
+  src: string;
+  w: number;
+  h: number;
+  zoom: number;
+  x: number;
+  y: number;
+};
 
 async function saveProfile(body: { name?: string; image?: string | null }) {
   const response = await client("/api/me/profile", {
@@ -41,7 +48,9 @@ async function saveProfile(body: { name?: string; image?: string | null }) {
     body,
     fallback: "保存个人资料失败",
   });
-  return (await response.json()) as { profile: { name: string | null; image: string | null } };
+  return (await response.json()) as {
+    profile: { name: string | null; image: string | null };
+  };
 }
 
 function loadImage(src: string) {
@@ -60,7 +69,11 @@ function clampCrop(c: Crop): Crop {
   const s = baseScale(c) * c.zoom;
   const maxX = Math.max(0, (c.w * s - STAGE) / 2);
   const maxY = Math.max(0, (c.h * s - STAGE) / 2);
-  return { ...c, x: Math.min(maxX, Math.max(-maxX, c.x)), y: Math.min(maxY, Math.max(-maxY, c.y)) };
+  return {
+    ...c,
+    x: Math.min(maxX, Math.max(-maxX, c.x)),
+    y: Math.min(maxY, Math.max(-maxY, c.y)),
+  };
 }
 
 async function exportCrop(c: Crop): Promise<string> {
@@ -76,7 +89,13 @@ async function exportCrop(c: Crop): Promise<string> {
   const dh = c.h * s;
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, OUTPUT, OUTPUT);
-  ctx.drawImage(img, (OUTPUT - dw) / 2 + c.x * k, (OUTPUT - dh) / 2 + c.y * k, dw, dh);
+  ctx.drawImage(
+    img,
+    (OUTPUT - dw) / 2 + c.x * k,
+    (OUTPUT - dh) / 2 + c.y * k,
+    dw,
+    dh,
+  );
   return canvas.toDataURL("image/jpeg", 0.86);
 }
 
@@ -91,7 +110,9 @@ function AvatarCropper({
   onChange: (c: Crop) => void;
   onPick: () => void;
 }) {
-  const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(
+    null,
+  );
   const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!crop) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -100,7 +121,11 @@ function AvatarCropper({
   const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!crop || !drag.current) return;
     onChange(
-      clampCrop({ ...crop, x: drag.current.x + e.clientX - drag.current.px, y: drag.current.y + e.clientY - drag.current.py }),
+      clampCrop({
+        ...crop,
+        x: drag.current.x + e.clientX - drag.current.px,
+        y: drag.current.y + e.clientY - drag.current.py,
+      }),
     );
   };
   const onUp = () => {
@@ -144,7 +169,9 @@ function AvatarCropper({
             aria-label={"缩放头像"}
             max={4}
             min={1}
-            onChange={(e) => onChange(clampCrop({ ...crop, zoom: Number(e.target.value) }))}
+            onChange={(e) =>
+              onChange(clampCrop({ ...crop, zoom: Number(e.target.value) }))
+            }
             step={0.01}
             type="range"
             value={crop.zoom}
@@ -202,13 +229,23 @@ function ProfileForm({
     const src = URL.createObjectURL(file);
     try {
       const img = await loadImage(src);
-      setCrop({ src, w: img.naturalWidth, h: img.naturalHeight, zoom: 1, x: 0, y: 0 });
+      setCrop({
+        src,
+        w: img.naturalWidth,
+        h: img.naturalHeight,
+        zoom: 1,
+        x: 0,
+        y: 0,
+      });
     } catch (e) {
       setPickError(e instanceof Error ? e.message : "图片无法读取");
     }
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 按 src 释放 blob URL；crop 的其他字段变化不需要重新释放
-  useEffect(() => () => (crop ? URL.revokeObjectURL(crop.src) : undefined), [crop?.src]);
+  useEffect(
+    () => () => (crop ? URL.revokeObjectURL(crop.src) : undefined),
+    [crop?.src],
+  );
 
   const trimmed = name.trim();
   const ready = trimmed.length > 0 && [...trimmed].length <= 40;
@@ -268,19 +305,31 @@ function ProfileForm({
         {required ? "保存并进入" : "保存"}
       </Button>
       {required && !ready ? (
-        <p className="text-center text-muted-foreground text-xs">{"填写显示名称即可开始；头像可以以后再换。"}</p>
+        <p className="text-center text-muted-foreground text-xs">
+          {"填写显示名称即可开始；头像可以以后再换。"}
+        </p>
       ) : null}
     </form>
   );
 }
 
 /** 「个人资料」弹窗（账号菜单 → 个人资料）。 */
-export function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function ProfileDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="glass-modal profile-dialog max-w-[400px]">
-        <DialogTitle className="font-semibold text-lg">{"个人资料"}</DialogTitle>
-        <DialogDescription className="text-xs">{"头像和名称显示在左下角的账号卡上。"}</DialogDescription>
+        <DialogTitle className="font-semibold text-lg">
+          {"个人资料"}
+        </DialogTitle>
+        <DialogDescription className="text-xs">
+          {"头像和名称显示在左下角的账号卡上。"}
+        </DialogDescription>
         {open ? <ProfileForm onSaved={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
@@ -295,7 +344,8 @@ export function ProfileSetupGate() {
   const { data: user } = useQuery(currentUserQueryOptions());
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [done, setDone] = useState(false);
-  const open = Boolean(user?.profileNeedsSetup) && !done && pathname !== "/onboarding";
+  const open =
+    Boolean(user?.profileNeedsSetup) && !done && pathname !== "/onboarding";
   return (
     <Dialog open={open}>
       <DialogContent
@@ -303,7 +353,9 @@ export function ProfileSetupGate() {
         overlayClassName="profile-setup-overlay"
         showCloseButton={false}
       >
-        <DialogTitle className="text-center font-semibold text-lg">{"欢迎使用 ChisaBot"}</DialogTitle>
+        <DialogTitle className="text-center font-semibold text-lg">
+          {"欢迎使用 ChisaBot"}
+        </DialogTitle>
         <DialogDescription className="text-center text-xs">
           {"先设置你的头像和名称，就可以开始了。"}
         </DialogDescription>

@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useMutationFeedback } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -36,16 +32,16 @@ export function HistorySummaryModelCard() {
   const value = draft ?? current;
   const known =
     value === FOLLOW_MAIN_MODEL || models.some((m) => m.id === value);
-  const save = useMutation(
-    saveHistorySummaryModelMutationOptions(queryClient),
-  );
+  const save = useMutation(saveHistorySummaryModelMutationOptions(queryClient));
   const saveState = useMutationFeedback(save);
   const submit = () => {
     const sent = value;
     save.mutate(sent === FOLLOW_MAIN_MODEL ? null : sent, {
       // 旧保存响应不能覆盖用户在请求期间新选的模型。
       onSuccess: () =>
-        setDraft((currentDraft) => (currentDraft === sent ? null : currentDraft)),
+        setDraft((currentDraft) =>
+          currentDraft === sent ? null : currentDraft,
+        ),
       onError: (error: Error) => toast.error(error.message),
     });
   };

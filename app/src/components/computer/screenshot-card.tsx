@@ -23,15 +23,26 @@ function load(): Stored {
     return {};
   }
 }
-export function keepShot(id: string, src: string, url?: string, botId?: string) {
+export function keepShot(
+  id: string,
+  src: string,
+  url?: string,
+  botId?: string,
+) {
   void tryClient(`/api/chat-shots/${encodeURIComponent(id)}`, {
     method: "PUT",
-    body: { dataUrl: src, ...(url ? { url } : {}), ...(botId ? { botId } : {}) },
+    body: {
+      dataUrl: src,
+      ...(url ? { url } : {}),
+      ...(botId ? { botId } : {}),
+    },
   }).catch(() => {});
   try {
     const all = load();
     all[id] = { src, ...(url ? { url } : {}), at: Date.now() };
-    const ids = Object.keys(all).sort((a, b) => (all[b]?.at ?? 0) - (all[a]?.at ?? 0));
+    const ids = Object.keys(all).sort(
+      (a, b) => (all[b]?.at ?? 0) - (all[a]?.at ?? 0),
+    );
     for (const old of ids.slice(KEEP)) delete all[old];
     localStorage.setItem(KEY, JSON.stringify(all));
   } catch {
@@ -62,12 +73,31 @@ export async function shrinkPng(base64: string): Promise<string> {
   return canvas.toDataURL("image/jpeg", 0.78);
 }
 
-export function ScreenshotCard({ id, running, failed, url }: { id?: string; running: boolean; failed?: string; url?: string }) {
+export function ScreenshotCard({
+  id,
+  running,
+  failed,
+  url,
+}: {
+  id?: string;
+  running: boolean;
+  failed?: string;
+  url?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [remoteGone, setRemoteGone] = useState(false);
   const local = shotFor(id);
   // 本机没有缓存（换了设备）就读服务器那份；读不到（过期清理了）再退回一行字。
-  const shot = local ?? (id && !remoteGone ? { src: `/api/chat-shots/${encodeURIComponent(id)}`, url: undefined, at: 0, remote: true } : undefined);
+  const shot =
+    local ??
+    (id && !remoteGone
+      ? {
+          src: `/api/chat-shots/${encodeURIComponent(id)}`,
+          url: undefined,
+          at: 0,
+          remote: true,
+        }
+      : undefined);
   let host = url ?? shot?.url ?? "";
   try {
     if (host) host = new URL(host).hostname.replace(/^www\./, "");
@@ -81,12 +111,18 @@ export function ScreenshotCard({ id, running, failed, url }: { id?: string; runn
   if (failed || !shot)
     return (
       <span className="shot-card shot-card-line" title={failed}>
-        <IconCamera className="size-4" /> {failed ? "没截到图" : `截图${host ? ` · ${host}` : ""}`}
+        <IconCamera className="size-4" />{" "}
+        {failed ? "没截到图" : `截图${host ? ` · ${host}` : ""}`}
       </span>
     );
   return (
     <>
-      <button className="shot-card" onClick={() => setOpen(true)} title="点开看大图" type="button">
+      <button
+        className="shot-card"
+        onClick={() => setOpen(true)}
+        title="点开看大图"
+        type="button"
+      >
         <img
           alt={`${host || "页面"}的截图`}
           data-shot-source={local ? "local" : "server"}
@@ -100,7 +136,13 @@ export function ScreenshotCard({ id, running, failed, url }: { id?: string; runn
       {/* 点开用和聊天图片同一个看大图（缩放、下载、Esc，DESIGN.md §31）。 */}
       {open ? (
         <Lightbox
-          images={[{ src: shot.src, alt: `${host || "页面"}的截图`, name: `截图${host ? `-${host}` : ""}.jpg` }]}
+          images={[
+            {
+              src: shot.src,
+              alt: `${host || "页面"}的截图`,
+              name: `截图${host ? `-${host}` : ""}.jpg`,
+            },
+          ]}
           onClose={() => setOpen(false)}
           startIndex={0}
         />

@@ -1,11 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
+import { client, tryClient } from "@/lib/client";
 import type {
   DeviceApprovalView,
   DeviceAuditEntry,
   DeviceCapabilities,
   DeviceView,
 } from "../../../shared/devices";
-import { client, tryClient } from "@/lib/client";
 
 /**
  * PC 设备（docs/pc-node.md）。列表每 5 秒刷新一次，这样在线状态和待审批几乎是实时的，
@@ -21,13 +21,19 @@ export const deviceKeys = {
   download: ["devices", "download"] as const,
 };
 
-export type DeviceList = { devices: DeviceView[]; approvals: DeviceApprovalView[] };
+export type DeviceList = {
+  devices: DeviceView[];
+  approvals: DeviceApprovalView[];
+};
 
 export function deviceListQueryOptions(all = false) {
   return queryOptions({
     queryKey: deviceKeys.list(all),
     queryFn: ({ signal }): Promise<DeviceList> =>
-      client(`/api/devices${all ? "?all=1" : ""}`, { fallback: "无法加载设备列表", signal }).then((r) => r.json()),
+      client(`/api/devices${all ? "?all=1" : ""}`, {
+        fallback: "无法加载设备列表",
+        signal,
+      }).then((r) => r.json()),
     refetchInterval: 5_000,
     refetchOnWindowFocus: "always",
   });
@@ -37,7 +43,10 @@ export function deviceQueryOptions(id: string) {
   return queryOptions({
     queryKey: deviceKeys.detail(id),
     queryFn: ({ signal }): Promise<DeviceView> =>
-      client(`/api/devices/${encodeURIComponent(id)}`, "device", { fallback: "无法加载这台设备", signal }),
+      client(`/api/devices/${encodeURIComponent(id)}`, "device", {
+        fallback: "无法加载这台设备",
+        signal,
+      }),
     refetchInterval: 5_000,
   });
 }
@@ -46,7 +55,11 @@ export function deviceAuditQueryOptions(id: string) {
   return queryOptions({
     queryKey: deviceKeys.audit(id),
     queryFn: ({ signal }): Promise<DeviceAuditEntry[]> =>
-      client(`/api/devices/${encodeURIComponent(id)}/audit?limit=100`, "entries", { fallback: "无法加载操作记录", signal }),
+      client(
+        `/api/devices/${encodeURIComponent(id)}/audit?limit=100`,
+        "entries",
+        { fallback: "无法加载操作记录", signal },
+      ),
     refetchInterval: 8_000,
   });
 }
@@ -64,12 +77,23 @@ export type DevicePatch = {
 
 /** 电脑 / 服务器 / 手机：手机看平台；服务器 = chisabot-node（客户端版本带 -node）；其余是 PC 客户端。 */
 export type DeviceKind = "pc" | "server" | "phone";
-export function deviceKind(device: Pick<DeviceView, "platform" | "clientVersion">): DeviceKind {
-  if (device.platform === "android" || device.platform === "ios") return "phone";
-  if (device.clientVersion?.endsWith("-node") || device.clientVersion?.endsWith("-cli")) return "server";
+export function deviceKind(
+  device: Pick<DeviceView, "platform" | "clientVersion">,
+): DeviceKind {
+  if (device.platform === "android" || device.platform === "ios")
+    return "phone";
+  if (
+    device.clientVersion?.endsWith("-node") ||
+    device.clientVersion?.endsWith("-cli")
+  )
+    return "server";
   return "pc";
 }
-export const DEVICE_KIND_LABEL: Record<DeviceKind, string> = { pc: "电脑", server: "服务器", phone: "手机" };
+export const DEVICE_KIND_LABEL: Record<DeviceKind, string> = {
+  pc: "电脑",
+  server: "服务器",
+  phone: "手机",
+};
 
 /** 「到 10月15日 14:20」/「永久」。 */
 export function fullAccessUntilText(until: string | null | undefined) {
@@ -94,7 +118,13 @@ export type DeviceJob = {
   lastLine: string;
 };
 export type DeviceActivity = {
-  live: { jobs: DeviceJob[]; sessions: Array<{ name: string; cwd: string; commands: number }>; elevatedHelper: { startedAt: string } | null; shell: string; git: boolean } | null;
+  live: {
+    jobs: DeviceJob[];
+    sessions: Array<{ name: string; cwd: string; commands: number }>;
+    elevatedHelper: { startedAt: string } | null;
+    shell: string;
+    git: boolean;
+  } | null;
   liveError: string | null;
   edits: DeviceAuditEntry[];
 };
@@ -103,17 +133,26 @@ export function deviceActivityQueryOptions(id: string, enabled = true) {
   return queryOptions({
     queryKey: deviceKeys.activity(id),
     queryFn: ({ signal }): Promise<DeviceActivity> =>
-      client(`/api/devices/${encodeURIComponent(id)}/activity`, { fallback: "无法读取运行中的命令", signal }).then((r) => r.json()),
+      client(`/api/devices/${encodeURIComponent(id)}/activity`, {
+        fallback: "无法读取运行中的命令",
+        signal,
+      }).then((r) => r.json()),
     refetchInterval: 3_000,
     enabled,
   });
 }
 
 export async function killDeviceJob(id: string, jobId: string) {
-  await client(`/api/devices/${encodeURIComponent(id)}/jobs/${encodeURIComponent(jobId)}/kill`, { method: "POST", fallback: "结束失败" });
+  await client(
+    `/api/devices/${encodeURIComponent(id)}/jobs/${encodeURIComponent(jobId)}/kill`,
+    { method: "POST", fallback: "结束失败" },
+  );
 }
 
-export function patchDevice(id: string, patch: DevicePatch): Promise<DeviceView> {
+export function patchDevice(
+  id: string,
+  patch: DevicePatch,
+): Promise<DeviceView> {
   return client(`/api/devices/${encodeURIComponent(id)}`, "device", {
     method: "PATCH",
     body: patch,
@@ -122,11 +161,17 @@ export function patchDevice(id: string, patch: DevicePatch): Promise<DeviceView>
 }
 
 export async function revokeDevice(id: string) {
-  await client(`/api/devices/${encodeURIComponent(id)}/revoke`, { method: "POST", fallback: "撤销失败，请重试" });
+  await client(`/api/devices/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    fallback: "撤销失败，请重试",
+  });
 }
 
 export async function deleteDevice(id: string) {
-  await client(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE", fallback: "删除失败，请重试" });
+  await client(`/api/devices/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    fallback: "删除失败，请重试",
+  });
 }
 
 export async function testDevice(id: string): Promise<Record<string, unknown>> {
@@ -149,7 +194,13 @@ export async function decideApproval(id: string, decision: "approve" | "deny") {
 export type PcDownload = {
   version: string;
   publishedAt?: string;
-  files: Array<{ kind: "installer" | "portable"; name: string; url: string; bytes: number; sha256?: string }>;
+  files: Array<{
+    kind: "installer" | "portable";
+    name: string;
+    url: string;
+    bytes: number;
+    sha256?: string;
+  }>;
 };
 
 export function pcDownloadQueryOptions() {
@@ -202,7 +253,10 @@ function relative(at: string) {
   if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours} 小时前`;
-  return new Date(at).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+  return new Date(at).toLocaleDateString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+  });
 }
 
 /** 「关联于 10月12日」（跨年时带年份）。 */
@@ -217,7 +271,10 @@ export function lastUsedText(use: { botName: string | null; at: string }) {
   return `${use.botName ?? "机器人"} · ${relative(use.at)}`;
 }
 
-export const OUTCOME_LABEL: Record<string, { text: string; tone: "ok" | "warn" | "danger" | "muted" }> = {
+export const OUTCOME_LABEL: Record<
+  string,
+  { text: string; tone: "ok" | "warn" | "danger" | "muted" }
+> = {
   succeeded: { text: "成功", tone: "ok" },
   requested: { text: "进行中", tone: "muted" },
   failed: { text: "失败", tone: "danger" },
@@ -262,7 +319,13 @@ export const ACTION_LABEL: Record<string, string> = {
 
 // ---- 手机扫码绑定（DESIGN.md §33） ----
 
-export type PairingTicket = { id: string; code: string; expiresAt: string; ttlSeconds: number; kind?: "phone" | "node" };
+export type PairingTicket = {
+  id: string;
+  code: string;
+  expiresAt: string;
+  ttlSeconds: number;
+  kind?: "phone" | "node";
+};
 export type PairingStatus = {
   id: string;
   state: "pending" | "bound" | "expired" | "cancelled";
@@ -270,24 +333,40 @@ export type PairingStatus = {
   device: { id: string; name: string } | null;
 };
 
-export function createPairing(kind: "phone" | "node" = "phone"): Promise<PairingTicket> {
+export function createPairing(
+  kind: "phone" | "node" = "phone",
+): Promise<PairingTicket> {
   return client("/api/devices/pairing", {
     method: "POST",
     ...(kind === "node" ? { body: { kind } } : {}),
-    fallback: kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试",
+    fallback:
+      kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试",
   }).then((r) => r.json());
 }
 
 /** 服务器节点一行安装命令（docs/pc-node.md §14）。 */
-export function nodeInstallCommand(origin: string, code: string, options: { fullAccess: boolean; name?: string }) {
+export function nodeInstallCommand(
+  origin: string,
+  code: string,
+  options: { fullAccess: boolean; name?: string },
+) {
   const extra = `${options.fullAccess ? "" : " --no-full-access"}${options.name ? ` --name '${options.name.replace(/'/g, "")}'` : ""}`;
   return `curl -fsSL ${origin}/api/devices/agent/node/install.sh | sh -s -- --server ${origin} --code ${code}${extra}`;
 }
 
-export function pairingStatus(id: string, signal?: AbortSignal): Promise<PairingStatus> {
-  return client(`/api/devices/pairing/${encodeURIComponent(id)}`, { fallback: "无法读取绑定状态", signal }).then((r) => r.json());
+export function pairingStatus(
+  id: string,
+  signal?: AbortSignal,
+): Promise<PairingStatus> {
+  return client(`/api/devices/pairing/${encodeURIComponent(id)}`, {
+    fallback: "无法读取绑定状态",
+    signal,
+  }).then((r) => r.json());
 }
 
 export async function cancelPairing(id: string) {
-  await client(`/api/devices/pairing/${encodeURIComponent(id)}`, { method: "DELETE", fallback: "取消失败" }).catch(() => {});
+  await client(`/api/devices/pairing/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    fallback: "取消失败",
+  }).catch(() => {});
 }

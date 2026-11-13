@@ -13,7 +13,9 @@ import path from "node:path";
 
 export const NODE_BUNDLE_FILE = "node-agent/chisabot-node.cjs";
 
-export async function readNodeBundle(appDistDir: string | undefined): Promise<Buffer | null> {
+export async function readNodeBundle(
+  appDistDir: string | undefined,
+): Promise<Buffer | null> {
   const candidates = [
     appDistDir ? path.join(appDistDir, NODE_BUNDLE_FILE) : null,
     process.env.CHISABOT_NODE_BUNDLE || null,

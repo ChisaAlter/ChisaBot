@@ -14,7 +14,13 @@ export function splitText(text: string, max: number): string[] {
     let cut = Math.max(window.lastIndexOf("\n\n"), -1);
     if (cut < max * 0.4) cut = window.lastIndexOf("\n");
     if (cut < max * 0.4) {
-      const sentence = Math.max(window.lastIndexOf("。"), window.lastIndexOf("！"), window.lastIndexOf("？"), window.lastIndexOf(". "), window.lastIndexOf("；"));
+      const sentence = Math.max(
+        window.lastIndexOf("。"),
+        window.lastIndexOf("！"),
+        window.lastIndexOf("？"),
+        window.lastIndexOf(". "),
+        window.lastIndexOf("；"),
+      );
       cut = sentence >= 0 ? sentence + 1 : -1;
     }
     if (cut < max * 0.4) cut = window.lastIndexOf(" ");
@@ -32,9 +38,18 @@ export function splitText(text: string, max: number): string[] {
  */
 export function markdownToPlain(text: string): string {
   let out = text.replace(/\r\n/g, "\n");
-  out = out.replace(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g, (_, body: string) => body.replace(/\n$/, ""));
-  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_, alt: string, url: string) => `[图片${alt ? `：${alt}` : ""}] ${url}`);
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_, label: string, url: string) => (label === url ? url : `${label}（${url}）`));
+  out = out.replace(/```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g, (_, body: string) =>
+    body.replace(/\n$/, ""),
+  );
+  out = out.replace(
+    /!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g,
+    (_, alt: string, url: string) => `[图片${alt ? `：${alt}` : ""}] ${url}`,
+  );
+  out = out.replace(
+    /\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g,
+    (_, label: string, url: string) =>
+      label === url ? url : `${label}（${url}）`,
+  );
   out = out.replace(/^#{1,6}\s+/gm, "");
   out = out.replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/__([^_\n]+)__/g, "$1");
   out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2");
@@ -48,12 +63,16 @@ export function markdownToPlain(text: string): string {
 }
 
 /** 重连等待：1s、2s、4s… 最多 60s，加一点随机抖动。attempt 从 0 开始。 */
-export function backoffMs(attempt: number, random: () => number = Math.random): number {
+export function backoffMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
   const base = Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6));
   return Math.round(base * (0.8 + random() * 0.4));
 }
 
-export const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+export const defaultSleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** 把任意错误变成一行中文能读的字。 */
 export function errorText(error: unknown): string {
@@ -69,8 +88,11 @@ export async function readJson(response: Response, what: string): Promise<any> {
   try {
     parsed = body ? JSON.parse(body) : {};
   } catch {
-    throw new Error(`${what}：HTTP ${response.status}，返回的不是 JSON（Upstream returned invalid JSON）`);
+    throw new Error(
+      `${what}：HTTP ${response.status}，返回的不是 JSON（Upstream returned invalid JSON）`,
+    );
   }
-  if (!response.ok) throw new Error(`${what}：HTTP ${response.status} ${body.slice(0, 200)}`);
+  if (!response.ok)
+    throw new Error(`${what}：HTTP ${response.status} ${body.slice(0, 200)}`);
   return parsed;
 }

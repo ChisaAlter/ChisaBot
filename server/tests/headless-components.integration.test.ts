@@ -9,6 +9,7 @@ import {
 } from "@ag-ui/client";
 import { inArray } from "drizzle-orm";
 import { Observable } from "rxjs";
+
 // 浏览器侧的组件库声明已在瘦身 P4a 整批删除（0b95fcc1，原 app/src/components/gallery/*）。
 // 目录种子保留当初浏览器通告的那一条：测试仍然校验「已发布文案」透传到无头工具。
 const GALLERY = [
@@ -20,6 +21,7 @@ const GALLERY = [
       "以柱状图显示值。用于比较少量命名事物、团队、月份、类别。不用于时间趋势，这是showLineChart。",
   },
 ];
+
 import { NOT_SHOWN } from "../../shared/component-markers";
 import type { AuditEventInput } from "../src/audit";
 import { createHeadlessComponentTools } from "../src/components/headless";

@@ -1,4 +1,5 @@
 ---
+
 name: chisabot-data-access
 description: Governs how the ChisaBot browser app reads and writes server data — every request goes through `client` in app/src/lib/client.ts, every read is a queryOptions factory in app/src/lib/<entity>/queries.ts, every write is a mutationOptions factory in app/src/lib/<entity>/mutations.ts, and components consume them through useQuery/useMutation. Use when adding or changing a screen that loads server data, calling a /api/... endpoint from the browser, adding a query key, writing a create/update/delete flow, deciding where a fetch belongs, or reviewing a diff that contains the word fetch under app/src. Don't use for server-side route handlers under server/ (that is not browser code), for form validation schemas (those live in lib/<entity>/form.ts), for page layout and Item rows, or for the AG-UI stream itself, which the runtime carries rather than the client.
 ---
@@ -118,7 +119,7 @@ before writing a new one.
    ```
 
    Where the whole body is the payload, omit the key and read it: `(await client(path, { fallback
-   })).json()`. Where a failed status is an *answer* rather than an error — a refused component call,
+   })).json()`. Where a failed status is an _answer_ rather than an error — a refused component call,
    a 401 that means "not signed in" — use `tryClient` and read the status.
 
 8. Annotate the `queryFn` return type explicitly (`(): Promise<AgentProfile[]>`). `client` is generic
@@ -244,25 +245,25 @@ before writing a new one.
 
 ## Red Flags
 
-| Signal | What it means | Do instead |
-|--------|---------------|------------|
-| `fetch(` anywhere but `lib/client.ts` | Either the read has no key and nothing can invalidate it, or the transport has been rewritten by hand | Move it into `lib/<entity>/` behind a factory, and call `client` |
-| A module-private `<entity>Request` helper | Superseded. Four of these existed and one had lost its `body.error` extraction | Call `client` |
-| `client` on an endpoint whose refusal is an answer | Turns the boundary working into an exception the caller has to catch | `tryClient`, and read the status |
-| `body: JSON.stringify(x)` at a call site | Double-encoded; the client serialises | Pass the object |
-| A one-shot tool call written as a `mutationOptions` factory | Gets a `queryClient` and an invalidation it has no use for | A plain function beside the factories |
-| A `fallback` sentence repeated on every write in a file | The reader cares which entity failed, and that does not change within a file | One `const FALLBACK` per file |
-| `<PageEmpty>Loading …</PageEmpty>`, "Loading…" text, or a spinner while a query is pending | Not the loading language of this app (DESIGN.md); it jumps the layout when the answer arrives | `<PageSkeleton />` shaped like the final rows |
-| The pending branch deleted | The empty-state sentence shows for the length of the fetch, asserting something false | Keep the branch, first in the chain |
-| `useQueryClient()` outside a component | Hooks cannot run there | `import { queryClient } from "@/query-client"` |
-| `new QueryClient()` anywhere outside `app/src/query-client.ts` | A second cache; queries written by one client are invisible to the other | Import the singleton. A test needing isolation constructs its own and passes it explicitly |
-| `useQuery({ queryKey: ["agents"], ... })` at a call site | An inline key drifts from the factory and silently stops matching invalidations | Call the factory: `useQuery(agentListQueryOptions())` |
-| `queryClient.setQueryData(...)` after a mutation | Guesses at server-derived fields; wrong the moment the server adds a rule | `invalidateQueries({ queryKey: <entity>Keys.all })` |
-| A component computing `user.role === "admin" && thing.ownerId === user.id` | Duplicates an authorization rule that the server already decided | Render the server's flag (`canManage`, `mine`) |
-| A read type carrying a token, key, or `plaintext` | Secrets are write-only in ChisaBot | Expose `hasAuth: boolean` or a `revokedAt` timestamp |
-| A hand-written `body.error` extraction | `client` already does it, and did it more consistently than the four copies did | Pass `fallback` and let it raise |
-| `queryFn` returning `{ agents: [...] }` | Leaks the transport envelope into every component | Unwrap in the `queryFn`; components see the array |
-| A second `<entity>Keys` object, or keys defined in `mutations.ts` | Two sources of truth for one cache namespace | One factory per entity, in `queries.ts`; `mutations.ts` imports it |
+| Signal                                                                                     | What it means                                                                                         | Do instead                                                                                 |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `fetch(` anywhere but `lib/client.ts`                                                      | Either the read has no key and nothing can invalidate it, or the transport has been rewritten by hand | Move it into `lib/<entity>/` behind a factory, and call `client`                           |
+| A module-private `<entity>Request` helper                                                  | Superseded. Four of these existed and one had lost its `body.error` extraction                        | Call `client`                                                                              |
+| `client` on an endpoint whose refusal is an answer                                         | Turns the boundary working into an exception the caller has to catch                                  | `tryClient`, and read the status                                                           |
+| `body: JSON.stringify(x)` at a call site                                                   | Double-encoded; the client serialises                                                                 | Pass the object                                                                            |
+| A one-shot tool call written as a `mutationOptions` factory                                | Gets a `queryClient` and an invalidation it has no use for                                            | A plain function beside the factories                                                      |
+| A `fallback` sentence repeated on every write in a file                                    | The reader cares which entity failed, and that does not change within a file                          | One `const FALLBACK` per file                                                              |
+| `<PageEmpty>Loading …</PageEmpty>`, "Loading…" text, or a spinner while a query is pending | Not the loading language of this app (DESIGN.md); it jumps the layout when the answer arrives         | `<PageSkeleton />` shaped like the final rows                                              |
+| The pending branch deleted                                                                 | The empty-state sentence shows for the length of the fetch, asserting something false                 | Keep the branch, first in the chain                                                        |
+| `useQueryClient()` outside a component                                                     | Hooks cannot run there                                                                                | `import { queryClient } from "@/query-client"`                                             |
+| `new QueryClient()` anywhere outside `app/src/query-client.ts`                             | A second cache; queries written by one client are invisible to the other                              | Import the singleton. A test needing isolation constructs its own and passes it explicitly |
+| `useQuery({ queryKey: ["agents"], ... })` at a call site                                   | An inline key drifts from the factory and silently stops matching invalidations                       | Call the factory: `useQuery(agentListQueryOptions())`                                      |
+| `queryClient.setQueryData(...)` after a mutation                                           | Guesses at server-derived fields; wrong the moment the server adds a rule                             | `invalidateQueries({ queryKey: <entity>Keys.all })`                                        |
+| A component computing `user.role === "admin" && thing.ownerId === user.id`                 | Duplicates an authorization rule that the server already decided                                      | Render the server's flag (`canManage`, `mine`)                                             |
+| A read type carrying a token, key, or `plaintext`                                          | Secrets are write-only in ChisaBot                                                                    | Expose `hasAuth: boolean` or a `revokedAt` timestamp                                       |
+| A hand-written `body.error` extraction                                                     | `client` already does it, and did it more consistently than the four copies did                       | Pass `fallback` and let it raise                                                           |
+| `queryFn` returning `{ agents: [...] }`                                                    | Leaks the transport envelope into every component                                                     | Unwrap in the `queryFn`; components see the array                                          |
+| A second `<entity>Keys` object, or keys defined in `mutations.ts`                          | Two sources of truth for one cache namespace                                                          | One factory per entity, in `queries.ts`; `mutations.ts` imports it                         |
 
 ## Error Handling
 

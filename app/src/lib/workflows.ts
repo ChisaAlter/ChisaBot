@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { client, tryClient } from "@/lib/client";
 import type {
   WorkflowDefinition,
   WorkflowDetail,
@@ -6,7 +7,6 @@ import type {
   WorkflowSummary,
 } from "../../../shared/workflows";
 import { ACTIVE_RUN_STATUSES } from "../../../shared/workflows";
-import { client, tryClient } from "@/lib/client";
 
 /** 工作流（docs/workflows.md）。运行页在运行中每 1.5 秒刷新一次，跑完就停。 */
 

@@ -21,8 +21,7 @@ const files = [
   .map((path) => path.replaceAll("\\", "/"))
   .filter(
     // The dsh-* suites run in their own job via `bun run test:dsh` (dedicated pgvector database).
-    (path) =>
-      !path.startsWith("server/tests/dsh-") && !quarantine.has(path),
+    (path) => !path.startsWith("server/tests/dsh-") && !quarantine.has(path),
   )
   .sort();
 

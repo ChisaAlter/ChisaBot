@@ -11,8 +11,7 @@ export async function probeRemoteFile(
   const length = Number(response.headers.get("content-length"));
   return {
     missing: response.status === 404,
-    size:
-      response.ok && Number.isFinite(length) && length > 0 ? length : null,
+    size: response.ok && Number.isFinite(length) && length > 0 ? length : null,
   };
 }
 

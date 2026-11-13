@@ -11,8 +11,11 @@ export function telegramBase(config: Record<string, string>, token: string) {
   return `${(config.apiBase || "https://api.telegram.org").replace(/\/+$/, "")}/bot${token}`;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Telegram Update 载荷字段随消息类型变化
-export function parseTelegramUpdate(update: any, me: { id: number; username: string } | null): ImInbound | null {
+export function parseTelegramUpdate(
+  // biome-ignore lint/suspicious/noExplicitAny: Telegram Update 载荷字段随消息类型变化
+  update: any,
+  me: { id: number; username: string } | null,
+): ImInbound | null {
   const message = update?.message;
   if (!message?.chat || !message.from || message.from.is_bot) return null;
   const group = message.chat.type !== "private";
@@ -22,7 +25,10 @@ export function parseTelegramUpdate(update: any, me: { id: number; username: str
   if (group && username) {
     if (text.toLowerCase().includes(username.toLowerCase())) {
       mentioned = true;
-      text = text.replace(new RegExp(username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "");
+      text = text.replace(
+        new RegExp(username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"),
+        "",
+      );
     }
     if (me && message.reply_to_message?.from?.id === me.id) mentioned = true;
   }
@@ -31,7 +37,10 @@ export function parseTelegramUpdate(update: any, me: { id: number; username: str
   if (message.document) attachments.push({ kind: "file" });
   if (message.voice) attachments.push({ kind: "voice" });
   if (message.video) attachments.push({ kind: "video" });
-  const name = [message.from.first_name, message.from.last_name].filter(Boolean).join(" ") || message.from.username;
+  const name =
+    [message.from.first_name, message.from.last_name]
+      .filter(Boolean)
+      .join(" ") || message.from.username;
   return {
     messageId: `${message.chat.id}:${message.message_id}`,
     chatType: group ? "group" : "private",
@@ -66,7 +75,11 @@ export class TelegramAdapter extends LoopAdapter {
     this.requests.clear();
   }
 
-  private async call(method: string, body: Record<string, unknown>, timeoutMs = 15_000) {
+  private async call(
+    method: string,
+    body: Record<string, unknown>,
+    timeoutMs = 15_000,
+  ) {
     if (this.stopped) throw new Error("连接已停止");
     const controller = new AbortController();
     this.requests.add(controller);
@@ -80,8 +93,13 @@ export class TelegramAdapter extends LoopAdapter {
       });
       const parsed = await response.json().catch(() => ({}));
       if (!parsed.ok) {
-        if (response.status === 409) throw new Error("另一个程序正在用这个 Token 收消息（或设置了 webhook）：同一个 Token 只能有一个地方收消息");
-        throw new Error(`Telegram ${method} 失败：${parsed.error_code ?? response.status} ${parsed.description ?? ""}`.trim());
+        if (response.status === 409)
+          throw new Error(
+            "另一个程序正在用这个 Token 收消息（或设置了 webhook）：同一个 Token 只能有一个地方收消息",
+          );
+        throw new Error(
+          `Telegram ${method} 失败：${parsed.error_code ?? response.status} ${parsed.description ?? ""}`.trim(),
+        );
       }
       return parsed.result;
     } finally {
@@ -91,7 +109,8 @@ export class TelegramAdapter extends LoopAdapter {
   }
 
   protected async runOnce(): Promise<void> {
-    if (!(this.ctx.secrets.token ?? "").trim()) throw new Error("请填写 Bot Token");
+    if (!(this.ctx.secrets.token ?? "").trim())
+      throw new Error("请填写 Bot Token");
     const me = await this.call("getMe", {});
     if (this.stopped) return;
     this.me = { id: Number(me.id), username: String(me.username ?? "") };
@@ -101,7 +120,11 @@ export class TelegramAdapter extends LoopAdapter {
       // biome-ignore lint/suspicious/noExplicitAny: getUpdates 返回的 Update 形状随消息类型变化
       let updates: any[];
       try {
-        updates = await this.call("getUpdates", { offset: this.offset, timeout: 30, allowed_updates: ["message"] }, 40_000);
+        updates = await this.call(
+          "getUpdates",
+          { offset: this.offset, timeout: 30, allowed_updates: ["message"] },
+          40_000,
+        );
       } catch (error) {
         if (this.stopped) return;
         if ((error as Error)?.name === "AbortError") continue;
@@ -118,7 +141,11 @@ export class TelegramAdapter extends LoopAdapter {
 
   async typing(inbound: ImInbound) {
     try {
-      await this.call("sendChatAction", { chat_id: inbound.chatId, action: "typing" }, 8000);
+      await this.call(
+        "sendChatAction",
+        { chat_id: inbound.chatId, action: "typing" },
+        8000,
+      );
     } catch {}
   }
 
@@ -129,7 +156,14 @@ export class TelegramAdapter extends LoopAdapter {
       await this.call("sendMessage", {
         chat_id: reply.inbound.chatId,
         text: chunk,
-        ...(first && messageId ? { reply_parameters: { message_id: messageId, allow_sending_without_reply: true } } : {}),
+        ...(first && messageId
+          ? {
+              reply_parameters: {
+                message_id: messageId,
+                allow_sending_without_reply: true,
+              },
+            }
+          : {}),
       });
       first = false;
     }
@@ -138,9 +172,15 @@ export class TelegramAdapter extends LoopAdapter {
 
 export async function testTelegram(ctx: AdapterContext): Promise<TestResult> {
   try {
-    const response = await ctx.fetch(`${telegramBase(ctx.config, (ctx.secrets.token ?? "").trim())}/getMe`);
-    const body = await readJson(response, "Telegram getMe").catch((error) => ({ ok: false, description: errorText(error) }));
-    if (!body.ok) return { ok: false, detail: `Token 无效：${body.description ?? ""}` };
+    const response = await ctx.fetch(
+      `${telegramBase(ctx.config, (ctx.secrets.token ?? "").trim())}/getMe`,
+    );
+    const body = await readJson(response, "Telegram getMe").catch((error) => ({
+      ok: false,
+      description: errorText(error),
+    }));
+    if (!body.ok)
+      return { ok: false, detail: `Token 无效：${body.description ?? ""}` };
     return { ok: true, detail: `Token 有效，机器人 @${body.result?.username}` };
   } catch (error) {
     return { ok: false, detail: errorText(error) };

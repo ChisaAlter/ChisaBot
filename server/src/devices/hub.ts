@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  capabilityFor,
   type DeviceApprovalView,
   type DeviceCapabilities,
   type DeviceOperation,
@@ -7,20 +8,33 @@ import {
   type DeviceView,
   OPERATION_LABEL,
   type ServerToDevice,
-  capabilityFor,
 } from "../../../shared/devices";
+import { redactText } from "../computer/activity-redact";
 import { TOOL_STOPPED_ZH } from "../confirmations/context";
 import { isMobilePlatform, MOBILE_ONLINE_WINDOW_MS } from "./pairing";
 import { outsideRoots, outsideRootsNote } from "./roots";
-import { type DevicePatch, type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
-import { redactText } from "../computer/activity-redact";
+import {
+  type DevicePatch,
+  type DeviceRecord,
+  type DeviceStore,
+  fullAccessActive,
+} from "./store";
 
 /** 和 store.ts MAX_ROOTS 一致。 */
 const MAX_ALLOWED_ROOTS = 20;
 
 /** 0.1.8 之前的客户端只有这些操作；更新的操作要看 hello.features。 */
 const LEGACY_OPERATIONS = new Set<DeviceOperation>([
-  "system_info", "shell", "list_files", "read_file", "write_file", "screenshot", "input", "open", "clipboard_read", "clipboard_write",
+  "system_info",
+  "shell",
+  "list_files",
+  "read_file",
+  "write_file",
+  "screenshot",
+  "input",
+  "open",
+  "clipboard_read",
+  "clipboard_write",
 ]);
 
 /**
@@ -92,12 +106,22 @@ export type InvokeInput = {
  * 不认识的节点消息交给它；能力是「允许」的操作先问它在不在档位之内（之外改成审批）。
  */
 export type DeviceHubExtension = {
-  onMessage?(record: DeviceRecord, message: { type: string } & Record<string, unknown>): Promise<void> | void;
+  onMessage?(
+    record: DeviceRecord,
+    message: { type: string } & Record<string, unknown>,
+  ): Promise<void> | void;
   onHello?(record: DeviceRecord): Promise<void> | void;
-  gate?(record: DeviceRecord, operation: DeviceOperation, args: Record<string, unknown>): Promise<string | null> | string | null;
+  gate?(
+    record: DeviceRecord,
+    operation: DeviceOperation,
+    args: Record<string, unknown>,
+  ): Promise<string | null> | string | null;
 };
 
-type HubStore = Pick<DeviceStore, "get" | "touch" | "update" | "audit" | "finishAudit"> &
+type HubStore = Pick<
+  DeviceStore,
+  "get" | "touch" | "update" | "audit" | "finishAudit"
+> &
   Partial<Pick<DeviceStore, "seedRoots">>;
 
 function unref(timer: ReturnType<typeof setTimeout>) {
@@ -119,7 +143,14 @@ export type DeviceConfirmLink = {
    * auto = 审批偏好「直接做」；full = 这个机器人开了「完全访问」（输入框权限，§97：连允许文件夹以外的路径也直接加进去）；ask = 问。
    * 只在策略已经是「询问」时调用：关闭的能力、紧急停止、管理员身份运行这些硬限制在这之前就拒绝了，完全访问放不开它们。
    */
-  before(input: { ownerUserId: string; botId: string; operation: string; operationLabel: string; summary: string; args: unknown }): Promise<"auto" | "ask" | "full">;
+  before(input: {
+    ownerUserId: string;
+    botId: string;
+    operation: string;
+    operationLabel: string;
+    summary: string;
+    args: unknown;
+  }): Promise<"auto" | "ask" | "full">;
   opened(input: {
     approvalId: string;
     ownerUserId: string;
@@ -132,7 +163,11 @@ export type DeviceConfirmLink = {
     diff?: string | null;
     expiresAt: string;
   }): Promise<void>;
-  closed(approvalId: string, decision: "approve" | "deny" | "expired", by: string): Promise<void>;
+  closed(
+    approvalId: string,
+    decision: "approve" | "deny" | "expired",
+    by: string,
+  ): Promise<void>;
 };
 /** 聊天里有卡片时等得久一点（和别的确认卡片一样 10 分钟）。 */
 const CHAT_APPROVAL_TTL_MS = 10 * 60_000;
@@ -169,7 +204,9 @@ export function createDeviceHub(options: {
     const { tokenHash: _omit, ...rest } = record;
     // 手机不连 /agent/ws：最近一次会话校验（网关约每 30 秒一次）在窗口内就算在线。
     const online = isMobilePlatform(record.platform)
-      ? !record.revoked && !!record.lastSeenAt && Date.now() - Date.parse(record.lastSeenAt) < MOBILE_ONLINE_WINDOW_MS
+      ? !record.revoked &&
+        !!record.lastSeenAt &&
+        Date.now() - Date.parse(record.lastSeenAt) < MOBILE_ONLINE_WINDOW_MS
       : connections.has(record.id);
     const full = fullAccessActive(record, now());
     const features = connections.get(record.id)?.features;
@@ -178,7 +215,10 @@ export function createDeviceHub(options: {
       online,
       fullAccess: full,
       fullAccessUntil: full ? record.fullAccessUntil : null,
-      fullAccessRemainingMs: full && record.fullAccessUntil ? Date.parse(record.fullAccessUntil) - now() : null,
+      fullAccessRemainingMs:
+        full && record.fullAccessUntil
+          ? Date.parse(record.fullAccessUntil) - now()
+          : null,
       features: features ? [...features] : null,
     };
   }
@@ -227,13 +267,25 @@ export function createDeviceHub(options: {
    * 把允许的文件夹以外的那个文件夹加进去（批准时、或机器人完全访问时），写审计，再推配置给 PC。
    * 成功返回 true，否则返回拒绝的原因。
    */
-  async function addOutsideRoot(record: DeviceRecord, folder: string, by: string): Promise<true | string> {
+  async function addOutsideRoot(
+    record: DeviceRecord,
+    folder: string,
+    by: string,
+  ): Promise<true | string> {
     const roots = record.allowedRoots;
-    if (roots.some((root) => root.toLowerCase() === folder.toLowerCase())) return true;
+    if (roots.some((root) => root.toLowerCase() === folder.toLowerCase()))
+      return true;
     if (roots.length >= MAX_ALLOWED_ROOTS)
       return `允许的文件夹已经有 ${roots.length} 个（上限 ${MAX_ALLOWED_ROOTS}），没法再加 ${folder}。请到 设置 → 设备 → 这台设备 删掉不用的文件夹。`;
-    const updated = await store.update(record.id, { allowedRoots: [...roots, folder] });
-    if (!updated?.allowedRoots.some((root) => root.toLowerCase() === folder.toLowerCase())) return `没能把 ${folder} 加入允许的文件夹。`;
+    const updated = await store.update(record.id, {
+      allowedRoots: [...roots, folder],
+    });
+    if (
+      !updated?.allowedRoots.some(
+        (root) => root.toLowerCase() === folder.toLowerCase(),
+      )
+    )
+      return `没能把 ${folder} 加入允许的文件夹。`;
     await store.audit({
       deviceId: record.id,
       ownerUserId: record.ownerUserId,
@@ -264,7 +316,11 @@ export function createDeviceHub(options: {
 
   function keepScreenshot(deviceId: string, base64: string): string {
     const id = randomUUID();
-    screenshots.set(id, { deviceId, png: Buffer.from(base64, "base64"), at: now() });
+    screenshots.set(id, {
+      deviceId,
+      png: Buffer.from(base64, "base64"),
+      at: now(),
+    });
     // 只留最近 30 张、30 分钟内的。
     const cutoff = now() - 30 * 60_000;
     for (const [key, shot] of screenshots)
@@ -286,7 +342,8 @@ export function createDeviceHub(options: {
     const before = await store.get(connection.deviceId);
     const after = await store.update(connection.deviceId, patch);
     if (!before || !after) return;
-    if (patch.paused === true) cancelAllFor(connection.deviceId, "已在 PC 上紧急停止。");
+    if (patch.paused === true)
+      cancelAllFor(connection.deviceId, "已在 PC 上紧急停止。");
     await pushConfig(connection.deviceId);
     await store.audit({
       deviceId: connection.deviceId,
@@ -294,13 +351,14 @@ export function createDeviceHub(options: {
       actorType: "device",
       actorId: connection.deviceId,
       actorName: "PC 客户端",
-      action: patch.paused !== undefined && patch.paused !== before.paused
-        ? patch.paused
-          ? "kill_switch_on"
-          : "kill_switch_off"
-        : message.fullAccess === "off" && before.fullAccessUntil
-          ? "full_access_off"
-          : "config_changed",
+      action:
+        patch.paused !== undefined && patch.paused !== before.paused
+          ? patch.paused
+            ? "kill_switch_on"
+            : "kill_switch_off"
+          : message.fullAccess === "off" && before.fullAccessUntil
+            ? "full_access_off"
+            : "config_changed",
       summary: describeChange(before, after),
       outcome: "succeeded",
       detail: null,
@@ -331,8 +389,13 @@ export function createDeviceHub(options: {
     approvals.delete(id);
     clearTimeout(approval.timer);
     approval.cleanup?.();
-    const decision = by === "expired" ? "expired" : approved ? "approve" : "deny";
-    send(connections.get(approval.view.deviceId), { type: "approval_closed", id, decision });
+    const decision =
+      by === "expired" ? "expired" : approved ? "approve" : "deny";
+    send(connections.get(approval.view.deviceId), {
+      type: "approval_closed",
+      id,
+      decision,
+    });
     approval.resolve({ approved, by });
     // A stop may arrive while the chat card is still being inserted. Close it after that insert,
     // otherwise a late insert would leave a cancelled invocation's card pending.
@@ -347,12 +410,15 @@ export function createDeviceHub(options: {
     input: InvokeInput,
     onCreated?: (id: string) => void,
   ): Promise<{ approved: boolean; by: string }> {
-    if (input.signal?.aborted) return Promise.resolve({ approved: false, by: "aborted" });
+    if (input.signal?.aborted)
+      return Promise.resolve({ approved: false, by: "aborted" });
     const id = randomUUID();
     onCreated?.(id);
     const createdAt = now();
     const chat = input.actorType !== "user" && (confirm?.linkable() ?? false);
-    const ttlMs = chat ? Math.max(approvalTtlMs, CHAT_APPROVAL_TTL_MS) : approvalTtlMs;
+    const ttlMs = chat
+      ? Math.max(approvalTtlMs, CHAT_APPROVAL_TTL_MS)
+      : approvalTtlMs;
     // 审批视图 / 下发 PC / 确认卡片只展示打码后的摘要；真正执行仍用内存里的 input.args。
     const displaySummary = redactText(input.summary);
     const displayDiff = input.diff == null ? null : redactText(input.diff);
@@ -369,16 +435,25 @@ export function createDeviceHub(options: {
       expiresAt: new Date(createdAt + ttlMs).toISOString(),
     };
     return new Promise((resolve) => {
-      const timer = setTimeout(() => decideInternal(id, false, "expired"), ttlMs);
+      const timer = setTimeout(
+        () => decideInternal(id, false, "expired"),
+        ttlMs,
+      );
       unref(timer);
       const onAbort = () => decideInternal(id, false, "aborted");
       const approval: Approval = {
-        view, ownerUserId: record.ownerUserId, resolve, timer,
+        view,
+        ownerUserId: record.ownerUserId,
+        resolve,
+        timer,
         cleanup: () => input.signal?.removeEventListener("abort", onAbort),
       };
       approvals.set(id, approval);
       input.signal?.addEventListener("abort", onAbort, { once: true });
-      if (input.signal?.aborted) { onAbort(); return; }
+      if (input.signal?.aborted) {
+        onAbort();
+        return;
+      }
       send(connections.get(record.id), {
         type: "approval_request",
         id,
@@ -403,7 +478,14 @@ export function createDeviceHub(options: {
             diff: view.diff ?? null,
             expiresAt: view.expiresAt,
           })
-          .catch((error) => console.warn(JSON.stringify({ type: "device-confirm-card-failed", reason: errorText(error) })));
+          .catch((error) =>
+            console.warn(
+              JSON.stringify({
+                type: "device-confirm-card-failed",
+                reason: errorText(error),
+              }),
+            ),
+          );
     });
   }
 
@@ -414,7 +496,9 @@ export function createDeviceHub(options: {
     supports(deviceId: string, operation: DeviceOperation) {
       const connection = connections.get(deviceId);
       if (!connection) return false;
-      return connection.features ? connection.features.has(operation) : LEGACY_OPERATIONS.has(operation);
+      return connection.features
+        ? connection.features.has(operation)
+        : LEGACY_OPERATIONS.has(operation);
     },
     scheduleExpiry,
     pushConfig,
@@ -460,7 +544,10 @@ export function createDeviceHub(options: {
           remainingMs: Math.max(0, Date.parse(approval.view.expiresAt) - now()),
         });
       }
-      const ping = setInterval(() => send(connection, { type: "ping" }), 25_000);
+      const ping = setInterval(
+        () => send(connection, { type: "ping" }),
+        25_000,
+      );
       unref(ping as unknown as ReturnType<typeof setTimeout>);
 
       return {
@@ -479,13 +566,20 @@ export function createDeviceHub(options: {
           switch (message.type) {
             case "hello": {
               const { suggestedRoots, features, ...facts } = message;
-              if (Array.isArray(features)) connection.features = new Set(features.filter((f) => typeof f === "string").slice(0, 200));
+              if (Array.isArray(features))
+                connection.features = new Set(
+                  features.filter((f) => typeof f === "string").slice(0, 200),
+                );
               await store.touch(record.id, { ip: connection.ip, ...facts });
               // PC 0.1.7 起带上默认文件夹（桌面 / 文档 / 下载）；只在列表为空、从没被人改过时采用。
               if (Array.isArray(suggestedRoots) && store.seedRoots)
-                await store.seedRoots(record.id, suggestedRoots).catch(() => false);
+                await store
+                  .seedRoots(record.id, suggestedRoots)
+                  .catch(() => false);
               await pushConfig(record.id);
-              void Promise.resolve(extension?.onHello?.(record)).catch(() => {});
+              void Promise.resolve(extension?.onHello?.(record)).catch(
+                () => {},
+              );
               return;
             }
             case "result": {
@@ -508,7 +602,11 @@ export function createDeviceHub(options: {
             case "approval": {
               const approval = approvals.get(String(message.id));
               if (approval && approval.view.deviceId === record.id)
-                decideInternal(String(message.id), message.decision === "approve", "device");
+                decideInternal(
+                  String(message.id),
+                  message.decision === "approve",
+                  "device",
+                );
               return;
             }
             case "set_config":
@@ -530,7 +628,15 @@ export function createDeviceHub(options: {
               return;
             default:
               if (extension?.onMessage)
-                await Promise.resolve(extension.onMessage(record, message as unknown as { type: string } & Record<string, unknown>)).catch((error) =>
+                await Promise.resolve(
+                  extension.onMessage(
+                    record,
+                    message as unknown as { type: string } & Record<
+                      string,
+                      unknown
+                    >,
+                  ),
+                ).catch((error) =>
                   console.warn("device extension message failed", error),
                 );
               return;
@@ -562,11 +668,22 @@ export function createDeviceHub(options: {
      * 网页上设备页的直接请求（设备主人本人发起，不是机器人）：查看运行中的命令、结束一个后台命令。
      * 不走能力开关和审批（这是主人管理自己的设备），离线 / 旧客户端直接报错。
      */
-    async direct(record: DeviceRecord, operation: DeviceOperation, args: Record<string, unknown>, timeoutMs = 20_000): Promise<unknown> {
+    async direct(
+      record: DeviceRecord,
+      operation: DeviceOperation,
+      args: Record<string, unknown>,
+      timeoutMs = 20_000,
+    ): Promise<unknown> {
       const connection = connections.get(record.id);
       if (!connection) throw new DeviceRefusedError("这台设备当前离线。");
-      if (!(connection.features ? connection.features.has(operation) : LEGACY_OPERATIONS.has(operation)))
-        throw new DeviceRefusedError("这台设备上的客户端版本太旧，不支持这个操作。");
+      if (
+        !(connection.features
+          ? connection.features.has(operation)
+          : LEGACY_OPERATIONS.has(operation))
+      )
+        throw new DeviceRefusedError(
+          "这台设备上的客户端版本太旧，不支持这个操作。",
+        );
       const id = randomUUID();
       return new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -575,7 +692,16 @@ export function createDeviceHub(options: {
         }, timeoutMs);
         unref(timer);
         connection.pending.set(id, { resolve, reject, timer });
-        if (!send(connection, { type: "call", id, operation, args, botName: null, timeoutMs })) {
+        if (
+          !send(connection, {
+            type: "call",
+            id,
+            operation,
+            args,
+            botName: null,
+            timeoutMs,
+          })
+        ) {
           clearTimeout(timer);
           connection.pending.delete(id);
           reject(new DeviceRefusedError("无法把请求发送到设备。"));
@@ -588,7 +714,10 @@ export function createDeviceHub(options: {
     },
 
     /** 给在线设备发一条扩展协议消息（本地 agent）。离线返回 false。 */
-    sendRaw(deviceId: string, message: { type: string } & Record<string, unknown>) {
+    sendRaw(
+      deviceId: string,
+      message: { type: string } & Record<string, unknown>,
+    ) {
       const connection = connections.get(deviceId);
       if (!connection) return false;
       try {
@@ -602,10 +731,24 @@ export function createDeviceHub(options: {
     /** 走同一套审批（PC 弹窗 + 网页 / 手机「等待你审批」卡片），给本地 agent 的启动和档位之外的操作用。 */
     requestUserApproval(
       record: DeviceRecord,
-      input: { bot: { id: string; name: string | null }; operation: DeviceOperation; summary: string },
+      input: {
+        bot: { id: string; name: string | null };
+        operation: DeviceOperation;
+        summary: string;
+      },
       onCreated?: (approvalId: string) => void,
     ) {
-      return requestApproval(record, { device: record, operation: input.operation, args: {}, bot: input.bot, summary: input.summary }, onCreated);
+      return requestApproval(
+        record,
+        {
+          device: record,
+          operation: input.operation,
+          args: {},
+          bot: input.bot,
+          summary: input.summary,
+        },
+        onCreated,
+      );
     },
 
     listApprovals(ownerUserId: string | null): DeviceApprovalView[] {
@@ -638,22 +781,50 @@ export function createDeviceHub(options: {
       const record = input.device;
       const capability = capabilityFor(input.operation, input.args);
       const full = fullAccessActive(record, now());
-      let policy = full ? "allow" : capability ? (record.capabilities as DeviceCapabilities)[capability] : "allow";
+      let policy = full
+        ? "allow"
+        : capability
+          ? (record.capabilities as DeviceCapabilities)[capability]
+          : "allow";
       // git push 总要人点头（完全访问除外）：推送是对外可见、难撤回的操作。
-      if (!full && policy === "allow" && input.operation === "git" && input.args.subcommand === "push") policy = "ask";
+      if (
+        !full &&
+        policy === "allow" &&
+        input.operation === "git" &&
+        input.args.subcommand === "push"
+      )
+        policy = "ask";
       // 权限档位（docs/local-agents.md）：档位之外的操作，能力是「允许」也改成先审批；从不放宽。完全访问开着时不再收紧。
-      if (!input.signal?.aborted && !full && policy === "allow" && extension?.gate) {
-        const reason = await Promise.resolve(extension.gate(record, input.operation, input.args)).catch(() => "档位检查失败");
+      if (
+        !input.signal?.aborted &&
+        !full &&
+        policy === "allow" &&
+        extension?.gate
+      ) {
+        const reason = await Promise.resolve(
+          extension.gate(record, input.operation, input.args),
+        ).catch(() => "档位检查失败");
         if (reason) {
           policy = "ask";
           input = { ...input, summary: `${input.summary}（${reason}）` };
         }
       }
       // 允许的文件夹之外的路径：照样审批（「允许」也改成问），批准后把文件夹加进去再执行（roots.ts）。
-      const outside = !full && policy !== "off" ? outsideRoots(record.platform, record.allowedRoots, input.operation, input.args) : null;
+      const outside =
+        !full && policy !== "off"
+          ? outsideRoots(
+              record.platform,
+              record.allowedRoots,
+              input.operation,
+              input.args,
+            )
+          : null;
       if (outside) {
         policy = "ask";
-        input = { ...input, summary: `${input.summary}（${outsideRootsNote(outside)}）` };
+        input = {
+          ...input,
+          summary: `${input.summary}（${outsideRootsNote(outside)}）`,
+        };
       }
       const started = now();
       const auditId = await store.audit({
@@ -669,26 +840,40 @@ export function createDeviceHub(options: {
         durationMs: null,
       });
       const finish = (outcome: string, detail?: string | null) =>
-        store.finishAudit(auditId, { outcome, detail: detail ?? null, durationMs: now() - started });
-      const refuse = async (outcome: string, message: string): Promise<never> => {
+        store.finishAudit(auditId, {
+          outcome,
+          detail: detail ?? null,
+          durationMs: now() - started,
+        });
+      const refuse = async (
+        outcome: string,
+        message: string,
+      ): Promise<never> => {
         await finish(outcome, message);
         throw new DeviceRefusedError(message);
       };
 
       if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
       if (record.revoked) return refuse("refused", "这台设备已被撤销。");
-      if (record.paused) return refuse("refused", "这台设备已紧急停止，所有远程操作都被拒绝。");
+      if (record.paused)
+        return refuse("refused", "这台设备已紧急停止，所有远程操作都被拒绝。");
       if (policy === "off")
         return refuse(
           "refused",
           `「${OPERATION_LABEL[input.operation]}」能力在这台设备上是关闭的。请到 设置 → 设备 打开。`,
         );
-      if (!connections.has(record.id)) return refuse("offline", "这台设备当前离线。");
+      if (!connections.has(record.id))
+        return refuse("offline", "这台设备当前离线。");
       if (input.args.elevated === true && !full)
-        return refuse("refused", "管理员身份运行只在「完全访问」模式下可用。用户可以在 设置 → 设备 → 这台设备 → 权限 里打开完全访问。");
+        return refuse(
+          "refused",
+          "管理员身份运行只在「完全访问」模式下可用。用户可以在 设置 → 设备 → 这台设备 → 权限 里打开完全访问。",
+        );
       {
         const connection = connections.get(record.id);
-        const supported = connection?.features ? connection.features.has(input.operation) : LEGACY_OPERATIONS.has(input.operation);
+        const supported = connection?.features
+          ? connection.features.has(input.operation)
+          : LEGACY_OPERATIONS.has(input.operation);
         if (!supported)
           return refuse(
             "refused",
@@ -704,7 +889,8 @@ export function createDeviceHub(options: {
                 ownerUserId: record.ownerUserId,
                 botId: input.bot.id,
                 operation: input.operation,
-                operationLabel: OPERATION_LABEL[input.operation] ?? input.operation,
+                operationLabel:
+                  OPERATION_LABEL[input.operation] ?? input.operation,
                 summary: input.summary,
                 args: input.args,
               })
@@ -718,16 +904,28 @@ export function createDeviceHub(options: {
         approvalNote = "机器人完全访问，直接执行";
         if (outside) {
           const fresh = await store.get(record.id);
-          if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
-          if (!fresh || fresh.revoked || fresh.paused) return refuse("refused", "设备已停止或被撤销。");
-          const added = await addOutsideRoot(fresh, outside.folder, "完全访问自动");
+          if (input.signal?.aborted)
+            return refuse("cancelled", TOOL_STOPPED_ZH);
+          if (!fresh || fresh.revoked || fresh.paused)
+            return refuse("refused", "设备已停止或被撤销。");
+          const added = await addOutsideRoot(
+            fresh,
+            outside.folder,
+            "完全访问自动",
+          );
           if (added !== true) return refuse("refused", added);
           approvalNote = `${approvalNote}；已把 ${outside.folder} 加入允许的文件夹`;
         }
       } else if (policy === "ask") {
         const decision = await requestApproval(record, input);
-        if (input.signal?.aborted || decision.by === "aborted") return refuse("cancelled", TOOL_STOPPED_ZH);
-        const who = decision.by === "device" ? "PC 上" : decision.by === "expired" ? "" : "网页上";
+        if (input.signal?.aborted || decision.by === "aborted")
+          return refuse("cancelled", TOOL_STOPPED_ZH);
+        const who =
+          decision.by === "device"
+            ? "PC 上"
+            : decision.by === "expired"
+              ? ""
+              : "网页上";
         if (!decision.approved)
           return refuse(
             decision.by === "expired" ? "expired" : "denied",
@@ -742,7 +940,11 @@ export function createDeviceHub(options: {
         if (!fresh || fresh.revoked || fresh.paused)
           return refuse("refused", "审批期间设备已停止或被撤销。");
         if (outside) {
-          const added = await addOutsideRoot(fresh, outside.folder, who ? `${who}批准` : "批准");
+          const added = await addOutsideRoot(
+            fresh,
+            outside.folder,
+            who ? `${who}批准` : "批准",
+          );
           if (added !== true) return refuse("refused", added);
           approvalNote = `${approvalNote}；已把 ${outside.folder} 加入允许的文件夹`;
         }
@@ -752,7 +954,10 @@ export function createDeviceHub(options: {
       const connection = connections.get(record.id);
       if (!connection) return refuse("offline", "这台设备当前离线。");
       const id = randomUUID();
-      const timeoutMs = Math.min(Math.max(input.timeoutMs ?? defaultTimeoutMs, 1_000), 15 * 60_000);
+      const timeoutMs = Math.min(
+        Math.max(input.timeoutMs ?? defaultTimeoutMs, 1_000),
+        15 * 60_000,
+      );
       try {
         let result = await new Promise<unknown>((resolve, reject) => {
           const cleanup = () => {
@@ -769,12 +974,19 @@ export function createDeviceHub(options: {
             if (!connection.pending.delete(id)) return;
             cleanup();
             send(connection, { type: "cancel", id });
-            reject(new DeviceRefusedError(`PC 端 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`));
+            reject(
+              new DeviceRefusedError(
+                `PC 端 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`,
+              ),
+            );
           }, timeoutMs);
           unref(timer);
           connection.pending.set(id, { resolve, reject, timer, cleanup });
           input.signal?.addEventListener("abort", onAbort, { once: true });
-          if (input.signal?.aborted) { onAbort(); return; }
+          if (input.signal?.aborted) {
+            onAbort();
+            return;
+          }
           const sent = send(connection, {
             type: "call",
             id,
@@ -789,14 +1001,18 @@ export function createDeviceHub(options: {
             reject(new DeviceRefusedError("无法把调用发送到设备。"));
           }
         });
-        if (input.signal?.aborted) throw new DeviceRefusedError(TOOL_STOPPED_ZH);
+        if (input.signal?.aborted)
+          throw new DeviceRefusedError(TOOL_STOPPED_ZH);
         if (
           input.operation === "screenshot" &&
           result &&
           typeof result === "object" &&
           typeof (result as { base64?: unknown }).base64 === "string"
         ) {
-          const { base64, ...rest } = result as { base64: string } & Record<string, unknown>;
+          const { base64, ...rest } = result as { base64: string } & Record<
+            string,
+            unknown
+          >;
           const shot = keepScreenshot(record.id, base64);
           result = {
             ...rest,
@@ -805,13 +1021,36 @@ export function createDeviceHub(options: {
             bytes: Math.round((base64.length * 3) / 4),
           };
         }
-        const diff = result && typeof result === "object" && typeof (result as { diff?: unknown }).diff === "string" ? (result as { diff: string }).diff : "";
-        await finish("succeeded", [full ? "完全访问" : null, approvalNote, diff ? diff.slice(0, 900) : null].filter(Boolean).join("\n") || null);
+        const diff =
+          result &&
+          typeof result === "object" &&
+          typeof (result as { diff?: unknown }).diff === "string"
+            ? (result as { diff: string }).diff
+            : "";
+        await finish(
+          "succeeded",
+          [
+            full ? "完全访问" : null,
+            approvalNote,
+            diff ? diff.slice(0, 900) : null,
+          ]
+            .filter(Boolean)
+            .join("\n") || null,
+        );
         return result;
       } catch (error) {
         const message = errorText(error);
-        await finish(input.signal?.aborted ? "cancelled" : /超时|没有返回/.test(message) ? "timeout" : "failed", [approvalNote, message].filter(Boolean).join("；"));
-        throw error instanceof DeviceRefusedError ? error : new DeviceRefusedError(message);
+        await finish(
+          input.signal?.aborted
+            ? "cancelled"
+            : /超时|没有返回/.test(message)
+              ? "timeout"
+              : "failed",
+          [approvalNote, message].filter(Boolean).join("；"),
+        );
+        throw error instanceof DeviceRefusedError
+          ? error
+          : new DeviceRefusedError(message);
       }
     },
   };
@@ -819,17 +1058,29 @@ export function createDeviceHub(options: {
 
 export type DeviceHub = ReturnType<typeof createDeviceHub>;
 
-export function describeChange(before: DeviceRecord, after: DeviceRecord): string {
+export function describeChange(
+  before: DeviceRecord,
+  after: DeviceRecord,
+): string {
   const parts: string[] = [];
-  if (before.name !== after.name) parts.push(`名称：${before.name} → ${after.name}`);
-  if (before.paused !== after.paused) parts.push(after.paused ? "紧急停止：开" : "紧急停止：关");
-  for (const key of Object.keys(after.capabilities) as (keyof DeviceCapabilities)[]) {
+  if (before.name !== after.name)
+    parts.push(`名称：${before.name} → ${after.name}`);
+  if (before.paused !== after.paused)
+    parts.push(after.paused ? "紧急停止：开" : "紧急停止：关");
+  for (const key of Object.keys(
+    after.capabilities,
+  ) as (keyof DeviceCapabilities)[]) {
     if (before.capabilities[key] !== after.capabilities[key])
-      parts.push(`${key}：${before.capabilities[key]} → ${after.capabilities[key]}`);
+      parts.push(
+        `${key}：${before.capabilities[key]} → ${after.capabilities[key]}`,
+      );
   }
   if (before.allowedRoots.join("|") !== after.allowedRoots.join("|"))
     parts.push(`允许的文件夹：${after.allowedRoots.length} 个`);
-  if (before.botIds.slice().sort().join("|") !== after.botIds.slice().sort().join("|"))
+  if (
+    before.botIds.slice().sort().join("|") !==
+    after.botIds.slice().sort().join("|")
+  )
     parts.push(`可用机器人：${after.botIds.length} 个`);
   return parts.join("；") || "无变化";
 }

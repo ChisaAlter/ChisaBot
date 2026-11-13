@@ -7,13 +7,16 @@ import { type BuildVersion, isNewerBuild } from "../../../shared/system-update";
  * 和镜像标签相同），运行时每 5 分钟、以及切回前台 / 窗口获得焦点时问一次 /api/version；
  * 服务器上的构建号变了就显示「有新版本，点此刷新」。从不自动刷新。
  */
-export const BUNDLED_BUILD_ID: string = import.meta.env.VITE_CHISABOT_BUILD_ID?.trim() || "dev";
+export const BUNDLED_BUILD_ID: string =
+  import.meta.env.VITE_CHISABOT_BUILD_ID?.trim() || "dev";
 
 export const VERSION_POLL_MS = 5 * 60_000;
 /** 切回前台时，距上次检查不足这么久就不再问。 */
 const FOCUS_MIN_GAP_MS = 30_000;
 
-export async function fetchServedVersion(signal?: AbortSignal): Promise<BuildVersion | null> {
+export async function fetchServedVersion(
+  signal?: AbortSignal,
+): Promise<BuildVersion | null> {
   try {
     const response = await tryClient("/api/version", {
       cache: "no-store",
@@ -29,7 +32,9 @@ export async function fetchServedVersion(signal?: AbortSignal): Promise<BuildVer
 }
 
 /** 有新版本时返回服务器上的版本；用户关掉提示后，同一个构建号不再提示。 */
-export function useNewVersion(options: { bundled?: string; pollMs?: number } = {}) {
+export function useNewVersion(
+  options: { bundled?: string; pollMs?: number } = {},
+) {
   const bundled = options.bundled ?? BUNDLED_BUILD_ID;
   const pollMs = options.pollMs ?? VERSION_POLL_MS;
   const [served, setServed] = useState<BuildVersion | null>(null);
@@ -69,7 +74,10 @@ export function useNewVersion(options: { bundled?: string; pollMs?: number } = {
     };
   }, [bundled, pollMs]);
 
-  const available = isNewerBuild(bundled, served) && served?.buildId !== dismissed ? served : null;
+  const available =
+    isNewerBuild(bundled, served) && served?.buildId !== dismissed
+      ? served
+      : null;
   return {
     available,
     dismiss: () => setDismissed(served?.buildId ?? null),

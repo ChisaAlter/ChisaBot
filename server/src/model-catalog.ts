@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
+import { normalizeModelBaseUrl } from "../../shared/model-base-url";
 import type {
   ModelCatalog,
   ModelCatalogEntry,
 } from "../../shared/model-selection";
-import { normalizeModelBaseUrl } from "../../shared/model-base-url";
 import type { ModelConnectionRuntime } from "./model-settings";
 
 export type ModelCatalogSyncState = {
@@ -64,16 +64,36 @@ function providerNameOf(label: unknown): string | undefined {
   return name && name.length <= 80 ? name : undefined;
 }
 /** 目录说这个模型能不能看图：modalities.input / input_modalities / capabilities.vision / supports_vision。 */
-export function imageInputOf(row: Record<string, unknown>): boolean | undefined {
-  const modal = object(row.modalities) ? row.modalities.input : Array.isArray(row.modalities) ? row.modalities : undefined;
-  const input = modal ?? row.input_modalities ?? (object(row.architecture) ? row.architecture.input_modalities : undefined);
-  if (Array.isArray(input) && input.length) return input.some((m) => typeof m === "string" && /image|vision/i.test(m));
+export function imageInputOf(
+  row: Record<string, unknown>,
+): boolean | undefined {
+  const modal = object(row.modalities)
+    ? row.modalities.input
+    : Array.isArray(row.modalities)
+      ? row.modalities
+      : undefined;
+  const input =
+    modal ??
+    row.input_modalities ??
+    (object(row.architecture) ? row.architecture.input_modalities : undefined);
+  if (Array.isArray(input) && input.length)
+    return input.some((m) => typeof m === "string" && /image|vision/i.test(m));
   const caps = object(row.capabilities) ? row.capabilities : undefined;
-  for (const value of [caps?.vision, caps?.image_input, caps?.image, row.supports_vision, row.supports_image_input, row.supports_images]) {
+  for (const value of [
+    caps?.vision,
+    caps?.image_input,
+    caps?.image,
+    row.supports_vision,
+    row.supports_image_input,
+    row.supports_images,
+  ]) {
     if (typeof value === "boolean") return value;
   }
   const features = row.features ?? row.supported_features;
-  if (Array.isArray(features) && features.length) return features.some((m) => typeof m === "string" && /vision|image|multimodal/i.test(m));
+  if (Array.isArray(features) && features.length)
+    return features.some(
+      (m) => typeof m === "string" && /vision|image|multimodal/i.test(m),
+    );
   return undefined;
 }
 /**
@@ -106,33 +126,65 @@ function knownContextOf(row: Record<string, unknown>): number | undefined {
 /** Resolve the known-window table by model id (exported for resolvers whose catalog
  *  connection is a different gateway than the runtime's — QA1104-01). */
 export function knownContextWindowOf(modelId: string): number | undefined {
-  return KNOWN_CONTEXT_WINDOWS.get(modelId) ?? KNOWN_CONTEXT_WINDOWS.get(modelId.split("/").pop() ?? "");
+  return (
+    KNOWN_CONTEXT_WINDOWS.get(modelId) ??
+    KNOWN_CONTEXT_WINDOWS.get(modelId.split("/").pop() ?? "")
+  );
 }
 function visionOf(row: Record<string, unknown>): boolean | undefined {
   // Case-insensitive: gateways re-case ids (QA508 vision check of the production DeepSeek id).
   const id = typeof row.id === "string" ? row.id.toLowerCase() : "";
-  if (KNOWN_VISION_MODELS.has(id) || KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")) return true;
+  if (
+    KNOWN_VISION_MODELS.has(id) ||
+    KNOWN_VISION_MODELS.has(id.split("/").pop() ?? "")
+  )
+    return true;
   return imageInputOf(row);
 }
 /** 目录说这个模型能不能收 `file` 文档块：modalities.input / capabilities.file / supports_file_input 等。 */
 export function fileInputOf(row: Record<string, unknown>): boolean | undefined {
-  const modal = object(row.modalities) ? row.modalities.input : Array.isArray(row.modalities) ? row.modalities : undefined;
-  const input = modal ?? row.input_modalities ?? (object(row.architecture) ? row.architecture.input_modalities : undefined);
-  if (Array.isArray(input) && input.length) return input.some((m) => typeof m === "string" && /file|document|pdf/i.test(m));
+  const modal = object(row.modalities)
+    ? row.modalities.input
+    : Array.isArray(row.modalities)
+      ? row.modalities
+      : undefined;
+  const input =
+    modal ??
+    row.input_modalities ??
+    (object(row.architecture) ? row.architecture.input_modalities : undefined);
+  if (Array.isArray(input) && input.length)
+    return input.some(
+      (m) => typeof m === "string" && /file|document|pdf/i.test(m),
+    );
   const caps = object(row.capabilities) ? row.capabilities : undefined;
-  for (const value of [caps?.file, caps?.file_input, caps?.document, caps?.pdf, row.supports_files, row.supports_file_input, row.supports_document_input]) {
+  for (const value of [
+    caps?.file,
+    caps?.file_input,
+    caps?.document,
+    caps?.pdf,
+    row.supports_files,
+    row.supports_file_input,
+    row.supports_document_input,
+  ]) {
     if (typeof value === "boolean") return value;
   }
   const features = row.features ?? row.supported_features;
-  if (Array.isArray(features) && features.length) return features.some((m) => typeof m === "string" && /file|document|pdf/i.test(m));
+  if (Array.isArray(features) && features.length)
+    return features.some(
+      (m) => typeof m === "string" && /file|document|pdf/i.test(m),
+    );
   return undefined;
 }
 /** 目录说这个模型能不能调工具：capabilities.function_calling / tools、supports_function_calling 等。 */
 export function toolInputOf(row: Record<string, unknown>): boolean | undefined {
   const caps = object(row.capabilities) ? row.capabilities : undefined;
   for (const value of [
-    caps?.function_calling, caps?.tools, caps?.tool_calling,
-    row.supports_function_calling, row.supports_tool_choice, row.supports_tools,
+    caps?.function_calling,
+    caps?.tools,
+    caps?.tool_calling,
+    row.supports_function_calling,
+    row.supports_tool_choice,
+    row.supports_tools,
   ]) {
     if (typeof value === "boolean") return value;
   }
@@ -171,7 +223,10 @@ function project(body: unknown): ModelCatalogEntry[] {
     const provider =
       prefix ?? (safeText(row.owned_by, 200) ? row.owned_by : "");
     const context =
-      row.context_window ?? row.context_length ?? row.max_input_tokens ?? knownContextOf(row);
+      row.context_window ??
+      row.context_length ??
+      row.max_input_tokens ??
+      knownContextOf(row);
     const providerName = providerNameOf(row.magpie_label);
     const maxOutput = row.max_output_tokens ?? row.max_completion_tokens;
     const supportsImages = visionOf(row);

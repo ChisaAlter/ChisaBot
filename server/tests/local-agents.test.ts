@@ -181,7 +181,8 @@ describe("hub gate", () => {
       touch: async () => {},
       update: async () => current,
       audit: async (input: Record<string, unknown>) => {
-        audits.push(input); return String(audits.length - 1);
+        audits.push(input);
+        return String(audits.length - 1);
       },
       finishAudit: async () => {},
     };
@@ -261,7 +262,8 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
   const hub = {
     isOnline: () => true,
     sendRaw: (_id: string, message: Record<string, unknown>) => {
-      sent.push(message); return true;
+      sent.push(message);
+      return true;
     },
     requestUserApproval: async (
       _r: DeviceRecord,
@@ -278,7 +280,10 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
   const deviceStore = {
     get: async () => device,
     forOwner: async () => [device],
-    audit: async (input: Record<string, unknown>) => { audits.push(input); return "a"; },
+    audit: async (input: Record<string, unknown>) => {
+      audits.push(input);
+      return "a";
+    },
   };
   const service = url
     ? createLocalAgentService({

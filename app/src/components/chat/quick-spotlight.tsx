@@ -17,13 +17,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
 import { toast } from "@/components/ui/toast";
+import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
 import {
   CHISABOT_QUOTE_EVENT,
   CHISABOT_SPOTLIGHT_EVENT,
   openQuickSpotlight,
   sendPromptToChat,
 } from "@/lib/chat/quote-event";
-import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
 import { generateMorningBrief } from "@/lib/personal-sources/mutations";
 
 export { CHISABOT_SPOTLIGHT_EVENT, openQuickSpotlight, sendPromptToChat };
