@@ -8,9 +8,4 @@
  * 每条 reason 记测量时的第一处报错；路径在仓库里不存在时 runner 直接失败，
  * 名单不会悄悄烂掉。
  */
-export const SERVER_TEST_QUARANTINE: Record<string, string> = {
-  "server/tests/tool-selection-environment-restoration.test.ts":
-    "expect(proof.exitCode).toBe(1) received 0 (:180)；remoteStopStatus expected \"rejected\" got \"fulfilled\" (:223) (2026-11 measurement)",
-  "server/tests/tool-selection-environment-restoration.test.ts":
-    "expect(proof.exitCode).toBe(1) received 0 (:180)；remoteStopStatus expected \"rejected\" got \"fulfilled\" (:223) (2026-11 measurement)",
-};
+export const SERVER_TEST_QUARANTINE: Record<string, string> = {};

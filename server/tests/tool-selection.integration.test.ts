@@ -83,6 +83,25 @@ const skills = [
 
 const llm = createModelFixture();
 const remote = createAgUiFixture();
+// SRA-009 校验用例靠「对未启动或已停止的 fixture 再调 stop 会抛
+// Server not started」制造 teardown/setup 失败。aimock 的 LLMock/AGUIMock
+// 原本就是这个语义；37391289 换成本地 fixture 后 stop 变幂等，前提消失。
+// 就地包回旧语义——共享 fixture 不动，其他测试里本文件也只停一次。
+for (const fixture of [llm, remote]) {
+  const start = fixture.start.bind(fixture);
+  const stop = fixture.stop.bind(fixture);
+  let running = false;
+  fixture.start = async () => {
+    const url = await start();
+    running = true;
+    return url;
+  };
+  fixture.stop = async () => {
+    if (!running) throw new Error("Server not started");
+    running = false;
+    await stop();
+  };
+}
 let remoteUrl = "";
 /** Every AG-UI run the mock received, as the endpoint saw it. */
 let sentToRemote: {
