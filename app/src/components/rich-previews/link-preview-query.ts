@@ -108,6 +108,8 @@ export function forgetRememberedPreviews() {
 async function fetchPreview(url: string): Promise<LinkPreviewData> {
   const response = await tryClient(
     `/api/link-preview?url=${encodeURIComponent(url)}`,
+    // 服务端会串行抓页面 + JSON 接口 + og:image（每跳 guardedFetch 8s），加起来可超默认 30s——不设请求超时。
+    { timeoutMs: 0 },
   );
   if (!response.ok) throw new PreviewMissing(String(response.status));
   const body = (await response.json().catch(() => null)) as {

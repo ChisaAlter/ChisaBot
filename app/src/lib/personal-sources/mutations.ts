@@ -48,6 +48,8 @@ export function connectEmailMutationOptions(queryClient: QueryClient) {
         method: "POST",
         body: input,
         fallback: "连接邮箱失败",
+        // IMAP 探测 8s + SMTP 校验 20s 串行，最坏 ~28s，贴住默认 30s 上限——不设请求超时。
+        timeoutMs: 0,
       });
       return response.json();
     },

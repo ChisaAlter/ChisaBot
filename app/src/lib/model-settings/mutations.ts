@@ -1,5 +1,5 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import { client, tryClient } from "@/lib/client";
+import { client } from "@/lib/client";
 import { credentialKeys } from "@/lib/credentials/queries";
 import type { ModelSettingsCurrent, ModelSettingsInput } from "./form";
 import { modelSettingsKeys } from "./queries";
@@ -46,16 +46,16 @@ export function testModelConnectionMutationOptions() {
 export function saveFallbackModelsMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationFn: async (models: string[]): Promise<{ models: string[] }> => {
-      const response = await tryClient("/api/admin/model-fallbacks", {
+      const response = await client("/api/admin/model-fallbacks", {
         method: "PUT",
         body: { models },
+        fallback: "保存失败，请重试",
       });
       const parsed = (await response.json().catch(() => null)) as {
         models?: string[];
-        error?: string;
       } | null;
-      if (!response.ok || !parsed || !Array.isArray(parsed.models))
-        throw new Error(parsed?.error || "保存失败，请重试");
+      if (!parsed || !Array.isArray(parsed.models))
+        throw new Error("保存失败，请重试");
       return { models: parsed.models };
     },
     onSuccess: (result) =>
@@ -71,20 +71,19 @@ export function saveHistorySummaryModelMutationOptions(
     mutationFn: async (
       model: string | null,
     ): Promise<{ model: string | null }> => {
-      const response = await tryClient("/api/admin/history-summary-model", {
+      const response = await client("/api/admin/history-summary-model", {
         method: "PUT",
         body: { model },
+        fallback: "保存失败，请重试",
       });
       const parsed = (await response.json().catch(() => null)) as {
         model?: string | null;
-        error?: string;
       } | null;
       if (
-        !response.ok ||
         !parsed ||
         (parsed.model !== null && typeof parsed.model !== "string")
       )
-        throw new Error(parsed?.error || "保存失败，请重试");
+        throw new Error("保存失败，请重试");
       return { model: parsed.model ?? null };
     },
     onSuccess: (result) =>
