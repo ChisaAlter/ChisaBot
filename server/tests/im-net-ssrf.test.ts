@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:http";
-import type { Socket } from "node:net";
+import {
+  createServer as createHttpServer,
+  type Server as HttpServer,
+} from "node:http";
+import {
+  createServer as createNetServer,
+  type Server as NetServer,
+  type Socket,
+} from "node:net";
 import {
   BlockedUrlError,
   createGuardedFetchLike,
@@ -30,24 +37,70 @@ const loopbackResolve = async () => [{ address: "127.0.0.1", family: 4 }];
 
 function httpServer(
   handler: (req: unknown, res: import("node:http").ServerResponse) => void,
-): Promise<{ server: Server; port: number }> {
+): Promise<{ server: HttpServer; port: number }> {
   return new Promise((resolve) => {
-    const server = createServer((req, res) => handler(req, res));
+    const server = createHttpServer((req, res) => handler(req, res));
     server.listen(0, "127.0.0.1", () =>
       resolve({ server, port: (server.address() as { port: number }).port }),
     );
   });
 }
 
-function closeServer(server: Server) {
+function closeServer(server: NetServer) {
   return new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );
 }
 
-/** 测试用最小 WebSocket 服务端：回显收到的每一帧，收到 close 就回 close。 */
+/**
+ * 在裸 TCP 上读到一个完整 HTTP 头（\r\n\r\n）后回调：head 是头文本（不含结尾空行），
+ * rest 是紧跟在头后已经读到的字节。
+ *
+ * 需要回应 Upgrade 请求的夹具不能走 node:http：Bun 里带 Upgrade 头的请求在没有
+ * 'upgrade' 监听时到不了 request handler，有监听时回调拿到的 socket 是僵尸——
+ * write() 返回 true 但字节不上线（oven-sh/bun#9882）。一律裸 node:net 手写。
+ */
+function readHttpHead(
+  socket: Socket,
+  onHead: (head: string, rest: Buffer) => void,
+) {
+  let buf = Buffer.alloc(0);
+  const onData = (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    const mark = buf.indexOf("\r\n\r\n");
+    if (mark < 0) return;
+    socket.off("data", onData);
+    onHead(
+      buf.subarray(0, mark).toString("latin1"),
+      Buffer.from(buf.subarray(mark + 4)),
+    );
+  };
+  socket.on("data", onData);
+  // 对端可能在任何时刻断开（比如收到 302 后立刻 destroy），吞掉 ECONNRESET 类错误。
+  socket.on("error", () => {});
+}
+
+/** 裸 node:net 版「读 HTTP 头 → 手写响应」；只用于必须回应 Upgrade 请求的夹具。 */
+function rawHttpServer(
+  handler: (head: string, socket: Socket) => void,
+): Promise<{ server: NetServer; port: number }> {
+  const server = createNetServer((socket) => {
+    readHttpHead(socket, (head) => handler(head, socket));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () =>
+      resolve({ server, port: (server.address() as { port: number }).port }),
+    );
+  });
+}
+
+/**
+ * 测试用最小 WebSocket 服务端：手写 101 握手，回显收到的每一帧，收到 close 就回 close。
+ * 用裸 node:net 实现（绕开 Bun 的 node:http upgrade bug，见 readHttpHead 注释）。
+ * 帧编解码只做最小集：客户端帧必须打掩码（会解掩），服务端帧不打掩码，不处理分片。
+ */
 function wsEchoServer(): Promise<{
-  server: Server;
+  server: NetServer;
   port: number;
   received: string[];
 }> {
@@ -69,61 +122,69 @@ function wsEchoServer(): Promise<{
     }
     return Buffer.concat([header, payload]);
   };
-  const server = createServer();
-  server.on("upgrade", (req, socket: Socket) => {
-    const key = req.headers["sec-websocket-key"];
-    if (!key) return socket.destroy();
-    const accept = createHash("sha1")
-      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-      .digest("base64");
-    socket.write(
-      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
-    );
-    let buf = Buffer.alloc(0);
-    socket.on("data", (chunk: Buffer) => {
-      buf = Buffer.concat([buf, chunk]);
-      for (;;) {
-        if (buf.length < 2) return;
-        const b0 = buf[0]!;
-        const b1 = buf[1]!;
-        let length = b1 & 0x7f;
-        let offset = 2;
-        if (length === 126) {
-          if (buf.length < 4) return;
-          length = buf.readUInt16BE(2);
-          offset = 4;
-        } else if (length === 127) {
-          if (buf.length < 10) return;
-          length = Number(buf.readBigUInt64BE(2));
-          offset = 10;
-        }
-        const maskLength = b1 & 0x80 ? 4 : 0;
-        if (buf.length < offset + maskLength + length) return;
-        const payload = Buffer.from(
-          buf.subarray(offset + maskLength, offset + maskLength + length),
-        );
-        if (maskLength) {
-          const maskKey = buf.subarray(offset, offset + 4);
-          for (let index = 0; index < payload.length; index += 1)
-            payload[index] = payload[index]! ^ maskKey[index & 3]!;
-        }
-        buf = Buffer.from(buf.subarray(offset + maskLength + length));
-        const opcode = b0 & 0x0f;
-        if (opcode === 0x8) return socket.end(serverFrame(0x8, payload));
-        if (opcode === 0x9) {
-          socket.write(serverFrame(0xa, payload));
-          continue;
-        }
-        if (opcode === 0x1 || opcode === 0x2) {
-          received.push(
-            opcode === 0x1
-              ? payload.toString("utf8")
-              : `[binary ${payload.length}]`,
+  const server = createNetServer((socket) => {
+    readHttpHead(socket, (head, rest) => {
+      const key = /^sec-websocket-key:\s*(\S+)/im.exec(head)?.[1];
+      if (!key) return socket.destroy();
+      const accept = createHash("sha1")
+        .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest("base64");
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+      let buf = rest;
+      const pump = () => {
+        for (;;) {
+          if (buf.length < 2) return;
+          const b0 = buf[0]!;
+          const b1 = buf[1]!;
+          let length = b1 & 0x7f;
+          let offset = 2;
+          if (length === 126) {
+            if (buf.length < 4) return;
+            length = buf.readUInt16BE(2);
+            offset = 4;
+          } else if (length === 127) {
+            if (buf.length < 10) return;
+            length = Number(buf.readBigUInt64BE(2));
+            offset = 10;
+          }
+          const maskLength = b1 & 0x80 ? 4 : 0;
+          if (buf.length < offset + maskLength + length) return;
+          const payload = Buffer.from(
+            buf.subarray(offset + maskLength, offset + maskLength + length),
           );
-          socket.write(serverFrame(opcode, payload));
+          if (maskLength) {
+            const maskKey = buf.subarray(offset, offset + 4);
+            for (let index = 0; index < payload.length; index += 1)
+              payload[index] = payload[index]! ^ maskKey[index & 3]!;
+          }
+          buf = Buffer.from(buf.subarray(offset + maskLength + length));
+          const opcode = b0 & 0x0f;
+          if (opcode === 0x8) {
+            socket.end(serverFrame(0x8, payload));
+            return;
+          }
+          if (opcode === 0x9) {
+            socket.write(serverFrame(0xa, payload));
+            continue;
+          }
+          if (opcode === 0x1 || opcode === 0x2) {
+            received.push(
+              opcode === 0x1
+                ? payload.toString("utf8")
+                : `[binary ${payload.length}]`,
+            );
+            socket.write(serverFrame(opcode, payload));
+          }
         }
-      }
+      };
+      socket.on("data", (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        pump();
+      });
+      pump();
     });
   });
   return new Promise((resolve) => {
@@ -235,7 +296,7 @@ describe("RV-01: guarded fetch（IM 出站 HTTP）", () => {
 
   test("公网 302 跟到另一个公网地址能正常返回", async () => {
     // 第一跳重定向到自己服务器的 /final（同源，仍是公网地址）。
-    const server = createServer((req, res) => {
+    const server = createHttpServer((req, res) => {
       if (req.url === "/final") {
         res.writeHead(200);
         res.end("done");
@@ -287,9 +348,14 @@ describe("RV-01: guarded WebSocket（IM 出站 WS）", () => {
   });
 
   test("握手被 302 到内网：跟随前重新校验，拒绝", async () => {
-    const { server, port } = await httpServer((_req, res) => {
-      res.writeHead(302, { Location: "ws://169.254.169.254:9000/" });
-      res.end();
+    // 客户端发的是带 Upgrade 头的请求，node:http 在 Bun 下不会给它响应（Bun#9882）——
+    // 用裸 node:net 手写 302。
+    const { server, port } = await rawHttpServer((_head, socket) => {
+      socket.end(
+        "HTTP/1.1 302 Found\r\n" +
+          "Location: ws://169.254.169.254:9000/\r\n" +
+          "Content-Length: 0\r\n\r\n",
+      );
     });
     try {
       const socket = openGuardedSocket(`ws://edge.example:${port}/`, wsDeps);
@@ -557,11 +623,17 @@ describe("RV-01 放宽项：allowPrivate（管理员给连接开的「允许内�
       hits++;
     });
     let hops = 0;
-    const { server: redirector, port } = await httpServer((_req, res) => {
-      hops++;
-      res.writeHead(302, { Location: `ws://127.0.0.2:${targetPort}/x` });
-      res.end();
-    });
+    // 同上：Upgrade 请求的 302 必须手写（Bun#9882），不能用 node:http。
+    const { server: redirector, port } = await rawHttpServer(
+      (_head, socket) => {
+        hops++;
+        socket.end(
+          "HTTP/1.1 302 Found\r\n" +
+            `Location: ws://127.0.0.2:${targetPort}/x\r\n` +
+            "Content-Length: 0\r\n\r\n",
+        );
+      },
+    );
     try {
       const socket = openGuardedSocket(`ws://127.0.0.1:${port}/`, {
         allowPrivate: true,
