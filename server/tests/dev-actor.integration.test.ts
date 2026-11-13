@@ -26,7 +26,7 @@ describe("development actor persistence", () => {
     );
   });
 
-  test("writes only when enabled and restores the canonical user identity", async () => {
+  test("writes only when enabled, restores the email and keeps a changed name", async () => {
     const rollback = new Error("rollback development actor test");
 
     await expect(
@@ -73,8 +73,10 @@ describe("development actor persistence", () => {
         expect(restoredRows).toHaveLength(1);
         expect(restoredRows[0]).toMatchObject({
           id: DEV_ACTOR.id,
+          // upsert 只回写 email：name 是个人资料页改过的展示名，按
+          // dev-actor.ts 的 onConflictDoUpdate 注释要跨重启保留（bd06cf50）。
           email: DEV_ACTOR.email,
-          name: DEV_ACTOR.name ?? DEV_ACTOR.email,
+          name: "Changed",
         });
 
         throw rollback;
