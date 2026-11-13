@@ -280,20 +280,28 @@ describe("haze default lives in one constant", () => {
 });
 
 describe("CHANGELOG", () => {
-  test("glass entries stay adjacent in the Unreleased list, allowing newer entries above", () => {
+  test("glass entries stay adjacent in the current changelog list before and after release", () => {
     const log = readFileSync(
       path.join(import.meta.dir, "../../CHANGELOG.md"),
       "utf8",
     );
-    const section =
-      /## Unreleased[^\n]*\n\n([\s\S]*?)\n## /.exec(log)?.[1] ?? "";
+    const sections = log
+      .split(/^## /m)
+      .slice(1)
+      .map((section) => section.slice(section.indexOf("\n") + 1).trim());
+    // A release moves the list below the version heading and leaves Unreleased
+    // empty. Check that current list, not a later historical match.
+    const section = sections[0] || sections[1] || "";
     const lines = section.split("\n");
+    const firstEntry = lines.findIndex((line) => line.startsWith("- "));
     const mist = lines.findIndex((l) => l.includes("薄雾玻璃"));
     const liquid = lines.findIndex((l) => l.startsWith("- 液态玻璃"));
     expect(mist).toBeGreaterThanOrEqual(0);
     expect(liquid).toBe(mist + 1);
     expect(
-      lines.slice(0, liquid + 1).every((line) => line.startsWith("- ")),
+      lines
+        .slice(firstEntry, liquid + 1)
+        .every((line) => line.startsWith("- ")),
     ).toBe(true);
   });
 });
