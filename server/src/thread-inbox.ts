@@ -400,7 +400,7 @@ export function withSteering<T>(session: SteerSession, run: () => T): T {
   return sessions.run(session, run);
 }
 
-/** 当前回合若在本地对话运行器里，返回它的插话会话（供 Hermes 等外部循环在工具边界领消息）。 */
+/** 当前回合若在本地对话运行器里，返回它的插话会话（dsh-runtime 在工具边界领消息用）。 */
 export function currentSteerSession(): SteerSession | undefined {
   return sessions.getStore();
 }

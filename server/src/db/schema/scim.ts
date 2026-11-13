@@ -1,14 +1,14 @@
 /**
- * The tables `@better-auth/scim` keeps, declared here so a generated migration creates them.
+ * Legacy tables created by migration 0049 for `@better-auth/scim`. The plugin and its
+ * `auth/scim.ts` integration were removed in slimming P6-2; nothing reads or writes these tables now.
  *
- * Better Auth's drizzle adapter finds a model by its plural key in the schema object handed to it
- * (`scimUser` -> `scimUsers`) and a column by its JavaScript property name, so every property below is
- * spelled exactly as the plugin's own schema spells the field. The SQL names are ours and snake_case,
- * like every other table. Field list and flags copied from the plugin's `schema` block in
- * `@better-auth/scim@1.7.1` (`dist/index.mjs`); `returned: false` there has no storage meaning.
+ * The declaration is kept on purpose: dropping it from the schema would make the next
+ * `drizzle-kit generate` emit `DROP TABLE` for all of them. Removing the tables needs its own
+ * explicit migration, chosen deliberately rather than as a side effect of the next generate.
  *
- * Owned by the plugin: nothing in ChisaBot writes these directly. Deprovisioning is reacted to through
- * the plugin's `identity.reconcileUser` hook in `auth/scim.ts`, never by reading these rows.
+ * Column spellings still mirror the plugin's own `schema` block (`@better-auth/scim@1.7.1`,
+ * `dist/index.mjs`), which is what migration 0049 created; `returned: false` there has no
+ * storage meaning.
  */
 import {
   boolean,

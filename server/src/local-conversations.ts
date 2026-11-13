@@ -1985,7 +1985,7 @@ class PostgresAgentRunner implements ConversationRunner {
             );
             await finalization;
           })();
-          // CB-104: Stop must end the turn in ~2 s even when the runtime (Hermes, a tool) is slow to
+          // CB-104: Stop must end the turn in ~2 s even when the runtime (the agent loop, a tool) is slow to
           // honour the abort. After a short grace the run is detached and closed as stopped.
           const forced =
             "acknowledgesStop" in agent && agent.acknowledgesStop === true

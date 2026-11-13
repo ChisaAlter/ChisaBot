@@ -51,7 +51,7 @@ export function preStreamFailureMessage(error: unknown): string {
 /**
  * CB-100b：连接超时只管「发请求 → 收到第一个事件」这一段。对端接受了 TCP 连接却一直不回（或地址不可路由、
  * SYN 被丢）时，不再无限挂着「思考中」。流一旦开始（第一个事件到了）就不再计时，长回答不受影响。
- * CHISABOT_AGENT_CONNECT_TIMEOUT_MS 可调；0 或负数关闭。默认 20 秒：Hermes / AG-UI 服务端收到请求后会先发
+ * CHISABOT_AGENT_CONNECT_TIMEOUT_MS 可调；0 或负数关闭。默认 20 秒：AG-UI 服务端收到请求后会先发
  * RUN_STARTED，正常情况远小于这个值。
  */
 export const DEFAULT_AGENT_CONNECT_TIMEOUT_MS = 20_000;

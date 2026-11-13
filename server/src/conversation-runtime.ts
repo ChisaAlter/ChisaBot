@@ -320,8 +320,8 @@ export async function resolveOutputLimit(
   }
 }
 /**
- * 上下文窗口（模型目录的 context_window；index.ts 接上）。Hermes 内核下估算这一轮要发多少 token、
- * 决定要不要压缩前文（agents/history-budget.ts）。不知道窗口就不压缩。
+ * 上下文窗口（模型目录的 context_window；index.ts 接上）。经 modelInfo 下发给内核，内核按它估算
+ * 这一轮要发多少 token、决定要不要压缩前文。不知道窗口就不压缩。
  */
 type ContextWindowResolver = (modelId: string) => Promise<number | undefined>;
 let contextWindowFor: ContextWindowResolver = async () => undefined;
@@ -346,13 +346,13 @@ export async function resolveContextWindow(
     // Fall through to the known-window table.
   }
   // The settings catalog can be a different gateway than the one the runtime actually
-  // serves the model from (settings → MiniMax; Hermes → local Magpie). A miss there
+  // serves the model from (settings → MiniMax; the runtime → local Magpie). A miss there
   // must not lose the declared window entirely (QA1104-01).
   return knownContextWindowOf(modelId);
 }
 /**
  * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
- * Hermes 内核下桥按它转换历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
+ * 经 modelInfo 下发给内核，内核按它处理历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
  * undefined → 目录没说就当能看（和识图回退的判断一致），不下发标记。
  */
 type VisionResolver = (modelId: string) => Promise<boolean | undefined>;

@@ -1251,14 +1251,14 @@ const modelFallbacks = createModelFallbackService({
   store: createModelFallbackStore(database),
 });
 setModelFallbackList(() => modelFallbacks.models());
-// Hermes 内核长对话压缩前文（agents/history-budget.ts）：上下文窗口来自模型目录；摘要缓存表运行时自建；
-// 摘要模型在 设置 → 模型 →「摘要模型」，没配置就用这一轮的主模型。
+// 长对话压缩前文 / 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）；
+// 「摘要模型」在 设置 → 模型 配置，没配置就用这一轮的主模型。
 setModelContextWindowResolver(
   async (modelId) =>
     (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
       ?.contextWindow,
 );
-// Hermes 桥按目录的 supportsImages 转换图片/文档块（QA1102-14）：没说就当能看。
+// 内核按目录的 supportsImages 处理图片/文档块（经 modelInfo 下发；QA1102-14）：没说就当能看。
 setModelVisionResolver(
   async (modelId) =>
     (await modelCatalog.list()).models.find((entry) => entry.id === modelId)

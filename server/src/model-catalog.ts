@@ -84,7 +84,7 @@ export function imageInputOf(row: Record<string, unknown>): boolean | undefined 
 const KNOWN_VISION_MODELS = new Set(["deepseek-v4.1-flash-1017"]);
 /**
  * 目录行三个上下文字段全缺、但官方已知的窗口（QA1104-01：Devin 插件表给 swe-2 系登记
- * context:0，Magpie /models 不带 context_length，Hermes 探测落缺省 32K、卡在 64K 下限外）。
+ * context:0，Magpie /models 不带 context_length，当时的 Hermes 探测落缺省 32K、卡在 64K 下限外）。
  * 值来自 `devin models` 的官方输出（SWE-2 / SWE-1.7 系均 262K）。按完整 id 或最后一个 /
  * 段匹配；目录明说了就压不过去。
  */

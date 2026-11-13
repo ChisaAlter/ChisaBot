@@ -713,7 +713,7 @@ const BROWSER_VISUAL_TOOLS = new Set([
 ]);
 
 /**
- * 同步服务端（Hermes / 无头工具）执行过的 computer_* 工具调用到右栏「计算机」状态行与「活动」列表。
+ * 同步服务端（外部内核 / 无头工具）执行过的 computer_* 工具调用到右栏「计算机」状态行与「活动」列表。
  * 通过 toolCallId 去重，即使前端 handler 同时跑了也不会重复记。
  */
 export function syncComputerMessages(

@@ -3,7 +3,7 @@
  *
  * 内置内核发给 AI SDK 的 call options（`prompt` 是 LanguageModelV2 消息数组，content 是
  * part 数组）先过一遍这个纯函数：空 text part 去掉 / 整条空消息补占位、超长 tool-result
- * 截断（Hermes 路径在 Python 适配器里做同一套，见 chisabot_protocol.normalize_history）、
+ * 截断（历史备注：已移除的 Hermes 路径当年在 Python 适配器里做同一套，见 chisabot_protocol.normalize_history）、
  * 超过预算时把最老的整轮丢掉——按 user 消息边界切，不切散 tool_call / tool-result 的配对。
  */
 

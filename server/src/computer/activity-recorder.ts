@@ -2,7 +2,7 @@
  * 把 gateway 包一层，每个计算机动作写一条「活动」（CB-101）。
  *
  * 为什么在 gateway 这一层：浏览器、文件、命令，不管是网页里的前端工具（routes.ts）、审批后服务端执行
- * （approvals）、还是 Hermes / 无头运行（headless-tools.ts），都要经过它。一处埋点就全覆盖，不用每个
+ * （approvals）、还是外部内核的无头运行（headless-tools.ts），都要经过它。一处埋点就全覆盖，不用每个
  * handler 各记一遍（以前前端各自 recordActivity，浏览器操作一条都没记）。
  *
  * 归属（哪段对话、哪一轮、哪次工具调用）来自两处：路由中间件按请求头放进 AsyncLocalStorage 的
