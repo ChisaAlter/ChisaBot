@@ -35,6 +35,7 @@ import {
   TasksRailCard,
   workflowRunDescription,
 } from "@/components/panels/tasks-rail-card";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { ClientError } from "@/lib/client";
 import { taskCenterKeys } from "@/lib/task-center-api";
 import {
@@ -208,7 +209,9 @@ async function renderRail(queryClient: QueryClient) {
   const rootRoute = createRootRoute({
     component: () => (
       <QueryClientProvider client={queryClient}>
-        <TasksRailCard />
+        <TaskCenterProvider>
+          <TasksRailCard />
+        </TaskCenterProvider>
       </QueryClientProvider>
     ),
   });

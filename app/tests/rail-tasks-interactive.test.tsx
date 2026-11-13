@@ -26,6 +26,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { formatRailErrorSummary } from "@/components/panels/task-rail-detail-dialog";
 import { TasksRailCard } from "@/components/panels/tasks-rail-card";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { taskCenterKeys } from "@/lib/task-center-api";
 import { TASK_RAIL_ORDER_KEY } from "@/lib/task-rail-order";
 import { workflowKeys } from "@/lib/workflows";
@@ -183,7 +184,9 @@ async function mountRail(queryClient: QueryClient) {
   const rootRoute = createRootRoute({
     component: () => (
       <QueryClientProvider client={queryClient}>
-        <TasksRailCard />
+        <TaskCenterProvider>
+          <TasksRailCard />
+        </TaskCenterProvider>
       </QueryClientProvider>
     ),
   });
