@@ -378,7 +378,7 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
         task: "x",
         cwd: "/etc",
       }),
-    ).rejects.toThrow(/不在这台电脑的工作区/);
+    ).rejects.toThrow(/允许的工作区文件夹/);
     await expect(
       service.start({
         ownerUserId: owner,
@@ -633,7 +633,11 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
   });
 
   test("provider instances, secret env encryption, bot grants, sync wait & nested subcalls", async () => {
-    await service.saveSettings(owner, device.id, { profile: "full" });
+    // saveSettings 不接受 full（ADR-0009）：完全访问走设备级开关 fullAccessUntil。
+    device = {
+      ...device,
+      fullAccessUntil: new Date(Date.now() + 3600_000).toISOString(),
+    };
     const created = await service.instances.createInstance({
       ownerUserId: owner,
       environmentId: device.id,
@@ -757,6 +761,7 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
     expect(waitOutcome.task.summary).toBe("同步修复完毕");
     await settle();
     expect(delivered.length).toBe(deliveredBefore);
+    device = { ...device, fullAccessUntil: null };
   });
 });
 
