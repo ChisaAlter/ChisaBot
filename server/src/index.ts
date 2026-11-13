@@ -1251,8 +1251,9 @@ const modelFallbacks = createModelFallbackService({
   store: createModelFallbackStore(database),
 });
 setModelFallbackList(() => modelFallbacks.models());
-// 长对话压缩前文 / 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）；
-// 「摘要模型」在 设置 → 模型 配置，没配置就用这一轮的主模型。
+// 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
+// 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
+// compactHistory 无调用者，是 Hermes 时代的遗留链路，待决定删除或接回。
 setModelContextWindowResolver(
   async (modelId) =>
     (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
