@@ -24,8 +24,9 @@ import { cn } from "@/lib/utils";
  * is where prose stays comfortable, and a row of label-and-control has no business being wider than
  * the sentence explaining it.
  *
- * `wide` exists for one page. An audit log is a table you scan, and forcing it into the prose column
- * would wrap every row. It is not a licence for anything else to be wide.
+ * `wide` is the default under /admin and is chosen by console-like boards outside it (task center,
+ * agent providers), whose content is columns rather than rows. It is not a licence for a settings
+ * page of rows to be wide.
  */
 type ShellWidth = "prose" | "wide";
 

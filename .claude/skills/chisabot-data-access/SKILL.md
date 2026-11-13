@@ -40,9 +40,10 @@ client(path, options?): Promise<Response>     // for a caller that only needed i
 tryClient(path, options?): Promise<Response>  // never throws; the status is the answer
 ```
 
-`options` is `{ method?, body?, fallback?, signal? }`. `body` is serialised by the client, which is
-also what sets the content type — so a caller passes an object, never a string. Passing
-`JSON.stringify(x)` sends a JSON string of a JSON string, which no endpoint accepts.
+`options` is `{ method?, body?, headers?, fallback?, signal?, timeoutMs? }`. `body` is serialised by
+the client, which is also what sets the content type — so a caller passes an object, never a string.
+Passing `JSON.stringify(x)` sends a JSON string of a JSON string, which no endpoint accepts. Every
+request has a 30 s deadline by default; a long action sets its own `timeoutMs`, and `0` disables it.
 
 ### Three kinds of request
 
@@ -158,29 +159,29 @@ before writing a new one.
 
 ### Procedure 3: Consume from a component
 
-1. Import the factories, never the endpoint — and import the `queryClient`, never call
-   `useQueryClient()`:
+1. Import the factories, never the endpoint:
 
    ```ts
-   import { queryClient } from "@/query-client";
+   const queryClient = useQueryClient();
 
    const credentials = useQuery(credentialListQueryOptions());
    const createCredential = useMutation(createCredentialMutationOptions(queryClient));
    ```
 
-2. **`useQueryClient()` is not the convention here.** There is exactly one client: constructed at
-   module scope in `app/src/query-client.ts` and handed to both `QueryClientProvider` and the router
-   context in `main.tsx`. The hook therefore resolves to the same object the import already holds,
-   at the cost of a hook call and a `const` line. The import also works where a hook cannot — a
-   plain event handler, a module with no component around it, a test — which is why mutation
-   factories take a `QueryClient` parameter rather than reaching for the hook themselves.
+2. **Inside a component, `useQueryClient()` and the singleton import are both correct** — they
+   resolve to the same object. There is exactly one client: constructed at module scope in
+   `app/src/query-client.ts` and handed to both `QueryClientProvider` and the router context in
+   `main.tsx`. Components overwhelmingly use the hook; follow the file you are in. **Outside a
+   component** — a plain module, a bare event handler with no component around it, a `bun test`
+   file — a hook cannot run, so `import { queryClient } from "@/query-client"`. This is why mutation
+   factories take a `QueryClient` parameter rather than reaching for either themselves.
 3. Import with the `@/` alias — `@/lib/credentials/queries`, not `../../../lib/credentials/queries`.
    Both spellings exist in the tree today; the alias is the correct one.
 4. Branch on all four states in order, every time — pending, error, empty, rows — and never
    dereference `data` without having handled the first three:
 
    ```tsx
-   {credentials.isPending ? null : credentials.error ? (
+   {credentials.isPending ? <PageSkeleton /> : credentials.error ? (
      <p className="text-destructive text-sm" role="alert">Could not load credentials.</p>
    ) : credentials.data?.length === 0 ? (
      <PageEmpty>No credentials are configured.</PageEmpty>
@@ -189,21 +190,20 @@ before writing a new one.
    )}
    ```
 
-5. **The pending branch renders nothing.** ChisaBot has no loading placeholder — no "Loading…"
-   text, no spinner, no skeleton, no shimmer. The section's heading is already on screen; what
-   arrives underneath it is the answer, and a placeholder that appears and vanishes inside a
-   local round-trip is a flicker rather than information. A few screens still carry
-   `<PageEmpty>Loading …</PageEmpty>` and one carries a `Skeleton` block, both from before this
-   decision. They are not the pattern to copy.
-6. `isPending` is still branched on, and branched on **first**. Deleting the branch instead of
-   returning `null` from it would show the empty-state sentence — "No credentials are
-   configured." — for the whole duration of the fetch, which states something false.
+5. **The pending branch renders a same-shape skeleton** — `<PageSkeleton />` from
+   `@/components/layout/page-shell` for a list of rows (`rows`, `tall` to match the final shape).
+   DESIGN.md §1 (加载与异步操作的反馈层级) is the source of truth: content that is loading shows a
+   skeleton shaped like the final layout, faded in place, with no layout jump. Never "Loading…"
+   text, a spinner, or `<PageEmpty>Loading …</PageEmpty>`. For a small inline value whose absence
+   moves nothing, `null` is acceptable.
+6. `isPending` is branched on, and branched on **first**. Deleting the branch would show the
+   empty-state sentence — "No credentials are configured." — for the whole duration of the fetch,
+   which states something false.
 7. This says nothing about mutations. A button the person just pressed still says `"Saving…"` or
    `"Deleting…"`, because that is feedback for an action they took rather than a placeholder for
    data they are waiting on. Derive it from the mutation, not from `useState`:
    `disabled={... || createCredential.isPending}`.
-8. Read `credentials.tsx` in `app/src/routes/_authed/admin/` for the whole pattern end to end —
-   with the caveat that its pending branch still renders text.
+8. Read `credentials.tsx` in `app/src/routes/_authed/admin/` for the whole pattern end to end.
 
 ### Procedure 4: Preload in a route
 
@@ -244,9 +244,9 @@ before writing a new one.
 | `body: JSON.stringify(x)` at a call site | Double-encoded; the client serialises | Pass the object |
 | A one-shot tool call written as a `mutationOptions` factory | Gets a `queryClient` and an invalidation it has no use for | A plain function beside the factories |
 | A `fallback` sentence repeated on every write in a file | The reader cares which entity failed, and that does not change within a file | One `const FALLBACK` per file |
-| `<PageEmpty>Loading …</PageEmpty>`, a spinner, or a `Skeleton` while a query is pending | ChisaBot uses no loading placeholder; the flicker costs more than the reassurance buys | Return `null` from the pending branch |
-| The pending branch deleted rather than returning `null` | The empty-state sentence shows for the length of the fetch, asserting something false | Keep the branch, first in the chain, returning `null` |
-| `const queryClient = useQueryClient()` | A hook call and a local binding for an object that is one import away, and unavailable outside a component | `import { queryClient } from "@/query-client"` |
+| `<PageEmpty>Loading …</PageEmpty>`, "Loading…" text, or a spinner while a query is pending | Not the loading language of this app (DESIGN.md); it jumps the layout when the answer arrives | `<PageSkeleton />` shaped like the final rows |
+| The pending branch deleted | The empty-state sentence shows for the length of the fetch, asserting something false | Keep the branch, first in the chain |
+| `useQueryClient()` outside a component | Hooks cannot run there | `import { queryClient } from "@/query-client"` |
 | `new QueryClient()` anywhere outside `app/src/query-client.ts` | A second cache; queries written by one client are invisible to the other | Import the singleton. A test needing isolation constructs its own and passes it explicitly |
 | `useQuery({ queryKey: ["agents"], ... })` at a call site | An inline key drifts from the factory and silently stops matching invalidations | Call the factory: `useQuery(agentListQueryOptions())` |
 | `queryClient.setQueryData(...)` after a mutation | Guesses at server-derived fields; wrong the moment the server adds a rule | `invalidateQueries({ queryKey: <entity>Keys.all })` |
@@ -278,13 +278,12 @@ before writing a new one.
 - **TypeScript cannot infer the `queryFn` return**: the explicit `Promise<T>` annotation is missing
   from the `queryFn` signature. Add it rather than casting at the call site.
 - **"No X are configured." flashes before the list appears**: the pending branch is missing, or it
-  sits after the empty check. It goes first and returns `null`.
-- **A query is slow enough that the blank feels broken**: the answer is not a placeholder, it is a
-  slow endpoint. Fix the endpoint, or preload the data in the route (Procedure 4) so the screen is
-  not entered until it is there.
+  sits after the empty check. It goes first.
+- **A query is slow enough that the skeleton lingers**: the answer is not a better placeholder, it
+  is a slow endpoint. Fix the endpoint, or preload the data in the route (Procedure 4).
 - **A mutation factory is needed where no hook can run** — a bare event handler, a module with no
   component around it, a `bun test` file: import `queryClient` from `app/src/query-client.ts` and
-  pass it in. This is the reason the singleton is the convention rather than the hook.
+  pass it in.
 - **An invalidation appears to do nothing and the keys do match**: two clients exist. Search for
   `new QueryClient(` outside `app/src/query-client.ts`.
 - **Unsure which entity directory a new endpoint belongs to**: name it after the noun the URL is

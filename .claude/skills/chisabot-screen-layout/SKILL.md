@@ -50,10 +50,13 @@ PageShell        the page: header (title, description, action, backButton) then 
     PageEmpty    what a section says when it has nothing to list
 ```
 
-`PageShell` takes a `width`: `prose` (`max-w-2xl`) is the default because configuration is mostly
-reading, and a row of label-and-control has no business being wider than the sentence explaining it.
-`wide` (`max-w-5xl`) exists for one screen — `admin/audit.tsx`, because an audit log is a table to be
-scanned and prose width would wrap every row. It is not a licence for anything else to be wide.
+`PageShell` takes a `width` (DESIGN.md §10.3): `prose` (880px) is the default outside `/admin`,
+because configuration is mostly reading and a row of label-and-control has no business being wider
+than the sentence explaining it. `wide` (1080px) is the default under `/admin` (template E) and is
+chosen explicitly by the console-like screens outside it — `task-center`, `agent-providers` — whose
+content is a multi-column board rather than rows. Prose pages beside the shared settings/admin rail
+align to the 1080 column's left edge so switching sections does not shift the title. Anywhere else,
+leave `width` alone.
 
 `PageEmpty` is a sentence, not an illustration with a heading. On a configuration screen "nothing
 here yet" is a fact, and the section heading already said what the section is for.
@@ -167,7 +170,8 @@ to sit a centred element visibly off centre or clip a card's corners against its
 - Unsure which `Item` size, `Button` size, or `variant` → Procedure 4.
 - A width, ratio or scale needs a number in pixels → the rem Trap section. Measure, do not assume.
 - The screen genuinely does not fit this shape → say so in the response and comment the reason in the
-  code. A table is the one accepted precedent (`admin/audit.tsx`, `width="wide"`).
+  code. Accepted precedents for `width="wide"` outside `/admin`: `task-center.tsx`,
+  `agent-providers-page.tsx`.
 - The question is which states the screen renders while loading or failing → not this skill;
   `chisabot-data-access`, Procedure 3.
 
@@ -177,7 +181,7 @@ to sit a centred element visibly off centre or clip a card's corners against its
 |--------|---------------|------------|
 | A hand-written `rounded-lg border border-border bg-card` div wrapping rows | `PageRows` re-implemented, and it will drift from the other seven screens | Use `PageRows` |
 | Rows separated by `gap-*` instead of `<Separator />` | A stack of cards rather than one card of rows | `<Separator />` between rows, none after the last |
-| `width="wide"` on anything that is not a table | Prose width is the default for a reason; wide was for the audit log | Leave `width` alone |
+| `width="wide"` on a settings page outside `/admin` that is rows, not a board | Prose width is the default for reading; wide is for admin and console-like boards | Leave `width` alone |
 | A `max-w-*`, `p-*` or text size invented for one screen | A fifth container width, which is what this layout exists to stop | Reach for the existing component |
 | Children on an element passed to `Item`'s `render` | They replace the row's own children; the row draws empty | Pass a childless element |
 | `bg-card` on a row inside a dialog | `--card` equals `--popover`; the row is invisible | `variant="muted"` |
