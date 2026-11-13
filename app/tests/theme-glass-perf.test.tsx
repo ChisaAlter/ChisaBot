@@ -256,6 +256,24 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     expect(mutations.map((m) => m.attributeName)).toEqual(["data-glass"]);
     expect(root.getAttribute("data-glass")).toBe("crystal");
   });
+
+  test("薄幕值变化仍立即生效，同值重新应用不触发根样式变更", async () => {
+    appearance.applyAppearanceToDocument();
+    const root = document.documentElement;
+    appearance.setWallpaperScrim(42);
+    expect(root.style.getPropertyValue("--wallpaper-scrim-alpha")).toBe("0.42");
+    const mutations: MutationRecord[] = [];
+    const mo = new MutationObserver((list) => mutations.push(...list));
+    mo.observe(root, { attributes: true });
+    try {
+      appearance.setWallpaperScrim(42);
+      appearance.applyAppearanceToDocument();
+      await Promise.resolve();
+      expect(mutations).toEqual([]);
+    } finally {
+      mo.disconnect();
+    }
+  });
 });
 
 describe("2) 地址栏颜色跟随应用主题", () => {

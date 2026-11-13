@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, rmdir } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SQL } from "bun";
 import { sql } from "drizzle-orm";
 import { createDatabase } from "../src/db/client";
@@ -798,6 +801,51 @@ describe("Bun SQL recovery", () => {
     } finally {
       await database.$client.close();
       await fake.close();
+    }
+  });
+
+  test("cancelled standalone queries never execute after a queued reservation is acquired", async () => {
+    const fake = await fakePostgres(() => "ok");
+    const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
+    const reserved = await database.$client.reserve();
+    try {
+      const beforeStart = database.$client.unsafe("INSERT before_start");
+      beforeStart.cancel();
+      expect((await observed(beforeStart, 200)).status).toBe("rejected");
+      const queued = database.$client.unsafe("INSERT queued").execute();
+      queued.cancel();
+      expect((await observed(queued, 200)).status).toBe("rejected");
+      await reserved.release();
+      expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
+      expect(fake.commands.filter(({ sql }) => /^INSERT/.test(sql))).toEqual(
+        [],
+      );
+      expect(fake.connections).toBe(1);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+    }
+  });
+
+  test("standalone file queries retain their eager promise API and release the connection", async () => {
+    const fake = await fakePostgres(() => "ok");
+    const database = createDatabase(fake.url, { max: 1, queryTimeoutMs: 1000 });
+    const directory = await mkdtemp(join(tmpdir(), "chisabot-sql-file-"));
+    const file = join(directory, "query.sql");
+    try {
+      await Bun.write(file, "SELECT 1");
+      expect((await database.$client.file(file))[0]?.ok).toBe(1);
+      expect((await database.$client.unsafe("SELECT 1"))[0]?.ok).toBe(1);
+      expect(fake.connections).toBe(1);
+      expect(fake.commands.map(({ sql }) => sql)).toEqual([
+        "SELECT 1",
+        "SELECT 1",
+      ]);
+    } finally {
+      await database.$client.close();
+      await fake.close();
+      await rm(file);
+      await rmdir(directory);
     }
   });
 });

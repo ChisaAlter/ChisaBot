@@ -25,8 +25,8 @@ export {
   fallbackGlassStyle,
   GLASS_STYLE_STORAGE_KEY,
   LEGACY_DEFAULT_GLASS_STYLE,
-  PRIOR_APPEARANCE_STORAGE_KEYS,
   PALETTE_STORAGE_KEY,
+  PRIOR_APPEARANCE_STORAGE_KEYS,
   paletteThemeColor,
   THEME_PALETTES,
   type ThemePaletteId,
@@ -827,10 +827,9 @@ export function applyAppearanceToDocument(
   );
   // 薄幕浓度：色在 styles.css 的深浅两条规则里，alpha 从根变量读，拖滑块只重算这一个值。
   // liquid-glass 画合成层时也从 documentElement 读 --wallpaper-scrim，两处自动一致。
-  root.style.setProperty(
-    "--wallpaper-scrim-alpha",
-    (state.wallpaperScrim / 100).toFixed(2),
-  );
+  const scrimAlpha = (state.wallpaperScrim / 100).toFixed(2);
+  if (root.style.getPropertyValue("--wallpaper-scrim-alpha") !== scrimAlpha)
+    root.style.setProperty("--wallpaper-scrim-alpha", scrimAlpha);
 }
 
 export function updateAppearance(patch: Partial<AppearanceState>) {

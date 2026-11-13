@@ -1,4 +1,4 @@
-import type { SQL } from "bun";
+import { SQL } from "bun";
 
 /** Includes acquiring a pooled connection, receiving its response, and transaction finalization. */
 export const DATABASE_TIMEOUT_MS = 30_000;
@@ -181,17 +181,56 @@ export function recoveringSql(
       }
     });
   }
-  function queryProxy(query: Query, pool: Generation, scope?: Scope): Query {
+  function queryProxy(
+    query: Query,
+    pool: Generation,
+    scope?: Scope,
+    onReserved?: (client: SQL) => Query,
+  ): Query {
     let running: Promise<unknown> | undefined;
+    let active = query;
+    let cancelled = false;
+    let cancelWaiting: ((error: unknown) => void) | undefined;
+    const cancelledError = () =>
+      new SQL.PostgresError("Query cancelled", {
+        code: "ERR_POSTGRES_QUERY_CANCELLED",
+      });
+    const modes: Array<{ key: string; args: unknown[] }> = [];
     const run = () =>
       (running ??=
         scope && !scope.open
           ? Promise.reject(closedError())
           : supervise(
               pool,
-              () => query,
+              async () => {
+                if (!onReserved) return await query;
+                if (cancelled) throw cancelledError();
+                // Bun 1.3.14 can leave a queued transaction reservation in its ready set;
+                // ordinary pooled queries then run inside that unrelated transaction. Reserve
+                // every standalone query too, so native reservation filtering keeps them apart.
+                // Acquisition stays lazy and inside the same deadline as the query itself.
+                const cancellation = new Promise<never>((_resolve, reject) => {
+                  cancelWaiting = reject;
+                });
+                const execute = async () => {
+                  const reserved = await pool.client.reserve();
+                  try {
+                    throwIfFailed(pool);
+                    if (cancelled) throw cancelledError();
+                    active = onReserved(reserved);
+                    for (const { key, args } of modes)
+                      Reflect.apply(Reflect.get(active, key), active, args);
+                    return await active;
+                  } finally {
+                    // A retired generation is already closing all of its connections.
+                    if (!pool.failed) await reserved.release();
+                  }
+                };
+                return await Promise.race([execute(), cancellation]);
+              },
               () => {
-                query.cancel();
+                cancelled = true;
+                active.cancel();
               },
               true,
             ));
@@ -211,6 +250,8 @@ export function recoveringSql(
             void run().catch(() => {});
             return proxy;
           };
+        if (key === "active" || key === "cancelled")
+          return Reflect.get(active, key, active);
         const value = Reflect.get(target, key, target);
         if (typeof value !== "function") return value;
         if (
@@ -221,6 +262,14 @@ export function recoveringSql(
         ) {
           return (...args: unknown[]) => {
             Reflect.apply(value, target, args);
+            if (key === "cancel") {
+              cancelled = true;
+              // Reject immediately even while reserve() is queued. The late reservation
+              // observes cancellation before executing, then releases its connection.
+              if (onReserved) cancelWaiting?.(cancelledError());
+            } else if (active === query) modes.push({ key, args });
+            if (active !== query)
+              Reflect.apply(Reflect.get(active, key), active, args);
             return proxy;
           };
         }
@@ -244,7 +293,14 @@ export function recoveringSql(
     const proxy = new Proxy((..._args: unknown[]) => {}, {
       apply(_target, _thisArg, args) {
         const { pool, client } = choose();
-        return wrapResult(Reflect.apply(client, client, args), pool, scope);
+        return wrapResult(
+          Reflect.apply(client, client, args),
+          pool,
+          scope,
+          scopedClient
+            ? undefined
+            : (reserved) => Reflect.apply(reserved, reserved, args),
+        );
       },
       get(_target, key, receiver) {
         // SQL is a callable object and callers also decorate it (for example unsafe spies). Keep
@@ -344,6 +400,32 @@ export function recoveringSql(
               Reflect.apply(method, client, args),
             ).then(() => proxy);
           }
+          // These native methods eagerly await an internal query, unlike unsafe()/tagged SQL.
+          if (
+            !scopedClient &&
+            (key === "file" ||
+              key === "commitDistributed" ||
+              key === "rollbackDistributed")
+          ) {
+            return supervise(
+              pool,
+              async () => {
+                const reserved = await pool.client.reserve();
+                try {
+                  throwIfFailed(pool);
+                  return await Reflect.apply(
+                    Reflect.get(reserved, key),
+                    reserved,
+                    args,
+                  );
+                } finally {
+                  if (!pool.failed) await reserved.release();
+                }
+              },
+              undefined,
+              true,
+            );
+          }
           if (
             scope &&
             (key === "release" ||
@@ -354,7 +436,15 @@ export function recoveringSql(
           ) {
             scope.open = false;
           }
-          return wrapResult(Reflect.apply(method, client, args), pool, scope);
+          return wrapResult(
+            Reflect.apply(method, client, args),
+            pool,
+            scope,
+            !scopedClient && key === "unsafe"
+              ? (reserved) =>
+                  Reflect.apply(Reflect.get(reserved, key), reserved, args)
+              : undefined,
+          );
         };
       },
     });
@@ -364,9 +454,10 @@ export function recoveringSql(
     result: unknown,
     pool: Generation,
     scope?: Scope,
+    onReserved?: (client: SQL) => Query,
   ): unknown {
     if (result && typeof (result as Query).cancel === "function")
-      return queryProxy(result as Query, pool, scope);
+      return queryProxy(result as Query, pool, scope, onReserved);
     if (result && typeof (result as PromiseLike<unknown>).then === "function")
       return supervise(pool, () => result as PromiseLike<unknown>);
     return result;

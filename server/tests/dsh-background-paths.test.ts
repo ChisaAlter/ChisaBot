@@ -38,6 +38,9 @@ import type {
 
 const address = process.env.CHISABOT_DSH_TEST_DATABASE_URL;
 const answer = "后台验收完成：产物已保存。";
+// Measure queue-time exclusion, not sub-second Host/database throughput. The deliberate queue wait
+// below exceeds this entire execution budget, so charging queue time still fails the same test.
+const SHORT_EXECUTION_BUDGET_MS = 2_000;
 async function until<T>(
   check: () => Promise<T | null | false | undefined>,
   timeout = 30_000,
@@ -279,7 +282,7 @@ class ProtocolSocket implements WsLike {
         conversations: backend.client,
         runner: backend.runner,
         buildAgentFor,
-        turnTimeoutMs: 700,
+        turnTimeoutMs: SHORT_EXECUTION_BUDGET_MS,
       });
     }, 90_000);
     afterAll(async () => {
@@ -442,7 +445,7 @@ class ProtocolSocket implements WsLike {
             )
           )[0],
       );
-      await Bun.sleep(1000); // Beyond this turn's execution budget; no model has been called.
+      await Bun.sleep(SHORT_EXECUTION_BUDGET_MS + 1000); // Beyond the execution budget; no model has been called.
       expect(JSON.stringify(modelRequests)).not.toContain("CAPACITY_SHORT");
       expect(await backgroundCount(database.$client, owner)).toBe(2);
       held.get("CAPACITY_WORKER")!();
