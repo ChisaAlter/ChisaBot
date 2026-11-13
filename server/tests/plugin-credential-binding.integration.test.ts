@@ -4,6 +4,7 @@ import {
   beforeAll,
   describe,
   expect,
+  spyOn,
   test,
 } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import { createAuditStore } from "../src/audit";
 import { encryptSecret } from "../src/credentials";
 import { createDatabase } from "../src/db/client";
 import { credentials, mcpServers, mcpTools } from "../src/db/schema";
+import * as mcpTransport from "../src/plugins/mcp";
 import {
   CustomServerRefusedError,
   createPluginStore,
@@ -85,20 +87,22 @@ const store = createPluginStore({
  * What left the deployment, so a refusal can be shown to have stopped the send rather than reported
  * on it afterwards. The vendors here do not exist, so a real request would fail anyway; what this
  * captures is whether one was attempted at all, and what it carried.
+ *
+ * The seam is the transport's listing entry point rather than global fetch: the MCP dial pins DNS
+ * and speaks raw HTTP since a1a989e7, so a fetch stub sees nothing. The `url` and decrypted `token`
+ * `listTools` is handed are exactly the pair the dial would carry — the same seam
+ * plugin-store.integration.test.ts uses.
  */
-let sent: { url: string; authorization: string | null }[] = [];
-const realFetch = globalThis.fetch;
+let sent: { url: string; token: string | null }[] = [];
+let listing: ReturnType<typeof spyOn> | undefined;
 
 beforeAll(async () => {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request =
-      input instanceof Request ? input : new Request(input as string, init);
-    sent.push({
-      url: request.url,
-      authorization: request.headers.get("authorization"),
-    });
-    return new Response("{}", { status: 500 });
-  }) as typeof fetch;
+  listing = spyOn(mcpTransport, "listTools").mockImplementation(
+    async (connection) => {
+      sent.push({ url: connection.url, token: connection.token ?? null });
+      return [];
+    },
+  );
 
   const encrypted = async (value: string) => encryptSecret(KEY, value);
   await database.insert(credentials).values([
@@ -127,7 +131,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  globalThis.fetch = realFetch;
+  listing?.mockRestore();
   await database.delete(mcpTools).where(like(mcpTools.serverId, `binding-%`));
   await database.delete(mcpServers).where(like(mcpServers.id, `binding-%`));
   await database
@@ -173,7 +177,7 @@ describe("a credential is spent only by the server it belongs to", () => {
     expect(await storedUrl(serverId)).toBe(LEGITIMATE_URL);
     // This is the case the field exists for, so the token does go out, to the address it was given.
     expect(sent[0]?.url).toContain("legit.vendor.example");
-    expect(sent[0]?.authorization).toContain(OWN_TOKEN);
+    expect(sent[0]?.token).toBe(OWN_TOKEN);
   });
 });
 
@@ -231,7 +235,7 @@ describe("a credential is spent only at the address it was given", () => {
 
     expect(moved.id).toBe(openServerId);
     expect(await storedUrl(openServerId)).toBe(CHOSEN_URL);
-    expect(sent.every((call) => call.authorization === null)).toBe(true);
+    expect(sent.every((call) => call.token === null)).toBe(true);
   });
 });
 
