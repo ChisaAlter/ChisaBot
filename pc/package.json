@@ -12,6 +12,7 @@
     "test": "node scripts/shell-fingerprint.js --check && node --test test/*.check.js",
     "agent": "node src/cli.js",
     "dist:win": "node scripts/shell-fingerprint.js --write && electron-builder --win nsis zip --x64 && node scripts/shell-fingerprint.js --stamp dist/latest.yml",
+    "dist:mac": "node scripts/shell-fingerprint.js --write && electron-builder --mac dmg zip --arm64 --x64 && node scripts/shell-fingerprint.js --stamp dist/latest-mac.yml",
     "dist:dir": "node scripts/shell-fingerprint.js --write && electron-builder --win dir --x64",
     "fingerprint": "node scripts/shell-fingerprint.js --write"
   },
@@ -72,6 +73,21 @@
       "unicode": true,
       "include": "build/installer.nsh",
       "artifactName": "ChisaBot-${version}-${arch}-setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "artifactName": "ChisaBot-${version}-${arch}-mac.${ext}",
+      "darkModeSupport": true,
+      "identity": null
+    },
+    "dmg": {
+      "title": "ChisaBot",
+      "sign": false
     },
     "electronLanguages": [
       "zh-CN",

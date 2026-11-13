@@ -1425,10 +1425,12 @@ function registerIpc() {
 // ---------- 生命周期 ----------
 
 app.on("second-instance", () => void openApp());
+// macOS：点 Dock 图标把主窗口叫回来（窗口关掉只是隐藏，应用常驻）。
+app.on("activate", () => void openApp());
 app.on("window-all-closed", () => {
   /* 常驻托盘 */
 });
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   quitting = true;
   try {
     globalShortcut?.unregisterAll?.();
@@ -1436,7 +1438,13 @@ app.on("before-quit", () => {
   agent?.stop();
   // 下载好（并验签通过）的更新而用户选了「稍后」：退出这一刻静默安装。需要重新安装（换了图标 / 组件）的走重新安装；
   // 普通更新在启用验签时也由这里安装（electron-updater 自己的退出安装没挂，见 updater.js）。
-  if (updater?.installOnQuit())
+  const outcome = updater?.installOnQuit();
+  // macOS 验签后退出安装要撑住应用：Squirrel 还在从本地代理拉包，拉完 electron-updater 会自己再退一次。
+  if (outcome === "hold") {
+    event.preventDefault();
+    return;
+  }
+  if (outcome)
     config?.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}` });
 });
 
@@ -1489,6 +1497,37 @@ function refreshShellIfChanged() {
 }
 
 app.whenReady().then(() => {
+  // macOS 应用菜单：没有它 ⌘C/⌘V/⌘Q 都不生效（窗口 setMenu 在 mac 上是空的，菜单是应用级的）。
+  // 编辑 / 视图 / 窗口用系统 role；退出走 role:"quit"→ before-quit（隐藏语义的「关闭窗口」归 ⌘W）。
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        {
+          label: pkg.productName || "ChisaBot",
+          submenu: [
+            { role: "about", label: `关于 ${pkg.productName || "ChisaBot"}` },
+            { type: "separator" },
+            { role: "hide", label: "隐藏 ChisaBot" },
+            { role: "hideOthers", label: "隐藏其他" },
+            { role: "unhide", label: "全部显示" },
+            { type: "separator" },
+            { role: "quit", label: "退出 ChisaBot" },
+          ],
+        },
+        // 文件 > 关闭窗口（⌘W）：macOS 惯例；关的是窗口不是进程——和窗口里的 ✕ 一样只是隐藏，应用常驻。
+        { label: "文件", submenu: [{ role: "close", label: "关闭窗口" }] },
+        { role: "editMenu", label: "编辑" },
+        { label: "视图", submenu: [{ role: "togglefullscreen", label: "切换全屏" }] },
+        { role: "windowMenu", label: "窗口" },
+      ]),
+    );
+    // 开发运行时是 Electron 默认图标，dock 上换成品牌图标；打包版用 build/icon.icns。
+    if (!app.isPackaged) {
+      try {
+        app.dock?.setIcon(nativeImage.createFromPath(path.join(ASSETS, "icon.png")));
+      } catch {}
+    }
+  }
   // 休眠唤醒 / 解锁后网络往往刚恢复，旧连接可能已经半死：立刻重连，不等退避和看门狗。
   powerMonitor.on("resume", () => agent?.reconnectNow());
   powerMonitor.on("unlock-screen", () => agent?.reconnectNow());

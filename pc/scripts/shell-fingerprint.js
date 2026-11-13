@@ -66,6 +66,12 @@ function collectInputs(root = ROOT) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const build = { ...(pkg.build || {}) };
   delete build.publish;
+  // 外壳指纹决定 Windows 客户端要不要「重新安装」（重建快捷方式 / 刷新图标缓存）。macOS 的打包配置和
+  // icon.icns 不影响 Windows 外壳——mac 更新本来就把整个 .app 换掉，指纹对它没有意义：排除，
+  // 避免给 mac 加配置时逼所有现存 Windows 客户端白做一次完整安装。
+  delete build.mac;
+  delete build.dmg;
+  delete build.mas;
   const dev = pkg.devDependencies || {};
   const deps = pkg.dependencies || {};
   const shellConfig = {

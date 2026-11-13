@@ -59,6 +59,12 @@ function make(options = {}) {
     platform: options.platform ?? "win32",
     execPath: options.execPath ?? installedExec,
     productName: "ChisaBot",
+    shellHash: options.shellHash,
+    clientHash: options.clientHash,
+    updateKeys: options.updateKeys,
+    verifyDownload: options.verifyDownload,
+    spawn: options.spawn,
+    quitApp: options.quitApp,
     getAutoUpdate: () => auto,
     onState: (s) => states.push(s),
     onDownloaded: (v) => downloaded.push(v),
@@ -193,4 +199,56 @@ test("update IPC goes through the source checks", () => {
   assert.ok(preload.includes('"update:answer"'));
   const web = fs.readFileSync(path.join(__dirname, "..", "src", "web-preload.js"), "utf8");
   assert.ok(web.includes('ipcRenderer.invoke("pc:install-update")'));
+});
+
+test("macOS: any packaged .app updates; fullInstall still uses quitAndInstall (Squirrel replaces the whole bundle)", async () => {
+  const { updater, autoUpdater } = make({
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    behavior: { version: "0.1.9" },
+  });
+  assert.strictEqual(updater.supported, true, "打包版 .app 就能更新，不需要 Windows 的「安装版」判定");
+  const result = await updater.check();
+  assert.strictEqual(result.status, "downloaded");
+  assert.strictEqual(updater.install(), true);
+  assert.deepStrictEqual(autoUpdater.installs, [[true, true]], "quitAndInstall(true, true)");
+
+  // 外壳指纹变了在 mac 上照常整包替换，不走 runFullInstaller / spawn
+  const spawns = [];
+  const full = make({
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    shellHash: "old-shell",
+    spawn: (cmd, args) => spawns.push([cmd, args]),
+    autoUpdater: (() => {
+      const e = fakeAutoUpdater();
+      e.checkForUpdates = async () => {
+        e.emit("checking-for-update");
+        e.emit("update-available", { version: "0.1.9", chisabotShell: "new-shell" });
+        e.emit("update-downloaded", { version: "0.1.9", chisabotShell: "new-shell" });
+        return {};
+      };
+      return e;
+    })(),
+  });
+  assert.strictEqual((await full.updater.check()).fullInstall, true);
+  assert.strictEqual(full.updater.install(), true);
+  assert.deepStrictEqual(spawns, [], "mac 不跑安装包");
+  assert.deepStrictEqual(full.autoUpdater.installs, [[true, true]]);
+});
+
+test("macOS installOnQuit: unsigned quit installs itself (return false); signed holds the quit via quitAndInstall", async () => {
+  const darwinOpts = { platform: "darwin", execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot", behavior: { version: "0.1.9" } };
+  const unsigned = make(darwinOpts);
+  await unsigned.updater.check();
+  assert.strictEqual(unsigned.updater.installOnQuit(), false, "Squirrel 已经拿到更新，普通退出就装");
+
+  const signed = make({ ...darwinOpts, updateKeys: { enforce: true, keys: new Map(), problem: "" }, verifyDownload: async () => {} });
+  await signed.updater.check();
+  await signed.updater.settled();
+  assert.strictEqual(signed.updater.state.status, "downloaded");
+  assert.strictEqual(signed.updater.installOnQuit(), "hold", "调用方要 preventDefault 撑住退出");
+  assert.strictEqual(signed.autoUpdater.autoRunAppAfterInstall, false, "装好不重启");
+  assert.deepStrictEqual(signed.autoUpdater.installs, [[true, true]], "quitAndInstall 触发 Squirrel 拉本地包");
+  assert.strictEqual(signed.updater.installOnQuit(), false, "已在安装中的重复退出直接放行");
 });

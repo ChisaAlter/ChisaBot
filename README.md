@@ -4,7 +4,7 @@
 
 <h1 align="center">ChisaBot</h1>
 
-<p align="center"><b>中文、自托管、可配置模型的 AI 助手平台。</b><br>网页 · Windows PC 客户端 · Android 客户端，连同一台你自己的服务器。</p>
+<p align="center"><b>中文、自托管、可配置模型的 AI 助手平台。</b><br>网页 · Windows / macOS PC 客户端 · Android 客户端，连同一台你自己的服务器。</p>
 
 <p align="center">
   <a href="docs/README.md">文档首页</a> ·
@@ -41,7 +41,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手。服务器负责会话
 
 </details>
 
-### PC 客户端（Windows）
+### PC 客户端（Windows / macOS）
 
 ChisaBot PC 是无边框窗口，打开后直接进入你服务器上的 ChisaBot，右上角是窗口按钮；首次运行先在本机的「登录 ChisaBot」页填写服务器地址。
 
@@ -72,7 +72,7 @@ ChisaBot PC 是无边框窗口，打开后直接进入你服务器上的 ChisaBo
 - **每 BOT 独立选择**：聊天输入框与 BOT 设置修改同一个持久化值，两处及跨标签页同步，下一轮使用新模型。
 - **工具与权限**：支持 AG-UI 接入、设备与云端浏览器、MCP 工具、审批和审计，按部署配置启用。
 - **面板与云端浏览器**：机器人可以在右栏建面板（可定时刷新），也可以在服务器上的云端浏览器里打开和操作网页，右栏「面板 | 任务 | 计算机」切换查看。
-- **客户端与在线更新**：Windows PC（Electron）和 Android 客户端连接你自己的服务器；服务器在「管理后台 → 系统更新」一键更新，网页和客户端各自提示新版本。
+- **客户端与在线更新**：Windows / macOS PC（Electron）和 Android 客户端连接你自己的服务器；服务器在「管理后台 → 系统更新」一键更新，网页和客户端各自提示新版本。
 
 目录表示当前网关连接向 ChisaBot 开放的模型，不表示全部供应商缓存，也不保证每个上游模型均可调用。具体权限、额度和服务状态由上游决定。
 
@@ -117,9 +117,9 @@ bun run typecheck
 | `examples/zh-CN/`               | 中文品牌、BOT、频道和技能配置                                                                                                                                                              |
 | `deploy/`                       | 镜像配置、认证网关、DSH 账号运维与宿主机更新器                                                                                                                                             |
 | `scripts/ops/`                  | 串行发布、网关同步和运维入口                                                                                                                                                               |
-| `pc/`                           | ChisaBot PC（Windows，Electron）客户端：设备节点 + 在线更新                                                                                                                                |
+| `pc/`                           | ChisaBot PC（Windows / macOS，Electron）客户端：设备节点 + 在线更新                                                                                                                                |
 | `android/`                      | ChisaBot Android 客户端（Kotlin 壳 + WebView，minSdk 24）：使用桌面同一 React 前端的手机布局；保留扫码 / 账号登录、系统文件与权限、返回键及 APK 在线更新（[说明](docs/android-native.md)） |
-| `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC + Android 安装包并发布到 Releases                                                                                                                  |
+| `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC（Windows / macOS）+ Android 安装包并发布到 Releases                                                                                                                  |
 | `deploy/updater/`               | 宿主机在线更新服务（管理后台 → 系统更新）                                                                                                                                                  |
 | `docs/`                         | 当前使用与运维文档；`pipeline-runs/` 保存实施证据，历史参考单独导航                                                                                                                        |
 | `assets/brand/`                 | 品牌头像原图与生成脚本（`node assets/brand/generate.mjs` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28                                                                |

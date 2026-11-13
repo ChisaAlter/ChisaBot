@@ -44,7 +44,8 @@ ChisaBot 有两种「发布」：
   和 `vX.Y.Z.android.txt`（Android 更新提示的短文本）。
 - 根 [CHANGELOG.md](../CHANGELOG.md) 和 [docs/CHANGELOG.md](CHANGELOG.md) 加这一版。
 - **改了 PC 图标、安装器（`pc/build/installer.nsh`）、electron / electron-builder 版本或打包配置**：运行 `npm run fingerprint`
-  更新 `pc/src/shell-fingerprint.json`（不更新 `npm test` 会失败）。见 §3.3。
+  更新 `pc/src/shell-fingerprint.json`（不更新 `npm test` 会失败）。见 §3.3。mac 打包配置（`build.mac` / `build.dmg` / `build.mas`）
+  和 `build/icon.icns` 不计入外壳指纹——mac 更新整包替换 `.app`，这些改动不需要逼 Windows 客户端「重新安装」。
 
 ### 3.2 构建与发布（`.github/workflows/release.yml`）
 
@@ -62,7 +63,7 @@ ChisaBot 有两种「发布」：
 
 - electron-updater 用 `--updated` 静默跑 NSIS 安装器时会保留旧快捷方式、不刷图标缓存。所以 PC 有一个**外壳指纹**
   （`pc/scripts/shell-fingerprint.js`：图标、`installer.nsh`、electron / builder 版本、去掉 publish 的打包配置的哈希），CI 写进
-  `latest.yml` 的 `chisabotShell`。
+  `latest.yml`（macOS 是 `latest-mac.yml`）的 `chisabotShell`。macOS 更新由 Squirrel.Mac 整包替换 `.app`，指纹对它没有意义。
 - 客户端发现新版指纹和自己不同 → 提示 **「此更新需要重新安装，以更新图标/组件」**，点「重新安装」后以完整安装方式运行（数据保留）；
   指纹相同 → 普通原地更新。
 - 历史：`a37303ffb08b9d60`（0.1.3–0.1.11）→ `059438f4e6c98c74`（0.1.12 起，换了按哈希命名的 `.ico`）。

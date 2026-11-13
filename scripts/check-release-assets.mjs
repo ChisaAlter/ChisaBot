@@ -7,17 +7,21 @@
  * latest.yml 与安装包不是同一个 build。这里在上传前最后一次确认「待上传的就是 generic flavor 的那套」。
  *
  * 用法：node scripts/check-release-assets.mjs <release-assets 目录> (--expect-signed | --expect-unsigned) [--version <版本>]
- *   --expect-signed    pc_sign=true 的发布：latest.yml 必须带 chisabotSig；
- *   --expect-unsigned  CHISABOT_PC_UPDATE_UNSIGNED=1 的发布：latest.yml 不得带 chisabotSig；
- *   --version <v>      latest.yml 的 version 必须等于 v。
+ *   --expect-signed    pc_sign=true 的发布：latest.yml / latest-mac.yml 必须带 chisabotSig；
+ *   --expect-unsigned  CHISABOT_PC_UPDATE_UNSIGNED=1 的发布：清单不得带 chisabotSig；
+ *   --version <v>      清单的 version 必须等于 v。
  *
  * 检查（任一不过即退出 1，打 ::error::）：
  *   1. flavor.txt（pc job 打进每个 pc-* 产物的 flavor 标记）内容必须是 generic；
  *   2. 剔除 flavor.txt / update-keys.json 后，目录里只允许发布白名单：*-setup.exe、*-setup.exe.blockmap、
- *      *-portable.zip、latest.yml、*.apk、chisabot-android.json；子目录一律算越界文件；
+ *      *-portable.zip、latest.yml、latest-mac.yml、*-mac.dmg(+blockmap)、*-mac.zip(+blockmap)、
+ *      *.apk、chisabot-android.json；子目录一律算越界文件；
  *   3. 恰好一个 *-setup.exe；latest.yml 的 path 指向它，顶层 sha512 与文件一致；
- *   4. latest.yml files[] 每一项都是同目录文件名、文件存在、sha512 / size 一致；
+ *   4. 每个清单 files[] 每一项都是同目录文件名、文件存在、sha512 / size 一致；
  *   5. 按开关断言 chisabotSig 在场 / 缺席。
+ *
+ * macOS 资产（latest-mac.yml、*-mac.dmg/zip）是可选的：有 latest-mac.yml 就做和 latest.yml 一样的
+ * 清单校验（path/files[] 必须指到目录里的真实 mac 资产）；没有就跳过，向后兼容只有 Windows 的发布。
  *
  * 副作用：flavor.txt、update-keys.json 是构建过程文件，校验通过后从目录里删掉，不作为 Release 资产上传。
  * 退出码：0 通过；1 校验失败；2 用法错误。
@@ -32,6 +36,11 @@ const ASSET_PATTERNS = [
   /-setup\.exe\.blockmap$/,
   /-portable\.zip$/,
   /^latest\.yml$/,
+  /^latest-mac\.yml$/,
+  /-mac\.dmg$/,
+  /-mac\.dmg\.blockmap$/,
+  /-mac\.zip$/,
+  /-mac\.zip\.blockmap$/,
   /\.apk$/,
   /^chisabot-android\.json$/,
 ];
@@ -130,57 +139,74 @@ function main(argv) {
     assets.push(entry.name);
   }
 
-  // 3. latest.yml ↔ 安装包
+  // 3./4. 每个清单（latest.yml 必选，latest-mac.yml 可选）↔ 同目录资产：
+  // version、path 指向真实文件、顶层 sha512、files[] 每项存在且哈希/大小一致、签名在场性。
+  const checkManifest = (ymlName) => {
+    const { top, files } = parseLatestYml(
+      fs.readFileSync(path.join(dir, ymlName), "utf8"),
+    );
+    if (version && top.version !== version)
+      fail(`${ymlName} version ${top.version || "空"} != ${version}`);
+    if (!top.path || !assets.includes(top.path))
+      fail(
+        `${ymlName} 的 path 是 ${top.path || "空"}，不在资产目录里：清单和安装包不是同一套`,
+      );
+    if (top.sha512 !== sha512File(path.join(dir, top.path)))
+      fail(
+        `${ymlName} 的 sha512 与 ${top.path} 不符（清单和安装包不是同一 flavor/build）`,
+      );
+    if (!files.length) fail(`${ymlName} 的 files[] 为空`);
+    for (const f of files) {
+      if (!f.url || f.url !== path.basename(f.url))
+        fail(`${ymlName} files[] 里有非法 url：${f.url || "空"}`);
+      const file = path.join(dir, f.url);
+      if (!assets.includes(f.url) || !fs.existsSync(file))
+        fail(`${ymlName} files[] 指向的 ${f.url} 不在资产目录里`);
+      if (f.sha512 !== sha512File(file))
+        fail(`${ymlName} files[] 里 ${f.url} 的 sha512 与文件不符`);
+      if (
+        f.size !== undefined &&
+        f.size !== "" &&
+        Number(f.size) !== fs.statSync(file).size
+      ) {
+        fail(`${ymlName} files[] 里 ${f.url} 的 size 与文件不符`);
+      }
+    }
+    const hasSig = top.chisabotSig !== undefined && top.chisabotSig !== "";
+    if (flag === "--expect-signed" && !hasSig)
+      fail(`pc_sign=true 的发布，${ymlName} 却没有 chisabotSig`);
+    if (flag === "--expect-unsigned" && hasSig)
+      fail(
+        `CHISABOT_PC_UPDATE_UNSIGNED=1 的发布，${ymlName} 却带了 chisabotSig`,
+      );
+    return top;
+  };
+
   if (!assets.includes("latest.yml")) fail("缺 latest.yml");
   const setups = assets.filter((f) => f.endsWith("-setup.exe"));
   if (setups.length !== 1)
     fail(`*-setup.exe 应该恰好一个，实际 ${setups.length} 个`);
-  const exe = setups[0];
-  const ymlPath = path.join(dir, "latest.yml");
-  const { top, files } = parseLatestYml(fs.readFileSync(ymlPath, "utf8"));
-  if (version && top.version !== version)
-    fail(`latest.yml version ${top.version || "空"} != ${version}`);
-  if (top.path !== exe)
+  const winTop = checkManifest("latest.yml");
+  if (winTop.path !== setups[0])
     fail(
-      `latest.yml 的 path 是 ${top.path || "空"}，目录里的安装包是 ${exe}：清单和安装包不是同一套`,
+      `latest.yml 的 path 是 ${winTop.path}，目录里的安装包是 ${setups[0]}：清单和安装包不是同一套`,
     );
-  const exeSha = sha512File(path.join(dir, exe));
-  if (top.sha512 !== exeSha)
-    fail(
-      `latest.yml 的 sha512 与 ${exe} 不符（清单和安装包不是同一 flavor/build）`,
-    );
-
-  // 4. files[] 每一项都要指向同目录的真实文件且哈希/大小一致。
-  if (!files.length) fail("latest.yml 的 files[] 为空");
-  for (const f of files) {
-    if (!f.url || f.url !== path.basename(f.url))
-      fail(`latest.yml files[] 里有非法 url：${f.url || "空"}`);
-    const file = path.join(dir, f.url);
-    if (!assets.includes(f.url) || !fs.existsSync(file))
-      fail(`latest.yml files[] 指向的 ${f.url} 不在资产目录里`);
-    if (f.sha512 !== sha512File(file))
-      fail(`latest.yml files[] 里 ${f.url} 的 sha512 与文件不符`);
-    if (
-      f.size !== undefined &&
-      f.size !== "" &&
-      Number(f.size) !== fs.statSync(file).size
-    ) {
-      fail(`latest.yml files[] 里 ${f.url} 的 size 与文件不符`);
-    }
+  if (assets.includes("latest-mac.yml")) {
+    // mac 清单在场时，至少一个 .app 更新包（*-mac.zip）必须跟着进 Release——没有它清单没有意义。
+    if (!assets.some((f) => f.endsWith("-mac.zip")))
+      fail("latest-mac.yml 在场，但没有任何 *-mac.zip 更新包");
+    checkManifest("latest-mac.yml");
+  } else if (assets.some((f) => /-mac\.(dmg|zip)$/.test(f))) {
+    fail("有 mac 资产但没有 latest-mac.yml：mac 客户端无法更新，中止上传");
   }
-
-  // 5. 签名在场性必须和发布开关一致。
-  const hasSig = top.chisabotSig !== undefined && top.chisabotSig !== "";
-  if (flag === "--expect-signed" && !hasSig)
-    fail("pc_sign=true 的发布，latest.yml 却没有 chisabotSig");
-  if (flag === "--expect-unsigned" && hasSig)
-    fail("CHISABOT_PC_UPDATE_UNSIGNED=1 的发布，latest.yml 却带了 chisabotSig");
 
   // 6. 构建过程文件不进 Release。
   for (const name of BUILD_FILES)
     fs.rmSync(path.join(dir, name), { force: true });
   console.log(
-    `release assets ok: ${assets.sort().join(", ")}（generic，${flag === "--expect-signed" ? "signed" : "unsigned"}）`,
+    `release assets ok: ${assets.sort().join(", ")}（generic，${
+      flag === "--expect-signed" ? "signed" : "unsigned"
+    }）`,
   );
   return 0;
 }

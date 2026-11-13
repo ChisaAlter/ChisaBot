@@ -118,7 +118,11 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
 }
 
 function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
-  const supported = Boolean(isPackaged && platform === "win32" && autoUpdater && isInstalledBuild({ execPath, productName }));
+  // Windows：只有 NSIS 安装版能更新（安装目录里有卸载程序）；开发运行、免安装 zip 不行。
+  // macOS：打包好的 .app 就能更新——Squirrel.Mac 每次更新都是整包替换，无所谓「安装版 / 免安装版」。
+  const supported = Boolean(
+    isPackaged && autoUpdater && (platform === "darwin" || (platform === "win32" && isInstalledBuild({ execPath, productName }))),
+  );
   const gateByClient = Boolean(String(clientHash || "").trim());
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
   const signing = Boolean(updateKeys && updateKeys.enforce);
@@ -303,11 +307,15 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   /** 退出并静默安装，装好后自动重新打开。只在已经下载好时有效。 */
   function install() {
     if (!supported || state.status !== "downloaded" || installing) return false;
-    if (state.fullInstall) {
+    // 「重新安装」是 NSIS 专属概念（不带 --updated 重跑安装包）；macOS 每次更新都整包替换 .app，
+    // fullInstall 标记不改变行为，照常 quitAndInstall。
+    if (state.fullInstall && platform === "win32") {
       if (runFullInstaller({ runAfter: true })) quitApp();
       return true;
     }
     installing = true;
+    // installOnQuit 会把 autoRunAppAfterInstall 关掉（退出时安装不重启）；立即重启恢复开。
+    if (platform === "darwin") autoUpdater.autoRunAppAfterInstall = true;
     autoUpdater.quitAndInstall(true, true);
     return true;
   }
@@ -316,9 +324,22 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
    * 用户退出程序时：已下载（验签通过）→ 静默安装（不自动打开）。需要重新安装的走 runFullInstaller；
    * 普通更新不验签时由 electron-updater 自己的退出安装处理，验签时它没挂，这里调 autoUpdater.install(true, false)
    * （和 electron-updater 自己退出安装的参数一样）。
+   *
+   * macOS：Squirrel.Mac 在进程退出时安装已抓取的更新。不验签时 autoInstallOnAppQuit=true 在下载完
+   * 就已把 zip 喂给 Squirrel，普通退出即安装，不用动；验签时 electron-updater 没喂包，这里调
+   * quitAndInstall 触发 Squirrel 从本地代理拉包，抓完 electron-updater 自己 app.quit() 再退出
+   * （autoRunAppAfterInstall=false 不重启）——返回 "hold"，调用方（before-quit）要 preventDefault
+   * 撑到抓完；没撑住就只是一次没装成的普通退出，下次启动会再提示已下载。
    */
   function installOnQuit() {
     if (!supported || state.status !== "downloaded" || installing) return false;
+    if (platform === "darwin") {
+      if (!signing) return false;
+      autoUpdater.autoRunAppAfterInstall = false;
+      installing = true;
+      autoUpdater.quitAndInstall(true, true);
+      return "hold";
+    }
     if (state.fullInstall) return runFullInstaller({ runAfter: false });
     if (!signing) return false;
     installing = true;

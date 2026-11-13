@@ -1,5 +1,6 @@
 ## 未发版
 
+- CB-123：PC 客户端 macOS 版——`pc/` Electron 外壳适配 macOS（应用菜单、Dock 激活召回、关闭常驻、登录项 / 托盘沿用）；打包 `dmg` + `zip`（arm64 / x64）+ `build/icon.icns`（`scripts/mac-icon.mjs` 生成）+ `latest-mac.yml`；`updater.js` 新增 darwin 支持（所有打包 `.app` 可更新，Squirrel.Mac 整包替换，验签后「稍后」用 before-quit preventDefault 撑到 Squirrel 抓完包）；`shell-fingerprint.js` 排除 `build.mac/dmg/mas` 不影响 Windows 外壳指纹；`release.yml` 新增 `pc-mac` job、`pc-sign` 同步签名 `latest-mac.yml`；`check-release-assets.mjs` 校验 mac 清单与资产。dmg 暂无 Apple 代码签名（Stage 2）。
 - CB-122：完整 UI 审查整改，统一标题重排、异步状态占位、弹窗高度与稳定状态所有权，修复附件反馈、提供方、独立授权页/404、任务导航及文件卡布局；保留既有字体光学裁切，不作全站图标平移。DESIGN §133；正式登录实机验收待完成。
 
 ## 0.1.147
