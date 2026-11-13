@@ -103,7 +103,7 @@
     const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) {
       const s = n.nodeValue;
-      if (!s || !s.trim()) continue;
+      if (!s?.trim()) continue;
       const p = n.parentElement;
       if (!p || !shown(p, el)) continue;
       const range = document.createRange();

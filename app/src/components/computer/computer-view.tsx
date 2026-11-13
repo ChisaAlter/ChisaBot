@@ -423,7 +423,6 @@ export function ComputerView({
     };
   }, [computerId, toolCallId, settled]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `secretPending` / `retryKey` intentionally restart settled polling.
   useEffect(() => {
     if (settled) return;
     if (!visualVisible) return;

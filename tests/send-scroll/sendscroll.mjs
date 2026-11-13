@@ -395,7 +395,7 @@ async function run(width) {
   rows.push(await continuous("c5", "WORK 接着（连续，带干活卡）"));
 
   // 6) 打字：多行、长高，对话不跳
-  for (const [tag, mode] of [["type", "multi"]]) {
+  for (const [tag] of [["type", "multi"]]) {
     await phase(tag);
     await editor().click();
     for (let i = 0; i < 7; i++) {

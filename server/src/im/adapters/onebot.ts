@@ -57,6 +57,7 @@ export function parseCqString(message: string): Segment[] {
 
 /** OneBot 消息事件 → ImInbound；不是消息、或是自己发的，返回 null。 */
 export function parseOneBotEvent(
+  // biome-ignore lint/suspicious/noExplicitAny: OneBot 事件载荷字段随 post_type 变化，按协议字段取用
   event: Record<string, any>,
   selfId: string | null,
 ): ImInbound | null {
@@ -116,6 +117,7 @@ export class OneBotAdapter extends LoopAdapter {
   private pending = new Map<
     string,
     {
+      // biome-ignore lint/suspicious/noExplicitAny: OneBot 应答 data 形状随 action 变化
       resolve: (value: any) => void;
       reject: (error: Error) => void;
       timer: ReturnType<typeof setTimeout>;
@@ -221,6 +223,7 @@ export class OneBotAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
+    // biome-ignore lint/suspicious/noExplicitAny: OneBot WebSocket 帧字段随事件/应答变化
     const payload = JSON.parse(text) as Record<string, any>;
     if (payload.echo != null && this.pending.has(String(payload.echo))) {
       const entry = this.pending.get(String(payload.echo))!;
@@ -254,6 +257,7 @@ export class OneBotAdapter extends LoopAdapter {
     action: string,
     params: Record<string, unknown>,
     timeoutMs = 15_000,
+  // biome-ignore lint/suspicious/noExplicitAny: 应答 data 形状随 action 变化，调用方按协议取用
   ): Promise<any> {
     const echo = randomId();
     return new Promise((resolve, reject) => {

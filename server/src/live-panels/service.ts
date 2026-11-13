@@ -517,7 +517,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
             lintStrikes.delete(parsed.data.id);
             const { data: _data, dataSources: _rawSources, ...input } = parsed.data;
             const { timeZone, refreshAt: rawAt, ...rest } = input;
-            let refreshAt: string | null | undefined = undefined;
+            let refreshAt: string | null | undefined ;
             if (rawAt === null) refreshAt = null;
             else if (rawAt !== undefined) {
               refreshAt = normalizeRefreshAt(rawAt, timeZone);

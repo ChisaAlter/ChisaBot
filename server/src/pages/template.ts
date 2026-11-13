@@ -5,7 +5,7 @@
  * （以 <!doctype 或 <html 开头）就原样发布，不套。外壳在每次打开页面时套上，所以以后模板改好看了，
  * 老页面也跟着变好看。
  */
-export const PAGE_CSS = String.raw`
+export const PAGE_CSS = `
 :root{color-scheme:light dark;--sky-1:#84aee0;--sky-2:#a9cbeb;--sky-3:#d3e5f4;--sky-4:#edf4fa;
 --glass:rgba(255,255,255,.66);--glass-2:rgba(255,255,255,.82);--line:rgba(22,36,62,.09);--edge:rgba(255,255,255,.75);
 --ink-1:#111a2b;--ink-2:#3b4659;--ink-3:#5f6673;--ink-4:rgba(17,26,43,.4);--accent:#2f74f0;--accent-ink:#1f5fd6;--accent-soft:rgba(47,116,240,.12);

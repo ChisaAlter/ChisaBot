@@ -29,7 +29,6 @@ export function usePrefetchBotChats(
 ) {
   const key = botIds.slice(0, MAX_BOTS).join(",");
   const ready = channels !== undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: channels 每次 socket 补丁都会换引用；只在机器人列表变了 / 列表第一次到时重排
   useEffect(() => {
     if (!ready || !key) return;
     let cancelled = false;

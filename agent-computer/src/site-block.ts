@@ -127,6 +127,7 @@ export async function detectSiteBlock(
   const signal = await page
     .evaluate(() => ({
       title: document.title,
+      // biome-ignore lint/performance/useDomNodeTextContent: 要的是渲染后的可见正文，textContent 会带上隐藏节点
       text: (document.body?.innerText ?? "").slice(0, 20_000),
       url: location.href,
     }))

@@ -86,7 +86,6 @@ export function Products({
         const image = safeHttps(item.image ?? undefined) ?? null;
         const site = item.source || (href ? domainOf(href) : "");
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: items carry no identity of their own.
           <div
             className="jr-product"
             data-testid="jr-product"

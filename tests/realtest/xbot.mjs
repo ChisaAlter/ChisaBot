@@ -38,7 +38,7 @@ try {
   await page.waitForTimeout(4000);
   await waitIdle(page, { max: 300000 });
   await page.screenshot({ path: "/out/x-A.png" });
-  for (const [k, tid, mine, other] of [["A", tidA, SITES_A, SITES_B], ["B", tidB, SITES_B, SITES_A]]) {
+  for (const [k, tid, , other] of [["A", tidA, SITES_A, SITES_B], ["B", tidB, SITES_B, SITES_A]]) {
     const msgs = await threadMessages(page, tid);
     const navs = []; const toolText = []; let final = "";
     for (const m of Array.isArray(msgs) ? msgs : []) {

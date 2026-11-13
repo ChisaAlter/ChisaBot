@@ -251,7 +251,6 @@ export function LiveScreen({
   /** 用户最后一次在地址栏里要打开的网址。 */
   const lastAttempt = useRef("");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: explicit Retry restarts this connection.
   useEffect(() => {
     let closed = false;
     setConnected(false);

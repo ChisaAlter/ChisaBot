@@ -249,11 +249,11 @@ if (SCENARIO === "worker") {
     `plan moved through states (${[...plans].join(" → ")})`,
   );
   check(
-    Boolean(final.summary && final.summary.includes("后台结果")),
+    Boolean(final.summary?.includes("后台结果")),
     "result summary on the card",
   );
   check(
-    Boolean(final.summary && final.summary.includes("日期")),
+    Boolean(final.summary?.includes("日期")),
     "steer message reached the worker",
   );
   // delivery: worker-result message + assistant summary in the thread (headless turn)

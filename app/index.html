@@ -35,6 +35,7 @@
       .boot .sh { background: linear-gradient(90deg, var(--s1) 0%, var(--s2) 50%, var(--s1) 100%); background-size: 200% 100%; animation: boot-sh 1.6s ease-in-out infinite; border-radius: 999px; }
       .boot .gl { background: var(--g); border: 1px solid var(--gl); -webkit-backdrop-filter: saturate(160%) blur(22px); backdrop-filter: saturate(160%) blur(22px); }
       .boot-top { position: absolute; inset: 14px 16px auto 16px; height: 48px; display: flex; align-items: center; justify-content: space-between; }
+      /* biome-ignore lint/complexity/noImportantStyles: 启动屏在全局样式前就要定型，不能被覆盖 */
       .boot-dot { width: 48px; height: 48px; border-radius: 50% !important; }
       .boot-seg { position: absolute; left: 50%; transform: translateX(-50%); width: 260px; height: 46px; border-radius: 999px; }
       .boot-right { display: flex; gap: 10px; }
@@ -80,9 +81,9 @@
         (() => {
           var d = document.documentElement;
           var ua = navigator.userAgent || "";
-          var mm = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+          var mm = (q) => !!window.matchMedia?.(q).matches;
           var force = null;
-          try { force = window.localStorage.getItem("chisabot-layout"); } catch (e) {}
+          try { force = window.localStorage.getItem("chisabot-layout"); } catch {}
           var uad = navigator.userAgentData;
           var shortSide = Math.min(screen.width || 9999, screen.height || 9999);
           var touch = mm("(pointer: coarse)") && mm("(hover: none)");
@@ -94,7 +95,7 @@
           // 浏览器「可以安装」的事件可能比应用脚本先到：先接住，app/src/lib/pwa.ts 再接手。
           window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); window.__chisabotInstallPrompt = event; });
         })();
-      } catch (e) {}
+      } catch {}
     </script>
   </head>
   <body>
@@ -142,7 +143,6 @@
       (function () {
         var startup = document.getElementById("chisabot-startup");
         var title = document.getElementById("chisabot-startup-title");
-        var detail = document.getElementById("chisabot-startup-detail");
         var reload = document.getElementById("chisabot-reload");
         var note = document.getElementById("chisabot-startup-note");
         var failed = false;

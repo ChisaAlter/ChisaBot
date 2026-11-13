@@ -20,7 +20,6 @@ import { toast } from "@/components/ui/toast";
 import {
   CHISABOT_QUOTE_EVENT,
   CHISABOT_SPOTLIGHT_EVENT,
-  dispatchComposerQuote,
   openQuickSpotlight,
   sendPromptToChat,
 } from "@/lib/chat/quote-event";

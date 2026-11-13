@@ -112,7 +112,6 @@ export async function send(page, text) {
 export async function waitIdle(page, { max = 240000, onTick } = {}) {
   const t0 = Date.now();
   let idle = null;
-  const first = null;
   await page.waitForTimeout(2500);
   while (Date.now() - t0 < max) {
     await page.waitForTimeout(1200);

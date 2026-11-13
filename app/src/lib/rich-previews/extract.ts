@@ -143,7 +143,7 @@ export function looksLikePartialLinkLine(line: string): boolean {
   if (/^(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/\S*)$/i.test(t)) return true;
   if (/^<(h|ht|htt|http|https?|https?:|https?:\/|https?:\/\/[^>\s]*)>?$/i.test(t)) return true;
   // [标签](网址 —— 标签写完、网址还在写；只写了「[标签」时还看不出是不是链接，先不藏。
-  if (/^\[[^\[\]\n]{0,80}\]\((<?https?:?\/{0,2}\S*)?$/i.test(t)) return true;
+  if (/^\[[^[\]\n]{0,80}\]\((<?https?:?\/{0,2}\S*)?$/i.test(t)) return true;
   return parseLinkLine(t) !== null;
 }
 
@@ -154,7 +154,7 @@ export function looksLikePartialLinkLine(line: string): boolean {
  */
 export function confidentLinkStart(line: string): string | null {
   let t = line.trim().replace(/^(\*\*|__)/, "");
-  const md = /^\[[^\[\]\n]{0,80}\]\((.*)$/.exec(t);
+  const md = /^\[[^[\]\n]{0,80}\]\((.*)$/.exec(t);
   if (md) t = md[1]!;
   t = t.replace(/^</, "");
   // 主机名后面已经有「/」：主机名写完了，骨架的比例（GitHub 2:1）不会再变。

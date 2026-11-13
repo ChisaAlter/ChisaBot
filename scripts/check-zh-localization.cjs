@@ -69,17 +69,6 @@ function contracts(source, filename) {
   return literals.sort();
 }
 
-// Reviewed runtime-mode additions: retain every original contract and permit only this exact
-// multiset, so the localization guard still rejects removed, rewritten, or extra contract values.
-const approvedContractAdditions = {
-  "app/src/lib/deployment/queries.ts": ["boolean", "local", "local", "local"],
-  "app/src/routes/_authed/admin/learning.tsx": [
-    "/admin/skills",
-    "@/lib/deployment/queries",
-    "local",
-  ],
-};
-
 // Always verify key localized route and capability contracts even on a clean working tree (CI).
 const contractChecks = {
   "app/src/lib/deployment/queries.ts": ["/api/capabilities", "local"],

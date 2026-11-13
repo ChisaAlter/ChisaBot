@@ -99,7 +99,7 @@ function nativeOptions(value: unknown): { labels: string[]; selected?: string; t
           ? Object.keys(child)[0]!
           : null;
     const descriptor = key ? parseDescriptor(key) : null;
-    if (!descriptor || descriptor.role !== "option") return null;
+    if (descriptor?.role !== "option") return null;
     const label = cutAtCodeUnits(descriptor.name, 100);
     labels.push(label);
     if (descriptor.flags.has("selected") && descriptor.flags.get("selected") !== "false") selected = label;

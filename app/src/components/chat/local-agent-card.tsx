@@ -83,7 +83,6 @@ export function LocalAgentCard({
 function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -100,7 +99,6 @@ function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
     >
       {lines.length ? (
         lines.map((line, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
           <div
             className={cn("la-line", `is-${line.kind}`)}
             key={`${line.at}-${index}`}
@@ -134,7 +132,7 @@ function DiffBlock({
   });
   const [all, setAll] = useState(false);
   const diff = task.diff;
-  if (!diff || !diff.files.length) return null;
+  if (!diff?.files.length) return null;
   const shown = all ? diff.files : diff.files.slice(0, 6);
   return (
     <div className="la-diff" data-testid="local-agent-diff">

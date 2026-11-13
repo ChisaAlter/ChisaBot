@@ -184,7 +184,7 @@ export function parseSkillMarkdown(
   const text = raw.replace(/\r\n/g, "\n").trim();
   if (!text) throw new PluginRefusedError("skills", "技能内容不能为空。");
 
-  let meta: Record<string, string> = {};
+  const meta: Record<string, string> = {};
   let body = text;
   const fmMatch = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
   if (fmMatch) {

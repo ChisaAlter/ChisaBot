@@ -423,14 +423,12 @@ function ConnectionSection({
     );
   }
   return (
-    <>
-      <section className="grid gap-2">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {"端点"}
-        </h2>
-        <p className="break-all font-mono text-sm">{profile.endpoint}</p>
-      </section>
-    </>
+    <section className="grid gap-2">
+      <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {"端点"}
+      </h2>
+      <p className="break-all font-mono text-sm">{profile.endpoint}</p>
+    </section>
   );
 }
 

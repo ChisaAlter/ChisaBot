@@ -42,7 +42,7 @@ export function MessageFind({
     if (!visible || !messageId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let started = Date.now();
+    const started = Date.now();
     let found = false;
     let release: (() => void) | undefined;
     const attempt = () => {

@@ -10,7 +10,6 @@ import {
   context,
   errors,
   log,
-  mkBot,
   newPage,
   send,
   transcript,

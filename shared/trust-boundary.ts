@@ -106,7 +106,6 @@ export function extractComposePortLines(yamlText: string): string[] {
         inPorts = false;
       } else if (/^\s*-\s*/.test(line)) {
         lines.push(line.trim());
-        continue;
       } else {
         inPorts = false;
       }

@@ -4,6 +4,7 @@ import { ContinuationDeferred } from "../src/conversations/continuation-work";
 import { createDatabase } from "../src/db/client";
 import { panelTaskRequests } from "../src/db/schema/panels";
 import { createNormalPanelTaskService } from "../src/panels/normal-task-service";
+import type { TurnRunner } from "../src/turns/types";
 import { createPanelStore } from "../src/panels/store";
 import { testDatabaseUrl } from "./support/database";
 
@@ -71,7 +72,7 @@ test("normal task starts once with frozen owner Bot and durable run, query never
   const finished = new Promise<{ replyText: string }>(
     (resolve) => (finish = resolve),
   );
-  let captured: any;
+  let captured: Parameters<TurnRunner>[0] | undefined;
   const service = createNormalPanelTaskService({
     database: db,
     createConversation: async () => ({
@@ -79,7 +80,7 @@ test("normal task starts once with frozen owner Bot and durable run, query never
       threadId: `panel-task:${r.id}`,
     }),
     isWaiting: () => false,
-    run: async (input: any) => {
+    run: async (input) => {
       starts++;
       captured = input;
       return finished;
@@ -113,7 +114,8 @@ test("normal task starts once with frozen owner Bot and durable run, query never
 });
 test("cancel uses exact saved run and aborts without starting another turn", async () => {
   const r = await request();
-  let signal!: AbortSignal, stopped: any;
+  let signal!: AbortSignal,
+    stopped: { threadId: string; runId: string } | undefined;
   const service = createNormalPanelTaskService({
     database: db,
     createConversation: async () => ({
@@ -121,12 +123,12 @@ test("cancel uses exact saved run and aborts without starting another turn", asy
       threadId: `panel-task:${r.id}`,
     }),
     isWaiting: () => false,
-    run: async (input: any) => {
+    run: async (input) => {
       signal = input.signal;
       return new Promise(() => {});
     },
     read: async () => ({ status: "running" }),
-    stop: async (input: any) => {
+    stop: async (input) => {
       stopped = input;
     },
   });

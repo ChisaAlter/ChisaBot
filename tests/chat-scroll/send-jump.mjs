@@ -48,7 +48,7 @@ const ctx = await browser.newContext({
     : {}),
 });
 await ctx.addInitScript(
-  ({ bot, thread }) => {
+  ({ bot: _bot, thread: _thread }) => {
     try {
       localStorage.setItem("chisabot-theme", "light");
     } catch {}

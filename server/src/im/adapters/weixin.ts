@@ -71,8 +71,9 @@ export async function weixinQrStatus(
 }
 
 /** getupdates 里的一条消息 → ImInbound（只要用户发来的；群消息这一版不接）。 */
+// biome-ignore lint/suspicious/noExplicitAny: ilink getupdates 消息载荷字段随 message_type 变化
 export function parseWeixinMessage(msg: any): ImInbound | null {
-  if (!msg || msg.message_type !== 1) return null;
+  if (msg?.message_type !== 1) return null;
   if (msg.group_id) return null;
   const userId = String(msg.from_user_id ?? "");
   if (!userId) return null;
@@ -155,6 +156,7 @@ export class WeixinAdapter extends LoopAdapter {
     this.expired = false;
     let first = true;
     while (!this.stopped) {
+      // biome-ignore lint/suspicious/noExplicitAny: ilink 接口回包 JSON 形状按协议字段取用
       let body: any;
       try {
         body = await this.post("ilink/bot/getupdates", { get_updates_buf: this.cursor }, 45_000);

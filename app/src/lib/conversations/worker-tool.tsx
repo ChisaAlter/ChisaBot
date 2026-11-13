@@ -50,7 +50,7 @@ export function WorkerTool() {
     parameters,
     render: ({ parameters: given, result }) => {
       const id = workerIdOf(result);
-      if (id === null) return <></>;
+      if (id === null) return null;
       return (
         <WorkerCard pendingTitle={pendingWorkerTitle(given)} workerId={id} />
       );

@@ -138,7 +138,6 @@ export function PanelBoard<T extends { id: string; title: string }>({
    * 换机器人要重新读它自己的那份（同一台设备、按机器人记，DESIGN.md §88）。
    */
   const layoutBot = useRef(botId);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: idsKey 变化（面板增删）时也要重新对齐，effect 里读的是 ref。
   useEffect(() => {
     const switched = layoutBot.current !== botId;
     // 还没有面板（列表在加载 / 这个机器人确实没有面板）：不动记下的布局，也不把「换过机器人」这件事记账。

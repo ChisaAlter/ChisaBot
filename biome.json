@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
   "files": {
     "includes": [
       "**",
@@ -9,7 +9,6 @@
       "!app/src/routeTree.gen.ts",
       "!app/src/lib/qr/qrcodegen.ts",
       "!app/src/vendor",
-      "!desktop/src-tauri/gen",
       "!**/target",
       "!server/drizzle",
       "!server/src/workflows/presets/*.md",
@@ -23,6 +22,9 @@
   "linter": {
     "enabled": true,
     "rules": {
+      "style": {
+        "noNonNullAssertion": "info"
+      },
       "a11y": {
         "noLabelWithoutControl": {
           "level": "error",
@@ -51,6 +53,22 @@
         "rules": {
           "style": {
             "noNonNullAssertion": "off"
+          },
+          "performance": {
+            "useDomNodeTextContent": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.css"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noImportantStyles": "off"
+          },
+          "style": {
+            "noDescendingSpecificity": "off"
           }
         }
       }

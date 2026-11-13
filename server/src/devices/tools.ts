@@ -309,7 +309,7 @@ export function deviceGuidance(
       .map(([cap, policy]) => `${CAPABILITY_INFO[cap as keyof typeof CAPABILITY_INFO]?.label ?? cap}${policy === "ask" ? "（每次需用户批准）" : ""}`);
     const full = fullAccessActive({ fullAccessUntil: device.fullAccessUntil ?? null, paused: device.paused, revoked: device.revoked ?? false }, now);
     if (full && isOnline(device.id))
-      return `- 「${device.name}」 (${device.osVersion || platformName(device.platform)}, deviceId ${device.id}): ONLINE now, 完全访问 FULL ACCESS is ON (the person turned it on${device.fullAccessUntil && device.fullAccessUntil.startsWith("9999") ? ", no expiry" : ` until ${device.fullAccessUntil}`}): every device_* tool runs without approval, any path on the whole computer, long/background commands without the 10-minute cap, elevated: true allowed. Everything is still logged and the person can hit 紧急停止 at any time.`;
+      return `- 「${device.name}」 (${device.osVersion || platformName(device.platform)}, deviceId ${device.id}): ONLINE now, 完全访问 FULL ACCESS is ON (the person turned it on${device.fullAccessUntil?.startsWith("9999") ? ", no expiry" : ` until ${device.fullAccessUntil}`}): every device_* tool runs without approval, any path on the whole computer, long/background commands without the 10-minute cap, elevated: true allowed. Everything is still logged and the person can hit 紧急停止 at any time.`;
     const state = isOnline(device.id)
       ? device.paused
         ? "online but on emergency stop (紧急停止): every remote action is refused until the person lifts it"
@@ -863,7 +863,7 @@ export function deviceTools(options: {
                 params: { name: args.toolName, arguments: args.toolArgs ?? {} },
               });
         const payloadB64 = Buffer.from(`${initMsg}\n${notifyMsg}\n${reqMsg}\n`, "utf8").toString("base64");
-        const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\\"id\\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
+        const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\"id\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
         return run(
           "shell",
           args.deviceId,

@@ -169,7 +169,7 @@ function ProfileForm({
 }) {
   const { data: user } = useQuery(currentUserQueryOptions());
   const queryClient = useQueryClient();
-  const initialName = user && user.name && user.name !== user.email ? user.name : "";
+  const initialName = user?.name && user.name !== user.email ? user.name : "";
   const [name, setName] = useState(initialName);
   const [crop, setCrop] = useState<Crop | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
@@ -207,7 +207,6 @@ function ProfileForm({
       setPickError(e instanceof Error ? e.message : "图片无法读取");
     }
   }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 按 src 释放 blob URL；crop 的其他字段变化不需要重新释放
   useEffect(() => () => (crop ? URL.revokeObjectURL(crop.src) : undefined), [crop?.src]);
 
   const trimmed = name.trim();

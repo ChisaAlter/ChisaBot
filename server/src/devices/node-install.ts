@@ -70,7 +70,7 @@ if [ -z "$NODE" ]; then
   MIRROR=\${NODE_MIRROR:-https://nodejs.org/dist}
   dl "$MIRROR/latest-v22.x/SHASUMS256.txt" "$DIR/node.sums" || { echo "连不上 $MIRROR；可以设置 NODE_MIRROR=https://npmmirror.com/mirrors/node 重试，或先自行安装 Node.js 18+"; exit 1; }
   FILE=$(grep -o "node-v22[.0-9]*-$P-$A.tar.gz" "$DIR/node.sums" | head -n 1)
-  SUM=$(grep " $FILE\$" "$DIR/node.sums" | cut -d' ' -f1)
+  SUM=$(grep " $FILE$" "$DIR/node.sums" | cut -d' ' -f1)
   [ -n "$FILE" ] || { echo "找不到 $P-$A 的 Node.js 安装包"; exit 1; }
   echo "下载 $FILE …"
   dl "$MIRROR/latest-v22.x/$FILE" "$DIR/node.tgz" || { echo "下载 Node.js 失败；可以设置 NODE_MIRROR=https://npmmirror.com/mirrors/node 重试，或先自行安装 Node.js 18+"; exit 1; }

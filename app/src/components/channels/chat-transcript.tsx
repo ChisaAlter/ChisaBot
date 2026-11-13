@@ -843,7 +843,6 @@ function SettleAtEnd({
   /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
   const releaseRef = useRef<(() => boolean) | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息等输入变化时重跑；ref 与 setter 不用列
   useLayoutEffect(() => {
     const s = state.current;
     s.hydrating = hydrating;
@@ -931,7 +930,7 @@ function SettleAtEnd({
             row.getBoundingClientRect().bottom -
             blank;
           const want = Math.round((element.clientHeight * 2) / 3) - below;
-          setSlack(want > 0 ? want : 0);
+          setSlack(Math.max(want, 0));
         } else if (s.slack > 0) {
           /*
            * 没有可以垫的目标（标记不在这批 DOM 里）：照旧把留白让给滚动容器的 spacer。等它对齐完（微任务之后）
@@ -1005,7 +1004,6 @@ function SettleAtEnd({
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
   // 回来时在底部、底下有留白：第一帧之前就把留白放回去（§88.3）。没在恢复、也没在回答：不放（§93.3）。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!memo?.atBottom || memo.spacer <= 0 || !element) return;
@@ -1013,7 +1011,6 @@ function SettleAtEnd({
     setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载时建立观察器；里面读的都是 ref，不随渲染变化
   useEffect(() => {
     const element = viewport.current;
     const content = element?.querySelector<HTMLElement>(
@@ -1612,19 +1609,6 @@ function SettleAtEnd({
 }
 
 /**
- * How many of the newest turns cascade when a channel is opened, and how far apart.
- *
- * The tail rather than the head: opening a channel lands you at the bottom, so these are the ones
- * actually on screen. Staggering from the top of a long history would spend the whole budget on
- * messages nobody can see and leave the visible ones arriving last.
- *
- * Twelve at 40ms is 440ms of cascade before the last one starts. Past roughly half a second this
- * stops reading as settling and starts reading as waiting.
- */
-const FIRST_PAINT_STAGGER_COUNT = 12;
-const FIRST_PAINT_STAGGER_SECONDS = 0.04;
-
-/**
  * Decide, once per message, whether it waits its turn.
  *
  * FROZEN PER ID ON PURPOSE. `delay` is a prop on a memoised component, so a value that changed
@@ -1980,7 +1964,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
     setUndoBusy(true);
     setUndoError(null);
     try {
-      if (item.noteId && item.noteId.startsWith("mem_")) {
+      if (item.noteId?.startsWith("mem_")) {
         const response = await fetch(
           `/api/memory-notes/${encodeURIComponent(item.noteId)}`,
           {
@@ -3326,8 +3310,6 @@ function assertNever(_item: never): null {
   return null;
 }
 
-const SEND_SCROLL_MS = 700;
-
 function useSmoothSendScroll(
   _viewport: React.RefObject<HTMLDivElement | null>,
   newestUserMessageId: string | null,
@@ -3408,7 +3390,7 @@ export function unansweredTurn(
 ): TranscriptItem | null {
   if (busy || queued > 0) return null;
   const last = items.at(-1);
-  if (!last || last.kind !== "text" || last.role !== "user") return null;
+  if (last?.kind !== "text" || last.role !== "user") return null;
   if (!isPersonSentMessage(last.role, last.text)) return null;
   if (stoppedTurns?.has(last.id)) return null;
   return last;
@@ -4841,8 +4823,7 @@ export function compactTurns(
     const prevTurn = index > 0 ? turns[index - 1] : undefined;
     const prevUsers = prevTurn ? personTextsOf(prevTurn.users) : [];
     const prevTurnStopped =
-      prevTurn !== undefined &&
-      prevTurn.users.some((user) => stopped.has(turnOf(user)));
+      prevTurn?.users.some((user) => stopped.has(turnOf(user)));
     const prevInterjected =
       prevTurn !== undefined &&
       !prevTurnStopped &&

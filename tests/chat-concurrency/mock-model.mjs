@@ -26,7 +26,6 @@ function plan(messages) {
   const last = users[users.length - 1];
   const lastText = last ? textOf(last.m) : "";
   const tools = last ? messages.slice(last.i + 1).filter((m) => m.role === "tool").length : 0;
-  const system = messages.filter((m) => m.role === "system").map(textOf).join("\n");
   const all = messages.map(textOf).join("\n");
 
   const frame = messages.findIndex((m) => m.role === "user" && textOf(m).startsWith("你现在是后台任务「"));

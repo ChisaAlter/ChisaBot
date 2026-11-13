@@ -43,7 +43,7 @@ test("easeNextSkyChange sets the attribute and clears it after the fade", async 
   const g = globalThis as unknown as { window?: unknown };
   const hadWindow = "window" in g;
   const prev = g.window;
-  g.window = { setTimeout: (fn: () => void) => (timers.push(fn), timers.length), clearTimeout: () => {} };
+  g.window = { setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: () => {} };
   try {
     const { easeNextSkyChange } = await import("../src/components/sky-background");
     easeNextSkyChange(root);

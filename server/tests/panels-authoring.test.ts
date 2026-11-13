@@ -25,7 +25,7 @@ function fixture() {
   let allowed = true;
   const service = createPanelAuthoring({
     store,
-    authorize: async (c, manage) => {
+    authorize: async (c, _manage) => {
       if (!allowed || c.actorId !== ctx.actorId || c.botId !== ctx.botId)
         throw Error("denied");
     },
@@ -42,7 +42,7 @@ test("tools_cannot_publish_or_grant", async () => {
   const f = fixture();
   const session = await f.service.beginPanelAuthoring(f.ctx);
   const tools = await f.service.tools(f.ctx, session.sessionId);
-  expect(tools.map((t: any) => t.name)).toEqual([
+  expect(tools.map((t: { name: string }) => t.name)).toEqual([
     "proposePanelDraft",
     "revisePanelDraft",
   ]);

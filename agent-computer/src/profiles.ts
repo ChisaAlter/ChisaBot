@@ -924,7 +924,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
      */
     async tabs(botId: string): Promise<TabsView> {
       const record = live.get(botId);
-      if (!record || !record.context.browser()?.isConnected()) {
+      if (!record?.context.browser()?.isConnected()) {
         const saved = LOCAL_CHROME ? null : await readSavedTabs(directoryFor(botId));
         return {
           running: false,

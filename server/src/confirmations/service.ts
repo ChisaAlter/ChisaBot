@@ -204,7 +204,7 @@ export const digestOf = (tool: string, args: unknown) =>
 
 /** 能当场答确认卡片的回合：网页聊天挂起等卡，原生 App 自己拉 /api/confirmations 决定；「confirm:」是用户刚确认后接着做的那一轮。 */
 export function interactiveInitiator(initiator: AuditInitiator | undefined) {
-  if (!initiator || initiator.kind !== "routine") return true;
+  if (initiator?.kind !== "routine") return true;
   return initiator.id.startsWith("confirm:");
 }
 

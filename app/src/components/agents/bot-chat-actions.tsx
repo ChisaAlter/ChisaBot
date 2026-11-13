@@ -89,7 +89,7 @@ export function RegisterBotChat({
 
 /** 左栏机器人行里的计算机提示：只在计算机已打开或需要你时出现（琥珀色圆点 = 需要你）。 */
 export function BotRowComputerChip({ chat }: { chat: BotChatContext | null }) {
-  if (!chat || !chat.canComputer || !(chat.computerOpen || chat.needsYou)) return null;
+  if (!chat?.canComputer || !(chat.computerOpen || chat.needsYou)) return null;
   const label = chat.needsYou ? "计算机需要你" : chat.computerOpen ? "关闭计算机" : "打开计算机";
   return (
     <Tooltip>

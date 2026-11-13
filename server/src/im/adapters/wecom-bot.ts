@@ -18,6 +18,7 @@ import { dataText, LoopAdapter, randomId } from "./base";
 
 export const WECOM_WS_URL = "wss://openws.work.weixin.qq.com";
 
+// biome-ignore lint/suspicious/noExplicitAny: 企业微信回调报文字段随 msgtype 变化
 export function parseWecomMessage(body: any): ImInbound | null {
   if (!body?.msgid) return null;
   const chatType = body.chattype === "group" ? "group" : "private";
@@ -53,6 +54,7 @@ export class WecomBotAdapter extends LoopAdapter {
   readonly markdown = true;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private missed = 0;
+  // biome-ignore lint/suspicious/noExplicitAny: 企业微信 WS 应答帧 body 形状随 cmd 变化
   private acks = new Map<string, { resolve: (frame: any) => void; timer: ReturnType<typeof setTimeout> }>();
   /** msgid → {req_id, stream_id}：回复时用。 */
   private streams = new Map<string, { reqId: string; streamId: string; at: number }>();
@@ -89,7 +91,7 @@ export class WecomBotAdapter extends LoopAdapter {
     await this.openSocket(WECOM_WS_URL, {
       onOpen: async () => {
         const frame = await this.request({ cmd: "aibot_subscribe", body: { bot_id: botId, secret } }, "aibot_subscribe");
-        if (!frame || frame.errcode !== 0) {
+        if (frame?.errcode !== 0) {
           throw new Error(`企业微信订阅失败：${frame ? `${frame.errcode} ${frame.errmsg ?? ""}` : "10 秒没有回应"}（检查 Bot ID / Secret，机器人是否选了「长连接」）`);
         }
         authed = true;
@@ -114,6 +116,7 @@ export class WecomBotAdapter extends LoopAdapter {
   }
 
   /** 发一帧并等同一个 req_id 的回执。 */
+  // biome-ignore lint/suspicious/noExplicitAny: 应答 body 形状随 cmd 变化，调用方按协议取用
   private request(frame: { cmd: string; body?: unknown; headers?: Record<string, string> }, prefix: string, timeoutMs = 10_000): Promise<any> {
     const reqId = frame.headers?.req_id ?? `${prefix}_${randomId()}`;
     return new Promise((resolve) => {
@@ -189,7 +192,7 @@ export class WecomBotAdapter extends LoopAdapter {
 
   private async active(chatid: string, content: string) {
     const ack = await this.request({ cmd: "aibot_send_msg", body: { chatid, msgtype: "markdown", markdown: { content } } }, "send");
-    if (!ack || ack.errcode !== 0) throw new Error(`企业微信发送失败：${ack ? `${ack.errcode} ${ack.errmsg ?? ""}` : "没有回执"}`);
+    if (ack?.errcode !== 0) throw new Error(`企业微信发送失败：${ack ? `${ack.errcode} ${ack.errmsg ?? ""}` : "没有回执"}`);
   }
 }
 

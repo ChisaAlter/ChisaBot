@@ -28,8 +28,8 @@ await ctx.addInitScript((dark) => {
     const portal = pop?.closest("[data-base-ui-portal]") || pop?.parentElement;
     const mo = new MutationObserver((ms) => {
       for (const m of ms) {
-        if (portal && portal.contains(m.target)) continue;
-        if (m.target.closest && m.target.closest('[data-slot="dialog-overlay"],[data-slot="dialog-content"]')) continue;
+        if (portal?.contains(m.target)) continue;
+        if (m.target.closest?.('[data-slot="dialog-overlay"],[data-slot="dialog-content"]')) continue;
         w.__rec.outsideMut++;
       }
       if (!w.__rec.gone && !document.querySelector('[data-slot="dialog-content"]')) w.__rec.gone = performance.now();
@@ -101,7 +101,7 @@ for (const p of PATHS) {
     await openDialog();
     if (i === 0) await page.screenshot({ path: `/out/open-${p}.png` });
     const tracing = process.env.TRACE === "1" && i === 1;
-    let chunks = [];
+    const chunks = [];
     if (tracing) {
       cdp.removeAllListeners("Tracing.dataCollected");
       cdp.on("Tracing.dataCollected", (e) => chunks.push(...e.value));

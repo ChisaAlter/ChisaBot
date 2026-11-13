@@ -27,7 +27,6 @@ export function LandingRedirect() {
   const navigate = useNavigate();
   const target = landing.state === "ready" ? landing.target : null;
   const key = target ? JSON.stringify(target) : null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the stable identity of `target`
   useEffect(() => {
     if (!target) return;
     const destination =

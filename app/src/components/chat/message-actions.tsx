@@ -42,7 +42,7 @@ function PillAction({
   icon: ReactNode;
   label: string;
   pending: string;
-  run: () => Promise<unknown> | void;
+  run: () => Promise<unknown> | undefined;
   testId: string;
 }) {
   const action = useAsyncAction(

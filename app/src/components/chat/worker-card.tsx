@@ -416,7 +416,6 @@ export function WorkerCardBody({
           >
             <ol className="worker-plan" data-testid="worker-plan">
               {worker.plan.map((step, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
                 <li
                   className={cn("worker-plan-step", `is-${step.status}`)}
                   key={`${index}-${step.text}`}

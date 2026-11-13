@@ -62,6 +62,7 @@ export function errorText(error: unknown): string {
 }
 
 /** 平台接口返回非 2xx 时带上状态码和一截正文。 */
+// biome-ignore lint/suspicious/noExplicitAny: IM 各平台回包 JSON 形状不一，调用方按各自协议字段取用
 export async function readJson(response: Response, what: string): Promise<any> {
   const body = await response.text();
   let parsed: unknown;

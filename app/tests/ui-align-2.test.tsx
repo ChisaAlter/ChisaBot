@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { edgePunct, labelText, T } from "../src/components/ui/button";
 
 /* DESIGN.md §82.6–§82.10 对齐第二轮的静态护栏（真浏览器测量在 tests/ui-align/）。 */
 const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
-const html = (node: ReactNode) => renderToStaticMarkup(<>{node}</>);
+const html = (node: ReactNode) => renderToStaticMarkup(node as ReactElement);
 
 test("trailing / leading full-width brackets are wrapped so no-halt fonts can trim them (§82.7)", () => {
   expect(html(labelText("检查（不生成图片）"))).toBe('<span class="btn-t">检查（不生成图片<span class="t-close">）</span></span>');

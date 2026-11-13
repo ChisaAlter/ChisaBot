@@ -193,7 +193,6 @@ export function WorkRow({
   }, [live, turnKey]);
   const step = live ? currentWorkStep(calls) : null;
   const stepKey = step ? `${step.name}\n${step.label}` : "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stepKey carries step.
   useEffect(() => {
     if (!live) return;
     announceStep(step);
@@ -309,7 +308,6 @@ export function WorkRow({
               }
               data-kind={step.kind}
               data-state={step.state}
-              // biome-ignore lint/suspicious/noArrayIndexKey: 静态列表：只追加、不重排、没有稳定 id
               key={`${index}:${step.text}`}
             >
               {step.text}

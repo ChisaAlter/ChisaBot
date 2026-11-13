@@ -98,7 +98,6 @@ export function useMutationFeedback(mutation: MutationLike, when = true): AsyncS
   const machine = useFeedbackMachine();
   const watching = useRef(false);
   const { begin, settle, reset } = machine;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useEffect(() => {
     if (mutation.status === "pending") {
       if (when) {

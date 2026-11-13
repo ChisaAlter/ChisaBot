@@ -533,7 +533,6 @@ export function ChannelChat({
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
   const mountReadOk = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时读一次；cached 是 useState 初始化后不再变的常量，earlyRead 是 ref
   useEffect(() => {
     const read = earlyRead.current;
     if (!read) return;
@@ -2023,7 +2022,7 @@ export function ChannelChat({
       const user = agentRef.current.messages.find(
         (message) => message.id === messageId,
       );
-      if (!user || user.role !== "user")
+      if (user?.role !== "user")
         throw new Error("这条消息已经不在了，刷新看看。");
       const content = withEditedText(user.content, text, removedPartIndices);
       if (content === null) throw new Error("消息不能是空的。");

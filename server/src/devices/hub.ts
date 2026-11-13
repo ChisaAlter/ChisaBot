@@ -233,7 +233,7 @@ export function createDeviceHub(options: {
     if (roots.length >= MAX_ALLOWED_ROOTS)
       return `允许的文件夹已经有 ${roots.length} 个（上限 ${MAX_ALLOWED_ROOTS}），没法再加 ${folder}。请到 设置 → 设备 → 这台设备 删掉不用的文件夹。`;
     const updated = await store.update(record.id, { allowedRoots: [...roots, folder] });
-    if (!updated || !updated.allowedRoots.some((root) => root.toLowerCase() === folder.toLowerCase())) return `没能把 ${folder} 加入允许的文件夹。`;
+    if (!updated?.allowedRoots.some((root) => root.toLowerCase() === folder.toLowerCase())) return `没能把 ${folder} 加入允许的文件夹。`;
     await store.audit({
       deviceId: record.id,
       ownerUserId: record.ownerUserId,

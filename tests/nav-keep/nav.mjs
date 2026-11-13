@@ -224,7 +224,7 @@ async function waitChat(page) {
     .waitFor({ timeout: 60000 });
   await page.waitForTimeout(6000);
 }
-async function openMenu(page, width) {
+async function openMenu(page, _width) {
   let trig = page.locator('[aria-label="账号与设置"]:visible').first();
   if (!(await trig.count())) {
     const drawer = page.locator('button[aria-label^="打开"]:visible').first();
@@ -251,7 +251,7 @@ async function menuGo(page, width, label) {
         .click();
     });
 }
-async function clickBotInRail(page, width, name) {
+async function clickBotInRail(page, _width, name) {
   const rail = page.locator('[data-testid="left-rail"]:visible');
   if (!(await rail.count())) {
     const drawer = page.locator('button[aria-label^="打开"]:visible').first();
@@ -331,7 +331,7 @@ async function measureReturn(page, label, before, loadId, reqs) {
     Math.abs((firstPaint.firstTop ?? 0) - (before.firstTop ?? 0)) <= 4;
   // movement after first paint: changes of firstId/firstTop
   let moves = 0;
-  for (let i = (firstChat < 0 ? 0 : firstChat) + 1; i < fr.length; i++) {
+  for (let i = Math.max(0, firstChat) + 1; i < fr.length; i++) {
     if (
       fr[i].firstId !== fr[i - 1].firstId ||
       Math.abs((fr[i].firstTop ?? 0) - (fr[i - 1].firstTop ?? 0)) > 2

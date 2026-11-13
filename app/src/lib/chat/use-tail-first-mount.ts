@@ -176,7 +176,6 @@ export function useTailFirstMount(
       el && !atBottomRef.current && !nativeAnchor() ? el.scrollHeight : 0;
   }, [viewport]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: target 只用于判断当前批次是否已追完
   useLayoutEffect(() => {
     const el = viewport.current;
     const prevStart = startRef.current;

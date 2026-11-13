@@ -57,7 +57,6 @@ function SeriesPaths({
         const first = points[0]!;
         const last = points[points.length - 1]!;
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: segments have no identity beyond their order.
           <g key={index}>
             {area && points.length > 1 ? (
               <path
@@ -304,7 +303,6 @@ export function Chart({
             style={{ "--jr-series": String(all.length) } as CSSProperties}
           >
             {Array.from({ length: count }, (_, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: one column per data index.
               <div
                 className={cn("jr-bar-col", hover === i && "is-hover")}
                 key={i}
@@ -525,7 +523,6 @@ export function Ring({
           {parts ? (
             <ul className="jr-ring-legend">
               {parts.map((p, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: legend rows follow segment order.
                 <li className={toneClass(partTone(i))} key={i}>
                   <i />
                   <span className="jr-ring-legend-k">{p.label}</span>
@@ -642,7 +639,6 @@ export function HeatStrip({
         {data.map((v, i) => (
           <span
             className={`jr-heat-cell is-l${heatLevel(v, max)}`}
-            // biome-ignore lint/suspicious/noArrayIndexKey: cells are positional.
             key={i}
             title={[tips[i], v === null ? "无数据" : String(v)]
               .filter(Boolean)

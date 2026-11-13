@@ -11,6 +11,7 @@ export function telegramBase(config: Record<string, string>, token: string) {
   return `${(config.apiBase || "https://api.telegram.org").replace(/\/+$/, "")}/bot${token}`;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: Telegram Update 载荷字段随消息类型变化
 export function parseTelegramUpdate(update: any, me: { id: number; username: string } | null): ImInbound | null {
   const message = update?.message;
   if (!message?.chat || !message.from || message.from.is_bot) return null;
@@ -97,6 +98,7 @@ export class TelegramAdapter extends LoopAdapter {
     this.markConnected(`@${this.me.username}`);
     this.ctx.log("info", `已连上 Telegram（@${this.me.username}）`);
     while (!this.stopped) {
+      // biome-ignore lint/suspicious/noExplicitAny: getUpdates 返回的 Update 形状随消息类型变化
       let updates: any[];
       try {
         updates = await this.call("getUpdates", { offset: this.offset, timeout: 30, allowed_updates: ["message"] }, 40_000);

@@ -12,9 +12,11 @@
 export function visiblePageText(): string {
   const body = document.body;
   if (!body) return "";
+  // biome-ignore lint/performance/useDomNodeTextContent: 读的是渲染后的可见正文
   const live = body.innerText ?? "";
   if (live.trim()) return live;
   const clone = body.cloneNode(true) as HTMLElement;
   for (const node of clone.querySelectorAll("script, style, noscript, svg")) node.remove();
+  // biome-ignore lint/performance/useDomNodeTextContent: 同上——克隆件也只为拿可见文本
   return clone.innerText ?? "";
 }

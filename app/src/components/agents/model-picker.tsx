@@ -39,7 +39,7 @@ function tailOf(id: string) {
 /** The name a pill can afford: the catalog label when it has one, otherwise the id's tail. */
 function shortName(id: string, models: readonly ModelCatalogEntry[]) {
   const entry = models.find((model) => model.id === id);
-  if (entry && entry.label && entry.label !== entry.id) return entry.label;
+  if (entry?.label && entry.label !== entry.id) return entry.label;
   return tailOf(id);
 }
 

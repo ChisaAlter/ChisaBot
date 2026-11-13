@@ -68,6 +68,7 @@ class FakeWs implements WsLike {
   push(data: unknown) {
     this.onmessage?.({ data });
   }
+  // biome-ignore lint/suspicious/noExplicitAny: IM 协议帧测试桩，断言按平台协议字段逐层访问
   json(): any[] {
     return this.sent
       .filter((item) => typeof item === "string")
@@ -75,6 +76,7 @@ class FakeWs implements WsLike {
   }
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: 请求体测试桩，按 IM 平台协议字段断言
 type FetchCall = { url: string; init?: RequestInit; body: any };
 
 function harness(
@@ -95,6 +97,7 @@ function harness(
     setStatus: (status) => statuses.push(status),
     onMessage: (message) => messages.push(message),
     fetch: async (url, init) => {
+      // biome-ignore lint/suspicious/noExplicitAny: 同上，请求体 JSON 形状按平台协议断言
       let body: any = null;
       try {
         body = init?.body ? JSON.parse(String(init.body)) : null;

@@ -157,7 +157,6 @@ const LiveBody = memo(function LiveBody({
    * 直连数据源：服务端会把最近一次的好值塞进 `spec.state.live`（手机 / 第一帧也有数字），这里用
    * 轮询拿到的更快的值按来源覆盖同名项；之后用 store.update 写 `/live/<id>`：仓库不重建、组件不重挂。
    */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one store per spec version.
   const store = useMemo(() => {
     const baked = ((spec as Spec | null)?.state?.live ?? {}) as Record<
       string,

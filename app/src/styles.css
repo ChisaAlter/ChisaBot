@@ -9047,7 +9047,6 @@ html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 
    内容一律跟着容器，不再有东西伸出抽屉框。 */
 html[data-phone] .glass-shell [data-slot="sidebar"][data-mobile="true"],
 html[data-phone] [data-slot="sidebar"][data-mobile="true"] {
-  /* biome-ignore lint/complexity/noImportantStyles: ui/sidebar.tsx 在元素上用的是 Tailwind important 类 w-(--sidebar-width)!，这里也得是 !important 才能生效。 */
   width: var(--sidebar-width) !important;
 }
 [data-slot="sidebar"][data-mobile="true"] * { min-width: 0; }

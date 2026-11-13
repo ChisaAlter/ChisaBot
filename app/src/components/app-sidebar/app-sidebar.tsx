@@ -292,7 +292,10 @@ function SearchHitRow({
             {title}
           </span>
           {meta ? (
-            <span className="shrink-0 text-[11px] leading-4 text-muted-foreground" data-testid="search-hit-meta">
+            <span
+              className="shrink-0 text-[11px] leading-4 text-muted-foreground"
+              data-testid="search-hit-meta"
+            >
               {meta}
             </span>
           ) : null}
@@ -386,7 +389,12 @@ function BotRow({
   const content = (
     <>
       <span className="glass-bot-ava">
-        <ChannelAvatar participantIds={[bot.id]} selected={selected} size={28} working={latest?.busy ?? false} />
+        <ChannelAvatar
+          participantIds={[bot.id]}
+          selected={selected}
+          size={28}
+          working={latest?.busy ?? false}
+        />
         {main ? (
           <span aria-hidden className="glass-bot-star">
             <IconStarFilled className="size-2.5" />
@@ -474,7 +482,9 @@ function BotRow({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
-          onReplaceMain={main && canReplaceMain ? () => setPickerOpen(true) : null}
+          onReplaceMain={
+            main && canReplaceMain ? () => setPickerOpen(true) : null
+          }
           paused={paused}
         />
       </DropdownMenu>
@@ -572,7 +582,13 @@ function BotMenuContent({
     >
       <DropdownMenuItem
         className="glass-mi"
-        render={<Link onClick={closeDrawer} params={{ agentId: bot.id }} to="/bots/$agentId" />}
+        render={
+          <Link
+            onClick={closeDrawer}
+            params={{ agentId: bot.id }}
+            to="/bots/$agentId"
+          />
+        }
       >
         <IconUserCircle className={icon} />
         <span className="min-w-0 flex-1">{"机器人资料"}</span>
@@ -856,7 +872,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           <EmptyHeader>
                             <EmptyTitle>{"搜索暂时不可用"}</EmptyTitle>
                             <EmptyDescription className="text-pretty">
-                              {"消息正文搜索没成功，请稍后再试。会话名和摘要的匹配结果仍会显示在下面（如果有）。"}
+                              {
+                                "消息正文搜索没成功，请稍后再试。会话名和摘要的匹配结果仍会显示在下面（如果有）。"
+                              }
                             </EmptyDescription>
                           </EmptyHeader>
                         </Empty>
@@ -898,7 +916,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             >
                               <SearchHitRow
                                 agentIds={channel.agentIds}
-                                botName={botNameOf(hit.agentId ?? channel.agentIds[0])}
+                                botName={botNameOf(
+                                  hit.agentId ?? channel.agentIds[0],
+                                )}
                                 hit={{
                                   ...hit,
                                   name: channel.name,
@@ -949,48 +969,44 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </div>
             </>
           ) : (
-            <>
-              <div className="glass-side-scroll glass-bot-scroll">
-                <HiddenChatBotRow
-                  known={new Set(roster.map((bot) => bot.id))}
-                />
-                {mainBot ? (
-                  <>
-                    <div className="glass-sec">
-                      <span className="glass-sec-main">
-                        <IconStarFilled className="size-3" />
-                        {"主机器人"}
-                      </span>
+            <div className="glass-side-scroll glass-bot-scroll">
+              <HiddenChatBotRow known={new Set(roster.map((bot) => bot.id))} />
+              {mainBot ? (
+                <>
+                  <div className="glass-sec">
+                    <span className="glass-sec-main">
+                      <IconStarFilled className="size-3" />
+                      {"主机器人"}
+                    </span>
+                  </div>
+                  <div className="glass-bot-list">{row(mainBot, true)}</div>
+                  {others.length > 0 ? (
+                    <div className="glass-sec mt-2">
+                      <span>{"其他"}</span>
                     </div>
-                    <div className="glass-bot-list">{row(mainBot, true)}</div>
-                    {others.length > 0 ? (
-                      <div className="glass-sec mt-2">
-                        <span>{"其他"}</span>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-                <div className="glass-bot-list relative">
-                  <PresenceList>
-                    {others.map((bot, index) => (
-                      <PresenceItem key={bot.id} layoutKey={index}>
-                        {row(bot, false)}
-                      </PresenceItem>
-                    ))}
-                  </PresenceList>
-                  {roster.length === 0 && agents.isSuccess ? (
-                    <button
-                      className="glass-list-empty"
-                      onClick={openCreateBot}
-                      type="button"
-                    >
-                      <IconPlus className="size-4" />
-                      {"新建一个机器人"}
-                    </button>
                   ) : null}
-                </div>
+                </>
+              ) : null}
+              <div className="glass-bot-list relative">
+                <PresenceList>
+                  {others.map((bot, index) => (
+                    <PresenceItem key={bot.id} layoutKey={index}>
+                      {row(bot, false)}
+                    </PresenceItem>
+                  ))}
+                </PresenceList>
+                {roster.length === 0 && agents.isSuccess ? (
+                  <button
+                    className="glass-list-empty"
+                    onClick={openCreateBot}
+                    type="button"
+                  >
+                    <IconPlus className="size-4" />
+                    {"新建一个机器人"}
+                  </button>
+                ) : null}
               </div>
-            </>
+            </div>
           )}
         </section>
         {/* 账号永远在左栏最底下，单独一张小卡：「我是谁」和「我在用什么」分开。 */}
@@ -1136,7 +1152,12 @@ function MiniBot({
       : null;
   const inner = (
     <>
-      <ChannelAvatar participantIds={[bot.id]} selected={selected} size={36} working={latest?.busy ?? false} />
+      <ChannelAvatar
+        participantIds={[bot.id]}
+        selected={selected}
+        size={36}
+        working={latest?.busy ?? false}
+      />
       {main ? (
         <span aria-hidden className="glass-bot-star">
           <IconStarFilled className="size-2.5" />
@@ -1217,7 +1238,9 @@ function MiniBot({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
-          onReplaceMain={main && canReplaceMain ? () => setPickerOpen(true) : null}
+          onReplaceMain={
+            main && canReplaceMain ? () => setPickerOpen(true) : null
+          }
           paused={paused}
         />
       </DropdownMenu>

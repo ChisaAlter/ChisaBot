@@ -167,7 +167,7 @@ export async function renderAvatar(
   let flattened = false;
   for (const quality of [0.86, 0.75, 0.6, 0.45]) {
     let blob = await encode("image/webp", quality);
-    if (!blob || blob.type !== "image/webp") {
+    if (blob?.type !== "image/webp") {
       if (!flattened) {
         context.globalCompositeOperation = "destination-over";
         context.fillStyle = "#ffffff";

@@ -476,8 +476,7 @@ export function createAuthApp(config: AuthConfig) {
       /* 下面按上次结果 */
     }
     return (
-      identityKnown !== null &&
-      identityKnown.ok &&
+      identityKnown?.ok === true &&
       now() - identityKnown.at < DEVICE_GRACE_MS
     );
   }

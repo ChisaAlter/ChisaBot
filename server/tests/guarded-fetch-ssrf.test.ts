@@ -9,7 +9,7 @@ import { isBlockedAddress } from "../../shared/net/ssrf";
  */
 describe("guardedFetch SSRF redirects", () => {
   test("refuses a 302 to the cloud metadata address", async () => {
-    const server = createServer((req, res) => {
+    const server = createServer((_req, res) => {
       res.writeHead(302, {
         Location: "http://169.254.169.254/latest/meta-data/",
       });
@@ -38,7 +38,7 @@ describe("guardedFetch SSRF redirects", () => {
   });
 
   test("refuses a 302 to RFC1918", async () => {
-    const server = createServer((req, res) => {
+    const server = createServer((_req, res) => {
       res.writeHead(302, { Location: "http://10.0.0.5/secret" });
       res.end();
     });
