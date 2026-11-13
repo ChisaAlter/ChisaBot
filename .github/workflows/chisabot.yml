@@ -124,6 +124,13 @@ jobs:
         working-directory: agent-computer
         run: bun install --frozen-lockfile --omit=peer
       - run: bun run --cwd agent-computer typecheck
+      # Must run before every step that touches chisabot_test: integration tests create
+      # their own tables via ensure() (CREATE TABLE IF NOT EXISTS), which would otherwise
+      # partially populate the DB and break 0000_schema.sql's bare CREATE TABLEs.
+      - name: Migrate test database
+        env:
+          DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
+        run: bun server/scripts/migrate.ts
       - name: Durable inbox and database recovery checks
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
@@ -174,10 +181,6 @@ jobs:
       # Everything the hand-picked lists miss: the whole server/shared suite minus the
       # measured defect quarantine (scripts/test-quarantine.ts) and the dsh-* suites,
       # which have their own job below.
-      - name: Migrate test database
-        env:
-          DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
-        run: bun server/scripts/migrate.ts
       - name: Full server suite (minus quarantine)
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
