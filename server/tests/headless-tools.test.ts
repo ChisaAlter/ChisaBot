@@ -108,17 +108,25 @@ function turnHarness(
       }),
     stop: async () => true,
   };
+  const conversations = {
+    getOrCreateThread: async () => undefined,
+    getThreadMessages: async () => ({ messages: [] }),
+    acquireThreadLease: async () => {
+      lockCalls.push("acquire");
+    },
+    renewThreadLease: async () => undefined,
+    releaseThreadLease: async () => {
+      lockCalls.push("cleanup");
+    },
+  };
   const run = createTurnRunner({
-    conversations: {
-      getOrCreateThread: async () => undefined,
-      getThreadMessages: async () => ({ messages: [] }),
-      acquireThreadLease: async () => {
-        lockCalls.push("acquire");
-      },
-      renewThreadLease: async () => undefined,
-      releaseThreadLease: async () => {
-        lockCalls.push("cleanup");
-      },
+    conversations,
+    // 假 runner 不持有租约，像 local-conversations.ts 的 backend.leases 一样由
+    // 回合经 adapter 自己取放；仍走原有 mock 记录锁生命周期。
+    leases: {
+      acquire: () => conversations.acquireThreadLease(),
+      renew: () => conversations.renewThreadLease(),
+      release: () => conversations.releaseThreadLease(),
     },
     runner,
     buildAgentFor: async () => agent,

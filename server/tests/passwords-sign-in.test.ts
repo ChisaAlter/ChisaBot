@@ -551,13 +551,21 @@ describe("an unattended turn that needs a sign-in", () => {
         }),
       stop: async () => true,
     };
+    const conversations = {
+      getOrCreateThread: async () => undefined,
+      getThreadMessages: async () => ({ messages: [] }),
+      acquireThreadLease: async () => undefined,
+      renewThreadLease: async () => undefined,
+      releaseThreadLease: async () => undefined,
+    };
     const run = createTurnRunner({
-      conversations: {
-        getOrCreateThread: async () => undefined,
-        getThreadMessages: async () => ({ messages: [] }),
-        acquireThreadLease: async () => undefined,
-        renewThreadLease: async () => undefined,
-        releaseThreadLease: async () => undefined,
+      conversations,
+      // 假 runner 不持有租约，像 local-conversations.ts 的 backend.leases 一样由
+      // 回合经 adapter 自己取放；仍走原有 mock。
+      leases: {
+        acquire: () => conversations.acquireThreadLease(),
+        renew: () => conversations.renewThreadLease(),
+        release: () => conversations.releaseThreadLease(),
       },
       runner,
       buildAgentFor: async () => agent,

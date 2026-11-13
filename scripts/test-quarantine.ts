@@ -9,10 +9,8 @@
  * 名单不会悄悄烂掉。
  */
 export const SERVER_TEST_QUARANTINE: Record<string, string> = {
-  "server/tests/headless-tools.test.ts":
-    "Expected promise that resolves / Received rejected (:196) — This conversation runner requires a lease adapter. (src/turns/run-turn.ts:497) (2026-11 measurement)",
-  "server/tests/passwords-sign-in.test.ts":
-    "expect(paused).toBeInstanceOf(HeadlessToolSuspension) — 同一个 lease adapter 错误 (:619) (2026-11 measurement)",
+  "server/tests/tool-selection-environment-restoration.test.ts":
+    "expect(proof.exitCode).toBe(1) received 0 (:180)；remoteStopStatus expected \"rejected\" got \"fulfilled\" (:223) (2026-11 measurement)",
   "server/tests/tool-selection-environment-restoration.test.ts":
     "expect(proof.exitCode).toBe(1) received 0 (:180)；remoteStopStatus expected \"rejected\" got \"fulfilled\" (:223) (2026-11 measurement)",
 };
