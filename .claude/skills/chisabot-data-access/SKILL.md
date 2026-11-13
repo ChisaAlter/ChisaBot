@@ -40,10 +40,18 @@ client(path, options?): Promise<Response>     // for a caller that only needed i
 tryClient(path, options?): Promise<Response>  // never throws; the status is the answer
 ```
 
-`options` is `{ method?, body?, headers?, fallback?, signal?, timeoutMs? }`. `body` is serialised by
-the client, which is also what sets the content type — so a caller passes an object, never a string.
-Passing `JSON.stringify(x)` sends a JSON string of a JSON string, which no endpoint accepts. Every
-request has a 30 s deadline by default; a long action sets its own `timeoutMs`, and `0` disables it.
+`options` is `{ method?, body?, headers?, fallback?, signal?, timeoutMs?, cache?, keepalive? }`.
+`body` is serialised by the client, which is also what sets the content type — so a caller passes an
+object, never a string. Passing `JSON.stringify(x)` sends a JSON string of a JSON string, which no
+endpoint accepts. A `FormData` or `Blob` body is sent as-is (uploads go through `client` too). Every
+request has a 30 s deadline by default; a call whose server work can run longer (uploads, model
+generation, chained outbound fetches) sets its own `timeoutMs` with a comment, and `0` disables it.
+
+`app/tests/no-raw-fetch.test.ts` enforces this: a raw `fetch(` / `window.fetch(` / `new
+XMLHttpRequest` anywhere in `app/src` fails the suite. Its allowlist holds the only exceptions —
+`client.ts` itself, the AG-UI session transport, the wallpaper runtime's static asset loader, and
+the XHR attachment upload that needs progress events. A new entry needs a reason `client` cannot
+serve; a component's convenience is not one.
 
 ### Three kinds of request
 
