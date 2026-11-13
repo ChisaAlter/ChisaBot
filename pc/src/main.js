@@ -329,7 +329,9 @@ function openChat(pathname) {
     // 无边框：网页顶栏就是标题栏（拖动区 + 网页里的最小化 / 最大化 / 关闭，DESIGN-v3 §3）。
     // 不透明窗口 + thickFrame：Windows 11 由系统画圆角（约 8px）和窗口阴影，拖边调整大小、
     // Win+方向键贴靠、最大化都是系统行为；Windows 10 上是方角。网页不再自己画圆角。
+    // macOS：hiddenInset 出原生红绿灯（左上，网页隐藏自己的 Windows 式按钮）；Windows / Linux 忽略此项。
     frame: false,
+    titleBarStyle: "hiddenInset",
     thickFrame: true,
     backgroundColor: windowBackground(),
     webPreferences: {

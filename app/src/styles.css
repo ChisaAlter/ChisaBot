@@ -3942,6 +3942,13 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
    最大化、贴靠、拖边调整大小都是系统行为。Windows 10 上是方角。 */
 html[data-desktop] .glass-topbar { -webkit-app-region: drag; app-region: drag; pointer-events: auto; }
 html[data-desktop] .glass-topbar :is(a, button, input, label, kbd, [role="menu"], [role="toolbar"] > *, .glass-seg) { -webkit-app-region: no-drag; app-region: no-drag; }
+/* macOS：原生红绿灯在窗口左上角（hiddenInset），顶栏内容右移让位。 */
+html[data-desktop="darwin"] .glass-topbar { padding-left: 84px; }
+html[data-desktop="darwin"] .glass-topbar-start { width: auto; }
+/* darwin 右上只剩「小窗模式」一个按钮（46px / 窄窗 36px）。 */
+@media (min-width: 768px) {
+  html[data-desktop="darwin"] .glass-topbar[data-winctrls="1"] { padding-right: calc(46px + 12px); }
+}
 html[data-desktop] .glass-brand { cursor: default; }
 /* 传统 Windows 标题按钮：46×40，贴住窗口右上角，无胶囊底、无圆角。 */
 .win-ctrls {
@@ -6235,6 +6242,8 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   html[data-desktop] .win-ctrl { width: 36px; }
   html[data-desktop] .glass-topbar { grid-template-columns: 40px minmax(0, 1fr); padding-right: calc(36px * 4 + 8px); }
   html[data-desktop] .glass-topbar:has(.win-ctrls[data-count="3"]) { padding-right: calc(36px * 3 + 8px); }
+  html[data-desktop="darwin"] .glass-topbar { padding-right: 16px; }
+  html[data-desktop="darwin"] .glass-topbar[data-winctrls="1"] { padding-right: calc(36px + 8px); }
   html[data-desktop] .glass-topbar-end { display: none; }
   html[data-desktop] .glass-topbar > .glass-seg { overflow: visible; }
   html[data-desktop] .glass-seg-item { display: inline-flex; align-items: center; gap: 4px; padding: 6px 9px; transition: background var(--dur-1) linear, color var(--dur-1) linear; }

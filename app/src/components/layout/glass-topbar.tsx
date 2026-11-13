@@ -84,7 +84,18 @@ export function GlassTopBar({
       data-scope={scope}
       // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
       data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
-      data-winctrls={desktop ? (canCompact(desktop.bridge) ? 4 : 3) : undefined}
+      data-winctrls={
+        desktop
+          ? // macOS 的关闭 / 最小化 / 最大化是系统红绿灯（左上），这里只剩「小窗模式」一个按钮。
+            desktop.bridge.platform === "darwin"
+            ? canCompact(desktop.bridge)
+              ? 1
+              : 0
+            : canCompact(desktop.bridge)
+              ? 4
+              : 3
+          : undefined
+      }
       // PC 无边框窗口：空白处双击 = 最大化 / 还原（拖动由 -webkit-app-region 交给系统）。
       onDoubleClick={
         desktop
@@ -170,9 +181,12 @@ export function WindowControls({
   compact?: boolean;
 }) {
   const compactLabel = compact ? "恢复窗口" : "小窗模式";
+  const isMac = bridge.platform === "darwin";
+  // macOS 的窗口控制是系统红绿灯；没有小窗按钮时这一组整个不渲染。
+  if (isMac && !canCompact(bridge)) return null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-    <div aria-label={"窗口"} className="win-ctrls" data-count={canCompact(bridge) ? 4 : 3} role="group">
+    <div aria-label={"窗口"} className="win-ctrls" data-count={isMac ? 1 : canCompact(bridge) ? 4 : 3} role="group">
       {canCompact(bridge) ? (
         <button
           aria-label={compactLabel}
@@ -197,6 +211,9 @@ export function WindowControls({
           )}
         </button>
       ) : null}
+      {/* macOS：系统红绿灯在窗口左上角，这三个按钮不画。 */}
+      {isMac ? null : (
+        <>
       <button aria-label={"最小化"} className="win-ctrl" onClick={() => bridge.minimize()} title={"最小化"} type="button">
         <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
           <path d="M1 5.5h8" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
@@ -225,6 +242,8 @@ export function WindowControls({
           <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
         </svg>
       </button>
+        </>
+      )}
     </div>
   );
 }

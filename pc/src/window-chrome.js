@@ -59,7 +59,8 @@ function chromeOptions(mode, { background = "#9dbddc" } = {}) {
   };
   if (mode === "clip") return { ...base, thickFrame: false, transparent: true, hasShadow: false, backgroundColor: "#00000000" };
   // thickFrame 让 Windows 11 给无边框窗口画系统圆角和阴影；resizable:false 时 Electron 不会因此允许拖边。
-  return { ...base, thickFrame: true, transparent: false, hasShadow: true, backgroundColor: background };
+  // titleBarStyle 只在 macOS 生效：hiddenInset = 原生红绿灯（左上），网页里的 .win-ctrl 由 chrome.css 按 data-os 隐藏。
+  return { ...base, titleBarStyle: "hiddenInset", thickFrame: true, transparent: false, hasShadow: true, backgroundColor: background };
 }
 
 /** 登录窗：固定 460×760，可以最小化，不能最大化 / 改大小。 */

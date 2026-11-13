@@ -127,7 +127,7 @@
 分支：`feat/pc-macos`。`pc/` 的 Electron 外壳此前只出 Windows（NSIS + 免安装 zip）；本条目把同一套外壳（无边框主窗口 + 本机登录页 + 设备节点 + 在线更新）移植到 macOS。
 
 - [x] 打包：`build/icon.icns`（`scripts/mac-icon.mjs` 从 `assets/icon.png` 生成）、`dmg` + `zip`（arm64 + x64）、`latest-mac.yml` 带 `chisabotShell` / `chisabotClient` 指纹；`npm run dist:mac` 本机验证产出四份安装包 + 清单。
-- [x] 运行时：应用菜单（系统 role，⌘C/⌘V/⌘Q/⌘W 生效）、`activate` → 召回主窗口、关闭窗口常驻托盘 / Dock、开发态 Dock 图标；`updater.js` darwin 支持（所有打包 `.app` 可更新，Squirrel.Mac 整包替换，`fullInstall` 标记不改变行为，验签后「稍后」由 before-quit 撑住退出直到 Squirrel 抓完包）。
+- [x] 运行时：应用菜单（系统 role，⌘C/⌘V/⌘Q/⌘W 生效）、`activate` → 召回主窗口、关闭窗口常驻托盘 / Dock、开发态 Dock 图标、`titleBarStyle: hiddenInset` 原生红绿灯（网页侧 Windows 式按钮按 darwin 隐藏，顶栏左移让位，「小窗模式」按钮保留在右上）；`updater.js` darwin 支持（所有打包 `.app` 可更新，Squirrel.Mac 整包替换，`fullInstall` 标记不改变行为，验签后「稍后」由 before-quit 撑住退出直到 Squirrel 抓完包）。
 - [x] `shell-fingerprint.js` 排除 `build.mac` / `build.dmg` / `build.mas`：加 mac 配置不改变 Windows 外壳指纹，现存 Windows 客户端不做无谓的「重新安装」。
 - [x] `release.yml` 新增 `pc-mac`（macos-latest，generic / custom matrix）；`pc-sign` 给 `latest-mac.yml` 同样签 `chisabotSig`；`check-release-assets.mjs` 校验 mac 清单 / 资产并把 mac 资产挡在「没有 latest-mac.yml」之外。
 - [x] darwin 更新单元测试（`test/update.check.js`）；本机构建 + 启动验证通过。

@@ -8,6 +8,8 @@
 (function () {
   var match = /[?&]frame=(dwm|clip)(?:&|$)/.exec(location.search);
   document.documentElement.dataset.frame = match ? match[1] : "dwm";
+  // macOS 用原生红绿灯（titleBarStyle=hiddenInset，window-chrome.js）：本页 .win-ctrl 按钮按 data-os 隐藏。
+  document.documentElement.dataset.os = /Mac/.test(navigator.userAgent) ? "mac" : "";
   document.addEventListener("DOMContentLoaded", function () {
     var buttons = document.querySelectorAll("[data-win]");
     for (var i = 0; i < buttons.length; i++) {
