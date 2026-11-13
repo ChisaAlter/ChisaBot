@@ -157,7 +157,6 @@ export function TasksRailCard() {
   return (
     <div className="task-rail" data-testid="tasks-rail-card">
       <header className="task-rail-header">
-        <h2>{"任务进度"}</h2>
         <div className="task-rail-header-actions">
           <button
             className="task-rail-new-btn"

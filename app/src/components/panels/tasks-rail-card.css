@@ -29,15 +29,9 @@
 }
 
 .task-rail-header {
-  margin-bottom: 16px;
+  justify-content: flex-end;
+  margin-bottom: 12px;
   padding: 0 4px;
-}
-
-.task-rail-header h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 .task-rail-header-actions {
