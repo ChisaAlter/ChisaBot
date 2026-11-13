@@ -117,9 +117,9 @@ bun run typecheck
 | `examples/zh-CN/`               | 中文品牌、BOT、频道和技能配置                                                                                                                                                              |
 | `deploy/`                       | 镜像配置、认证网关、DSH 账号运维与宿主机更新器                                                                                                                                             |
 | `scripts/ops/`                  | 串行发布、网关同步和运维入口                                                                                                                                                               |
-| `pc/`                           | ChisaBot PC（Windows / macOS，Electron）客户端：设备节点 + 在线更新                                                                                                                                |
+| `pc/`                           | ChisaBot PC（Windows / macOS，Electron）客户端：设备节点 + 在线更新                                                                                                                        |
 | `android/`                      | ChisaBot Android 客户端（Kotlin 壳 + WebView，minSdk 24）：使用桌面同一 React 前端的手机布局；保留扫码 / 账号登录、系统文件与权限、返回键及 APK 在线更新（[说明](docs/android-native.md)） |
-| `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC（Windows / macOS）+ Android 安装包并发布到 Releases                                                                                                                  |
+| `.github/workflows/release.yml` | 推 `v*` 标签时用 GitHub Actions 构建 PC（Windows / macOS）+ Android 安装包并发布到 Releases                                                                                                |
 | `deploy/updater/`               | 宿主机在线更新服务（管理后台 → 系统更新）                                                                                                                                                  |
 | `docs/`                         | 当前使用与运维文档；`pipeline-runs/` 保存实施证据，历史参考单独导航                                                                                                                        |
 | `assets/brand/`                 | 品牌头像原图与生成脚本（`node assets/brand/generate.mjs` 生成网页、登录页、PC、Android 的全部图标），规则见 `DESIGN.md` §28                                                                |
