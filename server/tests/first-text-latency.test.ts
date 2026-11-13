@@ -165,10 +165,10 @@ describe("研究类问题才预置研究技能", () => {
   });
 });
 
-describe("回复先一句再动手、按需搜索", () => {
-  test("动手前一句 15 字以内的话，紧接着调用工具", () => {
-    expect(WORK_STYLE_GUIDANCE).toContain("15 字以内");
-    expect(WORK_STYLE_GUIDANCE).toContain("紧接着就调用工具");
+describe("要动手就直接调工具、按需搜索", () => {
+  test("要动手时直接调用工具，不写开场短句（进展由状态胶囊显示）", () => {
+    expect(WORK_STYLE_GUIDANCE).toContain("直接调用工具，不要先写");
+    expect(WORK_STYLE_GUIDANCE).toContain("开场短句");
   });
 
   test("能直接答的不搜，只有最新或具体事实才搜", () => {

@@ -17,10 +17,6 @@ export const SERVER_TEST_QUARANTINE: Record<string, string> = {
     "Cannot find module '../../app/src/components/gallery/activity' — 目标组件已删除 (2026-11 measurement)",
   "server/tests/headless-components.integration.test.ts":
     "Cannot find module '../../app/src/components/gallery/charts' — 目标组件已删除 (2026-11 measurement)",
-  "server/tests/first-text-latency.test.ts":
-    "expect(received).toContain(\"15 字以内\") — prompt 文案已改，断言还是旧文案 (2026-11 measurement)",
-  "server/tests/reply-style.test.ts":
-    "expect(received).toContain(\"1–4 句话\") — prompt 文案已改，断言还是旧文案 (2026-11 measurement)",
   "server/tests/memory-tidy.test.ts":
     "TypeError: p5.toISOString is not a function (:212) — 内存 SQL fixture 与 src/memory-notes/tidy.ts:411 不一致 (2026-11 measurement)",
   "server/tests/headless-tools.test.ts":

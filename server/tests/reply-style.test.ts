@@ -59,7 +59,7 @@ describe("WORK_STYLE_GUIDANCE (Hark alignment, 2026-10-29)", () => {
   test("no fixed lead → card → next-step template any more", () => {
     expect(WORK_STYLE_GUIDANCE).not.toContain("三段式");
     expect(WORK_STYLE_GUIDANCE).not.toContain("必须采用");
-    expect(WORK_STYLE_GUIDANCE).toContain("1–4 句话");
+    expect(WORK_STYLE_GUIDANCE).toContain("每个气泡只装正文内容");
   });
   test("a table card is not followed by a markdown copy", () => {
     expect(WORK_STYLE_GUIDANCE).toContain("不要再在文字里用 Markdown 表格");
