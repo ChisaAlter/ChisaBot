@@ -67,4 +67,4 @@
 - **安全边界**：出网请求一律走 `shared/net/guarded-fetch.ts`；外部内容进模型前用 `markUntrusted` 包裹；不要信任请求体里的 Bot / 用户身份（以签名断言为准）。
 - **配置**：新环境变量在 `server/src/config.ts` 里读和校验，不要在业务代码里直接 `process.env`。
 - **仓库是公开的**：不提交服务器 IP、真实域名、主机名、密钥、真实用户数据（CI 有 Private host info guard）。临时调试脚本不要留在仓库根目录。
-- **lint**：不要用 `biome-ignore` 去压一条规则而不写具体原因；不要删掉写着原因的 suppression，即使 Biome 报它"未使用"（多半是规则域没开，原因仍然有价值）。
+- **lint**：不要用 `biome-ignore` 去压一条规则而不写具体原因；不要删掉写着原因的 suppression，即使 Biome 报它"未使用"（多半是规则域没开，原因仍然有价值）。Biome 2.6 不会因为根 package.json 没有 react 就开 React 规则域，所以 `useExhaustiveDependencies` / `noArrayIndexKey` / `noDangerouslySetInnerHtml` 是在 `biome.json` 里显式打开的，不要删。
