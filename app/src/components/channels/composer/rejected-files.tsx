@@ -66,33 +66,39 @@ export function RejectedFiles({
     <Collapse className="pb-2" open={rejected.length > 0}>
       {rejected.length > 0 ? (
         <div
-          className="flex items-start gap-2 rounded-lg border border-destructive border-dashed p-2"
+          className="flex min-w-0 flex-col gap-2 rounded-lg border border-destructive border-dashed p-2"
           role="alert"
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-destructive text-sm font-medium">
+              {`${rejected.length} 个文件未添加`}
+            </span>
+            <button
+              aria-label={
+                rejected.length === 1
+                  ? "关闭这条提示"
+                  : `关闭这 ${rejected.length} 条提示`
+              }
+              className="-m-1 shrink-0 rounded p-1 text-destructive/70 transition-colors hover:text-destructive"
+              onClick={onDismiss}
+              type="button"
+            >
+              <IconX className="size-4" />
+            </button>
+          </div>
+          {/* Keep the editor and the dismiss action reachable even after a large rejected drop. */}
+          <section
+            aria-label="未添加的文件及原因"
+            className="flex max-h-[min(20svh,8rem)] min-w-0 flex-col gap-1 overflow-y-auto overscroll-contain [overflow-wrap:anywhere]"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded scroll region needs keyboard focus so all refusal reasons can be read without a pointer.
+            tabIndex={0}
+          >
             {rejected.map((file) => (
               <p className="text-destructive text-sm" key={file.id}>
                 <span className="font-medium">{file.name}</span>: {file.reason}
               </p>
             ))}
-          </div>
-          {/*
-           * One button for the block, not one per line. These arrive together — a drop of eight
-           * files refuses several at once — and are read together, so dismissing them one at a
-           * time is work without a purpose.
-           */}
-          <button
-            aria-label={
-              rejected.length === 1
-                ? "关闭这条提示"
-                : `关闭这 ${rejected.length} 条提示`
-            }
-            className="-m-1 shrink-0 rounded p-1 text-destructive/70 transition-colors hover:text-destructive"
-            onClick={onDismiss}
-            type="button"
-          >
-            <IconX className="size-4" />
-          </button>
+          </section>
         </div>
       ) : null}
     </Collapse>

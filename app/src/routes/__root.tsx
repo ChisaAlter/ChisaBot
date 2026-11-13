@@ -137,7 +137,8 @@ function RootComponent() {
         <SkyBackground />
         <DesktopStrip />
         <TooltipProvider>
-          <Outlet />
+          {/* Standalone pages and 404s need the same foreground layer as the app shell. */}
+          <div className="relative z-10"><Outlet /></div>
           <ConfirmHost />
           <PageLoaderHost />
           <Toaster />

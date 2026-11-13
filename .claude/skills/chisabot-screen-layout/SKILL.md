@@ -132,11 +132,12 @@ itself when the dialog changes something.
 
 1. `DialogContent` defaults to `max-w-lg` and `max-h-[85svh]` with `p-5`. Header, body and footer go
    in as `DialogHeader` / `DialogBody className="mt-4"` / `DialogFooter className="mt-4"`.
-2. `DialogBody` must stay a **direct child** of `DialogContent`. Wrapping the three sections in one
-   padded div breaks the `flex-1 min-h-0` chain and the body stops scrolling.
-3. `DialogBody` carries `flex-1 min-h-0` and **no overflow of its own**, despite a comment saying it
-   scrolls. Any dialog tall enough to need it passes `overflow-y-auto` explicitly; without it the
-   body shrinks and paints its content over the footer.
+2. Put `DialogBody` directly inside `DialogContent`, or inside a form carrying
+   `flex min-h-0 flex-1 flex-col overflow-hidden`. Every intermediate wrapper must pass the
+   shrinkable height through; a plain flex form can push the footer outside the popup.
+3. `DialogBody` already carries `flex-1 min-h-0 overflow-y-auto`. Keep long fields, errors and
+   artwork inside it; header and footer stay outside it and do not shrink. Do not add a second
+   scrolling wrapper around the whole popup.
 4. For artwork reaching the dialog's edges: `className="p-0 gap-0 overflow-hidden"` on
    `DialogContent`, each section carrying its own padding, and `overflow-hidden` handing the popup's
    rounding to the artwork's corners. Pass `showCloseButton={false}` and supply a close button with
@@ -199,10 +200,9 @@ to sit a centred element visibly off centre or clip a card's corners against its
 - **A row's content sits visibly off centre, or a card's corners are clipped by its container**: a
   pixel constant was taken from the Tailwind docs and the root font size is 15px. Measure the drawn
   element instead of the box it was given.
-- **A dialog's footer has body content painted over it**: `DialogBody` is missing
-  `overflow-y-auto`. It has `flex-1 min-h-0` and no overflow of its own.
-- **A dialog stops scrolling after a refactor**: `DialogBody` is no longer a direct child of
-  `DialogContent`. Restore it and give each section its own padding instead.
+- **A dialog's footer overflows or body content paints over it**: check the shrink chain between
+  `DialogContent` and `DialogBody`. An intermediate form needs `flex min-h-0 flex-1 flex-col
+  overflow-hidden`; `DialogBody` already owns scrolling. Keep the footer outside the body.
 - **Artwork overflows the box it was placed in**: an inline `<svg>` with a `viewBox` and no width or
   height resolves to 100% width and a height derived from its own ratio. Give it
   `className="h-full w-full"`; `overflow-hidden` on the parent clips at the border rather than the

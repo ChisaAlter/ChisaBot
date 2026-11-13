@@ -89,3 +89,46 @@ test("a call site drawing a real button can say so", () => {
   expect(element.tagName).toBe("BUTTON");
   expect(element.getAttribute("role")).toBeNull();
 });
+
+test("loading without feedback keeps the label and both measured faces throughout the action", () => {
+  const { getByRole, rerender } = render(
+    <Button loading={false}>加载更多</Button>,
+  );
+  const button = getByRole("button", { name: "加载更多" });
+  const stack = button.querySelector(".btn-stack");
+  expect(stack).not.toBeNull();
+  expect(button.querySelector('[data-face="status"]')?.textContent).toBe(
+    "加载更多",
+  );
+  rerender(<Button loading>加载更多</Button>);
+  expect(getByRole("button", { name: "加载更多" })).toBe(button);
+  expect(button.querySelector(".btn-stack")).toBe(stack);
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+  rerender(<Button loading={false}>加载更多</Button>);
+  expect(button.querySelector(".btn-stack")).toBe(stack);
+  expect(button.hasAttribute("aria-busy")).toBe(false);
+  expect((button as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("state and mutation calls without feedback reserve their status face at idle", () => {
+  const { getByRole, rerender } = render(<Button state="idle">重试</Button>);
+  const button = getByRole("button", { name: "重试" });
+  expect(button.querySelector('[data-face="status"]')?.textContent).toBe(
+    "重试",
+  );
+  rerender(<Button state="error">重试</Button>);
+  expect(getByRole("button", { name: "重试" })).toBe(button);
+  expect(button.getAttribute("data-btn-state")).toBe("error");
+  rerender(<Button mutation={{ status: "idle", submittedAt: 0 }}>重试</Button>);
+  expect(button.querySelector('[data-face="status"]')?.textContent).toBe(
+    "重试",
+  );
+});
+
+test("a static button does not gain an async glyph or extra label", () => {
+  const { getByRole } = render(<Button>新建任务</Button>);
+  const button = getByRole("button", { name: "新建任务" });
+  expect(button.textContent).toBe("新建任务");
+  expect(button.querySelector(".btn-stack")).toBeNull();
+});

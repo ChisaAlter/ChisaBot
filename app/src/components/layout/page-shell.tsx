@@ -194,7 +194,7 @@ export function PageSection({
     <section className={cn("page-section", className)} data-setting-item={settingItem} data-slot="page-section" id={id}>
       {title || description || action ? (
         <div className="sh">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-[1_1_18rem]">
             {title ? <h2 className="sh-title page-section-title">{title}</h2> : null}
             {description ? <p className="sh-desc">{description}</p> : null}
           </div>

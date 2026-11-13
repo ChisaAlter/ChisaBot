@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { AccountDialogsHost } from "../components/layout/account-dialogs";
 import { AuthedShell } from "../components/layout/authed-shell";
 import { AfterIdle, lazyPart } from "../components/ui/lazy-part";
 import {
@@ -55,6 +56,7 @@ export const Route = createFileRoute("/_authed")({
   component: () => (
     <>
       <AppHotkeys />
+      <AccountDialogsHost />
       <AuthedShell />
       <AfterIdle>
         <QuickSpotlight />

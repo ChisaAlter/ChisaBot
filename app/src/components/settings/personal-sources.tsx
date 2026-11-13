@@ -796,7 +796,7 @@ function CalendarConnectDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           onSubmit={(e) => {
             e.preventDefault();
             if (valid && saveState !== "pending") submit();
@@ -977,7 +977,7 @@ function EmailConnectDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           onSubmit={(e) => {
             e.preventDefault();
             if (valid && saveState !== "pending") submit();
@@ -1201,7 +1201,7 @@ function NotifyWebhookDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-3"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           onSubmit={(e) => {
             e.preventDefault();
             if (valid && saveState !== "pending") submit();

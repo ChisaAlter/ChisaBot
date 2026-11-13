@@ -125,7 +125,23 @@ export function TaskCenter({
   const navigation = useRef<HTMLElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 切视图是有意的触发——回到列表顶
   useEffect(() => {
-    navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
+    const nav = navigation.current;
+    if (!nav) return;
+    nav.closest(".page-scroll")?.scrollTo({ top: 0 });
+    // Deep links and desktop → phone resizing must keep the selected section visible.
+    // Scroll only this strip, not the modal or the page underneath it.
+    const revealSelection = () => {
+      const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!selected || nav.scrollWidth <= nav.clientWidth) return;
+      const item = selected.getBoundingClientRect();
+      const strip = nav.getBoundingClientRect();
+      nav.scrollLeft +=
+        item.left - strip.left - (nav.clientWidth - item.width) / 2;
+    };
+    revealSelection();
+    const resize = new ResizeObserver(revealSelection);
+    resize.observe(nav);
+    return () => resize.disconnect();
   }, [view]);
   const data = snapshot.data;
   const refresh = () => {
@@ -180,17 +196,24 @@ export function TaskCenter({
       }
     >
       <div className="tc-service-bar">
-        <span
-          className="tc-service-state"
-          data-running={data?.running ?? false}
-        >
-          <span aria-hidden />
-          {data
-            ? data.running
-              ? "后台巡检运行中"
-              : "后台巡检已停止"
-            : "正在连接任务中心"}
-        </span>
+        <details className="tc-service-help">
+          <summary
+            className="tc-service-state"
+            data-running={data?.running ?? false}
+          >
+            <span aria-hidden />
+            {data
+              ? data.running
+                ? "后台巡检运行中"
+                : "后台巡检已停止"
+              : "正在连接任务中心"}
+          </summary>
+          <p className="tc-service-note">
+            {data?.running
+              ? "后台正在按信息源设置检查待办，任务进展会显示在这里。"
+              : "保存的任务会保留，服务恢复后继续检查。"}
+          </p>
+        </details>
         {data ? (
           <span className="tc-muted">
             每人最多并行 {data.concurrency} 个任务
@@ -211,16 +234,11 @@ export function TaskCenter({
           刷新
         </Button>
       </div>
-      {data && !data.running ? (
-        <p className="tc-notice" role="status">
-          后台调度未运行。保存的任务会保留，服务恢复后继续检查。
-        </p>
-      ) : null}
       <nav ref={navigation} className="tc-nav" aria-label="任务中心分区">
         {views.map(({ id, label, icon: Icon }) => {
           const count =
             id === "inbox"
-              ? data?.counts.inbox
+              ? (data?.counts.inbox ?? 0)
               : id === "outbox"
                 ? pendingCount
                 : id === "active"
@@ -233,12 +251,24 @@ export function TaskCenter({
               key={id}
               type="button"
               aria-current={view === id ? "page" : undefined}
+              aria-label={count ? `${label}，${count} 项` : label}
               className={cn("tc-nav-item", view === id && "is-active")}
               onClick={() => onNavigate(id)}
             >
               <Icon size={17} aria-hidden />
               <span>{label}</span>
-              {count ? <span className="tc-nav-count">{count}</span> : null}
+              {id === "inbox" ||
+              id === "outbox" ||
+              id === "active" ||
+              id === "sources" ? (
+                <span
+                  className="tc-nav-count"
+                  aria-hidden="true"
+                  data-empty={!count}
+                >
+                  {count > 99 ? "99+" : count || "0"}
+                </span>
+              ) : null}
             </button>
           );
         })}
