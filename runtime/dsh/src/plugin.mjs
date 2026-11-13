@@ -6,10 +6,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
 import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
-import {
-  ChisaModelRouter,
-  SINGLE_MODEL_DEADLINE_FACTOR,
-} from "./model-router.mjs";
+import { ChisaModelRouter } from "./model-router.mjs";
 import { ensureLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
 export const name = "chisabot-runtime";
@@ -69,7 +66,12 @@ export async function apply(ctx, config) {
     keyRefs.delete(ref);
     await saveKeyRefs();
   };
-  let providerProfiles = { ...config.providers };
+  let providerProfiles = Object.fromEntries(
+    Object.entries(config.providers).map(([id, profile]) => [
+      id,
+      { timeoutMs: 0, streamIdleTimeoutMs: 0, ...profile },
+    ]),
+  );
   const providerFiber = ctx.plugin(PiAi, { providers: providerProfiles });
   await providerFiber;
   let providerUpdate = Promise.resolve();
@@ -506,25 +508,15 @@ export async function apply(ctx, config) {
           await ctx.credentials.set(keyRef, connection.apiKey);
         }
         try {
-          // Provider request timeout must outlast the first-output deadline (QA511 P2):
-          // a single-model route waits firstOutputMs×4; the old 90s default fired first,
-          // then same-model-retried, for ~181s of "Request timed out." instead of the
-          // Chinese deadline copy. Explicit connection.timeoutMs still wins.
-          const firstOutputMs = binding.model?.firstOutputMs ?? 0;
-          const firstOutputWait =
-            firstOutputMs > 0
-              ? binding.model?.fallbacks?.length
-                ? firstOutputMs
-                : firstOutputMs * SINGLE_MODEL_DEADLINE_FACTOR
-              : 0;
           await updateProvider(provider, {
             api: connection.api,
             baseURL: connection.baseURL,
             models: connection.models,
             ...(keyRef ? { apiKeyEnv: keyRef } : {}),
-            timeoutMs:
-              connection.timeoutMs ??
-              Math.max(90_000, firstOutputWait + 30_000),
+            // No implicit deadline in either HTTP setup or an idle response stream.
+            // Explicit caller deadlines still apply; user stop propagates its signal.
+            timeoutMs: connection.timeoutMs ?? 0,
+            streamIdleTimeoutMs: 0,
           });
           routeFiber = { dispose: () => updateProvider(provider, undefined) };
         } catch (error) {

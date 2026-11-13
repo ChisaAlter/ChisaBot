@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { acquireHostLease } from "./host-lease.mjs";
 import { hostProfile } from "./profile.mjs";
+import "./provider-timeout-compat.mjs";
 
 const require = createRequire(import.meta.url);
 const source = dirname(fileURLToPath(import.meta.url));

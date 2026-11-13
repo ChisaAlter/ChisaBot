@@ -34,6 +34,7 @@ ChisaBot 采用**DSH 执行内核 + 自有会话服务 + 用户设备节点**。
 ### 2.1 服务器上的 agent（`server/`）
 
 - ChisaBot 的 Conversation 模块接纳命令、保存展示历史并管理业务权限；选择 DSH 时由独立 Node Host 维护模型/工具循环、Session 和压缩（`runtime/dsh/`、`server/src/agents/dsh-runtime.ts`）。模型来自原部署连接（Magpie 或 OpenAI / Anthropic 兼容接口，[models.md](models.md)），Bot 模型覆盖继续生效。
+- 聊天模型请求默认无首段输出、HTTP 或流静默期限，由用户停止；明确错误仍可触发原有回退策略。锁定依赖对零超时的兼容由 Host 启动时的 `provider-timeout-compat.mjs` 处理，只作用于该进程，不修改安装树。见 DESIGN §101.10。
 - 回合开头注入的上下文：工作方式提示、记忆（§50）、技能目录（§51）、保险箱用法（§52）、GitHub（§53）、当前北京时间（§55）、
   用户的设备情况（§45）。工具按回合类型给：人的回合全量；IM 回合只给文字类（§49）；面板刷新回合只给面板工具（§43）；
   后台任务（§38）有自己的工具集。

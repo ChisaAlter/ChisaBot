@@ -1,11 +1,10 @@
-// QA511 P2: real server path (DshRuntimeAgent + conversation routes + DSH Host + hanging
-// upstream). A single silent model must end on the Chinese first-output deadline (~4×
-// CHISABOT_DSH_FIRST_OUTPUT_MS), not after a provider request-timeout same-model retry.
+// Server path: DshRuntimeAgent + conversation routes + DSH Host + delayed upstream.
+// The former first-output deadline must not cut off a valid slow answer.
 import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { BaseEvent, Message } from "@ag-ui/client";
 import { HttpAgent } from "@ag-ui/client";
@@ -26,10 +25,16 @@ afterAll(async () => {
 }, 30_000);
 
 run(
-  "server path: single silent model ends ~4× firstOutputMs with Chinese deadline copy",
+  "server path: silent model answers past the former first-output deadline",
   async () => {
     const firstOutputMs = 250;
+    const previous = process.env.CHISABOT_DSH_FIRST_OUTPUT_MS;
     process.env.CHISABOT_DSH_FIRST_OUTPUT_MS = String(firstOutputMs);
+    resources.push(() => {
+      if (previous === undefined)
+        delete process.env.CHISABOT_DSH_FIRST_OUTPUT_MS;
+      else process.env.CHISABOT_DSH_FIRST_OUTPUT_MS = previous;
+    });
     const database = createDatabase(address!, { max: 4 });
     resources.push(() => database.$client.close());
     const bindings = createConversationBindings(database);
@@ -51,15 +56,38 @@ run(
         const url = new URL(request.url);
         if (/^\/(execute|steer)/.test(url.pathname))
           return gateway.routes.fetch(request);
-        // Hang forever — first-output deadline must win over the provider request timeout.
         await request.json();
-        return new Promise<Response>(() => {});
+        // Longer than the former 4 × 250ms single-model deadline.
+        await Bun.sleep(1500);
+        const chunk = {
+          id: "slow-fixture",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "slow_s1",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", content: "Slow answer completed." },
+              finish_reason: "stop",
+            },
+          ],
+        };
+        return new Response(
+          `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`,
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
       },
     });
     resources.push(() => bridge.stop(true));
     const runtime = resolve("runtime/dsh");
     await mkdir(join(runtime, ".runtime"), { recursive: true });
     const home = await mkdtemp(join(runtime, ".runtime", "qa511-to-"));
+    resources.push(async () => {
+      expect(await realpath(home)).toBe(home);
+      await rm(home, { recursive: true });
+    });
     await writeFile(
       join(home, "chisabot.json"),
       JSON.stringify({
@@ -72,6 +100,7 @@ run(
     let hostLogs = "";
     const child = spawn("node", ["src/start.mjs"], {
       cwd: runtime,
+      windowsHide: true,
       env: { ...process.env, CHISABOT_DSH_HOME: home },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -154,12 +183,10 @@ run(
     const runError = events
       .filter((e) => e.type === "RUN_ERROR")
       .map((e) => (e as { message?: string }).message ?? "");
-    const joined = runError.join("\n");
-    expect(joined).toMatch(/共等了约 1 秒仍没有任何输出/);
-    expect(joined).not.toMatch(/Request timed out/i);
-    // 4 × 250ms = 1000ms; allow scheduler slack, forbid a second ~90s-class retry.
-    expect(ms).toBeGreaterThanOrEqual(900);
-    expect(ms).toBeLessThan(4000);
+    expect(runError).toEqual([]);
+    expect(events.some((event) => event.type === "RUN_FINISHED")).toBe(true);
+    expect(JSON.stringify(events)).toContain("Slow answer completed.");
+    expect(ms).toBeGreaterThanOrEqual(1400);
   },
   30_000,
 );

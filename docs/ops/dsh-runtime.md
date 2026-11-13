@@ -10,6 +10,14 @@ API 启动脚本先建立 DSH 根目录并设为 `apiuser` 所有、权限 `0700
 
 新安装与现役部署统一使用 DSH，示例配置明确写入 `CHISABOT_AGENT_KERNEL=dsh`；`CHISABOT_DSH_ROOT` 指向持久卷。本地开发先在 `runtime/dsh` 执行 `npm ci` 安装锁定依赖，API 按账号启动独立 Node Host；生产按下文配置账号 Host 与 targets。缺少运行时或 Host 不可用时直接报告 DSH 错误，不切换到其他内核。模型配置仍由 ChisaBot 管理，Host 的连接文件不交给浏览器。
 
+## 模型等待由用户停止
+
+普通聊天不再设置首段输出期限，Host 默认 HTTP 请求和流静默期限也关闭。用户点「停止」仍取消正在等待的上游请求。旧 `CHISABOT_DSH_FIRST_OUTPUT_MS` 不再控制聊天；不需要为长任务调大环境变量。
+
+直接调用 Host 时，`model.firstOutputMs` 与 `connection.timeoutMs` 省略或 0 均表示不设期限，显式正值仍生效。自定义 provider profile 的显式 `timeoutMs` / `streamIdleTimeoutMs` 保留。
+
+锁定版 pi-ai 适配器及 OpenAI / Anthropic SDK 尚不能直接用零关闭这些计时器。`runtime/dsh/src/provider-timeout-compat.mjs` 在 Host 进程加载时补齐零值语义，不改写依赖文件；同时在现有 HTTP dispatcher 上关闭 Node fetch 默认的响应头 / 响应体静默期限，保留代理、连接建立与取消信号。升级依赖时运行 SDK 与真实 Host 回归；依赖实现变化导致兼容位置失效时，启动会明确报错，需更新或移除该兼容层。
+
 ## 快速更新与完整构建
 
 完整构建使用固定 Node 24.18.1 和 `runtime/dsh/package-lock.json` 安装 DSH。镜像构建时验证实际包版本与 manifest 相同，并生成 `/app/deploy/dsh/runtime-compat.json`，记录协议、运行时版本和历史读取器。
