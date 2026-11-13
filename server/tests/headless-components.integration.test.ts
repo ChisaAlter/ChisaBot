@@ -220,9 +220,13 @@ function harness(agent: AbstractAgent, botId: string) {
     conversations: {
       getOrCreateThread: async () => undefined,
       getThreadMessages: async () => ({ messages: [] }),
-      acquireThreadLease: async () => undefined,
-      renewThreadLease: async () => undefined,
-      releaseThreadLease: async () => undefined,
+    },
+    // 假 runner 不持有租约：无 ownsThreadLease 又无 leases 时 run() 直接抛
+    // "requires a lease adapter"（租约重构引入，同 ea06a1fa 给 headless-tools 的修法）。
+    leases: {
+      acquire: async () => undefined,
+      renew: async () => undefined,
+      release: async () => undefined,
     },
     runner,
     buildAgentFor: async () => agent,
