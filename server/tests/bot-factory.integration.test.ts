@@ -32,7 +32,7 @@ import { testDatabaseUrl } from "./support/database";
 const databaseUrl = testDatabaseUrl();
 // Wider than TEST_POOL on purpose: the concurrency test needs parallel transactions actually
 // reaching the advisory lock, which a two-connection pool turns back into a queue.
-const database = createDatabase(databaseUrl, { max: 8 });
+const database = createDatabase(databaseUrl, { max: 8, idleTimeout: 1 });
 const auditStore = createAuditStore(database);
 const store = createAgentProfileStore(database, undefined);
 const coworker = createCoworkerService({ store, auditStore });
