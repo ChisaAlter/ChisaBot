@@ -34,9 +34,35 @@ for (const [path, reason] of Object.entries(SERVER_TEST_QUARANTINE)) {
 }
 if (!files.length) throw new Error("No server/shared test files were found.");
 
-// One bun test invocation from the repo root so bunfig.toml preload applies.
-const child = Bun.spawn([process.execPath, "test", ...files], {
-  stdio: ["inherit", "inherit", "inherit"],
-  env: { ...process.env, NODE_ENV: "test" },
-});
-process.exit(await child.exited);
+/*
+ * Chunked, one `bun test` process per chunk — never one process for the whole suite.
+ *
+ * Test files open connection pools and never end them (see TEST_POOL in
+ * server/tests/support/database.ts). In a single process every finished file keeps its
+ * connections for the whole run: ~120 database files × max 2 sockets overshoots PostgreSQL's
+ * default max_connections of 100, and later files fail with `sorry, too many clients already`.
+ * A chunk's pools die with its process, so 30 files bound a chunk to ~60 sockets even if every
+ * file talks to the database (bot-factory's wider 8-conn pool still fits).
+ *
+ * Files run in sorted order one chunk after another, sharing the same test database exactly as
+ * the single-process run did — chunk boundaries change nothing about what data a file can see.
+ */
+const CHUNK_SIZE = 30;
+const chunks: string[][] = [];
+for (let index = 0; index < files.length; index += CHUNK_SIZE) {
+  chunks.push(files.slice(index, index + CHUNK_SIZE));
+}
+
+let failed = 0;
+for (const [index, chunk] of chunks.entries()) {
+  console.log(`\n=== Chunk ${index + 1}/${chunks.length} (${chunk.length} files) ===`);
+  const child = Bun.spawn([process.execPath, "test", ...chunk], {
+    stdio: ["inherit", "inherit", "inherit"],
+    env: { ...process.env, NODE_ENV: "test" },
+  });
+  if ((await child.exited) !== 0) failed++;
+}
+console.log(
+  `\n${chunks.length - failed}/${chunks.length} chunks green${failed ? `, ${failed} failed` : ""}.`,
+);
+process.exit(failed ? 1 : 0);

@@ -197,7 +197,7 @@ export function addressOf(
  */
 export function createDatabase(
   databaseUrl: string,
-  options: { max?: number; queryTimeoutMs?: number; idleTimeout?: number } = {},
+  options: { max?: number; queryTimeoutMs?: number } = {},
 ) {
   /*
    * Loud rather than silent when the arguments are the wrong way round.
@@ -248,9 +248,6 @@ export function createDatabase(
           ...address.connection,
         },
         ...(options.max === undefined ? {} : { max: options.max }),
-        ...(options.idleTimeout === undefined
-          ? {}
-          : { idleTimeout: options.idleTimeout }),
       }),
     options.queryTimeoutMs,
   );

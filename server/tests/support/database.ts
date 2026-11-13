@@ -58,11 +58,9 @@ export function testDatabaseUrlFrom(
  * Two, because a test that opens a transaction and reads inside it needs a second connection to do
  * so. A test that wants the deadlock that pinning to one exposes asks for `{ max: 1 }` itself.
  *
- * `idleTimeout` (seconds) closes a socket one second after its last query. Files never end their
- * pools, so without it every finished file keeps its connections for the whole run — at ~120
- * database files the sum (~240 sockets) blows past the CI image's default `max_connections` of 100
- * and unrelated files start failing with `sorry, too many clients already`. Files run one at a
- * time, so one second is plenty: only the file on the screen and the one just finished still hold
- * sockets. A test that idles a connection longer than one second simply reconnects on next use.
+ * Reclaiming the sockets is `run-server-tests.ts`'s job, not the pool's: it runs the suite in
+ * chunks, each in its own process, so every file's pool dies with its chunk. `idleTimeout` was
+ * tried and rejected — Bun kills a socket that sits idle while a query waits on a lock, which is
+ * exactly what the lock-contention tests do on purpose.
  */
-export const TEST_POOL = { max: 2, idleTimeout: 1 } as const;
+export const TEST_POOL = { max: 2 } as const;
