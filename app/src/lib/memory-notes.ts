@@ -8,7 +8,7 @@ import type {
   MemoryTidyResult,
   MemoryTidyUndoResult,
 } from "../../../shared/memory-notes";
-import { client } from "@/lib/client";
+import { client, tryClient } from "@/lib/client";
 
 /** 设置 → 记忆（DESIGN.md §50，docs/memory.md）。 */
 export const memoryNoteKeys = {
@@ -32,6 +32,17 @@ export function memoryNotesQueryOptions() {
 }
 
 export type MemoryNoteInput = { kind: MemoryKind; subject?: string | null; content: string; context?: string | null; shared?: boolean };
+
+/** 撤销一条刚生成的记忆（聊天里的「记忆」小条）：404 算已经删过，不算失败。 */
+export async function forgetMemoryNote(noteId: string): Promise<void> {
+  const response = await tryClient(
+    `/api/memory-notes/${encodeURIComponent(noteId)}`,
+    { method: "DELETE" },
+  );
+  // 删除失败（网络、权限、已被删）不能显示「已撤销」，否则用户以为记忆没了，其实还在。
+  if (!response.ok && response.status !== 404)
+    throw new Error(`撤销失败（${response.status}）`);
+}
 
 export async function createMemoryNote(input: MemoryNoteInput): Promise<MemoryNoteView> {
   const response = await client("/api/memory-notes", { method: "POST", body: input, fallback: "保存失败，请重试" });

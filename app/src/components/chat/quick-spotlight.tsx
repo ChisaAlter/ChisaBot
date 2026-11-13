@@ -24,6 +24,7 @@ import {
   sendPromptToChat,
 } from "@/lib/chat/quote-event";
 import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
+import { generateMorningBrief } from "@/lib/personal-sources/mutations";
 
 export { CHISABOT_SPOTLIGHT_EVENT, openQuickSpotlight, sendPromptToChat };
 
@@ -94,15 +95,8 @@ export function QuickSpotlight() {
   const handlePreviewMorningBrief = async () => {
     setLoadingBrief(true);
     try {
-      const res = await fetch("/api/personal-sources/morning-brief", {
-        method: "POST",
-        credentials: "include",
-      });
-      const data = (await res.json()) as { markdown?: string; error?: string };
-      if (!res.ok || !data.markdown) {
-        throw new Error(data.error || "生成晨报失败");
-      }
-      setBriefMarkdown(data.markdown);
+      const markdown = await generateMorningBrief();
+      setBriefMarkdown(markdown);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "生成晨报失败");
     } finally {

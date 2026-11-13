@@ -35,6 +35,7 @@ import {
   splitLinkLines,
 } from "@/lib/rich-previews/extract";
 import { readImageDims } from "@/lib/image-dims";
+import { readFileText, remoteFileSize } from "@/lib/rich-previews/files";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -454,16 +455,7 @@ function useRemoteSize(
     enabled: probe && sameOrigin && (known === undefined || known === null),
     staleTime: Number.POSITIVE_INFINITY,
     retry: false,
-    queryFn: async () => {
-      const response = await fetch(url, {
-        method: "HEAD",
-        credentials: "include",
-      });
-      const length = Number(response.headers.get("content-length"));
-      return response.ok && Number.isFinite(length) && length > 0
-        ? length
-        : null;
-    },
+    queryFn: () => remoteFileSize(url),
   });
   return known ?? data ?? null;
 }
@@ -552,11 +544,7 @@ function FileCardInner({
       enabled: viewing && isTextDoc,
       staleTime: 5 * 60_000,
       retry: false,
-      queryFn: async () => {
-        const response = await fetch(url, { credentials: "include" });
-        if (!response.ok) throw new Error(String(response.status));
-        return response.text();
-      },
+      queryFn: () => readFileText(url),
     },
     previewClient,
   );

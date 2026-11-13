@@ -1,7 +1,11 @@
 import { IconArrowDown, IconArrowUp, IconX } from "@tabler/icons-react";
-import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useAsyncAction } from "@/components/ui/async-action";
+import { useMutationFeedback } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -11,7 +15,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, ListRow } from "@/components/ui/skyglass";
+import { toast } from "@/components/ui/toast";
 import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { saveFallbackModelsMutationOptions } from "@/lib/model-settings/mutations";
+import { fallbackModelsQueryOptions } from "@/lib/model-settings/queries";
 
 /**
  * 设置 → 模型 →「备用模型」（DESIGN.md §61）：主模型额度用完或暂时不可用时，按这个顺序换下一个。
@@ -19,42 +26,6 @@ import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
  */
 
 export const MAX_FALLBACK_MODELS = 8;
-const fallbackKey = ["admin", "model-fallbacks"] as const;
-
-async function call(
-  method: "GET" | "PUT",
-  body?: unknown,
-  signal?: AbortSignal,
-): Promise<{ models: string[] }> {
-  const response = await fetch("/api/admin/model-fallbacks", {
-    method,
-    credentials: "include",
-    ...(body !== undefined
-      ? {
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      : {}),
-    ...(signal ? { signal } : {}),
-  });
-  const parsed = (await response.json().catch(() => null)) as {
-    models?: string[];
-    error?: string;
-  } | null;
-  if (!response.ok || !parsed || !Array.isArray(parsed.models))
-    throw new Error(
-      parsed?.error ||
-        (method === "GET" ? "无法加载备用模型" : "保存失败，请重试"),
-    );
-  return { models: parsed.models };
-}
-
-export function fallbackModelsQueryOptions() {
-  return queryOptions({
-    queryKey: fallbackKey,
-    queryFn: ({ signal }) => call("GET", undefined, signal),
-  });
-}
 
 /** 上移 / 下移 / 删除，纯函数便于测试。 */
 export function moveModel(
@@ -94,16 +65,17 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
   );
   const dirty =
     JSON.stringify(list) !== JSON.stringify(saved.data?.models ?? []);
-  const save = useAsyncAction(
-    async () => {
-      const sent = list;
-      const result = await call("PUT", { models: sent });
+  const save = useMutation(saveFallbackModelsMutationOptions(queryClient));
+  const saveState = useMutationFeedback(save);
+  const submit = () => {
+    const sent = list;
+    save.mutate(sent, {
       // 保存期间仍可调整顺序；响应只清掉本次提交的草稿，保留后续修改。
-      setDraft((current) => (current === sent ? null : current));
-      queryClient.setQueryData(fallbackKey, result);
-    },
-    { errorToast: (error) => error.message },
-  );
+      onSuccess: () =>
+        setDraft((current) => (current === sent ? null : current)),
+      onError: (error: Error) => toast.error(error.message),
+    });
+  };
 
   if (saved.isPending)
     return (
@@ -212,10 +184,10 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
         </Select>
         <Button
           data-testid="fallback-save"
-          disabled={!dirty && save.state === "idle"}
+          disabled={!dirty && saveState === "idle"}
           feedback="save"
-          onClick={() => void save.run()}
-          state={save.state}
+          onClick={submit}
+          state={saveState}
           type="button"
         >
           {"保存"}

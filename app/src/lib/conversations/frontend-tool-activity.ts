@@ -1,3 +1,5 @@
+import { tryClient } from "@/lib/client";
+
 /**
  * 正在跑的浏览器侧工具（`computer_*` 这些前端工具）——和它们最后一次有动静的时刻。
  *
@@ -24,6 +26,21 @@
  * 因为一个工具里可能连着跑好几条命令。
  */
 const MAX_TOOL_CREDIT_MS = 15 * 60_000;
+
+/**
+ * 把刚跑完的前端工具结果回存到对话（`POST .../frontend-finished`）：前端工具是浏览器同步执行的，
+ * 结果不经过 AG-UI 流，靠这次上报让服务器把结果并进这一轮的记录。失败静默——这一轮照常收尾，
+ * 服务器那侧对没等到的结果有自己的处理。
+ */
+export async function reportFrontendResultsFinished(
+  threadId: string,
+  results: readonly unknown[],
+): Promise<void> {
+  await tryClient(
+    `/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`,
+    { method: "POST", body: { results } },
+  ).catch(() => null);
+}
 
 let running = 0;
 let startedAt = 0;

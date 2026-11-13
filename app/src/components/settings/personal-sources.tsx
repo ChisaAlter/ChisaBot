@@ -10,7 +10,11 @@ import {
   IconSparkles,
   IconSun,
 } from "@tabler/icons-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
@@ -29,7 +33,10 @@ const LazyBotBubbles = lazy(() =>
   })),
 );
 
-import { useAsyncAction } from "@/components/ui/async-action";
+import {
+  useAsyncAction,
+  useMutationFeedback,
+} from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -45,26 +52,32 @@ import {
 import { Input } from "@/components/ui/input";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
-import { client } from "@/lib/client";
 import { agoText } from "@/lib/im";
+import {
+  connectCalendarMutationOptions,
+  connectEmailMutationOptions,
+  bindNotifyWebhookMutationOptions,
+  disconnectCalendarMutationOptions,
+  disconnectEmailMutationOptions,
+  disconnectNotifyWebhookMutationOptions,
+  generateMorningBrief,
+  rotateInboundTokenMutationOptions,
+  runCheckUpdates,
+  saveWeatherCity,
+  sendTestNotification,
+  simulateInboundEvent,
+} from "@/lib/personal-sources/mutations";
+import {
+  personalSourcesKeys,
+  personalSourcesStatusQueryOptions,
+} from "@/lib/personal-sources/queries";
 
-export const personalSourcesKeys = {
-  all: ["personal-sources"] as const,
-};
-
-async function fetchStatus(): Promise<PersonalSourcesStatusView> {
-  const res = await fetch("/api/personal-sources", { credentials: "include" });
-  if (!res.ok) throw new Error("无法读取个人日程与收件箱状态");
-  return (await res.json()) as PersonalSourcesStatusView;
-}
+export { personalSourcesKeys };
 
 export function PersonalSourcesSection() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const status = useQuery({
-    queryKey: personalSourcesKeys.all,
-    queryFn: fetchStatus,
-  });
+  const status = useQuery(personalSourcesStatusQueryOptions());
 
   const [calOpen, setCalOpen] = useState(false);
   const [mailOpen, setMailOpen] = useState(false);
@@ -90,45 +103,23 @@ export function PersonalSourcesSection() {
     async () => {
       const city = cityInput.trim() || status.data?.weatherCity || "上海";
       if (city !== status.data?.weatherCity) {
-        await fetch("/api/personal-sources/weather-city", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ city }),
-        });
+        await saveWeatherCity(city);
         await queryClient.invalidateQueries({
           queryKey: personalSourcesKeys.all,
         });
       }
-      const res = await fetch(
-        `/api/personal-sources/morning-brief?city=${encodeURIComponent(city)}`,
-        {
-          method: "POST",
-          credentials: "include",
-        },
-      );
-      const data = (await res.json()) as { markdown?: string; error?: string };
-      if (!res.ok || !data.markdown) {
-        throw new Error(data.error || "生成晨报失败");
-      }
+      const markdown = await generateMorningBrief(city);
       setBriefModalTitle("每日晨报卡片预览");
-      setBriefMarkdown(data.markdown);
+      setBriefMarkdown(markdown);
     },
     { errorToast: (err) => err.message },
   );
 
   const checkUpdates = useAsyncAction(
     async () => {
-      const res = await fetch("/api/personal-sources/check-updates", {
-        method: "POST",
-        credentials: "include",
-      });
-      const data = (await res.json()) as { markdown?: string; error?: string };
-      if (!res.ok || !data.markdown) {
-        throw new Error(data.error || "主动巡检失败");
-      }
+      const markdown = await runCheckUpdates();
       setBriefModalTitle("⚡ 个人助理主动巡检动态");
-      setBriefMarkdown(data.markdown);
+      setBriefMarkdown(markdown);
       await queryClient.invalidateQueries({
         queryKey: personalSourcesKeys.all,
       });
@@ -140,17 +131,7 @@ export function PersonalSourcesSection() {
     async () => {
       const path = status.data?.inboundWebhook?.path;
       if (!path) throw new Error("入站 Webhook 地址尚未就绪");
-      const res = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          source: "ChisaBot 连接测试",
-          title: "入站 Webhook 测试事件",
-          message: "这是手动触发的连接测试，可在巡检动态中查看。",
-        }),
-      });
-      if (!res.ok) throw new Error("触发模拟事件失败");
+      await simulateInboundEvent(path);
       await queryClient.invalidateQueries({
         queryKey: personalSourcesKeys.all,
       });
@@ -159,48 +140,43 @@ export function PersonalSourcesSection() {
     { errorToast: (err) => err.message },
   );
 
+  const rotateInboundTokenMutation = useMutation(
+    rotateInboundTokenMutationOptions(queryClient),
+  );
   const rotateInboundToken = useAsyncAction(
     async () => {
-      const res = await fetch("/api/personal-sources/inbound-webhook/rotate", {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("重置入站密钥失败");
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      await rotateInboundTokenMutation.mutateAsync();
       toast.success("已生成新的入站 Webhook 密钥");
     },
     { errorToast: (err) => err.message },
   );
 
+  const disconnectCalendarMutation = useMutation(
+    disconnectCalendarMutationOptions(queryClient),
+  );
   const disconnectCalendarAction = useAsyncAction(
     async () => {
-      const res = await client("/api/personal-sources/calendar", {
-        method: "DELETE",
-        fallback: "断开日历失败，请重试",
-      });
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      await disconnectCalendarMutation.mutateAsync();
       toast.success("已断开日历");
     },
     { errorToast: (err) => `断开日历失败：${err.message}` },
   );
+  const disconnectEmailMutation = useMutation(
+    disconnectEmailMutationOptions(queryClient),
+  );
   const disconnectEmailAction = useAsyncAction(
     async () => {
-      const res = await client("/api/personal-sources/email", {
-        method: "DELETE",
-        fallback: "断开收件箱失败，请重试",
-      });
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      await disconnectEmailMutation.mutateAsync();
       toast.success("已断开收件箱");
     },
     { errorToast: (err) => `断开收件箱失败：${err.message}` },
   );
+  const disconnectNotifyMutation = useMutation(
+    disconnectNotifyWebhookMutationOptions(queryClient),
+  );
   const disconnectNotifyAction = useAsyncAction(
     async () => {
-      const res = await client("/api/personal-sources/notify-webhook", {
-        method: "DELETE",
-        fallback: "断开通知推送失败，请重试",
-      });
-      queryClient.setQueryData(personalSourcesKeys.all, await res.json());
+      await disconnectNotifyMutation.mutateAsync();
       toast.success("已断开随身通知推送");
     },
     { errorToast: (err) => `断开通知推送失败：${err.message}` },
@@ -243,17 +219,13 @@ export function PersonalSourcesSection() {
 
   const testNotify = useAsyncAction(
     async () => {
-      const res = await fetch("/api/personal-sources/notify-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ requestId: crypto.randomUUID() }),
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      await queryClient.invalidateQueries({
-        queryKey: personalSourcesKeys.all,
-      });
-      if (!res.ok) throw new Error(data.error || "发送测试通知失败");
+      try {
+        await sendTestNotification(crypto.randomUUID());
+      } finally {
+        await queryClient.invalidateQueries({
+          queryKey: personalSourcesKeys.all,
+        });
+      }
       toast.success("通知平台已接受测试通知");
     },
     { errorToast: (err) => err.message },
@@ -787,29 +759,27 @@ function CalendarConnectDialog({
     Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
   );
 
-  const save = useAsyncAction(
-    async () => {
-      const res = await fetch("/api/personal-sources/calendar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          label: label.trim() || "我的日历",
-          icsUrl: icsUrl.trim() || undefined,
-          icsText: icsText.trim() || undefined,
-          timeZone,
-        }),
-      });
-      const data = (await res.json()) as PersonalSourcesStatusView & {
-        error?: string;
-      };
-      if (!res.ok) throw new Error(data.error || "连接日历失败");
-      onSaved(data);
-      toast.success("日历已连接");
-      onOpenChange(false);
-    },
-    { errorToast: (err) => err.message },
-  );
+  const queryClient = useQueryClient();
+  const save = useMutation(connectCalendarMutationOptions(queryClient));
+  const saveState = useMutationFeedback(save);
+  const submit = () => {
+    save.mutate(
+      {
+        label: label.trim() || "我的日历",
+        icsUrl: icsUrl.trim() || undefined,
+        icsText: icsText.trim() || undefined,
+        timeZone,
+      },
+      {
+        onSuccess: (data) => {
+          onSaved(data);
+          toast.success("日历已连接");
+          onOpenChange(false);
+        },
+        onError: (error: Error) => toast.error(error.message),
+      },
+    );
+  };
 
   const valid = Boolean(
     icsUrl.trim() || icsText.trim().includes("BEGIN:VCALENDAR"),
@@ -833,7 +803,7 @@ function CalendarConnectDialog({
           className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid && save.state !== "pending") void save.run();
+            if (valid && saveState !== "pending") submit();
           }}
         >
           <DialogBody className="im-form mt-2 flex flex-col gap-3">
@@ -896,7 +866,7 @@ function CalendarConnectDialog({
                 success: "已连接",
                 error: "失败",
               }}
-              state={save.state}
+              state={saveState}
               type="submit"
             >
               {"保存并连接"}
@@ -954,43 +924,41 @@ function EmailConnectDialog({
     if (domain) setSmtpPreset(domain);
   }
 
-  const save = useAsyncAction(
-    async () => {
-      const res = await fetch("/api/personal-sources/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          email: email.trim(),
-          imapHost: imapHost.trim(),
-          imapPort: Number(imapPort) || 993,
-          password: password.trim(),
-          ...(configureSmtp
-            ? {
-                smtp: {
-                  host: smtpHost.trim(),
-                  port: Number(smtpPort),
-                  ...(smtpUser.trim() ? { user: smtpUser.trim() } : {}),
-                  ...(smtpPassword ? { password: smtpPassword } : {}),
-                },
-              }
-            : {}),
-        } satisfies EmailConnectionInput),
-      });
-      const data = (await res.json()) as PersonalSourcesStatusView & {
-        error?: string;
-      };
-      if (!res.ok) throw new Error(data.error || "连接邮箱失败");
-      onSaved(data);
-      setPassword("");
-      setSmtpPassword("");
-      toast.success(
-        configureSmtp ? "收信与发信连接已验证" : "邮箱收件箱已连接",
-      );
-      onOpenChange(false);
-    },
-    { errorToast: (err) => err.message },
-  );
+  const queryClient = useQueryClient();
+  const save = useMutation(connectEmailMutationOptions(queryClient));
+  const saveState = useMutationFeedback(save);
+  const submit = () => {
+    save.mutate(
+      {
+        email: email.trim(),
+        imapHost: imapHost.trim(),
+        imapPort: Number(imapPort) || 993,
+        password: password.trim(),
+        ...(configureSmtp
+          ? {
+              smtp: {
+                host: smtpHost.trim(),
+                port: Number(smtpPort),
+                ...(smtpUser.trim() ? { user: smtpUser.trim() } : {}),
+                ...(smtpPassword ? { password: smtpPassword } : {}),
+              },
+            }
+          : {}),
+      } satisfies EmailConnectionInput,
+      {
+        onSuccess: (data) => {
+          onSaved(data);
+          setPassword("");
+          setSmtpPassword("");
+          toast.success(
+            configureSmtp ? "收信与发信连接已验证" : "邮箱收件箱已连接",
+          );
+          onOpenChange(false);
+        },
+        onError: (error: Error) => toast.error(error.message),
+      },
+    );
+  };
 
   const valid =
     email.includes("@") &&
@@ -1016,7 +984,7 @@ function EmailConnectDialog({
           className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid && save.state !== "pending") void save.run();
+            if (valid && saveState !== "pending") submit();
           }}
         >
           <DialogBody className="im-form mt-2 flex flex-col gap-3">
@@ -1176,7 +1144,7 @@ function EmailConnectDialog({
                 success: "已连接",
                 error: "连接失败",
               }}
-              state={save.state}
+              state={saveState}
               type="submit"
             >
               {"验证并连接"}
@@ -1200,27 +1168,25 @@ function NotifyWebhookDialog({
   const [label, setLabel] = useState("我的随身通知");
   const [url, setUrl] = useState("");
 
-  const save = useAsyncAction(
-    async () => {
-      const res = await fetch("/api/personal-sources/notify-webhook", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          label: label.trim() || undefined,
-          url: url.trim(),
-        }),
-      });
-      const data = (await res.json()) as PersonalSourcesStatusView & {
-        error?: string;
-      };
-      if (!res.ok) throw new Error(data.error || "绑定通知推送失败");
-      onSaved(data);
-      toast.success("随身通知推送已绑定");
-      onOpenChange(false);
-    },
-    { errorToast: (err) => err.message },
-  );
+  const queryClient = useQueryClient();
+  const save = useMutation(bindNotifyWebhookMutationOptions(queryClient));
+  const saveState = useMutationFeedback(save);
+  const submit = () => {
+    save.mutate(
+      {
+        label: label.trim() || undefined,
+        url: url.trim(),
+      },
+      {
+        onSuccess: (data) => {
+          onSaved(data);
+          toast.success("随身通知推送已绑定");
+          onOpenChange(false);
+        },
+        onError: (error: Error) => toast.error(error.message),
+      },
+    );
+  };
 
   const valid = Boolean(url.trim().startsWith("https://"));
 
@@ -1242,7 +1208,7 @@ function NotifyWebhookDialog({
           className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid && save.state !== "pending") void save.run();
+            if (valid && saveState !== "pending") submit();
           }}
         >
           <DialogBody className="im-form mt-2 flex flex-col gap-3">
@@ -1287,7 +1253,7 @@ function NotifyWebhookDialog({
                 success: "已绑定",
                 error: "失败",
               }}
-              state={save.state}
+              state={saveState}
               type="submit"
             >
               {"保存并启用"}

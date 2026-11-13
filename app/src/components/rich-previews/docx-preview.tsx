@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { downloadFileBlob } from "@/lib/rich-previews/files";
 
 /**
  * Word（.docx）文件在线预览（CB-089，DESIGN.md §111）。
@@ -36,9 +37,7 @@ export function DocxPreviewBody({ url, knownBytes }: { url: string; knownBytes: 
     let alive = true;
     (async () => {
       try {
-        const response = await fetch(url, { credentials: "include", signal: controller.signal });
-        if (!response.ok) throw new Error(String(response.status));
-        const blob = await response.blob();
+        const blob = await downloadFileBlob(url, controller.signal);
         if (docxTooLarge(blob.size)) {
           if (alive) setState({ kind: "too-large" });
           return;

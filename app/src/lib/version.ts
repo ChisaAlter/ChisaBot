@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { tryClient } from "@/lib/client";
 import { type BuildVersion, isNewerBuild } from "../../../shared/system-update";
 
 /**
@@ -14,9 +15,8 @@ const FOCUS_MIN_GAP_MS = 30_000;
 
 export async function fetchServedVersion(signal?: AbortSignal): Promise<BuildVersion | null> {
   try {
-    const response = await fetch("/api/version", {
+    const response = await tryClient("/api/version", {
       cache: "no-store",
-      credentials: "include",
       headers: { accept: "application/json" },
       ...(signal ? { signal } : {}),
     });

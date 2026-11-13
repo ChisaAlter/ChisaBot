@@ -172,8 +172,10 @@ import {
 } from "@/lib/conversations/tool-renderers";
 import { WORKER_RESULT_MARKER } from "@/lib/conversations/workers";
 import { markdownComponents } from "@/lib/markdown";
+import { forgetMemoryNote } from "@/lib/memory-notes";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
+import { probeRemoteFile } from "@/lib/rich-previews/files";
 import {
   asText,
   forDisplay,
@@ -1968,16 +1970,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
     setUndoError(null);
     try {
       if (item.noteId?.startsWith("mem_")) {
-        const response = await fetch(
-          `/api/memory-notes/${encodeURIComponent(item.noteId)}`,
-          {
-            method: "DELETE",
-            credentials: "include",
-          },
-        );
-        // 删除失败（网络、权限、已被删）不能显示「已撤销」，否则用户以为记忆没了，其实还在。
-        if (!response.ok && response.status !== 404)
-          throw new Error(`撤销失败（${response.status}）`);
+        await forgetMemoryNote(item.noteId);
       }
       setUndoneIds((prev) => ({ ...prev, [item.id]: true }));
     } catch (error) {
@@ -2692,15 +2685,7 @@ function probeDocument(url: string): Promise<DocumentProbe> {
   if (existing) return existing;
 
   // 同一个 HEAD 顺便读 content-length，文件卡显示大小，不再另发一次请求（DESIGN.md §31）。
-  const probe = fetch(url, { method: "HEAD", credentials: "include" })
-    .then((response) => {
-      const length = Number(response.headers.get("content-length"));
-      return {
-        missing: response.status === 404,
-        size:
-          response.ok && Number.isFinite(length) && length > 0 ? length : null,
-      };
-    })
+  const probe = probeRemoteFile(url)
     .finally(() => {
       // Cleared however it settled, so the next mount asks again rather than inheriting an answer
       // that has had time to stop being true.

@@ -1,6 +1,10 @@
-import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useState } from "react";
-import { useAsyncAction } from "@/components/ui/async-action";
+import { useMutationFeedback } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -9,55 +13,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "@/components/ui/toast";
 import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { saveHistorySummaryModelMutationOptions } from "@/lib/model-settings/mutations";
+import { historySummaryModelQueryOptions } from "@/lib/model-settings/queries";
 
 /**
  * 设置 → 模型 →「摘要模型」：Hermes 内核下长对话压缩前文时，用哪个模型把较早的轮次写成摘要。
  * 不选 = 跟随这一轮的主模型（服务器不写死任何模型）。摘要失败时只裁剪，不会挡住回答。
  */
 
-const summaryKey = ["admin", "history-summary-model"] as const;
 /** Select 里「跟随主模型」那一项的值（不是模型 id）。 */
 export const FOLLOW_MAIN_MODEL = "__follow-main__";
-
-async function call(
-  method: "GET" | "PUT",
-  body?: unknown,
-  signal?: AbortSignal,
-): Promise<{ model: string | null }> {
-  const response = await fetch("/api/admin/history-summary-model", {
-    method,
-    credentials: "include",
-    ...(body !== undefined
-      ? {
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      : {}),
-    ...(signal ? { signal } : {}),
-  });
-  const parsed = (await response.json().catch(() => null)) as {
-    model?: string | null;
-    error?: string;
-  } | null;
-  if (
-    !response.ok ||
-    !parsed ||
-    (parsed.model !== null && typeof parsed.model !== "string")
-  )
-    throw new Error(
-      parsed?.error ||
-        (method === "GET" ? "无法加载摘要模型" : "保存失败，请重试"),
-    );
-  return { model: parsed.model ?? null };
-}
-
-export function historySummaryModelQueryOptions() {
-  return queryOptions({
-    queryKey: summaryKey,
-    queryFn: ({ signal }) => call("GET", undefined, signal),
-  });
-}
 
 export function HistorySummaryModelCard() {
   const queryClient = useQueryClient();
@@ -69,18 +36,19 @@ export function HistorySummaryModelCard() {
   const value = draft ?? current;
   const known =
     value === FOLLOW_MAIN_MODEL || models.some((m) => m.id === value);
-  const save = useAsyncAction(
-    async () => {
-      const sent = value;
-      const result = await call("PUT", {
-        model: sent === FOLLOW_MAIN_MODEL ? null : sent,
-      });
-      // 旧保存响应不能覆盖用户在请求期间新选的模型。
-      setDraft((currentDraft) => (currentDraft === sent ? null : currentDraft));
-      queryClient.setQueryData(summaryKey, result);
-    },
-    { errorToast: (error) => error.message },
+  const save = useMutation(
+    saveHistorySummaryModelMutationOptions(queryClient),
   );
+  const saveState = useMutationFeedback(save);
+  const submit = () => {
+    const sent = value;
+    save.mutate(sent === FOLLOW_MAIN_MODEL ? null : sent, {
+      // 旧保存响应不能覆盖用户在请求期间新选的模型。
+      onSuccess: () =>
+        setDraft((currentDraft) => (currentDraft === sent ? null : currentDraft)),
+      onError: (error: Error) => toast.error(error.message),
+    });
+  };
 
   if (saved.isPending)
     return (
@@ -128,10 +96,10 @@ export function HistorySummaryModelCard() {
         </Select>
         <Button
           data-testid="history-summary-model-save"
-          disabled={value === current && save.state === "idle"}
+          disabled={value === current && saveState === "idle"}
           feedback="save"
-          onClick={() => void save.run()}
-          state={save.state}
+          onClick={submit}
+          state={saveState}
           type="button"
         >
           {"保存"}

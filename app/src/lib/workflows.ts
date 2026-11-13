@@ -6,7 +6,7 @@ import type {
   WorkflowSummary,
 } from "../../../shared/workflows";
 import { ACTIVE_RUN_STATUSES } from "../../../shared/workflows";
-import { client } from "@/lib/client";
+import { client, tryClient } from "@/lib/client";
 
 /** 工作流（docs/workflows.md）。运行页在运行中每 1.5 秒刷新一次，跑完就停。 */
 
@@ -99,13 +99,7 @@ async function send<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
-      method,
-      credentials: "include",
-      headers:
-        body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    response = await tryClient(path, { method, body });
   } catch {
     throw new WorkflowSaveError("无法连接到服务器，请重试。", [], 0);
   }

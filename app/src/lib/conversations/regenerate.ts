@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { CONFIRM_RESUME_MARKER } from "../../../../shared/confirmations";
 import { SCHEDULE_MARKER } from "../../../../shared/schedules";
+import { tryClient } from "@/lib/client";
 import { noteOwnRevision } from "./use-conversation-sync";
 import { WORKER_RESULT_MARKER } from "./workers";
 
@@ -95,13 +96,11 @@ export async function truncateConversation(
 ): Promise<{ removed: string[]; revision: string }> {
   let response: Response;
   try {
-    response = await fetch(
+    response = await tryClient(
       `/api/conversations/threads/${encodeURIComponent(threadId)}/truncate`,
       {
         method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fromMessageId, mode }),
+        body: { fromMessageId, mode },
       },
     );
   } catch {

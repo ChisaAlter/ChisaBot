@@ -5,7 +5,7 @@ import type {
   DeviceCapabilities,
   DeviceView,
 } from "../../../shared/devices";
-import { client } from "@/lib/client";
+import { client, tryClient } from "@/lib/client";
 
 /**
  * PC 设备（docs/pc-node.md）。列表每 5 秒刷新一次，这样在线状态和待审批几乎是实时的，
@@ -156,7 +156,7 @@ export function pcDownloadQueryOptions() {
   return queryOptions({
     queryKey: deviceKeys.download,
     queryFn: async (): Promise<PcDownload | null> => {
-      const response = await fetch("/downloads/pc/latest.json", { credentials: "include" });
+      const response = await tryClient("/downloads/pc/latest.json");
       if (!response.ok) return null;
       const type = response.headers.get("content-type") ?? "";
       if (!type.includes("json")) return null;

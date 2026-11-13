@@ -4,6 +4,7 @@ import {
   dictationMediaType,
   MAX_DICTATION_BYTES,
 } from "../../../../shared/dictation";
+import { tryClient } from "@/lib/client";
 import { isAndroidApp } from "@/lib/device";
 
 export interface Recording {
@@ -332,15 +333,12 @@ export async function transcribeRecording(
   body.set("file", audio, `recording.${extension}`);
   let response: Response;
   try {
-    response = await fetch("/api/audio/transcriptions", {
+    response = await tryClient("/api/audio/transcriptions", {
       method: "POST",
-      credentials: "include",
       headers: { "x-chisabot-dictation": "1" },
       body,
-      signal: AbortSignal.any([
-        signal,
-        AbortSignal.timeout(DICTATION_TIMEOUT_MS + 5_000),
-      ]),
+      signal,
+      timeoutMs: DICTATION_TIMEOUT_MS + 5_000,
     });
   } catch (error) {
     if (signal.aborted) throw error;

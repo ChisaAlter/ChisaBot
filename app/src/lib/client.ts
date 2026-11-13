@@ -15,7 +15,10 @@
 export type ClientOptions = {
   /** Absent means GET. */
   method?: string;
-  /** Serialised as JSON, which is also what sets the content type. */
+  /**
+   * Serialised as JSON, which is also what sets the content type. A `FormData` or `Blob` is sent
+   * as-is with no content type of ours — the browser writes the multipart boundary / blob type.
+   */
   body?: unknown;
   /** Extra request headers (CB-101: the computer activity attribution). */
   headers?: Record<string, string>;
@@ -35,6 +38,10 @@ export type ClientOptions = {
   signal?: AbortSignal;
   /** Default 30s. Long actions set their own budget; 0 explicitly disables the deadline. */
   timeoutMs?: number;
+  /** Passed to fetch for the few callers that bypass caches (e.g. /api/version's no-store). */
+  cache?: RequestCache;
+  /** Passed to fetch for a pagehide flush whose request must outlive the page. */
+  keepalive?: boolean;
 };
 
 /** Default budget for ordinary requests, with or without caller cancellation. */
@@ -50,17 +57,26 @@ function requestSignal(options: ClientOptions): AbortSignal | undefined {
   return options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
 }
 
-/** Every request in this app is authenticated, and every one of them is JSON or nothing. */
+/** Every request in this app is authenticated; bodies are JSON, or a FormData/Blob sent raw. */
 async function send(path: string, options: ClientOptions): Promise<Response> {
+  const body = options.body;
+  const passthrough = body instanceof FormData || body instanceof Blob;
   return fetch(path, {
     method: options.method,
     credentials: "include",
     headers:
-      options.body === undefined
+      body === undefined || passthrough
         ? options.headers
         : { ...options.headers, "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body:
+      body === undefined
+        ? undefined
+        : passthrough
+          ? (body as BodyInit)
+          : JSON.stringify(body),
     signal: requestSignal(options),
+    ...(options.cache !== undefined ? { cache: options.cache } : {}),
+    ...(options.keepalive !== undefined ? { keepalive: options.keepalive } : {}),
   });
 }
 

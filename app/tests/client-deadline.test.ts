@@ -22,6 +22,14 @@ beforeAll(() => {
           },
         }), { headers: { "content-type": "application/json" } });
       }
+      if (path === "/echo") {
+        return Response.json({
+          echo: {
+            contentType: request.headers.get("content-type"),
+            body: await request.text(),
+          },
+        });
+      }
       return Response.json({ value: "ok" });
     },
   });
@@ -82,5 +90,32 @@ describe("request lifetime", () => {
     const pending = tryClient(url("/headers"), { signal: owner.signal, timeoutMs: 0 });
     owner.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("body passthrough", () => {
+  type Echo = { contentType: string | null; body: string };
+  const echo = (body: unknown) =>
+    client<Echo>(url("/echo"), "echo", { method: "POST", body });
+
+  test("a plain value is JSON-serialised with the JSON content type", async () => {
+    const result = await echo({ a: 1 });
+    expect(result.contentType).toBe("application/json");
+    expect(result.body).toBe('{"a":1}');
+  });
+
+  test("FormData goes out raw and the runtime sets the multipart boundary", async () => {
+    const form = new FormData();
+    form.set("file", new Blob(["abc"], { type: "text/plain" }), "a.txt");
+    const result = await echo(form);
+    expect(result.contentType).toContain("multipart/form-data");
+    expect(result.contentType).toContain("boundary=");
+    expect(result.body).toContain("abc");
+  });
+
+  test("Blob goes out raw without a JSON content type", async () => {
+    const result = await echo(new Blob(["xyz"], { type: "text/plain" }));
+    expect(result.contentType).not.toBe("application/json");
+    expect(result.body).toBe("xyz");
   });
 });

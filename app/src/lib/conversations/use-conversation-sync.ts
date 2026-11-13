@@ -1,6 +1,7 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { tryClient } from "@/lib/client";
 import type { ThreadActivity } from "./bot-thread";
 import { createJoinBackoff } from "./join-backoff";
 import { restoreQueue } from "./thread-inbox";
@@ -482,7 +483,7 @@ export function useConversationSync(
         if (!alive || agent.isRunning || connecting) return;
         // 增量读（readStoredRows）：每轮结束后的这一次核对不再拉整份，只拉变了的尾部；请求仍是原来的 fetch。
         const rows = await readStoredRows(threadId, undefined, (path) =>
-          fetch(path, { credentials: "include" }),
+          tryClient(path),
         ).catch(() => null);
         if (!alive || !rows || agent.isRunning || connecting) return;
         const decision = reconcileDecision(

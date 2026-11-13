@@ -1,6 +1,7 @@
 import { IconCamera, IconLoader2 } from "@tabler/icons-react";
 import { useState } from "react";
 import { Lightbox } from "@/components/rich-previews/lightbox";
+import { tryClient } from "@/lib/client";
 
 /**
  * 用户明确要「截个图」时，对话里放一张缩略图（2026-10-13，Hark 第二轮）。
@@ -23,11 +24,9 @@ function load(): Stored {
   }
 }
 export function keepShot(id: string, src: string, url?: string, botId?: string) {
-  void fetch(`/api/chat-shots/${encodeURIComponent(id)}`, {
+  void tryClient(`/api/chat-shots/${encodeURIComponent(id)}`, {
     method: "PUT",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ dataUrl: src, ...(url ? { url } : {}), ...(botId ? { botId } : {}) }),
+    body: { dataUrl: src, ...(url ? { url } : {}), ...(botId ? { botId } : {}) },
   }).catch(() => {});
   try {
     const all = load();

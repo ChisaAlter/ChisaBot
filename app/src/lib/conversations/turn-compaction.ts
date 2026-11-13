@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { readSentAt, type SentAtReading } from "@/lib/chat/send-scroll";
+import { tryClient } from "@/lib/client";
 
 /**
  * 服务器记下的两类「一轮」信息（频道聊天读，chat-transcript.tsx 的 compactTurns 画）：
@@ -17,9 +18,8 @@ export function useStoppedTurnIds(
     if (!threadId) return;
     let alive = true;
     const load = () =>
-      fetch(
+      tryClient(
         `/api/conversations/threads/${encodeURIComponent(threadId)}/stopped`,
-        { credentials: "include" },
       )
         .then((r) => (r.ok ? r.json() : { userMessageIds: [] }))
         .then((body: { userMessageIds?: string[] }) => {
@@ -61,9 +61,8 @@ export function useFallbackTurns(
     if (!threadId) return;
     let alive = true;
     const load = () =>
-      fetch(
+      tryClient(
         `/api/conversations/threads/${encodeURIComponent(threadId)}/fallbacks`,
-        { credentials: "include" },
       )
         .then((r) => (r.ok ? r.json() : { turns: [] }))
         .then(
@@ -110,9 +109,8 @@ export function useLastSentAt(
     if (!threadId) return;
     let alive = true;
     const load = () =>
-      fetch(
+      tryClient(
         `/api/conversations/threads/${encodeURIComponent(threadId)}/sent-at`,
-        { credentials: "include" },
       )
         .then((r) => (r.ok ? r.json() : null))
         .then((body: unknown) => {

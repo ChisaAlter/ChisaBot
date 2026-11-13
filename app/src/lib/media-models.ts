@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { tryClient } from "@/lib/client";
 import type { ImageSettingsView } from "../../../shared/chat-files";
 import type { MediaAdminView, MediaPersonalView, MediaProbeResult, VisionSettingsView } from "../../../shared/media-models";
 
@@ -9,12 +10,12 @@ export const mediaKeys = {
   me: ["media-models", "me"] as const,
 };
 
-async function call<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}, fallback = "请求失败，请重试"): Promise<T> {
-  const response = await fetch(`/api/media-models${path}`, {
+async function call<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {}, fallback = "请求失败，请重试"): Promise<T> {
+  const response = await tryClient(`/api/media-models${path}`, {
     method: init.method ?? "GET",
-    credentials: "include",
-    ...(init.body !== undefined ? { headers: { "content-type": "application/json" }, body: JSON.stringify(init.body) } : {}),
+    body: init.body,
     ...(init.signal ? { signal: init.signal } : {}),
+    ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
   });
   const body = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!response.ok || !body) throw new Error(body?.error || fallback);
@@ -38,6 +39,6 @@ export const savePersonalImage = (input: PersonalImageInput) => call<MediaPerson
 export const savePersonalVision = (input: VisionInput) => call<MediaPersonalView>("/me/vision", { method: "PUT", body: input }, "保存失败，请重试");
 
 export const testImageModel = (input: { scope: "default" | "personal"; provider: "minimax" | "openai"; baseUrl: string; model: string; apiKey?: string }) =>
-  call<MediaProbeResult>("/test/image", { method: "POST", body: input }, "检查失败");
+  call<MediaProbeResult>("/test/image", { method: "POST", body: input, timeoutMs: 0 }, "检查失败");
 export const testVisionModel = (input: { scope: "default" | "personal"; baseUrl: string; model: string; apiKey?: string }) =>
-  call<MediaProbeResult>("/test/vision", { method: "POST", body: input }, "检查失败");
+  call<MediaProbeResult>("/test/vision", { method: "POST", body: input, timeoutMs: 0 }, "检查失败");

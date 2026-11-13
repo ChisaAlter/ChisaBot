@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { ChatFileView, ImageSettingsView } from "../../../shared/chat-files";
-import { client } from "@/lib/client";
+import { client, tryClient } from "@/lib/client";
 
 /** 聊天文件 + 图片生成（DESIGN.md §56，docs/chat-files.md）。 */
 export const chatFileKeys = {
@@ -32,7 +32,7 @@ export async function uploadChatFile(agentId: string, file: File): Promise<ChatF
   const form = new FormData();
   form.set("agentId", agentId);
   form.set("file", file, file.name);
-  const response = await fetch("/api/chat-files", { method: "POST", body: form, credentials: "include" });
+  const response = await tryClient("/api/chat-files", { method: "POST", body: form, timeoutMs: 0 });
   const body = (await response.json().catch(() => null)) as { file?: ChatFileView; error?: string } | null;
   if (!response.ok || !body?.file) throw new Error(body?.error || (response.status === 413 ? "文件太大" : "上传失败，请重试"));
   return body.file;
@@ -59,11 +59,10 @@ export function saveImageSettings(input: ImageSettingsInput): Promise<ImageSetti
 }
 
 export async function testImageSettings(input: Partial<ImageSettingsInput>): Promise<{ ok: boolean; message: string }> {
-  const response = await fetch("/api/chat-files/settings/image/test", {
+  const response = await tryClient("/api/chat-files/settings/image/test", {
     method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
+    body: input,
+    timeoutMs: 0,
   });
   const body = (await response.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
   if (!response.ok) throw new Error(body?.error || "检查失败");

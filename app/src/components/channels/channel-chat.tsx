@@ -97,7 +97,7 @@ import {
   ConversationProvider,
   replyAfterToolCall,
 } from "@/lib/conversations/conversation";
-import { frontendToolProgressAt } from "@/lib/conversations/frontend-tool-activity";
+import { frontendToolProgressAt, reportFrontendResultsFinished } from "@/lib/conversations/frontend-tool-activity";
 import {
   hideHeldSupplements,
   useStopRequest,
@@ -223,15 +223,7 @@ async function persistFailedFrontendResults(
     )
   )
     return;
-  await fetch(
-    `/api/conversations/threads/${encodeURIComponent(threadId)}/frontend-finished`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ results }),
-    },
-  ).catch(() => null);
+  await reportFrontendResultsFinished(threadId, results);
   return true;
 }
 

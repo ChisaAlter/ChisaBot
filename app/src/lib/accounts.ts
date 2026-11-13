@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { tryClient } from "@/lib/client";
 
 /**
  * 设置 → 管理 → 账号（CB-040，DESIGN.md §65）：朋友账号与邀请链接。
@@ -28,11 +29,11 @@ export type AccountsState =
   | { available: true; me: string; accounts: GatewayAccount[]; invites: GatewayInvite[]; invitesEnabled: boolean }
   | { available: false; reason: string };
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    ...init,
-    headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
+async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const response = await tryClient(path, {
+    method: init?.method,
+    body: init?.body,
+    headers: { Accept: "application/json" },
   });
   const data = (await response.json().catch(() => null)) as ({ ok?: boolean; error?: string } & T) | null;
   if (!response.ok || !data || data.ok === false) throw new Error(data?.error || `请求失败（${response.status}）`);
@@ -45,7 +46,9 @@ export function accountsQueryOptions() {
   return queryOptions({
     queryKey: accountKeys.all,
     queryFn: async (): Promise<AccountsState> => {
-      const response = await fetch("/auth/admin/accounts", { credentials: "same-origin", headers: { Accept: "application/json" } });
+      const response = await tryClient("/auth/admin/accounts", {
+        headers: { Accept: "application/json" },
+      });
       const type = response.headers.get("Content-Type") || "";
       if (!type.includes("application/json")) return { available: false, reason: "这个部署前面没有 ChisaBot 登录网关，账号由部署方式决定。" };
       const data = (await response.json().catch(() => null)) as
@@ -62,28 +65,28 @@ export function accountsQueryOptions() {
 }
 
 export async function setInvitesEnabled(enabled: boolean) {
-  return (await call<{ invitesEnabled: boolean }>("/auth/admin/invites-enabled", { method: "PUT", body: JSON.stringify({ enabled }) })).invitesEnabled;
+  return (await call<{ invitesEnabled: boolean }>("/auth/admin/invites-enabled", { method: "PUT", body: { enabled } })).invitesEnabled;
 }
 export async function createInvite(input: { note?: string; hours?: number; role?: "admin" | "user" }) {
-  return (await call<{ invite: { id: string; url: string; expiresAt: number; role?: "admin" | "user" } }>("/auth/admin/invites", { method: "POST", body: JSON.stringify(input) })).invite;
+  return (await call<{ invite: { id: string; url: string; expiresAt: number; role?: "admin" | "user" } }>("/auth/admin/invites", { method: "POST", body: input })).invite;
 }
 export async function createAccount(input: { username: string; displayName?: string; password: string; role?: "admin" | "user" }) {
-  return (await call<{ account: GatewayAccount }>("/auth/admin/accounts", { method: "POST", body: JSON.stringify(input) })).account;
+  return (await call<{ account: GatewayAccount }>("/auth/admin/accounts", { method: "POST", body: input })).account;
 }
 export async function revokeInvite(id: string) {
   await call(`/auth/admin/invites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export async function setAccountDisabled(id: string, disabled: boolean) {
-  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ disabled }) });
+  await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { disabled } });
 }
 export async function setAccountRole(id: string, role: "admin" | "user") {
-  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ role }) })).account;
+  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { role } })).account;
 }
 export async function setAccountPassword(id: string, password: string) {
-  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ password }) })).account;
+  return (await call<{ account: GatewayAccount }>(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "PATCH", body: { password } })).account;
 }
 export async function resetAccount(id: string) {
-  return (await call<{ invite: { id: string; url: string; expiresAt: number } }>(`/auth/admin/accounts/${encodeURIComponent(id)}/reset`, { method: "POST", body: "{}" })).invite;
+  return (await call<{ invite: { id: string; url: string; expiresAt: number } }>(`/auth/admin/accounts/${encodeURIComponent(id)}/reset`, { method: "POST", body: {} })).invite;
 }
 export async function deleteAccount(id: string) {
   await call(`/auth/admin/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });

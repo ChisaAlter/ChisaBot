@@ -19,7 +19,7 @@ import {
   type QueuedMessage,
   reduceQueue,
 } from "@/components/channels/composer";
-import { attachmentUrl } from "@/lib/channels/attachments";
+import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
 import { newId } from "../../lib/new-id";
@@ -737,8 +737,5 @@ function releaseStagedAttachment(attachment: Attachment): void {
   if (typeof metadata?.attachmentId !== "string") {
     return;
   }
-  void fetch(attachmentUrl(metadata.attachmentId), {
-    method: "DELETE",
-    credentials: "include",
-  }).catch(() => undefined);
+  releaseStagedAttachmentRow(metadata.attachmentId);
 }

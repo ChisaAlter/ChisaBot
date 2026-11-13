@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
+import { tryClient } from "@/lib/client";
 
 /**
  * 后台任务（DESIGN.md §38.2；服务器 server/src/workers/service.ts）在界面上的数据：这个对话里委派过的
@@ -48,9 +49,7 @@ export function useThreadWorkers(threadId: string | null | undefined) {
     queryKey: workerKeys.thread(threadId ?? ""),
     enabled: Boolean(threadId),
     queryFn: async (): Promise<WorkerView[]> => {
-      const response = await fetch(workersApi(threadId!), {
-        credentials: "include",
-      });
+      const response = await tryClient(workersApi(threadId!));
       if (!response.ok) return [];
       return (
         ((await response.json()) as { workers?: WorkerView[] }).workers ?? []
@@ -73,11 +72,9 @@ export function useWorkerAction(threadId: string | null | undefined) {
   return useCallback(
     async (workerId: string, action: "cancel" | "steer", text?: string) => {
       if (!threadId) throw new Error("no thread");
-      const response = await fetch(workersApi(threadId), {
+      const response = await tryClient(workersApi(threadId), {
         method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workerId, action, ...(text ? { text } : {}) }),
+        body: { workerId, action, ...(text ? { text } : {}) },
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as {

@@ -44,6 +44,7 @@ import {
   setMemoryBot,
   updateMemoryNote,
 } from "@/lib/memory-notes";
+import { tryClient } from "@/lib/client";
 import { cn } from "@/lib/utils";
 
 /**
@@ -420,12 +421,10 @@ export function flushOnPageHide() {
     forgetToast(key);
     for (const id of entry.ids) flushedIds.add(id);
     flushedRefreshes.add(entry.refresh);
-    void fetch("/api/memory-notes/forget", {
+    void tryClient("/api/memory-notes/forget", {
       method: "POST",
-      credentials: "include",
       keepalive: true,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ids: entry.ids }),
+      body: { ids: entry.ids },
     })
       .then(() => entry.refresh().catch(() => undefined))
       .catch(() => undefined)

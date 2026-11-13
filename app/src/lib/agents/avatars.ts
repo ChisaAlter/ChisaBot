@@ -58,16 +58,13 @@ export async function saveAvatarDraft(queryClient: QueryClient, agentId: string,
   if (draft.kind === "keep") return;
   if (draft.kind === "default") await client(path, { method: "DELETE", fallback });
   else if (draft.kind === "image") {
-    const response = await fetch(`${path}/image`, {
+    await client(`${path}/image`, {
       method: "PUT",
-      credentials: "include",
       headers: { "content-type": draft.blob.type || "application/octet-stream" },
       body: draft.blob,
+      fallback,
+      timeoutMs: 0,
     });
-    if (!response.ok) {
-      const message = await response.json().then((b: { error?: string }) => b.error).catch(() => undefined);
-      throw new Error(message ?? fallback);
-    }
   } else await client(path, { method: "PUT", body: draft, fallback });
   await queryClient.invalidateQueries({ queryKey: avatarKeys.all });
   announceAvatarChange(agentId);

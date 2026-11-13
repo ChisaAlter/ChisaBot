@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { tryClient } from "@/lib/client";
 
 /**
  * `GET /api/link-preview` 的前端一侧（从 rich-previews.tsx 拆出来，2026-10-29）：
@@ -105,9 +106,8 @@ export function forgetRememberedPreviews() {
 }
 
 async function fetchPreview(url: string): Promise<LinkPreviewData> {
-  const response = await fetch(
+  const response = await tryClient(
     `/api/link-preview?url=${encodeURIComponent(url)}`,
-    { credentials: "include" },
   );
   if (!response.ok) throw new PreviewMissing(String(response.status));
   const body = (await response.json().catch(() => null)) as {

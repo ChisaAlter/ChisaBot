@@ -93,7 +93,9 @@ test("备用模型保存期间的后续删除保留，旧响应只更新已保�
   const view = draw("fallback");
   fireEvent.click(view.getAllByRole("button", { name: "下移" })[0]!);
   fireEvent.click(view.getByTestId("fallback-save"));
-  expect(save.writes).toEqual([{ models: ["b", "a", "c"] }]);
+  await waitFor(() =>
+    expect(save.writes).toEqual([{ models: ["b", "a", "c"] }]),
+  );
   fireEvent.click(view.getAllByRole("button", { name: "移除" })[2]!);
   await save.finish({ models: ["b", "a", "c"] });
   await waitFor(() =>
@@ -134,7 +136,7 @@ test("摘要模型保存期间新选的模型不会被旧保存结果覆盖", as
   const view = draw("summary");
   await pickSummary(view, "b");
   fireEvent.click(view.getByTestId("history-summary-model-save"));
-  expect(save.writes).toEqual([{ model: "b" }]);
+  await waitFor(() => expect(save.writes).toEqual([{ model: "b" }]));
   await pickSummary(view, "c");
   await save.finish({ model: "b" });
   await waitFor(() =>

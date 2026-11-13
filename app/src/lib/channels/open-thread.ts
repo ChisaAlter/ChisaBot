@@ -1,6 +1,7 @@
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
+import { tryClient } from "@/lib/client";
 import { botChatChannelId } from "./bot-chat";
 import { type AgentChannel, channelKeys } from "./queries";
 
@@ -13,11 +14,9 @@ export async function openThreadChannel(
   threadId: string,
   queryClient?: QueryClient,
 ): Promise<AgentChannel> {
-  const response = await fetch("/api/channels/open-thread", {
+  const response = await tryClient("/api/channels/open-thread", {
     method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ agentId, threadId }),
+    body: { agentId, threadId },
   });
   const body = (await response.json().catch(() => null)) as {
     channel?: AgentChannel;

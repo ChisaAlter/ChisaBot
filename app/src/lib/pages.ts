@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { PageAssetView, PageVersionView, PageView } from "../../../shared/pages";
-import { client } from "@/lib/client";
+import { client, tryClient } from "@/lib/client";
 
 /** 页面（DESIGN.md §54，docs/pages.md）：机器人做的单页网页，/p/<随机串>/ 公开可看。 */
 export const pageKeys = {
@@ -61,11 +61,11 @@ export async function undoDeletePage(id: string) {
 }
 
 export async function uploadPageAsset(id: string, file: File): Promise<string> {
-  const response = await fetch(`/api/pages/${encodeURIComponent(id)}/assets?name=${encodeURIComponent(file.name)}`, {
+  const response = await tryClient(`/api/pages/${encodeURIComponent(id)}/assets?name=${encodeURIComponent(file.name)}`, {
     method: "PUT",
-    credentials: "include",
     headers: { "content-type": "application/octet-stream" },
     body: file,
+    timeoutMs: 0,
   });
   const body = (await response.json().catch(() => null)) as { name?: string; error?: string } | null;
   if (!response.ok) throw new Error(body?.error ?? "上传失败，请重试");
@@ -81,11 +81,9 @@ let originReported = false;
 export function reportPageOrigin() {
   if (originReported || typeof window === "undefined") return;
   originReported = true;
-  void fetch("/api/pages/origin", {
+  void tryClient("/api/pages/origin", {
     method: "PUT",
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ origin: window.location.origin }),
+    body: { origin: window.location.origin },
   }).catch(() => {
     originReported = false;
   });

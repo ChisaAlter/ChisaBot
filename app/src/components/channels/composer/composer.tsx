@@ -40,6 +40,7 @@ import {
   mediaTypeOf,
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
+import { releaseStagedAttachment } from "@/lib/channels/staged-attachment";
 import {
   type Attachment,
   type AttachmentsConfig,
@@ -2996,10 +2997,7 @@ function ComposerImpl({
  * actionable. `cull-staged-attachments.ts` is the backstop for whatever this misses.
  */
 function discardStagedAttachment(attachmentId: string): void {
-  void fetch(attachmentUrl(attachmentId), {
-    method: "DELETE",
-    credentials: "include",
-  }).catch(() => undefined);
+  releaseStagedAttachment(attachmentId);
 }
 
 /**
