@@ -169,6 +169,14 @@ jobs:
           for f in deploy/updater/*.sh; do bash -n "$f"; done
           bash deploy/updater/test-shell.sh
           python3 -m unittest discover -s deploy/updater -p "test_*.py"
+      # Everything the hand-picked lists miss: the whole server/shared suite minus the
+      # measured defect quarantine (scripts/test-quarantine.ts) and the dsh-* suites,
+      # which have their own job below.
+      - name: Full server suite (minus quarantine)
+        env:
+          TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
+          CHISABOT_COMPUTER_STOP_HTTP: "1"
+        run: bun run test:server
       # Private host info guard. The deny list lives in the repository variable
       # PRIVATE_HOST_DENY (Settings → Secrets and variables → Actions → Variables),
       # deliberately NOT in this file: a guard that spelled out the address would
