@@ -177,8 +177,8 @@ test("binding.connection: an explicit short request timeout on the last model do
 
   const baseURL = `http://127.0.0.1:${upstream.address().port}/v1`;
   // firstOutput wait (4×400=1600) is longer than the 300ms request timeout, so the SDK
-  // times out first. Without the QA511 fix that used to same-model-retry (~600ms+).
-  const started = Date.now();
+  // times out first. Assert the actual request count and terminal outcome, not
+  // bind/startup wall time, which also includes runner scheduling and disk work.
   await client.bind({
     sessionId: "short-to",
     threadId: "short-to",
@@ -213,8 +213,13 @@ test("binding.connection: an explicit short request timeout on the last model do
     mode: "queue",
     content: [{ type: "text", text: "hi" }],
   });
-  await client.wait("short-to", { timeoutMs: 10_000 });
-  const ms = Date.now() - started;
+  assert.equal(
+    (await client.wait("short-to", { timeoutMs: 10_000 })).reason,
+    "idle",
+  );
   assert.deepEqual(requests, ["slow_short"]);
-  assert.ok(ms < 900, `same-model retry suspected: ${ms}ms`);
+  assert.match(
+    JSON.stringify((await client.events("short-to")).records),
+    /Request timed out/i,
+  );
 });
