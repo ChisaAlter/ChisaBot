@@ -7,6 +7,8 @@ ChisaBot 功能入口与实现位置：**做什么 · 入口 · 代码 · 数据
 - 数据表的完整说明见 [data-model.md](data-model.md)。多数 `chisabot_` 表开机幂等初始化；会话与 DSH 账本经迁移 0063–0068 管理（表名统一为 `chisabot_*`，reader 4）。回滚还须匹配内核日志 reader，见 [DSH 运维](ops/dsh-runtime.md)。
 - 「状态」：**已上线** = 已合入主线并发布的能力；**隐藏** = 代码在、默认不显示，用开关恢复；**移除** = 代码已删。外部数据源连接状态按实际部署配置判断。
 
+任务中心弹层（[CB-120](BACKLOG.md#cb-120)、DESIGN §130）：从账号菜单或右栏打开完整任务中心，保留当前页面与地址；分区、详情和关闭均在弹层内完成。由 `app/src/components/task-center/task-center-provider.tsx` 与 `task-center-dialog.tsx` 接线，无新增开关或数据表；本地验证已通过，正式环境验收待部署后完成。
+
 ## 开关一览
 
 | 开关                                                                           | 默认           | 打开后                                                                                                                                              |

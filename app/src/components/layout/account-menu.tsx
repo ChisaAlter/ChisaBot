@@ -14,6 +14,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { GlassAvatar } from "@/components/layout/glass-topbar";
 import { useTheme } from "@/components/theme-provider";
+import { useOpenTaskCenter } from "@/components/task-center/task-center-provider";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -79,6 +80,7 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
+  const openTaskCenter = useOpenTaskCenter();
   // 当前应用版本（/api/version 的 version，例如 0.1.0）。
   const served = useQuery({
     queryKey: ["app-version"],
@@ -205,7 +207,11 @@ export function AccountMenu({
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
-          <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => go("/tasks")} />
+          <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => {
+            setOpen(false);
+            if (sidebar?.isMobile) sidebar.setOpenMobile(false);
+            openTaskCenter();
+          }} />
           <Row icon={<IconAlarm className={icon} />} label={"定时任务"} onClick={() => go("/settings/schedules")} />
           <Row
             hint={pending > 0 ? `${pending} 项` : undefined}

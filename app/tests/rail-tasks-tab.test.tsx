@@ -19,6 +19,7 @@ import {
 } from "@tanstack/react-router";
 import { act, cleanup, render } from "@testing-library/react";
 import { TasksRailCard } from "@/components/panels/tasks-rail-card";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { taskCenterKeys } from "@/lib/task-center-api";
 import { type WorkflowLibrary, workflowKeys } from "@/lib/workflows";
 import type { TaskCenterSnapshot } from "../../shared/task-center";
@@ -261,7 +262,9 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
-          <TasksRailCard />
+          <TaskCenterProvider>
+            <TasksRailCard />
+          </TaskCenterProvider>
         </QueryClientProvider>
       ),
     });
@@ -408,7 +411,9 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
-          <TasksRailCard />
+          <TaskCenterProvider>
+            <TasksRailCard />
+          </TaskCenterProvider>
         </QueryClientProvider>
       ),
     });
@@ -481,7 +486,9 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
-          <TasksRailCard />
+          <TaskCenterProvider>
+            <TasksRailCard />
+          </TaskCenterProvider>
         </QueryClientProvider>
       ),
     });
@@ -610,7 +617,9 @@ describe("右栏「面板 | 任务 | 计算机」三选项卡与任务进度拆�
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={queryClient}>
-          <TasksRailCard />
+          <TaskCenterProvider>
+            <TasksRailCard />
+          </TaskCenterProvider>
         </QueryClientProvider>
       ),
     });

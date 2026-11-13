@@ -25,6 +25,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "@/components/app-sidebar/app-sidebar";
 import { ChannelPagination } from "@/components/app-sidebar/channel-pagination";
+import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { agentKeys } from "@/lib/agents/queries";
@@ -255,7 +256,9 @@ function renderSidebar() {
     component: () => (
       <ThemeProvider>
         <SidebarProvider>
-          <AppSidebar />
+          <TaskCenterProvider>
+            <AppSidebar />
+          </TaskCenterProvider>
         </SidebarProvider>
       </ThemeProvider>
     ),

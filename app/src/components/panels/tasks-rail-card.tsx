@@ -28,7 +28,6 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { type ReactNode, useMemo, useState } from "react";
 import { CreateTask } from "@/components/task-center/create-task";
 import {
@@ -38,6 +37,7 @@ import {
   STATUS_LABELS,
   taskDate,
 } from "@/components/task-center/labels";
+import { useOpenTaskCenter } from "@/components/task-center/task-center-provider";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -134,6 +134,7 @@ export function useRailTasksSummary() {
  * 支持原位操作（三点菜单：取消、置顶、上移、下移、暂停/继续/重试）与点击卡片丝滑弹窗查看详情。
  */
 export function TasksRailCard() {
+  const openTaskCenter = useOpenTaskCenter();
   const queryClient = useQueryClient();
   const {
     snapshot,
@@ -166,13 +167,15 @@ export function TasksRailCard() {
             <IconPlus aria-hidden className="size-3.5" />
             {"新建"}
           </button>
-          <Link
+          <button
             className="task-rail-center-link"
-            search={{ view: approvalCount > 0 ? "outbox" : "active" }}
-            to="/tasks"
+            type="button"
+            onClick={() =>
+              openTaskCenter(approvalCount > 0 ? "outbox" : "active")
+            }
           >
             {"任务中心"}
-          </Link>
+          </button>
         </div>
       </header>
       <TasksRailBody
@@ -230,6 +233,7 @@ function TasksRailBody({
   detailTarget: RailDetailTarget | null;
   onOpenDetail: (target: RailDetailTarget | null) => void;
 }) {
+  const openTaskCenter = useOpenTaskCenter();
   const queryClient = useQueryClient();
   const orderMap = useTaskRailOrder();
   const [retrying, setRetrying] = useState(false);
@@ -388,13 +392,13 @@ function TasksRailBody({
               );
             })}
             {pendingCount > sortedDecisions.length ? (
-              <Link
+              <button
                 className="task-rail-center-link"
-                search={{ view: "outbox" }}
-                to="/tasks"
+                type="button"
+                onClick={() => openTaskCenter("outbox")}
               >
                 查看全部 {pendingCount} 项待确认
-              </Link>
+              </button>
             ) : null}
           </RailSection>
         ) : null}
@@ -457,13 +461,13 @@ function TasksRailBody({
               ),
             )}
             {taskCount > activeTasks.length ? (
-              <Link
+              <button
                 className="task-rail-center-link"
-                search={{ view: "active" }}
-                to="/tasks"
+                type="button"
+                onClick={() => openTaskCenter("active")}
               >
                 查看全部 {taskCount} 项任务
-              </Link>
+              </button>
             ) : null}
           </RailSection>
         ) : null}
@@ -482,9 +486,13 @@ function TasksRailBody({
               <div>
                 <p>{"当前没有待跟进的任务"}</p>
                 {inboxCount > 0 ? (
-                  <Link search={{ view: "inbox" }} to="/tasks">
+                  <button
+                    className="task-rail-center-link"
+                    type="button"
+                    onClick={() => openTaskCenter("inbox")}
+                  >
                     {`查看 ${inboxCount} 项待安排事项`}
-                  </Link>
+                  </button>
                 ) : (
                   <span>
                     {"可以在对话中交办，或点右上角「新建」直接创建。"}
