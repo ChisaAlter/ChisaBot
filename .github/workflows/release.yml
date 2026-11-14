@@ -223,7 +223,7 @@ jobs:
           if [ "$FLAVOR" = custom ]; then server="$SERVER_URL"; feed="$PC_FEED"; else server=""; feed=""; fi
           node -e 'const [s,f,r]=process.argv.slice(1);require("fs").writeFileSync("src/build-config.json",JSON.stringify({serverUrl:s,updateFeed:f,githubRepo:r},null,2)+"\n")' "$server" "$feed" "$REPO"
           if [ -n "$feed" ]; then url="${feed%/}/"; else url="https://github.com/$REPO/releases/latest/download/"; fi
-          node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.build.publish=[{provider:"generic",url:process.argv[1],channel:"latest-mac"}];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$url"
+          node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.build.publish=[{provider:"generic",url:process.argv[1],channel:"latest"}];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$url"
           cat src/build-config.json; echo "publish.url=$url"
       - name: Update keys
         env:
@@ -326,6 +326,8 @@ jobs:
       # 客户端验签通过后由 Squirrel.Mac 整包替换 .app。
       - name: Sign latest-mac.yml
         if: steps.sign.outputs.signed == 'true'
+        env:
+          PC_UPDATE_SIGNING_KEY: ${{ secrets.PC_UPDATE_SIGNING_KEY }}
         run: node scripts/sign-update.js dist-mac/latest-mac.yml --keys dist-mac/update-keys.json
       - name: Verify latest-mac.yml signature + tamper check
         if: steps.sign.outputs.signed == 'true'
