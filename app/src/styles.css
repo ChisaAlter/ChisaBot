@@ -6708,10 +6708,11 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
 .worker-result .worker-plan-collapse:not([data-open]) .worker-result-body { padding-bottom: 0; }
 
 /* §41 交互跟手：别让一次点击重算整页样式（2026-10-13，全面性能审计）。
- * ① 不写「:has(…) 后面跟任意后代」的规则（Tailwind 的 group-has-* / peer-has-*）：Chromium 把所有 :has 规则的
- *    失效集合并成一个，只要有一条是「:has(…) *」，任何 data-* / aria-* 变化都会让整个应用（约 4000 个元素）重算样式，
- *    4× CPU 下每次 130–230ms、一次点击两次。改用 [[祖先]:has(…)_&]:工具类 —— 右边是具体的类，只失效它自己。
- *    app/tests/no-group-has.test.ts 会拦住新写的 group-has-*。
+ * ① 不写「:has(…) 后面的选择器里出现通配 *」的规则（Tailwind 的 group-has-* / peer-has-* 会生成「:has(…) *」）：
+ *    Chromium 把所有 :has 规则的失效集合并成一个，只要有一条是「:has(…) *」，任何 data-* / aria-* 变化都会
+ *    让整个应用（约 4000 个元素）重算样式，4× CPU 下每次 130–230ms、一次点击两次。:has(…) 后接具体类的后代
+ *    （.x:has(.y) .z）失效面只有那棵子树，可以用；Tailwind 侧写 [[祖先]:has(…)_&]:工具类，右边是具体的类，
+ *    只失效它自己。app/tests/no-group-has.test.ts 拦 group-has-* / peer-has-* 和「:has(…) … *」的手写版。
  *    2026-10-29 设置面板卡顿：`body:has(…)` / `html:has(…)` 也不写。body 是所有元素的祖先，任何一条 body:has 的
  *    参数（例如 [data-slot=…]）一变就要在 body 上重算 :has，再加上一条「:has(…) .x *」，整棵树（含藏着的聊天）
  *    每次 DOM 变化都重算。要看「页面上有没有某个元素」，让那个元素挂 `ref={presenceRef("has-…")}`

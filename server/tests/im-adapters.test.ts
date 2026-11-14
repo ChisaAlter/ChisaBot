@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCipheriv } from "node:crypto";
-import { splitChatOrigin } from "../../app/src/components/channels/chat-origin";
+import { splitChatOrigin } from "../../shared/chat-origin";
 import {
   DingtalkAdapter,
   parseDingtalkMessage,

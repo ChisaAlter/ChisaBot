@@ -9,11 +9,15 @@ import path from "node:path";
  * 助手，其中一个丢了 body.error 提取）。新代码不许再开这个口子。
  *
  * `fetch(` 的判定要求前一个字符不是 `.` 也不是标识符字符：refetch()、agent.fetch()、
- * myfetch() 都不是裸 fetch；`window.fetch(` / `globalThis.fetch(` / `new XMLHttpRequest` 全部算。
+ * myfetch() 都不是裸 fetch；`window.fetch(` / `globalThis.fetch(` / `self.fetch(` /
+ * `win.fetch(`（注入的 window 形参）/ `new XMLHttpRequest` 全部算。
  */
 const RAW_PATTERNS: readonly { pattern: RegExp; what: string }[] = [
   { pattern: /(^|[^.$\w])fetch\(/, what: "fetch(" },
-  { pattern: /(?:window|globalThis)\.fetch\(/, what: "window.fetch(" },
+  {
+    pattern: /(?:win|window|globalThis|self)\.fetch\(/,
+    what: "window-like.fetch(",
+  },
   { pattern: /new XMLHttpRequest/, what: "new XMLHttpRequest" },
 ];
 
@@ -30,6 +34,8 @@ const ALLOWED: Record<string, string> = {
     "壁纸运行时加载 /wallpaper_core.html 静态资源（从不打 /api），带自己的超时与退避。",
   "components/channels/composer/attachments.ts":
     "XMLHttpRequest 是唯一有上传进度事件的 API，分片附件上传靠它报进度。",
+  "lib/auth/login-redirect.ts":
+    "sign-out POST 打的是注入的 win（RedirectWindow）以便测试替身；只打同源 /api/auth/sign-out。",
 };
 
 function files(dir: string): string[] {

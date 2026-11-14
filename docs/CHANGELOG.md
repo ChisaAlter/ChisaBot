@@ -1,5 +1,7 @@
 ## 未发版
 
+- CB-124（分支 `chore/review-hygiene`）：`bubbles` / `mermaid-lite` / `chat-origin`（含各自测试）与 egress 策略契约挪进 `shared/`（新增 `shared/egress-policy.ts`；`agent-computer/src/egress.ts` 改为导入并再导出，原有 `../src/egress` 调用方不变）；`server/computer/policy-network.ts` 改指 shared。新增 `server/tests/no-cross-surface-imports.test.ts`（跨 surface 相对 import 即挂；8 条「测试按真声明 pin 契约」按文件→specifier 白名单）与 `server/tests/no-raw-env.test.ts`（`config.ts` 之外的新裸 `process.env.X` 即挂；15 个存量文件白名单）。`no-raw-fetch` 检测补 `win|window|globalThis|self.fetch(`，`lib/auth/login-redirect.ts` 进白名单。`styles.css` §41① 措辞与 `universalAfterHas` 护栏对齐。`.gitignore` 收 HANDOFF.md / CLAUDE.md / GEMINI.md / `.cursor/`。
+
 ## 0.1.148
 
 - 版本统一为 0.1.148，Android versionCode 330；Windows 外壳指纹不变，无需重新安装。

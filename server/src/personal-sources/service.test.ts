@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { splitBubbles } from "../../../app/src/lib/chat/bubbles";
-import { renderMermaidToSvg } from "../../../app/src/lib/chat/mermaid-lite";
+import { splitBubbles } from "../../../shared/chat-bubbles";
+import { renderMermaidToSvg } from "../../../shared/mermaid-lite";
 import { categoryOfTool, titleForTool } from "../confirmations/classify";
 import {
   normalizeSkillSourceUrl,
@@ -29,23 +29,27 @@ describe("personal-sources & new Hark features", () => {
       "END:VCALENDAR",
     ].join("\r\n");
 
-    const events = parseIcsEvents(ics);
+    // 默认窗口跟着 now 走（昨天～+30 天）；要覆盖这两条历史夹具得把窗口写死。
+    const events = parseIcsEvents(ics, {
+      from: new Date("2025-01-01T00:00:00Z"),
+      to: new Date("2027-01-01T00:00:00Z"),
+    });
     expect(events.length).toBe(2);
     expect(events[1]?.summary).toBe("产品架构走查");
     expect(events[1]?.location).toBe("飞书 Room A");
   });
 
-  test("fetchImapInboxSummary returns structured demo inbox messages", async () => {
-    const messages = await fetchImapInboxSummary({
-      host: "demo.imap.local",
-      port: 993,
-      user: "chisa@demo.imap.local",
-      pass: "demo-inbox",
-      limit: 5,
-    });
-    expect(messages.filter((m) => m.unread).length).toBe(2);
-    expect(messages.length).toBe(3);
-    expect(messages[0]?.unread).toBe(true);
+  test("fetchImapInboxSummary refuses internal/local IMAP hosts (SSRF)", async () => {
+    // 内网 / 本机域名在连出前就被 isBlockedHostname 拒掉（shared/net/ssrf）。
+    await expect(
+      fetchImapInboxSummary({
+        host: "demo.imap.local",
+        port: 993,
+        user: "chisa@demo.imap.local",
+        pass: "demo-inbox",
+        limit: 5,
+      }),
+    ).rejects.toThrow("不能连接内网或本机");
   });
 
   test("renderMermaidToSvg renders flowchart, sequenceDiagram, and pie to SVG", () => {

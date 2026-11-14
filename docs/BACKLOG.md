@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                     | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: in-progress`                                  |
 | [CB-123](#cb-123) | PC 客户端 macOS 版（dmg + 在线更新）                                              | 设备核心 Devices core | `type: feat` · `area: pc` · `P1` · `status: done`（#532 · `v0.1.148`，后续 Apple 签名待办）   |
 | [CB-122](#cb-122) | 全页面 UI 审查整改：对齐、动态布局与弹窗可达性                                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`（#535 已合并 · `v0.1.148`）          |
 | [CB-121](#cb-121) | 模型等待由用户停止，不因长时间无输出自动结束                                      | 成熟度 Maturity       | `type: bug` · `area: models` · `P1` · `status: in-progress`                                   |
@@ -117,6 +118,24 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-124
+
+**审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏**
+
+标签：`type: chore` · `area: infra` · `P1` · `status: in-progress`
+
+分支：`chore/review-hygiene`。2026-11-14 全面审查后的修复批：行为不变，只收架构边界与护栏。
+
+- [x] 依赖方向归位：`app/src/lib/chat/{bubbles,mermaid-lite}` → `shared/{chat-bubbles,mermaid-lite}`；`app/src/components/channels/chat-origin`（含测试）→ `shared/chat-origin`；egress 策略契约（类型 / `EGRESS_MODES` / 默认目的地 / `parseEgress*`）→ `shared/egress-policy.ts`，`agent-computer/src/egress.ts` 改为从 shared 导入并再导出；`server/src/computer/policy-network.ts` 改指 shared。
+- [x] `server/tests/no-cross-surface-imports.test.ts`：跨 surface 相对 import 即挂；8 条「测试按真声明 pin 契约」按文件→specifier 白名单写原因，另有白名单过期检查。
+- [x] `server/tests/no-raw-env.test.ts`：`server/src`（`config.ts` 之外）的新裸 `process.env.X` 即挂；15 个存量文件白名单写原因，另有白名单过期检查。
+- [x] `no-raw-fetch.test.ts`：检测补 `win|window|globalThis|self.fetch(`；`lib/auth/login-redirect.ts` 进白名单。
+- [x] `.gitignore`：HANDOFF.md / CLAUDE.md / GEMINI.md / `.cursor/` 防 `git add -A` 带进公开仓库。
+- [x] `styles.css` §41① 措辞与 `universalAfterHas` 护栏一致（禁 `:has(…)` 后通配 `*`，不禁具体类后代）。
+- [x] `bun run typecheck`（server / agent-computer / app）+ `lint` 0 error 0 warning；受影响用例全绿。
+- [x] 顺手修 `server/src/personal-sources/service.test.ts` 两个存量失败：ICS 用例默认窗口跟 now 走（写死 `from`/`to`）；IMAP 演示域名撞 SSRF 拦截（改为断言内网域名被拒，即当前真实行为）。
+- [ ] PR、合并、CI。
 
 ## CB-123
 

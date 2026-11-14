@@ -6,7 +6,7 @@ import {
   normalizeDirectiveCards,
   parseStatusCardsFence,
 } from "../src/components/chat/bot-bubbles";
-import { MAX_BUBBLES, splitBubbles } from "../src/lib/chat/bubbles";
+import { MAX_BUBBLES, splitBubbles } from "../../shared/chat-bubbles";
 
 describe("splitBubbles（DESIGN.md §69）", () => {
   test("空行分段，一段一个气泡", () => {

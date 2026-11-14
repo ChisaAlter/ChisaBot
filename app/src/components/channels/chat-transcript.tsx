@@ -196,7 +196,7 @@ import {
   type SentAttachment,
   toVisibleChatItems,
 } from "./chat-messages";
-import { splitChatOrigin } from "./chat-origin";
+import { splitChatOrigin } from "../../../../shared/chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";

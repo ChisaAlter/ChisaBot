@@ -1,17 +1,15 @@
 /**
  * Getting a Bot's computer its network policy.
  *
- * The rules and their matcher are `agent-computer/src/egress.ts`. A computer refuses every connection
+ * The policy contract is `shared/egress-policy.ts`; the matcher that enforces it on the computer is
+ * `agent-computer/src/egress.ts`. A computer refuses every connection
  * until a policy has been pushed to it. ChisaBot has no network policy screen (the upstream enterprise
  * controls were removed in slimming P6-1), so every computer gets {@link NO_NETWORK_POLICY}
  * ("allow all"), which is what upstream pushed when no organization row existed. Pushed on the way to
  * every action ({@link withPolicyPushOnWake}) and every 30 seconds to running computers
  * ({@link startEgressPolicyPush}).
  */
-import type {
-  EgressPolicy,
-  EgressRule,
-} from "../../../agent-computer/src/egress";
+import type { EgressPolicy, EgressRule } from "../../../shared/egress-policy";
 import { computerHeaders } from "../../../shared/protocol-headers";
 import { reasonWithoutStatement } from "../db/query-failure";
 import type { ComputerProvider } from "./provider";

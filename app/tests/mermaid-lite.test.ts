@@ -3,7 +3,7 @@ import {
   MAX_GRAPH_NODES,
   renderMermaidToSvg,
   wrapLabel,
-} from "../src/lib/chat/mermaid-lite";
+} from "../../shared/mermaid-lite";
 
 type Box = { x: number; y: number; w: number; h: number; lines: string[] };
 

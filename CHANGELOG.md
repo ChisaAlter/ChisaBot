@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 仓库卫生（CB-124）：纯逻辑契约统一收进 `shared/`（`chat-bubbles`、`mermaid-lite`、`chat-origin`、egress 策略契约 `egress-policy`），app / server / agent-computer 三个 surface 之间不再有源码互 import；新增两道护栏测试（跨 surface import、config.ts 之外的裸 `process.env`），`no-raw-fetch` 补上 `win.fetch` / `self.fetch` 形状的漏检。行为不变，无需数据库迁移或客户端重装。
+
 ## 0.1.148 — 2026-11-14
 
 全端版本 0.1.148，Android versionCode 330。新增 PC macOS 桌面客户端（dmg / zip + `latest-mac.yml`），完成全页面 UI 布局稳定性整改，并修复桌面端离线安装包改名验签误拒问题。Windows 外壳指纹不变，无需重新安装；无需数据库迁移。

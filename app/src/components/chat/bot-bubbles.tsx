@@ -35,8 +35,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { type BubbleSegment, splitBubbles } from "@/lib/chat/bubbles";
-import { renderMermaidToSvg } from "@/lib/chat/mermaid-lite";
+import {
+  type BubbleSegment,
+  splitBubbles,
+} from "../../../../shared/chat-bubbles";
+import { renderMermaidToSvg } from "../../../../shared/mermaid-lite";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { githubQueryOptions } from "@/lib/github";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";

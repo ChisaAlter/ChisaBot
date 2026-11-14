@@ -13,7 +13,7 @@ import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
-import { splitChatOrigin } from "@/components/channels/chat-origin";
+import { splitChatOrigin } from "../../../../shared/chat-origin";
 import {
   type ComposerDraft,
   toAgentOptions,
