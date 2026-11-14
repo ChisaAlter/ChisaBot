@@ -114,9 +114,15 @@ test("multi-arch manifest (mac arm64 + x64): every files[] package carries its o
     // 篡改 x64 条目的 sha512 → 它自己的签名对不上。
     const forged = { ...info, files: info.files.map((f) => (f.url === x64Name ? { ...f, sha512: h(Buffer.from("evil")) } : f)) };
     await rejects(sig.verifyDownloadedUpdate({ info: forged, file: path.join(dir, x64Name), keys: KEYS }), "ERR_SIGNATURE_MISMATCH");
-    // 清单没给这个文件签名 → 拒。
+    // 清单声明过（files[] 里）但没签名的包 → 按未签名拒。
+    const unsigned = { ...info, chisabotSigs: { [armName]: info.chisabotSigs[armName] } };
+    await rejects(sig.verifyDownloadedUpdate({ info: unsigned, file: path.join(dir, x64Name), keys: KEYS }), "ERR_NO_SIGNATURE");
+    // 不在清单里的文件回顶层签名：改名后的同一个包照样过；外来文件被哈希拒。
+    const renamed = path.join(dir, "renamed-installer.zip");
+    fs.copyFileSync(path.join(dir, armName), renamed);
+    assert.strictEqual((await sig.verifyDownloadedUpdate({ info, file: renamed, keys: KEYS })).keyId, PRIMARY.keyId);
     fs.writeFileSync(path.join(dir, "evil-mac.zip"), "evil");
-    await rejects(sig.verifyDownloadedUpdate({ info, file: path.join(dir, "evil-mac.zip"), keys: KEYS }), "ERR_NO_SIGNATURE");
+    await rejects(sig.verifyDownloadedUpdate({ info, file: path.join(dir, "evil-mac.zip"), keys: KEYS }), "ERR_SIZE_MISMATCH");
     // --verify 两个包都过；重签后 chisabotSigs 不重复。
     assert.strictEqual((await run(["--verify", yml, "--keys", keysFile])).code, 0);
     assert.strictEqual((await run([yml, "--keys", keysFile], { PC_UPDATE_SIGNING_KEY: BACKUP.pem })).code, 0);

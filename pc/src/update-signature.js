@@ -170,22 +170,24 @@ function sha512File(file, { flipFirstByte = false } = {}) {
 /**
  * 按实际下载的文件名取这次要验的清单域。顶层 chisabotSig 只覆盖 path 指的那个包；
  * 多安装包清单（mac arm64/x64）其余包靠 chisabotSigs 里各自的签名（同一套 canonicalMessage，
- * 把 path/sha512 换成那条 files[] 条目）。下载的文件既没有顶层签名也没有自己的签名时：
- * 清单带 chisabotSigs → 明确按「没签名」拒；没带（旧清单 / Windows）→ 回顶层签名，
- * 后面大小 / sha512 自然不符被拒。
+ * 把 path/sha512 换成那条 files[] 条目）。三种情况：
+ * - basename 在 chisabotSigs 里 → 用那条签名（sha512 也换成对应 files[] 条目的）；
+ * - basename 是 files[] 声明过的包但没有签名 → 明确按「没签名」拒（多包清单里漏签的包不能放行）；
+ * - basename 不在清单里（比如 --installer 指向改了名的同一个包）→ 回顶层签名，
+ *   字节是签过的那份就过 size/sha512，不是就被哈希拒。
  */
 function scopedManifest(info, file) {
   if (!info || typeof info !== "object") return info;
   const base = file ? path.basename(String(file)) : "";
   if (!base || base === String(info.path || "")) return info;
-  const sigs = info[SIGS_FIELD];
-  if (!sigs || typeof sigs !== "object") return info;
   const entry = Array.isArray(info.files)
     ? info.files.find((f) => f && (f.url === base || (typeof f.url === "string" && decodeURIComponent(f.url) === base)))
     : null;
-  const perFile = sigs[base] || (entry && sigs[entry.url]);
-  if (!perFile) return { ...info, [SIG_FIELD]: "" };
-  return { ...info, path: entry ? String(entry.url) : base, sha512: entry && entry.sha512 != null ? String(entry.sha512) : "", [SIG_FIELD]: perFile };
+  const sigs = info[SIGS_FIELD];
+  const perFile = sigs && typeof sigs === "object" ? sigs[base] || (entry && sigs[entry.url]) : null;
+  if (perFile) return { ...info, path: entry ? String(entry.url) : base, sha512: entry && entry.sha512 != null ? String(entry.sha512) : "", [SIG_FIELD]: perFile };
+  if (entry) return { ...info, [SIG_FIELD]: "" };
+  return info;
 }
 
 /** files[] 里每个安装包各自的签名（mac 双 arch 清单）。返回 { url: '<keyId>:<签名>' }；没有 files[] 返回 {}。 */
