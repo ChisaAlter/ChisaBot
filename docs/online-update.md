@@ -46,6 +46,9 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
   `update:current`、`update:answer` 走 `handleLocal`（`src/ui/` 下的本机页面）。网页只能把「新版本已下载」窗口叫出来，
   立即重启要在本机窗口里由本人点。
 - 只有 NSIS 安装版会更新（安装目录里有 `Uninstall ChisaBot.exe`，改名前的 `Uninstall ChisaBotPC.exe` / `Uninstall ChisaBot PC.exe` 也认）；开发运行和免安装 zip 显示「只有安装版能自动更新」。
+- **macOS（Squirrel.Mac）**：mac 打包产物是 `ChisaBot-<版本>-<arch>-mac.dmg`（手动安装）+ `*-mac.zip`（更新包）+ `latest-mac.yml`，arm64 / x64 各一份，`files[]` 全列在一个清单里，electron-updater 按当前架构选 zip。更新机制和 Windows 共用同一条链（generic 源、`chisabotShell` / `chisabotClient` 指纹、`chisabotSig` 验签、「本机」标签），区别在于安装方式：mac 每次更新都由 Squirrel.Mac **整包替换 `.app`**——没有 NSIS「重新安装」概念，`fullInstall` 标记不改变行为。
+  「立即重启」走 `quitAndInstall`（装完自动打开）；「稍后」在启用验签时，`before-quit` 里先 `preventDefault` 撑住应用，让 Squirrel 把已验签的 zip 从本地代理抓完，抓完 electron-updater 自己再退一次（`autoRunAppAfterInstall=false`，装好不重启）——没撑住就只是一次普通退出，下次启动照常提示已下载；不验签时 Squirrel 下载完就已拿到包，普通退出即安装。所有**带证书签名**的打包 `.app` 都能更新，没有 Windows 的「只有安装版」判定。
+  **未签名 / adhoc 签名**：dmg 和 .app 目前不做 Apple 代码签名（`build.mac.identity: null`，CI `CSC_IDENTITY_AUTO_DISCOVERY=false`），首次从 Release 装的 dmg 会被 Gatekeeper 拦一次（右键 → 打开，或 `xattr -d com.apple.quarantine ChisaBot.app`）；Apple Developer 签名 + notarize 是第二阶段。**签名落地前 mac 在线更新不启用**：Squirrel.Mac 按运行中 app 的 designated requirement 校验新包，adhoc 签名的 requirement 就是 cdhash 本身，换一个构建 hash 就变，ShipIt 永远拒装（实机验证：`code failed to satisfy specified code requirement(s)`）。`updater.js` 用 `codesign -dv` 判 `Signature=adhoc` ⇒ `supported=false`，未签名构建不做白下载 —— 证书签名一配，整条链（查更新 → 验签 → 整包替换）即生效。
 - **版本号重置（2026-10-12）**：首个公开版本定为 0.1.0。之前内部测试过的 0.2.x 安装版不会自动“更新”到更低的 0.1.0（不允许降级），要卸载后手动装一次 0.1.0，之后正常自动更新。
 
 ### 2.1 普通更新与「重新安装」（外壳指纹）
@@ -65,8 +68,10 @@ electron-updater 一定以 `--updated /S` 运行安装包，electron-builder 的
 - **外壳指纹**（`pc/scripts/shell-fingerprint.js`）：对 `build/icon.ico`、`build/icons/*.ico`、`build/installer.nsh`、`assets/icon.png`、
   `assets/tray-*.png`、`package.json` 的 `main` / `productName` / `build`（`publish` 除外）/ `electron` 与
   `electron-builder` 版本 / `NATIVE_DEPENDENCIES` 里的原生依赖算 sha256（取 16 位）。版本号、更新源、纯 JS 依赖不算。
+  **macOS 的打包配置（`build.mac` / `build.dmg` / `build.mas`）也不算**：外壳指纹管的是 Windows 快捷方式和图标缓存，
+  mac 更新本来就整包替换 `.app`，给它加配置不该逼所有现存 Windows 客户端白做一次完整安装。
   `npm run fingerprint` 写 `src/shell-fingerprint.json`（打进 asar）；`npm test` 先跑 `--check`，过期就失败。
-  CI 打包前 `--write`，打包后 `--stamp dist/latest.yml` 给 `latest.yml` 加一行 `chisabotShell: <指纹>`
+  CI 打包前 `--write`，打包后 `--stamp dist/latest.yml`（mac 是 `dist/latest-mac.yml`）给清单加一行 `chisabotShell: <指纹>`
   （sha512 是安装包的，不受影响）。发布者想强制所有人重新安装时用 `--stamp dist/latest.yml --full`，多一行 `fullInstall: true`。
 - **客户端**（`pc/src/updater.js` `requiresFullInstall`）：更新源的 `chisabotShell` 和本机指纹不同，或 `fullInstall: true`
   → 这次是「重新安装」：下载好后弹窗标题换成 **「此更新需要重新安装，以更新图标/组件」**，按钮「重新安装」。点了以后

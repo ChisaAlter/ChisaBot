@@ -22,6 +22,8 @@ const path = require("node:path");
 
 const SCHEME = "chisabot-pc-update/v1";
 const SIG_FIELD = "chisabotSig";
+/** 多安装包清单（mac 双 arch）里 files[] 每个包各自的签名：{ <文件名>: '<keyId>:<签名>' }。 */
+const SIGS_FIELD = "chisabotSigs";
 const KEYS_FILE = path.join(__dirname, "update-keys.json");
 /** Ed25519 SubjectPublicKeyInfo 的固定 DER 前缀，后面接 32 字节原始公钥。 */
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -165,9 +167,43 @@ function sha512File(file, { flipFirstByte = false } = {}) {
   });
 }
 
+/**
+ * 按实际下载的文件名取这次要验的清单域。顶层 chisabotSig 只覆盖 path 指的那个包；
+ * 多安装包清单（mac arm64/x64）其余包靠 chisabotSigs 里各自的签名（同一套 canonicalMessage，
+ * 把 path/sha512 换成那条 files[] 条目）。三种情况：
+ * - basename 在 chisabotSigs 里 → 用那条签名（sha512 也换成对应 files[] 条目的）；
+ * - basename 是 files[] 声明过的包但没有签名 → 明确按「没签名」拒（多包清单里漏签的包不能放行）；
+ * - basename 不在清单里（比如 --installer 指向改了名的同一个包）→ 回顶层签名，
+ *   字节是签过的那份就过 size/sha512，不是就被哈希拒。
+ */
+function scopedManifest(info, file) {
+  if (!info || typeof info !== "object") return info;
+  const base = file ? path.basename(String(file)) : "";
+  if (!base || base === String(info.path || "")) return info;
+  const entry = Array.isArray(info.files)
+    ? info.files.find((f) => f && (f.url === base || (typeof f.url === "string" && decodeURIComponent(f.url) === base)))
+    : null;
+  const sigs = info[SIGS_FIELD];
+  const perFile = sigs && typeof sigs === "object" ? sigs[base] || (entry && sigs[entry.url]) : null;
+  if (perFile) return { ...info, path: entry ? String(entry.url) : base, sha512: entry && entry.sha512 != null ? String(entry.sha512) : "", [SIG_FIELD]: perFile };
+  if (entry) return { ...info, [SIG_FIELD]: "" };
+  return info;
+}
+
+/** files[] 里每个安装包各自的签名（mac 双 arch 清单）。返回 { url: '<keyId>:<签名>' }；没有 files[] 返回 {}。 */
+function fileSignatures(info, privateKey) {
+  const out = {};
+  if (!info || !Array.isArray(info.files)) return out;
+  for (const entry of info.files) {
+    if (!entry || typeof entry !== "object" || !entry.url || entry.sha512 == null) continue;
+    out[String(entry.url)] = signManifest({ ...info, path: entry.url, sha512: entry.sha512 }, privateKey);
+  }
+  return out;
+}
+
 /** 清单签名 + 下载文件的大小和 sha512。全部通过才返回；任何一项不对都抛 UpdateSignatureError。 */
 async function verifyDownloadedUpdate({ info, file, keys, hashFile = sha512File }) {
-  const result = verifyManifest(info, keys);
+  const result = verifyManifest(scopedManifest(info, file), keys);
   if (!file) fail("ERR_NO_FILE", "找不到下载好的安装包");
   let stat;
   try {
@@ -193,6 +229,7 @@ function signManifest(info, privateKey) {
 module.exports = {
   SCHEME,
   SIG_FIELD,
+  SIGS_FIELD,
   KEYS_FILE,
   UpdateSignatureError,
   signedFields,
@@ -203,7 +240,9 @@ module.exports = {
   loadKeys,
   parseSignature,
   verifyManifest,
+  scopedManifest,
   verifyDownloadedUpdate,
   sha512File,
   signManifest,
+  fileSignatures,
 };

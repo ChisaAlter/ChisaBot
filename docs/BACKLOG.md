@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-123](#cb-123) | PC 客户端 macOS 版（dmg + 在线更新）                                              | 设备核心 Devices core | `type: feat` · `area: pc` · `P1` · `status: in-progress`                                      |
 | [CB-122](#cb-122) | 全页面 UI 审查整改：对齐、动态布局与弹窗可达性                                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`                                      |
 | [CB-121](#cb-121) | 模型等待由用户停止，不因长时间无输出自动结束                                      | 成熟度 Maturity       | `type: bug` · `area: models` · `P1` · `status: in-progress`                                   |
 | [CB-120](#cb-120) | 任务中心统一原位弹出，不跳转当前页面                                              | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`                                      |
@@ -116,6 +117,22 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-123
+
+**PC 客户端 macOS 版（dmg + 在线更新）**
+
+标签：`type: feat` · `area: pc` · `P1` · `status: in-progress`
+
+分支：`feat/pc-macos`。`pc/` 的 Electron 外壳此前只出 Windows（NSIS + 免安装 zip）；本条目把同一套外壳（无边框主窗口 + 本机登录页 + 设备节点 + 在线更新）移植到 macOS。
+
+- [x] 打包：`build/icon.icns`（`scripts/mac-icon.mjs` 从 `assets/icon.png` 生成）、`dmg` + `zip`（arm64 + x64）、`latest-mac.yml` 带 `chisabotShell` / `chisabotClient` 指纹；`npm run dist:mac` 本机验证产出四份安装包 + 清单。
+- [x] 运行时：应用菜单（系统 role，⌘C/⌘V/⌘Q/⌘W 生效）、`activate` → 召回主窗口、关闭窗口常驻托盘 / Dock、开发态 Dock 图标、`titleBarStyle: hiddenInset` 原生红绿灯（网页侧 Windows 式按钮按 darwin 隐藏，顶栏左移让位，「小窗模式」按钮保留在右上）；`updater.js` darwin 支持（所有打包 `.app` 可更新，Squirrel.Mac 整包替换，`fullInstall` 标记不改变行为，验签后「稍后」由 before-quit 撑住退出直到 Squirrel 抓完包）。
+- [x] `shell-fingerprint.js` 排除 `build.mac` / `build.dmg` / `build.mas`：加 mac 配置不改变 Windows 外壳指纹，现存 Windows 客户端不做无谓的「重新安装」。
+- [x] `release.yml` 新增 `pc-mac`（macos-latest，generic / custom matrix）；`pc-sign` 给 `latest-mac.yml` 同样签 `chisabotSig`；`check-release-assets.mjs` 校验 mac 清单 / 资产并把 mac 资产挡在「没有 latest-mac.yml」之外。
+- [x] darwin 更新单元测试（`test/update.check.js`）；本机构建 + 启动验证通过。
+- [x] 实机验收（macOS arm64）：登录页 / 主窗口 / 应用菜单 / Dock / 托盘截图；dmg 装到 /Applications 启动正常；本地假更新源（自签证书 HTTPS + 测试 Ed25519 钥）端到端跑通 `latest-mac.yml` 验签 → 整包下载 → 「立即重启」触发 `quitAndInstall`；并实机确认 Squirrel 对 adhoc .app 永远拒装（requirement=cdhash）→ `updater.js` 按 `codesign -dv` 结果对未签名构建 `supported=false`。
+- [ ] 后续（不在本条目）：Apple Developer 签名 + notarize（**mac 在线更新的前提**——Squirrel.Mac 要求证书签名）；「设备」页下载卡片列出 mac 资产。
 
 ## CB-122
 

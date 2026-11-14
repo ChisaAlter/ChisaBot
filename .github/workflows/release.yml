@@ -1,7 +1,8 @@
 name: Client release
 
 # 推 v* 标签（或在 Actions 页手动运行并填标签）时构建 ChisaBot 客户端安装包，并发布到该标签的 GitHub Release：
-#   - PC（pc/，Electron，windows-latest）：NSIS 安装包、免安装 zip、latest.yml、.blockmap
+#   - PC Windows（pc/，Electron，windows-latest）：NSIS 安装包、免安装 zip、latest.yml、.blockmap
+#   - PC macOS（pc/，Electron，macos-latest）：dmg + zip（arm64 + x64）、latest-mac.yml
 #   - Android（android/，Kotlin + Jetpack Compose 原生，ubuntu-latest）：APK + chisabot-android.json（含 sha256）
 # Release 里放的是「通用版」：不内置任何服务器，首次运行由用户填写自己的服务器地址，在线更新读本仓库的 Releases。
 # 仓库变量 CHISABOT_SERVER_URL / CHISABOT_UPDATE_FEED / CHISABOT_ANDROID_UPDATE_FEED（或手动运行时的同名输入）
@@ -190,10 +191,92 @@ jobs:
             pc/dist/update-keys.json
             pc/dist/flavor.txt
 
+  # macOS 客户端：dmg（手动安装）+ zip（Squirrel.Mac 在线更新包），arm64 + x64，latest-mac.yml。
+  # 步骤和 Windows 的 pc job 一样（build-config / update-keys / 指纹 / 清单），只有 Runner 和 electron-builder 目标不同。
+  pc-mac:
+    needs: [config, pc-test]
+    runs-on: macos-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(needs.config.outputs.flavors) }}
+    defaults:
+      run:
+        working-directory: pc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+      - name: Build config
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ inputs.server_url || vars.CHISABOT_SERVER_URL }}
+          PC_FEED: ${{ inputs.update_feed || vars.CHISABOT_UPDATE_FEED }}
+        run: |
+          if [ "$FLAVOR" = custom ]; then server="$SERVER_URL"; feed="$PC_FEED"; else server=""; feed=""; fi
+          node -e 'const [s,f,r]=process.argv.slice(1);require("fs").writeFileSync("src/build-config.json",JSON.stringify({serverUrl:s,updateFeed:f,githubRepo:r},null,2)+"\n")' "$server" "$feed" "$REPO"
+          if [ -n "$feed" ]; then url="${feed%/}/"; else url="https://github.com/$REPO/releases/latest/download/"; fi
+          node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.build.publish=[{provider:"generic",url:process.argv[1],channel:"latest"}];fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")' "$url"
+          cat src/build-config.json; echo "publish.url=$url"
+      - name: Update keys
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          TAG: ${{ needs.config.outputs.tag }}
+          CHISABOT_UPDATE_PUBKEYS: ${{ vars.CHISABOT_UPDATE_PUBKEYS }}
+        run: |
+          if [ "$FLAVOR" = custom ]; then
+            node scripts/sign-update.js --keys-from-env
+          elif [ -n "$TAG" ]; then
+            node scripts/sign-update.js --require-keys
+          else
+            node scripts/sign-update.js --require-keys || echo "::warning::src/update-keys.json 没有公钥：这个构建不验签（只构建不发布）"
+          fi
+          cat src/update-keys.json
+      - name: Shell fingerprint
+        run: node scripts/shell-fingerprint.js --write
+      - name: electron-builder
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+      - name: Stamp latest-mac.yml
+        run: node scripts/shell-fingerprint.js --stamp dist/latest-mac.yml
+      - name: Check latest-mac.yml sha512
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+        run: |
+          cat dist/latest-mac.yml
+          pkg=$(sed -n 's/^path: //p' dist/latest-mac.yml)
+          want=$(sed -n 's/^sha512: //p' dist/latest-mac.yml)
+          got=$(shasum -a 512 "dist/$pkg" | cut -d' ' -f1 | xxd -r -p | base64)
+          [ "$want" = "$got" ] || { echo "::error::latest-mac.yml sha512 与 $pkg 不符"; exit 1; }
+          printf '%s\n' "$FLAVOR" > dist/flavor.txt
+          ls -la dist
+          cp src/update-keys.json dist/update-keys.json
+      # 这里还没签名：签名在 pc-sign（Environment pc-release），私钥不进跑 electron-builder 的 job。
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pc-mac-${{ matrix.flavor }}-unsigned
+          if-no-files-found: error
+          path: |
+            pc/dist/*-mac.dmg
+            pc/dist/*-mac.dmg.blockmap
+            pc/dist/*-mac.zip
+            pc/dist/*-mac.zip.blockmap
+            pc/dist/latest-mac.yml
+            pc/dist/update-keys.json
+            pc/dist/flavor.txt
+
   # 给 latest.yml 签名（docs/pc-update-signing.md）：只在发布时跑；Environment pc-release 只允许 v* 标签、不设审批人，
   # Secret PC_UPDATE_SIGNING_KEY 只在这个 job 的签名步骤里出现。签完立刻验签 + 篡改自检，再交给 release。
   pc-sign:
-    needs: [config, pc]
+    needs: [config, pc, pc-mac]
     if: needs.config.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -219,6 +302,10 @@ jobs:
         with:
           name: pc-${{ matrix.flavor }}-unsigned
           path: pc/dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pc-mac-${{ matrix.flavor }}-unsigned
+          path: pc/dist-mac
       - name: Sign latest.yml
         id: sign
         env:
@@ -235,7 +322,17 @@ jobs:
       - name: Verify signature + tamper check
         if: steps.sign.outputs.signed == 'true'
         run: node scripts/sign-update.js --verify dist/latest.yml --keys dist/update-keys.json --tamper-check
-      - run: cat dist/latest.yml
+      # macOS 清单走同一套 Ed25519 签名：latest-mac.yml 的 files[]（两个 arch 的 zip + dmg）被签进去，
+      # 客户端验签通过后由 Squirrel.Mac 整包替换 .app。
+      - name: Sign latest-mac.yml
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          PC_UPDATE_SIGNING_KEY: ${{ secrets.PC_UPDATE_SIGNING_KEY }}
+        run: node scripts/sign-update.js dist-mac/latest-mac.yml --keys dist-mac/update-keys.json
+      - name: Verify latest-mac.yml signature + tamper check
+        if: steps.sign.outputs.signed == 'true'
+        run: node scripts/sign-update.js --verify dist-mac/latest-mac.yml --keys dist-mac/update-keys.json --tamper-check
+      - run: cat dist/latest.yml dist-mac/latest-mac.yml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pc-${{ matrix.flavor }}
@@ -246,6 +343,17 @@ jobs:
             pc/dist/*-portable.zip
             pc/dist/latest.yml
             pc/dist/flavor.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pc-mac-${{ matrix.flavor }}
+          if-no-files-found: error
+          path: |
+            pc/dist-mac/*-mac.dmg
+            pc/dist-mac/*-mac.dmg.blockmap
+            pc/dist-mac/*-mac.zip
+            pc/dist-mac/*-mac.zip.blockmap
+            pc/dist-mac/latest-mac.yml
+            pc/dist-mac/flavor.txt
 
   android:
     needs: config
@@ -335,7 +443,7 @@ jobs:
           path: android/out/*
 
   release:
-    needs: [config, pc, pc-sign, android]
+    needs: [config, pc, pc-mac, pc-sign, android]
     if: needs.config.outputs.tag != '' && needs.pc-sign.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
