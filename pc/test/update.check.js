@@ -64,7 +64,7 @@ function make(options = {}) {
     updateKeys: options.updateKeys,
     verifyDownload: options.verifyDownload,
     spawn: options.spawn,
-    spawnSync: options.spawnSync ?? (() => ({ status: 0, stdout: "", stderr: "Signature=Developer ID Application: ChisaBot (TESTTEAM)\n" })),
+    spawnSync: options.spawnSync ?? (() => ({ status: 0, stdout: "", stderr: "Identifier=com.chisabot.app\nSignature size=4785\nAuthority=Developer ID Application: ChisaBot (TESTTEAM)\nTeamIdentifier=TESTTEAM\n" })),
     quitApp: options.quitApp,
     getAutoUpdate: () => auto,
     onState: (s) => states.push(s),

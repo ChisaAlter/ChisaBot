@@ -112,6 +112,8 @@ function defaultQuit() {
  * requirement 校验新包——adhoc 签名的 requirement 是 cdhash 本身，换一个构建 hash 就变，
  * ShipIt 永远拒装（实机验证：「code failed to satisfy specified code requirement(s)」）。
  * `codesign -dv` 输出 Signature=adhoc ⇒ 不启用更新链，免得每次检查白下一遍整包再装不上。
+ * 注意 codesign 的输出格式：证书签名写 `Signature size=<n>`（没有 Signature= 行），
+ * adhoc 写 `Signature=adhoc`，未签名直接非 0 退出。
  */
 function defaultSpawnSync(cmd, args) {
   try {
@@ -126,7 +128,7 @@ function hasStableMacSignature({ execPath, spawnSync = defaultSpawnSync }) {
   const res = spawnSync("codesign", ["-dv", "--verbose=2", appRoot]);
   if (!res || res.error || res.status !== 0) return false;
   const out = `${res.stdout || ""}\n${res.stderr || ""}`;
-  const sigLine = out.split(/\r?\n/).find((l) => l.startsWith("Signature="));
+  const sigLine = out.split(/\r?\n/).find((l) => /^Signature(?:=| size=)/.test(l));
   return Boolean(sigLine) && !/^Signature=adhoc\b/i.test(sigLine);
 }
 
