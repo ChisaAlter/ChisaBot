@@ -73,7 +73,7 @@ function Button({
    */
   nativeButton = render === undefined,
   /** Shorthand for `state="pending"` — kept for call sites that only know "busy or not". */
-  loading = false,
+  loading,
   /**
    * DESIGN.md §2 state machine: idle → pending → success / error. Drive it with
    * `useMutationFeedback(mutation)` or `useAsyncAction(fn).state`.
@@ -139,7 +139,9 @@ function Button({
         labels={labels}
         stacked={
           Boolean(labels) ||
-          (iconOnly && (state !== undefined || mutation !== undefined))
+          state !== undefined ||
+          mutation !== undefined ||
+          loading !== undefined
         }
         state={active}
       >
@@ -189,6 +191,7 @@ function AsyncContentImpl({
         data-face="status"
       >
         <StatusGlyph />
+        {!labels && !iconOnly ? labelText(children) : null}
         {labels && !iconOnly ? (
           <span aria-hidden="true" className="btn-labels">
             <span className="btn-t" data-for="pending">

@@ -47,6 +47,32 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  cursor: pointer;
+  list-style: none;
+}
+.tc-service-state::-webkit-details-marker {
+  display: none;
+}
+.tc-service-state:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: 4px;
+}
+.tc-service-help {
+  position: relative;
+}
+.tc-service-note {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(320px, calc(100vw - 3rem));
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--glass-bg-solid);
+  color: var(--text);
+  box-shadow: var(--shadow-2);
+  line-height: 1.6;
 }
 .tc-service-state > span {
   width: 7px;
@@ -90,9 +116,23 @@
 }
 .tc-nav-count {
   font-size: 12px;
-  min-width: 18px;
+  flex: 0 0 3ch;
+  width: 3ch;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+.tc-nav-count[data-empty="true"] {
+  visibility: hidden;
+}
+@media (max-width: 639px) {
+  .tc-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .tc-nav-item {
+    flex: none;
+  }
 }
 .tc-workspace {
   display: grid;
@@ -285,15 +325,6 @@
 }
 .tc-error :where(p + p) {
   margin-top: 5px;
-}
-.tc-notice {
-  border-radius: 12px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
-  background: var(--glass-2);
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--tc-muted);
 }
 .tc-detail {
   min-width: 0;

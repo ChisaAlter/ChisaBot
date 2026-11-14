@@ -3064,10 +3064,10 @@ button.chat-bottom-pill:hover {
 .ph-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
 .page-section { margin-top: 32px; }
 .ph + .page-section { margin-top: 0; }
-.sh { display: flex; align-items: flex-end; gap: 12px; color: var(--ink-1); }
+.sh { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; color: var(--ink-1); }
 .sh-title { margin: 0; font-size: 16px; line-height: 1.4; font-weight: 600; }
 .sh-desc { margin: 2px 0 0; max-width: 620px; font-size: 13px; line-height: 1.55; color: var(--ink-3); text-wrap: pretty; }
-.sh-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.sh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: none; max-width: 100%; }
 .page-rows,
 .sg-card {
   margin-top: 12px;
@@ -3504,7 +3504,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 }
 .pair-body { display: flex; flex-direction: column; align-items: center; gap: 14px; padding-top: 4px; }
 .pair-qr {
-  position: relative; width: min(248px, 64vw); aspect-ratio: 1; padding: 12px; border-radius: 22px;
+  position: relative; flex: none; width: min(248px, 64vw); aspect-ratio: 1; padding: 12px; border-radius: 22px;
   background: #fff; border: 1px solid var(--line); box-shadow: var(--shadow-1);
 }
 .pair-qr-svg { display: block; width: 100%; height: 100%; border-radius: 6px; animation: pair-in var(--dur-3, 260ms) var(--ease-out, ease-out); transition: opacity var(--dur-3, 260ms), filter var(--dur-3, 260ms); }
@@ -6802,7 +6802,8 @@ body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-con
 .bp-group:not(:first-child) { border-top: 1px solid var(--line); margin-top: 4px; }
 .bp-tasks { padding: 0 6px 6px; }
 .bp-files { display: flex; flex-direction: column; gap: 6px; padding: 6px 14px 12px; }
-.bp-files .rp-file { max-width: none; }
+.bp-files .rp-file { min-width: 0; max-width: 100%; }
+.bp-files .rp-file-text { min-width: 0; }
 .bp-footer { display: flex; justify-content: flex-start; margin-top: 16px; }
 .bp-footer [data-slot="button"] { color: var(--ink-3); }
 .bp-footer [data-slot="button"]:hover { color: var(--danger); }

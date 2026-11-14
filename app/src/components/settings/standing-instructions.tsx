@@ -100,18 +100,18 @@ export function StandingInstructions() {
             }
             value={text}
           />
-          <div className="flex flex-row items-center justify-between gap-4">
+          <div className="flex min-w-0 flex-col gap-2">
             <p
               className={
                 over
-                  ? "text-destructive text-xs"
-                  : "text-muted-foreground text-xs"
+                  ? "shrink-0 text-destructive text-xs"
+                  : "shrink-0 text-muted-foreground text-xs"
               }
             >
               {`${text.trim().length} / ${INSTRUCTIONS_LIMIT} 字`}
             </p>
             {problem ? (
-              <span className="text-destructive text-xs" role="alert">
+              <span className="text-destructive text-xs [overflow-wrap:anywhere]" role="alert">
                 {problem}
               </span>
             ) : null}

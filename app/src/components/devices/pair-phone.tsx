@@ -6,6 +6,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -174,7 +175,7 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
           <DialogDescription>{"用 ChisaBot 安卓 App 扫这个二维码，手机就会登录到你的账号并出现在设备列表里。"}</DialogDescription>
         </DialogHeader>
 
-        <div className="pair-body">
+        <DialogBody className="pair-body">
           <div className={cn("pair-qr", phase.kind === "bound" && "is-bound")}>
             {phase.kind === "pending" ? (
               <PairQr value={pairingUri(server, phase.ticket.code)} />
@@ -227,7 +228,7 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
               </span>
             </li>
           </ol>
-        </div>
+        </DialogBody>
 
         <DialogFooter className="pair-footer">
           {phase.kind === "bound" ? (

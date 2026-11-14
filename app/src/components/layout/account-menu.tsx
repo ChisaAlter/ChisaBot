@@ -24,7 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { lazyDialog } from "@/components/ui/lazy-dialog";
+import { openAccountDialog, preloadAccountDialogs } from "./account-dialogs";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -37,13 +37,6 @@ import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { fetchServedVersion } from "@/lib/version";
 import { cn } from "@/lib/utils";
 
-// 用到才加载、打开过才挂载（DESIGN.md §41.3）。
-const PairPhoneDialog = lazyDialog(() => import("@/components/devices/pair-phone").then((m) => m.PairPhoneDialog));
-const ProfileDialog = lazyDialog(() => import("@/components/layout/profile-dialog").then((m) => m.ProfileDialog));
-function preloadAccountDialogs() {
-  PairPhoneDialog.preload();
-  ProfileDialog.preload();
-}
 
 /**
  * 账号（DESIGN-v4）：左栏最底下一张小玻璃卡 —— 头像 + 名字 + 版本号，点开账号菜单（向上弹出）。
@@ -78,8 +71,6 @@ export function AccountMenu({
     (approvals.data?.questions.length ?? 0) +
     (confirms.data?.filter((r) => r.status === "pending").length ?? 0);
   const [open, setOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [pairOpen, setPairOpen] = useState(false);
   const openTaskCenter = useOpenTaskCenter();
   // 当前应用版本（/api/version 的 version，例如 0.1.0）。
   const served = useQuery({
@@ -203,7 +194,8 @@ export function AccountMenu({
             label={"个人资料"}
             onClick={() => {
               setOpen(false);
-              setProfileOpen(true);
+              if (sidebar?.isMobile) sidebar.setOpenMobile(false);
+              openAccountDialog("profile");
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
@@ -229,7 +221,7 @@ export function AccountMenu({
             onClick={() => {
               setOpen(false);
               if (sidebar?.isMobile) sidebar.setOpenMobile(false);
-              setPairOpen(true);
+              openAccountDialog("pair-phone");
             }}
           />
         </DropdownMenuGroup>
@@ -259,8 +251,6 @@ export function AccountMenu({
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-    <ProfileDialog onOpenChange={setProfileOpen} open={profileOpen} />
-    <PairPhoneDialog onOpenChange={setPairOpen} open={pairOpen} />
     </>
   );
 }

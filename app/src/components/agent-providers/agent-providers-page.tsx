@@ -430,7 +430,7 @@ export function AgentProvidersPage() {
         <div className="flex flex-col gap-4">
           {/* 顶部环境选择栏（对齐 T3 Code「正在应用设置到 ... on <环境>」） */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/60 px-4 py-3 backdrop-blur-sm">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground">{"正在应用设置到"}</span>
               <Select
                 onValueChange={(val) => {
@@ -438,19 +438,27 @@ export function AgentProvidersPage() {
                 }}
                 value={activeEnvId}
               >
-                <SelectTrigger className="min-w-[190px]" size="sm">
+                <SelectTrigger
+                  className="w-full min-w-0 sm:w-auto sm:min-w-[190px]"
+                  size="sm"
+                >
                   <SelectValue placeholder="选择运行环境">
                     {currentEnv ? (
-                      <span className="flex items-center gap-1.5">
+                      <span className="flex min-w-0 items-center gap-1.5">
                         {currentEnv.kind === "server" ? (
                           <IconServer className="size-3.5 text-primary" />
                         ) : (
                           <IconDeviceDesktop className="size-3.5 text-muted-foreground" />
                         )}
-                        <span className="font-medium">{currentEnv.name}</span>
+                        <span
+                          className="truncate font-medium"
+                          title={currentEnv.name}
+                        >
+                          {currentEnv.name}
+                        </span>
                         <span
                           className={cn(
-                            "ml-1 inline-block size-2 rounded-full",
+                            "ml-1 inline-block size-2 shrink-0 rounded-full",
                             currentEnv.online
                               ? "bg-emerald-500"
                               : "bg-muted-foreground/40",
@@ -1045,19 +1053,23 @@ function InstanceDetailPane({
     <div className="flex h-full flex-col justify-between">
       <div className="flex flex-col divide-y divide-border/60 px-6 py-5">
         {/* 头部标题行 */}
-        <div className="flex items-center justify-between gap-3 pb-4">
-          <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 pb-4">
+          <div className="flex min-w-0 flex-1 basis-48 items-start gap-2.5">
             <DriverIcon
-              className="size-5"
+              className="mt-0.5 size-5 shrink-0"
               driver={instance.driver}
               slug={instance.slug}
             />
-            <h3 className="text-base font-semibold">{instance.name}</h3>
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-              {spec.badge}
-            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold [overflow-wrap:anywhere]">
+                {instance.name}
+              </h3>
+              <span className="mt-1 inline-block rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                {spec.badge}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <Button
               disabled={!instance.environmentOnline || probing}
               onClick={() => void handleProbe()}
@@ -1111,7 +1123,7 @@ function InstanceDetailPane({
               {statusInfo.text}
             </span>
             {instance.probe?.resolvedPath ? (
-              <span className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+              <span className="w-full min-w-0 rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
                 {instance.probe.resolvedPath}
               </span>
             ) : null}

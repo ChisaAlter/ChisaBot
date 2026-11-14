@@ -280,7 +280,7 @@ describe("haze default lives in one constant", () => {
 });
 
 describe("CHANGELOG", () => {
-  test("glass entries stay adjacent in the current changelog list before and after release", () => {
+  test("glass entries stay adjacent in their release list after newer unreleased changes", () => {
     const log = readFileSync(
       path.join(import.meta.dir, "../../CHANGELOG.md"),
       "utf8",
@@ -289,9 +289,13 @@ describe("CHANGELOG", () => {
       .split(/^## /m)
       .slice(1)
       .map((section) => section.slice(section.indexOf("\n") + 1).trim());
-    // A release moves the list below the version heading and leaves Unreleased
-    // empty. Check that current list, not a later historical match.
-    const section = sections[0] || sections[1] || "";
+    // New Unreleased entries must not require copying already-released glass notes back.
+    // Locate the unique list owning this change, then keep the same adjacency/continuity checks.
+    const glassSections = sections.filter((section) =>
+      section.includes("新用户与「恢复默认」的玻璃材质改为「薄雾玻璃」"),
+    );
+    expect(glassSections).toHaveLength(1);
+    const section = glassSections[0] ?? "";
     const lines = section.split("\n");
     const firstEntry = lines.findIndex((line) => line.startsWith("- "));
     const mist = lines.findIndex((l) => l.includes("薄雾玻璃"));

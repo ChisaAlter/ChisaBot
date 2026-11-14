@@ -15,6 +15,7 @@ import {
   useUserPreferences,
 } from "@/lib/settings/message-list";
 import { DEFAULT_USER_PREFERENCES } from "../../../../shared/user-preferences";
+import { openAccountDialog } from "./account-dialogs";
 
 /**
  * 左上角的品牌名：前一段品牌红粗体（默认「Chisa」），后一段普通字（默认「Bot」）。
@@ -72,7 +73,6 @@ export function BrandAvatar({ size = 28 }: { size?: number }) {
 /** 顶栏里的品牌名，点一下就能改。`avatar={false}`：头像已经在旁边的圆形主页按钮里。 */
 export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
   const { accent, rest } = useBrandName();
-  const [open, setOpen] = useState(false);
   return (
     <>
       <Tooltip>
@@ -81,7 +81,7 @@ export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
             <button
               aria-label={`${accent}${rest}，点击修改名称`}
               className="brand-mark-btn"
-              onClick={() => setOpen(true)}
+              onClick={() => openAccountDialog("brand")}
               type="button"
             />
           }
@@ -91,12 +91,11 @@ export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
         </TooltipTrigger>
         <TooltipContent>{"点击修改名称"}</TooltipContent>
       </Tooltip>
-      <BrandDialog onOpenChange={setOpen} open={open} />
     </>
   );
 }
 
-function BrandDialog({
+export function BrandDialog({
   open,
   onOpenChange,
 }: {
