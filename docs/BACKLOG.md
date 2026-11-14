@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-11（`v0.1.143` + 去上游印记与架构收尾）。
+> 状态最后核对：2026-11-14（`v0.1.148`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,8 +15,8 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-123](#cb-123) | PC 客户端 macOS 版（dmg + 在线更新）                                              | 设备核心 Devices core | `type: feat` · `area: pc` · `P1` · `status: in-progress`                                      |
-| [CB-122](#cb-122) | 全页面 UI 审查整改：对齐、动态布局与弹窗可达性                                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`                                      |
+| [CB-123](#cb-123) | PC 客户端 macOS 版（dmg + 在线更新）                                              | 设备核心 Devices core | `type: feat` · `area: pc` · `P1` · `status: done`（#532 · `v0.1.148`，后续 Apple 签名待办）   |
+| [CB-122](#cb-122) | 全页面 UI 审查整改：对齐、动态布局与弹窗可达性                                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`（#535 已合并 · `v0.1.148`）          |
 | [CB-121](#cb-121) | 模型等待由用户停止，不因长时间无输出自动结束                                      | 成熟度 Maturity       | `type: bug` · `area: models` · `P1` · `status: in-progress`                                   |
 | [CB-120](#cb-120) | 任务中心统一原位弹出，不跳转当前页面                                              | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`                                      |
 | [CB-119](#cb-119) | 数据库普通查询与事务隔离、CI 收尾                                                 | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`（#530）                                   |
@@ -122,7 +122,7 @@
 
 **PC 客户端 macOS 版（dmg + 在线更新）**
 
-标签：`type: feat` · `area: pc` · `P1` · `status: in-progress`
+标签：`type: feat` · `area: pc` · `P1` · `status: done`（#532 · `v0.1.148`）
 
 分支：`feat/pc-macos`。`pc/` 的 Electron 外壳此前只出 Windows（NSIS + 免安装 zip）；本条目把同一套外壳（无边框主窗口 + 本机登录页 + 设备节点 + 在线更新）移植到 macOS。
 
@@ -138,7 +138,7 @@
 
 **全页面 UI 审查整改：对齐、动态布局与弹窗可达性**
 
-标签：`type: bug` · `area: web` · `P1` · `status: in-progress`
+标签：`type: bug` · `area: web` · `P1` · `status: in-progress`（#535 已合并 · `v0.1.148`）
 
 分支：`fix/ui-layout-stability`。完整审查记录16项：15项本机复现、1项原图光学观察；保留既有视觉体系与任务中心原位弹层。
 
@@ -149,7 +149,7 @@
 - [x] 日历、邮箱、Webhook、导入技能和绑定手机弹窗短窗口底部可操作；新建任务二层遮罩清楚。
 - [x] 常驻指令保存错误不挤压计数；个人资料/品牌草稿跨断点保留。
 - [x] 当前字体/缩放检查光学对齐，禁止全站机械平移图标。
-- [ ] 本地门禁、相关回归与宽窄/深浅色实际渲染通过。
+- [x] 本地门禁、相关回归与宽窄/深浅色实际渲染通过（#535 最终 CI 8/8 通过，含 Linux App tests 与 Jank harness）。
 - [ ] 最终CI、串行部署、正常登录正式环境实机验收。
 
 ## CB-121
