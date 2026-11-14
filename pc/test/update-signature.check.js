@@ -87,6 +87,47 @@ test("sign + verify a release, including the downloaded installer's sha512 and s
   }
 });
 
+test("multi-arch manifest (mac arm64 + x64): every files[] package carries its own signature", async () => {
+  const dir = tmpdir();
+  try {
+    const arm = crypto.randomBytes(2048);
+    const x64 = crypto.randomBytes(2048);
+    const armName = "ChisaBot-0.1.200-arm64-mac.zip";
+    const x64Name = "ChisaBot-0.1.200-x64-mac.zip";
+    fs.writeFileSync(path.join(dir, armName), arm);
+    fs.writeFileSync(path.join(dir, x64Name), x64);
+    const h = (b) => crypto.createHash("sha512").update(b).digest("base64");
+    // 顶层 path 是 arm64（arm64 runner 上 electron-builder 的产出），x64 客户端下载的是另一个包。
+    const text = `version: 0.1.200\nfiles:\n  - url: ${armName}\n    sha512: ${h(arm)}\n    size: ${arm.length}\n  - url: ${x64Name}\n    sha512: ${h(x64)}\n    size: ${x64.length}\npath: ${armName}\nsha512: ${h(arm)}\nreleaseDate: '2026-10-29T00:00:00.000Z'\n`;
+    const yml = path.join(dir, "latest-mac.yml");
+    fs.writeFileSync(yml, text);
+    const keysFile = path.join(dir, "keys.json");
+    fs.writeFileSync(keysFile, JSON.stringify(table(PRIMARY, BACKUP)));
+    assert.strictEqual((await run([yml, "--keys", keysFile], { PC_UPDATE_SIGNING_KEY: PRIMARY.pem })).code, 0);
+    const info = yaml.load(fs.readFileSync(yml, "utf8"));
+    assert.strictEqual(info.chisabotSigs[x64Name].slice(0, 8), PRIMARY.keyId);
+    assert.strictEqual(info.chisabotSigs[armName].slice(0, 8), PRIMARY.keyId);
+    // x64 包：basename ≠ 顶层 path，按 chisabotSigs 里自己的签名验。
+    assert.strictEqual((await sig.verifyDownloadedUpdate({ info, file: path.join(dir, x64Name), keys: KEYS })).keyId, PRIMARY.keyId);
+    // arm64 包（顶层 path）：照常。
+    assert.strictEqual((await sig.verifyDownloadedUpdate({ info, file: path.join(dir, armName), keys: KEYS })).keyId, PRIMARY.keyId);
+    // 篡改 x64 条目的 sha512 → 它自己的签名对不上。
+    const forged = { ...info, files: info.files.map((f) => (f.url === x64Name ? { ...f, sha512: h(Buffer.from("evil")) } : f)) };
+    await rejects(sig.verifyDownloadedUpdate({ info: forged, file: path.join(dir, x64Name), keys: KEYS }), "ERR_SIGNATURE_MISMATCH");
+    // 清单没给这个文件签名 → 拒。
+    fs.writeFileSync(path.join(dir, "evil-mac.zip"), "evil");
+    await rejects(sig.verifyDownloadedUpdate({ info, file: path.join(dir, "evil-mac.zip"), keys: KEYS }), "ERR_NO_SIGNATURE");
+    // --verify 两个包都过；重签后 chisabotSigs 不重复。
+    assert.strictEqual((await run(["--verify", yml, "--keys", keysFile])).code, 0);
+    assert.strictEqual((await run([yml, "--keys", keysFile], { PC_UPDATE_SIGNING_KEY: BACKUP.pem })).code, 0);
+    const reText = fs.readFileSync(yml, "utf8");
+    assert.strictEqual((reText.match(/chisabotSigs:/g) || []).length, 1);
+    assert.strictEqual(yaml.load(reText).chisabotSigs[x64Name].slice(0, 8), BACKUP.keyId);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("tampering any signed field breaks the signature", () => {
   const dir = tmpdir();
   try {
@@ -215,7 +256,7 @@ test("sign-update.js: signs from env, verifies, passes the tamper check, never p
     assert.strictEqual(signedRun.code, 0, signedRun.err);
     const text = fs.readFileSync(r.yml, "utf8");
     assert.ok(text.startsWith(r.text.trimEnd()), "只在末尾加一行");
-    assert.match(text, new RegExp(`\\nchisabotSig: '${PRIMARY.keyId}:[A-Za-z0-9+/]{86}=='\\n$`));
+    assert.match(text, new RegExp(`\\nchisabotSig: '${PRIMARY.keyId}:[A-Za-z0-9+/]{86}=='\\n`));
     assert.strictEqual(yaml.load(text).fullInstall, true);
     // 重签（换备用钥）只留一行签名。
     assert.strictEqual((await run([r.yml, "--keys", keysFile], { PC_UPDATE_SIGNING_KEY: BACKUP.pem })).code, 0);

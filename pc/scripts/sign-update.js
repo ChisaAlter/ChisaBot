@@ -41,14 +41,31 @@ function readManifest(file) {
   return { text: textValue, info };
 }
 
-/** 写（或替换）chisabotSig 一行。单引号包起来：base64 里没有单引号，js-yaml 读回来一定是原样字符串。 */
-function writeSignature(textValue, value) {
-  const kept = textValue
-    .split(/\r?\n/)
-    .filter((line) => !/^chisabotSig:/.test(line))
-    .join("\n")
-    .replace(/\n+$/, "");
-  return `${kept}\n${sig.SIG_FIELD}: '${value}'\n`;
+/**
+ * 写（或替换）chisabotSig 一行 + chisabotSigs 块（fileSigs：{ <文件名>: 签名 }，多安装包清单用）。
+ * 单引号包起来：base64 里没有单引号，js-yaml 读回来一定是原样字符串。
+ */
+function writeSignature(textValue, value, fileSigs = {}) {
+  const kept = [];
+  let skippingSigs = false;
+  for (const line of textValue.split(/\r?\n/)) {
+    if (/^chisabotSig:/.test(line)) continue;
+    if (/^chisabotSigs:/.test(line)) {
+      skippingSigs = true;
+      continue;
+    }
+    // chisabotSigs 块的缩进子行一并去掉，碰到下一个顶层字段为止。
+    if (skippingSigs && /^\s+\S/.test(line)) continue;
+    skippingSigs = false;
+    kept.push(line);
+  }
+  const head = kept.join("\n").replace(/\n+$/, "");
+  let out = `${head}\n${sig.SIG_FIELD}: '${value}'\n`;
+  const names = Object.keys(fileSigs);
+  if (names.length) {
+    out += `${sig.SIGS_FIELD}:\n${names.map((name) => `  ${JSON.stringify(name)}: '${fileSigs[name]}'`).join("\n")}\n`;
+  }
+  return out;
 }
 
 function readKeysFile(file) {
@@ -97,6 +114,15 @@ async function verify(file, { keysFile, installer, tamperCheck, log }) {
   const target = installer || path.join(path.dirname(file), String(info.path || ""));
   const result = await sig.verifyDownloadedUpdate({ info, file: target, keys });
   log(`verified ${file}: ${info.version} signed by ${result.keyId}, ${path.basename(target)} sha512 ok`);
+  // chisabotSigs 里每个安装包都要过（签名 + 安装包 sha512 / 大小）。
+  const sigs = info[sig.SIGS_FIELD];
+  if (sigs && typeof sigs === "object") {
+    for (const name of Object.keys(sigs)) {
+      if (name === path.basename(target)) continue;
+      await sig.verifyDownloadedUpdate({ info, file: path.join(path.dirname(file), name), keys });
+    }
+    log(`verified ${file}: ${Object.keys(sigs).length} files[] package signature(s) ok`);
+  }
   if (!tamperCheck) return;
   for (const [name, tamper] of Object.entries(TAMPERS)) {
     if (name === "size" && !result.fields.size) continue;
@@ -134,11 +160,15 @@ function sign(file, { keysFile, keyFile, env, log }) {
   }
   const keyId = value.slice(0, 8);
   if (!keys.has(keyId)) throw new sig.UpdateSignatureError("ERR_UNKNOWN_KEY", `签名私钥 ${keyId} 不在 ${keysFile} 里，客户端会拒装`);
-  const signed = writeSignature(textValue, value);
+  // files[] 里每个安装包各签一条（mac 清单带 arm64 / x64 两个 zip，顶层签名只覆盖 path 那一个）。
+  const fileSigs = sig.fileSignatures(info, pem);
+  const signed = writeSignature(textValue, value, fileSigs);
   // 先在内存里验一遍再写盘。
-  sig.verifyManifest(loadYaml().load(signed), keys);
+  const parsed = loadYaml().load(signed);
+  sig.verifyManifest(parsed, keys);
+  for (const name of Object.keys(parsed[sig.SIGS_FIELD] || {})) sig.verifyManifest(sig.scopedManifest(parsed, name), keys);
   fs.writeFileSync(file, signed);
-  log(`signed ${file}: ${info.version} with ${keyId}`);
+  log(`signed ${file}: ${info.version} with ${keyId}${fileSigs && Object.keys(fileSigs).length ? ` (+${Object.keys(fileSigs).length} files)` : ""}`);
 }
 
 /** CHISABOT_UPDATE_PUBKEYS → 公钥表。 */

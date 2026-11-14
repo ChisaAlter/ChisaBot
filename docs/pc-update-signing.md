@@ -82,6 +82,7 @@ fullInstall=<true|false>
 - `files[]` 里 url == path 那一项的 sha512 必须和顶层 sha512 一致（electron-updater 下载校验用的是 files 那一项），不一致 → 拒绝。
 - `fullInstall` 和 `updater.js` 的 `requiresFullInstall` 理解一致：只有 `true` / `"true"` 算 true。
 - 签名写进 `latest.yml` 的新字段，单引号包起来：`chisabotSig: '<keyId>:<base64 签名>'`。keyId = 原始公钥（32 字节）sha256 的前 8 个十六进制字符。electron-updater 把未知字段原样放进 UpdateInfo（`chisabotShell` 就是这样读到的）。
+- 顶层 `chisabotSig` 只覆盖 `path` 指的那个安装包。多安装包清单（`latest-mac.yml`，arm64 / x64 各一个 zip）里 `files[]` 每个包再各签一条，写在 `chisabotSigs:` 映射里（同一条规范化消息，把 `path`/`sha512`/`size` 换成那条 `files[]` 条目）；客户端按实际下载文件的 basename 挑对应签名验。没有 `chisabotSigs` 的旧清单行为不变。
 - 安装包本身不改，签了 sha512 就等于签了安装包。`releaseDate`、`.blockmap` 等不在签名里：它们不影响装什么。
 - 签名方和 electron-updater 都用 **js-yaml** 解析 `latest.yml`，值的类型一致，拼出来的消息逐字节相同（测试里有 js-yaml 往返测试）。
 - 签名覆盖 version，`allowDowngrade = false` 保留：把旧的已签名清单重放回来也降不了级。
@@ -95,7 +96,7 @@ fullInstall=<true|false>
 - 启用验签时：
   - `autoInstallOnAppQuit` 一直是 false（原因见 §1.1）。
   - `update-downloaded` → 状态 `verifying`（网页显示「正在校验更新包签名」）→ 校验：
-    1. `chisabotSig` 存在、格式对、keyId 在公钥表里、Ed25519 签名对得上规范化消息；
+    1. `chisabotSig` 存在、格式对、keyId 在公钥表里、Ed25519 签名对得上规范化消息——下载的文件不是顶层 `path` 时改用 `chisabotSigs[文件名]` 里那条签名；
     2. 下载文件（`info.downloadedFile`）的大小等于签名覆盖的 size（有的话），sha512 自己再算一遍，等于签名覆盖的 sha512。
   - 通过 → `downloaded`，和以前一样弹窗「新版本已下载」，可以立即重启（`quitAndInstall(true, true)`）或稍后（退出时 `installOnQuit` → 普通更新 `autoUpdater.install(true, false)`，重新安装照旧自己 spawn `/S`）。
   - 失败 → 删掉下载文件，状态 `error`：「更新包签名校验失败，已拒绝安装：<原因>」，写审计日志 `update_rejected`，不弹窗、不安装（立即和退出时都不装）。缺签名、keyId 未知、签名不符、大小 / 哈希不符、公钥表坏了，一律拒绝。下次检查会重新下载、重新校验（文件已删，electron-updater 不会复用缓存）。
@@ -106,7 +107,7 @@ fullInstall=<true|false>
 ### 3.3 签名脚本和 CI
 
 - `pc/scripts/sign-update.js`（在 `pc/` 下运行）：
-  - `node scripts/sign-update.js dist/latest.yml`：私钥从环境变量 `PC_UPDATE_SIGNING_KEY`（PKCS8 PEM 文本）读，或 `--key-file <离线私钥.pem>`；写入（或替换）`chisabotSig` 一行。私钥不落盘、不打印，私钥解析错误也不回显原文。签名用的钥匙不在公钥表（默认 `src/update-keys.json`，可 `--keys`）里就拒绝签——客户端只认公钥表。签完先在内存里验一遍再写盘。
+  - `node scripts/sign-update.js dist/latest.yml`：私钥从环境变量 `PC_UPDATE_SIGNING_KEY`（PKCS8 PEM 文本）读，或 `--key-file <离线私钥.pem>`；写入（或替换）`chisabotSig` 一行和 `files[]` 每个安装包的 `chisabotSigs` 条目。私钥不落盘、不打印，私钥解析错误也不回显原文。签名用的钥匙不在公钥表（默认 `src/update-keys.json`，可 `--keys`）里就拒绝签——客户端只认公钥表。签完先在内存里验一遍再写盘。
   - `--verify dist/latest.yml [--installer <安装包>] [--tamper-check]`：验清单签名 + 安装包大小和 sha512；`--tamper-check` 再把每个签名字段、安装包第一个字节各改一次，确认每次都被拒绝（CI 自检）。
   - `--require-keys`：公钥表为空就失败（通用版发布用）。
   - `--keys-from-env`：自建版按 `CHISABOT_UPDATE_PUBKEYS`（逗号或空白分隔的 base64 公钥）写公钥表；变量为空 → 空表 → 这个自建版不验签。
