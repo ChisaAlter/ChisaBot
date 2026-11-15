@@ -110,4 +110,5 @@
 | 服务端除 `server/src/config.ts` 外零散代码禁止读 `process.env`（零白名单）       | `server/tests/no-raw-env.test.ts`                |
 | 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |
 | 全仓 `biome-ignore` 必须写清 `>=10` 字真实技术原因且总量封顶只减不增               | `server/tests/biome-ignore-hygiene.test.ts`      |
+| 核心状态机（租约锁/插件三层权限/一次性审批/聊天账本）BFS 穷举与双变异体捕杀    | `server/tests/formal-conversation-locks.test.ts`、`server/tests/formal-plugin-grants.test.ts`、`server/tests/formal-approval-gate.test.ts`、`app/tests/formal-chat-ledger.test.ts` |
 | `DESIGN.md` 目录与正文章节 1:1 同步、门禁表路径真实、`test-quarantine` 清零      | `server/tests/docs-truth-guards.test.ts`         |

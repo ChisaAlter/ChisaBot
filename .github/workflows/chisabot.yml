@@ -63,6 +63,10 @@ jobs:
           server/tests/no-unapproved-schema-drop.test.ts
           server/tests/biome-ignore-hygiene.test.ts
           server/tests/docs-truth-guards.test.ts
+          server/tests/formal-conversation-locks.test.ts
+          server/tests/formal-plugin-grants.test.ts
+          server/tests/formal-approval-gate.test.ts
+          app/tests/formal-chat-ledger.test.ts
       - name: Server model, permission and runtime checks
         run: >-
           bun test
