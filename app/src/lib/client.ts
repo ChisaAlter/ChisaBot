@@ -105,9 +105,17 @@ export function tryClient(
  */
 export class ClientError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly code?: string;
+  readonly agentId?: string;
+  constructor(
+    message: string,
+    status: number,
+    details?: { code?: string; agentId?: string },
+  ) {
     super(message);
     this.status = status;
+    if (details?.code !== undefined) this.code = details.code;
+    if (details?.agentId !== undefined) this.agentId = details.agentId;
   }
 }
 
@@ -143,13 +151,21 @@ export async function client<T>(
      * The server's message is the useful one: it names the field or the permission that failed. The
      * fallback is only for the cases where it sent none, or sent something that is not JSON.
      */
-    const message = await response
+    const errorBody = await response
       .json()
-      .then((body: { error?: string }) => body.error)
+      .then((body: { error?: string; code?: string; agentId?: string }) => body)
       .catch(() => undefined);
     throw new ClientError(
-      message ?? options.fallback ?? "该请求失败。",
+      errorBody?.error ?? options.fallback ?? "该请求失败。",
       response.status,
+      {
+        ...(typeof errorBody?.code === "string"
+          ? { code: errorBody.code }
+          : {}),
+        ...(typeof errorBody?.agentId === "string"
+          ? { agentId: errorBody.agentId }
+          : {}),
+      },
     );
   }
 

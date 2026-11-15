@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { isMediaOnly, splitBubbles } from "../../shared/chat-bubbles";
 import { compactTurns } from "../src/components/channels/chat-transcript";
-import { isMediaOnly, splitBubbles } from "../src/lib/chat/bubbles";
 import { workCallFailed } from "../src/lib/chat/work-steps";
 
 /**

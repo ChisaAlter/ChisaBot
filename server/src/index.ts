@@ -72,6 +72,7 @@ import {
   createModelFallbackStore,
 } from "./agents/model-fallback-settings";
 import { createAgentModelService } from "./agents/model-selection";
+import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createAgentPurge } from "./agents/purge";
@@ -2282,6 +2283,14 @@ const coworkerService = createCoworkerService({
   auditStore: bootAuditStore,
 });
 const botLifecycle = createBotLifecycleStore(database);
+const userPreferencesStore = createUserPreferencesStore(database);
+const primaryAgentService = createPrimaryAgentService({
+  userPreferences: userPreferencesStore,
+  agentProfileStore,
+  isPaused: async (userId, agentId) =>
+    (await botLifecycle.get(userId, agentId)).paused,
+  actorForUser: actorFor,
+});
 const coordination = createCoordinationTools({
   desk: handoffDesk,
   caps: config.handoff,
@@ -3065,15 +3074,8 @@ const taskCenter = createTaskCenterRuntime({
     );
     return Boolean(profile && !profile.deletedAt);
   },
-  defaultAgentFor: async (ownerUserId) => {
-    const [row] = await database.$client.unsafe<{ main: string | null }[]>(
-      "SELECT preferences->>'mainBotId' AS main FROM users WHERE id = $1",
-      [ownerUserId],
-    );
-    if (row?.main) return row.main;
-    const actor = await actorFor(ownerUserId);
-    return (await agentProfileStore.list(actor))[0]?.id ?? null;
-  },
+  defaultAgentFor: async (ownerUserId) =>
+    primaryAgentService.resolveForBackground(ownerUserId),
   recordNotice: async (ownerUserId, agentId, text, context) => {
     const actor = await actorFor(ownerUserId);
     const channel = await channelStore.direct(actor, agentId);
@@ -4758,7 +4760,7 @@ const app = createApp(
   process.env.CHISABOT_MODEL_OAUTH_FILE?.trim()
     ? createProviderOAuthProxy(process.env.CHISABOT_MODEL_OAUTH_FILE.trim())
     : undefined,
-  createUserPreferencesStore(database),
+  userPreferencesStore,
   undefined, // was voice sessions (removed in CB-046 step 2)
   undefined, // was Automatic Learning (removed in slimming P4b-3)
   {
@@ -4805,6 +4807,7 @@ const app = createApp(
   magpie,
   {
     modelCatalogRefreshMinutes,
+    primaryAgentService,
     ...(gatewaySecret
       ? {
           singleUserGuard: createGatewayRequireUser(

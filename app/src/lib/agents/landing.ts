@@ -1,7 +1,10 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { type ChannelSummary, channelListQueryOptions } from "@/lib/channels/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
+import {
+  type ChannelSummary,
+  channelListQueryOptions,
+} from "@/lib/channels/queries";
 import { readStoredPanelBot } from "@/lib/panels/active-bot";
 import { useMainBot } from "@/lib/settings/message-list";
 
@@ -19,8 +22,9 @@ export type Landing =
   | { state: "ready"; botId: string; target: LandingTarget };
 
 /**
- * The Bot the app opens on: the one last used, else the main Bot (主机器人), else the first on the
- * roster. Its most recent one-to-one conversation when one is loaded, else its empty chat.
+ * The Bot the app opens on: the main Bot (主机器人) when configured and visible, else the one last
+ * used, else the first on the roster. Its most recent one-to-one conversation when one is loaded,
+ * else its empty chat.
  */
 export function pickLandingBot(
   roster: Array<{ id: string }>,
@@ -29,8 +33,8 @@ export function pickLandingBot(
 ): string | undefined {
   const has = (id: string | null | undefined): id is string =>
     Boolean(id) && roster.some((bot) => bot.id === id);
-  if (has(lastUsed)) return lastUsed;
   if (has(mainBotId)) return mainBotId;
+  if (has(lastUsed)) return lastUsed;
   return roster[0]?.id;
 }
 
@@ -40,10 +44,14 @@ export function useLanding(): Landing {
   const { mainBotId, settled } = useMainBot();
   // Waiting on the roster and preferences; a failed channel list only costs the "latest
   // conversation" hop, so it does not hold the landing back.
-  if (agents.isPending || !settled || channels.isPending) return { state: "loading" };
+  if (agents.isPending || !settled || channels.isPending)
+    return { state: "loading" };
   const roster = (agents.data ?? []).filter((bot) => !bot.hidden);
   const botId = pickLandingBot(roster, readStoredPanelBot(), mainBotId);
-  if (!botId) return agents.isError && agents.data === undefined ? { state: "error" } : { state: "empty" };
+  if (!botId)
+    return agents.isError && agents.data === undefined
+      ? { state: "error" }
+      : { state: "empty" };
   return { state: "ready", botId, target: chatTargetFor(botId, channels.data) };
 }
 

@@ -29,7 +29,7 @@ async function toDataUrl(blob: Blob): Promise<string> {
 }
 
 scope.onmessage = async (event) => {
-  const { file, maxSide } = event.data;
+  const { file, maxSide, crop } = event.data;
   try {
     let bitmap: ImageBitmap;
     try {
@@ -38,7 +38,7 @@ scope.onmessage = async (event) => {
       scope.postMessage({ ok: false, error: "无法解析该图片格式" });
       return;
     }
-    const encoded = await compressBitmapToBlob(bitmap, maxSide);
+    const encoded = await compressBitmapToBlob(bitmap, maxSide, crop);
     if (!encoded) {
       scope.postMessage({ ok: false, error: "OffscreenCanvas 2D 不可用" });
       return;

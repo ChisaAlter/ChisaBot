@@ -1,6 +1,8 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
+import type { AgentActor } from "./agents/profile-types";
 import type { AppVariables } from "./auth/guards";
+import { mapPrimaryAgentError } from "./settings/primary-agent-routes";
 import type { UserPreferencesStore } from "./user-preferences";
 
 /*
@@ -17,9 +19,14 @@ const preferencesPatch = z
   })
   .refine((patch) => Object.keys(patch).length > 0);
 
+export type UserPreferencesRoutesOptions = {
+  validateMainBot?: (actor: AgentActor, agentId: string) => Promise<unknown>;
+};
+
 export function userPreferencesRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   store?: UserPreferencesStore,
+  options?: UserPreferencesRoutesOptions,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.use("*", requireUser);
@@ -50,6 +57,15 @@ export function userPreferencesRoutes(
         },
         400,
       );
+    }
+    if (typeof parsed.data.mainBotId === "string" && options?.validateMainBot) {
+      try {
+        await options.validateMainBot(context.var.actor, parsed.data.mainBotId);
+      } catch (error) {
+        const mapped = mapPrimaryAgentError(context, error);
+        if (mapped) return mapped;
+        throw error;
+      }
     }
     return context.json({
       preferences: await store.patch(context.var.actor.id, parsed.data),

@@ -13,6 +13,7 @@ import { installPerfMode } from "./lib/perf-mode";
 import { installPreviewWindowBridge } from "./lib/proto-preview";
 import { installPwa } from "./lib/pwa";
 import { initResizeState } from "./lib/resize-state";
+import { installPrimaryAgentSync } from "./lib/settings/queries";
 import { installStaleChunkReload } from "./lib/stale-chunk";
 import { queryClient } from "./query-client";
 import { router } from "./router";
@@ -36,6 +37,7 @@ installStaleChunkReload();
 // 会话过期（网关的 401）整页去 /login?next=…，见 lib/auth/login-redirect.ts。
 installLoginRedirect();
 initResizeState();
+installPrimaryAgentSync(queryClient);
 const rootElement = document.getElementById("root");
 
 if (!rootElement) {

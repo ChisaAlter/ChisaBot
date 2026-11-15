@@ -30,6 +30,7 @@ import {
   chisabotChannelMappings,
 } from "../db/schema";
 import { parsePageLimit } from "../paging";
+import { mapPrimaryAgentError } from "../settings/primary-agent-routes";
 import {
   DRAFT_AGENT_CHANNEL_DESCRIPTION,
   type DraftDeleteOutcome,
@@ -1068,17 +1069,27 @@ type ChannelInputParseResult =
 
 type ChannelInputObject = { agentIds?: unknown; draft?: unknown };
 
-export function parseChannelInput(input: unknown): ChannelInputParseResult {
+export function parseChannelInput(
+  input: unknown,
+  options?: { allowEmptyAgentIds?: boolean },
+): ChannelInputParseResult {
   if (!isChannelInputObject(input)) {
     return { ok: false, error: "Channel input must be a JSON object." };
   }
 
-  if (!Array.isArray(input.agentIds) || input.agentIds.length === 0) {
+  const allowEmpty = options?.allowEmptyAgentIds === true;
+  if (input.agentIds === undefined) {
+    if (!allowEmpty) {
+      return { ok: false, error: "Agent IDs must be a non-empty array." };
+    }
+  } else if (!Array.isArray(input.agentIds)) {
+    return { ok: false, error: "Agent IDs must be a non-empty array." };
+  } else if (input.agentIds.length === 0 && !allowEmpty) {
     return { ok: false, error: "Agent IDs must be a non-empty array." };
   }
 
   const agentIds: string[] = [];
-  for (const agentId of input.agentIds) {
+  for (const agentId of Array.isArray(input.agentIds) ? input.agentIds : []) {
     if (typeof agentId !== "string" || agentId.trim().length === 0) {
       return { ok: false, error: "Agent IDs must be non-empty strings." };
     }
@@ -1175,6 +1186,10 @@ export function createChannelRoutes(
   auditStore?: AuditStore,
   /** FIX-03：会话正文搜索。不给则 /search 回空列表。 */
   database?: Database,
+  /** 缺省 agentIds 时自动解析用户的全局主 Agent。 */
+  primaryAgentResolver?: {
+    resolveForChannelCreation: (actor: AgentActor) => Promise<{ id: string }>;
+  },
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -1250,17 +1265,32 @@ export function createChannelRoutes(
   routes.post("/", requireUser, async (context) => {
     const parsed = parseChannelInput(
       await context.req.json().catch(() => null),
+      { allowEmptyAgentIds: Boolean(primaryAgentResolver) },
     );
     if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
     try {
+      const targetAgentIds =
+        parsed.value.agentIds.length > 0
+          ? parsed.value.agentIds
+          : primaryAgentResolver
+            ? [
+                (
+                  await primaryAgentResolver.resolveForChannelCreation(
+                    context.var.actor,
+                  )
+                ).id,
+              ]
+            : [];
       const channel = parsed.value.draft
-        ? await store.create(context.var.actor, parsed.value.agentIds, {
+        ? await store.create(context.var.actor, targetAgentIds, {
             draft: true,
           })
-        : await store.create(context.var.actor, parsed.value.agentIds);
+        : await store.create(context.var.actor, targetAgentIds);
       return context.json({ channel: channelDto(channel) }, 201);
     } catch (error) {
+      const primaryError = mapPrimaryAgentError(context, error);
+      if (primaryError) return primaryError;
       return mapStoreError(context, error);
     }
   });

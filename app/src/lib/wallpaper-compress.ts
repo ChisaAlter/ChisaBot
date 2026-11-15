@@ -13,6 +13,8 @@
  * - 编码参数不变：先试 WebP 0.84，Data URL 超过 3.5M 字符或浏览器不支持 WebP 编码就改 JPEG 0.8。
  */
 
+import type { PixelCropRect } from "@/lib/wallpaper-crop";
+
 /** 最长边上限：4K 屏的物理宽度。 */
 export const WALLPAPER_MAX_LONG_EDGE = 3840;
 /** 拿不到屏幕尺寸时用的最长边（和以前一样）。 */
@@ -55,27 +57,70 @@ export function fitLongEdge(
 }
 
 /** 主线程 ↔ Worker 的消息。 */
-export type WallpaperCompressRequest = { file: Blob; maxSide: number };
+export type WallpaperCompressRequest = {
+  file: Blob;
+  maxSide: number;
+  crop?: PixelCropRect;
+};
 export type WallpaperCompressResponse =
   | { ok: true; dataUrl: string; width: number; height: number }
   | { ok: false; error: string };
+
+/** 将像素裁剪框夹紧到源图尺寸范围内，至少保留 1×1。 */
+export function clampPixelCrop(
+  crop: PixelCropRect,
+  sourceWidth: number,
+  sourceHeight: number,
+): PixelCropRect {
+  const iw = Math.max(1, Math.round(sourceWidth));
+  const ih = Math.max(1, Math.round(sourceHeight));
+  const rawSx = Number.isFinite(crop.sx) ? crop.sx : 0;
+  const rawSy = Number.isFinite(crop.sy) ? crop.sy : 0;
+  const rawSw = Number.isFinite(crop.sw) ? crop.sw : iw;
+  const rawSh = Number.isFinite(crop.sh) ? crop.sh : ih;
+  const sx = Math.max(0, Math.min(iw - 1, Math.round(rawSx)));
+  const sy = Math.max(0, Math.min(ih - 1, Math.round(rawSy)));
+  const sw = Math.max(1, Math.min(iw - sx, Math.round(rawSw)));
+  const sh = Math.max(1, Math.min(ih - sy, Math.round(rawSh)));
+  return { sx, sy, sw, sh };
+}
 
 /** 没有 2D 上下文时返回 null，调用方用原图。 */
 export async function compressBitmapToBlob(
   bitmap: ImageBitmap,
   maxSide: number,
+  crop?: PixelCropRect,
 ): Promise<{
   webp: Blob | null;
   jpeg: () => Promise<Blob>;
   width: number;
   height: number;
 } | null> {
-  const { width, height } = fitLongEdge(bitmap.width, bitmap.height, maxSide);
+  const clamped = crop
+    ? clampPixelCrop(crop, bitmap.width, bitmap.height)
+    : null;
+  const { width, height } = clamped
+    ? fitLongEdge(clamped.sw, clamped.sh, maxSide)
+    : fitLongEdge(bitmap.width, bitmap.height, maxSide);
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  if (clamped) {
+    ctx.drawImage(
+      bitmap,
+      clamped.sx,
+      clamped.sy,
+      clamped.sw,
+      clamped.sh,
+      0,
+      0,
+      width,
+      height,
+    );
+  } else {
+    ctx.drawImage(bitmap, 0, 0, width, height);
+  }
   bitmap.close();
   const webp = await canvas.convertToBlob({
     type: "image/webp",
@@ -142,6 +187,7 @@ export function compressInWorker(
   maxSide: number,
   createWorker: () => WorkerLike = defaultWorkerFactory,
   timeoutMs = WALLPAPER_WORKER_TIMEOUT_MS,
+  crop?: PixelCropRect,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let worker: WorkerLike;
@@ -170,7 +216,7 @@ export function compressInWorker(
     };
     worker.onerror = () =>
       done(() => reject(new Error("壁纸压缩 Worker 出错")));
-    worker.postMessage({ file, maxSide });
+    worker.postMessage(crop ? { file, maxSide, crop } : { file, maxSide });
   });
 }
 
@@ -178,6 +224,7 @@ export function compressInWorker(
 export function compressOnMainThread(
   file: Blob,
   maxSide: number,
+  crop?: PixelCropRect,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -191,7 +238,12 @@ export function compressOnMainThread(
       const img = new Image();
       img.onerror = () => reject(new Error("无法解析该图片格式"));
       img.onload = () => {
-        const { width, height } = fitLongEdge(img.width, img.height, maxSide);
+        const natW = img.naturalWidth || img.width;
+        const natH = img.naturalHeight || img.height;
+        const clamped = crop ? clampPixelCrop(crop, natW, natH) : null;
+        const { width, height } = clamped
+          ? fitLongEdge(clamped.sw, clamped.sh, maxSide)
+          : fitLongEdge(natW, natH, maxSide);
         const canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
@@ -201,7 +253,21 @@ export function compressOnMainThread(
           return;
         }
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, width, height);
+        if (clamped) {
+          ctx.drawImage(
+            img,
+            clamped.sx,
+            clamped.sy,
+            clamped.sw,
+            clamped.sh,
+            0,
+            0,
+            width,
+            height,
+          );
+        } else {
+          ctx.drawImage(img, 0, 0, width, height);
+        }
         const webp = canvas.toDataURL("image/webp", WALLPAPER_WEBP_QUALITY);
         if (
           webp.startsWith("data:image/webp") &&
@@ -220,11 +286,16 @@ export function compressOnMainThread(
 
 export type CompressWallpaperOptions = {
   maxSide?: number;
+  crop?: PixelCropRect;
   /** 测试用：替换 Worker 和能力检测。 */
   createWorker?: () => WorkerLike;
   canUseWorker?: boolean;
   workerTimeoutMs?: number;
-  mainThread?: (file: Blob, maxSide: number) => Promise<string>;
+  mainThread?: (
+    file: Blob,
+    maxSide: number,
+    crop?: PixelCropRect,
+  ) => Promise<string>;
   /** Worker 路径失败、改走主线程时调用（测试和排查用）。 */
   onFallback?: (error: unknown) => void;
 };
@@ -242,10 +313,34 @@ export async function compressWallpaperImage(
         maxSide,
         options.createWorker,
         options.workerTimeoutMs,
+        options.crop,
       );
     } catch (error) {
       options.onFallback?.(error);
     }
   }
-  return (options.mainThread ?? compressOnMainThread)(file, maxSide);
+  const main = options.mainThread ?? compressOnMainThread;
+  return options.crop ? main(file, maxSide, options.crop) : main(file, maxSide);
+}
+
+/** 纯内存将 Data URL 转为 Blob（不走 fetch，遵守网络与传输边界）。 */
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || comma < 0) {
+    throw new Error("无效的图片数据");
+  }
+  const header = dataUrl.slice(5, comma);
+  const body = dataUrl.slice(comma + 1);
+  const parts = header.split(";");
+  const mime = parts[0] || "application/octet-stream";
+  const isBase64 = parts.some((part) => part.toLowerCase() === "base64");
+  if (!isBase64) {
+    return new Blob([decodeURIComponent(body)], { type: mime });
+  }
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
 }

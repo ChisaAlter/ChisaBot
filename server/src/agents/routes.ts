@@ -5,7 +5,6 @@ import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { testAgentConnection } from "./connection-test";
 import { canDeleteAgent, canManageAgent } from "./profile-policy";
-import type { AgentPurge } from "./purge";
 import {
   AgentNotFoundError,
   AgentNotManageableError,
@@ -14,6 +13,7 @@ import {
   ProtectedAgentError,
 } from "./profile-store";
 import type { AgentActor, AgentProfile } from "./profile-types";
+import type { AgentPurge } from "./purge";
 import {
   createCoworkerService,
   DEV_ACTOR_EMAIL,
@@ -259,7 +259,12 @@ export function createAgentRoutes(
       const me = context.var.actor;
       if (me.role === "admin")
         agents = agents.filter(
-          (agent) => agent.visibility !== "private" || !agent.ownerUserId || agent.ownerUserId === me.id || agent.systemOwned || agent.assignedToMe,
+          (agent) =>
+            agent.visibility !== "private" ||
+            !agent.ownerUserId ||
+            agent.ownerUserId === me.id ||
+            agent.systemOwned ||
+            agent.assignedToMe,
         );
       return context.json({
         agents: agents.map((agent) => dto(context.var.actor, agent)),
@@ -520,7 +525,10 @@ export function createAgentRoutes(
         try {
           purged = await purge.purge(context.var.actor, agentId);
         } catch (error) {
-          console.error(`[agents] purge after deleting ${agentId} failed:`, error);
+          console.error(
+            `[agents] purge after deleting ${agentId} failed:`,
+            error,
+          );
         }
       }
       await record(context, "bot.deleted", agentId, purged ? { purged } : {});
@@ -570,6 +578,18 @@ export function createAgentRoutes(
   });
 
   return routes;
+}
+
+export function serializeAgentDto(
+  actor: AgentActor,
+  agent: AgentProfile,
+  managedEndpoint?: string,
+) {
+  return {
+    ...agentDto(actor, agent),
+    builtIn:
+      typeof agent.endpoint === "string" && agent.endpoint === managedEndpoint,
+  };
 }
 
 function agentDto(actor: AgentActor, agent: AgentProfile) {
