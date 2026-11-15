@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type BaseEvent, EventType, type Message } from "@ag-ui/client";
 import { z } from "zod";
 import { describeWorkerStep } from "../../../shared/work-step";
+import { readWorkerCaps } from "../config";
 import {
   type HeadlessTool,
   HeadlessToolSuspension,
@@ -83,9 +84,9 @@ type WorkerRow = {
   finished_at: Date | string | null;
 };
 
-export const PER_USER_RUNNING =
-  Number(process.env.CHISABOT_WORKERS_PER_USER) || 5;
-export const GLOBAL_RUNNING = Number(process.env.CHISABOT_WORKERS_GLOBAL) || 10;
+const WORKER_CAPS = readWorkerCaps();
+export const PER_USER_RUNNING = WORKER_CAPS.perUserLimit;
+export const GLOBAL_RUNNING = WORKER_CAPS.globalLimit;
 export const PER_USER_BACKLOG = 10;
 export const WORKER_TIMEOUT_MS = 15 * 60_000;
 export const RESULT_LIMIT = 6_000;

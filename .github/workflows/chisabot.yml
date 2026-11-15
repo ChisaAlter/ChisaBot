@@ -51,6 +51,15 @@ jobs:
       # build script names app/node_modules/vite.
       - run: bun run generate:app-config && cd app && bun --bun ../node_modules/vite/bin/vite.js build
       - run: bun run --cwd app typecheck
+      - name: Architecture and truth guards
+        run: >-
+          bun test
+          app/tests/no-raw-fetch.test.ts
+          app/tests/no-group-has.test.ts
+          server/tests/no-raw-fetch.test.ts
+          server/tests/no-raw-env.test.ts
+          server/tests/no-unapproved-schema-drop.test.ts
+          server/tests/docs-truth-guards.test.ts
       - name: Server model, permission and runtime checks
         run: >-
           bun test

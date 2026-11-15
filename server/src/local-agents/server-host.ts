@@ -11,6 +11,7 @@ import os from "node:os";
 import { SERVER_ENVIRONMENT_ID } from "../../../shared/agent-providers";
 import { defaultCapabilities } from "../../../shared/devices";
 import type { DeviceRecord } from "../devices/store";
+import { readServerAgentRootsRaw } from "../config";
 
 const requireCjs = createRequire(import.meta.url);
 
@@ -34,7 +35,7 @@ const { createAgentRuntime } = requireCjs(
 };
 
 export function parseEnvServerRoots(
-  rawInput = process.env.CHISABOT_SERVER_AGENT_ROOTS,
+  rawInput = readServerAgentRootsRaw(),
 ): string[] {
   const raw = rawInput?.trim();
   if (!raw) return [];

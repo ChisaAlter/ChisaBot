@@ -1,3 +1,4 @@
+import { guardedFetchResponse } from "../../../shared/net/guarded-fetch";
 import { cutAtCodeUnits } from "../channels/text";
 import { MAX_RESULT_CHARS, type McpCallResult, type McpTool } from "./mcp";
 
@@ -157,6 +158,7 @@ async function request(
   path: string,
   query: Record<string, string>,
   signal?: AbortSignal,
+  stopAfterBytes?: number,
 ): Promise<{ ok: true; response: Response } | { ok: false; message: string }> {
   if (!connection.token) {
     return { ok: false, message: "No credential was available for this call." };
@@ -172,14 +174,12 @@ async function request(
 
   let response: Response;
   try {
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const combined =
-      signal && typeof AbortSignal.any === "function"
-        ? AbortSignal.any([signal, timeout])
-        : timeout;
-    response = await fetch(url, {
+    response = await guardedFetchResponse(url.toString(), {
       headers: { authorization: `Bearer ${connection.token}` },
-      signal: combined,
+      maxBytes: 2 * 1024 * 1024,
+      ...(stopAfterBytes !== undefined ? { stopAfterBytes } : {}),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      signal,
     });
   } catch (error) {
     if (
@@ -405,8 +405,11 @@ export async function callTool(
     err.name = "AbortError";
     throw err;
   }
-  const ask = (path: string, query: Record<string, string>) =>
-    request(connection, path, query, signal);
+  const ask = (
+    path: string,
+    query: Record<string, string>,
+    stopAfterBytes?: number,
+  ) => request(connection, path, query, signal, stopAfterBytes);
   const stringArg = (key: string): string | null => {
     const value = args[key];
     return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -518,14 +521,23 @@ export async function callTool(
       );
     }
 
+    const openingLimit = MAX_RESULT_CHARS * 4 + 4096;
     const content = exportAs
-      ? await ask(`/files/${encodeURIComponent(readId)}/export`, {
-          mimeType: exportAs,
-        })
-      : await ask(`/files/${encodeURIComponent(readId)}`, {
-          ...SHARED_DRIVES,
-          alt: "media",
-        });
+      ? await ask(
+          `/files/${encodeURIComponent(readId)}/export`,
+          {
+            mimeType: exportAs,
+          },
+          openingLimit,
+        )
+      : await ask(
+          `/files/${encodeURIComponent(readId)}`,
+          {
+            ...SHARED_DRIVES,
+            alt: "media",
+          },
+          openingLimit,
+        );
     if (!content.ok) return failure(content.message);
 
     const { text, cut } = await readOpening(content.response);

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { BuildVersion } from "../../shared/system-update";
 import { safeText } from "../../shared/system-update";
+import { defaultRuntimeEnvironment } from "./config";
 
 /**
  * 正在运行的这一版（docs/online-update.md）。
@@ -14,27 +15,44 @@ export type RunningBuild = BuildVersion & { image?: string };
 const SHA = /^[0-9a-f]{40}$/u;
 const BUILD_ID = /^[A-Za-z0-9._-]{1,80}$/u;
 
-export function parseBuildInfo(raw: unknown, fallbackVersion: string): RunningBuild {
-  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const buildId = typeof value.buildId === "string" && BUILD_ID.test(value.buildId) ? value.buildId : "dev";
+export function parseBuildInfo(
+  raw: unknown,
+  fallbackVersion: string,
+): RunningBuild {
+  const value =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const buildId =
+    typeof value.buildId === "string" && BUILD_ID.test(value.buildId)
+      ? value.buildId
+      : "dev";
   const parsedVersion = safeText(value.version, 40);
   const out: RunningBuild = {
-    version: parsedVersion && parsedVersion !== "0.0.0" ? parsedVersion : fallbackVersion,
+    version:
+      parsedVersion && parsedVersion !== "0.0.0"
+        ? parsedVersion
+        : fallbackVersion,
     buildId,
   };
-  if (typeof value.commit === "string" && SHA.test(value.commit)) out.commit = value.commit;
+  if (typeof value.commit === "string" && SHA.test(value.commit))
+    out.commit = value.commit;
   const builtAt = safeText(value.builtAt, 40);
   if (builtAt && !Number.isNaN(Date.parse(builtAt))) out.builtAt = builtAt;
   const image = safeText(value.image, 160);
-  if (image && /^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$/u.test(image)) out.image = image;
+  if (image && /^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$/u.test(image))
+    out.image = image;
   return out;
 }
 
 function packageVersion() {
   for (const candidate of ["../package.json", "../../package.json"]) {
     try {
-      const pkg = JSON.parse(readFileSync(new URL(candidate, import.meta.url), "utf8"));
-      if (pkg?.name === "chisabot" && typeof pkg.version === "string") return pkg.version as string;
+      const pkg = JSON.parse(
+        readFileSync(new URL(candidate, import.meta.url), "utf8"),
+      );
+      if (pkg?.name === "chisabot" && typeof pkg.version === "string")
+        return pkg.version as string;
     } catch {
       /* 试下一个 */
     }
@@ -44,9 +62,12 @@ function packageVersion() {
 
 let cached: RunningBuild | null = null;
 
-export function readRunningBuild(environment: NodeJS.ProcessEnv = process.env): RunningBuild {
+export function readRunningBuild(
+  environment: NodeJS.ProcessEnv = defaultRuntimeEnvironment(),
+): RunningBuild {
   if (cached) return cached;
-  const file = environment.CHISABOT_BUILD_INFO_FILE?.trim() || "/app/build-info.json";
+  const file =
+    environment.CHISABOT_BUILD_INFO_FILE?.trim() || "/app/build-info.json";
   let raw: unknown = null;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));

@@ -8,6 +8,7 @@ import {
   clearDesktopConnectionFailure,
   recordDesktopConnectionFailure,
 } from "../desktop-connection-failure";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 
 // The same provider contract used by the deployment model adapters.
 export type PlanLanguageModel = LanguageModelV3;
@@ -194,7 +195,8 @@ export class PlanModel implements PlanLanguageModel {
         )
           return;
         try {
-          const response = await fetch(
+          const response = await trustedEndpointFetch(
+            "picked-harness",
             `${config.endpoint.href.replace(/\/$/, "")}/cancel`,
             {
               method: "POST",
@@ -268,7 +270,7 @@ export class PlanModel implements PlanLanguageModel {
         ...managedAgentHeaders(this.config.token),
       },
       fetch: (url, init) =>
-        fetch(url, {
+        trustedEndpointFetch("picked-harness", url, {
           ...init,
           redirect: "error",
           signal: AbortSignal.any([

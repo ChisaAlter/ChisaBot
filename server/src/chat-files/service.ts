@@ -21,6 +21,7 @@ import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { StoredAttachment } from "../channels/attachment-parts";
 import type { Database } from "../db/client";
+import { defaultRuntimeEnvironment } from "../config";
 import { imageDimsFor } from "../image-dims";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
@@ -254,7 +255,7 @@ export function createChatFiles(
 ) {
   const sql = database.$client;
   const doFetch = options.fetch ?? fetch;
-  const env = options.env ?? process.env;
+  const env = options.env ?? defaultRuntimeEnvironment();
   const media = createMediaModels(database, {
     encryptionKey: options.encryptionKey,
     fetch: doFetch,

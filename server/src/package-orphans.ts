@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { readOrphanSweepEnabled } from "./config";
 import type { Database } from "./db/client";
 import {
   agentProfiles,
@@ -32,7 +33,7 @@ export async function sweepPackageOrphans(
   executor: Executor,
   input: { packageId: string; skillSlugs: string[]; channelIds: string[] },
 ) {
-  if (process.env.CHISABOT_ORPHAN_SWEEP === "0") return null;
+  if (!readOrphanSweepEnabled()) return null;
 
   const packages = await executor
     .select({ id: deploymentPackages.id })

@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
+import { buildSubprocessEnvironment } from "./config";
 
 export class CredentialLockUnavailable extends Error {}
 
@@ -128,11 +129,9 @@ finally { $file.Dispose() }
 `;
 
 async function windowsLock(path: string): Promise<() => Promise<void>> {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    CHISABOT_CREDENTIAL_LOCK: path,
-  };
-  delete env.PSModulePath;
+  const env = buildSubprocessEnvironment({ CHISABOT_CREDENTIAL_LOCK: path }, [
+    "PSModulePath",
+  ]);
   const child = Bun.spawn(
     [
       "powershell.exe",

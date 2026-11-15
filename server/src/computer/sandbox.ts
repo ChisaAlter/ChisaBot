@@ -15,6 +15,7 @@
  * in-cluster service account gives a token and a CA, which is what `inClusterConfig` reads.
  */
 import { readFile } from "node:fs/promises";
+import { readKubernetesClusterFromEnv } from "../config";
 import { reasonWithoutStatement } from "../db/query-failure";
 import type {
   ComputerLocation,
@@ -176,8 +177,9 @@ export async function inClusterConfig(): Promise<{
   token: () => Promise<string>;
   ca: string;
 }> {
-  const host = process.env.KUBERNETES_SERVICE_HOST;
-  const port = process.env.KUBERNETES_SERVICE_PORT ?? "443";
+  const cluster = readKubernetesClusterFromEnv();
+  const host = cluster?.host;
+  const port = cluster?.port ?? "443";
   if (!host) {
     throw new SandboxError(
       "COMPUTER_PROVIDER=sandbox needs to run inside a cluster: KUBERNETES_SERVICE_HOST is not set, so there is no API server to ask for a Bot's computer.",

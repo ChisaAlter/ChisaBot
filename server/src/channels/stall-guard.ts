@@ -47,6 +47,7 @@ import {
   recordAuditEvent,
 } from "../audit";
 import { type StalledStream, TurnWatchdog } from "./turn-watchdog";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 
 /** The fetch an `HttpAgent` uses, as @ag-ui/client 0.0.57 declares it. */
 export type AgentFetch = (
@@ -254,7 +255,9 @@ export function createStallGuard(options: StallGuardOptions): StallGuard {
     fetchImplementation?: AgentFetch,
   ): AgentFetch {
     const inner: AgentFetch =
-      fetchImplementation ?? ((url, requestInit) => fetch(url, requestInit));
+      fetchImplementation ??
+      ((url, requestInit) =>
+        trustedEndpointFetch("ag-ui-stream", url, requestInit));
     if (!watchdog.enabled) return inner;
 
     return async (url, requestInit) => {

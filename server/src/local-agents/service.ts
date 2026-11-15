@@ -22,6 +22,7 @@ import {
   type DeviceOperation,
   isMobilePlatform,
 } from "../../../shared/devices";
+import { readLocalAgentLimits } from "../config";
 import {
   ACTIVE_LOCAL_TASK,
   AGENT_PROFILES,
@@ -97,14 +98,13 @@ import {
  * - 内置 agent 的模型调用由这里代调（用这个机器人的模型连接，密钥不出服务器），每个任务有调用次数上限。
  */
 
-const TASK_TIMEOUT_MS =
-  Number(process.env.CHISABOT_LOCAL_AGENT_TIMEOUT_MS) || 45 * 60_000;
+const LOCAL_AGENT_LIMITS = readLocalAgentLimits();
+const TASK_TIMEOUT_MS = LOCAL_AGENT_LIMITS.timeoutMs;
 const PER_DEVICE_ACTIVE = 2;
 const PER_USER_ACTIVE = 4;
 const STORED_LINES = 1500;
 const CARD_LINES = 40;
-const LLM_CALLS_PER_TASK =
-  Number(process.env.CHISABOT_LOCAL_AGENT_LLM_CALLS) || 80;
+const LLM_CALLS_PER_TASK = LOCAL_AGENT_LIMITS.llmCalls;
 const RESULT_LIMIT = 6000;
 
 /** 内置 agent 的工具（和 pc/src/agent-runtime/builtin.js 的 TOOLS 一致；工具在电脑上执行，这里只给模型看定义）。 */

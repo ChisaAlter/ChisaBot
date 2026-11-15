@@ -9,6 +9,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { defaultRuntimeEnvironment } from "./config";
 import { reasonWithoutStatement } from "./db/query-failure";
 import {
   exportOpsMetricsFile,
@@ -17,8 +18,7 @@ import {
   type OpsMetricsFileV1,
 } from "../../shared/ops-counters";
 
-export const DEFAULT_OPS_METRICS_PATH =
-  "/workspace/.chisabot-ops/budgets.json";
+export const DEFAULT_OPS_METRICS_PATH = "/workspace/.chisabot-ops/budgets.json";
 
 const FLUSH_DEBOUNCE_MS = 2_000;
 const FLUSH_INTERVAL_MS = 60_000;
@@ -30,7 +30,7 @@ let started = false;
 let dirty = false;
 
 export function resolveOpsMetricsPath(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = defaultRuntimeEnvironment(),
 ): string {
   const raw = env.CHISABOT_OPS_METRICS_PATH?.trim();
   return raw && raw.length > 0 ? raw : DEFAULT_OPS_METRICS_PATH;

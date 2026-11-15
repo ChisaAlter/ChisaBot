@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import { DEPLOYMENT_ROUTES } from "./computer/deployment-routes";
+import { defaultRuntimeEnvironment } from "./config";
 import { sweepPackageOrphans } from "./package-orphans";
 import type { Database } from "./db/client";
 import {
@@ -331,7 +332,7 @@ function yaml(value: string, filename: string): Record<string, unknown> {
 export function expandEnvironment(
   value: string,
   filename: string,
-  environment: Record<string, string | undefined> = process.env,
+  environment: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): string {
   return value.replace(
     /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g,

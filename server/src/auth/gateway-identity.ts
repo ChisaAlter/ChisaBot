@@ -10,6 +10,7 @@ import { authenticationRequired } from "../conversations/protocol";
 import { DEV_ACTOR } from "./dev-actor";
 import type { AppVariables, AuthenticatedActor } from "./guards";
 import type { ChisaBotRole } from "./roles";
+import { defaultRuntimeEnvironment } from "../config";
 
 /**
  * 登录网关传来的签名身份（多账号，CB-040，docs/adr/0009-gateway-accounts.md）。
@@ -230,7 +231,7 @@ export function localCallerAuthorized(
 
 /** 紧急：允许没有身份头、也没有本机证明的直连当管理员（默认关）。 */
 export function trustUnsignedLocal(
-  environment: Record<string, string | undefined> = process.env,
+  environment: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): boolean {
   return environment.CHISABOT_TRUST_UNSIGNED_LOCAL?.trim() === "1";
 }
@@ -261,7 +262,7 @@ export function resolveGatewayRequest(
   secret: string,
   headers: Headers,
   now = Date.now(),
-  environment: Record<string, string | undefined> = process.env,
+  environment: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): GatewayResolution {
   const header = headers.get(GATEWAY_IDENTITY_HEADER);
   if (header) {

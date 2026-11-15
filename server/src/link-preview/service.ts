@@ -7,6 +7,7 @@ import {
 } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { computerHeaders } from "../../../shared/protocol-headers";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { imageDimsFor, imageKeyForUrl } from "../image-dims";
@@ -590,15 +591,19 @@ export async function createLinkPreviews(
     if (!options.computer) return null;
     const base = options.computer.baseUrl.replace(/\/$/, "");
     try {
-      const res = await fetch(`${base}/preview-shot`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...computerHeaders("link-preview", options.computer.token),
+      const res = await trustedEndpointFetch(
+        "agent-computer",
+        `${base}/preview-shot`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...computerHeaders("link-preview", options.computer.token),
+          },
+          body: JSON.stringify({ url }),
+          signal: AbortSignal.timeout(SHOT_TIMEOUT),
         },
-        body: JSON.stringify({ url }),
-        signal: AbortSignal.timeout(SHOT_TIMEOUT),
-      });
+      );
       if (!res.ok) return null;
       const bytes = new Uint8Array(await res.arrayBuffer());
       const mime = sniffImage(bytes);

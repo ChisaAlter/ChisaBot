@@ -6,6 +6,7 @@ import {
 } from "@ag-ui/client";
 // RUN_ERROR 可以是第一个事件（@ag-ui/client 的 verify 允许），所以不补一个假的 RUN_STARTED。
 import { Observable } from "rxjs";
+import { defaultRuntimeEnvironment } from "../config";
 
 /**
  * CB-100：智能体运行时（DSH、远程 AG-UI）在流开始之前就连不上时，给这一轮一个终止错误。
@@ -69,7 +70,7 @@ export function preStreamFailureMessage(error: unknown): string {
 export const DEFAULT_AGENT_CONNECT_TIMEOUT_MS = 20_000;
 
 export function agentConnectTimeoutMs(
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): number {
   const raw = env.CHISABOT_AGENT_CONNECT_TIMEOUT_MS?.trim();
   if (!raw) return DEFAULT_AGENT_CONNECT_TIMEOUT_MS;

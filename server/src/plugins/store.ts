@@ -1,4 +1,8 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  BlockedUrlError,
+  guardedFetchResponse,
+} from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { type ApprovalGate, currentApprovalContext } from "../approvals/types";
 import {
@@ -924,21 +928,33 @@ export async function exchangeRefreshTokenOverHttp(input: {
     params.set("client_secret", input.client.clientSecret);
   }
 
-  const response = await fetch(input.tokenUrl, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: params,
-    /*
-     * A redirect is a refusal, not a detour to be followed.
-     *
-     * `tokenUrl` is pinned in the catalogue because this request carries the deployment's client
-     * secret and somebody's refresh token, and following a 302 would hand both to whatever address
-     * the answer named. Manual leaves the 3xx as the response, which is not `ok`, so it falls into
-     * the refusal below. The same guard the authorization-code redemption in `oauth.ts` uses.
-     */
-    redirect: "manual",
-    signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-  });
+  let response: Response;
+  try {
+    response = await guardedFetchResponse(input.tokenUrl, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      /*
+       * A redirect is a refusal, not a detour to be followed.
+       *
+       * `tokenUrl` is pinned in the catalogue because this request carries the deployment's client
+       * secret and somebody's refresh token, and following a 302 would hand both to whatever address
+       * the answer named. Manual leaves the 3xx as the response, which is not `ok`, so it falls into
+       * the refusal below. The same guard the authorization-code redemption in `oauth.ts` uses.
+       */
+      manualRedirect: true,
+      maxBytes: 256 * 1024,
+      timeoutMs: TOKEN_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      throw new TokenRefusedError(
+        `The vendor token URL is not a safe public address (${error.message}).`,
+        null,
+      );
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     /*

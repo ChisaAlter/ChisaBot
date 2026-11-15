@@ -31,6 +31,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { readProfilesDir } from "../config";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
 import {
@@ -97,8 +98,7 @@ export function createAgentPurge(options: {
   forgetComputer?: (agentId: string, actor: AgentActor) => Promise<unknown>;
 }): AgentPurge {
   const { database, reset } = options;
-  const profilesDir =
-    options.profilesDir ?? process.env.PROFILES_DIR ?? "/profiles";
+  const profilesDir = options.profilesDir ?? readProfilesDir();
 
   async function liveConversations(agentId: string): Promise<number> {
     const [row] = await database

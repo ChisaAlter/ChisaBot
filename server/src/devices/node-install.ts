@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { readNodeBundlePath } from "../config";
 
 /**
  * 无界面节点 chisabot-node（docs/pc-node.md §14）：Linux / macOS（也能在 Windows 上跑）的服务器节点。
@@ -15,10 +16,11 @@ export const NODE_BUNDLE_FILE = "node-agent/chisabot-node.cjs";
 
 export async function readNodeBundle(
   appDistDir: string | undefined,
+  overrideBundlePath: string | null = readNodeBundlePath(),
 ): Promise<Buffer | null> {
   const candidates = [
     appDistDir ? path.join(appDistDir, NODE_BUNDLE_FILE) : null,
-    process.env.CHISABOT_NODE_BUNDLE || null,
+    overrideBundlePath,
   ].filter((p): p is string => !!p);
   for (const file of candidates) {
     try {

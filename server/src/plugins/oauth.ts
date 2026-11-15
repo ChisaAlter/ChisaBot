@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { seal, unseal } from "../auth/signed-value";
 import type { CatalogueAuth } from "./catalogue";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { guardedFetchResponse } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 
 /**
@@ -384,10 +385,10 @@ export async function redeemAuthorizationCode(input: {
    */
   let response: Response;
   try {
-    response = await fetch(input.tokenUrl, {
+    response = await guardedFetchResponse(input.tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: params,
+      body: params.toString(),
       /*
        * A redirect is a refusal, not a detour to be followed.
        *
@@ -395,8 +396,9 @@ export async function redeemAuthorizationCode(input: {
        * authorization code, and following a 302 would hand both to whatever address the answer named.
        * Manual leaves the 3xx as the response, which is not `ok`, so it falls into the refusal below.
        */
-      redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
+      manualRedirect: true,
+      maxBytes: 256 * 1024,
+      timeoutMs: 15_000,
     });
   } catch (error) {
     /*
@@ -507,7 +509,7 @@ export async function registerDynamicClient(input: {
   // would not register us.
   let response: Response;
   try {
-    response = await fetch(input.registrationUrl, {
+    response = await guardedFetchResponse(input.registrationUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -519,8 +521,9 @@ export async function registerDynamicClient(input: {
       }),
       // The registration endpoint is pinned in the catalogue, so a redirect is somebody else deciding
       // where this deployment introduces itself. Left as the response, which is not `ok`.
-      redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
+      manualRedirect: true,
+      maxBytes: 256 * 1024,
+      timeoutMs: 15_000,
     });
   } catch (error) {
     // Logged for the same reason the redemption above is: the caller's 502 tells an administrator

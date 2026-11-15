@@ -94,3 +94,16 @@
 - **配置**：新环境变量在 `server/src/config.ts` 里读和校验，不要在业务代码里直接 `process.env`。
 - **仓库是公开的**：不提交服务器 IP、真实域名、主机名、密钥、真实用户数据（CI 有 Private host info guard）。临时调试脚本不要留在仓库根目录。
 - **lint**：不要用 `biome-ignore` 去压一条规则而不写具体原因；不要删掉写着原因的 suppression，即使 Biome 报它"未使用"（多半是规则域没开，原因仍然有价值）。Biome 2.6 不会因为根 package.json 没有 react 就开 React 规则域，所以 `useExhaustiveDependencies` / `noArrayIndexKey` / `noDangerouslySetInnerHtml` 是在 `biome.json` 里显式打开的，不要删。
+
+## 7. 自动门禁对照表
+
+每一条硬约束都有对应的自动门禁直接报错拦截（见 `server/tests/docs-truth-guards.test.ts` 校验索引真实性）：
+
+| 约束规则                                                                         | 自动门禁测试 / 脚本                              |
+| -------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 前端禁止裸 `fetch`，统一走 `app/src/lib/client.ts`                               | `app/tests/no-raw-fetch.test.ts`                 |
+| 前端样式禁止高开销 `:has` 祖先选择器（`group-has-*` / `peer-has-*`）             | `app/tests/no-group-has.test.ts`                 |
+| 服务端除受控出口外禁止裸 `fetch`，统一走 `guardedFetch` / `trustedEndpointFetch` | `server/tests/no-raw-fetch.test.ts`              |
+| 服务端除 `server/src/config.ts` 外零散代码禁止读 `process.env`（零白名单）       | `server/tests/no-raw-env.test.ts`                |
+| 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |
+| `DESIGN.md` 目录与正文章节 1:1 同步、门禁表路径真实、`test-quarantine` 清零      | `server/tests/docs-truth-guards.test.ts`         |

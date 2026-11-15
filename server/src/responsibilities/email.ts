@@ -20,6 +20,7 @@
 import { createVerify, X509Certificate } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { guardedFetch } from "../../../shared/net/guarded-fetch";
 import { deliverToTrigger, type TriggerIngressDeps } from "./trigger-routes";
 import { matchesFilter } from "./triggers";
 
@@ -136,13 +137,14 @@ export function createSnsVerifier(fetchCertificate: CertificateFetcher) {
 
 /** HTTPS GET used for the certificate and for confirming the subscription. */
 export const fetchText = async (url: string) => {
-  const response = await fetch(url, {
-    redirect: "error",
-    signal: AbortSignal.timeout(10_000),
+  const response = await guardedFetch(url, {
+    maxBytes: 256 * 1024,
+    timeoutMs: 10_000,
+    maxRedirects: 0,
   });
-  if (!response.ok)
+  if (response.status < 200 || response.status >= 300)
     throw new Error(`SNS request failed with ${response.status}.`);
-  return response.text();
+  return response.body.toString("utf8");
 };
 
 function unfoldHeaders(block: string) {

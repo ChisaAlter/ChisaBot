@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
-import { BlockedUrlError, guardedFetch } from "../../shared/net/guarded-fetch";
+import {
+  BlockedUrlError,
+  guardedFetch,
+  guardedFetchResponse,
+} from "../../shared/net/guarded-fetch";
 import { isBlockedAddress } from "../../shared/net/ssrf";
 
 /**
@@ -151,6 +155,44 @@ describe("guardedFetch SSRF redirects", () => {
       expect(secondHopMethod).toBe("GET");
       expect(secondHopBody).toBe("");
       expect(secondHopHeaders["content-type"]).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  test("manualRedirect stops on 3xx without following Location and guardedFetchResponse preserves status/headers", async () => {
+    let targetHit = false;
+    const server = createServer((req, res) => {
+      if (req.url === "/redirect") {
+        res.writeHead(302, { Location: "/target" });
+        res.end();
+        return;
+      }
+      targetHit = true;
+      res.writeHead(200);
+      res.end("reached");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as { port: number };
+    try {
+      const res = await guardedFetchResponse(
+        `http://origin-a.example:${port}/redirect`,
+        {
+          manualRedirect: true,
+          maxBytes: 4_096,
+          timeoutMs: 5_000,
+          isBlocked: (address) =>
+            address !== "127.0.0.1" && isBlockedAddress(address),
+          resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        },
+      );
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/target");
+      expect(targetHit).toBe(false);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),

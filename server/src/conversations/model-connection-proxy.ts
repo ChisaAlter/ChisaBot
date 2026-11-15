@@ -1,4 +1,5 @@
 import { normalizeModelBaseUrl } from "../../../shared/model-base-url";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 
 /** The Host spends its run capability; only configured credentials reach the model endpoint. */
 export function createModelConnectionProxy(
@@ -49,7 +50,7 @@ export function createModelConnectionProxy(
         { status: 401 },
       );
     const key = connection.useApiKey === false ? undefined : connection.apiKey;
-    const response = await fetch(endpoint, {
+    const response = await trustedEndpointFetch("model-provider", endpoint, {
       method: "POST",
       redirect: "error",
       signal: AbortSignal.any([runSignal, requestSignal]),

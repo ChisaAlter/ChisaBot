@@ -328,7 +328,221 @@ export type DeploymentConfig = {
    * than an open door.
    */
   agentToolToken?: string;
+  rawPublicUrl?: string;
+  bindHost: string;
+  isTestRuntime: boolean;
+  updaterDir?: string;
+  sourceDir?: string;
+  modelCatalogRefreshMinutes: number;
+  deviceAskDefaultsEnabled: boolean;
+  githubApiBase?: string;
+  workerOrphanSweepEnabled: boolean;
+  schedulesSweepEnabled: boolean;
+  taskCenterRootsRaw?: string;
+  taskCenterEnabled: boolean;
+  linkPreviewShotsEnabled: boolean;
+  livePanelSweepEnabled: boolean;
+  desktopHostToken?: string;
+  modelOauthFile?: string;
+  imEnabled: boolean;
+  releaseLocksOnStart: boolean;
+  maxOutputTokens: number;
+  profilesDir: string;
+  kubernetesCluster?: { host: string; port: string };
+  nodeBundlePath: string | null;
+  orphanSweepEnabled: boolean;
+  modelFallback: {
+    firstOutputMsRaw?: string;
+    cooldownMsRaw?: string;
+    maxCooldownMsRaw?: string;
+  };
+  providerBaseUrls: {
+    anthropic?: string;
+    openai?: string;
+  };
+  managedAgentFlags: {
+    hasToken: boolean;
+    hasPickedHarnessUrl: boolean;
+    hasAgUiUrl: boolean;
+  };
+  livePanels: {
+    commandsEnabled: boolean;
+    orphanSweep: boolean;
+  };
+  workers: {
+    perUserLimit: number;
+    globalLimit: number;
+  };
+  localAgents: {
+    acpRegistryUrl?: string;
+    serverAgentRootsRaw?: string;
+    timeoutMs: number;
+    llmCalls: number;
+  };
+  environment: Readonly<Record<string, string | undefined>>;
 };
+
+export function defaultRuntimeEnvironment(): NodeJS.ProcessEnv {
+  return process.env;
+}
+
+export function buildSubprocessEnvironment(
+  overrides: Record<string, string | undefined>,
+  stripKeys: readonly string[] = [],
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of stripKeys) {
+    delete env[key];
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete env[key];
+    } else {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+export function pickSubprocessEnvironment(
+  keys: readonly string[],
+  overrides: Record<string, string | undefined> = {},
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+export function scrubInheritedDatabaseUrlFromProcessEnv(): void {
+  delete process.env.DATABASE_URL;
+}
+
+export function readDshMaintenanceRoot(
+  env: Environment = process.env,
+): string | undefined {
+  return (
+    env.CHISABOT_DSH_ROOT?.trim() ||
+    (selectedAgentKernel(env) === "dsh" ? ".data/dsh" : undefined)
+  );
+}
+
+export function readModelFallbackEnvTuning(env: Environment = process.env): {
+  firstOutputMsRaw?: string;
+  cooldownMsRaw?: string;
+  maxCooldownMsRaw?: string;
+} {
+  return {
+    firstOutputMsRaw: env.CHISABOT_MODEL_FIRST_OUTPUT_MS,
+    cooldownMsRaw: env.CHISABOT_MODEL_COOLDOWN_MS,
+    maxCooldownMsRaw: env.CHISABOT_MODEL_MAX_COOLDOWN_MS,
+  };
+}
+
+export function readProfilesDir(env: Environment = process.env): string {
+  return env.PROFILES_DIR ?? "/profiles";
+}
+
+export function readKubernetesClusterFromEnv(
+  env: Environment = process.env,
+): { host: string; port: string } | undefined {
+  const host = env.KUBERNETES_SERVICE_HOST;
+  if (!host) return undefined;
+  return { host, port: env.KUBERNETES_SERVICE_PORT ?? "443" };
+}
+
+export function readMaxOutputTokens(env: Environment = process.env): number {
+  return Number(env.CHISABOT_MAX_OUTPUT_TOKENS) || 32_000;
+}
+
+export function readConversationRuntimeEnvDefaults(
+  env: Environment = process.env,
+): {
+  anthropicBaseUrl?: string;
+  openaiBaseUrl?: string;
+  managedAgentToken?: string;
+  pickedHarnessUrl?: string;
+  managedAgentAgUiUrl?: string;
+} {
+  return {
+    anthropicBaseUrl: env.ANTHROPIC_BASE_URL,
+    openaiBaseUrl: env.OPENAI_BASE_URL,
+    managedAgentToken: env.MANAGED_AGENT_TOKEN,
+    pickedHarnessUrl: env.PICKED_HARNESS_URL,
+    managedAgentAgUiUrl: env.MANAGED_AGENT_AG_UI_URL,
+  };
+}
+
+export function readNodeBundlePath(
+  env: Environment = process.env,
+): string | null {
+  return env.CHISABOT_NODE_BUNDLE || null;
+}
+
+export function livePanelsSubprocessEnv(): NodeJS.ProcessEnv {
+  return buildSubprocessEnvironment({
+    CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1",
+  });
+}
+
+export function readLivePanelEnvFlags(env: Environment = process.env): {
+  commandsEnabled: boolean;
+  orphanSweep: boolean;
+} {
+  return {
+    commandsEnabled: env.CHISABOT_PANEL_COMMANDS === "1",
+    orphanSweep: env.CHISABOT_PANEL_ORPHAN_SWEEP !== "0",
+  };
+}
+
+export function readAcpRegistryUrl(
+  env: Environment = process.env,
+): string | undefined {
+  return env.CHISABOT_ACP_REGISTRY_URL || undefined;
+}
+
+export function readServerAgentRootsRaw(
+  env: Environment = process.env,
+): string | undefined {
+  return env.CHISABOT_SERVER_AGENT_ROOTS;
+}
+
+export function readLocalAgentLimits(env: Environment = process.env): {
+  timeoutMs: number;
+  llmCalls: number;
+} {
+  return {
+    timeoutMs: Number(env.CHISABOT_LOCAL_AGENT_TIMEOUT_MS) || 45 * 60_000,
+    llmCalls: Number(env.CHISABOT_LOCAL_AGENT_LLM_CALLS) || 80,
+  };
+}
+
+export function readReleaseLocksOnStart(
+  env: Environment = process.env,
+): boolean {
+  return env.CHISABOT_RELEASE_LOCKS_ON_START !== "0";
+}
+
+export function readOrphanSweepEnabled(
+  env: Environment = process.env,
+): boolean {
+  return env.CHISABOT_ORPHAN_SWEEP !== "0";
+}
+
+export function readWorkerCaps(env: Environment = process.env): {
+  perUserLimit: number;
+  globalLimit: number;
+} {
+  return {
+    perUserLimit: Number(env.CHISABOT_WORKERS_PER_USER) || 5,
+    globalLimit: Number(env.CHISABOT_WORKERS_GLOBAL) || 10,
+  };
+}
 
 type Environment = Record<string, string | undefined>;
 
@@ -1293,6 +1507,81 @@ export function loadConfig(
     ...(optional(environment, "AGENT_TOOL_TOKEN")
       ? { agentToolToken: optional(environment, "AGENT_TOOL_TOKEN") as string }
       : {}),
+    ...(optional(environment, "CHISABOT_PUBLIC_URL")
+      ? { rawPublicUrl: optional(environment, "CHISABOT_PUBLIC_URL") }
+      : {}),
+    bindHost: optional(environment, "CHISABOT_BIND_HOST") || "0.0.0.0",
+    isTestRuntime: environment.NODE_ENV === "test",
+    ...(environment.CHISABOT_UPDATER_DIR !== undefined
+      ? { updaterDir: environment.CHISABOT_UPDATER_DIR }
+      : {}),
+    ...(environment.CHISABOT_SOURCE_DIR !== undefined
+      ? { sourceDir: environment.CHISABOT_SOURCE_DIR }
+      : {}),
+    modelCatalogRefreshMinutes: (() => {
+      const value = Number(environment.MODEL_CATALOG_REFRESH_MINUTES ?? 10);
+      return Number.isFinite(value) && value >= 0
+        ? Math.min(value, 24 * 60)
+        : 10;
+    })(),
+    deviceAskDefaultsEnabled: environment.CHISABOT_DEVICE_ASK_DEFAULTS !== "0",
+    ...(environment.CHISABOT_GITHUB_API_BASE !== undefined
+      ? { githubApiBase: environment.CHISABOT_GITHUB_API_BASE }
+      : {}),
+    workerOrphanSweepEnabled: environment.CHISABOT_WORKER_ORPHAN_SWEEP !== "0",
+    schedulesSweepEnabled: environment.CHISABOT_SCHEDULES_SWEEP !== "0",
+    ...(optional(environment, "CHISABOT_TASK_CENTER_ROOTS")
+      ? {
+          taskCenterRootsRaw: optional(
+            environment,
+            "CHISABOT_TASK_CENTER_ROOTS",
+          ),
+        }
+      : {}),
+    taskCenterEnabled: environment.CHISABOT_TASK_CENTER !== "0",
+    linkPreviewShotsEnabled: environment.CHISABOT_LINK_PREVIEW_SHOTS === "1",
+    livePanelSweepEnabled: environment.CHISABOT_LIVE_PANEL_SWEEP !== "0",
+    ...(environment.CHISABOT_DESKTOP_HOST_TOKEN !== undefined
+      ? { desktopHostToken: environment.CHISABOT_DESKTOP_HOST_TOKEN }
+      : {}),
+    ...(optional(environment, "CHISABOT_MODEL_OAUTH_FILE")
+      ? { modelOauthFile: optional(environment, "CHISABOT_MODEL_OAUTH_FILE") }
+      : {}),
+    imEnabled: environment.CHISABOT_IM !== "0",
+    releaseLocksOnStart: readReleaseLocksOnStart(environment),
+    maxOutputTokens: readMaxOutputTokens(environment),
+    profilesDir: readProfilesDir(environment),
+    ...(readKubernetesClusterFromEnv(environment)
+      ? { kubernetesCluster: readKubernetesClusterFromEnv(environment) }
+      : {}),
+    nodeBundlePath: readNodeBundlePath(environment),
+    orphanSweepEnabled: readOrphanSweepEnabled(environment),
+    modelFallback: readModelFallbackEnvTuning(environment),
+    providerBaseUrls: {
+      ...(environment.ANTHROPIC_BASE_URL !== undefined
+        ? { anthropic: environment.ANTHROPIC_BASE_URL }
+        : {}),
+      ...(environment.OPENAI_BASE_URL !== undefined
+        ? { openai: environment.OPENAI_BASE_URL }
+        : {}),
+    },
+    managedAgentFlags: {
+      hasToken: Boolean(environment.MANAGED_AGENT_TOKEN),
+      hasPickedHarnessUrl: Boolean(environment.PICKED_HARNESS_URL),
+      hasAgUiUrl: Boolean(environment.MANAGED_AGENT_AG_UI_URL),
+    },
+    livePanels: readLivePanelEnvFlags(environment),
+    workers: readWorkerCaps(environment),
+    localAgents: {
+      ...(readAcpRegistryUrl(environment) !== undefined
+        ? { acpRegistryUrl: readAcpRegistryUrl(environment) }
+        : {}),
+      ...(readServerAgentRootsRaw(environment) !== undefined
+        ? { serverAgentRootsRaw: readServerAgentRootsRaw(environment) }
+        : {}),
+      ...readLocalAgentLimits(environment),
+    },
+    environment: { ...environment },
   };
 }
 

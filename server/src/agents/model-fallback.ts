@@ -15,6 +15,10 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  defaultRuntimeEnvironment,
+  readModelFallbackEnvTuning,
+} from "../config";
+import {
   filePartsToText,
   sanitizeCallOptionsForRetry,
 } from "./request-sanitize";
@@ -90,7 +94,7 @@ export type FallbackDeps = {
  * 上限里还留得出时间给备用模型答完。CHISABOT_MODEL_FIRST_OUTPUT_MS 可改，0 关闭。
  */
 export const FIRST_OUTPUT_MS = (() => {
-  const raw = process.env.CHISABOT_MODEL_FIRST_OUTPUT_MS;
+  const raw = readModelFallbackEnvTuning().firstOutputMsRaw;
   const n = raw === undefined || raw === "" ? NaN : Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : 30_000;
 })();
@@ -249,12 +253,12 @@ async function withFirstOutputDeadline(
  * 改上限。额度类（quota）的冷却仍按错误里写的恢复时间（cooldownMs），不在这里。
  */
 export const UNAVAILABLE_COOLDOWN_MS = (() => {
-  const raw = process.env.CHISABOT_MODEL_COOLDOWN_MS;
+  const raw = readModelFallbackEnvTuning().cooldownMsRaw;
   const n = raw === undefined || raw === "" ? NaN : Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 60_000;
 })();
 export const MAX_COOLDOWN_MS = (() => {
-  const raw = process.env.CHISABOT_MODEL_MAX_COOLDOWN_MS;
+  const raw = readModelFallbackEnvTuning().maxCooldownMsRaw;
   const n = raw === undefined || raw === "" ? NaN : Number(raw);
   return Number.isFinite(n) && n > 0 ? n : 10 * 60_000;
 })();
@@ -631,7 +635,7 @@ export type FallbackCatalog =
 
 export function fallbackCandidates(
   catalog: () => Promise<FallbackCatalog>,
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = defaultRuntimeEnvironment(),
   configured: () => Promise<string[]> = async () => [],
 ): (primary: string) => Promise<string[]> {
   return async (primary) => {
