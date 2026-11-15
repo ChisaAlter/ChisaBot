@@ -1,4 +1,13 @@
-import { setThreadUi, stashDraftFiles, threadUi } from "@/lib/chat/ui-memory";
+import {
+  composerTargetPath,
+  transferComposerInputs,
+} from "@/lib/chat/quote-event";
+import {
+  setThreadUi,
+  stashDraftFiles,
+  takeDraftFiles,
+  threadUi,
+} from "@/lib/chat/ui-memory";
 import { ClientError, tryClient } from "@/lib/client";
 
 /**
@@ -153,6 +162,28 @@ export function moveTextDraft(from: string, to: string): void {
   if (!Array.isArray(draft) || draft.length === 0) return;
   if (threadUi(to)?.draft) return;
   setThreadUi(to, { draft });
+}
+
+/**
+ * 在 `/channel/new` 切换目标 Agent（包括主 Agent 暂停提示一键切换或顶部轻量切换器）时，
+ * 同步迁移尚未落库的文本草稿、待投递报价/预填输入以及暂存附件，确保输入零丢失。
+ */
+export function switchNewChannelRecipient(
+  fromAgentId: string,
+  toAgentId: string,
+): void {
+  if (!fromAgentId || !toAgentId || fromAgentId === toAgentId) return;
+  const fromKey = `new:${fromAgentId}`;
+  const toKey = `new:${toAgentId}`;
+  moveTextDraft(fromKey, toKey);
+  transferComposerInputs(
+    composerTargetPath(undefined, fromKey),
+    composerTargetPath(undefined, toKey),
+  );
+  const stashed = takeDraftFiles(fromKey);
+  if (stashed.length > 0) {
+    stashDraftFiles(toKey, stashed);
+  }
 }
 
 /**

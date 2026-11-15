@@ -18,7 +18,13 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import { pickLandingBot } from "@/lib/agents/landing";
 import { type AgentProfile, agentKeys } from "@/lib/agents/queries";
 import { Route as ChannelNewRoute } from "@/routes/_authed/_app/channel/new";
@@ -200,17 +206,32 @@ const OTHER_BOT = agent({
 test("with no Bot used yet the app opens the deployment's default Bot", () => {
   // 上一次用的是哪个（没有）→ 部署的「主机器人」→ 名册第一个。原来由服务器的路由接口回答，
   // 现在这个顺序就在这一处，所以在这一处断。
-  expect(pickLandingBot([NAMED_BOT, OTHER_BOT].map((bot) => ({ id: bot.id })), null, "shared-public")).toBe("shared-public");
+  expect(
+    pickLandingBot(
+      [NAMED_BOT, OTHER_BOT].map((bot) => ({ id: bot.id })),
+      null,
+      "shared-public",
+    ),
+  ).toBe("shared-public");
   // 部署连主机器人都没设：名册第一个，而不是空着不落地。
-  expect(pickLandingBot([NAMED_BOT, OTHER_BOT].map((bot) => ({ id: bot.id })), null, null)).toBe("own-public");
+  expect(
+    pickLandingBot(
+      [NAMED_BOT, OTHER_BOT].map((bot) => ({ id: bot.id })),
+      null,
+      null,
+    ),
+  ).toBe("own-public");
 });
 
-test("the Bot used last keeps ahead of the deployment default", () => {
+test("the configured main Bot keeps priority ahead of the last-used Bot", () => {
   const roster = [NAMED_BOT, OTHER_BOT].map((bot) => ({ id: bot.id }));
-  // 一个真的选择优先于默认值。
-  expect(pickLandingBot(roster, "own-public", "shared-public")).toBe("own-public");
-  // 记着的那个已经不在名册里（删了 / 藏了）：退回默认，而不是拿着一个看不见的 id 去发消息。
-  expect(pickLandingBot(roster, "gone-bot", "shared-public")).toBe("shared-public");
+  // 配置了有效主 Agent 时优先打开主 Agent，不被历史面板占用。
+  expect(pickLandingBot(roster, "own-public", "shared-public")).toBe(
+    "shared-public",
+  );
+  // 未配主 Agent 或主 Agent 不在可见名册中时，退回上次打开的机器人。
+  expect(pickLandingBot(roster, "own-public", null)).toBe("own-public");
+  expect(pickLandingBot(roster, "own-public", "gone-bot")).toBe("own-public");
 });
 
 test("a refused start keeps the draft and never hands the message to a fallback Bot", async () => {

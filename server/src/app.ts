@@ -23,6 +23,10 @@ import {
   type AgentModelService,
   ModelSelectionError,
 } from "./agents/model-selection";
+import {
+  createPrimaryAgentService,
+  type PrimaryAgentService,
+} from "./agents/primary-agent-service";
 import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createAgentRoutes } from "./agents/routes";
@@ -110,6 +114,7 @@ import { createGithubResponsibilityRoutes } from "./responsibilities/github";
 import { createResponsibilityRoutes } from "./responsibilities/routes";
 import type { TriggerStore } from "./responsibilities/triggers";
 import type { ResponsibilityStore } from "./responsibilities/types";
+import { createPrimaryAgentRoutes } from "./settings/primary-agent-routes";
 import type { PackageStatusReader } from "./tenant-package";
 import { threadMessagesDelta } from "./thread-messages-delta";
 import {
@@ -375,6 +380,7 @@ export function createApp(
      * 没给 = 以前的单管理员。
      */
     singleUserGuard?: MiddlewareHandler<{ Variables: AppVariables }>;
+    primaryAgentService?: PrimaryAgentService;
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -586,9 +592,43 @@ export function createApp(
    * somebody's mouth in every channel they work in. An administrator has no business here either,
    * for the same reason.
    */
+  const lifecycleStore = coworker?.lifecycle?.lifecycle;
+  const primaryAgentService =
+    options.primaryAgentService ??
+    (userPreferences && agentProfileStore
+      ? createPrimaryAgentService({
+          userPreferences,
+          agentProfileStore,
+          ...(lifecycleStore
+            ? {
+                isPaused: async (userId: string, agentId: string) =>
+                  (await lifecycleStore.get(userId, agentId)).paused,
+              }
+            : {}),
+        })
+      : undefined);
+
   app.route(
     "/api/settings/preferences",
-    userPreferencesRoutes(requireUser, userPreferences),
+    userPreferencesRoutes(requireUser, userPreferences, {
+      ...(primaryAgentService
+        ? {
+            validateMainBot: (actor, agentId) =>
+              primaryAgentService.validateCandidate(actor, agentId),
+          }
+        : {}),
+    }),
+  );
+  app.route(
+    "/api/settings/primary-agent",
+    createPrimaryAgentRoutes({
+      requireUser,
+      ...(primaryAgentService ? { primaryAgentService } : {}),
+      ...(config.managedAgent?.endpoint !== undefined
+        ? { managedAgentEndpoint: config.managedAgent.endpoint.toString() }
+        : {}),
+      ...(auditStore ? { auditStore } : {}),
+    }),
   );
 
   app.get("/api/settings/instructions", requireUser, async (context) => {
@@ -1239,6 +1279,7 @@ export function createApp(
         channelEvents,
         auditStore,
         attachmentDatabase,
+        primaryAgentService,
       ),
     );
   }

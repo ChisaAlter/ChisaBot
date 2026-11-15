@@ -1,6 +1,12 @@
 import type { Message } from "@ag-ui/core";
 import {
+  IconArrowsExchange,
+  IconPlayerPlay,
+  IconStarFilled,
+} from "@tabler/icons-react";
+import {
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -14,8 +20,26 @@ import { canSend, type Recipient } from "@/components/channels/compose-state";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { seedMessage } from "@/components/channels/transcript-messages";
 import { PermissionChip } from "@/components/chat/permission-chip";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions, agentQueryOptions } from "@/lib/agents/queries";
-import { reclaimDraftText } from "@/lib/channels/draft-channel";
+import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
+import {
+  botAttentionQueryOptions,
+  botLifecycleQueryOptions,
+} from "@/lib/bot-lifecycle/queries";
+import {
+  reclaimDraftText,
+  switchNewChannelRecipient,
+} from "@/lib/channels/draft-channel";
 import { reusableEmptyChannelFor } from "@/lib/channels/latest";
 import { channelListQueryOptions } from "@/lib/channels/queries";
 import { useStartChannel } from "@/lib/channels/start";
@@ -23,12 +47,18 @@ import {
   composerTargetPath,
   transferComposerInputs,
 } from "@/lib/chat/quote-event";
-import { addDraftFiles } from "@/lib/chat/ui-memory";
+import {
+  addDraftFiles,
+  stashDraftFiles,
+  takeDraftFiles,
+} from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
+import { ClientError } from "@/lib/client";
 import { useModelSelectionSaving } from "@/lib/model-selection/hooks";
 import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
+import { useMainBot } from "@/lib/settings/message-list";
 import { newId } from "../../../../lib/new-id";
 
 /**
@@ -100,8 +130,19 @@ function BotChat({
   const { data: profiles, isError: rosterError } = useQuery(
     agentListQueryOptions(),
   );
+  const { mainBotId } = useMainBot();
+  const lifecycle = useQuery({
+    ...botLifecycleQueryOptions(agent),
+    enabled: false,
+  });
+  const attention = useQuery({
+    ...botAttentionQueryOptions(),
+    enabled: false,
+  });
+  const resumeBot = useMutation(setBotPausedMutationOptions(modelQueryClient));
 
   const [error, setError] = useState<string | null>(null);
+  const [pausedAgentError, setPausedAgentError] = useState<string | null>(null);
   // Optimistic seed shown before the first channel record exists.
   const [sent, setSent] = useState<Message | null>(null);
 
@@ -197,6 +238,7 @@ function BotChat({
     assertModelSelectionNotSaving(modelQueryClient, recipient.id);
 
     setError(null);
+    setPausedAgentError(null);
     setSent(seedMessage(text, newId()));
 
     try {
@@ -206,7 +248,11 @@ function BotChat({
     } catch (caught) {
       // Preserve the unsent draft when channel creation fails.
       setSent(null);
-      setError(caught instanceof Error ? caught.message : "无法开始会话。");
+      if (caught instanceof ClientError && caught.code === "AGENT_PAUSED") {
+        setPausedAgentError(caught.message || "该 Agent 已暂停运行。");
+      } else {
+        setError(caught instanceof Error ? caught.message : "无法开始会话。");
+      }
       throw caught;
     }
   };
@@ -234,20 +280,71 @@ function BotChat({
     setAttaching(true);
     queued.current = [...files];
     setError(null);
+    setPausedAgentError(null);
+    const pendingFiles = [
+      ...takeDraftFiles(`new:${agent}`),
+      ...queued.current.splice(0),
+    ];
     try {
       const channelId = await startDraft(
         recipient.id,
-        () => queued.current.splice(0),
+        () => [...pendingFiles, ...queued.current.splice(0)],
         { fromKey: `new:${agent}`, watch: isWatching },
       );
       const late = queued.current.splice(0);
       if (late.length > 0) addDraftFiles(channelId, late);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "无法开始会话。");
+      const unsent = [...pendingFiles, ...queued.current.splice(0)];
+      if (unsent.length > 0) stashDraftFiles(`new:${agent}`, unsent);
+      if (caught instanceof ClientError && caught.code === "AGENT_PAUSED") {
+        setPausedAgentError(caught.message || "该 Agent 已暂停运行。");
+      } else {
+        setError(caught instanceof Error ? caught.message : "无法开始会话。");
+      }
     } finally {
       queued.current = [];
       attachingRef.current = false;
       setAttaching(false);
+    }
+  };
+
+  const attentionById = new Map(
+    (attention.data ?? []).map((entry) => [entry.agentId, entry]),
+  );
+  const isCachePaused = Boolean(
+    lifecycle.data?.paused || attentionById.get(agent)?.paused,
+  );
+  const showPausedGuide =
+    !loadError && (pausedAgentError !== null || isCachePaused);
+  const otherSwitchCandidates = (profiles ?? []).filter(
+    (profile) => profile.id !== agent && !profile.hidden,
+  );
+  const fallbackCandidate = otherSwitchCandidates.find(
+    (profile) => !attentionById.get(profile.id)?.paused,
+  );
+  const isMain = chosen?.id === mainBotId;
+
+  const handleSwitchRecipient = async (targetAgentId: string) => {
+    if (!targetAgentId || targetAgentId === agent) return;
+    switchNewChannelRecipient(agent, targetAgentId);
+    await navigate({
+      to: "/channel/new",
+      search: {
+        agent: targetAgentId,
+        ...(fresh ? { topic: "new" as const } : {}),
+        ...(watch ? { watch: true } : {}),
+      },
+      replace: true,
+    });
+  };
+
+  const handleResume = async () => {
+    try {
+      await resumeBot.mutateAsync({ agentId: agent, paused: false });
+      setPausedAgentError(null);
+      setError(null);
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : "恢复运行失败。");
     }
   };
 
@@ -274,9 +371,62 @@ function BotChat({
         // Quiet identity of the Bot picked in the left column, until the first message replaces it.
         <div className="chat-intro">
           <ChannelAvatar participantIds={[chosen.id]} size={48} />
-          <p className="chat-intro-name">{chosen.name}</p>
+          <p className="chat-intro-name flex items-center justify-center gap-1.5">
+            <span>{chosen.name}</span>
+            {isMain ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-px font-medium text-[11px] text-amber-700 dark:text-amber-300"
+                data-testid="new-channel-primary-badge"
+              >
+                <IconStarFilled aria-hidden className="size-2.5" />
+                {"主 Agent"}
+              </span>
+            ) : null}
+          </p>
           {chosen.title ? (
             <p className="chat-intro-sub">{chosen.title}</p>
+          ) : null}
+          {otherSwitchCandidates.length > 0 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    className="mt-2"
+                    data-testid="new-channel-switch-trigger"
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                  />
+                }
+              >
+                <IconArrowsExchange className="size-3.5" />
+                {"切换机器人"}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="center"
+                className="glass-pop w-[220px] p-1.5"
+              >
+                <DropdownMenuLabel>{"切换对话机器人"}</DropdownMenuLabel>
+                <DropdownMenuSeparator className="glass-sep" />
+                {otherSwitchCandidates.map((candidate) => (
+                  <DropdownMenuItem
+                    className="glass-mi"
+                    data-testid={`switch-recipient-${candidate.id}`}
+                    key={candidate.id}
+                    onClick={() => void handleSwitchRecipient(candidate.id)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {candidate.name}
+                    </span>
+                    {candidate.id === mainBotId ? (
+                      <span className="ml-2 shrink-0 text-[11px] text-amber-600 dark:text-amber-300">
+                        {"主 Agent"}
+                      </span>
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
           {fresh ? (
             <p className="chat-intro-topic">
@@ -329,6 +479,44 @@ function BotChat({
             <p className="pb-2 text-sm text-destructive" role="alert">
               {loadError ?? error}
             </p>
+          ) : showPausedGuide ? (
+            <div
+              className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm"
+              data-testid="paused-agent-banner"
+              role="alert"
+            >
+              <span className="text-foreground">
+                {pausedAgentError ??
+                  `${chosen?.name ?? "当前机器人"}已暂停运行，请先恢复或切换其他机器人，已输入的草稿将保留。`}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="paused-agent-resume"
+                  disabled={resumeBot.isPending}
+                  onClick={() => void handleResume()}
+                  size="xs"
+                  type="button"
+                  variant="secondary"
+                >
+                  <IconPlayerPlay className="size-3.5" />
+                  {resumeBot.isPending ? "恢复中…" : "恢复运行"}
+                </Button>
+                {fallbackCandidate ? (
+                  <Button
+                    data-testid="paused-agent-switch"
+                    onClick={() =>
+                      void handleSwitchRecipient(fallbackCandidate.id)
+                    }
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                  >
+                    <IconArrowsExchange className="size-3.5" />
+                    {`切换到 ${fallbackCandidate.name}`}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
           ) : null
         }
         onSubmit={(draft) => start(draft.text)}

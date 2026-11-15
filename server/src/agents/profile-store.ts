@@ -830,6 +830,14 @@ export function createAgentProfileStore(
             .where(eq(agentProfiles.agentId, id));
           // 它的插件 / 技能授权一起收回，不留孤儿（瘦身 P2，docs/slimming.md）。
           await deleteGrantsForAgent(transaction, id);
+          // 同步置空指向该已删 Agent 的主 Agent 偏好，防止悬挂引用（与 purge.clearMainBot 幂等互补）。
+          await transaction
+            .update(users)
+            .set({
+              preferences: sql`${users.preferences} || '{"mainBotId": null}'::jsonb`,
+              updatedAt: deletedAt,
+            })
+            .where(sql`${users.preferences}->>'mainBotId' = ${id}`);
           /*
            * 部署包自带的机器人：在 agents.override 里记一笔「已被删除」。部署包每次启动都会重新同步并清掉
            * deletedAt，tenant-package 看到这个标记会把它重新标成已删除，不会死而复生。

@@ -1,7 +1,8 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
-import { client } from "@/lib/client";
 import { channelKeys } from "@/lib/channels/queries";
+import { client } from "@/lib/client";
 import { forgetStoredPanelBot } from "@/lib/panels/active-bot";
+import { primaryAgentKeys, settingsKeys } from "@/lib/settings/queries";
 import {
   type AgentProfile,
   type AgentVisibility,
@@ -123,7 +124,8 @@ export async function forgetDeletedBot(
   forgetStoredPanelBot(agentId);
   queryClient.setQueriesData<AgentProfile[]>(
     { queryKey: [...agentKeys.all, "list"] },
-    (list) => (Array.isArray(list) ? list.filter((agent) => agent.id !== agentId) : list),
+    (list) =>
+      Array.isArray(list) ? list.filter((agent) => agent.id !== agentId) : list,
   );
   queryClient.removeQueries({
     predicate: (query) =>
@@ -137,6 +139,8 @@ export async function forgetDeletedBot(
   // 删一个机器人会同时打出几十个请求、主线程忙一阵，看起来像「卡了一下」。
   void queryClient.invalidateQueries({ queryKey: agentKeys.all });
   void queryClient.invalidateQueries({ queryKey: channelKeys.all });
+  void queryClient.invalidateQueries({ queryKey: settingsKeys.all });
+  void queryClient.invalidateQueries({ queryKey: primaryAgentKeys.all });
 }
 
 /**

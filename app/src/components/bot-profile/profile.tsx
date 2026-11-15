@@ -2,6 +2,8 @@ import {
   IconMessage,
   IconPencil,
   IconRefresh,
+  IconStar,
+  IconStarFilled,
   IconTrash,
 } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -15,6 +17,7 @@ import {
   PageShell,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -189,7 +192,13 @@ function ResetDialog({
 }
 
 /** 头部那一行状态：模型 · 运行中 / 已暂停（职责就在下面「资料」卡里，不重复）。 */
-function StatusLine({ agent }: { agent: AgentProfile }) {
+function StatusLine({
+  agent,
+  isMain,
+}: {
+  agent: AgentProfile;
+  isMain: boolean;
+}) {
   const lifecycle = useQuery(botLifecycleQueryOptions(agent.id));
   const model = useQuery(agentModelQueryOptions(agent.id));
   const catalog = useQuery(modelCatalogQueryOptions());
@@ -220,6 +229,19 @@ function StatusLine({ agent }: { agent: AgentProfile }) {
           {paused ? "已暂停" : "运行中"}
         </span>
       )}
+      {isMain ? (
+        <span
+          className={
+            modelLabel || paused !== undefined
+              ? "ml-2 inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-px font-medium text-[11px] text-amber-700 dark:text-amber-300"
+              : "inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-px font-medium text-[11px] text-amber-700 dark:text-amber-300"
+          }
+          data-testid="profile-primary-badge"
+        >
+          <IconStarFilled aria-hidden className="size-2.5" />
+          {"主 Agent"}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -415,8 +437,43 @@ function TasksSection({ agentId }: { agentId: string }) {
 /** 机器人资料页。 */
 export function BotProfilePage({ agent }: { agent: AgentProfile }) {
   const openChat = useBotChat();
-  const { mainBotId } = useMainBot();
+  const { mainBotId, setMainBotAsync } = useMainBot();
+  const lifecycle = useQuery({
+    ...botLifecycleQueryOptions(agent.id),
+    enabled: false,
+  });
   const isMain = mainBotId === agent.id;
+  const isPaused = Boolean(lifecycle.data?.paused);
+  const [actionIntent, setActionIntent] = useState<"set" | "clear" | null>(
+    null,
+  );
+  const toggleMain = useAsyncAction(
+    async (intent: "set" | "clear") => {
+      await setMainBotAsync(intent === "set" ? agent.id : null);
+    },
+    {
+      errorToast: (err) =>
+        err instanceof Error ? err.message : "设置主 Agent 失败",
+    },
+  );
+  const effectiveIntent =
+    toggleMain.state === "idle"
+      ? isMain
+        ? "clear"
+        : "set"
+      : (actionIntent ?? (isMain ? "clear" : "set"));
+  const mainFeedback =
+    effectiveIntent === "set"
+      ? {
+          pending: "设置中…",
+          success: "已设为主 Agent",
+          error: "设置失败",
+        }
+      : {
+          pending: "取消中…",
+          success: "已取消主 Agent",
+          error: "取消失败",
+        };
   const [editing, setEditing] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -444,6 +501,25 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
             <IconMessage />
             {"开始聊天"}
           </Button>
+          {isMain || !agent.hidden ? (
+            <Button
+              className="min-w-[118px]"
+              data-paused={isPaused ? "true" : "false"}
+              data-testid="profile-primary-toggle"
+              feedback={mainFeedback}
+              onClick={() => {
+                const intent = isMain ? "clear" : "set";
+                setActionIntent(intent);
+                void toggleMain.run(intent);
+              }}
+              size="sm"
+              state={toggleMain.state}
+              variant={isMain ? "secondary" : "outline"}
+            >
+              {isMain ? <IconStarFilled /> : <IconStar />}
+              {isMain ? "取消主 Agent" : "设为主 Agent"}
+            </Button>
+          ) : null}
           {canEdit ? (
             <Button
               disabled={editing}
@@ -475,14 +551,25 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
       }
       backButton={{ label: "机器人", linkProps: { to: "/bots" } }}
       className="bot-profile"
-      description={<StatusLine agent={agent} />}
+      description={<StatusLine agent={agent} isMain={isMain} />}
       media={
-        <AbstractAvatar
-          agentId={agent.id}
-          name={agent.name}
-          seed={agent.avatarSeed}
-          size={56}
-        />
+        <div className="glass-bot-ava bp-avatar">
+          <AbstractAvatar
+            agentId={agent.id}
+            name={agent.name}
+            seed={agent.avatarSeed}
+            size={56}
+          />
+          {isMain ? (
+            <span
+              aria-hidden
+              className="glass-bot-star"
+              data-testid="profile-primary-star"
+            >
+              <IconStarFilled className="size-2.5" />
+            </span>
+          ) : null}
+        </div>
       }
       title={agent.name}
     >

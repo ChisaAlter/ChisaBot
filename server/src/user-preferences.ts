@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   DEFAULT_USER_PREFERENCES,
   type UserPreferences,
@@ -12,6 +12,10 @@ export type UserPreferencesStore = {
     userId: string,
     preferences: Partial<UserPreferences>,
   ) => Promise<UserPreferences>;
+  clearMainBotIfMatches?: (
+    userId: string,
+    expectedAgentId: string,
+  ) => Promise<boolean>;
 };
 
 /** Expose supported preferences while retaining unrelated stored JSON for other readers. */
@@ -52,6 +56,22 @@ export function createUserPreferencesStore(
         .returning({ preferences: users.preferences });
       if (!user) throw new Error("User preferences could not be saved.");
       return supportedPreferences(user.preferences);
+    },
+    async clearMainBotIfMatches(userId, expectedAgentId) {
+      const rows = await database
+        .update(users)
+        .set({
+          preferences: sql`${users.preferences} || '{"mainBotId": null}'::jsonb`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(users.id, userId),
+            sql`${users.preferences}->>'mainBotId' = ${expectedAgentId}`,
+          ),
+        )
+        .returning({ id: users.id });
+      return rows.length > 0;
     },
   };
 }
