@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash, createHmac, createSign } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,15 +38,36 @@ import type { ResponsibilityEvent } from "../src/responsibilities/types";
 const TRIGGER_ID = "5b0f5a36-8f3e-4b0e-9f53-0a4c1d1e2f30";
 const NOW = 1_790_000_000_000;
 
+function resolveOpensslBin(): string {
+  const fromPath = Bun.which("openssl");
+  if (fromPath) return fromPath;
+  if (process.platform === "win32") {
+    for (const candidate of [
+      "C:\\Program Files\\Git\\usr\\bin\\openssl.exe",
+      "C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe",
+    ]) {
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error("未找到可用的 openssl 可执行文件");
+}
+
+const OPENSSL_BIN = resolveOpensslBin();
+
 /** Independent implementation of the HMAC, to cross-check ours against OpenSSL's CLI. */
 function opensslHmacHex(secret: string, data: string) {
   const out = spawnSync(
-    "openssl",
+    OPENSSL_BIN,
     ["dgst", "-sha256", "-hmac", secret, "-hex"],
     {
       input: data,
     },
   );
+  if (out.error || out.status !== 0 || !out.stdout) {
+    throw new Error(
+      `openssl dgst 执行失败（status=${String(out.status)}）：${out.error?.message ?? out.stderr?.toString() ?? ""}`,
+    );
+  }
   return out.stdout.toString().trim().split(" ").pop() ?? "";
 }
 
@@ -581,23 +602,37 @@ describe("Slack triggers", () => {
 
 describe("inbound email via SES -> SNS", () => {
   const dir = mkdtempSync(join(tmpdir(), "sns-"));
-  spawnSync("openssl", [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-days",
-    "1",
-    "-keyout",
-    join(dir, "key.pem"),
-    "-out",
-    join(dir, "cert.pem"),
-    "-subj",
-    "/CN=sns.us-east-1.amazonaws.com",
-  ]);
-  const key = readFileSync(join(dir, "key.pem"), "utf8");
-  const cert = readFileSync(join(dir, "cert.pem"), "utf8");
+  let key = "";
+  let cert = "";
+  try {
+    const out = spawnSync(OPENSSL_BIN, [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-keyout",
+      join(dir, "key.pem"),
+      "-out",
+      join(dir, "cert.pem"),
+      "-subj",
+      "/CN=sns.us-east-1.amazonaws.com",
+    ]);
+    if (out.error || out.status !== 0) {
+      throw new Error(
+        `openssl req 执行失败（status=${String(out.status)}）：${out.error?.message ?? out.stderr?.toString() ?? ""}`,
+      );
+    }
+    key = readFileSync(join(dir, "key.pem"), "utf8");
+    cert = readFileSync(join(dir, "cert.pem"), "utf8");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
   const TOPIC = "arn:aws:sns:us-east-1:123456789012:chisabot-inbound";
   const CERT_URL =
     "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-fixture.pem";

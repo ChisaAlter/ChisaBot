@@ -558,12 +558,18 @@ export function useApprovalCountdown(
  * 和聊天确认卡（chat/confirm-card.tsx）同一套：两个独立的 useAsyncAction，一个在跑时另一个禁用，
  * 一个成功后两个都锁住；倒计时到 0 时两个都禁用并显示「已过期」。
  */
-export function ApprovalRow({ approval }: { approval: DeviceApprovalView }) {
+export function ApprovalRow({
+  approval,
+  onDecide = decideApproval,
+}: {
+  approval: DeviceApprovalView;
+  onDecide?: (id: string, decision: "approve" | "deny") => Promise<unknown>;
+}) {
   const queryClient = useQueryClient();
   // 成功后一直锁住（按钮自己的「已允许 / 已拒绝」1.5 秒后会回到常态，但这次审批已经处理完了）。
   const [done, setDone] = useState<"approve" | "deny" | null>(null);
   const decide = async (decision: "approve" | "deny") => {
-    await decideApproval(approval.id, decision);
+    await onDecide(approval.id, decision);
     setDone(decision);
     await queryClient.invalidateQueries({ queryKey: deviceKeys.all });
   };

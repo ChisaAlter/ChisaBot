@@ -4,107 +4,35 @@ import {
   beforeAll,
   describe,
   expect,
-  mock,
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  waitFor,
-} from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type * as React from "react";
+import {
+  DeviceErrorCard,
+  DeviceNotFound,
+} from "@/components/devices/device-page-parts";
+import { ApprovalRow, approvalDeadline } from "@/components/devices/devices";
+import { FullAccessCard } from "@/components/devices/full-access";
 import {
   type DeviceApprovalView,
   type DeviceView,
   defaultCapabilities,
 } from "../../shared/devices";
 import { settleReactWork } from "./settle-react-work";
+import { renderWithRouter } from "./support/render-with-router";
 
 /**
  * 设备页审计（模块 14）：S4 审批两个按钮各自的状态、O1 到点「已过期」、O2 倒计时不被时钟偏差重置、
  * O7 读不到设备时「返回设备列表」、O8 离线设备禁用并说明原因。
  */
 
-const router = await import("@tanstack/react-router");
-// mock.module 会原地改写模块命名空间，先把真的 Link / useRouter / useNavigate 拿住。
-const RealLink = router.Link as unknown as React.ComponentType<
-  Record<string, unknown>
->;
-const realUseRouter = router.useRouter;
-const realUseNavigate = router.useNavigate;
-
-/** 和真 Link 一样用 params 填 `to` 里的 `$xxx`；没给的参数原样留着，测试里一眼能看出来。 */
-function fillParams(
-  to: string | undefined,
-  params: unknown,
-): string | undefined {
-  if (!to || !params || typeof params !== "object") return to;
-  const values = params as Record<string, unknown>;
-  return to.replace(/\$([A-Za-z0-9_]+)/g, (whole, key: string) =>
-    key in values ? encodeURIComponent(String(values[key])) : whole,
-  );
-}
-
-/*
- * mock.module 是进程级的，换不回来：共享进程里排在后面的文件拿到的也是这个 Link。
- * 所以有路由（RouterProvider）时直接交给真 Link / 真 useNavigate，行为和没 mock 一样；
- * 只有像本文件这样不挂路由的渲染才走替身（schedule-fired.test.tsx 同款做法）。
- */
-mock.module("@tanstack/react-router", () => ({
-  ...router,
-  Link: (props: {
-    children?: React.ReactNode;
-    to?: string;
-    href?: string;
-    params?: unknown;
-    search?: unknown;
-    hash?: unknown;
-    [key: string]: unknown;
-  }) => {
-    if (realUseRouter({ warn: false })) return <RealLink {...props} />;
-    const {
-      children,
-      to,
-      href,
-      params,
-      search: _search,
-      hash: _hash,
-      ...rest
-    } = props;
-    return (
-      <a {...(rest as object)} href={href ?? fillParams(to, params)}>
-        {children}
-      </a>
-    );
-  },
-  useNavigate: (options?: unknown) => {
-    if (realUseRouter({ warn: false }))
-      return realUseNavigate(options as never);
-    return () => {};
-  },
-}));
-
 let decideImpl: (id: string, decision: string) => Promise<void> =
   async () => {};
 const calls: string[] = [];
-/** 只在本文件的用例跑的时候拦截 decideApproval；漏给别的文件时交回真实现。 */
-let interceptApprovals = false;
-const realDevices = await import("@/lib/devices");
-mock.module("@/lib/devices", () => ({
-  ...realDevices,
-  decideApproval: (id: string, decision: "approve" | "deny") => {
-    if (!interceptApprovals) return realDevices.decideApproval(id, decision);
-    calls.push(decision);
-    return decideImpl(id, decision);
-  },
-}));
 
 beforeAll(() => {
-  interceptApprovals = true;
   if (!globalThis.document) GlobalRegistrator.register();
 });
 afterEach(() => {
@@ -113,18 +41,9 @@ afterEach(() => {
   decideImpl = async () => {};
 });
 afterAll(async () => {
-  interceptApprovals = false;
   await settleReactWork();
   if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
 });
-
-const { ApprovalRow, approvalDeadline } = await import(
-  "@/components/devices/devices"
-);
-const { FullAccessCard } = await import("@/components/devices/full-access");
-const { DeviceNotFound, DeviceErrorCard } = await import(
-  "@/components/devices/device-page-parts"
-);
 
 let seq = 0;
 function approval(
@@ -171,13 +90,13 @@ function device(overrides: Partial<DeviceView> = {}): DeviceView {
 }
 
 function wrap(node: React.ReactNode) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>{node}</QueryClientProvider>,
-  );
+  return renderWithRouter(node);
 }
+
+const decideSpy = async (id: string, decision: "approve" | "deny") => {
+  calls.push(decision);
+  return decideImpl(id, decision);
+};
 
 const st = (root: HTMLElement, id: string) =>
   btn(root, id).getAttribute("data-btn-state") ?? "idle";
@@ -190,7 +109,9 @@ describe("S4 审批按钮各自的状态", () => {
   test("点「允许」只有允许按钮进入处理中，拒绝按钮禁用；成功后两个都锁住", async () => {
     let resolve!: () => void;
     decideImpl = () => new Promise<void>((r) => (resolve = r));
-    const { container } = wrap(<ApprovalRow approval={approval()} />);
+    const { container } = await wrap(
+      <ApprovalRow approval={approval()} onDecide={decideSpy} />,
+    );
     fireEvent.click(btn(container, "device-approval-approve"));
     await waitFor(() =>
       expect(st(container, "device-approval-approve")).toBe("pending"),
@@ -212,7 +133,9 @@ describe("S4 审批按钮各自的状态", () => {
     decideImpl = async () => {
       throw new Error("网络断了");
     };
-    const { container } = wrap(<ApprovalRow approval={approval()} />);
+    const { container } = await wrap(
+      <ApprovalRow approval={approval()} onDecide={decideSpy} />,
+    );
     fireEvent.click(btn(container, "device-approval-deny"));
     await waitFor(() =>
       expect(st(container, "device-approval-deny")).toBe("error"),
@@ -224,13 +147,13 @@ describe("S4 审批按钮各自的状态", () => {
 });
 
 describe("O1 / O2 倒计时", () => {
-  test("已经过了 expiresAt：显示「已过期」，两个按钮都禁用（不会重置成整段 TTL）", () => {
+  test("已经过了 expiresAt：显示「已过期」，两个按钮都禁用（不会重置成整段 TTL）", async () => {
     const now = Date.now();
     const expired = approval({
       createdAt: new Date(now - 200_000).toISOString(),
       expiresAt: new Date(now - 80_000).toISOString(),
     });
-    const { container } = wrap(<ApprovalRow approval={expired} />);
+    const { container } = await wrap(<ApprovalRow approval={expired} />);
     expect(
       container.querySelector('[data-testid="device-approval-expired"]')
         ?.textContent,
@@ -278,8 +201,8 @@ describe("O1 / O2 倒计时", () => {
 });
 
 describe("O7 / O6 读不到设备", () => {
-  test("有「返回设备列表」链接，标题是 h2", () => {
-    const { container } = wrap(<DeviceNotFound message="设备不存在。" />);
+  test("有「返回设备列表」链接，标题是 h2", async () => {
+    const { container } = await wrap(<DeviceNotFound message="设备不存在。" />);
     const back = container.querySelector(
       '[data-testid="device-back-to-list"]',
     ) as HTMLAnchorElement;
@@ -289,8 +212,8 @@ describe("O7 / O6 读不到设备", () => {
     expect(container.querySelector("h4")).toBeNull();
   });
 
-  test("错误卡标题不跳级", () => {
-    const { container } = wrap(
+  test("错误卡标题不跳级", async () => {
+    const { container } = await wrap(
       <DeviceErrorCard title="设备列表暂时无法读取" />,
     );
     expect(container.querySelector("h2")).not.toBeNull();
@@ -298,8 +221,8 @@ describe("O7 / O6 读不到设备", () => {
 });
 
 describe("O8 离线设备", () => {
-  test("开启完全访问被禁用，并用 aria-describedby 指向可见说明", () => {
-    const { container } = wrap(
+  test("开启完全访问被禁用，并用 aria-describedby 指向可见说明", async () => {
+    const { container } = await wrap(
       <FullAccessCard device={device({ online: false })} />,
     );
     const enable = btn(container, "full-access-enable");
@@ -311,8 +234,8 @@ describe("O8 离线设备", () => {
     expect(enable.getAttribute("aria-describedby")).toBe(note.id);
   });
 
-  test("在线时可以开启", () => {
-    const { container } = wrap(
+  test("在线时可以开启", async () => {
+    const { container } = await wrap(
       <FullAccessCard device={device({ online: true })} />,
     );
     expect(btn(container, "full-access-enable").disabled).toBe(false);

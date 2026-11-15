@@ -1,5 +1,3 @@
-import "./home-fallback-routing.fixture";
-
 import {
   afterAll,
   afterEach,

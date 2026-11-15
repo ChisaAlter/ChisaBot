@@ -4,81 +4,29 @@ import {
   beforeAll,
   describe,
   expect,
-  mock,
   test,
 } from "bun:test";
 import type { Message } from "@ag-ui/core";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { ComponentType, ReactNode } from "react";
-import { settleReactWork } from "./settle-react-work";
-
-const router = await import("@tanstack/react-router");
-// mock.module 会原地改写模块命名空间，先把真的 Link / useRouter 拿住。
-const RealLink = router.Link as unknown as ComponentType<
-  Record<string, unknown>
->;
-const realUseRouter = router.useRouter;
-
-/** 和真 Link 一样用 params 填 `to` 里的 `$xxx`；没给的参数原样留着，测试里一眼能看出来。 */
-function fillParams(
-  to: string | undefined,
-  params: unknown,
-): string | undefined {
-  if (!to || !params || typeof params !== "object") return to;
-  const values = params as Record<string, unknown>;
-  return to.replace(/\$([A-Za-z0-9_]+)/g, (whole, key: string) =>
-    key in values ? encodeURIComponent(String(values[key])) : whole,
-  );
-}
-
-/*
- * mock.module 是进程级的，换不回来：共享进程里排在这份后面的文件拿到的也是这个 Link。
- * 所以有路由（RouterProvider）时直接交给真 Link，行为和没 mock 一样；只有像本文件这样不挂路由的
- * 渲染才走替身：所有 props（aria-label、className…）原样透传给 <a>，href 用 params 填好路径参数。
- */
-mock.module("@tanstack/react-router", () => ({
-  ...router,
-  Link: (props: {
-    children?: ReactNode;
-    to?: string;
-    href?: string;
-    params?: unknown;
-    search?: unknown;
-    hash?: unknown;
-    [key: string]: unknown;
-  }) => {
-    const inRouter = realUseRouter({ warn: false });
-    if (inRouter) return <RealLink {...props} />;
-    const {
-      children,
-      to,
-      href,
-      params,
-      search: _search,
-      hash: _hash,
-      ...rest
-    } = props;
-    return (
-      <a {...rest} href={href ?? fillParams(to, params)}>
-        {children}
-      </a>
-    );
-  },
-}));
-
-/**
- * CB-105：到点提醒按消息自己的时间显示（旧消息标题里存的「今天 HH:00」不再照抄）；
- * 同一任务连续的提醒折成一行可展开；暂停的任务不显示下次运行。
- */
-const {
+import { QueryClient } from "@tanstack/react-query";
+import { cleanup, fireEvent } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { ScheduleFiredRow } from "@/components/chat/schedule-row";
+import {
   collapseScheduleRuns,
   firedGroupSummary,
   firedHeadline,
   firedTimeLabel,
   scheduleGroupOf,
-} = await import("@/lib/schedule-fired");
+} from "@/lib/schedule-fired";
+import { shownNextRun } from "@/lib/schedules";
+import { settleReactWork } from "./settle-react-work";
+import { renderWithRouter } from "./support/render-with-router";
+
+/**
+ * CB-105：到点提醒按消息自己的时间显示（旧消息标题里存的「今天 HH:00」不再照抄）；
+ * 同一任务连续的提醒折成一行可展开；暂停的任务不显示下次运行。
+ */
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
@@ -194,17 +142,14 @@ function wrap(
     client.setQueryData(["schedules", id, "runs", limit], {
       recentRuns: runs.map((r) => ({ ...r, scheduledFor: null })),
     });
-  return render(
-    <QueryClientProvider client={client}>{node}</QueryClientProvider>,
-  );
+  return renderWithRouter(node, { queryClient: client });
 }
 
 describe("ScheduleFiredRow", () => {
   test("group row expands to each run with its own date", async () => {
-    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
     const msgs = [reminder("sch_a", "r1"), reminder("sch_a", "r2")];
     collapseScheduleRuns(msgs);
-    const view = wrap(
+    const view = await wrap(
       <ScheduleFiredRow
         messageId="schedule-r1"
         text={msgs[0]!.content as string}
@@ -232,10 +177,9 @@ describe("ScheduleFiredRow", () => {
     expect(list).toContain("10月18日 12:00");
   });
   test("single row without run record drops the stale 今天", async () => {
-    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
     const m = reminder("sch_a", "solo");
     collapseScheduleRuns([m]);
-    const view = wrap(
+    const view = await wrap(
       <ScheduleFiredRow messageId={m.id} text={m.content as string} />,
       [],
     );
@@ -247,10 +191,9 @@ describe("ScheduleFiredRow", () => {
 
 describe("CB-105b", () => {
   test("single row: time in its own non-shrinking element, only the name ellipsizes", async () => {
-    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
     const m = reminder("sch_a", "solo2");
     collapseScheduleRuns([m]);
-    const view = wrap(
+    const view = await wrap(
       <ScheduleFiredRow messageId={m.id} text={m.content as string} />,
       [{ id: "solo2", startedAt: "2026-10-15T23:00:00Z" }],
     );
@@ -265,7 +208,6 @@ describe("CB-105b", () => {
     );
   });
   test("group of more than 20 asks for all runs and times every one", async () => {
-    const { ScheduleFiredRow } = await import("@/components/chat/schedule-row");
     const start = Date.parse("2025-12-29T16:00:00Z");
     const runs = Array.from({ length: 25 }, (_, i) => ({
       id: `x${i}`,
@@ -273,7 +215,7 @@ describe("CB-105b", () => {
     }));
     const msgs = runs.map((r) => reminder("sch_a", r.id));
     collapseScheduleRuns(msgs);
-    const view = wrap(
+    const view = await wrap(
       <ScheduleFiredRow
         messageId={msgs[0]!.id}
         text={msgs[0]!.content as string}
@@ -294,8 +236,7 @@ describe("CB-105b", () => {
 });
 
 describe("paused task shows no next run", () => {
-  test("shownNextRun hides stale next_run_at", async () => {
-    const { shownNextRun } = await import("@/lib/schedules");
+  test("shownNextRun hides stale next_run_at", () => {
     expect(
       shownNextRun({ status: "paused", nextRunAt: "2026-10-26T19:00:00Z" }),
     ).toBeNull();

@@ -56,6 +56,7 @@ jobs:
           bun test
           app/tests/no-raw-fetch.test.ts
           app/tests/no-group-has.test.ts
+          app/tests/no-mock-module.test.ts
           server/tests/no-raw-fetch.test.ts
           server/tests/no-raw-env.test.ts
           server/tests/no-unapproved-schema-drop.test.ts
