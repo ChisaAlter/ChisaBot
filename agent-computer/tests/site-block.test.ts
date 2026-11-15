@@ -56,7 +56,7 @@ describe("site block pages", () => {
     expect(
       classifySiteBlock({
         title: "Grok",
-        text: "What should we explore? " + "Sign in to access your chats. ".repeat(200),
+        text: `What should we explore? ${"Sign in to access your chats. ".repeat(200)}`,
         url: "https://grok.com/",
       }),
     ).toBeUndefined();

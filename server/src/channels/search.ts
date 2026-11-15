@@ -116,7 +116,8 @@ export async function searchChannelMessages(
       }
     }
     for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i]!;
+      const message = messages[i];
+      if (!message) continue;
       const body = textOf(message.content);
       if (!body) continue;
       const searchable = body.startsWith("⟦chisabot:")

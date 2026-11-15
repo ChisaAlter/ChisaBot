@@ -1089,16 +1089,24 @@ export function createApp(
         // trailing slashes. The owner check must recognize every spelling that reaches stop.
         const segments = context.req.path.split("/").filter(Boolean);
         const count = segments.length;
+        const stopAgentSegment = count >= 4 ? segments[count - 3] : undefined;
+        const stopThreadSegment = count >= 4 ? segments[count - 1] : undefined;
         const stop =
           count >= 4 &&
           segments[count - 4] === "agent" &&
-          segments[count - 2] === "stop"
-            ? { agentId: segments[count - 3]!, threadId: segments[count - 1]! }
+          segments[count - 2] === "stop" &&
+          stopAgentSegment !== undefined &&
+          stopThreadSegment !== undefined
+            ? { agentId: stopAgentSegment, threadId: stopThreadSegment }
             : undefined;
         if (action || stop) {
           try {
             const agentId =
-              action?.agentId ?? decodeURIComponent(stop!.agentId);
+              action?.agentId ??
+              (stop ? decodeURIComponent(stop.agentId) : undefined);
+            if (agentId === undefined) {
+              throw new Error("Expected action or stop route target.");
+            }
             if (
               agentProfileStore &&
               !(await agentProfileStore.get(actor, agentId))

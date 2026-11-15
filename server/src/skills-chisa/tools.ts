@@ -206,21 +206,22 @@ export function parseSkillMarkdown(
   let body = text;
   const fmMatch = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
   if (fmMatch) {
-    const fmLines = fmMatch[1]!.split("\n");
+    const [, fmRaw = "", bodyRaw = ""] = fmMatch;
+    const fmLines = fmRaw.split("\n");
     for (const line of fmLines) {
       const m = /^([a-zA-Z0-9_-]+)\s*:\s*(.+)$/.exec(line.trim());
-      if (m) {
-        meta[m[1]!.toLowerCase()] = m[2]!.trim().replace(/^["']|["']$/g, "");
+      if (m?.[1] && m[2]) {
+        meta[m[1].toLowerCase()] = m[2].trim().replace(/^["']|["']$/g, "");
       }
     }
-    body = fmMatch[2]!.trim() || text;
+    body = bodyRaw.trim() || text;
   }
 
   const headingMatch = /^#\s+(.+)$/m.exec(body);
   const rawTitle =
     meta.title ||
     meta.name ||
-    (headingMatch ? headingMatch[1]!.trim() : "") ||
+    headingMatch?.[1]?.trim() ||
     fallbackSlug ||
     "导入技能";
   const title = rawTitle.slice(0, 60);

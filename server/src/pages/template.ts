@@ -110,14 +110,16 @@ export const PAGE_TEMPLATE_GUIDE = [
   "要更个性就加 css 参数（只追加，不要整份重写）；想完全自己设计才写完整 HTML 文档。",
 ].join("");
 
+const HTML_ATTR_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
 const escapeHtml = (text: string) =>
-  text.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ]!,
-  );
+  text.replace(/[&<>"']/g, (c) => HTML_ATTR_ESCAPES[c] ?? c);
 
 /** 是不是一整份文档（这种就不套外壳）。 */
 export function isFullDocument(html: string) {

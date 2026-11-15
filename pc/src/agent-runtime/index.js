@@ -34,7 +34,7 @@ const MAX_LINES = 3000;
 const LINE_CAP = 2000;
 
 function killTree(child) {
-  if (!child || !child.pid) return;
+  if (!child?.pid) return;
   try {
     if (process.platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
     else process.kill(-child.pid, "SIGKILL");
@@ -50,8 +50,9 @@ function lineSplitter(onLine) {
   return {
     push(chunk) {
       buffer += chunk;
-      let index;
-      while ((index = buffer.indexOf("\n")) >= 0) {
+      for (;;) {
+        const index = buffer.indexOf("\n");
+        if (index < 0) break;
         const line = buffer.slice(0, index).replace(/\r$/, "");
         buffer = buffer.slice(index + 1);
         onLine(line);
@@ -118,7 +119,7 @@ function createAgentRuntime(options) {
           resolvedPath: null,
           authenticated: null,
           authLabel: null,
-          message: error && error.message ? error.message : String(error),
+          message: error?.message ? error.message : String(error),
         },
       });
     }
@@ -258,9 +259,9 @@ function createAgentRuntime(options) {
     let prep = null;
     let bridge = null;
     try {
-      if (options.isPaused && options.isPaused()) throw new Error("这台电脑已紧急停止，拒绝启动本地 agent。");
+      if (options.isPaused?.()) throw new Error("这台电脑已紧急停止，拒绝启动本地 agent。");
       // 本机再检查一次：工作目录要在工作区文件夹里（完全访问除外）。
-      if (message.profile !== "full" && message.roots && message.roots.length && message.cwd && !isInside(message.cwd, message.roots))
+      if (message.profile !== "full" && message.roots?.length && message.cwd && !isInside(message.cwd, message.roots))
         throw new Error("工作目录不在这台电脑的工作区文件夹里。");
       emit("status", "正在准备工作目录", "正在准备工作目录");
       prep = await sandbox.prepare({ taskId, cwd: message.cwd, isolation: message.isolation });
@@ -268,9 +269,9 @@ function createAgentRuntime(options) {
       for (const note of prep.notes) emit("status", note);
 
       const inst = message.instance || null;
-      const driver = (inst && inst.driver) || message.agent;
-      const cfg = (inst && inst.config) || {};
-      const instEnv = (inst && inst.env) || {};
+      const driver = inst?.driver || message.agent;
+      const cfg = inst?.config || {};
+      const instEnv = inst?.env || {};
 
       // 准备账号隔离的影子 Home（如 Codex shadowHomePath / Claude configDir）
       const shadow = prepareShadowHome({
@@ -281,7 +282,7 @@ function createAgentRuntime(options) {
       for (const note of shadow.notes) emit("status", note);
 
       // 准备外部 Agent 嵌套互调本地桥（当允许嵌套且未达最大深度时）
-      if (message.subagentBridge && message.subagentBridge.enabled) {
+      if (message.subagentBridge?.enabled) {
         bridge = await createSubagentBridge({
           taskId,
           depth: message.subagentBridge.depth,
@@ -384,7 +385,7 @@ function createAgentRuntime(options) {
       if (controller.signal.aborted) throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error("已停止");
       emit("status", "正在统计改动", "正在统计改动");
       const diff = await sandbox.diff(prep).catch(() => null);
-      if (diff && diff.pending && diff.files.length) prepared.set(taskId, prep);
+      if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
       else {
         if (diff) diff.pending = false;
         await prep.cleanup().catch(() => {});
@@ -399,12 +400,12 @@ function createAgentRuntime(options) {
         ...(result.isError ? { error: (result.stderrTail || result.summary || `退出码 ${result.exitCode}`).slice(-1200) } : {}),
       });
     } catch (error) {
-      const reason = error && error.message === "timeout" ? "超时，已停止。" : error && error.message ? error.message : String(error);
+      const reason = error?.message === "timeout" ? "超时，已停止。" : error?.message ? error.message : String(error);
       let diff = null;
       if (prep) {
         // 被停止的任务：一次性副本直接丢掉（服务器那边已经收尾，不会再给「应用改动」）。
         diff = controller.signal.aborted ? null : await sandbox.diff(prep).catch(() => null);
-        if (diff && diff.pending && diff.files.length) prepared.set(taskId, prep);
+        if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
         else await prep.cleanup().catch(() => {});
       }
       out({ type: "agent_done", taskId, ok: false, error: reason.slice(0, 1200), diff, stopped: controller.signal.aborted && reason !== "超时，已停止。" });

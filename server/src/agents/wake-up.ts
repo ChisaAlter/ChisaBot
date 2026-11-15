@@ -385,12 +385,13 @@ export function wakeUpTools(options: {
                   record.id.endsWith(`:${tail}`),
               )
             : [];
-        if (matches.length !== 1) return { cancelled: false };
+        const match = matches.length === 1 ? matches[0] : undefined;
+        if (!match) return { cancelled: false };
         return {
           cancelled: await store.cancel(
             ownerUserId,
             agentId,
-            matches[0]!.id,
+            match.id,
             initiator,
           ),
         };

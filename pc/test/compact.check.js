@@ -45,11 +45,11 @@ function fakeWindow(bounds, { maximized = false } = {}) {
     setBounds(b) {
       win._b = { ...b };
       win._normal = { ...b };
-      (handlers.resize || []).forEach((fn) => fn());
+      for (const fn of handlers.resize || []) fn();
     },
     maximize() {
       win._max = true;
-      (handlers.maximize || []).forEach((fn) => fn());
+      for (const fn of handlers.maximize || []) fn();
     },
     unmaximize() {
       win._max = false;
@@ -59,10 +59,11 @@ function fakeWindow(bounds, { maximized = false } = {}) {
       win._full = v;
     },
     on(name, fn) {
-      (handlers[name] ||= []).push(fn);
+      handlers[name] ||= [];
+      handlers[name].push(fn);
     },
     emit(name) {
-      (handlers[name] || []).forEach((fn) => fn());
+      for (const fn of handlers[name] || []) fn();
     },
   };
   return win;

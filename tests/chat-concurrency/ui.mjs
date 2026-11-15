@@ -115,7 +115,7 @@ if (SCENARIO === "worker") {
   log("ERROR", String(error).slice(0, 300));
   failures++;
   await shot("error").catch(() => {});
-  log("cards", await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-status") + ":" + e.textContent)).catch(() => ""));
+  log("cards", await page.locator('[data-testid=kept-page][data-visible=true] [data-testid="worker-card"]').evaluateAll((els) => els.map((e) => `${e.getAttribute("data-status")}:${e.textContent}`)).catch(() => ""));
 }
 check(errors.length === 0, `no page errors ${errors.slice(0, 3).join(" | ")}`);
 log(failures ? `RESULT FAIL (${failures})` : "RESULT PASS");

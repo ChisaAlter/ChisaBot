@@ -145,23 +145,29 @@ export function thinkTagTransform(): TransformStream<Part, Part> {
         splitters.set(id, new ThinkSplitter());
         return; // 有了第一段正文再开（开头若全是 <think>，就不留一个空的文字气泡）
       }
-      if (part.type === "text-delta" && splitters.has(id)) {
-        emit(controller, id, splitters.get(id)!.push(String(part.delta ?? "")));
-        return;
+      if (part.type === "text-delta") {
+        const splitter = splitters.get(id);
+        if (splitter) {
+          emit(controller, id, splitter.push(String(part.delta ?? "")));
+          return;
+        }
       }
-      if (part.type === "text-end" && splitters.has(id)) {
-        emit(controller, id, splitters.get(id)!.flush());
-        splitters.delete(id);
-        const rid = reasoningOpen.get(id);
-        if (rid) {
-          controller.enqueue({ type: "reasoning-end", id: rid });
-          reasoningOpen.delete(id);
+      if (part.type === "text-end") {
+        const splitter = splitters.get(id);
+        if (splitter) {
+          emit(controller, id, splitter.flush());
+          splitters.delete(id);
+          const rid = reasoningOpen.get(id);
+          if (rid) {
+            controller.enqueue({ type: "reasoning-end", id: rid });
+            reasoningOpen.delete(id);
+          }
+          if (textOpen.has(id)) {
+            controller.enqueue(part);
+            textOpen.delete(id);
+          }
+          return;
         }
-        if (textOpen.has(id)) {
-          controller.enqueue(part);
-          textOpen.delete(id);
-        }
-        return;
       }
       controller.enqueue(part);
     },

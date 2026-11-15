@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { PanelError } from "../../../shared/panels/types";
 import { isContinuationDeferred } from "../conversations/continuation-work";
 import type { Database } from "../db/client";
@@ -24,7 +24,7 @@ export function createNormalPanelTaskService(options: {
     active = new Map<string, AbortController>();
   async function turn(
     id: string,
-    input: Parameters<TurnRunner>[0],
+    input: Parameters<TurnRunner>[0] & { runId: string },
     runner: TurnRunner,
   ) {
     const abort = new AbortController();
@@ -50,7 +50,7 @@ export function createNormalPanelTaskService(options: {
         .where(
           and(
             eq(panelTaskRequests.id, id),
-            eq(panelTaskRequests.runId, input.runId!),
+            eq(panelTaskRequests.runId, input.runId),
             eq(panelTaskRequests.status, "running"),
           ),
         );
@@ -67,7 +67,7 @@ export function createNormalPanelTaskService(options: {
         .where(
           and(
             eq(panelTaskRequests.id, id),
-            eq(panelTaskRequests.runId, input.runId!),
+            eq(panelTaskRequests.runId, input.runId),
             eq(panelTaskRequests.status, "running"),
           ),
         );
@@ -187,7 +187,9 @@ export function createNormalPanelTaskService(options: {
               and(
                 eq(panelTaskRequests.id, task.id),
                 eq(panelTaskRequests.status, task.status),
-                eq(panelTaskRequests.runId, task.runId!),
+                task.runId
+                  ? eq(panelTaskRequests.runId, task.runId)
+                  : isNull(panelTaskRequests.runId),
               ),
             );
       }

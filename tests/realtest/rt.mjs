@@ -31,13 +31,13 @@ const PC = process.env.PC === "1";
 const results = [];
 const ctx = await context({ pc: PC });
 const page = await newPage(ctx, "rt");
-await page.goto(base + "/", { waitUntil: "domcontentloaded" });
+await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
 const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const r = await call("/api/agents", { method: "POST", body: JSON.stringify({ name: `临时验收${process.env.NAME || ""}`, title: "临时测试（会删除）", roleDescription: "我的私人助手：回答问题、查资料、帮我把事情办好。", visibility: "private" }) });
 if (!JSON.parse(r.body).agent) { log("create bot failed", r.status, r.body.slice(0, 300)); process.exit(1); }
 const bot = trackBot(JSON.parse(r.body).agent.id);
-fs.appendFileSync("/out/bots.txt", bot + "\n");
+fs.appendFileSync("/out/bots.txt", `${bot}\n`);
 if (process.env.MODEL) { const m = await call(`/api/agents/${bot}/model`, { method: "PUT", body: JSON.stringify({ model: process.env.MODEL }) }); log("bot model", process.env.MODEL, m.status, m.body.slice(0, 160)); }
 log("bot", bot, "pc", PC);
 try {

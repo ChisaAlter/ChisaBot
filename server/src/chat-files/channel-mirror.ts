@@ -13,6 +13,8 @@ export function createChannelUploadMirror(deps: {
   return async ({ actorId, channelId, name, bytes }) => {
     const bots = await deps.botsInChannel(channelId);
     if (bots.length !== 1) return;
-    await deps.upload(actorId, bots[0]!, { name, bytes });
+    const [botId] = bots;
+    if (botId === undefined) return;
+    await deps.upload(actorId, botId, { name, bytes });
   };
 }

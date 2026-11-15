@@ -132,12 +132,12 @@ describe("task instruction framing", () => {
 
   test("all six accepted context fields reach execution, including trailing conditions; legacy learned does not", () => {
     const saved = contextInputSchema.parse({
-      responsibilities: "责".repeat(7995) + "职责末尾",
-      projects: "项".repeat(11995) + "项目末尾",
-      goals: "目".repeat(7995) + "目标末尾",
-      interests: "趣".repeat(3995) + "兴趣末尾",
-      habits: "惯".repeat(3995) + "习惯末尾",
-      preferences: "偏".repeat(7995) + "禁止外发",
+      responsibilities: `${"责".repeat(7995)}职责末尾`,
+      projects: `${"项".repeat(11995)}项目末尾`,
+      goals: `${"目".repeat(7995)}目标末尾`,
+      interests: `${"趣".repeat(3995)}兴趣末尾`,
+      habits: `${"惯".repeat(3995)}习惯末尾`,
+      preferences: `${"偏".repeat(7995)}禁止外发`,
     });
     const text = frameTask(
       task(),

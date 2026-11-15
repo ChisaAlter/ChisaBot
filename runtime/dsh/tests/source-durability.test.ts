@@ -42,7 +42,7 @@ test.each(["unflushed", "flushed"])(
         const chunk = (delta: unknown, finish_reason: string | null) =>
           `data: ${JSON.stringify({ id: "reply", object: "chat.completion.chunk", model: "fixture", created: 1, choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
         return new Response(
-          chunk(delta, null) + chunk({}, "tool_calls") + "data: [DONE]\n\n",
+          `${chunk(delta, null)}${chunk({}, "tool_calls")}data: [DONE]\n\n`,
           { headers: { "content-type": "text/event-stream" } },
         );
       },

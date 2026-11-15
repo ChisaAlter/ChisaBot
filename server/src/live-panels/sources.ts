@@ -807,7 +807,7 @@ export function createSourceRunner(input: CreateSourceRunnerInput) {
     reading: LivePanelSourceReading | undefined,
     intervalSec: number,
     at: number,
-  ) {
+  ): reading is LivePanelSourceReading {
     if (!reading) return false;
     const time = Date.parse(reading.at);
     if (!Number.isFinite(time)) return false;
@@ -871,7 +871,7 @@ export function createSourceRunner(input: CreateSourceRunnerInput) {
       definitions.map(async (definition) => {
         const previous = cached[definition.id];
         if (!options.force && isFresh(previous, definition.intervalSec, time)) {
-          result[definition.id] = previous!;
+          result[definition.id] = previous;
           return;
         }
         const key = `${owner}:${row.id}:${definition.id}`;

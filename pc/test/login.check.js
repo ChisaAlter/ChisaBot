@@ -22,7 +22,10 @@ test("normalizeServerUrl adds https:// and strips the trailing slash / path", ()
 
 test("probe: gateway /auth/session reachable without login", async () => {
   const calls = [];
-  const fetchImpl = async (url) => (calls.push(url), res(200, { authenticated: false }));
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return res(200, { authenticated: false });
+  };
   const r = await auth.probe({ serverUrl: "x.example", fetchImpl });
   assert.deepEqual(r, { origin: "https://x.example", gateway: true, authenticated: false });
   assert.equal(calls[0], "https://x.example/auth/session");

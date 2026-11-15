@@ -101,7 +101,7 @@ async function pair(dir) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.token) throw new Error(body.error || `配对失败（HTTP ${response.status}）`);
   const previous = readConfig(dir);
-  if (previous && previous.token && previous.server) {
+  if (previous?.token && previous.server) {
     // 重新安装：作废旧令牌（失败也不要紧，网页上能撤销）
     await auth.unenroll({ serverUrl: previous.server, token: previous.token }).catch(() => false);
   }
@@ -111,7 +111,7 @@ async function pair(dir) {
 
 function run(dir) {
   const config = readConfig(dir);
-  if (!config || !config.token || !config.server) {
+  if (!config?.token || !config.server) {
     console.error(`没有配置（${configPath(dir)}）。先运行安装命令或 pair。`);
     process.exit(2);
   }
@@ -191,7 +191,7 @@ WantedBy=${uid === 0 ? "multi-user.target" : "default.target"}
       spawnSync("systemctl", ["--user", "enable", "--now", SERVICE], { stdio: "inherit" });
       spawnSync("systemctl", ["--user", "restart", SERVICE], { stdio: "inherit" });
       const linger = spawnSync("loginctl", ["enable-linger", os.userInfo().username], { stdio: "ignore" });
-      console.log(`已安装用户服务 ${SERVICE}（systemctl --user status ${SERVICE}）。${linger.status === 0 ? "已开启 linger：退出登录后也会继续运行。" : "提示：要在退出登录后继续运行，请让管理员执行 loginctl enable-linger " + os.userInfo().username}`);
+      console.log(`已安装用户服务 ${SERVICE}（systemctl --user status ${SERVICE}）。${linger.status === 0 ? "已开启 linger：退出登录后也会继续运行。" : `提示：要在退出登录后继续运行，请让管理员执行 loginctl enable-linger ${os.userInfo().username}`}`);
     }
     return;
   }
@@ -255,7 +255,7 @@ async function main() {
     }
     case "logout": {
       const config = readConfig(dir);
-      if (config && config.token) console.log((await auth.unenroll({ serverUrl: config.server, token: config.token })) ? "已作废令牌" : "作废令牌失败（可以在网页上撤销）");
+      if (config?.token) console.log((await auth.unenroll({ serverUrl: config.server, token: config.token })) ? "已作废令牌" : "作废令牌失败（可以在网页上撤销）");
       fs.rmSync(configPath(dir), { force: true });
       return;
     }

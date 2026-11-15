@@ -53,7 +53,7 @@ export function WorkerCard({
       return () => clearTimeout(timer);
     }
   }, [workerId, worker, workers]);
-  if (!worker) {
+  if (!worker || !threadId) {
     return (
       <div
         className="worker-card is-pending"
@@ -96,7 +96,7 @@ export function WorkerCard({
   return (
     <WorkerCardBody
       compact={running > 1}
-      threadId={threadId!}
+      threadId={threadId}
       worker={worker}
     />
   );

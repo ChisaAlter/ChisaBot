@@ -48,8 +48,8 @@ export function parseWorkflowMarkdown(text: string, librarySkills?: ReadonlySet<
   const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(source);
   try {
     if (match) {
-      front = parse(match[1]!, { maxAliasCount: 0 });
-      body = match[2]!.trim();
+      front = parse(match[1] ?? "", { maxAliasCount: 0 });
+      body = (match[2] ?? "").trim();
     } else if (source.trimStart().startsWith("{")) {
       front = JSON.parse(source);
     } else {

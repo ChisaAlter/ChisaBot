@@ -48,7 +48,14 @@ export function planTruncation(
       status: 404,
       error: "这条消息不在对话里（可能已经被别的设备改过了）",
     };
-  if (messages[index]!.role !== "user")
+  const target = messages[index];
+  if (!target)
+    return {
+      ok: false,
+      status: 404,
+      error: "这条消息不在对话里（可能已经被别的设备改过了）",
+    };
+  if (target.role !== "user")
     return { ok: false, status: 400, error: "只能从用户消息开始重发" };
   const removedMessages = messages.slice(index);
   const removed = removedMessages.map((message) => message.id);

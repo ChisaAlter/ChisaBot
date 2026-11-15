@@ -95,8 +95,9 @@ class Reader {
     let result = 0n;
     let shift = 0n;
     for (;;) {
-      if (this.pos >= this.buf.length) throw new Error("飞书帧被截断");
-      const byte = this.buf[this.pos++]!;
+      const byte = this.buf[this.pos];
+      if (byte === undefined) throw new Error("飞书帧被截断");
+      this.pos += 1;
       result |= BigInt(byte & 0x7f) << shift;
       if (!(byte & 0x80)) return result;
       shift += 7n;

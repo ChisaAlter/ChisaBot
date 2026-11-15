@@ -1031,7 +1031,8 @@ export function deviceTools(options: {
       },
     });
 
-  if (options.workspace && enabledAnywhere("file_upload"))
+  const workspace = options.workspace;
+  if (workspace && enabledAnywhere("file_upload"))
     tools.push({
       name: "device_upload",
       ref: "devices/upload",
@@ -1042,7 +1043,7 @@ export function deviceTools(options: {
         const args = schemas.upload.parse(input ?? {});
         let file: { bytes: Buffer; name: string };
         try {
-          file = await options.workspace!.read(args.from);
+          file = await workspace.read(args.from);
         } catch (error) {
           return `${REFUSAL_MARKER} 读不到工作区文件 ${args.from}：${error instanceof Error ? error.message : String(error)}`;
         }
@@ -1077,7 +1078,7 @@ export function deviceTools(options: {
       },
     });
 
-  if (options.workspace && enabledAnywhere("file_download"))
+  if (workspace && enabledAnywhere("file_download"))
     tools.push({
       name: "device_download",
       ref: "devices/download",
@@ -1116,7 +1117,7 @@ export function deviceTools(options: {
         }
         const all = Buffer.concat(parts);
         try {
-          await options.workspace!.write(args.to, all);
+          await workspace.write(args.to, all);
         } catch (error) {
           return `${REFUSAL_MARKER} 写入工作区失败：${error instanceof Error ? error.message : String(error)}`;
         }

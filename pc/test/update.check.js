@@ -32,8 +32,14 @@ function fakeAutoUpdater(behavior = {}) {
 
 function fakeTimers() {
   const t = { timeouts: [], intervals: [] };
-  t.setTimeout = (fn, ms) => (t.timeouts.push({ fn, ms }), t.timeouts.length);
-  t.setInterval = (fn, ms) => (t.intervals.push({ fn, ms }), 100 + t.intervals.length);
+  t.setTimeout = (fn, ms) => {
+    t.timeouts.push({ fn, ms });
+    return t.timeouts.length;
+  };
+  t.setInterval = (fn, ms) => {
+    t.intervals.push({ fn, ms });
+    return 100 + t.intervals.length;
+  };
   t.clearTimeout = () => {};
   t.clearInterval = () => {};
   return t;

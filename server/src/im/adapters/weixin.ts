@@ -27,7 +27,8 @@ export const WEIXIN_DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
 const SESSION_EXPIRED = -14;
 
 function randomUin() {
-  const value = crypto.getRandomValues(new Uint32Array(1))[0]!;
+  const [value] = crypto.getRandomValues(new Uint32Array(1));
+  if (value === undefined) throw new Error("Failed to generate random uin");
   return Buffer.from(String(value)).toString("base64");
 }
 

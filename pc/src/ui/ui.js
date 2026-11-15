@@ -5,7 +5,7 @@
  *    「背景随时间变化」开着时用网页同一个 computeSky 算天空（sky.js 由网页源码生成）；
  *  - 异步按钮状态机（DESIGN.md §2：最少 300ms 进行中，成功 1.5s、失败 2s 后复位）。
  */
-const Appearance = (function () {
+const Appearance = (() => {
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   let current = { dark: null, sky: true };
   function apply() {
@@ -37,8 +37,8 @@ const Appearance = (function () {
 })();
 
 if (window.chisa) {
-  window.chisa.invoke("state:get").then((state) => Appearance.set(state && state.appearance)).catch(() => {});
-  window.chisa.onState(() => window.chisa.invoke("state:get").then((state) => Appearance.set(state && state.appearance)).catch(() => {}));
+  window.chisa.invoke("state:get").then((state) => Appearance.set(state?.appearance)).catch(() => {});
+  window.chisa.onState(() => window.chisa.invoke("state:get").then((state) => Appearance.set(state?.appearance)).catch(() => {}));
 }
 
 function asyncButton(button, labels) {
@@ -74,7 +74,7 @@ function asyncButton(button, labels) {
 }
 
 function cleanError(error) {
-  const text = error && error.message ? error.message : String(error);
+  const text = error?.message ? error.message : String(error);
   return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
@@ -94,3 +94,5 @@ function fitDialog(channel) {
   if (document.fonts && document.fonts.status !== "loaded") document.fonts.ready.then(run);
   else run();
 }
+
+Object.assign(globalThis, { asyncButton, cleanError, fitDialog });

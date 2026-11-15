@@ -191,6 +191,15 @@ export function createGithub(
     };
   }
 
+  async function requireStatus(
+    owner: string,
+    action: string,
+  ): Promise<GithubConnectionView> {
+    const current = await status(owner);
+    if (!current) throw new Error(`${action}后未找到 GitHub 连接。`);
+    return current;
+  }
+
   /** 用给定的令牌直接发一个 GitHub 请求（地址固定在 API 主机上，不跟随重定向）。 */
   async function raw(
     token: string,
@@ -302,7 +311,7 @@ export function createGithub(
         scopes,
       ],
     );
-    return (await status(owner))!;
+    return requireStatus(owner, "保存连接");
   }
 
   /** 最近用过的令牌（只在内存里），用来把工具输出里出现的令牌抹掉（比如仓库文件里正好有它）。 */
@@ -334,7 +343,7 @@ export function createGithub(
     );
     if (!ok && response.status !== 401)
       throw new GithubError(explain(response.status, response.data, "账号"));
-    return (await status(owner))!;
+    return requireStatus(owner, "检查连接");
   }
 
   async function disconnect(owner: string) {
@@ -484,7 +493,8 @@ export function createGithub(
       "UPDATE chisabot_github_actions SET status = $2, result = $3::jsonb WHERE id = $1 RETURNING *",
       [id, outcome.status, JSON.stringify(outcome.result)],
     );
-    return actionView(done!);
+    if (!done) throw new Error(`更新 GitHub 操作状态后未找到记录：${id}`);
+    return actionView(done);
   }
 
   async function propose(

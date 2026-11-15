@@ -391,7 +391,9 @@ export function createChatFiles(
         input.sourceId ?? null,
       ],
     );
-    const view = fileView(rows[0]!);
+    const inserted = rows[0];
+    if (!inserted) throw new Error(`写入对话文件记录后未返回行：${id}`);
+    const view = fileView(inserted);
     // 图片记下宽高，随工具结果的文件清单给网页（DESIGN.md §83.2）。
     if (!input.mimeType.startsWith("image/")) return view;
     const dims = await imageDimsFor(database).remember(`cf:${id}`, input.bytes);

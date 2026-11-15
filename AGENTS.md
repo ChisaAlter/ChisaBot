@@ -56,7 +56,7 @@
 - **Bun 定时器陷阱**：测试里如果 `AbortSignal.timeout` 是进程里唯一挂着的定时器，它不会触发，测试会挂死（生产里总有 socket 撑着，不受影响）。假模型 / 假服务要模拟超时时，额外挂一个 `setTimeout`（见 `server/tests/approvals-policy.test.ts`）。
 - **Bun#9882 陷阱**：`node:http` 服务器 `upgrade` 事件给出的 socket 是僵尸——`write` 返回 true 但字节不上线，无 upgrade 监听时请求甚至不进 handler。测试里要做 WS / Upgrade 的 HTTP 服务，用 `node:net` 手写头（见 `server/tests/im-net-ssrf.test.ts`）。
 - `bun run test` / `test:ci` 是全仓联合跑，单机 20 分钟以上，日常不要用。
-- CI 另有 Biome 增量门禁（`scripts/biome-new-issues.ts`）：改动文件的 error+warning 数不得增加。
+- CI 的 `biome` 任务对全仓执行 `bun run lint`（`--error-on-warnings`），全仓必须保持 0 error 0 warning。
 
 ## 3. 测试隔离名单
 
@@ -101,6 +101,7 @@
 
 | 约束规则                                                                         | 自动门禁测试 / 脚本                              |
 | -------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 全仓 Biome 零错误零警告（含 `pc/`，生产代码禁用 `!` 非空断言与冗余 Fragment）    | `biome.json`（`bun run lint` / `bun run check`） |
 | 前端禁止裸 `fetch`，统一走 `app/src/lib/client.ts`                               | `app/tests/no-raw-fetch.test.ts`                 |
 | 前端样式禁止高开销 `:has` 祖先选择器（`group-has-*` / `peer-has-*`）             | `app/tests/no-group-has.test.ts`                 |
 | 测试禁止 `mock.module` / `vi.mock` / `jest.mock` 进程级模块替换（零白名单）      | `app/tests/no-mock-module.test.ts`               |

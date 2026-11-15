@@ -151,9 +151,9 @@
         var id;
         try {
           var random = window.crypto.getRandomValues(new Uint32Array(3));
-          id = "boot_" + random[0].toString(16) + "_" + random[1].toString(16) + "_" + random[2].toString(16);
+          id = `boot_${random[0].toString(16)}_${random[1].toString(16)}_${random[2].toString(16)}`;
         } catch {
-          id = "boot_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 12);
+          id = `boot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
         }
         function resourceName(value) {
           try {
@@ -210,7 +210,7 @@
           } else if (event.type === "unhandledrejection") {
             // A blocked third-party beacon must not be mistaken for a failed app.
             var reason = event.reason;
-            if (!reason || typeof reason.stack !== "string" || reason.stack.indexOf(window.location.origin + "/assets/") === -1) return;
+            if (!reason || typeof reason.stack !== "string" || reason.stack.indexOf(`${window.location.origin}/assets/`) === -1) return;
             category = "promise";
             info = { name: errorName(reason.name) };
           } else {

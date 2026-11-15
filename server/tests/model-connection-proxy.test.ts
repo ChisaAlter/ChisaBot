@@ -187,12 +187,12 @@ test("real DSH Host authenticates to the gateway while both keyless provider pro
                 `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
             )
             .join("")
-        : [{ role: "assistant", content: "keyless-ready" }, {}]
+        : `${[{ role: "assistant", content: "keyless-ready" }, {}]
             .map(
               (delta, index) =>
                 `data: ${JSON.stringify({ id: "reply", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: index ? "stop" : null }] })}\n\n`,
             )
-            .join("") + "data: [DONE]\n\n";
+            .join("")}data: [DONE]\n\n`;
       return new Response(data, {
         headers: { "content-type": "text/event-stream" },
       });

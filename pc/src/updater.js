@@ -37,7 +37,7 @@ const FIRST_CHECK_MS = 30 * 1000;
 const INTERVAL_MS = 30 * 60 * 1000;
 
 function cleanMessage(error) {
-  const text = error && error.message ? String(error.message) : String(error || "未知错误");
+  const text = error?.message ? String(error.message) : String(error || "未知错误");
   const first = text.split("\n")[0].replace(/\s+/g, " ").trim();
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ECONNRESET|net::ERR_/i.test(first)) return "连不上更新服务器，请检查网络。";
   if (/sha512 checksum mismatch/i.test(first)) return "下载的安装包校验失败，已丢弃，稍后会重新下载。";
@@ -152,7 +152,7 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   );
   const gateByClient = Boolean(String(clientHash || "").trim());
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
-  const signing = Boolean(updateKeys && updateKeys.enforce);
+  const signing = Boolean(updateKeys?.enforce);
   const verify = verifyDownload || ((info, file) => updateSignature.verifyDownloadedUpdate({ info, file, keys: updateKeys.keys }));
   let activeFeed = feedUrl || "";
   const state = { supported, status: "idle", feedUrl: activeFeed };

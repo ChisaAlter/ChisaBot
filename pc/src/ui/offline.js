@@ -1,5 +1,5 @@
 "use strict";
-(async function () {
+(async () => {
   const $ = (id) => document.getElementById(id);
   const render = async () => {
     const state = await window.chisa.invoke("state:get");

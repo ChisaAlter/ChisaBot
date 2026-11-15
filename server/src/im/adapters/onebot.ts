@@ -47,7 +47,8 @@ export function parseCqString(message: string): Segment[] {
       const eq = pair.indexOf("=");
       if (eq > 0) data[pair.slice(0, eq)] = unescapeCq(pair.slice(eq + 1));
     }
-    out.push({ type: match[1]!, data });
+    const cqType = match[1];
+    if (cqType) out.push({ type: cqType, data });
     last = re.lastIndex;
   }
   if (last < message.length)
@@ -225,9 +226,10 @@ export class OneBotAdapter extends LoopAdapter {
   private async handle(text: string) {
     // biome-ignore lint/suspicious/noExplicitAny: OneBot WebSocket 帧字段随事件/应答变化
     const payload = JSON.parse(text) as Record<string, any>;
-    if (payload.echo != null && this.pending.has(String(payload.echo))) {
-      const entry = this.pending.get(String(payload.echo))!;
-      this.pending.delete(String(payload.echo));
+    const echoKey = payload.echo != null ? String(payload.echo) : null;
+    const entry = echoKey !== null ? this.pending.get(echoKey) : undefined;
+    if (echoKey !== null && entry) {
+      this.pending.delete(echoKey);
       clearTimeout(entry.timer);
       if (
         payload.status === "failed" ||

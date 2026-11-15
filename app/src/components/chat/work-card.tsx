@@ -205,14 +205,20 @@ export function WorkRow({
   const reduce = useReducedMotion();
   const summary = live ? summarizeWork(calls) : null;
   const done = live ? null : summarizeDoneWork(calls);
-  if (live ? !summary : !done) return null;
+  const text = live
+    ? summary
+      ? (statusLabel ?? summary.current)
+      : null
+    : done
+      ? done.label
+      : null;
+  if (text === null) return null;
   const started = startedAt.get(turnKey) ?? now;
   const seconds = live
     ? Math.max(0, Math.floor((now - started) / 1000))
     : doneSeconds;
   // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
   const steps = open ? workTimeline(calls, notes, live) : [];
-  const text = live ? (statusLabel ?? summary!.current) : done!.label;
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
   // 网页类的摘要自己已经写了「N 步失败」（审查模块 7：4xx/5xx 算失败），后面不再重复一遍。
   const metaFailed =

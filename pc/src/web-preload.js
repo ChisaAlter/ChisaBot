@@ -61,11 +61,11 @@ if (isLocalPage) {
       state: () => ipcRenderer.invoke("pc:state"),
       setLocal: (patch) =>
         ipcRenderer.invoke("pc:set", {
-          localPaused: bool(patch && patch.localPaused),
-          forceLocalApproval: bool(patch && patch.forceLocalApproval),
-          autoStart: bool(patch && patch.autoStart),
-          startHidden: bool(patch && patch.startHidden),
-          autoUpdate: bool(patch && patch.autoUpdate),
+          localPaused: bool(patch?.localPaused),
+          forceLocalApproval: bool(patch?.forceLocalApproval),
+          autoStart: bool(patch?.autoStart),
+          startHidden: bool(patch?.startHidden),
+          autoUpdate: bool(patch?.autoUpdate),
         }),
       checkUpdate: () => ipcRenderer.invoke("pc:check-update"),
       installUpdate: () => ipcRenderer.invoke("pc:install-update"),

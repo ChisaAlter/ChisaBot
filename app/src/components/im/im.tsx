@@ -433,7 +433,8 @@ export function ConnectionDialog({
   }, [open, info, connection]);
   useEffect(() => {
     // 机器人列表晚到：新建时补上默认机器人。
-    if (form && !form.agentId && roster.length) setForm({ ...form, agentId: roster.find((bot) => bot.pinned)?.id ?? roster[0]!.id });
+    const defaultId = roster.find((bot) => bot.pinned)?.id ?? roster[0]?.id;
+    if (form && !form.agentId && defaultId) setForm({ ...form, agentId: defaultId });
   }, [roster, form]);
 
   const input = (): ImConnectionInput | null => {

@@ -12,7 +12,12 @@
       "!**/target",
       "!server/drizzle",
       "!server/src/workflows/presets/*.md",
-      "!pc"
+      "!app/public/wallpaper_core.html",
+      "!pc/node_modules",
+      "!pc/dist",
+      "!pc/out",
+      "!pc/release",
+      "!pc/src/shell-fingerprint.json"
     ]
   },
   "formatter": {
@@ -23,16 +28,20 @@
     "enabled": true,
     "rules": {
       "style": {
-        "noNonNullAssertion": "info"
+        "noNonNullAssertion": "error",
+        "useTemplate": "error"
+      },
+      "complexity": {
+        "noUselessFragments": "error"
       },
       "security": {
         "noDangerouslySetInnerHtml": "error"
       },
       "suspicious": {
-        "noArrayIndexKey": "warn"
+        "noArrayIndexKey": "error"
       },
       "correctness": {
-        "useExhaustiveDependencies": "warn"
+        "useExhaustiveDependencies": "error"
       },
       "a11y": {
         "noLabelWithoutControl": {
@@ -97,6 +106,9 @@
     {
       "includes": [
         "deploy/public/auth/server.ts",
+        "pc/src/agent-runtime/builtin.js",
+        "pc/src/agent-runtime/cli-agents.js",
+        "pc/src/agent/open-target.js",
         "server/src/app.ts",
         "server/src/chat-files/service.ts",
         "server/src/live-panels/sources.ts",
@@ -122,6 +134,26 @@
           },
           "suspicious": {
             "noShorthandPropertyOverrides": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["pc/**/*.js"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noRedundantUseStrict": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["pc/src/ui/login.html"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noNoninteractiveElementToInteractiveRole": "off"
           }
         }
       }

@@ -102,9 +102,9 @@ export function expandIpv6(input: string): number[] | null {
   if (isIP(address) !== 6) return null;
   // 末尾是点分 IPv4（::ffff:1.2.3.4）先换成两组十六进制。
   const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(address);
-  if (dotted) {
-    const parts = dotted[1]!.split(".").map(Number);
-    const hex = `${((parts[0]! << 8) | parts[1]!).toString(16)}:${((parts[2]! << 8) | parts[3]!).toString(16)}`;
+  if (dotted?.[1]) {
+    const [a = 0, b = 0, c = 0, d = 0] = dotted[1].split(".").map(Number);
+    const hex = `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
     address = address.slice(0, dotted.index) + hex;
   }
   const [head = "", tail] = address.split("::");
@@ -131,27 +131,28 @@ export function embeddedIpv4(address: string): string | null {
   if (!g) return null;
   const zeros = (from: number, to: number) =>
     g.slice(from, to).every((n) => n === 0);
+  const g6 = g[6] ?? 0;
+  const g7 = g[7] ?? 0;
   // ::ffff:a.b.c.d（映射）与 ::ffff:0:a.b.c.d（翻译）
-  if (zeros(0, 5) && g[5] === 0xffff) return v4FromGroups(g[6]!, g[7]!);
+  if (zeros(0, 5) && g[5] === 0xffff) return v4FromGroups(g6, g7);
   if (zeros(0, 4) && g[4] === 0xffff && g[5] === 0)
-    return v4FromGroups(g[6]!, g[7]!);
+    return v4FromGroups(g6, g7);
   // 64:ff9b::/96 NAT64
   if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6))
-    return v4FromGroups(g[6]!, g[7]!);
+    return v4FromGroups(g6, g7);
   // ::a.b.c.d（IPv4 兼容，已废弃；内网放行模式里 ::/96 不再整段拦，要把里面的 IPv4 取出来判）。
   // :: 和 ::1 不是兼容写法（未指定 / 回环），别错认成 IPv4。
-  if (zeros(0, 6) && (g[6] !== 0 || (g[7] ?? 0) > 1))
-    return v4FromGroups(g[6] ?? 0, g[7] ?? 0);
+  if (zeros(0, 6) && (g[6] !== 0 || g7 > 1)) return v4FromGroups(g6, g7);
   return null;
 }
 
 /** 这个 IP 是不是不能连（内网、本机、元数据、保留……）。不是合法 IP 的一律当作不能连。 */
 export function isBlockedAddress(input: string): boolean {
   const address = input.trim().replace(/^\[|\]$/g, "");
-  const version = isIP(address.split("%")[0] ?? "");
+  const clean = address.split("%")[0] ?? "";
+  const version = isIP(clean);
   if (version === 4) return v4List.check(address, "ipv4");
   if (version !== 6) return true;
-  const clean = address.split("%")[0]!;
   const v4 = embeddedIpv4(clean);
   if (v4 !== null && v4List.check(v4, "ipv4")) return true;
   return v6List.check(clean, "ipv6");

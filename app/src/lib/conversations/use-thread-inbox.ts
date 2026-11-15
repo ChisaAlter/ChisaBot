@@ -193,7 +193,8 @@ export function useThreadInbox(
       return workers.some(
         (worker) =>
           Boolean(worker.resultMessageId) &&
-          !have.has(worker.resultMessageId!) &&
+          typeof worker.resultMessageId === "string" &&
+          !have.has(worker.resultMessageId) &&
           Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
             10 * 60_000,
       );
@@ -210,8 +211,9 @@ export function useThreadInbox(
           (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
             10 * 60_000 &&
             (worker.status === "cancelled"
-              ? Boolean(worker.resultMessageId) &&
-                !have.has(worker.resultMessageId!)
+              ? Boolean(
+                  worker.resultMessageId && !have.has(worker.resultMessageId),
+                )
               : !worker.resultMessageId || !have.has(worker.resultMessageId))),
       );
     };

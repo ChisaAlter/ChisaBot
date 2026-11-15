@@ -398,9 +398,9 @@ export function ComputerView({
     const delays = [0, 400, 1200];
 
     void (async () => {
-      for (let i = 0; i < delays.length; i += 1) {
-        if (delays[i]! > 0) {
-          await new Promise((r) => setTimeout(r, delays[i]));
+      for (const delay of delays) {
+        if (delay > 0) {
+          await new Promise((r) => setTimeout(r, delay));
         }
         if (!current) return;
         const stored = await readPageFrame(computerId, toolCallId);

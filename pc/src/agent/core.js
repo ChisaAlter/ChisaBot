@@ -197,13 +197,13 @@ function createNodeAgent(options) {
   }
 
   function fullAccessOn() {
-    return !!(device && device.fullAccess && !fullAccessExpired && fullAccessAccepted && fullAccessAccepted === device.fullAccessUntil);
+    return !!(device?.fullAccess && !fullAccessExpired && fullAccessAccepted && fullAccessAccepted === device.fullAccessUntil);
   }
 
   /** 收到新配置时：完全访问刚开 → 本机确认一次；关了 / 到期 → 结束后台命令和管理员助手。 */
   function syncFullAccess(previous) {
     clearTimeout(fullAccessTimer);
-    const wasOn = previous && previous.fullAccess;
+    const wasOn = previous?.fullAccess;
     if (!device?.fullAccess) {
       fullAccessAccepted = null;
       fullAccessExpired = false;
@@ -303,7 +303,7 @@ function createNodeAgent(options) {
       if (controller.signal.aborted) return reply(false, "已取消。");
       reply(true, result);
     } catch (error) {
-      reply(false, error && error.message ? error.message : String(error));
+      reply(false, error?.message ? error.message : String(error));
     }
   }
 
@@ -399,7 +399,7 @@ function createNodeAgent(options) {
         ...(agent ? { agent } : {}),
       });
     } catch (error) {
-      lastError = error && error.message ? error.message : String(error);
+      lastError = error?.message ? error.message : String(error);
       setState("offline", lastError);
       scheduleReconnect();
       return;
@@ -481,7 +481,7 @@ function createNodeAgent(options) {
     ws.on("error", (error) => {
       // stop()/reconnectNow() 主动丢弃的连接（可能还在握手中，ws 会报「closed before the connection was established」）不再上报。
       if (socket !== ws) return;
-      lastError = error && error.message ? error.message : String(error);
+      lastError = error?.message ? error.message : String(error);
       events.emit("error", error);
     });
   }

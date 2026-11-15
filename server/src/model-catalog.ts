@@ -219,7 +219,8 @@ function project(body: unknown): ModelCatalogEntry[] {
       : safeText(row.magpie_label)
         ? row.magpie_label
         : row.id;
-    const prefix = row.id.includes("/") ? row.id.split("/")[0]! : undefined;
+    const slash = row.id.indexOf("/");
+    const prefix = slash >= 0 ? row.id.slice(0, slash) : undefined;
     const provider =
       prefix ?? (safeText(row.owned_by, 200) ? row.owned_by : "");
     const context =

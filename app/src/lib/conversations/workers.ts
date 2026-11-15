@@ -49,7 +49,8 @@ export function useThreadWorkers(threadId: string | null | undefined) {
     queryKey: workerKeys.thread(threadId ?? ""),
     enabled: Boolean(threadId),
     queryFn: async (): Promise<WorkerView[]> => {
-      const response = await tryClient(workersApi(threadId!));
+      if (!threadId) return [];
+      const response = await tryClient(workersApi(threadId));
       if (!response.ok) return [];
       return (
         ((await response.json()) as { workers?: WorkerView[] }).workers ?? []

@@ -73,7 +73,7 @@ function mapIntoCopy(args, ctx) {
 
 function resolveIn(workdir, p, ctx) {
   const resolved = path.resolve(workdir, String(p || "."));
-  if (ctx && ctx.disposable && !isInside(resolved, [workdir])) {
+  if (ctx?.disposable && !isInside(resolved, [workdir])) {
     throw new Error(`路径不能跳出工作目录：${p}`);
   }
   return real(resolved);
@@ -137,7 +137,7 @@ function runCommand(command, { workdir, timeoutSec, signal, isolation, network, 
     if (isolation === "docker" || isolation === "podman") ({ file, args } = wrap({ isolation, workdir, network, file: "sh", args: ["-c", command], containerImage }));
     else if (win) {
       file = "powershell.exe";
-      const script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" + command;
+      const script = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;${command}`;
       args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
       if (isolation === "wsl") ({ file, args } = wrap({ isolation, workdir, network, file: "sh", args: ["-c", command] }));
     } else ({ file, args } = wrap({ isolation, workdir, network, file: "/bin/sh", args: ["-c", command] }));
@@ -283,7 +283,7 @@ async function localModel({ baseUrl, model }, system, messages, signal) {
   });
   if (!response.ok) throw new Error(`本地模型返回 ${response.status}：${(await response.text()).slice(0, 200)}`);
   const body = await response.json();
-  const message = body.choices && body.choices[0] && body.choices[0].message;
+  const message = body.choices?.[0]?.message;
   if (!message) throw new Error("本地模型没有返回内容。");
   const content = [];
   if (message.content) content.push({ type: "text", text: String(message.content) });
@@ -354,7 +354,7 @@ async function runBuiltin(ctx) {
       try {
         output = await executeTool(call.toolName, args, ctx);
       } catch (error) {
-        output = `失败：${error && error.message ? error.message : String(error)}`;
+        output = `失败：${error?.message ? error.message : String(error)}`;
       }
       messages.push({ role: "tool", toolCallId: call.toolCallId, toolName: call.toolName, output: clip(String(output)) });
     }

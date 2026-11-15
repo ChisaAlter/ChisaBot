@@ -23,8 +23,9 @@ export function ScheduleNotifier() {
       try {
         const { events, now } = await scheduleEvents(since.current, controller.signal);
         if (stopped) return;
-        if (events.length) {
-          since.current = events[events.length - 1]!.finishedAt;
+        const lastEvent = events.at(-1);
+        if (lastEvent) {
+          since.current = lastEvent.finishedAt;
           await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
         } else if (now) {
           // 服务器时钟为准，往前留 5 秒余量（跑完和查询同一秒）。

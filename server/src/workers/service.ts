@@ -95,8 +95,11 @@ const ACTIVE: WorkerStatus[] = ["queued", "running", "waiting"];
 export const CANCELLED_BY_USER =
   "你在任务卡片上停止了这个任务，它没有做完。需要的话可以让我重新做。";
 
-const iso = (value: Date | string | null) =>
-  value ? new Date(value).toISOString() : null;
+function iso(value: Date | string): string;
+function iso(value: Date | string | null | undefined): string | null;
+function iso(value: Date | string | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
 const clip = (text: string, limit: number) =>
   text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 
@@ -141,7 +144,7 @@ function view(
       : null,
     error: row.error,
     resultMessageId: row.result_message_id,
-    createdAt: iso(row.created_at)!,
+    createdAt: iso(row.created_at),
     startedAt: iso(row.started_at),
     finishedAt: iso(row.finished_at),
   };
@@ -232,7 +235,8 @@ export function createWorkerService(
     );
     const messages = rows[0]?.messages ?? [];
     for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index]!;
+      const message = messages[index];
+      if (!message) continue;
       if (message.role === "user") break;
       if (message.role === "assistant" && textOfContent(message).trim())
         return textOfContent(message);
@@ -674,7 +678,7 @@ export function createWorkerService(
               status: index === 0 ? "current" : "pending",
             }) as WorkerPlanStep,
         );
-      const rows = await sql.unsafe<WorkerRow[]>(
+      const [inserted] = await sql.unsafe<WorkerRow[]>(
         `INSERT INTO chisabot_workers (id, owner_user_id, parent_thread_id, agent_id, thread_id, title, task, status, plan)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8::text::jsonb) RETURNING *`,
         [
@@ -688,8 +692,9 @@ export function createWorkerService(
           JSON.stringify(plan),
         ],
       );
+      if (!inserted) throw new Error("后台任务创建后没有返回记录。");
       void pump();
-      return view(rows[0]!);
+      return view(inserted);
     },
 
     async get(id) {

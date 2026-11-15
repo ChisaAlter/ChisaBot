@@ -35,7 +35,7 @@ const PRELOAD = path.join(SRC, "preload.js");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let dark = false;
-let current = { approval: null, confirm: null, update: null };
+const current = { approval: null, confirm: null, update: null };
 const log = [];
 
 function state() {

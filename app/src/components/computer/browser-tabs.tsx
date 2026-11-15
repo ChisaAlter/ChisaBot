@@ -148,8 +148,9 @@ export function TabStrip({
     const key = event.key;
     if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
     const ids = view.tabs.map((tab) => tab.id);
-    if (ids.length === 0) return;
-    const current = activeId ?? view.tabs.find((tab) => tab.active)?.id ?? ids[0]!;
+    const firstId = ids[0];
+    if (firstId === undefined) return;
+    const current = activeId ?? view.tabs.find((tab) => tab.active)?.id ?? firstId;
     const at = Math.max(0, ids.indexOf(current));
     const next =
       key === "Home"
@@ -160,7 +161,8 @@ export function TabStrip({
             ? (at - 1 + ids.length) % ids.length
             : (at + 1) % ids.length;
     event.preventDefault();
-    const id = ids[next]!;
+    const id = ids[next];
+    if (id === undefined) return;
     strip.current?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.focus();
     if (view.running && id !== current) void run(`a:${id}`, "activate", id);
   };

@@ -489,7 +489,9 @@ export function createConfirmations(
        ON CONFLICT (owner_user_id, category) DO UPDATE SET mode = EXCLUDED.mode, note = EXCLUDED.note, updated_at = now()`,
       [owner, category, mode, note?.trim() || null],
     );
-    return (await prefs(owner)).find((p) => p.category === category)!;
+    const pref = (await prefs(owner)).find((p) => p.category === category);
+    if (!pref) throw new Error(`保存确认偏好后未找到分类：${category}`);
+    return pref;
   }
   async function rules(owner: string): Promise<ConfirmRuleView[]> {
     const rows = await sql.unsafe<RuleRow[]>(
@@ -554,7 +556,9 @@ export function createConfirmations(
         by.agentId ?? null,
       ],
     );
-    return ruleView(rows[0]!);
+    const inserted = rows[0];
+    if (!inserted) throw new Error(`写入确认规则后未返回行：${id}`);
+    return ruleView(inserted);
   }
   async function removeRule(owner: string, id: string) {
     const rows = await sql.unsafe(
@@ -879,9 +883,9 @@ export function createConfirmations(
           );
         return saved;
       });
-      return requestWithContinuation(
-        updated ?? (await requestById(owner, id))!,
-      );
+      const next = updated ?? (await requestById(owner, id));
+      if (!next) throw new ConfirmError("找不到这张确认卡片。");
+      return requestWithContinuation(next);
     }
     const updated = await setStatus(
       id,

@@ -136,8 +136,10 @@ const IMAGE_SIZE_LIMIT = 500;
 
 function rememberSize(src: string, size: { width: number; height: number }) {
   if (imageSizes.has(src)) return;
-  if (imageSizes.size >= IMAGE_SIZE_LIMIT)
-    imageSizes.delete(imageSizes.keys().next().value!);
+  if (imageSizes.size >= IMAGE_SIZE_LIMIT) {
+    const oldest = imageSizes.keys().next();
+    if (!oldest.done) imageSizes.delete(oldest.value);
+  }
   imageSizes.set(src, size);
 }
 
@@ -274,8 +276,9 @@ export function ImagePile({
   }
   const markBroken = (src: string) => setBroken((b) => ({ ...b, [src]: true }));
 
-  if (shown.length === 1) {
-    const image = shown[0]!;
+  const single = shown.length === 1 ? shown[0] : undefined;
+  if (single) {
+    const image = single;
     const actualSrc = image.thumb ?? image.src;
     return (
       <div className="rp-images" data-align={align}>

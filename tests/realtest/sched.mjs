@@ -7,12 +7,12 @@ const SEND_URL = process.env.SEND_URL || "https://echo.websocket.org/.ws"; // �
 const MARK = process.env.MARK || `定时测试${Date.now() % 10000}`;
 const ctx = await context({});
 const page = await newPage(ctx, "s");
-await page.goto(base + "/", { waitUntil: "domcontentloaded" });
+await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
 const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const r = await call("/api/agents", { method: "POST", body: JSON.stringify({ name: `临时定时${process.env.NAME || ""}`, title: "临时测试（会删除）", roleDescription: "我的私人助手：回答问题、查资料、帮我把事情办好。", visibility: "private" }) });
 const bot = trackBot(JSON.parse(r.body).agent.id);
-fs.appendFileSync("/out/bots.txt", bot + "\n");
+fs.appendFileSync("/out/bots.txt", `${bot}\n`);
 if (process.env.MODEL) { const m = await call(`/api/agents/${bot}/model`, { method: "PUT", body: JSON.stringify({ model: process.env.MODEL }) }); log("bot model", process.env.MODEL, m.status); }
 log("bot", bot);
 const res = { steps: [] };
@@ -29,7 +29,7 @@ try {
   res.schedules = sch.body.slice(0, 800);
   step(`created; thread ${tid}; schedules ${sch.status}`);
   // 用户离开聊天（去设置页），任务到点在后台跑
-  await page.goto(base + "/settings", { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" });
   step("left chat → /settings");
   let card = false;
   const deadline = Date.now() + 9 * 60000;

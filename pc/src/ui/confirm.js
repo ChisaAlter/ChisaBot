@@ -1,5 +1,5 @@
 "use strict";
-(async function () {
+(async () => {
   const req = await window.chisa.invoke("confirm:current");
   if (!req) return window.close();
   const $ = (id) => document.getElementById(id);

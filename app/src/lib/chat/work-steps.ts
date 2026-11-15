@@ -81,8 +81,8 @@ export function summarizeWork(calls: readonly WorkCall[]): WorkSummary | null {
   const running = calls.filter((call) => isWorkCall(call.name) && workCallState(call, true) === "running");
   let current = parallelLabel(running) ?? "";
   for (let i = calls.length - 1; i >= 0 && !current; i--) {
-    const call = calls[i]!;
-    if (PREP.has(call.name)) continue;
+    const call = calls[i];
+    if (!call || PREP.has(call.name)) continue;
     const line = describeWorkerStep(call.name, parseArgs(call.arguments)) ?? "";
     // 没有中文说法的工具（skill_load 等）不当「当前步骤」，往前找一个说得出来的；都没有就「正在处理」（§69.3 不给用户看工具名）。
     current = line.startsWith("正在使用 ") ? "" : line;
@@ -231,8 +231,11 @@ export function workTimeline(
   const lines: WorkTimelineLine[] = [];
   const pending = [...notes].sort((a, b) => a.at - b.at);
   const flush = (upTo: number) => {
-    while (pending.length && pending[0]!.at <= upTo) {
-      const text = plainNote(pending.shift()!.text);
+    while (pending.length) {
+      const next = pending[0];
+      if (!next || next.at > upTo) break;
+      pending.shift();
+      const text = plainNote(next.text);
       if (text && !isBlankNote(text) && lines.at(-1)?.text !== text) lines.push({ kind: "note", text });
     }
   };

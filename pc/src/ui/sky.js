@@ -61,7 +61,7 @@ function computeSky(minuteOfDay, dark) {
     const y = parse(b);
     const ch = (i) => Math.round(x[i] + (y[i] - x[i]) * t);
     const al = Math.round((x[3] + (y[3] - x[3]) * t) * alphaScale * 1000) / 1000;
-    return "rgba(" + ch(0) + "," + ch(1) + "," + ch(2) + "," + al + ")";
+    return `rgba(${ch(0)},${ch(1)},${ch(2)},${al})`;
   };
   const num = (a, b, t) => Math.round((a + (b - a) * t) * 1000) / 1000;
 
@@ -97,8 +97,8 @@ function computeSky(minuteOfDay, dark) {
       "--sky-4": mix(p0[3], p1[3], t, 1),
       "--sky-cloud": mix(p0[4], p1[4], t, 1),
       "--sky-glow": mix(p0[5], p1[5], t, fade),
-      "--sky-glow-x": Math.round((8 + 84 * u) * 10) / 10 + "%",
-      "--sky-glow-y": Math.round((80 - 64 * arc) * 10) / 10 + "%",
+      "--sky-glow-x": `${Math.round((8 + 84 * u) * 10) / 10}%`,
+      "--sky-glow-y": `${Math.round((80 - 64 * arc) * 10) / 10}%`,
       "--sky-stars": String(num(p0[6], p1[6], t)),
     },
     root: {

@@ -124,7 +124,7 @@ export async function truncateConversation(
       );
     throw new TruncateFailed(reason ?? "没能重发，稍后再试。");
   }
-  const removed = Array.isArray(body?.removed) ? body!.removed.map(String) : [];
+  const removed = body && Array.isArray(body.removed) ? body.removed.map(String) : [];
   const revision =
     typeof body?.revision === "string"
       ? body.revision

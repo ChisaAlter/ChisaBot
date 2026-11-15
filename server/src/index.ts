@@ -1422,16 +1422,23 @@ if (config.dshKernel) {
   await bindings.ensure();
   await operations.ensure();
   dshToolGateway = createDshToolGateway(operations, journal);
-  dshTargetFor = config.dshKernel.targetsFile
-    ? await loadDshTargets(config.dshKernel.targetsFile)
-    : (
-        await import("./conversations/managed-runtime")
-      ).createManagedDshRuntimes({
-        root: config.dshKernel.root!,
-        gatewayUrl:
-          config.dshKernel.gatewayUrl ??
-          `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
-      }).targetFor;
+  if (config.dshKernel.targetsFile) {
+    dshTargetFor = await loadDshTargets(config.dshKernel.targetsFile);
+  } else {
+    if (!config.dshKernel.root) {
+      throw new Error(
+        "DSH kernel root is required when targetsFile is not configured.",
+      );
+    }
+    dshTargetFor = (
+      await import("./conversations/managed-runtime")
+    ).createManagedDshRuntimes({
+      root: config.dshKernel.root,
+      gatewayUrl:
+        config.dshKernel.gatewayUrl ??
+        `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+    }).targetFor;
+  }
   setAgentKernel({
     kind: "dsh",
     binding: {
@@ -1586,7 +1593,10 @@ const deviceToolsFor = async (
     const workspace = gateway?.writeBytes
       ? {
           write: async (path: string, bytes: Buffer) => {
-            await gateway.writeBytes!(
+            if (!gateway.writeBytes) {
+              throw new Error("computerGateway.writeBytes is unavailable.");
+            }
+            await gateway.writeBytes(
               botId,
               { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
               { path, base64: bytes.toString("base64") },
@@ -1650,7 +1660,12 @@ const browserBookmarks = createBrowserBookmarks(database, {
         pushStartLinks: (
           botId: string,
           links: { title: string; url: string }[],
-        ) => computerGateway.startLinks!(botId, links),
+        ) => {
+          if (!computerGateway.startLinks) {
+            throw new Error("computerGateway.startLinks is unavailable.");
+          }
+          return computerGateway.startLinks(botId, links);
+        },
       }
     : {}),
 });
@@ -1779,7 +1794,10 @@ const chatFiles = createChatFiles(database, {
             path: string,
             bytes: Buffer,
           ) => {
-            await computerGateway.writeBytes!(
+            if (!computerGateway.writeBytes) {
+              throw new Error("computerGateway.writeBytes is unavailable.");
+            }
+            await computerGateway.writeBytes(
               bot,
               { id: owner, userId: owner, initiator: PERSON_INITIATOR },
               { path, base64: bytes.toString("base64") },
@@ -2966,6 +2984,10 @@ imService = createImService({
   },
 });
 await imService.ensure();
+const readyImService = imService;
+if (!readyImService) {
+  throw new Error("imService unavailable");
+}
 
 /*
  * 定时任务 / 提醒（server/src/schedules，DESIGN.md §55，docs/schedules.md）：在对话里设，到点回到那段对话；
@@ -2975,7 +2997,7 @@ const schedules = createSchedules(database, {
   runTurn: governedTurnRunner,
   runImTurn: imTurnRunner,
   pushToIm: (threadId, text, options) =>
-    imService!.pushToThread(threadId, text, options),
+    readyImService.pushToThread(threadId, text, options),
   isThreadActive: (threadId) =>
     localBackend?.control.isActive(threadId) ?? false,
   ...(localBackend
@@ -3114,8 +3136,10 @@ const taskCenter = createTaskCenterRuntime({
             (await agentProfileStore.get(await actorFor(ownerUserId), agentId))
               ?.name ?? null,
         }),
-        listAgentInstances: (ownerUserId: string) =>
-          localAgents!.instances.listInstances(ownerUserId),
+        listAgentInstances: (ownerUserId: string) => {
+          if (!localAgents) throw new Error("localAgents unavailable");
+          return localAgents.instances.listInstances(ownerUserId);
+        },
       }
     : {}),
 });
@@ -3138,12 +3162,14 @@ const panelTaskService = createNormalPanelTaskService({
   },
   isWaiting: (error) => error instanceof HeadlessToolSuspension,
   run: async (input) => {
+    const runId = input.runId;
+    if (!runId) throw new Error("panelTaskService run requires runId");
     const actor = await actorFor(input.ownerUserId),
       source = await channelSourceForRun({
         actorId: input.ownerUserId,
         botId: input.agentId,
         threadId: input.threadId,
-        runId: input.runId!,
+        runId,
         depth: 0,
       });
     if (!source) throw new PanelError("task_binding_refused", 403);
@@ -3151,12 +3177,12 @@ const panelTaskService = createNormalPanelTaskService({
       actor,
       source.channelId,
       { text: input.instruction, agentId: null, at: new Date() },
-      { id: `${input.runId}:input` },
+      { id: `${runId}:input` },
     );
     const outcome = await governedTurnRunner({
       ...input,
       userMessage: {
-        id: `${input.runId}:input`,
+        id: `${runId}:input`,
         role: "user",
         content: input.instruction,
       },
@@ -3166,7 +3192,7 @@ const panelTaskService = createNormalPanelTaskService({
         actor,
         source.channelId,
         { text: outcome.replyText, agentId: input.agentId, at: new Date() },
-        { id: `${input.runId}:reply` },
+        { id: `${runId}:reply` },
       );
     return outcome;
   },
@@ -3485,11 +3511,12 @@ const actorAgentResolver = createActorAgentResolver({
         input.threadId &&
         !input.threadId.startsWith("worker-") &&
         !(await isGroupChannelThread(input.threadId).catch(() => true));
-      const delegated = delegating
+      const activeWorkerService = delegating ? workerService : undefined;
+      const delegated = activeWorkerService
         ? [
             ...coordinated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              workerService!.delegationTools({
+              activeWorkerService.delegationTools({
                 ownerUserId: actorId,
                 agentId: botId,
                 threadId: input.threadId,
@@ -4908,7 +4935,7 @@ const app = createApp(
       ["/api/live-panels", livePanelService.routes(requireUser)],
       ["/api/chat-shots", chatShots.routes(requireUser)],
       ["/api/bot-threads", botThreads.routes(requireUser)],
-      ["/api/im", imService!.routes(requireUser)],
+      ["/api/im", readyImService.routes(requireUser)],
       ["/api/memory-notes", memoryNotes.routes(requireUser)],
       ["/api/bot-avatars", botAvatars.routes(requireUser)],
       ["/api/browser-bookmarks", browserBookmarks.routes(requireUser)],

@@ -526,7 +526,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (pointers.current.size === 2) {
             const [a, b] = [...pointers.current.values()];
-            pinch.current = { distance: Math.hypot(a!.x - b!.x, a!.y - b!.y), zoom };
+            if (a && b) pinch.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom };
           }
         }}
         onPointerMove={(event) => {
@@ -535,7 +535,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (pointers.current.size === 2 && pinch.current) {
             const [a, b] = [...pointers.current.values()];
-            zoomTo((pinch.current.zoom * Math.hypot(a!.x - b!.x, a!.y - b!.y)) / pinch.current.distance);
+            if (a && b) zoomTo((pinch.current.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / pinch.current.distance);
             return;
           }
           setOffset((current) => clamp({ x: current.x + event.clientX - last.x, y: current.y + event.clientY - last.y }));

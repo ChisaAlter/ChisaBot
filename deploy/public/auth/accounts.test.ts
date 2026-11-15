@@ -116,7 +116,7 @@ describe("invites closed (default since 2026-10-15)", () => {
     expect(list.accounts.length).toBe(2);
     expect((await service.fetch(req("/auth/admin/invites", { body: { hours: 24 }, cookie: admin2 }))).status).toBe(403);
     expect((await service.fetch(req("/auth/admin/accounts", { body: { username: "direct1", password: "password-123" }, cookie: admin2 }))).status).toBe(403);
-    expect((await service.fetch(req("/auth/invite?token=" + pending))).status).toBe(404);
+    expect((await service.fetch(req(`/auth/invite?token=${pending}`))).status).toBe(404);
     // 已有的朋友照常用。
     expect((await service.fetch(req("/_internal/check", { cookie: made.cookie }))).status).toBe(200);
     expect((await service.fetch(req("/auth/login", { body: { username: "friend8", password: "friend-password-8" } }))).status).toBe(200);
@@ -367,7 +367,7 @@ describe("admin-only entries and phone sessions", () => {
     await friend(service, admin);
     const list = await (await service.fetch(req("/auth/admin/accounts", { cookie: admin }))).json();
     const friendId = list.accounts[1].id as string;
-    const phone = (token = "cbd_" + "a".repeat(43)) => service.fetch(req("/auth/device-session", { body: {}, headers: { "X-Device-Token": token } }));
+    const phone = (token = `cbd_${"a".repeat(43)}`) => service.fetch(req("/auth/device-session", { body: {}, headers: { "X-Device-Token": token } }));
     // 管理员的手机 → 管理员身份。
     let response = await phone();
     expect(response.status).toBe(200);

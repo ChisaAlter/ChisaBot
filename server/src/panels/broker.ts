@@ -655,9 +655,10 @@ export function createPanelBroker(options: {
       let cancel: (() => Promise<void>) | undefined;
       if (["running", "confirmed", "waiting", "unknown"].includes(row.status)) {
         const { cap, adapter } = await historicalCapability(row);
-        if (!adapter.cancel)
+        const cancelTask = adapter.cancel?.bind(adapter);
+        if (!cancelTask)
           throw new PanelError("normal_run_cancel_unavailable", 409);
-        cancel = () => adapter.cancel!(frozenTask(row, cap));
+        cancel = () => cancelTask(frozenTask(row, cap));
       }
       await db.transaction(async (tx) => {
         const [current] = await tx

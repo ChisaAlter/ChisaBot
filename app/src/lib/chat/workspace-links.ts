@@ -24,8 +24,8 @@ export function workspacePathOf(target: string): string | null {
   } else if (/^[a-z][a-z0-9+.-]*:/i.test(t)) {
     // 带协议的：只认 file:/// 和 sandbox: 指向工作区的；别的（https、mailto、data…）不是工作区文件
     const m = /^(?:file:\/\/|sandbox:)(\/[^?#]*)/i.exec(t);
-    if (!m) return null;
-    t = m[1]!;
+    if (!m?.[1]) return null;
+    t = m[1];
   }
   try {
     t = decodeURIComponent(t);

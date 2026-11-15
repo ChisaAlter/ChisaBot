@@ -1990,8 +1990,8 @@ export function ChannelChat({
   const regenerate = useCallback(async () => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
-    if (at < 0) throw new Error("没有可以重新生成的回答。");
-    const user = list[at]!;
+    const user = at >= 0 ? list[at] : undefined;
+    if (!user) throw new Error("没有可以重新生成的回答。");
     await resendRef.current(
       user.id,
       "regenerate",
@@ -2005,8 +2005,8 @@ export function ChannelChat({
   const retryUnanswered = useCallback(() => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
-    if (at < 0) return;
-    const user = list[at]!;
+    const user = at >= 0 ? list[at] : undefined;
+    if (!user) return;
     void resendRef
       .current(user.id, "regenerate", user.content as Message["content"])
       .catch(reportRetryRefusal);
@@ -2695,7 +2695,8 @@ function HistoryNotice({
 /** 最后一条用户消息之后已经有回答或工具调用（这一轮机器人已经接着它做了事）。 */
 export function turnAnswered(list: readonly Message[]): boolean {
   for (let i = list.length - 1; i >= 0; i -= 1) {
-    const message = list[i]!;
+    const message = list[i];
+    if (!message) continue;
     if (message.role === "user") return false;
     if (message.role === "assistant" || message.role === "tool") return true;
   }

@@ -74,24 +74,22 @@ export function BrandAvatar({ size = 28 }: { size?: number }) {
 export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
   const { accent, rest } = useBrandName();
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              aria-label={`${accent}${rest}，点击修改名称`}
-              className="brand-mark-btn"
-              onClick={() => openAccountDialog("brand")}
-              type="button"
-            />
-          }
-        >
-          {avatar ? <BrandAvatar /> : null}
-          <BrandWordmark accent={accent} rest={rest} />
-        </TooltipTrigger>
-        <TooltipContent>{"点击修改名称"}</TooltipContent>
-      </Tooltip>
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            aria-label={`${accent}${rest}，点击修改名称`}
+            className="brand-mark-btn"
+            onClick={() => openAccountDialog("brand")}
+            type="button"
+          />
+        }
+      >
+        {avatar ? <BrandAvatar /> : null}
+        <BrandWordmark accent={accent} rest={rest} />
+      </TooltipTrigger>
+      <TooltipContent>{"点击修改名称"}</TooltipContent>
+    </Tooltip>
   );
 }
 

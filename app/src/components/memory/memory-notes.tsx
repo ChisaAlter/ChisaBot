@@ -114,7 +114,7 @@ export function NoteRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const title = note.subject ?? note.content.split("\n")[0]!;
+  const title = note.subject ?? (note.content.split("\n")[0] ?? "");
   const body = note.subject
     ? note.content
     : note.content.split("\n").slice(1).join(" ");

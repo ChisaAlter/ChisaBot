@@ -58,7 +58,8 @@ function move<T>(list: T[], index: number, delta: number): T[] {
   if (target < 0 || target >= list.length) return list;
   const copy = [...list];
   const [item] = copy.splice(index, 1);
-  copy.splice(target, 0, item!);
+  if (item === undefined) return list;
+  copy.splice(target, 0, item);
   return copy;
 }
 
@@ -418,7 +419,7 @@ export function WorkflowEditor({ value, onChange, readOnly }: { value: WorkflowD
                 disabled={def.steps.length >= 30}
                 onClick={() => {
                   const id = nextKey("step", def.steps.map((s) => s.id));
-                  set({ steps: [...def.steps, { id, name: `第 ${def.steps.length + 1} 步`, bot: def.bots[0]!.key, prompt: "" }] });
+                  set({ steps: [...def.steps, { id, name: `第 ${def.steps.length + 1} 步`, bot: def.bots[0]?.key ?? "", prompt: "" }] });
                 }}
                 size="sm"
                 type="button"

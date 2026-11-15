@@ -53,7 +53,7 @@ for (const endpoint of endpoints) {
       body: JSON.stringify(endpoint.body),
     });
     if (!response.ok) {
-      failures.push(endpoint.path + ": HTTP " + response.status);
+      failures.push(`${endpoint.path}: HTTP ${response.status}`);
       continue;
     }
     const result = (await response.json()) as {
@@ -74,16 +74,16 @@ for (const endpoint of endpoints) {
       verified = endpoint.path;
       break;
     }
-    failures.push(endpoint.path + ": no standard tool call");
+    failures.push(`${endpoint.path}: no standard tool call`);
   } catch {
-    failures.push(endpoint.path + ": request failed");
+    failures.push(`${endpoint.path}: request failed`);
   }
 }
 if (!verified)
-  throw new Error("Model tool-call preflight failed: " + failures.join("; "));
+  throw new Error(`Model tool-call preflight failed: ${failures.join("; ")}`);
 await Bun.write(
   "/deployment/model-preflight.json",
-  JSON.stringify(
+  `${JSON.stringify(
     {
       model,
       tool_call: true,
@@ -92,6 +92,6 @@ await Bun.write(
     },
     null,
     2,
-  ) + "\n",
+  )}\n`,
 );
 console.log("Model tool-call preflight passed:", model);

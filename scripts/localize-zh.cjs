@@ -147,7 +147,7 @@ function textOf(node, tree) {
     return (
       node.head.text +
       node.templateSpans
-        .map((span, index) => `__VAR_${index}__` + span.literal.text)
+        .map((span, index) => `__VAR_${index}__${span.literal.text}`)
         .join("")
     );
   }
@@ -194,7 +194,7 @@ if (process.argv.includes("--extract")) {
   fs.mkdirSync(path.join(root, "work"), { recursive: true });
   fs.writeFileSync(
     path.join(root, "work/zh-candidates.json"),
-    JSON.stringify(output, null, 2) + "\n",
+    `${JSON.stringify(output, null, 2)}\n`,
   );
   console.log(`${records.size} visible strings extracted.`);
 } else {
@@ -228,7 +228,7 @@ if (process.argv.includes("--extract")) {
         node.templateSpans.forEach((span, index) => {
           replacement = replacement.replace(
             `__VAR_${index}__`,
-            "${" + span.expression.getText(tree) + "}",
+            `\${${span.expression.getText(tree)}}`,
           );
         });
       }
@@ -257,7 +257,7 @@ if (process.argv.includes("--extract")) {
   fs.mkdirSync(path.join(root, "work"), { recursive: true });
   fs.writeFileSync(
     path.join(root, "work/zh-untranslated.json"),
-    JSON.stringify(missing, null, 2) + "\n",
+    `${JSON.stringify(missing, null, 2)}\n`,
   );
   console.log(
     `${count} strings localized in ${changed} files; ${missing.length} remaining candidates.`,

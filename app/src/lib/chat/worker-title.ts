@@ -8,7 +8,7 @@ export function pendingWorkerTitle(given: { title?: unknown; task?: unknown } | 
   if (title) return title;
   const task = typeof given?.task === "string" ? given.task.replace(/\s+/g, " ").trim() : "";
   if (!task) return undefined;
-  const first = task.split(/[。！？!?；;\n]/)[0]!.trim() || task;
+  const first = (task.split(/[。！？!?；;\n]/)[0] ?? "").trim() || task;
   const chars = Array.from(first);
   return chars.length > 18 ? `${chars.slice(0, 18).join("").trimEnd()}…` : first;
 }

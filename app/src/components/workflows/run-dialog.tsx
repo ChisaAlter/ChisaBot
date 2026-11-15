@@ -72,10 +72,18 @@ export function RunWorkflowDialog({
     setFailure(null);
   }, [def]);
   useEffect(() => {
-    if (!def || roster.length === 0) return;
-    const fallback = roster.find((b) => b.id === mainBotId)?.id ?? roster[0]!.id;
+    const firstBot = roster[0];
+    if (!def || !firstBot) return;
+    const fallback = roster.find((b) => b.id === mainBotId)?.id ?? firstBot.id;
     setBindings(
-      Object.fromEntries(def.bots.map((role) => [role.key, roster.some((b) => b.id === role.botId) ? role.botId! : fallback])),
+      Object.fromEntries(
+        def.bots.map((role) => [
+          role.key,
+          role.botId && roster.some((b) => b.id === role.botId)
+            ? role.botId
+            : fallback,
+        ]),
+      ),
     );
   }, [def, roster, mainBotId]);
 

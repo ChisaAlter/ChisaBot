@@ -872,7 +872,8 @@ function renderSequenceSvg(lines: string[]): string {
 
   const ensureActor = (idRaw: string, labelRaw?: string): number => {
     const id = idRaw.trim();
-    if (pMap.has(id)) return pMap.get(id)!;
+    const existing = pMap.get(id);
+    if (existing !== undefined) return existing;
     const idx = participants.length;
     participants.push({
       id,
@@ -889,22 +890,22 @@ function renderSequenceSvg(lines: string[]): string {
     const pm = /^(?:participant|actor)\s+([^\s]+)(?:\s+as\s+(.+))?$/i.exec(
       line,
     );
-    if (pm) {
-      ensureActor(pm[1]!, pm[2]);
+    if (pm?.[1]) {
+      ensureActor(pm[1], pm[2]);
       continue;
     }
     const mm =
       /^([^\s\-:]+)\s*(-->>|->>|-->|->|--x|-x)\s*([^\s:]+)\s*:\s*(.*)$/.exec(
         line,
       );
-    if (mm) {
-      const from = ensureActor(mm[1]!);
-      const to = ensureActor(mm[3]!);
+    if (mm?.[1] && mm[2] && mm[3]) {
+      const from = ensureActor(mm[1]);
+      const to = ensureActor(mm[3]);
       messages.push({
         from,
         to,
-        text: mm[4]!.trim(),
-        dashed: mm[2]!.startsWith("--"),
+        text: (mm[4] ?? "").trim(),
+        dashed: mm[2].startsWith("--"),
       });
     }
   }

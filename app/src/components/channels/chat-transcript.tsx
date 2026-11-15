@@ -4552,7 +4552,8 @@ export function lastAnswerId(
   hidden: ReadonlySet<string>,
 ): string | null {
   for (let at = items.length - 1; at >= 0; at -= 1) {
-    const item = items[at]!;
+    const item = items[at];
+    if (!item) continue;
     if (item.kind === "attachments") return null;
     if (item.kind !== "text") continue;
     if (isPersonSentMessage(item.role, item.text)) return null;
@@ -4710,15 +4711,21 @@ export function compactTurns(
     (item.kind === "text" &&
       (isPersonSentMessage(item.role, item.text) ||
         (item.role === "user" && serverRowKind(item.text) !== null)));
+  let current: { users: TranscriptItem[]; rest: TranscriptItem[] } = {
+    users: [],
+    rest: [],
+  };
   const turns: { users: TranscriptItem[]; rest: TranscriptItem[] }[] = [
-    { users: [], rest: [] },
+    current,
   ];
   for (const item of items) {
-    const current = turns[turns.length - 1]!;
     if (sent(item)) {
       if (current.rest.length === 0 && current.users.length > 0)
         current.users.push(item);
-      else turns.push({ users: [item], rest: [] });
+      else {
+        current = { users: [item], rest: [] };
+        turns.push(current);
+      }
     } else current.rest.push(item);
   }
   const personTextsOf = (list: readonly TranscriptItem[]) =>
@@ -4783,9 +4790,11 @@ export function compactTurns(
         lastRest?.kind === "tool" &&
         lastRest.toolCall.function.name === "render_ui"
       ) {
-        const promoted = texts[texts.length - 1]!;
-        final = promoted.id;
-        tone.set(promoted.id, "final");
+        const promoted = texts[texts.length - 1];
+        if (promoted) {
+          final = promoted.id;
+          tone.set(promoted.id, "final");
+        }
       }
     }
     /*
@@ -4931,13 +4940,13 @@ export function compactTurns(
         ? prevUsers[prevUsers.length - 1]
         : personUsers[0];
       const lastUser = personUsers[personUsers.length - 1];
-      const firstBot = visibleBotTexts[0]!;
-      const lastBot = visibleBotTexts[visibleBotTexts.length - 1]!;
-      if (firstUser) {
+      const firstBot = visibleBotTexts[0];
+      const lastBot = visibleBotTexts[visibleBotTexts.length - 1];
+      if (firstUser && firstBot) {
         const q1 = formatQuoteText(firstUser.text);
         if (q1) replyTo.set(firstBot.id, { id: firstUser.id, text: q1 });
       }
-      if (lastUser) {
+      if (lastUser && lastBot) {
         const q2 = formatQuoteText(lastUser.text);
         if (q2) replyTo.set(lastBot.id, { id: lastUser.id, text: q2 });
       }
@@ -4948,10 +4957,12 @@ export function compactTurns(
         personUsers.length > 0 &&
         (personUsers.length > 1 || prevInterjected)
       ) {
-        const targetUser = personUsers[personUsers.length - 1]!;
-        const quoteText = formatQuoteText(targetUser.text);
-        if (quoteText)
-          replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
+        const targetUser = personUsers[personUsers.length - 1];
+        if (targetUser) {
+          const quoteText = formatQuoteText(targetUser.text);
+          if (quoteText)
+            replyTo.set(replyTargetId, { id: targetUser.id, text: quoteText });
+        }
       }
     }
     /*

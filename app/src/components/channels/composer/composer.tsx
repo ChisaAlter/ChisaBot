@@ -579,7 +579,7 @@ function ComposerImpl({
           setValue((current) =>
             mergeAdjacentTextSegments([
               ...current,
-              text(isSegmentsEmpty(current) ? addition : "\n" + addition),
+              text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
             ]),
           );
         }

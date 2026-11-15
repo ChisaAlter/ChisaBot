@@ -169,15 +169,19 @@ export function normalizeDirectiveCards(raw: string): string {
   let i = 0;
 
   while (i < rawLines.length) {
-    const line = (rawLines[i] ?? "").trim();
+    const rawLine = rawLines[i];
+    if (rawLine === undefined) break;
+    const line = rawLine.trim();
     // Directives inside a Markdown fence are literal code, including doc/card examples.
     // Ordinary streaming answers keep their Markdown structure throughout the turn.
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLines[i] ?? "");
-    if (fence) {
-      const marker = fence[1]!;
-      step1.push(rawLines[i++]!);
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLine);
+    if (fence?.[1]) {
+      const marker = fence[1];
+      step1.push(rawLine);
+      i++;
       while (i < rawLines.length) {
-        const raw = rawLines[i++]!;
+        const raw = rawLines[i++];
+        if (raw === undefined) break;
         step1.push(raw);
         const close = raw.trim();
         if (
@@ -190,7 +194,7 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line === ":::group") {
-      const groupLines: string[] = [rawLines[i]!];
+      const groupLines: string[] = [rawLine];
       i++;
       let inCard = false;
       while (i < rawLines.length) {
@@ -220,11 +224,13 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line.startsWith(":::card")) {
-      const cardLines: string[] = [rawLines[i]!];
+      const cardLines: string[] = [rawLine];
       i++;
       while (i < rawLines.length) {
-        const cur = (rawLines[i] ?? "").trim();
-        cardLines.push(rawLines[i]!);
+        const raw = rawLines[i];
+        if (raw === undefined) break;
+        const cur = raw.trim();
+        cardLines.push(raw);
         i++;
         if (cur === ":::") break;
       }
@@ -245,7 +251,7 @@ export function normalizeDirectiveCards(raw: string): string {
       continue;
     }
 
-    step1.push(rawLines[i]!);
+    step1.push(rawLine);
     i++;
   }
 
@@ -409,9 +415,9 @@ function parseActionPillSegment(
 ): { label: string; href: string } | null {
   const trimmed = rawText.trim();
   const match = /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.exec(trimmed);
-  if (!match) return null;
-  const label = match[1]!.replace(/[*_`~]+/g, "").trim();
-  const href = match[2]!.trim();
+  if (!match?.[1] || !match[2]) return null;
+  const label = match[1].replace(/[*_`~]+/g, "").trim();
+  const href = match[2].trim();
   if (!label || !href) return null;
   return { label, href };
 }
@@ -1413,9 +1419,9 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
       /^(日期|date|天气|weather|问候|导语|greeting|标题|title)\s*[：:]\s*(.+)$/i.exec(
         l,
       );
-    if (meta && sections.length === 0 && !curSection) {
-      const k = meta[1]!.toLowerCase();
-      const v = meta[2]!.trim();
+    if (meta?.[1] && meta[2] && sections.length === 0 && !curSection) {
+      const k = meta[1].toLowerCase();
+      const v = meta[2].trim();
       if (k === "标题" || k === "title") title = v;
       else if (k === "日期" || k === "date") dateStr = v;
       else if (k === "天气" || k === "weather") weather = v;
@@ -1423,8 +1429,8 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
       continue;
     }
     const hm = /^#{1,4}\s+(.+)$/.exec(l);
-    if (hm) {
-      const h = hm[1]!.trim();
+    if (hm?.[1]) {
+      const h = hm[1].trim();
       curSection = { heading: h, items: [], kind: inferKind(h) };
       sections.push(curSection);
       continue;
@@ -1435,12 +1441,12 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
         .replace(/\*([^*]+)\*/g, "$1")
         .trim();
     const bm = /^(?:[-*+]|\d+[.)、])\s+(.+)$/.exec(l);
-    if (bm) {
+    if (bm?.[1]) {
       if (!curSection) {
         curSection = { heading: "今日要点", items: [], kind: "highlight" };
         sections.push(curSection);
       }
-      curSection.items.push(cleanInline(bm[1]!));
+      curSection.items.push(cleanInline(bm[1]));
       continue;
     }
     if (!curSection && !greeting) {
@@ -1627,8 +1633,9 @@ export function StatusCardGroup({
   cards: ParsedStatusCard[];
   components: Record<string, unknown>;
 }) {
-  if (cards.length === 1) {
-    const card = cards[0]!;
+  const singleCard = cards.length === 1 ? cards[0] : undefined;
+  if (singleCard) {
+    const card = singleCard;
     return (
       <section
         aria-label={card.title}

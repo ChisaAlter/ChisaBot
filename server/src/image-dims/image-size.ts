@@ -16,10 +16,12 @@ function sane(width: number, height: number): ImageDims | null {
   return { width, height };
 }
 
-const u16be = (b: Uint8Array, i: number) => (b[i]! << 8) | b[i + 1]!;
-const u16le = (b: Uint8Array, i: number) => b[i]! | (b[i + 1]! << 8);
-const u24le = (b: Uint8Array, i: number) => b[i]! | (b[i + 1]! << 8) | (b[i + 2]! << 16);
-const u32be = (b: Uint8Array, i: number) => ((b[i]! << 24) >>> 0) + ((b[i + 1]! << 16) | (b[i + 2]! << 8) | b[i + 3]!);
+const byte = (b: Uint8Array, i: number) => b[i] ?? 0;
+const u16be = (b: Uint8Array, i: number) => (byte(b, i) << 8) | byte(b, i + 1);
+const u16le = (b: Uint8Array, i: number) => byte(b, i) | (byte(b, i + 1) << 8);
+const u24le = (b: Uint8Array, i: number) => byte(b, i) | (byte(b, i + 1) << 8) | (byte(b, i + 2) << 16);
+const u32be = (b: Uint8Array, i: number) => ((byte(b, i) << 24) >>> 0) + ((byte(b, i + 1) << 16) | (byte(b, i + 2) << 8) | byte(b, i + 3));
+const u32le = (b: Uint8Array, i: number) => (byte(b, i) | (byte(b, i + 1) << 8) | (byte(b, i + 2) << 16)) + byte(b, i + 3) * 0x1000000;
 const ascii = (b: Uint8Array, i: number, n: number) => String.fromCharCode(...b.subarray(i, i + n));
 
 function png(b: Uint8Array): ImageDims | null {
@@ -39,7 +41,11 @@ function webp(b: Uint8Array): ImageDims | null {
   if (chunk === "VP8X") return sane(1 + u24le(b, 24), 1 + u24le(b, 27));
   if (chunk === "VP8L") {
     if (b[20] !== 0x2f) return null;
-    const b0 = b[21]!, b1 = b[22]!, b2 = b[23]!, b3 = b[24]!;
+    const b0 = b[21];
+    const b1 = b[22];
+    const b2 = b[23];
+    const b3 = b[24];
+    if (b0 === undefined || b1 === undefined || b2 === undefined || b3 === undefined) return null;
     return sane(1 + (((b1 & 0x3f) << 8) | b0), 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6)));
   }
   if (chunk === "VP8 ") {
@@ -58,7 +64,7 @@ function exifOrientation(b: Uint8Array, start: number, end: number): number {
   if (order !== "II" && order !== "MM") return 1;
   const le = order === "II";
   const r16 = (i: number) => (le ? u16le(b, i) : u16be(b, i));
-  const r32 = (i: number) => (le ? (b[i]! | (b[i + 1]! << 8) | (b[i + 2]! << 16)) + b[i + 3]! * 0x1000000 : u32be(b, i));
+  const r32 = (i: number) => (le ? u32le(b, i) : u32be(b, i));
   const ifd = tiff + r32(tiff + 4);
   if (ifd + 2 > end) return 1;
   const count = r16(ifd);
@@ -78,7 +84,8 @@ function jpeg(b: Uint8Array): ImageDims | null {
   let orientation = 1;
   while (i + 4 <= b.length) {
     if (b[i] !== 0xff) return null;
-    const marker = b[i + 1]!;
+    const marker = b[i + 1];
+    if (marker === undefined) return null;
     if (marker === 0xff) { i += 1; continue; } // 填充
     if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
     if (marker === 0xd9 || marker === 0xda) return null; // 到了图像数据还没有 SOF

@@ -130,7 +130,9 @@ function unifiedDiff(oldText, newText, options = {}) {
   const b = markedLines(newText).lines;
   const ops = diffLines(a, b);
   const changes = [];
-  ops.forEach((op, i) => op.t !== " " && changes.push(i));
+  ops.forEach((op, i) => {
+    if (op.t !== " ") changes.push(i);
+  });
   if (!changes.length) return "";
   const out = [`--- ${options.oldLabel ?? `a/${label}`}`, `+++ ${options.newLabel ?? `b/${label}`}`];
   let gi = 0;
@@ -158,7 +160,7 @@ function unifiedDiff(oldText, newText, options = {}) {
     }
     out.push(`@@ -${oldCount ? oldLine : oldLine - 1},${oldCount} +${newCount ? newLine : newLine - 1},${newCount} @@`, ...body);
   }
-  return out.join("\n") + "\n";
+  return `${out.join("\n")}\n`;
 }
 
 /** 差异统计 { added, removed }。 */
@@ -208,7 +210,9 @@ function parsePatch(text) {
       while (i < src.length && (o < oldCount || n < newCount || src[i].startsWith("\\"))) {
         const l = src[i];
         if (l.startsWith("\\")) {
-          const mark = (arr) => arr.length && !arr[arr.length - 1].endsWith(NOEOL) && (arr[arr.length - 1] += NOEOL);
+          const mark = (arr) => {
+            if (arr.length && !arr[arr.length - 1].endsWith(NOEOL)) arr[arr.length - 1] += NOEOL;
+          };
           if (lastSide === "-" || lastSide === " ") mark(hunk.oldLines);
           if (lastSide === "+" || lastSide === " ") mark(hunk.newLines);
           i++;

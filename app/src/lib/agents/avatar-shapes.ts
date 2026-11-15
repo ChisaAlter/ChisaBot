@@ -88,7 +88,7 @@ export function shapePath(geometry: ShapeGeometry): string {
   const n = radii.length;
   const point = (i: number) => {
     const t = ((((i % n) + n) % n) / n) * TAU;
-    const r = radii[((i % n) + n) % n]!;
+    const r = radii[((i % n) + n) % n] ?? 0;
     return [50 + dx + r * Math.cos(t), 50 + dy + r * Math.sin(t)] as const;
   };
   const f = (v: number) => v.toFixed(2);
@@ -109,7 +109,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 /** 两个形状之间 t（0..1）处的样子。 */
 export function mixShapes(a: ShapeGeometry, b: ShapeGeometry, t: number): ShapeGeometry {
   return {
-    radii: a.radii.map((r, i) => lerp(r, b.radii[i]!, t)),
+    radii: a.radii.map((r, i) => lerp(r, b.radii[i] ?? r, t)),
     dx: lerp(a.dx, b.dx, t),
     dy: lerp(a.dy, b.dy, t),
     face: {

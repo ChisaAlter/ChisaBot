@@ -175,7 +175,7 @@ test("approval suspension remains waiting and approved continuation tracks a new
     routineId: "approval",
     threadId: `panel-task:${r.id}`,
     instruction: "",
-    runId: "resumed-" + r.id,
+    runId: `resumed-${r.id}`,
   };
   await service.runContinuation(input, async (received) => {
     resumed++;

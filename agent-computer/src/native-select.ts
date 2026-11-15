@@ -55,7 +55,9 @@ const asNumber = (text: string): number | null => {
 /** 一个月份写法 → 1–12；认不出 → null。 */
 const monthOf = (text: string): number | null => {
   const t = norm(text).replace(/\.$/, "");
-  const index = MONTHS.findIndex((names) => names.includes(t) || (t.length >= 3 && names[1]!.startsWith(t)));
+  const index = MONTHS.findIndex(
+    (names) => names.includes(t) || (t.length >= 3 && Boolean(names[1]?.startsWith(t))),
+  );
   return index >= 0 ? index + 1 : null;
 };
 
@@ -69,7 +71,10 @@ const monthOf = (text: string): number | null => {
  * 禁用的选项不选。返回下标；找不到返回 -1。
  */
 export function pickOption(options: readonly NativeOption[], wanted: string): number {
-  const usable = (index: number) => index >= 0 && !options[index]!.disabled;
+  const usable = (index: number) => {
+    const option = options[index];
+    return option !== undefined && !option.disabled;
+  };
   const w = norm(wanted);
   if (!w) return -1;
   const find = (test: (option: NativeOption) => boolean) => {
@@ -103,7 +108,8 @@ export function pickOption(options: readonly NativeOption[], wanted: string): nu
   const starts = options
     .map((o, i) => (!o.disabled && norm(o.label).startsWith(w) ? i : -1))
     .filter((i) => i >= 0);
-  return starts.length === 1 ? starts[0]! : -1;
+  const soleMatch = starts.length === 1 ? starts[0] : undefined;
+  return soleMatch ?? -1;
 }
 
 /** 给机器人看的选项清单（文字为主，文字和值不同时带上值），最多 OPTION_LIST_LIMIT 项。 */
@@ -180,9 +186,12 @@ export async function chooseNativeOption(
       `这个下拉框里没有「${wanted}」对应的选项。可选：${describeOptions(options).join("、")}。用 computer_type 填其中一项的文字或值。`,
     );
   }
+  const chosen = options[index];
+  if (!chosen) {
+    throw new SelectOptionError(`下拉框第 ${index} 项不存在。`);
+  }
   await closePopup(select, acting.timeout);
   await select.selectOption({ index }, acting);
-  const chosen = options[index]!;
   return { label: chosen.label, value: chosen.value, options: describeOptions(options) };
 }
 

@@ -146,7 +146,7 @@ export function sniffImage(bytes: Uint8Array): string | null {
     b[5] === 0x74 &&
     b[6] === 0x79 &&
     b[7] === 0x70 &&
-    /avi[fs]/.test(String.fromCharCode(b[8]!, b[9]!, b[10]!, b[11]!))
+    /avi[fs]/.test(String.fromCharCode(...b.subarray(8, 12)))
   )
     return "image/avif";
   if (b[0] === 0 && b[1] === 0 && (b[2] === 1 || b[2] === 2) && b[3] === 0)

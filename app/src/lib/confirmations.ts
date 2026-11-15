@@ -151,7 +151,9 @@ export function useThreadConfirmations(
     queryKey: confirmKeys.thread(threadId ?? ""),
     enabled: Boolean(threadId),
     queryFn: ({ signal }): Promise<ConfirmRequestView[]> =>
-      loadConfirmations({ threadId: threadId!, limit: 100 }, signal),
+      threadId
+        ? loadConfirmations({ threadId, limit: 100 }, signal)
+        : Promise.resolve([]),
     refetchInterval: (query) =>
       watching || (query.state.data ?? []).some(confirmationIsUnsettled)
         ? 1500

@@ -204,8 +204,8 @@ export class WecomBotAdapter extends LoopAdapter {
       }
       return;
     }
-    if (this.acks.has(reqId)) {
-      const ack = this.acks.get(reqId)!;
+    const ack = this.acks.get(reqId);
+    if (ack) {
       this.acks.delete(reqId);
       clearTimeout(ack.timer);
       ack.resolve(frame);

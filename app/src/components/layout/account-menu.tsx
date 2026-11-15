@@ -145,7 +145,6 @@ export function AccountMenu({
   );
 
   return (
-    <>
     <DropdownMenu
       // 非模态（jank P1-6）：不铺全屏遮罩，打开 / 关闭不为它量整页布局。
       modal={false}
@@ -251,7 +250,6 @@ export function AccountMenu({
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-    </>
   );
 }
 

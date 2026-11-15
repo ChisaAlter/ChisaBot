@@ -133,7 +133,7 @@ export function colorFor(text: string): AvatarColor {
   let hash = 0;
   for (const char of text)
     hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length] ?? AVATAR_COLORS[0];
 }
 
 export const AVATAR_EMOJIS = [

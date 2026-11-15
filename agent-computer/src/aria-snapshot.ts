@@ -94,12 +94,11 @@ function nativeOptions(
   const labels: string[] = [];
   let selected: string | undefined;
   for (const child of value) {
-    const key =
-      typeof child === "string"
-        ? child
-        : child && typeof child === "object" && Object.keys(child).length === 1
-          ? Object.keys(child)[0]!
-          : null;
+    const objectKey =
+      child && typeof child === "object" && Object.keys(child).length === 1
+        ? Object.keys(child)[0]
+        : undefined;
+    const key = typeof child === "string" ? child : objectKey ?? null;
     const descriptor = key ? parseDescriptor(key) : null;
     if (descriptor?.role !== "option") return null;
     const label = cutAtCodeUnits(descriptor.name, 100);

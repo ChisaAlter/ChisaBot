@@ -103,7 +103,7 @@ async function openTunnel(proxy, target, timeoutMs = 15_000) {
     });
     const end = head.indexOf("\r\n\r\n");
     const status = /^HTTP\/1\.[01] (\d{3})/.exec(head.subarray(0, end).toString("latin1"));
-    if (!status || status[1] !== "200") {
+    if (status?.[1] !== "200") {
       socket.destroy();
       throw new Error(`代理拒绝了连接（${status ? status[1] : "回应无效"}）`);
     }
@@ -169,7 +169,7 @@ function createProxyAgent(proxies, { secure = true, timeoutMs = 15_000, onRoute 
           onRoute?.(proxy);
           return socket;
         } catch (error) {
-          errors.push(`${describeProxy(proxy)}：${error && error.message ? error.message : error}`);
+          errors.push(`${describeProxy(proxy)}：${error?.message ? error.message : error}`);
         }
       }
       throw new Error(errors.join("；"));

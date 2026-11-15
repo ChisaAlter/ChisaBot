@@ -36,7 +36,8 @@ export function mergeSnapshot<T extends Msg>(
   const index = new Map(result.map((message, at) => [message.id, at]));
   let changed = false;
   for (let at = 0; at < snapshot.length; at++) {
-    const message = snapshot[at]!;
+    const message = snapshot[at];
+    if (!message) continue;
     const existing = index.get(message.id);
     if (existing !== undefined) {
       if (
@@ -50,7 +51,8 @@ export function mergeSnapshot<T extends Msg>(
     }
     let insertAt = 0;
     for (let back = at - 1; back >= 0; back--) {
-      const position = index.get(snapshot[back]!.id);
+      const prev = snapshot[back];
+      const position = prev ? index.get(prev.id) : undefined;
       if (position !== undefined) {
         insertAt = position + 1;
         break;
@@ -307,9 +309,10 @@ export function tailReplayPatch<T extends TailMsg>(
           event.toolCallId !== undefined &&
           message.toolCallId === event.toolCallId),
     );
-    if (at === -1) return;
+    const target = at >= 0 ? messages[at] : undefined;
+    if (!target) return;
     const next = [...messages];
-    next[at] = { ...next[at]!, content: event.content };
+    next[at] = { ...target, content: event.content };
     return { messages: next, stopPropagation: true };
   }
   return;

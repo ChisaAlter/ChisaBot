@@ -512,7 +512,7 @@ export function createMediaModels(
     input: { baseUrl?: string; model?: string; apiKey?: string },
     row: MediaRow | null,
     what: string,
-  ) {
+  ): string {
     const baseUrl = httpUrl.safeParse(input.baseUrl ?? "");
     if (!baseUrl.success)
       throw new MediaModelsError(
@@ -525,6 +525,7 @@ export function createMediaModels(
         ? Boolean(input.apiKey.trim())
         : Boolean(row?.api_key);
     if (!hasKey) throw new MediaModelsError(`要填${what}的 API 密钥。`);
+    return baseUrl.data;
   }
 
   async function saveVisionDefault(
@@ -562,8 +563,8 @@ export function createMediaModels(
     const row = await mediaRow(userId, "image");
     if (input.mode === "custom") {
       if (!input.provider) throw new MediaModelsError("要选接口类型。");
-      requireComplete(input, row, "生图模型");
-      await checkUrl(userId, input.baseUrl!);
+      const baseUrl = requireComplete(input, row, "生图模型");
+      await checkUrl(userId, baseUrl);
     }
     await upsertMedia(userId, "image", userId, {
       mode: input.mode,
@@ -587,8 +588,8 @@ export function createMediaModels(
     const input = personalVisionInput.parse(raw);
     const row = await mediaRow(userId, "vision");
     if (input.mode === "custom") {
-      requireComplete(input, row, "识图模型");
-      await checkUrl(userId, input.baseUrl!);
+      const baseUrl = requireComplete(input, row, "识图模型");
+      await checkUrl(userId, baseUrl);
     }
     await upsertMedia(userId, "vision", userId, {
       mode: input.mode,

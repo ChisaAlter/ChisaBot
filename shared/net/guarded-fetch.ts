@@ -100,9 +100,10 @@ export async function resolvePublic(
   const addresses = literal
     ? [{ address: bare, family: literal }]
     : await (options.resolve ?? defaultResolve)(bare);
-  if (addresses.length === 0) denySsrf("域名解析不到地址");
   if (addresses.some((a) => blocked(a.address))) denySsrf();
-  return addresses[0]!;
+  const primary = addresses[0];
+  if (!primary) return denySsrf("域名解析不到地址");
+  return primary;
 }
 
 /** DNS shares the request's deadline and cancellation; a late result must not start a connection. */

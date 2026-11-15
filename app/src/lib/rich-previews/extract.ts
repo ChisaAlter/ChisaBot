@@ -117,18 +117,18 @@ export function parseLinkLine(line: string): LinkRef | null {
   if (!t || t.length > 2100) return null;
   for (let i = 0; i < 2; i += 1) {
     const wrapped = /^(\*\*|__)(.+)\1$/.exec(t);
-    if (wrapped) t = wrapped[2]!.trim();
+    if (wrapped?.[2]) t = wrapped[2].trim();
   }
   const auto = LINE_AUTOLINK.exec(t.replace(LINE_TRAILING, ""));
-  if (auto) {
-    const url = normalizeLink(auto[1]!);
+  if (auto?.[1]) {
+    const url = normalizeLink(auto[1]);
     return url ? { url } : null;
   }
   const md = LINE_MD_LINK.exec(t.replace(LINE_TRAILING, ""));
-  if (md) {
-    const url = normalizeLink(md[2]!.replace(/^<|>$/g, ""));
+  if (md?.[1] !== undefined && md[2] !== undefined) {
+    const url = normalizeLink(md[2].replace(/^<|>$/g, ""));
     if (!url) return null;
-    const label = cleanLabel(md[1]!, url);
+    const label = cleanLabel(md[1], url);
     return label ? { url, label } : { url };
   }
   if (LINE_BARE.test(t)) {
@@ -169,7 +169,7 @@ export function looksLikePartialLinkLine(line: string): boolean {
 export function confidentLinkStart(line: string): string | null {
   let t = line.trim().replace(/^(\*\*|__)/, "");
   const md = /^\[[^[\]\n]{0,80}\]\((.*)$/.exec(t);
-  if (md) t = md[1]!;
+  if (md?.[1] !== undefined) t = md[1];
   t = t.replace(/^</, "");
   // 主机名后面已经有「/」：主机名写完了，骨架的比例（GitHub 2:1）不会再变。
   const m = /^https?:\/\/[^\s/<>()]+\.[^\s/<>().]{2,}\/[^\s<>()]*/i.exec(t);
@@ -206,7 +206,8 @@ export function splitLinkLines(
   let pendingUrl: string | undefined;
   let removed = false;
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]!;
+    const line = lines[i];
+    if (line === undefined) continue;
     const isLast = i === lines.length - 1;
     const marker = /^\s{0,3}(```|~~~)/.exec(line);
     if (fence) {
@@ -214,8 +215,8 @@ export function splitLinkLines(
       kept.push(line);
       continue;
     }
-    if (marker) {
-      fence = marker[1]!;
+    if (marker?.[1]) {
+      fence = marker[1];
       kept.push(line);
       continue;
     }
@@ -356,5 +357,5 @@ export function formatBytes(bytes: number | null | undefined): string {
 /** 文件名的扩展名（小写，不带点），没有就空串。 */
 export function extensionOf(name: string | undefined): string {
   const match = /\.([a-z0-9]{1,8})$/i.exec(name ?? "");
-  return match ? match[1]!.toLowerCase() : "";
+  return match?.[1] ? match[1].toLowerCase() : "";
 }

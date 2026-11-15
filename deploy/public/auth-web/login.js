@@ -165,7 +165,7 @@
       description.textContent = message;
       inviteForm.hidden = true;
     };
-    fetch("/auth/invite?token=" + encodeURIComponent(token), {
+    fetch(`/auth/invite?token=${encodeURIComponent(token)}`, {
       credentials: "same-origin",
       cache: "no-store",
       headers: { Accept: "application/json" },

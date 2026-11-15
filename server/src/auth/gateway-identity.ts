@@ -88,11 +88,13 @@ export function verifyGatewayIdentity(
     return null;
   const parts = header.split(".");
   if (parts.length !== 3 || parts[0] !== "v1") return null;
-  const body = `v1.${parts[1]}`;
+  const [, payloadPart, signaturePart] = parts;
+  if (payloadPart === undefined || signaturePart === undefined) return null;
+  const body = `v1.${payloadPart}`;
   const expected = mac(secret, body);
   let given: Buffer;
   try {
-    given = Buffer.from(parts[2]!, "base64url");
+    given = Buffer.from(signaturePart, "base64url");
   } catch {
     return null;
   }
@@ -100,7 +102,7 @@ export function verifyGatewayIdentity(
     return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+    parsed = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
   } catch {
     return null;
   }

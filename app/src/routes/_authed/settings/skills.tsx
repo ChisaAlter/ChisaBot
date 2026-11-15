@@ -542,7 +542,7 @@ function SkillDialog({
     <Dialog onOpenChange={guardedOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{readOnly ? skill!.title : skill ? "编辑技能" : "新建技能"}</DialogTitle>
+          <DialogTitle>{readOnly && skill ? skill.title : skill ? "编辑技能" : "新建技能"}</DialogTitle>
           <DialogDescription>{readOnly ? "共享技能，只读。" : "写成以后照着就能做的方法：步骤、偏好、注意事项。不要写密码。"}</DialogDescription>
         </DialogHeader>
         <form

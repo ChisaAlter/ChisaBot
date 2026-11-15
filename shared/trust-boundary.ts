@@ -106,7 +106,7 @@ export function extractComposePortLines(yamlText: string): string[] {
     const portsMatch = /^(\s*)ports:\s*$/.exec(line);
     if (portsMatch) {
       inPorts = true;
-      portsIndent = portsMatch[1]!.length;
+      portsIndent = (portsMatch[1] ?? "").length;
       continue;
     }
     if (inPorts) {

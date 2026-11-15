@@ -190,7 +190,7 @@ const cardSpec = JSON.stringify({
               choices: [{ index: 0, delta: change, finish_reason: reason }],
             })}\n\n`;
           return new Response(
-            chunk(delta) + chunk({}, finish) + "data: [DONE]\n\n",
+            `${chunk(delta)}${chunk({}, finish)}data: [DONE]\n\n`,
             { headers: { "content-type": "text/event-stream" } },
           );
         },
