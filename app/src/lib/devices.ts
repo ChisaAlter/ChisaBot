@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { client, tryClient } from "@/lib/client";
+import { ClientError, client, tryClient } from "@/lib/client";
 import type {
   DeviceApprovalView,
   DeviceAuditEntry,
@@ -333,15 +333,64 @@ export type PairingStatus = {
   device: { id: string; name: string } | null;
 };
 
-export function createPairing(
+const PAIRING_TIMEOUT_MS = 10_000;
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException || error instanceof Error) &&
+    error.name === "TimeoutError"
+  );
+}
+
+function isNetworkError(error: unknown): boolean {
+  return error instanceof TypeError;
+}
+
+function isTransientPairingError(error: unknown): boolean {
+  return isTimeoutError(error) || isNetworkError(error);
+}
+
+export function pairingErrorMessage(
+  error: unknown,
   kind: "phone" | "node" = "phone",
+): string {
+  const retry = kind === "phone" ? "点「刷新二维码」重试" : "重试";
+  if (isTimeoutError(error)) {
+    return `连接服务器超时，请${retry}`;
+  }
+  if (isNetworkError(error)) {
+    return `网络连不上，请检查网络后${retry}`;
+  }
+  if (error instanceof ClientError && error.message) {
+    return error.message;
+  }
+  return kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
+}
+
+export async function createPairing(
+  kind: "phone" | "node" = "phone",
+  options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<PairingTicket> {
-  return client("/api/devices/pairing", {
-    method: "POST",
-    ...(kind === "node" ? { body: { kind } } : {}),
-    fallback:
-      kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试",
-  }).then((r) => r.json());
+  const fallback =
+    kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
+  const timeoutMs = options?.timeoutMs ?? PAIRING_TIMEOUT_MS;
+  const runOnce = () =>
+    client("/api/devices/pairing", {
+      method: "POST",
+      body: { kind },
+      timeoutMs,
+      ...(options?.signal ? { signal: options.signal } : {}),
+      fallback,
+    }).then((r) => r.json());
+
+  try {
+    return await runOnce();
+  } catch (error) {
+    if (options?.signal?.aborted || !isTransientPairingError(error)) {
+      throw error;
+    }
+    return await runOnce();
+  }
 }
 
 /** 服务器节点一行安装命令（docs/pc-node.md §14）。 */

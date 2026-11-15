@@ -24,6 +24,7 @@ import {
   fullAccessUntilText,
   killDeviceJob,
   nodeInstallCommand,
+  pairingErrorMessage,
   type PairingTicket,
   patchDevice,
 } from "@/lib/devices";
@@ -305,7 +306,9 @@ export function AddServerCard() {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const [ticket, setTicket] = useState<PairingTicket | null>(null);
   const [fullAccess, setFullAccess] = useState(true);
-  const issue = useAsyncAction(async () => setTicket(await createPairing("node")), { errorToast: (error) => error.message });
+  const issue = useAsyncAction(async () => setTicket(await createPairing("node")), {
+    errorToast: (error) => pairingErrorMessage(error, "node"),
+  });
   const command = ticket ? nodeInstallCommand(origin, ticket.code, { fullAccess }) : "";
   return (
     <Card className="device-steps pair-card">

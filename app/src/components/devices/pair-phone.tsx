@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cancelPairing, createPairing, deviceKeys, type PairingTicket, pairingStatus } from "@/lib/devices";
+import { cancelPairing, createPairing, deviceKeys, type PairingTicket, pairingErrorMessage, pairingStatus } from "@/lib/devices";
 import { qrPath } from "@/lib/qr";
 import { cn } from "@/lib/utils";
 
@@ -74,20 +74,40 @@ export function PairQr({ value, dim }: { value: string; dim?: boolean }) {
   );
 }
 
+function isAbort(error: unknown): boolean {
+  return (
+    (error instanceof DOMException || error instanceof Error) &&
+    error.name === "AbortError"
+  );
+}
+
 export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const autoRefreshes = useRef(0);
   const current = useRef<string | null>(null);
+  const issueAbort = useRef<AbortController | null>(null);
   const server = typeof window === "undefined" ? "" : window.location.origin;
 
   const issue = useCallback(async () => {
+    issueAbort.current?.abort();
+    const controller = new AbortController();
+    issueAbort.current = controller;
     const previous = current.current;
-    const ticket = await createPairing();
+    const ticket = await createPairing("phone", { signal: controller.signal });
+    if (controller.signal.aborted || issueAbort.current !== controller) {
+      void cancelPairing(ticket.id);
+      return null;
+    }
     current.current = ticket.id;
-    if (previous) void cancelPairing(previous);
+    if (previous && previous !== ticket.id) void cancelPairing(previous);
     setPhase({ kind: "pending", ticket });
     return ticket;
+  }, []);
+
+  const onIssueError = useCallback((error: unknown) => {
+    if (isAbort(error)) return;
+    setPhase({ kind: "error", message: pairingErrorMessage(error) });
   }, []);
 
   // 打开时签发；关闭时作废。
@@ -96,13 +116,17 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
     autoRefreshes.current = 0;
     setPhase({ kind: "loading" });
     let alive = true;
-    issue().catch((error: Error) => alive && setPhase({ kind: "error", message: error.message }));
+    issue().catch((error: unknown) => {
+      if (alive) onIssueError(error);
+    });
     return () => {
       alive = false;
+      issueAbort.current?.abort();
+      issueAbort.current = null;
       if (current.current) void cancelPairing(current.current);
       current.current = null;
     };
-  }, [open, issue]);
+  }, [open, issue, onIssueError]);
 
   const ticket = phase.kind === "pending" ? phase.ticket : null;
   const left = useCountdown(ticket?.expiresAt ?? null, ticket?.ttlSeconds ?? 300);
@@ -145,15 +169,24 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
       return;
     }
     autoRefreshes.current += 1;
-    issue().catch((error: Error) => setPhase({ kind: "error", message: error.message }));
-  }, [left, ticket, issue]);
+    issue().catch(onIssueError);
+  }, [left, ticket, issue, onIssueError]);
 
   const refresh = useAsyncAction(
     async () => {
       autoRefreshes.current = 0;
-      await issue();
+      try {
+        await issue();
+      } catch (error) {
+        if (isAbort(error)) return;
+        const message = pairingErrorMessage(error);
+        setPhase((prev) =>
+          prev.kind === "pending" ? prev : { kind: "error", message },
+        );
+        throw error;
+      }
     },
-    { errorToast: (error) => `刷新失败：${error.message}` },
+    { errorToast: (error) => `刷新失败：${pairingErrorMessage(error)}` },
   );
 
   const status =
@@ -237,7 +270,7 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 onClick={() => {
                   autoRefreshes.current = 0;
                   setPhase({ kind: "loading" });
-                  issue().catch((error: Error) => setPhase({ kind: "error", message: error.message }));
+                  issue().catch(onIssueError);
                 }}
                 type="button"
                 variant="outline"

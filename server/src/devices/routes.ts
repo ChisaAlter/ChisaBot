@@ -110,6 +110,12 @@ function parsePatch(body: unknown): DevicePatch | string {
   return patch;
 }
 
+function hasJsonBody(headers: Headers): boolean {
+  const length = headers.get("content-length");
+  if (length !== null && length.trim() === "0") return false;
+  return Boolean(headers.get("content-type")?.toLowerCase().includes("application/json"));
+}
+
 export function createDeviceRoutes(options: {
   store: DeviceStore;
   hub: DeviceHub;
@@ -429,8 +435,13 @@ export function createDeviceRoutes(options: {
   /** 网页「绑定手机」：签发一次性绑定码（5 分钟），网页把它和服务器地址一起画成二维码。 */
   routes.post("/pairing", userGuard, async (context) => {
     const actor = context.var.actor;
-    const body = (await context.req.json().catch(() => null)) as { kind?: unknown } | null;
-    const kind = body?.kind === "node" ? "node" : "phone";
+    const raw: unknown = hasJsonBody(context.req.raw.headers)
+      ? await context.req.json().catch(() => null)
+      : null;
+    const kind =
+      typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "node"
+        ? "node"
+        : "phone";
     const issued = pairing.issue(actor.id, kind);
     return context.json({ ...issued, kind }, 201);
   });

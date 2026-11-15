@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import net from "node:net";
 import type { MiddlewareHandler } from "hono";
 import {
   defaultCapabilities,
@@ -203,6 +204,7 @@ function setup() {
       ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     });
   return {
+    routes,
     memory,
     pairing,
     call,
@@ -407,5 +409,77 @@ describe("/api/devices pairing routes", () => {
       action: "unenrolled",
       summary: "在手机上退出登录，令牌已作废",
     });
+  });
+
+  test("bodyless chunked POST /pairing issues a phone code without waiting for body EOF", async () => {
+    const { routes, call } = setup();
+    const phoneJson = await call("/pairing", {
+      method: "POST",
+      json: { kind: "phone" },
+    });
+    expect(phoneJson.status).toBe(201);
+    expect(((await phoneJson.json()) as { kind?: string }).kind).toBe("phone");
+
+    const nodeJson = await call("/pairing", {
+      method: "POST",
+      json: { kind: "node" },
+    });
+    expect(nodeJson.status).toBe(201);
+    expect(((await nodeJson.json()) as { kind?: string }).kind).toBe("node");
+
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) => routes.fetch(request),
+    });
+    try {
+      const raw = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(server.port, "127.0.0.1", () => {
+          socket.write(
+            `POST /pairing HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nX-Forwarded-For: 203.0.113.9\r\nTransfer-Encoding: chunked\r\n\r\n`,
+          );
+        });
+        let buffer = "";
+        const timer = setTimeout(() => {
+          socket.destroy();
+          reject(
+            new Error(
+              "POST /pairing timed out waiting for unbuffered bodyless chunked EOF",
+            ),
+          );
+        }, 300);
+        socket.on("data", (chunk) => {
+          buffer += chunk.toString();
+          const sep = buffer.indexOf("\r\n\r\n");
+          if (sep >= 0 && buffer.indexOf("}", sep + 4) >= 0) {
+            clearTimeout(timer);
+            socket.destroy();
+            resolve(buffer);
+          }
+        });
+        socket.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+
+      const [head, bodyPart = ""] = raw.split("\r\n\r\n");
+      expect(head.split("\r\n")[0]).toContain("201");
+      const jsonMatch = /\{[\s\S]*\}/.exec(bodyPart);
+      if (!jsonMatch) throw new Error("Expected JSON ticket body");
+      const ticket: unknown = JSON.parse(jsonMatch[0]);
+      if (
+        typeof ticket !== "object" ||
+        ticket === null ||
+        !("code" in ticket) ||
+        typeof ticket.code !== "string" ||
+        !("kind" in ticket)
+      ) {
+        throw new Error("Unexpected ticket payload");
+      }
+      expect(ticket.kind).toBe("phone");
+      expect(isPairingCode(ticket.code)).toBe(true);
+    } finally {
+      server.stop(true);
+    }
   });
 });
