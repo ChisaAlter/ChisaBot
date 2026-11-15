@@ -45,8 +45,9 @@ object GatewayAuth {
         }
         if (url.host.isNullOrBlank()) throw LoginError("invalid", "服务器地址格式不对，例如 chisabot.example.com:8443")
         if (url.userInfo != null) throw LoginError("invalid", "服务器地址里不能包含账号密码。")
-        if (http) return "http://" + url.host + (if (url.port == -1 || url.port == 80) "" else ":" + url.port)
-        return "https://" + url.host + (if (url.port == -1 || url.port == 443) "" else ":" + url.port)
+        val host = url.host.lowercase()
+        if (http) return "http://" + host + (if (url.port == -1 || url.port == 80) "" else ":" + url.port)
+        return "https://" + host + (if (url.port == -1 || url.port == 443) "" else ":" + url.port)
     }
 
     /**
@@ -69,17 +70,21 @@ object GatewayAuth {
     private fun networkError(e: Throwable): LoginError {
         var cause: Throwable? = e
         while (cause != null) {
-            if (cause is SSLException || cause is CertificateException) {
-                return LoginError("cert", "证书错误：服务器的 HTTPS 证书无效或不受信任（${cause.javaClass.simpleName}）。")
+            when (cause) {
+                is SSLException, is CertificateException ->
+                    return LoginError("cert", "证书错误：服务器的 HTTPS 证书无效或不受信任。")
+                is UnknownHostException ->
+                    return LoginError("unreachable", "地址无法连接：找不到这个域名，请检查拼写。")
+                is ConnectException ->
+                    return LoginError("unreachable", "地址无法连接：服务器拒绝连接，请检查端口。")
+                is SocketTimeoutException ->
+                    return LoginError("unreachable", "地址无法连接：服务器没有响应（超时）。")
             }
-            cause = cause.cause
+            val next = cause.cause
+            if (next === cause) break
+            cause = next
         }
-        return when (e) {
-            is UnknownHostException -> LoginError("unreachable", "地址无法连接：找不到这个域名，请检查拼写。")
-            is ConnectException -> LoginError("unreachable", "地址无法连接：服务器拒绝连接，请检查端口。")
-            is SocketTimeoutException -> LoginError("unreachable", "地址无法连接：服务器没有响应（超时）。")
-            else -> LoginError("unreachable", "地址无法连接（${e.javaClass.simpleName}），请检查地址和网络。")
-        }
+        return LoginError("unreachable", "地址无法连接，请检查地址和网络。")
     }
 
     private class Reply(val status: Int, val body: String, val setCookies: List<String>)
@@ -147,7 +152,10 @@ object GatewayAuth {
     }
 
     private fun error(reply: Reply, fallback: String): String =
-        runCatching { JSONObject(reply.body).optString("error").ifBlank { null } }.getOrNull() ?: fallback
+        runCatching {
+            JSONObject(reply.body).optString("error").trim()
+                .takeIf { it.isNotEmpty() && it.any { c -> c in '\u4e00'..'\u9fff' } }
+        }.getOrNull() ?: fallback
 
     /** 返回服务器下发的 Set-Cookie 原文（交给 CookieManager）。 */
     fun login(origin: String, username: String, password: String, remember: Boolean): List<String> {
@@ -211,7 +219,8 @@ object GatewayAuth {
             reply.status == 429 -> throw LoginError("rate", "尝试次数过多，请稍后再试。")
             reply.status == 401 -> {
                 val revoked = runCatching { JSONObject(reply.body).optBoolean("revoked") }.getOrDefault(false)
-                throw LoginError("revoked", if (revoked) "这台手机已在网页上被撤销，请重新扫码绑定。" else "绑定已失效，请重新扫码绑定。")
+                val defaultMsg = if (revoked) "这台手机已在网页上被撤销，请重新扫码绑定。" else "绑定已失效，请重新扫码绑定。"
+                throw LoginError("revoked", error(reply, defaultMsg))
             }
             reply.status == 404 || reply.status == 405 ->
                 throw LoginError("invalid", "这个服务器的登录网关还不支持扫码登录，请更新服务器或用账号密码登录。")

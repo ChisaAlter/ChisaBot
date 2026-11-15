@@ -1,23 +1,44 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import {
+  DEVICE_CAPABILITIES,
+  type DeviceCapabilities,
   FULL_ACCESS_DURATIONS,
   FULL_ACCESS_FOREVER,
   type FullAccessDuration,
-  DEVICE_CAPABILITIES,
-  type DeviceCapabilities,
 } from "../../../shared/devices";
 import { type AuditStore, recordAuditEvent } from "../audit";
-import { gatewayClientIp, localCallerAuthorized, trustUnsignedLocal } from "../auth/gateway-identity";
+import {
+  gatewayClientIp,
+  localCallerAuthorized,
+  trustUnsignedLocal,
+} from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
-import { DeviceRefusedError, type DeviceHub, describeChange } from "./hub";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
-import { createPairingStore, isMobilePlatform, type PairingStore } from "./pairing";
-import { type DevicePatch, type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
+import { type DeviceHub, DeviceRefusedError, describeChange } from "./hub";
 import { installScript, readNodeBundle } from "./node-install";
+import {
+  createPairingStore,
+  isMobilePlatform,
+  type PairingStore,
+} from "./pairing";
+import {
+  type DevicePatch,
+  type DeviceRecord,
+  type DeviceStore,
+  fullAccessActive,
+} from "./store";
 
-const NODE_PLATFORMS = new Set(["linux", "darwin", "win32", "freebsd", "openbsd", "sunos", "aix"]);
+const NODE_PLATFORMS = new Set([
+  "linux",
+  "darwin",
+  "win32",
+  "freebsd",
+  "openbsd",
+  "sunos",
+  "aix",
+]);
 
 /**
  * /api/devices（docs/pc-node.md §6）。
@@ -64,7 +85,8 @@ function pairLimited(ip: string | null) {
 function countPair(ip: string | null) {
   const key = ip ?? "?";
   const entry = pairAttempts.get(key);
-  if (!entry || entry.until < Date.now()) pairAttempts.set(key, { count: 1, until: Date.now() + FAIL_WINDOW_MS });
+  if (!entry || entry.until < Date.now())
+    pairAttempts.set(key, { count: 1, until: Date.now() + FAIL_WINDOW_MS });
   else entry.count++;
   if (pairAttempts.size > 5000) pairAttempts.clear();
 }
@@ -74,15 +96,21 @@ function parsePatch(body: unknown): DevicePatch | string {
   const input = body as Record<string, unknown>;
   const patch: DevicePatch = {};
   if (input.name !== undefined) {
-    if (typeof input.name !== "string" || !input.name.trim()) return "名称不能为空。";
+    if (typeof input.name !== "string" || !input.name.trim())
+      return "名称不能为空。";
     patch.name = input.name;
   }
   if (input.capabilities !== undefined) {
-    if (!input.capabilities || typeof input.capabilities !== "object") return "能力设置无效。";
+    if (!input.capabilities || typeof input.capabilities !== "object")
+      return "能力设置无效。";
     const caps: Partial<DeviceCapabilities> = {};
-    for (const [key, value] of Object.entries(input.capabilities as Record<string, unknown>)) {
-      if (!(DEVICE_CAPABILITIES as readonly string[]).includes(key)) return `未知能力：${key}`;
-      if (value !== "off" && value !== "ask" && value !== "allow") return `能力 ${key} 的取值无效。`;
+    for (const [key, value] of Object.entries(
+      input.capabilities as Record<string, unknown>,
+    )) {
+      if (!(DEVICE_CAPABILITIES as readonly string[]).includes(key))
+        return `未知能力：${key}`;
+      if (value !== "off" && value !== "ask" && value !== "allow")
+        return `能力 ${key} 的取值无效。`;
       caps[key as keyof DeviceCapabilities] = value;
     }
     patch.capabilities = caps;
@@ -102,9 +130,15 @@ function parsePatch(body: unknown): DevicePatch | string {
   // 完全访问（docs/pc-node.md §13）：只有这里能打开——设备主人在网页上，机器人没有任何工具能调到这里。
   if (input.fullAccess !== undefined) {
     if (input.fullAccess === "off") patch.fullAccessUntil = null;
-    else if (typeof input.fullAccess === "string" && input.fullAccess in FULL_ACCESS_DURATIONS) {
+    else if (
+      typeof input.fullAccess === "string" &&
+      input.fullAccess in FULL_ACCESS_DURATIONS
+    ) {
       const ms = FULL_ACCESS_DURATIONS[input.fullAccess as FullAccessDuration];
-      patch.fullAccessUntil = ms === null ? FULL_ACCESS_FOREVER : new Date(Date.now() + ms).toISOString();
+      patch.fullAccessUntil =
+        ms === null
+          ? FULL_ACCESS_FOREVER
+          : new Date(Date.now() + ms).toISOString();
     } else return "完全访问的时长无效（1h / 24h / permanent / off）。";
   }
   return patch;
@@ -112,8 +146,25 @@ function parsePatch(body: unknown): DevicePatch | string {
 
 function hasJsonBody(headers: Headers): boolean {
   const length = headers.get("content-length");
-  if (length !== null && length.trim() === "0") return false;
-  return Boolean(headers.get("content-type")?.toLowerCase().includes("application/json"));
+  if (length !== null) {
+    const bytes = Number(length.trim());
+    if (!Number.isFinite(bytes) || bytes <= 0) return false;
+  }
+  return Boolean(
+    headers.get("content-type")?.toLowerCase().includes("application/json"),
+  );
+}
+
+// 无 JSON 请求体时跳过 req.json()，避免流式代理下等待 EOF 超时；同时过滤 JSON 数组等非对象载荷。
+async function readJsonObject(req: {
+  raw: Request;
+  json: () => Promise<unknown>;
+}): Promise<Record<string, unknown> | null> {
+  if (!hasJsonBody(req.raw.headers)) return null;
+  const parsed = await req.json().catch(() => null);
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
 }
 
 export function createDeviceRoutes(options: {
@@ -136,17 +187,32 @@ export function createDeviceRoutes(options: {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
   const routes = new Hono<{ Variables: Variables }>();
-  const userGuard = requireUser as unknown as MiddlewareHandler<{ Variables: Variables }>;
+  const userGuard = requireUser as unknown as MiddlewareHandler<{
+    Variables: Variables;
+  }>;
 
-  async function auditControlChange(input: Parameters<DeviceStore["audit"]>[0]) {
+  async function auditControlChange(
+    input: Parameters<DeviceStore["audit"]>[0],
+  ) {
     try {
       await store.audit(input);
     } catch {
-      console.error(JSON.stringify({ type: "device-control-audit-failed", action: input.action, deviceId: input.deviceId }));
+      console.error(
+        JSON.stringify({
+          type: "device-control-audit-failed",
+          action: input.action,
+          deviceId: input.deviceId,
+        }),
+      );
     }
   }
 
-  async function mainAudit(actorUserId: string, deviceId: string, change: string, detail?: string) {
+  async function mainAudit(
+    actorUserId: string,
+    deviceId: string,
+    change: string,
+    detail?: string,
+  ) {
     if (!auditStore) return;
     try {
       await recordAuditEvent(auditStore, {
@@ -154,19 +220,30 @@ export function createDeviceRoutes(options: {
         targetType: "device",
         targetId: deviceId,
         actorUserId,
-        payload: { change, ...(detail ? { detail: detail.slice(0, 400) } : {}) },
+        payload: {
+          change,
+          ...(detail ? { detail: detail.slice(0, 400) } : {}),
+        },
       });
     } catch {
       /* 设备自己的审计表才是这条记录的主存处。 */
     }
   }
 
-  const requireDevice: MiddlewareHandler<{ Variables: Variables }> = async (context, next) => {
+  const requireDevice: MiddlewareHandler<{ Variables: Variables }> = async (
+    context,
+    next,
+  ) => {
     const ip = clientIp(context.req.raw);
-    if (limited(ip)) return context.json({ error: "失败次数过多，请稍后再试。" }, 429);
+    if (limited(ip))
+      return context.json({ error: "失败次数过多，请稍后再试。" }, 429);
     const token = context.req.header("x-device-token")?.trim() ?? "";
     const device = token ? await store.authenticate(token) : null;
-    if (device === "revoked") return context.json({ error: "这台设备已被撤销，请重新登录。", revoked: true }, 401);
+    if (device === "revoked")
+      return context.json(
+        { error: "这台设备已被撤销，请重新登录。", revoked: true },
+        401,
+      );
     if (!device) {
       fail(ip);
       return context.json({ error: "设备令牌无效，请重新登录。" }, 401);
@@ -194,12 +271,18 @@ export function createDeviceRoutes(options: {
         onOpen: (_event, ws) => {
           handlers = hub.attach(
             device,
-            { send: (data) => ws.send(data), close: (code, reason) => ws.close(code, reason) },
+            {
+              send: (data) => ws.send(data),
+              close: (code, reason) => ws.close(code, reason),
+            },
             ip,
           );
         },
         onMessage: (event) => {
-          if (typeof event.data === "string" && event.data.length < 24 * 1024 * 1024)
+          if (
+            typeof event.data === "string" &&
+            event.data.length < 24 * 1024 * 1024
+          )
             void handlers?.onMessage(event.data).catch(() => {});
         },
         onClose: () => handlers?.onClose(),
@@ -225,7 +308,9 @@ export function createDeviceRoutes(options: {
       actorId: device.id,
       actorName: mobile ? "手机客户端" : "PC 客户端",
       action: "unenrolled",
-      summary: mobile ? "在手机上退出登录，令牌已作废" : "在 PC 上退出登录，令牌已作废",
+      summary: mobile
+        ? "在手机上退出登录，令牌已作废"
+        : "在 PC 上退出登录，令牌已作废",
       outcome: "succeeded",
       detail: null,
       durationMs: null,
@@ -241,10 +326,11 @@ export function createDeviceRoutes(options: {
    */
   routes.post("/agent/pair", async (context) => {
     const ip = clientIp(context.req.raw);
-    if (limited(ip) || pairLimited(ip)) return context.json({ error: "尝试次数过多，请稍后再试。" }, 429);
+    if (limited(ip) || pairLimited(ip))
+      return context.json({ error: "尝试次数过多，请稍后再试。" }, 429);
     countPair(ip);
-    const body = (await context.req.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!body || typeof body !== "object") return context.json({ error: "请求格式无效。" }, 400);
+    const body = await readJsonObject(context.req);
+    if (!body) return context.json({ error: "请求格式无效。" }, 400);
     const result = pairing.redeem(body.code);
     if (!result.ok) {
       fail(ip);
@@ -254,11 +340,17 @@ export function createDeviceRoutes(options: {
           : result.reason === "expired"
             ? "二维码已过期，请在网页上刷新二维码后重新扫码。"
             : "二维码无效，请扫描 ChisaBot 网页「设置 → 设备 → 绑定手机」里的二维码。";
-      return context.json({ error, reason: result.reason }, result.reason === "invalid" ? 400 : 410);
+      return context.json(
+        { error, reason: result.reason },
+        result.reason === "invalid" ? 400 : 410,
+      );
     }
     if (result.kind === "node") {
       try {
-        const platform = typeof body.platform === "string" && NODE_PLATFORMS.has(body.platform) ? body.platform : "linux";
+        const platform =
+          typeof body.platform === "string" && NODE_PLATFORMS.has(body.platform)
+            ? body.platform
+            : "linux";
         const { device, token } = await store.enroll({
           ownerUserId: result.ownerUserId,
           name: body.name ?? body.hostname ?? "我的服务器",
@@ -270,8 +362,7 @@ export function createDeviceRoutes(options: {
           ip,
         });
         await store.touch(device.id, { ip });
-        pairing.complete(result.pairingId, device);
-        await store.audit({
+        await auditControlChange({
           deviceId: device.id,
           ownerUserId: result.ownerUserId,
           actorType: "device",
@@ -283,12 +374,21 @@ export function createDeviceRoutes(options: {
           detail: null,
           durationMs: null,
         });
-        await mainAudit(result.ownerUserId, device.id, "device_enrolled", device.name);
+        await mainAudit(
+          result.ownerUserId,
+          device.id,
+          "device_enrolled",
+          device.name,
+        );
         const fresh = (await store.get(device.id)) ?? device;
+        pairing.complete(result.pairingId, fresh);
         return context.json({ device: hub.view(fresh), token }, 201);
       } catch {
         pairing.fail(result.pairingId);
-        return context.json({ error: "登记失败，请在网页上重新生成安装命令后重试。" }, 500);
+        return context.json(
+          { error: "登记失败，请在网页上重新生成安装命令后重试。" },
+          500,
+        );
       }
     }
     try {
@@ -304,8 +404,7 @@ export function createDeviceRoutes(options: {
         ip,
       });
       await store.touch(device.id, { ip });
-      pairing.complete(result.pairingId, device);
-      await store.audit({
+      await auditControlChange({
         deviceId: device.id,
         ownerUserId: result.ownerUserId,
         actorType: "device",
@@ -317,12 +416,21 @@ export function createDeviceRoutes(options: {
         detail: null,
         durationMs: null,
       });
-      await mainAudit(result.ownerUserId, device.id, "device_enrolled", device.name);
+      await mainAudit(
+        result.ownerUserId,
+        device.id,
+        "device_enrolled",
+        device.name,
+      );
       const fresh = (await store.get(device.id)) ?? device;
+      pairing.complete(result.pairingId, fresh);
       return context.json({ device: hub.view(fresh), token }, 201);
     } catch {
       pairing.fail(result.pairingId);
-      return context.json({ error: "绑定失败，请在网页上刷新二维码后重试。" }, 500);
+      return context.json(
+        { error: "绑定失败，请在网页上刷新二维码后重试。" },
+        500,
+      );
     }
   });
 
@@ -332,14 +440,21 @@ export function createDeviceRoutes(options: {
    */
   routes.post("/agent/session", requireDevice, async (context) => {
     const device = context.get("device");
-    if (!isMobilePlatform(device.platform)) return context.json({ error: "只有手机设备可以这样登录。" }, 403);
-    const facts = (await context.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!isMobilePlatform(device.platform))
+      return context.json({ error: "只有手机设备可以这样登录。" }, 403);
+    const facts = await readJsonObject(context.req);
     await store.touch(device.id, {
       ip: clientIp(context.req.raw) ?? device.lastIp,
       clientVersion: facts?.clientVersion,
       osVersion: facts?.osVersion,
     });
-    return context.json({ device: { id: device.id, name: device.name, ownerUserId: device.ownerUserId } });
+    return context.json({
+      device: {
+        id: device.id,
+        name: device.name,
+        ownerUserId: device.ownerUserId,
+      },
+    });
   });
 
   /**
@@ -349,13 +464,21 @@ export function createDeviceRoutes(options: {
    * 网络上的兄弟容器不能靠「没有代理头」枚举设备。
    */
   routes.get("/agent/state/:id", async (context) => {
-    if (context.req.header("x-forwarded-for") || context.req.header("x-real-ip"))
+    if (
+      context.req.header("x-forwarded-for") ||
+      context.req.header("x-real-ip")
+    )
       return context.json({ error: "页面不存在。" }, 404);
     const secret = options.localCallerSecret;
-    if (secret && !localCallerAuthorized(secret, context.req.raw.headers) && !trustUnsignedLocal())
+    if (
+      secret &&
+      !localCallerAuthorized(secret, context.req.raw.headers) &&
+      !trustUnsignedLocal()
+    )
       return context.json({ error: "页面不存在。" }, 404);
     const device = await store.get(context.req.param("id"));
-    const active = !!device && !device.revoked && isMobilePlatform(device.platform);
+    const active =
+      !!device && !device.revoked && isMobilePlatform(device.platform);
     if (active && device) await store.touch(device.id);
     return context.json({ active });
   });
@@ -363,8 +486,13 @@ export function createDeviceRoutes(options: {
   // ---- 服务器节点 chisabot-node（docs/pc-node.md §14）：公开的安装脚本和节点程序（不含密钥，配对靠一次性安装码） ----
 
   routes.get("/agent/node/install.sh", (context) => {
-    const proto = context.req.header("x-forwarded-proto") ?? new URL(context.req.url).protocol.replace(":", "");
-    const host = context.req.header("x-forwarded-host") ?? context.req.header("host") ?? new URL(context.req.url).host;
+    const proto =
+      context.req.header("x-forwarded-proto") ??
+      new URL(context.req.url).protocol.replace(":", "");
+    const host =
+      context.req.header("x-forwarded-host") ??
+      context.req.header("host") ??
+      new URL(context.req.url).host;
     return context.body(installScript(`${proto}://${host}`), 200, {
       "content-type": "text/x-shellscript; charset=utf-8",
       "cache-control": "no-store",
@@ -373,7 +501,14 @@ export function createDeviceRoutes(options: {
 
   routes.get("/agent/node/chisabot-node.cjs", async (context) => {
     const bundle = await readNodeBundle(options.appDistDir);
-    if (!bundle) return context.json({ error: "这个部署没有打包服务器节点程序（node-agent/chisabot-node.cjs）。" }, 404);
+    if (!bundle)
+      return context.json(
+        {
+          error:
+            "这个部署没有打包服务器节点程序（node-agent/chisabot-node.cjs）。",
+        },
+        404,
+      );
     return context.body(new Uint8Array(bundle), 200, {
       "content-type": "application/javascript; charset=utf-8",
       "cache-control": "no-store",
@@ -382,7 +517,10 @@ export function createDeviceRoutes(options: {
 
   // ---- 已登录的人 ----
 
-  async function owned(context: { var: Variables }, id: string): Promise<DeviceRecord | null> {
+  async function owned(
+    context: { var: Variables },
+    id: string,
+  ): Promise<DeviceRecord | null> {
     const device = await store.get(id);
     if (!device) return null;
     const actor = context.var.actor;
@@ -403,7 +541,7 @@ export function createDeviceRoutes(options: {
 
   /** PC 客户端登录后调用：用当前会话登记这台电脑，返回一次性明文令牌。 */
   routes.post("/enroll", userGuard, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as Record<string, unknown> | null;
+    const body = await readJsonObject(context.req);
     if (!body) return context.json({ error: "请求格式无效。" }, 400);
     const actor = context.var.actor;
     const { device, token } = await store.enroll({
@@ -435,20 +573,19 @@ export function createDeviceRoutes(options: {
   /** 网页「绑定手机」：签发一次性绑定码（5 分钟），网页把它和服务器地址一起画成二维码。 */
   routes.post("/pairing", userGuard, async (context) => {
     const actor = context.var.actor;
-    const raw: unknown = hasJsonBody(context.req.raw.headers)
-      ? await context.req.json().catch(() => null)
-      : null;
-    const kind =
-      typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "node"
-        ? "node"
-        : "phone";
+    const raw = await readJsonObject(context.req);
+    const kind = raw?.kind === "node" ? "node" : "phone";
     const issued = pairing.issue(actor.id, kind);
     return context.json({ ...issued, kind }, 201);
   });
 
   routes.get("/pairing/:pairingId", userGuard, (context) => {
-    const status = pairing.status(context.req.param("pairingId"), context.var.actor.id);
-    if (!status) return context.json({ error: "这个二维码不存在或已过期。" }, 404);
+    const status = pairing.status(
+      context.req.param("pairingId"),
+      context.var.actor.id,
+    );
+    if (!status)
+      return context.json({ error: "这个二维码不存在或已过期。" }, 404);
     return context.json(status);
   });
 
@@ -468,12 +605,15 @@ export function createDeviceRoutes(options: {
     const owner = hub.approvalOwner(id);
     if (!owner || owner !== actor.id)
       return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
-    const body = (await context.req.json().catch(() => null)) as { decision?: unknown } | null;
+    const body = (await context.req.json().catch(() => null)) as {
+      decision?: unknown;
+    } | null;
     const decision = body?.decision;
     if (decision !== "approve" && decision !== "deny")
       return context.json({ error: "decision 必须是 approve 或 deny。" }, 400);
     const done = hub.decide(id, decision === "approve", "web");
-    if (!done) return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
+    if (!done)
+      return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
     return context.json({ ok: true });
   });
 
@@ -488,28 +628,39 @@ export function createDeviceRoutes(options: {
     const botId = context.req.param("botId");
     const tools = await toolsFor(actor.id, botId);
     const list = tools.find((tool) => tool.name === "device_list");
-    const devices = list ? JSON.parse(String(await list.execute({}))).devices : [];
+    const devices = list
+      ? JSON.parse(String(await list.execute({}))).devices
+      : [];
     // guidance = 这次运行里机器人会读到的「用户的电脑」提示词（在线 / 离线 / 开了哪些能力）。
-    return context.json({ botId, tools: tools.map((tool) => tool.name), devices, guidance: list?.guidance ?? null });
+    return context.json({
+      botId,
+      tools: tools.map((tool) => tool.name),
+      devices,
+      guidance: list?.guidance ?? null,
+    });
   });
 
   routes.post("/bot-tools/:botId/probe", userGuard, async (context) => {
     if (!toolsFor) return context.json({ error: "不可用。" }, 404);
     const actor = context.var.actor;
-    if (actor.role !== "admin") return context.json({ error: "只有管理员可以运行自检。" }, 403);
-    const body = (await context.req.json().catch(() => null)) as {
-      deviceId?: unknown;
-      tool?: unknown;
-      args?: unknown;
-    } | null;
+    if (actor.role !== "admin")
+      return context.json({ error: "只有管理员可以运行自检。" }, 403);
+    const body = await readJsonObject(context.req);
     const tools = await toolsFor(actor.id, context.req.param("botId"));
     // 默认跑 device_system_info；管理员也可以点名别的 device_* 工具（走同一条能力 / 审批 / 审计路径，
     // 「询问」会真的弹审批），用来不发聊天就验证整条链路（2026-10-14）。
-    const toolName = typeof body?.tool === "string" && body.tool.startsWith("device_") ? body.tool : "device_system_info";
+    const toolName =
+      typeof body?.tool === "string" && body.tool.startsWith("device_")
+        ? body.tool
+        : "device_system_info";
     const info = tools.find((tool) => tool.name === toolName);
     if (!info)
       return context.json(
-        { ok: false, error: `这个机器人现在没有 ${toolName}（没有在线设备，或这项能力在所有在线设备上都关闭）。`, tools: tools.map((tool) => tool.name) },
+        {
+          ok: false,
+          error: `这个机器人现在没有 ${toolName}（没有在线设备，或这项能力在所有在线设备上都关闭）。`,
+          tools: tools.map((tool) => tool.name),
+        },
         409,
       );
     const args =
@@ -517,9 +668,15 @@ export function createDeviceRoutes(options: {
         ? (body.args as Record<string, unknown>)
         : {};
     const result = String(
-      await info.execute({ ...args, ...(typeof body?.deviceId === "string" ? { deviceId: body.deviceId } : {}) }),
+      await info.execute({
+        ...args,
+        ...(typeof body?.deviceId === "string"
+          ? { deviceId: body.deviceId }
+          : {}),
+      }),
     );
-    const failed = result.startsWith(REFUSAL_MARKER) || result.startsWith("设备操作失败");
+    const failed =
+      result.startsWith(REFUSAL_MARKER) || result.startsWith("设备操作失败");
     return context.json({ ok: !failed, result }, failed ? 409 : 200);
   });
 
@@ -532,14 +689,24 @@ export function createDeviceRoutes(options: {
   routes.patch("/:id", userGuard, async (context) => {
     const before = await owned(context, context.req.param("id"));
     if (!before) return context.json({ error: "没有这台设备。" }, 404);
-    if (before.revoked) return context.json({ error: "这台设备已被撤销，不能再修改。" }, 409);
+    if (before.revoked)
+      return context.json({ error: "这台设备已被撤销，不能再修改。" }, 409);
     const patch = parsePatch(await context.req.json().catch(() => null));
     if (typeof patch === "string") return context.json({ error: patch }, 400);
     const actor = context.var.actor;
     if (patch.fullAccessUntil) {
-      if (before.ownerUserId !== actor.id) return context.json({ error: "完全访问只能由设备的主人自己打开。" }, 403);
-      if (isMobilePlatform(before.platform)) return context.json({ error: "手机不是可操作的设备。" }, 400);
-      if (before.paused && patch.paused !== false) return context.json({ error: "这台设备在紧急停止中，先解除紧急停止。" }, 409);
+      if (before.ownerUserId !== actor.id)
+        return context.json(
+          { error: "完全访问只能由设备的主人自己打开。" },
+          403,
+        );
+      if (isMobilePlatform(before.platform))
+        return context.json({ error: "手机不是可操作的设备。" }, 400);
+      if (before.paused && patch.paused !== false)
+        return context.json(
+          { error: "这台设备在紧急停止中，先解除紧急停止。" },
+          409,
+        );
     }
     const after = await store.update(before.id, patch);
     if (!after) return context.json({ error: "没有这台设备。" }, 404);
@@ -556,7 +723,10 @@ export function createDeviceRoutes(options: {
             ? "完全访问：关"
             : null
         : null;
-    const change = [describeChange(before, after), fullChange].filter((part) => part && part !== "无变化").join("；") || "无变化";
+    const change =
+      [describeChange(before, after), fullChange]
+        .filter((part) => part && part !== "无变化")
+        .join("；") || "无变化";
     const pausedChanged = before.paused !== after.paused;
     await auditControlChange({
       deviceId: after.id,
@@ -610,7 +780,12 @@ export function createDeviceRoutes(options: {
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     hub.kick(device.id);
     await store.remove(device.id);
-    await mainAudit(context.var.actor.id, device.id, "device_deleted", device.name);
+    await mainAudit(
+      context.var.actor.id,
+      device.id,
+      "device_deleted",
+      device.name,
+    );
     return context.json({ ok: true });
   });
 
@@ -622,7 +797,12 @@ export function createDeviceRoutes(options: {
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     const log = await store.auditLog(device.id, { limit: 200 });
     const edits = log
-      .filter((entry) => ["edit_file", "apply_patch", "write_file", "file_upload"].includes(entry.action) && entry.outcome === "succeeded")
+      .filter(
+        (entry) =>
+          ["edit_file", "apply_patch", "write_file", "file_upload"].includes(
+            entry.action,
+          ) && entry.outcome === "succeeded",
+      )
       .slice(0, 20);
     let live: unknown = null;
     let liveError: string | null = null;
@@ -632,7 +812,10 @@ export function createDeviceRoutes(options: {
       } catch (error) {
         liveError = error instanceof Error ? error.message : String(error);
       }
-    } else liveError = hub.isOnline(device.id) ? "客户端版本太旧，看不到运行中的命令（需要 0.1.8+）。" : "设备离线。";
+    } else
+      liveError = hub.isOnline(device.id)
+        ? "客户端版本太旧，看不到运行中的命令（需要 0.1.8+）。"
+        : "设备离线。";
     return context.json({ live, liveError, edits });
   });
 
@@ -658,7 +841,10 @@ export function createDeviceRoutes(options: {
       });
       return context.json({ ok: true, job: result });
     } catch (error) {
-      return context.json({ error: error instanceof Error ? error.message : String(error) }, 409);
+      return context.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        409,
+      );
     }
   });
 
@@ -691,7 +877,11 @@ export function createDeviceRoutes(options: {
       return context.json({ ok: true, result });
     } catch (error) {
       return context.json(
-        { ok: false, error: error instanceof DeviceRefusedError ? error.message : "测试失败。" },
+        {
+          ok: false,
+          error:
+            error instanceof DeviceRefusedError ? error.message : "测试失败。",
+        },
         error instanceof DeviceRefusedError ? 409 : 500,
       );
     }
@@ -701,9 +891,13 @@ export function createDeviceRoutes(options: {
     const device = await owned(context, context.req.param("id"));
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     const png = hub.screenshot(device.id, context.req.param("shotId"));
-    if (!png) return context.json({ error: "截图已过期（只保留 30 分钟）。" }, 404);
+    if (!png)
+      return context.json({ error: "截图已过期（只保留 30 分钟）。" }, 404);
     return new Response(new Uint8Array(png), {
-      headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=1800" },
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "private, max-age=1800",
+      },
     });
   });
 

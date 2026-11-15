@@ -355,16 +355,40 @@ export function pairingErrorMessage(
   kind: "phone" | "node" = "phone",
 ): string {
   const retry = kind === "phone" ? "点「刷新二维码」重试" : "重试";
+  const fallback =
+    kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
   if (isTimeoutError(error)) {
     return `连接服务器超时，请${retry}`;
   }
   if (isNetworkError(error)) {
     return `网络连不上，请检查网络后${retry}`;
   }
-  if (error instanceof ClientError && error.message) {
-    return error.message;
+  if (error instanceof ClientError) {
+    if (/[\u4e00-\u9fff]/u.test(error.message)) {
+      return error.message;
+    }
+    if (error.status === 401) {
+      return "登录已过期，请刷新页面重新登录后重试";
+    }
+    if (error.status === 403) {
+      return "当前账号没有权限执行此操作";
+    }
+    if (error.status === 404) {
+      return kind === "node"
+        ? "服务器暂不支持节点安装，请先更新服务器"
+        : "服务器暂不支持扫码绑定，请先更新服务器";
+    }
+    if (error.status === 429) {
+      return "操作太频繁，请稍后再试";
+    }
+    if (error.status >= 500) {
+      return error.message.includes("No identity provider")
+        ? "服务器尚未配置登录认证，无法绑定设备"
+        : `服务器暂时不可用，请稍后${retry}`;
+    }
+    return fallback;
   }
-  return kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
+  return fallback;
 }
 
 export async function createPairing(

@@ -219,15 +219,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val paired = GatewayAuth.pair(link.server, link.code, Pairing.deviceName(ctx.contentResolver), Pairing.model(), os)
         // 先换出会话再动本机状态：换不成（旧服务器没这个接口、网络断）时旧绑定和旧登录原样保留，可以重扫。
         val cookies = GatewayAuth.deviceSession(link.server, paired.token, os)
-        val oldToken = prefs.getString("deviceToken", null)
-        val oldServer = prefs.getString("deviceServer", null)
-        if (oldToken != null && oldServer != null) GatewayAuth.unenroll(oldServer, oldToken)
-        synchronized(authStateLock) {
+        val (oldServer, oldToken) = synchronized(authStateLock) {
+            val prev = prefs.getString("deviceServer", null) to prefs.getString("deviceToken", null)
             prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", link.server)
                 .putString("deviceId", paired.deviceId).putString("deviceName", paired.deviceName).apply()
             lastRenewAt = 0L; lastRenewSucceededAt = 0L
             setCookies(link.server, cookies)
             prefs.edit().putString("server", link.server).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
+            prev
+        }
+        if (oldToken != null && oldServer != null) {
+            viewModelScope.launch(Dispatchers.IO) { GatewayAuth.unenroll(oldServer, oldToken) }
         }
         saveRecent(link.server)
     }
@@ -283,6 +285,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 会话失效（服务器把我们带回登录）：不解除绑定，只回登录页；有设备令牌时下次请求会先静默续期。 */
     fun expired() {
+        synchronized(authStateLock) {
+            if (deviceToken == null) prefs.edit().putBoolean("loggedIn", false).apply()
+        }
         stopRun()
         notice = if (notice.isNotBlank()) notice else "登录已过期，请重新登录或扫码绑定。"
         stack.clear(); stack += Screen.Login
