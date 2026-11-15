@@ -4,6 +4,7 @@ import {
   type PrimaryAgentFallbackReason,
   type PrimaryAgentResolution,
 } from "../../../shared/validators/primary-agent";
+import { reasonWithoutStatement } from "../db/query-failure";
 import type { UserPreferencesStore } from "../user-preferences";
 import type { AgentProfileStore } from "./profile-store";
 import type { AgentActor, AgentProfile } from "./profile-types";
@@ -103,7 +104,7 @@ export function createPrimaryAgentService(deps: PrimaryAgentServiceDeps) {
             type: "primary-agent-self-heal-failed",
             userId,
             invalidAgentId,
-            error: error instanceof Error ? error.message : String(error),
+            error: reasonWithoutStatement(error),
           }),
         );
       });
