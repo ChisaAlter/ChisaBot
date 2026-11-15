@@ -26,7 +26,7 @@ object Pairing {
     /**
      * 扫码结果 → 绑定码或原因。三种情况分开说，别都报「不是绑定二维码」：
      * 不是本应用的码（带上认出来的地址，方便判断扫错了哪张）；是绑定码但内容不全（截断 / 旧版格式）；
-     * 服务器地址不行（release 包必须 https，内网 http 部署会走到这条）。
+     * 服务器地址不行（公网地址必须 https，局域网支持 http）。
      */
     fun inspect(text: String?): Result {
         val raw = text?.trim().orEmpty()
@@ -36,7 +36,7 @@ object Pairing {
         if (!uri.scheme.equals("chisabot", true) || !uri.host.equals("pair", true)) return notPair(raw)
         val params = uri.rawQuery.orEmpty().split('&').mapNotNull {
             val eq = it.indexOf('=')
-            if (eq <= 0) null else it.substring(0, eq) to runCatching { java.net.URLDecoder.decode(it.substring(eq + 1), "UTF-8") }.getOrNull().orEmpty()
+            if (eq <= 0) null else it.substring(0, eq) to runCatching { java.net.URLDecoder.decode(it.substring(eq + 1).replace("+", "%2B"), "UTF-8") }.getOrNull().orEmpty()
         }.toMap()
         val code = params["code"]?.trim().orEmpty()
         val server = params["server"]?.trim().orEmpty()

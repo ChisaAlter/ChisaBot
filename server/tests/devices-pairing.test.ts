@@ -10,6 +10,7 @@ import { createDeviceHub } from "../src/devices/hub";
 import {
   createPairingStore,
   isPairingCode,
+  NODE_PAIRING_TTL_MS,
   PAIRING_TTL_MS,
 } from "../src/devices/pairing";
 import { createDeviceRoutes } from "../src/devices/routes";
@@ -93,6 +94,50 @@ describe("pairing store", () => {
     expect(isMobilePlatform("android")).toBe(true);
     expect(isMobilePlatform("win32")).toBe(false);
     expect(isMobilePlatform(null)).toBe(false);
+  });
+
+  test("node pairing keeps bound status for KEEP_AFTER_MS past endedAt and sweep/MAX_ENTRIES respect it", () => {
+    let time = 1_000_000;
+    const store = createPairingStore({ now: () => time });
+    const node = store.issue("u1", "node");
+    expect(NODE_PAIRING_TTL_MS).toBe(30 * 60_000);
+
+    // 第 20 分钟兑换并完成绑定，第 25 分钟触发 sweep 仍应能查询到 bound 状态。
+    time += 20 * 60_000;
+    const redeemed = store.redeem(node.code);
+    expect(redeemed).toEqual({
+      ok: true,
+      pairingId: node.id,
+      ownerUserId: "u1",
+      kind: "node",
+    });
+    store.complete(node.id, { id: "dev_n1", name: "node-1" });
+
+    time += 5 * 60_000;
+    store.issue("u2");
+    expect(store.status(node.id, "u1")).toEqual({
+      id: node.id,
+      state: "bound",
+      expiresAt: node.expiresAt,
+      device: { id: "dev_n1", name: "node-1" },
+    });
+
+    // 超过 endedAt + 10 分钟后才由 sweep 清理。
+    time += 6 * 60_000;
+    store.issue("u2");
+    expect(store.status(node.id, "u1")).toBeNull();
+
+    // MAX_ENTRIES 淘汰优先丢弃已结束条目，保留仍处于 pending 的旧码。
+    const activePending = store.issue("u_keep", "phone");
+    const firstCancelled = store.issue("u_done", "phone");
+    store.cancel(firstCancelled.id, "u_done");
+    for (let i = 1; i < 1999; i++) {
+      const done = store.issue("u_done", "phone");
+      store.cancel(done.id, "u_done");
+    }
+    store.issue("u_extra", "phone");
+    expect(store.status(activePending.id, "u_keep")?.state).toBe("pending");
+    expect(store.status(firstCancelled.id, "u_done")).toBeNull();
   });
 });
 
@@ -481,5 +526,131 @@ describe("/api/devices pairing routes", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("bodyless chunked /agent/session and /agent/pair answer without EOF and reject JSON arrays", async () => {
+    const { routes, call } = setup();
+    const ticket = (await (
+      await call("/pairing", { method: "POST" })
+    ).json()) as { code: string };
+    const { token } = (await (
+      await call("/agent/pair", {
+        method: "POST",
+        json: { code: ticket.code, model: "Pixel 9" },
+      })
+    ).json()) as { token: string };
+
+    const sendBodylessChunked = (port: number, rawHead: string) =>
+      new Promise<{ statusLine: string; json: Record<string, unknown> }>(
+        (resolve, reject) => {
+          const socket = net.connect(port, "127.0.0.1", () => {
+            socket.write(rawHead);
+          });
+          let buffer = "";
+          const timer = setTimeout(() => {
+            socket.destroy();
+            reject(
+              new Error(
+                `Timed out waiting for chunked EOF: ${rawHead.split("\r\n")[0]}`,
+              ),
+            );
+          }, 300);
+          socket.on("data", (chunk) => {
+            buffer += chunk.toString();
+            const sep = buffer.indexOf("\r\n\r\n");
+            if (sep >= 0 && buffer.indexOf("}", sep + 4) >= 0) {
+              clearTimeout(timer);
+              socket.destroy();
+              const [head, bodyPart = ""] = buffer.split("\r\n\r\n");
+              const jsonMatch = /\{[\s\S]*\}/.exec(bodyPart);
+              if (!jsonMatch) {
+                reject(new Error(`Expected JSON response, got: ${bodyPart}`));
+                return;
+              }
+              resolve({
+                statusLine: head.split("\r\n")[0] ?? "",
+                json: JSON.parse(jsonMatch[0]) as Record<string, unknown>,
+              });
+            }
+          });
+          socket.on("error", (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+        },
+      );
+
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) => routes.fetch(request),
+    });
+    try {
+      const sessionRes = await sendBodylessChunked(
+        server.port,
+        `POST /agent/session HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nX-Forwarded-For: 203.0.113.10\r\nX-Device-Token: ${token}\r\nTransfer-Encoding: chunked\r\n\r\n`,
+      );
+      expect(sessionRes.statusLine).toContain("200");
+      expect(sessionRes.json.device).toMatchObject({ ownerUserId: "u1" });
+
+      const pairRes = await sendBodylessChunked(
+        server.port,
+        `POST /agent/pair HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nX-Forwarded-For: 203.0.113.11\r\nTransfer-Encoding: chunked\r\n\r\n`,
+      );
+      expect(pairRes.statusLine).toContain("400");
+      expect(pairRes.json).toEqual({ error: "请求格式无效。" });
+    } finally {
+      server.stop(true);
+    }
+
+    const pairArray = await call("/agent/pair", { method: "POST", json: [] });
+    expect(pairArray.status).toBe(400);
+    expect(await pairArray.json()).toEqual({ error: "请求格式无效。" });
+
+    const enrollArray = await call("/enroll", { method: "POST", json: [] });
+    expect(enrollArray.status).toBe(400);
+    expect(await enrollArray.json()).toEqual({ error: "请求格式无效。" });
+  });
+
+  test("POST /agent/pair still returns 201, issues cbd_ token, and marks pairing bound when store.audit throws", async () => {
+    const { call, memory, pairing } = setup();
+    memory.store.audit = async () => {
+      throw new Error("audit insert failed");
+    };
+
+    const phoneTicket = (await (
+      await call("/pairing", { method: "POST", json: { kind: "phone" } })
+    ).json()) as { id: string; code: string };
+    const phoneRes = await call("/agent/pair", {
+      method: "POST",
+      json: { code: phoneTicket.code, name: "Pixel 9" },
+    });
+    expect(phoneRes.status).toBe(201);
+    const phoneBody = (await phoneRes.json()) as {
+      token: string;
+      device: { id: string; name: string };
+    };
+    expect(phoneBody.token).toMatch(/^cbd_[A-Za-z0-9_-]{43}$/);
+    expect(pairing.status(phoneTicket.id, "u1")).toMatchObject({
+      state: "bound",
+      device: { id: phoneBody.device.id, name: "Pixel 9" },
+    });
+
+    const nodeTicket = (await (
+      await call("/pairing", { method: "POST", json: { kind: "node" } })
+    ).json()) as { id: string; code: string };
+    const nodeRes = await call("/agent/pair", {
+      method: "POST",
+      json: { code: nodeTicket.code, name: "srv-1", platform: "linux" },
+    });
+    expect(nodeRes.status).toBe(201);
+    const nodeBody = (await nodeRes.json()) as {
+      token: string;
+      device: { id: string; name: string };
+    };
+    expect(nodeBody.token).toMatch(/^cbd_[A-Za-z0-9_-]{43}$/);
+    expect(pairing.status(nodeTicket.id, "u1")).toMatchObject({
+      state: "bound",
+      device: { id: nodeBody.device.id, name: "srv-1" },
+    });
   });
 });

@@ -79,10 +79,10 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     val origin = vm.origin() ?: return
     val theme = if (sky.dark) "dark" else "light"
     val scope = rememberCoroutineScope()
-    var progress by remember { mutableStateOf(0) }
-    var loadError by remember { mutableStateOf<String?>(null) }
-    var renewing by remember { mutableStateOf(false) }
-    var web by remember { mutableStateOf<WebView?>(null) }
+    var progress by remember(origin) { mutableStateOf(0) }
+    var loadError by remember(origin) { mutableStateOf<String?>(null) }
+    var renewing by remember(origin) { mutableStateOf(false) }
+    var web by remember(origin) { mutableStateOf<WebView?>(null) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var cameraFile by remember { mutableStateOf<File?>(null) }
@@ -195,7 +195,8 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
             }
         }
     }
-    Box(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+    androidx.compose.runtime.key(origin) {
+        Box(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
@@ -230,7 +231,13 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 val url = request.url
                                 // originKey 已把协议 / 主机小写、默认端口补齐：https://host 和 https://host:443 算同一个。
                                 val same = originKey(url.toString())?.let { it == originKey(origin) } == true
-                                if (same) return false
+                                if (same) {
+                                    if (isWebSignOutPath(url.path)) {
+                                        vm.logout()
+                                        return true
+                                    }
+                                    return false
+                                }
                                 if (request.isForMainFrame && url.scheme in setOf("https", "http", "mailto", "tel", "chisabot")) {
                                     runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, url)) }
                                 }
@@ -238,8 +245,12 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                             }
                             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { loadError = null }
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
-                                if (originKey(url) == originKey(origin)) {
+                                if (originKey(url)?.let { it == originKey(origin) } == true) {
                                     val uri = Uri.parse(url)
+                                    if (isWebSignOutPath(uri.path)) {
+                                        vm.logout()
+                                        return
+                                    }
                                     vm.rememberWebPath((uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") + (uri.encodedFragment?.let { "#$it" } ?: ""))
                                 }
                             }
@@ -350,6 +361,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 }
             }
         }
+    }
 }
 
 /** 首次使用沿用系统主题；之后由同一网页的设置控制，不能每次导航重写用户选择。 */
@@ -402,6 +414,9 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
 
 /** evaluateJavascript 回来的是 JSON 文本：只有字面量 true 表示网页已经处理了返回键。 */
 internal fun isBackHandled(result: String?): Boolean = result?.trim() == "true"
+
+/** 网页内点击「退出登录」跳转到 /sign：同步清除原生设备令牌并回到登录页，避免再跳 /login 触发静默复登。 */
+internal fun isWebSignOutPath(path: String?): Boolean = path == "/sign" || path?.startsWith("/sign/") == true
 
 /** Android URLUtil 不识别服务器使用的 RFC 5987 filename*，否则中文文件会落成 UUID.bin。 */
 internal fun webDownloadName(url: String, disposition: String?, mime: String?): String {

@@ -19,6 +19,7 @@ import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
 import cn.ayase.chisabot.ui.hideIncompleteTail
 import cn.ayase.chisabot.ui.isBackHandled
+import cn.ayase.chisabot.ui.isWebSignOutPath
 import cn.ayase.chisabot.ui.MIC_DENIED_ONCE_MESSAGE
 import cn.ayase.chisabot.ui.MIC_DENIED_SETTINGS_MESSAGE
 import cn.ayase.chisabot.ui.isMicPermanentlyDenied
@@ -378,6 +379,13 @@ class NativeLogicTest {
         assertTrue(Pairing.inspect("") is Pairing.Result.Bad)
         assertTrue(Pairing.inspect(null) is Pairing.Result.Bad)
         assertTrue(Pairing.inspect("chisabot://pair?server=https%3A%2F%2Fx&code=cbp_${"a".repeat(31)}") is Pairing.Result.Bad)
+        // pair/ 尾斜杠 + 大写域名归一化；超 600 字符拦截；裸 + 不被 URLDecoder 转成空格
+        val slash = Pairing.inspect("chisabot://pair/?server=https%3A%2F%2FChat.Example.COM%2F&code=cbp_${"a".repeat(32)}") as Pairing.Result.Ok
+        assertEquals("https://chat.example.com", slash.link.server)
+        val tooLong = Pairing.inspect("chisabot://pair?server=https%3A%2F%2Fchat.example.com&code=cbp_${"a".repeat(600)}") as Pairing.Result.Bad
+        assertTrue(tooLong.reason.contains("太长"))
+        val plusBad = Pairing.inspect("chisabot://pair?server=http://example.com/a+b&code=cbp_${"a".repeat(32)}") as Pairing.Result.Bad
+        assertTrue(plusBad.reason.contains("http://example.com/a+b"))
     }
 
     @Test fun normalizePrivateHttp() {
@@ -390,14 +398,28 @@ class NativeLogicTest {
         assertEquals("http://localhost:3000", GatewayAuth.normalize("http://localhost:3000"))
         assertEquals("http://nas.local", GatewayAuth.normalize("http://nas.local"))
         assertEquals("http://[::1]:3000", GatewayAuth.normalize("http://[::1]:3000"))
-        // 公网 http 一律拒（含公网 IP、域名）
-        for (bad in listOf("http://example.com", "http://8.8.8.8", "http://192.168.1.5.evil.com", "http://172.32.0.1", "ftp://192.168.1.5")) {
+        // 公网 http 与带账号密码 userInfo 的地址一律拒
+        for (bad in listOf("http://example.com", "http://8.8.8.8", "http://192.168.1.5.evil.com", "http://172.32.0.1", "ftp://192.168.1.5", "https://user:pass@example.com")) {
             val e = try { GatewayAuth.normalize(bad); null } catch (x: GatewayAuth.LoginError) { x }
             assertEquals("$bad", "invalid", e?.kind)
         }
-        // 没写协议的默认 https；显式 :80 的 http 归一掉端口
+        val userInfoErr = try { GatewayAuth.normalize("https://user:pass@example.com"); null } catch (x: GatewayAuth.LoginError) { x }
+        assertTrue(userInfoErr?.message?.contains("账号密码") == true)
+        // 没写协议的默认 https；显式 :80 的 http 归一掉端口；大写域名转小写
         assertEquals("https://chat.example.com", GatewayAuth.normalize("chat.example.com"))
         assertEquals("http://192.168.1.5", GatewayAuth.normalize("http://192.168.1.5:80"))
+        assertEquals("https://chat.example.com:8443", GatewayAuth.normalize("HTTPS://Chat.Example.COM:8443/"))
+    }
+
+    @Test fun webSignOutPathMatchesSignRoutesOnly() {
+        assertTrue(isWebSignOutPath("/sign"))
+        assertTrue(isWebSignOutPath("/sign/"))
+        assertTrue(isWebSignOutPath("/sign/out"))
+        assertFalse(isWebSignOutPath("/sign-in/req1"))
+        assertFalse(isWebSignOutPath("/settings"))
+        assertFalse(isWebSignOutPath("/"))
+        assertFalse(isWebSignOutPath(""))
+        assertFalse(isWebSignOutPath(null))
     }
 
     @Test fun deviceRenewalNeverUsesAnotherServersBinding() {

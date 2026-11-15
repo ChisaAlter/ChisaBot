@@ -1,7 +1,11 @@
-import { IconCheck, IconDeviceMobile, IconQrcode, IconRefresh } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconDeviceMobile,
+  IconQrcode,
+  IconRefresh,
+} from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pairingUri } from "../../../../shared/devices";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import {
@@ -13,9 +17,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cancelPairing, createPairing, deviceKeys, type PairingTicket, pairingErrorMessage, pairingStatus } from "@/lib/devices";
+import { ClientError } from "@/lib/client";
+import {
+  cancelPairing,
+  createPairing,
+  deviceKeys,
+  type PairingTicket,
+  pairingErrorMessage,
+  pairingStatus,
+} from "@/lib/devices";
 import { qrPath } from "@/lib/qr";
 import { cn } from "@/lib/utils";
+import { pairingUri } from "../../../../shared/devices";
 
 /**
  * 设置 → 设备 →「绑定手机」（DESIGN.md §33）。
@@ -35,19 +48,31 @@ type Phase =
   | { kind: "bound"; name: string }
   | { kind: "error"; message: string };
 
-function useCountdown(expiresAt: string | null, ttlSeconds: number) {
+function useCountdown(key: string | null, ttlSeconds: number) {
   // 服务器时钟和本机可能差几分钟：只用 ttlSeconds + 本机单调时钟倒数（同 useApprovalCountdown 的做法）。
-  const [left, setLeft] = useState(ttlSeconds);
+  // 渲染期按 key 同步派生，避免新 ticket 写入当帧读到旧码归零后的 left === 0 而二次换码。
+  const [state, setState] = useState<{ key: string | null; left: number }>({
+    key,
+    left: ttlSeconds,
+  });
   useEffect(() => {
-    if (!expiresAt) return;
+    if (!key) return;
     const start = performance.now();
-    setLeft(ttlSeconds);
+    setState({ key, left: ttlSeconds });
     const timer = window.setInterval(() => {
-      setLeft(Math.max(0, Math.ceil(ttlSeconds - (performance.now() - start) / 1000)));
+      setState((prev) => {
+        const next = Math.max(
+          0,
+          Math.ceil(ttlSeconds - (performance.now() - start) / 1000),
+        );
+        return prev.key === key && prev.left === next
+          ? prev
+          : { key, left: next };
+      });
     }, 500);
     return () => window.clearInterval(timer);
-  }, [expiresAt, ttlSeconds]);
-  return left;
+  }, [key, ttlSeconds]);
+  return state.key === key ? state.left : ttlSeconds;
 }
 
 function mmss(seconds: number) {
@@ -81,12 +106,22 @@ function isAbort(error: unknown): boolean {
   );
 }
 
-export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function PairPhoneDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const autoRefreshes = useRef(0);
   const current = useRef<string | null>(null);
   const issueAbort = useRef<AbortController | null>(null);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const rotating = useRef<string | null>(null);
+  const leftRef = useRef(0);
   const server = typeof window === "undefined" ? "" : window.location.origin;
 
   const issue = useCallback(async () => {
@@ -99,6 +134,7 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
       void cancelPairing(ticket.id);
       return null;
     }
+    rotating.current = null;
     current.current = ticket.id;
     if (previous && previous !== ticket.id) void cancelPairing(previous);
     setPhase({ kind: "pending", ticket });
@@ -110,17 +146,48 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setPhase({ kind: "error", message: pairingErrorMessage(error) });
   }, []);
 
+  const rotateTicket = useCallback(
+    (deadId: string, cancelOnServer: boolean) => {
+      if (
+        !openRef.current ||
+        current.current !== deadId ||
+        rotating.current === deadId
+      ) {
+        return;
+      }
+      if (autoRefreshes.current >= MAX_AUTO_REFRESH) {
+        if (cancelOnServer) void cancelPairing(deadId);
+        current.current = null;
+        setPhase({ kind: "paused" });
+        return;
+      }
+      rotating.current = deadId;
+      autoRefreshes.current += 1;
+      // 服务端已失效（expired / cancelled / 404）时先清空 current，防止 issue() 成功后多余 DELETE。
+      if (!cancelOnServer) current.current = null;
+      issue().catch((err: unknown) => {
+        if (rotating.current === deadId) rotating.current = null;
+        if (openRef.current) onIssueError(err);
+      });
+    },
+    [issue, onIssueError],
+  );
+
   // 打开时签发；关闭时作废。
   useEffect(() => {
+    openRef.current = open;
     if (!open) return;
     autoRefreshes.current = 0;
+    rotating.current = null;
     setPhase({ kind: "loading" });
     let alive = true;
     issue().catch((error: unknown) => {
-      if (alive) onIssueError(error);
+      if (alive && openRef.current) onIssueError(error);
     });
     return () => {
       alive = false;
+      openRef.current = false;
+      rotating.current = null;
       issueAbort.current?.abort();
       issueAbort.current = null;
       if (current.current) void cancelPairing(current.current);
@@ -129,7 +196,8 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }, [open, issue, onIssueError]);
 
   const ticket = phase.kind === "pending" ? phase.ticket : null;
-  const left = useCountdown(ticket?.expiresAt ?? null, ticket?.ttlSeconds ?? 300);
+  const left = useCountdown(ticket?.id ?? null, ticket?.ttlSeconds ?? 300);
+  leftRef.current = left;
 
   // 轮询绑定状态。
   useEffect(() => {
@@ -146,9 +214,20 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
           void queryClient.invalidateQueries({ queryKey: deviceKeys.all });
           return;
         }
-        if (status.state === "expired" || status.state === "cancelled") return; // 倒计时那边负责换码
-      } catch {
-        /* 偶发网络错误：下一轮再问。 */
+        if (status.state === "expired" || status.state === "cancelled") {
+          rotateTicket(ticket.id, false);
+          return;
+        }
+      } catch (error) {
+        if (
+          !controller.signal.aborted &&
+          error instanceof ClientError &&
+          error.status === 404
+        ) {
+          rotateTicket(ticket.id, false);
+          return;
+        }
+        /* 偶发网络错误或取消：下一轮再问。 */
       }
       if (!controller.signal.aborted) timer = window.setTimeout(tick, POLL_MS);
     };
@@ -157,31 +236,27 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [ticket, queryClient]);
+  }, [ticket, queryClient, rotateTicket]);
 
   // 过期自动换码。
   useEffect(() => {
     if (!ticket || left > 0) return;
-    if (autoRefreshes.current >= MAX_AUTO_REFRESH) {
-      if (current.current) void cancelPairing(current.current);
-      current.current = null;
-      setPhase({ kind: "paused" });
-      return;
-    }
-    autoRefreshes.current += 1;
-    issue().catch(onIssueError);
-  }, [left, ticket, issue, onIssueError]);
+    rotateTicket(ticket.id, true);
+  }, [left, ticket, rotateTicket]);
 
   const refresh = useAsyncAction(
     async () => {
       autoRefreshes.current = 0;
+      rotating.current = null;
       try {
         await issue();
       } catch (error) {
-        if (isAbort(error)) return;
+        if (!openRef.current || isAbort(error)) return;
         const message = pairingErrorMessage(error);
         setPhase((prev) =>
-          prev.kind === "pending" ? prev : { kind: "error", message },
+          prev.kind === "pending" && leftRef.current > 0
+            ? prev
+            : { kind: "error", message },
         );
         throw error;
       }
@@ -205,7 +280,11 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
       <DialogContent className="pair-dialog max-w-[440px]">
         <DialogHeader>
           <DialogTitle>{"绑定手机"}</DialogTitle>
-          <DialogDescription>{"用 ChisaBot 安卓 App 扫这个二维码，手机就会登录到你的账号并出现在设备列表里。"}</DialogDescription>
+          <DialogDescription>
+            {
+              "用 ChisaBot 安卓 App 扫这个二维码，手机就会登录到你的账号并出现在设备列表里。"
+            }
+          </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="pair-body">
@@ -229,14 +308,21 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
             {phase.kind === "paused" || phase.kind === "error" ? (
               <div className="pair-qr-done is-plain">
                 <IconQrcode className="size-7 opacity-70" />
-                <span>{phase.kind === "paused" ? "二维码已暂停刷新" : phase.message}</span>
+                <span>
+                  {phase.kind === "paused" ? "二维码已暂停刷新" : phase.message}
+                </span>
               </div>
             ) : null}
           </div>
 
           <div className="pair-meta">
-            <span aria-live="polite" className={cn("device-badge", status.tone)}>
-              {phase.kind === "pending" ? <span className="device-dot is-ok pair-dot" /> : null}
+            <span
+              aria-live="polite"
+              className={cn("device-badge", status.tone)}
+            >
+              {phase.kind === "pending" ? (
+                <span className="device-dot is-ok pair-dot" />
+              ) : null}
               <T>{status.text}</T>
             </span>
             {phase.kind === "pending" ? (
@@ -269,8 +355,11 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <Button
                 onClick={() => {
                   autoRefreshes.current = 0;
+                  rotating.current = null;
                   setPhase({ kind: "loading" });
-                  issue().catch(onIssueError);
+                  issue().catch((error: unknown) => {
+                    if (openRef.current) onIssueError(error);
+                  });
                 }}
                 type="button"
                 variant="outline"
@@ -283,7 +372,11 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
             </>
           ) : (
             <>
-              <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
+              <Button
+                onClick={() => onOpenChange(false)}
+                type="button"
+                variant="outline"
+              >
                 {"关闭"}
               </Button>
               <Button
@@ -304,11 +397,22 @@ export function PairPhoneDialog({ open, onOpenChange }: { open: boolean; onOpenC
   );
 }
 
-export function PairPhoneButton({ size = "sm", variant = "outline" }: { size?: "sm" | "default"; variant?: "outline" | "default" }) {
+export function PairPhoneButton({
+  size = "sm",
+  variant = "outline",
+}: {
+  size?: "sm" | "default";
+  variant?: "outline" | "default";
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)} size={size} type="button" variant={variant}>
+      <Button
+        onClick={() => setOpen(true)}
+        size={size}
+        type="button"
+        variant={variant}
+      >
         <IconQrcode />
         {"绑定手机"}
       </Button>

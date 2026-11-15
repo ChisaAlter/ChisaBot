@@ -5,6 +5,7 @@ import {
   beforeEach,
   describe,
   expect,
+  jest,
   test,
 } from "bun:test";
 import {
@@ -16,15 +17,23 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   waitFor,
   within,
 } from "@testing-library/react";
+import { AddServerCard } from "@/components/devices/full-access";
 import { PairPhoneDialog } from "@/components/devices/pair-phone";
 import { resetToastsForTest, Toaster } from "@/components/ui/toast";
-import { createPairing, type PairingTicket } from "@/lib/devices";
+import { ClientError } from "@/lib/client";
+import {
+  createPairing,
+  type PairingStatus,
+  type PairingTicket,
+  pairingErrorMessage,
+} from "@/lib/devices";
 import { settleReactWork } from "./settle-react-work";
 
 type RecordedRequest = {
@@ -40,15 +49,21 @@ type RouteBehavior =
   | { kind: "status"; status: number; error: string }
   | { kind: "throw"; error: Error };
 
+type PollBehavior =
+  | { kind: "state"; state: PairingStatus["state"]; deviceName?: string }
+  | { kind: "status"; status: number; error: string };
+
 let server: Server;
 let serverPort = 0;
 let recorded: RecordedRequest[] = [];
 let script: RouteBehavior[] = [];
+let pollScript: PollBehavior[] = [];
 let nextId = 1;
 let runId = 0;
 let registeredDom = false;
 let prevHref: string | null = null;
 let prevFetch: typeof globalThis.fetch;
+const inflightFetches = new Set<Promise<unknown>>();
 // Use Bun's native fetch for the local test HTTP server so happy-dom's https->http Mixed Content guard never blocks it.
 const nativeFetch = Bun.fetch;
 
@@ -151,7 +166,10 @@ function installFetchBridge() {
       }
       if (parsed.pathname.startsWith("/api/")) {
         const target = `http://127.0.0.1:${serverPort}${parsed.pathname}${parsed.search}`;
-        return fetchWithSignalBridge(target, init);
+        const pending = fetchWithSignalBridge(target, init);
+        inflightFetches.add(pending);
+        pending.finally(() => inflightFetches.delete(pending)).catch(() => {});
+        return pending;
       }
       return prevFetch(input, init);
     },
@@ -222,11 +240,27 @@ beforeAll(async () => {
     }
 
     if (url.pathname.startsWith("/api/devices/pairing/") && method === "GET") {
+      const id = url.pathname.split("/").pop() ?? "pair_1";
+      const step = pollScript.shift();
+      if (step?.kind === "status") {
+        sendJson(res, step.status, { error: step.error });
+        return;
+      }
+      const state = step?.kind === "state" ? step.state : "pending";
       sendJson(res, 200, {
-        id: url.pathname.split("/").pop() ?? "pair_1",
-        state: "pending",
+        id,
+        state,
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
-        device: null,
+        device:
+          state === "bound"
+            ? {
+                id: "dev_1",
+                name:
+                  step?.kind === "state"
+                    ? (step.deviceName ?? "测试手机")
+                    : "测试手机",
+              }
+            : null,
       });
       return;
     }
@@ -254,16 +288,21 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  jest.useRealTimers();
   runId += 1;
   recorded = [];
   script = [];
+  pollScript = [];
   nextId = 1;
   resetToastsForTest();
   installFetchBridge();
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await settleReactWork();
+  await Promise.allSettled([...inflightFetches]);
+  jest.useRealTimers();
   resetToastsForTest();
   globalThis.fetch = prevFetch;
 });
@@ -386,6 +425,7 @@ describe("phone pairing transport and dialog", () => {
     expect(dialog.textContent ?? "").toContain(
       "https://chisabot.example.com:8443",
     );
+    await settleReactWork();
   });
 
   test("closing PairPhoneDialog mid-flight aborts issuance and cancels any orphan ticket", async () => {
@@ -433,13 +473,17 @@ describe("phone pairing transport and dialog", () => {
       </QueryClientProvider>,
     );
 
-    await Bun.sleep(10);
+    await act(async () => {
+      await Bun.sleep(10);
+    });
     view.rerender(
       <QueryClientProvider client={qc}>
         <PairPhoneDialog onOpenChange={() => {}} open={false} />
       </QueryClientProvider>,
     );
-    resolveSlow();
+    await act(async () => {
+      resolveSlow();
+    });
     await waitFor(() => {
       expect(abortedSeen).toBe(true);
       expect(
@@ -450,5 +494,395 @@ describe("phone pairing transport and dialog", () => {
         ),
       ).toBe(true);
     });
+    await settleReactWork();
+  });
+
+  test("auto-refresh on countdown expiry issues one ticket and never double-issues or deletes the new ticket", async () => {
+    script = [
+      { kind: "ok", ticket: { ttlSeconds: 1 } },
+      { kind: "ok", ticket: { ttlSeconds: 5 } },
+      { kind: "ok", ticket: { ttlSeconds: 5 } },
+    ];
+    const qc = queryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <PairPhoneDialog onOpenChange={() => {}} open />
+      </QueryClientProvider>,
+    );
+
+    const dialog = await within(document.body).findByRole("dialog");
+    await waitFor(() => {
+      expect(dialog.textContent ?? "").toContain("0:01 后自动刷新");
+    });
+
+    await waitFor(
+      () => {
+        expect(dialog.textContent ?? "").toContain("0:05 后自动刷新");
+      },
+      { timeout: 3500 },
+    );
+    await act(async () => {
+      await Bun.sleep(250);
+    });
+
+    const posts = recorded.filter(
+      (req) => req.method === "POST" && req.pathname === "/api/devices/pairing",
+    );
+    expect(posts).toHaveLength(2);
+    expect(
+      recorded.some(
+        (req) =>
+          req.method === "DELETE" &&
+          req.pathname === "/api/devices/pairing/pair_1",
+      ),
+    ).toBe(true);
+    expect(
+      recorded.some(
+        (req) =>
+          req.method === "DELETE" &&
+          req.pathname === "/api/devices/pairing/pair_2",
+      ),
+    ).toBe(false);
+    expect(within(dialog).getByText("等待扫码")).toBeTruthy();
+    await settleReactWork();
+  });
+
+  test("polling state cancelled or HTTP 404 rotates to a fresh pairing code without deleting the dead one", async () => {
+    script = [
+      { kind: "ok", ticket: { ttlSeconds: 300 } },
+      { kind: "ok", ticket: { ttlSeconds: 120 } },
+      { kind: "ok", ticket: { ttlSeconds: 180 } },
+    ];
+    pollScript = [
+      { kind: "state", state: "cancelled" },
+      { kind: "status", status: 404, error: "Pairing not found." },
+    ];
+    const qc = queryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <PairPhoneDialog onOpenChange={() => {}} open />
+      </QueryClientProvider>,
+    );
+
+    const dialog = await within(document.body).findByRole("dialog");
+    await waitFor(() => {
+      expect(dialog.textContent ?? "").toContain("5:00 后自动刷新");
+    });
+
+    await waitFor(
+      () => {
+        expect(dialog.textContent ?? "").toContain("2:00 后自动刷新");
+      },
+      { timeout: 4500 },
+    );
+    expect(
+      recorded.some(
+        (req) =>
+          req.method === "DELETE" &&
+          req.pathname === "/api/devices/pairing/pair_1",
+      ),
+    ).toBe(false);
+
+    await waitFor(
+      () => {
+        expect(dialog.textContent ?? "").toContain("3:00 后自动刷新");
+      },
+      { timeout: 4500 },
+    );
+    expect(
+      recorded.some(
+        (req) =>
+          req.method === "DELETE" &&
+          req.pathname === "/api/devices/pairing/pair_2",
+      ),
+    ).toBe(false);
+    expect(
+      recorded.filter(
+        (req) =>
+          req.method === "POST" && req.pathname === "/api/devices/pairing",
+      ),
+    ).toHaveLength(3);
+    await settleReactWork();
+  }, 12_000);
+
+  test("stops auto-refresh after MAX_AUTO_REFRESH (6) cycles and manual refresh issues once", async () => {
+    const realPerfNow = performance.now.bind(performance);
+    let perfOffset = 0;
+    performance.now = () => realPerfNow() + perfOffset;
+    try {
+      script = [
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 1 } },
+        { kind: "ok", ticket: { ttlSeconds: 300 } },
+        { kind: "ok", ticket: { ttlSeconds: 300 } },
+      ];
+      const qc = queryClient();
+      render(
+        <QueryClientProvider client={qc}>
+          <PairPhoneDialog onOpenChange={() => {}} open />
+        </QueryClientProvider>,
+      );
+
+      const dialog = await within(document.body).findByRole("dialog");
+      const postCount = () =>
+        recorded.filter(
+          (req) =>
+            req.method === "POST" && req.pathname === "/api/devices/pairing",
+        ).length;
+      const currentQrPath = () =>
+        within(dialog)
+          .queryByRole("img", { name: "绑定二维码" })
+          ?.querySelector("path")
+          ?.getAttribute("d") ?? null;
+
+      let prevPath: string | null = null;
+      for (let expected = 1; expected <= 7; expected += 1) {
+        let nextPath: string | null = null;
+        await waitFor(
+          () => {
+            expect(postCount()).toBeGreaterThanOrEqual(expected);
+            nextPath = currentQrPath();
+            expect(nextPath).toBeTruthy();
+            expect(nextPath).not.toBe(prevPath);
+          },
+          { timeout: 3000 },
+        );
+        expect(postCount()).toBe(expected);
+        prevPath = nextPath;
+        await act(async () => {
+          perfOffset += 1500;
+        });
+      }
+
+      await waitFor(
+        () => {
+          expect(within(dialog).getByText("二维码已暂停刷新")).toBeTruthy();
+        },
+        { timeout: 3000 },
+      );
+      await act(async () => {
+        await Bun.sleep(150);
+      });
+      expect(postCount()).toBe(7);
+      expect(
+        recorded.some(
+          (req) =>
+            req.method === "DELETE" &&
+            req.pathname === "/api/devices/pairing/pair_7",
+        ),
+      ).toBe(true);
+
+      const refreshButton = within(dialog)
+        .getAllByRole("button")
+        .find((button) => (button.textContent ?? "").includes("刷新二维码"));
+      if (!(refreshButton instanceof HTMLButtonElement)) {
+        throw new Error("Expected refresh button");
+      }
+      fireEvent.click(refreshButton);
+
+      await waitFor(() => {
+        expect(dialog.textContent ?? "").toContain("5:00 后自动刷新");
+      });
+      await act(async () => {
+        await Bun.sleep(200);
+      });
+      expect(postCount()).toBe(8);
+      expect(
+        recorded.some(
+          (req) =>
+            req.method === "DELETE" &&
+            req.pathname === "/api/devices/pairing/pair_8",
+        ),
+      ).toBe(false);
+      expect(within(dialog).getByText("等待扫码")).toBeTruthy();
+      await settleReactWork();
+    } finally {
+      performance.now = realPerfNow;
+    }
+  }, 15_000);
+
+  test("pairingErrorMessage and dialog map English ClientError responses to Chinese while keeping Chinese messages", async () => {
+    expect(
+      pairingErrorMessage(new ClientError("Authentication required.", 401)),
+    ).toBe("登录已过期，请刷新页面重新登录后重试");
+    expect(
+      pairingErrorMessage(new ClientError("Authorization required.", 403)),
+    ).toBe("当前账号没有权限执行此操作");
+    expect(
+      pairingErrorMessage(new ClientError("Not Found", 404), "phone"),
+    ).toBe("服务器暂不支持扫码绑定，请先更新服务器");
+    expect(pairingErrorMessage(new ClientError("Not Found", 404), "node")).toBe(
+      "服务器暂不支持节点安装，请先更新服务器",
+    );
+    expect(pairingErrorMessage(new ClientError("Too Many Requests", 429))).toBe(
+      "操作太频繁，请稍后再试",
+    );
+    expect(
+      pairingErrorMessage(
+        new ClientError("No identity provider is configured.", 503),
+      ),
+    ).toBe("服务器尚未配置登录认证，无法绑定设备");
+    expect(
+      pairingErrorMessage(new ClientError("Bad Gateway", 502), "phone"),
+    ).toBe("服务器暂时不可用，请稍后点「刷新二维码」重试");
+    expect(
+      pairingErrorMessage(new ClientError("Bad Gateway", 502), "node"),
+    ).toBe("服务器暂时不可用，请稍后重试");
+    expect(
+      pairingErrorMessage(new ClientError("I am a teapot", 418), "phone"),
+    ).toBe("无法生成二维码，请重试");
+    expect(
+      pairingErrorMessage(new ClientError("I am a teapot", 418), "node"),
+    ).toBe("无法生成安装命令，请重试");
+    expect(
+      pairingErrorMessage(
+        new ClientError("该设备绑定的二维码服务维护中，请稍后再试", 503),
+      ),
+    ).toBe("该设备绑定的二维码服务维护中，请稍后再试");
+
+    script = [
+      { kind: "status", status: 401, error: "Authentication required." },
+      { kind: "status", status: 403, error: "Authorization required." },
+      {
+        kind: "status",
+        status: 503,
+        error: "No identity provider is configured.",
+      },
+      { kind: "status", status: 503, error: "系统维护中，请两分钟后再试" },
+    ];
+    const qc = queryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <Toaster />
+        <PairPhoneDialog onOpenChange={() => {}} open />
+      </QueryClientProvider>,
+    );
+
+    const dialog = await within(document.body).findByRole("dialog");
+    const refreshButton = () => {
+      const found = within(dialog)
+        .getAllByRole("button")
+        .find((button) => (button.textContent ?? "").includes("刷新二维码"));
+      if (!(found instanceof HTMLButtonElement)) {
+        throw new Error("Expected refresh button");
+      }
+      return found;
+    };
+
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText("登录已过期，请刷新页面重新登录后重试"),
+      ).toBeTruthy();
+    });
+    expect(document.body.textContent ?? "").not.toContain(
+      "Authentication required",
+    );
+
+    await waitFor(() => expect(refreshButton().disabled).toBe(false));
+    fireEvent.click(refreshButton());
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText("当前账号没有权限执行此操作"),
+      ).toBeTruthy();
+    });
+    expect(document.body.textContent ?? "").not.toContain(
+      "Authorization required",
+    );
+
+    await waitFor(() => expect(refreshButton().disabled).toBe(false));
+    fireEvent.click(refreshButton());
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText("服务器尚未配置登录认证，无法绑定设备"),
+      ).toBeTruthy();
+    });
+    expect(document.body.textContent ?? "").not.toContain(
+      "No identity provider",
+    );
+
+    await waitFor(() => expect(refreshButton().disabled).toBe(false));
+    fireEvent.click(refreshButton());
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText("系统维护中，请两分钟后再试"),
+      ).toBeTruthy();
+    });
+    await settleReactWork();
+  });
+
+  test("unmounting AddServerCard mid-flight aborts node pairing and cancels orphan ticket", async () => {
+    let resolveSlow: () => void = () => {};
+    const delayed = new Promise<void>((resolve) => {
+      resolveSlow = resolve;
+    });
+    let abortedSeen = false;
+
+    const bridgeFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const rawUrl =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        const parsed = new URL(rawUrl, "https://chisabot.example.com:8443");
+        if (
+          parsed.pathname === "/api/devices/pairing" &&
+          (init?.method ?? "GET").toUpperCase() === "POST"
+        ) {
+          init?.signal?.addEventListener("abort", () => {
+            abortedSeen = true;
+          });
+          await delayed;
+          return new Response(
+            JSON.stringify(
+              makeTicket({ id: "pair_node_orphan", kind: "node" }),
+            ),
+            {
+              status: 201,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return bridgeFetch(input, init);
+      },
+      bridgeFetch,
+    );
+
+    const qc = queryClient();
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <Toaster />
+        <AddServerCard />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "生成安装命令" }));
+    await act(async () => {
+      await Bun.sleep(10);
+    });
+    view.unmount();
+    await act(async () => {
+      resolveSlow();
+    });
+
+    await waitFor(() => {
+      expect(abortedSeen).toBe(true);
+      expect(
+        recorded.some(
+          (req) =>
+            req.method === "DELETE" &&
+            req.pathname === "/api/devices/pairing/pair_node_orphan",
+        ),
+      ).toBe(true);
+    });
+    expect(document.body.textContent ?? "").not.toContain("已取消");
+    await settleReactWork();
   });
 });
