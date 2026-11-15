@@ -28,6 +28,7 @@ import {
   type Server,
 } from "node:http";
 import { BlockList, connect, isIP, type Socket } from "node:net";
+import type { EgressPolicy, EgressRule } from "../../shared/egress-policy";
 import {
   DEFAULT_EGRESS_DESTINATIONS,
   normalizeHost,
@@ -35,8 +36,12 @@ import {
   parseEgressPolicy,
   portsMatch,
 } from "../../shared/egress-policy";
-import type { EgressPolicy, EgressRule } from "../../shared/egress-policy";
 
+export type {
+  EgressMode,
+  EgressPolicy,
+  EgressRule,
+} from "../../shared/egress-policy";
 /*
  * The policy contract (types, modes, defaults, JSON parsers) lives in shared/egress-policy.ts —
  * the API server reads the same definitions when it pushes a policy, so the two ends cannot
@@ -47,11 +52,6 @@ export {
   EGRESS_MODES,
   parseEgressPolicy,
   parseEgressRules,
-} from "../../shared/egress-policy";
-export type {
-  EgressMode,
-  EgressPolicy,
-  EgressRule,
 } from "../../shared/egress-policy";
 
 /** A proxy as Playwright wants it: credentials separated from the URL. */

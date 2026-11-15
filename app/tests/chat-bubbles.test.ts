@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MAX_BUBBLES, splitBubbles } from "../../shared/chat-bubbles";
 import {
   DOC_BODY_PAD_Y,
   DOC_COLLAPSED_PX,
@@ -6,7 +7,6 @@ import {
   normalizeDirectiveCards,
   parseStatusCardsFence,
 } from "../src/components/chat/bot-bubbles";
-import { MAX_BUBBLES, splitBubbles } from "../../shared/chat-bubbles";
 
 describe("splitBubbles（DESIGN.md §69）", () => {
   test("空行分段，一段一个气泡", () => {

@@ -13,7 +13,6 @@ import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
-import { splitChatOrigin } from "../../../../shared/chat-origin";
 import {
   type ComposerDraft,
   toAgentOptions,
@@ -64,6 +63,7 @@ import {
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+import { splitChatOrigin } from "../../../../shared/chat-origin";
 
 function interruptWaitingKind(
   metadata: Record<string, unknown> | undefined,

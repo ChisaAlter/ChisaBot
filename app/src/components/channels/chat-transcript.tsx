@@ -184,6 +184,7 @@ import {
 import { probeRemoteFile } from "@/lib/rich-previews/files";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { cn } from "@/lib/utils";
+import { splitChatOrigin } from "../../../../shared/chat-origin";
 import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
 import { SCHEDULE_MARKER } from "../../../../shared/schedules";
 import {
@@ -196,7 +197,6 @@ import {
   type SentAttachment,
   toVisibleChatItems,
 } from "./chat-messages";
-import { splitChatOrigin } from "../../../../shared/chat-origin";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";
