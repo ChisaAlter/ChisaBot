@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- **绑定手机与设备配对全链路可靠性修复**：补齐绑定手机二维码与服务器节点安装码全链路可靠性修复。服务端 `/api/devices/pairing`、`/agent/pair`、`/agent/session`、`/enroll` 与 `/bot-tools/:botId/probe` 在无非空 `application/json` 请求体时跳过读取并拒绝 JSON 数组载荷，避免未缓冲代理分块传输等待 EOF 超时；`/agent/pair` 将控制审计异常与 `201` 令牌签发解耦，并在配对存储按 `endedAt` 保留 `node` 终态避免 30 分钟有效期内提前被清。网页端 `PairPhoneDialog` 改为按绑定码 ID 同步派生倒计时、消除归零重签双发与误删新码，遇到轮询 `expired` / `cancelled` / `404` 自动换码，将非中文 `ClientError` 按状态码映射中文提示，并为 `AddServerCard` 补齐卸载取消与孤儿安装码作废。Android 原生壳在 `GatewayAuth.normalize` 统一域名小写避免网关 `Origin` 403，清理网络异常英文类名、保留二维码参数字面量 `+`、异步注销旧服令牌、切服时重建 `WebView` 并拦截 `/sign` 同步执行 `vm.logout()`。更新服务端与前端后网页及桌面端立即生效（Windows 外壳指纹不变，无需重装桌面客户端，无需数据库迁移）；Android 原生壳改动随下一客户端版本生效。
+## 0.1.150 — 2026-11-15
+
+全端版本 0.1.150，Android versionCode 332。补齐手机扫码绑定与服务器节点配对全链路可靠性修复（#538）。Windows 外壳指纹不变，无需重新安装；无需数据库迁移。
+
+- **绑定手机与设备配对全链路可靠性修复（#538）**：补齐绑定手机二维码与服务器节点安装码全链路可靠性修复。服务端 `/api/devices/pairing`、`/agent/pair`、`/agent/session`、`/enroll` 与 `/bot-tools/:botId/probe` 在无非空 `application/json` 请求体时跳过读取并拒绝 JSON 数组载荷，避免未缓冲代理分块传输等待 EOF 超时；`/agent/pair` 将控制审计异常与 `201` 令牌签发解耦，并在配对存储按 `endedAt` 保留 `node` 终态避免 30 分钟有效期内提前被清。网页端 `PairPhoneDialog` 改为按绑定码 ID 同步派生倒计时、消除归零重签双发与误删新码，遇到轮询 `expired` / `cancelled` / `404` 自动换码，将非中文 `ClientError` 按状态码映射中文提示，并为 `AddServerCard` 补齐卸载取消与孤儿安装码作废。Android 原生壳在 `GatewayAuth.normalize` 统一域名小写避免网关 `Origin` 403，清理网络异常英文类名、保留二维码参数字面量 `+`、异步注销旧服令牌、切服时重建 `WebView` 并拦截 `/sign` 同步执行 `vm.logout()`。更新服务端与前端后网页及桌面端立即生效（Windows 外壳指纹不变，无需重装桌面客户端，无需数据库迁移）；Android 原生壳改动随本版 APK（versionCode 332）生效。
 
 ## 0.1.149 — 2026-11-15
 
