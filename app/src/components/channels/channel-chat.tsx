@@ -1253,7 +1253,6 @@ export function ChannelChat({
     );
     // Awaited below; a rejection before that point must not surface as unhandled.
     panelAuthoringRead.catch(() => undefined);
-    // Wait briefly for the runtime agent instance before adding the message.
     if (!isReadyRef.current) {
       await Promise.race([
         readyGatePromise,

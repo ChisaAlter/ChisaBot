@@ -247,16 +247,8 @@ export function createApp(
    * answers and an administrator deciding who has access needs to know which one they are reading.
    */
   peopleStore?: PeopleStore,
-  // Enterprise identity providers (SSO) removed in slimming P6-2; positional slot kept.
+  /** Positional placeholder slots kept to preserve caller argument indices. */
   _removedIdentityProviders?: undefined,
-  /**
-   * Chooses which coworker an untagged message is for, before a channel is pinned to one.
-   *
-   * Passed in already built, like the conversation handler, so this module never imports the model
-   * client. Absent leaves the composer's existing behaviour untouched: an untagged message goes to
-   * the default coworker, which is exactly the failsafe the router itself falls back to.
-   */
-  /** Removed in slimming P4b (intent routing); the slot stays because these are positional. */
   _intentRouter?: undefined,
   /**
    * Where the frame a browsing turn ended on is kept.
@@ -437,7 +429,6 @@ export function createApp(
     context.json({
       mode: config.runtime.mode,
       durableHistory: config.runtime.durableHistory,
-      // Automatic Learning was removed in slimming P4b-3; local runtime reports "off" for callers.
       learning: false,
       /*
        * Whether a Bot may answer with an interface it wrote itself.
@@ -477,9 +468,7 @@ export function createApp(
       );
     }
 
-    // Better Auth's own routes (social sign-in, sessions). The desktop handoff (electron plugin,
-    // /api/auth/desktop) was removed in slimming P6-4. The enterprise SSO and
-    // SCIM plugins and their admin-only / audited branches were removed in slimming P6-2.
+    // Better Auth 登录与会话路由。
     return auth.handler(context.req.raw);
   });
 
@@ -494,8 +483,7 @@ export function createApp(
     : auth && roleRepository
       ? createRequireUser(auth, roleRepository)
       : authenticationUnavailable;
-  // The upstream enterprise gate (capability switches, model allowlist) and /api/admin/enterprise were
-  // removed in slimming P6-1: every route checks its own actor / owner / admin role.
+  // 各路由自行校验 actor / owner / admin 权限。
 
   app.route(
     "/api/audio",
@@ -704,7 +692,6 @@ export function createApp(
 
     return context.json({ instructions: saved });
   });
-  // `/api/admin/learning` (Automatic Learning) was removed in slimming P4b-3.
   app.get("/api/admin/status", requireUser, (context) => {
     const denied = requireAdmin(context);
     return denied ?? context.json({ status: "ok" });
@@ -729,12 +716,7 @@ export function createApp(
       throw error;
     }
   });
-  // `/api/admin/people` (list / role / revoke + offboard) was removed in slimming P6-1: friend
-  // accounts are managed in the login gateway (设置 → 管理 → 账号, docs/accounts.md), whose signed
-  // identity carries the role.
-
-  // `/api/admin/identity-providers` (list / remove SSO providers) was removed in slimming P4b-3; the
-  // admin page went in P4a. Better Auth's own SSO plugin routes under /api/auth stay (auth is shared).
+  // 好友账号与角色由登录网关签发身份管理（docs/accounts.md）。
 
   app.get("/api/models", requireUser, async (context) => {
     context.header("Cache-Control", "no-store");

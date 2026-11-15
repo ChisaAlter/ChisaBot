@@ -4,6 +4,7 @@ import {
   defaultCapabilities,
   FULL_ACCESS_FOREVER,
   gitIsRead,
+  type ServerToDevice,
 } from "../../shared/devices";
 import { createDeviceHub, type InvokeInput } from "../src/devices/hub";
 import { installScript } from "../src/devices/node-install";
@@ -70,9 +71,17 @@ function fakeStore(initial: DeviceRecord) {
   };
 }
 
+function frameOf<T extends ServerToDevice["type"]>(
+  sent: ServerToDevice[],
+  type: T,
+): Extract<ServerToDevice, { type: T }> | undefined {
+  return sent.find(
+    (m): m is Extract<ServerToDevice, { type: T }> => m.type === type,
+  );
+}
+
 function socket() {
-  // biome-ignore lint/suspicious/noExplicitAny: 设备协议帧测试桩，断言按协议字段逐层访问
-  const sent: Array<Record<string, any>> = [];
+  const sent: ServerToDevice[] = [];
   return {
     sent,
     socket: { send: (d: string) => sent.push(JSON.parse(d)), close() {} },
@@ -139,12 +148,13 @@ describe("hub: features, push approval, full access", () => {
       summary: "git status",
     });
     await tick();
-    const call = s.sent.find((m) => m.type === "call");
+    const call = frameOf(s.sent, "call");
     expect(call?.args.subcommand).toBe("status");
+    if (!call) throw new Error("expected call frame");
     await h.onMessage(
       JSON.stringify({
         type: "result",
-        id: call!.id,
+        id: call.id,
         ok: true,
         result: { exitCode: 0 },
       }),
@@ -182,9 +192,7 @@ describe("hub: features, push approval, full access", () => {
     });
     await tick();
     expect(hub.listApprovals("u1")[0]?.diff).toContain("+a + b");
-    expect(s.sent.find((m) => m.type === "approval_request")?.diff).toContain(
-      "-a - b",
-    );
+    expect(frameOf(s.sent, "approval_request")?.diff).toContain("-a - b");
     hub.decide(hub.listApprovals("u1")[0]!.id, false, "web");
     await expect(p).rejects.toThrow();
   });
@@ -201,9 +209,7 @@ describe("hub: features, push approval, full access", () => {
     await h.onMessage(
       JSON.stringify({ type: "hello", features: ["shell", "edit_file"] }),
     );
-    expect(s.sent.find((m) => m.type === "welcome")?.device.fullAccess).toBe(
-      true,
-    );
+    expect(frameOf(s.sent, "welcome")?.device.fullAccess).toBe(true);
     const p = hub.invoke({
       device: on,
       operation: "shell",
@@ -212,11 +218,12 @@ describe("hub: features, push approval, full access", () => {
       summary: "id",
     });
     await tick();
-    const call = s.sent.find((m) => m.type === "call");
+    const call = frameOf(s.sent, "call");
     expect(call).toBeDefined();
+    if (!call) throw new Error("expected call frame");
     expect(hub.listApprovals("u1").length).toBe(0);
     await h.onMessage(
-      JSON.stringify({ type: "result", id: call!.id, ok: true, result: {} }),
+      JSON.stringify({ type: "result", id: call.id, ok: true, result: {} }),
     );
     await p;
     expect(String(fake.audits.at(-1)?.detail)).toContain("完全访问");

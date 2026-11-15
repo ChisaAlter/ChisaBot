@@ -80,9 +80,49 @@ export function errorText(error: unknown): string {
   return typeof error === "string" ? error : JSON.stringify(error);
 }
 
+export type JsonRecord = Record<string, unknown>;
+
+/** 判断是否为非 null、非数组的 JSON 对象。 */
+export function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 将未知值收窄为 JSON 对象；不是对象则返回 null。 */
+export function asJsonRecord(value: unknown): JsonRecord | null {
+  return isJsonRecord(value) ? value : null;
+}
+
+/** 将未知值收窄为数组；不是数组则返回空数组。 */
+export function asJsonArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** 按路径读取嵌套 JSON 对象的字段值。 */
+export function readJsonField(value: unknown, ...keys: string[]): unknown {
+  let current: unknown = value;
+  for (const key of keys) {
+    if (!isJsonRecord(current)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+/** 收窄为字符串；非字符串返回 undefined。 */
+export function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/** 解析 JSON 文本并收窄为对象；非对象返回空对象。 */
+export function parseJsonRecord(text: string): JsonRecord {
+  if (!text) return {};
+  return asJsonRecord(JSON.parse(text)) ?? {};
+}
+
 /** 平台接口返回非 2xx 时带上状态码和一截正文。 */
-// biome-ignore lint/suspicious/noExplicitAny: IM 各平台回包 JSON 形状不一，调用方按各自协议字段取用
-export async function readJson(response: Response, what: string): Promise<any> {
+export async function readJson(
+  response: Response,
+  what: string,
+): Promise<JsonRecord> {
   const body = await response.text();
   let parsed: unknown;
   try {
@@ -94,5 +134,5 @@ export async function readJson(response: Response, what: string): Promise<any> {
   }
   if (!response.ok)
     throw new Error(`${what}：HTTP ${response.status} ${body.slice(0, 200)}`);
-  return parsed;
+  return asJsonRecord(parsed) ?? {};
 }

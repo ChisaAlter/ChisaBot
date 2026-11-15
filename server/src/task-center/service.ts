@@ -77,8 +77,96 @@ export type TaskCenterOptions = {
   hasDurableExecution?: (task: TaskCenterTask) => Promise<boolean>;
 };
 type Sql = Pick<Database["$client"], "unsafe">;
-// biome-ignore lint/suspicious/noExplicitAny: 原生 SQL 行的形状是动态的，逐字段取用。
-type Row = Record<string, any>;
+type TaskPayload = Pick<
+  TaskCenterTask,
+  | "title"
+  | "description"
+  | "agentId"
+  | "category"
+  | "level"
+  | "assessment"
+  | "risk"
+  | "executor"
+  | "workspace"
+  | "maxAttempts"
+  | "timeoutSeconds"
+  | "completion"
+>;
+type SourcePayload = Pick<
+  TaskCenterSource,
+  | "kind"
+  | "label"
+  | "intervalMinutes"
+  | "autoStart"
+  | "agentId"
+  | "executor"
+  | "workspace"
+>;
+type TaskRow = {
+  id: string;
+  owner_user_id: string;
+  payload: TaskPayload | string;
+  status: TaskStatus;
+  parent_id: string | null;
+  source_id: string | null;
+  source_ref: string | null;
+  source_url: string | null;
+  dependencies: string[];
+  priority: number;
+  attempts: number;
+  plan_prepared: boolean;
+  summary: string | null;
+  artifacts: TaskCenterTask["artifacts"] | string;
+  usage: TaskCenterTask["usage"] | string;
+  error: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+  started_at: Date | string | null;
+  finished_at: Date | string | null;
+  next_attempt_at: Date | string;
+  lease_expires_at: Date | string | null;
+  version: number;
+};
+type SourceRow = {
+  id: string;
+  owner_user_id: string;
+  payload: SourcePayload | string;
+  config: TaskCenterSource["config"] | string;
+  enabled: boolean;
+  next_run_at: Date | string;
+  last_run_at: Date | string | null;
+  last_status: TaskCenterSource["lastStatus"];
+  last_error: string | null;
+  failures: number;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+type DecisionRow = {
+  id: string;
+  task_id: string;
+  owner_user_id: string;
+  task_version: number;
+  summary: string;
+  proposed_action: TaskCenterDecision["proposedAction"] | string;
+  status: TaskCenterDecision["status"];
+  created_at: Date | string;
+  decided_at: Date | string | null;
+  notification_error: string | null;
+};
+type EventRow = {
+  id: string;
+  task_id: string;
+  type: string;
+  message: string;
+  data: Record<string, unknown> | string;
+  created_at: Date | string;
+};
+type ContextRow = {
+  content: Record<string, unknown> | string;
+  updated_at: Date | string;
+  learned: string;
+  learned_at: Date | string | null;
+};
 const iso = (value: Date | string | null) =>
   value ? new Date(value).toISOString() : null;
 const isoReq = (value: Date | string) => new Date(value).toISOString();
@@ -88,10 +176,11 @@ const terminal = new Set<TaskStatus>(["succeeded", "failed", "cancelled"]);
 const leaseSeconds = 90;
 const eventLimit = 12000;
 
-function taskView(row: Row): TaskCenterTask {
+function taskView(row: TaskRow): TaskCenterTask {
   const payload = json(row.payload);
   return {
     ...payload,
+    agentId: payload.agentId ?? null,
     workspace: payload.workspace ?? null,
     id: row.id,
     ownerUserId: row.owner_user_id,
@@ -117,10 +206,11 @@ function taskView(row: Row): TaskCenterTask {
     version: row.version,
   };
 }
-function sourceView(row: Row): TaskCenterSource {
+function sourceView(row: SourceRow): TaskCenterSource {
   const payload = json(row.payload);
   return {
     ...payload,
+    agentId: payload.agentId ?? null,
     workspace: payload.workspace ?? null,
     id: row.id,
     ownerUserId: row.owner_user_id,
@@ -135,7 +225,7 @@ function sourceView(row: Row): TaskCenterSource {
     updatedAt: isoReq(row.updated_at),
   };
 }
-function decisionView(row: Row): TaskCenterDecision {
+function decisionView(row: DecisionRow): TaskCenterDecision {
   return {
     id: row.id,
     taskId: row.task_id,
@@ -243,7 +333,7 @@ export function createTaskCenter(
     owner: string,
     id: string,
   ): Promise<TaskCenterTask | null> {
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<TaskRow[]>(
       "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2",
       [owner, id],
     );
@@ -263,7 +353,7 @@ export function createTaskCenter(
     } = {},
   ): Promise<TaskCenterTask[]> {
     return (
-      await sql.unsafe<Row[]>(
+      await sql.unsafe<TaskRow[]>(
         `SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1
          AND ($2::text IS NULL OR status=ANY(string_to_array($2, ',')))
          AND ($3::text IS NULL OR parent_id=$3)
@@ -294,7 +384,7 @@ export function createTaskCenter(
       AND ($3::text IS NULL OR payload->>'category'=$3)
       AND ($4='' OR strpos(lower(concat_ws(E'\\n',payload->>'title',payload->>'description',summary)),lower($4))>0)`;
     const [rows, [count]] = await Promise.all([
-      sql.unsafe<Row[]>(
+      sql.unsafe<TaskRow[]>(
         `SELECT * FROM chisabot_task_center_tasks WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6`,
         [...values, limit, offset],
       ),
@@ -316,7 +406,7 @@ export function createTaskCenter(
   ): Promise<TaskCenterEvent[]> {
     await mustTask(owner, id);
     return (
-      await sql.unsafe<Row[]>(
+      await sql.unsafe<EventRow[]>(
         "SELECT * FROM (SELECT * FROM chisabot_task_center_events WHERE owner_user_id=$1 AND task_id=$2 ORDER BY created_at DESC LIMIT 500) e ORDER BY created_at",
         [owner, id],
       )
@@ -362,7 +452,7 @@ export function createTaskCenter(
     }
     const { dependencies: _deps, priority, ...payload } = parsed;
     const id = extra.id ?? randomUUID();
-    const rows = await tx.unsafe<Row[]>(
+    const rows = await tx.unsafe<TaskRow[]>(
       `INSERT INTO chisabot_task_center_tasks
       (id,owner_user_id,payload,status,parent_id,source_id,source_ref,source_url,dependencies,priority)
       VALUES($1,$2,$3::text::jsonb,$4,$5,$6,$7,$8,string_to_array($9, chr(31))::text[],$10)
@@ -409,7 +499,7 @@ export function createTaskCenter(
     options: { pending?: boolean; limit?: number } = {},
   ): Promise<TaskCenterDecision[]> {
     return (
-      await sql.unsafe<Row[]>(
+      await sql.unsafe<DecisionRow[]>(
         `SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1
          AND ($2::boolean IS NULL OR (status='pending')=$2)
          ORDER BY created_at DESC,id DESC LIMIT $3`,
@@ -427,7 +517,7 @@ export function createTaskCenter(
     const where =
       "owner_user_id=$1 AND ($2::boolean IS NULL OR (status='pending')=$2)";
     const [rows, [count]] = await Promise.all([
-      sql.unsafe<Row[]>(
+      sql.unsafe<DecisionRow[]>(
         `SELECT * FROM chisabot_task_center_decisions WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4`,
         [...values, limit, offset],
       ),
@@ -446,7 +536,7 @@ export function createTaskCenter(
   async function approvedDecision(
     task: TaskCenterTask,
   ): Promise<TaskCenterDecision | null> {
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<DecisionRow[]>(
       "SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1 AND task_id=$2 AND task_version=$3 AND status='approved'",
       [task.ownerUserId, task.id, task.version],
     );
@@ -460,7 +550,7 @@ export function createTaskCenter(
       "UPDATE chisabot_task_center_tasks SET status='waiting_approval',lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
       [task.ownerUserId, task.id],
     );
-    const [row] = await tx.unsafe<Row[]>(
+    const [row] = await tx.unsafe<DecisionRow[]>(
       `INSERT INTO chisabot_task_center_decisions(id,owner_user_id,task_id,task_version,summary,proposed_action,status)
       VALUES($1,$2,$3,$4,$5,$6::text::jsonb,'pending') ON CONFLICT(task_id,task_version) DO NOTHING RETURNING *`,
       [
@@ -510,7 +600,7 @@ export function createTaskCenter(
   ): Promise<TaskCenterTask> {
     const requested: TaskCenterDecision[] = [];
     await sql.begin(async (tx) => {
-      const [row] = await tx.unsafe<Row[]>(
+      const [row] = await tx.unsafe<TaskRow[]>(
         "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, id],
       );
@@ -579,7 +669,7 @@ export function createTaskCenter(
         const resumed =
           action === "resume"
             ? (
-                await tx.unsafe<Row[]>(
+                await tx.unsafe<TaskRow[]>(
                   `WITH RECURSIVE descendants AS (
               SELECT id FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2
               UNION ALL SELECT t.id FROM chisabot_task_center_tasks t JOIN descendants d ON t.parent_id=d.id WHERE t.owner_user_id=$1
@@ -643,7 +733,7 @@ export function createTaskCenter(
     priority: number,
   ): Promise<TaskCenterTask> {
     const clamped = Math.max(0, Math.min(100, Math.round(priority)));
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<TaskRow[]>(
       "UPDATE chisabot_task_center_tasks SET priority=$3 WHERE owner_user_id=$1 AND id=$2 RETURNING *",
       [owner, id, clamped],
     );
@@ -656,14 +746,14 @@ export function createTaskCenter(
     approved: boolean,
   ): Promise<TaskCenterDecision> {
     return sql.begin(async (tx) => {
-      const [decision] = await tx.unsafe<Row[]>(
+      const [decision] = await tx.unsafe<DecisionRow[]>(
         "SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, id],
       );
       if (!decision) throw new TaskCenterError("找不到这条确认请求。", 404);
       if (decision.status !== "pending")
         throw new TaskCenterError("这条确认请求已经处理。", 409);
-      const [task] = await tx.unsafe<Row[]>(
+      const [task] = await tx.unsafe<TaskRow[]>(
         "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, decision.task_id],
       );
@@ -673,7 +763,7 @@ export function createTaskCenter(
         task.status !== "waiting_approval"
       )
         throw new TaskCenterError("任务状态已经改变，请重新查看。", 409);
-      const [result] = await tx.unsafe<Row[]>(
+      const [result] = await tx.unsafe<DecisionRow[]>(
         "UPDATE chisabot_task_center_decisions SET status=$3,decided_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
         [owner, id, approved ? "approved" : "rejected"],
       );
@@ -696,7 +786,7 @@ export function createTaskCenter(
     });
   }
   async function getContext(owner: string): Promise<TaskContext> {
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<ContextRow[]>(
       "SELECT * FROM chisabot_task_center_context WHERE owner_user_id=$1",
       [owner],
     );
@@ -722,7 +812,7 @@ export function createTaskCenter(
   }
   async function listSources(owner: string): Promise<TaskCenterSource[]> {
     return (
-      await sql.unsafe<Row[]>(
+      await sql.unsafe<SourceRow[]>(
         "SELECT * FROM chisabot_task_center_sources WHERE owner_user_id=$1 ORDER BY created_at DESC",
         [owner],
       )
@@ -748,7 +838,7 @@ export function createTaskCenter(
     safeSourceConfig(parsed.config);
     await checkBot(owner, parsed.agentId);
     const { config, enabled, ...payload } = parsed;
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<SourceRow[]>(
       "INSERT INTO chisabot_task_center_sources(id,owner_user_id,payload,config,enabled) VALUES($1,$2,$3::text::jsonb,$4::text::jsonb,$5) RETURNING *",
       [
         randomUUID(),
@@ -774,7 +864,7 @@ export function createTaskCenter(
     if (patch.config) safeSourceConfig(patch.config);
     await checkBot(owner, patch.agentId);
     return sql.begin(async (tx) => {
-      const [row] = await tx.unsafe<Row[]>(
+      const [row] = await tx.unsafe<SourceRow[]>(
         "SELECT * FROM chisabot_task_center_sources WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, id],
       );
@@ -795,7 +885,7 @@ export function createTaskCenter(
         ...patch,
       });
       const { config, enabled, ...payload } = next;
-      const [updated] = await tx.unsafe<Row[]>(
+      const [updated] = await tx.unsafe<SourceRow[]>(
         "UPDATE chisabot_task_center_sources SET payload=$3::text::jsonb,config=$4::text::jsonb,enabled=$5,next_run_at=CASE WHEN $5 AND NOT enabled THEN now() ELSE next_run_at END,updated_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
         [owner, id, JSON.stringify(payload), JSON.stringify(config), enabled],
       );
@@ -808,7 +898,7 @@ export function createTaskCenter(
     owner: string,
     id: string,
   ): Promise<TaskCenterSource> {
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<SourceRow[]>(
       "UPDATE chisabot_task_center_sources SET next_run_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND last_status<>'running' RETURNING *",
       [owner, id],
     );
@@ -820,7 +910,7 @@ export function createTaskCenter(
     return source;
   }
   async function collectSource(owner: string, id: string, manual = false) {
-    const [row] = await sql.unsafe<Row[]>(
+    const [row] = await sql.unsafe<SourceRow[]>(
       `UPDATE chisabot_task_center_sources SET last_status='running',last_run_at=now(),lease_owner=$3,lease_expires_at=now()+interval '5 minutes',updated_at=now()
       WHERE owner_user_id=$1 AND id=$2 AND (enabled OR $4) AND next_run_at<=now() AND (lease_expires_at IS NULL OR lease_expires_at<now()) RETURNING *`,
       [owner, id, instance, manual],
@@ -881,7 +971,7 @@ export function createTaskCenter(
 
   async function recover() {
     await sql.begin(async (tx) => {
-      const expired = await tx.unsafe<Row[]>(
+      const expired = await tx.unsafe<TaskRow[]>(
         "SELECT * FROM chisabot_task_center_tasks WHERE status IN ('planning','running') AND lease_expires_at<now() FOR UPDATE SKIP LOCKED",
       );
       for (const row of expired) {
@@ -944,7 +1034,7 @@ export function createTaskCenter(
           "SELECT count(*)::int AS count FROM chisabot_task_center_tasks WHERE status IN ('planning','running') AND lease_expires_at>now()",
         );
         if (count >= globalConcurrency) return null;
-        const [row] = await tx.unsafe<Row[]>(
+        const [row] = await tx.unsafe<TaskRow[]>(
           `SELECT t.* FROM chisabot_task_center_tasks t WHERE t.status='queued' AND t.next_attempt_at<=now()
         AND NOT EXISTS(SELECT 1 FROM unnest(t.dependencies) dep LEFT JOIN chisabot_task_center_tasks d ON d.id=dep AND d.owner_user_id=t.owner_user_id WHERE d.status IS DISTINCT FROM 'succeeded')
         AND (SELECT count(*) FROM chisabot_task_center_tasks r WHERE r.owner_user_id=t.owner_user_id AND r.status IN ('planning','running') AND r.lease_expires_at>now()) < $1
@@ -965,7 +1055,7 @@ export function createTaskCenter(
           options.plan && !task.planPrepared && !task.parentId
             ? "planning"
             : "running";
-        const [claimed] = await tx.unsafe<Row[]>(
+        const [claimed] = await tx.unsafe<TaskRow[]>(
           "UPDATE chisabot_task_center_tasks SET status=$3,attempts=attempts+1,lease_owner=$4,lease_expires_at=now()+($5*interval '1 second'),started_at=COALESCE(started_at,now()),updated_at=now(),error=NULL WHERE owner_user_id=$1 AND id=$2 RETURNING *",
           [task.ownerUserId, task.id, status, instance, leaseSeconds],
         );
@@ -1021,7 +1111,7 @@ export function createTaskCenter(
       await checkBot(task.ownerUserId, step.agentId ?? task.agentId);
     const decisions: TaskCenterDecision[] = [];
     await sql.begin(async (tx) => {
-      const [current] = await tx.unsafe<Row[]>(
+      const [current] = await tx.unsafe<TaskRow[]>(
         "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='planning' FOR UPDATE",
         [task.ownerUserId, task.id, instance],
       );
@@ -1165,7 +1255,7 @@ export function createTaskCenter(
       controller.signal.throwIfAborted();
       const dependencies = task.dependencies.length
         ? (
-            await sql.unsafe<Row[]>(
+            await sql.unsafe<TaskRow[]>(
               "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=ANY(string_to_array($2, chr(31)))",
               [task.ownerUserId, task.dependencies.join("\x1f")],
             )
@@ -1247,7 +1337,7 @@ export function createTaskCenter(
     } catch (error) {
       let terminalFailure: string | null = null;
       await sql.begin(async (tx) => {
-        const [row] = await tx.unsafe<Row[]>(
+        const [row] = await tx.unsafe<TaskRow[]>(
           "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status IN ('planning','running') FOR UPDATE",
           [task.ownerUserId, task.id, instance],
         );
@@ -1333,7 +1423,9 @@ export function createTaskCenter(
     sweeping = true;
     try {
       await recover();
-      const sources = await sql.unsafe<Row[]>(
+      const sources = await sql.unsafe<
+        Pick<SourceRow, "owner_user_id" | "id">[]
+      >(
         "SELECT owner_user_id,id FROM chisabot_task_center_sources WHERE enabled AND next_run_at<=now() AND (lease_expires_at IS NULL OR lease_expires_at<now()) ORDER BY next_run_at LIMIT 4",
       );
       await Promise.all(

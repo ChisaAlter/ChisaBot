@@ -1232,8 +1232,7 @@ export function durationMs(value: string): number {
 }
 
 function computerConfig(environment: Environment): ComputerConfig | undefined {
-  // COMPUTER_SUPERVISOR_URL (a Docker supervisor per Bot) was removed in slimming P4b-3 with the
-  // supervisor service (P3). A personal deployment runs one shared agent-computer.
+  // 个人部署共享同一台 agent-computer。
   const sharedAddress = optional(environment, "AGENT_COMPUTER_URL");
   const sandboxNamespace = optional(environment, "COMPUTER_SANDBOX_NAMESPACE");
   if (!sharedAddress && !sandboxNamespace) {

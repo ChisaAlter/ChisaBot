@@ -1,4 +1,3 @@
-// biome-ignore-all lint/style/noNonNullAssertion: indexes are bounded by the loop / length checks right above each access.
 import { IconArrowUpRight, IconCheck, IconCopy } from "@tabler/icons-react";
 import {
   createContext,
@@ -256,6 +255,8 @@ export function useLiveValue(value: string): { shown: string; flash: boolean } {
     const to = parseNumeric(value);
     if (
       reduced ||
+      !from ||
+      !to ||
       !canTween(from, to) ||
       typeof requestAnimationFrame !== "function"
     ) {
@@ -265,8 +266,8 @@ export function useLiveValue(value: string): { shown: string; flash: boolean } {
       const duration = 300;
       const step = (time: number) => {
         const t = Math.min(1, (time - start) / duration);
-        const current = from!.value + (to!.value - from!.value) * easeOut(t);
-        setShown(t >= 1 ? value : formatLike(current, to!));
+        const current = from.value + (to.value - from.value) * easeOut(t);
+        setShown(t >= 1 ? value : formatLike(current, to));
         if (t < 1) frame.current = requestAnimationFrame(step);
       };
       if (frame.current) cancelAnimationFrame(frame.current);

@@ -61,6 +61,7 @@ jobs:
           server/tests/no-raw-fetch.test.ts
           server/tests/no-raw-env.test.ts
           server/tests/no-unapproved-schema-drop.test.ts
+          server/tests/biome-ignore-hygiene.test.ts
           server/tests/docs-truth-guards.test.ts
       - name: Server model, permission and runtime checks
         run: >-

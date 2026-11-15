@@ -257,7 +257,7 @@ export function Lightbox({
         </div>
       </div>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: 拖动 / 滑动 / 双击缩放是指针手势；键盘有 ←→ ± 0 Esc */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 同上 */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: 点击空白背景关闭仅为鼠标便捷入口，键盘关闭由 Esc 键和顶部关闭按钮承担 */}
       <div
         className="rp-lightbox-stage"
         data-zoomed={zoom > 1 || undefined}
@@ -321,7 +321,7 @@ export function Lightbox({
             <span className="rp-lightbox-count">{`${index + 1} / ${count}`}</span>
             <div aria-hidden className="rp-lightbox-dots">
               {images.map((_, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: 圆点只按位置区分
+                // biome-ignore lint/suspicious/noArrayIndexKey: 仅作位置指示的装饰性分页圆点（aria-hidden），顺序固定且与索引一一对应
                 <span data-active={i === index || undefined} key={i} />
               ))}
             </div>

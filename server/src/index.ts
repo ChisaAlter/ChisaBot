@@ -4665,9 +4665,9 @@ const app = createApp(
   threadIdentity,
   // Who has signed in, and what an administrator may do about them.
   peopleStore,
-  // Enterprise identity providers (SSO) removed in slimming P6-2; positional slot.
+  // 位置占位参数（保持后续入参下标不变）。
   undefined,
-  // Intent routing (choose a coworker for an untagged message) removed in slimming P4b; positional slot.
+  // 位置占位参数（保持后续入参下标不变）。
   undefined,
   // What a browsing turn's screen looked like when it finished, so the transcript can show it later.
   pageFrameStore,
@@ -4782,8 +4782,8 @@ const app = createApp(
     ? createProviderOAuthProxy(config.modelOauthFile)
     : undefined,
   userPreferencesStore,
-  undefined, // was voice sessions (removed in CB-046 step 2)
-  undefined, // was Automatic Learning (removed in slimming P4b-3)
+  undefined, // 位置占位参数
+  undefined, // 位置占位参数
   {
     approvals: approvalService,
     ...(signInService ? { passwords: signInService } : {}),

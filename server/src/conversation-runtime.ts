@@ -916,7 +916,7 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
-  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  /** 位置占位参数（保持后续入参下标不变）。 */
   _removedLearnedSkills?: undefined,
   loadPersonalMemory?: LoadPersonalMemory,
   resolveConnectionForAgent?: (
@@ -2215,7 +2215,7 @@ export async function resolveRuntimeAgents(
    * same positional reason. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
-  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  /** 位置占位参数（保持后续入参下标不变）。 */
   _removedLearnedSkills?: undefined,
   loadPersonalMemory?: LoadPersonalMemory,
   resolveConnectionForAgent?: (

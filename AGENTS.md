@@ -109,4 +109,5 @@
 | 服务端除受控出口外禁止裸 `fetch`，统一走 `guardedFetch` / `trustedEndpointFetch` | `server/tests/no-raw-fetch.test.ts`              |
 | 服务端除 `server/src/config.ts` 外零散代码禁止读 `process.env`（零白名单）       | `server/tests/no-raw-env.test.ts`                |
 | 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |
+| 全仓 `biome-ignore` 必须写清 `>=10` 字真实技术原因且总量封顶只减不增               | `server/tests/biome-ignore-hygiene.test.ts`      |
 | `DESIGN.md` 目录与正文章节 1:1 同步、门禁表路径真实、`test-quarantine` 清零      | `server/tests/docs-truth-guards.test.ts`         |

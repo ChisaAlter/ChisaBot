@@ -125,7 +125,7 @@ export function createActorAgentResolver(
       context?.initiator,
       deps.loadAttachmentForActor?.(actor.id),
       deps.markAttachmentsSentForActor?.(actor.id),
-      undefined, // was Automatic Learning (removed in slimming P4b-3)
+      undefined, // 位置占位参数
       deps.loadPersonalMemoryForActor?.(actor.id),
       deps.resolveConnectionForAgent,
       // The self-map's one fact about the person: may they approve an admin action.

@@ -1,4 +1,12 @@
-import { errorText, readJson } from "../text";
+import {
+  asJsonArray,
+  asJsonRecord,
+  asString,
+  errorText,
+  parseJsonRecord,
+  readJson,
+  readJsonField,
+} from "../text";
 import type { AdapterContext, ImInbound, ImReply, TestResult } from "../types";
 import { dataText, LoopAdapter } from "./base";
 
@@ -13,27 +21,31 @@ import { dataText, LoopAdapter } from "./base";
 
 const BOT_TOPIC = "/v1.0/im/bot/messages/get";
 
-// biome-ignore lint/suspicious/noExplicitAny: 钉钉 Stream 回调报文无官方类型，按协议文档字段取用
-export function parseDingtalkMessage(data: any): ImInbound | null {
+export function parseDingtalkMessage(rawData: unknown): ImInbound | null {
+  const data = asJsonRecord(rawData);
   if (!data?.msgId) return null;
   const group = String(data.conversationType) === "2";
   const userId = String(data.senderStaffId || data.senderId || "");
+  const content = asJsonRecord(data.content);
   let text = "";
   const attachments: ImInbound["attachments"] = [];
-  if (data.msgtype === "text") text = String(data.text?.content ?? "");
-  else if (data.msgtype === "richText") {
-    for (const item of data.content?.richText ?? [])
-      if (item.text) text += item.text;
+  if (data.msgtype === "text") {
+    text = String(readJsonField(data.text, "content") ?? "");
+  } else if (data.msgtype === "richText") {
+    for (const rawItem of asJsonArray(content?.richText)) {
+      const item = asJsonRecord(rawItem);
+      if (typeof item?.text === "string" && item.text) text += item.text;
+    }
   } else if (data.msgtype === "picture") attachments.push({ kind: "image" });
-  else if (data.msgtype === "audio")
-    text = String(data.content?.recognition ?? "");
-  else if (data.msgtype === "file") attachments.push({ kind: "file" });
+  else if (data.msgtype === "audio") {
+    text = String(content?.recognition ?? "");
+  } else if (data.msgtype === "file") attachments.push({ kind: "file" });
   return {
     messageId: String(data.msgId),
     chatType: group ? "group" : "private",
     chatId: group ? String(data.conversationId) : userId,
     userId,
-    userName: data.senderNick,
+    userName: asString(data.senderNick),
     text: text.trim(),
     mentioned: !group || data.isInAtList !== false,
     reply: {
@@ -78,10 +90,10 @@ export class DingtalkAdapter extends LoopAdapter {
     const body = await readJson(response, "打开钉钉 Stream 连接");
     if (!body.endpoint || !body.ticket)
       throw new Error(
-        `钉钉没有返回连接地址：${body.message ?? body.code ?? JSON.stringify(body).slice(0, 120)}`,
+        `钉钉没有返回连接地址：${String(body.message ?? body.code ?? JSON.stringify(body).slice(0, 120))}`,
       );
     await this.openSocket(
-      `${body.endpoint}?ticket=${encodeURIComponent(body.ticket)}`,
+      `${String(body.endpoint)}?ticket=${encodeURIComponent(String(body.ticket))}`,
       {
         onOpen: () => {
           this.markConnected(`钉钉应用 ${clientId}`);
@@ -93,8 +105,8 @@ export class DingtalkAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
-    const frame = JSON.parse(text);
-    const headers = frame.headers ?? {};
+    const frame = parseJsonRecord(text);
+    const headers = asJsonRecord(frame.headers) ?? {};
     if (frame.type === "SYSTEM") {
       if (headers.topic === "ping")
         this.sendJson({ code: 200, headers, message: "OK", data: frame.data });
@@ -114,8 +126,7 @@ export class DingtalkAdapter extends LoopAdapter {
         message: "OK",
         data: JSON.stringify({ response: null }),
       });
-      // biome-ignore lint/suspicious/noExplicitAny: 钉钉回调 data 字段为任意 JSON
-      let data: any = {};
+      let data: unknown = {};
       try {
         data =
           typeof frame.data === "string" ? JSON.parse(frame.data) : frame.data;
@@ -137,9 +148,7 @@ export class DingtalkAdapter extends LoopAdapter {
   }
 
   async send(reply: ImReply): Promise<undefined> {
-    const webhook = String(
-      (reply.inbound.reply as { sessionWebhook?: string }).sessionWebhook ?? "",
-    );
+    const webhook = String(reply.inbound.reply.sessionWebhook ?? "");
     if (!webhook) throw new Error("这条钉钉消息没有 sessionWebhook，无法回复");
     for (const chunk of reply.chunks) {
       const title =
@@ -157,7 +166,9 @@ export class DingtalkAdapter extends LoopAdapter {
       });
       const body = await readJson(response, "钉钉回复");
       if (body.errcode && body.errcode !== 0)
-        throw new Error(`钉钉回复失败：${body.errcode} ${body.errmsg ?? ""}`);
+        throw new Error(
+          `钉钉回复失败：${String(body.errcode)} ${String(body.errmsg ?? "")}`,
+        );
     }
   }
 }
@@ -175,11 +186,11 @@ export async function testDingtalk(ctx: AdapterContext): Promise<TestResult> {
         }),
       },
     );
-    const body = await response.json().catch(() => ({}));
+    const body = asJsonRecord(await response.json().catch(() => ({}))) ?? {};
     if (!response.ok || !body.accessToken)
       return {
         ok: false,
-        detail: `凭据无效：${body.message ?? body.code ?? response.status}`,
+        detail: `凭据无效：${String(body.message ?? body.code ?? response.status)}`,
       };
     return { ok: true, detail: "凭据有效" };
   } catch (error) {

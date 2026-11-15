@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { signOutAndReLogin } from "../src/lib/auth/login-redirect";
+import {
+  type SignOutWindow,
+  signOutAndReLogin,
+} from "../src/lib/auth/login-redirect";
 import { signOutMutationOptions } from "../src/lib/auth/mutations";
 import { mdCache } from "../src/lib/chat/md-cache";
 
@@ -15,9 +18,12 @@ function fill() {
 describe("退出时清空 Markdown 解析缓存", () => {
   test("设置里的「退出登录」（signOutMutationOptions.onSuccess）", async () => {
     fill();
-    const opts = signOutMutationOptions(new QueryClient());
-    // biome-ignore lint/suspicious/noExplicitAny: 只调 onSuccess
-    await (opts.onSuccess as any)?.(undefined, undefined, undefined, undefined);
+    const queryClient = new QueryClient();
+    const opts = signOutMutationOptions(queryClient);
+    await opts.onSuccess?.(undefined, undefined, undefined, {
+      client: queryClient,
+      meta: undefined,
+    });
     expect(mdCache.size).toBe(0);
     expect(mdCache.totalChars).toBe(0);
   });
@@ -26,16 +32,19 @@ describe("退出时清空 Markdown 解析缓存", () => {
     for (const fail of [false, true]) {
       fill();
       const replaced: string[] = [];
-      const win = {
-        location: { replace: (u: string) => replaced.push(u) },
+      const win: SignOutWindow = {
+        location: {
+          replace: (u: string) => {
+            replaced.push(u);
+          },
+        },
         fetch: async () => {
           if (fail) throw new TypeError("network");
           return new Response(null, { status: 200 });
         },
         sessionStorage: { getItem: () => null, setItem: () => {} },
       };
-      // biome-ignore lint/suspicious/noExplicitAny: 假窗口
-      await signOutAndReLogin(win as any, 1_000);
+      await signOutAndReLogin(win, 1_000);
       expect(replaced).toEqual(["/login"]);
       expect(mdCache.size).toBe(0);
     }

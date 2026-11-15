@@ -85,10 +85,9 @@ export function LocalAgentCard({
 function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
   useLayoutEffect(() => {
     const el = box.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
+    if (el && stick.current && lines.length > 0) el.scrollTop = el.scrollHeight;
   }, [lines]);
   return (
     <div

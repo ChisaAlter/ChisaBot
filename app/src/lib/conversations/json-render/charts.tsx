@@ -1,4 +1,3 @@
-// biome-ignore-all lint/style/noNonNullAssertion: indexes are bounded by the loop / length checks right above each access.
 import {
   type CSSProperties,
   type PointerEvent,
@@ -34,6 +33,14 @@ import {
 
 const VIEW_W = 300;
 const SERIES_TONES: Tone[] = ["accent", "info", "warn"];
+const RING_TONES: readonly Tone[] = [
+  "accent",
+  "info",
+  "success",
+  "warn",
+  "danger",
+  "default",
+];
 
 const toneClass = (tone: Tone) => `jr-tone-${tone}`;
 
@@ -53,9 +60,9 @@ function SeriesPaths({
     <>
       {segments.map((points, index) => {
         const line = monotonePath(points);
-        if (!line) return null;
-        const first = points[0]!;
-        const last = points[points.length - 1]!;
+        const first = points[0];
+        const last = points[points.length - 1];
+        if (!line || !first || !last) return null;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: segments have no identity beyond their order.
           <g key={index}>
@@ -212,7 +219,7 @@ export function Chart({
           ? normaliseTone(s.tone)
           : i === 0 && tone
             ? normaliseTone(tone)
-            : SERIES_TONES[i]!,
+            : (SERIES_TONES[i] ?? "accent"),
       }));
     }
     return [
@@ -465,12 +472,11 @@ export function Ring({
   const arcs = parts
     ? ringSegments(parts.map((p) => Number(p.value) || 0))
     : [];
-  const partTone = (i: number): Tone =>
-    parts?.[i]?.tone
-      ? normaliseTone(parts[i]!.tone)
-      : (["accent", "info", "success", "warn", "danger", "default"] as Tone[])[
-          i % 6
-        ]!;
+  const partTone = (i: number): Tone => {
+    const rawTone = parts?.[i]?.tone;
+    if (rawTone) return normaliseTone(rawTone);
+    return RING_TONES[i % RING_TONES.length] ?? "accent";
+  };
   const total =
     parts?.reduce((a, p) => a + Math.max(0, Number(p.value) || 0), 0) ?? 0;
   const centerText =

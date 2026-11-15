@@ -31,7 +31,15 @@ import {
   startPlatformQr,
 } from "../src/im/qr-auth";
 import { chatKey, frameInbound } from "../src/im/service";
-import { backoffMs, markdownToPlain, splitText } from "../src/im/text";
+import {
+  asJsonArray,
+  backoffMs,
+  type JsonRecord,
+  markdownToPlain,
+  parseJsonRecord,
+  readJsonField,
+  splitText,
+} from "../src/im/text";
 import type {
   AdapterContext,
   ImAdapterStatus,
@@ -68,16 +76,14 @@ class FakeWs implements WsLike {
   push(data: unknown) {
     this.onmessage?.({ data });
   }
-  // biome-ignore lint/suspicious/noExplicitAny: IM 协议帧测试桩，断言按平台协议字段逐层访问
-  json(): any[] {
+  json(): JsonRecord[] {
     return this.sent
-      .filter((item) => typeof item === "string")
-      .map((item) => JSON.parse(item as string));
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => parseJsonRecord(item));
   }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: 请求体测试桩，按 IM 平台协议字段断言
-type FetchCall = { url: string; init?: RequestInit; body: any };
+type FetchCall = { url: string; init?: RequestInit; body: JsonRecord | null };
 
 function harness(
   config: Record<string, string>,
@@ -97,10 +103,9 @@ function harness(
     setStatus: (status) => statuses.push(status),
     onMessage: (message) => messages.push(message),
     fetch: async (url, init) => {
-      // biome-ignore lint/suspicious/noExplicitAny: 同上，请求体 JSON 形状按平台协议断言
-      let body: any = null;
+      let body: JsonRecord | null = null;
       try {
-        body = init?.body ? JSON.parse(String(init.body)) : null;
+        body = init?.body ? parseJsonRecord(String(init.body)) : null;
       } catch {}
       const call = { url, init, body };
       calls.push(call);
@@ -338,8 +343,8 @@ describe("OneBot 11（QQ 个人号）", () => {
     const first = await waitFor(() =>
       socket.json().find((frame) => frame.action === "send_group_msg"),
     );
-    expect(first.params.group_id).toBe(99);
-    expect(first.params.message[0]).toEqual({
+    expect(readJsonField(first, "params", "group_id")).toBe(99);
+    expect(asJsonArray(readJsonField(first, "params", "message"))[0]).toEqual({
       type: "reply",
       data: { id: "5" },
     });
@@ -355,7 +360,7 @@ describe("OneBot 11（QQ 个人号）", () => {
       () =>
         socket.json().filter((frame) => frame.action === "send_group_msg")[1],
     );
-    expect(second.params.message).toEqual([
+    expect(readJsonField(second, "params", "message")).toEqual([
       { type: "text", data: { text: "第二段" } },
     ]);
     socket.push(
@@ -408,7 +413,7 @@ describe("OneBot 11（QQ 个人号）", () => {
     const frame = await waitFor(() =>
       socket.json().find((item) => item.action === "send_private_msg"),
     );
-    expect(frame.params).toEqual({
+    expect(readJsonField(frame, "params")).toEqual({
       user_id: 3,
       message: [{ type: "text", data: { text: "在" } }],
     });
@@ -483,7 +488,7 @@ describe("QQ 官方机器人", () => {
     const identify = await waitFor(() =>
       socket.json().find((frame) => frame.op === 2),
     );
-    expect(identify.d).toMatchObject({
+    expect(readJsonField(identify, "d")).toMatchObject({
       token: "QQBot AT",
       intents: 1 << 25,
       shard: [0, 1],
@@ -643,8 +648,10 @@ describe("飞书长连接", () => {
       text: "**好的**",
     });
     expect(replies[0]!.url).toContain("/open-apis/im/v1/messages/om_9/reply");
-    expect(replies[0]!.body.msg_type).toBe("post");
-    expect(JSON.parse(replies[0]!.body.content)).toEqual({
+    expect(readJsonField(replies[0]!.body, "msg_type")).toBe("post");
+    expect(
+      parseJsonRecord(String(readJsonField(replies[0]!.body, "content") ?? "")),
+    ).toEqual({
       zh_cn: { content: [[{ tag: "md", text: "**好的**" }]] },
     });
     await adapter.stop();
@@ -745,7 +752,7 @@ describe("企业微信智能机器人", () => {
     expect(sub.body).toEqual({ bot_id: "B1", secret: "S1" });
     socket.push(
       JSON.stringify({
-        headers: { req_id: sub.headers.req_id },
+        headers: { req_id: readJsonField(sub, "headers", "req_id") },
         errcode: 0,
         errmsg: "ok",
       }),
@@ -770,8 +777,8 @@ describe("企业微信智能机器人", () => {
     const initial = socket
       .json()
       .find((frame) => frame.cmd === "aibot_respond_msg")!;
-    expect(initial.headers.req_id).toBe("REQ");
-    expect(initial.body.stream.finish).toBe(false);
+    expect(readJsonField(initial, "headers", "req_id")).toBe("REQ");
+    expect(readJsonField(initial, "body", "stream", "finish")).toBe(false);
     const sending = adapter.send({
       inbound: message,
       chunks: ["第一段", "第二段"],
@@ -782,11 +789,12 @@ describe("企业微信智能机器人", () => {
         .json()
         .find(
           (frame) =>
-            frame.cmd === "aibot_respond_msg" && frame.body.stream.finish,
+            frame.cmd === "aibot_respond_msg" &&
+            readJsonField(frame, "body", "stream", "finish") === true,
         ),
     );
-    expect(final.body.stream).toMatchObject({
-      id: initial.body.stream.id,
+    expect(readJsonField(final, "body", "stream")).toMatchObject({
+      id: readJsonField(initial, "body", "stream", "id"),
       finish: true,
       content: "第一段",
     });
@@ -801,7 +809,7 @@ describe("企业微信智能机器人", () => {
     });
     socket.push(
       JSON.stringify({
-        headers: { req_id: active.headers.req_id },
+        headers: { req_id: readJsonField(active, "headers", "req_id") },
         errcode: 0,
       }),
     );
@@ -869,9 +877,11 @@ describe("个人微信（ClawBot / iLink）", () => {
     expect(
       (h.calls[0]!.init!.headers as Record<string, string>).Authorization,
     ).toBe("Bearer BT");
-    expect(h.calls[0]!.body.base_info).toEqual({ channel_version: "1.0.0" });
+    expect(readJsonField(h.calls[0]!.body, "base_info")).toEqual({
+      channel_version: "1.0.0",
+    });
     await adapter.send({ inbound: message, chunks: ["在的"], text: "在的" });
-    expect(sent[0]!.body.msg).toMatchObject({
+    expect(readJsonField(sent[0]!.body, "msg")).toMatchObject({
       to_user_id: "wx_u",
       message_type: 2,
       message_state: 2,
@@ -883,7 +893,7 @@ describe("个人微信（ClawBot / iLink）", () => {
         (status) => status.state === "error" && status.detail?.includes("过期"),
       ),
     );
-    expect(h.calls[1]!.body.get_updates_buf).toBe("c1");
+    expect(readJsonField(h.calls[1]!.body, "get_updates_buf")).toBe("c1");
     await adapter.stop();
   });
 });
@@ -921,7 +931,11 @@ describe("钉钉 Stream", () => {
     );
     expect(
       await waitFor(() =>
-        socket.json().find((frame) => frame.headers?.messageId === "p1"),
+        socket
+          .json()
+          .find(
+            (frame) => readJsonField(frame, "headers", "messageId") === "p1",
+          ),
       ),
     ).toMatchObject({ code: 200, data: '{"opaque":"1"}' });
     const data = {
@@ -952,7 +966,11 @@ describe("钉钉 Stream", () => {
       mentioned: true,
     });
     expect(
-      socket.json().find((frame) => frame.headers?.messageId === "cb1"),
+      socket
+        .json()
+        .find(
+          (frame) => readJsonField(frame, "headers", "messageId") === "cb1",
+        ),
     ).toMatchObject({ code: 200 });
     await adapter.send({
       inbound: message,
@@ -1035,7 +1053,7 @@ describe("Telegram", () => {
     const nextPoll = await waitFor(
       () => h.calls.filter((call) => call.url.includes("/getUpdates"))[1],
     );
-    expect(nextPoll.body.offset).toBe(11);
+    expect(readJsonField(nextPoll.body, "offset")).toBe(11);
     await adapter.stop();
   });
 });

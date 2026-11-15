@@ -1,4 +1,12 @@
-import { errorText, readJson } from "../text";
+import {
+  asJsonArray,
+  asJsonRecord,
+  asString,
+  errorText,
+  type JsonRecord,
+  readJson,
+  readJsonField,
+} from "../text";
 import type { AdapterContext, ImInbound, ImReply, TestResult } from "../types";
 import { LoopAdapter } from "./base";
 
@@ -12,13 +20,15 @@ export function telegramBase(config: Record<string, string>, token: string) {
 }
 
 export function parseTelegramUpdate(
-  // biome-ignore lint/suspicious/noExplicitAny: Telegram Update 载荷字段随消息类型变化
-  update: any,
+  rawUpdate: unknown,
   me: { id: number; username: string } | null,
 ): ImInbound | null {
-  const message = update?.message;
-  if (!message?.chat || !message.from || message.from.is_bot) return null;
-  const group = message.chat.type !== "private";
+  const update = asJsonRecord(rawUpdate);
+  const message = asJsonRecord(update?.message);
+  const chat = asJsonRecord(message?.chat);
+  const from = asJsonRecord(message?.from);
+  if (!message || !chat || !from || from.is_bot) return null;
+  const group = chat.type !== "private";
   let text = String(message.text ?? message.caption ?? "");
   let mentioned = !group;
   const username = me?.username ? `@${me.username}` : null;
@@ -30,7 +40,8 @@ export function parseTelegramUpdate(
         "",
       );
     }
-    if (me && message.reply_to_message?.from?.id === me.id) mentioned = true;
+    if (me && readJsonField(message.reply_to_message, "from", "id") === me.id)
+      mentioned = true;
   }
   const attachments: ImInbound["attachments"] = [];
   if (message.photo) attachments.push({ kind: "image" });
@@ -38,14 +49,14 @@ export function parseTelegramUpdate(
   if (message.voice) attachments.push({ kind: "voice" });
   if (message.video) attachments.push({ kind: "video" });
   const name =
-    [message.from.first_name, message.from.last_name]
+    [asString(from.first_name), asString(from.last_name)]
       .filter(Boolean)
-      .join(" ") || message.from.username;
+      .join(" ") || asString(from.username);
   return {
-    messageId: `${message.chat.id}:${message.message_id}`,
+    messageId: `${String(chat.id)}:${String(message.message_id)}`,
     chatType: group ? "group" : "private",
-    chatId: String(message.chat.id),
-    userId: String(message.from.id),
+    chatId: String(chat.id),
+    userId: String(from.id),
     userName: name,
     text: text.trim(),
     mentioned,
@@ -79,7 +90,7 @@ export class TelegramAdapter extends LoopAdapter {
     method: string,
     body: Record<string, unknown>,
     timeoutMs = 15_000,
-  ) {
+  ): Promise<unknown> {
     if (this.stopped) throw new Error("连接已停止");
     const controller = new AbortController();
     this.requests.add(controller);
@@ -91,14 +102,15 @@ export class TelegramAdapter extends LoopAdapter {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      const parsed = await response.json().catch(() => ({}));
+      const parsed =
+        asJsonRecord(await response.json().catch(() => ({}))) ?? {};
       if (!parsed.ok) {
         if (response.status === 409)
           throw new Error(
             "另一个程序正在用这个 Token 收消息（或设置了 webhook）：同一个 Token 只能有一个地方收消息",
           );
         throw new Error(
-          `Telegram ${method} 失败：${parsed.error_code ?? response.status} ${parsed.description ?? ""}`.trim(),
+          `Telegram ${method} 失败：${String(parsed.error_code ?? response.status)} ${String(parsed.description ?? "")}`.trim(),
         );
       }
       return parsed.result;
@@ -111,19 +123,20 @@ export class TelegramAdapter extends LoopAdapter {
   protected async runOnce(): Promise<void> {
     if (!(this.ctx.secrets.token ?? "").trim())
       throw new Error("请填写 Bot Token");
-    const me = await this.call("getMe", {});
+    const me = asJsonRecord(await this.call("getMe", {})) ?? {};
     if (this.stopped) return;
     this.me = { id: Number(me.id), username: String(me.username ?? "") };
     this.markConnected(`@${this.me.username}`);
     this.ctx.log("info", `已连上 Telegram（@${this.me.username}）`);
     while (!this.stopped) {
-      // biome-ignore lint/suspicious/noExplicitAny: getUpdates 返回的 Update 形状随消息类型变化
-      let updates: any[];
+      let updates: unknown[];
       try {
-        updates = await this.call(
-          "getUpdates",
-          { offset: this.offset, timeout: 30, allowed_updates: ["message"] },
-          40_000,
+        updates = asJsonArray(
+          await this.call(
+            "getUpdates",
+            { offset: this.offset, timeout: 30, allowed_updates: ["message"] },
+            40_000,
+          ),
         );
       } catch (error) {
         if (this.stopped) return;
@@ -131,9 +144,11 @@ export class TelegramAdapter extends LoopAdapter {
         throw error;
       }
       if (this.stopped) return;
-      for (const update of updates ?? []) {
-        this.offset = Math.max(this.offset, Number(update.update_id) + 1);
-        const inbound = parseTelegramUpdate(update, this.me);
+      for (const rawUpdate of updates) {
+        const update = asJsonRecord(rawUpdate);
+        if (update)
+          this.offset = Math.max(this.offset, Number(update.update_id) + 1);
+        const inbound = parseTelegramUpdate(rawUpdate, this.me);
         if (inbound) this.emit(inbound);
       }
     }
@@ -150,7 +165,11 @@ export class TelegramAdapter extends LoopAdapter {
   }
 
   async send(reply: ImReply): Promise<undefined> {
-    const messageId = (reply.inbound.reply as { messageId?: number }).messageId;
+    const rawMessageId = reply.inbound.reply.messageId;
+    const messageId =
+      typeof rawMessageId === "number" || typeof rawMessageId === "string"
+        ? rawMessageId
+        : undefined;
     let first = true;
     for (const chunk of reply.chunks) {
       await this.call("sendMessage", {
@@ -175,13 +194,21 @@ export async function testTelegram(ctx: AdapterContext): Promise<TestResult> {
     const response = await ctx.fetch(
       `${telegramBase(ctx.config, (ctx.secrets.token ?? "").trim())}/getMe`,
     );
-    const body = await readJson(response, "Telegram getMe").catch((error) => ({
-      ok: false,
-      description: errorText(error),
-    }));
+    const body = await readJson(response, "Telegram getMe").catch(
+      (error): JsonRecord => ({
+        ok: false,
+        description: errorText(error),
+      }),
+    );
     if (!body.ok)
-      return { ok: false, detail: `Token 无效：${body.description ?? ""}` };
-    return { ok: true, detail: `Token 有效，机器人 @${body.result?.username}` };
+      return {
+        ok: false,
+        detail: `Token 无效：${String(body.description ?? "")}`,
+      };
+    return {
+      ok: true,
+      detail: `Token 有效，机器人 @${String(readJsonField(body.result, "username") ?? "")}`,
+    };
   } catch (error) {
     return { ok: false, detail: errorText(error) };
   }

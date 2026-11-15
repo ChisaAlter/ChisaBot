@@ -131,7 +131,7 @@ export const BotBubbles = memo(function BotBubbles({
                 : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }
             }
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
-            // biome-ignore lint/suspicious/noArrayIndexKey: 见上
+            // biome-ignore lint/suspicious/noArrayIndexKey: 流式分段只在末尾追加，前序段落位置不变且没有独立 id
             key={i}
             transition={{
               delay:
@@ -1521,7 +1521,7 @@ export function BriefCard({
               <div
                 className="chat-brief-tile"
                 data-brief-kind={sec.kind}
-                // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
+                // biome-ignore lint/suspicious/noArrayIndexKey: 从静态晨报文本解析的固定节段列表，只读渲染不重排且标题可能重复
                 key={idx}
               >
                 <div className="chat-brief-tile-head">
@@ -1545,7 +1545,7 @@ export function BriefCard({
                 </div>
                 <ul className="chat-brief-tile-list">
                   {sec.items.slice(0, 3).map((item, j) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 从晨报节段解析的只读摘要条目，按文本顺序展示不会增删或重排
                     <li key={j}>{item}</li>
                   ))}
                 </ul>
@@ -1687,7 +1687,7 @@ export function StatusCardGroup({
           aria-label={card.title}
           className="chat-draft-card chat-doc-card w-full"
           data-testid="chat-status-card"
-          // biome-ignore lint/suspicious/noArrayIndexKey: 静态卡片组顺序
+          // biome-ignore lint/suspicious/noArrayIndexKey: 从消息正文解析的静态卡片列表，按文档顺序只读展示且标题可能重复
           key={idx}
         >
           <header className="chat-doc-head items-start">
