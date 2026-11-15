@@ -8,16 +8,46 @@
  * 后端可以替换（测试注入内存实现）；浏览器里默认用 IndexedDB。
  */
 
+import {
+  isNormalizedCropRect,
+  isWallpaperAspectPresetId,
+  type NormalizedCropRect,
+  type WallpaperAspectPresetId,
+} from "@/lib/wallpaper-crop";
+
 export const WALLPAPER_IDB_MARKER = "idb:custom-wallpaper";
 
 const DB_NAME = "chisabot-appearance";
 const STORE_NAME = "wallpaper";
 const RECORD_KEY = "custom";
+const RECORD_SOURCE_KEY = "custom-source";
+
+export type WallpaperSourceRecord = {
+  sourceDataUrl: string;
+  rect: NormalizedCropRect;
+  preset: WallpaperAspectPresetId;
+};
+
+export function isWallpaperSourceRecord(
+  value: unknown,
+): value is WallpaperSourceRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.sourceDataUrl === "string" &&
+    candidate.sourceDataUrl.startsWith("data:image/") &&
+    isNormalizedCropRect(candidate.rect) &&
+    isWallpaperAspectPresetId(candidate.preset)
+  );
+}
 
 export type WallpaperBackend = {
   get(): Promise<string | null>;
   put(dataUrl: string): Promise<void>;
   remove(): Promise<void>;
+  getSource?: () => Promise<WallpaperSourceRecord | null>;
+  putSource?: (record: WallpaperSourceRecord) => Promise<void>;
+  removeSource?: () => Promise<void>;
 };
 
 function openDb(): Promise<IDBDatabase> {
@@ -73,6 +103,18 @@ export const indexedDbWallpaperBackend: WallpaperBackend = {
   },
   async remove() {
     await withStore("readwrite", (s) => s.delete(RECORD_KEY));
+  },
+  async getSource() {
+    const v = await withStore<unknown>("readonly", (s) =>
+      s.get(RECORD_SOURCE_KEY),
+    );
+    return isWallpaperSourceRecord(v) ? v : null;
+  },
+  async putSource(record) {
+    await withStore("readwrite", (s) => s.put(record, RECORD_SOURCE_KEY));
+  },
+  async removeSource() {
+    await withStore("readwrite", (s) => s.delete(RECORD_SOURCE_KEY));
   },
 };
 

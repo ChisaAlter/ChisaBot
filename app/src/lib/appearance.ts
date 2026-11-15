@@ -12,9 +12,11 @@ import {
   writeStoredPreference,
 } from "@/lib/preference-storage";
 import { compressWallpaperImage } from "@/lib/wallpaper-compress";
+import type { PixelCropRect } from "@/lib/wallpaper-crop";
 import {
   getWallpaperBackend,
   WALLPAPER_IDB_MARKER,
+  type WallpaperSourceRecord,
 } from "@/lib/wallpaper-store";
 
 // 配色表搬到了纯模块 lib/palette.ts（构建时要内联进 index.html 的启动脚本），这里照旧导出。
@@ -640,6 +642,9 @@ function persistCustomWallpaperUrl(url: string) {
       .remove()
       .catch(() => {});
   }
+  getWallpaperBackend()
+    .removeSource?.()
+    .catch(() => {});
 }
 
 /**
@@ -655,6 +660,27 @@ export async function saveUploadedWallpaper(dataUrl: string): Promise<void> {
   }
   persistedWallpaperDataUrl = dataUrl;
   setCustomWallpaperUrl(dataUrl);
+}
+
+/** 读取上次上传的原图与裁剪状态（用于「裁剪区域」二次调整）；读取失败时返回 null。 */
+export async function loadUploadedWallpaperSource(): Promise<WallpaperSourceRecord | null> {
+  try {
+    const record = await getWallpaperBackend().getSource?.();
+    return record ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 保存上传原图与裁剪状态以便二次微调；配额不足等非致命错误静默跳过，不影响已应用的壁纸。 */
+export async function saveUploadedWallpaperSource(
+  record: WallpaperSourceRecord,
+): Promise<void> {
+  try {
+    await getWallpaperBackend().putSource?.(record);
+  } catch {
+    // 原图缓存写入失败不阻断已生效的自定义壁纸。
+  }
 }
 
 function emitChange() {
@@ -1076,6 +1102,9 @@ export function resetAppearanceDefaults() {
       // 存储不可用（隐私模式等）就跳过。
     }
   }
+  getWallpaperBackend()
+    .removeSource?.()
+    .catch(() => {});
 }
 
 /**
@@ -1173,3 +1202,22 @@ export async function compressUploadedWallpaper(file: File): Promise<string> {
   if (invalid) throw new Error(invalid);
   return assertWallpaperDataUrlSize(await compressWallpaperImage(file));
 }
+
+/**
+ * 对本地壁纸原图按选定区域裁剪并压缩为 Data URL。
+ * 传入 File 时会先执行类型与大小校验；不传 crop 时按整图压缩。
+ */
+export async function compressCroppedWallpaper(
+  source: Blob,
+  crop?: PixelCropRect,
+): Promise<string> {
+  if (source instanceof File) {
+    const invalid = validateWallpaperFile(source);
+    if (invalid) throw new Error(invalid);
+  }
+  return assertWallpaperDataUrlSize(
+    await compressWallpaperImage(source, crop ? { crop } : undefined),
+  );
+}
+
+export type { WallpaperSourceRecord } from "@/lib/wallpaper-store";

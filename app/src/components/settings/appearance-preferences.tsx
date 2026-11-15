@@ -1,6 +1,7 @@
 import {
   IconCheck,
   IconCloud,
+  IconCrop,
   IconPhoto,
   IconRefresh,
   IconTrash,
@@ -10,16 +11,21 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type DragEvent,
+  useEffect,
   useRef,
   useState,
 } from "react";
+import {
+  WallpaperCropDialog,
+  type WallpaperCropSource,
+} from "@/components/settings/wallpaper-crop-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
-  compressUploadedWallpaper,
+  compressCroppedWallpaper,
   DEFAULT_GLASS_OPACITY,
   DEFAULT_GLASS_STYLE,
   GLASS_OPACITY_MAX,
@@ -27,8 +33,10 @@ import {
   type GlassStyleId,
   HARK_SKY_SCENES,
   type HarkSkySceneId,
+  loadUploadedWallpaperSource,
   resetAppearanceDefaults,
   saveUploadedWallpaper,
+  saveUploadedWallpaperSource,
   setCustomWallpaperUrl,
   setGlassOpacity,
   setGlassOpacityDark,
@@ -37,8 +45,8 @@ import {
   setThemePalette,
   setWallpaperBlur,
   setWallpaperDim,
-  setWallpaperScrim,
   setWallpaperPreset,
+  setWallpaperScrim,
   THEME_PALETTES,
   updateAppearance,
   useAppearance,
@@ -47,6 +55,13 @@ import {
   type WallpaperCategoryId,
 } from "@/lib/appearance";
 import { cn } from "@/lib/utils";
+import { dataUrlToBlob } from "@/lib/wallpaper-compress";
+import {
+  isFullImageCrop,
+  type NormalizedCropRect,
+  toPixelCropRect,
+  type WallpaperAspectPresetId,
+} from "@/lib/wallpaper-crop";
 
 const GLASS_STYLE_OPTIONS: readonly { value: GlassStyleId; label: string }[] = [
   { value: "liquid", label: "液态玻璃" },
@@ -70,6 +85,44 @@ const rangeFillStyle = (
 ): CSSProperties =>
   ({ "--pct": `${((value - min) / (max - min)) * 100}%` }) as CSSProperties;
 
+function readImageDimensions(
+  url: string,
+): Promise<{ naturalWidth: number; naturalHeight: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const naturalWidth = img.naturalWidth || img.width;
+      const naturalHeight = img.naturalHeight || img.height;
+      if (naturalWidth > 0 && naturalHeight > 0) {
+        resolve({ naturalWidth, naturalHeight });
+      } else {
+        reject(new Error("无法读取图片尺寸，请检查图片文件是否损坏"));
+      }
+    };
+    img.onerror = () => {
+      reject(new Error("无法解码壁纸图片，请更换其他图片"));
+    };
+    img.src = url;
+  });
+}
+
+function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("无法读取图片数据"));
+      }
+    };
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("无法读取图片数据"));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function AppearancePreferences() {
   const appearance = useAppearance();
   const glassKeys = useSegmentedKeys<GlassStyleId>({
@@ -84,11 +137,28 @@ export function AppearancePreferences() {
     values: WALLPAPER_CATEGORY_VALUES,
     onChange: (next) => setWallpaperCategory(next),
   });
-  const [uploading, setUploading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [uploading, setUploading] = useState(false);
+  const [cropSaving, setCropSaving] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [cropSession, setCropSession] = useState<WallpaperCropSource | null>(
+    null,
+  );
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const decodeRequestIdRef = useRef(0);
+
+  const cropPreviewUrl = cropSession?.previewUrl ?? null;
+  useEffect(() => {
+    if (!cropPreviewUrl?.startsWith("blob:")) return;
+    return () => {
+      URL.revokeObjectURL(cropPreviewUrl);
+    };
+  }, [cropPreviewUrl]);
+
+  const busy = uploading || cropSaving;
   const hasStoredCustomImage = Boolean(appearance.customWallpaperUrl);
+  const canRecropStoredCustom =
+    hasStoredCustomImage && appearance.customWallpaperUrl.startsWith("data:");
   const isCustomActive =
     appearance.wallpaperId === "custom" && hasStoredCustomImage;
   const filteredArtWallpapers =
@@ -98,40 +168,175 @@ export function AppearancePreferences() {
           (item) => item.category === wallpaperCategory,
         );
 
-  const processWallpaperFile = async (file: File) => {
+  const openWallpaperCropForFile = async (file: File) => {
     // 先校验类型和大小，超限的文件不读进内存
     const invalid = validateWallpaperFile(file);
     if (invalid) {
       toast.error(invalid);
       return;
     }
+    const requestId = ++decodeRequestIdRef.current;
     setUploading(true);
+    let createdPreviewUrl: string | null = null;
     try {
-      const dataUrl = await compressUploadedWallpaper(file);
+      createdPreviewUrl = URL.createObjectURL(file);
+      const { naturalWidth, naturalHeight } =
+        await readImageDimensions(createdPreviewUrl);
+      if (decodeRequestIdRef.current !== requestId) {
+        URL.revokeObjectURL(createdPreviewUrl);
+        return;
+      }
+      const previewUrl = createdPreviewUrl;
+      createdPreviewUrl = null;
+      setCropSession({
+        blob: file,
+        previewUrl,
+        naturalWidth,
+        naturalHeight,
+      });
+    } catch (error) {
+      if (createdPreviewUrl) {
+        URL.revokeObjectURL(createdPreviewUrl);
+      }
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "无法读取图片尺寸，请换一张图片重试",
+      );
+    } finally {
+      if (decodeRequestIdRef.current === requestId) {
+        setUploading(false);
+      }
+    }
+  };
+
+  const handleOpenRecrop = async () => {
+    if (busy) return;
+    const requestId = ++decodeRequestIdRef.current;
+    setUploading(true);
+    let createdPreviewUrl: string | null = null;
+    try {
+      const savedSource = await loadUploadedWallpaperSource();
+      if (decodeRequestIdRef.current !== requestId) return;
+
+      const sourceDataUrl =
+        savedSource?.sourceDataUrl ??
+        (appearance.customWallpaperUrl.startsWith("data:")
+          ? appearance.customWallpaperUrl
+          : "");
+      if (!sourceDataUrl) {
+        toast.error("当前壁纸不支持重新裁剪，请重新选择本地图片");
+        return;
+      }
+
+      const blob = dataUrlToBlob(sourceDataUrl);
+      createdPreviewUrl = URL.createObjectURL(blob);
+      const { naturalWidth, naturalHeight } =
+        await readImageDimensions(createdPreviewUrl);
+      if (decodeRequestIdRef.current !== requestId) {
+        URL.revokeObjectURL(createdPreviewUrl);
+        return;
+      }
+
+      const previewUrl = createdPreviewUrl;
+      createdPreviewUrl = null;
+      setCropSession({
+        blob,
+        previewUrl,
+        naturalWidth,
+        naturalHeight,
+        initialPreset: savedSource?.preset,
+        initialRect: savedSource?.rect,
+        existingSourceDataUrl: sourceDataUrl,
+      });
+    } catch (error) {
+      if (createdPreviewUrl) {
+        URL.revokeObjectURL(createdPreviewUrl);
+      }
+      toast.error(
+        error instanceof Error ? error.message : "读取已保存壁纸原图失败",
+      );
+    } finally {
+      if (decodeRequestIdRef.current === requestId) {
+        setUploading(false);
+      }
+    }
+  };
+
+  const handleApplyCroppedWallpaper = async ({
+    rect,
+    preset,
+  }: {
+    rect: NormalizedCropRect;
+    preset: WallpaperAspectPresetId;
+  }) => {
+    if (!cropSession || cropSaving) return;
+    setCropSaving(true);
+    try {
+      const pixelCrop = toPixelCropRect(
+        rect,
+        cropSession.naturalWidth,
+        cropSession.naturalHeight,
+      );
+      const crop = isFullImageCrop(
+        pixelCrop,
+        cropSession.naturalWidth,
+        cropSession.naturalHeight,
+      )
+        ? undefined
+        : pixelCrop;
+      const dataUrl = await compressCroppedWallpaper(cropSession.blob, crop);
       // 存进 IndexedDB 成功后才应用；保存失败会抛错，走下面的错误提示
       await saveUploadedWallpaper(dataUrl);
-      toast.success("已上传并应用自定义背景壁纸");
+
+      try {
+        const sourceDataUrl =
+          cropSession.existingSourceDataUrl ??
+          (await readBlobAsDataUrl(cropSession.blob));
+        await saveUploadedWallpaperSource({
+          sourceDataUrl,
+          rect,
+          preset,
+        });
+      } catch {
+        // 原图缓存失败不影响已裁剪壁纸的应用
+      }
+
+      setCropSession(null);
+      toast.success("已裁剪并应用自定义背景壁纸");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "上传壁纸失败");
     } finally {
-      setUploading(false);
+      setCropSaving(false);
     }
+  };
+
+  const handleCancelCrop = () => {
+    if (cropSaving) return;
+    decodeRequestIdRef.current += 1;
+    setCropSession(null);
+  };
+
+  const handleReplaceCropFile = () => {
+    if (busy) return;
+    fileInputRef.current?.click();
   };
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    await processWallpaperFile(file);
+    await openWallpaperCropForFile(file);
   };
 
   const handleDrop = async (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
     setDragOver(false);
+    if (busy) return;
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
-    await processWallpaperFile(file);
+    await openWallpaperCropForFile(file);
   };
 
   return (
@@ -468,7 +673,11 @@ export function AppearancePreferences() {
             isCustomActive && "has-custom",
           )}
           data-testid="wallpaper-upload-dropzone"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (!busy) {
+              fileInputRef.current?.click();
+            }
+          }}
           onDragEnter={(e) => {
             e.preventDefault();
             setDragOver(true);
@@ -485,7 +694,9 @@ export function AppearancePreferences() {
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              fileInputRef.current?.click();
+              if (!busy) {
+                fileInputRef.current?.click();
+              }
             }
           }}
           role="button"
@@ -505,17 +716,19 @@ export function AppearancePreferences() {
           )}
           <div className="appearance-upload-copy">
             <div className="appearance-upload-title">
-              {uploading
-                ? "正在处理并压缩壁纸图片…"
-                : isCustomActive
-                  ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
-                  : hasStoredCustomImage
-                    ? "已保存本地自定义壁纸（点击右侧按钮即可重新启用）"
-                    : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
+              {cropSaving
+                ? "正在按选定区域裁剪并保存壁纸…"
+                : uploading
+                  ? "正在读取壁纸图片…"
+                  : isCustomActive
+                    ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
+                    : hasStoredCustomImage
+                      ? "已保存本地自定义壁纸（点击右侧按钮即可重新启用）"
+                      : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
             </div>
             <div className="appearance-upload-sub">
               {
-                "支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），自动高清压缩并保存在当前设备"
+                "支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），上传时可按屏幕比例或自由框选裁剪区域"
               }
             </div>
           </div>
@@ -523,6 +736,7 @@ export function AppearancePreferences() {
             {hasStoredCustomImage && !isCustomActive ? (
               <Button
                 data-testid="wallpaper-custom-activate"
+                disabled={busy}
                 onClick={(e) => {
                   e.stopPropagation();
                   setWallpaperPreset("custom");
@@ -535,8 +749,24 @@ export function AppearancePreferences() {
                 {"启用此图片"}
               </Button>
             ) : null}
+            {canRecropStoredCustom ? (
+              <Button
+                data-testid="wallpaper-custom-recrop"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleOpenRecrop();
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <IconCrop className="size-3.5" />
+                {"裁剪区域"}
+              </Button>
+            ) : null}
             <Button
-              disabled={uploading}
+              disabled={busy}
               onClick={(e) => {
                 // 别冒泡到拖放区，否则会再打开一次文件选择
                 e.stopPropagation();
@@ -553,6 +783,7 @@ export function AppearancePreferences() {
             </Button>
             {hasStoredCustomImage ? (
               <Button
+                disabled={busy}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (appearance.wallpaperId === "custom") {
@@ -636,6 +867,14 @@ export function AppearancePreferences() {
           </div>
         ) : null}
       </div>
+
+      <WallpaperCropDialog
+        onApply={handleApplyCroppedWallpaper}
+        onCancel={handleCancelCrop}
+        onReplaceFile={handleReplaceCropFile}
+        saving={cropSaving}
+        source={cropSession}
+      />
     </>
   );
 }
