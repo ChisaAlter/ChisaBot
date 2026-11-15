@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-14（`v0.1.148`）。
+> 状态最后核对：2026-11-15（`v0.1.149`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,7 +15,9 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                     | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: in-progress`                                  |
+| [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
+| [CB-125](#cb-125) | 主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换                               | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）             |
+| [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                    | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: done`（`v0.1.149`）                           |
 | [CB-123](#cb-123) | PC 客户端 macOS 版（dmg + 在线更新）                                              | 设备核心 Devices core | `type: feat` · `area: pc` · `P1` · `status: done`（#532 · `v0.1.148`，后续 Apple 签名待办）   |
 | [CB-122](#cb-122) | 全页面 UI 审查整改：对齐、动态布局与弹窗可达性                                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: in-progress`（#535 已合并 · `v0.1.148`）          |
 | [CB-121](#cb-121) | 模型等待由用户停止，不因长时间无输出自动结束                                      | 成熟度 Maturity       | `type: bug` · `area: models` · `P1` · `status: in-progress`                                   |
@@ -119,11 +121,35 @@
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
+## CB-126
+
+**自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁**
+
+标签：`type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）
+
+在「设置 → 通用 → 外观」为本地上传/拖入的自定义壁纸提供比例裁剪弹窗与二次重裁能力（DESIGN §131）。
+
+- [x] `app/src/lib/wallpaper-crop.ts`：提供 `当前屏幕 / 16:9 / 16:10 / 21:9 / 4:3 / 9:16 / 原图 / 自由` 8 档比例Presets，支持选区平移、八向拉伸、点选重定位、滚轮/`1×–4×` 缩放与像素区间转换。
+- [x] `wallpaper-compress.ts` / `wallpaper-compress.worker.ts`：直接在 Worker 或离屏 Canvas 按原图选中像素裁剪并等比压缩；新增纯内存 `dataUrlToBlob`。
+- [x] `wallpaper-store.ts` / `appearance.ts` / `appearance-preferences.tsx`：在 IndexedDB 持久化无损源图与上次选区比例，支持通过「裁剪区域」二次无损重裁，移除或恢复默认外观时自动清理；单测与交互回归全绿（`wallpaper-crop.test.tsx`）。
+
+## CB-125
+
+**主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换**
+
+标签：`type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）
+
+补齐主 Agent 的完整前后端校验、自愈、置顶交互与暂停会话恢复/切换引导，保障跨标签同步与草稿附件零丢失。
+
+- [x] 服务端与共享校验：`shared/validators/primary-agent.ts`、`primary-agent-service.ts`、`primary-agent-routes.ts`、`clearMainBotIfMatches` CAS 清理、`POST /api/channels` 返回 `409 AGENT_PAUSED` 及 `user-preferences-routes.ts` 校验收口。
+- [x] 前端与跨标签同步：`primaryAgentQueryOptions`、`BroadcastChannel` 跨标签缓存同步、`BotsPage` 置顶与操作菜单、`BotProfilePage` 异步切换按钮、`/channel/new` 徽标/切换器/暂停恢复与 `switchNewChannelRecipient` 草稿及暂存附件无损迁移。
+- [x] 路由分块构建与测试：`BotsPage` / `BotChat` 去导出并抽离 `switchNewChannelRecipient` 至 `draft-channel.ts`，`chunk-guard` 双构建与 `primary-agent*.test.*` / `home-fallback-routing.test.tsx` 全绿。
+
 ## CB-124
 
 **审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏**
 
-标签：`type: chore` · `area: infra` · `P1` · `status: in-progress`
+标签：`type: chore` · `area: infra` · `P1` · `status: done`（`v0.1.149`）
 
 分支：`chore/review-hygiene`。2026-11-14 全面审查后的修复批：行为不变，只收架构边界与护栏。
 
@@ -135,7 +161,7 @@
 - [x] `styles.css` §41① 措辞与 `universalAfterHas` 护栏一致（禁 `:has(…)` 后通配 `*`，不禁具体类后代）。
 - [x] `bun run typecheck`（server / agent-computer / app）+ `lint` 0 error 0 warning；受影响用例全绿。
 - [x] 顺手修 `server/src/personal-sources/service.test.ts` 两个存量失败：ICS 用例默认窗口跟 now 走（写死 `from`/`to`）；IMAP 演示域名撞 SSRF 拦截（改为断言内网域名被拒，即当前真实行为）。
-- [ ] PR、合并、CI。
+- [x] PR、合并、CI。
 
 ## CB-123
 

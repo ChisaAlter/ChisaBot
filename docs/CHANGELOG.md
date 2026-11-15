@@ -1,5 +1,10 @@
 ## 未发版
 
+## 0.1.149
+
+- 版本统一为 0.1.149，Android versionCode 331；Windows 外壳指纹不变，无需重新安装。
+- CB-126（`DESIGN §131`）：设置页「外观」支持上传/拖入本地壁纸时通过 `WallpaperCropDialog`（`app/src/components/settings/wallpaper-crop-dialog.tsx` + `wallpaper-crop.ts`）按 `当前屏幕 / 16:9 / 16:10 / 21:9 / 4:3 / 9:16 / 原图 / 自由` 比例框选、八向拉伸、平移、滚轮/`1×–4×` 滑块缩放及键盘微调；`wallpaper-compress.ts` / Worker 支持直接按原生像素选区 `PixelCropRect` 裁剪压缩并新增纯内存 `dataUrlToBlob`；`wallpaper-store.ts` 与 `appearance.ts` 在 IndexedDB 持久化 `custom-source` 无损源图及上次裁剪参数，支持外观页「裁剪区域」二次无损重裁并在移除/恢复默认时自动清理。
+- CB-125：新增 `shared/validators/primary-agent.ts`、`server/src/agents/primary-agent-service.ts`、`server/src/settings/primary-agent-routes.ts`，接管主 Agent 校验、CAS 自愈、`POST /api/channels` 的 `409 AGENT_PAUSED` 拦截及 `taskCenter` 默认执行人解析；前端新增 `primaryAgentQueryOptions` / `BroadcastChannel` 跨标签同步、`BotsPage` 置顶与主 Agent 操作菜单、`BotProfilePage` 异步切换开关、`/channel/new` 主 Agent 徽标与暂停恢复/切换条，并将 `switchNewChannelRecipient` 收进 `app/src/lib/channels/draft-channel.ts`（保障路由导出纯洁与 `[chisabot-chunk-guard]` 通过）；附单测与 UI 回归 `primary-agent*.test.*`。
 - CB-124（分支 `chore/review-hygiene`）：`bubbles` / `mermaid-lite` / `chat-origin`（含各自测试）与 egress 策略契约挪进 `shared/`（新增 `shared/egress-policy.ts`；`agent-computer/src/egress.ts` 改为导入并再导出，原有 `../src/egress` 调用方不变）；`server/computer/policy-network.ts` 改指 shared。新增 `server/tests/no-cross-surface-imports.test.ts`（跨 surface 相对 import 即挂；8 条「测试按真声明 pin 契约」按文件→specifier 白名单）与 `server/tests/no-raw-env.test.ts`（`config.ts` 之外的新裸 `process.env.X` 即挂；15 个存量文件白名单）。`no-raw-fetch` 检测补 `win|window|globalThis|self.fetch(`，`lib/auth/login-redirect.ts` 进白名单。`styles.css` §41① 措辞与 `universalAfterHas` 护栏对齐。`.gitignore` 收 HANDOFF.md / CLAUDE.md / GEMINI.md / `.cursor/`。
 
 ## 0.1.148

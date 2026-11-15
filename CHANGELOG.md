@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.149 — 2026-11-15
+
+全端版本 0.1.149，Android versionCode 331。新增自定义壁纸尺寸比例裁剪与无损源图重裁、主 Agent 绑定与新会话暂停草稿切换，并完成跨 surface 依赖与 env/fetch 护栏收尾。Windows 外壳指纹不变，无需重新安装；无需数据库迁移。
+
+- **自定义壁纸比例裁剪与无损重裁（CB-126）**：上传或拖入本地壁纸后弹出「裁剪并设置壁纸」弹窗，提供 `当前屏幕 / 16:9 / 16:10 / 21:9 / 4:3 / 9:16 / 原图 / 自由` 8 档比例预设、平移/八向角边拖拽、框外点击定位、滚轮与 `1×–4×` 滑块缩放、键盘微调及实时像素显示；Worker / 离屏 Canvas 按原图裁剪区域直接采样缩放压缩，同时在 IndexedDB 无损缓存源图与上次选区，支持通过「裁剪区域」二次重裁，移除或恢复默认时清理缓存。更新前端即可，无需数据库迁移或客户端重装。
+- **主 Agent 绑定管理与新会话暂停草稿迁移（CB-125）**：新增 `/api/settings/primary-agent` 与共享校验器、CAS 自愈清理及暂停 Agent 拦截（`409 AGENT_PAUSED`）；机器人列表自动置顶主 Agent 并支持菜单设/取/换，资料页新增内联反馈开关；`/channel/new` 展示主 Agent 徽标与机器人切换器，遇暂停提示可一键恢复或无损迁移正文草稿、报价/预填输入与暂存附件，多标签通过 `BroadcastChannel` 实时同步；同时把 `switchNewChannelRecipient` 移入 `draft-channel.ts` 使路由按需分块保持纯净。
 - 仓库卫生（CB-124）：纯逻辑契约统一收进 `shared/`（`chat-bubbles`、`mermaid-lite`、`chat-origin`、egress 策略契约 `egress-policy`），app / server / agent-computer 三个 surface 之间不再有源码互 import；新增两道护栏测试（跨 surface import、config.ts 之外的裸 `process.env`），`no-raw-fetch` 补上 `win.fetch` / `self.fetch` 形状的漏检。行为不变，无需数据库迁移或客户端重装。
 
 ## 0.1.148 — 2026-11-14
