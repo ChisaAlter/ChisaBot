@@ -67,6 +67,7 @@ jobs:
           server/tests/formal-plugin-grants.test.ts
           server/tests/formal-approval-gate.test.ts
           app/tests/formal-chat-ledger.test.ts
+          server/tests/verify-ui-driver.test.ts
       - name: Server model, permission and runtime checks
         run: >-
           bun test

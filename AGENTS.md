@@ -50,6 +50,7 @@
 | server + shared 全量测试   | `bun run test:server`             | 自动包含新测试；排除 `dsh-*`（走 `test:dsh`）和隔离名单               |
 | app DOM 测试               | `bun run test:app`                | 会把替换全局模块的用例放进独立进程，不要改成直接 `bun test app/tests` |
 | DSH 恢复测试               | `bun run test:dsh`                | 需要 `CHISABOT_DSH_TEST_DATABASE_URL`（pgvector）                     |
+| 实机浏览器 UI 自验收       | `bun run verify:ui`               | 复用本机 Edge / Chrome / Chromium 零下载跑双视口交互与截图自检          |
 | 格式                       | `bun run format` / `format:check` |                                                                       |
 - **数据库测试**需要 `TEST_DATABASE_URL`（CI：`postgres://test:test@127.0.0.1:5432/chisabot_test`）。库必须先迁移：`DATABASE_URL=<test-url> bun server/scripts/migrate.ts`（CI 由 `Migrate test database` 步骤做，service 镜像用 `pgvector` 因为 0000 迁移要 `vector` 扩展）。没有库时 `*.integration.test.ts` 会直接报错，这是环境缺失，不是缺陷。
 - **Windows 本机**：`compose-network-drift`、`provider-oauth` 依赖 symlink（需开发者模式），其余平台差异以 Linux CI 为准。
@@ -111,4 +112,5 @@
 | 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |
 | 全仓 `biome-ignore` 必须写清 `>=10` 字真实技术原因且总量封顶只减不增               | `server/tests/biome-ignore-hygiene.test.ts`      |
 | 核心状态机（租约锁/插件三层权限/一次性审批/聊天账本）BFS 穷举与双变异体捕杀    | `server/tests/formal-conversation-locks.test.ts`、`server/tests/formal-plugin-grants.test.ts`、`server/tests/formal-approval-gate.test.ts`、`app/tests/formal-chat-ledger.test.ts` |
+| 实机无头浏览器 UI 自验收驱动链路与临时目录零泄漏                                 | `server/tests/verify-ui-driver.test.ts`          |
 | `DESIGN.md` 目录与正文章节 1:1 同步、门禁表路径真实、`test-quarantine` 清零      | `server/tests/docs-truth-guards.test.ts`         |

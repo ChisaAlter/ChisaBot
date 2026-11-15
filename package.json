@@ -37,7 +37,8 @@
     "pretest:app": "bun run generate:app-config",
     "test:app": "bun scripts/run-app-tests.ts",
     "perf:jank": "node perf/jank.mjs",
-    "perf:compare": "node perf/compare.mjs"
+    "perf:compare": "node perf/compare.mjs",
+    "verify:ui": "node scripts/verify-ui.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
