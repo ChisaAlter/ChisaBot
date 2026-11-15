@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { IconDeviceDesktop } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { useComputerControl } from "@/lib/computers/use-control";
@@ -63,12 +63,9 @@ export function useComputerAttention(
   const promptKey = needsYou
     ? `${computerId}:${control?.secretWanted ?? control?.request?.id ?? "human"}`
     : null;
-  const shownPrompt = useRef<string | null>(null);
-  useEffect(() => {
-    if (shownPrompt.current === promptKey) return;
-    shownPrompt.current = promptKey;
-    if (promptKey) onOpenChange(true);
-  }, [promptKey, onOpenChange]);
+  useExternalConnection(promptKey, () => {
+    onOpenChange(true);
+  });
   return needsYou;
 }
 
@@ -92,13 +89,10 @@ export function ComputerChatControls({
   const promptKey = needsYou
     ? `${computerId}:${control?.secretWanted ?? control?.request?.id ?? "human"}`
     : null;
-  const shownPrompt = useRef<string | null>(null);
-  useEffect(() => {
-    if (shownPrompt.current === promptKey) return;
-    shownPrompt.current = promptKey;
-    // Surface each new prompt once; closing the Computer remains a real dismissal.
-    if (promptKey) onOpenChange(true);
-  }, [promptKey, onOpenChange]);
+  // Surface each new prompt once; closing the Computer remains a real dismissal.
+  useExternalConnection(promptKey, () => {
+    onOpenChange(true);
+  });
   return (
     <div className="flex items-start gap-1.5">
       <Button

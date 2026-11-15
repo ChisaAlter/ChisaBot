@@ -17,7 +17,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   memo,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -863,9 +862,7 @@ export function DocCard({
     return () => observer.disconnect();
   }, []);
   // 文字清空（极少）时 RO 可能不回调（高度本来就 0），这里兜底收起状态。
-  useEffect(() => {
-    if (!hasText) setTall(false);
-  }, [hasText]);
+  if (!hasText && tall) setTall(false);
   const heading = title || "文档";
   return (
     <>

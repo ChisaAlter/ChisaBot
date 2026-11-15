@@ -2,7 +2,7 @@
  * DOG-04：地址带 ?message=<id> 时，等气泡挂上后滚到该消息并闪一下（对齐 SettingsFind）。
  */
 import { useRouterState } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
 import {
   findMessageRow,
   focusMessageInChat,
@@ -38,48 +38,49 @@ export function MessageFind({
     },
   });
 
-  useEffect(() => {
-    if (!visible || !messageId) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const started = Date.now();
-    let found = false;
-    let release: (() => void) | undefined;
-    const attempt = () => {
-      if (cancelled || found) return;
-      // 只在露着的聊天里找：keep-alive 藏着的对话仍有 DOM（§98）。
-      const root =
-        document.querySelector<HTMLElement>(
-          `[data-channel-id="${CSS.escape(channelId)}"][data-channel-visible]`,
-        ) ?? document;
-      // CB-106 r2：瞬时滚到（不平滑），立刻钉住；之后由 ResizeObserver 保住位置，直到人滚动或发消息。
-      if (focusMessageInChat(messageId, { root, behavior: "auto" })) {
-        found = true;
-        const row = findMessageRow(messageId, root);
-        if (row) release = holdMessageInView(row);
-        return;
-      }
-      // 长对话只自动挂最近一段（tail-first-paint）：目标可能在没挂的历史里，请它把历史全挂上，
-      // 下一次轮询就找得到。幂等，已经全挂了就什么也不做。
-      root
-        .querySelector('[data-slot="message-scroller-viewport"]')
-        ?.dispatchEvent(new Event(MOUNT_ALL_HISTORY_EVENT));
-      // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
-      // 换 ?message= 或再次点同一命中（visible 抖动）会重跑本 effect。
-      window.dispatchEvent(
-        new CustomEvent(REVEAL_MESSAGE_EVENT, { detail: { messageId } }),
-      );
-      const elapsed = Date.now() - started;
-      const delay = elapsed < MESSAGE_FIND_WAIT_MS ? 150 : 1000;
-      timer = setTimeout(attempt, delay);
-    };
-    timer = setTimeout(attempt, 60);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      release?.();
-    };
-  }, [visible, messageId, channelId]);
+  useExternalConnection(
+    visible && messageId ? `${channelId}\0${messageId}` : false,
+    (_key, signal) => {
+      if (!messageId) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const started = Date.now();
+      let found = false;
+      let release: (() => void) | undefined;
+      const attempt = () => {
+        if (signal.aborted || found) return;
+        // 只在露着的聊天里找：keep-alive 藏着的对话仍有 DOM（§98）。
+        const root =
+          document.querySelector<HTMLElement>(
+            `[data-channel-id="${CSS.escape(channelId)}"][data-channel-visible]`,
+          ) ?? document;
+        // CB-106 r2：瞬时滚到（不平滑），立刻钉住；之后由 ResizeObserver 保住位置，直到人滚动或发消息。
+        if (focusMessageInChat(messageId, { root, behavior: "auto" })) {
+          found = true;
+          const row = findMessageRow(messageId, root);
+          if (row) release = holdMessageInView(row);
+          return;
+        }
+        // 长对话只自动挂最近一段（tail-first-paint）：目标可能在没挂的历史里，请它把历史全挂上，
+        // 下一次轮询就找得到。幂等，已经全挂了就什么也不做。
+        root
+          .querySelector('[data-slot="message-scroller-viewport"]')
+          ?.dispatchEvent(new Event(MOUNT_ALL_HISTORY_EVENT));
+        // CR-P2-04：首段 4s 内快轮询；超时后只要还露着就慢轮询（快照晚到 / 慢连），
+        // 换 ?message= 或再次点同一命中（visible 抖动）会重跑本连接。
+        window.dispatchEvent(
+          new CustomEvent(REVEAL_MESSAGE_EVENT, { detail: { messageId } }),
+        );
+        const elapsed = Date.now() - started;
+        const delay = elapsed < MESSAGE_FIND_WAIT_MS ? 150 : 1000;
+        timer = setTimeout(attempt, delay);
+      };
+      timer = setTimeout(attempt, 60);
+      return () => {
+        if (timer) clearTimeout(timer);
+        release?.();
+      };
+    },
+  );
 
   return null;
 }

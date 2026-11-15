@@ -3,7 +3,6 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -17,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMessageScroller } from "@/components/ui/message-scroller";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { MESSAGE_FLASH_CLASS } from "@/lib/channels/focus-message";
 import type {
   TranscriptDataLayer,
@@ -30,6 +30,17 @@ import {
   TranscriptSizeCache,
   VIRTUAL_BUFFER_PX,
 } from "@/lib/chat/virtual-transcript";
+
+const refIds = new WeakMap<object, number>();
+let nextRefId = 1;
+
+function refKey(value: object): number {
+  const existing = refIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextRefId++;
+  refIds.set(value, created);
+  return created;
+}
 
 /**
  * 长对话虚拟化的渲染层（jank P3-3，flag `virtualTranscript` 后面）。
@@ -206,62 +217,65 @@ export function TranscriptFindBar<Row extends { id: string }>({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [current, setCurrent] = useState(-1);
   const hits = useMemo(
     () => findTranscriptMatches(dataLayer.items, query, textOf),
     [dataLayer.items, query, textOf],
   );
   // 搜索词变了从最新（最下面）那条开始，和浏览器从视口附近开始的手感接近。
-  useEffect(() => {
+  const [prevHits, setPrevHits] = useState(hits);
+  const [current, setCurrent] = useState(hits.length > 0 ? hits.length - 1 : -1);
+  if (prevHits !== hits) {
+    setPrevHits(hits);
     setCurrent(hits.length > 0 ? hits.length - 1 : -1);
-  }, [hits]);
+  }
 
   const target = current >= 0 ? hits[current] : undefined;
   const layerRef = useRef(dataLayer);
   layerRef.current = dataLayer;
-  useEffect(() => {
-    if (!target) return;
-    let cancelled = false;
-    let frame = 0;
-    let tries = 0;
-    let marked: HTMLElement | null = null;
-    let flashTimer: ReturnType<typeof setTimeout> | undefined;
-    const mark = () => {
-      if (cancelled) return;
-      const row = viewportRef.current?.querySelector<HTMLElement>(
-        `[data-message-id="${CSS.escape(target)}"]`,
-      );
-      if (!row) {
-        if (tries++ < 30) frame = requestAnimationFrame(attempt);
-        return;
-      }
-      marked = row;
-      row.setAttribute(FIND_CURRENT_ATTR, "");
-      row.classList.remove(MESSAGE_FLASH_CLASS);
-      void row.offsetWidth;
-      row.classList.add(MESSAGE_FLASH_CLASS);
-      flashTimer = setTimeout(
-        () => row.classList.remove(MESSAGE_FLASH_CLASS),
-        2400,
-      );
-    };
-    const attempt = () => {
-      if (cancelled) return;
-      if (!layerRef.current.scrollToMessage(target, { align: "center" })) {
-        if (tries++ < 30) frame = requestAnimationFrame(attempt);
-        return;
-      }
-      frame = requestAnimationFrame(mark);
-    };
-    attempt();
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frame);
-      if (flashTimer) clearTimeout(flashTimer);
-      marked?.removeAttribute(FIND_CURRENT_ATTR);
-      marked?.classList.remove(MESSAGE_FLASH_CLASS);
-    };
-  }, [target, viewportRef]);
+  useExternalConnection(
+    target !== undefined ? `${target}\0${refKey(viewportRef)}` : false,
+    (_key, signal) => {
+      if (!target) return;
+      let frame = 0;
+      let tries = 0;
+      let marked: HTMLElement | null = null;
+      let flashTimer: ReturnType<typeof setTimeout> | undefined;
+      const mark = () => {
+        if (signal.aborted) return;
+        const row = viewportRef.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(target)}"]`,
+        );
+        if (!row) {
+          if (tries++ < 30) frame = requestAnimationFrame(attempt);
+          return;
+        }
+        marked = row;
+        row.setAttribute(FIND_CURRENT_ATTR, "");
+        row.classList.remove(MESSAGE_FLASH_CLASS);
+        void row.offsetWidth;
+        row.classList.add(MESSAGE_FLASH_CLASS);
+        flashTimer = setTimeout(
+          () => row.classList.remove(MESSAGE_FLASH_CLASS),
+          2400,
+        );
+      };
+      const attempt = () => {
+        if (signal.aborted) return;
+        if (!layerRef.current.scrollToMessage(target, { align: "center" })) {
+          if (tries++ < 30) frame = requestAnimationFrame(attempt);
+          return;
+        }
+        frame = requestAnimationFrame(mark);
+      };
+      attempt();
+      return () => {
+        cancelAnimationFrame(frame);
+        if (flashTimer) clearTimeout(flashTimer);
+        marked?.removeAttribute(FIND_CURRENT_ATTR);
+        marked?.classList.remove(MESSAGE_FLASH_CLASS);
+      };
+    },
+  );
 
   const step = (delta: 1 | -1) =>
     setCurrent((c) => stepMatch(c, hits.length, delta));
@@ -334,21 +348,21 @@ export function useFindShortcut(
   viewportRef: RefObject<HTMLElement | null>,
   open: () => void,
 ) {
-  useEffect(() => {
-    if (!enabled) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      if (event.key.toLowerCase() !== "f") return;
-      const viewport = viewportRef.current;
-      // KeepAlive 藏起来的会话带 inert（P1-3），不抢。
-      if (!viewport?.isConnected || viewport.closest("[inert],[hidden]"))
-        return;
-      event.preventDefault();
-      open();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [enabled, viewportRef, open]);
+  useWindowEvent(
+    "keydown",
+    enabled
+      ? (event: KeyboardEvent) => {
+          if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+          if (event.key.toLowerCase() !== "f") return;
+          const viewport = viewportRef.current;
+          // KeepAlive 藏起来的会话带 inert（P1-3），不抢。
+          if (!viewport?.isConnected || viewport.closest("[inert],[hidden]"))
+            return;
+          event.preventDefault();
+          open();
+        }
+      : null,
+  );
 }
 
 /**
@@ -372,23 +386,15 @@ export function VirtualTranscriptControls<Row extends { id: string }>({
 }) {
   const dataLayer = useVirtuaDataLayer(items, virtualIds, handleRef);
   layerRef.current = dataLayer;
-  useEffect(
-    () => () => {
-      layerRef.current = null;
-    },
-    [layerRef],
-  );
-  useEffect(() => {
-    const onReveal = (event: Event) => {
-      const id = (event as CustomEvent<{ messageId?: string }>).detail
-        ?.messageId;
-      const layer = layerRef.current;
-      if (id && layer?.items.some((item) => item.id === id))
-        layer.scrollToMessage(id, { align: "center" });
-    };
-    window.addEventListener(REVEAL_MESSAGE_EVENT, onReveal);
-    return () => window.removeEventListener(REVEAL_MESSAGE_EVENT, onReveal);
-  }, [layerRef]);
+  useExternalConnection(refKey(layerRef), () => () => {
+    layerRef.current = null;
+  });
+  useWindowEvent(REVEAL_MESSAGE_EVENT, (event) => {
+    const id = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+    const layer = layerRef.current;
+    if (id && layer?.items.some((item) => item.id === id))
+      layer.scrollToMessage(id, { align: "center" });
+  });
   const [findOpen, setFindOpen] = useState(false);
   const openFind = useCallback(() => setFindOpen(true), []);
   useFindShortcut(true, viewportRef, openFind);

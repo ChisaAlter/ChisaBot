@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { toast } from "@/components/ui/toast";
+import { useExternalConnection } from "@/hooks";
 import { scheduleEvents, scheduleKeys } from "@/lib/schedules";
 import { useOpenThread } from "@/lib/channels/open-thread";
 
@@ -15,14 +16,12 @@ export function ScheduleNotifier() {
   const openThread = useOpenThread();
   const since = useRef<string>(new Date().toISOString());
   const seen = useRef(new Set<string>());
-  useEffect(() => {
-    let stopped = false;
+  useExternalConnection(true, (_key, signal) => {
     let timer: number | undefined;
-    const controller = new AbortController();
     const tick = async () => {
       try {
-        const { events, now } = await scheduleEvents(since.current, controller.signal);
-        if (stopped) return;
+        const { events, now } = await scheduleEvents(since.current, signal);
+        if (signal.aborted) return;
         const lastEvent = events.at(-1);
         if (lastEvent) {
           since.current = lastEvent.finishedAt;
@@ -52,15 +51,13 @@ export function ScheduleNotifier() {
       } catch {
         // 网络抖动：下一轮再问。
       } finally {
-        if (!stopped) timer = window.setTimeout(() => void tick(), POLL_MS);
+        if (!signal.aborted) timer = window.setTimeout(() => void tick(), POLL_MS);
       }
     };
     timer = window.setTimeout(() => void tick(), 4000);
     return () => {
-      stopped = true;
-      controller.abort();
       if (timer) window.clearTimeout(timer);
     };
-  }, [queryClient, openThread]);
+  });
   return null;
 }

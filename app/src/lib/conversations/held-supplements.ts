@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 /**
  * CB-104: follow-ups held by Stop are drawn once — as a held item above the composer with
@@ -108,14 +108,17 @@ export function useStopRequest(
 ) {
   const [failed, setFailed] = useState(false);
   const { running, status } = turn;
-  const wasRunning = useRef(running);
+  const [prevRunning, setPrevRunning] = useState(running);
   const ended =
     running === false || (status != null && ENDED_TURN_STATUSES.has(status));
-  useEffect(() => {
-    const startedAgain = running === true && wasRunning.current === false;
-    wasRunning.current = running;
-    if (ended || startedAgain) setFailed(false);
-  }, [ended, running]);
+  if (prevRunning !== running) {
+    setPrevRunning(running);
+    if (ended || (running === true && prevRunning === false)) {
+      setFailed(false);
+    }
+  } else if (ended && failed) {
+    setFailed(false);
+  }
   const send = useCallback(async () => {
     const ok = await requestStop(threadId, fetchImpl ?? fetch);
     setFailed(!ok);

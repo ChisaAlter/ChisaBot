@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useAnimationFrame, useDocumentEvent } from "@/hooks";
 import { initialReveal, pending, receive, type RevealState, step } from "./smooth-reveal";
 
 /**
@@ -45,7 +46,6 @@ export function useSmoothText(text: string, enabled = true): string {
   const state = useRef<RevealState | null>(null);
   if (state.current === null) state.current = initialReveal(text, now());
   const [, force] = useState(0);
-  const frame = useRef(0);
   const lastPaint = useRef(0);
 
   if (state.current.target !== text) {
@@ -53,51 +53,33 @@ export function useSmoothText(text: string, enabled = true): string {
     state.current = !enabled || instantMode() ? initialReveal(text, now()) : receive(state.current, text, now());
   }
 
-  useEffect(() => {
-    const s = state.current;
-    if (!s || !pending(s) || frame.current) return;
-    const tick = () => {
-      frame.current = 0;
-      const cur = state.current;
-      if (!cur) return;
-      if (instantMode()) {
-        state.current = initialReveal(cur.target, now());
-        force((n) => n + 1);
-        return;
-      }
-      const t = now();
-      const gap = cur.target.length > LONG_TEXT ? LONG_FRAME_MS : MIN_FRAME_MS;
-      if (t - lastPaint.current < gap) {
-        frame.current = requestAnimationFrame(tick);
-        return;
-      }
-      const next = step(cur, t);
-      state.current = next;
-      if (next.cut !== cur.cut) {
-        lastPaint.current = t;
-        force((n) => n + 1);
-      }
-      if (pending(next)) frame.current = requestAnimationFrame(tick);
-    };
-    frame.current = requestAnimationFrame(tick);
+  const s = state.current;
+  useAnimationFrame(() => {
+    const cur = state.current;
+    if (!cur || !pending(cur)) return;
+    if (instantMode()) {
+      state.current = initialReveal(cur.target, now());
+      force((n) => n + 1);
+      return;
+    }
+    const t = now();
+    const gap = cur.target.length > LONG_TEXT ? LONG_FRAME_MS : MIN_FRAME_MS;
+    if (t - lastPaint.current < gap) return;
+    const next = step(cur, t);
+    state.current = next;
+    if (next.cut !== cur.cut) {
+      lastPaint.current = t;
+      force((n) => n + 1);
+    }
+  }, Boolean(s && pending(s)));
+
+  useDocumentEvent("visibilitychange", () => {
+    const cur = state.current;
+    if (cur && pending(cur) && instantMode()) {
+      state.current = initialReveal(cur.target, now());
+      force((n) => n + 1);
+    }
   });
 
-  useEffect(() => {
-    const flush = () => {
-      const cur = state.current;
-      if (cur && pending(cur) && instantMode()) {
-        state.current = initialReveal(cur.target, now());
-        force((n) => n + 1);
-      }
-    };
-    document.addEventListener("visibilitychange", flush);
-    return () => {
-      document.removeEventListener("visibilitychange", flush);
-      if (frame.current) cancelAnimationFrame(frame.current);
-      frame.current = 0;
-    };
-  }, []);
-
-  const s = state.current;
   return s.cut >= s.target.length ? s.target : s.target.slice(0, s.cut);
 }

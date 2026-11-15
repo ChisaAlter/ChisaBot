@@ -22,13 +22,18 @@ import {
   memo,
   type ReactNode,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { toast } from "@/components/ui/toast";
+import {
+  useDocumentEvent,
+  useElementEvent,
+  useElementSync,
+  useExternalConnection,
+} from "@/hooks";
 import { useReportPendingAttachments } from "@/lib/activity";
 import {
   attachmentUrl,
@@ -116,6 +121,36 @@ import {
   useOverallUploadPercent,
 } from "./upload-progress";
 import { useDictation } from "./use-dictation";
+
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 1;
+
+function objectKey(value: object): number {
+  const existing = objectIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextObjectId++;
+  objectIds.set(value, created);
+  return created;
+}
+
+function claimedClipboardFiles(
+  event: ClipboardEvent,
+  container: HTMLElement | null,
+): File[] | null {
+  const target = event.target as Node | null;
+  if (!target || !container?.contains(target)) return null;
+  const clipboard = event.clipboardData;
+  if (!clipboard) return null;
+  const files = Array.from(clipboard.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+  const claimed = shouldClaimPaste({
+    kinds: files.map((file) => classifyAttachment(file.type)),
+    plainText: clipboard.getData("text/plain"),
+  });
+  return claimed ? files : null;
+}
 
 /** Upload errors use the same attachment contract as the uploader. */
 type UploadFailure = Parameters<
@@ -442,12 +477,12 @@ function ComposerImpl({
   const fileDraftAlive = useRef(true);
   const restoringFiles = useRef(false);
   const acceptedDuringRestore = useRef(new Set<string>());
-  useEffect(() => {
+  useExternalConnection(true, () => {
     fileDraftAlive.current = true;
     return () => {
       fileDraftAlive.current = false;
     };
-  }, []);
+  });
   const storageErrorShown = useRef(false);
   const reportFileStorageError = useCallback(() => {
     if (storageErrorShown.current) return;
@@ -473,27 +508,29 @@ function ComposerImpl({
    * 写进内存是同步的，落到 localStorage 合并 150ms（ui-memory.ts）。
    */
   const draftWritten = useRef<Segment[] | null>(value);
-  useEffect(() => {
-    if (!draftKey || draftWritten.current === value) return;
-    draftWritten.current = value;
-    const restored = restoredQuotedSend.current;
-    const persisted =
-      uncertainDraft.current && restored
-        ? (retractRestoredDraft(value, restored.bodyText) ?? value)
-        : value;
-    const keep =
-      !isSegmentsEmpty(persisted) &&
-      !wasJustSent(draftKey, toDraft(persisted).text);
-    setThreadUi(draftKey, { draft: keep ? persisted : undefined });
-  }, [draftKey, value]);
+  useExternalConnection(
+    draftKey ? `${draftKey}\0${objectKey(value)}` : false,
+    () => {
+      if (!draftKey || draftWritten.current === value) return;
+      draftWritten.current = value;
+      const restored = restoredQuotedSend.current;
+      const persisted =
+        uncertainDraft.current && restored
+          ? (retractRestoredDraft(value, restored.bodyText) ?? value)
+          : value;
+      const keep =
+        !isSegmentsEmpty(persisted) &&
+        !wasJustSent(draftKey, toDraft(persisted).text);
+      setThreadUi(draftKey, { draft: keep ? persisted : undefined });
+    },
+  );
   /*
    * 「没发出去」判错、这句其实落地了（channel-chat 的迟到对账 → sendLanded）：失败时塞回来的
    * 这份草稿是多余的——消息在对话里、回答可能正在写，留着它再按一次发送就是同一句话发两遍。
    * 只在「字没被动过」时收：塞回来之后他又编辑 / 续打了，那些是他自己的字，照 §88.4 的规矩不碰。
    */
-  useEffect(() => {
-    if (!draftKey) return;
-    return listenSendLanded(draftKey, (landed) => {
+  useExternalConnection(draftKey || null, (activeKey) =>
+    listenSendLanded(activeKey, (landed) => {
       const restored = restoredQuotedSend.current;
       if (restored && landed.trim() === restored.fullText.trim()) {
         setValue(
@@ -506,12 +543,12 @@ function ComposerImpl({
         }
         restoredQuotedSend.current = null;
         uncertainDraft.current = false;
-        setThreadUi(draftKey, { restoredSend: undefined });
+        setThreadUi(activeKey, { restoredSend: undefined });
       } else {
         setValue((current) => retractRestoredDraft(current, landed) ?? current);
       }
-    });
-  }, [draftKey]);
+    }),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitInFlight = useRef(false);
   /**
@@ -548,54 +585,60 @@ function ComposerImpl({
     quote: ComposerQuotePayload | null;
   } | null>(threadUi(draftKey)?.restoredSend ?? null);
   const uncertainDraft = useRef(false);
-  useEffect(() => {
-    if (!draftKey) return;
-    const restored = restoredQuotedSend.current;
-    const quote =
-      uncertainDraft.current && restored?.quote === replyQuote
-        ? null
-        : replyQuote;
-    setThreadUi(draftKey, { quote: quote ?? undefined });
-  }, [draftKey, replyQuote]);
+  useExternalConnection(
+    draftKey ? `${draftKey}\0${replyQuote ? objectKey(replyQuote) : 0}` : false,
+    () => {
+      if (!draftKey) return;
+      const restored = restoredQuotedSend.current;
+      const quote =
+        uncertainDraft.current && restored?.quote === replyQuote
+          ? null
+          : replyQuote;
+      setThreadUi(draftKey, { quote: quote ?? undefined });
+    },
+  );
   const visibility = useKeptVisibility();
   const targetPath = composerTargetPath(channelId, draftKey);
   const activeComposer = () =>
     visibility.get() && currentChatTargetPath() === targetPath;
   const activeComposerRef = useRef(activeComposer);
   activeComposerRef.current = activeComposer;
-  useEffect(() => {
-    const receiver = receiveComposerInputs({
-      targetPath,
-      active: () => !disabled && activeComposerRef.current(),
-      consume: (input) => {
-        const addition =
-          input.kind === "quote" ? input.quote.prompt?.trim() : input.text;
-        if (input.kind === "quote") {
-          quoteRevision.current++;
-          replyQuoteRef.current = input.quote;
-          setReplyQuote(input.quote);
-        }
-        if (addition) {
-          setValue((current) =>
-            mergeAdjacentTextSegments([
-              ...current,
-              text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
-            ]),
-          );
-        }
-        requestAnimationFrame(() => {
-          if (!activeComposerRef.current()) return;
-          promptAreaRef.current?.focus();
-          promptAreaRef.current?.setCursorToEnd();
-        });
-      },
-    });
-    const off = visibility.subscribe(receiver.flush);
-    return () => {
-      off();
-      receiver.dispose();
-    };
-  }, [disabled, targetPath, visibility]);
+  useExternalConnection(
+    `${disabled ? 1 : 0}\0${targetPath}\0${objectKey(visibility)}`,
+    () => {
+      const receiver = receiveComposerInputs({
+        targetPath,
+        active: () => !disabled && activeComposerRef.current(),
+        consume: (input) => {
+          const addition =
+            input.kind === "quote" ? input.quote.prompt?.trim() : input.text;
+          if (input.kind === "quote") {
+            quoteRevision.current++;
+            replyQuoteRef.current = input.quote;
+            setReplyQuote(input.quote);
+          }
+          if (addition) {
+            setValue((current) =>
+              mergeAdjacentTextSegments([
+                ...current,
+                text(isSegmentsEmpty(current) ? addition : `\n${addition}`),
+              ]),
+            );
+          }
+          requestAnimationFrame(() => {
+            if (!activeComposerRef.current()) return;
+            promptAreaRef.current?.focus();
+            promptAreaRef.current?.setCursorToEnd();
+          });
+        },
+      });
+      const off = visibility.subscribe(receiver.flush);
+      return () => {
+        off();
+        receiver.dispose();
+      };
+    },
+  );
   /*
    * IME state, kept outside React.
    *
@@ -640,11 +683,14 @@ function ComposerImpl({
    * set on the editable element directly.
    */
   const coarsePointer = useCoarsePointer();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: compact 变了编辑区容器会重渲染，enterkeyhint 要重新写回
-  useEffect(() => {
-    const editor = containerRef.current?.querySelector("[contenteditable]");
-    editor?.setAttribute("enterkeyhint", coarsePointer ? "enter" : "send");
-  }, [coarsePointer, compact]);
+  useElementSync(
+    containerRef,
+    { coarsePointer, compact },
+    (container, next) => {
+      const editor = container.querySelector("[contenteditable]");
+      editor?.setAttribute("enterkeyhint", next.coarsePointer ? "enter" : "send");
+    },
+  );
   /** Dictation returns the caret once the editor can accept it. */
   const wantsFocus = useRef(false);
   const sendDictatedDraft = useRef(false);
@@ -857,25 +903,30 @@ function ComposerImpl({
    * mount, or between drops, runs this once for nothing and then not again until the next real
    * drop.
    */
-  useEffect(() => {
-    if (!droppedAttachments || droppedAttachments.attachments.length === 0) {
-      return;
-    }
-    const reason = DROPPED_REASON[droppedAttachments.cause];
-    releaseStagedRows(droppedAttachments.attachments);
-    setRejected((current) => [
-      ...current,
-      ...droppedAttachments.attachments.map((attachment) => ({
-        // `newId()` again, and this is the least survivable of the three sites: an effect body
-        // that throws propagates out of React's commit, so on a deployment served over plain
-        // `http://` a queue drop would answer by tearing down the tree that was about to explain
-        // it — a blank conversation instead of a list of the files it just lost.
-        id: newId(),
-        name: attachment.filename ?? "附件",
-        reason,
-      })),
-    ]);
-  }, [droppedAttachments, releaseStagedRows]);
+  useExternalConnection(
+    droppedAttachments && droppedAttachments.attachments.length > 0
+      ? `${objectKey(droppedAttachments)}\0${objectKey(releaseStagedRows)}`
+      : false,
+    () => {
+      if (!droppedAttachments || droppedAttachments.attachments.length === 0) {
+        return;
+      }
+      const reason = DROPPED_REASON[droppedAttachments.cause];
+      releaseStagedRows(droppedAttachments.attachments);
+      setRejected((current) => [
+        ...current,
+        ...droppedAttachments.attachments.map((attachment) => ({
+          // `newId()` again, and this is the least survivable of the three sites: an effect body
+          // that throws propagates out of React's commit, so on a deployment served over plain
+          // `http://` a queue drop would answer by tearing down the tree that was about to explain
+          // it — a blank conversation instead of a list of the files it just lost.
+          id: newId(),
+          name: attachment.filename ?? "附件",
+          reason,
+        })),
+      ]);
+    },
+  );
 
   /**
    * Called unconditionally, with a config only when there is a channel to upload to. The hook
@@ -1028,7 +1079,7 @@ function ComposerImpl({
    * `attachments` and not `staged`: a send in flight only HIDES its attachments, and they are still
    * the composer's until the send becomes a message.
    */
-  useEffect(() => {
+  useExternalConnection(objectKey(attachments), () => {
     if (uploadedRows.current.size === 0) {
       return;
     }
@@ -1051,7 +1102,7 @@ function ComposerImpl({
       uploadedRows.current.delete(rowId);
       discardStagedAttachment(rowId);
     }
-  }, [attachments]);
+  });
 
   /**
    * How many attachments the next screen must count, including any this tick has already accepted.
@@ -1080,14 +1131,16 @@ function ComposerImpl({
   /*
    * Every commit, and cheap: whenever nothing is in flight, the hook's own count is the truth, and
    * that is how a removal, a send taking its attachments off, or a file the SDK refused after we
-   * accepted it all get back into the number. No dependency array on purpose — the condition that
-   * matters is a ref, which no dependency list can watch.
+   * accepted it all get back into the number.
    */
-  useEffect(() => {
-    if (staging.current === 0) {
-      stagedCount.current = staged.length;
-    }
-  });
+  useExternalConnection(
+    `${staged.length}\0${staging.current}\0${stagedCount.current}`,
+    () => {
+      if (staging.current === 0) {
+        stagedCount.current = staged.length;
+      }
+    },
+  );
 
   /**
    * The one way a file gets from a person's hands into the upload queue.
@@ -1328,44 +1381,48 @@ function ComposerImpl({
    */
   // Persist original files as soon as picked, then replace their upload references when ready.
   // A reload reuses a staged row; it never uploads another copy to discover whether Send landed.
-  useEffect(() => {
-    let changed = false;
-    for (const attachment of attachments) {
-      const key = uploadIdentity.keyOf(attachment);
-      const saved = fileDraft.current.get(key);
-      if (
-        !saved ||
-        attachment.status !== "ready" ||
-        saved.attachment === attachment
-      )
-        continue;
-      fileDraft.current.set(key, { ...saved, attachment });
-      changed = true;
-    }
-    if (changed) saveFileDraft();
-  }, [attachments, uploadIdentity, saveFileDraft]);
-  useEffect(
-    () =>
-      listenDraftFilesAccepted((ids) => {
-        let changed = false;
-        const accepted = new Set(ids);
-        if (restoringFiles.current)
-          for (const id of ids) acceptedDuringRestore.current.add(id);
-        for (const [key, saved] of fileDraft.current) {
-          const rowId = stagedRowId(saved.attachment);
-          if (!rowId || !accepted.has(rowId)) continue;
-          fileDraft.current.delete(key);
-          uploadedRows.current.delete(rowId);
-          changed = true;
-        }
-        if (changed) {
-          fileDraftRevision.current++;
-          saveFileDraft();
-        }
-      }),
-    [saveFileDraft],
+  useExternalConnection(
+    `${objectKey(attachments)}\0${objectKey(uploadIdentity)}\0${objectKey(saveFileDraft)}`,
+    () => {
+      let changed = false;
+      for (const attachment of attachments) {
+        const key = uploadIdentity.keyOf(attachment);
+        const saved = fileDraft.current.get(key);
+        if (
+          !saved ||
+          attachment.status !== "ready" ||
+          saved.attachment === attachment
+        )
+          continue;
+        fileDraft.current.set(key, { ...saved, attachment });
+        changed = true;
+      }
+      if (changed) saveFileDraft();
+    },
   );
-  useEffect(
+  useExternalConnection(objectKey(saveFileDraft), () =>
+    listenDraftFilesAccepted((ids) => {
+      let changed = false;
+      const accepted = new Set(ids);
+      if (restoringFiles.current)
+        for (const id of ids) acceptedDuringRestore.current.add(id);
+      for (const [key, saved] of fileDraft.current) {
+        const rowId = stagedRowId(saved.attachment);
+        if (!rowId || !accepted.has(rowId)) continue;
+        fileDraft.current.delete(key);
+        uploadedRows.current.delete(rowId);
+        changed = true;
+      }
+      if (changed) {
+        fileDraftRevision.current++;
+        saveFileDraft();
+      }
+    }),
+  );
+  useExternalConnection(
+    accountId && draftKey
+      ? `${accountId}\0${draftKey}\0${objectKey(reportFileStorageError)}`
+      : false,
     () =>
       listenDraftFileSubmissions(async (ids, submission) => {
         if (!accountId || !draftKey) return;
@@ -1384,7 +1441,6 @@ function ComposerImpl({
           ]).catch(reportFileStorageError);
         }
       }),
-    [accountId, draftKey, reportFileStorageError],
   );
 
   const restoreSavedFile = useCallback(
@@ -1422,147 +1478,150 @@ function ComposerImpl({
   );
   const restoreSavedRef = useRef(restoreSavedFile);
   restoreSavedRef.current = restoreSavedFile;
-  useEffect(() => {
-    if (!draftKey || !canAttach || fileDraftRead.current) return;
-    fileDraftRead.current = true;
-    if (fileDraftRevision.current > 0) return;
-    const stagedInMemory = takeDraftFiles(draftKey);
-    if (stagedInMemory.length) {
-      void stageFiles(stagedInMemory);
-      return;
-    }
-    if (!accountId) return;
-    let alive = true;
-    let completed = false;
-    restoringFiles.current = true;
-    const abort = new AbortController();
-    const revision = fileDraftRevision.current;
-    const current = () => alive && revision === fileDraftRevision.current;
-    void (async () => {
-      const saved = await readDraftAttachments(accountId, draftKey);
-      if (!current() || !saved?.files.length) return;
-      // Queued supplements can still be staged: consult the existing inbox before restoring.
-      const state = conversationScope?.threadId
-        ? await inboxState(conversationScope.threadId, { signal: abort.signal })
-        : undefined;
-      if (!current()) return;
-      const queuedIds = new Set(
-        state?.items.flatMap((item) =>
-          attachmentIdsInContent(item.message.content),
-        ) ?? [],
-      );
-      const restored: Attachment[] = [];
-      const restoredDraft = new Map<string, PersistedDraftFile>();
-      const interrupted: (Omit<FailedUpload, "name"> & {
-        file: File;
-        saved?: PersistedDraftFile;
-      })[] = [];
-      for (const entry of saved.files) {
+  useExternalConnection(
+    draftKey && canAttach
+      ? [
+          accountId ?? "",
+          draftKey,
+          conversationScope?.threadId ?? "",
+          objectKey(stageFiles),
+          objectKey(restoreSavedFile),
+          objectKey(restoreAttachments),
+          objectKey(uploadIdentity),
+          objectKey(saveFileDraft),
+          objectKey(reportFileStorageError),
+        ].join("\0")
+      : false,
+    (_activeKey, signal) => {
+      if (!draftKey || !canAttach || fileDraftRead.current) return;
+      fileDraftRead.current = true;
+      if (fileDraftRevision.current > 0) return;
+      const stagedInMemory = takeDraftFiles(draftKey);
+      if (stagedInMemory.length) {
+        void stageFiles(stagedInMemory);
+        return;
+      }
+      if (!accountId) return;
+      let alive = true;
+      let completed = false;
+      restoringFiles.current = true;
+      const revision = fileDraftRevision.current;
+      const current = () =>
+        alive && !signal.aborted && revision === fileDraftRevision.current;
+      void (async () => {
+        const saved = await readDraftAttachments(accountId, draftKey);
+        if (!current() || !saved?.files.length) return;
+        // Queued supplements can still be staged: consult the existing inbox before restoring.
+        const state = conversationScope?.threadId
+          ? await inboxState(conversationScope.threadId, { signal })
+          : undefined;
         if (!current()) return;
-        const rowId = stagedRowId(entry.attachment);
-        if (rowId && queuedIds.has(rowId)) continue;
-        try {
-          if (rowId && conversationScope?.threadId && !state)
-            throw new Error("尚未确认附件的排队状态，联网后点重试。");
-          const status = await restoreSavedFile(entry, abort.signal);
+        const queuedIds = new Set(
+          state?.items.flatMap((item) =>
+            attachmentIdsInContent(item.message.content),
+          ) ?? [],
+        );
+        const restored: Attachment[] = [];
+        const restoredDraft = new Map<string, PersistedDraftFile>();
+        const interrupted: (Omit<FailedUpload, "name"> & {
+          file: File;
+          saved?: PersistedDraftFile;
+        })[] = [];
+        for (const entry of saved.files) {
           if (!current()) return;
-          if (status === "accepted") continue;
-          restoredDraft.set(entry.id, entry);
-          if (status === "staged" && entry.attachment) {
-            restored.push(entry.attachment);
-          } else {
+          const rowId = stagedRowId(entry.attachment);
+          if (rowId && queuedIds.has(rowId)) continue;
+          try {
+            if (rowId && conversationScope?.threadId && !state)
+              throw new Error("尚未确认附件的排队状态，联网后点重试。");
+            const status = await restoreSavedFile(entry, signal);
+            if (!current()) return;
+            if (status === "accepted") continue;
+            restoredDraft.set(entry.id, entry);
+            if (status === "staged" && entry.attachment) {
+              restored.push(entry.attachment);
+            } else {
+              interrupted.push({
+                id: entry.id,
+                file: entry.file,
+                reason: "上传尚未完成，点击重试。",
+              });
+            }
+          } catch (error) {
+            if (!current()) return;
+            restoredDraft.set(entry.id, entry);
             interrupted.push({
               id: entry.id,
               file: entry.file,
-              reason: "上传尚未完成，点击重试。",
+              saved: entry,
+              reason:
+                error instanceof Error
+                  ? error.message
+                  : "附件状态暂时无法核对，请重试。",
             });
           }
-        } catch (error) {
-          if (!current()) return;
-          restoredDraft.set(entry.id, entry);
-          interrupted.push({
-            id: entry.id,
-            file: entry.file,
-            saved: entry,
-            reason:
-              error instanceof Error
-                ? error.message
-                : "附件状态暂时无法核对，请重试。",
-          });
         }
-      }
-      if (!current()) return;
-      for (const [key, entry] of restoredDraft) {
-        const rowId = stagedRowId(entry.attachment);
-        if (rowId && acceptedDuringRestore.current.has(rowId))
-          restoredDraft.delete(key);
-      }
-      fileDraft.current = restoredDraft;
-      const ready = restored.filter((attachment) => {
-        const rowId = stagedRowId(attachment);
-        return !rowId || !acceptedDuringRestore.current.has(rowId);
-      });
-      for (const entry of restoredDraft.values()) {
-        if (!entry.attachment || !ready.includes(entry.attachment)) continue;
-        uploadIdentity.restore(entry.file, entry.id, entry.attachment.id);
-        const rowId = stagedRowId(entry.attachment);
-        if (rowId) uploadedRows.current.add(rowId);
-      }
-      if (ready.length) {
-        stagedCount.current += ready.length;
-        restoreAttachments(ready);
-      }
-      if (interrupted.length)
-        setFailedUploads((old) => [
-          ...old,
-          ...interrupted.filter((entry) => restoredDraft.has(entry.id)),
-        ]);
-      saveFileDraft();
-    })()
-      .catch(() => {
-        if (alive) reportFileStorageError();
-      })
-      .finally(() => {
-        if (!alive) return;
-        completed = true;
+        if (!current()) return;
+        for (const [key, entry] of restoredDraft) {
+          const rowId = stagedRowId(entry.attachment);
+          if (rowId && acceptedDuringRestore.current.has(rowId))
+            restoredDraft.delete(key);
+        }
+        fileDraft.current = restoredDraft;
+        const ready = restored.filter((attachment) => {
+          const rowId = stagedRowId(attachment);
+          return !rowId || !acceptedDuringRestore.current.has(rowId);
+        });
+        for (const entry of restoredDraft.values()) {
+          if (!entry.attachment || !ready.includes(entry.attachment)) continue;
+          uploadIdentity.restore(entry.file, entry.id, entry.attachment.id);
+          const rowId = stagedRowId(entry.attachment);
+          if (rowId) uploadedRows.current.add(rowId);
+        }
+        if (ready.length) {
+          stagedCount.current += ready.length;
+          restoreAttachments(ready);
+        }
+        if (interrupted.length)
+          setFailedUploads((old) => [
+            ...old,
+            ...interrupted.filter((entry) => restoredDraft.has(entry.id)),
+          ]);
+        saveFileDraft();
+      })()
+        .catch(() => {
+          if (alive && !signal.aborted) reportFileStorageError();
+        })
+        .finally(() => {
+          if (!alive || signal.aborted) return;
+          completed = true;
+          restoringFiles.current = false;
+          acceptedDuringRestore.current.clear();
+        });
+      return () => {
+        alive = false;
         restoringFiles.current = false;
         acceptedDuringRestore.current.clear();
-      });
-    return () => {
-      alive = false;
-      abort.abort();
-      restoringFiles.current = false;
-      acceptedDuringRestore.current.clear();
-      if (!completed) fileDraftRead.current = false;
-    };
-  }, [
-    accountId,
-    draftKey,
-    canAttach,
-    conversationScope?.threadId,
-    stageFiles,
-    restoreSavedFile,
-    restoreAttachments,
-    uploadIdentity,
-    saveFileDraft,
-    reportFileStorageError,
-  ]);
-  useEffect(() => {
-    if (!draftKey || !canAttach) return;
-    return listenDraftFiles(draftKey, (files) => void stageFiles(files));
-  }, [draftKey, canAttach, stageFiles]);
-  useEffect(
-    () => () => {
-      // Account-scoped persistence owns the files; old in-memory handoffs must not replay them.
-      if (accountId) return;
-      if (draftKey)
-        stashDraftFiles(
-          draftKey,
-          [...fileDraft.current.values()].map((item) => item.file),
-        );
+        if (!completed) fileDraftRead.current = false;
+      };
     },
-    [accountId, draftKey],
   );
+  useExternalConnection(
+    draftKey && canAttach ? `${draftKey}\0${objectKey(stageFiles)}` : false,
+    () =>
+      draftKey
+        ? listenDraftFiles(draftKey, (files) => void stageFiles(files))
+        : undefined,
+  );
+  useExternalConnection(`${accountId ?? ""}\0${draftKey ?? ""}`, () => () => {
+    // Account-scoped persistence owns the files; old in-memory handoffs must not replay them.
+    if (accountId) return;
+    if (draftKey)
+      stashDraftFiles(
+        draftKey,
+        [...fileDraft.current.values()].map((item) => item.file),
+      );
+  });
 
   const stagePastedImage = useCallback(
     (file: File) => {
@@ -1625,63 +1684,33 @@ function ComposerImpl({
     [handOff],
   );
 
-  useEffect(() => {
-    if (!handsOff) return;
-    const handlePaste = (event: ClipboardEvent) => {
-      const target = event.target as Node | null;
-      if (!target || !containerRef.current?.contains(target)) return;
-      const clipboard = event.clipboardData;
-      if (!clipboard) return;
-      const files = Array.from(clipboard.items)
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => file !== null);
-      const claimed = shouldClaimPaste({
-        kinds: files.map((file) => classifyAttachment(file.type)),
-        plainText: clipboard.getData("text/plain"),
-      });
-      if (!claimed) return;
-      event.preventDefault();
-      event.stopPropagation();
-      handOff(files);
-    };
-    document.addEventListener("paste", handlePaste, true);
-    return () => document.removeEventListener("paste", handlePaste, true);
-  }, [handsOff, handOff]);
+  useDocumentEvent(
+    "paste",
+    handsOff
+      ? (event: ClipboardEvent) => {
+          const files = claimedClipboardFiles(event, containerRef.current);
+          if (!files) return;
+          event.preventDefault();
+          event.stopPropagation();
+          handOff(files);
+        }
+      : null,
+    true,
+  );
 
-  useEffect(() => {
-    if (!canAttach) {
-      return;
-    }
-    const handlePaste = (event: ClipboardEvent) => {
-      // The hook's own containment gate, kept exactly: several composers can be mounted at once,
-      // and a paste into a search box is nobody's attachment.
-      const target = event.target as Node | null;
-      if (!target || !containerRef.current?.contains(target)) {
-        return;
-      }
-      const clipboard = event.clipboardData;
-      if (!clipboard) {
-        return;
-      }
-      const files = Array.from(clipboard.items)
-        .filter((item) => item.kind === "file")
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => file !== null);
-      const claimed = shouldClaimPaste({
-        kinds: files.map((file) => classifyAttachment(file.type)),
-        plainText: clipboard.getData("text/plain"),
-      });
-      if (!claimed) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      void stageFiles(files);
-    };
-    document.addEventListener("paste", handlePaste, true);
-    return () => document.removeEventListener("paste", handlePaste, true);
-  }, [canAttach, stageFiles]);
+  useDocumentEvent(
+    "paste",
+    canAttach
+      ? (event: ClipboardEvent) => {
+          const files = claimedClipboardFiles(event, containerRef.current);
+          if (!files) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void stageFiles(files);
+        }
+      : null,
+    true,
+  );
 
   const handleDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
@@ -1958,9 +1987,11 @@ function ComposerImpl({
     [],
   );
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
-  useEffect(
-    () => onAgentChange?.(draft.agentId ?? undefined),
-    [draft.agentId, onAgentChange],
+  useExternalConnection(
+    onAgentChange ? `${draft.agentId ?? ""}\0${objectKey(onAgentChange)}` : false,
+    () => {
+      onAgentChange?.(draft.agentId ?? undefined);
+    },
   );
 
   /**
@@ -2041,33 +2072,40 @@ function ComposerImpl({
    * text and send nothing of it, which is worse than the bug this file fixes. A blurred editor
    * cannot still be composing, and whatever it holds at that moment is committed text.
    */
-  useEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const start = () => {
+  const imeRebindKey = compact ? 1 : 0;
+  useElementEvent(
+    containerRef,
+    "compositionstart",
+    () => {
       composingRef.current = true;
       setComposing(true);
-    };
-    const end = () => {
+    },
+    true,
+    imeRebindKey,
+  );
+  useElementEvent(
+    containerRef,
+    "compositionend",
+    () => {
       composingRef.current = false;
       setComposing(false);
       flushPendingChange();
-    };
-    const interrupted = () => {
+    },
+    true,
+    imeRebindKey,
+  );
+  useElementEvent(
+    containerRef,
+    "blur",
+    () => {
       if (!composingRef.current) return;
       composingRef.current = false;
       setComposing(false);
       flushPendingChange();
-    };
-    element.addEventListener("compositionstart", start, true);
-    element.addEventListener("compositionend", end, true);
-    element.addEventListener("blur", interrupted, true);
-    return () => {
-      element.removeEventListener("compositionstart", start, true);
-      element.removeEventListener("compositionend", end, true);
-      element.removeEventListener("blur", interrupted, true);
-    };
-  }, [flushPendingChange]);
+    },
+    true,
+    imeRebindKey,
+  );
 
   /**
    * The single submit path for Enter, the send button, and the form.
@@ -2304,11 +2342,14 @@ function ComposerImpl({
 
   // Submit after the transcript has been committed to the latest draft. The ref is consumed
   // before invoking the normal send path, so rerenders and StrictMode cannot submit twice.
-  useEffect(() => {
-    if (!sendDictatedDraft.current) return;
-    sendDictatedDraft.current = false;
-    void submitDraft(value);
-  }, [value, submitDraft]);
+  useExternalConnection(
+    `${objectKey(value)}\0${objectKey(submitDraft)}`,
+    () => {
+      if (!sendDictatedDraft.current) return;
+      sendDictatedDraft.current = false;
+      void submitDraft(value);
+    },
+  );
 
   const wasDictating = useRef(false);
   /**
@@ -2321,20 +2362,24 @@ function ComposerImpl({
    * Dictation may return focus when it finishes; `autoFocus` runs once for this visible composer.
    * Completion of an ordinary send does not move focus away from the person's current control.
    */
-  useEffect(() => {
-    if (wasDictating.current && !dictation.busy) wantsFocus.current = true;
-    wasDictating.current = dictation.busy;
-    if (disabled || isBusy || dictation.busy || !activeComposerRef.current()) {
-      return;
-    }
-    const owed = wantsFocus.current || (autoFocus && !claimedAutoFocus.current);
-    if (!owed) {
-      return;
-    }
-    wantsFocus.current = false;
-    claimedAutoFocus.current = true;
-    promptAreaRef.current?.focus();
-  }, [autoFocus, disabled, isBusy, dictation.busy]);
+  useExternalConnection(
+    `${autoFocus ? 1 : 0}\0${disabled ? 1 : 0}\0${isBusy ? 1 : 0}\0${dictation.busy ? 1 : 0}`,
+    () => {
+      if (wasDictating.current && !dictation.busy) wantsFocus.current = true;
+      wasDictating.current = dictation.busy;
+      if (disabled || isBusy || dictation.busy || !activeComposerRef.current()) {
+        return;
+      }
+      const owed =
+        wantsFocus.current || (autoFocus && !claimedAutoFocus.current);
+      if (!owed) {
+        return;
+      }
+      wantsFocus.current = false;
+      claimedAutoFocus.current = true;
+      promptAreaRef.current?.focus();
+    },
+  );
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

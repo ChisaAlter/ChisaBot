@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { isPhone, isStandalone } from "@/lib/device";
 
 /**
@@ -170,39 +171,41 @@ export function useBackDismiss(
   sourceRef.current = source;
   const closeRef = useRef(close);
   closeRef.current = close;
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    // 挂上就开始区分「返回」和「用户操作」，不等第一次打开。
-    installOverlayBack();
-    if (!open) return;
-    seq += 1;
-    const entry: Entry = {
-      id: seq,
-      close: (reason) => closeRef.current(reason),
-      pushed: false,
-    };
-    stack.push(entry);
-    // 推迟一拍再压历史：StrictMode 的「挂载 → 卸载 → 挂载」不会留下一条多余记录。
-    const timer = historyWanted()
-      ? window.setTimeout(() => {
-          if (!stack.includes(entry)) return;
-          if (sourceRef.current === "restore") return;
-          window.history.pushState(
-            { ...(window.history.state ?? {}), __cbOverlay: entry.id },
-            "",
-          );
-          entry.pushed = true;
-        }, 0)
-      : undefined;
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      const index = stack.indexOf(entry);
-      if (index >= 0) stack.splice(index, 1);
-      if (entry.pushed && markerOf(window.history.state) === entry.id) {
-        entry.pushed = false;
-        swallowPops += 1;
-        window.history.back();
-      }
-    };
-  }, [open]);
+  useExternalConnection(
+    typeof window === "undefined" ? false : open ? "open" : "closed",
+    (mode) => {
+      // 挂上就开始区分「返回」和「用户操作」，不等第一次打开。
+      installOverlayBack();
+      if (mode !== "open") return;
+      seq += 1;
+      const entry: Entry = {
+        id: seq,
+        close: (reason) => closeRef.current(reason),
+        pushed: false,
+      };
+      stack.push(entry);
+      // 推迟一拍再压历史：StrictMode 的「挂载 → 卸载 → 挂载」不会留下一条多余记录。
+      const timer = historyWanted()
+        ? window.setTimeout(() => {
+            if (!stack.includes(entry)) return;
+            if (sourceRef.current === "restore") return;
+            window.history.pushState(
+              { ...(window.history.state ?? {}), __cbOverlay: entry.id },
+              "",
+            );
+            entry.pushed = true;
+          }, 0)
+        : undefined;
+      return () => {
+        if (timer !== undefined) window.clearTimeout(timer);
+        const index = stack.indexOf(entry);
+        if (index >= 0) stack.splice(index, 1);
+        if (entry.pushed && markerOf(window.history.state) === entry.id) {
+          entry.pushed = false;
+          swallowPops += 1;
+          window.history.back();
+        }
+      };
+    },
+  );
 }

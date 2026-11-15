@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useExternalConnection } from "@/hooks";
 import { scheduleRunsQueryOptions } from "@/lib/schedules";
 import { cn } from "@/lib/utils";
 import {
@@ -66,13 +67,11 @@ export function ScheduleRuns({ schedule: s }: { schedule: ScheduleView }) {
   const showButton = more || loading;
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
-  const buttonHadFocus = useRef(false);
-  useEffect(() => {
-    if (!showButton && buttonHadFocus.current) {
-      buttonHadFocus.current = false;
-      listRef.current?.focus();
-    }
-  }, [showButton]);
+  const [buttonFocused, setButtonFocused] = useState(false);
+  useExternalConnection(!showButton && buttonFocused, () => {
+    setButtonFocused(false);
+    listRef.current?.focus();
+  });
   return (
     <div className="sch-detail">
       <div className="sch-detail-l">{`最近运行${runs.length ? ` · ${runs.length}` : ""}`}</div>
@@ -108,14 +107,14 @@ export function ScheduleRuns({ schedule: s }: { schedule: ScheduleView }) {
             aria-disabled={loading || undefined}
             data-testid="schedule-runs-more"
             onBlur={() => {
-              buttonHadFocus.current = false;
+              setButtonFocused(false);
             }}
             onClick={() => {
               if (loading) return;
               setLimit((n) => Math.min(RUNS_KEPT, n + RUNS_PAGE));
             }}
             onFocus={() => {
-              buttonHadFocus.current = true;
+              setButtonFocused(true);
             }}
             size="sm"
             variant="ghost"

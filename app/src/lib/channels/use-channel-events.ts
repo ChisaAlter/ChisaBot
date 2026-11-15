@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { type ChannelPage, type ChannelSummary, channelKeys } from "./queries";
 import { socketUrl as buildSocketUrl } from "@/lib/socket-url";
 
@@ -207,97 +208,98 @@ export function useChannelEvents() {
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  useEffect(() => {
-    if (activeClients.has(queryClient)) return;
-    activeClients.add(queryClient);
-    let socket: WebSocket | undefined;
-    let retryTimer: number | undefined;
-    let retryDelay = FIRST_RETRY_MS;
-    let stopped = false;
+  useExternalConnection(
+    `${objectConnectionKey(queryClient)}:${objectConnectionKey(router)}`,
+    (_activeKey, signal) => {
+      if (activeClients.has(queryClient)) return;
+      activeClients.add(queryClient);
+      let socket: WebSocket | undefined;
+      let retryTimer: number | undefined;
+      let retryDelay = FIRST_RETRY_MS;
 
-    const connect = () => {
-      if (stopped) return;
-      socket = new WebSocket(socketUrl());
+      const connect = () => {
+        if (signal.aborted) return;
+        socket = new WebSocket(socketUrl());
 
-      socket.onopen = () => {
-        retryDelay = FIRST_RETRY_MS;
-        // Recover events missed while the socket was disconnected.
-        void queryClient.invalidateQueries({ queryKey: channelKeys.list() });
-      };
-
-      socket.onmessage = (message) => {
-        const parsed = parseChannelSocketMessage(message.data);
-        if (!parsed) return;
-
-        // Refetch rather than patch: there is no delta to apply. Checked before anything reads
-        // `channelId`, because this message has none.
-        if (isResync(parsed)) {
+        socket.onopen = () => {
+          retryDelay = FIRST_RETRY_MS;
+          // Recover events missed while the socket was disconnected.
           void queryClient.invalidateQueries({ queryKey: channelKeys.list() });
-          return;
-        }
+        };
 
-        const activity = parsed;
+        socket.onmessage = (message) => {
+          const parsed = parseChannelSocketMessage(message.data);
+          if (!parsed) return;
 
-        /*
-         * The list is paged, so the cache holds pages rather than one array.
-         *
-         * The channel is patched inside whichever page holds it and that page is re-sorted. Sorting
-         * across pages is deliberately not attempted: a channel that has just become the most recent
-         * belongs at the top of page one, and moving a row between pages would fight the cursors the
-         * next fetch uses. The page it is on stays correct, and the next refetch puts it in order.
-         */
-        queryClient.setQueryData(
-          channelKeys.list(),
-          (data: ChannelCache | undefined) => {
-            if (!data) return data;
-            const patched = applyChannelEvent(data, activity);
-            if (patched !== "unknown") return patched;
-            // An unknown channel id means the roster is stale; refetch rather than patch.
-            void queryClient.invalidateQueries({
-              queryKey: channelKeys.list(),
-            });
-            return data;
-          },
-        );
-
-        /*
-         * A tab looking at the channel somebody just deleted in another tab.
-         *
-         * The tab that issued the delete moves itself once the request returns. Every other tab only
-         * ever hears about it here, and dropping the row without moving leaves that tab on a route
-         * whose channel no longer resolves: an error, or an empty conversation, depending on which
-         * query answers first.
-         *
-         * Read off the router at event time rather than through `useParams`, so the effect does not
-         * have to be torn down and reconnected on every navigation just to keep this value fresh.
-         */
-        if (activity.deleted) {
-          const { pathname } = router.state.location;
-          if (pathname === `/channel/${activity.channelId}`) {
-            void router.navigate({ to: "/" });
+          // Refetch rather than patch: there is no delta to apply. Checked before anything reads
+          // `channelId`, because this message has none.
+          if (isResync(parsed)) {
+            void queryClient.invalidateQueries({ queryKey: channelKeys.list() });
+            return;
           }
-        }
+
+          const activity = parsed;
+
+          /*
+           * The list is paged, so the cache holds pages rather than one array.
+           *
+           * The channel is patched inside whichever page holds it and that page is re-sorted. Sorting
+           * across pages is deliberately not attempted: a channel that has just become the most recent
+           * belongs at the top of page one, and moving a row between pages would fight the cursors the
+           * next fetch uses. The page it is on stays correct, and the next refetch puts it in order.
+           */
+          queryClient.setQueryData(
+            channelKeys.list(),
+            (data: ChannelCache | undefined) => {
+              if (!data) return data;
+              const patched = applyChannelEvent(data, activity);
+              if (patched !== "unknown") return patched;
+              // An unknown channel id means the roster is stale; refetch rather than patch.
+              void queryClient.invalidateQueries({
+                queryKey: channelKeys.list(),
+              });
+              return data;
+            },
+          );
+
+          /*
+           * A tab looking at the channel somebody just deleted in another tab.
+           *
+           * The tab that issued the delete moves itself once the request returns. Every other tab only
+           * ever hears about it here, and dropping the row without moving leaves that tab on a route
+           * whose channel no longer resolves: an error, or an empty conversation, depending on which
+           * query answers first.
+           *
+           * Read off the router at event time rather than through `useParams`, so the effect does not
+           * have to be torn down and reconnected on every navigation just to keep this value fresh.
+           */
+          if (activity.deleted) {
+            const { pathname } = router.state.location;
+            if (pathname === `/channel/${activity.channelId}`) {
+              void router.navigate({ to: "/" });
+            }
+          }
+        };
+
+        // WebSocket needs explicit reconnect handling.
+        socket.onclose = () => {
+          if (signal.aborted) return;
+          retryTimer = window.setTimeout(connect, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+        };
       };
 
-      // WebSocket needs explicit reconnect handling.
-      socket.onclose = () => {
-        if (stopped) return;
-        retryTimer = window.setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_MS);
+      connect();
+
+      return () => {
+        activeClients.delete(queryClient);
+        if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+        // Cleared first: the close below must not schedule a reconnect for a screen that is gone.
+        if (socket) socket.onclose = null;
+        socket?.close();
       };
-    };
-
-    connect();
-
-    return () => {
-      activeClients.delete(queryClient);
-      stopped = true;
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-      // Cleared first: the close below must not schedule a reconnect for a screen that is gone.
-      if (socket) socket.onclose = null;
-      socket?.close();
-    };
-  }, [queryClient, router]);
+    },
+  );
 }
 
 /**

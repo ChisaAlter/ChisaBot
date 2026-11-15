@@ -1,7 +1,7 @@
 import { IconClock, IconCoins, IconListNumbers, IconPlayerPlayFilled, IconShieldCheck, IconTool } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   effectiveConstraints,
   TOOL_GROUP_INFO,
@@ -59,33 +59,50 @@ export function RunWorkflowDialog({
   const queryClient = useQueryClient();
   const def = detail.data?.workflow.definition;
   const roster = useMemo(() => (agents.data ?? []).filter((bot) => !bot.hidden), [agents.data]);
-  const [values, setValues] = useState<Record<string, Value>>({});
-  const [bindings, setBindings] = useState<Record<string, string>>({});
+  const [valuesOverride, setValuesOverride] = useState<Record<string, Value>>({});
+  const [bindingsOverride, setBindingsOverride] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [failure, setFailure] = useState<string | null>(null);
 
-  // 打开时按定义重置表单；机器人默认用角色绑定的，否则主机器人，否则第一个。
-  useEffect(() => {
-    if (!def) return;
-    setValues(Object.fromEntries(def.inputs.map((input) => [input.key, initialValue(input)])));
+  const resetKey = open && def ? `${workflowId ?? ""}` : "";
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  const [prevDef, setPrevDef] = useState(def);
+  if (resetKey !== prevResetKey || def !== prevDef) {
+    setPrevResetKey(resetKey);
+    setPrevDef(def);
+    setValuesOverride({});
+    setBindingsOverride({});
     setErrors({});
     setFailure(null);
-  }, [def]);
-  useEffect(() => {
+  }
+
+  const defaultValues = useMemo(
+    () =>
+      def
+        ? Object.fromEntries(def.inputs.map((input) => [input.key, initialValue(input)]))
+        : {},
+    [def],
+  );
+  const defaultBindings = useMemo(() => {
     const firstBot = roster[0];
-    if (!def || !firstBot) return;
+    if (!def || !firstBot) return {};
     const fallback = roster.find((b) => b.id === mainBotId)?.id ?? firstBot.id;
-    setBindings(
-      Object.fromEntries(
-        def.bots.map((role) => [
-          role.key,
-          role.botId && roster.some((b) => b.id === role.botId)
-            ? role.botId
-            : fallback,
-        ]),
-      ),
+    return Object.fromEntries(
+      def.bots.map((role) => [
+        role.key,
+        role.botId && roster.some((b) => b.id === role.botId) ? role.botId : fallback,
+      ]),
     );
   }, [def, roster, mainBotId]);
+
+  const values = useMemo(
+    () => ({ ...defaultValues, ...valuesOverride }),
+    [defaultValues, valuesOverride],
+  );
+  const bindings = useMemo(
+    () => ({ ...defaultBindings, ...bindingsOverride }),
+    [defaultBindings, bindingsOverride],
+  );
 
   const start = useAsyncAction(async () => {
     if (!def || !workflowId) return;
@@ -159,7 +176,7 @@ export function RunWorkflowDialog({
                     error={errors[input.key]}
                     input={input}
                     key={input.key}
-                    onChange={(value) => setValues((prev) => ({ ...prev, [input.key]: value }))}
+                    onChange={(value) => setValuesOverride((prev) => ({ ...prev, [input.key]: value }))}
                     value={values[input.key] ?? initialValue(input)}
                   />
                 ))}
@@ -179,7 +196,7 @@ export function RunWorkflowDialog({
                     </div>
                     <Select
                       items={Object.fromEntries(roster.map((b) => [b.id, b.name]))}
-                      onValueChange={(next) => setBindings((prev) => ({ ...prev, [role.key]: String(next) }))}
+                      onValueChange={(next) => setBindingsOverride((prev) => ({ ...prev, [role.key]: String(next) }))}
                       value={bindings[role.key] ?? ""}
                     >
                       <SelectTrigger aria-label={`由谁担任${role.name}`} className="w-44">

@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
@@ -16,6 +16,7 @@ import { MessageFind } from "@/components/channels/message-find";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
 import { ErrorCard } from "@/components/ui/skyglass";
+import { useExternalConnection } from "@/hooks";
 import {
   holdDraftChannel,
   releasedDraftRedirect,
@@ -77,15 +78,20 @@ export const ChannelPage = memo(function ChannelPage({
    * Channel routing currently supports one coworker. 刷新时对话详情还没读到：先用这台设备记下的「这段对话是哪个
    * 机器人的」（DESIGN.md §88），右栏第一帧就画对。
    */
-  const agentId = channel.data?.agentIds[0] ?? threadUi(channelId)?.agent;
-  useEffect(() => {
-    const id = channel.data?.agentIds[0];
-    if (id && threadUi(channelId)?.agent !== id)
-      setThreadUi(channelId, { agent: id });
-  }, [channelId, channel.data]);
+  const channelAgentId = channel.data?.agentIds[0];
+  const agentId = channelAgentId ?? threadUi(channelId)?.agent;
+  useExternalConnection(
+    channelAgentId ? `${channelId}\0${channelAgentId}` : false,
+    () => {
+      if (channelAgentId && threadUi(channelId)?.agent !== channelAgentId)
+        setThreadUi(channelId, { agent: channelAgentId });
+    },
+  );
 
   // 新话题页上加附件时建的草稿对话（A1）：没发就离开（这一页卸载）时删掉，见 `draft-channel.ts`。
-  useEffect(() => holdDraftChannel(channelId), [channelId]);
+  useExternalConnection(channelId || "__channel__", () =>
+    holdDraftChannel(channelId),
+  );
 
   /*
    * 本标签页回收过的草稿对话（二轮复审）：再打开它（后退、旧地址）拿到 404 时，不显示「找不到这段对话」，
@@ -94,14 +100,17 @@ export const ChannelPage = memo(function ChannelPage({
   const releasedAgent = channel.error
     ? releasedDraftRedirect(channelId, channel.error)
     : null;
-  useEffect(() => {
-    if (!visible || !releasedAgent) return;
-    void navigate({
-      to: "/channel/new",
-      search: { agent: releasedAgent, topic: "new" },
-      replace: true,
-    });
-  }, [visible, releasedAgent, navigate]);
+  useExternalConnection(
+    visible && releasedAgent ? `${releasedAgent}\0` : false,
+    () => {
+      if (!visible || !releasedAgent) return;
+      void navigate({
+        to: "/channel/new",
+        search: { agent: releasedAgent, topic: "new" },
+        replace: true,
+      });
+    },
+  );
 
   // 藏着时，全局的组件授权轮询不再为这个机器人跑（DESIGN.md §98.3）。
   useMarkBotHidden(agentId, !visible);
@@ -128,12 +137,15 @@ export const ChannelPage = memo(function ChannelPage({
    */
   const unseen = summary !== undefined && hasUnseenActivity(summary);
   const markReadMutate = markRead.mutate;
-  useEffect(() => {
-    // 藏着时机器人回复了不算「看过」：回来时再标。
-    if (unseen && visible) {
-      markReadMutate(channelId);
-    }
-  }, [channelId, unseen, markReadMutate, visible]);
+  useExternalConnection(
+    unseen && visible ? channelId || "__channel__" : false,
+    () => {
+      // 藏着时机器人回复了不算「看过」：回来时再标。
+      if (unseen && visible) {
+        markReadMutate(channelId);
+      }
+    },
+  );
 
   // 计算机在右栏「面板 | 计算机」里（DESIGN.md §23）；设置窗格仍是聊天旁的详情栏，两者互不挤占。
   // 按机器人记住选的是哪个标签（DESIGN.md §88）：地址里没有 `watch` 时用上次的。

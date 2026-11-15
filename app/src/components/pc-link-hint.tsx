@@ -1,6 +1,7 @@
 import { IconDeviceDesktopDown, IconPlugConnected, IconX } from "@tabler/icons-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useTimeout } from "@/hooks";
 import { type PcLocalState, pcBridge, usePcLocal } from "@/lib/pc-bridge";
 
 /**
@@ -51,29 +52,18 @@ export function PcLinkHint() {
   const [local, setLocal] = usePcLocal();
   const pathname = useLocation({ select: (location) => location.pathname });
   const navigate = useNavigate();
-  const [offlineSince, setOfflineSince] = useState<number | null>(null);
-  const [tick, setTick] = useState(0);
+  const [offlineLongEnough, setOfflineLongEnough] = useState(false);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
   const [gone, setGone] = useState(dismissedThisSession);
 
-  const online = local?.agentState === "online";
-  useEffect(() => {
-    if (!local) return;
-    if (online) setOfflineSince(null);
-    else setOfflineSince((since) => since ?? Date.now());
-  }, [local, online]);
-  useEffect(() => {
-    if (offlineSince === null) return;
-    const left = offlineSince + OFFLINE_GRACE_MS - Date.now();
-    if (left <= 0) return;
-    const timer = window.setTimeout(() => setTick((n) => n + 1), left + 50);
-    return () => window.clearTimeout(timer);
-  }, [offlineSince]);
-
-  const offlineLongEnough = offlineSince !== null && Date.now() - offlineSince >= OFFLINE_GRACE_MS;
-  void tick;
+  const offline = Boolean(local && local.agentState !== "online");
+  if (!offline && offlineLongEnough) setOfflineLongEnough(false);
+  useTimeout(
+    () => setOfflineLongEnough(true),
+    offline && !offlineLongEnough ? OFFLINE_GRACE_MS : null,
+  );
   const problem = pcLinkProblem(local, offlineLongEnough);
   const onDevicesPage = pathname.startsWith("/settings/devices");
   if (!problem || gone || onDevicesPage || pathname.startsWith("/onboarding")) return null;
@@ -116,7 +106,7 @@ export function PcLinkHint() {
       try {
         const result = await bridge.reconnect();
         setLocal(result.state);
-        setOfflineSince(Date.now());
+        setOfflineLongEnough(false);
       } catch {
         goDevices();
       } finally {

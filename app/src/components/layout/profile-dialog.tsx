@@ -4,7 +4,6 @@ import { useRouterState } from "@tanstack/react-router";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
@@ -16,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useExternalConnection } from "@/hooks";
 import { authKeys, currentUserQueryOptions } from "@/lib/auth/queries";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
@@ -241,11 +241,9 @@ function ProfileForm({
       setPickError(e instanceof Error ? e.message : "图片无法读取");
     }
   }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 按 src 释放 blob URL；crop 的其他字段变化不需要重新释放
-  useEffect(
-    () => () => (crop ? URL.revokeObjectURL(crop.src) : undefined),
-    [crop?.src],
-  );
+  useExternalConnection(crop?.src || false, (src) => () => {
+    URL.revokeObjectURL(src);
+  });
 
   const trimmed = name.trim();
   const ready = trimmed.length > 0 && [...trimmed].length <= 40;

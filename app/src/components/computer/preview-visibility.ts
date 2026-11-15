@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { useIntersectionObserver } from "@/hooks";
 import { useKeptVisible } from "@/lib/kept-visible";
 
 export function currentPageVisible(): boolean {
@@ -6,17 +7,20 @@ export function currentPageVisible(): boolean {
   return document.visibilityState !== "hidden" && !document.hidden;
 }
 
+function subscribePageVisibility(onStoreChange: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", onStoreChange);
+  return () => document.removeEventListener("visibilitychange", onStoreChange);
+}
+
 /** 页面在前台，且这块没被外壳藏起来（留着的聊天 / 右栏，DESIGN.md §98.3）。 */
 export function usePageVisible(): boolean {
   const kept = useKeptVisible();
-  const [visible, setVisible] = useState(currentPageVisible);
-
-  useEffect(() => {
-    const update = () => setVisible(currentPageVisible());
-    update();
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
-  }, []);
+  const visible = useSyncExternalStore(
+    subscribePageVisibility,
+    currentPageVisible,
+    () => true,
+  );
 
   return visible && kept;
 }
@@ -31,18 +35,9 @@ export function useElementVisible<T extends Element>(): [
     return !("IntersectionObserver" in window);
   });
 
-  useEffect(() => {
-    if (!node) return;
-    if (!("IntersectionObserver" in window)) {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(([entry]) => {
-      setVisible(Boolean(entry?.isIntersecting));
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [node]);
+  useIntersectionObserver(node, (entry) => setVisible(entry.isIntersecting), {
+    enabled: node !== null,
+  });
 
   return [setNode, visible];
 }

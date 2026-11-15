@@ -1,6 +1,7 @@
 import { IconSearch, IconX } from "@tabler/icons-react";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import { RailParked } from "@/components/layout/rail-sidebar";
+import { useExternalConnection } from "@/hooks";
 import {
   onSidebarSearchFocusRequest,
   setSidebarSearch,
@@ -22,17 +23,19 @@ export function SidebarSearchField() {
   const search = useSidebarSearch();
   const input = useRef<HTMLInputElement>(null);
   const [activeId, setActiveId] = useState<string | undefined>(undefined);
-  // 换了关键词，结果列表就换了：旧高亮作废。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: search 是触发条件，换关键词就要清高亮。
-  useEffect(() => {
-    clearSearchActive();
+  const [prevSearch, setPrevSearch] = useState(search);
+  if (search !== prevSearch) {
+    setPrevSearch(search);
     setActiveId(undefined);
-  }, [search]);
+  }
+  // 换了关键词，结果列表就换了：提交后清掉旧高亮。
+  useExternalConnection(`search:${search}`, () => {
+    clearSearchActive();
+  });
   // 左栏藏着（在设置里留着）时不接聚焦请求：设置里按 Ctrl K 是先记下请求再回聊天，等左栏露出来这里才接，
   // 和以前左栏重新挂上时一样（藏着的输入框聚焦不了，先接了请求就丢了）。
   const parked = useContext(RailParked);
-  useEffect(() => {
-    if (parked) return;
+  useExternalConnection(!parked, () => {
     const focus = () => {
       if (!takeSidebarSearchFocus()) return;
       // 左栏刚展开时输入框还在过渡里，下一帧再聚焦，光标不会落空。
@@ -43,7 +46,7 @@ export function SidebarSearchField() {
     };
     focus();
     return onSidebarSearchFocusRequest(focus);
-  }, [parked]);
+  });
   return (
     <label className={c.root}>
       <IconSearch aria-hidden className={c.ico} />

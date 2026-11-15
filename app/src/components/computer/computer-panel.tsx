@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useWindowEvent } from "@/hooks";
 import { markComputerEngaged } from "@/lib/computers/auto-watch";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
@@ -63,15 +64,9 @@ export function ComputerViewPanel({
     setTab(next);
     if (next === "activity") setUnread(false);
   }, []);
-  useEffect(() => {
-    if (tab === "activity") setUnread(false);
-  }, [tab]);
+  if (tab === "activity" && unread) setUnread(false);
   // 聊天里点「在活动里看」：窄屏先切到「活动」。
-  useEffect(() => {
-    const onJump = () => showTab("activity");
-    window.addEventListener(JUMP_TO_ACTIVITY, onJump);
-    return () => window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
-  }, [showTab]);
+  useWindowEvent(JUMP_TO_ACTIVITY, () => showTab("activity"));
   return (
     <section
       aria-label={"计算机"}

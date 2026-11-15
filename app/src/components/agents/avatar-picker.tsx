@@ -1,5 +1,6 @@
 import { IconCamera, IconMinus, IconPhotoUp, IconPlus } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
 import { ShapeAvatar, type ShapeMood } from "@/components/agents/shape-avatar";
@@ -205,9 +206,9 @@ function AvatarDialogBody({
   const cropRef = useRef<CropHandle | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => () => {
-    if (source) URL.revokeObjectURL(source.url);
-  }, [source]);
+  useExternalConnection(source?.url || null, (url) => () => {
+    URL.revokeObjectURL(url);
+  });
 
   const pick = (next: Tab) => {
     setTab(next);

@@ -21,8 +21,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import { useExternalConnection, useResizeObserver } from "@/hooks";
 import { AgentsRailCard } from "@/components/panels/agents-rail-card";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -123,26 +124,21 @@ export function TaskCenter({
     decisionListOptions("resolved", view === "outbox"),
   );
   const navigation = useRef<HTMLElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 切视图是有意的触发——回到列表顶
-  useEffect(() => {
+  const revealSelection = () => {
     const nav = navigation.current;
     if (!nav) return;
-    nav.closest(".page-scroll")?.scrollTo({ top: 0 });
-    // Deep links and desktop → phone resizing must keep the selected section visible.
-    // Scroll only this strip, not the modal or the page underneath it.
-    const revealSelection = () => {
-      const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
-      if (!selected || nav.scrollWidth <= nav.clientWidth) return;
-      const item = selected.getBoundingClientRect();
-      const strip = nav.getBoundingClientRect();
-      nav.scrollLeft +=
-        item.left - strip.left - (nav.clientWidth - item.width) / 2;
-    };
+    const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!selected || nav.scrollWidth <= nav.clientWidth) return;
+    const item = selected.getBoundingClientRect();
+    const strip = nav.getBoundingClientRect();
+    nav.scrollLeft +=
+      item.left - strip.left - (nav.clientWidth - item.width) / 2;
+  };
+  useExternalConnection(view, () => {
+    navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
     revealSelection();
-    const resize = new ResizeObserver(revealSelection);
-    resize.observe(nav);
-    return () => resize.disconnect();
-  }, [view]);
+  });
+  useResizeObserver(navigation, revealSelection, true, view);
   const data = snapshot.data;
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });

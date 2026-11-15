@@ -9,10 +9,10 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useElementEvent, useExternalConnection, useResizeObserver, useWindowEvent } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -172,33 +172,23 @@ function WallpaperCropEditor({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onResize = () => setViewportSize(readViewportSize());
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  useWindowEvent("resize", () => setViewportSize(readViewportSize()));
 
-  useEffect(() => {
+  const syncStage = () => {
     const el = stageRef.current;
     if (!el) return;
-    const syncStage = () => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (w > 0 && h > 0) {
-        setStageSize((prev) =>
-          prev.width === w && prev.height === h
-            ? prev
-            : { width: w, height: h },
-        );
-      }
-    };
-    syncStage();
-    if (typeof ResizeObserver !== "function") return;
-    const observer = new ResizeObserver(syncStage);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if (w > 0 && h > 0) {
+      setStageSize((prev) =>
+        prev.width === w && prev.height === h
+          ? prev
+          : { width: w, height: h },
+      );
+    }
+  };
+  useExternalConnection(true, syncStage);
+  useResizeObserver(stageRef, syncStage);
 
   const aspectRatio = resolveAspectRatio({
     preset,
@@ -208,10 +198,10 @@ function WallpaperCropEditor({
     viewportHeight: viewportSize.height,
   });
 
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const onWheel = (event: WheelEvent) => {
+  useElementEvent(
+    stageRef,
+    "wheel",
+    (event) => {
       event.preventDefault();
       const factor = Math.exp(-event.deltaY * 0.0015);
       setRect((current) => {
@@ -229,10 +219,9 @@ function WallpaperCropEditor({
           aspectRatio,
         });
       });
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [aspectRatio, source.naturalHeight, source.naturalWidth]);
+    },
+    { passive: false },
+  );
 
   const handlePresetChange = (nextPreset: WallpaperAspectPresetId) => {
     setPreset(nextPreset);

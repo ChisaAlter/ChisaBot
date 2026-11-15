@@ -1,6 +1,7 @@
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
@@ -185,23 +186,17 @@ export function WorkRow({
   const [doneSeconds, setDoneSeconds] = useState<number | null>(() =>
     live ? null : (workSeconds(turnKey) ?? workUi(turnKey)?.seconds ?? null),
   );
-  useEffect(() => {
-    if (live) return;
+  useExternalConnection(live ? null : `done:${turnKey}`, () => {
     const seconds = workSeconds(turnKey);
     if (seconds !== null) setWorkUi(turnKey, { seconds });
     setDoneSeconds(seconds ?? workUi(turnKey)?.seconds ?? null);
-  }, [live, turnKey]);
+  });
   const step = live ? currentWorkStep(calls) : null;
   const stepKey = step ? `${step.name}\n${step.label}` : "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stepKey carries step.
-  useEffect(() => {
-    if (!live) return;
+  useExternalConnection(live ? `step:${stepKey}` : null, () => {
     announceStep(step);
-  }, [live, stepKey]);
-  useEffect(() => {
-    if (!live) return;
-    return () => announceStep(null);
-  }, [live]);
+  });
+  useExternalConnection(live, () => () => announceStep(null));
   const reduce = useReducedMotion();
   const summary = live ? summarizeWork(calls) : null;
   const done = live ? null : summarizeDoneWork(calls);

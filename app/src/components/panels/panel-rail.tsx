@@ -11,11 +11,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import {
   DropdownMenu,
@@ -226,16 +226,12 @@ export function PanelRail({ className }: { className?: string }) {
   };
 
   // Ctrl+Alt+B（⌘⌥B）收起 / 展开面板卡。只在面板栏存在的宽度（≥1280px）生效。
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!matchesHotkey(event, PANEL_RAIL_HOTKEY)) return;
-      if (!window.matchMedia("(min-width: 1280px)").matches) return;
-      event.preventDefault();
-      togglePanelRail();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useWindowEvent("keydown", (event) => {
+    if (!matchesHotkey(event, PANEL_RAIL_HOTKEY)) return;
+    if (!window.matchMedia("(min-width: 1280px)").matches) return;
+    event.preventDefault();
+    togglePanelRail();
+  });
 
   const wide = useWideForRail();
   const sheetOpen = usePanelSheetOpen();
@@ -252,9 +248,9 @@ export function PanelRail({ className }: { className?: string }) {
     [],
   );
   // 关掉抽屉后窗口又变宽：抽屉的状态不带过去。
-  useEffect(() => {
-    if (wide) setPanelSheetOpen(false);
-  }, [wide]);
+  useExternalConnection(wide, () => {
+    setPanelSheetOpen(false);
+  });
 
   /*
    * 右栏 = 「面板 | 计算机」两个标签（DESIGN.md §23）。计算机是否打开仍由聊天页的 `watch` 参数决定，
@@ -271,7 +267,7 @@ export function PanelRail({ className }: { className?: string }) {
    *  - 只有带着 `watch=true` 新进入页面（深链接 / 刷新）才以 `restore` 打开抽屉（不压标记）。
    */
   const firstComputerRun = useRef(true);
-  useEffect(() => {
+  useExternalConnection(`${computerOn}:${wide}`, () => {
     const first = firstComputerRun.current;
     firstComputerRun.current = false;
     if (!computerOn) return;
@@ -282,7 +278,7 @@ export function PanelRail({ className }: { className?: string }) {
     // 返回把地址带回 `watch=true`：在离开，不是要看计算机，不拉抽屉。
     if (lastHistoryEventWasPop()) return;
     openPanelSheet(first && overlayHistoryMode() ? "restore" : "user");
-  }, [computerOn, wide]);
+  });
   const latestChat = useRef(chat);
   latestChat.current = chat;
   /*
@@ -292,25 +288,33 @@ export function PanelRail({ className }: { className?: string }) {
   const railBotId = widthBot;
   const live = useLivePanels(railBotId);
   const seenPanels = useRef<{ bot?: string; ids: Set<string> } | null>(null);
-  useEffect(() => {
-    const items = live.data;
-    if (!items || !railBotId) return;
-    const seen = seenPanels.current;
-    if (!seen || seen.bot !== railBotId) {
-      seenPanels.current = {
-        bot: railBotId,
-        ids: new Set(items.map((p) => p.id)),
-      };
-      return;
-    }
-    const fresh = items.filter((p) => !seen.ids.has(p.id));
-    for (const p of items) seen.ids.add(p.id);
-    if (!fresh.some((p) => p.status === "building")) return;
-    const current = latestChat.current;
-    if (current?.canComputer && current.computerOpen) current.toggleComputer();
-    if (wide) setPanelRailOpen(true);
-    else openPanelSheet("user");
-  }, [live.data, railBotId, wide]);
+  const liveItemsKey = live.data
+    ? live.data.map((p) => `${p.id}:${p.status}`).join("\0")
+    : null;
+  useExternalConnection(
+    liveItemsKey !== null && railBotId
+      ? `${railBotId}\x01${wide}\x01${liveItemsKey}`
+      : null,
+    () => {
+      const items = live.data;
+      if (!items || !railBotId) return;
+      const seen = seenPanels.current;
+      if (!seen || seen.bot !== railBotId) {
+        seenPanels.current = {
+          bot: railBotId,
+          ids: new Set(items.map((p) => p.id)),
+        };
+        return;
+      }
+      const fresh = items.filter((p) => !seen.ids.has(p.id));
+      for (const p of items) seen.ids.add(p.id);
+      if (!fresh.some((p) => p.status === "building")) return;
+      const current = latestChat.current;
+      if (current?.canComputer && current.computerOpen) current.toggleComputer();
+      if (wide) setPanelRailOpen(true);
+      else openPanelSheet("user");
+    },
+  );
   const closeComputer = useCallback(() => {
     const current = latestChat.current;
     if (current?.canComputer && current.computerOpen) current.toggleComputer();
@@ -514,9 +518,7 @@ function PanelRailBody({
   // 删掉最后一张后「撤销」还要靠 LivePanelList 里的 mutation。
   const hasLive = (liveList.data?.length ?? 0) > 0;
   const [liveMounted, setLiveMounted] = useState(hasLive);
-  useEffect(() => {
-    if (hasLive) setLiveMounted(true);
-  }, [hasLive]);
+  if (hasLive && !liveMounted) setLiveMounted(true);
 
   /*
    * 右栏顶部选项卡：「面板 | 任务 | 计算机（按需）」。
@@ -776,9 +778,7 @@ function RailComputerPane({
   const [mountedFor, setMountedFor] = useState<string | null>(
     active ? agentId : null,
   );
-  useEffect(() => {
-    if (active) setMountedFor(agentId);
-  }, [active, agentId]);
+  if (active && mountedFor !== agentId) setMountedFor(agentId);
   if (mountedFor !== agentId) return null;
   return (
     <div

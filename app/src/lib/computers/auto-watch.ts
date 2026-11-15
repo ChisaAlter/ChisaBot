@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { JUMP_TO_ACTIVITY } from "@/components/computer/activity-jump";
+import { useExternalConnection } from "@/hooks";
 import { onComputerActivity } from "@/lib/conversations/computer-activity";
 import { overlayHistoryActive, overlayHistoryMode } from "@/lib/overlay-back";
 import {
@@ -47,7 +48,7 @@ export function useComputerAutoWatch(
 
   // 打开 / 关闭的来源：我们设的是自动，其余都是用户手动。
   const previous = useRef(watching);
-  useEffect(() => {
+  useExternalConnection(watching ? "watching" : "idle", () => {
     const was = previous.current;
     previous.current = watching;
     if (!was && watching) {
@@ -60,16 +61,15 @@ export function useComputerAutoWatch(
       auto.current = false;
       clearTimeout(timer.current);
     }
-  }, [watching]);
+  });
 
-  useEffect(() => {
-    if (!agentId) return;
+  useExternalConnection(agentId || false, (activeBotId) => {
     const offEngaged = (botId: string) => {
-      if (botId === agentId) engaged.current = true;
+      if (botId === activeBotId) engaged.current = true;
     };
     engagedListeners.add(offEngaged);
     const offActivity = onComputerActivity((activity) => {
-      if (activity.botId !== agentId) return;
+      if (activity.botId !== activeBotId) return;
       runEpoch.current = activity.epoch;
       clearTimeout(timer.current);
       if (
@@ -95,7 +95,7 @@ export function useComputerAutoWatch(
       offActivity();
       clearTimeout(timer.current);
     };
-  }, [agentId]);
+  });
 }
 
 /**

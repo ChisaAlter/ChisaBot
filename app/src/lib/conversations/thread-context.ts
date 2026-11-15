@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /**
  * 输入框「上下文」读数（DESIGN.md §25），来自服务器：
@@ -75,18 +77,21 @@ export function useThreadContext(
     retry: 1,
   });
   const wasRunning = useRef(running);
-  useEffect(() => {
-    const finished = wasRunning.current && !running;
-    wasRunning.current = running;
-    if (!finished || !threadId) return;
-    // RUN_FINISHED 先落库再发给浏览器；稍等一下再读，避开同一时刻的快照写入。
-    const timer = setTimeout(() => {
-      void queryClient.invalidateQueries({
-        queryKey: threadContextKeys.thread(agentId, threadId),
-      });
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [running, agentId, threadId, queryClient]);
+  useExternalConnection(
+    `${running ? 1 : 0}\0${agentId}\0${threadId ?? ""}\0${objectConnectionKey(queryClient)}`,
+    () => {
+      const finished = wasRunning.current && !running;
+      wasRunning.current = running;
+      if (!finished || !threadId) return;
+      // RUN_FINISHED 先落库再发给浏览器；稍等一下再读，避开同一时刻的快照写入。
+      const timer = setTimeout(() => {
+        void queryClient.invalidateQueries({
+          queryKey: threadContextKeys.thread(agentId, threadId),
+        });
+      }, 400);
+      return () => clearTimeout(timer);
+    },
+  );
   return query;
 }
 

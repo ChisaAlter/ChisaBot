@@ -5,7 +5,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useExternalConnection, useInterval } from "@/hooks";
 import { ClientError } from "@/lib/client";
 import {
   cancelPairing,
@@ -51,28 +52,34 @@ type Phase =
 function useCountdown(key: string | null, ttlSeconds: number) {
   // 服务器时钟和本机可能差几分钟：只用 ttlSeconds + 本机单调时钟倒数（同 useApprovalCountdown 的做法）。
   // 渲染期按 key 同步派生，避免新 ticket 写入当帧读到旧码归零后的 left === 0 而二次换码。
+  const activeKey = key ? `${key}\0${ttlSeconds}` : null;
   const [state, setState] = useState<{ key: string | null; left: number }>({
-    key,
+    key: activeKey,
     left: ttlSeconds,
   });
-  useEffect(() => {
-    if (!key) return;
-    const start = performance.now();
-    setState({ key, left: ttlSeconds });
-    const timer = window.setInterval(() => {
-      setState((prev) => {
-        const next = Math.max(
-          0,
-          Math.ceil(ttlSeconds - (performance.now() - start) / 1000),
-        );
-        return prev.key === key && prev.left === next
+  const startRef = useRef(0);
+  const prevKeyRef = useRef<string | null>(null);
+  if (prevKeyRef.current !== activeKey) {
+    prevKeyRef.current = activeKey;
+    startRef.current = key ? performance.now() : 0;
+  }
+
+  useInterval(
+    () => {
+      const next = Math.max(
+        0,
+        Math.ceil(ttlSeconds - (performance.now() - startRef.current) / 1000),
+      );
+      setState((prev) =>
+        prev.key === activeKey && prev.left === next
           ? prev
-          : { key, left: next };
-      });
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, [key, ttlSeconds]);
-  return state.key === key ? state.left : ttlSeconds;
+          : { key: activeKey, left: next },
+      );
+    },
+    activeKey ? 500 : null,
+    activeKey,
+  );
+  return state.key === activeKey ? state.left : ttlSeconds;
 }
 
 function mmss(seconds: number) {
@@ -174,9 +181,8 @@ export function PairPhoneDialog({
   );
 
   // 打开时签发；关闭时作废。
-  useEffect(() => {
-    openRef.current = open;
-    if (!open) return;
+  useExternalConnection(open, () => {
+    openRef.current = true;
     autoRefreshes.current = 0;
     rotating.current = null;
     setPhase({ kind: "loading" });
@@ -193,21 +199,20 @@ export function PairPhoneDialog({
       if (current.current) void cancelPairing(current.current);
       current.current = null;
     };
-  }, [open, issue, onIssueError]);
+  });
 
   const ticket = phase.kind === "pending" ? phase.ticket : null;
   const left = useCountdown(ticket?.id ?? null, ticket?.ttlSeconds ?? 300);
   leftRef.current = left;
 
   // 轮询绑定状态。
-  useEffect(() => {
+  useExternalConnection(ticket ? `${ticket.id}\0${ticket.expiresAt}` : null, (_activeKey, signal) => {
     if (!ticket) return;
-    const controller = new AbortController();
     let timer = 0;
     const tick = async () => {
       try {
-        const status = await pairingStatus(ticket.id, controller.signal);
-        if (controller.signal.aborted) return;
+        const status = await pairingStatus(ticket.id, signal);
+        if (signal.aborted) return;
         if (status.state === "bound") {
           current.current = null;
           setPhase({ kind: "bound", name: status.device?.name ?? "这台手机" });
@@ -220,7 +225,7 @@ export function PairPhoneDialog({
         }
       } catch (error) {
         if (
-          !controller.signal.aborted &&
+          !signal.aborted &&
           error instanceof ClientError &&
           error.status === 404
         ) {
@@ -229,20 +234,22 @@ export function PairPhoneDialog({
         }
         /* 偶发网络错误或取消：下一轮再问。 */
       }
-      if (!controller.signal.aborted) timer = window.setTimeout(tick, POLL_MS);
+      if (!signal.aborted) timer = window.setTimeout(tick, POLL_MS);
     };
     timer = window.setTimeout(tick, POLL_MS);
     return () => {
-      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [ticket, queryClient, rotateTicket]);
+  });
 
   // 过期自动换码。
-  useEffect(() => {
-    if (!ticket || left > 0) return;
-    rotateTicket(ticket.id, true);
-  }, [left, ticket, rotateTicket]);
+  useExternalConnection(
+    ticket && left <= 0 ? `${ticket.id}:expired` : null,
+    () => {
+      if (!ticket) return;
+      rotateTicket(ticket.id, true);
+    },
+  );
 
   const refresh = useAsyncAction(
     async () => {

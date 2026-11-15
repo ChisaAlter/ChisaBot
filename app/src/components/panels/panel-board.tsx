@@ -16,10 +16,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useExternalConnection, useResizeObserver } from "@/hooks";
 import {
   canPairPanels,
   clampPanelHeight,
@@ -138,8 +138,7 @@ export function PanelBoard<T extends { id: string; title: string }>({
    * 换机器人要重新读它自己的那份（同一台设备、按机器人记，DESIGN.md §88）。
    */
   const layoutBot = useRef(botId);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: idsKey 变化（面板增删）时也要重新对齐，effect 里读的是 ref。
-  useEffect(() => {
+  useExternalConnection(`${botId}\0${idsKey}`, () => {
     const switched = layoutBot.current !== botId;
     // 还没有面板（列表在加载 / 这个机器人确实没有面板）：不动记下的布局，也不把「换过机器人」这件事记账。
     if (idsRef.current.length === 0) return;
@@ -149,24 +148,18 @@ export function PanelBoard<T extends { id: string; title: string }>({
     if (samePanelLayout(next, layoutRef.current)) return;
     setLayout(next);
     writePanelLayout(botId, next);
-  }, [botId, idsKey]);
+  });
 
   /*
    * 并排与否看右栏宽度（PanelRail 拖动时量好的那个数，≥480 才并排）。ResizeObserver 只是兜底：
    * 没有传宽度时（别处单独用 PanelBoard）退回卡片自己量到的宽度。
    */
   const [measured, setMeasured] = useState(0);
-  useEffect(() => {
-    const node = boardRef.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      // 被 KeepAlive 藏起来时宽度是 0：不记，回来时就不会因为 0→原值多渲染一遍。
-      if (rect && rect.width > 0) setMeasured(Math.round(rect.width));
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+  useResizeObserver(boardRef, (entry) => {
+    const rect = entry.contentRect;
+    // 被 KeepAlive 藏起来时宽度是 0：不记，回来时就不会因为 0→原值多渲染一遍。
+    if (rect.width > 0) setMeasured(Math.round(rect.width));
+  });
   const availableWidth = width > 0 ? width : measured;
   const allowPair = canPairPanels(availableWidth, drawer);
   const rows = visiblePanelRows(layout, allowPair);

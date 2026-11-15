@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import brandAvatar from "@/assets/brand/chisa-mark.png";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTimeout } from "@/hooks";
 import {
   saveUserPreferencesMutationOptions,
   useUserPreferences,
@@ -122,11 +123,7 @@ function BrandForm({ onSaved }: { onSaved: () => void }) {
   const save = useMutation(saveUserPreferencesMutationOptions(queryClient, userId));
 
   // 保存成功后让按钮先显示「已保存」再关闭。
-  useEffect(() => {
-    if (!save.isSuccess) return;
-    const timer = setTimeout(onSaved, 700);
-    return () => clearTimeout(timer);
-  }, [save.isSuccess, onSaved]);
+  useTimeout(onSaved, save.isSuccess ? 700 : null);
 
   const empty = !accent.trim() && !rest.trim();
   const preview = empty

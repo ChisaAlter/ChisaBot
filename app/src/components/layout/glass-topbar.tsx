@@ -8,7 +8,6 @@ import {
   type PointerEvent,
   type ReactElement,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -17,6 +16,7 @@ import { flushSync } from "react-dom";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useExternalConnection } from "@/hooks";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
 import { presenceRef } from "@/lib/presence-flag";
@@ -314,14 +314,13 @@ export function ToggleTip({
 }) {
   const [armed, setArmed] = useState<Armed | null>(() => (keyboardSeen ? { open: false, refocus: false } : null));
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (armed) return;
+  useExternalConnection(!armed, () => {
     const arm = () => setArmed({ open: false, refocus: false });
     keyboardListeners.add(arm);
     return () => {
       keyboardListeners.delete(arm);
     };
-  }, [armed]);
+  });
   useLayoutEffect(() => {
     if (armed?.refocus) triggerRef.current?.focus({ preventScroll: true });
   }, [armed]);

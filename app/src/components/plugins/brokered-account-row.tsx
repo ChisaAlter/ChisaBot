@@ -1,6 +1,6 @@
 import { IconArrowUpRight } from "@tabler/icons-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ConnectionFields } from "@/components/plugins/connection-fields";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,7 @@ import {
   ItemDescription,
   ItemTitle,
 } from "@/components/ui/item";
+import { useExternalConnection } from "@/hooks";
 import {
   type BrokerField,
   brokeredConnectionFieldsMutationOptions,
@@ -332,10 +333,12 @@ export function useBrokeredAccount(input: {
    * connected" answer from before the consent deciding a row about the account it granted.
    */
   const forgetConfirmation = confirmation.reset;
-  useEffect(() => {
-    if (!(brokered && configured)) return;
-    confirmAccount(serverId);
-  }, [brokered, configured, serverId, confirmAccount]);
+  useExternalConnection(
+    brokered && configured ? `confirm:${serverId}` : false,
+    () => {
+      confirmAccount(serverId);
+    },
+  );
 
   /*
    * Find out whether the key still works, when somebody presses for it and at no other time.
@@ -858,9 +861,7 @@ export function BrokeredAccountRow({
    * The row behind redraws as connected on the refetch either way; without this the person is left
    * reading the form they just submitted, over a row that says it worked.
    */
-  useEffect(() => {
-    if (account.connected) setAsking(false);
-  }, [account.connected]);
+  if (account.connected && asking) setAsking(false);
 
   return (
     <>

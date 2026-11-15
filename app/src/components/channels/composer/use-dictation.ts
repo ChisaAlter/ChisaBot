@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { useExternalConnection } from "@/hooks";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import {
   recordingSupported,
@@ -44,10 +45,7 @@ export function useDictation(
   );
   const browserSpeech = speechRecognitionSupported();
   const available = data?.transcription === true || browserSpeech;
-  useEffect(() => {
-    if (disabled || !available) session.cancel();
-    return () => session.cancel();
-  }, [disabled, available, session]);
+  useExternalConnection(!disabled && available, () => () => session.cancel());
   return {
     session,
     state,

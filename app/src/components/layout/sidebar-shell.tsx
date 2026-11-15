@@ -1,6 +1,7 @@
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { useDocumentSync } from "@/hooks";
 import {
   readStoredPreference,
   writeStoredPreference,
@@ -39,11 +40,11 @@ export function SidebarShell({
     parseStoredSidebarOpen(readStoredPreference(SIDEBAR_STORAGE_KEY)),
   );
 
-  useEffect(() => {
-    applySidebarOpen(open, {
+  useDocumentSync(open, (_doc, isOpen) => {
+    applySidebarOpen(isOpen, {
       setStoredValue: writeStoredPreference,
     });
-  }, [open]);
+  });
 
   return (
     <SidebarProvider

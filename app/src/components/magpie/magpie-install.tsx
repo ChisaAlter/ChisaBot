@@ -11,11 +11,12 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { PageSection } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Card } from "@/components/ui/skyglass";
+import { useExternalConnection } from "@/hooks";
 import { magpieKeys } from "@/lib/magpie";
 import {
   durationText,
@@ -156,8 +157,7 @@ export function MagpieInstallSection() {
 
   // 宿主机装好、应用还没读到密钥的那几秒：每 2 秒重读一次 Magpie 状态，读到就整页切成正常视图。
   const connecting = view?.kind === "connecting";
-  useEffect(() => {
-    if (!connecting) return;
+  useExternalConnection(connecting, () => {
     void queryClient.invalidateQueries({ queryKey: magpieKeys.overview });
     const timer = window.setInterval(
       () =>
@@ -165,7 +165,7 @@ export function MagpieInstallSection() {
       2_000,
     );
     return () => window.clearInterval(timer);
-  }, [connecting, queryClient]);
+  });
 
   async function install() {
     setBusy(true);

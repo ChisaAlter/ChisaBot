@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
 
 /**
  * 网站图标在暗色主题里会不会「黑上加黑」（DESIGN.md §96）。
@@ -88,19 +89,20 @@ function measure(src: string): Promise<boolean> {
 
 /** 图标 src 是不是深色墨（结果按 src 缓存；量出来之前是 false）。 */
 export function useDarkInk(src: string | undefined): boolean {
-  const [dark, setDark] = useState(() => (src ? (cache.get(src) ?? false) : false));
-  useEffect(() => {
-    if (!src) {
-      setDark(false);
-      return;
-    }
-    let alive = true;
-    void measure(src).then((value) => {
-      if (alive) setDark(value);
+  const [measured, setMeasured] = useState<{ src: string; dark: boolean } | null>(
+    () => (src && cache.has(src) ? { src, dark: cache.get(src) ?? false } : null),
+  );
+  useExternalConnection(src || false, (activeSrc, signal) => {
+    void measure(activeSrc).then((value) => {
+      if (!signal.aborted) {
+        setMeasured((prev) =>
+          prev?.src === activeSrc && prev.dark === value
+            ? prev
+            : { src: activeSrc, dark: value },
+        );
+      }
     });
-    return () => {
-      alive = false;
-    };
-  }, [src]);
-  return dark;
+  });
+  if (!src) return false;
+  return measured?.src === src ? measured.dark : (cache.get(src) ?? false);
 }

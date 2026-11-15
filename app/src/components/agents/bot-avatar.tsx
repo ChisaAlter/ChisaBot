@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Avatar from "boring-avatars";
-import { memo, useEffect, useState } from "react";
+import { memo, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import {
   type AvatarDraft,
@@ -62,9 +63,8 @@ export const BotAvatar = memo(function BotAvatar({
   });
   const queryClient = useQueryClient();
   // 别的标签页存了头像就重新拉（审查 10-2）；一页上所有头像共用一个 BroadcastChannel。
-  useEffect(
-    () => (agentId ? subscribeAvatarSync(queryClient) : undefined),
-    [agentId, queryClient],
+  useExternalConnection(Boolean(agentId), () =>
+    subscribeAvatarSync(queryClient),
   );
   const saved = agentId ? avatars.data?.[agentId] : undefined;
   // 审查 10-3：头像表还没回来（冷启动）或拉失败（500）时不能先画默认花纹——有自定义头像的机器人会「闪一下花纹」。

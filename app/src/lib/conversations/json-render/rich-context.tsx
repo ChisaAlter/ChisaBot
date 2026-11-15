@@ -5,13 +5,13 @@ import {
   type ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { useExternalConnection, useMediaQuery, useTimeout } from "@/hooks";
 import { cn } from "@/lib/utils";
 import {
   canTween,
@@ -138,9 +138,9 @@ export function ChoiceProvider({
     return true;
   }, []);
   // 对话记录后来才读到（恢复历史晚到）：补上，但不覆盖本机刚点的那一下。
-  useEffect(() => {
-    if (initial) setAnswered((current) => current ?? initial);
-  }, [initial]);
+  if (initial && answered === null) {
+    setAnswered(initial);
+  }
   const effective =
     picked ?? (answered && options.includes(answered) ? answered : null);
   const value = useMemo<ChoiceScope>(
@@ -227,20 +227,7 @@ export function useNow(granularitySeconds = 1): number {
 }
 
 export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const on = () => setReduced(query.matches);
-    query.addEventListener?.("change", on);
-    return () => query.removeEventListener?.("change", on);
-  }, []);
-  return reduced;
+  return useMediaQuery("(prefers-reduced-motion: reduce)");
 }
 
 /**
@@ -289,12 +276,9 @@ export function useLiveValue(value: string): { shown: string; flash: boolean } {
     return () => clearTimeout(timer);
   }, [value, reduced]);
 
-  useEffect(
-    () => () => {
-      if (frame.current) cancelAnimationFrame(frame.current);
-    },
-    [],
-  );
+  useExternalConnection(true, () => () => {
+    if (frame.current) cancelAnimationFrame(frame.current);
+  });
   return { shown, flash };
 }
 
@@ -351,11 +335,7 @@ export function ActionArea({
 }) {
   const actions = useRichActions();
   const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
+  useTimeout(() => setCopied(false), copied ? 1500 : null);
   const href = safeHttp(item?.href);
   const onCopy = useCallback(async () => {
     if (item?.copy && (await actions.copy(item.copy))) setCopied(true);

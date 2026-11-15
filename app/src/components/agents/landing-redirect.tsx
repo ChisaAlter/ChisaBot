@@ -1,6 +1,6 @@
 import { IconPlus, IconRobot } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorCard } from "@/components/ui/skyglass";
 import { openCreateBot } from "@/lib/agents/create-bot";
@@ -27,8 +27,7 @@ export function LandingRedirect() {
   const navigate = useNavigate();
   const target = landing.state === "ready" ? landing.target : null;
   const key = target ? JSON.stringify(target) : null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the stable identity of `target`
-  useEffect(() => {
+  useExternalConnection(key, () => {
     if (!target) return;
     const destination =
       target.to === "/channel/$channelId"
@@ -36,7 +35,7 @@ export function LandingRedirect() {
         : composerTargetPath(undefined, `new:${target.search.agent}`);
     transferComposerInputs(currentChatTargetPath(), destination);
     void navigate({ ...target, replace: true });
-  }, [key, navigate]);
+  });
 
   if (landing.state === "empty")
     return (

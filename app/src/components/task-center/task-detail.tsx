@@ -8,9 +8,10 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
+import { useExternalConnection } from "@/hooks";
 import {
   type TaskControl,
   taskCenterApi,
@@ -62,10 +63,9 @@ export function TaskDetail({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: taskCenterKeys.all }),
   });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 换任务是有意的触发——聚焦新详情页标题
-  useEffect(() => {
+  useExternalConnection(`focus:${id}`, () => {
     heading.current?.focus();
-  }, [id]);
+  });
   const task = query.data?.task;
   const actions: Array<[TaskControl, string]> = task
     ? task.status === "inbox"

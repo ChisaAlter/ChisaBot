@@ -4,7 +4,9 @@ import {
   Renderer,
   type Spec,
 } from "@json-render/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { useConversation } from "@/lib/conversations/conversation";
 import { jsonRenderRegistry } from "@/lib/conversations/json-render/registry";
 import {
@@ -65,13 +67,18 @@ export function JsonRenderSurface({
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
   const store = useMemo(() => createStateStore({ ...(spec.state ?? {}) }), []);
   const settled = useRef(!streaming);
-  useEffect(() => {
-    if (settled.current) return;
-    store.update(
-      topLevelPointers(spec.state as Record<string, unknown> | undefined),
-    );
-    if (!streaming) settled.current = true;
-  }, [spec.state, streaming, store]);
+  useExternalConnection(
+    settled.current
+      ? false
+      : `${objectConnectionKey(spec.state)}:${streaming ? 1 : 0}:${objectConnectionKey(store)}`,
+    () => {
+      if (settled.current) return;
+      store.update(
+        topLevelPointers(spec.state as Record<string, unknown> | undefined),
+      );
+      if (!streaming) settled.current = true;
+    },
+  );
 
   const handlers = useMemo(
     () => ({

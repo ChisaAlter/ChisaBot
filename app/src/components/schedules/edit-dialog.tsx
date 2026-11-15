@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
+import { useAbortScope } from "@/hooks";
 import type { AgentInstanceView } from "@/lib/local-agents";
 import {
   type EditRepeat,
@@ -85,25 +86,19 @@ function ScheduleEditor({
   const [original] = useState(() => editFormOf(s));
   const [form, setForm] = useState(original);
   const [error, setError] = useState<string | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const scope = useAbortScope();
   const save = useAsyncAction(
     async (patch: ScheduleEditPatch) => {
       setError(null);
       try {
         await send(s.id, patch);
         await queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
-        if (mounted.current) {
+        if (scope.alive()) {
           toast.success(`已保存「${patch.title ?? s.title}」`);
           onOpenChange(false);
         }
       } catch (e) {
-        if (mounted.current)
+        if (scope.alive())
           setError(e instanceof Error ? e.message : "保存失败，请重试");
         throw e;
       }
@@ -114,7 +109,7 @@ function ScheduleEditor({
   const guardedOpenChange = useGuardedOpenChange(
     formDirty(original, form),
     (open) => {
-      if (mounted.current) onOpenChange(open);
+      if (scope.alive()) onOpenChange(open);
     },
   );
   function submit() {

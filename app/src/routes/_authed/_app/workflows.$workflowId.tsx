@@ -2,7 +2,7 @@ import { requireExtra } from "@/lib/deployment/extras";
 import { IconCopy, IconDownload, IconLock, IconPlayerPlayFilled, IconPlus } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   emptyWorkflow,
   type WorkflowDefinition,
@@ -55,17 +55,15 @@ function WorkflowEditPage() {
   const saved = detail.data?.workflow;
   const [loadedFor, setLoadedFor] = useState<string | null>(isNew ? "new" : null);
   // 载入（以及换了一个工作流，比如复制后跳过来）时把草稿换成它。
-  useEffect(() => {
-    if (isNew && loadedFor !== "new") {
-      setDraft(emptyWorkflow());
-      setLoadedFor("new");
-      setServerProblems([]);
-    } else if (!isNew && saved && saved.id === workflowId && loadedFor !== workflowId) {
-      setDraft(structuredClone(saved.definition));
-      setLoadedFor(workflowId);
-      setServerProblems([]);
-    }
-  }, [isNew, saved, workflowId, loadedFor]);
+  if (isNew && loadedFor !== "new") {
+    setDraft(emptyWorkflow());
+    setLoadedFor("new");
+    setServerProblems([]);
+  } else if (!isNew && saved && saved.id === workflowId && loadedFor !== workflowId) {
+    setDraft(structuredClone(saved.definition));
+    setLoadedFor(workflowId);
+    setServerProblems([]);
+  }
 
   const readOnly = saved?.kind === "preset";
   const dirty = useMemo(() => {

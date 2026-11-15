@@ -1,6 +1,7 @@
 import type { Spec } from "@json-render/react";
-import { useEffect } from "react";
 import { lazyPart } from "@/components/ui/lazy-part";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /**
  * render_ui 的渲染面（json-render-surface，约 28K gz）按需下载，不进入口包，也不在聊天区挂载时立刻下载：
@@ -66,16 +67,18 @@ export function useRenderUiPreload(
   preload: () => unknown = JsonRenderSurface.preload,
 ): void {
   const hasCard = hasRenderUiCall(messages);
-  useEffect(() => {
-    if (hasCard) void preload();
-  }, [hasCard, preload]);
+  useExternalConnection(hasCard ? objectConnectionKey(preload) : false, () => {
+    void preload();
+  });
 }
 
 /** RenderUiTool 用（只在部署开了 generativeUi 时挂载）：浏览器空闲时预载，不和首屏抢带宽。 */
 export function useRenderUiIdlePreload(
   preload: () => unknown = JsonRenderSurface.preload,
 ): void {
-  useEffect(() => whenIdle(() => void preload()), [preload]);
+  useExternalConnection(objectConnectionKey(preload), () =>
+    whenIdle(() => void preload()),
+  );
 }
 
 /** 与最终卡片同形状的骨架（DESIGN.md §1 层级 ②），第一块内容到达后原地淡入替换。 */

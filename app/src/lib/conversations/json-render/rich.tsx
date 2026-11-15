@@ -7,11 +7,11 @@ import {
   Children,
   type CSSProperties,
   type ReactNode,
-  useEffect,
   useId,
   useRef,
   useState,
 } from "react";
+import { useElementSync, useResizeObserver } from "@/hooks";
 import { cn } from "@/lib/utils";
 import { normaliseTone } from "../../../../../shared/json-render/catalog";
 import { iconFor } from "./icons";
@@ -59,9 +59,8 @@ export function SafeImg({
   onFail?: () => void;
 }) {
   const url = safeHttps(src);
-  const [failed, setFailed] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: url 变了是有意的复位触发——新地址重新允许加载
-  useEffect(() => setFailed(false), [url]);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const failed = url !== null && failedUrl === url;
   if (!url || failed) return null;
   return (
     <img
@@ -70,7 +69,7 @@ export function SafeImg({
       decoding="async"
       loading="lazy"
       onError={() => {
-        setFailed(true);
+        setFailedUrl(url);
         onFail?.();
       }}
       referrerPolicy="no-referrer"
@@ -412,20 +411,18 @@ export function Carousel({
   const update = () => {
     const el = track.current;
     if (!el) return;
-    setEdges({
-      start: el.scrollLeft <= 2,
-      end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 2,
+    setEdges((current) => {
+      const start = el.scrollLeft <= 2;
+      const end = el.scrollLeft + el.clientWidth >= el.scrollWidth - 2;
+      return current.start === start && current.end === end
+        ? current
+        : { start, end };
     });
   };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: update 每次渲染新建，列上会让观察器每帧重建；effect 只在挂载时装订
-  useEffect(() => {
+  useElementSync(track, true, () => {
     update();
-    const el = track.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  });
+  useResizeObserver(track, update);
   const go = (direction: number) => {
     const el = track.current;
     if (el)

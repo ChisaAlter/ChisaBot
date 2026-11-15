@@ -5,7 +5,7 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsMobile, useWindowEvent } from "@/hooks";
 import { keyOf } from "@/lib/hotkeys/hotkeys";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -130,25 +130,20 @@ function SidebarProvider({
   }, [isMobile, setOpen]);
 
   // Adds a keyboard shortcut to toggle the sidebar.
-  React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // `keyOf` rather than `key`, as the app's own shortcuts read it: on a layout that writes
-      // another script the B key writes "и" or "β", and only its `code` still says B.
-      if (
-        keyOf(event) === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey) &&
-        // Ctrl+Alt+B belongs to the right-hand panel column (`lib/panels/rail-open.ts`).
-        !event.altKey &&
-        !event.shiftKey
-      ) {
-        event.preventDefault();
-        toggleSidebar();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar]);
+  useWindowEvent("keydown", (event: KeyboardEvent) => {
+    // `keyOf` rather than `key`, as the app's own shortcuts read it: on a layout that writes
+    // another script the B key writes "и" or "β", and only its `code` still says B.
+    if (
+      keyOf(event) === SIDEBAR_KEYBOARD_SHORTCUT &&
+      (event.metaKey || event.ctrlKey) &&
+      // Ctrl+Alt+B belongs to the right-hand panel column (`lib/panels/rail-open.ts`).
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      event.preventDefault();
+      toggleSidebar();
+    }
+  });
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.

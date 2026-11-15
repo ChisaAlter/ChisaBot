@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { RefusedCard } from "@/components/gallery/refused";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { useInteractionRenderer, useRenderTool } from "@/lib/chat/renderers";
 import {
   agentComponentsQueryOptions,
@@ -26,13 +28,13 @@ import {
  */
 export function GalleryTools() {
   const queryClient = useQueryClient();
-  useEffect(() => {
+  useExternalConnection(objectConnectionKey(queryClient), () => {
     void announceGallery(galleryManifest()).then((added) => {
       if (added.length > 0) {
         void queryClient.invalidateQueries({ queryKey: componentKeys.all });
       }
     });
-  }, [queryClient]);
+  });
 
   // See sandboxed-tools: the placeholder Bot is not fetchable, so the grant query waits for a
   // surface to declare a real one.
@@ -172,12 +174,15 @@ function RefusedDecision({
 }) {
   const reason = `${title} is not available to this Bot at the moment, so the person was not asked. An administrator grants components per Bot, and can unpublish one for every Bot at once.`;
 
-  useEffect(() => {
-    if (!respond) return;
-    void respond(reason).catch(() => {
-      // The run being gone is not a failure worth reporting: there is nothing left to answer.
-    });
-  }, [respond, reason]);
+  useExternalConnection(
+    respond ? `${objectConnectionKey(respond)}:${reason}` : false,
+    () => {
+      if (!respond) return;
+      void respond(reason).catch(() => {
+        // The run being gone is not a failure worth reporting: there is nothing left to answer.
+      });
+    },
+  );
 
   return <RefusedCard reason={reason} title={title} />;
 }

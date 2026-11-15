@@ -11,12 +11,12 @@ import {
   Component,
   type CSSProperties,
   type ReactNode,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useTimeout } from "@/hooks";
 import { LinkCard } from "@/components/rich-previews/link-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -312,9 +312,8 @@ function ListMark({
   tone: unknown;
 }) {
   const url = safeHttps(image);
-  const [failed, setFailed] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: url 变了是有意的复位触发——新地址重新允许加载
-  useEffect(() => setFailed(false), [url]);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const failed = url !== null && failedUrl === url;
   const name = typeof title === "string" ? title : "";
   if (url) {
     return (
@@ -330,7 +329,7 @@ function ListMark({
             <InitialMark kind="item" name={name} />
           </span>
         ) : (
-          <SafeImg alt="" onFail={() => setFailed(true)} src={url} />
+          <SafeImg alt="" onFail={() => setFailedUrl(url)} src={url} />
         )}
       </span>
     );
@@ -659,11 +658,7 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
         const actions = useRichActions();
         const scope = useChoiceScope();
         const [copied, setCopied] = useState(false);
-        useEffect(() => {
-          if (!copied) return;
-          const timer = setTimeout(() => setCopied(false), 1500);
-          return () => clearTimeout(timer);
-        }, [copied]);
+        useTimeout(() => setCopied(false), copied ? 1500 : null);
         const href = safeHttp(props.href);
         // 互斥选项（CB-090）：只在对话里、带 ask 的 choice 按钮上生效；右栏面板和普通按钮照旧。
         const asChoice = Boolean(

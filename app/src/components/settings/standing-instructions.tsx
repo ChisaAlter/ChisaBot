@@ -1,11 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { SaveBar } from "@/components/ui/skyglass";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { useUnsavedGuard } from "@/components/ui/unsaved-guard";
+import { useTimeout } from "@/hooks";
 import { saveInstructionsMutationOptions } from "@/lib/settings/mutations";
 import {
   INSTRUCTIONS_LIMIT,
@@ -28,37 +29,24 @@ export function StandingInstructions() {
 
   const [draft, setDraft] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  /* Keep the bar up for the ✓ (≈1.5s) after a save, then let it slide away. */
+  const [flash, setFlash] = useState(false);
 
   /*
-   * The box holds the stored text until somebody types, and their typing after that.
-   *
-   * Null is "has not been edited", which is not the same as "is empty": seeding the state with ""
-   * and then filling it in when the read lands would overwrite whatever they had already started
-   * typing into a box that was ready before the network was.
+   * Null means "has not been edited yet", so stored.data renders until somebody types without
+   * overwriting input entered before the query resolves.
    */
-  useEffect(() => {
-    if (stored.data !== undefined && draft === null) setDraft(stored.data);
-  }, [stored.data, draft]);
-
   const text = draft ?? stored.data ?? "";
   const over = text.trim().length > INSTRUCTIONS_LIMIT;
   const unchanged = stored.data !== undefined && text === stored.data;
   const dirty = stored.data !== undefined && !unchanged;
   /* 有未保存的更改时，切左栏、后退先确认；刷新、关标签走浏览器的 beforeunload（审查模块 12 第 3 条）。 */
   useUnsavedGuard(dirty && !save.isPending);
-  /* Keep the bar up for the ✓ (≈1.5s) after a save, then let it slide away. */
-  const [flash, setFlash] = useState(false);
-  useEffect(() => {
-    if (!saved) return;
-    setFlash(true);
-    const timer = window.setTimeout(() => setFlash(false), 1600);
-    return () => window.clearTimeout(timer);
-  }, [saved]);
+  useTimeout(() => setFlash(false), flash ? 1600 : null);
 
   const submit = () => {
     setProblem(null);
-    setSaved(false);
+    setFlash(false);
     const sent = text;
     save.mutate(sent, {
       onError: (thrown: Error) => {
@@ -69,7 +57,7 @@ export function StandingInstructions() {
       onSuccess: (asStored) => {
         /* 保存中框还能接着打：只有没再改过时才换成服务器存下的值，免得吞掉刚打的字。 */
         setDraft((current) => (current === sent ? asStored : current));
-        setSaved(true);
+        setFlash(true);
       },
     });
   };
@@ -93,7 +81,7 @@ export function StandingInstructions() {
             className="min-h-40"
             onChange={(event) => {
               setDraft(event.target.value);
-              setSaved(false);
+              setFlash(false);
             }}
             placeholder={
               "回答简洁，先说结论；中文回复，代码注释用英文。"

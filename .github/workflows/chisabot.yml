@@ -57,6 +57,7 @@ jobs:
           app/tests/no-raw-fetch.test.ts
           app/tests/no-group-has.test.ts
           app/tests/no-mock-module.test.ts
+          app/tests/no-raw-use-effect.test.ts
           server/tests/no-raw-fetch.test.ts
           server/tests/no-raw-env.test.ts
           server/tests/no-unapproved-schema-drop.test.ts
@@ -103,6 +104,7 @@ jobs:
         # Separate test processes keep SDK module registrations and DOM globals isolated.
         run: |
           bun test tests/client-deadline.test.ts tests/computer-tool-refusals.test.ts
+          bun test tests/hooks-primitives.test.tsx
           bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts
           bun test tests/tail-first-paint.test.ts
           bun test tests/message-scroll-reduced-motion.test.tsx

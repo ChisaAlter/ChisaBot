@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useRef } from "react";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { useDocumentEvent } from "@/hooks";
 import { isPhone } from "@/lib/device";
 import { setPanelSheetOpen, usePanelSheetOpen } from "@/lib/panels/rail-open";
 
@@ -33,57 +34,64 @@ export function PhoneGestures() {
   const setDrawer = sidebar?.setOpenMobile;
   const mobile = Boolean(sidebar?.isMobile);
 
-  useEffect(() => {
-    if (!isPhone() || !mobile || !setDrawer) return;
-    let start: { x: number; y: number; mode: "open" | "close-drawer" | "close-panel" } | null = null;
+  const startRef = useRef<{ x: number; y: number; mode: "open" | "close-drawer" | "close-panel" } | null>(null);
+  const active = Boolean(isPhone() && mobile && setDrawer);
 
-    const onStart = (event: TouchEvent) => {
-      start = null;
-      if (event.touches.length !== 1) return;
-      const touch = event.touches[0];
-      const target = event.target;
-      if (inHorizontalScroller(target)) return;
-      const inDrawer = target instanceof Element && target.closest('[data-slot="sidebar"][data-mobile="true"]');
-      const inPanel = target instanceof Element && target.closest("#chisabot-panel-sheet");
-      if (drawerOpen) start = { x: touch.clientX, y: touch.clientY, mode: "close-drawer" };
-      else if (panelOpen && inPanel) start = { x: touch.clientX, y: touch.clientY, mode: "close-panel" };
-      else if (!panelOpen && !inDrawer && touch.clientX <= EDGE)
-        start = { x: touch.clientX, y: touch.clientY, mode: "open" };
-    };
-    const onMove = (event: TouchEvent) => {
-      if (!start || event.touches.length !== 1) return;
-      const touch = event.touches[0];
-      const dx = touch.clientX - start.x;
-      const dy = touch.clientY - start.y;
-      if (Math.abs(dy) > Math.abs(dx) * 0.8 && Math.abs(dy) > 12) {
-        start = null; // vertical scroll wins
-        return;
+  useDocumentEvent(
+    "touchstart",
+    active
+      ? (event: TouchEvent) => {
+          startRef.current = null;
+          if (event.touches.length !== 1) return;
+          const touch = event.touches[0];
+          const target = event.target;
+          if (inHorizontalScroller(target)) return;
+          const inDrawer = target instanceof Element && target.closest('[data-slot="sidebar"][data-mobile="true"]');
+          const inPanel = target instanceof Element && target.closest("#chisabot-panel-sheet");
+          if (drawerOpen) startRef.current = { x: touch.clientX, y: touch.clientY, mode: "close-drawer" };
+          else if (panelOpen && inPanel) startRef.current = { x: touch.clientX, y: touch.clientY, mode: "close-panel" };
+          else if (!panelOpen && !inDrawer && touch.clientX <= EDGE)
+            startRef.current = { x: touch.clientX, y: touch.clientY, mode: "open" };
+        }
+      : null,
+    { passive: true },
+  );
+
+  useDocumentEvent(
+    "touchmove",
+    active
+      ? (event: TouchEvent) => {
+          const start = startRef.current;
+          if (!start || event.touches.length !== 1) return;
+          const touch = event.touches[0];
+          const dx = touch.clientX - start.x;
+          const dy = touch.clientY - start.y;
+          if (Math.abs(dy) > Math.abs(dx) * 0.8 && Math.abs(dy) > 12) {
+            startRef.current = null; // vertical scroll wins
+            return;
+          }
+          if (start.mode === "open" && dx > TRIGGER) {
+            setDrawer?.(true);
+            startRef.current = null;
+          } else if (start.mode === "close-drawer" && dx < -TRIGGER) {
+            setDrawer?.(false);
+            startRef.current = null;
+          } else if (start.mode === "close-panel" && dx > TRIGGER) {
+            setPanelSheetOpen(false);
+            startRef.current = null;
+          }
+        }
+      : null,
+    { passive: true },
+  );
+
+  const onEnd = active
+    ? () => {
+        startRef.current = null;
       }
-      if (start.mode === "open" && dx > TRIGGER) {
-        setDrawer(true);
-        start = null;
-      } else if (start.mode === "close-drawer" && dx < -TRIGGER) {
-        setDrawer(false);
-        start = null;
-      } else if (start.mode === "close-panel" && dx > TRIGGER) {
-        setPanelSheetOpen(false);
-        start = null;
-      }
-    };
-    const onEnd = () => {
-      start = null;
-    };
-    document.addEventListener("touchstart", onStart, { passive: true });
-    document.addEventListener("touchmove", onMove, { passive: true });
-    document.addEventListener("touchend", onEnd, { passive: true });
-    document.addEventListener("touchcancel", onEnd, { passive: true });
-    return () => {
-      document.removeEventListener("touchstart", onStart);
-      document.removeEventListener("touchmove", onMove);
-      document.removeEventListener("touchend", onEnd);
-      document.removeEventListener("touchcancel", onEnd);
-    };
-  }, [drawerOpen, panelOpen, mobile, setDrawer]);
+    : null;
+  useDocumentEvent("touchend", onEnd, { passive: true });
+  useDocumentEvent("touchcancel", onEnd, { passive: true });
 
   return null;
 }

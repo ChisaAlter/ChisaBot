@@ -8,11 +8,11 @@ import {
 } from "@tabler/icons-react";
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useWindowEvent } from "@/hooks";
 import { createPortal } from "react-dom";
 
 /**
@@ -115,8 +115,9 @@ export function Lightbox({
     };
   }, []);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+  useWindowEvent(
+    "keydown",
+    (event) => {
       if (event.key === "Escape") {
         event.stopPropagation();
         close();
@@ -142,10 +143,9 @@ export function Lightbox({
           first.focus();
         }
       }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [close, go, zoom, zoomTo]);
+    },
+    true,
+  );
 
   if (!image) return null;
 

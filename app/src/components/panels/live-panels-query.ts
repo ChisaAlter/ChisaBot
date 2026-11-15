@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { client } from "@/lib/client";
 import { isChatRunning } from "@/lib/conversations/computer-activity";
 import { useKeptVisible } from "@/lib/kept-visible";
@@ -53,12 +54,9 @@ export const livePanelKeys = {
 export function useChatRunning() {
   // 卡片可能在这一轮开始之后才挂上（新建的面板）：先读当前状态，不等下一次广播。
   const [running, setRunning] = useState(() => isChatRunning());
-  useEffect(() => {
-    const on = (event: Event) =>
-      setRunning(Boolean((event as CustomEvent<boolean>).detail));
-    window.addEventListener("chisabot-chat-running", on);
-    return () => window.removeEventListener("chisabot-chat-running", on);
-  }, []);
+  useWindowEvent("chisabot-chat-running", (event) =>
+    setRunning(Boolean((event as CustomEvent<boolean>).detail)),
+  );
   return running;
 }
 
@@ -68,12 +66,11 @@ export function useLivePanels(botId: string | undefined) {
   const onScreen = useKeptVisible();
   const queryClient = useQueryClient();
   // 一轮刚结束：再看一次（面板可能在最后一步才填好）。
-  useEffect(() => {
-    if (!running && botId)
-      void queryClient.invalidateQueries({
-        queryKey: livePanelKeys.list(botId),
-      });
-  }, [running, botId, queryClient]);
+  useExternalConnection(!running && botId ? botId : null, (activeBotId) => {
+    void queryClient.invalidateQueries({
+      queryKey: livePanelKeys.list(activeBotId),
+    });
+  });
   return useQuery({
     enabled: Boolean(botId),
     queryKey: livePanelKeys.list(botId ?? ""),

@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useDocumentSync, useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /**
  * ChisaBot 无边框窗口的窗口控制（DESIGN.md §18）。
@@ -46,37 +48,40 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
   const bridge = desktopWindow();
   const [maximized, setMaximized] = useState(false);
   const [compact, setCompact] = useState(false);
-  useEffect(() => {
+  const bridgeKey = objectConnectionKey(bridge);
+  useExternalConnection(bridgeKey, (_key, signal) => {
     if (!bridge) return;
     const root = document.documentElement;
     root.dataset.desktop = bridge.platform || "win32";
-    let alive = true;
     void bridge
       .isMaximized()
-      .then((value) => alive && setMaximized(value))
+      .then((value) => {
+        if (!signal.aborted) setMaximized(value);
+      })
       .catch(() => {});
     const off = bridge.onMaximizedChange((value) => setMaximized(value));
     let offCompact = () => {};
     if (canCompact(bridge)) {
       void bridge
         .isCompact?.()
-        .then((value) => alive && setCompact(Boolean(value)))
+        .then((value) => {
+          if (!signal.aborted) setCompact(Boolean(value));
+        })
         .catch(() => {});
       offCompact = bridge.onCompactChange?.((value) => setCompact(value)) ?? offCompact;
     }
     return () => {
-      alive = false;
       off();
       offCompact();
     };
-  }, [bridge]);
-  useEffect(() => {
-    if (!bridge) return;
-    document.documentElement.dataset.maximized = maximized ? "true" : "false";
-  }, [bridge, maximized]);
-  useEffect(() => {
-    if (!bridge) return;
-    document.documentElement.dataset.compact = compact ? "true" : "false";
-  }, [bridge, compact]);
+  });
+  useDocumentSync(
+    bridgeKey ? { bridgeKey, maximized, compact } : null,
+    (doc, state) => {
+      if (!state) return;
+      doc.documentElement.dataset.maximized = state.maximized ? "true" : "false";
+      doc.documentElement.dataset.compact = state.compact ? "true" : "false";
+    },
+  );
   return bridge ? { bridge, maximized, compact } : null;
 }

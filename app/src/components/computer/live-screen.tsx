@@ -10,10 +10,14 @@ import {
   type MutableRefObject,
   type ReactNode,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import {
+  useElementSync,
+  useExternalConnection,
+  useWindowEvent,
+} from "@/hooks";
 import { setTabsView } from "@/lib/computers/tabs";
 import {
   connectScreen,
@@ -251,8 +255,7 @@ export function LiveScreen({
   /** 用户最后一次在地址栏里要打开的网址。 */
   const lastAttempt = useRef("");
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: explicit Retry restarts this connection.
-  useEffect(() => {
+  useExternalConnection(`${computerId}\0${retryKey}`, () => {
     let closed = false;
     setConnected(false);
     hasFrameRef.current = false;
@@ -502,7 +505,7 @@ export function LiveScreen({
       document.removeEventListener("visibilitychange", drawLatestFrame);
       socketRef.current = null;
     };
-  }, [computerId, onProblem, retryKey]);
+  });
 
   /**
    * Send one thing the person did, if this socket can carry it.
@@ -593,58 +596,64 @@ export function LiveScreen({
    * the sidebar here. Escape and the paste shortcut are not stopped, because both are meant for this
    * page, and neither is a keystroke typed into one of this page's own fields.
    */
-  useEffect(() => {
-    if (!driving) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") return; // Escape still closes the view.
-      if (isPasteShortcut(event) || isLocalField(event.target)) {
-        localKeyUps.current.add(event.code);
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      send({
-        type: "key",
-        event: "down",
-        ...remoteKey(event),
-        // Only a printable character carries text. Sending text for Backspace makes Chrome insert a
-        // character instead of deleting one.
-        ...(event.key.length === 1 ? { text: event.key } : {}),
-        modifiers: modifierBits(event),
-      });
-    };
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key === "Escape") return;
-      if (localKeyUps.current.delete(event.code) || isPasteShortcut(event)) {
-        return;
-      }
-      event.preventDefault();
-      send({
-        type: "key",
-        event: "up",
-        ...remoteKey(event),
-        modifiers: modifierBits(event),
-      });
-    };
-    /** Paste arrives as one block; CDP inserts it as text rather than key events. */
-    const onPaste = (event: ClipboardEvent) => {
-      if (isLocalField(event.target)) return;
-      const text = event.clipboardData?.getData("text");
-      if (!text) return;
-      event.preventDefault();
-      send({ type: "text", text });
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("paste", onPaste);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("paste", onPaste);
-      localKeyUps.current.clear();
-    };
-  }, [driving, send]);
+  useWindowEvent(
+    "keydown",
+    driving
+      ? (event) => {
+          if (event.key === "Escape") return; // Escape still closes the view.
+          if (isPasteShortcut(event) || isLocalField(event.target)) {
+            localKeyUps.current.add(event.code);
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          send({
+            type: "key",
+            event: "down",
+            ...remoteKey(event),
+            // Only a printable character carries text. Sending text for Backspace makes Chrome insert a
+            // character instead of deleting one.
+            ...(event.key.length === 1 ? { text: event.key } : {}),
+            modifiers: modifierBits(event),
+          });
+        }
+      : null,
+    true,
+  );
+  useWindowEvent(
+    "keyup",
+    driving
+      ? (event) => {
+          if (event.key === "Escape") return;
+          if (localKeyUps.current.delete(event.code) || isPasteShortcut(event)) {
+            return;
+          }
+          event.preventDefault();
+          send({
+            type: "key",
+            event: "up",
+            ...remoteKey(event),
+            modifiers: modifierBits(event),
+          });
+        }
+      : null,
+  );
+  /** Paste arrives as one block; CDP inserts it as text rather than key events. */
+  useWindowEvent(
+    "paste",
+    driving
+      ? (event) => {
+          if (isLocalField(event.target)) return;
+          const text = event.clipboardData?.getData("text");
+          if (!text) return;
+          event.preventDefault();
+          send({ type: "text", text });
+        }
+      : null,
+  );
+  useExternalConnection(driving, () => () => {
+    localKeyUps.current.clear();
+  });
 
   /**
    * The wheel, forwarded while driving, from a listener that is allowed to stop it here.
@@ -658,34 +667,40 @@ export function LiveScreen({
    * ownership used to take the wheel away silently, which is the one thing a person scrolling a
    * page notices immediately.
    */
-  useEffect(() => {
+  const onWheelRef = useRef((_event: WheelEvent) => {});
+  onWheelRef.current = (event: WheelEvent) => {
     const canvas = canvasRef.current;
-    if (!driving || !canvas) return;
-    const onWheel = (event: WheelEvent) => {
-      const point = at(event);
-      if (!point) return;
-      event.preventDefault();
-      /*
-       * Chrome's `Input.dispatchMouseEvent` reads the delta as pixels. A browser that reports the
-       * wheel in lines (`deltaMode` 1) or pages (2) sends 3 rather than ~100, so a notch of the
-       * wheel moved the Bot's page by three pixels and read as "the wheel does nothing". One line is
-       * 16px, which is what Chrome itself uses, and one page is the height of the page being
-       * scrolled -- the frame Chrome is casting, not this canvas, which is scaled to fit.
-       */
-      const perPage = frameSize.current?.height ?? canvas.clientHeight;
-      const scale =
-        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Math.max(1, perPage) : 1;
-      send({
-        type: "wheel",
-        ...point,
-        deltaX: event.deltaX * scale,
-        deltaY: event.deltaY * scale,
-        modifiers: modifierBits(event),
-      });
-    };
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", onWheel);
-  }, [driving, at, send]);
+    const point = at(event);
+    if (!canvas || !point) return;
+    event.preventDefault();
+    /*
+     * Chrome's `Input.dispatchMouseEvent` reads the delta as pixels. A browser that reports the
+     * wheel in lines (`deltaMode` 1) or pages (2) sends 3 rather than ~100, so a notch of the
+     * wheel moved the Bot's page by three pixels and read as "the wheel does nothing". One line is
+     * 16px, which is what Chrome itself uses, and one page is the height of the page being
+     * scrolled -- the frame Chrome is casting, not this canvas, which is scaled to fit.
+     */
+    const perPage = frameSize.current?.height ?? canvas.clientHeight;
+    const scale =
+      event.deltaMode === 1
+        ? 16
+        : event.deltaMode === 2
+          ? Math.max(1, perPage)
+          : 1;
+    send({
+      type: "wheel",
+      ...point,
+      deltaX: event.deltaX * scale,
+      deltaY: event.deltaY * scale,
+      modifiers: modifierBits(event),
+    });
+  };
+  useElementSync(canvasRef, driving, (canvas, active) => {
+    if (!active) return;
+    const listener = (event: WheelEvent) => onWheelRef.current(event);
+    canvas.addEventListener("wheel", listener, { passive: false });
+    return () => canvas.removeEventListener("wheel", listener);
+  });
 
   const [draft, setDraft] = useState<string | null>(null);
   const navigate = (message: Record<string, unknown>) => {
@@ -718,7 +733,13 @@ export function LiveScreen({
     navigate({ type: "navigate", url });
     return true;
   };
-  useEffect(() => {
+  const [controllerTarget, setControllerTarget] = useState(controllerRef);
+  const [controllerEpoch, setControllerEpoch] = useState(0);
+  if (controllerTarget !== controllerRef) {
+    setControllerTarget(controllerRef);
+    setControllerEpoch(controllerEpoch + 1);
+  }
+  useExternalConnection(controllerRef ? controllerEpoch : null, () => {
     if (!controllerRef) return;
     controllerRef.current = {
       openUrl: (url) => openUrlRef.current(url),
@@ -729,7 +750,7 @@ export function LiveScreen({
     return () => {
       controllerRef.current = null;
     };
-  }, [controllerRef]);
+  });
 
   return (
     <div className="computer-live flex flex-col gap-2">

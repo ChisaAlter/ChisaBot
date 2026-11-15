@@ -13,7 +13,9 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import type { PageView } from "../../../../../shared/pages";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
@@ -56,7 +58,9 @@ function PagesPage() {
   const queryClient = useQueryClient();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<{ kind: "rename" | "versions" | "assets"; page: PageView } | null>(null);
-  useEffect(() => reportPageOrigin(), []);
+  useExternalConnection(true, () => {
+    reportPageOrigin();
+  });
   const pages = (list.data ?? []).filter((page) => !hidden.has(page.id));
   const refresh = () => queryClient.invalidateQueries({ queryKey: pageKeys.all });
 
@@ -300,11 +304,14 @@ function RenameDialog({ page, onOpenChange }: { page: PageView | null; onOpenCha
     { errorToast: (error) => error.message },
   );
   const resetSave = save.reset;
-  useEffect(() => {
-    if (!page) return;
-    setForm({ title: page.title, description: page.description ?? "" });
-    resetSave();
-  }, [page, resetSave]);
+  useExternalConnection(
+    page ? `${objectConnectionKey(page)}:${objectConnectionKey(resetSave)}` : false,
+    () => {
+      if (!page) return;
+      setForm({ title: page.title, description: page.description ?? "" });
+      resetSave();
+    },
+  );
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(page)}>
       <DialogContent className="im-dialog max-w-lg">

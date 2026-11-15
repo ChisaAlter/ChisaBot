@@ -14,7 +14,13 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
+import {
+  useDocumentEvent,
+  useResizeObserver,
+  useTimeout,
+  useWindowEvent,
+} from "@/hooks";
 import { toast } from "@/components/ui/toast";
 import {
   addBookmark,
@@ -53,11 +59,11 @@ export function BookmarkStar({
   const [state, setState] = useState<"idle" | "pending" | "done" | "failed">("idle");
   const web = /^https?:\/\//i.test(url);
 
-  useEffect(() => {
-    if (state !== "done" && state !== "failed") return;
-    const timer = setTimeout(() => setState("idle"), 1500);
-    return () => clearTimeout(timer);
-  }, [state]);
+  useTimeout(
+    () => setState("idle"),
+    state === "done" || state === "failed" ? 1500 : null,
+    state,
+  );
 
   const toggle = async () => {
     if (!web || state === "pending") return;
@@ -122,41 +128,29 @@ export function BookmarksBar({
   const [dragging, setDragging] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const node = box.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => setNarrow((entry?.contentRect.width ?? 999) < 520));
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+  useResizeObserver(box, (entry) =>
+    setNarrow(entry.contentRect.width < 520),
+  );
 
-  useEffect(() => {
-    if (!hint) return;
-    const timer = setTimeout(() => setHint(null), 3000);
-    return () => clearTimeout(timer);
-  }, [hint]);
+  useTimeout(() => setHint(null), hint ? 3000 : null, hint ?? null);
 
   // 点外面 / Esc 关掉弹出层。
-  useEffect(() => {
-    if (!menu && !dropdown) return;
-    const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
-      // 菜单开着时 Esc 只关菜单（大屏的 Esc 看 defaultPrevented）。
-      if (event instanceof KeyboardEvent) event.preventDefault();
-      if (event instanceof MouseEvent && box.current?.contains(event.target as Node)) {
-        const inside = (event.target as HTMLElement).closest?.(".bm-pop");
-        if (inside) return;
-      }
-      setMenu(null);
-      setDropdown(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close, true);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", close, true);
-    };
-  }, [menu, dropdown]);
+  const closePopovers = (event: MouseEvent | KeyboardEvent) => {
+    if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+    // 菜单开着时 Esc 只关菜单（大屏的 Esc 看 defaultPrevented）。
+    if (event instanceof KeyboardEvent) event.preventDefault();
+    if (
+      event instanceof MouseEvent &&
+      box.current?.contains(event.target as Node)
+    ) {
+      const inside = (event.target as HTMLElement).closest?.(".bm-pop");
+      if (inside) return;
+    }
+    setMenu(null);
+    setDropdown(false);
+  };
+  useDocumentEvent("mousedown", menu || dropdown ? closePopovers : null);
+  useDocumentEvent("keydown", menu || dropdown ? closePopovers : null, true);
 
   const open = (bookmark: Bookmark, inNewTab = false) => {
     setMenu(null);
@@ -347,18 +341,18 @@ function BookmarkManager({ botId, onClose }: { botId: string; onClose: () => voi
   const [problem, setProblem] = useState<string | null>(null);
   const list = bookmarks ?? [];
 
-  useEffect(() => {
-    // Esc 只关这个面板，不关大屏、不交还控制权：窗口捕获阶段最先拿到，标记 defaultPrevented 并截住。
-    const onKey = (event: KeyboardEvent) => {
+  // Esc 只关这个面板，不关大屏、不交还控制权：窗口捕获阶段最先拿到，标记 defaultPrevented 并截住。
+  useWindowEvent(
+    "keydown",
+    (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
         onClose();
       }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+    },
+    true,
+  );
 
   const guarded = async (key: string, work: () => Promise<unknown>) => {
     setPending(key);

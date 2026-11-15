@@ -1,5 +1,6 @@
 import { IconRefresh } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useTimeout } from "@/hooks";
 import { useNow } from "@/lib/use-now";
 import "./status-capsule.css";
 
@@ -71,12 +72,12 @@ export function PausedCapsule({
   label?: string | undefined;
 }) {
   const [shown, setShown] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: watch 是有意的重置触发——盯的东西换了就重新数 900ms
-  useEffect(() => {
+  const [prevWatch, setPrevWatch] = useState(watch);
+  if (watch !== prevWatch) {
+    setPrevWatch(watch);
     setShown(false);
-    const timer = window.setTimeout(() => setShown(true), 900);
-    return () => window.clearTimeout(timer);
-  }, [watch]);
+  }
+  useTimeout(() => setShown(true), shown ? null : 900, watch);
   if (!shown) return null;
   return (
     <StatusCapsule

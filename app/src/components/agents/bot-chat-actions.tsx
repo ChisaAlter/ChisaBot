@@ -4,7 +4,8 @@ import {
   IconMessagePlus,
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { useComputerAttention } from "@/components/computer/computer-controls";
 import {
   DropdownMenuItem,
@@ -120,9 +121,22 @@ export function RegisterBotChat({
       canHistory,
     ],
   );
-  useEffect(
-    () => (snapshot ? publishBotChat(snapshot) : undefined),
-    [snapshot],
+  const snapshotKey = snapshot
+    ? [
+        snapshot.agentId,
+        snapshot.fallbackName,
+        snapshot.settingsOpen,
+        snapshot.computerOpen,
+        snapshot.needsYou,
+        snapshot.freshTopic,
+        snapshot.canSettings,
+        snapshot.canComputer,
+        snapshot.canNewTopic,
+        snapshot.canHistory,
+      ].join("\0")
+    : null;
+  useExternalConnection(snapshotKey, () =>
+    snapshot ? publishBotChat(snapshot) : undefined,
   );
   return null;
 }

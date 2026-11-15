@@ -105,6 +105,7 @@
 | 前端禁止裸 `fetch`，统一走 `app/src/lib/client.ts`                               | `app/tests/no-raw-fetch.test.ts`                 |
 | 前端样式禁止高开销 `:has` 祖先选择器（`group-has-*` / `peer-has-*`）             | `app/tests/no-group-has.test.ts`                 |
 | 测试禁止 `mock.module` / `vi.mock` / `jest.mock` 进程级模块替换（零白名单）      | `app/tests/no-mock-module.test.ts`               |
+| 前端业务代码禁止裸 `useEffect`，外部同步统一收口至 `app/src/hooks/`              | `app/tests/no-raw-use-effect.test.ts`            |
 | 服务端除受控出口外禁止裸 `fetch`，统一走 `guardedFetch` / `trustedEndpointFetch` | `server/tests/no-raw-fetch.test.ts`              |
 | 服务端除 `server/src/config.ts` 外零散代码禁止读 `process.env`（零白名单）       | `server/tests/no-raw-env.test.ts`                |
 | 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 
 import { latestChannelFor } from "./latest";
 import type { ChannelSummary } from "./queries";
@@ -29,26 +30,27 @@ export function usePrefetchBotChats(
 ) {
   const key = botIds.slice(0, MAX_BOTS).join(",");
   const ready = channels !== undefined;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: channels 每次 socket 补丁都会换引用；只在机器人列表变了 / 列表第一次到时重排
-  useEffect(() => {
-    if (!ready || !key) return;
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        for (const botId of key.split(",")) {
-          if (cancelled) return;
-          const latest = latestChannelFor(botId, channels);
-          if (botId === currentBotId || !latest) continue;
-          await prefetchTranscript(latest.threadId, botId);
-        }
-      })();
-    }, IDLE_AFTER_MS);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-    // channels 每次 socket 补丁都会换引用；只在机器人列表变了 / 列表第一次到时重排。
-  }, [key, ready, currentBotId]);
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+
+  useExternalConnection(
+    ready && key ? `${key}\0${currentBotId ?? ""}` : false,
+    (_activeKey, signal) => {
+      const timer = window.setTimeout(() => {
+        void (async () => {
+          for (const botId of key.split(",")) {
+            if (signal.aborted) return;
+            const latest = latestChannelFor(botId, channelsRef.current);
+            if (botId === currentBotId || !latest) continue;
+            await prefetchTranscript(latest.threadId, botId);
+          }
+        })();
+      }, IDLE_AFTER_MS);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    },
+  );
 }
 
 /** 悬停 / 聚焦 / 手指按下左栏某个机器人时先读它的对话（点下去之前那 100–300ms 也用上）。 */

@@ -1,7 +1,8 @@
 import { IconSearch, IconX } from "@tabler/icons-react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { scrollIntoViewWithin } from "@/lib/scroll-within";
 import { locateSettingItem, settingTarget } from "@/lib/settings/locate";
 import { findEntry, type SettingsViewer } from "@/lib/settings/registry";
@@ -24,11 +25,14 @@ export function useSettingsSearch(viewer: SettingsViewer) {
   const navigate = useNavigate();
   const sidebar = useOptionalSidebar();
   const hits = useMemo(() => searchSettings(query, viewer), [query, viewer]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => setActive(0), [query]);
+  const updateQuery = (next: string) => {
+    setQuery(next);
+    setActive(0);
+  };
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+  useWindowEvent(
+    "keydown",
+    (event) => {
       const mod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
       const modK = mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
       const slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !typingIn(event.target);
@@ -46,19 +50,18 @@ export function useSettingsSearch(viewer: SettingsViewer) {
         } else if (tries < 10) requestAnimationFrame(() => focus(tries + 1));
       };
       focus();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [sidebar]);
+    },
+    true,
+  );
 
   function go(hit: SettingsHit) {
     const hash = hitHash(hit);
     void navigate({ to: hit.page.to, ...(hash ? { hash } : {}) });
-    setQuery("");
+    updateQuery("");
     inputRef.current?.blur();
     if (sidebar?.isMobile) sidebar.setOpenMobile(false);
   }
-  return { query, setQuery, hits, active, setActive, inputRef, go };
+  return { query, setQuery: updateQuery, hits, active, setActive, inputRef, go };
 }
 export type SettingsSearch = ReturnType<typeof useSettingsSearch>;
 
@@ -156,21 +159,18 @@ export function SettingsSearchResults({ search }: { search: SettingsSearch }) {
 export function SettingsFind() {
   const hash = useRouterState({ select: (state) => state.location.hash });
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
-    if (!hash) return;
+  useExternalConnection(hash ? `${pathname}#${hash}` : false, (_key, signal) => {
     const raw = decodeURIComponent(hash.replace(/^#/, ""));
     const entry = raw.startsWith("find=") ? findEntry(raw.slice(5)) : null;
     const itemId = entry?.item ? `${entry.page.id}.${entry.item.id}` : null;
     const text = entry?.item?.find ?? null;
     if (raw.startsWith("find=") && !itemId) return;
-    let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
     const locate = (): HTMLElement | null =>
       itemId ? locateSettingItem(document, itemId, text) : document.getElementById(raw);
     const attempt = () => {
-      if (cancelled) return;
+      if (signal.aborted) return;
       const found = locate();
       if (!found) {
         if (Date.now() - started < 4000) timer = setTimeout(attempt, 150);
@@ -191,9 +191,8 @@ export function SettingsFind() {
     };
     timer = setTimeout(attempt, 60);
     return () => {
-      cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [hash, pathname]);
+  });
   return null;
 }

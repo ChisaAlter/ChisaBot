@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /**
  * ChisaBot 桌面客户端的本机桥（docs/pc-node.md §8.2）。
@@ -92,21 +94,18 @@ export function pcBridge(): PcBridge | null {
 /** 在 PC 客户端里返回本机状态（随托盘 / 节点状态变化刷新）；在浏览器里始终是 null。 */
 export function usePcLocal(): [PcLocalState | null, (next: PcLocalState) => void] {
   const [state, setState] = useState<PcLocalState | null>(null);
-  useEffect(() => {
-    const bridge = pcBridge();
+  const bridge = pcBridge();
+  useExternalConnection(objectConnectionKey(bridge), (_key, signal) => {
     if (!bridge) return;
-    let alive = true;
     const load = () =>
       bridge
         .state()
-        .then((next) => alive && setState(next))
+        .then((next) => {
+          if (!signal.aborted) setState(next);
+        })
         .catch(() => {});
     void load();
-    const off = bridge.onChange(() => void load());
-    return () => {
-      alive = false;
-      off();
-    };
-  }, []);
+    return bridge.onChange(() => void load());
+  });
   return [state, setState];
 }

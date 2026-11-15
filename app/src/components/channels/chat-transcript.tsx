@@ -20,7 +20,6 @@ import {
   isValidElement,
   memo,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -99,6 +98,7 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useElementEvent, useExternalConnection, useWindowEvent } from "@/hooks";
 import { approvalInboxOptions } from "@/lib/approvals";
 import {
   attachmentThumbUrl,
@@ -701,6 +701,17 @@ function Queued({
  * alternative is threading a ref out through three components with no other reason to know a
  * scroller exists.
  */
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 1;
+
+function objectKey(value: object): number {
+  const existing = objectIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextObjectId++;
+  objectIds.set(value, created);
+  return created;
+}
+
 function ScrollNewestQueuedIntoView({
   newest,
   viewport,
@@ -710,23 +721,28 @@ function ScrollNewestQueuedIntoView({
 }) {
   const { scrollToEnd } = useMessageScroller();
 
-  useEffect(() => {
-    if (newest === null) {
-      return;
-    }
-    /*
-     * 只有本来就在底部（或几乎在底部）才跟下去：往上翻着读的人排了一句补充，不该被拽回底部——
-     * 那一行在列表末尾，翻回去看得到，而且「它已经排上了」由输入框清空 + 末尾那一行一起说清楚。
-     * 关掉也走这里（`newest` 换成上一条 / null）：同样不拽人。
-     */
-    const element = viewport?.current;
-    if (element) {
-      const fromBottom =
-        element.scrollHeight - element.scrollTop - element.clientHeight;
-      if (fromBottom > 80) return;
-    }
-    scrollToEnd();
-  }, [newest, scrollToEnd, viewport]);
+  useExternalConnection(
+    newest !== null
+      ? `${newest}\0${objectKey(scrollToEnd)}\0${viewport ? objectKey(viewport) : ""}`
+      : false,
+    () => {
+      if (newest === null) {
+        return;
+      }
+      /*
+       * 只有本来就在底部（或几乎在底部）才跟下去：往上翻着读的人排了一句补充，不该被拽回底部——
+       * 那一行在列表末尾，翻回去看得到，而且「它已经排上了」由输入框清空 + 末尾那一行一起说清楚。
+       * 关掉也走这里（`newest` 换成上一条 / null）：同样不拽人。
+       */
+      const element = viewport?.current;
+      if (element) {
+        const fromBottom =
+          element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (fromBottom > 80) return;
+      }
+      scrollToEnd();
+    },
+  );
 
   return null;
 }
@@ -1015,9 +1031,10 @@ function SettleAtEnd({
     setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载时建立观察器；里面读的都是 ref，不随渲染变化
-  useEffect(() => {
-    const element = viewport.current;
+  useExternalConnection(
+    `${scrollKey ?? ""}\0${objectKey(scrollToEnd)}\0${objectKey(scrollToMessage)}\0${objectKey(viewport)}\0${reduceMotion ? 1 : 0}`,
+    () => {
+      const element = viewport.current;
     const content = element?.querySelector<HTMLElement>(
       '[data-slot="message-scroller-content"]',
     );
@@ -1608,7 +1625,7 @@ function SettleAtEnd({
       element.removeEventListener("pointerdown", onPointer);
       element.removeEventListener("scroll", onScroll);
     };
-  }, [scrollToEnd, scrollToMessage, viewport, scrollKey, reduceMotion]);
+  });
 
   return null;
 }
@@ -2750,30 +2767,25 @@ function useDocumentIsGone(
   const [gone, setGone] = useState(false);
   const [size, setSize] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!ask) {
-      return;
-    }
-    // A tile reused at the same position for a different file starts the question over rather than
-    // inheriting the previous file's answer.
-    setGone(false);
+  useExternalConnection(
+    ask ? url || "__empty__" : false,
+    (_activeKey, signal) => {
+      // A tile reused at the same position for a different file starts the question over rather than
+      // inheriting the previous file's answer.
+      setGone(false);
 
-    let cancelled = false;
-    void probeDocument(url)
-      .then(({ missing, size: bytes }) => {
-        if (!cancelled && missing) {
-          setGone(true);
-        }
-        if (!cancelled && bytes !== null) setSize(bytes);
-      })
-      .catch(() => {
-        // Deliberately nothing: see above. Not knowing is not the same as knowing it is gone.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ask, url]);
+      void probeDocument(url)
+        .then(({ missing, size: bytes }) => {
+          if (!signal.aborted && missing) {
+            setGone(true);
+          }
+          if (!signal.aborted && bytes !== null) setSize(bytes);
+        })
+        .catch(() => {
+          // Deliberately nothing: see above. Not knowing is not the same as knowing it is gone.
+        });
+    },
+  );
 
   return { gone, size };
 }
@@ -3332,16 +3344,18 @@ function useKeepBottomOnPrepend(
 ) {
   const atBottom = useRef<boolean | null>(null);
   const seen = useRef<string | null>(null);
-  useEffect(() => {
-    const element = viewport.current;
-    if (!element) return;
-    const onScroll = () => {
+  useElementEvent(
+    viewport,
+    "scroll",
+    () => {
+      const element = viewport.current;
+      if (!element) return;
       atBottom.current =
         element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-    };
-    element.addEventListener("scroll", onScroll, { passive: true });
-    return () => element.removeEventListener("scroll", onScroll);
-  }, [viewport]);
+    },
+    { passive: true },
+    objectKey(viewport),
+  );
   useLayoutEffect(() => {
     const element = viewport.current;
     const previous = seen.current;
@@ -3883,11 +3897,12 @@ export function ChatTranscript({
    * cascade never happens.
    */
   const hasItems = items.length > 0;
-  useEffect(() => {
-    if (hasItems && !opening) {
+  useExternalConnection(
+    hasItems && !opening ? objectKey(delays) : false,
+    () => {
       delays.settle();
-    }
-  }, [hasItems, opening, delays]);
+    },
+  );
 
   /*
    * 翻页对齐落在视口上 1/3，而不是顶到最上（DESIGN.md §94.7）：上面留着上一轮、下面留 2/3 给回答，
@@ -3899,56 +3914,50 @@ export function ChatTranscript({
   messagesRef.current = messages;
   const mountAllRef = useRef(mountAll);
   mountAllRef.current = mountAll;
-  useEffect(() => {
-    let frame = 0;
-    const onJump = (event: Event) => {
-      const toolCallId = (event as CustomEvent<{ toolCallId?: string }>).detail
-        ?.toolCallId;
-      if (!toolCallId) return;
-      const owner = messagesRef.current.find(
-        (message) =>
-          (message as { toolCallId?: string }).toolCallId === toolCallId ||
-          ((message as { toolCalls?: { id?: string }[] }).toolCalls ?? []).some(
-            (call) => call.id === toolCallId,
-          ),
+  const jumpFrameRef = useRef(0);
+  useWindowEvent(JUMP_TO_TOOL_CALL, (event) => {
+    const toolCallId = (event as CustomEvent<{ toolCallId?: string }>).detail
+      ?.toolCallId;
+    if (!toolCallId) return;
+    const owner = messagesRef.current.find(
+      (message) =>
+        (message as { toolCallId?: string }).toolCallId === toolCallId ||
+        ((message as { toolCalls?: { id?: string }[] }).toolCalls ?? []).some(
+          (call) => call.id === toolCallId,
+        ),
+    );
+    if (!owner) return;
+    const flash = () => {
+      const row = viewportRef.current?.querySelector<HTMLElement>(
+        `[data-message-id="${CSS.escape(owner.id)}"]`,
       );
-      if (!owner) return;
-      const flash = () => {
-        const row = viewportRef.current?.querySelector<HTMLElement>(
-          `[data-message-id="${CSS.escape(owner.id)}"]`,
-        );
-        if (!row) return false;
-        row.scrollIntoView({ block: "center", behavior: "smooth" });
-        row.classList.add("is-activity-jump");
-        setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
-        return true;
-      };
+      if (!row) return false;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("is-activity-jump");
+      setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
+      return true;
+    };
+    if (flash()) return;
+    if (virtualRef.current) {
+      // 虚拟化下那一行可能没挂：先经数据层滚过去，挂上后再闪。
+      if (dataLayerRef.current?.scrollToMessage(owner.id, { align: "center" }))
+        requestAnimationFrame(() => requestAnimationFrame(flash));
+      return;
+    }
+    // 比挂着的窗口还旧：要求把历史全挂上，每帧看一次，最多等 1.5 秒。
+    mountAllRef.current();
+    const started = performance.now();
+    const wait = () => {
       if (flash()) return;
-      if (virtualRef.current) {
-        // 虚拟化下那一行可能没挂：先经数据层滚过去，挂上后再闪。
-        if (
-          dataLayerRef.current?.scrollToMessage(owner.id, { align: "center" })
-        )
-          requestAnimationFrame(() => requestAnimationFrame(flash));
-        return;
-      }
-      // 比挂着的窗口还旧：要求把历史全挂上，每帧看一次，最多等 1.5 秒。
-      mountAllRef.current();
-      const started = performance.now();
-      const wait = () => {
-        if (flash()) return;
-        if (performance.now() - started < 1500)
-          frame = requestAnimationFrame(wait);
-      };
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(wait);
+      if (performance.now() - started < 1500)
+        jumpFrameRef.current = requestAnimationFrame(wait);
     };
-    window.addEventListener(JUMP_TO_TOOL_CALL, onJump);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener(JUMP_TO_TOOL_CALL, onJump);
-    };
-  }, []);
+    cancelAnimationFrame(jumpFrameRef.current);
+    jumpFrameRef.current = requestAnimationFrame(wait);
+  });
+  useExternalConnection(true, () => () => {
+    cancelAnimationFrame(jumpFrameRef.current);
+  });
 
   /*
    * jank P3-3 虚拟化：除了末尾常驻的几行（流式中的回答、刚发的那条），其余按「每条消息一格」交给 virtua。
@@ -3974,7 +3983,7 @@ export function ChatTranscript({
   virtualRef.current = virtual;
 
   const [paneHeight, setPaneHeight] = useState(0);
-  useEffect(() => {
+  useExternalConnection(true, () => {
     const element = viewportRef.current;
     if (!element) return;
     /*
@@ -3989,7 +3998,7 @@ export function ChatTranscript({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  });
   const anchorOffset =
     paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
 
@@ -4533,14 +4542,16 @@ function useFreshAnchor(
     Date.now() - memo.at < FRESH_ANCHOR_MS;
   // 过期后重画一次，把标记拿掉。
   const [, expire] = useState(0);
-  useEffect(() => {
-    if (!fresh) return;
-    const timer = window.setTimeout(
-      () => expire((n) => n + 1),
-      FRESH_ANCHOR_MS - (Date.now() - memo.at) + 20,
-    );
-    return () => window.clearTimeout(timer);
-  }, [fresh, memo]);
+  useExternalConnection(
+    fresh ? `${objectKey(memo)}\0${memo.at}` : false,
+    () => {
+      const timer = window.setTimeout(
+        () => expire((n) => n + 1),
+        FRESH_ANCHOR_MS - (Date.now() - memo.at) + 20,
+      );
+      return () => window.clearTimeout(timer);
+    },
+  );
   return fresh ? memo.id : null;
 }
 

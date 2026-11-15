@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
 import { stashedAttachmentCount } from "@/lib/chat/ui-memory";
 
 /**
@@ -29,10 +29,10 @@ export function setBusy(key: string, value: boolean) {
 
 /** 组件挂着且 `value` 为真时登记为忙；卸载时自动撤销。 */
 export function useReportBusy(key: string, value: boolean) {
-  useEffect(() => {
+  useExternalConnection(`${value ? 1 : 0}\0${key}`, () => {
     setBusy(key, value);
     return () => setBusy(key, false);
-  }, [key, value]);
+  });
 }
 
 /** 登记「这个输入框上还挂着几个没发出去的附件」；卸载或清零时撤销。 */
@@ -47,11 +47,11 @@ export function useReportPendingAttachments(
   key: string | undefined,
   count: number,
 ) {
-  useEffect(() => {
+  useExternalConnection(key ? `${count}\0${key}` : false, () => {
     if (!key) return;
     setPendingAttachments(key, count);
     return () => setPendingAttachments(key, 0);
-  }, [key, count]);
+  });
 }
 
 /** 还挂在输入框上 / 收在草稿里、刷新就会丢的附件总数。 */

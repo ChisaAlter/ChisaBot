@@ -10,10 +10,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useDocumentEvent } from "@/hooks";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
   cleanLinkTitle,
@@ -647,15 +647,15 @@ export function LinkCardStack({
       });
   }, []);
 
-  useEffect(() => {
-    const away = (event: Event) => {
+  useDocumentEvent(
+    "pointerdown",
+    (event) => {
       const target = event.target as Element | null;
       if (stackRef.current && !stackRef.current.contains(target))
         clearRevealed();
-    };
-    document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
-  }, [clearRevealed]);
+    },
+    true,
+  );
   if (total === 0) return null;
   const main = Math.min(chosen ?? defaultLinkStackPrimary(total), total - 1);
   const slots = linkStackSlots(total, main);

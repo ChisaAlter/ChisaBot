@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { lazyDialog } from "@/components/ui/lazy-dialog";
+import { useWindowEvent } from "@/hooks";
 
 type AccountDialog = "profile" | "pair-phone" | "brand";
 const OPEN_EVENT = "chisabot-account-dialog";
@@ -27,12 +28,9 @@ export function openAccountDialog(dialog: AccountDialog) {
 /** Owned by the signed-in route, not by the desktop/mobile copies of each trigger. */
 export function AccountDialogsHost() {
   const [active, setActive] = useState<AccountDialog | null>(null);
-  useEffect(() => {
-    const open = (event: Event) =>
-      setActive((event as CustomEvent<AccountDialog>).detail);
-    window.addEventListener(OPEN_EVENT, open);
-    return () => window.removeEventListener(OPEN_EVENT, open);
-  }, []);
+  useWindowEvent(OPEN_EVENT, (event) => {
+    setActive((event as CustomEvent<AccountDialog>).detail);
+  });
   const close = (open: boolean) => {
     if (!open) setActive(null);
   };

@@ -5,10 +5,10 @@ import type {
 import {
   type DragEvent,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useAbortScope } from "@/hooks";
 import { newId } from "@/lib/new-id";
 
 export type Attachment = {
@@ -48,14 +48,8 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settings = useRef(config);
   settings.current = config;
-  const mounted = useRef(true);
+  const scope = useAbortScope();
   const queue = useRef(Promise.resolve());
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
   const removeAttachment = useCallback(
     (id: string) =>
       setAttachments((items) => items.filter((item) => item.id !== id)),
@@ -109,7 +103,7 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
               continue;
             }
             const { metadata, ...source } = await upload(file);
-            if (mounted.current)
+            if (scope.alive())
               setAttachments((items) =>
                 items.map((item) =>
                   item.id === id
@@ -118,7 +112,7 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
                 ),
               );
           } catch (error) {
-            if (mounted.current) removeAttachment(id);
+            if (scope.alive()) removeAttachment(id);
             selected.onUploadFailed?.({
               reason: "upload-failed",
               file,
@@ -131,7 +125,7 @@ export function useAttachments({ config }: { config?: AttachmentsConfig }) {
       queue.current = pending.catch(() => {});
       await pending;
     },
-    [removeAttachment],
+    [removeAttachment, scope],
   );
   return {
     attachments,

@@ -2,10 +2,11 @@ import {
   createContext,
   type ReactNode,
   useContext,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /**
  * Which Bot the surface in front of you is driving.
@@ -105,17 +106,22 @@ export function ActiveBotProvider({ children }: { children: ReactNode }) {
 export function useActiveBot(botId: string | undefined): void {
   const holder = useContext(ActiveBotContext);
   const value = useContext(ActiveBotValueContext);
-  useEffect(() => {
-    if (!holder) return;
-    const previous =
-      holder instanceof RunScopedHolder ? holder.base : holder.current;
-    holder.current = botId ?? DEFAULT_BOT_ID;
-    value?.announce(botId ?? DEFAULT_BOT_ID);
-    return () => {
-      holder.current = previous;
-      value?.announce(previous);
-    };
-  }, [holder, value, botId]);
+  useExternalConnection(
+    holder
+      ? `${objectConnectionKey(holder)}:${objectConnectionKey(value)}:${botId === undefined ? "u" : `s:${botId}`}`
+      : false,
+    () => {
+      if (!holder) return;
+      const previous =
+        holder instanceof RunScopedHolder ? holder.base : holder.current;
+      holder.current = botId ?? DEFAULT_BOT_ID;
+      value?.announce(botId ?? DEFAULT_BOT_ID);
+      return () => {
+        holder.current = previous;
+        value?.announce(previous);
+      };
+    },
+  );
 }
 
 /** The holder itself, to be read inside a handler at the moment it runs. */

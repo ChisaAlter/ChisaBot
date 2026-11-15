@@ -1,11 +1,12 @@
 import {
   type RefObject,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useElementEvent, useElementSync, useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import {
   anchorShortfall,
   captureScrollAnchor,
@@ -256,63 +257,69 @@ export function useTailFirstMount(
     setMounted((m) => nextMountedCount(nextMountedCount(m, total), total));
   }, [measureBeforeGrow, total, viewport]);
 
-  useEffect(() => () => cancelAnimationFrame(pinFrameRef.current), []);
-
   /*
    * 兜底（聊天记录消失，2026-11-10）：补完了（或封顶了）、上面还有历史，挂着的行却一行都看不见
    * （过程行默认整格 display:none，判断看得见的那一份又漏了）——接着往前补，不受 TAIL_FIRST_CAP 限制，
    * 直到露出一行或者挂到头。只在不补行的时候查一次 DOM，不读布局。
    */
-  useEffect(() => {
-    if (pending || !truncated) return;
-    if (hasVisibleRow(viewport.current)) return;
-    measureBeforeGrow();
-    setMounted((m) => nextMountedCount(m, total));
-  });
+  useElementSync(
+    viewport,
+    pending || !truncated
+      ? null
+      : {
+          total,
+          renderedMounted,
+          startIndex,
+          scrollKey: scrollKey ?? "",
+        },
+    (el, state) => {
+      if (!state || hasVisibleRow(el)) return;
+      measureBeforeGrow();
+      setMounted((m) => nextMountedCount(m, state.total));
+    },
+  );
 
-  useEffect(() => {
-    const el = viewport.current;
-    if (!el) return;
-    const onScroll = () => {
+  useElementEvent(
+    viewport,
+    "scroll",
+    () => {
+      const el = viewport.current;
+      if (!el) return;
       atBottomRef.current =
         el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (el.scrollTop < 480) prependHistory();
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener(MOUNT_ALL_HISTORY_EVENT, mountAll);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      el.removeEventListener(MOUNT_ALL_HISTORY_EVENT, mountAll);
-    };
-  }, [viewport, prependHistory, mountAll]);
+    },
+    { passive: true },
+  );
+  useElementEvent(viewport, MOUNT_ALL_HISTORY_EVENT, mountAll);
 
-  useEffect(() => {
-    // scrollKey: restart catch-up when the channel identity changes (same total is common).
-    void scrollKey;
-    let cancelled = false;
-    let cancel = () => {};
-    const goal = catchUpTarget(total, full);
-    const step = () => {
-      cancel = scheduleIdle(() => {
-        if (cancelled) return;
-        measureBeforeGrow();
-        setMounted((m) => {
-          // 已排队的更新在换频道后才执行：不再给新频道多挂、也不再续排旧频道的下一批。
-          if (cancelled || m >= goal) return m;
-          const n = Math.min(nextMountedCount(m, total), goal);
-          if (n < goal) step();
-          return n;
+  useExternalConnection(
+    `${scrollKey ?? ""}\0${total}\0${full ? 1 : 0}\0${objectConnectionKey(measureBeforeGrow)}`,
+    (_key, signal) => {
+      // scrollKey: restart catch-up when the channel identity changes (same total is common).
+      let cancel = () => {};
+      const goal = catchUpTarget(total, full);
+      const step = () => {
+        cancel = scheduleIdle(() => {
+          if (signal.aborted) return;
+          measureBeforeGrow();
+          setMounted((m) => {
+            // 已排队的更新在换频道后才执行：不再给新频道多挂、也不再续排旧频道的下一批。
+            if (signal.aborted || m >= goal) return m;
+            const n = Math.min(nextMountedCount(m, total), goal);
+            if (n < goal) step();
+            return n;
+          });
         });
-      });
-    };
-    step();
-    return () => {
-      cancelled = true;
-      cancel();
-      cancelAnimationFrame(pinFrameRef.current);
-      pinFrameRef.current = 0;
-    };
-  }, [scrollKey, total, full, measureBeforeGrow]);
+      };
+      step();
+      return () => {
+        cancel();
+        cancelAnimationFrame(pinFrameRef.current);
+        pinFrameRef.current = 0;
+      };
+    },
+  );
 
   return {
     startIndex,

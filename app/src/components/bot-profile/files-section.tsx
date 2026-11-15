@@ -1,7 +1,7 @@
 import { IconArrowUpRight, IconWorld } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import type { ChatFileView } from "../../../../shared/chat-files";
 import type { PageView } from "../../../../shared/pages";
 import { PageSection } from "@/components/layout/page-shell";
@@ -85,16 +85,18 @@ export function groupArtifactsByBucket(
 export function BotFilesAndPagesSection({ agentId }: { agentId: string }) {
   const initialFiles = useQuery(botChatFilesQueryOptions(agentId, PAGE_SIZE + 1));
   const allPages = useQuery(pagesQueryOptions());
+  const firstBatch = initialFiles.data ?? [];
+  const resetKey = `${agentId}:${firstBatch.length}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
   const [extraFiles, setExtraFiles] = useState<ChatFileView[]>([]);
-  const [hasMore, setHasMore] = useState(false);
+  const [hasMore, setHasMore] = useState(() => firstBatch.length > PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const firstBatch = initialFiles.data ?? [];
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey);
     setExtraFiles([]);
     setHasMore(firstBatch.length > PAGE_SIZE);
-  }, [agentId, firstBatch.length]);
+  }
 
   const files = [
     ...firstBatch.slice(0, PAGE_SIZE),

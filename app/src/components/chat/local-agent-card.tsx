@@ -12,7 +12,8 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useTimeout } from "@/hooks";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
@@ -54,12 +55,13 @@ export function LocalAgentCard({
   const task = taskId
     ? tasks.data?.find((item) => item.id === taskId)
     : undefined;
-  useEffect(() => {
-    if (taskId && tasks.data && !task) {
-      const timer = setTimeout(() => void tasks.refetch(), 400);
-      return () => clearTimeout(timer);
-    }
-  }, [taskId, task, tasks]);
+  useTimeout(
+    () => {
+      void tasks.refetch();
+    },
+    taskId && tasks.data && !task ? 400 : null,
+    `${taskId ?? ""}:${tasks.dataUpdatedAt}:${tasks.errorUpdatedAt}:${tasks.fetchStatus}`,
+  );
   if (!task) {
     return (
       <div

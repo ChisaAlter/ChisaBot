@@ -13,7 +13,7 @@ import {
   IconUserCircle,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -220,6 +220,32 @@ type Form = {
   shared: boolean;
 };
 
+function initialNoteForm(
+  note: MemoryNoteView | null,
+  preset?: {
+    kind?: MemoryKind;
+    subject?: string;
+    context?: string;
+    shared?: boolean;
+  } | null,
+): Form {
+  return note
+    ? {
+        kind: note.kind,
+        subject: note.subject ?? "",
+        content: note.content,
+        context: note.context ?? "",
+        shared: Boolean(note.shared),
+      }
+    : {
+        kind: preset?.kind ?? "preference",
+        subject: preset?.subject ?? "",
+        content: "",
+        context: preset?.context ?? "",
+        shared: Boolean(preset?.shared),
+      };
+}
+
 export function NoteDialog({
   open,
   note,
@@ -238,15 +264,40 @@ export function NoteDialog({
   isAdmin?: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  if (!open) return null;
+  const dialogKey = note
+    ? `edit:${note.id}`
+    : `new:${preset?.kind ?? ""}:${preset?.subject ?? ""}:${preset?.context ?? ""}:${Boolean(preset?.shared)}`;
+  return (
+    <NoteDialogOpen
+      isAdmin={isAdmin}
+      key={dialogKey}
+      note={note}
+      onOpenChange={onOpenChange}
+      preset={preset}
+    />
+  );
+}
+
+function NoteDialogOpen({
+  note,
+  preset,
+  isAdmin,
+  onOpenChange,
+}: {
+  note: MemoryNoteView | null;
+  preset?: {
+    kind?: MemoryKind;
+    subject?: string;
+    context?: string;
+    shared?: boolean;
+  } | null;
+  isAdmin: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Form>({
-    kind: "preference",
-    subject: "",
-    content: "",
-    context: "",
-    shared: false,
-  });
-  const [initial, setInitial] = useState<Form>(form);
+  const [initial] = useState<Form>(() => initialNoteForm(note, preset));
+  const [form, setForm] = useState<Form>(initial);
   const needsSubject = SUBJECT_KINDS.includes(form.kind);
   const save = useAsyncAction(
     async () => {
@@ -264,28 +315,6 @@ export function NoteDialog({
     },
     { errorToast: (error) => error.message },
   );
-  const resetSave = save.reset;
-  useEffect(() => {
-    if (!open) return;
-    const next: Form = note
-      ? {
-          kind: note.kind,
-          subject: note.subject ?? "",
-          content: note.content,
-          context: note.context ?? "",
-          shared: Boolean(note.shared),
-        }
-      : {
-          kind: preset?.kind ?? "preference",
-          subject: preset?.subject ?? "",
-          content: "",
-          context: preset?.context ?? "",
-          shared: Boolean(preset?.shared),
-        };
-    setForm(next);
-    setInitial(next);
-    resetSave();
-  }, [open, note, preset, resetSave]);
   const valid =
     form.content.trim().length > 0 &&
     (!needsSubject || form.subject.trim().length > 0);
@@ -298,7 +327,7 @@ export function NoteDialog({
     onOpenChange,
   );
   return (
-    <Dialog onOpenChange={guardedOpenChange} open={open}>
+    <Dialog onOpenChange={guardedOpenChange} open>
       <DialogContent
         className="im-dialog max-w-lg"
         data-testid="memory-note-dialog"

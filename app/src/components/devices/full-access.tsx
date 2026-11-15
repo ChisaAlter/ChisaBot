@@ -7,7 +7,7 @@ import {
   IconTerminal2,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -15,6 +15,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Card, SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
+import { useAbortScope } from "@/hooks";
 import {
   cancelPairing,
   createPairing,
@@ -407,18 +408,11 @@ export function AddServerCard() {
   const [fullAccess, setFullAccess] = useState(true);
   const issueAbort = useRef<AbortController | null>(null);
 
-  useEffect(
-    () => () => {
-      issueAbort.current?.abort();
-      issueAbort.current = null;
-    },
-    [],
-  );
+  const issueScope = useAbortScope();
 
   const issue = useAsyncAction(
     async () => {
-      issueAbort.current?.abort();
-      const controller = new AbortController();
+      const controller = issueScope.fork(issueAbort.current);
       issueAbort.current = controller;
       try {
         const created = await createPairing("node", {

@@ -1,7 +1,9 @@
 import { IconCheck, IconDownload, IconDots, IconMessageCircle, IconPencil, IconPlus, IconSparkles, IconTrash, IconUsers, IconWand } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { SearchBox } from "@/components/memory/memory-notes";
@@ -362,14 +364,16 @@ function SkillImportDialog({
     { errorToast: (err) => err.message },
   );
   const resetImportAction = importAction.reset;
-  useEffect(() => {
-    if (!open) return;
-    setUrl("");
-    setMarkdown("");
-    setSlug("");
-    setShared(false);
-    resetImportAction();
-  }, [open, resetImportAction]);
+  useExternalConnection(
+    open ? objectConnectionKey(resetImportAction) : false,
+    () => {
+      setUrl("");
+      setMarkdown("");
+      setSlug("");
+      setShared(false);
+      resetImportAction();
+    },
+  );
 
   const valid = Boolean(url.trim() || markdown.trim());
   /* 填了链接或内容还没导入，按 Esc / 点外面先确认（审查模块 12 第 3 条）。 */
@@ -524,16 +528,20 @@ function SkillDialog({
     { errorToast: (error) => error.message },
   );
   const resetSave = save.reset;
-  useEffect(() => {
-    if (!open) return;
-    const next = skill
-      ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
-      : { slug: "", title: "", summary: "", instructions: "", shared: false };
-    setForm(next);
-    setInitial(next);
-    setSlugTouched(false);
-    resetSave();
-  }, [open, skill, resetSave]);
+  useExternalConnection(
+    open
+      ? `${skill ? objectConnectionKey(skill) : "new"}:${objectConnectionKey(resetSave)}`
+      : false,
+    () => {
+      const next = skill
+        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
+        : { slug: "", title: "", summary: "", instructions: "", shared: false };
+      setForm(next);
+      setInitial(next);
+      setSlugTouched(false);
+      resetSave();
+    },
+  );
   const slugOk = SLUG.test(form.slug);
   const valid = slugOk && form.title.trim() && form.instructions.trim();
   const dirty = !readOnly && save.state !== "success" && formDirty(initial, form);

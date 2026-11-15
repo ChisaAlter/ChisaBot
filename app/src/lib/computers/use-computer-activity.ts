@@ -4,7 +4,9 @@
  * 实时用 SSE（/activity/stream，cookie 认证）；断了就退回轮询——有进行中的步骤时 3 秒一次，
  * 否则 15 秒一次。服务端没有这个接口（老部署，404）时 `legacy` 为 true，界面退回浏览器内存里的旧记录。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useExternalConnection, useInterval } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { tryClient } from "@/lib/client";
 
 export type ActivityStep = {
@@ -157,7 +159,7 @@ export function useComputerActivity(
       .catch(() => undefined);
   }, [absorb, cursor, fetchPage]);
 
-  useEffect(() => {
+  useExternalConnection(objectConnectionKey(refresh), () => {
     known.current = new Set();
     paged.current = false;
     setSteps([]);
@@ -166,37 +168,41 @@ export function useComputerActivity(
     setLegacy(false);
     refresh();
     // refresh 只随电脑 / 对话变化（base、query），所以这就是「换电脑 / 换对话时重来」。
-  }, [refresh]);
+  });
 
   // 实时：SSE；不可用时轮询。
   const running = steps.some((step) => step.status === "running");
   const [live, setLive] = useState(false);
-  useEffect(() => {
-    if (legacy || typeof EventSource === "undefined") return;
-    const source = new EventSource(`${base}/stream`, { withCredentials: true });
-    source.addEventListener("ready", () => setLive(true));
-    source.addEventListener("step", (event) => {
-      try {
-        absorb(
-          [JSON.parse((event as MessageEvent).data) as ActivityStep],
-          true,
-        );
-      } catch {
-        // 坏的一条不影响后面的。
-      }
-    });
-    source.onerror = () => setLive(false);
-    return () => {
-      source.close();
-      setLive(false);
-    };
-  }, [absorb, base, legacy]);
+  useExternalConnection(
+    legacy || typeof EventSource === "undefined"
+      ? false
+      : `${base}\0${objectConnectionKey(absorb)}`,
+    () => {
+      const source = new EventSource(`${base}/stream`, { withCredentials: true });
+      source.addEventListener("ready", () => setLive(true));
+      source.addEventListener("step", (event) => {
+        try {
+          absorb(
+            [JSON.parse((event as MessageEvent).data) as ActivityStep],
+            true,
+          );
+        } catch {
+          // 坏的一条不影响后面的。
+        }
+      });
+      source.onerror = () => setLive(false);
+      return () => {
+        source.close();
+        setLive(false);
+      };
+    },
+  );
 
-  useEffect(() => {
-    if (legacy || live) return;
-    const timer = setInterval(refresh, running ? 3_000 : 15_000);
-    return () => clearInterval(timer);
-  }, [legacy, live, refresh, running]);
+  useInterval(
+    refresh,
+    legacy || live ? null : running ? 3_000 : 15_000,
+    objectConnectionKey(refresh),
+  );
 
   return {
     steps,

@@ -1,6 +1,6 @@
-import { useEffect } from "react";
 import { z } from "zod";
 import { PageCard } from "@/components/pages/page-card";
+import { useExternalConnection } from "@/hooks";
 import { useRenderTool } from "@/lib/chat/renderers";
 import { pageIdFromResult, reportPageOrigin } from "@/lib/pages";
 
@@ -35,7 +35,9 @@ function render({
 
 export function PagesTool() {
   // 告诉服务器从哪个地址打开 ChisaBot，机器人回复里的页面链接才是完整地址（网关后面服务器看不到）。
-  useEffect(() => reportPageOrigin(), []);
+  useExternalConnection(true, () => {
+    reportPageOrigin();
+  });
   useRenderTool({ name: "page_create", parameters, render });
   useRenderTool({ name: "page_update", parameters, render });
   useRenderTool({ name: "page_publish", parameters, render });

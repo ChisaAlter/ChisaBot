@@ -1,4 +1,5 @@
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
+import { useTimeout } from "@/hooks";
 import { isStaleChunkError, reloadForStaleChunk } from "@/lib/stale-chunk";
 
 /**
@@ -16,10 +17,7 @@ const SLOW_HINT_MS = 10_000;
 
 function useSlow(ms: number) {
   const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setSlow(true), ms);
-    return () => window.clearTimeout(timer);
-  }, [ms]);
+  useTimeout(() => setSlow(true), slow ? null : ms, ms);
   return slow;
 }
 

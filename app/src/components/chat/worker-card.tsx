@@ -8,7 +8,8 @@ import {
   IconSend2,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { useAutoFocus, useTimeout } from "@/hooks";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   ACTIVE_WORKER,
@@ -47,12 +48,13 @@ export function WorkerCard({
     ? workers.data?.find((item) => item.id === workerId)
     : undefined;
   // 刚委派、列表里还没有它：马上再取一次（之后有任务在跑就自动轮询）。
-  useEffect(() => {
-    if (workerId && workers.data && !worker) {
-      const timer = setTimeout(() => void workers.refetch(), 400);
-      return () => clearTimeout(timer);
-    }
-  }, [workerId, worker, workers]);
+  useTimeout(
+    () => {
+      void workers.refetch();
+    },
+    workerId && workers.data && !worker ? 400 : null,
+    `${workerId ?? ""}:${workers.dataUpdatedAt}:${workers.errorUpdatedAt}:${workers.fetchStatus}`,
+  );
   if (!worker || !threadId) {
     return (
       <div
@@ -184,9 +186,7 @@ export function WorkerCardBody({
   const [sent, setSent] = useState(false);
   const act = useWorkerAction(threadId);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (steering) input.current?.focus();
-  }, [steering]);
+  useAutoFocus(input, steering);
 
   const started = worker.startedAt
     ? Date.parse(worker.startedAt)

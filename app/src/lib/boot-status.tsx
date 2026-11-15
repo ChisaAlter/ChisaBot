@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
 
 /** The classic HTML guard owns reporting; a missing guard must never affect React. */
 export function reportBootStage(stage: "entry-executing" | "react-mounted") {
@@ -10,6 +10,8 @@ export function reportBootStage(stage: "entry-executing" | "react-mounted") {
 }
 
 export function BootCommitMarker() {
-  useEffect(() => reportBootStage("react-mounted"), []);
+  useExternalConnection(true, () => {
+    reportBootStage("react-mounted");
+  });
   return null;
 }

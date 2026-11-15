@@ -25,8 +25,21 @@
  * SOFTWARE.
  */
 import { useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { cn } from "@/lib/utils";
+
+const streamIds = new WeakMap<MediaStream, number>();
+let nextStreamId = 1;
+
+function getStreamKey(stream: MediaStream | undefined): number {
+  if (!stream) return 0;
+  const existing = streamIds.get(stream);
+  if (existing !== undefined) return existing;
+  const id = nextStreamId++;
+  streamIds.set(stream, id);
+  return id;
+}
 
 export function LiveWaveform({
   stream,
@@ -44,9 +57,11 @@ export function LiveWaveform({
   const reduceMotion = useReducedMotion();
   const [unavailable, setUnavailable] = useState(false);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
+  useExternalConnection(
+    `${getStreamKey(stream)}:${processing}:${height}:${reduceMotion ?? false}`,
+    () => {
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
     if (!canvas || !container) return;
     const context = canvas.getContext("2d");
     if (!context) return;
@@ -136,7 +151,8 @@ export function LiveWaveform({
           );
       }
     };
-  }, [stream, processing, height, reduceMotion]);
+    },
+  );
 
   return (
     <div

@@ -16,7 +16,7 @@ import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   BotChatMenuItems,
   BotRowComputerChip,
@@ -353,9 +353,10 @@ function BotRow({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  useEffect(() => {
-    if (menuOpen) preloadBotDialogs();
-  }, [menuOpen]);
+  const handleMenuOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) preloadBotDialogs();
+    setMenuOpen(nextOpen);
+  };
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
   const waiting = attention ? needsInput(attention) : 0;
   const unread = !selected && attention ? attention.unread > 0 : false;
@@ -430,7 +431,7 @@ function BotRow({
       className={cn("glass-bot-row", lit && "is-on", menuOpen && "menu-open")}
       onContextMenu={(event) => {
         event.preventDefault();
-        setMenuOpen(true);
+        handleMenuOpenChange(true);
       }}
     >
       {latest ? (
@@ -460,7 +461,7 @@ function BotRow({
         </Link>
       )}
       <BotRowComputerChip chat={chat} />
-      <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+      <DropdownMenu onOpenChange={handleMenuOpenChange} open={menuOpen}>
         <DropdownMenuTrigger
           render={
             <button
@@ -1120,9 +1121,10 @@ function MiniBot({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  useEffect(() => {
-    if (menuOpen) preloadBotDialogs();
-  }, [menuOpen]);
+  const handleMenuOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) preloadBotDialogs();
+    setMenuOpen(nextOpen);
+  };
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
   const chat = useBotChat(bot.id);
   // 正在切到别的机器人时，旧对话登记的控件不再让这一行亮着（FIX-PLAN F0）。
@@ -1177,7 +1179,7 @@ function MiniBot({
       className={cn("glass-mini-slot", lit && "is-on", menuOpen && "menu-open")}
       onContextMenu={(event) => {
         event.preventDefault();
-        setMenuOpen(true);
+        handleMenuOpenChange(true);
       }}
     >
       <RailTip label={label}>
@@ -1216,7 +1218,7 @@ function MiniBot({
           title={computer === "needs" ? "计算机需要你" : "计算机已打开"}
         />
       ) : null}
-      <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+      <DropdownMenu onOpenChange={handleMenuOpenChange} open={menuOpen}>
         <DropdownMenuTrigger
           render={
             <button

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { channelFromRoster, channelQueryOptions } from "@/lib/channels/queries";
 import { threadUi } from "@/lib/chat/ui-memory";
@@ -72,22 +73,26 @@ export function usePanelBot(): {
 
   // A remembered Bot that has since been deleted is forgotten once the roster says so, so the
   // panel rail never asks for panels of a Bot that no longer exists.
-  const rosterIds = agents.isSuccess ? known.join("\n") : null;
-  useEffect(() => {
+  const unknownStored =
+    agents.isSuccess &&
+    stored &&
+    stored !== routeBotId &&
+    !known.includes(stored)
+      ? stored
+      : false;
+  useExternalConnection(unknownStored, (deletedBotId) => {
     // The open conversation's Bot is never "unknown" here, even when it is hidden from the roster.
-    if (rosterIds === null || !stored || stored === routeBotId) return;
-    if (!rosterIds.split("\n").includes(stored)) {
-      forgetStoredPanelBot(stored);
-      setStored(undefined);
-    }
-  }, [rosterIds, stored, routeBotId]);
+    forgetStoredPanelBot(deletedBotId);
+    setStored(undefined);
+  });
 
-  useEffect(() => {
-    if (routeBotId && routeBotId !== stored) {
-      writeStoredPreference(PANEL_BOT_KEY, routeBotId);
-      setStored(routeBotId);
-    }
-  }, [routeBotId, stored]);
+  useExternalConnection(
+    routeBotId && routeBotId !== stored ? routeBotId : false,
+    (nextBotId) => {
+      writeStoredPreference(PANEL_BOT_KEY, nextBotId);
+      setStored(nextBotId);
+    },
+  );
 
   return {
     botId: routeBotId ?? fallback,

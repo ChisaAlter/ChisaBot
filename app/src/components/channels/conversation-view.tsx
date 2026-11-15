@@ -2,7 +2,6 @@ import type { Message } from "@ag-ui/core";
 import {
   type ReactNode,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -19,6 +18,7 @@ import {
   type QueuedMessage,
   reduceQueue,
 } from "@/components/channels/composer";
+import { useExternalConnection } from "@/hooks";
 import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
@@ -311,16 +311,13 @@ export function ConversationView({
    * transition in the same commit, the state is a render behind and the ref is not. Empty on
    * StrictMode's development double-mount, which makes that pass a no-op.
    */
-  useEffect(
-    () => () => {
-      for (const message of queuedRef.current) {
-        for (const attachment of message.attachments) {
-          releaseStagedAttachment(attachment);
-        }
+  useExternalConnection(true, () => () => {
+    for (const message of queuedRef.current) {
+      for (const attachment of message.attachments) {
+        releaseStagedAttachment(attachment);
       }
-    },
-    [],
-  );
+    }
+  });
 
   /**
    * A RUN BUILT OUT OF THIS QUEUE FAILED, SO THE DRAIN WAITS FOR A TURN BEFORE TRYING AGAIN.
@@ -456,8 +453,8 @@ export function ConversationView({
    *
    * AND IT REFUSES ONCE A DRAIN HAS FAILED, until a turn starts. See `heldBack`.
    */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: inFlight 起落与 sendBlocked/queued 都是放行条件的组成，每一个都要触发重估
-  useEffect(() => {
+  const drainKey = `${inFlight ? 1 : 0}\0${disabled ? 1 : 0}\0${sendBlocked ? 1 : 0}\0${queued.length}`;
+  useExternalConnection(drainKey, () => {
     const started = inFlight && !wasInFlight.current;
     wasInFlight.current = inFlight;
     if (inFlight) {
@@ -520,7 +517,7 @@ export function ConversationView({
        */
       restoreFailedRun(carried);
     });
-  }, [apply, disabled, inFlight, queued.length, restoreFailedRun, sendBlocked]);
+  });
 
   /*
    * 重试 resends what the failed turn put back into the composer: the composer restores the words,

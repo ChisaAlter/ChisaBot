@@ -1,14 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useExternalConnection } from "@/hooks";
 import type { ConversationSession } from "@/lib/chat/session-client";
 import { client } from "@/lib/client";
 import type {
   ToolOutcomeResolution,
   UnknownToolOperation,
 } from "../../../../shared/conversations";
+
+const instanceIds = new WeakMap<object, number>();
+let nextInstanceId = 1;
+
+function instanceKey(value: object): number {
+  const existing = instanceIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextInstanceId++;
+  instanceIds.set(value, created);
+  return created;
+}
 
 /** Uses persisted operations, so the same decision remains available after reopening a chat. */
 export function ToolOutcomeNotice({
@@ -36,16 +48,19 @@ export function ToolOutcomeNotice({
     },
     refetchInterval: (state) => (state.state.data?.length ? 5000 : false),
   });
-  useEffect(() => {
-    const subscription = agent.subscribe({
-      onRunFinishedEvent: () => {
-        void cache.invalidateQueries({
-          queryKey: ["conversation-operations", agent.threadId],
-        });
-      },
-    });
-    return () => subscription.unsubscribe();
-  }, [agent, cache]);
+  useExternalConnection(
+    `${instanceKey(agent)}\0${instanceKey(cache)}`,
+    () => {
+      const subscription = agent.subscribe({
+        onRunFinishedEvent: () => {
+          void cache.invalidateQueries({
+            queryKey: ["conversation-operations", agent.threadId],
+          });
+        },
+      });
+      return () => subscription.unsubscribe();
+    },
+  );
   const operation = query.data?.[0];
   if (query.isError && !operation)
     return (

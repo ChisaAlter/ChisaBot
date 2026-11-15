@@ -19,12 +19,12 @@ import {
 import {
   type CSSProperties,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useTimeout } from "@/hooks";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
 import {
@@ -111,11 +111,7 @@ export function usePreviewImage(
  */
 export function useSettledText(text: string, ms = 900): string {
   const [settled, setSettled] = useState(text);
-  useEffect(() => {
-    if (settled === text) return;
-    const timer = window.setTimeout(() => setSettled(text), ms);
-    return () => window.clearTimeout(timer);
-  }, [text, ms, settled]);
+  useTimeout(() => setSettled(text), settled === text ? null : ms, text);
   return settled;
 }
 
