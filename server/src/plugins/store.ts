@@ -949,7 +949,7 @@ export async function exchangeRefreshTokenOverHttp(input: {
   } catch (error) {
     if (error instanceof BlockedUrlError) {
       throw new TokenRefusedError(
-        `The vendor token URL is not a safe public address (${error.message}).`,
+        `The vendor token URL is not a safe public address (${withoutStatement(error)}).`,
         null,
       );
     }
