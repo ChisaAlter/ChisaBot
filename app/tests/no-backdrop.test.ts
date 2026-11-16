@@ -173,9 +173,8 @@ const EXEMPT: Record<string, string> = {
   ".glass-newchat": "小按钮，平常也不模糊",
   ".glass-icon-btn": "小按钮，平常也不模糊",
   ".glass-mini-new": "小按钮，平常也不模糊",
-  // 气泡、对话里的卡片、设置页卡片：本地 --lg-blur: none（render-budget.test.ts），平常也不模糊。
-  '[data-slot="bubble-content"]': "气泡，平常也不模糊",
-  ".jr-card": "对话里的卡片，平常也不模糊",
+  // 设置页卡片：本地 --lg-blur: none（render-budget.test.ts），平常也不模糊；
+  // 聊天气泡与 .jr-card 与侧栏共用 --lg-blur，关闭模糊时已由 perf-noblur.css 切为不透明底色。
   ".page-rows": "设置页卡片，平常也不模糊",
   ".sg-card": "设置页卡片，平常也不模糊",
   form: "设置页卡片（.page-section > form），平常也不模糊",

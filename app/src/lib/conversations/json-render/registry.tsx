@@ -17,7 +17,9 @@ import {
   useState,
 } from "react";
 import { useTimeout } from "@/hooks";
-import { LinkCard } from "@/components/rich-previews/link-card";
+import { LinkCard, LinkCardStack } from "@/components/rich-previews/link-card";
+import { Lightbox } from "@/components/rich-previews/lightbox";
+import { ImagePile } from "@/components/rich-previews/rich-previews";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -30,6 +32,7 @@ import {
 import { Chart, Gauge, HeatStrip, Ring, Sparkline, SparkSvg } from "./charts";
 import { iconFor } from "./icons";
 import { emptyMarkProps, InitialMark } from "./initial-mark";
+import type { ExtractedMediaDeck } from "./media-deck";
 import { Products } from "./products";
 import {
   Accordion,
@@ -61,6 +64,7 @@ import {
   hueOf,
   safeHttp,
   safeHttps,
+  safeRenderImageSrc,
   splitDotted,
   trendOfText,
 } from "./rich-utils";
@@ -300,6 +304,78 @@ class NodeBoundary extends Component<
  * - 没图、icon 认得出：语义色图标块。
  * - 没图、icon 认不出或没写：不占位（「认不出的名字不画」，连底色块一起不画）。
  */
+function RenderImage({
+  src,
+  alt,
+  caption,
+  aspect,
+  href,
+}: {
+  src: string;
+  alt: string;
+  caption?: string | null;
+  aspect?: string | null;
+  href?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const safeSrc = safeRenderImageSrc(src);
+  const safeLink = safeHttp(href);
+  return (
+    <figure
+      className={cn(
+        "jr-image jr-el",
+        aspect && aspect !== "auto" && "has-aspect",
+      )}
+      style={
+        aspect && aspect !== "auto"
+          ? ({
+              "--jr-aspect": aspect.replace(":", " / "),
+            } as CSSProperties)
+          : undefined
+      }
+    >
+      {safeSrc ? (
+        safeLink ? (
+          <ActionArea className="jr-image-a" item={{ href: safeLink }}>
+            <img
+              alt={alt}
+              decoding="async"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              src={safeSrc}
+            />
+          </ActionArea>
+        ) : (
+          <button
+            aria-label={`查看图片${alt ? `：${alt}` : ""}`}
+            className="jr-image-a w-full cursor-zoom-in border-0 bg-transparent p-0 text-left"
+            onClick={() => setOpen(true)}
+            type="button"
+          >
+            <img
+              alt={alt}
+              decoding="async"
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              src={safeSrc}
+            />
+          </button>
+        )
+      ) : (
+        <div className="jr-image-blocked">{"图片地址不安全，已隐藏"}</div>
+      )}
+      {caption ? <figcaption>{caption}</figcaption> : null}
+      {open && safeSrc ? (
+        <Lightbox
+          images={[{ src: safeSrc, alt, name: caption || alt }]}
+          onClose={() => setOpen(false)}
+          startIndex={0}
+        />
+      ) : null}
+    </figure>
+  );
+}
+
 function ListMark({
   image,
   icon,
@@ -899,40 +975,15 @@ export const { registry: jsonRenderRegistry } = defineRegistry(
           </div>
         );
       },
-      Image: ({ props }) => {
-        const safe =
-          typeof props.src === "string" && /^https:\/\//i.test(props.src);
-        return (
-          <figure
-            className={cn(
-              "jr-image jr-el",
-              props.aspect && props.aspect !== "auto" && "has-aspect",
-            )}
-            style={
-              props.aspect && props.aspect !== "auto"
-                ? ({
-                    "--jr-aspect": props.aspect.replace(":", " / "),
-                  } as CSSProperties)
-                : undefined
-            }
-          >
-            {safe ? (
-              <ActionArea className="jr-image-a" item={{ href: props.href }}>
-                <img
-                  alt={props.alt}
-                  decoding="async"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                  src={props.src}
-                />
-              </ActionArea>
-            ) : (
-              <div className="jr-image-blocked">{"图片地址不安全，已隐藏"}</div>
-            )}
-            {props.caption ? <figcaption>{props.caption}</figcaption> : null}
-          </figure>
-        );
-      },
+      Image: ({ props }) => (
+        <RenderImage
+          alt={props.alt}
+          aspect={props.aspect}
+          caption={props.caption}
+          href={props.href}
+          src={props.src}
+        />
+      ),
       Separator: ({ props }) =>
         props.label ? (
           <div className="jr-sep-l jr-el">
@@ -1095,3 +1146,18 @@ for (const [type, Render] of Object.entries(jsonRenderRegistry)) {
     </NodeBoundary>
   );
 }
+
+jsonRenderRegistry.__mediaDeck = ({ element }) => {
+  const deck = (element.props as { deck?: ExtractedMediaDeck } | undefined)
+    ?.deck;
+  if (!deck) return null;
+  return (
+    <NodeBoundary type="__mediaDeck">
+      {deck.kind === "images" ? (
+        <ImagePile align="start" images={deck.items} />
+      ) : (
+        <LinkCardStack items={deck.items} />
+      )}
+    </NodeBoundary>
+  );
+};

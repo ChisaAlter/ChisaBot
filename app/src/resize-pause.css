@@ -10,7 +10,7 @@
  * - 不用 :has()、不用通配，只点名具体的类；不加 blur，不加动画。
  */
 
-/* 大板块：左栏、账号卡、收起态左栏、右栏、输入框、对话内嵌卡片。 */
+/* 大板块：左栏、账号卡、收起态左栏、右栏、输入框、聊天气泡与对话内嵌卡片。 */
 html[data-resizing]:not(#chisabot-no-blur)
 :is(
   .glass-side-card,
@@ -19,13 +19,18 @@ html[data-resizing]:not(#chisabot-no-blur)
   .glass-mini-card,
   .rail-card,
   .glass-composer,
+  [data-slot="bubble-content"],
   .jr-card
 ) {
   --lg-blur: none;
   --lg-shadow: none;
   --lg-surface: var(--glass-bg-opaque);
   --lg-surface-strong: var(--glass-bg-opaque);
+  --bubble-user-bg: var(--glass-bg-opaque);
   transition: none;
+}
+html[data-resizing]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubble-content"] {
+  --lg-surface-strong: transparent;
 }
 
 /* 玻璃外壳、弹出层、卡片：直接写属性。 */

@@ -347,7 +347,7 @@ a.lc-card[href]:hover {
 
 /*
  * 一叠卡。卡宽 --lc-w：桌面 208px；窄的时候（手机）按容器宽缩，保证整叠（卡宽 + 两侧各 0.72 卡宽）不出屏。
- * 槽位：主位居中不倾斜；左槽 / 右槽向两边错开 0.72 卡宽、往下 0.24 / 0.30 卡宽、倾斜 -4° / 3.5°、缩到 0.94。
+ * 槽位：主位居中不倾斜；左槽 / 右槽向两边错开 0.72 卡宽、往下 0.32 / 0.40 卡宽基准（窄屏按 196px 下限兜底）、倾斜 -4° / 3.5°、缩到 0.94。
  */
 .lc-stack {
   container-type: inline-size;
@@ -358,6 +358,11 @@ a.lc-card[href]:hover {
   --lc-sides: calc(var(--lc-left, 1) + var(--lc-right, 1));
   --lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.72 * var(--lc-sides))));
   --lc-step: calc(var(--lc-w) * 0.72);
+  --lc-drop-unit: max(var(--lc-w), 196px);
+}
+.lc-stack[data-deck][data-count="2"] {
+  --lc-step: calc(var(--lc-w) * 0.88);
+  --lc-w: min(208px, calc((100cqw - 16px) / (1 + 0.88 * var(--lc-sides))));
 }
 .lc-stack-track {
   display: flex;
@@ -369,7 +374,7 @@ a.lc-card[href]:hover {
   width: max-content;
   padding: var(--sp-3, 12px)
     calc(var(--lc-step) * var(--lc-right, 1) + var(--sp-2, 8px))
-    calc(var(--lc-w) * 0.3 + var(--sp-4, 16px))
+    calc(var(--lc-drop-unit) * 0.4 + var(--sp-4, 16px))
     calc(var(--lc-step) * var(--lc-left, 1) + var(--sp-2, 8px));
 }
 .rp-stack[data-align="end"] .lc-stack-track {
@@ -388,7 +393,7 @@ a.lc-card[href]:hover {
   transform-origin: 50% 60%;
   transform: translate(
       calc(var(--lc-step) * var(--lc-sx, 0)),
-      calc(var(--lc-w) * var(--lc-sy, 0))
+      calc(var(--lc-drop-unit) * var(--lc-sy, 0))
     )
     rotate(var(--lc-rot, 0deg)) scale(var(--lc-sc, 1));
 }

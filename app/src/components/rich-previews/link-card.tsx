@@ -66,6 +66,8 @@ export type LinkCardProps = GivenLinkFields &
     slot?: LinkStackSlot;
     /** 一叠里的序号（层级、测试用）。 */
     stackIndex?: number;
+    /** 一叠里的总张数（用于区分 2 张双卡扇形与 3 张品字扇形）。 */
+    stackTotal?: number;
     /** 层级（主位的卡在最前）。 */
     layer?: number;
     /** 一叠里的卡被点 / 聚焦时交给外层决定要不要挪到主位。 */
@@ -166,17 +168,28 @@ export const LINK_STACK_GEOMETRY: Record<
   { x: number; y: number; rot: number; scale: number }
 > = {
   main: { x: 0, y: 0, rot: 0, scale: 1 },
-  left: { x: -1, y: 0.24, rot: -4, scale: 0.94 },
-  right: { x: 1, y: 0.3, rot: 3.5, scale: 0.94 },
+  left: { x: -1, y: 0.32, rot: -4, scale: 0.94 },
+  right: { x: 1, y: 0.4, rot: 3.5, scale: 0.94 },
 };
 
-function slotStyle(slot: LinkStackSlot | undefined, layer: number | undefined) {
+function slotStyle(
+  slot: LinkStackSlot | undefined,
+  layer: number | undefined,
+  total: number,
+) {
   if (!slot) return undefined;
   const g = LINK_STACK_GEOMETRY[slot];
+  const isTwoDeck = total === 2;
+  const rot =
+    isTwoDeck && slot === "main"
+      ? -2.5
+      : isTwoDeck && slot === "right"
+        ? 3.5
+        : g.rot;
   return {
     "--lc-sx": String(g.x),
     "--lc-sy": String(g.y),
-    "--lc-rot": `${g.rot}deg`,
+    "--lc-rot": `${rot}deg`,
     "--lc-sc": String(g.scale),
     zIndex: layer ?? 1,
   } as CSSProperties;
@@ -326,6 +339,7 @@ export function LinkCardSkeleton({
   title,
   site,
   slot,
+  stackTotal = 3,
   layer,
   className,
 }: {
@@ -333,6 +347,7 @@ export function LinkCardSkeleton({
   title?: string | null;
   site?: string | null;
   slot?: LinkStackSlot;
+  stackTotal?: number;
   layer?: number;
   className?: string;
 }) {
@@ -344,7 +359,7 @@ export function LinkCardSkeleton({
       data-layout="image"
       data-stack-slot={slot}
       data-testid="link-card-skeleton"
-      style={slotStyle(slot, layer)}
+      style={slotStyle(slot, layer, stackTotal)}
     >
       <span
         className="lc-media lc-skel-block"
@@ -376,6 +391,7 @@ export function LinkCard({
   url,
   slot,
   stackIndex,
+  stackTotal = 3,
   layer,
   onStackClick,
   onStackFocus,
@@ -418,6 +434,7 @@ export function LinkCard({
         layer={layer}
         site={given.title ? fields.site : null}
         slot={slot}
+        stackTotal={stackTotal}
         title={given.title ? fields.title : null}
         url={href}
       />
@@ -447,7 +464,7 @@ export function LinkCard({
       data-layout="image"
       data-primary={slot === "main" ? "" : undefined}
       data-stack-slot={slot}
-      style={slotStyle(slot, layer)}
+      style={slotStyle(slot, layer, stackTotal)}
     >
       <a
         aria-label={`${title}（${line}），在新窗口打开`}
@@ -575,8 +592,11 @@ export function LinkCard({
 // 一叠卡
 // ---------------------------------------------------------------------------------------------
 
-/** 一叠里的一项：来源格式（{@link LinkSourceFields}）+ 正文链接的标签（meta）。 */
-export type LinkStackItem = LinkSourceFields & { meta?: string | null };
+export type LinkStackItem = LinkSourceFields & {
+  meta?: string | null;
+  image?: string | null;
+  description?: string | null;
+};
 
 /** 换主位后的锁定时间：不短于 link-card.css 的 transition（--dur-2，220ms）。这段时间里不再换主位，免得卡片在指针下来回换。 */
 export const LINK_STACK_MOVE_MS = 250;
@@ -768,6 +788,8 @@ export function LinkCardStack({
             // biome-ignore lint/suspicious/noArrayIndexKey: 同上——位置序是唯一能区分开重复 URL 的部分
             key={`${i}:${item.url}`}
             layer={isStack ? layers[i] : undefined}
+            description={item.description}
+            image={item.image}
             meta={item.meta}
             site={item.site}
             toolCallId={item.toolCallId}
@@ -791,6 +813,7 @@ export function LinkCardStack({
             }
             slot={isStack ? slots[i] : undefined}
             stackIndex={i}
+            stackTotal={total}
             title={item.title}
             url={item.url}
           />
@@ -801,6 +824,7 @@ export function LinkCardStack({
             url={pendingUrl}
             layer={isStack ? layers[shown.length] : undefined}
             slot={isStack ? slots[shown.length] : undefined}
+            stackTotal={total}
           />
         ) : null}
       </div>

@@ -98,6 +98,56 @@ describe("json-render catalog (render_ui)", () => {
     }
   });
 
+  test("Image allows same-origin /api/chat-files and attachment paths while rejecting insecure or traversal URLs", () => {
+    const valid = inspectRenderUiSpec(
+      JSON.stringify({
+        root: "s",
+        elements: {
+          s: { type: "Stack", props: {}, children: ["i1", "i2"] },
+          i1: {
+            type: "Image",
+            props: { src: "/api/chat-files/cf_123", alt: "图一" },
+            children: [],
+          },
+          i2: {
+            type: "Image",
+            props: {
+              src: "/api/channels/ch_1/attachments/att_1?w=240",
+              alt: "图二",
+            },
+            children: [],
+          },
+        },
+      }),
+    );
+    expect(valid.ok).toBe(true);
+    if (valid.ok) {
+      expect(Object.keys(valid.spec.elements)).toEqual(["s", "i1", "i2"]);
+    }
+
+    for (const badSrc of [
+      "http://x.test/a.png",
+      "//evil.test/a.png",
+      "/api/chat-files/../secret",
+    ]) {
+      const rejected = validateRenderUiSpec(
+        parseRenderUiSpec(
+          JSON.stringify({
+            root: "img",
+            elements: {
+              img: {
+                type: "Image",
+                props: { src: badSrc, alt: "bad" },
+                children: [],
+              },
+            },
+          }),
+        ),
+      );
+      expect(rejected.ok).toBe(false);
+    }
+  });
+
   test("action bindings are checked: unknown actions and missing params", () => {
     const button = (on: unknown) => ({
       root: "b",

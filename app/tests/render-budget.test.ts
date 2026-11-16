@@ -7,8 +7,8 @@ import path from "node:path";
  *
  * 同屏可见的毛玻璃层数要看页面上实际挂了哪些元素，这里不跑浏览器，拆成样式表上能检查的几条：
  *   1. 任何 blur() 都不超过 30px；Hark 玻璃令牌 --glass-blur 20px、--glass-pop-blur 12px，饱和度 160–180%；
- *   2. 会模糊的规则只有下面列出的这些：左栏、右栏、输入框、顶栏、弹层 / 抽屉 / 对话框（外观设置页自己的预览除外）；
- *   3. 气泡、按钮、胶囊、对话里的卡片、设置页卡片不模糊（旧的 !important 玻璃层靠本地 --lg-blur: none 关掉）；
+ *   2. 会模糊的规则只有下面列出的这些：左栏、右栏、输入框、顶栏、聊天气泡、顶层对话卡片、弹层 / 抽屉 / 对话框（外观设置页自己的预览除外）；
+ *   3. 裸代码块气泡、按钮、胶囊、嵌套对话卡片、设置页卡片不模糊（旧的 !important 玻璃层靠本地 --lg-blur: none 关掉）；
  *   4. 无限循环的动画只动 transform / opacity；滚动区不再挂渐隐遮罩。
  * 左右栏 + 输入框 + 顶栏 + 一个弹层，同屏合计 ≤ 6 层。实际页面的数目由浏览器审计记在 PR 里。
  */
@@ -124,11 +124,12 @@ test("only the rails, the composer, the top bar and popups blur", () => {
   ]);
 });
 
-test("bubbles, buttons, pills and in-chat or settings cards switch the old glass layer off", () => {
+test("bare code bubbles, buttons, pills and settings cards switch the old glass layer off", () => {
   const off = all.filter(
     (r) =>
       /--lg-blur:\s*none/.test(r.body) &&
-      !r.selector.startsWith("html[data-perf"),
+      !r.selector.startsWith("html[data-perf") &&
+      !r.selector.startsWith("html:root"),
   );
   const covered = off.map((r) => r.selector).join(", ");
   for (const s of [
@@ -136,9 +137,7 @@ test("bubbles, buttons, pills and in-chat or settings cards switch the old glass
     ".glass-newchat",
     ".glass-icon-btn",
     ".glass-mini-new",
-    // 设在气泡本身上，气泡内容继承到 none
-    '.glass-main [data-slot="bubble"]',
-    ".jr-card",
+    '.chat-bubble-bare > [data-slot="bubble-content"]',
     ".page-rows",
     ".sg-card",
     ".page-section > form",

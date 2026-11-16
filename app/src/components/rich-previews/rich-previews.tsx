@@ -1,4 +1,5 @@
 import {
+  IconArrowUpRight,
   IconDownload,
   IconEye,
   IconFile,
@@ -9,21 +10,13 @@ import {
   IconFileTypePdf,
   IconFileZip,
   IconMessageReply,
-  IconPhoto,
 } from "@tabler/icons-react";
 import {
   QueryClientProvider,
   useQueries,
   useQuery,
 } from "@tanstack/react-query";
-import {
-  type CSSProperties,
-  type ReactNode,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
 import { useTimeout } from "@/hooks";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -200,13 +193,93 @@ function LinkPreviewCardsInner({
 }
 
 // ---------------------------------------------------------------------------------------------
-// 图片：单张 / 一摞
+// 图片：单张 / 错落扇形牌组
 // ---------------------------------------------------------------------------------------------
 
-export type PileImage = LightboxImage;
+export type PileImage = LightboxImage & {
+  caption?: string | undefined;
+  href?: string | undefined;
+};
 
-const ROTATIONS = [-5, 4, -2.5, 3];
+export type ImagePileSlot = {
+  sx: number;
+  sy: number;
+  rot: number;
+  scale: number;
+  z: number;
+};
+
+export type ImagePileGeometry = {
+  leftSpan: number;
+  rightSpan: number;
+  dropSpan: number;
+  slots: readonly ImagePileSlot[];
+};
+
 const MAX_IN_PILE = 4;
+
+const IMAGE_PILE_GEOMETRIES: Record<2 | 3 | 4, ImagePileGeometry> = {
+  2: {
+    leftSpan: 0.42,
+    rightSpan: 0.42,
+    dropSpan: 0.32,
+    slots: [
+      { sx: -0.42, sy: 0, rot: -2.8, scale: 1, z: 20 },
+      { sx: 0.42, sy: 0.32, rot: 3.5, scale: 0.95, z: 10 },
+    ],
+  },
+  3: {
+    leftSpan: 0.82,
+    rightSpan: 0.82,
+    dropSpan: 0.38,
+    slots: [
+      { sx: -0.82, sy: 0.28, rot: -4, scale: 0.94, z: 20 },
+      { sx: 0, sy: 0, rot: 0, scale: 1, z: 30 },
+      { sx: 0.82, sy: 0.38, rot: 3.5, scale: 0.94, z: 10 },
+    ],
+  },
+  4: {
+    leftSpan: 1.02,
+    rightSpan: 1.02,
+    dropSpan: 0.28,
+    slots: [
+      { sx: -1.02, sy: 0.26, rot: -5, scale: 0.92, z: 10 },
+      { sx: -0.34, sy: 0.04, rot: -1.8, scale: 0.97, z: 25 },
+      { sx: 0.34, sy: 0, rot: 1.8, scale: 1, z: 30 },
+      { sx: 1.02, sy: 0.28, rot: 4.5, scale: 0.93, z: 20 },
+    ],
+  },
+};
+
+export function imagePileGeometry(total: number): ImagePileGeometry {
+  if (total <= 2) return IMAGE_PILE_GEOMETRIES[2];
+  if (total === 3) return IMAGE_PILE_GEOMETRIES[3];
+  return IMAGE_PILE_GEOMETRIES[4];
+}
+
+function safeImageHref(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return null;
+  }
+}
+
+function keyImages(items: readonly PileImage[]) {
+  const counts = new Map<string, number>();
+  return items.map((image, i) => {
+    const seen = (counts.get(image.src) ?? 0) + 1;
+    counts.set(image.src, seen);
+    return {
+      image,
+      index: i,
+      key: `${image.src}#${seen}`,
+    };
+  });
+}
 
 export function ImagePile({
   images,
@@ -219,41 +292,11 @@ export function ImagePile({
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   /** 加载完的图：没有宽高的那张换下占位框（尺寸那时记进了 `imageSizes`）。 */
   const [loaded, setLoaded] = useState<Record<string, boolean>>({});
-  const [spread, setSpread] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [step, setStep] = useState(110);
-  const root = useRef<HTMLDivElement | null>(null);
-  // 按下那一刻是否已经摊开：轻点会先触发 focus（把这一摞摊开），click 时再读 state 就晚了。
-  const spreadAtPress = useRef<boolean | null>(null);
   const shown = useMemo(
     () => images.filter((image) => !broken[image.src]),
     [images, broken],
   );
-
-  // 摊开时每张错开多少：容器越宽错开越多（窄栏 / 手机也不会出界）。
-  useLayoutEffect(() => {
-    const el = root.current?.parentElement;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      const visible = Math.min(shown.length, MAX_IN_PILE);
-      const card =
-        root.current?.querySelector<HTMLElement>(".rp-pile-card")
-          ?.offsetWidth ?? 160;
-      const width = el.clientWidth;
-      setStep(
-        visible > 1
-          ? Math.max(
-              24,
-              Math.min(card * 0.82, (width - card - 8) / (visible - 1)),
-            )
-          : 0,
-      );
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [shown.length]);
 
   if (images.length === 0) return null;
   /*
@@ -314,6 +357,11 @@ export function ImagePile({
 
   const visible = shown.slice(0, MAX_IN_PILE);
   const extra = shown.length - visible.length;
+  const keyed = keyImages(visible);
+  const geometry = imagePileGeometry(visible.length);
+  const hasCaption = visible.some(
+    (item) => typeof item.caption === "string" && item.caption.trim() !== "",
+  );
   const coarse =
     typeof window !== "undefined" &&
     window.matchMedia?.("(hover: none)").matches;
@@ -323,89 +371,108 @@ export function ImagePile({
       <div
         aria-label={`${shown.length} 张图片`}
         className="rp-pile"
+        data-captioned={hasCaption ? "" : undefined}
+        data-count={visible.length}
         data-focused={hoveredIndex !== null ? "" : undefined}
-        data-spread={spread || undefined}
         onBlur={(event) => {
           if (
             !event.currentTarget.contains(event.relatedTarget as Node | null)
           ) {
-            setSpread(false);
             setHoveredIndex(null);
           }
-        }}
-        onFocus={() => setSpread(true)}
-        onMouseEnter={() => !coarse && setSpread(true)}
-        onPointerDownCapture={() => {
-          spreadAtPress.current = spread;
         }}
         onMouseLeave={() => {
-          if (!coarse) {
-            setSpread(false);
-            setHoveredIndex(null);
-          }
+          if (!coarse) setHoveredIndex(null);
         }}
-        ref={root}
         role="group"
         style={
           {
-            "--rp-step": `${step}px`,
-            "--rp-n": visible.length,
+            "--rp-left": String(geometry.leftSpan),
+            "--rp-right": String(geometry.rightSpan),
+            "--rp-drop": String(geometry.dropSpan),
+            "--rp-n": String(visible.length),
           } as CSSProperties
         }
       >
-        {visible.map((image, i) => {
-          const order = visible.length - 1 - i; // 第一张在最上面
+        {keyed.map(({ image, index: i, key }) => {
+          const slot = geometry.slots[i] ?? {
+            sx: 0,
+            sy: 0,
+            rot: 0,
+            scale: 1,
+            z: 1,
+          };
           const isFocused = hoveredIndex === i;
           const isDimmed = hoveredIndex !== null && hoveredIndex !== i;
+          const caption = image.caption?.trim() || "";
+          const href = safeImageHref(image.href);
+          const site = href ? hostOf(href) : "";
+          const label = caption || image.name || `图片 ${i + 1}`;
           return (
-            <button
-              aria-label={`查看第 ${i + 1} 张图片（共 ${shown.length} 张）`}
-              className="rp-pile-card"
+            <div
+              className="rp-pile-item"
               data-dimmed={isDimmed ? "" : undefined}
               data-focused={isFocused ? "" : undefined}
-              // biome-ignore lint/suspicious/noArrayIndexKey: 同一地址可以出现两次（两个附件指向同一份文件），位置才是唯一的
-              key={`${i}:${image.src}`}
-              onBlur={() => setHoveredIndex(null)}
-              onClick={() => {
-                // 手机上第一次轻点先摊开，再点哪张开哪张。
-                const wasSpread = spreadAtPress.current ?? spread;
-                spreadAtPress.current = null;
-                if (coarse && !wasSpread) {
-                  setSpread(true);
-                  return;
-                }
-                setOpen(i);
-              }}
-              onFocus={() => setHoveredIndex(i)}
-              onMouseEnter={() => !coarse && setHoveredIndex(i)}
-              onMouseLeave={() => !coarse && setHoveredIndex(null)}
+              key={key}
               style={
                 {
-                  "--rp-i": i,
-                  "--rp-rot": `${ROTATIONS[i % ROTATIONS.length]}deg`,
-                  zIndex: isFocused ? 25 : order + 1,
+                  "--rp-i": String(i),
+                  "--rp-sx": String(slot.sx),
+                  "--rp-sy": String(slot.sy),
+                  "--rp-rot": `${slot.rot}deg`,
+                  "--rp-sc": String(slot.scale),
+                  zIndex: isFocused ? 35 : slot.z,
                 } as CSSProperties
               }
-              type="button"
             >
-              <img
-                alt={image.alt || image.name || `图片 ${i + 1}`}
-                decoding="async"
-                draggable={false}
-                loading="lazy"
-                onError={() => markBroken(image.src)}
-                src={image.thumb ?? image.src}
-              />
-              {i === visible.length - 1 && extra > 0 ? (
-                <span className="rp-pile-more">+{extra}</span>
+              <button
+                aria-label={`查看第 ${i + 1} 张图片（共 ${shown.length} 张）`}
+                className="rp-pile-card"
+                data-dimmed={isDimmed ? "" : undefined}
+                data-focused={isFocused ? "" : undefined}
+                onBlur={() => setHoveredIndex(null)}
+                onClick={() => setOpen(i)}
+                onFocus={() => setHoveredIndex(i)}
+                onMouseEnter={() => !coarse && setHoveredIndex(i)}
+                onMouseLeave={() => !coarse && setHoveredIndex(null)}
+                type="button"
+              >
+                <span className="rp-pile-media">
+                  <img
+                    alt={image.alt || label}
+                    decoding="async"
+                    draggable={false}
+                    loading="lazy"
+                    onError={() => markBroken(image.src)}
+                    src={image.thumb ?? image.src}
+                  />
+                  {i === visible.length - 1 && extra > 0 ? (
+                    <span className="rp-pile-more">+{extra}</span>
+                  ) : null}
+                </span>
+                {hasCaption ? (
+                  <span className="rp-pile-body">
+                    <span className="rp-pile-caption">{caption || label}</span>
+                    {site ? <span className="rp-pile-site">{site}</span> : null}
+                  </span>
+                ) : null}
+              </button>
+              {href ? (
+                <a
+                  aria-label={`打开原页：${label}`}
+                  className="rp-pile-go"
+                  href={href}
+                  onClick={(event) => event.stopPropagation()}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                  title={site || href}
+                >
+                  <IconArrowUpRight aria-hidden className="size-3.5" />
+                </a>
               ) : null}
-            </button>
+            </div>
           );
         })}
-        <span aria-hidden className="rp-pile-count">
-          <IconPhoto className="size-3.5" />
-          {shown.length}
-        </span>
       </div>
       {open !== null ? (
         <Lightbox
