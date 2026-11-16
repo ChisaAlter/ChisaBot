@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+## 0.1.151 — 2026-11-16
+
+全端版本 0.1.151，Android versionCode 333。新增任务中心四列看板与本地 Markdown 双向协同（CB-127），并完成全仓架构边界、形式化状态机检验与实机 UI 自验收护栏收口。Windows 外壳指纹不变，无需重新安装；无需数据库迁移。
+
 - **任务中心四列看板与本地 Markdown 双向协同（CB-127 · DESIGN §134）**：任务中心弹层新增「看板」视图（默认仍保持 `Inbox`），右栏任务栏头新增「看板」入口，卡片菜单、详情弹窗与看板卡片支持一键「发到当前对话」，`最近交付` 卡片展示原属泳道与看板卡片编号。服务端新增 `/api/task-center/tasks/:id/schedule` 与 `/api/task-center/boards*` 接口（本机 `/roots` 与 `/boards*` 目录及看板写接口限定 `admin` 管理员权限），在既有授权目录沙箱、路径逃逸检查与 `markUntrusted` 隔离基础上支持 Autobahn 格式与 `docs/ROADMAP.md`+`docs/BACKLOG.md` 双文件看板的解析、整块改写（保留原行尾、锚点与未编辑卡片字节）、单行待办复选框翻转、同伴 `.md` 文档读写（SHA-256 `baseRevision` `409` 乐观并发与文件锁原子写入）、等宽透明覆盖层高亮编辑器，以及将看板卡片派发给 Bot / 本地智能体并在任务成功后自动将卡片标为完成并附上交付摘要（`#### 交付摘要（ChisaBot 自动回写）`）。前端与服务端增量更新即生效，无需数据库迁移（`chisabot_task_center` 运行期自动补齐兼容结构），无需重装客户端。
+- **工程基建与门禁收口**：全仓启用 Biome 零警告检查并清零生产代码非空断言，业务组件全面切换至 `app/src/hooks/` 外部同步原语、根除 `mock.module` 测试污染与未登记跨 surface / 裸 `process.env` / 裸 `fetch` 访问，引入四大核心状态机确定性 BFS 模型检验器与零下载实机 Edge/Chrome UI 自验收驱动 `verify:ui`。
 
 ## 0.1.150 — 2026-11-15
 

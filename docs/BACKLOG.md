@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-16（`v0.1.150` + CB-127）。
+> 状态最后核对：2026-11-16（`v0.1.151`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,7 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`                           |
+| [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
 | [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
 | [CB-125](#cb-125) | 主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换                               | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）             |
 | [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                    | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: done`（`v0.1.149`）                           |
@@ -126,7 +126,7 @@
 
 **任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同**
 
-标签：`type: feat` · `area: agents` · `area: web` · `P1` · `status: done`
+标签：`type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）
 
 将 `autobahn` 的本地 Markdown 看板工作流与 ChisaBot 任务中心、右栏任务面板、本地智能体与服务端任务队列深度融合，并在派发任务完成后自动标为完成并回写摘要（DESIGN §134）。
 

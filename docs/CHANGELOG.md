@@ -1,6 +1,10 @@
 ## 未发版
 
+## 0.1.151
+
+- 版本统一为 0.1.151，Android versionCode 333；Windows 外壳指纹（`7314f9105596bec5`）不变，无需重新安装（PC 客户端代码指纹同步更新为 `d165de18744a81f9`）。
 - **任务中心四列看板与本地 Markdown 双向协同（CB-127 · DESIGN §134）**：共享层拆分 `shared/task-board-core.ts`（零运行时 `zod` 的 `TASK_BOARD_COLUMNS`、`resolveTaskBoardPlacement`、`board:v1:` `sourceRef` 编解码与看板类型）、`shared/task-board.ts`（Zod 校验 Schema）、`shared/markdown-syntax.ts`（栅栏跟踪、偏移切片与标题/摘要降级）及 `shared/task-center.ts` `lane` 字段；服务端新增 `server/src/task-center/dialects/{autobahn,chisabot-docs}.ts`、`markdown-board-parser.ts`、`markdown-splice.ts`、`file-lock.ts`、`board-discovery.ts` 与 `markdown-board.ts`（基于 `roots.list` ∪ `localRoots` 与 `resolveTaskSourcePath` / `allowedDocument` 的目录沙箱、每文件互斥锁、原子写入、SHA-256 CAS `409`、派发正文 `markUntrusted` 包裹），并在 `routes.ts`（`/roots` 与 `/boards*` 本机写接口强制 `actor.role === "admin"`）、`service.ts`、`runtime.ts` 接入 `scheduleTask`、`recordTaskEvent` 及 `onSettled -> completeCardFromTask` 终态自动回写（幂等标记完成并追加/更新 `#### 交付摘要（ChisaBot 自动回写）` 与 `board_writeback` / `board_writeback_failed` 审计事件）。前端扩展 `app/src/lib/task-center-api.ts` 与 `labels.ts`（均只依赖 `shared/task-board-core` 以防 `zod` 渗入首屏 `shell`），新增 `app/src/components/task-center/{board-format.ts,use-board-mutations.ts,markdown-overlay-editor.tsx,task-board-card.tsx,task-board-doc-panel.tsx,task-board-detail.tsx,task-board.tsx}`（四列个人看板 + 本地 Markdown 看板、deshout 句首柔化、规格胶囊、Pointer Capture 拖拽与无障碍菜单、复选框物理落盘、CAS 重载/覆盖冲突处理、覆盖层编辑器与机器人派发），补充 `task-center.css` / `tasks-rail-card.css` 并完成 `task-center.tsx` / `task-center-dialog.tsx` / `tasks.tsx` / `tasks-rail-card.tsx` / `task-rail-detail-dialog.tsx` 联动。测试见 `server/tests/task-center-markdown-board.test.ts`、`app/tests/task-center-board.test.tsx` 与 `tests/task-center/ui.mjs`。
+- **工程基建与门禁收口（`chore/engineering-foundations-overhaul`）**：收口服务端出网与 `process.env` 边界，根除 `mock.module` 测试污染与业务组件裸 `useEffect`（统一迁入 `app/src/hooks/`），开启全仓 Biome 零警告检查并清零生产代码 `!` 非空断言及 `biome-ignore` 敷衍抑制，引入确定性状态空间模型检验器（`shared/verification/model-checker.ts`，覆盖锁租约 / 插件三层授权 / 一次性审批 / 聊天账本）及零下载实机 Edge/Chrome UI 自验收驱动（`scripts/verify-ui.mjs`）。
 
 ## 0.1.150
 
