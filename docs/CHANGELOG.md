@@ -1,5 +1,7 @@
 ## 未发版
 
+- **全域原生融合（Wave 0–6 · DESIGN §136）**：数据库迁移 `0069_native_system_unification.sql` 统一扩展 `chisabot_user_quotas` / `chisabot_usage_ledger`、`chisabot_local_threads` 侧边会话列、`chisabot_im_outbox(files)` 与 `workflow_runs` `resume_token_hash` 恢复列；服务端原生打通 `key-pool`、`quotas/service`（`CB-045`）、`dsh` 多模态图片回传、`agent-computer` 人工接管与国内外 CAPTCHA 阻断、`pc` 原生 `stdio` MCP 与局域网配对、`channels/group` 接力守卫、`side-threads`、工作流脱敏毕业与单次 `resumeToken` 恢复、`memory-notes` 四级隔离与 4000 字稳定前缀、`session-search` + `chat-files` 分块、`content-safety-scanner` + `AsyncLocalStorage` 污点强制审批、`im` 非号主/群聊隔离与 Discord/Slack 适配器、`window-expiry` 降级与定时连败免疫（`CB-027`），以及 `audio/speech-service`（`/api/speech/tts`、`asr`）。前端补全配额/密钥池设置、多 Bot 群聊入口与 `/side` 抽屉、以及语音播放 Hook；验证新增 4 份形式化证明（共 8 份，详见 `docs/formal-statecharts.md`）与 `scripts/chisa-bench.ts`（`bun run bench`）。
+
 ## 0.1.152
 
 - 版本统一为 0.1.152，Android versionCode 334；Windows 外壳指纹（`7314f9105596bec5`）与 PC 客户端代码指纹（`d165de18744a81f9`）不变，无需重新安装。

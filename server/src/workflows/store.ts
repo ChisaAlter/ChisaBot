@@ -44,11 +44,31 @@ export type StoredRun = {
   state: RunState;
   output: string | null;
   error: string | null;
+  stepMode?: string;
+  resumeTokenHash?: string | null;
+  resumeReason?: string | null;
+  resumeExpiresAt?: Date | null;
   createdAt: Date;
   startedAt: Date | null;
   finishedAt: Date | null;
   updatedAt: Date;
 };
+
+type RunMutableFields = Partial<
+  Pick<
+    StoredRun,
+    | "status"
+    | "state"
+    | "bindings"
+    | "output"
+    | "error"
+    | "startedAt"
+    | "finishedAt"
+    | "resumeTokenHash"
+    | "resumeReason"
+    | "resumeExpiresAt"
+  >
+>;
 
 export type RunEvent = {
   id: string;
@@ -108,30 +128,56 @@ export function createWorkflowStore(database: Database) {
       const [row] = await database
         .select()
         .from(workflows)
-        .where(and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)));
+        .where(
+          and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)),
+        );
       return row ? asWorkflow(row) : null;
     },
-    async create(ownerUserId: string, definition: WorkflowDefinition, origin: string | null): Promise<StoredWorkflow> {
+    async create(
+      ownerUserId: string,
+      definition: WorkflowDefinition,
+      origin: string | null,
+    ): Promise<StoredWorkflow> {
       const id = `wf_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
       const [row] = await database
         .insert(workflows)
-        .values({ id, ownerUserId, slug: definition.slug, name: definition.name, definition: json(definition), origin })
+        .values({
+          id,
+          ownerUserId,
+          slug: definition.slug,
+          name: definition.name,
+          definition: json(definition),
+          origin,
+        })
         .returning();
       if (!row) throw new Error("工作流创建后没有返回记录。");
       return asWorkflow(row);
     },
-    async update(ownerUserId: string, id: string, definition: WorkflowDefinition): Promise<StoredWorkflow | null> {
+    async update(
+      ownerUserId: string,
+      id: string,
+      definition: WorkflowDefinition,
+    ): Promise<StoredWorkflow | null> {
       const [row] = await database
         .update(workflows)
-        .set({ slug: definition.slug, name: definition.name, definition: json(definition), updatedAt: new Date() })
-        .where(and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)))
+        .set({
+          slug: definition.slug,
+          name: definition.name,
+          definition: json(definition),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)),
+        )
         .returning();
       return row ? asWorkflow(row) : null;
     },
     async remove(ownerUserId: string, id: string): Promise<boolean> {
       const rows = await database
         .delete(workflows)
-        .where(and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)))
+        .where(
+          and(eq(workflows.id, id), eq(workflows.ownerUserId, ownerUserId)),
+        )
         .returning({ id: workflows.id });
       return rows.length > 0;
     },
@@ -154,42 +200,60 @@ export function createWorkflowStore(database: Database) {
     ): Promise<StoredRun | null> {
       const id = `wfr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
       return database.transaction(async (tx) => {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workflow:runs:${input.ownerUserId}`}))`);
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`workflow:runs:${input.ownerUserId}`}))`,
+        );
         if (Number.isFinite(maxActive)) {
           const [count] = await tx
             .select({ n: sql<number>`count(*)::int` })
             .from(workflowRuns)
-            .where(and(eq(workflowRuns.ownerUserId, input.ownerUserId), inArray(workflowRuns.status, ["queued", "running"])));
+            .where(
+              and(
+                eq(workflowRuns.ownerUserId, input.ownerUserId),
+                inArray(workflowRuns.status, ["queued", "running"]),
+              ),
+            );
           if (Number(count?.n ?? 0) >= maxActive) return null;
         }
         const [row] = await tx
-        .insert(workflowRuns)
-        .values({
-          id,
-          ownerUserId: input.ownerUserId,
-          workflowId: input.workflowId,
-          workflowName: input.definition.name,
-          definition: json(input.definition),
-          inputs: json(input.inputs),
-          bindings: json(input.bindings),
-          status: "queued",
-          source: input.source,
-          state: json(input.state),
-        })
-        .returning();
+          .insert(workflowRuns)
+          .values({
+            id,
+            ownerUserId: input.ownerUserId,
+            workflowId: input.workflowId,
+            workflowName: input.definition.name,
+            definition: json(input.definition),
+            inputs: json(input.inputs),
+            bindings: json(input.bindings),
+            status: "queued",
+            source: input.source,
+            state: json(input.state),
+          })
+          .returning();
         if (!row) throw new Error("工作流运行创建后没有返回记录。");
         return asRun(row);
       });
     },
     async getRun(id: string): Promise<StoredRun | null> {
-      const [row] = await database.select().from(workflowRuns).where(eq(workflowRuns.id, id));
-      return row ? asRun(row) : null;
-    },
-    async getOwnRun(ownerUserId: string, id: string): Promise<StoredRun | null> {
       const [row] = await database
         .select()
         .from(workflowRuns)
-        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.ownerUserId, ownerUserId)));
+        .where(eq(workflowRuns.id, id));
+      return row ? asRun(row) : null;
+    },
+    async getOwnRun(
+      ownerUserId: string,
+      id: string,
+    ): Promise<StoredRun | null> {
+      const [row] = await database
+        .select()
+        .from(workflowRuns)
+        .where(
+          and(
+            eq(workflowRuns.id, id),
+            eq(workflowRuns.ownerUserId, ownerUserId),
+          ),
+        );
       return row ? asRun(row) : null;
     },
     async listRuns(ownerUserId: string, limit = 20): Promise<StoredRun[]> {
@@ -205,12 +269,17 @@ export function createWorkflowStore(database: Database) {
       const [row] = await database
         .select({ n: sql<number>`count(*)::int` })
         .from(workflowRuns)
-        .where(and(eq(workflowRuns.ownerUserId, ownerUserId), inArray(workflowRuns.status, ["queued", "running"])));
+        .where(
+          and(
+            eq(workflowRuns.ownerUserId, ownerUserId),
+            inArray(workflowRuns.status, ["queued", "running"]),
+          ),
+        );
       return Number(row?.n ?? 0);
     },
     async saveRun(
       id: string,
-      patch: Partial<Pick<StoredRun, "status" | "state" | "bindings" | "output" | "error" | "startedAt" | "finishedAt">>,
+      patch: RunMutableFields,
       noticeEvent?: RunEventInput,
     ): Promise<void> {
       const values = {
@@ -219,20 +288,43 @@ export function createWorkflowStore(database: Database) {
         ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
         ...(patch.output !== undefined ? { output: patch.output } : {}),
         ...(patch.error !== undefined ? { error: patch.error } : {}),
-        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-        ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
+        ...(patch.startedAt !== undefined
+          ? { startedAt: patch.startedAt }
+          : {}),
+        ...(patch.finishedAt !== undefined
+          ? { finishedAt: patch.finishedAt }
+          : {}),
+        ...(patch.resumeTokenHash !== undefined
+          ? { resumeTokenHash: patch.resumeTokenHash }
+          : {}),
+        ...(patch.resumeReason !== undefined
+          ? { resumeReason: patch.resumeReason }
+          : {}),
+        ...(patch.resumeExpiresAt !== undefined
+          ? { resumeExpiresAt: patch.resumeExpiresAt }
+          : {}),
         updatedAt: new Date(),
       };
       if (!noticeEvent) {
-        await database.update(workflowRuns).set(values).where(eq(workflowRuns.id, id));
+        await database
+          .update(workflowRuns)
+          .set(values)
+          .where(eq(workflowRuns.id, id));
         return;
       }
       // Notification recovery reads events: the state and its notice must commit together.
       await database.transaction(async (tx) => {
-        await tx.update(workflowRuns).set(values).where(eq(workflowRuns.id, id));
+        await tx
+          .update(workflowRuns)
+          .set(values)
+          .where(eq(workflowRuns.id, id));
         await tx.insert(workflowRunEvents).values({
-          id: eventId(), runId: id, kind: noticeEvent.kind, message: noticeEvent.message,
-          stepId: noticeEvent.stepId ?? null, data: noticeEvent.data ? json(noticeEvent.data) : null,
+          id: eventId(),
+          runId: id,
+          kind: noticeEvent.kind,
+          message: noticeEvent.message,
+          stepId: noticeEvent.stepId ?? null,
+          data: noticeEvent.data ? json(noticeEvent.data) : null,
         });
       });
     },
@@ -242,7 +334,7 @@ export function createWorkflowStore(database: Database) {
     async transitionRun(
       id: string,
       from: WorkflowRunStatus[],
-      patch: Pick<StoredRun, "status"> & Partial<Pick<StoredRun, "state" | "bindings" | "output" | "error" | "startedAt" | "finishedAt">>,
+      patch: Pick<StoredRun, "status"> & RunMutableFields,
     ): Promise<boolean> {
       const rows = await database
         .update(workflowRuns)
@@ -252,11 +344,76 @@ export function createWorkflowStore(database: Database) {
           ...(patch.bindings ? { bindings: json(patch.bindings) } : {}),
           ...(patch.output !== undefined ? { output: patch.output } : {}),
           ...(patch.error !== undefined ? { error: patch.error } : {}),
-          ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-          ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
+          ...(patch.startedAt !== undefined
+            ? { startedAt: patch.startedAt }
+            : {}),
+          ...(patch.finishedAt !== undefined
+            ? { finishedAt: patch.finishedAt }
+            : {}),
+          ...(patch.resumeTokenHash !== undefined
+            ? { resumeTokenHash: patch.resumeTokenHash }
+            : {}),
+          ...(patch.resumeReason !== undefined
+            ? { resumeReason: patch.resumeReason }
+            : {}),
+          ...(patch.resumeExpiresAt !== undefined
+            ? { resumeExpiresAt: patch.resumeExpiresAt }
+            : {}),
           updatedAt: new Date(),
         })
         .where(and(eq(workflowRuns.id, id), inArray(workflowRuns.status, from)))
+        .returning({ id: workflowRuns.id });
+      return rows.length > 0;
+    },
+    /**
+     * 原子单次消费恢复令牌（CAS）：仅在处于 waiting_approval、tokenHash 匹配且未过期时更新状态并清零令牌字段。
+     */
+    async consumeResumeToken(
+      runId: string,
+      tokenHash: string,
+      nextPatch: Pick<StoredRun, "status"> &
+        Partial<
+          Pick<
+            StoredRun,
+            | "state"
+            | "bindings"
+            | "output"
+            | "error"
+            | "startedAt"
+            | "finishedAt"
+          >
+        >,
+    ): Promise<boolean> {
+      if (!tokenHash) return false;
+      const rows = await database
+        .update(workflowRuns)
+        .set({
+          status: nextPatch.status,
+          ...(nextPatch.state ? { state: json(nextPatch.state) } : {}),
+          ...(nextPatch.bindings ? { bindings: json(nextPatch.bindings) } : {}),
+          ...(nextPatch.output !== undefined
+            ? { output: nextPatch.output }
+            : {}),
+          ...(nextPatch.error !== undefined ? { error: nextPatch.error } : {}),
+          ...(nextPatch.startedAt !== undefined
+            ? { startedAt: nextPatch.startedAt }
+            : {}),
+          ...(nextPatch.finishedAt !== undefined
+            ? { finishedAt: nextPatch.finishedAt }
+            : {}),
+          resumeTokenHash: null,
+          resumeReason: null,
+          resumeExpiresAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(workflowRuns.id, runId),
+            eq(workflowRuns.status, "waiting_approval"),
+            eq(workflowRuns.resumeTokenHash, tokenHash),
+            sql`(${workflowRuns.resumeExpiresAt} IS NULL OR ${workflowRuns.resumeExpiresAt} > now())`,
+          ),
+        )
         .returning({ id: workflowRuns.id });
       return rows.length > 0;
     },
@@ -274,7 +431,9 @@ export function createWorkflowStore(database: Database) {
       await database
         .update(workflowRuns)
         .set({ updatedAt: new Date() })
-        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.status, "running")));
+        .where(
+          and(eq(workflowRuns.id, id), eq(workflowRuns.status, "running")),
+        );
     },
     /**
      * 开机恢复：只有心跳早于 staleBefore 的进行中运行才标失败（条件更新），
@@ -289,7 +448,13 @@ export function createWorkflowStore(database: Database) {
       return database.transaction(async (tx) => {
         const rows = await tx
           .update(workflowRuns)
-          .set({ status: "failed", state: json(patch.state), error: patch.error, finishedAt: patch.finishedAt, updatedAt: new Date() })
+          .set({
+            status: "failed",
+            state: json(patch.state),
+            error: patch.error,
+            finishedAt: patch.finishedAt,
+            updatedAt: new Date(),
+          })
           .where(
             and(
               eq(workflowRuns.id, id),
@@ -300,8 +465,12 @@ export function createWorkflowStore(database: Database) {
           .returning({ id: workflowRuns.id });
         if (rows.length > 0 && noticeEvent) {
           await tx.insert(workflowRunEvents).values({
-            id: eventId(), runId: id, kind: noticeEvent.kind, message: noticeEvent.message,
-            stepId: noticeEvent.stepId ?? null, data: noticeEvent.data ? json(noticeEvent.data) : null,
+            id: eventId(),
+            runId: id,
+            kind: noticeEvent.kind,
+            message: noticeEvent.message,
+            stepId: noticeEvent.stepId ?? null,
+            data: noticeEvent.data ? json(noticeEvent.data) : null,
           });
         }
         return rows.length > 0;
@@ -310,7 +479,12 @@ export function createWorkflowStore(database: Database) {
     async deleteRun(ownerUserId: string, id: string): Promise<boolean> {
       const rows = await database
         .delete(workflowRuns)
-        .where(and(eq(workflowRuns.id, id), eq(workflowRuns.ownerUserId, ownerUserId)))
+        .where(
+          and(
+            eq(workflowRuns.id, id),
+            eq(workflowRuns.ownerUserId, ownerUserId),
+          ),
+        )
         .returning({ id: workflowRuns.id });
       return rows.length > 0;
     },
@@ -323,7 +497,13 @@ export function createWorkflowStore(database: Database) {
       return rows.map(asRun);
     },
 
-    async addEvent(runId: string, kind: string, message: string, stepId?: string | null, data?: Record<string, unknown>) {
+    async addEvent(
+      runId: string,
+      kind: string,
+      message: string,
+      stepId?: string | null,
+      data?: Record<string, unknown>,
+    ) {
       await database.insert(workflowRunEvents).values({
         id: eventId(),
         runId,
@@ -340,7 +520,10 @@ export function createWorkflowStore(database: Database) {
         .where(eq(workflowRunEvents.runId, runId))
         .orderBy(workflowRunEvents.id)
         .limit(500);
-      return rows.map((row) => ({ ...row, data: (row.data as Record<string, unknown> | null) ?? null }));
+      return rows.map((row) => ({
+        ...row,
+        data: (row.data as Record<string, unknown> | null) ?? null,
+      }));
     },
   };
 }

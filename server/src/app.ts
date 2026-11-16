@@ -95,7 +95,7 @@ import { createPasswordRoutes, createSignInRoutes } from "./passwords/routes";
 import type { SignInService } from "./passwords/service";
 import type { OnboardingStore } from "./people/onboarding";
 import { parseProfileInput, profileNeedsSetup } from "./people/onboarding";
-import type { PeopleStore } from "./people/store";
+import { MAX_PAGE, type PeopleStore } from "./people/store";
 import type { ComposioBroker } from "./plugins/broker";
 import { createPluginRoutes } from "./plugins/routes";
 import {
@@ -108,6 +108,11 @@ import {
   type ModelProviderProxy,
   mountProviderOAuthProxy,
 } from "./provider-oauth";
+import {
+  type QuotaService,
+  QuotaValidationError,
+  type UsageAggregate as ServiceUsageAggregate,
+} from "./quotas/service";
 import type { ResponsibilityBindingStore } from "./responsibilities/bindings";
 import type { ResponsibilityEngine } from "./responsibilities/engine";
 import { createGithubResponsibilityRoutes } from "./responsibilities/github";
@@ -176,6 +181,50 @@ export type DeploymentToolCallInput = {
 export type DeploymentToolCaller = (
   input: DeploymentToolCallInput,
 ) => Promise<{ text: string; isError: boolean } | null>;
+
+function emptyUsageAggregate() {
+  return {
+    dailyInputTokens: 0,
+    dailyOutputTokens: 0,
+    dailyCacheReadTokens: 0,
+    dailyTotalTokens: 0,
+    dailyRequests: 0,
+    monthlyInputTokens: 0,
+    monthlyOutputTokens: 0,
+    monthlyCacheReadTokens: 0,
+    monthlyTotalTokens: 0,
+    monthlyRequests: 0,
+    byModel: [] as Array<{
+      model: string;
+      dailyTokens: number;
+      dailyRequests: number;
+      monthlyTokens: number;
+      monthlyRequests: number;
+    }>,
+  };
+}
+
+function projectUsageAggregate(usage: ServiceUsageAggregate) {
+  return {
+    dailyInputTokens: usage.daily.inputTokens,
+    dailyOutputTokens: usage.daily.outputTokens,
+    dailyCacheReadTokens: usage.daily.cacheReadTokens,
+    dailyTotalTokens: usage.daily.totalTokens,
+    dailyRequests: usage.daily.requests,
+    monthlyInputTokens: usage.monthly.inputTokens,
+    monthlyOutputTokens: usage.monthly.outputTokens,
+    monthlyCacheReadTokens: usage.monthly.cacheReadTokens,
+    monthlyTotalTokens: usage.monthly.totalTokens,
+    monthlyRequests: usage.monthly.requests,
+    byModel: usage.byModel.map((item) => ({
+      model: item.model,
+      dailyTokens: item.daily.totalTokens,
+      dailyRequests: item.daily.requests,
+      monthlyTokens: item.monthly.totalTokens,
+      monthlyRequests: item.monthly.requests,
+    })),
+  };
+}
 
 export function createApp(
   config: DeploymentConfig,
@@ -373,6 +422,7 @@ export function createApp(
      */
     singleUserGuard?: MiddlewareHandler<{ Variables: AppVariables }>;
     primaryAgentService?: PrimaryAgentService;
+    quotaService?: QuotaService;
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -442,7 +492,7 @@ export function createApp(
       generativeUi: config.generativeUi,
       // 结构化回复来源（shared/reply-sources.ts）；旧客户端不认这个字段，照旧显示正文。
       replySources: config.replySources === true,
-      // 设置 → 管理 →「账号」入口（CB-040）；默认隐藏，CHISABOT_ACCOUNTS_UI=1 打开。
+      // 设置 → 管理 →「账号」入口（CB-040 / CB-096）；默认开启，CHISABOT_ACCOUNTS_UI=0 关闭。
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
       extras: [...(config.extras ?? [])],
@@ -931,6 +981,153 @@ export function createApp(
     });
   }
 
+  app.get("/api/me/quota", requireUser, async (context) => {
+    context.header("Cache-Control", "no-store");
+    if (!options.quotaService) {
+      return context.json({ error: "配额服务暂时不可用。" }, 503);
+    }
+    try {
+      const actor = context.var.actor;
+      const raw = await options.quotaService.getUserSummary(
+        actor.id,
+        actor.role === "admin",
+      );
+      return context.json({
+        summary: {
+          ...raw,
+          usage: projectUsageAggregate(raw.usage),
+        },
+      });
+    } catch {
+      return context.json(
+        { error: "个人配额与用量暂时无法读取，请稍后重试。" },
+        503,
+      );
+    }
+  });
+
+  app.get("/api/admin/quotas", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+    context.header("Cache-Control", "no-store");
+    if (!options.quotaService) {
+      return context.json({ error: "配额服务暂时不可用。" }, 503);
+    }
+    try {
+      const [rows, peopleResult] = await Promise.all([
+        options.quotaService.listQuotasWithUsage(),
+        peopleStore
+          ? peopleStore.list({ limit: MAX_PAGE }).catch(() => ({ people: [] }))
+          : Promise.resolve({ people: [] }),
+      ]);
+      const byUser = new Map<
+        string,
+        {
+          userId: string;
+          displayName?: string | null;
+          email?: string | null;
+          role?: string | null;
+          quota: (typeof rows)[number]["quota"];
+          usage: ReturnType<typeof emptyUsageAggregate>;
+        }
+      >();
+      for (const row of rows) {
+        byUser.set(row.userId, {
+          userId: row.userId,
+          quota: row.quota,
+          usage: projectUsageAggregate(row.usage),
+        });
+      }
+      for (const person of peopleResult.people) {
+        const existing = byUser.get(person.id);
+        if (existing) {
+          existing.displayName = person.name;
+          existing.email = person.email;
+          existing.role = person.role;
+        } else {
+          byUser.set(person.id, {
+            userId: person.id,
+            displayName: person.name,
+            email: person.email,
+            role: person.role,
+            quota: null,
+            usage: emptyUsageAggregate(),
+          });
+        }
+      }
+      const actor = context.var.actor;
+      if (!byUser.has(actor.id)) {
+        byUser.set(actor.id, {
+          userId: actor.id,
+          displayName: actor.name ?? null,
+          email: actor.email ?? null,
+          role: actor.role,
+          quota: null,
+          usage: emptyUsageAggregate(),
+        });
+      }
+      const quotas = [...byUser.values()].sort((left, right) => {
+        if (right.usage.monthlyTotalTokens !== left.usage.monthlyTotalTokens) {
+          return right.usage.monthlyTotalTokens - left.usage.monthlyTotalTokens;
+        }
+        return left.userId.localeCompare(right.userId);
+      });
+      return context.json({ quotas });
+    } catch {
+      return context.json(
+        { error: "用户配额列表暂时无法读取，请稍后重试。" },
+        503,
+      );
+    }
+  });
+
+  app.put("/api/admin/quotas/:userId", requireUser, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+    context.header("Cache-Control", "no-store");
+    if (!options.quotaService) {
+      return context.json({ error: "配额服务暂时不可用。" }, 503);
+    }
+    const userId = context.req.param("userId").trim();
+    if (!userId) {
+      return context.json({ error: "用户 ID 不能为空。" }, 400);
+    }
+    const body = await context.req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return context.json({ error: "请求体必须为 JSON 对象。" }, 400);
+    }
+    const record = body as Record<string, unknown>;
+    const isOptionalLimit = (
+      value: unknown,
+    ): value is number | null | undefined =>
+      value === undefined || value === null || typeof value === "number";
+    if (
+      !isOptionalLimit(record.dailyTokenLimit) ||
+      !isOptionalLimit(record.monthlyTokenLimit) ||
+      !isOptionalLimit(record.dailyRequestLimit) ||
+      (record.bypassAdmin !== undefined &&
+        typeof record.bypassAdmin !== "boolean")
+    ) {
+      return context.json({ error: "配额字段类型无效。" }, 400);
+    }
+    try {
+      const quota = await options.quotaService.setQuota({
+        userId,
+        dailyTokenLimit: record.dailyTokenLimit ?? null,
+        monthlyTokenLimit: record.monthlyTokenLimit ?? null,
+        dailyRequestLimit: record.dailyRequestLimit ?? null,
+        bypassAdmin: record.bypassAdmin ?? true,
+        updatedBy: context.var.actor.id,
+      });
+      return context.json({ quota });
+    } catch (error) {
+      if (error instanceof QuotaValidationError) {
+        return context.json({ error: error.message }, 400);
+      }
+      return context.json({ error: "用户配额保存失败，请稍后重试。" }, 503);
+    }
+  });
+
   app.get("/api/admin/credentials", requireUser, async (context) => {
     const denied = requireAdmin(context);
     if (denied) {
@@ -1342,7 +1539,10 @@ export function createApp(
       createBotLifecycleRoutes(coworker.lifecycle, requireUser),
     );
   if (coworker?.groups)
-    app.route("/api/groups", createGroupRoutes(coworker.groups, requireUser));
+    app.route(
+      "/api/groups",
+      createGroupRoutes(coworker.groups, requireUser, { requireAdmin: false }),
+    );
   if (coworker?.approvals)
     app.route(
       "/api/approvals",

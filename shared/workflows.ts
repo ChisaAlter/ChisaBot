@@ -24,15 +24,36 @@ export const WORKFLOW_TOOL_GROUPS = [
 ] as const;
 export type WorkflowToolGroup = (typeof WORKFLOW_TOOL_GROUPS)[number];
 
-export const TOOL_GROUP_INFO: Record<WorkflowToolGroup, { label: string; description: string }> = {
-  computer: { label: "云端浏览器", description: "打开网页、点击、读取页面、在工作区读写文件（computer_*）" },
-  devices: { label: "设备", description: "操作已关联的电脑 / 手机（device_*）" },
-  host: { label: "本机文件夹", description: "读写桌面端授权的本机文件夹（host_*）" },
-  apps: { label: "已连接的应用", description: "插件 / MCP 工具，如 GitHub、Google" },
+export const TOOL_GROUP_INFO: Record<
+  WorkflowToolGroup,
+  { label: string; description: string }
+> = {
+  computer: {
+    label: "云端浏览器",
+    description: "打开网页、点击、读取页面、在工作区读写文件（computer_*）",
+  },
+  devices: {
+    label: "设备",
+    description: "操作已关联的电脑 / 手机（device_*）",
+  },
+  host: {
+    label: "本机文件夹",
+    description: "读写桌面端授权的本机文件夹（host_*）",
+  },
+  apps: {
+    label: "已连接的应用",
+    description: "插件 / MCP 工具，如 GitHub、Google",
+  },
   memory: { label: "记忆", description: "读写个人记忆" },
   schedule: { label: "提醒与定时", description: "稍后提醒、唤醒（lifecycle）" },
-  ui: { label: "界面与面板", description: "render_ui 生成式界面、组件、保存面板" },
-  handoff: { label: "找别的机器人", description: "message_bot 把活交给另一个机器人" },
+  ui: {
+    label: "界面与面板",
+    description: "render_ui 生成式界面、组件、保存面板",
+  },
+  handoff: {
+    label: "找别的机器人",
+    description: "message_bot 把活交给另一个机器人",
+  },
 };
 
 /** 一个工具属于哪个分组。名字和 ref 都看，认不出的算 apps（插件工具的名字是供应商起的）。 */
@@ -42,7 +63,12 @@ export function toolGroupOf(name: string, ref?: string): WorkflowToolGroup {
   if (name.startsWith("host_")) return "host";
   if (ref?.startsWith("memory/")) return "memory";
   if (ref?.startsWith("lifecycle/")) return "schedule";
-  if (name === "render_ui" || ref?.startsWith("components/") || name === "proposePanelDraft" || name === "revisePanelDraft")
+  if (
+    name === "render_ui" ||
+    ref?.startsWith("components/") ||
+    name === "proposePanelDraft" ||
+    name === "revisePanelDraft"
+  )
     return "ui";
   if (name === "message_bot" || name === "ask_person") return "handoff";
   return "apps";
@@ -55,9 +81,16 @@ export type ToolRule = { allow?: string[]; deny?: string[] };
  * 规则：deny 优先；有 allow 时只放行 allow 里的；条目可以是分组名或具体工具名。
  * 步骤自己的规则叠加在工作流规则上：两边任一禁止即禁止；两边的 allow 取交集。
  */
-export function toolAllowed(rules: ToolRule[], name: string, ref?: string): boolean {
+export function toolAllowed(
+  rules: ToolRule[],
+  name: string,
+  ref?: string,
+): boolean {
   const group = toolGroupOf(name, ref);
-  const hit = (list: string[]) => list.includes(name) || list.includes(group) || (ref ? list.includes(ref) : false);
+  const hit = (list: string[]) =>
+    list.includes(name) ||
+    list.includes(group) ||
+    (ref ? list.includes(ref) : false);
   for (const rule of rules) {
     if (rule.deny && hit(rule.deny)) return false;
   }
@@ -80,7 +113,9 @@ const key = z
   .max(32, "最多 32 个字符")
   .regex(/^[A-Za-z][A-Za-z0-9_]*$/, "以字母开头，只能用字母、数字、下划线");
 const toolList = z.array(z.string().trim().min(1).max(80)).max(40);
-const toolRule = z.object({ allow: toolList.optional(), deny: toolList.optional() }).strict();
+const toolRule = z
+  .object({ allow: toolList.optional(), deny: toolList.optional() })
+  .strict();
 
 export const workflowBotSchema = z
   .object({
@@ -100,7 +135,14 @@ export const workflowSkillSchema = z
   })
   .strict();
 
-export const WORKFLOW_INPUT_TYPES = ["text", "textarea", "number", "select", "boolean", "url"] as const;
+export const WORKFLOW_INPUT_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "select",
+  "boolean",
+  "url",
+] as const;
 export type WorkflowInputType = (typeof WORKFLOW_INPUT_TYPES)[number];
 export const INPUT_TYPE_LABEL: Record<WorkflowInputType, string> = {
   text: "单行文字",
@@ -117,7 +159,9 @@ export const workflowInputSchema = z
     label: z.string().trim().min(1, "名称不能为空").max(40),
     type: z.enum(WORKFLOW_INPUT_TYPES).default("text"),
     required: z.boolean().optional(),
-    default: z.union([z.string().max(4000), z.number(), z.boolean()]).optional(),
+    default: z
+      .union([z.string().max(4000), z.number(), z.boolean()])
+      .optional(),
     options: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
     placeholder: z.string().max(120).optional(),
     help: z.string().max(200).optional(),
@@ -225,6 +269,23 @@ export const workflowConstraintsSchema = z
   })
   .strict();
 
+export const workflowScheduleObjectSchema = z
+  .object({
+    cron: z.string().trim().min(1, "定时表达式不能为空").max(120),
+    title: z.string().trim().min(1).max(120).optional(),
+    timezone: z.string().trim().min(1).max(80).optional(),
+    paused: z.boolean().optional(),
+  })
+  .strict();
+
+export const workflowScheduleSchema = z.preprocess(
+  (value) => (typeof value === "string" ? { cron: value } : value),
+  workflowScheduleObjectSchema,
+);
+export type WorkflowScheduleDraft = z.infer<
+  typeof workflowScheduleObjectSchema
+>;
+
 export const workflowDefinitionSchema = z
   .object({
     format: z.literal(WORKFLOW_FORMAT).default(WORKFLOW_FORMAT),
@@ -235,10 +296,17 @@ export const workflowDefinitionSchema = z
     icon: z.string().trim().max(8).default("⚙️"),
     version: z.string().trim().max(20).optional(),
     tags: z.array(z.string().trim().min(1).max(16)).max(8).optional(),
-    bots: z.array(workflowBotSchema).min(1, "至少要有一个机器人角色").max(8, "最多 8 个机器人角色"),
+    bots: z
+      .array(workflowBotSchema)
+      .min(1, "至少要有一个机器人角色")
+      .max(8, "最多 8 个机器人角色"),
     skills: z.array(workflowSkillSchema).max(12).optional(),
     inputs: z.array(workflowInputSchema).max(16).default([]),
-    steps: z.array(workflowStepSchema).min(1, "至少要有一个步骤").max(30, "最多 30 个步骤"),
+    steps: z
+      .array(workflowStepSchema)
+      .min(1, "至少要有一个步骤")
+      .max(30, "最多 30 个步骤"),
+    schedule: workflowScheduleSchema.optional(),
     constraints: workflowConstraintsSchema.default({}),
     /** WORKFLOW.md 正文（给人看的说明）。 */
     notes: z.string().max(20_000).optional(),
@@ -266,7 +334,8 @@ export function effectiveConstraints(def: WorkflowDefinition) {
     maxSteps: c.maxSteps ?? def.steps.length,
     maxTokens: c.maxTokens ?? DEFAULT_LIMITS.maxTokens,
     timeLimitMinutes: c.timeLimitMinutes ?? DEFAULT_LIMITS.timeLimitMinutes,
-    stepTimeoutMinutes: c.stepTimeoutMinutes ?? DEFAULT_LIMITS.stepTimeoutMinutes,
+    stepTimeoutMinutes:
+      c.stepTimeoutMinutes ?? DEFAULT_LIMITS.stepTimeoutMinutes,
     tools: c.tools ?? {},
     outputFormat: c.output?.format ?? ("markdown" as WorkflowOutputFormat),
     maxChars: c.output?.maxChars,
@@ -278,7 +347,10 @@ export function effectiveConstraints(def: WorkflowDefinition) {
  * 结构上的检查（zod 之外）：key 唯一、步骤引用的角色和技能存在、模板引用的输入和步骤存在、
  * 并行组相邻、打回目标在前面、步骤数不超过 maxSteps。`librarySkills` 是此人能用的技能 slug；不传就不检查库技能。
  */
-export function workflowProblems(def: WorkflowDefinition, librarySkills?: ReadonlySet<string>): string[] {
+export function workflowProblems(
+  def: WorkflowDefinition,
+  librarySkills?: ReadonlySet<string>,
+): string[] {
   const problems: string[] = [];
   const dup = (list: string[], what: string) => {
     const seen = new Set<string>();
@@ -287,10 +359,22 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
       seen.add(item);
     }
   };
-  dup(def.bots.map((b) => b.key), "机器人角色");
-  dup(def.steps.map((s) => s.id), "步骤 id");
-  dup(def.inputs.map((i) => i.key), "输入参数");
-  dup((def.skills ?? []).map((s) => s.slug), "技能");
+  dup(
+    def.bots.map((b) => b.key),
+    "机器人角色",
+  );
+  dup(
+    def.steps.map((s) => s.id),
+    "步骤 id",
+  );
+  dup(
+    def.inputs.map((i) => i.key),
+    "输入参数",
+  );
+  dup(
+    (def.skills ?? []).map((s) => s.slug),
+    "技能",
+  );
   const bots = new Set(def.bots.map((b) => b.key));
   const embedded = new Set((def.skills ?? []).map((s) => s.slug));
   const inputs = new Set(def.inputs.map((i) => i.key));
@@ -298,30 +382,42 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
   const seenSteps = new Set<string>();
   def.steps.forEach((step, index) => {
     const label = `第 ${index + 1} 步「${step.name}」`;
-    if (!bots.has(step.bot)) problems.push(`${label}用的角色「${step.bot}」不存在。`);
+    if (!bots.has(step.bot))
+      problems.push(`${label}用的角色「${step.bot}」不存在。`);
     for (const skill of step.skills ?? []) {
       if (!embedded.has(skill) && librarySkills && !librarySkills.has(skill))
         problems.push(`${label}用的技能 /${skill} 找不到。`);
     }
     for (const ref of templateRefs(step.prompt)) {
-      if (ref.kind === "inputs" && !inputs.has(ref.key)) problems.push(`${label}引用的输入 {{inputs.${ref.key}}} 不存在。`);
-      if (ref.kind === "steps" && !seenSteps.has(ref.key)) problems.push(`${label}引用的步骤 {{steps.${ref.key}}} 不在它前面。`);
+      if (ref.kind === "inputs" && !inputs.has(ref.key))
+        problems.push(`${label}引用的输入 {{inputs.${ref.key}}} 不存在。`);
+      if (ref.kind === "steps" && !seenSteps.has(ref.key))
+        problems.push(`${label}引用的步骤 {{steps.${ref.key}}} 不在它前面。`);
     }
     if (step.rejectTo) {
       const target = allStepsById.get(step.rejectTo);
       if (!target) {
         problems.push(`${label}打回的目标步骤「${step.rejectTo}」不存在。`);
-      } else if (!seenSteps.has(step.rejectTo) || (step.group && target.group === step.group)) {
-        problems.push(`${label}打回的目标步骤「${step.rejectTo}」必须在它前面的阶段。`);
+      } else if (
+        !seenSteps.has(step.rejectTo) ||
+        (step.group && target.group === step.group)
+      ) {
+        problems.push(
+          `${label}打回的目标步骤「${step.rejectTo}」必须在它前面的阶段。`,
+        );
       }
     }
     if (step.onFailure === "reject" && !step.rejectTo) {
-      problems.push(`${label}设置了失败时打回重做，需要指定打回的目标步骤（rejectTo）。`);
+      problems.push(
+        `${label}设置了失败时打回重做，需要指定打回的目标步骤（rejectTo）。`,
+      );
     }
     if (step.group && index > 0) {
       const prev = def.steps[index - 1];
       if (prev?.group === step.group && step.approval)
-        problems.push(`${label}在并行组里，不能单独设置审批（把审批放在组里第一步）。`);
+        problems.push(
+          `${label}在并行组里，不能单独设置审批（把审批放在组里第一步）。`,
+        );
     }
     seenSteps.add(step.id);
   });
@@ -331,7 +427,8 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
   for (const step of def.steps) {
     if (step.group !== current) {
       if (current) closed.add(current);
-      if (step.group && closed.has(step.group)) problems.push(`并行组「${step.group}」的步骤要挨在一起。`);
+      if (step.group && closed.has(step.group))
+        problems.push(`并行组「${step.group}」的步骤要挨在一起。`);
       current = step.group;
     }
   }
@@ -340,14 +437,21 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
       problems.push(`输入「${input.label}」是下拉选择，需要至少一个选项。`);
   }
   const c = effectiveConstraints(def);
-  if (def.steps.length > c.maxSteps) problems.push(`步骤数 ${def.steps.length} 超过了约束里的最多步骤数 ${c.maxSteps}。`);
+  if (def.steps.length > c.maxSteps)
+    problems.push(
+      `步骤数 ${def.steps.length} 超过了约束里的最多步骤数 ${c.maxSteps}。`,
+    );
   return problems;
 }
 
 /** 模板里的 {{inputs.x}} / {{steps.y}}。 */
-export function templateRefs(text: string): { kind: "inputs" | "steps"; key: string }[] {
+export function templateRefs(
+  text: string,
+): { kind: "inputs" | "steps"; key: string }[] {
   const refs: { kind: "inputs" | "steps"; key: string }[] = [];
-  for (const match of text.matchAll(/\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g)) {
+  for (const match of text.matchAll(
+    /\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
+  )) {
     const kind = match[1];
     const key = match[2];
     if (kind && key) refs.push({ kind: kind as "inputs" | "steps", key });
@@ -356,7 +460,9 @@ export function templateRefs(text: string): { kind: "inputs" | "steps"; key: str
 }
 
 /** 把步骤按「阶段」分组：相邻且 group 相同的步骤同一阶段（并行）。 */
-export function workflowStages(steps: readonly WorkflowStep[]): WorkflowStep[][] {
+export function workflowStages(
+  steps: readonly WorkflowStep[],
+): WorkflowStep[][] {
   const stages: WorkflowStep[][] = [];
   for (const step of steps) {
     const last = stages[stages.length - 1];
@@ -385,14 +491,28 @@ export function emptyWorkflow(): WorkflowDefinition {
     icon: "⚙️",
     bots: [{ key: "assistant", name: "助手" }],
     inputs: [{ key: "task", label: "任务", type: "textarea", required: true }],
-    steps: [{ id: "do", name: "完成任务", bot: "assistant", prompt: "完成这个任务：{{inputs.task}}" }],
+    steps: [
+      {
+        id: "do",
+        name: "完成任务",
+        bot: "assistant",
+        prompt: "完成这个任务：{{inputs.task}}",
+      },
+    ],
     constraints: {},
   });
 }
 
 // ─── 运行 ───────────────────────────────────────────────────────────────
 
-export const RUN_STATUSES = ["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled"] as const;
+export const RUN_STATUSES = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
 export type WorkflowRunStatus = (typeof RUN_STATUSES)[number];
 export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   queued: "排队中",
@@ -402,9 +522,21 @@ export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   failed: "失败",
   cancelled: "已停止",
 };
-export const ACTIVE_RUN_STATUSES: readonly WorkflowRunStatus[] = ["queued", "running", "waiting_approval"];
+export const ACTIVE_RUN_STATUSES: readonly WorkflowRunStatus[] = [
+  "queued",
+  "running",
+  "waiting_approval",
+];
 
-export const STEP_STATUSES = ["pending", "waiting_approval", "running", "succeeded", "failed", "skipped", "cancelled"] as const;
+export const STEP_STATUSES = [
+  "pending",
+  "waiting_approval",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+  "cancelled",
+] as const;
 export type WorkflowStepStatus = (typeof STEP_STATUSES)[number];
 export const STEP_STATUS_LABEL: Record<WorkflowStepStatus, string> = {
   pending: "等待中",
@@ -440,6 +572,13 @@ export type WorkflowStepFeedback = {
   findings?: WorkflowGateFinding[];
 };
 
+export type WorkflowStepWaiting = {
+  kind: string;
+  requestId?: string;
+  message?: string;
+  [key: string]: unknown;
+};
+
 export type WorkflowStepState = {
   id: string;
   name: string;
@@ -454,7 +593,16 @@ export type WorkflowStepState = {
   tokens: number;
   startedAt?: string;
   finishedAt?: string;
-  approval?: { required: boolean; note?: string; decidedBy?: string; decidedAt?: string; decision?: "approve" | "reject"; comment?: string };
+  approval?: {
+    required: boolean;
+    note?: string;
+    decidedBy?: string;
+    decidedAt?: string;
+    decision?: "approve" | "reject";
+    comment?: string;
+  };
+  /** 外部工具挂起等待人工接管或确认时的元数据（HeadlessToolSuspension）。 */
+  waiting?: WorkflowStepWaiting;
   skills: string[];
   /** 打回目标步骤 id（来自定义，供审批卡片直接展示「打回给…」）。 */
   rejectTo?: string;
@@ -476,7 +624,11 @@ export type WorkflowStepState = {
 };
 
 export type WorkflowPreflightItem = {
-  kind: "missing_role_bot" | "missing_skill" | "computer_unavailable" | "device_unpaired";
+  kind:
+    | "missing_role_bot"
+    | "missing_skill"
+    | "computer_unavailable"
+    | "device_unpaired";
   severity: "blocking" | "warning";
   message: string;
   stepId?: string;
@@ -501,7 +653,12 @@ export type WorkflowRunView = {
   inputs: Record<string, string | number | boolean>;
   steps: WorkflowStepState[];
   usage: { tokens: number; steps: number; elapsedMs: number };
-  limits: { maxTokens: number; maxSteps: number; timeLimitMinutes: number; stepTimeoutMinutes: number };
+  limits: {
+    maxTokens: number;
+    maxSteps: number;
+    timeLimitMinutes: number;
+    stepTimeoutMinutes: number;
+  };
   outputFormat: WorkflowOutputFormat;
   output: string | null;
   error: string | null;
@@ -511,6 +668,9 @@ export type WorkflowRunView = {
   events?: WorkflowRunEventView[];
   /** 运行开始时的工具规则（展示用）。 */
   tools: ToolRule;
+  hasResumeToken?: boolean;
+  resumeReason?: string | null;
+  resumeExpiresAt?: string | null;
 };
 
 export type WorkflowSummary = {

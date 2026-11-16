@@ -51,20 +51,24 @@ object GatewayAuth {
     }
 
     /**
-     * 局域网 / 环回地址（http 的放行范围）：localhost 和 *.local（mDNS 只在链路内解析）、
-     * IPv4 私网段 10/8 · 172.16/12 · 192.168/16、环回 127/8、链路本地 169.254/16，IPv6 ::1 / ULA(fc00::/7) / 链路本地 fe80::。
+     * 局域网 / 环回 / Tailscale 地址（http 的放行范围）：localhost、*.local、*.ts.net（MagicDNS）、
+     * IPv4 私网段 10/8 · 172.16/12 · 192.168/16 · Tailscale CGNAT 100.64/10 · 环回 127/8 · 链路本地 169.254/16，
+     * IPv6 ::1 / ULA(fc00::/7，含 Tailscale fd7a:115c:a1e0::/48) / 链路本地 fe80::。
      * 域名不猜——能解析到公网的域名走 http 没有保护，统一要求 https。
      */
+    fun isTailscaleOrLanHost(host: String?): Boolean = privateHost(host)
+
     private fun privateHost(host: String?): Boolean {
         if (host.isNullOrBlank()) return false
         val h = host.removePrefix("[").removeSuffix("]").lowercase()
         if (h == "localhost" || h.endsWith(".local")) return true
+        if (h.endsWith(".ts.net") && h.length > ".ts.net".length) return true
         if (h.contains(':')) return h == "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")
         val parts = h.split('.')
         if (parts.size != 4) return false
         val n = parts.map { it.toIntOrNull() ?: return false }
         if (n.any { it !in 0..255 }) return false
-        return n[0] == 10 || n[0] == 127 || (n[0] == 172 && n[1] in 16..31) || (n[0] == 192 && n[1] == 168) || (n[0] == 169 && n[1] == 254)
+        return n[0] == 10 || n[0] == 127 || (n[0] == 172 && n[1] in 16..31) || (n[0] == 192 && n[1] == 168) || (n[0] == 169 && n[1] == 254) || (n[0] == 100 && n[1] in 64..127)
     }
 
     private fun networkError(e: Throwable): LoginError {
@@ -149,6 +153,34 @@ object GatewayAuth {
             if (reply.status >= 500) last = LoginError("server", "服务器暂时不可用（${reply.status}），请稍后再试。")
         }
         throw last ?: LoginError("invalid", "这个地址能打开，但不像 ChisaBot 服务器，请检查地址。")
+    }
+
+    /** 探测主地址并在不可达时自动尝试备选地址（HTTPS 优先）。返回命中的 `(origin, Session)`。 */
+    fun probeWithFallback(origins: List<String>, cookie: String?): Pair<String, Session> {
+        val unique = LinkedHashSet<String>()
+        val httpsList = ArrayList<String>()
+        val httpList = ArrayList<String>()
+        for (raw in origins) {
+            val normalized = runCatching { normalize(raw) }.getOrNull() ?: continue
+            if (!unique.add(normalized)) continue
+            if (normalized.startsWith("https://")) httpsList.add(normalized) else httpList.add(normalized)
+        }
+        val ordered = ArrayList<String>(httpsList.size + httpList.size)
+        // 首地址优先，其余按 https 优先排序回退
+        val first = unique.firstOrNull()
+        if (first != null) ordered.add(first)
+        for (item in httpsList) if (item != first) ordered.add(item)
+        for (item in httpList) if (item != first) ordered.add(item)
+
+        var lastError: LoginError? = null
+        for (candidate in ordered) {
+            try {
+                return candidate to probe(candidate, cookie)
+            } catch (e: LoginError) {
+                lastError = e
+            }
+        }
+        throw lastError ?: LoginError("unreachable", "所有候选服务器地址均无法连接。")
     }
 
     private fun error(reply: Reply, fallback: String): String =

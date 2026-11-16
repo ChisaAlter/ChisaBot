@@ -1,5 +1,26 @@
 import type { ImPlatform } from "../../../shared/im";
 
+export type ImMediaKind = "image" | "file" | "voice" | "video";
+
+export type ImInboundAttachment = {
+  kind: ImMediaKind;
+  url?: string;
+  mimeType?: string;
+  fileName?: string;
+  dataBase64?: string;
+  durationMs?: number;
+  transcript?: string;
+  textSummary?: string;
+};
+
+export type ImReplyFile = {
+  kind: ImMediaKind;
+  url?: string;
+  mimeType?: string;
+  fileName?: string;
+  dataBase64?: string;
+};
+
 /** 平台收到的一条消息，已经变成和平台无关的样子。 */
 export type ImInbound = {
   /** 平台的消息 id（回复、去重用）。 */
@@ -16,8 +37,8 @@ export type ImInbound = {
   mentioned: boolean;
   /** 适配器回复时需要的平台原始信息（被动回复的 msg_id、req_id、sessionWebhook……）。 */
   reply: Record<string, unknown>;
-  /** 图片等附件：只记数量 / 地址，这一版不发给模型。 */
-  attachments?: { kind: "image" | "file" | "voice" | "video"; url?: string }[];
+  /** 图片、语音、文件等入站富媒体附件。 */
+  attachments?: ImInboundAttachment[];
 };
 
 export type ImLogLevel = "info" | "warn" | "error";
@@ -79,6 +100,8 @@ export type ImReply = {
   chunks: string[];
   /** 完整原文（支持 Markdown 的平台自己决定怎么发）。 */
   text: string;
+  /** 可选随回复附带的媒体文件。 */
+  files?: ImReplyFile[];
 };
 
 export type ImDeliveryReceipt = { messageIds: string[] };

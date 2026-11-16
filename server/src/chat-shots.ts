@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import sharp from "sharp";
 import type { AppVariables } from "./auth/guards";
+import { emitToolImage } from "./conversations/tool-images";
 import type { Database } from "./db/client";
 
 /**
@@ -125,6 +126,11 @@ export async function createChatShots(database: Database) {
       [id, ownerUserId, botId, frame.url ?? null, data],
     );
     await prune(ownerUserId);
+    // 压缩并落库后再交给当前工具收集器，确保非工具上下文调用时静默无副作用。
+    emitToolImage({
+      mediaType: "image/jpeg",
+      data: data.toString("base64"),
+    });
     return { ok: true, shown: true, url: frame.url ?? null };
   }
   return { routes, removeForBot, prune, saveScreenshot };

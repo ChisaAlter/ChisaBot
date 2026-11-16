@@ -57,6 +57,7 @@ import {
   currentConfirmTurn,
   currentDurableConfirmation,
   currentToolAbort,
+  isTurnTainted,
   TOOL_STOPPED_ZH,
   withConfirmInteractive,
 } from "./context";
@@ -227,6 +228,8 @@ export type ConfirmCheck = {
   /** 后来才确认时，重试要对得上的「同一个操作」。 */
   digest: string;
   initiator?: AuditInitiator;
+  /** 显式覆盖回合污点标记；缺省读取 AsyncLocalStorage 当前回合污点。 */
+  tainted?: boolean;
 };
 export type ConfirmOutcome =
   | { ok: true; via: "preference" | "rule" | "grant" | "confirmed" | "bot" }
@@ -441,6 +444,7 @@ export function createConfirmations(
         text,
         pref: "auto",
         rules: (await rules(owner)).filter((r) => r.mode === "ask"),
+        tainted: isTurnTainted(),
       });
       return decision.mode === "ask" && decision.source === "rule"
         ? "ask"
@@ -571,6 +575,7 @@ export function createConfirmations(
     owner: string,
     category: ConfirmCategory,
     text: string,
+    tainted?: boolean,
   ) {
     const [prefList, ruleList] = await Promise.all([
       prefRows(owner),
@@ -581,6 +586,7 @@ export function createConfirmations(
       text,
       pref: prefList.find((p) => p.category === category)?.mode,
       rules: ruleList,
+      tainted: tainted ?? isTurnTainted(),
     });
   }
 
@@ -742,6 +748,7 @@ export function createConfirmations(
         input.ownerUserId,
         input.category,
         input.matchText,
+        input.tainted,
       );
       if (decision.mode === "auto")
         return {

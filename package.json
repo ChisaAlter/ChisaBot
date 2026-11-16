@@ -25,6 +25,7 @@
     "test:ci": "bun scripts/test-ci.ts",
     "test:dsh": "bun scripts/run-dsh-tests.ts",
     "test:server": "bun scripts/run-server-tests.ts",
+    "bench": "bun scripts/chisa-bench.ts",
     "check": "bun run typecheck && bun run lint",
     "check:full": "bun run check && bun run test:server && bun run test:app",
     "pretest": "bun run generate:app-config",

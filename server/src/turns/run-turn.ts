@@ -262,6 +262,7 @@ export function createTurnRunner(options: {
   heartbeatMs?: number;
   /** See {@link DEFAULT_ABORT_GRACE_MS}. */
   abortGraceMs?: number;
+  checkQuota?: (ownerUserId: string) => Promise<void>;
 }): TurnRunner {
   const {
     conversations,
@@ -273,6 +274,7 @@ export function createTurnRunner(options: {
     lockTtlSeconds = DEFAULT_LOCK_TTL_SECONDS,
     heartbeatMs = DEFAULT_HEARTBEAT_MS,
     abortGraceMs = DEFAULT_ABORT_GRACE_MS,
+    checkQuota,
   } = options;
 
   const run: TurnRunner = async ({
@@ -326,6 +328,7 @@ export function createTurnRunner(options: {
      * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
      */
     assertConversationAdmissionOpen();
+    await checkQuota?.(ownerUserId);
     await conversations.getOrCreateThread({
       threadId,
       userId: ownerUserId,

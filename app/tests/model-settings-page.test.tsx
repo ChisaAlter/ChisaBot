@@ -14,16 +14,24 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
 import type { ModelSettingsCurrent } from "@/lib/model-settings/form";
+import { resetClockForTests } from "@/lib/use-now";
 import { Route as ModelsRoute } from "@/routes/_authed/admin/models";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(async () => {
   await act(async () => cleanup());
+  resetClockForTests();
 });
 afterAll(async () => {
   await settleReactWork();
@@ -112,6 +120,29 @@ beforeEach(() => {
             { error: "模型设置保存失败，请重试。" },
             { status: 500 },
           );
+        const incomingPool = Array.isArray(body.pooledKeys)
+          ? (body.pooledKeys as Array<{
+              id?: string;
+              label: string;
+              apiKey?: string;
+              remove?: boolean;
+            }>)
+          : undefined;
+        const nextPool = incomingPool
+          ? incomingPool
+              .filter((item) => !item.remove)
+              .map((item, idx) => {
+                const prev = stored.pooledKeys?.find((p) => p.id === item.id);
+                return {
+                  id: item.id ?? `pk-new-${idx + 1}`,
+                  label: item.label,
+                  hasApiKey: prev?.hasApiKey ?? Boolean(item.apiKey),
+                  healthy: prev?.healthy ?? true,
+                  cooldownUntil: prev?.cooldownUntil ?? null,
+                  lastStatus: prev?.lastStatus,
+                };
+              })
+          : undefined;
         stored = {
           provider: body.provider as ModelSettingsCurrent["provider"],
           model: String(body.model),
@@ -119,6 +150,7 @@ beforeEach(() => {
           useApiKey: Boolean(body.useApiKey),
           hasApiKey: Boolean(body.useApiKey),
           source: "saved",
+          ...(nextPool?.length ? { pooledKeys: nextPool } : {}),
         };
         return Response.json({ config: stored });
       }
@@ -275,4 +307,84 @@ test("failed saves keep the draft available and allow a retry", async () => {
   await clickSave(view);
   await view.findByText(/已保存，下一轮对话将使用/);
   expect(stored.model).toBe("retry-model");
+});
+
+test("pooled API keys show health/cooldown status and support adding, rotating, and removing keys", async () => {
+  stored = {
+    ...stored,
+    pooledKeys: [
+      {
+        id: "pk-1",
+        label: "主备通道",
+        hasApiKey: true,
+        healthy: true,
+        cooldownUntil: null,
+      },
+      {
+        id: "pk-2",
+        label: "备用通道 2",
+        hasApiKey: true,
+        healthy: false,
+        cooldownUntil: Date.now() + 25_000,
+        lastStatus: 429,
+      },
+    ],
+  };
+
+  const view = draw();
+  await view.findByText("备选 API Key 池（粘性故障转移）");
+  expect(view.container.textContent).toContain("id: pk-1");
+  expect(view.container.textContent).toContain("健康");
+  expect(view.container.textContent).toContain("id: pk-2");
+  expect(view.container.textContent).toMatch(/冷却中，剩余 \d+ 秒/);
+
+  // Rotate pk-1 secret while leaving label untouched.
+  const user = userEvent.setup({ document: view.baseElement.ownerDocument });
+  const rotateInputs = view.getAllByLabelText("更换密钥");
+  await user.type(rotateInputs[0] as HTMLInputElement, "sk-rotated-1");
+
+  // Mark pk-2 for removal (then undo -> re-mark to verify toggle).
+  fireEvent.click(
+    view.getByRole("button", { name: "移除备选 Key「备用通道 2」" }),
+  );
+  await view.findByText("保存后移除");
+  fireEvent.click(view.getByRole("button", { name: "撤销移除" }));
+  expect(view.queryByText("保存后移除")).toBeNull();
+  fireEvent.click(
+    view.getByRole("button", { name: "移除备选 Key「备用通道 2」" }),
+  );
+  await view.findByText("保存后移除");
+
+  // Add a new plaintext key.
+  fireEvent.click(view.getByRole("button", { name: "添加备选 Key" }));
+  const aliasInputs = view.getAllByLabelText("别名");
+  await user.type(
+    aliasInputs[aliasInputs.length - 1] as HTMLInputElement,
+    "备用通道 3",
+  );
+  const newPlaintextInput = await view.findByLabelText("API Key（明文）");
+  await user.type(newPlaintextInput, "sk-plain-3");
+
+  await clickSave(view);
+  await view.findByText(/已保存，下一轮对话将使用/);
+
+  expect(writes[0]?.body.pooledKeys).toEqual([
+    { id: "pk-1", label: "主备通道", apiKey: "sk-rotated-1" },
+    { id: "pk-2", label: "备用通道 2", remove: true },
+    { label: "备用通道 3", apiKey: "sk-plain-3" },
+  ]);
+  await waitFor(() => {
+    expect(view.container.textContent).not.toContain("id: pk-2");
+    expect(view.container.textContent).toContain("备用通道 3");
+  });
+});
+
+test("pooled API keys reject missing alias or key before saving", async () => {
+  const view = draw();
+  await view.findByText("备选 API Key 池（粘性故障转移）");
+  fireEvent.click(view.getByRole("button", { name: "添加备选 Key" }));
+  await clickSave(view);
+  await view.findByText("请填写备选 Key 的别名。");
+  await view.findByText("请填写新增备选 Key 的 API Key。");
+  expect(writes).toHaveLength(0);
 });

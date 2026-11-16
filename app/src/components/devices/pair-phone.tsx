@@ -130,6 +130,7 @@ export function PairPhoneDialog({
   const rotating = useRef<string | null>(null);
   const leftRef = useRef(0);
   const server = typeof window === "undefined" ? "" : window.location.origin;
+  const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null);
 
   const issue = useCallback(async () => {
     issueAbort.current?.abort();
@@ -202,45 +203,77 @@ export function PairPhoneDialog({
   });
 
   const ticket = phase.kind === "pending" ? phase.ticket : null;
+  const alternateOrigins = (ticket?.alternateOrigins ?? []).filter(
+    (origin) => origin && origin !== server,
+  );
+  const activeServer =
+    selectedOrigin && alternateOrigins.includes(selectedOrigin)
+      ? selectedOrigin
+      : server;
+  const remainingAlternates = [server, ...alternateOrigins].filter(
+    (origin) => origin && origin !== activeServer,
+  );
+  const qrValue = ticket
+    ? pairingUri(
+        activeServer,
+        ticket.code,
+        remainingAlternates.length > 0 || ticket.e2eePublicKey
+          ? {
+              ...(remainingAlternates.length > 0
+                ? { alternates: remainingAlternates }
+                : {}),
+              ...(ticket.e2eePublicKey
+                ? { e2eePub: ticket.e2eePublicKey }
+                : {}),
+            }
+          : undefined,
+      )
+    : "";
   const left = useCountdown(ticket?.id ?? null, ticket?.ttlSeconds ?? 300);
   leftRef.current = left;
 
   // 轮询绑定状态。
-  useExternalConnection(ticket ? `${ticket.id}\0${ticket.expiresAt}` : null, (_activeKey, signal) => {
-    if (!ticket) return;
-    let timer = 0;
-    const tick = async () => {
-      try {
-        const status = await pairingStatus(ticket.id, signal);
-        if (signal.aborted) return;
-        if (status.state === "bound") {
-          current.current = null;
-          setPhase({ kind: "bound", name: status.device?.name ?? "这台手机" });
-          void queryClient.invalidateQueries({ queryKey: deviceKeys.all });
-          return;
+  useExternalConnection(
+    ticket ? `${ticket.id}\0${ticket.expiresAt}` : null,
+    (_activeKey, signal) => {
+      if (!ticket) return;
+      let timer = 0;
+      const tick = async () => {
+        try {
+          const status = await pairingStatus(ticket.id, signal);
+          if (signal.aborted) return;
+          if (status.state === "bound") {
+            current.current = null;
+            setPhase({
+              kind: "bound",
+              name: status.device?.name ?? "这台手机",
+            });
+            void queryClient.invalidateQueries({ queryKey: deviceKeys.all });
+            return;
+          }
+          if (status.state === "expired" || status.state === "cancelled") {
+            rotateTicket(ticket.id, false);
+            return;
+          }
+        } catch (error) {
+          if (
+            !signal.aborted &&
+            error instanceof ClientError &&
+            error.status === 404
+          ) {
+            rotateTicket(ticket.id, false);
+            return;
+          }
+          /* 偶发网络错误或取消：下一轮再问。 */
         }
-        if (status.state === "expired" || status.state === "cancelled") {
-          rotateTicket(ticket.id, false);
-          return;
-        }
-      } catch (error) {
-        if (
-          !signal.aborted &&
-          error instanceof ClientError &&
-          error.status === 404
-        ) {
-          rotateTicket(ticket.id, false);
-          return;
-        }
-        /* 偶发网络错误或取消：下一轮再问。 */
-      }
-      if (!signal.aborted) timer = window.setTimeout(tick, POLL_MS);
-    };
-    timer = window.setTimeout(tick, POLL_MS);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  });
+        if (!signal.aborted) timer = window.setTimeout(tick, POLL_MS);
+      };
+      timer = window.setTimeout(tick, POLL_MS);
+      return () => {
+        window.clearTimeout(timer);
+      };
+    },
+  );
 
   // 过期自动换码。
   useExternalConnection(
@@ -297,7 +330,7 @@ export function PairPhoneDialog({
         <DialogBody className="pair-body">
           <div className={cn("pair-qr", phase.kind === "bound" && "is-bound")}>
             {phase.kind === "pending" ? (
-              <PairQr value={pairingUri(server, phase.ticket.code)} />
+              <PairQr value={qrValue} />
             ) : phase.kind === "loading" ? (
               <div aria-hidden className="pair-qr-skeleton" />
             ) : (
@@ -349,11 +382,38 @@ export function PairPhoneDialog({
               <IconQrcode aria-hidden className="size-4" />
               <span>
                 {"对准二维码，服务器地址 "}
-                <code className="device-code pair-server">{server}</code>
+                <code className="device-code pair-server">{activeServer}</code>
                 {" 会自动填好"}
               </span>
             </li>
           </ol>
+
+          {phase.kind === "pending" && alternateOrigins.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <span>{"切换地址："}</span>
+              {[server, ...alternateOrigins].map((origin) => {
+                const selected = origin === activeServer;
+                return (
+                  <button
+                    key={origin}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setSelectedOrigin(origin === server ? null : origin)
+                    }
+                    className={cn(
+                      "rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors",
+                      selected
+                        ? "border-primary/40 bg-primary/10 text-foreground"
+                        : "border-border/60 bg-background/60 hover:bg-muted",
+                    )}
+                  >
+                    {origin}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </DialogBody>
 
         <DialogFooter className="pair-footer">

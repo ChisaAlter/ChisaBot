@@ -19,7 +19,7 @@ sh deploy/friend-up.sh
 2. 为空的 `KEY_ENCRYPTION_KEY`（以及已填域名 / 多账号时的 `CHISABOT_GATEWAY_SECRET`）生成随机值，**不打印密钥**
 3. 硬检查：应用 compose 必须绑 `127.0.0.1:3001`；拒绝把单用户 `TRUSTED_ORIGINS` 配成 https 公网
 4. 需要时构建前端，再调用 `deploy/start.sh` 起容器
-起来后本机只在 **http://127.0.0.1:3001**。公网必须再走 HTTPS 登录网关，**禁止**把 `:3001` 直接映射到 `0.0.0.0`。
+   起来后本机只在 **http://127.0.0.1:3001**。公网必须再走 HTTPS 登录网关，**禁止**把 `:3001` 直接映射到 `0.0.0.0`。
 
 ## 安全默认（相对裸 `.env.example`）
 
@@ -37,7 +37,7 @@ sh deploy/friend-up.sh
 ## 公网与分享给朋友
 
 1. **HTTPS 网关**：按 [deploy/public/README.zh-CN.md](../deploy/public/README.zh-CN.md) 配证书与 `render-nginx.sh`，只开放自己的 HTTPS 端口。
-2. **多账号邀请**：`.env` 设 `CHISABOT_ACCOUNTS_UI=1`，登录网关 `config.json` 设同一 `identitySecret` / `CHISABOT_GATEWAY_SECRET`，并 `"invites": true`。设置 → 账号 →「邀请朋友」。详见 [accounts.md](accounts.md)。
+2. **多账号邀请**：`CHISABOT_ACCOUNTS_UI` 默认已开启（不要设成 `0`），登录网关 `config.json` 设同一 `identitySecret` / `CHISABOT_GATEWAY_SECRET`，并 `"invites": true`。设置 → 账号 →「邀请朋友」。详见 [accounts.md](accounts.md)。
 3. **网页里**：设置 → **分享给朋友**（本版新增）用同一套 ChisaBot 界面说明两条路径：邀请进你的实例，或让朋友自己 `friend-up.sh`。
 
 ## 明确不做

@@ -43,6 +43,7 @@ import {
   type ComputerGateway,
   HumanHasControlError,
 } from "./gateway";
+import type { BrowserChallenge } from "../../../shared/computer-control";
 import type { ControlState } from "./schema";
 
 /** Client tools supplied by ChisaBot when the caller has no browser. */
@@ -501,6 +502,35 @@ export function createHeadlessComputerTools(options: {
         : {}),
     });
   }
+  function handleChallenge<T extends { challenge?: BrowserChallenge }>(
+    result: T,
+    toolCallId?: string,
+  ):
+    | (T & { ok: true })
+    | {
+        ok: false;
+        error: string;
+        reason: string;
+        siteBlock: { notice: string };
+      } {
+    if (!result.challenge) return { ok: true, ...result };
+    if (isUnattendedInitiator(actor.initiator)) {
+      const reason = UNATTENDED_NEED_HUMAN_ZH(result.challenge.reason);
+      return {
+        ok: false,
+        error: reason,
+        reason,
+        siteBlock: { notice: reason },
+      };
+    }
+    throw new HeadlessToolSuspension(result.challenge.reason, {
+      kind: "computer_handoff",
+      botId,
+      requestId: result.challenge.requestId,
+      source: result.challenge.kind,
+      ...(toolCallId ? { toolCallId } : {}),
+    });
+  }
   const tools = [
     tool(
       "computer_navigate",
@@ -508,39 +538,25 @@ export function createHeadlessComputerTools(options: {
         "To open a page you wrote yourself, save it with computer_write_file (e.g. page.html) and open https://workspace.local/page.html (file:// does not work). " +
         "If the result has siteBlock, the site refused this browser outright: do not retry that site; tell the user in Chinese what siteBlock.notice says.",
       z.strictObject({ url: text }),
-      async ({ url }, { toolCallId }) => {
-        const result = await gateway.navigate(botId, actor, url, toolCallId);
-        if (result.challenge) {
-          if (isUnattendedInitiator(actor.initiator)) {
-            const reason = UNATTENDED_NEED_HUMAN_ZH(result.challenge.reason);
-            return {
-              ok: false,
-              error: reason,
-              reason,
-              siteBlock: { notice: reason },
-            };
-          }
-          throw new HeadlessToolSuspension(result.challenge.reason, {
-            kind: "computer_handoff",
-            botId,
-            requestId: result.challenge.requestId,
-            source: result.challenge.kind,
-          });
-        }
-        return { ok: true, ...result };
-      },
+      async ({ url }, { toolCallId }) =>
+        handleChallenge(
+          await gateway.navigate(botId, actor, url, toolCallId),
+          toolCallId,
+        ),
     ),
     tool(
       "computer_read",
       "Read the currently open browser page without navigating.",
       noArgs,
-      async () => ({ ok: true, ...(await gateway.read(botId)) }),
+      async (_input, { toolCallId }) =>
+        handleChallenge(await gateway.read(botId), toolCallId),
     ),
     tool(
       "computer_snapshot",
       "List fields, buttons and links with refs. Call before clicking or typing and pass the returned snapshotId with every ref. If refs are stale take a fresh snapshot. A dropdown (<select>) is a combobox with an options list: choose with computer_type.",
       noArgs,
-      async () => ({ ok: true, ...(await gateway.snapshot(botId)) }),
+      async (_input, { toolCallId }) =>
+        handleChallenge(await gateway.snapshot(botId), toolCallId),
     ),
     tool(
       "computer_screenshot",
@@ -552,10 +568,11 @@ export function createHeadlessComputerTools(options: {
       "computer_click",
       "Click an element using its ref and snapshotId from the latest snapshot.",
       z.strictObject({ ref, snapshotId }),
-      async (input, { signal }) => ({
-        ok: true,
-        ...(await gateway.click(botId, actor, input, signal)),
-      }),
+      async (input, { signal, toolCallId }) =>
+        handleChallenge(
+          await gateway.click(botId, actor, input, signal),
+          toolCallId,
+        ),
     ),
     tool(
       "computer_type",
@@ -566,10 +583,11 @@ export function createHeadlessComputerTools(options: {
         text: z.string(),
         submit: z.boolean().optional(),
       }),
-      async (input, { signal }) => ({
-        ok: true,
-        ...(await gateway.type(botId, actor, input, signal)),
-      }),
+      async (input, { signal, toolCallId }) =>
+        handleChallenge(
+          await gateway.type(botId, actor, input, signal),
+          toolCallId,
+        ),
     ),
     tool(
       "computer_key",

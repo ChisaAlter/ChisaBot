@@ -20,7 +20,9 @@ export type ImPlatform =
   | "wecom_bot"
   | "weixin"
   | "dingtalk"
-  | "telegram";
+  | "telegram"
+  | "discord"
+  | "slack";
 
 export type ImFieldType = "text" | "secret" | "select" | "url";
 
@@ -63,10 +65,12 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "feishu",
     name: "飞书 / Lark",
-    summary: "飞书开放平台的机器人，长连接收消息，支持手机飞书直接扫码一键创建并绑定，不需要公网回调地址。",
+    summary:
+      "飞书开放平台的机器人，长连接收消息，支持手机飞书直接扫码一键创建并绑定，不需要公网回调地址。",
     official: true,
     qrAuth: true,
-    qrHint: "使用手机飞书 / Lark 扫码，一键注册个人助手应用并自动拉取 App ID 与 App Secret。",
+    qrHint:
+      "使用手机飞书 / Lark 扫码，一键注册个人助手应用并自动拉取 App ID 与 App Secret。",
     steps: [
       "推荐：直接点下方「扫码绑定」，用手机飞书扫码确认即可自动创建并填入 App ID 与 App Secret。",
       "若需手动配置自建应用：打开 open.feishu.cn（国际版 open.larksuite.com）→ 开发者后台 → 创建企业自建应用，添加「机器人」能力。",
@@ -74,7 +78,13 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
       "「事件与回调」→ 订阅方式选「使用长连接接收事件」→ 添加事件「接收消息 im.message.receive_v1」，发布版本。",
     ],
     fields: [
-      { key: "appId", label: "App ID", type: "text", required: true, placeholder: "cli_xxxxxxxxxxxx" },
+      {
+        key: "appId",
+        label: "App ID",
+        type: "text",
+        required: true,
+        placeholder: "cli_xxxxxxxxxxxx",
+      },
       { key: "appSecret", label: "App Secret", type: "secret", required: true },
       {
         key: "domain",
@@ -93,17 +103,25 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "qq_official",
     name: "QQ 官方机器人",
-    summary: "QQ 开放平台的官方机器人，WebSocket 网关收消息，支持手机 QQ 直接扫码绑定，支持 QQ 私聊、QQ 群 @ 和频道 @。",
+    summary:
+      "QQ 开放平台的官方机器人，WebSocket 网关收消息，支持手机 QQ 直接扫码绑定，支持 QQ 私聊、QQ 群 @ 和频道 @。",
     official: true,
     qrAuth: true,
-    qrHint: "使用手机 QQ 扫码，在官方页面选择或创建 QQ 机器人，自动解密并填入 AppID 与 AppSecret。",
+    qrHint:
+      "使用手机 QQ 扫码，在官方页面选择或创建 QQ 机器人，自动解密并填入 AppID 与 AppSecret。",
     steps: [
       "推荐：直接点下方「扫码绑定」，用手机 QQ 扫码选择或一键创建机器人，自动填入 AppID 和 AppSecret。",
       "若手动填写：打开 q.qq.com（QQ 开放平台）→「开发设置」复制 AppID 和 AppSecret 填入下方。",
       "在 QQ 里私聊机器人，或把它拉进群 / 频道里 @ 它即可直接和绑定的 Bot 对话。",
     ],
     fields: [
-      { key: "appId", label: "AppID", type: "text", required: true, placeholder: "102xxxxxx" },
+      {
+        key: "appId",
+        label: "AppID",
+        type: "text",
+        required: true,
+        placeholder: "102xxxxxx",
+      },
       { key: "appSecret", label: "AppSecret", type: "secret", required: true },
       {
         key: "scope",
@@ -126,13 +144,15 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
         ],
       },
     ],
-    groupNote: "QQ 群和频道只会收到 @ 机器人的消息；私聊直接回复。被动回复有时限（群 5 分钟、私聊 60 分钟），太久的任务回复可能发不出去。",
+    groupNote:
+      "QQ 群和频道只会收到 @ 机器人的消息；私聊直接回复。被动回复有时限（群 5 分钟、私聊 60 分钟），太久的任务回复可能发不出去。",
     docAnchor: "qq-官方机器人",
   },
   {
     id: "onebot",
     name: "QQ 个人号（OneBot 11）",
-    summary: "通过 NapCat、LLOneBot 等 OneBot 11 协议端，把一个 QQ 个人号接成机器人。",
+    summary:
+      "通过 NapCat、LLOneBot 等 OneBot 11 协议端，把一个 QQ 个人号接成机器人。",
     official: false,
     risk: "这不是 QQ 官方接口：协议端模拟 QQ 客户端登录，腾讯可能限制或封禁这个号。请用小号，不要用常用号；不要在大群里刷屏。",
     steps: [
@@ -153,8 +173,20 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
           { value: "reverse", label: "反向（协议端连 ChisaBot）" },
         ],
       },
-      { key: "url", label: "协议端 WebSocket 地址", type: "url", placeholder: "ws://192.168.1.10:3001", help: "公网地址直接填；本机 / 内网地址要管理员先打开「允许内网地址」，否则请用反向连接。", showIf: { key: "mode", equals: "forward" } },
-      { key: "accessToken", label: "Access Token", type: "secret", help: "协议端里设置的 token；反向连接时不填会自动生成。" },
+      {
+        key: "url",
+        label: "协议端 WebSocket 地址",
+        type: "url",
+        placeholder: "ws://192.168.1.10:3001",
+        help: "公网地址直接填；本机 / 内网地址要管理员先打开「允许内网地址」，否则请用反向连接。",
+        showIf: { key: "mode", equals: "forward" },
+      },
+      {
+        key: "accessToken",
+        label: "Access Token",
+        type: "secret",
+        help: "协议端里设置的 token；反向连接时不填会自动生成。",
+      },
     ],
     groupNote: "群里 @ 这个 QQ 号才回复；私聊直接回复。",
     docAnchor: "qq-个人号onebot-11",
@@ -162,7 +194,8 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "wecom_bot",
     name: "企业微信智能机器人",
-    summary: "企业微信官方「智能机器人」API 模式，长连接收消息，支持企业微信直接扫码创建绑定，不需要公网回调地址。",
+    summary:
+      "企业微信官方「智能机器人」API 模式，长连接收消息，支持企业微信直接扫码创建绑定，不需要公网回调地址。",
     official: true,
     qrAuth: true,
     qrHint: "使用企业微信扫码确认，自动创建智能机器人并获取 Bot ID 与 Secret。",
@@ -181,7 +214,8 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "weixin",
     name: "个人微信（微信 ClawBot）",
-    summary: "微信官方的个人助手插件（iLink 接口），用自己的微信扫码授权，机器人在微信里以「ClawBot」私聊回复。",
+    summary:
+      "微信官方的个人助手插件（iLink 接口），用自己的微信扫码授权，机器人在微信里以「ClawBot」私聊回复。",
     official: true,
     qrAuth: true,
     qrHint: "使用手机微信扫码并在手机上确认，即可绑定微信 ClawBot。",
@@ -192,8 +226,19 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
       "授权后在微信里找到 ClawBot（微信助手）给它发消息，就会由你选的机器人回复。",
     ],
     fields: [
-      { key: "token", label: "授权令牌", type: "secret", help: "扫码授权后自动填好，一般不用手填。" },
-      { key: "baseUrl", label: "接口地址", type: "url", default: "https://ilinkai.weixin.qq.com", help: "一般不用改。" },
+      {
+        key: "token",
+        label: "授权令牌",
+        type: "secret",
+        help: "扫码授权后自动填好，一般不用手填。",
+      },
+      {
+        key: "baseUrl",
+        label: "接口地址",
+        type: "url",
+        default: "https://ilinkai.weixin.qq.com",
+        help: "一般不用改。",
+      },
     ],
     groupNote: "目前只支持私聊。",
     docAnchor: "个人微信微信-clawbot",
@@ -201,18 +246,30 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
   {
     id: "dingtalk",
     name: "钉钉机器人",
-    summary: "钉钉开放平台企业内部应用机器人，Stream 模式收消息，支持手机钉钉扫码一键创建绑定，不需要公网回调地址。",
+    summary:
+      "钉钉开放平台企业内部应用机器人，Stream 模式收消息，支持手机钉钉扫码一键创建绑定，不需要公网回调地址。",
     official: true,
     qrAuth: true,
-    qrHint: "使用手机钉钉扫码确认，自动注册钉钉机器人应用并填入 Client ID 与 Client Secret。",
+    qrHint:
+      "使用手机钉钉扫码确认，自动注册钉钉机器人应用并填入 Client ID 与 Client Secret。",
     steps: [
       "推荐：直接点下方「扫码绑定」，用手机钉钉扫码确认即可自动创建机器人并填入凭据。",
       "若手动填写：open-dev.dingtalk.com → 应用开发 → 企业内部应用 → 创建应用，添加「机器人」能力，消息接收模式选「Stream 模式」并发布，复制 Client ID 和 Client Secret。",
       "在钉钉里私聊机器人，或把它加进群里 @ 它。",
     ],
     fields: [
-      { key: "clientId", label: "Client ID（AppKey）", type: "text", required: true },
-      { key: "clientSecret", label: "Client Secret（AppSecret）", type: "secret", required: true },
+      {
+        key: "clientId",
+        label: "Client ID（AppKey）",
+        type: "text",
+        required: true,
+      },
+      {
+        key: "clientSecret",
+        label: "Client Secret（AppSecret）",
+        type: "secret",
+        required: true,
+      },
     ],
     groupNote: "群里只会收到 @ 机器人的消息；私聊直接回复。",
     docAnchor: "钉钉",
@@ -228,11 +285,102 @@ export const IM_PLATFORMS: ImPlatformInfo[] = [
       "把 Token 填到下面；ChisaBot 服务器要能访问 api.telegram.org。",
     ],
     fields: [
-      { key: "token", label: "Bot Token", type: "secret", required: true, placeholder: "123456:ABC-DEF…" },
-      { key: "apiBase", label: "API 地址", type: "url", default: "https://api.telegram.org", help: "用反向代理时才改。" },
+      {
+        key: "token",
+        label: "Bot Token",
+        type: "secret",
+        required: true,
+        placeholder: "123456:ABC-DEF…",
+      },
+      {
+        key: "apiBase",
+        label: "API 地址",
+        type: "url",
+        default: "https://api.telegram.org",
+        help: "用反向代理时才改。",
+      },
     ],
     groupNote: "群里 @ 机器人、或回复机器人的消息才回复；私聊直接回复。",
     docAnchor: "telegram",
+  },
+  {
+    id: "discord",
+    name: "Discord",
+    summary: "Discord 官方机器人，Gateway 长连接收消息，不需要公网回调地址。",
+    official: true,
+    steps: [
+      "打开 discord.com/developers/applications 创建应用，进入 Bot 页面重置并复制 Bot Token。",
+      "在 Bot 页面开启 Privileged Gateway Intents 中的「MESSAGE CONTENT INTENT」。",
+      "通过 OAuth2 URL Generator（勾选 bot 权限与发消息/读历史权限）把机器人邀请进服务器，或直接私信机器人。",
+    ],
+    fields: [
+      {
+        key: "botToken",
+        label: "Bot Token",
+        type: "secret",
+        required: true,
+        placeholder: "MTxx...",
+      },
+      {
+        key: "apiBase",
+        label: "API 地址",
+        type: "url",
+        default: "https://discord.com/api/v10",
+        help: "使用反向代理时才改。",
+      },
+      {
+        key: "gatewayUrl",
+        label: "Gateway 地址（可选）",
+        type: "url",
+        placeholder: "wss://gateway.discord.gg/?v=10&encoding=json",
+        help: "留空会自动通过 /gateway/bot 获取。",
+      },
+      {
+        key: "intents",
+        label: "Gateway Intents（可选）",
+        type: "text",
+        placeholder: "37377",
+        help: "留空默认包含 Guilds / GuildMessages / DirectMessages / MessageContent。",
+      },
+    ],
+    groupNote: "频道里 @ 机器人、或回复机器人的消息才回复；私信直接回复。",
+    docAnchor: "discord",
+  },
+  {
+    id: "slack",
+    name: "Slack（Socket Mode）",
+    summary: "Slack 官方机器人，Socket Mode 长连接收消息，不需要公网回调地址。",
+    official: true,
+    steps: [
+      "打开 api.slack.com/apps 创建应用，在 Socket Mode 中开启并生成带 connections:write 权限的 App-Level Token（xapp-...）。",
+      "在 Event Subscriptions 订阅 app_mention、message.im、message.channels，在 OAuth & Permissions 添加 chat:write、im:history、channels:history 等权限。",
+      "把应用安装到工作区并复制 Bot User OAuth Token（xoxb-...）填入下方。",
+    ],
+    fields: [
+      {
+        key: "botToken",
+        label: "Bot Token (xoxb-)",
+        type: "secret",
+        required: true,
+        placeholder: "xoxb-...",
+      },
+      {
+        key: "appToken",
+        label: "App-Level Token (xapp-)",
+        type: "secret",
+        required: true,
+        placeholder: "xapp-...",
+      },
+      {
+        key: "apiBase",
+        label: "API 地址",
+        type: "url",
+        default: "https://slack.com/api",
+        help: "使用反向代理时才改。",
+      },
+    ],
+    groupNote: "频道里 @ 机器人才回复（按原 thread_ts 回复）；私聊直接回复。",
+    docAnchor: "slack",
   },
 ];
 
@@ -240,7 +388,12 @@ export function imPlatform(id: string): ImPlatformInfo | undefined {
   return IM_PLATFORMS.find((platform) => platform.id === id);
 }
 
-export type ImStatus = "connected" | "connecting" | "error" | "disabled" | "waiting";
+export type ImStatus =
+  | "connected"
+  | "connecting"
+  | "error"
+  | "disabled"
+  | "waiting";
 
 export type ImConnectionView = {
   id: string;
@@ -271,7 +424,11 @@ export type ImConnectionView = {
   reverseToken?: string;
 };
 
-export type ImLogEntry = { at: string; level: "info" | "warn" | "error"; text: string };
+export type ImLogEntry = {
+  at: string;
+  level: "info" | "warn" | "error";
+  text: string;
+};
 
 export const IM_STATUS_LABEL: Record<ImStatus, string> = {
   connected: "已连接",

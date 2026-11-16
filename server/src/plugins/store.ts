@@ -2984,6 +2984,132 @@ export function createPluginStore(options: PluginStoreOptions) {
     },
 
     /**
+     * 登记来自用户已配对电脑发现的本地 MCP 元数据（provenance = "device"）。
+     * 只保存脱敏后的来源/工具清单元数据，不存密钥，也不合并或绕过 grant / policy / audit 三层。
+     */
+    async registerDeviceMcpServer(input: {
+      id: string;
+      title: string;
+      deviceId: string;
+      source: string;
+      url?: string;
+      tools?: ListedTool[];
+      by: string;
+    }): Promise<ServerRecord> {
+      if (
+        catalogueEntry(input.id) ||
+        input.id === "composio" ||
+        input.id.startsWith("composio-")
+      ) {
+        throw new CustomServerRefusedError(
+          `${input.id} uses a reserved plugin namespace and cannot be overwritten by a device MCP entry.`,
+        );
+      }
+      if (!/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/.test(input.id)) {
+        throw new CustomServerRefusedError(
+          "A server name is lower-case letters, numbers and hyphens.",
+        );
+      }
+
+      const [existing] = await database
+        .select({
+          url: mcpServers.url,
+          provenance: mcpServers.provenance,
+          authScheme: mcpServers.authScheme,
+        })
+        .from(mcpServers)
+        .where(eq(mcpServers.id, input.id));
+
+      requireNotBrokered(input.id, existing);
+      if (existing && existing.provenance !== "device") {
+        throw new CustomServerRefusedError(
+          `${input.id} already exists with provenance "${existing.provenance}" and cannot be overwritten as a device MCP entry.`,
+        );
+      }
+
+      let storedUrl = `device://${encodeURIComponent(input.deviceId.trim() || "unknown")}/${encodeURIComponent(input.source.trim() || "stdio")}`;
+      if (input.url?.trim()) {
+        let parsed: URL;
+        try {
+          parsed = new URL(input.url.trim());
+        } catch {
+          throw new CustomServerRefusedError("Invalid device MCP URL.");
+        }
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          throw new CustomServerRefusedError(
+            "Device MCP metadata URL must use http or https.",
+          );
+        }
+        storedUrl = `${parsed.origin}${parsed.pathname}`;
+      }
+
+      const vendor = `device:${input.deviceId.trim().slice(0, 40) || "unknown"}`;
+      const storable = input.tools
+        ? storableTools(input.id, input.tools)
+        : null;
+
+      await database.transaction(async (transaction) => {
+        await transaction
+          .insert(mcpServers)
+          .values({
+            id: input.id,
+            title: input.title,
+            vendor,
+            url: storedUrl,
+            provenance: "device",
+            credentialId: null,
+            toolsRefreshedAt: storable ? new Date() : null,
+            lastError: null,
+            addedBy: input.by,
+          })
+          .onConflictDoUpdate({
+            target: mcpServers.id,
+            set: {
+              title: input.title,
+              vendor,
+              url: storedUrl,
+              provenance: "device",
+              credentialId: null,
+              ...(storable ? { toolsRefreshedAt: new Date() } : {}),
+              lastError: null,
+              addedBy: input.by,
+              updatedAt: new Date(),
+            },
+          });
+
+        if (storable) {
+          await transaction
+            .delete(mcpTools)
+            .where(eq(mcpTools.serverId, input.id));
+          if (storable.length > 0) {
+            await transaction.insert(mcpTools).values(storable);
+          }
+        }
+      });
+
+      await recordAuditEvent(auditStore, {
+        eventType: "configuration.changed",
+        targetType: "mcp_server",
+        targetId: input.id,
+        payload: {
+          actor: input.by,
+          change: "mcp_device_server_registered",
+          server: input.id,
+          deviceId: input.deviceId,
+          source: input.source,
+          url: storedUrl,
+          provenance: "device",
+        },
+      });
+
+      const added = (await this.listServers()).find(
+        (server) => server.id === input.id,
+      );
+      if (!added) throw new CatalogueEntryUnknownError(input.id);
+      return added;
+    },
+
+    /**
      * Enable one app of the broker's catalogue, which is a third way for a server to arrive.
      *
      * NO URL IS TAKEN FROM A CALLER, WHICH IS WHY THERE IS NO HOST RULE HERE. `addCustomServer`
@@ -3666,6 +3792,13 @@ export function createPluginStore(options: PluginStoreOptions) {
       actorId = "",
     ): Promise<{ tools: number }> {
       const { row, entry, access } = await requireServer(serverId);
+      if (row.provenance === "device") {
+        const held = await database
+          .select({ name: mcpTools.name })
+          .from(mcpTools)
+          .where(eq(mcpTools.serverId, serverId));
+        return { tools: held.length };
+      }
 
       /*
        * Who the trail says asked for this listing, which is not the same value as who to list AS.
@@ -7372,6 +7505,12 @@ export function createPluginStore(options: PluginStoreOptions) {
        * it did.
        */
       try {
+        if (row.provenance === "device") {
+          throw new PluginRefusedError(
+            "Device-scoped MCP metadata cannot be called over HTTP; invoke it through device_mcp_call.",
+            null,
+          );
+        }
         const { token } = await connectionTokenFor(
           row,
           entry,

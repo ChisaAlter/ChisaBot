@@ -13,11 +13,16 @@ import {
  *   本身就是用户要求的记录类操作，删除也有撤销。例外：memory_dream（整理记忆）一次合并、删除多条，算「删除」。
  * - 其余工具（内置任务工具、连接器 / MCP 工具）按名字判断：删除类、付款类、发消息类；读类动词开头的不算。
  */
-const SKIP_REF = /^(memory|vault|skills|lifecycle|web|workflows|devices|host-access|confirmations|github|chat-files|fleet)\//;
-const READ_VERB = /^(list|get|search|find|read|fetch|query|describe|count|check|lookup|preview|view|show|download)(_|$)/i;
-const DELETE = /(^|[_\-/])(delete|remove|trash|destroy|purge|erase|wipe|drop)([_\-/]|$)/i;
-const PURCHASE = /(^|[_\-/])(pay|payment|purchase|checkout|buy|place_order|create_order|order_create|transfer|send_money|charge|subscribe)([_\-/]|$)/i;
-const MESSAGE = /(^|[_\-/])(send|reply|post|publish|tweet|comment|forward|invite|share|message|email|mail|dm)([_\-/]|$)/i;
+const SKIP_REF =
+  /^(memory|vault|skills|lifecycle|web|workflows|devices|host-access|confirmations|github|chat-files|fleet)\//;
+const READ_VERB =
+  /^(list|get|search|find|read|fetch|query|describe|count|check|lookup|preview|view|show|download)(_|$)/i;
+const DELETE =
+  /(^|[_\-/])(delete|remove|trash|destroy|purge|erase|wipe|drop)([_\-/]|$)/i;
+const PURCHASE =
+  /(^|[_\-/])(pay|payment|purchase|checkout|buy|place_order|create_order|order_create|transfer|send_money|charge|subscribe)([_\-/]|$)/i;
+const MESSAGE =
+  /(^|[_\-/])(send|reply|post|publish|tweet|comment|forward|invite|share|message|email|mail|dm)([_\-/]|$)/i;
 
 /** 自带的群聊发言（机器人在群里说话就是这样说的），不是代用户对外发消息。 */
 /** page_publish：页面建好就是公开的，发布 / 下线只是开关（页面本身见 §页面），不再问。 */
@@ -32,10 +37,14 @@ const NOT_OUTBOUND = new Set([
   "personal_check_updates",
 ]);
 
-export function categoryOfTool(name: string, ref?: string): ConfirmCategory | null {
+export function categoryOfTool(
+  name: string,
+  ref?: string,
+): ConfirmCategory | null {
   const id = ref ?? name;
   // 整理记忆会删掉被并掉的笔记：算「删除」，按偏好先问（审计 12-settings 必修 1：周报技能不能静默触发）。
-  if (name === "memory_dream" && (!ref || ref === "memory/memory_dream")) return "delete";
+  if (name === "memory_dream" && (!ref || ref === "memory/memory_dream"))
+    return "delete";
   // 把部署指向一个新端点（自定义 MCP）：凭据会发往该地址，和付款同级——固定先问。
   if (name === "mcp_add" && ref === "plugins/mcp_add") return "admin";
   if (SKIP_REF.test(id)) return null;
@@ -54,8 +63,10 @@ export function categoryOfTool(name: string, ref?: string): ConfirmCategory | nu
 export function flattenForMatch(value: unknown, depth = 0): string {
   if (depth > 6 || value === null || value === undefined) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.map((entry) => flattenForMatch(entry, depth + 1)).join(" ");
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  if (Array.isArray(value))
+    return value.map((entry) => flattenForMatch(entry, depth + 1)).join(" ");
   if (typeof value === "object")
     return Object.entries(value as Record<string, unknown>)
       .map(([key, entry]) => `${key} ${flattenForMatch(entry, depth + 1)}`)
@@ -63,25 +74,55 @@ export function flattenForMatch(value: unknown, depth = 0): string {
   return "";
 }
 
-export type RuleLike = { id: string; category: ConfirmCategory; mode: ConfirmMode; keywords: string[] };
+export type RuleLike = {
+  id: string;
+  category: ConfirmCategory;
+  mode: ConfirmMode;
+  keywords: string[];
+};
 
-/**
- * 这一次要不要问：付款一律问（安全底线）；带关键词的规则全部命中才算数，「先问我」压过「直接做」；
- * 没有规则命中就按这一类的偏好（没设过 = 先问我）。
- */
-export function decideMode(input: {
+export type DecideInput = {
   category: ConfirmCategory;
   text: string;
   pref: ConfirmMode | undefined;
   rules: readonly RuleLike[];
-}): { mode: ConfirmMode; source: "safety" | "rule" | "preference" | "default"; ruleId?: string } {
-  if (CONFIRM_CATEGORY_INFO[input.category].locked) return { mode: "ask", source: "safety" };
+  /** 回合是否已接触外部非受信内容；为 true 时高风险类别强制升格为逐次人工确认。 */
+  tainted?: boolean;
+};
+
+const TAINT_ESCALATED_CATEGORIES: ReadonlySet<ConfirmCategory> = new Set([
+  "message",
+  "delete",
+  "purchase",
+  "admin",
+]);
+
+/**
+ * 这一次要不要问：付款与连接器管理一律问（安全底线）；当回合带有非受信污点时，对外发信、删除、
+ * 付款与管理动作强制升格为先问我；其余情况按关键词规则（「先问我」压过「直接做」）或类别偏好决策。
+ */
+export function decideMode(input: DecideInput): {
+  mode: ConfirmMode;
+  source: "safety" | "rule" | "preference" | "default";
+  ruleId?: string;
+} {
+  if (CONFIRM_CATEGORY_INFO[input.category].locked)
+    return { mode: "ask", source: "safety" };
+  if (
+    input.tainted === true &&
+    TAINT_ESCALATED_CATEGORIES.has(input.category)
+  ) {
+    return { mode: "ask", source: "safety" };
+  }
   const text = input.text.toLowerCase();
   const hits = input.rules.filter(
     (rule) =>
       rule.category === input.category &&
       rule.keywords.length > 0 &&
-      rule.keywords.every((keyword) => keyword.trim() && text.includes(keyword.trim().toLowerCase())),
+      rule.keywords.every(
+        (keyword) =>
+          keyword.trim() && text.includes(keyword.trim().toLowerCase()),
+      ),
   );
   const ask = hits.find((rule) => rule.mode === "ask");
   if (ask) return { mode: "ask", source: "rule", ruleId: ask.id };
@@ -91,7 +132,8 @@ export function decideMode(input: {
   return { mode: "ask", source: "default" };
 }
 
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
 /** 卡片上的细节行：参数里的前几个字段（长文本截断，命令 / 路径等宽）。 */
 export function detailsFromArgs(args: unknown, max = 6): ConfirmDetail[] {
@@ -102,7 +144,11 @@ export function detailsFromArgs(args: unknown, max = 6): ConfirmDetail[] {
     if (value === null || value === undefined || value === "") continue;
     if (/secret|token|password|passwd|api_?key/i.test(key)) continue;
     const text = typeof value === "string" ? value : JSON.stringify(value);
-    out.push({ label: ARG_LABEL[key] ?? key, value: clip(text, 600), ...(/command|cmd|path|script|code|url/i.test(key) ? { code: true } : {}) });
+    out.push({
+      label: ARG_LABEL[key] ?? key,
+      value: clip(text, 600),
+      ...(/command|cmd|path|script|code|url/i.test(key) ? { code: true } : {}),
+    });
   }
   return out;
 }
@@ -135,11 +181,18 @@ export function titleForTool(name: string, category: ConfirmCategory): string {
     panel_remove: "删除右栏的一张面板",
     page_delete: "删除一个页面（链接立刻失效，素材一起删）",
     email_send: "通过已连接邮箱发送一封邮件",
-    memory_dream: "整理记忆：合并同主题的重复笔记（被并掉的条目会删除，可在 设置 → 记忆 撤销）",
+    memory_dream:
+      "整理记忆：合并同主题的重复笔记（被并掉的条目会删除，可在 设置 → 记忆 撤销）",
     mcp_add: "添加一个 MCP 服务器（自定义端点，凭据会发往该地址）",
   };
   if (known[name]) return known[name];
-  const verb = { message: "发送", delete: "删除", purchase: "付款 / 下单", device: "电脑操作", admin: "添加连接器" }[category];
+  const verb = {
+    message: "发送",
+    delete: "删除",
+    purchase: "付款 / 下单",
+    device: "电脑操作",
+    admin: "添加连接器",
+  }[category];
   return `${verb}（${name}）`;
 }
 
@@ -148,15 +201,28 @@ export function titleForTool(name: string, category: ConfirmCategory): string {
  * 只看按钮 / 链接上显示的字，短标签整段匹配（「发送」「Send」「删除」「Move to trash」…）；
  * 付款下单不在这里：上游的付款安全规则已经拦（DESIGN.md §58.5）。
  */
-const PAGE_MESSAGE = /^(发送|发 送|立即发送|发送邮件|发送消息|发布|发表|发帖|发微博|回复|发表回复|发表评论|评论|提交评论|转发|send|send now|send email|send message|post|publish|tweet|post reply|reply|comment|submit comment|share)$/i;
-const PAGE_DELETE = /^(删除|永久删除|彻底删除|确认删除|删除文件|删除邮件|移除|清空|清空回收站|移到回收站|移至废纸篓|delete|delete forever|delete permanently|permanently delete|remove|move to trash|move to bin|empty trash|empty bin)$/i;
-export function categoryOfPageAction(element: { role?: string; name?: string } | null | undefined): Exclude<ConfirmCategory, "purchase" | "device"> | null {
+const PAGE_MESSAGE =
+  /^(发送|发 送|立即发送|发送邮件|发送消息|发布|发表|发帖|发微博|回复|发表回复|发表评论|评论|提交评论|转发|send|send now|send email|send message|post|publish|tweet|post reply|reply|comment|submit comment|share)$/i;
+const PAGE_DELETE =
+  /^(删除|永久删除|彻底删除|确认删除|删除文件|删除邮件|移除|清空|清空回收站|移到回收站|移至废纸篓|delete|delete forever|delete permanently|permanently delete|remove|move to trash|move to bin|empty trash|empty bin)$/i;
+export function categoryOfPageAction(
+  element: { role?: string; name?: string } | null | undefined,
+): Exclude<ConfirmCategory, "purchase" | "device"> | null {
   const raw = element?.name?.replace(/\s+/g, " ").trim() ?? "";
   if (!raw || raw.length > 24) return null;
   // 输入框、标题、正文里的同样几个字不算按钮。
-  if (element?.role && /^(textbox|searchbox|combobox|heading|paragraph|statictext|text|label|checkbox|radio|switch|cell|row|listitem|article)$/i.test(element.role)) return null;
+  if (
+    element?.role &&
+    /^(textbox|searchbox|combobox|heading|paragraph|statictext|text|label|checkbox|radio|switch|cell|row|listitem|article)$/i.test(
+      element.role,
+    )
+  )
+    return null;
   // 去掉快捷键提示和箭头之类的尾巴：「发送(S)」「Send ➤」「删除 (Del)」
-  const name = raw.replace(/\s*[（(][^)）]{0,12}[)）]\s*$/, "").replace(/[\s➤›>→✓✔·•…]+$/u, "").trim();
+  const name = raw
+    .replace(/\s*[（(][^)）]{0,12}[)）]\s*$/, "")
+    .replace(/[\s➤›>→✓✔·•…]+$/u, "")
+    .trim();
   if (PAGE_MESSAGE.test(name)) return "message";
   if (PAGE_DELETE.test(name)) return "delete";
   return null;

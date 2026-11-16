@@ -4,6 +4,12 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
+import os from "node:os";
+import {
+  isTailscaleHost,
+  isTailscaleOrLanHost,
+  isValidE2eePublicKey,
+} from "../../../shared/device-e2ee";
 
 /**
  * 手机扫码绑定（docs/pc-node.md §10，DESIGN.md §33）。
@@ -32,6 +38,8 @@ export type PairingStatus = {
   state: PairingState;
   expiresAt: string;
   device: { id: string; name: string } | null;
+  serverE2eePublicKey?: string;
+  peerE2eePublicKey?: string;
 };
 
 type Entry = {
@@ -45,6 +53,8 @@ type Entry = {
   device: { id: string; name: string } | null;
   /** phone = 手机扫码；node = 服务器节点（chisabot-node 安装命令里的一次性码，docs/pc-node.md §14）。 */
   kind: PairingKind;
+  e2eePub?: string | null;
+  peerE2eePub?: string | null;
 };
 
 export type PairingKind = "phone" | "node";
@@ -52,7 +62,13 @@ export type PairingKind = "phone" | "node";
 export const NODE_PAIRING_TTL_MS = 30 * 60_000;
 
 export type RedeemResult =
-  | { ok: true; pairingId: string; ownerUserId: string; kind: PairingKind }
+  | {
+      ok: true;
+      pairingId: string;
+      ownerUserId: string;
+      kind: PairingKind;
+      e2eePub?: string;
+    }
   | { ok: false; reason: "invalid" | "expired" | "used" };
 
 const hash = (value: string) =>
@@ -103,6 +119,8 @@ export function createPairingStore(
       state: stateOf(entry),
       expiresAt: new Date(entry.expiresAt).toISOString(),
       device: entry.device,
+      ...(entry.e2eePub ? { serverE2eePublicKey: entry.e2eePub } : {}),
+      ...(entry.peerE2eePub ? { peerE2eePublicKey: entry.peerE2eePub } : {}),
     };
   }
 
@@ -111,7 +129,14 @@ export function createPairingStore(
     issue(
       ownerUserId: string,
       kind: PairingKind = "phone",
-    ): { id: string; code: string; expiresAt: string; ttlSeconds: number } {
+      issueOptions?: { e2eePub?: string },
+    ): {
+      id: string;
+      code: string;
+      expiresAt: string;
+      ttlSeconds: number;
+      e2eePublicKey?: string;
+    } {
       sweep();
       // 同一个人的旧的未用码：超过上限时从最旧的开始作废（网页每 5 分钟自动换码）。
       const pending = [...entries.values()]
@@ -149,6 +174,10 @@ export function createPairingStore(
         kind === "node"
           ? Math.max(ttl, options.nodeTtlMs ?? NODE_PAIRING_TTL_MS)
           : ttl;
+      const e2eePub =
+        issueOptions?.e2eePub && isValidE2eePublicKey(issueOptions.e2eePub)
+          ? issueOptions.e2eePub.trim()
+          : null;
       const entry: Entry = {
         id,
         ownerUserId,
@@ -159,6 +188,7 @@ export function createPairingStore(
         state: "pending",
         device: null,
         kind,
+        ...(e2eePub ? { e2eePub } : {}),
       };
       entries.set(id, entry);
       byHash.set(entry.codeHash, id);
@@ -167,6 +197,7 @@ export function createPairingStore(
         code,
         expiresAt: new Date(entry.expiresAt).toISOString(),
         ttlSeconds: Math.round(life / 1000),
+        ...(e2eePub ? { e2eePublicKey: e2eePub } : {}),
       };
     },
 
@@ -211,15 +242,23 @@ export function createPairingStore(
         pairingId: entry.id,
         ownerUserId: entry.ownerUserId,
         kind: entry.kind,
+        ...(entry.e2eePub ? { e2eePub: entry.e2eePub } : {}),
       };
     },
 
-    complete(pairingId: string, device: { id: string; name: string }) {
+    complete(
+      pairingId: string,
+      device: { id: string; name: string },
+      extra?: { peerE2eePub?: string },
+    ) {
       const entry = entries.get(pairingId);
       if (!entry) return;
       entry.state = "bound";
       entry.endedAt = now();
       entry.device = { id: device.id, name: device.name };
+      if (extra?.peerE2eePub && isValidE2eePublicKey(extra.peerE2eePub)) {
+        entry.peerE2eePub = extra.peerE2eePub.trim();
+      }
     },
 
     /** 登记设备失败（数据库出错等）：码作废，网页会自动换新码。 */
@@ -233,6 +272,54 @@ export function createPairingStore(
 
     size: () => entries.size,
   };
+}
+
+/**
+ * 发现本机可用作扫码直连候选的 Tailscale / 局域网 origin（不含回环、公网 IP 与链路本地 169.254）。
+ * Tailscale（100.64.0.0/10）优先排在普通私网 IP 之前，避免泄露外网或敏感主机信息。
+ */
+export function discoverAlternateOrigins(options?: {
+  requestUrl?: string;
+  networkInterfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+}): string[] {
+  let protocol = "https:";
+  let port = "";
+  let requestHost = "";
+  if (options?.requestUrl) {
+    try {
+      const parsed = new URL(options.requestUrl);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        protocol = parsed.protocol;
+      }
+      port = parsed.port;
+      requestHost = parsed.hostname.toLowerCase();
+    } catch {}
+  }
+
+  const ifaces = (options?.networkInterfaces ?? os.networkInterfaces)();
+  const tailscale: string[] = [];
+  const lan: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entries of Object.values(ifaces)) {
+    for (const info of entries ?? []) {
+      if (!info || info.internal || info.family !== "IPv4") continue;
+      const addr = info.address.trim();
+      if (!addr || addr === requestHost || addr.startsWith("169.254."))
+        continue;
+      if (!isTailscaleOrLanHost(addr)) continue;
+      const origin = `${protocol}//${addr}${port ? `:${port}` : ""}`;
+      if (seen.has(origin)) continue;
+      seen.add(origin);
+      if (isTailscaleHost(addr)) {
+        tailscale.push(origin);
+      } else {
+        lan.push(origin);
+      }
+    }
+  }
+
+  return [...tailscale, ...lan].slice(0, 6);
 }
 
 export type PairingStore = ReturnType<typeof createPairingStore>;

@@ -11,6 +11,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { createCodeOps } = require("./code-ops");
 const { classifyOpenTarget } = require("./open-target");
+const { callLocalMcp, discoverLocalMcpConfigs } = require("./mcp-host");
 
 const OUTPUT_CAP = 64 * 1024;
 const LIST_CAP = 500;
@@ -39,7 +40,9 @@ function killTree(child, platform) {
   if (!child.pid) return;
   try {
     if (platform === "win32")
-      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+      });
     else process.kill(-child.pid, "SIGKILL");
   } catch {
     try {
@@ -52,7 +55,11 @@ function killTree(child, platform) {
  * 运行一个进程，带超时、输出上限和取消。
  * 返回 { exitCode, stdout, stderr, truncated, timedOut, durationMs }。
  */
-function runProcess(file, args, { cwd, timeoutMs = 60_000, signal, platform = process.platform, input } = {}) {
+function runProcess(
+  file,
+  args,
+  { cwd, timeoutMs = 60_000, signal, platform = process.platform, input } = {},
+) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     let child;
@@ -116,7 +123,15 @@ function runProcess(file, args, { cwd, timeoutMs = 60_000, signal, platform = pr
 function runPowerShell(script, options = {}) {
   return runProcess(
     "powershell.exe",
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(PS_PREFIX + script)],
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-EncodedCommand",
+      encodePowerShell(PS_PREFIX + script),
+    ],
     { ...options, platform: "win32" },
   );
 }
@@ -142,9 +157,15 @@ function which(command) {
 async function resolveInRoots(requested, roots, platform = process.platform) {
   const P = pathApi(platform);
   if (!Array.isArray(roots) || roots.length === 0)
-    throw new OpError("这台电脑还没有设置「允许的文件夹」，请先在 PC 客户端或网页的设备设置里添加。");
+    throw new OpError(
+      "这台电脑还没有设置「允许的文件夹」，请先在 PC 客户端或网页的设备设置里添加。",
+    );
   const raw = typeof requested === "string" ? requested.trim() : "";
-  const candidate = raw ? (P.isAbsolute(raw) ? P.resolve(raw) : P.resolve(roots[0], raw)) : P.resolve(roots[0]);
+  const candidate = raw
+    ? P.isAbsolute(raw)
+      ? P.resolve(raw)
+      : P.resolve(roots[0], raw)
+    : P.resolve(roots[0]);
   const fold = (p) => (platform === "win32" ? p.toLowerCase() : p);
   const real = async (p) => {
     // 对还不存在的路径（写新文件）解析其最近的已存在祖先。
@@ -167,9 +188,12 @@ async function resolveInRoots(requested, roots, platform = process.platform) {
     const rootReal = await real(P.resolve(root));
     const a = fold(target);
     const b = fold(rootReal);
-    if (a === b || a.startsWith(b.endsWith(P.sep) ? b : b + P.sep)) return target;
+    if (a === b || a.startsWith(b.endsWith(P.sep) ? b : b + P.sep))
+      return target;
   }
-  throw new OpError(`路径不在允许的文件夹内：${raw || "(空)"}（允许的文件夹：${roots.join("、")}）。在网页或 PC 的设备设置里把它加入允许的文件夹，或让机器人再试一次并在审批时批准加入。`);
+  throw new OpError(
+    `路径不在允许的文件夹内：${raw || "(空)"}（允许的文件夹：${roots.join("、")}）。在网页或 PC 的设备设置里把它加入允许的文件夹，或让机器人再试一次并在审批时批准加入。`,
+  );
 }
 
 function looksBinary(buffer) {
@@ -199,8 +223,12 @@ public static class CBInput {
 function winInputScript(args) {
   const x = Number.isFinite(args.x) ? Math.round(args.x) : null;
   const y = Number.isFinite(args.y) ? Math.round(args.y) : null;
-  const move = x !== null && y !== null ? `[CBInput]::SetCursorPos(${x}, ${y}) | Out-Null; Start-Sleep -Milliseconds 30;` : "";
-  const click = (down, up) => `[CBInput]::mouse_event(${down},0,0,0,[UIntPtr]::Zero); [CBInput]::mouse_event(${up},0,0,0,[UIntPtr]::Zero);`;
+  const move =
+    x !== null && y !== null
+      ? `[CBInput]::SetCursorPos(${x}, ${y}) | Out-Null; Start-Sleep -Milliseconds 30;`
+      : "";
+  const click = (down, up) =>
+    `[CBInput]::mouse_event(${down},0,0,0,[UIntPtr]::Zero); [CBInput]::mouse_event(${up},0,0,0,[UIntPtr]::Zero);`;
   switch (args.action) {
     case "move":
       if (!move) throw new OpError("move 需要 x 和 y。");
@@ -212,7 +240,9 @@ function winInputScript(args) {
     case "right_click":
       return WIN_INPUT_TYPE + move + click("0x0008", "0x0010");
     case "scroll": {
-      const amount = Number.isFinite(args.amount) ? Math.round(args.amount) : -3;
+      const amount = Number.isFinite(args.amount)
+        ? Math.round(args.amount)
+        : -3;
       return `${WIN_INPUT_TYPE}${move}[CBInput]::mouse_event(0x0800,0,0,${amount * 120},[UIntPtr]::Zero);`;
     }
     case "type": {
@@ -254,15 +284,24 @@ function createOps(options = {}) {
 
   /** 完全访问模式（ctx.fullAccess）：任意绝对路径；相对路径相对于第一个允许的文件夹或主目录。 */
   async function resolvePath(requested, ctx) {
-    if (!ctx.fullAccess) return resolveInRoots(requested, ctx.allowedRoots, platform);
+    if (!ctx.fullAccess)
+      return resolveInRoots(requested, ctx.allowedRoots, platform);
     const raw = typeof requested === "string" ? requested.trim() : "";
     const base = ctx.allowedRoots?.[0] || os.homedir();
-    const expanded = raw.startsWith("~") ? P.join(os.homedir(), raw.slice(1)) : raw;
-    return expanded ? (P.isAbsolute(expanded) ? P.resolve(expanded) : P.resolve(base, expanded)) : P.resolve(base);
+    const expanded = raw.startsWith("~")
+      ? P.join(os.homedir(), raw.slice(1))
+      : raw;
+    return expanded
+      ? P.isAbsolute(expanded)
+        ? P.resolve(expanded)
+        : P.resolve(base, expanded)
+      : P.resolve(base);
   }
 
   async function systemInfo() {
-    const screen = hooks.screenInfo ? await hooks.screenInfo().catch(() => null) : null;
+    const screen = hooks.screenInfo
+      ? await hooks.screenInfo().catch(() => null)
+      : null;
     return {
       hostname: os.hostname(),
       platform,
@@ -294,10 +333,16 @@ function createOps(options = {}) {
 
   async function listFiles(args, ctx) {
     const roots = ctx.allowedRoots || [];
-    if (!args.path && ctx.fullAccess && !roots.length) args = { ...args, path: os.homedir() };
+    if (!args.path && ctx.fullAccess && !roots.length)
+      args = { ...args, path: os.homedir() };
     if (!args.path) {
       if (!roots.length) await resolveInRoots("", roots, platform);
-      return { roots: roots.map((root) => ({ path: root, exists: fs.existsSync(root) })) };
+      return {
+        roots: roots.map((root) => ({
+          path: root,
+          exists: fs.existsSync(root),
+        })),
+      };
     }
     const dir = await resolvePath(args.path, ctx);
     const stat = await fsp.stat(dir).catch(() => null);
@@ -310,23 +355,44 @@ function createOps(options = {}) {
       const s = await fsp.lstat(full).catch(() => null);
       entries.push({
         name,
-        type: !s ? "unknown" : s.isDirectory() ? "dir" : s.isSymbolicLink() ? "link" : "file",
+        type: !s
+          ? "unknown"
+          : s.isDirectory()
+            ? "dir"
+            : s.isSymbolicLink()
+              ? "link"
+              : "file",
         size: s?.isFile() ? s.size : undefined,
         modified: s ? s.mtime.toISOString() : undefined,
       });
     }
-    entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
-    return { path: dir, entries, truncated: names.length > LIST_CAP, total: names.length };
+    entries.sort((a, b) =>
+      a.type === b.type
+        ? a.name.localeCompare(b.name)
+        : a.type === "dir"
+          ? -1
+          : 1,
+    );
+    return {
+      path: dir,
+      entries,
+      truncated: names.length > LIST_CAP,
+      total: names.length,
+    };
   }
 
   async function readFile(args, ctx) {
     // 带行号范围 = 按行读取（大文件也只读需要的那几行）
-    if (args.startLine !== undefined || args.endLine !== undefined) return code.table.read_range(args, ctx);
+    if (args.startLine !== undefined || args.endLine !== undefined)
+      return code.table.read_range(args, ctx);
     const file = await resolvePath(args.path, ctx);
     const stat = await fsp.stat(file).catch(() => null);
     if (!stat) throw new OpError(`文件不存在：${file}`);
     if (!stat.isFile()) throw new OpError(`不是文件：${file}`);
-    const max = Math.min(Math.max(Number(args.maxBytes) || 262_144, 1), 1_048_576);
+    const max = Math.min(
+      Math.max(Number(args.maxBytes) || 262_144, 1),
+      1_048_576,
+    );
     const handle = await fsp.open(file, "r");
     try {
       const buffer = Buffer.alloc(Math.min(max, stat.size));
@@ -357,17 +423,28 @@ function createOps(options = {}) {
     }
     if (args.append) await fsp.appendFile(file, content, "utf8");
     else await fsp.writeFile(file, content, "utf8");
-    return { path: file, bytes: Buffer.byteLength(content), appended: !!args.append, backup };
+    return {
+      path: file,
+      bytes: Buffer.byteLength(content),
+      appended: !!args.append,
+      backup,
+    };
   }
 
   async function screenshot(args) {
-    const maxWidth = Math.min(Math.max(Number(args.maxWidth) || 1600, 320), 3840);
+    const maxWidth = Math.min(
+      Math.max(Number(args.maxWidth) || 1600, 320),
+      3840,
+    );
     if (hooks.screenshot) return hooks.screenshot({ maxWidth });
     if (platform === "win32") {
-      const result = await runPowerShell(WIN_SCREENSHOT(maxWidth), { timeoutMs: 30_000 });
+      const result = await runPowerShell(WIN_SCREENSHOT(maxWidth), {
+        timeoutMs: 30_000,
+      });
       const text = result.stdout.trim();
       const match = /^(\d+)x(\d+)x(\d+)x(\d+):(.+)$/s.exec(text);
-      if (!match) throw new OpError(`截图失败：${(result.stderr || text).slice(0, 300)}`);
+      if (!match)
+        throw new OpError(`截图失败：${(result.stderr || text).slice(0, 300)}`);
       return {
         format: "png",
         screenWidth: Number(match[1]),
@@ -379,8 +456,20 @@ function createOps(options = {}) {
     }
     // Linux：ImageMagick import（需要 X 显示）。
     if (process.env.DISPLAY && which("import")) {
-      const result = await runProcess("sh", ["-c", `import -silent -window root -resize '${maxWidth}x>' png:- | base64 -w0`], { timeoutMs: 30_000 });
-      if (result.exitCode === 0 && result.stdout) return { format: "png", base64: result.stdout.trim(), note: "Linux import" };
+      const result = await runProcess(
+        "sh",
+        [
+          "-c",
+          `import -silent -window root -resize '${maxWidth}x>' png:- | base64 -w0`,
+        ],
+        { timeoutMs: 30_000 },
+      );
+      if (result.exitCode === 0 && result.stdout)
+        return {
+          format: "png",
+          base64: result.stdout.trim(),
+          note: "Linux import",
+        };
     }
     throw new OpError("这台电脑上没有可用的截图方式。");
   }
@@ -388,16 +477,33 @@ function createOps(options = {}) {
   async function input(args) {
     if (hooks.input) return hooks.input(args);
     if (platform === "win32") {
-      const result = await runPowerShell(winInputScript(args), { timeoutMs: 20_000 });
-      if (result.exitCode !== 0) throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
+      const result = await runPowerShell(winInputScript(args), {
+        timeoutMs: 20_000,
+      });
+      if (result.exitCode !== 0)
+        throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
       return { done: true, action: args.action };
     }
     if (which("xdotool") && process.env.DISPLAY) {
       const map = {
         move: ["mousemove", String(args.x), String(args.y)],
         click: ["mousemove", String(args.x), String(args.y), "click", "1"],
-        double_click: ["mousemove", String(args.x), String(args.y), "click", "--repeat", "2", "1"],
-        right_click: ["mousemove", String(args.x), String(args.y), "click", "3"],
+        double_click: [
+          "mousemove",
+          String(args.x),
+          String(args.y),
+          "click",
+          "--repeat",
+          "2",
+          "1",
+        ],
+        right_click: [
+          "mousemove",
+          String(args.x),
+          String(args.y),
+          "click",
+          "3",
+        ],
         scroll: ["click", (args.amount ?? -3) > 0 ? "4" : "5"],
         type: ["type", "--", String(args.text ?? "")],
         key: ["key", String(args.keys ?? "")],
@@ -405,7 +511,8 @@ function createOps(options = {}) {
       const argv = map[args.action];
       if (!argv) throw new OpError(`不支持的输入动作：${args.action}`);
       const result = await runProcess("xdotool", argv, { timeoutMs: 20_000 });
-      if (result.exitCode !== 0) throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
+      if (result.exitCode !== 0)
+        throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
       return { done: true, action: args.action };
     }
     throw new OpError("这台电脑上没有可用的鼠标键盘控制方式。");
@@ -415,15 +522,20 @@ function createOps(options = {}) {
   async function open(args, ctx = {}) {
     const picked = classifyOpenTarget(args.target);
     if (picked.error) throw new OpError(picked.error);
-    if (Array.isArray(args.args) && args.args.length) throw new OpError("「打开」不带参数：只能打开网址或文件 / 文件夹。");
+    if (Array.isArray(args.args) && args.args.length)
+      throw new OpError("「打开」不带参数：只能打开网址或文件 / 文件夹。");
     if (picked.kind === "url") {
       if (hooks.openExternal) {
         await hooks.openExternal(picked.url);
         return { opened: picked.url, via: "browser" };
       }
       if (platform === "win32") {
-        const result = await runPowerShell(`Start-Process -FilePath '${picked.url.replace(/'/g, "''")}'`, { timeoutMs: 20_000 });
-        if (result.exitCode !== 0) throw new OpError(`打开失败：${result.stderr.slice(0, 300)}`);
+        const result = await runPowerShell(
+          `Start-Process -FilePath '${picked.url.replace(/'/g, "''")}'`,
+          { timeoutMs: 20_000 },
+        );
+        if (result.exitCode !== 0)
+          throw new OpError(`打开失败：${result.stderr.slice(0, 300)}`);
         return { opened: picked.url, via: "Start-Process" };
       }
       return spawnOpener(picked.url);
@@ -435,22 +547,30 @@ function createOps(options = {}) {
     } catch {
       throw new OpError(`找不到：${file}`);
     }
-    if (!stat.isFile() && !stat.isDirectory()) throw new OpError("只能打开文件或文件夹。");
+    if (!stat.isFile() && !stat.isDirectory())
+      throw new OpError("只能打开文件或文件夹。");
     // 再按解析后的真实路径查一次类型（符号链接 / 快捷方式指向可执行文件）。
     if (stat.isFile()) {
       const real = await fsp.realpath(file).catch(() => file);
       const again = classifyOpenTarget(real);
       if (again.error) throw new OpError(again.error);
     }
-    if (stat.isFile() && platform !== "win32" && stat.mode & 0o111) throw new OpError("这是可执行文件，打开它等于运行程序。要运行请用命令行能力。");
+    if (stat.isFile() && platform !== "win32" && stat.mode & 0o111)
+      throw new OpError(
+        "这是可执行文件，打开它等于运行程序。要运行请用命令行能力。",
+      );
     if (hooks.openPath) {
       const error = await hooks.openPath(file);
       if (error) throw new OpError(`打开失败：${String(error).slice(0, 300)}`);
       return { opened: file, via: "default-app" };
     }
     if (platform === "win32") {
-      const result = await runPowerShell(`Invoke-Item -LiteralPath '${file.replace(/'/g, "''")}'`, { timeoutMs: 20_000 });
-      if (result.exitCode !== 0) throw new OpError(`打开失败：${result.stderr.slice(0, 300)}`);
+      const result = await runPowerShell(
+        `Invoke-Item -LiteralPath '${file.replace(/'/g, "''")}'`,
+        { timeoutMs: 20_000 },
+      );
+      if (result.exitCode !== 0)
+        throw new OpError(`打开失败：${result.stderr.slice(0, 300)}`);
       return { opened: file, via: "Invoke-Item" };
     }
     return spawnOpener(file);
@@ -458,8 +578,17 @@ function createOps(options = {}) {
 
   function spawnOpener(target) {
     const opener = platform === "darwin" ? which("open") : which("xdg-open");
-    if (!opener) throw new OpError(platform === "darwin" ? "这台电脑上没有 open 命令。" : "这台电脑上没有 xdg-open。");
-    const child = spawn(opener, platform === "darwin" ? ["--", target] : [target], { detached: true, stdio: "ignore" });
+    if (!opener)
+      throw new OpError(
+        platform === "darwin"
+          ? "这台电脑上没有 open 命令。"
+          : "这台电脑上没有 xdg-open。",
+      );
+    const child = spawn(
+      opener,
+      platform === "darwin" ? ["--", target] : [target],
+      { detached: true, stdio: "ignore" },
+    );
     child.on("error", () => {});
     child.unref();
     return { opened: target, via: platform === "darwin" ? "open" : "xdg-open" };
@@ -468,7 +597,9 @@ function createOps(options = {}) {
   async function clipboardRead() {
     if (hooks.clipboardRead) return { text: await hooks.clipboardRead() };
     if (platform === "win32") {
-      const result = await runPowerShell("Get-Clipboard -Raw", { timeoutMs: 10_000 });
+      const result = await runPowerShell("Get-Clipboard -Raw", {
+        timeoutMs: 10_000,
+      });
       return { text: result.stdout.replace(/\r?\n$/, "") };
     }
     return { text: memoryClipboard, note: "无系统剪贴板，使用进程内剪贴板" };
@@ -493,6 +624,44 @@ function createOps(options = {}) {
     return { written: text.length, note: "进程内剪贴板" };
   }
 
+  async function mcpCall(args, ctx = {}) {
+    const cwd =
+      typeof args.cwd === "string" && args.cwd.trim()
+        ? await resolvePath(args.cwd, ctx)
+        : undefined;
+    try {
+      return await callLocalMcp({
+        command: args.command,
+        args: Array.isArray(args.args) ? args.args : undefined,
+        env:
+          args.env && typeof args.env === "object" && !Array.isArray(args.env)
+            ? args.env
+            : undefined,
+        cwd,
+        action: args.action || "list_tools",
+        toolName: args.toolName,
+        toolArgs: args.toolArgs,
+        timeoutMs: args.timeoutMs,
+        signal: ctx.signal,
+        platform,
+      });
+    } catch (error) {
+      throw new OpError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function mcpDiscover(args = {}, ctx = {}) {
+    const workspaceDir =
+      typeof args.workspaceDir === "string" && args.workspaceDir.trim()
+        ? await resolvePath(args.workspaceDir, ctx)
+        : ctx.allowedRoots?.[0] || undefined;
+    try {
+      return await discoverLocalMcpConfigs({ platform, workspaceDir });
+    } catch (error) {
+      throw new OpError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const table = {
     system_info: systemInfo,
     shell,
@@ -504,13 +673,17 @@ function createOps(options = {}) {
     open,
     clipboard_read: clipboardRead,
     clipboard_write: clipboardWrite,
-    ...Object.fromEntries(Object.entries(code.table).filter(([name]) => name !== "shell")),
+    mcp_call: mcpCall,
+    mcp_discover: mcpDiscover,
+    ...Object.fromEntries(
+      Object.entries(code.table).filter(([name]) => name !== "shell"),
+    ),
   };
 
   return {
     platform,
-    /** 这个客户端支持的全部操作（hello.features），服务器据此判断旧客户端缺哪些。 */
-    features: Object.keys(table),
+    /** 这个客户端支持的全部操作及扩展特性（hello.features），服务器据此判断旧客户端缺哪些。 */
+    features: [...new Set([...Object.keys(table), "mcp"])],
     stopAll: (reason) => code.stopAll(reason),
     async run(operation, args, ctx = {}) {
       const fn = table[operation];
@@ -520,4 +693,12 @@ function createOps(options = {}) {
   };
 }
 
-module.exports = { createOps, resolveInRoots, runProcess, encodePowerShell, winInputScript, escapeSendKeys, OpError };
+module.exports = {
+  createOps,
+  resolveInRoots,
+  runProcess,
+  encodePowerShell,
+  winInputScript,
+  escapeSendKeys,
+  OpError,
+};

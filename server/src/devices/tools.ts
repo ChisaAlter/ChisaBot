@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import sharp from "sharp";
 import { z } from "zod";
+import { emitToolImage } from "../conversations/tool-images";
 import {
   CAPABILITY_INFO,
   capabilityFor,
@@ -324,6 +326,13 @@ const schemas = {
       .describe(
         '在用户电脑上启动本地 stdio MCP 服务的命令，例如 "npx -y @modelcontextprotocol/server-filesystem D:/work"',
       ),
+    args: z
+      .array(z.string().max(1000))
+      .max(64)
+      .optional()
+      .describe(
+        "可选的显式参数数组（提供后将与可执行文件直接传给进程，不经过引号分词）",
+      ),
     action: z
       .enum(["list_tools", "call_tool"])
       .describe(
@@ -338,6 +347,16 @@ const schemas = {
       .record(z.string(), z.unknown())
       .optional()
       .describe("action=call_tool 时传给工具的 JSON 参数对象"),
+  }),
+  mcpDiscover: z.object({
+    deviceId,
+    workspaceDir: z
+      .string()
+      .max(500)
+      .optional()
+      .describe(
+        "可选工作区目录，用于同时扫描 .vscode/mcp.json、.cursor/mcp.json、.mcp.json",
+      ),
   }),
   windows: z.object({
     deviceId,
@@ -562,7 +581,7 @@ export function deviceGuidance(
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
       'Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: "main") when later commands depend on cd / env from earlier ones. Never wait in the foreground on a program that is itself waiting for input (login prompts, REPLs, y/n confirmations): it will not exit, every retry burns the whole timeout, and the turn looks dead. Feed input through a stdin pipe (`echo CODE | cmd`) or a non-interactive flag, or run it with background: true and poll device_shell_output.',
-      'Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: "list") to inspect all open desktop windows, the currently active foreground window, and each window\'s exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: "focus" or "launch") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_call.',
+      'Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: "list") to inspect all open desktop windows, the currently active foreground window, and each window\'s exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: "focus" or "launch") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_discover (read-only redacted config discovery) and device_mcp_call.',
     );
   } else {
     lines.push(
@@ -656,7 +675,31 @@ export function deviceTools(options: {
         typeof result === "object" &&
         "url" in result
       ) {
-        const shot = result as { url: string; width?: number; height?: number };
+        const shot = result as {
+          url: string;
+          screenshotId?: string;
+          width?: number;
+          height?: number;
+        };
+        if (shot.screenshotId) {
+          const rawImage = hub.screenshot(device.id, shot.screenshotId);
+          if (rawImage) {
+            try {
+              const jpeg = await sharp(rawImage)
+                .resize({ width: 960, withoutEnlargement: true })
+                .jpeg({ quality: 76 })
+                .toBuffer();
+              if (jpeg.length > 0 && jpeg.length <= 400 * 1024) {
+                emitToolImage({
+                  mediaType: "image/jpeg",
+                  data: jpeg.toString("base64"),
+                });
+              }
+            } catch {
+              // 非法或损坏图片数据时保留纯文本返回，不阻断桌面截图工具调用
+            }
+          }
+        }
         return JSON.stringify({
           ...shot,
           note: `截图已保存（30 分钟内有效）。在回复中可用 Markdown 展示：![截图](${shot.url})`,
@@ -1243,13 +1286,47 @@ export function deviceTools(options: {
       name: "device_mcp_call",
       ref: "devices/mcp_call",
       description:
-        "在用户已配对的电脑/节点上直接调用本地 stdio MCP 服务（借鉴 OpenClaw 本地节点桥接：无需公网暴露 HTTP，通过 JSON-RPC 2.0 over stdio 列出或调用本地 MCP 工具，如 filesystem / sqlite / git / 浏览器插件等）。",
+        "在用户已配对的电脑/节点上直接调用本地 stdio MCP 服务（新客户端优先走隔离 mcp_call 沙盒协议执行，旧客户端保留兜底兼容）。",
       parameters: schemas.mcpCall,
       execute: async (input) => {
         const args = schemas.mcpCall.parse(input ?? {});
         if (args.action === "call_tool" && !args.toolName?.trim()) {
           return `${REFUSAL_MARKER} action 为 call_tool 时必须提供 toolName。`;
         }
+        const picked = await resolveDevice(
+          store,
+          actorId,
+          args.deviceId,
+          (id) => hub.isOnline(id),
+        );
+        if (typeof picked === "string") {
+          return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
+        }
+        const summary = `本地 MCP (${args.action === "list_tools" ? "列出工具" : `调用 ${args.toolName}`})：${clip(args.command, 80)}`;
+        const hubWithFeatures = hub as DeviceHub & {
+          supportsFeature?: (id: string, feature: string) => boolean;
+        };
+        const supportsNativeMcp = Boolean(
+          hubWithFeatures.supportsFeature?.(picked.id, "mcp") ||
+            hub.supports?.(picked.id, "mcp_call"),
+        );
+
+        if (supportsNativeMcp) {
+          return run(
+            "mcp_call",
+            picked.id,
+            {
+              command: args.command,
+              ...(args.args?.length ? { args: args.args } : {}),
+              action: args.action,
+              ...(args.toolName ? { toolName: args.toolName } : {}),
+              ...(args.toolArgs ? { toolArgs: args.toolArgs } : {}),
+            },
+            summary,
+            30_000,
+          );
+        }
+
         const initMsg = JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
@@ -1282,14 +1359,46 @@ export function deviceTools(options: {
           `${initMsg}\n${notifyMsg}\n${reqMsg}\n`,
           "utf8",
         ).toString("base64");
-        const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']});let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\"id\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
+        const spawnCall = args.args?.length
+          ? `spawn(${JSON.stringify(args.command)},${JSON.stringify(args.args)},{shell:false,stdio:['pipe','pipe','pipe']})`
+          : `spawn(${JSON.stringify(args.command)},{shell:true,stdio:['pipe','pipe','pipe']})`;
+        const wrappedCmd = `node -e "const {spawn}=require('child_process');const p=${spawnCall};let out='';p.stdout.on('data',d=>{out+=d.toString();if(out.includes('\\"id\\":2')){console.log(out);process.exit(0);}});p.stderr.on('data',d=>process.stderr.write(d));p.stdin.write(Buffer.from('${payloadB64}','base64'));setTimeout(()=>{console.log(out);process.exit(0);},12000);"`;
         return run(
           "shell",
-          args.deviceId,
+          picked.id,
           { command: wrappedCmd, timeoutSec: 25 },
-          `本地 MCP (${args.action === "list_tools" ? "列出工具" : `调用 ${args.toolName}`})：${clip(args.command, 80)}`,
+          summary,
           30_000,
         );
+      },
+    });
+
+  if (enabledAnywhere("mcp_discover"))
+    tools.push({
+      name: "device_mcp_discover",
+      ref: "devices/mcp_discover",
+      description:
+        "只读扫描用户电脑上的本地 MCP 客户端配置（Claude Desktop / Claude Code / Cursor / VS Code），返回脱敏清单（不含真实环境变量值或 Header 密钥）及导入说明。",
+      parameters: schemas.mcpDiscover,
+      execute: async (input) => {
+        const args = schemas.mcpDiscover.parse(input ?? {});
+        const result = await raw(
+          "mcp_discover",
+          args.deviceId,
+          args.workspaceDir ? { workspaceDir: args.workspaceDir } : {},
+          "扫描本机已配置的 MCP 服务（只读脱敏）",
+          15_000,
+        );
+        if (typeof result === "string") return result;
+        const payload =
+          result && typeof result === "object"
+            ? (result as Record<string, unknown>)
+            : {};
+        return JSON.stringify({
+          ...payload,
+          guidance:
+            "清单已自动脱敏：envKeys 与 headerKeys 仅显示键名，不回传真实密钥。可通过 device_mcp_call 列出工具或执行 stdio MCP 调用，或将其只读元数据以 provenance='device' 登记到插件清单。",
+        });
       },
     });
 

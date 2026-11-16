@@ -35,11 +35,18 @@ export const localThreads = pgTable(
       .notNull()
       .defaultNow(),
     snapshotSequence: bigint("snapshot_sequence", { mode: "bigint" }),
+    threadKind: text("thread_kind").notNull().default("primary"),
+    parentThreadId: text("parent_thread_id"),
+    anchorMessageId: text("anchor_message_id"),
   },
   (table) => [
     index("chisabot_local_threads_owner_updated").on(
       table.ownerUserId,
       table.updatedAt.desc().nullsFirst(),
+    ),
+    index("chisabot_local_threads_parent_idx").on(
+      table.ownerUserId,
+      table.parentThreadId,
     ),
   ],
 );

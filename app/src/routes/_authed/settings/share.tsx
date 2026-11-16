@@ -25,7 +25,11 @@ function ShareWithFriendsPage() {
       description="邀请朋友用你的实例，或让他自己装一份可分享的自托管助手。安全默认：应用只听本机、公网走 HTTPS 网关、单用户不直连公网。"
       title="分享给朋友"
     >
-      <PageSection description="每个账号的机器人、对话、记忆、密钥和设备都是分开的。" settingItem="share.share-invite" title="路径一 · 邀请进你的实例">
+      <PageSection
+        description="每个账号的机器人、对话、记忆、密钥和设备都是分开的。"
+        settingItem="share.share-invite"
+        title="路径一 · 邀请进你的实例"
+      >
         <Card className="mem-card">
           <div className="im-row">
             <div className="im-row-main">
@@ -35,17 +39,25 @@ function ShareWithFriendsPage() {
                     <IconUsers className="size-5" />
                   </span>
                 }
-                sub={<span className="mem-by">{"设置 → 账号 → 邀请朋友（需打开多账号）"}</span>}
+                sub={
+                  <span className="mem-by">
+                    {"设置 → 账号 → 邀请朋友（需打开多账号）"}
+                  </span>
+                }
                 title={"发一个一次性邀请链接"}
               />
             </div>
             {accountsUi ? (
-              <Button nativeButton={false} render={<Link to="/admin/accounts" />} size="sm">
+              <Button
+                nativeButton={false}
+                render={<Link to="/admin/accounts" />}
+                size="sm"
+              >
                 <T>{"打开账号"}</T>
               </Button>
             ) : (
               <span className="device-cap-chip is-off">
-                <T>{"需 CHISABOT_ACCOUNTS_UI=1"}</T>
+                <T>{"账号页已由部署配置关闭（CHISABOT_ACCOUNTS_UI=0）"}</T>
               </span>
             )}
           </div>
@@ -66,7 +78,9 @@ function ShareWithFriendsPage() {
                     <IconRocket className="size-5" />
                   </span>
                 }
-                sub={<span className="mem-by font-mono text-xs">{install}</span>}
+                sub={
+                  <span className="mem-by font-mono text-xs">{install}</span>
+                }
                 title={"好友可装包"}
               />
             </div>
@@ -82,7 +96,11 @@ function ShareWithFriendsPage() {
                     <IconLink className="size-5" />
                   </span>
                 }
-                sub={<span className="mem-by">{"公网请走 deploy/public，禁止把 :3001 绑到 0.0.0.0"}</span>}
+                sub={
+                  <span className="mem-by">
+                    {"公网请走 deploy/public，禁止把 :3001 绑到 0.0.0.0"}
+                  </span>
+                }
                 title={"安全默认已写进脚本"}
               />
             </div>

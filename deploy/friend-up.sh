@@ -34,8 +34,9 @@ fill_secret() {
 }
 command -v openssl >/dev/null 2>&1 || die "需要 openssl 生成密钥"
 fill_secret KEY_ENCRYPTION_KEY 32
-# 域名已填或用户想开多账号时预生成网关密钥（仍可不启用 accounts UI）
-if [ -n "$(env_value CHISABOT_DOMAIN)" ] || [ "$(env_value CHISABOT_ACCOUNTS_UI)" = "1" ] || [ "$(env_value CHISABOT_ACCOUNTS_UI)" = "true" ]; then
+# 域名已填、默认开启或显式保留 accounts UI 时预生成网关密钥（仅当显式设为 0/false 时跳过）
+accounts_ui=$(env_value CHISABOT_ACCOUNTS_UI)
+if [ -n "$(env_value CHISABOT_DOMAIN)" ] || { [ "$accounts_ui" != "0" ] && [ "$accounts_ui" != "false" ]; }; then
   fill_secret CHISABOT_GATEWAY_SECRET 32
 fi
 
@@ -102,5 +103,5 @@ if [ -n "$(env_value CHISABOT_DOMAIN)" ]; then
 else
   say "下一步公网：在 .env 填 CHISABOT_DOMAIN，按 docs/friend-deploy.md 开 HTTPS 网关。"
 fi
-say "分享给朋友（多账号）：.env 设 CHISABOT_ACCOUNTS_UI=1，网关 config.json 设 invites:true + identitySecret=网关密钥；见 docs/accounts.md"
+say "分享给朋友（多账号）：设置 → 账号 页已默认显示（关闭可设 CHISABOT_ACCOUNTS_UI=0），网关 config.json 设 invites:true + identitySecret=网关密钥；见 docs/accounts.md"
 say "电车类定时默认保持暂停；不要 resume。"

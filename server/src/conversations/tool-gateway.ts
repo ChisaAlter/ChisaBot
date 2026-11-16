@@ -28,6 +28,7 @@ import {
   ConversationMaintenanceError,
 } from "./maintenance";
 import type { DshRunJournal } from "./run-journal";
+import { type ToolImagePart, withToolImageCollector } from "./tool-images";
 import type {
   ToolOperationResult,
   ToolOperationStore,
@@ -65,6 +66,10 @@ function unknownEffect(
   });
 }
 
+export type DshToolExecuteResult = ToolOperationResult & {
+  images?: ToolImagePart[];
+};
+
 export type DshToolRegistration = {
   bindingId: string;
   identity: RuntimeToolIdentity;
@@ -72,6 +77,8 @@ export type DshToolRegistration = {
   tools: readonly GrantedTool[];
   signal: AbortSignal;
   initiator?: AuditInitiator;
+  supportsImages?: boolean;
+  describeImage?: (part: ToolImagePart) => Promise<string | null>;
   steering?: SteerSession;
   prepareSteering?: (messages: Message[]) => Promise<{
     messages: {
@@ -96,7 +103,7 @@ export function createDshToolGateway(
       call: string;
       runId: string;
       threadId: string;
-      result: Promise<ToolOperationResult>;
+      result: Promise<DshToolExecuteResult>;
     }
   >();
   const steering = new Map<string, Promise<unknown>>();
@@ -133,7 +140,7 @@ export function createDshToolGateway(
   async function invoke(
     run: DshToolRegistration,
     input: z.infer<typeof Call>,
-  ): Promise<ToolOperationResult> {
+  ): Promise<DshToolExecuteResult> {
     run.signal.throwIfAborted();
     const refusal = await journal?.continuationRefusal(
       run.identity.threadId,
@@ -224,26 +231,39 @@ export function createDshToolGateway(
     let invoked = false;
     try {
       run.signal.throwIfAborted();
-      const content = await withConfirmTurn(turn, () =>
-        withConfirmToolCall(toolCallId, input.name, () =>
-          withConfirmActor(initiator, () =>
-            withToolAbort(run.signal, () =>
-              withApprovalContext(continuation, () =>
-                withDurableConfirmation(
-                  { suspend: suspendConfirmation(claim.id, continuation) },
-                  () => {
-                    invoked = true;
-                    return tool.execute(parsed.data, { signal: run.signal });
-                  },
+      const collected = await withToolImageCollector(
+        {
+          supportsImages: run.supportsImages ?? false,
+          ...(run.describeImage ? { describeImage: run.describeImage } : {}),
+        },
+        () =>
+          withConfirmTurn(turn, () =>
+            withConfirmToolCall(toolCallId, input.name, () =>
+              withConfirmActor(initiator, () =>
+                withToolAbort(run.signal, () =>
+                  withApprovalContext(continuation, () =>
+                    withDurableConfirmation(
+                      { suspend: suspendConfirmation(claim.id, continuation) },
+                      () => {
+                        invoked = true;
+                        return tool.execute(parsed.data, {
+                          signal: run.signal,
+                        });
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
       );
-      const result = { content };
-      await operations.settle(claim.id, "completed", result);
-      return result;
+      // 账本仅落盘纯文本结果，避免将大体积 base64 写入 PostgreSQL JSONB。
+      await operations.settle(claim.id, "completed", {
+        content: collected.content,
+      });
+      return collected.images?.length
+        ? { content: collected.content, images: collected.images }
+        : { content: collected.content };
     } catch (error) {
       const message = publicErrorMessage(error, "工具执行失败。");
       if (error instanceof HeadlessToolSuspension) {

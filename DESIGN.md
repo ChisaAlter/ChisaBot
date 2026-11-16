@@ -141,6 +141,7 @@
 | [133](#133-动态布局与弹窗状态稳定性2026-11-14)                                                           | 动态布局与弹窗状态稳定性                                                                                         | 2026-11-14                                                                 |
 | [134](#134-任务中心四列看板与本地-markdown-双向协同2026-11-15)                                             | 任务中心四列看板与本地 Markdown 双向协同                                                                         | 2026-11-15                                                                 |
 | [135](#135-多图与多卡片错落扇形牌组展示2026-11-16)                                                       | 多图与多卡片错落扇形牌组展示                                                                                     | 2026-11-16                                                                 |
+| [136](#136-全域协同安全护栏与多端原生融合2026-11-16)                                                     | 全域协同、安全护栏与多端原生融合                                                                                 | 2026-11-16                                                                 |
 
 ## 0. 总原则
 
@@ -2913,3 +2914,13 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **双卡微倾扇面（`LinkCardStack`）**：2 张链接卡时主卡微逆时针倾斜 `-2.5deg`、右卡顺时针 `+3.5deg` 并下沉 `0.4` 卡宽（窄屏按竖向像素下限兜底），3 张及以上延续居中品字扇形（左卡下沉 `0.32`、右卡下沉 `0.4` 卡宽），标题无需左缩进即可完整露在下方。
 - **生成式界面多图 / 多链接自动升级与同源图片直引**：`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc`，在继续拦截 `http://`、`//`、`..` 与 `data:` 的前提下允许 `Image` 引用本站 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`；聊天面 `JsonRenderSurface` 通过 `extractStandaloneMediaDeck` 与 `upgradeNestedMediaDecks` 将仅含 `2+` 张 `Image` 或 `2–3` 张 `Link` 的 `Carousel` / `Stack` / `Grid`（含无描述 `Card` 外壳）直接渲染为无外框扇形牌组，并在提示词引导模型优先用 Markdown 独立行图片/链接直接输出。
 - **AI 回复气泡与侧栏磨砂背景一致（§3.1–§3.4 渲染预算修正）**：移除 `styles.css` 渲染预算段落中对 `.glass-main [data-slot="bubble"]`、`[data-slot="bubble-content"]` 与 `.jr-card` 的 `--lg-blur: none` 封锁，仅保留 `.chat-bubble-bare > [data-slot="bubble-content"]` 裸代码容器为无框无模糊（含 `--glass-tint: transparent`）；普通 AI 回复气泡、用户气泡与对话顶层卡片全面恢复与侧栏、右栏及输入框一致的四档磨砂毛玻璃（`liquid` / `crystal` / `frosted` / `mist`），并在 `perf-noblur.css` 与 `resize-pause.css` 中同步为性能优化模式、系统减少透明度及窗口拖拽缩放配置不透明实色兜底（含 `--bubble-user-bg`）。
+
+## 136. 全域协同安全护栏与多端原生融合（2026-11-16）
+
+面向企业与个人全栈协同场景，在 ChisaBot 现有账户、配额、运行时、IM 与验证体系内部完成全域原生融合，拒绝外挂平行系统，全部状态转移受形式化 BFS 不变式与 `ChisaBench` 基线双重约束：
+
+- **底层多 Key 池与每用户配额账本（Wave 1 · 迁移 `0069`）**：新增 `user_quotas` / `usage_ledger`（`0069_native_system_unification.sql`），`server/src/conversations/key-pool.ts` 为同 Provider 提供 FNV-1a 粘性选取与 `429/402/401` 冷却恢复，`server/src/quotas/service.ts` 对每回合、群聊接力与定时的日请求/日 Token/月 Token 实施硬上限准入（仅 `bypassAdmin === true` 管理员豁免）并在设置页提供明文汇总与配置面板。
+- **DSH 多模态回传、云端人工接管与 PC 原生互联（Wave 2）**：DSH 工具结果原生回传图片并对齐多模态窗口预算；`agent-computer` 识别国内外 CAPTCHA 并通过 Take-the-Wheel 互斥门与 `resumeSnapshotRequired` 恢复快照栅栏保证人工接管期间绝对独占与释权后强制重拍快照；Electron `pc/` 提供原生 `stdio` MCP 服务与局域网 E2EE 对等配对。
+- **多 Bot 群聊防循环、`/side` 只读旁白与暂停工作流原子恢复（Wave 3）**：`server/src/channels/group.ts` 通过 `evaluateGroupRelayGuard` 强制 `maxDepth = 6`、双向乒乓上限 `<= 2`、冷却窗、扇出限额、Bot-to-Bot 授权与配额继承；单 Bot 频道支持 `/side` 派生只读侧边会话（`chisabot_side_threads` + `LiveSteer`）并隔离主回合占线态；暂停工作流通过 `createPausedSchedule` 在同一事务状态中周期重投递并随终态安全毕业。
+- **四级记忆隔离、跨会话检索与内容安全污点升级（Wave 4）**：`shared/memory-notes.ts` 与 `server/src/memory-notes/` 实施 `private` / `bot_private` / `shared` / `public` 四级严格隔离，删 Bot 同步清理 `bot_private` 并拦截滞后写入，组装 `<= 4000` 字符按 `(kind, id)` 确定的 KV 前缀缓存与动态召回；`session-search.ts` 提供跨会话检索，`chat-files/service.ts` 利用原生 `node:zlib` 对 DOCX/PDF 分块入库（`chisabot_chat_file_chunks`）；`shared/content-safety-scanner.ts` 拦截 Bidi/零宽偷渡与外带密钥并配合 `AsyncLocalStorage` 污点上下文将本轮危险审批从 `"auto"` 强制升为 `"ask"`（`source: "safety"`）。
+- **IM 隔离降级、Discord/Slack 适配器与原生 ASR/TTS 语音链路（Wave 5–6）**：`server/src/im/` 区分号主私聊、外部白名单与群聊隔离（群聊/非号主剥离设备与私密工具并标记不可信作用域，保留人工接管 `/takeover` 与 `/release`），新增 Discord / Slack 适配器并引入 `ImWindowExpiredError`（`CB-027`）将超出平台被动窗口的投递记为 `window_expired`（`window_expired_at`）并派发 `personalNotifications` 提醒，同时免疫 `schedules` 连败自动暂停；统一原生 ASR/TTS 服务挂载于 `/api/speech`（`/tts`、`/asr`）并与 IM 语音入站转写打通。整套核心状态机由 [docs/formal-statecharts.md](docs/formal-statecharts.md) 的 8 份 BFS + 双变异体证明与 `scripts/chisa-bench.ts`（`bun run bench`）守卫。

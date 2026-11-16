@@ -43,6 +43,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "../../app/src/lib/conversations/approval-context":
       "验收流要过真 approval context",
   },
+  "server/tests/formal-computer-takeover.test.ts": {
+    "../../agent-computer/src/control":
+      "BFS 形式化模型检验直接驱动真 createControl 与 canBotAct 对齐状态机",
+  },
   "server/tests/untrusted-content.test.ts": {
     "../../app/src/lib/plugins/tool-result":
       "信封格式双端各自声明（tool-result.ts 头注），靠这个测试对齐两份",

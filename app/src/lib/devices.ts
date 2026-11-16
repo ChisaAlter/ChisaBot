@@ -315,6 +315,8 @@ export const ACTION_LABEL: Record<string, string> = {
   open: "打开",
   input: "输入",
   system_info: "系统信息",
+  mcp_call: "调用本地 MCP",
+  mcp_discover: "发现本地 MCP 配置",
 };
 
 // ---- 手机扫码绑定（DESIGN.md §33） ----
@@ -325,6 +327,8 @@ export type PairingTicket = {
   expiresAt: string;
   ttlSeconds: number;
   kind?: "phone" | "node";
+  alternateOrigins?: string[];
+  e2eePublicKey?: string;
 };
 export type PairingStatus = {
   id: string;

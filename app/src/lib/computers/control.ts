@@ -12,7 +12,10 @@ import { tryClient } from "@/lib/client";
  */
 
 export type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
-import type { ComputerControlState as ControlState } from "../../../../shared/computer-control";
+import type {
+  ComputerControlState as ControlState,
+  HandoffSource,
+} from "../../../../shared/computer-control";
 
 const okListeners = new Set<(computerId: string) => void>();
 /** 同一个 bot 的别的控制请求成功了：说明连得上，轮询不必再退避。 */
@@ -113,12 +116,48 @@ export async function readControlStatus(
   return { kind, control };
 }
 
-export async function takeControl(computerId: string, requestId?: string) {
+const HANDOFF_SOURCE_HINT_ZH: Record<HandoffSource, string> = {
+  "cn-captcha":
+    "检测到国内安全验证或滑块/扫码风控，请点「接管控制」在浏览器亲自完成后交还。",
+  cloudflare: "网站要求人机验证，请点「接管控制」在浏览器亲自完成后交还。",
+  "visible-challenge":
+    "页面存在可见人机验证，请点「接管控制」在浏览器亲自完成后交还。",
+  "human-takeover": "已请求人工接管，请点「接管控制」操作浏览器。",
+  model: "机器人需要协助，请点「接管控制」处理后交还。",
+  manual: "正在等待人工接管浏览器。",
+};
+
+export const HANDOFF_DONE_CONTINUE_ZH =
+  "完成操作后点击「交还」（我已完成，继续执行）";
+
+export function controlHandoffHint(
+  control:
+    | Pick<
+        ControlState,
+        "holder" | "requested" | "reason" | "request" | "transitioning"
+      >
+    | null
+    | undefined,
+): string | null {
+  if (!control || control.transitioning) return null;
+  if (control.holder === "human") return HANDOFF_DONE_CONTINUE_ZH;
+  if (!control.requested) return null;
+  if (control.reason?.trim()) return control.reason.trim();
+  const source = control.request?.source;
+  return source ? HANDOFF_SOURCE_HINT_ZH[source] : null;
+}
+
+export async function takeControl(
+  computerId: string,
+  requestId?: string,
+  source?: HandoffSource,
+) {
   const id =
     requestId ??
     (
       await callControl(computerId, "/control/request", {
         reason: "我来接管浏览器。",
+        ...(source ? { source } : {}),
       })
     )?.request?.id;
   return id

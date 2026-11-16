@@ -1,6 +1,7 @@
-import type {
-  BrowserChallenge,
-  HandoffRequest,
+import {
+  type BrowserChallenge,
+  type HandoffRequest,
+  isBrowserChallengeKind,
 } from "../../../../shared/computer-control";
 import { callComputer, type ToolOutcome } from "./call";
 import { cancelControl, readControl } from "./control";
@@ -257,7 +258,7 @@ function challengeFrom(result: ToolOutcome): BrowserChallenge | undefined {
     !("requestId" in value) ||
     typeof value.requestId !== "string" ||
     !("kind" in value) ||
-    (value.kind !== "cloudflare" && value.kind !== "visible-challenge") ||
+    !isBrowserChallengeKind(value.kind) ||
     !("reason" in value) ||
     typeof value.reason !== "string"
   )

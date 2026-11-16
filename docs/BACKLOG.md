@@ -56,7 +56,7 @@
 | [CB-024](#cb-024) | 切换暗色外观卡约 400ms（毛玻璃重绘已修，长对话主线程见 CB-025）                   | 成熟度 Maturity       | `type: perf` · `area: chat` · `area: settings` · `P2` · `status: done`                        |
 | [CB-025](#cb-025) | 打开长对话首屏渲染约 1 秒                                                         | 成熟度 Maturity       | `type: perf` · `area: chat` · `P2` · `status: done`                                           |
 | [CB-026](#cb-026) | chisabot_bot_threads：确认没有孤儿指针行                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                           |
-| [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制                                                 | 成熟度 Maturity       | `type: bug` · `area: im` · `area: schedules` · `P2`                                           |
+| [CB-027](#cb-027) | IM 定时推送受平台被动回复窗口限制                                                 | 成熟度 Maturity       | `type: bug` · `area: im` · `area: schedules` · `P2` · `status: done`                          |
 | [CB-028](#cb-028) | 「开场一句」只在显示时折叠，事件历史里仍保存                                      | 成熟度 Maturity       | `type: chore` · `area: chat` · `P2`                                                           |
 | [CB-029](#cb-029) | 弹窗打开动画仍有毛玻璃开销                                                        | 成熟度 Maturity       | `type: perf` · `area: settings` · `P2` · ✅ 0.1.38                                            |
 | [CB-030](#cb-030) | 设备能力「打开」实际可执行任意命令，却标为非危险                                  | 设备核心 Devices core | `type: bug` · `area: devices` · `area: pc` · `P1` · `status: done`                            |
@@ -70,7 +70,7 @@
 | [CB-042](#cb-042) | 重新生成 / 编辑后重发                                                             | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: done`                                           |
 | [CB-043](#cb-043) | 频道聊天的跨设备实时同步（手机发的桌面看不到）                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: pwa` · `P1` · `status: done`                              |
 | [CB-044](#cb-044) | 登录页预填管理员账号名                                                            | 成熟度 Maturity       | `type: bug` · `area: infra` · `P1` · `status: done`                                           |
-| [CB-045](#cb-045) | 每人模型额度 / 用量上限                                                           | 成熟度 Maturity       | `type: feat` · `area: models` · `P2`                                                          |
+| [CB-045](#cb-045) | 每人模型额度 / 用量上限                                                           | 成熟度 Maturity       | `type: feat` · `area: models` · `P2` · `status: done`                                         |
 | [CB-046](#cb-046) | 两套聊天实现（/bot 与 /channel）收成一套                                          | 成熟度 Maturity       | `type: chore` · `area: chat` · `P1` · `status: done`                                          |
 | [CB-047](#cb-047) | 很长的对话打开时历史晚到，画面停在上面                                            | 成熟度 Maturity       | `type: bug` · `area: chat` · `P2` · `status: done`（#146，继续观察）                          |
 | [CB-048](#cb-048) | 对话像发短信：先答、短气泡、不讲方法、草稿卡 / 代码卡 / 回复引用（完成）          | Hark parity           | `type: feature` · `area: chat` · `P1`                                                         |
@@ -983,7 +983,7 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 ## CB-027
 
 **IM 定时推送受平台被动回复窗口限制**  
-里程碑：成熟度 Maturity · 标签：`type: bug` `area: im` `area: schedules` `P2`
+里程碑：成熟度 Maturity · 标签：`type: bug` `area: im` `area: schedules` `P2` · `status: done`（Wave 5 · DESIGN §136）
 
 #### 背景
 
@@ -991,9 +991,9 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 #### 验收标准
 
-- [ ] 推送失败时在网页通知和定时任务记录里写明原因
-- [ ] 支持主动消息的平台走主动接口
-- [ ] docs/im.md 写清各平台限制
+- [x] 推送失败时在网页通知和定时任务记录里写明原因
+- [x] 支持主动消息的平台走主动接口
+- [x] docs/im.md 写清各平台限制
 
 #### 相关
 
@@ -1234,7 +1234,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 ## CB-045
 
 **每人模型额度 / 用量上限**  
-里程碑：成熟度 Maturity · 标签：`type: feat` `area: models` `P2`
+里程碑：成熟度 Maturity · 标签：`type: feat` `area: models` `P2` · `status: done`（Wave 1 · DESIGN §136 · 迁移 `0069`）
 
 #### 背景
 
@@ -1242,7 +1242,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 
 #### 验收标准
 
-- [ ] 按人统计每日 token / 次数；管理员可给每人设日上限，超了在聊天里说人话
+- [x] 按人统计每日 token / 次数；管理员可给每人设日上限，超了在聊天里说人话
 
 ## CB-046
 

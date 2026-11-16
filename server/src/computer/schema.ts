@@ -199,6 +199,7 @@ export type ActionResult = {
   /** Where the page ended up, which is how a Bot notices that its click navigated. */
   url: string;
   elapsedMs: number;
+  challenge?: BrowserChallenge;
 };
 
 /** Absent path means the whole workspace. */
@@ -396,7 +397,6 @@ export type ComputerStatus = {
   /** Set when state is "unreachable", in words a person can act on. */
   reason?: string;
 };
-
 
 /** 浏览器标签（DESIGN.md §95）。和 agent-computer/src/tabs.ts 的 TabsView 同一个形状。 */
 export type BrowserTab = {

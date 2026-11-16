@@ -4,6 +4,17 @@ import {
   PlanModel,
   type PlanModelConfig,
 } from "../agents/plan-model";
+import { QuotaExceededError } from "../quotas/service";
+import {
+  buildQuotaExceededResponse,
+  type ModelProxyQuotaOptions,
+} from "./model-connection-proxy";
+
+export type PlanModelProxyOptions = {
+  quota?: ModelProxyQuotaOptions;
+  estimatePromptChars?: (bodyText: string) => number;
+  now?: () => number;
+};
 
 type StreamOptions = Parameters<PlanLanguageModel["doStream"]>[0];
 type Prompt = StreamOptions["prompt"];
@@ -32,10 +43,16 @@ export function createPlanModelProxy(
   input: RunAgentInput,
   toolNames: readonly string[],
   signal: AbortSignal,
+  options?: PlanModelProxyOptions,
 ) {
   const model = new PlanModel(config, botId, input, new Set(toolNames), signal);
+  const nowFn = options?.now ?? Date.now;
   return async (body: unknown, requestSignal: AbortSignal) => {
-    const request = (body ?? {}) as { messages?: unknown; tools?: unknown };
+    const request = (body ?? {}) as {
+      model?: unknown;
+      messages?: unknown;
+      tools?: unknown;
+    };
     if (!Array.isArray(request.messages) || !Array.isArray(request.tools ?? []))
       throw new Error("Invalid plan model request.");
     const allowed = new Set(toolNames);
@@ -111,6 +128,29 @@ export function createPlanModelProxy(
               }),
       };
     });
+    if (options?.quota) {
+      try {
+        await options.quota.checkAdmission(
+          options.quota.userId,
+          options.quota.isAdmin ?? false,
+          nowFn(),
+        );
+      } catch (error) {
+        if (error instanceof QuotaExceededError) {
+          return buildQuotaExceededResponse(error);
+        }
+        throw error;
+      }
+    }
+    const bodyText = JSON.stringify(body ?? {});
+    const requestChars = options?.estimatePromptChars
+      ? Math.max(0, options.estimatePromptChars(bodyText))
+      : bodyText.length;
+    const modelName =
+      typeof request.model === "string" && request.model.trim()
+        ? request.model.trim()
+        : model.modelId;
+
     const abort = new AbortController();
     const result = await model.doStream({
       prompt,
@@ -121,6 +161,46 @@ export function createPlanModelProxy(
     const encoder = new TextEncoder();
     const id = crypto.randomUUID();
     const calls = new Map<string, number>();
+    let outputChars = 0;
+    let recorded = false;
+    const recordOnce = (usage?: {
+      inputTokens?: { total?: number; cacheRead?: number };
+      outputTokens?: { total?: number };
+    }) => {
+      if (recorded || !options?.quota) return;
+      recorded = true;
+      const rawIn = usage?.inputTokens?.total;
+      const rawOut = usage?.outputTokens?.total;
+      const rawCache = usage?.inputTokens?.cacheRead;
+      const finalIn =
+        typeof rawIn === "number" && Number.isFinite(rawIn) && rawIn >= 0
+          ? Math.floor(rawIn)
+          : Math.ceil(Math.max(0, requestChars) / 4);
+      const finalOut =
+        typeof rawOut === "number" && Number.isFinite(rawOut) && rawOut >= 0
+          ? Math.floor(rawOut)
+          : Math.ceil(Math.max(0, outputChars) / 4);
+      const finalCache =
+        typeof rawCache === "number" &&
+        Number.isFinite(rawCache) &&
+        rawCache >= 0
+          ? Math.floor(rawCache)
+          : 0;
+      Promise.resolve(
+        options.quota.recordUsage({
+          userId: options.quota.userId,
+          model: modelName,
+          inputTokens: finalIn,
+          outputTokens: finalOut,
+          cacheReadTokens: finalCache,
+          requests: 1,
+          now: nowFn(),
+        }),
+      ).catch(() => {
+        // 异步记账失败不阻塞计划模型流式响应。
+      });
+    };
+
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const emit = (delta: unknown, finish_reason: string | null = null) =>
@@ -133,10 +213,13 @@ export function createPlanModelProxy(
           while (true) {
             const { value: part, done } = await reader.read();
             if (done) break;
-            if (part.type === "text-delta") emit({ content: part.delta });
-            else if (part.type === "tool-input-start") {
+            if (part.type === "text-delta") {
+              outputChars += part.delta.length;
+              emit({ content: part.delta });
+            } else if (part.type === "tool-input-start") {
               const index = calls.size;
               calls.set(part.id, index);
+              outputChars += part.toolName.length;
               emit({
                 tool_calls: [
                   {
@@ -147,7 +230,8 @@ export function createPlanModelProxy(
                   },
                 ],
               });
-            } else if (part.type === "tool-input-delta")
+            } else if (part.type === "tool-input-delta") {
+              outputChars += part.delta.length;
               emit({
                 tool_calls: [
                   {
@@ -156,8 +240,9 @@ export function createPlanModelProxy(
                   },
                 ],
               });
-            else if (part.type === "error") throw part.error;
+            } else if (part.type === "error") throw part.error;
             else if (part.type === "finish") {
+              recordOnce(part.usage);
               emit(
                 {},
                 part.finishReason.unified === "tool-calls"
@@ -171,10 +256,12 @@ export function createPlanModelProxy(
           }
           throw new Error("The plan model ended without a completion receipt.");
         } catch (error) {
+          recordOnce();
           controller.error(error);
         }
       },
       cancel() {
+        recordOnce();
         abort.abort();
         return reader.cancel();
       },

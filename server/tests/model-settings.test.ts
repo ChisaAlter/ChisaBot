@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { createModelKeyPool } from "../src/conversations/key-pool";
 import { decryptSecret } from "../src/credentials";
 import {
   createModelSettingsService,
   type ModelSettingsSnapshot,
   type ModelSettingsStore,
   ModelSettingsValidationError,
+  modelPoolId,
   parseModelConnectionInput,
 } from "../src/model-settings";
 
@@ -37,7 +39,12 @@ function memoryStore() {
 }
 
 function setup(
-  options: { fetch?: typeof fetch; fallbackKey?: string | null } = {},
+  options: {
+    fetch?: typeof fetch;
+    fallbackKey?: string | null;
+    keyPool?: ReturnType<typeof createModelKeyPool>;
+    now?: () => number;
+  } = {},
 ) {
   const backing = memoryStore();
   const service = createModelSettingsService({
@@ -49,6 +56,8 @@ function setup(
         ? "environment-secret"
         : options.fallbackKey,
     fetch: options.fetch,
+    keyPool: options.keyPool,
+    now: options.now,
   });
   return { ...backing, service };
 }
@@ -769,5 +778,184 @@ describe("unsaved model connection probes", () => {
     expect(result.ok).toBe(false);
     expect(result.message).not.toContain("environment-secret");
     expect(result.message).not.toContain("existing.test");
+  });
+});
+
+describe("模型备选 Key 池配置", () => {
+  test("保存多把备选 Key 时加密落盘、投影不泄露明文且运行时可完整解密", async () => {
+    const keyPool = createModelKeyPool();
+    const { store, service } = setup({ keyPool });
+    const saved = await service.save(
+      {
+        provider: "openai",
+        model: "gpt-4o",
+        baseUrl: "https://pool.example/v1",
+        apiKey: "sk-primary-secret",
+        pooledKeys: [
+          { label: "华东主账户", apiKey: "sk-pool-east" },
+          { label: "华南备账户", apiKey: "sk-pool-south" },
+        ],
+      },
+      "admin-1",
+    );
+
+    expect(saved.hasApiKey).toBe(true);
+    expect(saved.pooledKeys).toHaveLength(2);
+    expect(JSON.stringify(saved)).not.toContain("sk-primary-secret");
+    expect(JSON.stringify(saved)).not.toContain("sk-pool-east");
+    expect(JSON.stringify(saved)).not.toContain("sk-pool-south");
+
+    const firstKeyId = saved.pooledKeys?.[0]?.id;
+    const secondKeyId = saved.pooledKeys?.[1]?.id;
+    expect(typeof firstKeyId).toBe("string");
+    expect(typeof secondKeyId).toBe("string");
+
+    const snapshot = await store.read();
+    expect(snapshot?.pooledKeys).toHaveLength(2);
+    expect(snapshot?.pooledKeys?.[0]?.encryptedApiKey).not.toBe("sk-pool-east");
+    expect(
+      await decryptSecret(
+        encryptionKey,
+        snapshot?.pooledKeys?.[0]?.encryptedApiKey ?? "",
+      ),
+    ).toBe("sk-pool-east");
+
+    const current = await service.get();
+    expect(current.pooledKeys).toEqual([
+      {
+        id: firstKeyId ?? "",
+        label: "华东主账户",
+        hasApiKey: true,
+        healthy: true,
+        cooldownUntil: null,
+      },
+      {
+        id: secondKeyId ?? "",
+        label: "华南备账户",
+        hasApiKey: true,
+        healthy: true,
+        cooldownUntil: null,
+      },
+    ]);
+    expect(JSON.stringify(current)).not.toContain("sk-pool-");
+
+    const runtime = await service.resolve();
+    expect(runtime.apiKey).toBe("sk-primary-secret");
+    expect(runtime.pooledKeys).toEqual([
+      { id: firstKeyId ?? "", label: "华东主账户", apiKey: "sk-pool-east" },
+      { id: secondKeyId ?? "", label: "华南备账户", apiKey: "sk-pool-south" },
+    ]);
+  });
+
+  test("保留条目不覆盖原有密钥，标记 remove: true 时从池与快照移除", async () => {
+    const { service, store } = setup();
+    const initialSaved = await service.save({
+      provider: "openai",
+      model: "gpt-4o",
+      baseUrl: "https://pool.example/v1",
+      apiKey: "sk-main",
+      pooledKeys: [
+        { label: "通道 A", apiKey: "sk-key-a" },
+        { label: "通道 B", apiKey: "sk-key-b" },
+      ],
+    });
+    const keyA = initialSaved.pooledKeys?.[0]?.id ?? "";
+    const keyB = initialSaved.pooledKeys?.[1]?.id ?? "";
+
+    const updated = await service.save({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      baseUrl: "https://pool.example/v1",
+      pooledKeys: [
+        { id: keyA, label: "通道 A-更新名称" },
+        { id: keyB, label: "通道 B", remove: true },
+        { label: "通道 C", apiKey: "sk-key-c" },
+      ],
+    });
+
+    expect(updated.pooledKeys).toHaveLength(2);
+    expect(updated.pooledKeys?.[0]?.id).toBe(keyA);
+    expect(updated.pooledKeys?.[0]?.label).toBe("通道 A-更新名称");
+    expect(updated.pooledKeys?.[1]?.label).toBe("通道 C");
+
+    const runtime = await service.resolve();
+    expect(runtime.pooledKeys).toEqual([
+      { id: keyA, label: "通道 A-更新名称", apiKey: "sk-key-a" },
+      {
+        id: updated.pooledKeys?.[1]?.id ?? "",
+        label: "通道 C",
+        apiKey: "sk-key-c",
+      },
+    ]);
+    expect(
+      (await store.read())?.pooledKeys?.some((item) => item.id === keyB),
+    ).toBe(false);
+  });
+
+  test("切换协议或地址时拒绝复用旧备选密钥，关闭 API Key 时清空池配置", async () => {
+    const { service } = setup();
+    const first = await service.save({
+      provider: "openai",
+      model: "gpt-4o",
+      baseUrl: "https://a.example/v1",
+      apiKey: "sk-main",
+      pooledKeys: [{ label: "通道 A", apiKey: "sk-key-a" }],
+    });
+    const keyA = first.pooledKeys?.[0]?.id ?? "";
+
+    await expect(
+      service.save({
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        baseUrl: "https://b.example/v1",
+        apiKey: "sk-new-main",
+        pooledKeys: [{ id: keyA, label: "试图跨协议复用" }],
+      }),
+    ).rejects.toThrow(ModelSettingsValidationError);
+
+    const noKey = await service.save({
+      provider: "openai",
+      model: "local-llm",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      useApiKey: false,
+    });
+    expect(noKey.hasApiKey).toBe(false);
+    expect(noKey.pooledKeys).toBeUndefined();
+    expect((await service.resolve()).pooledKeys).toBeUndefined();
+  });
+
+  test("传入 keyPool 时投影可反映各 Key 的实时冷却与错误状态", async () => {
+    let now = 1_700_000_000_000;
+    const keyPool = createModelKeyPool();
+    const { service } = setup({ keyPool, now: () => now });
+    const saved = await service.save({
+      provider: "openai",
+      model: "gpt-4o",
+      baseUrl: "https://status.example/v1",
+      apiKey: "sk-main",
+      pooledKeys: [
+        { label: "Key-1", apiKey: "sk-1" },
+        { label: "Key-2", apiKey: "sk-2" },
+      ],
+    });
+    const k1 = saved.pooledKeys?.[0]?.id ?? "";
+    const pid = modelPoolId(saved);
+    keyPool.reportResult(pid, k1, 429, { "retry-after": "30" }, now);
+
+    const projected = await service.get();
+    expect(projected.pooledKeys?.[0]).toEqual({
+      id: k1,
+      label: "Key-1",
+      hasApiKey: true,
+      healthy: false,
+      cooldownUntil: now + 30_000,
+      lastStatus: 429,
+    });
+    expect(projected.pooledKeys?.[1]?.healthy).toBe(true);
+
+    now += 31_000;
+    const recovered = await service.get();
+    expect(recovered.pooledKeys?.[0]?.healthy).toBe(true);
+    expect(recovered.pooledKeys?.[0]?.cooldownUntil).toBeNull();
   });
 });

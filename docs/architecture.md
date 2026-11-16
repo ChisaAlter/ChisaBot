@@ -149,17 +149,17 @@ Kotlin 壳用全屏 WebView 加载桌面端同一套 React 前端，气泡、卡
 
 以下是环境变量的仓库默认值或可选开关；生产实际值取决于部署配置。完整列表见 [configuration.md](configuration.md) 和各功能文档。
 
-| 变量                                                                                           | 作用                                                                                                       |
-| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `CHISABOT_EXTRAS`                                                                              | 默认空；`workflows,plugins,boundaries,components` 或 `all` 重新打开被精简隐藏的功能（§74）                 |
-| `CHISABOT_ACCOUNTS_UI=1`                                                                       | 显示 设置 → 账号（朋友账号）；网关 `config.json` 的 `"invites": true` 才能发新邀请                         |
-| `CHISABOT_GATEWAY_SECRET` / `_FILE`                                                            | 多账号：与登录服务 `identitySecret` 相同的密钥（≥32 字符），启用网关签名身份（[accounts.md](accounts.md)） |
-| `CHISABOT_SCHEDULES_SWEEP=0`                                                                   | 关掉定时任务扫描                                                                                           |
-| `CHISABOT_IM=0`                                                                                | 开机不启动 IM 连接                                                                                         |
-| `CHISABOT_RELEASE_LOCKS_ON_START=0`                                                            | 不在启动时释放孤儿线程锁（多进程共用一个库时）                                                             |
-| `CHISABOT_ORPHAN_SWEEP=0` / `CHISABOT_WORKER_ORPHAN_SWEEP=0` / `CHISABOT_PANEL_ORPHAN_SWEEP=0` | 关掉对应的开机孤儿清理                                                                                     |
-| `CHISABOT_DEVICE_ASK_DEFAULTS=0`                                                               | 不把从没改过的「全部关闭」设备改成「询问」                                                                 |
-| `COMPUTER_BROWSER_MODE=headless`                                                               | 云端浏览器回到无界面模式                                                                                   |
-| `CHISABOT_MAX_OUTPUT_TOKENS`                                                                   | 单次输出上限（默认按模型目录，封顶 32000）                                                                 |
-| `CHISABOT_GITHUB_API_BASE`                                                                     | GitHub Enterprise 或测试替身                                                                               |
-| `CHISABOT_LINK_PREVIEW_SHOTS=1`                                                                | 没有 og:image 时截图做链接卡缩略图                                                                         |
+| 变量                                                                                           | 作用                                                                                                                |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `CHISABOT_EXTRAS`                                                                              | 默认空；`workflows,plugins,boundaries,components` 或 `all` 重新打开被精简隐藏的功能（§74）                          |
+| `CHISABOT_ACCOUNTS_UI`                                                                         | 默认开启，在 设置 → 账号与连接 显示「账号」管理入口（设 `0` 可关闭）；网关 `config.json` `"invites": true` 开放邀请 |
+| `CHISABOT_GATEWAY_SECRET` / `_FILE`                                                            | 多账号：与登录服务 `identitySecret` 相同的密钥（≥32 字符），启用网关签名身份（[accounts.md](accounts.md)）          |
+| `CHISABOT_SCHEDULES_SWEEP=0`                                                                   | 关掉定时任务扫描                                                                                                    |
+| `CHISABOT_IM=0`                                                                                | 开机不启动 IM 连接                                                                                                  |
+| `CHISABOT_RELEASE_LOCKS_ON_START=0`                                                            | 不在启动时释放孤儿线程锁（多进程共用一个库时）                                                                      |
+| `CHISABOT_ORPHAN_SWEEP=0` / `CHISABOT_WORKER_ORPHAN_SWEEP=0` / `CHISABOT_PANEL_ORPHAN_SWEEP=0` | 关掉对应的开机孤儿清理                                                                                              |
+| `CHISABOT_DEVICE_ASK_DEFAULTS=0`                                                               | 不把从没改过的「全部关闭」设备改成「询问」                                                                          |
+| `COMPUTER_BROWSER_MODE=headless`                                                               | 云端浏览器回到无界面模式                                                                                            |
+| `CHISABOT_MAX_OUTPUT_TOKENS`                                                                   | 单次输出上限（默认按模型目录，封顶 32000）                                                                          |
+| `CHISABOT_GITHUB_API_BASE`                                                                     | GitHub Enterprise 或测试替身                                                                                        |
+| `CHISABOT_LINK_PREVIEW_SHOTS=1`                                                                | 没有 og:image 时截图做链接卡缩略图                                                                                  |

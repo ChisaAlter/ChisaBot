@@ -9,6 +9,8 @@ export const chatSearchSchema = z.object({
   settings: z.boolean().optional(),
   /** Opens the Bot's screen in the right column's 计算机 tab. */
   watch: z.boolean().optional(),
+  /** Opens the non-polluting /side drawer for the current channel thread. */
+  side: z.boolean().optional(),
   /** DOG-04：Ctrl+K 正文命中深链到这条消息（滚入并短暂高亮）。 */
   message: z
     .string()

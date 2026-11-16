@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { isValidE2eePublicKey } from "../../../shared/device-e2ee";
 import {
   DEVICE_CAPABILITIES,
   type DeviceCapabilities,
@@ -20,6 +21,7 @@ import { type DeviceHub, DeviceRefusedError, describeChange } from "./hub";
 import { installScript, readNodeBundle } from "./node-install";
 import {
   createPairingStore,
+  discoverAlternateOrigins,
   isMobilePlatform,
   type PairingStore,
 } from "./pairing";
@@ -331,6 +333,16 @@ export function createDeviceRoutes(options: {
     countPair(ip);
     const body = await readJsonObject(context.req);
     if (!body) return context.json({ error: "请求格式无效。" }, 400);
+    if (
+      body.e2eePublicKey !== undefined &&
+      !isValidE2eePublicKey(body.e2eePublicKey)
+    ) {
+      return context.json({ error: "E2EE 公钥格式无效。" }, 400);
+    }
+    const peerE2eePub =
+      typeof body.e2eePublicKey === "string" && body.e2eePublicKey.trim()
+        ? body.e2eePublicKey.trim()
+        : undefined;
     const result = pairing.redeem(body.code);
     if (!result.ok) {
       fail(ip);
@@ -381,8 +393,29 @@ export function createDeviceRoutes(options: {
           device.name,
         );
         const fresh = (await store.get(device.id)) ?? device;
-        pairing.complete(result.pairingId, fresh);
-        return context.json({ device: hub.view(fresh), token }, 201);
+        pairing.complete(
+          result.pairingId,
+          fresh,
+          peerE2eePub ? { peerE2eePub } : undefined,
+        );
+        return context.json(
+          {
+            device: hub.view(fresh),
+            token,
+            ...(result.e2eePub || peerE2eePub
+              ? {
+                  e2ee: {
+                    accepted: Boolean(peerE2eePub),
+                    ...(result.e2eePub
+                      ? { serverPublicKey: result.e2eePub }
+                      : {}),
+                    ...(peerE2eePub ? { peerPublicKey: peerE2eePub } : {}),
+                  },
+                }
+              : {}),
+          },
+          201,
+        );
       } catch {
         pairing.fail(result.pairingId);
         return context.json(
@@ -423,8 +456,29 @@ export function createDeviceRoutes(options: {
         device.name,
       );
       const fresh = (await store.get(device.id)) ?? device;
-      pairing.complete(result.pairingId, fresh);
-      return context.json({ device: hub.view(fresh), token }, 201);
+      pairing.complete(
+        result.pairingId,
+        fresh,
+        peerE2eePub ? { peerE2eePub } : undefined,
+      );
+      return context.json(
+        {
+          device: hub.view(fresh),
+          token,
+          ...(result.e2eePub || peerE2eePub
+            ? {
+                e2ee: {
+                  accepted: Boolean(peerE2eePub),
+                  ...(result.e2eePub
+                    ? { serverPublicKey: result.e2eePub }
+                    : {}),
+                  ...(peerE2eePub ? { peerPublicKey: peerE2eePub } : {}),
+                },
+              }
+            : {}),
+        },
+        201,
+      );
     } catch {
       pairing.fail(result.pairingId);
       return context.json(
@@ -575,8 +629,29 @@ export function createDeviceRoutes(options: {
     const actor = context.var.actor;
     const raw = await readJsonObject(context.req);
     const kind = raw?.kind === "node" ? "node" : "phone";
-    const issued = pairing.issue(actor.id, kind);
-    return context.json({ ...issued, kind }, 201);
+    if (raw?.e2eePub !== undefined && !isValidE2eePublicKey(raw.e2eePub)) {
+      return context.json({ error: "E2EE 公钥格式无效。" }, 400);
+    }
+    const e2eePub =
+      typeof raw?.e2eePub === "string" && raw.e2eePub.trim()
+        ? raw.e2eePub.trim()
+        : undefined;
+    const issued = pairing.issue(
+      actor.id,
+      kind,
+      e2eePub ? { e2eePub } : undefined,
+    );
+    const alternateOrigins = discoverAlternateOrigins({
+      requestUrl: context.req.url,
+    });
+    return context.json(
+      {
+        ...issued,
+        kind,
+        ...(alternateOrigins.length > 0 ? { alternateOrigins } : {}),
+      },
+      201,
+    );
   });
 
   routes.get("/pairing/:pairingId", userGuard, (context) => {

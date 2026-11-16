@@ -1,16 +1,48 @@
-import { IconDots, IconKey, IconLink, IconLock, IconPlayerPause, IconPlayerPlay, IconPlus, IconTrash, IconUser, IconUserPlus, IconUserShield } from "@tabler/icons-react";
+import {
+  IconDots,
+  IconKey,
+  IconLink,
+  IconLock,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlus,
+  IconTrash,
+  IconUser,
+  IconUserPlus,
+  IconUserShield,
+} from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
-import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import {
+  PageEmpty,
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
+import { AdminQuotaSection } from "@/components/settings/admin-quota-section";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
@@ -37,8 +69,11 @@ import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 export const Route = createFileRoute("/_authed/admin/accounts")({
   // CB-096：多用户与管理员账号管理默认开启；仅当显式配置 CHISABOT_ACCOUNTS_UI=0 时隐藏。
   beforeLoad: async ({ context }) => {
-    const capabilities = await context.queryClient.ensureQueryData(deploymentCapabilitiesQueryOptions()).catch(() => null);
-    if (capabilities?.accountsUi === false) throw redirect({ to: "/settings", replace: true });
+    const capabilities = await context.queryClient
+      .ensureQueryData(deploymentCapabilitiesQueryOptions())
+      .catch(() => null);
+    if (capabilities?.accountsUi === false)
+      throw redirect({ to: "/settings", replace: true });
   },
   component: AccountsPage,
 });
@@ -53,15 +88,23 @@ function AccountsPage() {
   const queryClient = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [passwordTarget, setPasswordTarget] = useState<GatewayAccount | null>(null);
-  const [link, setLink] = useState<{ title: string; url: string; expiresAt: number } | null>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: accountKeys.all });
+  const [passwordTarget, setPasswordTarget] = useState<GatewayAccount | null>(
+    null,
+  );
+  const [link, setLink] = useState<{
+    title: string;
+    url: string;
+    expiresAt: number;
+  } | null>(null);
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: accountKeys.all });
 
   async function toggle(account: GatewayAccount) {
     if (!account.disabled) {
       const ok = await confirmDialog({
         title: `停用「${account.displayName}」？`,
-        description: "停用后他立刻退出所有设备（网页、PC、手机），也不能再登录。他的机器人和数据都保留，随时可以恢复。",
+        description:
+          "停用后他立刻退出所有设备（网页、PC、手机），也不能再登录。他的机器人和数据都保留，随时可以恢复。",
         confirmLabel: "停用",
         destructive: true,
       });
@@ -70,7 +113,11 @@ function AccountsPage() {
     try {
       await setAccountDisabled(account.id, !account.disabled);
       await refresh();
-      toast.success(account.disabled ? `已恢复「${account.displayName}」` : `已停用「${account.displayName}」`);
+      toast.success(
+        account.disabled
+          ? `已恢复「${account.displayName}」`
+          : `已停用「${account.displayName}」`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     }
@@ -78,7 +125,10 @@ function AccountsPage() {
   async function toggleRole(account: GatewayAccount) {
     const nextRole = account.role === "admin" ? "user" : "admin";
     const ok = await confirmDialog({
-      title: nextRole === "admin" ? `将「${account.displayName}」设为管理员？` : `将「${account.displayName}」改为普通成员？`,
+      title:
+        nextRole === "admin"
+          ? `将「${account.displayName}」设为管理员？`
+          : `将「${account.displayName}」改为普通成员？`,
       description:
         nextRole === "admin"
           ? "管理员可以管理所有账号、模型、公共知识库、全局技能和插件与 MCP 配置。"
@@ -89,7 +139,11 @@ function AccountsPage() {
     try {
       await setAccountRole(account.id, nextRole);
       await refresh();
-      toast.success(nextRole === "admin" ? `已将「${account.displayName}」设为管理员` : `已将「${account.displayName}」改为普通成员`);
+      toast.success(
+        nextRole === "admin"
+          ? `已将「${account.displayName}」设为管理员`
+          : `已将「${account.displayName}」改为普通成员`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     }
@@ -97,14 +151,19 @@ function AccountsPage() {
   async function reset(account: GatewayAccount) {
     const ok = await confirmDialog({
       title: `给「${account.displayName}」重置密码？`,
-      description: "会生成一个 24 小时内有效的链接，发给他，他打开后设新密码；设好后旧密码和所有已登录的设备都会失效。",
+      description:
+        "会生成一个 24 小时内有效的链接，发给他，他打开后设新密码；设好后旧密码和所有已登录的设备都会失效。",
       confirmLabel: "生成链接",
     });
     if (!ok) return;
     try {
       const invite = await resetAccount(account.id);
       await refresh();
-      setLink({ title: `「${account.displayName}」的重置密码链接`, url: invite.url, expiresAt: invite.expiresAt });
+      setLink({
+        title: `「${account.displayName}」的重置密码链接`,
+        url: invite.url,
+        expiresAt: invite.expiresAt,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     }
@@ -112,7 +171,8 @@ function AccountsPage() {
   async function remove(account: GatewayAccount) {
     const ok = await confirmDialog({
       title: `删除账号「${account.displayName}」？`,
-      description: "他会立刻退出、不能再登录，账号名可以重新使用。他在 ChisaBot 里的机器人和对话不会被删除（只是没人能再登录看到）。不能撤销。",
+      description:
+        "他会立刻退出、不能再登录，账号名可以重新使用。他在 ChisaBot 里的机器人和对话不会被删除（只是没人能再登录看到）。不能撤销。",
       confirmLabel: "删除",
       destructive: true,
     });
@@ -129,7 +189,9 @@ function AccountsPage() {
     try {
       await setInvitesEnabled(enabled);
       await refresh();
-      toast.success(enabled ? "已允许添加新成员" : "已关闭添加新成员，已有成员照常使用");
+      toast.success(
+        enabled ? "已允许添加新成员" : "已关闭添加新成员，已有成员照常使用",
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     }
@@ -148,14 +210,17 @@ function AccountsPage() {
   const accounts = data?.available ? data.accounts : [];
   const invites = data?.available ? data.invites : [];
   const invitesEnabled = data?.available ? data.invitesEnabled : false;
-  const nameOf = (id: string | null) => accounts.find((a) => a.id === id)?.displayName ?? "账号";
+  const nameOf = (id: string | null) =>
+    accounts.find((a) => a.id === id)?.displayName ?? "账号";
   return (
     <>
       <CreateAccountDialog
         onCreated={(account) => {
           void refresh();
           setCreateOpen(false);
-          toast.success(`已创建${account.role === "admin" ? "管理员" : "成员"}账号「${account.displayName}」`);
+          toast.success(
+            `已创建${account.role === "admin" ? "管理员" : "成员"}账号「${account.displayName}」`,
+          );
         }}
         onOpenChange={setCreateOpen}
         open={createOpen}
@@ -164,7 +229,11 @@ function AccountsPage() {
         onCreated={(invite) => {
           void refresh();
           setInviteOpen(false);
-          setLink({ title: invite.role === "admin" ? "管理员邀请链接" : "邀请链接", url: invite.url, expiresAt: invite.expiresAt });
+          setLink({
+            title: invite.role === "admin" ? "管理员邀请链接" : "邀请链接",
+            url: invite.url,
+            expiresAt: invite.expiresAt,
+          });
         }}
         onOpenChange={setInviteOpen}
         open={inviteOpen}
@@ -178,16 +247,34 @@ function AccountsPage() {
           toast.success(`已修改「${account.displayName}」的密码`);
         }}
       />
-      <LinkDialog link={link} onOpenChange={(open) => (open ? null : setLink(null))} />
+      <LinkDialog
+        link={link}
+        onOpenChange={(open) => (open ? null : setLink(null))}
+      />
       <PageShell
         action={
           data?.available ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button disabled={!invitesEnabled} onClick={() => setCreateOpen(true)} size="sm" title={invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"} variant="outline">
+              <Button
+                disabled={!invitesEnabled}
+                onClick={() => setCreateOpen(true)}
+                size="sm"
+                title={
+                  invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"
+                }
+                variant="outline"
+              >
                 <IconUserPlus />
                 {"新建账号"}
               </Button>
-              <Button disabled={!invitesEnabled} onClick={() => setInviteOpen(true)} size="sm" title={invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"}>
+              <Button
+                disabled={!invitesEnabled}
+                onClick={() => setInviteOpen(true)}
+                size="sm"
+                title={
+                  invitesEnabled ? undefined : "先在下方打开「允许添加新成员」"
+                }
+              >
                 <IconPlus />
                 {"邀请成员"}
               </Button>
@@ -202,7 +289,12 @@ function AccountsPage() {
         ) : list.isError ? (
           <ErrorCard
             action={
-              <Button className="mt-2" onClick={() => void list.refetch()} size="sm" variant="outline">
+              <Button
+                className="mt-2"
+                onClick={() => void list.refetch()}
+                size="sm"
+                variant="outline"
+              >
                 {"重试"}
               </Button>
             }
@@ -223,11 +315,21 @@ function AccountsPage() {
                           <IconUserPlus className="size-5" />
                         </span>
                       }
-                      sub={<span className="mem-by">{invitesEnabled ? "已开启：可以新建账号和发邀请链接。不用时建议关掉。" : "已关闭（默认）：不能新建账号，也不能发邀请链接，已有成员照常使用。"}</span>}
+                      sub={
+                        <span className="mem-by">
+                          {invitesEnabled
+                            ? "已开启：可以新建账号和发邀请链接。不用时建议关掉。"
+                            : "已关闭（默认）：不能新建账号，也不能发邀请链接，已有成员照常使用。"}
+                        </span>
+                      }
                       title="允许添加新成员"
                     />
                   </div>
-                  <Switch aria-label="允许添加新成员" checked={invitesEnabled} onCheckedChange={(value) => void changeInvites(!!value)} />
+                  <Switch
+                    aria-label="允许添加新成员"
+                    checked={invitesEnabled}
+                    onCheckedChange={(value) => void changeInvites(!!value)}
+                  />
                 </div>
               </Card>
             </PageSection>
@@ -239,18 +341,42 @@ function AccountsPage() {
                       <ListRow
                         icon={
                           <span className="mem-ico is-project">
-                            {account.role === "admin" ? <IconUserShield className="size-5" /> : <IconUser className="size-5" />}
+                            {account.role === "admin" ? (
+                              <IconUserShield className="size-5" />
+                            ) : (
+                              <IconUser className="size-5" />
+                            )}
                           </span>
                         }
                         sub={
                           <>
                             <span className="device-row-meta">
-                              <span className="skill-slug">{account.username}</span>
-                              <span className="device-cap-chip"><T>{account.role === "admin" ? "管理员" : "普通成员"}</T></span>
-                              {account.disabled ? <span className="device-cap-chip is-off"><T>{"已停用"}</T></span> : null}
-                              {account.id === data.me ? <span className="device-cap-chip"><T>{"你"}</T></span> : null}
+                              <span className="skill-slug">
+                                {account.username}
+                              </span>
+                              <span className="device-cap-chip">
+                                <T>
+                                  {account.role === "admin"
+                                    ? "管理员"
+                                    : "普通成员"}
+                                </T>
+                              </span>
+                              {account.disabled ? (
+                                <span className="device-cap-chip is-off">
+                                  <T>{"已停用"}</T>
+                                </span>
+                              ) : null}
+                              {account.id === data.me ? (
+                                <span className="device-cap-chip">
+                                  <T>{"你"}</T>
+                                </span>
+                              ) : null}
                             </span>
-                            <span className="mem-by">{account.builtin ? "内置管理员 · 在服务器配置里改密码" : lastSeenText(account.lastLoginAt)}</span>
+                            <span className="mem-by">
+                              {account.builtin
+                                ? "内置管理员 · 在服务器配置里改密码"
+                                : lastSeenText(account.lastLoginAt)}
+                            </span>
                           </>
                         }
                         title={account.displayName}
@@ -258,30 +384,77 @@ function AccountsPage() {
                     </div>
                     {account.builtin ? null : (
                       <DropdownMenu>
-                        <DropdownMenuTrigger render={<button aria-label={`「${account.displayName}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
+                        <DropdownMenuTrigger
+                          render={
+                            <button
+                              aria-label={`「${account.displayName}」的更多操作`}
+                              className="device-row-more"
+                              title={"更多操作"}
+                              type="button"
+                            />
+                          }
+                        >
                           <IconDots className="size-4" />
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="glass-pop w-[210px] p-1.5">
-                          <DropdownMenuItem className="glass-mi" onClick={() => setPasswordTarget(account)}>
+                        <DropdownMenuContent
+                          align="end"
+                          className="glass-pop w-[210px] p-1.5"
+                        >
+                          <DropdownMenuItem
+                            className="glass-mi"
+                            onClick={() => setPasswordTarget(account)}
+                          >
                             <IconLock className="size-[18px] shrink-0 opacity-80" />
-                            <span className="min-w-0 flex-1">{"直接修改密码…"}</span>
+                            <span className="min-w-0 flex-1">
+                              {"直接修改密码…"}
+                            </span>
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="glass-mi" onClick={() => void reset(account)}>
+                          <DropdownMenuItem
+                            className="glass-mi"
+                            onClick={() => void reset(account)}
+                          >
                             <IconKey className="size-[18px] shrink-0 opacity-80" />
-                            <span className="min-w-0 flex-1">{"重置密码链接…"}</span>
+                            <span className="min-w-0 flex-1">
+                              {"重置密码链接…"}
+                            </span>
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="glass-mi" onClick={() => void toggleRole(account)}>
-                            {account.role === "admin" ? <IconUser className="size-[18px] shrink-0 opacity-80" /> : <IconUserShield className="size-[18px] shrink-0 opacity-80" />}
-                            <span className="min-w-0 flex-1">{account.role === "admin" ? "改为普通成员…" : "设为管理员…"}</span>
+                          <DropdownMenuItem
+                            className="glass-mi"
+                            onClick={() => void toggleRole(account)}
+                          >
+                            {account.role === "admin" ? (
+                              <IconUser className="size-[18px] shrink-0 opacity-80" />
+                            ) : (
+                              <IconUserShield className="size-[18px] shrink-0 opacity-80" />
+                            )}
+                            <span className="min-w-0 flex-1">
+                              {account.role === "admin"
+                                ? "改为普通成员…"
+                                : "设为管理员…"}
+                            </span>
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="glass-mi" onClick={() => void toggle(account)}>
-                            {account.disabled ? <IconPlayerPlay className="size-[18px] shrink-0 opacity-80" /> : <IconPlayerPause className="size-[18px] shrink-0 opacity-80" />}
-                            <span className="min-w-0 flex-1">{account.disabled ? "恢复" : "停用…"}</span>
+                          <DropdownMenuItem
+                            className="glass-mi"
+                            onClick={() => void toggle(account)}
+                          >
+                            {account.disabled ? (
+                              <IconPlayerPlay className="size-[18px] shrink-0 opacity-80" />
+                            ) : (
+                              <IconPlayerPause className="size-[18px] shrink-0 opacity-80" />
+                            )}
+                            <span className="min-w-0 flex-1">
+                              {account.disabled ? "恢复" : "停用…"}
+                            </span>
                           </DropdownMenuItem>
                           <DropdownMenuSeparator className="glass-sep" />
-                          <DropdownMenuItem className="glass-mi is-danger" onClick={() => void remove(account)}>
+                          <DropdownMenuItem
+                            className="glass-mi is-danger"
+                            onClick={() => void remove(account)}
+                          >
                             <IconTrash className="size-[18px] shrink-0 opacity-80" />
-                            <span className="min-w-0 flex-1">{"删除账号…"}</span>
+                            <span className="min-w-0 flex-1">
+                              {"删除账号…"}
+                            </span>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -290,7 +463,10 @@ function AccountsPage() {
                 ))}
               </Card>
             </PageSection>
-            <PageSection description="链接只能用一次，过期自动失效。还没用的可以在这里作废。" title={`未使用的链接 · ${invites.length}`}>
+            <PageSection
+              description="链接只能用一次，过期自动失效。还没用的可以在这里作废。"
+              title={`未使用的链接 · ${invites.length}`}
+            >
               {invites.length ? (
                 <Card className="mem-card">
                   {invites.map((invite) => (
@@ -302,7 +478,11 @@ function AccountsPage() {
                               <IconLink className="size-5" />
                             </span>
                           }
-                          sub={<span className="mem-by">{expiresText(invite.expiresAt)}</span>}
+                          sub={
+                            <span className="mem-by">
+                              {expiresText(invite.expiresAt)}
+                            </span>
+                          }
                           title={
                             invite.kind === "reset"
                               ? `重置密码 · ${nameOf(invite.accountId)}`
@@ -310,7 +490,11 @@ function AccountsPage() {
                           }
                         />
                       </div>
-                      <Button onClick={() => void revoke(invite)} size="sm" variant="ghost">
+                      <Button
+                        onClick={() => void revoke(invite)}
+                        size="sm"
+                        variant="ghost"
+                      >
                         {"作废"}
                       </Button>
                     </div>
@@ -322,6 +506,7 @@ function AccountsPage() {
             </PageSection>
           </>
         )}
+        <AdminQuotaSection gatewayAccounts={accounts} />
       </PageShell>
     </>
   );
@@ -365,7 +550,11 @@ function CreateAccountDialog({
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
           <DialogTitle>{"新建账号"}</DialogTitle>
-          <DialogDescription>{"直接为团队成员或管理员创建登录账号。创建后对方即可使用账号名与密码登录。"}</DialogDescription>
+          <DialogDescription>
+            {
+              "直接为团队成员或管理员创建登录账号。创建后对方即可使用账号名与密码登录。"
+            }
+          </DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -429,7 +618,13 @@ function CreateAccountDialog({
                     ["admin", "管理员"],
                   ] as const
                 ).map(([value, label]) => (
-                  <Button key={value} onClick={() => setRole(value)} size="sm" type="button" variant={role === value ? "default" : "outline"}>
+                  <Button
+                    key={value}
+                    onClick={() => setRole(value)}
+                    size="sm"
+                    type="button"
+                    variant={role === value ? "default" : "outline"}
+                  >
                     {label}
                   </Button>
                 ))}
@@ -437,10 +632,19 @@ function CreateAccountDialog({
             </div>
           </DialogBody>
           <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
-            <Button disabled={!username.trim() || password.length < 8} feedback="create" state={create.state} type="submit">
+            <Button
+              disabled={!username.trim() || password.length < 8}
+              feedback="create"
+              state={create.state}
+              type="submit"
+            >
               {"创建账号"}
             </Button>
           </DialogFooter>
@@ -470,7 +674,9 @@ function PasswordDialog({
   );
   const resetSave = save.reset;
   useExternalConnection(
-    account ? `${objectConnectionKey(account)}:${objectConnectionKey(resetSave)}` : false,
+    account
+      ? `${objectConnectionKey(account)}:${objectConnectionKey(resetSave)}`
+      : false,
     () => {
       setPassword("");
       resetSave();
@@ -480,8 +686,14 @@ function PasswordDialog({
     <Dialog onOpenChange={onOpenChange} open={!!account}>
       <DialogContent className="im-dialog max-w-md">
         <DialogHeader>
-          <DialogTitle>{account ? `修改「${account.displayName}」的密码` : "修改密码"}</DialogTitle>
-          <DialogDescription>{"直接为该账号设置新密码。保存后，该账号在所有已登录设备上的会话将立即失效。"}</DialogDescription>
+          <DialogTitle>
+            {account ? `修改「${account.displayName}」的密码` : "修改密码"}
+          </DialogTitle>
+          <DialogDescription>
+            {
+              "直接为该账号设置新密码。保存后，该账号在所有已登录设备上的会话将立即失效。"
+            }
+          </DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -509,10 +721,19 @@ function PasswordDialog({
             </label>
           </DialogBody>
           <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
-            <Button disabled={password.length < 8} feedback="save" state={save.state} type="submit">
+            <Button
+              disabled={password.length < 8}
+              feedback="save"
+              state={save.state}
+              type="submit"
+            >
               {"保存密码"}
             </Button>
           </DialogFooter>
@@ -529,14 +750,22 @@ function InviteDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (invite: { url: string; expiresAt: number; role?: "admin" | "user" }) => void;
+  onCreated: (invite: {
+    url: string;
+    expiresAt: number;
+    role?: "admin" | "user";
+  }) => void;
 }) {
   const [note, setNote] = useState("");
   const [hours, setHours] = useState(72);
   const [role, setRole] = useState<"user" | "admin">("user");
   const create = useAsyncAction(
     async () => {
-      const invite = await createInvite({ note: note.trim() || undefined, hours, role });
+      const invite = await createInvite({
+        note: note.trim() || undefined,
+        hours,
+        role,
+      });
       window.setTimeout(() => onCreated(invite), 400);
     },
     { errorToast: (error) => error.message },
@@ -553,7 +782,11 @@ function InviteDialog({
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
           <DialogTitle>{"邀请成员"}</DialogTitle>
-          <DialogDescription>{"生成一个一次性链接发给对方。他打开后自己设账号名和密码，登录后会有一个自己的「助手」机器人。"}</DialogDescription>
+          <DialogDescription>
+            {
+              "生成一个一次性链接发给对方。他打开后自己设账号名和密码，登录后会有一个自己的「助手」机器人。"
+            }
+          </DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col"
@@ -568,7 +801,13 @@ function InviteDialog({
                 {"备注"}
                 <span className="im-req">{"可选，只有你看得到"}</span>
               </span>
-              <Input id="invite-note" maxLength={32} onChange={(event) => setNote(event.target.value)} placeholder={"例如：小明"} value={note} />
+              <Input
+                id="invite-note"
+                maxLength={32}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder={"例如：小明"}
+                value={note}
+              />
             </label>
             <div className="im-field">
               <span className="im-field-l">{"角色权限"}</span>
@@ -579,7 +818,13 @@ function InviteDialog({
                     ["admin", "管理员"],
                   ] as const
                 ).map(([value, label]) => (
-                  <Button key={value} onClick={() => setRole(value)} size="sm" type="button" variant={role === value ? "default" : "outline"}>
+                  <Button
+                    key={value}
+                    onClick={() => setRole(value)}
+                    size="sm"
+                    type="button"
+                    variant={role === value ? "default" : "outline"}
+                  >
                     {label}
                   </Button>
                 ))}
@@ -593,7 +838,13 @@ function InviteDialog({
                   [72, "3 天"],
                   [168, "7 天"],
                 ].map(([value, label]) => (
-                  <Button key={value} onClick={() => setHours(value as number)} size="sm" type="button" variant={hours === value ? "default" : "outline"}>
+                  <Button
+                    key={value}
+                    onClick={() => setHours(value as number)}
+                    size="sm"
+                    type="button"
+                    variant={hours === value ? "default" : "outline"}
+                  >
                     {label}
                   </Button>
                 ))}
@@ -601,7 +852,11 @@ function InviteDialog({
             </div>
           </DialogBody>
           <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
               {"取消"}
             </Button>
             <Button feedback="create" state={create.state} type="submit">
@@ -614,7 +869,13 @@ function InviteDialog({
   );
 }
 
-function LinkDialog({ link, onOpenChange }: { link: { title: string; url: string; expiresAt: number } | null; onOpenChange: (open: boolean) => void }) {
+function LinkDialog({
+  link,
+  onOpenChange,
+}: {
+  link: { title: string; url: string; expiresAt: number } | null;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(link)}>
       <DialogContent className="im-dialog max-w-lg">
@@ -623,10 +884,20 @@ function LinkDialog({ link, onOpenChange }: { link: { title: string; url: string
           <DialogDescription>{`复制下面的链接发给他（微信、QQ 都行）。只能用一次，${link ? expiresText(link.expiresAt) : ""}。关掉这个窗口后就看不到完整链接了。`}</DialogDescription>
         </DialogHeader>
         <DialogBody className="im-form mt-2">
-          <Input aria-label={"链接"} className="font-mono" onFocus={(event) => event.currentTarget.select()} readOnly value={link?.url ?? ""} />
+          <Input
+            aria-label={"链接"}
+            className="font-mono"
+            onFocus={(event) => event.currentTarget.select()}
+            readOnly
+            value={link?.url ?? ""}
+          />
         </DialogBody>
         <DialogFooter className="mt-4">
-          <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+          <Button
+            onClick={() => onOpenChange(false)}
+            type="button"
+            variant="ghost"
+          >
             {"完成"}
           </Button>
           <CopyButton value={link?.url ?? ""}>{"复制链接"}</CopyButton>

@@ -31,6 +31,7 @@ import {
 } from "../conversations/maintenance";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
+import { isImWindowExpiredError } from "../im/window-expiry";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { readDurableTurn } from "../turns/durable-outcome";
 
@@ -416,7 +417,9 @@ export type ScheduleDeps = {
     threadId: string,
     text: string,
     options?: { deliveryId: string; connectionId?: string },
-  ) => Promise<void>;
+  ) =>
+    | Promise<{ status?: string; windowExpired?: boolean } | undefined>
+    | Promise<void>;
   /** 对话正被一轮占着？是的话把消息排进收件箱。 */
   isThreadActive?: (threadId: string) => boolean;
   enqueueToThread?: (input: {
@@ -504,6 +507,43 @@ const ORPHAN_SCHEDULE_SQL = `(
 
 /** S2：服务端自动清理只硬删结束了一周以上的孤儿，且至多每小时一次。 */
 const ORPHAN_PURGE_EVERY_MS = 60 * 60_000;
+
+/** CB-027：外部 IM 客服/被动回复窗口过期时附加到结果尾部的说明，不计作运行器失败。 */
+const IM_WINDOW_EXPIRED_NOTE =
+  "（IM 会话 24h 互动窗口已过期，完整结果已保存于网页对话与站内通知）";
+
+async function pushScheduleResultToIm(
+  pushToIm: NonNullable<ScheduleDeps["pushToIm"]>,
+  threadId: string,
+  text: string,
+  options: { deliveryId: string; connectionId?: string },
+): Promise<{ text: string; runnerError: string | null }> {
+  try {
+    const outcome = await pushToIm(threadId, text, options);
+    if (
+      outcome &&
+      (outcome.windowExpired === true || outcome.status === "window_expired")
+    ) {
+      return {
+        text: `${text}\n${IM_WINDOW_EXPIRED_NOTE}`,
+        runnerError: null,
+      };
+    }
+    return { text, runnerError: null };
+  } catch (cause) {
+    if (isImWindowExpiredError(cause)) {
+      return {
+        text: `${text}\n${IM_WINDOW_EXPIRED_NOTE}`,
+        runnerError: null,
+      };
+    }
+    const runnerError = reasonWithoutStatement(cause);
+    return {
+      text: `${text}\n（推送到 IM 失败：${runnerError}）`,
+      runnerError,
+    };
+  }
+}
 
 export function createSchedules(database: Database, deps: ScheduleDeps) {
   const sql = database.$client;
@@ -779,7 +819,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         when = { repeat: "cron", cron: row.cron ?? "" };
       } else {
         if (!row.run_at)
-          throw new ScheduleError("一次性任务缺少原定时间，请提供新的时间（when）。");
+          throw new ScheduleError(
+            "一次性任务缺少原定时间，请提供新的时间（when）。",
+          );
         when = {
           repeat: "once",
           at: localText(new Date(row.run_at), row.timezone),
@@ -794,7 +836,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       // 恢复：周期任务从现在排下一次；一次性的时间过了就要新时间。
       if (kind === "cron") {
         if (!cron)
-          throw new ScheduleError("周期任务缺少 cron 表达式，请重新设置时间（when）。");
+          throw new ScheduleError(
+            "周期任务缺少 cron 表达式，请重新设置时间（when）。",
+          );
         next = nextOccurrence(cron, timezone, now());
       } else if (runAt && runAt.getTime() <= now().getTime())
         throw new ScheduleError(
@@ -1403,15 +1447,17 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           }
           let runnerError: string | null = null;
           if (!silent && im && deps.pushToIm) {
-            try {
-              await deps.pushToIm(threadId, text, {
+            const pushed = await pushScheduleResultToIm(
+              deps.pushToIm,
+              threadId,
+              text,
+              {
                 deliveryId: `schedule:${runId}`,
                 connectionId: row.im_connection_id ?? undefined,
-              });
-            } catch (error) {
-              runnerError = reasonWithoutStatement(error);
-              text += `\n（推送到 IM 失败：${runnerError}）`;
-            }
+              },
+            );
+            text = pushed.text;
+            runnerError = pushed.runnerError;
           }
           // M1：失败只看工具结果 / 运行器错误（及运行器固定前缀），不扫模型正文。
           const status = classifyScheduleReply(text, {
@@ -1637,15 +1683,17 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         const silent = !run.manual && isSilentScheduleReply(text);
         let error: string | null = null;
         if (!silent && run.im_connection_id && deps.pushToIm) {
-          try {
-            await deps.pushToIm(run.thread_id, text, {
+          const pushed = await pushScheduleResultToIm(
+            deps.pushToIm,
+            run.thread_id,
+            text,
+            {
               deliveryId: `schedule:${run.id}`,
               connectionId: run.im_connection_id,
-            });
-          } catch (cause) {
-            error = reasonWithoutStatement(cause);
-            text += `\n（推送到 IM 失败：${error}）`;
-          }
+            },
+          );
+          text = pushed.text;
+          error = pushed.runnerError;
         }
         if (silent) {
           text = "巡检完成：暂无需要打扰用户的事项";

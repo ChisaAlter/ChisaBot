@@ -10,7 +10,12 @@ import android.provider.Settings
  */
 object Pairing {
 
-    class Link(val server: String, val code: String)
+    class Link(
+        val server: String,
+        val code: String,
+        val alternates: List<String> = emptyList(),
+        val e2eePub: String? = null,
+    )
 
     /** inspect 的结果：Ok = 能用的绑定码；Bad = 界面上直接给用户看的中文原因。 */
     sealed class Result {
@@ -48,7 +53,18 @@ object Pairing {
         } catch (e: GatewayAuth.LoginError) {
             return Result.Bad("绑定二维码里的服务器地址（$server）不能用：${e.message ?: "格式不对"}")
         }
-        return Result.Ok(Link(origin, code))
+        val alternates = params["alt"]
+            .orEmpty()
+            .split(',')
+            .mapNotNull { candidate ->
+                val clean = candidate.trim()
+                if (clean.isEmpty()) null
+                else runCatching { GatewayAuth.normalize(clean) }.getOrNull()
+            }
+            .filter { it != origin }
+            .distinct()
+        val e2eePub = params["pk"]?.trim()?.takeIf { it.isNotEmpty() }
+        return Result.Ok(Link(origin, code, alternates, e2eePub))
     }
 
     /** 不是本应用的码：认得出 URL 就带出来（不带路径，免得把地址里的敏感参数露出来）。 */

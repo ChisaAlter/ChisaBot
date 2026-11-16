@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { isHandoffSource } from "../../../shared/computer-control";
 import { downloadHeaders } from "../../../shared/file-download";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AuditReader } from "../audit";
@@ -388,6 +389,7 @@ export function createComputerRoutes(
           ? body.reason.trim()
           : "The assistant needs a person to continue.",
         typeof body?.toolCallId === "string" ? body.toolCallId : undefined,
+        isHandoffSource(body?.source) ? body.source : undefined,
       ),
     ),
   );

@@ -34,6 +34,7 @@ export const imOutbox = pgTable(
     inbound: jsonb("inbound").notNull(),
     text: text("text").notNull(),
     chunks: jsonb("chunks").notNull(),
+    files: jsonb("files").notNull().default([]),
     state: text("state").notNull().default("queued"),
     receipt: jsonb("receipt"),
     error: text("error"),

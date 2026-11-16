@@ -1,18 +1,13 @@
 import type { Message } from "@ag-ui/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { ContextMeter } from "@/components/agents/context-meter";
 import { PendingQuestion } from "@/components/approvals/pending-question";
 import { ChannelAvatar } from "@/components/channels/avatar";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import {
+  type CommandOption,
   type ComposerDraft,
   toAgentOptions,
 } from "@/components/channels/composer";
@@ -28,11 +23,7 @@ import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
-import {
-  useExternalConnection,
-  useTimeout,
-  useWindowEvent,
-} from "@/hooks";
+import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
 import { useReportBusy } from "@/lib/activity";
 import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -462,10 +453,18 @@ function describeAttachments(attachments: readonly Attachment[]): string {
 export function ChannelChat({
   channel,
   runtimeAgentId,
+  onOpenSideChat,
+  onBusyChange,
 }: {
   channel: AgentChannel;
   runtimeAgentId: string;
+  onOpenSideChat?: (initialQuestion?: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
+  const onOpenSideChatRef = useRef(onOpenSideChat);
+  onOpenSideChatRef.current = onOpenSideChat;
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
   const keptVisibility = useKeptVisibility();
   const modelQueryClient = useQueryClient();
   const modelSaving = useModelSelectionSaving(runtimeAgentId);
@@ -750,7 +749,9 @@ export function ChannelChat({
               void (async () => {
                 try {
                   for (const delayMs of HISTORY_RETRY_DELAYS_MS) {
-                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, delayMs),
+                    );
                     if (!current) return;
                     if (await retryHistoryRead()) return;
                   }
@@ -1044,6 +1045,19 @@ export function ChannelChat({
   useActiveBot(runtimeAgentId);
 
   const skillCommands = useSkillCommands(runtimeAgentId);
+  const composerCommands = useMemo<CommandOption[]>(() => {
+    if (!onOpenSideChat) return skillCommands;
+    return [
+      {
+        id: "side",
+        name: "side",
+        description: "开启侧边临时提问（不污染主对话）",
+        kind: "action",
+        run: () => onOpenSideChatRef.current?.(),
+      },
+      ...skillCommands,
+    ];
+  }, [skillCommands, onOpenSideChat]);
   /*
    * 记下这段对话的样子，下次切回来先画它（DESIGN.md §83）：恢复完成时记一次，离开（切机器人 / 换对话）时
    * 再记一次最新的。agent 会原地改它的数组，所以 `rememberTranscript` 存的是一份拷贝。
@@ -2286,7 +2300,11 @@ export function ChannelChat({
   useReportBusy(`chat:${channel.id}`, chatBusy);
   useExternalConnection(chatBusy ? "busy" : "idle", () => {
     reportChatRunning(chatBusy);
-    return () => reportChatRunning(false);
+    onBusyChangeRef.current?.(chatBusy);
+    return () => {
+      reportChatRunning(false);
+      onBusyChangeRef.current?.(false);
+    };
   });
   const activeMessages = restoring
     ? (early ?? cached ?? EMPTY_MESSAGES)
@@ -2435,8 +2453,8 @@ export function ChannelChat({
               threadLive={threadLive}
               joining={joining}
               reconnecting={connectionStatus === "reconnecting"}
-              // The `/` menu exposes only skills granted to this Bot.
-              commands={skillCommands}
+              // The `/` menu exposes built-in `/side` plus skills granted to this Bot.
+              commands={composerCommands}
               // Readiness is handled by `say`; deletion is the only disabled-chat state.
               disabled={!channel.active}
               messages={heldView.messages}
@@ -2499,6 +2517,16 @@ export function ChannelChat({
                 </>
               }
               onSubmit={async (draft) => {
+                if (
+                  draft.commandIds.includes("side") ||
+                  /^\/side(?:\s+|$)/i.test(draft.text)
+                ) {
+                  const initialQuestion = draft.text
+                    .replace(/^\/side(?:\s+|$)/i, "")
+                    .trim();
+                  onOpenSideChatRef.current?.(initialQuestion || undefined);
+                  return;
+                }
                 assertModelSelectionNotSaving(modelQueryClient, runtimeAgentId);
                 // `draft.agentId` carries the @mentioned coworker, but nothing routes on it yet: this
                 // channel is pinned to one `runtimeAgentId` for the life of its thread, so honouring a

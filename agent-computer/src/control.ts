@@ -1,7 +1,8 @@
-import type {
-  ComputerControlState,
-  HandoffRequest,
-  HandoffSource,
+import {
+  type ComputerControlState,
+  type HandoffRequest,
+  type HandoffSource,
+  isHandoffSource,
 } from "../../shared/computer-control";
 import {
   createActionBarrier,
@@ -47,6 +48,22 @@ export const HUMAN_HAS_CONTROL =
   "A person has control or has been asked to take control. Wait for them to hand it back before acting.";
 export const TAKE_CONTROL_FIRST =
   "Take control before driving the computer yourself.";
+
+export function canBotAct(
+  state: Pick<
+    ComputerControlState,
+    "holder" | "requested" | "resumeSnapshotRequired"
+  > & { recoveryRequired?: boolean },
+  browserMutation = false,
+): { allowed: true } | { allowed: false; reason: "human" | "snapshot" } {
+  if (state.holder === "human" || state.requested || state.recoveryRequired) {
+    return { allowed: false, reason: "human" };
+  }
+  if (browserMutation && state.resumeSnapshotRequired) {
+    return { allowed: false, reason: "snapshot" };
+  }
+  return { allowed: true };
+}
 type Options = {
   store?: ControlStore;
   invalidateSnapshot?: () => void;
@@ -296,6 +313,9 @@ export function createControl(
       }
       barrier.close(); // Before any persistence or awaited browser operation.
       const at = now();
+      const safeSource: HandoffSource = isHandoffSource(source)
+        ? source
+        : "model";
       const request: HandoffRequest = {
         id: crypto.randomUUID(),
         toolCallId,
@@ -303,7 +323,7 @@ export function createControl(
           typeof reason === "string" && reason.trim()
             ? reason.trim().slice(0, 500)
             : "The assistant needs a person to continue.",
-        source,
+        source: safeSource,
         status: "waiting",
         createdAt: at,
         updatedAt: at,
@@ -388,6 +408,7 @@ export function createControl(
     },
     interrupt,
     snapshotTaken() {
+      expire();
       if (
         data.holder === "bot" &&
         data.resumeSnapshotRequired &&
@@ -399,10 +420,19 @@ export function createControl(
     },
     assertBotMayAct(browserMutation = false) {
       expire();
-      if (data.holder === "human" || active(current()) || data.recoveryRequired)
-        throw new ControlError(HUMAN_HAS_CONTROL);
-      if (browserMutation && data.resumeSnapshotRequired)
+      const gate = canBotAct(
+        {
+          holder: data.holder,
+          requested: active(current()),
+          resumeSnapshotRequired: data.resumeSnapshotRequired,
+          recoveryRequired: data.recoveryRequired,
+        },
+        browserMutation,
+      );
+      if (!gate.allowed) {
+        if (gate.reason === "human") throw new ControlError(HUMAN_HAS_CONTROL);
         throw new SnapshotRequiredError();
+      }
     },
     admitBotAction(
       browserMutation = false,

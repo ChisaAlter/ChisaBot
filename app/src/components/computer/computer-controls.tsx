@@ -1,6 +1,7 @@
 import { useExternalConnection } from "@/hooks";
 import { IconDeviceDesktop } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { controlHandoffHint } from "@/lib/computers/control";
 import { useComputerControl } from "@/lib/computers/use-control";
 
 /** The same ownership action appears in chat, the computer sidebar, and the full-size viewer. */
@@ -13,6 +14,7 @@ export function ComputerControlButton({
 }) {
   const { control, busy, problem, change } = useComputerControl(computerId);
   const human = control?.holder === "human";
+  const handoffHint = controlHandoffHint(control);
   return (
     <div className="flex flex-col items-start gap-1">
       <Button
@@ -31,6 +33,11 @@ export function ComputerControlButton({
       {control?.transitioning ? (
         <span className="text-xs text-muted-foreground" role="status">
           {"正在完成当前操作…"}
+        </span>
+      ) : null}
+      {!control?.transitioning && !problem && handoffHint ? (
+        <span className="max-w-64 text-xs text-muted-foreground">
+          {handoffHint}
         </span>
       ) : null}
       {problem ? (
