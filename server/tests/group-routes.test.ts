@@ -19,7 +19,11 @@ import {
  * answer the statuses they used to.
  */
 
-function appWith(calls: string[], service?: Partial<GroupConversations>) {
+function appWith(
+  calls: string[],
+  service?: Partial<GroupConversations>,
+  options?: Parameters<typeof createGroupRoutes>[2],
+) {
   const stub = {
     create: async (owner: string, input: unknown) => {
       calls.push(`create:${owner}`);
@@ -53,7 +57,7 @@ function appWith(calls: string[], service?: Partial<GroupConversations>) {
     } as never);
     await next();
   };
-  return createGroupRoutes(stub, requireUser);
+  return createGroupRoutes(stub, requireUser, options);
 }
 
 describe("/api/groups", () => {
@@ -199,5 +203,64 @@ describe("/api/groups", () => {
     expect(body).toContain("That Bot was not found.");
     expect(body).not.toContain("a1-secret-id");
     expect(seeded).toBe(false);
+  });
+
+  test("with requireAdmin: false, signed-in members can access their own group while non-members still get 404", async () => {
+    const calls: string[] = [];
+    const app = appWith(
+      calls,
+      {
+        list: async (owner, channel) => {
+          calls.push(`list:${owner}:${channel}`);
+          if (owner !== "u-member") throw new GroupNotFoundError();
+          return { bots: [], people: [], messages: [] } as never;
+        },
+        send: async (owner, channel, input) => {
+          calls.push(`send:${owner}:${channel}`);
+          if (owner !== "u-member") throw new GroupNotFoundError();
+          return { id: "m-2", queued: true, ...(input as object) } as never;
+        },
+      },
+      { requireAdmin: false },
+    );
+
+    const allowedList = await app.request("/ch-1", {
+      headers: { "x-test-user": "u-member", "x-test-role": "user" },
+    });
+    expect(allowedList.status).toBe(200);
+
+    const allowedSend = await app.request("/ch-1", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-test-user": "u-member",
+        "x-test-role": "user",
+      },
+      body: JSON.stringify({ id: "m-2", text: "/goal 请给出最终建议" }),
+    });
+    expect(allowedSend.status).toBe(202);
+
+    const strangerList = await app.request("/ch-1", {
+      headers: { "x-test-user": "u-outsider", "x-test-role": "user" },
+    });
+    expect(strangerList.status).toBe(404);
+
+    const strangerSend = await app.request("/ch-1", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-test-user": "u-outsider",
+        "x-test-role": "user",
+      },
+      body: JSON.stringify({ id: "m-3", text: "hi" }),
+    });
+    expect(strangerSend.status).toBe(404);
+
+    expect(calls).toEqual([
+      "list:u-member:ch-1",
+      "send:u-member:ch-1",
+      "list:u-outsider:ch-1",
+      "send:u-outsider:ch-1",
+    ]);
   });
 });

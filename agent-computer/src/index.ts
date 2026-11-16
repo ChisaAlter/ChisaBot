@@ -16,6 +16,7 @@ import {
   mutatesBrowser,
   offeredToken,
 } from "./authorisation";
+import { isHandoffSource } from "../../shared/computer-control";
 import { isPlainBotId } from "./bot-id";
 import { browserRuntimeFromEnv } from "./browser-runtime";
 import { CaptureBusyError } from "./capture-gate";
@@ -1083,14 +1084,21 @@ serve<StreamData>({
         const body = (await request.json().catch(() => null)) as {
           reason?: unknown;
           toolCallId?: unknown;
+          source?: unknown;
         } | null;
         if (
           body?.toolCallId !== undefined &&
           typeof body.toolCallId !== "string"
         )
           return json({ error: "toolCallId must be a string." }, 400);
+        if (body?.source !== undefined && !isHandoffSource(body.source))
+          return json({ error: "source is invalid." }, 400);
         return json(
-          session.control.requestHelp(body?.reason, body?.toolCallId),
+          session.control.requestHelp(
+            body?.reason,
+            body?.toolCallId,
+            body?.source,
+          ),
         );
       }
 
@@ -1788,7 +1796,20 @@ serve<StreamData>({
             // aborts the one it made to this computer, and Bun aborts this one in turn.
             request.signal,
           );
-          return json({ ...detail, elapsedMs: Date.now() - startedAt });
+          const challenge =
+            url.pathname === "/click" || url.pathname === "/type"
+              ? await detectChallenge(target, session.control, {
+                  toolCallId:
+                    typeof body.toolCallId === "string"
+                      ? body.toolCallId
+                      : undefined,
+                }).catch(() => undefined)
+              : undefined;
+          return json({
+            ...detail,
+            elapsedMs: Date.now() - startedAt,
+            ...(challenge ? { challenge } : {}),
+          });
         } catch (error) {
           /*
            * Stopped, not failed. The signal is checked rather than the error text: Playwright words an
@@ -1867,6 +1888,7 @@ type ActionBody = {
   key?: unknown;
   deltaY?: unknown;
   submit?: unknown;
+  toolCallId?: unknown;
 };
 
 const ACTIONS = new Set(["/click", "/type", "/key", "/scroll"]);

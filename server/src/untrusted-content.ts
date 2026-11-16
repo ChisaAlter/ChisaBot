@@ -1,3 +1,5 @@
+import { markTurnTainted } from "./confirmations/context";
+
 /**
  * Outside content, marked as data before a model reads it.
  *
@@ -37,6 +39,7 @@ const CLOSING = new RegExp(`</${UNTRUSTED_TAG}`, "gi");
  * envelope is returned as it is.
  */
 export function markUntrusted(content: string, source: string): string {
+  markTurnTainted(source);
   if (isMarkedUntrusted(content)) return content;
   const safeSource = source.replace(/["<>\n\r]/g, " ").slice(0, 120);
   return `${untrustedNotice(`${safeSource} content`)}\n<${UNTRUSTED_TAG} source="${safeSource}">\n${content.replace(CLOSING, `<\\/${UNTRUSTED_TAG}`)}\n</${UNTRUSTED_TAG}>`;
@@ -62,6 +65,7 @@ export function withUntrustedNotice<T extends object>(
   source: string,
   fields: readonly string[],
 ): { untrusted: string } & T {
+  markTurnTainted(source);
   const present = fields.filter((field) => field in value);
   return {
     untrusted: `${untrustedNotice(`${source} content`)} Untrusted fields: ${present.length ? present.join(", ") : "all"}.`,

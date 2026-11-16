@@ -63,6 +63,7 @@ import {
   policyInitiator,
 } from "./policy";
 import type { ComputerProvider, ComputerUpdate } from "./provider";
+import type { HandoffSource } from "../../../shared/computer-control";
 import { notifyControlReleased } from "./control-blocks";
 import type {
   ActionResult,
@@ -165,12 +166,23 @@ export interface ComputerGateway {
   tabAction?(
     botId: string,
     actor: ActionActor,
-    input: { action: TabAction; id?: string; url?: string; toolCallId?: string },
+    input: {
+      action: TabAction;
+      id?: string;
+      url?: string;
+      toolCallId?: string;
+    },
   ): Promise<TabsView & { page?: NavigateResult }>;
   /** 人接管时自己的标签操作。 */
-  humanTab?(botId: string, input: { action: TabAction; id?: string }): Promise<TabsView>;
+  humanTab?(
+    botId: string,
+    input: { action: TabAction; id?: string },
+  ): Promise<TabsView>;
   /** 把收藏夹推给这个机器人的浏览器，起始页上的常用网站跟着变。 */
-  startLinks?(botId: string, links: StartLink[]): Promise<{ ok: boolean; count: number }>;
+  startLinks?(
+    botId: string,
+    links: StartLink[],
+  ): Promise<{ ok: boolean; count: number }>;
   navigate(
     botId: string,
     actor: ActionActor,
@@ -247,6 +259,7 @@ export interface ComputerGateway {
     actor: ActionActor,
     reason: string,
     toolCallId?: string,
+    source?: HandoffSource,
   ): Promise<ControlState>;
   takeControl(
     botId: string,
@@ -785,7 +798,8 @@ export function createComputerGateway(
       botId,
       actor,
       { targetUrl: target },
-      async () => transport.navigate(await locate(botId), botId, target, toolCallId),
+      async () =>
+        transport.navigate(await locate(botId), botId, target, toolCallId),
     ).then((result) => withUntrustedNotice(result, "web page", PAGE_FIELDS));
   }
 
@@ -801,23 +815,35 @@ export function createComputerGateway(
     },
 
     async tabAction(botId, actor, input) {
-      if (!TAB_ACTIONS.has(input.action)) throw new Error("标签页操作只能是 new / activate / close。");
+      if (!TAB_ACTIONS.has(input.action))
+        throw new Error("标签页操作只能是 new / activate / close。");
       if (input.action === "new") {
         const view = await post<TabsView>(botId, "/tabs/new", {});
         if (!input.url) return view;
-        const page = await navigateGoverned(botId, actor, input.url, input.toolCallId);
+        const page = await navigateGoverned(
+          botId,
+          actor,
+          input.url,
+          input.toolCallId,
+        );
         return { ...(await get<TabsView>(botId, "/tabs")), page };
       }
       return post<TabsView>(botId, `/tabs/${input.action}`, { id: input.id });
     },
 
     humanTab(botId, input) {
-      if (!TAB_ACTIONS.has(input.action)) throw new Error("标签页操作只能是 new / activate / close。");
-      return post<TabsView>(botId, "/human/tab", { action: input.action, id: input.id });
+      if (!TAB_ACTIONS.has(input.action))
+        throw new Error("标签页操作只能是 new / activate / close。");
+      return post<TabsView>(botId, "/human/tab", {
+        action: input.action,
+        id: input.id,
+      });
     },
 
     startLinks(botId, links) {
-      return post<{ ok: boolean; count: number }>(botId, "/start-links", { links });
+      return post<{ ok: boolean; count: number }>(botId, "/start-links", {
+        links,
+      });
     },
 
     status(botId: string): Promise<ComputerStatus> {
@@ -838,10 +864,12 @@ export function createComputerGateway(
       actor: ActionActor,
       reason: string,
       toolCallId?: string,
+      source?: HandoffSource,
     ) {
       const state = await post<ControlState>(botId, "/control/request", {
         reason,
         ...(toolCallId ? { toolCallId } : {}),
+        ...(source ? { source } : {}),
       });
       await writeControlEvent(auditStore, "computer.help_requested", {
         botId,
@@ -975,7 +1003,8 @@ export function createComputerGateway(
       await writeControlEvent(auditStore, "computer.reset", {
         botId,
         actor,
-        reason: reason ?? "这个机器人的浏览器（配置文件、登录状态、接管记录）被删除",
+        reason:
+          reason ?? "这个机器人的浏览器（配置文件、登录状态、接管记录）被删除",
       });
       await snapshots.clear(botId);
       await pageFrames?.clear(botId);
@@ -1322,13 +1351,24 @@ export function createComputerGateway(
       );
     },
 
-    writeBytes(botId: string, actor: ActionActor, input: { path: string; base64: string }) {
+    writeBytes(
+      botId: string,
+      actor: ActionActor,
+      input: { path: string; base64: string },
+    ) {
       return govern(
         "computer_write_file",
         botId,
         actor,
         { filePath: input.path },
-        () => post<{ path: string; bytes: number }>(botId, "/files/write-bytes", input, undefined, 120_000),
+        () =>
+          post<{ path: string; bytes: number }>(
+            botId,
+            "/files/write-bytes",
+            input,
+            undefined,
+            120_000,
+          ),
       );
     },
   };

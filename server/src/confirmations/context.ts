@@ -12,11 +12,57 @@ export type ConfirmTurn = {
   runId: string;
   stopped: () => boolean;
 };
+
+export type TurnTaintState = {
+  tainted: boolean;
+  sources: string[];
+};
+
+type MutableTurnTaint = {
+  tainted: boolean;
+  sources: Set<string>;
+};
+
 const turns = new AsyncLocalStorage<ConfirmTurn>();
 const calls = new AsyncLocalStorage<{ toolCallId: string; toolName: string }>();
+const turnTaints = new AsyncLocalStorage<MutableTurnTaint>();
+
+/**
+ * 为单个回合初始化独立的非受信污点追踪作用域，防止并发异步执行互相串台。
+ */
+export const withTurnTaint = <T>(run: () => T): T =>
+  turnTaints.run({ tainted: false, sources: new Set<string>() }, run);
+
+/**
+ * 将当前回合标记为已接触非受信数据，并记录来源标签；若当前不在回合作用域内则安全忽略。
+ */
+export function markTurnTainted(source: string): void {
+  const state = turnTaints.getStore();
+  if (!state) return;
+  state.tainted = true;
+  const label = source.trim();
+  if (label) state.sources.add(label.slice(0, 120));
+}
+
+/**
+ * 读取当前回合污点快照；未处于污点作用域时返回 null。
+ */
+export function currentTurnTaint(): TurnTaintState | null {
+  const state = turnTaints.getStore();
+  if (!state) return null;
+  return {
+    tainted: state.tainted,
+    sources: [...state.sources],
+  };
+}
+
+export const isTurnTainted = (): boolean =>
+  turnTaints.getStore()?.tainted === true;
 
 export const withConfirmTurn = <T>(turn: ConfirmTurn, run: () => T): T =>
-  turns.run(turn, run);
+  turnTaints.getStore()
+    ? turns.run(turn, run)
+    : withTurnTaint(() => turns.run(turn, run));
 export const currentConfirmTurn = () => turns.getStore();
 export const withConfirmToolCall = <T>(
   toolCallId: string | undefined,

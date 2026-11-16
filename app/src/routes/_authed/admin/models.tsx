@@ -1,14 +1,22 @@
 import { IconCheck, IconKey, IconNetwork } from "@tabler/icons-react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImageDefaultCard, VisionDefaultCard } from "@/components/settings/media-models";
+import {
+  ImageDefaultCard,
+  VisionDefaultCard,
+} from "@/components/settings/media-models";
 import { FallbackModelsCard } from "@/components/settings/fallback-models";
 import { HistorySummaryModelCard } from "@/components/settings/history-summary-model";
 import { ErrorCard } from "@/components/ui/skyglass";
 import { mediaAdminQueryOptions } from "@/lib/media-models";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import { useRef, useState } from "react";
+import {
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
+import { PooledApiKeysSection } from "@/components/settings/pooled-api-keys";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -29,8 +37,11 @@ import {
   type ModelSettingsCurrent,
   type ModelSettingsDraft,
   type ModelSettingsErrors,
+  type PooledKeyDraft,
   modelSettingsInput,
   modelSettingsValidation,
+  pooledKeyDraftKey,
+  pooledKeyDraftsFromCurrent,
 } from "@/lib/model-settings/form";
 import {
   saveModelSettingsMutationOptions,
@@ -49,11 +60,21 @@ function ModelSettingsPage() {
       action={
         /* Magpie 网关页已从左栏移除（2026-10-12 精简），从这里进入；凭据并入模型（DESIGN.md §57 导航收敛），也从这里进入。 */
         <div className="flex flex-wrap gap-2">
-          <Button nativeButton={false} render={<Link to="/admin/credentials" />} size="sm" variant="outline">
+          <Button
+            nativeButton={false}
+            render={<Link to="/admin/credentials" />}
+            size="sm"
+            variant="outline"
+          >
             <IconKey />
             {"模型密钥"}
           </Button>
-          <Button nativeButton={false} render={<Link to="/admin/magpie" />} size="sm" variant="outline">
+          <Button
+            nativeButton={false}
+            render={<Link to="/admin/magpie" />}
+            size="sm"
+            variant="outline"
+          >
             <IconNetwork />
             {"Magpie 网关"}
           </Button>
@@ -85,10 +106,17 @@ function ModelSettingsPage() {
       )}
       {settings.data ? (
         <div className="media-anchor" id="fallback-models">
-          <PageSection description="主模型额度用完或暂时不可用时，按这个顺序换下一个，对话里会有一行小字说明。" settingItem="models.fallback-models" title="备用模型">
+          <PageSection
+            description="主模型额度用完或暂时不可用时，按这个顺序换下一个，对话里会有一行小字说明。"
+            settingItem="models.fallback-models"
+            title="备用模型"
+          >
             <FallbackModelsCard mainModel={settings.data.model} />
           </PageSection>
-          <PageSection description="对话很长时，较早的轮次由这个模型写成摘要再发给主模型；不选就用主模型。摘要失败只会裁剪旧内容，不影响回答。" title="摘要模型">
+          <PageSection
+            description="对话很长时，较早的轮次由这个模型写成摘要再发给主模型；不选就用主模型。摘要失败只会裁剪旧内容，不影响回答。"
+            title="摘要模型"
+          >
             <HistorySummaryModelCard />
           </PageSection>
         </div>
@@ -111,16 +139,34 @@ function MediaDefaults() {
   );
   if (media.isPending) return <PageSkeleton rows={3} />;
   if (media.error || !media.data)
-    return <ErrorCard action={<Button onClick={() => media.refetch()} variant="outline">{"重试"}</Button>} title={media.error?.message ?? "无法加载生图 / 识图设置"} />;
+    return (
+      <ErrorCard
+        action={
+          <Button onClick={() => media.refetch()} variant="outline">
+            {"重试"}
+          </Button>
+        }
+        title={media.error?.message ?? "无法加载生图 / 识图设置"}
+      />
+    );
   return (
     <>
       <div className="media-anchor" id="image-model">
-        <PageSection action={personal} description="机器人画图、改图（image_generate / image_edit）用的模型，所有人的默认。每张图按模型价格计费。" settingItem="models.image-model" title="生图模型">
+        <PageSection
+          action={personal}
+          description="机器人画图、改图（image_generate / image_edit）用的模型，所有人的默认。每张图按模型价格计费。"
+          settingItem="models.image-model"
+          title="生图模型"
+        >
           <ImageDefaultCard current={media.data.image} />
         </PageSection>
       </div>
       <div className="media-anchor" id="vision-model">
-        <PageSection description="聊天里上传的图片怎么让机器人看懂，所有人的默认。" settingItem="models.vision-model" title="识图模型">
+        <PageSection
+          description="聊天里上传的图片怎么让机器人看懂，所有人的默认。"
+          settingItem="models.vision-model"
+          title="识图模型"
+        >
           <VisionDefaultCard current={media.data.vision} />
         </PageSection>
       </div>
@@ -133,12 +179,14 @@ function ModelSettingsForm({ config }: { config: ModelSettingsCurrent }) {
   const save = useMutation(saveModelSettingsMutationOptions(queryClient));
   const testConnection = useMutation(testModelConnectionMutationOptions());
   const [current, setCurrent] = useState(config);
+  const nextPooledKeyRef = useRef(0);
   const [draft, setDraft] = useState<ModelSettingsDraft>(() => ({
     provider: config.provider,
     model: config.model,
     baseUrl: config.baseUrl,
     useApiKey: config.useApiKey,
     apiKey: "",
+    pooledKeys: pooledKeyDraftsFromCurrent(config.pooledKeys),
   }));
   const [errors, setErrors] = useState<ModelSettingsErrors>({});
   const [feedback, setFeedback] = useState<{
@@ -160,8 +208,42 @@ function ModelSettingsForm({ config }: { config: ModelSettingsCurrent }) {
     setFeedback(null);
   }
 
-  const saveAction = useAsyncAction(() => submit("save"), { errorToast: false });
-  const testAction = useAsyncAction(() => submit("test"), { errorToast: false });
+  function addPooledKey() {
+    nextPooledKeyRef.current += 1;
+    const clientKey = `new-${nextPooledKeyRef.current}`;
+    change("pooledKeys", [
+      ...(draft.pooledKeys ?? []),
+      { kind: "new", clientKey, label: "", apiKey: "" },
+    ]);
+  }
+
+  function updatePooledKey(
+    entryKey: string,
+    updater: (entry: PooledKeyDraft) => PooledKeyDraft,
+  ) {
+    change(
+      "pooledKeys",
+      (draft.pooledKeys ?? []).map((entry) =>
+        pooledKeyDraftKey(entry) === entryKey ? updater(entry) : entry,
+      ),
+    );
+  }
+
+  function removeNewPooledKey(clientKey: string) {
+    change(
+      "pooledKeys",
+      (draft.pooledKeys ?? []).filter(
+        (entry) => !(entry.kind === "new" && entry.clientKey === clientKey),
+      ),
+    );
+  }
+
+  const saveAction = useAsyncAction(() => submit("save"), {
+    errorToast: false,
+  });
+  const testAction = useAsyncAction(() => submit("test"), {
+    errorToast: false,
+  });
 
   async function submit(action: "save" | "test") {
     if (busy) return;
@@ -188,6 +270,7 @@ function ModelSettingsForm({ config }: { config: ModelSettingsCurrent }) {
           baseUrl: saved.baseUrl,
           useApiKey: saved.useApiKey,
           apiKey: "",
+          pooledKeys: pooledKeyDraftsFromCurrent(saved.pooledKeys),
         });
         setFeedback({
           ok: true,
@@ -355,6 +438,31 @@ function ModelSettingsForm({ config }: { config: ModelSettingsCurrent }) {
                 </FieldDescription>
                 <FieldError>{errors.apiKey}</FieldError>
               </Field>
+            ) : null}
+            {draft.useApiKey ? (
+              <PooledApiKeysSection
+                disabled={busy}
+                entries={draft.pooledKeys ?? []}
+                errors={errors.pooledKeys}
+                onAdd={addPooledKey}
+                onChangeLabel={(key, label) =>
+                  updatePooledKey(key, (entry) => ({ ...entry, label }))
+                }
+                onChangeSecret={(key, value) =>
+                  updatePooledKey(key, (entry) =>
+                    entry.kind === "existing"
+                      ? { ...entry, newApiKey: value }
+                      : { ...entry, apiKey: value },
+                  )
+                }
+                onRemoveNew={removeNewPooledKey}
+                onToggleRemove={(id, removed) =>
+                  updatePooledKey(id, (entry) =>
+                    entry.kind === "existing" ? { ...entry, removed } : entry,
+                  )
+                }
+                projections={config.pooledKeys ?? current.pooledKeys ?? []}
+              />
             ) : null}
           </FieldGroup>
           <div className="mt-7 flex flex-wrap items-center gap-3">

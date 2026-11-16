@@ -94,6 +94,7 @@ export function createConversationRoutes(options: {
     botId: string,
     input: import("@ag-ui/client").RunAgentInput,
   ) => Promise<readonly HeadlessTool[]>;
+  checkQuota?: (actor: { id: string; isAdmin: boolean }) => Promise<void>;
 }) {
   const routes = new Hono();
   const { backend, resolver, identifyActor } = options;
@@ -139,6 +140,10 @@ export function createConversationRoutes(options: {
   ) {
     await assertConversationAdmissionOpen();
     const actor = await identifyActor(request);
+    await options.checkQuota?.({
+      id: actor.id,
+      isAdmin: actor.role === "admin",
+    });
     const baseAgent = await resolver.resolveAgentForActor(actor, agentId, {
       initiator: { kind: "person" },
     });
@@ -222,6 +227,10 @@ export function createConversationRoutes(options: {
         : undefined;
       if (agent) {
         await assertConversationAdmissionOpen();
+        await options.checkQuota?.({
+          id: actor.id,
+          isAdmin: actor.role === "admin",
+        });
         await options.prepareAgent?.(actor.id, agent);
       }
       const { record, alreadyAccepted } =
@@ -283,8 +292,15 @@ export function createConversationRoutes(options: {
       "status" in error && typeof error.status === "number"
         ? error.status
         : 500;
+    const code =
+      "code" in error && typeof error.code === "string"
+        ? error.code
+        : undefined;
     return context.json(
-      { error: publicConversationError(error) },
+      {
+        error: publicConversationError(error),
+        ...(code ? { code } : {}),
+      },
       status as 400,
     );
   });

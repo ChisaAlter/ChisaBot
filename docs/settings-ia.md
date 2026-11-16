@@ -7,27 +7,27 @@
 
 左栏分三组（`components/settings/settings-sidebar.tsx`）：
 
-| 旧组             | 页                                     | 路由                                   | 页里的块                                                                           |
-| ---------------- | -------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| 个人             | 通用                                   | /settings                              | 外观（主题、背景随时间变化）· 常驻指令 · 键盘快捷键                                |
-| 个人             | 记忆                                   | /settings/memory                       | 记忆列表（按种类筛选）· 哪些机器人用记忆                                           |
-| 个人             | 技能                                   | /settings/skills                       | 技能列表（管理员页内进共享技能管理 /admin/skills）                                 |
-| 个人             | 定时任务                               | /settings/schedules                    | 任务列表                                                                           |
-| 个人             | 页面                                   | /settings/pages                        | 页面列表（复制链接、下线、删除）                                                   |
-| 个人             | 账号连接                               | /settings/connected-accounts (+ /$key) | GitHub、应用连接、保存的登录                                                       |
-| 个人             | 生图与识图                             | /settings/media                        | 生图模型 · 识图模型（自己的）                                                      |
-| 个人             | 密钥                                   | /settings/vault                        | 保险箱条目                                                                         |
-| 个人             | 审批偏好                               | /settings/approvals                    | 哪些事先问我 · 你的规则 · 最近的确认                                               |
-| 个人             | 设备                                   | /settings/devices (+ /$deviceId)       | 待审批 · 设备列表 · 添加手机 / 电脑 / 服务器；详情页：能力、文件夹、完全访问、审计 |
-| 个人             | IM 接入                                | /settings/im                           | 我的连接                                                                           |
-| 管理             | 账号（默认隐藏，CHISABOT_ACCOUNTS_UI） | /admin/accounts                        | 邀请、停用、重置密码                                                               |
-| 管理             | 模型                                   | /admin/models                          | 聊天模型 · 备用模型 · 生图模型 · 识图模型（部署）                                  |
-| 管理             | 云端浏览器                             | /admin/computers                       | 此部署中的计算机                                                                   |
-| 管理             | 权限规则（默认隐藏，extras）           | /admin/boundaries                      | 命中规则时 · 永远不允许 · 其余允许                                                 |
-| 管理             | 系统更新                               | /admin/system-update                   | 版本 · 可用更新 · 回滚 · 历史 · 自检 · 调试                                        |
-| 管理             | 活动记录                               | /admin/audit                           | 全部操作记录                                                                       |
-| 高级（默认隐藏） | 工作流                                 | /workflows                             |                                                                                    |
-| 高级（默认隐藏） | 插件与 MCP                             | /admin/plugins                         |                                                                                    |
+| 旧组             | 页                                  | 路由                                   | 页里的块                                                                           |
+| ---------------- | ----------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| 个人             | 通用                                | /settings                              | 外观（主题、背景随时间变化）· 常驻指令 · 键盘快捷键                                |
+| 个人             | 记忆                                | /settings/memory                       | 记忆列表（按种类筛选）· 哪些机器人用记忆                                           |
+| 个人             | 技能                                | /settings/skills                       | 技能列表（管理员页内进共享技能管理 /admin/skills）                                 |
+| 个人             | 定时任务                            | /settings/schedules                    | 任务列表                                                                           |
+| 个人             | 页面                                | /settings/pages                        | 页面列表（复制链接、下线、删除）                                                   |
+| 个人             | 账号连接                            | /settings/connected-accounts (+ /$key) | GitHub、应用连接、保存的登录                                                       |
+| 个人             | 生图与识图                          | /settings/media                        | 生图模型 · 识图模型（自己的）                                                      |
+| 个人             | 密钥                                | /settings/vault                        | 保险箱条目                                                                         |
+| 个人             | 审批偏好                            | /settings/approvals                    | 哪些事先问我 · 你的规则 · 最近的确认                                               |
+| 个人             | 设备                                | /settings/devices (+ /$deviceId)       | 待审批 · 设备列表 · 添加手机 / 电脑 / 服务器；详情页：能力、文件夹、完全访问、审计 |
+| 个人             | IM 接入                             | /settings/im                           | 我的连接                                                                           |
+| 管理             | 账号（CHISABOT_ACCOUNTS_UI 默认开） | /admin/accounts                        | 邀请、停用、重置密码                                                               |
+| 管理             | 模型                                | /admin/models                          | 聊天模型 · 备用模型 · 生图模型 · 识图模型（部署）                                  |
+| 管理             | 云端浏览器                          | /admin/computers                       | 此部署中的计算机                                                                   |
+| 管理             | 权限规则（默认隐藏，extras）        | /admin/boundaries                      | 命中规则时 · 永远不允许 · 其余允许                                                 |
+| 管理             | 系统更新                            | /admin/system-update                   | 版本 · 可用更新 · 回滚 · 历史 · 自检 · 调试                                        |
+| 管理             | 活动记录                            | /admin/audit                           | 全部操作记录                                                                       |
+| 高级（默认隐藏） | 工作流                              | /workflows                             |                                                                                    |
+| 高级（默认隐藏） | 插件与 MCP                          | /admin/plugins                         |                                                                                    |
 
 不在左栏、但存在的页：/admin/skills（共享技能管理，从 技能 页进）、/admin/credentials（模型密钥，从模型页进）、/admin/magpie（模型平台）、
 /admin/components（UI 组件库）、/approvals（账号菜单 → 待处理）。

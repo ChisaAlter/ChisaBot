@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
+import type os from "node:os";
 import type { MiddlewareHandler } from "hono";
+import {
+  decryptDeviceFrame,
+  deriveSessionKey,
+  encryptDeviceFrame,
+  generateE2eeKeyPair,
+} from "../../shared/device-e2ee";
 import {
   defaultCapabilities,
   isMobilePlatform,
@@ -9,6 +16,7 @@ import {
 import { createDeviceHub } from "../src/devices/hub";
 import {
   createPairingStore,
+  discoverAlternateOrigins,
   isPairingCode,
   NODE_PAIRING_TTL_MS,
   PAIRING_TTL_MS,
@@ -652,5 +660,153 @@ describe("/api/devices pairing routes", () => {
       state: "bound",
       device: { id: nodeBody.device.id, name: "srv-1" },
     });
+  });
+
+  test("pairingUri backwards compatibility, discoverAlternateOrigins filtering, and optional E2EE pairing handshake", async () => {
+    const code = `cbp_${"Z".repeat(32)}`;
+    expect(pairingUri("https://chat.example:8443", code)).toBe(
+      `chisabot://pair?server=https%3A%2F%2Fchat.example%3A8443&code=${code}`,
+    );
+    expect(
+      pairingUri("https://chat.example:8443", code, {
+        alternates: [],
+        e2eePub: "",
+      }),
+    ).toBe(
+      `chisabot://pair?server=https%3A%2F%2Fchat.example%3A8443&code=${code}`,
+    );
+
+    const withOptions = pairingUri("https://chat.example:8443", code, {
+      alternates: [
+        "https://chat.example:8443",
+        "https://box.tail.ts.net:8443",
+        "http://100.64.2.3:3000",
+      ],
+      e2eePub: "B".repeat(43),
+    });
+    expect(withOptions).toBe(
+      `chisabot://pair?server=https%3A%2F%2Fchat.example%3A8443&code=${code}&alt=${encodeURIComponent("https://box.tail.ts.net:8443,http://100.64.2.3:3000")}&pk=${"B".repeat(43)}`,
+    );
+
+    const nic = (
+      address: string,
+      internal = false,
+      family = "IPv4",
+    ): os.NetworkInterfaceInfo => ({
+      address,
+      netmask: "255.255.255.0",
+      family: family as "IPv4",
+      mac: "00:00:00:00:00:00",
+      internal,
+      cidr: `${address}/24`,
+    });
+    const discovered = discoverAlternateOrigins({
+      requestUrl: "https://192.168.1.10:8443/api/devices/pairing",
+      networkInterfaces: () => ({
+        lo: [nic("127.0.0.1", true)],
+        apipa: [nic("169.254.10.20")],
+        wan: [nic("203.0.113.5")],
+        lan: [nic("192.168.1.10"), nic("192.168.1.50")],
+        tailscale0: [nic("100.64.12.34")],
+      }),
+    });
+    expect(discovered).toEqual([
+      "https://100.64.12.34:8443",
+      "https://192.168.1.50:8443",
+    ]);
+
+    const { call } = setup();
+    const browserKeys = await generateE2eeKeyPair();
+    const phoneKeys = await generateE2eeKeyPair();
+
+    const badIssue = await call("/pairing", {
+      method: "POST",
+      json: { kind: "phone", e2eePub: "bad!" },
+    });
+    expect(badIssue.status).toBe(400);
+
+    const issueRes = await call("/pairing", {
+      method: "POST",
+      json: { kind: "phone", e2eePub: browserKeys.publicKey },
+    });
+    expect(issueRes.status).toBe(201);
+    const issued = (await issueRes.json()) as {
+      id: string;
+      code: string;
+      kind: string;
+      e2eePublicKey?: string;
+      alternateOrigins?: string[];
+    };
+    expect(issued.kind).toBe("phone");
+    expect(issued.e2eePublicKey).toBe(browserKeys.publicKey);
+    if (issued.alternateOrigins) {
+      expect(Array.isArray(issued.alternateOrigins)).toBe(true);
+    }
+
+    // 非法对端公钥应在消耗一次性绑定码前返回 400。
+    const badPeerRes = await call("/agent/pair", {
+      method: "POST",
+      json: { code: issued.code, e2eePublicKey: "short" },
+    });
+    expect(badPeerRes.status).toBe(400);
+
+    const pairRes = await call("/agent/pair", {
+      method: "POST",
+      json: {
+        code: issued.code,
+        name: "Phone E2EE",
+        e2eePublicKey: phoneKeys.publicKey,
+      },
+    });
+    expect(pairRes.status).toBe(201);
+    const pairBody = (await pairRes.json()) as {
+      token: string;
+      e2ee?: {
+        accepted: boolean;
+        serverPublicKey?: string;
+        peerPublicKey?: string;
+      };
+    };
+    expect(pairBody.e2ee).toEqual({
+      accepted: true,
+      serverPublicKey: browserKeys.publicKey,
+      peerPublicKey: phoneKeys.publicKey,
+    });
+
+    const statusRes = await call(`/pairing/${issued.id}`);
+    expect(statusRes.status).toBe(200);
+    const statusBody = (await statusRes.json()) as {
+      state: string;
+      serverE2eePublicKey?: string;
+      peerE2eePublicKey?: string;
+    };
+    expect(statusBody.state).toBe("bound");
+    expect(statusBody.serverE2eePublicKey).toBe(browserKeys.publicKey);
+    expect(statusBody.peerE2eePublicKey).toBe(phoneKeys.publicKey);
+
+    // 双方按握手交换公钥派生的会话密钥可双向加解密。
+    const webKey = await deriveSessionKey(
+      browserKeys.privateKey,
+      statusBody.peerE2eePublicKey ?? "",
+      issued.id,
+    );
+    const mobileKey = await deriveSessionKey(
+      phoneKeys.privateKey,
+      pairBody.e2ee?.serverPublicKey ?? "",
+      issued.id,
+    );
+    const sealed = await encryptDeviceFrame(
+      mobileKey,
+      1,
+      issued.id,
+      "paired-ok",
+    );
+    const unsealed = await decryptDeviceFrame(
+      webKey,
+      { maxSeq: 0 },
+      issued.id,
+      sealed,
+    );
+    expect(unsealed).toBe("paired-ok");
   });
 });

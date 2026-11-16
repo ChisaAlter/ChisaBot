@@ -1,11 +1,5 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import {
-  memo,
-  useCallback,
-  useDeferredValue,
-  useMemo,
-  useState,
-} from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import type { ShellScope } from "@/components/layout/glass-topbar";
@@ -156,7 +150,12 @@ export const ShellSidebar = memo(function ShellSidebar({
   );
 });
 
-type ChatAddress = { channelId: string; settings?: boolean; watch?: boolean };
+type ChatAddress = {
+  channelId: string;
+  settings?: boolean;
+  watch?: boolean;
+  side?: boolean;
+};
 
 /** 当前地址是不是一段聊天（`/channel/:id`），是的话它的参数。 */
 function useChatAddress(): ChatAddress | null {
@@ -164,26 +163,33 @@ function useChatAddress(): ChatAddress | null {
     select: (s) => {
       const match = s.matches.find((m) => m.routeId === CHANNEL_ROUTE_ID);
       if (!match) return "";
-      const search = match.search as { settings?: boolean; watch?: boolean };
+      const search = match.search as {
+        settings?: boolean;
+        watch?: boolean;
+        side?: boolean;
+      };
       return JSON.stringify([
         (match.params as { channelId: string }).channelId,
         search.settings === true,
         search.watch === true ? true : search.watch === false ? false : null,
+        search.side === true,
       ]);
     },
   });
   // 同一个地址给同一个对象：`useDeferredValue` 按引用比，每次新对象会白跑一遍延后渲染。
   return useMemo(() => {
     if (!key) return null;
-    const [channelId, settings, watch] = JSON.parse(key) as [
+    const [channelId, settings, watch, side] = JSON.parse(key) as [
       string,
       boolean,
       boolean | null,
+      boolean,
     ];
     return {
       channelId,
       ...(settings ? { settings: true } : {}),
       ...(watch === null ? {} : { watch }),
+      ...(side ? { side: true } : {}),
     };
   }, [key]);
 }
@@ -191,7 +197,8 @@ function useChatAddress(): ChatAddress | null {
 const sameAddress = (a: ChatAddress, b: ChatAddress) =>
   a.channelId === b.channelId &&
   a.settings === b.settings &&
-  a.watch === b.watch;
+  a.watch === b.watch &&
+  a.side === b.side;
 
 /** 地址没换时（延后渲染还没跟上的那一次、左栏高亮那一次）不重画整段对话。 */
 const KeptChannelPage = memo(ChannelPage);
@@ -249,6 +256,7 @@ function ChatStage({ pathname }: { pathname: string }) {
            */
           key={kept.channelId}
           settings={kept.settings}
+          side={kept.side}
           visible={visible}
           watch={kept.watch}
         />

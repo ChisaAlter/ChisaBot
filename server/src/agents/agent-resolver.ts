@@ -10,11 +10,14 @@ import {
   type MarkAttachmentsSent,
   type RuntimeModel,
   type RuntimeModelConnection,
+  type RuntimeModelPolicy,
   type RuntimeModelResolver,
   resolveRuntimeAgents,
   type SignRun,
   type ToolSelection,
 } from "../conversation-runtime";
+import type { ModelProxyQuotaOptions } from "../conversations/model-connection-proxy";
+import type { ToolImagePart } from "../conversations/tool-images";
 import type { LoadPersonalMemory } from "../memory/tools";
 import type { AgentActor } from "./profile-types";
 
@@ -76,6 +79,10 @@ export type ActorAgentResolverDependencies = {
   loadAttachmentForActor?: (actorId: string) => LoadAttachment;
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent;
   loadPersonalMemoryForActor?: (actorId: string) => LoadPersonalMemory;
+  quota?: Omit<ModelProxyQuotaOptions, "userId" | "isAdmin">;
+  describeImageForActor?: (
+    actorId: string,
+  ) => (agentId: string, part: ToolImagePart) => Promise<string | null>;
 };
 
 /**
@@ -108,6 +115,30 @@ export function createActorAgentResolver(
     const connection = usesBuiltInModel
       ? await deps.resolveConnection?.()
       : undefined;
+    const quotaPolicy: ModelProxyQuotaOptions | undefined = deps.quota
+      ? {
+          ...deps.quota,
+          userId: actor.id,
+          isAdmin: actor.role === "admin",
+        }
+      : undefined;
+    const describeImageForAgent = deps.describeImageForActor?.(actor.id);
+    const runtimePolicy: RuntimeModelPolicy | undefined =
+      connection?.pooledKeys ||
+      connection?.keyPool ||
+      connection?.poolId ||
+      quotaPolicy ||
+      describeImageForAgent
+        ? {
+            ...(connection?.pooledKeys
+              ? { pooledKeys: connection.pooledKeys }
+              : {}),
+            ...(connection?.keyPool ? { keyPool: connection.keyPool } : {}),
+            ...(connection?.poolId ? { poolId: connection.poolId } : {}),
+            ...(quotaPolicy ? { quota: quotaPolicy } : {}),
+            ...(describeImageForAgent ? { describeImageForAgent } : {}),
+          }
+        : undefined;
     return resolveRuntimeAgents(
       () => Promise.resolve(registered),
       connection?.model ?? deps.model,
@@ -130,6 +161,7 @@ export function createActorAgentResolver(
       deps.resolveConnectionForAgent,
       // The self-map's one fact about the person: may they approve an admin action.
       { isAdmin: actor.role === "admin" },
+      runtimePolicy,
     );
   };
 

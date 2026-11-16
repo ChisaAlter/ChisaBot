@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.153 — 2026-11-16
+
+全端版本 0.1.153，Android versionCode 335。落地全域原生融合与安全护栏升级（Wave 0–6 · CB-027、CB-045 · DESIGN §136），包含服务端迁移 `0069_native_system_unification.sql`、桌面端原生 `stdio` MCP 与局域网 E2EE 对等配对（代码指纹更新为 `b0a46e5236d43b82`），Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新，无需重新安装。
+
+- **全域原生融合与安全护栏升级（Wave 0–6 · DESIGN §136）**：在既有账号、配额、设备与会话系统内原生融合多 Key 粘性轮换池与每用户配额硬上限（`CB-045`，迁移 `0069_native_system_unification.sql`）、DSH 多模态工具图片回传与云端浏览器 CAPTCHA 识别及人工接管（Take-the-Wheel + 恢复快照栅栏）、Electron PC 端原生 `stdio` MCP（含跨平台本机配置发现与脱敏）与局域网 E2EE 对等配对、多 Bot 群聊防循环接力（最多 6 跳 / 双向乒乓 ≤ 2 / 冷却窗 / 配额继承）、侧边只读派生会话 `/side` 与工作流毕业脱敏及单次 `resumeToken` 原子恢复、四级记忆隔离（`private` / `bot_private` / `shared` / `public`）与 4000 字稳定 KV 前缀缓存、跨会话 FTS 检索与 `node:zlib` 原生 DOCX/PDF 分块、技能与上下文内容安全扫描及 `AsyncLocalStorage` 污点审批升级、IM 群聊/非号主隔离与 Discord/Slack 适配器补全、IM 被动回复窗口过期降级（`CB-027`，不计入定时任务连败自动暂停）、统一原生 ASR/TTS 语音服务 `/api/speech` 与浏览器音频播放，以及 8 份 BFS 形式化状态机证明和 `ChisaBench` 吞吐基线（`bun run bench`）。增量部署服务端并执行迁移后生效，三端客户端同步发布 `0.1.153`。
+
 ## 0.1.152 — 2026-11-16
 
 全端版本 0.1.152，Android versionCode 334。统一聊天内用户多图附件与 AI 多图/多卡片的舒展错落扇形牌组展示，修复右对齐发图裁切与生成式界面大框包裹问题，并恢复 AI 聊天气泡与侧栏/右栏一致的四档磨砂毛玻璃质感（CB-128）。Windows 外壳指纹不变，无需重新安装；无需数据库迁移。

@@ -1,4 +1,10 @@
-import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  index,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 import { jsonb } from "./json";
 
 /**
@@ -15,8 +21,12 @@ export const workflows = pgTable(
     definition: jsonb("definition").notNull(),
     /** 从哪个预设 / 工作流复制来的，或 import。 */
     origin: text("origin"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("workflows_owner_idx").on(t.ownerUserId)],
 );
@@ -39,14 +49,23 @@ export const workflowRuns = pgTable(
     state: jsonb("state").notNull(),
     output: text("output"),
     error: text("error"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    stepMode: text("step_mode").notNull().default("auto"),
+    resumeTokenHash: text("resume_token_hash"),
+    resumeReason: text("resume_reason"),
+    resumeExpiresAt: timestamp("resume_expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("workflow_runs_owner_created_idx").on(t.ownerUserId, t.createdAt),
     index("workflow_runs_status_idx").on(t.status),
+    uniqueIndex("workflow_runs_resume_token_idx").on(t.resumeTokenHash),
   ],
 );
 

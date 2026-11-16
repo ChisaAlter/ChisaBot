@@ -1,7 +1,7 @@
 {
   "name": "chisabot",
   "description": "ChisaBot 中文自托管 AI 助手与 Magpie 模型集成",
-  "version": "0.1.152",
+  "version": "0.1.153",
   "license": "MIT",
   "private": true,
   "repository": {
@@ -25,6 +25,7 @@
     "test:ci": "bun scripts/test-ci.ts",
     "test:dsh": "bun scripts/run-dsh-tests.ts",
     "test:server": "bun scripts/run-server-tests.ts",
+    "bench": "bun scripts/chisa-bench.ts",
     "check": "bun run typecheck && bun run lint",
     "check:full": "bun run check && bun run test:server && bun run test:app",
     "pretest": "bun run generate:app-config",

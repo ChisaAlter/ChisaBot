@@ -114,14 +114,13 @@ PC → 服务器：`hello{clientVersion,platform,osVersion,hostname,arch}`、`re
 - 无界面节点：`node src/cli.js login|run|logout --server … --token-file …`，用于测试或在没有桌面的机器上跑。
 - 发布：服务器 `/opt/chisabot-pc-build/build.sh`（`electronuserland/builder:wine` 容器里跑 electron-builder，NSIS 需要 x86 makensis + wine）→ `publish-pc.sh` 复制到网关 `/downloads/pc/` 并写 `latest.json`（版本、大小、SHA-256）；设备页下载卡片读它。
 
-## 9. 已知限制 / 下一步
+## 9. 已知限制与演进方向
 
-- 截图只截主屏；多屏、录屏、摄像头未做。浏览器自动化（CDP 控制本机 Chrome）未做——服务器端机器人已有自己的「计算机」浏览器。
-- 机器人目前拿到的是截图地址，模型本身看不到图片内容（需要把截图作为图像内容块注入模型上下文，属于运行时改造，2026-10-11 评估后暂缓：各模型平台的工具结果图像格式不同，风险不低）。
-- 客户端只在 Linux 版 Electron（同一份代码，Xvfb）里端到端跑过，没有在真实 Windows 上跑过：DPAPI、托盘、PowerShell 操作、截图、鼠标键盘、NSIS 安装 / 卸载、开机自启、SmartScreen 提示都待真机验证。
-- 安装包未签名（Windows SmartScreen 会提示「未知发布者」）；无自动更新。
-- 网页的审批是轮询（5 秒），不是推送；审批也还没并入 `/approvals` 审批页。
-- 网关之外的部署（Better Auth 多用户）登录路径已实现但没有实际测过。
+- 多屏独立区域录屏、摄像头采集仍按需逐步补充；服务器端机器人拥有独立「计算机」浏览器，桌面设备则新增 `mcp-host` 沙箱宿主以直接安全承载本机 Claude / Cursor / VS Code 的 `stdio` MCP 工具。
+- `device_screenshot` / `computer_screenshot` 支持通过 DSH `@deepseek-ai/dsh-attachment-local` 原生回传图像内容块与物理坐标缩放比例，在不支持多模态的主模型下自动回退 `vision-provider` 解析控件坐标。
+- Windows 安装包如未签名时 SmartScreen 会提示「未知发布者」。
+- 网页端支持推送与轮询协同审批，PC / 手机 / 网页统一对齐审批倒数。
+- 支持公网 HTTPS 网关部署、Better Auth 多用户部署以及局域网 / Tailscale `100.64.0.0/10` + 可选端到端加密中继互联。
 
 ## 10. 手机扫码绑定（2026-10-13，界面见 DESIGN.md §33）
 

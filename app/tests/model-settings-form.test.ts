@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import {
+  describePooledKeyHealth,
   modelSettingsInput,
   modelSettingsValidation,
+  pooledKeyDraftsFromCurrent,
 } from "@/lib/model-settings/form";
 
 const current = {
@@ -129,4 +131,169 @@ test.each([
       current,
     )[field as "model" | "baseUrl"],
   ).toBeTruthy();
+});
+
+test("pooledKeys serializes additions, rotations without blank overwrite, and removals cleanly", () => {
+  expect(
+    modelSettingsInput({
+      ...current,
+      apiKey: "",
+      pooledKeys: [],
+    }).pooledKeys,
+  ).toBeUndefined();
+
+  expect(
+    modelSettingsInput({
+      ...current,
+      useApiKey: false,
+      apiKey: "",
+      pooledKeys: [
+        { kind: "new", clientKey: "new-1", label: "备选", apiKey: "sk-1" },
+      ],
+    }).pooledKeys,
+  ).toBeUndefined();
+
+  expect(
+    modelSettingsInput({
+      ...current,
+      apiKey: "",
+      pooledKeys: [
+        {
+          kind: "existing",
+          id: "k1",
+          label: " 主备 1 ",
+          hasApiKey: true,
+          newApiKey: "   ",
+          removed: false,
+        },
+        {
+          kind: "existing",
+          id: "k2",
+          label: "备选 2",
+          hasApiKey: true,
+          newApiKey: " sk-rotated ",
+          removed: false,
+        },
+        {
+          kind: "existing",
+          id: "k3",
+          label: "旧 Key",
+          hasApiKey: true,
+          newApiKey: "",
+          removed: true,
+        },
+        {
+          kind: "new",
+          clientKey: "new-1",
+          label: " 新增备选 ",
+          apiKey: " sk-new ",
+        },
+      ],
+    }).pooledKeys,
+  ).toEqual([
+    { id: "k1", label: "主备 1" },
+    { id: "k2", label: "备选 2", apiKey: "sk-rotated" },
+    { id: "k3", label: "旧 Key", remove: true },
+    { label: "新增备选", apiKey: "sk-new" },
+  ]);
+});
+
+test("pooledKeys validation rejects empty alias or missing key while skipping removed rows", () => {
+  const drafts = pooledKeyDraftsFromCurrent([
+    {
+      id: "k1",
+      label: "已存在未填密钥",
+      hasApiKey: false,
+      healthy: true,
+      cooldownUntil: null,
+    },
+    {
+      id: "k2",
+      label: "",
+      hasApiKey: true,
+      healthy: true,
+      cooldownUntil: null,
+    },
+  ]);
+  const errors = modelSettingsValidation(
+    {
+      ...current,
+      apiKey: "",
+      pooledKeys: [
+        drafts[0] as (typeof drafts)[number],
+        {
+          ...(drafts[1] as (typeof drafts)[number]),
+          kind: "existing",
+          removed: true,
+          id: "k2",
+          label: "",
+          hasApiKey: true,
+          newApiKey: "",
+        },
+        { kind: "new", clientKey: "new-1", label: "  ", apiKey: " " },
+      ],
+    },
+    current,
+  );
+  expect(errors.pooledKeys).toEqual({
+    k1: { apiKey: "请填写此备选 Key 的 API Key，或将其移除。" },
+    "new-1": {
+      label: "请填写备选 Key 的别名。",
+      apiKey: "请填写新增备选 Key 的 API Key。",
+    },
+  });
+});
+
+test("describePooledKeyHealth formats healthy, active cooldown, expired cooldown, and error states", () => {
+  const now = 1_700_000_000_000;
+  expect(
+    describePooledKeyHealth(
+      {
+        id: "k1",
+        label: "A",
+        hasApiKey: true,
+        healthy: true,
+        cooldownUntil: null,
+      },
+      now,
+    ).label,
+  ).toBe("健康");
+  expect(
+    describePooledKeyHealth(
+      {
+        id: "k2",
+        label: "B",
+        hasApiKey: true,
+        healthy: false,
+        cooldownUntil: now + 12_300,
+        lastStatus: 429,
+      },
+      now,
+    ).label,
+  ).toBe("冷却中，剩余 13 秒");
+  expect(
+    describePooledKeyHealth(
+      {
+        id: "k2",
+        label: "B",
+        hasApiKey: true,
+        healthy: false,
+        cooldownUntil: now - 500,
+      },
+      now,
+    ).label,
+  ).toBe("冷却已结束（待恢复）");
+  expect(
+    describePooledKeyHealth(
+      {
+        id: "k3",
+        label: "C",
+        hasApiKey: true,
+        healthy: false,
+        cooldownUntil: null,
+        lastStatus: 401,
+      },
+      now,
+    ).label,
+  ).toBe("异常（HTTP 401）");
 });

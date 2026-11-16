@@ -80,7 +80,7 @@ export type SettingsPage = {
   nav?: false;
   /** 默认隐藏，部署的 CHISABOT_EXTRAS 里有这个名字才出现（DESIGN.md §74）。 */
   extra?: string;
-  /** 默认隐藏，部署打开多用户界面（CHISABOT_ACCOUNTS_UI=1）才出现。 */
+  /** 默认显示，设为 CHISABOT_ACCOUNTS_UI=0 可隐藏。 */
   accountsUi?: boolean;
   keywords: readonly string[];
   items: readonly SettingsItem[];
@@ -192,6 +192,13 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
           "要求",
           "czzl",
         ],
+      },
+      {
+        id: "my-quota",
+        title: "我的模型配额与用量",
+        description: "查看今日与本月 Token、请求次数与分模型消耗",
+        find: "我的模型配额与用量",
+        keywords: ["配额", "用量", "quota", "token", "统计", "限额"],
       },
       {
         id: "hotkeys",
@@ -706,6 +713,13 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         description: "直接新建成员或管理员账号、生成邀请链接、修改角色与密码",
         find: "账号",
         keywords: ["新建账号", "管理员", "角色", "修改密码", "邀请链接"],
+      },
+      {
+        id: "quotas",
+        title: "Token 与请求配额管理",
+        description: "查看各用户日 / 月 Token 与请求消耗，并配置配额上限",
+        find: "Token 与请求配额管理",
+        keywords: ["配额", "用量", "quota", "token", "限额", "豁免"],
       },
     ],
   },

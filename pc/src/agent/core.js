@@ -35,11 +35,16 @@ const OPERATION_CAPABILITY = {
   file_upload: "files_write",
   file_download: "files_read",
   activity: null,
+  mcp_call: "shell",
+  mcp_discover: "files_read",
 };
 
 /** 某次调用需要的能力（git 只读子命令只要「读取文件」）。和 shared/devices.ts 的 capabilityFor 一致。 */
 function capabilityFor(operation, args = {}) {
-  if (operation === "git") return gitIsRead(args.subcommand, Array.isArray(args.args) ? args.args : []) ? "files_read" : "shell";
+  if (operation === "git")
+    return gitIsRead(args.subcommand, Array.isArray(args.args) ? args.args : [])
+      ? "files_read"
+      : "shell";
   return OPERATION_CAPABILITY[operation];
 }
 
@@ -77,6 +82,10 @@ function summarize(operation, args) {
       return `鼠标键盘：${args.action}`;
     case "open":
       return `打开：${String(args.target || "").slice(0, 200)}`;
+    case "mcp_call":
+      return `MCP 调用：${String(args.command || "").slice(0, 120)} -> ${args.toolName || args.action || "list_tools"}`;
+    case "mcp_discover":
+      return "扫描本机 MCP 配置";
     default:
       return operation;
   }
@@ -107,7 +116,8 @@ function invalidTokenHint(retryMs = 60_000) {
 function createNodeAgent(options) {
   const events = new EventEmitter();
   const WebSocketImpl = options.WebSocket || require("ws");
-  const local = options.local || (() => ({ paused: false, forceLocalApproval: false }));
+  const local =
+    options.local || (() => ({ paused: false, forceLocalApproval: false }));
   // 完全访问（docs/pc-node.md §13）：服务器说开了，还要本机同意一次（PC 弹窗 / 无界面节点的启动参数）。
   // acceptFullAccess(device) → Promise<boolean>；不提供时按 allowFullAccess（默认 true）。
   let fullAccessAccepted = null; // 已同意的那次开启（fullAccessUntil）
@@ -172,32 +182,50 @@ function createNodeAgent(options) {
         ws.terminate();
       } catch {}
     }, silenceMs);
-    if (typeof watchdog.unref === "function" && options.unrefTimers) watchdog.unref();
+    if (typeof watchdog.unref === "function" && options.unrefTimers)
+      watchdog.unref();
   }
 
   function scheduleReconnect() {
     if (stopped) return;
     clearTimeout(reconnectTimer);
-    const base = Math.min(30 * backoffBaseMs, backoffBaseMs * 2 ** Math.min(attempt, 5));
+    const base = Math.min(
+      30 * backoffBaseMs,
+      backoffBaseMs * 2 ** Math.min(attempt, 5),
+    );
     const delay = Math.round(base * (0.7 + Math.random() * 0.6));
     attempt++;
     events.emit("reconnect", { delay, attempt });
     reconnectTimer = setTimeout(() => void connect(), delay);
-    if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
+    if (typeof reconnectTimer.unref === "function" && options.unrefTimers)
+      reconnectTimer.unref();
   }
 
   /** 401 但没有明确撤销（令牌未知、设备行被删、服务器那边临时认证异常）：保持「revoked」状态，隔很久再试一次（CB-113）。 */
   function scheduleInvalidTokenRetry() {
     if (stopped) return;
     clearTimeout(reconnectTimer);
-    events.emit("reconnect", { delay: invalidTokenRetryMs, attempt, invalidToken: true });
+    events.emit("reconnect", {
+      delay: invalidTokenRetryMs,
+      attempt,
+      invalidToken: true,
+    });
     // 后台静默重试：不切到「connecting」，托盘不闪「正在连接…」；失败保持原提示，成功照常上线。
-    reconnectTimer = setTimeout(() => void connect({ quiet: true }), invalidTokenRetryMs);
-    if (typeof reconnectTimer.unref === "function" && options.unrefTimers) reconnectTimer.unref();
+    reconnectTimer = setTimeout(
+      () => void connect({ quiet: true }),
+      invalidTokenRetryMs,
+    );
+    if (typeof reconnectTimer.unref === "function" && options.unrefTimers)
+      reconnectTimer.unref();
   }
 
   function fullAccessOn() {
-    return !!(device?.fullAccess && !fullAccessExpired && fullAccessAccepted && fullAccessAccepted === device.fullAccessUntil);
+    return !!(
+      device?.fullAccess &&
+      !fullAccessExpired &&
+      fullAccessAccepted &&
+      fullAccessAccepted === device.fullAccessUntil
+    );
   }
 
   /** 收到新配置时：完全访问刚开 → 本机确认一次；关了 / 到期 → 结束后台命令和管理员助手。 */
@@ -214,30 +242,59 @@ function createNodeAgent(options) {
       return;
     }
     fullAccessExpired = false;
-    if (typeof device.fullAccessRemainingMs === "number" && device.fullAccessRemainingMs < 400 * 24 * 3600_000) {
-      fullAccessTimer = setTimeout(() => {
-        fullAccessExpired = true;
-        stopOperations("full_access_expired");
-        events.emit("full_access", { on: false, expired: true });
-      }, Math.max(0, device.fullAccessRemainingMs));
-      if (typeof fullAccessTimer.unref === "function" && options.unrefTimers) fullAccessTimer.unref();
+    if (
+      typeof device.fullAccessRemainingMs === "number" &&
+      device.fullAccessRemainingMs < 400 * 24 * 3600_000
+    ) {
+      fullAccessTimer = setTimeout(
+        () => {
+          fullAccessExpired = true;
+          stopOperations("full_access_expired");
+          events.emit("full_access", { on: false, expired: true });
+        },
+        Math.max(0, device.fullAccessRemainingMs),
+      );
+      if (typeof fullAccessTimer.unref === "function" && options.unrefTimers)
+        fullAccessTimer.unref();
     }
-    if (fullAccessAccepted === device.fullAccessUntil || fullAccessAsking === device.fullAccessUntil) return;
+    if (
+      fullAccessAccepted === device.fullAccessUntil ||
+      fullAccessAsking === device.fullAccessUntil
+    )
+      return;
     const grant = device.fullAccessUntil;
     fullAccessAsking = grant;
-    const ask = options.acceptFullAccess ? options.acceptFullAccess(device) : Promise.resolve(options.allowFullAccess !== false);
+    const ask = options.acceptFullAccess
+      ? options.acceptFullAccess(device)
+      : Promise.resolve(options.allowFullAccess !== false);
     Promise.resolve(ask)
       .catch(() => false)
       .then((ok) => {
         fullAccessAsking = null;
-        if (stopped || !device?.fullAccess || fullAccessExpired || device.fullAccessUntil !== grant) return;
+        if (
+          stopped ||
+          !device?.fullAccess ||
+          fullAccessExpired ||
+          device.fullAccessUntil !== grant
+        )
+          return;
         if (ok) {
           fullAccessAccepted = grant;
-          send({ type: "local_audit", action: "full_access_accepted", outcome: "succeeded", summary: "本机同意了完全访问" });
+          send({
+            type: "local_audit",
+            action: "full_access_accepted",
+            outcome: "succeeded",
+            summary: "本机同意了完全访问",
+          });
           events.emit("full_access", { on: true });
         } else {
           send({ type: "set_config", fullAccess: "off" });
-          send({ type: "local_audit", action: "full_access_declined", outcome: "denied", summary: "本机拒绝了完全访问，已关闭" });
+          send({
+            type: "local_audit",
+            action: "full_access_declined",
+            outcome: "denied",
+            summary: "本机拒绝了完全访问，已关闭",
+          });
         }
       });
   }
@@ -247,12 +304,20 @@ function createNodeAgent(options) {
     const args = message.args || {};
     const capability = capabilityFor(operation, args);
     let full = fullAccessOn();
-    const policy = full ? "allow" : capability ? device?.capabilities?.[capability] ?? "off" : "allow";
+    const policy = full
+      ? "allow"
+      : capability
+        ? (device?.capabilities?.[capability] ?? "off")
+        : "allow";
     const started = Date.now();
     const controller = new AbortController();
     const reply = (ok, payload) => {
       if (running.get(id) === controller) running.delete(id);
-      send(ok ? { type: "result", id, ok: true, result: payload } : { type: "result", id, ok: false, error: payload });
+      send(
+        ok
+          ? { type: "result", id, ok: true, result: payload }
+          : { type: "result", id, ok: false, error: payload },
+      );
       audit({
         actor: message.botName || "机器人",
         operation,
@@ -262,16 +327,30 @@ function createNodeAgent(options) {
         durationMs: Date.now() - started,
       });
     };
-    if (capability === undefined) return reply(false, `PC 客户端不支持操作 ${operation}。`);
-    if (local().paused) return reply(false, "这台电脑已在本机紧急停止，拒绝所有远程操作。");
+    if (capability === undefined)
+      return reply(false, `PC 客户端不支持操作 ${operation}。`);
+    if (local().paused)
+      return reply(false, "这台电脑已在本机紧急停止，拒绝所有远程操作。");
     if (device?.paused) return reply(false, "这台设备已紧急停止。");
     if (policy === "off") return reply(false, "本机设置中这项能力是关闭的。");
-    if (args.elevated && !full) return reply(false, "管理员身份运行只在「完全访问」模式下可用（本机尚未同意或已到期）。");
+    if (args.elevated && !full)
+      return reply(
+        false,
+        "管理员身份运行只在「完全访问」模式下可用（本机尚未同意或已到期）。",
+      );
     // 等待本机确认也属于这次调用；取消、断线和退出必须在真正执行前生效。
     running.set(id, controller);
     // 本机强制审批：危险能力即使服务器设为「直接执行」也在本机再问一次。完全访问模式下不问（用户已在本机同意过）。
-    if (!full && local().forceLocalApproval && capability && DANGEROUS.has(capability) && policy === "allow" && options.approve) {
-      const closePrompt = () => events.emit("approval_closed", { id: `local-${id}` });
+    if (
+      !full &&
+      local().forceLocalApproval &&
+      capability &&
+      DANGEROUS.has(capability) &&
+      policy === "allow" &&
+      options.approve
+    ) {
+      const closePrompt = () =>
+        events.emit("approval_closed", { id: `local-${id}` });
       controller.signal.addEventListener("abort", closePrompt, { once: true });
       const decision = await options
         .approve({
@@ -281,17 +360,27 @@ function createNodeAgent(options) {
           botName: message.botName,
           local: true,
           // 本机确认最多等到这次调用的超时（服务器那边到点就按失败处理），上限 2 分钟。
-          remainingMs: Math.min(120_000, Math.max(10_000, (message.timeoutMs || 120_000) - 5_000)),
+          remainingMs: Math.min(
+            120_000,
+            Math.max(10_000, (message.timeoutMs || 120_000) - 5_000),
+          ),
         })
         .catch(() => "deny");
       controller.signal.removeEventListener("abort", closePrompt);
       if (controller.signal.aborted) return reply(false, "已取消。");
-      if (decision !== "approve") return reply(false, "用户在本机拒绝了这次操作。");
+      if (decision !== "approve")
+        return reply(false, "用户在本机拒绝了这次操作。");
     }
     if (controller.signal.aborted || stopped) return reply(false, "已取消。");
-    if (local().paused || device?.paused) return reply(false, "这台设备已紧急停止。");
+    if (local().paused || device?.paused)
+      return reply(false, "这台设备已紧急停止。");
     full = fullAccessOn();
-    if (!full && capability && (device?.capabilities?.[capability] ?? "off") === "off") return reply(false, "本机设置中这项能力是关闭的。");
+    if (
+      !full &&
+      capability &&
+      (device?.capabilities?.[capability] ?? "off") === "off"
+    )
+      return reply(false, "本机设置中这项能力是关闭的。");
     events.emit("call", { id, operation, botName: message.botName });
     try {
       const result = await options.ops.run(operation, args, {
@@ -314,7 +403,11 @@ function createNodeAgent(options) {
     const decision = await options.approve(message).catch(() => "deny");
     approvalPrompts.delete(message.id);
     if (cancelled || decision === "dismissed") return;
-    send({ type: "approval", id: message.id, decision: decision === "approve" ? "approve" : "deny" });
+    send({
+      type: "approval",
+      id: message.id,
+      decision: decision === "approve" ? "approve" : "deny",
+    });
     audit({
       actor: message.botName || "机器人",
       operation: message.operation,
@@ -391,10 +484,16 @@ function createNodeAgent(options) {
     let ws;
     try {
       // 系统代理（proxy.js）：窗口里的 Chromium 走代理，节点也得走同一条路，否则直连不通的网络里永远离线。
-      const agent = options.getAgent ? await options.getAgent(url).catch(() => undefined) : undefined;
+      const agent = options.getAgent
+        ? await options.getAgent(url).catch(() => undefined)
+        : undefined;
       if (stopped) return;
       ws = new WebSocketImpl(url, {
-        headers: { "X-Device-Token": token, Origin: origin, "User-Agent": `ChisaBot/${options.clientInfo?.clientVersion || "0"}` },
+        headers: {
+          "X-Device-Token": token,
+          Origin: origin,
+          "User-Agent": `ChisaBot/${options.clientInfo?.clientVersion || "0"}`,
+        },
         handshakeTimeout: 15_000,
         ...(agent ? { agent } : {}),
       });
@@ -411,7 +510,11 @@ function createNodeAgent(options) {
     ws.on("open", () => {
       if (socket !== ws || stopped) return;
       lastError = "";
-      send({ type: "hello", ...(options.clientInfo || {}), features: options.ops.features || undefined });
+      send({
+        type: "hello",
+        ...(options.clientInfo || {}),
+        features: options.ops.features || undefined,
+      });
     });
     ws.on("message", (data) => {
       if (socket !== ws || stopped) return;
@@ -474,7 +577,12 @@ function createNodeAgent(options) {
         return;
       }
       if ((state !== "revoked" || quiet) && !stopped) {
-        setState("offline", code === 4000 ? "在别处重新连接" : lastError || (code === 1006 ? "连接中断" : `连接关闭（${code}）`));
+        setState(
+          "offline",
+          code === 4000
+            ? "在别处重新连接"
+            : lastError || (code === 1006 ? "连接中断" : `连接关闭（${code}）`),
+        );
         scheduleReconnect();
       }
     });
@@ -531,9 +639,15 @@ function createNodeAgent(options) {
     /** 改本机设置并同步到服务器（能力、文件夹、名称、紧急停止）。 */
     setConfig(patch) {
       if (device) {
-        if (patch.capabilities) device = { ...device, capabilities: { ...device.capabilities, ...patch.capabilities } };
-        if (patch.allowedRoots) device = { ...device, allowedRoots: patch.allowedRoots };
-        if (patch.paused !== undefined) device = { ...device, paused: patch.paused };
+        if (patch.capabilities)
+          device = {
+            ...device,
+            capabilities: { ...device.capabilities, ...patch.capabilities },
+          };
+        if (patch.allowedRoots)
+          device = { ...device, allowedRoots: patch.allowedRoots };
+        if (patch.paused !== undefined)
+          device = { ...device, paused: patch.paused };
         if (patch.name) device = { ...device, name: patch.name };
         events.emit("config", device);
       }
@@ -566,4 +680,12 @@ function createNodeAgent(options) {
   };
 }
 
-module.exports = { createNodeAgent, invalidTokenHint, INVALID_TOKEN_DETAIL, wsUrlFor, OPERATION_CAPABILITY, capabilityFor, summarize };
+module.exports = {
+  createNodeAgent,
+  invalidTokenHint,
+  INVALID_TOKEN_DETAIL,
+  wsUrlFor,
+  OPERATION_CAPABILITY,
+  capabilityFor,
+  summarize,
+};

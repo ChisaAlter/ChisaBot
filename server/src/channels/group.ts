@@ -49,6 +49,9 @@ import type { TurnRunner } from "../turns/types";
 import type { WorkQueue } from "../work/queue";
 
 export const GROUP_TURN_KIND = "group.turn";
+export const GROUP_RELAY_MAX_DEPTH = 6;
+export const GROUP_PAIR_PINGPONG_LIMIT = 2;
+export const GROUP_BOT_COOLDOWN_MS = 1_500;
 
 export type GroupMessage = typeof groupMessages.$inferSelect;
 export type GroupBot = { id: string; name: string };
@@ -67,8 +70,11 @@ export type GroupTurn = {
   text: string;
   depth?: number;
   fromAgentId?: string;
+  rootMessageId?: string;
+  pairCounts?: Record<string, number>;
+  goal?: string;
 };
-const turnSchema = z.object({
+export const turnSchema = z.object({
   ownerUserId: z.string().min(1),
   channelId: z.string().min(1),
   messageId: z.string().min(1),
@@ -76,7 +82,137 @@ const turnSchema = z.object({
   text: z.string().min(1).max(16000),
   depth: z.number().int().nonnegative().optional(),
   fromAgentId: z.string().min(1).optional(),
+  rootMessageId: z.string().min(1).optional(),
+  pairCounts: z
+    .record(z.string().min(1), z.number().int().nonnegative())
+    .optional(),
+  goal: z.string().min(1).max(16000).optional(),
 });
+
+export type GroupRelayRefusalReason =
+  | "depth_cap"
+  | "pingpong_cap"
+  | "cooldown_cap"
+  | "fan_out_cap"
+  | "quota_cap"
+  | "not_granted";
+
+export type GroupRelayGuardInput = {
+  depth: number;
+  maxDepth: number;
+  speakerId: string;
+  peerId: string;
+  pairCounts?: Readonly<Record<string, number>>;
+  lastRelayedAtMs?: number | null;
+  nowMs?: number;
+  fanOutIndex: number;
+  maxPerRun: number;
+  quotaAllowed?: boolean;
+  granted?: boolean;
+};
+
+export type GroupRelayGuardDecision =
+  | {
+      allowed: true;
+      pairKey: string;
+      nextPairCount: number;
+      effectiveMaxDepth: number;
+    }
+  | {
+      allowed: false;
+      reason: GroupRelayRefusalReason;
+      pairKey: string;
+    };
+
+export function relayPairKey(speakerId: string, peerId: string): string {
+  return `${speakerId}->${peerId}`;
+}
+
+/**
+ * Pure four-layer guard for group Bot-to-Bot relays:
+ * 1) hard depth cap, 2) per-root directed pair ping-pong limit,
+ * 3) per-channel target Bot cooldown window, 4) fan-out, quota, and grant.
+ */
+export function evaluateGroupRelayGuard(
+  input: GroupRelayGuardInput,
+): GroupRelayGuardDecision {
+  const pairKey = relayPairKey(input.speakerId, input.peerId);
+  const effectiveMaxDepth = Math.max(
+    0,
+    Math.min(input.maxDepth, GROUP_RELAY_MAX_DEPTH),
+  );
+  if (input.depth >= effectiveMaxDepth) {
+    return { allowed: false, reason: "depth_cap", pairKey };
+  }
+  const currentPairCount = input.pairCounts?.[pairKey] ?? 0;
+  if (currentPairCount >= GROUP_PAIR_PINGPONG_LIMIT) {
+    return { allowed: false, reason: "pingpong_cap", pairKey };
+  }
+  const nowMs = input.nowMs ?? Date.now();
+  if (
+    input.lastRelayedAtMs !== undefined &&
+    input.lastRelayedAtMs !== null &&
+    nowMs - input.lastRelayedAtMs < GROUP_BOT_COOLDOWN_MS
+  ) {
+    return { allowed: false, reason: "cooldown_cap", pairKey };
+  }
+  if (input.fanOutIndex >= input.maxPerRun) {
+    return { allowed: false, reason: "fan_out_cap", pairKey };
+  }
+  if (input.quotaAllowed === false) {
+    return { allowed: false, reason: "quota_cap", pairKey };
+  }
+  if (input.granted === false) {
+    return { allowed: false, reason: "not_granted", pairKey };
+  }
+  return {
+    allowed: true,
+    pairKey,
+    nextPairCount: currentPairCount + 1,
+    effectiveMaxDepth,
+  };
+}
+
+export type ParsedGroupGoal = {
+  goal?: string;
+  text: string;
+};
+
+/** Extract `/goal <target>` or `/goal: <target>` (including full-width `：`) from a group message. */
+export function parseGroupGoal(text: string): ParsedGroupGoal {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/goal(?:\s*[:：]\s*|\s+)([\s\S]+)$/i);
+  if (!match) {
+    return { text: trimmed };
+  }
+  const extracted = match[1]?.trim() ?? "";
+  if (!extracted) {
+    return { text: trimmed };
+  }
+  return { goal: extracted, text: extracted };
+}
+
+export function buildGroupGoalConvergenceHint(input: {
+  goal: string;
+  depth: number;
+  maxDepth: number;
+}): string {
+  const depth = Math.max(0, input.depth);
+  const effectiveMax = Math.max(
+    0,
+    Math.min(input.maxDepth, GROUP_RELAY_MAX_DEPTH),
+  );
+  const remaining = Math.max(0, effectiveMax - depth);
+  const budgetLine =
+    remaining > 0
+      ? `当前第 ${depth} 跳（上限 ${effectiveMax} 跳），剩余接力预算 ${remaining} 跳。`
+      : `当前第 ${depth} 跳（已达上限 ${effectiveMax} 跳），剩余接力预算 0 跳，本轮禁止继续 @ 其他 Bot。`;
+  return [
+    `[目标收敛模式] 目标：${input.goal}`,
+    budgetLine,
+    "请聚焦目标给出可验证结论；得出明确结论后直接输出总结，不再 @ 其他 Bot。",
+  ].join("\n");
+}
 
 /** Not a member, not a group, or gone. One answer for all three, so membership cannot be probed. */
 export class GroupNotFoundError extends Error {
@@ -498,25 +634,77 @@ export function mentionedPeers(
     .map(({ bot }) => bot);
 }
 
+type GroupTurnChain = Pick<
+  GroupTurn,
+  "depth" | "fromAgentId" | "rootMessageId" | "pairCounts" | "goal"
+>;
+
+function parsePairCounts(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const parsed: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (
+      key &&
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= 0
+    ) {
+      parsed[key] = value;
+    }
+  }
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+function mergePairCounts(
+  stored: Readonly<Record<string, number>> | undefined,
+  incoming: Readonly<Record<string, number>> | undefined,
+): Record<string, number> {
+  const merged: Record<string, number> = { ...stored };
+  if (!incoming) return merged;
+  for (const [key, count] of Object.entries(incoming)) {
+    const prev = merged[key] ?? 0;
+    if (count > prev) merged[key] = count;
+  }
+  return merged;
+}
+
+function extractRootMessageId(messageId: string): string {
+  const relayAt = messageId.indexOf(">");
+  return relayAt >= 0 ? messageId.slice(0, relayAt) : messageId;
+}
+
 /**
  * Where a turn sits in a Bot-to-Bot chain, kept on its row while it waits. Without it, a peer turn
  * resumed after an approval would relay from depth zero and the depth cap would never stop the chain.
  */
-function chainOf(turn: GroupTurn): Pick<GroupTurn, "depth" | "fromAgentId"> {
+function chainOf(turn: GroupTurn): GroupTurnChain {
   return {
     ...(turn.depth ? { depth: turn.depth } : {}),
     ...(turn.fromAgentId ? { fromAgentId: turn.fromAgentId } : {}),
+    ...(turn.rootMessageId ? { rootMessageId: turn.rootMessageId } : {}),
+    ...(turn.pairCounts && Object.keys(turn.pairCounts).length > 0
+      ? { pairCounts: turn.pairCounts }
+      : {}),
+    ...(turn.goal ? { goal: turn.goal } : {}),
   };
 }
-function chainFrom(
-  details: Record<string, unknown>,
-): Pick<GroupTurn, "depth" | "fromAgentId"> {
+function chainFrom(details: Record<string, unknown>): GroupTurnChain {
+  const pairCounts = parsePairCounts(details.pairCounts);
   return {
-    ...(Number.isInteger(details.depth) && (details.depth as number) > 0
-      ? { depth: details.depth as number }
+    ...(typeof details.depth === "number" &&
+    Number.isInteger(details.depth) &&
+    details.depth > 0
+      ? { depth: details.depth }
       : {}),
     ...(typeof details.fromAgentId === "string" && details.fromAgentId
       ? { fromAgentId: details.fromAgentId }
+      : {}),
+    ...(typeof details.rootMessageId === "string" && details.rootMessageId
+      ? { rootMessageId: details.rootMessageId }
+      : {}),
+    ...(pairCounts ? { pairCounts } : {}),
+    ...(typeof details.goal === "string" && details.goal
+      ? { goal: details.goal }
       : {}),
   };
 }
@@ -541,6 +729,8 @@ export function createGroupConversations(deps: {
   caps: HandoffCaps;
   mayAddress(fromBotId: string, toBotId: string): Promise<boolean>;
   auditStore: AuditStore;
+  checkQuota?: (userId: string) => Promise<void>;
+  now?: () => number;
   activity?: (
     turn: GroupTurn,
     agentId: string | null,
@@ -570,6 +760,35 @@ export function createGroupConversations(deps: {
     agentId: string,
   ) => () => { botId: string; serverId: string; message: string }[];
 }) {
+  const now = deps.now ?? (() => Date.now());
+  const lastRelayedAt = new Map<string, number>();
+  const rootPairCounts = new Map<string, Record<string, number>>();
+
+  const recordRelayTimestamp = (
+    channelId: string,
+    peerId: string,
+    atMs: number,
+  ) => {
+    if (lastRelayedAt.size > 1000) {
+      for (const [key, recordedAt] of lastRelayedAt) {
+        if (atMs - recordedAt >= GROUP_BOT_COOLDOWN_MS) {
+          lastRelayedAt.delete(key);
+        }
+      }
+    }
+    lastRelayedAt.set(`${channelId}\0${peerId}`, atMs);
+  };
+
+  const recordRootPairCounts = (
+    rootId: string,
+    counts: Record<string, number>,
+  ) => {
+    if (rootPairCounts.size > 500 && !rootPairCounts.has(rootId)) {
+      const oldest = rootPairCounts.keys().next().value;
+      if (oldest !== undefined) rootPairCounts.delete(oldest);
+    }
+    rootPairCounts.set(rootId, { ...counts });
+  };
   /**
    * Whether a Bot's line may be shown to this group now. `allowed`, or held behind the owner's
    * decision (`pending`, with what to store on the waiting row), or refused.
@@ -658,21 +877,62 @@ export function createGroupConversations(deps: {
     runId: string,
   ) {
     const depth = turn.depth ?? 0;
+    const rootMessageId =
+      turn.rootMessageId ?? extractRootMessageId(turn.messageId);
+    const activeGoal = turn.goal ?? parseGroupGoal(turn.text).goal;
+    const mergedCounts = mergePairCounts(
+      rootPairCounts.get(rootMessageId),
+      turn.pairCounts,
+    );
     const initiator: AuditInitiator =
       turn.fromAgentId !== undefined
         ? { kind: "handoff", id: turn.fromAgentId }
         : PERSON_INITIATOR;
     const peers = mentionedPeers(reply, bots, speaker.id);
     for (const [index, peer] of peers.entries()) {
-      const reason =
-        depth >= deps.caps.maxDepth
-          ? "depth_cap"
-          : index >= deps.caps.maxPerRun
-            ? "fan_out_cap"
-            : !(await deps.mayAddress(speaker.id, peer.id).catch(() => false))
-              ? "not_granted"
-              : null;
-      if (reason) {
+      const checkedAtMs = now();
+      const cooldownAtMs = lastRelayedAt.get(`${turn.channelId}\0${peer.id}`);
+      const preCheck = evaluateGroupRelayGuard({
+        depth,
+        maxDepth: deps.caps.maxDepth,
+        speakerId: speaker.id,
+        peerId: peer.id,
+        pairCounts: mergedCounts,
+        lastRelayedAtMs: cooldownAtMs,
+        nowMs: checkedAtMs,
+        fanOutIndex: index,
+        maxPerRun: deps.caps.maxPerRun,
+        quotaAllowed: true,
+        granted: true,
+      });
+      let decision = preCheck;
+      if (preCheck.allowed) {
+        let quotaAllowed = true;
+        if (deps.checkQuota) {
+          try {
+            await deps.checkQuota(turn.ownerUserId);
+          } catch {
+            quotaAllowed = false;
+          }
+        }
+        const granted = quotaAllowed
+          ? await deps.mayAddress(speaker.id, peer.id).catch(() => false)
+          : true;
+        decision = evaluateGroupRelayGuard({
+          depth,
+          maxDepth: deps.caps.maxDepth,
+          speakerId: speaker.id,
+          peerId: peer.id,
+          pairCounts: mergedCounts,
+          lastRelayedAtMs: cooldownAtMs,
+          nowMs: checkedAtMs,
+          fanOutIndex: index,
+          maxPerRun: deps.caps.maxPerRun,
+          quotaAllowed,
+          granted,
+        });
+      }
+      if (!decision.allowed) {
         await recordAuditEvent(deps.auditStore, {
           eventType: "agent.handoff_refused",
           targetType: "agent",
@@ -685,12 +945,16 @@ export function createGroupConversations(deps: {
             target: peer.id,
             run: runId,
             depth,
-            reason,
+            reason: decision.reason,
             group: turn.channelId,
           },
         });
         continue;
       }
+      const nextPairCounts: Record<string, number> = {
+        ...mergedCounts,
+        [decision.pairKey]: decision.nextPairCount,
+      };
       const next: GroupTurn = {
         ownerUserId: turn.ownerUserId,
         channelId: turn.channelId,
@@ -699,28 +963,36 @@ export function createGroupConversations(deps: {
         text: reply,
         depth: depth + 1,
         fromAgentId: speaker.id,
+        rootMessageId,
+        pairCounts: nextPairCounts,
+        ...(activeGoal ? { goal: activeGoal } : {}),
       };
-      await deps.queue.offer({
+      const offered = await deps.queue.offer({
         kind: GROUP_TURN_KIND,
         key: next.messageId,
         payload: { ...next },
       });
-      await recordAuditEvent(deps.auditStore, {
-        eventType: "agent.handoff_offered",
-        targetType: "agent",
-        targetId: peer.id,
-        actorUserId: turn.ownerUserId,
-        initiator,
-        payload: {
-          bot: speaker.id,
-          from: speaker.id,
-          to: peer.id,
-          run: runId,
-          depth: depth + 1,
-          task: reply.slice(0, 500),
-          group: turn.channelId,
-        },
-      });
+      if (offered !== "already" && offered !== "refused") {
+        mergedCounts[decision.pairKey] = decision.nextPairCount;
+        recordRootPairCounts(rootMessageId, mergedCounts);
+        recordRelayTimestamp(turn.channelId, peer.id, checkedAtMs);
+        await recordAuditEvent(deps.auditStore, {
+          eventType: "agent.handoff_offered",
+          targetType: "agent",
+          targetId: peer.id,
+          actorUserId: turn.ownerUserId,
+          initiator,
+          payload: {
+            bot: speaker.id,
+            from: speaker.id,
+            to: peer.id,
+            run: runId,
+            depth: depth + 1,
+            task: reply.slice(0, 500),
+            group: turn.channelId,
+          },
+        });
+      }
     }
   }
 
@@ -786,9 +1058,17 @@ export function createGroupConversations(deps: {
       .map((candidate) => candidate.name);
     // Each Bot speaks for itself: left unsaid, the first to answer writes everybody's part.
     const role = `You are ${self}, one of several Bots in this group conversation${others.length ? ` with ${others.join(", ")}` : ""}. Answer only your own part. The other Bots answer in their own turns, so do not write replies for them.`;
-    const instruction = from
+    const baseInstruction = from
       ? `${role}\n\n${from} addressed you in this group conversation:\n${turn.text}`
       : `${role}\n\n${turn.text}`;
+    const activeGoal = turn.goal ?? parseGroupGoal(turn.text).goal;
+    const instruction = activeGoal
+      ? `${baseInstruction}\n\n${buildGroupGoalConvergenceHint({
+          goal: activeGoal,
+          depth: turn.depth ?? 0,
+          maxDepth: deps.caps.maxDepth,
+        })}`
+      : baseInstruction;
     // A peer turn's prompt is the peer's reply, so that row is left out of the transcript under it.
     const exclude = new Set(
       turn.fromAgentId
@@ -1211,6 +1491,7 @@ export function createGroupConversations(deps: {
       // A chip addresses one Bot; `@Name`s in the text address those Bots in the order written;
       // otherwise every Bot answers, in the group's order.
       const named = mentionedPeers(body.text, bots, "");
+      const parsedGoal = parseGroupGoal(body.text);
       const turn: GroupTurn = {
         ownerUserId: owner,
         channelId: channel,
@@ -1219,6 +1500,9 @@ export function createGroupConversations(deps: {
         agentIds: body.agentId
           ? [body.agentId]
           : (named.length ? named : bots).map((bot) => bot.id),
+        rootMessageId: body.id,
+        pairCounts: {},
+        ...(parsedGoal.goal ? { goal: parsedGoal.goal } : {}),
       };
       await deps.store.submit(turn);
       await deps.activity?.(turn, null, turn.text, `group:${turn.messageId}`);
@@ -1273,25 +1557,30 @@ export function createGroupConversations(deps: {
 }
 export type GroupConversations = ReturnType<typeof createGroupConversations>;
 
+export type GroupRouteOptions = {
+  requireAdmin?: boolean;
+};
+
 /*
- * The minimal `/api/groups` surface, restored for the bot-factory work (design §6): no UI, but the
- * service's entry points are reachable and tested over HTTP, so a person message can queue a group
- * turn and a Bot's `@Name` reply can hand the turn to a peer through the same desk grant it uses
- * anywhere else. Membership is still the roster check inside each method — a non-member gets the
- * same 404 as a channel that does not exist. Administrators only (CB-BC v1): anyone else gets 403.
+ * The minimal `/api/groups` surface: membership is still the roster check inside each method —
+ * a non-member gets the same 404 as a channel that does not exist. Defaults to administrator-only
+ * unless callers explicitly pass `{ requireAdmin: false }`.
  */
 export function createGroupRoutes(
   service: GroupConversations,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  options: GroupRouteOptions = {},
 ) {
+  const enforceAdmin = options.requireAdmin ?? true;
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", requireUser);
-  // CB-BC v1: groups are an administrator surface until the product ships them to everyone.
-  routes.use("*", async (context, next) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-    await next();
-  });
+  if (enforceAdmin) {
+    routes.use("*", async (context, next) => {
+      const denied = requireAdmin(context);
+      if (denied) return denied;
+      await next();
+    });
+  }
   routes.onError((error, context) => {
     const status =
       error instanceof GroupNotFoundError

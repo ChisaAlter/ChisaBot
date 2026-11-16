@@ -12,7 +12,9 @@ import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-histo
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { BotPausedBanner } from "@/components/bot-profile/pause-banner";
 import { ChannelChat } from "@/components/channels/channel-chat";
+import { GroupChatView } from "@/components/channels/group-chat-view";
 import { MessageFind } from "@/components/channels/message-find";
+import { SideChatDrawer } from "@/components/channels/side-chat-drawer";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
 import { ErrorCard } from "@/components/ui/skyglass";
@@ -32,6 +34,7 @@ import {
 import { setThreadUi, threadUi } from "@/lib/chat/ui-memory";
 import { useBotComputerTab } from "@/lib/chat/use-bot-computer";
 import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
+import { createSideThreadMutationOptions } from "@/lib/conversations/side-threads";
 import { useMarkBotHidden } from "@/lib/kept-visible";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 
@@ -39,6 +42,7 @@ export type ChannelPageProps = {
   channelId: string;
   settings?: boolean;
   watch?: boolean;
+  side?: boolean;
   /** 地址正停在这个聊天上。藏起来时（在设置等页面）不写地址、不标已读、不占左栏「⋯」和快捷键。 */
   visible: boolean;
   /** 每次从藏着变回看得见时加一：地址在离开期间变了（比如 `?watch` 没带回来）不当作「用户关掉了」。 */
@@ -57,6 +61,7 @@ export const ChannelPage = memo(function ChannelPage({
   channelId,
   settings,
   watch,
+  side,
   visible,
   epoch,
 }: ChannelPageProps) {
@@ -74,12 +79,18 @@ export const ChannelPage = memo(function ChannelPage({
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const isSettingsOpen = settings === true;
+  const isSideOpen = side === true;
+  const isGroupChannel = (channel.data?.agentIds.length ?? 0) > 1;
   /**
-   * Channel routing currently supports one coworker. 刷新时对话详情还没读到：先用这台设备记下的「这段对话是哪个
-   * 机器人的」（DESIGN.md §88），右栏第一帧就画对。
+   * 单机器人对话按左栏记住的 Bot 预填首帧（DESIGN.md §88）；多机器人群聊不绑定单个 Bot 的右侧设置或计算机面板。
    */
-  const channelAgentId = channel.data?.agentIds[0];
-  const agentId = channelAgentId ?? threadUi(channelId)?.agent;
+  const channelAgentId =
+    channel.data && channel.data.agentIds.length === 1
+      ? channel.data.agentIds[0]
+      : undefined;
+  const agentId = isGroupChannel
+    ? undefined
+    : (channelAgentId ?? threadUi(channelId)?.agent);
   useExternalConnection(
     channelAgentId ? `${channelId}\0${channelAgentId}` : false,
     () => {
@@ -174,6 +185,46 @@ export const ChannelPage = memo(function ChannelPage({
   // 离开聊天时收起「历史对话」弹窗：它画在 body 上，不跟着聊天藏起来。
   if (!visible && historyOpen) setHistoryOpen(false);
   const openThread = useOpenThread();
+  const [mainBusy, setMainBusy] = useState(false);
+  const [sideThreadFocusId, setSideThreadFocusId] = useState<string | null>(
+    null,
+  );
+  const createSideThread = useMutation(
+    createSideThreadMutationOptions(queryClient),
+  );
+  const sideHelperRef = useRef({
+    parentThreadId: channel.data?.threadId,
+    mutateAsync: createSideThread.mutateAsync,
+  });
+  sideHelperRef.current = {
+    parentThreadId: channel.data?.threadId,
+    mutateAsync: createSideThread.mutateAsync,
+  };
+  const setSideOpen = useCallback(
+    (open: boolean) => {
+      if (!visibleRef.current) return;
+      void navigate({
+        search: (previous) => ({ ...previous, side: open ? true : undefined }),
+      });
+    },
+    [navigate],
+  );
+  const handleOpenSideChat = useCallback(
+    (initialQuestion?: string) => {
+      setSideOpen(true);
+      const { parentThreadId, mutateAsync } = sideHelperRef.current;
+      if (!initialQuestion || !parentThreadId) return;
+      void mutateAsync({
+        parentThreadId,
+        question: initialQuestion,
+      })
+        .then((created) => {
+          setSideThreadFocusId(created.id);
+        })
+        .catch(() => {});
+    },
+    [setSideOpen],
+  );
 
   return (
     <div
@@ -190,13 +241,17 @@ export const ChannelPage = memo(function ChannelPage({
             });
         }}
         // 设置窗格在窄窗口里是画在 body 上的抽屉：藏着时关掉，别盖在别的页面上。
-        open={visible && isSettingsOpen && agentId !== undefined}
+        open={
+          visible && isSettingsOpen && !isGroupChannel && agentId !== undefined
+        }
         detail={
-          agentId === undefined ? null : <AgentProfile agentId={agentId} />
+          !isGroupChannel && agentId !== undefined ? (
+            <AgentProfile agentId={agentId} />
+          ) : null
         }
       >
         {/* DESIGN v4.1：聊天列没有头部；机器人「⋯」与计算机提示在左栏它那一行。藏着时不登记（§98）。 */}
-        {visible ? (
+        {visible && !isGroupChannel ? (
           <RegisterBotChat
             agentId={agentId}
             computerOpen={isWatching}
@@ -221,7 +276,7 @@ export const ChannelPage = memo(function ChannelPage({
             onHistory={() => setHistoryOpen(true)}
           />
         ) : null}
-        {agentId ? (
+        {!isGroupChannel && agentId ? (
           <LazyBotThreadHistoryDialog
             agentId={agentId}
             currentThreadId={channel.data?.threadId}
@@ -230,22 +285,32 @@ export const ChannelPage = memo(function ChannelPage({
             open={historyOpen}
           />
         ) : null}
-        {agentId && channel.data?.agentIds.length === 1 ? (
+        {!isGroupChannel && agentId && channel.data?.agentIds.length === 1 ? (
           <BotPausedBanner agentId={agentId} />
         ) : null}
         <ChannelBody
           channel={channel.data}
-          isPending={channel.isPending || releasedAgent !== null}
           hasError={Boolean(channel.error)}
+          isPending={channel.isPending || releasedAgent !== null}
+          onBusyChange={setMainBusy}
+          onOpenSideChat={handleOpenSideChat}
         />
       </DetailPanel>
+      {!isGroupChannel && channel.data?.threadId ? (
+        <SideChatDrawer
+          initialSideThreadId={sideThreadFocusId}
+          isMainRunning={mainBusy}
+          onOpenChange={setSideOpen}
+          open={visible && isSideOpen}
+          parentThreadId={channel.data.threadId}
+        />
+      ) : null}
     </div>
   );
 });
 
 /**
- * A channel with exactly one coworker is its 会话客户端 chat. Old multi-Bot group conversations
- * have no page since slimming P4b; they say so instead of redirecting to the removed `/group`.
+ * 渲染当前频道的主体内容：单机器人频道进入完整会话视图，多机器人频道进入原生群聊协作视图。
  */
 // `memo`：`visible` 变了（从设置回来）`ChannelPage` 要重画，但聊天本身（props 是同一个对话对象和两个布尔）
 // 不用跟着重画——要知道「看不看得见」的地方读 `KeptVisibleContext` / `useKeptVisibility`。
@@ -253,10 +318,14 @@ const ChannelBody = memo(function ChannelBody({
   channel,
   isPending,
   hasError,
+  onOpenSideChat,
+  onBusyChange,
 }: {
   channel: AgentChannel | undefined;
   isPending: boolean;
   hasError: boolean;
+  onOpenSideChat?: (initialQuestion?: string) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   // Nothing while the channel loads: a placeholder inside a local round-trip is a flicker.
   if (isPending) return null;
@@ -283,12 +352,16 @@ const ChannelBody = memo(function ChannelBody({
     );
   }
 
+  if (channel.agentIds.length > 1) {
+    return <GroupChatView channel={channel} key={channel.id} />;
+  }
+
   const runtimeAgentId =
     channel.agentIds.length === 1 ? channel.agentIds[0] : undefined;
   if (!runtimeAgentId) {
     return (
       <p className="p-8 text-sm text-muted-foreground" role="status">
-        {"这是旧的多机器人群聊，已不再支持。数据仍保留。"}
+        {"当前频道尚未分配可用的机器人成员。"}
       </p>
     );
   }
@@ -298,6 +371,8 @@ const ChannelBody = memo(function ChannelBody({
     <ChannelChat
       channel={channel}
       key={channel.id}
+      onBusyChange={onBusyChange}
+      onOpenSideChat={onOpenSideChat}
       runtimeAgentId={runtimeAgentId}
     />
   );

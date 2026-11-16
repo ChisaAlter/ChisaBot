@@ -1,4 +1,4 @@
-import type { Message } from "@ag-ui/client";
+import type { ContentPart, Message } from "@ag-ui/client";
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import {
@@ -33,7 +33,11 @@ import { drawnComponents } from "../turns/run-turn";
 import type { TurnRunner } from "../turns/types";
 import { OneBotAdapter } from "./adapters/onebot";
 import { WEIXIN_DEFAULT_BASE } from "./adapters/weixin";
-import { createImDelivery } from "./delivery";
+import {
+  createImDelivery,
+  type ImDeliveryOptions,
+  type ImOutboxRecord,
+} from "./delivery";
 import { imGuardedFetch, imGuardedFetchPrivate, imGuardedWs } from "./net";
 import {
   isQrPlatform,
@@ -49,6 +53,7 @@ import type {
   ImAdapter,
   ImAdapterStatus,
   ImInbound,
+  ImInboundAttachment,
   ImLogLevel,
   WsFactory,
   WsLike,
@@ -98,8 +103,35 @@ type Live = {
   ctx: AdapterContext;
 };
 
+export function isOwnerIdentity(
+  row: Pick<Row, "owner_users" | "config">,
+  userId: string,
+): boolean {
+  const senderId = userId.trim();
+  if (!senderId) return false;
+  const configOwnerId =
+    typeof row.config?.ownerUserId === "string"
+      ? row.config.ownerUserId.trim()
+      : "";
+  if (configOwnerId) return senderId === configOwnerId;
+  const owners = Array.isArray(row.owner_users)
+    ? row.owner_users.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+  return owners.includes(senderId);
+}
+
+/** 仅当确认配置了号主身份且消息来自私聊时判定为号主本人会话，其余（群聊或外部成员）严格隔离。 */
+export function isOwnerImSender(
+  row: Pick<Row, "owner_users" | "allow_users" | "config">,
+  inbound?: Pick<ImInbound, "chatType" | "userId"> | null,
+): boolean {
+  if (inbound?.chatType !== "private") return false;
+  return isOwnerIdentity(row, inbound.userId);
+}
+
 function canUseConnection(row: Row, userId: string): boolean {
   return (
+    isOwnerIdentity(row, userId) ||
     (Array.isArray(row.owner_users) && row.owner_users.includes(userId)) ||
     (Array.isArray(row.allow_users) && row.allow_users.includes(userId))
   );
@@ -148,6 +180,16 @@ export type ImServiceOptions = {
   ws?: WsFactory;
   /** 测试用：替换「保存协议端地址时预查 DNS」的解析实现（不注入就用真实解析）。 */
   resolveDns?: GuardedFetchOptions["resolve"];
+  /** 收到语音附件时尽力转写为文本，拼入用户消息正文。 */
+  transcribeVoice?: (input: {
+    ownerUserId: string;
+    attachment: NonNullable<ImInbound["attachments"]>[number];
+  }) => Promise<string | null>;
+  /** 主动发送或回复遇到平台窗口关闭/过期时的静默归档回调。 */
+  onWindowExpired?: (
+    record: ImOutboxRecord,
+    reason: string,
+  ) => Promise<void> | void;
 };
 
 export type ImService = ReturnType<typeof createImService>;
@@ -176,6 +218,8 @@ export function chatKey(inbound: Pick<ImInbound, "chatType" | "chatId">) {
 }
 
 const NEW_TOPIC = new Set(["/new", "/reset", "新话题", "/新话题", "重新开始"]);
+const TAKEOVER_WORDS = new Set(["/takeover", "/接管"]);
+const RELEASE_WORDS = new Set(["/release", "/恢复"]);
 const IM_APPROVE_WORDS = new Set([
   "允许",
   "批准",
@@ -185,7 +229,41 @@ const IM_APPROVE_WORDS = new Set([
 ]);
 const IM_DENY_WORDS = new Set(["拒绝", "取消执行", "/deny", "/reject"]);
 
-/** 给机器人看的那条用户消息：哪个平台、谁发的，然后是原文。 */
+function formatAttachmentLabel(
+  item: ImInboundAttachment,
+  inboundText: string,
+): { summary: string; hasDetail: boolean } {
+  const baseLabel = {
+    image: "[图片]",
+    file: "[文件]",
+    voice: "[语音]",
+    video: "[视频]",
+  }[item.kind];
+  const details: string[] = [];
+  if (item.fileName) details.push(item.fileName);
+  if (item.mimeType) details.push(item.mimeType);
+  if (item.durationMs != null && Number.isFinite(item.durationMs)) {
+    details.push(`${Math.max(1, Math.round(item.durationMs / 1000))}秒`);
+  }
+  if (item.textSummary) details.push(`说明：${item.textSummary}`);
+  if (item.kind === "voice" && item.transcript) {
+    details.push(
+      inboundText.includes(item.transcript)
+        ? "已转写"
+        : `转写：${item.transcript}`,
+    );
+  }
+  if (item.url) details.push(`地址：${item.url}`);
+  else if (item.dataBase64) details.push("已附带内联数据");
+  return {
+    summary: details.length
+      ? `${baseLabel}（${details.join("｜")}）`
+      : baseLabel,
+    hasDetail: details.length > 0,
+  };
+}
+
+/** 给机器人看的那条用户消息：哪个平台、谁发的，然后是富媒体说明与正文。 */
 export function frameInbound(platformName: string, inbound: ImInbound): string {
   const where =
     inbound.chatType === "group"
@@ -194,16 +272,45 @@ export function frameInbound(platformName: string, inbound: ImInbound): string {
   const who = inbound.userName
     ? `${inbound.userName}（${inbound.userId}）`
     : inbound.userId;
-  const extras = (inbound.attachments ?? [])
-    .map(
-      (item) =>
-        ({ image: "[图片]", file: "[文件]", voice: "[语音]", video: "[视频]" })[
-          item.kind
-        ],
-    )
-    .join("");
+  const formatted = (inbound.attachments ?? []).map((item) =>
+    formatAttachmentLabel(item, inbound.text),
+  );
+  const hasAnyDetail = formatted.some((entry) => entry.hasDetail);
+  const extras = formatted.length
+    ? hasAnyDetail
+      ? `${formatted.map((entry) => entry.summary).join("\n")}\n`
+      : `${formatted.map((entry) => entry.summary).join("")}（这一版收不到附件内容）\n`
+    : "";
   const text = inbound.text || (extras ? "" : "（空消息）");
-  return `［经${where}发来｜发送者：${who}｜你的回复会以文字发回${platformName}，不要画卡片或面板］\n${extras ? `${extras}（这一版收不到附件内容）\n` : ""}${text}`;
+  return `［经${where}发来｜发送者：${who}｜你的回复会以文字发回${platformName}，不要画卡片或面板］\n${extras}${text}`;
+}
+
+function buildImUserMessage(
+  messageId: string,
+  content: string,
+  inbound: ImInbound,
+): Message {
+  const inlineImages = (inbound.attachments ?? []).filter(
+    (item): item is ImInboundAttachment & { dataBase64: string } =>
+      item.kind === "image" &&
+      typeof item.dataBase64 === "string" &&
+      item.dataBase64.trim().length > 0,
+  );
+  if (!inlineImages.length) {
+    return { id: messageId, role: "user", content } as Message;
+  }
+  const parts: ContentPart[] = [
+    { type: "text", text: content },
+    ...inlineImages.map((img) => ({
+      type: "image" as const,
+      source: {
+        type: "data" as const,
+        value: img.dataBase64.trim().replace(/^data:[^;]+;base64,/i, ""),
+        mimeType: img.mimeType?.trim() || "image/png",
+      },
+    })),
+  ];
+  return { id: messageId, role: "user", content: parts } as Message;
 }
 
 export function createImService(options: ImServiceOptions) {
@@ -217,7 +324,14 @@ export function createImService(options: ImServiceOptions) {
   const emptyListHintAt = new Map<string, number>();
   const queues = new Map<string, { tail: Promise<void>; size: number }>();
   const logCounts = new Map<string, number>();
-  const delivery = createImDelivery(options.database);
+  const deliveryOptions: ImDeliveryOptions | undefined = options.onWindowExpired
+    ? {
+        onWindowExpired: async (record, reason) => {
+          await options.onWindowExpired?.(record, reason);
+        },
+      }
+    : undefined;
+  const delivery = createImDelivery(options.database, deliveryOptions);
   const activeTurns = new Set<string>();
   let deliveryTimer: ReturnType<typeof setInterval> | null = null;
   let recovering = false;
@@ -271,6 +385,8 @@ export function createImService(options: ImServiceOptions) {
       );
       CREATE INDEX IF NOT EXISTS chisabot_im_logs_connection ON chisabot_im_logs (connection_id, id DESC);
       ALTER TABLE chisabot_im_chats ADD COLUMN IF NOT EXISTS last_inbound jsonb;
+      ALTER TABLE chisabot_im_chats ADD COLUMN IF NOT EXISTS taken_over boolean NOT NULL DEFAULT false;
+      ALTER TABLE chisabot_im_chats ADD COLUMN IF NOT EXISTS taken_over_at timestamptz;
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS owner_users jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE chisabot_im_connections ADD COLUMN IF NOT EXISTS allow_private boolean NOT NULL DEFAULT false;
     `);
@@ -551,8 +667,11 @@ export function createImService(options: ImServiceOptions) {
     row: Row,
     key: string,
     fresh = false,
+    inbound?: ImInbound,
   ): Promise<string> {
-    if (options.resolveBotConversation) {
+    const isGroup = inbound?.chatType === "group" || key.startsWith("group:");
+    const ownerPrivate = !isGroup && isOwnerImSender(row, inbound);
+    if (ownerPrivate && options.resolveBotConversation) {
       const threadId = await options.resolveBotConversation(
         row.owner_user_id,
         row.agent_id,
@@ -563,14 +682,9 @@ export function createImService(options: ImServiceOptions) {
          ON CONFLICT (connection_id, chat_key) DO UPDATE SET thread_id = EXCLUDED.thread_id, updated_at = now()`,
         [row.id, key, threadId],
       );
-      if (fresh) {
-        await sql.unsafe(
-          "UPDATE chisabot_im_chats SET thread_id = $2, updated_at = now() WHERE connection_id = $1",
-          [row.id, threadId],
-        );
-      }
       return threadId;
     }
+    const prefix = isGroup ? "im-grp-" : ownerPrivate ? "im-" : "im-ext-";
     if (!fresh) {
       const found = (
         await sql.unsafe<{ thread_id: string }[]>(
@@ -578,15 +692,108 @@ export function createImService(options: ImServiceOptions) {
           [row.id, key],
         )
       )[0];
-      if (found) return found.thread_id;
+      if (
+        found?.thread_id &&
+        (ownerPrivate || found.thread_id.startsWith(prefix))
+      ) {
+        return found.thread_id;
+      }
     }
-    const threadId = `im-${row.id.slice(3)}-${crypto.randomUUID().slice(0, 13)}`;
+    const threadId = `${prefix}${row.id.slice(3)}-${crypto.randomUUID().slice(0, 13)}`;
     await sql.unsafe(
       `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id) VALUES ($1, $2, $3)
        ON CONFLICT (connection_id, chat_key) DO UPDATE SET thread_id = EXCLUDED.thread_id, updated_at = now()`,
       [row.id, key, threadId],
     );
     return threadId;
+  }
+
+  async function isChatTakenOver(
+    connectionId: string,
+    key: string,
+  ): Promise<boolean> {
+    const rows = await sql.unsafe<{ taken_over?: boolean }[]>(
+      "SELECT taken_over FROM chisabot_im_chats WHERE connection_id = $1 AND chat_key = $2",
+      [connectionId, key],
+    );
+    return rows[0]?.taken_over === true;
+  }
+
+  async function setChatTakenOver(
+    row: Row,
+    key: string,
+    inbound: ImInbound,
+    takenOver: boolean,
+  ): Promise<void> {
+    const threadId = await threadFor(row, key, false, inbound);
+    if (takenOver) {
+      await sql.unsafe(
+        `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id, taken_over, taken_over_at)
+         VALUES ($1, $2, $3, true, now())
+         ON CONFLICT (connection_id, chat_key)
+         DO UPDATE SET taken_over = true, taken_over_at = now(), updated_at = now()`,
+        [row.id, key, threadId],
+      );
+      return;
+    }
+    await sql.unsafe(
+      `INSERT INTO chisabot_im_chats (connection_id, chat_key, thread_id, taken_over, taken_over_at)
+       VALUES ($1, $2, $3, false, NULL)
+       ON CONFLICT (connection_id, chat_key)
+       DO UPDATE SET taken_over = false, taken_over_at = NULL, updated_at = now()`,
+      [row.id, key, threadId],
+    );
+  }
+
+  async function enrichInboundMedia(
+    row: Row,
+    inbound: ImInbound,
+  ): Promise<ImInbound> {
+    if (!inbound.attachments?.length) return inbound;
+    const nextAttachments: ImInboundAttachment[] = [];
+    const transcripts: string[] = [];
+    for (const attachment of inbound.attachments) {
+      if (attachment.kind !== "voice") {
+        nextAttachments.push(attachment);
+        continue;
+      }
+      let transcript = attachment.transcript?.trim() || "";
+      if (!transcript && options.transcribeVoice) {
+        try {
+          const result = await options.transcribeVoice({
+            ownerUserId: row.owner_user_id,
+            attachment,
+          });
+          transcript = result?.trim() || "";
+        } catch (error) {
+          log(
+            row.id,
+            "warn",
+            `语音附件转写失败，已保留附件占位：${errorText(error)}`,
+          );
+        }
+      }
+      if (transcript) {
+        nextAttachments.push({ ...attachment, transcript });
+        if (!inbound.text.includes(transcript)) {
+          transcripts.push(transcript);
+        }
+      } else {
+        nextAttachments.push(attachment);
+      }
+    }
+    if (!transcripts.length) {
+      return { ...inbound, attachments: nextAttachments };
+    }
+    const voiceText = transcripts
+      .map((line) => `[语音转写] ${line}`)
+      .join("\n");
+    const baseText = inbound.text.trim();
+    return {
+      ...inbound,
+      text: baseText ? `${baseText}\n${voiceText}` : voiceText,
+      attachments: nextAttachments,
+    };
   }
 
   async function reply(
@@ -625,6 +832,12 @@ export function createImService(options: ImServiceOptions) {
       if (entry?.status.state !== "connected") return null;
       return { send: (message) => entry.adapter.send(message) };
     });
+    if (state === "window_expired") {
+      return {
+        status: "window_expired" as const,
+        windowExpired: true as const,
+      };
+    }
     if (state === "outcome_unknown")
       throw new Error(
         `IM 发送结果待核对，原回复已保存（${id}），不会自动重发。`,
@@ -737,10 +950,20 @@ export function createImService(options: ImServiceOptions) {
     // 谁能用：主人的平台 id + 白名单里的人；两边都空 = 谁也不理（RV-02：以前是「空 = 所有人可用」，任何人都能以主人身份发起回合、审批）。
     const allow = Array.isArray(row.allow_users) ? row.allow_users : [];
     const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
-    const isOwner = owners.includes(inbound.userId);
+    const configOwnerId =
+      typeof row.config?.ownerUserId === "string"
+        ? row.config.ownerUserId.trim()
+        : "";
+    const isOwnerSender = isOwnerIdentity(row, inbound.userId);
+    const isOwnerPrivate = isOwnerImSender(row, inbound);
     if (!canUseConnection(row, inbound.userId)) {
       // 名单全空（多半是升级前扫码绑的连接还没填主人）：私聊回一次怎么绑，同一个发件人 10 分钟内只回一次；群里绝不开口。
-      if (!owners.length && !allow.length && inbound.chatType === "private") {
+      if (
+        !owners.length &&
+        !allow.length &&
+        !configOwnerId &&
+        inbound.chatType === "private"
+      ) {
         const hintKey = `${row.id}|${inbound.userId}`;
         const last = emptyListHintAt.get(hintKey) ?? 0;
         if (Date.now() - last > 10 * 60_000) {
@@ -765,8 +988,55 @@ export function createImService(options: ImServiceOptions) {
       )
       .catch(() => {});
     const key = chatKey(inbound);
+    const cmd = text.toLowerCase();
+    if (TAKEOVER_WORDS.has(cmd)) {
+      if (!isOwnerSender) {
+        log(row.id, "warn", `${who} 不是号主，已拒绝人工接管指令`);
+        await reply(
+          row,
+          entry.adapter,
+          inbound,
+          "只有连接号主可以执行人工接管（/takeover）操作。",
+        ).catch(() => {});
+        return;
+      }
+      await setChatTakenOver(row, key, inbound, true);
+      log(row.id, "info", `${who} 开启了人工接管模式（${key}）`);
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        "已进入人工接管模式：本会话收到的普通消息将暂不触发机器人自动回复，发送 /release 或 /恢复 可恢复。",
+      ).catch((error) => log(row.id, "warn", `回复失败：${errorText(error)}`));
+      return;
+    }
+    if (RELEASE_WORDS.has(cmd)) {
+      if (!isOwnerSender) {
+        log(row.id, "warn", `${who} 不是号主，已拒绝恢复自动回复指令`);
+        await reply(
+          row,
+          entry.adapter,
+          inbound,
+          "只有连接号主可以解除人工接管（/release）操作。",
+        ).catch(() => {});
+        return;
+      }
+      await setChatTakenOver(row, key, inbound, false);
+      log(row.id, "info", `${who} 解除了人工接管模式（${key}）`);
+      await reply(
+        row,
+        entry.adapter,
+        inbound,
+        "已解除人工接管模式，机器人已恢复自动回复。",
+      ).catch((error) => log(row.id, "warn", `回复失败：${errorText(error)}`));
+      return;
+    }
+    if (await isChatTakenOver(row.id, key)) {
+      log(row.id, "info", `会话 ${key} 处于人工接管模式，已忽略自动回复`);
+      return;
+    }
     if (NEW_TOPIC.has(text)) {
-      await threadFor(row, key, true);
+      await threadFor(row, key, true, inbound);
       log(row.id, "info", `${who} 开始了新话题`);
       await reply(row, entry.adapter, inbound, "好的，已开始新话题。").catch(
         (error) => log(row.id, "warn", `回复失败：${errorText(error)}`),
@@ -778,13 +1048,13 @@ export function createImService(options: ImServiceOptions) {
         row,
         entry.adapter,
         inbound,
-        "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id\n允许 / 拒绝 审批待确认的操作卡片（只有主人在私聊里发才生效）",
+        "直接发消息就会由机器人回复。\n/new 开始新话题\n/id 查看自己的用户 id\n/takeover 暂停本会话自动回复（仅号主）\n/release 恢复本会话自动回复（仅号主）\n允许 / 拒绝 审批待确认的操作卡片（只有主人在私聊里发才生效）",
       ).catch(() => {});
       return;
     }
-    const approvalDecision = IM_APPROVE_WORDS.has(text.toLowerCase())
+    const approvalDecision = IM_APPROVE_WORDS.has(cmd)
       ? ("approve" as const)
-      : IM_DENY_WORDS.has(text.toLowerCase())
+      : IM_DENY_WORDS.has(cmd)
         ? ("deny" as const)
         : null;
     if (approvalDecision && options.resolveApproval) {
@@ -797,14 +1067,16 @@ export function createImService(options: ImServiceOptions) {
         await deny("待确认的操作只能由主人在私聊里回复「允许」/「拒绝」处理。");
         return;
       }
-      if (!isOwner) {
+      if (!isOwnerPrivate) {
         log(row.id, "warn", `${who} 不是这个连接的主人，审批被忽略`);
         await deny(
           "只有这个连接的主人可以在 IM 里审批：请主人私聊回复，或到网页端处理。",
         );
         return;
       }
-      const currentThread = await threadFor(row, key).catch(() => null);
+      const currentThread = await threadFor(row, key, false, inbound).catch(
+        () => null,
+      );
       const resolved = currentThread
         ? await options
             .resolveApproval(row.owner_user_id, currentThread, approvalDecision)
@@ -873,8 +1145,9 @@ export function createImService(options: ImServiceOptions) {
     const entry = live.get(connectionId);
     const row = await rowById(connectionId);
     if (!entry || !row?.enabled) return;
-    // 排队期间名单可能已变更；撤销授权后不再以主人身份执行尚未开始的消息。
+    // 排队期间名单可能已变更；撤销授权或进入人工接管后不再以主人身份执行尚未开始的消息。
     if (!canUseConnection(row, inbound.userId)) return;
+    if (await isChatTakenOver(row.id, key)) return;
     const adapter = entry.adapter;
     if (!(await options.botAvailable(row.owner_user_id, row.agent_id))) {
       log(row.id, "error", "对接的机器人不存在或已删除，请在设置里重新选择");
@@ -913,8 +1186,9 @@ export function createImService(options: ImServiceOptions) {
       );
       return;
     }
-    const threadId = received?.thread_id ?? (await threadFor(row, key));
-    inbound = received?.inbound ?? inbound;
+    const threadId =
+      received?.thread_id ?? (await threadFor(row, key, false, inbound));
+    inbound = await enrichInboundMedia(row, received?.inbound ?? inbound);
     await delivery.accept({
       id: messageId,
       connection_id: row.id,
@@ -931,6 +1205,8 @@ export function createImService(options: ImServiceOptions) {
       )
       .catch(() => {});
     const content = frameInbound(platformName, inbound);
+    const userMessage = buildImUserMessage(messageId, content, inbound);
+    const ownerPrivate = isOwnerImSender(row, inbound);
     const rawUserText = inbound.text.trim() || `［${platformName}消息］`;
     void options
       .recordChannelActivity?.(threadId, row.owner_user_id, rawUserText)
@@ -979,9 +1255,11 @@ export function createImService(options: ImServiceOptions) {
           threadId,
           instruction: content,
           initiator: { kind: "routine", id: `${IM_INITIATOR_PREFIX}${row.id}` },
-          userMessage: { id: messageId, role: "user", content } as Message,
+          userMessage,
           forwardedProps: {
             chisabotIm: { connectionId: row.id, platform: row.platform },
+            chatType: inbound.chatType,
+            ...(!ownerPrivate ? { imUntrustedScope: true } : {}),
           },
         });
       });
@@ -1002,9 +1280,7 @@ export function createImService(options: ImServiceOptions) {
       }
       if (options.isSuspension?.(error)) {
         // 只有主人在私聊里能批（RV-02）：给别人的提示只说去哪确认，不暗示群里/陌生人能批。
-        const owners = Array.isArray(row.owner_users) ? row.owner_users : [];
-        const canApprove =
-          inbound.chatType === "private" && owners.includes(inbound.userId);
+        const canApprove = isOwnerImSender(row, inbound);
         /*
          * 卡在审批卡上时把卡片里的内容摘要一起发过去：IM 上看不到卡片本身，让人在回复
          * 「允许 / 拒绝」之前至少看到名字、模型、提示词开头和能看全文的链接。
@@ -1048,10 +1324,12 @@ export function createImService(options: ImServiceOptions) {
         `reply:${messageId}`,
         messageId,
       );
+      const outcomeStatus =
+        typeof state === "object" && state !== null ? state.status : state;
       log(
         row.id,
         "info",
-        `${state === "sent" ? "已回复" : "回复已保存，等待发送"}（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`,
+        `${outcomeStatus === "sent" ? "已回复" : outcomeStatus === "window_expired" ? "回复窗口已过期，已转存" : "回复已保存，等待发送"}（${answer.length} 字，用时 ${Math.round((Date.now() - started) / 1000)} 秒）`,
       );
     } catch (error) {
       log(row.id, "error", `回复发送失败：${errorText(error)}`);
@@ -1176,6 +1454,13 @@ export function createImService(options: ImServiceOptions) {
       if (!config[field.key] && field.default)
         config[field.key] = field.default;
     }
+    if (typeof rawConfig.ownerUserId === "string") {
+      const trimmedOwner = rawConfig.ownerUserId.trim().slice(0, 200);
+      if (trimmedOwner) config.ownerUserId = trimmedOwner;
+      else delete config.ownerUserId;
+    } else if (rawConfig.ownerUserId === null) {
+      delete config.ownerUserId;
+    }
     const loginKey =
       typeof input.qrLogin === "string" && input.qrLogin
         ? input.qrLogin
@@ -1293,8 +1578,7 @@ export function createImService(options: ImServiceOptions) {
         ? (input.platform as ImPlatform)
         : null;
     const platformInfo = platform ? imPlatform(platform) : undefined;
-    if (!platform || !platformInfo)
-      throw new InputError("不支持这个平台");
+    if (!platform || !platformInfo) throw new InputError("不支持这个平台");
     const agentId =
       typeof input.agentId === "string" ? input.agentId.trim() : "";
     if (!agentId || !(await options.botAvailable(owner, agentId)))
@@ -1787,7 +2071,8 @@ export function createImService(options: ImServiceOptions) {
               shim.readyState = 3;
               ws.close(code, reason);
             };
-            if (!id || !attachReverse(id, shim, selfId)) ws.close(1008, "disabled");
+            if (!id || !attachReverse(id, shim, selfId))
+              ws.close(1008, "disabled");
           },
           onMessage: (event) => shim.onmessage?.({ data: event.data }),
           onClose: (event) => {
@@ -1956,7 +2241,7 @@ export function createImService(options: ImServiceOptions) {
         deliveryId?: string;
         connectionId?: string;
       },
-    ) {
+    ): Promise<{ status: "window_expired"; windowExpired: true } | undefined> {
       const deliveryId = `push:${opts?.deliveryId ?? crypto.randomUUID()}`;
       const existing = await delivery.get(deliveryId);
       if (existing) {
@@ -1965,8 +2250,15 @@ export function createImService(options: ImServiceOptions) {
           (opts?.connectionId && existing.connection_id !== opts.connectionId)
         )
           throw new Error("IM 交付标识不属于这段对话");
-        await dispatchDelivery(deliveryId);
-        return;
+        const dispatched = await dispatchDelivery(deliveryId);
+        if (
+          typeof dispatched === "object" &&
+          dispatched !== null &&
+          dispatched.windowExpired
+        ) {
+          return dispatched;
+        }
+        return undefined;
       }
       const chat = (
         await sql.unsafe<{ connection_id: string; last_inbound: unknown }[]>(
@@ -1995,8 +2287,24 @@ export function createImService(options: ImServiceOptions) {
           row.platform,
           testContext(row.platform, row.id, row.config, {}, row.allow_private),
         );
-      await queueReply(row, adapter, inbound, threadId, text, deliveryId);
+      const dispatched = await queueReply(
+        row,
+        adapter,
+        inbound,
+        threadId,
+        text,
+        deliveryId,
+      );
+      if (
+        typeof dispatched === "object" &&
+        dispatched !== null &&
+        dispatched.windowExpired
+      ) {
+        log(row.id, "info", "主动推送遇到回复窗口过期，已转交静默处理");
+        return dispatched;
+      }
       log(row.id, "info", `主动推送消息已保存（${text.length} 字）`);
+      return undefined;
     },
     /** IM 回合能不能用电脑 / 设备类工具（连接里的开关）。 */
     allowsDevices: (connectionId: string) =>

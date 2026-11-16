@@ -258,15 +258,19 @@ export async function apply(ctx, config) {
           ...tool,
           output: {
             schema: { type: "object", additionalProperties: true },
-            render: (_args, value) => [
-              {
+            render: (_args, value) => {
+              const textPart = {
                 type: "text",
                 text:
                   typeof value.content === "string"
                     ? value.content
                     : JSON.stringify(value),
-              },
-            ],
+              };
+              return [
+                textPart,
+                ...(Array.isArray(value.imageParts) ? value.imageParts : []),
+              ];
+            },
           },
           execute: async (args, execution) => {
             if (state.stopped) throw new Error("This run was stopped.");
@@ -337,8 +341,66 @@ export async function apply(ctx, config) {
                 "Waiting for a ChisaBot approval; the operation has not executed.",
               );
             }
-            state.loopGuard.observe({ result });
-            return result;
+            const rawImages = Array.isArray(result?.images)
+              ? result.images
+              : [];
+            // 立即剥离网关返回的裸 base64 图片，防止写入 DSH 会话日志。
+            const { images: _ignored, ...cleanResult } =
+              result && typeof result === "object"
+                ? result
+                : { content: String(result ?? "") };
+            const validImages = rawImages.filter(
+              (img) =>
+                img &&
+                typeof img.mediaType === "string" &&
+                typeof img.data === "string" &&
+                img.data.length > 0,
+            );
+            let finalResult = cleanResult;
+            if (validImages.length > 0) {
+              const baseText =
+                typeof cleanResult.content === "string"
+                  ? cleanResult.content
+                  : JSON.stringify(cleanResult);
+              if (typeof ctx?.attachments?.admitPromptContent === "function") {
+                try {
+                  const admitted = await ctx.attachments.admitPromptContent(
+                    validImages.map((img) => ({
+                      type: "image",
+                      mediaType: img.mediaType,
+                      data: img.data,
+                    })),
+                  );
+                  const imageParts = Array.isArray(admitted)
+                    ? admitted.filter(
+                        (part) =>
+                          part && part.type === "image" && part.attachment,
+                      )
+                    : [];
+                  if (imageParts.length > 0) {
+                    finalResult = { ...cleanResult, imageParts };
+                  }
+                } catch (error) {
+                  const detail =
+                    error instanceof Error && error.message
+                      ? `：${error.message}`
+                      : "";
+                  const notice = `[工具图片附件写入失败，已保留文本结果${detail}]`;
+                  finalResult = {
+                    ...cleanResult,
+                    content: baseText ? `${baseText}\n${notice}` : notice,
+                  };
+                }
+              } else {
+                const notice = `[工具返回了 ${validImages.length} 张图片，当前运行时未启用附件存储，无法附带原图]`;
+                finalResult = {
+                  ...cleanResult,
+                  content: baseText ? `${baseText}\n${notice}` : notice,
+                };
+              }
+            }
+            state.loopGuard.observe({ result: finalResult });
+            return finalResult;
           },
         }),
       );

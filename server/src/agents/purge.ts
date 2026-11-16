@@ -256,6 +256,22 @@ export function createAgentPurge(options: {
         await tx.execute(
           sql`delete from chisabot_bot_threads where agent_id = ${agentId}`,
         );
+      // 同步清除已彻底删除 Bot 的专属私有记忆（bot_private），保留用户共享/团队/公开记忆。
+      const [memoryNotes] = await tx.execute<{ present: boolean }>(
+        sql`select to_regclass('public.chisabot_memory_notes') is not null as present`,
+      );
+      if ((memoryNotes as { present?: boolean } | undefined)?.present) {
+        const [visibilityColumn] = await tx.execute<{ present: boolean }>(
+          sql`select exists (
+            select 1 from information_schema.columns
+            where table_schema = 'public' and table_name = 'chisabot_memory_notes' and column_name = 'visibility'
+          ) as present`,
+        );
+        if ((visibilityColumn as { present?: boolean } | undefined)?.present)
+          await tx.execute(
+            sql`delete from chisabot_memory_notes where agent_id = ${agentId} and visibility = 'bot_private'`,
+          );
+      }
 
       // Everything else hangs off `agents` with ON DELETE CASCADE.
       // 部署包机器人的 agents 行要留着：它带着「已被删除」的标记（override.removedAt），删掉它的话

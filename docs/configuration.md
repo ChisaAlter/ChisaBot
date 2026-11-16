@@ -78,7 +78,7 @@
 | `CHISABOT_SINGLE_USER`                                            | `true` 时启用免内建 OAuth 的单用户模式。**安全红线**：仅允许配合回环 `TRUSTED_ORIGINS`（`localhost` / `127.0.0.1`）或前置 HTTPS 登录网关使用，严禁将 `:3001` 直接暴露公网。 |
 | `TRUSTED_ORIGINS`                                                 | 逗号分隔的可信前端来源（本地开发为 `http://localhost:3010`，网关回环转发为 `http://localhost:3001,http://127.0.0.1:3001`）。                                                |
 | `CHISABOT_GATEWAY_SECRET`                                         | 与前置认证网关 `auth/config.json` 中 `identitySecret` 一致的共享签名密钥（≥32 字符）。启用后，本机运维脚本/更新器访问本机管理接口须携带 `X-ChisaBot-Local-Caller` 头。      |
-| `CHISABOT_ACCOUNTS_UI`                                            | 设为 `1` 在「设置 → 账号与连接」显示多用户「账号」管理入口（默认关闭）。                                                                                                    |
+| `CHISABOT_ACCOUNTS_UI`                                            | 在「设置 → 账号与连接」显示多用户「账号」管理入口（默认开启，设 `0`/`false` 可关闭）。                                                                                      |
 | `CHISABOT_SECURE_COOKIES`                                         | 设为 `1` 强制会话 Cookie 启用 `Secure`（当 `CHISABOT_PUBLIC_URL` 为 `https://` 时自动开启）。                                                                               |
 | `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` / `INITIAL_ADMIN_EMAILS` | 不使用前置登录网关而直接启用 Google / Microsoft / Okta OAuth 时的回调根地址、会话签名密钥（≥32 字符）与管理员邮箱列表；可配合 `SIGNIN_ALLOWED_EMAIL_DOMAINS` 限制邮箱域名。 |
 

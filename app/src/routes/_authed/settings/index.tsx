@@ -6,6 +6,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
+import { MyQuotaSection } from "@/components/settings/my-quota-section";
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
 import { SkyPreference } from "@/components/settings/sky-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
@@ -55,9 +56,7 @@ function RouteComponent() {
    */
   return (
     <PageShell
-      description={
-        "外观保存在此浏览器，常驻指令跟随账号。"
-      }
+      description={"外观保存在此浏览器，常驻指令跟随账号。"}
       title={"通用"}
     >
       <PageSection title={"外观"}>
@@ -65,11 +64,19 @@ function RouteComponent() {
           <Item data-setting-item="general.theme" size="sm">
             <ItemContent>
               <ItemTitle>{"主题"}</ItemTitle>
-              <ItemDescription>{"浅色或深色外观，保存在此浏览器。"}</ItemDescription>
+              <ItemDescription>
+                {"浅色或深色外观，保存在此浏览器。"}
+              </ItemDescription>
             </ItemContent>
             <ItemActions>
               {/* 分段控件 (DESIGN.md §11). 跟随系统 is not offered: the theme is stored as a boolean. */}
-              <div aria-label={"主题"} className="sg-segmented" {...themeKeys.groupProps} ref={themeKeys.groupRef} role="radiogroup">
+              <div
+                aria-label={"主题"}
+                className="sg-segmented"
+                {...themeKeys.groupProps}
+                ref={themeKeys.groupRef}
+                role="radiogroup"
+              >
                 {[
                   { on: false, label: "浅色", Icon: IconSun },
                   { on: true, label: "深色", Icon: IconMoon },
@@ -99,6 +106,7 @@ function RouteComponent() {
         </PageRows>
       </PageSection>
       <StandingInstructions />
+      <MyQuotaSection />
       {/*
        * Drawn from the same registry the listeners match against, so this list is what the keys
        * actually do rather than what somebody remembered they did. Read-only on purpose: these
@@ -113,7 +121,11 @@ function RouteComponent() {
               <ItemDescription>{`共 ${ALL_HOTKEYS.length} 个，不可修改。`}</ItemDescription>
             </ItemContent>
             <ItemActions>
-              <Button onClick={() => setKeysOpen(true)} size="sm" variant="outline">
+              <Button
+                onClick={() => setKeysOpen(true)}
+                size="sm"
+                variant="outline"
+              >
                 <IconKeyboard />
                 {"查看"}
               </Button>
@@ -123,15 +135,21 @@ function RouteComponent() {
       </PageSection>
       <Dialog onOpenChange={setKeysOpen} open={keysOpen}>
         <DialogContent className="glass-modal max-h-[80dvh] max-w-[480px] overflow-y-auto">
-          <DialogTitle className="font-semibold text-lg">{"键盘快捷键"}</DialogTitle>
-          <DialogDescription className="text-xs">{"在 ChisaBot 任意位置可用。"}</DialogDescription>
+          <DialogTitle className="font-semibold text-lg">
+            {"键盘快捷键"}
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            {"在 ChisaBot 任意位置可用。"}
+          </DialogDescription>
           <div className="mt-2">
             {ALL_HOTKEYS.map((hotkey, index) => (
               <React.Fragment key={hotkey.id}>
                 <div className="flex items-center gap-3 py-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm">{hotkey.label}</div>
-                    <div className="text-xs text-muted-foreground">{hotkey.description}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {hotkey.description}
+                    </div>
                   </div>
                   <span className="flex shrink-0 gap-1">
                     {formatHotkey(hotkey.combo).map((part) => (

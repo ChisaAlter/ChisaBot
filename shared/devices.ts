@@ -27,17 +27,20 @@ export const CAPABILITY_INFO: Record<
 > = {
   shell: {
     label: "命令行",
-    description: "在这台设备上运行命令（Windows 上是 PowerShell，Linux / macOS 上是 sh / bash；有超时和输出上限）。也用于 git 提交 / 拉取、后台命令和进程管理。",
+    description:
+      "在这台设备上运行命令（Windows 上是 PowerShell，Linux / macOS 上是 sh / bash；有超时和输出上限）。也用于 git 提交 / 拉取、后台命令和进程管理。",
     dangerous: true,
   },
   files_read: {
     label: "读取文件",
-    description: "列出、搜索和读取「允许的文件夹」里的文件，以及 git status / diff / log 这类只读操作。",
+    description:
+      "列出、搜索和读取「允许的文件夹」里的文件，以及 git status / diff / log 这类只读操作。",
     dangerous: false,
   },
   files_write: {
     label: "写入文件",
-    description: "在「允许的文件夹」里新建或修改文件（精确替换、补丁、整文件写入），改前自动备份，审批时能看到改动。",
+    description:
+      "在「允许的文件夹」里新建或修改文件（精确替换、补丁、整文件写入），改前自动备份，审批时能看到改动。",
     dangerous: true,
   },
   screenshot: {
@@ -52,7 +55,8 @@ export const CAPABILITY_INFO: Record<
   },
   open: {
     label: "打开网址 / 文件",
-    description: "用默认浏览器打开 http/https 网址，或用默认程序打开允许的文件夹里的文件 / 文件夹。不启动程序、不带参数、不打开可执行文件和脚本。",
+    description:
+      "用默认浏览器打开 http/https 网址，或用默认程序打开允许的文件夹里的文件 / 文件夹。不启动程序、不带参数、不打开可执行文件和脚本。",
     dangerous: true,
   },
   clipboard: {
@@ -82,7 +86,9 @@ export function initialCapabilities(): DeviceCapabilities {
 
 /** 能力是不是还停在旧版出厂值（全部关闭）。 */
 export function isFactoryOff(capabilities: DeviceCapabilities): boolean {
-  return DEVICE_CAPABILITIES.every((capability) => capabilities[capability] === "off");
+  return DEVICE_CAPABILITIES.every(
+    (capability) => capabilities[capability] === "off",
+  );
 }
 
 export function normalizeCapabilities(value: unknown): DeviceCapabilities {
@@ -96,12 +102,40 @@ export function normalizeCapabilities(value: unknown): DeviceCapabilities {
   return result;
 }
 
+export type PairingUriOptions = {
+  alternates?: string[];
+  e2eePub?: string;
+};
+
 /**
  * 手机扫码绑定（DESIGN.md §33）：二维码内容 `chisabot://pair?server=<https 源>&code=<一次性绑定码>`。
- * Android 端 Pairing.kt 解析同一格式。
+ * Android 端 Pairing.kt 解析同一格式；存在备选地址或公钥时附加 `&alt=` / `&pk=`。
  */
-export function pairingUri(server: string, code: string): string {
-  return `chisabot://pair?server=${encodeURIComponent(server)}&code=${encodeURIComponent(code)}`;
+export function pairingUri(
+  server: string,
+  code: string,
+  options?: PairingUriOptions,
+): string {
+  let base = `chisabot://pair?server=${encodeURIComponent(server)}&code=${encodeURIComponent(code)}`;
+  if (!options) return base;
+
+  const seen = new Set<string>([server]);
+  const alts: string[] = [];
+  for (const raw of options.alternates ?? []) {
+    const clean = raw.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    alts.push(clean);
+  }
+  if (alts.length > 0) {
+    base += `&alt=${encodeURIComponent(alts.join(","))}`;
+  }
+
+  const pk = options.e2eePub?.trim();
+  if (pk) {
+    base += `&pk=${encodeURIComponent(pk)}`;
+  }
+  return base;
 }
 
 /** 手机设备只用来登录聊天，不是机器人可操作的节点（不进设备工具、不接 /agent/ws）。 */
@@ -113,7 +147,10 @@ export function isMobilePlatform(platform: string | null | undefined): boolean {
 export const MOBILE_ONLINE_WINDOW_MS = 3 * 60_000;
 
 /** 每个设备操作需要的能力；system_info 为 null（始终可用）。 */
-export const OPERATION_CAPABILITY: Record<DeviceOperation, DeviceCapability | null> = {
+export const OPERATION_CAPABILITY: Record<
+  DeviceOperation,
+  DeviceCapability | null
+> = {
   system_info: null,
   shell: "shell",
   list_files: "files_read",
@@ -140,32 +177,86 @@ export const OPERATION_CAPABILITY: Record<DeviceOperation, DeviceCapability | nu
   file_upload: "files_write",
   file_download: "files_read",
   activity: null,
+  mcp_call: "shell",
+  mcp_discover: "files_read",
 };
 
 /** git 只读子命令（status / diff / log / show / 列分支…）只要「读取文件」能力；其余要「命令行」。 */
-export const GIT_READ_SUBCOMMANDS = ["status", "diff", "log", "show", "branch", "rev-parse", "remote", "blame", "ls-files", "stash-list"] as const;
+export const GIT_READ_SUBCOMMANDS = [
+  "status",
+  "diff",
+  "log",
+  "show",
+  "branch",
+  "rev-parse",
+  "remote",
+  "blame",
+  "ls-files",
+  "stash-list",
+] as const;
 export const GIT_SUBCOMMANDS = [
   ...GIT_READ_SUBCOMMANDS,
-  "add", "commit", "checkout", "switch", "restore", "reset", "pull", "push", "fetch", "clone", "init", "stash", "merge", "rebase", "tag", "rm", "mv", "apply", "cherry-pick", "config",
+  "add",
+  "commit",
+  "checkout",
+  "switch",
+  "restore",
+  "reset",
+  "pull",
+  "push",
+  "fetch",
+  "clone",
+  "init",
+  "stash",
+  "merge",
+  "rebase",
+  "tag",
+  "rm",
+  "mv",
+  "apply",
+  "cherry-pick",
+  "config",
 ] as const;
 
-export function gitIsRead(subcommand: string, args: readonly string[] = []): boolean {
-  if (!(GIT_READ_SUBCOMMANDS as readonly string[]).includes(subcommand)) return false;
+export function gitIsRead(
+  subcommand: string,
+  args: readonly string[] = [],
+): boolean {
+  if (!(GIT_READ_SUBCOMMANDS as readonly string[]).includes(subcommand))
+    return false;
   if (subcommand === "branch")
-    return args.every((a) => /^-(a|r|v|vv|l|-list|-all|-remotes|-show-current|-contains|-merged|-no-merged)$/.test(a) || a.startsWith("--format"));
-  if (subcommand === "remote") return args.length === 0 || (args.length === 1 && args[0] === "-v");
+    return args.every(
+      (a) =>
+        /^-(a|r|v|vv|l|-list|-all|-remotes|-show-current|-contains|-merged|-no-merged)$/.test(
+          a,
+        ) || a.startsWith("--format"),
+    );
+  if (subcommand === "remote")
+    return args.length === 0 || (args.length === 1 && args[0] === "-v");
   return true;
 }
 
 /** 某次调用需要的能力（PC 端 core.js 的 capabilityFor 同一规则）。 */
-export function capabilityFor(operation: DeviceOperation, args: Record<string, unknown> = {}): DeviceCapability | null {
+export function capabilityFor(
+  operation: DeviceOperation,
+  args: Record<string, unknown> = {},
+): DeviceCapability | null {
   if (operation === "git")
-    return gitIsRead(String(args.subcommand ?? ""), Array.isArray(args.args) ? args.args.map(String) : []) ? "files_read" : "shell";
+    return gitIsRead(
+      String(args.subcommand ?? ""),
+      Array.isArray(args.args) ? args.args.map(String) : [],
+    )
+      ? "files_read"
+      : "shell";
   return OPERATION_CAPABILITY[operation];
 }
 
 /** 完全访问的时长选项。permanent = 一直开着，直到手动关闭或紧急停止。 */
-export const FULL_ACCESS_DURATIONS = { "1h": 3600_000, "24h": 24 * 3600_000, permanent: null } as const;
+export const FULL_ACCESS_DURATIONS = {
+  "1h": 3600_000,
+  "24h": 24 * 3600_000,
+  permanent: null,
+} as const;
 export type FullAccessDuration = keyof typeof FULL_ACCESS_DURATIONS;
 /** 「永久」在库里存成这个时间。 */
 export const FULL_ACCESS_FOREVER = "9999-12-31T00:00:00.000Z";
@@ -195,7 +286,9 @@ export type DeviceOperation =
   | "process_kill"
   | "file_upload"
   | "file_download"
-  | "activity";
+  | "activity"
+  | "mcp_call"
+  | "mcp_discover";
 
 export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   system_info: "读取系统信息",
@@ -223,6 +316,8 @@ export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   file_upload: "传文件到设备",
   file_download: "从设备取文件",
   activity: "查看运行中的命令",
+  mcp_call: "调用本地 MCP",
+  mcp_discover: "发现本地 MCP 配置",
 };
 
 /** 网页 / PC 看到的设备。不含令牌。 */
@@ -250,7 +345,11 @@ export type DeviceView = {
    */
   botIds: string[];
   /** 最近一次由机器人发起的操作（来自设备审计记录）；从未被机器人用过为 null。 */
-  lastUsedBy: { botId: string | null; botName: string | null; at: string } | null;
+  lastUsedBy: {
+    botId: string | null;
+    botName: string | null;
+    at: string;
+  } | null;
   /**
    * 完全访问（docs/pc-node.md §13）：只能由用户在 设置 → 设备 → 权限 打开，机器人没有工具能打开。
    * 开着时所有能力按「允许」、不限文件夹、命令不限 10 分钟、可以用管理员身份运行；仍全部审计，紧急停止立即关闭它。
@@ -309,7 +408,13 @@ export type DeviceToServer =
       /** 0.1.8 起：客户端支持的操作名单。 */
       features?: string[];
     }
-  | { type: "result"; id: string; ok: boolean; result?: unknown; error?: string }
+  | {
+      type: "result";
+      id: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }
   | { type: "approval"; id: string; decision: "approve" | "deny" }
   | {
       type: "set_config";
@@ -338,7 +443,11 @@ export type ServerToDevice =
       /** 按服务器时钟算的剩余毫秒数（PC 时钟可能不准，倒数用它）。 */
       remainingMs?: number;
     }
-  | { type: "approval_closed"; id: string; decision: "approve" | "deny" | "expired" }
+  | {
+      type: "approval_closed";
+      id: string;
+      decision: "approve" | "deny" | "expired";
+    }
   | {
       type: "call";
       id: string;
@@ -368,25 +477,43 @@ export const OPEN_EXECUTABLE_EXT: ReadonlySet<string> = new Set(
 export function checkOpenTarget(raw: unknown): string | null {
   const target = typeof raw === "string" ? raw.trim() : "";
   if (!target) return "没有要打开的目标。";
-  if (/[\u0000-\u001f\u007f]/.test(target)) return "目标里有控制字符，不能打开。";
+  if (/[\u0000-\u001f\u007f]/.test(target))
+    return "目标里有控制字符，不能打开。";
   if (/^https?:\/\//i.test(target)) {
     try {
       const url = new URL(target);
-      return url.protocol === "http:" || url.protocol === "https:" ? null : "只能打开 http / https 网址。";
+      return url.protocol === "http:" || url.protocol === "https:"
+        ? null
+        : "只能打开 http / https 网址。";
     } catch {
       return "网址格式不对。";
     }
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(target) && !/^[a-z]:[\\/]/i.test(target)) return "不允许打开这种地址：只能打开 http / https 网址或文件 / 文件夹。";
-  if (/^(\\\\|\/\/)/.test(target)) return "不打开网络路径（\\\\服务器\\共享）。";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) && !/^[a-z]:[\\/]/i.test(target))
+    return "不允许打开这种地址：只能打开 http / https 网址或文件 / 文件夹。";
+  if (/^(\\\\|\/\/)/.test(target))
+    return "不打开网络路径（\\\\服务器\\共享）。";
   if (target.startsWith("-")) return "目标不能以 - 开头。";
-  const base = target.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  const base =
+    target
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() ?? "";
   const looksLikePath =
-    /^([a-z]:[\\/]|[\\/]|~)/i.test(target) || /[\\/]/.test(target) || /\.[^.\\/]+$/.test(base) || target === "." || target === "~";
-  if (!looksLikePath) return "「打开」不再启动程序：只能打开网址，或允许的文件夹里的文件 / 文件夹（给出路径）。要运行程序请用命令行能力。";
-  const ext = /\.([^.\\/]+)$/.exec(base.replace(/[. ]+$/, ""))?.[1]?.toLowerCase();
-  if (ext && OPEN_EXECUTABLE_EXT.has(ext)) return `不打开 .${ext} 文件：打开它等于运行程序。要运行请用命令行能力。`;
+    /^([a-z]:[\\/]|[\\/]|~)/i.test(target) ||
+    /[\\/]/.test(target) ||
+    /\.[^.\\/]+$/.test(base) ||
+    target === "." ||
+    target === "~";
+  if (!looksLikePath)
+    return "「打开」不再启动程序：只能打开网址，或允许的文件夹里的文件 / 文件夹（给出路径）。要运行程序请用命令行能力。";
+  const ext = /\.([^.\\/]+)$/
+    .exec(base.replace(/[. ]+$/, ""))?.[1]
+    ?.toLowerCase();
+  if (ext && OPEN_EXECUTABLE_EXT.has(ext))
+    return `不打开 .${ext} 文件：打开它等于运行程序。要运行请用命令行能力。`;
   // 没有扩展名的只当文件夹，并且要以 / 或 \ 结尾：Windows 打开「C:\…\calc」这类没扩展名的路径时会按 PATHEXT 补成 calc.exe 去运行（旧版 PC 客户端）。
-  if (!ext && !/[\\/]$/.test(target) && target !== "." && target !== "~") return "没有扩展名的路径只当文件夹打开，请以 / 或 \\ 结尾（例如 D:\\报告\\）；文件请写全文件名和扩展名。";
+  if (!ext && !/[\\/]$/.test(target) && target !== "." && target !== "~")
+    return "没有扩展名的路径只当文件夹打开，请以 / 或 \\ 结尾（例如 D:\\报告\\）；文件请写全文件名和扩展名。";
   return null;
 }

@@ -500,6 +500,11 @@ export function createDeviceHub(options: {
         ? connection.features.has(operation)
         : LEGACY_OPERATIONS.has(operation);
     },
+    /** 在线设备是否在 hello.features 中声明了指定特性（例如 "mcp"）。 */
+    supportsFeature(deviceId: string, feature: string) {
+      const connection = connections.get(deviceId);
+      return Boolean(connection?.features?.has(feature));
+    },
     scheduleExpiry,
     pushConfig,
     onlineCount: () => connections.size,

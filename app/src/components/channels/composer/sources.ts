@@ -18,4 +18,18 @@ export const PLACEHOLDER_COMMANDS: CommandOption[] = [
     kind: "prompt",
     prompt: "Summarize what we covered in this channel so far.",
   },
+  {
+    id: "side",
+    name: "side",
+    description: "开启侧边临时提问（不污染主对话）",
+    kind: "prompt",
+    prompt: "/side ",
+  },
+  {
+    id: "goal",
+    name: "goal",
+    description: "在多机器人群聊中发起有界目标协作",
+    kind: "prompt",
+    prompt: "/goal ",
+  },
 ];

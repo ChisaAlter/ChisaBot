@@ -2,6 +2,11 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
+  type ContentSafetyResult,
+  type SkillSafetyPayload,
+  scanSkillSafety,
+} from "../../../shared/content-safety-scanner";
+import {
   BlockedUrlError,
   type GuardedResponse,
   guardedFetch,
@@ -22,6 +27,61 @@ import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
  * 用户自己的技能（只能动用户自己的；部署共享的只读）。
  */
 export const SKILL_SLUG = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
+
+export class SkillSafetyError extends PluginRefusedError {
+  constructor(
+    message: string,
+    readonly scan: ContentSafetyResult,
+  ) {
+    super(message, "content-safety");
+    this.name = "SkillSafetyError";
+  }
+}
+
+function safetyWarningsOf(scan: ContentSafetyResult): string[] {
+  return scan.findings
+    .filter((f) => f.severity === "warn")
+    .map((f) => f.message);
+}
+
+function formatSkillSafetyWarnings(scan: ContentSafetyResult): string {
+  const warnings = safetyWarningsOf(scan);
+  return warnings.length > 0 ? `\n⚠️ 安全提示：${warnings.join("；")}` : "";
+}
+
+/**
+ * 技能入库前安全扫描门禁：阻断级风险直接拒绝入库并抛出明确中文原因，告警级记录日志并由调用方返回提示。
+ */
+export function enforceSkillSafety(
+  skill: SkillSafetyPayload,
+): ContentSafetyResult {
+  const scan = scanSkillSafety(skill);
+  if (scan.level === "block") {
+    const blocked = scan.findings.filter((f) => f.severity === "block");
+    console.warn(
+      JSON.stringify({
+        type: "chisa-skill-safety-blocked",
+        slug: skill.slug ?? null,
+        rules: blocked.map((f) => f.rule),
+      }),
+    );
+    throw new SkillSafetyError(
+      `技能内容未通过安全扫描，已拒绝入库：${blocked.map((f) => f.message).join("；")}`,
+      scan,
+    );
+  }
+  if (scan.level === "warn") {
+    const warned = scan.findings.filter((f) => f.severity === "warn");
+    console.warn(
+      JSON.stringify({
+        type: "chisa-skill-safety-warning",
+        slug: skill.slug ?? null,
+        rules: warned.map((f) => f.rule),
+      }),
+    );
+  }
+  return scan;
+}
 type Actor = { id: string; isAdmin: boolean };
 type Skill = {
   slug: string;
@@ -434,15 +494,24 @@ export function createChisaSkills(options: {
           const owner = await options.store.skillOwner(input.slug);
           if (owner !== undefined && owner !== userId)
             return `${REFUSAL_MARKER} 「${input.slug}」这个名字已经被${owner === null ? "部署共享技能" : "别人的技能"}占用，换个名字。`;
+          const title = input.title.trim();
+          const summary = input.summary.trim();
+          const instructions = input.instructions.trim();
+          const scan = enforceSkillSafety({
+            slug: input.slug,
+            title,
+            summary,
+            instructions,
+          });
           await options.store.installSkill({
             slug: input.slug,
-            title: input.title.trim(),
-            summary: input.summary.trim(),
-            instructions: input.instructions.trim(),
+            title,
+            summary,
+            instructions,
             ownerUserId: userId,
             by: `bot:${agentId}`,
           });
-          return `${owner === undefined ? "已新建" : "已更新"}技能「${input.title}」（${input.slug}）。用户可以在 设置 → 技能 里查看和修改，也能在聊天框输入 /${input.slug} 直接调用。`;
+          return `${owner === undefined ? "已新建" : "已更新"}技能「${title}」（${input.slug}）。用户可以在 设置 → 技能 里查看和修改，也能在聊天框输入 /${input.slug} 直接调用。${formatSkillSafetyWarnings(scan)}`;
         },
       ),
       tool(
@@ -463,15 +532,22 @@ export function createChisaSkills(options: {
           const count = skill.instructions.split(needle).length - 1;
           if (count !== 1)
             return `${REFUSAL_MARKER} 要替换的原文${count ? `出现了 ${count} 次，多带一点上下文` : "没找到，先 skill_load 看看现在的内容"}。`;
+          const nextInstructions = skill.instructions.replace(needle, replace);
+          const scan = enforceSkillSafety({
+            slug,
+            title: skill.title,
+            summary: skill.summary,
+            instructions: nextInstructions,
+          });
           await options.store.installSkill({
             slug,
             title: skill.title,
             summary: skill.summary,
-            instructions: skill.instructions.replace(needle, replace),
+            instructions: nextInstructions,
             ownerUserId: userId,
             by: `bot:${agentId}`,
           });
-          return `已修改技能「${skill.title}」。`;
+          return `已修改技能「${skill.title}」。${formatSkillSafetyWarnings(scan)}`;
         },
       ),
       tool(
@@ -501,6 +577,7 @@ export function createChisaSkills(options: {
           for (const preset of presets) {
             const owner = await options.store.skillOwner(preset.slug);
             if (owner !== undefined && owner !== userId) continue;
+            enforceSkillSafety(preset);
             await options.store.installSkill({
               slug: preset.slug,
               title: preset.title,
@@ -586,6 +663,12 @@ export function createChisaSkills(options: {
           if (owner !== undefined && owner !== userId) {
             return `${REFUSAL_MARKER} 「${finalSlug}」已被占用，请指定另一个 slug。`;
           }
+          const scan = enforceSkillSafety({
+            slug: finalSlug,
+            title: parsed.title,
+            summary: parsed.summary,
+            instructions: parsed.instructions,
+          });
           await options.store.installSkill({
             slug: finalSlug,
             title: parsed.title,
@@ -594,7 +677,7 @@ export function createChisaSkills(options: {
             ownerUserId: userId,
             by: `bot:${agentId}`,
           });
-          return `已成功导入技能「${parsed.title}」（/${finalSlug}）：${parsed.summary}`;
+          return `已成功导入技能「${parsed.title}」（/${finalSlug}）：${parsed.summary}${formatSkillSafetyWarnings(scan)}`;
         },
       ),
     ];
@@ -674,6 +757,7 @@ export function createChisaSkills(options: {
             shared: wantShared,
           });
           if (!plan.ok) continue;
+          enforceSkillSafety(preset);
           await options.store.installSkill({
             slug: preset.slug,
             title: preset.title,
@@ -763,6 +847,12 @@ export function createChisaSkills(options: {
           { error: `「${finalSlug}」已被占用，请指定另一个英文名字。` },
           409,
         );
+      const scan = enforceSkillSafety({
+        slug: finalSlug,
+        title: parsed.title,
+        summary: parsed.summary,
+        instructions: parsed.instructions,
+      });
       await options.store.installSkill({
         slug: finalSlug,
         title: parsed.title,
@@ -775,9 +865,11 @@ export function createChisaSkills(options: {
       const saved = (await visible(userId)).find(
         (skill) => skill.slug === finalSlug,
       );
+      const warnings = safetyWarningsOf(scan);
       return c.json({
         skill: saved ? view(userId)(saved) : null,
         installedCount: 1,
+        ...(warnings.length > 0 ? { safetyWarnings: warnings } : {}),
       });
     });
     app.put("/:slug", async (c) => {
@@ -818,6 +910,12 @@ export function createChisaSkills(options: {
         );
       if (body.create && owner !== undefined)
         return c.json({ error: `你已经有一个叫「${slug}」的技能了。` }, 409);
+      const scan = enforceSkillSafety({
+        slug,
+        title: body.title,
+        summary: body.summary,
+        instructions: body.instructions,
+      });
       await options.store.installSkill({
         slug,
         title: body.title,
@@ -830,7 +928,11 @@ export function createChisaSkills(options: {
       const saved = (await visible(c.var.actor.id)).find(
         (skill) => skill.slug === slug,
       );
-      return c.json({ skill: saved ? view(c.var.actor.id)(saved) : null });
+      const warnings = safetyWarningsOf(scan);
+      return c.json({
+        skill: saved ? view(c.var.actor.id)(saved) : null,
+        ...(warnings.length > 0 ? { safetyWarnings: warnings } : {}),
+      });
     });
     app.delete("/:slug", async (c) => {
       const slug = c.req.param("slug");

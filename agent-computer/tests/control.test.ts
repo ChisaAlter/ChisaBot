@@ -211,27 +211,77 @@ describe("secret entry remains scoped and ephemeral", () => {
 
 describe("2026-10-17: a stuck action cannot block 接管 for ever", () => {
   test("take succeeds once the stuck action's lease expires, and names it while waiting", async () => {
-    const expired: string[] = [];
-    const waiting: string[][] = [];
+    const keepAlive = setInterval(() => {}, 10);
+    try {
+      const expired: string[] = [];
+      const waiting: string[][] = [];
+      const control = createControl(undefined, {
+        actionLeaseMs: 40,
+        drainTimeoutMs: 10,
+        onLeaseExpired: (lease) => expired.push(lease.label),
+        onDrainTimeout: (holders) => waiting.push(holders.map((h) => h.label)),
+      });
+      control.admitBotAction(false, "/navigate"); // never released
+      const help = control.requestHelp("我来接管浏览器。").request!;
+      // Before the lease runs out: the old behaviour, but now it says what it waited for.
+      await expect(control.take(help.id)).rejects.toThrow(/still finishing/);
+      expect(waiting).toEqual([["/navigate"]]);
+      expect(control.admittedActions().map((a) => a.label)).toEqual([
+        "/navigate",
+      ]);
+      await new Promise((r) => setTimeout(r, 60));
+      expect(expired).toEqual(["/navigate"]);
+      const taken = await control.take(help.id);
+      expect(taken.holder).toBe("human");
+      control.release(help.id);
+      expect(control.get().holder).toBe("bot");
+    } finally {
+      clearInterval(keepAlive);
+    }
+  });
+
+  test("cn-captcha and human-takeover sources enforce human mutual exclusion and snapshot invalidation on release", async () => {
+    let invalidated = 0;
     const control = createControl(undefined, {
-      actionLeaseMs: 40,
-      drainTimeoutMs: 10,
-      onLeaseExpired: (lease) => expired.push(lease.label),
-      onDrainTimeout: (holders) => waiting.push(holders.map((h) => h.label)),
+      invalidateSnapshot: () => {
+        invalidated += 1;
+      },
     });
-    control.admitBotAction(false, "/navigate"); // never released
-    const help = control.requestHelp("我来接管浏览器。").request!;
-    // Before the lease runs out: the old behaviour, but now it says what it waited for.
-    await expect(control.take(help.id)).rejects.toThrow(/still finishing/);
-    expect(waiting).toEqual([["/navigate"]]);
-    expect(control.admittedActions().map((a) => a.label)).toEqual([
-      "/navigate",
-    ]);
-    await new Promise((r) => setTimeout(r, 60));
-    expect(expired).toEqual(["/navigate"]);
-    const taken = await control.take(help.id);
-    expect(taken.holder).toBe("human");
-    control.release(help.id);
-    expect(control.get().holder).toBe("bot");
+    const captchaState = control.requestHelp(
+      "检测到国内安全验证",
+      "call-cn",
+      "cn-captcha",
+    );
+    expect(captchaState.request?.source).toBe("cn-captcha");
+    expect(() => control.assertBotMayAct(false)).toThrow(ControlError);
+    expect(() => control.assertBotMayAct(true)).toThrow(ControlError);
+
+    const requestId = captchaState.request?.id;
+    if (!requestId) throw new Error("Expected request id");
+    await control.take(requestId);
+    expect(() => control.assertBotMayAct(false)).toThrow(ControlError);
+
+    const released = control.release(requestId);
+    expect(released.holder).toBe("bot");
+    expect(released.resumeSnapshotRequired).toBe(true);
+    expect(invalidated).toBe(1);
+    expect(() => control.assertBotMayAct(true)).toThrow(SnapshotRequiredError);
+    expect(() => control.assertBotMayAct(false)).not.toThrow();
+
+    control.snapshotTaken();
+    expect(() => control.assertBotMayAct(true)).not.toThrow();
+
+    const takeoverState = control.requestHelp(
+      "我来接管浏览器。",
+      "call-manual",
+      "human-takeover",
+    );
+    expect(takeoverState.request?.source).toBe("human-takeover");
+    const takeoverId = takeoverState.request?.id;
+    if (!takeoverId) throw new Error("Expected takeover request id");
+    await control.take(takeoverId);
+    expect(() => control.admitBotAction(false)).toThrow(ControlError);
+    control.release(takeoverId);
+    expect(invalidated).toBe(2);
   });
 });

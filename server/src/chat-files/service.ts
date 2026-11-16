@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { inflateRawSync, inflateSync } from "node:zlib";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -234,6 +235,1017 @@ const TEXT_TYPES = new Set([
   "application/json",
 ]);
 
+const DEFAULT_CHUNK_SIZE = 1500;
+const DEFAULT_CHUNK_OVERLAP = 150;
+const SINGLE_CHUNK_INLINE_MAX_CHARS = 3000;
+const PREVIEW_MAX_CHARS = 320;
+const MAX_DOC_CHUNKS = 500;
+const MAX_DOCX_ARCHIVE_BYTES = 50 * 1024 * 1024;
+const MAX_DOCX_ENTRIES = 2000;
+const MAX_DOCX_ENTRY_BYTES = 10 * 1024 * 1024;
+const MAX_PDF_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_STREAMS = 500;
+const MAX_PDF_STREAM_IN_BYTES = 5 * 1024 * 1024;
+const MAX_PDF_STREAM_OUT_BYTES = 8 * 1024 * 1024;
+const MAX_EXTRACTED_DOC_CHARS = 2_000_000;
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const utf8FatalDecoder = new TextDecoder("utf-8", { fatal: true });
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function safeClip(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  let end = Math.max(0, maxChars);
+  if (end > 0 && isHighSurrogate(text.charCodeAt(end - 1))) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
+function readUint16LE(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8);
+}
+
+function readUint32LE(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] ?? 0) |
+      ((bytes[offset + 1] ?? 0) << 8) |
+      ((bytes[offset + 2] ?? 0) << 16) |
+      ((bytes[offset + 3] ?? 0) << 24)) >>>
+    0
+  );
+}
+
+function docxEntryPriority(rawName: string): number | null {
+  const normalized = rawName
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .toLowerCase();
+  if (normalized === "word/document.xml") return 0;
+  if (/^word\/header\d*\.xml$/.test(normalized)) return 1;
+  if (/^word\/footer\d*\.xml$/.test(normalized)) return 2;
+  if (
+    normalized === "word/footnotes.xml" ||
+    normalized === "word/endnotes.xml"
+  ) {
+    return 3;
+  }
+  return null;
+}
+
+function decodeXmlEntities(text: string): string {
+  return text.replace(
+    /&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/g,
+    (full, entity: string) => {
+      switch (entity) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        case "apos":
+          return "'";
+        case "nbsp":
+          return " ";
+        default: {
+          const isHex = entity.startsWith("#x") || entity.startsWith("#X");
+          const code = Number.parseInt(
+            entity.slice(isHex ? 2 : 1),
+            isHex ? 16 : 10,
+          );
+          if (
+            !Number.isFinite(code) ||
+            code <= 0 ||
+            code > 0x10ffff ||
+            (code >= 0xd800 && code <= 0xdfff)
+          ) {
+            return full;
+          }
+          return String.fromCodePoint(code);
+        }
+      }
+    },
+  );
+}
+
+function cleanWordXml(xml: string): string {
+  const prepared = xml
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<w:del\b[^>]*>[\s\S]*?<\/w:del>/gi, "")
+    .replace(/<w:instrText\b[^>]*>[\s\S]*?<\/w:instrText>/gi, "")
+    .replace(/<\/w:p>|<\/p>|<\/w:tr>|<\/tr>/gi, "\n")
+    .replace(/<w:br\b[^>]*\/?>|<w:cr\b[^>]*\/?>/gi, "\n")
+    .replace(/<w:tab\b[^>]*\/?>|<\/w:tc>|<\/td>/gi, "\t")
+    .replace(/<[^>]+>/g, "");
+  const decoded = decodeXmlEntities(prepared);
+  return decoded
+    .split(/\r?\n/)
+    .map((line) => line.replace(/ {2,}/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+type ZipEntrySlice = {
+  priority: number;
+  name: string;
+  method: number;
+  data: Uint8Array;
+};
+
+function readZipEntriesFromCentralDirectory(
+  bytes: Uint8Array,
+): ZipEntrySlice[] | null {
+  const minPos = Math.max(0, bytes.length - 65557);
+  let eocdOffset = -1;
+  for (let pos = bytes.length - 22; pos >= minPos; pos -= 1) {
+    if (readUint32LE(bytes, pos) === 0x06054b50) {
+      eocdOffset = pos;
+      break;
+    }
+  }
+  if (eocdOffset < 0) return null;
+
+  const totalEntries = readUint16LE(bytes, eocdOffset + 10);
+  const cdSize = readUint32LE(bytes, eocdOffset + 12);
+  const cdOffset = readUint32LE(bytes, eocdOffset + 16);
+  if (cdOffset >= bytes.length || cdOffset + cdSize > bytes.length) return null;
+
+  const results: ZipEntrySlice[] = [];
+  let pos = cdOffset;
+  let seen = 0;
+  const limit = Math.min(totalEntries, MAX_DOCX_ENTRIES);
+
+  while (pos + 46 <= cdOffset + cdSize && seen < limit) {
+    if (readUint32LE(bytes, pos) !== 0x02014b50) break;
+    seen += 1;
+    const method = readUint16LE(bytes, pos + 10);
+    const compSize = readUint32LE(bytes, pos + 20);
+    const uncompSize = readUint32LE(bytes, pos + 24);
+    const nameLen = readUint16LE(bytes, pos + 28);
+    const extraLen = readUint16LE(bytes, pos + 30);
+    const commentLen = readUint16LE(bytes, pos + 32);
+    const localOffset = readUint32LE(bytes, pos + 42);
+    const nameStart = pos + 46;
+    const nextPos = nameStart + nameLen + extraLen + commentLen;
+    if (nextPos > bytes.length) break;
+
+    const name = Buffer.from(
+      bytes.subarray(nameStart, nameStart + nameLen),
+    ).toString("utf8");
+    const priority = docxEntryPriority(name);
+    if (priority !== null && localOffset + 30 <= bytes.length) {
+      if (readUint32LE(bytes, localOffset) === 0x04034b50) {
+        const lNameLen = readUint16LE(bytes, localOffset + 26);
+        const lExtraLen = readUint16LE(bytes, localOffset + 28);
+        const dataStart = localOffset + 30 + lNameLen + lExtraLen;
+        const size = method === 0 && compSize === 0 ? uncompSize : compSize;
+        if (
+          size > 0 &&
+          size <= MAX_DOCX_ENTRY_BYTES &&
+          dataStart + size <= bytes.length
+        ) {
+          results.push({
+            priority,
+            name,
+            method,
+            data: bytes.subarray(dataStart, dataStart + size),
+          });
+        }
+      }
+    }
+    pos = nextPos;
+  }
+
+  return results;
+}
+
+function readZipEntriesFromLocalHeaders(bytes: Uint8Array): ZipEntrySlice[] {
+  const results: ZipEntrySlice[] = [];
+  let pos = 0;
+  let seen = 0;
+
+  while (pos + 30 <= bytes.length && seen < MAX_DOCX_ENTRIES) {
+    if (readUint32LE(bytes, pos) !== 0x04034b50) break;
+    seen += 1;
+    const flags = readUint16LE(bytes, pos + 6);
+    const method = readUint16LE(bytes, pos + 8);
+    const compSize = readUint32LE(bytes, pos + 18);
+    const uncompSize = readUint32LE(bytes, pos + 22);
+    const nameLen = readUint16LE(bytes, pos + 26);
+    const extraLen = readUint16LE(bytes, pos + 28);
+    const nameStart = pos + 30;
+    const dataStart = nameStart + nameLen + extraLen;
+    if (dataStart > bytes.length) break;
+
+    const size = method === 0 && compSize === 0 ? uncompSize : compSize;
+    if (size === 0 && (flags & 0x08) !== 0) break;
+    if (dataStart + size > bytes.length) break;
+
+    const name = Buffer.from(
+      bytes.subarray(nameStart, nameStart + nameLen),
+    ).toString("utf8");
+    const priority = docxEntryPriority(name);
+    if (priority !== null && size > 0 && size <= MAX_DOCX_ENTRY_BYTES) {
+      results.push({
+        priority,
+        name,
+        method,
+        data: bytes.subarray(dataStart, dataStart + size),
+      });
+    }
+    pos = dataStart + size;
+  }
+
+  return results;
+}
+
+/** 零依赖解析 DOCX（ZIP Local File Header / Central Directory + deflate）并清洗正文 XML。 */
+export function extractDocxText(buffer: Uint8Array): string {
+  if (!buffer || buffer.length < 30 || buffer.length > MAX_DOCX_ARCHIVE_BYTES) {
+    return "";
+  }
+  try {
+    const entries =
+      readZipEntriesFromCentralDirectory(buffer) ??
+      readZipEntriesFromLocalHeaders(buffer);
+    if (entries.length === 0) return "";
+
+    entries.sort((a, b) =>
+      a.priority !== b.priority
+        ? a.priority - b.priority
+        : a.name.localeCompare(b.name),
+    );
+
+    const sections: string[] = [];
+    let totalChars = 0;
+
+    for (const entry of entries) {
+      let xmlBytes: Uint8Array;
+      try {
+        if (entry.method === 0) {
+          xmlBytes = entry.data;
+        } else if (entry.method === 8) {
+          xmlBytes = inflateRawSync(entry.data, {
+            maxOutputLength: MAX_DOCX_ENTRY_BYTES,
+          });
+        } else {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      const xmlText = Buffer.from(xmlBytes).toString("utf8");
+      const cleaned = cleanWordXml(xmlText);
+      if (!cleaned) continue;
+
+      const remaining = MAX_EXTRACTED_DOC_CHARS - totalChars;
+      if (remaining <= 0) break;
+      const piece =
+        cleaned.length > remaining ? safeClip(cleaned, remaining) : cleaned;
+      if (piece) {
+        sections.push(piece);
+        totalChars += piece.length;
+      }
+    }
+
+    return sections.join("\n\n").trim();
+  } catch {
+    return "";
+  }
+}
+
+function decodeUtf16Be(bytes: Uint8Array): string {
+  const units: number[] = [];
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    units.push(((bytes[i] ?? 0) << 8) | (bytes[i + 1] ?? 0));
+  }
+  return String.fromCharCode(...units);
+}
+
+function decodePdfBytesToText(bytes: Uint8Array): string {
+  if (bytes.length === 0) return "";
+  let raw: string;
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    raw = decodeUtf16Be(bytes.subarray(2));
+  } else {
+    try {
+      raw = utf8FatalDecoder.decode(bytes);
+    } catch {
+      raw = Buffer.from(bytes).toString("latin1");
+    }
+  }
+  // 去掉无意义控制字符，仅保留常见空白符与可打印字符。
+  return raw.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+}
+
+function isPdfWhitespace(byte: number): boolean {
+  return (
+    byte === 0x20 ||
+    byte === 0x09 ||
+    byte === 0x0a ||
+    byte === 0x0d ||
+    byte === 0x0c ||
+    byte === 0x00
+  );
+}
+
+function isPdfDelimiter(byte: number): boolean {
+  return (
+    byte === 0x28 || // (
+    byte === 0x29 || // )
+    byte === 0x3c || // <
+    byte === 0x3e || // >
+    byte === 0x5b || // [
+    byte === 0x5d || // ]
+    byte === 0x7b || // {
+    byte === 0x7d || // }
+    byte === 0x2f || // /
+    byte === 0x25 // %
+  );
+}
+
+function readPdfLiteralString(
+  bytes: Uint8Array,
+  startPos: number,
+): { text: string; nextPos: number } {
+  const out: number[] = [];
+  let pos = startPos + 1;
+  let depth = 1;
+
+  while (pos < bytes.length && depth > 0) {
+    const ch = bytes[pos] ?? 0;
+    if (ch === 0x5c) {
+      // 反斜杠转义
+      pos += 1;
+      if (pos >= bytes.length) break;
+      const esc = bytes[pos] ?? 0;
+      if (esc === 0x6e) {
+        out.push(0x0a);
+        pos += 1;
+      } else if (esc === 0x72) {
+        out.push(0x0d);
+        pos += 1;
+      } else if (esc === 0x74) {
+        out.push(0x09);
+        pos += 1;
+      } else if (esc === 0x62) {
+        out.push(0x08);
+        pos += 1;
+      } else if (esc === 0x66) {
+        out.push(0x0c);
+        pos += 1;
+      } else if (esc === 0x0d) {
+        pos += 1;
+        if (bytes[pos] === 0x0a) pos += 1;
+      } else if (esc === 0x0a) {
+        pos += 1;
+      } else if (esc >= 0x30 && esc <= 0x37) {
+        let octal = esc - 0x30;
+        pos += 1;
+        for (let k = 0; k < 2 && pos < bytes.length; k += 1) {
+          const next = bytes[pos] ?? 0;
+          if (next < 0x30 || next > 0x37) break;
+          octal = (octal << 3) | (next - 0x30);
+          pos += 1;
+        }
+        out.push(octal & 0xff);
+      } else {
+        out.push(esc);
+        pos += 1;
+      }
+      continue;
+    }
+    if (ch === 0x28) {
+      depth += 1;
+      out.push(ch);
+      pos += 1;
+      continue;
+    }
+    if (ch === 0x29) {
+      depth -= 1;
+      if (depth > 0) out.push(ch);
+      pos += 1;
+      continue;
+    }
+    out.push(ch);
+    pos += 1;
+  }
+
+  return {
+    text: decodePdfBytesToText(Uint8Array.from(out)),
+    nextPos: pos,
+  };
+}
+
+function hexNibble(byte: number): number {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30;
+  if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10;
+  if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10;
+  return -1;
+}
+
+function readPdfHexString(
+  bytes: Uint8Array,
+  startPos: number,
+): { text: string; nextPos: number } {
+  const nibbles: number[] = [];
+  let pos = startPos + 1;
+  while (pos < bytes.length) {
+    const ch = bytes[pos] ?? 0;
+    pos += 1;
+    if (ch === 0x3e) break; // >
+    if (isPdfWhitespace(ch)) continue;
+    const val = hexNibble(ch);
+    if (val >= 0) nibbles.push(val);
+  }
+  if (nibbles.length % 2 === 1) nibbles.push(0);
+  const raw = new Uint8Array(nibbles.length / 2);
+  for (let i = 0; i < raw.length; i += 1) {
+    raw[i] = ((nibbles[i * 2] ?? 0) << 4) | (nibbles[i * 2 + 1] ?? 0);
+  }
+  return {
+    text: decodePdfBytesToText(raw),
+    nextPos: pos,
+  };
+}
+
+type PdfOperand =
+  | { kind: "str"; text: string }
+  | { kind: "num"; value: number }
+  | {
+      kind: "arr";
+      items: ({ kind: "str"; text: string } | { kind: "num"; value: number })[];
+    };
+
+function extractTextFromContentStream(bytes: Uint8Array): string {
+  const parts: string[] = [];
+  let stack: PdfOperand[] = [];
+  let inText = false;
+  let inArray = false;
+  let arrayItems: (
+    | { kind: "str"; text: string }
+    | { kind: "num"; value: number }
+  )[] = [];
+  let lastTmY: number | null = null;
+  let pos = 0;
+
+  const pushOperand = (op: PdfOperand) => {
+    if (inArray && (op.kind === "str" || op.kind === "num")) {
+      arrayItems.push(op);
+      return;
+    }
+    stack.push(op);
+    if (stack.length > 24) {
+      stack = stack.slice(-16);
+    }
+  };
+
+  while (pos < bytes.length) {
+    const ch = bytes[pos] ?? 0;
+    if (isPdfWhitespace(ch)) {
+      pos += 1;
+      continue;
+    }
+    if (ch === 0x25) {
+      // PDF 注释 %... 到行尾
+      while (pos < bytes.length && bytes[pos] !== 0x0a && bytes[pos] !== 0x0d) {
+        pos += 1;
+      }
+      continue;
+    }
+    if (ch === 0x28) {
+      const lit = readPdfLiteralString(bytes, pos);
+      pushOperand({ kind: "str", text: lit.text });
+      pos = lit.nextPos;
+      continue;
+    }
+    if (ch === 0x3c) {
+      if (bytes[pos + 1] === 0x3c) {
+        pos += 2;
+        continue;
+      }
+      const hex = readPdfHexString(bytes, pos);
+      pushOperand({ kind: "str", text: hex.text });
+      pos = hex.nextPos;
+      continue;
+    }
+    if (ch === 0x3e && bytes[pos + 1] === 0x3e) {
+      pos += 2;
+      continue;
+    }
+    if (ch === 0x5b) {
+      inArray = true;
+      arrayItems = [];
+      pos += 1;
+      continue;
+    }
+    if (ch === 0x5d) {
+      if (inArray) {
+        inArray = false;
+        pushOperand({ kind: "arr", items: arrayItems });
+        arrayItems = [];
+      }
+      pos += 1;
+      continue;
+    }
+    if (ch === 0x2f) {
+      pos += 1;
+      while (
+        pos < bytes.length &&
+        !isPdfWhitespace(bytes[pos] ?? 0) &&
+        !isPdfDelimiter(bytes[pos] ?? 0)
+      ) {
+        pos += 1;
+      }
+      continue;
+    }
+
+    const tokenStart = pos;
+    while (
+      pos < bytes.length &&
+      !isPdfWhitespace(bytes[pos] ?? 0) &&
+      !isPdfDelimiter(bytes[pos] ?? 0)
+    ) {
+      pos += 1;
+    }
+    if (pos === tokenStart) {
+      pos += 1;
+      continue;
+    }
+    const token = Buffer.from(bytes.subarray(tokenStart, pos)).toString(
+      "latin1",
+    );
+    if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(token)) {
+      const value = Number(token);
+      if (Number.isFinite(value)) {
+        pushOperand({ kind: "num", value });
+      }
+      continue;
+    }
+
+    if (token === "BT") {
+      inText = true;
+      lastTmY = null;
+      stack = [];
+      continue;
+    }
+    if (token === "ET") {
+      if (inText && parts.length > 0 && parts[parts.length - 1] !== "\n") {
+        parts.push("\n");
+      }
+      inText = false;
+      lastTmY = null;
+      stack = [];
+      continue;
+    }
+
+    if (inText) {
+      const top = stack[stack.length - 1];
+      if (token === "Tj") {
+        if (top?.kind === "str" && top.text) parts.push(top.text);
+      } else if (token === "'" || token === '"') {
+        if (top?.kind === "str" && top.text) {
+          if (parts.length > 0 && parts[parts.length - 1] !== "\n") {
+            parts.push("\n");
+          }
+          parts.push(top.text);
+        }
+      } else if (token === "TJ") {
+        if (top?.kind === "arr") {
+          for (const item of top.items) {
+            if (item.kind === "str") {
+              parts.push(item.text);
+            } else if (item.kind === "num" && item.value <= -180) {
+              const prev = parts[parts.length - 1];
+              if (prev && !prev.endsWith(" ") && !prev.endsWith("\n")) {
+                parts.push(" ");
+              }
+            }
+          }
+        }
+      } else if (token === "T*") {
+        if (parts.length > 0 && parts[parts.length - 1] !== "\n") {
+          parts.push("\n");
+        }
+      } else if (token === "Td" || token === "TD") {
+        const tx = stack[stack.length - 2];
+        const ty = stack[stack.length - 1];
+        if (ty?.kind === "num" && Math.abs(ty.value) > 0.5) {
+          if (parts.length > 0 && parts[parts.length - 1] !== "\n") {
+            parts.push("\n");
+          }
+        } else if (tx?.kind === "num" && tx.value > 1) {
+          const prev = parts[parts.length - 1];
+          if (prev && !prev.endsWith(" ") && !prev.endsWith("\n")) {
+            parts.push(" ");
+          }
+        }
+      } else if (token === "Tm" && stack.length >= 6) {
+        const yOp = stack[stack.length - 1];
+        if (yOp?.kind === "num") {
+          if (lastTmY !== null && Math.abs(yOp.value - lastTmY) > 0.5) {
+            if (parts.length > 0 && parts[parts.length - 1] !== "\n") {
+              parts.push("\n");
+            }
+          }
+          lastTmY = yOp.value;
+        }
+      }
+    }
+
+    stack = [];
+  }
+
+  return parts.join("");
+}
+
+function findPrecedingPdfDict(buf: Buffer, streamIdx: number): string {
+  const minScan = Math.max(0, streamIdx - 4096);
+  let depth = 0;
+  let dictEnd = -1;
+  let dictStart = -1;
+
+  for (let pos = streamIdx - 1; pos > minScan; pos -= 1) {
+    if (buf[pos] === 0x3e && buf[pos - 1] === 0x3e) {
+      if (dictEnd < 0) dictEnd = pos + 1;
+      depth += 1;
+      pos -= 1;
+      continue;
+    }
+    if (buf[pos] === 0x3c && buf[pos - 1] === 0x3c) {
+      depth -= 1;
+      if (depth <= 0 && dictEnd >= 0) {
+        dictStart = pos - 1;
+        break;
+      }
+      pos -= 1;
+    }
+  }
+
+  if (dictStart >= 0 && dictEnd > dictStart) {
+    return buf.subarray(dictStart, dictEnd).toString("latin1");
+  }
+  return "";
+}
+
+function isPdfStreamKeywordBoundary(byte: number | undefined): boolean {
+  return (
+    byte === undefined || isPdfWhitespace(byte) || byte === 0x3e // >
+  );
+}
+
+/** 零依赖解析 PDF stream（含未压缩与 FlateDecode）内 BT...ET 的 Tj/TJ 文本，安全跳过损坏流。 */
+export function extractPdfText(buffer: Uint8Array): string {
+  if (!buffer || buffer.length < 8 || buffer.length > MAX_PDF_BYTES) {
+    return "";
+  }
+  try {
+    const buf = Buffer.isBuffer(buffer)
+      ? buffer
+      : Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    if (buf.subarray(0, Math.min(buf.length, 1024)).indexOf("%PDF-") < 0) {
+      return "";
+    }
+
+    const sections: string[] = [];
+    let totalChars = 0;
+    let pos = 0;
+    let scannedStreams = 0;
+
+    while (pos < buf.length && scannedStreams < MAX_PDF_STREAMS) {
+      const idx = buf.indexOf("stream", pos);
+      if (idx < 0) break;
+
+      const beforeByte = idx > 0 ? buf[idx - 1] : undefined;
+      if (!isPdfStreamKeywordBoundary(beforeByte)) {
+        pos = idx + 6;
+        continue;
+      }
+
+      const after0 = buf[idx + 6];
+      const after1 = buf[idx + 7];
+      let dataStart = -1;
+      if (after0 === 0x0d && after1 === 0x0a) {
+        dataStart = idx + 8;
+      } else if (after0 === 0x0a || after0 === 0x0d) {
+        dataStart = idx + 7;
+      } else {
+        pos = idx + 6;
+        continue;
+      }
+
+      scannedStreams += 1;
+      const dict = findPrecedingPdfDict(buf, idx);
+      const lengthMatch = /\/Length\s+(\d+)(?!\s+\d+\s+R)\b/.exec(dict);
+      const declaredLen = lengthMatch
+        ? Number.parseInt(lengthMatch[1] ?? "", 10)
+        : -1;
+
+      let dataEnd = -1;
+      let nextPos = -1;
+      if (
+        Number.isFinite(declaredLen) &&
+        declaredLen >= 0 &&
+        dataStart + declaredLen <= buf.length
+      ) {
+        const probeFrom = Math.max(dataStart, dataStart + declaredLen - 2);
+        const probeTo = Math.min(buf.length, dataStart + declaredLen + 32);
+        const relEnd = buf.subarray(probeFrom, probeTo).indexOf("endstream");
+        if (relEnd >= 0) {
+          dataEnd = dataStart + declaredLen;
+          nextPos = probeFrom + relEnd + 9;
+        }
+      }
+
+      if (dataEnd < 0) {
+        const endIdx = buf.indexOf("endstream", dataStart);
+        if (endIdx < 0) break;
+        dataEnd = endIdx;
+        if (
+          dataEnd >= dataStart + 2 &&
+          buf[dataEnd - 2] === 0x0d &&
+          buf[dataEnd - 1] === 0x0a
+        ) {
+          dataEnd -= 2;
+        } else if (
+          dataEnd >= dataStart + 1 &&
+          (buf[dataEnd - 1] === 0x0a || buf[dataEnd - 1] === 0x0d)
+        ) {
+          dataEnd -= 1;
+        }
+        nextPos = endIdx + 9;
+      }
+
+      pos = nextPos;
+      if (
+        dataEnd <= dataStart ||
+        dataEnd - dataStart > MAX_PDF_STREAM_IN_BYTES
+      ) {
+        continue;
+      }
+      if (/\/(?:DCTDecode|JPXDecode|CCITTFaxDecode|JBIG2Decode)\b/.test(dict)) {
+        continue;
+      }
+
+      const slice = buf.subarray(dataStart, dataEnd);
+      const isFlate =
+        /\/Filter\b[\s\S]{0,200}(?:\/FlateDecode\b|\/Fl(?![A-Za-z]))/.test(
+          dict,
+        );
+
+      let decoded: Uint8Array | null = null;
+      if (isFlate) {
+        try {
+          decoded = inflateSync(slice, {
+            maxOutputLength: MAX_PDF_STREAM_OUT_BYTES,
+          });
+        } catch {
+          try {
+            decoded = inflateRawSync(slice, {
+              maxOutputLength: MAX_PDF_STREAM_OUT_BYTES,
+            });
+          } catch {
+            decoded = null;
+          }
+        }
+      } else {
+        decoded = slice;
+      }
+
+      if (!decoded || decoded.length === 0) continue;
+      const extracted = extractTextFromContentStream(decoded)
+        .split(/\r?\n/)
+        .map((line) => line.replace(/ {2,}/g, " ").trim())
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      if (!extracted) continue;
+      const remaining = MAX_EXTRACTED_DOC_CHARS - totalChars;
+      if (remaining <= 0) break;
+      const piece =
+        extracted.length > remaining
+          ? safeClip(extracted, remaining)
+          : extracted;
+      if (piece) {
+        sections.push(piece);
+        totalChars += piece.length;
+      }
+    }
+
+    if (scannedStreams === 0) {
+      const direct = extractTextFromContentStream(buf)
+        .split(/\r?\n/)
+        .map((line) => line.replace(/ {2,}/g, " ").trim())
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (direct) sections.push(safeClip(direct, MAX_EXTRACTED_DOC_CHARS));
+    }
+
+    return sections.join("\n\n").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** 按段落与句子边界切分长文本，支持适当重叠并限制最大块数防膨胀。 */
+export function chunkDocumentText(
+  text: string,
+  chunkSize = DEFAULT_CHUNK_SIZE,
+  overlap = DEFAULT_CHUNK_OVERLAP,
+): string[] {
+  const normalized = text.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return [];
+
+  const size = Math.max(
+    1,
+    Math.floor(Number.isFinite(chunkSize) ? chunkSize : DEFAULT_CHUNK_SIZE),
+  );
+  const ov = Math.min(
+    Math.max(
+      0,
+      Math.floor(Number.isFinite(overlap) ? overlap : DEFAULT_CHUNK_OVERLAP),
+    ),
+    size - 1,
+  );
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < normalized.length && chunks.length < MAX_DOC_CHUNKS) {
+    if (start > 0 && isLowSurrogate(normalized.charCodeAt(start))) {
+      start += 1;
+      if (start >= normalized.length) break;
+    }
+
+    let end = Math.min(normalized.length, start + size);
+    if (end < normalized.length) {
+      const minBreak = start + Math.floor(size * 0.7);
+      if (minBreak > start && minBreak < end) {
+        const window = normalized.slice(minBreak, end);
+        const breakCandidates = [
+          window.lastIndexOf("\n\n"),
+          window.lastIndexOf("\n"),
+          Math.max(
+            window.lastIndexOf("。"),
+            window.lastIndexOf("！"),
+            window.lastIndexOf("？"),
+            window.lastIndexOf(". "),
+          ),
+          window.lastIndexOf(" "),
+        ];
+        for (const rel of breakCandidates) {
+          if (rel > 0) {
+            end = minBreak + rel + 1;
+            break;
+          }
+        }
+      }
+      if (end > start && isHighSurrogate(normalized.charCodeAt(end - 1))) {
+        end -= 1;
+      }
+      if (end <= start) {
+        end = Math.min(normalized.length, start + size);
+      }
+    }
+
+    const piece = normalized.slice(start, end).trim();
+    if (piece) chunks.push(piece);
+    if (end >= normalized.length) break;
+
+    const nextStart = Math.max(start + 1, end - ov);
+    start = nextStart;
+  }
+
+  return chunks;
+}
+
+const CHUNK_CJK_CHAR =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const CHUNK_CJK_RUN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
+const CHUNK_LATIN_WORD = /[a-z0-9][a-z0-9._@+-]*/g;
+
+function tokenizeChunkQuery(query: string) {
+  const phrase = query.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+  const terms = new Set<string>();
+  const bigrams = new Set<string>();
+  if (!phrase)
+    return { phrase: "", terms: [] as string[], bigrams: [] as string[] };
+
+  for (const word of phrase.match(CHUNK_LATIN_WORD) ?? []) {
+    if (word.length >= 2 || !CHUNK_CJK_CHAR.test(phrase)) {
+      terms.add(word);
+    }
+  }
+  for (const run of phrase.match(CHUNK_CJK_RUN) ?? []) {
+    terms.add(run);
+    if (run.length === 1) {
+      bigrams.add(run);
+    } else {
+      for (let i = 0; i + 1 < run.length; i += 1) {
+        bigrams.add(run.slice(i, i + 2));
+      }
+    }
+  }
+  if (terms.size === 0 && bigrams.size === 0) {
+    terms.add(phrase);
+  }
+  return { phrase, terms: [...terms], bigrams: [...bigrams] };
+}
+
+function scoreChunkText(
+  content: string,
+  tokens: { phrase: string; terms: string[]; bigrams: string[] },
+): number {
+  const hay = content.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+  if (!hay || !tokens.phrase) return 0;
+
+  let total = 0;
+  if (hay.includes(tokens.phrase)) total += 10;
+
+  let termHits = 0;
+  for (const term of tokens.terms) {
+    if (hay.includes(term)) termHits += 1;
+  }
+  if (tokens.terms.length > 0 && termHits > 0) {
+    total += (termHits / tokens.terms.length) * 6;
+  }
+
+  let bigramHits = 0;
+  for (const bg of tokens.bigrams) {
+    if (hay.includes(bg)) bigramHits += 1;
+  }
+  if (tokens.bigrams.length > 0 && bigramHits > 0) {
+    const ratio = bigramHits / tokens.bigrams.length;
+    if (ratio >= 0.4 || termHits > 0) {
+      total += ratio * 3;
+    }
+  }
+  return total;
+}
+
+function isDocxFile(mimeType: string, name: string): boolean {
+  return mimeType === DOCX_MIME || name.toLowerCase().endsWith(".docx");
+}
+
+function isPdfFile(mimeType: string, name: string): boolean {
+  return mimeType === "application/pdf" || name.toLowerCase().endsWith(".pdf");
+}
+
+function isTextFile(mimeType: string, name: string): boolean {
+  return (
+    TEXT_TYPES.has(mimeType) || /\.(txt|md|markdown|csv|json|log)$/i.test(name)
+  );
+}
+
+function extractDocumentChunks(
+  bytes: Uint8Array,
+  mimeType: string,
+  name: string,
+): { text: string; chunks: string[]; isStructuredDoc: boolean } {
+  if (isDocxFile(mimeType, name)) {
+    const text = extractDocxText(bytes);
+    return {
+      text,
+      chunks: text ? chunkDocumentText(text) : [],
+      isStructuredDoc: true,
+    };
+  }
+  if (isPdfFile(mimeType, name)) {
+    const text = extractPdfText(bytes);
+    return {
+      text,
+      chunks: text ? chunkDocumentText(text) : [],
+      isStructuredDoc: true,
+    };
+  }
+  if (isTextFile(mimeType, name)) {
+    if (bytes.subarray(0, 8192).includes(0)) {
+      return { text: "", chunks: [], isStructuredDoc: false };
+    }
+    const text = Buffer.from(bytes).toString("utf8").trim();
+    const chunks =
+      text.length > DEFAULT_CHUNK_SIZE ? chunkDocumentText(text) : [];
+    return { text, chunks, isStructuredDoc: false };
+  }
+  return { text: "", chunks: [], isStructuredDoc: false };
+}
+
 export function createChatFiles(
   database: Database,
   options: {
@@ -319,6 +1331,15 @@ export function createChatFiles(
         updated_at timestamptz,
         updated_by text
       );
+      CREATE TABLE IF NOT EXISTS chisabot_chat_file_chunks (
+        file_id text NOT NULL,
+        owner_user_id text NOT NULL,
+        chunk_index integer NOT NULL,
+        content text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (file_id, chunk_index)
+      );
+      CREATE INDEX IF NOT EXISTS chisabot_chat_file_chunks_owner_file ON chisabot_chat_file_chunks (owner_user_id, file_id);
     `);
   }
 
@@ -358,6 +1379,63 @@ export function createChatFiles(
 
   // ------------------------------------------------------------------ 文件
 
+  async function indexDocumentChunks(
+    fileId: string,
+    owner: string,
+    bytes: Buffer,
+    mimeType: string,
+    name: string,
+  ): Promise<void> {
+    const extracted = extractDocumentChunks(bytes, mimeType, name);
+    if (extracted.chunks.length === 0) return;
+    try {
+      for (let index = 0; index < extracted.chunks.length; index += 1) {
+        const content = extracted.chunks[index];
+        if (!content) continue;
+        await sql.unsafe(
+          `INSERT INTO chisabot_chat_file_chunks (file_id, owner_user_id, chunk_index, content)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (file_id, chunk_index) DO UPDATE SET content = EXCLUDED.content`,
+          [fileId, owner, index, content],
+        );
+      }
+    } catch {
+      // 兼容缺少 chisabot_chat_file_chunks 表的精简测试桩数据库，不阻断文件上传落库。
+    }
+  }
+
+  async function loadFileChunks(
+    owner: string,
+    fileId: string,
+  ): Promise<string[]> {
+    try {
+      const rows = await sql.unsafe<{ chunk_index: number; content: string }[]>(
+        `SELECT chunk_index, content
+         FROM chisabot_chat_file_chunks
+         WHERE file_id = $1 AND owner_user_id = $2
+         ORDER BY chunk_index ASC`,
+        [fileId, owner],
+      );
+      return rows
+        .map((entry) => entry.content)
+        .filter((text) => text.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
+  async function hasIndexedChunks(owner: string): Promise<boolean> {
+    try {
+      const rows = await sql.unsafe<{ ok: number }[]>(
+        "SELECT 1 AS ok FROM chisabot_chat_file_chunks WHERE owner_user_id = $1 LIMIT 1",
+        [owner],
+      );
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   async function store(
     owner: string,
     agentId: string,
@@ -394,10 +1472,24 @@ export function createChatFiles(
     const inserted = rows[0];
     if (!inserted) throw new Error(`写入对话文件记录后未返回行：${id}`);
     const view = fileView(inserted);
-    // 图片记下宽高，随工具结果的文件清单给网页（DESIGN.md §83.2）。
-    if (!input.mimeType.startsWith("image/")) return view;
-    const dims = await imageDimsFor(database).remember(`cf:${id}`, input.bytes);
-    return dims ? { ...view, width: dims.width, height: dims.height } : view;
+    if (input.mimeType.startsWith("image/")) {
+      // 图片记下宽高，随工具结果的文件清单给网页（DESIGN.md §83.2）。
+      const dims = await imageDimsFor(database).remember(
+        `cf:${id}`,
+        input.bytes,
+      );
+      return dims ? { ...view, width: dims.width, height: dims.height } : view;
+    }
+    if (input.kind === "upload" || input.kind === "shared") {
+      await indexDocumentChunks(
+        id,
+        owner,
+        input.bytes,
+        input.mimeType,
+        input.name,
+      );
+    }
+    return view;
   }
 
   async function setWorkspacePath(id: string, path: string | null) {
@@ -470,7 +1562,15 @@ export function createChatFiles(
         [id, owner],
       );
     });
-    if (rows.length > 0) await media.forgetDescriptions(id).catch(() => {});
+    if (rows.length > 0) {
+      await media.forgetDescriptions(id).catch(() => {});
+      await sql
+        .unsafe(
+          "DELETE FROM chisabot_chat_file_chunks WHERE file_id = $1 AND owner_user_id = $2",
+          [id, owner],
+        )
+        .catch(() => {});
+    }
     return rows.length > 0;
   }
 
@@ -802,6 +1902,55 @@ export function createChatFiles(
         where,
         turn?.agentId === found.agent_id ? turn.modelId : undefined,
       );
+
+    const storedChunks = await loadFileChunks(owner, found.id);
+    const fallbackExtracted =
+      storedChunks.length === 0
+        ? extractDocumentChunks(bytes, found.mime_type, found.name)
+        : null;
+    const chunks =
+      storedChunks.length > 0
+        ? storedChunks
+        : (fallbackExtracted?.chunks ?? []);
+
+    if (chunks.length > 0) {
+      const rawLength = chunks.reduce((sum, piece) => sum + piece.length, 0);
+      const estimatedOverlap =
+        Math.max(0, chunks.length - 1) * DEFAULT_CHUNK_OVERLAP;
+      const totalChars =
+        fallbackExtracted?.text.length ??
+        Math.max(chunks[0]?.length ?? 0, rawLength - estimatedOverlap);
+
+      if (chunks.length > 1 || totalChars > SINGLE_CHUNK_INLINE_MAX_CHARS) {
+        const preview = safeClip(chunks[0] ?? "", PREVIEW_MAX_CHARS).trim();
+        const summary = [
+          `用户上传了文档「${found.name}」（${found.mime_type}，${formatSize(bytes.length)}），${where}。文件 id：${found.id}`,
+          `文档摘要：正文共约 ${totalChars} 字，已分为 ${chunks.length} 块（由于篇幅较长未全量注入上下文）。`,
+          preview
+            ? `首段预览：\n${preview}${totalChars > preview.length ? "…" : ""}`
+            : "",
+          `请调用 chat_file_search 工具按关键词检索需要的内容（可传入 fileId="${found.id}" 与 query）。`,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        return {
+          mimeType: "text/plain",
+          name: found.name,
+          bytes: Buffer.from(summary),
+        };
+      }
+
+      if (!TEXT_TYPES.has(found.mime_type)) {
+        return {
+          mimeType: "text/plain",
+          name: found.name,
+          bytes: Buffer.from(
+            `用户上传了文档「${found.name}」（${found.mime_type}，${formatSize(bytes.length)}），${where}。文件 id：${found.id}\n\n【文档正文】\n${chunks[0] ?? ""}`,
+          ),
+        };
+      }
+    }
+
     if (TEXT_TYPES.has(found.mime_type) && bytes.length <= 512 * 1024) {
       return {
         mimeType: "text/plain",
@@ -974,9 +2123,11 @@ export function createChatFiles(
       description: string,
       parameters: T,
       run: (input: z.infer<T>) => Promise<string>,
+      effect?: "read" | "write",
     ): GrantedTool => ({
       name,
       ref: `chat-files/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args) {
@@ -1167,8 +2318,144 @@ export function createChatFiles(
             )
             .join("\n");
         },
+        "read",
       ),
     );
+    if (await hasIndexedChunks(owner)) {
+      out.push(
+        tool(
+          "chat_file_search",
+          "在当前用户上传的文档分块（PDF / DOCX / 长文本）中按关键词检索相关片段，返回所属文件 id、文件名、分块序号 chunkIndex 与命中片段。",
+          z
+            .object({
+              query: z
+                .string()
+                .trim()
+                .min(1, "请提供要检索的关键词。")
+                .max(300)
+                .describe("要检索的关键词或短语（支持中英文）"),
+              fileId: z
+                .string()
+                .trim()
+                .min(1)
+                .max(64)
+                .optional()
+                .describe("可选，只检索指定文件 id 的分块"),
+              file_id: z
+                .string()
+                .trim()
+                .min(1)
+                .max(64)
+                .optional()
+                .describe("fileId 的可选别名"),
+              limit: z
+                .number()
+                .int()
+                .min(1)
+                .max(100)
+                .optional()
+                .describe("最多返回条数，默认 5，上限 20"),
+            })
+            .strict(),
+          async (input) => {
+            const targetFileId = input.fileId ?? input.file_id ?? null;
+            const limit = Math.min(Math.max(input.limit ?? 5, 1), 20);
+            const tokens = tokenizeChunkQuery(input.query);
+            if (!tokens.phrase) {
+              return JSON.stringify(
+                {
+                  total: 0,
+                  results: [],
+                  message: "请提供有效检索关键词。",
+                },
+                null,
+                2,
+              );
+            }
+
+            type ChunkSearchRow = {
+              file_id: string;
+              owner_user_id?: string;
+              chunk_index: number;
+              content: string;
+              file_name?: string | null;
+            };
+
+            let rows: ChunkSearchRow[] = [];
+            try {
+              rows = targetFileId
+                ? await sql.unsafe<ChunkSearchRow[]>(
+                    `SELECT c.file_id, c.owner_user_id, c.chunk_index, c.content, f.name AS file_name
+                     FROM chisabot_chat_file_chunks c
+                     LEFT JOIN chisabot_chat_files f
+                       ON f.id = c.file_id AND f.owner_user_id = c.owner_user_id
+                     WHERE c.owner_user_id = $1 AND c.file_id = $2
+                     ORDER BY c.chunk_index ASC
+                     LIMIT 500`,
+                    [owner, targetFileId],
+                  )
+                : await sql.unsafe<ChunkSearchRow[]>(
+                    `SELECT c.file_id, c.owner_user_id, c.chunk_index, c.content, f.name AS file_name
+                     FROM chisabot_chat_file_chunks c
+                     LEFT JOIN chisabot_chat_files f
+                       ON f.id = c.file_id AND f.owner_user_id = c.owner_user_id
+                     WHERE c.owner_user_id = $1
+                     ORDER BY c.created_at DESC, c.chunk_index ASC
+                     LIMIT 500`,
+                    [owner],
+                  );
+            } catch {
+              rows = [];
+            }
+
+            const ranked = rows
+              .filter(
+                (entry) =>
+                  (entry.owner_user_id === undefined ||
+                    entry.owner_user_id === owner) &&
+                  (!targetFileId || entry.file_id === targetFileId),
+              )
+              .map((entry) => ({
+                fileId: entry.file_id,
+                fileName: entry.file_name || entry.file_id,
+                chunkIndex: Number(entry.chunk_index),
+                excerpt: entry.content,
+                score: scoreChunkText(entry.content, tokens),
+              }))
+              .filter((hit) => hit.score > 0)
+              .sort((a, b) =>
+                b.score !== a.score
+                  ? b.score - a.score
+                  : a.chunkIndex - b.chunkIndex,
+              )
+              .slice(0, limit)
+              .map(({ score: _score, ...rest }) => rest);
+
+            if (ranked.length === 0) {
+              return JSON.stringify(
+                {
+                  total: 0,
+                  results: [],
+                  message: "没有找到匹配的文件分块。",
+                },
+                null,
+                2,
+              );
+            }
+
+            return JSON.stringify(
+              {
+                total: ranked.length,
+                results: ranked,
+              },
+              null,
+              2,
+            );
+          },
+          "read",
+        ),
+      );
+    }
     return out;
   }
 

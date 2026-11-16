@@ -7,9 +7,11 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   index,
+  integer,
   pgTable,
   primaryKey,
   text,
@@ -159,5 +161,44 @@ export const modelUsage = pgTable(
       "model_usage_source_check",
       sql`${table.source} IN ('configured', 'observed', 'unknown')`,
     ),
+  ],
+);
+
+/** 每位用户的模型 Token 与请求硬配额上限（CB-045）。 */
+export const userQuotas = pgTable("chisabot_user_quotas", {
+  userId: text("user_id").primaryKey(),
+  dailyTokenLimit: bigint("daily_token_limit", { mode: "number" }),
+  monthlyTokenLimit: bigint("monthly_token_limit", { mode: "number" }),
+  dailyRequestLimit: integer("daily_request_limit"),
+  bypassAdmin: boolean("bypass_admin").notNull().default(true),
+  updatedBy: text("updated_by"),
+  updatedAt: updatedAt(),
+});
+
+/** 按（用户, 自然日, 模型）实时原子累计的真实消耗账本。 */
+export const usageLedger = pgTable(
+  "chisabot_usage_ledger",
+  {
+    userId: text("user_id").notNull(),
+    day: text("day").notNull(),
+    model: text("model").notNull(),
+    inputTokens: bigint("input_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    cacheReadTokens: bigint("cache_read_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    requests: integer("requests").notNull().default(0),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    primaryKey({
+      name: "chisabot_usage_ledger_pkey",
+      columns: [table.userId, table.day, table.model],
+    }),
+    index("chisabot_usage_ledger_day_idx").on(table.day),
   ],
 );

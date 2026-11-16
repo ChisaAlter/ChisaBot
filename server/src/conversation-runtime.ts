@@ -74,11 +74,15 @@ import {
   withConfirmToolCall,
 } from "./confirmations/context";
 import { meterLanguageModel, meterRun } from "./context-usage";
+import type { ModelKeyPool } from "./conversations/key-pool";
+import type { ModelProxyQuotaOptions } from "./conversations/model-connection-proxy";
 import { runAssertionValue } from "./conversations/protocol";
 import { createConversationRoutes } from "./conversations/routes";
+import type { ToolImagePart } from "./conversations/tool-images";
 import { observeModelConnection } from "./desktop-connection-failure";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import type { LocalConversationBackend } from "./local-conversations";
+import type { ModelConnectionPooledKeyRuntime } from "./model-settings";
 import {
   type LoadPersonalMemory,
   PersonalMemoryMiddleware,
@@ -199,9 +203,23 @@ export type RuntimeModel = {
   useApiKey?: boolean;
 };
 
+export type RuntimeModelPolicy = {
+  pooledKeys?: readonly ModelConnectionPooledKeyRuntime[];
+  keyPool?: ModelKeyPool;
+  poolId?: string;
+  quota?: ModelProxyQuotaOptions;
+  describeImageForAgent?: (
+    agentId: string,
+    part: ToolImagePart,
+  ) => Promise<string | null>;
+};
+
 export type RuntimeModelConnection = {
   model: RuntimeModel;
   apiKey: string | null;
+  pooledKeys?: readonly ModelConnectionPooledKeyRuntime[];
+  keyPool?: ModelKeyPool;
+  poolId?: string;
 };
 export type RuntimeModelResolver = () => Promise<RuntimeModelConnection>;
 
@@ -924,6 +942,7 @@ export async function buildAgents(
   ) => Promise<RuntimeModelConnection>,
   /** Who the build is for, for each built-in Bot's self-map. Appended last, positionally as ever. */
   audience?: BotAudience,
+  runtimePolicy?: RuntimeModelPolicy,
 ): Promise<Record<string, AbstractAgent>> {
   let vendors: readonly string[] = [];
   try {
@@ -972,6 +991,29 @@ export async function buildAgents(
           (agent.type === "built_in" && agent.model
             ? { ...model, defaultModel: agent.model, plan: undefined }
             : model);
+        const agentPooledKeys =
+          connection?.pooledKeys ?? runtimePolicy?.pooledKeys;
+        const agentKeyPool = connection?.keyPool ?? runtimePolicy?.keyPool;
+        const agentPoolId = connection?.poolId ?? runtimePolicy?.poolId;
+        const agentPolicy: RuntimeModelPolicy | undefined =
+          agentPooledKeys ||
+          agentKeyPool ||
+          agentPoolId ||
+          runtimePolicy?.quota ||
+          runtimePolicy?.describeImageForAgent
+            ? {
+                ...(agentPooledKeys ? { pooledKeys: agentPooledKeys } : {}),
+                ...(agentKeyPool ? { keyPool: agentKeyPool } : {}),
+                ...(agentPoolId ? { poolId: agentPoolId } : {}),
+                ...(runtimePolicy?.quota ? { quota: runtimePolicy.quota } : {}),
+                ...(runtimePolicy?.describeImageForAgent
+                  ? {
+                      describeImageForAgent:
+                        runtimePolicy.describeImageForAgent,
+                    }
+                  : {}),
+              }
+            : undefined;
         const built = await buildAgent(
           agent,
           selectedModel,
@@ -1002,6 +1044,7 @@ export async function buildAgents(
             ),
           markAttachmentsSent,
           audience,
+          agentPolicy,
         );
         if (loadPersonalMemory)
           built.use(new PersonalMemoryMiddleware(agent.id, loadPersonalMemory));
@@ -1287,6 +1330,7 @@ async function buildAgent(
   markAttachmentsSent?: MarkAttachmentsSent,
   /** Who the run belongs to, for the self-map. Appended last for the usual positional reason. */
   audience?: BotAudience,
+  runtimePolicy?: RuntimeModelPolicy,
 ): Promise<AbstractAgent> {
   if (agent.type === "unavailable") {
     return new UnavailableAgent(agent);
@@ -1404,7 +1448,20 @@ async function buildAgent(
         apiKey,
         useApiKey: model.useApiKey,
         model: model.defaultModel,
+        ...(runtimePolicy?.pooledKeys
+          ? { pooledKeys: runtimePolicy.pooledKeys }
+          : {}),
       },
+      ...(runtimePolicy?.keyPool ? { keyPool: runtimePolicy.keyPool } : {}),
+      ...(runtimePolicy?.poolId ? { poolId: runtimePolicy.poolId } : {}),
+      ...(runtimePolicy?.quota ? { quota: runtimePolicy.quota } : {}),
+      ...(runtimePolicy?.describeImageForAgent
+        ? {
+            describeImage: (part: ToolImagePart) =>
+              runtimePolicy.describeImageForAgent?.(agent.id, part) ??
+              Promise.resolve(null),
+          }
+        : {}),
       prompt: (tools) => {
         const configured = builtInAgentConfiguration(
           agent,
@@ -2223,6 +2280,7 @@ export async function resolveRuntimeAgents(
   ) => Promise<RuntimeModelConnection>,
   /** Appended after `resolveConnectionForAgent`, for the same positional reason it gives. */
   audience?: BotAudience,
+  runtimePolicy?: RuntimeModelPolicy,
 ): Promise<Record<string, AbstractAgent>> {
   const all = await loadAgents();
   if (all.length === 0) {
@@ -2261,6 +2319,7 @@ export async function resolveRuntimeAgents(
     loadPersonalMemory,
     resolveConnectionForAgent,
     audience,
+    runtimePolicy,
   );
 }
 
@@ -2389,6 +2448,7 @@ export function mountConversationRuntime(
     basePath?: string;
     onRunBusy?: (input: { threadId: string; busy: boolean }) => void;
     localBackend?: LocalConversationBackend;
+    checkQuota?: (actor: { id: string; isAdmin: boolean }) => Promise<void>;
     overrideAgent?: (
       actorId: string,
       botId: string,
@@ -2420,6 +2480,7 @@ export function mountConversationRuntime(
       resolver,
       identifyActor,
       overrideAgent: options.overrideAgent,
+      ...(options.checkQuota ? { checkQuota: options.checkQuota } : {}),
       toolOperations:
         agentKernel.kind === "dsh"
           ? agentKernel.binding.gateway.operations

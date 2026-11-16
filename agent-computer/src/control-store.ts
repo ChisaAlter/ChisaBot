@@ -10,7 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { HandoffRequest } from "../../shared/computer-control";
+import {
+  HANDOFF_SOURCES,
+  type HandoffRequest,
+} from "../../shared/computer-control";
 import { isPlainBotId } from "./bot-id";
 
 export type StoredControl = {
@@ -35,7 +38,7 @@ const statuses = new Set([
   "expired",
   "interrupted",
 ]);
-const sources = new Set(["model", "manual", "cloudflare", "visible-challenge"]);
+const sources = new Set<string>(HANDOFF_SOURCES);
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const timestamp = (v: unknown): v is string =>
@@ -162,5 +165,7 @@ export async function forgetControlState(
 ): Promise<void> {
   if (!isPlainBotId(botId)) return;
   const { rm } = await import("node:fs/promises");
-  await rm(join(profilesDirectory, ".control", `${botId}.json`), { force: true });
+  await rm(join(profilesDirectory, ".control", `${botId}.json`), {
+    force: true,
+  });
 }

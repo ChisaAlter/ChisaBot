@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  canReadMemoryNote,
   MEMORY_LIMITS,
   type MemoryKind,
   type MemoryTidyGroup,
@@ -7,7 +8,11 @@ import {
   type MemoryTidyPreview,
   type MemoryTidyResult,
   type MemoryTidyUndoResult,
+  type MemoryViewer,
+  type MemoryVisibility,
+  resolveMemoryVisibility,
 } from "../../../shared/memory-notes";
+import { toVisibilityNote } from "./search";
 
 /**
  * 整理记忆（设置 → 记忆 →「更多」→ 整理记忆…，机器人工具 memory_dream）。审计 12-settings 必修 1。
@@ -29,6 +34,7 @@ export type TidyRow = {
   content: string;
   context: string | null;
   agent_id: string | null;
+  visibility?: MemoryVisibility | null;
   shared?: boolean;
   created_at: Date | string;
   updated_at: Date | string;
@@ -62,12 +68,33 @@ export const TIDY_SCHEMA = `
 const norm = (value: string | null | undefined) =>
   (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
-/** 分组键：种类 + 机器人 + 情境 + 主题（没主题就用正文，即完全重复的才算一组）。 */
+/** 四级隔离整理准入判定：仅整理私有记忆，且严格遵循调用方可见性作用域。 */
+export function canTidyMemoryNote(
+  row: TidyRow,
+  viewer?: MemoryViewer,
+): boolean {
+  const visibility = resolveMemoryVisibility(row);
+  if (visibility !== "private" && visibility !== "bot_private") return false;
+  if (!viewer) return visibility === "private";
+  return canReadMemoryNote(toVisibilityNote(row), viewer);
+}
+
+/** 分组键：可见性 + 种类 + 机器人 + 情境 + 主题（没主题就用正文，不同隔离级别绝不混并）。 */
 export function tidyGroupKey(
-  row: Pick<TidyRow, "kind" | "subject" | "content" | "context" | "agent_id">,
+  row: Pick<
+    TidyRow,
+    | "kind"
+    | "subject"
+    | "content"
+    | "context"
+    | "agent_id"
+    | "visibility"
+    | "shared"
+  >,
 ): string {
   const subject = norm(row.subject);
   return JSON.stringify([
+    resolveMemoryVisibility(row),
     row.kind,
     row.agent_id ?? "",
     norm(row.context),
@@ -121,9 +148,13 @@ const clipTitle = (text: string) => {
  * 算整理计划（不碰库）。rows 只能是这个人自己的、非公共知识库的笔记，按 updated_at 新到旧：
  * 每组留最新那条，旧的按顺序接在后面（已经包含在里面的不重复接）。
  */
-export function planTidy(rows: readonly TidyRow[]): TidyPlan {
+export function planTidy(
+  rows: readonly TidyRow[],
+  viewer?: MemoryViewer,
+): TidyPlan {
   const buckets = new Map<string, TidyRow[]>();
   for (const row of rows) {
+    if (!canTidyMemoryNote(row, viewer)) continue;
     const key = tidyGroupKey(row);
     const list = buckets.get(key);
     if (list) list.push(row);
@@ -231,16 +262,18 @@ const LOCK_ROWS =
 
 export class TidyConflictError extends Error {}
 
-/** 这个人自己的笔记（不含公共知识库），新到旧。 */
+/** 这个人自己的笔记（不含公共知识库），新到旧，并按四级可见性规则过滤。 */
 export async function loadTidyRows(
   sql: Pick<TidySql, "unsafe">,
   owner: string,
   lock = false,
+  viewer?: MemoryViewer,
 ): Promise<TidyRow[]> {
-  return await sql.unsafe<TidyRow[]>(
+  const rows = await sql.unsafe<TidyRow[]>(
     lock ? LOCK_ROWS : LOCK_ROWS.replace(" FOR UPDATE", ""),
     [owner, MEMORY_LIMITS.perUser],
   );
+  return rows.filter((row) => canTidyMemoryNote(row, viewer));
 }
 
 /**
@@ -250,10 +283,11 @@ export async function loadTidyRows(
 export async function applyTidy(
   sql: TidySql,
   owner: string,
-  options: { token?: string | null } = {},
+  options: { token?: string | null; viewer?: MemoryViewer } = {},
 ): Promise<MemoryTidyResult> {
   return await sql.begin(async (tx) => {
-    const plan = planTidy(await loadTidyRows(tx, owner, true));
+    const rows = await loadTidyRows(tx, owner, true, options.viewer);
+    const plan = planTidy(rows, options.viewer);
     if (options.token && options.token !== plan.fingerprint)
       throw new TidyConflictError(
         "记忆在你确认前有了变化，请重新点「整理记忆」看一遍。",
@@ -373,6 +407,10 @@ export async function undoTidy(
   sql: TidySql,
   owner: string,
   batchId: string,
+  options: {
+    deletedBotIds?: ReadonlySet<string>;
+    isBotDeleted?: (agentId: string) => boolean | Promise<boolean>;
+  } = {},
 ): Promise<MemoryTidyUndoResult> {
   if (!/^tidy_[a-f0-9]{8,40}$/.test(batchId))
     return { restored: 0, skipped: 0 };
@@ -389,6 +427,17 @@ export async function undoTidy(
           ? JSON.parse(backup.original)
           : backup.original
       ) as TidyRow;
+      const originalVisibility = resolveMemoryVisibility(original);
+      if (originalVisibility === "bot_private") {
+        const deleted =
+          !original.agent_id ||
+          Boolean(options.deletedBotIds?.has(original.agent_id)) ||
+          Boolean(await options.isBotDeleted?.(original.agent_id));
+        if (deleted) {
+          skipped++;
+          continue;
+        }
+      }
       if (backup.action === "deleted") {
         const inserted = await tx.unsafe<{ id: string }[]>(
           `INSERT INTO chisabot_memory_notes (id, owner_user_id, kind, subject, content, context, agent_id, shared, created_at, updated_at)
@@ -405,8 +454,17 @@ export async function undoTidy(
             new Date(original.updated_at).toISOString(),
           ],
         );
-        if (inserted.length) restored++;
-        else skipped++;
+        if (inserted.length) {
+          if (originalVisibility === "bot_private") {
+            await tx.unsafe(
+              "UPDATE chisabot_memory_notes SET visibility = 'bot_private' WHERE id = $1 AND owner_user_id = $2",
+              [original.id, owner],
+            );
+          }
+          restored++;
+        } else {
+          skipped++;
+        }
       } else {
         const updated = await tx.unsafe<{ id: string }[]>(
           "UPDATE chisabot_memory_notes SET content = $3, updated_at = $5 WHERE id = $1 AND owner_user_id = $2 AND content = $4 RETURNING id",

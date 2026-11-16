@@ -2,6 +2,7 @@
 
 import { selectedAgentKernel } from "../../shared/agent-kernel";
 import { useSecureCookies as decideSecureCookies } from "../../shared/secure-cookies";
+import { type SpeechConfig, speechConfigFromEnv } from "./audio/speech-service";
 import { singleUserEnabled } from "./auth/dev-actor";
 import { normalizeDomain } from "./auth/email-domain";
 import type { ActionPolicy } from "./computer/policy";
@@ -161,6 +162,7 @@ export type BotFactoryCaps = {
 export type DeploymentConfig = {
   /** Audio configuration is independent of agent model providers. */
   transcription?: TranscriptionConfig;
+  speech?: SpeechConfig;
   /** The port the API listens on. Named `PORT` or `SERVER_PORT`; see `serverPort`. */
   port: number;
   databaseUrl: string;
@@ -569,9 +571,8 @@ function wholeNumber(
 
 function handoffCaps(environment: Environment): HandoffCaps {
   return {
-    // Bot-to-Bot hand-off is off by default since slimming P4b (a personal deployment has one
-    // assistant per person). BOT_HANDOFF_MAX_DEPTH=1 turns the upstream behaviour back on.
-    maxDepth: wholeNumber(environment, "BOT_HANDOFF_MAX_DEPTH", 0),
+    // Default depth is 6 (bounded by GROUP_RELAY_MAX_DEPTH and loop guards); BOT_HANDOFF_MAX_DEPTH=0 disables handoffs.
+    maxDepth: wholeNumber(environment, "BOT_HANDOFF_MAX_DEPTH", 6),
     maxPerRun: wholeNumber(environment, "BOT_HANDOFF_MAX_PER_RUN", 3),
   };
 }
@@ -1444,9 +1445,11 @@ export function loadConfig(
     }
   }
 
+  const transcription = transcriptionConfig(environment);
   return {
     port: serverPort(environment),
-    transcription: transcriptionConfig(environment),
+    transcription,
+    speech: speechConfigFromEnv(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
     ...(kernel === "dsh"

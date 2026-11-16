@@ -12,6 +12,7 @@
  * （软删除），所以不会出现在任何人的会话里；步骤的产出存在运行记录里，运行页面读它。
  */
 
+import { createHash, randomBytes } from "node:crypto";
 import {
   ACTIVE_RUN_STATUSES,
   effectiveConstraints,
@@ -24,6 +25,7 @@ import {
   type WorkflowGateResult,
   type WorkflowOutputFormat,
   type WorkflowRetryStrategy,
+  type WorkflowRunStatus,
   type WorkflowRunView,
   type WorkflowStep,
   type WorkflowStepFeedback,
@@ -32,7 +34,10 @@ import {
 } from "../../../shared/workflows";
 import type { AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
-import { HeadlessToolSuspension } from "../computer/headless-tools";
+import {
+  HeadlessToolSuspension,
+  type HeadlessWaiting,
+} from "../computer/headless-tools";
 import type { TurnRunner } from "../turns/types";
 import {
   clearStepPolicy,
@@ -123,6 +128,32 @@ class GateHumanEscalation extends Error {
   }
 }
 
+/** 步骤调用的工具挂起（HeadlessToolSuspension），等待人工确认或接管后恢复。 */
+class StepToolSuspended extends Error {
+  constructor(
+    readonly stepId: string,
+    readonly stepName: string,
+    message: string,
+    readonly waiting: HeadlessWaiting,
+    readonly threadId?: string,
+  ) {
+    super(message);
+    this.name = "StepToolSuspended";
+  }
+}
+
+export type WorkflowToolSuspensionNotice = {
+  runId: string;
+  ownerUserId: string;
+  stepId: string;
+  stepName: string;
+  message: string;
+  waiting: HeadlessWaiting;
+  resumeToken: string;
+  resumeExpiresAt: Date;
+  threadId?: string;
+};
+
 export type BotInfo = { id: string; name: string };
 export type LibrarySkill = {
   slug: string;
@@ -149,6 +180,10 @@ export type WorkflowEngineDeps = {
     ownerUserId: string,
     botId: string,
   ) => Promise<string | null>;
+  /** 工具挂起产生一次性明文恢复令牌时通过回调按需下发，持久化存储只保留 SHA-256 哈希。 */
+  onToolSuspension?: (
+    notice: WorkflowToolSuspensionNotice,
+  ) => void | Promise<void>;
   audit?: AuditStore;
   now?: () => Date;
   log?: (line: string) => void;
@@ -386,6 +421,7 @@ function applyReworkReset(
       delete st.error;
       delete st.finishedAt;
       delete st.gateResult;
+      delete st.waiting;
       if (stepDef.approval) {
         st.approval = {
           required: true,
@@ -497,8 +533,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
             `工作流步骤「${step.id}」引用了未知角色「${step.bot}」。`,
           );
         const botId = bindings[role.key];
-        if (!botId)
-          throw new Error(`工作流角色「${role.key}」未绑定机器人。`);
+        if (!botId) throw new Error(`工作流角色「${role.key}」未绑定机器人。`);
         return {
           id: step.id,
           name: step.name,
@@ -602,7 +637,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     return run;
   }
 
-  async function execute(runId: string): Promise<void> {
+  async function execute(
+    runId: string,
+  ): Promise<{ status: WorkflowRunStatus; resumeToken?: string } | undefined> {
     // 在任何 await 之前同步占位：同一进程里并发的两次 execute 只有一个往下走。
     const existing = active.get(runId);
     if (existing) {
@@ -650,11 +687,19 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
 
     let persistTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPersist = 0;
+    let suspendedNotice: WorkflowToolSuspensionNotice | undefined;
     const persistNow = async (
       patch: Partial<
         Pick<
           StoredRun,
-          "status" | "output" | "error" | "startedAt" | "finishedAt"
+          | "status"
+          | "output"
+          | "error"
+          | "startedAt"
+          | "finishedAt"
+          | "resumeTokenHash"
+          | "resumeReason"
+          | "resumeExpiresAt"
         >
       > = {},
       noticeEvent?: RunEventInput,
@@ -843,6 +888,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       st.output = "";
       delete st.error;
       delete st.gateResult;
+      delete st.waiting;
       await persistNow();
       await event(
         runId,
@@ -895,6 +941,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
 
       let conversation: { channelId: string; threadId: string } | null = null;
       let createdFreshConversation = false;
+      let suspended = false;
       let turnCount = 0;
       const turn = async (
         text: string,
@@ -1099,6 +1146,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         st.status = "succeeded";
         st.finishedAt = now().toISOString();
         delete st.retryMode;
+        delete st.waiting;
         state.stepsRun += 1;
         outputs[step.id] = output;
         await persistNow();
@@ -1129,6 +1177,33 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         const reason = stepController.signal.aborted
           ? stepController.signal.reason
           : error;
+        if (
+          error instanceof HeadlessToolSuspension &&
+          !(reason instanceof UserCancelled) &&
+          !(reason instanceof ConstraintError)
+        ) {
+          const note = error.message || "步骤需要人工确认或接管后继续";
+          suspended = true;
+          st.status = "waiting_approval";
+          delete st.finishedAt;
+          delete st.error;
+          st.approval = {
+            required: true,
+            note,
+          };
+          st.waiting = {
+            ...error.waiting,
+            message: note,
+          };
+          await persistNow();
+          throw new StepToolSuspended(
+            step.id,
+            step.name,
+            note,
+            error.waiting,
+            st.threadId,
+          );
+        }
         st.finishedAt = now().toISOString();
         if (reason instanceof UserCancelled) {
           st.status = "cancelled";
@@ -1138,11 +1213,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           st.error =
             reason instanceof ConstraintError
               ? reason.message
-              : error instanceof HeadlessToolSuspension
-                ? "这一步调用了需要人工审批的工具，工作流运行中不能等待工具审批。可以在设备 / 权限里把它改成允许，或在约束里禁止这个工具。"
-                : error instanceof Error
-                  ? error.message
-                  : String(error);
+              : error instanceof Error
+                ? error.message
+                : String(error);
         }
         // 非致命单步失败时，按 step.onFailure 策略分流（但运行级超预算/超时/手动取消除外）
         const isRunLevelConstraint =
@@ -1182,8 +1255,8 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         clearTimeout(stepTimer);
         controller.signal.removeEventListener("abort", onParentAbort);
         clearStepPolicy(initiatorId);
-        // 新建的步骤会话立即软删除以从用户左侧列表隐藏，但底层 threadId 保留在数据库里供 targeted_fix 续跑。
-        if (conversation && createdFreshConversation)
+        // 新建的步骤会话立即软删除以从用户左侧列表隐藏，但因工具挂起（StepToolSuspended）暂停时保留底层会话供续跑。
+        if (conversation && createdFreshConversation && !suspended)
           await deps
             .deleteConversation(run.ownerUserId, conversation.channelId)
             .catch((error) =>
@@ -1228,7 +1301,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
               stepId: gate.id,
             },
           );
-          return;
+          return { status: "waiting_approval" };
         }
         const hasReworks = state.steps.some((s) => (s.reworkCount ?? 0) > 0);
         const stepCap =
@@ -1247,11 +1320,54 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         const results = await Promise.allSettled(
           pending.map((step) => runStep(step, index)),
         );
-        const rejected = results.find(
+        const rejections = results.filter(
           (r): r is PromiseRejectedResult => r.status === "rejected",
         );
+        const rejected =
+          rejections.find(
+            (r) =>
+              r.reason instanceof UserCancelled ||
+              r.reason instanceof ConstraintError,
+          ) ?? rejections[0];
         if (rejected) {
           const reason = rejected.reason;
+          if (reason instanceof StepToolSuspended) {
+            const token = `wfr_${randomBytes(24).toString("base64url")}`;
+            const tokenHash = createHash("sha256").update(token).digest("hex");
+            const expiresAt = new Date(now().getTime() + 24 * 3600_000);
+            await persistNow(
+              {
+                status: "waiting_approval",
+                resumeTokenHash: tokenHash,
+                resumeReason: reason.message,
+                resumeExpiresAt: expiresAt,
+              },
+              {
+                kind: "tool_suspension_requested",
+                message: `「${reason.stepName}」需要人工确认或接管后继续：${reason.message}`,
+                stepId: reason.stepId,
+                data: {
+                  stepId: reason.stepId,
+                  waiting: reason.waiting,
+                  hasResumeToken: true,
+                  resumeTokenHashPrefix: tokenHash.slice(0, 12),
+                  resumeExpiresAt: expiresAt.toISOString(),
+                },
+              },
+            );
+            suspendedNotice = {
+              runId,
+              ownerUserId: run.ownerUserId,
+              stepId: reason.stepId,
+              stepName: reason.stepName,
+              message: reason.message,
+              waiting: reason.waiting,
+              resumeToken: token,
+              resumeExpiresAt: expiresAt,
+              ...(reason.threadId ? { threadId: reason.threadId } : {}),
+            };
+            return { status: "waiting_approval", resumeToken: token };
+          }
           if (reason instanceof GateHumanEscalation) {
             await persistNow(
               { status: "waiting_approval" },
@@ -1261,7 +1377,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
                 stepId: reason.stepId,
               },
             );
-            return;
+            return { status: "waiting_approval" };
           }
           if (reason instanceof StepReworkRequested) {
             const rework = applyReworkReset(
@@ -1329,6 +1445,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         steps: state.stepsRun,
         elapsedMs: elapsed(),
       });
+      return { status: "succeeded" };
     } catch (thrown) {
       const reason =
         controller.signal.aborted && !(thrown instanceof ConstraintError)
@@ -1370,11 +1487,20 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         tokens: state.tokens,
         steps: state.stepsRun,
       });
+      return { status: cancelled ? "cancelled" : "failed" };
     } finally {
       clearTimeout(deadline);
       clearInterval(heartbeat);
       if (persistTimer) clearTimeout(persistTimer);
       active.delete(runId);
+      if (suspendedNotice && deps.onToolSuspension) {
+        await Promise.resolve(deps.onToolSuspension(suspendedNotice)).catch(
+          (error) =>
+            log(
+              `[workflows] onToolSuspension failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+        );
+      }
       if (slot.rerun) void execute(runId);
     }
   }
@@ -1429,6 +1555,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         status: "queued",
         state: run.state,
         error: null,
+        resumeTokenHash: null,
+        resumeReason: null,
+        resumeExpiresAt: null,
       });
       if (!won) throw new WorkflowRunError("这一步已经被处理过了。", 409);
       await event(
@@ -1448,6 +1577,8 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       return;
     }
 
+    const hadWaiting = Boolean(step.waiting);
+    delete step.waiting;
     step.approval = {
       required: true,
       ...(step.approval?.note ? { note: step.approval.note } : {}),
@@ -1461,7 +1592,22 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         if (s.status === "pending" || s.status === "waiting_approval")
           s.status = "skipped";
       step.status = "cancelled";
-    } else step.status = "pending";
+    } else {
+      step.status = "pending";
+      delete step.finishedAt;
+      if (step.threadId) {
+        step.retryMode = step.retryMode ?? "targeted_fix";
+        if (hadWaiting || input.comment?.trim()) {
+          step.feedback = {
+            by: input.by,
+            reason:
+              input.comment?.trim() ||
+              "人工已批准或完成确认，请基于已有对话上下文继续完成本步骤。",
+            at: now().toISOString(),
+          };
+        }
+      }
+    }
     // CAS：只有状态还是 waiting_approval 时才写入；并发的两次审批只有一个能过，另一个得到 409。
     const won = await store.transitionRun(
       run.id,
@@ -1472,8 +1618,17 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
             state: run.state,
             error: `「${step.name}」的审批没有通过。`,
             finishedAt: now(),
+            resumeTokenHash: null,
+            resumeReason: null,
+            resumeExpiresAt: null,
           }
-        : { status: "queued", state: run.state },
+        : {
+            status: "queued",
+            state: run.state,
+            resumeTokenHash: null,
+            resumeReason: null,
+            resumeExpiresAt: null,
+          },
     );
     if (!won) throw new WorkflowRunError("这一步已经被处理过了。", 409);
     await event(
@@ -1496,6 +1651,131 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       return;
     }
     void execute(run.id);
+  }
+
+  /**
+   * 凭一次性恢复令牌继续挂起的工作流运行（CAS 消费 tokenHash，并发第二次必返 409）。
+   */
+  async function resumeWithToken(input: {
+    ownerUserId: string;
+    runId: string;
+    token: string;
+    decision?: "approve" | "reject";
+    comment?: string;
+    by?: string;
+  }): Promise<StoredRun> {
+    const run = await store.getOwnRun(input.ownerUserId, input.runId);
+    if (!run) throw new WorkflowRunError("找不到这次运行。", 404);
+    const token = typeof input.token === "string" ? input.token.trim() : "";
+    if (!token) {
+      throw new WorkflowRunError("恢复令牌无效、已过期或已被使用。", 409);
+    }
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const decision = input.decision ?? "approve";
+    const actorBy = input.by?.trim() || "你";
+    const nextState = structuredClone(run.state);
+    const waitingSteps = nextState.steps.filter(
+      (s) => s.status === "waiting_approval",
+    );
+    if (run.status !== "waiting_approval" || waitingSteps.length === 0) {
+      throw new WorkflowRunError("恢复令牌无效、已过期或已被使用。", 409);
+    }
+
+    const decidedAt = now().toISOString();
+    if (decision === "reject") {
+      for (const s of nextState.steps) {
+        if (s.status === "waiting_approval") {
+          s.status = "cancelled";
+          s.finishedAt = decidedAt;
+          s.approval = {
+            required: true,
+            ...(s.approval?.note ? { note: s.approval.note } : {}),
+            decision: "reject",
+            decidedBy: actorBy,
+            decidedAt,
+            ...(input.comment ? { comment: input.comment.slice(0, 500) } : {}),
+          };
+          delete s.waiting;
+        } else if (s.status === "pending") {
+          s.status = "skipped";
+        }
+      }
+      const won = await store.consumeResumeToken(run.id, tokenHash, {
+        status: "cancelled",
+        state: nextState,
+        error: input.comment?.trim() || "人工拒绝恢复，运行已停止。",
+        finishedAt: now(),
+      });
+      if (!won) {
+        throw new WorkflowRunError("恢复令牌无效、已过期或已被使用。", 409);
+      }
+      const primaryStep = waitingSteps[0];
+      await event(
+        run.id,
+        "approval_decided",
+        `${actorBy}拒绝恢复「${primaryStep?.name ?? "当前步骤"}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`,
+        primaryStep?.id ?? null,
+        { by: actorBy, decision: "reject", via: "resume_token" },
+      );
+      await event(run.id, "run_cancelled", "人工拒绝恢复，运行结束", null);
+      await audit(run, "workflow.approval_decided", {
+        step: primaryStep?.id,
+        decision: "reject",
+        via: "resume_token",
+      });
+      await audit(run, "workflow.run_finished", {
+        status: "cancelled",
+        reason: "resume_token_rejected",
+      });
+      return (await store.getOwnRun(input.ownerUserId, run.id)) ?? run;
+    }
+
+    for (const s of waitingSteps) {
+      s.status = "pending";
+      delete s.finishedAt;
+      delete s.error;
+      delete s.waiting;
+      s.retryMode = "targeted_fix";
+      s.approval = {
+        required: true,
+        ...(s.approval?.note ? { note: s.approval.note } : {}),
+        decision: "approve",
+        decidedBy: actorBy,
+        decidedAt,
+        ...(input.comment ? { comment: input.comment.slice(0, 500) } : {}),
+      };
+      s.feedback = {
+        by: actorBy,
+        reason:
+          input.comment?.trim() ||
+          "已完成人工确认或外部接管，请基于已有对话上下文继续完成本步骤。",
+        at: decidedAt,
+      };
+    }
+
+    const won = await store.consumeResumeToken(run.id, tokenHash, {
+      status: "queued",
+      state: nextState,
+      error: null,
+    });
+    if (!won) {
+      throw new WorkflowRunError("恢复令牌无效、已过期或已被使用。", 409);
+    }
+    const primaryStep = waitingSteps[0];
+    await event(
+      run.id,
+      "tool_suspension_resumed",
+      `${actorBy}已确认恢复「${primaryStep?.name ?? "当前步骤"}」${input.comment ? `：${input.comment.slice(0, 200)}` : ""}`,
+      primaryStep?.id ?? null,
+      { by: actorBy, decision: "approve", via: "resume_token" },
+    );
+    await audit(run, "workflow.approval_decided", {
+      step: primaryStep?.id,
+      decision: "approve",
+      via: "resume_token",
+    });
+    void execute(run.id);
+    return (await store.getOwnRun(input.ownerUserId, run.id)) ?? run;
   }
 
   /**
@@ -1596,6 +1876,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         delete st.error;
         delete st.finishedAt;
         delete st.gateResult;
+        delete st.waiting;
         if (stepDef.approval) {
           st.approval = {
             required: true,
@@ -1629,6 +1910,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       state: run.state,
       error: null,
       finishedAt: null,
+      resumeTokenHash: null,
+      resumeReason: null,
+      resumeExpiresAt: null,
     });
     if (!won) throw new WorkflowRunError("运行状态已改变，请刷新后再试。", 409);
 
@@ -1667,6 +1951,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       state: run.state,
       error: "已被手动停止。",
       finishedAt: now(),
+      resumeTokenHash: null,
+      resumeReason: null,
+      resumeExpiresAt: null,
     });
     await event(run.id, "run_cancelled", "运行已停止", null);
     await audit(run, "workflow.run_finished", {
@@ -1775,6 +2062,11 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       startedAt: run.startedAt?.toISOString() ?? null,
       finishedAt: run.finishedAt?.toISOString() ?? null,
       tools: limits.tools,
+      ...(run.resumeTokenHash ? { hasResumeToken: true } : {}),
+      ...(run.resumeReason ? { resumeReason: run.resumeReason } : {}),
+      ...(run.resumeExpiresAt
+        ? { resumeExpiresAt: run.resumeExpiresAt.toISOString() }
+        : {}),
       ...(events
         ? {
             events: events.map((e) => ({
@@ -1793,6 +2085,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     start,
     execute,
     approve,
+    resumeWithToken,
     retry,
     cancel,
     remove,

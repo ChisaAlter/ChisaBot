@@ -29,11 +29,17 @@ import {
   type DshTurnReason,
 } from "../conversations/dsh-events";
 import { inboxInstructions } from "../conversations/inbox-message";
-import { createModelConnectionProxy } from "../conversations/model-connection-proxy";
+import type { ModelKeyPool } from "../conversations/key-pool";
+import {
+  createModelConnectionProxy,
+  type ModelProxyQuotaOptions,
+} from "../conversations/model-connection-proxy";
 import { createPlanModelProxy } from "../conversations/plan-model-proxy";
 import type { DshRunJournal } from "../conversations/run-journal";
 import { createEventLifecycles } from "../conversations/runner";
 import type { createDshToolGateway } from "../conversations/tool-gateway";
+import type { ToolImagePart } from "../conversations/tool-images";
+import type { ModelConnectionPooledKeyRuntime } from "../model-settings";
 import type { GrantedTool } from "../plugins/tools";
 import { currentSteerSession } from "../thread-inbox";
 import type { RunAssertion } from "./callback-token";
@@ -58,7 +64,7 @@ export type DshRuntimeBinding = RuntimeToolBinding & {
   revisionFor?: (threadId: string) => Promise<number>;
   journal?: DshRunJournal;
 };
-type Configuration = {
+export type DshRuntimeConfiguration = {
   botId: string;
   binding: DshRuntimeBinding;
   signRun: (input: RunAgentInput) => string;
@@ -75,8 +81,13 @@ type Configuration = {
     apiKey: string | null;
     useApiKey?: boolean;
     model: string;
+    pooledKeys?: readonly ModelConnectionPooledKeyRuntime[];
   };
+  keyPool?: ModelKeyPool;
+  poolId?: string;
+  quota?: Omit<ModelProxyQuotaOptions, "userId"> & { userId?: string };
   plan?: PlanModelConfig;
+  describeImage?: (part: ToolImagePart) => Promise<string | null>;
   modelInfo: (model: string) => Promise<{
     maxOutputTokens?: number;
     contextWindow?: number;
@@ -88,6 +99,8 @@ type Configuration = {
     signal: AbortSignal,
   ) => Promise<readonly GrantedTool[]>;
 };
+
+type Configuration = DshRuntimeConfiguration;
 
 function dshUserContent(
   messages: readonly Message[],
@@ -523,6 +536,9 @@ export class DshRuntimeAgent extends AbstractAgent {
           maxTokens: Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
         }));
         if (!primary) throw new Error("没有可用的模型。");
+        const primarySupportsImages = Boolean(
+          this.configuration.plan || definitions[0]?.input.includes("image"),
+        );
         const identity = {
           sessionId: binding.sessionId,
           runId: input.runId,
@@ -534,6 +550,13 @@ export class DshRuntimeAgent extends AbstractAgent {
         };
         let projection!: DshEventProjection;
         const connection = this.configuration.connection;
+        const quotaOptions: ModelProxyQuotaOptions | undefined = this
+          .configuration.quota
+          ? {
+              ...this.configuration.quota,
+              userId: this.configuration.quota.userId ?? scope.actorId,
+            }
+          : undefined;
         const modelProxy = this.configuration.plan
           ? createPlanModelProxy(
               this.configuration.plan,
@@ -541,22 +564,35 @@ export class DshRuntimeAgent extends AbstractAgent {
               input,
               [...tools.keys()],
               active.toolAbort.signal,
+              quotaOptions ? { quota: quotaOptions } : undefined,
             )
-          : connection.useApiKey === false ||
-              connection.provider === "anthropic"
-            ? createModelConnectionProxy(
-                connection,
-                models,
-                [...tools.keys()],
-                active.toolAbort.signal,
-              )
-            : undefined;
+          : createModelConnectionProxy(
+              connection,
+              models,
+              [...tools.keys()],
+              active.toolAbort.signal,
+              {
+                stickyKey:
+                  input.threadId || identity.sessionId || scope.actorId,
+                ...(this.configuration.keyPool
+                  ? { keyPool: this.configuration.keyPool }
+                  : {}),
+                ...(this.configuration.poolId
+                  ? { poolId: this.configuration.poolId }
+                  : {}),
+                ...(quotaOptions ? { quota: quotaOptions } : {}),
+              },
+            );
         capability = this.configuration.binding.gateway.register({
           bindingId: binding.bindingId,
           identity,
           input,
           tools: [...tools.values()],
           signal: active.toolAbort.signal,
+          supportsImages: primarySupportsImages,
+          ...(this.configuration.describeImage
+            ? { describeImage: this.configuration.describeImage }
+            : {}),
           steering,
           prepareSteering: async (messages) => {
             const prepared = this.configuration.prepareInput
@@ -570,7 +606,7 @@ export class DshRuntimeAgent extends AbstractAgent {
               instructions: inboxInstructions(messages),
             };
           },
-          ...(modelProxy ? { modelProxy } : {}),
+          modelProxy,
           continuationMessages: async (throughSeq) => {
             if (!projection) throw new Error("The DSH observer is not ready.");
             const missing = await client.eventsAfter(
@@ -623,24 +659,16 @@ export class DshRuntimeAgent extends AbstractAgent {
                 ? "anthropic-messages"
                 : "openai-completions",
             // Anthropic's SDK appends /v1/messages; OpenAI's SDK appends /chat/completions.
-            baseURL: modelProxy
-              ? `${this.configuration.binding.toolGatewayUrl.replace(/\/$/, "")}/model${connection.provider === "anthropic" && !this.configuration.plan ? "" : "/v1"}`
-              : connection.baseUrl,
-            ...(modelProxy
-              ? {
-                  apiKey: capability.capability,
-                  modelProxy: true,
-                  target: {
-                    provider:
-                      this.configuration.plan?.provider ?? connection.provider,
-                    baseUrl: this.configuration.plan
-                      ? `${this.configuration.plan.endpoint.origin}${this.configuration.plan.endpoint.pathname}`
-                      : connection.baseUrl,
-                  },
-                }
-              : connection.apiKey
-                ? { apiKey: connection.apiKey }
-                : {}),
+            baseURL: `${this.configuration.binding.toolGatewayUrl.replace(/\/$/, "")}/model${connection.provider === "anthropic" && !this.configuration.plan ? "" : "/v1"}`,
+            apiKey: capability.capability,
+            modelProxy: true,
+            target: {
+              provider:
+                this.configuration.plan?.provider ?? connection.provider,
+              baseUrl: this.configuration.plan
+                ? `${this.configuration.plan.endpoint.origin}${this.configuration.plan.endpoint.pathname}`
+                : connection.baseUrl,
+            },
             models: definitions,
           },
           tools: [...tools.values()].map((tool) => ({
