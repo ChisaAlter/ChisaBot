@@ -45,10 +45,16 @@ html.dark {
       .rail-card,
       .glass-seg,
       .glass-search,
-      .glass-composer
+      .glass-composer,
+      [data-slot="bubble-content"],
+      .jr-card
     ) {
     --lg-surface: var(--glass-bg-opaque);
     --lg-surface-strong: var(--glass-bg-opaque);
+    --bubble-user-bg: var(--glass-bg-opaque);
+  }
+  html:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubble-content"] {
+    --lg-surface-strong: transparent;
   }
   html:not(#chisabot-no-blur)
     :is(
@@ -159,10 +165,16 @@ html[data-perf="on"]:not(#chisabot-no-blur)
   .rail-card,
   .glass-seg,
   .glass-search,
-  .glass-composer
+  .glass-composer,
+  [data-slot="bubble-content"],
+  .jr-card
 ) {
   --lg-surface: var(--glass-bg-opaque);
   --lg-surface-strong: var(--glass-bg-opaque);
+  --bubble-user-bg: var(--glass-bg-opaque);
+}
+html[data-perf="on"]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubble-content"] {
+  --lg-surface-strong: transparent;
 }
 html[data-perf="on"]:not(#chisabot-no-blur)
   :is(

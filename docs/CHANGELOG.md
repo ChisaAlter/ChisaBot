@@ -3,7 +3,7 @@
 ## 0.1.152
 
 - 版本统一为 0.1.152，Android versionCode 334；Windows 外壳指纹（`7314f9105596bec5`）与 PC 客户端代码指纹（`d165de18744a81f9`）不变，无需重新安装。
-- **多图与多卡片错落扇形牌组展示（CB-128 · DESIGN §135）**：`rich-previews.tsx` / `styles.css` / `chat-transcript.tsx` 推出 `imagePileGeometry(total)` 与带 `[container-type:inline-size]` 基准的单格 CSS Grid 扇形牌组（支持 `caption`、`href` 外链入口、点击直开 `Lightbox` 与窄屏 `--rp-drop-unit` 竖向兜底，修复右对齐 `align="end"` 裁切）；`link-card.tsx` / `link-card.css` 补充 2 卡斜扇与 `--lc-drop-unit` 下限兜底，去掉右卡 `padding-left` 缩进；`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc` 允许同源 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`，`media-deck.ts` + `json-render-surface.tsx` + `registry.tsx` 自动将 `Card > Carousel` 或独立多图/多链接容器拆壳升级为扇形牌组，`shared/bot-prompt.ts` 同步更新多图引导，附实机双视口截图与单测 `app/tests/image-pile-deck.test.tsx`。
+- **多图与多卡片错落扇形牌组展示及聊天气泡磨砂统一（CB-128 · DESIGN §135）**：`rich-previews.tsx` / `styles.css` / `chat-transcript.tsx` 推出 `imagePileGeometry(total)` 与带 `[container-type:inline-size]` 基准的单格 CSS Grid 扇形牌组（支持 `caption`、`href` 外链入口、点击直开 `Lightbox` 与窄屏 `--rp-drop-unit` 竖向兜底，修复右对齐 `align="end"` 裁切）；`link-card.tsx` / `link-card.css` 补充 2 卡斜扇与 `--lc-drop-unit` 下限兜底，去掉右卡 `padding-left` 缩进；`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc` 允许同源 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`，`media-deck.ts` + `json-render-surface.tsx` + `registry.tsx` 自动将 `Card > Carousel` 或独立多图/多链接容器拆壳升级为扇形牌组，`shared/bot-prompt.ts` 同步更新多图引导；同时解除 `styles.css` 渲染预算对 `[data-slot="bubble-content"]` 与顶层 `.jr-card` 的 `--lg-blur: none` 封锁并在 `perf-noblur.css` / `resize-pause.css` 对称补齐实色退化（裸代码块维持无框透明），使 AI 输出气泡与侧栏/右栏/输入框磨砂质感保持一致，附实机验证与单测（`app/tests/image-pile-deck.test.tsx`、`render-budget.test.ts`、`no-backdrop.test.ts`、`theme-glass-perf.test.tsx`）。
 
 ## 0.1.151
 

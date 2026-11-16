@@ -134,6 +134,7 @@
 - [x] **多图扇形牌组与右对齐防裁切（`ImagePile`）**：实现 `imagePileGeometry(total)`（2 卡斜扇、3 卡居中品字、4+ 卡拱形 `+N`），`.rp-pile` 采用单格 CSS Grid + 旋转外接四向内边距，配合 `AttachmentTiles` 的 `w-full [container-type:inline-size]` 基准消除右对齐（`align="end"`）溢出与裁切；支持带 `caption` 与外链 `href` 的图注卡片及 `--rp-drop-unit` 窄屏竖向兜底。
 - [x] **链接双卡 / 三卡斜向扇面统一（`LinkCardStack`）**：2 张链接卡主卡 `-2.5deg`、右卡 `+3.5deg` 且增大步距，`--lc-drop-unit: max(var(--lc-w), 196px)` 配合左/右槽竖向下沉 `0.32 / 0.4` 取代右卡标题 `padding-left` 缩进，1440px 与 390px 双视口零遮挡。
 - [x] **生成式界面同源图片直引与无外框自动拆壳升级**：`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc` 放行 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`；`media-deck.ts` 与 `JsonRenderSurface` 将独立及嵌套的多图 / `2–3` 张链接容器直接渲染为 `ImagePile` / `LinkCardStack`；通过 `app/tests/image-pile-deck.test.tsx`、`shared/json-render/catalog.test.ts` 与实机 Edge 双视口截图校验。
+- [x] **AI 气泡与全站磨砂玻璃一致性修复**：解除 `styles.css` 渲染预算对 `[data-slot="bubble-content"]` 与顶层 `.jr-card` 的 `--lg-blur: none` 封锁，仅保持 `.chat-bubble-bare` 裸代码容器透明无模糊；在 `perf-noblur.css` 与 `resize-pause.css` 对称补齐性能模式/减少透明度/拖拽缩放实色底退化（含 `--bubble-user-bg`），通过 `render-budget.test.ts`、`no-backdrop.test.ts`、`theme-glass-perf.test.tsx` 与实机 Edge `backdropFilter` 对比校验。
 
 ## CB-127
 

@@ -212,9 +212,12 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     }
   });
 
-  test("渲染预算里给气泡关模糊的规则直接写在气泡内容上（不继承之后写在外层不再生效）", () => {
+  test("渲染预算只关闭裸代码块气泡的模糊，普通 AI 气泡与侧栏共用磨砂模糊", () => {
     expect(css).toContain(
-      '.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"]),\n.jr-card,',
+      '.glass-main .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"],',
+    );
+    expect(css).not.toContain(
+      '.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"])',
     );
   });
 

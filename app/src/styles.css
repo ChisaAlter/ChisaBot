@@ -7381,6 +7381,7 @@ a.page-card-media:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var
 .chat-bubbles [data-slot="bubble-content"] :is(p, ul, ol, table, pre, blockquote, h1, h2, h3, h4, [data-streamdown="code-block"], [data-streamdown="table-wrapper"])
   + :is(p, ul, ol, table, pre, blockquote, h1, h2, h3, h4, [data-streamdown="code-block"], [data-streamdown="table-wrapper"]) { margin-top: 0.6em; }
 .glass-main [data-slot="message"][data-align="start"] .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"] {
+  --lg-blur: none; --lg-surface-strong: transparent; --lg-shadow: none; --glass-tint: transparent;
   padding: 0; background: transparent; border: 0; box-shadow: none; backdrop-filter: none;
 }
 .chat-bubble-bare [data-streamdown="code-block"] { margin: 0; background: var(--glass-1); box-shadow: var(--shadow-1); }
@@ -10771,9 +10772,7 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
  *   那层不改、这里也不加 !important：在不该模糊的元素自己身上把 --lg-blur 设成 none，那条规则读到的就是 none。
  * ======================================================================================== */
 :is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new),
-.glass-main [data-slot="bubble"],
-.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"]),
-.jr-card,
+.glass-main .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"],
 .page-rows,
 .sg-card,
 .page-section > form,
@@ -10781,25 +10780,31 @@ html.dark .glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubbl
   --lg-blur: none;
 }
 
-/* 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」：不再模糊，大面板换成接近不透明的底色。 */
+/* 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」：不再模糊，大面板与聊天气泡换成接近不透明的底色。 */
 html[data-perf="on"] {
   --glass-filter: none;
   --glass-pop-filter: none;
 }
-html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
+html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card) {
   --lg-blur: none;
   --lg-surface: var(--popover);
   --lg-surface-strong: var(--popover);
+}
+html[data-perf="on"] .chat-bubble-bare > [data-slot="bubble-content"] {
+  --lg-surface-strong: transparent;
 }
 @media (prefers-reduced-transparency: reduce) {
   html:root {
     --glass-filter: none;
     --glass-pop-filter: none;
   }
-  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer) {
+  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card) {
     --lg-blur: none;
     --lg-surface: var(--popover);
     --lg-surface-strong: var(--popover);
+  }
+  html:root .chat-bubble-bare > [data-slot="bubble-content"] {
+    --lg-surface-strong: transparent;
   }
 }
 
