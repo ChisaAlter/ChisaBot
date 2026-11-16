@@ -40,6 +40,8 @@ function desktop(fetchImpl) {
     windows, BrowserWindow: Window, config: { get: () => ({ serverUrl: "https://chat.example" }) },
     path, __dirname, PARTITION: "owned-test", UI: "/ui", UI_URL: "file:///ui/",
     WINDOW_ICON: "icon", windowBackground: () => "#fff", net: { fetch: fetchImpl },
+    netFetch: () => {}, cookieHeaderFor: async () => "",
+    localWeb: { probeVersion: async () => null },
     agent: { reconnectNow() {} }, shell: { openExternal() {} },
     loginUrl: () => false, openLogin() {}, sessionExpired() {},
     compactWindows: () => ({ watch() {}, toggle() {} }), placeUpdateWindow() {},

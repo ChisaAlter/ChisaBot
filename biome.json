@@ -17,7 +17,8 @@
       "!pc/dist",
       "!pc/out",
       "!pc/release",
-      "!pc/src/shell-fingerprint.json"
+      "!pc/src/shell-fingerprint.json",
+      "!pc/src/web-bundle"
     ]
   },
   "formatter": {

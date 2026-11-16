@@ -34,6 +34,13 @@ export type PcLocalState = {
   /** 自动更新（docs/online-update.md §PC）。旧客户端没有这个字段，网页就不显示更新设置。 */
   autoUpdate?: boolean;
   update?: PcUpdateState;
+  /** 桌面端内置本地前端状态（0.1.154 起，DESIGN.md §137）。 */
+  webUi?: {
+    hasLocalBundle: boolean;
+    mode: "local" | "remote";
+    bundledVersion: string;
+    serverVersion?: string;
+  };
 };
 
 export type PcUpdateState = {

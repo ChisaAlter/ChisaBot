@@ -117,6 +117,7 @@ for (const username of ["first-user", "second-user"]) {
       session: { fromPartition: () => ({ clearStorageData: async () => { clears++; } }) },
       PARTITION: "test",
       netFetch: () => {},
+      localWeb: { probeVersion: async () => null },
       dropDevice: async () => { drops++; token = null; },
       windows: { chat: null },
       injectCookies: async () => {},

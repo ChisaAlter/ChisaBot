@@ -51,6 +51,7 @@ const shellRefresh = require("./shell-refresh");
 const { createCompactController } = require("./compact-window");
 const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
+const { createLocalWebController } = require("./local-web");
 const buildConfig = require("./build-config");
 const BUILD = buildConfig.load();
 const pkg = require("../package.json");
@@ -247,8 +248,10 @@ async function sessionStatus() {
   const origin = serverOrigin();
   if (!origin) return "login";
   try {
-    const result = await auth.probe({ fetchImpl: netFetch, serverUrl: origin, cookieHeader: await cookieHeaderFor(origin), timeoutMs: 6000 });
-    if (result.gateway) return result.authenticated ? "ok" : "login";
+    const cookieHeader = await cookieHeaderFor(origin);
+    const result = await auth.probe({ fetchImpl: netFetch, serverUrl: origin, cookieHeader, timeoutMs: 6000 });
+    if (result.gateway && !result.authenticated) return "login";
+    await localWeb.probeVersion({ origin, fetchImpl: netFetch, cookieHeader, timeoutMs: 2500 });
     return "ok";
   } catch {
     return "offline";
@@ -261,7 +264,7 @@ function openApp(pathname) {
   if (!config.get().serverUrl) return openLogin();
   if (!entering)
     entering = sessionStatus()
-      .then((status) => (status === "login" ? openLogin("expired") : openChat(pathname)))
+      .then((status) => (status === "login" ? openLogin("expired") : openChat(pathname, { offline: status === "offline" })))
       .finally(() => {
         entering = null;
       });
@@ -306,7 +309,7 @@ function isServerUrl(url) {
   }
 }
 
-function openChat(pathname) {
+function openChat(pathname, options) {
   const { serverUrl } = config.get();
   if (!serverUrl) return openLogin();
   const target = pathname ? `${serverOrigin()}${pathname}` : null;
@@ -344,9 +347,14 @@ function openChat(pathname) {
     },
   });
   win.setMenu(null);
-  chatOffline = false;
-  win.loadURL(target || serverUrl);
   win.once("ready-to-show", () => win.show());
+  chatOffline = Boolean(options?.offline);
+  if (chatOffline) {
+    if (pathname) lastWebPath = pathname;
+    showOffline(win, "连不上服务器");
+  } else {
+    win.loadURL(target || serverUrl);
+  }
   win.webContents.setWindowOpenHandler(({ url }) => {
     // 同一服务器的弹窗（例如连接账号的授权窗口）照常打开；本机桥只认主窗口，弹窗里拿不到。
     if (isServerUrl(url)) return { action: "allow", overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: WINDOW_ICON } };
@@ -381,7 +389,9 @@ function openChat(pathname) {
     }
   });
   win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-    if (isMainFrame && isServerUrl(url)) rememberWebPath(url);
+    if (!isMainFrame) return;
+    if (loginUrl(url)) return setImmediate(sessionExpired);
+    if (isServerUrl(url)) rememberWebPath(url);
   });
   // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
@@ -450,6 +460,13 @@ function retryChat() {
     // Closing, logging out or navigating replaces the owner of this recovery attempt.
     if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
     if (!reachable) throw new Error("仍然连不上服务器。");
+    await localWeb.probeVersion({
+      origin: request.origin,
+      fetchImpl: netFetch,
+      cookieHeader: await cookieHeaderFor(request.origin).catch(() => ""),
+      timeoutMs: 2500,
+    });
+    if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
     chatOffline = false;
     clearInterval(chatRetryTimer);
     await win.loadURL(`${request.origin}${lastWebPath || "/"}`);
@@ -1041,6 +1058,7 @@ function webLocalState() {
     startHidden: local.startHidden,
     autoUpdate: local.autoUpdate !== false,
     update: updater ? updater.state : { supported: false, status: "idle" },
+    webUi: localWeb.statusFor(serverOrigin()),
   };
 }
 
@@ -1203,6 +1221,12 @@ async function submitLogin(input) {
   await injectCookies(serverUrl, sessionInfo.cookies);
   const recent = [serverUrl, ...(Array.isArray(prev.recentServers) ? prev.recentServers : []).filter((s) => s !== serverUrl)].slice(0, 6);
   config.set({ serverUrl, username, remember, recentServers: recent });
+  const versionProbe = localWeb.probeVersion({
+    origin: serverUrl,
+    fetchImpl: netFetch,
+    cookieHeader: sessionInfo.cookieHeader,
+    timeoutMs: 2500,
+  });
 
   let device = null;
   let warning = "";
@@ -1232,6 +1256,7 @@ async function submitLogin(input) {
   clearTimeout(enrollRetryTimer);
   enrollIssue = warning;
   agentDetail = "";
+  await versionProbe;
   startAgent();
   return { device, warning };
 }
@@ -1498,7 +1523,15 @@ function refreshShellIfChanged() {
   });
 }
 
+const localWeb = createLocalWebController({
+  bundleDir: path.join(__dirname, "web-bundle"),
+  localVersion: pkg.version,
+  getServerOrigin: serverOrigin,
+  onModeChange: () => broadcast(),
+});
+
 app.whenReady().then(() => {
+  localWeb.installSessionProtocol(session.fromPartition(PARTITION));
   // macOS 应用菜单：没有它 ⌘C/⌘V/⌘Q 都不生效（窗口 setMenu 在 mac 上是空的，菜单是应用级的）。
   // 编辑 / 视图 / 窗口用系统 role；退出走 role:"quit"→ before-quit（隐藏语义的「关闭窗口」归 ⌘W）。
   if (process.platform === "darwin") {

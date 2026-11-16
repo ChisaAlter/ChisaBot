@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.token
 src/sync/bin/
+src/web-bundle/

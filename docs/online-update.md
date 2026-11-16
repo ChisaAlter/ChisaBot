@@ -9,7 +9,7 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
 - `GET /api/version`（`server/src/build-info.ts`）返回 `{ version, commit, buildId, builtAt }`，`Cache-Control: no-store`。
   应用里不要求登录（和 `/health` 一样只有版本信息），公网网关照常先认证会话。
 - 网页每 5 分钟（页面可见时）、切回前台 / 窗口获得焦点时（距上次 ≥ 30 秒）问一次；打开后 20 秒做第一次。
-  构建号不同就在顶部居中显示玻璃胶囊「有新版本，点此刷新」（`components/update-banner.tsx`，DESIGN.md §22）。
+  浏览器构建只要 `buildId` 与服务器不同即显示「有新版本，点此刷新」；**桌面端内置前端**（`VITE_CHISABOT_BUILD_ID="pc-<version>"`，DESIGN.md §137）仅在服务器 `/api/version` 语义化版本严格高于桌面端时提示刷新（服务端落后时不误弹提示，而在账号卡片提示双版本并由 `pc/src/local-web.js` 保持本地前端加载）。
   可以关掉，同一个构建号关掉后不再提示。开发环境（`dev`）永不提示。
 - **从不自动刷新。** 用户点了刷新时，如果机器人还在回复（`channel-chat.tsx` 通过 `useReportBusy` 登记），
   输入框上还挂着没发出去的附件（`composer.tsx` 通过 `useReportPendingAttachments` 登记：File 只在内存里，
@@ -61,7 +61,7 @@ electron-updater 一定以 `--updated /S` 运行安装包，electron-builder 的
   照旧。
 
 所以 exe 里的图标虽然已经换了（0.1.1 起就是品牌头像，已对 v0.1.2 安装包实测），用户看到的桌面、开始菜单、任务栏图标还是旧的。
-另外聊天窗口加载的是服务器网页，网页更新是即时的——这也是「看起来只是在线热更新」的原因。
+另外自 `0.1.154`（CB-129 / DESIGN.md §137）起，PC 客户端内置本地构建前端（`src/web-bundle/` 打入 `app.asar`）并与服务器 `/api/version` 按「版本高者优先」仲裁：桌面端不低于服务器时零延迟使用本机前端（只向服务器拉取 API 数据），服务器高于桌面端时自动切换透传加载服务器前端；因此 `chisabotClient` 代码指纹同时跟踪 `pc/src/` 与前端共用源码。
 
 现在分成两种安装方式：
 

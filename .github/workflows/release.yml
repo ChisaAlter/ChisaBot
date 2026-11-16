@@ -128,6 +128,18 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci --no-audit --no-fund
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Build and stage bundled web UI
+        working-directory: .
+        env:
+          VERSION: ${{ needs.config.outputs.version }}
+        run: |
+          bun install --frozen-lockfile --omit=peer --linker hoisted
+          bun run generate:app-config
+          cd app && VITE_CHISABOT_BUILD_ID="pc-$VERSION" bun --bun ../node_modules/vite/bin/vite.js build
+          cd ../pc && node scripts/stage-web-bundle.js --from ../app/dist --version "$VERSION"
       - name: Build config
         env:
           FLAVOR: ${{ matrix.flavor }}
@@ -164,6 +176,8 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder --win nsis zip --x64 --publish never
+      - name: Verify bundled web UI in app.asar
+        run: node scripts/stage-web-bundle.js --verify-asar dist/win-unpacked/resources/app.asar
       - name: Stamp latest.yml
         run: node scripts/shell-fingerprint.js --stamp dist/latest.yml
       - name: Check latest.yml sha512
@@ -213,6 +227,18 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci --no-audit --no-fund
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Build and stage bundled web UI
+        working-directory: .
+        env:
+          VERSION: ${{ needs.config.outputs.version }}
+        run: |
+          bun install --frozen-lockfile --omit=peer --linker hoisted
+          bun run generate:app-config
+          cd app && VITE_CHISABOT_BUILD_ID="pc-$VERSION" bun --bun ../node_modules/vite/bin/vite.js build
+          cd ../pc && node scripts/stage-web-bundle.js --from ../app/dist --version "$VERSION"
       - name: Build config
         env:
           FLAVOR: ${{ matrix.flavor }}
@@ -245,6 +271,10 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder --mac dmg zip --arm64 --x64 --publish never
+      - name: Verify bundled web UI in app.asar
+        run: |
+          node scripts/stage-web-bundle.js --verify-asar dist/mac-arm64/ChisaBot.app/Contents/Resources/app.asar
+          node scripts/stage-web-bundle.js --verify-asar dist/mac/ChisaBot.app/Contents/Resources/app.asar
       - name: Stamp latest-mac.yml
         run: node scripts/shell-fingerprint.js --stamp dist/latest-mac.yml
       - name: Check latest-mac.yml sha512

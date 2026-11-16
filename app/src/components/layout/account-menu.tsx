@@ -1,12 +1,13 @@
 import {
   IconAlarm,
+  IconCloudDownload,
   IconInbox,
+  IconListCheck,
   IconLogout,
   IconMoon,
   IconQrcode,
   IconSelector,
   IconSettings,
-  IconListCheck,
   IconUserCircle,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,6 +36,7 @@ import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { fetchServedVersion } from "@/lib/version";
+import { formatAccountVersionLabel, serverSkewBehindBundled } from "@/lib/version-skew";
 import { cn } from "@/lib/utils";
 
 
@@ -78,7 +80,8 @@ export function AccountMenu({
     queryFn: () => fetchServedVersion(),
     staleTime: 5 * 60_000,
   });
-  const version = served.data?.version ? `v${served.data.version}` : "";
+  const skew = serverSkewBehindBundled(served.data?.version);
+  const version = formatAccountVersionLabel(served.data?.version);
 
   /*
    * 点菜单项去别的页（jank P1-6）：菜单立刻收起、不播退出动画，收起那一帧画出来后马上切页——
@@ -198,6 +201,13 @@ export function AccountMenu({
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
+          {skew && user?.role === "admin" ? (
+            <Row
+              icon={<IconCloudDownload className={icon} />}
+              label={`升级服务端（当前 v${skew.serverVersion}）`}
+              onClick={() => go("/admin/system-update")}
+            />
+          ) : null}
           <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => {
             setOpen(false);
             if (sidebar?.isMobile) sidebar.setOpenMobile(false);

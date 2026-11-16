@@ -100,20 +100,23 @@ const CLIENT_GENERATED_FILES = new Set([
   "src/update-keys.json",
 ]);
 
-function walkClientFiles(dir, prefix, out) {
+function walkClientFiles(dir, prefix, out, { skipTestFiles = false, skipRel = null } = {}) {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const rel = `${prefix}/${entry.name}`;
+    if (rel === "src/web-bundle") continue;
+    if (skipRel?.has(rel)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      walkClientFiles(full, rel, out);
+      walkClientFiles(full, rel, out, { skipTestFiles, skipRel });
     } else if (entry.isFile() && !CLIENT_GENERATED_FILES.has(rel)) {
+      if (skipTestFiles && /\.(test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) continue;
       out.push([rel, full]);
     }
   }
 }
 
-/** 客户端代码输入：外壳哈希 + 运行时 JS 依赖 + src/ 代码与本机 UI（排除版本号与构建期注入文件）。 */
+/** 客户端代码输入：外壳哈希 + 运行时 JS 依赖 + src/ 代码与随包内置前端源码（排除暂存产物、生成文件与单测）。 */
 function collectClientInputs(root = ROOT, shellHash = "") {
   const pkgFile = path.join(root, "package.json");
   const pkg = fs.existsSync(pkgFile) ? JSON.parse(fs.readFileSync(pkgFile, "utf8")) : {};
@@ -123,8 +126,21 @@ function collectClientInputs(root = ROOT, shellHash = "") {
   };
   const files = [];
   walkClientFiles(path.join(root, "src"), "src", files);
+  const appIndex = path.join(root, "..", "app", "index.html");
+  if (fs.existsSync(appIndex) && fs.statSync(appIndex).isFile()) {
+    files.push(["app/index.html", appIndex]);
+  }
+  const appSrcDir = path.join(root, "..", "app", "src");
+  if (fs.existsSync(appSrcDir)) {
+    walkClientFiles(appSrcDir, "app/src", files, {
+      skipTestFiles: true,
+      skipRel: new Set(["app/src/lib/generated/application-config.ts", "app/src/routeTree.gen.ts"]),
+    });
+    walkClientFiles(path.join(root, "..", "app", "public"), "app/public", files);
+    walkClientFiles(path.join(root, "..", "shared"), "shared", files, { skipTestFiles: true });
+  }
   for (const [rel, full] of files) {
-    const raw = /\.(js|cjs|mjs|json|html|css|svg|txt)$/i.test(rel)
+    const raw = /\.(js|cjs|mjs|ts|tsx|mts|cts|json|html|css|svg|txt|md|yaml|yml)$/i.test(rel)
       ? Buffer.from(fs.readFileSync(full, "utf8").replace(/\r\n/g, "\n"), "utf8")
       : fs.readFileSync(full);
     clientInputs[rel] = sha256(raw);
