@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-16（`v0.1.152`）。
+> 状态最后核对：2026-11-16（`v0.1.154`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
 | [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`（`v0.1.152`）            |
 | [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
 | [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
@@ -122,6 +123,18 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-129
+
+**桌面端内置本地前端与「版本高者优先」同源加载**
+
+标签：`type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）
+
+桌面客户端直接内置构建好的网页前端，仅向服务端请求 API 数据与认证/公开路由；当连接了尚未升级的旧版服务端时即可完整呈现桌面端最新 UI（如磨砂气泡、扇形牌组等），而当服务端版本高于桌面端时自动透传加载服务端最新前端（DESIGN §137）。
+
+- [x] **内置暂存与 ASAR 验证打包**：新增 `pc/scripts/stage-web-bundle.js`，将 `VITE_CHISABOT_BUILD_ID="pc-<ver>"` 产物暂存进 `pc/src/web-bundle/`（排除 `node-agent/` 与 `*.map`，`.gitignore` 与 `biome.json` 忽略），在 `release.yml` 的 Windows `pc` 与 macOS `pc-mac` 流水线中随包打入 `resources/app.asar` 并以 `--verify-asar` 解析 Pickle 目录树校验完整性；`shell-fingerprint.js` 纳入前端共享源码同时保持 Windows 外壳指纹 `7314f9105596bec5` 不变。
+- [x] **同源协议拦截与版本高者优先**：`pc/src/local-web.js` + `pc/src/main.js` 在保持主窗口真实服务器 `origin` 与 `persist:chisabot` Cookie 的前提下，仅本地接管同源 SPA 页面与 `/assets/*`；`/api`、`/auth`、`/login`、`/sign`、`/p`、`/downloads` 与写请求经 `net.request`（`redirect: "manual"`，剥离 Chromium 已解压编码头）透传服务端，保留 `302` `will-redirect`、`Set-Cookie` 与 SSE 流式响应，并通过 Electron 45 真实 E2E 验证服务端升级后自动切 `remote`。
+- [x] **版本偏移感知与测试收口**：`shared/system-update.ts` 新增 `compareSemver` 让 `pc-<ver>` 仅在服务端严格更高时触发更新横幅；新增 `app/src/lib/version-skew.ts`，在 `AccountMenu` 展示双版本副标题与管理员升级服务端快捷入口，在 `app/src/lib/client.ts` 将本地超前时的裸 `404` 转为升级引导提示，并补齐 `pc/test/local-web.check.js`、`shared/system-update.test.ts` 与 `app/tests/pc-local-web-version.test.tsx`。
 
 ## CB-128
 

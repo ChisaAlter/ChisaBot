@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { estimateText, installUpdaterCommand, isNewerBuild, projectMagpieGatewayState, projectSystemUpdateState, safeText } from "./system-update";
+import { compareSemver, estimateText, installUpdaterCommand, isNewerBuild, projectMagpieGatewayState, projectSystemUpdateState, safeText } from "./system-update";
 
 const running = { version: "0.1.2", buildId: "glass-20261012a", commit: "a".repeat(40) };
 const NOW = Date.parse("2026-10-12T02:00:00Z");
@@ -215,4 +215,21 @@ test("magpie.json: 一键安装相关字段只认白名单值", () => {
     projectMagpieGatewayState({ installed: true, isolation: "maybe" })
       ?.isolation,
   ).toBeUndefined();
+});
+
+test("compareSemver compares numeric segments cleanly", () => {
+  expect(compareSemver("0.1.154", "0.1.149")).toBe(1);
+  expect(compareSemver("0.1.154", "0.1.154")).toBe(0);
+  expect(compareSemver("0.1.154", "0.1.155")).toBe(-1);
+  expect(compareSemver("v0.2.0-beta.1", "0.1.999")).toBe(1);
+  expect(compareSemver("0.1", "0.1.0")).toBe(0);
+  expect(compareSemver("invalid", "0.1.154")).toBe(0);
+});
+
+test("isNewerBuild for pc-local bundle only notifies when server semver is strictly newer", () => {
+  expect(isNewerBuild("pc-0.1.154", { version: "0.1.149", buildId: "srv-149" })).toBe(false);
+  expect(isNewerBuild("pc-0.1.154", { version: "0.1.154", buildId: "srv-154" })).toBe(false);
+  expect(isNewerBuild("pc-0.1.154", { version: "0.1.155", buildId: "srv-155" })).toBe(true);
+  expect(isNewerBuild("pc-0.1.154", { version: "", buildId: "srv-155" })).toBe(false);
+  expect(isNewerBuild("pc-0.1.154", { version: "0.1.155", buildId: "dev" })).toBe(false);
 });

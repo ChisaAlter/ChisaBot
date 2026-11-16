@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
+import { recordServedVersion } from "@/lib/version-skew";
 import { type BuildVersion, isNewerBuild } from "../../../shared/system-update";
 
 /**
@@ -26,7 +27,11 @@ export async function fetchServedVersion(
     });
     if (!response.ok) return null;
     const body = (await response.json()) as BuildVersion;
-    return body && typeof body.buildId === "string" ? body : null;
+    if (body && typeof body.buildId === "string") {
+      if (typeof body.version === "string") recordServedVersion(body.version);
+      return body;
+    }
+    return null;
   } catch {
     return null;
   }

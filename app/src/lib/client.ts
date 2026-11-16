@@ -1,3 +1,5 @@
+import { serverSkewBehindBundled } from "@/lib/version-skew";
+
 /**
  * The one place the browser talks to the API server.
  *
@@ -155,18 +157,19 @@ export async function client<T>(
       .json()
       .then((body: { error?: string; code?: string; agentId?: string }) => body)
       .catch(() => undefined);
-    throw new ClientError(
-      errorBody?.error ?? options.fallback ?? "该请求失败。",
-      response.status,
-      {
-        ...(typeof errorBody?.code === "string"
-          ? { code: errorBody.code }
-          : {}),
-        ...(typeof errorBody?.agentId === "string"
-          ? { agentId: errorBody.agentId }
-          : {}),
-      },
-    );
+    const skew =
+      response.status === 404 && !errorBody?.error
+        ? serverSkewBehindBundled()
+        : null;
+    const message = skew
+      ? `${options.fallback ? `${options.fallback}：` : ""}当前服务端版本（v${skew.serverVersion}）低于桌面端（v${skew.uiVersion}），请在「设置 → 系统更新」升级服务端。`
+      : (errorBody?.error ?? options.fallback ?? "该请求失败。");
+    throw new ClientError(message, response.status, {
+      ...(typeof errorBody?.code === "string" ? { code: errorBody.code } : {}),
+      ...(typeof errorBody?.agentId === "string"
+        ? { agentId: errorBody.agentId }
+        : {}),
+    });
   }
 
   if (key === undefined) return response;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.154 — 2026-11-16
+
+全端版本 0.1.154，Android versionCode 336。将 Electron 桌面客户端改造为「内置本地前端 + 仅向服务器拉取数据（版本高者优先）」架构（CB-129 · DESIGN §137），PC 客户端代码指纹更新为 `d17e97707583d003`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新，无需重新安装；无需数据库迁移。
+
+- **桌面端内置本地前端与「版本高者优先」同源加载（CB-129 · DESIGN §137）**：构建桌面端时注入 `VITE_CHISABOT_BUILD_ID="pc-0.1.154"`，经 `pc/scripts/stage-web-bundle.js` 将构建产物暂存打入 `app.asar` 并以 `--verify-asar` 解析校验；`pc/src/local-web.js` 与 `pc/src/main.js` 保持窗口真实服务器 origin 不变（完整保留 HttpOnly 会话 Cookie、`Origin` 校验与 `web-preload.js` 隔离），仅拦截本地同源页面导航与 `/assets/*` 静态资源，而将 `/api`、`/auth`、`/login`、`/sign`、`/p`、`/downloads` 及所有写请求通过 Chromium `net.request`（`redirect: "manual"`，剥离已解压 `content-encoding`/`content-length` 头）原样透传服务器；当服务器版本严格高于桌面端时自动切换为透传加载服务端最新前端，桌面端更高或同版本时零延迟使用本地前端并消除「有新版本」误报，同时在左栏账号卡片展示 `v<桌面> · 服务端 v<服务端>`、管理员快捷升级入口与裸 `404` 版本偏移提示。三端客户端同步发布 `0.1.154`。
+
 ## 0.1.153 — 2026-11-16
 
 全端版本 0.1.153，Android versionCode 335。落地全域原生融合与安全护栏升级（Wave 0–6 · CB-027、CB-045 · DESIGN §136），包含服务端迁移 `0069_native_system_unification.sql`、桌面端原生 `stdio` MCP 与局域网 E2EE 对等配对（代码指纹更新为 `b0a46e5236d43b82`），Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新，无需重新安装。

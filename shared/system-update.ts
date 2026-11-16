@@ -485,8 +485,41 @@ export function projectMagpieGatewayState(raw: unknown): MagpieGatewayUpdate | u
   return out;
 }
 
-/** 网页的「有新版本」判断：两边都有构建号、而且不一样。开发环境（dev）从不提示。 */
+function parseSemverParts(version: string | undefined | null): number[] | null {
+  if (typeof version !== "string") return null;
+  const cleaned = version.trim().replace(/^v/i, "").split(/[-+]/)[0] ?? "";
+  if (!cleaned) return null;
+  const rawParts = cleaned.split(".");
+  const nums: number[] = [];
+  for (const part of rawParts) {
+    if (!/^\d+$/.test(part)) return null;
+    nums.push(Number.parseInt(part, 10));
+  }
+  return nums.length > 0 ? nums : null;
+}
+
+/** 比较两个语义化版本号；任一方无合法数字段时返回 0。 */
+export function compareSemver(a: string | undefined | null, b: string | undefined | null): number {
+  const pa = parseSemverParts(a);
+  const pb = parseSemverParts(b);
+  if (!pa || !pb) return 0;
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+/** 网页的「有新版本」判断：桌面端内置前端（pc-<version>）仅在服务端版本严格更高时提示；其余比较构建号。开发环境（dev）从不提示。 */
 export function isNewerBuild(bundled: string | undefined, served: BuildVersion | null | undefined) {
   if (!bundled || bundled === "dev" || !served?.buildId || served.buildId === "dev") return false;
+  if (bundled.startsWith("pc-")) {
+    const localVer = bundled.slice(3).trim();
+    if (!localVer || !served.version) return false;
+    return compareSemver(served.version, localVer) > 0;
+  }
   return served.buildId !== bundled;
 }
