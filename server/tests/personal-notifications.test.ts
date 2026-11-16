@@ -70,6 +70,13 @@ beforeAll(async () => {
       `"${schema}"."workflow_runs"`,
     ),
   );
+  await sql.unsafe(`
+    ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "step_mode" text DEFAULT 'auto' NOT NULL;
+    ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "resume_token_hash" text;
+    ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "resume_reason" text;
+    ALTER TABLE "workflow_runs" ADD COLUMN IF NOT EXISTS "resume_expires_at" timestamp with time zone;
+    CREATE UNIQUE INDEX IF NOT EXISTS "workflow_runs_resume_token_idx" ON "workflow_runs" USING btree ("resume_token_hash");
+  `);
   const migration = await readFile(
     new URL("../drizzle/0065_personal_delivery.sql", import.meta.url),
     "utf8",

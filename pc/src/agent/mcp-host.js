@@ -576,7 +576,7 @@ function extractEntriesFromConfig(source, parsed) {
  */
 async function discoverLocalMcpConfigs(options = {}) {
   const platform = options.platform || process.platform;
-  const pathImpl = platform === "win32" ? path.win32 : path.posix;
+  const pathImpl = path;
   const hasCustomHome =
     typeof options.homeDir === "string" && options.homeDir.length > 0;
   const home = hasCustomHome ? options.homeDir : os.homedir();
