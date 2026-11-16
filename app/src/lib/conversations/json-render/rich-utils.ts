@@ -4,6 +4,8 @@
  * 不依赖 React，也不碰 DOM，所以单元测试直接测（app/tests/json-render-rich.test.ts）。
  */
 
+import { isSafeRenderImageSrc } from "../../../../../shared/json-render/catalog";
+
 /** "81,272" / "$81,272.5" / "-3.1%" / 42 → 数字；读不出来 → null。 */
 export function toNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -332,6 +334,14 @@ export function safeHttp(url: unknown): string | null {
 export function safeHttps(url: unknown): string | null {
   const ok = safeHttp(url);
   return ok && /^https:/i.test(ok) ? ok : null;
+}
+
+/** json-render Image 允许外部 https 或本站受控聊天附件/文件图片路径。 */
+export function safeRenderImageSrc(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  const trimmed = url.trim();
+  if (!isSafeRenderImageSrc(trimmed)) return null;
+  return trimmed.startsWith("/api/") ? trimmed : (safeHttps(trimmed) ?? null);
 }
 
 /** 链接的域名（去掉 www.）。 */

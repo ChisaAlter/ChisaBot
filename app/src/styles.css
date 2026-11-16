@@ -5563,7 +5563,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .dark .rp-link-icon { background: rgba(255, 255, 255, 0.9); padding: 1px; box-sizing: border-box; }
 
 /* 图片：单张 */
-.rp-images { display: flex; max-width: 100%; }
+.rp-images { container-type: inline-size; display: flex; width: 100%; max-width: 100%; min-width: 0; }
 .rp-images[data-align="end"] { justify-content: flex-end; }
 .rp-image-single {
   display: block; max-width: min(320px, 100%); padding: 0; overflow: hidden; cursor: zoom-in;
@@ -5575,55 +5575,81 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .rp-image-single:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .rp-image-single img { display: block; max-width: 100%; max-height: 300px; width: auto; height: auto; object-fit: contain; }
 
-/* 图片：一摞（Hark 风格多图交叠扇形牌组：悬停优先放大置顶 + 其余卡片柔和虚化，点击打开全屏看大图） */
+/* 图片：错落扇形牌组（静止即舒展展开、不靠边裁切；悬停置顶微浮，其余轻微退后） */
 .rp-pile {
-  position: relative; width: 220px; height: 162px; margin: 8px 8px 12px; flex: none;
-  transition: width var(--dur-3) var(--ease-out); animation: rp-in var(--dur-2) var(--ease-out) both;
+  --rp-max: 204px;
+  --rp-span: calc(1 + var(--rp-left, 0.74) + var(--rp-right, 0.74));
+  --rp-w: min(var(--rp-max), calc((100cqw - 28px) / var(--rp-span)));
+  --rp-drop-unit: var(--rp-w);
+  position: relative; display: grid; grid-template-columns: var(--rp-w); align-items: start;
+  width: max-content; max-width: 100%; box-sizing: border-box; flex: none;
+  padding: 12px calc(var(--rp-w) * var(--rp-right, 0.74) + 12px) calc(var(--rp-drop-unit) * var(--rp-drop, 0.26) + 16px) calc(var(--rp-w) * var(--rp-left, 0.74) + 12px);
+  animation: rp-in var(--dur-2) var(--ease-out) both;
 }
-.rp-pile[data-spread] { width: calc(220px + (var(--rp-n) - 1) * var(--rp-step)); }
+.rp-pile[data-captioned] { --rp-drop-unit: max(var(--rp-w), 204px); }
+.rp-pile[data-count="2"] { --rp-max: 216px; }
+.rp-pile[data-count="3"] { --rp-max: 200px; }
+.rp-pile[data-count="4"] { --rp-max: 168px; }
 .rp-images[data-align="end"] .rp-pile { margin-left: auto; }
+.rp-pile-item {
+  position: relative; grid-area: 1 / 1; width: var(--rp-w); min-width: 0;
+  transform-origin: 50% 60%;
+  transform: translate(calc(var(--rp-w) * var(--rp-sx, 0)), calc(var(--rp-drop-unit) * var(--rp-sy, 0))) rotate(var(--rp-rot, 0deg)) scale(var(--rp-sc, 1));
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.rp-pile-item[data-focused],
+.rp-pile-item:hover {
+  transform: translate(calc(var(--rp-w) * var(--rp-sx, 0)), calc(var(--rp-drop-unit) * var(--rp-sy, 0) - 8px)) rotate(0deg) scale(1.04);
+  z-index: 35;
+}
+.rp-pile-item[data-dimmed] {
+  transform: translate(calc(var(--rp-w) * var(--rp-sx, 0)), calc(var(--rp-drop-unit) * var(--rp-sy, 0) + 2px)) rotate(var(--rp-rot, 0deg)) scale(calc(var(--rp-sc, 1) * 0.96));
+}
 .rp-pile-card {
-  position: absolute; top: 0; left: 0; width: 220px; height: 152px; padding: 0; overflow: hidden; cursor: zoom-in;
-  border-radius: 18px; border: 2px solid rgba(255, 255, 255, 0.9); background: var(--glass-2);
-  box-shadow: 0 4px 12px rgba(20, 35, 70, 0.14), 0 14px 32px rgba(30, 52, 96, 0.18);
-  transform: translateX(calc(var(--rp-i) * 34px)) translateY(calc(var(--rp-i) * 6px)) rotate(var(--rp-rot));
-  transform-origin: 50% 85%;
-  transition:
-    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  --rp-card-radius: var(--r-lg, 20px);
+  --rp-card-inset: 5px;
+  position: relative; display: flex; flex-direction: column; width: 100%; padding: var(--rp-card-inset); box-sizing: border-box;
+  overflow: hidden; cursor: zoom-in; pointer-events: auto; text-align: left;
+  border-radius: var(--rp-card-radius); border: 1px solid var(--stroke); background: var(--glass-bg-solid);
+  box-shadow: var(--glass-highlight), 0 8px 24px rgba(18, 30, 56, 0.16);
+  transition: filter 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.rp-pile-card:first-child { transform: rotate(-3deg); }
-.rp-pile-card img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
-.rp-pile[data-spread] .rp-pile-card {
-  transform: translateX(calc(var(--rp-i) * var(--rp-step))) rotate(calc(var(--rp-rot) * 0.45));
+.rp-pile[data-captioned] .rp-pile-card { --rp-card-inset: var(--sp-2, 8px); }
+.rp-pile-media {
+  position: relative; display: block; width: 100%; aspect-ratio: 4 / 3; overflow: hidden;
+  border-radius: calc(var(--rp-card-radius) - var(--rp-card-inset));
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
+.rp-pile-media > img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
+.rp-pile-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--sp-2, 8px) var(--sp-1, 4px) var(--sp-1, 4px); }
+.rp-pile-caption {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  font-size: 13px; font-weight: 600; line-height: 18px; color: var(--text); word-break: break-word;
+}
+.rp-pile-site { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.rp-pile-go {
+  position: absolute; top: 14px; right: 14px; z-index: 4; display: grid; place-items: center;
+  width: 24px; height: 24px; border-radius: var(--r-pill, 999px);
+  background: rgba(15, 20, 32, 0.62); color: #fff; pointer-events: auto;
+  opacity: 0; transform: translateY(2px);
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out), background 150ms;
+}
+.rp-pile-item:hover .rp-pile-go,
+.rp-pile-item[data-focused] .rp-pile-go,
+.rp-pile-go:focus-visible { opacity: 1; transform: none; }
+@media (hover: none), (any-pointer: coarse) { .rp-pile-go { opacity: 0.78; transform: none; } }
 .rp-pile-card[data-focused],
-.rp-pile[data-spread] .rp-pile-card:hover {
-  transform: translateX(calc(var(--rp-i) * var(--rp-step))) translateY(-8px) scale(1.04) rotate(0deg);
-  box-shadow: 0 20px 44px rgba(12, 22, 44, 0.28);
-  z-index: 25 !important;
-}
-.rp-pile-card[data-dimmed] {
-  filter: blur(4px);
-  opacity: 0.52;
-  transform: translateX(calc(var(--rp-i) * var(--rp-step))) scale(0.95) rotate(var(--rp-rot));
-}
-.rp-pile-card:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; z-index: 25 !important; }
-.rp-pile-more { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 16, 28, 0.48); color: #fff; font-size: var(--fs-20); font-weight: 600; }
-.rp-pile-count {
-  position: absolute; left: 10px; bottom: -4px; z-index: 30; display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px;
-  border-radius: var(--r-pill); background: var(--glass-3); border: 1px solid var(--line); box-shadow: var(--shadow-1);
-  font-size: var(--fs-12); line-height: 18px; color: var(--ink-2); pointer-events: none; transition: opacity var(--dur-2) var(--ease-out);
-}
-.rp-pile[data-spread] .rp-pile-count { opacity: 0; }
-.dark .rp-pile-card { border-color: rgba(255, 255, 255, 0.16); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 16px 36px rgba(0, 0, 0, 0.38); }
-@container (max-width: 340px) {
-  .rp-pile, .rp-pile-card { width: 164px; }
-  .rp-pile-card { height: 116px; }
-  .rp-pile { height: 126px; }
-  .rp-pile[data-spread] { width: calc(164px + (var(--rp-n) - 1) * var(--rp-step)); }
+.rp-pile-item:hover .rp-pile-card { box-shadow: var(--glass-highlight), 0 18px 42px rgba(12, 22, 44, 0.24); }
+.rp-pile-card[data-dimmed] { filter: blur(1.5px); opacity: 0.76; }
+.rp-pile-card:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
+.rp-pile-more { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 16, 28, 0.58); color: #fff; font-size: var(--fs-20); font-weight: 600; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); }
+.dark .rp-pile-card { border-color: rgba(255, 255, 255, 0.14); box-shadow: var(--glass-highlight), 0 10px 28px rgba(0, 0, 0, 0.42); }
+.dark .rp-pile-card[data-focused],
+.dark .rp-pile-item:hover .rp-pile-card { box-shadow: var(--glass-highlight), 0 20px 46px rgba(0, 0, 0, 0.56); }
+@container (max-width: 420px) {
+  .rp-pile-caption { font-size: 12px; line-height: 16px; }
+  .rp-pile-site { font-size: 11px; }
 }
 
 /* 文件卡（Hark 风格高对比圆角胶囊卡 + 弹窗阅读器） */
@@ -5753,7 +5779,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   .rp-link { animation: rp-fade var(--dur-2) linear backwards; }
   .rp-lightbox-img { animation: rp-fade var(--dur-2) linear both; }
   /* 不做位移动画：摊开 / 收起、悬停上浮直接到位。 */
-  .rp-image-single, .rp-pile, .rp-pile-card, .rp-lightbox-img { transition-property: opacity, box-shadow, background-color; }
+  .rp-image-single, .rp-pile, .rp-pile-item, .rp-pile-card, .rp-pile-go, .rp-lightbox-img { transition-property: opacity, box-shadow, background-color; }
   .rp-link, .rp-link-go { transition-property: opacity; }
   .rp-link:hover, .rp-link:active, .rp-image-single:hover { transform: none; }
   .rp-link-go { transform: none; }

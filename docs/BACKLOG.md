@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`                          |
 | [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
 | [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
 | [CB-125](#cb-125) | 主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换                               | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）             |
@@ -121,6 +122,18 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-128
+
+**多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级**
+
+标签：`type: feat` · `area: chat` · `area: images` · `P1` · `status: done`
+
+解决用户发送多张图片时仅错开 34px 过于紧凑且右对齐被裁切、以及 AI 使用 `Card > Carousel` 或同源 `/api/chat-files/...` 返回多图/多卡时被套进大玻璃框横向截断的问题（DESIGN §135）。
+
+- [x] **多图扇形牌组与右对齐防裁切（`ImagePile`）**：实现 `imagePileGeometry(total)`（2 卡斜扇、3 卡居中品字、4+ 卡拱形 `+N`），`.rp-pile` 采用单格 CSS Grid + 旋转外接四向内边距，配合 `AttachmentTiles` 的 `w-full [container-type:inline-size]` 基准消除右对齐（`align="end"`）溢出与裁切；支持带 `caption` 与外链 `href` 的图注卡片及 `--rp-drop-unit` 窄屏竖向兜底。
+- [x] **链接双卡 / 三卡斜向扇面统一（`LinkCardStack`）**：2 张链接卡主卡 `-2.5deg`、右卡 `+3.5deg` 且增大步距，`--lc-drop-unit: max(var(--lc-w), 196px)` 配合左/右槽竖向下沉 `0.32 / 0.4` 取代右卡标题 `padding-left` 缩进，1440px 与 390px 双视口零遮挡。
+- [x] **生成式界面同源图片直引与无外框自动拆壳升级**：`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc` 放行 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`；`media-deck.ts` 与 `JsonRenderSurface` 将独立及嵌套的多图 / `2–3` 张链接容器直接渲染为 `ImagePile` / `LinkCardStack`；通过 `app/tests/image-pile-deck.test.tsx`、`shared/json-render/catalog.test.ts` 与实机 Edge 双视口截图校验。
 
 ## CB-127
 

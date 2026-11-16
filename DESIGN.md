@@ -140,6 +140,7 @@
 | [132](#132-智能体提供方子代理调用与-bot-工具派发2026-11-11)                                              | 智能体提供方、子代理调用与 Bot 工具派发                                                                          | 2026-11-11                                                                 |
 | [133](#133-动态布局与弹窗状态稳定性2026-11-14)                                                           | 动态布局与弹窗状态稳定性                                                                                         | 2026-11-14                                                                 |
 | [134](#134-任务中心四列看板与本地-markdown-双向协同2026-11-15)                                             | 任务中心四列看板与本地 Markdown 双向协同                                                                         | 2026-11-15                                                                 |
+| [135](#135-多图与多卡片错落扇形牌组展示2026-11-16)                                                       | 多图与多卡片错落扇形牌组展示                                                                                     | 2026-11-16                                                                 |
 
 ## 0. 总原则
 
@@ -2903,3 +2904,11 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **个人任务四列投影与快捷联动**：任务中心保留 `Inbox` 默认入口，在其后新增 `看板` 视图（支持桌面四列「现在 / 接下来 / 以后 / 已交付」网格与 `<640px` 单行分段切换），个人任务依据 `lane`、`priority` 与状态投影，终态任务自动归入 `已交付` 并显示 `原属：<泳道>`（与可选看板卡片标识）来源徽标；右栏任务栏头新增「看板」快捷按钮，卡片菜单与详情弹窗工具栏提供「发到当前对话」（填入当前对话输入框并关闭弹窗），`最近交付` 展示原属泳道与看板编号。
 - **双格式本地 Markdown 解析与 CAS 安全写入**：服务端通过职责拆分的 `markdown-board.ts`、`board-discovery.ts`、`markdown-board-parser.ts`、`dialects/{autobahn,chisabot-docs}.ts`、`file-lock.ts` 与 `markdown-splice.ts` 复用 `resolveTaskSourcePath` / `allowedDocument` 与用户授权目录并集（拒绝目录穿越、符号链接逃逸与 `.env`/密钥等敏感文件），`/roots` 与 `/boards*` 本机目录及看板写接口强制要求 `admin` 角色权限（`actor.role === "admin"`）；同时支持 Autobahn 方言（`BACKLOG.md` / 自定义 `autobahn.config.json`）与 ChisaBot 自带双文件方言（`docs/ROADMAP.md` + `docs/BACKLOG.md`）。全部移动、编辑、新建与勾选操作基于原始偏移整块替换并保留未触碰卡片字节及 CRLF/LF 行尾（保护 `#cb-xxx` 锚点），辅以每路径串行互斥锁、临时文件原子替换与 SHA-256 `baseRevision` 乐观并发检查（过期返回 `409` 并提示刷新）。
 - **无痛浏览、覆盖层源码编辑与机器人闭环回写**：看板界面提供可折叠置顶说明、规格键值胶囊与大写柔化渲染（保留行内代码与围栏代码块原貌）、单行可点击待办复选框、伴随 `.md` 文档在线页签，以及字符 1:1 等宽同步的透明 `<textarea>` + `<pre>` 语法高亮覆盖层编辑器（`Ctrl/Cmd+S` 保存、`Esc` 取消）。每张卡片支持以 `markUntrusted` 安全包裹正文派发给 Bot 或已配置本地子代理（`board:v1:` `sourceRef` 关联），并在关联任务到达 `succeeded` 终态时通过 `onSettled` 自动将对应 Markdown 卡片标为已完成并追加「交付摘要（ChisaBot 自动回写）」与 `board_writeback` 审计事件。
+
+## 135. 多图与多卡片错落扇形牌组展示（2026-11-16）
+
+改进消息附件、聊天富预览与生成式界面中多张图片及多张链接卡片的展示姿态，使发送消息的多图与 AI 展示的多图/多卡统一呈现舒展、无裁切的浮动错落扇形牌组：
+
+- **静止即展开与真实包围盒（`ImagePile`）**：取消旧版仅靠悬停才摊开、静态叠压遮挡 85% 且在右对齐（`align="end"`）时向右溢出容器边界的窄堆叠布局；通过 `imagePileGeometry(total)` 将 2 张图排为左上逆时针微倾（`-2.8deg`）与右下顺时针微倾（`+3.5deg`）的舒展双卡扇形，3 张图排为居中抬高置顶、左右微倾的品字扇形，4 张及以上排为四卡拱形扇面并在末卡显示 `+N`。`.rp-pile` 使用单格 CSS Grid 配合基于 `--rp-w`、`--rp-left`、`--rp-right`、`--rp-drop` 精确计算的四向内边距容纳旋转外接矩形，并在 `AttachmentTiles` 提供 `[container-type:inline-size]` 宽度基准，使桌面与 390px 手机端右对齐多图都不再裁切或溢出；同时支持带 `caption` 与外链 `href` 的图注卡片（外链按钮作为 `<button>` 兄弟元素渲染），点击任意卡直接打开 `Lightbox` 看大图，保留 `[data-dimmed]` 降焦柔化及 `perf-noblur.css` 关闭开关。
+- **双卡微倾扇面（`LinkCardStack`）**：2 张链接卡时主卡微逆时针倾斜 `-2.5deg`、右卡顺时针 `+3.5deg` 并下沉 `0.4` 卡宽（窄屏按竖向像素下限兜底），3 张及以上延续居中品字扇形（左卡下沉 `0.32`、右卡下沉 `0.4` 卡宽），标题无需左缩进即可完整露在下方。
+- **生成式界面多图 / 多链接自动升级与同源图片直引**：`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc`，在继续拦截 `http://`、`//`、`..` 与 `data:` 的前提下允许 `Image` 引用本站 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`；聊天面 `JsonRenderSurface` 通过 `extractStandaloneMediaDeck` 与 `upgradeNestedMediaDecks` 将仅含 `2+` 张 `Image` 或 `2–3` 张 `Link` 的 `Carousel` / `Stack` / `Grid`（含无描述 `Card` 外壳）直接渲染为无外框扇形牌组，并在提示词引导模型优先用 Markdown 独立行图片/链接直接输出。

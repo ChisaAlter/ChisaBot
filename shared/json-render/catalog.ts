@@ -473,14 +473,19 @@ export const jsonRenderCatalog = defineCatalog(schema, {
     },
     Image: {
       props: z.object({
-        src: z.string().describe("必须是 https:// 开头的图片地址"),
+        src: z
+          .string()
+          .describe(
+            "必须是 https:// 开头的图片地址，或本站 /api/chat-files/ 图片路径",
+          ),
         alt: z.string(),
         caption: z.string().nullish(),
         aspect: z.enum(["16:9", "4:3", "1:1", "auto"]).nullish(),
         href: itemActions.href,
       }),
       slots: [],
-      description: "图片。只用你确实拿到的真实 https 图片地址，不要编造链接。",
+      description:
+        "图片。只用你确实拿到的真实 https 图片地址或 /api/chat-files/ 路径，不要编造链接。",
     },
     Separator: {
       props: z.object({
@@ -788,7 +793,7 @@ export const jsonRenderCatalog = defineCatalog(schema, {
       }),
       slots: ["default"],
       description:
-        "横向滑动列表（可拖动 / 滚动，吸附对齐）：一排 Link / Metric / Hero / Image 卡片。",
+        "横向滑动列表（可拖动 / 滚动，吸附对齐）：适合 4 个以上的 Metric / Hero 卡片；展示 2–4 张图片或 1–3 个链接请直接写在正文里让界面画成扇形牌组。",
     },
     Timeline: {
       props: z.object({
@@ -946,7 +951,7 @@ const CUSTOM_RULES = [
   `icon 只能写这些名字（Tabler 图标）：${ICON_NAMES.join(" ")}。`,
   "每一项都能带动作：组件或 List / Timeline / KeyValue 的每一行可写 href（http(s) 链接，新标签页打开）、ask（替用户发一句话）、copy（复制的文字）。时间字段（List.items[].time、Timeline.items[].time、RelativeTime.time、Countdown.target）写 ISO 带时区，如 2026-10-13T09:00:00+08:00。",
   "数列（Chart.data / series[].data、Sparkline.data、Metric.spark、HeatStrip.values）写数字数组，按时间先后；Chart.labels 与数据一一对应，写短（10/13、09:00）。",
-  "只是要用户点开一到三个网页（下载页、入口、文档）时不要用 render_ui：在回复里把链接单独放一行（或一行 `[标签](网址)`），聊天界面会自动画成链接卡。",
+  "只是要用户点开一到三个网页（下载页、入口、文档）时不要用 render_ui：在回复里把链接单独放一行（或一行 `[标签](网址)`），聊天界面会自动画成链接卡；同理，展示 2–4 张图片时也不要套 Card + Carousel，直接在正文里每行写一个 `![说明](地址)`，界面会自动画成错落展开的扇形图片牌组。",
   "按钮只用 send_message、open_link、copy_text、refresh_panel 或内置的 setState / pushState / removeState / validateForm；不要使用 confirm 字段。",
   "用户要的是「面板」（放在右侧面板栏、长期保留的小工具）时不要用 render_ui：有 proposePanelDraft 工具就用它保存；没有就请用户点右栏面板的「新建」后再说一遍。",
   "send_message 只是替用户发一条消息给你，真正的操作（发送邮件、付款、删除等）仍由你在下一轮用工具完成，并照常经过审批。",
@@ -1069,6 +1074,19 @@ const IMAGE_PROPS: Record<string, string[]> = {
 };
 const isHttps = (value: unknown) =>
   typeof value === "string" && /^https:\/\//i.test(value.trim());
+
+const LOCAL_CHAT_IMAGE_RE =
+  /^\/api\/(?:chat-files\/|channels\/[^/?#]+\/attachments\/)[A-Za-z0-9._-]+(?:\?w=\d+)?$/;
+
+/** 放行外部 https:// 图片与本站受控聊天附件/文件图片路径（拒绝 //、..、http://、data:）。 */
+export function isSafeRenderImageSrc(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.startsWith("//") || trimmed.includes(".."))
+    return false;
+  if (/^https:\/\//i.test(trimmed)) return true;
+  return LOCAL_CHAT_IMAGE_RE.test(trimmed);
+}
 
 /** `on` 里的动作：名字必须存在；本部署的动作（send_message / open_link）按目录校验参数。 */
 function actionIssues(key: string, on: unknown): string[] {
@@ -1195,9 +1213,11 @@ export function validateRenderUiSpec(spec: Spec | null): RenderUiValidation {
     if (
       element.type === "Image" &&
       typeof props.src === "string" &&
-      !/^https:\/\//i.test(props.src)
+      !isSafeRenderImageSrc(props.src)
     ) {
-      issues.push(`elements.${key}.props.src 必须是 https:// 开头的地址。`);
+      issues.push(
+        `elements.${key}.props.src 必须是 https:// 开头的地址或本站 /api/chat-files/ 图片路径。`,
+      );
     }
   }
 
@@ -1296,9 +1316,9 @@ export function sanitizeRenderUiSpec(
     if (
       type === "Image" &&
       typeof props.src === "string" &&
-      !/^https:\/\//i.test(props.src)
+      !isSafeRenderImageSrc(props.src)
     ) {
-      skipped.push(`${key}（图片地址不是 https）`);
+      skipped.push(`${key}（图片地址不安全）`);
       continue;
     }
     for (const name of IMAGE_PROPS[type as string] ?? []) {

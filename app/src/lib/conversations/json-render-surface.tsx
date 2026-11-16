@@ -7,7 +7,13 @@ import {
 import { useMemo, useRef } from "react";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
+import { LinkCardStack } from "@/components/rich-previews/link-card";
+import { ImagePile } from "@/components/rich-previews/rich-previews";
 import { useConversation } from "@/lib/conversations/conversation";
+import {
+  extractStandaloneMediaDeck,
+  upgradeNestedMediaDecks,
+} from "@/lib/conversations/json-render/media-deck";
 import { jsonRenderRegistry } from "@/lib/conversations/json-render/registry";
 import {
   ChoiceProvider,
@@ -62,6 +68,14 @@ export function JsonRenderSurface({
       : null;
   // 最外层不是 Card、又有字直接落在背景上：整张界面自己当外壳（DESIGN.md §29，shared/json-render/shell.ts）。
   const shell = useMemo(() => needsShell(spec), [spec]);
+  const mediaDeck = useMemo(
+    () => (streaming ? null : extractStandaloneMediaDeck(spec)),
+    [spec, streaming],
+  );
+  const chatSpec = useMemo(
+    () => (streaming ? spec : upgradeNestedMediaDecks(spec)),
+    [spec, streaming],
+  );
 
   // 每张界面一个状态仓库；表单输入写在这里，不会影响别的消息里的界面。
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once per surface on purpose.
@@ -127,6 +141,22 @@ export function JsonRenderSurface({
     [conversation?.ask],
   );
 
+  if (mediaDeck) {
+    return (
+      <section
+        aria-label={title || "机器人生成的界面"}
+        className="jr-surface"
+        data-media-deck={mediaDeck.kind}
+      >
+        {mediaDeck.kind === "images" ? (
+          <ImagePile align="start" images={mediaDeck.items} />
+        ) : (
+          <LinkCardStack items={mediaDeck.items} />
+        )}
+      </section>
+    );
+  }
+
   return (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
     <div
@@ -150,7 +180,7 @@ export function JsonRenderSurface({
             <Renderer
               loading={streaming}
               registry={jsonRenderRegistry}
-              spec={spec}
+              spec={chatSpec}
             />
           </JSONUIProvider>
         </ChoiceProvider>

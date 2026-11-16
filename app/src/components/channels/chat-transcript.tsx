@@ -2612,12 +2612,12 @@ function AttachmentTiles({
   return (
     <ul
       className={cn(
-        "flex w-fit max-w-full flex-wrap items-start justify-end gap-2 self-end",
+        "flex w-full max-w-full flex-wrap items-start justify-end gap-2 self-end [container-type:inline-size]",
         className,
       )}
     >
       {pictures.length > 0 ? (
-        <li key="pictures">
+        <li className="w-full max-w-full" key="pictures">
           <ImagePile
             align="end"
             images={pictures.map((picture) => ({
