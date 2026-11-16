@@ -152,7 +152,7 @@ export async function resolveTaskSourcePath(
   return canonical;
 }
 
-function allowedDocument(path: string) {
+export function allowedDocument(path: string) {
   const name = basename(path).toLowerCase();
   return (
     [".md", ".markdown", ".txt"].includes(extname(name)) &&

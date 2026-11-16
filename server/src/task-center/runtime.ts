@@ -18,6 +18,7 @@
 
 import { setTimeout as delay } from "node:timers/promises";
 import type { Message } from "@ag-ui/client";
+import { parseBoardSourceRef } from "../../../shared/task-board-core";
 import type {
   TaskArtifact,
   TaskCapability,
@@ -48,6 +49,10 @@ import { drawnComponents } from "../turns/run-turn";
 import type { DrawnComponent, TurnRunner } from "../turns/types";
 import { taskContextBrief } from "./context";
 import { isLocalAgentExecutor, localAgentThreadId } from "./local-agent-runner";
+import {
+  createMarkdownBoardService,
+  type MarkdownBoardService,
+} from "./markdown-board";
 import {
   assertTaskEvidence,
   TaskResultNeedsReview,
@@ -578,6 +583,7 @@ export function createTaskCenterRuntime(
     return [...executors, ...sourceCaps];
   }
 
+  let boards: MarkdownBoardService | undefined;
   const service = createTaskCenter(options.database, {
     hasDurableExecution: async (task) => {
       if (isLocalAgentExecutor(task.executor) && task.status !== "planning") {
@@ -625,21 +631,68 @@ export function createTaskCenterRuntime(
     ...(options.globalConcurrency
       ? { globalConcurrency: options.globalConcurrency }
       : {}),
+    onSettled: async (ownerUserId, task, outcome) => {
+      if (
+        outcome.status !== "succeeded" ||
+        !boards ||
+        !parseBoardSourceRef(task.sourceRef)
+      ) {
+        return;
+      }
+      try {
+        const written = await boards.completeCardFromTask(
+          ownerUserId,
+          task,
+          outcome.detail,
+        );
+        if (written) {
+          await service.recordTaskEvent(
+            ownerUserId,
+            task.id,
+            "board_writeback",
+            `已自动将看板卡片 ${written.cardId} 标为完成并附上交付摘要`,
+            written,
+          );
+        }
+      } catch (error) {
+        await service
+          .recordTaskEvent(
+            ownerUserId,
+            task.id,
+            "board_writeback_failed",
+            `看板回写失败：${error instanceof Error ? error.message : String(error)}`,
+            { sourceRef: task.sourceRef },
+          )
+          .catch(() => {});
+      }
+    },
   });
 
   /**
    * service.ts 的 routes 组装点不开放协作者入口，这里在 runtime 层把它接上：
-   * 授权目录（roots，用户可维护的本机目录白名单）与执行轨迹（trace，
-   * chisabot_local_events 投影）。ensure 顺带建 roots 表，建表失败保持原有行为。
+   * 授权目录（roots，用户可维护的本机目录白名单）、执行轨迹（trace，
+   * chisabot_local_events 投影）与本地 Markdown 看板协同（boards）。
+   * ensure 顺带建 roots 表，建表失败保持原有行为。
    */
   const roots = createTaskCenterRoots(options.database);
   const trace = createTaskCenterTrace(options.database);
+  const configuredRoots = options.localRoots;
+  boards = createMarkdownBoardService({
+    localRoots: configuredRoots
+      ? (owner) => configuredRoots(owner)
+      : (owner) => roots.list(owner).catch(() => [] as string[]),
+    listTasks: (owner) => service.listTasks(owner),
+    createTask: (owner, input, extra) =>
+      service.createTask(owner, input, extra),
+    controlTask: (owner, id, action) => service.controlTask(owner, id, action),
+    scheduleTask: (owner, id, patch) => service.scheduleTask(owner, id, patch),
+  });
   const innerEnsure = service.ensure;
   service.ensure = async () => {
     await innerEnsure();
     await roots.ensure();
   };
   service.routes = (requireUser) =>
-    createTaskCenterRoutes(service, requireUser, { roots, trace });
+    createTaskCenterRoutes(service, requireUser, { roots, trace, boards });
   return service;
 }

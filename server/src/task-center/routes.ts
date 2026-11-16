@@ -2,17 +2,35 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
+  boardCardCreateInputSchema,
+  boardCardUpdateInputSchema,
+  boardCheckboxInputSchema,
+  boardDispatchInputSchema,
+  boardDocWriteInputSchema,
+  boardIdSchema,
+  boardInitInputSchema,
+  boardMoveInputSchema,
+  taskScheduleInputSchema,
+} from "../../../shared/task-board";
+import {
   contextInputSchema,
   sourceInputSchema,
   TASK_CATEGORIES,
   taskInputSchema,
 } from "../../../shared/task-center";
 import type { AppVariables } from "../auth/guards";
+import type { MarkdownBoardService } from "./markdown-board";
 import type { TaskCenterRoots } from "./roots";
 import { TaskCenterError, type TaskCenterService } from "./service";
 import type { TaskCenterTrace } from "./trace";
 
 const resourceId = z.string().trim().min(1).max(128);
+const boardDocQuery = z
+  .object({
+    boardId: boardIdSchema,
+    relFile: z.string().trim().min(1).max(260),
+  })
+  .strict();
 const decisionInput = z.object({ approved: z.boolean() }).strict();
 const sourcePatchInput = sourceInputSchema.partial().strict();
 const rootPathInput = z.object({ path: z.string().min(1).max(1000) }).strict();
@@ -41,6 +59,7 @@ const decisionListInput = pagingInput.extend({
 export type TaskCenterRouteDeps = {
   roots?: TaskCenterRoots;
   trace?: TaskCenterTrace;
+  boards?: MarkdownBoardService;
 };
 
 /** The authenticated actor owns every read, mutation and decision in this API. */
@@ -50,7 +69,7 @@ export function createTaskCenterRoutes(
   deps: TaskCenterRouteDeps = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
-  app.use("*", requireUser, bodyLimit({ maxSize: 128 * 1024 }));
+  app.use("*", requireUser, bodyLimit({ maxSize: 512 * 1024 }));
   app.use("*", async (context, next) => {
     context.header("Cache-Control", "no-store");
     await next();
@@ -123,6 +142,15 @@ export function createTaskCenterRoutes(
       context.var.actor.id,
       resourceId.parse(context.req.param("id")),
       priority,
+    );
+    return context.json({ task });
+  });
+  app.post("/tasks/:id/schedule", async (context) => {
+    const patch = taskScheduleInputSchema.parse(await context.req.json());
+    const task = await service.scheduleTask(
+      context.var.actor.id,
+      resourceId.parse(context.req.param("id")),
+      patch,
     );
     return context.json({ task });
   });
@@ -202,6 +230,16 @@ export function createTaskCenterRoutes(
     }),
   );
 
+  const assertAdminForHostWrite = (context: {
+    var: { actor: { role: string } };
+  }) => {
+    if (context.var.actor.role !== "admin") {
+      throw new TaskCenterError(
+        "仅管理员可修改服务器主机上的授权目录或本地看板文件。",
+        403,
+      );
+    }
+  };
   const roots = () => {
     if (!deps.roots)
       throw new TaskCenterError("授权目录设置尚未在此部署启用。", 404);
@@ -211,16 +249,84 @@ export function createTaskCenterRoutes(
     context.json({ roots: await roots().list(context.var.actor.id) }),
   );
   app.put("/roots", async (context) => {
+    assertAdminForHostWrite(context);
     const { path } = rootPathInput.parse(await context.req.json());
     return context.json({
       roots: await roots().add(context.var.actor.id, path),
     });
   });
   app.delete("/roots", async (context) => {
+    assertAdminForHostWrite(context);
     const { path } = rootPathInput.parse(await context.req.json());
     return context.json({
       roots: await roots().remove(context.var.actor.id, path),
     });
+  });
+
+  const boards = () => {
+    if (!deps.boards)
+      throw new TaskCenterError("本地 Markdown 看板尚未在此部署启用。", 404);
+    return deps.boards;
+  };
+  app.get("/boards", async (context) =>
+    context.json(await boards().listBoards(context.var.actor.id)),
+  );
+  app.post("/boards/init", async (context) => {
+    assertAdminForHostWrite(context);
+    const { rootPath } = boardInitInputSchema.parse(await context.req.json());
+    const board = await boards().initBoard(context.var.actor.id, rootPath);
+    return context.json({ board }, 201);
+  });
+  app.get("/boards/view", async (context) => {
+    const boardId = boardIdSchema.parse(context.req.query("boardId"));
+    return context.json({
+      board: await boards().getBoardView(context.var.actor.id, boardId),
+    });
+  });
+  app.post("/boards/move", async (context) => {
+    assertAdminForHostWrite(context);
+    const input = boardMoveInputSchema.parse(await context.req.json());
+    return context.json({
+      board: await boards().moveCard(context.var.actor.id, input),
+    });
+  });
+  app.post("/boards/card", async (context) => {
+    assertAdminForHostWrite(context);
+    const input = boardCardUpdateInputSchema.parse(await context.req.json());
+    return context.json({
+      board: await boards().updateCard(context.var.actor.id, input),
+    });
+  });
+  app.post("/boards/new", async (context) => {
+    assertAdminForHostWrite(context);
+    const input = boardCardCreateInputSchema.parse(await context.req.json());
+    const result = await boards().createCard(context.var.actor.id, input);
+    return context.json(result, 201);
+  });
+  app.post("/boards/checkbox", async (context) => {
+    assertAdminForHostWrite(context);
+    const input = boardCheckboxInputSchema.parse(await context.req.json());
+    return context.json({
+      board: await boards().toggleCheckbox(context.var.actor.id, input),
+    });
+  });
+  app.get("/boards/doc", async (context) => {
+    const { boardId, relFile } = boardDocQuery.parse(context.req.query());
+    return context.json({
+      doc: await boards().readDoc(context.var.actor.id, boardId, relFile),
+    });
+  });
+  app.post("/boards/doc", async (context) => {
+    assertAdminForHostWrite(context);
+    const input = boardDocWriteInputSchema.parse(await context.req.json());
+    return context.json({
+      doc: await boards().writeDoc(context.var.actor.id, input),
+    });
+  });
+  app.post("/boards/dispatch", async (context) => {
+    const input = boardDispatchInputSchema.parse(await context.req.json());
+    const result = await boards().dispatchCard(context.var.actor.id, input);
+    return context.json(result, 201);
   });
   return app;
 }

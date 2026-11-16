@@ -1,6 +1,11 @@
+import {
+  parseBoardSourceRef,
+  TASK_HORIZON_LABELS,
+} from "../../../../shared/task-board-core";
 import type {
   TaskCapability,
   TaskCategory,
+  TaskCenterTask,
   TaskRisk,
   TaskStatus,
 } from "../../../../shared/task-center";
@@ -76,4 +81,32 @@ export function safeTaskUrl(
   } catch {
     return undefined;
   }
+}
+
+export function buildTaskChatPrompt(
+  task: Pick<
+    TaskCenterTask,
+    "title" | "status" | "summary" | "error" | "description" | "sourceRef"
+  >,
+): string {
+  const boardRef = parseBoardSourceRef(task.sourceRef);
+  const detail = (task.summary || task.error || task.description || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  return [
+    `请结合任务进展协助我处理：${task.title}`,
+    `当前状态：${STATUS_LABELS[task.status]}${boardRef ? ` · 看板卡片 ${boardRef.cardId}` : ""}`,
+    detail ? `摘要：${detail}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function taskProvenanceLabels(
+  task: Pick<TaskCenterTask, "lane" | "sourceRef">,
+): { laneLabel: string | null; cardId: string | null } {
+  const boardRef = parseBoardSourceRef(task.sourceRef);
+  const laneLabel = task.lane ? `原属：${TASK_HORIZON_LABELS[task.lane]}` : null;
+  return { laneLabel, cardId: boardRef?.cardId ?? null };
 }

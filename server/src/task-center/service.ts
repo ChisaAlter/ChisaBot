@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import {
+  DEFAULT_LANE_PRIORITY,
+  TASK_HORIZON_LABELS,
+} from "../../../shared/task-board-core";
+import {
   contextInputSchema,
   type DecisionListPage,
   needsTaskApproval,
@@ -17,10 +21,13 @@ import {
   type TaskDiscovery,
   type TaskExecutionContext,
   type TaskExecutionResult,
+  type TaskHorizonLane,
   type TaskInput,
+  type TaskLevel,
   type TaskListFilter,
   type TaskListPage,
   type TaskPlan,
+  type TaskRisk,
   type TaskSourceInput,
   type TaskStatus,
   taskInputSchema,
@@ -69,6 +76,12 @@ export type TaskCenterOptions = {
     task: TaskCenterTask,
     outcome: { status: "succeeded" | "failed"; detail: string },
   ) => Promise<void>;
+  /** 任务到达终态后的外部协同回调（如本地 Markdown 看板自动完成回写）；异常不影响任务结果。 */
+  onSettled?: (
+    ownerUserId: string,
+    task: TaskCenterTask,
+    outcome: { status: "succeeded" | "failed"; detail: string },
+  ) => Promise<void>;
   capabilities?: (ownerUserId: string) => Promise<TaskCapability[]>;
   botAvailable?: (ownerUserId: string, agentId: string) => Promise<boolean>;
   concurrency?: number;
@@ -90,6 +103,7 @@ type TaskPayload = Pick<
   | "workspace"
   | "maxAttempts"
   | "timeoutSeconds"
+  | "lane"
   | "completion"
 >;
 type SourcePayload = Pick<
@@ -488,9 +502,10 @@ export function createTaskCenter(
   async function createTask(
     owner: string,
     input: TaskInput,
+    extra: { sourceRef?: string; sourceUrl?: string } = {},
   ): Promise<TaskCenterTask> {
     await checkBot(owner, input.agentId);
-    const task = await sql.begin((tx) => insertTask(tx, owner, input));
+    const task = await sql.begin((tx) => insertTask(tx, owner, input, extra));
     if (!task) throw new TaskCenterError("任务没有创建成功，请重试。");
     return task;
   }
@@ -739,6 +754,100 @@ export function createTaskCenter(
     );
     if (!row) throw new TaskCenterError("找不到这个任务。", 404);
     return taskView(row);
+  }
+  async function scheduleTask(
+    owner: string,
+    id: string,
+    patch: {
+      lane?: TaskHorizonLane;
+      priority?: number;
+      start?: boolean;
+      executor?: string;
+      agentId?: string | null;
+      workspace?: string | null;
+      level?: TaskLevel;
+      risk?: TaskRisk;
+    },
+  ): Promise<TaskCenterTask> {
+    const updated = await sql.begin(async (tx) => {
+      const [row] = await tx.unsafe<TaskRow[]>(
+        "SELECT * FROM chisabot_task_center_tasks WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
+        [owner, id],
+      );
+      if (!row) throw new TaskCenterError("找不到这个任务。", 404);
+      const currentPayload = json(row.payload);
+      const nextLane = patch.lane ?? currentPayload.lane;
+      const canPatchDispatch = row.status === "inbox";
+      const nextPayload: TaskPayload = {
+        ...currentPayload,
+        ...(nextLane ? { lane: nextLane } : {}),
+        ...(canPatchDispatch && patch.executor !== undefined
+          ? { executor: patch.executor }
+          : {}),
+        ...(canPatchDispatch && patch.agentId !== undefined
+          ? { agentId: patch.agentId }
+          : {}),
+        ...(canPatchDispatch && patch.workspace !== undefined
+          ? { workspace: patch.workspace }
+          : {}),
+        ...(canPatchDispatch && patch.level !== undefined
+          ? { level: patch.level }
+          : {}),
+        ...(canPatchDispatch && patch.risk !== undefined
+          ? { risk: patch.risk }
+          : {}),
+      };
+      const rawPriority =
+        patch.priority ??
+        (patch.lane !== undefined
+          ? DEFAULT_LANE_PRIORITY[patch.lane]
+          : row.priority);
+      const nextPriority = Math.max(0, Math.min(100, Math.round(rawPriority)));
+      const [nextRow] = await tx.unsafe<TaskRow[]>(
+        "UPDATE chisabot_task_center_tasks SET payload=$3::text::jsonb,priority=$4,updated_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
+        [owner, id, JSON.stringify(nextPayload), nextPriority],
+      );
+      await event(
+        owner,
+        id,
+        "scheduled",
+        patch.lane
+          ? `已调整到「${TASK_HORIZON_LABELS[patch.lane]}」泳道（优先级 ${nextPriority}）。`
+          : `已更新任务优先级为 ${nextPriority}。`,
+        {
+          ...(patch.lane ? { lane: patch.lane } : {}),
+          priority: nextPriority,
+        },
+        tx,
+      );
+      return nextRow ? taskView(nextRow) : taskView(row);
+    });
+    if (patch.start && updated.status === "inbox") {
+      return controlTask(owner, id, "start");
+    }
+    return updated;
+  }
+  async function recordTaskEvent(
+    owner: string,
+    id: string,
+    type: string,
+    message: string,
+    data: Record<string, unknown> = {},
+  ): Promise<void> {
+    const encoded = JSON.stringify(data);
+    await sql.unsafe(
+      "INSERT INTO chisabot_task_center_events(id,owner_user_id,task_id,type,message,data) SELECT $1,$2,id,$3,$4,$5::text::jsonb FROM chisabot_task_center_tasks WHERE owner_user_id=$2 AND id=$6",
+      [
+        randomUUID(),
+        owner,
+        type.slice(0, 100),
+        message.slice(0, eventLimit),
+        encoded.length <= eventLimit
+          ? encoded
+          : JSON.stringify({ truncated: true }),
+        id,
+      ],
+    );
   }
   async function decide(
     owner: string,
@@ -1294,9 +1403,9 @@ export function createTaskCenter(
         throw new TaskCenterError(
           "交付内容过大，请将文件保存在成果目录并返回引用。",
         );
-      const settled = await sql.begin(async (tx) => {
-        const rows = await tx.unsafe(
-          "UPDATE chisabot_task_center_tasks SET status='succeeded',summary=$4,artifacts=$5::text::jsonb,usage=$6::text::jsonb,error=NULL,lease_owner=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='running' RETURNING id",
+      const settledTask = await sql.begin(async (tx) => {
+        const rows = await tx.unsafe<TaskRow[]>(
+          "UPDATE chisabot_task_center_tasks SET status='succeeded',summary=$4,artifacts=$5::text::jsonb,usage=$6::text::jsonb,error=NULL,lease_owner=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE owner_user_id=$1 AND id=$2 AND lease_owner=$3 AND status='running' RETURNING *",
           [
             task.ownerUserId,
             task.id,
@@ -1306,7 +1415,7 @@ export function createTaskCenter(
             JSON.stringify(result.usage ?? {}),
           ],
         );
-        if (rows.length)
+        if (rows[0])
           await event(
             task.ownerUserId,
             task.id,
@@ -1327,14 +1436,18 @@ export function createTaskCenter(
             },
             tx,
           );
-        return rows.length > 0;
+        return rows[0] ? taskView(rows[0]) : null;
       });
-      if (settled)
-        await reportLearn(task, {
-          status: "succeeded",
+      if (settledTask) {
+        const outcome = {
+          status: "succeeded" as const,
           detail: result.summary,
-        });
+        };
+        await reportLearn(settledTask, outcome);
+        await reportSettled(settledTask, outcome);
+      }
     } catch (error) {
+      let failedTask: TaskCenterTask | null = null;
       let terminalFailure: string | null = null;
       await sql.begin(async (tx) => {
         const [row] = await tx.unsafe<TaskRow[]>(
@@ -1358,12 +1471,14 @@ export function createTaskCenter(
             ? "服务重启中断了执行，稍后自动继续。"
             : "服务重启中断了已确认的操作，请检查已有结果后手动重试。"
           : reasonWithoutStatement(
-              controller.signal.aborted
-                ? (controller.signal.reason ?? new Error("任务被中止。"))
-                : error,
+              controller.signal.reason instanceof Error
+                ? controller.signal.reason
+                : controller.signal.aborted
+                  ? (controller.signal.reason ?? new Error("任务被中止。"))
+                  : error,
             ).slice(0, 3000);
-        await tx.unsafe(
-          "UPDATE chisabot_task_center_tasks SET status=$3,error=$4,attempts=attempts-$6,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=now()+($5*interval '1 second'),finished_at=CASE WHEN $3='failed' THEN now() ELSE NULL END,updated_at=now() WHERE owner_user_id=$1 AND id=$2",
+        const [updatedRow] = await tx.unsafe<TaskRow[]>(
+          "UPDATE chisabot_task_center_tasks SET status=$3,error=$4,attempts=attempts-$6,lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=now()+($5*interval '1 second'),finished_at=CASE WHEN $3='failed' THEN now() ELSE NULL END,updated_at=now() WHERE owner_user_id=$1 AND id=$2 RETURNING *",
           [
             task.ownerUserId,
             task.id,
@@ -1374,7 +1489,10 @@ export function createTaskCenter(
           ],
         );
         const terminal = interrupted ? false : !retry;
-        if (terminal) terminalFailure = message;
+        if (terminal) {
+          terminalFailure = message;
+          failedTask = updatedRow ? taskView(updatedRow) : taskView(row);
+        }
         await event(
           task.ownerUserId,
           task.id,
@@ -1390,11 +1508,11 @@ export function createTaskCenter(
           tx,
         );
       });
-      if (terminalFailure)
-        await reportLearn(task, {
-          status: "failed",
-          detail: terminalFailure,
-        });
+      if (terminalFailure && failedTask) {
+        const outcome = { status: "failed" as const, detail: terminalFailure };
+        await reportLearn(failedTask, outcome);
+        await reportSettled(failedTask, outcome);
+      }
     } finally {
       timeout.cancel();
       clearInterval(heartbeat);
@@ -1412,6 +1530,23 @@ export function createTaskCenter(
       console.warn(
         JSON.stringify({
           type: "task-center-learn-failed",
+          task: task.id,
+          reason: reasonWithoutStatement(error).slice(0, 300),
+        }),
+      );
+    }
+  }
+  async function reportSettled(
+    task: TaskCenterTask,
+    outcome: { status: "succeeded" | "failed"; detail: string },
+  ) {
+    if (!options.onSettled) return;
+    try {
+      await options.onSettled(task.ownerUserId, task, outcome);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          type: "task-center-settled-hook-failed",
           task: task.id,
           reason: reasonWithoutStatement(error).slice(0, 300),
         }),
@@ -1530,6 +1665,8 @@ export function createTaskCenter(
     createTask,
     controlTask,
     setTaskPriority,
+    scheduleTask,
+    recordTaskEvent,
     listDecisions,
     decisionPage,
     decide,
