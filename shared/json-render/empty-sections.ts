@@ -136,7 +136,8 @@ export function findEmptySections(spec: Spec | null | undefined): EmptySectionRe
       removed.add(child);
       // 标题后面（到下一个标题前）一个不空的都没有 → 标题也剪掉。
       for (let back = index - 1; back >= 0; back--) {
-        const candidate = children[back]!;
+        const candidate = children[back];
+        if (!candidate) continue;
         if (elements[candidate]?.type === "Heading") {
           const tail = children.slice(back + 1);
           const nextHeading = tail.findIndex((k) => elements[k]?.type === "Heading");

@@ -7,6 +7,7 @@ import {
 } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { computerHeaders } from "../../../shared/protocol-headers";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { imageDimsFor, imageKeyForUrl } from "../image-dims";
@@ -145,7 +146,7 @@ export function sniffImage(bytes: Uint8Array): string | null {
     b[5] === 0x74 &&
     b[6] === 0x79 &&
     b[7] === 0x70 &&
-    /avi[fs]/.test(String.fromCharCode(b[8]!, b[9]!, b[10]!, b[11]!))
+    /avi[fs]/.test(String.fromCharCode(...b.subarray(8, 12)))
   )
     return "image/avif";
   if (b[0] === 0 && b[1] === 0 && (b[2] === 1 || b[2] === 2) && b[3] === 0)
@@ -590,15 +591,19 @@ export async function createLinkPreviews(
     if (!options.computer) return null;
     const base = options.computer.baseUrl.replace(/\/$/, "");
     try {
-      const res = await fetch(`${base}/preview-shot`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...computerHeaders("link-preview", options.computer.token),
+      const res = await trustedEndpointFetch(
+        "agent-computer",
+        `${base}/preview-shot`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...computerHeaders("link-preview", options.computer.token),
+          },
+          body: JSON.stringify({ url }),
+          signal: AbortSignal.timeout(SHOT_TIMEOUT),
         },
-        body: JSON.stringify({ url }),
-        signal: AbortSignal.timeout(SHOT_TIMEOUT),
-      });
+      );
       if (!res.ok) return null;
       const bytes = new Uint8Array(await res.arrayBuffer());
       const mime = sniffImage(bytes);

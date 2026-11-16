@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useInterval } from "@/hooks";
 import type { SystemUpdateAction, SystemUpdateOverview } from "../../../shared/system-update";
 import { client } from "@/lib/client";
 
@@ -74,11 +75,7 @@ export function durationText(seconds?: number) {
 /** 进行中的任务每秒走一次的「已用 x 分 y 秒」（系统更新页、Magpie 更新段共用）。 */
 export function useElapsed(startedAt: string | undefined, running: boolean) {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
+  useInterval(() => setNow(Date.now()), running ? 1000 : null);
   const started = startedAt ? Date.parse(startedAt) : Number.NaN;
   return running && Number.isFinite(started) ? Math.max(0, (now - started) / 1000) : undefined;
 }

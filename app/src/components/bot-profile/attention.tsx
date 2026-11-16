@@ -1,8 +1,9 @@
 import { IconPlayerPause } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
+import { useDocumentSync } from "@/hooks";
 import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
 import {
   type BotAttention,
@@ -31,10 +32,10 @@ export function attentionSummary(bot: BotAttention): string {
  */
 export function useAttentionNotifications(bots: BotAttention[] | undefined) {
   const seen = useRef<Map<string, number> | null>(null);
-  useEffect(() => {
-    if (!bots) return;
+  useDocumentSync(bots, (_doc, currentBots) => {
+    if (!currentBots) return;
     const previous = seen.current;
-    seen.current = new Map(bots.map((bot) => [bot.agentId, needsInput(bot)]));
+    seen.current = new Map(currentBots.map((bot) => [bot.agentId, needsInput(bot)]));
     // The first answer is the state on arrival, not news.
     if (!previous) return;
     let permitted = false;
@@ -46,7 +47,7 @@ export function useAttentionNotifications(bots: BotAttention[] | undefined) {
       permitted = false;
     }
     if (!permitted) return;
-    for (const bot of bots) {
+    for (const bot of currentBots) {
       const now = needsInput(bot);
       if (bot.notify === "none" || now <= (previous.get(bot.agentId) ?? 0))
         continue;
@@ -59,7 +60,7 @@ export function useAttentionNotifications(bots: BotAttention[] | undefined) {
         // A browser that refuses the constructor still has the badge.
       }
     }
-  }, [bots]);
+  });
 }
 
 /**

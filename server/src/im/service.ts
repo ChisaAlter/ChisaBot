@@ -292,6 +292,16 @@ export function createImService(options: ImServiceOptions) {
     const row = await rowById(id);
     return row && row.owner_user_id === owner ? row : null;
   };
+  const requirePlatform = (platform: ImPlatform) => {
+    const info = imPlatform(platform);
+    if (!info) throw new InputError("不支持这个平台");
+    return info;
+  };
+  const requireRowById = async (id: string) => {
+    const row = await rowById(id);
+    if (!row) throw new Error(`IM 连接不存在：${id}`);
+    return row;
+  };
 
   async function readSecrets(
     row: Pick<Row, "secrets">,
@@ -1114,7 +1124,7 @@ export function createImService(options: ImServiceOptions) {
     consumeQr = true,
     allowPrivate = false,
   ) {
-    const info = imPlatform(platform)!;
+    const info = requirePlatform(platform);
     const config: Record<string, string> = { ...current.config };
     const secrets: Record<string, string> = { ...current.secrets };
     const rawConfig = (
@@ -1219,7 +1229,7 @@ export function createImService(options: ImServiceOptions) {
     config: Record<string, string>,
     secrets: Record<string, string>,
   ): string | null {
-    const info = imPlatform(platform)!;
+    const info = requirePlatform(platform);
     for (const field of info.fields) {
       if (field.showIf && config[field.showIf.key] !== field.showIf.equals)
         continue;
@@ -1282,7 +1292,8 @@ export function createImService(options: ImServiceOptions) {
       typeof input.platform === "string"
         ? (input.platform as ImPlatform)
         : null;
-    if (!platform || !imPlatform(platform))
+    const platformInfo = platform ? imPlatform(platform) : undefined;
+    if (!platform || !platformInfo)
       throw new InputError("不支持这个平台");
     const agentId =
       typeof input.agentId === "string" ? input.agentId.trim() : "";
@@ -1291,7 +1302,7 @@ export function createImService(options: ImServiceOptions) {
     const name = (
       typeof input.name === "string" && input.name.trim()
         ? input.name.trim()
-        : imPlatform(platform)!.name
+        : platformInfo.name
     ).slice(0, 40);
     const allowPrivate = admin && input.allowPrivate === true;
     const { config, secrets, account, boundUserId } = await cleanFields(
@@ -1327,10 +1338,10 @@ export function createImService(options: ImServiceOptions) {
         allowPrivate,
       ],
     );
-    log(id, "info", `创建了连接（${imPlatform(platform)!.name}）`);
+    log(id, "info", `创建了连接（${platformInfo.name}）`);
     if (boundUserId && !givenOwners.includes(boundUserId))
       log(id, "info", `扫码绑定的平台账号（${boundUserId}）已自动加为主人`);
-    const row = (await rowById(id))!;
+    const row = await requireRowById(id);
     await startRow(row);
     return view(row, secrets);
   }
@@ -1426,7 +1437,7 @@ export function createImService(options: ImServiceOptions) {
         : null,
     ].filter(Boolean);
     if (changes.length) log(id, "info", `设置已更新：${changes.join("、")}`);
-    const next = (await rowById(id))!;
+    const next = await requireRowById(id);
     // 只改了名字 / 白名单 / 机器人：不用重连。
     const reconnect =
       enabled !== row.enabled ||
@@ -1757,7 +1768,7 @@ export function createImService(options: ImServiceOptions) {
         await next();
       },
       upgradeWebSocket((c) => {
-        const id = c.req.param("id")!;
+        const id = c.req.param("id");
         const selfId = c.req.header("x-self-id") ?? null;
         const shim: WsLike = {
           readyState: 0,
@@ -1776,7 +1787,7 @@ export function createImService(options: ImServiceOptions) {
               shim.readyState = 3;
               ws.close(code, reason);
             };
-            if (!attachReverse(id, shim, selfId)) ws.close(1008, "disabled");
+            if (!id || !attachReverse(id, shim, selfId)) ws.close(1008, "disabled");
           },
           onMessage: (event) => shim.onmessage?.({ data: event.data }),
           onClose: (event) => {

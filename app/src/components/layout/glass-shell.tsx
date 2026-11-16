@@ -1,5 +1,5 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { GlassTopBar, type ShellScope } from "@/components/layout/glass-topbar";
 import { PhoneGestures } from "@/components/layout/phone-gestures";
@@ -7,6 +7,7 @@ import { SidebarShell } from "@/components/layout/sidebar-shell";
 import { TopBarOwnsSidebarToggle } from "@/components/layout/sidebar-toggle";
 import { ShellBoundary } from "@/components/startup-status";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { KeptVisibleContext } from "@/lib/kept-visible";
 import { usePresenceFlag } from "@/lib/presence-flag";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
@@ -78,13 +79,9 @@ export function GlassShell({
 const CLOSE_DRAWER_EVENT = "chisabot-close-drawer";
 function DrawerCloser() {
   const sidebar = useOptionalSidebar();
-  useEffect(() => {
-    const close = () => {
-      if (sidebar?.isMobile) sidebar.setOpenMobile(false);
-    };
-    window.addEventListener(CLOSE_DRAWER_EVENT, close);
-    return () => window.removeEventListener(CLOSE_DRAWER_EVENT, close);
-  }, [sidebar]);
+  useWindowEvent(CLOSE_DRAWER_EVENT, () => {
+    if (sidebar?.isMobile) sidebar.setOpenMobile(false);
+  });
   return null;
 }
 
@@ -106,14 +103,12 @@ function CloseDrawerOnScope({ scope }: { scope: ShellScope }) {
   const router = useRouter();
   const latest = useRef({ scope, sidebar });
   latest.current = { scope, sidebar };
-  useEffect(
-    () =>
-      router.subscribe("onBeforeNavigate", ({ toLocation }) => {
-        const { scope: current, sidebar: bar } = latest.current;
-        if (scopeOfPath(toLocation.pathname) === current) return;
-        if (bar?.isMobile && bar.openMobile) bar.setOpenMobile(false);
-      }),
-    [router],
+  useExternalConnection(true, () =>
+    router.subscribe("onBeforeNavigate", ({ toLocation }) => {
+      const { scope: current, sidebar: bar } = latest.current;
+      if (scopeOfPath(toLocation.pathname) === current) return;
+      if (bar?.isMobile && bar.openMobile) bar.setOpenMobile(false);
+    }),
   );
   return null;
 }
@@ -125,23 +120,19 @@ function CloseDrawerOnScope({ scope }: { scope: ShellScope }) {
 function SearchHotkey({ scope }: { scope: ShellScope }) {
   const sidebar = useOptionalSidebar();
   const navigate = useNavigate();
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey)
-        return;
-      if (event.key.toLowerCase() !== "k") return;
-      event.preventDefault();
-      if (scope !== "app") {
-        requestSidebarSearchFocus();
-        void navigate({ to: "/" });
-        return;
-      }
-      if (sidebar?.isMobile) sidebar.setOpenMobile(true);
-      else if (sidebar && !sidebar.open) sidebar.setOpen(true);
+  useWindowEvent("keydown", (event) => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey)
+      return;
+    if (event.key.toLowerCase() !== "k") return;
+    event.preventDefault();
+    if (scope !== "app") {
       requestSidebarSearchFocus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [scope, sidebar, navigate]);
+      void navigate({ to: "/" });
+      return;
+    }
+    if (sidebar?.isMobile) sidebar.setOpenMobile(true);
+    else if (sidebar && !sidebar.open) sidebar.setOpen(true);
+    requestSidebarSearchFocus();
+  });
   return null;
 }

@@ -18,7 +18,7 @@ const int32 = (n: number) => {
   b.writeInt32BE(n);
   return b;
 };
-const cstring = (text: string) => Buffer.from(text + "\0");
+const cstring = (text: string) => Buffer.from(`${text}\0`);
 const packet = (tag: string, ...parts: Buffer[]) => {
   const body = Buffer.concat(parts);
   return Buffer.concat([Buffer.from(tag), int32(body.length + 4), body]);

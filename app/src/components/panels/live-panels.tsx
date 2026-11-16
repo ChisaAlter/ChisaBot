@@ -21,11 +21,15 @@ import {
   memo,
   type ReactNode,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  useDocumentEvent,
+  useExternalConnection,
+  useWindowEvent,
+} from "@/hooks";
 import {
   lastWorkStep,
   WORK_STEP_EVENT,
@@ -126,6 +130,20 @@ function cadence(
   return `每 ${minutes} 分钟刷新`;
 }
 
+function sameLiveRecord(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  if (a === b) return true;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (!Object.is(a[key], b[key])) return false;
+  }
+  return true;
+}
+
 const LiveBody = memo(function LiveBody({
   spec: source,
   title,
@@ -172,14 +190,23 @@ const LiveBody = memo(function LiveBody({
    * 读数变化只写变化的路径。先比一次当前值：同一个值重复 update 会让订阅它的组件白闪一下；
    * 规范换新时新仓库第一帧就带着 live，这里也不会重复写。
    */
-  useEffect(() => {
+  const [syncDeps, setSyncDeps] = useState({ live, store });
+  const [syncEpoch, setSyncEpoch] = useState(0);
+  if (
+    syncDeps.store !== store ||
+    !sameLiveRecord(syncDeps.live, live)
+  ) {
+    setSyncDeps({ live, store });
+    setSyncEpoch(syncEpoch + 1);
+  }
+  useExternalConnection(syncEpoch, () => {
     const updates: Record<string, unknown> = {};
     for (const [id, value] of Object.entries(live)) {
       const path = `/live/${id}`;
       if (store.get(path) !== value) updates[path] = value;
     }
     if (Object.keys(updates).length > 0) store.update(updates);
-  }, [live, store]);
+  });
   const refreshRef = useRef(onRefresh);
   refreshRef.current = onRefresh;
   const handlers = useMemo(
@@ -232,12 +259,9 @@ const LiveBody = memo(function LiveBody({
 /** 聊天里干活卡正在做的那一步（§77.1）。 */
 function useWorkStep(): WorkStepDetail {
   const [step, setStep] = useState<WorkStepDetail>(() => lastWorkStep());
-  useEffect(() => {
-    const on = (event: Event) =>
-      setStep((event as CustomEvent<WorkStepDetail>).detail ?? null);
-    window.addEventListener(WORK_STEP_EVENT, on);
-    return () => window.removeEventListener(WORK_STEP_EVENT, on);
-  }, []);
+  useWindowEvent(WORK_STEP_EVENT, (event) =>
+    setStep((event as CustomEvent<WorkStepDetail>).detail ?? null),
+  );
   return step;
 }
 
@@ -481,26 +505,18 @@ function DataSourcePanel({
   onClose: () => void;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onPointer = (event: Event) => {
-      const target = event.target;
-      if (
-        target instanceof Node &&
-        box.current &&
-        !box.current.contains(target)
-      )
-        onClose();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
+  useDocumentEvent("pointerdown", (event) => {
+    const target = event.target;
+    if (
+      target instanceof Node &&
+      box.current &&
+      !box.current.contains(target)
+    )
+      onClose();
+  });
+  useDocumentEvent("keydown", (event) => {
+    if (event.key === "Escape") onClose();
+  });
   const sources = panel.dataSources ?? NO_LIVE_SOURCES;
   return (
     <div
@@ -610,9 +626,7 @@ function LivePanelCard({
   const closeSources = useCallback(() => setSourcesOpen(false), []);
   const dataSources = panel.dataSources ?? NO_LIVE_SOURCES;
   // 折叠就收起「数据来源…」小弹层：只留标题行。
-  useEffect(() => {
-    if (collapsed) setSourcesOpen(false);
-  }, [collapsed]);
+  if (collapsed && sourcesOpen) setSourcesOpen(false);
   // 直连数据源：卡片可见且没折叠时轮询；折叠时 active=false，一次请求都不发。
   const live = useLiveValues(panel, !collapsed);
   const key = livePanelKeys.list(panel.botId);

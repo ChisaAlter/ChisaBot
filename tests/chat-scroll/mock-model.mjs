@@ -102,7 +102,7 @@ http
     const base = { id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: "mock-scroll" };
     if (!j.stream) {
       res.writeHead(200, { "content-type": "application/json" });
-      return res.end(JSON.stringify({ id, object: "chat.completion", model: "mock-scroll", choices: [{ index: 0, message: { role: "assistant", content: user.slice(0, 0) + "测试标题" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } }));
+      return res.end(JSON.stringify({ id, object: "chat.completion", model: "mock-scroll", choices: [{ index: 0, message: { role: "assistant", content: `${user.slice(0, 0)}测试标题` }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } }));
     }
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);

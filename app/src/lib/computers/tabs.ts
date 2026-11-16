@@ -1,6 +1,7 @@
-import { useKeptVisible } from "@/lib/kept-visible";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
+import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
+import { useKeptVisible } from "@/lib/kept-visible";
 
 /**
  * 机器人浏览器的标签（DESIGN.md §95）。
@@ -134,22 +135,20 @@ export function useBrowserTabs(computerId: string, pollWanted: boolean): TabsVie
     () => views.get(computerId) ?? null,
     () => null,
   );
-  useEffect(() => {
-    if (!poll) return;
-    let live = true;
-    const controller = new AbortController();
+  useExternalConnection(poll ? `tabs:${computerId}` : false, (_key, signal) => {
     const tick = async () => {
-      if (!live) return;
-      if (typeof document === "undefined" || document.visibilityState === "visible")
-        await readTabs(computerId, controller.signal);
+      if (signal.aborted) return;
+      if (
+        typeof document === "undefined" ||
+        document.visibilityState === "visible"
+      )
+        await readTabs(computerId, signal);
     };
     void tick();
     const timer = setInterval(() => void tick(), POLL_MS);
     return () => {
-      live = false;
-      controller.abort();
       clearInterval(timer);
     };
-  }, [computerId, poll]);
+  });
   return view;
 }

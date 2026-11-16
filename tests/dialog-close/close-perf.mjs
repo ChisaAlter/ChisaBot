@@ -145,7 +145,7 @@ page.on("request", (r) => {
   if (capReq) reqs.push(`${r.method()} ${r.url().replace(BASE, "")}`);
 });
 page.on("pageerror", (e) => log("pageerror", e.message));
-await page.goto(BASE + "/", { waitUntil: "networkidle" }).catch(() => {});
+await page.goto(`${BASE}/`, { waitUntil: "networkidle" }).catch(() => {});
 await page.waitForTimeout(3000);
 log("url", page.url());
 await page.screenshot({ path: "/out/bg.png" });

@@ -296,7 +296,7 @@ if (SCENARIO === "worker") {
   );
   log(
     "delegate2 events",
-    r2.events.map((e) => e.type + (e.message ? ":" + e.message : "")).join(","),
+    r2.events.map((e) => `${e.type}${e.message ? `:${e.message}` : ""}`).join(","),
   );
   check(
     r2.status === 200 && !r2.events.some((e) => e.type === "RUN_ERROR"),

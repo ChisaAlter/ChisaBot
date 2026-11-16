@@ -1,6 +1,18 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { type ClientOptions, client, tryClient } from "@/lib/client";
 import type {
+  BoardCardCreateInput,
+  BoardCardUpdateInput,
+  BoardCheckboxInput,
+  BoardDispatchInput,
+  BoardDocWriteInput,
+  BoardMoveInput,
+  MarkdownBoardDocPayload,
+  MarkdownBoardSnapshot,
+  MarkdownBoardSummary,
+  TaskScheduleInput,
+} from "../../../shared/task-board";
+import type {
   DecisionListPage,
   TaskCapability,
   TaskCenterDecision,
@@ -27,6 +39,11 @@ export const taskCenterKeys = {
   tasks: (filter: TaskListFilter) => ["task-center", "tasks", filter] as const,
   decisions: (status: "pending" | "resolved") =>
     ["task-center", "decisions", status] as const,
+  boards: ["task-center", "boards"] as const,
+  boardView: (boardId: string) =>
+    ["task-center", "board-view", boardId] as const,
+  boardDoc: (boardId: string, relFile: string) =>
+    ["task-center", "board-doc", boardId, relFile] as const,
 };
 
 export type TaskDetail = {
@@ -148,6 +165,64 @@ export const taskCenterApi = {
       method: "DELETE",
       body: { path },
     }),
+  scheduleTask: (id: string, body: TaskScheduleInput) =>
+    request<{ task: TaskCenterTask }>(
+      `/tasks/${encodeURIComponent(id)}/schedule`,
+      { method: "POST", body },
+    ),
+  listBoards: (signal?: AbortSignal) =>
+    request<{
+      boards: MarkdownBoardSummary[];
+      availableRoots: Array<{ path: string; label: string; hasBoard: boolean }>;
+    }>("/boards", { signal }),
+  initBoard: (rootPath: string) =>
+    request<{ board: MarkdownBoardSummary }>("/boards/init", {
+      method: "POST",
+      body: { rootPath },
+    }),
+  boardView: (boardId: string, signal?: AbortSignal) =>
+    request<{ board: MarkdownBoardSnapshot }>(
+      `/boards/view?boardId=${encodeURIComponent(boardId)}`,
+      { signal },
+    ),
+  moveBoardCard: (body: BoardMoveInput) =>
+    request<{ board: MarkdownBoardSnapshot }>("/boards/move", {
+      method: "POST",
+      body,
+    }),
+  updateBoardCard: (body: BoardCardUpdateInput) =>
+    request<{ board: MarkdownBoardSnapshot }>("/boards/card", {
+      method: "POST",
+      body,
+    }),
+  createBoardCard: (body: BoardCardCreateInput) =>
+    request<{ board: MarkdownBoardSnapshot; cardId: string }>("/boards/new", {
+      method: "POST",
+      body,
+    }),
+  toggleBoardCheckbox: (body: BoardCheckboxInput) =>
+    request<{ board: MarkdownBoardSnapshot }>("/boards/checkbox", {
+      method: "POST",
+      body,
+    }),
+  readBoardDoc: (boardId: string, relFile: string, signal?: AbortSignal) =>
+    request<{ doc: MarkdownBoardDocPayload }>(
+      `/boards/doc?boardId=${encodeURIComponent(boardId)}&relFile=${encodeURIComponent(relFile)}`,
+      { signal },
+    ),
+  writeBoardDoc: (body: BoardDocWriteInput) =>
+    request<{ doc: MarkdownBoardDocPayload }>("/boards/doc", {
+      method: "POST",
+      body,
+    }),
+  dispatchBoardCard: (body: BoardDispatchInput) =>
+    request<{ task: TaskCenterTask; board: MarkdownBoardSnapshot }>(
+      "/boards/dispatch",
+      {
+        method: "POST",
+        body,
+      },
+    ),
 };
 
 export function taskListOptions(filter: TaskListFilter, enabled = true) {
@@ -214,5 +289,32 @@ export function taskCenterRootsOptions() {
   return queryOptions({
     queryKey: taskCenterKeys.roots,
     queryFn: ({ signal }) => taskCenterApi.listRoots(signal),
+  });
+}
+
+export function taskCenterBoardsOptions() {
+  return queryOptions({
+    queryKey: taskCenterKeys.boards,
+    queryFn: ({ signal }) => taskCenterApi.listBoards(signal),
+  });
+}
+
+export function taskCenterBoardViewOptions(boardId: string) {
+  return queryOptions({
+    queryKey: taskCenterKeys.boardView(boardId),
+    queryFn: ({ signal }) => taskCenterApi.boardView(boardId, signal),
+    enabled: Boolean(boardId),
+    refetchInterval: 4_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function taskCenterBoardDocOptions(boardId: string, relFile: string) {
+  return queryOptions({
+    queryKey: taskCenterKeys.boardDoc(boardId, relFile),
+    queryFn: ({ signal }) => taskCenterApi.readBoardDoc(boardId, relFile, signal),
+    enabled: Boolean(boardId && relFile),
+    refetchInterval: 6_000,
+    refetchIntervalInBackground: false,
   });
 }

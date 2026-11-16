@@ -19,7 +19,7 @@ fs.writeFileSync(path.join(root, "src/b.ts"), "export const twice = (x: number) 
 fs.writeFileSync(path.join(root, "node_modules/x/index.js"), "TODO hidden\n");
 fs.writeFileSync(path.join(root, "crlf.txt"), "one\r\ntwo\r\nthree\r\n");
 fs.writeFileSync(path.join(tmp, "outside.txt"), "secret\n");
-const big = Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+const big = `${Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join("\n")}\n`;
 fs.writeFileSync(path.join(root, "big.txt"), big);
 const ops = createOps({ clientVersion: "test" });
 const ctx = { allowedRoots: [root] };
@@ -75,7 +75,7 @@ test("read_file with line range returns numbered lines and totals", async () => 
 test("edit_file: unique replace returns diff + backup", async () => {
   const r = await ops.run("edit_file", { path: "src/a.js", edits: [{ oldText: "return a - b;", newText: "return a + b;" }] }, ctx);
   assert.equal(r.changed, true);
-  assert.match(r.diff, /-  return a - b;\n\+  return a \+ b;/);
+  assert.match(r.diff, /- {2}return a - b;\n\+ {2}return a \+ b;/);
   assert.equal(r.added, 1);
   assert.equal(r.removed, 1);
   assert.ok(fs.existsSync(r.backup));
@@ -218,7 +218,7 @@ test("core: full access needs local acceptance and skips local confirm", async (
       this.readyState = 1;
       FakeWS.last = this;
       this.handlers = {};
-      setTimeout(() => this.handlers.open && this.handlers.open(), 0);
+      setTimeout(() => this.handlers.open?.(), 0);
     }
     on(e, f) {
       this.handlers[e] = f;
@@ -235,7 +235,7 @@ test("core: full access needs local acceptance and skips local confirm", async (
     serverUrl: "http://localhost:1",
     getToken: () => "cbd_x",
     WebSocket: FakeWS,
-    ops: { run: async (op, args, c) => ({ op, fullAccess: c.fullAccess }), features: ["shell"], stopAll() {} },
+    ops: { run: async (op, _args, c) => ({ op, fullAccess: c.fullAccess }), features: ["shell"], stopAll() {} },
     local: () => ({ paused: false, forceLocalApproval: true }),
     approve: async () => {
       localPrompts++;
@@ -282,7 +282,7 @@ test("core: declining full access turns it off on the server", async () => {
       this.readyState = 1;
       FakeWS.last = this;
       this.handlers = {};
-      setTimeout(() => this.handlers.open && this.handlers.open(), 0);
+      setTimeout(() => this.handlers.open?.(), 0);
     }
     on(e, f) {
       this.handlers[e] = f;

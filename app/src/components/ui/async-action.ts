@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 
 import { toast } from "@/components/ui/toast";
 
@@ -59,7 +60,7 @@ export function useFeedbackMachine() {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
     timer.current = undefined;
   }, []);
-  useEffect(() => clear, [clear]);
+  useExternalConnection(true, () => clear);
 
   const begin = useCallback(() => {
     clear();
@@ -98,8 +99,8 @@ export function useMutationFeedback(mutation: MutationLike, when = true): AsyncS
   const machine = useFeedbackMachine();
   const watching = useRef(false);
   const { begin, settle, reset } = machine;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
+  // `submittedAt` makes a second run of the same mutation register as a new start.
+  useExternalConnection(`${mutation.status}:${mutation.submittedAt ?? "none"}:${when}`, () => {
     if (mutation.status === "pending") {
       if (when) {
         watching.current = true;
@@ -112,8 +113,7 @@ export function useMutationFeedback(mutation: MutationLike, when = true): AsyncS
     if (mutation.status === "success") settle(true);
     else if (mutation.status === "error") settle(false);
     else reset();
-    // `submittedAt` makes a second run of the same mutation register as a new start.
-  }, [mutation.status, mutation.submittedAt, when, begin, settle, reset]);
+  });
   return machine.state;
 }
 

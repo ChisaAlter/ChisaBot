@@ -52,6 +52,8 @@ export type GuardedFetchOptions = {
   maxBytes: number;
   timeoutMs: number;
   maxRedirects?: number;
+  /** Return 3xx responses directly without following the Location hop. */
+  manualRedirect?: boolean;
   headers?: Record<string, string>;
   signal?: AbortSignal;
   /** 读到这么多字节就够了（例如 HTML 只要 <head>），可以提前停；默认 = maxBytes。 */
@@ -98,9 +100,10 @@ export async function resolvePublic(
   const addresses = literal
     ? [{ address: bare, family: literal }]
     : await (options.resolve ?? defaultResolve)(bare);
-  if (addresses.length === 0) denySsrf("域名解析不到地址");
   if (addresses.some((a) => blocked(a.address))) denySsrf();
-  return addresses[0]!;
+  const primary = addresses[0];
+  if (!primary) return denySsrf("域名解析不到地址");
+  return primary;
 }
 
 /** DNS shares the request's deadline and cancellation; a late result must not start a connection. */
@@ -337,6 +340,7 @@ async function oneHopViaFetch(
   });
   const status = res.status;
   if (status >= 300 && status < 400 && headers.location) {
+    await res.body?.cancel().catch(() => {});
     return {
       status,
       headers,
@@ -345,16 +349,37 @@ async function oneHopViaFetch(
       location: headers.location,
     };
   }
-  const ab = await res.arrayBuffer();
-  const full = Buffer.from(ab);
   const stopAt = Math.min(
     options.stopAfterBytes ?? options.maxBytes,
     options.maxBytes,
   );
-  const truncated =
-    full.length > options.maxBytes ||
-    (full.length > stopAt && stopAt < options.maxBytes);
-  const body = full.length > stopAt ? full.subarray(0, stopAt) : full;
+  let body: Buffer;
+  let truncated = false;
+  if (!res.body) {
+    body = Buffer.alloc(0);
+  } else {
+    const reader = res.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value);
+        total += chunk.length;
+        if (total > stopAt) {
+          const keep = chunk.length - (total - stopAt);
+          if (keep > 0) chunks.push(chunk.subarray(0, keep));
+          truncated = true;
+          break;
+        }
+        chunks.push(chunk);
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    body = Buffer.concat(chunks, Math.min(total, stopAt));
+  }
   return {
     status,
     headers,
@@ -388,11 +413,9 @@ export async function guardedFetch(
   const currentHeaders: Record<string, string> | undefined = options.headers
     ? { ...options.headers }
     : undefined;
+  const effectiveFetch = options.fetchImpl ?? globalThis.fetch;
   const useCustomFetch =
-    options.fetchImpl !== undefined &&
-    options.fetchImpl !== defaultFetch &&
-    !options.resolve &&
-    !options.isBlocked;
+    effectiveFetch !== defaultFetch && !options.resolve && !options.isBlocked;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     // 内网放行只抵自己配的那一跳：一旦重定向，目标回到普通（纯公网）政策重新判——
@@ -412,12 +435,7 @@ export async function guardedFetch(
       headers: currentHeaders,
     };
     const result = useCustomFetch
-      ? await oneHopViaFetch(
-          verdict.url,
-          options.fetchImpl!,
-          hopOptions,
-          deadline,
-        )
+      ? await oneHopViaFetch(verdict.url, effectiveFetch, hopOptions, deadline)
       : await oneHop(
           verdict.url,
           await resolveForRequest(
@@ -432,6 +450,16 @@ export async function guardedFetch(
           deadline,
         );
     if (result.location) {
+      if (options.manualRedirect) {
+        return {
+          url: verdict.url.toString(),
+          status: result.status,
+          headers: result.headers,
+          contentType: (result.headers["content-type"] ?? "").toLowerCase(),
+          body: result.body,
+          truncated: result.truncated,
+        };
+      }
       const nextUrl = new URL(result.location, verdict.url);
       if (nextUrl.origin !== verdict.url.origin) {
         stripHeadersCaseInsensitive(currentHeaders, [
@@ -466,6 +494,54 @@ export async function guardedFetch(
     };
   }
   throw new Error("重定向次数太多");
+}
+
+function toStandardResponse(
+  method: string | undefined,
+  res: GuardedResponse,
+): Response {
+  const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
+  const noBody =
+    method?.toUpperCase() === "HEAD" ||
+    status === 204 ||
+    status === 205 ||
+    status === 304;
+  const response = new Response(noBody ? null : new Uint8Array(res.body), {
+    status,
+    headers: res.headers,
+  });
+  Object.defineProperty(response, "url", { value: res.url });
+  return response;
+}
+
+/**
+ * 执行一次 {@link guardedFetch} 并返回标准 `Response`；保留 `AbortError` / `TimeoutError` 语义，
+ * 供需要 `Response` 接口的 OAuth、云盘等外部适配器复用（`maxRedirects` / `manualRedirect` 由调用方传入）。
+ */
+export async function guardedFetchResponse(
+  raw: string,
+  options: GuardedFetchOptions,
+): Promise<Response> {
+  try {
+    const res = await guardedFetch(raw, options);
+    return toStandardResponse(options.method, res);
+  } catch (error) {
+    if (
+      options.signal?.aborted ||
+      (error instanceof Error &&
+        (error.name === "AbortError" || error.message === "已取消"))
+    ) {
+      const aborted = new Error("The operation was aborted");
+      aborted.name = "AbortError";
+      throw aborted;
+    }
+    if (error instanceof Error && error.message === "请求超时") {
+      const timeout = new Error(error.message);
+      timeout.name = "TimeoutError";
+      throw timeout;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -506,39 +582,17 @@ export function createGuardedFetchLike(defaults: {
       body = Buffer.from(await rawBody.arrayBuffer());
     else if (rawBody != null)
       throw new TypeError("guarded fetch 不支持这种请求体");
-    try {
-      const res = await guardedFetch(String(input), {
-        method: init.method ?? "GET",
-        ...(Object.keys(headers).length ? { headers } : {}),
-        ...(body !== undefined ? { body } : {}),
-        signal: init.signal ?? undefined,
-        timeoutMs: defaults.timeoutMs,
-        maxBytes: defaults.maxBytes,
-        maxRedirects: defaults.maxRedirects,
-        ...(defaults.resolve ? { resolve: defaults.resolve } : {}),
-        ...(defaults.isBlocked ? { isBlocked: defaults.isBlocked } : {}),
-        ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
-      });
-      const status = res.status >= 200 && res.status <= 599 ? res.status : 502;
-      const noBody =
-        init.method?.toUpperCase() === "HEAD" ||
-        status === 204 ||
-        status === 205 ||
-        status === 304;
-      const response = new Response(noBody ? null : new Uint8Array(res.body), {
-        status,
-        headers: res.headers,
-      });
-      Object.defineProperty(response, "url", { value: res.url });
-      return response;
-    } catch (error) {
-      // 调用方主动 abort（长轮询到点收工）：按 fetch 语义抛 AbortError。
-      if (init.signal?.aborted) {
-        const aborted = new Error("The operation was aborted");
-        aborted.name = "AbortError";
-        throw aborted;
-      }
-      throw error;
-    }
+    return guardedFetchResponse(String(input), {
+      method: init.method ?? "GET",
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(body !== undefined ? { body } : {}),
+      signal: init.signal ?? undefined,
+      timeoutMs: defaults.timeoutMs,
+      maxBytes: defaults.maxBytes,
+      maxRedirects: defaults.maxRedirects,
+      ...(defaults.resolve ? { resolve: defaults.resolve } : {}),
+      ...(defaults.isBlocked ? { isBlocked: defaults.isBlocked } : {}),
+      ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
+    });
   };
 }

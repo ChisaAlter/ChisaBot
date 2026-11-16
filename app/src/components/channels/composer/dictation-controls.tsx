@@ -6,9 +6,10 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { LiveWaveform } from "@/components/ui/live-waveform";
+import { useAutoFocus } from "@/hooks";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { useDictation } from "./use-dictation";
@@ -88,9 +89,7 @@ function RecordingControls({
   const { state, session } = dictation;
   const reduceMotion = useReducedMotion();
   const cancel = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    cancel.current?.focus();
-  }, []);
+  useAutoFocus(cancel, true);
   const recording = state.phase === "recording";
   const transcribing = state.phase === "transcribing";
   const transition = {

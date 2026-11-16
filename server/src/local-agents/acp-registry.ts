@@ -5,10 +5,12 @@
  * 当网络不可达或超时时，优雅回退到内置的常见 ACP 智能体目录兜底，绝不阻塞设置界面。
  */
 
+import { guardedFetch } from "../../../shared/net/guarded-fetch";
 import type { AcpRegistryEntry } from "../../../shared/agent-providers";
+import { readAcpRegistryUrl } from "../config";
 
 const ACP_REGISTRY_URL =
-  process.env.CHISABOT_ACP_REGISTRY_URL ||
+  readAcpRegistryUrl() ||
   "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
 const CACHE_TTL_MS = 15 * 60_000;
@@ -223,14 +225,15 @@ export async function listAcpRegistryEntries(options?: {
     (!entries || options?.refresh || now - cachedAt > CACHE_TTL_MS)
   ) {
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(ACP_REGISTRY_URL, {
-        signal: controller.signal,
+      const res = await guardedFetch(ACP_REGISTRY_URL, {
         headers: { accept: "application/json" },
-      }).finally(() => clearTimeout(timer));
-      if (res.ok) {
-        const json = (await res.json()) as { agents?: RawRegistryAgent[] };
+        maxBytes: 4 * 1024 * 1024,
+        timeoutMs: 5_000,
+      });
+      if (res.status >= 200 && res.status < 300) {
+        const json = JSON.parse(res.body.toString("utf8")) as {
+          agents?: RawRegistryAgent[];
+        };
         if (Array.isArray(json.agents) && json.agents.length > 0) {
           const parsed = json.agents
             .map(normalizeRawAgent)

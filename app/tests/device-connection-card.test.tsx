@@ -1,24 +1,16 @@
-import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import type * as React from "react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { ConnectionCard } from "@/components/devices/devices";
 import type { PcLocalState } from "@/lib/pc-bridge";
 import { type DeviceView, defaultCapabilities } from "../../shared/devices";
 import { settleReactWork } from "./settle-react-work";
+import { renderWithRouter } from "./support/render-with-router";
 
 /**
  * 设备页顶部的「连接状态」卡（2026-10-13，用户：「我安装了 Windows 端，但是 bot 还是识别不到我的电脑」）。
  * 要一眼说清：有没有在线的电脑、能力是不是全关着；在 PC 客户端里没登记时给「登记这台电脑」。
  */
-
-const real = await import("@tanstack/react-router");
-mock.module("@tanstack/react-router", () => ({
-  ...real,
-  Link: ({ children, ...props }: { children?: React.ReactNode }) => (
-    <a {...(props as object)}>{children}</a>
-  ),
-  useNavigate: () => () => {},
-}));
 
 beforeAll(() => {
   if (!globalThis.document) GlobalRegistrator.register();
@@ -77,10 +69,8 @@ function local(overrides: Partial<PcLocalState> = {}): PcLocalState {
   };
 }
 
-const { ConnectionCard } = await import("@/components/devices/devices");
-
-test("all linked computers offline: says the bots cannot use it and what to do", () => {
-  const view = render(
+test("all linked computers offline: says the bots cannot use it and what to do", async () => {
+  const view = await renderWithRouter(
     <ConnectionCard devices={[device()]} local={null} onLocal={() => {}} />,
   );
   expect(view.getByText("没有在线设备")).toBeTruthy();
@@ -90,8 +80,8 @@ test("all linked computers offline: says the bots cannot use it and what to do",
   expect(view.container.textContent).toContain("ChisaBot");
 });
 
-test("online with every capability off: says so and links to permissions", () => {
-  const view = render(
+test("online with every capability off: says so and links to permissions", async () => {
+  const view = await renderWithRouter(
     <ConnectionCard
       devices={[device({ online: true })]}
       local={null}
@@ -131,7 +121,7 @@ test("in the PC client, logged in but not enrolled: offers 登记这台电脑 an
     },
   };
   const updates: PcLocalState[] = [];
-  const view = render(
+  const view = await renderWithRouter(
     <ConnectionCard
       devices={[device()]}
       local={local()}
@@ -146,8 +136,8 @@ test("in the PC client, logged in but not enrolled: offers 登记这台电脑 an
   await waitFor(() => expect(updates.at(-1)?.agentState).toBe("online"));
 });
 
-test("in a plain browser with no devices: renders nothing (the add-a-computer section covers it)", () => {
-  const view = render(
+test("in a plain browser with no devices: renders nothing (the add-a-computer section covers it)", async () => {
+  const view = await renderWithRouter(
     <ConnectionCard devices={[]} local={null} onLocal={() => {}} />,
   );
   expect(view.container.textContent).toBe("");

@@ -32,7 +32,7 @@
       <p class="hint center scan-hint" id="scanHint">在电脑上打开 ChisaBot 网页，进入「设置 → 设备 → 绑定手机」，扫描那里的二维码</p>
       <div id="scanError" class="alert hidden" role="alert"></div>
       <p class="step hint center hidden" id="scanStep" aria-live="polite">&nbsp;</p>
-      <div class="divider" role="separator"><span>或使用账号密码登录</span></div>
+      <div class="divider"><span>或使用账号密码登录</span></div>
     </div>
 
     <div class="fields enter enter-3">
@@ -65,7 +65,7 @@
 
       <label class="check" for="remember">
         <input id="remember" type="checkbox" checked />
-        <span class="box" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8.5 3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="box" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         <span class="check-text">记住登录<small>30 天内打开直接进入；不保存密码</small></span>
       </label>
 
@@ -79,14 +79,14 @@
 </main>
 <!-- 无边框窗口的拖动带和窗口按钮（DESIGN.md §91）：只有最小化 + 关闭（登录窗不能最大化 / 改大小）。放在表单后面，Tab 顺序不变。 -->
 <div class="win-bar">
-  <div class="win-ctrls" role="group" aria-label="窗口">
+  <section class="win-ctrls" aria-label="窗口">
     <button class="win-ctrl" data-win="minimize" type="button" aria-label="最小化" title="最小化">
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5.5h8" stroke="currentColor" stroke-linecap="round" stroke-width="1.2"/></svg>
     </button>
     <button class="win-ctrl is-close" data-win="close" type="button" aria-label="关闭" title="关闭">
       <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-linecap="round" stroke-width="1.2"/></svg>
     </button>
-  </div>
+  </section>
 </div>
 <script src="sky.js"></script>
 <script src="ui.js"></script>

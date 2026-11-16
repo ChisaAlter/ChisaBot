@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { Message } from "@ag-ui/client";
+import type { Message, RunErrorEvent } from "@ag-ui/client";
 import { AbstractAgent, EventType } from "@ag-ui/client";
 import { EMPTY } from "rxjs";
 import {
   createTurnRunner,
   drawnComponents,
   frameFiring,
+  type RunnerLike,
   sanitizeSeededHistory,
 } from "../src/turns/run-turn";
 
@@ -70,16 +71,12 @@ class FakeAgent extends AbstractAgent {
   }
 }
 
-type Observer = {
-  next: (event: { type: string; message?: string }) => void;
-  error: (error: unknown) => void;
-  complete: () => void;
-};
+type Observer = Parameters<ReturnType<RunnerLike["run"]>["subscribe"]>[0];
 
 type Driver = (context: {
   agent: FakeAgent;
   observer: Observer;
-  request: { input: { runId: string; threadId: string } };
+  request: Parameters<RunnerLike["run"]>[0];
 }) => void;
 
 /** The default: the Bot answers, the way the runner leaves the answer on the agent it was passed. */
@@ -177,23 +174,21 @@ function harness(options: {
     },
   };
 
-  const runner = {
-    run: (request: {
-      threadId: string;
-      agent: unknown;
-      input: { runId: string; threadId: string; messages: { id: string }[] };
-      persistedInputMessages?: { id: string; content?: unknown }[];
-    }) => {
+  const runner: RunnerLike = {
+    run: (request) => {
       order.push("run");
       calls.runs.push(request);
       return {
-        subscribe(observer: Observer) {
-          drive({ agent: request.agent as FakeAgent, observer, request });
+        subscribe(observer) {
+          if (!(request.agent instanceof FakeAgent)) {
+            throw new Error("Expected FakeAgent");
+          }
+          drive({ agent: request.agent, observer, request });
           return { unsubscribe: () => undefined };
         },
       };
     },
-    stop: async (request: { threadId: string; runId?: string }) => {
+    stop: async (request) => {
       order.push("stop");
       calls.stops.push(request);
       return true;
@@ -202,11 +197,9 @@ function harness(options: {
 
   const builtFor: { initiator: { kind: string; id?: string } }[] = [];
   const runTurn = createTurnRunner({
-    // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
-    conversations: conversations as any,
+    conversations,
     leases: conversations,
-    // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
-    runner: runner as any,
+    runner,
     buildAgentFor: async (input) => {
       builtFor.push(input);
       return agent;
@@ -828,7 +821,7 @@ describe("a failed heartbeat stops the turn", () => {
 describe("recovering what was said", () => {
   test("falls back to the streamed chunks when no message was added", async () => {
     const { run } = harness({
-      drive: ({ agent, observer }) => {
+      drive: ({ agent, observer, request }) => {
         for (const subscriber of agent.subscribers) {
           void subscriber.onTextMessageEndEvent?.({
             event: {
@@ -839,8 +832,8 @@ describe("recovering what was said", () => {
             messages: agent.messages,
             state: agent.state,
             agent,
-            // biome-ignore lint/suspicious/noExplicitAny: the subscriber params are not the subject.
-          } as any);
+            input: request.input,
+          });
         }
         observer.complete();
       },
@@ -866,8 +859,7 @@ describe("recovering what was said", () => {
     const { run, calls } = harness({
       drive: (context) => {
         context.agent.pendingInterrupts = [
-          // biome-ignore lint/suspicious/noExplicitAny: the interrupt's shape is not the subject.
-          { id: "interrupt_1" } as any,
+          { id: "interrupt_1", reason: "human_input" },
         ];
         answers(context);
       },
@@ -884,8 +876,7 @@ describe("recovering what was said", () => {
     const { run } = harness({
       drive: ({ observer, agent }) => {
         agent.pendingInterrupts = [
-          // biome-ignore lint/suspicious/noExplicitAny: the interrupt's shape is not the subject.
-          { id: "interrupt_1" } as any,
+          { id: "interrupt_1", reason: "human_input" },
         ];
         observer.complete();
       },
@@ -901,10 +892,11 @@ describe("a RUN_ERROR through next", () => {
   test("rejects rather than hanging, and does not read as an empty answer", async () => {
     const { run, calls } = harness({
       drive: ({ observer }) => {
-        observer.next({
+        const errorEvent: RunErrorEvent = {
           type: EventType.RUN_ERROR,
           message: "the model refused",
-        });
+        };
+        observer.next(errorEvent);
         observer.complete();
       },
     });

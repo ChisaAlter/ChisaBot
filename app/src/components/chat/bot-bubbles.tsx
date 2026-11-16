@@ -17,7 +17,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   memo,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -132,7 +131,7 @@ export const BotBubbles = memo(function BotBubbles({
                 : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }
             }
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
-            // biome-ignore lint/suspicious/noArrayIndexKey: 见上
+            // biome-ignore lint/suspicious/noArrayIndexKey: 流式分段只在末尾追加，前序段落位置不变且没有独立 id
             key={i}
             transition={{
               delay:
@@ -169,15 +168,19 @@ export function normalizeDirectiveCards(raw: string): string {
   let i = 0;
 
   while (i < rawLines.length) {
-    const line = (rawLines[i] ?? "").trim();
+    const rawLine = rawLines[i];
+    if (rawLine === undefined) break;
+    const line = rawLine.trim();
     // Directives inside a Markdown fence are literal code, including doc/card examples.
     // Ordinary streaming answers keep their Markdown structure throughout the turn.
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLines[i] ?? "");
-    if (fence) {
-      const marker = fence[1]!;
-      step1.push(rawLines[i++]!);
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLine);
+    if (fence?.[1]) {
+      const marker = fence[1];
+      step1.push(rawLine);
+      i++;
       while (i < rawLines.length) {
-        const raw = rawLines[i++]!;
+        const raw = rawLines[i++];
+        if (raw === undefined) break;
         step1.push(raw);
         const close = raw.trim();
         if (
@@ -190,7 +193,7 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line === ":::group") {
-      const groupLines: string[] = [rawLines[i]!];
+      const groupLines: string[] = [rawLine];
       i++;
       let inCard = false;
       while (i < rawLines.length) {
@@ -220,11 +223,13 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line.startsWith(":::card")) {
-      const cardLines: string[] = [rawLines[i]!];
+      const cardLines: string[] = [rawLine];
       i++;
       while (i < rawLines.length) {
-        const cur = (rawLines[i] ?? "").trim();
-        cardLines.push(rawLines[i]!);
+        const raw = rawLines[i];
+        if (raw === undefined) break;
+        const cur = raw.trim();
+        cardLines.push(raw);
         i++;
         if (cur === ":::") break;
       }
@@ -245,7 +250,7 @@ export function normalizeDirectiveCards(raw: string): string {
       continue;
     }
 
-    step1.push(rawLines[i]!);
+    step1.push(rawLine);
     i++;
   }
 
@@ -409,9 +414,9 @@ function parseActionPillSegment(
 ): { label: string; href: string } | null {
   const trimmed = rawText.trim();
   const match = /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.exec(trimmed);
-  if (!match) return null;
-  const label = match[1]!.replace(/[*_`~]+/g, "").trim();
-  const href = match[2]!.trim();
+  if (!match?.[1] || !match[2]) return null;
+  const label = match[1].replace(/[*_`~]+/g, "").trim();
+  const href = match[2].trim();
   if (!label || !href) return null;
   return { label, href };
 }
@@ -857,9 +862,7 @@ export function DocCard({
     return () => observer.disconnect();
   }, []);
   // 文字清空（极少）时 RO 可能不回调（高度本来就 0），这里兜底收起状态。
-  useEffect(() => {
-    if (!hasText) setTall(false);
-  }, [hasText]);
+  if (!hasText && tall) setTall(false);
   const heading = title || "文档";
   return (
     <>
@@ -1413,9 +1416,9 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
       /^(日期|date|天气|weather|问候|导语|greeting|标题|title)\s*[：:]\s*(.+)$/i.exec(
         l,
       );
-    if (meta && sections.length === 0 && !curSection) {
-      const k = meta[1]!.toLowerCase();
-      const v = meta[2]!.trim();
+    if (meta?.[1] && meta[2] && sections.length === 0 && !curSection) {
+      const k = meta[1].toLowerCase();
+      const v = meta[2].trim();
       if (k === "标题" || k === "title") title = v;
       else if (k === "日期" || k === "date") dateStr = v;
       else if (k === "天气" || k === "weather") weather = v;
@@ -1423,8 +1426,8 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
       continue;
     }
     const hm = /^#{1,4}\s+(.+)$/.exec(l);
-    if (hm) {
-      const h = hm[1]!.trim();
+    if (hm?.[1]) {
+      const h = hm[1].trim();
       curSection = { heading: h, items: [], kind: inferKind(h) };
       sections.push(curSection);
       continue;
@@ -1435,12 +1438,12 @@ function parseBriefBody(raw: string, fallbackTitle?: string) {
         .replace(/\*([^*]+)\*/g, "$1")
         .trim();
     const bm = /^(?:[-*+]|\d+[.)、])\s+(.+)$/.exec(l);
-    if (bm) {
+    if (bm?.[1]) {
       if (!curSection) {
         curSection = { heading: "今日要点", items: [], kind: "highlight" };
         sections.push(curSection);
       }
-      curSection.items.push(cleanInline(bm[1]!));
+      curSection.items.push(cleanInline(bm[1]));
       continue;
     }
     if (!curSection && !greeting) {
@@ -1518,7 +1521,7 @@ export function BriefCard({
               <div
                 className="chat-brief-tile"
                 data-brief-kind={sec.kind}
-                // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
+                // biome-ignore lint/suspicious/noArrayIndexKey: 从静态晨报文本解析的固定节段列表，只读渲染不重排且标题可能重复
                 key={idx}
               >
                 <div className="chat-brief-tile-head">
@@ -1542,7 +1545,7 @@ export function BriefCard({
                 </div>
                 <ul className="chat-brief-tile-list">
                   {sec.items.slice(0, 3).map((item, j) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 静态顺序
+                    // biome-ignore lint/suspicious/noArrayIndexKey: 从晨报节段解析的只读摘要条目，按文本顺序展示不会增删或重排
                     <li key={j}>{item}</li>
                   ))}
                 </ul>
@@ -1627,8 +1630,9 @@ export function StatusCardGroup({
   cards: ParsedStatusCard[];
   components: Record<string, unknown>;
 }) {
-  if (cards.length === 1) {
-    const card = cards[0]!;
+  const singleCard = cards.length === 1 ? cards[0] : undefined;
+  if (singleCard) {
+    const card = singleCard;
     return (
       <section
         aria-label={card.title}
@@ -1683,7 +1687,7 @@ export function StatusCardGroup({
           aria-label={card.title}
           className="chat-draft-card chat-doc-card w-full"
           data-testid="chat-status-card"
-          // biome-ignore lint/suspicious/noArrayIndexKey: 静态卡片组顺序
+          // biome-ignore lint/suspicious/noArrayIndexKey: 从消息正文解析的静态卡片列表，按文档顺序只读展示且标题可能重复
           key={idx}
         >
           <header className="chat-doc-head items-start">

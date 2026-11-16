@@ -7,6 +7,7 @@ import type {
   RuntimeModel,
   RuntimeModelResolver,
 } from "../conversation-runtime";
+import { defaultRuntimeEnvironment } from "../config";
 import { runtimeModelEndpoint } from "../routing/model";
 
 /** Rules, not an example: a model copies an example's subject as readily as its shape. */
@@ -83,7 +84,10 @@ export function createChannelTitler(options: TitlerOptions) {
     const anthropic = model.provider === "anthropic";
 
     const response = await call(
-      runtimeModelEndpoint(model, options.environment ?? process.env),
+      runtimeModelEndpoint(
+        model,
+        options.environment ?? defaultRuntimeEnvironment(),
+      ),
       {
         method: "POST",
         headers: {

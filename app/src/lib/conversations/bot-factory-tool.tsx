@@ -1,9 +1,10 @@
 import { IconChevronDown, IconRobot } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
+import { useExternalConnection } from "@/hooks";
 import { invalidateAgents } from "@/lib/agents/mutations";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { latestChannelFor } from "@/lib/channels/latest";
@@ -181,9 +182,9 @@ export function botFactoryApprovalSpec(
 
 /** 建 / 改 / 停成真后让机器人列表重读：新 bot 和「由 X 创建」徽章才有东西可画。 */
 function useAgentsInvalidated(active: boolean) {
-  useEffect(() => {
-    if (active) void invalidateAgents(sharedQueryClient);
-  }, [active]);
+  useExternalConnection(active || false, () => {
+    void invalidateAgents(sharedQueryClient);
+  });
 }
 
 function BotChatLink({ bot }: { bot: { id: string; name: string } }) {

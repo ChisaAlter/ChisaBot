@@ -1,5 +1,5 @@
 "use strict";
-(async function () {
+(async () => {
   const OPS = { system_info: "读取系统信息", shell: "运行命令", list_files: "列出文件", read_file: "读取文件", write_file: "写入文件", screenshot: "截图", input: "操作鼠标键盘", open: "打开网址 / 文件", clipboard_read: "读取剪贴板", clipboard_write: "写入剪贴板", search: "搜索文件", read_range: "读取文件", edit_file: "修改文件", apply_patch: "应用补丁", git: "运行 git", shell_session: "运行命令", exec_start: "后台运行命令", exec_poll: "查看命令输出", exec_kill: "结束命令", exec_list: "查看后台命令", process_list: "查看进程", process_kill: "结束进程", file_upload: "传文件到这台电脑", file_download: "从这台电脑取文件" };
   const req = await window.chisa.invoke("approval:current");
   if (!req) return window.close();

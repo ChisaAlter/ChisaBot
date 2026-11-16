@@ -10,6 +10,8 @@ import {
   IconDots,
   IconEye,
   IconGitBranch,
+  IconLayoutKanban,
+  IconMessageForward,
   IconPaperclip,
   IconPinned,
   IconPinnedOff,
@@ -28,15 +30,19 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useMemo, useState } from "react";
 import { CreateTask } from "@/components/task-center/create-task";
 import {
   ACTIVE_STATUSES,
+  buildTaskChatPrompt,
   CATEGORY_LABELS,
   RISK_LABELS,
   STATUS_LABELS,
   taskDate,
+  taskProvenanceLabels,
 } from "@/components/task-center/labels";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { useOpenTaskCenter } from "@/components/task-center/task-center-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -166,6 +172,14 @@ export function TasksRailCard() {
           >
             <IconPlus aria-hidden className="size-3.5" />
             {"新建"}
+          </button>
+          <button
+            className="task-rail-center-link"
+            onClick={() => openTaskCenter("board")}
+            type="button"
+          >
+            <IconLayoutKanban aria-hidden className="size-3.5" />
+            {"看板"}
           </button>
           <button
             className="task-rail-center-link"
@@ -1204,6 +1218,7 @@ function RailTaskItem({
   onChanged: () => void;
   recent?: boolean;
 }) {
+  const navigate = useNavigate();
   const control = useMutation({
     mutationFn: (action: TaskControl) =>
       taskCenterApi.controlTask(task.id, action),
@@ -1238,6 +1253,7 @@ function RailTaskItem({
     ? formatRailErrorSummary(task.error)
     : rawDescription;
   const CategoryIcon = CATEGORY_ICONS[task.category];
+  const provenance = taskProvenanceLabels(task);
 
   const primaryMenuActions: CardMenuAction[] = [];
   if (task.status === "inbox") {
@@ -1273,6 +1289,18 @@ function RailTaskItem({
       onSelect: () => control.mutate("retry"),
     });
   }
+  primaryMenuActions.push({
+    key: "send-to-chat",
+    label: "发到当前对话",
+    Icon: IconMessageForward,
+    onSelect: () => {
+      sendPromptToChat(
+        navigate as (opts: never) => unknown,
+        buildTaskChatPrompt(task),
+      );
+      toast.success("已填入当前对话输入框");
+    },
+  });
 
   return (
     <article
@@ -1311,6 +1339,16 @@ function RailTaskItem({
           </p>
         ) : null}
         <CardMeta at={task.finishedAt ?? task.updatedAt}>
+          {recent && provenance.laneLabel ? (
+            <span className="task-rail-provenance-chip">
+              {provenance.laneLabel}
+            </span>
+          ) : null}
+          {provenance.cardId ? (
+            <span className="task-rail-provenance-chip">
+              {provenance.cardId}
+            </span>
+          ) : null}
           {task.artifacts.length > 0 ? (
             <span className="task-rail-artifacts">
               <IconPaperclip aria-hidden className="size-3.5" />

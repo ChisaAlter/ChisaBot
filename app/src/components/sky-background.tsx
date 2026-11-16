@@ -1,5 +1,6 @@
-import { type CSSProperties, useEffect, useRef, useSyncExternalStore } from "react";
+import { type CSSProperties, useRef, useSyncExternalStore } from "react";
 import { useTheme } from "@/components/theme-provider";
+import { useDocumentSync, useExternalConnection } from "@/hooks";
 import {
   applyAppearanceToDocument,
   applyThemeColor,
@@ -601,25 +602,25 @@ export function SkyBackground() {
   // 1. 挂载时把外观写到 <html>（之后每次改动由 updateAppearance 自己写，不在这里跟着每一步滑块重跑）。
   //    同时开始听别的标签页改外观（storage 事件）。
   //    液态玻璃的边缘透镜 + 背景自适应也在这里挂上（liquid 材质 / 支持 backdrop url 时才生效）。
-  useEffect(() => {
+  useExternalConnection(true, () => {
     applyAppearanceToDocument(getAppearanceState());
     installAppearanceStorageSync();
     return installLiquidGlass();
-  }, []);
+  });
 
   // 2. 深浅色 / 配色变了：data-theme、天空垫片变量（写在 body 上，--sky-* 注册为不继承）、地址栏颜色。
   //    只依赖这两个值：以前依赖整个 appearance 对象，拖一下玻璃滑块这里也重跑一遍。
   const palette = appearance.palette;
-  useEffect(() => {
-    const root = document.documentElement;
-    if (root.getAttribute("data-theme") !== (dark ? "dark" : "light")) {
-      root.setAttribute("data-theme", dark ? "dark" : "light");
+  useDocumentSync({ dark, palette }, (doc, current) => {
+    const root = doc.documentElement;
+    if (root.getAttribute("data-theme") !== (current.dark ? "dark" : "light")) {
+      root.setAttribute("data-theme", current.dark ? "dark" : "light");
     }
 
-    const customSky = computePaletteSky(palette, dark);
+    const customSky = computePaletteSky(current.palette, current.dark);
     if (customSky) {
       for (const [k, v] of Object.entries(customSky.body)) {
-        document.body.style.setProperty(k, v);
+        doc.body.style.setProperty(k, v);
       }
       for (const [k, v] of Object.entries(customSky.root)) {
         root.style.setProperty(k, v);
@@ -633,7 +634,7 @@ export function SkyBackground() {
         "--sky-glow",
         "--sky-glow-a",
       ]) {
-        document.body.style.removeProperty(k);
+        doc.body.style.removeProperty(k);
       }
       for (const k of [
         "--glass-sky",
@@ -647,8 +648,8 @@ export function SkyBackground() {
     }
     // 旧版本写在 <html> 上、没有任何样式读的 --glass-sky：清掉（换配色时它让整页跟着重算）。
     root.style.removeProperty("--glass-sky");
-    applyThemeColor(paletteThemeColor(palette, dark));
-  }, [dark, palette]);
+    applyThemeColor(paletteThemeColor(current.palette, current.dark));
+  });
 
   const perf = usePerfMode();
   const wallpaperCss = resolveActiveWallpaperCss(appearance);
@@ -664,7 +665,7 @@ export function SkyBackground() {
   });
 
   // 3. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。
-  useEffect(() => {
+  useExternalConnection(skyMode, () => {
     if (typeof window === "undefined") return;
     setSkyMode(skyMode);
     if (skyMode === "off") return;
@@ -760,18 +761,18 @@ export function SkyBackground() {
       .catch(() => {
         window.__harkBooting = false;
       });
-  }, [skyMode]);
+  });
 
   // 4. 系统开了「减少动态效果」：当帧停住天空（模式切换那条 effect 会退回快照，但快照还会再画 2.6s）。
-  useEffect(() => {
-    if (reducedMotion) stopSkyMotionNow();
-  }, [reducedMotion]);
+  useExternalConnection(Boolean(reducedMotion), () => {
+    stopSkyMotionNow();
+  });
 
   // 5. 当主题亮暗、配色方案或用户指定的 Hark 场景变化时，切换 WebGL 天空场景（点击先上屏，见下）。
   //    换场景时引擎会当场画一帧（applyScene → tick），4× 降速下这一帧要一两百毫秒。点配色是离散输入，
   //    React 会在同一个任务里同步跑完这条 effect，这一帧就算进了点击的 INP。所以等这次点击先上屏，再换场景。
   const targetScene = resolveEffectiveHarkScene(appearance, dark);
-  useEffect(() => {
+  useExternalConnection(`scene:${targetScene}`, () => {
     let raf = 0;
     let timer = 0;
     raf = window.requestAnimationFrame(() => {
@@ -784,7 +785,7 @@ export function SkyBackground() {
       window.cancelAnimationFrame(raf);
       window.clearTimeout(timer);
     };
-  }, [targetScene]);
+  });
 
   // 壁纸读取中：连静态天空占位也不画，只铺主题纯色（body 的底色 --sky-2）；读回后直接换成壁纸。
   if (wallpaperLoading && !wallpaperCss) {

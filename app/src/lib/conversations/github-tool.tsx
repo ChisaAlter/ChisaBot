@@ -37,11 +37,11 @@ const parameters = z.object({
 });
 type Given = z.infer<typeof parameters>;
 
-const TOOLS: { name: string; kind: GithubActionKind }[] = [
+const TOOLS = [
   { name: "github_create_issue", kind: "create_issue" },
   { name: "github_comment", kind: "comment" },
   { name: "github_create_pr", kind: "create_pr" },
-];
+] as const satisfies readonly { name: string; kind: GithubActionKind }[];
 
 function useGithubRender(tool: (typeof TOOLS)[number]) {
   useRenderTool({
@@ -59,9 +59,9 @@ function useGithubRender(tool: (typeof TOOLS)[number]) {
 }
 
 export function GithubTool() {
-  useGithubRender(TOOLS[0]!);
-  useGithubRender(TOOLS[1]!);
-  useGithubRender(TOOLS[2]!);
+  useGithubRender(TOOLS[0]);
+  useGithubRender(TOOLS[1]);
+  useGithubRender(TOOLS[2]);
   return null;
 }
 

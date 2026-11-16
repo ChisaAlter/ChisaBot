@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
 import { type BuildVersion, isNewerBuild } from "../../../shared/system-update";
 
@@ -41,38 +42,44 @@ export function useNewVersion(
   const [dismissed, setDismissed] = useState<string | null>(null);
   const last = useRef(0);
 
-  useEffect(() => {
-    if (!bundled || bundled === "dev") return;
-    let alive = true;
-    let inflight: AbortController | null = null;
-    const check = async () => {
-      if (inflight) return;
-      last.current = Date.now();
-      inflight = new AbortController();
-      const next = await fetchServedVersion(inflight.signal);
-      inflight = null;
-      if (alive && next) setServed(next);
-    };
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void check();
-    }, pollMs);
-    const onFocus = () => {
-      if (document.visibilityState !== "visible") return;
-      if (Date.now() - last.current >= FOCUS_MIN_GAP_MS) void check();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    // 首次检查稍后再做：刚打开的页面一定是最新的，不跟启动抢网络。
-    const first = window.setTimeout(() => void check(), 20_000);
-    return () => {
-      alive = false;
-      inflight?.abort();
-      window.clearInterval(timer);
-      window.clearTimeout(first);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, [bundled, pollMs]);
+  useExternalConnection(
+    bundled && bundled !== "dev" ? `${bundled}\0${pollMs}` : false,
+    (_key, signal) => {
+      let inflight: AbortController | null = null;
+      const onAbort = () => inflight?.abort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      const check = async () => {
+        if (inflight || signal.aborted) return;
+        last.current = Date.now();
+        const controller = new AbortController();
+        inflight = controller;
+        try {
+          const next = await fetchServedVersion(controller.signal);
+          if (!signal.aborted && next) setServed(next);
+        } finally {
+          if (inflight === controller) inflight = null;
+        }
+      };
+      const timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") void check();
+      }, pollMs);
+      const onFocus = () => {
+        if (document.visibilityState !== "visible") return;
+        if (Date.now() - last.current >= FOCUS_MIN_GAP_MS) void check();
+      };
+      window.addEventListener("focus", onFocus);
+      document.addEventListener("visibilitychange", onFocus);
+      // 首次检查稍后再做：刚打开的页面一定是最新的，不跟启动抢网络。
+      const first = window.setTimeout(() => void check(), 20_000);
+      return () => {
+        signal.removeEventListener("abort", onAbort);
+        window.clearInterval(timer);
+        window.clearTimeout(first);
+        window.removeEventListener("focus", onFocus);
+        document.removeEventListener("visibilitychange", onFocus);
+      };
+    },
+  );
 
   const available =
     isNewerBuild(bundled, served) && served?.buildId !== dismissed

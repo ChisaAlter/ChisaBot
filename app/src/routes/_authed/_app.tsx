@@ -1,26 +1,24 @@
 import { createFileRoute, Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useExternalConnection, useIdleTask } from "@/hooks";
 import { rememberBotsLocation } from "@/lib/bots-location";
+import { objectConnectionKey } from "@/lib/connection-key";
 
 /** Route chunks the avatar menu leads to, fetched once the app is idle so those clicks never wait. */
 const IDLE_PRELOAD = ["/_authed/settings", "/_authed/settings/connected-accounts/", "/_authed/admin"] as const;
 
 function useIdleRoutePreload() {
   const router = useRouter();
-  useEffect(() => {
-    const run = () => {
+  useIdleTask(
+    () => {
       for (const id of IDLE_PRELOAD) {
         const route = (router.routesById as unknown as Record<string, unknown>)[id];
         if (route) void router.loadRouteChunk(route as Parameters<typeof router.loadRouteChunk>[0])?.catch(() => {});
       }
-    };
-    const idle = window.requestIdleCallback?.(run, { timeout: 4000 });
-    const timer = idle === undefined ? window.setTimeout(run, 2500) : undefined;
-    return () => {
-      if (idle !== undefined) window.cancelIdleCallback?.(idle);
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [router]);
+    },
+    true,
+    4000,
+    objectConnectionKey(router),
+  );
 }
 
 export const Route = createFileRoute("/_authed/_app")({
@@ -35,8 +33,8 @@ function RouteComponent() {
   useIdleRoutePreload();
   const pathname = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).pathname });
   const search = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).search });
-  useEffect(() => {
+  useExternalConnection(`${pathname}\0${JSON.stringify(search)}`, () => {
     rememberBotsLocation(pathname, search as Record<string, unknown>);
-  }, [pathname, search]);
+  });
   return <Outlet />;
 }

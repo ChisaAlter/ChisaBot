@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
+import { scrubInheritedDatabaseUrlFromProcessEnv } from "../config";
 import { recoveringSql } from "./recovery";
 import * as schema from "./schema";
 
@@ -226,7 +227,7 @@ export function createDatabase(
    * reads it into a local before it opens a database. Removing it also means a later
    * `new SQL()` cannot silently connect somewhere nobody named.
    */
-  delete process.env.DATABASE_URL;
+  scrubInheritedDatabaseUrlFromProcessEnv();
 
   const address = addressOf(databaseUrl);
   const client = recoveringSql(

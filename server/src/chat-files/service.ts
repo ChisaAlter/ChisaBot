@@ -21,6 +21,7 @@ import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { StoredAttachment } from "../channels/attachment-parts";
 import type { Database } from "../db/client";
+import { defaultRuntimeEnvironment } from "../config";
 import { imageDimsFor } from "../image-dims";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
@@ -254,7 +255,7 @@ export function createChatFiles(
 ) {
   const sql = database.$client;
   const doFetch = options.fetch ?? fetch;
-  const env = options.env ?? process.env;
+  const env = options.env ?? defaultRuntimeEnvironment();
   const media = createMediaModels(database, {
     encryptionKey: options.encryptionKey,
     fetch: doFetch,
@@ -390,7 +391,9 @@ export function createChatFiles(
         input.sourceId ?? null,
       ],
     );
-    const view = fileView(rows[0]!);
+    const inserted = rows[0];
+    if (!inserted) throw new Error(`写入对话文件记录后未返回行：${id}`);
+    const view = fileView(inserted);
     // 图片记下宽高，随工具结果的文件清单给网页（DESIGN.md §83.2）。
     if (!input.mimeType.startsWith("image/")) return view;
     const dims = await imageDimsFor(database).remember(`cf:${id}`, input.bytes);

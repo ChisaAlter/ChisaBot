@@ -2,6 +2,7 @@ import { IconPlug } from "@tabler/icons-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import * as React from "react";
+import { useTimeout } from "@/hooks";
 import {
   PageEmpty,
   PageRows,
@@ -68,10 +69,7 @@ function RouteComponent() {
    * against somebody else's rate limit.
    */
   const [query, setQuery] = React.useState("");
-  React.useEffect(() => {
-    const timer = setTimeout(() => setQuery(search), 250);
-    return () => clearTimeout(timer);
-  }, [search]);
+  useTimeout(() => setQuery(search), query === search ? null : 250, search);
 
   const apps = useQuery(composioAppsQueryOptions(query));
   /*

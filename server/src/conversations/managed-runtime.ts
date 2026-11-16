@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { DshHostClient } from "../../../runtime/dsh/src/client.mjs";
 import type { DshRuntimeTarget } from "../agents/dsh-runtime";
+import { pickSubprocessEnvironment } from "../config";
 
 /** One persistent Host home per account. Model credentials arrive only with an authenticated run. */
 export function createManagedDshRuntimes(options: {
@@ -56,21 +57,21 @@ export function createManagedDshRuntimes(options: {
       }),
       { mode: 0o600 },
     );
-    const environment: NodeJS.ProcessEnv = { CHISABOT_DSH_HOME: home };
-    for (const key of [
-      "PATH",
-      "Path",
-      "SystemRoot",
-      "WINDIR",
-      "HOME",
-      "USERPROFILE",
-      "TEMP",
-      "TMP",
-      "LANG",
-      "LC_ALL",
-    ]) {
-      if (process.env[key]) environment[key] = process.env[key];
-    }
+    const environment = pickSubprocessEnvironment(
+      [
+        "PATH",
+        "Path",
+        "SystemRoot",
+        "WINDIR",
+        "HOME",
+        "USERPROFILE",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+      ],
+      { CHISABOT_DSH_HOME: home },
+    );
     // Runtime lifetime outlives a web-server observer. The private home/token is the reconnect path.
     const log = await open(join(home, "host.log"), "a", 0o600);
     const child = spawn(options.node ?? "node", [source], {

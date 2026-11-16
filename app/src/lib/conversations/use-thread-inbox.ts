@@ -1,7 +1,9 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import type { Message } from "@ag-ui/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { tryClient } from "../client";
 import {
   applyInboxState,
@@ -51,217 +53,228 @@ export function useThreadInbox(
   const flushRef = useRef<(() => void) | null>(null);
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (!threadId) return;
-    let alive = true;
-    const reconcile = () => {
-      const ids = new Set(agent.messages.map((message) => message.id));
-      for (const item of queuedFor(threadId))
-        if (item.status !== "paused" && ids.has(item.id))
-          markRead(threadId, item.id);
-    };
-    let flushing = false;
-    let failed = false;
-    /** Rows a failed drain gave back; the person's retry turns one back to queued. */
-    const retryable = new Set<string>();
-    const accepted = (id: string) =>
-      (
-        agent as { isCommandAccepted?: (id: string) => boolean }
-      ).isCommandAccepted?.(id) === true;
-    const unadmitted = (items: readonly QueuedMessage[]) => {
-      if (items.some((item) => accepted(item.id))) return false;
-      const ids = new Set(items.map((item) => item.id));
-      const first = agent.messages.findIndex((message) => ids.has(message.id));
-      return (
-        first >= 0 &&
-        !agent.messages
-          .slice(first)
-          .some(
-            (message) =>
-              message.role === "assistant" || message.role === "tool",
-          )
-      );
-    };
-    const idle = () =>
-      alive &&
-      !agent.isRunning &&
-      !optionsRef.current.turnRunning &&
-      optionsRef.current.canFlush?.() !== false &&
-      !failed;
-    const flush = async () => {
-      if (!idle() || flushing) return;
-      reconcile();
-      if (
-        !queuedFor(threadId).some(
-          (item) => item.status === "queued" && !item.remote,
-        )
-      )
-        return;
-      flushing = true;
-      try {
-        // Wire finalization is not the end of a frontend turn. Verify the server's relay
-        // state too, and reconcile claims whose snapshot has not reached this tab yet.
-        const state = await inboxState(threadId);
-        if (!state || !idle()) return;
-        applyInboxState(threadId, state);
+  useExternalConnection(
+    threadId
+      ? `${threadId}:${objectConnectionKey(agent)}:${objectConnectionKey(runAgent)}`
+      : false,
+    (_key, signal) => {
+      if (!threadId) return;
+      const reconcile = () => {
+        const ids = new Set(agent.messages.map((message) => message.id));
+        for (const item of queuedFor(threadId))
+          if (item.status !== "paused" && ids.has(item.id))
+            markRead(threadId, item.id);
+      };
+      let flushing = false;
+      let failed = false;
+      let flushTimer: ReturnType<typeof setTimeout> | undefined;
+      /** Rows a failed drain gave back; the person's retry turns one back to queued. */
+      const retryable = new Set<string>();
+      const accepted = (id: string) =>
+        (
+          agent as { isCommandAccepted?: (id: string) => boolean }
+        ).isCommandAccepted?.(id) === true;
+      const unadmitted = (items: readonly QueuedMessage[]) => {
+        if (items.some((item) => accepted(item.id))) return false;
+        const ids = new Set(items.map((item) => item.id));
+        const first = agent.messages.findIndex((message) => ids.has(message.id));
+        return (
+          first >= 0 &&
+          !agent.messages
+            .slice(first)
+            .some(
+              (message) =>
+                message.role === "assistant" || message.role === "tool",
+            )
+        );
+      };
+      const idle = () =>
+        !signal.aborted &&
+        !agent.isRunning &&
+        !optionsRef.current.turnRunning &&
+        optionsRef.current.canFlush?.() !== false &&
+        !failed;
+      const flush = async () => {
+        if (!idle() || flushing) return;
         reconcile();
-        if (state.running || state.paused) return;
-        const left = takeQueued(threadId);
-        if (!left.length) return;
-        for (const item of left)
-          agent.addMessage(
-            item.message ??
-              ({ id: item.id, role: "user", content: item.text } as Message),
-          );
-        let threw = false;
-        await runAgent({ agent }).catch(() => {
-          threw = true;
-        });
-        if ((threw || failed) && unadmitted(left)) {
-          // Never admitted and nothing came back: the send did not happen. Take the copies out of
-          // the transcript and give the rows back, files included, for the person to retry.
-          const ids = new Set(left.map((item) => item.id));
-          agent.setMessages(
-            agent.messages.filter((message) => !ids.has(message.id)),
-          );
-          for (const item of left) retryable.add(item.id);
-          restoreFailedQueue(threadId, left);
+        if (
+          !queuedFor(threadId).some(
+            (item) => item.status === "queued" && !item.remote,
+          )
+        )
+          return;
+        flushing = true;
+        try {
+          // Wire finalization is not the end of a frontend turn. Verify the server's relay
+          // state too, and reconcile claims whose snapshot has not reached this tab yet.
+          const state = await inboxState(threadId);
+          if (!state || !idle()) return;
+          applyInboxState(threadId, state);
+          reconcile();
+          if (state.running || state.paused) return;
+          const left = takeQueued(threadId);
+          if (!left.length) return;
+          for (const item of left)
+            agent.addMessage(
+              item.message ??
+                ({ id: item.id, role: "user", content: item.text } as Message),
+            );
+          let threw = false;
+          await runAgent({ agent }).catch(() => {
+            threw = true;
+          });
+          if ((threw || failed) && unadmitted(left)) {
+            // Never admitted and nothing came back: the send did not happen. Take the copies out of
+            // the transcript and give the rows back, files included, for the person to retry.
+            const ids = new Set(left.map((item) => item.id));
+            agent.setMessages(
+              agent.messages.filter((message) => !ids.has(message.id)),
+            );
+            for (const item of left) retryable.add(item.id);
+            restoreFailedQueue(threadId, left);
+          }
+        } finally {
+          flushing = false;
         }
-      } finally {
-        flushing = false;
-      }
-    };
-    const scheduleFlush = () => {
-      setTimeout(() => void flush(), 250);
-    };
-    flushRef.current = scheduleFlush;
-    const subscription = agent.subscribe({
-      onMessagesChanged: () => reconcile(),
-      onRunStartedEvent: () => {
-        failed = false;
-      },
-      onRunErrorEvent: () => {
-        failed = true;
-      },
-      onRunFailed: () => {
-        failed = true;
-      },
-      onRunFinishedEvent: ({ event }) => {
-        if (event.outcome?.type === "cancelled") failed = true;
-      },
-      onRunFinalized: scheduleFlush,
-    });
-    const unwatch = subscribeQueued(() => {
-      const retried = queuedFor(threadId).some(
-        (item) => item.status === "queued" && retryable.delete(item.id),
-      );
-      if (retried) {
-        failed = false;
-        scheduleFlush();
-      }
-    });
-    void restoreQueue(threadId).then((state) => {
-      reconcile();
-      if (state && !state.running && !state.paused) scheduleFlush();
-    });
-    return () => {
-      alive = false;
-      if (flushRef.current === scheduleFlush) flushRef.current = null;
-      subscription.unsubscribe();
-      unwatch();
-    };
-  }, [threadId, agent, runAgent]);
+      };
+      const scheduleFlush = () => {
+        clearTimeout(flushTimer);
+        flushTimer = setTimeout(() => void flush(), 250);
+      };
+      flushRef.current = scheduleFlush;
+      const subscription = agent.subscribe({
+        onMessagesChanged: () => reconcile(),
+        onRunStartedEvent: () => {
+          failed = false;
+        },
+        onRunErrorEvent: () => {
+          failed = true;
+        },
+        onRunFailed: () => {
+          failed = true;
+        },
+        onRunFinishedEvent: ({ event }) => {
+          if (event.outcome?.type === "cancelled") failed = true;
+        },
+        onRunFinalized: scheduleFlush,
+      });
+      const unwatch = subscribeQueued(() => {
+        const retried = queuedFor(threadId).some(
+          (item) => item.status === "queued" && retryable.delete(item.id),
+        );
+        if (retried) {
+          failed = false;
+          scheduleFlush();
+        }
+      });
+      void restoreQueue(threadId).then((state) => {
+        reconcile();
+        if (state && !state.running && !state.paused) scheduleFlush();
+      });
+      return () => {
+        clearTimeout(flushTimer);
+        if (flushRef.current === scheduleFlush) flushRef.current = null;
+        subscription.unsubscribe();
+        unwatch();
+      };
+    },
+  );
 
   // The final wire callback fires before 会话客户端 resolves frontend tool follow-ups.
   // A whole-turn transition to idle must schedule the fallback that callback deferred.
-  useEffect(() => {
-    if (!options.turnRunning) flushRef.current?.();
-  }, [options.turnRunning]);
+  useExternalConnection(options.turnRunning ? "running" : "idle", (state) => {
+    if (state === "idle") flushRef.current?.();
+  });
 
-  useEffect(() => {
-    if (!threadId || !pullServerTurns) return;
-    let alive = true;
-    let serverRunning = false;
-    let busy = false;
-    let sync: ThreadSync | null = null;
-    /** 有任务交回来的那条消息（结果，或用户在卡片上停掉后的「已停止」）还没出现在这边。 */
-    const resultMissing = () => {
-      const workers =
-        queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
-        [];
-      const have = new Set(agent.messages.map((message) => message.id));
-      return workers.some(
-        (worker) =>
-          Boolean(worker.resultMessageId) &&
-          !have.has(worker.resultMessageId!) &&
-          Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
-            10 * 60_000,
-      );
-    };
-    const workersNeedSync = () => {
-      const workers =
-        queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
-        [];
-      const have = new Set(agent.messages.map((message) => message.id));
-      return workers.some(
-        (worker) =>
-          ACTIVE_WORKER.includes(worker.status) ||
-          // 停掉的任务：只有用户在卡片上停的才有交回的「已停止」消息（有 resultMessageId），要等它出现。
-          (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
-            10 * 60_000 &&
-            (worker.status === "cancelled"
-              ? Boolean(worker.resultMessageId) &&
-                !have.has(worker.resultMessageId!)
-              : !worker.resultMessageId || !have.has(worker.resultMessageId))),
-      );
-    };
-    const pull = async () => {
-      try {
-        const query = syncQuery(agent.messages, sync);
-        const response = await tryClient(
-          `/api/conversations/threads/${encodeURIComponent(threadId)}/messages?${query}`,
+  useExternalConnection(
+    threadId && pullServerTurns
+      ? `${threadId}:${objectConnectionKey(agent)}:${objectConnectionKey(queryClient)}`
+      : false,
+    (_key, signal) => {
+      if (!threadId) return;
+      let serverRunning = false;
+      let busy = false;
+      let sync: ThreadSync | null = null;
+      /** 有任务交回来的那条消息（结果，或用户在卡片上停掉后的「已停止」）还没出现在这边。 */
+      const resultMissing = () => {
+        const workers =
+          queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
+          [];
+        const have = new Set(agent.messages.map((message) => message.id));
+        return workers.some(
+          (worker) =>
+            Boolean(worker.resultMessageId) &&
+            typeof worker.resultMessageId === "string" &&
+            !have.has(worker.resultMessageId) &&
+            Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
+              10 * 60_000,
         );
-        if (!response.ok || !alive || agent.isRunning) return;
-        const body: unknown = await response.json();
-        if (!alive || agent.isRunning) return;
-        const merged = mergeServerMessages(agent.messages, sync, body);
-        if (!merged) {
-          sync = null;
-          return;
+      };
+      const workersNeedSync = () => {
+        const workers =
+          queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
+          [];
+        const have = new Set(agent.messages.map((message) => message.id));
+        return workers.some(
+          (worker) =>
+            ACTIVE_WORKER.includes(worker.status) ||
+            // 停掉的任务：只有用户在卡片上停的才有交回的「已停止」消息（有 resultMessageId），要等它出现。
+            (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
+              10 * 60_000 &&
+              (worker.status === "cancelled"
+                ? Boolean(
+                    worker.resultMessageId && !have.has(worker.resultMessageId),
+                  )
+                : !worker.resultMessageId || !have.has(worker.resultMessageId))),
+        );
+      };
+      const pull = async () => {
+        try {
+          const query = syncQuery(agent.messages, sync);
+          const response = await tryClient(
+            `/api/conversations/threads/${encodeURIComponent(threadId)}/messages?${query}`,
+          );
+          if (!response.ok || signal.aborted || agent.isRunning) return;
+          const body: unknown = await response.json();
+          if (signal.aborted || agent.isRunning) return;
+          const merged = mergeServerMessages(agent.messages, sync, body);
+          if (!merged) {
+            sync = null;
+            return;
+          }
+          if (merged.next) agent.setMessages(merged.next);
+          sync =
+            merged.version && merged.cursor
+              ? {
+                  version: merged.version,
+                  cursor: merged.cursor,
+                  applied: agent.messages.slice(),
+                }
+              : null;
+        } catch {
+          // A timed-out or malformed snapshot cannot erase the readable local conversation.
         }
-        if (merged.next) agent.setMessages(merged.next);
-        sync =
-          merged.version && merged.cursor
-            ? {
-                version: merged.version,
-                cursor: merged.cursor,
-                applied: agent.messages.slice(),
-              }
-            : null;
-      } catch {
-        // A timed-out or malformed snapshot cannot erase the readable local conversation.
-      }
-    };
-    const tick = async () => {
-      if (busy || !alive || agent.isRunning) return;
-      if (!serverRunning && !workersNeedSync()) return;
-      busy = true;
-      try {
-        const state = await inboxState(threadId);
-        const wasRunning = serverRunning;
-        serverRunning = Boolean(state?.running);
-        // 交付那一轮很短时可能两次轮询之间就跑完了：交回的消息还没到，也拉一次。
-        if (serverRunning || wasRunning || resultMissing()) await pull();
-      } catch {
-        // Preserve the current transcript and let the next polling opportunity reconcile.
-      } finally {
-        busy = false;
-      }
-    };
-    const timer = setInterval(() => void tick(), 1200);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [threadId, agent, queryClient, pullServerTurns]);
+      };
+      const tick = async () => {
+        if (busy || signal.aborted || agent.isRunning) return;
+        if (!serverRunning && !workersNeedSync()) return;
+        busy = true;
+        try {
+          const state = await inboxState(threadId);
+          const wasRunning = serverRunning;
+          serverRunning = Boolean(state?.running);
+          // 交付那一轮很短时可能两次轮询之间就跑完了：交回的消息还没到，也拉一次。
+          if (serverRunning || wasRunning || resultMissing()) await pull();
+        } catch {
+          // Preserve the current transcript and let the next polling opportunity reconcile.
+        } finally {
+          busy = false;
+        }
+      };
+      const timer = setInterval(() => void tick(), 1200);
+      return () => {
+        clearInterval(timer);
+      };
+    },
+  );
 }

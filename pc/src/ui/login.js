@@ -10,10 +10,10 @@
  * 流程：规范化地址（补 https://、去掉末尾 /）→ 探测地址通不通 → 直接请求服务器登录网关（和网页登录表单同一个请求，
  * 会话 Cookie 写进客户端）→ 进入应用。错误前缀「[kind] 」决定提示放在哪个输入框旁。
  */
-(async function () {
+(async () => {
   const $ = (id) => document.getElementById(id);
 
-  const Host = (function () {
+  const Host = (() => {
     if (window.chisa) {
       return {
         label: "ChisaBot",
@@ -119,7 +119,7 @@
     }
   }
   function fail(error) {
-    const raw = typeof cleanError === "function" ? cleanError(error) : String(error && error.message ? error.message : error);
+    const raw = typeof cleanError === "function" ? cleanError(error) : String(error?.message ? error.message : error);
     const match = raw.match(/^(?:Error: )?\[(\w+)\]\s*([\s\S]*)$/);
     const kind = match ? match[1] : "invalid";
     const text = match ? match[2] : raw;
@@ -294,7 +294,7 @@
           async () => {
             scanStep(`正在绑定到 ${link.server.replace(/^https:\/\//, "")}…`);
             const result = await Host.pair(link);
-            scanStep(`已绑定为「${(result && result.deviceName) || "这台手机"}」，正在进入…`);
+            scanStep(`已绑定为「${result?.deviceName || "这台手机"}」，正在进入…`);
             return result;
           },
           { keepSuccess: true },
@@ -329,13 +329,13 @@
           await Host.probe(serverUrl);
           step("正在验证账号…");
           const result = await Host.login({ serverUrl, username: user.value.trim(), password: pass.value, remember: remember.checked });
-          step(result && result.warning ? result.warning : "正在进入…");
+          step(result?.warning ? result.warning : "正在进入…");
           return result;
         },
         { keepSuccess: true },
       );
       pass.value = "";
-      setTimeout(() => Host.open(), result && result.warning ? 2600 : 650);
+      setTimeout(() => Host.open(), result?.warning ? 2600 : 650);
     } catch (error) {
       step("");
       fail(error);

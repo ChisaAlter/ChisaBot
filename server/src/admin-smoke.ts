@@ -86,8 +86,12 @@ export type SmokeQuestion = { a: number; b: number; answer: number };
 /** 一道每次都不同的两位数加法。 */
 export function smokeQuestion(): SmokeQuestion {
   const bytes = randomBytes(2);
-  const a = 10 + (bytes[0]! % 90);
-  const b = 10 + (bytes[1]! % 90);
+  const [first, second] = bytes;
+  if (first === undefined || second === undefined) {
+    throw new Error("生成随机算术题失败：随机字节不足。");
+  }
+  const a = 10 + (first % 90);
+  const b = 10 + (second % 90);
   return { a, b, answer: a + b };
 }
 

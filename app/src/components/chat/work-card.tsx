@@ -1,6 +1,7 @@
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
@@ -185,34 +186,34 @@ export function WorkRow({
   const [doneSeconds, setDoneSeconds] = useState<number | null>(() =>
     live ? null : (workSeconds(turnKey) ?? workUi(turnKey)?.seconds ?? null),
   );
-  useEffect(() => {
-    if (live) return;
+  useExternalConnection(live ? null : `done:${turnKey}`, () => {
     const seconds = workSeconds(turnKey);
     if (seconds !== null) setWorkUi(turnKey, { seconds });
     setDoneSeconds(seconds ?? workUi(turnKey)?.seconds ?? null);
-  }, [live, turnKey]);
+  });
   const step = live ? currentWorkStep(calls) : null;
   const stepKey = step ? `${step.name}\n${step.label}` : "";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stepKey carries step.
-  useEffect(() => {
-    if (!live) return;
+  useExternalConnection(live ? `step:${stepKey}` : null, () => {
     announceStep(step);
-  }, [live, stepKey]);
-  useEffect(() => {
-    if (!live) return;
-    return () => announceStep(null);
-  }, [live]);
+  });
+  useExternalConnection(live, () => () => announceStep(null));
   const reduce = useReducedMotion();
   const summary = live ? summarizeWork(calls) : null;
   const done = live ? null : summarizeDoneWork(calls);
-  if (live ? !summary : !done) return null;
+  const text = live
+    ? summary
+      ? (statusLabel ?? summary.current)
+      : null
+    : done
+      ? done.label
+      : null;
+  if (text === null) return null;
   const started = startedAt.get(turnKey) ?? now;
   const seconds = live
     ? Math.max(0, Math.floor((now - started) / 1000))
     : doneSeconds;
   // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
   const steps = open ? workTimeline(calls, notes, live) : [];
-  const text = live ? (statusLabel ?? summary!.current) : done!.label;
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
   // 网页类的摘要自己已经写了「N 步失败」（审查模块 7：4xx/5xx 算失败），后面不再重复一遍。
   const metaFailed =

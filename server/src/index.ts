@@ -192,7 +192,7 @@ import {
 } from "./computer/provider";
 import { createSnapshotStore } from "./computer/snapshot-store";
 import { streamPathBotId } from "./computer/stream-path";
-import { loadConfig } from "./config";
+import { loadConfig, readConversationRuntimeEnvDefaults } from "./config";
 import { createConfirmations } from "./confirmations/service";
 import {
   type IdentifyActor,
@@ -517,7 +517,7 @@ const roleRepository = createRoleRepository(database);
  * 第一次见到的朋友账号在 users / user_roles 建行；角色以网关为准（管理员在网关里改）。
  */
 const gatewaySecret = config.singleUser
-  ? gatewaySecretFromEnvironment(process.env)
+  ? gatewaySecretFromEnvironment(config.environment)
   : undefined;
 const provisionedGatewayUsers = new Map<
   string,
@@ -1045,7 +1045,7 @@ const triggerIngressDeps = {
   ingest: (event: unknown) => responsibilityEngine.ingest(event),
   auditStore: bootAuditStore,
 };
-const inboundEmail = inboundEmailConfigFromEnv(process.env);
+const inboundEmail = inboundEmailConfigFromEnv(config.environment);
 const responsibilityTriggers = {
   store: responsibilityTriggerStore,
   emailDomain: inboundEmail?.domain ?? null,
@@ -1201,7 +1201,7 @@ const resolveRuntimeModelApiKey = () =>
     reader: credentialStore,
     provider: runtimeModel.provider,
     keyId: tenantPackage.model.credentialSecretRef,
-    environment: process.env,
+    environment: config.environment,
   });
 const modelSettings = createModelSettingsService({
   store: createModelSettingsStore(database),
@@ -1211,8 +1211,10 @@ const modelSettings = createModelSettingsService({
     model: runtimeModel.defaultModel,
     baseUrl:
       runtimeModel.provider === "anthropic"
-        ? process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1"
-        : process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+        ? readConversationRuntimeEnvDefaults().anthropicBaseUrl ||
+          "https://api.anthropic.com/v1"
+        : readConversationRuntimeEnvDefaults().openaiBaseUrl ||
+          "https://api.openai.com/v1",
   },
   fallbackApiKey: resolveRuntimeModelApiKey,
 });
@@ -1420,16 +1422,23 @@ if (config.dshKernel) {
   await bindings.ensure();
   await operations.ensure();
   dshToolGateway = createDshToolGateway(operations, journal);
-  dshTargetFor = config.dshKernel.targetsFile
-    ? await loadDshTargets(config.dshKernel.targetsFile)
-    : (
-        await import("./conversations/managed-runtime")
-      ).createManagedDshRuntimes({
-        root: config.dshKernel.root!,
-        gatewayUrl:
-          config.dshKernel.gatewayUrl ??
-          `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
-      }).targetFor;
+  if (config.dshKernel.targetsFile) {
+    dshTargetFor = await loadDshTargets(config.dshKernel.targetsFile);
+  } else {
+    if (!config.dshKernel.root) {
+      throw new Error(
+        "DSH kernel root is required when targetsFile is not configured.",
+      );
+    }
+    dshTargetFor = (
+      await import("./conversations/managed-runtime")
+    ).createManagedDshRuntimes({
+      root: config.dshKernel.root,
+      gatewayUrl:
+        config.dshKernel.gatewayUrl ??
+        `http://127.0.0.1:${config.port}/api/internal/dsh-tools`,
+    }).targetFor;
+  }
   setAgentKernel({
     kind: "dsh",
     binding: {
@@ -1472,9 +1481,9 @@ const probeConfiguredDsh = dshTargetFor
  * embedded console; without them, a Magpie installed from that page is picked up on its own. The model list syncs on start and every MODEL_CATALOG_REFRESH_MINUTES (10).
  */
 const magpie = createAutoMagpieService({
-  environment: process.env,
+  environment: config.environment,
   // 一键安装（管理后台 → 模型平台 Magpie）由宿主机把管理密钥放进更新程序的 state 目录，不用重启就接上。
-  updaterDir: process.env.CHISABOT_UPDATER_DIR,
+  updaterDir: config.updaterDir,
 });
 magpie.onChange(() => modelCatalog.invalidate());
 
@@ -1483,14 +1492,11 @@ magpie.onChange(() => modelCatalog.invalidate());
  * /var/lib/chisabot-updater）。没挂就显示「未安装」，其余照常。docs/online-update.md。
  */
 const systemUpdate = createSystemUpdateService({
-  dir: process.env.CHISABOT_UPDATER_DIR,
-  sourceDir: process.env.CHISABOT_SOURCE_DIR,
+  dir: config.updaterDir,
+  sourceDir: config.sourceDir,
   running: readRunningBuild(),
 });
-const modelCatalogRefreshMinutes = (() => {
-  const value = Number(process.env.MODEL_CATALOG_REFRESH_MINUTES ?? 10);
-  return Number.isFinite(value) && value >= 0 ? Math.min(value, 24 * 60) : 10;
-})();
+const modelCatalogRefreshMinutes = config.modelCatalogRefreshMinutes;
 if (modelCatalogRefreshMinutes > 0)
   modelCatalog.startAutoRefresh(modelCatalogRefreshMinutes * 60_000);
 const agentModels = createAgentModelService({
@@ -1535,7 +1541,7 @@ const chooseSkills = createModelCompleter({
       reader: credentialStore,
       provider: runtimeModel.provider,
       keyId: tenantPackage.model.credentialSecretRef,
-      environment: process.env,
+      environment: config.environment,
     }),
 });
 
@@ -1553,7 +1559,7 @@ confirmations.setDeviceDecider((approvalId, approved) =>
 );
 // 2026-10-14：旧版登记、能力仍是出厂「全部关闭」且没人改过配置的电脑 → 新默认「全部询问」（每次审批）。
 // 幂等，用户自己关掉的不动；CHISABOT_DEVICE_ASK_DEFAULTS=0 关掉。
-if (process.env.CHISABOT_DEVICE_ASK_DEFAULTS !== "0") {
+if (config.deviceAskDefaultsEnabled) {
   try {
     const adopted = await deviceStore.adoptAskDefaults();
     if (adopted.length)
@@ -1587,7 +1593,10 @@ const deviceToolsFor = async (
     const workspace = gateway?.writeBytes
       ? {
           write: async (path: string, bytes: Buffer) => {
-            await gateway.writeBytes!(
+            if (!gateway.writeBytes) {
+              throw new Error("computerGateway.writeBytes is unavailable.");
+            }
+            await gateway.writeBytes(
               botId,
               { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
               { path, base64: bytes.toString("base64") },
@@ -1651,7 +1660,12 @@ const browserBookmarks = createBrowserBookmarks(database, {
         pushStartLinks: (
           botId: string,
           links: { title: string; url: string }[],
-        ) => computerGateway.startLinks!(botId, links),
+        ) => {
+          if (!computerGateway.startLinks) {
+            throw new Error("computerGateway.startLinks is unavailable.");
+          }
+          return computerGateway.startLinks(botId, links);
+        },
       }
     : {}),
 });
@@ -1662,7 +1676,7 @@ await vault.ensure();
 /** GitHub 账号连接（DESIGN.md §53）：令牌在保险箱（保留名 github），读直接做，写先在聊天里确认。 */
 const github = createGithub(database, {
   vault,
-  apiBase: process.env.CHISABOT_GITHUB_API_BASE,
+  apiBase: config.githubApiBase,
 });
 await github.ensure();
 /** 个人日程与收件箱只读接入（CB-013）+ 每日晨报（CB-014）。 */
@@ -1673,10 +1687,10 @@ await personalSources.ensure();
 const personalNotifications = createPersonalNotifications({
   database,
   sources: personalSources,
-  publicUrl: process.env.CHISABOT_PUBLIC_URL,
+  publicUrl: config.rawPublicUrl,
 });
 const hostNotificationSweep = createHostNotifications({
-  updaterDir: process.env.CHISABOT_UPDATER_DIR,
+  updaterDir: config.updaterDir,
   database,
   deliver: personalNotifications.deliver,
 });
@@ -1707,7 +1721,7 @@ deliveryNotifications = async (scope, input) => {
 };
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
 const pages = createPages(database, {
-  publicUrl: process.env.CHISABOT_PUBLIC_URL?.trim() || null,
+  publicUrl: config.rawPublicUrl ?? null,
   ...(computerGateway
     ? {
         readBotFile: async ({
@@ -1780,7 +1794,10 @@ const chatFiles = createChatFiles(database, {
             path: string,
             bytes: Buffer,
           ) => {
-            await computerGateway.writeBytes!(
+            if (!computerGateway.writeBytes) {
+              throw new Error("computerGateway.writeBytes is unavailable.");
+            }
+            await computerGateway.writeBytes(
               bot,
               { id: owner, userId: owner, initiator: PERSON_INITIATOR },
               { path, base64: bytes.toString("base64") },
@@ -2693,7 +2710,7 @@ if (localBackend) {
     console.warn("marking interrupted workers failed", error);
   }
   // 删机器人以前不清后台任务记录和收件箱：开机顺手清掉孤儿行（幂等；CHISABOT_WORKER_ORPHAN_SWEEP=0 关掉）。
-  if (process.env.CHISABOT_WORKER_ORPHAN_SWEEP !== "0") {
+  if (config.workerOrphanSweepEnabled) {
     try {
       const swept = await workerService.sweepOrphans();
       if (swept.workers || swept.inbox)
@@ -2793,7 +2810,7 @@ try {
     hub: deviceHub,
     deviceStore,
     encryptionKey: config.keyEncryptionKey,
-    enableServerHost: process.env.NODE_ENV !== "test",
+    enableServerHost: !config.isTestRuntime,
     ...(localBackend
       ? { inbox: localBackend.inbox, control: localBackend.control }
       : {}),
@@ -2967,6 +2984,10 @@ imService = createImService({
   },
 });
 await imService.ensure();
+const readyImService = imService;
+if (!readyImService) {
+  throw new Error("imService unavailable");
+}
 
 /*
  * 定时任务 / 提醒（server/src/schedules，DESIGN.md §55，docs/schedules.md）：在对话里设，到点回到那段对话；
@@ -2976,7 +2997,7 @@ const schedules = createSchedules(database, {
   runTurn: governedTurnRunner,
   runImTurn: imTurnRunner,
   pushToIm: (threadId, text, options) =>
-    imService!.pushToThread(threadId, text, options),
+    readyImService.pushToThread(threadId, text, options),
   isThreadActive: (threadId) =>
     localBackend?.control.isActive(threadId) ?? false,
   ...(localBackend
@@ -3050,11 +3071,7 @@ const schedules = createSchedules(database, {
     : {}),
 });
 await schedules.ensure();
-if (
-  process.env.NODE_ENV !== "test" &&
-  process.env.CHISABOT_SCHEDULES_SWEEP !== "0"
-)
-  schedules.start();
+if (!config.isTestRuntime && config.schedulesSweepEnabled) schedules.start();
 
 /*
  * 任务中心（server/src/task-center，docs/research/task-center-core-handoff.md）：统一 Inbox / Outbox。
@@ -3090,7 +3107,7 @@ const taskCenter = createTaskCenterRuntime({
   },
   localRoots: async (ownerUserId) => {
     const roots = new Set<string>();
-    const raw = process.env.CHISABOT_TASK_CENTER_ROOTS?.trim();
+    const raw = config.taskCenterRootsRaw;
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as unknown;
@@ -3119,8 +3136,10 @@ const taskCenter = createTaskCenterRuntime({
             (await agentProfileStore.get(await actorFor(ownerUserId), agentId))
               ?.name ?? null,
         }),
-        listAgentInstances: (ownerUserId: string) =>
-          localAgents!.instances.listInstances(ownerUserId),
+        listAgentInstances: (ownerUserId: string) => {
+          if (!localAgents) throw new Error("localAgents unavailable");
+          return localAgents.instances.listInstances(ownerUserId);
+        },
       }
     : {}),
 });
@@ -3131,8 +3150,7 @@ personalNotificationSweep = async () => {
   await personalNotifications.sweep();
   await hostNotificationSweep();
 };
-if (process.env.NODE_ENV !== "test" && process.env.CHISABOT_TASK_CENTER !== "0")
-  taskCenter.start();
+if (!config.isTestRuntime && config.taskCenterEnabled) taskCenter.start();
 
 const panelTaskService = createNormalPanelTaskService({
   database,
@@ -3144,12 +3162,14 @@ const panelTaskService = createNormalPanelTaskService({
   },
   isWaiting: (error) => error instanceof HeadlessToolSuspension,
   run: async (input) => {
+    const runId = input.runId;
+    if (!runId) throw new Error("panelTaskService run requires runId");
     const actor = await actorFor(input.ownerUserId),
       source = await channelSourceForRun({
         actorId: input.ownerUserId,
         botId: input.agentId,
         threadId: input.threadId,
-        runId: input.runId!,
+        runId,
         depth: 0,
       });
     if (!source) throw new PanelError("task_binding_refused", 403);
@@ -3157,12 +3177,12 @@ const panelTaskService = createNormalPanelTaskService({
       actor,
       source.channelId,
       { text: input.instruction, agentId: null, at: new Date() },
-      { id: `${input.runId}:input` },
+      { id: `${runId}:input` },
     );
     const outcome = await governedTurnRunner({
       ...input,
       userMessage: {
-        id: `${input.runId}:input`,
+        id: `${runId}:input`,
         role: "user",
         content: input.instruction,
       },
@@ -3172,7 +3192,7 @@ const panelTaskService = createNormalPanelTaskService({
         actor,
         source.channelId,
         { text: outcome.replyText, agentId: input.agentId, at: new Date() },
-        { id: `${input.runId}:reply` },
+        { id: `${runId}:reply` },
       );
     return outcome;
   },
@@ -3387,7 +3407,7 @@ const chatShots = await createChatShots(database);
 // 聊天里的链接预览卡（link-preview/service.ts，DESIGN.md §31 / §48）：只连公网；没有 og:image 时的截图默认关闭，
 // CHISABOT_LINK_PREVIEW_SHOTS=1 才由内置浏览器截（仅共享计算机部署）。
 const linkPreviews = await createLinkPreviews(database, {
-  screenshots: process.env.CHISABOT_LINK_PREVIEW_SHOTS === "1",
+  screenshots: config.linkPreviewShotsEnabled,
   ...(config.computer?.provider === "shared"
     ? {
         computer: {
@@ -3441,7 +3461,7 @@ onControlReleased(
   (ownerUserId) => void livePanelService.resumeAfterHandback(ownerUserId),
 );
 // CHISABOT_LIVE_PANEL_SWEEP=0：不跑后台刷新循环（只给并排的预览容器用，免得它替正式实例刷新面板）。
-if (process.env.CHISABOT_LIVE_PANEL_SWEEP !== "0") livePanelService.start();
+if (config.livePanelSweepEnabled) livePanelService.start();
 
 void workflowEngineInstance.recover().catch((error) =>
   console.error(
@@ -3491,11 +3511,12 @@ const actorAgentResolver = createActorAgentResolver({
         input.threadId &&
         !input.threadId.startsWith("worker-") &&
         !(await isGroupChannelThread(input.threadId).catch(() => true));
-      const delegated = delegating
+      const activeWorkerService = delegating ? workerService : undefined;
+      const delegated = activeWorkerService
         ? [
             ...coordinated,
             ...(await restrictNamedToolsForWorkflow(initiator, async () =>
-              workerService!.delegationTools({
+              activeWorkerService.delegationTools({
                 ownerUserId: actorId,
                 agentId: botId,
                 threadId: input.threadId,
@@ -4644,9 +4665,9 @@ const app = createApp(
   threadIdentity,
   // Who has signed in, and what an administrator may do about them.
   peopleStore,
-  // Enterprise identity providers (SSO) removed in slimming P6-2; positional slot.
+  // 位置占位参数（保持后续入参下标不变）。
   undefined,
-  // Intent routing (choose a coworker for an untagged message) removed in slimming P4b; positional slot.
+  // 位置占位参数（保持后续入参下标不变）。
   undefined,
   // What a browsing turn's screen looked like when it finished, so the transcript can show it later.
   pageFrameStore,
@@ -4664,7 +4685,7 @@ const app = createApp(
   database,
   // Positional slot of the removed native host-folder broker (slimming P6-4, upstream desktop app).
   undefined,
-  process.env.CHISABOT_DESKTOP_HOST_TOKEN,
+  config.desktopHostToken,
   async (input) => {
     const workflowRefusal = guardWorkflowCallback(input.initiator, input.name);
     if (workflowRefusal) return workflowRefusal;
@@ -4757,12 +4778,12 @@ const app = createApp(
   // Absent without a key, which leaves the routes reporting no broker rather than listing apps
   // nobody could connect.
   composio ? { broker: composio.broker } : undefined,
-  process.env.CHISABOT_MODEL_OAUTH_FILE?.trim()
-    ? createProviderOAuthProxy(process.env.CHISABOT_MODEL_OAUTH_FILE.trim())
+  config.modelOauthFile
+    ? createProviderOAuthProxy(config.modelOauthFile)
     : undefined,
   userPreferencesStore,
-  undefined, // was voice sessions (removed in CB-046 step 2)
-  undefined, // was Automatic Learning (removed in slimming P4b-3)
+  undefined, // 位置占位参数
+  undefined, // 位置占位参数
   {
     approvals: approvalService,
     ...(signInService ? { passwords: signInService } : {}),
@@ -4779,6 +4800,7 @@ const app = createApp(
       purge: createAgentPurge({
         database,
         reset: botReset,
+        profilesDir: config.profilesDir,
         stopWorkers: async (agentId) => workerService?.stopForAgent(agentId),
         retirePanels: async (agentId) => livePanelService.retireBot(agentId),
         ...(computerGateway
@@ -4913,7 +4935,7 @@ const app = createApp(
       ["/api/live-panels", livePanelService.routes(requireUser)],
       ["/api/chat-shots", chatShots.routes(requireUser)],
       ["/api/bot-threads", botThreads.routes(requireUser)],
-      ["/api/im", imService!.routes(requireUser)],
+      ["/api/im", readyImService.routes(requireUser)],
       ["/api/memory-notes", memoryNotes.routes(requireUser)],
       ["/api/bot-avatars", botAvatars.routes(requireUser)],
       ["/api/browser-bookmarks", browserBookmarks.routes(requireUser)],
@@ -5027,7 +5049,7 @@ const gatewayReplayCache = new GatewayReplayCache();
 
 serve<SocketData>({
   port,
-  hostname: process.env.CHISABOT_BIND_HOST?.trim() || "0.0.0.0",
+  hostname: config.bindHost,
   async fetch(request, server) {
     if (
       gatewaySecret &&
@@ -5297,7 +5319,7 @@ void startOpsMetricsStore()
   });
 
 // IM 接入：服务起来以后再连各平台（适配器自己断线重连）。CHISABOT_IM=0 关掉（不连任何平台）。
-if (process.env.CHISABOT_IM !== "0") {
+if (config.imEnabled) {
   setTimeout(() => {
     void imService
       ?.startAll()

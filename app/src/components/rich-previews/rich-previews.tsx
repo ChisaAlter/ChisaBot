@@ -19,12 +19,12 @@ import {
 import {
   type CSSProperties,
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useTimeout } from "@/hooks";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
 import {
@@ -111,11 +111,7 @@ export function usePreviewImage(
  */
 export function useSettledText(text: string, ms = 900): string {
   const [settled, setSettled] = useState(text);
-  useEffect(() => {
-    if (settled === text) return;
-    const timer = window.setTimeout(() => setSettled(text), ms);
-    return () => window.clearTimeout(timer);
-  }, [text, ms, settled]);
+  useTimeout(() => setSettled(text), settled === text ? null : ms, text);
   return settled;
 }
 
@@ -136,8 +132,10 @@ const IMAGE_SIZE_LIMIT = 500;
 
 function rememberSize(src: string, size: { width: number; height: number }) {
   if (imageSizes.has(src)) return;
-  if (imageSizes.size >= IMAGE_SIZE_LIMIT)
-    imageSizes.delete(imageSizes.keys().next().value!);
+  if (imageSizes.size >= IMAGE_SIZE_LIMIT) {
+    const oldest = imageSizes.keys().next();
+    if (!oldest.done) imageSizes.delete(oldest.value);
+  }
   imageSizes.set(src, size);
 }
 
@@ -274,8 +272,9 @@ export function ImagePile({
   }
   const markBroken = (src: string) => setBroken((b) => ({ ...b, [src]: true }));
 
-  if (shown.length === 1) {
-    const image = shown[0]!;
+  const single = shown.length === 1 ? shown[0] : undefined;
+  if (single) {
+    const image = single;
     const actualSrc = image.thumb ?? image.src;
     return (
       <div className="rp-images" data-align={align}>

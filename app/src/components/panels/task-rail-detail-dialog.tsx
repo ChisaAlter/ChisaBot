@@ -14,6 +14,7 @@ import {
   IconExternalLink,
   IconFileText,
   IconGitBranch,
+  IconMessageForward,
   IconMessages,
   IconPinned,
   IconPinnedOff,
@@ -28,15 +29,18 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useRef, useState } from "react";
 import {
   ACTIVE_STATUSES,
+  buildTaskChatPrompt,
   CATEGORY_LABELS,
   RISK_LABELS,
   STATUS_LABELS,
   safeTaskUrl,
   taskDate,
 } from "@/components/task-center/labels";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -205,10 +209,11 @@ export function TaskRailDetailDialog({
 
   const [navStack, setNavStack] = useState<RailDetailTarget[]>([]);
   const outerKey = targetKey(target);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: outerKey 是有意的重置触发——外层目标变了导航栈清零
-  useEffect(() => {
+  const [prevOuterKey, setPrevOuterKey] = useState(outerKey);
+  if (outerKey !== prevOuterKey) {
+    setPrevOuterKey(outerKey);
     setNavStack([]);
-  }, [outerKey]);
+  }
 
   const activeTarget =
     navStack.length > 0 ? (navStack.at(-1) ?? baseTarget) : baseTarget;
@@ -300,13 +305,15 @@ function TaskDetailModalContent({
   onSelectTask: (taskId: string) => void;
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const orderMap = useTaskRailOrder();
   const [tab, setTab] = useState<"overview" | "events" | "trace">("overview");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 换任务是有意的重置触发——回到总览页
-  useEffect(() => {
+  const [prevTaskId, setPrevTaskId] = useState(target.taskId);
+  if (target.taskId !== prevTaskId) {
+    setPrevTaskId(target.taskId);
     setTab("overview");
-  }, [target.taskId]);
+  }
 
   const detailQuery = useQuery(taskCenterDetailOptions(target.taskId));
   const snapshotTask =
@@ -514,7 +521,7 @@ function TaskDetailModalContent({
           </section>
         ) : null}
 
-        {actions.length > 0 || (target.section && target.orderItemId) ? (
+        {task || actions.length > 0 || (target.section && target.orderItemId) ? (
           <div className="task-rail-modal-toolbar">
             {actions.map(({ action, label, destructive }) => (
               <Button
@@ -546,6 +553,23 @@ function TaskDetailModalContent({
                 {label}
               </Button>
             ))}
+            {task ? (
+              <Button
+                onClick={() => {
+                  sendPromptToChat(
+                    navigate as (opts: never) => unknown,
+                    buildTaskChatPrompt(task),
+                  );
+                  toast.success("已填入当前对话输入框");
+                  onClose();
+                }}
+                size="sm"
+                variant="outline"
+              >
+                <IconMessageForward aria-hidden className="size-3.5" />
+                {"发到当前对话"}
+              </Button>
+            ) : null}
             {target.section && target.orderItemId ? (
               <Button
                 onClick={() => {
@@ -1066,11 +1090,12 @@ function WorkflowRunModalContent({
   const orderMap = useTaskRailOrder();
   const [tab, setTab] = useState<"steps" | "events">("steps");
   const [comment, setComment] = useState("");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 换运行是有意的重置触发——回 steps 页并清评论草稿
-  useEffect(() => {
+  const [prevRunId, setPrevRunId] = useState(target.runId);
+  if (target.runId !== prevRunId) {
+    setPrevRunId(target.runId);
     setTab("steps");
     setComment("");
-  }, [target.runId]);
+  }
 
   const runQuery = useQuery(workflowRunQueryOptions(target.runId));
   const run = runQuery.data ?? target.initialRun;

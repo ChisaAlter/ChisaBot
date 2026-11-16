@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { IMAGE_PROVIDER_PRESETS, type ImageProviderKind, type ImageSettingsView } from "../../../shared/chat-files";
+import {
+  IMAGE_PROVIDER_PRESETS,
+  type ImageProviderKind,
+  type ImageSettingsView,
+} from "../../../shared/chat-files";
 import type {
   MediaAdminView,
   MediaDefaultsSummary,
@@ -13,11 +17,17 @@ import type {
   VisionSettingsView,
 } from "../../../shared/media-models";
 import type { AppVariables } from "../auth/guards";
+import { defaultRuntimeEnvironment } from "../config";
 import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import { assertPublicUrl } from "../web/tools";
 import { type ImageProviderConfig, probeImageModel } from "./image-provider";
-import { askVisionModel, DESCRIBE_PROMPT, probeVisionModel, type VisionConfig } from "./vision-provider";
+import {
+  askVisionModel,
+  DESCRIBE_PROMPT,
+  probeVisionModel,
+  type VisionConfig,
+} from "./vision-provider";
 
 /**
  * 生图模型 / 识图模型的设置与解析（DESIGN.md §59）。
@@ -59,20 +69,42 @@ type ImageSettingsRow = {
 
 export class MediaModelsError extends Error {}
 
-export type EffectiveImage = { config: ImageProviderConfig; source: "personal" | "default" };
+export type EffectiveImage = {
+  config: ImageProviderConfig;
+  source: "personal" | "default";
+};
 export type EffectiveVision =
-  | { kind: "model"; config: VisionConfig; source: "personal" | "default"; label: string }
+  | {
+      kind: "model";
+      config: VisionConfig;
+      source: "personal" | "default";
+      label: string;
+    }
   /** 图片直接给主模型看。 */
   | { kind: "main" }
   /** 主模型看不了图，也没有识图模型。 */
   | { kind: "none" };
 
-const iso = (value: Date | string | null | undefined) => (value ? new Date(value).toISOString() : null);
+const iso = (value: Date | string | null | undefined) =>
+  value ? new Date(value).toISOString() : null;
 const hint = (key: string) => (key.length >= 8 ? key.slice(-4) : "");
-const httpUrl = z.string().trim().max(300).url("接口地址要写成 https://… 这样的网址").refine((v) => /^https?:\/\//i.test(v), "接口地址要以 http:// 或 https:// 开头");
+const httpUrl = z
+  .string()
+  .trim()
+  .max(300)
+  .url("接口地址要写成 https://… 这样的网址")
+  .refine(
+    (v) => /^https?:\/\//i.test(v),
+    "接口地址要以 http:// 或 https:// 开头",
+  );
 
 export function modelKeyOf(config: { baseUrl: string; model: string }) {
-  return createHash("sha256").update(`${config.baseUrl.trim().replace(/\/+$/, "")}\n${config.model.trim()}`).digest("hex").slice(0, 24);
+  return createHash("sha256")
+    .update(
+      `${config.baseUrl.trim().replace(/\/+$/, "")}\n${config.model.trim()}`,
+    )
+    .digest("hex")
+    .slice(0, 24);
 }
 
 /** 描述缓存里只认这么新的图片（老对话里的图第一次遇到时不批量描述，避免一轮里几十次调用）。 */
@@ -88,7 +120,10 @@ export function createMediaModels(
      * 这个机器人这一轮的聊天模型能不能看图：true / false / 目录里没有（undefined）。modelId 给了就问这个模型
      * （这一轮实际用的、换到的备用模型）；没给就由接线方按这一轮的选择（个人选的模型、机器人设置、默认）找。
      */
-    mainModelSupportsImages?: (agentId: string, modelId?: string) => Promise<boolean | undefined>;
+    mainModelSupportsImages?: (
+      agentId: string,
+      modelId?: string,
+    ) => Promise<boolean | undefined>;
     /** 某人是不是管理员（决定能不能填内网地址）。 */
     isAdmin?: (userId: string) => Promise<boolean>;
     /** 测试里换掉公网检查。 */
@@ -103,8 +138,11 @@ export function createMediaModels(
   // Narrow wrapper keeps redirect:"error" by default; cast back so callers that expect
   // `typeof fetch` (incl. Bun's `preconnect`) still typecheck.
   const doFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-    rawFetch(input, { ...init, redirect: init?.redirect ?? "error" })) as typeof fetch;
-  const env = options.env ?? process.env;
+    rawFetch(input, {
+      ...init,
+      redirect: init?.redirect ?? "error",
+    })) as typeof fetch;
+  const env = options.env ?? defaultRuntimeEnvironment();
   const assertPublic = options.assertPublic ?? assertPublicUrl;
 
   async function ensure() {
@@ -192,14 +230,20 @@ export function createMediaModels(
   // ------------------------------------------------------------------ 管理员的生图默认（§56 原表）
 
   async function imageRow(): Promise<ImageSettingsRow | null> {
-    const rows = await sql.unsafe<ImageSettingsRow[]>("SELECT * FROM chisabot_image_settings WHERE id = 'default'");
+    const rows = await sql.unsafe<ImageSettingsRow[]>(
+      "SELECT * FROM chisabot_image_settings WHERE id = 'default'",
+    );
     return rows[0] ?? null;
   }
 
   function envKey(provider: ImageProviderKind): string {
     if (provider === "minimax") {
       if (env.MINIMAX_API_KEY?.trim()) return env.MINIMAX_API_KEY.trim();
-      if (/minimax/i.test(env.OPENAI_BASE_URL ?? "") && env.OPENAI_API_KEY?.trim()) return env.OPENAI_API_KEY.trim();
+      if (
+        /minimax/i.test(env.OPENAI_BASE_URL ?? "") &&
+        env.OPENAI_API_KEY?.trim()
+      )
+        return env.OPENAI_API_KEY.trim();
       return "";
     }
     return env.IMAGE_API_KEY?.trim() ?? "";
@@ -208,7 +252,8 @@ export function createMediaModels(
   async function imageDefaultView(): Promise<ImageSettingsView> {
     const row = await imageRow();
     const provider = (row?.provider ?? "minimax") as ImageProviderKind;
-    const preset = IMAGE_PROVIDER_PRESETS[provider] ?? IMAGE_PROVIDER_PRESETS.minimax;
+    const preset =
+      IMAGE_PROVIDER_PRESETS[provider] ?? IMAGE_PROVIDER_PRESETS.minimax;
     const fromEnv = envKey(provider);
     const keySource = row?.api_key ? "saved" : fromEnv ? "environment" : "none";
     const baseUrl = row?.base_url || preset.baseUrl;
@@ -221,25 +266,38 @@ export function createMediaModels(
       editModel: row?.edit_model ?? "",
       keySource,
       keyHint: row?.api_key ? row.key_hint : hint(fromEnv),
-      ready: Boolean(row?.enabled) && keySource !== "none" && Boolean(baseUrl) && Boolean(model),
+      ready:
+        Boolean(row?.enabled) &&
+        keySource !== "none" &&
+        Boolean(baseUrl) &&
+        Boolean(model),
       updatedAt: iso(row?.updated_at),
     };
   }
 
   /** 管理员默认的生图配置（解开密钥）；override 用于「检查」时用表单里还没保存的值。 */
-  async function imageDefaultConfig(override?: Partial<ImageProviderConfig>): Promise<ImageProviderConfig | null> {
+  async function imageDefaultConfig(
+    override?: Partial<ImageProviderConfig>,
+  ): Promise<ImageProviderConfig | null> {
     const row = await imageRow();
     const view = await imageDefaultView();
     const provider = override?.provider ?? view.provider;
     const apiKey =
       override?.apiKey ||
-      (row?.api_key && (!override?.provider || override.provider === view.provider) ? await decryptSecret(options.encryptionKey, row.api_key) : "") ||
+      (row?.api_key &&
+      (!override?.provider || override.provider === view.provider)
+        ? await decryptSecret(options.encryptionKey, row.api_key)
+        : "") ||
       envKey(provider);
     if (!apiKey) return null;
     return {
       provider,
-      baseUrl: override?.baseUrl || view.baseUrl || IMAGE_PROVIDER_PRESETS[provider].baseUrl,
-      model: override?.model || view.model || IMAGE_PROVIDER_PRESETS[provider].model,
+      baseUrl:
+        override?.baseUrl ||
+        view.baseUrl ||
+        IMAGE_PROVIDER_PRESETS[provider].baseUrl,
+      model:
+        override?.model || view.model || IMAGE_PROVIDER_PRESETS[provider].model,
       editModel: override?.editModel ?? view.editModel,
       apiKey,
     };
@@ -257,7 +315,10 @@ export function createMediaModels(
     })
     .strict();
 
-  async function saveImageDefault(actorId: string, raw: unknown): Promise<ImageSettingsView> {
+  async function saveImageDefault(
+    actorId: string,
+    raw: unknown,
+  ): Promise<ImageSettingsView> {
     const input = imageDefaultInput.parse(raw);
     const row = await imageRow();
     let sealed = row?.api_key ?? null;
@@ -271,15 +332,30 @@ export function createMediaModels(
       `INSERT INTO chisabot_image_settings (id, enabled, provider, base_url, model, edit_model, api_key, key_hint, updated_at, updated_by)
        VALUES ('default', $1, $2, $3, $4, $5, $6, $7, now(), $8)
        ON CONFLICT (id) DO UPDATE SET enabled = $1, provider = $2, base_url = $3, model = $4, edit_model = $5, api_key = $6, key_hint = $7, updated_at = now(), updated_by = $8`,
-      [input.enabled, input.provider, input.baseUrl, input.model, input.editModel ?? "", sealed, keyHint, actorId],
+      [
+        input.enabled,
+        input.provider,
+        input.baseUrl,
+        input.model,
+        input.editModel ?? "",
+        sealed,
+        keyHint,
+        actorId,
+      ],
     );
     return imageDefaultView();
   }
 
   // ------------------------------------------------------------------ chisabot_media_models
 
-  async function mediaRow(owner: string, kind: "image" | "vision"): Promise<MediaRow | null> {
-    const rows = await sql.unsafe<MediaRow[]>("SELECT * FROM chisabot_media_models WHERE owner_user_id = $1 AND kind = $2", [owner, kind]);
+  async function mediaRow(
+    owner: string,
+    kind: "image" | "vision",
+  ): Promise<MediaRow | null> {
+    const rows = await sql.unsafe<MediaRow[]>(
+      "SELECT * FROM chisabot_media_models WHERE owner_user_id = $1 AND kind = $2",
+      [owner, kind],
+    );
     return rows[0] ?? null;
   }
 
@@ -287,7 +363,14 @@ export function createMediaModels(
     owner: string,
     kind: "image" | "vision",
     actorId: string,
-    input: { mode: string; provider?: string; baseUrl?: string; model?: string; editModel?: string; apiKey?: string },
+    input: {
+      mode: string;
+      provider?: string;
+      baseUrl?: string;
+      model?: string;
+      editModel?: string;
+      apiKey?: string;
+    },
   ) {
     const row = await mediaRow(owner, kind);
     let sealed = row?.api_key ?? null;
@@ -317,7 +400,8 @@ export function createMediaModels(
     return { sealed };
   }
 
-  const complete = (row: MediaRow | null) => Boolean(row?.api_key && row.base_url && row.model);
+  const complete = (row: MediaRow | null) =>
+    Boolean(row?.api_key && row.base_url && row.model);
 
   function visionView(row: MediaRow | null): VisionSettingsView {
     const mode = row?.mode === "custom" ? "custom" : "follow";
@@ -333,7 +417,9 @@ export function createMediaModels(
   }
 
   function personalImageView(row: MediaRow | null): PersonalImageView {
-    const provider = (row?.provider === "minimax" ? "minimax" : "openai") as ImageProviderKind;
+    const provider = (
+      row?.provider === "minimax" ? "minimax" : "openai"
+    ) as ImageProviderKind;
     const mode = row?.mode === "custom" ? "custom" : "default";
     return {
       mode,
@@ -349,7 +435,8 @@ export function createMediaModels(
   }
 
   function personalVisionView(row: MediaRow | null): PersonalVisionView {
-    const mode = row?.mode === "custom" || row?.mode === "follow" ? row.mode : "default";
+    const mode =
+      row?.mode === "custom" || row?.mode === "follow" ? row.mode : "default";
     return {
       mode,
       baseUrl: row?.base_url ?? "",
@@ -362,20 +449,33 @@ export function createMediaModels(
   }
 
   async function adminView(): Promise<MediaAdminView> {
-    return { image: await imageDefaultView(), vision: visionView(await mediaRow("", "vision")) };
+    return {
+      image: await imageDefaultView(),
+      vision: visionView(await mediaRow("", "vision")),
+    };
   }
 
   async function defaultsSummary(): Promise<MediaDefaultsSummary> {
     const image = await imageDefaultView();
     const vision = visionView(await mediaRow("", "vision"));
     return {
-      image: { ready: image.ready, provider: image.provider, model: image.model },
-      vision: { mode: vision.mode, ready: vision.ready, model: vision.ready ? vision.model : "" },
+      image: {
+        ready: image.ready,
+        provider: image.provider,
+        model: image.model,
+      },
+      vision: {
+        mode: vision.mode,
+        ready: vision.ready,
+        model: vision.ready ? vision.model : "",
+      },
     };
   }
 
   async function canUsePrivate(userId: string) {
-    return options.isAdmin ? await options.isAdmin(userId).catch(() => false) : false;
+    return options.isAdmin
+      ? await options.isAdmin(userId).catch(() => false)
+      : false;
   }
 
   async function personalView(userId: string): Promise<MediaPersonalView> {
@@ -392,7 +492,9 @@ export function createMediaModels(
     try {
       await assertPublic(url);
     } catch (error) {
-      throw new MediaModelsError(`接口地址不能用：${error instanceof Error ? error.message : "不是公网地址"}（个人设置只能填公网接口）。`);
+      throw new MediaModelsError(
+        `接口地址不能用：${error instanceof Error ? error.message : "不是公网地址"}（个人设置只能填公网接口）。`,
+      );
     }
   }
 
@@ -406,15 +508,30 @@ export function createMediaModels(
     .strict();
 
   /** custom 必须齐：地址、模型、密钥（新填的或已存的）。 */
-  function requireComplete(input: { baseUrl?: string; model?: string; apiKey?: string }, row: MediaRow | null, what: string) {
+  function requireComplete(
+    input: { baseUrl?: string; model?: string; apiKey?: string },
+    row: MediaRow | null,
+    what: string,
+  ): string {
     const baseUrl = httpUrl.safeParse(input.baseUrl ?? "");
-    if (!baseUrl.success) throw new MediaModelsError(baseUrl.error.issues[0]?.message ?? "接口地址不对。");
-    if (!input.model?.trim()) throw new MediaModelsError(`要填${what}的模型名。`);
-    const hasKey = input.apiKey !== undefined ? Boolean(input.apiKey.trim()) : Boolean(row?.api_key);
+    if (!baseUrl.success)
+      throw new MediaModelsError(
+        baseUrl.error.issues[0]?.message ?? "接口地址不对。",
+      );
+    if (!input.model?.trim())
+      throw new MediaModelsError(`要填${what}的模型名。`);
+    const hasKey =
+      input.apiKey !== undefined
+        ? Boolean(input.apiKey.trim())
+        : Boolean(row?.api_key);
     if (!hasKey) throw new MediaModelsError(`要填${what}的 API 密钥。`);
+    return baseUrl.data;
   }
 
-  async function saveVisionDefault(actorId: string, raw: unknown): Promise<VisionSettingsView> {
+  async function saveVisionDefault(
+    actorId: string,
+    raw: unknown,
+  ): Promise<VisionSettingsView> {
     const input = visionInput.parse(raw);
     const row = await mediaRow("", "vision");
     if (input.mode === "custom") requireComplete(input, row, "识图模型");
@@ -438,13 +555,16 @@ export function createMediaModels(
     })
     .strict();
 
-  async function savePersonalImage(userId: string, raw: unknown): Promise<MediaPersonalView> {
+  async function savePersonalImage(
+    userId: string,
+    raw: unknown,
+  ): Promise<MediaPersonalView> {
     const input = personalImageInput.parse(raw);
     const row = await mediaRow(userId, "image");
     if (input.mode === "custom") {
       if (!input.provider) throw new MediaModelsError("要选接口类型。");
-      requireComplete(input, row, "生图模型");
-      await checkUrl(userId, input.baseUrl!);
+      const baseUrl = requireComplete(input, row, "生图模型");
+      await checkUrl(userId, baseUrl);
     }
     await upsertMedia(userId, "image", userId, {
       mode: input.mode,
@@ -457,14 +577,19 @@ export function createMediaModels(
     return personalView(userId);
   }
 
-  const personalVisionInput = visionInput.extend({ mode: z.enum(["default", "follow", "custom"]) }).strict();
+  const personalVisionInput = visionInput
+    .extend({ mode: z.enum(["default", "follow", "custom"]) })
+    .strict();
 
-  async function savePersonalVision(userId: string, raw: unknown): Promise<MediaPersonalView> {
+  async function savePersonalVision(
+    userId: string,
+    raw: unknown,
+  ): Promise<MediaPersonalView> {
     const input = personalVisionInput.parse(raw);
     const row = await mediaRow(userId, "vision");
     if (input.mode === "custom") {
-      requireComplete(input, row, "识图模型");
-      await checkUrl(userId, input.baseUrl!);
+      const baseUrl = requireComplete(input, row, "识图模型");
+      await checkUrl(userId, baseUrl);
     }
     await upsertMedia(userId, "vision", userId, {
       mode: input.mode,
@@ -477,7 +602,9 @@ export function createMediaModels(
 
   // ------------------------------------------------------------------ 解析（给机器人用）
 
-  async function rowImageConfig(row: MediaRow): Promise<ImageProviderConfig | null> {
+  async function rowImageConfig(
+    row: MediaRow,
+  ): Promise<ImageProviderConfig | null> {
     if (!row.api_key || !row.base_url || !row.model) return null;
     return {
       provider: row.provider === "minimax" ? "minimax" : "openai",
@@ -488,9 +615,15 @@ export function createMediaModels(
     };
   }
 
-  async function rowVisionConfig(row: MediaRow | null): Promise<VisionConfig | null> {
+  async function rowVisionConfig(
+    row: MediaRow | null,
+  ): Promise<VisionConfig | null> {
     if (!row?.api_key || !row.base_url || !row.model) return null;
-    return { baseUrl: row.base_url, model: row.model, apiKey: await decryptSecret(options.encryptionKey, row.api_key) };
+    return {
+      baseUrl: row.base_url,
+      model: row.model,
+      apiKey: await decryptSecret(options.encryptionKey, row.api_key),
+    };
   }
 
   /** 这个人现在用哪个生图模型：个人 custom → 管理员默认（打开且齐全）→ 没有。 */
@@ -499,7 +632,8 @@ export function createMediaModels(
     if (mine?.mode === "custom") {
       const config = await rowImageConfig(mine);
       if (config) {
-        if (!(await canUsePrivate(userId))) await checkUrl(userId, config.baseUrl);
+        if (!(await canUsePrivate(userId)))
+          await checkUrl(userId, config.baseUrl);
         return { config, source: "personal" };
       }
     }
@@ -509,11 +643,26 @@ export function createMediaModels(
     return config ? { config, source: "default" } : null;
   }
 
-  async function imageViewFor(userId: string): Promise<{ ready: boolean; provider: ImageProviderKind; source: "personal" | "default" | null }> {
+  async function imageViewFor(
+    userId: string,
+  ): Promise<{
+    ready: boolean;
+    provider: ImageProviderKind;
+    source: "personal" | "default" | null;
+  }> {
     const mine = await mediaRow(userId, "image");
-    if (mine?.mode === "custom" && complete(mine)) return { ready: true, provider: mine.provider === "minimax" ? "minimax" : "openai", source: "personal" };
+    if (mine?.mode === "custom" && complete(mine))
+      return {
+        ready: true,
+        provider: mine.provider === "minimax" ? "minimax" : "openai",
+        source: "personal",
+      };
     const view = await imageDefaultView();
-    return { ready: view.ready, provider: view.provider, source: view.ready ? "default" : null };
+    return {
+      ready: view.ready,
+      provider: view.provider,
+      source: view.ready ? "default" : null,
+    };
   }
 
   /**
@@ -521,10 +670,17 @@ export function createMediaModels(
    * 个人 custom → 个人 follow → 管理员 custom → 跟随主模型；跟随主模型但主模型明确看不了图时，
    * 退回管理员的识图模型（有的话），都没有就是 none。
    */
-  async function visionFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
+  async function visionFor(
+    userId: string,
+    agentId: string,
+    modelId?: string,
+  ): Promise<EffectiveVision> {
     const mine = await mediaRow(userId, "vision");
     const admin = await mediaRow("", "vision");
-    const model = async (row: MediaRow | null, source: "personal" | "default"): Promise<EffectiveVision | null> => {
+    const model = async (
+      row: MediaRow | null,
+      source: "personal" | "default",
+    ): Promise<EffectiveVision | null> => {
       const config = await rowVisionConfig(row);
       if (!config) return null;
       if (source === "personal" && !(await canUsePrivate(userId))) {
@@ -553,8 +709,13 @@ export function createMediaModels(
     return { kind: "none" };
   }
 
-  function mainSupports(agentId: string, modelId?: string): Promise<boolean | undefined> {
-    return options.mainModelSupportsImages ? options.mainModelSupportsImages(agentId, modelId).catch(() => undefined) : Promise.resolve(undefined);
+  function mainSupports(
+    agentId: string,
+    modelId?: string,
+  ): Promise<boolean | undefined> {
+    return options.mainModelSupportsImages
+      ? options.mainModelSupportsImages(agentId, modelId).catch(() => undefined)
+      : Promise.resolve(undefined);
   }
 
   /**
@@ -567,7 +728,11 @@ export function createMediaModels(
    * 原来 `cf:` 引用按 visionFor 走：管理员配了「单独的识图模型」就只给描述，而频道附件照样给原图，
    * 提示词却对两条路都说「你只拿到了文字描述」——模型于是说「没收到截图」，或者先去找文件。
    */
-  async function imageInputFor(userId: string, agentId: string, modelId?: string): Promise<EffectiveVision> {
+  async function imageInputFor(
+    userId: string,
+    agentId: string,
+    modelId?: string,
+  ): Promise<EffectiveVision> {
     const supports = await mainSupports(agentId, modelId);
     if (supports === true) return { kind: "main" };
     if (supports === false) return visionFor(userId, agentId, modelId);
@@ -578,12 +743,19 @@ export function createMediaModels(
   // ------------------------------------------------------------------ 描述缓存
 
   /** 频道附件的缓存 id：'att:<附件 uuid>'，写进 attachment_id 让外键跟着附件删。 */
-  const ATTACHMENT_CACHE_ID = /^att:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  const ATTACHMENT_CACHE_ID =
+    /^att:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
   const inflight = new Map<string, Promise<string>>();
 
-  async function cachedDescription(fileId: string, config: VisionConfig): Promise<string | null> {
-    const rows = await sql.unsafe<{ text: string }[]>("SELECT text FROM chisabot_image_descriptions WHERE file_id = $1 AND model_key = $2", [fileId, modelKeyOf(config)]);
+  async function cachedDescription(
+    fileId: string,
+    config: VisionConfig,
+  ): Promise<string | null> {
+    const rows = await sql.unsafe<{ text: string }[]>(
+      "SELECT text FROM chisabot_image_descriptions WHERE file_id = $1 AND model_key = $2",
+      [fileId, modelKeyOf(config)],
+    );
     return rows[0]?.text ?? null;
   }
 
@@ -591,7 +763,12 @@ export function createMediaModels(
    * 一张图的详细描述（含 OCR），按 (文件, 模型) 缓存。同一张图并发请求只调一次。
    * fresh = false（老图）且没有缓存时不调用，返回 null。
    */
-  async function describe(fileId: string, image: { bytes: Buffer; mimeType: string }, config: VisionConfig, opts: { fresh: boolean }): Promise<string | null> {
+  async function describe(
+    fileId: string,
+    image: { bytes: Buffer; mimeType: string },
+    config: VisionConfig,
+    opts: { fresh: boolean },
+  ): Promise<string | null> {
     const cached = await cachedDescription(fileId, config);
     if (cached) return cached;
     if (!opts.fresh) return null;
@@ -599,7 +776,9 @@ export function createMediaModels(
     const running = inflight.get(key);
     if (running) return running;
     const job = (async () => {
-      const text = await askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
+      const text = await askVisionModel(config, image, DESCRIBE_PROMPT, {
+        fetch: doFetch,
+      });
       const attachmentId = ATTACHMENT_CACHE_ID.exec(fileId)?.[1] ?? null;
       try {
         // 开机时 attachments 还没建好的话，外键没加上：写频道附件描述前补一次（幂等）。
@@ -607,11 +786,19 @@ export function createMediaModels(
         await sql.unsafe(
           `INSERT INTO chisabot_image_descriptions (file_id, model_key, model, text, attachment_id) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (file_id, model_key) DO UPDATE SET text = $4, created_at = now()`,
-          [fileId, modelKeyOf(config), config.model, text.slice(0, 20_000), attachmentId],
+          [
+            fileId,
+            modelKeyOf(config),
+            config.model,
+            text.slice(0, 20_000),
+            attachmentId,
+          ],
         );
       } catch {
         // 存缓存失败（比如附件刚被删，外键不让写）不影响这一轮用描述。
-        console.error(JSON.stringify({ type: "image-description-cache-write-failed" }));
+        console.error(
+          JSON.stringify({ type: "image-description-cache-write-failed" }),
+        );
       }
       return text;
     })().finally(() => inflight.delete(key));
@@ -625,23 +812,40 @@ export function createMediaModels(
    * 64 张（同一轮里多步工具调用每步都会重发同一张图）。
    */
   const transient = new Map<string, Promise<string>>();
-  async function describeTransient(image: { bytes: Buffer; mimeType: string }, config: VisionConfig): Promise<string> {
+  async function describeTransient(
+    image: { bytes: Buffer; mimeType: string },
+    config: VisionConfig,
+  ): Promise<string> {
     const key = `${createHash("sha256").update(image.bytes).digest("hex")}:${modelKeyOf(config)}`;
     const hit = transient.get(key);
     if (hit) return hit;
-    const job = askVisionModel(config, image, DESCRIBE_PROMPT, { fetch: doFetch });
+    const job = askVisionModel(config, image, DESCRIBE_PROMPT, {
+      fetch: doFetch,
+    });
     transient.set(key, job);
     job.catch(() => transient.delete(key));
-    while (transient.size > 64) transient.delete(transient.keys().next().value as string);
+    while (transient.size > 64)
+      transient.delete(transient.keys().next().value as string);
     return job;
   }
 
-  async function ask(config: VisionConfig, image: { bytes: Buffer; mimeType: string }, question: string, signal?: AbortSignal) {
-    return askVisionModel(config, image, question, { fetch: doFetch, ...(signal ? { signal } : {}) });
+  async function ask(
+    config: VisionConfig,
+    image: { bytes: Buffer; mimeType: string },
+    question: string,
+    signal?: AbortSignal,
+  ) {
+    return askVisionModel(config, image, question, {
+      fetch: doFetch,
+      ...(signal ? { signal } : {}),
+    });
   }
 
   async function forgetDescriptions(fileId: string) {
-    await sql.unsafe("DELETE FROM chisabot_image_descriptions WHERE file_id = $1", [fileId]);
+    await sql.unsafe(
+      "DELETE FROM chisabot_image_descriptions WHERE file_id = $1",
+      [fileId],
+    );
   }
 
   // ------------------------------------------------------------------ 检查
@@ -656,36 +860,78 @@ export function createMediaModels(
     })
     .strict();
 
-  async function probeImage(userId: string, isAdmin: boolean, raw: unknown): Promise<MediaProbeResult> {
+  async function probeImage(
+    userId: string,
+    isAdmin: boolean,
+    raw: unknown,
+  ): Promise<MediaProbeResult> {
     const input = probeImageInput.parse(raw);
     const typed = input.apiKey?.trim() ?? "";
     let config: ImageProviderConfig | null;
     if (input.scope === "default") {
       if (!isAdmin) throw new MediaModelsError("只有管理员能检查默认模型。");
-      config = await imageDefaultConfig({ provider: input.provider, baseUrl: input.baseUrl, model: input.model, ...(typed ? { apiKey: typed } : {}) });
-      if (!config) return { ok: false, message: "没有密钥：填一个密钥，或者在部署环境变量里配置。" };
+      config = await imageDefaultConfig({
+        provider: input.provider,
+        baseUrl: input.baseUrl,
+        model: input.model,
+        ...(typed ? { apiKey: typed } : {}),
+      });
+      if (!config)
+        return {
+          ok: false,
+          message: "没有密钥：填一个密钥，或者在部署环境变量里配置。",
+        };
     } else {
       await checkUrl(userId, input.baseUrl);
       const row = await mediaRow(userId, "image");
-      const key = typed || (row?.api_key ? await decryptSecret(options.encryptionKey, row.api_key) : "");
+      const key =
+        typed ||
+        (row?.api_key
+          ? await decryptSecret(options.encryptionKey, row.api_key)
+          : "");
       if (!key) return { ok: false, message: "没有密钥：请先填 API 密钥。" };
-      config = { provider: input.provider, baseUrl: input.baseUrl, model: input.model, apiKey: key };
+      config = {
+        provider: input.provider,
+        baseUrl: input.baseUrl,
+        model: input.model,
+        apiKey: key,
+      };
     }
     return probeImageModel(config, doFetch);
   }
 
   const probeVisionInput = z
-    .object({ scope: z.enum(["default", "personal"]), baseUrl: httpUrl, model: z.string().trim().min(1, "要填模型名").max(160), apiKey: z.string().max(4000).optional() })
+    .object({
+      scope: z.enum(["default", "personal"]),
+      baseUrl: httpUrl,
+      model: z.string().trim().min(1, "要填模型名").max(160),
+      apiKey: z.string().max(4000).optional(),
+    })
     .strict();
 
-  async function probeVision(userId: string, isAdmin: boolean, raw: unknown): Promise<MediaProbeResult> {
+  async function probeVision(
+    userId: string,
+    isAdmin: boolean,
+    raw: unknown,
+  ): Promise<MediaProbeResult> {
     const input = probeVisionInput.parse(raw);
-    if (input.scope === "default" && !isAdmin) throw new MediaModelsError("只有管理员能检查默认模型。");
+    if (input.scope === "default" && !isAdmin)
+      throw new MediaModelsError("只有管理员能检查默认模型。");
     if (input.scope === "personal") await checkUrl(userId, input.baseUrl);
-    const row = await mediaRow(input.scope === "default" ? "" : userId, "vision");
-    const key = input.apiKey?.trim() || (row?.api_key ? await decryptSecret(options.encryptionKey, row.api_key) : "");
+    const row = await mediaRow(
+      input.scope === "default" ? "" : userId,
+      "vision",
+    );
+    const key =
+      input.apiKey?.trim() ||
+      (row?.api_key
+        ? await decryptSecret(options.encryptionKey, row.api_key)
+        : "");
     if (!key) return { ok: false, message: "没有密钥：请先填 API 密钥。" };
-    return probeVisionModel({ baseUrl: input.baseUrl, model: input.model, apiKey: key }, doFetch);
+    return probeVisionModel(
+      { baseUrl: input.baseUrl, model: input.model, apiKey: key },
+      doFetch,
+    );
   }
 
   // ------------------------------------------------------------------ 路由（/api/media-models）
@@ -694,24 +940,64 @@ export function createMediaModels(
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser);
     app.onError((error, c) => {
-      if (error instanceof MediaModelsError) return c.json({ error: error.message }, 400);
-      if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "media-models-error", error: error.name, route: c.req.path }));
+      if (error instanceof MediaModelsError)
+        return c.json({ error: error.message }, 400);
+      if (error instanceof z.ZodError)
+        return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
+      console.error(
+        JSON.stringify({
+          type: "media-models-error",
+          error: error.name,
+          route: c.req.path,
+        }),
+      );
       return c.json({ error: "模型设置暂时不可用，请重试。" }, 503);
     });
-    const admin: MiddlewareHandler<{ Variables: AppVariables }> = async (c, next) => {
-      if (c.var.actor.role !== "admin") return c.json({ error: "只有管理员能改默认模型。" }, 403);
+    const admin: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      if (c.var.actor.role !== "admin")
+        return c.json({ error: "只有管理员能改默认模型。" }, 403);
       await next();
     };
     const small = bodyLimit({ maxSize: 16_384 });
     app.get("/default", admin, async (c) => c.json(await adminView()));
-    app.put("/default/image", admin, small, async (c) => c.json({ image: await saveImageDefault(c.var.actor.id, await c.req.json()) }));
-    app.put("/default/vision", admin, small, async (c) => c.json({ vision: await saveVisionDefault(c.var.actor.id, await c.req.json()) }));
+    app.put("/default/image", admin, small, async (c) =>
+      c.json({
+        image: await saveImageDefault(c.var.actor.id, await c.req.json()),
+      }),
+    );
+    app.put("/default/vision", admin, small, async (c) =>
+      c.json({
+        vision: await saveVisionDefault(c.var.actor.id, await c.req.json()),
+      }),
+    );
     app.get("/me", async (c) => c.json(await personalView(c.var.actor.id)));
-    app.put("/me/image", small, async (c) => c.json(await savePersonalImage(c.var.actor.id, await c.req.json())));
-    app.put("/me/vision", small, async (c) => c.json(await savePersonalVision(c.var.actor.id, await c.req.json())));
-    app.post("/test/image", small, async (c) => c.json(await probeImage(c.var.actor.id, c.var.actor.role === "admin", await c.req.json())));
-    app.post("/test/vision", small, async (c) => c.json(await probeVision(c.var.actor.id, c.var.actor.role === "admin", await c.req.json())));
+    app.put("/me/image", small, async (c) =>
+      c.json(await savePersonalImage(c.var.actor.id, await c.req.json())),
+    );
+    app.put("/me/vision", small, async (c) =>
+      c.json(await savePersonalVision(c.var.actor.id, await c.req.json())),
+    );
+    app.post("/test/image", small, async (c) =>
+      c.json(
+        await probeImage(
+          c.var.actor.id,
+          c.var.actor.role === "admin",
+          await c.req.json(),
+        ),
+      ),
+    );
+    app.post("/test/vision", small, async (c) =>
+      c.json(
+        await probeVision(
+          c.var.actor.id,
+          c.var.actor.role === "admin",
+          await c.req.json(),
+        ),
+      ),
+    );
     return app;
   }
 

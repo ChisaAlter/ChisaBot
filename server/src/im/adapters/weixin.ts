@@ -1,4 +1,12 @@
-import { errorText, readJson } from "../text";
+import {
+  asJsonArray,
+  asJsonRecord,
+  asString,
+  errorText,
+  type JsonRecord,
+  readJson,
+  readJsonField,
+} from "../text";
 import type {
   AdapterContext,
   FetchLike,
@@ -27,7 +35,8 @@ export const WEIXIN_DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
 const SESSION_EXPIRED = -14;
 
 function randomUin() {
-  const value = crypto.getRandomValues(new Uint32Array(1))[0]!;
+  const [value] = crypto.getRandomValues(new Uint32Array(1));
+  if (value === undefined) throw new Error("Failed to generate random uin");
   return Buffer.from(String(value)).toString("base64");
 }
 
@@ -94,23 +103,29 @@ export async function weixinQrStatus(
 }
 
 /** getupdates 里的一条消息 → ImInbound（只要用户发来的；群消息这一版不接）。 */
-// biome-ignore lint/suspicious/noExplicitAny: ilink getupdates 消息载荷字段随 message_type 变化
-export function parseWeixinMessage(msg: any): ImInbound | null {
+export function parseWeixinMessage(rawMsg: unknown): ImInbound | null {
+  const msg = asJsonRecord(rawMsg);
   if (msg?.message_type !== 1) return null;
   if (msg.group_id) return null;
   const userId = String(msg.from_user_id ?? "");
   if (!userId) return null;
   let text = "";
   const attachments: ImInbound["attachments"] = [];
-  for (const item of msg.item_list ?? []) {
-    if (item.type === 1 && item.text_item?.text) {
-      const quoted = item.ref_msg?.message_item?.text_item?.text;
-      text += quoted
-        ? `「${quoted}」\n${item.text_item.text}`
-        : item.text_item.text;
+  for (const rawItem of asJsonArray(msg.item_list)) {
+    const item = asJsonRecord(rawItem);
+    if (!item) continue;
+    if (item.type === 1) {
+      const itemText = asString(readJsonField(item.text_item, "text"));
+      if (itemText) {
+        const quoted = asString(
+          readJsonField(item.ref_msg, "message_item", "text_item", "text"),
+        );
+        text += quoted ? `「${quoted}」\n${itemText}` : itemText;
+      }
     } else if (item.type === 2) attachments.push({ kind: "image" });
     else if (item.type === 3) {
-      if (item.voice_item?.text) text += item.voice_item.text;
+      const voiceText = asString(readJsonField(item.voice_item, "text"));
+      if (voiceText) text += voiceText;
       else attachments.push({ kind: "voice" });
     } else if (item.type === 4) attachments.push({ kind: "file" });
     else if (item.type === 5) attachments.push({ kind: "video" });
@@ -191,8 +206,7 @@ export class WeixinAdapter extends LoopAdapter {
     this.expired = false;
     let first = true;
     while (!this.stopped) {
-      // biome-ignore lint/suspicious/noExplicitAny: ilink 接口回包 JSON 形状按协议字段取用
-      let body: any;
+      let body: JsonRecord;
       try {
         body = await this.post(
           "ilink/bot/getupdates",
@@ -212,7 +226,7 @@ export class WeixinAdapter extends LoopAdapter {
       }
       if (code && code !== 0)
         throw new Error(
-          `微信 getupdates 出错：${code} ${body.errmsg ?? ""}`.trim(),
+          `微信 getupdates 出错：${String(code)} ${String(body.errmsg ?? "")}`.trim(),
         );
       if (first) {
         this.markConnected(
@@ -225,7 +239,7 @@ export class WeixinAdapter extends LoopAdapter {
       }
       if (typeof body.get_updates_buf === "string" && body.get_updates_buf)
         this.cursor = body.get_updates_buf;
-      for (const msg of body.msgs ?? []) {
+      for (const msg of asJsonArray(body.msgs)) {
         const inbound = parseWeixinMessage(msg);
         if (inbound) this.emit(inbound);
       }
@@ -234,9 +248,7 @@ export class WeixinAdapter extends LoopAdapter {
 
   async typing(inbound: ImInbound) {
     try {
-      const contextToken = String(
-        (inbound.reply as { contextToken?: string }).contextToken ?? "",
-      );
+      const contextToken = String(inbound.reply.contextToken ?? "");
       const config = await this.post(
         "ilink/bot/getconfig",
         { ilink_user_id: inbound.userId, context_token: contextToken || null },
@@ -256,9 +268,7 @@ export class WeixinAdapter extends LoopAdapter {
   }
 
   async send(reply: ImReply): Promise<undefined> {
-    const contextToken = String(
-      (reply.inbound.reply as { contextToken?: string }).contextToken ?? "",
-    );
+    const contextToken = String(reply.inbound.reply.contextToken ?? "");
     for (const chunk of reply.chunks) {
       const body = await this.post("ilink/bot/sendmessage", {
         msg: {
@@ -273,7 +283,9 @@ export class WeixinAdapter extends LoopAdapter {
       });
       const code = body.errcode ?? body.ret;
       if (code && code !== 0)
-        throw new Error(`微信发送失败：${code} ${body.errmsg ?? ""}`.trim());
+        throw new Error(
+          `微信发送失败：${String(code)} ${String(body.errmsg ?? "")}`.trim(),
+        );
     }
   }
 }

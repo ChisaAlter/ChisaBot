@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useWindowEvent } from "@/hooks";
 import { newId } from "@/lib/new-id";
 
 export type SandboxContent = {
@@ -30,23 +31,19 @@ export function SandboxSurface({ content }: { content: SandboxContent }) {
     const reporter = `const report=()=>parent.postMessage({type:'chisabot:sandbox-height',channel:${JSON.stringify(channel)},height:Math.ceil(document.documentElement.getBoundingClientRect().height)},'*');new ResizeObserver(report).observe(document.documentElement);report();`;
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>html,body{margin:0;padding:0;min-height:0;overflow-wrap:anywhere}body{font:15px/1.5 system-ui,sans-serif}${css}</style></head><body>${html}<script>${script}</script><script>${reporter}</script></body></html>`;
   }, [content.html, content.css, content.jsFunctions, channel]);
-  useEffect(() => {
-    const receive = (event: MessageEvent) => {
-      if (
-        event.source !== frame.current?.contentWindow ||
-        event.data?.type !== "chisabot:sandbox-height" ||
-        event.data.channel !== channel
-      )
-        return;
-      if (
-        typeof event.data.height === "number" &&
-        Number.isFinite(event.data.height)
-      )
-        setHeight(Math.max(32, Math.min(6000, event.data.height)));
-    };
-    window.addEventListener("message", receive);
-    return () => window.removeEventListener("message", receive);
-  }, [channel]);
+  useWindowEvent("message", (event: MessageEvent) => {
+    if (
+      event.source !== frame.current?.contentWindow ||
+      event.data?.type !== "chisabot:sandbox-height" ||
+      event.data.channel !== channel
+    )
+      return;
+    if (
+      typeof event.data.height === "number" &&
+      Number.isFinite(event.data.height)
+    )
+      setHeight(Math.max(32, Math.min(6000, event.data.height)));
+  });
   return (
     <iframe
       ref={frame}

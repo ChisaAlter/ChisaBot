@@ -11,7 +11,9 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { BotModelSelector } from "@/components/agents/bot-model-selector";
 import { LandingRedirect } from "@/components/agents/landing-redirect";
@@ -153,8 +155,12 @@ function BotChat({
     sent || fresh
       ? undefined
       : reusableEmptyChannelFor(agent, channels.data)?.id;
-  useEffect(() => {
-    if (existing) {
+  useExternalConnection(
+    existing
+      ? `${agent}\0${existing}\0${watch ? 1 : 0}\0${objectConnectionKey(navigate)}`
+      : false,
+    () => {
+      if (!existing) return;
       transferComposerInputs(
         composerTargetPath(undefined, `new:${agent}`),
         composerTargetPath(existing),
@@ -165,8 +171,8 @@ function BotChat({
         search: watch ? { watch: true } : {},
         replace: true,
       });
-    }
-  }, [agent, existing, navigate, watch]);
+    },
+  );
 
   // 右栏「计算机」开关（DESIGN.md §79）：和对话页一样记在 `watch` 搜索参数里（刷新保留、后退关闭）。
   // 按机器人记住选的是哪个标签（DESIGN.md §88）：地址里没有 `watch` 时用上次的。

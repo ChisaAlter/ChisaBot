@@ -123,6 +123,12 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     return rows[0] ? avatarView(rows[0]) : null;
   }
 
+  async function requireAvatar(agentId: string): Promise<BotAvatar> {
+    const avatar = await read(agentId);
+    if (!avatar) throw new Error(`写入机器人头像后未能读回：${agentId}`);
+    return avatar;
+  }
+
   async function setPreset(actor: AgentActor, agentId: string, input: unknown): Promise<BotAvatar> {
     await manageable(actor, agentId);
     const body = (input ?? {}) as { kind?: unknown; emoji?: unknown; color?: unknown; shape?: unknown };
@@ -148,7 +154,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
          version = $5, updated_by = $6, updated_at = now()`,
       [agentId, kind, emoji, body.color, version, actor.id, shape],
     );
-    return (await read(agentId))!;
+    return requireAvatar(agentId);
   }
 
   async function setImage(actor: AgentActor, agentId: string, bytes: Uint8Array): Promise<BotAvatar> {
@@ -165,7 +171,7 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
          version = $5, updated_by = $6, updated_at = now()`,
       [agentId, Buffer.from(bytes), mime, bytes.length, version, actor.id],
     );
-    return (await read(agentId))!;
+    return requireAvatar(agentId);
   }
 
   async function clear(actor: AgentActor, agentId: string): Promise<void> {

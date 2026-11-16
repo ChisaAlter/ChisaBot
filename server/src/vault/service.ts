@@ -162,9 +162,17 @@ export function createVault(database: Database, options: { encryptionKey: string
     const value = input.value?.trim() ? input.value.trim() : null;
     if (value && value.length > 8000) throw new VaultError("密钥太长。");
     const existing = await byName(owner, name);
-    if (!existing && !value) throw new VaultError("要填密钥的值。");
-    const sealed = value ? await encryptSecret(options.encryptionKey, value) : existing!.value;
-    const hint = value ? hintOf(value) : existing!.hint;
+    let sealed: string;
+    let hint: string;
+    if (value) {
+      sealed = await encryptSecret(options.encryptionKey, value);
+      hint = hintOf(value);
+    } else if (existing) {
+      sealed = existing.value;
+      hint = existing.hint;
+    } else {
+      throw new VaultError("要填密钥的值。");
+    }
     const [row] = await sql.unsafe<SecretRow[]>(
       `INSERT INTO chisabot_vault_secrets (id, owner_user_id, name, label, domains, value, hint)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
@@ -172,7 +180,8 @@ export function createVault(database: Database, options: { encryptionKey: string
        RETURNING *`,
       [`vs_${randomUUID().replace(/-/g, "").slice(0, 20)}`, owner, name, label, JSON.stringify(domains), sealed, hint],
     );
-    return secretView(row!);
+    if (!row) throw new Error("密钥保存后没有返回记录。");
+    return secretView(row);
   }
 
   async function remove(owner: string, id: string) {
@@ -209,7 +218,9 @@ export function createVault(database: Database, options: { encryptionKey: string
     const used = new Map<string, SecretRow>();
     const names = new Set<string>();
     const scan = (text: string) => {
-      for (const match of text.matchAll(PLACEHOLDER)) names.add(match[1]!);
+      for (const match of text.matchAll(PLACEHOLDER)) {
+        if (match[1]) names.add(match[1]);
+      }
     };
     scan(input.url);
     for (const [k, v] of Object.entries(input.headers ?? {})) {

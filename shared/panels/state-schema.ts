@@ -167,11 +167,12 @@ export function stateMatches(s: Record<string, Json>, value: Json): boolean {
         )
       )
         return false;
-      return Object.entries(value).every(([key, v]) =>
-        Object.hasOwn(props, key)
-          ? stateMatches(props[key]!, v)
-          : s.additionalProperties !== false,
-      );
+      return Object.entries(value).every(([key, v]) => {
+        const propSchema = props[key];
+        return Object.hasOwn(props, key) && propSchema
+          ? stateMatches(propSchema, v)
+          : s.additionalProperties !== false;
+      });
     }
     default:
       return false;

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { downloadFileBlob } from "@/lib/rich-previews/files";
 
 /**
@@ -42,20 +43,18 @@ export function DocxPreviewBody({
     docxTooLarge(knownBytes) ? { kind: "too-large" } : { kind: "loading" },
   );
 
-  useEffect(() => {
-    if (docxTooLarge(knownBytes)) return;
-    const controller = new AbortController();
-    let alive = true;
-    (async () => {
+  useExternalConnection(
+    docxTooLarge(knownBytes) ? null : `${url}\0${knownBytes ?? ""}`,
+    async (_activeKey, signal) => {
       try {
-        const blob = await downloadFileBlob(url, controller.signal);
+        const blob = await downloadFileBlob(url, signal);
         if (docxTooLarge(blob.size)) {
-          if (alive) setState({ kind: "too-large" });
+          if (!signal.aborted) setState({ kind: "too-large" });
           return;
         }
         const { renderAsync } = await import("docx-preview");
         const target = pages.current;
-        if (!alive || !target) return;
+        if (signal.aborted || !target) return;
         target.replaceChildren();
         await renderAsync(blob, target, target, {
           className: "docx",
@@ -92,16 +91,12 @@ export function DocxPreviewBody({
             link.removeAttribute("href");
           }
         }
-        if (alive) setState({ kind: "ready" });
+        if (!signal.aborted) setState({ kind: "ready" });
       } catch {
-        if (alive && !controller.signal.aborted) setState({ kind: "failed" });
+        if (!signal.aborted) setState({ kind: "failed" });
       }
-    })();
-    return () => {
-      alive = false;
-      controller.abort();
-    };
-  }, [url, knownBytes]);
+    },
+  );
 
   return (
     <div className="rp-docx" data-state={state.kind}>

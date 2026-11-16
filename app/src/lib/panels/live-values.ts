@@ -8,7 +8,8 @@
  * 读数在 json-render 的 state 里是 `{ live: { [sourceId]: value } }`；本文件只管取数与合并，
  * 写进 store 的是 `live-panels.tsx`（store.update，不重建仓库、不重挂组件）。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useAbortScope, useExternalConnection } from "@/hooks";
 import { client } from "@/lib/client";
 import { useKeptVisible } from "@/lib/kept-visible";
 
@@ -154,18 +155,19 @@ function errorText(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "取数失败。";
 }
 
+function subscribePageVisible(callback: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", callback);
+  return () => document.removeEventListener("visibilitychange", callback);
+}
+
+function getPageVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
 /** 标签页在前台（页面隐藏时停轮询）。 */
 function usePageVisible(): boolean {
-  const [visible, setVisible] = useState(
-    () => typeof document === "undefined" || document.visibilityState !== "hidden",
-  );
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onVisibility = () => setVisible(document.visibilityState !== "hidden");
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
-  return visible;
+  return useSyncExternalStore(subscribePageVisible, getPageVisible, () => true);
 }
 
 const NO_SOURCES: LiveSource[] = [];
@@ -199,82 +201,110 @@ export function useLiveValues(
   const pageVisible = usePageVisible();
   const sources = panel?.dataSources ?? NO_SOURCES;
   const panelId = panel?.id ?? "";
-  const [readings, setReadings] = useState<LiveSourceReadings>({});
-  const [error, setError] = useState<string | null>(null);
+  const [readingState, setReadingState] = useState<{
+    panelId: string;
+    readings: LiveSourceReadings;
+    error: string | null;
+  }>(() => ({ panelId, readings: {}, error: null }));
   const [refreshing, setRefreshing] = useState(false);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const scope = useAbortScope();
 
   // 换了一张面板：上一张的读数不能跟着漂过去。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 面板 id 变了要清空，effect 里读到的就是它。
-  useEffect(() => {
-    setReadings({});
-    setError(null);
-  }, [panelId]);
+  if (readingState.panelId !== panelId) {
+    setReadingState({ panelId, readings: {}, error: null });
+  }
+  const readings =
+    readingState.panelId === panelId ? readingState.readings : {};
+  const error = readingState.panelId === panelId ? readingState.error : null;
 
   const delay = livePollMs(sources);
   const enabled = shouldPollLive({ visible: keptVisible && pageVisible, active, panelId, sources });
 
-  useEffect(() => {
-    if (!enabled || delay === null) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const controller = new AbortController();
+  useExternalConnection(
+    enabled && delay !== null ? `${panelId}\0${delay}` : false,
+    (_key, signal) => {
+      if (delay === null) return;
+      let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const tick = async () => {
-      try {
-        const next = await client<LiveSourceReadings>(
-          `/api/live-panels/${encodeURIComponent(panelId)}/live`,
-          "sources",
-          { fallback: "取数失败。", signal: controller.signal },
-        );
-        if (stopped) return;
-        setReadings((previous) => mergeLiveReadings(previous, next));
-        setError(null);
-      } catch (problem) {
-        if (stopped || controller.signal.aborted) return;
-        // 整次失败：上一个好值原样留着（不写空值），只在「数据来源…」里说明。
-        setError(errorText(problem));
-      } finally {
-        if (!stopped) timer = setTimeout(() => void tick(), delay);
-      }
-    };
+      const tick = async () => {
+        try {
+          const next = await client<LiveSourceReadings>(
+            `/api/live-panels/${encodeURIComponent(panelId)}/live`,
+            "sources",
+            { fallback: "取数失败。", signal },
+          );
+          if (signal.aborted) return;
+          setReadingState((previous) =>
+            previous.panelId !== panelId
+              ? previous
+              : {
+                  panelId,
+                  readings: mergeLiveReadings(previous.readings, next),
+                  error: null,
+                },
+          );
+        } catch (problem) {
+          if (signal.aborted) return;
+          // 整次失败：上一个好值原样留着（不写空值），只在「数据来源…」里说明。
+          setReadingState((previous) =>
+            previous.panelId !== panelId
+              ? previous
+              : {
+                  panelId,
+                  readings: previous.readings,
+                  error: errorText(problem),
+                },
+          );
+        } finally {
+          if (!signal.aborted) timer = setTimeout(() => void tick(), delay);
+        }
+      };
 
-    void tick();
-    return () => {
-      stopped = true;
-      controller.abort();
-      if (timer !== null) clearTimeout(timer);
-    };
-  }, [enabled, delay, panelId]);
+      void tick();
+      return () => {
+        if (timer !== null) clearTimeout(timer);
+      };
+    },
+  );
 
   const refresh = useCallback(() => {
     if (!panelId || refreshing) return;
     setRefreshing(true);
+    const activePanelId = panelId;
     const controller = new AbortController();
     void (async () => {
       try {
         const next = await client<LiveSourceReadings>(
-          `/api/live-panels/${encodeURIComponent(panelId)}/live/refresh`,
+          `/api/live-panels/${encodeURIComponent(activePanelId)}/live/refresh`,
           "sources",
           { method: "POST", fallback: "取数失败。", signal: controller.signal },
         );
-        if (!mounted.current) return;
-        setReadings((previous) => mergeLiveReadings(previous, next));
-        setError(null);
+        if (!scope.alive()) return;
+        setReadingState((previous) =>
+          previous.panelId !== activePanelId
+            ? previous
+            : {
+                panelId: activePanelId,
+                readings: mergeLiveReadings(previous.readings, next),
+                error: null,
+              },
+        );
       } catch (problem) {
-        if (!mounted.current) return;
-        setError(errorText(problem));
+        if (!scope.alive()) return;
+        setReadingState((previous) =>
+          previous.panelId !== activePanelId
+            ? previous
+            : {
+                panelId: activePanelId,
+                readings: previous.readings,
+                error: errorText(problem),
+              },
+        );
       } finally {
-        if (mounted.current) setRefreshing(false);
+        if (scope.alive()) setRefreshing(false);
       }
     })();
-  }, [panelId, refreshing]);
+  }, [panelId, refreshing, scope]);
 
   const values = useMemo(() => liveStateValues(readings, sources), [readings, sources]);
 

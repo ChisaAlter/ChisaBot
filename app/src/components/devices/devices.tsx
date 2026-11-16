@@ -26,7 +26,8 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { useInterval } from "@/hooks";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -435,9 +436,12 @@ export function RenameDeviceDialog({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(device.name);
-  useEffect(() => {
+  const resetKey = `${open}:${device.name}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey);
     if (open) setName(device.name);
-  }, [open, device.name]);
+  }
   const trimmed = name.trim();
   const save = useAsyncAction(async () => {
     const next = await patchDevice(device.id, { name: trimmed });
@@ -540,16 +544,13 @@ export function useApprovalCountdown(
   const [left, setLeft] = useState(() =>
     Math.max(0, deadline - performance.now()),
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在跨过 0 的边界重建 interval，不是每秒重设
-  useEffect(() => {
-    if (left <= 0) return;
-    const timer = setInterval(() => {
-      const next = Math.max(0, deadline - performance.now());
-      setLeft(next);
-      if (next <= 0) clearInterval(timer);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [deadline, left <= 0]);
+  useInterval(
+    () => {
+      setLeft(Math.max(0, deadline - performance.now()));
+    },
+    left > 0 ? 1000 : null,
+    deadline,
+  );
   return left;
 }
 
@@ -558,12 +559,18 @@ export function useApprovalCountdown(
  * 和聊天确认卡（chat/confirm-card.tsx）同一套：两个独立的 useAsyncAction，一个在跑时另一个禁用，
  * 一个成功后两个都锁住；倒计时到 0 时两个都禁用并显示「已过期」。
  */
-export function ApprovalRow({ approval }: { approval: DeviceApprovalView }) {
+export function ApprovalRow({
+  approval,
+  onDecide = decideApproval,
+}: {
+  approval: DeviceApprovalView;
+  onDecide?: (id: string, decision: "approve" | "deny") => Promise<unknown>;
+}) {
   const queryClient = useQueryClient();
   // 成功后一直锁住（按钮自己的「已允许 / 已拒绝」1.5 秒后会回到常态，但这次审批已经处理完了）。
   const [done, setDone] = useState<"approve" | "deny" | null>(null);
   const decide = async (decision: "approve" | "deny") => {
-    await decideApproval(approval.id, decision);
+    await onDecide(approval.id, decision);
     setDone(decision);
     await queryClient.invalidateQueries({ queryKey: deviceKeys.all });
   };
@@ -1054,15 +1061,11 @@ export function DevicePermissions({
 }) {
   const queryClient = useQueryClient();
   const base = useMemo(() => draftOf(device), [device]);
-  const [draft, setDraft] = useState<Draft>(base);
-  const [touched, setTouched] = useState(false);
+  const [edits, setEdits] = useState<Draft | null>(null);
   const [newRoot, setNewRoot] = useState("");
   const fieldId = useId();
-  // 服务器（或 PC 上）改了配置而本页没有未保存的改动时，跟上最新值。
-  useEffect(() => {
-    if (!touched) setDraft(base);
-  }, [base, touched]);
-  const dirty = touched && !sameDraft(draft, base);
+  const draft = edits ?? base;
+  const dirty = edits !== null && !sameDraft(edits, base);
   /* 保存栏亮着时切左栏、后退先确认，和常驻指令页同一套（审查模块 12 第 3 条）。 */
   useUnsavedGuard(dirty);
   const locked = device.revoked;
@@ -1075,12 +1078,11 @@ export function DevicePermissions({
     });
     queryClient.setQueryData(deviceKeys.detail(device.id), next);
     void queryClient.invalidateQueries({ queryKey: deviceKeys.all });
-    setTouched(false);
+    setEdits(null);
   });
 
   const update = (fn: (current: Draft) => Draft) => {
-    setTouched(true);
-    setDraft(fn);
+    setEdits((current) => fn(current ?? base));
   };
   const addRoots = (paths: string[]) =>
     update((current) => {
@@ -1308,8 +1310,7 @@ export function DevicePermissions({
         <Button
           disabled={save.state === "pending"}
           onClick={() => {
-            setDraft(base);
-            setTouched(false);
+            setEdits(null);
           }}
           size="sm"
           variant="ghost"

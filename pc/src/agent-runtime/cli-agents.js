@@ -117,7 +117,7 @@ function codexParser() {
       } else if (/reasoning/.test(type) && item.text) {
         emit("status", short(item.text, 160));
       } else if (/error|turn.failed/.test(type)) {
-        failed = item.message || (item.error && item.error.message) || short(item);
+        failed = item.message || item.error?.message || short(item);
         emit("stderr", failed);
       }
     },

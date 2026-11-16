@@ -1,5 +1,6 @@
 import { useIsMutating, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { modelSelectionKeys } from "./queries";
 import { listenForModelSelectionChanges } from "./sync";
 
@@ -9,5 +10,7 @@ export function useModelSelectionSaving(agentId: string) {
 
 export function useModelSelectionSync() {
   const queryClient = useQueryClient();
-  useEffect(() => listenForModelSelectionChanges(queryClient), [queryClient]);
+  useExternalConnection(objectConnectionKey(queryClient), () =>
+    listenForModelSelectionChanges(queryClient),
+  );
 }

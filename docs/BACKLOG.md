@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-15（`v0.1.150`）。
+> 状态最后核对：2026-11-16（`v0.1.151`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
 | [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
 | [CB-125](#cb-125) | 主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换                               | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）             |
 | [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                    | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: done`（`v0.1.149`）                           |
@@ -120,6 +121,23 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-127
+
+**任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同**
+
+标签：`type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）
+
+将 `autobahn` 的本地 Markdown 看板工作流与 ChisaBot 任务中心、右栏任务面板、本地智能体与服务端任务队列深度融合，并在派发任务完成后自动标为完成并回写摘要（DESIGN §134）。
+
+- [x] **共享契约与零 `zod` 首屏隔离**：`shared/markdown-syntax.ts`、`shared/task-board-core.ts` 与 `shared/task-board.ts` 实现四列投影（`现在 / 接下来 / 以后 / 已交付`）、`board:v1:` `sourceRef` 编解码、围栏安全换行切片与标题/摘要降级，前端纯展示入口仅依赖 `task-board-core` 以防 `zod` 渗入 `shell` chunk。
+- [x] **服务端双协议解析与 `admin` 安全写回**：`server/src/task-center/{markdown-board,board-discovery,markdown-board-parser,markdown-splice,file-lock}.ts` 与 `dialects/{autobahn,chisabot-docs}.ts` 兼容 `BACKLOG.md` + `autobahn.config.json` 及 `docs/ROADMAP.md` + `docs/BACKLOG.md`；`routes.ts` 对 `/roots` 与 `/boards*` 本机目录/看板写接口强制校验 `actor.role === "admin"`；采用 `resolveTaskSourcePath` / `allowedDocument` 沙箱、每路径互斥锁、临时文件回滚原子替换与 SHA-256 `baseRevision` `409` 乐观并发检查，并用 `markUntrusted` 包裹派发正文；`service.ts` / `runtime.ts` 在任务 `succeeded` 时经 `onSettled` 幂等标为完成并写入 `#### 交付摘要（ChisaBot 自动回写）`。
+- [x] **前端双模看板与完整验收**：`task-board*.tsx`、`board-format.ts`、`use-board-mutations.ts`、`markdown-overlay-editor.tsx` 与 `tasks-rail-card.tsx` / `task-rail-detail-dialog.tsx` 提供个人四列看板（含 `原属：<泳道>`）、置顶备忘折叠、全大写柔化、规格胶囊、复选框实时落盘、CAS 重载/覆盖冲突处理、Companion `.md` 标签、1:1 覆盖层源码编辑器与「发到当前对话」；通过 `bun run check`、`task-center-markdown-board.test.ts`、`task-center-board.test.tsx`、Vite 分片构建、Edge 三视口实机 E2E、`tests/task-center/ui.mjs` 与 `verify:ui -- --self-test`。
+
+#### 交付摘要（ChisaBot 自动回写）
+
+- 实现个人任务四列投影看板与本机 Markdown（Autobahn 单文件 + ChisaBot `docs/ROADMAP.md` / `docs/BACKLOG.md` 双文件）双向协同。
+- 本机授权目录与看板写接口限定 `admin` 权限，外部 Markdown 正文派发前经过 `markUntrusted` 边界隔离，任务成功后自动勾选完成并幂等追加摘要（自动降级冲突标题级别）。
 
 ## CB-126
 

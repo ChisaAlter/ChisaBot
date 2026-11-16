@@ -2,7 +2,6 @@ import type { Message } from "@ag-ui/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -29,6 +28,11 @@ import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import {
+  useExternalConnection,
+  useTimeout,
+  useWindowEvent,
+} from "@/hooks";
 import { useReportBusy } from "@/lib/activity";
 import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -64,6 +68,17 @@ import {
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
 import { splitChatOrigin } from "../../../../shared/chat-origin";
+
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 1;
+
+function objectKey(value: object): number {
+  const existing = objectIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextObjectId++;
+  objectIds.set(value, created);
+  return created;
+}
 
 function interruptWaitingKind(
   metadata: Record<string, unknown> | undefined,
@@ -528,14 +543,12 @@ export function ChannelChat({
   }
   /** 打开时那次读存储读到了：接入之后不用为「最后一句是机器人说的」再读一遍。 */
   const mountReadOk = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时读一次；cached 是 useState 初始化后不再变的常量，earlyRead 是 ref
-  useEffect(() => {
+  useExternalConnection(true, (_key, signal) => {
     const read = earlyRead.current;
     if (!read) return;
-    let alive = true;
     void read.then((stored) => {
       if (
-        alive &&
+        !signal.aborted &&
         stored.availability === "ready" &&
         stored.messages.length > 0 &&
         !(
@@ -547,17 +560,13 @@ export function ChannelChat({
       )
         setEarly(stored.messages);
     });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  });
 
   // 打开时就问收件箱这一段还在不在跑 / 等审批（和读历史同时发起，上面 earlyInbox）。
-  useEffect(() => {
+  useExternalConnection(channel.threadId || "__thread__", (_key, signal) => {
     setThreadLive(false);
-    let alive = true;
     const apply = (state: { running: boolean; paused?: boolean } | null) => {
-      if (alive) setThreadLive(inboxLive(state));
+      if (!signal.aborted) setThreadLive(inboxLive(state));
     };
     const pending = earlyInbox.current;
     earlyInbox.current = null;
@@ -566,10 +575,7 @@ export function ChannelChat({
       void inboxState(channel.threadId)
         .then(apply)
         .catch(() => apply(null));
-    return () => {
-      alive = false;
-    };
-  }, [channel.threadId]);
+  });
 
   /** Cleared by the send-on-mount effect without restarting it. */
   const seedRef = useRef(seed);
@@ -662,9 +668,9 @@ export function ChannelChat({
     setHistoryReadFailed(false);
     return true;
   }, [channel.threadId, runtimeAgentId]);
-  useEffect(() => {
-    if (isReady) openReadyGate.current();
-  }, [isReady]);
+  useExternalConnection(isReady, () => {
+    openReadyGate.current();
+  });
 
   /**
    * 从新建页带着第一句话进来的对话（`seed`）：线程刚由 POST /api/channels 建好，服务器上什么都没有，
@@ -674,103 +680,102 @@ export function ChannelChat({
   const freshThread = useRef(seed !== null);
 
   // Join the gateway socket, restore durable history, then release the first-message gate.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: agent / threadId 换了接入目标就变了，必须整段重跑
-  useEffect(() => {
-    if (!isReady) return;
-    let current = true;
-    const version = ++historyReadVersion.current;
-    if (freshThread.current) {
-      freshThread.current = false;
-      setRestoring(false);
-      setJoined(true);
-      openJoinGate.current();
+  useExternalConnection(
+    isReady
+      ? `${objectKey(conversationClient)}\0${objectKey(agent)}\0${channel.threadId}\0${runtimeAgentId}\0${objectKey(retryHistoryRead)}`
+      : false,
+    () => {
+      let current = true;
+      const version = ++historyReadVersion.current;
+      if (freshThread.current) {
+        freshThread.current = false;
+        setRestoring(false);
+        setJoined(true);
+        openJoinGate.current();
+        return () => {
+          current = false;
+        };
+      }
+
+      void (async () => {
+        try {
+          // Bounded, and finished when it returns; `join-thread.ts` has why that matters.
+          await joinWithin({
+            connect: conversationClient.connectAgent({ agent }),
+            deadline: afterMs(JOIN_DEADLINE_MS),
+            detach: () => agent.detachActiveRun(),
+          });
+        } catch {
+          /*
+           * A join that throws is a join that is over. It must not take the gate with it: everything
+           * typed afterwards waits on that gate, so a throw here would silence the conversation
+           * rather than degrade it. History is restored below either way.
+           */
+        }
+
+        try {
+          // 打开时已经开始读了（和接入同时）；只用一次，之后重跑这段（agent 换了）照旧重新读。
+          const pendingRead = earlyRead.current;
+          earlyRead.current = null;
+          const stored = await (pendingRead ??
+            readThreadMessages(channel.threadId, runtimeAgentId));
+          const isCurrent = current && version === historyReadVersion.current;
+          if (isCurrent) mountReadOk.current = stored.availability === "ready";
+          if (isCurrent) {
+            // The gateway snapshot can lag the store. Keep its valid local rows even when the
+            // corresponding stored row is unreadable, while restoring other readable additions.
+            const messages = mergeStoredMessages(
+              agent.messages,
+              stored.messages,
+            );
+            if (messages !== agent.messages) agent.setMessages(messages);
+          }
+          /*
+           * Said on screen rather than only counted. A turn the history store holds and this app cannot
+           * parse is left out of the transcript, and a record people read back must not have a hole in
+           * it that nothing accounts for. Set even when nothing was restored: a thread whose every turn
+           * is unreadable is exactly the case where silence would read as "this conversation is empty".
+           */
+          if (isCurrent) {
+            setUnreadable(stored.unreadable);
+            setHistoryAvailability(stored.availability);
+            // A gateway snapshot may be partial; neither it nor a later send proves this read succeeded.
+            setHistoryReadFailed(stored.availability === "unavailable");
+            if (stored.availability === "unavailable") {
+              /*
+               * 不挡输入：下面的 finally 照常放行第一条消息，重试在后台进行。全部失败后才轮到
+               * channelHistoryNotice 判断要不要提示（只在什么都没恢复出来时）。
+               */
+              setRetryingHistory(true);
+              void (async () => {
+                try {
+                  for (const delayMs of HISTORY_RETRY_DELAYS_MS) {
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    if (!current) return;
+                    if (await retryHistoryRead()) return;
+                  }
+                } finally {
+                  if (current) setRetryingHistory(false);
+                }
+              })();
+            }
+          }
+        } finally {
+          // Cleared on failure too: placeholders over an empty transcript promise messages that are
+          // never coming.
+          if (current) setRestoring(false);
+          // 接入结束（不管成败）：从这里起 `agent.isRunning` 说的是「服务器真在写」，不再是 connect（见 `joining`）。
+          if (current) setJoined(true);
+          // Release even on join/restore failure; the gate orders messages, not withholds them.
+          openJoinGate.current();
+        }
+      })();
+
       return () => {
         current = false;
       };
-    }
-
-    void (async () => {
-      try {
-        // Bounded, and finished when it returns; `join-thread.ts` has why that matters.
-        await joinWithin({
-          connect: conversationClient.connectAgent({ agent }),
-          deadline: afterMs(JOIN_DEADLINE_MS),
-          detach: () => agent.detachActiveRun(),
-        });
-      } catch {
-        /*
-         * A join that throws is a join that is over. It must not take the gate with it: everything
-         * typed afterwards waits on that gate, so a throw here would silence the conversation
-         * rather than degrade it. History is restored below either way.
-         */
-      }
-
-      try {
-        // 打开时已经开始读了（和接入同时）；只用一次，之后重跑这段（agent 换了）照旧重新读。
-        const pendingRead = earlyRead.current;
-        earlyRead.current = null;
-        const stored = await (pendingRead ??
-          readThreadMessages(channel.threadId, runtimeAgentId));
-        const isCurrent = current && version === historyReadVersion.current;
-        if (isCurrent) mountReadOk.current = stored.availability === "ready";
-        if (isCurrent) {
-          // The gateway snapshot can lag the store. Keep its valid local rows even when the
-          // corresponding stored row is unreadable, while restoring other readable additions.
-          const messages = mergeStoredMessages(agent.messages, stored.messages);
-          if (messages !== agent.messages) agent.setMessages(messages);
-        }
-        /*
-         * Said on screen rather than only counted. A turn the history store holds and this app cannot
-         * parse is left out of the transcript, and a record people read back must not have a hole in
-         * it that nothing accounts for. Set even when nothing was restored: a thread whose every turn
-         * is unreadable is exactly the case where silence would read as "this conversation is empty".
-         */
-        if (isCurrent) {
-          setUnreadable(stored.unreadable);
-          setHistoryAvailability(stored.availability);
-          // A gateway snapshot may be partial; neither it nor a later send proves this read succeeded.
-          setHistoryReadFailed(stored.availability === "unavailable");
-          if (stored.availability === "unavailable") {
-            /*
-             * 不挡输入：下面的 finally 照常放行第一条消息，重试在后台进行。全部失败后才轮到
-             * channelHistoryNotice 判断要不要提示（只在什么都没恢复出来时）。
-             */
-            setRetryingHistory(true);
-            void (async () => {
-              try {
-                for (const delayMs of HISTORY_RETRY_DELAYS_MS) {
-                  await new Promise((resolve) => setTimeout(resolve, delayMs));
-                  if (!current) return;
-                  if (await retryHistoryRead()) return;
-                }
-              } finally {
-                if (current) setRetryingHistory(false);
-              }
-            })();
-          }
-        }
-      } finally {
-        // Cleared on failure too: placeholders over an empty transcript promise messages that are
-        // never coming.
-        if (current) setRestoring(false);
-        // 接入结束（不管成败）：从这里起 `agent.isRunning` 说的是「服务器真在写」，不再是 connect（见 `joining`）。
-        if (current) setJoined(true);
-        // Release even on join/restore failure; the gate orders messages, not withholds them.
-        openJoinGate.current();
-      }
-    })();
-
-    return () => {
-      current = false;
-    };
-  }, [
-    conversationClient,
-    agent,
-    isReady,
-    channel.threadId,
-    runtimeAgentId,
-    retryHistoryRead,
-  ]);
+    },
+  );
 
   /*
    * 刷新 / 切后台 / 换设备后接着看正在写的回答，别的设备发的消息几秒内出现（DESIGN.md §64，CB-041 / CB-043）。
@@ -784,38 +789,36 @@ export function ChannelChat({
   const activity = useThreadActivity(runtimeAgentId, channel.threadId);
   // 变化戳带 running：还在跑就立刻标 live；停了再读一次收件箱。只认 running（inboxLive）：paused 是用户停止 /
   // 出错 / 停滞后留住补充消息，不是进行中；等审批由 transcript 看审批收件箱。
-  useEffect(() => {
-    let alive = true;
-    const off = activity.onActivity((value) => {
-      if (!alive) return;
-      if (value.running) setThreadLive(true);
-      else
-        void inboxState(channel.threadId)
-          .then((state) => {
-            if (alive) setThreadLive(inboxLive(state));
-          })
-          .catch(() => {
-            if (alive) setThreadLive(false);
-          });
-    });
-    return () => {
-      alive = false;
-      off();
-    };
-  }, [activity, channel.threadId]);
+  useExternalConnection(
+    `${objectKey(activity)}\0${channel.threadId}`,
+    (_key, signal) => {
+      const off = activity.onActivity((value) => {
+        if (signal.aborted) return;
+        if (value.running) setThreadLive(true);
+        else
+          void inboxState(channel.threadId)
+            .then((state) => {
+              if (!signal.aborted) setThreadLive(inboxLive(state));
+            })
+            .catch(() => {
+              if (!signal.aborted) setThreadLive(false);
+            });
+      });
+      return () => off();
+    },
+  );
   const joinedRef = useRef(false);
-  useEffect(() => {
-    joinedRef.current = false;
-    let alive = true;
-    void joinGatePromise.then(() => {
-      if (!alive) return;
-      joinedRef.current = true;
-      activity.kick();
-    });
-    return () => {
-      alive = false;
-    };
-  }, [joinGatePromise, activity.kick]);
+  useExternalConnection(
+    `${objectKey(joinGatePromise)}\0${objectKey(activity.kick)}`,
+    (_key, signal) => {
+      joinedRef.current = false;
+      void joinGatePromise.then(() => {
+        if (signal.aborted) return;
+        joinedRef.current = true;
+        activity.kick();
+      });
+    },
+  );
   const onJoinedActivity = useCallback(
     (listener: (value: ThreadActivity) => void) =>
       activity.onActivity((value) => {
@@ -855,47 +858,55 @@ export function ChannelChat({
       skipReconcile: skipReconcileWhileJoining,
     },
   );
-  useEffect(() => {
-    let wasRunning = false;
-    return onJoinedActivity((value) => {
-      const finished = wasRunning && !value.running;
-      wasRunning = value.running;
-      if (!finished) return;
-      void (async () => {
-        // 给回放 / 实时流一点时间收尾；这台自己在跑（刚又发了一句）时不动。
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        const current = agentRef.current;
-        if (
-          current.isRunning ||
-          turnsRef.current > 0 ||
-          sendInFlightRef.current
-        )
-          return;
-        const stored = await readThreadMessages(
-          channel.threadId,
-          runtimeAgentId,
-        );
-        if (stored.availability === "unavailable") return;
-        const latest = agentRef.current;
-        if (latest.isRunning || turnsRef.current > 0 || sendInFlightRef.current)
-          return;
-        const merged = withStoredTail(
-          mergeStoredMessages(latest.messages, stored.messages),
-          stored.messages,
-        );
-        if (
-          merged !== latest.messages &&
-          !(
-            merged.length === latest.messages.length &&
-            merged.at(-1)?.id === latest.messages.at(-1)?.id &&
-            merged.at(-1)?.content === latest.messages.at(-1)?.content
+  useExternalConnection(
+    `${objectKey(onJoinedActivity)}\0${channel.threadId}\0${runtimeAgentId}`,
+    (_key, signal) => {
+      let wasRunning = false;
+      return onJoinedActivity((value) => {
+        const finished = wasRunning && !value.running;
+        wasRunning = value.running;
+        if (!finished) return;
+        void (async () => {
+          // 给回放 / 实时流一点时间收尾；这台自己在跑（刚又发了一句）时不动。
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          if (signal.aborted) return;
+          const current = agentRef.current;
+          if (
+            current.isRunning ||
+            turnsRef.current > 0 ||
+            sendInFlightRef.current
           )
-        ) {
-          latest.setMessages(merged);
-        }
-      })();
-    });
-  }, [onJoinedActivity, channel.threadId, runtimeAgentId]);
+            return;
+          const stored = await readThreadMessages(
+            channel.threadId,
+            runtimeAgentId,
+          );
+          if (signal.aborted || stored.availability === "unavailable") return;
+          const latest = agentRef.current;
+          if (
+            latest.isRunning ||
+            turnsRef.current > 0 ||
+            sendInFlightRef.current
+          )
+            return;
+          const merged = withStoredTail(
+            mergeStoredMessages(latest.messages, stored.messages),
+            stored.messages,
+          );
+          if (
+            merged !== latest.messages &&
+            !(
+              merged.length === latest.messages.length &&
+              merged.at(-1)?.id === latest.messages.at(-1)?.id &&
+              merged.at(-1)?.content === latest.messages.at(-1)?.content
+            )
+          ) {
+            latest.setMessages(merged);
+          }
+        })();
+      });
+    },
+  );
 
   /*
    * A turn nobody here streamed, surfaced while the channel is open.
@@ -914,117 +925,120 @@ export function ChannelChat({
    * Retried briefly, because the roster is patched when the turn is on record with the runner and
    * the platform's read of the thread can be a beat behind it.
    */
-  useEffect(() => {
-    const rosterRow = (): ChannelSummary | undefined =>
-      queryClient
-        .getQueryData<{
-          pages: { channels: ChannelSummary[] }[];
-        }>(channelKeys.list())
-        ?.pages.flatMap((page) => page.channels)
-        .find((row) => row.id === channel.id);
-    const authoredActivity = (): ChannelActivitySignature | null => {
-      const summary = rosterRow();
-      // Only a Bot's turn is news here; a person's own line arrives through the run that sent it.
-      if (
-        !summary ||
-        summary.lastMessageAgentId === null ||
-        summary.lastMessageAt === null ||
-        summary.lastMessage === null
-      ) {
-        return null;
-      }
-      return {
-        agentId: summary.lastMessageAgentId,
-        at: summary.lastMessageAt,
-        text: summary.lastMessage,
-      };
-    };
-
-    const initialActivity = authoredActivity();
-    let lastSeen = initialActivity;
-    // 挂上时左栏列表里有没有这条对话（哪怕最后一句还是空的）；没有就是冷打开、列表还没到。
-    let rosterKnown = rosterRow() !== undefined;
-    let cancelled = false;
-
-    const pull = () => {
-      const version = ++historyReadVersion.current;
-      const isCurrent = () =>
-        !cancelled && version === historyReadVersion.current;
-      void (async () => {
-        for (const delayMs of [0, 750, 1500]) {
-          if (delayMs > 0) {
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-          }
-          if (!isCurrent()) return;
-          const stored = await readThreadMessages(
-            channel.threadId,
-            runtimeAgentId,
-          );
-          if (!isCurrent()) return;
-          if (stored.availability === "unavailable") {
-            /*
-             * 刷新失败不提示：这只是「别处新到的一条回复」没拉下来，屏幕上的会话完好，下一次
-             * 活动还会再拉。以前这里会把「较早的消息暂时无法加载」挂到输入框上方。
-             */
-            continue;
-          }
-          // A ready read owns the notice even when every readable id is already on screen.
-          setUnreadable(stored.unreadable);
-          setHistoryAvailability("ready");
-          setHistoryReadFailed(false);
-          const current = agentRef.current;
-          const messages = mergeStoredMessages(
-            current.messages,
-            stored.messages,
-          );
-          if (messages === current.messages) continue;
-          current.setMessages(messages);
-          return;
-        }
-      })();
-    };
-
-    /*
-     * 打开时左栏说的那一句：等打开时那次读存储（和接入）结束再看。读到了这一句就不再读（DESIGN.md §83，
-     * 不再连读三遍）；存储落后（还没有这一句）时照旧重试，等它写进来。
-     */
-    const settleInitial = (initial: ChannelActivitySignature) => {
-      void (async () => {
-        await joinGatePromise;
+  useExternalConnection(
+    `${channel.id}\0${channel.threadId}\0${objectKey(joinGatePromise)}\0${runtimeAgentId}`,
+    () => {
+      const rosterRow = (): ChannelSummary | undefined =>
+        queryClient
+          .getQueryData<{
+            pages: { channels: ChannelSummary[] }[];
+          }>(channelKeys.list())
+          ?.pages.flatMap((page) => page.channels)
+          .find((row) => row.id === channel.id);
+      const authoredActivity = (): ChannelActivitySignature | null => {
+        const summary = rosterRow();
+        // Only a Bot's turn is news here; a person's own line arrives through the run that sent it.
         if (
-          !cancelled &&
-          !sameActivity(selfReportedBotActivity.current, initial) &&
-          !(
-            mountReadOk.current &&
-            saysActivity(agentRef.current.messages, initial.text)
-          )
+          !summary ||
+          summary.lastMessageAgentId === null ||
+          summary.lastMessageAt === null ||
+          summary.lastMessage === null
         ) {
-          pull();
+          return null;
         }
-      })();
-    };
-    const unsubscribe = queryClient.getQueryCache().subscribe(() => {
-      const arrived = !rosterKnown && rosterRow() !== undefined;
-      if (arrived) rosterKnown = true;
-      const activity = authoredActivity();
-      if (activity && !sameActivity(activity, lastSeen)) {
-        lastSeen = activity;
-        if (sameActivity(selfReportedBotActivity.current, activity)) return;
-        /*
-         * 冷打开（刷新 / 直接打开链接）时左栏列表常常比对话详情晚到：聊天已经挂上，列表才第一次出现。
-         * 这不是「别处新说了一句」，是打开时本该看到的那一句——按上面打开时的规则处理，不马上 pull()。
-         * 以前这里会和打开时那次读存储同时发出，since 都为空，整份历史读两遍（0.1.110 验收）。
-         */
-        if (arrived) settleInitial(activity);
-        else pull();
-      }
-    });
-    if (initialActivity) settleInitial(initialActivity);
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [channel.id, channel.threadId, joinGatePromise, runtimeAgentId]);
+        return {
+          agentId: summary.lastMessageAgentId,
+          at: summary.lastMessageAt,
+          text: summary.lastMessage,
+        };
+      };
+
+      const initialActivity = authoredActivity();
+      let lastSeen = initialActivity;
+      // 挂上时左栏列表里有没有这条对话（哪怕最后一句还是空的）；没有就是冷打开、列表还没到。
+      let rosterKnown = rosterRow() !== undefined;
+      let cancelled = false;
+
+      const pull = () => {
+        const version = ++historyReadVersion.current;
+        const isCurrent = () =>
+          !cancelled && version === historyReadVersion.current;
+        void (async () => {
+          for (const delayMs of [0, 750, 1500]) {
+            if (delayMs > 0) {
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+            if (!isCurrent()) return;
+            const stored = await readThreadMessages(
+              channel.threadId,
+              runtimeAgentId,
+            );
+            if (!isCurrent()) return;
+            if (stored.availability === "unavailable") {
+              /*
+               * 刷新失败不提示：这只是「别处新到的一条回复」没拉下来，屏幕上的会话完好，下一次
+               * 活动还会再拉。以前这里会把「较早的消息暂时无法加载」挂到输入框上方。
+               */
+              continue;
+            }
+            // A ready read owns the notice even when every readable id is already on screen.
+            setUnreadable(stored.unreadable);
+            setHistoryAvailability("ready");
+            setHistoryReadFailed(false);
+            const current = agentRef.current;
+            const messages = mergeStoredMessages(
+              current.messages,
+              stored.messages,
+            );
+            if (messages === current.messages) continue;
+            current.setMessages(messages);
+            return;
+          }
+        })();
+      };
+
+      /*
+       * 打开时左栏说的那一句：等打开时那次读存储（和接入）结束再看。读到了这一句就不再读（DESIGN.md §83，
+       * 不再连读三遍）；存储落后（还没有这一句）时照旧重试，等它写进来。
+       */
+      const settleInitial = (initial: ChannelActivitySignature) => {
+        void (async () => {
+          await joinGatePromise;
+          if (
+            !cancelled &&
+            !sameActivity(selfReportedBotActivity.current, initial) &&
+            !(
+              mountReadOk.current &&
+              saysActivity(agentRef.current.messages, initial.text)
+            )
+          ) {
+            pull();
+          }
+        })();
+      };
+      const unsubscribe = queryClient.getQueryCache().subscribe(() => {
+        const arrived = !rosterKnown && rosterRow() !== undefined;
+        if (arrived) rosterKnown = true;
+        const activity = authoredActivity();
+        if (activity && !sameActivity(activity, lastSeen)) {
+          lastSeen = activity;
+          if (sameActivity(selfReportedBotActivity.current, activity)) return;
+          /*
+           * 冷打开（刷新 / 直接打开链接）时左栏列表常常比对话详情晚到：聊天已经挂上，列表才第一次出现。
+           * 这不是「别处新说了一句」，是打开时本该看到的那一句——按上面打开时的规则处理，不马上 pull()。
+           * 以前这里会和打开时那次读存储同时发出，since 都为空，整份历史读两遍（0.1.110 验收）。
+           */
+          if (arrived) settleInitial(activity);
+          else pull();
+        }
+      });
+      if (initialActivity) settleInitial(initialActivity);
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
+    },
+  );
 
   // Tool calls from this conversation act on this coworker's own computer.
   useActiveBot(runtimeAgentId);
@@ -1035,19 +1049,21 @@ export function ChannelChat({
    * 再记一次最新的。agent 会原地改它的数组，所以 `rememberTranscript` 存的是一份拷贝。
    */
   const restoredRef = useRef(false);
-  useEffect(() => {
-    if (restoring) return;
-    restoredRef.current = true;
-    rememberTranscript(channel.threadId, agentRef.current.messages);
-  }, [restoring, channel.threadId]);
-  useEffect(() => {
+  useExternalConnection(
+    !restoring ? channel.threadId || "__thread__" : false,
+    () => {
+      restoredRef.current = true;
+      rememberTranscript(channel.threadId, agentRef.current.messages);
+    },
+  );
+  useExternalConnection(channel.threadId || "__thread__", () => {
     const threadId = channel.threadId;
     // 恢复没完成就离开：手里只有回放的一部分，不记（下次会先画出半截）。
     return () => {
       if (restoredRef.current)
         rememberTranscript(threadId, agentRef.current.messages);
     };
-  }, [channel.threadId]);
+  });
 
   const historyNotice = channelHistoryNotice({
     restoring: restoring || retryingHistory,
@@ -1237,7 +1253,6 @@ export function ChannelChat({
     );
     // Awaited below; a rejection before that point must not surface as unhandled.
     panelAuthoringRead.catch(() => undefined);
-    // Wait briefly for the runtime agent instance before adding the message.
     if (!isReadyRef.current) {
       await Promise.race([
         readyGatePromise,
@@ -1806,55 +1821,50 @@ export function ChannelChat({
   /** Stable reference for effects and component callbacks. */
   const sayRef = useRef(say);
   sayRef.current = say;
-  useEffect(() => {
-    const onSendPaused = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          threadId: string;
-          id: string;
-          accept: (run: () => Promise<unknown>) => void;
-        }>
-      ).detail;
+  useWindowEvent("chisabot-send-paused", (event) => {
+    const detail = (
+      event as CustomEvent<{
+        threadId: string;
+        id: string;
+        accept: (run: () => Promise<unknown>) => void;
+      }>
+    ).detail;
+    if (
+      !detail ||
+      detail.threadId !== channel.threadId ||
+      typeof detail.accept !== "function"
+    )
+      return;
+    detail.accept(async () => {
+      const item = queuedFor(channel.threadId).find(
+        (item) => item.id === detail.id && item.status === "paused",
+      );
+      if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
+      // CB-104: the resent copy replaces a held original the stopped turn had read (server does the same).
+      const target = agentRef.current;
       if (
-        !detail ||
-        detail.threadId !== channel.threadId ||
-        typeof detail.accept !== "function"
-      )
-        return;
-      detail.accept(async () => {
-        const item = queuedFor(channel.threadId).find(
-          (item) => item.id === detail.id && item.status === "paused",
-        );
-        if (!item) throw new Error("这条消息已不再暂停，请刷新后查看。");
-        // CB-104: the resent copy replaces a held original the stopped turn had read (server does the same).
-        const target = agentRef.current;
-        if (
-          target.messages.some(
-            (message) => message.id === item.id && message.role === "user",
-          )
+        target.messages.some(
+          (message) => message.id === item.id && message.role === "user",
         )
-          target.setMessages(
-            target.messages.filter(
-              (message) => message.id !== item.id,
-            ) as typeof target.messages,
-          );
-        try {
-          return await sayRef.current(
-            item.text,
-            [],
-            [],
-            item.message?.content,
-            item.id,
-          );
-        } finally {
-          await restoreQueue(channel.threadId);
-        }
-      });
-    };
-    window.addEventListener("chisabot-send-paused", onSendPaused);
-    return () =>
-      window.removeEventListener("chisabot-send-paused", onSendPaused);
-  }, [channel.threadId]);
+      )
+        target.setMessages(
+          target.messages.filter(
+            (message) => message.id !== item.id,
+          ) as typeof target.messages,
+        );
+      try {
+        return await sayRef.current(
+          item.text,
+          [],
+          [],
+          item.message?.content,
+          item.id,
+        );
+      } finally {
+        await restoreQueue(channel.threadId);
+      }
+    });
+  });
 
   // 「已停止」（2026-10-13 第四轮）：本机刚按停止的那一轮 + 服务器记下的（刷新、换设备也在）。
   const [localStops, setLocalStops] = useState<ReadonlySet<string>>(
@@ -1889,23 +1899,25 @@ export function ChannelChat({
   const stopRequest = useStopRequest(channel.threadId, undefined, {
     running: stopFailedServerRunning,
   });
-  useEffect(() => {
-    if (!stopRequest.failed) {
-      setStopFailedServerRunning(undefined);
-      return;
-    }
-    let cancelled = false;
-    const poll = () =>
-      void restoreQueue(channel.threadId).then((state) => {
-        if (!cancelled && state) setStopFailedServerRunning(state.running);
-      });
-    poll();
-    const timer = setInterval(poll, 1_500);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [stopRequest.failed, channel.threadId]);
+  useExternalConnection(
+    `${stopRequest.failed ? 1 : 0}\0${channel.threadId}`,
+    (_key, signal) => {
+      if (!stopRequest.failed) {
+        setStopFailedServerRunning(undefined);
+        return;
+      }
+      const poll = () =>
+        void restoreQueue(channel.threadId).then((state) => {
+          if (!signal.aborted && state)
+            setStopFailedServerRunning(state.running);
+        });
+      poll();
+      const timer = setInterval(poll, 1_500);
+      return () => {
+        clearInterval(timer);
+      };
+    },
+  );
   const sendStop = () => {
     void stopRequest.send().then((ok) => {
       if (!ok) setStopping(false);
@@ -1990,8 +2002,8 @@ export function ChannelChat({
   const regenerate = useCallback(async () => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
-    if (at < 0) throw new Error("没有可以重新生成的回答。");
-    const user = list[at]!;
+    const user = at >= 0 ? list[at] : undefined;
+    if (!user) throw new Error("没有可以重新生成的回答。");
     await resendRef.current(
       user.id,
       "regenerate",
@@ -2005,8 +2017,8 @@ export function ChannelChat({
   const retryUnanswered = useCallback(() => {
     const list = agentRef.current.messages;
     const at = lastUserIndex(list);
-    if (at < 0) return;
-    const user = list[at]!;
+    const user = at >= 0 ? list[at] : undefined;
+    if (!user) return;
     void resendRef
       .current(user.id, "regenerate", user.content as Message["content"])
       .catch(reportRetryRefusal);
@@ -2176,31 +2188,27 @@ export function ChannelChat({
     [channel.threadId],
   );
   // 右栏面板（不在这棵组件树里）里的「问一句」发 chisabot-ask 事件（DESIGN.md §29）：发到当前对话。
-  useEffect(() => {
-    const on = (event: Event) => {
-      const detail = (event as CustomEvent<unknown>).detail;
-      if (!detail || typeof detail !== "object") return;
-      const { text, targetPath } = detail as {
-        text?: unknown;
-        targetPath?: unknown;
-      };
-      if (
-        typeof text === "string" &&
-        targetPath === composerTargetPath(channel.id) &&
-        targetPath === currentChatTargetPath() &&
-        keptVisibility.get()
-      )
-        askFromComponent(text);
+  useWindowEvent("chisabot-ask", (event) => {
+    const detail = (event as CustomEvent<unknown>).detail;
+    if (!detail || typeof detail !== "object") return;
+    const { text, targetPath } = detail as {
+      text?: unknown;
+      targetPath?: unknown;
     };
-    window.addEventListener("chisabot-ask", on);
-    return () => window.removeEventListener("chisabot-ask", on);
-  }, [askFromComponent, channel.id, keptVisibility]);
+    if (
+      typeof text === "string" &&
+      targetPath === composerTargetPath(channel.id) &&
+      targetPath === currentChatTargetPath() &&
+      keptVisibility.get()
+    )
+      askFromComponent(text);
+  });
 
   /**
    * Send the create-channel seed once. No waiting of its own: `say` owns that for every turn, and a
    * second copy of the ordering here was the one that could disagree with it.
    */
-  useEffect(() => {
+  useExternalConnection(true, () => {
     const pending = seedRef.current;
     if (!pending) return;
     seedRef.current = null;
@@ -2214,7 +2222,7 @@ export function ChannelChat({
       .finally(() => setSeedSending(false));
 
     // Keep `seed` in state; transcriptMessages gives it up once the agent holds a user turn.
-  }, []);
+  });
 
   /*
    * 挂载时的「接入」不是一轮回答（2026-10-22）。
@@ -2230,11 +2238,7 @@ export function ChannelChat({
    * （运行时不就绪），也不能让发送键永远不变成停止。
    */
   const [joined, setJoined] = useState(false);
-  useEffect(() => {
-    if (joined) return;
-    const timer = window.setTimeout(() => setJoined(true), 6_000);
-    return () => window.clearTimeout(timer);
-  }, [joined]);
+  useTimeout(() => setJoined(true), joined ? null : 6_000);
   /** 这一段对话还在接入（回放 / 读历史）：`agent.isRunning` 这时说的是 connect，不是一轮回答。 */
   const joining = !joined;
 
@@ -2249,27 +2253,30 @@ export function ChannelChat({
     (agent.isRunning && !joining) || turnsInFlight > 0 || runsInFlight > 0;
   // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
   const agentLiveBefore = useRef(agentLive);
-  useEffect(() => {
-    if (agentLive && !agentLiveBefore.current) stopRequest.clear();
-    agentLiveBefore.current = agentLive;
-  }, [agentLive, stopRequest.clear]);
-  useEffect(() => {
-    if (!stopping) return;
-    let alive = true;
-    const check = async () => {
-      const state = await restoreQueue(channel.threadId);
-      if (alive && state?.running === false) {
-        setStopping(false);
-        void agent.detachActiveRun();
-      }
-    };
-    void check();
-    const timer = setInterval(() => void check(), 1500);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [stopping, agent, channel.threadId]);
+  useExternalConnection(
+    `${agentLive ? 1 : 0}\0${objectKey(stopRequest.clear)}`,
+    () => {
+      if (agentLive && !agentLiveBefore.current) stopRequest.clear();
+      agentLiveBefore.current = agentLive;
+    },
+  );
+  useExternalConnection(
+    stopping ? `${objectKey(agent)}\0${channel.threadId}` : false,
+    (_key, signal) => {
+      const check = async () => {
+        const state = await restoreQueue(channel.threadId);
+        if (!signal.aborted && state?.running === false) {
+          setStopping(false);
+          void agent.detachActiveRun();
+        }
+      };
+      void check();
+      const timer = setInterval(() => void check(), 1500);
+      return () => {
+        clearInterval(timer);
+      };
+    },
+  );
   const chatBusy =
     seedSending ||
     turnsInFlight > 0 ||
@@ -2277,10 +2284,10 @@ export function ChannelChat({
     (agent.isRunning && !joining);
   // 机器人还在回复时，「有新版本」的刷新先确认（lib/activity.ts）。
   useReportBusy(`chat:${channel.id}`, chatBusy);
-  useEffect(() => {
+  useExternalConnection(chatBusy ? "busy" : "idle", () => {
     reportChatRunning(chatBusy);
     return () => reportChatRunning(false);
-  }, [chatBusy]);
+  });
   const activeMessages = restoring
     ? (early ?? cached ?? EMPTY_MESSAGES)
     : agent.messages;
@@ -2300,9 +2307,12 @@ export function ChannelChat({
       replyAfterToolCall(activeMessagesRef.current, toolCallId),
     [],
   );
-  useEffect(() => {
-    syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
-  }, [runtimeAgentId, activeMessages, chatBusy]);
+  useExternalConnection(
+    `${runtimeAgentId}\0${objectKey(activeMessages)}\0${chatBusy ? 1 : 0}`,
+    () => {
+      syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
+    },
+  );
   // 头像变形（DESIGN.md §81）：在跑工具 = working，在跑但没有工具 = thinking；左栏那一行和资料页读这个。
   const liveActivity = activityOf(
     activeMessages,
@@ -2310,9 +2320,8 @@ export function ChannelChat({
     // 手动停止或出错结束的一轮不跳「做完了」（DESIGN.md §81）。
     stopping || runError !== null,
   );
-  useEffect(
-    () => publishBotActivity(runtimeAgentId, liveActivity),
-    [runtimeAgentId, liveActivity],
+  useExternalConnection(`${runtimeAgentId}\0${liveActivity ?? ""}`, () =>
+    publishBotActivity(runtimeAgentId, liveActivity),
   );
   const canResend = !agentLive && channel.active && !restoring && !modelSaving;
   const canWithdrawLast =
@@ -2695,7 +2704,8 @@ function HistoryNotice({
 /** 最后一条用户消息之后已经有回答或工具调用（这一轮机器人已经接着它做了事）。 */
 export function turnAnswered(list: readonly Message[]): boolean {
   for (let i = list.length - 1; i >= 0; i -= 1) {
-    const message = list[i]!;
+    const message = list[i];
+    if (!message) continue;
     if (message.role === "user") return false;
     if (message.role === "assistant" || message.role === "tool") return true;
   }

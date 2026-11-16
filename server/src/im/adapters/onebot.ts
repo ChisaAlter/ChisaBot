@@ -1,4 +1,4 @@
-import { errorText } from "../text";
+import { asJsonRecord, errorText, parseJsonRecord } from "../text";
 import type {
   AdapterContext,
   ImDeliveryReceipt,
@@ -25,6 +25,21 @@ import { dataText, LoopAdapter, randomId } from "./base";
 
 type Segment = { type: string; data?: Record<string, unknown> };
 
+function parseSegments(raw: unknown): Segment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Segment[] = [];
+  for (const item of raw) {
+    const record = asJsonRecord(item);
+    if (record && typeof record.type === "string") {
+      out.push({
+        type: record.type,
+        data: asJsonRecord(record.data) ?? undefined,
+      });
+    }
+  }
+  return out;
+}
+
 export function parseCqString(message: string): Segment[] {
   const out: Segment[] = [];
   const re = /\[CQ:([a-zA-Z_]+)((?:,[^\]]*)?)\]/g;
@@ -47,7 +62,8 @@ export function parseCqString(message: string): Segment[] {
       const eq = pair.indexOf("=");
       if (eq > 0) data[pair.slice(0, eq)] = unescapeCq(pair.slice(eq + 1));
     }
-    out.push({ type: match[1]!, data });
+    const cqType = match[1];
+    if (cqType) out.push({ type: cqType, data });
     last = re.lastIndex;
   }
   if (last < message.length)
@@ -57,18 +73,20 @@ export function parseCqString(message: string): Segment[] {
 
 /** OneBot 消息事件 → ImInbound；不是消息、或是自己发的，返回 null。 */
 export function parseOneBotEvent(
-  // biome-ignore lint/suspicious/noExplicitAny: OneBot 事件载荷字段随 post_type 变化，按协议字段取用
-  event: Record<string, any>,
+  rawEvent: unknown,
   selfId: string | null,
 ): ImInbound | null {
+  const event = asJsonRecord(rawEvent);
+  if (!event) return null;
   if (event.post_type !== "message" && event.post_type !== "message_sent")
     return null;
   if (event.post_type === "message_sent") return null;
+  const sender = asJsonRecord(event.sender);
   const self = String(event.self_id ?? selfId ?? "");
-  const userId = String(event.user_id ?? event.sender?.user_id ?? "");
+  const userId = String(event.user_id ?? sender?.user_id ?? "");
   if (!userId || userId === self) return null;
   const segments: Segment[] = Array.isArray(event.message)
-    ? event.message
+    ? parseSegments(event.message)
     : parseCqString(
         typeof event.message === "string"
           ? event.message
@@ -95,7 +113,7 @@ export function parseOneBotEvent(
     else if (segment.type === "face") text += "[表情]";
   }
   const group = event.message_type === "group";
-  const name = event.sender?.card || event.sender?.nickname;
+  const name = sender?.card || sender?.nickname;
   return {
     messageId: String(event.message_id ?? ""),
     chatType: group ? "group" : "private",
@@ -117,8 +135,7 @@ export class OneBotAdapter extends LoopAdapter {
   private pending = new Map<
     string,
     {
-      // biome-ignore lint/suspicious/noExplicitAny: OneBot 应答 data 形状随 action 变化
-      resolve: (value: any) => void;
+      resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       timer: ReturnType<typeof setTimeout>;
     }
@@ -210,11 +227,11 @@ export class OneBotAdapter extends LoopAdapter {
     this.markConnected(this.selfId ? `QQ ${this.selfId}` : null);
     this.ctx.log("info", "已连上协议端");
     try {
-      const info = await this.call("get_login_info", {});
+      const info = asJsonRecord(await this.call("get_login_info", {}));
       if (info?.user_id) {
         this.selfId = String(info.user_id);
         this.markConnected(
-          `${info.nickname ? `${info.nickname} ` : ""}(QQ ${this.selfId})`,
+          `${info.nickname ? `${String(info.nickname)} ` : ""}(QQ ${this.selfId})`,
         );
       }
     } catch (error) {
@@ -223,11 +240,11 @@ export class OneBotAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
-    // biome-ignore lint/suspicious/noExplicitAny: OneBot WebSocket 帧字段随事件/应答变化
-    const payload = JSON.parse(text) as Record<string, any>;
-    if (payload.echo != null && this.pending.has(String(payload.echo))) {
-      const entry = this.pending.get(String(payload.echo))!;
-      this.pending.delete(String(payload.echo));
+    const payload = parseJsonRecord(text);
+    const echoKey = payload.echo != null ? String(payload.echo) : null;
+    const entry = echoKey !== null ? this.pending.get(echoKey) : undefined;
+    if (echoKey !== null && entry) {
+      this.pending.delete(echoKey);
       clearTimeout(entry.timer);
       if (
         payload.status === "failed" ||
@@ -235,7 +252,7 @@ export class OneBotAdapter extends LoopAdapter {
       )
         entry.reject(
           new Error(
-            `协议端返回错误 ${payload.retcode ?? ""} ${payload.wording ?? payload.message ?? payload.msg ?? ""}`.trim(),
+            `协议端返回错误 ${String(payload.retcode ?? "")} ${String(payload.wording ?? payload.message ?? payload.msg ?? "")}`.trim(),
           ),
         );
       else entry.resolve(payload.data);
@@ -257,8 +274,7 @@ export class OneBotAdapter extends LoopAdapter {
     action: string,
     params: Record<string, unknown>,
     timeoutMs = 15_000,
-    // biome-ignore lint/suspicious/noExplicitAny: 应答 data 形状随 action 变化，调用方按协议取用
-  ): Promise<any> {
+  ): Promise<unknown> {
     const echo = randomId();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -292,7 +308,7 @@ export class OneBotAdapter extends LoopAdapter {
           data: { id: String(inbound.reply.messageId) },
         });
       message.push({ type: "text", data: { text: chunk } });
-      const receipt =
+      const receipt = asJsonRecord(
         inbound.chatType === "group"
           ? await this.call("send_group_msg", {
               group_id: Number(inbound.chatId) || inbound.chatId,
@@ -301,7 +317,8 @@ export class OneBotAdapter extends LoopAdapter {
           : await this.call("send_private_msg", {
               user_id: Number(inbound.chatId) || inbound.chatId,
               message,
-            });
+            }),
+      );
       if (receipt?.message_id != null)
         messageIds.push(String(receipt.message_id));
       first = false;
@@ -321,10 +338,10 @@ export async function testOneBot(
         detail: "这个连接已停用。启用后在协议端填反向连接地址。",
       };
     try {
-      const info = await running.call("get_login_info", {}, 8000);
+      const info = asJsonRecord(await running.call("get_login_info", {}, 8000));
       return {
         ok: true,
-        detail: `协议端已连入，登录的是 ${info?.nickname ?? ""}（QQ ${info?.user_id ?? "?"}）`,
+        detail: `协议端已连入，登录的是 ${String(info?.nickname ?? "")}（QQ ${String(info?.user_id ?? "?")}）`,
       };
     } catch (error) {
       return { ok: false, detail: `协议端还没有连进来：${errorText(error)}` };
@@ -332,10 +349,10 @@ export async function testOneBot(
   }
   if (running) {
     try {
-      const info = await running.call("get_login_info", {}, 8000);
+      const info = asJsonRecord(await running.call("get_login_info", {}, 8000));
       return {
         ok: true,
-        detail: `连接正常，登录的是 ${info?.nickname ?? ""}（QQ ${info?.user_id ?? "?"}）`,
+        detail: `连接正常，登录的是 ${String(info?.nickname ?? "")}（QQ ${String(info?.user_id ?? "?")}）`,
       };
     } catch {}
   }
@@ -385,17 +402,22 @@ export async function testOneBot(
       );
     socket.onmessage = (event) => {
       try {
-        const payload = JSON.parse(dataText(event.data));
+        const payload = parseJsonRecord(dataText(event.data));
         if (payload.echo !== echo) return;
         clearTimeout(timer);
         socket.close();
         if (payload.retcode && payload.retcode !== 0)
-          resolve({ ok: false, detail: `协议端返回错误 ${payload.retcode}` });
-        else
+          resolve({
+            ok: false,
+            detail: `协议端返回错误 ${String(payload.retcode)}`,
+          });
+        else {
+          const data = asJsonRecord(payload.data);
           resolve({
             ok: true,
-            detail: `连接正常，登录的是 ${payload.data?.nickname ?? ""}（QQ ${payload.data?.user_id ?? "?"}）`,
+            detail: `连接正常，登录的是 ${String(data?.nickname ?? "")}（QQ ${String(data?.user_id ?? "?")}）`,
           });
+        }
       } catch {}
     };
     socket.onerror = () => {};

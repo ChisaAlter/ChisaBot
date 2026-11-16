@@ -84,7 +84,7 @@ export function solidPng(r: number, g: number, b: number, size = 32): Buffer {
   });
   const crc = (buf: Buffer) => {
     let c = 0xffffffff;
-    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
+    for (const byte of buf) c = (crcTable[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8);
     return (c ^ 0xffffffff) >>> 0;
   };
   const chunk = (type: string, data: Buffer) => {

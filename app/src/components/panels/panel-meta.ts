@@ -22,9 +22,10 @@ function siteOf(url: string): string {
 
 /** 一组名字的公共前缀（按字符），去掉末尾的空格和标点。 */
 function commonPrefix(names: string[]): string {
-  if (names.length === 0) return "";
-  let prefix = names[0]!;
-  for (const name of names.slice(1)) {
+  const [first, ...rest] = names;
+  if (first === undefined) return "";
+  let prefix = first;
+  for (const name of rest) {
     let i = 0;
     while (i < prefix.length && i < name.length && prefix[i] === name[i]) i++;
     prefix = prefix.slice(0, i);
@@ -56,7 +57,7 @@ export function groupSources(sources: readonly PanelSource[]): SourceGroup[] {
   for (const group of groups) {
     if (group.names.length < 2) continue;
     const prefix = commonPrefix(group.names);
-    group.label = prefix.length >= 2 ? prefix : group.names[0]!;
+    group.label = prefix.length >= 2 ? prefix : (group.names[0] ?? group.label);
   }
   return groups;
 }

@@ -17,7 +17,8 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useAbortScope, useExternalConnection } from "@/hooks";
 import {
   IM_PLATFORMS,
   IM_STATUS_LABEL,
@@ -123,7 +124,11 @@ export function ConnectionRow({ connection, botName, onEdit, onLogs }: { connect
   const info = imPlatform(connection.platform);
   const refresh = () => queryClient.invalidateQueries({ queryKey: imKeys.all });
   const [enabled, setEnabled] = useState(connection.enabled);
-  useEffect(() => setEnabled(connection.enabled), [connection.enabled]);
+  const [prevEnabled, setPrevEnabled] = useState(connection.enabled);
+  if (connection.enabled !== prevEnabled) {
+    setPrevEnabled(connection.enabled);
+    setEnabled(connection.enabled);
+  }
   const toggle = useAsyncAction(
     async (next: boolean) => {
       setEnabled(next);
@@ -305,27 +310,21 @@ function PlatformQrLogin({
   const [qr, setQr] = useState<ImQrStartResult | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "wait" | "scanned" | "expired" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
-  const alive = useRef(true);
-  const runId = useRef(0);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-      runId.current += 1;
-    };
-  }, []);
+  const scope = useAbortScope();
+  const activeRun = useRef<AbortController | null>(null);
   const start = async () => {
-    const currentRun = ++runId.current;
+    const controller = scope.fork(activeRun.current);
+    activeRun.current = controller;
     setStatus("loading");
     setError(null);
     try {
       const next = await startImQr({ platform, baseUrl, domain });
-      if (!alive.current || runId.current !== currentRun) return;
+      if (controller.signal.aborted) return;
       setQr(next);
       setStatus("wait");
-      for (let round = 0; round < 60 && alive.current && runId.current === currentRun; round++) {
+      for (let round = 0; round < 60 && !controller.signal.aborted; round++) {
         const result = await pollImQr(next.qrcode);
-        if (!alive.current || runId.current !== currentRun) return;
+        if (controller.signal.aborted) return;
         if (result.status === "confirmed" && result.loginKey) {
           setQr(null);
           setStatus("idle");
@@ -338,9 +337,9 @@ function PlatformQrLogin({
         }
         setStatus(result.status === "scanned" ? "scanned" : "wait");
       }
-      if (alive.current && runId.current === currentRun) setStatus("expired");
+      if (!controller.signal.aborted) setStatus("expired");
     } catch (err) {
-      if (!alive.current || runId.current !== currentRun) return;
+      if (controller.signal.aborted) return;
       setStatus("error");
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -419,22 +418,50 @@ export function ConnectionDialog({
   const me = useQuery<AuthenticatedUser | null>({ queryKey: authKeys.currentUser(), enabled: false });
   const isAdmin = me.data?.role === "admin";
   const roster = useMemo(() => (bots.data ?? []), [bots.data]);
-  const [platform, setPlatform] = useState<ImPlatform | null>(connection?.platform ?? initialPlatform ?? null);
+  const defaultBotId = roster.find((bot) => bot.pinned)?.id ?? roster[0]?.id;
+  const initialPlatformValue = connection?.platform ?? initialPlatform ?? null;
+  const [platform, setPlatform] = useState<ImPlatform | null>(initialPlatformValue);
   const info = platform ? imPlatform(platform) : undefined;
-  const [form, setForm] = useState<FormState | null>(null);
+  const [form, setForm] = useState<FormState | null>(() =>
+    open && info ? initialForm(info, connection, defaultBotId) : null,
+  );
   const [stepsOpen, setStepsOpen] = useState(!connection);
   const [testResult, setTestResult] = useState<ImTestResult | null>(null);
   const [saved, setSaved] = useState<ImConnectionView | null>(null);
+  const [resetEpoch, setResetEpoch] = useState(0);
+  const [prevDialogDeps, setPrevDialogDeps] = useState({
+    open,
+    connection,
+    initialPlatform,
+    info,
+  });
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 机器人列表晚到由下面那个 effect 补默认机器人；这里不依赖 roster，免得列表刷新时覆盖用户正在填的表单
-  useEffect(() => {
-    if (!open || !info) return;
-    setForm(initialForm(info, connection, roster.find((bot) => bot.pinned)?.id ?? roster[0]?.id));
-  }, [open, info, connection]);
-  useEffect(() => {
+  const openOrTargetChanged =
+    prevDialogDeps.open !== open ||
+    prevDialogDeps.connection !== connection ||
+    prevDialogDeps.initialPlatform !== initialPlatform;
+
+  if (openOrTargetChanged) {
+    if (open) {
+      const nextPlatform = initialPlatformValue;
+      const nextInfo = nextPlatform ? imPlatform(nextPlatform) : undefined;
+      setPrevDialogDeps({ open, connection, initialPlatform, info: nextInfo });
+      setPlatform(nextPlatform);
+      setTestResult(null);
+      setSaved(null);
+      setStepsOpen(!connection);
+      setResetEpoch(resetEpoch + 1);
+      if (nextInfo) setForm(initialForm(nextInfo, connection, defaultBotId));
+    } else {
+      setPrevDialogDeps({ open, connection, initialPlatform, info });
+    }
+  } else if (prevDialogDeps.info !== info) {
+    setPrevDialogDeps({ open, connection, initialPlatform, info });
+    if (open && info) setForm(initialForm(info, connection, defaultBotId));
+  } else if (form && !form.agentId && defaultBotId) {
     // 机器人列表晚到：新建时补上默认机器人。
-    if (form && !form.agentId && roster.length) setForm({ ...form, agentId: roster.find((bot) => bot.pinned)?.id ?? roster[0]!.id });
-  }, [roster, form]);
+    setForm({ ...form, agentId: defaultBotId });
+  }
 
   const input = (): ImConnectionInput | null => {
     if (!form || !platform) return null;
@@ -463,14 +490,9 @@ export function ConnectionDialog({
     { errorToast: false },
   );
   const resetTest = test.reset;
-  useEffect(() => {
-    if (!open) return;
-    setPlatform(connection?.platform ?? initialPlatform ?? null);
-    setTestResult(null);
+  useExternalConnection(open ? resetEpoch : null, () => {
     resetTest();
-    setSaved(null);
-    setStepsOpen(!connection);
-  }, [open, connection, initialPlatform, resetTest]);
+  });
 
   const visible = (field: ImField) => !field.showIf || (form?.config[field.showIf.key] ?? "") === field.showIf.equals;
   const reverse = saved ?? (connection?.reversePath ? connection : null);

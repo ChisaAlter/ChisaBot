@@ -118,7 +118,8 @@ export function createImageDims(database: Database) {
       byKind.set(kind, [...(byKind.get(kind) ?? []), key.slice(at + 1)]);
     }
     for (const [kind, ids] of byKind) {
-      const source = SOURCES[kind]!;
+      const source = SOURCES[kind];
+      if (!source) continue;
       let rows: Row[] = [];
       try {
         rows = await sql.unsafe<Row[]>(source.head, [ids.join(",")]);

@@ -27,12 +27,12 @@ import {
 import {
   type ReactNode,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { tryClient } from "@/lib/client";
 import {
   type ActivityItem,
@@ -468,9 +468,12 @@ export function ActivityLog({
     threadId ? { threadId } : {},
   );
   const newestId = activity.steps[0]?.id;
-  useEffect(() => {
-    onNewest?.(newestId);
-  }, [newestId, onNewest]);
+  useExternalConnection(
+    newestId !== undefined ? `step:${newestId}` : "empty",
+    () => {
+      onNewest?.(newestId);
+    },
+  );
   const turns = useMemo(() => groupActivity(activity.steps), [activity.steps]);
   const scroller = useRef<HTMLDivElement>(null);
   const before = useRef<{
@@ -543,13 +546,27 @@ export function ActivityLog({
    * 被合并的命令先展开那一组。记录还没到就等数据来了再找（请求 10 秒内有效）。
    */
   const [jumpTick, setJumpTick] = useState(0);
-  useEffect(() => {
-    const onJump = () => setJumpTick((tick) => tick + 1);
-    window.addEventListener(JUMP_TO_ACTIVITY, onJump);
-    return () => window.removeEventListener(JUMP_TO_ACTIVITY, onJump);
-  }, []);
-  useEffect(() => {
-    void jumpTick;
+  useWindowEvent(JUMP_TO_ACTIVITY, () => setJumpTick((tick) => tick + 1));
+
+  const [jumpDeps, setJumpDeps] = useState({
+    jumpTick,
+    steps: activity.steps,
+    hasMore: activity.hasMore,
+  });
+  const [jumpEpoch, setJumpEpoch] = useState(0);
+  if (
+    jumpDeps.jumpTick !== jumpTick ||
+    jumpDeps.steps !== activity.steps ||
+    jumpDeps.hasMore !== activity.hasMore
+  ) {
+    setJumpDeps({
+      jumpTick,
+      steps: activity.steps,
+      hasMore: activity.hasMore,
+    });
+    setJumpEpoch(jumpEpoch + 1);
+  }
+  useExternalConnection(jumpEpoch, () => {
     const toolCallId = pendingActivityJump();
     const element = scroller.current;
     if (!toolCallId || !element || !activity.steps.length) return;
@@ -590,13 +607,7 @@ export function ActivityLog({
       row.classList.add("is-activity-jump");
       setTimeout(() => row.classList.remove("is-activity-jump"), 1800);
     }
-  }, [
-    jumpTick,
-    activity.steps,
-    activity.hasMore,
-    activity.loadMore,
-    readAnchor,
-  ]);
+  });
 
   if (activity.legacy) return <LegacyActivityLog computerId={computerId} />;
 

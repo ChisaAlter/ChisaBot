@@ -1,6 +1,6 @@
 import { IconEye, IconPhoto } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { IMAGE_PROVIDER_PRESETS, type ImageProviderKind, type ImageSettingsView } from "../../../../shared/chat-files";
 import { type MediaDefaultsSummary, type PersonalImageView, type PersonalVisionView, VISION_PRESET, type VisionSettingsView } from "../../../../shared/media-models";
 import { useAsyncAction } from "@/components/ui/async-action";
@@ -130,13 +130,19 @@ export function ImageDefaultCard({ current }: { current: ImageSettingsView }) {
   const [enabled, setEnabled] = useState(current.enabled);
   const [form, setForm] = useState<ImageForm>({ provider: current.provider, baseUrl: current.baseUrl, model: current.model, editModel: current.editModel, apiKey: "" });
   const [probe, setProbe] = useState<Probe>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
+  const updateForm = (next: ImageForm) => {
+    if (next.provider !== form.provider || next.baseUrl !== form.baseUrl || next.model !== form.model || next.apiKey !== form.apiKey) {
+      setProbe(null);
+    }
+    setForm(next);
+  };
   const valid = validUrl(form.baseUrl) && form.model.trim() !== "";
   const save = useAsyncAction(
     async () => {
+      const hadKey = form.apiKey !== "";
       await saveImageDefault({ enabled, provider: form.provider, baseUrl: form.baseUrl.trim(), model: form.model.trim(), editModel: form.editModel.trim(), ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}) });
       setForm((f) => ({ ...f, apiKey: "" }));
+      if (hadKey) setProbe(null);
       await queryClient.invalidateQueries({ queryKey: mediaKeys.all });
     },
     { errorToast: (error) => error.message },
@@ -174,7 +180,7 @@ export function ImageDefaultCard({ current }: { current: ImageSettingsView }) {
         </SettingRow>
       </div>
       <div className="media-body">
-        <ImageFields form={form} idPrefix="img" keyEmpty={current.keySource === "none"} keyText={note} setForm={setForm} />
+        <ImageFields form={form} idPrefix="img" keyEmpty={current.keySource === "none"} keyText={note} setForm={updateForm} />
         <ProbeLine probe={probe} testId="image-probe" />
         <div className="media-actions">
           <Button disabled={!valid} feedback="test" onClick={() => void test.run()} state={test.state} type="button" variant="outline">
@@ -202,18 +208,24 @@ export function ImagePersonalCard({ current, defaults }: { current: PersonalImag
     apiKey: "",
   });
   const [probe, setProbe] = useState<Probe>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => setProbe(null), [form.provider, form.baseUrl, form.model, form.apiKey]);
+  const updateForm = (next: ImageForm) => {
+    if (next.provider !== form.provider || next.baseUrl !== form.baseUrl || next.model !== form.model || next.apiKey !== form.apiKey) {
+      setProbe(null);
+    }
+    setForm(next);
+  };
   const hasKey = form.apiKey.trim() !== "" || current.keySource === "saved";
   const valid = mode === "default" || (validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey);
   const save = useAsyncAction(
     async () => {
+      const hadKey = form.apiKey !== "";
       await savePersonalImage(
         mode === "default"
           ? { mode }
           : { mode, provider: form.provider, baseUrl: form.baseUrl.trim(), model: form.model.trim(), editModel: form.editModel.trim(), ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}) },
       );
       setForm((f) => ({ ...f, apiKey: "" }));
+      if (hadKey) setProbe(null);
       await queryClient.invalidateQueries({ queryKey: mediaKeys.all });
     },
     { errorToast: (error) => error.message },
@@ -251,7 +263,7 @@ export function ImagePersonalCard({ current, defaults }: { current: PersonalImag
           />
           <span className="im-field-h media-head-note">{mode === "default" ? defaultText : "只有你的机器人用它，费用记在你的密钥上。"}</span>
         </div>
-        {mode === "custom" ? <ImageFields form={form} idPrefix="my-img" keyEmpty={current.keySource === "none"} keyText={keyNote(form.apiKey, current.keySource, current.keyHint, "填你自己的密钥。")} setForm={setForm} /> : null}
+        {mode === "custom" ? <ImageFields form={form} idPrefix="my-img" keyEmpty={current.keySource === "none"} keyText={keyNote(form.apiKey, current.keySource, current.keyHint, "填你自己的密钥。")} setForm={updateForm} /> : null}
         <ProbeLine probe={probe} testId="my-image-probe" />
         <div className="media-actions">
           {mode === "custom" ? (
@@ -294,8 +306,6 @@ const VISION_EXPLAIN = "识图模型只在聊天模型看不了图时用：先�
 
 function useVisionActions(scope: "default" | "personal", mode: string, form: VisionForm, hasKey: boolean, onSave: () => Promise<void>) {
   const [probe, setProbe] = useState<Probe>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => setProbe(null), [form.baseUrl, form.model, form.apiKey]);
   const fieldsOk = validUrl(form.baseUrl) && form.model.trim() !== "" && hasKey;
   const save = useAsyncAction(onSave, { errorToast: (error) => error.message });
   const test = useAsyncAction(
@@ -306,7 +316,7 @@ function useVisionActions(scope: "default" | "personal", mode: string, form: Vis
     },
     { errorToast: false },
   );
-  return { probe, save, test, fieldsOk, valid: mode !== "custom" || fieldsOk };
+  return { probe, clearProbe: () => setProbe(null), save, test, fieldsOk, valid: mode !== "custom" || fieldsOk };
 }
 
 /** 管理员：所有人的识图默认。 */
@@ -315,11 +325,19 @@ export function VisionDefaultCard({ current }: { current: VisionSettingsView }) 
   const [mode, setMode] = useState(current.mode);
   const [form, setForm] = useState<VisionForm>({ baseUrl: current.baseUrl, model: current.model, apiKey: "" });
   const hasKey = form.apiKey.trim() !== "" || current.keySource === "saved";
-  const { probe, save, test, fieldsOk, valid } = useVisionActions("default", mode, form, hasKey, async () => {
+  const { probe, clearProbe, save, test, fieldsOk, valid } = useVisionActions("default", mode, form, hasKey, async () => {
+    const hadKey = form.apiKey !== "";
     await saveVisionDefault(mode === "follow" ? { mode } : { mode, baseUrl: form.baseUrl.trim(), model: form.model.trim(), ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}) });
     setForm((f) => ({ ...f, apiKey: "" }));
+    if (hadKey) clearProbe();
     await queryClient.invalidateQueries({ queryKey: mediaKeys.all });
   });
+  const updateForm = (next: VisionForm) => {
+    if (next.baseUrl !== form.baseUrl || next.model !== form.model || next.apiKey !== form.apiKey) {
+      clearProbe();
+    }
+    setForm(next);
+  };
   return (
     <VisionShell
       actions={{ fieldsOk, save, test, valid }}
@@ -333,7 +351,7 @@ export function VisionDefaultCard({ current }: { current: VisionSettingsView }) 
         { value: "custom", label: "单独的识图模型" },
       ]}
       probe={probe}
-      setForm={setForm}
+      setForm={updateForm}
       setMode={(m) => setMode(m as typeof mode)}
       testId="vision-default"
     />
@@ -346,11 +364,19 @@ export function VisionPersonalCard({ current, defaults }: { current: PersonalVis
   const [mode, setMode] = useState(current.mode);
   const [form, setForm] = useState<VisionForm>({ baseUrl: current.baseUrl, model: current.model, apiKey: "" });
   const hasKey = form.apiKey.trim() !== "" || current.keySource === "saved";
-  const { probe, save, test, fieldsOk, valid } = useVisionActions("personal", mode, form, hasKey, async () => {
+  const { probe, clearProbe, save, test, fieldsOk, valid } = useVisionActions("personal", mode, form, hasKey, async () => {
+    const hadKey = form.apiKey !== "";
     await savePersonalVision(mode !== "custom" ? { mode } : { mode, baseUrl: form.baseUrl.trim(), model: form.model.trim(), ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}) });
     setForm((f) => ({ ...f, apiKey: "" }));
+    if (hadKey) clearProbe();
     await queryClient.invalidateQueries({ queryKey: mediaKeys.all });
   });
+  const updateForm = (next: VisionForm) => {
+    if (next.baseUrl !== form.baseUrl || next.model !== form.model || next.apiKey !== form.apiKey) {
+      clearProbe();
+    }
+    setForm(next);
+  };
   const defaultText = defaults.vision.ready ? `默认：识图模型 ${defaults.vision.model}（只在聊天模型看不了图时描述图片，以及回答 image_inspect 追问）` : "默认：跟随主模型（图片直接发给聊天模型）。";
   return (
     <VisionShell
@@ -366,7 +392,7 @@ export function VisionPersonalCard({ current, defaults }: { current: PersonalVis
         { value: "custom", label: "我自己的" },
       ]}
       probe={probe}
-      setForm={setForm}
+      setForm={updateForm}
       setMode={(m) => setMode(m as typeof mode)}
       testId="vision-personal"
     />

@@ -1,6 +1,6 @@
 import { IconCheck, IconFolder, IconFolderPlus, IconLock, IconLockOpen, IconRefresh, IconShieldHalf, IconTerminal2, IconTrash } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { DeviceView } from "../../../../shared/devices";
 import {
   AGENT_PROFILES,
@@ -64,12 +64,10 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
   const queryClient = useQueryClient();
   const state = useQuery({ ...deviceAgentQueryOptions(device.id), refetchInterval: (query) => (query.state.data?.tasks.some((t) => ["pending_approval", "starting", "running"].includes(t.status)) ? 2000 : false) });
   const base = useMemo(() => (state.data ? pick(state.data.settings) : null), [state.data]);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [edits, setEdits] = useState<Draft | null>(null);
   const [newRoot, setNewRoot] = useState("");
-  useEffect(() => {
-    if (base && !draft) setDraft(base);
-  }, [base, draft]);
-  const dirty = !!draft && !!base && JSON.stringify(draft) !== JSON.stringify(base);
+  const draft = edits ?? base;
+  const dirty = !!edits && !!base && JSON.stringify(edits) !== JSON.stringify(base);
   /* 保存栏亮着时切左栏、后退先确认，和常驻指令页同一套（审查模块 12 第 3 条）。 */
   useUnsavedGuard(dirty);
   const save = useAsyncAction(
@@ -78,7 +76,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
       const settings = await saveDeviceAgent(device.id, draft);
       queryClient.setQueryData(localAgentKeys.device(device.id), (old: typeof state.data) => (old ? { ...old, settings } : old));
       await queryClient.invalidateQueries({ queryKey: localAgentKeys.device(device.id) });
-      setDraft(pick(settings));
+      setEdits(null);
     },
     { errorToast: (error) => `保存失败：${error.message}` },
   );
@@ -103,7 +101,10 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
   const detected = state.data?.settings.detected;
   const sandboxes = detected?.sandboxes ?? {};
   function update(fn: (d: Draft) => Draft) {
-    setDraft((d) => (d ? fn(d) : d));
+    setEdits((d) => {
+      const current = d ?? base;
+      return current ? fn(current) : current;
+    });
   }
   const available = (iso: Isolation) => iso === "none" || iso === "copy" || sandboxes[iso] === true;
   // 完全访问 = 设备的「完全访问」开关（ADR-0009，有时限）；这里存的只有 只读 / 工作区，完全访问到期后回到它。
@@ -351,7 +352,7 @@ export function DeviceAgentsPanel({ device, isThisPc }: { device: DeviceView; is
       ) : null}
 
       <SaveBar show={dirty || save.state !== "idle"}>
-        <Button disabled={save.state === "pending"} onClick={() => setDraft(base)} size="sm" variant="ghost">
+        <Button disabled={save.state === "pending"} onClick={() => setEdits(null)} size="sm" variant="ghost">
           {"放弃"}
         </Button>
         <Button feedback="save" onClick={() => void save.run()} size="sm" state={save.state}>

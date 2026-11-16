@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { useKeptVisibility } from "@/lib/kept-visible";
 import { readSync, SYNC_INTERVAL_MS, type ThreadActivity } from "./bot-thread";
 
@@ -30,72 +32,73 @@ export function useThreadActivity(
   const onScreenRef = useRef(visibility.get());
   const pauseRef = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    if (!threadId) return;
-    let alive = true;
-    let busy = false;
-    /** 服务器没有这个接口（旧版本 / 不是本地会话模式）：不再问。 */
-    let unsupported = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const visible = () =>
-      typeof document === "undefined" || document.visibilityState !== "hidden";
-    const schedule = () => {
-      if (timer) clearTimeout(timer);
-      timer =
-        alive && !unsupported && visible()
-          ? setTimeout(
-              () => void tick(),
-              onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS,
-            )
-          : undefined;
-    };
-    const tick = async () => {
-      if (!alive || busy || unsupported) return;
-      busy = true;
-      try {
-        const reply = await readSync(agentId, threadId);
-        if (!alive) return;
-        if (reply === "unsupported") {
-          unsupported = true;
-          return;
+  useExternalConnection(
+    threadId ? `${agentId}\0${threadId}` : false,
+    (_key, signal) => {
+      if (!threadId) return;
+      let busy = false;
+      /** 服务器没有这个接口（旧版本 / 不是本地会话模式）：不再问。 */
+      let unsupported = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const visible = () =>
+        typeof document === "undefined" || document.visibilityState !== "hidden";
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer =
+          !signal.aborted && !unsupported && visible()
+            ? setTimeout(
+                () => void tick(),
+                onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS,
+              )
+            : undefined;
+      };
+      const tick = async () => {
+        if (signal.aborted || busy || unsupported) return;
+        busy = true;
+        try {
+          const reply = await readSync(agentId, threadId);
+          if (signal.aborted) return;
+          if (reply === "unsupported") {
+            unsupported = true;
+            return;
+          }
+          if (reply?.thread && reply.thread.threadId === threadId)
+            for (const listener of listenersRef.current) listener(reply.thread);
+        } finally {
+          busy = false;
+          schedule();
         }
-        if (reply?.thread && reply.thread.threadId === threadId)
-          for (const listener of listenersRef.current) listener(reply.thread);
-      } finally {
-        busy = false;
-        schedule();
-      }
-    };
-    const now = () => {
-      if (!alive) return;
-      if (timer) clearTimeout(timer);
-      timer = undefined;
-      if (visible()) void tick();
-    };
-    kickRef.current = now;
-    pauseRef.current = () => {
-      if (!busy) schedule();
-    };
-    const onVisibility = () =>
-      visible() ? now() : timer && clearTimeout(timer);
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", now);
-    window.addEventListener("online", now);
-    window.addEventListener("pageshow", now);
-    schedule();
-    return () => {
-      alive = false;
-      kickRef.current = () => {};
-      pauseRef.current = () => {};
-      if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", now);
-      window.removeEventListener("online", now);
-      window.removeEventListener("pageshow", now);
-    };
-  }, [agentId, threadId]);
+      };
+      const now = () => {
+        if (signal.aborted) return;
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        if (visible()) void tick();
+      };
+      kickRef.current = now;
+      pauseRef.current = () => {
+        if (!busy) schedule();
+      };
+      const onVisibility = () =>
+        visible() ? now() : timer && clearTimeout(timer);
+      document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("focus", now);
+      window.addEventListener("online", now);
+      window.addEventListener("pageshow", now);
+      schedule();
+      return () => {
+        kickRef.current = () => {};
+        pauseRef.current = () => {};
+        if (timer) clearTimeout(timer);
+        document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("focus", now);
+        window.removeEventListener("online", now);
+        window.removeEventListener("pageshow", now);
+      };
+    },
+  );
 
-  useEffect(() => {
+  useExternalConnection(objectConnectionKey(visibility), () => {
     const sync = () => {
       const onScreen = visibility.get();
       if (onScreenRef.current === onScreen) return;
@@ -105,7 +108,7 @@ export function useThreadActivity(
     };
     sync();
     return visibility.subscribe(sync);
-  }, [visibility]);
+  });
 
   const onActivity = useCallback(
     (listener: (activity: ThreadActivity) => void) => {

@@ -9,13 +9,14 @@ import {
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useReducer,
   useSyncExternalStore,
 } from "react";
 import { Observable, type Subscription } from "rxjs";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "../conversations/connection-drop";
 import { draftFilesAccepted, draftFilesSubmitting } from "./ui-memory";
 
@@ -304,7 +305,7 @@ export function useConversationSession({
     agent.connectionSnapshot,
   );
   const [, refresh] = useReducer((value) => value + 1, 0);
-  useEffect(() => {
+  useExternalConnection(objectConnectionKey(agent), () => {
     const subscription = agent.subscribe({
       onMessagesChanged: refresh,
       onStateChanged: refresh,
@@ -312,7 +313,7 @@ export function useConversationSession({
       onRunFinalized: refresh,
     });
     return () => subscription.unsubscribe();
-  }, [agent]);
+  });
   return { agent, isReady: true, connectionStatus };
 }
 

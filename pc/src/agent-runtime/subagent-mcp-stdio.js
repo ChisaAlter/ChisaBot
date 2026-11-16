@@ -162,7 +162,7 @@ function startMcpServer(config) {
 
     try {
       if (method === "initialize") {
-        const clientProto = (params && params.protocolVersion) || "2024-11-05";
+        const clientProto = params?.protocolVersion || "2024-11-05";
         writeMsg({
           jsonrpc: "2.0",
           id,
@@ -186,8 +186,8 @@ function startMcpServer(config) {
       }
 
       if (method === "tools/call") {
-        const name = params && params.name;
-        const args = (params && params.arguments) || {};
+        const name = params?.name;
+        const args = params?.arguments || {};
         const actionMap = {
           subagent_list: "list",
           subagent_run: "run",
@@ -237,7 +237,7 @@ function startMcpServer(config) {
       writeMsg({
         jsonrpc: "2.0",
         id,
-        error: { code: -32603, message: err && err.message ? err.message : String(err) },
+        error: { code: -32603, message: err?.message ? err.message : String(err) },
       });
     }
   }
@@ -246,8 +246,9 @@ function startMcpServer(config) {
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
     buffer += chunk;
-    let idx;
-    while ((idx = buffer.indexOf("\n")) >= 0) {
+    for (;;) {
+      const idx = buffer.indexOf("\n");
+      if (idx < 0) break;
       const line = buffer.slice(0, idx).replace(/\r$/, "").trim();
       buffer = buffer.slice(idx + 1);
       if (!line || line.startsWith("Content-Length:")) continue;

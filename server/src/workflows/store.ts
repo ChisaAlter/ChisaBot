@@ -117,7 +117,8 @@ export function createWorkflowStore(database: Database) {
         .insert(workflows)
         .values({ id, ownerUserId, slug: definition.slug, name: definition.name, definition: json(definition), origin })
         .returning();
-      return asWorkflow(row!);
+      if (!row) throw new Error("工作流创建后没有返回记录。");
+      return asWorkflow(row);
     },
     async update(ownerUserId: string, id: string, definition: WorkflowDefinition): Promise<StoredWorkflow | null> {
       const [row] = await database
@@ -176,7 +177,8 @@ export function createWorkflowStore(database: Database) {
           state: json(input.state),
         })
         .returning();
-        return asRun(row!);
+        if (!row) throw new Error("工作流运行创建后没有返回记录。");
+        return asRun(row);
       });
     },
     async getRun(id: string): Promise<StoredRun | null> {

@@ -270,7 +270,7 @@ async function run(width) {
     }),
   });
   const bot = JSON.parse(r.body).agent.id;
-  fs.appendFileSync(`${OUT}/bots.txt`, bot + "\n");
+  fs.appendFileSync(`${OUT}/bots.txt`, `${bot}\n`);
   log(width, "bot", bot);
   await page.goto(`${base}/channel/new?agent=${encodeURIComponent(bot)}`, {
     waitUntil: "domcontentloaded",
@@ -354,7 +354,7 @@ async function run(width) {
             n: Object.keys(rows).length,
             users: Object.entries(rows)
               .filter(([, r]) => r[2])
-              .map(([id, r]) => id.slice(0, 8) + "@" + r[0]),
+              .map(([id, r]) => `${id.slice(0, 8)}@${r[0]}`),
           })),
           null,
           0,

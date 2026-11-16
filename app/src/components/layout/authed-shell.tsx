@@ -3,7 +3,6 @@ import {
   memo,
   useCallback,
   useDeferredValue,
-  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -14,6 +13,7 @@ import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
 import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { lazyPart } from "@/components/ui/lazy-part";
+import { useExternalConnection, useIdleTask } from "@/hooks";
 import { useLanding } from "@/lib/agents/landing";
 import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
@@ -90,17 +90,12 @@ const KeptPanelRail = memo(PanelRail);
 /** 空闲时把设置页的代码块先取好（jank P1-6）：设置路由没有 loader，所以只下载 JS，不发 `/api/settings/*`。 */
 function useIdleSettingsPrefetch(scope: string) {
   const router = useRouter();
-  useEffect(() => {
-    if (scope !== "app") return;
-    const run = () =>
-      void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(run, { timeout: 4000 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const id = window.setTimeout(run, 2000);
-    return () => window.clearTimeout(id);
-  }, [router, scope]);
+  useIdleTask(
+    () => void router.preloadRoute({ to: "/settings" }).catch(() => undefined),
+    scope === "app",
+    4000,
+    scope,
+  );
 }
 
 function ShellFrame({ pathname }: { pathname: string }) {
@@ -218,10 +213,9 @@ function ChatStage({ pathname }: { pathname: string }) {
   const address = switching ? deferredAddress : routeAddress;
   // 地址变了、新对话也换上了（它登记的机器人控件已经到位）才清掉左栏的「正在切过去」，
   // 不然延后渲染那一段旧对话的机器人会跟着又亮起来。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 是路由切换触发器；即使 switching 仍为 false，也要清掉新地址的待切换状态。
-  useEffect(() => {
-    if (!switching) clearPendingBot();
-  }, [switching, pathname]);
+  useExternalConnection(switching ? false : `settled:${pathname}`, () => {
+    clearPendingBot();
+  });
   // `/` 正在跳的那段（最近的对话）正是留着的这段时才先露着；跳向别的机器人 / 空聊天时不露，免得闪一下别人的对话。
   const landing = useLanding();
   const landingChannel =

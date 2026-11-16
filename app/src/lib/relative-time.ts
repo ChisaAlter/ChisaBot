@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useInterval } from "@/hooks";
 
 const RELATIVE_UNITS = [
   { limit: 60_000, divisor: 1_000, unit: "second" },
@@ -31,9 +32,6 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
 /** FIX-09：每分钟刷新相对时间（侧栏「1 小时前」不会卡死）。 */
 export function useRelativeNow(intervalMs = 60_000): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(id);
-  }, [intervalMs]);
+  useInterval(() => setNow(Date.now()), intervalMs);
   return now;
 }

@@ -15,7 +15,7 @@ function attachAgentRuntime(options = {}) {
   const runtime = createAgentRuntime({
     send: (message) => (agent ? agent.sendRaw(message) : false),
     log: options.log,
-    isPaused: () => (isPaused ? isPaused() : false) || !!(agent && agent.device && agent.device.paused),
+    isPaused: () => (isPaused ? isPaused() : false) || !!agent?.device?.paused,
   });
   return {
     runtime,
@@ -29,7 +29,7 @@ function attachAgentRuntime(options = {}) {
       });
       // 紧急停止（网页 / 托盘 / 本机）：本地 agent 任务立刻停。
       nodeAgent.events.on("config", (device) => {
-        if (device && device.paused) runtime.stopAll();
+        if (device?.paused) runtime.stopAll();
       });
       return runtime;
     },

@@ -97,7 +97,13 @@ test("approval request answered locally; ping/pong; set_config sent", async (t) 
 
 test("force local approval on dangerous allow", async (t) => {
   const asked = [];
-  const s = setup(t, { approve: async (req) => (asked.push(req), "deny"), local: () => ({ paused: false, forceLocalApproval: true }) });
+  const s = setup(t, {
+    approve: async (req) => {
+      asked.push(req);
+      return "deny";
+    },
+    local: () => ({ paused: false, forceLocalApproval: true }),
+  });
   const ws = await s.connected;
   await s.waitFor((m) => m.type === "hello");
   ws.send(JSON.stringify({ type: "call", id: "c4", operation: "shell", args: { command: "rm" } }));

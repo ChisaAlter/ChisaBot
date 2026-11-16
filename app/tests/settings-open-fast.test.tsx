@@ -58,7 +58,8 @@ test("hidden chat and panel rail are memoized; idle prefetch has no loader calls
   const shell = src("components/layout/authed-shell.tsx");
   expect(shell).toContain("memo(PanelRail)");
   expect(shell).toContain("memo(ChannelPage)");
-  expect(shell).toContain("requestIdleCallback");
+  expect(shell).toContain("useIdleTask(");
+  expect(src("hooks/use-timers.ts")).toContain("requestIdleCallback");
   expect(src("components/channels/channel-page.tsx")).toContain(
     "const ChannelBody = memo(",
   );

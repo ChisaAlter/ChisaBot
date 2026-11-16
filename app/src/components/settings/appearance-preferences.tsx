@@ -11,10 +11,10 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type DragEvent,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useExternalConnection } from "@/hooks";
 import {
   WallpaperCropDialog,
   type WallpaperCropSource,
@@ -148,12 +148,12 @@ export function AppearancePreferences() {
   const decodeRequestIdRef = useRef(0);
 
   const cropPreviewUrl = cropSession?.previewUrl ?? null;
-  useEffect(() => {
-    if (!cropPreviewUrl?.startsWith("blob:")) return;
-    return () => {
-      URL.revokeObjectURL(cropPreviewUrl);
-    };
-  }, [cropPreviewUrl]);
+  useExternalConnection(
+    cropPreviewUrl?.startsWith("blob:") ? cropPreviewUrl : false,
+    (url) => () => {
+      URL.revokeObjectURL(url);
+    },
+  );
 
   const busy = uploading || cropSaving;
   const hasStoredCustomImage = Boolean(appearance.customWallpaperUrl);

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { createPortal } from "react-dom";
 
 import { MIN_PENDING_MS } from "@/components/ui/async-action";
@@ -142,8 +143,7 @@ export function PageLoaderHost() {
 
   // Focus lands in the card while it is up, on 重试 once there is something to press, and the
   // page behind is inert so Tab cannot wander under the overlay.
-  useEffect(() => {
-    if (!open) return;
+  useExternalConnection(open, () => {
     const root = document.getElementById("root") ?? document.body.firstElementChild;
     const previous = document.activeElement as HTMLElement | null;
     root?.setAttribute("inert", "");
@@ -151,19 +151,19 @@ export function PageLoaderHost() {
       root?.removeAttribute("inert");
       previous?.focus?.();
     };
-  }, [open]);
-  useEffect(() => {
-    if (phase === "error") retryRef.current?.focus();
-    else if (phase) cardRef.current?.focus();
-  }, [phase]);
-  useEffect(() => {
-    if (phase !== "error") return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") view?.onClose?.();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [phase]);
+  });
+  useExternalConnection(phase || false, (activePhase) => {
+    if (activePhase === "error") retryRef.current?.focus();
+    else cardRef.current?.focus();
+  });
+  useWindowEvent(
+    "keydown",
+    phase === "error"
+      ? (event) => {
+          if (event.key === "Escape") view?.onClose?.();
+        }
+      : null,
+  );
 
   if (!current) return null;
   const steps = current.steps ?? [];

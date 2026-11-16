@@ -6,12 +6,13 @@ import {
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react";
 import type { z } from "zod";
+import { useExternalConnection } from "@/hooks";
 import { client } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
 import type { ContinuationView } from "../../../../shared/confirmations";
 import { continuationIsActive } from "./continuation";
 import { useConversationScope } from "./conversation-scope";
@@ -80,10 +81,11 @@ export function useRenderTool<S extends z.ZodType>(tool: {
 }) {
   const registry = useContext(Registry);
   const key = useMemo(() => Symbol(tool.name), [tool.name]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool 的字段已逐项列出，对象本身身份不用算
-  useEffect(
-    () => registry?.register(key, tool as RegisteredToolRenderer),
-    [registry, key, tool.name, tool.match, tool.agentId, tool.render],
+  const connectionKey = registry
+    ? `${objectConnectionKey(registry)}:${tool.name}:${objectConnectionKey(tool.match)}:${tool.agentId === undefined ? "u" : `s:${tool.agentId}`}:${objectConnectionKey(tool.render)}`
+    : false;
+  useExternalConnection(connectionKey, () =>
+    registry?.register(key, tool as RegisteredToolRenderer),
   );
 }
 function DrawTool({

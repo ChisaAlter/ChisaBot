@@ -1,5 +1,3 @@
-import "./channel-new-error-state.fixture";
-
 import {
   afterAll,
   afterEach,

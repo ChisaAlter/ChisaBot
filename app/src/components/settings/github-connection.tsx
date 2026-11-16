@@ -1,6 +1,6 @@
 import { IconBrandGithub, IconDots, IconExternalLink, IconKey, IconPlugConnectedX, IconRefresh } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { GITHUB_NEW_TOKEN_URL, type GithubConnectionView } from "../../../../shared/github";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
@@ -163,6 +163,20 @@ export function GithubConnectionSection() {
 }
 
 export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="im-dialog max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{replacing ? "更换 GitHub 令牌" : "连接 GitHub"}</DialogTitle>
+          <DialogDescription>{"令牌只发往 api.github.com，加密保存；保存后谁也看不到，包括你自己。"}</DialogDescription>
+        </DialogHeader>
+        {open ? <GithubTokenForm onClose={() => onOpenChange(false)} replacing={replacing} /> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GithubTokenForm({ replacing, onClose }: { replacing: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState("");
   const save = useAsyncAction(
@@ -171,76 +185,62 @@ export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boo
       setToken("");
       queryClient.setQueryData(githubKeys.all, next);
       await queryClient.invalidateQueries({ queryKey: ["vault"] });
-      window.setTimeout(() => onOpenChange(false), 700);
+      window.setTimeout(onClose, 700);
     },
     { errorToast: (error) => error.message },
   );
-  const resetSave = save.reset;
-  useEffect(() => {
-    if (!open) return;
-    setToken("");
-    resetSave();
-  }, [open, resetSave]);
   const valid = token.trim().length >= 20 && !/\s/.test(token.trim());
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{replacing ? "更换 GitHub 令牌" : "连接 GitHub"}</DialogTitle>
-          <DialogDescription>{"令牌只发往 api.github.com，加密保存；保存后谁也看不到，包括你自己。"}</DialogDescription>
-        </DialogHeader>
-        <form
-          autoComplete="off"
-          className="flex min-h-0 flex-1 flex-col"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (valid && save.state !== "pending") void save.run();
-          }}
-        >
-          <DialogBody className="im-form mt-2">
-            <ol className="gh-steps">
-              <li>
-                <span className="gh-step-n">{"1"}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="gh-step-t">{"在 GitHub 创建令牌"}</div>
-                  <div className="gh-step-s">{"已预填名称、90 天有效期和 Contents · Issues · Pull requests 读写权限。在「Repository access」里选要给机器人的仓库，然后点 Generate token。"}</div>
-                  <a className="gh-step-link" href={GITHUB_NEW_TOKEN_URL} rel="noopener noreferrer" target="_blank">
-                    <IconBrandGithub className="size-4" />
-                    {"打开 GitHub 创建令牌"}
-                    <IconExternalLink className="size-3.5 opacity-70" />
-                  </a>
-                </div>
-              </li>
-              <li>
-                <span className="gh-step-n">{"2"}</span>
-                <label className="im-field min-w-0 flex-1" htmlFor="github-token">
-                  <span className="gh-step-t">{"粘贴令牌"}</span>
-                  <Input
-                    autoComplete="new-password"
-                    className="font-mono"
-                    data-1p-ignore
-                    id="github-token"
-                    onChange={(event) => setToken(event.target.value)}
-                    placeholder="github_pat_…"
-                    spellCheck={false}
-                    type="password"
-                    value={token}
-                  />
-                  <span className="im-field-h">{"也可以用 Classic 令牌（勾 repo），但 Fine-grained 只开放选中的仓库，更安全。"}</span>
-                </label>
-              </li>
-            </ol>
-          </DialogBody>
-          <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
-              {"取消"}
-            </Button>
-            <Button disabled={!valid} feedback={{ pending: "验证中…", success: "已连接", error: "连接失败" }} state={save.state} type="submit">
-              {replacing ? "更换" : "连接"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <form
+      autoComplete="off"
+      className="flex min-h-0 flex-1 flex-col"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (valid && save.state !== "pending") void save.run();
+      }}
+    >
+      <DialogBody className="im-form mt-2">
+        <ol className="gh-steps">
+          <li>
+            <span className="gh-step-n">{"1"}</span>
+            <div className="min-w-0 flex-1">
+              <div className="gh-step-t">{"在 GitHub 创建令牌"}</div>
+              <div className="gh-step-s">{"已预填名称、90 天有效期和 Contents · Issues · Pull requests 读写权限。在「Repository access」里选要给机器人的仓库，然后点 Generate token。"}</div>
+              <a className="gh-step-link" href={GITHUB_NEW_TOKEN_URL} rel="noopener noreferrer" target="_blank">
+                <IconBrandGithub className="size-4" />
+                {"打开 GitHub 创建令牌"}
+                <IconExternalLink className="size-3.5 opacity-70" />
+              </a>
+            </div>
+          </li>
+          <li>
+            <span className="gh-step-n">{"2"}</span>
+            <label className="im-field min-w-0 flex-1" htmlFor="github-token">
+              <span className="gh-step-t">{"粘贴令牌"}</span>
+              <Input
+                autoComplete="new-password"
+                className="font-mono"
+                data-1p-ignore
+                id="github-token"
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="github_pat_…"
+                spellCheck={false}
+                type="password"
+                value={token}
+              />
+              <span className="im-field-h">{"也可以用 Classic 令牌（勾 repo），但 Fine-grained 只开放选中的仓库，更安全。"}</span>
+            </label>
+          </li>
+        </ol>
+      </DialogBody>
+      <DialogFooter className="mt-4">
+        <Button onClick={onClose} type="button" variant="ghost">
+          {"取消"}
+        </Button>
+        <Button disabled={!valid} feedback={{ pending: "验证中…", success: "已连接", error: "连接失败" }} state={save.state} type="submit">
+          {replacing ? "更换" : "连接"}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }

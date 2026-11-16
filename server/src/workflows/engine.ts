@@ -264,7 +264,7 @@ function clip(text: string, max: number) {
 export function extractJson(text: string): string | null {
   const candidates: string[] = [text.trim()];
   const fence = /```(?:json)?\s*\n([\s\S]*?)```/i.exec(text);
-  if (fence) candidates.push(fence[1]!.trim());
+  if (fence?.[1] !== undefined) candidates.push(fence[1].trim());
   const first = text.search(/[[{]/);
   const last = Math.max(text.lastIndexOf("}"), text.lastIndexOf("]"));
   if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
@@ -292,8 +292,8 @@ function ruleText(rules: ToolRule[]): string[] {
       ].includes(d),
   );
   const allows = rules
-    .filter((r) => r.allow && r.allow.length > 0)
-    .map((r) => r.allow!);
+    .map((r) => r.allow)
+    .filter((allow): allow is string[] => Boolean(allow && allow.length > 0));
   const lines: string[] = [];
   if (allows.length > 0) {
     const allowed = allows.reduce((acc, list) =>
@@ -491,8 +491,14 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
       stepsRun: 0,
       elapsedMs: 0,
       steps: def.steps.map((step): WorkflowStepState => {
-        const role = def.bots.find((b) => b.key === step.bot)!;
-        const botId = bindings[role.key]!;
+        const role = def.bots.find((b) => b.key === step.bot);
+        if (!role)
+          throw new Error(
+            `工作流步骤「${step.id}」引用了未知角色「${step.bot}」。`,
+          );
+        const botId = bindings[role.key];
+        if (!botId)
+          throw new Error(`工作流角色「${role.key}」未绑定机器人。`);
         return {
           id: step.id,
           name: step.name,
@@ -617,15 +623,16 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     };
     active.set(runId, slot);
     // 跨进程原子占位：queued → running 只有一个能抢到。
-    const run = await store.claimRun(runId).catch((error) => {
+    const claimed = await store.claimRun(runId).catch((error) => {
       log(`[workflows] claim failed: ${String(error)}`);
       return null;
     });
-    if (!run) {
+    if (!claimed) {
       active.delete(runId);
       if (slot.rerun) void execute(runId);
       return;
     }
+    const run = claimed;
     const def = run.definition;
     const limits = effectiveConstraints(def);
     const state = run.state;
@@ -686,15 +693,24 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
     let library: LibrarySkill[] | null = null;
     const stages = workflowStages(def.steps);
 
-    const stateOf = (id: string) => state.steps.find((s) => s.id === id)!;
+    const stateOf = (id: string): WorkflowStepState => {
+      const found = state.steps.find((s) => s.id === id);
+      if (!found) throw new Error(`工作流运行缺少步骤状态「${id}」。`);
+      return found;
+    };
 
     async function runStep(
       step: WorkflowStep,
       stageIndex: number,
     ): Promise<void> {
       const st = stateOf(step.id);
-      const role = def.bots.find((b) => b.key === step.bot)!;
-      const botId = run!.bindings[role.key]!;
+      const role = def.bots.find((b) => b.key === step.bot);
+      if (!role)
+        throw new Error(
+          `工作流步骤「${step.id}」引用了未知角色「${step.bot}」。`,
+        );
+      const botId = run.bindings[role.key];
+      if (!botId) throw new Error(`工作流角色「${role.key}」未绑定机器人。`);
       const isLast = stageIndex === stages.length - 1;
       const format: WorkflowOutputFormat | undefined =
         step.output ?? (isLast ? limits.outputFormat : undefined);
@@ -718,7 +734,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           );
           continue;
         }
-        library ??= await deps.librarySkills(run!.ownerUserId).catch(() => []);
+        library ??= await deps.librarySkills(run.ownerUserId).catch(() => []);
         const found = library.find((s) => s.slug === slug);
         if (found)
           skillTexts.push(`### /${slug} ${found.title}\n${found.instructions}`);
@@ -737,7 +753,9 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           ...step.prompt.matchAll(
             /\{\{\s*steps\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g,
           ),
-        ].map((m) => m[1]!),
+        ]
+          .map((m) => m[1])
+          .filter((id): id is string => Boolean(id)),
       );
       const handoff = step.handoff ?? "previous";
       const priorSteps =
@@ -746,18 +764,20 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           : handoff === "all"
             ? stages.slice(0, stageIndex).flat()
             : stageIndex > 0
-              ? stages[stageIndex - 1]!
+              ? (stages[stageIndex - 1] ?? [])
               : [];
-      const handoffBlocks = priorSteps
-        .filter((s) => !referenced.has(s.id) && outputs[s.id])
-        .map((s) => {
-          const ps = stateOf(s.id);
-          return `### 第 ${def.steps.indexOf(s) + 1} 步「${s.name}」（${ps.roleName}）\n${clip(outputs[s.id]!, HANDOFF_CHARS)}`;
-        });
+      const handoffBlocks = priorSteps.flatMap((s) => {
+        const priorOutput = outputs[s.id];
+        if (referenced.has(s.id) || !priorOutput) return [];
+        const ps = stateOf(s.id);
+        return [
+          `### 第 ${def.steps.indexOf(s) + 1} 步「${s.name}」（${ps.roleName}）\n${clip(priorOutput, HANDOFF_CHARS)}`,
+        ];
+      });
 
       const remaining = limits.maxTokens - state.tokens;
       const inputLines = def.inputs.map(
-        (i) => `- ${i.label}：${clip(inputText(run!.inputs[i.key]), 4000)}`,
+        (i) => `- ${i.label}：${clip(inputText(run.inputs[i.key]), 4000)}`,
       );
       const constraintLines = [
         "只完成本步骤，直接给出本步骤的产出；不要寒暄，不要复述要求，不要替后面的步骤做事。",
@@ -797,7 +817,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
               `当前时间：${now().toISOString()}（UTC）`,
               "",
               "## 本步骤要求",
-              renderTemplate(step.prompt, run!.inputs, outputs),
+              renderTemplate(step.prompt, run.inputs, outputs),
               ...(st.feedback ? formatFeedbackSection(st.feedback) : []),
               ...(inputLines.length ? ["", "## 输入参数", ...inputLines] : []),
               ...(skillTexts.length
@@ -842,7 +862,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
             `拦下了被约束禁止的工具调用：${name}`,
             step.id,
           );
-          void audit(run!, "workflow.constraint_blocked", {
+          void audit(run, "workflow.constraint_blocked", {
             step: step.id,
             constraint: "tools",
             tool: name,
@@ -880,14 +900,16 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         text: string,
         forwardedProps?: Record<string, unknown>,
       ) => {
+        const activeConversation = conversation;
+        if (!activeConversation) throw new Error("步骤对话尚未初始化。");
         turnCount += 1;
         const base = state.tokens;
         const inTokens = estimateTokens(text);
         const { replyText } = await deps.runTurn({
-          ownerUserId: run!.ownerUserId,
+          ownerUserId: run.ownerUserId,
           routineId: runId,
           agentId: botId,
-          threadId: conversation!.threadId,
+          threadId: activeConversation.threadId,
           instruction: text,
           initiator: { kind: "workflow", id: initiatorId },
           signal: stepController.signal,
@@ -925,7 +947,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
             threadId: st.threadId,
           };
         } else {
-          conversation = await deps.createConversation(run!.ownerUserId, botId);
+          conversation = await deps.createConversation(run.ownerUserId, botId);
           createdFreshConversation = true;
           st.channelId = conversation.channelId;
           st.threadId = conversation.threadId;
@@ -933,7 +955,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         let forwarded: Record<string, unknown> | undefined;
         if (step.panel && deps.beginPanelSession) {
           const sessionId = await deps
-            .beginPanelSession(run!.ownerUserId, botId)
+            .beginPanelSession(run.ownerUserId, botId)
             .catch(() => null);
           if (sessionId) forwarded = { panelAuthoring: { sessionId } };
           else
@@ -1163,7 +1185,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         // 新建的步骤会话立即软删除以从用户左侧列表隐藏，但底层 threadId 保留在数据库里供 targeted_fix 续跑。
         if (conversation && createdFreshConversation)
           await deps
-            .deleteConversation(run!.ownerUserId, conversation.channelId)
+            .deleteConversation(run.ownerUserId, conversation.channelId)
             .catch((error) =>
               log(`[workflows] conversation cleanup failed: ${String(error)}`),
             );
@@ -1176,7 +1198,8 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         ...(run.startedAt ? {} : { startedAt: now() }),
       });
       for (let index = 0; index < stages.length; index++) {
-        const stage = stages[index]!;
+        const stage = stages[index];
+        if (!stage) continue;
         const pending = stage.filter((s) => {
           const st = stateOf(s.id);
           return (
@@ -1189,7 +1212,8 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         if (controller.signal.aborted) throw controller.signal.reason;
 
         // 审批关卡：阶段第一步要求审批且还没批准，就停在这里。
-        const gate = stage[0]!;
+        const gate = stage[0];
+        if (!gate) continue;
         const gateState = stateOf(gate.id);
         if (
           (gate.approval || gateState.approval?.required) &&
@@ -1271,13 +1295,13 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
         }
       }
 
-      const last = stages[stages.length - 1]!;
-      let output =
-        last.length === 1
-          ? (outputs[last[0]!.id] ?? "")
-          : last
-              .map((s) => `## ${s.name}\n\n${outputs[s.id] ?? ""}`)
-              .join("\n\n");
+      const last = stages[stages.length - 1] ?? [];
+      const singleLast = last.length === 1 ? last[0] : undefined;
+      let output = singleLast
+        ? (outputs[singleLast.id] ?? "")
+        : last
+            .map((s) => `## ${s.name}\n\n${outputs[s.id] ?? ""}`)
+            .join("\n\n");
       if (limits.maxChars && output.length > limits.maxChars) {
         output = `${output.slice(0, limits.maxChars)}\n\n…（按约束截断到 ${limits.maxChars} 字）`;
         await event(

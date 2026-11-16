@@ -138,14 +138,15 @@ export function sniffMatches(name: string, bytes: Uint8Array) {
   }
 }
 
-const escapeText = (text: string) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
+const HTML_TEXT_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
+const escapeText = (text: string) => text.replace(/[&<>]/g, (c) => HTML_TEXT_ESCAPES[c] ?? c);
 /** 把第一个内容正好是旧标题的 <h1> 换成新标题（找不到就原样返回）。 */
 export function syncHeading(html: string, from: string, to: string) {
   const match = /<h1(\s[^>]*)?>([\s\S]*?)<\/h1>/i.exec(html);
   if (!match) return html;
-  const inner = match[2]!.trim();
+  const inner = (match[2] ?? "").trim();
   if (inner !== from && inner !== escapeText(from)) return html;
-  return html.slice(0, match.index) + `<h1${match[1] ?? ""}>${escapeText(to)}</h1>` + html.slice(match.index + match[0].length);
+  return `${html.slice(0, match.index)}<h1${match[1] ?? ""}>${escapeText(to)}</h1>${html.slice(match.index + match[0].length)}`;
 }
 
 /** 每个 /p/ 响应都带的头。 */
@@ -309,7 +310,8 @@ export function createPages(
   // The caller owns the page row lock for the transaction, including the read used to build edits.
   async function addVersion(query: PageSql, pageId: string, input: { title: string; html: string; css?: string | null; note?: string | null }) {
     const [next] = await query.unsafe<{ n: number }[]>("SELECT coalesce(max(version), 0) + 1 AS n FROM chisabot_page_versions WHERE page_id = $1", [pageId]);
-    const n = Number(next!.n);
+    if (!next) throw new Error("无法生成页面版本号。");
+    const n = Number(next.n);
     await query.unsafe("INSERT INTO chisabot_page_versions (page_id, version, title, html, css, note) VALUES ($1, $2, $3, $4, $5, $6)", [
       pageId,
       n,
@@ -338,7 +340,7 @@ export function createPages(
         [id, owner, input.agentId ?? null, newSlug(), title, description, input.published ?? true],
       );
       await addVersion(transaction, id, { title, html: input.html, css: input.css ?? null, note: "创建" });
-      return pageView((await row(owner, id, transaction))!);
+      return pageView(await mustRow(owner, id, transaction));
     });
   }
 
@@ -370,7 +372,7 @@ export function createPages(
       const changed = html !== current.html || (css ?? null) !== (current.css ?? null) || title !== current.title;
       if (changed) await addVersion(transaction, page.id, { title, html, css, note: input.note ?? null });
       else await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
-      return { page: pageView((await row(owner, page.id, transaction))!), changed };
+      return { page: pageView(await mustRow(owner, page.id, transaction)), changed };
     });
   }
 
@@ -381,14 +383,14 @@ export function createPages(
       if (!old) throw new PageError(`没有第 ${n} 版（只保留最近 ${PAGE_LIMITS.versionsKept} 版）。`);
       if (n === page.current_version) return pageView(page);
       await addVersion(transaction, page.id, { title: old.title, html: old.html, css: old.css, note: `恢复到第 ${n} 版` });
-      return pageView((await row(owner, page.id, transaction))!);
+      return pageView(await mustRow(owner, page.id, transaction));
     });
   }
 
   async function setPublished(owner: string, ref: string, published: boolean) {
     const page = await mustRow(owner, ref);
     await sql.unsafe("UPDATE chisabot_pages SET published = $2, updated_at = now() WHERE id = $1", [page.id, published]);
-    return pageView((await row(owner, page.id))!);
+    return pageView(await mustRow(owner, page.id));
   }
 
   /** 删除：先软删（链接立刻失效），24 小时内可撤销，之后连素材一起清掉。 */
@@ -414,13 +416,15 @@ export function createPages(
         "SELECT count(*)::int AS n, coalesce(sum(bytes), 0)::bigint AS total FROM chisabot_page_assets WHERE page_id = $1 AND name <> $2",
         [page.id, name],
       );
-      if (Number(usage!.n) >= PAGE_LIMITS.assetsPerPage) throw new PageError(`一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`);
-      if (Number(usage!.total) + bytes.byteLength > PAGE_LIMITS.pageAssetBytes) throw new PageError("这个页面的素材加起来超过 40MB 了。");
+      if (Number(usage?.n ?? 0) >= PAGE_LIMITS.assetsPerPage) throw new PageError(`一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`);
+      if (Number(usage?.total ?? 0) + bytes.byteLength > PAGE_LIMITS.pageAssetBytes) throw new PageError("这个页面的素材加起来超过 40MB 了。");
       const ext = name.slice(name.lastIndexOf(".") + 1);
+      const contentType = PAGE_ASSET_TYPES[ext];
+      if (!contentType) throw new PageError(`不支持的素材类型「.${ext || "?"}」。`);
       await transaction.unsafe(
         `INSERT INTO chisabot_page_assets (page_id, name, type, bytes, data) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (page_id, name) DO UPDATE SET type = EXCLUDED.type, bytes = EXCLUDED.bytes, data = EXCLUDED.data, created_at = now()`,
-        [page.id, name, PAGE_ASSET_TYPES[ext]!, bytes.byteLength, Buffer.from(bytes)],
+        [page.id, name, contentType, bytes.byteLength, Buffer.from(bytes)],
       );
       await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
       return name;
@@ -458,7 +462,7 @@ export function createPages(
         }
         let name = source.name || new URL(source.url).pathname.split("/").pop() || "image";
         if (!/\.[a-z0-9]+$/i.test(name)) {
-          const ext = Object.entries(PAGE_ASSET_TYPES).find(([, type]) => fetched.contentType.startsWith(type.split(";")[0]!))?.[0];
+          const ext = Object.entries(PAGE_ASSET_TYPES).find(([, type]) => fetched.contentType.startsWith(type.split(";")[0] ?? type))?.[0];
           name = `${name}.${ext ?? "bin"}`;
         }
         saved.push(await putAsset(owner, ref, name, fetched.bytes));

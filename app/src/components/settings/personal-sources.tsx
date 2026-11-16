@@ -12,8 +12,9 @@ import {
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
+import { useWindowEvent } from "@/hooks";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   type EmailConnectionInput,
@@ -81,19 +82,14 @@ export function PersonalSourcesSection() {
   const [briefMarkdown, setBriefMarkdown] = useState<string | null>(null);
   const [briefModalTitle, setBriefModalTitle] = useState("每日晨报卡片预览");
   const [cityInput, setCityInput] = useState("");
+  const serverCity = status.data?.weatherCity;
+  const [prevServerCity, setPrevServerCity] = useState<string | undefined>(undefined);
+  if (serverCity !== prevServerCity) {
+    setPrevServerCity(serverCity);
+    if (serverCity) setCityInput(serverCity);
+  }
 
-  useEffect(() => {
-    if (status.data?.weatherCity) {
-      setCityInput(status.data.weatherCity);
-    }
-  }, [status.data?.weatherCity]);
-
-  useEffect(() => {
-    if (!briefMarkdown) return;
-    const onQuote = () => setBriefMarkdown(null);
-    window.addEventListener("chisabot-quote", onQuote);
-    return () => window.removeEventListener("chisabot-quote", onQuote);
-  }, [briefMarkdown]);
+  useWindowEvent("chisabot-quote", briefMarkdown ? () => setBriefMarkdown(null) : null);
 
   const generateBrief = useAsyncAction(
     async () => {
@@ -896,13 +892,14 @@ function EmailConnectDialog({
   const [smtpPort, setSmtpPort] = useState(String(connection?.smtpPort ?? 465));
   const [smtpUser, setSmtpUser] = useState(connection?.smtpUser ?? "");
   const [smtpPassword, setSmtpPassword] = useState("");
-
-  useEffect(() => {
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (!open) {
       setPassword("");
       setSmtpPassword("");
     }
-  }, [open]);
+  }
 
   function setSmtpPreset(domain: string) {
     const preset = SMTP_PRESETS[domain];

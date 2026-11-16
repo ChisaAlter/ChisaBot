@@ -11,7 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import {
   PageEmpty,
   PageSection,
@@ -319,10 +319,12 @@ function ScheduleRow({
     queryClient.invalidateQueries({ queryKey: scheduleKeys.all });
   const ended = s.status === "done" || s.status === "cancelled";
   const [on, setOn] = useState(s.status === "active");
+  const [prevStatus, setPrevStatus] = useState(s.status);
   const [toggling, setToggling] = useState(false);
-  useEffect(() => {
+  if (prevStatus !== s.status) {
+    setPrevStatus(s.status);
     setOn(s.status === "active");
-  }, [s.status]);
+  }
   const run = useAsyncAction(
     async () => {
       await runScheduleNow(s.id);

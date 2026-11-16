@@ -1,4 +1,5 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
+import { useWindowEvent } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -103,12 +104,7 @@ function useLastPending(pending: Pending | null): Pending | null {
 export function ConfirmHost() {
   const pending = useSyncExternalStore(subscribe, snapshot, snapshot);
   const open = pending !== null;
-  useEffect(() => {
-    if (!open) return;
-    window.addEventListener("keydown", consumeConfirmEscape, true);
-    return () =>
-      window.removeEventListener("keydown", consumeConfirmEscape, true);
-  }, [open]);
+  useWindowEvent("keydown", open ? consumeConfirmEscape : null, true);
   // 关闭动画期间 pending 已经是 null，所以记住最后一个。
   const last = useLastPending(pending);
   return (

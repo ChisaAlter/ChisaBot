@@ -46,7 +46,7 @@ let bot;
 let thread;
 const get = async (p) => {
   const r = await api(p);
-  assert.equal(r.status, 200, p + " " + r.body.slice(0, 200));
+  assert.equal(r.status, 200, `${p} ${r.body.slice(0, 200)}`);
   return JSON.parse(r.body);
 };
 const send = async (text) => {
@@ -60,7 +60,7 @@ const until = async (fn, label, timeout = 45000) => {
     if (await fn()) return;
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error("Timeout: " + label);
+  throw new Error(`Timeout: ${label}`);
 };
 const inbox = () => get(`/api/conversations/threads/${thread}/inbox`);
 const messages = async () => {
@@ -86,11 +86,11 @@ const idle = async () => {
   );
 };
 const shot = async (name) =>
-  page.screenshot({ path: path.join(out, name + ".png") });
+  page.screenshot({ path: path.join(out, `${name}.png`) });
 try {
   await until(
     () =>
-      context.request.get(base + "/api/version").then(
+      context.request.get(`${base}/api/version`).then(
         (r) => r.ok(),
         () => false,
       ),
@@ -139,7 +139,7 @@ try {
   });
   await page.locator('[aria-label="消息"]:visible').waitFor({ timeout: 45000 });
   const runTag = crypto.randomUUID().replaceAll("-", "");
-  await send("EXEC_ONCE RUN_TAG=" + runTag + " 请只执行一次原命令。");
+  await send(`EXEC_ONCE RUN_TAG=${runTag} 请只执行一次原命令。`);
   await page.waitForURL((u) => /\/channel\/(?!new)/.test(u.pathname), {
     timeout: 15000,
   });

@@ -5,19 +5,17 @@
  *    窗口透明，chrome.css 把整页裁成圆角；dwm = Windows 11，圆角和阴影由系统画，页面铺满到边。
  *  - [data-win="minimize|close"] 按钮：只控制本窗口（主进程核对来源）。
  */
-(function () {
-  var match = /[?&]frame=(dwm|clip)(?:&|$)/.exec(location.search);
+(() => {
+  const match = /[?&]frame=(dwm|clip)(?:&|$)/.exec(location.search);
   document.documentElement.dataset.frame = match ? match[1] : "dwm";
   // macOS 用原生红绿灯（titleBarStyle=hiddenInset，window-chrome.js）：本页 .win-ctrl 按钮按 data-os 隐藏。
   document.documentElement.dataset.os = /Mac/.test(navigator.userAgent) ? "mac" : "";
-  document.addEventListener("DOMContentLoaded", function () {
-    var buttons = document.querySelectorAll("[data-win]");
-    for (var i = 0; i < buttons.length; i++) {
-      (function (button) {
-        button.addEventListener("click", function () {
-          if (window.chisa) window.chisa.invoke("window:local", button.dataset.win).catch(function () {});
-        });
-      })(buttons[i]);
+  document.addEventListener("DOMContentLoaded", () => {
+    const buttons = document.querySelectorAll("[data-win]");
+    for (const button of buttons) {
+      button.addEventListener("click", () => {
+        if (window.chisa) window.chisa.invoke("window:local", button.dataset.win).catch(() => {});
+      });
     }
   });
 })();

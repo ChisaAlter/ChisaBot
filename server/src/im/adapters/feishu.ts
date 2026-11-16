@@ -4,7 +4,16 @@ import {
   type FeishuFrame,
   headerOf,
 } from "../feishu-proto";
-import { errorText, readJson } from "../text";
+import {
+  asJsonArray,
+  asJsonRecord,
+  asString,
+  errorText,
+  type JsonRecord,
+  parseJsonRecord,
+  readJson,
+  readJsonField,
+} from "../text";
 import type { AdapterContext, ImInbound, ImReply, TestResult } from "../types";
 import { dataBytes, LoopAdapter } from "./base";
 
@@ -46,7 +55,9 @@ export async function feishuTenantToken(
   );
   const body = await readJson(response, "获取飞书 tenant_access_token");
   if (body.code !== 0 || !body.tenant_access_token)
-    throw new Error(`飞书凭据无效：${body.code} ${body.msg ?? ""}`.trim());
+    throw new Error(
+      `飞书凭据无效：${String(body.code ?? "")} ${String(body.msg ?? "")}`.trim(),
+    );
   return {
     token: String(body.tenant_access_token),
     expiresAt: Date.now() + (Number(body.expire) || 7200) * 1000,
@@ -64,56 +75,56 @@ export async function feishuBotInfo(
   const body = await readJson(response, "读取飞书机器人信息");
   if (body.code !== 0)
     throw new Error(
-      `读取飞书机器人信息失败：${body.code} ${body.msg ?? ""}（应用是否已添加「机器人」能力并发布？）`,
+      `读取飞书机器人信息失败：${String(body.code ?? "")} ${String(body.msg ?? "")}（应用是否已添加「机器人」能力并发布？）`,
     );
+  const bot = asJsonRecord(body.bot);
   return {
-    openId: String(body.bot?.open_id ?? ""),
-    name: String(body.bot?.app_name ?? ""),
+    openId: String(bot?.open_id ?? ""),
+    name: String(bot?.app_name ?? ""),
   };
 }
 
 /** 富文本（post）内容 → 文字。 */
-// biome-ignore lint/suspicious/noExplicitAny: 飞书 post 富文本载荷无官方类型，按开放文档结构取用
-function postText(content: any): string {
-  const body = content?.zh_cn ?? content?.en_us ?? content?.ja_jp ?? content;
-  // biome-ignore lint/suspicious/noExplicitAny: 同上，逐段落元素结构不一
-  const rows: any[] = Array.isArray(body?.content) ? body.content : [];
+function postText(content: unknown): string {
+  const root = asJsonRecord(content);
+  const body =
+    asJsonRecord(root?.zh_cn) ??
+    asJsonRecord(root?.en_us) ??
+    asJsonRecord(root?.ja_jp) ??
+    root;
+  const rows = asJsonArray(body?.content);
   const lines = rows.map((row) =>
-    (Array.isArray(row) ? row : [])
-      // biome-ignore lint/suspicious/noExplicitAny: 段落元素按 tag 分派，形状随 tag 变化
-      .map((item: any) =>
-        item.tag === "text" || item.tag === "md"
-          ? item.text
-          : item.tag === "a"
-            ? `${item.text}（${item.href}）`
-            : item.tag === "at"
-              ? `@${item.user_name ?? ""}`
-              : "",
-      )
+    asJsonArray(row)
+      .map((rawItem) => {
+        const item = asJsonRecord(rawItem);
+        if (!item) return "";
+        if (item.tag === "text" || item.tag === "md")
+          return asString(item.text) ?? "";
+        if (item.tag === "a")
+          return `${String(item.text ?? "")}（${String(item.href ?? "")}）`;
+        if (item.tag === "at") return `@${String(item.user_name ?? "")}`;
+        return "";
+      })
       .join(""),
   );
-  return [body?.title, ...lines].filter(Boolean).join("\n");
+  return [asString(body?.title), ...lines].filter(Boolean).join("\n");
 }
 
 /** im.message.receive_v1 事件 → ImInbound。 */
 export function parseFeishuMessage(
-  // biome-ignore lint/suspicious/noExplicitAny: 飞书 im.message.receive_v1 事件载荷无官方类型
-  event: any,
+  rawEvent: unknown,
   botOpenId: string | null,
 ): ImInbound | null {
-  const message = event?.message;
+  const event = asJsonRecord(rawEvent);
+  const message = asJsonRecord(event?.message);
   if (!message?.message_id) return null;
-  if (event.sender?.sender_type && event.sender.sender_type !== "user")
-    return null;
-  // biome-ignore lint/suspicious/noExplicitAny: message.content 是按 msg_type 变化的 JSON 字符串
-  let content: any = {};
+  const sender = asJsonRecord(event?.sender);
+  if (sender?.sender_type && sender.sender_type !== "user") return null;
+  let content: JsonRecord = {};
   try {
-    content = JSON.parse(message.content ?? "{}");
+    content = parseJsonRecord(asString(message.content) ?? "{}");
   } catch {}
-  // biome-ignore lint/suspicious/noExplicitAny: mentions 元素形状按官方文档字段取用
-  const mentions: any[] = Array.isArray(message.mentions)
-    ? message.mentions
-    : [];
+  const mentions = asJsonArray(message.mentions);
   let text = "";
   const attachments: ImInbound["attachments"] = [];
   if (message.message_type === "text") text = String(content.text ?? "");
@@ -126,16 +137,23 @@ export function parseFeishuMessage(
   else if (message.message_type === "media")
     attachments.push({ kind: "video" });
   let mentioned = message.chat_type === "p2p";
-  for (const mention of mentions) {
-    const isBot = botOpenId ? mention.id?.open_id === botOpenId : false;
+  for (const rawMention of mentions) {
+    const mention = asJsonRecord(rawMention);
+    if (!mention) continue;
+    const isBot = botOpenId
+      ? readJsonField(mention.id, "open_id") === botOpenId
+      : false;
     if (isBot) mentioned = true;
-    text = text.split(mention.key).join(isBot ? "" : `@${mention.name ?? ""}`);
+    const key = asString(mention.key);
+    if (key)
+      text = text
+        .split(key)
+        .join(isBot ? "" : `@${String(mention.name ?? "")}`);
   }
   // 不知道机器人自己的 open_id 时：群里有任何 @ 都当作 @ 了机器人（飞书默认只把 @ 机器人的群消息推过来）。
   if (!botOpenId && mentions.length) mentioned = true;
-  const userId = String(
-    event.sender?.sender_id?.open_id ?? event.sender?.sender_id?.user_id ?? "",
-  );
+  const senderId = asJsonRecord(sender?.sender_id);
+  const userId = String(senderId?.open_id ?? senderId?.user_id ?? "");
   const group = message.chat_type !== "p2p";
   return {
     messageId: String(message.message_id),
@@ -199,15 +217,16 @@ export class FeishuAdapter extends LoopAdapter {
       },
     );
     const body = await readJson(response, "获取飞书长连接地址");
-    if (body.code !== 0 || !body.data?.URL)
+    const data = asJsonRecord(body.data);
+    if (body.code !== 0 || !data?.URL)
       throw new Error(
-        `获取飞书长连接地址失败：${body.code} ${body.msg ?? ""}`.trim(),
+        `获取飞书长连接地址失败：${String(body.code ?? "")} ${String(body.msg ?? "")}`.trim(),
       );
-    const url = String(body.data.URL);
+    const url = String(data.URL);
     const query = new URL(url).searchParams;
     this.serviceId = Number(query.get("service_id")) || 0;
     this.pingInterval =
-      (Number(body.data.ClientConfig?.PingInterval) || 120) * 1000;
+      (Number(readJsonField(data.ClientConfig, "PingInterval")) || 120) * 1000;
     await this.openSocket(url, {
       binary: true,
       onOpen: () => {
@@ -250,7 +269,9 @@ export class FeishuAdapter extends LoopAdapter {
     if (frame.method === 0) {
       if (type === "pong" && frame.payload) {
         try {
-          const config = JSON.parse(new TextDecoder().decode(frame.payload));
+          const config = parseJsonRecord(
+            new TextDecoder().decode(frame.payload),
+          );
           if (Number(config.PingInterval))
             this.pingInterval = Number(config.PingInterval) * 1000;
         } catch {}
@@ -284,8 +305,10 @@ export class FeishuAdapter extends LoopAdapter {
     }
     let code = 200;
     try {
-      const event = JSON.parse(new TextDecoder().decode(payload));
-      const eventType = event.header?.event_type ?? event.event?.type;
+      const event = parseJsonRecord(new TextDecoder().decode(payload));
+      const eventType =
+        readJsonField(event.header, "event_type") ??
+        readJsonField(event.event, "type");
       if (eventType === "im.message.receive_v1") {
         const inbound = parseFeishuMessage(event.event, this.botOpenId);
         if (inbound) this.emit(inbound);
@@ -321,13 +344,14 @@ export class FeishuAdapter extends LoopAdapter {
     );
     const body = await readJson(response, "飞书回复");
     if (body.code !== 0)
-      throw new Error(`飞书回复失败：${body.code} ${body.msg ?? ""}`.trim());
+      throw new Error(
+        `飞书回复失败：${String(body.code ?? "")} ${String(body.msg ?? "")}`.trim(),
+      );
   }
 
   async send(reply: ImReply): Promise<undefined> {
     const messageId = String(
-      (reply.inbound.reply as { messageId?: string }).messageId ??
-        reply.inbound.messageId,
+      reply.inbound.reply.messageId ?? reply.inbound.messageId,
     );
     for (const chunk of reply.chunks) {
       try {
@@ -372,7 +396,7 @@ export async function testFeishu(ctx: AdapterContext): Promise<TestResult> {
     if (body.code !== 0)
       return {
         ok: false,
-        detail: `凭据正确，但长连接不可用：${body.code} ${body.msg ?? ""}`,
+        detail: `凭据正确，但长连接不可用：${String(body.code ?? "")} ${String(body.msg ?? "")}`,
       };
     return {
       ok: true,

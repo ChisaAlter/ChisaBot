@@ -1,5 +1,6 @@
 import { useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useAnimationFrame } from "@/hooks";
 
 /**
  * Types a conversation's name in as it arrives, so the line reads as learning something rather than
@@ -31,38 +32,43 @@ export type TypedReveal = {
 
 export function useTypedReveal(summary: string | undefined): TypedReveal {
   const reduce = useReducedMotion();
-  const previous = useRef(summary);
-  const firstRun = useRef(true);
-  const [typed, setTyped] = useState<number | null>(null);
+  const [prevSummary, setPrevSummary] = useState(summary);
+  const [reveal, setReveal] = useState<{
+    text: string;
+    typed: number;
+    startedAt: number;
+  } | null>(null);
 
-  useEffect(() => {
-    const from = previous.current;
-    previous.current = summary;
+  if (prevSummary !== summary) {
+    setPrevSummary(summary);
     // A row that arrives already named is not a naming.
-    const mounting = firstRun.current;
-    firstRun.current = false;
-    if (mounting || !summary || !isNaming(from, summary)) return;
+    if (summary && isNaming(prevSummary, summary) && !reduce) {
+      setReveal({ text: summary, typed: 0, startedAt: performance.now() });
+    } else if (reveal !== null) {
+      setReveal(null);
+    }
+  } else if (reduce && reveal !== null) {
     // The gentler version of a reveal made entirely of movement is no movement.
-    if (reduce) return;
+    setReveal(null);
+  }
 
-    let frame = 0;
-    const started = performance.now();
-    const total = typingSeconds(summary.length) * 1000;
+  useAnimationFrame((now) => {
+    if (!reveal) return;
+    const total = typingSeconds(reveal.text.length) * 1000;
     // Linear, because this is constant motion. An eased typewriter reads as a machine hesitating.
-    const step = (now: number) => {
-      const progress = Math.min((now - started) / total, 1);
-      setTyped(Math.round(progress * summary.length));
-      if (progress < 1) {
-        frame = requestAnimationFrame(step);
-        return;
+    const progress =
+      total <= 0 ? 1 : Math.min(Math.max(0, (now - reveal.startedAt) / total), 1);
+    if (progress < 1) {
+      const nextTyped = Math.round(progress * reveal.text.length);
+      if (nextTyped !== reveal.typed) {
+        setReveal({ ...reveal, typed: nextTyped });
       }
-      // Null, not the full length, so later renders draw the string rather than re-slicing it.
-      setTyped(null);
-    };
-    frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
-  }, [summary, reduce]);
+      return;
+    }
+    // Null, not the full length, so later renders draw the string rather than re-slicing it.
+    setReveal(null);
+  }, reveal !== null);
 
-  if (typed === null || !summary) return { text: summary, typing: false };
-  return { text: summary.slice(0, typed), typing: true };
+  if (reveal === null || !summary) return { text: summary, typing: false };
+  return { text: summary.slice(0, reveal.typed), typing: true };
 }

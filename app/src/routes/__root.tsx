@@ -3,7 +3,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { MotionConfig } from "motion/react";
-import { useEffect } from "react";
+import { useDocumentEvent } from "@/hooks";
 import { NotFoundRoute } from "@/components/not-found";
 import { StartupFailure } from "@/components/startup-status";
 import { SkyBackground } from "@/components/sky-background";
@@ -77,8 +77,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
  * standing up a router.
  */
 export function useUnclaimedDropGuard() {
-  useEffect(() => {
-    const refuse = (event: DragEvent) => {
+  const refuse = (event: DragEvent) => {
       // Somebody in the tree already claimed it: the composer's container, or any drop target
       // added later. Returning here is what keeps this guard from becoming the thing that breaks
       // them.
@@ -118,13 +117,8 @@ export function useUnclaimedDropGuard() {
      * carries the file, and a browser that never saw a prevented `dragover` — a drop that arrived
      * some other way, or a `dragover` an extension stopped — would still navigate on it.
      */
-    document.addEventListener("dragover", refuse);
-    document.addEventListener("drop", refuse);
-    return () => {
-      document.removeEventListener("dragover", refuse);
-      document.removeEventListener("drop", refuse);
-    };
-  }, []);
+  useDocumentEvent("dragover", refuse);
+  useDocumentEvent("drop", refuse);
 }
 
 function RootComponent() {

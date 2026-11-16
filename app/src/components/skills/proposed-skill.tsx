@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ContinuationStatus } from "@/components/chat/continuation-status";
 import { Badge, GalleryFrame } from "@/components/gallery/frame";
 import { Button } from "@/components/ui/button";
+import { useExternalConnection } from "@/hooks";
 import { continuationError } from "@/lib/chat/continuation";
 import type { SkillFormValues } from "@/lib/skills/form";
 import {
@@ -240,11 +241,11 @@ function Unwritable({
    * would answer the same tool call again on each of them.
    */
   const answered = useRef(false);
-  useEffect(() => {
+  useExternalConnection(true, () => {
     if (answered.current) return;
     answered.current = true;
     void answer(respond, skillCardAnswer.unwritable(problems));
-  }, [problems, respond]);
+  });
 
   return (
     <GalleryFrame

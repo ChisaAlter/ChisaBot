@@ -1,7 +1,9 @@
 import type { AbstractAgent } from "@ag-ui/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
 import type { ThreadActivity } from "./bot-thread";
 import { createJoinBackoff } from "./join-backoff";
 import { restoreQueue } from "./thread-inbox";
@@ -36,7 +38,8 @@ export function mergeSnapshot<T extends Msg>(
   const index = new Map(result.map((message, at) => [message.id, at]));
   let changed = false;
   for (let at = 0; at < snapshot.length; at++) {
-    const message = snapshot[at]!;
+    const message = snapshot[at];
+    if (!message) continue;
     const existing = index.get(message.id);
     if (existing !== undefined) {
       if (
@@ -50,7 +53,8 @@ export function mergeSnapshot<T extends Msg>(
     }
     let insertAt = 0;
     for (let back = at - 1; back >= 0; back--) {
-      const position = index.get(snapshot[back]!.id);
+      const prev = snapshot[back];
+      const position = prev ? index.get(prev.id) : undefined;
       if (position !== undefined) {
         insertAt = position + 1;
         break;
@@ -307,9 +311,10 @@ export function tailReplayPatch<T extends TailMsg>(
           event.toolCallId !== undefined &&
           message.toolCallId === event.toolCallId),
     );
-    if (at === -1) return;
+    const target = at >= 0 ? messages[at] : undefined;
+    if (!target) return;
     const next = [...messages];
-    next[at] = { ...next[at]!, content: event.content };
+    next[at] = { ...target, content: event.content };
     return { messages: next, stopPropagation: true };
   }
   return;
@@ -364,11 +369,13 @@ export function useConversationSync(
     idleJoinInFlight: () => false,
     yieldForSend: async () => {},
   });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: skipReconcile 只在接入时取一次；中途换值不该拆掉整条同步重建
-  useEffect(() => {
-    if (!threadId) return;
-    let alive = true;
-    let last: ThreadActivity | null = null;
+  useExternalConnection(
+    threadId
+      ? `${threadId}:${objectConnectionKey(agent)}:${objectConnectionKey(connect)}:${objectConnectionKey(onActivity)}:${objectConnectionKey(queryClient)}:${liveTail ? 1 : 0}:${snapshotContinuations ? 1 : 0}:${objectConnectionKey(suppressConnect)}`
+      : false,
+    (_key, signal) => {
+      if (!threadId) return;
+      let last: ThreadActivity | null = null;
     /** 下一次同步只记基线（刚打开 / 本机刚跑完一轮或刚接完）。 */
     let rebase = true;
     let connecting = false;
@@ -419,7 +426,7 @@ export function useConversationSync(
             deferTimer = undefined;
             const next = deferred;
             deferred = null;
-            if (alive && next) join(next.mode, next.running);
+            if (!signal.aborted && next) join(next.mode, next.running);
           }, wait);
         return true;
       }
@@ -480,12 +487,12 @@ export function useConversationSync(
     const reconcile = () => {
       if (reconcileTimer) clearTimeout(reconcileTimer);
       reconcileTimer = setTimeout(async () => {
-        if (!alive || agent.isRunning || connecting) return;
+        if (signal.aborted || agent.isRunning || connecting) return;
         // 增量读（readStoredRows）：每轮结束后的这一次核对不再拉整份，只拉变了的尾部；请求仍是原来的 fetch。
         const rows = await readStoredRows(threadId, undefined, (path) =>
           tryClient(path),
         ).catch(() => null);
-        if (!alive || !rows || agent.isRunning || connecting) return;
+        if (signal.aborted || !rows || agent.isRunning || connecting) return;
         const decision = reconcileDecision(
           agent.messages as never,
           rows as readonly Role[],
@@ -572,7 +579,7 @@ export function useConversationSync(
       },
     });
     const off = onActivity((activity) => {
-      if (!alive || activity.threadId !== threadId) return;
+      if (signal.aborted || activity.threadId !== threadId) return;
       const quietFor = Date.now() - lastActivityAt;
       lastActivityAt = Date.now();
       const seenBefore = seenSeq;
@@ -631,21 +638,12 @@ export function useConversationSync(
         join("merge", activity.running);
     });
     return () => {
-      alive = false;
       if (reconcileTimer) clearTimeout(reconcileTimer);
       if (deferTimer) clearTimeout(deferTimer);
       off();
       subscription.unsubscribe();
     };
-  }, [
-    threadId,
-    agent,
-    connect,
-    onActivity,
-    queryClient,
-    liveTail,
-    snapshotContinuations,
-    suppressConnect,
-  ]);
+  },
+  );
   return control;
 }

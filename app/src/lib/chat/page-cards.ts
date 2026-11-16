@@ -50,7 +50,8 @@ export function supersededPageCalls(calls: readonly PageCall[]): Set<string> {
     if (list.length < 2) continue;
     const keep =
       list.findLast((call) => call.result !== undefined) ??
-      list[list.length - 1]!;
+      list[list.length - 1];
+    if (!keep) continue;
     for (const call of list) if (call !== keep) hidden.add(call.id);
   }
   return hidden;

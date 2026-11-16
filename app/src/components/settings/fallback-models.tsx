@@ -33,7 +33,11 @@ export function moveModel(
   if (index < 0 || index >= list.length || target < 0 || target >= list.length)
     return [...list];
   const next = [...list];
-  [next[index], next[target]] = [next[target]!, next[index]!];
+  const atIndex = next[index];
+  const atTarget = next[target];
+  if (atIndex === undefined || atTarget === undefined) return next;
+  next[index] = atTarget;
+  next[target] = atIndex;
   return next;
 }
 

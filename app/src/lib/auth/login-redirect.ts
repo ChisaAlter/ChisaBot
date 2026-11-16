@@ -40,7 +40,9 @@ let redirecting = false;
 let loopDetected = false;
 const loopListeners = new Set<() => void>();
 
-function storageOf(win: RedirectWindow): RedirectWindow["sessionStorage"] {
+function storageOf(win: {
+  sessionStorage?: LoginWindowStorage;
+}): LoginWindowStorage | undefined {
   try {
     return win.sessionStorage;
   } catch {
@@ -48,7 +50,7 @@ function storageOf(win: RedirectWindow): RedirectWindow["sessionStorage"] {
   }
 }
 
-function lastRedirectAt(win: RedirectWindow): number | null {
+function lastRedirectAt(win: { sessionStorage?: LoginWindowStorage }): number | null {
   try {
     const value = Number(storageOf(win)?.getItem(LOGIN_REDIRECT_KEY));
     return Number.isFinite(value) && value > 0 ? value : null;
@@ -57,7 +59,10 @@ function lastRedirectAt(win: RedirectWindow): number | null {
   }
 }
 
-function markRedirect(win: RedirectWindow, now: number): void {
+function markRedirect(
+  win: { sessionStorage?: LoginWindowStorage },
+  now: number,
+): void {
   try {
     storageOf(win)?.setItem(LOGIN_REDIRECT_KEY, String(now));
   } catch {}
@@ -68,10 +73,10 @@ function markRedirect(win: RedirectWindow, now: number): void {
  * 否则「刚登录完、30 秒内会话又真的过期」会被误当成死循环，停在「登录状态异常」而不是直接去 /login。
  */
 export function clearLoginRedirectMark(
-  win: Pick<RedirectWindow, "sessionStorage"> = window,
+  win: { sessionStorage?: LoginWindowStorage } = window,
 ): void {
   try {
-    storageOf(win as RedirectWindow)?.removeItem?.(LOGIN_REDIRECT_KEY);
+    storageOf(win)?.removeItem?.(LOGIN_REDIRECT_KEY);
   } catch {}
 }
 
@@ -128,8 +133,14 @@ export function goToLogin(
  * 「退出重新登录」：先 POST /api/auth/sign-out 清掉会话，再去 /login（不带 next）。
  * 退出失败也照样去 /login；时间戳重新记一次，万一还是被弹回来，循环保护仍然生效，不会再转起来。
  */
+export type SignOutWindow = {
+  location: Pick<Location, "replace">;
+  sessionStorage?: LoginWindowStorage;
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
+};
+
 export async function signOutAndReLogin(
-  win: RedirectWindow & Pick<Window, "fetch"> = window,
+  win: SignOutWindow = window,
   now: number = Date.now(),
 ): Promise<void> {
   try {

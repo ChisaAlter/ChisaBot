@@ -28,7 +28,12 @@ export function TaskCenterDialog({
         <DialogDescription className="sr-only">
           把目标交给机器人，在这里掌握进展与关键决策。
         </DialogDescription>
-        <TaskCenter view={view} taskId={taskId} onNavigate={onNavigate} />
+        <TaskCenter
+          view={view}
+          taskId={taskId}
+          onNavigate={onNavigate}
+          onClose={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
   );

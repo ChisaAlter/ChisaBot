@@ -1,7 +1,7 @@
 import { IconExternalLink, IconRefresh } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/skyglass";
@@ -21,8 +21,6 @@ function MagpieConsolePage() {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => setLoaded(false), [nonce]);
   const available = overview.data?.managementAvailable !== false;
 
   return (
@@ -34,7 +32,10 @@ function MagpieConsolePage() {
               <Button
                 aria-label="重新载入"
                 disabled={!available}
-                onClick={() => setNonce((value) => value + 1)}
+                onClick={() => {
+                  setLoaded(false);
+                  setNonce((value) => value + 1);
+                }}
                 size="sm"
                 title="重新载入 Magpie 控制台"
                 type="button"

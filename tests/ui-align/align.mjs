@@ -216,7 +216,7 @@ async function pix(page, r, vtag, name) {
     .catch(() => {});
   for (const rec of r.list) {
     if (!rec.single || rec.h > 64 || rec.w > 480 || rec.w < 12) continue;
-    const key = vtag + "|" + rec.d;
+    const key = `${vtag}|${rec.d}`;
     if (pixSeen.has(key)) continue;
     pixSeen.add(key);
     if (++n > 80) break;
@@ -245,7 +245,7 @@ async function pix(page, r, vtag, name) {
     const ink = await page
       .evaluate(
         ([u, rr]) => window.__alignPix(u, window.devicePixelRatio, rr),
-        ["data:image/png;base64," + buf.toString("base64"), rec],
+        [`data:image/png;base64,${buf.toString("base64")}`, rec],
       )
       .catch(() => null);
     if (!ink) continue;

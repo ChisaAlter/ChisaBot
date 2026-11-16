@@ -76,7 +76,7 @@
       .join(".");
     const id =
       el.getAttribute("data-testid") || el.getAttribute("data-slot") || "";
-    return `${el.tagName.toLowerCase()}${id ? `[${id}]` : ""}${cls ? "." + cls : ""} 「${t}」`;
+    return `${el.tagName.toLowerCase()}${id ? `[${id}]` : ""}${cls ? `.${cls}` : ""} 「${t}」`;
   };
   const union = (rs) => {
     if (!rs.length) return null;

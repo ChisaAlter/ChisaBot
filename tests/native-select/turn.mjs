@@ -53,7 +53,7 @@ const URL_ = "https://workspace.local/sel-form.html";
 
 const ctx = await context("light", { width: 1280, height: 860 });
 const page = await newPage(ctx, "sel");
-await page.goto(base + "/", { waitUntil: "domcontentloaded" });
+await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
 const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const r = await call("/api/agents", {
@@ -66,7 +66,7 @@ const r = await call("/api/agents", {
   }),
 });
 const bot = trackBot(JSON.parse(r.body).agent.id);
-fs.appendFileSync("/out/bots.txt", bot + "\n");
+fs.appendFileSync("/out/bots.txt", `${bot}\n`);
 log("bot", bot);
 const C = (path, body) =>
   call(`/api/computers/${bot}${path}`, {
@@ -87,14 +87,14 @@ const readOut = async () =>
 
 try {
   const w = await C("/files/write", { path: "sel-form.html", contents: FORM });
-  ok("write form", w.status === 200, w.status + " " + w.body.slice(0, 120));
+  ok("write form", w.status === 200, `${w.status} ${w.body.slice(0, 120)}`);
 
   if (PARTS.includes("A")) {
     const nav = await C("/navigate", { url: URL_ });
     ok(
       "A navigate",
       nav.status === 200,
-      nav.status + " " + nav.body.slice(0, 120),
+      `${nav.status} ${nav.body.slice(0, 120)}`,
     );
     const snap = J(await C("/snapshot"));
     const els = snap.elements || [];
@@ -110,7 +110,7 @@ try {
         month.options.includes("Jul") &&
         year?.options?.length === 61 &&
         !els.some((e) => e.role === "option"),
-      JSON.stringify(month) + " total " + els.length,
+      `${JSON.stringify(month)} total ${els.length}`,
     );
     const click = await C("/click", {
       ref: month.ref,
@@ -122,7 +122,7 @@ try {
       click.status === 200 &&
         cj.nativeSelect === true &&
         Array.isArray(cj.options),
-      click.status + " " + click.body.slice(0, 200),
+      `${click.status} ${click.body.slice(0, 200)}`,
     );
     for (const [el, text] of [
       [month, "7"],
@@ -137,7 +137,7 @@ try {
       ok(
         `A type ${el.name}=${text}`,
         t.status === 200 && J(t).action === "select",
-        t.status + " " + t.body.slice(0, 200),
+        `${t.status} ${t.body.slice(0, 200)}`,
       );
     }
     const out = await readOut();
@@ -150,7 +150,7 @@ try {
     ok(
       "A missing option is a 400 with the choices",
       bad.status === 400 && /没有「1800」/.test(bad.body),
-      bad.status + " " + bad.body.slice(0, 160),
+      `${bad.status} ${bad.body.slice(0, 160)}`,
     );
     const key = await C("/key", {
       ref: month.ref,
@@ -160,7 +160,7 @@ try {
     ok(
       "A Enter on a select does not hang",
       key.status === 200 && J(key).nativeSelect === true,
-      key.status + " " + key.body.slice(0, 160),
+      `${key.status} ${key.body.slice(0, 160)}`,
     );
     await C("/navigate", { url: URL_ });
   }

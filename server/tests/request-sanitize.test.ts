@@ -90,7 +90,7 @@ describe("sanitizeCallOptionsForRetry (QA1102-14)", () => {
       {
         role: "user",
         content: [
-          { type: "text", text: "old " + "x".repeat(RETRY_PROMPT_CHARS) },
+          { type: "text", text: `old ${"x".repeat(RETRY_PROMPT_CHARS)}` },
         ],
       },
       { role: "assistant", content: [{ type: "text", text: "old answer" }] },

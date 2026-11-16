@@ -5,6 +5,7 @@ import { botsTarget } from "@/lib/bots-location";
 
 const views = [
   "inbox",
+  "board",
   "outbox",
   "active",
   "history",

@@ -17,7 +17,7 @@ const { isInside, real } = require("./profile");
 const PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"];
 
 function killTree(child) {
-  if (!child || !child.pid) return;
+  if (!child?.pid) return;
   try {
     if (process.platform === "win32") {
       spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
@@ -93,8 +93,9 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
   let outBuf = "";
   child.stdout.on("data", (chunk) => {
     outBuf += String(chunk);
-    let idx;
-    while ((idx = outBuf.indexOf("\n")) >= 0) {
+    for (;;) {
+      const idx = outBuf.indexOf("\n");
+      if (idx < 0) break;
       const line = outBuf.slice(0, idx).replace(/\r$/, "").trim();
       outBuf = outBuf.slice(idx + 1);
       if (!line) continue;
@@ -124,7 +125,7 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
               sendRaw({
                 jsonrpc: "2.0",
                 id: msg.id,
-                error: { code: -32000, message: err && err.message ? err.message : String(err) },
+                error: { code: -32000, message: err?.message ? err.message : String(err) },
               }),
           );
       } else if (typeof msg.method === "string") {
@@ -136,8 +137,9 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
   let errBuf = "";
   child.stderr.on("data", (chunk) => {
     errBuf += String(chunk);
-    let idx;
-    while ((idx = errBuf.indexOf("\n")) >= 0) {
+    for (;;) {
+      const idx = errBuf.indexOf("\n");
+      if (idx < 0) break;
       const line = errBuf.slice(0, idx).replace(/\r$/, "").trim();
       errBuf = errBuf.slice(idx + 1);
       if (line && onStderrLine) onStderrLine(line);
@@ -203,7 +205,7 @@ async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), t
       version: null,
       authenticated: null,
       authLabel: null,
-      message: error && error.message ? error.message : String(error),
+      message: error?.message ? error.message : String(error),
     };
   }
 
@@ -223,8 +225,8 @@ async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), t
       },
       timeoutMs,
     );
-    const info = (init && init.agentInfo) || {};
-    const authMethods = Array.isArray(init && init.authMethods) ? init.authMethods : [];
+    const info = init?.agentInfo || {};
+    const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
     const version = info.version ? String(info.version) : null;
     return {
       status: "available",
@@ -239,7 +241,7 @@ async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), t
       version: null,
       authenticated: null,
       authLabel: null,
-      message: (stderrTail.trim() || (error && error.message) || String(error)).slice(0, 300),
+      message: (stderrTail.trim() || error?.message || String(error)).slice(0, 300),
     };
   } finally {
     rpc.closeAll();
@@ -286,8 +288,9 @@ async function runAcpSession({
       lineBuffer = "";
       return;
     }
-    let idx;
-    while ((idx = lineBuffer.indexOf("\n")) >= 0) {
+    for (;;) {
+      const idx = lineBuffer.indexOf("\n");
+      if (idx < 0) break;
       const piece = lineBuffer.slice(0, idx).trimEnd();
       lineBuffer = lineBuffer.slice(idx + 1);
       if (piece.trim()) emit("text", piece);
@@ -368,7 +371,7 @@ async function runAcpSession({
         }
       } else if (kind === "plan" && Array.isArray(update.entries) && update.entries.length) {
         const active = update.entries.find((e) => e.status === "in_progress") || update.entries[0];
-        if (active && active.content) {
+        if (active?.content) {
           emit("status", `计划：${String(active.content).slice(0, 140)}`, String(active.content).slice(0, 100));
         }
       }
@@ -395,7 +398,7 @@ async function runAcpSession({
           allowed = true;
         } else if (profile === "workspace") {
           const locations = Array.isArray(toolCall.locations) ? toolCall.locations : [];
-          const allInScope = locations.every((loc) => !loc || !loc.path || isInside(real(path.resolve(workdir, loc.path)), scope));
+          const allInScope = locations.every((loc) => !loc?.path || isInside(real(path.resolve(workdir, loc.path)), scope));
           if (allInScope && !(disposable && origin && title.includes(origin))) {
             allowed = true;
           }
@@ -449,7 +452,7 @@ async function runAcpSession({
         const termEnv = { ...process.env, ...env };
         if (Array.isArray(params.env)) {
           for (const item of params.env) {
-            if (item && item.name) termEnv[item.name] = String(item.value ?? "");
+            if (item?.name) termEnv[item.name] = String(item.value ?? "");
           }
         }
         const proc = spawn(cmd, cmdArgs, {
@@ -549,7 +552,7 @@ async function runAcpSession({
       },
       30_000,
     );
-    const agentInfo = (init && init.agentInfo) || {};
+    const agentInfo = init?.agentInfo || {};
     emit(
       "status",
       `ACP 会话已连接${agentInfo.title || agentInfo.name ? `（${agentInfo.title || agentInfo.name}${agentInfo.version ? ` v${agentInfo.version}` : ""}）` : ""}`,
@@ -568,7 +571,7 @@ async function runAcpSession({
       },
       45_000,
     );
-    sessionId = created && created.sessionId;
+    sessionId = created?.sessionId;
     if (!sessionId) throw new Error("ACP 智能体未返回有效的 sessionId");
 
     if (model) {
@@ -584,7 +587,7 @@ async function runAcpSession({
       timeoutMs,
     );
     flushTextLine(true);
-    const stopReason = promptResult && promptResult.stopReason;
+    const stopReason = promptResult?.stopReason;
     return {
       exitCode: 0,
       summary: fullText.trim() || `（ACP 会话完成${stopReason ? `：${stopReason}` : ""}）`,
@@ -593,14 +596,14 @@ async function runAcpSession({
     };
   } catch (error) {
     flushTextLine(true);
-    if (signal && signal.aborted) {
+    if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error("已停止");
     }
     return {
       exitCode: 1,
       summary: fullText.trim(),
       isError: true,
-      stderrTail: stderrTail || (error && error.message ? error.message : String(error)),
+      stderrTail: stderrTail || (error?.message ? error.message : String(error)),
     };
   } finally {
     clearTimeout(timer);

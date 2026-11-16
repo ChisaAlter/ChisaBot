@@ -69,7 +69,7 @@ function shellArgv(script, platform = process.platform) {
 }
 
 function killTree(child, platform = process.platform, signal = "SIGKILL") {
-  if (!child || !child.pid) return;
+  if (!child?.pid) return;
   try {
     if (platform === "win32") spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
     else process.kill(-child.pid, signal);
@@ -134,7 +134,7 @@ function createCodeOps(options = {}) {
     const session = args.session ? sessions.get(String(args.session)) : null;
     if (args.cwd) return String(args.cwd);
     if (session) return session.cwd;
-    if (ctx.allowedRoots && ctx.allowedRoots.length) return ctx.allowedRoots[0];
+    if (ctx.allowedRoots?.length) return ctx.allowedRoots[0];
     return os.homedir();
   }
 
@@ -160,7 +160,7 @@ function createCodeOps(options = {}) {
     const want = args.cwd ? String(args.cwd) : baseDir(args, ctx);
     const dir = await resolvePath(want, {}, free || ctx.fullAccess ? { ...ctx, fullAccess: true } : ctx);
     const stat = await fsp.stat(dir).catch(() => null);
-    if (!stat || !stat.isDirectory()) throw new OpError(`工作目录不存在：${dir}`);
+    if (!stat?.isDirectory()) throw new OpError(`工作目录不存在：${dir}`);
     return dir;
   }
 
@@ -200,8 +200,9 @@ function createCodeOps(options = {}) {
       };
       stream.on("data", (chunk) => {
         rest += chunk;
-        let index;
-        while ((index = rest.indexOf("\n")) >= 0) {
+        for (;;) {
+          const index = rest.indexOf("\n");
+          if (index < 0) break;
           take(rest.slice(0, index));
           rest = rest.slice(index + 1);
         }
@@ -540,7 +541,12 @@ function createCodeOps(options = {}) {
       };
       child.stdout.on("data", (c) => (outBytes = keep(out, c, outBytes)));
       child.stderr.on("data", (c) => (errBytes = keep(err, c, errBytes)));
-      const timer = timeoutMs ? setTimeout(() => ((timedOut = true), killTree(child, platform)), timeoutMs) : null;
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            timedOut = true;
+            killTree(child, platform);
+          }, timeoutMs)
+        : null;
       const onAbort = () => killTree(child, platform);
       signal?.addEventListener("abort", onAbort, { once: true });
       child.on("error", (error) => {
@@ -599,7 +605,7 @@ function createCodeOps(options = {}) {
       const state = await fsp.readFile(stateFile, "utf8").catch(() => null);
       if (state) {
         const [cwdPart, envPart = ""] = state.split(/\r?\n__CB_ENV__\r?\n/);
-        if (cwdPart && cwdPart.trim()) session.cwd = cwdPart.trim();
+        if (cwdPart?.trim()) session.cwd = cwdPart.trim();
         const next = {};
         for (const line of envPart.split(/\r?\n/)) {
           const m = /^([A-Za-z_][A-Za-z0-9_().]*)=(.*)$/.exec(line);
@@ -728,7 +734,7 @@ function createCodeOps(options = {}) {
           killTree(child, platform);
         }
       }, timeoutSec * 1000);
-    if (timer && timer.unref) timer.unref();
+    timer?.unref?.();
     child.on("error", (error) => {
       push(Buffer.from(`\n[启动失败] ${error.message}\n`));
     });
@@ -816,7 +822,7 @@ function createCodeOps(options = {}) {
     if (!which("git")) throw new OpError("这台电脑上没有安装 git。");
     const extra = gitArgsSafe(Array.isArray(args.args) ? args.args.map(String) : []);
     const free = !gitIsRead(sub, extra);
-    const want = { cwd: args.cwd || (ctx.allowedRoots && ctx.allowedRoots[0]) || os.homedir() };
+    const want = { cwd: args.cwd || ctx.allowedRoots?.[0] || os.homedir() };
     const cwd =
       sub === "clone" || sub === "init"
         ? await resolvePath(want.cwd, {}, free ? { ...ctx, fullAccess: true } : ctx)

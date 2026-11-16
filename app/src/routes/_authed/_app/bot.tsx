@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { LandingRedirect } from "@/components/agents/landing-redirect";
 import { useBotChat } from "@/lib/channels/bot-chat";
 import { openThreadChannel } from "@/lib/channels/open-thread";
@@ -34,35 +35,35 @@ function RouteComponent() {
   const queryClient = useQueryClient();
   const openChat = useBotChat();
 
-  useEffect(() => {
-    if (!agent) return;
-    let alive = true;
-    const toBot = () => {
-      if (alive) void openChat(agent, { watch, replace: true });
-    };
-    if (!thread) {
-      toBot();
-      return;
-    }
-    openThreadChannel(agent, thread, queryClient)
-      .then((channel) => {
-        if (!alive) return;
-        void navigate({
-          to: "/channel/$channelId",
-          params: { channelId: channel.id },
-          search: watch ? { watch: true } : {},
-          replace: true,
-        });
-      })
-      .catch(() => {
-        // 这条对话不在了（或不是这个人的）：退回这个机器人的聊天，而不是停在空白页。
-        if (!alive) return;
+  useExternalConnection(
+    agent
+      ? `${agent}\0${thread ?? ""}\0${watch ? 1 : 0}\0${objectConnectionKey(navigate)}\0${objectConnectionKey(queryClient)}\0${objectConnectionKey(openChat)}`
+      : false,
+    (_activeKey, signal) => {
+      if (!agent) return;
+      const toBot = () => {
+        if (!signal.aborted) void openChat(agent, { watch, replace: true });
+      };
+      if (!thread) {
         toBot();
-      });
-    return () => {
-      alive = false;
-    };
-  }, [agent, thread, watch, navigate, queryClient, openChat]);
+        return;
+      }
+      openThreadChannel(agent, thread, queryClient)
+        .then((channel) => {
+          if (signal.aborted) return;
+          void navigate({
+            to: "/channel/$channelId",
+            params: { channelId: channel.id },
+            search: watch ? { watch: true } : {},
+            replace: true,
+          });
+        })
+        .catch(() => {
+          // 这条对话不在了（或不是这个人的）：退回这个机器人的聊天，而不是停在空白页。
+          toBot();
+        });
+    },
+  );
 
   if (!agent) return <LandingRedirect />;
   return null;

@@ -50,7 +50,7 @@ function cookieToken(
   const matches = cookie
     .split(";")
     .map((part) => part.trim())
-    .filter((part) => part.startsWith(name + "="));
+    .filter((part) => part.startsWith(`${name}=`));
   if (matches.length === 0) return { present: false, token: null };
   const token =
     matches.length === 1 ? (matches[0]?.slice(name.length + 1) ?? "") : "";
@@ -65,13 +65,7 @@ function sessionToken(request: Request): string | null {
 }
 
 function cookieHeader(token: string, lifetime?: number, name = COOKIE): string {
-  return (
-    name +
-    "=" +
-    token +
-    "; Path=/; Secure; HttpOnly; SameSite=Lax" +
-    (lifetime === undefined ? "" : "; Max-Age=" + lifetime)
-  );
+  return `${name}=${token}; Path=/; Secure; HttpOnly; SameSite=Lax${lifetime === undefined ? "" : `; Max-Age=${lifetime}`}`;
 }
 
 function sessionHeaders(token: string, lifetime: number | undefined): Headers {
@@ -303,7 +297,9 @@ export function createAuthApp(config: AuthConfig) {
       config.identitySecret.length < 32)
   )
     throw new Error("identitySecret must be at least 32 characters");
-  const multi = typeof config.identitySecret === "string";
+  const identitySecret =
+    typeof config.identitySecret === "string" ? config.identitySecret : null;
+  const multi = identitySecret !== null;
   const invitesClosed = () =>
     json(
       { ok: false, error: "邀请新朋友目前已关闭。", invitesEnabled: false },
@@ -316,9 +312,9 @@ export function createAuthApp(config: AuthConfig) {
   const appFetch =
     config.appFetch ||
     ((input: string, init?: RequestInit) => globalThis.fetch(input, init));
-  const credentialKey = digest(config.username + "\0" + config.passwordHash);
+  const credentialKey = digest(`${config.username}\0${config.passwordHash}`);
   const accountKey = (id: string, hash: string) =>
-    digest("account\0" + id + "\0" + hash);
+    digest(`account\0${id}\0${hash}`);
   const hashPassword = (password: string) =>
     Bun.password.hash(password, {
       algorithm: "argon2id",
@@ -421,6 +417,11 @@ export function createAuthApp(config: AuthConfig) {
     return db
       .query("SELECT * FROM accounts WHERE id = ?")
       .get(id) as AccountRow | null;
+  }
+  function requireAccount(id: string): AccountRow {
+    const found = account(id);
+    if (!found) throw new Error(`Account missing after write: ${id}`);
+    return found;
   }
   /** 问应用：这台手机还有效吗？true / false；连不上或回答异常 = null。 */
   async function deviceActive(deviceId: string): Promise<boolean | null> {
@@ -789,7 +790,7 @@ export function createAuthApp(config: AuthConfig) {
     accountId: string | null,
     role: "admin" | "user" = "user",
   ): { id: string; url: string; expiresAt: number; role: "admin" | "user" } {
-    const token = "cbi_" + randomBytes(32).toString("base64url");
+    const token = `cbi_${randomBytes(32).toString("base64url")}`;
     const expiresAt = now() + hours * 3600_000;
     db.query(
       "INSERT INTO invites (token_hash, kind, account_id, role, note, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -929,7 +930,7 @@ export function createAuthApp(config: AuthConfig) {
         } finally {
           inFlight--;
         }
-        const id = "u_" + randomBytes(9).toString("base64url");
+        const id = `u_${randomBytes(9).toString("base64url")}`;
         db.query(
           "INSERT INTO accounts (id, username, username_key, display_name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ).run(
@@ -942,7 +943,7 @@ export function createAuthApp(config: AuthConfig) {
           now(),
           now(),
         );
-        return json({ ok: true, account: accountView(account(id)!) }, 201);
+        return json({ ok: true, account: accountView(requireAccount(id)) }, 201);
       }
       return json({ ok: false, error: "请求方法不支持。" }, 405);
     }
@@ -1056,7 +1057,7 @@ export function createAuthApp(config: AuthConfig) {
             db.query(
               "UPDATE accounts SET display_name = ?, updated_at = ? WHERE id = ?",
             ).run(cleanName(body.displayName, current.username), now(), id);
-          return account(id)!;
+          return account(id);
         })();
         if (!updated) return json({ ok: false, error: "账号不存在。" }, 404);
         return json({ ok: true, account: accountView(updated) });
@@ -1109,7 +1110,7 @@ export function createAuthApp(config: AuthConfig) {
   async function invite(request: Request): Promise<Response> {
     if (!multi) return json({ ok: false, error: "这个链接无效。" }, 404);
     clean();
-    const clientKey = digest("client:" + clientAddress(request.headers));
+    const clientKey = digest(`client:${clientAddress(request.headers)}`);
     if (request.method === "GET") {
       const limited = tooMany(clientKey);
       if (limited) return limited;
@@ -1190,7 +1191,7 @@ export function createAuthApp(config: AuthConfig) {
           ).run(row.token_hash);
           return;
         }
-        accountId = "u_" + randomBytes(9).toString("base64url");
+        accountId = `u_${randomBytes(9).toString("base64url")}`;
         const assignedRole: "admin" | "user" =
           row.role === "admin" ? "admin" : "user";
         db.query(
@@ -1228,7 +1229,7 @@ export function createAuthApp(config: AuthConfig) {
         },
         409,
       );
-    const principal = accountPrincipal(account(accountId)!);
+    const principal = accountPrincipal(requireAccount(accountId));
     const remember = body.remember === true;
     const token = issueSession(
       request,
@@ -1264,10 +1265,10 @@ export function createAuthApp(config: AuthConfig) {
         return json(
           { ok: true },
           200,
-          multi
+          identitySecret
             ? {
                 "X-ChisaBot-Identity": signIdentity(
-                  config.identitySecret!,
+                  identitySecret,
                   principal,
                   now(),
                 ),
@@ -1289,7 +1290,7 @@ export function createAuthApp(config: AuthConfig) {
           return new Response(null, {
             status: 302,
             headers: {
-              Location: "/login?next=" + encodeURIComponent(safeNext(original)),
+              Location: `/login?next=${encodeURIComponent(safeNext(original))}`,
               "Cache-Control": "no-store",
             },
           });
@@ -1323,7 +1324,9 @@ export function createAuthApp(config: AuthConfig) {
         if (request.headers.get("Origin") !== config.publicOrigin)
           return json({ ok: false }, 403);
         // A diagnostic refusal must not activate the workspace's login redirect interceptor.
-        if (!(await authenticated(request))) return json({ ok: false }, 401);
+        const token = sessionToken(request);
+        if (!token || !(await authenticated(request)))
+          return json({ ok: false }, 401);
         if (
           (request.headers.get("Content-Type") || "")
             .split(";")[0]
@@ -1342,12 +1345,15 @@ export function createAuthApp(config: AuthConfig) {
         const report = startupMetadata(body);
         if (!report) return json({ ok: false }, 400);
         cleanStartupReports();
-        const key = digest(sessionToken(request)! + ":" + report.id);
+        const key = digest(`${token}:${report.id}`);
         const count = startupCounts.get(key);
         if (count && count.count >= 8) return json({ ok: false }, 429);
         startupCounts.set(key, { count: (count?.count || 0) + 1, at: now() });
-        while (startupCounts.size > 100)
-          startupCounts.delete(startupCounts.keys().next().value!);
+        while (startupCounts.size > 100) {
+          const oldestKey = startupCounts.keys().next().value;
+          if (oldestKey === undefined) break;
+          startupCounts.delete(oldestKey);
+        }
         startupReports.push({
           ...report,
           at: now(),
@@ -1400,7 +1406,7 @@ export function createAuthApp(config: AuthConfig) {
       } catch {
         return json({ ok: false, error: "请求格式无效。" }, 400);
       }
-      const clientKey = digest("client:" + clientAddress(request.headers));
+      const clientKey = digest(`client:${clientAddress(request.headers)}`);
       const limited = tooMany(clientKey);
       if (limited) return limited;
       const validInput =

@@ -43,10 +43,11 @@ export function cleanSources(sources: readonly { name?: string; url?: string | n
     try {
       url = s.url ? new URL(s.url) : null;
     } catch {}
-    const linkable = url && (url.protocol === "http:" || url.protocol === "https:") && isRealHost(url.hostname);
-    const name = (s.name?.trim() || (linkable ? url!.hostname : "")).slice(0, 60);
+    const linkable =
+      url && (url.protocol === "http:" || url.protocol === "https:") && isRealHost(url.hostname) ? url : null;
+    const name = (s.name?.trim() || (linkable ? linkable.hostname : "")).slice(0, 60);
     if (!name) continue;
-    out.push({ name, url: linkable ? url!.toString().slice(0, 500) : "" });
+    out.push({ name, url: linkable ? linkable.toString().slice(0, 500) : "" });
   }
   return out.slice(0, 6);
 }
@@ -58,21 +59,25 @@ export function cleanSources(sources: readonly { name?: string; url?: string | n
 export function parseRefreshAt(value: string | null | undefined): { hour: number; minute: number; timeZone: string } | null {
   const m = /^(\d{1,2}):(\d{2})@([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*)$/.exec(value?.trim() ?? "");
   if (!m) return null;
-  const hour = Number(m[1]), minute = Number(m[2]);
+  const [, hourStr, minuteStr, timeZone] = m;
+  if (!hourStr || !minuteStr || !timeZone) return null;
+  const hour = Number(hourStr), minute = Number(minuteStr);
   if (hour > 23 || minute > 59) return null;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: m[3] });
+    new Intl.DateTimeFormat("en-US", { timeZone });
   } catch {
     return null;
   }
-  return { hour, minute, timeZone: m[3]! };
+  return { hour, minute, timeZone };
 }
 
 /** 规范成「HH:MM@时区」；时刻或时区不对返回 null。 */
 export function normalizeRefreshAt(time: string | null | undefined, timeZone = "Asia/Shanghai"): string | null {
   const m = /^\s*(\d{1,2})[:：](\d{2})\s*$/.exec(time ?? "");
-  if (!m) return null;
-  const v = `${m[1]!.padStart(2, "0")}:${m[2]}@${timeZone || "Asia/Shanghai"}`;
+  const hour = m?.[1];
+  const minute = m?.[2];
+  if (!hour || !minute) return null;
+  const v = `${hour.padStart(2, "0")}:${minute}@${timeZone || "Asia/Shanghai"}`;
   return parseRefreshAt(v) ? v : null;
 }
 

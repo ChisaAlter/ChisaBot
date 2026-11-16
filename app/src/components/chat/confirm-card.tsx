@@ -10,7 +10,8 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { ContinuationStatus } from "@/components/chat/continuation-status";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -300,12 +301,9 @@ export function ConfirmRequestCard({
 /** 聊天正在跑一轮（turn-compaction 广播 chisabot-chat-running）。 */
 function useChatRunning() {
   const [running, setRunning] = useState(() => isChatRunning());
-  useEffect(() => {
-    const on = (event: Event) =>
-      setRunning(Boolean((event as CustomEvent<boolean>).detail));
-    window.addEventListener("chisabot-chat-running", on);
-    return () => window.removeEventListener("chisabot-chat-running", on);
-  }, []);
+  useWindowEvent("chisabot-chat-running", (event) =>
+    setRunning(Boolean((event as CustomEvent<boolean>).detail)),
+  );
   return running;
 }
 
@@ -347,12 +345,17 @@ function ToolConfirmCards({
   const open = (running || recent) && ids.some((id) => !answered.has(id));
   const list = useThreadConfirmations(ids.length ? threadId : null, open);
   const queryClient = useQueryClient();
-  useEffect(() => {
-    if (!running && recent && threadId && ids.length)
-      void queryClient.invalidateQueries({
-        queryKey: confirmKeys.thread(threadId),
-      });
-  }, [running, recent, threadId, ids.length, queryClient]);
+  useExternalConnection(
+    !running && recent && threadId && ids.length > 0
+      ? `${threadId}\0${ids.length}`
+      : null,
+    () => {
+      if (threadId)
+        void queryClient.invalidateQueries({
+          queryKey: confirmKeys.thread(threadId),
+        });
+    },
+  );
   const cards = (list.data ?? [])
     .filter((request) => request.toolCallId && ids.includes(request.toolCallId))
     .reverse();
@@ -411,12 +414,15 @@ export function LooseConfirmCards({
   const list = useThreadConfirmations(threadId, false);
   const queryClient = useQueryClient();
   // 后台回合的消息同步进来（列表变长）时卡片多半也刚放好：再取一次。有卡在等时 useThreadConfirmations 自己 1.5 秒一取。
-  useEffect(() => {
-    if (threadId && version > 0)
-      void queryClient.invalidateQueries({
-        queryKey: confirmKeys.thread(threadId),
-      });
-  }, [threadId, version, queryClient]);
+  useExternalConnection(
+    threadId && version > 0 ? `${threadId}\0${version}` : null,
+    () => {
+      if (threadId)
+        void queryClient.invalidateQueries({
+          queryKey: confirmKeys.thread(threadId),
+        });
+    },
+  );
   const seen = useRef<Set<string>>(new Set());
   for (const request of list.data ?? [])
     if (request.status === "pending" && !request.toolCallId)

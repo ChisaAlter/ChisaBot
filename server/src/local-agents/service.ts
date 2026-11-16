@@ -22,6 +22,7 @@ import {
   type DeviceOperation,
   isMobilePlatform,
 } from "../../../shared/devices";
+import { readLocalAgentLimits } from "../config";
 import {
   ACTIVE_LOCAL_TASK,
   AGENT_PROFILES,
@@ -97,14 +98,13 @@ import {
  * - 内置 agent 的模型调用由这里代调（用这个机器人的模型连接，密钥不出服务器），每个任务有调用次数上限。
  */
 
-const TASK_TIMEOUT_MS =
-  Number(process.env.CHISABOT_LOCAL_AGENT_TIMEOUT_MS) || 45 * 60_000;
+const LOCAL_AGENT_LIMITS = readLocalAgentLimits();
+const TASK_TIMEOUT_MS = LOCAL_AGENT_LIMITS.timeoutMs;
 const PER_DEVICE_ACTIVE = 2;
 const PER_USER_ACTIVE = 4;
 const STORED_LINES = 1500;
 const CARD_LINES = 40;
-const LLM_CALLS_PER_TASK =
-  Number(process.env.CHISABOT_LOCAL_AGENT_LLM_CALLS) || 80;
+const LLM_CALLS_PER_TASK = LOCAL_AGENT_LIMITS.llmCalls;
 const RESULT_LIMIT = 6000;
 
 /** 内置 agent 的工具（和 pc/src/agent-runtime/builtin.js 的 TOOLS 一致；工具在电脑上执行，这里只给模型看定义）。 */
@@ -244,8 +244,11 @@ type TaskRow = {
   capacity_active: boolean;
 };
 
-const iso = (value: Date | string | null | undefined) =>
-  value ? new Date(value).toISOString() : null;
+function iso(value: Date | string): string;
+function iso(value: Date | string | null | undefined): string | null;
+function iso(value: Date | string | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
@@ -791,7 +794,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       approvalId: state?.approvalId ?? null,
       approvalSummary: state?.approvalSummary ?? null,
       resultMessageId: row.result_message_id,
-      createdAt: iso(row.created_at)!,
+      createdAt: iso(row.created_at),
       startedAt: iso(row.started_at),
       finishedAt: iso(row.finished_at),
       ...(full ? { task: row.task, transcript: lines } : {}),
@@ -1004,9 +1007,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       "UPDATE chisabot_local_agent_tasks SET result_message_id = $2 WHERE id = $1",
       [row.id, messageId],
     );
+    const inbox = options.inbox;
+    const threadId = row.thread_id;
     const enqueue = () =>
-      options.inbox!.enqueue({
-        threadId: row.thread_id!,
+      inbox.enqueue({
+        threadId,
         ownerUserId: row.owner_user_id,
         message,
         kind: "worker_result",
@@ -2215,13 +2220,26 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         ? await instancesStore.getBotGrant(row.owner_user_id, row.agent_id)
         : null;
       const rowDepth = Number(row.depth ?? 0);
-      const run: LocalAgentRunMessage = {
-        ...(supplied ?? {
+      let run: LocalAgentRunMessage;
+      if (supplied) {
+        run = { ...supplied, roots };
+      } else {
+        if (!row.cwd) {
+          await sql.unsafe(
+            "UPDATE chisabot_local_agent_tasks SET capacity_active=false WHERE id=$1",
+            [row.id],
+          );
+          await finish(row.id, "failed", {
+            error: "设备权限或允许目录已更改，原任务没有发出。",
+          });
+          return;
+        }
+        run = {
           type: "agent_run",
           taskId: row.id,
           agent: row.agent as LocalAgentKind,
           prompt: row.task,
-          cwd: row.cwd!,
+          cwd: row.cwd,
           profile: row.profile as AgentProfile,
           isolation: row.isolation as Isolation,
           network: row.network,
@@ -2247,9 +2265,8 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
                 },
               }
             : {}),
-        }),
-        roots,
-      };
+        };
+      }
       const dispatched = await sql.begin(async (tx) => {
         const [current] = await tx.unsafe<
           { status: string; capacity_active: boolean }[]

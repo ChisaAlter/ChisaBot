@@ -14,9 +14,12 @@ import { cn } from "@/lib/utils";
  * ⌘ on Apple platforms, Ctrl everywhere else. The primitive's listener accepts either modifier, so
  * this only decides which of the two to name.
  */
-const SHORTCUT_LABEL = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
-  ? "⌘B"
-  : "Ctrl+B";
+function shortcutLabel(): string {
+  return typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
+    ? "⌘B"
+    : "Ctrl+B";
+}
 
 /** True inside a shell whose top bar already carries the roster toggle (the glass `_app` shell). */
 export const TopBarOwnsSidebarToggle = createContext(false);
@@ -84,9 +87,7 @@ export function SidebarToggle({ className }: { className?: string }) {
   const { isMobile, open, openMobile, toggleSidebar } = sidebar;
 
   // The label says what the click will do, not what is on screen.
-  const label = (isMobile ? openMobile : open)
-    ? "隐藏侧边栏"
-    : "显示侧边栏";
+  const label = (isMobile ? openMobile : open) ? "隐藏侧边栏" : "显示侧边栏";
 
   return (
     <Tooltip>
@@ -106,7 +107,7 @@ export function SidebarToggle({ className }: { className?: string }) {
       {/* An accelerator nobody is told about is not a feature. */}
       <TooltipContent side="bottom">
         {label}
-        <span className="text-background/60">{SHORTCUT_LABEL}</span>
+        <span className="text-background/60">{shortcutLabel()}</span>
       </TooltipContent>
     </Tooltip>
   );

@@ -1,4 +1,5 @@
-import { type ComponentType, useEffect, useState } from "react";
+import { type ComponentType, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 
 /*
  * 用到才加载、打开过才挂载的弹窗（DESIGN.md §41.3）。
@@ -34,10 +35,10 @@ export function lazyDialog<P extends DialogProps>(load: () => Promise<ComponentT
   function Opening({ component: Loaded, ...props }: P & { component: ComponentType<P> }) {
     // 第一次挂载先以 open=false 渲染一帧再打开，进场动画照常。
     const [ready, setReady] = useState(false);
-    useEffect(() => {
+    useExternalConnection(!ready, () => {
       const frame = requestAnimationFrame(() => setReady(true));
       return () => cancelAnimationFrame(frame);
-    }, []);
+    });
     return <Loaded {...(props as unknown as P)} open={props.open && ready} />;
   }
 
@@ -45,17 +46,14 @@ export function lazyDialog<P extends DialogProps>(load: () => Promise<ComponentT
     const [mounted, setMounted] = useState(props.open);
     const [component, setComponent] = useState<ComponentType<P> | null>(() => loaded);
     if (props.open && !mounted) setMounted(true);
-    useEffect(() => {
-      if (!mounted || component) return;
-      let alive = true;
+    useExternalConnection(mounted && !component, (_key, signal) => {
       get().then(
-        (next) => alive && setComponent(() => next),
+        (next) => {
+          if (!signal.aborted) setComponent(() => next);
+        },
         (error) => console.warn("[ChisaBot] 弹窗代码加载失败，下次打开再试", error),
       );
-      return () => {
-        alive = false;
-      };
-    }, [mounted, component]);
+    });
     const ready = component ?? (mounted ? loaded : null);
     if (!mounted || !ready) return null;
     return <Opening {...props} component={ready} />;

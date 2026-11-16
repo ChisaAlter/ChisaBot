@@ -1,6 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AuditEventInput } from "../src/audit";
 import { createStallGuard } from "../src/channels/stall-guard";
+
+// AGENTS.md §2：stall-guard 内部对 sweeper timer 调用了 .unref()，测试里流挂起且没有真 socket 时
+// 若进程无其他 ref 定时器，Bun 事件循环不会唤醒 unref 定时器。
+let keepalive: ReturnType<typeof setInterval> | undefined;
+beforeEach(() => {
+  keepalive = setInterval(() => {}, 1_000);
+});
+afterEach(() => {
+  if (keepalive) clearInterval(keepalive);
+  keepalive = undefined;
+});
 
 /**
  * These drive real streams, because the properties that matter are properties of a stream.

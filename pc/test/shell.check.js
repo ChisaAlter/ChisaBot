@@ -304,7 +304,10 @@ test("refreshShell rewrites only shortcuts that point at this exe and refreshes 
   const result = shellRefresh.refreshShell({
     shell: {
       readShortcutLink: (p) => links[p],
-      writeShortcutLink: (p, op, opts) => (writes.push([p, op, opts]), true),
+      writeShortcutLink: (p, op, opts) => {
+        writes.push([p, op, opts]);
+        return true;
+      },
     },
     exists: (p) => p in links || p === tool,
     execPath: exe,
@@ -320,7 +323,7 @@ test("refreshShell rewrites only shortcuts that point at this exe and refreshes 
   assert.strictEqual(result.cacheRefreshed, true);
 
   const win7 = [];
-  shellRefresh.refreshShell({ shell: {}, exists: (p) => p === tool, execPath: exe, candidates: [], systemRoot: "C:\\Windows", osRelease: "6.1.7601", run: (c, a) => win7.push(a) });
+  shellRefresh.refreshShell({ shell: {}, exists: (p) => p === tool, execPath: exe, candidates: [], systemRoot: "C:\\Windows", osRelease: "6.1.7601", run: (_c, a) => win7.push(a) });
   assert.deepStrictEqual(win7, [["-ClearIconCache"]]);
 });
 
@@ -451,7 +454,13 @@ test("findIcon / scanShortcuts / staleShortcuts / refreshShell with the hashed i
     [`${bar}\\ChisaBot (2).lnk`]: { target: exe.toUpperCase(), icon: "" },
   };
   const exists = (p) => p in links || p === exe || p === ico;
-  const shell = { readShortcutLink: (p) => links[p], writeShortcutLink: (p, op, opts) => (writes.push([p, opts.target, opts.icon]), true) };
+  const shell = {
+    readShortcutLink: (p) => links[p],
+    writeShortcutLink: (p, _op, opts) => {
+      writes.push([p, opts.target, opts.icon]);
+      return true;
+    },
+  };
   const writes = [];
   const stale = shellRefresh.staleShortcuts({ shell, exists, execPath: exe, icon: ico, candidates: found });
   assert.deepStrictEqual(stale, [`${desk}\\ChisaBot.lnk`, `${desk}\\ChisaBot - 副本.lnk`, `${bar}\\ChisaBot (2).lnk`]);

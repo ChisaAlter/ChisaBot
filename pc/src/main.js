@@ -675,7 +675,7 @@ function startAgent() {
   agent.events.on("full_access", () => refreshTray());
   agentRuntime.bind(agent, { isPaused: () => !!config.get().localPaused });
   agent.events.on("state", (event) => {
-    agentDetail = event && event.detail ? String(event.detail) : event && event.state === "online" ? "" : agentDetail;
+    agentDetail = event?.detail ? String(event.detail) : event?.state === "online" ? "" : agentDetail;
     refreshTray();
     if (event && event.state === "online" && config.get().autoUpdate !== false) {
       void updater?.check();
@@ -912,14 +912,14 @@ function startUpdater() {
 
 function currentUpdateBounds() {
   const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
-  const chatVisible = Boolean(chat && chat.isVisible() && !chat.isMinimized());
+  const chatVisible = Boolean(chat?.isVisible() && !chat.isMinimized());
   const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
   const b = computeUpdateBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea, contentHeight: updateContentHeight });
   return { ...b, chat: b.attached ? chat : null };
 }
 
 function openUpdateWindow() {
-  if (!updater || updater.state.status !== "downloaded") return false;
+  if (updater?.state.status !== "downloaded") return false;
   if (updateWindow && !updateWindow.isDestroyed()) {
     placeUpdateWindow();
     updateWindow.show();
@@ -983,7 +983,7 @@ function placeUpdateWindow() {
 }
 
 function installUpdateNow() {
-  if (!updater || updater.state.status !== "downloaded") return false;
+  if (updater?.state.status !== "downloaded") return false;
   const how = updater.state.fullInstall ? "重新安装" : "重启并安装";
   config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${how} ${updater.state.version || ""}` });
   quitting = true;

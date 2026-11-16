@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import {
   lastHistoryEventWasPop,
   noteUserIntent,
@@ -32,18 +34,24 @@ export function useBotComputerTab(
   latest.current = { agentId, writeUrl };
 
   // 地址说开着、记的是关着（例如别人发来的链接、旧版本留下的地址）：以地址为准记下来。
-  useEffect(() => {
-    if (agentId && watch === true && !remembered)
-      setBotUi(agentId, { computer: true });
-  }, [agentId, watch, remembered]);
+  useExternalConnection(
+    agentId && watch === true && !remembered ? agentId : false,
+    (id) => {
+      setBotUi(id, { computer: true });
+    },
+  );
 
   // 用记下的选择打开的：把地址补上，地址和屏幕说同一件事。
-  useEffect(() => {
-    if (!agentId || !open || watch !== undefined) return;
-    // 返回（popstate）带出来的这一帧不许写地址（CB-098 QA 第三轮）：那是在离开，不是在打开。
-    if (overlayHistoryMode() && lastHistoryEventWasPop()) return;
-    writeUrl(true, true);
-  }, [agentId, open, watch, writeUrl]);
+  useExternalConnection(
+    agentId && open && watch === undefined
+      ? `${agentId}:${objectConnectionKey(writeUrl)}`
+      : false,
+    () => {
+      // 返回（popstate）带出来的这一帧不许写地址（CB-098 QA 第三轮）：那是在离开，不是在打开。
+      if (overlayHistoryMode() && lastHistoryEventWasPop()) return;
+      writeUrl(true, true);
+    },
+  );
 
   // 同一个机器人页里，地址从「开着」变成没有（浏览器后退）= 关上。
   const previous = useRef<{
@@ -51,23 +59,26 @@ export function useBotComputerTab(
     watch: boolean | undefined;
     epoch: number;
   }>({ agentId, watch, epoch });
-  useEffect(() => {
-    const was = previous.current;
-    previous.current = { agentId, watch, epoch };
-    if (
-      agentId &&
-      was.agentId === agentId &&
-      was.epoch === epoch &&
-      was.watch === true &&
-      watch !== true &&
-      // 只有真·后退 / 前进把参数退掉才算关上。不是后退的同地址导航也会丢 `watch`——`/` 落地跳回这段对话、
-      // 左栏再点正在看的这一行、`useBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
-      // 离开再回来就永远是「面板」。非后退的丢弃不清记忆，由上面的 effect 把地址补回来。
-      lastHistoryEventWasPop()
-    ) {
-      setBotUi(agentId, { computer: false });
-    }
-  }, [agentId, watch, epoch]);
+  useExternalConnection(
+    `${agentId === undefined ? "u" : `s:${agentId}`}\0${watch === undefined ? "u" : watch ? "1" : "0"}\0${epoch}`,
+    () => {
+      const was = previous.current;
+      previous.current = { agentId, watch, epoch };
+      if (
+        agentId &&
+        was.agentId === agentId &&
+        was.epoch === epoch &&
+        was.watch === true &&
+        watch !== true &&
+        // 只有真·后退 / 前进把参数退掉才算关上。不是后退的同地址导航也会丢 `watch`——`/` 落地跳回这段对话、
+        // 左栏再点正在看的这一行、`useBotChat` 落到同一段——页面没藏过（epoch 不变），那时清了记忆，
+        // 离开再回来就永远是「面板」。非后退的丢弃不清记忆，由上面的 effect 把地址补回来。
+        lastHistoryEventWasPop()
+      ) {
+        setBotUi(agentId, { computer: false });
+      }
+    },
+  );
 
   const setOpen = useCallback((next: boolean) => {
     const { agentId: id, writeUrl: write } = latest.current;

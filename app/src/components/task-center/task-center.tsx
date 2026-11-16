@@ -7,6 +7,7 @@ import {
   IconClock,
   IconHistory,
   IconInbox,
+  IconLayoutKanban,
   IconListDetails,
   IconPlus,
   IconRefresh,
@@ -21,8 +22,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import { useExternalConnection, useResizeObserver } from "@/hooks";
 import { AgentsRailCard } from "@/components/panels/agents-rail-card";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
@@ -54,11 +56,13 @@ import {
   taskDate,
 } from "./labels";
 import { SourceSettings } from "./source-settings";
+import { TaskBoard } from "./task-board";
 import { TaskDetail, TaskStatusBadge } from "./task-detail";
 import "./task-center.css";
 
 export type TaskCenterView =
   | "inbox"
+  | "board"
   | "outbox"
   | "active"
   | "history"
@@ -67,6 +71,7 @@ export type TaskCenterView =
   | "capabilities";
 const views = [
   { id: "inbox", label: "Inbox", icon: IconInbox },
+  { id: "board", label: "看板", icon: IconLayoutKanban },
   { id: "outbox", label: "Outbox", icon: IconSend },
   { id: "active", label: "进行中", icon: IconActivity },
   { id: "history", label: "历史", icon: IconHistory },
@@ -76,6 +81,7 @@ const views = [
 ] as const;
 const titles: Record<TaskCenterView, string> = {
   inbox: "等待安排的事项",
+  board: "任务看板",
   outbox: "需要你确认",
   active: "正在推进",
   history: "历史与交付",
@@ -85,6 +91,7 @@ const titles: Record<TaskCenterView, string> = {
 };
 const descriptions: Partial<Record<TaskCenterView, string>> = {
   inbox: "主动发现的待办和你交付的目标，统一在这里安排。",
+  board: "在四列看板上统筹个人任务与本机 Markdown 路线图，点击即可交给机器人推进并自动回写成果。",
   outbox: "查看拟执行的具体内容，批准后继续，拒绝则停止这项操作。",
   active: "跟踪执行、等待和暂停的任务，随时查看进度或介入。",
   history: "查看已交付成果、失败原因和取消记录。",
@@ -94,10 +101,12 @@ export function TaskCenter({
   view,
   taskId,
   onNavigate,
+  onClose,
 }: {
   view: TaskCenterView;
   taskId?: string;
   onNavigate: (view: TaskCenterView, taskId?: string) => void;
+  onClose?: () => void;
 }) {
   const snapshot = useQuery(taskCenterSnapshotOptions());
   const queryClient = useQueryClient();
@@ -123,26 +132,21 @@ export function TaskCenter({
     decisionListOptions("resolved", view === "outbox"),
   );
   const navigation = useRef<HTMLElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 切视图是有意的触发——回到列表顶
-  useEffect(() => {
+  const revealSelection = () => {
     const nav = navigation.current;
     if (!nav) return;
-    nav.closest(".page-scroll")?.scrollTo({ top: 0 });
-    // Deep links and desktop → phone resizing must keep the selected section visible.
-    // Scroll only this strip, not the modal or the page underneath it.
-    const revealSelection = () => {
-      const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
-      if (!selected || nav.scrollWidth <= nav.clientWidth) return;
-      const item = selected.getBoundingClientRect();
-      const strip = nav.getBoundingClientRect();
-      nav.scrollLeft +=
-        item.left - strip.left - (nav.clientWidth - item.width) / 2;
-    };
+    const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!selected || nav.scrollWidth <= nav.clientWidth) return;
+    const item = selected.getBoundingClientRect();
+    const strip = nav.getBoundingClientRect();
+    nav.scrollLeft +=
+      item.left - strip.left - (nav.clientWidth - item.width) / 2;
+  };
+  useExternalConnection(view, () => {
+    navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
     revealSelection();
-    const resize = new ResizeObserver(revealSelection);
-    resize.observe(nav);
-    return () => resize.disconnect();
-  }, [view]);
+  });
+  useResizeObserver(navigation, revealSelection, true, view);
   const data = snapshot.data;
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: taskCenterKeys.all });
@@ -460,6 +464,14 @@ export function TaskCenter({
                   </details>
                 ) : null}
               </>
+            ) : null}
+            {view === "board" ? (
+              <TaskBoard
+                onCloseCenter={onClose}
+                onOpenSources={() => onNavigate("sources")}
+                onOpenTask={(id) => onNavigate(view, id)}
+                tasks={data.tasks}
+              />
             ) : null}
             {view === "sources" ? (
               <SourceSettings sources={data.sources} onChanged={refresh} />

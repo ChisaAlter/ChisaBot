@@ -319,8 +319,9 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
       problems.push(`${label}设置了失败时打回重做，需要指定打回的目标步骤（rejectTo）。`);
     }
     if (step.group && index > 0) {
-      const prev = def.steps[index - 1]!;
-      if (prev.group === step.group && step.approval) problems.push(`${label}在并行组里，不能单独设置审批（把审批放在组里第一步）。`);
+      const prev = def.steps[index - 1];
+      if (prev?.group === step.group && step.approval)
+        problems.push(`${label}在并行组里，不能单独设置审批（把审批放在组里第一步）。`);
     }
     seenSteps.add(step.id);
   });
@@ -346,8 +347,11 @@ export function workflowProblems(def: WorkflowDefinition, librarySkills?: Readon
 /** 模板里的 {{inputs.x}} / {{steps.y}}。 */
 export function templateRefs(text: string): { kind: "inputs" | "steps"; key: string }[] {
   const refs: { kind: "inputs" | "steps"; key: string }[] = [];
-  for (const match of text.matchAll(/\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g))
-    refs.push({ kind: match[1] as "inputs" | "steps", key: match[2]! });
+  for (const match of text.matchAll(/\{\{\s*(inputs|steps)\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g)) {
+    const kind = match[1];
+    const key = match[2];
+    if (kind && key) refs.push({ kind: kind as "inputs" | "steps", key });
+  }
   return refs;
 }
 
@@ -356,7 +360,7 @@ export function workflowStages(steps: readonly WorkflowStep[]): WorkflowStep[][]
   const stages: WorkflowStep[][] = [];
   for (const step of steps) {
     const last = stages[stages.length - 1];
-    if (last && step.group && last[0]!.group === step.group) last.push(step);
+    if (last && step.group && last[0]?.group === step.group) last.push(step);
     else stages.push([step]);
   }
   return stages;

@@ -1,7 +1,9 @@
 import { IconArrowBackUp, IconBook, IconDots, IconPlus, IconSparkles, IconWorld } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { MEMORY_KIND_LABELS, MEMORY_KINDS, type MemoryKind, type MemoryNoteView } from "../../../../../shared/memory-notes";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import {
@@ -93,12 +95,17 @@ function MemoryPage() {
   const { undoTidy: undoLink } = Route.useSearch();
   const navigate = useNavigate({ from: "/settings/memory" });
   const handledLink = useRef<string | null>(null);
-  useEffect(() => {
-    if (!undoLink || handledLink.current === undoLink) return;
-    handledLink.current = undoLink;
-    void navigate({ search: {}, replace: true });
-    void undoTidyFromLink(undoLink, refresh);
-  });
+  useExternalConnection(
+    undoLink && handledLink.current !== undoLink
+      ? `${undoLink}\0${objectConnectionKey(navigate)}\0${objectConnectionKey(refresh)}`
+      : false,
+    () => {
+      if (!undoLink || handledLink.current === undoLink) return;
+      handledLink.current = undoLink;
+      void navigate({ search: {}, replace: true });
+      void undoTidyFromLink(undoLink, refresh);
+    },
+  );
   const tidyAction = useAsyncAction(
     async () => {
       await runMemoryTidy({ refresh, botName: (id) => botName.get(id) ?? null });

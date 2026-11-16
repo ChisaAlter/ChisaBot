@@ -62,8 +62,11 @@ export async function createChatShots(database: Database) {
               body.dataUrl,
             )
           : null;
-      if (!match) return c.json({ error: "只收 JPEG / PNG / WebP 图片" }, 400);
-      const bytes = Buffer.from(match[2]!, "base64");
+      const mime = match?.[1];
+      const encoded = match?.[2];
+      if (!mime || !encoded)
+        return c.json({ error: "只收 JPEG / PNG / WebP 图片" }, 400);
+      const bytes = Buffer.from(encoded, "base64");
       if (bytes.length === 0 || bytes.length > MAX_BYTES)
         return c.json({ error: "截图太大" }, 413);
       const botId =
@@ -75,7 +78,7 @@ export async function createChatShots(database: Database) {
       await database.$client.unsafe(
         `INSERT INTO chisabot_chat_shots (id, owner_user_id, bot_id, url, mime, data) VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (owner_user_id, id) DO UPDATE SET bot_id = EXCLUDED.bot_id, url = EXCLUDED.url, mime = EXCLUDED.mime, data = EXCLUDED.data`,
-        [id, c.var.actor.id, botId, url, match[1]!, bytes],
+        [id, c.var.actor.id, botId, url, mime, bytes],
       );
       await prune(c.var.actor.id).catch(() => {});
       return c.json({ ok: true });

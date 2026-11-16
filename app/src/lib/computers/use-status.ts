@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import {
   type ComputerStatus,
   currentComputerStatus,
@@ -26,35 +27,38 @@ export function useComputerStatus(
       ? s
       : null;
   });
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let last: ComputerStatus | null = null;
-    const settle = () => {
-      clearTimeout(timer);
-      // 还在动（工具在跑，或这一轮没结束）就不收；否则留一会儿再收。
-      if (!last || last.pending || isChatRunning()) return;
-      const left = Math.max(0, LINGER_MS - (Date.now() - last.at));
-      timer = setTimeout(() => {
-        if (!isChatRunning()) setValue(null);
-      }, left);
-    };
-    const off = onComputerStatus((s) => {
-      if (!s || s.botId !== botId) return;
-      last = s;
-      setValue(s);
-      settle();
-    });
-    const onRunning = () => {
-      // 一轮结束时从「现在」起再留 LINGER_MS。
-      if (last && !isChatRunning()) last = { ...last, at: Date.now() };
-      settle();
-    };
-    window.addEventListener("chisabot-chat-running", onRunning);
-    return () => {
-      off();
-      window.removeEventListener("chisabot-chat-running", onRunning);
-      clearTimeout(timer);
-    };
-  }, [botId]);
+  useExternalConnection(
+    botId === undefined ? "u" : `s:${botId}`,
+    () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let last: ComputerStatus | null = null;
+      const settle = () => {
+        clearTimeout(timer);
+        // 还在动（工具在跑，或这一轮没结束）就不收；否则留一会儿再收。
+        if (!last || last.pending || isChatRunning()) return;
+        const left = Math.max(0, LINGER_MS - (Date.now() - last.at));
+        timer = setTimeout(() => {
+          if (!isChatRunning()) setValue(null);
+        }, left);
+      };
+      const off = onComputerStatus((s) => {
+        if (!s || s.botId !== botId) return;
+        last = s;
+        setValue(s);
+        settle();
+      });
+      const onRunning = () => {
+        // 一轮结束时从「现在」起再留 LINGER_MS。
+        if (last && !isChatRunning()) last = { ...last, at: Date.now() };
+        settle();
+      };
+      window.addEventListener("chisabot-chat-running", onRunning);
+      return () => {
+        off();
+        window.removeEventListener("chisabot-chat-running", onRunning);
+        clearTimeout(timer);
+      };
+    },
+  );
   return value;
 }

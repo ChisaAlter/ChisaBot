@@ -19,7 +19,7 @@ import {
 
 const ctx = await context({});
 const page = await newPage(ctx, "x");
-await page.goto(base + "/", { waitUntil: "domcontentloaded" });
+await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
 const call = (p, o) => api(page, p, o);
 await guardInit(call);
 const mk = async (name) => {

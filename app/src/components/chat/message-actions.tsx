@@ -7,10 +7,10 @@ import {
 import {
   type KeyboardEvent,
   type ReactNode,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useElementSync } from "@/hooks";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, StatusGlyph } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -169,12 +169,10 @@ export function MessageEditor({
     () => new Set(),
   );
   const ref = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
+  useElementSync(ref, true, (element) => {
     element.focus();
     element.setSelectionRange(element.value.length, element.value.length);
-  }, []);
+  });
   const keptAttachments = (attachments ?? []).filter(
     (item) => !removedIndices.has(item.partIndex),
   );

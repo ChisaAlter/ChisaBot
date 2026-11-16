@@ -5,7 +5,8 @@ import {
   useAnimationFrame,
   useMotionValue,
 } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 
 /**
  * The single state contract shared by every SmoothUI AI component.
@@ -219,11 +220,9 @@ export const useAmplitudeValue = (
   const fallback = useMotionValue(0);
   const numeric = typeof amplitude === "number" ? amplitude : null;
 
-  useEffect(() => {
-    if (numeric !== null) {
-      fallback.set(numeric);
-    }
-  }, [numeric, fallback]);
+  useExternalConnection(numeric, (value) => {
+    fallback.set(value);
+  });
 
   return isMotionValue(amplitude) ? amplitude : fallback;
 };
@@ -335,12 +334,12 @@ export const useAudioAmplitude = (
     }
   }, [fftSize]);
 
-  useEffect(() => {
+  useExternalConnection(autoStart ? "auto" : "manual", () => {
     if (autoStart) {
       start();
     }
     return stop;
-  }, [autoStart, start, stop]);
+  });
 
   useAnimationFrame(() => {
     const analyser = analyserRef.current;

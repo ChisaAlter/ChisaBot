@@ -1,4 +1,5 @@
-import { type ComponentType, type ReactNode, useEffect, useState } from "react";
+import { type ComponentType, type ReactNode, useState } from "react";
+import { useExternalConnection, useIdleTask } from "@/hooks";
 
 /**
  * 首屏画完、浏览器空下来以后才挂上 children（最多等 `timeout` 毫秒）：给首屏用不到、只在后台听事件的东西
@@ -6,14 +7,7 @@ import { type ComponentType, type ReactNode, useEffect, useState } from "react";
  */
 export function AfterIdle({ children, timeout = 2000 }: { children: ReactNode; timeout?: number }) {
   const [idle, setIdle] = useState(false);
-  useEffect(() => {
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(() => setIdle(true), { timeout });
-      return () => window.cancelIdleCallback(id);
-    }
-    const timer = window.setTimeout(() => setIdle(true), Math.min(timeout, 500));
-    return () => window.clearTimeout(timer);
-  }, [timeout]);
+  useIdleTask(() => setIdle(true), !idle, timeout);
   return idle ? children : null;
 }
 
@@ -48,17 +42,16 @@ export function lazyPart<P extends object>(
   function Lazy(props: P) {
     const [component, setComponent] = useState<ComponentType<P> | null>(() => loaded);
     const [error, setError] = useState<unknown>(null);
-    useEffect(() => {
-      if (component) return;
-      let alive = true;
+    useExternalConnection(!component, (_key, signal) => {
       get().then(
-        (next) => alive && setComponent(() => next),
-        (failure) => alive && setError(failure ?? new Error("lazy part failed to load")),
+        (next) => {
+          if (!signal.aborted) setComponent(() => next);
+        },
+        (failure) => {
+          if (!signal.aborted) setError(failure ?? new Error("lazy part failed to load"));
+        },
       );
-      return () => {
-        alive = false;
-      };
-    }, [component]);
+    });
     if (error) throw error;
     const Ready = component ?? loaded;
     if (Ready) return <Ready {...props} />;

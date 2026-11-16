@@ -21,7 +21,7 @@ const { which } = require("./detect");
 const MCP_STDIO_SCRIPT = path.join(__dirname, "subagent-mcp-stdio.js");
 
 function resolveJsRunner() {
-  if (!process.versions || !process.versions.electron) {
+  if (!process.versions?.electron) {
     return { command: process.execPath, env: {} };
   }
   const nodeBin = which("node");
@@ -93,7 +93,7 @@ async function createSubagentBridge(options) {
         res.end(JSON.stringify({ ok: true, data }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: err && err.message ? err.message : String(err) }));
+        res.end(JSON.stringify({ ok: false, error: err?.message ? err.message : String(err) }));
       }
     });
   });

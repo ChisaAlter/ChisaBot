@@ -42,7 +42,7 @@ async function ensureEnrolled({ config, sessionStatus, cookieHeader, enroll, che
     config.set({ deviceId: result.device.id, deviceName: result.device.name, localPaused: false });
     return { status: "enrolled", message: `已登记为设备「${result.device.name}」。`, device: result.device };
   } catch (error) {
-    const message = error && error.message ? error.message : String(error);
+    const message = error?.message ? error.message : String(error);
     return { status: "failed", message: `这台电脑没能登记为设备：${message}` };
   }
 }

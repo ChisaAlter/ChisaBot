@@ -263,11 +263,10 @@ const CLOSE_PUNCT = "）」』】〉》〕";
  * lib/halt.ts 量出来的）它们收掉空着的那半个字宽，「检查（不生成图片）」的墨迹才居中；带 halt 的字体不变。
  */
 export function edgePunct(text: string): ReactNode {
-  const head = text.length > 1 && OPEN_PUNCT.includes(text[0]!) ? text[0]! : "";
-  const tail =
-    text.length > 1 && CLOSE_PUNCT.includes(text[text.length - 1]!)
-      ? text[text.length - 1]!
-      : "";
+  const first = text.length > 1 ? (text[0] ?? "") : "";
+  const last = text.length > 1 ? (text[text.length - 1] ?? "") : "";
+  const head = first && OPEN_PUNCT.includes(first) ? first : "";
+  const tail = last && CLOSE_PUNCT.includes(last) ? last : "";
   if (!head && !tail) return text;
   const middle = text.slice(head ? 1 : 0, tail ? -1 : undefined);
   return (

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import brandAvatar from "@/assets/brand/chisa-mark.png";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTimeout } from "@/hooks";
 import {
   saveUserPreferencesMutationOptions,
   useUserPreferences,
@@ -74,24 +75,22 @@ export function BrandAvatar({ size = 28 }: { size?: number }) {
 export function BrandMark({ avatar = true }: { avatar?: boolean } = {}) {
   const { accent, rest } = useBrandName();
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              aria-label={`${accent}${rest}，点击修改名称`}
-              className="brand-mark-btn"
-              onClick={() => openAccountDialog("brand")}
-              type="button"
-            />
-          }
-        >
-          {avatar ? <BrandAvatar /> : null}
-          <BrandWordmark accent={accent} rest={rest} />
-        </TooltipTrigger>
-        <TooltipContent>{"点击修改名称"}</TooltipContent>
-      </Tooltip>
-    </>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            aria-label={`${accent}${rest}，点击修改名称`}
+            className="brand-mark-btn"
+            onClick={() => openAccountDialog("brand")}
+            type="button"
+          />
+        }
+      >
+        {avatar ? <BrandAvatar /> : null}
+        <BrandWordmark accent={accent} rest={rest} />
+      </TooltipTrigger>
+      <TooltipContent>{"点击修改名称"}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -124,11 +123,7 @@ function BrandForm({ onSaved }: { onSaved: () => void }) {
   const save = useMutation(saveUserPreferencesMutationOptions(queryClient, userId));
 
   // 保存成功后让按钮先显示「已保存」再关闭。
-  useEffect(() => {
-    if (!save.isSuccess) return;
-    const timer = setTimeout(onSaved, 700);
-    return () => clearTimeout(timer);
-  }, [save.isSuccess, onSaved]);
+  useTimeout(onSaved, save.isSuccess ? 700 : null);
 
   const empty = !accent.trim() && !rest.trim();
   const preview = empty

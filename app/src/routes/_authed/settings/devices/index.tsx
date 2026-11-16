@@ -1,7 +1,9 @@
 import { IconDownload } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import {
   AddDeviceCard,
   AddPhoneCard,
@@ -46,11 +48,10 @@ function DevicesPage() {
   const { pair } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const [pairOpen, setPairOpen] = useState(false);
-  useEffect(() => {
-    if (!pair) return;
+  useExternalConnection(pair ? objectConnectionKey(navigate) : false, () => {
     setPairOpen(true);
     void navigate({ search: {}, replace: true });
-  }, [pair, navigate]);
+  });
   const list = useQuery(deviceListQueryOptions());
   const [local, setLocal] = usePcLocal();
   const download = useQuery(pcDownloadQueryOptions());

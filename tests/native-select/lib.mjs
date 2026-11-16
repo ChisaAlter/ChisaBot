@@ -83,7 +83,7 @@ export async function mkBot(
     }),
   });
   const id = JSON.parse(r.body).agent.id;
-  fs.appendFileSync("/out/bots.txt", id + "\n");
+  fs.appendFileSync("/out/bots.txt", `${id}\n`);
   return id;
 }
 export const ta = (page) => page.locator('[aria-label="消息"]:visible').first();

@@ -14,6 +14,7 @@ import {
   capConnectMessages,
   snapshotSince,
 } from "../../shared/connect-snapshot";
+import { readReleaseLocksOnStart } from "./config";
 import { forgetHistorySummaries } from "./agents/history-budget";
 import { fallbackNotice } from "./agents/model-fallback";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
@@ -2687,7 +2688,7 @@ export async function createLocalConversations(
   const client = new LocalConversationClient(store);
   const inbox = new ThreadInbox(database);
   await inbox.ensure();
-  if (process.env.CHISABOT_RELEASE_LOCKS_ON_START !== "0") {
+  if (readReleaseLocksOnStart()) {
     try {
       const retained = await createDshRunJournal(database).pending();
       const owed = await inbox.releaseInterrupted(
@@ -2720,7 +2721,7 @@ export async function createLocalConversations(
     }
   }
   // Track B：存活期间也扫过期锁（启动清锁管重启；这里管 renewal 停了却没 finally 的边角）。
-  if (process.env.CHISABOT_RELEASE_LOCKS_ON_START !== "0") {
+  if (readReleaseLocksOnStart()) {
     const sweep = () => {
       void client
         .sweepExpiredLocks()

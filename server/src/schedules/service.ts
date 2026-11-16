@@ -772,14 +772,19 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     if (patch.paused === false) status = "active";
     let next: Date | null = row.next_run_at ? new Date(row.next_run_at) : null;
     if (patch.when || patch.timezone) {
-      const when: WhenInput =
-        patch.when ??
-        (row.kind === "cron"
-          ? { repeat: "cron", cron: row.cron ?? "" }
-          : {
-              repeat: "once",
-              at: localText(new Date(row.run_at!), row.timezone),
-            });
+      let when: WhenInput;
+      if (patch.when) {
+        when = patch.when;
+      } else if (row.kind === "cron") {
+        when = { repeat: "cron", cron: row.cron ?? "" };
+      } else {
+        if (!row.run_at)
+          throw new ScheduleError("一次性任务缺少原定时间，请提供新的时间（when）。");
+        when = {
+          repeat: "once",
+          at: localText(new Date(row.run_at), row.timezone),
+        };
+      }
       const resolved = resolveWhen(when, timezone, now());
       kind = resolved.kind;
       cron = resolved.cron;
@@ -787,8 +792,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       next = resolved.next;
     } else if (status === "active" && row.status !== "active") {
       // 恢复：周期任务从现在排下一次；一次性的时间过了就要新时间。
-      if (kind === "cron") next = nextOccurrence(cron!, timezone, now());
-      else if (runAt && runAt.getTime() <= now().getTime())
+      if (kind === "cron") {
+        if (!cron)
+          throw new ScheduleError("周期任务缺少 cron 表达式，请重新设置时间（when）。");
+        next = nextOccurrence(cron, timezone, now());
+      } else if (runAt && runAt.getTime() <= now().getTime())
         throw new ScheduleError(
           "这个提醒的时间已经过了，恢复时请给一个新时间（when）。",
         );
@@ -840,9 +848,10 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
       return view(written(rows));
     }
+    if (!row.cron) throw new ScheduleError("周期任务缺少 cron 表达式。");
     const from = row.next_run_at ? new Date(row.next_run_at) : now();
     const next = nextOccurrence(
-      row.cron!,
+      row.cron,
       row.timezone,
       from.getTime() > now().getTime() ? from : now(),
     );
@@ -884,7 +893,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           "UPDATE chisabot_schedules SET status='done', next_run_at=NULL, updated_at=now() WHERE id=$1 RETURNING *",
           [current.id],
         );
-        claimed = rows[0]!;
+        claimed = written(rows);
       }
       await tx.unsafe(
         "INSERT INTO chisabot_schedule_runs (id, schedule_id, owner_user_id, scheduled_for, manual) VALUES ($1,$2,$3,now(),true)",
@@ -1496,7 +1505,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     const at = now();
     for (const row of due) {
       try {
-        const stamp = new Date(row.next_run_at!);
+        const scheduledNextRun = row.next_run_at;
+        if (!scheduledNextRun) continue;
+        const stamp = new Date(scheduledNextRun);
         const lateMs = Math.max(0, at.getTime() - stamp.getTime());
         let nextAt: Date | null = null;
         let status: ScheduleStatus = "active";
@@ -1510,13 +1521,14 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           }
         } else {
           try {
+            if (!row.cron) throw new Error("missing cron");
             nextAt = nextOccurrence(
-              row.cron!,
+              row.cron,
               row.timezone,
               lateMs > CRON_GRACE_MS ? at : stamp,
             );
             if (nextAt.getTime() <= at.getTime())
-              nextAt = nextOccurrence(row.cron!, row.timezone, at);
+              nextAt = nextOccurrence(row.cron, row.timezone, at);
           } catch {
             status = "paused";
             fireIt = false;
@@ -1536,7 +1548,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           const tx = transaction as unknown as Database["$client"];
           const current = await tx.unsafe(
             "SELECT id FROM chisabot_schedules WHERE id = $1 AND status = 'active' AND date_trunc('milliseconds', next_run_at) = $2::timestamptz FOR UPDATE",
-            [row.id, iso(row.next_run_at!)],
+            [row.id, iso(scheduledNextRun)],
           );
           if (!current.length) return [];
           const active = fireIt
@@ -1558,7 +1570,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
            SELECT $5, id, owner_user_id, $2::timestamptz, $6::text, $7::text, CASE WHEN $6::text = 'running' THEN NULL ELSE now() END FROM upd RETURNING id`,
             [
               row.id,
-              iso(row.next_run_at!),
+              iso(scheduledNextRun),
               isoOrNull(nextAt),
               status,
               runId,
@@ -1728,17 +1740,23 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
        WHERE r.owner_user_id = $1 AND r.finished_at > $2 AND r.finished_at > now() - interval '1 hour' ORDER BY r.finished_at LIMIT 20`,
       [owner, iso(after)],
     );
-    return rows.map((r) => ({
-      runId: r.id,
-      scheduleId: r.schedule_id,
-      title: r.title,
-      agentId: r.agent_id,
-      threadId: r.thread_id,
-      status: r.status,
-      result: r.result ? clip(r.result, 200) : null,
-      manual: r.manual,
-      finishedAt: iso(r.finished_at!),
-    }));
+    return rows.flatMap((r) =>
+      r.finished_at
+        ? [
+            {
+              runId: r.id,
+              scheduleId: r.schedule_id,
+              title: r.title,
+              agentId: r.agent_id,
+              threadId: r.thread_id,
+              status: r.status,
+              result: r.result ? clip(r.result, 200) : null,
+              manual: r.manual,
+              finishedAt: iso(r.finished_at),
+            },
+          ]
+        : [],
+    );
   }
 
   // ---------- 机器人工具 ----------

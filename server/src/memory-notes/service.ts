@@ -197,7 +197,8 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
           "UPDATE chisabot_memory_notes SET content = $3, context = COALESCE($4, context), updated_at = now() WHERE id = $1 AND owner_user_id = $2 RETURNING *",
           [same.id, owner, merged, context],
         );
-        return { note: view(row!), merged: true, unchanged: false };
+        if (!row) throw new Error("记忆笔记更新后没有返回记录。");
+        return { note: view(row), merged: true, unchanged: false };
       }
     } else {
       const [dup] = await sql.unsafe<Row[]>(
@@ -216,7 +217,8 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [`mem_${randomUUID().replace(/-/g, "").slice(0, 20)}`, owner, kind, subject, content, context, agentId, shared],
     );
-    return { note: view(row!), merged: false, unchanged: false };
+    if (!row) throw new Error("记忆笔记插入后没有返回记录。");
+    return { note: view(row), merged: false, unchanged: false };
   }
 
   async function update(owner: string, id: string, patch: Partial<NoteInput>, isAdmin = false) {
@@ -234,7 +236,8 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
        WHERE id = $1 AND owner_user_id = $2 RETURNING *`,
       [id, row.owner_user_id, kind, subject, content, context, shared],
     );
-    return view(next!);
+    if (!next) throw new MemoryNoteError("找不到这条记忆（可能已经删了或属于只读公共知识库）。");
+    return view(next);
   }
 
   async function remove(owner: string, ids: readonly string[], isAdmin = false) {
@@ -311,7 +314,7 @@ export function createMemoryNotes(database: Database, options: { timeZone?: stri
         `- [${row.id}] ${row.shared ? "〔公共知识库〕" : ""}${row.subject ? `${row.subject}：` : ""}${row.content.replace(/\n+/g, "；")}${row.context ? `（情境：${row.context}）` : ""}`,
       );
     const index = (row: Row) =>
-      take(`- [${row.id}] ${row.shared ? "〔公共知识库〕" : ""}${row.subject}：${row.content.split("\n")[0]!.slice(0, 80)}`);
+      take(`- [${row.id}] ${row.shared ? "〔公共知识库〕" : ""}${row.subject}：${(row.content.split("\n")[0] ?? "").slice(0, 80)}`);
     const parts = [
       section("个人资料", rows.filter((r) => r.kind === "profile").map(fact)),
       section("偏好", rows.filter((r) => r.kind === "preference").map(fact)),

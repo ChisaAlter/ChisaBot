@@ -208,12 +208,12 @@ function winInputScript(args) {
     case "click":
       return WIN_INPUT_TYPE + move + click("0x0002", "0x0004");
     case "double_click":
-      return WIN_INPUT_TYPE + move + click("0x0002", "0x0004") + "Start-Sleep -Milliseconds 60;" + click("0x0002", "0x0004");
+      return `${WIN_INPUT_TYPE}${move}${click("0x0002", "0x0004")}Start-Sleep -Milliseconds 60;${click("0x0002", "0x0004")}`;
     case "right_click":
       return WIN_INPUT_TYPE + move + click("0x0008", "0x0010");
     case "scroll": {
       const amount = Number.isFinite(args.amount) ? Math.round(args.amount) : -3;
-      return WIN_INPUT_TYPE + move + `[CBInput]::mouse_event(0x0800,0,0,${amount * 120},[UIntPtr]::Zero);`;
+      return `${WIN_INPUT_TYPE}${move}[CBInput]::mouse_event(0x0800,0,0,${amount * 120},[UIntPtr]::Zero);`;
     }
     case "type": {
       const text = escapeSendKeys(args.text ?? "").replace(/'/g, "''");
@@ -256,7 +256,7 @@ function createOps(options = {}) {
   async function resolvePath(requested, ctx) {
     if (!ctx.fullAccess) return resolveInRoots(requested, ctx.allowedRoots, platform);
     const raw = typeof requested === "string" ? requested.trim() : "";
-    const base = (ctx.allowedRoots && ctx.allowedRoots[0]) || os.homedir();
+    const base = ctx.allowedRoots?.[0] || os.homedir();
     const expanded = raw.startsWith("~") ? P.join(os.homedir(), raw.slice(1)) : raw;
     return expanded ? (P.isAbsolute(expanded) ? P.resolve(expanded) : P.resolve(base, expanded)) : P.resolve(base);
   }
@@ -311,7 +311,7 @@ function createOps(options = {}) {
       entries.push({
         name,
         type: !s ? "unknown" : s.isDirectory() ? "dir" : s.isSymbolicLink() ? "link" : "file",
-        size: s && s.isFile() ? s.size : undefined,
+        size: s?.isFile() ? s.size : undefined,
         modified: s ? s.mtime.toISOString() : undefined,
       });
     }

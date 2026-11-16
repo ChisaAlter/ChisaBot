@@ -6,7 +6,8 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useLocation } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useDocumentSync, useTimeout } from "@/hooks";
 import { isPhone, isStandalone } from "@/lib/device";
 import {
   installHintDismissed,
@@ -55,26 +56,24 @@ export function InstallHint() {
     (canPrompt || ios) &&
     !pathname.startsWith("/onboarding");
 
-  useEffect(() => {
-    if (!eligible || ready) return;
-    if (installHintDismissed()) {
-      setGone(true);
-      return;
-    }
-    const timer = window.setTimeout(() => setReady(true), DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [eligible, ready]);
+  useTimeout(
+    () => {
+      if (installHintDismissed()) setGone(true);
+      else setReady(true);
+    },
+    eligible && !ready ? DELAY_MS : null,
+  );
 
   // 关掉动画期间仍占位，避免正文顶距猛地缩回盖住标题一闪。
   const visible = Boolean(eligible && ready && !gone);
-  useEffect(() => {
-    if (!visible) {
-      document.body.removeAttribute("data-install-hint");
+  useDocumentSync(visible, (doc, isVisible) => {
+    if (!isVisible) {
+      doc.body.removeAttribute("data-install-hint");
       return;
     }
-    document.body.setAttribute("data-install-hint", "open");
-    return () => document.body.removeAttribute("data-install-hint");
-  }, [visible]);
+    doc.body.setAttribute("data-install-hint", "open");
+    return () => doc.body.removeAttribute("data-install-hint");
+  });
 
   if (!eligible || !ready || gone) return null;
 

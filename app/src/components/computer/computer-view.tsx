@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconDeviceDesktop, IconWorld, IconX } from "@tabler/icons-react";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useRef, useState } from "react";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { createPortal } from "react-dom";
 import {
   browserPresenceCardLabel,
@@ -289,9 +290,9 @@ export function ComputerView({
   const [problem, setProblem] = useState<string | null>(null);
   /** The card's screenshot is yielding to a live cast (this window's big screen or another window's). */
   const [castingElsewhere, setCastingElsewhere] = useState(false);
-  useEffect(() => {
+  useExternalConnection(`cast:${castingElsewhere}`, () => {
     onLiveCastChange?.(castingElsewhere);
-  }, [castingElsewhere, onLiveCastChange]);
+  });
   const [expanded, setExpanded] = useState(false);
   const [streamProblem, setStreamProblem] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -363,9 +364,12 @@ export function ComputerView({
   const tabsView = useBrowserTabs(computerId, false);
   const activeTab = tabsView?.tabs.find((tab) => tab.id === tabsView.activeId);
   // 起始页上的常用网站 = 收藏夹：右栏画面出现、打开大屏时推一次给这个机器人的浏览器。
-  useEffect(() => {
-    if (browserChrome || expanded) syncStartLinks(computerId);
-  }, [browserChrome, expanded, computerId]);
+  useExternalConnection(
+    browserChrome || expanded ? computerId || null : null,
+    (id) => {
+      syncStartLinks(id);
+    },
+  );
   const openBookmark = async (url: string, inNewTab: boolean) => {
     if (inNewTab) {
       const opened = await humanTab(computerId, "new");
@@ -384,186 +388,205 @@ export function ComputerView({
    * succeeds, which is the one moment the screen is certainly showing the page that was asked for,
    * so there is nothing left here to race.
    */
-  useEffect(() => {
-    if (!toolCallId || !settled) return;
-    const remembered = REMEMBERED_TURNS.get(toolCallId);
-    /*
-     * Asked once per turn once we have an answer — or after a few empty replies. A single empty
-     * stamp (CR-P2-02) raced the server's keepFrameOf write and left the turn on the named-page
-     * placeholder forever. Bounded retries cover that race; after that we remember empty so old
-     * turns without frames do not refetch on every remount.
-     */
-    if (remembered?.frame || remembered?.asked) return;
-    let current = true;
-    const delays = [0, 400, 1200];
+  useExternalConnection(
+    toolCallId && settled ? `${computerId}\0${toolCallId}` : null,
+    (_activeKey, signal) => {
+      if (!toolCallId) return;
+      const remembered = REMEMBERED_TURNS.get(toolCallId);
+      /*
+       * Asked once per turn once we have an answer — or after a few empty replies. A single empty
+       * stamp (CR-P2-02) raced the server's keepFrameOf write and left the turn on the named-page
+       * placeholder forever. Bounded retries cover that race; after that we remember empty so old
+       * turns without frames do not refetch on every remount.
+       */
+      if (remembered?.frame || remembered?.asked) return;
+      const delays = [0, 400, 1200];
 
-    void (async () => {
-      for (let i = 0; i < delays.length; i += 1) {
-        if (delays[i]! > 0) {
-          await new Promise((r) => setTimeout(r, delays[i]));
-        }
-        if (!current) return;
-        const stored = await readPageFrame(computerId, toolCallId);
-        if (!current) return;
-        if (stored) {
-          rememberTurn(toolCallId, {
-            asked: true,
-            frame: { base64: stored.frame, url: stored.url },
-          });
-          setFrameArrived((n) => n + 1);
-          return;
-        }
-      }
-      if (!current) return;
-      rememberTurn(toolCallId, { asked: true });
-    })();
-
-    return () => {
-      current = false;
-    };
-  }, [computerId, toolCallId, settled]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `secretPending` / `retryKey` intentionally restart settled polling.
-  useEffect(() => {
-    if (settled) return;
-    if (!visualVisible) return;
-    /*
-     * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
-     * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
-     */
-    const blocked = screenshotPollBlocked({
-      expanded,
-      driving,
-      controlState,
-      controlEnabled: !settled,
-    });
-    if (blocked === "expanded") return;
-    // CB-103：先拿到接管状态再取图；还没读到就等下一次状态变化（effect 会重跑）。
-    if (blocked === "pending") return;
-    if (blocked === "unreachable") {
-      setShot(null);
-      setCastingElsewhere(false);
-      setProblem(CONTROL_UNREACHABLE_ZH);
-      return;
-    }
-    /*
-     * CB-103：有人接管着（不管是这张卡的大屏还是右栏 / 别的窗口），画面都在直播里。这时再拉 HTTP
-     * 截图只会被让路拒绝，控制台多一条红字。直接显示「直播中」占位，交还后 driving 变回 false，
-     * 这个 effect 重新跑，卡片自己接回截图。
-     */
-    if (blocked === "user_control") {
-      setShot(null);
-      setProblem(null);
-      setCastingElsewhere(true);
-      return;
-    }
-    const mine = ++generation.current;
-    let timer: ReturnType<typeof setTimeout>;
-    // Consecutive identical frames observed during post-action settling.
-    let unchanged = 0;
-    let lastFrame = "";
-    let failStreak = 0;
-    const graceStartedAt = Date.now();
-
-    /** Continue while active, human-driven, secret-pending, or not yet visually settled. */
-    const shouldContinue = () => {
-      if (active) return true;
-      if (drivingRef.current) return true;
-      if (secretPendingRef.current) return true;
-      if (Date.now() < watchUntil.current) return true;
-      if (Date.now() - graceStartedAt > SETTLE_TIMEOUT_MS) return false;
-      return unchanged < SETTLED_FRAMES;
-    };
-
-    // Always fetch at least one frame; only repeated refreshes are conditional.
-    const tick = async () => {
-      let liveCastBusy = false;
-      try {
-        const result = await readScreenshot(computerId);
-        if (generation.current !== mine) return;
-        // 接管中的让路（409 user_control）也按直播处理：慢速探、不报警告。
-        liveCastBusy = result.liveCast === true || result.userControl === true;
-
-        const next = applyScreenshotPollResult(result);
-        if (!next.shot) {
-          // DOG-05：清掉陈旧帧，占位「暂时看不到屏幕」，不要把上一张当直播。
-          failStreak += 1;
-          setShot(null);
-          setProblem(next.problem);
-          // 直播占着 CDP 是「大屏正在放」，不是「看不到屏幕」：换一张不带警告的卡。
-          setCastingElsewhere(liveCastBusy);
-        } else {
-          failStreak = 0;
-          setCastingElsewhere(false);
-          // Exact byte comparison is the settling signal.
-          unchanged = next.shot.base64 === lastFrame ? unchanged + 1 : 0;
-          lastFrame = next.shot.base64;
-          // Decode before swapping to avoid blanking the visible image during data URL changes.
-          await preloadFrame(next.shot.base64);
-          if (generation.current !== mine) return;
-          setShot(next.shot);
-          setProblem(null);
-        }
-      } catch (error) {
-        // 已被新一轮取代的探测，出错也与它无关了；当前这轮照常抛出。
-        if (generation.current === mine) throw error;
-      } finally {
-        if (generation.current === mine) {
-          // 不变式：**只要还显示着「暂时看不到屏幕」，就必须继续重试**。底栏文案承诺「稍后会自动重试」，
-          // 而停下来等用户点「重试」的话，大屏关掉、电脑恢复之后卡片都不会自己回来（线上卡死状态）。
-          // 所以「慢」是允许的，「停」不是：liveCast 固定 10s 探一次，连续失败按退避上限 30s 探。
-          const recovering = liveCastBusy || failStreak > 0;
-          if (shouldContinue() || recovering) {
-            /*
-             * 刚收起大屏时直播刚停，第一次探测会撞上「大屏正在直播」的 503；下一次如果还按 10 秒的
-             * liveCast 间隔走，右栏要空着「暂时看不到屏幕」十秒才回来（2026-10-22 实测约 12 秒）。
-             * 头两次改用 1.2 秒，让卡片在收起大屏后一两秒内接回截图；仍然失败才退回 10 秒探测。
-             */
-            const quick = liveCastBusy && failStreak <= 2;
-            timer = setTimeout(
-              tick,
-              quick
-                ? 1200
-                : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
-            );
+      void (async () => {
+        for (const delay of delays) {
+          if (delay > 0) {
+            await new Promise<void>((resolve) => {
+              const id = setTimeout(resolve, delay);
+              signal.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(id);
+                  resolve();
+                },
+                { once: true },
+              );
+            });
+          }
+          if (signal.aborted) return;
+          const stored = await readPageFrame(computerId, toolCallId);
+          if (signal.aborted) return;
+          if (stored) {
+            rememberTurn(toolCallId, {
+              asked: true,
+              frame: { base64: stored.frame, url: stored.url },
+            });
+            setFrameArrived((n) => n + 1);
+            return;
           }
         }
-      }
-    };
+        if (signal.aborted) return;
+        rememberTurn(toolCallId, { asked: true });
+      })();
+    },
+  );
 
-    void tick();
-    return () => {
-      generation.current++;
-      clearTimeout(timer);
-    };
-  }, [computerId, active, intervalMs, secretPending, settled, visualVisible, retryKey, expanded, driving, controlState]);
+  useExternalConnection(
+    !settled && visualVisible
+      ? [
+          computerId,
+          active,
+          intervalMs,
+          secretPending,
+          retryKey,
+          expanded,
+          driving,
+          controlState,
+        ].join("\0")
+      : null,
+    () => {
+      /*
+       * 大屏展开时 LiveScreen 走 websocket 出图。HTTP /screenshot 再轮询会跟流抢电脑，
+       * 控制台 503 刷屏，而画布仍像健康直播（狗粮 0.1.39 → 0.1.40）。收起后再拉卡片帧。
+       */
+      const blocked = screenshotPollBlocked({
+        expanded,
+        driving,
+        controlState,
+        controlEnabled: !settled,
+      });
+      if (blocked === "expanded") return;
+      // CB-103：先拿到接管状态再取图；还没读到就等下一次状态变化（连接键会更新）。
+      if (blocked === "pending") return;
+      if (blocked === "unreachable") {
+        setShot(null);
+        setCastingElsewhere(false);
+        setProblem(CONTROL_UNREACHABLE_ZH);
+        return;
+      }
+      /*
+       * CB-103：有人接管着（不管是这张卡的大屏还是右栏 / 别的窗口），画面都在直播里。这时再拉 HTTP
+       * 截图只会被让路拒绝，控制台多一条红字。直接显示「直播中」占位，交还后 driving 变回 false，
+       * 连接重新运行，卡片自己接回截图。
+       */
+      if (blocked === "user_control") {
+        setShot(null);
+        setProblem(null);
+        setCastingElsewhere(true);
+        return;
+      }
+      const mine = ++generation.current;
+      let timer: ReturnType<typeof setTimeout>;
+      // Consecutive identical frames observed during post-action settling.
+      let unchanged = 0;
+      let lastFrame = "";
+      let failStreak = 0;
+      const graceStartedAt = Date.now();
+
+      /** Continue while active, human-driven, secret-pending, or not yet visually settled. */
+      const shouldContinue = () => {
+        if (active) return true;
+        if (drivingRef.current) return true;
+        if (secretPendingRef.current) return true;
+        if (Date.now() < watchUntil.current) return true;
+        if (Date.now() - graceStartedAt > SETTLE_TIMEOUT_MS) return false;
+        return unchanged < SETTLED_FRAMES;
+      };
+
+      // Always fetch at least one frame; only repeated refreshes are conditional.
+      const tick = async () => {
+        let liveCastBusy = false;
+        try {
+          const result = await readScreenshot(computerId);
+          if (generation.current !== mine) return;
+          // 接管中的让路（409 user_control）也按直播处理：慢速探、不报警告。
+          liveCastBusy = result.liveCast === true || result.userControl === true;
+
+          const next = applyScreenshotPollResult(result);
+          if (!next.shot) {
+            // DOG-05：清掉陈旧帧，占位「暂时看不到屏幕」，不要把上一张当直播。
+            failStreak += 1;
+            setShot(null);
+            setProblem(next.problem);
+            // 直播占着 CDP 是「大屏正在放」，不是「看不到屏幕」：换一张不带警告的卡。
+            setCastingElsewhere(liveCastBusy);
+          } else {
+            failStreak = 0;
+            setCastingElsewhere(false);
+            // Exact byte comparison is the settling signal.
+            unchanged = next.shot.base64 === lastFrame ? unchanged + 1 : 0;
+            lastFrame = next.shot.base64;
+            // Decode before swapping to avoid blanking the visible image during data URL changes.
+            await preloadFrame(next.shot.base64);
+            if (generation.current !== mine) return;
+            setShot(next.shot);
+            setProblem(null);
+          }
+        } catch (error) {
+          // 已被新一轮取代的探测，出错也与它无关了；当前这轮照常抛出。
+          if (generation.current === mine) throw error;
+        } finally {
+          if (generation.current === mine) {
+            // 不变式：**只要还显示着「暂时看不到屏幕」，就必须继续重试**。底栏文案承诺「稍后会自动重试」，
+            // 而停下来等用户点「重试」的话，大屏关掉、电脑恢复之后卡片都不会自己回来（线上卡死状态）。
+            // 所以「慢」是允许的，「停」不是：liveCast 固定 10s 探一次，连续失败按退避上限 30s 探。
+            const recovering = liveCastBusy || failStreak > 0;
+            if (shouldContinue() || recovering) {
+              /*
+               * 刚收起大屏时直播刚停，第一次探测会撞上「大屏正在直播」的 503；下一次如果还按 10 秒的
+               * liveCast 间隔走，右栏要空着「暂时看不到屏幕」十秒才回来（2026-10-22 实测约 12 秒）。
+               * 头两次改用 1.2 秒，让卡片在收起大屏后一两秒内接回截图；仍然失败才退回 10 秒探测。
+               */
+              const quick = liveCastBusy && failStreak <= 2;
+              timer = setTimeout(
+                tick,
+                quick
+                  ? 1200
+                  : nextScreenshotPollDelay(failStreak, intervalMs, { liveCast: liveCastBusy }),
+              );
+            }
+          }
+        }
+      };
+
+      void tick();
+      return () => {
+        generation.current++;
+        clearTimeout(timer);
+      };
+    },
+  );
 
   /*
    * 交还之后收起大屏。交还就是「我弄完了」，留着一个只读的大屏还要再点一次关闭，
    * 用户会以为交还没生效。
    */
-  const wasDriving = useRef(false);
-  useEffect(() => {
-    if (wasDriving.current && !driving && !control?.transitioning) setExpanded(false);
-    wasDriving.current = driving;
-  }, [driving, control?.transitioning]);
+  const [wasDriving, setWasDriving] = useState(driving);
+  if (driving !== wasDriving) {
+    setWasDriving(driving);
+    if (wasDriving && !driving && !control?.transitioning) setExpanded(false);
+  }
 
   // Input forwarding lives in LiveScreen on the socket.
   // Escape is bound to the window so it works regardless of overlay focus.
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // 收藏夹的菜单 / 管理面板先处理了这次 Esc（只关它自己）。
-      if (event.defaultPrevented) return;
-      // 关掉大屏 = 我弄完了：手里有控制权就顺手交还（Hark 的做法）。以前 Esc 只关窗口、控制权
-      // 还留在人手里，机器人下一步全部卡在「等待交还」，而人已经看不到交还按钮了。
-      if (driving && !settled) void changeControl?.("release");
-      setExpanded(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [expanded, driving, settled, changeControl]);
+  useWindowEvent(
+    "keydown",
+    expanded
+      ? (event) => {
+          if (event.key !== "Escape") return;
+          // 收藏夹的菜单 / 管理面板先处理了这次 Esc（只关它自己）。
+          if (event.defaultPrevented) return;
+          // 关掉大屏 = 我弄完了：手里有控制权就顺手交还（Hark 的做法）。以前 Esc 只关窗口、控制权
+          // 还留在人手里，机器人下一步全部卡在「等待交还」，而人已经看不到交还按钮了。
+          if (driving && !settled) void changeControl?.("release");
+          setExpanded(false);
+        }
+      : null,
+  );
 
   // Always render the card frame; help/secret controls live below the conditional picture.
   /*

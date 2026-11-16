@@ -446,9 +446,9 @@ for (const width of WIDTHS) {
   let reqs = [];
   page.on("request", (r) => {
     const u = r.url().replace(base, "");
-    if (r.resourceType() === "document") reqs.push("DOC " + u);
+    if (r.resourceType() === "document") reqs.push(`DOC ${u}`);
     else if (u.startsWith("/api/"))
-      reqs.push(r.method() + " " + u.slice(0, 120));
+      reqs.push(`${r.method()} ${u.slice(0, 120)}`);
   });
   await page.goto(`${base}/bot?agent=${AGENT}`, {
     waitUntil: "domcontentloaded",
@@ -474,7 +474,7 @@ for (const width of WIDTHS) {
     botName,
     "dbg",
     await page.evaluate(
-      () => typeof window.__scrollLog + "/" + typeof window.__frames,
+      () => `${typeof window.__scrollLog}/${typeof window.__frames}`,
     ),
   );
   const chatUrl = page.url();
@@ -690,9 +690,9 @@ if (process.env.STREAM)
     let reqs = [];
     page.on("request", (r) => {
       const u = r.url().replace(base, "");
-      if (r.resourceType() === "document") reqs.push("DOC " + u);
+      if (r.resourceType() === "document") reqs.push(`DOC ${u}`);
       else if (u.startsWith("/api/"))
-        reqs.push(r.method() + " " + u.slice(0, 120));
+        reqs.push(`${r.method()} ${u.slice(0, 120)}`);
     });
     try {
       await page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" });
@@ -702,7 +702,7 @@ if (process.env.STREAM)
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            name: "导航测试" + Date.now().toString(36).slice(-4),
+            name: `导航测试${Date.now().toString(36).slice(-4)}`,
             title: "临时测试（会删除）",
             roleDescription: "测试",
             visibility: "private",
@@ -858,9 +858,9 @@ if (process.env.SWITCH)
     let reqs = [];
     page.on("request", (r) => {
       const u = r.url().replace(base, "");
-      if (r.resourceType() === "document") reqs.push("DOC " + u);
+      if (r.resourceType() === "document") reqs.push(`DOC ${u}`);
       else if (u.startsWith("/api/"))
-        reqs.push(r.method() + " " + u.slice(0, 160));
+        reqs.push(`${r.method()} ${u.slice(0, 160)}`);
     });
     const ids = () =>
       page.evaluate(() =>

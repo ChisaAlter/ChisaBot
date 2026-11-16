@@ -118,7 +118,7 @@ http.createServer(async (req, res) => {
   if (/^DOC\b/.test(user.trim())) {
     await text("React 19 主要让表单和异步更新更省事。\n\n```doc\n标题：React 19 新特性\n");
     const lines = ["## Actions", "- `<form action={fn}>` 直接调用异步函数", "- 提交中的状态由 React 处理", "", "## 新 Hook", "- useActionState：拿结果和 pending", "- useFormStatus：读父表单状态", "- useOptimistic：先显示乐观结果", "", "## use API", "渲染时读取 Promise 或 Context，配合 Suspense。", "", "## Server Components", "正式进入稳定版，通常依赖框架。", "", "## 其他", "- ref 可以直接当 prop", "- 文档标题、meta 直接写在组件里", "- 静态预渲染 API", "- Suspense 改进", "", "| 项目 | 说明 |", "|---|---|", "| 升级 | 先看官方升级指南 |", "| 类型 | 旧 API 移除 |"];
-    for (const l of lines) { await text(l + "\n"); await sleep(140); }
+    for (const l of lines) { await text(`${l}\n`); await sleep(140); }
     await text("```\n\n要我按升级顺序再排一下吗？");
   } else
   if (/^WORK\b/.test(user.trim())) {

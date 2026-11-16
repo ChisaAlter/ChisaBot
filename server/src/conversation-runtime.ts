@@ -26,6 +26,12 @@ import type {
 } from "./agents/dsh-runtime";
 import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import {
+  defaultRuntimeEnvironment,
+  readConversationRuntimeEnvDefaults,
+  readMaxOutputTokens,
+} from "./config";
+import { trustedEndpointFetch } from "./net/trusted-endpoint-fetch";
+import {
   type HistorySummaryStore,
   type MeasuredUsage,
   type Summarize,
@@ -229,7 +235,11 @@ export function connectionLanguageModel(
       headers.delete("x-api-key");
     }
     // An API endpoint cannot redirect a credential to a different host.
-    return fetch(input, { ...init, headers, redirect: "error" });
+    return trustedEndpointFetch("model-provider", input, {
+      ...init,
+      headers,
+      redirect: "error",
+    });
   }) as typeof fetch;
   const options = {
     apiKey: apiKey ?? "",
@@ -273,7 +283,7 @@ export function fallbackConnectionModel(
       ...(adapt ? { adapt } : {}),
       candidates: fallbackCandidates(
         () => fallbackCatalog(),
-        process.env,
+        defaultRuntimeEnvironment(),
         () => fallbackConfigured(),
       ),
       build: (id) =>
@@ -292,8 +302,7 @@ export function fallbackConnectionModel(
  * max_output_tokens）里有就用它，封顶 {@link MAX_OUTPUT_CAP}（CHISABOT_MAX_OUTPUT_TOKENS 可改）；
  * 目录里没有就不动，照旧由 SDK 决定。认得的 Claude 型号 SDK 自己会再压到它的真实上限。
  */
-export const MAX_OUTPUT_CAP =
-  Number(process.env.CHISABOT_MAX_OUTPUT_TOKENS) || 32_000;
+export const MAX_OUTPUT_CAP = readMaxOutputTokens();
 type OutputLimitResolver = (modelId: string) => Promise<number | undefined>;
 let outputLimitFor: OutputLimitResolver = async () => undefined;
 /** index.ts 接上模型目录。 */
@@ -476,7 +485,7 @@ export function outputLimitLanguageModel<T>(model: T, modelId: string): T {
 
 /** Optional desktop environment values may be present but blank; SDKs treat them as URLs. */
 export function normalizeModelBaseUrls(
-  environment: Record<string, string | undefined> = process.env,
+  environment: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): void {
   for (const key of ["OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"]) {
     const value = environment[key]?.trim();
@@ -494,7 +503,7 @@ export function normalizeModelBaseUrls(
 
 export function runtimeModelForEnvironment(
   packageModel: RuntimeModel,
-  environment: Record<string, string | undefined> = process.env,
+  environment: Record<string, string | undefined> = defaultRuntimeEnvironment(),
 ): RuntimeModel {
   const selectedModel = environment.BOT_MODEL?.trim();
   const selectedProvider = environment.BOT_PROVIDER?.trim().toLowerCase();
@@ -907,7 +916,7 @@ export async function buildAgents(
    * `loadAttachment` for the positional reason it gives. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
-  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  /** 位置占位参数（保持后续入参下标不变）。 */
   _removedLearnedSkills?: undefined,
   loadPersonalMemory?: LoadPersonalMemory,
   resolveConnectionForAgent?: (
@@ -1388,8 +1397,10 @@ async function buildAgent(
         baseUrl:
           model.baseUrl ??
           (model.provider === "anthropic"
-            ? (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com")
-            : (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")),
+            ? (readConversationRuntimeEnvDefaults().anthropicBaseUrl ??
+              "https://api.anthropic.com")
+            : (readConversationRuntimeEnvDefaults().openaiBaseUrl ??
+              "https://api.openai.com/v1")),
         apiKey,
         useApiKey: model.useApiKey,
         model: model.defaultModel,
@@ -1423,7 +1434,7 @@ async function buildAgent(
       fallbacks: () =>
         fallbackCandidates(
           () => fallbackCatalog(),
-          process.env,
+          defaultRuntimeEnvironment(),
           () => fallbackConfigured(),
         )(model.defaultModel),
     });
@@ -1843,13 +1854,14 @@ function remoteAgentWithStandingRole(
           ]),
         ).pipe(switchMap((offered) => runWith(offered, input, next))),
       );
+      const runtimeEnvDefaults = readConversationRuntimeEnvDefaults();
       const owned =
-        !!process.env.MANAGED_AGENT_TOKEN &&
+        !!runtimeEnvDefaults.managedAgentToken &&
         new Headers(agent.headers).get("x-chisabot-agent-token") ===
-          process.env.MANAGED_AGENT_TOKEN &&
+          runtimeEnvDefaults.managedAgentToken &&
         [
-          process.env.PICKED_HARNESS_URL,
-          process.env.MANAGED_AGENT_AG_UI_URL,
+          runtimeEnvDefaults.pickedHarnessUrl,
+          runtimeEnvDefaults.managedAgentAgUiUrl,
         ].some(
           (url) =>
             url?.replace(/\/$/, "") === agent.endpoint.replace(/\/$/, ""),
@@ -2203,7 +2215,7 @@ export async function resolveRuntimeAgents(
    * same positional reason. Absent means nothing is recorded.
    */
   markAttachmentsSent?: MarkAttachmentsSent,
-  /** Was Automatic Learning's skill reader (removed in slimming P4b-3); a slot so positional callers do not shift. */
+  /** 位置占位参数（保持后续入参下标不变）。 */
   _removedLearnedSkills?: undefined,
   loadPersonalMemory?: LoadPersonalMemory,
   resolveConnectionForAgent?: (

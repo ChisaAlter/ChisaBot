@@ -1,3 +1,4 @@
+import { useElementEvent, useExternalConnection, useTimeout } from "@/hooks";
 import { createKeptVisibility, KeptVisibilityContext, KeptVisibleContext } from "@/lib/kept-visible";
 import {
   type CSSProperties,
@@ -5,7 +6,6 @@ import {
   memo,
   type ReactNode,
   useContext,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -127,20 +127,40 @@ export function KeepAliveStage<T>({
   const idle = address === null && head !== null && headIdle(head);
   const shown = address !== null || idle;
 
-  // TTL：到点放掉藏着的那几段（每段自己计时）。
-  useEffect(() => {
-    const getTtl = (e: Entry<T>) => (typeof ttlMs === "function" ? ttlMs(e.value) : ttlMs);
-    const hidden = entries.filter((e, i) => e.hiddenAt !== null && !(i === 0 && shown));
-    if (hidden.length === 0) return;
-    const due = Math.min(...hidden.map((e) => (e.hiddenAt as number) + getTtl(e)));
-    const timer = window.setTimeout(() => {
-      const now = Date.now();
-      setEntries((list) => list.filter((e, i) => (i === 0 && shown) || e.hiddenAt === null || e.hiddenAt + getTtl(e) > now));
-    }, Math.max(0, due - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [entries, ttlMs, shown]);
-
   // 元素预算：藏起来那一刻每段报一次自己的元素数；藏着的合计超了，从最久没看的开始放。
+  let totalNodes = 0;
+  for (let i = 0; i < entries.length; i++) if (!(i === 0 && shown)) totalNodes += entries[i].nodes;
+  if (totalNodes > nodeBudget) {
+    const keep = entries.slice();
+    for (let i = keep.length - 1; i >= 0 && totalNodes > nodeBudget; i--) {
+      if (i === 0 && shown) break;
+      totalNodes -= keep[i].nodes;
+      keep.splice(i, 1);
+    }
+    if (keep.length < entries.length) setEntries(keep);
+  }
+
+  // TTL：到点放掉藏着的那几段（每段自己计时）。
+  const getTtl = (e: Entry<T>) => (typeof ttlMs === "function" ? ttlMs(e.value) : ttlMs);
+  let nextDue: number | null = null;
+  for (let i = 0; i < entries.length; i++) {
+    if (i === 0 && shown) continue;
+    const entry = entries[i];
+    if (entry.hiddenAt === null) continue;
+    const due = entry.hiddenAt + getTtl(entry);
+    if (nextDue === null || due < nextDue) nextDue = due;
+  }
+  useTimeout(
+    () => {
+      const now = Date.now();
+      setEntries((list) =>
+        list.filter((e, i) => (i === 0 && shown) || e.hiddenAt === null || e.hiddenAt + getTtl(e) > now),
+      );
+    },
+    nextDue === null ? null : Math.max(0, nextDue - Date.now()),
+    nextDue,
+  );
+
   const report = useRef((id: number, nodes: number) => {
     setEntries((list) => {
       const at = list.findIndex((e) => e.id === id);
@@ -150,18 +170,6 @@ export function KeepAliveStage<T>({
       return next;
     });
   });
-  useEffect(() => {
-    let total = 0;
-    for (let i = 0; i < entries.length; i++) if (!(i === 0 && shown)) total += entries[i].nodes;
-    if (total <= nodeBudget) return;
-    const keep = entries.slice();
-    for (let i = keep.length - 1; i >= 0 && total > nodeBudget; i--) {
-      if (i === 0 && shown) break;
-      total -= keep[i].nodes;
-      keep.splice(i, 1);
-    }
-    setEntries(keep);
-  }, [entries, nodeBudget, shown]);
 
   const renderRef = useRef(renderKept);
   renderRef.current = renderKept;
@@ -230,7 +238,9 @@ function KeptSlotInner<T>({ entryId, slotKey, value, visible, switching = false,
 
   // 不让读的组件重画的那份「看不看得见」（`useKeptVisibility`）：同一个对象，提交后改值、通知订阅者。
   const [visibility] = useState(() => createKeptVisibility(visible));
-  useEffect(() => visibility.set(visible), [visibility, visible]);
+  useExternalConnection(`${entryId}:${visible}`, () => {
+    visibility.set(visible);
+  });
 
   // 给页面里用的这一段的信息（P3-3 接口）。
   const evictCbs = useRef(new Set<() => void>());
@@ -246,21 +256,18 @@ function KeptSlotInner<T>({ entryId, slotKey, value, visible, switching = false,
       return () => scrollHandlers.current.delete(handler);
     },
   }));
-  useEffect(
-    () => () => {
-      for (const cb of evictCbs.current) cb();
-    },
-    [],
-  );
+  useExternalConnection(true, () => () => {
+    for (const cb of evictCbs.current) cb();
+  });
 
   // 看得见时一直记着尺寸；藏起来那一刻（同一次提交、新页面画出来之前）用记下的尺寸冻住。
   // 尺寸只从 ResizeObserver 拿（浏览器排完版后给，开始观察时也会先给一次）：以前变回看得见的那次提交里
   // 当场 getBoundingClientRect，关设置时逼浏览器在提交中途把整段对话排一遍版（4× 降速 60ms+，§41 ④）。
   const box = useRef<HTMLDivElement>(null);
   const size = useRef<{ width: number; height: number } | null>(null);
-  useEffect(() => {
+  useExternalConnection(visible, () => {
     const el = box.current;
-    if (!el || !visible) return;
+    if (!el) return;
     const remember = (width: number, height: number) => {
       if (width > 0 && height > 0) size.current = { width, height };
     };
@@ -280,7 +287,7 @@ function KeptSlotInner<T>({ entryId, slotKey, value, visible, switching = false,
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [visible]);
+  });
 
   // 看得见时记着每个滚动容器最后的位置；藏起来后 KEPT_SCROLL_HOLD_MS 内被挪了就还原（§98.5）。
   // 滚动事件里只记「哪个容器滚过」，不读 scrollTop——capture 阶段每个滚动事件读一次会强制同步布局
@@ -288,18 +295,20 @@ function KeptSlotInner<T>({ entryId, slotKey, value, visible, switching = false,
   const tops = useRef(new WeakMap<Element, number>());
   const pinned = useRef(new WeakSet<Element>());
   const scrollers = useRef(new Set<Element>());
-  useEffect(() => {
-    const el = box.current;
-    if (!el || !visible) return;
-    const remember = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Element && el.contains(target)) {
-        scrollers.current.add(target);
-      }
-    };
-    el.addEventListener("scroll", remember, { capture: true, passive: true });
-    return () => el.removeEventListener("scroll", remember, { capture: true });
-  }, [visible]);
+  useElementEvent(
+    box,
+    "scroll",
+    visible
+      ? (event) => {
+          const el = box.current;
+          const target = event.target;
+          if (el && target instanceof Element && el.contains(target)) {
+            scrollers.current.add(target);
+          }
+        }
+      : null,
+    { capture: true, passive: true },
+  );
 
   // 藏起来那一刻：交给页面自己的 save()、数一下元素数。变回看得见时还原滚动位置。
   const savedScroll = useRef(new Map<KeptScrollHandler, unknown>());

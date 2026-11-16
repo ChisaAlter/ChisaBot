@@ -50,13 +50,14 @@
 | server + shared 全量测试   | `bun run test:server`             | 自动包含新测试；排除 `dsh-*`（走 `test:dsh`）和隔离名单               |
 | app DOM 测试               | `bun run test:app`                | 会把替换全局模块的用例放进独立进程，不要改成直接 `bun test app/tests` |
 | DSH 恢复测试               | `bun run test:dsh`                | 需要 `CHISABOT_DSH_TEST_DATABASE_URL`（pgvector）                     |
+| 实机浏览器 UI 自验收       | `bun run verify:ui`               | 复用本机 Edge / Chrome / Chromium 零下载跑双视口交互与截图自检          |
 | 格式                       | `bun run format` / `format:check` |                                                                       |
 - **数据库测试**需要 `TEST_DATABASE_URL`（CI：`postgres://test:test@127.0.0.1:5432/chisabot_test`）。库必须先迁移：`DATABASE_URL=<test-url> bun server/scripts/migrate.ts`（CI 由 `Migrate test database` 步骤做，service 镜像用 `pgvector` 因为 0000 迁移要 `vector` 扩展）。没有库时 `*.integration.test.ts` 会直接报错，这是环境缺失，不是缺陷。
 - **Windows 本机**：`compose-network-drift`、`provider-oauth` 依赖 symlink（需开发者模式），其余平台差异以 Linux CI 为准。
 - **Bun 定时器陷阱**：测试里如果 `AbortSignal.timeout` 是进程里唯一挂着的定时器，它不会触发，测试会挂死（生产里总有 socket 撑着，不受影响）。假模型 / 假服务要模拟超时时，额外挂一个 `setTimeout`（见 `server/tests/approvals-policy.test.ts`）。
 - **Bun#9882 陷阱**：`node:http` 服务器 `upgrade` 事件给出的 socket 是僵尸——`write` 返回 true 但字节不上线，无 upgrade 监听时请求甚至不进 handler。测试里要做 WS / Upgrade 的 HTTP 服务，用 `node:net` 手写头（见 `server/tests/im-net-ssrf.test.ts`）。
 - `bun run test` / `test:ci` 是全仓联合跑，单机 20 分钟以上，日常不要用。
-- CI 另有 Biome 增量门禁（`scripts/biome-new-issues.ts`）：改动文件的 error+warning 数不得增加。
+- CI 的 `biome` 任务对全仓执行 `bun run lint`（`--error-on-warnings`），全仓必须保持 0 error 0 warning。
 
 ## 3. 测试隔离名单
 
@@ -94,3 +95,22 @@
 - **配置**：新环境变量在 `server/src/config.ts` 里读和校验，不要在业务代码里直接 `process.env`。
 - **仓库是公开的**：不提交服务器 IP、真实域名、主机名、密钥、真实用户数据（CI 有 Private host info guard）。临时调试脚本不要留在仓库根目录。
 - **lint**：不要用 `biome-ignore` 去压一条规则而不写具体原因；不要删掉写着原因的 suppression，即使 Biome 报它"未使用"（多半是规则域没开，原因仍然有价值）。Biome 2.6 不会因为根 package.json 没有 react 就开 React 规则域，所以 `useExhaustiveDependencies` / `noArrayIndexKey` / `noDangerouslySetInnerHtml` 是在 `biome.json` 里显式打开的，不要删。
+
+## 7. 自动门禁对照表
+
+每一条硬约束都有对应的自动门禁直接报错拦截（见 `server/tests/docs-truth-guards.test.ts` 校验索引真实性）：
+
+| 约束规则                                                                         | 自动门禁测试 / 脚本                              |
+| -------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 全仓 Biome 零错误零警告（含 `pc/`，生产代码禁用 `!` 非空断言与冗余 Fragment）    | `biome.json`（`bun run lint` / `bun run check`） |
+| 前端禁止裸 `fetch`，统一走 `app/src/lib/client.ts`                               | `app/tests/no-raw-fetch.test.ts`                 |
+| 前端样式禁止高开销 `:has` 祖先选择器（`group-has-*` / `peer-has-*`）             | `app/tests/no-group-has.test.ts`                 |
+| 测试禁止 `mock.module` / `vi.mock` / `jest.mock` 进程级模块替换（零白名单）      | `app/tests/no-mock-module.test.ts`               |
+| 前端业务代码禁止裸 `useEffect`，外部同步统一收口至 `app/src/hooks/`              | `app/tests/no-raw-use-effect.test.ts`            |
+| 服务端除受控出口外禁止裸 `fetch`，统一走 `guardedFetch` / `trustedEndpointFetch` | `server/tests/no-raw-fetch.test.ts`              |
+| 服务端除 `server/src/config.ts` 外零散代码禁止读 `process.env`（零白名单）       | `server/tests/no-raw-env.test.ts`                |
+| 数据库禁止未经显式登记的 `DROP TABLE` / `DROP COLUMN` / `TRUNCATE`               | `server/tests/no-unapproved-schema-drop.test.ts` |
+| 全仓 `biome-ignore` 必须写清 `>=10` 字真实技术原因且总量封顶只减不增               | `server/tests/biome-ignore-hygiene.test.ts`      |
+| 核心状态机（租约锁/插件三层权限/一次性审批/聊天账本）BFS 穷举与双变异体捕杀    | `server/tests/formal-conversation-locks.test.ts`、`server/tests/formal-plugin-grants.test.ts`、`server/tests/formal-approval-gate.test.ts`、`app/tests/formal-chat-ledger.test.ts` |
+| 实机无头浏览器 UI 自验收驱动链路与临时目录零泄漏                                 | `server/tests/verify-ui-driver.test.ts`          |
+| `DESIGN.md` 目录与正文章节 1:1 同步、门禁表路径真实、`test-quarantine` 清零      | `server/tests/docs-truth-guards.test.ts`         |

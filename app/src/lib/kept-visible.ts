@@ -1,9 +1,9 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useSyncExternalStore,
 } from "react";
+import { useExternalConnection } from "@/hooks";
 
 /**
  * 留着但藏起来的聊天 / 右栏（DESIGN.md §98.3）：`false` 时这块不在屏幕上。
@@ -89,18 +89,21 @@ export function useMarkBotHidden(
   botId: string | undefined,
   hidden: boolean,
 ): void {
-  useEffect(() => {
-    if (!botId) return;
-    const map = hidden ? hiddenBots : shownBots;
-    map.set(botId, (map.get(botId) ?? 0) + 1);
-    notify();
-    return () => {
-      const left = (map.get(botId) ?? 1) - 1;
-      if (left > 0) map.set(botId, left);
-      else map.delete(botId);
+  useExternalConnection(
+    botId ? `${hidden ? 1 : 0}\0${botId}` : false,
+    () => {
+      if (!botId) return;
+      const map = hidden ? hiddenBots : shownBots;
+      map.set(botId, (map.get(botId) ?? 0) + 1);
       notify();
-    };
-  }, [botId, hidden]);
+      return () => {
+        const left = (map.get(botId) ?? 1) - 1;
+        if (left > 0) map.set(botId, left);
+        else map.delete(botId);
+        notify();
+      };
+    },
+  );
 }
 
 /** 这个机器人的聊天在屏幕上（没有藏着的段，或者至少有一段正看着）。 */

@@ -23,6 +23,7 @@ import {
 import { emptySections } from "../../../shared/json-render/empty-sections";
 import type { AppVariables } from "../auth/guards";
 import { takeHumanControlBlock } from "../computer/control-blocks";
+import { livePanelsSubprocessEnv, readLivePanelEnvFlags } from "../config";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { lintPanelSpec, PANEL_DESIGN_GUIDE } from "./design";
@@ -753,10 +754,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
       typeof options.isAdmin === "function"
         ? await options.isAdmin().catch(() => false)
         : options.isAdmin === true;
-    const panelEnv = () => ({
-      ...process.env,
-      CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1",
-    });
+    const panelEnv = () => livePanelsSubprocessEnv();
     const list: GrantedTool[] = [
       {
         name: "panel_update",
@@ -1079,10 +1077,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
         const owner = c.var.actor.id;
         const row = await store.get(owner, c.req.param("id"));
         if (row.removed) throw new LivePanelError("这个面板已经删除了", 404);
-        const env = {
-          ...process.env,
-          CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1",
-        };
+        const env = livePanelsSubprocessEnv();
         return c.json(
           await sourceRunner.readings(owner, row, {
             isAdmin: c.var.actor.role === "admin",
@@ -1099,10 +1094,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
         const owner = c.var.actor.id;
         const row = await store.get(owner, c.req.param("id"));
         if (row.removed) throw new LivePanelError("这个面板已经删除了", 404);
-        const env = {
-          ...process.env,
-          CHISABOT_PANEL_COMMANDS: process.env.CHISABOT_PANEL_COMMANDS ?? "1",
-        };
+        const env = livePanelsSubprocessEnv();
         return c.json(
           await sourceRunner.readings(owner, row, {
             force: true,
@@ -1242,7 +1234,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
     sweep,
     start() {
       // 删机器人以前不清面板：开机把机器人已不在的面板删掉（幂等；CHISABOT_PANEL_ORPHAN_SWEEP=0 关掉）。
-      if (process.env.CHISABOT_PANEL_ORPHAN_SWEEP !== "0")
+      if (readLivePanelEnvFlags().orphanSweep)
         void store
           .sweepOrphans()
           .then(

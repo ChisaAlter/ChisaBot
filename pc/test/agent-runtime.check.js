@@ -171,7 +171,7 @@ test("builtin loop: tools run locally, out-of-profile steps ask, denied steps ar
       seen.push(messages[messages.length - 1]);
       return script.shift();
     },
-    approve: async (operation, summary) => {
+    approve: async (_operation, summary) => {
       asked.push(summary);
       return false;
     },
@@ -225,7 +225,12 @@ test("runtime protocol: agent_run with a fake CLI agent streams events and repor
   const oldPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   const sent = [];
-  const runtime = createAgentRuntime({ send: (m) => (sent.push(m), true) });
+  const runtime = createAgentRuntime({
+    send: (m) => {
+      sent.push(m);
+      return true;
+    },
+  });
   try {
     assert.equal(runtime.handle({ type: "agent_run", taskId: "task-proto-1", agent: "claude", prompt: "修错别字", cwd: dir, profile: "workspace", isolation: "worktree", network: true, roots: [dir], skipPermissions: false, builtinModel: { kind: "server" }, containerImage: "x", timeoutMs: 60_000 }), true);
     const t0 = Date.now();

@@ -1,7 +1,9 @@
 import { IconDots, IconKey, IconLink, IconLock, IconPlayerPause, IconPlayerPlay, IconPlus, IconTrash, IconUser, IconUserPlus, IconUserShield } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
@@ -351,14 +353,13 @@ function CreateAccountDialog({
     { errorToast: (error) => error.message },
   );
   const resetCreate = create.reset;
-  useEffect(() => {
-    if (!open) return;
+  useExternalConnection(open ? objectConnectionKey(resetCreate) : false, () => {
     setUsername("");
     setDisplayName("");
     setPassword("");
     setRole("user");
     resetCreate();
-  }, [open, resetCreate]);
+  });
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">
@@ -468,11 +469,13 @@ function PasswordDialog({
     { errorToast: (error) => error.message },
   );
   const resetSave = save.reset;
-  useEffect(() => {
-    if (!account) return;
-    setPassword("");
-    resetSave();
-  }, [account, resetSave]);
+  useExternalConnection(
+    account ? `${objectConnectionKey(account)}:${objectConnectionKey(resetSave)}` : false,
+    () => {
+      setPassword("");
+      resetSave();
+    },
+  );
   return (
     <Dialog onOpenChange={onOpenChange} open={!!account}>
       <DialogContent className="im-dialog max-w-md">
@@ -539,13 +542,12 @@ function InviteDialog({
     { errorToast: (error) => error.message },
   );
   const resetCreate = create.reset;
-  useEffect(() => {
-    if (!open) return;
+  useExternalConnection(open ? objectConnectionKey(resetCreate) : false, () => {
     setNote("");
     setHours(72);
     setRole("user");
     resetCreate();
-  }, [open, resetCreate]);
+  });
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">

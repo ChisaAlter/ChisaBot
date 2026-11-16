@@ -348,7 +348,8 @@ export function createPanelStore(db: Database) {
             .map((r) => r.id),
         ];
         for (const [position, id] of order.entries()) {
-          const row = rows.find((r) => r.id === id)!;
+          const row = rows.find((r) => r.id === id);
+          if (!row) throw new PanelError("instance_binding", 404);
           if (row.position === position) continue;
           const instance = await bound(tx, ctx, id);
           await tx.insert(versions).values({
@@ -794,7 +795,9 @@ export function createPanelStore(db: Database) {
           };
         },
       );
-      return bound(db, ctx, result.instanceId!);
+      if (!result.instanceId)
+        throw new PanelError("missing_installed_instance", 500);
+      return bound(db, ctx, result.instanceId);
     },
     async readState(ctx: ActorContext, instanceId: string) {
       const instance = await bound(db, ctx, instanceId);

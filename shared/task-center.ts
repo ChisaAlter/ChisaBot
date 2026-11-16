@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const TASK_HORIZON_LANES = ["now", "next", "later"] as const;
+export type TaskHorizonLane = (typeof TASK_HORIZON_LANES)[number];
 export const TASK_LEVELS = [1, 2, 3, 4, 5] as const;
 export type TaskLevel = (typeof TASK_LEVELS)[number];
 export const TASK_LEVEL_LABELS: Record<TaskLevel, string> = {
@@ -132,6 +134,7 @@ export type TaskCenterTask = {
   parentId: string | null;
   dependencies: string[];
   planPrepared: boolean;
+  lane?: TaskHorizonLane;
   completion?: TaskCompletion;
   priority: number;
   attempts: number;
@@ -292,6 +295,7 @@ export const taskInputSchema = z
     dependencies: z.array(z.string().min(1).max(128)).max(30).default([]),
     maxAttempts: z.number().int().min(1).max(5).default(3),
     timeoutSeconds: z.number().int().min(10).max(7200).default(900),
+    lane: z.enum(TASK_HORIZON_LANES).optional(),
     completion: taskCompletionSchema.optional(),
   })
   .strict();

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
+import { useResizeObserver } from "@/hooks";
 import { SandboxSurface } from "@/lib/chat/sandbox-surface";
 import { galleryComponent } from "@/lib/conversations/gallery-registry";
 import {
@@ -144,41 +145,35 @@ function FittedPreview({
   const content = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
 
-  useEffect(() => {
+  const measure = () => {
     const outer = box.current;
     const inner = content.current;
     if (!outer || !inner) return;
+    /*
+     * Measured on the component's own root rather than the box it was handed, because the two are
+     * not the same width: the box is the column it lays out against, and the component caps
+     * itself inside that. Scaling by the box would shrink it to fit a width it never occupied.
+     *
+     * `offsetWidth` and `offsetHeight` are laid-out values, which a transform does not touch — so
+     * reading them here cannot feed back into the scale about to be applied to them.
+     */
+    const drawn = inner.firstElementChild;
+    const measured = drawn instanceof HTMLElement ? drawn : inner;
 
-    const measure = () => {
-      /*
-       * Measured on the component's own root rather than the box it was handed, because the two are
-       * not the same width: the box is the column it lays out against, and the component caps
-       * itself inside that. Scaling by the box would shrink it to fit a width it never occupied.
-       *
-       * `offsetWidth` and `offsetHeight` are laid-out values, which a transform does not touch — so
-       * reading them here cannot feed back into the scale about to be applied to them.
-       */
-      const drawn = inner.firstElementChild;
-      const measured = drawn instanceof HTMLElement ? drawn : inner;
+    if (!measured.offsetWidth || !measured.offsetHeight) return;
+    if (!outer.clientWidth || !outer.clientHeight) return;
 
-      if (!measured.offsetWidth || !measured.offsetHeight) return;
-      if (!outer.clientWidth || !outer.clientHeight) return;
-
-      setScale(
-        fill *
-          Math.min(
-            1,
-            outer.clientWidth / measured.offsetWidth,
-            outer.clientHeight / measured.offsetHeight,
-          ),
-      );
-    };
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(outer);
-    observer.observe(inner);
-    return () => observer.disconnect();
-  }, [fill]);
+    setScale(
+      fill *
+        Math.min(
+          1,
+          outer.clientWidth / measured.offsetWidth,
+          outer.clientHeight / measured.offsetHeight,
+        ),
+    );
+  };
+  useResizeObserver(box, measure, true, fill);
+  useResizeObserver(content, measure, true, fill);
 
   return (
     <div

@@ -4,13 +4,12 @@ import {
   beforeAll,
   beforeEach,
   expect,
-  mock,
   test,
 } from "bun:test";
-import type * as React from "react";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { PendingInbox } from "@/components/approvals/inbox";
 import { InlineApproval } from "@/components/approvals/inline-approval";
 import {
   BrowserActivity,
@@ -18,42 +17,7 @@ import {
 } from "@/components/channels/browser-activity";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import { settleReactWork } from "./settle-react-work";
-
-// 待处理页里有 <Link>（去审批偏好），测试里没有路由：换成普通 <a>。
-const realRouter = await import("@tanstack/react-router");
-const RealLink = realRouter.Link as unknown as React.ComponentType<
-  Record<string, unknown>
->;
-const realUseRouter = realRouter.useRouter;
-mock.module("@tanstack/react-router", () => ({
-  ...realRouter,
-  Link: (props: {
-    children?: React.ReactNode;
-    to?: string;
-    href?: string;
-    params?: unknown;
-    search?: unknown;
-    hash?: unknown;
-    [key: string]: unknown;
-  }) => {
-    if (realUseRouter({ warn: false })) return <RealLink {...props} />;
-    const {
-      children,
-      to,
-      href,
-      params: _params,
-      search: _search,
-      hash: _hash,
-      ...rest
-    } = props;
-    return (
-      <a {...(rest as object)} href={href ?? to}>
-        {children}
-      </a>
-    );
-  },
-}));
-const { PendingInbox } = await import("@/components/approvals/inbox");
+import { renderWithRouter } from "./support/render-with-router";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);
@@ -136,8 +100,15 @@ beforeEach(() => {
         return Response.json({ ok: true });
       }
       if (url === "/api/approvals") return Response.json(inbox);
-      if (url.startsWith("/api/confirmations/requests")) return Response.json({ requests: confirmations });
-      if (url.startsWith("/api/agents")) return Response.json({ agents: [{ id: "Shopper", name: "购物助手" }, { id: "agent_mail", name: "邮件助手" }] });
+      if (url.startsWith("/api/confirmations/requests"))
+        return Response.json({ requests: confirmations });
+      if (url.startsWith("/api/agents"))
+        return Response.json({
+          agents: [
+            { id: "Shopper", name: "购物助手" },
+            { id: "agent_mail", name: "邮件助手" },
+          ],
+        });
       if (url === "/api/me")
         return Response.json({
           user: { id: "me", email: "me@example.test", role },
@@ -152,20 +123,12 @@ afterEach(() => {
 });
 
 function draw() {
-  return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <PendingInbox />
-    </QueryClientProvider>,
-  );
+  return renderWithRouter(<PendingInbox />);
 }
 
 test("待处理：交给你的一步只能标记自己完成或不要执行，不能替你允许", async () => {
   confirmations = [];
-  const view = draw();
+  const view = await draw();
   await view.findByText("购物助手把这一步交给你亲自完成");
   expect(view.queryByRole("button", { name: "允许一次" })).toBeNull();
   fireEvent.click(view.getByRole("button", { name: "我已自己完成" }));
@@ -180,7 +143,7 @@ test("待处理：交给你的一步只能标记自己完成或不要执行，�
 
 test("待处理：不再有上游的开关和规则表，只放等你点头的事和去审批偏好的入口", async () => {
   confirmations = [];
-  const view = draw();
+  const view = await draw();
   await view.findByText("购物助手把这一步交给你亲自完成");
   expect(view.queryByText("自动审核")).toBeNull();
   expect(view.queryByText("更改前询问")).toBeNull();
@@ -207,12 +170,18 @@ test("待处理：聊天里没点的确认卡片带机器人名字，能直接�
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     },
   ];
-  const view = draw();
+  const view = await draw();
   await view.findByText("给张三发邮件");
   expect(view.getByText(/邮件助手 · /)).toBeTruthy();
   expect(view.getByText("待跟进的确认 · 1")).toBeTruthy();
   fireEvent.click(view.getByRole("button", { name: "确认" }));
-  await waitFor(() => expect(sent.some((s) => s.path.includes("/api/confirmations/") && s.method === "POST")).toBe(true));
+  await waitFor(() =>
+    expect(
+      sent.some(
+        (s) => s.path.includes("/api/confirmations/") && s.method === "POST",
+      ),
+    ).toBe(true),
+  );
 });
 
 test("a pending change is drawn in the conversation where the action was, and decided there", async () => {
@@ -297,8 +266,8 @@ test("in the real transcript shape a waiting click is folded into browser activi
   );
   await view.findByRole("region", { name: /^需要你确认：/ });
   // Only the waiting call gets a card; the finished navigate does not.
-  expect(
-    view.getAllByRole("region", { name: /^需要你确认：/ }),
-  ).toHaveLength(1);
+  expect(view.getAllByRole("region", { name: /^需要你确认：/ })).toHaveLength(
+    1,
+  );
   expect(view.getByRole("button", { name: "我已自己完成" })).toBeTruthy();
 });

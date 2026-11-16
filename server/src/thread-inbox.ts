@@ -48,8 +48,11 @@ type InboxRow = {
   read_at: Date | string | null;
 };
 
-const iso = (value: Date | string | null) =>
-  value ? new Date(value).toISOString() : null;
+function iso(value: Date | string): string;
+function iso(value: Date | string | null | undefined): string | null;
+function iso(value: Date | string | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
 const item = (row: InboxRow): InboxItem => ({
   id: row.id,
   threadId: row.thread_id,
@@ -57,7 +60,7 @@ const item = (row: InboxRow): InboxItem => ({
   message: row.message,
   status: row.status,
   runId: row.run_id,
-  createdAt: iso(row.created_at)!,
+  createdAt: iso(row.created_at),
   readAt: iso(row.read_at),
 });
 
@@ -536,12 +539,20 @@ export function weavePrompt(
   const out: PromptMessage[] = [];
   let next = 0;
   for (let index = 0; index <= prompt.length; index++) {
-    while (next < sorted.length && sorted[next]!.index === index)
-      out.push(...sorted[next++]!.messages);
-    if (index < prompt.length) out.push(prompt[index]!);
+    let injection = sorted[next];
+    while (injection && injection.index === index) {
+      out.push(...injection.messages);
+      next++;
+      injection = sorted[next];
+    }
+    const message = prompt[index];
+    if (message !== undefined) out.push(message);
   }
   // 位置超出（不该发生）就放在最后，宁可多给也不丢。
-  while (next < sorted.length) out.push(...sorted[next++]!.messages);
+  for (; next < sorted.length; next++) {
+    const injection = sorted[next];
+    if (injection) out.push(...injection.messages);
+  }
   return out;
 }
 
@@ -551,8 +562,8 @@ export function trailingToolCallIds(
 ): string[] {
   const ids: string[] = [];
   for (let index = prompt.length - 1; index >= 0; index--) {
-    const message = prompt[index]!;
-    if (message.role !== "tool") break;
+    const message = prompt[index];
+    if (message?.role !== "tool") break;
     for (const part of Array.isArray(message.content) ? message.content : []) {
       const id = (part as { toolCallId?: unknown })?.toolCallId;
       if (typeof id === "string") ids.push(id);
@@ -606,12 +617,12 @@ export function steerLanguageModel<T>(model: T): T {
   const target = model as unknown as SteerableModel;
   return new Proxy(model as unknown as object, {
     get(object, property) {
-      if (
-        (property === "doStream" || property === "doGenerate") &&
-        typeof target[property] === "function"
-      ) {
-        return async (options: unknown) =>
-          target[property]!.call(object, await steer(options));
+      if (property === "doStream" || property === "doGenerate") {
+        const method = target[property];
+        if (typeof method === "function") {
+          return async (options: unknown) =>
+            method.call(object, await steer(options));
+        }
       }
       const value = Reflect.get(object, property);
       return typeof value === "function" ? value.bind(object) : value;
@@ -664,7 +675,11 @@ export function weaveMessages(
     }
     if (at < 0) at = out.length;
     // 排在之前插在同一个位置的插话后面（保持进队顺序）。
-    while (at < out.length && injected.has(out[at]!.id)) at++;
+    while (at < out.length) {
+      const current = out[at];
+      if (!current || !injected.has(current.id)) break;
+      at++;
+    }
     out.splice(at, 0, injection.message);
     present.add(injection.message.id);
   }

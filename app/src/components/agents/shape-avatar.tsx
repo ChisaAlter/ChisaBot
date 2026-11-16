@@ -2,11 +2,11 @@ import { animate, useReducedMotion } from "motion/react";
 import {
   type CSSProperties,
   memo,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useTimeout } from "@/hooks";
 import {
   attachMorph,
   morphLevelOf as levelOfState,
@@ -46,24 +46,28 @@ export function useShapeMood(
   interrupted = false,
 ): ShapeMood {
   const working = active;
+  const [wasWorking, setWasWorking] = useState(working);
   const [done, setDone] = useState(false);
-  const wasWorking = useRef(working);
-  useEffect(() => {
-    if (working) {
-      wasWorking.current = true;
+  const [doneEpoch, setDoneEpoch] = useState(0);
+
+  if (working !== wasWorking) {
+    setWasWorking(working);
+    if (working || interrupted) {
       setDone(false);
-      return;
+    } else {
+      setDone(true);
+      setDoneEpoch(doneEpoch + 1);
     }
-    if (!wasWorking.current || interrupted) {
-      wasWorking.current = false;
-      setDone(false);
-      return;
-    }
-    wasWorking.current = false;
-    setDone(true);
-    const timer = window.setTimeout(() => setDone(false), doneMs);
-    return () => window.clearTimeout(timer);
-  }, [working, doneMs, interrupted]);
+  } else if (interrupted && done) {
+    setDone(false);
+  }
+
+  useTimeout(
+    () => setDone(false),
+    done && !working && !interrupted ? doneMs : null,
+    doneEpoch,
+  );
+
   if (working) return "working";
   if (done && !interrupted) return "done";
   return selected ? "selected" : "idle";

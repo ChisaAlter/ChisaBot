@@ -2,10 +2,10 @@ import { IconLoader2, IconPlus, IconWorld, IconX } from "@tabler/icons-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
-  useEffect,
   useRef,
   useState,
 } from "react";
+import { useElementSync, useTimeout } from "@/hooks";
 import { siteMonogram } from "@/lib/browser-bookmarks";
 import { DARK_INK_LUMINANCE, hexLuminance, useDarkInk } from "@/lib/favicon-tone";
 import { type BrowserTab, humanTab, useBrowserTabs } from "@/lib/computers/tabs";
@@ -75,18 +75,24 @@ export function TabStrip({
   const strip = useRef<HTMLDivElement>(null);
   const activeId = view?.activeId ?? view?.tabs.find((tab) => tab.active)?.id ?? null;
 
-  useEffect(() => {
-    if (!problem) return;
-    const timer = setTimeout(() => setProblem(null), 4000);
-    return () => clearTimeout(timer);
-  }, [problem]);
+  useTimeout(
+    () => setProblem(null),
+    problem ? 4000 : null,
+    problem ?? null,
+  );
 
   // 当前标签滚进可见范围（标签多、被挤到右边时）。
-  useEffect(() => {
-    if (!activeId) return;
-    const node = strip.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(activeId)}"]`);
-    node?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "smooth" });
-  }, [activeId]);
+  useElementSync(strip, activeId ?? null, (el, id) => {
+    if (!id) return;
+    const node = el.querySelector<HTMLElement>(
+      `[data-tab-id="${CSS.escape(id)}"]`,
+    );
+    node?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+  });
 
   if (!view || view.tabs.length === 0)
     return end ? (
@@ -148,8 +154,9 @@ export function TabStrip({
     const key = event.key;
     if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
     const ids = view.tabs.map((tab) => tab.id);
-    if (ids.length === 0) return;
-    const current = activeId ?? view.tabs.find((tab) => tab.active)?.id ?? ids[0]!;
+    const firstId = ids[0];
+    if (firstId === undefined) return;
+    const current = activeId ?? view.tabs.find((tab) => tab.active)?.id ?? firstId;
     const at = Math.max(0, ids.indexOf(current));
     const next =
       key === "Home"
@@ -160,7 +167,8 @@ export function TabStrip({
             ? (at - 1 + ids.length) % ids.length
             : (at + 1) % ids.length;
     event.preventDefault();
-    const id = ids[next]!;
+    const id = ids[next];
+    if (id === undefined) return;
     strip.current?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.focus();
     if (view.running && id !== current) void run(`a:${id}`, "activate", id);
   };

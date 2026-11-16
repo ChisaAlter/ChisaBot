@@ -1,5 +1,6 @@
-import { Fragment, useEffect } from "react";
+import { Fragment } from "react";
 import { PageRows } from "@/components/layout/page-shell";
+import { useExternalConnection } from "@/hooks";
 import {
   setSkyEnabled,
   setSkyPreview,
@@ -19,7 +20,7 @@ export function SkyPreference({ bare = false }: { bare?: boolean } = {}) {
   const { enabled } = useSkyState();
 
   // Leaving the settings screen drops the preview; the sky goes back to the clock.
-  useEffect(() => () => setSkyPreview(null), []);
+  useExternalConnection(true, () => () => setSkyPreview(null));
 
 
   return (

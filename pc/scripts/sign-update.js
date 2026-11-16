@@ -146,7 +146,7 @@ function sign(file, { keysFile, keyFile, env, log }) {
   let pem;
   if (keyFile) pem = fs.readFileSync(keyFile, "utf8");
   else pem = env.PC_UPDATE_SIGNING_KEY;
-  if (!pem || !pem.trim()) throw new sig.UpdateSignatureError("ERR_NO_PRIVATE_KEY", "没有签名私钥：设置 PC_UPDATE_SIGNING_KEY 或用 --key-file");
+  if (!pem?.trim()) throw new sig.UpdateSignatureError("ERR_NO_PRIVATE_KEY", "没有签名私钥：设置 PC_UPDATE_SIGNING_KEY 或用 --key-file");
   const keys = readKeysFile(keysFile);
   if (keys.size === 0) throw new sig.UpdateSignatureError("ERR_NO_KEYS", `${keysFile} 是空的：没有公钥的构建不能签名`);
   const { text: textValue, info } = readManifest(file);
@@ -217,7 +217,7 @@ async function main(argv, { env = process.env, log = (line) => console.log(line)
       error(`sign-update: ${e.message}（${e.code}）`);
       return 1;
     }
-    error(`sign-update: ${e && e.code ? e.code : "失败"} ${e && e.message ? e.message.split("\n")[0].slice(0, 200) : ""}`);
+    error(`sign-update: ${e?.code ? e.code : "失败"} ${e?.message ? e.message.split("\n")[0].slice(0, 200) : ""}`);
     return 1;
   }
 }

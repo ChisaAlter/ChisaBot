@@ -1,7 +1,9 @@
 import { IconBrandGithub, IconDots, IconKey, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { VAULT_DOMAIN, VAULT_NAME, type VaultSecretView } from "../../../../../shared/vault";
 import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
@@ -207,11 +209,19 @@ function SecretDialog({ open, secret, onOpenChange }: { open: boolean; secret: V
     { errorToast: (error) => error.message },
   );
   const resetSave = save.reset;
-  useEffect(() => {
-    if (!open) return;
-    setForm(secret ? { name: secret.name, label: secret.label, domains: secret.domains.join(", "), value: "" } : { name: "", label: "", domains: "", value: "" });
-    resetSave();
-  }, [open, secret, resetSave]);
+  useExternalConnection(
+    open
+      ? `${secret ? objectConnectionKey(secret) : "new"}:${objectConnectionKey(resetSave)}`
+      : false,
+    () => {
+      setForm(
+        secret
+          ? { name: secret.name, label: secret.label, domains: secret.domains.join(", "), value: "" }
+          : { name: "", label: "", domains: "", value: "" },
+      );
+      resetSave();
+    },
+  );
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="im-dialog max-w-lg">

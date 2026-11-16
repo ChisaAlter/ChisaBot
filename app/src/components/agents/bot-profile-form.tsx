@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { AvatarField } from "@/components/agents/avatar-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,18 +61,21 @@ export function BotProfileForm({
   const [titleAuto, setTitleAuto] = useState(!editing);
   /** 新建默认是名字首字 + 底色（一打开就看得到，建好后一样）；编辑默认不动。 */
   const [avatar, setAvatar] = useState<AvatarDraft>(editing ? { kind: "keep" } : { kind: "monogram", color: "sky" });
-  const avatarTouched = useRef(false);
+  const [avatarTouched, setAvatarTouched] = useState(false);
   const [tried, setTried] = useState(false);
 
   // 新建：首字头像的底色按名字挑（改名就换色，直到用户自己选了头像）。
-  useEffect(() => {
-    if (editing || avatarTouched.current) return;
-    setAvatar({ kind: "monogram", color: colorFor(fields.name.trim() || "新") });
-  }, [editing, fields.name]);
+  const resolvedAvatar: AvatarDraft =
+    !editing && !avatarTouched
+      ? { kind: "monogram", color: colorFor(fields.name.trim() || "新") }
+      : avatar;
   // 本地预览图用完就释放。
-  useEffect(() => () => {
-    if (avatar.kind === "image") URL.revokeObjectURL(avatar.previewUrl);
-  }, [avatar]);
+  useExternalConnection(
+    resolvedAvatar.kind === "image" ? resolvedAvatar.previewUrl || null : null,
+    (previewUrl) => () => {
+      URL.revokeObjectURL(previewUrl);
+    },
+  );
 
   const suggestion = fields.roleDescription.trim() ? titleFromPurpose(fields.roleDescription) : "";
   const shownTitle = titleAuto ? suggestion : fields.title;
@@ -109,7 +113,7 @@ export function BotProfileForm({
           : await update.mutateAsync({ agentId: agent.id, input: agentInputFrom(values) })
         : await create.mutateAsync(agentInputFrom(values));
       try {
-        await saveAvatarDraft(client, saved.id, avatar);
+        await saveAvatarDraft(client, saved.id, resolvedAvatar);
       } catch (failure) {
         // 机器人已经建好 / 改好了：只是头像没存上。新建时照样进去，提示在资料里再换。
         const reason = failure instanceof Error ? failure.message : "头像没能保存";
@@ -167,11 +171,11 @@ export function BotProfileForm({
           <AvatarField
             agentId={agent?.id}
             allowPattern={editing}
-            autoPicked={!editing && !avatarTouched.current}
-            draft={avatar}
+            autoPicked={!editing && !avatarTouched}
+            draft={resolvedAvatar}
             name={fields.name}
             onChange={(next) => {
-              avatarTouched.current = true;
+              setAvatarTouched(true);
               setAvatar(next);
             }}
             seed={agent?.avatarSeed}

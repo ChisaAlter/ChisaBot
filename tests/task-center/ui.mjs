@@ -5,18 +5,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright-core";
+import { resolveBrowserExecutable } from "../../scripts/verify-ui.mjs";
 
 const base = process.env.BASE || "http://127.0.0.1:4317";
 const out =
   process.env.OUT_DIR || path.join(os.tmpdir(), "chisabot-task-center-ui");
 fs.mkdirSync(out, { recursive: true });
-const browserDir = path.join(process.env.LOCALAPPDATA, "ms-playwright");
-const chromiumDir = fs
-  .readdirSync(browserDir)
-  .find((name) => name.startsWith("chromium-") && !name.includes("headless"));
-const executablePath =
-  process.env.CHROME ||
-  path.join(browserDir, chromiumDir, "chrome-win64", "chrome.exe");
+function findExecutablePath() {
+  if (process.env.CHROME) return process.env.CHROME;
+  const fromVerify = resolveBrowserExecutable();
+  if (fromVerify) return fromVerify;
+  const browserDir = path.join(process.env.LOCALAPPDATA ?? "", "ms-playwright");
+  const chromiumDir = fs
+    .readdirSync(browserDir)
+    .find((name) => name.startsWith("chromium-") && !name.includes("headless"));
+  return chromiumDir
+    ? path.join(browserDir, chromiumDir, "chrome-win64", "chrome.exe")
+    : undefined;
+}
+const executablePath = findExecutablePath();
 const now = "2026-11-06T08:30:00.000Z";
 const statuses = [
   "inbox",
@@ -232,6 +239,8 @@ async function setup(width, dark = false) {
     if (pathname === "/api/capabilities") return json({ authProviders: [] });
     if (pathname === "/api/version") return json({ version: "ui-fixture" });
     if (pathname === "/api/schedules/events") return json({ events: [] });
+    if (pathname === "/api/workflows")
+      return json({ workflows: [], runs: [], tools: [] });
     if (pathname === "/api/task-center")
       return json({
         tasks,
@@ -243,14 +252,103 @@ async function setup(width, dark = false) {
             tasks.filter((task) => task.status === status).length,
           ]),
         ),
+        decisionCounts: {
+          pending: decisions.filter((d) => d.status === "pending").length,
+          approved: decisions.filter((d) => d.status === "approved").length,
+          rejected: decisions.filter((d) => d.status === "rejected").length,
+          superseded: decisions.filter((d) => d.status === "superseded").length,
+        },
         running: true,
         concurrency: 2,
       });
     if (pathname === "/api/task-center/capabilities")
       return json({ capabilities });
+    if (pathname === "/api/task-center/roots") return json({ roots: [] });
+    if (pathname === "/api/task-center/boards")
+      return json({
+        boards: [
+          {
+            boardId: "0123456789abcdef",
+            rootPath: "C:\\Projects\\example",
+            label: "示例看板",
+            dialect: "autobahn",
+            backlogFile: "BACKLOG.md",
+            writable: true,
+            cardCount: 1,
+          },
+        ],
+        availableRoots: [],
+      });
+    if (pathname === "/api/task-center/boards/view")
+      return json({
+        board: {
+          boardId: "0123456789abcdef",
+          rootPath: "C:\\Projects\\example",
+          label: "示例看板",
+          dialect: "autobahn",
+          backlogFile: "BACKLOG.md",
+          revision: "0".repeat(64),
+          writable: true,
+          lanes: { now: "现在", next: "接下来", later: "以后" },
+          pinned: null,
+          cards: [
+            {
+              id: "AB-1",
+              title: "验证看板视图布局",
+              lane: "now",
+              filedIn: "now",
+              done: false,
+              blocked: false,
+              movable: true,
+              statusText: "open",
+              size: "S",
+              tags: ["ui"],
+              body: "- **Status:** open",
+              line: 5,
+              sourceFile: "BACKLOG.md",
+              sourceRef: "board:v1:0123456789abcdef:BACKLOG.md:AB-1",
+              checkboxes: { checked: 0, total: 0 },
+              linkedTask: null,
+            },
+          ],
+          docs: [{ relFile: "BACKLOG.md", name: "BACKLOG.md", writable: true }],
+        },
+      });
     if (pathname === "/api/task-center/context") {
       if (method === "PUT") personalContext = { ...data, updatedAt: now };
       return json({ context: personalContext });
+    }
+    if (pathname === "/api/task-center/tasks" && method === "GET") {
+      const viewParam = url.searchParams.get("view") || "inbox";
+      const categoryParam = url.searchParams.get("category") || "";
+      const searchParam = (url.searchParams.get("search") || "").trim();
+      const offset = Number(url.searchParams.get("offset") || "0");
+      const limit = Number(url.searchParams.get("limit") || "50");
+      const statusSet =
+        viewParam === "active"
+          ? new Set([
+              "queued",
+              "planning",
+              "running",
+              "waiting_dependencies",
+              "waiting_approval",
+              "paused",
+            ])
+          : viewParam === "history"
+            ? new Set(["succeeded", "failed", "cancelled"])
+            : new Set(["inbox"]);
+      const filtered = tasks.filter(
+        (entry) =>
+          statusSet.has(entry.status) &&
+          (!categoryParam || entry.category === categoryParam) &&
+          (!searchParam ||
+            entry.title.includes(searchParam) ||
+            entry.description.includes(searchParam)),
+      );
+      const slice = filtered.slice(offset, offset + limit);
+      const nextOffset =
+        offset + slice.length < filtered.length ? offset + slice.length : null;
+      return json({ tasks: slice, total: filtered.length, nextOffset });
     }
     if (pathname === "/api/task-center/tasks" && method === "POST") {
       const created = task(
@@ -263,11 +361,17 @@ async function setup(width, dark = false) {
       return json({ task: created }, 201);
     }
     const item = pathname.match(
-      /^\/api\/task-center\/tasks\/([^/]+)(?:\/(start|pause|resume|retry|cancel))?$/,
+      /^\/api\/task-center\/tasks\/([^/]+)(?:\/(start|pause|resume|retry|cancel|schedule))?$/,
     );
     if (item) {
       const current = tasks.find((task) => task.id === item[1]);
       if (!current) return json({ error: "找不到这个任务。" }, 404);
+      if (item[2] === "schedule") {
+        current.lane = data.lane;
+        current.priority = data.priority;
+        if (data.start && current.status === "inbox") current.status = "queued";
+        return json({ task: current });
+      }
       if (item[2]) {
         current.status =
           item[2] === "pause"
@@ -291,6 +395,20 @@ async function setup(width, dark = false) {
         ],
         children: [],
       });
+    }
+    if (pathname === "/api/task-center/outbox" && method === "GET") {
+      const statusParam = url.searchParams.get("status") || "pending";
+      const offset = Number(url.searchParams.get("offset") || "0");
+      const limit = Number(url.searchParams.get("limit") || "50");
+      const filtered = decisions.filter((entry) =>
+        statusParam === "pending"
+          ? entry.status === "pending"
+          : entry.status !== "pending",
+      );
+      const slice = filtered.slice(offset, offset + limit);
+      const nextOffset =
+        offset + slice.length < filtered.length ? offset + slice.length : null;
+      return json({ outbox: slice, total: filtered.length, nextOffset });
     }
     if (pathname.startsWith("/api/task-center/outbox/") && method === "POST") {
       decisions[0] = {
@@ -397,6 +515,12 @@ try {
   await p.getByText(/上次更新：/).waitFor();
   checks.push("个人上下文保存");
   await capture(p, "desktop-context.png");
+  await p.getByRole("button", { name: "看板", exact: true }).click();
+  await p.getByRole("tab", { name: "个人任务看板" }).waitFor();
+  await p.getByRole("tab", { name: /示例看板/ }).click();
+  await p.getByText("验证看板视图布局", { exact: true }).waitFor();
+  await capture(p, "desktop-board.png");
+  checks.push("任务看板四列与本地 Markdown 看板切换");
   await desktop.context.close();
 
   const mobile = await setup(420);

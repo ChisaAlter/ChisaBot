@@ -36,7 +36,7 @@ function git(args, { cwd, env, timeoutMs = 120_000, input } = {}) {
     try {
       child = spawn("git", ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false", ...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
-      resolve({ code: -1, out: "", err: String(error && error.message) });
+      resolve({ code: -1, out: "", err: String(error?.message) });
       return;
     }
     const timer = setTimeout(() => {
@@ -48,7 +48,7 @@ function git(args, { cwd, env, timeoutMs = 120_000, input } = {}) {
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (error) => {
       clearTimeout(timer);
-      resolve({ code: -1, out, err: String(error && error.message) });
+      resolve({ code: -1, out, err: String(error?.message) });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -141,8 +141,8 @@ async function prepare({ taskId, cwd, isolation }) {
           original,
           originalRoot: toplevel,
           notes,
-          diffEnv: snap && snap.env,
-          base: snap && snap.base,
+          diffEnv: snap?.env,
+          base: snap?.base,
           taskDir,
           async cleanup() {
             await git(["worktree", "remove", "--force", wt], { cwd: toplevel });
@@ -166,8 +166,8 @@ async function prepare({ taskId, cwd, isolation }) {
       original,
       originalRoot: original,
       notes,
-      diffEnv: snap && snap.env,
-      base: snap && snap.base,
+      diffEnv: snap?.env,
+      base: snap?.base,
       taskDir,
       async cleanup() {
         await fsp.rm(taskDir, { recursive: true, force: true });
@@ -186,8 +186,8 @@ async function prepare({ taskId, cwd, isolation }) {
     original,
     originalRoot: original,
     notes,
-    diffEnv: snap && snap.env,
-    base: snap && snap.base,
+    diffEnv: snap?.env,
+    base: snap?.base,
     taskDir,
     async cleanup() {
       await fsp.rm(taskDir, { recursive: true, force: true });

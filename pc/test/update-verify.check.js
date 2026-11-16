@@ -29,7 +29,10 @@ function fakeAutoUpdater(info) {
     return {};
   };
   e.quitAndInstall = (silent, runAfter) => e.quitAndInstalls.push([silent, runAfter]);
-  e.install = (silent, runAfter) => (e.installs.push([silent, runAfter]), true);
+  e.install = (silent, runAfter) => {
+    e.installs.push([silent, runAfter]);
+    return true;
+  };
   return e;
 }
 

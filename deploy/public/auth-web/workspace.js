@@ -24,7 +24,7 @@
     const next =
       window.location.pathname + window.location.search + window.location.hash;
     window.location.replace(
-      preservePath ? "/login?next=" + encodeURIComponent(next) : "/login",
+      preservePath ? `/login?next=${encodeURIComponent(next)}` : "/login",
     );
   }
   if (authChannel)

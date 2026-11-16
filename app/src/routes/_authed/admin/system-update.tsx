@@ -16,7 +16,8 @@ import {
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useElementSync } from "@/hooks";
 import {
   PageSection,
   PageShell,
@@ -855,14 +856,13 @@ function JobCard({
 function JobLog({ lines }: { lines: string[] }) {
   const [node, setNode] = useState<HTMLPreElement | null>(null);
   const last = lines[lines.length - 1];
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(() => {
-    if (!node) return;
+  useElementSync(node, `${lines.length}\0${last ?? ""}`, (element) => {
     const nearBottom =
-      node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-    if (nearBottom || node.dataset.stuck !== "0")
-      node.scrollTop = node.scrollHeight;
-  }, [node, last, lines.length]);
+      element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    if (nearBottom || element.dataset.stuck !== "0")
+      element.scrollTop = element.scrollHeight;
+    return undefined;
+  });
   return (
     <pre
       aria-label={"更新日志"}

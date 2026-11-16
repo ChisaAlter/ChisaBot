@@ -14,7 +14,8 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useTimeout, useWindowEvent } from "@/hooks";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
 import { toast } from "@/components/ui/toast";
 import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
@@ -36,51 +37,40 @@ export function QuickSpotlight() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Alt+Space summons Quick Spotlight (Ctrl+K is reserved for sidebar conversation search)
-      const isAltSpace =
-        e.altKey && !e.ctrlKey && !e.metaKey && e.code === "Space";
-      if (isAltSpace) {
-        e.preventDefault();
-        setOpen((prev) => !prev);
-      } else if (e.key === "Escape" && open) {
-        setOpen(false);
-      }
-    };
-    const onCustomOpen = () => {
-      setOpen(true);
-    };
-    const onQuote = () => {
-      if (open) {
-        setOpen(false);
-        setBriefMarkdown(null);
-      }
-      // The quote is already addressed and pending; navigation never replays it.
-      if (!isBotsChatPath(window.location.pathname))
-        void navigate(botsTarget() as never);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener(CHISABOT_SPOTLIGHT_EVENT, onCustomOpen);
-    window.addEventListener(CHISABOT_QUOTE_EVENT, onQuote);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener(CHISABOT_SPOTLIGHT_EVENT, onCustomOpen);
-      window.removeEventListener(CHISABOT_QUOTE_EVENT, onQuote);
-    };
-  }, [open, navigate]);
-
-  useEffect(() => {
-    if (!open) {
-      setBriefMarkdown(null);
-      return;
+  useWindowEvent("keydown", (e) => {
+    // Alt+Space summons Quick Spotlight (Ctrl+K is reserved for sidebar conversation search)
+    const isAltSpace =
+      e.altKey && !e.ctrlKey && !e.metaKey && e.code === "Space";
+    if (isAltSpace) {
+      e.preventDefault();
+      setOpen((prev) => !prev);
+    } else if (e.key === "Escape" && open) {
+      setOpen(false);
     }
-    const id = window.setTimeout(() => {
+  });
+  useWindowEvent(CHISABOT_SPOTLIGHT_EVENT, () => {
+    setOpen(true);
+  });
+  useWindowEvent(CHISABOT_QUOTE_EVENT, () => {
+    if (open) {
+      setOpen(false);
+      setBriefMarkdown(null);
+    }
+    // The quote is already addressed and pending; navigation never replays it.
+    if (!isBotsChatPath(window.location.pathname))
+      void navigate(botsTarget() as never);
+  });
+
+  if (!open && briefMarkdown !== null) {
+    setBriefMarkdown(null);
+  }
+  useTimeout(
+    () => {
       inputRef.current?.focus();
       inputRef.current?.select();
-    }, 20);
-    return () => window.clearTimeout(id);
-  }, [open]);
+    },
+    open ? 20 : null,
+  );
 
   if (!open) return null;
 

@@ -1,4 +1,12 @@
-import { errorText } from "../text";
+import {
+  asJsonArray,
+  asJsonRecord,
+  asString,
+  errorText,
+  type JsonRecord,
+  parseJsonRecord,
+  readJsonField,
+} from "../text";
 import type {
   AdapterContext,
   ImInbound,
@@ -24,24 +32,35 @@ import { dataText, LoopAdapter, randomId } from "./base";
 
 export const WECOM_WS_URL = "wss://openws.work.weixin.qq.com";
 
-// biome-ignore lint/suspicious/noExplicitAny: 企业微信回调报文字段随 msgtype 变化
-export function parseWecomMessage(body: any): ImInbound | null {
+export function parseWecomMessage(rawBody: unknown): ImInbound | null {
+  const body = asJsonRecord(rawBody);
   if (!body?.msgid) return null;
   const chatType = body.chattype === "group" ? "group" : "private";
-  const userId = String(body.from?.userid ?? "");
+  const userId = String(readJsonField(body.from, "userid") ?? "");
   let text = "";
   const attachments: ImInbound["attachments"] = [];
-  if (body.msgtype === "text") text = String(body.text?.content ?? "");
-  else if (body.msgtype === "mixed") {
-    for (const item of body.mixed?.msg_item ?? []) {
-      if (item.msgtype === "text") text += String(item.text?.content ?? "");
+  if (body.msgtype === "text") {
+    text = String(readJsonField(body.text, "content") ?? "");
+  } else if (body.msgtype === "mixed") {
+    for (const rawItem of asJsonArray(readJsonField(body.mixed, "msg_item"))) {
+      const item = asJsonRecord(rawItem);
+      if (!item) continue;
+      if (item.msgtype === "text")
+        text += String(readJsonField(item.text, "content") ?? "");
       else if (item.msgtype === "image")
-        attachments.push({ kind: "image", url: item.image?.url });
+        attachments.push({
+          kind: "image",
+          url: asString(readJsonField(item.image, "url")),
+        });
     }
-  } else if (body.msgtype === "image")
-    attachments.push({ kind: "image", url: body.image?.url });
-  else if (body.msgtype === "voice") text = String(body.voice?.content ?? "");
-  else if (body.msgtype === "file") attachments.push({ kind: "file" });
+  } else if (body.msgtype === "image") {
+    attachments.push({
+      kind: "image",
+      url: asString(readJsonField(body.image, "url")),
+    });
+  } else if (body.msgtype === "voice") {
+    text = String(readJsonField(body.voice, "content") ?? "");
+  } else if (body.msgtype === "file") attachments.push({ kind: "file" });
   // 群消息开头是「@机器人名 」。
   if (chatType === "group") text = text.replace(/^\s*@\S+\s*/, "");
   return {
@@ -64,8 +83,10 @@ export class WecomBotAdapter extends LoopAdapter {
   private missed = 0;
   private acks = new Map<
     string,
-    // biome-ignore lint/suspicious/noExplicitAny: 企业微信 WS 应答帧 body 形状随 cmd 变化
-    { resolve: (frame: any) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (frame: JsonRecord | null) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   /** msgid → {req_id, stream_id}：回复时用。 */
   private streams = new Map<
@@ -110,7 +131,7 @@ export class WecomBotAdapter extends LoopAdapter {
         );
         if (frame?.errcode !== 0) {
           throw new Error(
-            `企业微信订阅失败：${frame ? `${frame.errcode} ${frame.errmsg ?? ""}` : "10 秒没有回应"}（检查 Bot ID / Secret，机器人是否选了「长连接」）`,
+            `企业微信订阅失败：${frame ? `${String(frame.errcode ?? "")} ${String(frame.errmsg ?? "")}` : "10 秒没有回应"}（检查 Bot ID / Secret，机器人是否选了「长连接」）`,
           );
         }
         authed = true;
@@ -142,8 +163,7 @@ export class WecomBotAdapter extends LoopAdapter {
     frame: { cmd: string; body?: unknown; headers?: Record<string, string> },
     prefix: string,
     timeoutMs = 10_000,
-    // biome-ignore lint/suspicious/noExplicitAny: 应答 body 形状随 cmd 变化，调用方按协议取用
-  ): Promise<any> {
+  ): Promise<JsonRecord | null> {
     const reqId = frame.headers?.req_id ?? `${prefix}_${randomId()}`;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -165,8 +185,8 @@ export class WecomBotAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
-    const frame = JSON.parse(text);
-    const reqId: string = frame.headers?.req_id ?? "";
+    const frame = parseJsonRecord(text);
+    const reqId = asString(readJsonField(frame.headers, "req_id")) ?? "";
     if (frame.cmd === "aibot_msg_callback") {
       const inbound = parseWecomMessage(frame.body);
       if (!inbound) return;
@@ -190,7 +210,8 @@ export class WecomBotAdapter extends LoopAdapter {
       return;
     }
     if (frame.cmd === "aibot_event_callback") {
-      const type = frame.body?.event?.eventtype ?? frame.body?.eventtype;
+      const body = asJsonRecord(frame.body);
+      const type = readJsonField(body?.event, "eventtype") ?? body?.eventtype;
       if (type === "disconnected_event") {
         this.kicked = true;
         this.ctx.log(
@@ -204,8 +225,8 @@ export class WecomBotAdapter extends LoopAdapter {
       }
       return;
     }
-    if (this.acks.has(reqId)) {
-      const ack = this.acks.get(reqId)!;
+    const ack = this.acks.get(reqId);
+    if (ack) {
       this.acks.delete(reqId);
       clearTimeout(ack.timer);
       ack.resolve(frame);
@@ -216,22 +237,20 @@ export class WecomBotAdapter extends LoopAdapter {
 
   async send(reply: ImReply): Promise<undefined> {
     const { inbound } = reply;
-    const meta = inbound.reply as {
-      reqId?: string;
-      streamId?: string;
-      chatid?: string;
-    };
+    const reqId = asString(inbound.reply.reqId);
+    const streamId = asString(inbound.reply.streamId);
+    const chatid = asString(inbound.reply.chatid);
     const [first, ...rest] = reply.chunks;
     if (first != null) {
       let sent = false;
-      if (meta.reqId && meta.streamId) {
+      if (reqId && streamId) {
         const ack = await this.request(
           {
             cmd: "aibot_respond_msg",
-            headers: { req_id: meta.reqId },
+            headers: { req_id: reqId },
             body: {
               msgtype: "stream",
-              stream: { id: meta.streamId, finish: true, content: first },
+              stream: { id: streamId, finish: true, content: first },
             },
           },
           "respond",
@@ -240,13 +259,13 @@ export class WecomBotAdapter extends LoopAdapter {
         if (!sent)
           this.ctx.log(
             "warn",
-            `流式回复失败（${ack ? `${ack.errcode} ${ack.errmsg ?? ""}` : "没有回执"}），改用主动发送`,
+            `流式回复失败（${ack ? `${String(ack.errcode ?? "")} ${String(ack.errmsg ?? "")}` : "没有回执"}），改用主动发送`,
           );
       }
-      if (!sent) await this.active(meta.chatid ?? inbound.chatId, first);
+      if (!sent) await this.active(chatid ?? inbound.chatId, first);
     }
     for (const chunk of rest)
-      await this.active(meta.chatid ?? inbound.chatId, chunk);
+      await this.active(chatid ?? inbound.chatId, chunk);
   }
 
   private async active(chatid: string, content: string) {
@@ -259,7 +278,7 @@ export class WecomBotAdapter extends LoopAdapter {
     );
     if (ack?.errcode !== 0)
       throw new Error(
-        `企业微信发送失败：${ack ? `${ack.errcode} ${ack.errmsg ?? ""}` : "没有回执"}`,
+        `企业微信发送失败：${ack ? `${String(ack.errcode ?? "")} ${String(ack.errmsg ?? "")}` : "没有回执"}`,
       );
   }
 }
@@ -304,8 +323,8 @@ export async function testWecomBot(
       );
     socket.onmessage = (event) => {
       try {
-        const frame = JSON.parse(dataText(event.data));
-        if (frame.headers?.req_id !== reqId) return;
+        const frame = parseJsonRecord(dataText(event.data));
+        if (readJsonField(frame.headers, "req_id") !== reqId) return;
         clearTimeout(timer);
         socket.close();
         resolve(
@@ -313,7 +332,7 @@ export async function testWecomBot(
             ? { ok: true, detail: "凭据有效，长连接订阅成功" }
             : {
                 ok: false,
-                detail: `订阅失败：${frame.errcode} ${frame.errmsg ?? ""}`,
+                detail: `订阅失败：${String(frame.errcode ?? "")} ${String(frame.errmsg ?? "")}`,
               },
         );
       } catch {}

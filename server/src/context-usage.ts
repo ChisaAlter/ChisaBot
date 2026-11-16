@@ -90,51 +90,54 @@ export function meterLanguageModel<T>(model: T): T {
   const target = model as unknown as MeterableModel;
   return new Proxy(model as unknown as object, {
     get(object, property) {
-      if (property === "doStream" && typeof target.doStream === "function") {
-        return async (options: unknown) => {
-          const result = await target.doStream!.call(object, options);
-          if (!meters.getStore() || !(result?.stream instanceof ReadableStream))
-            return result;
-          let responseModel: string | undefined;
-          const stream = result.stream.pipeThrough(
-            new TransformStream<unknown, unknown>({
-              transform(part, controller) {
-                const chunk = part as {
-                  type?: string;
-                  usage?: unknown;
-                  modelId?: unknown;
-                };
-                if (
-                  chunk?.type === "response-metadata" &&
-                  typeof chunk.modelId === "string"
-                )
-                  responseModel = chunk.modelId;
-                if (chunk?.type === "finish")
-                  record(chunk.usage, responseModel ?? target.modelId);
-                controller.enqueue(part);
-              },
-            }),
-          );
-          return { ...result, stream };
-        };
+      if (property === "doStream") {
+        const doStream = target.doStream;
+        if (typeof doStream === "function") {
+          return async (options: unknown) => {
+            const result = await doStream.call(object, options);
+            if (!meters.getStore() || !(result?.stream instanceof ReadableStream))
+              return result;
+            let responseModel: string | undefined;
+            const stream = result.stream.pipeThrough(
+              new TransformStream<unknown, unknown>({
+                transform(part, controller) {
+                  const chunk = part as {
+                    type?: string;
+                    usage?: unknown;
+                    modelId?: unknown;
+                  };
+                  if (
+                    chunk?.type === "response-metadata" &&
+                    typeof chunk.modelId === "string"
+                  )
+                    responseModel = chunk.modelId;
+                  if (chunk?.type === "finish")
+                    record(chunk.usage, responseModel ?? target.modelId);
+                  controller.enqueue(part);
+                },
+              }),
+            );
+            return { ...result, stream };
+          };
+        }
       }
-      if (
-        property === "doGenerate" &&
-        typeof target.doGenerate === "function"
-      ) {
-        return async (options: unknown) => {
-          const result = await target.doGenerate!.call(object, options);
-          const response = result?.response as
-            | { modelId?: unknown }
-            | undefined;
-          record(
-            result?.usage,
-            typeof response?.modelId === "string"
-              ? response.modelId
-              : target.modelId,
-          );
-          return result;
-        };
+      if (property === "doGenerate") {
+        const doGenerate = target.doGenerate;
+        if (typeof doGenerate === "function") {
+          return async (options: unknown) => {
+            const result = await doGenerate.call(object, options);
+            const response = result?.response as
+              | { modelId?: unknown }
+              | undefined;
+            record(
+              result?.usage,
+              typeof response?.modelId === "string"
+                ? response.modelId
+                : target.modelId,
+            );
+            return result;
+          };
+        }
       }
       // 不传 receiver：模型类的私有字段只认它自己，getter / 方法都在原对象上跑。
       const value = Reflect.get(object, property);
@@ -222,12 +225,12 @@ export function readingFromRunFinished(
   const measured = metadata?.contextUsage as
     | Record<string, unknown>
     | undefined;
-  if (measured && count(measured.inputTokens)) {
-    const inputTokens = count(measured.inputTokens)!;
+  const measuredInputTokens = measured ? count(measured.inputTokens) : undefined;
+  if (measured && measuredInputTokens) {
     const outputTokens = count(measured.outputTokens) ?? 0;
     return {
-      tokens: inputTokens + outputTokens,
-      inputTokens,
+      tokens: measuredInputTokens + outputTokens,
+      inputTokens: measuredInputTokens,
       outputTokens,
       ...(count(measured.cachedInputTokens) !== undefined
         ? { cachedInputTokens: count(measured.cachedInputTokens) }
@@ -241,12 +244,12 @@ export function readingFromRunFinished(
     ? (row.event.usage as Record<string, unknown>[])
     : [];
   const last = usage[usage.length - 1];
-  if (last && count(last.inputTokens)) {
-    const inputTokens = count(last.inputTokens)!;
+  const lastInputTokens = last ? count(last.inputTokens) : undefined;
+  if (last && lastInputTokens) {
     const outputTokens = count(last.outputTokens) ?? 0;
     return {
-      tokens: inputTokens + outputTokens,
-      inputTokens,
+      tokens: lastInputTokens + outputTokens,
+      inputTokens: lastInputTokens,
       outputTokens,
       ...(typeof last.model === "string" ? { model: last.model } : {}),
       source: "run-total",

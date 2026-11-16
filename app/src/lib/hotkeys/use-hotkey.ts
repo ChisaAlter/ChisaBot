@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useWindowEvent } from "@/hooks";
 import type { HotkeyId } from "./hotkeys";
 import { getHotkey, matchesHotkey } from "./hotkeys";
 
@@ -30,22 +30,15 @@ function isEditable(target: EventTarget | null): boolean {
  * render-time state, and re-binding a window listener on every render is churn the ref avoids.
  */
 export function useHotkey(id: HotkeyId, handler: () => void) {
-  const handlerRef = useRef(handler);
-  handlerRef.current = handler;
-
-  useEffect(() => {
+  useWindowEvent("keydown", (event) => {
     const { combo } = getHotkey(id);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!matchesHotkey(event, combo)) {
-        return;
-      }
-      if (!combo.mod && !combo.alt && isEditable(event.target)) {
-        return;
-      }
-      event.preventDefault();
-      handlerRef.current();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [id]);
+    if (!matchesHotkey(event, combo)) {
+      return;
+    }
+    if (!combo.mod && !combo.alt && isEditable(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    handler();
+  });
 }

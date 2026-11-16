@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
+import { useExternalConnection } from "@/hooks";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 
 /**
@@ -110,7 +111,7 @@ export function Collapse({
    * for this same commit, and it ran first; a browser delivers an initial callback on `observe()`
    * in any case.
    */
-  useEffect(() => {
+  useExternalConnection(true, () => {
     const element = content.current;
     if (!element) return;
     const measure = () => {
@@ -119,7 +120,7 @@ export function Collapse({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  });
 
   return (
     <motion.div

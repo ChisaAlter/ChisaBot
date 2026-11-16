@@ -1,4 +1,12 @@
-import { errorText, readJson } from "../text";
+import {
+  asJsonRecord,
+  asString,
+  errorText,
+  type JsonRecord,
+  parseJsonRecord,
+  readJson,
+  readJsonField,
+} from "../text";
 import type { AdapterContext, ImInbound, ImReply, TestResult } from "../types";
 import { dataText, LoopAdapter } from "./base";
 
@@ -53,7 +61,7 @@ export async function qqAccessToken(
   const body = await readJson(response, "获取 QQ 机器人令牌");
   if (!body.access_token)
     throw new Error(
-      `获取 QQ 机器人令牌失败：${body.message ?? body.msg ?? JSON.stringify(body).slice(0, 160)}`,
+      `获取 QQ 机器人令牌失败：${String(body.message ?? body.msg ?? JSON.stringify(body).slice(0, 160))}`,
     );
   return {
     token: String(body.access_token),
@@ -62,28 +70,32 @@ export async function qqAccessToken(
 }
 
 /** QQ 事件 → ImInbound。 */
-export function parseQqEvent(
-  type: string,
-  // biome-ignore lint/suspicious/noExplicitAny: QQ 开放平台事件 d 载荷字段随事件类型变化
-  d: Record<string, any>,
-): ImInbound | null {
+export function parseQqEvent(type: string, rawD: unknown): ImInbound | null {
+  const d = asJsonRecord(rawD) ?? {};
   const content = String(d.content ?? "");
-  const attachments = Array.isArray(d.attachments)
-    ? // biome-ignore lint/suspicious/noExplicitAny: 附件元素按官方协议字段取用
-      d.attachments.map((item: any) => ({
-        kind: String(item.content_type ?? "").startsWith("image")
-          ? ("image" as const)
-          : ("file" as const),
-        url: item.url,
-      }))
+  const rawAttachments = Array.isArray(d.attachments) ? d.attachments : null;
+  const attachments = rawAttachments
+    ? rawAttachments.flatMap((rawItem) => {
+        const item = asJsonRecord(rawItem);
+        if (!item) return [];
+        return [
+          {
+            kind: String(item.content_type ?? "").startsWith("image")
+              ? ("image" as const)
+              : ("file" as const),
+            url: asString(item.url),
+          },
+        ];
+      })
     : undefined;
+  const author = asJsonRecord(d.author);
   const base = {
     messageId: String(d.id ?? ""),
     attachments: attachments?.length ? attachments : undefined,
   };
   switch (type) {
     case "C2C_MESSAGE_CREATE": {
-      const user = String(d.author?.user_openid ?? d.author?.id ?? "");
+      const user = String(author?.user_openid ?? author?.id ?? "");
       return {
         ...base,
         chatType: "private",
@@ -96,7 +108,7 @@ export function parseQqEvent(
     }
     case "GROUP_AT_MESSAGE_CREATE": {
       const group = String(d.group_openid ?? d.group_id ?? "");
-      const user = String(d.author?.member_openid ?? d.author?.id ?? "");
+      const user = String(author?.member_openid ?? author?.id ?? "");
       return {
         ...base,
         chatType: "group",
@@ -112,8 +124,8 @@ export function parseQqEvent(
         ...base,
         chatType: "group",
         chatId: String(d.channel_id),
-        userId: String(d.author?.id ?? ""),
-        userName: d.author?.username,
+        userId: String(author?.id ?? ""),
+        userName: asString(author?.username),
         text: content.replace(/<@!?\d+>/g, "").trim(),
         mentioned: true,
         reply: { kind: "channel", msgId: d.id, channelId: d.channel_id },
@@ -123,9 +135,9 @@ export function parseQqEvent(
       return {
         ...base,
         chatType: "private",
-        chatId: `dms:${d.guild_id}`,
-        userId: String(d.author?.id ?? ""),
-        userName: d.author?.username,
+        chatId: `dms:${String(d.guild_id)}`,
+        userId: String(author?.id ?? ""),
+        userName: asString(author?.username),
         text: content.trim(),
         mentioned: true,
         reply: { kind: "dms", msgId: d.id, guildId: d.guild_id },
@@ -169,7 +181,7 @@ export class QqOfficialAdapter extends LoopAdapter {
     const gateway = await readJson(response, "获取 QQ 网关地址");
     if (!gateway.url)
       throw new Error(
-        `获取 QQ 网关地址失败：${gateway.message ?? JSON.stringify(gateway).slice(0, 160)}`,
+        `获取 QQ 网关地址失败：${String(gateway.message ?? JSON.stringify(gateway).slice(0, 160))}`,
       );
     await this.openSocket(String(gateway.url), {
       onMessage: (data) => this.handle(dataText(data)),
@@ -177,17 +189,12 @@ export class QqOfficialAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
-    const payload = JSON.parse(text) as {
-      op: number;
-      // biome-ignore lint/suspicious/noExplicitAny: QQ 网关帧 d 载荷字段随 op/t 变化
-      d?: any;
-      s?: number;
-      t?: string;
-    };
+    const payload = parseJsonRecord(text);
     if (typeof payload.s === "number") this.seq = payload.s;
+    const d = asJsonRecord(payload.d);
     switch (payload.op) {
       case 10: {
-        const interval = Number(payload.d?.heartbeat_interval) || 41_250;
+        const interval = Number(d?.heartbeat_interval) || 41_250;
         if (this.heartbeat) clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => {
           try {
@@ -234,8 +241,8 @@ export class QqOfficialAdapter extends LoopAdapter {
         return;
     }
     if (payload.t === "READY") {
-      this.sessionId = payload.d?.session_id ?? null;
-      const name = payload.d?.user?.username;
+      this.sessionId = asString(d?.session_id) ?? null;
+      const name = asString(readJsonField(d?.user, "username"));
       this.markConnected(name ? `QQ 机器人「${name}」` : "QQ 机器人");
       this.ctx.log("info", `已连上 QQ 网关${name ? `（${name}）` : ""}`);
       return;
@@ -248,7 +255,10 @@ export class QqOfficialAdapter extends LoopAdapter {
     if (inbound) this.emit(inbound);
   }
 
-  private async post(path: string, body: Record<string, unknown>) {
+  private async post(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<JsonRecord> {
     const token = await this.accessToken();
     const response = await this.ctx.fetch(
       `${qqApiBase(this.ctx.config)}${path}`,
@@ -262,14 +272,13 @@ export class QqOfficialAdapter extends LoopAdapter {
       },
     );
     const text = await response.text();
-    // biome-ignore lint/suspicious/noExplicitAny: 开放平台接口回包 JSON 形状按文档字段取用
-    let parsed: any = {};
+    let parsed: JsonRecord = {};
     try {
-      parsed = text ? JSON.parse(text) : {};
+      parsed = parseJsonRecord(text);
     } catch {}
     if (!response.ok || (parsed.code && parsed.code !== 0 && !parsed.id))
       throw new Error(
-        `QQ 发送失败：HTTP ${response.status} ${parsed.code ?? ""} ${parsed.message ?? text.slice(0, 160)}`.trim(),
+        `QQ 发送失败：HTTP ${response.status} ${String(parsed.code ?? "")} ${String(parsed.message ?? text.slice(0, 160))}`.trim(),
       );
     return parsed;
   }
@@ -322,10 +331,11 @@ export async function testQqOfficial(ctx: AdapterContext): Promise<TestResult> {
     const response = await ctx.fetch(`${qqApiBase(ctx.config)}/users/@me`, {
       headers: { Authorization: `QQBot ${token}` },
     });
-    const me = await response.json().catch(() => ({}));
+    const me = asJsonRecord(await response.json().catch(() => ({}))) ?? {};
+    const username = asString(me.username);
     return {
       ok: true,
-      detail: `凭据有效${me?.username ? `，机器人「${me.username}」` : ""}`,
+      detail: `凭据有效${username ? `，机器人「${username}」` : ""}`,
     };
   } catch (error) {
     return { ok: false, detail: errorText(error) };

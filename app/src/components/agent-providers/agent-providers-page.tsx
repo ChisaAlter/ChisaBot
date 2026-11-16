@@ -24,7 +24,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -284,22 +284,12 @@ export function AgentProvidersPage() {
 
   const [selectedEnvId, setSelectedEnvId] = useState<string>("");
 
-  useEffect(() => {
-    if (!environments.length) return;
-    if (selectedEnvId && environments.some((e) => e.id === selectedEnvId)) {
-      return;
-    }
-    const preferred =
+  const currentEnv: AgentEnvironmentSummary | undefined = useMemo(
+    () =>
+      environments.find((e) => e.id === selectedEnvId) ??
       environments.find((e) => e.online && e.id !== SERVER_ENVIRONMENT_ID) ??
       environments.find((e) => e.online) ??
-      environments[0];
-    if (preferred) {
-      setSelectedEnvId(preferred.id);
-    }
-  }, [environments, selectedEnvId]);
-
-  const currentEnv: AgentEnvironmentSummary | undefined = useMemo(
-    () => environments.find((e) => e.id === selectedEnvId) ?? environments[0],
+      environments[0],
     [environments, selectedEnvId],
   );
   const activeEnvId = currentEnv?.id ?? "";
@@ -310,22 +300,11 @@ export function AgentProvidersPage() {
   const instances = instancesQuery.data ?? [];
 
   const [selectedInstanceId, setSelectedInstanceId] = useState<string>("");
-  useEffect(() => {
-    if (!instances.length) {
-      setSelectedInstanceId("");
-      return;
-    }
-    if (
-      !selectedInstanceId ||
-      !instances.some((item) => item.id === selectedInstanceId)
-    ) {
-      const first = instances[0];
-      if (first) setSelectedInstanceId(first.id);
-    }
-  }, [instances, selectedInstanceId]);
-
   const selectedInstance = useMemo(
-    () => instances.find((item) => item.id === selectedInstanceId) ?? null,
+    () =>
+      instances.find((item) => item.id === selectedInstanceId) ??
+      instances[0] ??
+      null,
     [instances, selectedInstanceId],
   );
 
@@ -930,10 +909,11 @@ function InstanceDetailPane({
   const [saving, setSaving] = useState(false);
   const [probing, setProbing] = useState(false);
   const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
+  const [prevInstance, setPrevInstance] = useState(instance);
+  if (instance !== prevInstance) {
+    setPrevInstance(instance);
     setDraft(buildDraftFromInstance(instance));
-  }, [instance]);
+  }
 
   const previewToolName = agentToolName(draft.slug || instance.slug);
 

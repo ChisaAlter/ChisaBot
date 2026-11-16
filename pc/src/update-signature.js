@@ -140,7 +140,7 @@ function parseSignature(value) {
 /** 只校验清单（不碰安装包）。返回 { keyId, fields }。 */
 function verifyManifest(info, keys) {
   if (!keys || keys.size === 0) fail("ERR_NO_KEYS", "这个版本没有可用的更新公钥");
-  const { keyId, signature } = parseSignature(info && info[SIG_FIELD]);
+  const { keyId, signature } = parseSignature(info?.[SIG_FIELD]);
   const entry = keys.get(keyId);
   if (!entry) fail("ERR_UNKNOWN_KEY", `签名用的密钥 ${keyId} 不在本机公钥表里`);
   const message = Buffer.from(canonicalMessage(info), "utf8");

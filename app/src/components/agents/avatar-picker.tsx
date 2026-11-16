@@ -1,5 +1,6 @@
 import { IconCamera, IconMinus, IconPhotoUp, IconPlus } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
 import { ShapeAvatar, type ShapeMood } from "@/components/agents/shape-avatar";
@@ -205,9 +206,9 @@ function AvatarDialogBody({
   const cropRef = useRef<CropHandle | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => () => {
-    if (source) URL.revokeObjectURL(source.url);
-  }, [source]);
+  useExternalConnection(source?.url || null, (url) => () => {
+    URL.revokeObjectURL(url);
+  });
 
   const pick = (next: Tab) => {
     setTab(next);
@@ -526,7 +527,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (pointers.current.size === 2) {
             const [a, b] = [...pointers.current.values()];
-            pinch.current = { distance: Math.hypot(a!.x - b!.x, a!.y - b!.y), zoom };
+            if (a && b) pinch.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom };
           }
         }}
         onPointerMove={(event) => {
@@ -535,7 +536,7 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           if (pointers.current.size === 2 && pinch.current) {
             const [a, b] = [...pointers.current.values()];
-            zoomTo((pinch.current.zoom * Math.hypot(a!.x - b!.x, a!.y - b!.y)) / pinch.current.distance);
+            if (a && b) zoomTo((pinch.current.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / pinch.current.distance);
             return;
           }
           setOffset((current) => clamp({ x: current.x + event.clientX - last.x, y: current.y + event.clientY - last.y }));

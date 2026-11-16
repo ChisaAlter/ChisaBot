@@ -145,7 +145,7 @@ describe("public cookie login", () => {
   test("logout revokes the canonical session cookie and rejects malformed cookies", async () => {
     const service = app();
     const current = cookie(await login(service));
-    const malformed = current.slice(0, current.indexOf("=") + 1) + "invalid";
+    const malformed = `${current.slice(0, current.indexOf("=") + 1)}invalid`;
     expect(
       (await service.fetch(request("/_internal/check", undefined, malformed)))
         .status,
@@ -153,7 +153,7 @@ describe("public cookie login", () => {
     expect(
       (
         await service.fetch(
-          request("/_internal/check", undefined, current + "; " + current),
+          request("/_internal/check", undefined, `${current}; ${current}`),
         )
       ).status,
     ).toBe(401);
@@ -225,7 +225,7 @@ describe("public cookie login", () => {
     const service = app();
     const token = cookie(await login(service));
     const response = await service.fetch(
-      new Request(origin + "/auth/logout", {
+      new Request(`${origin}/auth/logout`, {
         method: "POST",
         headers: { Origin: origin, Cookie: token },
       }),
@@ -242,13 +242,13 @@ describe("public cookie login", () => {
     let service = app(file);
     const token = cookie(await login(service));
     expect(
-      (await service.fetch(request("/_internal/check", undefined, token + "x")))
+      (await service.fetch(request("/_internal/check", undefined, `${token}x`)))
         .status,
     ).toBe(401);
     expect(
       (
         await service.fetch(
-          request("/_internal/check", undefined, token + "; " + token),
+          request("/_internal/check", undefined, `${token}; ${token}`),
         )
       ).status,
     ).toBe(401);

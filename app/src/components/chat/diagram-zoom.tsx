@@ -1,11 +1,11 @@
 import { IconZoomIn, IconZoomOut } from "@tabler/icons-react";
 import {
   type ReactNode,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { useElementEvent } from "@/hooks";
 import { Button } from "@/components/ui/button";
 
 const MIN_ZOOM = 0.5;
@@ -54,18 +54,17 @@ export function DiagramZoom({
     el.scrollTop = cy * ratio - el.clientHeight / 2;
   }, [zoom]);
 
-  useEffect(() => {
-    const el = viewport.current;
-    if (!el) return;
-    // React 的 onWheel 是 passive 的，拦不住浏览器自己的整页缩放，这里直接挂原生监听。
-    const onWheel = (event: WheelEvent) => {
+  // React 的 onWheel 是 passive 的，拦不住浏览器自己的整页缩放，这里直接挂原生监听。
+  useElementEvent(
+    viewport,
+    "wheel",
+    (event) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       setZoom((z) => clampZoom(event.deltaY < 0 ? z * 1.15 : z / 1.15));
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+    },
+    { passive: false },
+  );
 
   return (
     <div className="chat-artifact-zoom">

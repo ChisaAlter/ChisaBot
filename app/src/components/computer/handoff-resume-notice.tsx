@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import {
   forgetHandoff,
   hasActiveHandoff,
@@ -32,8 +33,18 @@ export function HandoffResumeNotice({
   // CB-103：不再自己每秒 readControl——和右栏、按钮共用同一个带退避的 store（每个 bot 只有一个轮询源）。
   // 聊天被外壳藏着时 store 不轮询（DESIGN.md §98.3），回来时它马上补读一次。
   const { control: state } = useComputerControl(botId, ready);
-  useEffect(() => {
-    if (!ready) return;
+  const [syncDeps, setSyncDeps] = useState({ botId, agent, ready, state });
+  const [syncEpoch, setSyncEpoch] = useState(0);
+  if (
+    syncDeps.botId !== botId ||
+    syncDeps.agent !== agent ||
+    syncDeps.ready !== ready ||
+    syncDeps.state !== state
+  ) {
+    setSyncDeps({ botId, agent, ready, state });
+    setSyncEpoch(syncEpoch + 1);
+  }
+  useExternalConnection(ready ? syncEpoch : null, () => {
     let stored = pendingHandoff(botId);
     if (!stored) {
       const request = state?.request;
@@ -72,15 +83,18 @@ export function HandoffResumeNotice({
     setPending(
       stored && !hasActiveHandoff(botId, stored.requestId) ? stored : null,
     );
-  }, [botId, agent, ready, state]);
+  });
+
   // 正在继续的任务只在换了机器人 / 对话或卸载时放弃——藏起来不算。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 这些值是有意的重启触发条件
-  useEffect(
-    () => () => {
-      controller.current?.abort("detached");
-    },
-    [botId, agent],
-  );
+  const [detachDeps, setDetachDeps] = useState({ botId, agent });
+  const [detachEpoch, setDetachEpoch] = useState(0);
+  if (detachDeps.botId !== botId || detachDeps.agent !== agent) {
+    setDetachDeps({ botId, agent });
+    setDetachEpoch(detachEpoch + 1);
+  }
+  useExternalConnection(detachEpoch, () => () => {
+    controller.current?.abort("detached");
+  });
 
   const resume = async () => {
     if (!pending || busy) return;

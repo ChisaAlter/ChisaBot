@@ -26,7 +26,7 @@ function real(p, depth = 0) {
 }
 
 function isInside(target, roots, platform = process.platform) {
-  if (!target || !roots || !roots.length) return false;
+  if (!target || !roots?.length) return false;
   const win = platform === "win32";
   const norm = (p) => {
     const value = path.resolve(real(p));
@@ -44,7 +44,7 @@ const READ_TOOLS = new Set(["list_files", "read_file", "search"]);
 /** 内置 agent 工具在档位里算不算「之内」。返回 null = 之内；字符串 = 之外的原因。 */
 function builtinToolGate(profile, tool, args, ctx) {
   if (profile === "full") return null;
-  const roots = ctx.roots && ctx.roots.length ? ctx.roots : [ctx.workdir];
+  const roots = ctx.roots?.length ? ctx.roots : [ctx.workdir];
   // 在一次性副本里：只有副本本身是工作区（原文件夹里的改动要等用户点「应用改动」）；直接模式下是工作区文件夹。
   const scope = ctx.disposable ? [ctx.workdir] : [ctx.workdir, ...roots];
   if (READ_TOOLS.has(tool)) {

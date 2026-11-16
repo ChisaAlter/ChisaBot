@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { useAutoFocus, useDocumentSync } from "@/hooks";
 import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
@@ -21,12 +22,12 @@ export function AuthLoopNotice() {
     () => false,
   );
   // 卡片盖在启动骨架上：挂 html[data-auth-loop-open]，styles.css 据此藏起「正在加载 ChisaBot…」，两段字不叠在一起。
-  useEffect(() => {
-    if (!open) return;
-    const root = document.documentElement;
+  useDocumentSync(open, (doc, isOpen) => {
+    if (!isOpen) return;
+    const root = doc.documentElement;
     root.setAttribute("data-auth-loop-open", "");
     return () => root.removeAttribute("data-auth-loop-open");
-  }, [open]);
+  });
   if (!open || typeof document === "undefined") return null;
   return createPortal(<AuthLoopCard />, document.body);
 }
@@ -38,9 +39,7 @@ export function AuthLoopCard({
 }) {
   const [pending, setPending] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    buttonRef.current?.focus();
-  }, []);
+  useAutoFocus(buttonRef, true);
   return (
     <div className="page-loader-overlay" data-auth-loop="">
       <div

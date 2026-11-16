@@ -1,6 +1,6 @@
 import { accessSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { selectedAgentKernel } from "../../../shared/agent-kernel";
+import { readDshMaintenanceRoot } from "../config";
 
 export class ConversationMaintenanceError extends Error {
   readonly status = 503;
@@ -12,9 +12,7 @@ export class ConversationMaintenanceError extends Error {
 
 /** The updater closes admission before draining and backing up the persistent runtime volume. */
 export function conversationAdmissionClosed(): boolean {
-  const root =
-    process.env.CHISABOT_DSH_ROOT?.trim() ||
-    (selectedAgentKernel(process.env) === "dsh" ? ".data/dsh" : undefined);
+  const root = readDshMaintenanceRoot();
   if (!root) return false;
   try {
     accessSync(join(resolve(root), ".maintenance"));

@@ -65,7 +65,7 @@ function stagesOf(steps: WorkflowStepState[]): WorkflowStepState[][] {
   const stages: WorkflowStepState[][] = [];
   for (const step of steps) {
     const last = stages[stages.length - 1];
-    if (last && step.group && last[0]!.group === step.group) last.push(step);
+    if (last && step.group && last[0]?.group === step.group) last.push(step);
     else stages.push([step]);
   }
   return stages;
@@ -253,7 +253,7 @@ function RunPage() {
 
       <ol className="wf-timeline" aria-label="步骤">
         {stages.map((stage, index) => (
-          <li className="wf-stage" key={stage[0]!.id}>
+          <li className="wf-stage" key={stage[0]?.id ?? ""}>
             <div className="wf-stage-rail" aria-hidden>
               <span className={cn("wf-stage-dot", stageTone(stage))}>{index + 1}</span>
             </div>
@@ -280,7 +280,15 @@ function RunPage() {
             <CopyButton size="sm" value={run.output} variant="ghost">
               {"复制"}
             </CopyButton>
-            <Button onClick={() => downloadText(run.output!, `${run.workflowName}.${run.outputFormat === "json" ? "json" : "md"}`)} size="sm" variant="ghost">
+            <Button
+              onClick={() => {
+                if (run.output) {
+                  downloadText(run.output, `${run.workflowName}.${run.outputFormat === "json" ? "json" : "md"}`);
+                }
+              }}
+              size="sm"
+              variant="ghost"
+            >
               <IconDownload />
               {"下载"}
             </Button>
