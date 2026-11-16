@@ -1,5 +1,10 @@
 ## 未发版
 
+## 0.1.154
+
+- 版本统一为 0.1.154，Android versionCode 336；Windows 外壳指纹（`7314f9105596bec5`）不变，无需重新安装；PC 客户端代码指纹更新为 `d17e97707583d003`。
+- **桌面端内置本地前端与「版本高者优先」同源加载（CB-129 · DESIGN §137）**：新增 `pc/scripts/stage-web-bundle.js`（打包前置暂存 `pc/src/web-bundle/` 并通过 `--verify-asar` 直接读取 ASAR Pickle 头树验证）、`pc/src/local-web.js`（基于 `ses.protocol.handle` 与 Chromium `net.request` `redirect: "manual"`，按 server origin 独立维护 `/api/version` 裁决态，被动嗅探与登录/恢复主动探测驱动 `local` / `remote` 自动切换，剥离 Chromium 解压编码头、保留 `Set-Cookie` / `will-redirect` / SSE 流与路径穿越防御）及 `pc/src/main.js` 接线；`pc/scripts/shell-fingerprint.js` 排除 `src/web-bundle` 与 `routeTree.gen.ts` 同时将 `app/` 与 `shared/` 前端源码纳入 `clientHash`；`release.yml` 在 `pc` 与 `pc-mac` 流水线统一构建内置前端并验包。共享与前端侧通过 `shared/system-update.ts` 新增 `compareSemver` 收敛 `isNewerBuild("pc-<ver>", ...)`，新增 `app/src/lib/version-skew.ts` 联动 `version.ts`、`pc-bridge.ts`、`client.ts`（裸 `404` 提示升级服务端）与 `account-menu.tsx`（双版本副标题与管理员升级快捷入口），补齐 Electron 45 真实 E2E、`pc/test/local-web.check.js`、`shared/system-update.test.ts` 与 `app/tests/pc-local-web-version.test.tsx`；无需数据库迁移。
+
 ## 0.1.153
 
 - 版本统一为 0.1.153，Android versionCode 335；Windows 外壳指纹（`7314f9105596bec5`）不变，无需重新安装；PC 客户端代码指纹更新为 `b0a46e5236d43b82`。
