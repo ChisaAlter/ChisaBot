@@ -6,6 +6,8 @@ FROM ${BASE_IMAGE} AS production-deps
 USER root
 WORKDIR /chisabot-deps
 COPY package.json bun.lock ./
+# patchedDependencies（patches/*.patch）在 bun install 时应用，必须一起进上下文。
+COPY patches/ ./patches/
 COPY app/package.json app/package.json
 COPY server/package.json server/package.json
 RUN bun install --frozen-lockfile --production --omit=peer --linker hoisted --backend copyfile \
