@@ -65,7 +65,7 @@ export function ToolOutcomeNotice({
   if (query.isError && !operation)
     return (
       <div
-        className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-1)] p-3 text-sm"
+        className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-3)] p-3 text-sm"
         role="alert"
       >
         <span>无法读取待核对操作。</span>
@@ -128,7 +128,7 @@ function OutcomeForm({
   });
   return (
     <section
-      className="mb-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-1)] p-3 text-sm"
+      className="mb-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-3)] p-3 text-sm"
       aria-label="核对操作结果"
     >
       <h3 className="font-medium">这一步的结果需要你核对</h3>
@@ -169,7 +169,7 @@ function OutcomeForm({
         <label className="flex flex-col gap-1">
           <span>实际结果</span>
           <select
-            className="min-h-10 rounded-lg border border-input bg-background px-2"
+            className="min-h-10 rounded-lg border border-input bg-[var(--glass-2)] px-2"
             value={outcome}
             onChange={(event) =>
               setOutcome(event.target.value as typeof outcome)
