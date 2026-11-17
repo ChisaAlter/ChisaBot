@@ -4,6 +4,7 @@ import {
   PlanModel,
   type PlanModelConfig,
 } from "../agents/plan-model";
+import { reasonWithoutStatement } from "../db/query-failure";
 import { QuotaExceededError, type QuotaReservation } from "../quotas/service";
 import {
   buildQuotaExceededResponse,
@@ -185,7 +186,7 @@ export function createPlanModelProxy(
             type: "quota-reservation-release-failed",
             userId: quota.userId,
             model: released.model,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: reasonWithoutStatement(error),
           }),
         );
       });
@@ -253,7 +254,7 @@ export function createPlanModelProxy(
             type: "quota-usage-record-failed",
             userId: quota.userId,
             model: modelName,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: reasonWithoutStatement(error),
           }),
         );
       });

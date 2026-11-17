@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- 主题配色修复：素白星尘 / 墨夜星尘自 0.1.156 在选择器中可见但缺 `data-palette` CSS 令牌块，选中后外观无变化；现补齐全套明暗令牌，选色生效（palette 门禁恢复）。
+- 服务端日志脱敏：配额预留释放 / 用量记账失败的告警原因改用 `reasonWithoutStatement`，不再把可能含 SQL 语句与绑定参数的原始 `error.message` 写进日志（log-scrub 红线恢复）。
+
 ## 0.1.158 — 2026-11-17
 
 全端版本 0.1.158，Android versionCode 338：Android WebView 加载失败的错误页遮挡与首屏重连落空修复（PR #545）；构建链补齐 `patches/` 进 Docker 上下文（修复 v0.1.157 全量构建失败）。Windows 外壳指纹不变，支持原地自动更新；无需数据库迁移。
