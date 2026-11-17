@@ -103,7 +103,7 @@ function bootGlass(): string | null {
   return document.documentElement.getAttribute("data-glass");
 }
 
-describe("existing users keep the old default (liquid)", () => {
+describe("existing users also fall back to mist", () => {
   test("the prior-appearance key list is every appearance key except the glass style and the auto-written theme", () => {
     expect([...PRIOR_APPEARANCE_STORAGE_KEYS].sort()).toEqual(
       [
@@ -119,19 +119,19 @@ describe("existing users keep the old default (liquid)", () => {
     );
     expect(PRIOR_APPEARANCE_STORAGE_KEYS).not.toContain(THEME_STORAGE_KEY);
     expect(DEFAULT_GLASS_STYLE).toBe("mist");
-    expect(LEGACY_DEFAULT_GLASS_STYLE).toBe("liquid");
+    expect(LEGACY_DEFAULT_GLASS_STYLE).toBe("mist");
   });
 
   for (const key of PRIOR_APPEARANCE_STORAGE_KEYS) {
-    test(`only ${key} saved (no glass style) → liquid, in the app and in the boot script`, () => {
+    test(`only ${key} saved (no glass style) → mist, in the app and in the boot script`, () => {
       window.localStorage.clear();
       window.localStorage.setItem(key, key.includes("opacity") ? "21" : "x");
       reloadAppearanceFromStorage();
-      expect(getAppearanceState().glassStyle).toBe("liquid");
+      expect(getAppearanceState().glassStyle).toBe("mist");
       expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe(
-        "liquid",
+        "mist",
       );
-      expect(bootGlass()).toBe("liquid");
+      expect(bootGlass()).toBe("mist");
     });
   }
 
@@ -162,17 +162,17 @@ describe("existing users keep the old default (liquid)", () => {
     }
   });
 
-  test("a prior appearance key (no glass style) → liquid, persisted, and kept after reload", () => {
+  test("a prior appearance key (no glass style) → mist, persisted, and kept after reload", () => {
     window.localStorage.clear();
     window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
-    expect(bootGlass()).toBe("liquid");
-    expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("liquid");
+    expect(bootGlass()).toBe("mist");
+    expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("mist");
     reloadAppearanceFromStorage();
-    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
     window.localStorage.setItem(THEME_STORAGE_KEY, "light");
     reloadAppearanceFromStorage();
-    expect(getAppearanceState().glassStyle).toBe("liquid");
-    expect(bootGlass()).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
+    expect(bootGlass()).toBe("mist");
   });
 
   test("an already stored glass style is left alone (mist / crystal / liquid)", () => {
@@ -188,11 +188,11 @@ describe("existing users keep the old default (liquid)", () => {
     }
   });
 
-  test("only the haze slider saved: keeps liquid and the saved haze (QA U sliderOnly)", () => {
+  test("only the haze slider saved: falls back to mist and keeps the saved haze (QA U sliderOnly)", () => {
     window.localStorage.clear();
     window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "21");
     reloadAppearanceFromStorage();
-    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(21);
     expect(getAppearanceState().glassOpacityDark).toBe(21);
   });
@@ -219,14 +219,14 @@ describe("existing users keep the old default (liquid)", () => {
     expect(bootGlass()).toBe("mist");
   });
 
-  test("an old (liquid) user who saves another setting stays liquid; reset still goes to mist", () => {
+  test("a legacy-appearance user who saves another setting stays mist; reset still goes to mist", () => {
     window.localStorage.clear();
     window.localStorage.setItem(HARK_SCENE_STORAGE_KEY, "7");
     reloadAppearanceFromStorage();
     setGlassOpacity(30);
     flushAppearanceWrites();
     reloadAppearanceFromStorage();
-    expect(getAppearanceState().glassStyle).toBe("liquid");
+    expect(getAppearanceState().glassStyle).toBe("mist");
     resetAppearanceDefaults();
     flushAppearanceWrites();
     reloadAppearanceFromStorage();

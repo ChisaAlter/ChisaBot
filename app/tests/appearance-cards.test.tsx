@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 describe("主题配色与动态天象选择卡", () => {
-  test("8 款配色卡全部渲染，含新增的银杏暖金与朱砂绛红", () => {
+  test("10 款配色卡全部渲染，含新增的银杏暖金、朱砂绛红与素白 / 墨夜星尘", () => {
     const view = render(<AppearancePreferences />);
     for (const p of THEME_PALETTES) {
       const card = view.getByTestId(`palette-option-${p.id}`);
@@ -53,6 +53,8 @@ describe("主题配色与动态天象选择卡", () => {
     }
     expect(THEME_PALETTES.map((p) => p.id)).toContain("gold");
     expect(THEME_PALETTES.map((p) => p.id)).toContain("ruby");
+    expect(THEME_PALETTES.map((p) => p.id)).toContain("stardust");
+    expect(THEME_PALETTES.map((p) => p.id)).toContain("nocturne");
   });
 
   test("8 张天象卡全部渲染，且每张预览渐变互不相同（去同质）", () => {

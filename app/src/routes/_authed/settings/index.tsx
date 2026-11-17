@@ -6,7 +6,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
-import { MyQuotaSection } from "@/components/settings/my-quota-section";
+
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
 import { SkyPreference } from "@/components/settings/sky-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
@@ -106,7 +106,6 @@ function RouteComponent() {
         </PageRows>
       </PageSection>
       <StandingInstructions />
-      <MyQuotaSection />
       {/*
        * Drawn from the same registry the listeners match against, so this list is what the keys
        * actually do rather than what somebody remembered they did. Read-only on purpose: these

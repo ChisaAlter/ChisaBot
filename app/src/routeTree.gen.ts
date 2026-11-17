@@ -51,6 +51,7 @@ import { Route as AuthedSettingsMediaRouteImport } from './routes/_authed/settin
 import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed/settings/memory'
 import { Route as AuthedSettingsPagesRouteImport } from './routes/_authed/settings/pages'
 import { Route as AuthedSettingsPasswordsRouteImport } from './routes/_authed/settings/passwords'
+import { Route as AuthedSettingsQuotaRouteImport } from './routes/_authed/settings/quota'
 import { Route as AuthedSettingsSchedulesRouteImport } from './routes/_authed/settings/schedules'
 import { Route as AuthedSettingsShareRouteImport } from './routes/_authed/settings/share'
 import { Route as AuthedSettingsSkillsRouteImport } from './routes/_authed/settings/skills'
@@ -294,6 +295,11 @@ const AuthedSettingsPasswordsRoute = AuthedSettingsPasswordsRouteImport.update({
   path: '/passwords',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
+const AuthedSettingsQuotaRoute = AuthedSettingsQuotaRouteImport.update({
+  id: '/quota',
+  path: '/quota',
+  getParentRoute: () => AuthedSettingsRouteRoute,
+} as any)
 const AuthedSettingsSchedulesRoute = AuthedSettingsSchedulesRouteImport.update({
   id: '/schedules',
   path: '/schedules',
@@ -498,6 +504,7 @@ export interface FileRoutesByFullPath {
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
+  '/settings/quota': typeof AuthedSettingsQuotaRoute
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
@@ -568,6 +575,7 @@ export interface FileRoutesByTo {
   '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/pages': typeof AuthedSettingsPagesRoute
   '/settings/passwords': typeof AuthedSettingsPasswordsRoute
+  '/settings/quota': typeof AuthedSettingsQuotaRoute
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
@@ -642,6 +650,7 @@ export interface FileRoutesById {
   '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
   '/_authed/settings/pages': typeof AuthedSettingsPagesRoute
   '/_authed/settings/passwords': typeof AuthedSettingsPasswordsRoute
+  '/_authed/settings/quota': typeof AuthedSettingsQuotaRoute
   '/_authed/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/_authed/settings/share': typeof AuthedSettingsShareRoute
   '/_authed/settings/skills': typeof AuthedSettingsSkillsRoute
@@ -717,6 +726,7 @@ export interface FileRouteTypes {
     | '/settings/memory'
     | '/settings/pages'
     | '/settings/passwords'
+    | '/settings/quota'
     | '/settings/schedules'
     | '/settings/share'
     | '/settings/skills'
@@ -787,6 +797,7 @@ export interface FileRouteTypes {
     | '/settings/memory'
     | '/settings/pages'
     | '/settings/passwords'
+    | '/settings/quota'
     | '/settings/schedules'
     | '/settings/share'
     | '/settings/skills'
@@ -860,6 +871,7 @@ export interface FileRouteTypes {
     | '/_authed/settings/memory'
     | '/_authed/settings/pages'
     | '/_authed/settings/passwords'
+    | '/_authed/settings/quota'
     | '/_authed/settings/schedules'
     | '/_authed/settings/share'
     | '/_authed/settings/skills'
@@ -1196,6 +1208,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsPasswordsRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
+    '/_authed/settings/quota': {
+      id: '/_authed/settings/quota'
+      path: '/quota'
+      fullPath: '/settings/quota'
+      preLoaderRoute: typeof AuthedSettingsQuotaRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
     '/_authed/settings/schedules': {
       id: '/_authed/settings/schedules'
       path: '/schedules'
@@ -1479,6 +1498,7 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsMemoryRoute: typeof AuthedSettingsMemoryRoute
   AuthedSettingsPagesRoute: typeof AuthedSettingsPagesRoute
   AuthedSettingsPasswordsRoute: typeof AuthedSettingsPasswordsRoute
+  AuthedSettingsQuotaRoute: typeof AuthedSettingsQuotaRoute
   AuthedSettingsSchedulesRoute: typeof AuthedSettingsSchedulesRoute
   AuthedSettingsShareRoute: typeof AuthedSettingsShareRoute
   AuthedSettingsSkillsRoute: typeof AuthedSettingsSkillsRoute
@@ -1499,6 +1519,7 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsMemoryRoute: AuthedSettingsMemoryRoute,
   AuthedSettingsPagesRoute: AuthedSettingsPagesRoute,
   AuthedSettingsPasswordsRoute: AuthedSettingsPasswordsRoute,
+  AuthedSettingsQuotaRoute: AuthedSettingsQuotaRoute,
   AuthedSettingsSchedulesRoute: AuthedSettingsSchedulesRoute,
   AuthedSettingsShareRoute: AuthedSettingsShareRoute,
   AuthedSettingsSkillsRoute: AuthedSettingsSkillsRoute,

@@ -66,7 +66,9 @@ export function QuotaMetricBlock({
         />
       )}
       {detail ? (
-        <p className="text-muted-foreground text-xs tabular-nums">{detail}</p>
+        <p className="break-words text-muted-foreground text-xs leading-relaxed tabular-nums">
+          {detail}
+        </p>
       ) : null}
     </div>
   );

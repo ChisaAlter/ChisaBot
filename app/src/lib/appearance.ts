@@ -189,12 +189,18 @@ export type ArtisticWallpaperPresetId =
   | "waterlily-pond"
   | "starry-rhone"
   | "tuscan-golden"
+  | "lavender-provence"
+  | "venice-glow"
   | "qinglv-shanhe"
   | "fuji-sakura"
   | "ink-bamboo-mist"
+  | "red-maple"
+  | "snow-river"
   | "arch-sunbeam"
   | "mineral-agate"
-  | "nordic-fjord";
+  | "nordic-fjord"
+  | "nebula-drift"
+  | "dune-gold";
 
 export type WallpaperPresetId = "none" | ArtisticWallpaperPresetId | "custom";
 
@@ -266,6 +272,24 @@ export const ARTISTIC_WALLPAPER_PRESETS: readonly ArtisticWallpaperPresetMeta[] 
       previewBackground:
         "linear-gradient(135deg, #dba473 0%, #c98856 52%, #7c4922 100%)",
     }),
+    artPreset({
+      id: "lavender-provence",
+      category: "impression",
+      tag: "田园油画",
+      name: "薰衣草浪 · 普罗旺斯",
+      subtitle: "暮紫花海垄浪、暖金夕照与远山薄雾笔触",
+      previewBackground:
+        "linear-gradient(135deg, #a88ac0 0%, #7a5ea0 52%, #584080 100%)",
+    }),
+    artPreset({
+      id: "venice-glow",
+      category: "impression",
+      tag: "都市油画",
+      name: "水城暮光 · 威尼斯",
+      subtitle: "暖金夕照洒落碧水回廊与粼粼倒影油彩",
+      previewBackground:
+        "linear-gradient(135deg, #c87858 0%, #4a7080 52%, #1e4858 100%)",
+    }),
     // ── 东方意境 ──
     artPreset({
       id: "qinglv-shanhe",
@@ -294,6 +318,24 @@ export const ARTISTIC_WALLPAPER_PRESETS: readonly ArtisticWallpaperPresetMeta[] 
       previewBackground:
         "linear-gradient(135deg, #efece0 0%, #cbd3cb 52%, #59605d 100%)",
     }),
+    artPreset({
+      id: "red-maple",
+      category: "eastern",
+      tag: "丹枫设色",
+      name: "霜叶栖霞 · 丹枫似火",
+      subtitle: "朱砂霜叶层林尽染与暖金暮霭远山",
+      previewBackground:
+        "linear-gradient(135deg, #e0b898 0%, #a84a40 52%, #682828 100%)",
+    }),
+    artPreset({
+      id: "snow-river",
+      category: "eastern",
+      tag: "浅绛山水",
+      name: "寒江雪霁 · 独钓空濛",
+      subtitle: "雪后江天留白、浅绛远岫与一蓑寒波",
+      previewBackground:
+        "linear-gradient(135deg, #d8e0e6 0%, #7d8d95 52%, #46565e 100%)",
+    }),
     // ── 现代光影 ──
     artPreset({
       id: "arch-sunbeam",
@@ -321,6 +363,24 @@ export const ARTISTIC_WALLPAPER_PRESETS: readonly ArtisticWallpaperPresetMeta[] 
       subtitle: "薄荷粉紫极光丝带与镜面冰川峡湾雪峰",
       previewBackground:
         "linear-gradient(135deg, #2d3e56 0%, #73998f 50%, #243b55 100%)",
+    }),
+    artPreset({
+      id: "nebula-drift",
+      category: "modern",
+      tag: "深空影像",
+      name: "星云漫游 · 深空絮语",
+      subtitle: "紫粉星云弥散、微光尘埃与漫天星屑",
+      previewBackground:
+        "linear-gradient(135deg, #141a3a 0%, #3a2a5e 52%, #6a4a8a 100%)",
+    }),
+    artPreset({
+      id: "dune-gold",
+      category: "modern",
+      tag: "自然光影",
+      name: "沙海鎏金 · 大漠弧线",
+      subtitle: "落日斜照沙丘流线与明暗鎏金分界",
+      previewBackground:
+        "linear-gradient(135deg, #e0ac6c 0%, #a06838 52%, #6e4020 100%)",
     }),
   ] as const;
 

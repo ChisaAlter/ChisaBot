@@ -1,3 +1,7 @@
+## 未发版
+
+- 外观偏好：主题配色新增素白星尘 / 墨夜星尘（非纯白纯黑、带星空质感）；玻璃材质默认统一薄雾玻璃（legacy liquid 回落并入 mist）；艺术壁纸图库 9 → 15 幅（新增 6 幅程序化生成，`scripts/generate-wallpapers.ts`）；「我的模型配额与用量」迁至独立的「设置 → 配额与用量」页（模型分组）并修复明细文本溢出。
+
 ## 0.1.155
 
 - 修复群聊私密记忆泄露（注入 + 工具检索双路径）：个人记忆装配改经 `createPersonalMemoryLoader`，`isGroupChat`/`threadId` 不再被丢弃；群聊回合补 `forwardedProps.isGroupChat` 标记；标记经 `buildAgentFor → AgentResolutionContext → loadToolsForActor` 穿到 `memoryNotes.tools`，`memory_search` 在群聊回合按群聊视图检索（恢复路径同样判定传入）；加源码门禁防回归。

@@ -44,7 +44,7 @@ export function MyQuotaSection() {
         />
       }
       description="查看当前账号今日与本月模型 Token、请求次数及分模型消耗明细。"
-      settingItem="general.my-quota"
+      settingItem="quota.my-quota"
       title="我的模型配额与用量"
     >
       {quotaQuery.isPending ? (
@@ -69,30 +69,26 @@ export function MyQuotaSection() {
       ) : (
         <div className="space-y-4">
           <Card className="mem-card p-4 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {summary.bypassed ? (
-                  <span className="magpie-badge is-ok text-xs">
-                    {"管理员豁免"}
-                  </span>
-                ) : !limited ? (
-                  <span className="device-cap-chip is-off text-xs">
-                    {"不限"}
-                  </span>
-                ) : (
-                  <span className="magpie-badge text-xs">{"按配额限制"}</span>
-                )}
-                <span className="text-muted-foreground text-xs">
-                  {summary.bypassed
-                    ? "当前账号为管理员且已开启豁免，不受配额上限拦截。"
-                    : !limited
-                      ? "管理员暂未对当前账号设置 Token 或请求上限。"
-                      : "达到每日或每月上限后将暂停新的模型调用。"}
+            <div className="flex flex-wrap items-center gap-2">
+              {summary.bypassed ? (
+                <span className="magpie-badge is-ok text-xs">
+                  {"管理员豁免"}
                 </span>
-              </div>
-              <span className="text-muted-foreground text-xs tabular-nums">
-                {`统计周期：${summary.day} · 本月 ${summary.month} · UTC 重置 ${formatQuotaResetUtc(summary.resetAtUtc)}`}
+              ) : !limited ? (
+                <span className="device-cap-chip is-off text-xs">{"不限"}</span>
+              ) : (
+                <span className="magpie-badge text-xs">{"按配额限制"}</span>
+              )}
+              <span className="min-w-0 text-muted-foreground text-xs">
+                {summary.bypassed
+                  ? "当前账号为管理员且已开启豁免，不受配额上限拦截。"
+                  : !limited
+                    ? "管理员暂未对当前账号设置 Token 或请求上限。"
+                    : "达到每日或每月上限后将暂停新的模型调用。"}
               </span>
+            </div>
+            <div className="text-muted-foreground text-xs tabular-nums">
+              {`统计周期：${summary.day} · 本月 ${summary.month} · UTC 重置 ${formatQuotaResetUtc(summary.resetAtUtc)}`}
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">

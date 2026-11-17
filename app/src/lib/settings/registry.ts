@@ -194,13 +194,6 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         ],
       },
       {
-        id: "my-quota",
-        title: "我的模型配额与用量",
-        description: "查看今日与本月 Token、请求次数与分模型消耗",
-        find: "我的模型配额与用量",
-        keywords: ["配额", "用量", "quota", "token", "统计", "限额"],
-      },
-      {
         id: "hotkeys",
         title: "键盘快捷键",
         description: "全部快捷键一览",
@@ -841,6 +834,24 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         title: "我的识图模型",
         description: "用自己的看图模型和密钥",
         find: "识图模型",
+      },
+    ],
+  },
+  {
+    id: "quota",
+    group: "models",
+    title: "配额与用量",
+    sub: "我的今日 / 本月 Token 与请求消耗",
+    icon: IconListDetails,
+    to: "/settings/quota",
+    keywords: ["pe", "配额", "用量", "quota", "token", "统计", "限额"],
+    items: [
+      {
+        id: "my-quota",
+        title: "我的模型配额与用量",
+        description: "查看今日与本月 Token、请求次数与分模型消耗",
+        find: "我的模型配额与用量",
+        keywords: ["配额", "用量", "quota", "token", "统计", "限额"],
       },
     ],
   },

@@ -341,14 +341,14 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 主题配色与动态天空场景（8 款配色 + 8 款天象，场景彼此观感区分：晨霞 / 晴空 / 暖金 / 雪霁 / 风暴 / 星夜） */}
+      {/* 1. 主题配色与动态天空场景（10 款配色 + 8 款天象，场景彼此观感区分：晨霞 / 晴空 / 暖金 / 雪霁 / 风暴 / 星夜） */}
       <div className="appearance-block" data-setting-item="主题配色">
         <div className="appearance-block-head">
           <div>
             <div className="appearance-block-title">{"主题配色与动态天象"}</div>
             <div className="appearance-block-desc">
               {
-                "精选 8 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
+                "精选 10 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
               }
             </div>
           </div>
@@ -563,7 +563,7 @@ export function AppearancePreferences() {
             </div>
             <div className="appearance-block-desc">
               {
-                "精选 9 幅印象油画、东方意境与现代光影画作，或上传本地图片，透过液态玻璃呈现通透景深"
+                "精选 15 幅印象油画、东方意境与现代光影画作，或上传本地图片，透过液态玻璃呈现通透景深"
               }
             </div>
           </div>

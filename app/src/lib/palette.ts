@@ -1,5 +1,5 @@
 /**
- * 主题配色（8 套）和它们算出来的天空垫片颜色。
+ * 主题配色（10 套）和它们算出来的天空垫片颜色。
  *
  * 单独成一个不依赖 React / 别名路径的纯模块（2026-10-29，模块 11 审计）：vite.config.ts 要在构建时
  * 把配色表序列化进 index.html 的启动脚本（{@link paletteBootScript}），让启动骨架和地址栏颜色在 JS 加载前
@@ -14,7 +14,9 @@ export type ThemePaletteId =
   | "sunset"
   | "sakura"
   | "gold"
-  | "ruby";
+  | "ruby"
+  | "stardust"
+  | "nocturne";
 
 export type ThemePaletteMeta = {
   id: ThemePaletteId;
@@ -153,6 +155,36 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     harkSceneLight: 1,
     harkSceneDark: 2,
   },
+  {
+    id: "stardust",
+    name: "素白星尘",
+    subtitle: "极简月白底色与淡淡星屑微光",
+    accentLight: "#5d6f9e",
+    accentDark: "#a9b8e6",
+    swatchGradient:
+      "radial-gradient(circle at 72% 24%, rgba(93,111,158,.55) 1.4px, transparent 2.2px), radial-gradient(circle at 34% 62%, rgba(93,111,158,.4) 1px, transparent 1.6px), linear-gradient(135deg, #f8fafd 0%, #e9eef6 52%, #d3dcec 100%)",
+    skyHueLight: [222, 220, 218, 224],
+    skySatLight: [12, 10, 14, 16],
+    skyHueDark: [226, 224, 222, 228],
+    skySatDark: [22, 18, 20, 16],
+    harkSceneLight: 5,
+    harkSceneDark: 4,
+  },
+  {
+    id: "nocturne",
+    name: "墨夜星尘",
+    subtitle: "深邃夜空黑与微光星野",
+    accentLight: "#4c63a8",
+    accentDark: "#a9bdf2",
+    swatchGradient:
+      "radial-gradient(circle at 74% 22%, rgba(226,232,255,.95) 1.4px, transparent 2.2px), radial-gradient(circle at 30% 66%, rgba(226,232,255,.6) 1px, transparent 1.8px), radial-gradient(circle at 55% 42%, rgba(196,210,255,.5) .8px, transparent 1.4px), linear-gradient(135deg, #05070f 0%, #0d1424 55%, #1a2440 100%)",
+    skyHueLight: [230, 228, 232, 226],
+    skySatLight: [30, 26, 32, 38],
+    skyHueDark: [234, 232, 230, 236],
+    skySatDark: [36, 32, 38, 30],
+    harkSceneLight: 11,
+    harkSceneDark: 4,
+  },
 ] as const;
 
 /**
@@ -249,8 +281,8 @@ export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 const BOOT_GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"];
 /** 新用户（从没存过任何外观设置）的默认材质。 */
 export const DEFAULT_GLASS_STYLE = "mist";
-/** 0.1.138 以前的默认材质：存过任何外观设置、但没存过材质的老用户沿用它。 */
-export const LEGACY_DEFAULT_GLASS_STYLE = "liquid";
+/** 0.1.138 以前的默认材质是 liquid；0.1.155 起统一回落薄雾玻璃（老用户已存的显式选择仍保留）。 */
+export const LEGACY_DEFAULT_GLASS_STYLE = "mist";
 /**
  * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
  * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。

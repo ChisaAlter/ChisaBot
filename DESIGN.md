@@ -377,7 +377,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ### 10.6 液态玻璃材质（liquid）
 
-`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃整屏只用一种墨：各面板背后亮度按视口内面积加权平均，低于 0.40 整屏翻深釉、回到 0.50 以上才翻回（迟滞防闪），不再按面板/按行各自翻转；判定只在内存里，不持久化。Hark WebGL 天空没有 preserveDrawingBuffer，帧外读 `#gl` 只会读到全黑，所以背景光栅改读天空宿主在出帧当下拷的小快照（`lib/sky-snapshot.ts`，液态玻璃在用时才拷，最多每秒一张）。后渲染的玻璃面当场挂上整屏墨色并排一次采样。没存过材质时：存过任何其他外观设置（不含会自动写入的深浅主题 `chisabot-theme`）的老用户按旧默认 liquid，从没存过外观、或只有自动写入主题键的用户才是 mist（`fallbackGlassStyle`，启动脚本同一规则，判定后立刻写入 `glass-style`）；默认雾度只在 `DEFAULT_GLASS_OPACITY` 一处。自定义壁纸只换图片也会重新采样（不依赖 `data-wallpaper` 是否变化）。滚动期间暂停采样和快照判定，停稳后在 idle 里补一次。
+`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃整屏只用一种墨：各面板背后亮度按视口内面积加权平均，低于 0.40 整屏翻深釉、回到 0.50 以上才翻回（迟滞防闪），不再按面板/按行各自翻转；判定只在内存里，不持久化。Hark WebGL 天空没有 preserveDrawingBuffer，帧外读 `#gl` 只会读到全黑，所以背景光栅改读天空宿主在出帧当下拷的小快照（`lib/sky-snapshot.ts`，液态玻璃在用时才拷，最多每秒一张）。后渲染的玻璃面当场挂上整屏墨色并排一次采样。没存过材质时一律回落 mist（`fallbackGlassStyle`，启动脚本同一规则，判定后立刻写入 `glass-style`；0.1.155 起老用户也不再单独回落 liquid）；默认雾度只在 `DEFAULT_GLASS_OPACITY` 一处。自定义壁纸只换图片也会重新采样（不依赖 `data-wallpaper` 是否变化）。滚动期间暂停采样和快照判定，停稳后在 idle 里补一次。
 
 **令牌与状态**
 
@@ -2877,7 +2877,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 ## 131. 预设艺术壁纸图库与分类切换（2026-11-11）
 
-在「设置 → 通用 → 艺术壁纸图库与自定义壁纸」内置 9 幅 16:9 精选艺术壁纸（印象油画、东方意境、现代光影三大系列各 3 幅），以同源静态 WebP 原图与轻量缩略图（`/wallpapers/*.webp`、`*-thumb.webp`）随前端静态目录分发，离线可用、零第三方请求，并支持 `LiquidGlass` 同源采样壁纸明暗自适应玻璃折射与对比度。
+在「设置 → 通用 → 艺术壁纸图库与自定义壁纸」内置 15 幅 16:9 精选艺术壁纸（印象油画、东方意境、现代光影三大系列各 5 幅；其中 6 幅由 `scripts/generate-wallpapers.ts` 程序化绘制），以同源静态 WebP 原图与轻量缩略图（`/wallpapers/*.webp`、`*-thumb.webp`）随前端静态目录分发，离线可用、零第三方请求，并支持 `LiquidGlass` 同源采样壁纸明暗自适应玻璃折射与对比度。
 
 - **3×3 画廊与分类筛选**：在 `PageShell`（15px 根字号）宽度下呈现整齐 3 列网格；栏头提供 `全部 / 印象油画 / 东方意境 / 现代光影` 分段筛选与「切回动态天空」快捷操作；缩略卡不遮挡画作中心，仅保留左下角画风角标与右上角选中勾选，移除旧版内联几何 SVG 数据以减轻首屏包体积，并平滑映射历史预设 ID。
 - **自定义壁纸无损保留与尺寸裁剪（2026-11-15）**：用户上传或拖拽本地图片后先打开「裁剪并设置壁纸」弹窗，支持按 `当前屏幕 / 16:9 / 16:10 / 21:9 / 4:3 / 9:16 / 原图 / 自由` 比例框选目标区域，并提供八向角边拖拽、选区平移、点选外侧重定位、滚轮/滑块缩放、键盘微调与实时输出像素尺寸显示。确认后在 Worker / 离屏 Canvas 中按原生像素区域裁剪压缩并写入 IndexedDB，同时无损缓存原图与上次裁剪区域和比例，以便随时通过上传横幅上的「裁剪区域」无损重裁；切换到艺术壁纸或动态天空时保留该缓存与裁剪图，仅在点击「移除」或「恢复默认」时同步清理。全站壁纸遮罩仍严格仅由 `.chisabot-wallpaper::after`（`--wallpaper-scrim`）承担，保持浅/深色 × 全部主题配色的 WCAG AA 对比度与性能模式无额外 `blur` 约束。

@@ -31,8 +31,8 @@ const css = readFileSync(
 );
 
 describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
-  test("provides 8 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
-    expect(THEME_PALETTES.length).toBe(8);
+  test("provides 10 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
+    expect(THEME_PALETTES.length).toBe(10);
     expect(computePaletteSky("default", false)).toBeNull();
     for (const p of THEME_PALETTES) {
       // Every theme's dark sky scene is a deep night scene (2 or 4) for dark mode legibility
@@ -79,7 +79,7 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(resolveActiveWallpaperCss(getAppearanceState())).toBeNull();
 
-    expect(ARTISTIC_WALLPAPER_PRESETS.length).toBe(9);
+    expect(ARTISTIC_WALLPAPER_PRESETS.length).toBe(15);
     expect(WALLPAPER_CATEGORIES.map((c) => c.id)).toEqual([
       "all",
       "impression",
@@ -89,7 +89,7 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
     for (const cat of ["impression", "eastern", "modern"] as const) {
       expect(
         ARTISTIC_WALLPAPER_PRESETS.filter((w) => w.category === cat).length,
-      ).toBe(3);
+      ).toBe(5);
     }
 
     const publicDir = path.join(import.meta.dir, "../public");
