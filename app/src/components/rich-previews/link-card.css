@@ -379,6 +379,8 @@ a.lc-card[href]:hover {
 }
 .rp-stack[data-align="end"] .lc-stack-track {
   margin-left: auto;
+  /* 单张卡的 flex 行占满容器：行靠右之外，卡面也要贴齐消息右沿。 */
+  justify-content: flex-end;
 }
 .lc-stack[data-deck] .lc-card {
   /* 叠在一起时把同一个实色令牌再叠一层（.96 → 约 .998），压在下面那张的字不透上来；不另写颜色。 */
