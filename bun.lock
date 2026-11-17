@@ -115,6 +115,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "prompt-area@0.7.1": "patches/prompt-area@0.7.1.patch",
+  },
   "overrides": {
     "@ag-ui/client": "1.0.2",
     "@ag-ui/core": "1.0.2",

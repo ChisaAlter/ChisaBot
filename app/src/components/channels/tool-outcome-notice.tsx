@@ -65,7 +65,7 @@ export function ToolOutcomeNotice({
   if (query.isError && !operation)
     return (
       <div
-        className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-3)] p-3 text-sm"
+        className="to-card mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
         role="alert"
       >
         <span>无法读取待核对操作。</span>
@@ -128,7 +128,7 @@ function OutcomeForm({
   });
   return (
     <section
-      className="mb-3 rounded-xl border border-[var(--line-strong)] bg-[var(--glass-3)] p-3 text-sm"
+      className="to-card mb-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
       aria-label="核对操作结果"
     >
       <h3 className="font-medium">这一步的结果需要你核对</h3>

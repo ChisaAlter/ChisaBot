@@ -161,6 +161,22 @@ describe("接线", () => {
     expect(settle).toContain("setThreadUi(scrollKey");
   });
 
+  test("状态行在固定槽里：胶囊出现 / 收起不改列高，钉底时不整段往上挪（§94.8）", () => {
+    // 槽包着「已停止 / 干活胶囊 / 思考中 / 暂停」那一行，排在 LooseConfirmCards 之前——和原来同一位置。
+    const tail = transcript.slice(transcript.indexOf('className="chat-tail'));
+    expect(tail.indexOf('className="chat-status-slot"')).toBeGreaterThan(-1);
+    expect(tail.indexOf('className="chat-status-slot"')).toBeLessThan(
+      tail.indexOf("<LooseConfirmCards"),
+    );
+    expect(tail).toMatch(
+      /chat-status-slot">\s*\{tailStop \?/,
+    );
+    // 槽高 = 胶囊高（38px）；槽里和槽的子元素都不当滚动锚点。
+    const css = src("styles.css");
+    expect(css).toMatch(/\.chat-status-slot\s*\{[^}]*min-height:\s*38px/);
+    expect(css).toMatch(/\.chat-status-slot\s*>\s*\*\s*\{[^}]*overflow-anchor:\s*none/);
+  });
+
   test("对话页 / 空聊天都用按机器人记住的「计算机」", () => {
     // 同上：这次调用被格式化成了多行，参数和顺序才是要锁的东西。
     expect(route).toMatch(

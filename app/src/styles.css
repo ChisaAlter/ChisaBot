@@ -2211,7 +2211,7 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   transition: background-color 0.15s ease;
 }
 .chat-history-more:hover {
-  background: var(--glass-strong);
+  --lg-hover-a: 1.14;
 }
 .chat-history-more:focus-visible {
   outline: none;
@@ -2236,8 +2236,8 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   align-self: flex-start;
   padding: 9px 14px 9px 12px;
   border-radius: 999px;
-  background: var(--glass-strong);
-  box-shadow: var(--glass-shadow-sm);
+  background: var(--pal-tint-layer,) var(--lg-surface-strong);
+  box-shadow: var(--lg-shadow);
   color: var(--glass-ink-2);
   font-size: 13px;
   animation: p3-rise 0.24s cubic-bezier(0.23, 1, 0.32, 1) both;
@@ -3958,6 +3958,8 @@ html[data-desktop] .glass-brand { cursor: default; }
   display: flex;
   align-items: stretch;
   height: 40px;
+  border-radius: 0 0 0 14px;
+  overflow: hidden;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -5414,8 +5416,15 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 /* ── 第四轮（2026-10-13）：有了结果就收起过程话；用户停掉的那一轮末尾挂「已停止」 ── */
 
 /* §94.6：最下面那一格（留白、「思考中」、排队的消息）不当滚动锚点，见 chat-transcript.tsx chat-tail。 */
-.chat-tail > * {
+.chat-tail > *,
+.chat-status-slot > * {
   overflow-anchor: none;
+}
+
+/* §94.7：状态行固定槽——「思考中」/ 干活胶囊 / 暂停 /「已停止」在这格 38px 里出现换样收起，列高不变，
+ * 钉在底部时不再整段往上挪（以前胶囊从 0 长高，scrollTop 跟着 +38px）。38px = 胶囊高（9 + 20 行高 + 9）。 */
+.chat-status-slot {
+  min-height: 38px;
 }
 
 .chat-stopped-mark {
@@ -9740,7 +9749,7 @@ html[data-wallpaper="on"] {
  *   和后面「三档玻璃」那几条 background / backdrop-filter 规则一一对应）：改动只让这几十个元素重算。
  * - --lg-alpha 由 lib/appearance.ts 写进一条只命中同一名单的动态规则（#chisabot-glass-alpha），不再写 <html> 的行内样式。
  * - 全部用 :where()，优先级为 0：抽屉、性能模式、减少透明度、渲染预算里对这些变量的覆盖照旧生效。
- * 名单要和读这些变量的选择器同步（app/tests/glass-scope.test.ts 会检查）。
+ * 名单要和读这些变量的选择器同步（app/tests/theme-glass-perf.test.tsx 会检查）。
  */
 @property --lg-alpha { syntax: "<number>"; inherits: false; initial-value: 0.16; }
 @property --lg-surface { syntax: "*"; inherits: false; }
@@ -9785,7 +9794,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   /* 墨：浅玻璃上深色字（不透明色画、svg 用 multiply 融进底色）。 */
   --lg-ink: rgba(0, 0, 0, 0.86);
@@ -9855,7 +9879,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   /* 深色档：rgb(20 20 24) 16–38% 的暗釉，亮度 0.8 压成 multiply 式暗化；边缘/内光
    * 取浅色档的约三分之一，外轮廓和阴影更深。 */
@@ -9916,7 +9955,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   )[data-lg-ink="dark"] {
   --lg-tint-rgb: 16 18 22;
   --lg-tint-lo: 0.1;
@@ -9991,7 +10045,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
@@ -10028,7 +10097,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
@@ -10067,7 +10151,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
@@ -10104,7 +10203,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
@@ -10144,7 +10258,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
@@ -10183,7 +10312,22 @@ html[data-wallpaper="on"] {
     .page-rows,
     .sg-card,
     .page-section > form,
-    .page .border
+    .page .border,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
   ) {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
@@ -10348,6 +10492,29 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
 /* 聊天气泡附属胶囊与卡片（记忆胶囊、引用胶囊、文档卡、可视化卡、晨报卡、右栏收起把手）：统一去除硬线框 */
 :is(.chat-memory-pill, .chat-reply-pill, .chat-doc-card, .chat-doc-inset, .chat-artifact-card, .chat-brief-card, .chat-brief-tile, .chat-brief-body, .rail-tab, .bca-row, .bca-empty) {
   border: 0 !important;
+}
+
+/* 聊天栏里直接浮在壁纸上的卡与胶囊（确认卡、GitHub 卡、页面卡、定时卡、网关确认卡、提问卡、
+ * 干活步骤、草稿卡、历史提示、工具结果核对 .to-card、交接恢复 .hr-card、状态/干活胶囊、
+ * 「显示更早」胶囊、PC 窗口按钮）：和气泡同一档釉面，不吃 .glass-shell 的薄纱令牌。
+ * .cf-card 完成态用更弱一档的 --lg-surface。 */
+:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls) {
+  background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  box-shadow: var(--lg-shadow) !important;
+}
+/* 状态/干活胶囊里有持续动画（spinner、逐字点）：釉面同档但不用 backdrop-filter
+ *（status-capsule.css 头注的既有约束），性能/减少透明度下仍由 perf-noblur 换成实心底。 */
+:is(.rs-capsule, .chat-thinking) {
+  background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
+  box-shadow: var(--lg-shadow) !important;
+}
+.cf-card:not([data-state="pending"]) {
+  background: var(--pal-tint-layer,) var(--lg-surface) !important;
+  box-shadow: none !important;
+}
+:is(.rs-capsule, .chat-thinking):hover {
+  --lg-hover-a: 1.14;
 }
 
 /* 设置页与通用卡片：无边框通透毛玻璃 */
@@ -10779,7 +10946,7 @@ html[data-perf="on"] {
   --glass-filter: none;
   --glass-pop-filter: none;
 }
-html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card) {
+html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
   --lg-blur: none;
   --lg-surface: var(--popover);
   --lg-surface-strong: var(--popover);
@@ -10792,7 +10959,7 @@ html[data-perf="on"] .chat-bubble-bare > [data-slot="bubble-content"] {
     --glass-filter: none;
     --glass-pop-filter: none;
   }
-  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card) {
+  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
     --lg-blur: none;
     --lg-surface: var(--popover);
     --lg-surface-strong: var(--popover);

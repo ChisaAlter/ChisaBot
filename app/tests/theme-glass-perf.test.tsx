@@ -568,7 +568,7 @@ describe("5) 启动骨架用用户选的配色", () => {
     // 只存了个不认识的材质、别的外观都没存过：新用户 → mist。
     runBoot({ [palette.GLASS_STYLE_STORAGE_KEY]: "bogus" }, false);
     expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
-    // 存过配色键（哪怕值不认识）：算存过外观的老用户 → 旧默认 liquid。
+    // 存过配色键（哪怕值不认识）：算存过外观的老用户 → 0.1.155 起统一回落 mist。
     runBoot(
       {
         [palette.PALETTE_STORAGE_KEY]: "nope",
@@ -577,7 +577,7 @@ describe("5) 启动骨架用用户选的配色", () => {
       false,
     );
     expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
-    expect(document.documentElement.getAttribute("data-glass")).toBe("liquid");
+    expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
     expect(document.body.style.getPropertyValue("--sky-1")).toBe("");
     for (const m of document.querySelectorAll<HTMLMetaElement>(
       'meta[name="theme-color"]',
@@ -623,5 +623,43 @@ describe("8) 性能模式入口", () => {
       "utf8",
     );
     expect(page).toContain("<PerfModePreference />");
+  });
+});
+
+describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass-shell 薄纱）", () => {
+  /** 直接浮在壁纸上的卡与胶囊：确认卡、页面/定时/网关/提问卡、干活步骤、草稿/历史提示、
+   * 工具结果核对、交接恢复、状态/干活胶囊、「显示更早」、PC 窗口按钮。 */
+  const FLOATING = [
+    ".cf-card",
+    ".gh-card",
+    ".page-card",
+    ".schedule-card",
+    ".bot-exchange-card",
+    ".chat-question",
+    ".chat-work-steps",
+    ".chat-draft-card",
+    ".chat-history-notice",
+    ".chat-history-more",
+    ".to-card",
+    ".hr-card",
+    ".win-ctrls",
+    ".rs-capsule",
+    ".chat-thinking",
+  ];
+  test("全部在 GLASS_SURFACE_SELECTOR 里（拿得到 --lg-* 变量与深釉翻墨）", () => {
+    for (const cls of FLOATING) {
+      expect(appearance.GLASS_SURFACE_SELECTOR).toContain(cls);
+    }
+  });
+  test("各自有规则把底画成 --lg-surface-strong（含不带模糊的胶囊组）", () => {
+    const rules = [
+      ...css.matchAll(
+        /:is\(([^)]*)\)\s*\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface-strong\)/g,
+      ),
+    ];
+    expect(rules.length).toBeGreaterThanOrEqual(2);
+    for (const cls of FLOATING) {
+      expect(rules.some(([, list]) => list.includes(cls))).toBe(true);
+    }
   });
 });

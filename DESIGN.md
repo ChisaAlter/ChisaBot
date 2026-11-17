@@ -377,7 +377,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 
 ### 10.6 液态玻璃材质（liquid）
 
-`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃整屏只用一种墨：各面板背后亮度按视口内面积加权平均，低于 0.40 整屏翻深釉、回到 0.50 以上才翻回（迟滞防闪），不再按面板/按行各自翻转；判定只在内存里，不持久化。Hark WebGL 天空没有 preserveDrawingBuffer，帧外读 `#gl` 只会读到全黑，所以背景光栅改读天空宿主在出帧当下拷的小快照（`lib/sky-snapshot.ts`，液态玻璃在用时才拷，最多每秒一张）。后渲染的玻璃面当场挂上整屏墨色并排一次采样。没存过材质时一律回落 mist（`fallbackGlassStyle`，启动脚本同一规则，判定后立刻写入 `glass-style`；0.1.155 起老用户也不再单独回落 liquid）；默认雾度只在 `DEFAULT_GLASS_OPACITY` 一处。自定义壁纸只换图片也会重新采样（不依赖 `data-wallpaper` 是否变化）。滚动期间暂停采样和快照判定，停稳后在 idle 里补一次。
+`data-glass="liquid"` 的完整材质，令牌集中在 `styles.css` 的「液态玻璃材质」段，四个应用点（`background` / `backdrop-filter` / `box-shadow` / `color`）引用变量；crystal / frosted 保留各自旧材质，只补 `--lg-ink` 等共用变量。运行时在 `app/src/lib/liquid-glass.ts`（`installLiquidGlass`，从 `sky-background.tsx` 挂）。默认材质是第四档 `data-glass="mist"`（薄雾玻璃）：20px 柔焦 + 白釉/深釉渐变，无透镜无自适应；未设 `data-glass` 时按 mist。液态玻璃重写档 `data-glass="liquid"` 仍可用；透镜运行时 `liquidActive()` 只认 `liquid`。浅色主题下液态玻璃整屏只用一种墨：各面板背后亮度按视口内面积加权平均，低于 0.40 整屏翻深釉、回到 0.50 以上才翻回（迟滞防闪），不再按面板/按行各自翻转；判定只在内存里，不持久化。Hark WebGL 天空没有 preserveDrawingBuffer，帧外读 `#gl` 只会读到全黑，所以背景光栅改读天空宿主在出帧当下拷的小快照（`lib/sky-snapshot.ts`，液态玻璃在用时才拷，最多每秒一张）。后渲染的玻璃面当场挂上整屏墨色并排一次采样。没存过材质时一律回落 mist（`fallbackGlassStyle`，启动脚本同一规则，判定后立刻写入 `glass-style`；0.1.155 起老用户也不再单独回落 liquid）；默认雾度只在 `DEFAULT_GLASS_OPACITY` 一处。自定义壁纸只换图片也会重新采样（不依赖 `data-wallpaper` 是否变化）。滚动期间暂停采样和快照判定，停稳后在 idle 里补一次。名单（`GLASS_SURFACE_SELECTOR`，`styles.css` 四档材质共用同一份 `:where`）除侧栏 / 输入框 / 气泡 / 右栏外，还包含聊天区直接浮在壁纸上的浮动面：确认卡 `.cf-card`、GitHub 卡 `.gh-card`、页面卡 `.page-card`、定时卡 `.schedule-card`、网关确认卡 `.bot-exchange-card`、提问卡 `.chat-question`、干活步骤 `.chat-work-steps`、草稿卡 `.chat-draft-card`、历史提示 `.chat-history-notice`、「显示更早」`.chat-history-more`、核对卡 `.to-card`、交接提示 `.hr-card`、状态 / 干活胶囊 `.rs-capsule` / `.chat-thinking`（持续动画不加 backdrop-filter，釉面同档）与 PC 窗口按钮条 `.win-ctrls`——它们不能再吃 `.glass-shell` 的薄纱 `--glass-*`，否则深主题下胶囊变成 `:root` 烘焙的不透明 navy、卡片却薄到近乎透明。
 
 **令牌与状态**
 
@@ -1283,7 +1283,7 @@ Jun：GitHub 仓库链接要出 Hark 那种大卡（上半部是图、标题两�
 
 ### 58.2 确认卡片（`components/chat/confirm-card.tsx`）
 
-- 画在那条工具调用下面（`RichToolCallsView` 里，和链接卡同一个插槽）。玻璃卡，最宽 480px，`--glass-3`：左边 40px 类别图标（发消息蓝 / 删除红 / 付款琥珀 / 电脑蓝）· 小字「需要你确认 · 类别」· 标题（要做什么，14/600）· 对象（13，`--ink-3`）；细节两列（标签 64px · 内容，命令和路径等宽 12.5px，过长滚动不撑高）；按钮「确认」（删除是红色）「取消」，走按钮状态机（确认中… → ✓ 已确认 / 取消中… → 已取消），宽度固定；右边一个文字按钮「以后这类直接做」（改偏好再确认，付款没有，换成「付款一律先问你」小锁）。
+- 画在那条工具调用下面（`RichToolCallsView` 里，和链接卡同一个插槽）。玻璃卡，最宽 480px，底和气泡同档 `--lg-surface-strong` 釉面（在 `GLASS_SURFACE_SELECTOR` 名单里，完成态降 `--lg-surface`）：左边 40px 类别图标（发消息蓝 / 删除红 / 付款琥珀 / 电脑蓝）· 小字「需要你确认 · 类别」· 标题（要做什么，14/600）· 对象（13，`--ink-3`）；细节两列（标签 64px · 内容，命令和路径等宽 12.5px，过长滚动不撑高）；按钮「确认」（删除是红色）「取消」，走按钮状态机（确认中… → ✓ 已确认 / 取消中… → 已取消），宽度固定；右边一个文字按钮「以后这类直接做」（改偏好再确认，付款没有，换成「付款一律先问你」小锁）。
 - **决定后原地收成一行**：细节和按钮用 grid-rows 1fr→0fr 收起（200ms），图标缩到 28px 并变 ✓（绿）/ ✕（灰），小字变「已确认 · 类别」「已取消，没有执行」「已过期，没有执行」「已停止，没有执行」，标题一行省略；电脑上弹窗决定的写「在电脑上决定」。记录留在对话里。
 - 进场 `cf-in`（淡入 + 上移 4px）；`prefers-reduced-motion` 只淡入。不放进 turn-compaction 的折叠里（过程话收起时卡片仍在）。
 - **跨刷新、跨设备**：卡片状态在服务器（表 `chisabot_confirm_requests`），每段对话一个查询，有卡片在等或有工具调用还没结果时每 1.5 秒取一次；在手机上点了确认，电脑上的卡片 1–2 秒内跟着变。
@@ -2111,6 +2111,8 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 实测（1280×800、视口 583、预览 + 假模型、流式长回答）：问题落在离顶 **218px**（约 1/3），下面 spacer 267px；回答流 5.5 秒全程 10 次采样位置不动（`218 / gap 63`）；短回答长出来、内容不再超出视口时自己落回底部。范围 80–320px 写进了 `tests/send-scroll/sendscroll.mjs` 的断言。
 
 **验证**：`app/tests/send-scroll.test.ts` 13 项（界限、`staysInSameTurn`、提交即记 + 60 秒过期）；预览 + 假模型：上一条 35 分钟前 → 有标记、落在 218px、流式期间不动；连续两条隔 8 秒 → 无标记、离底 0；刷新后 5 分钟内 → 无标记、离底 0；`tests/rail-drag-scroll` 三场景（bottom / mid / collapse）全过。`tests/send-scroll/sendscroll.mjs` 的 a4 / r8 已改拨 35 分钟、断言改成 80–320px。
+
+**94.8 状态行固定槽：每轮开始不再整段往上挪**（`chat-transcript.tsx` `chat-status-slot`）：「思考中」/ 干活胶囊 / 暂停胶囊 /「已停止」这一行在 `chat-tail` 里，出现和收起都改列高——§88.1 / §94.6 的留白只能吃「变矮」，吃不下「从 0 长高」：胶囊一挂上来列高 +38px，钉在底部时 scrollTop 跟着 +38px，每一轮机器人开始回答整段对话都往上挪一下。现在这一行包在一个 `min-height: 38px` 的槽里（38px = 胶囊实际高，9 + 20 行高 + 9，见 status-capsule.css 文件头），槽一直占着那 38px：胶囊出现、换样（思考中 ↔ 干活胶囊 ↔ 暂停）、收起，列高都不变，钉底时画面不动。代价是最后一条消息下面常驻一行空白（状态本来就出现在那里）。「已停止」比 38px 高，槽只罩住前 38px——仍会长列，但幅度小一截；确认卡、排队消息是真内容行，进槽外照旧。
 
 ## 95. 浏览器多标签 + 收藏夹（2026-10-16）
 
