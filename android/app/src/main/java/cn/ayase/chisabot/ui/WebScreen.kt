@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.provider.MediaStore
 import android.os.Environment
 import android.widget.Toast
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
@@ -55,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
@@ -346,6 +348,9 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                         web = this
                     }
                 },
+                // 主框架加载失败时 WebView 自己会画英文错误页（net::ERR_…），和上面的中文提示叠在一起；
+                // 藏掉它（INVISIBLE 的 View 也不接触摸），让后面的 SkyBackground 露出来。
+                update = { it.visibility = if (loadError == null) View.VISIBLE else View.INVISIBLE },
                 // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
                 modifier = Modifier.fillMaxSize(),
                 onRelease = { it.stopLoading(); it.destroy() },
@@ -355,8 +360,13 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
             }
             loadError?.let { message ->
                 Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(message, color = sky.ink1)
-                    TextButton(onClick = { loadError = null; web?.reload() }) { Text("重新连接") }
+                    Text(message, color = sky.ink1, textAlign = TextAlign.Center)
+                    // 首屏加载就失败时 WebView 没有已提交的 URL，reload() 是空操作；退回原始地址重新加载。
+                    TextButton(onClick = {
+                        loadError = null
+                        val w = web
+                        if (w?.url != null) w.reload() else w?.loadUrl(origin + path)
+                    }) { Text("重新连接") }
                     TextButton(onClick = { vm.switchServer() }) { Text("切换服务器") }
                 }
             }
