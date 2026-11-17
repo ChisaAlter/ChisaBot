@@ -45,9 +45,11 @@ export async function qqAccessToken(ctx: Pick<AdapterContext, "fetch" | "config"
 }
 
 /** QQ 事件 → ImInbound。 */
+// biome-ignore lint/suspicious/noExplicitAny: QQ 开放平台事件 d 载荷字段随事件类型变化
 export function parseQqEvent(type: string, d: Record<string, any>): ImInbound | null {
   const content = String(d.content ?? "");
   const attachments = Array.isArray(d.attachments)
+    // biome-ignore lint/suspicious/noExplicitAny: 附件元素按官方协议字段取用
     ? d.attachments.map((item: any) => ({ kind: String(item.content_type ?? "").startsWith("image") ? ("image" as const) : ("file" as const), url: item.url }))
     : undefined;
   const base = { messageId: String(d.id ?? ""), attachments: attachments?.length ? attachments : undefined };
@@ -122,6 +124,7 @@ export class QqOfficialAdapter extends LoopAdapter {
   }
 
   private async handle(text: string) {
+    // biome-ignore lint/suspicious/noExplicitAny: QQ 网关帧 d 载荷字段随 op/t 变化
     const payload = JSON.parse(text) as { op: number; d?: any; s?: number; t?: string };
     if (typeof payload.s === "number") this.seq = payload.s;
     switch (payload.op) {
@@ -178,6 +181,7 @@ export class QqOfficialAdapter extends LoopAdapter {
       body: JSON.stringify(body),
     });
     const text = await response.text();
+    // biome-ignore lint/suspicious/noExplicitAny: 开放平台接口回包 JSON 形状按文档字段取用
     let parsed: any = {};
     try {
       parsed = text ? JSON.parse(text) : {};

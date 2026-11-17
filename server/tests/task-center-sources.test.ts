@@ -12,6 +12,7 @@ import {
   emailSourceRef,
   markdownTodos,
   resolveTaskSourcePath,
+  type TaskSourceOptions,
 } from "../src/task-center/sources";
 
 function source(
@@ -40,7 +41,9 @@ function source(
 }
 function collectors(overrides: Record<string, unknown> = {}) {
   return createTaskSourceCollectors({
-    database: { $client: { unsafe: async () => [] } } as any,
+    database: {
+      $client: { unsafe: async () => [] },
+    } as TaskSourceOptions["database"],
     personalSources: {
       scanCalendar: async () => [],
       scanEmails: async () => [],
@@ -48,7 +51,7 @@ function collectors(overrides: Record<string, unknown> = {}) {
     },
     github: { listOpenItems: async () => [], status: async () => null },
     ...overrides,
-  } as any);
+  } as TaskSourceOptions);
 }
 
 describe("task source identity and trust", () => {
@@ -108,7 +111,9 @@ describe("task source identity and trust", () => {
 
   test("missing personal connections are errors rather than successful empty scans", async () => {
     const personal = createPersonalSources(
-      { $client: { unsafe: async () => [] } } as any,
+      { $client: { unsafe: async () => [] } } as Parameters<
+        typeof createPersonalSources
+      >[0],
       { encryptionKey: "test-only" },
     );
     await expect(personal.scanEmails("owner")).rejects.toThrow("尚未连接邮箱");

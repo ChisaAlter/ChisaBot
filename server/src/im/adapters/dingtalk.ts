@@ -13,6 +13,7 @@ import { dataText, LoopAdapter } from "./base";
 
 const BOT_TOPIC = "/v1.0/im/bot/messages/get";
 
+// biome-ignore lint/suspicious/noExplicitAny: 钉钉 Stream 回调报文无官方类型，按协议文档字段取用
 export function parseDingtalkMessage(data: any): ImInbound | null {
   if (!data?.msgId) return null;
   const group = String(data.conversationType) === "2";
@@ -80,6 +81,7 @@ export class DingtalkAdapter extends LoopAdapter {
     }
     if (frame.type === "CALLBACK" && headers.topic === BOT_TOPIC) {
       this.sendJson({ code: 200, headers: { contentType: "application/json", messageId: headers.messageId }, message: "OK", data: JSON.stringify({ response: null }) });
+      // biome-ignore lint/suspicious/noExplicitAny: 钉钉回调 data 字段为任意 JSON
       let data: any = {};
       try {
         data = typeof frame.data === "string" ? JSON.parse(frame.data) : frame.data;

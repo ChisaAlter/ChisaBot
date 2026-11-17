@@ -173,7 +173,7 @@ describe("image providers", () => {
     const downloads: string[] = [];
     const deps = {
       fetch: fetchMock,
-      download: async (u: string) => (downloads.push(u), PNG),
+      download: async (u: string) => { downloads.push(u); return PNG; },
     };
     const config = {
       provider: "openai" as const,
@@ -297,9 +297,9 @@ describe.skipIf(!url)("chat files service", () => {
         },
         ownsBot: async (o, b) => o === owner && b === bot,
         workspace: {
-          write: async (_o, _b, path, bytes) => (
-            written.set(path, bytes), true
-          ),
+          write: async (_o, _b, path, bytes) => {
+            written.set(path, bytes); return true;
+          },
           read: async (_o, _b, path) => {
             const found = written.get(path);
             if (!found) throw new Error(`There is no file at ${path}.`);

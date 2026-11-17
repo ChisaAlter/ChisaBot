@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/client";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import {
   IM_PLATFORMS,
@@ -583,7 +583,7 @@ export function createImService(options: ImServiceOptions) {
   }
 
   async function reply(
-    row: Row,
+    _row: Row,
     adapter: ImAdapter,
     inbound: ImInbound,
     text: string,
@@ -1793,10 +1793,12 @@ export function createImService(options: ImServiceOptions) {
 
     const authed = new Hono<{ Variables: AppVariables }>();
     authed.use("*", requireUser);
-    const fail = (c: any, error: unknown) =>
-      error instanceof InputError
-        ? c.json({ error: error.message }, 400)
-        : (console.error(error), c.json({ error: "出错了，请重试" }, 500));
+    const fail = (c: Context, error: unknown) => {
+      if (error instanceof InputError)
+        return c.json({ error: error.message }, 400);
+      console.error(error);
+      return c.json({ error: "出错了，请重试" }, 500);
+    };
     authed.get("/platforms", (c) => c.json({ platforms: IM_PLATFORMS }));
     authed.get("/connections", async (c) => {
       c.header("Cache-Control", "no-store");

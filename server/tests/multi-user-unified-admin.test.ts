@@ -4,7 +4,6 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../src/auth/guards";
 import { createDatabase } from "../src/db/client";
 import { mcpServers, mcpTools } from "../src/db/schema";
-import { createMemoryNotes } from "../src/memory-notes/service";
 import { createPluginStore, type PluginStore } from "../src/plugins/store";
 import {
   createChisaSkills,

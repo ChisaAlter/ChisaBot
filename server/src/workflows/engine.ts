@@ -680,7 +680,7 @@ export function createWorkflowEngine(deps: WorkflowEngineDeps) {
           if (sessionId) forwarded = { panelAuthoring: { sessionId } };
           else await event(runId, "panel_unavailable", "没能打开面板创作会话，这一步只能输出文字。", step.id);
         }
-        let { replyText, used } = await turn(instruction, forwarded);
+        const { replyText, used } = await turn(instruction, forwarded);
         let stepTokens = used;
         let output = replyText.trim();
 

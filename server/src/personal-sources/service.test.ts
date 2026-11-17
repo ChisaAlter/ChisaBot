@@ -7,7 +7,6 @@ import { splitBubbles } from "../../../app/src/lib/chat/bubbles";
 
 describe("personal-sources & new Hark features", () => {
   test("parseIcsEvents parses VEVENT blocks and filters upcoming range", () => {
-    const now = new Date("2026-10-23T08:00:00Z");
     const ics = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",

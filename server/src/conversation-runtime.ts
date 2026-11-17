@@ -87,7 +87,6 @@ import {
 import {
   type GrantedTool,
   grantedToolGuidance,
-  parametersFor,
   REFUSAL_MARKER,
   toolCarriedGuidance,
 } from "./plugins/tools";

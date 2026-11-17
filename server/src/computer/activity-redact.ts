@@ -1032,7 +1032,6 @@ export function redactUserinfo(value: string): string {
         out += `${value.slice(last, from)}${MASK}@`;
         last = firstAtBeforePath + 1;
         from = last;
-        continue;
       }
     }
   }

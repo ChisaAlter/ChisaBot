@@ -605,7 +605,7 @@ export function createPanelStore(db: Database) {
               ),
             )
             .for("update");
-          if (!draft || draft.status !== "ready")
+          if (draft?.status !== "ready")
             throw new PanelError("draft_binding", 404);
           if (draft.draftRevision !== input.expectedDraftRevision)
             throw new PanelError("draft_revision_conflict");

@@ -49,7 +49,7 @@ function fixture() {
   const app = new Hono<{ Variables: AppVariables }>();
   app.route(
     "/api/panels",
-    services.routes(async (c: any, next: any) => {
+    services.routes(async (c, next) => {
       const actor = c.req.header("x-test-actor");
       if (![alice, bob].includes(actor))
         return c.json({ error: "Authentication required" }, 401);

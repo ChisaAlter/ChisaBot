@@ -45,11 +45,14 @@ export async function feishuBotInfo(ctx: Pick<AdapterContext, "fetch" | "config"
 }
 
 /** 富文本（post）内容 → 文字。 */
+// biome-ignore lint/suspicious/noExplicitAny: 飞书 post 富文本载荷无官方类型，按开放文档结构取用
 function postText(content: any): string {
   const body = content?.zh_cn ?? content?.en_us ?? content?.ja_jp ?? content;
+  // biome-ignore lint/suspicious/noExplicitAny: 同上，逐段落元素结构不一
   const rows: any[] = Array.isArray(body?.content) ? body.content : [];
   const lines = rows.map((row) =>
     (Array.isArray(row) ? row : [])
+      // biome-ignore lint/suspicious/noExplicitAny: 段落元素按 tag 分派，形状随 tag 变化
       .map((item: any) => (item.tag === "text" || item.tag === "md" ? item.text : item.tag === "a" ? `${item.text}（${item.href}）` : item.tag === "at" ? `@${item.user_name ?? ""}` : ""))
       .join(""),
   );
@@ -57,14 +60,17 @@ function postText(content: any): string {
 }
 
 /** im.message.receive_v1 事件 → ImInbound。 */
+// biome-ignore lint/suspicious/noExplicitAny: 飞书 im.message.receive_v1 事件载荷无官方类型
 export function parseFeishuMessage(event: any, botOpenId: string | null): ImInbound | null {
   const message = event?.message;
   if (!message?.message_id) return null;
   if (event.sender?.sender_type && event.sender.sender_type !== "user") return null;
+  // biome-ignore lint/suspicious/noExplicitAny: message.content 是按 msg_type 变化的 JSON 字符串
   let content: any = {};
   try {
     content = JSON.parse(message.content ?? "{}");
   } catch {}
+  // biome-ignore lint/suspicious/noExplicitAny: mentions 元素形状按官方文档字段取用
   const mentions: any[] = Array.isArray(message.mentions) ? message.mentions : [];
   let text = "";
   const attachments: ImInbound["attachments"] = [];
@@ -165,7 +171,7 @@ export class FeishuAdapter extends LoopAdapter {
 
   private sendFrame(frame: FeishuFrame) {
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1) throw new Error("飞书长连接没有连上");
+    if (socket?.readyState !== 1) throw new Error("飞书长连接没有连上");
     socket.send(encodeFrame(frame));
   }
 

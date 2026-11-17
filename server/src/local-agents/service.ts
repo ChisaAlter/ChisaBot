@@ -961,7 +961,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   }
 
   function diffLine(diff: LocalAgentDiff | null | undefined) {
-    if (!diff || !diff.files.length) return "没有改动文件。";
+    if (!diff?.files.length) return "没有改动文件。";
     const names = diff.files
       .slice(0, 8)
       .map((f) => f.path)

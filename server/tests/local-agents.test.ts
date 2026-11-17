@@ -180,9 +180,9 @@ describe("hub gate", () => {
       get: async () => current,
       touch: async () => {},
       update: async () => current,
-      audit: async (input: Record<string, unknown>) => (
-        audits.push(input), String(audits.length - 1)
-      ),
+      audit: async (input: Record<string, unknown>) => {
+        audits.push(input); return String(audits.length - 1);
+      },
       finishAudit: async () => {},
     };
     const hub = createDeviceHub({ store: store as never, approvalTtlMs: 200 });
@@ -260,9 +260,9 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
   let lastApprovalId: string | null = null;
   const hub = {
     isOnline: () => true,
-    sendRaw: (_id: string, message: Record<string, unknown>) => (
-      sent.push(message), true
-    ),
+    sendRaw: (_id: string, message: Record<string, unknown>) => {
+      sent.push(message); return true;
+    },
     requestUserApproval: async (
       _r: DeviceRecord,
       _input: unknown,
@@ -278,7 +278,7 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
   const deviceStore = {
     get: async () => device,
     forOwner: async () => [device],
-    audit: async (input: Record<string, unknown>) => (audits.push(input), "a"),
+    audit: async (input: Record<string, unknown>) => { audits.push(input); return "a"; },
   };
   const service = url
     ? createLocalAgentService({

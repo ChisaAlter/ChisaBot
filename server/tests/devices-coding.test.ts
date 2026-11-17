@@ -5,7 +5,7 @@ import {
   FULL_ACCESS_FOREVER,
   gitIsRead,
 } from "../../shared/devices";
-import { createDeviceHub } from "../src/devices/hub";
+import { createDeviceHub, type InvokeInput } from "../src/devices/hub";
 import { installScript } from "../src/devices/node-install";
 import { createPairingStore } from "../src/devices/pairing";
 import type { DeviceRecord, DeviceStore } from "../src/devices/store";
@@ -71,6 +71,7 @@ function fakeStore(initial: DeviceRecord) {
 }
 
 function socket() {
+  // biome-ignore lint/suspicious/noExplicitAny: 设备协议帧测试桩，断言按协议字段逐层访问
   const sent: Array<Record<string, any>> = [];
   return {
     sent,
@@ -295,7 +296,7 @@ describe("coding tools", () => {
   function harness(device: DeviceRecord) {
     const calls: Array<{
       operation: string;
-      args: any;
+      args: Record<string, unknown>;
       diff?: string | null;
       summary: string;
     }> = [];
@@ -306,7 +307,7 @@ describe("coding tools", () => {
     const hub = {
       isOnline: () => true,
       supports: () => true,
-      invoke: async (input: any) => {
+      invoke: async (input: InvokeInput) => {
         calls.push({
           operation: input.operation,
           args: input.args,
