@@ -108,6 +108,7 @@ import {
   parseApprovalContinuation,
   parseApprovalResult,
 } from "./approvals/types";
+import { createSpeechService } from "./audio/speech-service";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -117,7 +118,6 @@ import {
   recordAuditEvent,
 } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
-import { createSpeechService } from "./audio/speech-service";
 import { createAuth } from "./auth";
 import { DEV_ACTOR, initializeDevActorUser } from "./auth/dev-actor";
 import {
@@ -274,11 +274,11 @@ import {
 } from "./local-agents/service";
 import { createLocalConversations } from "./local-conversations";
 import { createAutoMagpieService } from "./magpie";
-import { createMemoryNotes } from "./memory-notes/service";
 import {
   createPersonalMemoryLoader,
   type LoadPersonalMemory,
 } from "./memory/tools";
+import { createMemoryNotes } from "./memory-notes/service";
 import { createModelCatalogService } from "./model-catalog";
 import {
   resolveScopedAgentModelConnection,
@@ -1905,7 +1905,11 @@ const wakeUpStore = createWakeUpStore(database, { auditStore: bootAuditStore });
 /** IM 接入（server/src/im，DESIGN.md §49）：下面才建；IM 回合的工具按连接的开关裁剪。 */
 let imService: ImService | undefined;
 const loadToolsForActor =
-  (actorId: string, initiator: AuditInitiator = PERSON_INITIATOR) =>
+  (
+    actorId: string,
+    initiator: AuditInitiator = PERSON_INITIATOR,
+    options?: { isGroupChat?: boolean },
+  ) =>
   async (botId: string) => {
     // IM 回合（initiator = routine「im:<连接>」）：网页才能显示的工具（render_ui、面板）不给；
     // 电脑 / 设备类工具只有连接里打开了「允许使用电脑和设备」且非群聊/非外部成员才给。
@@ -1936,13 +1940,15 @@ const loadToolsForActor =
             agentId: botId,
             initiator,
           })),
-      // 长期记忆（server/src/memory-notes，DESIGN.md §50）：IM 群聊/非号主私聊按群聊只读共享隔离，后台刷新面板不给。
+      // 长期记忆（server/src/memory-notes，DESIGN.md §50）：群聊 / IM 群聊/非号主私聊按群聊只读共享隔离，后台刷新面板不给。
       ...(isPanelRefresh
         ? []
         : memoryNotes.tools(
             actorId,
             botId,
-            imUntrusted ? { isGroupChat: true } : undefined,
+            imUntrusted || options?.isGroupChat
+              ? { isGroupChat: true }
+              : undefined,
           )),
       // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板与 IM 隔离回合不给。
       ...(stripOwnerPrivate ? [] : fleetAudit.tools(actorId)),
@@ -2612,11 +2618,13 @@ const buildAgentFor = async ({
   agentId,
   initiator,
   depth,
+  isGroupChat,
 }: {
   ownerUserId: string;
   agentId: string;
   initiator: AuditInitiator;
   depth?: number;
+  isGroupChat?: boolean;
 }) => {
   const actor = await actorFor(ownerUserId);
   let agent: AbstractAgent | undefined;
@@ -2624,6 +2632,7 @@ const buildAgentFor = async ({
     agent = await actorAgentResolver.resolveAgentForActor(actor, agentId, {
       initiator,
       depth,
+      isGroupChat,
     });
   } catch (error) {
     if (!(error instanceof CoworkerUnavailableError)) throw error;
@@ -3615,8 +3624,11 @@ const actorAgentResolver = createActorAgentResolver({
     }
   },
   stallGuard,
-  loadToolsForActor: (actorId, initiator) =>
-    restrictToolsForWorkflow(initiator, loadToolsForActor(actorId, initiator)),
+  loadToolsForActor: (actorId, initiator, options) =>
+    restrictToolsForWorkflow(
+      initiator,
+      loadToolsForActor(actorId, initiator, options),
+    ),
   signRunForActor,
   computerGuidance: config.computer ? COMPUTER_GUIDANCE : undefined,
   loadVendors,

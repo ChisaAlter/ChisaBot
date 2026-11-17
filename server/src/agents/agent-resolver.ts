@@ -24,6 +24,8 @@ import type { AgentActor } from "./profile-types";
 export type AgentResolutionContext = {
   initiator?: AuditInitiator;
   depth?: number;
+  /** 群聊回合：装配工具时私密记忆按群聊隔离（memory-notes 的 isGroupChat 视图）。 */
+  isGroupChat?: boolean;
 };
 
 export class CoworkerUnavailableError extends Error {}
@@ -54,6 +56,7 @@ export type ActorAgentResolverDependencies = {
   loadToolsForActor?: (
     actorId: string,
     initiator?: AuditInitiator,
+    options?: { isGroupChat?: boolean },
   ) => LoadToolsForBot;
   signRunForActor?: (
     actorId: string,
@@ -144,7 +147,9 @@ export function createActorAgentResolver(
       connection?.model ?? deps.model,
       connection ? async () => connection.apiKey : deps.resolveModelApiKey,
       deps.stallGuard,
-      deps.loadToolsForActor?.(actor.id, context?.initiator),
+      deps.loadToolsForActor?.(actor.id, context?.initiator, {
+        isGroupChat: context?.isGroupChat,
+      }),
       deps.signRunForActor?.(actor.id, context?.initiator, context?.depth),
       deps.computerGuidance,
       deps.loadVendors,

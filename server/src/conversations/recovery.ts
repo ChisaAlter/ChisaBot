@@ -2,6 +2,7 @@ import type { AbstractAgent } from "@ag-ui/client";
 import type { AuditInitiator } from "../audit";
 import { reasonWithoutStatement } from "../db/query-failure";
 import type { LocalConversationBackend } from "../local-conversations";
+import { isGroupChatProps } from "../memory/tools";
 import { executionClass } from "./capacity";
 import { conversationAdmissionClosed } from "./maintenance";
 import type { DshRunJournal } from "./run-journal";
@@ -34,6 +35,8 @@ export async function recoverConversations(options: {
     ownerUserId: string;
     agentId: string;
     initiator: AuditInitiator;
+    /** 恢复群聊回合时保持私密记忆隔离。 */
+    isGroupChat?: boolean;
   }): Promise<AbstractAgent>;
 }) {
   const { backend } = options;
@@ -73,6 +76,9 @@ export async function recoverConversations(options: {
         ownerUserId: record.owner_user_id,
         agentId: record.bot_id,
         initiator,
+        ...(isGroupChatProps(record.input?.forwardedProps)
+          ? { isGroupChat: true }
+          : {}),
       });
       backend.runner
         .run({
@@ -101,6 +107,9 @@ export async function recoverConversations(options: {
         ownerUserId: record.owner_user_id,
         agentId: record.bot_id,
         initiator: saved.initiator,
+        ...(isGroupChatProps(saved.input?.forwardedProps)
+          ? { isGroupChat: true }
+          : {}),
       });
       backend.runner
         .run({

@@ -31,6 +31,7 @@ import {
   executionDeadline,
 } from "../conversations/capacity";
 import { assertConversationAdmissionOpen } from "../conversations/maintenance";
+import { isGroupChatProps } from "../memory/tools";
 import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
 import type { DrawnComponent, TurnRunner } from "./types";
@@ -243,6 +244,8 @@ export function createTurnRunner(options: {
     agentId: string;
     initiator: AuditInitiator;
     depth?: number;
+    /** 群聊回合：装配工具时私密记忆按群聊隔离。 */
+    isGroupChat?: boolean;
   }) => Promise<AbstractAgent>;
   toolsForTurn?: (input: {
     ownerUserId: string;
@@ -408,6 +411,11 @@ export function createTurnRunner(options: {
       agentId,
       initiator,
       ...(depth ? { depth } : {}),
+      ...(isGroupChatProps(
+        continuation?.snapshot.forwardedProps ?? suppliedForwardedProps,
+      )
+        ? { isGroupChat: true }
+        : {}),
     });
     agent.threadId = threadId;
     agent.setMessages(messages);

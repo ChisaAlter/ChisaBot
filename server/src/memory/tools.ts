@@ -26,23 +26,24 @@ export type PersonalMemoryMiddlewareOptions = {
     | ((input: RunAgentInput) => boolean | Promise<boolean>);
 };
 
+/** 从 forwardedProps 识别群聊标记；回合装配早于 RunAgentInput 成型时用这份判定。 */
+export function isGroupChatProps(props: unknown): boolean {
+  if (!props || typeof props !== "object" || Array.isArray(props)) return false;
+  const record = props as Record<string, unknown>;
+  if (record.isGroupChat === true || record.groupChat === true) return true;
+  if (record.chatType === "group" || record.channelKind === "group") {
+    return true;
+  }
+  return (
+    record.chisabotGroup !== undefined &&
+    record.chisabotGroup !== null &&
+    record.chisabotGroup !== false
+  );
+}
+
 /** 从 AG-UI 运行入参识别是否处于群聊上下文，防止私人/机器人专属记忆渗入群聊。 */
 export function isGroupChatInput(input: RunAgentInput): boolean {
-  const props = input.forwardedProps;
-  if (props && typeof props === "object" && !Array.isArray(props)) {
-    const record = props as Record<string, unknown>;
-    if (record.isGroupChat === true || record.groupChat === true) return true;
-    if (record.chatType === "group" || record.channelKind === "group") {
-      return true;
-    }
-    if (
-      record.chisabotGroup !== undefined &&
-      record.chisabotGroup !== null &&
-      record.chisabotGroup !== false
-    ) {
-      return true;
-    }
-  }
+  if (isGroupChatProps(input.forwardedProps)) return true;
   return input.context.some(
     (entry) =>
       entry.description === "ChisaBot group chat" &&

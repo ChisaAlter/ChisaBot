@@ -1645,3 +1645,15 @@ test("群聊回合必须给 RunAgentInput 打 isGroupChat 标记", () => {
   );
   expect(source).toContain("forwardedProps: { isGroupChat: true }");
 });
+
+// 记忆检索工具（memory_search 等）在群聊回合也必须带 isGroupChat 视图：turn runner 从
+// forwardedProps 判群、index.ts 装配时把标记传给 memoryNotes.tools。两处缺一就会复现泄露。
+test("群聊标记必须穿到记忆工具装配层", () => {
+  const runTurn = readFileSync(
+    join(import.meta.dir, "../src/turns/run-turn.ts"),
+    "utf8",
+  );
+  const index = readFileSync(join(import.meta.dir, "../src/index.ts"), "utf8");
+  expect(runTurn).toContain("isGroupChatProps(");
+  expect(index).toContain("options?.isGroupChat");
+});
