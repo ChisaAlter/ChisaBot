@@ -1133,6 +1133,8 @@ export function createGroupConversations(deps: {
         initiator: turn.fromAgentId
           ? { kind: "handoff", id: turn.fromAgentId }
           : PERSON_INITIATOR,
+        // 群聊回合必须带标记：PersonalMemoryMiddleware 据此隔离 private/bot_private 记忆。
+        forwardedProps: { isGroupChat: true },
       });
       await writing;
       const gate = await shareGate({

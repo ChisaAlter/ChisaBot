@@ -1636,3 +1636,12 @@ test("index.ts 的个人记忆装配不绕过 createPersonalMemoryLoader", () =>
   expect(source).not.toContain("memoryNotes.context(");
   expect(source).toContain("createPersonalMemoryLoader");
 });
+
+// 群聊回合的 RunAgentInput 必须带 isGroupChat 标记，否则中间件按私聊注入私密记忆。
+test("群聊回合必须给 RunAgentInput 打 isGroupChat 标记", () => {
+  const source = readFileSync(
+    join(import.meta.dir, "../src/channels/group.ts"),
+    "utf8",
+  );
+  expect(source).toContain("forwardedProps: { isGroupChat: true }");
+});
