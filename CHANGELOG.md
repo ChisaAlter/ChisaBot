@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.158 — 2026-11-17
+
+全端版本 0.1.158，Android versionCode 338：Android WebView 加载失败的错误页遮挡与首屏重连落空修复（PR #545）；构建链补齐 `patches/` 进 Docker 上下文（修复 v0.1.157 全量构建失败）。Windows 外壳指纹不变，支持原地自动更新；无需数据库迁移。
+
+- **Android 加载失败页**：主框架加载失败时 WebView 自带英文错误页（net::ERR_…）叠在中文提示上——出错时置 INVISIBLE 露出 SkyBackground；首屏就失败时 `reload()` 是空操作，「重新连接」改为退回 `origin + path` 重新加载（PR #545）。
+- **构建链**：`Dockerfile` 与 `deploy/Dockerfile.zh` 的 bun install 上下文补 `patches/`（`patchedDependencies` 必备，否则 frozen-lockfile 安装失败）。
+
 ## 0.1.157 — 2026-11-17
 
 全端版本 0.1.157，Android versionCode 337：聊天输入框链接边界修正、聊天浮动面与 PC 窗口按钮玻璃釉统一、状态行上跳修复（PR #544）。PC 客户端代码指纹更新为 `72c326725a367466`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新，无需重新安装；无需数据库迁移。

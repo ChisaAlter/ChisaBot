@@ -1,3 +1,9 @@
+## 0.1.158
+
+- Android：WebView 加载失败的英文错误页遮挡中文提示（出错置 INVISIBLE）；首屏失败「重新连接」落空（无已提交 URL 时退回 origin+path 加载）。错误文案居中。
+- 构建链：`Dockerfile` / `deploy/Dockerfile.zh` 补 `patches/` 进 bun install 上下文（`patchedDependencies` 必备）。
+- 全端发版：PC / macOS / Android 同步 `0.1.158`（versionCode 338），外壳指纹不变。
+
 ## 0.1.157
 
 - 输入框裸网址识别：网址后紧跟中文等非 ASCII 文字时，下划线与可点范围不再把尾巴吞进链接（`bun patch` 修正 `prompt-area@0.7.1` 的 URL 匹配字符集，回归测试 `app/tests/composer-link-boundary.test.tsx`）。
