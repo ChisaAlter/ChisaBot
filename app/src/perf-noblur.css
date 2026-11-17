@@ -47,7 +47,22 @@ html.dark {
       .glass-search,
       .glass-composer,
       [data-slot="bubble-content"],
-      .jr-card
+      .jr-card,
+      .cf-card,
+      .gh-card,
+      .page-card,
+      .schedule-card,
+      .bot-exchange-card,
+      .chat-question,
+      .chat-work-steps,
+      .chat-draft-card,
+      .chat-history-notice,
+      .chat-history-more,
+      .to-card,
+      .hr-card,
+      .win-ctrls,
+      .rs-capsule,
+      .chat-thinking
     ) {
     --lg-surface: var(--glass-bg-opaque);
     --lg-surface-strong: var(--glass-bg-opaque);
@@ -167,7 +182,22 @@ html[data-perf="on"]:not(#chisabot-no-blur)
   .glass-search,
   .glass-composer,
   [data-slot="bubble-content"],
-  .jr-card
+  .jr-card,
+  .cf-card,
+  .gh-card,
+  .page-card,
+  .schedule-card,
+  .bot-exchange-card,
+  .chat-question,
+  .chat-work-steps,
+  .chat-draft-card,
+  .chat-history-notice,
+  .chat-history-more,
+  .to-card,
+  .hr-card,
+  .win-ctrls,
+  .rs-capsule,
+  .chat-thinking
 ) {
   --lg-surface: var(--glass-bg-opaque);
   --lg-surface-strong: var(--glass-bg-opaque);

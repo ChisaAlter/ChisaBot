@@ -302,7 +302,7 @@ export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
 ];
 
 /**
- * 没存材质时用哪种：存过任何其他外观设置（不含会自动写入的深浅主题） → 旧默认 liquid；
+ * 没存材质时用哪种：存过任何其他外观设置（不含会自动写入的深浅主题） → LEGACY_DEFAULT_GLASS_STYLE；
  * 什么都没存过（或只有自动写入的 chisabot-theme） → mist。get 读不到（隐私模式抛错）按没存过处理。
  * 判定结果由调用方立刻写入 glass-style，避免随后自动写入的主题键在下次加载时改口径。
  */

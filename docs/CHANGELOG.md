@@ -735,6 +735,9 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 
 ## 未发版（main 上，已随服务器上线）
 
+- 输入框裸网址识别：网址后紧跟中文等非 ASCII 文字时，下划线与可点范围不再把尾巴吞进链接（`bun patch` 修正 `prompt-area@0.7.1` 的 URL 匹配字符集，回归测试 `app/tests/composer-link-boundary.test.tsx`）。
+- 聊天浮动面与 PC 窗口按钮进玻璃面名单：「正在处理」状态胶囊、确认卡 / 提问卡 / 核对卡 / 交接提示等直接浮在壁纸上的元素此前不在 `GLASS_SURFACE_SELECTOR`，吃不到 `--lg-*` 釉面变量，只能落到 `:root` 烘焙的 `--glass-strong` 别名（深色 = 不透明 navy）或被 `.glass-shell` 薄纱化的 `--glass-3`（≈透明）；现统一为与气泡 / 侧栏同档的 `--lg-surface-strong` 釉面（`.rs-capsule` 等带持续动画的胶囊不加 backdrop-filter），`perf-noblur` / `resize-pause` 不透明兜底同步扩充。
+- 聊天滚动：机器人开始回答时不再「整段往上挪一下」——「思考中」/ 干活 / 暂停 /「已停止」状态行包进固定 38px 槽（`chat-status-slot`，DESIGN.md §94.8），胶囊出现、换样、收起不再改列高；代价是末条消息下常驻一行状态位空白。「已停止」卡更高的部分仍会长列。
 - Claude Code 左栏：新建工作区固定在模式切换下方；目录行保留折叠 / 来源 / ⋯，会话只留标题；＋新会话、同步、删除等原功能保留；顶栏、会话页头、模型菜单不变。
 - PC 在线更新：识别的卸载器名补上 electron-builder 实际写出的 `Uninstall ChisaBotPC.exe`（去掉 productName 里的空格）；0.1.11–0.1.45 安装版此前 `supported=false`，检查更新直接返回。
 

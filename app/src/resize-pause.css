@@ -20,7 +20,22 @@ html[data-resizing]:not(#chisabot-no-blur)
   .rail-card,
   .glass-composer,
   [data-slot="bubble-content"],
-  .jr-card
+  .jr-card,
+  .cf-card,
+  .gh-card,
+  .page-card,
+  .schedule-card,
+  .bot-exchange-card,
+  .chat-question,
+  .chat-work-steps,
+  .chat-draft-card,
+  .chat-history-notice,
+  .chat-history-more,
+  .to-card,
+  .hr-card,
+  .win-ctrls,
+  .rs-capsule,
+  .chat-thinking
 ) {
   --lg-blur: none;
   --lg-shadow: none;

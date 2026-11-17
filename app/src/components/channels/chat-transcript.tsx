@@ -4083,37 +4083,46 @@ export function ChatTranscript({
               >
                 {liveStatus}
               </span>
-              {tailStop ? (
-                <Stopped
-                  onRetry={stopped ? onRetry : onRetryUnanswered}
-                  onWithdraw={onWithdraw}
-                  reason={tailStop}
-                />
-              ) : liveWorkInTail && liveWork ? (
-                <WorkRow
-                  calls={liveWork.calls}
-                  agentId={agentId}
-                  live
-                  notes={liveWork.notes}
-                  since={liveSince}
-                  turnKey={liveWork.key}
-                />
-              ) : waitingOnFirstToken ? (
-                // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
-                // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
-                liveWorking ? null : (
-                  <Thinking
-                    since={liveSince}
-                    label={connectionLabel ?? "思考中"}
+              {/*
+               * 状态行固定槽（§94.7）：「思考中」/ 干活胶囊 / 暂停 /「已停止」在 38px 高的格子里出现、换样、收起，
+               * 格子一直占着那 38px，列高不变。以前这一行从 0 长出来，钉在底部时 scrollTop 跟着整列 +38px，
+               * 每一轮开始整段对话都往上挪一下；§88.1 的留白只能吃「变矮」，吃不下「从 0 长高」。
+               * 38px = 胶囊实际高（status-capsule.css：9 + 20 行高 + 9）；「已停止」更高的部分仍会长列，
+               * 但最常见的「每轮开始出胶囊」完全不画面。
+               */}
+              <div className="chat-status-slot">
+                {tailStop ? (
+                  <Stopped
+                    onRetry={stopped ? onRetry : onRetryUnanswered}
+                    onWithdraw={onWithdraw}
+                    reason={tailStop}
                   />
-                )
-              ) : pausedAfterText !== null ? (
-                <PausedCapsule
-                  since={liveSince}
-                  watch={pausedAfterText}
-                  label={connectionLabel}
-                />
-              ) : null}
+                ) : liveWorkInTail && liveWork ? (
+                  <WorkRow
+                    calls={liveWork.calls}
+                    agentId={agentId}
+                    live
+                    notes={liveWork.notes}
+                    since={liveSince}
+                    turnKey={liveWork.key}
+                  />
+                ) : waitingOnFirstToken ? (
+                  // 这一轮已经在调工具：换成干活卡（当前步骤 · 第几步 · 用时，DESIGN.md §70），同一位置、同样一行高。
+                  // 这一轮已经在干活：干活卡在第一个干活的工具那一行里（DESIGN.md §75.1），这里不再画「思考中」。
+                  liveWorking ? null : (
+                    <Thinking
+                      since={liveSince}
+                      label={connectionLabel ?? "思考中"}
+                    />
+                  )
+                ) : pausedAfterText !== null ? (
+                  <PausedCapsule
+                    since={liveSince}
+                    watch={pausedAfterText}
+                    label={connectionLabel}
+                  />
+                ) : null}
+              </div>
               <LooseConfirmCards
                 resumed={resumedCards}
                 version={items.length}
