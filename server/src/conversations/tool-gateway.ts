@@ -551,5 +551,13 @@ export function createDshToolGateway(
           .map((call) => call.result),
       );
     },
+    /**
+     * 执行者已经消失（内核重启/会话空闲被收尾）时，该 run 还停在 dispatching 的
+     * 操作永远等不到回执：它们的外部结果不可知，一次性落 outcome_unknown。
+     * waiting_approval 不受影响——它们由自己的持久决议恢复。
+     */
+    async abandonRun(runId: string) {
+      await operations.markRunOutcomeUnknown(runId);
+    },
   };
 }

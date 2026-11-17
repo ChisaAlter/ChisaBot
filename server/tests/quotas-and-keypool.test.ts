@@ -216,7 +216,7 @@ describe("模型连接代理：多 Key 轮换、流式透传与配额记账", ()
           quota: {
             userId: "u-rotate",
             isAdmin: false,
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
         },
@@ -322,7 +322,7 @@ describe("模型连接代理：多 Key 轮换、流式透传与配额记账", ()
           quota: {
             userId: "u-ant",
             isAdmin: false,
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
         },
@@ -414,7 +414,7 @@ describe("模型连接代理：多 Key 轮换、流式透传与配额记账", ()
           quota: {
             userId: "u-cancel",
             isAdmin: false,
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
         },
@@ -483,7 +483,7 @@ describe("模型连接代理：多 Key 轮换、流式透传与配额记账", ()
           quota: {
             userId: "u-limited",
             isAdmin: false,
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
         },
@@ -578,7 +578,7 @@ describe("PlanModelProxy 配额与流式估算", () => {
           quota: {
             userId: "u-plan",
             isAdmin: false,
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
         },
@@ -803,7 +803,7 @@ describe("DSH 运行时 100% 强制代理（禁止向 DSH 下发真实密钥）"
           },
           keyPool,
           quota: {
-            checkAdmission: quotaService.checkAdmission,
+            admit: quotaService.admit,
             recordUsage: quotaService.recordUsage,
           },
           modelInfo: async () => ({
@@ -1170,5 +1170,215 @@ describe("Quota HTTP 路由与对话/无头回合门禁回归", () => {
       }),
     ).rejects.toBeInstanceOf(QuotaExceededError);
     expect(touchedThread).toBe(false);
+  });
+});
+
+describe("QuotaService.admit 原子预留准入", () => {
+  const NOW = Date.UTC(2026, 4, 15, 8, 30, 0);
+
+  test("并发 admit 按用户串行：请求数上限成为硬上限", async () => {
+    const quotaService = createQuotaService(createMemoryQuotaStorage());
+    await quotaService.setQuota({
+      userId: "u-race",
+      dailyRequestLimit: 2,
+      bypassAdmin: false,
+      updatedBy: "admin",
+    });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, index) =>
+        quotaService.admit({
+          userId: "u-race",
+          isAdmin: false,
+          model: `m-${index}`,
+          requestChars: 40,
+          maxOutputTokens: 10,
+          now: NOW,
+        }),
+      ),
+    );
+    const admitted = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(admitted).toHaveLength(2);
+    expect(rejected).toHaveLength(3);
+    for (const r of rejected)
+      expect((r as PromiseRejectedResult).reason).toBeInstanceOf(
+        QuotaExceededError,
+      );
+
+    const summary = await quotaService.getUserSummary("u-race", false, NOW);
+    expect(summary.usage.daily.requests).toBe(2);
+  });
+
+  test("并发 admit 把 token 预留顶到上限为止，超出者被拒", async () => {
+    const quotaService = createQuotaService(createMemoryQuotaStorage());
+    await quotaService.setQuota({
+      userId: "u-tokens",
+      dailyTokenLimit: 1000,
+      bypassAdmin: false,
+      updatedBy: "admin",
+    });
+    const admitOne = () =>
+      quotaService.admit({
+        userId: "u-tokens",
+        isAdmin: false,
+        model: "m",
+        requestChars: 0,
+        maxOutputTokens: 600,
+        now: NOW,
+      });
+
+    const results = await Promise.allSettled([
+      admitOne(),
+      admitOne(),
+      admitOne(),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+
+    // 第一次占 600，第二次只占到剩余 400——committed 恰好停在上限
+    const summary = await quotaService.getUserSummary("u-tokens", false, NOW);
+    expect(summary.usage.daily.totalTokens).toBe(1000);
+    expect(summary.usage.daily.requests).toBe(2);
+  });
+
+  test("结算按差量写回：预留被实际用量替换", async () => {
+    const quotaService = createQuotaService(createMemoryQuotaStorage());
+    await quotaService.setQuota({
+      userId: "u-settle",
+      dailyTokenLimit: 100_000,
+      dailyRequestLimit: 50,
+      bypassAdmin: false,
+      updatedBy: "admin",
+    });
+    const reservation = await quotaService.admit({
+      userId: "u-settle",
+      isAdmin: false,
+      model: "m",
+      requestChars: 400,
+      maxOutputTokens: 500,
+      now: NOW,
+    });
+    expect(reservation).not.toBeNull();
+
+    let summary = await quotaService.getUserSummary("u-settle", false, NOW);
+    expect(summary.usage.daily.totalTokens).toBe(600);
+    expect(summary.usage.daily.requests).toBe(1);
+
+    await quotaService.recordUsage({
+      userId: "u-settle",
+      model: "m",
+      inputTokens: 80,
+      outputTokens: 120,
+      cacheReadTokens: 5,
+      requests: 1,
+      now: NOW,
+      reservation: reservation ?? undefined,
+    });
+    summary = await quotaService.getUserSummary("u-settle", false, NOW);
+    expect(summary.usage.daily).toEqual({
+      inputTokens: 80,
+      outputTokens: 120,
+      cacheReadTokens: 5,
+      totalTokens: 200,
+      requests: 1,
+    });
+  });
+
+  test("上游失败的调用以零结算释放预留", async () => {
+    const quotaService = createQuotaService(createMemoryQuotaStorage());
+    await quotaService.setQuota({
+      userId: "u-release",
+      dailyRequestLimit: 1,
+      bypassAdmin: false,
+      updatedBy: "admin",
+    });
+    const reservation = await quotaService.admit({
+      userId: "u-release",
+      isAdmin: false,
+      model: "m",
+      requestChars: 40,
+      maxOutputTokens: 10,
+      now: NOW,
+    });
+    expect(reservation).not.toBeNull();
+
+    await quotaService.recordUsage({
+      userId: "u-release",
+      model: "m",
+      inputTokens: 0,
+      outputTokens: 0,
+      requests: 0,
+      now: NOW,
+      reservation: reservation ?? undefined,
+    });
+    const summary = await quotaService.getUserSummary("u-release", false, NOW);
+    expect(summary.usage.daily.requests).toBe(0);
+    expect(summary.usage.daily.totalTokens).toBe(0);
+
+    // 释放后额度空出来，新的 admit 可以放行
+    await expect(
+      quotaService.admit({
+        userId: "u-release",
+        isAdmin: false,
+        model: "m",
+        now: NOW,
+      }),
+    ).resolves.not.toBeNull();
+  });
+
+  test("proxy 层并发：请求数上限内放行、其余 429 且不打上游", async () => {
+    let upstreamHits = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        upstreamHits += 1;
+        return Response.json({ choices: [{ message: { content: "ok" } }] });
+      },
+    });
+
+    try {
+      const quotaService = createQuotaService(createMemoryQuotaStorage());
+      await quotaService.setQuota({
+        userId: "u-parallel",
+        dailyRequestLimit: 2,
+        bypassAdmin: false,
+        updatedBy: "admin",
+      });
+      const proxy = createModelConnectionProxy(
+        {
+          provider: "openai",
+          baseUrl: `${upstream.url}v1`,
+          apiKey: "sk-test",
+        },
+        ["gpt-4o"],
+        [],
+        new AbortController().signal,
+        {
+          now: () => NOW,
+          quota: {
+            userId: "u-parallel",
+            isAdmin: false,
+            admit: quotaService.admit,
+            recordUsage: quotaService.recordUsage,
+          },
+        },
+      );
+
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          proxy(
+            { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },
+            new AbortController().signal,
+          ),
+        ),
+      );
+      const statuses = responses.map((r) => r.status).sort();
+      expect(statuses).toEqual([200, 200, 429, 429]);
+      expect(upstreamHits).toBe(2);
+    } finally {
+      await upstream.stop(true);
+    }
   });
 });

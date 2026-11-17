@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AbstractAgent,
   type BaseEvent,
@@ -1625,4 +1627,12 @@ describe("四级记忆隔离、删 Bot 清理与 4000 字稳定缓存前缀核�
       ),
     ).toBe(false);
   });
+});
+
+// 回归护栏：服务端接线必须经 createPersonalMemoryLoader 注入个人记忆，
+// 任何直调 memoryNotes.context 的装配都会丢掉群聊/线程可见性参数（曾致私密记忆进群聊）。
+test("index.ts 的个人记忆装配不绕过 createPersonalMemoryLoader", () => {
+  const source = readFileSync(join(import.meta.dir, "../src/index.ts"), "utf8");
+  expect(source).not.toContain("memoryNotes.context(");
+  expect(source).toContain("createPersonalMemoryLoader");
 });

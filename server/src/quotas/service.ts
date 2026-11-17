@@ -81,6 +81,31 @@ export type RecordUsageInput = {
   cacheReadTokens?: number;
   requests?: number;
   now?: number;
+  /**
+   * admit() 发还的预留。结算按（实际 - 预留）差量写回预留所在日/模型的同一行，
+   * 上游失败的调用以全零实际值调用即可释放预留。
+   */
+  reservation?: QuotaReservation;
+};
+
+/** admit() 预留在账本中的一段额度：1 次请求 + 估计输入 + 声明的最大输出。 */
+export type QuotaReservation = {
+  userId: string;
+  day: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type AdmitUsageInput = {
+  userId: string;
+  isAdmin: boolean;
+  model: string;
+  /** 请求体字符数，用于估计输入 token 预留。 */
+  requestChars?: number;
+  /** 客户端声明的 max_tokens/max_completion_tokens；缺省时按默认输出预留。 */
+  maxOutputTokens?: number;
+  now?: number;
 };
 
 export type UsageLedgerRow = {
@@ -133,6 +158,14 @@ export type QuotaStorage = {
     monthPrefix: string,
     userId?: string,
   ) => Promise<UsageLedgerRow[]>;
+  /**
+   * 串行化同一用户的准入判定：PG 实现对用户配额行 FOR UPDATE，
+   * 内存实现按用户排队。回调内的读改写对并发 admit 原子可见。
+   */
+  withUserQuotaLock: <T>(
+    userId: string,
+    fn: (locked: QuotaStorage) => Promise<T>,
+  ) => Promise<T>;
 };
 
 export type QuotaService = {
@@ -141,6 +174,11 @@ export type QuotaService = {
     isAdmin: boolean,
     now?: number,
   ) => Promise<void>;
+  /**
+   * 原子准入：串行检查配额后把本次调用的预留量立即写进账本，
+   * 并发的 admit 不可能放行超出上限的调用。返回预留用于结算或释放。
+   */
+  admit: (input: AdmitUsageInput) => Promise<QuotaReservation | null>;
   recordUsage: (input: RecordUsageInput) => Promise<void>;
   getQuota: (userId: string) => Promise<UserQuotaRecord | null>;
   setQuota: (input: SetUserQuotaInput) => Promise<UserQuotaRecord>;
@@ -154,6 +192,9 @@ export type QuotaService = {
 };
 
 const MAX_PG_INT32 = 2_147_483_647;
+
+/** 请求未声明输出上限时的准入预留量；声明了 max_tokens 则以声明值为准。 */
+const DEFAULT_RESERVED_OUTPUT_TOKENS = 8192;
 
 function formatCount(value: number): string {
   return value.toLocaleString("en-US");
@@ -488,14 +529,28 @@ export function createPgQuotaStorage(database: Database): QuotaStorage {
         .where(condition);
       return rows;
     },
+
+    async withUserQuotaLock(userId, fn) {
+      return database.transaction(async (tx) => {
+        /*
+         * 锁住用户配额行，把该用户所有 admit 的判定串行化。
+         * 行不存在说明没有限额，也就没有需要竞争的额度。
+         */
+        await tx.execute(
+          sql`SELECT 1 FROM ${userQuotas} WHERE ${userQuotas.userId} = ${userId} FOR UPDATE`,
+        );
+        return fn(createPgQuotaStorage(tx as unknown as Database));
+      });
+    },
   };
 }
 
 export function createMemoryQuotaStorage(): QuotaStorage {
   const quotas = new Map<string, UserQuotaRecord>();
   const ledger = new Map<string, UsageLedgerRow>();
+  const admissionLocks = new Map<string, Promise<void>>();
 
-  return {
+  const storage: QuotaStorage = {
     async getQuota(userId) {
       const row = quotas.get(userId);
       return row ? { ...row } : null;
@@ -554,7 +609,26 @@ export function createMemoryQuotaStorage(): QuotaStorage {
       }
       return result;
     },
+
+    async withUserQuotaLock(userId, fn) {
+      const previous = admissionLocks.get(userId) ?? Promise.resolve();
+      let release = () => {};
+      const current = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      admissionLocks.set(
+        userId,
+        previous.then(() => current),
+      );
+      await previous;
+      try {
+        return await fn(storage);
+      } finally {
+        release();
+      }
+    },
   };
+  return storage;
 }
 
 export function createQuotaService(storage: QuotaStorage): QuotaService {
@@ -584,15 +658,105 @@ export function createQuotaService(storage: QuotaStorage): QuotaService {
       }
     },
 
+    async admit(input) {
+      const userId = input.userId.trim();
+      if (!userId) return null;
+      const model = input.model.trim() || "unknown";
+      const now = input.now ?? Date.now();
+      const { day, month } = utcDateParts(now);
+      return storage.withUserQuotaLock(userId, async (locked) => {
+        const quota = await locked.getQuota(userId);
+        if (!quota) return null;
+        if (input.isAdmin && quota.bypassAdmin) return null;
+        if (
+          quota.dailyRequestLimit === null &&
+          quota.dailyTokenLimit === null &&
+          quota.monthlyTokenLimit === null
+        ) {
+          return null;
+        }
+        const rows = await locked.listUsageInMonth(month, userId);
+        const usage = aggregateUsageRows(rows, day);
+        /*
+         * 判定口径与 checkAdmission 一致（committed ≥ 上限即拒）。在途调用的
+         * 预留已作为账本行提交，committed usage 本身就含它们；同一锁内读写，
+         * 并发 admit 必然看到彼此刚占走的额度，不会双双放行。
+         */
+        const decision = evaluateQuotaAdmission({
+          quota,
+          isAdmin: input.isAdmin,
+          usage,
+          now,
+        });
+        if (!decision.allowed) {
+          throw new QuotaExceededError(decision);
+        }
+        /*
+         * 立即把预留记进账本：1 次请求 + 估计输入 + 声明的最大输出，各项只占到
+         * 剩余额度为止。声明了 max_tokens 的调用最坏情况就是预留本身，token
+         * 上限成为真硬上限；未声明的调用超出默认预留的部分仍只在结算时入账，
+         * 超限幅度被在途调用数限制住而不再无界。
+         */
+        let headroom = Number.MAX_SAFE_INTEGER;
+        if (quota.dailyTokenLimit !== null) {
+          headroom = Math.min(
+            headroom,
+            quota.dailyTokenLimit - usage.daily.totalTokens,
+          );
+        }
+        if (quota.monthlyTokenLimit !== null) {
+          headroom = Math.min(
+            headroom,
+            quota.monthlyTokenLimit - usage.monthly.totalTokens,
+          );
+        }
+        headroom = Math.max(0, headroom);
+        const reservedInput = Math.min(
+          Math.ceil(Math.max(0, input.requestChars ?? 0) / 4),
+          headroom,
+        );
+        const reservedOutput = Math.min(
+          input.maxOutputTokens !== undefined
+            ? clampNonNegativeInt(input.maxOutputTokens)
+            : DEFAULT_RESERVED_OUTPUT_TOKENS,
+          Math.max(0, headroom - reservedInput),
+        );
+        await locked.incrementUsage({
+          userId,
+          day,
+          model,
+          inputTokens: reservedInput,
+          outputTokens: reservedOutput,
+          cacheReadTokens: 0,
+          requests: 1,
+          updatedAt: new Date(now),
+        });
+        return {
+          userId,
+          day,
+          model,
+          inputTokens: reservedInput,
+          outputTokens: reservedOutput,
+        };
+      });
+    },
+
     async recordUsage(input) {
       const userId = input.userId.trim();
       if (!userId) return;
-      const model = input.model.trim() || "unknown";
-      const inputTokens = clampNonNegativeInt(input.inputTokens);
-      const outputTokens = clampNonNegativeInt(input.outputTokens);
+      const reservation = input.reservation;
+      const model = (reservation?.model ?? input.model).trim() || "unknown";
+      const inputTokens =
+        clampNonNegativeInt(input.inputTokens) -
+        (reservation?.inputTokens ?? 0);
+      const outputTokens =
+        clampNonNegativeInt(input.outputTokens) -
+        (reservation?.outputTokens ?? 0);
       const cacheReadTokens = clampNonNegativeInt(input.cacheReadTokens ?? 0);
       const requests =
-        input.requests === undefined ? 1 : clampNonNegativeInt(input.requests);
+        (input.requests === undefined
+          ? 1
+          : clampNonNegativeInt(input.requests)) - (reservation ? 1 : 0);
       if (
         inputTokens === 0 &&
         outputTokens === 0 &&
@@ -602,7 +766,7 @@ export function createQuotaService(storage: QuotaStorage): QuotaService {
         return;
       }
       const nowMs = input.now ?? Date.now();
-      const { day } = utcDateParts(nowMs);
+      const day = reservation?.day ?? utcDateParts(nowMs).day;
       await storage.incrementUsage({
         userId,
         day,

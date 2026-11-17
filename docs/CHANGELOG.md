@@ -1,5 +1,11 @@
 ## 未发版
 
+- 修复群聊私密记忆泄露：个人记忆装配改经 `createPersonalMemoryLoader`，`isGroupChat`/`threadId` 不再被丢弃；加源码门禁防回归。
+
+- 配额上限原子化：`QuotaService.admit` 按用户配额行串行准入并把预留量先写进账本，并发请求不再双双放行；结算按差量写回，失败调用零结算释放预留，记账失败改结构化告警。
+
+- DSH 孤儿执行收尾：恢复接管的回合在内核会话空闲、内核持续不可达或恢复连续失败约 5 分钟时按 `interrupted` 收尾，残留 `dispatching` 操作统一落 `outcome_unknown`，不再卡部署排空。
+
 ## 0.1.154
 
 - 版本统一为 0.1.154，Android versionCode 336；Windows 外壳指纹（`7314f9105596bec5`）不变，无需重新安装；PC 客户端代码指纹更新为 `d17e97707583d003`。

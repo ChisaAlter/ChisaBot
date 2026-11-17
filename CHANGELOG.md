@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **群聊私密记忆隔离修复**：`server/src/index.ts` 的个人记忆装配改经 `createPersonalMemoryLoader` 注入，`isGroupChat`/`threadId` 可见性参数不再被丢弃——此前群聊/IM 群回合会按私聊加载 `private`/`bot_private` 记忆并注入模型上下文。新增源码门禁防止再次绕过该装配入口。
+- **配额硬上限原子化**：`QuotaService` 新增 `admit` 原子准入——PostgreSQL 按用户配额行 `FOR UPDATE` 串行化（内存实现按用户排队），准入即把「1 次请求 + 估计输入 + 声明的最大输出」预留写进用量账本、各项以剩余额度封顶，并发请求不再出现 check-then-record 双双放行；声明 `max_tokens` 的调用 token 上限成为真硬上限，未声明按默认输出预留。结算按（实际 − 预留）差量写回，上游失败/未发起的调用以零结算释放预留；异步记账失败由静默吞掉改为结构化告警日志。
+- **DSH 孤儿执行收尾**：恢复接管的回合在内核会话已空闲且无等待决议时按 `interrupted` 收尾（原来在 `client.wait` 上无界空转、永远占着观察位）；恢复阶段连接内核持续不可达超过约 5 分钟同样收尾；恢复 sweep 对连续失败约 20 轮（≈5 分钟）的 run 兜底置 `interrupted`。所有 interrupted 收尾路径将该 run 仍停在 `dispatching` 的工具操作统一落 `outcome_unknown`（`waiting_approval` 保持可恢复），不再阻塞部署排空。
+
 ## 0.1.154 — 2026-11-16
 
 全端版本 0.1.154，Android versionCode 336。将 Electron 桌面客户端改造为「内置本地前端 + 仅向服务器拉取数据（版本高者优先）」架构（CB-129 · DESIGN §137），PC 客户端代码指纹更新为 `d17e97707583d003`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新，无需重新安装；无需数据库迁移。

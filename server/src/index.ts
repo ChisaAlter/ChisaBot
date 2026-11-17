@@ -275,6 +275,10 @@ import {
 import { createLocalConversations } from "./local-conversations";
 import { createAutoMagpieService } from "./magpie";
 import { createMemoryNotes } from "./memory-notes/service";
+import {
+  createPersonalMemoryLoader,
+  type LoadPersonalMemory,
+} from "./memory/tools";
 import { createModelCatalogService } from "./model-catalog";
 import {
   resolveScopedAgentModelConnection,
@@ -1878,11 +1882,13 @@ const chisaSkills = createChisaSkills({
 });
 // 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
 const loadPersonalMemoryForActor =
-  (ownerUserId: string) => async (botId: string, question?: string) =>
-    (
+  (ownerUserId: string): LoadPersonalMemory =>
+  async (botId, question, options) => {
+    const personalMemory = createPersonalMemoryLoader(memoryNotes, ownerUserId);
+    return (
       await Promise.all([
         currentDateContext(),
-        memoryNotes.context(ownerUserId, botId, question).catch(() => ""),
+        personalMemory(botId, question, options).catch(() => ""),
         chisaSkills.catalog(ownerUserId, question).catch(() => ""),
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
@@ -1892,6 +1898,7 @@ const loadPersonalMemoryForActor =
     )
       .filter(Boolean)
       .join("\n\n");
+  };
 // Follow-ups a Bot schedules for itself, on the shared work queue. See agents/wake-up.ts.
 const wakeUpStore = createWakeUpStore(database, { auditStore: bootAuditStore });
 
@@ -2649,6 +2656,9 @@ const dshRecoverySweep =
           await recoverConversations({
             backend: localBackend,
             journal: createDshRunJournal(database),
+            settleInterrupted: async (record) => {
+              await dshToolGateway?.abandonRun(record.run_id);
+            },
             buildAgentFor,
           });
         } finally {
@@ -3587,7 +3597,7 @@ const actorAgentResolver = createActorAgentResolver({
   resolveConnection: resolveRuntimeConnection,
   resolveConnectionForAgent: resolveRuntimeConnectionForAgent,
   quota: {
-    checkAdmission: quotaService.checkAdmission,
+    admit: quotaService.admit,
     recordUsage: quotaService.recordUsage,
   },
   describeImageForActor: (actorId) => async (agentId, part) => {

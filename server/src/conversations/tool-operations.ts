@@ -168,6 +168,13 @@ export function createToolOperationStore(database: Database) {
         [id],
       );
     },
+    async markRunOutcomeUnknown(runId: string) {
+      await sql.unsafe(
+        `UPDATE chisabot_tool_operations SET status='outcome_unknown',updated_at=now()
+        WHERE run_id=$1 AND status='dispatching'`,
+        [runId],
+      );
+    },
     async listUnknown(
       owner: string,
       threadId: string,

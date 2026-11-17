@@ -747,5 +747,67 @@ class FinishedAgent extends AbstractAgent {
         }
       }
     }, 30_000);
+
+    test("orphan run that keeps failing to reattach settles interrupted and its dispatching effects become outcome_unknown", async () => {
+      const journal = createDshRunJournal(database);
+      const operations = createToolOperationStore(database);
+      const gateway = createDshToolGateway(operations, journal);
+      const threadId = `${owner}-orphan`,
+        runId = randomUUID(),
+        messageId = randomUUID(),
+        sessionId = `session-${randomUUID()}`,
+        bindingId = `binding-${randomUUID()}`;
+      const input: RunAgentInput = {
+        threadId,
+        runId,
+        messages: [{ id: messageId, role: "user", content: "orphaned" }],
+        state: {},
+        tools: [],
+        context: [],
+      };
+      await journal.accept({
+        thread_id: threadId,
+        run_id: runId,
+        owner_user_id: owner,
+        bot_id: bot,
+        session_id: sessionId,
+        binding_revision: 1,
+        generation: "dead-generation",
+        baseline: 0,
+        input,
+        initiator: { kind: "person" },
+        request_id: messageId,
+      });
+      await database.$client.unsafe(
+        `INSERT INTO chisabot_tool_operations(id,owner_user_id,binding_id,session_id,run_id,call_id,turn_number,step_number,tool_name,args,status)
+         VALUES($1,$2,$3,$4,$5,$6,0,0,'device_run_shell','{}'::jsonb,'dispatching')`,
+        [randomUUID(), owner, bindingId, sessionId, runId, randomUUID()],
+      );
+      const settled: string[] = [];
+      const recovery = {
+        backend,
+        journal,
+        settleInterrupted: async (record: { run_id: string }) => {
+          settled.push(record.run_id);
+          await gateway.abandonRun(record.run_id);
+        },
+        buildAgentFor: async () => {
+          throw new Error("host unreachable");
+        },
+      };
+      // 连续失败未达上限前，观察位保持 pending，不做乐观收尾。
+      for (let attempt = 0; attempt < 19; attempt++) {
+        await recoverConversations(recovery);
+        expect((await journal.get(threadId, runId))?.status).toBe("admitting");
+      }
+      await recoverConversations(recovery);
+      expect((await journal.get(threadId, runId))?.status).toBe("interrupted");
+      const [operation] = await database.$client.unsafe<{ status: string }[]>(
+        "SELECT status FROM chisabot_tool_operations WHERE run_id=$1",
+        [runId],
+      );
+      expect(operation?.status).toBe("outcome_unknown");
+      expect(settled).toContain(runId);
+    }, 30_000);
   },
 );

@@ -4,7 +4,7 @@ import {
   PlanModel,
   type PlanModelConfig,
 } from "../agents/plan-model";
-import { QuotaExceededError } from "../quotas/service";
+import { QuotaExceededError, type QuotaReservation } from "../quotas/service";
 import {
   buildQuotaExceededResponse,
   type ModelProxyQuotaOptions,
@@ -52,6 +52,8 @@ export function createPlanModelProxy(
       model?: unknown;
       messages?: unknown;
       tools?: unknown;
+      max_tokens?: unknown;
+      max_completion_tokens?: unknown;
     };
     if (!Array.isArray(request.messages) || !Array.isArray(request.tools ?? []))
       throw new Error("Invalid plan model request.");
@@ -128,20 +130,6 @@ export function createPlanModelProxy(
               }),
       };
     });
-    if (options?.quota) {
-      try {
-        await options.quota.checkAdmission(
-          options.quota.userId,
-          options.quota.isAdmin ?? false,
-          nowFn(),
-        );
-      } catch (error) {
-        if (error instanceof QuotaExceededError) {
-          return buildQuotaExceededResponse(error);
-        }
-        throw error;
-      }
-    }
     const bodyText = JSON.stringify(body ?? {});
     const requestChars = options?.estimatePromptChars
       ? Math.max(0, options.estimatePromptChars(bodyText))
@@ -150,13 +138,71 @@ export function createPlanModelProxy(
       typeof request.model === "string" && request.model.trim()
         ? request.model.trim()
         : model.modelId;
+    const declaredMaxOutput = [
+      request.max_tokens,
+      request.max_completion_tokens,
+    ].find(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value) && value > 0,
+    );
+
+    let reservation: QuotaReservation | null = null;
+    if (options?.quota) {
+      try {
+        reservation = await options.quota.admit({
+          userId: options.quota.userId,
+          isAdmin: options.quota.isAdmin ?? false,
+          model: modelName,
+          requestChars,
+          maxOutputTokens: declaredMaxOutput,
+          now: nowFn(),
+        });
+      } catch (error) {
+        if (error instanceof QuotaExceededError) {
+          return buildQuotaExceededResponse(error);
+        }
+        throw error;
+      }
+    }
+    const releaseReservation = () => {
+      const quota = options?.quota;
+      if (!reservation || !quota) return;
+      const released = reservation;
+      reservation = null;
+      Promise.resolve(
+        quota.recordUsage({
+          userId: quota.userId,
+          model: released.model,
+          inputTokens: 0,
+          outputTokens: 0,
+          requests: 0,
+          now: nowFn(),
+          reservation: released,
+        }),
+      ).catch((error) => {
+        console.warn(
+          JSON.stringify({
+            type: "quota-reservation-release-failed",
+            userId: quota.userId,
+            model: released.model,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
+    };
 
     const abort = new AbortController();
-    const result = await model.doStream({
-      prompt,
-      tools,
-      abortSignal: AbortSignal.any([signal, requestSignal, abort.signal]),
-    });
+    let result: Awaited<ReturnType<PlanLanguageModel["doStream"]>>;
+    try {
+      result = await model.doStream({
+        prompt,
+        tools,
+        abortSignal: AbortSignal.any([signal, requestSignal, abort.signal]),
+      });
+    } catch (error) {
+      releaseReservation();
+      throw error;
+    }
     const reader = result.stream.getReader();
     const encoder = new TextEncoder();
     const id = crypto.randomUUID();
@@ -167,7 +213,8 @@ export function createPlanModelProxy(
       inputTokens?: { total?: number; cacheRead?: number };
       outputTokens?: { total?: number };
     }) => {
-      if (recorded || !options?.quota) return;
+      const quota = options?.quota;
+      if (recorded || !quota) return;
       recorded = true;
       const rawIn = usage?.inputTokens?.total;
       const rawOut = usage?.outputTokens?.total;
@@ -186,18 +233,29 @@ export function createPlanModelProxy(
         rawCache >= 0
           ? Math.floor(rawCache)
           : 0;
+      const settled = reservation;
+      reservation = null;
       Promise.resolve(
-        options.quota.recordUsage({
-          userId: options.quota.userId,
+        quota.recordUsage({
+          userId: quota.userId,
           model: modelName,
           inputTokens: finalIn,
           outputTokens: finalOut,
           cacheReadTokens: finalCache,
           requests: 1,
           now: nowFn(),
+          ...(settled ? { reservation: settled } : {}),
         }),
-      ).catch(() => {
-        // 异步记账失败不阻塞计划模型流式响应。
+      ).catch((error) => {
+        // 异步记账失败不阻塞计划模型流式响应，但必须可观测。
+        console.warn(
+          JSON.stringify({
+            type: "quota-usage-record-failed",
+            userId: quota.userId,
+            model: modelName,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
       });
     };
 

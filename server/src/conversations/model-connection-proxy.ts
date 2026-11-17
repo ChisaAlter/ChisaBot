@@ -5,17 +5,24 @@ import {
   modelPoolId,
 } from "../model-settings";
 import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
-import { QuotaExceededError, type RecordUsageInput } from "../quotas/service";
+import {
+  QuotaExceededError,
+  type QuotaReservation,
+  type RecordUsageInput,
+} from "../quotas/service";
 import type { ModelKeyPool, ModelPoolKey } from "./key-pool";
 
 export type ModelProxyQuotaOptions = {
   userId: string;
   isAdmin?: boolean;
-  checkAdmission: (
-    userId: string,
-    isAdmin: boolean,
-    now?: number,
-  ) => Promise<void>;
+  admit: (input: {
+    userId: string;
+    isAdmin: boolean;
+    model: string;
+    requestChars?: number;
+    maxOutputTokens?: number;
+    now?: number;
+  }) => Promise<QuotaReservation | null>;
   recordUsage: (input: RecordUsageInput) => Promise<void>;
 };
 
@@ -64,6 +71,7 @@ function createUsageTracker(input: {
   model: string;
   requestChars: number;
   quota: ModelProxyQuotaOptions;
+  reservation: QuotaReservation | null;
   nowFn: () => number;
 }) {
   let inputTokens: number | undefined;
@@ -242,9 +250,18 @@ function createUsageTracker(input: {
           cacheReadTokens,
           requests: 1,
           now: input.nowFn(),
+          ...(input.reservation ? { reservation: input.reservation } : {}),
         }),
-      ).catch(() => {
-        // 流结束后异步记账失败不能打断已返回给调用方的流。
+      ).catch((error) => {
+        // 流结束后异步记账失败不能打断已返回给调用方的流，但必须可观测。
+        console.warn(
+          JSON.stringify({
+            type: "quota-usage-record-failed",
+            userId: input.quota.userId,
+            model: input.model,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
       });
     },
   };
@@ -292,7 +309,12 @@ export function createModelConnectionProxy(
         { error: "Model request is required." },
         { status: 400 },
       );
-    const request = body as { model?: unknown; tools?: unknown };
+    const request = body as {
+      model?: unknown;
+      tools?: unknown;
+      max_tokens?: unknown;
+      max_completion_tokens?: unknown;
+    };
     if (typeof request.model !== "string" || !models.has(request.model))
       return Response.json(
         { error: "This model was not selected for the run." },
@@ -319,13 +341,29 @@ export function createModelConnectionProxy(
     const combinedSignal = AbortSignal.any([runSignal, requestSignal]);
     combinedSignal.throwIfAborted();
 
+    const bodyText = JSON.stringify(body);
+    const requestChars = options?.estimatePromptChars
+      ? Math.max(0, options.estimatePromptChars(bodyText))
+      : bodyText.length;
+    const declaredMaxOutput = [
+      request.max_tokens,
+      request.max_completion_tokens,
+    ].find(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value) && value > 0,
+    );
+
+    let reservation: QuotaReservation | null = null;
     if (options?.quota) {
       try {
-        await options.quota.checkAdmission(
-          options.quota.userId,
-          options.quota.isAdmin ?? false,
-          nowFn(),
-        );
+        reservation = await options.quota.admit({
+          userId: options.quota.userId,
+          isAdmin: options.quota.isAdmin ?? false,
+          model: request.model,
+          requestChars,
+          maxOutputTokens: declaredMaxOutput,
+          now: nowFn(),
+        });
       } catch (error) {
         if (error instanceof QuotaExceededError) {
           return buildQuotaExceededResponse(error);
@@ -333,8 +371,33 @@ export function createModelConnectionProxy(
         throw error;
       }
     }
+    const releaseReservation = () => {
+      const quota = options?.quota;
+      if (!reservation || !quota) return;
+      const released = reservation;
+      reservation = null;
+      Promise.resolve(
+        quota.recordUsage({
+          userId: quota.userId,
+          model: released.model,
+          inputTokens: 0,
+          outputTokens: 0,
+          requests: 0,
+          now: nowFn(),
+          reservation: released,
+        }),
+      ).catch((error) => {
+        console.warn(
+          JSON.stringify({
+            type: "quota-reservation-release-failed",
+            userId: quota.userId,
+            model: released.model,
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      });
+    };
 
-    const bodyText = JSON.stringify(body);
     const stickyKey = options?.stickyKey ?? "default";
 
     const sendWithKey = (key?: string) =>
@@ -355,73 +418,78 @@ export function createModelConnectionProxy(
       });
 
     let response: Response | null = null;
-    if (useKeyPool && options?.keyPool) {
-      const pool = options.keyPool;
-      pool.setPool(poolId, poolCandidates);
+    try {
+      if (useKeyPool && options?.keyPool) {
+        const pool = options.keyPool;
+        pool.setPool(poolId, poolCandidates);
 
-      const exhaustedResponse = () => {
-        const now = nowFn();
-        const check = pool.selectKey(poolId, stickyKey, now);
-        const retryAfterSeconds =
-          check.nextAvailableAt !== null
-            ? Math.max(1, Math.ceil((check.nextAvailableAt - now) / 1000))
-            : 60;
-        return Response.json(
-          {
-            error:
-              "当前所有模型 API Key 均处于冷却中，请稍后重试或切换备选模型。",
-            code: "key_pool_exhausted",
-            retryAfterSeconds,
-          },
-          {
-            status: 429,
-            headers: {
-              "cache-control": "no-store",
-              "retry-after": String(retryAfterSeconds),
+        const exhaustedResponse = () => {
+          const now = nowFn();
+          const check = pool.selectKey(poolId, stickyKey, now);
+          const retryAfterSeconds =
+            check.nextAvailableAt !== null
+              ? Math.max(1, Math.ceil((check.nextAvailableAt - now) / 1000))
+              : 60;
+          return Response.json(
+            {
+              error:
+                "当前所有模型 API Key 均处于冷却中，请稍后重试或切换备选模型。",
+              code: "key_pool_exhausted",
+              retryAfterSeconds,
             },
-          },
-        );
-      };
+            {
+              status: 429,
+              headers: {
+                "cache-control": "no-store",
+                "retry-after": String(retryAfterSeconds),
+              },
+            },
+          );
+        };
 
-      for (let attempt = 0; attempt < poolCandidates.length; attempt++) {
-        const selection = pool.selectKey(poolId, stickyKey, nowFn());
-        if (!selection.key) {
+        for (let attempt = 0; attempt < poolCandidates.length; attempt++) {
+          const selection = pool.selectKey(poolId, stickyKey, nowFn());
+          if (!selection.key) {
+            return exhaustedResponse();
+          }
+          const candidateResponse = await sendWithKey(selection.key.apiKey);
+          if (RETRYABLE_KEY_STATUSES.has(candidateResponse.status)) {
+            await candidateResponse.body?.cancel().catch(() => {});
+            pool.reportResult(
+              poolId,
+              selection.key.id,
+              candidateResponse.status,
+              candidateResponse.headers,
+              nowFn(),
+            );
+            continue;
+          }
+          if (candidateResponse.ok) {
+            pool.reportResult(
+              poolId,
+              selection.key.id,
+              candidateResponse.status,
+              candidateResponse.headers,
+              nowFn(),
+            );
+          }
+          response = candidateResponse;
+          break;
+        }
+
+        if (!response) {
           return exhaustedResponse();
         }
-        const candidateResponse = await sendWithKey(selection.key.apiKey);
-        if (RETRYABLE_KEY_STATUSES.has(candidateResponse.status)) {
-          await candidateResponse.body?.cancel().catch(() => {});
-          pool.reportResult(
-            poolId,
-            selection.key.id,
-            candidateResponse.status,
-            candidateResponse.headers,
-            nowFn(),
-          );
-          continue;
-        }
-        if (candidateResponse.ok) {
-          pool.reportResult(
-            poolId,
-            selection.key.id,
-            candidateResponse.status,
-            candidateResponse.headers,
-            nowFn(),
-          );
-        }
-        response = candidateResponse;
-        break;
+      } else {
+        const key =
+          connection.useApiKey === false
+            ? undefined
+            : (connection.apiKey ?? poolCandidates[0]?.apiKey);
+        response = await sendWithKey(key);
       }
-
-      if (!response) {
-        return exhaustedResponse();
-      }
-    } else {
-      const key =
-        connection.useApiKey === false
-          ? undefined
-          : (connection.apiKey ?? poolCandidates[0]?.apiKey);
-      response = await sendWithKey(key);
+    } catch (error) {
+      releaseReservation();
+      throw error;
     }
 
     const headers = new Headers({ "cache-control": "no-store" });
@@ -431,6 +499,7 @@ export function createModelConnectionProxy(
     }
 
     if (!options?.quota || !response.ok) {
+      releaseReservation();
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -438,15 +507,14 @@ export function createModelConnectionProxy(
       });
     }
 
-    const requestChars = options.estimatePromptChars
-      ? Math.max(0, options.estimatePromptChars(bodyText))
-      : bodyText.length;
     const tracker = createUsageTracker({
       model: request.model,
       requestChars,
       quota: options.quota,
+      reservation,
       nowFn,
     });
+    reservation = null;
 
     if (!response.body) {
       tracker.finalize();

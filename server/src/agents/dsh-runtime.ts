@@ -427,6 +427,7 @@ export class DshRuntimeAgent extends AbstractAgent {
             input.runId,
             "interrupted",
           );
+          await this.configuration.binding.gateway.abandonRun(input.runId);
           throw new Error(
             "执行内核已重启，已恢复保存的输出。已完成的操作保留；未确认的操作需要核对后再继续。",
           );
@@ -439,6 +440,7 @@ export class DshRuntimeAgent extends AbstractAgent {
             input.runId,
             "interrupted",
           );
+          await this.configuration.binding.gateway.abandonRun(input.runId);
           throw new Error("这段对话已被编辑，旧版本的执行不能写入当前对话。");
         }
         const binding = await this.configuration.binding.bindings.getOrCreate({
@@ -754,7 +756,27 @@ export class DshRuntimeAgent extends AbstractAgent {
               } as BaseEvent);
             }
             let delay = 250;
+            const reconnectStartedAt = Date.now();
             while (!follow.signal.aborted) {
+              /*
+               * 恢复接管的回合等不到完成事件就是死信：宿主机 5 分钟都不可达
+               * 时按 interrupted 收尾，否则观察位会永远占着、排空被卡死。
+               * 前台回合不受此限——它的执行主人可以随时手动停止。
+               */
+              if (recovered && Date.now() - reconnectStartedAt > 5 * 60_000) {
+                this.executionSettled = true;
+                await this.configuration.binding.journal?.status(
+                  input.threadId,
+                  input.runId,
+                  "interrupted",
+                );
+                await this.configuration.binding.gateway.abandonRun(
+                  input.runId,
+                );
+                throw new Error(
+                  "执行内核持续不可达，本轮按未完成收尾。已完成的操作保留；未确认的操作需要核对后再继续。",
+                );
+              }
               try {
                 // The launch token may change when the Host restarts; never reuse its old cookie.
                 const address = JSON.parse(
@@ -776,6 +798,9 @@ export class DshRuntimeAgent extends AbstractAgent {
                       input.threadId,
                       input.runId,
                       "interrupted",
+                    );
+                    await this.configuration.binding.gateway.abandonRun(
+                      input.runId,
                     );
                   }
                   throw new Error(
@@ -947,6 +972,38 @@ export class DshRuntimeAgent extends AbstractAgent {
             await reconnect();
             result = { reason: "timeout" };
           }
+          if (result.reason === "timeout" && recovered) {
+            /*
+             * 进程重启接管的回合只有在内核里还留着在途执行时才值得继续等。
+             * 会话已空闲（prompt 随旧进程消失，也没有等待中的决议）意味着
+             * 永远等不到完成事件——drain 会被卡死。按 interrupted 收尾，
+             * 并把仍停在 dispatching 的操作统一落 outcome_unknown。
+             */
+            let alive = true;
+            try {
+              const status = await client.health();
+              const session = status.sessions.find(
+                (x) => x.sessionId === binding.sessionId,
+              );
+              alive = Boolean(
+                session && (session.state !== "idle" || session.waiting),
+              );
+            } catch {
+              // 探活失败按存活处理；下一次 wait 超时会重新检查。
+            }
+            if (!alive) {
+              this.executionSettled = true;
+              await this.configuration.binding.journal?.status(
+                input.threadId,
+                input.runId,
+                "interrupted",
+              );
+              await this.configuration.binding.gateway.abandonRun(input.runId);
+              throw new Error(
+                "执行内核中已没有这一轮的在途执行，本轮按未完成收尾。已完成的操作保留；未确认的操作需要核对后再继续。",
+              );
+            }
+          }
         } while (result.reason === "timeout");
         if (active.abort.signal.aborted)
           await this.configuration.binding.gateway.whenIdle(
@@ -1072,6 +1129,9 @@ export class DshRuntimeAgent extends AbstractAgent {
                   input.threadId,
                   input.runId,
                   "interrupted",
+                );
+                await this.configuration.binding.gateway.abandonRun(
+                  input.runId,
                 );
               }
             } catch {
