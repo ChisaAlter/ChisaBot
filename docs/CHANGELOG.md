@@ -3,7 +3,7 @@
 - 输入框裸网址识别：网址后紧跟中文等非 ASCII 文字时，下划线与可点范围不再把尾巴吞进链接（`bun patch` 修正 `prompt-area@0.7.1` 的 URL 匹配字符集，回归测试 `app/tests/composer-link-boundary.test.tsx`）。
 - 聊天浮动面与 PC 窗口按钮进玻璃面名单：「正在处理」状态胶囊、确认卡 / 提问卡 / 核对卡 / 交接提示等直接浮在壁纸上的元素此前不在 `GLASS_SURFACE_SELECTOR`，吃不到 `--lg-*` 釉面变量，只能落到 `:root` 烘焙的 `--glass-strong` 别名（深色 = 不透明 navy）或被 `.glass-shell` 薄纱化的 `--glass-3`（≈透明）；现统一为与气泡 / 侧栏同档的 `--lg-surface-strong` 釉面（`.rs-capsule` 等带持续动画的胶囊不加 backdrop-filter），`perf-noblur` / `resize-pause` 不透明兜底同步扩充。
 - 聊天滚动：机器人开始回答时不再「整段往上挪一下」——「思考中」/ 干活 / 暂停 /「已停止」状态行包进固定 38px 槽（`chat-status-slot`，DESIGN.md §94.8），胶囊出现、换样、收起不再改列高；代价是末条消息下常驻一行状态位空白。「已停止」卡更高的部分仍会长列。
-- PC 客户端代码指纹更新为 `72c326725a367466`（外壳指纹不变）。
+- 全端发版：PC / macOS / Android 同步 `0.1.157`（versionCode 337），PC 客户端代码指纹 `72c326725a367466`，外壳指纹不变。
 
 ## 0.1.156
 

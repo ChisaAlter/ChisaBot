@@ -3,8 +3,9 @@
 ChisaBot 有两种「发布」：
 
 1. **服务器 / 网页上线**：每个合并的 PR 都走，靠宿主机更新器换镜像。网页、PC 窗口里的网页、Android 的网页页面都随之更新。
-2. **客户端发版**（PC + Android）：只在 `pc/` 或 `android/` 有改动、或需要统一版本号时做，打 `v0.1.x` 标签，出 GitHub Release，
-   更新各自的更新源。
+2. **客户端发版**（PC + Android）：打 `v0.1.x` 标签，出 GitHub Release，更新各自的更新源。
+   **每次发版都全端同步**（所有者要求，2026-11-17）：服务器版本号提升的同时，PC / macOS / Android
+   三处版本号同步到同一版本、versionCode +1、打标签出客户端包，不再做「只升根 package.json」的服务器专属发版。
 
 原则见 [decisions.md](decisions.md) §2：一功能一 PR、合并前 rebase、**绝不强推 main**、「做好一版就发」（验证过就合并 / 部署 / 发版，
 不再逐项等确认，[ADR-0008](adr/0008-pr-per-feature-serial-deploy.md)）。版本记录见 [CHANGELOG](CHANGELOG.md)。
