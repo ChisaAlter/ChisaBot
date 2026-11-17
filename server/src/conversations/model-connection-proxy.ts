@@ -1,4 +1,5 @@
 import { normalizeModelBaseUrl } from "../../../shared/model-base-url";
+import { reasonWithoutStatement } from "../db/query-failure";
 import {
   buildConnectionPoolKeys,
   type ModelConnectionPooledKeyRuntime,
@@ -259,7 +260,7 @@ function createUsageTracker(input: {
             type: "quota-usage-record-failed",
             userId: input.quota.userId,
             model: input.model,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: reasonWithoutStatement(error),
           }),
         );
       });
@@ -392,7 +393,7 @@ export function createModelConnectionProxy(
             type: "quota-reservation-release-failed",
             userId: quota.userId,
             model: released.model,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: reasonWithoutStatement(error),
           }),
         );
       });

@@ -9652,6 +9652,58 @@ html.dark[data-palette="ruby"] {
   --focus-line: rgba(248, 113, 113, 0.7);
   --glass-tint: rgba(248, 113, 113, 0.1);
 }
+html[data-palette="stardust"] {
+  --accent-blue: #5d6f9e;
+  --accent-blue-ink: #4a5b85;
+  --accent-blue-soft: rgba(93, 111, 158, 0.14);
+  --accent-color: #5d6f9e;
+  --accent-soft: rgba(93, 111, 158, 0.14);
+  --ink-primary: #4a5b85;
+  --ink-primary-hover: #3d4d70;
+  --on-primary: #ffffff;
+  --focus: rgba(93, 111, 158, 0.24);
+  --focus-line: rgba(93, 111, 158, 0.6);
+  --glass-tint: rgba(93, 111, 158, 0.08);
+}
+html.dark[data-palette="stardust"] {
+  --accent-blue: #a9b8e6;
+  --accent-blue-ink: #bfcbee;
+  --accent-blue-soft: rgba(169, 184, 230, 0.2);
+  --accent-color: #a9b8e6;
+  --accent-soft: rgba(169, 184, 230, 0.2);
+  --ink-primary: #bfcbee;
+  --ink-primary-hover: #d8e0f6;
+  --on-primary: #0b1020;
+  --focus: rgba(169, 184, 230, 0.28);
+  --focus-line: rgba(169, 184, 230, 0.7);
+  --glass-tint: rgba(169, 184, 230, 0.1);
+}
+html[data-palette="nocturne"] {
+  --accent-blue: #4c63a8;
+  --accent-blue-ink: #3d5088;
+  --accent-blue-soft: rgba(76, 99, 168, 0.14);
+  --accent-color: #4c63a8;
+  --accent-soft: rgba(76, 99, 168, 0.14);
+  --ink-primary: #3d5088;
+  --ink-primary-hover: #32426f;
+  --on-primary: #ffffff;
+  --focus: rgba(76, 99, 168, 0.24);
+  --focus-line: rgba(76, 99, 168, 0.6);
+  --glass-tint: rgba(76, 99, 168, 0.08);
+}
+html.dark[data-palette="nocturne"] {
+  --accent-blue: #a9bdf2;
+  --accent-blue-ink: #c3d1f5;
+  --accent-blue-soft: rgba(169, 189, 242, 0.2);
+  --accent-color: #a9bdf2;
+  --accent-soft: rgba(169, 189, 242, 0.2);
+  --ink-primary: #c3d1f5;
+  --ink-primary-hover: #dbe4f9;
+  --on-primary: #0b1020;
+  --focus: rgba(169, 189, 242, 0.28);
+  --focus-line: rgba(169, 189, 242, 0.7);
+  --glass-tint: rgba(169, 189, 242, 0.1);
+}
 
 /* 2. 环境流光层、自定义壁纸层与容器层级（彻底消除祖先 animation 导致的 Chromium Backdrop Root 采样阻断） */
 .chisabot-ambient-orbs {
