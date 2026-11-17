@@ -1,6 +1,6 @@
 # ROADMAP（看板）
 
-## 当前状态（核对至 2026-11-17 · `v0.1.155`）
+## 当前状态（核对至 2026-11-17 · `v0.1.156`）
 
 ChisaBot 主线已完成以下核心工程闭环：
 
@@ -21,7 +21,7 @@ ChisaBot 主线已完成以下核心工程闭环：
 | [精简 Slim](https://github.com/ChisaAlter/ChisaBot/milestone/2)             | P1–P5 收敛为纯粹的中文私人助手（[slimming.md](slimming.md)）                    | P1–P4b、P6、P4c-1、`CHISABOT_EXTRAS` 精简、P5 废弃空表清理（CB-016 / 迁移 0068）及去上游印记收尾（CB-118）已完成                               |
 | [设备核心 Devices core](https://github.com/ChisaAlter/ChisaBot/milestone/3) | 设备编码工具、无界面节点、完全访问、本地编程代理                                | 编码工具、无界面节点、完全访问、本地 agent 与输入框按机器人权限已上线（云端 Claude Code 已随 CB-099 下线）                                     |
 | [成熟度 Maturity](https://github.com/ChisaAlter/ChisaBot/milestone/4)       | DSH 主内核、个人助理生产交付、连续操作体验与全站 UI/可靠性收敛                  | DSH 内核（CB-115）、聊天可靠性（CB-114）、个人助理交付（CB-116）、连续操作体验（CB-117）全部上线                                               |
-| [0.2.0 release](https://github.com/ChisaAlter/ChisaBot/milestone/5)         | 外部真实账号与跨端全量真机终验后发布 0.2.0                                      | `0.1.x` 已连续发布至 `v0.1.155`（服务器、Windows / macOS PC 与 Android 同步演进）；待所有者按需完成外部真实凭据与真机终验项（CB-017 / CB-034） |
+| [0.2.0 release](https://github.com/ChisaAlter/ChisaBot/milestone/5)         | 外部真实账号与跨端全量真机终验后发布 0.2.0                                      | `0.1.x` 已连续发布至 `v0.1.156`（服务器、Windows / macOS PC 与 Android 同步演进）；待所有者按需完成外部真实凭据与真机终验项（CB-017 / CB-034） |
 
 ---
 
