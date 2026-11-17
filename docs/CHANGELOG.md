@@ -1,3 +1,9 @@
+## 0.1.159
+
+- 主题配色：素白星尘 / 墨夜星尘补 `data-palette` 明暗令牌块（0.1.156 起选择器可见但选了不生效）；PC `skyglass-tokens.css` 生成物同步。
+- 服务端配额预留释放 / 用量记账失败告警的 reason 改用 `reasonWithoutStatement`，不再把含 SQL 的原始 `error.message` 写进日志。
+- 全端发版：PC / macOS / Android 同步 `0.1.159`（versionCode 339），外壳指纹不变。
+
 ## 0.1.158
 
 - Android：WebView 加载失败的英文错误页遮挡中文提示（出错置 INVISIBLE）；首屏失败「重新连接」落空（无已提交 URL 时退回 origin+path 加载）。错误文案居中。
@@ -748,7 +754,6 @@ ChisaBot 自己的版本史，从 0.1.0（首个公开版本）起，按**发版
 
 ## 未发版（main 上，已随服务器上线）
 
-- 主题配色：素白星尘 / 墨夜星尘补 `data-palette` 明暗令牌块（0.1.156 起选择器可见但选了不生效）；服务端配额预留释放 / 用量记账失败告警的 reason 改用 `reasonWithoutStatement`，不再把含 SQL 的原始 `error.message` 写进日志。
 - Claude Code 左栏：新建工作区固定在模式切换下方；目录行保留折叠 / 来源 / ⋯，会话只留标题；＋新会话、同步、删除等原功能保留；顶栏、会话页头、模型菜单不变。
 - PC 在线更新：识别的卸载器名补上 electron-builder 实际写出的 `Uninstall ChisaBotPC.exe`（去掉 productName 里的空格）；0.1.11–0.1.45 安装版此前 `supported=false`，检查更新直接返回。
 

@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.159 — 2026-11-17
 
-- 主题配色修复：素白星尘 / 墨夜星尘自 0.1.156 在选择器中可见但缺 `data-palette` CSS 令牌块，选中后外观无变化；现补齐全套明暗令牌，选色生效（palette 门禁恢复）。
-- 服务端日志脱敏：配额预留释放 / 用量记账失败的告警原因改用 `reasonWithoutStatement`，不再把可能含 SQL 语句与绑定参数的原始 `error.message` 写进日志（log-scrub 红线恢复）。
+全端版本 0.1.159，Android versionCode 339：星尘主题配色修复 + 服务端日志脱敏（PR #546）。PC 客户端代码指纹更新为 `bba8f4db64181311`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
+
+- **主题配色修复**：素白星尘 / 墨夜星尘自 0.1.156 在选择器中可见但缺 `data-palette` CSS 令牌块，选中后外观无变化；现补齐全套明暗令牌，选色生效（palette 门禁恢复）。
+- **服务端日志脱敏**：配额预留释放 / 用量记账失败的告警原因改用 `reasonWithoutStatement`，不再把可能含 SQL 语句与绑定参数的原始 `error.message` 写进日志（log-scrub 红线恢复）。
+- **PC 生成物同步**：`skyglass-tokens.css` 重跑 `sync-skyglass.mjs` 纳入新色板令牌。
 
 ## 0.1.158 — 2026-11-17
 
