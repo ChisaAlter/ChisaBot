@@ -1,6 +1,6 @@
 ## 未发版
 
-- 修复群聊私密记忆泄露：个人记忆装配改经 `createPersonalMemoryLoader`，`isGroupChat`/`threadId` 不再被丢弃；加源码门禁防回归。
+- 修复群聊私密记忆泄露（注入 + 工具检索双路径）：个人记忆装配改经 `createPersonalMemoryLoader`，`isGroupChat`/`threadId` 不再被丢弃；群聊回合补 `forwardedProps.isGroupChat` 标记；标记经 `buildAgentFor → AgentResolutionContext → loadToolsForActor` 穿到 `memoryNotes.tools`，`memory_search` 在群聊回合按群聊视图检索（恢复路径同样判定传入）；加源码门禁防回归。
 
 - 配额上限原子化：`QuotaService.admit` 按用户配额行串行准入并把预留量先写进账本，并发请求不再双双放行；结算按差量写回，失败调用零结算释放预留，记账失败改结构化告警。
 
