@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.155 — 2026-11-17
+
+服务器 / 网页版本 0.1.155：群聊私密记忆隔离修复、配额硬上限原子化、DSH 孤儿执行收尾，以及聊天气泡与浮动面板玻璃底材统一。仅提升根 `package.json`，无客户端发版（PC / Android 保持 0.1.154，桌面端按「版本高者优先」自动加载服务端新版前端）；无需数据库迁移。
 
 - **群聊私密记忆隔离修复（注入 + 工具检索双路径）**：`server/src/index.ts` 的个人记忆装配改经 `createPersonalMemoryLoader` 注入，`isGroupChat`/`threadId` 可见性参数不再被丢弃；群聊回合的 `RunAgentInput` 补上 `forwardedProps.isGroupChat` 标记（此前群聊 send/relay 不传 forwardedProps，`isGroupChatInput` 判 false 仍按私聊注入）；群聊标记经 `buildAgentFor → AgentResolutionContext → loadToolsForActor` 穿到 `memoryNotes.tools`——此前 `memory_search` 等记忆检索工具在群聊回合拿不到标记、按私聊视图返回 `private`/`bot_private` 笔记，恢复路径按持久化 input 判定后同样传入。新增源码门禁防止再次绕过装配入口与穿线。
 - **配额硬上限原子化**：`QuotaService` 新增 `admit` 原子准入——PostgreSQL 按用户配额行 `FOR UPDATE` 串行化（内存实现按用户排队），准入即把「1 次请求 + 估计输入 + 声明的最大输出」预留写进用量账本、各项以剩余额度封顶，并发请求不再出现 check-then-record 双双放行；声明 `max_tokens` 的调用 token 上限成为真硬上限，未声明按默认输出预留。结算按（实际 − 预留）差量写回，上游失败/未发起的调用以零结算释放预留；异步记账失败由静默吞掉改为结构化告警日志。
