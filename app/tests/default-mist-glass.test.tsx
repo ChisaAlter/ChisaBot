@@ -12,6 +12,7 @@ import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
+import { ThemeProvider } from "@/components/theme-provider";
 import {
   DEFAULT_GLASS_OPACITY,
   DEFAULT_GLASS_STYLE,
@@ -85,13 +86,21 @@ describe("default glass is mist", () => {
   test("settings dirty check treats mist+16 as default (no reset button)", async () => {
     resetAppearanceDefaults();
     flushAppearanceWrites();
-    const view = render(<AppearancePreferences />);
+    const view = render(
+      <ThemeProvider>
+        <AppearancePreferences />
+      </ThemeProvider>,
+    );
     expect(view.queryByRole("button", { name: "恢复默认" })).toBeNull();
     act(() => {
       setGlassStyle("liquid");
       flushAppearanceWrites();
     });
-    view.rerender(<AppearancePreferences />);
+    view.rerender(
+      <ThemeProvider>
+        <AppearancePreferences />
+      </ThemeProvider>,
+    );
     expect(view.getByRole("button", { name: "恢复默认" })).toBeTruthy();
   });
 });

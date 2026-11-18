@@ -2,8 +2,10 @@ import {
   IconCheck,
   IconCloud,
   IconCrop,
+  IconMoonStars,
   IconPhoto,
   IconRefresh,
+  IconSunHigh,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
@@ -14,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTheme } from "@/components/theme-provider";
 import { useExternalConnection } from "@/hooks";
 import {
   WallpaperCropDialog,
@@ -26,11 +29,13 @@ import { toast } from "@/components/ui/toast";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
   compressCroppedWallpaper,
+  computePaletteSky,
   DEFAULT_GLASS_OPACITY,
   DEFAULT_GLASS_STYLE,
   GLASS_OPACITY_MAX,
   GLASS_OPACITY_MIN,
   type GlassStyleId,
+  HARK_SCENE_INFO,
   HARK_SKY_SCENES,
   type HarkSkySceneId,
   loadUploadedWallpaperSource,
@@ -42,12 +47,14 @@ import {
   setGlassOpacityDark,
   setGlassStyle,
   setHarkSkyScene,
+  setSkySource,
   setThemePalette,
   setWallpaperBlur,
   setWallpaperDim,
   setWallpaperPreset,
   setWallpaperScrim,
   THEME_PALETTES,
+  type ThemePaletteMeta,
   updateAppearance,
   useAppearance,
   validateWallpaperFile,
@@ -125,6 +132,7 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
 
 export function AppearancePreferences() {
   const appearance = useAppearance();
+  const { dark, setDark } = useTheme();
   const glassKeys = useSegmentedKeys<GlassStyleId>({
     value: appearance.glassStyle,
     values: GLASS_STYLE_VALUES,
@@ -167,6 +175,32 @@ export function AppearancePreferences() {
       : ARTISTIC_WALLPAPER_PRESETS.filter(
           (item) => item.category === wallpaperCategory,
         );
+
+  /**
+   * 皮肤卡 = 强调色 + 配套主题天空（壁纸启用中只换强调色）。
+   * 素白 / 墨夜是明暗绑定皮肤：色板承诺整套明暗观感，点击连外观模式一起切（「所见即所得」）。
+   */
+  const handlePalettePick = (item: ThemePaletteMeta) => {
+    setThemePalette(item.id);
+    if (item.boundMode && dark !== (item.boundMode === "dark")) {
+      setDark(item.boundMode === "dark");
+      toast.success(
+        item.boundMode === "dark" ? "已切换到深色外观" : "已切换到浅色外观",
+      );
+    }
+  };
+
+  // 「主题天空」卡的预览 = 当前皮肤配套渐变（default 皮肤 = 经典蓝天 / 夜空静态渐变）。
+  const paletteSky = computePaletteSky(appearance.palette, dark);
+  const themeSkyGradient = paletteSky
+    ? `linear-gradient(180deg, ${paletteSky.body["--sky-0"]} 0%, ${paletteSky.body["--sky-1"]} 36%, ${paletteSky.body["--sky-2"]} 72%, ${paletteSky.body["--sky-3"]} 100%)`
+    : dark
+      ? "linear-gradient(180deg, #070b16 0%, #0c1324 38%, #121c32 74%, #182540 100%)"
+      : "linear-gradient(180deg, #4b89dc 0%, #6ea5eb 36%, #95c2f4 72%, #c5e1fb 100%)";
+  const themeSkySubtitle =
+    appearance.palette === "default"
+      ? "经典蓝天 / 夜空的静态渐变，不启动 WebGL 更省电"
+      : `「${THEME_PALETTES.find((p) => p.id === appearance.palette)?.name ?? ""}」配套的主题渐变天空`;
 
   const openWallpaperCropForFile = async (file: File) => {
     // 先校验类型和大小，超限的文件不读进内存
@@ -341,14 +375,19 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 主题配色与动态天空场景（10 款配色 + 8 款天象，场景彼此观感区分：晨霞 / 晴空 / 暖金 / 雪霁 / 风暴 / 星夜） */}
-      <div className="appearance-block" data-setting-item="主题配色">
+      {/* 1. 外观模型（2026-11 重构）：外观 = 模式 × 皮肤 × 背景。
+          *    皮肤卡 = 强调色 + 配套主题天空；天空背景在「主题天空 / Hark 动态天象 / 壁纸」三选一，
+          *    昼景只配浅色、夜景只配深色（错配在解析层自动落到配对场景），晨昏两相宜。 */}
+      <div
+        className="appearance-block"
+        data-setting-item="主题皮肤 主题配色 general.sky"
+      >
         <div className="appearance-block-head">
           <div>
-            <div className="appearance-block-title">{"主题配色与动态天象"}</div>
+            <div className="appearance-block-title">{"主题皮肤与天空背景"}</div>
             <div className="appearance-block-desc">
               {
-                "精选 10 款高对比主题色与 Hark WebGL 动态天空；深色模式自动保障夜幕高对比度与文字清晰可读"
+                "皮肤决定强调色与配套主题天空；天象由 Hark WebGL 引擎实时渲染，昼夜场景按外观明暗自动配对呈现"
               }
             </div>
           </div>
@@ -373,8 +412,9 @@ export function AppearancePreferences() {
           ) : null}
         </div>
 
+        <div className="appearance-subhead">{"皮肤"}</div>
         <div
-          aria-label="主题配色选择"
+          aria-label="主题皮肤选择"
           className="appearance-palette-grid"
           role="radiogroup"
         >
@@ -387,7 +427,7 @@ export function AppearancePreferences() {
                 className={cn("appearance-palette-card", active && "is-active")}
                 data-testid={`palette-option-${item.id}`}
                 key={item.id}
-                onClick={() => setThemePalette(item.id)}
+                onClick={() => handlePalettePick(item)}
                 role="radio"
                 type="button"
               >
@@ -396,6 +436,15 @@ export function AppearancePreferences() {
                   className="appearance-palette-swatch"
                   style={{ background: item.swatchGradient }}
                 >
+                  {item.boundMode ? (
+                    <span className="appearance-palette-mode">
+                      {item.boundMode === "dark" ? (
+                        <IconMoonStars className="size-3" />
+                      ) : (
+                        <IconSunHigh className="size-3" />
+                      )}
+                    </span>
+                  ) : null}
                   {active ? (
                     <span className="appearance-swatch-check">
                       <IconCheck className="size-3.5 stroke-[2.6]" />
@@ -412,21 +461,68 @@ export function AppearancePreferences() {
             );
           })}
         </div>
-
-        {appearance.palette !== "default" ? (
+        {appearance.wallpaperId !== "none" ? (
           <p className="appearance-palette-sub" data-testid="palette-sky-hint">
-            彩色主题下使用主题天空
+            壁纸启用中 · 皮肤仅更新强调色
           </p>
         ) : null}
+
+        <div className="appearance-subhead">{"天空背景"}</div>
         <div
-          aria-label="Hark 动态天空场景选择"
+          aria-label="天空背景选择"
           className="appearance-wallpaper-grid"
           role="radiogroup"
         >
+          {/* 「主题天空」：皮肤配套静态渐变（引擎不启动）。它和天象卡是同一个单选组：
+              壁纸启用时整组都不亮（壁纸盖过天空）。 */}
+          {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了 */}
+          <button
+            aria-checked={
+              appearance.wallpaperId === "none" &&
+              appearance.skySource === "theme"
+            }
+            className={cn(
+              "appearance-wallpaper-card",
+              appearance.wallpaperId === "none" &&
+                appearance.skySource === "theme" &&
+                "is-active",
+            )}
+            data-testid="sky-source-theme"
+            onClick={() => setSkySource("theme")}
+            role="radio"
+            type="button"
+          >
+            <div
+              className="appearance-wallpaper-thumb"
+              style={{ background: themeSkyGradient }}
+            >
+              <div className="appearance-wallpaper-glass-demo">
+                <i />
+                <i />
+              </div>
+              {appearance.wallpaperId === "none" &&
+              appearance.skySource === "theme" ? (
+                <span className="appearance-swatch-check">
+                  <IconCheck className="size-3.5 stroke-[2.6]" />
+                </span>
+              ) : null}
+            </div>
+            <div className="appearance-wallpaper-meta">
+              <span className="appearance-palette-name">{"主题天空"}</span>
+              <span className="appearance-palette-sub">
+                {themeSkySubtitle}
+              </span>
+            </div>
+          </button>
           {HARK_SKY_SCENES.map((scene) => {
             const active =
               appearance.wallpaperId === "none" &&
+              appearance.skySource === "hark" &&
               appearance.harkScene === scene.id;
+            const daylight =
+              scene.sceneIndex !== null && scene.sceneIndex >= 0
+                ? HARK_SCENE_INFO[scene.sceneIndex]?.daylight
+                : null;
             return (
               // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
               <button
@@ -449,6 +545,15 @@ export function AppearancePreferences() {
                     <i />
                     <i />
                   </div>
+                  {daylight ? (
+                    <span className="appearance-scene-daylight">
+                      {daylight === "day"
+                        ? "昼"
+                        : daylight === "night"
+                          ? "夜"
+                          : "暮"}
+                    </span>
+                  ) : null}
                   {active ? (
                     <span className="appearance-swatch-check">
                       <IconCheck className="size-3.5 stroke-[2.6]" />
@@ -601,7 +706,10 @@ export function AppearancePreferences() {
             {appearance.wallpaperId !== "none" ? (
               <Button
                 onClick={() => {
-                  setWallpaperPreset("none");
+                  updateAppearance({
+                    wallpaperId: "none",
+                    skySource: "hark",
+                  });
                   toast.success("已切回 Hark 动态天空");
                 }}
                 size="sm"

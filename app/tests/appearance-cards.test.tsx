@@ -10,6 +10,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
+import { ThemeProvider } from "@/components/theme-provider";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
   flushAppearanceWrites,
@@ -44,7 +45,7 @@ beforeEach(() => {
 
 describe("主题配色与动态天象选择卡", () => {
   test("10 款配色卡全部渲染，含新增的银杏暖金、朱砂绛红与素白 / 墨夜星尘", () => {
-    const view = render(<AppearancePreferences />);
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     for (const p of THEME_PALETTES) {
       const card = view.getByTestId(`palette-option-${p.id}`);
       expect(card.textContent).toContain(p.name);
@@ -58,7 +59,7 @@ describe("主题配色与动态天象选择卡", () => {
   });
 
   test("8 张天象卡全部渲染，且每张预览渐变互不相同（去同质）", () => {
-    const view = render(<AppearancePreferences />);
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     expect(HARK_SKY_SCENES.length).toBe(8);
     const gradients = new Set<string>();
     for (const scene of HARK_SKY_SCENES) {
@@ -76,7 +77,7 @@ describe("主题配色与动态天象选择卡", () => {
   });
 
   test("新增的两张场景卡（晨霞·檀香山、风暴·迈阿密）有名字和预览", () => {
-    const view = render(<AppearancePreferences />);
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     const dawn = view.getByTestId("hark-scene-11");
     expect(dawn.textContent).toContain("晨霞初晓");
     expect(dawn.textContent).toContain("Honolulu");
@@ -88,7 +89,7 @@ describe("主题配色与动态天象选择卡", () => {
 
 describe("艺术壁纸图库与分类切换", () => {
   test("默认展示全部 9 幅艺术画作，支持按三大系列筛选并点击应用", () => {
-    const view = render(<AppearancePreferences />);
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     const fallbackGradients = new Set<string>();
     for (const art of ARTISTIC_WALLPAPER_PRESETS) {
       const card = view.getByTestId(`wallpaper-preset-${art.id}`);
@@ -129,7 +130,7 @@ describe("艺术壁纸图库与分类切换", () => {
     act(() => {
       setCustomWallpaperUrl("https://example.com/my-painting.webp");
     });
-    const view = render(<AppearancePreferences />);
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     expect(getAppearanceState().wallpaperId).toBe("custom");
 
     fireEvent.click(view.getByTestId("wallpaper-preset-starry-rhone"));

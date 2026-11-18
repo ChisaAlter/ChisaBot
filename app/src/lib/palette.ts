@@ -32,6 +32,12 @@ export type ThemePaletteMeta = {
   /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引（深色模式统一采用深邃夜景以保障文字对比度） */
   harkSceneLight: number;
   harkSceneDark: number;
+  /**
+   * 明暗绑定皮肤（「所见即所得」）：色板承诺的就是整套明暗观感——素白星尘只在浅色下成立、
+   * 墨夜星尘只在深色下成立。点这类皮肤卡时调用方要一并把外观模式切到 boundMode。
+   * 其余皮肤两种模式下都有对应版本，不绑定。
+   */
+  boundMode?: "light" | "dark";
 };
 
 export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
@@ -169,6 +175,7 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     skySatDark: [22, 18, 20, 16],
     harkSceneLight: 5,
     harkSceneDark: 4,
+    boundMode: "light",
   },
   {
     id: "nocturne",
@@ -184,6 +191,7 @@ export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
     skySatDark: [36, 32, 38, 30],
     harkSceneLight: 11,
     harkSceneDark: 4,
+    boundMode: "dark",
   },
 ] as const;
 
@@ -277,6 +285,15 @@ export function applyThemeColor(
 }
 
 export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
+/**
+ * 天空来源（2026-11 外观模型重构）：皮肤与背景解耦——皮肤只管强调色与配套主题渐变，
+ * 天空是「Hark 动态天象」还是「皮肤配套渐变」由这个键单独决定。
+ * - "hark"（默认）：Hark WebGL 引擎渲染的天象（auto / live / 场景）。
+ * - "theme"：皮肤配套的静态主题渐变（引擎不启动，更省）。
+ * 没有这个键的老存档按旧语义迁移：皮肤不是 default 时旧版一定显示主题渐变 → "theme"。
+ */
+export const SKY_SOURCE_STORAGE_KEY = "chisabot-sky-source";
+export type SkySourceId = "hark" | "theme";
 export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
 const BOOT_GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"];
 /** 新用户（从没存过任何外观设置）的默认材质。 */
@@ -348,5 +365,5 @@ export function paletteBootScript(): string {
       td: paletteThemeColor(p.id, true),
     };
   }
-  return `(function(){try{var d=document.documentElement,s=window.localStorage,M=${JSON.stringify(map)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},p=s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)}),g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c=k?${JSON.stringify(DEFAULT_THEME_COLOR.dark)}:${JSON.stringify(DEFAULT_THEME_COLOR.light)},v,i,m,w;if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);if(p&&M[p]){d.setAttribute("data-palette",p);v=M[p][k?"d":"l"];for(i in v)document.body.style.setProperty(i,v[i]);c=M[p][k?"td":"tl"]}m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c);w=s.getItem("chisabot-wallpaper-scrim");if(w!=null)w=(Math.min(100,Math.max(0,parseFloat(w)||0))/100).toFixed(2),d.style.setProperty("--wallpaper-scrim-alpha",w)}catch(e){}})();`;
+  return `(function(){try{var d=document.documentElement,s=window.localStorage,M=${JSON.stringify(map)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},p=s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)}),g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c=k?${JSON.stringify(DEFAULT_THEME_COLOR.dark)}:${JSON.stringify(DEFAULT_THEME_COLOR.light)},v,i,m,w,q=s.getItem(${JSON.stringify(SKY_SOURCE_STORAGE_KEY)});if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);if(p&&M[p]){d.setAttribute("data-palette",p);if(q!=="hark"){v=M[p][k?"d":"l"];for(i in v)document.body.style.setProperty(i,v[i]);c=M[p][k?"td":"tl"]}}m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c);w=s.getItem("chisabot-wallpaper-scrim");if(w!=null)w=(Math.min(100,Math.max(0,parseFloat(w)||0))/100).toFixed(2),d.style.setProperty("--wallpaper-scrim-alpha",w)}catch(e){}})();`;
 }
