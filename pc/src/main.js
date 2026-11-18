@@ -36,6 +36,7 @@ const {
   net,
   powerMonitor,
   globalShortcut,
+  systemPreferences,
 } = require("electron");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const { createConfig } = require("./config");
@@ -48,7 +49,7 @@ const { ensureEnrolled } = require("./agent/enrollment");
 const { createUpdater } = require("./updater");
 const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
-const { createCompactController } = require("./compact-window");
+const { animateWindowBounds, createCompactController } = require("./compact-window");
 const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
@@ -1143,6 +1144,19 @@ function compactWindows() {
       screen,
       onChange: (win, compact) => {
         if (!win.isDestroyed()) win.webContents.send("window:compact", compact);
+      },
+      // 进出小窗平滑补间窗口 bounds；系统「减少动画」时直接落位。
+      animate: (win, target, done) => {
+        try {
+          if (systemPreferences.getAnimationSettings?.().prefersReducedMotion) {
+            win.setBounds(target);
+            done();
+            return () => {};
+          }
+        } catch {
+          /* 平台不支持读动画设置就当没减少动画 */
+        }
+        return animateWindowBounds(win, target, { onDone: done });
       },
     });
   }

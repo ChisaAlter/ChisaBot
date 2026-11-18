@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useReducedMotion } from "motion/react";
 import { attachmentModality } from "@/components/channels/chat-messages";
 import { toast } from "@/components/ui/toast";
 import {
@@ -33,6 +34,7 @@ import {
   useElementEvent,
   useElementSync,
   useExternalConnection,
+  useResizeObserver,
 } from "@/hooks";
 import { useReportPendingAttachments } from "@/lib/activity";
 import {
@@ -564,6 +566,66 @@ function ComposerImpl({
       /* 存储不可用时只影响本次挂载，不挡切换。 */
     }
   }, []);
+  /**
+   * 收起横条 ⇄ 展开卡片是两棵 DOM 分支，React 换形本身没有过渡。这里做 FLIP：
+   * ResizeObserver 随时记录当前表单的高和圆角；表单 ref 在 commit 阶段、绘制前
+   * 拿旧值用 WAAPI 从新高度反向补间（高度 + 圆角 + 淡入），再交出真实布局。
+   * prefers-reduced-motion 时跳过（collapse.tsx 同款约定）。
+   */
+  const formEl = useRef<HTMLFormElement | null>(null);
+  const lastFormFrame = useRef<{ h: number; r: string } | null>(null);
+  const reduceMotion = useReducedMotion();
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
+  const composerFormRef = useCallback((el: HTMLFormElement | null) => {
+    formEl.current = el;
+    if (el) {
+      const prev = lastFormFrame.current;
+      const next = {
+        h: el.offsetHeight,
+        r: getComputedStyle(el).borderRadius,
+      };
+      lastFormFrame.current = next;
+      if (
+        prev &&
+        !reduceMotionRef.current &&
+        typeof el.animate === "function" &&
+        (Math.abs(prev.h - next.h) >= 1 || prev.r !== next.r)
+      ) {
+        el.animate(
+          [
+            {
+              height: `${prev.h}px`,
+              borderRadius: prev.r,
+              opacity: 0.4,
+              overflow: "hidden",
+            },
+            {
+              height: `${next.h}px`,
+              borderRadius: next.r,
+              opacity: 1,
+              overflow: "hidden",
+            },
+          ],
+          { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
+        );
+      }
+    }
+    return presenceRef("has-composer")(el) as (() => void) | undefined;
+  }, []);
+  useResizeObserver(
+    formEl,
+    () => {
+      const el = formEl.current;
+      if (!el) return;
+      lastFormFrame.current = {
+        h: el.offsetHeight,
+        r: getComputedStyle(el).borderRadius,
+      };
+    },
+    true,
+    expanded,
+  );
   const promptAreaRef = useRef<PromptAreaHandle>(null);
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
@@ -2688,8 +2750,8 @@ function ComposerImpl({
         </Button>
       );
     /**
-     * 发送键左边那颗切换横条 ⇄ 工具栏的箭头：收起时是下箭头（展开），展开时原位变上箭头（收起）。
-     * 对话死掉也只收发送，不收这颗开关。
+     * 发送键左边那颗切换横条 ⇄ 工具栏的箭头：收起时是上箭头（向上展开工具栏），
+     * 展开时原位变下箭头（收回横条）。对话死掉也只收发送，不收这颗开关。
      */
     const expandToggle = (
       <Button
@@ -2703,9 +2765,9 @@ function ComposerImpl({
         variant="ghost"
       >
         {expanded ? (
-          <IconChevronUp className="size-[18px]" />
-        ) : (
           <IconChevronDown className="size-[18px]" />
+        ) : (
+          <IconChevronUp className="size-[18px]" />
         )}
       </Button>
     );
@@ -2724,7 +2786,11 @@ function ComposerImpl({
      */
     if (!expanded) {
       return (
-        <div className="flex flex-col" ref={containerRef} {...dropZone}>
+        <div
+          className="composer-frame flex flex-col"
+          ref={containerRef}
+          {...dropZone}
+        >
           <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
           {tooManyStagedNotice}
           {/*
@@ -2747,13 +2813,13 @@ function ComposerImpl({
             onKeyDown={handleEscapeStop}
             /*
              * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列已挪到框外，
-             * 引用条仍在编辑区上方，日常只剩「+ · 输入区 · 下箭头 · 发送」一行。
+             * 引用条仍在编辑区上方，日常只剩「+ · 输入区 · 上箭头 · 发送」一行。
              */
             className={cn(
               "glass-composer glass-composer-pill flex flex-col",
               className,
             )}
-            ref={presenceRef("has-composer")}
+            ref={composerFormRef}
             onSubmit={handleFormSubmit}
           >
             <DictationSurface dictation={dictation} canSend={canSendRecording}>
@@ -2804,7 +2870,11 @@ function ComposerImpl({
     }
 
     return (
-      <div className="flex flex-col" ref={containerRef} {...dropZone}>
+      <div
+        className="composer-frame flex flex-col"
+        ref={containerRef}
+        {...dropZone}
+      >
         <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
         {tooManyStagedNotice}
         <form
@@ -2819,7 +2889,7 @@ function ComposerImpl({
             "glass-composer flex flex-col",
             className,
           )}
-          ref={presenceRef("has-composer")}
+          ref={composerFormRef}
           onSubmit={handleFormSubmit}
         >
           <DictationSurface dictation={dictation} canSend={canSendRecording}>

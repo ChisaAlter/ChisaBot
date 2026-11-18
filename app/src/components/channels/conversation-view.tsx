@@ -18,6 +18,7 @@ import {
   type QueuedMessage,
   reduceQueue,
 } from "@/components/channels/composer";
+import { ComposerDock } from "@/components/channels/composer/dock";
 import { useExternalConnection } from "@/hooks";
 import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
 import type { Attachment } from "@/lib/chat/attachment-state";
@@ -600,7 +601,7 @@ export function ConversationView({
   const withdrawTurn = useCallback(() => latest.current.onWithdrawTurn?.(), []);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 relative">
       <div className="flex flex-1 min-h-0">
         {/*
          * The command NAMES, joined, rather than the option objects.
@@ -634,8 +635,8 @@ export function ConversationView({
           {...(onWithdrawTurn ? { onWithdraw: withdrawTurn } : {})}
         />
       </div>
-      {/* 输入框列：和消息列同宽同心，左右至少 16px、窄窗口有「面板」把手时右边让开把手（DESIGN.md §24 / §92，styles.css `.chat-composer-box`）。 */}
-      <div className="chat-composer-box shrink-0" ref={composerBoxRef}>
+      {/* 输入框悬浮在对话底边上：不占排版位，消息能滚到卡片上方（DESIGN.md §24 / §92，styles.css `.chat-composer-box`、`composer/dock.tsx`）。 */}
+      <ComposerDock dockRef={composerBoxRef}>
         {notice}
         <Composer
           modelControl={modelControl}
@@ -695,7 +696,7 @@ export function ConversationView({
           stopFailed={stopFailed}
           onRetryStop={onRetryStop ? retryStopRun : undefined}
         />
-      </div>
+      </ComposerDock>
     </div>
   );
 }

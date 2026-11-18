@@ -4382,7 +4382,8 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 /* 收起后：右边缘中间的小把手（竖排「面板」），在卡片收走之后再淡入。 */
 .rail-tab {
   position: absolute;
-  right: 0;
+  /* --edge-clip-r：PC 无边框窗口最大化 / 贴边时右缘在屏外的进边（lib/desktop-window.ts 写入），让位后仍贴可见边缘。 */
+  right: var(--edge-clip-r, 0px);
   top: calc(var(--glass-top) + (100% - var(--glass-top)) / 2);
   translate: 0 -50%;
   z-index: 5;
@@ -4420,11 +4421,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   max-width: calc(100vw - 32px);
   font: inherit;
   color: var(--glass-ink);
-  background: rgba(250, 251, 254, 0.96);
   backdrop-filter: var(--glass-filter);
-}
-.dark .rail-sheet[data-slot="sheet-content"] {
-  background: rgba(20, 28, 44, 0.96);
 }
 @media (max-width: 640px) {
   .rail-sheet[data-slot="sheet-content"] { top: 8px; right: 8px; bottom: 8px; max-width: calc(100vw - 16px); }
@@ -7857,20 +7854,94 @@ html[data-no-halt] .t-close { margin-inline-end: -0.5em; }
 html[data-no-halt] .t-open { margin-inline-start: -0.5em; }
 
 /* ---------- §92 输入框两边留白：窄窗口也不贴左栏 / 窗口边 / 右栏 / 把手 ---------- */
-/* 以前输入框列是 `max-w-2xl px-0`：主区比 42rem 窄（左栏展开的 700–1100px 窗口、手机）时，输入框卡片左右各 0px，
-   贴着左栏卡和窗口右边，消息却有 16px。现在 = `min(42rem, 100% - 32px)` 居中（§24 原话）：宽屏和以前一样 672px，
-   窄了就左右各留 16px、底边 16px；「面板」把手在的时候右边和消息列一样让开把手（§82.10 同一个式子，
-   这里列宽算上两边 16px 是 44rem），窄窗口里输入框左右沿正好对齐消息列。 */
+/* 输入框悬浮层：脱离文档流、绝对定位压在对话底边上，消息从卡片底下滚过去，
+   滚动区按 `--chat-composer-h`（ComposerDock 写入）补底部内边距让最后一条能滚到卡片上方。
+   默认形态还是以前那条底栏：`min(42rem, 100% - 32px)` 居中、左右各 16px、底边 16px；
+   「面板」把手在的时候右边和消息列一样让开把手（§82.10 同一个式子，列宽算上两边 16px 是 44rem）。 */
 .chat-composer-box {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
   width: 100%;
   max-width: calc(42rem + 2rem);
   margin-inline: auto;
   padding: 0 1rem 1rem;
+  /* 悬浮层整体不吃指针：卡片之间的透明缝要能点到后面的消息。 */
+  pointer-events: none;
 }
-body[data-has-narrow-rail] .chat-composer-box {
+.chat-composer-box > * { pointer-events: auto; }
+body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) {
   padding-right: max(1rem, calc(var(--rail-tab-clear) - max(0px, (100% - 44rem) / 2)));
 }
-html[data-phone] .chat-composer-box { padding-bottom: calc(1rem + var(--safe-b, 0px)); }
+html[data-phone] .chat-composer-box:not([data-docked]) { padding-bottom: calc(1rem + var(--safe-b, 0px)); }
+
+/* 竖向拖定高后的撑满链：外框高度锁定时，展开卡片的编辑区吃掉剩余空间并在内部滚动。 */
+.chat-composer-box[data-sized] { display: flex; flex-direction: column; justify-content: flex-end; }
+.chat-composer-box[data-sized] .composer-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.chat-composer-box[data-sized] .composer-frame > form:not(.glass-composer-pill) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.chat-composer-box[data-sized] .composer-frame > form:not(.glass-composer-pill) > div,
+.chat-composer-box[data-sized] .composer-frame > form:not(.glass-composer-pill) > div > div,
+.chat-composer-box[data-sized] .composer-frame > form:not(.glass-composer-pill) > div > div > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.chat-composer-box[data-sized] .glass-composer-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* PromptArea 根里还包着一层自己的 relative 内层，编辑区在它里面才能吃到定高。 */
+.chat-composer-box[data-sized] .glass-composer-editor > .relative {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-composer-box[data-sized] .glass-composer-editor .prompt-area-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+}
+
+/* 悬浮把手层：贴在卡片边/角上，壳不吃点击，把手吃；双击把手还原默认底栏。 */
+.chat-dock-handles {
+  position: absolute;
+  inset: 0 16px 16px 16px;
+  pointer-events: none;
+}
+/* 「面板」把手让开的右边距和框的 padding-right 一致，把手才贴得住卡片边。 */
+body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-handles {
+  right: max(1rem, calc(var(--rail-tab-clear) - max(0px, (100% - 44rem) / 2)));
+}
+.chat-dock-handle { position: absolute; pointer-events: auto; touch-action: none; }
+.chat-dock-n { top: -5px; left: 10px; right: 10px; height: 10px; cursor: ns-resize; }
+.chat-dock-s { bottom: -5px; left: 10px; right: 10px; height: 10px; cursor: ns-resize; }
+.chat-dock-w { left: -5px; top: 10px; bottom: 10px; width: 10px; cursor: ew-resize; }
+.chat-dock-e { right: -5px; top: 10px; bottom: 10px; width: 10px; cursor: ew-resize; }
+.chat-dock-nw { left: -6px; top: -6px; width: 12px; height: 12px; cursor: nwse-resize; }
+.chat-dock-ne { right: -6px; top: -6px; width: 12px; height: 12px; cursor: nesw-resize; }
+.chat-dock-sw { left: -6px; bottom: -6px; width: 12px; height: 12px; cursor: nesw-resize; }
+.chat-dock-se { right: -6px; bottom: -6px; width: 12px; height: 12px; cursor: nwse-resize; }
+@media (pointer: coarse) { .chat-dock-handles { display: none; } }
+
+/* 滚动区底部留白：悬浮输入框占据的高度 + 一条 24px 呼吸缝（DESIGN.md §25）。 */
+.chat-scroll-pad { padding-bottom: calc(24px + var(--chat-composer-h, 0px)); }
+/* 「回到底部」药丸抬到悬浮卡片上方。 */
+.chat-bottom-pill { bottom: calc(16px + var(--chat-composer-h, 0px)); }
 
 /* ── 浏览器多标签 + 收藏夹（DESIGN.md §95）──────────────────────────────────────────── */
 .btabs { position: relative; display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -10401,7 +10472,9 @@ html[data-wallpaper="on"] {
 }
 
 /* 将 .glass-shell 内部嵌套子卡片玻璃变量统一收束为纯净无边框薄纱 */
-.glass-shell {
+/* .rail-sheet 是同一张面板卡 portal 到 body 上的窄窗抽屉，不在 .glass-shell 里：不列进来的话
+   它和它里面的小面读的是 :root 那套深色 0.9/0.09 令牌（性能 / 减透明模式下整块变死黑）。 */
+:is(.glass-shell, .rail-sheet) {
   --glass-1: rgba(255, 255, 255, 0.28);
   --glass-2: rgba(255, 255, 255, 0.38);
   --glass-3: rgba(255, 255, 255, 0.52);
@@ -10409,7 +10482,7 @@ html[data-wallpaper="on"] {
   --stroke: transparent;
   --inset-hl: 0 0 0 transparent;
 }
-html.dark .glass-shell {
+html.dark :is(.glass-shell, .rail-sheet) {
   --glass-1: rgba(255, 255, 255, 0.06);
   --glass-2: rgba(255, 255, 255, 0.09);
   --glass-3: rgba(255, 255, 255, 0.14);

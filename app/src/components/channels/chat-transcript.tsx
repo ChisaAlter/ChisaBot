@@ -4019,7 +4019,7 @@ export function ChatTranscript({
             data-testid="chat-transcript"
             data-tail-first-pending={tailPending ? "" : undefined}
             data-tail-first-truncated={tailTruncated ? "" : undefined}
-            className="mx-auto w-full max-w-2xl px-4 py-6"
+            className="mx-auto w-full max-w-2xl px-4 pt-6 chat-scroll-pad"
             spacerClassName="order-2"
           >
             {/*

@@ -45,15 +45,20 @@ test("control labels use half-width CJK punctuation so a trailing 「）」 does
   expect(css).toMatch(/\[data-slot="button"\][^{]*\{ font-feature-settings: "halt"; \}/);
 });
 
-test("chat composer keeps 16px side gutters and clears the panel handle at narrow widths (§24 / §92)", () => {
+test("chat composer keeps 16px side gutters and clears the panel handle at narrow widths (§24 / §92 / §138)", () => {
   // 以前输入框列是 `max-w-2xl px-0`：主区窄于 42rem 时输入框卡片左右 0px，贴左栏卡和窗口边。
+  // §138 起它是悬浮层：div 改由 ComposerDock 渲染、脱离文档流压在面板底边上。
   const view = readFileSync(path.join(import.meta.dir, "../src/components/channels/conversation-view.tsx"), "utf8");
-  expect(view).toContain('className="chat-composer-box shrink-0"');
+  expect(view).toContain("<ComposerDock");
   expect(view).not.toContain("px-0 pb-4");
+  const dock = readFileSync(path.join(import.meta.dir, "../src/components/channels/composer/dock.tsx"), "utf8");
+  expect(dock).toContain('className="chat-composer-box"');
   const box = css.match(/\n\.chat-composer-box\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(box).toMatch(/max-width:\s*calc\(42rem \+ 2rem\)/);
   expect(box).toMatch(/padding:\s*0 1rem 1rem/);
-  const handle = css.match(/body\[data-has-narrow-rail\] \.chat-composer-box\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(box).toMatch(/position:\s*absolute/);
+  // 「面板」把手让位只对默认底栏生效：已悬浮定位的框有自己的矩形。
+  const handle = css.match(/body\[data-has-narrow-rail\] \.chat-composer-box:not\(\[data-docked\]\)\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(handle).toContain("var(--rail-tab-clear)");
 });
 

@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）             |
 | [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
 | [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`（`v0.1.152`）            |
 | [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
@@ -123,6 +124,18 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-130
+
+**聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画**
+
+标签：`type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）
+
+输入框原来整行占位遮住对话底边、收展与 PC 小窗 ⇄ 主窗切换都直接跳变没有过渡。改为悬浮卡片 + 8 向拖拽 + 两套补间动画（DESIGN §138）。
+
+- [x] **悬浮输入框与滚动区自适应**：`.chat-composer-box` 脱离文档流悬浮在对话底边上，消息从卡片底下滚过；`--chat-composer-h` 按实测高度补滚动区底部内边距并同步抬高「回到底部」药丸；桌面四边 / 四角隐形把手可拉大缩小（最小 320×120、夹回面板、尺寸进 localStorage、双击还原），触屏保持原底栏（`composer/dock.tsx` + `dock-geometry.ts`，回归 `app/tests/composer-dock.test.ts`）。
+- [x] **收展 FLIP 过渡与箭头方向**：横条 ⇄ 卡片换形补 WAAPI 反向补间（高度 + 圆角 + 淡入 220ms，`prefers-reduced-motion` 跳过）；收起显示上箭头、展开显示下箭头，可访问名不变。
+- [x] **PC 小窗切换 bounds 补间**：~60Hz 插值补间窗口 bounds 240ms ease-out（macOS 交系统 `setBounds(target, true)`），补间途中宽 resize 不判离小窗、恢复落地才 `maximize`，系统减少动画时直接落位（`pc/src/compact-window.js`，回归 `pc/test/compact.check.js`）。
 
 ## CB-129
 
