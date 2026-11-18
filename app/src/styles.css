@@ -4382,7 +4382,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 /* 收起后：右边缘中间的小把手（竖排「面板」），在卡片收走之后再淡入。 */
 .rail-tab {
   position: absolute;
-  /* --edge-clip-r：PC 无边框窗口最大化 / 贴边时右缘在屏外的进边（lib/desktop-window.ts 写入），让位后仍贴可见边缘。 */
+  /* --edge-clip-r：恢复态窗口被拖得右缘出屏时越出工作区的量（lib/desktop-window.ts 写入），让位后仍贴可见边缘。 */
   right: var(--edge-clip-r, 0px);
   top: calc(var(--glass-top) + (100% - var(--glass-top)) / 2);
   translate: 0 -50%;
