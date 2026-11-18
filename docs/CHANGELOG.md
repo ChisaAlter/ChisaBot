@@ -1,8 +1,9 @@
-## Unreleased
+## 0.1.160
 
 - 聊天输入框悬浮化：脱离文档流浮在对话底边上、消息从卡片底下滚过（`--chat-composer-h` 补滚动区底部内边距 +「回到底部」药丸抬高）；桌面端卡片四边 / 四角可拖拽拉大缩小（最小 320×120、夹回面板、尺寸进 localStorage、双击把手还原），触屏保持原底栏（`composer/dock.tsx`，DESIGN §138）。
 - 输入框收展补 WAAPI FLIP 过渡（220ms，圆角 + 淡入，reduced-motion 跳过）；切换箭头方向修正——收起时上箭头、展开时下箭头（可访问名不变）。
 - PC 小窗 ⇄ 主窗切换补窗口 bounds 补间动画（240ms ease-out；macOS 用系统动画；补间途中宽 resize 不判离小窗、恢复落地才最大化；系统减少动画时直接落位），`pc/test/compact.check.js` 新增回归。
+- 全端发版：PC / macOS / Android 同步 `0.1.160`（versionCode 340），PC 客户端代码指纹 `609c55eac285b51a`，外壳指纹不变。
 
 ## 0.1.159
 
