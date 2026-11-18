@@ -9931,6 +9931,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10016,6 +10017,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10092,6 +10094,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10182,6 +10185,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10234,6 +10238,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10288,6 +10293,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10340,6 +10346,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10395,6 +10402,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10449,6 +10457,7 @@ html[data-wallpaper="on"] {
     .glass-newchat,
     .glass-icon-btn,
     .glass-mini-new,
+    .rail-tab,
     .glass-composer,
     [data-slot="bubble-content"],
     .jr-card,
@@ -10521,14 +10530,14 @@ html.dark :is(.glass-shell, .rail-sheet) {
 }
 
 /* 顶栏主导航胶囊与按钮：纯净无边框胶囊 */
-:is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new) {
+:is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab) {
   background: var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
   box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06) !important;
   color: var(--lg-ink) !important;
 }
-html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new) {
+html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab) {
   background: var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
@@ -10537,7 +10546,7 @@ html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-ico
 }
 
 /* 液态玻璃的可交互小面：悬停把釉提亮约 14%（--lg-hover-a 乘进 --lg-tint-a）。 */
-:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-search):hover {
+:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab, .glass-search):hover {
   --lg-hover-a: 1.14;
 }
 
@@ -10699,12 +10708,12 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
 /* 液态玻璃上的图标用不透明色画、以 blend 融进背后场景：浅色 multiply、深色 plus-lighter；
  * 彩色图表 / 头像 / 媒体不融（会被底色吞掉）。 */
 :where(html[data-glass="liquid"])
-  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
+  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab, .glass-composer)
   :where(svg) {
   mix-blend-mode: var(--lg-blend, multiply);
 }
 :where(html[data-glass="liquid"])
-  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .glass-composer)
+  :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab, .glass-composer)
   :where(.recharts svg, .recharts-wrapper svg, svg.sa, .mermaid svg, .agent-orb svg, canvas, img, video) {
   mix-blend-mode: normal;
 }
@@ -10713,7 +10722,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
  * :where 优先级为 0——元素自己声明过 transition 的一律按它的走。 */
 :where(
   .glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card,
-  .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new,
+  .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab,
   .glass-composer, [data-slot="bubble-content"], .jr-card,
   .page-rows, .sg-card, .page-section > form, .page .border
 ) {
@@ -11114,7 +11123,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
  * - 上面「三档玻璃材质」那层用 !important 给不少小元素加了 backdrop-filter: var(--lg-blur)。
  *   那层不改、这里也不加 !important：在不该模糊的元素自己身上把 --lg-blur 设成 none，那条规则读到的就是 none。
  * ======================================================================================== */
-:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new),
+:is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab),
 .glass-main .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"],
 .page-rows,
 .sg-card,
