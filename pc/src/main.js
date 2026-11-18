@@ -917,15 +917,30 @@ function startUpdater() {
     },
     onDownloaded: (version) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_downloaded", outcome: "succeeded", summary: `新版本 ${version || ""} 已下载` });
-      if (Notification.isSupported())
-        new Notification({ title: "ChisaBot", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
-      openUpdateWindow();
+      promptUpdate(version);
     },
     onRejected: ({ version, code, reason }) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_rejected", outcome: "failed", summary: `新版本 ${version || ""} 签名校验失败，已拒绝安装（${code}）：${reason}`.slice(0, 300) });
     },
   });
   updater.schedule();
+  // 「稍后」≈ 永远不装：客户端常驻托盘几乎不退出，autoInstallOnAppQuit 轮不到。
+  // 待安装状态按周期重弹提示窗，直到装上或被更新版本顶掉（CB-137）。
+  setInterval(() => {
+    if (updater?.state.status === "downloaded" && Date.now() - updatePromptAt >= UPDATE_REMIND_MS) promptUpdate(updater.state.version);
+  }, UPDATE_REMIND_TICK_MS).unref();
+}
+
+/** 待安装提醒：距离上次弹窗超过这么久就再弹一次。 */
+const UPDATE_REMIND_MS = 4 * 60 * 60 * 1000;
+const UPDATE_REMIND_TICK_MS = 30 * 60 * 1000;
+let updatePromptAt = 0;
+
+function promptUpdate(version) {
+  updatePromptAt = Date.now();
+  const alreadyOpen = updateWindow && !updateWindow.isDestroyed() && updateWindow.isVisible();
+  if (!alreadyOpen && Notification.isSupported()) new Notification({ title: "ChisaBot", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
+  openUpdateWindow();
 }
 
 function currentUpdateBounds() {
