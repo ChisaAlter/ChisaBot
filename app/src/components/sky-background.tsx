@@ -3,12 +3,10 @@ import { useTheme } from "@/components/theme-provider";
 import { useDocumentSync, useExternalConnection } from "@/hooks";
 import {
   applyAppearanceToDocument,
-  applyThemeColor,
-  computePaletteSky,
   getAppearanceState,
   installAppearanceStorageSync,
-  paletteThemeColor,
   resolveActiveWallpaperCss,
+  resolvedSeed,
   resolveEffectiveHarkScene,
   resolveSkyReadability,
   useAppearance,
@@ -51,8 +49,9 @@ import { createSkyWindow } from "@/lib/sky-window";
  *  - 「背景随时间变化」（live）= 动态天空：页面可见、窗口有焦点、且 2.5s 内有操作时才跑；
  *    系统开了「减少动态效果」时退回快照；
  *  - 设了壁纸或开了性能模式：不启动引擎；已经启动的停下并隐藏画布（html[data-sky-off]）；
- *  - 天空来源是「主题天空」（skySource="theme"）：同样不启动引擎，#skyph 显示 computePaletteSky
- *    的主题渐变（引擎没有色相参数）；皮肤与引擎天象可以共存，配色不再劫持天空；
+ *  - 天空来源是「主题天空」（skySource="theme"）：同样不启动引擎，#skyph 显示当前主题族
+ *    seed 经 deriveSeed 派生的 --fam-sky-* 渐变（引擎没有色相参数）；族与引擎天象可以共存，
+ *    选族不再劫持天空；
  *  - 不再强制 preserveDrawingBuffer：停住的画布保留最后一次上屏的画面，不需要每帧多拷一份缓冲。
  */
 
@@ -334,7 +333,12 @@ const SKY_PREWARM_MAX_MS = 8000;
 export function prewarmSkyShaders(script: string): Promise<void> {
   const vert = /const VERT\s*=\s*'([^']*)'/.exec(script)?.[1];
   const frag = /const FRAG\s*=\s*`([\s\S]*?)`;/.exec(script)?.[1];
-  if (!vert || !frag || typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
+  if (
+    !vert ||
+    !frag ||
+    typeof Worker === "undefined" ||
+    typeof OffscreenCanvas === "undefined"
+  ) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
@@ -348,7 +352,11 @@ export function prewarmSkyShaders(script: string): Promise<void> {
     };
     const timer = window.setTimeout(done, SKY_PREWARM_MAX_MS);
     try {
-      url = URL.createObjectURL(new Blob([`(${skyPrewarmWorker.toString()})()`], { type: "text/javascript" }));
+      url = URL.createObjectURL(
+        new Blob([`(${skyPrewarmWorker.toString()})()`], {
+          type: "text/javascript",
+        }),
+      );
       worker = new Worker(url);
       worker.onmessage = done;
       worker.onerror = done;
@@ -362,7 +370,9 @@ export function prewarmSkyShaders(script: string): Promise<void> {
 /** Worker 里跑的代码（整段转成字符串，不能引用外面的任何东西）。 */
 function skyPrewarmWorker() {
   const scope = self as unknown as {
-    onmessage: ((event: MessageEvent<{ vert: string; frag: string }>) => void) | null;
+    onmessage:
+      | ((event: MessageEvent<{ vert: string; frag: string }>) => void)
+      | null;
     postMessage: (message: unknown) => void;
   };
   scope.onmessage = (event) => {
@@ -395,7 +405,11 @@ function skyPrewarmWorker() {
         return finish();
       }
       const poll = () => {
-        if (gl.isContextLost() || gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)) finish();
+        if (
+          gl.isContextLost() ||
+          gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)
+        )
+          finish();
         else setTimeout(poll, 50);
       };
       poll();
@@ -590,47 +604,26 @@ export function SkyBackground() {
     return installLiquidGlass();
   });
 
-  // 2. 深浅色 / 配色变了：data-theme、天空垫片变量（写在 body 上，--sky-* 注册为不继承）、地址栏颜色。
-  //    只依赖这两个值：以前依赖整个 appearance 对象，拖一下玻璃滑块这里也重跑一遍。
-  const palette = appearance.palette;
-  useDocumentSync({ dark, palette }, (doc, current) => {
+  // 2. 深浅色 / 主题族变了：data-theme + 整套族派生变量（accent/ink/边框/玻璃令牌在 <html> 上，
+  //    --sky-*/--fam-sky-* 天空变量，地址栏 theme-color）全部由 applyAppearanceToDocument 重写。
+  //    依赖解析出的 seed 而不是整个 appearance：拖玻璃滑块不会重跑这里。
+  const seed = resolvedSeed(appearance, dark);
+  useDocumentSync({ dark, seed }, (doc, current) => {
     const root = doc.documentElement;
     if (root.getAttribute("data-theme") !== (current.dark ? "dark" : "light")) {
       root.setAttribute("data-theme", current.dark ? "dark" : "light");
     }
-
-    const customSky = computePaletteSky(current.palette, current.dark);
-    if (customSky) {
-      for (const [k, v] of Object.entries(customSky.body)) {
-        doc.body.style.setProperty(k, v);
-      }
-      for (const [k, v] of Object.entries(customSky.root)) {
-        root.style.setProperty(k, v);
-      }
-    } else {
-      for (const k of [
-        "--sky-0",
-        "--sky-1",
-        "--sky-2",
-        "--sky-3",
-        "--sky-glow",
-        "--sky-glow-a",
-      ]) {
-        doc.body.style.removeProperty(k);
-      }
-      for (const k of [
-        "--glass-sky",
-        "--palette-sky-0",
-        "--palette-sky-1",
-        "--palette-sky-2",
-        "--palette-sky-3",
-      ]) {
-        root.style.removeProperty(k);
-      }
+    applyAppearanceToDocument(getAppearanceState());
+    // 旧 palette 轴写过的 --palette-sky-* / --glass-sky 内联变量：清掉（换族时这些残留会让整页重算）。
+    for (const k of [
+      "--glass-sky",
+      "--palette-sky-0",
+      "--palette-sky-1",
+      "--palette-sky-2",
+      "--palette-sky-3",
+    ]) {
+      root.style.removeProperty(k);
     }
-    // 旧版本写在 <html> 上、没有任何样式读的 --glass-sky：清掉（换配色时它让整页跟着重算）。
-    root.style.removeProperty("--glass-sky");
-    applyThemeColor(paletteThemeColor(current.palette, current.dark));
   });
 
   const perf = usePerfMode();

@@ -23,7 +23,8 @@ function block(startMarker, from = 0) {
   let depth = 0;
   for (let i = css.indexOf("{", start); i < css.length; i++) {
     if (css[i] === "{") depth++;
-    else if (css[i] === "}" && --depth === 0) return { text: css.slice(start, i + 1), end: i + 1 };
+    else if (css[i] === "}" && --depth === 0)
+      return { text: css.slice(start, i + 1), end: i + 1 };
   }
   throw new Error(`${startMarker} 没有闭合`);
 }
@@ -31,7 +32,6 @@ function block(startMarker, from = 0) {
 const tokenStart = css.indexOf("Skyglass design tokens");
 const root = block(":root {", tokenStart);
 const dark = block(".dark {", root.end);
-const palettes = css.match(/^html(?:\.dark)?\[data-palette="[^"]+"\]\s*\{[^}]+\}/gm) ?? [];
 const properties = css.match(/^@property --sky-[^\n]+$/gm) ?? [];
 const bodyStart = css.indexOf("\nbody {", dark.end);
 const body = block("body {", bodyStart);
@@ -48,7 +48,6 @@ fs.writeFileSync(
     baseDark.text,
     root.text,
     dark.text,
-    ...palettes,
     ...properties,
     body.text,
     darkBody.text,
@@ -62,15 +61,22 @@ const fnStart = ts.indexOf("export function computeSky");
 const fnEnd = ts.indexOf("\n}\n", fnStart) + 2;
 let fn = ts.slice(fnStart, fnEnd).replace("export function", "function");
 fn = fn
-  .replace(/\(minuteOfDay: number, dark: boolean\): SkyVars/, "(minuteOfDay, dark)")
+  .replace(
+    /\(minuteOfDay: number, dark: boolean\): SkyVars/,
+    "(minuteOfDay, dark)",
+  )
   .replace(/^\s*type P = [^\n]+\n/m, "")
   .replace(/const (\w+): [^=]+ = /g, "const $1 = ")
   .replace(/\((c|i): (string|number)\): number\[\] =>/g, "($1) =>")
   .replace(/\(([a-z]): (string|number)\)/g, "($1)")
-  .replace(/\(a: string, b: string, t: number, alphaScale: number\): string/, "(a, b, t, alphaScale)")
+  .replace(
+    /\(a: string, b: string, t: number, alphaScale: number\): string/,
+    "(a, b, t, alphaScale)",
+  )
   .replace(/\(a: number, b: number, t: number\)/, "(a, b, t)")
   .replace(/let u: number;/, "let u;");
-if (/:\s*(string|number|boolean|SkyVars|P\b)/.test(fn.replace(/"[^"]*"/g, ""))) throw new Error("sky.ts 里还有没去掉的类型标注");
+if (/:\s*(string|number|boolean|SkyVars|P\b)/.test(fn.replace(/"[^"]*"/g, "")))
+  throw new Error("sky.ts 里还有没去掉的类型标注");
 
 fs.writeFileSync(
   path.join(out, "sky.js"),

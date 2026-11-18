@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { THEME_PALETTES } from "../src/lib/appearance";
+import { THEME_FAMILIES } from "../src/lib/appearance";
 import {
   findEntry,
   navGroups,
@@ -67,11 +67,11 @@ describe("skill slug", () => {
 });
 
 describe("settings copy matches the product", () => {
-  test("palette count comes from THEME_PALETTES, no stale numbers", () => {
+  test("theme-family count comes from THEME_FAMILIES, no stale numbers", () => {
     const palette = findEntry("general.palette")!.item!;
-    expect(palette.description).toContain(`${THEME_PALETTES.length} 款`);
-    for (const p of THEME_PALETTES)
-      expect(palette.description).toContain(p.name);
+    expect(palette.description).toContain(`${THEME_FAMILIES.length} 款`);
+    for (const f of THEME_FAMILIES)
+      expect(palette.description).toContain(f.name);
     expect(palette.description).not.toContain("6 款");
   });
 
