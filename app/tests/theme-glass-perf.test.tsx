@@ -642,7 +642,6 @@ describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass
     ".chat-history-more",
     ".to-card",
     ".hr-card",
-    ".win-ctrls",
     ".rs-capsule",
     ".chat-thinking",
   ];
@@ -660,6 +659,20 @@ describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass
     expect(rules.length).toBeGreaterThanOrEqual(2);
     for (const cls of FLOATING) {
       expect(rules.some(([, list]) => list.includes(cls))).toBe(true);
+    }
+  });
+});
+
+describe("10) 窗口按钮条不进材质画底名单（回归门）", () => {
+  test(".win-ctrls 不出现在任何 --lg-* 画底规则的选择器里", () => {
+    const rules = [
+      ...css.matchAll(
+        /([^{}]+)\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface/g,
+      ),
+    ];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [sel] of rules) {
+      expect(sel).not.toContain(".win-ctrls");
     }
   });
 });

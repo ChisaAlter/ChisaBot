@@ -10652,7 +10652,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
  * 干活步骤、草稿卡、历史提示、工具结果核对 .to-card、交接恢复 .hr-card、状态/干活胶囊、
  * 「显示更早」胶囊、PC 窗口按钮）：和气泡同一档釉面，不吃 .glass-shell 的薄纱令牌。
  * .cf-card 完成态用更弱一档的 --lg-surface。 */
-:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls) {
+:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card) {
   background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   box-shadow: var(--lg-shadow) !important;

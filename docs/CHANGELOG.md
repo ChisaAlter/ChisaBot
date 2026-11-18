@@ -1,3 +1,7 @@
+## Unreleased
+
+- 弹出面板与窗口按钮条材质收口（CB-139，DESIGN §142）：`.rail-sheet` 移出 perf-noblur / resize-pause 的直接实心底名单，底色只经 `--lg-surface` 一条通道（与每个 `.rail-card` 同升同降，不再单独长成另一块颜色）；`.win-ctrls` 退出 `--lg-surface-strong` 画底名单——4 个窗口控制键常态无底，悬停 / 按下 / 关闭红 / 焦点环不变；新增回归门断言 `.win-ctrls` 不进任何 `--lg-*` 画底选择器（styles.css · perf-noblur.css · resize-pause.css · theme-glass-perf.test.tsx · render-budget.test.ts）。
+
 ## 0.1.168 — 2026-11-18
 
 - 右边缘「面板」把手接入液态玻璃材质：`.rail-tab` 进各材质名单与 `GLASS_SURFACE_SELECTOR`，取 `--lg-surface-strong` 小面釉 + `--lg-ink`，随雾度滑块、深底自动翻墨；小面不进模糊预算（本地 `--lg-blur: none`）。悬停变宽 / Ctrl+Alt+B / `--edge-clip-r` / 窄窗抽屉不变（styles.css · appearance.ts，CB-138，DESIGN §141）。
