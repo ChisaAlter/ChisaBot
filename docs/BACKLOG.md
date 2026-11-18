@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-135](#cb-135) | 网页新构建上线后页面不自动换新版，靠用户手点刷新横幅                            | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: in-progress`                                     |
 | [CB-134](#cb-134) | 深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」              | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`                  |
 | [CB-133](#cb-133) | 左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列                              | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#553 · `v0.1.164`）                                     |
 | [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                 | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: done`（#551 · `v0.1.163`）                         |
@@ -128,6 +129,19 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-135
+
+**网页新构建上线后页面不自动换新版，靠用户手点刷新横幅**
+
+标签：`type: feat` · `area: web` · `P1` · `status: in-progress`
+
+分支：`feat/web-auto-reload`。问题：部署后常开页面挂着旧构建直到用户自己点「有新版本，点此刷新」——旧页面可以挂几天。机制已具备：`useNewVersion` 轮询、`refreshWouldInterrupt()` 在刷新无损时返回 null（没在回复、没挂附件、没有没发出去的字；聊天草稿在 localStorage）。缺的是自动扣扳机：横幅出现期间每 15 秒查一次 `refreshWouldInterrupt()`，null 即 `window.location.reload()`。
+
+- [x] **无损自动刷新**：`update-banner.tsx` 起 15s 轮询，`refreshWouldInterrupt() === null` → reload（注入 `reload` prop 供测试）；横幅保持可见，手动点击 + 既有确认框路径不变。
+- [x] **不刷的场景**：busy / 挂附件 / 有未发内容时继续等；点 ✕ 关掉（`dismiss()`）取消自动刷新；`pcUpdateActive`（downloading / downloaded）不显示横幅也不自动刷。
+- [ ] **验收**：`bun run check` + `app/tests/update-banner.test.tsx`（空闲到点刷一次 / 忙时等 / 关掉不刷 / PC 更新中不刷）。
+- [ ] PR 合并发版；串行部署后生产观察。
 
 ## CB-134
 
