@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.168 — 2026-11-18
 
 - 右边缘「面板」把手接入液态玻璃材质：`.rail-tab` 进各材质名单与 `GLASS_SURFACE_SELECTOR`，取 `--lg-surface-strong` 小面釉 + `--lg-ink`，随雾度滑块、深底自动翻墨；小面不进模糊预算（本地 `--lg-blur: none`）。悬停变宽 / Ctrl+Alt+B / `--edge-clip-r` / 窄窗抽屉不变（styles.css · appearance.ts，CB-138，DESIGN §141）。
 
