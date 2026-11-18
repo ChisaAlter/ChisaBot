@@ -53,6 +53,34 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
     if (!bridge) return;
     const root = document.documentElement;
     root.dataset.desktop = bridge.platform || "win32";
+    /*
+     * 把窗口右缘越出屏幕工作区多少写进 --edge-clip-r，右缘的「面板」把手按它让位（styles.css）。
+     * 恢复态窗口可以被拖得右缘出屏，这时把手跟着出屏被裁；最大化时客户区就是工作区，
+     * 越屏量恒为 0（outerWidth 是否含 thickFrame 进边各实现不一，按 0 收），把手维持贴可见边缘。
+     * 浏览器没有这座桥，变量不设、恒回落 0。
+     */
+    const syncEdgeClip = () => {
+      // availLeft / availTop 是 Windows / Electron 事实标准但没进 TS 的 DOM Screen 类型。
+      const availLeft =
+        (window.screen as Screen & { availLeft?: number }).availLeft ?? 0;
+      const availRight = availLeft + window.screen.availWidth;
+      const overhang = Math.max(
+        0,
+        Math.round(window.screenX + window.outerWidth - availRight),
+      );
+      void bridge
+        .isMaximized()
+        .then((max) => {
+          if (signal.aborted) return;
+          root.style.setProperty(
+            "--edge-clip-r",
+            `${max ? 0 : overhang}px`,
+          );
+        })
+        .catch(() => {});
+    };
+    syncEdgeClip();
+    window.addEventListener("resize", syncEdgeClip);
     void bridge
       .isMaximized()
       .then((value) => {
@@ -73,6 +101,8 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
     return () => {
       off();
       offCompact();
+      window.removeEventListener("resize", syncEdgeClip);
+      root.style.removeProperty("--edge-clip-r");
     };
   });
   useDocumentSync(

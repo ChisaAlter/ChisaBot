@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.161 — 2026-11-18
+
+全端版本 0.1.161，Android versionCode 341：右缘「面板」把手越屏裁切修复 + 面板抽屉底材统一。PC 客户端代码指纹更新为 `404d59334e921e59`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
+
+- **「面板」把手越屏裁切修复**：右缘的竖排「面板」把手 `right:0` 贴 `.glass-body` 右缘——恢复态窗口被拖得右缘出屏时，把手跟着出屏被裁掉一截。`lib/desktop-window.ts` 量窗口右缘越出屏幕工作区的量写进 `--edge-clip-r`，把手按它收回；最大化时客户区就是工作区、恒写 0（`outerWidth` 是否含 thickFrame 进边各实现不一，按 0 收不产生空隙），浏览器没有窗口桥、变量不设恒回落 0。真实 Electron 45 thickFrame 窗口实测：最大化贴屏缘、恢复态越屏 955px 时把手拉回工作区内。
+- **面板抽屉底材统一**：窄窗口右滑出的 `.rail-sheet` 是 portal 到 `body` 的同一张 `.rail-card`，`--lg-surface` 兜底 `var(--popover)→--glass-3` 按元素作用域解析——壳外抽屉原先读 `:root` 深色 0.9 成死黑实底，现并入 `:is(.glass-shell, .rail-sheet)` 薄纱令牌作用域，与常驻面板栏同一块材质；删掉被 `!important` 覆盖的两条死背景。
+
 ## 0.1.160 — 2026-11-18
 
 全端版本 0.1.160，Android versionCode 340：聊天输入框悬浮化与 PC 小窗切换动画（DESIGN.md §138）。PC 客户端代码指纹更新为 `9cf3ce76564afe8b`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。

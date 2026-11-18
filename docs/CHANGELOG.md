@@ -1,3 +1,9 @@
+## 0.1.161
+
+- 右缘「面板」把手：恢复态窗口被拖得右缘出屏时按实测越屏量收回（`--edge-clip-r`，最大化恒 0、浏览器恒回落 0，lib/desktop-window.ts）。
+- 面板抽屉（`.rail-sheet`，portal 挂载）并入 `.glass-shell` 薄纱令牌作用域——`--lg-surface` 兜底回落 `var(--popover)→--glass-3` 时不再读 `:root` 深色 0.9 死底，与常驻栏同材质；删两条被 `!important` 覆盖的死背景。
+- 全端发版：PC / macOS / Android 同步 `0.1.161`（versionCode 341），PC 客户端代码指纹 `404d59334e921e59`，外壳指纹不变。
+
 ## 0.1.160
 
 - 聊天输入框悬浮化：脱离文档流浮在对话底边上、消息从卡片底下滚过（`--chat-composer-h` 补滚动区底部内边距 +「回到底部」药丸抬高）；桌面端卡片四边 / 四角可拖拽拉大缩小（最小 320×120、夹回面板、尺寸进 localStorage、双击把手还原），触屏保持原底栏（`composer/dock.tsx`，DESIGN §138）。
