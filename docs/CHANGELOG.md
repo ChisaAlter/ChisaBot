@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.165 — 2026-11-18
 
 - 网页新构建空闲自动刷新：横幅挂着时每 15s 查 `refreshWouldInterrupt()`，null（无损）即自动 reload；busy / 关掉提示 / `pcUpdateActive` 不刷；手动点击确认路径不变（update-banner.tsx · activity.ts · version.ts，DESIGN §22，CB-135）。验证：`app/tests/update-banner.test.tsx` 4 项（空闲刷一次 / 忙等 / 关不刷 / PC 更新中不刷）。
 - 外观模型重构（模式 × 皮肤 × 背景）：皮肤只管强调色与配套主题渐变，天空背景三选一互斥（`chisabot-sky-source` 新键，老存档按旧语义迁移）；天象场景按明暗自动配对、素白 / 墨夜明暗绑定；`--sky-lift` / `--sky-muted` 由有效天空驱动；删「背景随时间变化」重复开关（palette.ts · appearance.ts · sky-background.tsx · appearance-preferences.tsx · styles.css，DESIGN §140，CB-134）。

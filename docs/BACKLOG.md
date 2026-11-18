@@ -15,8 +15,9 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-135](#cb-135) | 网页新构建上线后页面不自动换新版，靠用户手点刷新横幅                            | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: in-progress`                                     |
-| [CB-134](#cb-134) | 深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」              | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`                  |
+| [CB-136](#cb-136) | PC 客户端发版后不收敛：待安装冻结检查 + 内置前端切换晚于页面加载                  | 设备核心 Devices core | `type: bug` · `area: pc` · `P1` · `status: in-progress`                                     |
+| [CB-135](#cb-135) | 网页新构建上线后页面不自动换新版，靠用户手点刷新横幅                            | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#556 · `v0.1.165`）                                     |
+| [CB-134](#cb-134) | 深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」              | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#555 · `v0.1.165`）                  |
 | [CB-133](#cb-133) | 左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列                              | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#553 · `v0.1.164`）                                     |
 | [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                 | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: done`（#551 · `v0.1.163`）                         |
 | [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                       |
@@ -130,24 +131,37 @@
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
+## CB-136
+
+**PC 客户端发版后不收敛：待安装冻结检查 + 内置前端切换晚于页面加载**
+
+标签：`type: bug` · `area: pc` · `P1` · `status: in-progress`
+
+分支：`fix/pc-update-converge`。问题（2026-11-18 用户实测）：客户端 0.1.159 装着，0.1.160 下载完「待安装」后更新器永久停止检查（`check()` 对 downloaded 直接返回），错过 0.1.161–0.1.164 四次发版；应用常驻托盘几乎不退出，autoInstallOnAppQuit 也轮不到，客户端无限期落后。同时「内置前端优先 + 服务器更高切远程」的仲裁结果只存内存：启动探测一失败，整个会话锁死在旧 bundle，会话中嗅探到新版本也只广播状态不重载已加载页面。
+
+- [x] **待安装不冻结检查（updater.js）**：`downloaded` 状态照常进入检查，复查时临时关 `autoDownload`——同版本不重复拉包，源上出现更新版本就顶掉待安装的重新下载；复查失败 / 源上没更新都保留待安装状态。
+- [x] **local→remote 翻转即重载（local-web.js / main.js）**：`onModeChange` 带上 `prevMode`，探测 / 嗅探晚于页面加载导致模式翻到 `remote` 时重载聊天窗口一次换到服务器前端（serverVersions 单调递增，每会话最多一次）。
+- [x] **测试**：update.check.js 新增「更新版本顶掉待安装」「复查失败 / 空结果保留待安装」，local-web.check.js 断言事件携带 prevMode；pc 全量 204 项通过。
+- [ ] PR 合并发版；观察实机客户端在发版后自行追平。
+
 ## CB-135
 
 **网页新构建上线后页面不自动换新版，靠用户手点刷新横幅**
 
-标签：`type: feat` · `area: web` · `P1` · `status: in-progress`
+标签：`type: feat` · `area: web` · `P1` · `status: done`（#556 · `v0.1.165`）
 
 分支：`feat/web-auto-reload`。问题：部署后常开页面挂着旧构建直到用户自己点「有新版本，点此刷新」——旧页面可以挂几天。机制已具备：`useNewVersion` 轮询、`refreshWouldInterrupt()` 在刷新无损时返回 null（没在回复、没挂附件、没有没发出去的字；聊天草稿在 localStorage）。缺的是自动扣扳机：横幅出现期间每 15 秒查一次 `refreshWouldInterrupt()`，null 即 `window.location.reload()`。
 
 - [x] **无损自动刷新**：`update-banner.tsx` 起 15s 轮询，`refreshWouldInterrupt() === null` → reload（注入 `reload` prop 供测试）；横幅保持可见，手动点击 + 既有确认框路径不变。
 - [x] **不刷的场景**：busy / 挂附件 / 有未发内容时继续等；点 ✕ 关掉（`dismiss()`）取消自动刷新；`pcUpdateActive`（downloading / downloaded）不显示横幅也不自动刷。
-- [ ] **验收**：`bun run check` + `app/tests/update-banner.test.tsx`（空闲到点刷一次 / 忙时等 / 关掉不刷 / PC 更新中不刷）。
-- [ ] PR 合并发版；串行部署后生产观察。
+- [x] **验收**：`bun run check` 0/0 + `app/tests/update-banner.test.tsx` 4 项（空闲到点刷一次 / 忙时等 / 关掉不刷 / PC 更新中不刷）。
+- [x] PR #556 合并发版 `v0.1.165`；串行部署后生产观察。
 
 ## CB-134
 
 **深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」**
 
-标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`
+标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#555 · `v0.1.165`）
 
 用户（2026-11-19）：「现在的深浅，主题，动态天象太乱了。特别是我浅色主题+墨夜背景，或者深色主题+素白背景，都没法看」。审查确认是模型问题不是配色问题：四条轴争同一块天空、非 default 配色静默劫持天空成天象死选项、`--sky-lift` / `--sky-muted` 护栏断线、「背景随时间变化」与 live 天象卡重复。按 DESIGN §140 重构。
 
@@ -155,8 +169,8 @@
 - [x] **昼夜配对不变式**：`HARK_SCENE_INFO` 给 12 个场景标 day / dusk / night + darkness，`resolveEffectiveHarkScene` 收口配对（浅色下夜景 → 黄昏 / 雨景、深色下日景 → 夜景）。
 - [x] **明暗绑定皮肤**：素白 `boundMode:"light"` / 墨夜 `boundMode:"dark"`，点击连模式一起切，色板带日 / 月角标；天象卡带昼 / 暮 / 夜角标 + 「主题天空」卡。
 - [x] **可读性护栏接电**：`resolveSkyReadability` 按有效天空明暗写 `--sky-lift` / `--sky-muted`，live 每分钟重算；删「背景随时间变化」开关行与 `usesPaletteGradientSky`。
-- [ ] **验收**：`bun run check` + `app/tests/appearance-sky-model.test.tsx` 等新测通过；verify-ui 双视口截图验收（错配组合 × 三来源）。
-- [ ] PR 合并发版；串行部署后生产观察。
+- [x] **验收**：`bun run check` 0/0 + 外观套件 152 项通过（新增 appearance-sky-model 契约）；真浏览器 harness `tests/appearance-model/appearance.mjs` 16 项断言全过（配对 / 互斥 / data-sky / 移动端无溢出）。
+- [x] PR #555 合并发版 `v0.1.165`；串行部署后生产观察。
 
 ## CB-133
 
