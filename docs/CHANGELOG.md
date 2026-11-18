@@ -1,3 +1,7 @@
+## Unreleased
+
+- PC 客户端发版不收敛修复：`downloaded` 待安装状态不再让 `check()` 永久返回——复查临时关 `autoDownload`，同版本不重下、更新版本顶掉待安装（复查失败 / 源上无更新保留待安装）；`local-web` 的 `onModeChange` 带 `prevMode`，local→remote 翻转即重载聊天窗口换服务器前端，每会话最多一次（updater.js · local-web.js · main.js，CB-136）。验证：`update.check.js` / `local-web.check.js` 新增用例，pc 全量 204 项通过。
+
 ## 0.1.165 — 2026-11-18
 
 - 网页新构建空闲自动刷新：横幅挂着时每 15s 查 `refreshWouldInterrupt()`，null（无损）即自动 reload；busy / 关掉提示 / `pcUpdateActive` 不刷；手动点击确认路径不变（update-banner.tsx · activity.ts · version.ts，DESIGN §22，CB-135）。验证：`app/tests/update-banner.test.tsx` 4 项（空闲刷一次 / 忙等 / 关不刷 / PC 更新中不刷）。

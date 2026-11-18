@@ -274,6 +274,10 @@ test("classifyRequest routes server prefixes, writes, local HTML/assets, and mul
       "passthrough",
     );
     assert.ok(modeEvents.some((e) => e.mode === "remote"));
+    assert.ok(
+      modeEvents.some((e) => e.mode === "remote" && e.prevMode === "local"),
+      "local→remote 翻转要带 prevMode，主进程据此重载已加载的旧前端",
+    );
 
     // Origin B remains isolated in local mode
     currentOrigin = "https://srv-b.example.com";

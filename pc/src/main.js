@@ -1541,7 +1541,14 @@ const localWeb = createLocalWebController({
   bundleDir: path.join(__dirname, "web-bundle"),
   localVersion: pkg.version,
   getServerOrigin: serverOrigin,
-  onModeChange: () => broadcast(),
+  onModeChange: ({ origin, mode, prevMode }) => {
+    broadcast();
+    // 探测/嗅探可能晚于页面加载（窗口里还是内置旧前端）：local→remote 一旦翻转就重载聊天窗口，
+    // 换到服务器前端。serverVersions 单调递增，local→remote 每会话最多翻一次，不会反复重载。
+    if (mode === "remote" && prevMode === "local" && origin === serverOrigin() && windows.chat && !windows.chat.isDestroyed() && !chatOffline) {
+      windows.chat.webContents.reload();
+    }
+  },
 });
 
 app.whenReady().then(() => {
