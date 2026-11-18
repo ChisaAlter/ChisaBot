@@ -1,3 +1,8 @@
+## Unreleased
+
+- 聊天滚动：流式回答中内容长高后贴底改用 `scrollTo` `"instant"`（视口 `.scroll-smooth` 下 `"auto"` 会解析回平滑；不忙仍 smooth、宽度换行不变）——真机 painted 帧 >50px 下砸 11~16 次 @~230px → 0~1 次（`tests/chat-scroll/work-card-jump.mjs`，DESIGN §94.9）。
+- 干活卡点开 / 收起在 content 捕获阶段处理：记 `touchedAt` 让收起的 ~65px 变矮不再被 §88.1 补成留白挂到回合结束（实测 gap 220→与展开持平），§94.6 floor 在场时冻成渲染高度不删。
+
 ## 0.1.161
 
 - 右缘「面板」把手：恢复态窗口被拖得右缘出屏时按实测越屏量收回（`--edge-clip-r`，最大化恒 0、浏览器恒回落 0，lib/desktop-window.ts）。

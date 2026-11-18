@@ -18,7 +18,7 @@
   min-width: 0;
   padding: 9px 14px 9px 12px;
   border: 0;
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-bubble, 16px);
   background: var(--pal-tint-layer,) var(--lg-surface-strong);
   box-shadow: var(--lg-shadow);
   color: var(--glass-ink-2);

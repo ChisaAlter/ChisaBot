@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: in-progress`                                     |
 | [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）             |
 | [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
 | [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`（`v0.1.152`）            |
@@ -124,6 +125,21 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-131
+
+**聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐**
+
+标签：`type: bug` · `area: chat` · `P1` · `status: in-progress`
+
+分支：`fix/chat-stream-jumps`。流式回答的 markdown 整块提交（一帧 +100~230px）时 `stickToBottom` 一律走 smooth，追一次 ~1.5s、每块落地又重启，画面每 ~2s 出现一次 ~230px 的底边下砸再往回漂；回合中点开再收起干活卡，收起那帧 ~65px 的变矮被 §88.1 补成留白、busy 期间一路 `skip:busy` 挂到回合结束（输入框上方留一块空白）；「思考中」胶囊 / 干活步骤列表用 999px 胶囊 / `--r-md` 圆角，与气泡 `--r-bubble` 不对齐（DESIGN §94.9）。
+
+- [x] **busy 贴底同帧 `instant`**：`SettleAtEnd` 在 `s.busy` 且内容长高时 `scrollTo` 用 `"instant"`——同帧直接贴底，看不见中间位置；视口带 `.scroll-smooth`，`"auto"` 会按 computed `scroll-behavior` 解析回平滑，必须 instant 才跳过 CSS 并掐断在飞的那次滚动；不忙仍 smooth、宽度换行分支不变。真机 painted 帧 >50px 下砸 11~16 次 @~230px → 0~1 次。
+- [x] **干活卡点开 / 收走在 content 捕获阶段处理**：记 `touchedAt` 使收起帧不进 §88.1 补留白分支；§94.6 floor 在场时把留白冻成渲染高度而不是删掉。实测收起后底边间距与展开时持平（基线残留 +45~55px），回合末照常收完。
+- [x] **圆角对齐气泡**：`.rs-capsule` / `.chat-thinking` / `.chat-work-steps` 的 `border-radius` 统一为 `var(--r-bubble, 16px)`，与消息气泡同一令牌。
+- [x] **真机滚动回归 harness 落地**：`tests/chat-scroll/work-card-jump.mjs`（mock 后端 + playwright-core 驱动本机浏览器，rAF 与 post-RO 双采样，场景 A 流式下砸 / 场景 B 展开收起留白，支持 `--answer` 正文矩阵与 `--viewports`）+ `perf/mock-server.mjs` 新增 opt-in `toolTurn` 模式（commands+events AG-UI SSE、web_search×2+web_fetch、`holdMs`），向后兼容。
+- [ ] `tests/chat-scroll/regression.sh` 对真实预览实例 7 项（需 BASE/BOT/THREAD + Postgres，本机无实例，以 work-card-jump harness 为替代证据）。
+- [ ] PR CI、合并、串行部署后生产观察。
 
 ## CB-130
 

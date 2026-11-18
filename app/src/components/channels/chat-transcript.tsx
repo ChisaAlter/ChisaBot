@@ -1115,6 +1115,27 @@ function SettleAtEnd({
       if (event.target === element) release();
     };
     /*
+     * 干活卡点开 / 收起是人的动作，而且是「会改变内容高度」的点击：在 content 的捕获阶段处理——先于 React
+     * 根上冒泡派发的委托 click、也先于随后那次布局提交。
+     * 1) 记 touchedAt：收起那一帧内容矮 ~65px（实测 1280/420 两个视口都是），grew<0 走到下面 §88.1 的
+     *    补留白分支时 recentlyTouched 成立——缩掉的高度不再存成留白。busy 期间 releaseRef 一路
+     *    `skip:busy` 拒收，存进去就一直挂到回合结束（实测 gap 从展开前 ~156 变成 220、+1.9s 不变）。
+     *    不补留白，浏览器这一帧直接把 scrollTop 夹小，底边回到正常间距。展开是 grew>0，本来就不走
+     *    补留白分支；记 touched 只是让它也按「人刚动过」对待。
+     * 2) §94.6 的 floor 还撑着时，收起的变矮本来由「跟着变」的留白在同一布局里让出——这里在布局之前
+     *    把它冻成渲染高度（退出 floor、留白固定）。不能删：删掉这一列立刻矮一截、画面先跳一下；冻住
+     *    则这一帧布局原样，随后的 grew<0 走正常路径由浏览器夹 scrollTop。没有 floor（固定留白 / 没有
+     *    留白）时什么都不用做。干活卡已完成的 .chat-work-done 也带这个类，同样无害地走到这里。
+     */
+    const onWorkCardToggle = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(".chat-work-card"))
+        return;
+      touchedAt = performance.now();
+      const el = slack.current;
+      if (s.floor !== null && el) setSlack(el.offsetHeight);
+    };
+    /*
      * 上一次看到的位置：滚动事件、每次 ResizeObserver 回调之后更新。内容变矮被浏览器夹回去的那一帧，这里还是
      * 夹之前的数（滚动事件要到下一帧才来）。
      */
@@ -1151,15 +1172,26 @@ function SettleAtEnd({
      * 换行之后人还贴着底部：同一帧就贴回去。滚动容器自己也会贴（它的 handleResize → scrollToEnd），但排在
      * 下一帧的 rAF 里，中间那一帧会先画「最后一条掉到折线下面」。只在本来就在底部、不在恢复 / 对齐某一轮时动手。
      */
-    const stickToBottom = () => {
+    /*
+     * instant（流式回答中 s.busy）：markdown 一块一块整块提交，一帧能长 100~230px。平滑追要 ~1.5s、
+     * 每来一块又重新起一次 —— 实测就是底边先砸下去再往回漂的「乱跳」（work-card-jump 基线：每 ~2s 一次
+     * ~230px 的向下跳，接着一帧缩回 ~105px 的二次布局）。忙的时候块本来就在一帧里整块落地，同一帧直接
+     * 贴到底读起来只是「流式多长了一块」，看不见中间位置。不忙时长出来的多是错误卡 / 缓冲消息一整条，
+     * 直接跳会把历史搬走 >150px，仍走平滑。换行那一支（reflowed）不传 instant：整列重新折行时内容末尾
+     * 没长，平滑过去才对得上。
+     *
+     * 必须是 "instant" 不能是 "auto"：视口带着 `.scroll-smooth`（scroll-behavior:smooth），"auto" 会走
+     * 元素的 computed scroll-behavior 解析回平滑——实测（work-card-jump fix1）同一帧的 scrollTo(auto)
+     * 不但没贴住，还在已飞行的平滑滚动上重启一次，底边照样砸 233px。"instant" 跳过 CSS 解析、同时
+     * 掐断还在飞的那次平滑滚动。
+     */
+    const stickToBottom = (instant = false) => {
       if (held()) return;
       const max = element.scrollHeight - element.clientHeight;
       if (element.scrollTop >= max - 1) return;
-      // Follow growing content with the scroller's native motion. An error card or a
-      // buffered message can add more than a line; snapping to max moved history >150px.
       element.scrollTo({
         top: max,
-        behavior: reduceMotion ? "auto" : "smooth",
+        behavior: reduceMotion || instant ? "instant" : "smooth",
       });
     };
     const look = () => {
@@ -1296,10 +1328,10 @@ function SettleAtEnd({
           element.scrollTop = seen.top;
           element.style.scrollBehavior = "";
         } else if (grew > use && seen.atBottom && !s.restore && !anchoring()) {
-          stickToBottom();
+          stickToBottom(s.busy);
         }
       } else if (grew > 0 && seen.atBottom && !s.restore && !anchoring()) {
-        stickToBottom();
+        stickToBottom(s.busy);
       } else if (
         s.busy &&
         grew < 0 &&
@@ -1590,6 +1622,7 @@ function SettleAtEnd({
     element.addEventListener("touchmove", release, { passive: true });
     element.addEventListener("keydown", onKey);
     element.addEventListener("pointerdown", onPointer);
+    content.addEventListener("click", onWorkCardToggle, true);
     element.addEventListener("scroll", onScroll, { passive: true });
     /*
      * 「显示更早的消息」恢复锚点时底下不够滚（内容原本不够一屏）：在最后一条下面垫出差的那一截，
@@ -1623,6 +1656,7 @@ function SettleAtEnd({
       element.removeEventListener("touchmove", release);
       element.removeEventListener("keydown", onKey);
       element.removeEventListener("pointerdown", onPointer);
+      content.removeEventListener("click", onWorkCardToggle, true);
       element.removeEventListener("scroll", onScroll);
     };
   });
