@@ -137,12 +137,7 @@ type FamilyDraft = { name: string; light: Seed; dark: Seed };
 
 export function AppearancePreferences() {
   const appearance = useAppearance();
-  const { dark, setDark } = useTheme();
-  const modeKeys = useSegmentedKeys<"light" | "dark">({
-    value: dark ? "dark" : "light",
-    values: ["light", "dark"],
-    onChange: (next) => setDark(next === "dark"),
-  });
+  const { dark } = useTheme();
   const glassKeys = useSegmentedKeys<GlassStyleId>({
     value: appearance.glassStyle,
     values: GLASS_STYLE_VALUES,
@@ -430,33 +425,6 @@ export function AppearancePreferences() {
             </div>
           </div>
           <div className="appearance-head-actions">
-            <div
-              aria-label="外观模式"
-              className="sg-segmented"
-              {...modeKeys.groupProps}
-              ref={modeKeys.groupRef}
-              role="radiogroup"
-            >
-              {(
-                [
-                  ["light", "浅色"],
-                  ["dark", "深色"],
-                ] as const
-              ).map(([value, label]) => (
-                // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-                <button
-                  aria-checked={(dark ? "dark" : "light") === value}
-                  className="sg-segmented-item"
-                  key={value}
-                  onClick={() => setDark(value === "dark")}
-                  role="radio"
-                  tabIndex={modeKeys.itemTabIndex(value)}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
             {appearance.harkScene !== "auto" ||
             appearance.familyLight !== "azure" ||
             appearance.familyDark !== "azure" ||
