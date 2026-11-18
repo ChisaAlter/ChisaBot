@@ -74,14 +74,14 @@ html.dark {
   html:not(#chisabot-no-blur)
     :is(
       .glass:not(.is-flat),
-      .glass-card:not(.rail-card .glass-card),
+      .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
       [data-slot="dropdown-menu-content"],
       [data-slot="context-menu-content"],
       [data-slot="select-content"],
       [data-slot="popover-content"],
       [data-slot="combobox-content"],
       [data-slot="dialog-content"],
-      [data-slot="sheet-content"],
+      [data-slot="sheet-content"]:not(.rail-sheet),
       [data-slot="sidebar"][data-mobile="true"],
       .model-popover,
       .page-loader-card,
@@ -209,14 +209,14 @@ html[data-perf="on"]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubb
 html[data-perf="on"]:not(#chisabot-no-blur)
   :is(
     .glass:not(.is-flat),
-    .glass-card:not(.rail-card .glass-card),
+    .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
     [data-slot="dropdown-menu-content"],
     [data-slot="context-menu-content"],
     [data-slot="select-content"],
     [data-slot="popover-content"],
     [data-slot="combobox-content"],
     [data-slot="dialog-content"],
-    [data-slot="sheet-content"],
+    [data-slot="sheet-content"]:not(.rail-sheet),
     [data-slot="sidebar"][data-mobile="true"],
     .model-popover,
     .page-loader-card,

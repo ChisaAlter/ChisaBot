@@ -52,7 +52,7 @@ html[data-resizing]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubbl
 html[data-resizing]:not(#chisabot-no-blur)
 :is(
   .glass:not(.is-flat),
-  .glass-card:not(.rail-card .glass-card),
+  .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
   [data-slot="dropdown-menu-content"],
   [data-slot="popover-content"],
   [data-slot="select-content"],
