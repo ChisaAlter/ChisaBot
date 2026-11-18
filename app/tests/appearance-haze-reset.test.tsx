@@ -10,6 +10,7 @@ import {
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { cleanup, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
+import { ThemeProvider } from "@/components/theme-provider";
 import {
   flushAppearanceWrites,
   GLASS_OPACITY_MAX,
@@ -64,7 +65,11 @@ describe("10) haze slider range matches storage", () => {
     reloadAppearanceFromStorage();
     expect(getAppearanceState().glassOpacity).toBe(50);
 
-    const view = render(<AppearancePreferences />);
+    const view = render(
+      <ThemeProvider>
+        <AppearancePreferences />
+      </ThemeProvider>,
+    );
     const slider = view.getByLabelText("玻璃面板不透明度") as HTMLInputElement;
     expect(slider.type).toBe("range");
     expect(slider.min).toBe(String(GLASS_OPACITY_MIN));

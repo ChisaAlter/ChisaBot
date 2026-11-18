@@ -16,6 +16,7 @@ import {
   within,
 } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
+import { ThemeProvider } from "@/components/theme-provider";
 import {
   flushAppearanceWrites,
   getAppearanceState,
@@ -692,7 +693,7 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
   const body = () => within(document.body);
 
   test("rejects unsupported file types without opening crop dialog", async () => {
-    const { container } = render(<AppearancePreferences />);
+    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     const input = container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;
@@ -706,7 +707,7 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
   });
 
   test("opens crop dialog on upload, supports cancel without mutating wallpaper", async () => {
-    const { container } = render(<AppearancePreferences />);
+    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     const input = container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;
@@ -733,7 +734,7 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
   });
 
   test("supports preset switch, handle drag, zoom slider, keyboard move, apply, and lossless recrop", async () => {
-    const { container } = render(<AppearancePreferences />);
+    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
     const input = container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;

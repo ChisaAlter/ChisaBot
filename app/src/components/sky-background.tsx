@@ -10,10 +10,10 @@ import {
   paletteThemeColor,
   resolveActiveWallpaperCss,
   resolveEffectiveHarkScene,
-  setHarkSkyScene,
+  resolveSkyReadability,
   useAppearance,
-  usesPaletteGradientSky,
   useWallpaperLoading,
+  usesThemeGradientSky,
 } from "@/lib/appearance";
 import { installLiquidGlass } from "@/lib/liquid-glass";
 import { usePerfMode } from "@/lib/perf-mode";
@@ -51,7 +51,8 @@ import { createSkyWindow } from "@/lib/sky-window";
  *  - 「背景随时间变化」（live）= 动态天空：页面可见、窗口有焦点、且 2.5s 内有操作时才跑；
  *    系统开了「减少动态效果」时退回快照；
  *  - 设了壁纸或开了性能模式：不启动引擎；已经启动的停下并隐藏画布（html[data-sky-off]）；
- *  - 非 default 配色（不管是否智能跟随）：同样不启动引擎，#skyph 显示 computePaletteSky 的主题渐变（引擎没有色相参数）；
+ *  - 天空来源是「主题天空」（skySource="theme"）：同样不启动引擎，#skyph 显示 computePaletteSky
+ *    的主题渐变（引擎没有色相参数）；皮肤与引擎天象可以共存，配色不再劫持天空；
  *  - 不再强制 preserveDrawingBuffer：停住的画布保留最后一次上屏的画面，不需要每帧多拷一份缓冲。
  */
 
@@ -72,30 +73,6 @@ export function easeNextSkyChange(
   easeTimer = window.setTimeout(() => {
     root.removeAttribute("data-sky-ease");
   }, SKY_EASE_MS);
-}
-
-/**
- * 供「背景随时间变化」开关读取/切换 Hark 实时时钟天空（live）与精选场景（auto）。
- */
-export function useSkyState(): { enabled: boolean; preview: number | null } {
-  const appearance = useAppearance();
-  return {
-    enabled: appearance.harkScene === "live",
-    preview: null,
-  };
-}
-
-export function setSkyEnabled(enabled: boolean): void {
-  setHarkSkyScene(enabled ? "live" : "auto");
-}
-
-export function setSkyPreview(hour: number | null): void {
-  if (typeof window === "undefined") return;
-  if (hour === null) {
-    window.hark?.setLive?.(true);
-  } else {
-    window.hark?.setHour?.(hour, true);
-  }
 }
 
 interface HarkController {
@@ -437,6 +414,11 @@ function wakeSky(ms: number) {
 }
 
 function setSkyMode(mode: SkyMode) {
+  // <html data-sky> 对外报告真实天空模式：PC 原生窗（web-preload 的 MutationObserver 在听它）
+  // 只在 "live" / "time"（启动骨架）时用网页同一套 computeSky 画时间天空。
+  // 先写再早退：初始 sky.mode 已是 "snapshot"，幂等路径也要把启动脚本留下的 "time" 盖成真实模式。
+  if (typeof document !== "undefined")
+    document.documentElement.setAttribute("data-sky", mode);
   if (sky.mode === mode) return;
   const wasOff = sky.mode === "off";
   sky.mode = mode;
@@ -661,7 +643,7 @@ export function SkyBackground() {
     // 壁纸还在从 IndexedDB 读回时也不启动天空：读回来就是壁纸，先启动只会闪一下。
     wallpaper: wallpaperCss !== null || wallpaperLoading,
     live: appearance.harkScene === "live",
-    paletteGradient: usesPaletteGradientSky(appearance),
+    paletteGradient: usesThemeGradientSky(appearance),
   });
 
   // 3. 启动 Hark 原生 WebGL 动态天空引擎（/wallpaper_core.html）；壁纸 / 性能模式下不启动。
@@ -772,6 +754,28 @@ export function SkyBackground() {
   //    换场景时引擎会当场画一帧（applyScene → tick），4× 降速下这一帧要一两百毫秒。点配色是离散输入，
   //    React 会在同一个任务里同步跑完这条 effect，这一帧就算进了点击的 INP。所以等这次点击先上屏，再换场景。
   const targetScene = resolveEffectiveHarkScene(appearance, dark);
+  // 5b. 浅色模式的可读性旋钮（--sky-lift / --sky-muted，DESIGN.md §7）：由有效天空的明暗驱动。
+  //     live 天象随本机时间每分钟重算；深色 / 壁纸 / 主题渐变下移除（深色令牌或薄幕自己承担对比度）。
+  useExternalConnection(
+    `readability:${dark ? "d" : "l"}:${appearance.skySource}:${appearance.wallpaperId}:${targetScene}`,
+    () => {
+      const apply = () => {
+        const r = resolveSkyReadability(getAppearanceState(), dark);
+        const style = document.documentElement.style;
+        if (!r) {
+          style.removeProperty("--sky-lift");
+          style.removeProperty("--sky-muted");
+          return;
+        }
+        style.setProperty("--sky-lift", String(r.lift));
+        style.setProperty("--sky-muted", r.muted);
+      };
+      apply();
+      if (targetScene !== "live") return;
+      const timer = window.setInterval(apply, 60_000);
+      return () => window.clearInterval(timer);
+    },
+  );
   useExternalConnection(`scene:${targetScene}`, () => {
     let raf = 0;
     let timer = 0;
