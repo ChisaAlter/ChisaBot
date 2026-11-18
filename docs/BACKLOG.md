@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: in-progress`                                    |
 | [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                    |
 | [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）             |
 | [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
@@ -125,6 +126,19 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-132
+
+**PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条**
+
+标签：`type: bug` · `area: pc` · `P1` · `status: in-progress`
+
+分支：`fix/rail-tab-edge-clip`。0.1.161 的 `--edge-clip-r` 让位逻辑只在挂载 + `window.resize` 时量越屏量（`lib/desktop-window.ts`）；拖窗口不产生任何 DOM 事件、`chisabotWindow` 桥也没有 bounds 回调，恢复态窗口被拖到右缘出屏后变量停在旧值，`.rail-tab` 跟着出屏被裁半条（用户 2026-11-18 截图实测，DESIGN §82.11）。修复：250ms 轮询 `screenX + outerWidth` 对 `screen.avail` 重算越屏量，值变才写样式、最大化恒 0、轮询内不走 IPC；网页侧轮询同时覆盖没有 bounds 回调的旧 PC 客户端。
+
+- [x] **轮询重算**：`useDesktopWindow` 挂载后每 250ms 比对越屏量并写 `--edge-clip-r`；读 `screenX` / `outerWidth` 不引发布局，值不变时不写样式。
+- [x] **最大化恒 0**：`isMaximized()` 初值与 `onMaximizedChange` 同一处更新本地缓存，轮询不另发 IPC。
+- [x] **验收**：窗口移动后 ~250ms 内把手保持贴在可见右缘（不随窗口出屏）。真 Chromium `tests/rail-edge-clip/edge-clip.mjs`：改 screenX 不发事件，`.rail-tab` computed `right` 在轮询周期内 0 → 860px → 0，最大化恒 0px；单测 `app/tests/desktop-window-edge-clip.test.tsx` 5 项。
+- [ ] PR CI、合并、串行部署后生产观察。
 
 ## CB-131
 

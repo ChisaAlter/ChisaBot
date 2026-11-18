@@ -57,8 +57,12 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
      * 把窗口右缘越出屏幕工作区多少写进 --edge-clip-r，右缘的「面板」把手按它让位（styles.css）。
      * 恢复态窗口可以被拖得右缘出屏，这时把手跟着出屏被裁；最大化时客户区就是工作区，
      * 越屏量恒为 0（outerWidth 是否含 thickFrame 进边各实现不一，按 0 收），把手维持贴可见边缘。
-     * 浏览器没有这座桥，变量不设、恒回落 0。
+     * 拖窗口不触发 resize、桥没有 bounds 回调，250ms 轮询比对越屏量（读 screenX/outerWidth
+     * 不引发布局，不变时不写样式）——0.1.161 的让位逻辑否则只在窗口改大小时生效，
+     * 把手跟着出屏被裁半条（用户 2026-11-18 截图实测）。浏览器没有这座桥，变量不设、恒回落 0。
      */
+    let maximizedNow = false;
+    let lastClip = "";
     const syncEdgeClip = () => {
       // availLeft / availTop 是 Windows / Electron 事实标准但没进 TS 的 DOM Screen 类型。
       const availLeft =
@@ -68,26 +72,29 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
         0,
         Math.round(window.screenX + window.outerWidth - availRight),
       );
-      void bridge
-        .isMaximized()
-        .then((max) => {
-          if (signal.aborted) return;
-          root.style.setProperty(
-            "--edge-clip-r",
-            `${max ? 0 : overhang}px`,
-          );
-        })
-        .catch(() => {});
+      const next = `${maximizedNow ? 0 : overhang}px`;
+      if (next !== lastClip) {
+        lastClip = next;
+        root.style.setProperty("--edge-clip-r", next);
+      }
     };
     syncEdgeClip();
     window.addEventListener("resize", syncEdgeClip);
+    const clipTimer = window.setInterval(syncEdgeClip, 250);
     void bridge
       .isMaximized()
       .then((value) => {
-        if (!signal.aborted) setMaximized(value);
+        if (signal.aborted) return;
+        maximizedNow = value;
+        setMaximized(value);
+        syncEdgeClip();
       })
       .catch(() => {});
-    const off = bridge.onMaximizedChange((value) => setMaximized(value));
+    const off = bridge.onMaximizedChange((value) => {
+      maximizedNow = value;
+      setMaximized(value);
+      syncEdgeClip();
+    });
     let offCompact = () => {};
     if (canCompact(bridge)) {
       void bridge
@@ -102,6 +109,7 @@ export function useDesktopWindow(): { bridge: DesktopWindowBridge; maximized: bo
       off();
       offCompact();
       window.removeEventListener("resize", syncEdgeClip);
+      window.clearInterval(clipTimer);
       root.style.removeProperty("--edge-clip-r");
     };
   });
