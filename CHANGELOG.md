@@ -2,7 +2,7 @@
 
 ## 0.1.160 — 2026-11-18
 
-全端版本 0.1.160，Android versionCode 340：聊天输入框悬浮化与 PC 小窗切换动画（DESIGN.md §138）。PC 客户端代码指纹更新为 `609c55eac285b51a`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
+全端版本 0.1.160，Android versionCode 340：聊天输入框悬浮化与 PC 小窗切换动画（DESIGN.md §138）。PC 客户端代码指纹更新为 `9cf3ce76564afe8b`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
 
 - **输入框悬浮 + 可拖拽调整**：`.chat-composer-box` 脱离文档流、悬浮压在对话底边上，消息能从卡片底下滚过去（滚动区按卡片实际占用高度 `--chat-composer-h` 补底部内边距，最后一条永远能滚到卡片上方，「回到底部」药丸同步抬高）；桌面上卡片四边与四角出现隐形把手，可上下左右拉大缩小（最小 320×120，夹回面板内），尺寸记入 `localStorage`、双击把手还原默认底栏；触屏（`pointer: coarse`）不出把手、保持原底栏（`composer/dock.tsx` + `dock-geometry.ts`，测试 `app/tests/composer-dock.test.ts`）。
 - **输入框收展动画 + 箭头方向**：日常收起的横条 ⇄ 完整工具栏原来直接换 DOM 分支、没有任何过渡；现在表单 ref 在 commit 阶段拿 ResizeObserver 记录的上一帧做 WAAPI 反向补间（高度 + 圆角 + 淡入，220ms ease-out），`prefers-reduced-motion` 照旧跳过。箭头方向修正：收起时显示上箭头（向上展开）、展开时显示下箭头（收回），可访问名不变。
