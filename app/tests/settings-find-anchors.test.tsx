@@ -158,7 +158,12 @@ describe("locateSettingItem on rendered blocks", () => {
     const { AppearancePreferences } = await import(
       "@/components/settings/appearance-preferences"
     );
-    draw(<AppearancePreferences />);
+    const { ThemeProvider } = await import("@/components/theme-provider");
+    draw(
+      <ThemeProvider>
+        <AppearancePreferences />
+      </ThemeProvider>,
+    );
     for (const id of APPEARANCE) {
       const find = findEntry(id)!.item!.find!;
       await waitFor(() =>

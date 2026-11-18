@@ -4,7 +4,7 @@ import path from "node:path";
 import {
   computePaletteSky,
   THEME_PALETTES,
-  usesPaletteGradientSky,
+  usesThemeGradientSky,
 } from "../src/lib/appearance";
 
 /*
@@ -115,24 +115,15 @@ describe("theme palettes visibly change the UI", () => {
     }
   }
 
-  test("any non-default palette uses the gradient sky instead of WebGL, smart follow on or off", () => {
+  test("the sky source decides gradient vs WebGL, independent of the palette", () => {
     expect(computePaletteSky("default", false)).toBeNull();
-    expect(usesPaletteGradientSky({ palette: "default" })).toBe(false);
-    for (const p of THEME_PALETTES) {
-      if (p.id === "default") continue;
-      // 智能跟随（auto）、手动场景、背景随时间变化（live）都不启动 WebGL
-      for (const harkScene of ["auto", "3", "live"] as const) {
-        expect(
-          usesPaletteGradientSky({ harkScene, palette: p.id } as {
-            harkScene: string;
-            palette: typeof p.id;
-          }),
-        ).toBe(true);
-      }
-    }
+    // 天空来源与皮肤解耦：主题渐变只看 skySource，任何皮肤都能配 Hark 引擎天象
+    // （getAppearanceState() 整态路径在 appearance-sky-model.test 里覆盖）
+    expect(usesThemeGradientSky({ skySource: "theme" })).toBe(true);
+    expect(usesThemeGradientSky({ skySource: "hark" })).toBe(false);
   });
 
-  test("scene picker tells the user colour themes use the theme sky", () => {
+  test("the scene picker offers the palette-owned theme sky as an explicit card", () => {
     const tsx = readFileSync(
       path.join(
         import.meta.dir,
@@ -140,7 +131,7 @@ describe("theme palettes visibly change the UI", () => {
       ),
       "utf8",
     );
-    expect(tsx).toContain("彩色主题下使用主题天空");
+    expect(tsx).toContain('data-testid="sky-source-theme"');
   });
 
   test("sakura: pink dusk by day, deep purple-red night", () => {

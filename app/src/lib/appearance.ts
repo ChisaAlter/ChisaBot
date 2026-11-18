@@ -4,9 +4,12 @@ import {
   fallbackGlassStyle,
   GLASS_STYLE_STORAGE_KEY,
   PALETTE_STORAGE_KEY,
+  SKY_SOURCE_STORAGE_KEY,
+  type SkySourceId,
   THEME_PALETTES,
   type ThemePaletteId,
 } from "@/lib/palette";
+import { computeSky, currentMinuteOfDay } from "@/lib/sky";
 import {
   readStoredPreference,
   writeStoredPreference,
@@ -30,6 +33,8 @@ export {
   PALETTE_STORAGE_KEY,
   PRIOR_APPEARANCE_STORAGE_KEYS,
   paletteThemeColor,
+  SKY_SOURCE_STORAGE_KEY,
+  type SkySourceId,
   THEME_PALETTES,
   type ThemePaletteId,
   type ThemePaletteMeta,
@@ -95,6 +100,39 @@ export type HarkSkySceneMeta = {
   previewGradient: string;
   isNight: boolean;
 };
+
+export type HarkSceneDaylight = "day" | "dusk" | "night";
+
+/**
+ * 12 个引擎场景的明暗属性（配对解析与可读性护栏共用，索引 = wallpaper_core.html 的 SCENES 下标）：
+ * - "day"：白天场景——深色外观下自动落到 darkPair 夜景，不再允许「深色界面 + 正午天空」；
+ * - "night"：夜景——浅色外观下自动落到 lightPair 黄昏 / 雨景，不再允许「浅色界面 + 夜空」；
+ * - "dusk"：晨昏场景——两种外观都直接呈现（由 --sky-lift / --sky-muted 加厚浅色玻璃兜底）。
+ * darkness 0~1：有效天空的大致明暗，驱动浅色模式的可读性旋钮（{@link resolveSkyReadability}）。
+ */
+export type HarkSceneInfo = {
+  daylight: HarkSceneDaylight;
+  /** 浅色外观下的替代场景（仅 night 场景需要）。 */
+  lightPair: number | null;
+  /** 深色外观下的替代场景（仅 day 场景需要）。 */
+  darkPair: number | null;
+  darkness: number;
+};
+
+export const HARK_SCENE_INFO: readonly HarkSceneInfo[] = [
+  /* 0  Palo Alto · 正午晴空 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.15 },
+  /* 1  纽约 · 日落 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.5 },
+  /* 2  雷克雅未克 · 午夜 */ { daylight: "night", lightPair: 1, darkPair: null, darkness: 0.9 },
+  /* 3  伦敦 · 雨 */ { daylight: "day", lightPair: null, darkPair: 10, darkness: 0.35 },
+  /* 4  柏林 · 夜 */ { daylight: "night", lightPair: 11, darkPair: null, darkness: 0.9 },
+  /* 5  太浩湖 · 雪霁正午 */ { daylight: "day", lightPair: null, darkPair: 2, darkness: 0.1 },
+  /* 6  凤凰城 · 黄金时刻 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.45 },
+  /* 7  东京 · 晴朗上午 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.15 },
+  /* 8  德里 · 霾暮 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.5 },
+  /* 9  旧金山 · 雾 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.3 },
+  /* 10 迈阿密 · 风暴 */ { daylight: "night", lightPair: 3, darkPair: null, darkness: 0.75 },
+  /* 11 檀香山 · 晨霞 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.55 },
+] as const;
 
 export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
   {
@@ -422,6 +460,11 @@ export type AppearanceState = {
   glassOpacityDark: number;
   /** Hark WebGL 动态天空场景（默认 "auto"） */
   harkScene: HarkSkySceneId;
+  /**
+   * 天空来源（默认 "hark"）："hark" = Hark WebGL 引擎天象；"theme" = 皮肤配套静态主题渐变。
+   * 壁纸（wallpaperId != "none"）仍然盖过两者，见 {@link resolveSkyMode}。
+   */
+  skySource: SkySourceId;
   wallpaperId: WallpaperPresetId;
   customWallpaperUrl: string;
   wallpaperBlur: number;
@@ -457,6 +500,7 @@ const VALID_WALLPAPER_IDS = new Set<WallpaperPresetId>([
   ...WALLPAPER_PRESETS.map((w) => w.id),
   "custom",
 ]);
+const VALID_SKY_SOURCES = new Set<SkySourceId>(["hark", "theme"]);
 
 function clampNumber(
   value: number,
@@ -493,6 +537,9 @@ function readInitialAppearance(): AppearanceState {
   const rawHarkScene = readStoredPreference(
     HARK_SCENE_STORAGE_KEY,
   ) as HarkSkySceneId | null;
+  const rawSkySource = readStoredPreference(
+    SKY_SOURCE_STORAGE_KEY,
+  ) as SkySourceId | null;
   const rawWallpaperKey = readStoredPreference(WALLPAPER_ID_STORAGE_KEY);
   const rawWallpaperId = (
     rawWallpaperKey && rawWallpaperKey in LEGACY_WALLPAPER_ID_MAP
@@ -520,10 +567,11 @@ function readInitialAppearance(): AppearanceState {
     GLASS_OPACITY_MAX,
     DEFAULT_GLASS_OPACITY,
   );
+  const palette =
+    rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default";
 
   return {
-    palette:
-      rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default",
+    palette,
     // 没存材质：按 fallbackGlassStyle 判定一次（不含会自动写入的深浅主题），并立刻写入
     // glass-style，这样 ThemeProvider 随后写入 chisabot-theme 也不会在下次加载时改口径。
     glassStyle: resolveStoredGlassStyle(rawGlass),
@@ -539,6 +587,14 @@ function readInitialAppearance(): AppearanceState {
       rawHarkScene && VALID_HARK_SCENES.has(rawHarkScene)
         ? rawHarkScene
         : "auto",
+    // 老存档没有天空来源键：旧语义下皮肤非 default 时天空一定是主题渐变 → "theme"，
+    // 迁移保持用户当时看到的画面；新语义下每次写入都会显式带这个键。
+    skySource:
+      rawSkySource && VALID_SKY_SOURCES.has(rawSkySource)
+        ? rawSkySource
+        : palette !== "default"
+          ? "theme"
+          : "hark",
     wallpaperId:
       rawWallpaperId && VALID_WALLPAPER_IDS.has(rawWallpaperId)
         ? rawWallpaperId
@@ -951,6 +1007,10 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
       patch.harkScene && VALID_HARK_SCENES.has(patch.harkScene)
         ? patch.harkScene
         : prev.harkScene,
+    skySource:
+      patch.skySource && VALID_SKY_SOURCES.has(patch.skySource)
+        ? patch.skySource
+        : prev.skySource,
     wallpaperId:
       patch.wallpaperId && VALID_WALLPAPER_IDS.has(patch.wallpaperId)
         ? patch.wallpaperId
@@ -981,6 +1041,7 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
     [PALETTE_STORAGE_KEY, prev.palette, next.palette],
     [GLASS_STYLE_STORAGE_KEY, prev.glassStyle, next.glassStyle],
     [HARK_SCENE_STORAGE_KEY, prev.harkScene, next.harkScene],
+    [SKY_SOURCE_STORAGE_KEY, prev.skySource, next.skySource],
     [WALLPAPER_ID_STORAGE_KEY, prev.wallpaperId, next.wallpaperId],
   ];
   for (const [key, before, after] of writes) {
@@ -1025,6 +1086,7 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
       prev.glassOpacityDark !== next.glassOpacityDark) &&
     prev.palette === next.palette &&
     prev.glassStyle === next.glassStyle &&
+    prev.skySource === next.skySource &&
     prev.wallpaperId === next.wallpaperId &&
     prev.customWallpaperUrl === next.customWallpaperUrl;
   if (onlyGlassOpacity)
@@ -1045,6 +1107,7 @@ const SYNCED_APPEARANCE_KEYS = new Set<string>([
   GLASS_OPACITY_STORAGE_KEY,
   GLASS_OPACITY_DARK_STORAGE_KEY,
   HARK_SCENE_STORAGE_KEY,
+  SKY_SOURCE_STORAGE_KEY,
 ]);
 
 /**
@@ -1098,7 +1161,18 @@ export function installAppearanceStorageSync() {
 }
 
 export function setThemePalette(palette: ThemePaletteId) {
-  updateAppearance({ palette });
+  const prev = ensureState();
+  updateAppearance({
+    palette,
+    // 皮肤卡承诺的是「强调色 + 配套主题天空」：壁纸启用中只换强调色（壁纸是用户在下方
+    // 单独选的背景，不被皮肤卡带走）；否则把天空切到主题渐变，兑现色板上画的观感。
+    skySource: prev.wallpaperId === "none" ? "theme" : prev.skySource,
+  });
+}
+
+/** 「主题天空」卡 / 程序切天空来源：同时退出壁纸，让所选来源立即生效。 */
+export function setSkySource(skySource: SkySourceId) {
+  updateAppearance({ skySource, wallpaperId: "none" });
 }
 
 export function setGlassStyle(glassStyle: GlassStyleId) {
@@ -1114,7 +1188,7 @@ export function setGlassOpacityDark(glassOpacityDark: number) {
 }
 
 export function setHarkSkyScene(harkScene: HarkSkySceneId) {
-  updateAppearance({ harkScene, wallpaperId: "none" });
+  updateAppearance({ harkScene, skySource: "hark", wallpaperId: "none" });
 }
 
 export function setWallpaperPreset(wallpaperId: WallpaperPresetId) {
@@ -1148,6 +1222,7 @@ export function resetAppearanceDefaults() {
     glassOpacity: DEFAULT_GLASS_OPACITY,
     glassOpacityDark: DEFAULT_GLASS_OPACITY,
     harkScene: "auto",
+    skySource: "hark",
     wallpaperId: "none",
     customWallpaperUrl: "",
     wallpaperBlur: 0,
@@ -1177,13 +1252,72 @@ export function resolveEffectiveHarkScene(
   dark: boolean,
 ): "live" | number {
   if (state.harkScene === "live") return "live";
+  let idx: number | undefined;
   if (state.harkScene !== "auto") {
-    const idx = Number(state.harkScene);
-    if (Number.isInteger(idx) && idx >= 0 && idx <= 11) return idx;
+    const n = Number(state.harkScene);
+    if (Number.isInteger(n) && n >= 0 && n <= 11) idx = n;
   }
-  const meta =
-    THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
-  return dark ? meta.harkSceneDark : meta.harkSceneLight;
+  if (idx === undefined) {
+    const meta =
+      THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
+    idx = dark ? meta.harkSceneDark : meta.harkSceneLight;
+  }
+  // 昼夜配对（明暗错配的硬不变式）：夜景在浅色外观下落到它的黄昏 / 雨景配对，
+  // 日景在深色外观下落到夜景配对。存量的手动场景、auto 映射、多标签页同步都走这里，
+  // 任何路径都造不出「浅色界面 + 夜空」或「深色界面 + 正午天空」。
+  const info = HARK_SCENE_INFO[idx];
+  if (info) {
+    if (!dark && info.daylight === "night" && info.lightPair !== null)
+      return info.lightPair;
+    if (dark && info.daylight === "day" && info.darkPair !== null)
+      return info.darkPair;
+  }
+  return idx;
+}
+
+export type SkyReadability = {
+  /** --sky-lift：浅色玻璃加厚量（0–0.14，DESIGN.md §7）。 */
+  lift: number;
+  /** --sky-muted：浅色次要文字色。 */
+  muted: string;
+};
+
+/**
+ * 浅色模式的可读性旋钮：由有效天空的真实明暗驱动 --sky-lift / --sky-muted。
+ * 返回 null = 移除这两个变量（深色外观有深色令牌、壁纸由薄幕承担对比度、
+ * 主题渐变的浅色版始终明亮，都不需要加厚）。
+ * live 天象按本机时间用 computeSky 的浅色列重算，调用方负责每分钟再调一次。
+ */
+export function resolveSkyReadability(
+  state: AppearanceState,
+  dark: boolean,
+): SkyReadability | null {
+  if (
+    dark ||
+    state.skySource !== "hark" ||
+    resolveActiveWallpaperCss(state) !== null
+  )
+    return null;
+  const scene = resolveEffectiveHarkScene(state, false);
+  if (scene === "live") {
+    const sky = computeSky(currentMinuteOfDay(), false);
+    return {
+      lift: Number(sky.root["--sky-lift"]),
+      muted: sky.root["--sky-muted"],
+    };
+  }
+  const darkness = HARK_SCENE_INFO[scene]?.darkness ?? 0;
+  const lift = Math.min(0.14, Math.max(0, (darkness - 0.35) * 0.35));
+  // 次要文字随天空变暗而加深：0.35 以下保持默认 #5f6673，向 #454d5c 渐变。
+  const t = Math.min(1, Math.max(0, (darkness - 0.35) / 0.4));
+  const channel = (a: number, b: number) =>
+    Math.round(a + (b - a) * t)
+      .toString(16)
+      .padStart(2, "0");
+  return {
+    lift: Math.round(lift * 1000) / 1000,
+    muted: `#${channel(0x5f, 0x45)}${channel(0x66, 0x4d)}${channel(0x73, 0x5c)}`,
+  };
 }
 
 export function resolveActiveWallpaperCss(
@@ -1204,14 +1338,13 @@ export function resolveActiveWallpaperCss(
 }
 
 /**
- * 选了非 default 配色时（不管「智能跟随主题」开没开、手动选了哪个场景），天空一律用 computePaletteSky 的主题渐变，
- * 不启动 Hark WebGL：引擎只有固定的蓝天 / 夜空场景、没有色相参数，会把主题色盖掉；不跑 WebGL 也更省。
- * 设置页场景选择处会提示「彩色主题下使用主题天空」。
+ * 背景来源是「皮肤配套主题渐变」（引擎不启动）：用户在天象卡里选了「主题天空」，
+ * 或点了皮肤卡。引擎没有色相参数，主题渐变由 computePaletteSky 直接画在 #skyph 上，更省。
  */
-export function usesPaletteGradientSky(
-  state: Pick<AppearanceState, "palette">,
+export function usesThemeGradientSky(
+  state: Pick<AppearanceState, "skySource">,
 ): boolean {
-  return state.palette !== "default";
+  return state.skySource === "theme";
 }
 
 /** 允许上传的壁纸图片类型（与上传控件的 accept 一致）。 */

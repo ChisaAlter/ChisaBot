@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-134](#cb-134) | 深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」              | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`                  |
 | [CB-133](#cb-133) | 左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列                              | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#553 · `v0.1.164`）                                     |
 | [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                 | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: done`（#551 · `v0.1.163`）                         |
 | [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                       |
@@ -127,6 +128,21 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-134
+
+**深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」**
+
+标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`
+
+用户（2026-11-19）：「现在的深浅，主题，动态天象太乱了。特别是我浅色主题+墨夜背景，或者深色主题+素白背景，都没法看」。审查确认是模型问题不是配色问题：四条轴争同一块天空、非 default 配色静默劫持天空成天象死选项、`--sky-lift` / `--sky-muted` 护栏断线、「背景随时间变化」与 live 天象卡重复。按 DESIGN §140 重构。
+
+- [x] **背景三选一互斥**：`chisabot-sky-source`（`hark` / `theme`）新键；皮肤卡 = 强调色 + 主题天空（壁纸启用中只换强调色），配色不再静默停引擎；老存档按键缺失时的旧语义迁移（皮肤非 default → `theme`）。
+- [x] **昼夜配对不变式**：`HARK_SCENE_INFO` 给 12 个场景标 day / dusk / night + darkness，`resolveEffectiveHarkScene` 收口配对（浅色下夜景 → 黄昏 / 雨景、深色下日景 → 夜景）。
+- [x] **明暗绑定皮肤**：素白 `boundMode:"light"` / 墨夜 `boundMode:"dark"`，点击连模式一起切，色板带日 / 月角标；天象卡带昼 / 暮 / 夜角标 + 「主题天空」卡。
+- [x] **可读性护栏接电**：`resolveSkyReadability` 按有效天空明暗写 `--sky-lift` / `--sky-muted`，live 每分钟重算；删「背景随时间变化」开关行与 `usesPaletteGradientSky`。
+- [ ] **验收**：`bun run check` + `app/tests/appearance-sky-model.test.tsx` 等新测通过；verify-ui 双视口截图验收（错配组合 × 三来源）。
+- [ ] PR 合并发版；串行部署后生产观察。
 
 ## CB-133
 

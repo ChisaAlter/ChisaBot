@@ -10803,6 +10803,43 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   color: #fff;
   backdrop-filter: blur(4px);
 }
+.appearance-palette-mode {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--glass-3);
+  color: var(--ink-2);
+  border: 1px solid var(--stroke-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+.appearance-scene-daylight {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.appearance-subhead {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
 .appearance-palette-info {
   display: flex;
   flex-direction: column;
