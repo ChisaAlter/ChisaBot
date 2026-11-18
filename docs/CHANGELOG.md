@@ -1,7 +1,9 @@
-## Unreleased
+## 0.1.162
 
 - 聊天滚动：流式回答中内容长高后贴底改用 `scrollTo` `"instant"`（视口 `.scroll-smooth` 下 `"auto"` 会解析回平滑；不忙仍 smooth、宽度换行不变）——真机 painted 帧 >50px 下砸 11~16 次 @~230px → 0~1 次（`tests/chat-scroll/work-card-jump.mjs`，DESIGN §94.9）。
 - 干活卡点开 / 收起在 content 捕获阶段处理：记 `touchedAt` 让收起的 ~65px 变矮不再被 §88.1 补成留白挂到回合结束（实测 gap 220→与展开持平），§94.6 floor 在场时冻成渲染高度不删。
+- 状态胶囊 / 干活步骤圆角统一 `var(--r-bubble, 16px)`，与消息气泡同一令牌（status-capsule.css、styles.css）。
+- 全端发版：PC / macOS / Android 同步 `0.1.162`（versionCode 342），PC 客户端代码指纹 `4ad625f7f58ace59`，外壳指纹不变。
 
 ## 0.1.161
 

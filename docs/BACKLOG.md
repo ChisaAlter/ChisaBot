@@ -15,7 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: in-progress`                                     |
+| [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                    |
 | [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）             |
 | [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
 | [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`（`v0.1.152`）            |
@@ -130,7 +130,7 @@
 
 **聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐**
 
-标签：`type: bug` · `area: chat` · `P1` · `status: in-progress`
+标签：`type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）
 
 分支：`fix/chat-stream-jumps`。流式回答的 markdown 整块提交（一帧 +100~230px）时 `stickToBottom` 一律走 smooth，追一次 ~1.5s、每块落地又重启，画面每 ~2s 出现一次 ~230px 的底边下砸再往回漂；回合中点开再收起干活卡，收起那帧 ~65px 的变矮被 §88.1 补成留白、busy 期间一路 `skip:busy` 挂到回合结束（输入框上方留一块空白）；「思考中」胶囊 / 干活步骤列表用 999px 胶囊 / `--r-md` 圆角，与气泡 `--r-bubble` 不对齐（DESIGN §94.9）。
 
@@ -138,8 +138,8 @@
 - [x] **干活卡点开 / 收走在 content 捕获阶段处理**：记 `touchedAt` 使收起帧不进 §88.1 补留白分支；§94.6 floor 在场时把留白冻成渲染高度而不是删掉。实测收起后底边间距与展开时持平（基线残留 +45~55px），回合末照常收完。
 - [x] **圆角对齐气泡**：`.rs-capsule` / `.chat-thinking` / `.chat-work-steps` 的 `border-radius` 统一为 `var(--r-bubble, 16px)`，与消息气泡同一令牌。
 - [x] **真机滚动回归 harness 落地**：`tests/chat-scroll/work-card-jump.mjs`（mock 后端 + playwright-core 驱动本机浏览器，rAF 与 post-RO 双采样，场景 A 流式下砸 / 场景 B 展开收起留白，支持 `--answer` 正文矩阵与 `--viewports`）+ `perf/mock-server.mjs` 新增 opt-in `toolTurn` 模式（commands+events AG-UI SSE、web_search×2+web_fetch、`holdMs`），向后兼容。
-- [ ] `tests/chat-scroll/regression.sh` 对真实预览实例 7 项（需 BASE/BOT/THREAD + Postgres，本机无实例，以 work-card-jump harness 为替代证据）。
-- [ ] PR CI、合并、串行部署后生产观察。
+- [ ] `tests/chat-scroll/regression.sh` 对真实预览实例 7 项（需 BASE/BOT/THREAD + Postgres，本机无实例，以 work-card-jump harness 为替代证据，部署后建议预览补跑）。
+- [x] PR #550 合并发版 `v0.1.162`；串行部署后生产观察。
 
 ## CB-130
 
