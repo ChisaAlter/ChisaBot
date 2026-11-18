@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 弹出面板与窗口按钮条材质收口（CB-139，DESIGN §142）：`.rail-sheet` 移出 perf-noblur / resize-pause 的直接实心底名单，底色只经 `--lg-surface` 一条通道（与每个 `.rail-card` 同升同降，不再单独长成另一块颜色）；`.win-ctrls` 退出 `--lg-surface-strong` 画底名单——4 个窗口控制键常态无底，悬停 / 按下 / 关闭红 / 焦点环不变；新增回归门断言 `.win-ctrls` 不进任何 `--lg-*` 画底选择器（styles.css · perf-noblur.css · resize-pause.css · theme-glass-perf.test.tsx · render-budget.test.ts）。
 
@@ -353,7 +353,7 @@
 
 - 版本号 0.1.115（根、app、server）；只有网页更新。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 主题配色看得出来了：6 个配色的亮 / 暗都覆盖强调色、强调浅底、主按钮、聚焦色，新增 `--glass-tint` 把强调色叠进左栏 / 右栏 / 输入框毛玻璃；非 default 配色一律不启动 WebGL（不管是否智能跟随），天空用主题渐变（樱花：粉白黄昏 / 深紫红夜），设置页提示「彩色主题下使用主题天空」；写死的蓝色（开关、进度条、加载图标等）改用主题变量；「模型加载失败 · 重试」深色对比度 ≥ 4.5。主按钮对比度 ≥ 4.5，default 与 main 像素一致、布局不变（fix/palette-theme）。
 
@@ -367,7 +367,7 @@
 
 - 版本号 0.1.114（根、app、server）；只有网页更新。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 拖动改窗口大小时更顺：改大小期间暂时去掉大面积毛玻璃和阴影，换成不透明底色，松手后恢复。
 
@@ -389,17 +389,17 @@
 
 - 版本号 0.1.112（根、app、server）；只有服务器 / 网页更新。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 定时任务设置页（审查模块 13）：起手句中性、只填不发（S4）；运行记录「显示更多」20→40→50（S7）；行内「已暂停」，运行中「立即运行」置灰并说明原因（O8）。未升级版本号。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 设置页审查模块 12：常驻指令有未保存的更改时，切左栏 / 浏览器后退先确认（`useBlocker`），刷新 / 关标签有 beforeunload 提示；技能、记忆、导入 SKILL.md 弹窗有改动时 Esc / 点遮罩 / ✕ 先确认（全站统一用确认）。设置文案和真实功能对齐：配色说明从 `THEME_PALETTES` 生成，去掉「内置流光壁纸」，精选技能不写死数量，左栏「生图与识图」和页面标题一致，「密钥」不在左栏单列（并在 账号连接 → API 密钥，仍能搜到），常驻指令超长报错改中文。中文标题的技能自动生成合法名字并标「必填」；常驻指令保存中只禁用按钮。测试 `app/tests/settings-audit-12.test.ts`。不升版本号。
 - 设置页审查模块 12 复审返修：设备权限 / 本机智能体两个保存栏页接上未保存拦截；确认框 Esc 和点击不再传到下面的弹窗（去掉 150ms 窗口）；取消后焦点回原输入框；拉丁字母少于 4 个的技能名字加 hash 后缀。测试 `app/tests/settings-audit-12-confirm.test.tsx`。不升版本号。
 - `docs/DEVLOG.md` 记录设置页审查模块 12 的动机、改动和前后截图（`docs/images/settings-audit/`）。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - Hermes 内核：每轮下发备用模型链和输出上限（`model:{id,fallbacks,maxOutputTokens}`），adapter 设到 Hermes agent，切到备用模型时回报并复用现有提示和日志；设置页只在检测到 Hermes 不支持时注明「不生效」。
 - Hermes 内核长历史压缩：按上下文窗口估算（有上一轮真实用量就校准，否则乘 1.15 安全系数早压缩），超过 70% 裁掉旧工具结果和超长旧消息，超过 85% 用缓存的摘要代替较早轮次。本轮不等摘要模型（首字时间不变），回复结束后后台写摘要、下一轮再用；按话题 + 轮次范围缓存，较早消息编辑 / 删除 / 重新生成时失效，续写 5 次或超 600 字整段重摘；摘要模型可在「模型 → 摘要模型」配置，默认跟随主模型。宿主压缩过的运行关掉 Hermes 自带压缩，避免二次压缩。数据库完整历史不动；回复下方显示可展开的「已压缩前文」。新增运行时建表的摘要缓存表 `chisabot_history_summaries`。长话题样本 token：改前 164,250 → 裁剪 48,736 → 下一轮摘要 33,212（31 轮样本改前 168,116）。
@@ -420,21 +420,21 @@
 - 修复：空对话第一轮从本机发出后断线不补——`useConversationSync` 记下本机在跑时问到的序号（`seenSeq`），没有 `last` 基线时拿它比；打开后第一次问照旧只记基线（#411）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.111`），PC / Android 外壳未变。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 修复「一键整理记忆」（审计 12-settings 必修 1）：先预览、弹窗列出要合并的组再确认（带 token，期间有变化返回 409）；合并后超过 4000 字的整组不合并，不再截断；分组区分机器人和情境；整个整理在一个事务里，原文写入 `chisabot_memory_tidy_backups`，可在 8 秒内或「更多」→「撤销上次整理」恢复；`memory_dream` 归入「删除」审批：卡片逐组列出预览、按 token 执行，每周整理的定时任务改为留一张整理建议卡片等确认（不再直接拒绝），确认后记忆变了会重出卡片说明原因；删除设为「直接做」时照常执行并附撤销链接，新增 `memory_dream_undo`；按钮移入「更多」菜单。不升版本号。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 修复：当前时间按用户时区（Asia/Shanghai）写并标明时区，和长期记忆同一天；测试 `server/tests/reply-quality.test.ts`。
 - 修复：Hermes 适配器透传模型出错的分类（限流 / 上下文过长 / 超时等），网页出对应提示；测试 `examples/hermes-agent/tests/`、`app/tests/hermes-error-categories.test.ts`。
 - 返修：Hermes 出错分类跳过内置异常（工具的 FileNotFoundError / PermissionError / timed out 不再冒充模型错误），只按 HTTP 状态码 + 模型 SDK 异常类型；403 看 body 分地区限制 / 内容拦截 / 密钥，分不清走通用提示；分类函数不再抛异常（body 序列化兜底、bytes 解码、截断 64KB），适配器出错时一定 run.fail。
 - 提示词：来源只在末尾写一次；卡片收尾写结论；公式加括号；拒绝给替代；写上当前模型；记忆笔记与出处规则写明优先级。
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 新话题页支持选择 / 粘贴 / 拖入附件：先建一段不进列表的草稿对话（`POST /api/channels` `draft: true`），把文字和文件带过去再跳转；没发就离开（去新话题页时立即，去设置等别处留 10 分钟）时带条件删除（`?draft=1`，服务端确认仍是空草稿才删，否则 409，不写审计不发通知），字放回新话题页；本标签页回收过的草稿再打开 404 时静默跳回那个机器人的新话题页；服务端每小时清理超过 24 小时的空草稿（非 `local` 运行模式不删）。建草稿期间不能发送、建草稿和跳转期间再加的文件一起带过去、全被拒不建草稿；没有宽高的图片先占固定框。用户消息里的图片按已有尺寸稳定占位，多图走叠放组，点开看原图。没有表结构变化，未升级版本号。
 - 回归返修：没发就离开草稿对话去新话题页时，写了一半的字在新话题页输入框第一次渲染时就在（新话题页挂载时同步 `reclaimDraftText`，不再等草稿页卸载回收后才放回）；测试 `app/tests/draft-leave-new-topic.test.tsx`。
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 回复过程照 Hark 改：等待时只在机器人一侧显示一行状态胶囊（转圈 + 当前动作 + 秒数），替代原来的「思考中」三点气泡和停顿时的占位气泡；一轮做完后干活卡自动收起（从历史打开的也默认收起），不再留在对话里；正文里只有「---」、空白或标点的过程话 / 步骤不再画成一项。胶囊用现有设计 token（`--r-pill`、`--glass-strong`、`--glass-shadow-sm`、`--dur-2`），不用模糊，动画只动 transform / opacity；减少动态效果时转圈静止，减少透明度 / 性能模式下为不透明底色。样式在组件自己的 `app/src/components/chat/status-capsule.css`（只有 `rs-` 开头的新类），styles.css 未改。新增 `app/tests/reply-steps.test.tsx`。未升级版本号。
 - 回复过程按审查修正：只有代码块的回复不再整段消失（`isBlankNote` 只认整段都是 `---`、`***`、`…` 这类分隔符，可以夹空白）；工具失败后没有文字、或只回了 `---` 的一轮不再是一片空白：干活那一行不收起（「N 步失败」），下面一句「这一轮没有回答」和重试（走现有的重发入口）。读屏：干活卡按钮名字里带上当前动作，对话末尾保留一个一直挂着的 `role="status"`，「思考中」换成干活卡时照样读出；键盘点开步骤后这一轮收起时焦点移到收起后的那一行；停顿时的胶囊和以前的占位等高（22px）；切换频道回来秒数不归零；胶囊换成干活卡不再播一次淡入；深色的不透明底色改用 `--glass-bg-solid` token。未升级版本号。
@@ -455,7 +455,7 @@
 - 性能模式和系统「减少透明度」下全局关掉毛玻璃：一条 `*, *::before, *::after { backdrop-filter: none }`（`app/src/perf-noblur.css`，不用 `!important`），漏网的代码块操作条、遮罩、外观预览一起关掉；原来模糊的面板换成不透明底色 `--glass-bg-opaque`。实测两种模式下桌面、手机可见模糊层都是 0，普通模式与 main 一致。新增 `app/tests/no-backdrop.test.ts` 防止新的模糊绕过；规则见 DESIGN.md §10.3.1。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.110`），PC / Android 外壳未变。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 链接卡组照 Hark 错落叠放（依赖 #380）：多个链接叠成一叠、悬停 / 聚焦 / 触屏第一次点换到主位（只改 transform，离开后保持最后一张），GitHub 宽图按原比例完整显示、底行「GitHub · v0.1.13」；材质改用设计系统令牌（`--glass-bg-solid`、`--r-lg`、`--sp-2`，不模糊），标题纯文本，props 兼容 #391 来源格式（未接入）
 - 链接卡组修正（依赖 #397）：流式输出时同尺寸骨架占位；悬停换主位不再整页重算样式（卡组属性 `data-slot` → `data-stack-slot`，避开 styles.css 的 `:has([data-slot=…])`，styles.css 未改；CPU 1× 最长任务 53 ms → 不超过 50 ms）；用户消息里的链接也显示成卡组（靠右）；「追问」移出 `<a>`、触屏明确显示、隐藏时不接点击；小图不放大不裁切；预览存 sessionStorage，刷新不跳（重访 CLS 0）；favicon 懒加载；URL 关 `calt`；可选 `kind: "video"` 播放角标（服务端未改）。顶栏一项跳过（#374 未合并）。未升级版本号。
@@ -473,7 +473,7 @@
 - 回复风格对齐 Hark（提示词 + 服务端）：去掉「导语 → 卡片 → 下一步」固定三段式，默认一个气泡、1–4 句、结论先行；render_ui 画过表格卡后不再附一份 Markdown 表格（提示词 + 工具结果都提醒）；推荐类问题直接给 2–3 个带价格的选项再追问（web_search 工具描述里写明一般搜 1–3 次就收敛）；数学用 Unicode 纯文本，不用 LaTeX（前端不恢复 katex）。安全和不可信内容相关的提示词一字未改，新增测试按 sha256 钉住。未升级版本号。（#381）
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.108`），PC / Android 外壳未变。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - 修复（Android）：`Turns.buildTurn` 一轮结束后以最后一个干活的步骤（`WorkSteps.splitsReply`：网页的 `isWorkCall` 再去掉记忆写入）为界，之后的全部文字都是回答气泡（`Kind.Result`、可复制）；`WorkSteps.NOT_WORK` 补齐网页的 message_bot / file_share / image_generate / image_edit；测试 `NativeLogicTest.allTextAfterLastWorkStaysVisible`、`notWorkMatchesWeb`。
 
@@ -504,7 +504,7 @@
 - 修 test:app 共享进程里的测试干扰（use-control 的 wake 监听、schedule-runs-query 的 mock.module 泄漏），修 gateway-account-control / startup-resilience 及 5 个 server 测试；server 补 `旧聊天运行时包` 开发依赖；CI 下 chisabot-node 打包失败即构建失败；schedule-fired 的 `Link` 替身不再漏给其他文件（有路由时用真 `Link`），移出隔离名单；avatar-picker-shape 拆 DOM 前先 `settleReactWork`，`test:app` 退出码恢复 0（#368）。
 - 只升级服务器版本号（根、`app`、`server` 为 `0.1.105`），PC / Android 外壳未变。
 
-## Unreleased
+## 0.1.169 — 2026-11-19
 
 - PC 更新验签（审查第 7 项 / M7，**Windows 端到端跑完前不合并**）：发布时用 Ed25519 给 `latest.yml` 签名（`chisabotSig`，覆盖版本、安装包 sha512 / 大小、外壳指纹、是否重新安装），客户端用内置主 + 备公钥校验并重算下载文件的 sha512，不通过一律删掉安装包、拒装、写审计；自建版没配公钥时保持旧行为并在「本机」页提示（可用 `CHISABOT_UPDATE_PUBKEYS` 提供公钥）。CI 新增 `pc-sign` job（Environment `pc-release`，只允许 `v*` 标签、不设审批），新增 `pc/scripts/sign-update.js`（带 `--verify`）和 `gen-update-key.js`。核对 electron-updater 6.8.9：没有 `publisherName` 时 `verifyUpdateCodeSignature` 根本不被调用。不改版本号。详见 `docs/pc-update-signing.md`。
 
