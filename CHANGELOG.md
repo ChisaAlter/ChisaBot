@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.162 — 2026-11-18
+
+全端版本 0.1.162，Android versionCode 342：聊天滚动两处修复 + 状态胶囊圆角对齐（DESIGN.md §94.9，CB-131）。PC 客户端代码指纹更新为 `4ad625f7f58ace59`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
+
+- **流式回答贴底改为同帧 instant**：markdown 一块一块整块提交（一帧 +100~230px），原先 `stickToBottom` 一律 smooth，~1.5s 追一次且每块落地重启——实测每 ~2s 一次 ~230px 的底边下砸。现在 `s.busy` 时 `scrollTo` 用 `"instant"`（视口带 `.scroll-smooth`，`"auto"` 会按 computed `scroll-behavior` 解析回平滑，必须 instant 才跳过 CSS 并掐断在飞的滚动）；不忙仍 smooth，宽度换行那一支不变。真机 painted-frame 测量：>50px 下砸 11~16 次 @~230px → 0~1 次（`tests/chat-scroll/work-card-jump.mjs` + `perf/mock-server.mjs` toolTurn）。
+- **点干活卡收起不再攒留白**：内容列捕获阶段监听 `.chat-work-card` 的 click（先于 React 委托与布局提交）——记 `touchedAt` 让收起那一帧的 ~65px 变矮不再进 §88.1 补留白分支（busy 期间 `releaseRef` 一直 `skip:busy`，收进去会挂到回合结束，实测 gap 220 vs ~156）；§94.6 floor 还撑着时把留白冻成渲染高度而不是删掉。实测收起后底边间距与展开时持平，回合末照常收完。
+- **状态胶囊圆角对齐气泡**：`.rs-capsule` / `.chat-thinking` / `.chat-work-steps` 的 `border-radius` 统一为 `var(--r-bubble, 16px)`，与消息气泡同一令牌。
+
 ## 0.1.161 — 2026-11-18
 
 全端版本 0.1.161，Android versionCode 341：右缘「面板」把手越屏裁切修复 + 面板抽屉底材统一。PC 客户端代码指纹更新为 `404d59334e921e59`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
