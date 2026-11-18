@@ -1,3 +1,8 @@
+## 0.1.163
+
+- 「面板」把手越屏让位改为 250ms 轮询重算：拖窗口不触发 resize、桥无 bounds 回调，0.1.161 只在挂载 + resize 时量 `--edge-clip-r`，窗口被拖到右缘出屏后把手被裁半条；现按 `screenX + outerWidth − avail` 轮询、值变才写、最大化恒 0（lib/desktop-window.ts，DESIGN §82.11，CB-132）。验证：`app/tests/desktop-window-edge-clip.test.tsx` + 真 Chromium `tests/rail-edge-clip/edge-clip.mjs`（860px 越屏量 ~250ms 内跟上）。
+- 全端发版：PC / macOS / Android 同步 `0.1.163`（versionCode 343），PC 客户端代码指纹 `19869a09efc81c8c`，外壳指纹不变。
+
 ## 0.1.162
 
 - 聊天滚动：流式回答中内容长高后贴底改用 `scrollTo` `"instant"`（视口 `.scroll-smooth` 下 `"auto"` 会解析回平滑；不忙仍 smooth、宽度换行不变）——真机 painted 帧 >50px 下砸 11~16 次 @~230px → 0~1 次（`tests/chat-scroll/work-card-jump.mjs`，DESIGN §94.9）。
