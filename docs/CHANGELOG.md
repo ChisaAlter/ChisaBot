@@ -1,6 +1,7 @@
-## Unreleased
+## 0.1.163
 
 - 「面板」把手越屏让位改为 250ms 轮询重算：拖窗口不触发 resize、桥无 bounds 回调，0.1.161 只在挂载 + resize 时量 `--edge-clip-r`，窗口被拖到右缘出屏后把手被裁半条；现按 `screenX + outerWidth − avail` 轮询、值变才写、最大化恒 0（lib/desktop-window.ts，DESIGN §82.11，CB-132）。验证：`app/tests/desktop-window-edge-clip.test.tsx` + 真 Chromium `tests/rail-edge-clip/edge-clip.mjs`（860px 越屏量 ~250ms 内跟上）。
+- 全端发版：PC / macOS / Android 同步 `0.1.163`（versionCode 343），PC 客户端代码指纹 `19869a09efc81c8c`，外壳指纹不变。
 
 ## 0.1.162
 

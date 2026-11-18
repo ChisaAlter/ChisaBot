@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.163 — 2026-11-18
+
+全端版本 0.1.163，Android versionCode 343：「面板」把手跟随窗口移动重算越屏量（DESIGN.md §82.11，CB-132）。PC 客户端代码指纹更新为 `19869a09efc81c8c`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。
 
 - **「面板」把手跟随窗口移动重算越屏量**：0.1.161 的 `--edge-clip-r` 只在挂载 + `window.resize` 时量窗口右缘越出工作区的量；拖窗口不触发任何 DOM 事件、窗口桥也没有 bounds 回调，恢复态窗口被拖到右缘出屏后把手跟着出屏被裁半条（用户截图实测）。现 `useDesktopWindow` 每 250ms 轮询 `screenX + outerWidth` 对 `screen.avail` 重算，值变才写样式、最大化恒 0、轮询不走 IPC——网页侧生效，不依赖 PC 客户端更新（DESIGN.md §82.11，CB-132）。网页 + PC 壳同步生效；无需数据库迁移。
 
