@@ -92,8 +92,11 @@ export function SectionRail({
     return (
       <Sidebar collapsible="icon" variant="floating" {...props}>
         <nav aria-label={ariaLabel} className="glass-mini" id="chisabot-bot-list">
-          <RosterToggle className="glass-mini-toggle" scope={scope} />
           <div className="glass-card glass-mini-card">
+            <div className="glass-mini-head">
+              <RosterToggle className="glass-mini-toggle" scope={scope} />
+            </div>
+            <span aria-hidden className="glass-mini-div" />
             <div className="glass-mini-scroll">
               {groups.map((group, gi) => (
                 <div className="rail-mini-group" key={group.label ?? gi}>
@@ -121,17 +124,21 @@ export function SectionRail({
               ))}
             </div>
             {footerLink ? (
-              <div className="glass-mini-links">
-                <RailTip label={footerLink.label}>
-                  <Link aria-label={footerLink.label} className="glass-mini-link" search={footerLink.search as never} to={footerLink.to}>
-                    <footerLink.icon className="size-[18px]" />
-                  </Link>
-                </RailTip>
-              </div>
+              <>
+                <span aria-hidden className="glass-mini-div" />
+                <div className="glass-mini-links">
+                  <RailTip label={footerLink.label}>
+                    <Link aria-label={footerLink.label} className="glass-mini-link" search={footerLink.search as never} to={footerLink.to}>
+                      <footerLink.icon className="size-[18px]" />
+                    </Link>
+                  </RailTip>
+                </div>
+              </>
             ) : null}
-          </div>
-          <div className="glass-card acct-mini-card">
-            <AccountMenu compact />
+            <span aria-hidden className="glass-mini-div" />
+            <div className="glass-mini-foot">
+              <AccountMenu compact />
+            </div>
           </div>
         </nav>
       </Sidebar>

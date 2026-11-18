@@ -6,7 +6,6 @@ import {
   IconLogout,
   IconMoon,
   IconQrcode,
-  IconSelector,
   IconSettings,
   IconUserCircle,
 } from "@tabler/icons-react";
@@ -143,7 +142,6 @@ export function AccountMenu({
         <span className="acct-name">{name}</span>
         {sub ? <span className="acct-sub">{sub}</span> : null}
       </span>
-      <IconSelector aria-hidden className="acct-chev" />
     </>
   );
 
