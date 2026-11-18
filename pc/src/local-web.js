@@ -221,6 +221,7 @@ function createLocalWebController({
       onModeChange?.({
         origin: cleanOrigin,
         mode: nextMode,
+        prevMode,
         serverVersion: cleanVersion,
       });
     }

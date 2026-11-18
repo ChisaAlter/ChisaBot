@@ -11,6 +11,7 @@ function fakeAutoUpdater(behavior = {}) {
   const emitter = new EventEmitter();
   emitter.checks = 0;
   emitter.installs = [];
+  emitter.downloads = 0;
   emitter.checkForUpdates = async () => {
     emitter.checks++;
     emitter.emit("checking-for-update");
@@ -21,10 +22,20 @@ function fakeAutoUpdater(behavior = {}) {
     }
     if (behavior.version) {
       emitter.emit("update-available", { version: behavior.version });
-      emitter.emit("download-progress", { percent: 42.4 });
-      if (behavior.download !== false) emitter.emit("update-downloaded", { version: behavior.version });
+      if (emitter.autoDownload && behavior.download !== false) {
+        emitter.emit("download-progress", { percent: 42.4 });
+        emitter.emit("update-downloaded", { version: behavior.version });
+      }
     } else emitter.emit("update-not-available", {});
     return {};
+  };
+  emitter.downloadUpdate = async () => {
+    emitter.downloads++;
+    if (behavior.download !== false) {
+      emitter.emit("download-progress", { percent: 42.4 });
+      emitter.emit("update-downloaded", { version: behavior.version });
+    }
+    return ["setup.exe"];
   };
   emitter.quitAndInstall = (silent, runAfter) => emitter.installs.push([silent, runAfter]);
   return emitter;
@@ -114,8 +125,42 @@ test("found → downloading → downloaded calls onDownloaded once and install q
   assert.deepStrictEqual(downloaded, ["0.1.1"]);
   assert.strictEqual(updater.install(), true);
   assert.deepStrictEqual(autoUpdater.installs, [[true, true]]);
+  const again = await updater.check();
+  assert.strictEqual(autoUpdater.checks, 2, "待安装不冻结检查");
+  assert.strictEqual(again.status, "downloaded");
+  assert.strictEqual(again.version, "0.1.1");
+  assert.deepStrictEqual(downloaded, ["0.1.1"], "同版本不重复下载");
+});
+
+test("a newer feed version supersedes the pending download", async () => {
+  const behavior = { version: "0.1.160" };
+  const { updater, autoUpdater, downloaded } = make({ behavior });
+  assert.strictEqual((await updater.check()).version, "0.1.160");
+  assert.strictEqual(autoUpdater.downloads, 0, "首轮走自动下载");
+  behavior.version = "0.1.164";
+  const next = await updater.check();
+  assert.strictEqual(next.status, "downloaded");
+  assert.strictEqual(next.version, "0.1.164", "更新版本顶掉待安装的旧版");
+  assert.strictEqual(autoUpdater.downloads, 1, "复查时 autoDownload 关了，手动拉新包");
+  assert.deepStrictEqual(downloaded, ["0.1.160", "0.1.164"]);
+  const settled = await updater.check();
+  assert.strictEqual(settled.version, "0.1.164");
+  assert.strictEqual(autoUpdater.downloads, 1, "已下载的最新版不再重复拉包");
+});
+
+test("a failed or empty re-check keeps the downloaded update installable", async () => {
+  const behavior = { version: "0.1.160" };
+  const { updater, autoUpdater } = make({ behavior });
   await updater.check();
-  assert.strictEqual(autoUpdater.checks, 1, "已下载后不再检查");
+  behavior.version = "";
+  const none = await updater.check();
+  assert.strictEqual(none.status, "downloaded");
+  assert.strictEqual(none.version, "0.1.160", "源上没有更新时保留待安装状态");
+  behavior.fail = "net::ERR_NAME_NOT_RESOLVED";
+  const failed = await updater.check();
+  assert.strictEqual(failed.status, "downloaded");
+  assert.strictEqual(failed.version, "0.1.160", "复查失败不清掉待安装包");
+  assert.strictEqual(autoUpdater.autoDownload, true, "复查完恢复自动下载");
 });
 
 test("no update and errors become readable states", async () => {

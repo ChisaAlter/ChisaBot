@@ -19,6 +19,8 @@
  *  - 什么时候检查：开着「自动更新」时，启动 30 秒后一次、之后每 30 分钟一次；下载在后台进行，下载好了
  *    调 onDownloaded（主进程弹本机窗口「新版本已下载，重启以安装」：立即重启 / 稍后）。选「稍后」时，
  *    下次退出 ChisaBot 时自动安装（autoInstallOnAppQuit）。
+ *  - 「已下载待安装」不冻结检查：客户端常驻托盘几乎不退出，停在旧版待安装上会错过后续所有发版。
+ *    复查时临时关掉自动下载——同版本不重复拉包，只有源上出现更新版本才顶掉待安装的。
  *  - 关掉「自动更新」只停掉定时检查；网页「本机」标签里的「检查更新」照样可以手动检查和下载。
  *  - 只有 NSIS 安装版能更新（安装目录里有卸载程序）。开发运行、免安装 zip 一律 supported = false。
  *  - 两种安装方式（docs/online-update.md §2.1）。每次更新下载的都是完整安装包，区别只在怎么运行它：
@@ -164,6 +166,7 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   let firstTimer = null;
   let interval = null;
   let checking = null;
+  let supersedeCheck = false;
 
   function set(patch) {
     Object.assign(state, patch);
@@ -189,15 +192,24 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     try {
       autoUpdater.verifyUpdateCodeSignature = async () => null;
     } catch {}
-    autoUpdater.on("checking-for-update", () => set({ status: "checking" }));
+    autoUpdater.on("checking-for-update", () => {
+      if (!supersedeCheck) set({ status: "checking" });
+    });
     autoUpdater.on("update-available", (info) => {
+      // 复查（已有待安装包）：源上还是同一版本就不重复下载，更高版本才顶掉待安装的。
+      const pending = supersedeCheck ? state.version : "";
+      if (pending && compareVersion(info?.version || "", pending) <= 0) {
+        set({ status: "downloaded", checkedAt: now().toISOString() });
+        return;
+      }
       if (gateByClient && !requiresClientDownload(info, { localShell: shellHash, localClient: clientHash })) {
         logger?.info?.(`远端版本 ${info?.version || ""} 客户端指纹未变（${clientHash}），跳过下载安装包，由网页刷新生效`);
-        set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
+        set(pending ? { status: "downloaded", checkedAt: now().toISOString() } : { status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
         return;
       }
       set({ status: "downloading", version: info?.version, percent: 0, fullInstall: requiresFullInstall(info, shellHash) });
-      if (gateByClient && typeof autoUpdater.downloadUpdate === "function" && !downloading) {
+      // 复查时 autoDownload 被临时关掉，新版本要手动拉包。
+      if ((gateByClient || pending) && typeof autoUpdater.downloadUpdate === "function" && !downloading) {
         downloading = Promise.resolve()
           .then(() => autoUpdater.downloadUpdate())
           .catch((error) => {
@@ -209,7 +221,11 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
           });
       }
     });
-    autoUpdater.on("update-not-available", () => set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() }));
+    autoUpdater.on("update-not-available", () => {
+      // 复查时源上已没有更新：保留待安装状态，不能把可装的包丢掉。
+      if (supersedeCheck) return set({ status: "downloaded", checkedAt: now().toISOString() });
+      set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
+    });
     autoUpdater.on("download-progress", (progress) => {
       if (state.status === "downloaded" || state.status === "verifying") return;
       set({ status: "downloading", percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)) });
@@ -253,10 +269,12 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
 
   async function check() {
     if (!supported) return { ...state };
-    if (state.status === "downloaded" || state.status === "downloading" || state.status === "verifying") return { ...state };
+    if (state.status === "downloading" || state.status === "verifying") return { ...state };
     if (checking) return checking;
+    supersedeCheck = state.status === "downloaded";
+    if (supersedeCheck) autoUpdater.autoDownload = false;
     checking = (async () => {
-      set({ status: "checking" });
+      if (!supersedeCheck) set({ status: "checking" });
       let fellBack = false;
       try {
         const result = await autoUpdater.checkForUpdates();
@@ -279,8 +297,12 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
           set({ feedStale: undefined });
         }
       } catch (error) {
-        set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
+        // 复查失败不清掉待安装状态。
+        if (supersedeCheck) set({ status: "downloaded", checkedAt: now().toISOString() });
+        else set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
       } finally {
+        supersedeCheck = false;
+        autoUpdater.autoDownload = !gateByClient;
         checking = null;
       }
       if (fellBack) return check();

@@ -41,9 +41,10 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
 - **安装包没有代码签名**：`build.win.verifyUpdateCodeSignature = false`（`app-update.yml` 里就不写 `publisherName`）。
   electron-updater 6.8.9 在没有 `publisherName` 时根本不调用 `verifyUpdateCodeSignature`，`pc/src/updater.js` 里把它设成通过只是两边一致。
   代码签名（Authenticode）是第二阶段，暂缓；以后有了证书：去掉这两处，配置 `win.signtoolOptions.publisherName`。
-- 行为（`pc/src/updater.js`）：开着「自动更新」（默认开）时启动 30 秒后检查一次、之后每 4 小时一次；发现新版本就在
+- 行为（`pc/src/updater.js`）：开着「自动更新」（默认开）时启动 30 秒后检查一次、之后每 30 分钟一次；发现新版本就在
   后台下载；下载好后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
   **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。
+  「已下载待安装」不冻结检查（CB-136）：复查临时关 `autoDownload`，同版本不重复拉包，源上出现更新版本就顶掉待安装的重新下载；复查失败或源上已无更新都保留待安装状态。
 - 网页 偏好设置 → 设备 → 这台电脑（「本机」标签）：「自动更新」开关、「客户端版本」行（当前 / 新版本 / 状态 / 下载进度）
   - 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
 - 新 IPC 都经过来源检查：`pc:check-update`、`pc:install-update` 走 `handleWeb`（主窗口 + 顶层框架 + 已登录服务器）；
