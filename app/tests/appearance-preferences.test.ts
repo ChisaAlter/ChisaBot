@@ -3,7 +3,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
-  computePaletteSky,
+  deriveSeed,
+  familySeed,
   getAppearanceState,
   HARK_SKY_SCENES,
   LEGACY_WALLPAPER_ID_MAP,
@@ -15,11 +16,11 @@ import {
   setGlassOpacity,
   setGlassStyle,
   setHarkSkyScene,
-  setThemePalette,
+  setThemeHalf,
   setWallpaperBlur,
   setWallpaperDim,
   setWallpaperPreset,
-  THEME_PALETTES,
+  THEME_FAMILIES,
   WALLPAPER_CATEGORIES,
   WALLPAPER_ID_STORAGE_KEY,
   WALLPAPER_PRESETS,
@@ -30,20 +31,17 @@ const css = readFileSync(
   "utf8",
 );
 
-describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () => {
-  test("provides 10 curated high-contrast theme palettes and computes sky variables for non-default palettes", () => {
-    expect(THEME_PALETTES.length).toBe(10);
-    expect(computePaletteSky("default", false)).toBeNull();
-    for (const p of THEME_PALETTES) {
-      // Every theme's dark sky scene is a deep night scene (2 or 4) for dark mode legibility
-      expect([2, 4]).toContain(p.harkSceneDark);
-      if (p.id === "default") continue;
-      const light = computePaletteSky(p.id, false);
-      const dark = computePaletteSky(p.id, true);
-      expect(light).not.toBeNull();
-      expect(dark).not.toBeNull();
-      expect(light?.body["--sky-1"]).toBeTruthy();
-      expect(dark?.body["--sky-1"]).toBeTruthy();
+describe("appearance theme families, Hark WebGL sky scenes, wallpapers & glass", () => {
+  test("provides 8 curated theme families and derives sky variables for every family", () => {
+    expect(THEME_FAMILIES.length).toBe(8);
+    for (const f of THEME_FAMILIES) {
+      // 每个族的深浅两个 seed 都能派生出完整的四段天空与 accent 令牌
+      for (const dark of [false, true]) {
+        const vars = deriveSeed(familySeed(f, dark), dark);
+        expect(vars.body["--sky-1"]).toBeTruthy();
+        expect(vars.root["--fam-sky-3"]).toBeTruthy();
+        expect(vars.root["--accent-blue"]).toBe(familySeed(f, dark).ac);
+      }
     }
   });
 
@@ -74,7 +72,8 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
 
   test("resolves curated artistic gallery wallpapers (with verified WebP assets), custom URLs, legacy IDs, and resets cleanly", () => {
     resetAppearanceDefaults();
-    expect(getAppearanceState().palette).toBe("default");
+    expect(getAppearanceState().familyLight).toBe("azure");
+    expect(getAppearanceState().familyDark).toBe("azure");
     expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(resolveActiveWallpaperCss(getAppearanceState())).toBeNull();
@@ -128,19 +127,21 @@ describe("appearance palettes, Hark WebGL sky scenes, wallpapers & glass", () =>
       'url("https://example.com/wall.jpg")',
     );
 
-    setThemePalette("sakura");
+    setThemeHalf("light", "sakura");
     setGlassStyle("crystal");
     setGlassOpacity(10);
     setWallpaperBlur(14);
     setWallpaperDim(28);
-    expect(getAppearanceState().palette).toBe("sakura");
+    expect(getAppearanceState().familyLight).toBe("sakura");
+    expect(getAppearanceState().familyDark).toBe("azure");
     expect(getAppearanceState().glassStyle).toBe("crystal");
     expect(getAppearanceState().glassOpacity).toBe(10);
     expect(getAppearanceState().wallpaperBlur).toBe(14);
     expect(getAppearanceState().wallpaperDim).toBe(28);
 
     resetAppearanceDefaults();
-    expect(getAppearanceState().palette).toBe("default");
+    expect(getAppearanceState().familyLight).toBe("azure");
+    expect(getAppearanceState().familyDark).toBe("azure");
     expect(getAppearanceState().glassStyle).toBe("mist");
     expect(getAppearanceState().glassOpacity).toBe(16);
     expect(getAppearanceState().harkScene).toBe("auto");

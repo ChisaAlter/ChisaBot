@@ -1,4 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   flushAppearanceWrites,
@@ -11,19 +18,17 @@ import {
   resolveSkyReadability,
   setHarkSkyScene,
   setSkySource,
-  setThemePalette,
+  setThemeHalf,
   setWallpaperPreset,
   SKY_SOURCE_STORAGE_KEY,
-  THEME_PALETTES,
   usesThemeGradientSky,
 } from "../src/lib/appearance";
 import { settleReactWork } from "./settle-react-work";
 
 /**
- * 2026-11 外观模型重构（模式 × 皮肤 × 背景）的契约测试：
- * - 皮肤与天空解耦，背景三选一互斥；
+ * CB-134 → CB-137 外观模型（模式 × 主题族 × 背景）的契约测试：
+ * - 主题族与天空解耦，背景三选一互斥；点族卡的半边只写对应族槽、不碰天空；
  * - 昼 / 夜场景按外观明暗自动配对（任何存储路径都造不出错配天空）；
- * - 素白 / 墨夜是明暗绑定皮肤；
  * - --sky-lift / --sky-muted 由有效天空明暗真实驱动。
  */
 
@@ -61,19 +66,20 @@ describe("天空来源（skySource）", () => {
     expect(getAppearanceState().skySource).toBe("hark");
   });
 
-  test("点皮肤卡：无壁纸时把天空切到主题渐变；壁纸启用中只换强调色", () => {
+  test("点族卡半边：只写对应族槽，天空来源与壁纸都不动", () => {
     setHarkSkyScene("0");
     expect(getAppearanceState().skySource).toBe("hark");
-    setThemePalette("sakura");
-    expect(getAppearanceState().palette).toBe("sakura");
-    expect(getAppearanceState().skySource).toBe("theme");
+    setThemeHalf("light", "sakura");
+    expect(getAppearanceState().familyLight).toBe("sakura");
+    expect(getAppearanceState().familyDark).toBe("azure");
+    // 选族不再劫持天空：hark 引擎照常跑，主题渐变只是备选
+    expect(getAppearanceState().skySource).toBe("hark");
 
     setWallpaperPreset("waterlily-pond");
-    setThemePalette("emerald");
-    expect(getAppearanceState().palette).toBe("emerald");
-    // 壁纸不被皮肤卡带走，天空来源保持用户上次的选择
+    setThemeHalf("dark", "celadon");
+    expect(getAppearanceState().familyDark).toBe("celadon");
     expect(getAppearanceState().wallpaperId).toBe("waterlily-pond");
-    expect(getAppearanceState().skySource).toBe("theme");
+    expect(getAppearanceState().skySource).toBe("hark");
   });
 
   test("点天象卡：切到 Hark 引擎并退出壁纸", () => {
@@ -149,16 +155,32 @@ describe("昼夜场景配对", () => {
   });
 });
 
-describe("明暗绑定皮肤", () => {
-  test("素白星尘绑定浅色、墨夜星尘绑定深色，其余皮肤不绑定", () => {
-    const stardust = THEME_PALETTES.find((p) => p.id === "stardust");
-    const nocturne = THEME_PALETTES.find((p) => p.id === "nocturne");
-    expect(stardust?.boundMode).toBe("light");
-    expect(nocturne?.boundMode).toBe("dark");
-    for (const p of THEME_PALETTES) {
-      if (p.id === "stardust" || p.id === "nocturne") continue;
-      expect(p.boundMode).toBeUndefined();
-    }
+describe("主题族不绑定外观模式", () => {
+  test("选族不切外观模式（CB-134 的明暗绑定皮肤已被双槽独立族取代）", () => {
+    // 任何族两个模式的 seed 都成立，选谁都不会强制翻转 dark——
+    // 「mono 深色半边的黑夜观感」用「深色槽选 mono」表达，不再靠 boundMode。
+    const darkBefore = document.documentElement.classList.contains("dark");
+    setThemeHalf("light", "mono");
+    setThemeHalf("dark", "mono");
+    expect(document.documentElement.classList.contains("dark")).toBe(
+      darkBefore,
+    );
+    expect(getAppearanceState().familyLight).toBe("mono");
+    expect(getAppearanceState().familyDark).toBe("mono");
+  });
+
+  test("auto 场景跟随当前族 seed：seed.scene 经昼夜配对后呈现", () => {
+    setHarkSkyScene("auto");
+    // azure 浅色 seed.scene = 0（昼景）→ 浅外观直接呈现
+    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);
+    // azure 深色 seed.scene = 4（夜景）→ 深外观直接呈现
+    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(4);
+    setThemeHalf("dark", "celadon");
+    // celadon 深色 seed.scene = 5（太浩湖雪霁）→ 日景在深外观下配对到 2（雷克雅未克夜）
+    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(2);
+    setThemeHalf("light", "violet");
+    // violet 浅色 seed.scene = 2 → 夜景在浅外观下配对到 1（纽约日落）
+    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(1);
   });
 });
 

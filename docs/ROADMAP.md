@@ -27,8 +27,9 @@ ChisaBot 主线已完成以下核心工程闭环：
 
 ## 现在（进行中）
 
+- [CB-137](BACKLOG.md#cb-137)：皮肤轴升级为主题族——`familyLight` / `familyDark` 双槽独立选族、族卡分半预览、`deriveSeed(seed)` 派生全部令牌（删 `data-palette` 静态块）、启动脚本写 `data-theme-family`、8 内置族 + 自定义族编辑器、旧 palette 键一次性迁移、`boundMode` 明暗绑定删除（DESIGN §141）；分支 `feat/theme-families`，验收中。
 - [CB-135](BACKLOG.md#cb-135)：网页新构建空闲自动刷新——横幅挂着时每 15s 查刷新无损即自动 reload，忙 / 关掉 / PC 更新中不刷（DESIGN §22）；分支 `feat/web-auto-reload`，验收中。
-- [CB-134](BACKLOG.md#cb-134)：外观模型重构——模式 × 皮肤 × 背景；皮肤与天空来源解耦（`chisabot-sky-source`）、场景按明暗自动配对、素白/墨夜明暗绑定、`--sky-lift`/`--sky-muted` 接有效天空驱动（DESIGN §140）；分支 `feat/sky-source-model`，验收中。
+- [CB-134](BACKLOG.md#cb-134)：外观模型重构——模式 × 皮肤 × 背景；皮肤与天空来源解耦（`chisabot-sky-source`）、场景按明暗自动配对、`--sky-lift`/`--sky-muted` 接有效天空驱动（DESIGN §140）；CB-137 已把「皮肤」换成主题族双槽、明暗绑定皮肤随之删除。
 - [CB-133](BACKLOG.md#cb-133)：#553 合并并纳入 `v0.1.164` 发版；左栏收敛——收起态合成一条通顶玻璃列、展开态去「主机器人/其他」分组标签（DESIGN §139）。
 - [CB-132](BACKLOG.md#cb-132)：#551 合并并纳入 `v0.1.163` 发版；「面板」把手跟随窗口移动按 250ms 轮询重算越屏量，不再被拖出屏裁半条，真机 harness `edge-clip.mjs` 验证通过。
 - [CB-131](BACKLOG.md#cb-131)：#550 合并并纳入 `v0.1.162` 发版；聊天流式贴底 instant 消底边乱跳、干活卡收起不留白、思考胶囊圆角对齐气泡，真机 harness `work-card-jump.mjs` 验证通过（`regression.sh` 待预览实例补跑）。

@@ -146,6 +146,7 @@
 | [138](#138-输入框悬浮可拖拽调整与收展小窗切换动画2026-11-17)                                               | 输入框悬浮 + 边框拉大缩小、收展与 PC 小窗切换动画                                                                | 2026-11-17                                                                 |
 | [139](#139-左栏收敛收起态单条玻璃列与展开态去分组标签2026-11-18)                                            | 左栏收敛：收起态单条玻璃列、展开态去分组标签                                                                     | 2026-11-18                                                                 |
 | [140](#140-外观模型模式--皮肤--背景2026-11-19cb-134)                                                       | 外观模型：模式 × 皮肤 × 背景                                                                                     | 2026-11-19，CB-134                                                         |
+| [141](#141-主题族双槽独立-seed-派生令牌2026-11-26cb-137)                                                    | 主题族：双槽独立、seed 派生令牌                                                                                  | 2026-11-26，CB-137                                                         |
 
 ## 0. 总原则
 
@@ -484,7 +485,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 | `_app/approvals.tsx`                                                      | 审批                                                                    | B    | 应用 | 面板   | `#/approvals`                |
 | `_app/reachability.tsx`                                                   | 可达性                                                                  | B    | 应用 | 面板   | `#/reachability`             |
 | `components/panels/panel-rail.tsx`（面板库 Sheet）                        | 面板库                                                                  | B    | 应用 | 面板   | `#/panels`                   |
-| `settings/index.tsx`                                                      | 偏好设置 · 通用（外观：模式 × 皮肤 × 天空背景 / 消息列表 / 常驻指令 / 快捷键） | D    | 设置 | —      | `#/settings`                 |
+| `settings/index.tsx`                                                      | 偏好设置 · 通用（外观：模式 × 主题族 × 天空背景 / 消息列表 / 常驻指令 / 快捷键） | D    | 设置 | —      | `#/settings`                 |
 | `settings/connected-accounts/index.tsx`                                   | 已连接账号                                                              | D    | 设置 | —      | `#/settings/accounts`        |
 | `settings/connected-accounts/$key.tsx`                                    | 账号详情                                                                | C    | 设置 | —      | `#/settings/accounts/github` |
 | `settings/passwords.tsx`                                                  | 密码（已保存的登录）                                                    | D    | 设置 | —      | `#/settings/passwords`       |
@@ -2977,3 +2978,15 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **明暗绑定皮肤**：素白星尘 `boundMode: "light"`、墨夜星尘 `boundMode: "dark"`——色板承诺的就是整套明暗观感，点它连外观模式一起切并 toast 说明；其余皮肤两种模式都有对应版本、不绑定。色板带日 / 月角标（`.appearance-palette-mode`）。
 - **可读性护栏接电**：§7 的 `--sky-lift` / `--sky-muted` 由**有效天空**的真实明暗驱动（`resolveSkyReadability`，`SkyBackground` 里一条 `useExternalConnection` 写根变量）：手动 / auto 场景查 `darkness`，live 按 `computeSky(本机分钟, false)` 每分钟重算；深色外观、壁纸、主题渐变下移除这两个变量。
 - **设置 UI**：「主题皮肤与天空背景」一块两小节（`.appearance-subhead`）——皮肤网格 + 天空背景网格（主题天空卡 + 8 张天象卡，缩略图左下昼 / 暮 / 夜角标 `.appearance-scene-daylight`）；壁纸启用时皮肤卡下提示「壁纸启用中 · 皮肤仅更新强调色」。删掉的：独立的「背景随时间变化」开关行（与 live 天象卡重复，`general.sky` 搜索锚点并入这一块）、`usesPaletteGradientSky`（配色不再决定引擎开关）。
+
+## 141. 主题族：双槽独立、seed 派生令牌（2026-11-26，CB-137）
+
+问题：§140 的「皮肤」轴仍是一条单选轴——一套皮肤的浅色版与深色版被绑死在同一个选项里，造不出「浅色要落樱、深色要伦敦雨」这类混搭；10 套静态 `html[data-palette]` 令牌块躺在样式表里，加新皮肤要手写两份十六进制令牌、且「素白 / 墨夜」这类明暗绑定皮肤只能靠 `boundMode` 特判翻转模式。
+
+- **模型 = 模式 × 主题族（双槽）**：`ThemeFamily = { id, name, light: Seed, dark: Seed }`，`Seed = { ac, bg, fg, c }`（强调色 / 底色 / 文字色 / 对比度 30–70，可选 `scene` 天象推荐）。`AppearanceState` 里 `familyLight` / `familyDark` 两个槽互相独立——浅色槽管浅色模式、深色槽管深色模式，允许任意混搭；`mono`（对比族）这类「黑夜观感」用「深色槽选 mono」表达，`boundMode` 与模式翻转特判整体删除。
+- **seed 派生整套令牌**：`deriveSeed(seed, dark)` 一个纯函数从四件套算出全部 CSS 变量——强调色系（`--accent-*` / `--ink-primary` / `--on-primary` 按实际按钮底色取 WCAG 更高对比）、文字层级（`--ink-1/2/4`）、边框（`--stroke-*`，alpha 随 `c` 增大）、玻璃底（`--glass-bg` / `--glass-tint`）、四段天空（`--fam-sky-0..3` + body 的 `--sky-1..4`）。styles.css 里 10 套 `data-palette` 静态块全部删除，只留 `html[data-theme-family]` 的结构规则（`--pal-accent` / `--pal-tint-layer` / `#skyph` 渐变）。
+- **族卡 = 左右分半预览**：设置页一张族卡画该族的浅色半边 + 深色半边（各自 seed 的 bg/ac 小样）；点左半写 `familyLight`、点右半写 `familyDark`，`setThemeHalf(mode, id)` 只动对应槽。8 张内置卡（晴空 / 晨雾 / 青瓷 / 落樱 / 琥珀 / 暮紫 / 伦敦雨 / 对比）+ 第 9 张「自定义主题」虚线卡，点开编辑器分别调两个 seed（accent / bg / fg 三色 + 对比度滑杆 + 背景材质），保存即两槽同指、持久化到 `chisabot-theme-families`。
+- **选族不碰天空**：族卡只管整套派生令牌，天空来源（`skySource`）与壁纸完全不动——这是与 §140「点皮肤卡切主题渐变」的最大语义差异：彩色族 + Hark 引擎天象是常态组合，「主题天空」仍是天空组第一张卡、画当前族 seed 的 `--fam-sky-*` 渐变。
+- **存储与迁移**：新键 `chisabot-theme-family-light` / `chisabot-theme-family-dark` / `chisabot-theme-families`（自定义族 JSON 数组）。旧 `chisabot-theme-palette` 只在 `readInitialAppearance` 与启动脚本里读一次做映射迁移（`migrateLegacyPalette`：sakura/ruby→落樱、emerald→青瓷、aurora/nocturne→暮紫、sunset/gold→琥珀、stardust→晨雾、default/ocean→晴空），两槽同写映射结果，之后不再读；新键已有值时忽略老键。
+- **启动脚本**：`familyBootScript()`（lib/palette.ts → lib/theme-family.ts，`deriveSeed` 函数体构建时 `.toString()` 内联）在 React 挂载前解析当前模式的族（新键 → 自定义族 → 老键迁移 → azure 兜底），写 `data-theme-family` 与整套派生变量、`data-glass`、meta theme-color（`--fam-sky-0`）——启动骨架第一帧就是用户的主题。
+- **auto 天象跟随族**：`harkScene="auto"` 时 `resolveEffectiveHarkScene` 取当前模式 seed 的 `scene`（未写时按浅 0 晴空 / 深 4 柏林夜兜底），再经 §140 的昼夜配对不变式过滤——任何路径都造不出明暗错配的天空。

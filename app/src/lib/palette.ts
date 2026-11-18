@@ -1,273 +1,51 @@
 /**
- * 主题配色（10 套）和它们算出来的天空垫片颜色。
+ * CB-137：旧的「10 套皮肤」轴已被主题族（{@link ./theme-family}）取代。
+ * 这个文件只剩兼容层：
+ *  - 外观存储键（玻璃材质、天空来源）与「存过外观设置」的判定；
+ *  - index.html 启动脚本（{@link familyBootScript}，由 vite.config.ts 的
+ *    chisabot-sky-boot 插件构建时内联）：族解析 + seed 派生变量 + 材质 + theme-color。
+ * 类型与常量 re-export 自 theme-family.ts；lib/appearance.ts 照旧从这里转口。
  *
- * 单独成一个不依赖 React / 别名路径的纯模块（2026-10-29，模块 11 审计）：vite.config.ts 要在构建时
- * 把配色表序列化进 index.html 的启动脚本（{@link paletteBootScript}），让启动骨架和地址栏颜色在 JS 加载前
- * 就是用户选的配色，而不是默认蓝天。lib/appearance.ts 照旧 re-export 这里的名字。
+ * 保持为一个不依赖 React / 别名路径的纯模块（启动脚本要序列化 deriveSeed 进 HTML）。
  */
 
-export type ThemePaletteId =
-  | "default"
-  | "aurora"
-  | "emerald"
-  | "ocean"
-  | "sunset"
-  | "sakura"
-  | "gold"
-  | "ruby"
-  | "stardust"
-  | "nocturne";
+import {
+  CUSTOM_FAMILIES_STORAGE_KEY,
+  DEFAULT_FAMILY_ID,
+  deriveSeed,
+  FAMILY_DARK_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
+  PALETTE_STORAGE_KEY,
+  type Seed,
+  THEME_FAMILIES,
+} from "./theme-family";
 
-export type ThemePaletteMeta = {
-  id: ThemePaletteId;
-  name: string;
-  subtitle: string;
-  accentLight: string;
-  accentDark: string;
-  swatchGradient: string;
-  skyHueLight: [number, number, number, number];
-  skySatLight: [number, number, number, number];
-  skyHueDark: [number, number, number, number];
-  skySatDark: [number, number, number, number];
-  /** 默认关联的日间 / 夜间 Hark WebGL 天空场景索引（深色模式统一采用深邃夜景以保障文字对比度） */
-  harkSceneLight: number;
-  harkSceneDark: number;
-  /**
-   * 明暗绑定皮肤（「所见即所得」）：色板承诺的就是整套明暗观感——素白星尘只在浅色下成立、
-   * 墨夜星尘只在深色下成立。点这类皮肤卡时调用方要一并把外观模式切到 boundMode。
-   * 其余皮肤两种模式下都有对应版本，不绑定。
-   */
-  boundMode?: "light" | "dark";
-};
+export {
+  CUSTOM_FAMILIES_STORAGE_KEY,
+  DEFAULT_FAMILY_ID,
+  deriveSeed,
+  FAMILY_DARK_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
+  familySeed,
+  familySkyStops,
+  familyThemeColor,
+  isValidFamily,
+  isValidFamilyId,
+  listThemeFamilies,
+  migrateLegacyPalette,
+  PALETTE_STORAGE_KEY,
+  parseCustomFamilies,
+  resolveThemeFamily,
+  type Seed,
+  THEME_FAMILIES,
+  type ThemeFamily,
+} from "./theme-family";
 
-export const THEME_PALETTES: readonly ThemePaletteMeta[] = [
-  {
-    id: "default",
-    name: "晴空冰蓝",
-    subtitle: "澄澈晴空蓝与通透液态玻璃",
-    accentLight: "#2f7cf6",
-    accentDark: "#5b9cff",
-    swatchGradient:
-      "linear-gradient(135deg, #1d57a9 0%, #3e7bd1 50%, #6da7ec 100%)",
-    skyHueLight: [214, 212, 208, 204],
-    skySatLight: [71, 62, 68, 82],
-    skyHueDark: [222, 220, 218, 216],
-    skySatDark: [45, 42, 38, 34],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "aurora",
-    name: "极光幻紫",
-    subtitle: "星夜紫罗兰与极光流彩",
-    accentLight: "#7c3aed",
-    accentDark: "#b197fc",
-    swatchGradient:
-      "linear-gradient(135deg, #6366f1 0%, #8b5cf6 52%, #ec4899 100%)",
-    skyHueLight: [258, 266, 276, 245],
-    skySatLight: [64, 58, 52, 48],
-    skyHueDark: [266, 258, 250, 284],
-    skySatDark: [52, 46, 40, 36],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "emerald",
-    name: "翡翠森境",
-    subtitle: "雨后松林薄雾与通透翡翠",
-    accentLight: "#059669",
-    accentDark: "#38d9a9",
-    swatchGradient:
-      "linear-gradient(135deg, #059669 0%, #10b981 52%, #2dd4bf 100%)",
-    skyHueLight: [164, 168, 172, 158],
-    skySatLight: [56, 50, 44, 42],
-    skyHueDark: [168, 172, 176, 160],
-    skySatDark: [50, 46, 40, 36],
-    harkSceneLight: 5,
-    harkSceneDark: 4,
-  },
-  {
-    id: "ocean",
-    name: "深海蔚蓝",
-    subtitle: "太平洋青蓝与冰晶折射高光",
-    accentLight: "#0284c7",
-    accentDark: "#4dabf7",
-    swatchGradient:
-      "linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #22d3ee 100%)",
-    skyHueLight: [196, 199, 202, 192],
-    skySatLight: [76, 70, 62, 56],
-    skyHueDark: [194, 198, 202, 188],
-    skySatDark: [62, 56, 50, 44],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "sunset",
-    name: "落日琥珀",
-    subtitle: "黄金时刻暖橙晚霞与流光",
-    accentLight: "#d97706",
-    accentDark: "#ffc048",
-    swatchGradient:
-      "linear-gradient(135deg, #ea580c 0%, #f59e0b 52%, #fb7185 100%)",
-    skyHueLight: [28, 34, 40, 18],
-    skySatLight: [74, 68, 60, 54],
-    skyHueDark: [20, 26, 32, 12],
-    skySatDark: [48, 44, 40, 34],
-    harkSceneLight: 0,
-    harkSceneDark: 4,
-  },
-  {
-    id: "sakura",
-    name: "樱花绯粉",
-    subtitle: "春日落樱柔粉与微醺暮色",
-    accentLight: "#db2777",
-    accentDark: "#f783ac",
-    swatchGradient:
-      "linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fda4af 100%)",
-    skyHueLight: [332, 340, 350, 22],
-    skySatLight: [62, 60, 58, 74],
-    skyHueDark: [318, 326, 334, 300],
-    skySatDark: [46, 42, 38, 32],
-    harkSceneLight: 7,
-    harkSceneDark: 2,
-  },
-  {
-    id: "gold",
-    name: "银杏暖金",
-    subtitle: "秋日银杏黄与暖阳鎏金",
-    accentLight: "#a16207",
-    accentDark: "#facc15",
-    swatchGradient:
-      "linear-gradient(135deg, #a16207 0%, #eab308 52%, #fde68a 100%)",
-    skyHueLight: [46, 44, 42, 38],
-    skySatLight: [72, 66, 58, 50],
-    skyHueDark: [44, 42, 40, 48],
-    skySatDark: [40, 36, 32, 28],
-    harkSceneLight: 6,
-    harkSceneDark: 4,
-  },
-  {
-    id: "ruby",
-    name: "朱砂绛红",
-    subtitle: "醇厚朱砂红与蔷薇微醺",
-    accentLight: "#dc2626",
-    accentDark: "#f87171",
-    swatchGradient:
-      "linear-gradient(135deg, #991b1b 0%, #dc2626 50%, #fca5a5 100%)",
-    skyHueLight: [356, 352, 348, 342],
-    skySatLight: [62, 58, 54, 66],
-    skyHueDark: [352, 348, 344, 336],
-    skySatDark: [42, 38, 34, 30],
-    harkSceneLight: 1,
-    harkSceneDark: 2,
-  },
-  {
-    id: "stardust",
-    name: "素白星尘",
-    subtitle: "极简月白底色与淡淡星屑微光",
-    accentLight: "#5d6f9e",
-    accentDark: "#a9b8e6",
-    swatchGradient:
-      "radial-gradient(circle at 72% 24%, rgba(93,111,158,.55) 1.4px, transparent 2.2px), radial-gradient(circle at 34% 62%, rgba(93,111,158,.4) 1px, transparent 1.6px), linear-gradient(135deg, #f8fafd 0%, #e9eef6 52%, #d3dcec 100%)",
-    skyHueLight: [222, 220, 218, 224],
-    skySatLight: [12, 10, 14, 16],
-    skyHueDark: [226, 224, 222, 228],
-    skySatDark: [22, 18, 20, 16],
-    harkSceneLight: 5,
-    harkSceneDark: 4,
-    boundMode: "light",
-  },
-  {
-    id: "nocturne",
-    name: "墨夜星尘",
-    subtitle: "深邃夜空黑与微光星野",
-    accentLight: "#4c63a8",
-    accentDark: "#a9bdf2",
-    swatchGradient:
-      "radial-gradient(circle at 74% 22%, rgba(226,232,255,.95) 1.4px, transparent 2.2px), radial-gradient(circle at 30% 66%, rgba(226,232,255,.6) 1px, transparent 1.8px), radial-gradient(circle at 55% 42%, rgba(196,210,255,.5) .8px, transparent 1.4px), linear-gradient(135deg, #05070f 0%, #0d1424 55%, #1a2440 100%)",
-    skyHueLight: [230, 228, 232, 226],
-    skySatLight: [30, 26, 32, 38],
-    skyHueDark: [234, 232, 230, 236],
-    skySatDark: [36, 32, 38, 30],
-    harkSceneLight: 11,
-    harkSceneDark: 4,
-    boundMode: "dark",
-  },
-] as const;
-
-/**
- * 根据当前主题色生成与天空融合的渐变变量（作为 WebGL 首帧绘制前的预渲染垫片）
- */
-export function computePaletteSky(
-  palette: ThemePaletteId,
-  dark: boolean,
-): { body: Record<string, string>; root: Record<string, string> } | null {
-  if (palette === "default") return null;
-  const meta = THEME_PALETTES.find((p) => p.id === palette);
-  if (!meta) return null;
-
-  const hues = dark ? meta.skyHueDark : meta.skyHueLight;
-  const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [12, 16, 21, 26] : [54, 66, 78, 88];
-  const stops = [0, 1, 2, 3].map(
-    (i) => `hsl(${hues[i]} ${sats[i]}% ${lights[i]}%)`,
-  );
-
-  return {
-    body: {
-      "--sky-0": stops[0],
-      "--sky-1": stops[1],
-      "--sky-2": stops[2],
-      "--sky-3": stops[3],
-      "--sky-glow": `hsl(${hues[1]} ${Math.min(90, sats[1] + 15)}% ${dark ? 32 : 76}%)`,
-      "--sky-glow-a": dark ? "0.42" : "0.52",
-    },
-    root: {
-      "--palette-sky-0": stops[0],
-      "--palette-sky-1": stops[1],
-      "--palette-sky-2": stops[2],
-      "--palette-sky-3": stops[3],
-    },
-  };
-}
-
-/** 默认配色的地址栏 / 状态栏颜色（和 index.html 启动骨架的天空同色）。 */
+/** 默认配色的地址栏 / 状态栏颜色（族解析失败时的兜底，正常情况下永远解析得到 azure）。 */
 export const DEFAULT_THEME_COLOR = {
   light: "#9dbddc",
   dark: "#0c1626",
 } as const;
-
-function hslToHex(h: number, s: number, l: number): string {
-  const sat = s / 100;
-  const lig = l / 100;
-  const a = sat * Math.min(lig, 1 - lig);
-  const f = (n: number) => {
-    const k = (n + h / 30) % 12;
-    const c = lig - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-    return Math.round(c * 255)
-      .toString(16)
-      .padStart(2, "0");
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}
-
-/**
- * 地址栏 / PWA 状态栏颜色（meta[name=theme-color]）：跟随应用自己的浅色 / 深色和配色，而不是系统的配色方案。
- * 取天空最上面那一段：浅色取 --sky-2（和默认的 #9dbddc 同一档），深色取 --sky-1。
- */
-export function paletteThemeColor(
-  palette: ThemePaletteId,
-  dark: boolean,
-): string {
-  const meta =
-    palette === "default" ? null : THEME_PALETTES.find((p) => p.id === palette);
-  if (!meta) return dark ? DEFAULT_THEME_COLOR.dark : DEFAULT_THEME_COLOR.light;
-  const i = dark ? 1 : 2;
-  const hues = dark ? meta.skyHueDark : meta.skyHueLight;
-  const sats = dark ? meta.skySatDark : meta.skySatLight;
-  const lights = dark ? [6, 9, 13, 17] : [54, 66, 78, 88];
-  return hslToHex(hues[i], sats[i], lights[i]);
-}
 
 /** 把所有 meta[name=theme-color] 改成同一个颜色（两条按系统配色分的 meta 都改，应用主题优先）。 */
 export function applyThemeColor(
@@ -284,13 +62,11 @@ export function applyThemeColor(
   }
 }
 
-export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
 /**
- * 天空来源（2026-11 外观模型重构）：皮肤与背景解耦——皮肤只管强调色与配套主题渐变，
- * 天空是「Hark 动态天象」还是「皮肤配套渐变」由这个键单独决定。
+ * 天空来源（2026-11 外观模型重构）：主题族与背景解耦——族只管整套派生令牌，
+ * 天空是「Hark 动态天象」还是「族配套静态主题渐变」由这个键单独决定。
  * - "hark"（默认）：Hark WebGL 引擎渲染的天象（auto / live / 场景）。
- * - "theme"：皮肤配套的静态主题渐变（引擎不启动，更省）。
- * 没有这个键的老存档按旧语义迁移：皮肤不是 default 时旧版一定显示主题渐变 → "theme"。
+ * - "theme"：当前族 seed 派生的静态主题渐变（引擎不启动，更省）。
  */
 export const SKY_SOURCE_STORAGE_KEY = "chisabot-sky-source";
 export type SkySourceId = "hark" | "theme";
@@ -304,11 +80,12 @@ export const LEGACY_DEFAULT_GLASS_STYLE = "mist";
  * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
  * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
  * 不含 `chisabot-theme`：ThemeProvider 挂载时会自动写入，分不出用户有没有主动选过。
- * 其余键与 appearance.ts 的同名常量对应（tests/default-mist-glass.test.tsx 核对）。
+ * CB-137 后主题族键顶替旧的 palette 键；其余键与 appearance.ts 的同名常量对应
+ * （tests/default-mist-glass.test.tsx 核对）。
  * 写在这里而不是 appearance.ts：启动脚本要内联这份列表，palette.ts 是不依赖 DOM 的纯模块。
  */
 export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
-  PALETTE_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
   "chisabot-wallpaper-id",
   "chisabot-wallpaper-custom-url",
   "chisabot-wallpaper-blur",
@@ -336,34 +113,31 @@ export function fallbackGlassStyle(
   return DEFAULT_GLASS_STYLE;
 }
 
+/** 旧 data-palette 轴 → 主题族的迁移表（启动脚本内联一份）。 */
+const LEGACY_PALETTE_TO_FAMILY: Record<string, string> = {
+  default: "azure",
+  ocean: "azure",
+  aurora: "violet",
+  nocturne: "violet",
+  emerald: "celadon",
+  sakura: "sakura",
+  ruby: "sakura",
+  sunset: "amber",
+  gold: "amber",
+  stardust: "mist",
+};
+
 /**
  * index.html 的启动脚本（vite.config.ts 的 chisabot-sky-boot 插件塞在 <body> 第一行、时段天空之后）：
- * - 用户选了非默认配色：在 <html> 上写 data-palette，body 上写和应用一样的 --sky-0..3 / --sky-glow，
- *   启动骨架（骨架读 --sky-1..4）直接是这套配色；
- * - 写 data-glass（没存材质时按 {@link fallbackGlassStyle} 的同一条规则，并把结果写入 glass-style），应用挂载时不用再改一次根属性；
- * - meta theme-color 按应用自己的深浅色 + 配色写好。
- * 配色表在构建时算好内联（非 default 各 2 个小对象），运行时不用再算。
+ * - 解析当前模式的主题族（新键优先；旧 palette 键一次性映射迁移；兜底 azure），
+ *   在 <html> 上写 data-theme-family，把 deriveSeed 算出的整套变量写进 html/body 内联样式——
+ *   启动骨架（读 --sky-1..4、--accent-color 等）React 接管前就是用户的主题；
+ * - 写 data-glass（没存材质时按 {@link fallbackGlassStyle} 的同一条规则，并把结果写入 glass-style）；
+ * - meta theme-color 取当前族天空渐变顶段。
+ * deriveSeed 的函数体在构建时序列化内联（函数必须自包含，不能引用模块级变量）。
  */
-export function paletteBootScript(): string {
-  const map: Record<
-    string,
-    {
-      l: Record<string, string>;
-      d: Record<string, string>;
-      tl: string;
-      td: string;
-    }
-  > = {};
-  for (const p of THEME_PALETTES) {
-    const light = computePaletteSky(p.id, false);
-    const dark = computePaletteSky(p.id, true);
-    if (!light || !dark) continue;
-    map[p.id] = {
-      l: light.body,
-      d: dark.body,
-      tl: paletteThemeColor(p.id, false),
-      td: paletteThemeColor(p.id, true),
-    };
-  }
-  return `(function(){try{var d=document.documentElement,s=window.localStorage,M=${JSON.stringify(map)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},p=s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)}),g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c=k?${JSON.stringify(DEFAULT_THEME_COLOR.dark)}:${JSON.stringify(DEFAULT_THEME_COLOR.light)},v,i,m,w,q=s.getItem(${JSON.stringify(SKY_SOURCE_STORAGE_KEY)});if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);if(p&&M[p]){d.setAttribute("data-palette",p);if(q!=="hark"){v=M[p][k?"d":"l"];for(i in v)document.body.style.setProperty(i,v[i]);c=M[p][k?"td":"tl"]}}m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c);w=s.getItem("chisabot-wallpaper-scrim");if(w!=null)w=(Math.min(100,Math.max(0,parseFloat(w)||0))/100).toFixed(2),d.style.setProperty("--wallpaper-scrim-alpha",w)}catch(e){}})();`;
+export function familyBootScript(): string {
+  const map: Record<string, { l: Seed; d: Seed }> = {};
+  for (const f of THEME_FAMILIES) map[f.id] = { l: f.light, d: f.dark };
+  return `(function(){try{var d=document.documentElement,s=window.localStorage,F=${JSON.stringify(map)},L=${JSON.stringify(LEGACY_PALETTE_TO_FAMILY)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c,i,m,w,seed,vars,fid,lm,dm,cu=[];if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);try{var r=s.getItem(${JSON.stringify(CUSTOM_FAMILIES_STORAGE_KEY)});cu=r?JSON.parse(r):[]}catch(e){cu=[]}if(!Array.isArray(cu))cu=[];fid=function(v){if(!v)return null;if(F[v])return v;for(i=0;i<cu.length;i++){var f=cu[i];if(f&&f.id===v&&f.light&&f.dark)return v}return null};lm=s.getItem(${JSON.stringify(FAMILY_LIGHT_STORAGE_KEY)});dm=s.getItem(${JSON.stringify(FAMILY_DARK_STORAGE_KEY)});var lg=L[s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)})||""]||null;lm=fid(lm)||lg||${JSON.stringify(DEFAULT_FAMILY_ID)};dm=fid(dm)||lg||${JSON.stringify(DEFAULT_FAMILY_ID)};var id=k?dm:lm,fam=F[id];if(!fam){for(i=0;i<cu.length;i++){var cf=cu[i];if(cf&&cf.id===id){fam={l:cf.light,d:cf.dark};break}}}if(!fam){id=${JSON.stringify(DEFAULT_FAMILY_ID)};fam=F[id]}d.setAttribute("data-theme-family",id);seed=k?fam.d:fam.l;var derive=${deriveSeed.toString()};vars=derive(seed,k);for(i in vars.root)d.style.setProperty(i,vars.root[i]);if(document.body)for(i in vars.body)document.body.style.setProperty(i,vars.body[i]);c=vars.root["--fam-sky-0"]||seed.bg;m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c);w=s.getItem("chisabot-wallpaper-scrim");if(w!=null)w=(Math.min(100,Math.max(0,parseFloat(w)||0))/100).toFixed(2),d.style.setProperty("--wallpaper-scrim-alpha",w)}catch(e){}})();`;
 }

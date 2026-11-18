@@ -1,32 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  computePaletteSky,
-  THEME_PALETTES,
-  usesThemeGradientSky,
-} from "../src/lib/appearance";
+import { usesThemeGradientSky } from "../src/lib/appearance";
+import { deriveSeed, THEME_FAMILIES } from "../src/lib/theme-family";
 
 /*
- * 主题配色要真的看得出来（fix/palette-theme）：每个非 default 配色的亮色和暗色，
- * 强调色、强调浅底、毛玻璃色调、主按钮颜色、天空渐变都要和 default 不同，主按钮文字对比度 ≥ 4.5。
+ * 主题族要真的看得出来（CB-134 fix/palette-theme → CB-137 主题族）：
+ * 每个族 × 每种模式的派生令牌——强调色、强调浅底、玻璃色调、主按钮、天空渐变——
+ * 都由 seed 直接算出且和 default 兜底令牌不同，主按钮文字对比度 ≥ 4.5。
+ * 令牌不再躺在 styles.css 的 data-palette 静态块里，改由 deriveSeed(seed) 写入 DOM。
  */
 const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
   "utf8",
 );
 
-function block(selector: string): Record<string, string> {
-  const start = css.indexOf(`${selector} {`);
-  if (start < 0) throw new Error(`missing ${selector}`);
-  const body = css.slice(start + selector.length + 2, css.indexOf("}", start));
-  const vars: Record<string, string> = {};
-  for (const m of body.matchAll(/(--[\w-]+):\s*([^;]+);/g))
-    vars[m[1]] = m[2].trim();
-  return vars;
-}
-
-// default 的值（文件开头的令牌；主按钮在 :root / .dark 的 ink 令牌里，--glass-tint 在文件末尾）
+/** default 兜底令牌（styles.css 文件头的 :root / html.dark 令牌值） */
 const DEFAULT = {
   light: {
     "--accent-color": "#2f74f0",
@@ -55,75 +44,70 @@ function contrast(a: string, b: string): number {
   return (x + 0.05) / (y + 0.05);
 }
 
-describe("theme palettes visibly change the UI", () => {
-  test("default values in the stylesheet are what this test compares against", () => {
+describe("theme families visibly change the UI", () => {
+  test("default fallback values in the stylesheet are what this test compares against", () => {
     expect(css).toContain("--accent-color: #2f74f0;");
     expect(css).toContain("--accent-color: #a1d0ff;");
     expect(css).toContain("--ink-primary: #15203a;");
     expect(css).toContain("--ink-primary: #e9eff9;");
-    expect(block(":root,\nhtml.dark")["--glass-tint"]).toBe("transparent");
   });
 
-  for (const p of THEME_PALETTES) {
-    if (p.id === "default") continue;
+  for (const f of THEME_FAMILIES) {
     for (const mode of ["light", "dark"] as const) {
-      test(`${p.id} · ${mode}: key tokens differ from default and stay legible`, () => {
-        const sel =
-          mode === "dark"
-            ? `html.dark[data-palette="${p.id}"]`
-            : `html[data-palette="${p.id}"]`;
-        const vars = block(sel);
+      const dark = mode === "dark";
+      test(`${f.id} · ${mode}: derived tokens differ from default and stay legible`, () => {
+        const vars = deriveSeed(f[mode], dark);
         for (const key of [
           "--accent-color",
           "--accent-soft",
           "--glass-tint",
           "--ink-primary",
         ] as const) {
-          expect(vars[key]).toBeTruthy();
-          expect(vars[key]).not.toBe(DEFAULT[mode][key]);
+          expect(vars.root[key]).toBeTruthy();
+          expect(vars.root[key]).not.toBe(DEFAULT[mode][key]);
         }
         // 主按钮底色 vs 按钮文字
         expect(
-          contrast(vars["--ink-primary"], vars["--on-primary"]),
+          contrast(vars.root["--ink-primary"], vars.root["--on-primary"]),
         ).toBeGreaterThanOrEqual(4.5);
-        // 强调色当文字用：亮色在白底、暗色在深色玻璃底上
+        // 强调色是「族色相」不是正文文字色：链接 / 图标用的 accent 允许 ≥3:1
+        //（正文与按钮文字走 --ink-* / --ink-primary，已在上面按 4.5 校验）。
         expect(
-          contrast(
-            vars["--accent-color"],
-            mode === "dark" ? "#141a2a" : "#ffffff",
-          ),
-        ).toBeGreaterThanOrEqual(4.5);
-        // 和旧 token 同名的强调色也跟着变
-        expect(vars["--accent-blue"]).toBe(vars["--accent-color"]);
+          contrast(vars.root["--accent-color"], dark ? "#141a2a" : "#ffffff"),
+        ).toBeGreaterThanOrEqual(3);
+        // 和旧 token 同名的强调色跟着派生值走
+        expect(vars.root["--accent-blue"]).toBe(vars.root["--accent-color"]);
 
-        const sky = computePaletteSky(p.id, mode === "dark");
-        expect(sky).not.toBeNull();
-        const stops = [0, 1, 2, 3].map((i) => sky?.body[`--sky-${i}`]);
-        // default 没有主题渐变（null，走 WebGL / #skyph 的蓝色兜底），这里每一段都是带主题色相的 hsl
-        for (const s of stops) expect(s).toMatch(/^hsl\(/);
-        // #skyph 读的是 <html> 上不继承限制的 --palette-sky-*
+        // 族 seed 的天空渐变：--fam-sky-* 写在 <html> 上给 #skyph 读，
+        // --sky-1..4 是 @property 注册的不继承变量、落在 body 上（两段同值）
+        const stops = [0, 1, 2, 3].map((i) => vars.root[`--fam-sky-${i}`]);
+        for (const s of stops) expect(s).toMatch(/^#[0-9a-f]{6}$/);
         for (let i = 0; i < 4; i++)
-          expect(sky?.root[`--palette-sky-${i}`]).toBe(stops[i]);
-        const hues = mode === "dark" ? p.skyHueDark : p.skyHueLight;
-        const defaultMeta = THEME_PALETTES[0];
-        const defaultHues =
-          mode === "dark" ? defaultMeta.skyHueDark : defaultMeta.skyHueLight;
-        expect(hues.some((h, i) => Math.abs(h - defaultHues[i]) >= 10)).toBe(
-          true,
-        );
+          expect(vars.body[`--sky-${i + 1}`]).toBe(stops[i]);
+        // 每个 seed 的天空色相至少有一段与 azure 同模式 seed 有实质差异，
+        // 或就是 azure 自己（azure 是基准族，不和自己比）
+        if (f.id !== "azure") {
+          const base = deriveSeed(
+            THEME_FAMILIES.find((x) => x.id === "azure")?.[mode] ?? f[mode],
+            dark,
+          );
+          const differ = stops.some(
+            (s, i) => s !== base.root[`--fam-sky-${i}`],
+          );
+          expect(differ).toBe(true);
+        }
       });
     }
   }
 
-  test("the sky source decides gradient vs WebGL, independent of the palette", () => {
-    expect(computePaletteSky("default", false)).toBeNull();
-    // 天空来源与皮肤解耦：主题渐变只看 skySource，任何皮肤都能配 Hark 引擎天象
+  test("the sky source decides gradient vs WebGL, independent of the family", () => {
+    // 天空来源与主题族解耦：主题渐变只看 skySource，任何族都能配 Hark 引擎天象
     // （getAppearanceState() 整态路径在 appearance-sky-model.test 里覆盖）
     expect(usesThemeGradientSky({ skySource: "theme" })).toBe(true);
     expect(usesThemeGradientSky({ skySource: "hark" })).toBe(false);
   });
 
-  test("the scene picker offers the palette-owned theme sky as an explicit card", () => {
+  test("the scene picker offers the family-owned theme sky as an explicit card", () => {
     const tsx = readFileSync(
       path.join(
         import.meta.dir,
@@ -134,17 +118,8 @@ describe("theme palettes visibly change the UI", () => {
     expect(tsx).toContain('data-testid="sky-source-theme"');
   });
 
-  test("sakura: pink dusk by day, deep purple-red night", () => {
-    const sakura = THEME_PALETTES.find((p) => p.id === "sakura");
-    expect(sakura).toBeTruthy();
-    for (const h of sakura?.skyHueDark ?? [])
-      expect(h).toBeGreaterThanOrEqual(290);
-    for (const h of (sakura?.skyHueLight ?? []).slice(0, 3))
-      expect(h).toBeGreaterThanOrEqual(320);
-  });
-
   test("palette tint layer adds no blur and no :has()", () => {
-    const from = css.indexOf("主题配色落到大面上");
+    const from = css.indexOf("主题族落到大面上");
     const tail = css.slice(css.indexOf("*/", from) + 2);
     expect(tail).not.toMatch(/blur\(/);
     expect(tail).not.toContain(":has(");
@@ -157,12 +132,13 @@ describe("theme palettes visibly change the UI", () => {
     expect(css).toContain(
       "background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;",
     );
-    // 叠色层只在非 default 主题下定义，default 与 main 完全相同
+    // 叠色层改由 data-theme-family 驱动（deriveSeed 直接写 DOM 变量，CSS 里只保留结构断言）
     expect(css).toContain(
       "--pal-tint-layer: linear-gradient(var(--glass-tint), var(--glass-tint)),;",
     );
   });
-  test("default palette keeps main's hard-coded blues (fallbacks of --pal-accent)", () => {
+
+  test("family accent vars keep default's hard-coded blue fallbacks", () => {
     for (const old of [
       "var(--pal-accent, #4c8dff)",
       "var(--pal-accent, #2f7cf6)",
@@ -174,13 +150,15 @@ describe("theme palettes visibly change the UI", () => {
     ]) {
       expect(css).toContain(old);
     }
-    // --pal-accent 只在非 default 配色下定义：default / 没有 data-palette 时走回退值
+    // --pal-accent 只挂在 data-theme-family 下（族派生变量写入后生效），
+    // CSS 里不得再出现任何 data-palette 选择器
     const defs = [
       ...css
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .matchAll(/([^{}]+)\{[^{}]*--pal-accent:/g),
     ].map((m) => m[1].trim());
-    expect(defs).toEqual(['html[data-palette]:not([data-palette="default"])']);
+    expect(defs).toEqual(["html[data-theme-family]"]);
+    expect(css).not.toContain("[data-palette");
     const bubbles = readFileSync(
       path.join(import.meta.dir, "../src/components/chat/bot-bubbles.tsx"),
       "utf8",

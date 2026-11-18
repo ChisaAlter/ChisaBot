@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-137](#cb-137) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`                  |
 | [CB-135](#cb-135) | 网页新构建上线后页面不自动换新版，靠用户手点刷新横幅                            | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: in-progress`                                     |
 | [CB-134](#cb-134) | 深浅 × 配色 × 动态天象组合混乱，外观模型重构为「模式 × 皮肤 × 背景」              | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`                  |
 | [CB-133](#cb-133) | 左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列                              | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: done`（#553 · `v0.1.164`）                                     |
@@ -129,6 +130,20 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-137
+
+**皮肤轴升级为主题族：浅 / 深两个模式各自独立选族，令牌由 seed 派生**
+
+标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`
+
+分支：`feat/theme-families`。CB-134 把模型收成「模式 × 皮肤 × 背景」后，皮肤轴仍是一条单选轴：一套皮肤的浅 / 深两版绑死在同一选项（造不出「浅色落樱 + 深色伦敦雨」混搭），10 套 `html[data-palette]` 静态令牌块躺样式表，明暗绑定皮肤只能靠 `boundMode` 特判翻转模式。按 DESIGN §141 重构：`ThemeFamily = { id, name, light, dark }`、`Seed = { ac, bg, fg, c }`，`AppearanceState` 换 `familyLight` / `familyDark` 双槽 + `customFamilies`，令牌全部由 `deriveSeed` 派生、启动脚本写 `data-theme-family`。
+
+- [x] **双槽独立选族**：`setThemeHalf(mode, id)` 只写对应槽；族卡左右分半预览（各 seed 的 bg/ac 小样），8 内置族 + 第 9 张自定义族卡 / 编辑器（`chisabot-theme-families`）。
+- [x] **seed 派生令牌**：`deriveSeed(seed, dark)` 出强调色 / 文字层级 / 边框 / 玻璃 / `--fam-sky-*` 四段天空；styles.css 删全部 `data-palette` 块，启动脚本（`familyBootScript`，构建时内联 `deriveSeed`）与 `applyAppearanceToDocument` 同一路径写 DOM。
+- [x] **迁移与兼容**：`chisabot-theme-palette` 老键一次性映射迁移两槽（boot 与应用同规则）；`boundMode` 明暗绑定皮肤删除；auto 天象改随族 `seed.scene`，§140 昼夜配对不变式不动；壁纸 / 玻璃 / skySource 行为全部保留。
+- [ ] **验收**：`bun run check` + `bun run test:app`（theme-family / palette-theme / appearance-* / theme-glass-perf / default-mist-glass / settings-audit 等迁移后全绿）；`tests/appearance-model/appearance.mjs` 真浏览器验收（族半边点击、两槽独立、主题天空卡、壁纸互斥）。
+- [ ] PR 合并发版；串行部署后生产观察。
 
 ## CB-135
 

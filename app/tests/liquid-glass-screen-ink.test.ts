@@ -136,7 +136,7 @@ afterAll(async () => {
 beforeEach(() => {
   gray = 200;
   window.localStorage.clear();
-  // 同进程里别的测试会留下 data-perf / data-palette 等根属性（性能模式会让液态玻璃整套撤掉）。
+  // 同进程里别的测试会留下 data-perf / data-theme-family 等根属性（性能模式会让液态玻璃整套撤掉）。
   const de = document.documentElement;
   for (const name of de.getAttributeNames()) de.removeAttribute(name);
   de.setAttribute("data-glass", "liquid");

@@ -4,7 +4,7 @@
  * 不跑浏览器，只用 styles.css / perf-noblur.css 里的真实令牌和 lib/appearance.ts 的配色天空，
  * 把文字背后的每一层按 alpha 叠出来，再算 WCAG 2.x 对比度：
  *
- *   天空（默认配色读 #skyph 的回落色，其他配色读 computePaletteSky 的 4 个色标）
+ *   天空（主题族 seed 经 deriveSeed 派生的 --fam-sky-* 4 个色标）
  *   → 天幕薄纱 #sky-root::after（按同一高度插值）
  *   → 左栏卡片的玻璃 --lg-surface（3 种材质 × 雾度 5% / 55%，取渐变起点：文字在卡片左上）
  *     或不透明底色 --glass-bg-opaque（性能模式 / 减少透明度 / 增加对比度）
@@ -21,9 +21,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  computePaletteSky,
-  THEME_PALETTES,
-  type ThemePaletteId,
+  deriveSeed,
+  familySeed,
+  resolveThemeFamily,
+  THEME_FAMILIES,
 } from "../src/lib/appearance";
 import {
   alphaForContrast,
@@ -173,8 +174,8 @@ export const GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"] as const;
 /** lib/appearance.ts 存储 / 校验的雾度范围（clampNumber(…, 5, 55, …)）。 */
 export const HAZE_RANGE = [0.05, 0.55] as const;
 
-/** 天空：带高度位置的 4 个色标。 */
-export function skyStops(palette: ThemePaletteId, scheme: Scheme): Stop[] {
+/** 天空：带高度位置的 4 个色标（CB-137：族 seed 派生的 --fam-sky-* 四段）。 */
+export function skyStops(familyId: string, scheme: Scheme): Stop[] {
   const sel =
     scheme === "dark"
       ? 'html.dark #sky-root #skyph, html[data-theme="dark"] #sky-root #skyph'
@@ -183,11 +184,11 @@ export function skyStops(palette: ThemePaletteId, scheme: Scheme): Stop[] {
     lastDecl(stylesCss, sel, "background") ?? "",
   );
   if (placeholder.length !== 4) throw new Error(`#skyph stops for ${scheme}`);
-  const sky = computePaletteSky(palette, scheme === "dark");
-  if (!sky) return placeholder;
+  const dark = scheme === "dark";
+  const vars = deriveSeed(familySeed(resolveThemeFamily(familyId), dark), dark);
   return placeholder.map((p, i) => ({
     at: p.at,
-    color: parseColor(sky.body[`--sky-${i}`]),
+    color: parseColor(vars.root[`--fam-sky-${i}`] ?? "#000000"),
   }));
 }
 
@@ -271,18 +272,22 @@ export function liquidMaterial(scheme: Scheme): LiquidMaterial {
   const hi = Number.parseFloat(
     glassDecl("--lg-tint-hi", "liquid", scheme) ?? "",
   );
-  if (!m || !Number.isFinite(lo) || !Number.isFinite(hi) || rgb.length < 3 || rgb.some((n) => !Number.isFinite(n)))
+  if (
+    !m ||
+    !Number.isFinite(lo) ||
+    !Number.isFinite(hi) ||
+    rgb.length < 3 ||
+    rgb.some((n) => !Number.isFinite(n))
+  )
     throw new Error(`liquid material for ${scheme}`);
   // 公式里除了 --lg-alpha 以外的标量因子（--lg-tint-mul / --lg-density-k / …）：
   // var 带 fallback 用 fallback，否则读同规则里声明的默认值（都是 1）。
   let mul = 1;
-  for (const f of m[2].matchAll(
-    /\*\s*var\(--([\w-]+)(?:,\s*([\d.]+))?\)/g,
-  )) {
+  for (const f of m[2].matchAll(/\*\s*var\(--([\w-]+)(?:,\s*([\d.]+))?\)/g)) {
     const fb = Number(f[2]);
     mul *= Number.isFinite(fb)
       ? fb
-      : (Number.parseFloat(glassDecl(`--${f[1]}`, "liquid", scheme) ?? "") || 1);
+      : Number.parseFloat(glassDecl(`--${f[1]}`, "liquid", scheme) ?? "") || 1;
   }
   const hl = Number.parseFloat(glassDecl("--lg-hl", "liquid", scheme) ?? "0");
   const mat = {
@@ -319,9 +324,7 @@ function liquidComposite(
   const mat = liquidMaterial(scheme);
   const ink = decideInk(scheme, bgLum(base), null);
   const under = scheme === "light" && ink === "dark";
-  const tintRGB: [number, number, number] = under
-    ? [16, 18, 22]
-    : mat.tintRGB;
+  const tintRGB: [number, number, number] = under ? [16, 18, 22] : mat.tintRGB;
   const lo = under ? 0.1 : mat.lo;
   const mul = under ? 1.4 : mat.mul;
   const hl = under ? 0.08 : mat.hl;
@@ -343,7 +346,10 @@ function liquidComposite(
       [255, 255, 255, hl],
       [tintRGB[0], tintRGB[1], tintRGB[2], alpha],
     );
-    out.push({ bg: over(surf, base), inkScheme: ink === "dark" ? "dark" : "light" });
+    out.push({
+      bg: over(surf, base),
+      inkScheme: ink === "dark" ? "dark" : "light",
+    });
   }
   return out;
 }
@@ -388,11 +394,8 @@ export function rowFills(scheme: Scheme): RGBA[] {
 }
 
 /** 左栏卡片上文字背后所有可能的不透明底色（液态玻璃按底色自适应出合成结果）。 */
-export function panelBackdrops(
-  palette: ThemePaletteId,
-  scheme: Scheme,
-): Backdrop[] {
-  const sky = skyStops(palette, scheme);
+export function panelBackdrops(familyId: string, scheme: Scheme): Backdrop[] {
+  const sky = skyStops(familyId, scheme);
   const veil = veilStops(scheme);
   const out: Backdrop[] = [{ bg: opaqueSurface(scheme), inkScheme: scheme }];
   for (const stop of sky) {
@@ -515,7 +518,7 @@ export type ElementId = "sec-main" | "sub" | "avatar";
 
 export function backdropsFor(
   element: ElementId,
-  palette: ThemePaletteId,
+  familyId: string,
   scheme: Scheme,
   surface: "sky" | "wallpaper" = "sky",
 ): Backdrop[] {
@@ -524,7 +527,7 @@ export function backdropsFor(
   const panel =
     surface === "wallpaper"
       ? wallpaperPanelBackdrops(scheme)
-      : panelBackdrops(palette, scheme);
+      : panelBackdrops(familyId, scheme);
   if (element === "sec-main") return panel;
   // 行底色跟着墨的档走：深釉浅墨档（inkScheme=dark 的翻转条目）用深色行底。
   return [
@@ -555,7 +558,7 @@ export function rangeAdaptive(
   return { min: Math.min(...values), max: Math.max(...values) };
 }
 
-export const PALETTE_IDS = THEME_PALETTES.map((p) => p.id);
+export const FAMILY_IDS = THEME_FAMILIES.map((f) => f.id);
 
 /* ---------- 壁纸下的其他面板和主区（#420 审查第二轮） ---------- */
 

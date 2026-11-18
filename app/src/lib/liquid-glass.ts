@@ -389,7 +389,7 @@ const HTML_WATCHED_ATTRS = [
   "data-perf",
   "data-resizing",
   "data-wallpaper",
-  "data-palette",
+  "data-theme-family",
   "data-theme",
   "data-sky-painted",
   "data-sky-off",
