@@ -145,6 +145,7 @@
 | [137](#137-桌面端内置本地前端与版本高者优先加载2026-11-16)                                                 | 桌面端内置本地前端与版本高者优先加载                                                                             | 2026-11-16                                                                 |
 | [138](#138-输入框悬浮可拖拽调整与收展小窗切换动画2026-11-17)                                               | 输入框悬浮 + 边框拉大缩小、收展与 PC 小窗切换动画                                                                | 2026-11-17                                                                 |
 | [139](#139-左栏收敛收起态单条玻璃列与展开态去分组标签2026-11-18)                                            | 左栏收敛：收起态单条玻璃列、展开态去分组标签                                                                     | 2026-11-18                                                                 |
+| [140](#140-外观模型模式--皮肤--背景2026-11-19cb-134)                                                       | 外观模型：模式 × 皮肤 × 背景                                                                                     | 2026-11-19，CB-134                                                         |
 
 ## 0. 总原则
 
@@ -246,12 +247,13 @@
 - **可读性旋钮**：天空变暗时 `--sky-lift`（0–0.14）加厚亮色玻璃（`--glass*`、`--card`、`--sidebar`、`--secondary` 的白色不透明度），`--sky-muted` 加深亮色次要文字（`--muted-foreground`、`--glass-ink-3`）。新增亮色玻璃变量时请同样写成 `rgba(255, 255, 255, calc(基础值 + var(--sky-lift, 0)))`。
 - **性能约定**：会过渡的 `--sky-1..4`、`--sky-cloud`、`--sky-glow(-x/-y)` 用 `@property` 注册为**不继承**，只写在 `<body>` 上（变化只重绘背景）；`--sky-stars`、`--sky-lift`、`--sky-muted` 是普通继承变量，每分钟最多变一次、自身不做动画。不要把天空渐变放回 `:root` 的变量里（`var()` 会在 `:root` 上求值，读不到 body 上的值）。
 - **首屏**：Vite 插件 `chisabot-sky-boot` 把 `computeSky` 序列化后内联到 `index.html` 的 `<body>` 开头，骨架屏首帧就是当前时间的天空，不会先闪蓝天或白屏。因此 `computeSky` 必须完全自包含（不引用函数体外的任何东西）。全屏骨架 `.sky-skel` 背景必须透明，透出 body 的天空。
-- **设置**：偏好设置 → 通用 →「背景随时间变化」开关（默认开，`localStorage` 键 `chisabot-sky`，`off` 为关闭，关闭后平滑回到固定蓝天）；开启时下方展开「预览时间」滑块（15 分钟一档），仅临时预览，离开设置页恢复当前时间，不保存。
+- **可读性旋钮由有效天空驱动（§140 起接通）**：浅色模式下 `--sky-lift` / `--sky-muted` 由 `resolveSkyReadability` 写——live 天象按 `computeSky(本机分钟, false)` 每分钟重算，手动 / auto 场景按 `HARK_SCENE_INFO[].darkness`；深色外观、壁纸、主题渐变下移除（深色令牌、壁纸薄幕、亮色主题渐变各自承担对比度）。
+- **设置（§140 起）**：「背景随时间变化」独立开关已并入外观块的天象卡——「实时动态天象」（`harkScene="live"`）就是本节的按时间天空；旧键 `chisabot-sky` 只由启动脚本继续认 `"off"`（老用户兼容），不再被写入。
 - **减少动态效果**（prefers-reduced-motion）：颜色照常淡变，光晕位置不做移动过渡。
 
 ### 7.4 天空只在「改天空」时淡变（CB-024，2026-10-15）
 
-- **切暗色 / 亮色、每分钟走一格：一帧换好，不淡变。** 只有 `<html data-sky-ease>` 在时 body 上的 `--sky-*` 和星星透明度才有 1.6s 过渡；`SkyBackground` 只在「背景随时间变化」开 / 关、设置里拖「预览时间」时加这个属性，约 1.7 秒后去掉（`easeNextSkyChange()`）。
+- **切暗色 / 亮色、每分钟走一格：一帧换好，不淡变。** 只有 `<html data-sky-ease>` 在时 body 上的 `--sky-*` 和星星透明度才有 1.6s 过渡；`easeNextSkyChange()` 挂上约 1.7 秒后去掉（保留给单元测试与主题切换调用）。
 - **为什么**：天空在所有毛玻璃后面。天空淡变的每一帧，每块玻璃（左栏、右栏、输入框、菜单）都要把背后重新模糊一遍——切一次主题 ≈ 100 帧整屏模糊，光栅化合计约 1.9 秒（4× CPU 预览实测），电脑 / 手机上就是「切暗色卡一下、菜单发涩」。改后同一次切换光栅化约 0.2 秒、0.47 秒内画面全部停住；按钮自身 150ms 的颜色过渡保留。
 - **规则**：不要再给 `body` / `body::before` 写无条件的 `transition`；任何在毛玻璃**后面**持续变化的东西（背景动画、渐变、视频）都会让玻璃逐帧重模糊，要么一帧换好，要么只在用户明确操作时短暂过渡。`app/tests/sky-ease.test.ts` 会拦住。
 - **测量**：4× CPU、1280×860、账号菜单里点「暗色外观」，看 Event Timing（INP）、长任务和 trace 里 `RasterTask` / `VizCompositorThread` 合计与最后一帧时间（脚本在仓库外的 FRA 测试目录，PR 描述里有数字）。主线程那一下（整页样式重算，约 1400 个元素 ≈ 110ms@4×）随元素数涨，长对话里另由 CB-025 处理。
@@ -482,7 +484,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 | `_app/approvals.tsx`                                                      | 审批                                                                    | B    | 应用 | 面板   | `#/approvals`                |
 | `_app/reachability.tsx`                                                   | 可达性                                                                  | B    | 应用 | 面板   | `#/reachability`             |
 | `components/panels/panel-rail.tsx`（面板库 Sheet）                        | 面板库                                                                  | B    | 应用 | 面板   | `#/panels`                   |
-| `settings/index.tsx`                                                      | 偏好设置 · 通用（外观 / 背景随时间变化 / 消息列表 / 常驻指令 / 快捷键） | D    | 设置 | —      | `#/settings`                 |
+| `settings/index.tsx`                                                      | 偏好设置 · 通用（外观：模式 × 皮肤 × 天空背景 / 消息列表 / 常驻指令 / 快捷键） | D    | 设置 | —      | `#/settings`                 |
 | `settings/connected-accounts/index.tsx`                                   | 已连接账号                                                              | D    | 设置 | —      | `#/settings/accounts`        |
 | `settings/connected-accounts/$key.tsx`                                    | 账号详情                                                                | C    | 设置 | —      | `#/settings/accounts/github` |
 | `settings/passwords.tsx`                                                  | 密码（已保存的登录）                                                    | D    | 设置 | —      | `#/settings/passwords`       |
@@ -2964,3 +2966,14 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **展开态去分组标签**：删「主机器人」「其他」两行 `.glass-sec` 标签；主机器人照旧置顶带星，与其余机器人之间用 `.glass-bot-sep` 一条细分隔线，列表密度不变、层级仍在。
 - **账号卡收窄**：去掉行尾 `IconSelector` 切换箭头（菜单仍由整卡点击打开），内边距 6→4、行高 44→40，与上方行节奏对齐。
 - **不动的**：`collapsible="icon"` 状态机、`RosterToggle` 焦点转移、`SidebarSearchField` 搜索与 Ctrl K、未读点 / 待处理数字 / 计算机状态点、机器人菜单、隐藏当前机器人临时行、移动端抽屉。对比度与渲染预算契约类名（`.glass-side-card` `.acct-card` `.acct-mini-card` `.glass-mini-card` `.rail-card` `.glass-mini-new`）全部保留。
+
+## 140. 外观模型：模式 × 皮肤 × 背景（2026-11-19，CB-134）
+
+问题：模式（浅 / 深）、主题配色、Hark 动态天象、壁纸四条轴争同一块天空，互不通信——非 default 配色静默劫持天空成主题渐变（8 张天象卡全是死选项）、「浅色 + 墨夜」「深色 + 素白」这类错配组合不可读、§7 的 `--sky-lift` / `--sky-muted` 护栏只有启动脚本写一次值（运行时是断的）、「背景随时间变化」开关和 live 天象卡是同一个状态的两个入口。
+
+- **模型 = 模式 × 皮肤 × 背景**：皮肤（10 款配色）只管强调色与配套主题渐变；背景在「主题天空 / Hark WebGL 动态天象 / 壁纸」三选一互斥。存储上新开 `chisabot-sky-source`（`"hark"` 默认 / `"theme"`）；壁纸仍是独立 `wallpaperId`，启用时盖过两者。没有这个键的老存档按旧语义迁移：皮肤非 default 时旧版一定显示主题渐变 → `"theme"`，保持用户当时看到的画面；此后每次写入都显式带这个键。
+- **皮肤卡 = 强调色 + 配套主题天空**：点皮肤卡把天空切到主题渐变（壁纸启用中只换强调色——壁纸是用户单独选的背景，不被皮肤卡带走）；点天象卡切到引擎并退出壁纸；「主题天空」是天空组第一张卡（`skySource="theme"`，引擎不启动、预览画当前皮肤的配套渐变）。配色不再静默劫持引擎——彩色皮肤 + 天象引擎是合法组合，每皮肤的 `harkSceneLight` / `harkSceneDark`（auto 的配色映射）恢复为真实语义。
+- **昼夜配对不变式**：每个引擎场景带明暗属性（`HARK_SCENE_INFO`：`day` / `dusk` / `night` + `darkness`）。夜景在浅色外观下解析到它的黄昏 / 雨景配对（柏林夜 → 檀香山晨霞、雷克雅未克午夜 → 纽约日落、迈阿密风暴 → 伦敦雨），日景在深色外观下解析到夜景配对，晨昏两种外观直接呈现。解析收口在 `resolveEffectiveHarkScene` 一处——手动场景、auto 映射、存量存档、多标签同步任何路径都造不出「浅色界面 + 夜空」或「深色界面 + 正午」。
+- **明暗绑定皮肤**：素白星尘 `boundMode: "light"`、墨夜星尘 `boundMode: "dark"`——色板承诺的就是整套明暗观感，点它连外观模式一起切并 toast 说明；其余皮肤两种模式都有对应版本、不绑定。色板带日 / 月角标（`.appearance-palette-mode`）。
+- **可读性护栏接电**：§7 的 `--sky-lift` / `--sky-muted` 由**有效天空**的真实明暗驱动（`resolveSkyReadability`，`SkyBackground` 里一条 `useExternalConnection` 写根变量）：手动 / auto 场景查 `darkness`，live 按 `computeSky(本机分钟, false)` 每分钟重算；深色外观、壁纸、主题渐变下移除这两个变量。
+- **设置 UI**：「主题皮肤与天空背景」一块两小节（`.appearance-subhead`）——皮肤网格 + 天空背景网格（主题天空卡 + 8 张天象卡，缩略图左下昼 / 暮 / 夜角标 `.appearance-scene-daylight`）；壁纸启用时皮肤卡下提示「壁纸启用中 · 皮肤仅更新强调色」。删掉的：独立的「背景随时间变化」开关行（与 live 天象卡重复，`general.sky` 搜索锚点并入这一块）、`usesPaletteGradientSky`（配色不再决定引擎开关）。

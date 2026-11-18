@@ -1,5 +1,6 @@
 ## 0.1.164 — 2026-11-18
 
+- 外观模型重构（模式 × 皮肤 × 背景）：皮肤只管强调色与配套主题渐变，天空背景三选一互斥（`chisabot-sky-source` 新键，老存档按旧语义迁移）；天象场景按明暗自动配对、素白 / 墨夜明暗绑定；`--sky-lift` / `--sky-muted` 由有效天空驱动；删「背景随时间变化」重复开关（palette.ts · appearance.ts · sky-background.tsx · appearance-preferences.tsx · styles.css，DESIGN §140，CB-134）。
 - 左栏收敛：收起态 5 个分离悬浮件合成一条通顶玻璃列（`.glass-mini-head` 幽灵图标组 + `.glass-mini-scroll` 头像区 + `.glass-mini-foot` 账号，`.glass-mini-div` 分区）；展开态删「主机器人 / 其他」分组标签改 `.glass-bot-sep` 细分隔线，账号卡去 chevron、内边距 6→4、行高 44→40（app-sidebar.tsx · section-rail.tsx · account-menu.tsx · styles.css，DESIGN §139，CB-133）。
 
 ## 0.1.163

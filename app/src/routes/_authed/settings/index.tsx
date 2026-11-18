@@ -8,7 +8,6 @@ import {
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
-import { SkyPreference } from "@/components/settings/sky-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { useTheme } from "@/components/theme-provider";
 import {
@@ -98,8 +97,6 @@ function RouteComponent() {
               </div>
             </ItemActions>
           </Item>
-          <Separator />
-          <SkyPreference bare />
           <Separator />
           <PerfModePreference />
           <AppearancePreferences />
