@@ -972,23 +972,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           ) : (
             <div className="glass-side-scroll glass-bot-scroll">
               <HiddenChatBotRow known={new Set(roster.map((bot) => bot.id))} />
-              {mainBot ? (
-                <>
-                  <div className="glass-sec">
-                    <span className="glass-sec-main">
-                      <IconStarFilled className="size-3" />
-                      {"主机器人"}
-                    </span>
-                  </div>
-                  <div className="glass-bot-list">{row(mainBot, true)}</div>
-                  {others.length > 0 ? (
-                    <div className="glass-sec mt-2">
-                      <span>{"其他"}</span>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
+              {/* §139：不再有「主机器人 / 其他」分组标签——主机器人置顶、头像带星，中间一条细分隔线。 */}
               <div className="glass-bot-list relative">
+                {mainBot ? row(mainBot, true) : null}
+                {mainBot && others.length > 0 ? (
+                  <span aria-hidden className="glass-bot-sep" />
+                ) : null}
                 <PresenceList>
                   {others.map((bot, index) => (
                     <PresenceItem key={bot.id} layoutKey={index}>
@@ -1036,9 +1025,11 @@ function RailTip({
 }
 
 /**
- * The roster collapsed (Ctrl+B / the toggle at the top of the card): a 64px glass rail of Bot avatars, so Bots stay
- * one click away. The selected Bot carries the same blue ring/edge as its full row, the main Bot its
- * star, and unread / waiting states a dot.
+ * The roster collapsed (Ctrl+B / the toggle at the top of the card): one full-height glass column (DESIGN.md §139).
+ * Top a ghost-icon cluster (expand · search · new Bot), middle the scrollable Bot avatars, bottom the account
+ * avatar — hairline dividers between the zones, so the rail reads as a single object instead of five floating
+ * pieces. The selected Bot carries the same tint/edge as its full row, the main Bot its star, and unread /
+ * waiting states a dot.
  */
 function BotMiniRail({
   bots,
@@ -1057,19 +1048,22 @@ function BotMiniRail({
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
-      <RosterToggle className="glass-mini-toggle" scope="app" />
-      <MiniSearchButton />
-      <RailTip label={"新建机器人"}>
-        <button
-          aria-label={"新建机器人"}
-          className="glass-mini-new"
-          onClick={openCreateBot}
-          type="button"
-        >
-          <IconPlus className="size-5" />
-        </button>
-      </RailTip>
       <div className="glass-card glass-mini-card">
+        <div className="glass-mini-head">
+          <RosterToggle className="glass-mini-toggle" scope="app" />
+          <MiniSearchButton />
+          <RailTip label={"新建机器人"}>
+            <button
+              aria-label={"新建机器人"}
+              className="glass-mini-act is-primary"
+              onClick={openCreateBot}
+              type="button"
+            >
+              <IconPlus className="size-5" />
+            </button>
+          </RailTip>
+        </div>
+        <span aria-hidden className="glass-mini-div" />
         <div className="glass-mini-scroll">
           <HiddenChatMiniBot known={new Set(bots.map((bot) => bot.id))} />
           {bots.map((bot) => (
@@ -1087,9 +1081,10 @@ function BotMiniRail({
             />
           ))}
         </div>
-      </div>
-      <div className="glass-card acct-mini-card">
-        <AccountMenu compact />
+        <span aria-hidden className="glass-mini-div" />
+        <div className="glass-mini-foot">
+          <AccountMenu compact />
+        </div>
       </div>
     </nav>
   );
@@ -1357,14 +1352,14 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
   );
 }
 
-/** 收起的左栏：搜索变成一个图标，点它（或 Ctrl K）先展开左栏再聚焦搜索框，位置和展开时一致（最上面）。 */
+/** 收起的左栏：搜索变成顶部图标组里的一格，点它（或 Ctrl K）先展开左栏再聚焦搜索框。 */
 function MiniSearchButton() {
   const sidebar = useOptionalSidebar();
   return (
     <RailTip label={"搜索会话（Ctrl K）"}>
       <button
         aria-label={"搜索会话"}
-        className="glass-mini-search"
+        className="glass-mini-act"
         onClick={() => {
           sidebar?.setOpen(true);
           requestSidebarSearchFocus();

@@ -1,3 +1,7 @@
+## 0.1.164 — 2026-11-18
+
+- 左栏收敛：收起态 5 个分离悬浮件合成一条通顶玻璃列（`.glass-mini-head` 幽灵图标组 + `.glass-mini-scroll` 头像区 + `.glass-mini-foot` 账号，`.glass-mini-div` 分区）；展开态删「主机器人 / 其他」分组标签改 `.glass-bot-sep` 细分隔线，账号卡去 chevron、内边距 6→4、行高 44→40（app-sidebar.tsx · section-rail.tsx · account-menu.tsx · styles.css，DESIGN §139，CB-133）。
+
 ## 0.1.163
 
 - 「面板」把手越屏让位改为 250ms 轮询重算：拖窗口不触发 resize、桥无 bounds 回调，0.1.161 只在挂载 + resize 时量 `--edge-clip-r`，窗口被拖到右缘出屏后把手被裁半条；现按 `screenX + outerWidth − avail` 轮询、值变才写、最大化恒 0（lib/desktop-window.ts，DESIGN §82.11，CB-132）。验证：`app/tests/desktop-window-edge-clip.test.tsx` + 真 Chromium `tests/rail-edge-clip/edge-clip.mjs`（860px 越屏量 ~250ms 内跟上）。

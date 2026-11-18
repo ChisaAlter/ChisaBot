@@ -15,12 +15,13 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: done`（#551 · `v0.1.163`）                    |
-| [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                    |
-| [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）             |
-| [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                |
+| [CB-133](#cb-133) | 左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列                              | 成熟度 Maturity       | `type: feat` · `area: web` · `P1` · `status: in-progress`                                     |
+| [CB-132](#cb-132) | PC 恢复态窗口被拖到右缘出屏时「面板」把手被裁半条                                 | 成熟度 Maturity       | `type: bug` · `area: pc` · `P1` · `status: done`（#551 · `v0.1.163`）                         |
+| [CB-131](#cb-131) | 聊天流式输出底边乱跳、干活卡收起留白残留与思考胶囊圆角不对齐                      | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（#550 · `v0.1.162`）                       |
+| [CB-130](#cb-130) | 聊天输入框悬浮可拖拽调整、收展 FLIP 过渡与 PC 小窗切换动画                        | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: pc` · `P1` · `status: done`（`v0.1.160`）                |
+| [CB-129](#cb-129) | 桌面端内置本地前端与「版本高者优先」同源加载                                      | 设备核心 Devices core | `type: feat` · `area: pc` · `area: web` · `P1` · `status: done`（`v0.1.154`）                 |
 | [CB-128](#cb-128) | 多图附件与多卡片错落扇形牌组展示及生成式界面拆壳升级                              | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: images` · `P1` · `status: done`（`v0.1.152`）            |
-| [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同            | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
+| [CB-127](#cb-127) | 任务中心四列看板与本地 Markdown（Autobahn / ROADMAP+BACKLOG）双向协同             | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.151`）             |
 | [CB-126](#cb-126) | 自定义壁纸按屏幕比例或自由框选裁剪与无损源图重裁                                  | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: done`（`v0.1.149`）                         |
 | [CB-125](#cb-125) | 主 Agent 绑定管理、置顶展示与新会话暂停草稿无损切换                               | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: web` · `P1` · `status: done`（`v0.1.149`）             |
 | [CB-124](#cb-124) | 审查收尾：surface 依赖方向归位与 env / fetch / import 三道护栏                    | 成熟度 Maturity       | `type: chore` · `area: infra` · `P1` · `status: done`（`v0.1.149`）                           |
@@ -126,6 +127,19 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-133
+
+**左栏收起态与展开态元素过多，重新设计收敛为单条玻璃列**
+
+标签：`type: feat` · `area: web` · `P1` · `status: in-progress`
+
+分支：`feat/rail-declutter`。用户（2026-11-18 截图实测）：收起后的左栏是展开钮、搜索钮、＋胶囊、头像卡、账号卡 5 个形状各异的悬浮件；展开态还有「主机器人 ★」「其他」两行分组标签与账号卡行尾切换箭头，元素太多太乱。按 DESIGN §139 收敛。
+
+- [x] **收起态单条玻璃列**：`BotMiniRail` / `SectionRail` 收起结构改为一整张 `.glass-mini-card`——顶部 `.glass-mini-head` 幽灵图标组（展开 · 搜索 · 新建，新建是唯一填充面）、`.glass-mini-scroll` 头像区、`.glass-mini-foot` 账号头像，区间 `.glass-mini-div` 细分隔线；设置 / 管理收起栏同结构。
+- [x] **展开态去分组标签**：删「主机器人」「其他」`glass-sec` 标签，主机器人置顶带星、`.glass-bot-sep` 细分隔线；账号卡去 chevron、内边距 6→4、行高 44→40。
+- [ ] **验收**：`bun run check` + 相关单测通过；verify-ui 双视口截图验收（收起 / 展开 × 明暗）。
+- [ ] PR 合并发版；串行部署后生产观察。
 
 ## CB-132
 

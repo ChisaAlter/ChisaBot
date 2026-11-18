@@ -983,6 +983,13 @@ html[data-sky-ease] body::before {
   margin: 0 -4px;
   padding: 0 4px 6px;
 }
+/* §139：主机器人和其余机器人之间的细分隔线（替代旧的「主机器人 / 其他」分组标签）。 */
+.glass-bot-sep {
+  flex: none;
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--line-strong);
+}
 .glass-bot-scroll .glass-bot-list {
   max-height: none;
   overflow: visible;
@@ -1352,44 +1359,79 @@ html[data-sky-ease] body::before {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
   height: 100%;
   width: calc(var(--sidebar-width-icon, 80px) - 16px);
   animation: glass-fade-in 0.24s ease-out;
 }
-.glass-mini-new {
-  height: 46px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  flex: none;
-  background: var(--glass-strong);
-  box-shadow: var(--glass-shadow-sm);
-  color: var(--glass-ink);
-  transition: background 0.15s ease, transform 0.15s ease;
-}
-.glass-mini-new:hover {
-  background: rgba(255, 255, 255, 0.92);
-}
-.dark .glass-mini-new:hover {
-  background: rgba(40, 54, 76, 0.9);
-}
+/* §139：收起的左栏是一条通顶玻璃列 —— 顶部动作图标组、中间头像滚动区、底部账号，细分隔线分开，
+   不再是一列互不相同的悬浮零件。 */
 .glass-mini-card {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px 0;
+  align-items: center;
+  padding: 8px 0;
+}
+.glass-mini-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.glass-mini-act {
+  width: 40px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  color: var(--ink-2);
+  outline: none;
+  transition: background var(--dur-1), color var(--dur-1), transform var(--dur-1);
+}
+.glass-mini-act:hover {
+  background: var(--glass-hover);
+  color: var(--ink-1);
+}
+.glass-mini-act:active {
+  transform: scale(0.94);
+}
+.glass-mini-act:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+/* 图标组里唯一的填充面：新建机器人是主操作。 */
+.glass-mini-act.is-primary {
+  background: var(--fill-tertiary);
+  color: var(--ink-1);
+}
+.glass-mini-act.is-primary:hover {
+  background: var(--glass-2);
+}
+.glass-mini-div {
+  flex: none;
+  width: 32px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--line-strong);
+  border-radius: 1px;
+}
+.glass-mini-foot {
+  flex: none;
+  display: grid;
+  place-items: center;
 }
 .glass-mini-scroll {
   flex: 1;
   min-height: 0;
+  align-self: stretch;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 2px 0 12px;
+  padding: 2px 0 8px;
   scrollbar-width: none;
 }
 .glass-mini-scroll::-webkit-scrollbar {
@@ -1474,17 +1516,13 @@ html[data-sky-ease] body::before {
 .dark .glass-mini-badge {
   box-shadow: 0 0 0 2px rgba(22, 30, 44, 0.95);
 }
+/* §139：收起态只剩一条玻璃列，区域切换链接直接是列底的一组图标，不再自带边框。 */
 .glass-mini-links {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding-top: 8px;
-  margin: 0 10px;
-  border-top: 1px solid rgba(22, 24, 29, 0.06);
-}
-.dark .glass-mini-links {
-  border-top-color: rgba(255, 255, 255, 0.07);
 }
 .glass-mini-link {
   width: 40px;
@@ -4028,7 +4066,6 @@ body[data-has-collapsed-sidebar] .glass-shell .glass-topbar-start { width: auto;
   transition: background var(--dur-1), color var(--dur-1);
 }
 .glass-list-empty:hover { background: var(--glass-hover); color: var(--ink-1); }
-.glass-mini-new { height: 40px; }
 @media (prefers-reduced-motion: reduce) { .glass-list-add, .glass-list-empty { transition: none; } .glass-list-add:active { transform: none; } }
 
 /* ==========================================================================================
@@ -4295,13 +4332,13 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .side-search-clear:hover { background: var(--glass-hover); color: var(--ink-1); }
 
 /* ---------- 左栏最底下：账号卡 ---------- */
-.acct-card { flex: none; padding: 6px; border-radius: var(--r-lg); }
+.acct-card { flex: none; padding: 4px; border-radius: var(--r-lg); }
 .acct-row {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 44px;
+  height: 40px;
   padding: 0 8px 0 6px;
   border-radius: var(--r-md);
   text-align: left;
@@ -4315,24 +4352,9 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .acct-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
 .acct-name { font-size: 13px; font-weight: 600; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-sub { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-chev { width: 16px; height: 16px; flex: none; color: var(--ink-3); }
-.acct-mini-card { flex: none; display: grid; place-items: center; padding: 8px 0; border-radius: var(--r-lg); }
 .acct-mini { position: relative; display: grid; border-radius: 50%; outline: none; transition: scale var(--dur-1) var(--ease-std), box-shadow var(--dur-1); }
 .acct-mini:hover, .acct-mini[data-popup-open] { box-shadow: 0 0 0 3px var(--glass-2); }
 .acct-mini:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
-.glass-mini-search {
-  height: 40px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-radius: var(--r-pill);
-  color: var(--ink-2);
-  background: var(--glass-1);
-  border: 1px solid var(--line-strong);
-  transition: background var(--dur-1), color var(--dur-1);
-}
-.glass-mini-search:hover { background: var(--glass-2); color: var(--ink-1); }
-.glass-mini-search:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus); }
 
 /* ---------- v4.1：聊天列没有头部；机器人「⋯」+ 计算机提示在左栏机器人行 ---------- */
 .glass-bot-row.is-on .glass-bot-more { opacity: 1; }
@@ -8218,8 +8240,6 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
 .kept-chat[data-switching="true"] { opacity: 0.8; pointer-events: none; transition: opacity 120ms var(--ease-out, ease-out) 100ms; }
 @media (prefers-reduced-motion: reduce) { .kept-chat[data-switching="true"] { transition: none; } }
 
-.glass-mini-new:disabled { opacity: 0.45; cursor: default; }
-
 /* ── 面板看板（2026-10-22，docs/live-panel-sources.md 第 2–3 节）─────────────────
    右栏宽 ≥480px 时最多两张并排、中间一条细分隔条调比例；每张卡标题左边一个握把（拖动换行 / 并排，
    方向键也能调），底部一条细横条拖高（最小 120px，卡内滚动，双击回自动）；点标题折叠。
@@ -11186,7 +11206,7 @@ html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn
 .rail-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .rail-title-row .rail-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-title-row .glass-roster-toggle { margin: -4px -6px -4px 0; }
-.glass-mini > .glass-mini-toggle { align-self: center; width: 40px; height: 40px; border-radius: var(--r-md); }
+.glass-mini-head .glass-mini-toggle { width: 40px; height: 36px; border-radius: var(--r-md); }
 
 /* PC 客户端支持「小窗模式」时标题按钮是 4 个（4 × 46px），右边要让出 4 个的宽度，不然头像会压在小窗按钮上。
    窄窗口（< 768px）另有 36px 的规则，这里不管。 */
