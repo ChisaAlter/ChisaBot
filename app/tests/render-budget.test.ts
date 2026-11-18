@@ -112,8 +112,8 @@ test("only the rails, the composer, the top bar and popups blur", () => {
     ".chat-spotlight-panel",
     // 旧的三档玻璃层（!important）：小元素在下一条测试里用本地 --lg-blur: none 关掉。
     ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)",
-    ":is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new)",
-    "html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new)",
+    ":is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
+    "html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
     ".glass-composer, .dark .glass-composer, .glass-composer:focus-within, .dark .glass-composer:focus-within",
     '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card',
     '.glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"]',
