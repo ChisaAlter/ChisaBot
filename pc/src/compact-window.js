@@ -17,6 +17,48 @@ const COMPACT_HEIGHT = 860;
 const EDGE_MARGIN = 12;
 /** 比这更宽就不算小窗了（用户手动把小窗拉宽）。 */
 const LEAVE_WIDTH = 640;
+/** 进出小窗的窗口动画时长（毫秒）；macOS 走系统 setBounds animate，其余手动按帧插值。 */
+const COMPACT_ANIMATE_MS = 240;
+
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+
+function lerpBounds(from, to, t) {
+  return {
+    x: Math.round(from.x + (to.x - from.x) * t),
+    y: Math.round(from.y + (to.y - from.y) * t),
+    width: Math.round(from.width + (to.width - from.width) * t),
+    height: Math.round(from.height + (to.height - from.height) * t),
+  };
+}
+
+/**
+ * 把窗口从当前 bounds 平滑补间到 target，返回取消函数。
+ * macOS 的 setBounds(target, true) 本身就是系统动画，直接交给它并等待系统时长；
+ * Windows / Linux 的 setBounds 没有动画，按 ~60Hz 手动插值（ease-out，结束时精确落在目标上）。
+ */
+function animateWindowBounds(win, target, { durationMs = COMPACT_ANIMATE_MS, onDone } = {}) {
+  if (process.platform === "darwin") {
+    win.setBounds(target, true);
+    const timer = setTimeout(() => onDone?.(), 250);
+    return () => clearTimeout(timer);
+  }
+  const from = win.getBounds();
+  const started = Date.now();
+  let timer = null;
+  const step = () => {
+    if (win.isDestroyed()) return;
+    const p = Math.min(1, (Date.now() - started) / durationMs);
+    win.setBounds(lerpBounds(from, target, easeOutCubic(p)));
+    if (p < 1) timer = setTimeout(step, 16);
+    else onDone?.();
+  };
+  step();
+  return () => {
+    if (timer) clearTimeout(timer);
+  };
+}
 
 function clampToArea(bounds, area) {
   const width = Math.min(bounds.width, area.width);
@@ -49,20 +91,51 @@ function intersects(a, b) {
 }
 
 /**
- * @param {{ screen: import("electron").Screen, onChange: (win: import("electron").BrowserWindow, compact: boolean) => void }} deps
+ * @param {{ screen: import("electron").Screen,
+ *   onChange: (win: import("electron").BrowserWindow, compact: boolean) => void,
+ *   animate?: (win: import("electron").BrowserWindow, target: object, done: () => void) => (() => void) | undefined }} deps
+ * `animate` 可注入做 bounds 补间（main.js 传 animateWindowBounds，测试省略 = 直接 setBounds 无动画）；
+ * 注入方负责调用 done()，返回的函数用来取消。
  */
-function createCompactController({ screen, onChange }) {
+function createCompactController({ screen, onChange, animate }) {
   /** @type {WeakMap<object, {restore: {bounds: object, maximized: boolean, fullScreen: boolean}, applying: boolean}>} */
   const states = new WeakMap();
+  /** 进行中的窗口动画：enter/leave 互相打断、窗口关闭时取消。 */
+  const anims = new WeakMap();
   /** 本次运行里用户最后一次摆放的小窗（显示器 id + 位置）。 */
   let lastCompact = null;
 
   const isCompact = (win) => Boolean(win && states.has(win));
 
+  const cancelAnim = (win) => {
+    const cancel = anims.get(win);
+    anims.delete(win);
+    if (typeof cancel === "function") cancel();
+  };
+
+  /** 把窗口送到 target；有 animate 就补间，没有就直接落位——两条路都一定会调到 done。 */
+  const runTo = (win, target, done) => {
+    cancelAnim(win);
+    if (!animate) {
+      win.setBounds(target);
+      done?.();
+      return;
+    }
+    try {
+      const cancel = animate(win, target, done);
+      anims.set(win, typeof cancel === "function" ? cancel : () => {});
+    } catch {
+      win.setBounds(target);
+      done?.();
+    }
+  };
+
   function leave(win, { restore }) {
     const state = states.get(win);
     if (!state) return;
     states.delete(win);
+    // 进入动画还在跑就打断——窗口已经不算小窗了，别再把它往小窗里拉。
+    cancelAnim(win);
     if (!win.isDestroyed()) {
       const b = win.getBounds();
       lastCompact = { displayId: screen.getDisplayMatching(b).id, bounds: b };
@@ -72,9 +145,12 @@ function createCompactController({ screen, onChange }) {
       // 原来的显示器还在就原样放回；拔掉了就夹进现在这台显示器的工作区。
       const onScreen = screen.getAllDisplays().some((d) => intersects(d.workArea, bounds));
       const area = screen.getDisplayMatching(win.getBounds()).workArea;
-      win.setBounds(onScreen ? bounds : clampToArea(bounds, area), true);
-      if (maximized) win.maximize();
-      if (fullScreen) win.setFullScreen(true);
+      // 补间结束才恢复最大化 / 全屏，窗口不会先跳到原尺寸再放大。
+      runTo(win, onScreen ? bounds : clampToArea(bounds, area), () => {
+        if (win.isDestroyed()) return;
+        if (maximized) win.maximize();
+        if (fullScreen) win.setFullScreen(true);
+      });
     }
     if (!win.isDestroyed()) onChange(win, false);
   }
@@ -99,11 +175,10 @@ function createCompactController({ screen, onChange }) {
             minHeight,
           });
     if (target.width > LEAVE_WIDTH) target = computeCompactBounds(area, area, { maximized: true, minWidth, minHeight });
-    win.setBounds(target, true);
-    // setBounds 触发的 resize 事件不算「用户把窗口拉宽」。
-    setTimeout(() => {
+    // 动画补间（或直接落位）触发的 resize 事件不算「用户把窗口拉宽」；done 之后才恢复判宽。
+    runTo(win, target, () => {
       state.applying = false;
-    }, 400);
+    });
     onChange(win, true);
   }
 
@@ -119,7 +194,10 @@ function createCompactController({ screen, onChange }) {
       if (!state || state.applying) return;
       if (win.getBounds().width > LEAVE_WIDTH) leave(win, { restore: false });
     });
-    win.on("closed", () => states.delete(win));
+    win.on("closed", () => {
+      cancelAnim(win);
+      states.delete(win);
+    });
   }
 
   function toggle(win) {
@@ -132,4 +210,4 @@ function createCompactController({ screen, onChange }) {
   return { toggle, isCompact, watch };
 }
 
-module.exports = { COMPACT_WIDTH, COMPACT_HEIGHT, EDGE_MARGIN, LEAVE_WIDTH, clampToArea, computeCompactBounds, createCompactController };
+module.exports = { COMPACT_WIDTH, COMPACT_HEIGHT, COMPACT_ANIMATE_MS, EDGE_MARGIN, LEAVE_WIDTH, animateWindowBounds, clampToArea, computeCompactBounds, createCompactController, lerpBounds };

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+聊天输入框悬浮化与 PC 小窗切换动画（DESIGN.md §138）。网页 + PC 壳同步生效；无需数据库迁移。
+
+- **输入框悬浮 + 可拖拽调整**：`.chat-composer-box` 脱离文档流、悬浮压在对话底边上，消息能从卡片底下滚过去（滚动区按卡片实际占用高度 `--chat-composer-h` 补底部内边距，最后一条永远能滚到卡片上方，「回到底部」药丸同步抬高）；桌面上卡片四边与四角出现隐形把手，可上下左右拉大缩小（最小 320×120，夹回面板内），尺寸记入 `localStorage`、双击把手还原默认底栏；触屏（`pointer: coarse`）不出把手、保持原底栏（`composer/dock.tsx` + `dock-geometry.ts`，测试 `app/tests/composer-dock.test.ts`）。
+- **输入框收展动画 + 箭头方向**：日常收起的横条 ⇄ 完整工具栏原来直接换 DOM 分支、没有任何过渡；现在表单 ref 在 commit 阶段拿 ResizeObserver 记录的上一帧做 WAAPI 反向补间（高度 + 圆角 + 淡入，220ms ease-out），`prefers-reduced-motion` 照旧跳过。箭头方向修正：收起时显示上箭头（向上展开）、展开时显示下箭头（收回），可访问名不变。
+- **PC 小窗切换动画**：主窗口 ⇄ 竖长小窗（§36）原来是 `setBounds` 一步到位、视觉跳变；现在 `compact-window.js` 按 ~60Hz 手动插值补间窗口 bounds（ease-out 240ms，macOS 交给系统 `setBounds(target, true)` 原生动画），进出都会被打断重算、补间途中的中间帧不算「用户拉宽」（`applying` 改由 done 回调释放），恢复时补间落地才 `maximize` / `setFullScreen`。系统「减少动画」开启时直接落位。回归测试 `pc/test/compact.check.js` 新增 4 例。
+
 ## 0.1.159 — 2026-11-17
 
 全端版本 0.1.159，Android versionCode 339：星尘主题配色修复 + 服务端日志脱敏（PR #546）。PC 客户端代码指纹更新为 `bba8f4db64181311`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需数据库迁移。

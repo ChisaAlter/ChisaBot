@@ -143,3 +143,77 @@ test("更新提示：主窗口在托盘里时放在工作区右下角", () => {
   const b = computeUpdateBounds({ chat: null, chatVisible: false, workArea: SECOND, contentHeight: 260 });
   assert.deepEqual(b, { x: 1920 + 1280 - 440 - 16, y: 680 - 260 - 16, width: 440, height: 260, attached: false });
 });
+
+test("切换动画：animate 走补间，done 之后才解除 applying、宽 resize 才判离小窗", () => {
+  const events = [];
+  let doneFn = null;
+  const seen = [];
+  const c = createCompactController({
+    screen: fakeScreen,
+    onChange: (_w, v) => events.push(v),
+    animate: (_win, target, done) => {
+      seen.push(target);
+      doneFn = done;
+      return () => {};
+    },
+  });
+  const win = fakeWindow({ x: 100, y: 80, width: 1280, height: 840 });
+  c.watch(win);
+  assert.equal(c.toggle(win), true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].width, COMPACT_WIDTH);
+  // 补间途中的中间帧（宽度 > LEAVE_WIDTH）不触发「用户拉宽」。
+  win._b = { x: 200, y: 100, width: 900, height: 840 };
+  win.emit("resize");
+  assert.equal(c.isCompact(win), true);
+  // 动画落地后用户自己拉宽才真正离开小窗。
+  doneFn();
+  win.emit("resize");
+  assert.equal(c.isCompact(win), false);
+  assert.deepEqual(events, [true, false]);
+});
+
+test("切换动画：恢复也走 animate，补间落地才恢复最大化", () => {
+  let doneFn = null;
+  const c = createCompactController({
+    screen: fakeScreen,
+    onChange: () => {},
+    animate: (_win, _target, done) => {
+      doneFn = done;
+      return () => {};
+    },
+  });
+  const win = fakeWindow({ x: 100, y: 80, width: 1280, height: 840 }, { maximized: true });
+  c.watch(win);
+  c.toggle(win);
+  doneFn();
+  c.toggle(win);
+  assert.equal(win._max, false, "补间还没落地不能提前最大化");
+  doneFn();
+  assert.equal(win._max, true);
+});
+
+test("切换动画：补间被再次切换打断，旧动画取消", () => {
+  let cancelled = 0;
+  const c = createCompactController({
+    screen: fakeScreen,
+    onChange: () => {},
+    animate: () => () => {
+      cancelled++;
+    },
+  });
+  const win = fakeWindow({ x: 100, y: 80, width: 1280, height: 840 });
+  c.watch(win);
+  c.toggle(win); // enter 动画起跑
+  c.toggle(win); // leave：cancel enter + 起跑恢复动画
+  assert.equal(cancelled, 1);
+});
+
+test("切换动画：lerpBounds 端点与中点", () => {
+  const { lerpBounds } = require("../src/compact-window");
+  const from = { x: 0, y: 0, width: 1280, height: 840 };
+  const to = { x: 1000, y: 12, width: 420, height: 860 };
+  assert.deepEqual(lerpBounds(from, to, 0), from);
+  assert.deepEqual(lerpBounds(from, to, 1), to);
+  assert.deepEqual(lerpBounds(from, to, 0.5), { x: 500, y: 6, width: 850, height: 850 });
+});
