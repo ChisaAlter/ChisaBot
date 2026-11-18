@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.166 — 2026-11-18
 
 - PC 客户端发版不收敛修复：`downloaded` 待安装状态不再让 `check()` 永久返回——复查临时关 `autoDownload`，同版本不重下、更新版本顶掉待安装（复查失败 / 源上无更新保留待安装）；`local-web` 的 `onModeChange` 带 `prevMode`，local→remote 翻转即重载聊天窗口换服务器前端，每会话最多一次（updater.js · local-web.js · main.js，CB-136）。验证：`update.check.js` / `local-web.check.js` 新增用例，pc 全量 204 项通过。
 
