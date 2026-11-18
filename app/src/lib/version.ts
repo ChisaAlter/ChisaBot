@@ -7,7 +7,8 @@ import { type BuildVersion, isNewerBuild } from "../../../shared/system-update";
 /**
  * 网页的在线更新（docs/online-update.md）：打包时 vite 注入本次构建号（VITE_CHISABOT_BUILD_ID，
  * 和镜像标签相同），运行时每 5 分钟、以及切回前台 / 窗口获得焦点时问一次 /api/version；
- * 服务器上的构建号变了就显示「有新版本，点此刷新」。从不自动刷新。
+ * 服务器上的构建号变了就显示「有新版本，点此刷新」。横幅挂着时页面一空（刷新无损）会自动换到
+ * 新构建（CB-135，见 components/update-banner.tsx）。
  */
 export const BUNDLED_BUILD_ID: string =
   import.meta.env.VITE_CHISABOT_BUILD_ID?.trim() || "dev";
