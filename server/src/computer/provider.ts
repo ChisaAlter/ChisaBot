@@ -1,7 +1,12 @@
 import { computerHeaders } from "../../../shared/protocol-headers";
 import type { ComputerConfig } from "../config";
 import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
-import type { ActiveExecutionNode } from "./execution-node-store";
+import {
+  type ActiveExecutionNode,
+  assertExecutionNodeDnsSafe,
+  type ExecutionNodeDnsResolver,
+  ExecutionNodeError,
+} from "./execution-node-store";
 import {
   createSandboxComputerProvider,
   inClusterConfig,
@@ -320,12 +325,15 @@ export type DynamicExecutionNodeProviderOptions = {
   /** 静态环境变量回退 provider（未配置远程热切换节点时无缝接管）。 */
   fallback?: ComputerProvider;
   fetchImpl?: typeof fetch;
+  /** 可选自定义 DNS 解析器（测试隔离用；默认走 `resolvePublic` 防云元数据与未授权私网 SSRF）。 */
+  resolveDns?: ExecutionNodeDnsResolver;
   timeoutMs?: number;
 };
 
 /**
  * 支持可视化热切换远程执行节点的动态 ComputerProvider（Wave 8）：
  * - 每次操作按需解析当前激活的远程执行节点，热切换后立即生效、无需重启；
+ * - 连接前先过 DNS 校验（拒绝云元数据/链路本地与未授权私网）；
  * - 未激活远程节点时无缝回退既有环境变量静态模式。
  */
 export function createDynamicExecutionNodeProvider(
@@ -334,6 +342,18 @@ export function createDynamicExecutionNodeProvider(
   async function currentProvider(): Promise<ComputerProvider> {
     const active = await options.resolveActiveNode();
     if (active) {
+      try {
+        await assertExecutionNodeDnsSafe(
+          active.baseUrl,
+          active.allowPrivateNetwork,
+          options.resolveDns,
+        );
+      } catch (error) {
+        if (error instanceof ExecutionNodeError) {
+          throw new ProviderError(error.message);
+        }
+        throw error;
+      }
       return createSharedComputerProvider({
         baseUrl: active.baseUrl,
         ...(active.token ? { token: active.token } : {}),
@@ -375,7 +395,13 @@ export function createDynamicExecutionNodeProvider(
       const target = await currentProvider();
       return target.forget ? target.forget(botId) : target.reset(botId);
     },
-    list: async () => (await currentProvider()).list(),
+    list: async () => {
+      const active = await options.resolveActiveNode();
+      if (!active && !options.fallback) {
+        return [];
+      }
+      return (await currentProvider()).list();
+    },
     update: async (botId) => {
       const target = await currentProvider();
       if (!target.update) {

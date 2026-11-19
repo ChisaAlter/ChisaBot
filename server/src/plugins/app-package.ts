@@ -78,6 +78,8 @@ const RESERVED_ENV_EXACT: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
   "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
   "LOCALAPPDATA",
   "SHELL",
@@ -363,8 +365,9 @@ export function computePackageDigest(
 }
 
 function isReservedConfigKey(key: string): boolean {
-  if (RESERVED_ENV_EXACT.has(key)) return true;
-  return RESERVED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+  const upper = key.toUpperCase();
+  if (RESERVED_ENV_EXACT.has(upper)) return true;
+  return RESERVED_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix));
 }
 
 function validateHttpsPublicUrl(
@@ -595,6 +598,19 @@ export function validateChisaAppPackage(
       totalBytes += buf.length;
       if (encoding === "utf8") {
         checkEmbeddedSecretsInText(normalizedContent, pathCheck.path, issues);
+      } else {
+        // 对 base64 编码的文本/源码文件同样执行硬编码密钥扫描，防止通过 base64 绕过静态检测
+        const ext = posix.extname(pathCheck.path).slice(1).toLowerCase();
+        const isKnownBinaryImage = ["png", "jpg", "jpeg", "webp", "gif"].includes(
+          ext,
+        );
+        if (!isKnownBinaryImage && !buf.includes(0)) {
+          checkEmbeddedSecretsInText(
+            buf.toString("utf8"),
+            pathCheck.path,
+            issues,
+          );
+        }
       }
       const sha256 = createHash("sha256").update(buf).digest("hex");
       const entry: AppPackageFile = {
@@ -1552,6 +1568,18 @@ export type AppPackageStorage = {
   listApps(): Promise<StoredAppPackageRow[]>;
   getApp(id: string): Promise<StoredAppPackageRow | null>;
   upsertApp(row: StoredAppPackageRow): Promise<void>;
+  /** 仅定向更新 OAuth 密文与更新时间，防止刷新期间覆盖并发 disable() 或新草稿提交。 */
+  updateOAuthOnly(
+    id: string,
+    encryptedOAuth: string | null,
+    updatedAt: string,
+  ): Promise<void>;
+  /** 原子写入应用行与不可变版本快照（避免并发读取见到缺少对应 revision 的中间态）。 */
+  upsertAppWithRevision(
+    row: StoredAppPackageRow,
+    revision: StoredAppRevisionRow,
+    isUpdate: boolean,
+  ): Promise<void>;
   deleteApp(id: string): Promise<boolean>;
   listRevisions(appId: string): Promise<StoredAppRevisionRow[]>;
   getRevision(
@@ -1562,7 +1590,9 @@ export type AppPackageStorage = {
 };
 
 export type AppPackageDatabase = {
-  $client: Pick<Database["$client"], "unsafe">;
+  $client: Pick<Database["$client"], "unsafe"> & {
+    begin?: Database["$client"]["begin"];
+  };
 };
 
 type PgAppRow = {
@@ -1726,6 +1756,87 @@ export function createPgAppPackageStorage(
       );
     },
 
+    async updateOAuthOnly(id, encryptedOAuth, updatedAt) {
+      await sql.unsafe(
+        `UPDATE chisabot_app_packages
+         SET encrypted_oauth = $2, updated_at = $3
+         WHERE id = $1`,
+        [id, encryptedOAuth, updatedAt],
+      );
+    },
+
+    async upsertAppWithRevision(row, revision, isUpdate) {
+      const execWithClient = async (
+        client: Pick<Database["$client"], "unsafe">,
+      ) => {
+        const writeApp = () =>
+          client.unsafe(
+            `INSERT INTO chisabot_app_packages (
+               id, status, installed, enabled, current_digest, approved_digest,
+               encrypted_config, encrypted_oauth, oauth_scopes, created_by,
+               created_at, updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+             ON CONFLICT (id) DO UPDATE SET
+               status = $2,
+               installed = $3,
+               enabled = $4,
+               current_digest = $5,
+               approved_digest = $6,
+               encrypted_config = $7,
+               encrypted_oauth = $8,
+               oauth_scopes = $9::jsonb,
+               updated_at = $12`,
+            [
+              row.id,
+              row.status,
+              row.installed,
+              row.enabled,
+              row.currentDigest,
+              row.approvedDigest,
+              row.encryptedConfig,
+              row.encryptedOAuth,
+              JSON.stringify(row.oauthScopes),
+              row.createdBy,
+              row.createdAt,
+              row.updatedAt,
+            ],
+          );
+        const writeRevision = () =>
+          client.unsafe(
+            `INSERT INTO chisabot_app_package_revisions (
+               app_id, digest, version, package_json, created_by, created_at
+             )
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+             ON CONFLICT (app_id, digest) DO NOTHING`,
+            [
+              revision.appId,
+              revision.digest,
+              revision.version,
+              JSON.stringify(revision.packageJson),
+              revision.createdBy,
+              revision.createdAt,
+            ],
+          );
+
+        if (isUpdate) {
+          await writeRevision();
+          await writeApp();
+        } else {
+          await writeApp();
+          await writeRevision();
+        }
+      };
+
+      if (typeof sql.begin === "function") {
+        await sql.begin(async (tx) => {
+          await execWithClient(tx);
+        });
+      } else {
+        await execWithClient(sql);
+      }
+    },
+
     async deleteApp(id) {
       const rows = await sql.unsafe<{ id: string }[]>(
         `DELETE FROM chisabot_app_packages WHERE id = $1 RETURNING id`,
@@ -1779,6 +1890,17 @@ export function createMemoryAppPackageStorage(): AppPackageStorage {
   const apps = new Map<string, StoredAppPackageRow>();
   const revisions = new Map<string, StoredAppRevisionRow[]>();
 
+  const insertRevSync = (revision: StoredAppRevisionRow) => {
+    const list = revisions.get(revision.appId) ?? [];
+    if (!list.some((item) => item.digest === revision.digest)) {
+      list.push({
+        ...revision,
+        packageJson: stripSecretsForExport(revision.packageJson),
+      });
+      revisions.set(revision.appId, list);
+    }
+  };
+
   return {
     async ensure() {},
     async listApps() {
@@ -1791,6 +1913,20 @@ export function createMemoryAppPackageStorage(): AppPackageStorage {
       return found ? { ...found, oauthScopes: [...found.oauthScopes] } : null;
     },
     async upsertApp(row) {
+      apps.set(row.id, { ...row, oauthScopes: [...row.oauthScopes] });
+    },
+    async updateOAuthOnly(id, encryptedOAuth, updatedAt) {
+      const latest = apps.get(id);
+      if (!latest) return;
+      apps.set(id, {
+        ...latest,
+        encryptedOAuth,
+        updatedAt,
+      });
+    },
+    async upsertAppWithRevision(row, revision) {
+      // 内存实现先写入版本快照再切换主行，确保并发读绝不会读到缺少 revision 的草稿
+      insertRevSync(revision);
       apps.set(row.id, { ...row, oauthScopes: [...row.oauthScopes] });
     },
     async deleteApp(id) {
@@ -1809,14 +1945,7 @@ export function createMemoryAppPackageStorage(): AppPackageStorage {
       );
     },
     async insertRevisionIfAbsent(revision) {
-      const list = revisions.get(revision.appId) ?? [];
-      if (!list.some((item) => item.digest === revision.digest)) {
-        list.push({
-          ...revision,
-          packageJson: stripSecretsForExport(revision.packageJson),
-        });
-        revisions.set(revision.appId, list);
-      }
+      insertRevSync(revision);
     },
   };
 }
@@ -2030,11 +2159,13 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
     /**
      * 提交草稿或新版到不可变版本栈：
      * - 新应用永远落为 `status: "draft"`, `installed: false`, `enabled: false`, `approvedDigest: null`；
+     * - 已有应用严防跨租户覆盖停用：非管理员严禁覆盖他人应用，且严禁覆盖已由管理员安装启用的全站微应用；
      * - 已有应用提交新版绝不自动批准，保留原 `approvedDigest` 并停用待重新审阅（绝不静默执行新版代码！）。
      */
     async submitDraft(
       rawPackage: unknown,
       actorId: string,
+      submitOptions?: { isAdmin?: boolean },
     ): Promise<{ summary: AppPackageSummary; isUpdate: boolean }> {
       const check = validateChisaAppPackage(rawPackage);
       if (!check.valid || !check.normalized || !check.digest) {
@@ -2047,8 +2178,24 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
       const pkg = stripSecretsForExport(check.normalized);
       const nowIso = new Date(nowFn()).toISOString();
       const existing = await storage.getApp(pkg.id);
+      const isAdmin = submitOptions?.isAdmin === true;
 
       if (existing) {
+        if (!isAdmin && existing.createdBy !== actorId) {
+          throw new AppPackageError(
+            `应用 "${pkg.id}" 已由其他成员创建，普通用户无权覆盖。请更换新的应用 ID 或由管理员更新。`,
+            403,
+            "forbidden_overwrite",
+          );
+        }
+        if (!isAdmin && existing.installed) {
+          throw new AppPackageError(
+            `应用 "${pkg.id}" 已由管理员审批安装为全站可用，普通用户不能覆盖线上版本（请由管理员审阅升级或更换新的应用 ID）。`,
+            403,
+            "forbidden_installed_overwrite",
+          );
+        }
+
         const revs = await storage.listRevisions(pkg.id);
         const versionConflict = revs.find(
           (rev) =>
@@ -2074,15 +2221,18 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
               : existing.status,
           updatedAt: nowIso,
         };
-        await storage.upsertApp(nextRow);
-        await storage.insertRevisionIfAbsent({
-          appId: pkg.id,
-          digest: pkg.packageDigest,
-          version: pkg.version,
-          packageJson: pkg,
-          createdBy: actorId,
-          createdAt: nowIso,
-        });
+        await storage.upsertAppWithRevision(
+          nextRow,
+          {
+            appId: pkg.id,
+            digest: pkg.packageDigest,
+            version: pkg.version,
+            packageJson: pkg,
+            createdBy: actorId,
+            createdAt: nowIso,
+          },
+          true,
+        );
         await audit("app_package.draft_submitted", pkg.id, {
           actor: actorId,
           version: pkg.version,
@@ -2107,15 +2257,18 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
         createdAt: nowIso,
         updatedAt: nowIso,
       };
-      await storage.upsertApp(created);
-      await storage.insertRevisionIfAbsent({
-        appId: pkg.id,
-        digest: pkg.packageDigest,
-        version: pkg.version,
-        packageJson: pkg,
-        createdBy: actorId,
-        createdAt: nowIso,
-      });
+      await storage.upsertAppWithRevision(
+        created,
+        {
+          appId: pkg.id,
+          digest: pkg.packageDigest,
+          version: pkg.version,
+          packageJson: pkg,
+          createdBy: actorId,
+          createdAt: nowIso,
+        },
+        false,
+      );
       await audit("app_package.draft_submitted", pkg.id, {
         actor: actorId,
         version: pkg.version,
@@ -2396,6 +2549,15 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
       return buildSummary(updated);
     },
 
+    /** 仅供服务端 Host 托管 OAuth2 首次换码流程读取已加密封存的 OAUTH_CLIENT_SECRET（绝不暴露给前端）。 */
+    async getOAuthClientSecret(appId: string): Promise<string | undefined> {
+      const row = await storage.getApp(appId);
+      if (!row?.encryptedConfig) return undefined;
+      const configValues = await unsealConfig(row.encryptedConfig);
+      const secret = configValues.OAUTH_CLIENT_SECRET?.trim();
+      return secret || undefined;
+    },
+
     /** 解析 Host 托管的认证请求头，并在 OAuth2 令牌即将过期时自动刷新后重新 AES-256-GCM 封存。 */
     async resolveAuthHeaders(appId: string): Promise<{
       headers: Record<string, string>;
@@ -2453,25 +2615,35 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
               token_type?: unknown;
               scope?: unknown;
             } | null;
-            if (typeof body?.access_token === "string" && body.access_token) {
+            if (
+              typeof body?.access_token === "string" &&
+              body.access_token.length > 0 &&
+              validateHeaderValue(body.access_token)
+            ) {
               const expiresIn =
                 typeof body.expires_in === "number" &&
                 Number.isFinite(body.expires_in) &&
                 body.expires_in > 0
                   ? body.expires_in
                   : 3600;
+              const nextRefresh =
+                typeof body.refresh_token === "string" &&
+                body.refresh_token.length > 0 &&
+                validateHeaderValue(body.refresh_token)
+                  ? body.refresh_token
+                  : tokenState.refreshToken;
+              const nextTokenType =
+                typeof body.token_type === "string" &&
+                body.token_type.length > 0 &&
+                validateHeaderValue(body.token_type)
+                  ? body.token_type
+                  : (tokenState.tokenType ?? "Bearer");
               const nowMs = nowFn();
               tokenState = {
                 ...tokenState,
                 accessToken: body.access_token,
-                refreshToken:
-                  typeof body.refresh_token === "string" && body.refresh_token
-                    ? body.refresh_token
-                    : tokenState.refreshToken,
-                tokenType:
-                  typeof body.token_type === "string" && body.token_type
-                    ? body.token_type
-                    : (tokenState.tokenType ?? "Bearer"),
+                refreshToken: nextRefresh,
+                tokenType: nextTokenType,
                 expiresAt: new Date(nowMs + expiresIn * 1000).toISOString(),
                 scope:
                   typeof body.scope === "string" && body.scope
@@ -2483,18 +2655,24 @@ export function createAppPackageStore(options: AppPackageStoreOptions) {
                 encryptionKey,
                 JSON.stringify(tokenState),
               );
-              await storage.upsertApp({
-                ...row,
+              // 仅定向更新 OAuth 密文与更新时间，绝不拿旧 row 全量 upsertApp（防止覆盖并发 disable() 或新草稿并复活已停用应用）
+              await storage.updateOAuthOnly(
+                appId,
                 encryptedOAuth,
-                updatedAt: tokenState.updatedAt,
-              });
+                tokenState.updatedAt,
+              );
               refreshed = true;
             }
           }
         }
       }
 
-      if (!tokenState.accessToken) return { headers: {}, refreshed };
+      if (
+        !tokenState.accessToken ||
+        !validateHeaderValue(tokenState.accessToken)
+      ) {
+        return { headers: {}, refreshed };
+      }
 
       if (oauthSpec.type === "api-key") {
         const headerName = tokenState.headerName || oauthSpec.headerName;

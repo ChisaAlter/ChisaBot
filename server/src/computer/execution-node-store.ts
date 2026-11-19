@@ -19,7 +19,15 @@ import type {
   ExecutionNodesListResponse,
   ExecutionNodeView,
 } from "../../../shared/app-packages";
-import { checkPublicUrl } from "../../../shared/net/ssrf";
+import {
+  BlockedUrlError,
+  resolvePublic,
+} from "../../../shared/net/guarded-fetch";
+import {
+  checkPublicUrl,
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+} from "../../../shared/net/ssrf";
 import { computerHeaders } from "../../../shared/protocol-headers";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
@@ -31,6 +39,7 @@ import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 const NODE_ID_RE = /^[a-z0-9][a-z0-9-]{1,47}$/;
 const MAX_EXECUTION_NODES = 32;
 const PROBE_TIMEOUT_MS = 10_000;
+const PROBE_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export class ExecutionNodeError extends Error {
   readonly status: 400 | 404 | 409;
@@ -330,6 +339,117 @@ export function validateExecutionNodeUrl(
   return parsed.href.replace(/\/+$/, "");
 }
 
+export type ExecutionNodeDnsResolver = (
+  hostname: string,
+) => Promise<{ address: string; family: number }[]>;
+
+/**
+ * 探活与连接前执行真实 DNS 校验（防域名解析到云元数据 169.254.169.254 / fd00:ec2::254
+ * 或在 allowPrivateNetwork=false 时解析到私网地址绕过字面量检查）。
+ */
+export async function assertExecutionNodeDnsSafe(
+  rawUrl: string,
+  allowPrivateNetwork: boolean,
+  resolveDns?: ExecutionNodeDnsResolver,
+): Promise<{ url: string; address: string; family: number }> {
+  const normalized = validateExecutionNodeUrl(rawUrl, allowPrivateNetwork);
+  const parsed = new URL(normalized);
+  try {
+    const resolved = await resolvePublic(parsed.hostname, {
+      isBlocked: allowPrivateNetwork
+        ? isBlockedAddressAllowPrivate
+        : isBlockedAddress,
+      ...(resolveDns ? { resolve: resolveDns } : {}),
+    });
+    return {
+      url: normalized,
+      address: resolved.address,
+      family: resolved.family,
+    };
+  } catch (error) {
+    if (error instanceof BlockedUrlError) {
+      throw new ExecutionNodeError(
+        `执行节点地址 DNS 解析命中禁止网段（云元数据/链路本地或未授权私网）：${error.message}`,
+        400,
+      );
+    }
+    throw new ExecutionNodeError(
+      `执行节点域名解析失败：${error instanceof Error ? error.message : String(error)}`,
+      400,
+    );
+  }
+}
+
+async function readBoundedHealthJson(
+  response: Response,
+  maxBytes: number,
+): Promise<
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; error: string }
+> {
+  const declaredLen = response.headers.get("content-length");
+  if (declaredLen && /^\d+$/.test(declaredLen)) {
+    const len = Number(declaredLen);
+    if (len > maxBytes) {
+      await response.body?.cancel().catch(() => {});
+      return {
+        ok: false,
+        error: `远程执行节点健康检查响应体超过上限（${maxBytes} 字节）。`,
+      };
+    }
+  }
+  let text: string;
+  if (response.body) {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => {});
+          return {
+            ok: false,
+            error: `远程执行节点健康检查响应体超过上限（${maxBytes} 字节）。`,
+          };
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    text = Buffer.concat(chunks).toString("utf8");
+  } else {
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.byteLength > maxBytes) {
+      return {
+        ok: false,
+        error: `远程执行节点健康检查响应体超过上限（${maxBytes} 字节）。`,
+      };
+    }
+    text = buf.toString("utf8");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: "远程执行节点健康检查返回了非 JSON 内容。",
+    };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      ok: false,
+      error: "远程执行节点健康检查响应必须是 JSON 对象。",
+    };
+  }
+  return { ok: true, body: parsed as Record<string, unknown> };
+}
+
 function validateNodeName(raw: unknown): string {
   if (typeof raw !== "string") {
     throw new ExecutionNodeError("节点名称必须是字符串。", 400);
@@ -388,6 +508,8 @@ export type ExecutionNodeStoreOptions = {
     input: string | URL | Request,
     init?: RequestInit,
   ) => Promise<Response>;
+  /** 可选自定义 DNS 解析器（测试隔离用；默认走系统 DNS `resolvePublic`）。 */
+  resolveDns?: ExecutionNodeDnsResolver;
 };
 
 export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
@@ -449,9 +571,29 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
 
   async function probeEndpoint(
     baseUrl: string,
+    allowPrivateNetwork: boolean,
     token?: string,
   ): Promise<ExecutionNodeHealthResult> {
     const started = nowFn();
+    try {
+      await assertExecutionNodeDnsSafe(
+        baseUrl,
+        allowPrivateNetwork,
+        options.resolveDns,
+      );
+    } catch (error) {
+      const latencyMs = Math.max(0, nowFn() - started);
+      return {
+        ok: false,
+        ready: false,
+        latencyMs,
+        error:
+          error instanceof Error
+            ? error.message
+            : "执行节点地址未通过 DNS 安全校验。",
+      };
+    }
+
     const headers: Record<string, string> = {
       ...computerHeaders(undefined, token),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -465,34 +607,46 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
       });
       const latencyMs = Math.max(0, nowFn() - started);
       if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
         return {
           ok: false,
+          ready: false,
           status: response.status,
           latencyMs,
           error: `远程执行节点健康检查返回 HTTP ${response.status}。`,
         };
       }
-      const body = (await response.json().catch(() => null)) as {
+      const parsed = await readBoundedHealthJson(
+        response,
+        PROBE_MAX_RESPONSE_BYTES,
+      );
+      if (!parsed.ok) {
+        return {
+          ok: false,
+          ready: false,
+          status: response.status,
+          latencyMs,
+          error: parsed.error,
+        };
+      }
+      const body = parsed.body as {
         ok?: unknown;
         ready?: unknown;
         status?: unknown;
         protocol?: unknown;
         services?: unknown;
-      } | null;
+      };
       const ready =
-        body?.ready === true ||
-        body?.ok === true ||
-        body?.status === "ok" ||
-        body === null;
+        body.ready === true || body.ok === true || body.status === "ok";
       return {
         ok: ready,
         status: response.status,
         latencyMs,
-        ...(typeof body?.protocol === "string"
+        ...(typeof body.protocol === "string"
           ? { protocol: body.protocol }
           : {}),
         ready,
-        ...(body?.services &&
+        ...(body.services &&
         typeof body.services === "object" &&
         !Array.isArray(body.services)
           ? { services: body.services as Record<string, unknown> }
@@ -503,6 +657,7 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
       const latencyMs = Math.max(0, nowFn() - started);
       return {
         ok: false,
+        ready: false,
         latencyMs,
         error: `无法连接远程执行节点：${error instanceof Error ? error.message : String(error)}`,
       };
@@ -611,10 +766,11 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
         input.allowPrivateNetwork ?? existing.allowPrivateNetwork;
       const name =
         input.name !== undefined ? validateNodeName(input.name) : existing.name;
-      const baseUrl =
-        input.baseUrl !== undefined
-          ? validateExecutionNodeUrl(input.baseUrl, allowPrivateNetwork)
-          : existing.baseUrl;
+      // 无论是否同时修改 baseUrl，均按最新 allowPrivateNetwork 重新校验地址（防仅关闭内网开关遗留 HTTP/内网 URL）
+      const baseUrl = validateExecutionNodeUrl(
+        input.baseUrl !== undefined ? input.baseUrl : existing.baseUrl,
+        allowPrivateNetwork,
+      );
 
       // 跨源密钥隔离：变更 origin 且未显式提供新令牌时清空旧令牌
       const sameOrigin = new URL(existing.baseUrl).origin === new URL(baseUrl).origin;
@@ -696,7 +852,11 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
         throw new ExecutionNodeError(`执行节点 "${id}" 不存在。`, 404);
       }
       const token = await unsealToken(row.encryptedToken);
-      const health = await probeEndpoint(row.baseUrl, token);
+      const health = await probeEndpoint(
+        row.baseUrl,
+        row.allowPrivateNetwork,
+        token,
+      );
       const checkedAt = new Date(nowFn()).toISOString();
       const updated: StoredExecutionNodeRow = {
         ...row,
@@ -735,7 +895,7 @@ export function createExecutionNodeStore(options: ExecutionNodeStoreOptions) {
           token = await unsealToken(saved.encryptedToken);
         }
       }
-      return probeEndpoint(baseUrl, token);
+      return probeEndpoint(baseUrl, allowPrivate, token);
     },
 
     /** 管理员 API 路由（挂载于 `/api/admin/execution-nodes`）。 */

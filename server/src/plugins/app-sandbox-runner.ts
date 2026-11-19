@@ -47,6 +47,7 @@ const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_ACTIVE_SESSIONS = 16;
 const DEFAULT_MAX_CONCURRENT_CALLS_PER_APP = 4;
+const DEFAULT_MAX_STDOUT_BUFFER_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_CHARS = 8_000;
 const HEADER_NAME_RE = /^[A-Za-z0-9-]+$/;
 
@@ -59,6 +60,8 @@ const SANDBOX_FORBIDDEN_HOST_KEYS: ReadonlySet<string> = new Set([
   "COMPOSIO_API_KEY",
   "HOME",
   "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
   "LOCALAPPDATA",
   "SHELL",
@@ -134,7 +137,7 @@ export function buildSandboxedAppEnv(input: {
   );
   for (const [key, value] of Object.entries(input.nonSecretConfig)) {
     if (!allowedNonSecretKeys.has(key)) continue;
-    if (SANDBOX_FORBIDDEN_HOST_KEYS.has(key)) continue;
+    if (SANDBOX_FORBIDDEN_HOST_KEYS.has(key.toUpperCase())) continue;
     if (typeof value !== "string" || value.includes("\0")) continue;
     env[key] = value;
   }
@@ -172,6 +175,8 @@ export function buildSandboxedAppEnv(input: {
 class SandboxedStdioTransport implements Transport {
   private processRef: ChildProcessWithoutNullStreams | null = null;
   private readonly readBuffer = new ReadBuffer();
+  private pendingStdoutBytes = 0;
+  private readonly maxStdoutBufferBytes: number;
   private stderrText = "";
   private closed = false;
 
@@ -185,8 +190,12 @@ class SandboxedStdioTransport implements Transport {
       args: string[];
       cwd: string;
       env: Record<string, string>;
+      maxStdoutBufferBytes?: number;
     },
-  ) {}
+  ) {
+    this.maxStdoutBufferBytes =
+      params.maxStdoutBufferBytes ?? DEFAULT_MAX_STDOUT_BUFFER_BYTES;
+  }
 
   get pid(): number | null {
     return this.processRef?.pid ?? null;
@@ -201,21 +210,19 @@ class SandboxedStdioTransport implements Transport {
       throw new Error("SandboxedStdioTransport already started.");
     }
     this.closed = false;
+    this.pendingStdoutBytes = 0;
     return new Promise((resolveStart, rejectStart) => {
       let settled = false;
-      // Windows 下 Bun spawn 若未显式声明 USERPROFILE 等键，会从宿主进程令牌自动补全真实用户目录；显式置空防止路径泄漏
-      const spawnEnv: Record<string, string> =
-        process.platform === "win32"
-          ? {
-              HOME: "",
-              USERPROFILE: "",
-              HOMEDRIVE: "",
-              HOMEPATH: "",
-              APPDATA: "",
-              LOCALAPPDATA: "",
-              ...this.params.env,
-            }
-          : this.params.env;
+      // 全平台显式置空 HOME/USERPROFILE 等宿主目录键，防止子进程（尤其 Windows 下 Bun spawn 或库回退）窥探宿主用户目录
+      const spawnEnv: Record<string, string> = {
+        HOME: "",
+        USERPROFILE: "",
+        HOMEDRIVE: "",
+        HOMEPATH: "",
+        APPDATA: "",
+        LOCALAPPDATA: "",
+        ...this.params.env,
+      };
       const child = spawn(this.params.command, this.params.args, {
         cwd: this.params.cwd,
         env: spawnEnv,
@@ -243,6 +250,7 @@ class SandboxedStdioTransport implements Transport {
       child.on("close", () => {
         this.processRef = null;
         this.closed = true;
+        this.pendingStdoutBytes = 0;
         this.onclose?.();
       });
 
@@ -252,13 +260,25 @@ class SandboxedStdioTransport implements Transport {
 
       child.stdout.on("data", (chunk: Buffer) => {
         try {
+          if (this.pendingStdoutBytes + chunk.length > this.maxStdoutBufferBytes) {
+            throw new Error(
+              `沙箱子进程 stdout 未决缓冲超过上限（${this.maxStdoutBufferBytes} 字节），已强制终止防 OOM。`,
+            );
+          }
+          const lastNewline = chunk.lastIndexOf(0x0a);
+          this.pendingStdoutBytes += chunk.length;
           this.readBuffer.append(chunk);
           for (;;) {
             const msg = this.readBuffer.readMessage();
             if (msg === null) break;
             this.onmessage?.(msg);
           }
+          if (lastNewline >= 0) {
+            this.pendingStdoutBytes = chunk.length - (lastNewline + 1);
+          }
         } catch (error) {
+          this.pendingStdoutBytes = 0;
+          this.readBuffer.clear();
           this.onerror?.(
             error instanceof Error ? error : new Error(String(error)),
           );
@@ -448,10 +468,21 @@ type ActiveSandboxSession = {
   tmpDir: string;
   timeoutMs: number;
   inFlight: number;
+  drainWaiters: Array<() => void>;
   lastUsedAt: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   startedAt: number;
 };
+
+function isCallerAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (error instanceof Error) {
+    if (error.name === "AbortError") return true;
+    const code = (error as { code?: unknown }).code;
+    if (code === "ABORT_ERR") return true;
+  }
+  return false;
+}
 
 export type AppSandboxSessionDiagnostics = {
   appId: string;
@@ -468,7 +499,7 @@ export type AppSandboxRunnerOptions = {
   store: AppPackageStore;
   /** 沙箱临时工作目录父路径，默认使用系统 tmpdir。 */
   tempRootDir?: string;
-  /** 启动 Node 的命令，默认 "node"。 */
+  /** 启动子进程的运行时路径，默认锁定当前 `process.execPath` 避免 PATH 劫持。 */
   nodeCommand?: string;
   /** 可选宿主基础环境变量注入（测试隔离用）。 */
   hostBaseEnv?: Record<string, string>;
@@ -482,13 +513,15 @@ export type AppSandboxRunnerOptions = {
   maxActiveSessions?: number;
   /** 单应用最大并发调用数，默认 4。 */
   maxConcurrentCallsPerApp?: number;
+  /** 子进程 stdout 单条/未决缓冲最大字节数，默认 16 MiB 防 OOM。 */
+  maxStdoutBufferBytes?: number;
   /** 可选 MCP 返回图片提取校验器（由 mcp-enhancements 接入）。 */
   extractImages?: (content: unknown) => ToolImagePart[];
 };
 
 export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
   const tempRootDir = options.tempRootDir ?? tmpdir();
-  const nodeCommand = options.nodeCommand ?? "node";
+  const nodeCommand = options.nodeCommand ?? process.execPath;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const connectTimeoutMs =
     options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
@@ -496,6 +529,8 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
     options.maxActiveSessions ?? DEFAULT_MAX_ACTIVE_SESSIONS;
   const maxConcurrentCallsPerApp =
     options.maxConcurrentCallsPerApp ?? DEFAULT_MAX_CONCURRENT_CALLS_PER_APP;
+  const maxStdoutBufferBytes =
+    options.maxStdoutBufferBytes ?? DEFAULT_MAX_STDOUT_BUFFER_BYTES;
 
   const sessions = new Map<string, ActiveSandboxSession>();
   const lifecycleLocks = new Map<string, Promise<unknown>>();
@@ -570,6 +605,31 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
     await destroySession(victim);
   }
 
+  function releaseInFlight(session: ActiveSandboxSession): void {
+    session.inFlight = Math.max(0, session.inFlight - 1);
+    if (session.inFlight === 0 && session.drainWaiters.length > 0) {
+      const waiters = session.drainWaiters.splice(0, session.drainWaiters.length);
+      for (const wake of waiters) wake();
+    }
+  }
+
+  async function waitForSessionDrain(
+    session: ActiveSandboxSession,
+    maxWaitMs: number,
+  ): Promise<boolean> {
+    if (session.inFlight === 0) return true;
+    await Promise.race([
+      new Promise<void>((resolveWait) => {
+        session.drainWaiters.push(resolveWait);
+      }),
+      new Promise<void>((resolveWait) => {
+        const timer = setTimeout(resolveWait, maxWaitMs);
+        timer.unref?.();
+      }),
+    ]);
+    return session.inFlight === 0;
+  }
+
   async function ensureSessionLocked(
     snapshot: AppRuntimeAuthorizationSnapshot,
   ): Promise<ActiveSandboxSession> {
@@ -582,7 +642,20 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
         resetIdleTimer(existing);
         return existing;
       }
-      // OAuth 令牌刷新、配置变更或版本切换：优雅重启子进程
+      // OAuth 令牌刷新、配置变更或版本切换：等待在途调用排空（inFlight === 0）后再优雅重启子进程
+      if (alive && existing.inFlight > 0) {
+        const drained = await waitForSessionDrain(
+          existing,
+          Math.min(existing.timeoutMs, 5_000),
+        );
+        if (!drained && existing.transport.pid !== null) {
+          throw new AppPackageError(
+            `应用 "${snapshot.appId}" 正在等待在途调用结束后切换凭据或版本，请稍后重试。`,
+            409,
+            "sandbox_restarting",
+          );
+        }
+      }
       await destroySession(existing);
       restartCounts.set(
         snapshot.appId,
@@ -610,6 +683,7 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
       args: [materialized.entryAbsPath],
       cwd: materialized.appDir,
       env,
+      maxStdoutBufferBytes,
     });
     const client = new Client({
       name: "chisabot-app-sandbox",
@@ -651,12 +725,20 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
       tmpDir: materialized.tmpDir,
       timeoutMs,
       inFlight: 0,
+      drainWaiters: [],
       lastUsedAt: Date.now(),
       idleTimer: null,
       startedAt: Date.now(),
     };
 
+    // 保留并串联 MCP SDK 内部 onclose 回调，避免子进程崩溃退出时在途 RPC 永久挂死到超时
+    const prevOnClose = transport.onclose;
     transport.onclose = () => {
+      try {
+        prevOnClose?.();
+      } catch {
+        // ignore sdk close callback error
+      }
       if (sessions.get(session.appId) === session) {
         sessions.delete(session.appId);
         if (session.idleTimer) {
@@ -672,8 +754,31 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
     return session;
   }
 
+  /** 在 app 锁内原子获取会话并校验/递增 inFlight，杜绝并发检查与淘汰/重启竞态。 */
+  async function acquireSessionForCall(
+    snapshot: AppRuntimeAuthorizationSnapshot,
+  ): Promise<ActiveSandboxSession> {
+    return withAppLock(snapshot.appId, async () => {
+      const session = await ensureSessionLocked(snapshot);
+      if (session.inFlight >= maxConcurrentCallsPerApp) {
+        throw new AppPackageError(
+          `应用 "${snapshot.appId}" 并发调用数已达上限（${maxConcurrentCallsPerApp}）。`,
+          409,
+          "sandbox_concurrency_limit",
+        );
+      }
+      session.inFlight += 1;
+      return session;
+    });
+  }
+
   return {
     async listTools(appId: string, signal?: AbortSignal): Promise<ListedTool[]> {
+      if (signal?.aborted) {
+        const abortErr = new Error("The operation was aborted.");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
       const snapshot = await options.store.getRuntimeSnapshot(appId);
       if (snapshot.pkg.runtime.kind === "skills-only") return [];
       if (snapshot.pkg.runtime.kind !== "node-stdio") {
@@ -683,19 +788,7 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
         );
       }
 
-      const session = await withAppLock(appId, () =>
-        ensureSessionLocked(snapshot),
-      );
-
-      if (session.inFlight >= maxConcurrentCallsPerApp) {
-        throw new AppPackageError(
-          `应用 "${appId}" 并发调用数已达上限（${maxConcurrentCallsPerApp}）。`,
-          409,
-          "sandbox_concurrency_limit",
-        );
-      }
-
-      session.inFlight += 1;
+      const session = await acquireSessionForCall(snapshot);
       try {
         const tools: ListedTool[] = [];
         const seenCursors = new Set<string>();
@@ -743,8 +836,17 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
         }
         resetIdleTimer(session);
         return tools;
+      } catch (error) {
+        if (!isCallerAbortError(error, signal)) {
+          void withAppLock(appId, async () => {
+            if (sessions.get(appId) === session) {
+              await destroySession(session);
+            }
+          });
+        }
+        throw error;
       } finally {
-        session.inFlight = Math.max(0, session.inFlight - 1);
+        releaseInFlight(session);
       }
     },
 
@@ -754,6 +856,11 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
       args: Record<string, unknown>,
       signal?: AbortSignal,
     ): Promise<McpCallResult & { images?: ToolImagePart[] }> {
+      if (signal?.aborted) {
+        const abortErr = new Error("The operation was aborted.");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
       const snapshot = await options.store.getRuntimeSnapshot(appId);
       if (snapshot.pkg.runtime.kind !== "node-stdio") {
         throw new AppPackageError(
@@ -762,19 +869,7 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
         );
       }
 
-      const session = await withAppLock(appId, () =>
-        ensureSessionLocked(snapshot),
-      );
-
-      if (session.inFlight >= maxConcurrentCallsPerApp) {
-        throw new AppPackageError(
-          `应用 "${appId}" 并发调用数已达上限（${maxConcurrentCallsPerApp}）。`,
-          409,
-          "sandbox_concurrency_limit",
-        );
-      }
-
-      session.inFlight += 1;
+      const session = await acquireSessionForCall(snapshot);
       try {
         const result = await session.client.callTool(
           { name: toolName, arguments: args },
@@ -796,9 +891,17 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
           ...(images.length > 0 ? { images } : {}),
         };
       } catch (error) {
+        // 用户主动取消（AbortError / signal.aborted）不误判为超时或坏会话
+        if (isCallerAbortError(error, signal)) {
+          throw error;
+        }
         // 超时或子进程异常退出时直接清理异常会话，并提示模型切勿自动重试
         const msg = error instanceof Error ? error.message : String(error);
-        if (/timed out|timeout|closed|epipe|eof/i.test(msg)) {
+        if (
+          /timed out|timeout|closed|epipe|eof|buffer|stdout|connection/i.test(
+            msg,
+          )
+        ) {
           void withAppLock(appId, async () => {
             if (sessions.get(appId) === session) {
               await destroySession(session);
@@ -812,7 +915,7 @@ export function createAppSandboxRunner(options: AppSandboxRunnerOptions) {
         }
         throw error;
       } finally {
-        session.inFlight = Math.max(0, session.inFlight - 1);
+        releaseInFlight(session);
       }
     },
 

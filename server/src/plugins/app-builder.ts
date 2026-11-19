@@ -33,7 +33,12 @@ import {
 } from "./app-package";
 import type { AppSandboxRunner } from "./app-sandbox-runner";
 import { formatMcpCallFailure } from "./mcp-enhancements";
-import { type GrantedTool, REFUSAL_MARKER, vendorAnswer } from "./tools";
+import {
+  type GrantedTool,
+  parametersFor,
+  REFUSAL_MARKER,
+  vendorAnswer,
+} from "./tools";
 
 export const APP_BUILDER_ID = "app-builder";
 const APP_OAUTH_STATE_LABEL = "chisabot-app-oauth";
@@ -141,6 +146,8 @@ const packageArgInput = z.object({
 export function createAppBuilderTools(options: {
   store: AppPackageStore;
   actorId: string;
+  /** 是否为管理员；普通用户禁止覆盖他人应用或已批准安装的线上微应用。 */
+  isAdmin?: boolean | (() => boolean | Promise<boolean>);
 }): GrantedTool[] {
   const { store, actorId } = options;
 
@@ -231,9 +238,14 @@ export function createAppBuilderTools(options: {
         });
       }
       try {
+        const isAdmin =
+          typeof options.isAdmin === "function"
+            ? await options.isAdmin()
+            : options.isAdmin === true;
         const { summary, isUpdate } = await store.submitDraft(
           check.normalized,
           actorId,
+          { isAdmin },
         );
         return [
           JSON.stringify({
@@ -285,13 +297,18 @@ export function resolveActiveAppSkills(
   }> = [];
   for (const app of apps) {
     if (!app.installed || !app.enabled || app.needsReview) continue;
+    const safeApp = app.id.replace(/[^a-z0-9_]/gi, "_");
     for (const skill of app.skills) {
-      const satisfied = skill.requiresTools.every(
-        (toolName) =>
+      const satisfied = skill.requiresTools.every((toolName) => {
+        const safeTool = toolName.replace(/[^a-z0-9_]/gi, "_");
+        return (
           availableToolNames.has(toolName) ||
+          availableToolNames.has(`app__${safeApp}__${safeTool}`) ||
           availableToolNames.has(`app__${app.id}__${toolName}`) ||
-          availableToolNames.has(`${app.id}/${toolName}`),
-      );
+          availableToolNames.has(`app:${app.id}/${toolName}`) ||
+          availableToolNames.has(`${app.id}/${toolName}`)
+        );
+      });
       if (!satisfied) continue;
       active.push({
         appId: app.id,
@@ -306,6 +323,68 @@ export function resolveActiveAppSkills(
   return active;
 }
 
+const MAX_APP_SKILL_SECTION_CHARS = 12_000;
+const MAX_SINGLE_APP_SKILL_CHARS = 3_000;
+
+/**
+ * 为对话提示词组装已启用微应用的动态技能正文（经 `resolveActiveAppSkills` 按 `requiresTools` 实时联动过滤）：
+ * 只有当微应用已审阅批准、当前会话允许访问、且 `requiresTools` 全部存在于本轮可用工具集中时才激活对应技能。
+ */
+export async function buildActiveAppSkillsPrompt(options: {
+  store: AppPackageStore;
+  availableToolNames: ReadonlySet<string>;
+  canExposeApp?: (app: AppPackageSummary) => boolean | Promise<boolean>;
+}): Promise<string> {
+  const allApps = await options.store.list();
+  const visibleApps: AppPackageSummary[] = [];
+  for (const app of allApps) {
+    if (!app.installed || !app.enabled || app.needsReview) continue;
+    if (options.canExposeApp && !(await options.canExposeApp(app))) continue;
+    visibleApps.push(app);
+  }
+  const activeSkills = resolveActiveAppSkills(
+    visibleApps,
+    options.availableToolNames,
+  );
+  if (activeSkills.length === 0) return "";
+
+  const detailCache = new Map<
+    string,
+    Awaited<ReturnType<AppPackageStore["get"]>>
+  >();
+  const blocks: string[] = [];
+  let totalChars = 0;
+
+  for (const item of activeSkills) {
+    let detail = detailCache.get(item.appId);
+    if (!detail) {
+      detail = await options.store.get(item.appId).catch(() => undefined);
+      if (detail) detailCache.set(item.appId, detail);
+    }
+    const file = detail?.package.files.find((f) => f.path === item.path);
+    const rawBody =
+      file?.encoding === "utf8"
+        ? file.content.trim()
+        : file?.encoding === "base64"
+          ? Buffer.from(file.content, "base64").toString("utf8").trim()
+          : "";
+    const snippet = rawBody.slice(0, MAX_SINGLE_APP_SKILL_CHARS);
+    const section = [
+      `### 微应用技能：${item.name}（${item.appId}/${item.skillId}）`,
+      item.description ? `说明：${item.description}` : "",
+      snippet,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    if (totalChars + section.length > MAX_APP_SKILL_SECTION_CHARS) break;
+    blocks.push(section);
+    totalChars += section.length;
+  }
+
+  if (blocks.length === 0) return "";
+  return ["## 已激活的自研微应用技能", ...blocks].join("\n\n");
+}
+
 /**
  * 为已审阅并批准（`installed && enabled && approvedDigest === currentDigest`）的 `node-stdio`
  * 微应用挂载可执行工具，并支持通过三层授权守卫（grant / policy / audit 独立校验）桥接调用。
@@ -315,6 +394,8 @@ export async function createApprovedAppTools(options: {
   runner: AppSandboxRunner;
   botId: string;
   actorId: string;
+  /** 可选暴露范围过滤（按管理员角色、创建者归属或显式授权隔离，防止跨用户暴露）。 */
+  canExposeApp?: (app: AppPackageSummary) => boolean | Promise<boolean>;
   /** 可选三层治理桥接：保留 grant / policy / audit 分层，绝不合并。 */
   authorize?: (input: {
     appId: string;
@@ -327,14 +408,22 @@ export async function createApprovedAppTools(options: {
   }) => Promise<{ allowed: true } | { allowed: false; reason: string }>;
 }): Promise<GrantedTool[]> {
   const apps = await options.store.list();
-  const approvedApps = apps.filter(
-    (app) =>
-      app.runtime.kind === "node-stdio" &&
-      app.installed &&
-      app.enabled &&
-      !app.needsReview &&
-      app.approvedDigest === app.currentDigest,
-  );
+  const approvedApps: AppPackageSummary[] = [];
+  for (const app of apps) {
+    if (
+      app.runtime.kind !== "node-stdio" ||
+      !app.installed ||
+      !app.enabled ||
+      app.needsReview ||
+      app.approvedDigest !== app.currentDigest
+    ) {
+      continue;
+    }
+    if (options.canExposeApp && !(await options.canExposeApp(app))) {
+      continue;
+    }
+    approvedApps.push(app);
+  }
   const tools: GrantedTool[] = [];
 
   for (const app of approvedApps) {
@@ -354,7 +443,7 @@ export async function createApprovedAppTools(options: {
         ref: `app:${app.id}/${item.name}`,
         effect,
         description: `[自研微应用 ${app.name["zh-CN"]}] ${item.description}`,
-        parameters: z.object({}).catchall(z.unknown()),
+        parameters: parametersFor(item.inputSchema),
         execute: async (rawArgs, ctx) => {
           const signal = ctx?.signal ?? currentToolAbort();
           if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
@@ -421,6 +510,8 @@ export type AppBuilderRoutesOptions = {
   encryptionKey: string;
   publicUrl?: string;
   appUrl?: string;
+  /** 可选校验 OAuth2 回调当前登录会话用户 ID，须与 state.userId 一致防 Login CSRF。 */
+  resolveSessionUserId?: (headers: Headers) => Promise<string | null>;
   /** 可选注入 OAuth2 换取 token 网络请求（测试隔离用）。 */
   oauthTokenFetch?: (url: string, init: RequestInit) => Promise<Response>;
 };
@@ -439,9 +530,24 @@ export function createAppBuilderRoutes(
   const actorLabel = (context: { var: AppVariables }) =>
     context.var.actor.email ?? context.var.actor.id;
 
-  /** 列表：所有已提交的草稿与已安装微应用（不含任何密文或令牌）。 */
+  /** 读权限与归属/角色对齐：管理员可读全站应用，普通用户仅可查看/导出本人提交的草稿或应用。 */
+  const canReadApp = (
+    context: { var: AppVariables },
+    createdBy: string,
+  ): boolean => {
+    const actor = context.var.actor;
+    if (actor.role === "admin") return true;
+    return (
+      createdBy === actor.id ||
+      (Boolean(actor.email) && createdBy === actor.email)
+    );
+  };
+
+  /** 列表：管理员看全站应用，普通用户仅看本人提交的草稿/应用（不含任何密文或令牌）。 */
   routes.get("/", requireUser, async (context) => {
-    const apps = await store.list();
+    const apps = (await store.list()).filter((app) =>
+      canReadApp(context, app.createdBy),
+    );
     return context.json({
       apps,
       oauthCallbackUrl: options.publicUrl
@@ -493,7 +599,9 @@ export function createAppBuilderRoutes(
         return context.json({ error: parsed.error }, 400);
       }
       try {
-        const result = await store.submitDraft(parsed.value, actorLabel(context));
+        const result = await store.submitDraft(parsed.value, actorLabel(context), {
+          isAdmin: true,
+        });
         await runner.closeSession(result.summary.id);
         return context.json(
           { app: result.summary, isUpdate: result.isUpdate },
@@ -511,7 +619,7 @@ export function createAppBuilderRoutes(
     },
   );
 
-  /** Host 托管 OAuth2 回调（绑定 appId + userId + digest + PKCE verifier）。 */
+  /** Host 托管 OAuth2 回调（绑定 appId + userId + digest + PKCE verifier，校验登录态与 client_secret）。 */
   routes.get("/oauth/callback", async (context) => {
     const code = context.req.query("code") ?? "";
     const stateParam = context.req.query("state") ?? "";
@@ -547,6 +655,16 @@ export function createAppBuilderRoutes(
       return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
     }
 
+    // 校验当前登录会话用户与 state 绑定发起者一致，防止 Login CSRF
+    if (options.resolveSessionUserId) {
+      const sessionUserId = await options
+        .resolveSessionUserId(context.req.raw.headers)
+        .catch(() => null);
+      if (!sessionUserId || sessionUserId !== state.userId) {
+        return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
+      }
+    }
+
     try {
       const detail = await store.get(state.appId);
       if (
@@ -565,6 +683,7 @@ export function createAppBuilderRoutes(
       if (!verdict.ok || verdict.url.protocol !== "https:") {
         return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
       }
+      const clientSecret = await store.getOAuthClientSecret(state.appId);
       const params = new URLSearchParams({
         grant_type: "authorization_code",
         code,
@@ -572,6 +691,9 @@ export function createAppBuilderRoutes(
         redirect_uri: redirectUri,
         code_verifier: state.verifier,
       });
+      if (clientSecret) {
+        params.set("client_secret", clientSecret);
+      }
       const response = options.oauthTokenFetch
         ? await options.oauthTokenFetch(detail.oauth.tokenUrl, {
             method: "POST",
@@ -596,9 +718,28 @@ export function createAppBuilderRoutes(
         token_type?: unknown;
         scope?: unknown;
       } | null;
-      if (typeof payload?.access_token !== "string" || !payload.access_token) {
+      if (
+        typeof payload?.access_token !== "string" ||
+        !payload.access_token ||
+        /[\r\n\0]/.test(payload.access_token) ||
+        payload.access_token.length > 8192
+      ) {
         return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
       }
+      const refreshToken =
+        typeof payload.refresh_token === "string" &&
+        payload.refresh_token.length > 0 &&
+        !/[\r\n\0]/.test(payload.refresh_token) &&
+        payload.refresh_token.length <= 8192
+          ? payload.refresh_token
+          : undefined;
+      const tokenType =
+        typeof payload.token_type === "string" &&
+        payload.token_type.length > 0 &&
+        !/[\r\n\0]/.test(payload.token_type) &&
+        payload.token_type.length <= 128
+          ? payload.token_type
+          : "Bearer";
       const expiresIn =
         typeof payload.expires_in === "number" && payload.expires_in > 0
           ? payload.expires_in
@@ -607,14 +748,8 @@ export function createAppBuilderRoutes(
         state.appId,
         {
           accessToken: payload.access_token,
-          refreshToken:
-            typeof payload.refresh_token === "string"
-              ? payload.refresh_token
-              : undefined,
-          tokenType:
-            typeof payload.token_type === "string"
-              ? payload.token_type
-              : "Bearer",
+          refreshToken,
+          tokenType,
           expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
           scope:
             typeof payload.scope === "string" ? payload.scope : undefined,
@@ -631,10 +766,16 @@ export function createAppBuilderRoutes(
     }
   });
 
-  /** 详情与源码审阅（包含源码预览、权限声明、摘要、版本历史）。 */
+  /** 详情与源码审阅（包含源码预览、权限声明、摘要、版本历史；限管理员或创建者）。 */
   routes.get("/:id", requireUser, async (context) => {
     try {
       const app = await store.get(context.req.param("id"));
+      if (!canReadApp(context, app.createdBy)) {
+        return context.json(
+          { error: "仅管理员或应用创建者可查看此微应用源码与详情。" },
+          403,
+        );
+      }
       return context.json({ app });
     } catch (error) {
       if (error instanceof AppPackageError) {
@@ -916,10 +1057,18 @@ export function createAppBuilderRoutes(
     }
   });
 
-  /** 不可变版本历史列表。 */
+  /** 不可变版本历史列表（限管理员或创建者）。 */
   routes.get("/:id/revisions", requireUser, async (context) => {
     try {
-      const revisions = await store.listRevisions(context.req.param("id"));
+      const appId = context.req.param("id");
+      const detail = await store.get(appId);
+      if (!canReadApp(context, detail.createdBy)) {
+        return context.json(
+          { error: "仅管理员或应用创建者可查看此微应用版本历史。" },
+          403,
+        );
+      }
+      const revisions = await store.listRevisions(appId);
       return context.json({ revisions });
     } catch (error) {
       if (error instanceof AppPackageError) {
@@ -970,11 +1119,18 @@ export function createAppBuilderRoutes(
     },
   );
 
-  /** 脱敏导出单 JSON 应用包（严禁含任何用户密文、配置值或 OAuth 令牌）。 */
+  /** 脱敏导出单 JSON 应用包（严禁含任何用户密文、配置值或 OAuth 令牌；限管理员或创建者）。 */
   routes.get("/:id/export", requireUser, async (context) => {
     const appId = context.req.param("id");
     const digest = context.req.query("digest") || undefined;
     try {
+      const detail = await store.get(appId);
+      if (!canReadApp(context, detail.createdBy)) {
+        return context.json(
+          { error: "仅管理员或应用创建者可导出此微应用。" },
+          403,
+        );
+      }
       const pkg = await store.exportPackage(appId, digest);
       return context.json({ package: pkg });
     } catch (error) {

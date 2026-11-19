@@ -151,12 +151,16 @@ export function withPolicyPushOnWake(
     fetchImpl?: typeof fetch;
   },
 ): ComputerProvider {
-  const pushed = new Map<string, { run: string | undefined; at: number }>();
+  const pushed = new Map<
+    string,
+    { url: string; run: string | undefined; at: number }
+  >();
   const ensure = async (botId: string, url: string) => {
     const run = await provider.sessionOf?.(botId).catch(() => undefined);
     const last = pushed.get(botId);
     if (
       last &&
+      last.url === url &&
       (run !== undefined
         ? last.run === run
         : Date.now() - last.at < UNKNOWN_RUN_REPUSH_MS)
@@ -173,7 +177,7 @@ export function withPolicyPushOnWake(
         ...(token ? { token } : {}),
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       });
-      pushed.set(botId, { run, at: Date.now() });
+      pushed.set(botId, { url, run, at: Date.now() });
     } catch (error) {
       console.warn(
         JSON.stringify({

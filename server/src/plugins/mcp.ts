@@ -261,16 +261,31 @@ export function dialAddress(connection: Connection): {
   headers?: Record<string, string>;
 } {
   const target = new URL(connection.url);
-  const baseHeaders: Record<string, string> = connection.extraHeaders
-    ? { ...connection.extraHeaders }
-    : {};
+  const baseHeaders: Record<string, string> = {};
+  const setHeaderCaseInsensitive = (name: string, value: string) => {
+    const lower = name.toLowerCase();
+    for (const existingKey of Object.keys(baseHeaders)) {
+      if (existingKey.toLowerCase() === lower) {
+        delete baseHeaders[existingKey];
+      }
+    }
+    baseHeaders[name] = value;
+  };
+  if (connection.extraHeaders) {
+    for (const [k, v] of Object.entries(connection.extraHeaders)) {
+      setHeaderCaseInsensitive(k, v);
+    }
+  }
   if (connection.token) {
     if (connection.keyParam) {
       target.searchParams.set(connection.keyParam, connection.token);
     } else if (connection.keyHeader) {
-      baseHeaders[connection.keyHeader] = connection.token;
+      setHeaderCaseInsensitive(connection.keyHeader, connection.token);
     } else {
-      baseHeaders.Authorization = authorizationHeader(connection.token);
+      setHeaderCaseInsensitive(
+        "Authorization",
+        authorizationHeader(connection.token),
+      );
     }
   }
   return Object.keys(baseHeaders).length > 0

@@ -17,14 +17,20 @@ import {
   ExecutionNodeError,
 } from "../src/computer/execution-node-store";
 import {
+  NO_NETWORK_POLICY,
+  withPolicyPushOnWake,
+} from "../src/computer/policy-network";
+import {
   createDynamicExecutionNodeProvider,
   createSharedComputerProvider,
+  ProviderError,
 } from "../src/computer/provider";
 import {
   emitToolImage,
   withToolImageCollector,
 } from "../src/conversations/tool-images";
 import {
+  dialAddress,
   callTool as mcpCallTool,
   listTools as mcpListTools,
   pinnedMcpFetch,
@@ -182,7 +188,7 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
     expect(overlay.extraHeaders["X-Tenant-Secret"]).toBe("tenant-secret-42");
     expect(overlay.extraHeaders.Authorization).toBe("Bearer oauth-token-1");
 
-    // 跨源修改 tokenUrl 时自动清除旧令牌防跨源外泄
+    // 跨源修改 authorizationUrl/tokenUrl 时自动清除旧 OAuth 凭据与加密 Header 防跨源外泄
     const crossOrigin = await store.update(
       "acme",
       {
@@ -195,6 +201,14 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
     );
     expect(crossOrigin.oauth?.hasToken).toBe(false);
     expect(crossOrigin.oauth?.hasClientSecret).toBe(false);
+    expect(crossOrigin.customHeaderKeys).toEqual([]);
+
+    // 为新域重新配置 Header 后，mcp-last-good 降级保护必须保留该配置与最近快照
+    await store.update(
+      "acme",
+      { customHeaders: { "X-New-Tenant-Secret": "new-secret-99" } },
+      "admin@example.com",
+    );
 
     // mcp-last-good：先成功快照，再模拟远端探测失败 → 保留快照且标 degraded=true
     await store.recordProbeSuccess("acme", [
@@ -216,7 +230,7 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
     const viewAfterFail = await store.getView("acme");
     expect(viewAfterFail.lastGood?.degraded).toBe(true);
     expect(viewAfterFail.lastGood?.tools).toHaveLength(2);
-    expect(viewAfterFail.customHeaderKeys).toEqual(["X-Tenant-Secret"]);
+    expect(viewAfterFail.customHeaderKeys).toEqual(["X-New-Tenant-Secret"]);
 
     // 路由鉴权检查
     const app = new Hono<{ Variables: AppVariables }>();
@@ -589,5 +603,298 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
     const okList = await app.request("/api/admin/execution-nodes");
     expect(okList.status).toBe(200);
     expect(okList.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("审查回归（远程执行节点）：DNS 重绑定元数据 SSRF 拦截、非 JSON/超大 /health 拒判就绪、关闭私网重校验、冷启动热切换与策略立即重推", async () => {
+    // 1. DNS 解析到云元数据 169.254.169.254 / fd00:ec2::254 即使开启 allowPrivateNetwork 也必须拦截
+    const dnsAttackStore = createExecutionNodeStore({
+      storage: createMemoryExecutionNodeStorage(),
+      encryptionKey: TEST_KEY,
+      resolveDns: async (hostname) => {
+        if (hostname === "meta4.example.com") {
+          return [{ address: "169.254.169.254", family: 4 }];
+        }
+        if (hostname === "meta6.example.com") {
+          return [{ address: "fd00:ec2::254", family: 6 }];
+        }
+        if (hostname === "priv.example.com") {
+          return [{ address: "10.0.0.9", family: 4 }];
+        }
+        return [{ address: "93.184.216.34", family: 4 }];
+      },
+    });
+    await dnsAttackStore.ensure();
+
+    const probeMeta4 = await dnsAttackStore.probeDraft({
+      baseUrl: "https://meta4.example.com",
+      allowPrivateNetwork: true,
+    });
+    expect(probeMeta4.ok).toBe(false);
+    expect(probeMeta4.ready).toBe(false);
+
+    const probeMeta6 = await dnsAttackStore.probeDraft({
+      baseUrl: "https://meta6.example.com",
+      allowPrivateNetwork: true,
+    });
+    expect(probeMeta6.ok).toBe(false);
+
+    const probePrivBlocked = await dnsAttackStore.probeDraft({
+      baseUrl: "https://priv.example.com",
+      allowPrivateNetwork: false,
+    });
+    expect(probePrivBlocked.ok).toBe(false);
+
+    // dynamicProvider 连接前同样过 DNS 校验，防止激活后绕过探活直连元数据 IP
+    await dnsAttackStore.create(
+      {
+        id: "evil-meta",
+        name: "Evil Meta",
+        baseUrl: "https://meta4.example.com",
+        allowPrivateNetwork: true,
+      },
+      "admin",
+    );
+    await dnsAttackStore.activate("evil-meta", "admin");
+    const dnsGuardedProvider = createDynamicExecutionNodeProvider({
+      resolveActiveNode: () => dnsAttackStore.getActive(),
+      resolveDns: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+    await expect(dnsGuardedProvider.locate("bot-1")).rejects.toThrow(
+      ProviderError,
+    );
+
+    // 2. /health 返回非 JSON 200（HTML）或 >64 KiB 超大响应体必须判 ok: false, ready: false
+    const badHealthHtml = await startHttpServer((_req, res) => {
+      res
+        .writeHead(200, { "content-type": "text/html" })
+        .end("<html><body>login page</body></html>");
+    });
+    const badHealthHuge = await startHttpServer((_req, res) => {
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ ok: true, pad: "x".repeat(80 * 1024) }));
+    });
+    const store = createExecutionNodeStore({
+      storage: createMemoryExecutionNodeStorage(),
+      encryptionKey: TEST_KEY,
+    });
+    await store.ensure();
+
+    const htmlRes = await store.probeDraft({
+      baseUrl: badHealthHtml.url,
+      allowPrivateNetwork: true,
+    });
+    expect(htmlRes.ok).toBe(false);
+    expect(htmlRes.ready).toBe(false);
+
+    const hugeRes = await store.probeDraft({
+      baseUrl: badHealthHuge.url,
+      allowPrivateNetwork: true,
+    });
+    expect(hugeRes.ok).toBe(false);
+    expect(hugeRes.ready).toBe(false);
+
+    // 3. update() 仅将 allowPrivateNetwork 从 true 改为 false 且不传 baseUrl 时，必须重校验拒绝遗留 HTTP/私网地址
+    await store.create(
+      {
+        id: "priv-http",
+        name: "Private HTTP",
+        baseUrl: badHealthHtml.url,
+        allowPrivateNetwork: true,
+      },
+      "admin",
+    );
+    await expect(
+      store.update("priv-http", { allowPrivateNetwork: false }, "admin"),
+    ).rejects.toThrow(ExecutionNodeError);
+
+    // 4. 冷启动无 fallback：list() 平滑返回 []，激活后立即生效；热切换到无令牌节点绝不泄露静态令牌且 30s 内立即向新节点重推网络策略
+    const pushedTargets: Array<{ url: string; token: string | null }> = [];
+    const node1 = await startHttpServer((req, res) => {
+      if (req.url === "/egress-policy") {
+        pushedTargets.push({
+          url: node1.url,
+          token: (req.headers["x-chisabot-computer-token"] as string) ?? null,
+        });
+        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end('{"computers":[]}');
+    });
+    const node2NoToken = await startHttpServer((req, res) => {
+      if (req.url === "/egress-policy") {
+        pushedTargets.push({
+          url: node2NoToken.url,
+          token: (req.headers["x-chisabot-computer-token"] as string) ?? null,
+        });
+        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end('{"computers":[]}');
+    });
+
+    const coldStore = createExecutionNodeStore({
+      storage: createMemoryExecutionNodeStorage(),
+      encryptionKey: TEST_KEY,
+    });
+    await coldStore.ensure();
+    const resolveTokenStrict = (): string | undefined => {
+      const active = coldStore.getActiveSync();
+      return active ? active.token : "static-env-secret-must-not-leak";
+    };
+    const coldDynamic = withPolicyPushOnWake(
+      createDynamicExecutionNodeProvider({
+        resolveActiveNode: () => coldStore.getActive(),
+      }),
+      {
+        policyForBot: async () => NO_NETWORK_POLICY,
+        token: resolveTokenStrict,
+      },
+    );
+
+    // 冷启动无激活节点、无 fallback 时 list() 返回 [] 不崩溃
+    expect(await coldDynamic.list()).toEqual([]);
+
+    await coldStore.create(
+      {
+        id: "n1",
+        name: "Node 1",
+        baseUrl: node1.url,
+        token: "tok-n1",
+        allowPrivateNetwork: true,
+      },
+      "admin",
+    );
+    await coldStore.create(
+      {
+        id: "n2",
+        name: "Node 2 No Token",
+        baseUrl: node2NoToken.url,
+        allowPrivateNetwork: true,
+      },
+      "admin",
+    );
+
+    await coldStore.activate("n1", "admin");
+    expect(await coldDynamic.locate("bot-x")).toBe(node1.url);
+    expect(pushedTargets).toHaveLength(1);
+    expect(pushedTargets[0]).toEqual({ url: node1.url, token: "tok-n1" });
+
+    // 热切换到无令牌的 n2：30s 内必须立即向新 URL 推策略，且绝不泄露静态 token
+    await coldStore.activate("n2", "admin");
+    expect(await coldDynamic.locate("bot-x")).toBe(node2NoToken.url);
+    expect(pushedTargets).toHaveLength(2);
+    expect(pushedTargets[1]).toEqual({ url: node2NoToken.url, token: null });
+  });
+
+  test("审查回归（MCP 增强）：OAuth 刷新防 Lost Update、大小写 Authorization 去重、authorizationUrl 跨源清凭据与 CRLF 拦截", async () => {
+    const nowMs = Date.parse("2026-11-19T12:00:00Z");
+    let storeRef: ReturnType<typeof createMcpEnhancementStore> | null = null;
+    const store = createMcpEnhancementStore({
+      storage: createMemoryMcpEnhancementStorage(),
+      encryptionKey: TEST_KEY,
+      now: () => nowMs,
+      refreshFetch: async () => {
+        if (storeRef) {
+          // 模拟刷新网络期间管理员并发修改 disabledTools 与 customInstructions
+          await storeRef.update(
+            "srv-race",
+            {
+              disabledTools: ["danger_delete"],
+              customInstructions: "并发更新后的最新指令",
+            },
+            "admin",
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            access_token: "fresh-mcp-token",
+            refresh_token: "fresh-mcp-rt",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    storeRef = store;
+
+    await store.update(
+      "srv-race",
+      {
+        customInstructions: "初始指令",
+        customHeaders: { authorization: "Bearer custom-lowercase-auth" },
+        oauth: {
+          authorizationUrl: "https://auth-a.example.com/authorize",
+          tokenUrl: "https://auth-a.example.com/token",
+          scopes: ["read"],
+          clientId: "cid-a",
+          clientSecret: "sec-a",
+          accessToken: "old-tok",
+          refreshToken: "old-rt",
+          expiresAt: new Date(nowMs + 20_000).toISOString(),
+        },
+      },
+      "admin",
+    );
+
+    expect(await store.hasCredentials("srv-race")).toBe(true);
+
+    // 触发刷新：并发更新的 disabledTools 与 customInstructions 绝不被旧 row 覆盖！
+    const overlay = await store.resolveConnectionOverlay("srv-race");
+    // 大小写去重：已有小写 authorization，不得再并存大写 Authorization
+    const authKeys = Object.keys(overlay.extraHeaders).filter(
+      (k) => k.toLowerCase() === "authorization",
+    );
+    expect(authKeys).toHaveLength(1);
+    expect(overlay.extraHeaders.authorization).toBe(
+      "Bearer custom-lowercase-auth",
+    );
+
+    const latestView = await store.getView("srv-race");
+    expect(latestView.disabledTools).toEqual(["danger_delete"]);
+    expect(latestView.customInstructions).toBe("并发更新后的最新指令");
+
+    // dialAddress 同样大小写去重：小写 authorization 被连接 token 的 Authorization 覆盖而非并存
+    const dialed = dialAddress({
+      url: "https://mcp.example.com/rpc",
+      token: "vault-token",
+      extraHeaders: { authorization: "Bearer stale-lower", "X-Env": "prod" },
+    });
+    const dialedAuthKeys = Object.keys(dialed.headers ?? {}).filter(
+      (k) => k.toLowerCase() === "authorization",
+    );
+    expect(dialedAuthKeys).toEqual(["Authorization"]);
+    expect(dialed.headers?.Authorization).toBe("Bearer vault-token");
+    expect(dialed.headers?.["X-Env"]).toBe("prod");
+
+    // 修改 authorizationUrl 跨源必须同步清空旧 OAuth 凭据与加密 Header
+    const movedAuth = await store.update(
+      "srv-race",
+      {
+        oauth: {
+          authorizationUrl: "https://auth-b.example.com/authorize",
+        },
+      },
+      "admin",
+    );
+    expect(movedAuth.oauth?.hasToken).toBe(false);
+    expect(movedAuth.oauth?.hasClientSecret).toBe(false);
+    expect(movedAuth.customHeaderKeys).toEqual([]);
+    expect(await store.hasCredentials("srv-race")).toBe(false);
+
+    // oauth.accessToken 含 CRLF 必须被拒绝
+    await expect(
+      store.update(
+        "srv-race",
+        {
+          oauth: {
+            authorizationUrl: "https://auth-b.example.com/authorize",
+            tokenUrl: "https://auth-a.example.com/token",
+            accessToken: "evil\r\nX-Injected: 1",
+          },
+        },
+        "admin",
+      ),
+    ).rejects.toThrow("控制字符");
   });
 });

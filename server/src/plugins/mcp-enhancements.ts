@@ -444,6 +444,12 @@ export type McpEnhancementStorage = {
   get(serverId: string): Promise<StoredMcpEnhancementRow | null>;
   list(): Promise<StoredMcpEnhancementRow[]>;
   upsert(row: StoredMcpEnhancementRow): Promise<void>;
+  /** 仅定向更新 OAuth 密文与时间戳，避免刷新期间覆盖并发修改的 disabledTools/customInstructions/customHeaders。 */
+  updateOAuthOnly(
+    serverId: string,
+    encryptedOAuth: string | null,
+    updatedAt: string,
+  ): Promise<void>;
   delete(serverId: string): Promise<void>;
 };
 
@@ -586,6 +592,15 @@ export function createPgMcpEnhancementStorage(
       );
     },
 
+    async updateOAuthOnly(serverId, encryptedOAuth, updatedAt) {
+      await sql.unsafe(
+        `UPDATE chisabot_mcp_enhancements
+         SET encrypted_oauth = $2, updated_at = $3
+         WHERE server_id = $1`,
+        [serverId, encryptedOAuth, updatedAt],
+      );
+    },
+
     async delete(serverId) {
       await sql.unsafe(
         `DELETE FROM chisabot_mcp_enhancements WHERE server_id = $1`,
@@ -627,6 +642,15 @@ export function createMemoryMcpEnhancementStorage(): McpEnhancementStorage {
         lastGoodTools: row.lastGoodTools
           ? row.lastGoodTools.map((t) => ({ ...t }))
           : null,
+      });
+    },
+    async updateOAuthOnly(serverId, encryptedOAuth, updatedAt) {
+      const latest = rows.get(serverId);
+      if (!latest) return;
+      rows.set(serverId, {
+        ...latest,
+        encryptedOAuth,
+        updatedAt,
       });
     },
     async delete(serverId) {
@@ -837,7 +861,12 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
       ) {
         const mergedHeaders = await unsealHeaders(current.encryptedHeaders);
         for (const key of patch.clearHeaderKeys ?? []) {
-          delete mergedHeaders[key];
+          const targetLower = key.toLowerCase();
+          for (const existingKey of Object.keys(mergedHeaders)) {
+            if (existingKey.toLowerCase() === targetLower) {
+              delete mergedHeaders[existingKey];
+            }
+          }
         }
         if (patch.customHeaders !== undefined) {
           if (!isPlainObject(patch.customHeaders)) {
@@ -860,9 +889,14 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
                 `Header ${key} 的值必须是字符串。`,
               );
             }
-            if (rawVal === "") {
-              delete mergedHeaders[key];
-            } else {
+            // 大小写无关去重，防止 authorization 与 Authorization 并存
+            const keyLower = key.toLowerCase();
+            for (const existingKey of Object.keys(mergedHeaders)) {
+              if (existingKey.toLowerCase() === keyLower) {
+                delete mergedHeaders[existingKey];
+              }
+            }
+            if (rawVal !== "") {
               if (/[\r\n\0]/.test(rawVal) || rawVal.length > 8192) {
                 throw new McpEnhancementValidationError(
                   `Header ${key} 的值包含非法控制字符或超长。`,
@@ -904,12 +938,37 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
               "配置自定义 MCP OAuth2 必须提供 authorizationUrl 与 tokenUrl。",
             );
           }
-          // 跨源保护：修改 tokenUrl origin 时清空旧密钥与令牌，防止凭据跨源外泄
-          const prevOrigin = prevOAuth?.tokenUrl
+          const validateOAuthField = (
+            rawVal: string | undefined,
+            label: string,
+          ): string | undefined => {
+            if (rawVal === undefined) return undefined;
+            const trimmed = rawVal.trim();
+            if (!trimmed) return undefined;
+            if (/[\r\n\0]/.test(trimmed) || trimmed.length > 8192) {
+              throw new McpEnhancementValidationError(
+                `${label} 包含非法控制字符或超过长度上限。`,
+              );
+            }
+            return trimmed;
+          };
+
+          // 跨源保护：修改 authorizationUrl 或 tokenUrl 任一 origin 时清空旧 OAuth 凭据与加密 Header，防止凭据跨源外泄
+          const prevAuthOrigin = prevOAuth?.authorizationUrl
+            ? new URL(prevOAuth.authorizationUrl).origin
+            : null;
+          const nextAuthOrigin = new URL(authorizationUrl).origin;
+          const prevTokenOrigin = prevOAuth?.tokenUrl
             ? new URL(prevOAuth.tokenUrl).origin
             : null;
-          const nextOrigin = new URL(tokenUrl).origin;
-          const sameOrigin = prevOrigin === null || prevOrigin === nextOrigin;
+          const nextTokenOrigin = new URL(tokenUrl).origin;
+          const sameOrigin =
+            (prevAuthOrigin === null || prevAuthOrigin === nextAuthOrigin) &&
+            (prevTokenOrigin === null || prevTokenOrigin === nextTokenOrigin);
+
+          if (!sameOrigin && patch.customHeaders === undefined) {
+            next.encryptedHeaders = null;
+          }
 
           const scopes =
             patch.oauth.scopes !== undefined
@@ -928,25 +987,34 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
             scopes,
             clientId:
               patch.oauth.clientId !== undefined
-                ? patch.oauth.clientId.trim() || undefined
+                ? validateOAuthField(patch.oauth.clientId, "oauth.clientId")
                 : sameOrigin
                   ? prevOAuth?.clientId
                   : undefined,
             clientSecret:
               patch.oauth.clientSecret !== undefined
-                ? patch.oauth.clientSecret.trim() || undefined
+                ? validateOAuthField(
+                    patch.oauth.clientSecret,
+                    "oauth.clientSecret",
+                  )
                 : sameOrigin
                   ? prevOAuth?.clientSecret
                   : undefined,
             accessToken:
               patch.oauth.accessToken !== undefined
-                ? patch.oauth.accessToken.trim() || undefined
+                ? validateOAuthField(
+                    patch.oauth.accessToken,
+                    "oauth.accessToken",
+                  )
                 : sameOrigin
                   ? prevOAuth?.accessToken
                   : undefined,
             refreshToken:
               patch.oauth.refreshToken !== undefined
-                ? patch.oauth.refreshToken.trim() || undefined
+                ? validateOAuthField(
+                    patch.oauth.refreshToken,
+                    "oauth.refreshToken",
+                  )
                 : sameOrigin
                   ? prevOAuth?.refreshToken
                   : undefined,
@@ -1018,36 +1086,53 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
             refresh_token?: unknown;
             expires_in?: unknown;
           } | null;
-          if (typeof body?.access_token === "string" && body.access_token) {
+          if (
+            typeof body?.access_token === "string" &&
+            body.access_token.length > 0 &&
+            body.access_token.length <= 8192 &&
+            !/[\r\n\0]/.test(body.access_token)
+          ) {
             const expiresIn =
               typeof body.expires_in === "number" &&
               Number.isFinite(body.expires_in) &&
               body.expires_in > 0
                 ? body.expires_in
                 : 3600;
+            const nextRefresh =
+              typeof body.refresh_token === "string" &&
+              body.refresh_token.length > 0 &&
+              body.refresh_token.length <= 8192 &&
+              !/[\r\n\0]/.test(body.refresh_token)
+                ? body.refresh_token
+                : oauth.refreshToken;
             oauth = {
               ...oauth,
               accessToken: body.access_token,
-              refreshToken:
-                typeof body.refresh_token === "string" && body.refresh_token
-                  ? body.refresh_token
-                  : oauth.refreshToken,
+              refreshToken: nextRefresh,
               expiresAt: new Date(nowFn() + expiresIn * 1000).toISOString(),
             };
             const encryptedOAuth = await encryptSecret(
               encryptionKey,
               JSON.stringify(oauth),
             );
-            await storage.upsert({
-              ...row,
+            // 仅定向更新 OAuth 密文，绝不拿旧 row 全量 upsert 覆盖并发修改的 disabledTools/customInstructions/customHeaders
+            await storage.updateOAuthOnly(
+              serverId,
               encryptedOAuth,
-              updatedAt: new Date(nowFn()).toISOString(),
-            });
+              new Date(nowFn()).toISOString(),
+            );
           }
         }
       }
 
-      if (oauth?.accessToken && !extraHeaders.Authorization) {
+      const hasAuthHeader = Object.keys(extraHeaders).some(
+        (key) => key.toLowerCase() === "authorization",
+      );
+      if (
+        oauth?.accessToken &&
+        !/[\r\n\0]/.test(oauth.accessToken) &&
+        !hasAuthHeader
+      ) {
         extraHeaders.Authorization = /^(?:bearer|basic)\s+/i.test(
           oauth.accessToken,
         )
@@ -1061,6 +1146,31 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
         disabledTools: new Set(row.disabledTools),
         customInstructions: row.customInstructions,
       };
+    },
+
+    /** 是否在增强表中持有任何加密 Header 或 OAuth2 凭据（供跨源修改 MCP 地址门禁校验）。 */
+    async hasCredentials(serverId: string): Promise<boolean> {
+      const row = await storage.get(serverId);
+      if (!row) return false;
+      const headers = await unsealHeaders(row.encryptedHeaders);
+      if (Object.keys(headers).length > 0) return true;
+      const oauth = await unsealOAuth(row.encryptedOAuth);
+      return Boolean(
+        oauth?.accessToken || oauth?.refreshToken || oauth?.clientSecret,
+      );
+    },
+
+    /** 清空该 MCP 增强表中的加密 Header 与 OAuth2 凭据（用于跨源变更防泄兜底）。 */
+    async clearCredentials(serverId: string, actorId: string): Promise<void> {
+      const row = await storage.get(serverId);
+      if (!row) return;
+      await storage.upsert({
+        ...row,
+        encryptedHeaders: null,
+        encryptedOAuth: null,
+        updatedAt: new Date(nowFn()).toISOString(),
+        updatedBy: actorId,
+      });
     },
 
     async isToolDisabled(serverId: string, toolName: string): Promise<boolean> {

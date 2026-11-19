@@ -346,6 +346,7 @@ import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { createPersonalSources } from "./personal-sources/service";
 import {
+  buildActiveAppSkillsPrompt,
   createAppBuilderRoutes,
   createAppBuilderTools,
   createApprovedAppTools,
@@ -743,31 +744,38 @@ const executionNodeStore = createExecutionNodeStore({
   staticFallbackProvider: config.computer?.provider ?? null,
 });
 await executionNodeStore.ensure();
-const resolveComputerToken = (): string | undefined =>
-  executionNodeStore.getActiveSync()?.token ?? config.computer?.token;
+// 当已热切换激活远程执行节点时，绝不因新节点未配 token 而回退泄露静态环境变量机密令牌
+const resolveComputerToken = (): string | undefined => {
+  const active = executionNodeStore.getActiveSync();
+  return active ? active.token : config.computer?.token;
+};
+const resolveComputerAllowPrivateHosts = (): boolean => {
+  const active = executionNodeStore.getActiveSync();
+  return active
+    ? active.allowPrivateNetwork
+    : config.computer?.allowPrivateHosts === true;
+};
 const staticComputerProvider = config.computer
   ? createComputerProvider(config.computer)
   : undefined;
+const hasConfiguredComputer = (): boolean =>
+  Boolean(staticComputerProvider || executionNodeStore.getActiveSync());
 
+// 始终实例化动态 computerProvider（支持冷启动无静态配置时在管理台热新增并立即激活远程执行节点，无需重启）。
 // Each computer is pushed its network policy on the way to the action that woke it, because a
 // computer refuses every connection until one arrives (see `withPolicyPushOnWake`).
-const computerProvider =
-  staticComputerProvider || executionNodeStore.getActiveSync()
-    ? withPolicyPushOnWake(
-        createDynamicExecutionNodeProvider({
-          resolveActiveNode: () => executionNodeStore.getActive(),
-          ...(staticComputerProvider
-            ? { fallback: staticComputerProvider }
-            : {}),
-        }),
-        {
-          policyForBot: async () => NO_NETWORK_POLICY,
-          token: resolveComputerToken,
-        },
-      )
-    : undefined;
+const computerProvider = withPolicyPushOnWake(
+  createDynamicExecutionNodeProvider({
+    resolveActiveNode: () => executionNodeStore.getActive(),
+    ...(staticComputerProvider ? { fallback: staticComputerProvider } : {}),
+  }),
+  {
+    policyForBot: async () => NO_NETWORK_POLICY,
+    token: resolveComputerToken,
+  },
+);
 
-if (computerProvider?.warm) {
+if (hasConfiguredComputer() && computerProvider.warm) {
   void computerProvider.warm();
 }
 // What Bots may do on their computers. Configuration supplies the deployment's default; an
@@ -1016,26 +1024,24 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
 };
 // CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
 installActivityStore(createComputerActivityStore(database, config.databaseUrl));
-const computerGateway = computerProvider
-  ? withComputerActivity(
-      createComputerGateway({
-        provider: computerProvider,
-        auditStore: bootAuditStore,
-        approvalGate: confirmAwareGate,
-        policy: () => policyStore.get(),
-        // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-        // when the snapshot was taken by another server. A Map here would be blank on every replica
-        // but the one that snapshotted, and the boundary would decide with no element to look at.
-        snapshots: createSnapshotStore(database),
-        // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-        // sentence on that button already promised.
-        pageFrames: pageFrameStore,
-        allowPrivateHosts: config.computer?.allowPrivateHosts,
-        token: resolveComputerToken,
-      }),
-      { pageFrames: pageFrameStore },
-    )
-  : undefined;
+const computerGateway = withComputerActivity(
+  createComputerGateway({
+    provider: computerProvider,
+    auditStore: bootAuditStore,
+    approvalGate: confirmAwareGate,
+    policy: () => policyStore.get(),
+    // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
+    // when the snapshot was taken by another server. A Map here would be blank on every replica
+    // but the one that snapshotted, and the boundary would decide with no element to look at.
+    snapshots: createSnapshotStore(database),
+    // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
+    // sentence on that button already promised.
+    pageFrames: pageFrameStore,
+    allowPrivateHosts: resolveComputerAllowPrivateHosts,
+    token: resolveComputerToken,
+  }),
+  { pageFrames: pageFrameStore },
+);
 
 /**
  * What a Bot can reach beyond its own computer.
@@ -1321,7 +1327,9 @@ void recordAuditEvent(bootAuditStore, {
  * A shared provider is a fine way to run on a laptop, but the shared isolation state must be visible
  * rather than inferred.
  */
-const isolation = describeComputerIsolation(computerProvider);
+const isolation = describeComputerIsolation(
+  hasConfiguredComputer() ? computerProvider : undefined,
+);
 
 void recordAuditEvent(bootAuditStore, {
   eventType: "computer.isolation_loaded",
@@ -1336,7 +1344,7 @@ void recordAuditEvent(bootAuditStore, {
 console.info(
   JSON.stringify({
     type: "computer-isolation",
-    provider: computerProvider ? computerProvider.name : "none",
+    provider: hasConfiguredComputer() ? computerProvider.name : "none",
     isolation: isolation.isolation,
     ...(isolation.warning ? { warning: isolation.warning } : {}),
   }),
@@ -1540,7 +1548,7 @@ const runtimeToolBinding: import("./agents/dsh-runtime").RuntimeToolBinding = {
       !imConnection ||
       (!imUntrusted && imService?.allowsDevices(imConnection) === true);
     const computer =
-      computerGateway && allowDevices && canUseComputer(profile, actor)
+      hasConfiguredComputer() && allowDevices && canUseComputer(profile, actor)
         ? createHeadlessComputerTools({
             gateway: computerGateway,
             botId: scope.botId,
@@ -1566,7 +1574,9 @@ const runtimeToolBinding: import("./agents/dsh-runtime").RuntimeToolBinding = {
           components: componentStore,
           sandboxed: sandboxedStore,
           interactions: conversationInteractions,
-          ...(computerGateway && allowDevices && canUseComputer(profile, actor)
+          ...(hasConfiguredComputer() &&
+          allowDevices &&
+          canUseComputer(profile, actor)
             ? {
                 computer: {
                   gateway: computerGateway,
@@ -1805,36 +1815,37 @@ const deviceToolsFor = async (
       .catch(() => null);
     // device_upload / device_download：机器人自己的云端工作区（和聊天文件同一个通道）。
     const gateway = computerGateway;
-    const workspace = gateway?.writeBytes
-      ? {
-          write: async (path: string, bytes: Buffer) => {
-            if (!gateway.writeBytes) {
-              throw new Error("computerGateway.writeBytes is unavailable.");
-            }
-            await gateway.writeBytes(
-              botId,
-              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
-              { path, base64: bytes.toString("base64") },
-            );
-            return true;
-          },
-          read: async (path: string) => {
-            const file = await gateway.downloadFile(
-              botId,
-              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
-              { path },
-            );
-            if (file.bytes > 200 * 1024 * 1024) {
-              await file.body.cancel().catch(() => {});
-              throw new Error(`文件 ${path} 超过 200 MB。`);
-            }
-            return {
-              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
-              name: file.name,
-            };
-          },
-        }
-      : undefined;
+    const workspace =
+      hasConfiguredComputer() && gateway.writeBytes
+        ? {
+            write: async (path: string, bytes: Buffer) => {
+              if (!gateway.writeBytes) {
+                throw new Error("computerGateway.writeBytes is unavailable.");
+              }
+              await gateway.writeBytes(
+                botId,
+                { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+                { path, base64: bytes.toString("base64") },
+              );
+              return true;
+            },
+            read: async (path: string) => {
+              const file = await gateway.downloadFile(
+                botId,
+                { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+                { path },
+              );
+              if (file.bytes > 200 * 1024 * 1024) {
+                await file.body.cancel().catch(() => {});
+                throw new Error(`文件 ${path} 超过 200 MB。`);
+              }
+              return {
+                bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+                name: file.name,
+              };
+            },
+          }
+        : undefined;
     return deviceTools({
       store: deviceStore,
       hub: deviceHub,
@@ -1870,14 +1881,14 @@ await botAvatars.ensure();
 // 浏览器收藏夹（DESIGN §95）：每个用户一份，推给机器人浏览器的起始页。
 const browserBookmarks = createBrowserBookmarks(database, {
   agents: agentProfileStore,
-  ...(computerGateway?.startLinks
+  ...(computerGateway.startLinks
     ? {
-        pushStartLinks: (
+        pushStartLinks: async (
           botId: string,
           links: { title: string; url: string }[],
         ) => {
-          if (!computerGateway.startLinks) {
-            throw new Error("computerGateway.startLinks is unavailable.");
+          if (!hasConfiguredComputer() || !computerGateway.startLinks) {
+            return { ok: false, count: 0 };
           }
           return computerGateway.startLinks(botId, links);
         },
@@ -2015,7 +2026,7 @@ const chatFiles = createChatFiles(database, {
     (await agentProfileStore
       .get(await actorFor(owner), bot)
       .catch(() => null)) !== null,
-  ...(computerGateway?.writeBytes
+  ...(computerGateway.writeBytes
     ? {
         workspace: {
           write: async (
@@ -2024,8 +2035,8 @@ const chatFiles = createChatFiles(database, {
             path: string,
             bytes: Buffer,
           ) => {
-            if (!computerGateway.writeBytes) {
-              throw new Error("computerGateway.writeBytes is unavailable.");
+            if (!hasConfiguredComputer() || !computerGateway.writeBytes) {
+              return false;
             }
             await computerGateway.writeBytes(
               bot,
@@ -2035,6 +2046,9 @@ const chatFiles = createChatFiles(database, {
             return true;
           },
           read: async (owner: string, bot: string, path: string) => {
+            if (!hasConfiguredComputer()) {
+              throw new Error("未配置云端电脑执行节点。");
+            }
             const file = await computerGateway.downloadFile(
               bot,
               { id: owner, userId: owner, initiator: PERSON_INITIATOR },
@@ -2211,7 +2225,7 @@ const mediaPool = createMediaPoolService(database, {
         bytes: Buffer.from(found.bytes),
       };
     }
-    if (!computerGateway?.downloadFile) return null;
+    if (!hasConfiguredComputer() || !computerGateway.downloadFile) return null;
     const wsFile = await computerGateway
       .downloadFile(
         agentId,
@@ -2318,6 +2332,15 @@ const chisaSkills = createChisaSkills({
   versionStore: skillVersions,
 });
 let sharingService: SharingService | undefined;
+/** 微应用访问与执行归属判定：管理员可使用全站已批准微应用，普通用户仅限本人提交并经管理员审批通过的微应用。 */
+const canActorAccessApp = async (
+  actorId: string,
+  app: { createdBy: string },
+): Promise<boolean> => {
+  const actor = await actorFor(actorId);
+  if (actor.role === "admin") return true;
+  return app.createdBy === actor.id;
+};
 // 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
 // 当轮实际装载的工具名集合由 agent-resolver 在单次 resolveRegisteredAgents 作用域内传入，避免跨上下文串味。
 const loadPersonalMemoryForActor =
@@ -2339,6 +2362,11 @@ const loadPersonalMemoryForActor =
             availableToolNames ? { availableToolNames } : undefined,
           )
           .catch(() => ""),
+        buildActiveAppSkillsPrompt({
+          store: appPackageStore,
+          availableToolNames: availableToolNames ?? new Set<string>(),
+          canExposeApp: (app) => canActorAccessApp(ownerUserId, app),
+        }).catch(() => ""),
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
         chatFiles.guidance(ownerUserId, botId).catch(() => ""),
@@ -2492,9 +2520,13 @@ const loadToolsForActor =
         },
         offerMcpAdd,
       }),
-      // 内置 app-builder 3 工具（指南 / 静态预检 / 只入目录草稿不执行）+ 已审阅批准的沙箱微应用工具。
+      // 内置 app-builder 3 工具（指南 / 静态预检 / 只入目录草稿不执行）+ 已审阅批准的沙箱微应用工具（带归属/角色与摘要锚定治理及审计）。
       ...(!imUntrusted && !isPanelRefresh
-        ? createAppBuilderTools({ store: appPackageStore, actorId })
+        ? createAppBuilderTools({
+            store: appPackageStore,
+            actorId,
+            isAdmin: async () => (await actorFor(actorId)).role === "admin",
+          })
         : []),
       ...(!imUntrusted && !isPanelRefresh
         ? await createApprovedAppTools({
@@ -2502,6 +2534,75 @@ const loadToolsForActor =
             runner: appSandboxRunner,
             botId,
             actorId,
+            canExposeApp: (app) => canActorAccessApp(actorId, app),
+            authorize: async (call) => {
+              const detail = await appPackageStore
+                .get(call.appId)
+                .catch(() => null);
+              if (
+                !detail?.installed ||
+                !detail.enabled ||
+                detail.approvedDigest !== call.digest ||
+                detail.currentDigest !== call.digest
+              ) {
+                await recordAuditEvent(bootAuditStore, {
+                  eventType: "mcp.call_rejected",
+                  targetType: "app_package",
+                  targetId: `${call.appId}/${call.toolName}`,
+                  actorUserId: call.actorId,
+                  initiator,
+                  payload: {
+                    bot: call.botId,
+                    appId: call.appId,
+                    digest: call.digest,
+                    tool: call.toolName,
+                    reason: "digest_or_state_invalid",
+                  },
+                }).catch(() => {});
+                return {
+                  allowed: false,
+                  reason:
+                    "该微应用已被停用或发生版本变更，需经管理员重新审阅当前摘要后方可调用。",
+                };
+              }
+              const permitted = await canActorAccessApp(call.actorId, detail);
+              if (!permitted) {
+                await recordAuditEvent(bootAuditStore, {
+                  eventType: "mcp.call_rejected",
+                  targetType: "app_package",
+                  targetId: `${call.appId}/${call.toolName}`,
+                  actorUserId: call.actorId,
+                  initiator,
+                  payload: {
+                    bot: call.botId,
+                    appId: call.appId,
+                    digest: call.digest,
+                    tool: call.toolName,
+                    reason: "actor_not_authorized",
+                  },
+                }).catch(() => {});
+                return {
+                  allowed: false,
+                  reason:
+                    "当前账号无权调用此微应用（仅管理员或该微应用创建者可调用）。",
+                };
+              }
+              await recordAuditEvent(bootAuditStore, {
+                eventType: "mcp.call_succeeded",
+                targetType: "app_package",
+                targetId: `${call.appId}/${call.toolName}`,
+                actorUserId: call.actorId,
+                initiator,
+                payload: {
+                  bot: call.botId,
+                  appId: call.appId,
+                  digest: call.digest,
+                  tool: call.toolName,
+                  effect: call.effect,
+                },
+              }).catch(() => {});
+              return { allowed: true };
+            },
           })
         : []),
       // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
@@ -3173,7 +3274,7 @@ const governedTurnRunner = createTurnRunner({
   checkQuota: checkTurnQuota,
   buildAgentFor,
   toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-    if (!computerGateway) return [];
+    if (!hasConfiguredComputer()) return [];
     const actor = await actorFor(ownerUserId);
     const profile = await agentProfileStore.get(actor, agentId);
     if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -3201,7 +3302,7 @@ const workerComputerTools = async ({
   agentId: string;
   initiator: AuditInitiator;
 }) => {
-  if (!computerGateway) return [];
+  if (!hasConfiguredComputer()) return [];
   const actor = await actorFor(ownerUserId);
   const profile = await agentProfileStore.get(actor, agentId);
   if (!profile || !canUseComputer(profile, actor)) return [];
@@ -4341,7 +4442,7 @@ const responsibilityEngine: ResponsibilityEngine = createResponsibilityEngine({
         const actor = await actorFor(context.ownerUserId);
         // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
         const computer =
-          computerGateway &&
+          hasConfiguredComputer() &&
           canUseComputer(
             await agentProfileStore
               .get(actor, context.agentId)
@@ -4505,7 +4606,7 @@ const approvalComputerTools = async (
   if (!profile)
     throw new ApprovalRefusedError("That Bot is no longer available to you.");
   // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-  return computerGateway && canUseComputer(profile, actor)
+  return hasConfiguredComputer() && canUseComputer(profile, actor)
     ? createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -4838,7 +4939,7 @@ const wakeUpRunner = createWakeUpRunner({
     checkQuota: checkTurnQuota,
     buildAgentFor,
     toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-      if (!computerGateway) return [];
+      if (!hasConfiguredComputer()) return [];
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -4903,7 +5004,7 @@ const groupConversations = createGroupConversations({
     checkQuota: checkTurnQuota,
     buildAgentFor,
     toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-      if (!computerGateway) return [];
+      if (!hasConfiguredComputer()) return [];
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -6054,17 +6155,15 @@ const app = createApp(
         profilesDir: config.profilesDir,
         stopWorkers: async (agentId) => workerService?.stopForAgent(agentId),
         retirePanels: async (agentId) => livePanelService.retireBot(agentId),
-        ...(computerGateway
-          ? {
-              forgetComputer: (agentId: string, actor: { id: string }) =>
-                computerGateway.forgetComputer(
-                  agentId,
-                  // 不写 userId：内置管理员不一定是 users 表里的行（审计表外键），是谁记在内容里。
-                  { id: actor.id },
-                  "机器人被删除，它的浏览器（配置文件、登录状态、接管记录）随之删除",
-                ),
-            }
-          : {}),
+        forgetComputer: async (agentId: string, actor: { id: string }) => {
+          if (!hasConfiguredComputer()) return { cleared: false };
+          return computerGateway.forgetComputer(
+            agentId,
+            // 不写 userId：内置管理员不一定是 users 表里的行（审计表外键），是谁记在内容里。
+            { id: actor.id },
+            "机器人被删除，它的浏览器（配置文件、登录状态、接管记录）随之删除",
+          );
+        },
       }),
       activity: createActivityStore(database),
       wakeUps: wakeUpStore,
@@ -6119,45 +6218,41 @@ const app = createApp(
           gatewayMode: gatewaySecret ? "on" : "off",
           dshRequired: !!config.dshKernel,
           ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
-          ...(computerProvider
-            ? {
-                probeComputer: async () => {
-                  try {
-                    // list() proves the provider answers. Do NOT invent a fake bot id:
-                    // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
-                    const list = await computerProvider.list();
-                    let reachable = list.length === 0;
-                    let error: string | undefined;
-                    if (list[0]) {
-                      const status = await computerProvider.status(
-                        list[0].botId,
-                      );
-                      reachable = status.state === "ready";
-                      if (!reachable && status.reason)
-                        error = status.reason.slice(0, 200);
-                    }
-                    return {
-                      // Provider reachable (list worked). Per-bot ready is informational.
-                      ok: true as const,
-                      configured: true as const,
-                      provider: computerProvider.name,
-                      reachable,
-                      running: list.filter((c) => c.status === "running")
-                        .length,
-                      total: list.length,
-                      ...(error ? { error } : {}),
-                    };
-                  } catch (error) {
-                    return {
-                      ok: false,
-                      configured: true as const,
-                      provider: computerProvider.name,
-                      error: reasonWithoutStatement(error),
-                    };
-                  }
-                },
+          probeComputer: async () => {
+            if (!hasConfiguredComputer()) {
+              return { ok: null, configured: false as const };
+            }
+            try {
+              // list() proves the provider answers. Do NOT invent a fake bot id:
+              // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
+              const list = await computerProvider.list();
+              let reachable = list.length === 0;
+              let error: string | undefined;
+              if (list[0]) {
+                const status = await computerProvider.status(list[0].botId);
+                reachable = status.state === "ready";
+                if (!reachable && status.reason)
+                  error = status.reason.slice(0, 200);
               }
-            : {}),
+              return {
+                // Provider reachable (list worked). Per-bot ready is informational.
+                ok: true as const,
+                configured: true as const,
+                provider: computerProvider.name,
+                reachable,
+                running: list.filter((c) => c.status === "running").length,
+                total: list.length,
+                ...(error ? { error } : {}),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                configured: true as const,
+                provider: computerProvider.name,
+                error: reasonWithoutStatement(error),
+              };
+            }
+          },
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
@@ -6333,6 +6428,13 @@ const app = createApp(
           encryptionKey: config.keyEncryptionKey,
           publicUrl: config.publicUrl,
           appUrl: config.appUrl,
+          resolveSessionUserId: async (headers) => {
+            if (!auth) return DEV_ACTOR.id;
+            const session = await auth.api
+              .getSession({ headers })
+              .catch(() => null);
+            return session?.user?.id ?? null;
+          },
         }),
       ],
       [
@@ -6538,7 +6640,7 @@ serve<SocketData>({
           : undefined;
       let upstream: string;
       try {
-        const streamBase = computerGateway
+        const streamBase = hasConfiguredComputer()
           ? await computerGateway.locate(streamBotId)
           : undefined;
         if (!streamBase) {

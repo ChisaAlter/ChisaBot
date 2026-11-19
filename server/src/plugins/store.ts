@@ -2894,14 +2894,19 @@ export function createPluginStore(options: PluginStoreOptions) {
        */
       requireNotBrokered(input.id, existing);
 
-      if (
-        existing &&
-        existing.url !== input.url &&
-        (existing.credentialId || credentialId)
-      ) {
-        throw new CustomServerRefusedError(
-          `${input.id} is already here at a different address and holds a credential. Remove it and add it again, with the token the new address is meant to have.`,
-        );
+      if (existing && existing.url !== input.url) {
+        const hasEnhancementCreds =
+          (await options.enhancements?.hasCredentials(input.id)) ?? false;
+        if (existing.credentialId || credentialId || hasEnhancementCreds) {
+          throw new CustomServerRefusedError(
+            `${input.id} is already here at a different address and holds a credential. Remove it and add it again, with the token the new address is meant to have.`,
+          );
+        }
+        const prevOrigin = new URL(existing.url).origin;
+        const nextOrigin = new URL(input.url).origin;
+        if (prevOrigin !== nextOrigin) {
+          await options.enhancements?.clearCredentials(input.id, input.by);
+        }
       }
 
       if (credentialId) {
@@ -3756,6 +3761,9 @@ export function createPluginStore(options: PluginStoreOptions) {
         await transaction.delete(mcpServers).where(eq(mcpServers.id, serverId));
         return removed.sort((left, right) => left.ref.localeCompare(right.ref));
       });
+
+      // 同步清理 Wave 8 增强表中的加密 Header / OAuth2 凭据与快照，防止同 ID 重建到新域时继承残留凭据
+      await options.enhancements?.remove(serverId);
 
       await recordAuditEvent(auditStore, {
         eventType: "configuration.changed",

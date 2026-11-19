@@ -8,9 +8,12 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { CHISABOT_APP_FORMAT } from "../../shared/app-packages";
 import type { AppVariables } from "../src/auth/guards";
+import { seal } from "../src/auth/signed-value";
 import {
+  buildActiveAppSkillsPrompt,
   createAppBuilderRoutes,
   createAppBuilderTools,
+  createApprovedAppTools,
   resolveActiveAppSkills,
 } from "../src/plugins/app-builder";
 import {
@@ -339,7 +342,28 @@ describe("Wave 8 app-builder、包安全校验、digest 锚定与沙箱隔离", 
     expect(exportedStr).not.toContain("prod-prefix");
     expect(exported.packageDigest).toBe(v1Digest);
 
-    // 同版本号提交不同内容必须被不可变版本栈拒绝
+    // 普通跨用户与非管理员覆盖已批准线上微应用均必须被 403 硬拒绝（防跨租户 DoS / 代码投毒）
+    await expect(
+      store.submitDraft(
+        makeSampleAppPackage({ version: "1.0.1" }),
+        "bob",
+        { isAdmin: false },
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "forbidden_overwrite" });
+    await expect(
+      store.submitDraft(
+        makeSampleAppPackage({ version: "1.0.1" }),
+        "alice",
+        { isAdmin: false },
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden_installed_overwrite",
+    });
+    // 原线上已批准应用必须保持启用，未被停用
+    expect((await store.get("sandbox-probe")).enabled).toBe(true);
+
+    // 管理员同版本号提交不同内容必须被不可变版本栈拒绝
     await expect(
       store.submitDraft(
         makeSampleAppPackage({
@@ -352,11 +376,12 @@ describe("Wave 8 app-builder、包安全校验、digest 锚定与沙箱隔离", 
             { path: "skills/SKILL.md", encoding: "utf8", content: "# v1 mod" },
           ],
         }),
-        "alice",
+        "admin",
+        { isAdmin: true },
       ),
     ).rejects.toMatchObject({ status: 409, code: "immutable_version_conflict" });
 
-    // 提交 v2 新版：绝不静默执行！旧 grant 仍锚定在 v1Digest，v2 处于待重审停用态
+    // 管理员提交 v2 新版：绝不静默执行！旧 grant 仍锚定在 v1Digest，v2 处于待重审停用态
     const v2 = await store.submitDraft(
       makeSampleAppPackage({
         version: "1.1.0",
@@ -369,7 +394,8 @@ describe("Wave 8 app-builder、包安全校验、digest 锚定与沙箱隔离", 
           { path: "skills/SKILL.md", encoding: "utf8", content: "# v1.1.0" },
         ],
       }),
-      "alice",
+      "admin",
+      { isAdmin: true },
     );
     const v2Digest = v2.summary.currentDigest;
     expect(v2Digest).not.toBe(v1Digest);
@@ -632,5 +658,400 @@ describe("Wave 8 app-builder、包安全校验、digest 锚定与沙箱隔离", 
     expect(await exportRes.text()).not.toContain("route-secret-123");
 
     await runner.shutdown();
+  });
+
+  test("审查回归：base64 密文扫描、HOMEDRIVE/大小写 env 隔离、OAuth 刷新防 Lost Update、回调 client_secret & Login CSRF、路由归属隔离", async () => {
+    // 1. base64 编码文本文件内嵌硬编码密钥必须被检出
+    const base64SecretCheck = validateChisaAppPackage(
+      makeSampleAppPackage({
+        files: [
+          {
+            path: "index.mjs",
+            encoding: "base64",
+            content: Buffer.from(
+              `${SANDBOX_PROBE_ENTRY_JS}\n// token = sk-proj-abcdefghijklmnopqrstuvwxyz123456\n`,
+              "utf8",
+            ).toString("base64"),
+          },
+          { path: "skills/SKILL.md", encoding: "utf8", content: "# ok" },
+        ],
+      }),
+    );
+    expect(base64SecretCheck.valid).toBe(false);
+    expect(
+      base64SecretCheck.errors.some((e) => e.code === "embedded_secret"),
+    ).toBe(true);
+
+    // 2. HOMEDRIVE / HOMEPATH 被 RESERVED_ENV_EXACT 拦截，buildSandboxedAppEnv 大小写无关过滤
+    const homedriveCheck = validateChisaAppPackage(
+      makeSampleAppPackage({
+        configSchema: [
+          { key: "HOMEDRIVE", name: "drive", secret: false, required: false },
+        ],
+      }),
+    );
+    expect(homedriveCheck.valid).toBe(false);
+    expect(
+      homedriveCheck.errors.some((e) => e.code === "reserved_config_key"),
+    ).toBe(true);
+
+    // 3. OAuth 刷新期间并发 disable() 不得被 Lost Update 覆盖复活，且拒绝含 CRLF 的 access_token
+    let nowMs = Date.parse("2026-11-19T12:00:00Z");
+    let returnCrlfToken = false;
+    let storeRef: ReturnType<typeof createAppPackageStore> | null = null;
+    const store = createAppPackageStore({
+      storage: createMemoryAppPackageStorage(),
+      encryptionKey: TEST_KEY,
+      now: () => nowMs,
+      refreshFetch: async () => {
+        if (!returnCrlfToken && storeRef) {
+          // 模拟刷新网络期间管理员并发停用该应用
+          await storeRef.disable("sandbox-probe", "admin");
+        }
+        return new Response(
+          JSON.stringify({
+            access_token: returnCrlfToken
+              ? "bad-token\r\nX-Injected: 1"
+              : "refreshed-safe-token",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    storeRef = store;
+
+    const draft = await store.submitDraft(makeSampleAppPackage(), "alice");
+    await store.installAndApprove(
+      "sandbox-probe",
+      draft.summary.currentDigest,
+      "admin",
+    );
+    await store.configure(
+      "sandbox-probe",
+      {
+        OAUTH_CLIENT_ID: "cid-1",
+        OAUTH_CLIENT_SECRET: "csecret-xyz",
+      },
+      "admin",
+    );
+    await store.setOAuthTokens(
+      "sandbox-probe",
+      {
+        accessToken: "old-token",
+        refreshToken: "rt-1",
+        expiresAt: new Date(nowMs + 30_000).toISOString(),
+      },
+      "admin",
+    );
+
+    const refreshedRes = await store.resolveAuthHeaders("sandbox-probe");
+    expect(refreshedRes.refreshed).toBe(true);
+    expect(refreshedRes.headers.Authorization).toBe(
+      "Bearer refreshed-safe-token",
+    );
+    // 关键：刷新后不得复活已被管理员并发停用的应用！
+    const afterDisable = await store.get("sandbox-probe");
+    expect(afterDisable.enabled).toBe(false);
+    expect(afterDisable.status).toBe("disabled");
+
+    // 含 CRLF 的刷新令牌不得写入
+    returnCrlfToken = true;
+    nowMs += 2 * 60 * 60_000;
+    const crlfRes = await store.resolveAuthHeaders("sandbox-probe");
+    expect(crlfRes.refreshed).toBe(false);
+
+    // 4. /api/apps/* 读权限隔离 + /oauth/callback 附带 client_secret 与 Login CSRF 校验
+    const runner = createAppSandboxRunner({ store });
+    let currentActor: {
+      id: string;
+      email: string;
+      role: "admin" | "user";
+      name: string;
+    } = {
+      id: "bob",
+      email: "bob@example.com",
+      role: "user",
+      name: "Bob",
+    };
+    let currentSessionUserId: string | null = "attacker-user";
+    let exchangedBody = "";
+    const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.set("actor", currentActor);
+      await next();
+    };
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route(
+      "/api/apps",
+      createAppBuilderRoutes({
+        store,
+        runner,
+        requireUser,
+        encryptionKey: TEST_KEY,
+        publicUrl: "https://chisa.example.com",
+        resolveSessionUserId: async () => currentSessionUserId,
+        oauthTokenFetch: async (_url, init) => {
+          exchangedBody = String(init.body ?? "");
+          return new Response(
+            JSON.stringify({
+              access_token: "oauth-cb-token",
+              refresh_token: "oauth-cb-rt",
+              expires_in: 3600,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        },
+      }),
+    );
+
+    // 非创建者普通用户不可读源码、历史或导出
+    expect((await app.request("/api/apps/sandbox-probe")).status).toBe(403);
+    expect((await app.request("/api/apps/sandbox-probe/revisions")).status).toBe(
+      403,
+    );
+    expect((await app.request("/api/apps/sandbox-probe/export")).status).toBe(
+      403,
+    );
+    const bobList = (await (await app.request("/api/apps")).json()) as {
+      apps: unknown[];
+    };
+    expect(bobList.apps).toHaveLength(0);
+
+    // 创建者本人可读
+    currentActor = {
+      id: "alice",
+      email: "alice@example.com",
+      role: "user",
+      name: "Alice",
+    };
+    expect((await app.request("/api/apps/sandbox-probe")).status).toBe(200);
+
+    // OAuth 回调：Login CSRF（sessionUserId !== state.userId）必须被拒
+    const sealedState = await seal(
+      JSON.stringify({
+        appId: "sandbox-probe",
+        userId: "admin-1",
+        digest: draft.summary.currentDigest,
+        verifier: "pkce-verifier-123",
+        exp: Date.now() + 60_000,
+      }),
+      TEST_KEY,
+      "chisabot-app-oauth",
+    );
+    const csrfRes = await app.request(
+      `/api/apps/oauth/callback?code=abc&state=${encodeURIComponent(sealedState)}`,
+    );
+    expect(csrfRes.status).toBe(302);
+    expect(csrfRes.headers.get("location")).toContain("app_oauth=failed");
+    expect(exchangedBody).toBe("");
+
+    // 会话一致时换码必须附带解密后的 client_secret
+    currentSessionUserId = "admin-1";
+    const okCbRes = await app.request(
+      `/api/apps/oauth/callback?code=abc&state=${encodeURIComponent(sealedState)}`,
+    );
+    expect(okCbRes.status).toBe(302);
+    expect(okCbRes.headers.get("location")).toContain("app_oauth=connected");
+    expect(exchangedBody).toContain("client_secret=csecret-xyz");
+    expect(exchangedBody).toContain("code_verifier=pkce-verifier-123");
+
+    await runner.shutdown();
+  });
+
+  test("审查回归：沙箱子进程崩溃快速失败不挂死、stdout 无换行洪泛上限保护、AbortError 不误判超时、真实 inputSchema 与技能正文联动", async () => {
+    const tempParent = await mkdtemp(join(tmpdir(), "chisabot-wave8-reg-"));
+    cleanupPaths.push(tempParent);
+
+    const CRASH_AND_SCHEMA_ENTRY = `import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'initialize') {
+    send({
+      jsonrpc: '2.0',
+      id: msg.id,
+      result: {
+        protocolVersion: '2025-03-26',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'crash-probe', version: '1.0.0' },
+      },
+    });
+    return;
+  }
+  if (msg.method === 'tools/list') {
+    send({
+      jsonrpc: '2.0',
+      id: msg.id,
+      result: {
+        tools: [
+          {
+            name: 'echo_typed',
+            description: 'Requires query string',
+            inputSchema: {
+              type: 'object',
+              properties: { query: { type: 'string' } },
+              required: ['query'],
+            },
+          },
+          {
+            name: 'crash_now',
+            description: 'Crash immediately',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'flood_stdout',
+            description: 'Write unbounded bytes without newline',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'slow_op',
+            description: 'Wait before replying',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+      },
+    });
+    return;
+  }
+  if (msg.method === 'tools/call') {
+    const name = msg.params?.name;
+    if (name === 'echo_typed') {
+      send({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: { content: [{ type: 'text', text: 'q:' + String(msg.params?.arguments?.query ?? '') }] },
+      });
+      return;
+    }
+    if (name === 'crash_now') {
+      process.exit(1);
+    }
+    if (name === 'flood_stdout') {
+      process.stdout.write('A'.repeat(20 * 1024));
+      return;
+    }
+    if (name === 'slow_op') {
+      setTimeout(() => {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: { content: [{ type: 'text', text: 'late' }] },
+        });
+      }, 5000);
+    }
+  }
+});
+`;
+
+    const store = createAppPackageStore({
+      storage: createMemoryAppPackageStorage(),
+      encryptionKey: TEST_KEY,
+    });
+    const pkg = makeSampleAppPackage({
+      id: "crash-probe",
+      runtime: {
+        kind: "node-stdio",
+        entry: "index.mjs",
+        memoryLimitMb: 64,
+        timeoutMs: 10_000,
+      },
+      skills: [
+        {
+          id: "typed-skill",
+          path: "skills/SKILL.md",
+          name: "类型化技能",
+          description: "依赖 echo_typed 工具",
+          requiresTools: ["echo_typed"],
+        },
+      ],
+      files: [
+        { path: "index.mjs", encoding: "utf8", content: CRASH_AND_SCHEMA_ENTRY },
+        {
+          path: "skills/SKILL.md",
+          encoding: "utf8",
+          content: "# Typed Skill\nAlways pass query.",
+        },
+      ],
+    });
+    const sub = await store.submitDraft(pkg, "admin", { isAdmin: true });
+    await store.installAndApprove(
+      "crash-probe",
+      sub.summary.currentDigest,
+      "admin",
+    );
+
+    const runner = createAppSandboxRunner({
+      store,
+      tempRootDir: tempParent,
+      maxStdoutBufferBytes: 8 * 1024,
+    });
+
+    try {
+      // 1. createApprovedAppTools 保留真实 inputSchema 且支持 canExposeApp 隔离
+      const hiddenTools = await createApprovedAppTools({
+        store,
+        runner,
+        botId: "bot-1",
+        actorId: "other-user",
+        canExposeApp: () => false,
+      });
+      expect(hiddenTools).toHaveLength(0);
+
+      const tools = await createApprovedAppTools({
+        store,
+        runner,
+        botId: "bot-1",
+        actorId: "admin",
+      });
+      const echoTool = tools.find((t) => t.name === "app__crash_probe__echo_typed");
+      expect(echoTool).toBeDefined();
+      // 真实 schema：缺少 required query 必须校验失败，传入 string 校验通过
+      expect(echoTool?.parameters.safeParse({}).success).toBe(false);
+      expect(echoTool?.parameters.safeParse({ query: "ok" }).success).toBe(true);
+
+      // buildActiveAppSkillsPrompt 动态联动
+      const promptWithoutTool = await buildActiveAppSkillsPrompt({
+        store,
+        availableToolNames: new Set(["unrelated_tool"]),
+      });
+      expect(promptWithoutTool).toBe("");
+      const promptWithTool = await buildActiveAppSkillsPrompt({
+        store,
+        availableToolNames: new Set(["app__crash_probe__echo_typed"]),
+      });
+      expect(promptWithTool).toContain("Always pass query.");
+
+      // 2. 子进程中途崩溃必须因串联 SDK transport.onclose 而在 < 3 秒内快速失败（而非挂死至 10s 超时）
+      const t0 = Date.now();
+      const crashRes = await runner.callTool("crash-probe", "crash_now", {});
+      const elapsed = Date.now() - t0;
+      expect(crashRes.isError).toBe(true);
+      expect(crashRes.text).toContain("不要自动重试");
+      expect(elapsed).toBeLessThan(4_000);
+
+      // 3. 子进程 stdout 无换行洪泛超过 8 KiB 上限立即被强杀并报错（防 OOM）
+      const floodRes = await runner.callTool("crash-probe", "flood_stdout", {});
+      expect(floodRes.isError).toBe(true);
+
+      // 4. 调用方主动 AbortError 必须原样抛出，不误判为超时防重试提示
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 50);
+      let caughtAbort: unknown = null;
+      try {
+        await runner.callTool("crash-probe", "slow_op", {}, ac.signal);
+      } catch (err) {
+        caughtAbort = err;
+      }
+      expect(caughtAbort).not.toBeNull();
+      expect(ac.signal.aborted).toBe(true);
+    } finally {
+      await runner.shutdown();
+    }
   });
 });

@@ -157,7 +157,8 @@ export class HandoffRequestError extends Error {
 export type ComputerTransportOptions = {
   /** 支持静态令牌或热切换动态令牌读取函数。 */
   token?: string | (() => string | undefined);
-  allowPrivateHosts?: boolean;
+  /** 支持静态布尔或热切换节点动态私网开关。 */
+  allowPrivateHosts?: boolean | (() => boolean | undefined);
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
@@ -368,8 +369,12 @@ export function createComputerTransport(
     url: string,
     toolCallId?: string,
   ): Promise<NavigateResult> {
+    const allowPrivateHosts =
+      typeof options.allowPrivateHosts === "function"
+        ? options.allowPrivateHosts()
+        : options.allowPrivateHosts;
     const verdict = checkNavigationTarget(url, {
-      allowPrivateHosts: options.allowPrivateHosts,
+      allowPrivateHosts,
     });
     if (!verdict.allowed) {
       throw new NavigationRefusedError(verdict.reason);
