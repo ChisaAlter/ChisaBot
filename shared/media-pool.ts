@@ -157,6 +157,12 @@ const FORBIDDEN_PARAM_KEYS = new Set([
   "headers",
   "baseUrl",
   "base_url",
+  "model",
+  "prompt",
+  "image",
+  "image[]",
+  "n",
+  "size",
 ]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

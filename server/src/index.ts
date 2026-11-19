@@ -2113,15 +2113,38 @@ const mediaPool = createMediaPoolService(database, {
     const wsFile = await computerGateway
       .downloadFile(
         agentId,
-        { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+        {
+          id: owner,
+          userId: owner,
+          initiator: opts?.initiator ?? PERSON_INITIATOR,
+        },
         { path: ref },
       )
       .catch(() => null);
-    if (!wsFile || wsFile.bytes > 20 * 1024 * 1024) {
+    const MAX_WORKSPACE_MEDIA_BYTES = 20 * 1024 * 1024;
+    if (!wsFile || wsFile.bytes > MAX_WORKSPACE_MEDIA_BYTES) {
       if (wsFile) await wsFile.body.cancel().catch(() => {});
       return null;
     }
-    const wsBytes = Buffer.from(await new Response(wsFile.body).arrayBuffer());
+    const reader = wsFile.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_WORKSPACE_MEDIA_BYTES) {
+          await reader.cancel().catch(() => {});
+          return null;
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const wsBytes = Buffer.concat(chunks, totalBytes);
     const lower = wsFile.name.toLowerCase();
     const mimeType = lower.endsWith(".mp4")
       ? "video/mp4"
@@ -2294,9 +2317,9 @@ const loadToolsForActor =
       ...(isPanelRefresh
         ? []
         : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
-      ...(isPanelRefresh
+      ...(isPanelRefresh || stripOwnerPrivate
         ? []
-        : await mediaPool.tools(actorId, botId).catch(() => [])),
+        : await mediaPool.tools(actorId, botId, initiator).catch(() => [])),
       ...(!isPanelRefresh && (await speechService.isTtsReady())
         ? speechService.tools({ actorId, agentId: botId })
         : []),
@@ -5627,10 +5650,13 @@ const app = createApp(
             .tools(actorId, botId, initiator ?? undefined)
             .catch(() => [])
         : []),
-      ...(/^(media_pool_list$|image_generate_multi$|video_generate$|video_inspect$)/.test(
+      ...(!imUntrusted &&
+      /^(media_pool_list$|image_generate_multi$|video_generate$|video_inspect$)/.test(
         name,
       )
-        ? await mediaPool.tools(actorId, botId).catch(() => [])
+        ? await mediaPool
+            .tools(actorId, botId, initiator ?? undefined)
+            .catch(() => [])
         : []),
       ...(!imUntrusted && name === "session_search"
         ? createSessionSearchTools({

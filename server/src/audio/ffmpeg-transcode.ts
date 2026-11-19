@@ -2,14 +2,17 @@
  * FFmpeg 统一音频转码与视频关键帧安全抽样封装。
  *
  * 安全红线：
- * - 强制 `-protocol_whitelist file,pipe`：阻断输入流中暗藏的 http/https/concat/hls 协议 SSRF 与任意文件读取；
+ * - 纯管道模式强制 `-protocol_whitelist pipe`（绝不放行 `file` / `http` / `https` / `concat` / `hls`）：
+ *   彻底阻断伪装成音视频的 `ffconcat` / `#EXTM3U` 播放列表触发宿主机 LFI 或 SSRF；
+ * - 入口前置拦截播放列表文本头与输入字节硬上限（默认 20 MiB）；
  * - 仅走 `pipe:0` -> `pipe:1` 内存管道，零临时文件残留；
- * - 严格超时熔断与 32 MiB 输出字节上限，防解压/转码炸弹耗尽内存；
+ * - stderr 持续排空丢弃防止写满管道死锁；严格超时强杀 + 32 MiB 输出字节上限 + `finally` 兜底清理；
  * - 本机未安装 `ffmpeg`（ENOENT）或转码异常时优雅降级返回原始字节，绝不中断业务主链路。
  */
 
-export const FFMPEG_PROTOCOL_WHITELIST = "file,pipe";
+export const FFMPEG_PROTOCOL_WHITELIST = "pipe";
 export const DEFAULT_FFMPEG_TIMEOUT_MS = 15_000;
+export const MAX_FFMPEG_INPUT_BYTES = 20 * 1024 * 1024;
 export const MAX_TRANSCODED_WAV_BYTES = 32 * 1024 * 1024;
 export const MAX_KEYFRAME_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -43,12 +46,46 @@ export type FfmpegSpawnFn = (
 export type TranscodeToWavOptions = {
   ffmpegPath?: string;
   timeoutMs?: number;
+  maxInputBytes?: number;
   maxOutputBytes?: number;
   /** 仅用于单测注入假进程，生产默认走 `Bun.spawn`。 */
   spawn?: FfmpegSpawnFn;
 };
 
-/** 构造统一的 16kHz 单声道 WAV 转码参数（强制协议白名单）。 */
+const PLAYLIST_HEADER_RE =
+  /^(?:#extm3u\b|#ext-x-[a-z0-9-]+|ffconcat\b|\[playlist\]|file:\/\/|https?:\/\/)/i;
+
+/**
+ * 识别并拒绝可能诱导 FFmpeg demuxer 发起本地文件读取或网络请求的文本播放列表头（ffconcat / HLS M3U8 / PLS）。
+ */
+export function isDangerousPlaylistHeader(inputBytes: Uint8Array): boolean {
+  if (inputBytes.byteLength === 0) return false;
+  let start = 0;
+  // 跳过可选 UTF-8 BOM
+  if (
+    inputBytes.byteLength >= 3 &&
+    inputBytes[0] === 0xef &&
+    inputBytes[1] === 0xbb &&
+    inputBytes[2] === 0xbf
+  ) {
+    start = 3;
+  }
+  const head = inputBytes.subarray(
+    start,
+    Math.min(inputBytes.byteLength, start + 256),
+  );
+  // 含 NUL 字节说明为二进制容器，不是纯文本播放列表
+  for (let i = 0; i < head.length; i += 1) {
+    if (head[i] === 0) return false;
+  }
+  const text = new TextDecoder("utf-8", { fatal: false })
+    .decode(head)
+    .trimStart();
+  if (!text) return false;
+  return PLAYLIST_HEADER_RE.test(text);
+}
+
+/** 构造统一的 16kHz 单声道 WAV 转码参数（强制纯管道协议白名单）。 */
 export function buildFfmpegWavArgs(): string[] {
   return [
     "-hide_banner",
@@ -68,7 +105,7 @@ export function buildFfmpegWavArgs(): string[] {
   ];
 }
 
-/** 构造安全视频等距关键帧抽样参数（单路 MJPEG 流经 pipe:1 输出，强制协议白名单）。 */
+/** 构造安全视频等距关键帧抽样参数（单路 MJPEG 流经 pipe:1 输出，强制纯管道协议白名单）。 */
 export function buildFfmpegKeyframeArgs(frameCount: number): string[] {
   const safeCount = Math.min(Math.max(Math.trunc(frameCount) || 4, 1), 8);
   return [
@@ -132,15 +169,44 @@ async function readBoundedStream(
   return { bytes: merged, exceeded: false };
 }
 
+/** 持续消费并丢弃 stderr 直到流关闭，防止损坏大文件大量告警写满 OS 管道导致子进程死锁。 */
+async function drainStreamSilently(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+): Promise<void> {
+  if (!stream) return;
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  } catch {
+    // 进程退出或被强杀时忽略流中断
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function runFfmpegPipe(
   inputBytes: Uint8Array,
   args: string[],
   options: TranscodeToWavOptions,
   defaultMaxBytes: number,
 ): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; reason: string }> {
+  const maxInputBytes = Math.max(
+    1024,
+    options.maxInputBytes ?? MAX_FFMPEG_INPUT_BYTES,
+  );
+  if (inputBytes.byteLength > maxInputBytes) {
+    return { ok: false, reason: "input-too-large" };
+  }
+  if (isDangerousPlaylistHeader(inputBytes)) {
+    return { ok: false, reason: "playlist-input-rejected" };
+  }
+
   const ffmpegPath = options.ffmpegPath?.trim() || "ffmpeg";
   const timeoutMs = Math.max(
-    500,
+    50,
     options.timeoutMs ?? DEFAULT_FFMPEG_TIMEOUT_MS,
   );
   const maxOutputBytes = Math.max(
@@ -162,6 +228,7 @@ async function runFfmpegPipe(
 
   let timedOut = false;
   let exceeded = false;
+  let processExited = false;
   const killSafely = () => {
     try {
       proc.kill("SIGKILL");
@@ -169,10 +236,15 @@ async function runFfmpegPipe(
       // 进程可能已退出
     }
   };
-  const timer = setTimeout(() => {
-    timedOut = true;
-    killSafely();
-  }, timeoutMs);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutRace = new Promise<{ kind: "timeout" }>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      killSafely();
+      resolve({ kind: "timeout" });
+    }, timeoutMs);
+  });
 
   try {
     const writeInput = (async () => {
@@ -190,18 +262,31 @@ async function runFfmpegPipe(
       exceeded = true;
       killSafely();
     });
-    const drainStderr = readBoundedStream(proc.stderr, 32 * 1024, () => {});
+    const drainStderr = drainStreamSilently(proc.stderr);
+    const waitExited = proc.exited
+      .then((code) => {
+        processExited = true;
+        return code;
+      })
+      .catch(() => {
+        processExited = true;
+        return -1;
+      });
 
-    const [, out, , exitCode] = await Promise.all([
-      writeInput,
-      readStdout,
-      drainStderr,
-      proc.exited.catch(() => -1),
+    const outcome = await Promise.race([
+      Promise.all([writeInput, readStdout, drainStderr, waitExited]).then(
+        ([, out, , exitCode]) => ({ kind: "done" as const, out, exitCode }),
+      ),
+      timeoutRace,
     ]);
 
-    if (timedOut) return { ok: false, reason: "timeout" };
-    if (exceeded || out.exceeded)
+    if (outcome.kind === "timeout" || timedOut) {
+      return { ok: false, reason: "timeout" };
+    }
+    const { out, exitCode } = outcome;
+    if (exceeded || out.exceeded) {
       return { ok: false, reason: "output-too-large" };
+    }
     if (exitCode !== 0 || out.bytes.byteLength === 0) {
       return { ok: false, reason: `ffmpeg-exit-${exitCode}` };
     }
@@ -210,13 +295,14 @@ async function runFfmpegPipe(
     killSafely();
     return { ok: false, reason: "ffmpeg-error" };
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
+    if (!processExited) killSafely();
   }
 }
 
 /**
  * 将任意音频字节转码为 16kHz 单声道 WAV。
- * 若本机未安装 ffmpeg、超时、输出超 32 MiB 或转码失败，则优雅降级返回原始字节且不抛错。
+ * 若本机未安装 ffmpeg、输入非法/超限、超时、输出超 32 MiB 或转码失败，则优雅降级返回原始字节且不抛错。
  */
 export async function transcodeTo16kMonoWav(
   inputBytes: Uint8Array,
@@ -272,7 +358,7 @@ export function splitMjpegFrames(stream: Uint8Array): Buffer[] {
 }
 
 /**
- * 使用 FFmpeg（严格 `-protocol_whitelist file,pipe`）从视频中抽取最多 `frameCount` 张关键帧 JPEG。
+ * 使用 FFmpeg（严格 `-protocol_whitelist pipe`）从视频中抽取最多 `frameCount` 张关键帧 JPEG。
  * 本机无 ffmpeg 或抽帧失败时优雅返回空数组。
  */
 export async function extractVideoKeyframes(

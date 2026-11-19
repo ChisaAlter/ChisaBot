@@ -131,6 +131,8 @@ function unwrap(result: unknown): string | null {
   return result;
 }
 
+const SAFE_CHAT_FILE_URL_RE = /^\/api\/chat-files\/[A-Za-z0-9_-]+$/;
+
 /** 工具结果里带的文件清单（网页画卡用）。解析失败返回空数组。 */
 export function filesFromToolResult(raw: unknown): ChatFileView[] {
   const result = unwrap(raw);
@@ -148,7 +150,7 @@ export function filesFromToolResult(raw: unknown): ChatFileView[] {
             typeof f === "object" &&
             typeof (f as ChatFileView).id === "string" &&
             typeof (f as ChatFileView).url === "string" &&
-            (f as ChatFileView).url.startsWith(CHAT_FILE_URL_PREFIX),
+            SAFE_CHAT_FILE_URL_RE.test((f as ChatFileView).url),
         )
       : [];
   } catch {

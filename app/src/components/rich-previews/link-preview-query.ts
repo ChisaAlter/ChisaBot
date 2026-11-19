@@ -97,7 +97,10 @@ export function rememberedPreview(url: string): {
     typeof hit.data?.title !== "string"
   )
     return {};
-  return { initialData: hit.data, initialDataUpdatedAt: hit.at };
+  return {
+    initialData: sanitizeLinkPreview(hit.data),
+    initialDataUpdatedAt: hit.at,
+  };
 }
 
 /**

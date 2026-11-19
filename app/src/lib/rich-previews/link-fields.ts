@@ -251,10 +251,11 @@ export function mergeLinkFields(
       domain,
   );
   const givenImage = usableImage(given.image);
-  const previewImage =
-    (preview && preview.imageKind !== "none"
-      ? usableImage(preview.image)
-      : null) ?? usableImage(preview?.thumbnail);
+  const previewImage = antiBotBlocked
+    ? null
+    : ((preview && preview.imageKind !== "none"
+        ? usableImage(preview.image)
+        : null) ?? usableImage(preview?.thumbnail));
   const image = givenImage ?? previewImage;
   const imageFallback =
     givenImage && previewImage && previewImage !== givenImage
@@ -292,7 +293,10 @@ export function mergeLinkFields(
     extra,
     domain,
     favicon: usableImage(preview?.favicon),
-    description: text(given.description) || text(preview?.description) || null,
+    description:
+      text(given.description) ||
+      (antiBotBlocked ? "" : text(preview?.description)) ||
+      null,
     degraded,
     kind: preview?.kind === "video" ? "video" : null,
   };

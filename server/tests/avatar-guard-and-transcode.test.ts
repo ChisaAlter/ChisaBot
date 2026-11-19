@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildFfmpegKeyframeArgs,
   buildFfmpegWavArgs,
   FFMPEG_PROTOCOL_WHITELIST,
   type FfmpegSpawnFn,
+  isDangerousPlaylistHeader,
   transcodeTo16kMonoWav,
 } from "../src/audio/ffmpeg-transcode";
 import { createSpeechService } from "../src/audio/speech-service";
@@ -196,23 +198,70 @@ describe("头像二进制防像素炸弹校验（PNG / JPEG / WebP）", () => {
 });
 
 describe("FFmpeg 安全音频转码与 SpeechService 前置集成", () => {
-  test("buildFfmpegWavArgs 强制携带 -protocol_whitelist file,pipe 与 16kHz 单声道 WAV 参数", () => {
-    const args = buildFfmpegWavArgs();
-    const wlIdx = args.indexOf("-protocol_whitelist");
-    expect(wlIdx).toBeGreaterThanOrEqual(0);
-    expect(args[wlIdx + 1]).toBe(FFMPEG_PROTOCOL_WHITELIST);
-    expect(args).toContain("pipe:0");
-    expect(args).toContain("pipe:1");
-    expect(args).toContain("16000");
-    expect(args).toContain("wav");
+  test("buildFfmpegWavArgs 与 buildFfmpegKeyframeArgs 强制纯管道 -protocol_whitelist pipe（不含 file）", () => {
+    expect(FFMPEG_PROTOCOL_WHITELIST).toBe("pipe");
+    for (const args of [buildFfmpegWavArgs(), buildFfmpegKeyframeArgs(4)]) {
+      const wlIdx = args.indexOf("-protocol_whitelist");
+      expect(wlIdx).toBeGreaterThanOrEqual(0);
+      expect(args[wlIdx + 1]).toBe("pipe");
+      expect(args).not.toContain("file,pipe");
+      expect(args).toContain("pipe:0");
+      expect(args).toContain("pipe:1");
+    }
+    const wavArgs = buildFfmpegWavArgs();
+    expect(wavArgs).toContain("16000");
+    expect(wavArgs).toContain("wav");
   });
 
-  test("成功转码返回 WAV 字节；输出超限、超时或本机无 ffmpeg 均优雅降级返回原始字节", async () => {
+  test("拒绝 ffconcat / #EXTM3U 播放列表头与超限输入（零子进程调用）", async () => {
+    let spawned = false;
+    const neverSpawn: FfmpegSpawnFn = () => {
+      spawned = true;
+      throw new Error("should not spawn");
+    };
+
+    const ffconcat = new TextEncoder().encode(
+      "ffconcat version 1.0\nfile '/etc/passwd'\n",
+    );
+    expect(isDangerousPlaylistHeader(ffconcat)).toBe(true);
+    const res1 = await transcodeTo16kMonoWav(ffconcat, { spawn: neverSpawn });
+    expect(res1.transcoded).toBe(false);
+    expect(res1.reason).toBe("playlist-input-rejected");
+    expect(spawned).toBe(false);
+
+    const hlsPlaylist = new TextEncoder().encode(
+      "\uFEFF#EXTM3U\n#EXT-X-TARGETDURATION:10\nfile:///etc/hosts\n",
+    );
+    expect(isDangerousPlaylistHeader(hlsPlaylist)).toBe(true);
+    const res2 = await transcodeTo16kMonoWav(hlsPlaylist, {
+      spawn: neverSpawn,
+    });
+    expect(res2.transcoded).toBe(false);
+    expect(res2.reason).toBe("playlist-input-rejected");
+    expect(spawned).toBe(false);
+
+    // 正常 Ogg 二进制不误拦
+    const ogg = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]);
+    expect(isDangerousPlaylistHeader(ogg)).toBe(false);
+
+    // 输入超过 maxInputBytes 拦截
+    const tooBig = new Uint8Array(2048);
+    const res3 = await transcodeTo16kMonoWav(tooBig, {
+      maxInputBytes: 1024,
+      spawn: neverSpawn,
+    });
+    expect(res3.transcoded).toBe(false);
+    expect(res3.reason).toBe("input-too-large");
+    expect(spawned).toBe(false);
+  });
+
+  test("成功转码返回 WAV 字节；输出超限、真实超时强杀、大 stderr 与无 ffmpeg 均优雅处理", async () => {
     const original = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 0x01, 0x02]);
     const fakeWav = new TextEncoder().encode("RIFF\x24\x00\x00\x00WAVEfmt ");
 
-    // 1. 正常转码
+    // 1. 正常转码（含超 64 KiB 大量 stderr 持续排空不阻塞）
     let capturedCmd: string[] = [];
+    let stderrChunksRead = 0;
     const okSpawn: FfmpegSpawnFn = (cmd) => {
       capturedCmd = cmd;
       return {
@@ -224,8 +273,13 @@ describe("FFmpeg 安全音频转码与 SpeechService 前置集成", () => {
           },
         }),
         stderr: new ReadableStream({
-          start(controller) {
-            controller.close();
+          pull(controller) {
+            if (stderrChunksRead < 8) {
+              stderrChunksRead += 1;
+              controller.enqueue(new Uint8Array(16 * 1024));
+            } else {
+              controller.close();
+            }
           },
         }),
         exited: Promise.resolve(0),
@@ -239,8 +293,10 @@ describe("FFmpeg 安全音频转码与 SpeechService 前置集成", () => {
     expect(ok.transcoded).toBe(true);
     expect(ok.mimeType).toBe("audio/wav");
     expect(ok.bytes).toEqual(fakeWav);
+    expect(stderrChunksRead).toBe(8);
     expect(capturedCmd[0]).toBe("/usr/bin/ffmpeg");
-    expect(capturedCmd).toContain("file,pipe");
+    expect(capturedCmd).toContain("pipe");
+    expect(capturedCmd).not.toContain("file,pipe");
 
     // 2. 本机未安装 ffmpeg（ENOENT）：优雅降级返回原始字节不抛错
     const missingSpawn: FfmpegSpawnFn = () => {
@@ -277,6 +333,34 @@ describe("FFmpeg 安全音频转码与 SpeechService 前置集成", () => {
     expect(overflow.reason).toBe("output-too-large");
     expect(killedOnOverflow).toBe(true);
     expect(overflow.bytes).toEqual(original);
+
+    // 4. 真实超时触发 SIGKILL 强杀并优雅降级
+    const killSignals: Array<number | NodeJS.Signals | undefined> = [];
+    let resolveHangingExit: ((code: number) => void) | null = null;
+    const hangingSpawn: FfmpegSpawnFn = () => ({
+      stdin: { write: () => original.length, end: () => {} },
+      stdout: new ReadableStream({
+        start() {
+          // 模拟进程卡死不产出数据也不关闭
+        },
+      }),
+      stderr: null,
+      exited: new Promise<number>((resolve) => {
+        resolveHangingExit = resolve;
+      }),
+      kill: (sig) => {
+        killSignals.push(sig);
+        resolveHangingExit?.(137);
+      },
+    });
+    const timedOut = await transcodeTo16kMonoWav(original, {
+      timeoutMs: 60,
+      spawn: hangingSpawn,
+    });
+    expect(timedOut.transcoded).toBe(false);
+    expect(timedOut.reason).toBe("timeout");
+    expect(killSignals).toContain("SIGKILL");
+    expect(timedOut.bytes).toEqual(original);
   });
 
   test("speechService.transcribeAudio 对非 wav 音频前置转码，对 wav 直接放行", async () => {

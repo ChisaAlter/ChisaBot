@@ -30,6 +30,7 @@ import {
 } from "../../../shared/net/guarded-fetch";
 import { canManageAgent } from "../agents/profile-policy";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
+import type { AuditInitiator } from "../audit";
 import { extractVideoKeyframes } from "../audio/ffmpeg-transcode";
 import type { AppVariables } from "../auth/guards";
 import { validateAvatarImage } from "../bot-avatars/validate-image";
@@ -37,13 +38,14 @@ import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
+import { markUntrusted } from "../untrusted-content";
 import { minimaxEndpoint, openaiBase, sizeForAspect } from "./image-provider";
 import { sniffImage } from "./service";
 
 /**
  * 多模态创作模型池服务（Wave 6）：
- * - 幂等表 `chisabot_media_model_pool`：按条目 AES-256-GCM 封存密钥 + 同源校验防跨源复用；
- * - 幂等表 `chisabot_video_generation_tasks`：按 `(owner_user_id, request_key)` 去重防重复扣费；
+ * - 幂等表 `chisabot_media_model_pool`：按条目 AES-256-GCM 封存密钥 + 同源同厂商校验防跨源复用；
+ * - 幂等表 `chisabot_video_generation_tasks`：按 `(owner_user_id, agent_id, request_key)` 原子占位去重防并发双扣；
  * - 严格按条目的 `paramSchema` 白名单校验自定义参数透传；
  * - 工具：`media_pool_list`、`image_generate_multi`（≤10 参考图）、`video_generate`、`video_inspect`；
  * - AI 生成 Bot 头像：`generateBotAvatar` 与路由 `POST /api/bots/:agentId/avatar/generate`。
@@ -51,11 +53,16 @@ import { sniffImage } from "./service";
  * 安全红线：
  * - 上游模型接口全部走 `trustedEndpointFetch("model-provider", ...)`（带 `redirect: "error"`）；
  * - 远端产物下载全部走 `guardedFetch`（SSRF 防护 + 字节上限）；
- * - `video_inspect` 严禁 90MB base64 暴力内联与写死私有 `/analyze` 端点，严格使用标准 Gemini / OpenAI-compatible 关键帧抽样协议。
+ * - 上游 JSON/Base64 产物严格限长防 OOM，落盘前必过图片/视频容器魔数校验；
+ * - `video_inspect` 严禁 90MB base64 暴力内联与写死私有 `/analyze` 端点，外部模型输出经 `markUntrusted` 隔离。
  */
 
 /** 专项视频理解允许直接内联的严格字节上限（10 MiB），超过一律走安全关键帧抽样。 */
 export const MAX_VIDEO_INLINE_BYTES = 10 * 1024 * 1024;
+/** 上游 JSON 响应体流式读取上限（32 MiB，覆盖 20 MiB 产物的 base64 JSON 封装并防 OOM）。 */
+export const MAX_UPSTREAM_JSON_BYTES = 32 * 1024 * 1024;
+/** 异步视频任务超时收敛 TTL（默认 30 分钟）。 */
+export const VIDEO_TASK_TTL_MS = 30 * 60 * 1000;
 const UPSTREAM_TIMEOUT_MS = 120_000;
 const STATUS_TIMEOUT_MS = 30_000;
 const ADMIN_BODY_LIMIT_BYTES = 64 * 1024;
@@ -121,7 +128,7 @@ export type MediaPoolDependencies = {
     owner: string,
     agentId: string,
     source?: string,
-    opts?: { kind?: "image" | "video" },
+    opts?: { kind?: "image" | "video"; initiator?: AuditInitiator },
   ) => Promise<MediaFileRecord | null>;
   /** 将生成的图片/视频持久化为聊天文件并返回视图。 */
   storeFile?: (
@@ -177,6 +184,10 @@ export type MediaPoolDependencies = {
   transport?: (url: string, init?: RequestInit) => Promise<Response>;
   /** 可选测试注入的远端产物下载函数，默认走 `guardedFetch`。 */
   download?: (url: string, maxBytes: number) => Promise<Buffer>;
+  /** 可选覆盖异步视频任务超时 TTL（毫秒），默认 30 分钟。 */
+  videoTaskTtlMs?: number;
+  /** 可选覆盖上游 JSON 响应体字节上限（用于单测验证防 OOM）。 */
+  maxUpstreamJsonBytes?: number;
 };
 
 const iso = (value: Date | string | null | undefined): string =>
@@ -294,6 +305,22 @@ function rowToEntry(row: PoolRow): MediaPoolModelEntry {
     keySource: row.api_key ? "saved" : "none",
     keyHint: row.api_key ? (row.key_hint ?? "") : "",
     updatedAt: row.updated_at ? iso(row.updated_at) : null,
+  };
+}
+
+/** 非管理员读接口脱敏视图：隐藏内网/私有 baseUrl、keySource、keyHint 与 updatedAt，与 media_pool_list 口径对齐。 */
+function entryToPublicView(entry: MediaPoolModelEntry) {
+  return {
+    id: entry.id,
+    label: entry.label,
+    capability: entry.capability,
+    provider: entry.provider,
+    model: entry.model,
+    costHint: entry.costHint,
+    styleTags: entry.styleTags,
+    maxReferenceImages: entry.maxReferenceImages,
+    paramSchema: entry.paramSchema,
+    enabled: entry.enabled,
   };
 }
 
@@ -424,11 +451,141 @@ function geminiEndpoint(baseUrl: string, model: string): string {
   return `${clean}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+const VIDEO_EXT_BY_MIME: Record<string, string> = {
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
+};
+
+/** 校验视频容器二进制魔数（ISO BMFF ftyp / QuickTime qt / WebM EBML），拒绝空体与 HTML 错误页。 */
+export function sniffVideoMime(
+  bytes: Uint8Array,
+): "video/mp4" | "video/webm" | "video/quicktime" | null {
+  if (bytes.byteLength < 12) return null;
+  // WebM / Matroska EBML 头：1A 45 DF A3
+  if (
+    bytes[0] === 0x1a &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0xdf &&
+    bytes[3] === 0xa3
+  ) {
+    return "video/webm";
+  }
+  // ISO Base Media File Format（MP4 / MOV）：偏移 4 为 "ftyp"
+  if (
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70
+  ) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, 4);
+    const boxSize = view.getUint32(0, false);
+    if (boxSize !== 0 && boxSize < 12) return null;
+    if (
+      bytes[8] === 0x71 &&
+      bytes[9] === 0x74 &&
+      bytes[10] === 0x20 &&
+      bytes[11] === 0x20
+    ) {
+      return "video/quicktime";
+    }
+    return "video/mp4";
+  }
+  return null;
+}
+
+/** 限长 Base64 解码：解码前先按长度预检防 OOM，解码后复验 `0 < bytes <= maxBytes`。 */
+export function decodeBoundedBase64(
+  raw: string,
+  maxBytes: number,
+  label: string,
+): Buffer {
+  const clean = raw.replace(/\s+/g, "");
+  if (!clean) {
+    throw new MediaPoolError(`${label}返回了空的 Base64 产物数据。`, 502);
+  }
+  if (clean.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) {
+    throw new MediaPoolError(`${label}返回了非法的 Base64 编码数据。`, 502);
+  }
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  const estimatedBytes = Math.floor((clean.length * 3) / 4) - padding;
+  if (estimatedBytes <= 0) {
+    throw new MediaPoolError(`${label}返回了空的 Base64 产物数据。`, 502);
+  }
+  if (estimatedBytes > maxBytes) {
+    throw new MediaPoolError(`${label}返回的 Base64 产物超过大小限制。`, 413);
+  }
+  const decoded = Buffer.from(clean, "base64");
+  if (decoded.byteLength === 0) {
+    throw new MediaPoolError(`${label}返回了空的 Base64 产物数据。`, 502);
+  }
+  if (decoded.byteLength > maxBytes) {
+    throw new MediaPoolError(`${label}返回的 Base64 产物超过大小限制。`, 413);
+  }
+  return decoded;
+}
+
+/** 严格解析 `data:<mime>;base64,<payload>` URL 并执行字节上限校验。 */
+export function decodeBoundedDataUrl(
+  dataUrl: string,
+  maxBytes: number,
+  label: string,
+): Buffer {
+  const trimmed = dataUrl.trim();
+  const match = /^data:[^;,]+;base64,/i.exec(trimmed);
+  if (!match) {
+    throw new MediaPoolError(
+      `${label}返回了非法的 data URL（缺少 ;base64, 声明）。`,
+      502,
+    );
+  }
+  return decodeBoundedBase64(trimmed.slice(match[0].length), maxBytes, label);
+}
+
+async function readBoundedText(
+  response: Response,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
+  const headerLen = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(headerLen) && headerLen > maxBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new MediaPoolError(`${label}响应体超过大小限制。`, 413);
+  }
+  if (!response.body) {
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, "utf8") > maxBytes) {
+      throw new MediaPoolError(`${label}响应体超过大小限制。`, 413);
+    }
+    return raw;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new MediaPoolError(`${label}响应体超过大小限制。`, 413);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total).toString("utf8");
+}
+
 async function readJsonResponse(
   response: Response,
   label: string,
+  maxBytes = MAX_UPSTREAM_JSON_BYTES,
 ): Promise<Record<string, unknown>> {
-  const raw = await response.text();
+  const raw = await readBoundedText(response, maxBytes, label);
   try {
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
@@ -467,7 +624,10 @@ function extractGeminiText(json: Record<string, unknown>): string {
     .trim();
 }
 
-function extractGeminiImageBytes(json: Record<string, unknown>): Buffer | null {
+function extractGeminiImageBytes(
+  json: Record<string, unknown>,
+  maxBytes = MAX_CHAT_FILE_BYTES,
+): Buffer | null {
   const candidates = Array.isArray(json.candidates) ? json.candidates : [];
   for (const candidate of candidates) {
     const parts = (
@@ -484,7 +644,7 @@ function extractGeminiImageBytes(json: Record<string, unknown>): Buffer | null {
     for (const part of parts) {
       const b64 = part.inlineData?.data ?? part.inline_data?.data;
       if (typeof b64 === "string" && b64.length > 0) {
-        return Buffer.from(b64, "base64");
+        return decodeBoundedBase64(b64, maxBytes, "Gemini 生图接口");
       }
     }
   }
@@ -538,6 +698,14 @@ export function createMediaPoolService(
   const sql = database.$client;
   const doFetch = deps.transport ?? defaultTransport;
   const download = deps.download ?? defaultDownload;
+  const maxJsonBytes = Math.max(
+    1024,
+    deps.maxUpstreamJsonBytes ?? MAX_UPSTREAM_JSON_BYTES,
+  );
+  const videoTaskTtlMs = Math.max(
+    1_000,
+    deps.videoTaskTtlMs ?? VIDEO_TASK_TTL_MS,
+  );
   const extractKeyframes =
     deps.extractKeyframes ??
     ((bytes: Uint8Array, frameCount: number) =>
@@ -579,10 +747,12 @@ export function createMediaPoolService(
         error_message text,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (owner_user_id, request_key)
+        UNIQUE (owner_user_id, agent_id, request_key)
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS chisabot_video_tasks_owner_agent_req_idx
+        ON chisabot_video_generation_tasks (owner_user_id, agent_id, request_key);
       CREATE INDEX IF NOT EXISTS chisabot_video_tasks_owner_idx
-        ON chisabot_video_generation_tasks (owner_user_id, created_at DESC);
+        ON chisabot_video_generation_tasks (owner_user_id, agent_id, created_at DESC);
     `);
   }
 
@@ -844,7 +1014,11 @@ export function createMediaPoolService(
         body: JSON.stringify(body),
         signal,
       });
-      const json = await readJsonResponse(response, "MiniMax 生图接口");
+      const json = await readJsonResponse(
+        response,
+        "MiniMax 生图接口",
+        maxJsonBytes,
+      );
       const baseResp = json.base_resp as
         | { status_code?: number; status_msg?: string }
         | undefined;
@@ -860,7 +1034,13 @@ export function createMediaPoolService(
       const b64 = Array.isArray(data?.image_base64)
         ? data.image_base64[0]
         : undefined;
-      if (typeof b64 === "string" && b64) return Buffer.from(b64, "base64");
+      if (typeof b64 === "string" && b64) {
+        return decodeBoundedBase64(
+          b64,
+          MAX_CHAT_FILE_BYTES,
+          "MiniMax 生图接口",
+        );
+      }
       const url = Array.isArray(data?.image_urls)
         ? data.image_urls[0]
         : undefined;
@@ -899,14 +1079,18 @@ export function createMediaPoolService(
           signal,
         },
       );
-      const json = await readJsonResponse(response, "Gemini 生图接口");
+      const json = await readJsonResponse(
+        response,
+        "Gemini 生图接口",
+        maxJsonBytes,
+      );
       if (!response.ok) {
         throw new MediaPoolError(
           `Gemini 生图失败（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
           502,
         );
       }
-      const bytes = extractGeminiImageBytes(json);
+      const bytes = extractGeminiImageBytes(json, MAX_CHAT_FILE_BYTES);
       if (!bytes) {
         throw new MediaPoolError("Gemini 接口未返回图片字节。", 502);
       }
@@ -918,13 +1102,14 @@ export function createMediaPoolService(
     let response: Response;
     if (request.references.length > 0) {
       const form = new FormData();
+      // 先写通过 paramSchema 白名单校验的自定义参数，核心字段置于其后防止被覆写
+      for (const [key, value] of Object.entries(request.extraParams)) {
+        form.set(key, String(value));
+      }
       form.set("model", entry.model);
       form.set("prompt", request.prompt);
       form.set("n", "1");
       form.set("size", sizeForAspect(request.aspect));
-      for (const [key, value] of Object.entries(request.extraParams)) {
-        form.set(key, String(value));
-      }
       for (let i = 0; i < request.references.length; i += 1) {
         const ref = request.references[i];
         if (!ref) continue;
@@ -957,7 +1142,7 @@ export function createMediaPoolService(
       });
     }
 
-    const json = await readJsonResponse(response, "生图接口");
+    const json = await readJsonResponse(response, "生图接口", maxJsonBytes);
     if (!response.ok) {
       throw new MediaPoolError(
         `生图模型报错（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
@@ -968,14 +1153,15 @@ export function createMediaPoolService(
       ? (json.data[0] as { b64_json?: unknown; url?: unknown } | undefined)
       : undefined;
     if (typeof first?.b64_json === "string" && first.b64_json) {
-      return Buffer.from(first.b64_json, "base64");
+      return decodeBoundedBase64(
+        first.b64_json,
+        MAX_CHAT_FILE_BYTES,
+        "生图接口",
+      );
     }
     if (typeof first?.url === "string" && first.url) {
-      if (first.url.startsWith("data:")) {
-        return Buffer.from(
-          first.url.slice(first.url.indexOf(",") + 1),
-          "base64",
-        );
+      if (first.url.trim().toLowerCase().startsWith("data:")) {
+        return decodeBoundedDataUrl(first.url, MAX_CHAT_FILE_BYTES, "生图接口");
       }
       return download(first.url, MAX_CHAT_FILE_BYTES);
     }
@@ -991,6 +1177,7 @@ export function createMediaPoolService(
       aspectRatio?: ImageAspect;
       referenceSources?: string[];
       params?: Record<string, unknown>;
+      initiator?: AuditInitiator;
     },
   ): Promise<{ file: ChatFileView; entry: MediaPoolModelEntry }> {
     const refs = (input.referenceSources ?? [])
@@ -1031,7 +1218,10 @@ export function createMediaPoolService(
     const loadedRefs: MediaFileRecord[] = [];
     for (const ref of refs) {
       const file = deps.loadFile
-        ? await deps.loadFile(owner, agentId, ref, { kind: "image" })
+        ? await deps.loadFile(owner, agentId, ref, {
+            kind: "image",
+            ...(input.initiator ? { initiator: input.initiator } : {}),
+          })
         : null;
       if (!file) {
         throw new MediaPoolError(`找不到参考图「${ref}」。`, 404);
@@ -1072,33 +1262,48 @@ export function createMediaPoolService(
     return { file, entry };
   }
 
-  // ------------------------------------------------------------------ 视频生成（异步提交 + 幂等 requestKey + 状态轮询）
+  // ------------------------------------------------------------------ 视频生成（异步提交 + 原子占位幂等 + 魔数校验 + 超时收敛）
 
   async function readVideoTaskByRequestKey(
     owner: string,
+    agentId: string,
     requestKey: string,
   ): Promise<VideoTaskRow | null> {
     const rows = await sql.unsafe<VideoTaskRow[]>(
-      "SELECT * FROM chisabot_video_generation_tasks WHERE owner_user_id = $1 AND request_key = $2",
-      [owner, requestKey],
+      "SELECT * FROM chisabot_video_generation_tasks WHERE owner_user_id = $1 AND agent_id = $2 AND request_key = $3",
+      [owner, agentId, requestKey],
     );
     return rows[0] ?? null;
   }
 
   async function readVideoTaskById(
     owner: string,
+    agentId: string,
     taskId: string,
   ): Promise<VideoTaskRow | null> {
     const rows = await sql.unsafe<VideoTaskRow[]>(
-      "SELECT * FROM chisabot_video_generation_tasks WHERE owner_user_id = $1 AND id = $2",
-      [owner, taskId],
+      "SELECT * FROM chisabot_video_generation_tasks WHERE owner_user_id = $1 AND agent_id = $2 AND id = $3",
+      [owner, agentId, taskId],
     );
     return rows[0] ?? null;
   }
 
-  async function persistVideoResult(
+  async function markVideoTaskFailed(
     owner: string,
     agentId: string,
+    taskId: string,
+    errorMessage: string,
+  ): Promise<void> {
+    await sql.unsafe(
+      `UPDATE chisabot_video_generation_tasks
+       SET status = 'failed', error_message = $4, updated_at = now()
+       WHERE id = $1 AND owner_user_id = $2 AND agent_id = $3`,
+      [taskId, owner, agentId, shortText(errorMessage || "视频生成失败")],
+    );
+  }
+
+  async function persistVideoResult(
+    owner: string,
     task: VideoTaskRow,
     modelName: string,
     videoBytes: Buffer,
@@ -1106,20 +1311,35 @@ export function createMediaPoolService(
     if (!deps.storeFile) {
       throw new MediaPoolError("聊天文件存储服务未就绪。", 502);
     }
-    const name = `${stamp()}-${slugOf(task.prompt, "video")}.mp4`;
-    const saved = await deps.storeFile(owner, agentId, {
+    if (videoBytes.byteLength === 0) {
+      throw new MediaPoolError("视频生成模型返回了空文件。", 502);
+    }
+    if (videoBytes.byteLength > MAX_CHAT_FILE_BYTES) {
+      throw new MediaPoolError("视频产物超过大小限制。", 413);
+    }
+    const detectedMime = sniffVideoMime(videoBytes);
+    if (!detectedMime) {
+      throw new MediaPoolError(
+        "模型返回的字节不是有效的视频容器格式（仅支持 MP4 / WebM / QuickTime）。",
+        502,
+      );
+    }
+    const ext = VIDEO_EXT_BY_MIME[detectedMime] ?? "mp4";
+    const name = `${stamp()}-${slugOf(task.prompt, "video")}.${ext}`;
+    // 落盘恒使用任务归属的 task.agent_id，杜绝跨 Bot 串名
+    const saved = await deps.storeFile(owner, task.agent_id, {
       kind: "generated",
       name,
-      mimeType: "video/mp4",
+      mimeType: detectedMime,
       bytes: videoBytes,
       prompt: task.prompt,
       model: modelName,
     });
     await sql.unsafe(
       `UPDATE chisabot_video_generation_tasks
-       SET status = 'succeeded', progress = 100, result_file_id = $3, error_message = NULL, updated_at = now()
-       WHERE id = $1 AND owner_user_id = $2`,
-      [task.id, owner, saved.id],
+       SET status = 'succeeded', progress = 100, result_file_id = $4, error_message = NULL, updated_at = now()
+       WHERE id = $1 AND owner_user_id = $2 AND agent_id = $3`,
+      [task.id, owner, task.agent_id, saved.id],
     );
     return saved;
   }
@@ -1157,6 +1377,7 @@ export function createMediaPoolService(
       modelId?: string;
       referenceSources?: string[];
       params?: Record<string, unknown>;
+      initiator?: AuditInitiator;
     },
   ): Promise<{ task: VideoGenerationTaskView; deduplicated: boolean }> {
     const refs = (input.referenceSources ?? [])
@@ -1182,6 +1403,18 @@ export function createMediaPoolService(
     }
     const entry = rowToEntry(row);
 
+    if (refs.length > entry.maxReferenceImages) {
+      throw new MediaPoolError(
+        `视频模型「${entry.label}」最多支持 ${entry.maxReferenceImages} 张参考图。`,
+        400,
+      );
+    }
+
+    const paramCheck = validateMediaParams(entry.paramSchema, input.params);
+    if (!paramCheck.ok) {
+      throw new MediaPoolError(paramCheck.errors.join("；"), 400);
+    }
+
     const requestKey =
       input.requestKey?.trim() ||
       `vg_${createHash("sha256")
@@ -1198,31 +1431,13 @@ export function createMediaPoolService(
         .digest("hex")
         .slice(0, 24)}`;
 
-    // 幂等校验：命中相同 (owner, requestKey) 直接返回已有任务，绝不重复调上游扣费。
-    const existing = await readVideoTaskByRequestKey(owner, requestKey);
-    if (existing) {
-      return {
-        task: await buildVideoTaskView(owner, existing),
-        deduplicated: true,
-      };
-    }
-
-    if (refs.length > entry.maxReferenceImages) {
-      throw new MediaPoolError(
-        `视频模型「${entry.label}」最多支持 ${entry.maxReferenceImages} 张参考图。`,
-        400,
-      );
-    }
-
-    const paramCheck = validateMediaParams(entry.paramSchema, input.params);
-    if (!paramCheck.ok) {
-      throw new MediaPoolError(paramCheck.errors.join("；"), 400);
-    }
-
     const loadedRefs: MediaFileRecord[] = [];
     for (const ref of refs) {
       const file = deps.loadFile
-        ? await deps.loadFile(owner, agentId, ref, { kind: "image" })
+        ? await deps.loadFile(owner, agentId, ref, {
+            kind: "image",
+            ...(input.initiator ? { initiator: input.initiator } : {}),
+          })
         : null;
       if (!file) throw new MediaPoolError(`找不到参考图「${ref}」。`, 404);
       const mime = sniffImage(file.bytes);
@@ -1232,112 +1447,191 @@ export function createMediaPoolService(
       loadedRefs.push({ ...file, mimeType: mime });
     }
 
-    const apiKey = await resolveApiKeyForRow(row);
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-      "idempotency-key": requestKey,
-      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-    };
-    const submitUrl =
-      entry.provider === "minimax"
-        ? `${entry.baseUrl.replace(/\/v1$/i, "")}/v1/video_generation`
-        : `${openaiBase(entry.baseUrl)}/videos/generations`;
-
-    const payload: Record<string, unknown> = {
-      ...paramCheck.value,
-      model: entry.model,
-      prompt: input.prompt,
-      ...(loadedRefs.length > 0
-        ? {
-            reference_images: loadedRefs.map(
-              (ref) =>
-                `data:${ref.mimeType};base64,${ref.bytes.toString("base64")}`,
-            ),
-          }
-        : {}),
-    };
-
-    const response = await doFetch(submitUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
-    const json = await readJsonResponse(response, "视频生成接口");
-    if (!response.ok) {
-      throw new MediaPoolError(
-        `视频生成提交失败（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
-        502,
-      );
-    }
-
-    const taskId = `vt_${randomUUID().slice(0, 12)}`;
-    const providerTaskId = String(
-      json.task_id ??
-        json.id ??
-        (json.data as { id?: unknown } | undefined)?.id ??
-        taskId,
-    );
-    const rawStatus = String(json.status ?? "queued");
-    const status = normalizeTaskStatus(rawStatus);
-    const progress =
-      typeof json.progress === "number" && Number.isFinite(json.progress)
-        ? Math.min(100, Math.max(0, Math.trunc(json.progress)))
-        : status === "succeeded"
-          ? 100
-          : 0;
-
-    await sql.unsafe(
+    // 原子占位：先 INSERT ON CONFLICT DO NOTHING 防并发双请求同时跨过查重造成重复扣费。
+    const candidateTaskId = `vt_${randomUUID().slice(0, 12)}`;
+    const insertedRows = await sql.unsafe<VideoTaskRow[]>(
       `INSERT INTO chisabot_video_generation_tasks
        (id, owner_user_id, agent_id, request_key, model_id, provider_task_id, status, progress, prompt, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())`,
-      [
-        taskId,
+       VALUES ($1, $2, $3, $4, $5, '', 'queued', 0, $6, now(), now())
+       ON CONFLICT (owner_user_id, agent_id, request_key) DO NOTHING
+       RETURNING *`,
+      [candidateTaskId, owner, agentId, requestKey, entry.id, input.prompt],
+    );
+
+    let reserved = insertedRows[0] ?? null;
+    if (!reserved) {
+      const existing = await readVideoTaskByRequestKey(
         owner,
         agentId,
         requestKey,
-        entry.id,
-        providerTaskId,
-        status,
-        progress,
-        input.prompt,
-      ],
-    );
-
-    const inserted = await readVideoTaskById(owner, taskId);
-    if (!inserted) throw new MediaPoolError("写入视频生成任务失败。", 502);
-
-    const directUrl =
-      typeof json.video_url === "string"
-        ? json.video_url
-        : typeof (json.data as { url?: unknown } | undefined)?.url === "string"
-          ? String((json.data as { url?: unknown }).url)
-          : null;
-    const directB64 =
-      typeof json.b64_video === "string" ? json.b64_video : null;
-
-    if (directUrl || directB64) {
-      const videoBytes = directB64
-        ? Buffer.from(directB64, "base64")
-        : await download(directUrl ?? "", MAX_CHAT_FILE_BYTES);
-      const savedFile = await persistVideoResult(
-        owner,
-        agentId,
-        inserted,
-        entry.model,
-        videoBytes,
       );
-      const updated = (await readVideoTaskById(owner, taskId)) ?? inserted;
-      return {
-        task: await buildVideoTaskView(owner, updated, savedFile),
-        deduplicated: false,
-      };
+      if (!existing) {
+        throw new MediaPoolError("写入视频生成占位任务失败，请重试。", 502);
+      }
+      if (normalizeTaskStatus(existing.status) === "failed") {
+        // 此前失败的任务允许以原 requestKey 原子抢占重试，避免永久锁死同提示词
+        const retried = await sql.unsafe<VideoTaskRow[]>(
+          `UPDATE chisabot_video_generation_tasks
+           SET id = $4, model_id = $5, provider_task_id = '', status = 'queued', progress = 0,
+               prompt = $6, result_file_id = NULL, error_message = NULL, created_at = now(), updated_at = now()
+           WHERE owner_user_id = $1 AND agent_id = $2 AND request_key = $3 AND status = 'failed'
+           RETURNING *`,
+          [owner, agentId, requestKey, candidateTaskId, entry.id, input.prompt],
+        );
+        reserved = retried[0] ?? null;
+        if (!reserved) {
+          const latest =
+            (await readVideoTaskByRequestKey(owner, agentId, requestKey)) ??
+            existing;
+          return {
+            task: await buildVideoTaskView(owner, latest),
+            deduplicated: true,
+          };
+        }
+      } else {
+        return {
+          task: await buildVideoTaskView(owner, existing),
+          deduplicated: true,
+        };
+      }
     }
 
-    return {
-      task: await buildVideoTaskView(owner, inserted),
-      deduplicated: false,
-    };
+    const taskId = reserved.id;
+    try {
+      const apiKey = await resolveApiKeyForRow(row);
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "idempotency-key": requestKey,
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      };
+      const submitUrl =
+        entry.provider === "minimax"
+          ? `${entry.baseUrl.replace(/\/v1$/i, "")}/v1/video_generation`
+          : `${openaiBase(entry.baseUrl)}/videos/generations`;
+
+      const payload: Record<string, unknown> = {
+        ...paramCheck.value,
+        model: entry.model,
+        prompt: input.prompt,
+        ...(loadedRefs.length > 0
+          ? {
+              reference_images: loadedRefs.map(
+                (ref) =>
+                  `data:${ref.mimeType};base64,${ref.bytes.toString("base64")}`,
+              ),
+            }
+          : {}),
+      };
+
+      const response = await doFetch(submitUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      const json = await readJsonResponse(
+        response,
+        "视频生成接口",
+        maxJsonBytes,
+      );
+      if (!response.ok) {
+        throw new MediaPoolError(
+          `视频生成提交失败（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
+          502,
+        );
+      }
+
+      const providerTaskId = String(
+        json.task_id ??
+          json.id ??
+          (json.data as { id?: unknown } | undefined)?.id ??
+          taskId,
+      );
+      const rawStatus = String(json.status ?? "queued");
+      const status = normalizeTaskStatus(rawStatus);
+      const progress =
+        typeof json.progress === "number" && Number.isFinite(json.progress)
+          ? Math.min(100, Math.max(0, Math.trunc(json.progress)))
+          : status === "succeeded"
+            ? 95
+            : 0;
+
+      const directUrl =
+        typeof json.video_url === "string" && json.video_url.trim()
+          ? json.video_url.trim()
+          : typeof (json.data as { url?: unknown } | undefined)?.url ===
+                "string" && String((json.data as { url?: unknown }).url).trim()
+            ? String((json.data as { url?: unknown }).url).trim()
+            : null;
+      const directB64 =
+        typeof json.b64_video === "string" && json.b64_video.trim()
+          ? json.b64_video
+          : null;
+
+      if (directUrl || directB64) {
+        // 先以 running 态写入上游任务 ID；下载与容器魔数校验全部通过后才由 persistVideoResult 标 succeeded
+        await sql.unsafe(
+          `UPDATE chisabot_video_generation_tasks
+           SET provider_task_id = $4, status = 'running', progress = 95, updated_at = now()
+           WHERE id = $1 AND owner_user_id = $2 AND agent_id = $3`,
+          [taskId, owner, agentId, providerTaskId],
+        );
+        const videoBytes = directB64
+          ? decodeBoundedBase64(directB64, MAX_CHAT_FILE_BYTES, "视频生成接口")
+          : await download(directUrl ?? "", MAX_CHAT_FILE_BYTES);
+        const savedFile = await persistVideoResult(
+          owner,
+          { ...reserved, provider_task_id: providerTaskId },
+          entry.model,
+          videoBytes,
+        );
+        const updated =
+          (await readVideoTaskById(owner, agentId, taskId)) ?? reserved;
+        return {
+          task: await buildVideoTaskView(owner, updated, savedFile),
+          deduplicated: false,
+        };
+      }
+
+      if (status === "succeeded") {
+        throw new MediaPoolError(
+          "视频生成接口返回已完成状态，但未提供有效的视频文件。",
+          502,
+        );
+      }
+
+      if (status === "failed") {
+        const errMsg = shortText(extractApiError(json) || "视频生成失败");
+        await markVideoTaskFailed(owner, agentId, taskId, errMsg);
+        const failedTask =
+          (await readVideoTaskById(owner, agentId, taskId)) ?? reserved;
+        return {
+          task: await buildVideoTaskView(owner, failedTask),
+          deduplicated: false,
+        };
+      }
+
+      await sql.unsafe(
+        `UPDATE chisabot_video_generation_tasks
+         SET provider_task_id = $4, status = $5, progress = $6, updated_at = now()
+         WHERE id = $1 AND owner_user_id = $2 AND agent_id = $3`,
+        [taskId, owner, agentId, providerTaskId, status, progress],
+      );
+      const updated =
+        (await readVideoTaskById(owner, agentId, taskId)) ?? reserved;
+      return {
+        task: await buildVideoTaskView(owner, updated),
+        deduplicated: false,
+      };
+    } catch (error) {
+      await markVideoTaskFailed(
+        owner,
+        agentId,
+        taskId,
+        error instanceof Error ? error.message : "视频生成提交失败",
+      ).catch(() => {});
+      throw error;
+    }
   }
 
   async function pollVideoGenerationStatus(
@@ -1346,20 +1640,47 @@ export function createMediaPoolService(
     query: { taskId?: string; requestKey?: string },
   ): Promise<VideoGenerationTaskView> {
     const task = query.taskId?.trim()
-      ? await readVideoTaskById(owner, query.taskId.trim())
+      ? await readVideoTaskById(owner, agentId, query.taskId.trim())
       : query.requestKey?.trim()
-        ? await readVideoTaskByRequestKey(owner, query.requestKey.trim())
+        ? await readVideoTaskByRequestKey(
+            owner,
+            agentId,
+            query.requestKey.trim(),
+          )
         : null;
     if (!task) {
       throw new MediaPoolError("找不到对应的视频生成任务。", 404);
     }
     const currentStatus = normalizeTaskStatus(task.status);
-    if (currentStatus === "succeeded" || currentStatus === "failed") {
+    if (
+      currentStatus === "failed" ||
+      (currentStatus === "succeeded" && Boolean(task.result_file_id))
+    ) {
       return buildVideoTaskView(owner, task);
+    }
+
+    // 超时收敛：超过 TTL 仍停留在非终态则自动标记超时失败，允许用户以同提示词重试
+    const createdAtMs = new Date(task.created_at).getTime();
+    if (
+      Number.isFinite(createdAtMs) &&
+      Date.now() - createdAtMs > videoTaskTtlMs
+    ) {
+      await markVideoTaskFailed(
+        owner,
+        agentId,
+        task.id,
+        "视频生成任务超时未完成，请重新提交。",
+      );
+      const expired =
+        (await readVideoTaskById(owner, agentId, task.id)) ?? task;
+      return buildVideoTaskView(owner, expired);
     }
 
     const row = await readPoolRow(task.model_id);
     if (!row) {
+      return buildVideoTaskView(owner, task);
+    }
+    if (!task.provider_task_id) {
       return buildVideoTaskView(owner, task);
     }
     const entry = rowToEntry(row);
@@ -1377,7 +1698,11 @@ export function createMediaPoolService(
       headers,
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
-    const json = await readJsonResponse(response, "视频状态查询接口");
+    const json = await readJsonResponse(
+      response,
+      "视频状态查询接口",
+      maxJsonBytes,
+    );
     if (!response.ok) {
       throw new MediaPoolError(
         `查询视频任务状态失败（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
@@ -1395,46 +1720,62 @@ export function createMediaPoolService(
 
     if (nextStatus === "failed") {
       const errMsg = shortText(extractApiError(json) || "视频生成失败");
-      await sql.unsafe(
-        `UPDATE chisabot_video_generation_tasks
-         SET status = 'failed', error_message = $3, updated_at = now()
-         WHERE id = $1 AND owner_user_id = $2`,
-        [task.id, owner, errMsg],
-      );
-      const updated = (await readVideoTaskById(owner, task.id)) ?? task;
+      await markVideoTaskFailed(owner, agentId, task.id, errMsg);
+      const updated =
+        (await readVideoTaskById(owner, agentId, task.id)) ?? task;
       return buildVideoTaskView(owner, updated);
     }
 
     const videoUrl =
-      typeof json.video_url === "string"
-        ? json.video_url
-        : typeof (json.data as { url?: unknown } | undefined)?.url === "string"
-          ? String((json.data as { url?: unknown }).url)
+      typeof json.video_url === "string" && json.video_url.trim()
+        ? json.video_url.trim()
+        : typeof (json.data as { url?: unknown } | undefined)?.url ===
+              "string" && String((json.data as { url?: unknown }).url).trim()
+          ? String((json.data as { url?: unknown }).url).trim()
           : null;
-    const videoB64 = typeof json.b64_video === "string" ? json.b64_video : null;
+    const videoB64 =
+      typeof json.b64_video === "string" && json.b64_video.trim()
+        ? json.b64_video
+        : null;
 
-    if (nextStatus === "succeeded" && (videoUrl || videoB64)) {
-      const videoBytes = videoB64
-        ? Buffer.from(videoB64, "base64")
-        : await download(videoUrl ?? "", MAX_CHAT_FILE_BYTES);
-      const savedFile = await persistVideoResult(
-        owner,
-        agentId,
-        task,
-        entry.model,
-        videoBytes,
-      );
-      const updated = (await readVideoTaskById(owner, task.id)) ?? task;
-      return buildVideoTaskView(owner, updated, savedFile);
+    if (nextStatus === "succeeded") {
+      if (!videoUrl && !videoB64) {
+        const msg =
+          "视频生成接口返回已完成状态，但缺少有效的视频产物地址或字节。";
+        await markVideoTaskFailed(owner, agentId, task.id, msg);
+        throw new MediaPoolError(msg, 502);
+      }
+      try {
+        const videoBytes = videoB64
+          ? decodeBoundedBase64(videoB64, MAX_CHAT_FILE_BYTES, "视频生成接口")
+          : await download(videoUrl ?? "", MAX_CHAT_FILE_BYTES);
+        const savedFile = await persistVideoResult(
+          owner,
+          task,
+          entry.model,
+          videoBytes,
+        );
+        const updated =
+          (await readVideoTaskById(owner, agentId, task.id)) ?? task;
+        return buildVideoTaskView(owner, updated, savedFile);
+      } catch (error) {
+        await markVideoTaskFailed(
+          owner,
+          agentId,
+          task.id,
+          error instanceof Error ? error.message : "视频产物校验或落盘失败",
+        ).catch(() => {});
+        throw error;
+      }
     }
 
     await sql.unsafe(
       `UPDATE chisabot_video_generation_tasks
-       SET status = $3, progress = $4, updated_at = now()
-       WHERE id = $1 AND owner_user_id = $2`,
-      [task.id, owner, nextStatus, nextProgress],
+       SET status = $4, progress = $5, updated_at = now()
+       WHERE id = $1 AND owner_user_id = $2 AND agent_id = $3`,
+      [task.id, owner, agentId, nextStatus, nextProgress],
     );
-    const updated = (await readVideoTaskById(owner, task.id)) ?? task;
+    const updated = (await readVideoTaskById(owner, agentId, task.id)) ?? task;
     return buildVideoTaskView(owner, updated);
   }
 
@@ -1449,10 +1790,14 @@ export function createMediaPoolService(
       modelId?: string;
       frameCount?: number;
       focusTimestamp?: string;
+      initiator?: AuditInitiator;
     },
   ): Promise<VideoInspectResult> {
     const file = deps.loadFile
-      ? await deps.loadFile(owner, agentId, input.source, { kind: "video" })
+      ? await deps.loadFile(owner, agentId, input.source, {
+          kind: "video",
+          ...(input.initiator ? { initiator: input.initiator } : {}),
+        })
       : null;
     if (!file) {
       throw new MediaPoolError(
@@ -1556,7 +1901,11 @@ export function createMediaPoolService(
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       );
-      const json = await readJsonResponse(response, "Gemini 视频理解接口");
+      const json = await readJsonResponse(
+        response,
+        "Gemini 视频理解接口",
+        maxJsonBytes,
+      );
       if (!response.ok) {
         throw new MediaPoolError(
           `视频理解模型报错（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
@@ -1647,7 +1996,11 @@ export function createMediaPoolService(
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       );
-      const json = await readJsonResponse(response, "Gemini 关键帧理解接口");
+      const json = await readJsonResponse(
+        response,
+        "Gemini 关键帧理解接口",
+        maxJsonBytes,
+      );
       if (!response.ok) {
         throw new MediaPoolError(
           `视频理解模型报错（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
@@ -1687,7 +2040,11 @@ export function createMediaPoolService(
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       );
-      const json = await readJsonResponse(response, "视频理解接口");
+      const json = await readJsonResponse(
+        response,
+        "视频理解接口",
+        maxJsonBytes,
+      );
       if (!response.ok) {
         throw new MediaPoolError(
           `视频理解模型报错（HTTP ${response.status}）：${shortText(extractApiError(json) || "未知错误")}`,
@@ -1813,7 +2170,11 @@ export function createMediaPoolService(
   const withFiles = (text: string, files: ChatFileView[]) =>
     `${text}\n${CHAT_FILES_MARKER}${JSON.stringify(files.map(({ prompt: _p, ...rest }) => rest))}`;
 
-  async function tools(owner: string, agentId: string): Promise<GrantedTool[]> {
+  async function tools(
+    owner: string,
+    agentId: string,
+    initiator?: AuditInitiator,
+  ): Promise<GrantedTool[]> {
     const wrap = <T extends z.ZodType>(
       name: string,
       description: string,
@@ -1928,6 +2289,7 @@ export function createMediaPoolService(
                 ? { referenceSources: input.reference_sources }
                 : {}),
               ...(input.params ? { params: input.params } : {}),
+              ...(initiator ? { initiator } : {}),
             });
             return withFiles(
               `已使用模型「${entry.label}（${entry.model}）」生成图片，已在聊天里展示。文件 id：${file.id}`,
@@ -1984,6 +2346,7 @@ export function createMediaPoolService(
                   ? { referenceSources: input.reference_sources }
                   : {}),
                 ...(input.params ? { params: input.params } : {}),
+                ...(initiator ? { initiator } : {}),
               },
             );
             const prefix = deduplicated
@@ -2019,8 +2382,12 @@ export function createMediaPoolService(
               ...(input.focus_timestamp
                 ? { focusTimestamp: input.focus_timestamp }
                 : {}),
+              ...(initiator ? { initiator } : {}),
             });
-            return `视频理解结果（模型：${result.modelLabel}，策略：${result.strategy}${result.framesSampled > 0 ? `，抽样 ${result.framesSampled} 帧` : ""}）：\n${result.summary}`;
+            const body = result.audioTranscript
+              ? `${result.summary}\n\n【音轨转写】\n${result.audioTranscript}`
+              : result.summary;
+            return `视频理解结果（模型：${result.modelLabel}，策略：${result.strategy}${result.framesSampled > 0 ? `，抽样 ${result.framesSampled} 帧` : ""}）：\n${markUntrusted(body, "video_inspect")}`;
           },
           "read",
         ),
@@ -2034,8 +2401,13 @@ export function createMediaPoolService(
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      c.header("Cache-Control", "no-store");
+      await next();
+    });
     app.use("*", requireUser);
     app.onError((error, c) => {
+      c.header("Cache-Control", "no-store");
       if (error instanceof MediaPoolError) {
         return c.json({ error: error.message }, error.status);
       }
@@ -2063,7 +2435,9 @@ export function createMediaPoolService(
         includeDisabled,
         ...(capability ? { capability } : {}),
       });
-      return c.json({ entries });
+      return c.json({
+        entries: isAdmin ? entries : entries.map(entryToPublicView),
+      });
     });
 
     app.post(
@@ -2106,8 +2480,8 @@ export function createMediaPoolService(
     requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   ) {
     const app = new Hono<{ Variables: AppVariables }>();
-    app.use("*", requireUser);
     app.onError((error, c) => {
+      c.header("Cache-Control", "no-store");
       if (error instanceof MediaPoolError) {
         return c.json({ error: error.message }, error.status);
       }
@@ -2122,8 +2496,18 @@ export function createMediaPoolService(
       })
       .strict();
 
+    const noStore: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.header("Cache-Control", "no-store");
+      await next();
+    };
+
     app.post(
       "/:agentId/avatar/generate",
+      noStore,
+      requireUser,
       bodyLimit({ maxSize: 16 * 1024 }),
       async (c) => {
         const raw = await c.req.json().catch(() => ({}));

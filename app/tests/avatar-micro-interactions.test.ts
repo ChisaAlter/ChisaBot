@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  CHAT_FILES_MARKER,
+  filesFromToolResult,
+} from "../../shared/chat-files";
+import {
   forgetRememberedPreviews,
   isAntiBotChallengeTitle,
   type LinkPreviewData,
   peekCachedLinkPreview,
   previewClient,
+  rememberedPreview,
   rememberPreview,
   sanitizeLinkPreview,
 } from "@/components/rich-previews/link-preview-query";
@@ -227,14 +232,60 @@ describe("链接预览 Hover 纯缓存探测与微信/知乎/小红书反爬标�
       favicon: null,
     };
     rememberPreview(wxUrl, poisoned);
+    // rememberedPreview 必须返回已清洗数据，防止旧缓存残留验证码图片和异常摘要
+    const recalled = rememberedPreview(wxUrl).initialData;
+    expect(recalled?.degraded).toBe(true);
+    expect(recalled?.title).toBe("mp.weixin.qq.com");
+    expect(recalled?.image).toBeNull();
+    expect(recalled?.description).toBe("");
+
     const sanitized = sanitizeLinkPreview(poisoned);
     expect(sanitized.degraded).toBe(true);
     expect(sanitized.title).toBe("mp.weixin.qq.com");
     expect(sanitized.image).toBeNull();
+    expect(sanitized.description).toBe("");
 
-    // mergeLinkFields 同样拒绝将反爬验证标题显示为主标题
+    // mergeLinkFields 命中反爬时同样清空预览图与反爬描述
     const merged = mergeLinkFields(wxUrl, {}, poisoned);
     expect(merged.degraded).toBe(true);
     expect(merged.title).toBe("mp.weixin.qq.com");
+    expect(merged.image).toBeNull();
+    expect(merged.description).toBeNull();
+
+    // 音视频文件卡片 URL 仅放行 /api/chat-files/<safe-id>，拒绝路径穿越与非法外链
+    const rawToolOut = `已生成\n${CHAT_FILES_MARKER}${JSON.stringify([
+      {
+        id: "vid_123-abc",
+        name: "ok.mp4",
+        mimeType: "video/mp4",
+        size: 120,
+        kind: "generated",
+        url: "/api/chat-files/vid_123-abc",
+        workspacePath: null,
+        createdAt: "2026-11-19T00:00:00Z",
+      },
+      {
+        id: "evil-1",
+        name: "evil.mp4",
+        mimeType: "video/mp4",
+        size: 120,
+        kind: "generated",
+        url: "/api/chat-files/../admin/secret",
+        workspacePath: null,
+        createdAt: "2026-11-19T00:00:00Z",
+      },
+      {
+        id: "evil-2",
+        name: "evil2.mp4",
+        mimeType: "video/mp4",
+        size: 120,
+        kind: "generated",
+        url: "/api/chat-files/vid_1?redirect=https://evil.test",
+        workspacePath: null,
+        createdAt: "2026-11-19T00:00:00Z",
+      },
+    ])}`;
+    const parsedFiles = filesFromToolResult(rawToolOut);
+    expect(parsedFiles.map((f) => f.id)).toEqual(["vid_123-abc"]);
   });
 });
