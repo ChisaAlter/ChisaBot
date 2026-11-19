@@ -493,7 +493,7 @@ describe.skipIf(!url)("schedules (database)", () => {
       when: { repeat: "hourly" },
     });
     for (let i = 0; i < 3; i++) {
-      await due(s.id);
+      await due(s.id, `${3 - i} minutes`);
       await failing.sweep();
       await settle();
     }

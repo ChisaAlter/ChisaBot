@@ -101,7 +101,10 @@ test("windows default folders: C:\\AI is outside (message lists the roots); Chin
 test("powershell encoding and input scripts", () => {
   assert.equal(Buffer.from(encodePowerShell("echo 你好"), "base64").toString("utf16le"), "echo 你好");
   assert.match(winInputScript({ action: "click", x: 10, y: 20 }), /SetCursorPos\(10, 20\)/);
-  assert.match(winInputScript({ action: "type", text: "a+b" }), /a\{\+\}b/);
+  const typeScript = winInputScript({ action: "type", text: "a+b" });
+  const encodedType = typeScript.match(/FromBase64String\('([^']+)'\)/)?.[1];
+  assert.ok(encodedType, typeScript);
+  assert.equal(Buffer.from(encodedType, "base64").toString("utf8"), "a{+}b");
   assert.equal(escapeSendKeys("50%(x)"), "50{%}{(}x{)}");
   assert.throws(() => winInputScript({ action: "move" }), /x 和 y/);
 });

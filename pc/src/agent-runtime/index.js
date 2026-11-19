@@ -419,6 +419,7 @@ function createAgentRuntime(options) {
     let prep = previousSession?.prep || null;
     let reusedPrep = Boolean(prep);
     let bridge = null;
+    let started = false;
     try {
       const validatedInputSessionId =
         message.sessionId !== undefined && message.sessionId !== null
@@ -588,6 +589,7 @@ function createAgentRuntime(options) {
       };
 
       const activeSessionId = resumeSessionId || `sess-${taskId}`;
+      started = true;
       out({
         type: "agent_started",
         taskId,
@@ -756,18 +758,24 @@ function createAgentRuntime(options) {
             ? error.message
             : String(error);
       let diff = null;
+      let continuable = false;
       const stopped = controller.signal.aborted && reason !== "超时，已停止。";
       if (prep) {
-        diff = stopped ? null : await sandbox.diff(prep).catch(() => null);
-        if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
-        // 暂停或失败时同样保留 worktree / session 供显式 continue 续接（不丢失已有上下文与文件）。
-        sessions.set(taskId, {
-          prep,
-          sessionId: resumeSessionId || `sess-${taskId}`,
-          builtinMessages: previousSession?.builtinMessages || null,
-          lastUsedAt: Date.now(),
-        });
-        pruneSessions();
+        if (!started && !reusedPrep) {
+          await prep.cleanup().catch(() => {});
+        } else {
+          diff = stopped ? null : await sandbox.diff(prep).catch(() => null);
+          if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
+          // 暂停或失败时同样保留 worktree / session 供显式 continue 续接（不丢失已有上下文与文件）。
+          sessions.set(taskId, {
+            prep,
+            sessionId: resumeSessionId || `sess-${taskId}`,
+            builtinMessages: previousSession?.builtinMessages || null,
+            lastUsedAt: Date.now(),
+          });
+          pruneSessions();
+          continuable = true;
+        }
       }
       out({
         type: "agent_done",
@@ -777,7 +785,7 @@ function createAgentRuntime(options) {
         diff,
         stopped,
         sessionId: resumeSessionId || `sess-${taskId}`,
-        continuable: Boolean(prep),
+        continuable,
       });
     } finally {
       if (bridge) await bridge.close().catch(() => {});

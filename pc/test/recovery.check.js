@@ -45,6 +45,7 @@ function desktop(fetchImpl) {
     agent: { reconnectNow() {} }, shell: { openExternal() {} },
     loginUrl: () => false, openLogin() {}, sessionExpired() {},
     compactWindows: () => ({ watch() {}, toggle() {} }), placeUpdateWindow() {},
+    pendingDeepLink: null,
     setInterval: () => 1, clearInterval() {}, URL, AbortController, AbortSignal,
     setImmediate, quitting: false,
   };

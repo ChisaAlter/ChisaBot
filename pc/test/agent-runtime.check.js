@@ -74,12 +74,20 @@ test("node stop and revocation stop the attached agent runtime", () => {
 test("stopping while preparing a workdir does not start the agent afterwards", async () => {
   const originalPrepare = sandbox.prepare;
   let prepared;
+  let markPrepareStarted;
+  const prepareStarted = new Promise((resolve) => {
+    markPrepareStarted = resolve;
+  });
   let cleaned = false;
   const sent = [];
   const runtime = createAgentRuntime({ send: (message) => { sent.push(message); return true; } });
-  sandbox.prepare = () => new Promise((resolve) => { prepared = resolve; });
+  sandbox.prepare = () => new Promise((resolve) => {
+    prepared = resolve;
+    markPrepareStarted();
+  });
   try {
     runtime.handle({ type: "agent_run", taskId: "cancel-prep", agent: "builtin", prompt: "unused", cwd: os.tmpdir(), profile: "readonly", roots: [os.tmpdir()], isolation: "none", timeoutMs: 5000 });
+    await prepareStarted;
     runtime.stopAll();
     prepared({ workdir: os.tmpdir(), notes: [], mode: "direct", cleanup: async () => { cleaned = true; } });
     await new Promise((resolve) => setImmediate(resolve));
@@ -196,7 +204,7 @@ test("claude stream-json and codex json parsing", () => {
   c.line(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "我来看看" }, { type: "tool_use", name: "Edit", input: { file_path: "a.js" } }] } }), emit);
   c.line(JSON.stringify({ type: "result", subtype: "success", result: "完成", num_turns: 3, total_cost_usd: 0.0123 }), emit);
   assert.deepEqual(out.slice(0, 3), ["status:Claude Code 已启动（claude-sonnet）", "text:我来看看", "tool:修改 a.js"]);
-  assert.deepEqual(c.result(), { summary: "完成", isError: false });
+  assert.deepEqual(c.result(), { summary: "完成", isError: false, sessionId: null });
   const x = codexParser();
   out.length = 0;
   x.line(JSON.stringify({ type: "item.started", item: { type: "command_execution", command: "npm test" } }), emit);
@@ -417,6 +425,7 @@ process.stdin.on("data", (chunk) => {
           runtime.handle({
             type: "agent_subcall_result",
             reqId: m.reqId,
+            taskId: m.taskId,
             ok: true,
             data: [{ slug: "codebuddy", name: "Codebuddy" }],
           });
