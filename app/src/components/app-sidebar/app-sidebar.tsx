@@ -3,6 +3,8 @@ import {
   IconDeviceDesktop,
   IconDots,
   IconLayoutDashboard,
+  IconPin,
+  IconPinnedOff,
   IconPlayerPause,
   IconPlus,
   IconSearch,
@@ -47,7 +49,9 @@ import {
 import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
 import { useBotChat, useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { openCreateBot } from "@/lib/agents/create-bot";
+import { setAgentPinnedMutationOptions } from "@/lib/agents/mutations";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { sortSidebarRoster } from "@/lib/agents/roster-order";
 import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
 import {
   type BotAttention,
@@ -321,6 +325,8 @@ type RosterBot = {
   id: string;
   name: string;
   title?: string | null;
+  pinned?: boolean;
+  pinnedAt?: string | null;
   canManage?: boolean;
   /** 部署包机器人不能改但管理员能删；旧服务器没有这个字段时按 canManage。 */
   canDelete?: boolean;
@@ -358,6 +364,7 @@ function BotRow({
     setMenuOpen(nextOpen);
   };
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
+  const togglePinned = useMutation(setAgentPinnedMutationOptions(queryClient));
   const waiting = attention ? needsInput(attention) : 0;
   const unread = !selected && attention ? attention.unread > 0 : false;
   const paused = attention?.paused ?? false;
@@ -410,6 +417,16 @@ function BotRow({
           <span className="glass-item-s">{bot.title}</span>
         ) : null}
       </span>
+      {!main && bot.pinned ? (
+        <span
+          aria-label={"已固定"}
+          className="shrink-0 text-muted-foreground/75"
+          role="img"
+          title={"已固定"}
+        >
+          <IconPin className="size-3.5" />
+        </span>
+      ) : null}
       {waiting > 0 ? (
         <span
           className="glass-bot-badge"
@@ -483,6 +500,9 @@ function BotRow({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
+          onTogglePinned={() =>
+            togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
+          }
           onReplaceMain={
             main && canReplaceMain ? () => setPickerOpen(true) : null
           }
@@ -525,6 +545,7 @@ function BotMenuContent({
   main,
   paused,
   onToggleMain,
+  onTogglePinned,
   onReplaceMain,
   onResume,
   onDelete,
@@ -536,6 +557,7 @@ function BotMenuContent({
   main: boolean | null;
   paused: boolean;
   onToggleMain: (() => void) | null;
+  onTogglePinned?: (() => void) | null;
   /** 「更换主机器人…」：只在主机器人自己的菜单里、且有别的机器人可选时给。 */
   onReplaceMain?: (() => void) | null;
   onResume: () => void;
@@ -613,7 +635,7 @@ function BotMenuContent({
           </span>
         </DropdownMenuItem>
       ) : null}
-      {onToggleMain || paused ? (
+      {onToggleMain || onTogglePinned || paused ? (
         <DropdownMenuSeparator className="glass-sep" />
       ) : null}
       {onToggleMain ? (
@@ -632,6 +654,18 @@ function BotMenuContent({
         <DropdownMenuItem className="glass-mi" onClick={onReplaceMain}>
           <IconArrowsExchange className={icon} />
           <span className="min-w-0 flex-1">{"更换主机器人…"}</span>
+        </DropdownMenuItem>
+      ) : null}
+      {onTogglePinned ? (
+        <DropdownMenuItem className="glass-mi" onClick={onTogglePinned}>
+          {bot.pinned ? (
+            <IconPinnedOff className={icon} />
+          ) : (
+            <IconPin className={icon} />
+          )}
+          <span className="min-w-0 flex-1">
+            {bot.pinned ? "取消固定" : "固定在顶部"}
+          </span>
         </DropdownMenuItem>
       ) : null}
       {paused ? (
@@ -753,15 +787,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pendingBotId = usePendingBot();
   const selectedBotId = pendingBotId ?? routeBotId;
   const { mainBotId, setMainBot } = useMainBot();
-  const mainBot = mainBotId
-    ? roster.find((bot) => bot.id === mainBotId)
-    : undefined;
-  const others = mainBot
-    ? roster.filter((bot) => bot.id !== mainBot.id)
-    : roster;
+  const { mainBot, others, ordered } = sortSidebarRoster(roster, mainBotId);
   // 空闲时预取主机器人和左栏前几个的对话，切过去就是现成的（DESIGN.md §83）。
   usePrefetchBotChats(
-    [...(mainBot ? [mainBot.id] : []), ...others.map((bot) => bot.id)],
+    ordered.map((bot) => bot.id),
     channels.data,
     routeBotId,
   );
@@ -805,7 +834,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     sidebar && !sidebar.isMobile && sidebar.state === "collapsed",
   );
   if (collapsed) {
-    const railBots = mainBot ? [mainBot, ...others] : roster;
+    const railBots = ordered;
     return (
       <RailSidebar collapsible="icon" variant="floating" {...props}>
         <BotMiniRail
@@ -1121,6 +1150,7 @@ function MiniBot({
     setMenuOpen(nextOpen);
   };
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
+  const togglePinned = useMutation(setAgentPinnedMutationOptions(queryClient));
   const chat = useBotChat(bot.id);
   // 正在切到别的机器人时，旧对话登记的控件不再让这一行亮着（FIX-PLAN F0）。
   const pendingBot = usePendingBot();
@@ -1140,7 +1170,11 @@ function MiniBot({
   const waiting = attention ? needsInput(attention) : 0;
   const unread = !selected && attention ? attention.unread > 0 : false;
   const paused = attention?.paused ?? false;
-  const label = main ? `${bot.name}（主机器人）` : bot.name;
+  const label = main
+    ? `${bot.name}（主机器人）`
+    : bot.pinned
+      ? `${bot.name}（已固定）`
+      : bot.name;
   const computer =
     chat?.canComputer && (chat.needsYou || chat.computerOpen)
       ? chat.needsYou
@@ -1235,6 +1269,9 @@ function MiniBot({
           onDelete={() => setDeleteOpen(true)}
           onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
           onToggleMain={onToggleMain}
+          onTogglePinned={() =>
+            togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
+          }
           onReplaceMain={
             main && canReplaceMain ? () => setPickerOpen(true) : null
           }

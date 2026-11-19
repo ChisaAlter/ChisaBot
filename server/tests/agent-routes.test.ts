@@ -379,6 +379,7 @@ describe("agent lifecycle routes", () => {
           visibility: "private",
           hidden: false,
           pinned: false,
+          pinnedAt: null,
           systemOwned: false,
           canManage: true,
           canDelete: true,
@@ -396,6 +397,7 @@ describe("agent lifecycle routes", () => {
           visibility: "private",
           hidden: false,
           pinned: false,
+          pinnedAt: null,
           systemOwned: false,
           canManage: false,
           canDelete: false,
@@ -413,6 +415,7 @@ describe("agent lifecycle routes", () => {
           visibility: "public",
           hidden: false,
           pinned: false,
+          pinnedAt: null,
           systemOwned: true,
           canManage: false,
           canDelete: false,
@@ -420,6 +423,26 @@ describe("agent lifecycle routes", () => {
           builtIn: false,
           createdByAgentId: null,
         },
+      ],
+    });
+  });
+
+  test("serializes pinnedAt when an agent is pinned", async () => {
+    const pinnedAt = "2026-11-19T08:00:00.000Z";
+    const store = fakeStore({
+      async list() {
+        return [profile({ id: "pinned-1", pinned: true, pinnedAt })];
+      },
+    });
+    const response = await appFor(store).request("http://chisabot.test/");
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      agents: [
+        expect.objectContaining({
+          id: "pinned-1",
+          pinned: true,
+          pinnedAt,
+        }),
       ],
     });
   });
