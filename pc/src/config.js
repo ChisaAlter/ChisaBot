@@ -3,6 +3,7 @@
  * 本机配置与本机审计日志（userData 目录）。
  * 设备令牌用 Electron safeStorage（Windows 上是 DPAPI）加密后保存；不可用时才明文保存并在设置页提示。
  */
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -27,21 +28,73 @@ const DEFAULTS = {
   shellHash: "",
   /** 主窗口里网页的外观（深色 / 时间天空），本机窗口跟着它走；dark 为 null 时跟随系统。 */
   appearance: { dark: null, sky: true },
+  /** 硬件加速开关（重启客户端后生效）；遇到显卡兼容黑屏/花屏时可关闭。 */
+  hardwareAcceleration: true,
+  /** 渲染进程拼写检查开关（配合原生右键菜单拼写建议）。 */
+  spellcheck: true,
+  /** 显式时区覆盖（IANA 时区如 Asia/Shanghai；留空跟随系统时区）。 */
+  timezone: "",
+  /** 渲染进程出口域名白名单（除已配服务器与 loopback 外显式放行的域名或 *.domain.tld）。 */
+  allowedEgressDomains: [],
 };
+
+function readConfigFileStrictSync(filePath) {
+  const before = fs.lstatSync(filePath, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error("拒绝读取非普通文件或符号链接的配置文件。");
+  }
+  if (process.platform !== "win32" && (Number(before.mode) & 0o777) !== 0o600) {
+    throw new Error("配置文件权限不是 0600，已拒绝读取。");
+  }
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(filePath, flags);
+  try {
+    const info = fs.fstatSync(fd, { bigint: true });
+    if (before.dev !== info.dev || before.ino !== info.ino || !info.isFile()) {
+      throw new Error("配置文件在打开期间发生变动，已拒绝读取。");
+    }
+    if (process.platform !== "win32" && (Number(info.mode) & 0o777) !== 0o600) {
+      throw new Error("配置文件句柄权限不是 0600，已拒绝读取。");
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 function createConfig({ dir, safeStorage }) {
   const file = path.join(dir, "config.json");
   const auditFile = path.join(dir, "audit.jsonl");
   let data = { ...DEFAULTS };
   try {
-    data = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(file, "utf8")) };
+    data = { ...DEFAULTS, ...JSON.parse(readConfigFileStrictSync(file)) };
   } catch {}
 
   function save() {
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    let fd;
+    let renamed = false;
+    try {
+      fd = fs.openSync(tmp, "wx", 0o600);
+      fs.writeFileSync(fd, JSON.stringify(data, null, 2));
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = undefined;
+      fs.renameSync(tmp, file);
+      renamed = true;
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      }
+      if (!renamed) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
+      }
+    }
   }
 
   const encryptionAvailable = () => {

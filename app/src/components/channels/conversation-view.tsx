@@ -21,6 +21,7 @@ import {
 import { ComposerDock } from "@/components/channels/composer/dock";
 import { useExternalConnection } from "@/hooks";
 import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
+import { deleteChatFile } from "@/lib/chat-files";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
 import { newId } from "../../lib/new-id";
@@ -645,6 +646,7 @@ export function ConversationView({
           sendBlocked={sendBlocked}
           agents={agents}
           autoFocus={autoFocus}
+          {...(agentId ? { chatFileAgentId: agentId } : {})}
           {...(channelId ? { channelId } : {})}
           {...(draftKey ? { draftKey } : {})}
           {...(onAttachWithoutChannel ? { onAttachWithoutChannel } : {})}
@@ -730,10 +732,13 @@ export function ConversationView({
  */
 function releaseStagedAttachment(attachment: Attachment): void {
   const metadata = attachment.metadata as
-    | { attachmentId?: unknown }
+    | { attachmentId?: unknown; chatFileId?: unknown }
     | undefined;
-  if (typeof metadata?.attachmentId !== "string") {
+  if (typeof metadata?.attachmentId === "string") {
+    releaseStagedAttachmentRow(metadata.attachmentId);
     return;
   }
-  releaseStagedAttachmentRow(metadata.attachmentId);
+  if (typeof metadata?.chatFileId === "string") {
+    void deleteChatFile(metadata.chatFileId);
+  }
 }

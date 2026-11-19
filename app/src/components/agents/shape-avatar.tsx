@@ -7,6 +7,10 @@ import {
   useState,
 } from "react";
 import { useTimeout } from "@/hooks";
+import type {
+  BusyExpression,
+  SignAvatarMood,
+} from "@/lib/agents/avatar-expressions";
 import {
   attachMorph,
   morphLevelOf as levelOfState,
@@ -105,6 +109,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
   working = false,
   interrupted = false,
   mood: forcedMood,
+  expression,
 }: {
   shape: AvatarShape;
   color: ShapeColor;
@@ -116,6 +121,8 @@ export const ShapeAvatar = memo(function ShapeAvatar({
   interrupted?: boolean;
   /** 只给预览用（头像编辑框的「选中 / 工作中 / 做完了」）：直接定表情。 */
   mood?: ShapeMood;
+  /** 可选情感微交互神态（忙碌去重微表情或登录状态表情）。 */
+  expression?: BusyExpression | SignAvatarMood;
 }) {
   // 「做完了」看整轮（干活或在想）结束，不看工具结束（DESIGN.md §81）。
   const ownMood = useShapeMood(
@@ -239,6 +246,7 @@ export const ShapeAvatar = memo(function ShapeAvatar({
       className="sa"
       data-activity={level}
       data-color={color}
+      data-expression={expression}
       data-mood={mood}
       data-morph={still ? undefined : "on"}
       height={size}

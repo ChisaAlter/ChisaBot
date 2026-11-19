@@ -345,6 +345,10 @@ export type DeploymentConfig = {
   linkPreviewShotsEnabled: boolean;
   livePanelSweepEnabled: boolean;
   desktopHostToken?: string;
+  /** 内部静默排空与健康探针令牌（CHISABOT_INTERNAL_TOKEN / CHISABOT_QUIESCE_TOKEN）。 */
+  internalQuiesceToken?: string;
+  /** 是否显式信任反代写入的 X-Forwarded-For / X-Real-IP（CHISABOT_TRUST_PROXY=1）。 */
+  trustForwardedHeaders?: boolean;
   modelOauthFile?: string;
   imEnabled: boolean;
   releaseLocksOnStart: boolean;
@@ -522,6 +526,26 @@ export function readLocalAgentLimits(env: Environment = process.env): {
     timeoutMs: Number(env.CHISABOT_LOCAL_AGENT_TIMEOUT_MS) || 45 * 60_000,
     llmCalls: Number(env.CHISABOT_LOCAL_AGENT_LLM_CALLS) || 80,
   };
+}
+
+/**
+ * 为 AI 微应用沙箱子进程提取严格最小白名单宿主基础环境变量：
+ * 仅提取 PATH（及 Windows 平台启动 Node 所需的 SYSTEMROOT/COMSPEC），
+ * 严禁透传 HOME、USERPROFILE、DATABASE_URL、API Key、NODE_OPTIONS 等任何宿主状态或凭据。
+ */
+export function readAppSandboxBaseEnv(
+  env: Environment = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const pathVal = env.PATH ?? env.Path;
+  if (pathVal) out.PATH = pathVal;
+  if (process.platform === "win32") {
+    const sysRoot = env.SYSTEMROOT ?? env.SystemRoot;
+    if (sysRoot) out.SYSTEMROOT = sysRoot;
+    const comSpec = env.COMSPEC ?? env.ComSpec;
+    if (comSpec) out.COMSPEC = comSpec;
+  }
+  return out;
 }
 
 export function readReleaseLocksOnStart(
@@ -1546,6 +1570,17 @@ export function loadConfig(
     ...(environment.CHISABOT_DESKTOP_HOST_TOKEN !== undefined
       ? { desktopHostToken: environment.CHISABOT_DESKTOP_HOST_TOKEN }
       : {}),
+    ...(optional(environment, "CHISABOT_INTERNAL_TOKEN") ??
+    optional(environment, "CHISABOT_QUIESCE_TOKEN")
+      ? {
+          internalQuiesceToken:
+            optional(environment, "CHISABOT_INTERNAL_TOKEN") ??
+            optional(environment, "CHISABOT_QUIESCE_TOKEN"),
+        }
+      : {}),
+    trustForwardedHeaders: ["1", "true", "yes"].includes(
+      (optional(environment, "CHISABOT_TRUST_PROXY") ?? "").toLowerCase(),
+    ),
     ...(optional(environment, "CHISABOT_MODEL_OAUTH_FILE")
       ? { modelOauthFile: optional(environment, "CHISABOT_MODEL_OAUTH_FILE") }
       : {}),

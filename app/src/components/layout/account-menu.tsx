@@ -139,7 +139,9 @@ export function AccountMenu({
         {pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null}
       </span>
       <span className="acct-text">
-        <span className="acct-name">{name}</span>
+        <span className="acct-name" data-private="">
+          {name}
+        </span>
         {sub ? <span className="acct-sub">{sub}</span> : null}
       </span>
     </>
@@ -182,7 +184,9 @@ export function AccountMenu({
               <GlassAvatar ring={false} size={32} />
             </span>
             <span className="acct-text">
-              <span className="acct-name">{name}</span>
+              <span className="acct-name" data-private="">
+                {name}
+              </span>
               {version ? <span className="acct-sub">{version}</span> : null}
             </span>
           </DropdownMenuLabel>

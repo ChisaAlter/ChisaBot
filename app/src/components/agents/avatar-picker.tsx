@@ -1,10 +1,18 @@
-import { IconCamera, IconMinus, IconPhotoUp, IconPlus } from "@tabler/icons-react";
+import {
+  IconCamera,
+  IconMinus,
+  IconPhotoUp,
+  IconPlus,
+  IconSparkles,
+} from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { monogramOf } from "../../../../shared/bot-avatars";
 import { BotAvatar } from "@/components/agents/bot-avatar";
 import { ShapeAvatar, type ShapeMood } from "@/components/agents/shape-avatar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   Dialog,
@@ -21,6 +29,8 @@ import {
   AVATAR_COLORS,
   AVATAR_EMOJIS,
   AVATAR_SHAPES,
+  announceAvatarChange,
+  avatarKeys,
   type AvatarColor,
   type AvatarDraft,
   type AvatarShape,
@@ -30,7 +40,12 @@ import {
   smallSourceHint,
   type ShapeColor,
 } from "@/lib/agents/avatars";
-import { SHAPE_COLOR_HEX, SHAPE_COLOR_LABEL, SHAPE_LABEL } from "@/lib/agents/avatar-shapes";
+import {
+  SHAPE_COLOR_HEX,
+  SHAPE_COLOR_LABEL,
+  SHAPE_LABEL,
+} from "@/lib/agents/avatar-shapes";
+import { generateBotAvatar } from "@/lib/media-pool";
 import { cn } from "@/lib/utils";
 
 const COLOR_LABEL: Record<AvatarColor, string> = {
@@ -71,8 +86,38 @@ export function AvatarField({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const shownName = name.trim() || "新";
+
+  const runAiGenerate = async () => {
+    if (!agentId || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      await generateBotAvatar(agentId, {
+        ...(aiPrompt.trim() ? { prompt: aiPrompt.trim() } : {}),
+      });
+      await queryClient.invalidateQueries({ queryKey: avatarKeys.all });
+      announceAvatarChange(agentId);
+      onChange({ kind: "keep" });
+      setAiPrompt("");
+      setAiOpen(false);
+    } catch (failure) {
+      setAiError(
+        failure instanceof Error
+          ? failure.message
+          : "AI 生成头像失败，请稍后重试。",
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   return (
     <div className="bot-ava-field">
       {/* 圆形头像本身也能点；读屏和 Tab 只走旁边的「更换头像」按钮，不念两遍。 */}
@@ -84,24 +129,81 @@ export function AvatarField({
         tabIndex={-1}
         type="button"
       >
-        <BotAvatar agentId={agentId} decorative draft={draft} name={shownName} seed={seed} size={64} />
+        <BotAvatar
+          agentId={agentId}
+          decorative
+          draft={draft}
+          name={shownName}
+          seed={seed}
+          size={64}
+        />
         <span aria-hidden className="bot-ava-field-cam">
           <IconCamera className="size-3.5" />
         </span>
       </button>
       <div className="bot-ava-field-text">
-        <Button
-          data-testid="ava-open"
-          disabled={disabled}
-          onClick={() => setOpen(true)}
-          ref={triggerRef}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {"更换头像"}
-        </Button>
-        <span className="bot-ava-field-hint">{"选一个形象，或上传图片 / 选表情 / 首字"}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            data-testid="ava-open"
+            disabled={disabled}
+            onClick={() => setOpen(true)}
+            ref={triggerRef}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {"更换头像"}
+          </Button>
+          {agentId ? (
+            <Button
+              data-testid="ava-ai-toggle"
+              disabled={disabled || aiBusy}
+              onClick={() => {
+                setAiError(null);
+                setAiOpen((prev) => !prev);
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <IconSparkles className="size-3.5" />
+              {"AI 生成头像"}
+            </Button>
+          ) : null}
+        </div>
+        <span className="bot-ava-field-hint">
+          {agentId
+            ? "选一个形象、上传图片、选表情/首字，或使用 AI 一键生成头像"
+            : "选一个形象，或上传图片 / 选表情 / 首字"}
+        </span>
+        {agentId && aiOpen ? (
+          <div className="mt-2 flex flex-col gap-2" data-testid="ava-ai-panel">
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label="AI 头像描述"
+                data-testid="ava-ai-prompt"
+                disabled={aiBusy}
+                onChange={(event) => setAiPrompt(event.target.value)}
+                placeholder="可选：描述风格或画面（留空按机器人职责自动生成）"
+                value={aiPrompt}
+              />
+              <Button
+                data-testid="ava-ai-generate"
+                disabled={aiBusy}
+                onClick={() => void runAiGenerate()}
+                size="sm"
+                type="button"
+              >
+                {aiBusy ? "生成中…" : "立即生成"}
+              </Button>
+            </div>
+            {aiError ? (
+              <p className="text-destructive text-xs" role="alert">
+                {aiError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <AvatarDialog
         agentId={agentId}
@@ -115,7 +217,11 @@ export function AvatarField({
           setOpen(false);
           // 受控关窗时 Base UI 有时不走 finalFocus（焦点落到 body）：下一帧兜底放回去。
           requestAnimationFrame(() => {
-            if (!document.activeElement || document.activeElement === document.body) triggerRef.current?.focus();
+            if (
+              !document.activeElement ||
+              document.activeElement === document.body
+            )
+              triggerRef.current?.focus();
           });
         }}
         onOpenChange={setOpen}
@@ -148,9 +254,15 @@ function AvatarDialog({
 }) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="bot-ava-dialog sm:max-w-[420px]" finalFocus={finalFocus} overlayClassName="bg-black/25 supports-backdrop-filter:backdrop-blur-sm">
+      <DialogContent
+        className="bot-ava-dialog sm:max-w-[420px]"
+        finalFocus={finalFocus}
+        overlayClassName="bg-black/25 supports-backdrop-filter:backdrop-blur-sm"
+      >
         {/* 关窗即丢掉没按「完成」的选择。 */}
-        {open ? <AvatarDialogBody {...rest} onCancel={() => onOpenChange(false)} /> : null}
+        {open ? (
+          <AvatarDialogBody {...rest} onCancel={() => onOpenChange(false)} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -160,13 +272,16 @@ function AvatarDialog({
 function initialTab(draft: AvatarDraft, autoPicked: boolean): Tab {
   if (draft.kind === "emoji") return "emoji";
   if (draft.kind === "monogram" && !autoPicked) return "monogram";
-  if (draft.kind === "shape" || (draft.kind === "monogram" && autoPicked)) return "shape";
+  if (draft.kind === "shape" || (draft.kind === "monogram" && autoPicked))
+    return "shape";
   return "upload";
 }
 
 /** 停在「形象」页就得有一个确定的选择，不然预览里是圆团而按「完成」什么也没发生。 */
 function initialChoice(draft: AvatarDraft, tab: Tab): AvatarDraft {
-  return tab === "shape" && draft.kind !== "shape" ? { kind: "shape", shape: "round", color: "violet" } : draft;
+  return tab === "shape" && draft.kind !== "shape"
+    ? { kind: "shape", shape: "round", color: "violet" }
+    : draft;
 }
 
 function AvatarDialogBody({
@@ -189,14 +304,25 @@ function AvatarDialogBody({
   onCancel: () => void;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab(draft, autoPicked));
-  const [choice, setChoice] = useState<AvatarDraft>(() => initialChoice(draft, initialTab(draft, autoPicked)));
+  const [choice, setChoice] = useState<AvatarDraft>(() =>
+    initialChoice(draft, initialTab(draft, autoPicked)),
+  );
   const [color, setColor] = useState<AvatarColor>(
     draft.kind === "emoji" || draft.kind === "monogram" ? draft.color : "sky",
   );
-  const [emoji, setEmoji] = useState<string>(draft.kind === "emoji" ? draft.emoji : "🤖");
-  const [shape, setShape] = useState<AvatarShape>(draft.kind === "shape" ? draft.shape : "round");
-  const [shapeColor, setShapeColor] = useState<ShapeColor>(draft.kind === "shape" ? draft.color : "violet");
-  const [source, setSource] = useState<{ image: HTMLImageElement; url: string } | null>(null);
+  const [emoji, setEmoji] = useState<string>(
+    draft.kind === "emoji" ? draft.emoji : "🤖",
+  );
+  const [shape, setShape] = useState<AvatarShape>(
+    draft.kind === "shape" ? draft.shape : "round",
+  );
+  const [shapeColor, setShapeColor] = useState<ShapeColor>(
+    draft.kind === "shape" ? draft.color : "violet",
+  );
+  const [source, setSource] = useState<{
+    image: HTMLImageElement;
+    url: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 审查 10-10：拖着文件经过上传区时给反馈。 */
@@ -215,10 +341,15 @@ function AvatarDialogBody({
     setError(null);
     if (next === "emoji") setChoice({ kind: "emoji", emoji, color });
     if (next === "monogram") setChoice({ kind: "monogram", color });
-    if (next === "shape") setChoice({ kind: "shape", shape, color: shapeColor });
+    if (next === "shape")
+      setChoice({ kind: "shape", shape, color: shapeColor });
   };
   // 三处分段选择（来源 / 表情 / 底色）都走共用的键盘约定（2026-10-20）：roving tabindex + 方向键。
-  const tabKeys = useSegmentedKeys<Tab>({ value: tab, values: ["shape", "upload", "emoji", "monogram"], onChange: pick });
+  const tabKeys = useSegmentedKeys<Tab>({
+    value: tab,
+    values: ["shape", "upload", "emoji", "monogram"],
+    onChange: pick,
+  });
   const emojiKeys = useSegmentedKeys<string>({
     value: emoji,
     values: AVATAR_EMOJIS,
@@ -232,7 +363,11 @@ function AvatarDialogBody({
     values: AVATAR_COLORS,
     onChange: (next) => {
       setColor(next);
-      setChoice(tab === "emoji" ? { kind: "emoji", emoji, color: next } : { kind: "monogram", color: next });
+      setChoice(
+        tab === "emoji"
+          ? { kind: "emoji", emoji, color: next }
+          : { kind: "monogram", color: next },
+      );
     },
   });
   const chooseFile = async (file: File | undefined) => {
@@ -243,7 +378,9 @@ function AvatarDialogBody({
     try {
       const loaded = await loadAvatarSource(file);
       setSource(loaded);
-      setNotice(smallSourceHint(loaded.image.naturalWidth, loaded.image.naturalHeight));
+      setNotice(
+        smallSourceHint(loaded.image.naturalWidth, loaded.image.naturalHeight),
+      );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "这张图片打不开。");
     }
@@ -270,10 +407,18 @@ function AvatarDialogBody({
     <>
       <DialogHeader>
         <DialogTitle>{"头像"}</DialogTitle>
-        <DialogDescription>{"图片、表情、首字显示成圆形；形象保持自己的形状。"}</DialogDescription>
+        <DialogDescription>
+          {"图片、表情、首字显示成圆形；形象保持自己的形状。"}
+        </DialogDescription>
       </DialogHeader>
       <DialogBody>
-        <div aria-label={"头像来源"} className="sg-segmented bot-ava-seg" {...tabKeys.groupProps} ref={tabKeys.groupRef} role="radiogroup">
+        <div
+          aria-label={"头像来源"}
+          className="sg-segmented bot-ava-seg"
+          {...tabKeys.groupProps}
+          ref={tabKeys.groupRef}
+          role="radiogroup"
+        >
           {(
             [
               ["shape", "形象"],
@@ -305,19 +450,33 @@ function AvatarDialogBody({
               onChange={(nextShape, nextColor) => {
                 setShape(nextShape);
                 setShapeColor(nextColor);
-                setChoice({ kind: "shape", shape: nextShape, color: nextColor });
+                setChoice({
+                  kind: "shape",
+                  shape: nextShape,
+                  color: nextColor,
+                });
               }}
               shape={shape}
             />
           ) : tab === "upload" ? (
             source ? (
-              <AvatarCropper handleRef={cropRef} image={source.image} key={source.url} />
+              <AvatarCropper
+                handleRef={cropRef}
+                image={source.image}
+                key={source.url}
+              />
             ) : (
               <div className="bot-ava-drop-wrap">
                 <BotAvatar
                   agentId={agentId}
                   decorative
-                  draft={choice.kind === "image" ? choice : draft.kind === "image" ? draft : { kind: "keep" }}
+                  draft={
+                    choice.kind === "image"
+                      ? choice
+                      : draft.kind === "image"
+                        ? draft
+                        : { kind: "keep" }
+                  }
                   name={name}
                   seed={seed}
                   size={96}
@@ -333,7 +492,12 @@ function AvatarDialogBody({
                   }}
                   onDragLeave={(event) => {
                     // 移到按钮里面的子元素上也会触发 dragleave：只有真的离开按钮才算。
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+                    if (
+                      !event.currentTarget.contains(
+                        event.relatedTarget as Node | null,
+                      )
+                    )
+                      setDragging(false);
                   }}
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -349,7 +513,11 @@ function AvatarDialogBody({
                 >
                   <IconPhotoUp className="size-5" />
                   <span>{"选择一张图片"}</span>
-                  <span className="bot-ava-drop-sub">{dragging ? "松开就用这张" : `${ACCEPTED_AVATAR_HINT}；选好后在圆框里拖动、缩放`}</span>
+                  <span className="bot-ava-drop-sub">
+                    {dragging
+                      ? "松开就用这张"
+                      : `${ACCEPTED_AVATAR_HINT}；选好后在圆框里拖动、缩放`}
+                  </span>
                 </button>
               </div>
             )
@@ -357,7 +525,13 @@ function AvatarDialogBody({
             <div className="bot-ava-preset">
               <BotAvatar decorative draft={choice} name={name} size={96} />
               {tab === "emoji" ? (
-                <div aria-label={"表情"} className="bot-ava-emojis" {...emojiKeys.groupProps} ref={emojiKeys.groupRef} role="radiogroup">
+                <div
+                  aria-label={"表情"}
+                  className="bot-ava-emojis"
+                  {...emojiKeys.groupProps}
+                  ref={emojiKeys.groupRef}
+                  role="radiogroup"
+                >
                   {AVATAR_EMOJIS.map((item) => (
                     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                     <button
@@ -380,7 +554,13 @@ function AvatarDialogBody({
               ) : (
                 <p className="bot-ava-mono-note">{`用名字的第一个字「${monogramOf(name)}」，改名后跟着变。`}</p>
               )}
-              <div aria-label={"底色"} className="bot-ava-colors" {...colorKeys.groupProps} ref={colorKeys.groupRef} role="radiogroup">
+              <div
+                aria-label={"底色"}
+                className="bot-ava-colors"
+                {...colorKeys.groupProps}
+                ref={colorKeys.groupRef}
+                role="radiogroup"
+              >
                 {AVATAR_COLORS.map((item) => (
                   // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
                   <button
@@ -390,7 +570,11 @@ function AvatarDialogBody({
                     key={item}
                     onClick={() => {
                       setColor(item);
-                      setChoice(tab === "emoji" ? { kind: "emoji", emoji, color: item } : { kind: "monogram", color: item });
+                      setChoice(
+                        tab === "emoji"
+                          ? { kind: "emoji", emoji, color: item }
+                          : { kind: "monogram", color: item },
+                      );
                     }}
                     role="radio"
                     tabIndex={colorKeys.itemTabIndex(item)}
@@ -415,7 +599,11 @@ function AvatarDialogBody({
           type="file"
         />
         <p
-          className={cn("bot-ava-error", !error && "is-empty", !error && notice && "is-notice")}
+          className={cn(
+            "bot-ava-error",
+            !error && "is-empty",
+            !error && notice && "is-notice",
+          )}
           data-testid="ava-message"
           role={error ? "alert" : notice ? "status" : undefined}
         >
@@ -424,7 +612,12 @@ function AvatarDialogBody({
       </DialogBody>
       <DialogFooter className="bot-ava-foot">
         {cropping ? (
-          <Button onClick={() => fileRef.current?.click()} size="sm" type="button" variant="ghost">
+          <Button
+            onClick={() => fileRef.current?.click()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             {"换一张"}
           </Button>
         ) : allowPattern ? (
@@ -446,7 +639,9 @@ function AvatarDialogBody({
         </Button>
         <Button
           data-testid="ava-done"
-          disabled={busy || (tab === "upload" && !source && choice.kind !== "image")}
+          disabled={
+            busy || (tab === "upload" && !source && choice.kind !== "image")
+          }
           onClick={() => void done()}
           type="button"
         >
@@ -468,7 +663,13 @@ const MAX_ZOOM = 4;
  * 圆形取景框（用户 2026-10-16：左栏头像是圆的，裁剪也要是圆的）。拖动 = 平移，滚轮 / 双指 / 下面的滑杆 = 缩放，
  * 方向键平移、+ / − 缩放。图片永远盖满圆框；存下来的是圆框外接的正方形（显示时再裁成圆）。
  */
-function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRef: React.RefObject<CropHandle | null> }) {
+function AvatarCropper({
+  image,
+  handleRef,
+}: {
+  image: HTMLImageElement;
+  handleRef: React.RefObject<CropHandle | null>;
+}) {
   const w = image.naturalWidth;
   const h = image.naturalHeight;
   const base = Math.max(RING / w, RING / h);
@@ -484,12 +685,17 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
     const s = base * z;
     const limitX = Math.max(0, (w * s - RING) / 2);
     const limitY = Math.max(0, (h * s - RING) / 2);
-    return { x: Math.min(limitX, Math.max(-limitX, next.x)), y: Math.min(limitY, Math.max(-limitY, next.y)) };
+    return {
+      x: Math.min(limitX, Math.max(-limitX, next.x)),
+      y: Math.min(limitY, Math.max(-limitY, next.y)),
+    };
   };
   const zoomTo = (next: number) => {
     const z = Math.min(MAX_ZOOM, Math.max(1, next));
     setZoom(z);
-    setOffset((current) => clamp({ x: (current.x * z) / zoom, y: (current.y * z) / zoom }, z));
+    setOffset((current) =>
+      clamp({ x: (current.x * z) / zoom, y: (current.y * z) / zoom }, z),
+    );
   };
 
   handleRef.current = {
@@ -497,23 +703,36 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
       const size = RING / scale;
       const left = (width / 2 - offset.x - RING / 2) / scale;
       const top = (height / 2 - offset.y - RING / 2) / scale;
-      return { x: Math.max(0, left), y: Math.max(0, top), size: Math.min(size, w, h) };
+      return {
+        x: Math.max(0, left),
+        y: Math.max(0, top),
+        size: Math.min(size, w, h),
+      };
     },
   };
 
   return (
     <div className="bot-ava-crop-wrap">
       <div
-        aria-label={"调整取景：拖动或方向键移动（Shift 加大步长），滚轮、滑杆或 + / − 键缩放"}
+        aria-label={
+          "调整取景：拖动或方向键移动（Shift 加大步长），滚轮、滑杆或 + / − 键缩放"
+        }
         className="bot-ava-crop"
         data-testid="ava-crop"
         onKeyDown={(event) => {
           const step = event.shiftKey ? 24 : 8;
-          const moves: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+          const moves: Record<string, [number, number]> = {
+            ArrowLeft: [step, 0],
+            ArrowRight: [-step, 0],
+            ArrowUp: [0, step],
+            ArrowDown: [0, -step],
+          };
           const move = moves[event.key];
           if (move) {
             event.preventDefault();
-            setOffset((current) => clamp({ x: current.x + move[0], y: current.y + move[1] }));
+            setOffset((current) =>
+              clamp({ x: current.x + move[0], y: current.y + move[1] }),
+            );
           } else if (event.key === "+" || event.key === "=") {
             event.preventDefault();
             zoomTo(zoom + 0.2);
@@ -524,22 +743,41 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
         }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
-          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          pointers.current.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+          });
           if (pointers.current.size === 2) {
             const [a, b] = [...pointers.current.values()];
-            if (a && b) pinch.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom };
+            if (a && b)
+              pinch.current = {
+                distance: Math.hypot(a.x - b.x, a.y - b.y),
+                zoom,
+              };
           }
         }}
         onPointerMove={(event) => {
           const last = pointers.current.get(event.pointerId);
           if (!last) return;
-          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          pointers.current.set(event.pointerId, {
+            x: event.clientX,
+            y: event.clientY,
+          });
           if (pointers.current.size === 2 && pinch.current) {
             const [a, b] = [...pointers.current.values()];
-            if (a && b) zoomTo((pinch.current.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / pinch.current.distance);
+            if (a && b)
+              zoomTo(
+                (pinch.current.zoom * Math.hypot(a.x - b.x, a.y - b.y)) /
+                  pinch.current.distance,
+              );
             return;
           }
-          setOffset((current) => clamp({ x: current.x + event.clientX - last.x, y: current.y + event.clientY - last.y }));
+          setOffset((current) =>
+            clamp({
+              x: current.x + event.clientX - last.x,
+              y: current.y + event.clientY - last.y,
+            }),
+          );
         }}
         onPointerUp={(event) => {
           pointers.current.delete(event.pointerId);
@@ -560,12 +798,25 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           className="bot-ava-crop-img"
           draggable={false}
           src={image.src}
-          style={{ width, height, transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))` }}
+          style={{
+            width,
+            height,
+            transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`,
+          }}
         />
-        <span aria-hidden className="bot-ava-crop-ring" style={{ width: RING, height: RING }} />
+        <span
+          aria-hidden
+          className="bot-ava-crop-ring"
+          style={{ width: RING, height: RING }}
+        />
       </div>
       <div className="bot-ava-zoom">
-        <button aria-label={"缩小"} className="bot-ava-zoom-btn" onClick={() => zoomTo(zoom - 0.25)} type="button">
+        <button
+          aria-label={"缩小"}
+          className="bot-ava-zoom-btn"
+          onClick={() => zoomTo(zoom - 0.25)}
+          type="button"
+        >
           <IconMinus className="size-4" />
         </button>
         <input
@@ -579,7 +830,12 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
           type="range"
           value={zoom}
         />
-        <button aria-label={"放大"} className="bot-ava-zoom-btn" onClick={() => zoomTo(zoom + 0.25)} type="button">
+        <button
+          aria-label={"放大"}
+          className="bot-ava-zoom-btn"
+          onClick={() => zoomTo(zoom + 0.25)}
+          type="button"
+        >
           <IconPlus className="size-4" />
         </button>
       </div>
@@ -587,13 +843,39 @@ function AvatarCropper({ image, handleRef }: { image: HTMLImageElement; handleRe
   );
 }
 
-const PREVIEW_MOODS = ["still", "selected", "thinking", "working", "done"] as const;
+const PREVIEW_MOODS = [
+  "still",
+  "selected",
+  "thinking",
+  "working",
+  "done",
+] as const;
 type PreviewMood = (typeof PREVIEW_MOODS)[number];
-const PREVIEW_MOOD_LABEL: Record<PreviewMood, string> = { still: "静止", selected: "选中", thinking: "思考", working: "工作中", done: "做完了" };
-const PREVIEW_SHAPE_MOOD: Record<PreviewMood, ShapeMood> = { still: "idle", selected: "selected", thinking: "idle", working: "working", done: "done" };
+const PREVIEW_MOOD_LABEL: Record<PreviewMood, string> = {
+  still: "静止",
+  selected: "选中",
+  thinking: "思考",
+  working: "工作中",
+  done: "做完了",
+};
+const PREVIEW_SHAPE_MOOD: Record<PreviewMood, ShapeMood> = {
+  still: "idle",
+  selected: "selected",
+  thinking: "idle",
+  working: "working",
+  done: "done",
+};
 
 /** 「形象」页：预览（可以试静止 / 选中 / 思考 / 工作中 / 做完了）+ 14 个形状 + 11 种颜色。 */
-function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: ShapeColor; onChange: (shape: AvatarShape, color: ShapeColor) => void }) {
+function ShapePicker({
+  shape,
+  color,
+  onChange,
+}: {
+  shape: AvatarShape;
+  color: ShapeColor;
+  onChange: (shape: AvatarShape, color: ShapeColor) => void;
+}) {
   // 预览的表情：单选（以前三个开关各管各的，点「做完了」时「工作中」还亮着）。
   const [preview, setPreview] = useState<PreviewMood>("still");
   // 再点一次「做完了」重新跳一遍。
@@ -602,12 +884,28 @@ function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: Sh
     if (next === "done") setReplay((value) => value + 1);
     setPreview(next);
   };
-  const shapeKeys = useSegmentedKeys<AvatarShape>({ value: shape, values: AVATAR_SHAPES, onChange: (next) => onChange(next, color) });
-  const colorKeys = useSegmentedKeys<ShapeColor>({ value: color, values: SHAPE_COLORS, onChange: (next) => onChange(shape, next) });
-  const moodKeys = useSegmentedKeys<PreviewMood>({ value: preview, values: PREVIEW_MOODS, onChange: pick });
+  const shapeKeys = useSegmentedKeys<AvatarShape>({
+    value: shape,
+    values: AVATAR_SHAPES,
+    onChange: (next) => onChange(next, color),
+  });
+  const colorKeys = useSegmentedKeys<ShapeColor>({
+    value: color,
+    values: SHAPE_COLORS,
+    onChange: (next) => onChange(shape, next),
+  });
+  const moodKeys = useSegmentedKeys<PreviewMood>({
+    value: preview,
+    values: PREVIEW_MOODS,
+    onChange: pick,
+  });
   return (
     <div className="bot-ava-preset">
-      <span className="bot-ava" data-avatar="shape" style={{ width: 96, height: 96 }}>
+      <span
+        className="bot-ava"
+        data-avatar="shape"
+        style={{ width: 96, height: 96 }}
+      >
         {/* 换一种预览就重新挂一个头像：预览之间切换不该被当成「一轮做完了」。 */}
         <ShapeAvatar
           color={color}
@@ -620,7 +918,13 @@ function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: Sh
           working={preview === "working"}
         />
       </span>
-      <div aria-label={"预览表情"} className="bot-ava-moods" {...moodKeys.groupProps} ref={moodKeys.groupRef} role="radiogroup">
+      <div
+        aria-label={"预览表情"}
+        className="bot-ava-moods"
+        {...moodKeys.groupProps}
+        ref={moodKeys.groupRef}
+        role="radiogroup"
+      >
         {PREVIEW_MOODS.map((item) => (
           // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
           <button
@@ -637,7 +941,13 @@ function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: Sh
           </button>
         ))}
       </div>
-      <div aria-label={"形状"} className="bot-ava-shapes" {...shapeKeys.groupProps} ref={shapeKeys.groupRef} role="radiogroup">
+      <div
+        aria-label={"形状"}
+        className="bot-ava-shapes"
+        {...shapeKeys.groupProps}
+        ref={shapeKeys.groupRef}
+        role="radiogroup"
+      >
         {AVATAR_SHAPES.map((item) => (
           // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
           <button
@@ -652,13 +962,23 @@ function ShapePicker({ shape, color, onChange }: { shape: AvatarShape; color: Sh
             title={SHAPE_LABEL[item]}
             type="button"
           >
-            <span className="bot-ava" data-avatar="shape" style={{ width: 38, height: 38 }}>
+            <span
+              className="bot-ava"
+              data-avatar="shape"
+              style={{ width: 38, height: 38 }}
+            >
               <ShapeAvatar color={color} shape={item} size={38} />
             </span>
           </button>
         ))}
       </div>
-      <div aria-label={"颜色"} className="bot-ava-colors is-shape" {...colorKeys.groupProps} ref={colorKeys.groupRef} role="radiogroup">
+      <div
+        aria-label={"颜色"}
+        className="bot-ava-colors is-shape"
+        {...colorKeys.groupProps}
+        ref={colorKeys.groupRef}
+        role="radiogroup"
+      >
         {SHAPE_COLORS.map((item) => (
           // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
           <button

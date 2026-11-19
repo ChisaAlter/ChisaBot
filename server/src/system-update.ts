@@ -1,15 +1,9 @@
 import { randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import {
   projectMagpieGatewayState,
   projectSystemUpdateState,
@@ -21,6 +15,7 @@ import { type AuditStore, recordAuditEvent } from "./audit";
 import type { AppVariables } from "./auth/guards";
 import { requireAdmin } from "./auth/guards";
 import type { RunningBuild } from "./build-info";
+import { atomicWriteFileUniqueSync } from "./security/file-hygiene";
 
 /**
  * 管理后台 → 系统更新（docs/online-update.md）。
@@ -156,10 +151,12 @@ export function createSystemUpdateService(options: {
         ...(expectCommit && /^[0-9a-f]{40}$/u.test(expectCommit) ? { expectCommit } : {}),
         ...(action === "update" && (options?.full || state.depsChanged) ? { mode: "full" } : {}),
       };
-      const tmp = path.join(requestsDir, `.${id}.tmp`);
       try {
-        writeFileSync(tmp, JSON.stringify(body), { mode: 0o600 });
-        renameSync(tmp, path.join(requestsDir, `${id}.json`));
+        atomicWriteFileUniqueSync(
+          path.join(requestsDir, `${id}.json`),
+          JSON.stringify(body),
+          { mode: 0o600 },
+        );
       } catch {
         // 目录是 Docker 自己建的（root 所有）= 宿主机更新服务没装：页面上有安装命令。
         return { error: "无法写入更新请求：宿主机更新服务没有安装好。", status: 503 };
@@ -181,8 +178,11 @@ export function createSystemUpdateService(options: {
       if (audited.includes(job.id)) return;
       await record(job);
       try {
-        mkdirSync(requestsDir, { recursive: true });
-        writeFileSync(auditedFile, JSON.stringify([...audited, job.id].slice(-100)), { mode: 0o600 });
+        atomicWriteFileUniqueSync(
+          auditedFile,
+          JSON.stringify([...audited, job.id].slice(-100)),
+          { mode: 0o600 },
+        );
       } catch {
         /* 下次再记一次也比不记好 */
       }
@@ -214,7 +214,7 @@ export function createSystemUpdateRoutes(options: {
     }
   }
 
-  routes.use("*", requireUser);
+  routes.use("*", requireUser, bodyLimit({ maxSize: 32 * 1024 }));
   routes.use("*", async (context, next) => {
     const denied = requireAdmin(context);
     if (denied) return denied;

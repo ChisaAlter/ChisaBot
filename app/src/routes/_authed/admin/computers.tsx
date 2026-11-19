@@ -8,6 +8,7 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { StaggerItem } from "@/components/layout/stagger";
+import { ExecutionNodePanel } from "@/components/settings/execution-node-panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -121,6 +122,8 @@ function ComputersPage() {
           }
         </p>
       ) : null}
+
+      <ExecutionNodePanel settingItem="computers.execution-nodes" />
 
       <PageSection title={"此部署中的计算机"}>
         {setState.error || (forget.error && confirmingForget === null) ? (

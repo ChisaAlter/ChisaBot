@@ -11328,3 +11328,142 @@ html[data-theme-family] #sky-root #skyph {
   color: var(--shiki-dark, var(--ink-1));
   background-color: var(--shiki-dark-bg, transparent);
 }
+
+/* 一键隐私遮罩模式（Ctrl+Shift+P / 设置 → 通用 → 隐私遮罩模式，无 :has 与无滤镜模糊） */
+[data-privacy-mask="1"] [data-private] {
+  color: transparent !important;
+  text-shadow: 0 0 9px var(--ink-1, #64748b);
+  background-color: color-mix(in srgb, var(--ink-1, #64748b) 14%, transparent);
+  border-radius: 4px;
+  user-select: none;
+  transition:
+    text-shadow 120ms ease,
+    background-color 120ms ease;
+}
+[data-privacy-mask="1"] [data-private]:hover,
+[data-privacy-mask="1"] [data-private]:focus-within {
+  text-shadow: 0 0 3px var(--ink-1, #64748b);
+  background-color: color-mix(in srgb, var(--ink-1, #64748b) 7%, transparent);
+}
+
+/* ==========================================================================================
+ * Wave 6：虚拟形象情感微交互（登录表情联动 + 顶栏忙碌 Bot 去重状态条）
+ * 严格零 :has / group-has，尊重 prefers-reduced-motion 与性能模式。
+ * ========================================================================================== */
+.sign-avatar-stage {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+.sign-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.sign-avatar-stage .sa-eyes {
+  transform: translate(var(--sign-gaze-x, 0px), var(--sign-gaze-y, 0px));
+  transition: transform 0.14s ease-out;
+}
+.sa[data-expression="cover-eyes"] .sa-open {
+  transform: scaleY(0.14);
+}
+.sa[data-expression="happy-squint"] .sa-open {
+  opacity: 0;
+}
+.sa[data-expression="happy-squint"] .sa-happy {
+  opacity: 1;
+}
+.sign-avatar-stage[data-sign-mood="shake-error"] {
+  animation: sign-avatar-shake 0.36s ease-in-out;
+}
+@keyframes sign-avatar-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px) rotate(-3deg); }
+  55% { transform: translateX(5px) rotate(3deg); }
+  80% { transform: translateX(-3px); }
+}
+
+.sa[data-expression="reading"] .sa-eyes {
+  transform: translateY(2px);
+}
+.sa[data-expression="thinking"] .sa-eyes {
+  transform: translateY(-2.5px);
+}
+.sa[data-expression="scanning"] .sa-eyes {
+  transform: translateX(2.5px);
+}
+.sa[data-expression="focused"] .sa-open {
+  transform: scale(1.06, 0.88);
+}
+
+.glass-topbar-mid {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.working-crew-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(560px, 56vw);
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.72)) 84%, transparent);
+  border: 1px solid var(--line-subtle, rgba(128, 128, 128, 0.18));
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.working-crew-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 156px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--ink-1, inherit);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.14s ease-out;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.working-crew-chip:hover {
+  background: var(--glass-hover, rgba(128, 128, 128, 0.12));
+}
+.working-crew-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.working-crew-mood {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-2, currentColor);
+  opacity: 0.8;
+}
+.working-crew-more {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2, currentColor);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sign-avatar-stage[data-sign-mood="shake-error"] {
+    animation: none;
+  }
+  .sign-avatar-stage .sa-eyes {
+    transition: none;
+  }
+}

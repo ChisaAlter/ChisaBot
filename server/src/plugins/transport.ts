@@ -1,3 +1,4 @@
+import type { McpTransportMode } from "../../../shared/app-packages";
 import * as builtinRoutines from "./builtin-triggers";
 import * as composio from "./composio";
 import * as driveRest from "./google-drive-rest";
@@ -75,6 +76,8 @@ export type VendorTransport = {
      */
     keyParam?: string;
     keyHeader?: string;
+    transport?: McpTransportMode;
+    extraHeaders?: Record<string, string>;
     /**
      * Declared by the shared connection shape, and never supplied on THIS path.
      *
@@ -101,6 +104,8 @@ export type VendorTransport = {
       /** Reviewed credential placement from the catalogue entry — see `listTools`. */
       keyParam?: string;
       keyHeader?: string;
+      transport?: McpTransportMode;
+      extraHeaders?: Record<string, string>;
       /**
        * Who this call is for, and which Bot is making it.
        *

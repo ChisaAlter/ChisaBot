@@ -9,12 +9,12 @@ import {
   isAvatarShape,
   isShapeColor,
   MAX_AVATAR_BYTES,
-  sniffAvatarMime,
 } from "../../../shared/bot-avatars";
 import { canManageAgent } from "../agents/profile-policy";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
+import { validateAvatarImage } from "./validate-image";
 
 /**
  * 机器人头像（DESIGN.md §81，docs/bot-avatars.md）。
@@ -57,10 +57,21 @@ export class BotAvatarError extends Error {
 const AGENT_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 export function avatarView(row: Row): BotAvatar | null {
-  if (row.kind === "image") return { kind: "image", url: botAvatarImageUrl(row.agent_id, row.version), version: row.version };
-  if (row.kind === "shape") return isAvatarShape(row.shape) && isShapeColor(row.color) ? { kind: "shape", shape: row.shape, color: row.color } : null;
+  if (row.kind === "image")
+    return {
+      kind: "image",
+      url: botAvatarImageUrl(row.agent_id, row.version),
+      version: row.version,
+    };
+  if (row.kind === "shape")
+    return isAvatarShape(row.shape) && isShapeColor(row.color)
+      ? { kind: "shape", shape: row.shape, color: row.color }
+      : null;
   if (!isAvatarColor(row.color)) return null;
-  if (row.kind === "emoji") return row.emoji && isAvatarEmoji(row.emoji) ? { kind: "emoji", emoji: row.emoji, color: row.color } : null;
+  if (row.kind === "emoji")
+    return row.emoji && isAvatarEmoji(row.emoji)
+      ? { kind: "emoji", emoji: row.emoji, color: row.color }
+      : null;
   return { kind: "monogram", color: row.color };
 }
 
@@ -86,20 +97,33 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     `);
   }
 
-  async function visible(actor: AgentActor, agentId: string): Promise<AgentProfile> {
-    if (!AGENT_ID.test(agentId)) throw new BotAvatarError("找不到这个机器人。", 404);
+  async function visible(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<AgentProfile> {
+    if (!AGENT_ID.test(agentId))
+      throw new BotAvatarError("找不到这个机器人。", 404);
     const agent = await agents.get(actor, agentId);
     if (!agent) throw new BotAvatarError("找不到这个机器人。", 404);
     return agent;
   }
-  async function manageable(actor: AgentActor, agentId: string): Promise<AgentProfile> {
+  async function manageable(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<AgentProfile> {
     const agent = await visible(actor, agentId);
-    if (!canManageAgent(actor, agent)) throw new BotAvatarError("你不能修改这个机器人的头像。", 403);
+    if (!canManageAgent(actor, agent))
+      throw new BotAvatarError("你不能修改这个机器人的头像。", 403);
     return agent;
   }
 
-  async function listFor(actor: AgentActor): Promise<Record<string, BotAvatar>> {
-    const [shown, hidden] = await Promise.all([agents.list(actor, false), agents.list(actor, true).catch(() => [])]);
+  async function listFor(
+    actor: AgentActor,
+  ): Promise<Record<string, BotAvatar>> {
+    const [shown, hidden] = await Promise.all([
+      agents.list(actor, false),
+      agents.list(actor, true).catch(() => []),
+    ]);
     const ids = [...new Set([...shown, ...hidden].map((agent) => agent.id))];
     if (ids.length === 0) return {};
     const rows = await sql.unsafe<Row[]>(
@@ -129,16 +153,28 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     return avatar;
   }
 
-  async function setPreset(actor: AgentActor, agentId: string, input: unknown): Promise<BotAvatar> {
+  async function setPreset(
+    actor: AgentActor,
+    agentId: string,
+    input: unknown,
+  ): Promise<BotAvatar> {
     await manageable(actor, agentId);
-    const body = (input ?? {}) as { kind?: unknown; emoji?: unknown; color?: unknown; shape?: unknown };
+    const body = (input ?? {}) as {
+      kind?: unknown;
+      emoji?: unknown;
+      color?: unknown;
+      shape?: unknown;
+    };
     if (body.kind === "shape") {
-      if (!isAvatarShape(body.shape)) throw new BotAvatarError("请选一个形状。");
+      if (!isAvatarShape(body.shape))
+        throw new BotAvatarError("请选一个形状。");
       if (!isShapeColor(body.color)) throw new BotAvatarError("请选一种颜色。");
     } else {
-      if (!isAvatarColor(body.color)) throw new BotAvatarError("请选一种底色。");
+      if (!isAvatarColor(body.color))
+        throw new BotAvatarError("请选一种底色。");
       if (body.kind === "emoji") {
-        if (!isAvatarEmoji(body.emoji)) throw new BotAvatarError("请选一个表情。");
+        if (!isAvatarEmoji(body.emoji))
+          throw new BotAvatarError("请选一个表情。");
       } else if (body.kind !== "monogram") {
         throw new BotAvatarError("不支持这种头像。");
       }
@@ -146,7 +182,10 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     const kind = body.kind;
     const emoji = kind === "emoji" ? (body.emoji as string) : null;
     const shape = kind === "shape" ? (body.shape as string) : null;
-    const version = createHash("sha256").update(`${kind}:${emoji ?? ""}:${shape ?? ""}:${body.color}`).digest("hex").slice(0, 12);
+    const version = createHash("sha256")
+      .update(`${kind}:${emoji ?? ""}:${shape ?? ""}:${body.color}`)
+      .digest("hex")
+      .slice(0, 12);
     await sql.unsafe(
       `INSERT INTO chisabot_bot_avatars (agent_id, kind, emoji, color, shape, image, mime, size_bytes, version, updated_by, updated_at)
        VALUES ($1, $2, $3, $4, $7, NULL, NULL, NULL, $5, $6, now())
@@ -157,13 +196,22 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     return requireAvatar(agentId);
   }
 
-  async function setImage(actor: AgentActor, agentId: string, bytes: Uint8Array): Promise<BotAvatar> {
+  async function setImage(
+    actor: AgentActor,
+    agentId: string,
+    bytes: Uint8Array,
+  ): Promise<BotAvatar> {
     await manageable(actor, agentId);
     if (bytes.length === 0) throw new BotAvatarError("没有收到图片。");
-    if (bytes.length > MAX_AVATAR_BYTES) throw new BotAvatarError("图片太大了（最多 256 KB）。", 413);
-    const mime = sniffAvatarMime(bytes);
-    if (!mime) throw new BotAvatarError("只支持 PNG、JPEG 或 WebP 图片。");
-    const version = createHash("sha256").update(bytes).digest("hex").slice(0, 12);
+    if (bytes.length > MAX_AVATAR_BYTES)
+      throw new BotAvatarError("图片太大了（最多 256 KB）。", 413);
+    const validated = validateAvatarImage(bytes);
+    if (!validated.ok) throw new BotAvatarError(validated.reason, 400);
+    const mime = validated.image.mime;
+    const version = createHash("sha256")
+      .update(bytes)
+      .digest("hex")
+      .slice(0, 12);
     await sql.unsafe(
       `INSERT INTO chisabot_bot_avatars (agent_id, kind, emoji, color, image, mime, size_bytes, version, updated_by, updated_at)
        VALUES ($1, 'image', NULL, NULL, $2, $3, $4, $5, $6, now())
@@ -176,24 +224,34 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
 
   async function clear(actor: AgentActor, agentId: string): Promise<void> {
     await manageable(actor, agentId);
-    await sql.unsafe("DELETE FROM chisabot_bot_avatars WHERE agent_id = $1", [agentId]);
+    await sql.unsafe("DELETE FROM chisabot_bot_avatars WHERE agent_id = $1", [
+      agentId,
+    ]);
   }
 
-  async function image(actor: AgentActor, agentId: string): Promise<{ bytes: Buffer; mime: string; version: string } | null> {
+  async function image(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<{ bytes: Buffer; mime: string; version: string } | null> {
     await visible(actor, agentId);
-    const rows = await sql.unsafe<{ image: Buffer | null; mime: string | null; version: string }[]>(
+    const rows = await sql.unsafe<
+      { image: Buffer | null; mime: string | null; version: string }[]
+    >(
       "SELECT image, mime, version FROM chisabot_bot_avatars WHERE agent_id = $1 AND kind = 'image'",
       [agentId],
     );
     const row = rows[0];
-    return row?.image && row.mime ? { bytes: Buffer.from(row.image), mime: row.mime, version: row.version } : null;
+    return row?.image && row.mime
+      ? { bytes: Buffer.from(row.image), mime: row.mime, version: row.version }
+      : null;
   }
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser);
     app.onError((error, c) => {
-      if (error instanceof BotAvatarError) return c.json({ error: error.message }, error.status);
+      if (error instanceof BotAvatarError)
+        return c.json({ error: error.message }, error.status);
       console.error("[bot-avatars]", error);
       return c.json({ error: "头像没能处理，请稍后再试。" }, 500);
     });
@@ -202,28 +260,44 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
       const found = await image(c.var.actor, c.req.param("agentId"));
       if (!found) return c.json({ error: "这个机器人没有上传头像。" }, 404);
       const fresh = c.req.query("v") === found.version;
-      return new Response(c.req.method === "HEAD" ? null : new Uint8Array(found.bytes), {
-        headers: {
-          "content-type": found.mime,
-          "content-length": String(found.bytes.length),
-          "x-content-type-options": "nosniff",
-          "content-security-policy": "sandbox; default-src 'none'",
-          etag: `"${found.version}"`,
-          // 带对版本号的网址内容永远不变；不带或版本旧了就每次问。
-          "cache-control": fresh ? "private, max-age=31536000, immutable" : "private, no-cache",
+      return new Response(
+        c.req.method === "HEAD" ? null : new Uint8Array(found.bytes),
+        {
+          headers: {
+            "content-type": found.mime,
+            "content-length": String(found.bytes.length),
+            "x-content-type-options": "nosniff",
+            "content-security-policy": "sandbox; default-src 'none'",
+            etag: `"${found.version}"`,
+            // 带对版本号的网址内容永远不变；不带或版本旧了就每次问。
+            "cache-control": fresh
+              ? "private, max-age=31536000, immutable"
+              : "private, no-cache",
+          },
         },
-      });
+      );
     });
     app.put(
       "/:agentId/image",
-      bodyLimit({ maxSize: MAX_AVATAR_BYTES, onError: (c) => c.json({ error: "图片太大了（最多 256 KB）。" }, 413) }),
+      bodyLimit({
+        maxSize: MAX_AVATAR_BYTES,
+        onError: (c) => c.json({ error: "图片太大了（最多 256 KB）。" }, 413),
+      }),
       async (c) => {
         const bytes = new Uint8Array(await c.req.arrayBuffer());
-        return c.json({ avatar: await setImage(c.var.actor, c.req.param("agentId"), bytes) });
+        return c.json({
+          avatar: await setImage(c.var.actor, c.req.param("agentId"), bytes),
+        });
       },
     );
     app.put("/:agentId", bodyLimit({ maxSize: 4096 }), async (c) =>
-      c.json({ avatar: await setPreset(c.var.actor, c.req.param("agentId"), await c.req.json().catch(() => null)) }),
+      c.json({
+        avatar: await setPreset(
+          c.var.actor,
+          c.req.param("agentId"),
+          await c.req.json().catch(() => null),
+        ),
+      }),
     );
     app.delete("/:agentId", async (c) => {
       await clear(c.var.actor, c.req.param("agentId"));

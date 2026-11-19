@@ -9,6 +9,7 @@
  */
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { ActivityStore } from "../activity/activity";
 import type { AuditEventType, AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
@@ -51,6 +52,13 @@ export function createBotLifecycleRoutes(
   const { lifecycle, reset, activity, wakeUps, profiles, auditStore } =
     services;
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 128 * 1024,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+  );
   type C = Context<{ Variables: AppVariables }>;
 
   const record = async (

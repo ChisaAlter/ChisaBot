@@ -2,6 +2,7 @@ import { IconLink, IconRocket, IconUsers } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PageSection, PageShell } from "@/components/layout/page-shell";
+import { SharingWorkbench } from "@/components/settings/sharing-workbench";
 import { Button, T } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Card, ListRow } from "@/components/ui/skyglass";
@@ -107,6 +108,8 @@ function ShareWithFriendsPage() {
           </div>
         </Card>
       </PageSection>
+
+      <SharingWorkbench />
     </PageShell>
   );
 }

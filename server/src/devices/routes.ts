@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { isValidE2eePublicKey } from "../../../shared/device-e2ee";
 import {
   DEVICE_CAPABILITIES,
@@ -17,6 +18,7 @@ import {
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
+import { liveConnections } from "../security/http-hardening";
 import { type DeviceHub, DeviceRefusedError, describeChange } from "./hub";
 import { installScript, readNodeBundle } from "./node-install";
 import {
@@ -189,6 +191,13 @@ export function createDeviceRoutes(options: {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
   const routes = new Hono<{ Variables: Variables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 4 * 1024 * 1024,
+      onError: (context) => context.json({ error: "设备接口请求体过大。" }, 413),
+    }),
+  );
   const userGuard = requireUser as unknown as MiddlewareHandler<{
     Variables: Variables;
   }>;
@@ -269,6 +278,7 @@ export function createDeviceRoutes(options: {
       const device = context.get("device") as DeviceRecord;
       const ip = clientIp(context.req.raw);
       let handlers: ReturnType<DeviceHub["attach"]> | null = null;
+      let detachLive: (() => void) | null = null;
       return {
         onOpen: (_event, ws) => {
           handlers = hub.attach(
@@ -279,6 +289,18 @@ export function createDeviceRoutes(options: {
             },
             ip,
           );
+          detachLive = liveConnections.track(
+            [
+              device.id,
+              `device:${device.id}`,
+              device.ownerUserId,
+              `user:${device.ownerUserId}`,
+            ],
+            {
+              kind: "ws",
+              close: (reason) => ws.close(4401, reason ?? "revoked"),
+            },
+          );
         },
         onMessage: (event) => {
           if (
@@ -287,8 +309,16 @@ export function createDeviceRoutes(options: {
           )
             void handlers?.onMessage(event.data).catch(() => {});
         },
-        onClose: () => handlers?.onClose(),
-        onError: () => handlers?.onClose(),
+        onClose: () => {
+          detachLive?.();
+          detachLive = null;
+          handlers?.onClose();
+        },
+        onError: () => {
+          detachLive?.();
+          detachLive = null;
+          handlers?.onClose();
+        },
       };
     }),
   );
@@ -303,6 +333,8 @@ export function createDeviceRoutes(options: {
     const mobile = isMobilePlatform(device.platform);
     await store.revoke(device.id);
     hub.kick(device.id);
+    liveConnections.revokePrincipal(device.id, "device_unenrolled");
+    liveConnections.revokePrincipal(`device:${device.id}`, "device_unenrolled");
     await auditControlChange({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
@@ -833,6 +865,8 @@ export function createDeviceRoutes(options: {
     const actor = context.var.actor;
     await store.revoke(device.id);
     hub.kick(device.id);
+    liveConnections.revokePrincipal(device.id, "device_revoked");
+    liveConnections.revokePrincipal(`device:${device.id}`, "device_revoked");
     await auditControlChange({
       deviceId: device.id,
       ownerUserId: device.ownerUserId,
@@ -854,6 +888,8 @@ export function createDeviceRoutes(options: {
     const device = await owned(context, context.req.param("id"));
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     hub.kick(device.id);
+    liveConnections.revokePrincipal(device.id, "device_deleted");
+    liveConnections.revokePrincipal(`device:${device.id}`, "device_deleted");
     await store.remove(device.id);
     await mainAudit(
       context.var.actor.id,

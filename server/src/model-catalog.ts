@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ModelContextPolicyOverride } from "../../shared/context-policy";
 import { normalizeModelBaseUrl } from "../../shared/model-base-url";
 import type {
   ModelCatalog,
@@ -301,8 +302,39 @@ async function readJson(
 export function createModelCatalogService(options: {
   resolveConnection: () => Promise<ModelConnectionRuntime>;
   fetch?: typeof fetch;
+  /** 可选：叠加管理员按模型覆写的上下文容量与摘要阈值（不污染底层目录缓存）。 */
+  resolveContextOverrides?: () => Promise<readonly ModelContextPolicyOverride[]>;
 }): ModelCatalogService {
   const request = options.fetch ?? fetch;
+  async function applyContextOverrides(
+    catalog: ModelCatalog,
+  ): Promise<ModelCatalog> {
+    if (!options.resolveContextOverrides) return catalog;
+    const overrides = await options.resolveContextOverrides().catch(() => []);
+    if (!overrides.length) return catalog;
+    const byId = new Map<string, ModelContextPolicyOverride>();
+    const byTail = new Map<string, ModelContextPolicyOverride>();
+    for (const policy of overrides) {
+      const lower = policy.modelId.toLowerCase();
+      byId.set(lower, policy);
+      const tail = lower.split("/").pop() ?? lower;
+      if (!byTail.has(tail)) byTail.set(tail, policy);
+    }
+    return {
+      ...catalog,
+      models: catalog.models.map((entry) => {
+        const lower = entry.id.toLowerCase();
+        const tail = lower.split("/").pop() ?? lower;
+        const matched = byId.get(lower) ?? byTail.get(tail);
+        if (!matched) return entry;
+        return {
+          ...entry,
+          contextWindow: matched.contextWindowTokens,
+          summaryThresholdTokens: matched.summaryThresholdTokens,
+        };
+      }),
+    };
+  }
   type Cache = {
     key: string;
     value?: ModelCatalog;
@@ -372,7 +404,7 @@ export function createModelCatalogService(options: {
           cache.value &&
           Date.now() - cache.value.fetchedAt < CACHE_MS
         )
-          return structuredClone(cache.value);
+          return applyContextOverrides(structuredClone(cache.value));
         if (!cache.pending) {
           state.lastAttemptAt = Date.now();
           cache.pending = (async () => {
@@ -418,7 +450,7 @@ export function createModelCatalogService(options: {
             cache.pending = undefined;
           });
         }
-        return structuredClone(await cache.pending);
+        return applyContextOverrides(structuredClone(await cache.pending));
       } catch (error) {
         // Fetch, parsing and storage exceptions can contain keys or arbitrary upstream prose.
         const safe =
@@ -427,7 +459,7 @@ export function createModelCatalogService(options: {
         // A passive read keeps working on the last good list while the gateway is down; an
         // explicit 刷新 reports the failure so its button lands on ✕.
         if (!input.refresh && stale?.models.length)
-          return { ...structuredClone(stale), stale: true };
+          return applyContextOverrides({ ...structuredClone(stale), stale: true });
         throw safe;
       }
     },

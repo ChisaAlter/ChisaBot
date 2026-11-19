@@ -24,6 +24,7 @@ import {
 } from "@/lib/rich-previews/link-fields";
 import { cn } from "@/lib/utils";
 import {
+  peekCachedLinkPreview,
   previewClient,
   previewQuery,
   rememberedPreview,
@@ -407,16 +408,17 @@ export function LinkCard({
   };
   const href = safeHref(url);
   const needs = Boolean(href) && needsLinkPreview(given, href ?? undefined);
+  const cached = href ? peekCachedLinkPreview(href) : null;
   const query = useQuery(
     {
       ...previewQuery(href ?? ""),
       enabled: needs,
-      // 刷新页面后：这个标签页里取到过的预览先同步拿出来画成真卡，不先放骨架再换（骨架和真卡高度不同会跳，CLS）。
+      // 刷新或 Hover 前：先零网络命中本地缓存（内存 / sessionStorage + 反爬过滤），不闪烁骨架。
       ...(needs && href ? rememberedPreview(href) : {}),
     },
     previewClient,
   );
-  const fields = mergeLinkFields(href ?? url, given, query.data);
+  const fields = mergeLinkFields(href ?? url, given, query.data ?? cached);
   const [iconBroken, setIconBroken] = useState(false);
   // 这张图试到哪一步了。按地址记：预览到了 / 换了一张图，就从头试（同一次渲染里就换，不等 effect，免得先闪一下图标）。
   const [attempt, setAttempt] = useState<ImageAttempt>(() =>
@@ -427,7 +429,7 @@ export function LinkCard({
 
   if (!href) return null;
   const waiting = needs && query.isPending && !query.isError;
-  if (waiting && !fields.image) {
+  if (waiting && !cached && !fields.image) {
     return (
       <LinkCardSkeleton
         className={className}

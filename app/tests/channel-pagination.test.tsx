@@ -221,6 +221,8 @@ function preferences(emphasis: "agent" | "thread") {
     mainBotId: null,
     brandAccent: "Chisa",
     brandRest: "Bot",
+    notificationFrequency: "every-reply" as const,
+    notificationSound: "soft-blip" as const,
   };
 }
 

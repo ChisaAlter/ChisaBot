@@ -38,6 +38,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | [HANDOFF.md](HANDOFF.md)         | 当前主线状态摘要与开发交接快速入口                                             |
 | [decisions.md](decisions.md)     | 所有者的长期规则（发布流程、测试安全、版本号、界面原则），带日期               |
 | [CHANGELOG.md](CHANGELOG.md)     | 按发版标签分组的版本与 PR 记录                                                 |
+| [prokbot-comparison.md](prokbot-comparison.md) | ProkBot 全量代码级对比清单与 Wave 1–10 落地总台账                    |
 | [adr/](adr/README.md)            | 架构决策记录 0001–0014（0012 号空缺）                                          |
 | [pipeline-runs/](pipeline-runs/) | 带日期的实施、验收与发布证据                                                   |
 
@@ -75,6 +76,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | 文档                                              | 适合解决的问题                                                       |
 | ------------------------------------------------- | -------------------------------------------------------------------- |
 | [快速开始](getting-started.md)                    | 第一次部署，配置完成后怎样开始聊天                                   |
+| [AI 辅助安装手册](AI-INSTALL.md)                  | 面向编程助手的 ChisaBot 一键安装、环境变量配置与验证手册             |
 | [本地开发参考](development.md)                    | 本地数据库迁移、分开启动服务与质量检查；生产使用本表的部署入口       |
 | [自托管部署](../deploy/README.zh-CN.md)           | 镜像、持久化、认证网关与 Magpie 部署模板                             |
 | [**运维手册（总览）**](ops/README.md)             | 自己部署后长期运维的全部章节入口与一页速查                           |

@@ -59,6 +59,18 @@ export async function uploadChatFile(
   return body.file;
 }
 
+/** 清理未发送草稿芯片对应的聊天文件（best-effort：忽略 404 与网络异常）。 */
+export async function deleteChatFile(id: string): Promise<void> {
+  if (!id) return;
+  try {
+    await tryClient(`/api/chat-files/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  } catch {
+    // 清理未发送草稿为尽力而为，失败不打断界面操作。
+  }
+}
+
 export function imageSettingsQueryOptions() {
   return queryOptions({
     queryKey: chatFileKeys.imageSettings,

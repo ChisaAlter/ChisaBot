@@ -174,7 +174,14 @@ const EXT_MIME: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   mp3: "audio/mpeg",
+  wav: "audio/wav",
+  opus: "audio/opus",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
+  m4a: "audio/mp4",
   mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
 };
 
 /** 按字节判断；只有位图和 PDF 是看字节认的，其他按扩展名给个描述性类型（下载时一律当附件）。 */
@@ -1902,6 +1909,14 @@ export function createChatFiles(
         where,
         turn?.agentId === found.agent_id ? turn.modelId : undefined,
       );
+
+    if (found.mime_type.toLowerCase().startsWith("video/")) {
+      return {
+        mimeType: found.mime_type,
+        name: found.name,
+        bytes,
+      };
+    }
 
     const storedChunks = await loadFileChunks(owner, found.id);
     const fallbackExtracted =

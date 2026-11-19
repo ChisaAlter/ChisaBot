@@ -4,10 +4,22 @@ import {
   MAX_FILE_BYTES,
   MAX_IMAGE_BYTES,
 } from "@/lib/channels/attachments";
+import {
+  ACCEPTED_CHAT_DOCUMENT_MIME,
+  MAX_CHAT_FILE_BYTES,
+} from "../../../../../shared/chat-files";
 import { screenPickedFiles } from "./picked-files";
+
+const DOCX_MIME = ACCEPTED_CHAT_DOCUMENT_MIME[1];
 
 function file(name: string, type: string, size = 3): File {
   return new File(["x".repeat(size)], name, { type });
+}
+
+function sizedFile(name: string, type: string, size: number): File {
+  const f = new File(["x"], name, { type });
+  Object.defineProperty(f, "size", { value: size });
+  return f;
 }
 
 describe("screenPickedFiles", () => {
@@ -227,5 +239,96 @@ describe("screenPickedFiles", () => {
     const notes = file("notes", "");
     const result = screenPickedFiles([notes], { alreadyStaged: 0 });
     expect(result.accepted).toEqual([notes]);
+  });
+
+  test("allowDocuments 为 true 时放行 ≤20MB 的 PDF 与 DOCX", () => {
+    const pdf = sizedFile("report.pdf", "application/pdf", MAX_CHAT_FILE_BYTES);
+    const docx = sizedFile("spec.docx", DOCX_MIME, 12 * 1024 * 1024);
+
+    const result = screenPickedFiles([pdf, docx], {
+      alreadyStaged: 0,
+      allowDocuments: true,
+    });
+
+    expect(result.accepted).toEqual([pdf, docx]);
+    expect(result.rejected).toEqual([]);
+  });
+
+  test("allowDocuments 为 true 时拒绝超过 20MB 的文档", () => {
+    const hugePdf = sizedFile(
+      "huge.pdf",
+      "application/pdf",
+      MAX_CHAT_FILE_BYTES + 1,
+    );
+    const hugeDocx = sizedFile(
+      "huge.docx",
+      DOCX_MIME,
+      MAX_CHAT_FILE_BYTES + 1024,
+    );
+
+    const result = screenPickedFiles([hugePdf, hugeDocx], {
+      alreadyStaged: MAX_ATTACHMENTS_PER_MESSAGE,
+      allowDocuments: true,
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toHaveLength(2);
+    expect(result.rejected[0]?.reason).toBe("文档太大（上限 20MB）。");
+    expect(result.rejected[1]?.reason).toBe("文档太大（上限 20MB）。");
+  });
+
+  test("浏览器给出空 MIME 或 octet-stream 的 .pdf / .docx 在允许文档时按 20MB 放行", () => {
+    const emptyMimePdf = sizedFile("scan.PDF", "", 15 * 1024 * 1024);
+    const genericDocx = sizedFile(
+      "draft.DOCX",
+      "application/octet-stream",
+      MAX_CHAT_FILE_BYTES,
+    );
+
+    const result = screenPickedFiles([emptyMimePdf, genericDocx], {
+      alreadyStaged: 0,
+      allowDocuments: true,
+    });
+
+    expect(result.accepted).toEqual([emptyMimePdf, genericDocx]);
+    expect(result.rejected).toEqual([]);
+  });
+
+  test("allowDocuments 为 false 或省略时拒绝 PDF 与 DOCX（含空 MIME 后缀）", () => {
+    const pdf = file("report.pdf", "application/pdf");
+    const docx = file("spec.docx", DOCX_MIME);
+    const untypedPdf = file("scan.pdf", "");
+
+    const defaultResult = screenPickedFiles([pdf, docx, untypedPdf], {
+      alreadyStaged: 0,
+    });
+    expect(defaultResult.accepted).toEqual([]);
+    expect(defaultResult.rejected).toHaveLength(3);
+    for (const entry of defaultResult.rejected) {
+      expect(entry.reason).toBe("当前对话暂不支持上传 PDF / DOCX 文档。");
+    }
+
+    const explicitFalse = screenPickedFiles([pdf], {
+      alreadyStaged: 0,
+      allowDocuments: false,
+    });
+    expect(explicitFalse.accepted).toEqual([]);
+    expect(explicitFalse.rejected[0]?.reason).toBe(
+      "当前对话暂不支持上传 PDF / DOCX 文档。",
+    );
+  });
+
+  test("允许的 PDF 同样受单条消息附件数量上限约束", () => {
+    const pdf = sizedFile("extra.pdf", "application/pdf", 1024);
+    const result = screenPickedFiles([pdf], {
+      alreadyStaged: MAX_ATTACHMENTS_PER_MESSAGE,
+      allowDocuments: true,
+    });
+
+    expect(result.accepted).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toMatch(
+      new RegExp(String(MAX_ATTACHMENTS_PER_MESSAGE)),
+    );
   });
 });

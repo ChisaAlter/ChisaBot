@@ -46,6 +46,25 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="chisabot" android:host="pair" />
             </intent-filter>
+            <!-- 推送通知与快捷指令深链：直达目标 Bot（chisabot://agent/<id>）或会话（chisabot://channel/<id>）。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="chisabot" android:host="agent" />
+                <data android:scheme="chisabot" android:host="channel" />
+            </intent-filter>
+            <!-- 系统分享接收：其他应用分享文本或图片到 ChisaBot，自动带入当前会话草稿。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />

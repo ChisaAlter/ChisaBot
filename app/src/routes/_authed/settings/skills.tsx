@@ -1,25 +1,54 @@
-import { IconCheck, IconDownload, IconDots, IconMessageCircle, IconPencil, IconPlus, IconSparkles, IconTrash, IconUsers, IconWand } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconDots,
+  IconDownload,
+  IconMessageCircle,
+  IconPencil,
+  IconPlus,
+  IconSparkles,
+  IconTrash,
+  IconUsers,
+  IconWand,
+} from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { useExternalConnection } from "@/hooks";
-import { objectConnectionKey } from "@/lib/connection-key";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
-import { PageEmpty, PageSection, PageShell, PageSkeleton } from "@/components/layout/page-shell";
+import {
+  PageEmpty,
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
 import { SearchBox } from "@/components/memory/memory-notes";
+import { SkillVersionsPanel } from "@/components/skills/skill-versions-panel";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { normalizeSlugInput, SKILL_SLUG, slugFromTitle } from "@/lib/skill-slug";
-import { formDirty } from "@/lib/unsaved";
-import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Card, ErrorCard, ListRow, Toolbar } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useGuardedOpenChange } from "@/components/ui/unsaved-guard";
+import { useExternalConnection } from "@/hooks";
+import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   type ChisaSkill,
   chisaSkillHubQueryOptions,
@@ -29,7 +58,14 @@ import {
   importChisaSkill,
   saveChisaSkill,
 } from "@/lib/chisa-skills";
-import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { objectConnectionKey } from "@/lib/connection-key";
+import { sharingKeys } from "@/lib/sharing";
+import {
+  normalizeSlugInput,
+  SKILL_SLUG,
+  slugFromTitle,
+} from "@/lib/skill-slug";
+import { formDirty } from "@/lib/unsaved";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authed/settings/skills")({
@@ -49,12 +85,20 @@ function SkillsPage() {
   const isAdmin = useQuery(currentUserQueryOptions()).data?.role === "admin";
   const [query, setQuery] = useState("");
   const [hidden, setHidden] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<{ open: boolean; skill: ChisaSkill | null }>({ open: false, skill: null });
+  const [dialog, setDialog] = useState<{
+    open: boolean;
+    skill: ChisaSkill | null;
+  }>({ open: false, skill: null });
   const [importOpen, setImportOpen] = useState(false);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
   const q = query.trim().toLocaleLowerCase();
   const skills = (list.data ?? []).filter(
-    (skill) => skill.slug !== hidden && (!q || [skill.slug, skill.title, skill.summary, skill.instructions].some((part) => part.toLocaleLowerCase().includes(q))),
+    (skill) =>
+      skill.slug !== hidden &&
+      (!q ||
+        [skill.slug, skill.title, skill.summary, skill.instructions].some(
+          (part) => part.toLocaleLowerCase().includes(q),
+        )),
   );
   const mine = skills.filter((skill) => skill.mine);
   const shared = skills.filter((skill) => !skill.mine);
@@ -67,16 +111,28 @@ function SkillsPage() {
     ]);
   };
   const openSkillInChat = (skill: { slug: string; title: string }) => {
-    sendPromptToChat(navigate, `/${skill.slug} 请按「${skill.title}」技能帮我执行`);
+    sendPromptToChat(
+      navigate,
+      `/${skill.slug} 请按「${skill.title}」技能帮我执行`,
+    );
   };
-  async function installFromHub(hubSlug: string, title?: string, asShared = false) {
+  async function installFromHub(
+    hubSlug: string,
+    title?: string,
+    asShared = false,
+  ) {
     setInstallingSlug(hubSlug);
     try {
-      const res = await importChisaSkill({ hubSlug, ...(asShared ? { shared: true } : {}) });
+      const res = await importChisaSkill({
+        hubSlug,
+        ...(asShared ? { shared: true } : {}),
+      });
       await refresh();
       const skipped = res.skippedCount ?? 0;
       if (res.installedCount === 0 && skipped > 0) {
-        toast.error("没有安装：同名技能已被他人或共享技能占用，请先在列表里处理。");
+        toast.error(
+          "没有安装：同名技能已被他人或共享技能占用，请先在列表里处理。",
+        );
       } else {
         toast.success(
           hubSlug === "all"
@@ -91,7 +147,12 @@ function SkillsPage() {
     }
   }
   async function remove(skill: ChisaSkill) {
-    const ok = await confirmDialog({ title: `删除技能「${skill.title}」？`, description: "机器人以后不会再按它做事。删除后 8 秒内可以撤销。", confirmLabel: "删除", destructive: true });
+    const ok = await confirmDialog({
+      title: `删除技能「${skill.title}」？`,
+      description: "机器人以后不会再按它做事。删除后 8 秒内可以撤销。",
+      confirmLabel: "删除",
+      destructive: true,
+    });
     if (!ok) return;
     setHidden(skill.slug);
     try {
@@ -105,7 +166,13 @@ function SkillsPage() {
     }
     toast.undo(`已删除技能「${skill.title}」`, async () => {
       try {
-        await saveChisaSkill(skill.slug, { title: skill.title, summary: skill.summary, instructions: skill.instructions, create: true, shared: !skill.mine });
+        await saveChisaSkill(skill.slug, {
+          title: skill.title,
+          summary: skill.summary,
+          instructions: skill.instructions,
+          create: true,
+          shared: !skill.mine,
+        });
         await refresh();
       } catch {
         toast.error("恢复失败");
@@ -114,19 +181,39 @@ function SkillsPage() {
   }
   const row = (skill: ChisaSkill) => (
     <div className="im-row" key={skill.slug}>
-      <button className="im-row-main" onClick={() => setDialog({ open: true, skill })} type="button">
+      <button
+        className="im-row-main"
+        onClick={() => setDialog({ open: true, skill })}
+        type="button"
+      >
         <ListRow
           icon={
             <span className={cn("mem-ico", !skill.mine && "is-note")}>
-              {skill.mine ? <IconSparkles className="size-5" /> : <IconUsers className="size-5" />}
+              {skill.mine ? (
+                <IconSparkles className="size-5" />
+              ) : (
+                <IconUsers className="size-5" />
+              )}
             </span>
           }
           sub={
             <>
-              {skill.summary ? <span className="mem-body">{skill.summary}</span> : null}
+              {skill.summary ? (
+                <span className="mem-body">{skill.summary}</span>
+              ) : null}
               <span className="device-row-meta">
                 <span className="skill-slug">{`/${skill.slug}`}</span>
-                {skill.mine ? null : <span className="device-cap-chip"><T>{isAdmin ? "全局共享 · 管理员可改" : "共享 · 只读"}</T></span>}
+                {skill.mine ? null : (
+                  <span className="device-cap-chip">
+                    <T>{isAdmin ? "全局共享 · 管理员可改" : "共享 · 只读"}</T>
+                  </span>
+                )}
+                {skill.requiresTools?.length ? (
+                  <span className="device-cap-chip">{`依赖 ${skill.requiresTools.length} 个工具`}</span>
+                ) : null}
+                {skill.fileCount ? (
+                  <span className="device-cap-chip">{`${skill.fileCount} 个附属文件`}</span>
+                ) : null}
               </span>
             </>
           }
@@ -146,16 +233,34 @@ function SkillsPage() {
         </Button>
         {skill.mine || isAdmin ? (
           <DropdownMenu>
-            <DropdownMenuTrigger render={<button aria-label={`「${skill.title}」的更多操作`} className="device-row-more" title={"更多操作"} type="button" />}>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  aria-label={`「${skill.title}」的更多操作`}
+                  className="device-row-more"
+                  title={"更多操作"}
+                  type="button"
+                />
+              }
+            >
               <IconDots className="size-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="glass-pop w-[180px] p-1.5">
-              <DropdownMenuItem className="glass-mi" onClick={() => setDialog({ open: true, skill })}>
+            <DropdownMenuContent
+              align="end"
+              className="glass-pop w-[180px] p-1.5"
+            >
+              <DropdownMenuItem
+                className="glass-mi"
+                onClick={() => setDialog({ open: true, skill })}
+              >
                 <IconPencil className="size-[18px] shrink-0 opacity-80" />
                 <span className="min-w-0 flex-1">{"编辑…"}</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator className="glass-sep" />
-              <DropdownMenuItem className="glass-mi is-danger" onClick={() => void remove(skill)}>
+              <DropdownMenuItem
+                className="glass-mi is-danger"
+                onClick={() => void remove(skill)}
+              >
                 <IconTrash className="size-[18px] shrink-0 opacity-80" />
                 <span className="min-w-0 flex-1">{"删除…"}</span>
               </DropdownMenuItem>
@@ -237,7 +342,9 @@ function SkillsPage() {
                     </Button>
                     <Button
                       data-testid={`skill-hub-installed-${item.slug}`}
-                      onClick={() => existing && setDialog({ open: true, skill: existing })}
+                      onClick={() =>
+                        existing && setDialog({ open: true, skill: existing })
+                      }
                       size="sm"
                       variant="ghost"
                     >
@@ -266,23 +373,48 @@ function SkillsPage() {
 
   return (
     <>
-      <SkillDialog isAdmin={isAdmin} onOpenChange={(open) => setDialog((current) => ({ ...current, open }))} open={dialog.open} skill={dialog.skill} />
-      <SkillImportDialog isAdmin={isAdmin} onImported={refresh} onOpenChange={setImportOpen} open={importOpen} />
+      <SkillDialog
+        isAdmin={isAdmin}
+        onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
+        open={dialog.open}
+        skill={dialog.skill}
+      />
+      <SkillImportDialog
+        isAdmin={isAdmin}
+        onImported={refresh}
+        onOpenChange={setImportOpen}
+        open={importOpen}
+      />
       <PageShell
         action={
           /* 技能管理并入这里（DESIGN.md §57 导航收敛）：管理员从这里进入部署共享技能。 */
           <div className="flex flex-wrap gap-2">
             {isAdmin ? (
-              <Button nativeButton={false} render={<Link to="/admin/skills" />} size="sm" variant="outline">
+              <Button
+                nativeButton={false}
+                render={<Link to="/admin/skills" />}
+                size="sm"
+                variant="outline"
+              >
                 <IconUsers />
                 {"共享技能管理"}
               </Button>
             ) : null}
-            <Button data-setting-item="skills.import-skill" data-testid="skill-import-btn" onClick={() => setImportOpen(true)} size="sm" variant="outline">
+            <Button
+              data-setting-item="skills.import-skill"
+              data-testid="skill-import-btn"
+              onClick={() => setImportOpen(true)}
+              size="sm"
+              variant="outline"
+            >
               <IconDownload />
               {"从 GitHub / SKILL.md 导入"}
             </Button>
-            <Button data-testid="skill-new-btn" onClick={() => setDialog({ open: true, skill: null })} size="sm">
+            <Button
+              data-testid="skill-new-btn"
+              onClick={() => setDialog({ open: true, skill: null })}
+              size="sm"
+            >
               <IconPlus />
               {"新建技能"}
             </Button>
@@ -296,7 +428,12 @@ function SkillsPage() {
         ) : list.isError ? (
           <ErrorCard
             action={
-              <Button className="mt-2" onClick={() => void list.refetch()} size="sm" variant="outline">
+              <Button
+                className="mt-2"
+                onClick={() => void list.refetch()}
+                size="sm"
+                variant="outline"
+              >
                 {"重试"}
               </Button>
             }
@@ -308,7 +445,11 @@ function SkillsPage() {
             {(list.data ?? []).length > 4 ? (
               <Toolbar className="mem-toolbar">
                 <span />
-                <SearchBox onChange={setQuery} placeholder={"搜索技能"} value={query} />
+                <SearchBox
+                  onChange={setQuery}
+                  placeholder={"搜索技能"}
+                  value={query}
+                />
               </Toolbar>
             ) : null}
             {mine.length === 0 && !q ? hubSection : null}
@@ -316,11 +457,18 @@ function SkillsPage() {
               {mine.length ? (
                 <Card className="mem-card">{mine.map(row)}</Card>
               ) : (
-                <PageEmpty>{q ? "没有符合条件的技能。" : "还没有个人技能。可在上方「精选技能库」一键安装常用技能，或点右上角新建 / 从 GitHub 导入。"}</PageEmpty>
+                <PageEmpty>
+                  {q
+                    ? "没有符合条件的技能。"
+                    : "还没有个人技能。可在上方「精选技能库」一键安装常用技能，或点右上角新建 / 从 GitHub 导入。"}
+                </PageEmpty>
               )}
             </PageSection>
             {shared.length ? (
-              <PageSection description="管理员给所有人准备的技能，只读。" title={`共享技能 · ${shared.length}`}>
+              <PageSection
+                description="管理员给所有人准备的技能，只读。"
+                title={`共享技能 · ${shared.length}`}
+              >
                 <Card className="mem-card">{shared.map(row)}</Card>
               </PageSection>
             ) : null}
@@ -348,7 +496,6 @@ function SkillImportDialog({
   const [slug, setSlug] = useState("");
   const [shared, setShared] = useState(false);
 
-
   const importAction = useAsyncAction(
     async () => {
       const res = await importChisaSkill({
@@ -358,7 +505,9 @@ function SkillImportDialog({
         ...(isAdmin ? { shared } : {}),
       });
       await onImported();
-      toast.success(`已导入${shared ? "全局共享" : ""}技能「${res.skill?.title ?? (slug || "新技能")}」`);
+      toast.success(
+        `已导入${shared ? "全局共享" : ""}技能「${res.skill?.title ?? (slug || "新技能")}」`,
+      );
       onOpenChange(false);
     },
     { errorToast: (err) => err.message },
@@ -377,30 +526,40 @@ function SkillImportDialog({
 
   const valid = Boolean(url.trim() || markdown.trim());
   /* 填了链接或内容还没导入，按 Esc / 点外面先确认（审查模块 12 第 3 条）。 */
-  const dirty = Boolean(url.trim() || markdown.trim() || slug.trim()) && importAction.state !== "success";
+  const dirty =
+    Boolean(url.trim() || markdown.trim() || slug.trim()) &&
+    importAction.state !== "success";
   const guardedOpenChange = useGuardedOpenChange(dirty, onOpenChange);
 
   return (
     <Dialog onOpenChange={guardedOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-xl" data-testid="skill-import-dialog">
+      <DialogContent
+        className="im-dialog max-w-xl"
+        data-testid="skill-import-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{"从 GitHub / SKILL.md 导入技能"}</DialogTitle>
           <DialogDescription>
-            {"支持粘贴 GitHub 上的 SKILL.md 链接（兼容 OpenClaw ClawHub / Claude Code / Cursor 技能格式，自动解析 YAML Frontmatter），或直接粘贴 Markdown 文本。"}
+            {
+              "支持粘贴 GitHub 上的 SKILL.md 链接（兼容 OpenClaw ClawHub / Claude Code / Cursor 技能格式，自动解析 YAML Frontmatter），或直接粘贴 Markdown 文本。"
+            }
           </DialogDescription>
         </DialogHeader>
         <form
           className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid && importAction.state !== "pending") void importAction.run();
+            if (valid && importAction.state !== "pending")
+              void importAction.run();
           }}
         >
           <DialogBody className="im-form mt-2 flex flex-col gap-3">
             <label className="im-field">
               <span className="im-field-l">
                 {"GitHub SKILL.md 链接 / Raw URL"}
-                <span className="im-req">{"支持 github.com/.../blob/.../SKILL.md"}</span>
+                <span className="im-req">
+                  {"支持 github.com/.../blob/.../SKILL.md"}
+                </span>
               </span>
               <Input
                 className="font-mono text-xs"
@@ -419,7 +578,9 @@ function SkillImportDialog({
                 className="font-mono text-xs"
                 data-testid="skill-import-markdown-input"
                 onChange={(e) => setMarkdown(e.target.value)}
-                placeholder={"---\nname: my-skill\ndescription: 一句话说明什么时候用\n---\n\n# 技能标题\n1. 第一步..."}
+                placeholder={
+                  "---\nname: my-skill\ndescription: 一句话说明什么时候用\n---\n\n# 技能标题\n1. 第一步..."
+                }
                 rows={7}
                 value={markdown}
               />
@@ -433,7 +594,11 @@ function SkillImportDialog({
                 className="font-mono text-xs"
                 data-testid="skill-import-slug-input"
                 maxLength={40}
-                onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))}
+                onChange={(e) =>
+                  setSlug(
+                    e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+                  )
+                }
                 placeholder="my-skill"
                 value={slug}
               />
@@ -441,10 +606,19 @@ function SkillImportDialog({
             {isAdmin ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
                 <div className="min-w-0">
-                  <div className="font-medium text-sm">{"设为全局共享技能（全员可用）"}</div>
-                  <div className="text-muted-foreground text-xs">{"开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"}</div>
+                  <div className="font-medium text-sm">
+                    {"设为全局共享技能（全员可用）"}
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    {
+                      "开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"
+                    }
+                  </div>
                 </div>
-                <Switch checked={shared} onCheckedChange={(checked) => setShared(Boolean(checked))} />
+                <Switch
+                  checked={shared}
+                  onCheckedChange={(checked) => setShared(Boolean(checked))}
+                />
               </div>
             ) : null}
           </DialogBody>
@@ -475,13 +649,21 @@ function SkillImportDialog({
               {"填入示例 SKILL.md"}
             </Button>
             <div className="flex items-center gap-2">
-              <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
+              <Button
+                onClick={() => onOpenChange(false)}
+                type="button"
+                variant="ghost"
+              >
                 {"取消"}
               </Button>
               <Button
                 data-testid="skill-import-submit-btn"
                 disabled={!valid}
-                feedback={{ pending: "导入中…", success: "已导入", error: "导入失败" }}
+                feedback={{
+                  pending: "导入中…",
+                  success: "已导入",
+                  error: "导入失败",
+                }}
                 state={importAction.state}
                 type="submit"
               >
@@ -493,6 +675,19 @@ function SkillImportDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+type SkillDialogTab = "editor" | "governance";
+
+function parseRequiresToolsText(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[,\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function SkillDialog({
@@ -508,9 +703,18 @@ function SkillDialog({
 }) {
   const queryClient = useQueryClient();
   const readOnly = Boolean(skill && !skill.mine && !isAdmin);
-  const empty = { slug: "", title: "", summary: "", instructions: "", shared: false };
+  const empty = {
+    slug: "",
+    title: "",
+    summary: "",
+    instructions: "",
+    requiresToolsText: "",
+    reason: "",
+    shared: false,
+  };
   const [form, setForm] = useState(empty);
   const [initial, setInitial] = useState(empty);
+  const [tab, setTab] = useState<SkillDialogTab>("editor");
   /* 名字没手动改过时，跟着标题自动生成（中文标题也能得到合法的名字，审查模块 12 第 5 条）。 */
   const [slugTouched, setSlugTouched] = useState(false);
   const save = useAsyncAction(
@@ -519,10 +723,17 @@ function SkillDialog({
         title: form.title,
         summary: form.summary,
         instructions: form.instructions,
+        requiresTools: parseRequiresToolsText(form.requiresToolsText),
+        ...(form.reason.trim() ? { reason: form.reason.trim() } : {}),
         create: !skill,
         ...(isAdmin ? { shared: form.shared } : {}),
       });
-      await queryClient.invalidateQueries({ queryKey: chisaSkillKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: chisaSkillKeys.all }),
+        queryClient.invalidateQueries({
+          queryKey: sharingKeys.skillRevisions(form.slug),
+        }),
+      ]);
       window.setTimeout(() => onOpenChange(false), 600);
     },
     { errorToast: (error) => error.message },
@@ -534,108 +745,301 @@ function SkillDialog({
       : false,
     () => {
       const next = skill
-        ? { slug: skill.slug, title: skill.title, summary: skill.summary, instructions: skill.instructions, shared: !skill.mine }
-        : { slug: "", title: "", summary: "", instructions: "", shared: false };
+        ? {
+            slug: skill.slug,
+            title: skill.title,
+            summary: skill.summary,
+            instructions: skill.instructions,
+            requiresToolsText: (skill.requiresTools ?? []).join(", "),
+            reason: "",
+            shared: !skill.mine,
+          }
+        : {
+            slug: "",
+            title: "",
+            summary: "",
+            instructions: "",
+            requiresToolsText: "",
+            reason: "",
+            shared: false,
+          };
       setForm(next);
       setInitial(next);
+      setTab("editor");
       setSlugTouched(false);
       resetSave();
     },
   );
   const slugOk = SLUG.test(form.slug);
   const valid = slugOk && form.title.trim() && form.instructions.trim();
-  const dirty = !readOnly && save.state !== "success" && formDirty(initial, form);
+  const dirty =
+    !readOnly && save.state !== "success" && formDirty(initial, form);
   const guardedOpenChange = useGuardedOpenChange(dirty, onOpenChange);
   return (
     <Dialog onOpenChange={guardedOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-2xl">
+      <DialogContent className="im-dialog max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{readOnly && skill ? skill.title : skill ? "编辑技能" : "新建技能"}</DialogTitle>
-          <DialogDescription>{readOnly ? "共享技能，只读。" : "写成以后照着就能做的方法：步骤、偏好、注意事项。不要写密码。"}</DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex min-h-0 flex-1 flex-col"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (valid && !readOnly && save.state !== "pending") void save.run();
-          }}
-        >
-          <DialogBody className="im-form mt-2">
-            <div className="im-grid">
-              <label className="im-field" htmlFor="skill-title">
-                <span className="im-field-l">
-                  {"标题"}
-                  <span className="im-req">{"必填"}</span>
-                </span>
-                <Input disabled={readOnly} id="skill-title" maxLength={60} onChange={(event) => {
-                    const title = event.target.value;
-                    setForm({ ...form, title, ...(!skill && !slugTouched ? { slug: slugFromTitle(title) } : {}) });
-                  }} placeholder={"如「写周报」"} value={form.title} />
-              </label>
-              <label className="im-field" htmlFor="skill-slug">
-                <span className="im-field-l">
-                  {"名字"}
-                  <span className="im-req">{skill ? "不能改" : "必填，小写字母、数字、连字符；按标题自动生成"}</span>
-                </span>
-                <Input
-                  className="font-mono"
-                  disabled={Boolean(skill)}
-                  id="skill-slug"
-                  maxLength={40}
-                  onChange={(event) => {
-                    const slug = normalizeSlugInput(event.target.value);
-                    setSlugTouched(slug !== "");
-                    setForm({ ...form, slug: slug || slugFromTitle(form.title) });
-                  }}
-                  placeholder={"weekly-report"}
-                  value={form.slug}
-                />
-                {!skill && form.slug && !slugOk ? <span className="im-field-h">{"2–40 个字符，首尾不能是连字符。"}</span> : null}
-              </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <DialogTitle>
+                {readOnly && skill
+                  ? skill.title
+                  : skill
+                    ? "编辑技能"
+                    : "新建技能"}
+              </DialogTitle>
+              <DialogDescription>
+                {readOnly
+                  ? "共享技能，只读。可查阅版本历史与附属只读文件。"
+                  : "写成以后照着就能做的方法：步骤、偏好、注意事项。保存时自动记录不可变版本快照。不要写密码。"}
+              </DialogDescription>
             </div>
-            <label className="im-field" htmlFor="skill-summary">
-              <span className="im-field-l">
-                {"什么时候用"}
-                <span className="im-req">{"一句话，机器人靠它判断要不要加载"}</span>
-              </span>
-              <Input disabled={readOnly} id="skill-summary" maxLength={200} onChange={(event) => setForm({ ...form, summary: event.target.value })} placeholder={"用户让我写本周工作周报时"} value={form.summary} />
-            </label>
-            <label className="im-field" htmlFor="skill-instructions">
-              <span className="im-field-l">
-                {"方法说明"}
-                <span className="im-req">{"必填，支持 Markdown"}</span>
-              </span>
-              <Textarea
-                className="skill-instructions"
-                disabled={readOnly}
-                id="skill-instructions"
-                maxLength={20000}
-                onChange={(event) => setForm({ ...form, instructions: event.target.value })}
-                rows={12}
-                value={form.instructions}
-              />
-            </label>
-            {isAdmin ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="font-medium text-sm">{"设为全局共享技能（全员可用）"}</div>
-                  <div className="text-muted-foreground text-xs">{"开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"}</div>
-                </div>
-                <Switch checked={form.shared} onCheckedChange={(checked) => setForm({ ...form, shared: Boolean(checked) })} />
+            {skill ? (
+              <div
+                aria-label="技能编辑与治理视图"
+                className="sg-segmented"
+                role="tablist"
+              >
+                <button
+                  aria-selected={tab === "editor"}
+                  className={cn(tab === "editor" && "is-on")}
+                  data-testid="skill-tab-editor"
+                  onClick={() => setTab("editor")}
+                  role="tab"
+                  type="button"
+                >
+                  {"编辑内容"}
+                </button>
+                <button
+                  aria-selected={tab === "governance"}
+                  className={cn(tab === "governance" && "is-on")}
+                  data-testid="skill-tab-governance"
+                  onClick={() => setTab("governance")}
+                  role="tab"
+                  type="button"
+                >
+                  {"版本与多文件"}
+                </button>
               </div>
             ) : null}
-          </DialogBody>
-          <DialogFooter className="mt-4">
-            <Button onClick={() => onOpenChange(false)} type="button" variant="ghost">
-              {readOnly ? "关闭" : "取消"}
-            </Button>
-            {readOnly ? null : (
-              <Button disabled={!valid} feedback="save" state={save.state} type="submit">
-                {"保存"}
+          </div>
+        </DialogHeader>
+        {skill && tab === "governance" ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <DialogBody className="mt-2">
+              <SkillVersionsPanel
+                onRestored={(restored) => {
+                  const synced = {
+                    slug: restored.slug,
+                    title: restored.title,
+                    summary: restored.summary,
+                    instructions: restored.instructions,
+                    requiresToolsText: (restored.requiresTools ?? []).join(
+                      ", ",
+                    ),
+                    reason: "",
+                    shared: !restored.mine,
+                  };
+                  setForm(synced);
+                  setInitial(synced);
+                }}
+                readOnly={readOnly}
+                skillSlug={skill.slug}
+              />
+            </DialogBody>
+            <DialogFooter className="mt-4">
+              <Button
+                onClick={() => onOpenChange(false)}
+                type="button"
+                variant="ghost"
+              >
+                {"关闭"}
               </Button>
-            )}
-          </DialogFooter>
-        </form>
+            </DialogFooter>
+          </div>
+        ) : (
+          <form
+            className="flex min-h-0 flex-1 flex-col"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (valid && !readOnly && save.state !== "pending")
+                void save.run();
+            }}
+          >
+            <DialogBody className="im-form mt-2">
+              <div className="im-grid">
+                <label className="im-field" htmlFor="skill-title">
+                  <span className="im-field-l">
+                    {"标题"}
+                    <span className="im-req">{"必填"}</span>
+                  </span>
+                  <Input
+                    disabled={readOnly}
+                    id="skill-title"
+                    maxLength={60}
+                    onChange={(event) => {
+                      const title = event.target.value;
+                      setForm({
+                        ...form,
+                        title,
+                        ...(!skill && !slugTouched
+                          ? { slug: slugFromTitle(title) }
+                          : {}),
+                      });
+                    }}
+                    placeholder={"如「写周报」"}
+                    value={form.title}
+                  />
+                </label>
+                <label className="im-field" htmlFor="skill-slug">
+                  <span className="im-field-l">
+                    {"名字"}
+                    <span className="im-req">
+                      {skill
+                        ? "不能改"
+                        : "必填，小写字母、数字、连字符；按标题自动生成"}
+                    </span>
+                  </span>
+                  <Input
+                    className="font-mono"
+                    disabled={Boolean(skill)}
+                    id="skill-slug"
+                    maxLength={40}
+                    onChange={(event) => {
+                      const slug = normalizeSlugInput(event.target.value);
+                      setSlugTouched(slug !== "");
+                      setForm({
+                        ...form,
+                        slug: slug || slugFromTitle(form.title),
+                      });
+                    }}
+                    placeholder={"weekly-report"}
+                    value={form.slug}
+                  />
+                  {!skill && form.slug && !slugOk ? (
+                    <span className="im-field-h">
+                      {"2–40 个字符，首尾不能是连字符。"}
+                    </span>
+                  ) : null}
+                </label>
+              </div>
+              <label className="im-field" htmlFor="skill-summary">
+                <span className="im-field-l">
+                  {"什么时候用"}
+                  <span className="im-req">
+                    {"一句话，机器人靠它判断要不要加载"}
+                  </span>
+                </span>
+                <Input
+                  disabled={readOnly}
+                  id="skill-summary"
+                  maxLength={200}
+                  onChange={(event) =>
+                    setForm({ ...form, summary: event.target.value })
+                  }
+                  placeholder={"用户让我写本周工作周报时"}
+                  value={form.summary}
+                />
+              </label>
+              <label className="im-field" htmlFor="skill-instructions">
+                <span className="im-field-l">
+                  {"方法说明"}
+                  <span className="im-req">{"必填，支持 Markdown"}</span>
+                </span>
+                <Textarea
+                  className="skill-instructions"
+                  disabled={readOnly}
+                  id="skill-instructions"
+                  maxLength={20000}
+                  onChange={(event) =>
+                    setForm({ ...form, instructions: event.target.value })
+                  }
+                  rows={10}
+                  value={form.instructions}
+                />
+              </label>
+              <div className="im-grid">
+                <label className="im-field" htmlFor="skill-requires-tools">
+                  <span className="im-field-l">
+                    {"依赖工具（requiresTools）"}
+                    <span className="im-req">
+                      {"可选，逗号分隔；缺工具时自动对模型隐身"}
+                    </span>
+                  </span>
+                  <Input
+                    className="font-mono text-xs"
+                    disabled={readOnly}
+                    id="skill-requires-tools"
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        requiresToolsText: event.target.value,
+                      })
+                    }
+                    placeholder={"如 web_search, email_send"}
+                    value={form.requiresToolsText}
+                  />
+                </label>
+                {!readOnly ? (
+                  <label className="im-field" htmlFor="skill-reason">
+                    <span className="im-field-l">
+                      {"本次版本备注"}
+                      <span className="im-req">{"可选，写入不可变历史栈"}</span>
+                    </span>
+                    <Input
+                      id="skill-reason"
+                      maxLength={200}
+                      onChange={(event) =>
+                        setForm({ ...form, reason: event.target.value })
+                      }
+                      placeholder={"例如：补充异常重试步骤"}
+                      value={form.reason}
+                    />
+                  </label>
+                ) : null}
+              </div>
+              {isAdmin ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm">
+                      {"设为全局共享技能（全员可用）"}
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {
+                        "开启后，实例中所有用户的机器人都可加载此技能，成员也能直接用 /名字 调用。"
+                      }
+                    </div>
+                  </div>
+                  <Switch
+                    checked={form.shared}
+                    onCheckedChange={(checked) =>
+                      setForm({ ...form, shared: Boolean(checked) })
+                    }
+                  />
+                </div>
+              ) : null}
+            </DialogBody>
+            <DialogFooter className="mt-4">
+              <Button
+                onClick={() => onOpenChange(false)}
+                type="button"
+                variant="ghost"
+              >
+                {readOnly ? "关闭" : "取消"}
+              </Button>
+              {readOnly ? null : (
+                <Button
+                  disabled={!valid}
+                  feedback="save"
+                  state={save.state}
+                  type="submit"
+                >
+                  {"保存"}
+                </Button>
+              )}
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

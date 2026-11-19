@@ -215,15 +215,30 @@ export function needsLinkPreview(
   );
 }
 
+const ANTI_BOT_TITLE_RE =
+  /^(?:环境异常|当前环境异常|请完成验证|完成验证后即可继续访问|安全验证|百度安全验证|人机验证|访问验证|滑动验证|安全限制|访问异常|操作频繁|微信公众平台安全验证|系统繁忙|验证您是真人|Just a moment\.{0,3}|Attention Required! \| Cloudflare|Verify you are human|Are you a robot\??|Human verification|Security check|Access denied|Checking your browser)(?:[\s.!…]*$|[\s]*[-|–—·:：]\s*.*$)/i;
+
+const ANTI_BOT_PHRASE_RE =
+  /(?:当前环境异常|请完成(?:安全)?验证|完成验证后即可继续访问|微信公众平台安全验证|安全验证\s*[-–—|]\s*知乎|小红书.*(?:安全限制|请完成验证)|你似乎来到了没有知识存在的荒原)/i;
+
+export function isAntiBotTitle(title: string | null | undefined): boolean {
+  const clean = text(title);
+  if (!clean) return false;
+  return ANTI_BOT_TITLE_RE.test(clean) || ANTI_BOT_PHRASE_RE.test(clean);
+}
+
 export function mergeLinkFields(
   url: string,
   given: GivenLinkFields,
   preview?: PreviewLinkFields | null,
 ): MergedLinkFields {
   const domain = text(preview?.domain) || linkHost(url);
-  const degraded = preview?.degraded === true;
+  const rawPreviewTitle = text(preview?.title);
+  const antiBotBlocked = isAntiBotTitle(rawPreviewTitle);
+  const degraded = preview?.degraded === true || antiBotBlocked;
   const givenTitle = text(given.title);
-  const ogTitle = degraded ? "" : text(preview?.title);
+  const safePreviewTitle = antiBotBlocked ? "" : rawPreviewTitle;
+  const ogTitle = degraded ? "" : safePreviewTitle;
   const names = [
     text(given.siteName),
     text(preview?.siteName),
@@ -232,14 +247,15 @@ export function mergeLinkFields(
   ];
   const title = cleanLinkTitle(
     (isWeakLinkTitle(givenTitle, ogTitle, names) ? ogTitle : givenTitle) ||
-      text(preview?.title) ||
+      safePreviewTitle ||
       domain,
   );
   const givenImage = usableImage(given.image);
-  const previewImage =
-    (preview && preview.imageKind !== "none"
-      ? usableImage(preview.image)
-      : null) ?? usableImage(preview?.thumbnail);
+  const previewImage = antiBotBlocked
+    ? null
+    : ((preview && preview.imageKind !== "none"
+        ? usableImage(preview.image)
+        : null) ?? usableImage(preview?.thumbnail));
   const image = givenImage ?? previewImage;
   const imageFallback =
     givenImage && previewImage && previewImage !== givenImage
@@ -277,7 +293,10 @@ export function mergeLinkFields(
     extra,
     domain,
     favicon: usableImage(preview?.favicon),
-    description: text(given.description) || text(preview?.description) || null,
+    description:
+      text(given.description) ||
+      (antiBotBlocked ? "" : text(preview?.description)) ||
+      null,
     degraded,
     kind: preview?.kind === "video" ? "video" : null,
   };

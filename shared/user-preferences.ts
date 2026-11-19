@@ -1,3 +1,10 @@
+import {
+  DEFAULT_NOTIFICATION_FREQUENCY,
+  DEFAULT_NOTIFICATION_SOUND,
+  type NotificationFrequency,
+  type NotificationSoundId,
+} from "./notifications";
+
 export type MessageListEmphasis = "agent" | "thread";
 
 export type UserPreferences = {
@@ -8,6 +15,10 @@ export type UserPreferences = {
   brandAccent: string;
   /** 品牌名里普通字的那一段（默认 Bot）。 */
   brandRest: string;
+  /** AI 回复与任务的主动通知频率（every-reply / task-complete / muted）。 */
+  notificationFrequency: NotificationFrequency;
+  /** 主动通知播放的 WebAudio 提示音。 */
+  notificationSound: NotificationSoundId;
 };
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
@@ -15,4 +26,6 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   mainBotId: null,
   brandAccent: "Chisa",
   brandRest: "Bot",
+  notificationFrequency: DEFAULT_NOTIFICATION_FREQUENCY,
+  notificationSound: DEFAULT_NOTIFICATION_SOUND,
 };

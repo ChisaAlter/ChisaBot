@@ -1,4 +1,5 @@
 import { Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { type AppVariables, requireAdmin } from "../auth/guards";
 import type { ApprovalService } from "./service";
@@ -50,7 +51,14 @@ export function createApprovalRoutes(
   const streamAfterMs = longAction.streamAfterMs ?? LONG_ACTION_STREAM_AFTER_MS;
   const heartbeatMs = longAction.heartbeatMs ?? LONG_ACTION_HEARTBEAT_MS;
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser);
+  routes.use(
+    "*",
+    requireUser,
+    bodyLimit({
+      maxSize: 2 * 1024 * 1024,
+      onError: (context) => context.json({ error: "审批请求体过大。" }, 413),
+    }),
+  );
   routes.onError((error, context) =>
     // A body that is not JSON is the caller's mistake, as the delivery routes answer it, not a
     // 500 carrying the parser's message.

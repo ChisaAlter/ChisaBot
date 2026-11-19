@@ -42,6 +42,7 @@ import {
 } from "./conversations/inbox-message";
 import { createConversationInteractions } from "./conversations/interactions";
 import { assertConversationAdmissionOpen } from "./conversations/maintenance";
+import { beginTurn } from "./runtime/quiesce";
 import { createDshRunJournal } from "./conversations/run-journal";
 import {
   type AgentRunnerConnectRequest,
@@ -1103,22 +1104,34 @@ class PostgresAgentRunner implements ConversationRunner {
           }),
         );
       }
-      this.clearFrontend(request.threadId);
     }
-    const entry: ActiveRun = {
-      runId: request.input.runId,
-      agent: request.agent,
-      stream: new ReplaySubject<BaseEvent>(),
-      live: new Subject<LiveEvent>(),
-      stopped: false,
-      abort: new AbortController(),
-      done: Promise.resolve(),
-      injections: [],
-      inboxRunIds: [...(relay?.inboxRunIds ?? []), request.input.runId],
-      inputMessageIds: new Set(),
-    };
-    this.active.set(request.threadId, entry);
-    entry.done = this.execute(request, entry);
+    // 先通过排空准入登记（recover 恢复回合亦计入 runningTurns 以便排空等待完成），再清理前端中继状态。
+    const releaseQuiesceTurn = beginTurn(request.input.runId, {
+      allowDuringQuiesce: Boolean(request.recover),
+    });
+    let entry: ActiveRun;
+    try {
+      if (relay) {
+        this.clearFrontend(request.threadId);
+      }
+      entry = {
+        runId: request.input.runId,
+        agent: request.agent,
+        stream: new ReplaySubject<BaseEvent>(),
+        live: new Subject<LiveEvent>(),
+        stopped: false,
+        abort: new AbortController(),
+        done: Promise.resolve(),
+        injections: [],
+        inboxRunIds: [...(relay?.inboxRunIds ?? []), request.input.runId],
+        inputMessageIds: new Set(),
+      };
+      this.active.set(request.threadId, entry);
+      entry.done = this.execute(request, entry).finally(releaseQuiesceTurn);
+    } catch (error) {
+      releaseQuiesceTurn();
+      throw error;
+    }
     // Do not let a fast frontend continuation overtake the old lease cleanup.
     return withRunStartedAck(
       request,

@@ -48,6 +48,7 @@ import {
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
 import { releaseStagedAttachment } from "@/lib/channels/staged-attachment";
+import { deleteChatFile } from "@/lib/chat-files";
 import {
   type Attachment,
   type AttachmentsConfig,
@@ -91,11 +92,14 @@ import { newId } from "@/lib/new-id";
 import { presenceRef } from "@/lib/presence-flag";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { cn } from "@/lib/utils";
+import { chatFileUrl } from "../../../../../shared/chat-files";
 import { Button } from "../../ui/button";
 import { AttachmentStrip, type FailedUpload } from "./attachment-strip";
 import {
   attachmentsConfigFor,
+  chatFileRowId,
   FILE_PICKER_ACCEPT,
+  FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
   stagedRowId,
 } from "./attachments";
 import { DictationButton, DictationSurface } from "./dictation-controls";
@@ -203,6 +207,16 @@ function stagedModality(attachment: Attachment) {
   return attachmentModality(attachment.type, corroborated);
 }
 
+/** 统一草稿与收件箱对账键：普通频道附件用原始 `attachmentId`，聊天文档用 `cf:<chatFileId>`。 */
+function draftTrackingId(
+  carrier: { metadata?: unknown } | undefined,
+): string | undefined {
+  const rowId = stagedRowId(carrier);
+  if (rowId !== undefined) return rowId;
+  const chatFileId = chatFileRowId(carrier);
+  return chatFileId !== undefined ? `cf:${chatFileId}` : undefined;
+}
+
 const MAX_HEIGHT_PX = 220;
 /**
  * Tracks the compact `text-sm` line box so PromptArea stays vertically centered in one row.
@@ -300,6 +314,8 @@ export type ComposerProps = {
    * a channel that does not exist yet.
    */
   channelId?: string;
+  /** 当前对话所属机器人 id；存在时允许直传 ≤20MB 的 PDF / DOCX 文档至 `/api/chat-files`。 */
+  chatFileAgentId?: string | null;
   /**
    * There is a run on the wire for Stop to reach.
    *
@@ -460,6 +476,7 @@ function ComposerImpl({
   pending = false,
   autoFocus = false,
   channelId,
+  chatFileAgentId,
   stoppable,
   stopping = false,
   stopFailed = false,
@@ -881,11 +898,24 @@ function ComposerImpl({
    * composer on every upload would invalidate all four attachment memos for no visible reason.
    */
   const uploadedRows = useRef<Set<string>>(new Set());
+  /** 与 `uploadedRows` 对称：记录本输入框直传至 `/api/chat-files`、尚未随消息发出的文档 id。 */
+  const uploadedChatFiles = useRef<Set<string>>(new Set());
 
   const recordUpload = useCallback(
     (attachmentId: string, file: File) => {
       uploadedRows.current.add(attachmentId);
       // Landed: nothing left to cancel or to count up.
+      const key = uploadIdentity.keyOfFile(file);
+      uploadAborts.current.delete(key);
+      abortedUploads.current.delete(key);
+      progressStore.clear(key);
+    },
+    [uploadIdentity, progressStore],
+  );
+
+  const recordChatFileUpload = useCallback(
+    (chatFileId: string, file: File) => {
+      uploadedChatFiles.current.add(chatFileId);
       const key = uploadIdentity.keyOfFile(file);
       uploadAborts.current.delete(key);
       abortedUploads.current.delete(key);
@@ -909,6 +939,10 @@ function ComposerImpl({
         const rowId = stagedRowId(attachment);
         if (rowId !== undefined) {
           uploadedRows.current.delete(rowId);
+        }
+        const chatFileId = chatFileRowId(attachment);
+        if (chatFileId !== undefined) {
+          uploadedChatFiles.current.delete(chatFileId);
         }
         pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
       }
@@ -944,6 +978,8 @@ function ComposerImpl({
               else uploadAborts.current.set(key, controller);
               return controller.signal;
             },
+            chatFileAgentId,
+            recordChatFileUpload,
           )
         : undefined,
     [
@@ -953,6 +989,8 @@ function ComposerImpl({
       recordUpload,
       progressStore,
       uploadIdentity,
+      chatFileAgentId,
+      recordChatFileUpload,
     ],
   );
 
@@ -1142,17 +1180,25 @@ function ComposerImpl({
    * the composer's until the send becomes a message.
    */
   useExternalConnection(objectKey(attachments), () => {
-    if (uploadedRows.current.size === 0) {
+    if (
+      uploadedRows.current.size === 0 &&
+      uploadedChatFiles.current.size === 0
+    ) {
       return;
     }
     if (attachments.some((attachment) => attachment.status === "uploading")) {
       return;
     }
     const drawn = new Set<string>();
+    const drawnChatFiles = new Set<string>();
     for (const attachment of attachments) {
       const rowId = stagedRowId(attachment);
       if (rowId !== undefined) {
         drawn.add(rowId);
+      }
+      const chatFileId = chatFileRowId(attachment);
+      if (chatFileId !== undefined) {
+        drawnChatFiles.add(chatFileId);
       }
     }
     for (const rowId of uploadedRows.current) {
@@ -1163,6 +1209,13 @@ function ComposerImpl({
       }
       uploadedRows.current.delete(rowId);
       discardStagedAttachment(rowId);
+    }
+    for (const chatFileId of uploadedChatFiles.current) {
+      if (drawnChatFiles.has(chatFileId)) {
+        continue;
+      }
+      uploadedChatFiles.current.delete(chatFileId);
+      void deleteChatFile(chatFileId);
     }
   });
 
@@ -1235,6 +1288,7 @@ function ComposerImpl({
         // see `queuedAttachmentCount`. Without the second half the client accepts a pick the
         // server then refuses with a 409 the person was given no chance to avoid.
         alreadyStaged: stagedCount.current + queuedAttachmentCount,
+        allowDocuments: Boolean(chatFileAgentId),
       });
       if (screened.rejected.length > 0) {
         setRejected((current) => [...current, ...screened.rejected]);
@@ -1268,6 +1322,7 @@ function ComposerImpl({
       disabled,
       processFiles,
       queuedAttachmentCount,
+      chatFileAgentId,
       draftKey,
       uploadIdentity,
       saveFileDraft,
@@ -1291,16 +1346,16 @@ function ComposerImpl({
         let status: "staged" | "accepted" | "missing" | "interrupted" =
           "interrupted";
         if (failed.saved) {
-          const rowId = stagedRowId(failed.saved.attachment);
+          const trackingId = draftTrackingId(failed.saved.attachment);
           const state = conversationScope?.threadId
             ? await inboxState(conversationScope.threadId)
             : undefined;
-          if (rowId && conversationScope?.threadId && !state)
+          if (trackingId && conversationScope?.threadId && !state)
             throw new Error("尚未确认附件的排队状态，联网后点重试。");
           const queued =
-            rowId &&
+            trackingId &&
             state?.items.some((item) =>
-              attachmentIdsInContent(item.message.content).includes(rowId),
+              attachmentIdsInContent(item.message.content).includes(trackingId),
             );
           status = queued
             ? "accepted"
@@ -1316,6 +1371,8 @@ function ComposerImpl({
           uploadIdentity.restore(saved.file, saved.id, restoredAttachment.id);
           const rowId = stagedRowId(restoredAttachment);
           if (rowId) uploadedRows.current.add(rowId);
+          const chatFileId = chatFileRowId(restoredAttachment);
+          if (chatFileId) uploadedChatFiles.current.add(chatFileId);
           stagedCount.current++;
           restoreAttachments([restoredAttachment]);
         } else {
@@ -1469,10 +1526,13 @@ function ComposerImpl({
       if (restoringFiles.current)
         for (const id of ids) acceptedDuringRestore.current.add(id);
       for (const [key, saved] of fileDraft.current) {
-        const rowId = stagedRowId(saved.attachment);
-        if (!rowId || !accepted.has(rowId)) continue;
+        const trackingId = draftTrackingId(saved.attachment);
+        if (!trackingId || !accepted.has(trackingId)) continue;
         fileDraft.current.delete(key);
-        uploadedRows.current.delete(rowId);
+        const rowId = stagedRowId(saved.attachment);
+        if (rowId) uploadedRows.current.delete(rowId);
+        const chatFileId = chatFileRowId(saved.attachment);
+        if (chatFileId) uploadedChatFiles.current.delete(chatFileId);
         changed = true;
       }
       if (changed) {
@@ -1491,8 +1551,8 @@ function ComposerImpl({
         const matching = new Set(ids);
         let changed = false;
         for (const [key, saved] of fileDraft.current) {
-          const rowId = stagedRowId(saved.attachment);
-          if (!rowId || !matching.has(rowId)) continue;
+          const trackingId = draftTrackingId(saved.attachment);
+          if (!trackingId || !matching.has(trackingId)) continue;
           fileDraft.current.set(key, { ...saved, submission });
           changed = true;
         }
@@ -1521,6 +1581,17 @@ function ComposerImpl({
         throw new Error("尚未确认附件的排队状态，联网后点重试。");
       const attachment = saved.attachment;
       if (!attachment) return "interrupted" as const;
+      const chatFileId = chatFileRowId(attachment);
+      if (chatFileId) {
+        const response = await tryClient(chatFileUrl(chatFileId), {
+          method: "HEAD",
+          signal,
+        });
+        if (response.status === 404) return "missing" as const;
+        if (!response.ok)
+          throw new Error("尚未确认附件的发送状态，联网后点重试。");
+        return "staged" as const;
+      }
       const rowId = stagedRowId(attachment);
       if (!rowId) return "interrupted" as const;
       const response = await tryClient(attachmentUrl(rowId), {
@@ -1591,10 +1662,10 @@ function ComposerImpl({
         })[] = [];
         for (const entry of saved.files) {
           if (!current()) return;
-          const rowId = stagedRowId(entry.attachment);
-          if (rowId && queuedIds.has(rowId)) continue;
+          const trackingId = draftTrackingId(entry.attachment);
+          if (trackingId && queuedIds.has(trackingId)) continue;
           try {
-            if (rowId && conversationScope?.threadId && !state)
+            if (trackingId && conversationScope?.threadId && !state)
               throw new Error("尚未确认附件的排队状态，联网后点重试。");
             const status = await restoreSavedFile(entry, signal);
             if (!current()) return;
@@ -1625,20 +1696,22 @@ function ComposerImpl({
         }
         if (!current()) return;
         for (const [key, entry] of restoredDraft) {
-          const rowId = stagedRowId(entry.attachment);
-          if (rowId && acceptedDuringRestore.current.has(rowId))
+          const trackingId = draftTrackingId(entry.attachment);
+          if (trackingId && acceptedDuringRestore.current.has(trackingId))
             restoredDraft.delete(key);
         }
         fileDraft.current = restoredDraft;
         const ready = restored.filter((attachment) => {
-          const rowId = stagedRowId(attachment);
-          return !rowId || !acceptedDuringRestore.current.has(rowId);
+          const trackingId = draftTrackingId(attachment);
+          return !trackingId || !acceptedDuringRestore.current.has(trackingId);
         });
         for (const entry of restoredDraft.values()) {
           if (!entry.attachment || !ready.includes(entry.attachment)) continue;
           uploadIdentity.restore(entry.file, entry.id, entry.attachment.id);
           const rowId = stagedRowId(entry.attachment);
           if (rowId) uploadedRows.current.add(rowId);
+          const chatFileId = chatFileRowId(entry.attachment);
+          if (chatFileId) uploadedChatFiles.current.add(chatFileId);
         }
         if (ready.length) {
           stagedCount.current += ready.length;
@@ -1725,7 +1798,10 @@ function ComposerImpl({
     (files: File[]) => {
       if (!handsOff || files.length === 0) return;
       // 先按 `stageFiles` 同样的规则筛一遍：全被拒（类型不支持、太大、太多）就不建草稿对话，拒收的说法留在这里。
-      const screened = screenPickedFiles(files, { alreadyStaged: 0 });
+      const screened = screenPickedFiles(files, {
+        alreadyStaged: 0,
+        allowDocuments: Boolean(chatFileAgentId),
+      });
       if (screened.rejected.length > 0) {
         setRejected((current) => [...current, ...screened.rejected]);
       }
@@ -1739,7 +1815,7 @@ function ComposerImpl({
       }
       onAttachWithoutChannel?.([...screened.accepted]);
     },
-    [handsOff, draftKey, onAttachWithoutChannel],
+    [handsOff, draftKey, onAttachWithoutChannel, chatFileAgentId],
   );
   const handOffPastedImage = useCallback(
     (file: File) => handOff([file]),
@@ -2010,6 +2086,7 @@ function ComposerImpl({
            */
           mayTruncate:
             attachment.status !== "uploading" &&
+            chatFileRowId(attachment) === undefined &&
             attachment.size !== undefined &&
             mayBeTruncatedForModel(attachment.size),
         })),
@@ -2632,9 +2709,12 @@ function ComposerImpl({
    * string on both meant the honest widening of the gate would have widened the hint to "any file",
    * which helps nobody. Two names, two jobs.
    */
+  const pickerAccept = chatFileAgentId
+    ? FILE_PICKER_ACCEPT_WITH_DOCUMENTS
+    : FILE_PICKER_ACCEPT;
   const filePicker = attachmentsEnabled ? (
     <input
-      accept={FILE_PICKER_ACCEPT}
+      accept={pickerAccept}
       aria-label={"选择文件"}
       className="sr-only"
       // The input the `+` button clicks, shut along with it: a `click()` on a disabled input opens
@@ -2647,7 +2727,7 @@ function ComposerImpl({
     />
   ) : handsOff ? (
     <input
-      accept={FILE_PICKER_ACCEPT}
+      accept={pickerAccept}
       aria-label={"选择文件"}
       className="sr-only"
       multiple

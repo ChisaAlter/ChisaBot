@@ -13,8 +13,18 @@ export {
   useResizeObserver,
 } from "./use-observers";
 export {
+  activeChannelIdFromPath,
+  useReplyNotifications,
+} from "./use-reply-notifications";
+export {
   useAnimationFrame,
   useIdleTask,
   useInterval,
   useTimeout,
 } from "./use-timers";
+export {
+  type UseVoiceCallOptions,
+  type UseVoiceCallResult,
+  useVoiceCall,
+  type VoiceSubtitleEntry,
+} from "./use-voice-call";

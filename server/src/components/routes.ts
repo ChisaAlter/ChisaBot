@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
@@ -58,6 +59,13 @@ export function createComponentRoutes(
   sandboxedStore?: SandboxedStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 2 * 1024 * 1024,
+      onError: (context) => context.json({ error: "组件请求体过大。" }, 413),
+    }),
+  );
 
   const audit = async (
     context: { var: AppVariables },

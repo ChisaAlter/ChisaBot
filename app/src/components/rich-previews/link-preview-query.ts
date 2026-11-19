@@ -97,7 +97,72 @@ export function rememberedPreview(url: string): {
     typeof hit.data?.title !== "string"
   )
     return {};
-  return { initialData: hit.data, initialDataUpdatedAt: hit.at };
+  return {
+    initialData: sanitizeLinkPreview(hit.data),
+    initialDataUpdatedAt: hit.at,
+  };
+}
+
+/**
+ * 微信 / 知乎 / 小红书及常见反爬安全验证页标题特征。
+ * 命中时不把验证页提示当作正常网页标题展示，而是降级为域名兜底卡。
+ */
+const ANTI_BOT_CHALLENGE_TITLE_RE =
+  /^(?:环境异常|当前环境异常|请完成验证|完成验证后即可继续访问|安全验证|百度安全验证|人机验证|访问验证|滑动验证|安全限制|访问异常|操作频繁|微信公众平台安全验证|系统繁忙|验证您是真人|Just a moment\.{0,3}|Attention Required! \| Cloudflare|Verify you are human|Are you a robot\??|Human verification|Security check|Access denied|Checking your browser)(?:[\s.!…]*$|[\s]*[-|–—·:：]\s*.*$)/i;
+
+const ANTI_BOT_CHALLENGE_PHRASE_RE =
+  /(?:当前环境异常|请完成(?:安全)?验证|完成验证后即可继续访问|微信公众平台安全验证|安全验证\s*[-–—|]\s*知乎|小红书.*(?:安全限制|请完成验证)|你似乎来到了没有知识存在的荒原)/i;
+
+/** 判断链接预览标题是否属于微信 / 知乎 / 小红书等反爬或人机验证页。 */
+export function isAntiBotChallengeTitle(
+  title: string | null | undefined,
+): boolean {
+  const clean =
+    typeof title === "string" ? title.replace(/\s+/g, " ").trim() : "";
+  if (!clean) return false;
+  return (
+    ANTI_BOT_CHALLENGE_TITLE_RE.test(clean) ||
+    ANTI_BOT_CHALLENGE_PHRASE_RE.test(clean)
+  );
+}
+
+/** 对预览数据执行反爬标题清洗：命中反爬验证页时安全降级为域名标题并清空误导摘要。 */
+export function sanitizeLinkPreview(data: LinkPreviewData): LinkPreviewData {
+  if (!isAntiBotChallengeTitle(data.title)) return data;
+  const fallbackDomain = data.domain || hostOf(data.url);
+  return {
+    ...data,
+    title: fallbackDomain,
+    description: "",
+    image: null,
+    imageKind: "none",
+    imagePending: false,
+    degraded: true,
+  };
+}
+
+/**
+ * Hover 前纯缓存零网络探测：
+ * 1. 先查 TanStack Query 内存缓存；
+ * 2. 再查同标签页 `sessionStorage` 缓存；
+ * 3. 自动过一遍反爬验证页标题过滤。
+ * 绝不发起任何网络请求，未命中返回 `null`。
+ */
+export function peekCachedLinkPreview(url: string): LinkPreviewData | null {
+  const normalized = url.trim();
+  if (!normalized) return null;
+  const inMemory = previewClient.getQueryData<LinkPreviewData>([
+    "link-preview",
+    normalized,
+  ]);
+  if (inMemory && typeof inMemory.title === "string") {
+    return sanitizeLinkPreview(inMemory);
+  }
+  const stored = rememberedPreview(normalized).initialData;
+  if (stored && typeof stored.title === "string") {
+    return sanitizeLinkPreview(stored);
+  }
+  return null;
 }
 
 /** 测试用：清掉内存里的那份（sessionStorage 由测试自己清）。 */
@@ -117,8 +182,9 @@ async function fetchPreview(url: string): Promise<LinkPreviewData> {
   } | null;
   if (!body?.preview || typeof body.preview.title !== "string")
     throw new PreviewMissing("bad body");
-  rememberPreview(url, body.preview);
-  return body.preview;
+  const clean = sanitizeLinkPreview(body.preview);
+  rememberPreview(url, clean);
+  return clean;
 }
 
 export function previewQuery(url: string) {

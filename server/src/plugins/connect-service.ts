@@ -471,9 +471,9 @@ function customMcpNote(offerMcpAdd: boolean): string {
         "第 1 步我能替你查、替你把配置写好；第 3 步是管理员页面的动作，我的工具里没有安装入口。",
       ];
   return [
-    "这个部署接一个没有现成连接器的服务，只有一条路：Streamable HTTP 的 MCP 服务器。",
+    "这个部署接一个没有现成连接器的服务，可以接入 Streamable HTTP 或 SSE 远端 MCP 服务器，也可以通过 application_development_guide + submit_application 提交可审阅的沙箱微应用草稿（仅入目录，需用户在插件页审阅源码与摘要后手动安装）。",
     "1. 在该服务的开放平台拿凭证（Client ID / API Key / OAuth）。",
-    "2. 把它的 MCP 桥跑在一个能访问公网的地址上；stdio 的 MCP 进程这个部署跑不了。",
+    "2. 若对方提供远端 MCP，可配置 Streamable HTTP 或 SSE 端点并按需设置加密 Header / OAuth2；若需自写后端桥接，可用 app-builder 打包为 chisabot-app/v1 草稿提交。",
     ...tail,
   ].join("\n");
 }

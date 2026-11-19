@@ -30,6 +30,7 @@ export type SpeechAudioPlayer = {
 export type SpeechPlaybackOptions = {
   synthesize?: (input: SynthesizeSpeechAudioInput) => Promise<Blob>;
   createAudio?: (url: string) => SpeechAudioPlayer;
+  onError?: (message: string) => void;
 };
 
 export type SpeechPlaybackControls = SpeechPlaybackState & {
@@ -42,6 +43,27 @@ const IDLE_STATE: SpeechPlaybackState = {
   activeId: null,
   error: null,
 };
+
+/**
+ * 模块级单路互斥协调器：确保整个页面同一时刻最多只有一个朗读/试听实例处于加载或播放状态。
+ * 新实例调用 `speak` 时自动停止先前的活跃实例并释放其网络请求与对象 URL。
+ */
+let activePlaybackStopper: (() => void) | null = null;
+
+function claimActivePlayback(stopper: () => void): void {
+  if (activePlaybackStopper && activePlaybackStopper !== stopper) {
+    const previous = activePlaybackStopper;
+    activePlaybackStopper = null;
+    previous();
+  }
+  activePlaybackStopper = stopper;
+}
+
+function releaseActivePlayback(stopper: () => void): void {
+  if (activePlaybackStopper === stopper) {
+    activePlaybackStopper = null;
+  }
+}
 
 function defaultCreateAudio(url: string): SpeechAudioPlayer {
   if (typeof Audio === "undefined") {
@@ -61,7 +83,7 @@ function toPlaybackErrorMessage(error: unknown): string {
 }
 
 /**
- * 语音朗读播放控制 Hook：统一管理请求中止、对象 URL 释放、切歌暂停与卸载清理。
+ * 语音朗读播放控制 Hook：统一管理请求中止、对象 URL 释放、跨组件单路互斥与卸载清理。
  */
 export function useSpeechPlayback(
   options?: SpeechPlaybackOptions,
@@ -78,6 +100,8 @@ export function useSpeechPlayback(
   synthesizeRef.current = options?.synthesize ?? synthesizeSpeechAudio;
   const createAudioRef = useRef(options?.createAudio ?? defaultCreateAudio);
   createAudioRef.current = options?.createAudio ?? defaultCreateAudio;
+  const onErrorRef = useRef(options?.onError);
+  onErrorRef.current = options?.onError;
 
   const cleanupMedia = useCallback(() => {
     // 必须先解绑事件再清空音频源，避免主动停止时触发多余的 error 回调。
@@ -112,17 +136,13 @@ export function useSpeechPlayback(
     abortRef.current = null;
   }, []);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      generationRef.current += 1;
-      cancelInFlight();
-      cleanupMedia();
-    };
-  }, [cancelInFlight, cleanupMedia]);
+  const stopImplRef = useRef<() => void>(() => {});
+  const stableStopper = useCallback(() => {
+    stopImplRef.current();
+  }, []);
 
   const stop = useCallback(() => {
+    releaseActivePlayback(stableStopper);
     generationRef.current += 1;
     cancelInFlight();
     cleanupMedia();
@@ -132,12 +152,26 @@ export function useSpeechPlayback(
         ? prev
         : IDLE_STATE,
     );
-  }, [cancelInFlight, cleanupMedia]);
+  }, [cancelInFlight, cleanupMedia, stableStopper]);
+
+  stopImplRef.current = stop;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      releaseActivePlayback(stableStopper);
+      generationRef.current += 1;
+      cancelInFlight();
+      cleanupMedia();
+    };
+  }, [cancelInFlight, cleanupMedia, stableStopper]);
 
   const speak = useCallback(
     async (item: SpeechPlaybackItem): Promise<void> => {
       if (!mountedRef.current) return;
 
+      claimActivePlayback(stableStopper);
       generationRef.current += 1;
       const generation = generationRef.current;
       cancelInFlight();
@@ -145,11 +179,14 @@ export function useSpeechPlayback(
 
       const text = item.text.trim();
       if (!text) {
+        releaseActivePlayback(stableStopper);
+        const message = "朗读文本不能为空。";
         setState({
           status: "error",
           activeId: item.id,
-          error: "朗读文本不能为空。",
+          error: message,
         });
+        onErrorRef.current?.(message);
         return;
       }
 
@@ -192,6 +229,7 @@ export function useSpeechPlayback(
           if (abortRef.current === controller) {
             abortRef.current = null;
           }
+          releaseActivePlayback(stableStopper);
           cleanupMedia();
           setState(IDLE_STATE);
         };
@@ -203,12 +241,15 @@ export function useSpeechPlayback(
           if (abortRef.current === controller) {
             abortRef.current = null;
           }
+          releaseActivePlayback(stableStopper);
           cleanupMedia();
+          const message = "音频播放失败，请稍后重试。";
           setState({
             status: "error",
             activeId: item.id,
-            error: "音频播放失败，请稍后重试。",
+            error: message,
           });
+          onErrorRef.current?.(message);
         };
 
         audio.addEventListener("ended", onEnded);
@@ -244,18 +285,21 @@ export function useSpeechPlayback(
         if (!mountedRef.current || generation !== generationRef.current) {
           return;
         }
+        releaseActivePlayback(stableStopper);
         cleanupMedia();
         if (controller.signal.aborted) {
           return;
         }
+        const message = toPlaybackErrorMessage(error);
         setState({
           status: "error",
           activeId: item.id,
-          error: toPlaybackErrorMessage(error),
+          error: message,
         });
+        onErrorRef.current?.(message);
       }
     },
-    [cancelInFlight, cleanupMedia],
+    [cancelInFlight, cleanupMedia, stableStopper],
   );
 
   return {

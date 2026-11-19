@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-16（`v0.1.154`）。
+> 状态最后核对：2026-11-19（`main`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（已合入 `main`） |
 | [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（从 `wip/link-card-align-recovered` 提取合入 `main`） |
 | [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`（已本地合入 `main`） |
 | [CB-139](#cb-139) | 弹出面板颜色回归——底色多通道收口；窗口按钮条退出材质体系                | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#565 · `v0.1.169`）                                     |
@@ -135,6 +136,25 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-142
+
+**ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10）**
+
+标签：`type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`
+
+- 状态：已由原开发分支 `feat/prokbot-parity` 合入 `main`（Wave 1–10 全部 39 个 commit 经独立代码/安全复审闭环，对照清单见 [prokbot-comparison.md](prokbot-comparison.md) §6–§7，界面规范见 `DESIGN.md` §144）。
+- [x] **Wave 1**：建档建分支 + 4 处半成品断口接通（多 Bot 置顶排序、20MB PDF/DOCX 上传、单实例聊天 TTS 与音频卡、DOM 示教录制 → 4 规则编译技能）+ `/admin/models` 语音服务管理台与音色试听。
+- [x] **Wave 2**：AI 回复完成主动通知 + `(userId, channelId)` 前台抑制 + 全局频率策略 + WebAudio 5 档提示音 + 跨端 `chisabot://` 深链与 Android `ACTION_SEND` + `push_devices` 原生推送（APNs/FCM/Bark）+ 无界面幂等 `/api/intents`。
+- [x] **Wave 3**：可插拔联网搜索后端 + 按模型覆写上下文/摘要阈值 + 多 Webhook 规则与 7 态流水面板 + Bot 常驻资料库 + 零 `blur(` 一键隐私遮罩 + 桌面壳右键/硬件加速/时区/出口白名单 + `docs/AI-INSTALL.md`。
+- [x] **Wave 4**：按任务难度自适应路由 + 动态 `reasoning_effort`/Anthropic `thinking.budget_tokens` + 30 天路由日志与 Dry-Run + 本地时区/`kind`/`reasoning` 用量账本 + 热启停脱敏抓包观测器 + 7 角色系统提示词版本台（LCS Diff + 组装/工具透视）+ 7 开关 Harness 台。
+- [x] **Wave 5**：Bot 配方与多文件技能一键脱敏分享 ZIP 生态 + 技能不可变版本栈/Diff/回滚 + 回合级 `requiresTools` 动态隐身 + 多文件只读技能包（事务替换 + `markUntrusted`）。
+- [x] **Wave 6**：多生图/视频模型池 + ≤10 参考图 + `video_generate`/`video_inspect` 工具 + `<video>`/`<audio>` 聊天卡 + AI 生成 Bot 头像 + FFmpeg 纯管道音频转码 + 头像防像素炸弹 + 链接预览 Hover 零网络缓存 + 虚拟形象视线追踪/登录捂眼与 6 表情工位条。
+- [x] **Wave 7**：全链路双向实时语音通话（60s 一次性票据 + WS Origin 校验 + 分态 VAD/真 `abort()` 打断 + 流式分句 PCM16 TTS + 播放回执与超时兜底 + 仅已播报入史 + 无 AEC 自动降级半双工 + PC/Android 原生 AEC3 钩子 + `AgentOrb` 声波共振）。
+- [x] **Wave 8**：AI 自研微应用 / MCP 工具包（`app-builder` 仅落 `draft` + 固定 `process.execPath` 沙箱 `node-stdio` + Host 托管 OAuth + digest 锚定 + `requiresTools` 联动）+ 远端 MCP 全量增强 + 远程执行节点冷启动热切换与 DNS SSRF 拦截。
+- [x] **Wave 9**：Coding Agent 同上下文续接/`needs_input` 追问/`status(waitMs)`/`pwd -P` 沙盒预检 + Chrome Cookie 单精确 `origin` 审批导入与 WebAuthn/Passkey 跨端转发 + 无障碍控件树语义操控与 `bundleId × directionEpoch` 代际授权 + 4 MiB 分块上传与原子下载 + 500 条脱敏环形诊断日志导出。
+- [x] **Wave 10**：Supervisor 静默排空升级、付费外部调用 `(principal_id, request_key)` 幂等账本、凭据读时 `0600`/`O_NOFOLLOW` 与全仓唯一 tmp 原子写、装载物 Provenance 校验、OAuth `state` 绑定与刷新保护、审批 args 白名单与辅助审查分区、XFF 从右向左限流/配额/吊销断活流/hop-by-hop/body cap/64 MiB SSE 上限、Tool Journal 父子树与原子续跑、Handoff 双向对账、定时任务重启 `interrupted` 与去重账本、Ed25519 联邦签名基础协议。
+- [x] **收官门禁验证**：`bun run check`（4,358 文件 `0 error 0 warning`）、12 项形式化+安全守卫 56/56（19,131 断言）、`bun run test:app` 373 文件（9 独立进程文件全绿 + 4 个长跑超时文件 `--timeout 15000` 复测 63/63 过）、全 10 波 `reviewer` 逐波终审通过。
 
 ## CB-141
 

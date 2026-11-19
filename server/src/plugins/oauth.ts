@@ -65,6 +65,8 @@ export type ConnectOrigin = "settings" | "admin";
 export type ConnectState = {
   /** Who is connecting. Taken from their session when the flow starts, never from the callback. */
   userId: string;
+  /** 发起本次授权的用户 ID（默认等同于 userId；回调完成者若携带会话必须严格等于 initiatorUserId）。 */
+  initiatorUserId?: string;
   /** Which server they are connecting. Prevents a code for one vendor landing on another's row. */
   serverId: string;
   /**
@@ -74,6 +76,8 @@ export type ConnectState = {
    * code it unlocks, so a state anybody could read would be a code anybody could redeem.
    */
   verifier: string;
+  /** 发起授权时的 OAuth 客户端/服务端点配置版本摘要，防止授权途中配置被篡改或漂移。 */
+  configRevision?: string;
   /** Where to go back to. Absent reads as `settings`, which is where every flow used to end. */
   returnTo?: ConnectOrigin;
 };
@@ -84,17 +88,67 @@ export type ConnectState = {
  * The expiry travels inside the sealed value because sealing says nothing about freshness. Nobody
  * can move it without the key, and this deployment checks it on the way out.
  */
-type SealedState = ConnectState & { exp: number };
+type SealedState = ConnectState & {
+  exp: number;
+  /** 内部显式标记发起者是否作为显式字段传入，以便保持既有读取返回形状兼容。 */
+  hasExplicitInitiator?: boolean;
+};
 
 /**
  * Where the vendor sends somebody back to.
  *
- * Built from the deployment's own public URL rather than from the incoming request, because this
- * value has to match what an administrator registered with the vendor character for character. A
- * redirect URI assembled from a request header is a redirect URI an attacker has a say in.
+ * Built exclusively from the deployment's configured public URL — NEVER derived from an incoming
+ * HTTP `Host` / `X-Forwarded-Host` header, which an attacker controls.
  */
 export function redirectUriFor(publicUrl: string): string {
-  return `${publicUrl.replace(/\/+$/, "")}${CALLBACK_PATH}`;
+  const trimmed = publicUrl.trim();
+  if (!trimmed) {
+    throw new Error(
+      "OAuth redirect_uri 必须来自受控部署配置 CHISABOT_PUBLIC_URL，禁止留空或从 Host 头推导。",
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("CHISABOT_PUBLIC_URL 不是合法的 URL，无法构造受控 redirect_uri。");
+  }
+  if (
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      "CHISABOT_PUBLIC_URL 必须是不含凭据、查询参数与片段的 http/https 源地址。",
+    );
+  }
+  return `${trimmed.replace(/\/+$/, "")}${CALLBACK_PATH}`;
+}
+
+/** 计算 OAuth 连接配置的确定性版本指纹（绑定 clientId + 授权/令牌端点），用于防授权中途篡改。 */
+export function oauthConfigRevisionFor(input: {
+  serverId: string;
+  clientId: string;
+  authorizationUrl: string;
+  tokenUrl: string;
+  redirectUri: string;
+  scopes?: readonly string[];
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        input.serverId,
+        input.clientId,
+        input.authorizationUrl,
+        input.tokenUrl,
+        input.redirectUri,
+        [...(input.scopes ?? [])].sort(),
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 32);
 }
 
 /**
@@ -181,22 +235,41 @@ export async function sealConnectState(
   encryptionKey: string,
   now: number = Date.now(),
 ): Promise<string> {
-  const payload: SealedState = { ...state, exp: now + STATE_TTL_MS };
+  const initiatorUserId = state.initiatorUserId ?? state.userId;
+  if (initiatorUserId !== state.userId) {
+    throw new Error("OAuth state 的 initiatorUserId 必须与 userId 一致。");
+  }
+  const payload: SealedState = {
+    ...state,
+    initiatorUserId,
+    ...(state.initiatorUserId !== undefined
+      ? { hasExplicitInitiator: true }
+      : {}),
+    exp: now + STATE_TTL_MS,
+  };
   return seal(JSON.stringify(payload), encryptionKey, CONNECT_LABEL);
 }
+
+export type ReadConnectStateExpectations = {
+  /** 回调请求当前已登录的完成者用户 ID；传入时必须与发起者 initiatorUserId 严格一致。 */
+  completerUserId?: string | null;
+  /** 回调时刻当前 OAuth 客户端/服务端点配置版本摘要；传入时必须与 state 签发时一致。 */
+  expectedConfigRevision?: string;
+};
 
 /**
  * What a state says, or nothing at all.
  *
  * One return for every way of being unacceptable — altered, sealed by another key, sealed for
- * another purpose, expired, malformed, missing a field — because a caller that has to tell those
- * apart is a caller that can get one of them wrong. There is exactly one thing to do with an
- * unusable state, so there is one answer.
+ * another purpose, expired, malformed, missing a field, mismatched completer, or drifted config
+ * revision — because a caller that has to tell those apart is a caller that can get one of them
+ * wrong. There is exactly one thing to do with an unusable state, so there is one answer.
  */
 export async function readConnectState(
   sealed: string,
   encryptionKey: string,
   now: number = Date.now(),
+  expected?: ReadConnectStateExpectations,
 ): Promise<ConnectState | null> {
   const value = await unseal(sealed, encryptionKey, CONNECT_LABEL);
   if (!value) return null;
@@ -217,16 +290,82 @@ export async function readConnectState(
       return null;
     }
 
-    return {
+    const effectiveInitiator =
+      typeof payload.initiatorUserId === "string" && payload.initiatorUserId
+        ? payload.initiatorUserId
+        : payload.userId;
+    if (effectiveInitiator !== payload.userId) {
+      return null;
+    }
+
+    if (
+      expected?.completerUserId !== undefined &&
+      expected.completerUserId !== null &&
+      expected.completerUserId !== effectiveInitiator
+    ) {
+      return null;
+    }
+
+    if (expected?.expectedConfigRevision !== undefined) {
+      if (
+        typeof payload.configRevision !== "string" ||
+        payload.configRevision !== expected.expectedConfigRevision
+      ) {
+        return null;
+      }
+    }
+
+    const result: ConnectState = {
       userId: payload.userId,
       serverId: payload.serverId,
       verifier: payload.verifier,
       // Only the one name is recognised; anything else becomes the default rather than being carried.
       returnTo: payload.returnTo === "admin" ? "admin" : "settings",
+      ...(payload.hasExplicitInitiator
+        ? { initiatorUserId: effectiveInitiator }
+        : {}),
+      ...(typeof payload.configRevision === "string" && payload.configRevision
+        ? { configRevision: payload.configRevision }
+        : {}),
     };
+    return result;
   } catch {
     return null;
   }
+}
+
+/**
+ * 显式核对回调完成者与配置版本：
+ * - `completerUserId` 必须严格等于发起者（`state.initiatorUserId ?? state.userId`）；
+ * - 若 state 绑定了 `configRevision` 或调用方提供当前版本，则双方必须完全一致。
+ */
+export function verifyOAuthCallbackBinding(
+  state: ConnectState,
+  input: {
+    completerUserId: string;
+    currentConfigRevision?: string;
+  },
+): { ok: true } | { ok: false; code: "COMPLETER_MISMATCH" | "CONFIG_REVISION_DRIFT"; reason: string } {
+  const initiator = state.initiatorUserId ?? state.userId;
+  if (!input.completerUserId || input.completerUserId !== initiator) {
+    return {
+      ok: false,
+      code: "COMPLETER_MISMATCH",
+      reason: "OAuth 回调完成者与授权发起者不是同一用户，拒绝绑定凭据。",
+    };
+  }
+  if (
+    (state.configRevision !== undefined ||
+      input.currentConfigRevision !== undefined) &&
+    state.configRevision !== input.currentConfigRevision
+  ) {
+    return {
+      ok: false,
+      code: "CONFIG_REVISION_DRIFT",
+      reason: "OAuth 授权途中配置版本已变化，拒绝完成本次绑定。",
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -394,9 +533,9 @@ export async function redeemAuthorizationCode(input: {
        *
        * `tokenUrl` is pinned in the catalogue because this request carries a client secret and an
        * authorization code, and following a 302 would hand both to whatever address the answer named.
-       * Manual leaves the 3xx as the response, which is not `ok`, so it falls into the refusal below.
+       * `redirectMode: "error"` enforces `redirect: "error"` so any 3xx is refused immediately.
        */
-      manualRedirect: true,
+      redirectMode: "error",
       maxBytes: 256 * 1024,
       timeoutMs: 15_000,
     });
@@ -520,8 +659,8 @@ export async function registerDynamicClient(input: {
         client_name: "ChisaBot",
       }),
       // The registration endpoint is pinned in the catalogue, so a redirect is somebody else deciding
-      // where this deployment introduces itself. Left as the response, which is not `ok`.
-      manualRedirect: true,
+      // where this deployment introduces itself. `redirectMode: "error"` rejects any 3xx immediately.
+      redirectMode: "error",
       maxBytes: 256 * 1024,
       timeoutMs: 15_000,
     });
@@ -552,5 +691,197 @@ export async function registerDynamicClient(input: {
     // A public client has none; a vendor that issues one anyway gets it stored and sent back.
     clientSecret:
       typeof body.client_secret === "string" ? body.client_secret : "",
+  };
+}
+
+/** 明确属于 OAuth 令牌已被吊销/失效、需要清除本地已存凭据的 RFC 6749 错误码集合。 */
+const REVOKED_OAUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "unauthorized_client",
+  "access_denied",
+  "invalid_token",
+]);
+
+export type OAuthRefreshFailureClassification = {
+  shouldClearCredential: boolean;
+  transient: boolean;
+  reason: string;
+  errorCode: string | null;
+  status: number | null;
+};
+
+/**
+ * 判定 OAuth refresh 失败时是否允许清除已保存凭据（§2.1）：
+ * - 网络超时 / 连接断开 / DNS 失败 / 5xx / 429 / 408 / 3xx 重定向：一律 **绝不清凭据**（`shouldClearCredential: false`）；
+ * - 仅当收到明确 HTTP 400（或 401）且 JSON `error` 属于 OAuth 吊销类错误码（如 `invalid_grant`）时，
+ *   才允许标记 `shouldClearCredential: true`。
+ */
+export function classifyOAuthRefreshFailure(input: {
+  status?: number | null;
+  errorCode?: string | null;
+  isNetworkError?: boolean;
+}): OAuthRefreshFailureClassification {
+  const status = typeof input.status === "number" ? input.status : null;
+  const normalizedCode =
+    typeof input.errorCode === "string" && input.errorCode.trim()
+      ? input.errorCode.trim().toLowerCase().slice(0, 64)
+      : null;
+
+  if (input.isNetworkError === true || status === null) {
+    return {
+      shouldClearCredential: false,
+      transient: true,
+      reason: "网络异常或超时，保留现有 OAuth 凭据待重试。",
+      errorCode: normalizedCode,
+      status,
+    };
+  }
+
+  if (status >= 500 || status === 429 || status === 408 || (status >= 300 && status < 400)) {
+    return {
+      shouldClearCredential: false,
+      transient: true,
+      reason: `上游返回瞬态或异常状态码（HTTP ${status}），保留现有 OAuth 凭据。`,
+      errorCode: normalizedCode,
+      status,
+    };
+  }
+
+  if (
+    (status === 400 || status === 401) &&
+    normalizedCode !== null &&
+    REVOKED_OAUTH_ERROR_CODES.has(normalizedCode)
+  ) {
+    return {
+      shouldClearCredential: true,
+      transient: false,
+      reason: `OAuth 刷新返回明确吊销/失效错误（HTTP ${status} / ${normalizedCode}），允许清理失效凭据。`,
+      errorCode: normalizedCode,
+      status,
+    };
+  }
+
+  return {
+    shouldClearCredential: false,
+    transient: false,
+    reason: `OAuth 刷新被拒绝（HTTP ${status}${normalizedCode ? ` / ${normalizedCode}` : ""}），未命中明确吊销错误码，保守保留凭据。`,
+    errorCode: normalizedCode,
+    status,
+  };
+}
+
+export function shouldClearCredentialOnRefreshFailure(input: {
+  status?: number | null;
+  errorCode?: string | null;
+  isNetworkError?: boolean;
+}): boolean {
+  return classifyOAuthRefreshFailure(input).shouldClearCredential;
+}
+
+export type OAuthRefreshResult =
+  | {
+      ok: true;
+      accessToken: string;
+      refreshToken?: string;
+      expiresInSeconds?: number;
+    }
+  | {
+      ok: false;
+      classification: OAuthRefreshFailureClassification;
+    };
+
+/**
+ * 使用 refresh_token 换取新 access_token（强制 `redirect: "error"`，绝不跟随重定向；
+ * 失败时按 RFC 6749 精确分类，绝不在网络超时/5xx 时误清凭据）。
+ */
+export async function refreshOAuthToken(input: {
+  tokenUrl: string;
+  clientId: string;
+  clientSecret?: string;
+  refreshToken: string;
+  timeoutMs?: number;
+}): Promise<OAuthRefreshResult> {
+  if (!URL.canParse(input.tokenUrl)) {
+    return {
+      ok: false,
+      classification: classifyOAuthRefreshFailure({ isNetworkError: true }),
+    };
+  }
+  const verdict = checkPublicUrl(input.tokenUrl);
+  if (!verdict.ok) {
+    return {
+      ok: false,
+      classification: classifyOAuthRefreshFailure({ isNetworkError: true }),
+    };
+  }
+
+  const params = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: input.refreshToken,
+    client_id: input.clientId,
+  });
+  if (input.clientSecret) {
+    params.set("client_secret", input.clientSecret);
+  }
+
+  let response: Response;
+  try {
+    response = await guardedFetchResponse(input.tokenUrl, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      redirectMode: "error",
+      maxBytes: 256 * 1024,
+      timeoutMs: input.timeoutMs ?? 15_000,
+    });
+  } catch {
+    return {
+      ok: false,
+      classification: classifyOAuthRefreshFailure({ isNetworkError: true }),
+    };
+  }
+
+  if (!response.ok) {
+    const refusal = (await response.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    const errorCode =
+      typeof refusal?.error === "string" ? refusal.error.slice(0, 64) : null;
+    return {
+      ok: false,
+      classification: classifyOAuthRefreshFailure({
+        status: response.status,
+        errorCode,
+        isNetworkError: false,
+      }),
+    };
+  }
+
+  const body = (await response.json().catch(() => null)) as {
+    access_token?: unknown;
+    refresh_token?: unknown;
+    expires_in?: unknown;
+  } | null;
+
+  if (typeof body?.access_token !== "string" || !body.access_token) {
+    return {
+      ok: false,
+      classification: classifyOAuthRefreshFailure({
+        status: 502,
+        errorCode: null,
+        isNetworkError: false,
+      }),
+    };
+  }
+
+  return {
+    ok: true,
+    accessToken: body.access_token,
+    ...(typeof body.refresh_token === "string" && body.refresh_token
+      ? { refreshToken: body.refresh_token }
+      : {}),
+    ...(typeof body.expires_in === "number" && Number.isFinite(body.expires_in)
+      ? { expiresInSeconds: body.expires_in }
+      : {}),
   };
 }

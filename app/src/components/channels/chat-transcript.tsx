@@ -48,6 +48,7 @@ import {
   EditAction,
   MessageEditor,
   RegenerateAction,
+  SpeakAction,
   WithdrawAction,
 } from "@/components/chat/message-actions";
 import { QueuedMessages } from "@/components/chat/queued-messages";
@@ -100,6 +101,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useElementEvent, useExternalConnection, useWindowEvent } from "@/hooks";
 import { approvalInboxOptions } from "@/lib/approvals";
+import { speechStatusQueryOptions } from "@/lib/audio/speech";
 import {
   attachmentThumbUrl,
   attachmentUrl,
@@ -184,6 +186,7 @@ import {
 import { probeRemoteFile } from "@/lib/rich-previews/files";
 import { collapseScheduleRuns } from "@/lib/schedule-fired";
 import { cn } from "@/lib/utils";
+import { CHAT_FILE_URL_PREFIX } from "../../../../shared/chat-files";
 import { splitChatOrigin } from "../../../../shared/chat-origin";
 import { LOCAL_AGENT_RESULT_MARKER } from "../../../../shared/local-agents";
 import { SCHEDULE_MARKER } from "../../../../shared/schedules";
@@ -547,10 +550,21 @@ function Stopped({
  * hides the defect instead of paying it down. `attachmentModality` is shared with the sent path
  * precisely so that fixing the source there needs no second change here.
  */
-function parkedTiles(attachments: readonly Attachment[]): SentAttachment[] {
+export function parkedTiles(
+  attachments: readonly Attachment[],
+): SentAttachment[] {
   return attachments.map((attachment) => {
-    const attachmentId = (attachment.metadata as { attachmentId?: unknown })
-      ?.attachmentId;
+    const metadata = attachment.metadata as
+      | { attachmentId?: unknown; chatFileId?: unknown }
+      | undefined;
+    const attachmentId = metadata?.attachmentId;
+    const chatFileId = metadata?.chatFileId;
+    const resolvedId =
+      typeof attachmentId === "string" && attachmentId
+        ? attachmentId
+        : typeof chatFileId === "string" && chatFileId
+          ? chatFileId
+          : attachment.id;
     /*
      * Narrowed rather than read straight through, for the reason the sent path narrows the same
      * field: `Attachment["source"]` is a union whose `data` member REQUIRES `mimeType` and whose
@@ -566,8 +580,7 @@ function parkedTiles(attachments: readonly Attachment[]): SentAttachment[] {
 
     return {
       id: attachment.id,
-      attachmentId:
-        typeof attachmentId === "string" ? attachmentId : attachment.id,
+      attachmentId: resolvedId,
       url: source.value,
       ...(attachment.filename ? { filename: attachment.filename } : {}),
       modality: attachmentModality(attachment.type, mimeType),
@@ -2452,6 +2465,7 @@ function CopyMessage({
   messageId?: string | undefined;
   extra?: React.ReactNode;
 }) {
+  const speechStatus = useQuery(speechStatusQueryOptions());
   const copy = useAsyncAction(() => writeClipboard(text), {
     errorToast: "复制失败，请手动选择文本复制。",
   });
@@ -2499,6 +2513,9 @@ function CopyMessage({
       </button>
       {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
       <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
+      {speechStatus.data?.ttsReady ? (
+        <SpeakAction messageId={messageId ?? "msg"} text={text} />
+      ) : null}
       {extra}
     </div>
   );
@@ -2824,6 +2841,13 @@ function useDocumentIsGone(
   return { gone, size };
 }
 
+export function isServableAttachmentUrl(url: string): boolean {
+  return (
+    url.startsWith(ATTACHMENT_URL_PREFIX) ||
+    url.startsWith(CHAT_FILE_URL_PREFIX)
+  );
+}
+
 function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
   const [failedToLoad, setFailedToLoad] = useState(false);
   const { filename, modality, url } = attachment;
@@ -2837,7 +2861,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
    * and putting it in `src` would have the reader's browser fetch a third party the instant the
    * transcript drew, announcing to whoever owns it that this person opened this channel.
    */
-  const servable = url.startsWith(ATTACHMENT_URL_PREFIX);
+  const servable = isServableAttachmentUrl(url);
   /*
    * ONLY OURS IS EVER ASKED ABOUT, and that is the same rule as the line above rather than a second
    * one: a probe is a request like any other, so asking a third party whether a file is still there

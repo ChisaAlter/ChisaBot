@@ -66,6 +66,10 @@ if (isLocalPage) {
           autoStart: bool(patch?.autoStart),
           startHidden: bool(patch?.startHidden),
           autoUpdate: bool(patch?.autoUpdate),
+          hardwareAcceleration: bool(patch?.hardwareAcceleration),
+          spellcheck: bool(patch?.spellcheck),
+          timezone: typeof patch?.timezone === "string" ? patch.timezone : undefined,
+          allowedEgressDomains: Array.isArray(patch?.allowedEgressDomains) ? patch.allowedEgressDomains : undefined,
         }),
       checkUpdate: () => ipcRenderer.invoke("pc:check-update"),
       installUpdate: () => ipcRenderer.invoke("pc:install-update"),
@@ -74,6 +78,15 @@ if (isLocalPage) {
       enroll: () => ipcRenderer.invoke("pc:enroll"),
       reconnect: () => ipcRenderer.invoke("pc:reconnect"),
       logout: () => ipcRenderer.invoke("pc:logout"),
+      focusWindow: () => ipcRenderer.invoke("pc:focus-window"),
+      consumeDeepLink: () => ipcRenderer.invoke("pc:consume-deep-link"),
+      diagnosticsExport: () => ipcRenderer.invoke("pc:diagnostics-export"),
+      browserProfiles: () => ipcRenderer.invoke("pc:browser-profiles"),
+      onDeepLink(callback) {
+        const listener = (_event, link) => callback(link);
+        ipcRenderer.on("pc:deep-link", listener);
+        return () => ipcRenderer.removeListener("pc:deep-link", listener);
+      },
       onChange(callback) {
         const listener = () => callback();
         ipcRenderer.on("state:changed", listener);

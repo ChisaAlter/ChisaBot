@@ -1,7 +1,10 @@
 import {
   IconArrowBackUp,
+  IconLoader2,
   IconPencil,
+  IconPlayerStop,
   IconRefresh,
+  IconVolume,
   IconX,
 } from "@tabler/icons-react";
 import {
@@ -11,9 +14,16 @@ import {
   useState,
 } from "react";
 import { useElementSync } from "@/hooks";
+import { useSpeechPlayback } from "@/hooks/use-speech-playback";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, StatusGlyph } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
+import {
+  MAX_SPEECH_TTS_CHARS,
+  stripMarkdownForSpeech,
+  truncateForSpeech,
+} from "@/lib/audio/speech";
 import {
   type EditableAttachment,
   useMessageActions,
@@ -104,6 +114,63 @@ export function RegenerateAction() {
       run={() => actions.regenerate()}
       testId="msg-regenerate"
     />
+  );
+}
+
+/** 助手消息下面的「朗读 / 停止」：一键清理 Markdown 并按句末截断后走统一 TTS 播放，全页单路互斥。 */
+export function SpeakAction({
+  messageId,
+  text,
+}: {
+  messageId: string;
+  text: string;
+}) {
+  const playback = useSpeechPlayback({
+    onError: (message) => toast.error(message),
+  });
+  const readableText = truncateForSpeech(
+    stripMarkdownForSpeech(text),
+    MAX_SPEECH_TTS_CHARS,
+  );
+  if (!readableText) return null;
+
+  const isLoading = playback.status === "loading";
+  const isPlaying = playback.status === "playing";
+  const isActive = isLoading || isPlaying;
+  const label = isLoading ? "合成中…" : isPlaying ? "停止" : "朗读";
+  const ariaLabel = isLoading
+    ? "取消语音合成"
+    : isPlaying
+      ? "停止朗读"
+      : "朗读回答";
+
+  return (
+    <button
+      aria-label={ariaLabel}
+      aria-pressed={isActive}
+      className="chat-msg-action"
+      data-active={isActive || undefined}
+      data-speech-state={playback.status}
+      data-testid="msg-speak"
+      onClick={() => {
+        if (isActive) {
+          playback.stop();
+        } else {
+          void playback.speak({ id: messageId, text: readableText });
+        }
+      }}
+      title={playback.error ?? ariaLabel}
+      type="button"
+    >
+      {isLoading ? (
+        <IconLoader2 className="size-3.5 animate-spin" />
+      ) : isPlaying ? (
+        <IconPlayerStop className="size-3.5" />
+      ) : (
+        <IconVolume className="size-3.5" />
+      )}
+      <span>{label}</span>
+    </button>
   );
 }
 

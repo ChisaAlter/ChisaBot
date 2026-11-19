@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
@@ -25,11 +26,14 @@ import {
   challengeFor,
   connectedAccountsUrlFor,
   createVerifier,
+  oauthConfigRevisionFor,
   readConnectState,
   redeemAuthorizationCode,
   redirectUriFor,
   sealConnectState,
+  verifyOAuthCallbackBinding,
 } from "./oauth";
+import { verifyArtifactProvenance } from "./provenance";
 import {
   CatalogueEntryUnknownError,
   CustomServerRefusedError,
@@ -176,6 +180,13 @@ export function createPluginRoutes(
      * all — so the flow would complete correctly and end on a 404.
      */
     appUrl: string | undefined;
+    /**
+     * 可选：从回调请求中解析当前浏览器会话用户 ID。
+     * 若回调浏览器带有登录态，必须与 state 发起者 `initiatorUserId` 严格一致，防止跨人代完成授权。
+     */
+    resolveSessionUserId?: (request: Request) => Promise<string | null>;
+    /** 可选：读取某个连接器当前的配置版本号，与 state 中封存的 configRevision 核对防授权中途篡改。 */
+    configRevisionFor?: (serverId: string) => Promise<string | undefined>;
   },
   /**
    * The broker this deployment talks to when an app is connected for somebody rather than
@@ -196,6 +207,14 @@ export function createPluginRoutes(
   composio?: { broker: ComposioBroker },
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 1024 * 1024,
+      onError: (context) =>
+        context.json({ error: "插件管理请求体过大。" }, 413),
+    }),
+  );
 
   const actorEmail = (context: { var: AppVariables }) =>
     context.var.actor?.email ?? "unknown";
@@ -456,6 +475,8 @@ export function createPluginRoutes(
       title?: unknown;
       url?: unknown;
       credentialId?: unknown;
+      provenance?: unknown;
+      expectedGrantDigest?: unknown;
     } | null;
     if (
       typeof body?.id !== "string" ||
@@ -480,6 +501,27 @@ export function createPluginRoutes(
         { error: "A credential id must be a non-empty string." },
         400,
       );
+    }
+    if (body.provenance !== undefined) {
+      const descriptor = JSON.stringify({
+        id: body.id.trim(),
+        title: body.title.trim(),
+        url: body.url.trim(),
+      });
+      const verdict = verifyArtifactProvenance({
+        manifest: body.provenance,
+        sourceBytes: descriptor,
+        targetBytes: descriptor,
+        ...(typeof body.expectedGrantDigest === "string"
+          ? { expectedGrantDigest: body.expectedGrantDigest }
+          : {}),
+      });
+      if (!verdict.ok) {
+        return context.json(
+          { error: verdict.reason, code: verdict.code },
+          400,
+        );
+      }
     }
 
     try {
@@ -1754,13 +1796,31 @@ export function createPluginRoutes(
       context.req.query("returnTo") === "admin" ? "admin" : "settings";
 
     const verifier = createVerifier();
+    const redirectUri = redirectUriFor(connect.publicUrl);
+    const configRevision =
+      (await connect.configRevisionFor?.(serverId)) ??
+      oauthConfigRevisionFor({
+        serverId,
+        clientId: client.clientId,
+        authorizationUrl: entry.auth.authorizationUrl,
+        tokenUrl: entry.auth.tokenUrl,
+        redirectUri,
+        scopes: entry.auth.scopes,
+      });
     return context.json({
       authorizationUrl: authorizationUrlFor({
         auth: entry.auth,
         clientId: client.clientId,
-        redirectUri: redirectUriFor(connect.publicUrl),
+        redirectUri,
         state: await sealConnectState(
-          { userId: context.var.actor.id, serverId, verifier, returnTo },
+          {
+            userId: context.var.actor.id,
+            initiatorUserId: context.var.actor.id,
+            serverId,
+            verifier,
+            configRevision,
+            returnTo,
+          },
           connect.encryptionKey,
         ),
         codeChallenge: challengeFor(verifier),
@@ -2085,11 +2145,26 @@ export function createPluginRoutes(
      */
     try {
       const code = context.req.query("code");
+      const sessionUserId = connect.resolveSessionUserId
+        ? await connect.resolveSessionUserId(context.req.raw)
+        : null;
       const state = await readConnectState(
         context.req.query("state") ?? "",
         connect.encryptionKey,
+        Date.now(),
+        sessionUserId ? { completerUserId: sessionUserId } : undefined,
       );
       if (!code || !state) return context.redirect(failed);
+
+      if (sessionUserId !== null) {
+        const binding = verifyOAuthCallbackBinding(state, {
+          completerUserId: sessionUserId,
+          ...(state.configRevision !== undefined
+            ? { currentConfigRevision: state.configRevision }
+            : {}),
+        });
+        if (!binding.ok) return context.redirect(failed);
+      }
 
       /*
        * Is the person in the state still somebody here?
@@ -2114,12 +2189,31 @@ export function createPluginRoutes(
       const client = await store.oauthClientFor(state.serverId);
       if (!client) return context.redirect(failed);
 
+      const redirectUri = redirectUriFor(connect.publicUrl);
+      if (state.configRevision !== undefined) {
+        const currentRevision =
+          (await connect.configRevisionFor?.(state.serverId)) ??
+          oauthConfigRevisionFor({
+            serverId: state.serverId,
+            clientId: client.clientId,
+            authorizationUrl: entry.auth.authorizationUrl,
+            tokenUrl: entry.auth.tokenUrl,
+            redirectUri,
+            scopes: entry.auth.scopes,
+          });
+        const revisionCheck = verifyOAuthCallbackBinding(state, {
+          completerUserId: sessionUserId ?? state.initiatorUserId ?? state.userId,
+          currentConfigRevision: currentRevision,
+        });
+        if (!revisionCheck.ok) return context.redirect(failed);
+      }
+
       const grant = await redeemAuthorizationCode({
         tokenUrl: entry.auth.tokenUrl,
         clientId: client.clientId,
         clientSecret: client.clientSecret,
         code,
-        redirectUri: redirectUriFor(connect.publicUrl),
+        redirectUri,
         verifier: state.verifier,
       });
       if (!grant) return context.redirect(failed);
@@ -2212,6 +2306,8 @@ export function createPluginRoutes(
       instructions?: unknown;
       global?: boolean;
       tools?: unknown;
+      provenance?: unknown;
+      expectedGrantDigest?: unknown;
     } | null;
     /*
      * The body is JSON, so the annotations are wishes: `{"slug":123}` passes a truthiness
@@ -2287,6 +2383,27 @@ export function createPluginRoutes(
       ? (body.tools as string[]).map((ref) => ref.trim())
       : undefined;
 
+    let provenanceGrantDigest: string | undefined;
+    if (body.provenance !== undefined) {
+      const normalizedInstructions = body.instructions.trim();
+      const verdict = verifyArtifactProvenance({
+        manifest: body.provenance,
+        sourceBytes: normalizedInstructions,
+        targetBytes: normalizedInstructions,
+        requestedBindings: tools ?? [],
+        ...(typeof body.expectedGrantDigest === "string"
+          ? { expectedGrantDigest: body.expectedGrantDigest }
+          : {}),
+      });
+      if (!verdict.ok) {
+        return context.json(
+          { error: verdict.reason, code: verdict.code },
+          400,
+        );
+      }
+      provenanceGrantDigest = verdict.grantDigest;
+    }
+
     try {
       await store.installSkill({
         slug: body.slug,
@@ -2305,7 +2422,10 @@ export function createPluginRoutes(
       }
       throw error;
     }
-    return context.json({ skills: await store.listSkills(actor) });
+    return context.json({
+      skills: await store.listSkills(actor),
+      ...(provenanceGrantDigest ? { provenanceGrantDigest } : {}),
+    });
   });
 
   routes.delete("/skills/:slug", requireUser, async (context) => {

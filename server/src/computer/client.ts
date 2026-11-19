@@ -155,8 +155,10 @@ export class HandoffRequestError extends Error {
  * use this interface directly.
  */
 export type ComputerTransportOptions = {
-  token?: string;
-  allowPrivateHosts?: boolean;
+  /** 支持静态令牌或热切换动态令牌读取函数。 */
+  token?: string | (() => string | undefined);
+  /** 支持静态布尔或热切换节点动态私网开关。 */
+  allowPrivateHosts?: boolean | (() => boolean | undefined);
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
@@ -236,7 +238,12 @@ export function createComputerTransport(
         ...init,
         headers: {
           ...(init?.headers as Record<string, string> | undefined),
-          ...computerHeaders(botId, options.token),
+          ...computerHeaders(
+            botId,
+            typeof options.token === "function"
+              ? options.token()
+              : options.token,
+          ),
         },
         signal: caller
           ? AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)])
@@ -362,8 +369,12 @@ export function createComputerTransport(
     url: string,
     toolCallId?: string,
   ): Promise<NavigateResult> {
+    const allowPrivateHosts =
+      typeof options.allowPrivateHosts === "function"
+        ? options.allowPrivateHosts()
+        : options.allowPrivateHosts;
     const verdict = checkNavigationTarget(url, {
-      allowPrivateHosts: options.allowPrivateHosts,
+      allowPrivateHosts,
     });
     if (!verdict.allowed) {
       throw new NavigationRefusedError(verdict.reason);

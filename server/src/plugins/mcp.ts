@@ -3,14 +3,21 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import type { McpTransportMode } from "../../../shared/app-packages";
 import {
   BlockedUrlError,
   resolvePublic,
 } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
 import { cutAtCodeUnits } from "../channels/text";
+import type { ToolImagePart } from "../conversations/tool-images";
+import {
+  createMcpClientTransport,
+  extractValidatedMcpImages,
+  formatMcpCallFailure,
+  isMcpTimeoutOrNetworkError,
+  listAllClientTools,
+} from "./mcp-enhancements";
 
 /**
  * The only place in this deployment that speaks MCP to somebody else's server.
@@ -230,6 +237,10 @@ type Connection = {
    */
   keyParam?: string;
   keyHeader?: string;
+  /** 传输协议：默认 Streamable HTTP，支持 SSE（仍走 DNS 钉死 + 同源边界 + 禁重定向）。 */
+  transport?: McpTransportMode;
+  /** 解密后的自定义加密 Header 或自定义 OAuth2 认证头。 */
+  extraHeaders?: Record<string, string>;
   /**
    * Test harness only (MCPMock on 127.0.0.1). Production call sites never set this — CR-P2-08
    * still resolves and refuses private / metadata addresses for every real vendor URL.
@@ -250,21 +261,36 @@ export function dialAddress(connection: Connection): {
   headers?: Record<string, string>;
 } {
   const target = new URL(connection.url);
-  if (!connection.token) return { url: target };
-  if (connection.keyParam) {
-    target.searchParams.set(connection.keyParam, connection.token);
-    return { url: target };
-  }
-  if (connection.keyHeader) {
-    return {
-      url: target,
-      headers: { [connection.keyHeader]: connection.token },
-    };
-  }
-  return {
-    url: target,
-    headers: { Authorization: authorizationHeader(connection.token) },
+  const baseHeaders: Record<string, string> = {};
+  const setHeaderCaseInsensitive = (name: string, value: string) => {
+    const lower = name.toLowerCase();
+    for (const existingKey of Object.keys(baseHeaders)) {
+      if (existingKey.toLowerCase() === lower) {
+        delete baseHeaders[existingKey];
+      }
+    }
+    baseHeaders[name] = value;
   };
+  if (connection.extraHeaders) {
+    for (const [k, v] of Object.entries(connection.extraHeaders)) {
+      setHeaderCaseInsensitive(k, v);
+    }
+  }
+  if (connection.token) {
+    if (connection.keyParam) {
+      target.searchParams.set(connection.keyParam, connection.token);
+    } else if (connection.keyHeader) {
+      setHeaderCaseInsensitive(connection.keyHeader, connection.token);
+    } else {
+      setHeaderCaseInsensitive(
+        "Authorization",
+        authorizationHeader(connection.token),
+      );
+    }
+  }
+  return Object.keys(baseHeaders).length > 0
+    ? { url: target, headers: baseHeaders }
+    : { url: target };
 }
 
 /**
@@ -409,27 +435,36 @@ export function isMcpAbortError(error: unknown): boolean {
 export function pinnedMcpFetch(
   target: URL,
   pinned: { address: string; family: number },
+  options?: { allowSameOriginPath?: boolean },
 ): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  const allowSameOriginPath = options?.allowSameOriginPath === true;
   return async (input, init = {}) => {
     const url = new URL(input);
-    // The client has one endpoint. Never send its credential to a redirect or another origin.
-    if (url.href !== target.href)
+    // Streamable HTTP 锁定精确端点；SSE 传输允许服务端下发同源 session 消息路径，但严禁跨域。
+    if (allowSameOriginPath) {
+      if (url.origin !== target.origin) {
+        throw new McpServerError(
+          "The MCP SSE endpoint attempted a cross-origin request.",
+        );
+      }
+    } else if (url.href !== target.href) {
       throw new McpServerError("The MCP endpoint changed during the request.");
+    }
     if (init.body != null && typeof init.body !== "string")
       throw new McpServerError("The MCP request body must be JSON text.");
     init.signal?.throwIfAborted();
     const headers = new Headers(init.headers);
-    headers.set("host", target.host);
+    headers.set("host", url.host);
     // Node's HTTP client streams compressed bytes unchanged; request the SSE/JSON body as-is.
     headers.set("accept-encoding", "identity");
-    const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
     return new Promise<Response>((resolve, reject) => {
-      const req = (target.protocol === "https:" ? httpsRequest : httpRequest)(
+      const req = (url.protocol === "https:" ? httpsRequest : httpRequest)(
         {
-          protocol: target.protocol,
+          protocol: url.protocol,
           hostname,
-          port: target.port || undefined,
-          path: `${target.pathname}${target.search}`,
+          port: url.port || undefined,
+          path: `${url.pathname}${url.search}`,
           method: init.method ?? "GET",
           headers: Object.fromEntries(headers),
           // A pooled socket could have been opened before this DNS verdict.
@@ -526,9 +561,12 @@ async function withClient<T>(
         : "That MCP address could not be resolved.",
     );
   }
-  const transport = new StreamableHTTPClientTransport(target, {
-    requestInit: headers ? { headers } : undefined,
-    fetch: pinnedMcpFetch(target, pinned),
+  const transport = createMcpClientTransport({
+    target,
+    pinned,
+    transport: connection.transport,
+    headers,
+    makePinnedFetch: pinnedMcpFetch,
   });
   const client = new Client({ name: "chisabot", version: "1.0.0" });
 
@@ -542,6 +580,9 @@ async function withClient<T>(
       const err = new Error("The MCP call was aborted.");
       err.name = "AbortError";
       throw err;
+    }
+    if (isMcpTimeoutOrNetworkError(error)) {
+      throw new McpServerError(formatMcpCallFailure(error));
     }
     // Rewrapped so a caller never has to care whether the failure came from the transport, the
     // handshake or the call, and so the message that reaches an audit row and an admin page is one
@@ -562,60 +603,18 @@ async function withClient<T>(
  */
 export const listNeedsCredential = true;
 
-/**
- * ONLY THE HINT THAT NARROWS IS BELIEVED, and the omission of the other one is the decision here.
- *
- * The SDK declares four hints on `annotations` — `readOnlyHint`, `destructiveHint`,
- * `idempotentHint`, `openWorldHint` — and warns in the same place that a client should never make
- * tool use decisions from annotations a server it does not trust supplied. That warning is the
- * whole design of this function. `destructiveHint` can only ever move an action from read to write,
- * so a server that lies with it can restrict itself and nothing else. `readOnlyHint` moves an
- * action the other way, and `classifyTool` exists to make sure nothing but review can do that.
- *
- * WHAT HONOURING `readOnlyHint` WOULD ACTUALLY BUY, which is the reason withholding it costs
- * nothing. For a curated vendor it changes no answer: an advertised name absent from the reviewed
- * `writeTools` already classifies as a read, so recording `read` for it lands on the same result by
- * a worse route. For a name the reviewed list DOES hold, `classifyTool` consults review first and
- * ignores the column, so the hint would be discarded anyway. The single case where it would change
- * an answer is a server an administrator added by URL, which has no reviewed list behind it and
- * whose every tool is a write for exactly that reason — and there, believing it means letting an
- * arbitrary server declare its own tools harmless and be believed. Zero accuracy gained, one
- * fail-open introduced, so it is not read at all.
- *
- * `destructiveHint` is taken on presence of `true` only, never inverted. The specification gives it
- * a default of true when a tool is not read-only, and applying that default would reclassify every
- * unannotated action of every MCP vendor as a write — correct by the letter and a mass revocation
- * of grants people already hold. An absent hint stays absent, which leaves the reviewed list
- * deciding exactly as it did before, and only an explicit declaration narrows anything.
- *
- * A server that sets both hints is contradicting itself, and is read as destructive. The
- * specification says `destructiveHint` is meaningless while `readOnlyHint` is true, but resolving
- * an incoherent listing towards the permissive reading is the one direction that could hurt.
- */
-function declaredEffect(annotations: ToolAnnotations | undefined) {
-  if (annotations?.destructiveHint !== true) return {};
-  return { effect: "write", destructive: true } as const;
-}
-
-/** What this server says it offers, right now. */
+/** What this server says it offers, right now（支持 nextCursor 有界完整分页）。 */
 export async function listTools(
   connection: Connection,
   signal?: AbortSignal,
 ): Promise<ListedTool[]> {
   return withClient(
     connection,
-    async (client) => {
-      const result = await client.listTools(undefined, {
+    async (client) =>
+      listAllClientTools(client, {
         timeout: LIST_TIMEOUT_MS,
         ...(signal ? { signal } : {}),
-      });
-      return result.tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? "",
-        inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
-        ...declaredEffect(tool.annotations),
-      }));
-    },
+      }),
     signal,
   );
 }
@@ -626,6 +625,8 @@ export type McpCallResult = {
   /** True when the server itself reported the call as an error rather than failing to answer. */
   isError: boolean;
   truncated: boolean;
+  /** 经二进制魔数、分辨率与字节上限校验通过的 MCP 图像内容块，可直接透传给视觉模型。 */
+  images?: ToolImagePart[];
 };
 
 /**
@@ -660,7 +661,17 @@ export async function callTool(
         result.content,
         "structuredContent" in result ? result.structuredContent : undefined,
       );
-      return { text, isError: result.isError === true, truncated };
+      const { images, rejected } = extractValidatedMcpImages(result.content);
+      const finalText =
+        rejected.length > 0
+          ? `${text}\n[部分 MCP 返回图像未通过安全校验已略过：${rejected[0]}]`
+          : text;
+      return {
+        text: finalText,
+        isError: result.isError === true,
+        truncated,
+        ...(images.length > 0 ? { images } : {}),
+      };
     },
     signal,
   );

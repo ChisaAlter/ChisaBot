@@ -91,6 +91,7 @@ const UNFINISHED: Record<string, string> = {
   image_generate: "画图",
   image_edit: "改图",
   file_share: "分享文件",
+  speech_synthesize: "语音合成",
   schedule_create: "设置定时任务",
   render_ui: "生成界面",
   delegate_task: "交给后台",

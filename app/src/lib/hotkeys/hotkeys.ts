@@ -42,6 +42,12 @@ export const HOTKEYS = [
     description: "在当前机器人的聊天里开始新话题：清空发给它的上下文，之前的对话保留在搜索里。",
     combo: { key: "t", shift: true },
   },
+  {
+    id: "privacy-mask",
+    label: "隐私遮罩模式",
+    description: "一键模糊屏幕中的账号、密钥提示与机器人名称，适合录屏、投屏或公共场合使用。",
+    combo: { key: "p", mod: true, shift: true },
+  },
 ] as const satisfies readonly Hotkey[];
 
 export type HotkeyId = (typeof HOTKEYS)[number]["id"];

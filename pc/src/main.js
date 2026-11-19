@@ -53,6 +53,10 @@ const { animateWindowBounds, createCompactController } = require("./compact-wind
 const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
+const desktopPrefs = require("./desktop-prefs");
+const { createDesktopBrowserBridgeClient } = require("./browser-bridge");
+const { createAccessibilityBridge } = require("./accessibility-bridge");
+const { createDiagnosticsRingBuffer } = require("./diagnostics-log");
 const buildConfig = require("./build-config");
 const BUILD = buildConfig.load();
 const pkg = require("../package.json");
@@ -96,8 +100,97 @@ const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
   } catch {}
 })();
 
+// 在 app.whenReady() 之前读取持久化桌面偏好：应用硬件加速开关与显式时区覆盖。
+const bootstrapDesktopPrefs = desktopPrefs.readBootstrapDesktopPrefs(app.getPath("userData"));
+if (bootstrapDesktopPrefs.hardwareAcceleration === false) {
+  app.disableHardwareAcceleration();
+}
+if (bootstrapDesktopPrefs.timezone) {
+  process.env.TZ = bootstrapDesktopPrefs.timezone;
+}
+
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 if (!app.requestSingleInstanceLock()) app.quit();
+
+const DEEP_LINK_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+
+function hasControlChar(value) {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** 解析 `chisabot://agent/<id>` 与 `chisabot://channel/<id>[?agent=<id>]` 深链。 */
+function parseDeepLinkUrl(rawUrl) {
+  if (typeof rawUrl !== "string") return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 2048 || hasControlChar(trimmed)) return null;
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol.toLowerCase() !== "chisabot:") return null;
+  if (url.username || url.password || url.hash) return null;
+
+  const host = url.hostname.toLowerCase();
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length !== 1) return null;
+  let id;
+  try {
+    id = decodeURIComponent(segments[0]);
+  } catch {
+    return null;
+  }
+  if (!DEEP_LINK_ID_RE.test(id) || id === "." || id === "..") return null;
+
+  if (host === "agent") {
+    if (url.search) return null;
+    return {
+      kind: "agent",
+      agentId: id,
+      pathname: `/channel/new?agent=${encodeURIComponent(id)}`,
+      raw: trimmed,
+    };
+  }
+  if (host === "channel") {
+    const agentParam = url.searchParams.get("agent")?.trim() || "";
+    if (agentParam && !DEEP_LINK_ID_RE.test(agentParam)) return null;
+    return {
+      kind: "channel",
+      channelId: id,
+      ...(agentParam ? { agentId: agentParam } : {}),
+      pathname: `/channel/${encodeURIComponent(id)}`,
+      raw: trimmed,
+    };
+  }
+  return null;
+}
+
+function extractDeepLinkFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const arg of argv) {
+    if (typeof arg === "string" && /^chisabot:\/\//i.test(arg.trim())) {
+      const parsed = parseDeepLinkUrl(arg);
+      if (parsed) return parsed;
+    }
+  }
+  return null;
+}
+
+try {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("chisabot", process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient("chisabot");
+  }
+} catch {}
+
+let pendingDeepLink = extractDeepLinkFromArgv(process.argv);
+let chatDomReady = false;
 
 let config;
 let agent = null;
@@ -116,6 +209,21 @@ let approvalWindow = null;
 let currentApproval = null;
 let updater = null;
 let updateWindow = null;
+const diagnosticsLog = createDiagnosticsRingBuffer();
+const accessibilityBridge = createAccessibilityBridge();
+const browserBridge = createDesktopBrowserBridgeClient({
+  getGrantedScopes: () => (Array.isArray(agent?.device?.grantedScopes) ? agent.device.grantedScopes : []),
+  confirmApproval: (req) =>
+    confirmLocal({
+      title: req.kind === "passkey_forward" ? "允许本机通行密钥验证？" : "允许导入单域名登录态？",
+      description:
+        req.kind === "passkey_forward"
+          ? `云端浏览器请求在本机完成 ${req.origin}（rpId: ${req.rpId}）的通行密钥 ${req.ceremonyKind} 操作。`
+          : `云端浏览器请求从「${req.profileLabel}」导入 ${req.origin} 的登录 Cookie（仅限该单一域名）。`,
+      confirmLabel: "允许本次",
+    }),
+  log: (entry) => diagnosticsLog.record(entry),
+});
 
 function clientInfo() {
   return {
@@ -310,17 +418,59 @@ function isServerUrl(url) {
   }
 }
 
+function focusMainWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  if (typeof win.moveTop === "function") win.moveTop();
+  win.focus();
+}
+
+function flushPendingDeepLink() {
+  if (!pendingDeepLink) return;
+  const win = windows.chat;
+  if (!win || win.isDestroyed() || chatOffline || !chatDomReady) return;
+  if (!isServerUrl(win.webContents.getURL())) return;
+  const target = pendingDeepLink;
+  pendingDeepLink = null;
+  win.webContents.send("pc:deep-link", {
+    kind: target.kind,
+    ...(target.agentId ? { agentId: target.agentId } : {}),
+    ...(target.channelId ? { channelId: target.channelId } : {}),
+    pathname: target.pathname,
+  });
+  focusMainWindow(win);
+}
+
+function handleDeepLinkUrl(rawUrl) {
+  const target = parseDeepLinkUrl(rawUrl);
+  if (!target) return false;
+  pendingDeepLink = target;
+  if (!app.isReady() || !config) return true;
+  if (!config.get().serverUrl) {
+    openLogin();
+    return true;
+  }
+  if (windows.chat && !windows.chat.isDestroyed() && !chatOffline && chatDomReady) {
+    flushPendingDeepLink();
+    return true;
+  }
+  void openApp(target.pathname);
+  return true;
+}
+
 function openChat(pathname, options) {
   const { serverUrl } = config.get();
   if (!serverUrl) return openLogin();
-  const target = pathname ? `${serverOrigin()}${pathname}` : null;
+  const effectivePath = pathname || pendingDeepLink?.pathname || null;
+  const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
   if (windows.chat && !windows.chat.isDestroyed()) {
     if (target && !chatOffline) windows.chat.loadURL(target);
-    else if (pathname) lastWebPath = pathname;
-    windows.chat.show();
-    windows.chat.focus();
+    else if (effectivePath) lastWebPath = effectivePath;
+    focusMainWindow(windows.chat);
     return windows.chat;
   }
+  chatDomReady = false;
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -344,10 +494,20 @@ function openChat(pathname, options) {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      spellcheck: false,
+      spellcheck: config.get().spellcheck !== false,
     },
   });
   win.setMenu(null);
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = desktopPrefs.buildContextMenuTemplate(params, {
+      openExternal: (url) => shell.openExternal(url),
+      writeClipboard: (text) => clipboard.writeText(text),
+      replaceMisspelling: (word) => win.webContents.replaceMisspelling(word),
+    });
+    if (template.length > 0) {
+      Menu.buildFromTemplate(template).popup({ window: win });
+    }
+  });
   win.once("ready-to-show", () => win.show());
   chatOffline = Boolean(options?.offline);
   if (chatOffline) {
@@ -377,6 +537,12 @@ function openChat(pathname, options) {
     if (isServerUrl(url) || url.startsWith(UI_URL)) return;
     event.preventDefault();
     if (/^https?:/i.test(url)) shell.openExternal(url);
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (isServerUrl(win.webContents.getURL())) {
+      chatDomReady = true;
+      flushPendingDeepLink();
+    }
   });
   win.webContents.on("did-navigate", (_event, url) => {
     if (loginUrl(url)) return setImmediate(sessionExpired);
@@ -424,6 +590,7 @@ function openChat(pathname, options) {
     }
   });
   win.on("closed", () => {
+    chatDomReady = false;
     windows.chat = null;
     clearInterval(chatRetryTimer);
     cancelChatRetry();
@@ -671,8 +838,53 @@ function startAgent() {
   });
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime();
+  const handleExtra = (message) => {
+    if (message?.type === "desktop_browser_cookie_request") {
+      if (config.get().localPaused || agent?.device?.paused) {
+        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "设备已紧急停止，拒绝本机 Cookie 导入请求。" } });
+        return true;
+      }
+      const exp = Date.parse(String(message.expiresAt || ""));
+      if (!Number.isFinite(exp) || exp <= Date.now()) {
+        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入审批请求已过期。" } });
+        return true;
+      }
+      void browserBridge
+        .handleCookieApprovalRequest(message)
+        .then((decision) => {
+          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
+        })
+        .catch((err) => {
+          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "cookie_approval_failed", message: String(err?.message || err) });
+          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入处理异常，已拒绝。" } });
+        });
+      return true;
+    }
+    if (message?.type === "desktop_browser_webauthn_request") {
+      if (config.get().localPaused || agent?.device?.paused) {
+        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "设备已紧急停止，拒绝本机 Passkey 请求。" } });
+        return true;
+      }
+      const exp = Date.parse(String(message.expiresAt || ""));
+      if (!Number.isFinite(exp) || exp <= Date.now()) {
+        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发请求已过期。" } });
+        return true;
+      }
+      void browserBridge
+        .handleWebAuthnRequest(message)
+        .then((result) => {
+          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
+        })
+        .catch((err) => {
+          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "webauthn_forward_failed", message: String(err?.message || err) });
+          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发处理异常，已拒绝。" } });
+        });
+      return true;
+    }
+    return agentRuntime.onExtra(message);
+  };
   agent = createNodeAgent({
-    onExtra: agentRuntime.onExtra,
+    onExtra: handleExtra,
     serverUrl: local.serverUrl,
     getToken: () => config.getToken(),
     ops,
@@ -694,6 +906,7 @@ function startAgent() {
   agentRuntime.bind(agent, { isPaused: () => !!config.get().localPaused });
   agent.events.on("state", (event) => {
     agentDetail = event?.detail ? String(event.detail) : event?.state === "online" ? "" : agentDetail;
+    diagnosticsLog.record({ category: "connection", event: "agent_state", message: event?.state || "unknown", detail: event?.detail ? { detail: event.detail } : undefined });
     refreshTray();
     if (event && event.state === "online" && config.get().autoUpdate !== false) {
       void updater?.check();
@@ -1073,6 +1286,10 @@ function webLocalState() {
     autoStart: local.autoStart,
     startHidden: local.startHidden,
     autoUpdate: local.autoUpdate !== false,
+    hardwareAcceleration: local.hardwareAcceleration !== false,
+    spellcheck: local.spellcheck !== false,
+    timezone: local.timezone || "",
+    allowedEgressDomains: Array.isArray(local.allowedEgressDomains) ? local.allowedEgressDomains : [],
     update: updater ? updater.state : { supported: false, status: "idle" },
     webUi: localWeb.statusFor(serverOrigin()),
   };
@@ -1316,6 +1533,26 @@ async function setLocal(patch) {
     config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "config_changed", outcome: "succeeded", summary: `自动更新 → ${patch.autoUpdate ? "开启" : "关闭"}` });
     updater?.schedule();
   }
+  const desktopPatch = desktopPrefs.sanitizeDesktopPrefsPatch(patch);
+  if (Object.keys(desktopPatch).length > 0) {
+    config.set(desktopPatch);
+    if (typeof desktopPatch.spellcheck === "boolean") {
+      try {
+        session.fromPartition(PARTITION).setSpellCheckerEnabled?.(desktopPatch.spellcheck);
+      } catch {}
+    }
+    if (typeof desktopPatch.timezone === "string") {
+      if (desktopPatch.timezone) process.env.TZ = desktopPatch.timezone;
+      else delete process.env.TZ;
+    }
+    config.appendAudit({
+      at: new Date().toISOString(),
+      actor: "本机",
+      operation: "config_changed",
+      outcome: "succeeded",
+      summary: `桌面壳偏好已更新：${Object.keys(desktopPatch).join("、")}`,
+    });
+  }
   refreshTray();
   return webLocalState();
 }
@@ -1466,6 +1703,21 @@ function registerIpc() {
   handleWeb("pc:check-update", async () => (updater ? updater.check() : { supported: false, status: "idle" }));
   // 网页只能把「新版本已下载」的本机窗口叫出来；立即重启要在那个窗口里由本人点。
   handleWeb("pc:install-update", () => openUpdateWindow());
+  handleWeb("pc:focus-window", () => {
+    focusMainWindow(windows.chat);
+    return true;
+  });
+  handleWeb("pc:consume-deep-link", () => {
+    if (!pendingDeepLink) return null;
+    const next = {
+      kind: pendingDeepLink.kind,
+      ...(pendingDeepLink.agentId ? { agentId: pendingDeepLink.agentId } : {}),
+      ...(pendingDeepLink.channelId ? { channelId: pendingDeepLink.channelId } : {}),
+      pathname: pendingDeepLink.pathname,
+    };
+    pendingDeepLink = null;
+    return next;
+  });
   handleWeb("pc:appearance", (value) => {
     const next = { dark: typeof value?.dark === "boolean" ? value.dark : null, sky: value?.sky !== false };
     const prev = config.get().appearance || {};
@@ -1476,11 +1728,30 @@ function registerIpc() {
     }
     return true;
   });
+  handleWeb("pc:diagnostics-export", () =>
+    diagnosticsLog.buildExportPayload({
+      clientVersion: pkg.version,
+      agentState: agent?.state || "offline",
+      accessibilityGrants: accessibilityBridge.authorizer.snapshot().grants.length,
+    }),
+  );
+  handleWeb("pc:browser-profiles", () => browserBridge.discoverProfiles());
 }
 
 // ---------- 生命周期 ----------
 
-app.on("second-instance", () => void openApp());
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLinkUrl(url);
+});
+app.on("second-instance", (_event, argv) => {
+  const link = extractDeepLinkFromArgv(argv);
+  if (link) {
+    handleDeepLinkUrl(link.raw);
+    return;
+  }
+  void Promise.resolve(openApp()).then((win) => focusMainWindow(win));
+});
 // macOS：点 Dock 图标把主窗口叫回来（窗口关掉只是隐藏，应用常驻）。
 app.on("activate", () => void openApp());
 app.on("window-all-closed", () => {
@@ -1567,7 +1838,16 @@ const localWeb = createLocalWebController({
 });
 
 app.whenReady().then(() => {
-  localWeb.installSessionProtocol(session.fromPartition(PARTITION));
+  const ses = session.fromPartition(PARTITION);
+  localWeb.installSessionProtocol(ses);
+  // 出口域名白名单：仅放行已配 server origin、loopback 与显式放行域名，防恶意渲染脚本外泄。
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    const allowed = desktopPrefs.isEgressUrlAllowed(details.url, {
+      serverOrigin: serverOrigin(),
+      allowedDomains: config?.get().allowedEgressDomains || [],
+    });
+    callback({ cancel: !allowed });
+  });
   // macOS 应用菜单：没有它 ⌘C/⌘V/⌘Q 都不生效（窗口 setMenu 在 mac 上是空的，菜单是应用级的）。
   // 编辑 / 视图 / 窗口用系统 role；退出走 role:"quit"→ before-quit（隐藏语义的「关闭窗口」归 ⌘W）。
   if (process.platform === "darwin") {
@@ -1603,6 +1883,9 @@ app.whenReady().then(() => {
   powerMonitor.on("resume", () => agent?.reconnectNow());
   powerMonitor.on("unlock-screen", () => agent?.reconnectNow());
   config = createConfig({ dir: app.getPath("userData"), safeStorage });
+  try {
+    ses.setSpellCheckerEnabled?.(config.get().spellcheck !== false);
+  } catch {}
   const appearance = config.get().appearance || {};
   nativeTheme.themeSource = typeof appearance.dark === "boolean" ? (appearance.dark ? "dark" : "light") : "system";
   registerIpc();
@@ -1634,7 +1917,8 @@ app.whenReady().then(() => {
     if (config.getToken()) startAgent();
     // 已登录但没有设备令牌（重装、令牌解不开、旧版配置）：用还有效的会话补登记，不再永远「看不到这台电脑」。
     else void repairDevice();
-    if (!HIDDEN && !config.get().startHidden) void openApp();
+    if (pendingDeepLink) void openApp(pendingDeepLink.pathname);
+    else if (!HIDDEN && !config.get().startHidden) void openApp();
   } else {
     openLogin();
   }

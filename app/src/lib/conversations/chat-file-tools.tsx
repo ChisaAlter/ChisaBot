@@ -1,9 +1,15 @@
-import { IconPhoto } from "@tabler/icons-react";
+import {
+  IconDownload,
+  IconMovie,
+  IconMusic,
+  IconPhoto,
+} from "@tabler/icons-react";
 import { memo } from "react";
 import { z } from "zod";
 import { FileCard, ImagePile } from "@/components/rich-previews/rich-previews";
 import { useRenderTool } from "@/lib/chat/renderers";
 import { readImageDims } from "@/lib/image-dims";
+import { formatBytes } from "@/lib/rich-previews/extract";
 import {
   type ChatFileView,
   filesFromToolResult,
@@ -11,10 +17,11 @@ import {
 import { type CardCheck, registerCardCheck } from "./tool-renderers";
 
 /**
- * 机器人的图片 / 文件工具在聊天里的样子（DESIGN.md §56）。RENDER ONLY：工具在服务器上执行。
+ * 机器人的图片 / 文件 / 语音工具在聊天里的样子（DESIGN.md §56）。RENDER ONLY：工具在服务器上执行。
  *
  * - image_generate / image_edit：进行中 = 同尺寸骨架「正在画图…」；完成 = 单图卡 / 一摞（点开看大图、下载）。
- * - file_share：文件卡（类型图标、名字、类型 · 大小；图片出缩略图，PDF 能预览；下载）。
+ * - file_share：文件卡（类型图标、名字、类型 · 大小；图片出缩略图，PDF 能预览；音频出原生播放条；下载）。
+ * - speech_synthesize：合成音频落盘卡片（原生 `<audio controls preload="none" />` 播放条 + 文件名 + 下载）。
  * - 失败时不画东西：机器人会用话说明原因。画不画由下面导出的判断决定（和「这一轮算不算有回答」用同一个函数）。
  */
 const imageParams = z.object({
@@ -25,6 +32,25 @@ const imageParams = z.object({
 const shareParams = z.object({
   path: z.string().optional(),
   title: z.string().optional(),
+});
+const speechParams = z.object({
+  text: z.string().optional(),
+  voice: z.string().optional(),
+  format: z.string().optional(),
+  speed: z.number().optional(),
+});
+const multiImageParams = z.object({
+  prompt: z.string().optional(),
+  aspect_ratio: z.string().optional(),
+  modelId: z.string().optional(),
+  reference_sources: z.array(z.string()).optional(),
+});
+const videoGenParams = z.object({
+  action: z.enum(["submit", "status"]).optional(),
+  prompt: z.string().optional(),
+  task_id: z.string().optional(),
+  request_key: z.string().optional(),
+  modelId: z.string().optional(),
 });
 
 function aspectOf(value: unknown): string {
@@ -40,16 +66,119 @@ function toolImages(result?: string): ChatFileView[] {
   );
 }
 
-/** image_generate / image_edit 完成后画不画卡片：结果里有图片才画，否则 ImageToolCard 返回 null。 */
+/** image_generate / image_edit / image_generate_multi 完成后画不画卡片：结果里有图片才画，否则 ImageToolCard 返回 null。 */
 export const imageToolDrawsCard: CardCheck = registerCardCheck(
-  ["image_generate", "image_edit"],
+  ["image_generate", "image_edit", "image_generate_multi"],
   ({ result }) => toolImages(result).length > 0,
 );
-/** file_share 完成后画不画卡片：结果里有文件才画，否则 FileToolCard 返回 null。 */
+/** file_share / speech_synthesize / video_generate 完成后画不画卡片：结果里有文件才画，否则 FileToolCard 返回 null。 */
 export const fileToolDrawsCard: CardCheck = registerCardCheck(
-  ["file_share"],
+  ["file_share", "speech_synthesize", "video_generate"],
   ({ result }) => filesFromToolResult(result).length > 0,
 );
+
+const VideoFileCard = memo(function VideoFileCard({
+  file,
+}: {
+  file: ChatFileView;
+}) {
+  const downloadHref = file.url.startsWith("/api/chat-files/")
+    ? `${file.url}?download=1`
+    : file.url;
+  const meta = [
+    file.mimeType.replace(/^video\//, "").toUpperCase(),
+    formatBytes(file.size),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div
+      className="rp-file flex flex-col gap-2.5 p-3"
+      data-preview="video"
+      data-testid="video-tool-card"
+    >
+      <div className="flex w-full items-center gap-2.5">
+        <span aria-hidden className="rp-file-icon shrink-0">
+          <IconMovie className="size-5" />
+        </span>
+        <div className="rp-file-text min-w-0 flex-1">
+          <span className="rp-file-name truncate">{file.name}</span>
+          <span className="rp-file-meta">{meta}</span>
+        </div>
+        <a
+          aria-label={`下载 ${file.name}`}
+          className="rp-file-dl shrink-0"
+          download={file.name}
+          href={downloadHref}
+          title="下载视频"
+        >
+          <IconDownload className="size-4" />
+        </a>
+      </div>
+      <video
+        aria-label={`播放 ${file.name}`}
+        className="max-h-[360px] w-full rounded-lg bg-black/80"
+        controls
+        playsInline
+        preload="metadata"
+        src={file.url}
+      >
+        <track kind="captions" />
+      </video>
+    </div>
+  );
+});
+
+const AudioFileCard = memo(function AudioFileCard({
+  file,
+}: {
+  file: ChatFileView;
+}) {
+  const downloadHref = file.url.startsWith("/api/chat-files/")
+    ? `${file.url}?download=1`
+    : file.url;
+  const meta = [
+    file.mimeType.replace(/^audio\//, "").toUpperCase(),
+    formatBytes(file.size),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div
+      className="rp-file flex flex-col gap-2.5 p-3"
+      data-preview="audio"
+      data-testid="audio-tool-card"
+    >
+      <div className="flex w-full items-center gap-2.5">
+        <span aria-hidden className="rp-file-icon shrink-0">
+          <IconMusic className="size-5" />
+        </span>
+        <div className="rp-file-text min-w-0 flex-1">
+          <span className="rp-file-name truncate">{file.name}</span>
+          <span className="rp-file-meta">{meta}</span>
+        </div>
+        <a
+          aria-label={`下载 ${file.name}`}
+          className="rp-file-dl shrink-0"
+          download={file.name}
+          href={downloadHref}
+          title="下载音频"
+        >
+          <IconDownload className="size-4" />
+        </a>
+      </div>
+      <audio
+        aria-label={`播放 ${file.name}`}
+        className="h-9 w-full min-w-[220px]"
+        controls
+        preload="none"
+        src={file.url}
+      >
+        <track kind="captions" />
+      </audio>
+    </div>
+  );
+});
 
 const ImageToolCard = memo(function ImageToolCard({
   running,
@@ -125,16 +254,22 @@ const FileToolCard = memo(function FileToolCard({
       data-testid="file-tool-result"
     >
       <div className="rp-files">
-        {files.map((f) => (
-          <FileCard
-            key={f.id}
-            mimeType={f.mimeType}
-            name={f.name}
-            probeSize={false}
-            size={f.size}
-            url={f.url}
-          />
-        ))}
+        {files.map((f) =>
+          f.mimeType.startsWith("video/") ? (
+            <VideoFileCard file={f} key={f.id} />
+          ) : f.mimeType.startsWith("audio/") ? (
+            <AudioFileCard file={f} key={f.id} />
+          ) : (
+            <FileCard
+              key={f.id}
+              mimeType={f.mimeType}
+              name={f.name}
+              probeSize={false}
+              size={f.size}
+              url={f.url}
+            />
+          ),
+        )}
       </div>
     </div>
   );
@@ -176,6 +311,44 @@ export function ChatFileTools() {
             : typeof parameters?.path === "string"
               ? (parameters.path.split("/").pop() ?? "")
               : ""
+        }
+        result={typeof result === "string" ? result : undefined}
+        running={status !== "complete"}
+      />
+    ),
+  });
+  useRenderTool({
+    name: "speech_synthesize",
+    parameters: speechParams,
+    render: ({ status, result }) => (
+      <FileToolCard
+        name="正在合成语音…"
+        result={typeof result === "string" ? result : undefined}
+        running={status !== "complete"}
+      />
+    ),
+  });
+  useRenderTool({
+    name: "image_generate_multi",
+    parameters: multiImageParams,
+    render: ({ parameters, status, result }) => (
+      <ImageToolCard
+        aspect={aspectOf(parameters?.aspect_ratio)}
+        editing={Boolean(parameters?.reference_sources?.length)}
+        result={typeof result === "string" ? result : undefined}
+        running={status !== "complete"}
+      />
+    ),
+  });
+  useRenderTool({
+    name: "video_generate",
+    parameters: videoGenParams,
+    render: ({ parameters, status, result }) => (
+      <FileToolCard
+        name={
+          parameters?.action === "status"
+            ? "正在查询视频进度…"
+            : "正在生成视频…"
         }
         result={typeof result === "string" ? result : undefined}
         running={status !== "complete"}

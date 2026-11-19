@@ -1,6 +1,8 @@
 package cn.ayase.chisabot
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -95,15 +97,37 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /** 桌面图标长按「切换服务器」/「退出登录」；系统相机扫到的 chisabot://pair 链接。 */
+    /** 桌面图标长按、扫码绑定（chisabot://pair）、Bot/会话深链（chisabot://agent|channel/*）以及系统分享（ACTION_SEND）。 */
     private fun handleIntent(intent: Intent?) {
         when (intent?.action) {
             ACTION_SERVER -> vm.switchServer()
             ACTION_LOGOUT -> confirmLogout = true
             Intent.ACTION_VIEW -> intent.data?.toString()?.let { text ->
+                val deepLink = DeepLinks.parse(text)
+                if (deepLink != null) {
+                    vm.openWebDeepLink(deepLink.toWebPath())
+                    return
+                }
                 when (val r = Pairing.inspect(text)) {
                     is Pairing.Result.Ok -> pairPrompt = r.link
                     is Pairing.Result.Bad -> Toast.makeText(this, r.reason, Toast.LENGTH_LONG).show()
+                }
+            }
+            Intent.ACTION_SEND -> {
+                val mime = intent.type.orEmpty().lowercase()
+                val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)?.trim().orEmpty()
+                val body = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+                val combinedText = listOf(subject, body).filter { it.isNotEmpty() }.joinToString("\n").takeIf { it.isNotEmpty() }
+                val streamUri = if (mime.startsWith("image/")) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                    }
+                } else null
+                if (combinedText != null || streamUri != null) {
+                    vm.receiveSharedContent(combinedText, streamUri)
                 }
             }
         }

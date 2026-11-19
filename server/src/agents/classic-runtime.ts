@@ -15,6 +15,7 @@ import {
 } from "ai";
 import { Observable } from "rxjs";
 import type { z } from "zod";
+import { buildLengthTruncationContinuation } from "../../../shared/model-routing";
 
 /** Compatibility for existing builtin bindings. New DSH bindings own their own loop. */
 export type ClassicAgentConfiguration =
@@ -375,6 +376,14 @@ export class ClassicRuntimeAgent extends AbstractAgent {
                 metadata: {
                   finishReason: part.finishReason,
                   usage: part.totalUsage,
+                  ...(part.finishReason === "length"
+                    ? buildLengthTruncationContinuation({
+                        model:
+                          typeof this.config.model === "string"
+                            ? this.config.model
+                            : undefined,
+                      })
+                    : {}),
                 },
               });
               return;

@@ -7,7 +7,11 @@ import { KEPT_TTL_MS, KeepAliveStage } from "@/components/layout/keep-alive";
 import { RouteSkeleton, SidebarSkeleton } from "@/components/startup-status";
 import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { lazyPart } from "@/components/ui/lazy-part";
-import { useExternalConnection, useIdleTask } from "@/hooks";
+import {
+  useExternalConnection,
+  useIdleTask,
+  useReplyNotifications,
+} from "@/hooks";
 import { useLanding } from "@/lib/agents/landing";
 import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
@@ -94,6 +98,7 @@ function useIdleSettingsPrefetch(scope: string) {
 
 function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
+  useReplyNotifications();
   const scope = scopeOfPath(pathname);
   useIdleSettingsPrefetch(scope);
   // 进过一次聊天就保持会话上下文挂载（见上面 ChatConversation）。

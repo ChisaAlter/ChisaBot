@@ -244,6 +244,29 @@ function tooMuchToInline(
  * that nothing answers as though the file were in front of it, and names the
  * type so a person reading the transcript can tell what happened.
  */
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 视频附件不直接把整段大视频 base64 内联到主对话上下文，而是输出结构化元数据与
+ * `video_inspect` 专项视频理解工具调用指引，让模型按需多轮理解画面与音轨内容。
+ */
+function videoGuidanceNote(
+  part: Record<string, unknown>,
+  id: string,
+  attachment: StoredAttachment,
+): unknown {
+  const fileId = id.startsWith("cf:") ? id.slice(3) : id;
+  const label = attachment.name || displayName(part, id);
+  return {
+    type: "text",
+    text: `[收到视频附件「${label}」：文件 id="${fileId}"，类型 ${attachment.mimeType}，大小 ${formatAttachmentSize(attachment.bytes.length)}。请调用 video_inspect 专项视频理解工具（传入 source="${fileId}" 与你的具体问题）多轮理解视频画面关键帧与音频内容，不要编造未观察到的细节。]`,
+  };
+}
+
 function unreadableNote(
   part: Record<string, unknown>,
   id: string,
@@ -437,6 +460,11 @@ async function resolvePart(
     throw new Error(
       `Attachment ${namedForFailure(part, id)} could not be loaded: it may have been deleted, or it may belong to another channel or to somebody whose files you cannot see.`,
     );
+  }
+
+  const isVideo = attachment.mimeType.toLowerCase().startsWith("video/");
+  if (isVideo) {
+    return videoGuidanceNote(part, id, attachment);
   }
 
   if (budget) {

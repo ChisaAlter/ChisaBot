@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { CredentialStore } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -228,6 +228,7 @@ function mapProfile(
     hasCallbackToken: row.callbackTokenHash !== null,
     hidden: row.hiddenAt !== null,
     pinned: row.pinnedAt !== null,
+    pinnedAt: row.pinnedAt ? row.pinnedAt.toISOString() : null,
     assignedToMe: false,
     deletedAt: row.deletedAt,
     createdByAgentId: row.createdByAgentId,
@@ -544,15 +545,21 @@ export function createAgentProfileStore(
 
   return {
     async list(actor, hidden = false) {
-      const rows = await joinedProfiles(database, actor).where(
-        and(
-          isNull(agentProfiles.deletedAt),
-          accessFilter(actor),
-          hidden
-            ? isNotNull(agentPreferences.hiddenAt)
-            : isNull(agentPreferences.hiddenAt),
-        ),
-      );
+      const rows = await joinedProfiles(database, actor)
+        .where(
+          and(
+            isNull(agentProfiles.deletedAt),
+            accessFilter(actor),
+            hidden
+              ? isNotNull(agentPreferences.hiddenAt)
+              : isNull(agentPreferences.hiddenAt),
+          ),
+        )
+        .orderBy(
+          sql`${agentPreferences.pinnedAt} desc nulls last`,
+          asc(agents.createdAt),
+          asc(agents.id),
+        );
       return rows.map(mapProfile);
     },
 

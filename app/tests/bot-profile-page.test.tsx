@@ -59,6 +59,7 @@ beforeEach(() => {
       if (path.endsWith("/lifecycle")) return Response.json({ lifecycle: { paused: false, notify: "all" }, paused: false, notify: "all" });
       if (path.endsWith("/activity")) return Response.json({ activity: { inProgress: [], scheduled: [], completed: [] }, inProgress: [], scheduled: [], completed: [] });
       if (path.endsWith("/model")) return Response.json({ agentId: AGENT.id, model: "m-1", overrideModel: null, defaultModel: "m-1", available: true, canManage: true });
+      if (path.endsWith("/library")) return Response.json({ files: [], limit: 20, maxFileBytes: 20 * 1024 * 1024 });
       if (path.includes("/models")) return Response.json({ models: [{ id: "m-1", label: "模型一", provider: "p" }] });
       if (path === `/api/agents/${AGENT.id}` && method === "PATCH") return Response.json({ agent: { ...AGENT, ...body } });
       return Response.json({});

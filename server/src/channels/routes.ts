@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm";
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import {
   AgentNotFoundError,
   type AgentProfileStore,
@@ -1192,6 +1193,13 @@ export function createChannelRoutes(
   },
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 512 * 1024,
+      onError: (context) => context.json({ error: "频道请求体过大。" }, 413),
+    }),
+  );
 
   /**
    * Write the one audit row this file ever writes, tolerantly.
@@ -1250,10 +1258,18 @@ export function createChannelRoutes(
         // Resolved at upgrade, not per message: the connection belongs to whoever authenticated it,
         // and nothing it later sends can change that.
         const { id: userId } = context.var.actor;
+        const rawDeviceId = context.req.query("deviceId")?.trim();
+        const deviceId =
+          rawDeviceId && rawDeviceId.length <= 128 ? rawDeviceId : undefined;
         let detach = () => {};
         return {
           onOpen: (_event, ws) => {
-            detach = events.register(userId, (payload) => ws.send(payload));
+            detach = events.register(
+              userId,
+              (payload) => ws.send(payload),
+              deviceId,
+              (reason) => ws.close(4401, reason ?? "revoked"),
+            );
           },
           onClose: () => detach(),
           onError: () => detach(),

@@ -12,6 +12,7 @@ import {
   selfMapGuidance,
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
+import type { AdaptiveRouter } from "./agents/adaptive-router";
 import {
   type ActorAgentResolver,
   CoworkerUnavailableError,
@@ -26,12 +27,6 @@ import type {
 } from "./agents/dsh-runtime";
 import { guaranteeFinalAnswer } from "./agents/final-answer-guard";
 import {
-  defaultRuntimeEnvironment,
-  readConversationRuntimeEnvDefaults,
-  readMaxOutputTokens,
-} from "./config";
-import { trustedEndpointFetch } from "./net/trusted-endpoint-fetch";
-import {
   type HistorySummaryStore,
   type MeasuredUsage,
   type Summarize,
@@ -43,6 +38,7 @@ import {
   fallbackCandidates,
   fallbackLanguageModel,
 } from "./agents/model-fallback";
+import type { ModelObservationService } from "./agents/model-observation";
 import { modelOverrideFromValue } from "./agents/model-selection";
 import {
   PLAN_RUN_COMPLETED,
@@ -68,6 +64,11 @@ import type { AgentFetch, StallGuard } from "./channels/stall-guard";
 import { HeadlessToolsMiddleware } from "./computer/headless-tools";
 import type { DeploymentConfig } from "./config";
 import {
+  defaultRuntimeEnvironment,
+  readConversationRuntimeEnvDefaults,
+  readMaxOutputTokens,
+} from "./config";
+import {
   currentConfirmTurn,
   currentToolAbort,
   TOOL_STOPPED_ZH,
@@ -82,12 +83,13 @@ import type { ToolImagePart } from "./conversations/tool-images";
 import { observeModelConnection } from "./desktop-connection-failure";
 import { LIVE_PANEL_GUIDANCE } from "./live-panels/service";
 import type { LocalConversationBackend } from "./local-conversations";
-import type { ModelConnectionPooledKeyRuntime } from "./model-settings";
 import {
   type LoadPersonalMemory,
   PersonalMemoryMiddleware,
 } from "./memory/tools";
 import { knownContextWindowOf } from "./model-catalog";
+import type { ModelConnectionPooledKeyRuntime } from "./model-settings";
+import { trustedEndpointFetch } from "./net/trusted-endpoint-fetch";
 import type { SelectableSkill, Selection } from "./plugins/selection";
 import {
   latestUserText,
@@ -100,6 +102,8 @@ import {
   REFUSAL_MARKER,
   toolCarriedGuidance,
 } from "./plugins/tools";
+import type { PromptWorkbenchStore } from "./prompts/workbench-store";
+import type { UsageBreakdownService } from "./quotas/usage-breakdown";
 import { steerLanguageModel } from "./thread-inbox";
 import { UNTRUSTED_GUIDANCE } from "./untrusted-content";
 import { WEB_GUIDANCE } from "./web/tools";
@@ -212,6 +216,10 @@ export type RuntimeModelPolicy = {
     agentId: string,
     part: ToolImagePart,
   ) => Promise<string | null>;
+  adaptiveRouter?: AdaptiveRouter;
+  modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
+  usageBreakdown?: Pick<UsageBreakdownService, "record">;
+  promptWorkbench?: PromptWorkbenchStore;
 };
 
 export type RuntimeModelConnection = {
@@ -376,6 +384,39 @@ export async function resolveContextWindow(
   // serves the model from (settings → MiniMax; the runtime → local Magpie). A miss there
   // must not lose the declared window entirely (QA1104-01).
   return knownContextWindowOf(modelId);
+}
+
+/** 管理员按模型覆写的长对话摘要触发阈值（Token；index.ts 接上）。 */
+type SummaryThresholdResolver = (
+  modelId: string,
+) => Promise<number | undefined>;
+let summaryThresholdFor: SummaryThresholdResolver = async () => undefined;
+export function setModelSummaryThresholdResolver(
+  resolver: SummaryThresholdResolver,
+): void {
+  summaryThresholdFor = resolver;
+}
+export async function resolveSummaryThreshold(
+  modelId: string,
+): Promise<number | undefined> {
+  try {
+    const threshold = await Promise.race([
+      summaryThresholdFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    if (
+      typeof threshold === "number" &&
+      Number.isFinite(threshold) &&
+      threshold > 0
+    ) {
+      return threshold;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 /**
  * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
@@ -1000,7 +1041,11 @@ export async function buildAgents(
           agentKeyPool ||
           agentPoolId ||
           runtimePolicy?.quota ||
-          runtimePolicy?.describeImageForAgent
+          runtimePolicy?.describeImageForAgent ||
+          runtimePolicy?.adaptiveRouter ||
+          runtimePolicy?.modelObserver ||
+          runtimePolicy?.usageBreakdown ||
+          runtimePolicy?.promptWorkbench
             ? {
                 ...(agentPooledKeys ? { pooledKeys: agentPooledKeys } : {}),
                 ...(agentKeyPool ? { keyPool: agentKeyPool } : {}),
@@ -1011,6 +1056,18 @@ export async function buildAgents(
                       describeImageForAgent:
                         runtimePolicy.describeImageForAgent,
                     }
+                  : {}),
+                ...(runtimePolicy?.adaptiveRouter
+                  ? { adaptiveRouter: runtimePolicy.adaptiveRouter }
+                  : {}),
+                ...(runtimePolicy?.modelObserver
+                  ? { modelObserver: runtimePolicy.modelObserver }
+                  : {}),
+                ...(runtimePolicy?.usageBreakdown
+                  ? { usageBreakdown: runtimePolicy.usageBreakdown }
+                  : {}),
+                ...(runtimePolicy?.promptWorkbench
+                  ? { promptWorkbench: runtimePolicy.promptWorkbench }
                   : {}),
               }
             : undefined;
@@ -1462,6 +1519,18 @@ async function buildAgent(
               Promise.resolve(null),
           }
         : {}),
+      ...(runtimePolicy?.adaptiveRouter
+        ? { adaptiveRouter: runtimePolicy.adaptiveRouter }
+        : {}),
+      ...(runtimePolicy?.modelObserver
+        ? { modelObserver: runtimePolicy.modelObserver }
+        : {}),
+      ...(runtimePolicy?.usageBreakdown
+        ? { usageBreakdown: runtimePolicy.usageBreakdown }
+        : {}),
+      ...(runtimePolicy?.promptWorkbench
+        ? { promptWorkbench: runtimePolicy.promptWorkbench }
+        : {}),
       prompt: (tools) => {
         const configured = builtInAgentConfiguration(
           agent,
@@ -1480,13 +1549,23 @@ async function buildAgent(
         return configured.prompt;
       },
       modelInfo: async (modelId) => {
-        const [maxOutputTokens, contextWindow, supportsImages] =
-          await Promise.all([
-            resolveOutputLimit(modelId),
-            resolveContextWindow(modelId),
-            resolveModelVisionSupport(modelId),
-          ]);
-        return { maxOutputTokens, contextWindow, supportsImages };
+        const [
+          maxOutputTokens,
+          contextWindow,
+          summaryThresholdTokens,
+          supportsImages,
+        ] = await Promise.all([
+          resolveOutputLimit(modelId),
+          resolveContextWindow(modelId),
+          resolveSummaryThreshold(modelId),
+          resolveModelVisionSupport(modelId),
+        ]);
+        return {
+          maxOutputTokens,
+          contextWindow,
+          summaryThresholdTokens,
+          supportsImages,
+        };
       },
       fallbacks: () =>
         fallbackCandidates(

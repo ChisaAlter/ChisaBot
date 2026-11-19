@@ -1,10 +1,19 @@
+import { type Context, Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { BlockedUrlError, guardedFetch, resolvePublic } from "../../../shared/net/guarded-fetch";
 import { checkPublicUrl } from "../../../shared/net/ssrf";
+import type { AppVariables } from "../auth/guards";
+import { requireAdmin as defaultRequireAdmin } from "../auth/guards";
 import { currentConfirmTurn, currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { REFUSAL_MARKER, type GrantedTool } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
 import { formatSearchHits, SEARCH_GROUNDING_NOTE, SEARCH_TURN_ENOUGH, takeSearchSlot } from "./search-grounding";
+import {
+  type WebSearchExecuteDeps,
+  type WebSearchSettingsStore,
+  WebSearchSettingsValidationError,
+} from "./search-settings";
 
 /**
  * 内置联网：`web_search` + `web_fetch`（2026-10-13，向 Hark 的体验看齐）。
@@ -488,4 +497,147 @@ export function webTools(io: WebIo = REAL_IO): GrantedTool[] {
       },
     },
   ];
+}
+
+/**
+ * 按模型覆写解析可插拔联网搜索工具集，完整保留 `search-grounding.ts` 与反死循环治理层。
+ * - 当该模型配置为 `native` 时关闭内置 `web_search`（仅保留 `web_fetch`），避免与模型原生联网重复。
+ * - 当配置了外部供应商（Tavily/Brave/Serper/Bocha/Exa/Custom）时经其检索，失败按策略优雅回退内建源。
+ */
+export async function webToolsForModel(options: {
+  settings?: WebSearchSettingsStore;
+  modelId?: string;
+  io?: WebIo;
+  executeDeps?: WebSearchExecuteDeps;
+}): Promise<GrantedTool[]> {
+  const baseIo = options.io ?? REAL_IO;
+  if (!options.settings) {
+    return webTools(baseIo);
+  }
+  const settings = options.settings;
+  const plan = await settings
+    .resolveForModel(options.modelId)
+    .catch(() => ({ mode: "provider" as const, provider: "builtin" as const }));
+
+  if (plan.mode === "native") {
+    return webTools(baseIo).filter((tool) => tool.name !== "web_search");
+  }
+
+  const builtinSearch =
+    options.executeDeps?.builtinSearch ??
+    ((query: string, count: number, signal?: AbortSignal, timeoutMs?: number) =>
+      baseIo.outcome
+        ? baseIo.outcome(query, count, signal)
+        : searchWeb(query, count, signal, { timeoutMs }));
+
+  const pluggedOutcome = async (
+    query: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<SearchOutcome> => {
+    const result = await settings.executeSearch(query, {
+      ...(options.modelId ? { modelId: options.modelId } : {}),
+      count,
+      ...(signal ? { signal } : {}),
+      ...options.executeDeps,
+      builtinSearch,
+    });
+    return { hits: result.hits, sourceDown: result.sourceDown };
+  };
+
+  return webTools({
+    fetch: baseIo.fetch,
+    search: async (query, count = 6, signal) =>
+      (await pluggedOutcome(query, count, signal)).hits,
+    outcome: pluggedOutcome,
+  });
+}
+
+export type WebSearchAdminGuard = (
+  context: Context<{ Variables: AppVariables }>,
+) => Response | undefined | Promise<Response | undefined>;
+
+/**
+ * 联网搜索管理员路由（挂载于 `/api/web-search`）：
+ * - `GET /api/web-search/settings`
+ * - `PUT /api/web-search/settings`
+ * - `POST /api/web-search/test`
+ */
+export function createWebSearchRoutes(deps: {
+  store: WebSearchSettingsStore;
+  requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
+  requireAdmin?: WebSearchAdminGuard;
+  executeDeps?: WebSearchExecuteDeps;
+}): Hono<{ Variables: AppVariables }> {
+  const routes = new Hono<{ Variables: AppVariables }>();
+  const checkAdmin = deps.requireAdmin ?? defaultRequireAdmin;
+  routes.use("*", deps.requireUser);
+  routes.use("*", async (context, next) => {
+    context.header("Cache-Control", "no-store");
+    const denied = await checkAdmin(context);
+    if (denied) return denied;
+    await next();
+  });
+
+  routes.get("/settings", async (context) => {
+    try {
+      return context.json(await deps.store.view());
+    } catch {
+      return context.json(
+        { error: "联网搜索配置暂时无法读取，请稍后重试。" },
+        503,
+      );
+    }
+  });
+
+  routes.put(
+    "/settings",
+    bodyLimit({
+      maxSize: 32 * 1024,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+    async (context) => {
+      const body = await context.req.json().catch(() => null);
+      if (!body || typeof body !== "object") {
+        return context.json({ error: "请发送有效的 JSON 配置。" }, 400);
+      }
+      try {
+        const saved = await deps.store.save(context.var.actor.id, body);
+        return context.json(saved);
+      } catch (error) {
+        if (error instanceof WebSearchSettingsValidationError) {
+          return context.json({ error: error.message }, 400);
+        }
+        return context.json(
+          { error: "联网搜索配置保存失败，请稍后重试。" },
+          503,
+        );
+      }
+    },
+  );
+
+  routes.post(
+    "/test",
+    bodyLimit({
+      maxSize: 16 * 1024,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+    async (context) => {
+      const body = await context.req.json().catch(() => ({}));
+      try {
+        const result = await deps.store.testSearch(body, deps.executeDeps);
+        return context.json(result);
+      } catch (error) {
+        if (error instanceof WebSearchSettingsValidationError) {
+          return context.json({ error: error.message }, 400);
+        }
+        return context.json(
+          { error: "联网搜索测试失败，请稍后重试。" },
+          503,
+        );
+      }
+    },
+  );
+
+  return routes;
 }

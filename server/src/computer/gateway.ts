@@ -130,10 +130,10 @@ export type ComputerGatewayOptions = {
   auditStore: AuditStore;
   /** Absent denies everything. See evaluateActionPolicy. */
   policy: () => ActionPolicy | undefined;
-  /** True on a laptop, where browsing private network addresses is required. */
-  allowPrivateHosts?: boolean;
-  /** The secret that agent-computer requires on each request. */
-  token?: string;
+  /** True on a laptop, where browsing private network addresses is required (static or hot-switched). */
+  allowPrivateHosts?: boolean | (() => boolean | undefined);
+  /** The secret that agent-computer requires on each request (static or dynamic hot-switched). */
+  token?: string | (() => string | undefined);
   /** An injectable fetch implementation for focused gateway tests. */
   fetchImpl?: typeof fetch;
   /**

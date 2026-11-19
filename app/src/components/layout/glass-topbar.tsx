@@ -14,18 +14,29 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { BrandMark } from "@/components/layout/brand-mark";
+import { WorkingCrewStrip } from "@/components/layout/working-crew-strip";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useExternalConnection } from "@/hooks";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { canCompact, type DesktopWindowBridge, useDesktopWindow } from "@/lib/desktop-window";
+import {
+  canCompact,
+  type DesktopWindowBridge,
+  useDesktopWindow,
+} from "@/lib/desktop-window";
 import { presenceRef } from "@/lib/presence-flag";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
 import { cn } from "@/lib/utils";
 
-
-export function initialsOf(name: string | null | undefined, email: string | undefined) {
+export function initialsOf(
+  name: string | null | undefined,
+  email: string | undefined,
+) {
   const trimmed = name?.trim();
   if (trimmed) {
     // A CJK name reads best as its first character; a Latin one as its initials.
@@ -39,7 +50,13 @@ export function initialsOf(name: string | null | undefined, email: string | unde
   return email?.slice(0, 2).toUpperCase() ?? "?";
 }
 
-export function GlassAvatar({ size = 44, ring = true }: { size?: number; ring?: boolean }) {
+export function GlassAvatar({
+  size = 44,
+  ring = true,
+}: {
+  size?: number;
+  ring?: boolean;
+}) {
   const { data: user } = useQuery(currentUserQueryOptions());
   return (
     <span
@@ -47,7 +64,12 @@ export function GlassAvatar({ size = 44, ring = true }: { size?: number; ring?: 
       style={{ width: size, height: size, fontSize: size * 0.36 }}
     >
       {user?.image ? (
-        <img alt="" className="glass-avatar-img" draggable={false} src={user.image} />
+        <img
+          alt=""
+          className="glass-avatar-img"
+          draggable={false}
+          src={user.image}
+        />
       ) : (
         initialsOf(user?.name, user?.email)
       )}
@@ -75,7 +97,12 @@ export function GlassTopBar({
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
   const desktop = useDesktopWindow();
-  const drawerLabel = scope === "app" ? "机器人列表" : scope === "settings" ? "设置分区" : "管理导航";
+  const drawerLabel =
+    scope === "app"
+      ? "机器人列表"
+      : scope === "settings"
+        ? "设置分区"
+        : "管理导航";
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理指针 / 右键 / 双击事件，键盘入口在内部的链接和按钮上
     <header
@@ -100,7 +127,12 @@ export function GlassTopBar({
       onDoubleClick={
         desktop
           ? (event) => {
-              if ((event.target as HTMLElement).closest("a,button,input,label,[role=menu]")) return;
+              if (
+                (event.target as HTMLElement).closest(
+                  "a,button,input,label,[role=menu]",
+                )
+              )
+                return;
               desktop.bridge.toggleMaximize();
             }
           : undefined
@@ -122,12 +154,17 @@ export function GlassTopBar({
           </span>
         )}
         {PROTO_PREVIEW && !mobile ? (
-          <span className="proto-badge" title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}>
+          <span
+            className="proto-badge"
+            title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}
+          >
             {"原型预览"}
           </span>
         ) : null}
       </div>
-      <span aria-hidden className="glass-topbar-mid" />
+      <div className="glass-topbar-mid">
+        {scope === "app" && !mobile ? <WorkingCrewStrip /> : null}
+      </div>
       <div className="glass-topbar-end">
         {mobile ? (
           <>
@@ -136,7 +173,13 @@ export function GlassTopBar({
           </>
         ) : null}
       </div>
-      {desktop ? <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} /> : null}
+      {desktop ? (
+        <WindowControls
+          bridge={desktop.bridge}
+          compact={desktop.compact}
+          maximized={desktop.maximized}
+        />
+      ) : null}
     </header>
   );
 }
@@ -186,7 +229,12 @@ export function WindowControls({
   if (isMac && !canCompact(bridge)) return null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-    <div aria-label={"窗口"} className="win-ctrls" data-count={isMac ? 1 : canCompact(bridge) ? 4 : 3} role="group">
+    <div
+      aria-label={"窗口"}
+      className="win-ctrls"
+      data-count={isMac ? 1 : canCompact(bridge) ? 4 : 3}
+      role="group"
+    >
       {canCompact(bridge) ? (
         <button
           aria-label={compactLabel}
@@ -198,15 +246,53 @@ export function WindowControls({
         >
           {compact ? (
             // 恢复窗口：一台横放的显示器。
-            <svg aria-hidden fill="none" height="10" viewBox="0 0 10 10" width="10">
-              <rect height="6" rx="1.2" stroke="currentColor" strokeWidth="1.1" width="8.4" x="0.8" y="0.9" />
-              <path d="M3.2 9.1h3.6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.1" />
+            <svg
+              aria-hidden
+              fill="none"
+              height="10"
+              viewBox="0 0 10 10"
+              width="10"
+            >
+              <rect
+                height="6"
+                rx="1.2"
+                stroke="currentColor"
+                strokeWidth="1.1"
+                width="8.4"
+                x="0.8"
+                y="0.9"
+              />
+              <path
+                d="M3.2 9.1h3.6"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.1"
+              />
             </svg>
           ) : (
             // 小窗模式：一部竖放的手机。
-            <svg aria-hidden fill="none" height="10" viewBox="0 0 10 10" width="10">
-              <rect height="8.6" rx="1.4" stroke="currentColor" strokeWidth="1.1" width="5.6" x="2.2" y="0.7" />
-              <path d="M4.3 7.4h1.4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.1" />
+            <svg
+              aria-hidden
+              fill="none"
+              height="10"
+              viewBox="0 0 10 10"
+              width="10"
+            >
+              <rect
+                height="8.6"
+                rx="1.4"
+                stroke="currentColor"
+                strokeWidth="1.1"
+                width="5.6"
+                x="2.2"
+                y="0.7"
+              />
+              <path
+                d="M4.3 7.4h1.4"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.1"
+              />
             </svg>
           )}
         </button>
@@ -214,34 +300,88 @@ export function WindowControls({
       {/* macOS：系统红绿灯在窗口左上角，这三个按钮不画。 */}
       {isMac ? null : (
         <>
-      <button aria-label={"最小化"} className="win-ctrl" onClick={() => bridge.minimize()} title={"最小化"} type="button">
-        <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
-          <path d="M1 5.5h8" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
-        </svg>
-      </button>
-      <button
-        aria-label={maximized ? "还原" : "最大化"}
-        className="win-ctrl"
-        onClick={() => bridge.toggleMaximize()}
-        title={maximized ? "还原" : "最大化"}
-        type="button"
-      >
-        {maximized ? (
-          <svg aria-hidden fill="none" height="10" viewBox="0 0 10 10" width="10">
-            <rect height="6" rx="1.2" stroke="currentColor" strokeWidth="1.1" width="6" x="1" y="3" />
-            <path d="M3.2 1.2h4.4c.7 0 1.2.5 1.2 1.2v4.4" stroke="currentColor" strokeWidth="1.1" />
-          </svg>
-        ) : (
-          <svg aria-hidden fill="none" height="10" viewBox="0 0 10 10" width="10">
-            <rect height="8" rx="1.6" stroke="currentColor" strokeWidth="1.1" width="8" x="1" y="1" />
-          </svg>
-        )}
-      </button>
-      <button aria-label={"关闭"} className="win-ctrl is-close" onClick={() => bridge.close()} title={"关闭"} type="button">
-        <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
-          <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
-        </svg>
-      </button>
+          <button
+            aria-label={"最小化"}
+            className="win-ctrl"
+            onClick={() => bridge.minimize()}
+            title={"最小化"}
+            type="button"
+          >
+            <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+              <path
+                d="M1 5.5h8"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.2"
+              />
+            </svg>
+          </button>
+          <button
+            aria-label={maximized ? "还原" : "最大化"}
+            className="win-ctrl"
+            onClick={() => bridge.toggleMaximize()}
+            title={maximized ? "还原" : "最大化"}
+            type="button"
+          >
+            {maximized ? (
+              <svg
+                aria-hidden
+                fill="none"
+                height="10"
+                viewBox="0 0 10 10"
+                width="10"
+              >
+                <rect
+                  height="6"
+                  rx="1.2"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  width="6"
+                  x="1"
+                  y="3"
+                />
+                <path
+                  d="M3.2 1.2h4.4c.7 0 1.2.5 1.2 1.2v4.4"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                />
+              </svg>
+            ) : (
+              <svg
+                aria-hidden
+                fill="none"
+                height="10"
+                viewBox="0 0 10 10"
+                width="10"
+              >
+                <rect
+                  height="8"
+                  rx="1.6"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  width="8"
+                  x="1"
+                  y="1"
+                />
+              </svg>
+            )}
+          </button>
+          <button
+            aria-label={"关闭"}
+            className="win-ctrl is-close"
+            onClick={() => bridge.close()}
+            title={"关闭"}
+            type="button"
+          >
+            <svg aria-hidden height="10" viewBox="0 0 10 10" width="10">
+              <path
+                d="M1.5 1.5l7 7M8.5 1.5l-7 7"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.2"
+              />
+            </svg>
+          </button>
         </>
       )}
     </div>
@@ -269,15 +409,34 @@ export const PANEL_RAIL_ID = "chisabot-panel-rail";
  */
 let keyboardSeen = false;
 const keyboardListeners = new Set<() => void>();
-const NAV_KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " ", "Escape", "F6"]);
+const NAV_KEYS = new Set([
+  "Tab",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "Enter",
+  " ",
+  "Escape",
+  "F6",
+]);
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
 }
 function onFirstKeydown(event: KeyboardEvent) {
   if (keyboardSeen) return;
   const modified = event.ctrlKey || event.metaKey || event.altKey;
-  const nav = event.key === "Tab" || (NAV_KEYS.has(event.key) && !isTypingTarget(event.target));
+  const nav =
+    event.key === "Tab" ||
+    (NAV_KEYS.has(event.key) && !isTypingTarget(event.target));
   if (!modified && !nav) return;
   keyboardSeen = true;
   window.removeEventListener("keydown", onFirstKeydown, true);
@@ -312,7 +471,9 @@ export function ToggleTip({
   children: ReactElement;
   side?: "bottom" | "left" | "right" | "top";
 }) {
-  const [armed, setArmed] = useState<Armed | null>(() => (keyboardSeen ? { open: false, refocus: false } : null));
+  const [armed, setArmed] = useState<Armed | null>(() =>
+    keyboardSeen ? { open: false, refocus: false } : null,
+  );
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   useExternalConnection(!armed, () => {
     const arm = () => setArmed({ open: false, refocus: false });
@@ -364,7 +525,13 @@ function matchesFocusVisible(el: Element) {
  * 用 mouseenter（和 Base UI 悬停 hook 同一个事件，内容在静止的指针下移过来也算），触屏的兼容
  * mouseenter 按前面 pointer 事件的 pointerType 排除。
  */
-function LazyTipTrigger({ trigger, onArm }: { trigger: ReactElement; onArm: (refocus: boolean) => void }) {
+function LazyTipTrigger({
+  trigger,
+  onArm,
+}: {
+  trigger: ReactElement;
+  onArm: (refocus: boolean) => void;
+}) {
   const own = trigger.props as TipTriggerProps;
   const pointerType = useRef<string | undefined>(undefined);
   return cloneElement(trigger as ReactElement<TipTriggerProps>, {
@@ -380,7 +547,9 @@ function LazyTipTrigger({ trigger, onArm }: { trigger: ReactElement; onArm: (ref
     onMouseEnter: (event: MouseEvent<HTMLElement>) => {
       own.onMouseEnter?.(event);
       if (pointerType.current === "touch") return;
-      onArm(event.currentTarget.ownerDocument.activeElement === event.currentTarget);
+      onArm(
+        event.currentTarget.ownerDocument.activeElement === event.currentTarget,
+      );
     },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       own.onFocus?.(event);

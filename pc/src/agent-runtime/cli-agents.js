@@ -13,6 +13,32 @@
  * - OpenCode / Gemini CLI / Aider 没有可靠的只读模式：服务器只在完全访问、一次性副本或系统级沙盒里交给它们。
  */
 
+const RESUME_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** 过滤不可信输出中的 sessionId；不命中白名单时返回 null。 */
+function normalizeResumeSessionId(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || !RESUME_SESSION_ID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** 强校验外部传入的 resumeSessionId，防命令/选项注入。 */
+function assertValidResumeSessionId(raw) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw !== "string") {
+    throw new Error("无效的续接会话 ID（resumeSessionId 必须为字符串）。");
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (!RESUME_SESSION_ID_RE.test(trimmed)) {
+    throw new Error(
+      "无效的续接会话 ID：必须以字母或数字开头，仅允许字母、数字及 . _ : -（最长 128 字符）。",
+    );
+  }
+  return trimmed;
+}
+
 function short(value, max = 160) {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const one = text.replace(/\s+/g, " ").trim();
@@ -52,6 +78,7 @@ function describeToolUse(name, input) {
 function claudeParser() {
   let summary = "";
   let isError = false;
+  let sessionId = null;
   return {
     line(raw, emit) {
       let event;
@@ -61,11 +88,24 @@ function claudeParser() {
         if (raw.trim()) emit("text", raw.trim());
         return;
       }
+      const safeSessionId = normalizeResumeSessionId(event.session_id);
+      if (safeSessionId) {
+        sessionId = safeSessionId;
+      }
       if (event.type === "system" && event.subtype === "init") {
-        emit("status", `Claude Code 已启动${event.model ? `（${event.model}）` : ""}`, "Claude Code 已启动");
-      } else if (event.type === "assistant" && event.message && Array.isArray(event.message.content)) {
+        emit(
+          "status",
+          `Claude Code 已启动${event.model ? `（${event.model}）` : ""}`,
+          "Claude Code 已启动",
+        );
+      } else if (
+        event.type === "assistant" &&
+        event.message &&
+        Array.isArray(event.message.content)
+      ) {
         for (const part of event.message.content) {
-          if (part.type === "text" && part.text && part.text.trim()) emit("text", part.text.trim());
+          if (part.type === "text" && part.text && part.text.trim())
+            emit("text", part.text.trim());
           else if (part.type === "tool_use") {
             const line = describeToolUse(part.name, part.input);
             emit("tool", line, line);
@@ -73,21 +113,29 @@ function claudeParser() {
         }
       } else if (event.type === "result") {
         summary = typeof event.result === "string" ? event.result : summary;
-        isError = !!event.is_error || (event.subtype && event.subtype !== "success");
-        const cost = typeof event.total_cost_usd === "number" ? ` · 约 $${event.total_cost_usd.toFixed(3)}` : "";
-        emit("status", `Claude Code 结束（${event.num_turns ?? "?"} 轮${cost}）`);
+        isError =
+          !!event.is_error || (event.subtype && event.subtype !== "success");
+        const cost =
+          typeof event.total_cost_usd === "number"
+            ? ` · 约 $${event.total_cost_usd.toFixed(3)}`
+            : "";
+        emit(
+          "status",
+          `Claude Code 结束（${event.num_turns ?? "?"} 轮${cost}）`,
+        );
       }
     },
     result() {
-      return { summary, isError };
+      return { summary, isError, sessionId };
     },
   };
 }
 
-/** Codex `exec --json`：新旧版本事件格式不同，宽松地取文字和命令。 */
+/** Codex `exec --json`：新旧版本事件格式不同，宽松地取文字、会话 ID 和命令。 */
 function codexParser() {
   let summary = "";
   let failed = "";
+  let sessionId = null;
   return {
     line(raw, emit) {
       let event;
@@ -97,21 +145,43 @@ function codexParser() {
         if (raw.trim()) emit("text", raw.trim());
         return;
       }
+      const detectedSession =
+        event.thread_id ||
+        event.threadId ||
+        event.session_id ||
+        event.sessionId ||
+        event.thread?.id ||
+        event.item?.thread_id ||
+        event.msg?.thread_id;
+      const safeSessionId = normalizeResumeSessionId(detectedSession);
+      if (safeSessionId) {
+        sessionId = safeSessionId;
+      }
       const item = event.item || event.msg || event;
       const type = item.type || event.type || "";
       if (/agent_message/.test(type)) {
         const text = item.text || item.message || "";
-        if (text && (event.type === "item.completed" || !event.type || event.type === "agent_message" || event.msg)) {
+        if (
+          text &&
+          (event.type === "item.completed" ||
+            !event.type ||
+            event.type === "agent_message" ||
+            event.msg)
+        ) {
           summary = text;
           emit("text", text.trim());
         }
       } else if (/command_execution|exec_command_begin/.test(type)) {
         if (event.type === "item.completed") return;
-        const command = Array.isArray(item.command) ? item.command.join(" ") : item.command || "";
+        const command = Array.isArray(item.command)
+          ? item.command.join(" ")
+          : item.command || "";
         const line = `运行 ${short(command, 120)}`;
         emit("tool", line, line);
       } else if (/file_change|patch_apply_begin/.test(type)) {
-        const files = Array.isArray(item.changes) ? item.changes.map((c) => c.path).join("、") : "";
+        const files = Array.isArray(item.changes)
+          ? item.changes.map((c) => c.path).join("、")
+          : "";
         const line = `修改文件 ${short(files, 120)}`;
         emit("tool", line, line);
       } else if (/reasoning/.test(type) && item.text) {
@@ -122,7 +192,7 @@ function codexParser() {
       }
     },
     result() {
-      return { summary, isError: !!failed && !summary };
+      return { summary, isError: !!failed && !summary, sessionId };
     },
   };
 }
@@ -148,7 +218,9 @@ function genericJsonlParser(label = "Custom") {
       }
       if (!event || typeof event !== "object") return;
       if (event.type === "tool" || event.tool) {
-        const toolText = String(event.title || event.tool || event.name || "工具操作");
+        const toolText = String(
+          event.title || event.tool || event.name || "工具操作",
+        );
         emit("tool", toolText, toolText);
         return;
       }
@@ -157,14 +229,23 @@ function genericJsonlParser(label = "Custom") {
         emit("stderr", String(event.error || event.message || raw));
         return;
       }
-      const text = event.result || event.summary || event.text || event.message || event.content;
+      const text =
+        event.result ||
+        event.summary ||
+        event.text ||
+        event.message ||
+        event.content;
       if (typeof text === "string" && text.trim()) {
         summary = text.trim();
         emit("text", summary);
       }
     },
     result() {
-      return { summary: summary || tail.join("\n").slice(-4000), isError, label };
+      return {
+        summary: summary || tail.join("\n").slice(-4000),
+        isError,
+        label,
+      };
     },
   };
 }
@@ -205,15 +286,21 @@ function buildCommand(
     codexConfigArgs,
     stdinPrompt,
     outputFormat,
+    resumeSessionId,
   },
 ) {
-  const extra = Array.isArray(extraArgs) ? extraArgs.map(String).filter((s) => s.length > 0) : [];
-  const trimmedModel = typeof model === "string" && model.trim() ? model.trim() : null;
+  const extra = Array.isArray(extraArgs)
+    ? extraArgs.map(String).filter((s) => s.length > 0)
+    : [];
+  const trimmedModel =
+    typeof model === "string" && model.trim() ? model.trim() : null;
+  const trimmedResume = assertValidResumeSessionId(resumeSessionId);
 
   switch (kind) {
     case "claude": {
       const args = ["-p"];
       if (!viaStdin) args.push(prompt);
+      if (trimmedResume) args.push("--resume", trimmedResume);
       args.push("--output-format", "stream-json", "--verbose");
       if (trimmedModel) args.push("--model", trimmedModel);
       if (claudeMcpConfigPath) args.push("--mcp-config", claudeMcpConfigPath);
@@ -222,44 +309,98 @@ function buildCommand(
       else args.push("--permission-mode", "acceptEdits");
       if (extra.length) args.push(...extra);
       const env = root && skipPermissions ? { IS_SANDBOX: "1" } : {};
-      return { name: "claude", args, env, stdin: viaStdin ? prompt : null, parser: claudeParser() };
+      return {
+        name: "claude",
+        args,
+        env,
+        stdin: viaStdin ? prompt : null,
+        parser: claudeParser(),
+      };
     }
     case "codex": {
-      const args = ["exec", "--json", "--skip-git-repo-check", "-C", workdir];
+      const args = trimmedResume
+        ? ["exec", "resume", trimmedResume, "--json", "--skip-git-repo-check"]
+        : ["exec", "--json", "--skip-git-repo-check", "-C", workdir];
       if (trimmedModel) args.push("-m", trimmedModel);
-      if (Array.isArray(codexConfigArgs) && codexConfigArgs.length) args.push(...codexConfigArgs);
-      if (skipPermissions && profile === "full") args.push("--dangerously-bypass-approvals-and-sandbox");
-      else if (profile === "readonly") args.push("--sandbox", "read-only");
-      else {
-        args.push("--sandbox", "workspace-write");
-        if (network) args.push("-c", "sandbox_workspace_write.network_access=true");
+      if (Array.isArray(codexConfigArgs) && codexConfigArgs.length)
+        args.push(...codexConfigArgs);
+      if (!trimmedResume) {
+        if (skipPermissions && profile === "full")
+          args.push("--dangerously-bypass-approvals-and-sandbox");
+        else if (profile === "readonly") args.push("--sandbox", "read-only");
+        else {
+          args.push("--sandbox", "workspace-write");
+          if (network)
+            args.push("-c", "sandbox_workspace_write.network_access=true");
+        }
+      } else if (skipPermissions && profile === "full") {
+        args.push("-c", 'sandbox_mode="danger-full-access"');
+      } else if (profile === "readonly") {
+        args.push("-c", 'sandbox_mode="read-only"');
+      } else {
+        args.push("-c", 'sandbox_mode="workspace-write"');
+        args.push(
+          "-c",
+          `sandbox_workspace_write.network_access=${network ? "true" : "false"}`,
+        );
       }
       if (extra.length) args.push(...extra);
       args.push(viaStdin ? "-" : prompt);
-      return { name: "codex", args, env: {}, stdin: viaStdin ? prompt : null, parser: codexParser() };
+      return {
+        name: "codex",
+        args,
+        env: {},
+        stdin: viaStdin ? prompt : null,
+        parser: codexParser(),
+      };
     }
     case "antigravity": {
       const args = ["chat", "-m", prompt];
       if (trimmedModel) args.push("--model", trimmedModel);
       if (extra.length) args.push(...extra);
-      return { name: "agy", args, env: {}, stdin: null, parser: textParser("Antigravity") };
+      return {
+        name: "agy",
+        args,
+        env: {},
+        stdin: null,
+        parser: textParser("Antigravity"),
+      };
     }
     case "opencode": {
       const args = ["run"];
       if (trimmedModel) args.push("-m", trimmedModel);
       if (extra.length) args.push(...extra);
       args.push(prompt);
-      return { name: "opencode", args, env: {}, stdin: null, parser: textParser("OpenCode") };
+      return {
+        name: "opencode",
+        args,
+        env: {},
+        stdin: null,
+        parser: textParser("OpenCode"),
+      };
     }
     case "gemini": {
       const args = ["-p", prompt];
       if (trimmedModel) args.push("-m", trimmedModel);
       if (skipPermissions) args.push("--yolo");
       if (extra.length) args.push(...extra);
-      return { name: "gemini", args, env: {}, stdin: null, parser: textParser("Gemini CLI") };
+      return {
+        name: "gemini",
+        args,
+        env: {},
+        stdin: null,
+        parser: textParser("Gemini CLI"),
+      };
     }
     case "aider": {
-      const args = ["--message", prompt, "--yes-always", "--no-pretty", "--no-auto-commits", "--no-check-update"];
+      const args = [
+        "--message",
+        prompt,
+        "--yes-always",
+        "--no-pretty",
+        "--no-auto-commits",
+        "--no-check-update",
+      ];
       if (trimmedModel) args.push("--model", trimmedModel);
       if (extra.length) args.push(...extra);
       return {
@@ -288,7 +429,10 @@ function buildCommand(
         args: renderedArgs,
         env: {},
         stdin: useStdin ? prompt : null,
-        parser: outputFormat === "jsonl" ? genericJsonlParser("Custom") : textParser("Custom"),
+        parser:
+          outputFormat === "jsonl"
+            ? genericJsonlParser("Custom")
+            : textParser("Custom"),
       };
     }
     default:
@@ -298,7 +442,9 @@ function buildCommand(
 
 /** Windows 上 .cmd 要经过 cmd.exe：去掉会被 cmd 解释的字符（提示词走参数时）。claude / codex 走标准输入，不受影响。 */
 function cmdSafe(text) {
-  return String(text).replace(/[\r\n]+/g, " ").replace(/["%^&|<>]/g, " ");
+  return String(text)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/["%^&|<>]/g, " ");
 }
 
 module.exports = {
@@ -309,4 +455,7 @@ module.exports = {
   textParser,
   describeToolUse,
   cmdSafe,
+  RESUME_SESSION_ID_RE,
+  normalizeResumeSessionId,
+  assertValidResumeSessionId,
 };

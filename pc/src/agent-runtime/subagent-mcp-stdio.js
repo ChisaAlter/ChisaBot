@@ -52,7 +52,9 @@ async function callBridge(config, action, params = {}) {
     },
     body: JSON.stringify({ action, params }),
   });
-  const body = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+  const body = await res
+    .json()
+    .catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
   if (!res.ok || !body.ok) {
     throw new Error(body.error || `子代理调用失败（HTTP ${res.status}）`);
   }
@@ -62,7 +64,8 @@ async function callBridge(config, action, params = {}) {
 const MCP_TOOLS = [
   {
     name: "subagent_list",
-    description: "列出当前可调用的其他智能体实例（含 slug、名称、宿主环境与擅长领域说明）。在拆分子任务前可先调用查看。",
+    description:
+      "列出当前可调用的其他智能体实例（含 slug、名称、宿主环境与擅长领域说明）。在拆分子任务前可先调用查看。",
     inputSchema: {
       type: "object",
       properties: {},
@@ -71,17 +74,20 @@ const MCP_TOOLS = [
   },
   {
     name: "subagent_run",
-    description: "委派一个子任务给指定的智能体实例执行。mode='wait'（默认）会等待子代理完成并返回摘要与改动统计；mode='async' 立即返回 taskId 后台运行。",
+    description:
+      "委派一个子任务给指定的智能体实例执行。mode='wait'（默认）会等待子代理完成并返回摘要与改动统计；mode='async' 立即返回 taskId 后台运行。",
     inputSchema: {
       type: "object",
       properties: {
         instance: {
           type: "string",
-          description: "目标智能体实例的 slug 或 id（从 subagent_list 获取，例如 codex、claude、antigravity、codebuddy）。",
+          description:
+            "目标智能体实例的 slug 或 id（从 subagent_list 获取，例如 codex、claude、antigravity、codebuddy）。",
         },
         task: {
           type: "string",
-          description: "要交给该子代理完成的完整任务说明（包含背景、目标文件与验收标准）。",
+          description:
+            "要交给该子代理完成的完整任务说明（包含背景、目标文件与验收标准）。",
         },
         title: {
           type: "string",
@@ -108,11 +114,38 @@ const MCP_TOOLS = [
   },
   {
     name: "subagent_status",
-    description: "查询已启动的子代理任务状态、最近输出与结果摘要。",
+    description:
+      "查询已启动的子代理任务状态、最近输出与结果摘要；支持 waitMs（0-30000）阻塞长轮询等待状态变化。",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string", description: "子代理任务 ID。" },
+        waitMs: {
+          type: "integer",
+          minimum: 0,
+          maximum: 30000,
+          description: "可选长轮询等待毫秒数（上限 30000）。",
+        },
+      },
+      required: ["taskId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "subagent_continue",
+    description:
+      "在同一上下文与工作目录中续接已完成/已暂停的子代理任务，或回答处于 needs_input 状态的追问。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "子代理任务 ID。" },
+        prompt: { type: "string", description: "后续指令。" },
+        answers: {
+          type: "object",
+          additionalProperties: { type: "array", items: { type: "string" } },
+          description: "回答 needs_input 追问卡的用户答复（键为问题 id）。",
+        },
+        mode: { type: "string", enum: ["wait", "async"] },
       },
       required: ["taskId"],
       additionalProperties: false,
@@ -192,6 +225,7 @@ function startMcpServer(config) {
           subagent_list: "list",
           subagent_run: "run",
           subagent_status: "status",
+          subagent_continue: "continue",
           subagent_stop: "stop",
         };
         const action = actionMap[name];
@@ -212,7 +246,15 @@ function startMcpServer(config) {
             jsonrpc: "2.0",
             id,
             result: {
-              content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }],
+              content: [
+                {
+                  type: "text",
+                  text:
+                    typeof data === "string"
+                      ? data
+                      : JSON.stringify(data, null, 2),
+                },
+              ],
             },
           });
         } catch (err) {
@@ -221,7 +263,9 @@ function startMcpServer(config) {
             id,
             result: {
               isError: true,
-              content: [{ type: "text", text: `子代理调用错误：${err.message}` }],
+              content: [
+                { type: "text", text: `子代理调用错误：${err.message}` },
+              ],
             },
           });
         }
@@ -237,7 +281,10 @@ function startMcpServer(config) {
       writeMsg({
         jsonrpc: "2.0",
         id,
-        error: { code: -32603, message: err?.message ? err.message : String(err) },
+        error: {
+          code: -32603,
+          message: err?.message ? err.message : String(err),
+        },
       });
     }
   }

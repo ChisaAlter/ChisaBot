@@ -6,6 +6,8 @@ export type ModelCatalogEntry = {
   /** The provider's display name when the gateway gives one (Magpie: "… · OpenCode Zen"). */
   providerName?: string;
   contextWindow?: number;
+  /** 可选：管理员按模型覆写的长对话摘要触发阈值（Token）。 */
+  summaryThresholdTokens?: number;
   /** 这个模型一次最多能输出多少 token（Magpie: max_output_tokens）。服务器用它给不认识的模型定输出上限。 */
   maxOutputTokens?: number;
   /** 能不能看图（目录里的 input modalities / vision 标记）；目录没说就不写（当作能）。识图模型用（DESIGN.md §59）。 */

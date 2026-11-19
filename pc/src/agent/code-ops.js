@@ -1003,10 +1003,10 @@ Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
       elevatedHelper = null;
     }
     const dir = P.join(os.tmpdir(), `chisabot-elev-${crypto.randomBytes(8).toString("hex")}`);
-    await fsp.mkdir(dir, { recursive: true });
+    await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
     const key = crypto.randomBytes(24).toString("hex");
     const script = P.join(dir, "helper.ps1");
-    await fsp.writeFile(script, HELPER_PS, "utf8");
+    await fsp.writeFile(script, HELPER_PS, { encoding: "utf8", mode: 0o600 });
     const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
     const launcher = `Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${q(script)},'-Dir',${q(dir)},'-Key',${q(key)},'-ParentPid','${process.pid}')`;
     const r = await runCollect(launcher, { timeoutMs: 120_000 });
@@ -1025,12 +1025,25 @@ Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
     const helper = await ensureHelper();
     const id = crypto.randomBytes(6).toString("hex");
     const started = Date.now();
-    await fsp.writeFile(
-      P.join(helper.dir, `${id}.tmp`),
-      JSON.stringify({ key: helper.key, script: encodePowerShell(PS_PREFIX + command), cwd: cwd || os.homedir(), timeoutMs }),
-      "utf8",
-    );
-    await fsp.rename(P.join(helper.dir, `${id}.tmp`), P.join(helper.dir, `${id}.cmd`));
+    const tmpFile = P.join(helper.dir, `${id}.${process.pid}.${crypto.randomUUID()}.tmp`);
+    let handle;
+    let renamed = false;
+    try {
+      handle = await fsp.open(tmpFile, "wx", 0o600);
+      await handle.writeFile(
+        JSON.stringify({ key: helper.key, script: encodePowerShell(PS_PREFIX + command), cwd: cwd || os.homedir(), timeoutMs }),
+        "utf8",
+      );
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await fsp.rename(tmpFile, P.join(helper.dir, `${id}.cmd`));
+      renamed = true;
+    } catch (error) {
+      if (handle) await handle.close().catch(() => {});
+      if (!renamed) await fsp.unlink(tmpFile).catch(() => {});
+      throw error;
+    }
     const rcFile = P.join(helper.dir, `${id}.rc`);
     while (!(await fsp.stat(rcFile).catch(() => null))) {
       if (signal?.aborted) throw new OpError("已取消。");

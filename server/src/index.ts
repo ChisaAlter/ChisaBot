@@ -17,9 +17,15 @@ import {
   proposedSkillSchema,
   savedSkillAnswer,
 } from "../../shared/skill-authoring";
+import { VOICE_WS_PATH } from "../../shared/voice-call";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
+import {
+  createHarnessSettingsService,
+  createPgHarnessSettingsStorage,
+} from "./admin/harness-settings";
 import { createAdminSmokeRoutes } from "./admin-smoke";
+import { createAdaptiveRouter } from "./agents/adaptive-router";
 import {
   CoworkerUnavailableError,
   createActorAgentResolver,
@@ -37,6 +43,7 @@ import {
 import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
 import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
 import { createDshHealthProbe } from "./agents/dsh-health";
+import { createContextPolicyStore } from "./agents/context-policy-store";
 import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
@@ -72,11 +79,16 @@ import {
   createModelFallbackService,
   createModelFallbackStore,
 } from "./agents/model-fallback-settings";
+import { createModelObservationService } from "./agents/model-observation";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createAgentPurge } from "./agents/purge";
+import {
+  createPgRoutingLogStorage,
+  createRoutingAdminRoutes,
+} from "./agents/routing-log";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
 import { createCoworkerService } from "./agents/service";
 import {
@@ -108,7 +120,9 @@ import {
   parseApprovalContinuation,
   parseApprovalResult,
 } from "./approvals/types";
+import { shrinkAvatarImageToJpeg } from "./audio/ffmpeg-transcode";
 import { createSpeechService } from "./audio/speech-service";
+import { createSpeechSettingsStore } from "./audio/speech-settings";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -128,7 +142,7 @@ import {
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
 import type { AuthenticatedActor, AuthService } from "./auth/guards";
-import { createRoleRepository } from "./auth/guards";
+import { createRoleRepository, requireAdmin } from "./auth/guards";
 import { type ChisaBotRole, setRole } from "./auth/roles";
 import { createBotAvatars } from "./bot-avatars/service";
 import { createBotThreads } from "./bot-threads";
@@ -141,6 +155,7 @@ import {
 } from "./channels/attachments";
 import { startDraftSweeps } from "./channels/drafts";
 import {
+  type ChannelActivityEvent,
   createChannelEventHub,
   startChannelActivityListener,
 } from "./channels/events";
@@ -160,7 +175,10 @@ import {
 import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
-import { createChatFiles } from "./chat-files/service";
+import { createChunkedUploadService } from "./chat-files/chunked-upload";
+import { createBotLibraryService } from "./chat-files/library-service";
+import { createMediaPoolService } from "./chat-files/media-pool-service";
+import { createChatFiles, fileView } from "./chat-files/service";
 import { turnAttachmentLoader } from "./chat-files/turn-attachments";
 import { createChatShots } from "./chat-shots";
 import { createHeadlessComponentTools } from "./components/headless";
@@ -172,6 +190,17 @@ import {
   installActivityStore,
 } from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
+import { createDesktopBrowserBridge } from "./computer/desktop-browser-bridge";
+import {
+  buildComputerStreamUrl,
+  createDemonstrationStore,
+  isValidRecordingId,
+  parseDemonstrationActionFrame,
+} from "./computer/demonstration-store";
+import {
+  createExecutionNodeStore,
+  createPgExecutionNodeStorage,
+} from "./computer/execution-node-store";
 import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
@@ -190,6 +219,7 @@ import {
 } from "./computer/policy-store";
 import {
   createComputerProvider,
+  createDynamicExecutionNodeProvider,
   describeComputerIsolation,
 } from "./computer/provider";
 import { createSnapshotStore } from "./computer/snapshot-store";
@@ -210,6 +240,7 @@ import {
   setModelFallbackList,
   setModelFileResolver,
   setModelOutputLimitResolver,
+  setModelSummaryThresholdResolver,
   setModelVisionResolver,
   setPreviousRunUsageResolver,
   type ToolSelection,
@@ -252,8 +283,15 @@ import {
   users,
 } from "./db/schema";
 import { panelTaskRequests } from "./db/schema/panels";
+import { createForegroundRegistry } from "./delivery/foreground-registry";
 import { createHostNotifications } from "./delivery/host-notifications";
 import { createPersonalNotifications } from "./delivery/personal-notifications";
+import { createPushService } from "./delivery/push-service";
+import { createQuickIntents } from "./delivery/quick-intents";
+import {
+  createReplyNotifier,
+  type ReplyNotifier,
+} from "./delivery/reply-notifier";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
@@ -307,13 +345,31 @@ import { createPasswordStore } from "./passwords/store";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { createPersonalSources } from "./personal-sources/service";
+import {
+  buildActiveAppSkillsPrompt,
+  createAppBuilderRoutes,
+  createAppBuilderTools,
+  createApprovedAppTools,
+} from "./plugins/app-builder";
+import {
+  createAppPackageStore,
+  createPgAppPackageStorage,
+} from "./plugins/app-package";
+import { createAppSandboxRunner } from "./plugins/app-sandbox-runner";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
 import { connectServiceTools } from "./plugins/connect-service";
 import { backfillComposioLogos } from "./plugins/logos";
+import {
+  createMcpEnhancementRoutes,
+  createMcpEnhancementStore,
+  createPgMcpEnhancementStorage,
+  extractValidatedMcpImages,
+} from "./plugins/mcp-enhancements";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
 import {
+  type GrantedTool,
   grantedSkills,
   grantedTools,
   REFUSAL_MARKER,
@@ -323,8 +379,17 @@ import {
   createPrivateShareCheck,
   PRIVATE_SHARE_TOOL_REF,
 } from "./proactive/private-share";
+import { createPromptWorkbenchRoutes } from "./prompts/routes";
+import {
+  createPgPromptWorkbenchStorage,
+  createPromptWorkbenchStore,
+} from "./prompts/workbench-store";
 import { createProviderOAuthProxy } from "./provider-oauth";
 import { createPgQuotaStorage, createQuotaService } from "./quotas/service";
+import {
+  createPgUsageBreakdownStorage,
+  createUsageBreakdownService,
+} from "./quotas/usage-breakdown";
 import { createResponsibilityBindingStore } from "./responsibilities/bindings";
 import {
   createEmailTriggerRoutes,
@@ -347,9 +412,30 @@ import { createTriggerIngressRoutes } from "./responsibilities/trigger-routes";
 import { useTriggerTools } from "./responsibilities/trigger-tools";
 import { createTriggerStore } from "./responsibilities/triggers";
 import type { Responsibility } from "./responsibilities/types";
+import {
+  createPgWebhookPanelStore,
+  createWebhookPanelRoutes,
+} from "./responsibilities/webhook-panel-routes";
 import { createModelCompleter } from "./routing/model";
-import { createSchedules } from "./schedules/service";
+import {
+  createFederationRoutes,
+  createFederationService,
+} from "./federation/routes";
+import {
+  createInternalQuiesceRoutes,
+  getRuntimeQuiesceController,
+} from "./runtime/quiesce";
+import { createSchedules, ScheduleError } from "./schedules/service";
+import { liveConnections } from "./security/http-hardening";
+import { SharePackageError } from "./sharing/package";
+import { createSharingRoutes } from "./sharing/routes";
+import {
+  createPgShareImportStore,
+  createSharingService,
+  type SharingService,
+} from "./sharing/service";
 import { createChisaSkills, enforceSkillSafety } from "./skills-chisa/tools";
+import { createSkillVersionStore } from "./skills-chisa/version-store";
 import {
   createSystemUpdateRoutes,
   createSystemUpdateService,
@@ -367,7 +453,20 @@ import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
 import { createVault, VAULT_GUIDANCE } from "./vault/service";
-import { webSearch, webTools } from "./web/tools";
+import {
+  createVoiceCallService,
+  isVoiceSocketData,
+  type VoiceSocketData,
+} from "./voice/voice-routes";
+import { trimInterruptedVoiceTurnMessages } from "./voice/voice-session";
+import { createVoiceStreamTts } from "./voice/voice-stream-tts";
+import { createWebSearchSettingsStore } from "./web/search-settings";
+import {
+  createWebSearchRoutes,
+  searchWeb,
+  webSearch,
+  webToolsForModel,
+} from "./web/tools";
 import { repeatAfterEach } from "./work/loop";
 import {
   createWorkQueue,
@@ -504,7 +603,43 @@ const channelStore = createChannelStore(
   threadIdentity,
   { localConversations: config.runtime.mode === "local" },
 );
-const channelEvents = createChannelEventHub();
+let replyNotifierRef: ReplyNotifier | undefined;
+const dispatchChannelActivityToNotifier = (event: ChannelActivityEvent) => {
+  if (
+    !replyNotifierRef ||
+    !event.lastMessageAgentId ||
+    !event.lastMessage ||
+    !event.lastMessageAt ||
+    event.deleted ||
+    event.pinned !== undefined ||
+    event.busy !== undefined ||
+    event.summary !== undefined
+  ) {
+    return;
+  }
+  const messageId = `${event.channelId}:${event.lastMessageAt}`;
+  for (const userId of event.memberIds) {
+    void replyNotifierRef
+      .notifyReply({
+        userId,
+        channelId: event.channelId,
+        agentId: event.lastMessageAgentId,
+        messageId,
+        text: event.lastMessage,
+        kind: "reply",
+        createdAt: event.lastMessageAt,
+      })
+      .catch(() => {});
+  }
+};
+const foregroundRegistry = createForegroundRegistry({
+  hasUserLiveConnection: (userId) => channelEvents.connectionCount(userId) > 0,
+});
+const channelEvents = createChannelEventHub({
+  onConnection: (userId, deviceId) =>
+    foregroundRegistry.trackConnection(userId, deviceId),
+  onActivity: dispatchChannelActivityToNotifier,
+});
 // One reset for the profile screen's "重置" and for deleting a Bot, which starts with the same reset.
 const botReset = createBotReset({
   database,
@@ -601,16 +736,46 @@ const auth: AuthService | undefined = config.auth
       signInAuditStore,
     )
   : undefined;
+// 远程执行节点可视化热切换存储（未激活时无缝回退既有环境变量静态模式）。
+const executionNodeStore = createExecutionNodeStore({
+  storage: createPgExecutionNodeStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+  auditStore: createAuditStore(database),
+  staticFallbackProvider: config.computer?.provider ?? null,
+});
+await executionNodeStore.ensure();
+// 当已热切换激活远程执行节点时，绝不因新节点未配 token 而回退泄露静态环境变量机密令牌
+const resolveComputerToken = (): string | undefined => {
+  const active = executionNodeStore.getActiveSync();
+  return active ? active.token : config.computer?.token;
+};
+const resolveComputerAllowPrivateHosts = (): boolean => {
+  const active = executionNodeStore.getActiveSync();
+  return active
+    ? active.allowPrivateNetwork
+    : config.computer?.allowPrivateHosts === true;
+};
+const staticComputerProvider = config.computer
+  ? createComputerProvider(config.computer)
+  : undefined;
+const hasConfiguredComputer = (): boolean =>
+  Boolean(staticComputerProvider || executionNodeStore.getActiveSync());
+
+// 始终实例化动态 computerProvider（支持冷启动无静态配置时在管理台热新增并立即激活远程执行节点，无需重启）。
 // Each computer is pushed its network policy on the way to the action that woke it, because a
 // computer refuses every connection until one arrives (see `withPolicyPushOnWake`).
-const computerProvider = config.computer
-  ? withPolicyPushOnWake(createComputerProvider(config.computer), {
-      policyForBot: async () => NO_NETWORK_POLICY,
-      ...(config.computer.token ? { token: config.computer.token } : {}),
-    })
-  : undefined;
+const computerProvider = withPolicyPushOnWake(
+  createDynamicExecutionNodeProvider({
+    resolveActiveNode: () => executionNodeStore.getActive(),
+    ...(staticComputerProvider ? { fallback: staticComputerProvider } : {}),
+  }),
+  {
+    policyForBot: async () => NO_NETWORK_POLICY,
+    token: resolveComputerToken,
+  },
+);
 
-if (computerProvider?.warm) {
+if (hasConfiguredComputer() && computerProvider.warm) {
   void computerProvider.warm();
 }
 // What Bots may do on their computers. Configuration supplies the deployment's default; an
@@ -859,26 +1024,24 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
 };
 // CB-101：计算机活动记录。gateway 外包一层，每个动作写一条；每小时清 90 天前的记录。
 installActivityStore(createComputerActivityStore(database, config.databaseUrl));
-const computerGateway = computerProvider
-  ? withComputerActivity(
-      createComputerGateway({
-        provider: computerProvider,
-        auditStore: bootAuditStore,
-        approvalGate: confirmAwareGate,
-        policy: () => policyStore.get(),
-        // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
-        // when the snapshot was taken by another server. A Map here would be blank on every replica
-        // but the one that snapshotted, and the boundary would decide with no element to look at.
-        snapshots: createSnapshotStore(database),
-        // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
-        // sentence on that button already promised.
-        pageFrames: pageFrameStore,
-        allowPrivateHosts: config.computer?.allowPrivateHosts,
-        token: config.computer?.token,
-      }),
-      { pageFrames: pageFrameStore },
-    )
-  : undefined;
+const computerGateway = withComputerActivity(
+  createComputerGateway({
+    provider: computerProvider,
+    auditStore: bootAuditStore,
+    approvalGate: confirmAwareGate,
+    policy: () => policyStore.get(),
+    // In Postgres, so the ref a click carries resolves against the snapshot that produced it even
+    // when the snapshot was taken by another server. A Map here would be blank on every replica
+    // but the one that snapshotted, and the boundary would decide with no element to look at.
+    snapshots: createSnapshotStore(database),
+    // So wiping a profile takes the pictures of its signed-in pages with it, which is what the
+    // sentence on that button already promised.
+    pageFrames: pageFrameStore,
+    allowPrivateHosts: resolveComputerAllowPrivateHosts,
+    token: resolveComputerToken,
+  }),
+  { pageFrames: pageFrameStore },
+);
 
 /**
  * What a Bot can reach beyond its own computer.
@@ -968,6 +1131,24 @@ const workflowEngineRef = (): WorkflowEngine => {
   return workflowEngineInstance;
 };
 
+const mcpEnhancementStore = createMcpEnhancementStore({
+  storage: createPgMcpEnhancementStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+});
+await mcpEnhancementStore.ensure();
+
+const appPackageStore = createAppPackageStore({
+  storage: createPgAppPackageStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+  auditStore: bootAuditStore,
+});
+await appPackageStore.ensure();
+
+const appSandboxRunner = createAppSandboxRunner({
+  store: appPackageStore,
+  extractImages: (content) => extractValidatedMcpImages(content).images,
+});
+
 const pluginStore = createPluginStore({
   database,
   auditStore: bootAuditStore,
@@ -975,6 +1156,7 @@ const pluginStore = createPluginStore({
   encryptionKey: config.keyEncryptionKey,
   policy: () => policyStore.get(),
   approvalGate: approvalService.gate,
+  enhancements: mcpEnhancementStore,
   // A connector send to other people asks the owner first. See plugins/share-target.ts.
   privateShareCheck: createPrivateShareCheck({
     approvals: approvalService.store,
@@ -1145,7 +1327,9 @@ void recordAuditEvent(bootAuditStore, {
  * A shared provider is a fine way to run on a laptop, but the shared isolation state must be visible
  * rather than inferred.
  */
-const isolation = describeComputerIsolation(computerProvider);
+const isolation = describeComputerIsolation(
+  hasConfiguredComputer() ? computerProvider : undefined,
+);
 
 void recordAuditEvent(bootAuditStore, {
   eventType: "computer.isolation_loaded",
@@ -1160,7 +1344,7 @@ void recordAuditEvent(bootAuditStore, {
 console.info(
   JSON.stringify({
     type: "computer-isolation",
-    provider: computerProvider ? computerProvider.name : "none",
+    provider: hasConfiguredComputer() ? computerProvider.name : "none",
     isolation: isolation.isolation,
     ...(isolation.warning ? { warning: isolation.warning } : {}),
   }),
@@ -1255,8 +1439,11 @@ const resolveRuntimeConnection = () =>
     };
   });
 
+const contextPolicyStore = createContextPolicyStore(database);
+await contextPolicyStore.ensure();
 const modelCatalog = createModelCatalogService({
   resolveConnection: () => modelSettings.resolve(),
+  resolveContextOverrides: () => contextPolicyStore.list(),
 });
 // 不认识的模型（走 Anthropic 协议的非 Claude 模型）按目录里的 max_output_tokens 定输出上限，别被截在 4096。
 setModelOutputLimitResolver(
@@ -1277,11 +1464,17 @@ setModelFallbackList(() => modelFallbacks.models());
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
 // compactHistory 无调用者，是 Hermes 时代的遗留链路，待决定删除或接回。
-setModelContextWindowResolver(
-  async (modelId) =>
-    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
-      ?.contextWindow,
-);
+setModelContextWindowResolver(async (modelId) => {
+  const override = await contextPolicyStore.get(modelId).catch(() => null);
+  if (override) return override.contextWindowTokens;
+  return (await modelCatalog.list()).models.find(
+    (entry) => entry.id === modelId,
+  )?.contextWindow;
+});
+setModelSummaryThresholdResolver(async (modelId) => {
+  const override = await contextPolicyStore.get(modelId).catch(() => null);
+  return override?.summaryThresholdTokens;
+});
 // 内核按目录的 supportsImages 处理图片/文档块（经 modelInfo 下发；QA1102-14）：没说就当能看。
 setModelVisionResolver(
   async (modelId) =>
@@ -1355,7 +1548,7 @@ const runtimeToolBinding: import("./agents/dsh-runtime").RuntimeToolBinding = {
       !imConnection ||
       (!imUntrusted && imService?.allowsDevices(imConnection) === true);
     const computer =
-      computerGateway && allowDevices && canUseComputer(profile, actor)
+      hasConfiguredComputer() && allowDevices && canUseComputer(profile, actor)
         ? createHeadlessComputerTools({
             gateway: computerGateway,
             botId: scope.botId,
@@ -1381,7 +1574,9 @@ const runtimeToolBinding: import("./agents/dsh-runtime").RuntimeToolBinding = {
           components: componentStore,
           sandboxed: sandboxedStore,
           interactions: conversationInteractions,
-          ...(computerGateway && allowDevices && canUseComputer(profile, actor)
+          ...(hasConfiguredComputer() &&
+          allowDevices &&
+          canUseComputer(profile, actor)
             ? {
                 computer: {
                   gateway: computerGateway,
@@ -1620,36 +1815,37 @@ const deviceToolsFor = async (
       .catch(() => null);
     // device_upload / device_download：机器人自己的云端工作区（和聊天文件同一个通道）。
     const gateway = computerGateway;
-    const workspace = gateway?.writeBytes
-      ? {
-          write: async (path: string, bytes: Buffer) => {
-            if (!gateway.writeBytes) {
-              throw new Error("computerGateway.writeBytes is unavailable.");
-            }
-            await gateway.writeBytes(
-              botId,
-              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
-              { path, base64: bytes.toString("base64") },
-            );
-            return true;
-          },
-          read: async (path: string) => {
-            const file = await gateway.downloadFile(
-              botId,
-              { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
-              { path },
-            );
-            if (file.bytes > 200 * 1024 * 1024) {
-              await file.body.cancel().catch(() => {});
-              throw new Error(`文件 ${path} 超过 200 MB。`);
-            }
-            return {
-              bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
-              name: file.name,
-            };
-          },
-        }
-      : undefined;
+    const workspace =
+      hasConfiguredComputer() && gateway.writeBytes
+        ? {
+            write: async (path: string, bytes: Buffer) => {
+              if (!gateway.writeBytes) {
+                throw new Error("computerGateway.writeBytes is unavailable.");
+              }
+              await gateway.writeBytes(
+                botId,
+                { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+                { path, base64: bytes.toString("base64") },
+              );
+              return true;
+            },
+            read: async (path: string) => {
+              const file = await gateway.downloadFile(
+                botId,
+                { id: actorId, userId: actorId, initiator: PERSON_INITIATOR },
+                { path },
+              );
+              if (file.bytes > 200 * 1024 * 1024) {
+                await file.body.cancel().catch(() => {});
+                throw new Error(`文件 ${path} 超过 200 MB。`);
+              }
+              return {
+                bytes: Buffer.from(await new Response(file.body).arrayBuffer()),
+                name: file.name,
+              };
+            },
+          }
+        : undefined;
     return deviceTools({
       store: deviceStore,
       hub: deviceHub,
@@ -1685,14 +1881,14 @@ await botAvatars.ensure();
 // 浏览器收藏夹（DESIGN §95）：每个用户一份，推给机器人浏览器的起始页。
 const browserBookmarks = createBrowserBookmarks(database, {
   agents: agentProfileStore,
-  ...(computerGateway?.startLinks
+  ...(computerGateway.startLinks
     ? {
-        pushStartLinks: (
+        pushStartLinks: async (
           botId: string,
           links: { title: string; url: string }[],
         ) => {
-          if (!computerGateway.startLinks) {
-            throw new Error("computerGateway.startLinks is unavailable.");
+          if (!hasConfiguredComputer() || !computerGateway.startLinks) {
+            return { ok: false, count: 0 };
           }
           return computerGateway.startLinks(botId, links);
         },
@@ -1718,10 +1914,6 @@ const personalNotifications = createPersonalNotifications({
   database,
   sources: personalSources,
   publicUrl: config.rawPublicUrl,
-});
-const speechService = createSpeechService({
-  getConfig: () => config.speech ?? {},
-  ...(config.rawPublicUrl ? { publicOrigin: config.rawPublicUrl } : {}),
 });
 const hostNotificationSweep = createHostNotifications({
   updaterDir: config.updaterDir,
@@ -1751,6 +1943,21 @@ deliveryNotifications = async (scope, input) => {
         state: "staging_failed",
       }),
     );
+  }
+  if (replyNotifierRef) {
+    await replyNotifierRef
+      .notifyReply({
+        userId: scope.ownerUserId,
+        channelId: scope.channelId,
+        agentId: scope.agentId,
+        messageId: input.id,
+        text: input.text,
+        kind:
+          input.kind === "approval" || input.kind === "question"
+            ? "needs-input"
+            : "task-complete",
+      })
+      .catch(() => {});
   }
 };
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
@@ -1819,7 +2026,7 @@ const chatFiles = createChatFiles(database, {
     (await agentProfileStore
       .get(await actorFor(owner), bot)
       .catch(() => null)) !== null,
-  ...(computerGateway?.writeBytes
+  ...(computerGateway.writeBytes
     ? {
         workspace: {
           write: async (
@@ -1828,8 +2035,8 @@ const chatFiles = createChatFiles(database, {
             path: string,
             bytes: Buffer,
           ) => {
-            if (!computerGateway.writeBytes) {
-              throw new Error("computerGateway.writeBytes is unavailable.");
+            if (!hasConfiguredComputer() || !computerGateway.writeBytes) {
+              return false;
             }
             await computerGateway.writeBytes(
               bot,
@@ -1839,6 +2046,9 @@ const chatFiles = createChatFiles(database, {
             return true;
           },
           read: async (owner: string, bot: string, path: string) => {
+            if (!hasConfiguredComputer()) {
+              throw new Error("未配置云端电脑执行节点。");
+            }
             const file = await computerGateway.downloadFile(
               bot,
               { id: owner, userId: owner, initiator: PERSON_INITIATOR },
@@ -1859,6 +2069,244 @@ const chatFiles = createChatFiles(database, {
 });
 await pages.ensure();
 await chatFiles.ensure();
+const chunkedUploads = createChunkedUploadService({
+  ownsBot: async (owner, bot) => {
+    const profile = await agentProfileStore
+      .get(await actorFor(owner), bot)
+      .catch(() => null);
+    return Boolean(profile && !profile.deletedAt);
+  },
+  commitFile: (owner, agentId, file) =>
+    chatFiles.store(owner, agentId, {
+      kind: "upload",
+      name: file.name,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+    }),
+});
+const botLibrary = createBotLibraryService({
+  database,
+  chatFiles,
+  profiles: agentProfileStore,
+});
+await botLibrary.ensure();
+const webSearchSettings = createWebSearchSettingsStore(database, {
+  encryptionKey: config.keyEncryptionKey,
+  builtinSearch: (query, count, signal, timeoutMs) =>
+    searchWeb(query, count, signal, { timeoutMs }),
+});
+await webSearchSettings.ensure();
+const webhookPanelStore = createPgWebhookPanelStore({
+  database,
+  responsibilities: responsibilityStore,
+  triggers: responsibilityTriggerStore,
+  resolveDirectChannel: async (actor, agentId) => ({
+    channelId: (await channelStore.direct(actor, agentId)).id,
+  }),
+});
+const speechSettings = createSpeechSettingsStore(database, {
+  encryptionKey: config.keyEncryptionKey,
+  ...(config.speech ? { envSpeechConfig: config.speech } : {}),
+});
+await speechSettings.ensure();
+const speechService = createSpeechService({
+  getConfig: () => speechSettings.resolveConfig(),
+  settingsStore: speechSettings,
+  persistAudio: (actorId, agentId, file) =>
+    chatFiles.upload(actorId, agentId, {
+      name: file.name,
+      bytes: file.bytes,
+    }),
+  ...(config.rawPublicUrl ? { publicOrigin: config.rawPublicUrl } : {}),
+});
+// Wave 4：自适应难度路由 + 细粒度用量账本 + 按需脱敏观测器 + Harness 开关台 + 多角色提示词工作台。
+const routingLogStorage = createPgRoutingLogStorage(database);
+const usageBreakdownService = createUsageBreakdownService(
+  createPgUsageBreakdownStorage(database),
+);
+const modelObservationService = createModelObservationService();
+const harnessSettingsService = createHarnessSettingsService(
+  createPgHarnessSettingsStorage(database),
+);
+const desktopBrowserBridge = createDesktopBrowserBridge({
+  deviceStore,
+  hub: deviceHub,
+  getHarnessFlags: () => harnessSettingsService.currentFlags(),
+});
+const promptWorkbenchStore = createPromptWorkbenchStore(
+  createPgPromptWorkbenchStorage(database),
+);
+await Promise.all([
+  routingLogStorage.ensure(),
+  usageBreakdownService.ensure(),
+  harnessSettingsService.ensure(),
+  promptWorkbenchStore.ensure(),
+]);
+const adaptiveRouter = createAdaptiveRouter({
+  getPolicy: async () =>
+    routingLogStorage.readPolicy(
+      (await resolveRuntimeConnection()).model.defaultModel,
+    ),
+  getDefaultModel: async () =>
+    (await resolveRuntimeConnection()).model.defaultModel,
+  resolveClassifierConnection: async () => {
+    const resolved = await modelSettings.resolve();
+    return {
+      provider: resolved.provider,
+      baseUrl: resolved.baseUrl,
+      apiKey: resolved.apiKey,
+      useApiKey: resolved.useApiKey,
+    };
+  },
+  onDecisionLog: (payload) => routingLogStorage.appendLog(payload),
+  onClassifierUsage: async (usage) => {
+    await usageBreakdownService.record({
+      ownerUserId: usage.ownerUserId ?? DEV_ACTOR.id,
+      kind: "classifier",
+      modelId: usage.model,
+      effort: "default",
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens,
+    });
+  },
+});
+
+/** 多模态创作模型池（多生图/多参考图/视频生成与理解/AI 生成 Bot 头像）。 */
+const mediaPool = createMediaPoolService(database, {
+  encryptionKey: config.keyEncryptionKey,
+  agents: agentProfileStore,
+  botAvatars,
+  shrinkAvatarBytes: (bytes) => shrinkAvatarImageToJpeg(bytes),
+  storeFile: (owner, agentId, file) =>
+    chatFiles.store(owner, agentId, {
+      kind: file.kind,
+      name: file.name,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+      prompt: file.prompt ?? null,
+      model: file.model ?? null,
+    }),
+  getFileView: async (owner, fileId) => {
+    const found = await chatFiles.row(owner, fileId, false);
+    return found ? fileView(found) : null;
+  },
+  loadFile: async (owner, agentId, source, opts) => {
+    const ref = source?.trim() ?? "";
+    const id = ref.replace(/^.*\/api\/chat-files\//, "").replace(/[?#].*$/, "");
+    if (/^[0-9a-f-]{36}$/i.test(id)) {
+      const found = await chatFiles.row(owner, id, true);
+      if (!found?.bytes) return null;
+      return {
+        id: found.id,
+        name: found.name,
+        mimeType: found.mime_type,
+        bytes: Buffer.from(found.bytes),
+      };
+    }
+    if (!ref) {
+      const recent = await chatFiles.list(owner, agentId, {
+        imagesOnly: opts?.kind === "image",
+        limit: 20,
+      });
+      const hit =
+        opts?.kind === "video"
+          ? recent.find((item) =>
+              item.mimeType.toLowerCase().startsWith("video/"),
+            )
+          : recent[0];
+      if (!hit) return null;
+      const found = await chatFiles.row(owner, hit.id, true);
+      if (!found?.bytes) return null;
+      return {
+        id: found.id,
+        name: found.name,
+        mimeType: found.mime_type,
+        bytes: Buffer.from(found.bytes),
+      };
+    }
+    if (!hasConfiguredComputer() || !computerGateway.downloadFile) return null;
+    const wsFile = await computerGateway
+      .downloadFile(
+        agentId,
+        {
+          id: owner,
+          userId: owner,
+          initiator: opts?.initiator ?? PERSON_INITIATOR,
+        },
+        { path: ref },
+      )
+      .catch(() => null);
+    const MAX_WORKSPACE_MEDIA_BYTES = 20 * 1024 * 1024;
+    if (!wsFile || wsFile.bytes > MAX_WORKSPACE_MEDIA_BYTES) {
+      if (wsFile) await wsFile.body.cancel().catch(() => {});
+      return null;
+    }
+    const reader = wsFile.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_WORKSPACE_MEDIA_BYTES) {
+          await reader.cancel().catch(() => {});
+          return null;
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const wsBytes = Buffer.concat(chunks, totalBytes);
+    const lower = wsFile.name.toLowerCase();
+    const mimeType = lower.endsWith(".mp4")
+      ? "video/mp4"
+      : lower.endsWith(".webm")
+        ? "video/webm"
+        : lower.endsWith(".mov")
+          ? "video/quicktime"
+          : "application/octet-stream";
+    return {
+      id: null,
+      name: wsFile.name,
+      mimeType,
+      bytes: wsBytes,
+    };
+  },
+  fallbackGenerateImage: async (actorId, agentId, prompt) => {
+    const chosen = await chatFiles.media.imageFor(actorId).catch(() => null);
+    if (!chosen) return null;
+    const file = await chatFiles.makeImage(actorId, agentId, {
+      prompt,
+      aspect: "1:1",
+    });
+    const saved = await chatFiles.row(actorId, file.id, true);
+    if (!saved?.bytes) return null;
+    return { bytes: Buffer.from(saved.bytes), model: chosen.config.model };
+  },
+  fallbackVisionModel: async (owner, agentId) => {
+    const vision = await chatFiles.media
+      .visionFor(owner, agentId)
+      .catch(() => null);
+    return vision?.kind === "model" ? vision.config : null;
+  },
+  transcribeVideoAudio: async (bytes, mimeType, name) => {
+    try {
+      const res = await speechService.transcribeAudio({
+        data: bytes,
+        mimeType,
+        fileName: name,
+      });
+      return res.text || null;
+    } catch {
+      return null;
+    }
+  },
+});
+await mediaPool.ensure();
 /** 频道聊天的上传也存进机器人工作区 uploads/（CB-046，DESIGN.md §68），和旧 /bot 一样。 */
 setChannelUploadMirror(
   createChannelUploadMirror({
@@ -1872,27 +2320,59 @@ setChannelUploadMirror(
     upload: (owner, agentId, file) => chatFiles.upload(owner, agentId, file),
   }),
 );
-/** 技能（DESIGN.md §51）：用户自己的 + 部署共享的，所有机器人按需加载，不用逐个授权。 */
+/** 技能（DESIGN.md §51）：用户自己的 + 部署共享的，所有机器人按需加载，不用逐个授权；接入不可变版本栈与多文件只读包。 */
+const skillVersions = createSkillVersionStore(database);
+await skillVersions.ensure();
 const chisaSkills = createChisaSkills({
   store: pluginStore,
   actorFor: async (userId) => {
     const actor = await actorFor(userId);
     return { id: actor.id, isAdmin: actor.role === "admin" };
   },
+  versionStore: skillVersions,
 });
+let sharingService: SharingService | undefined;
+/** 微应用访问与执行归属判定：管理员可使用全站已批准微应用，普通用户仅限本人提交并经管理员审批通过的微应用。 */
+const canActorAccessApp = async (
+  actorId: string,
+  app: { createdBy: string },
+): Promise<boolean> => {
+  const actor = await actorFor(actorId);
+  if (actor.role === "admin") return true;
+  return app.createdBy === actor.id;
+};
 // 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
+// 当轮实际装载的工具名集合由 agent-resolver 在单次 resolveRegisteredAgents 作用域内传入，避免跨上下文串味。
 const loadPersonalMemoryForActor =
-  (ownerUserId: string): LoadPersonalMemory =>
+  (
+    ownerUserId: string,
+    getAvailableToolNames?: (botId: string) => ReadonlySet<string> | undefined,
+  ): LoadPersonalMemory =>
   async (botId, question, options) => {
     const personalMemory = createPersonalMemoryLoader(memoryNotes, ownerUserId);
+    const availableToolNames = getAvailableToolNames?.(botId);
     return (
       await Promise.all([
         currentDateContext(),
         personalMemory(botId, question, options).catch(() => ""),
-        chisaSkills.catalog(ownerUserId, question).catch(() => ""),
+        chisaSkills
+          .catalog(
+            ownerUserId,
+            question,
+            availableToolNames ? { availableToolNames } : undefined,
+          )
+          .catch(() => ""),
+        buildActiveAppSkillsPrompt({
+          store: appPackageStore,
+          availableToolNames: availableToolNames ?? new Set<string>(),
+          canExposeApp: (app) => canActorAccessApp(ownerUserId, app),
+        }).catch(() => ""),
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
         chatFiles.guidance(ownerUserId, botId).catch(() => ""),
+        botLibrary
+          .buildBotLibraryPromptSection(ownerUserId, botId)
+          .catch(() => ""),
         confirmations.context(ownerUserId, botId).catch(() => ""),
       ])
     )
@@ -1928,7 +2408,7 @@ const loadToolsForActor =
     const offerMcpAdd =
       !imConnection && !isPanelRefresh && chatActor?.role === "admin";
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
-    const rawTools = [
+    const rawTools: GrantedTool[] = [
       ...(stripOwnerPrivate
         ? []
         : confirmations.tools(actorId, botId, initiator)),
@@ -1952,7 +2432,14 @@ const loadToolsForActor =
           )),
       // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板与 IM 隔离回合不给。
       ...(stripOwnerPrivate ? [] : fleetAudit.tools(actorId)),
-      ...(isPanelRefresh ? [] : chisaSkills.tools(actorId, botId)),
+      ...(isPanelRefresh
+        ? []
+        : chisaSkills.tools(actorId, botId, {
+            availableToolNames: () => rawTools.flatMap((t) => [t.name, t.ref]),
+          })),
+      ...(!stripOwnerPrivate && sharingService
+        ? sharingService.tools(actorId, botId)
+        : []),
       ...(stripOwnerPrivate ? [] : vault.tools(actorId, botId, initiator)),
       ...(stripOwnerPrivate
         ? []
@@ -1962,7 +2449,12 @@ const loadToolsForActor =
       ...(isPanelRefresh
         ? []
         : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
-      ...(config.speech?.tts && !isPanelRefresh ? speechService.tools() : []),
+      ...(isPanelRefresh || stripOwnerPrivate
+        ? []
+        : await mediaPool.tools(actorId, botId, initiator).catch(() => [])),
+      ...(!isPanelRefresh && (await speechService.isTtsReady())
+        ? speechService.tools({ actorId, agentId: botId })
+        : []),
       ...(await grantedTools({
         store: pluginStore,
         botId,
@@ -1974,8 +2466,15 @@ const loadToolsForActor =
       ...(config.generativeUi && !imConnection
         ? renderUiTools({ replySources: config.replySources === true })
         : []),
-      // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
-      ...webTools(),
+      // 内置联网（web_search / web_fetch）：支持多供应商与按模型覆写（native 模式关闭内置搜改走模型原生联网）。
+      ...(await webToolsForModel({
+        settings: webSearchSettings,
+        modelId:
+          (await agentModels.resolveModel(botId).catch(() => null)) ??
+          (
+            await modelSettings.resolve().catch(() => null)
+          )?.model,
+      })),
       // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
       // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
       ...connectServiceTools({
@@ -2021,6 +2520,91 @@ const loadToolsForActor =
         },
         offerMcpAdd,
       }),
+      // 内置 app-builder 3 工具（指南 / 静态预检 / 只入目录草稿不执行）+ 已审阅批准的沙箱微应用工具（带归属/角色与摘要锚定治理及审计）。
+      ...(!imUntrusted && !isPanelRefresh
+        ? createAppBuilderTools({
+            store: appPackageStore,
+            actorId,
+            isAdmin: async () => (await actorFor(actorId)).role === "admin",
+          })
+        : []),
+      ...(!imUntrusted && !isPanelRefresh
+        ? await createApprovedAppTools({
+            store: appPackageStore,
+            runner: appSandboxRunner,
+            botId,
+            actorId,
+            canExposeApp: (app) => canActorAccessApp(actorId, app),
+            authorize: async (call) => {
+              const detail = await appPackageStore
+                .get(call.appId)
+                .catch(() => null);
+              if (
+                !detail?.installed ||
+                !detail.enabled ||
+                detail.approvedDigest !== call.digest ||
+                detail.currentDigest !== call.digest
+              ) {
+                await recordAuditEvent(bootAuditStore, {
+                  eventType: "mcp.call_rejected",
+                  targetType: "app_package",
+                  targetId: `${call.appId}/${call.toolName}`,
+                  actorUserId: call.actorId,
+                  initiator,
+                  payload: {
+                    bot: call.botId,
+                    appId: call.appId,
+                    digest: call.digest,
+                    tool: call.toolName,
+                    reason: "digest_or_state_invalid",
+                  },
+                }).catch(() => {});
+                return {
+                  allowed: false,
+                  reason:
+                    "该微应用已被停用或发生版本变更，需经管理员重新审阅当前摘要后方可调用。",
+                };
+              }
+              const permitted = await canActorAccessApp(call.actorId, detail);
+              if (!permitted) {
+                await recordAuditEvent(bootAuditStore, {
+                  eventType: "mcp.call_rejected",
+                  targetType: "app_package",
+                  targetId: `${call.appId}/${call.toolName}`,
+                  actorUserId: call.actorId,
+                  initiator,
+                  payload: {
+                    bot: call.botId,
+                    appId: call.appId,
+                    digest: call.digest,
+                    tool: call.toolName,
+                    reason: "actor_not_authorized",
+                  },
+                }).catch(() => {});
+                return {
+                  allowed: false,
+                  reason:
+                    "当前账号无权调用此微应用（仅管理员或该微应用创建者可调用）。",
+                };
+              }
+              await recordAuditEvent(bootAuditStore, {
+                eventType: "mcp.call_succeeded",
+                targetType: "app_package",
+                targetId: `${call.appId}/${call.toolName}`,
+                actorUserId: call.actorId,
+                initiator,
+                payload: {
+                  bot: call.botId,
+                  appId: call.appId,
+                  digest: call.digest,
+                  tool: call.toolName,
+                  effect: call.effect,
+                },
+              }).catch(() => {});
+              return { allowed: true };
+            },
+          })
+        : []),
       // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
       // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
       // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
@@ -2690,7 +3274,7 @@ const governedTurnRunner = createTurnRunner({
   checkQuota: checkTurnQuota,
   buildAgentFor,
   toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-    if (!computerGateway) return [];
+    if (!hasConfiguredComputer()) return [];
     const actor = await actorFor(ownerUserId);
     const profile = await agentProfileStore.get(actor, agentId);
     if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -2718,7 +3302,7 @@ const workerComputerTools = async ({
   agentId: string;
   initiator: AuditInitiator;
 }) => {
-  if (!computerGateway) return [];
+  if (!hasConfiguredComputer()) return [];
   const actor = await actorFor(ownerUserId);
   const profile = await agentProfileStore.get(actor, agentId);
   if (!profile || !canUseComputer(profile, actor)) return [];
@@ -2897,10 +3481,25 @@ try {
         count: interrupted,
       }),
     );
-  deviceHub.setExtension(localAgents.extension);
+  deviceHub.setExtension({
+    onMessage: async (record, message) => {
+      if (await desktopBrowserBridge.handleDeviceMessage(record, message)) {
+        return;
+      }
+      await localAgents?.extension.onMessage?.(record, message);
+    },
+    onHello: (record) => localAgents?.extension.onHello?.(record),
+    gate: (record, operation, args) =>
+      localAgents?.extension.gate?.(record, operation, args) ?? null,
+  });
 } catch (error) {
   console.warn("local agents unavailable", error);
   localAgents = undefined;
+  deviceHub.setExtension({
+    onMessage: async (record, message) => {
+      await desktopBrowserBridge.handleDeviceMessage(record, message);
+    },
+  });
 }
 /** 群聊（频道）的对话不给委派：交回结果要走频道的记录，这一版只做机器人私聊。 */
 /**
@@ -3609,6 +4208,10 @@ const actorAgentResolver = createActorAgentResolver({
     admit: quotaService.admit,
     recordUsage: quotaService.recordUsage,
   },
+  adaptiveRouter,
+  modelObserver: modelObservationService,
+  usageBreakdown: usageBreakdownService,
+  promptWorkbench: promptWorkbenchStore,
   describeImageForActor: (actorId) => async (agentId, part) => {
     const vision = await chatFiles.media
       .visionFor(actorId, agentId)
@@ -3839,7 +4442,7 @@ const responsibilityEngine: ResponsibilityEngine = createResponsibilityEngine({
         const actor = await actorFor(context.ownerUserId);
         // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
         const computer =
-          computerGateway &&
+          hasConfiguredComputer() &&
           canUseComputer(
             await agentProfileStore
               .get(actor, context.agentId)
@@ -4003,7 +4606,7 @@ const approvalComputerTools = async (
   if (!profile)
     throw new ApprovalRefusedError("That Bot is no longer available to you.");
   // A Team Bot's teammate uses the Bot, not its owner's signed-in computer.
-  return computerGateway && canUseComputer(profile, actor)
+  return hasConfiguredComputer() && canUseComputer(profile, actor)
     ? createHeadlessComputerTools({
         gateway: computerGateway,
         botId: agentId,
@@ -4336,7 +4939,7 @@ const wakeUpRunner = createWakeUpRunner({
     checkQuota: checkTurnQuota,
     buildAgentFor,
     toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-      if (!computerGateway) return [];
+      if (!hasConfiguredComputer()) return [];
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -4401,7 +5004,7 @@ const groupConversations = createGroupConversations({
     checkQuota: checkTurnQuota,
     buildAgentFor,
     toolsForTurn: async ({ ownerUserId, agentId, initiator }) => {
-      if (!computerGateway) return [];
+      if (!hasConfiguredComputer()) return [];
       const actor = await actorFor(ownerUserId);
       const profile = await agentProfileStore.get(actor, agentId);
       if (!profile) throw new Error("That Bot is not available to this owner.");
@@ -4810,7 +5413,518 @@ repeatAfterEach(async () => {
 // running computer is kept on "allow all" (the upstream default with no organization row).
 startEgressPolicyPush({
   ...(computerProvider ? { provider: computerProvider } : {}),
-  ...(config.computer?.token ? { token: config.computer.token } : {}),
+  token: resolveComputerToken,
+});
+
+const demonstrationStore = createDemonstrationStore();
+
+const pushService = createPushService({
+  store: deliveryStore,
+  encryptionKey: config.keyEncryptionKey,
+});
+const replyNotifier = createReplyNotifier({
+  foregroundRegistry,
+  getFrequency: async (userId) =>
+    (await userPreferencesStore.read(userId)).notificationFrequency,
+  resolveAgentName: async (_userId, agentId) =>
+    (await agentProfileStore.record?.(agentId))?.name ?? null,
+  pushService,
+  onInAppNotification: (userId, event) => {
+    channelEvents.deliverNotification?.(userId, event);
+  },
+});
+replyNotifierRef = replyNotifier;
+// 启动基线：将已有频道最近一条 Bot 消息写入去重基线，防止重启或重连时重发旧回复。
+try {
+  const baselineRows = await database
+    .select({
+      userId: channelMemberships.userId,
+      channelId: channels.id,
+      agentId: channels.lastMessageAgentId,
+      lastMessageAt: channels.lastMessageAt,
+    })
+    .from(channels)
+    .innerJoin(
+      channelMemberships,
+      eq(channelMemberships.channelId, channels.id),
+    )
+    .where(
+      and(
+        isNull(channels.deletedAt),
+        sql`${channels.lastMessageAgentId} is not null`,
+        sql`${channels.lastMessageAt} is not null`,
+      ),
+    )
+    .limit(2000);
+  await replyNotifier.seedBaseline(
+    baselineRows.flatMap((row) =>
+      row.agentId && row.lastMessageAt
+        ? [
+            {
+              userId: row.userId,
+              agentId: row.agentId,
+              messageId: `${row.channelId}:${row.lastMessageAt.toISOString()}`,
+            },
+          ]
+        : [],
+    ),
+  );
+} catch {
+  await replyNotifier.seedBaseline([]);
+}
+
+const quickIntents = createQuickIntents({
+  agentProfileStore,
+  channelStore,
+  getMainBotId: async (userId) =>
+    (await userPreferencesStore.read(userId)).mainBotId,
+  dispatchTurn: async ({
+    actor,
+    agent,
+    channelId,
+    threadId,
+    messageId,
+    clientNonce,
+    text,
+  }) => {
+    const outcome = await governedTurnRunner({
+      ownerUserId: actor.id,
+      routineId: `intent:${clientNonce}`,
+      agentId: agent.id,
+      threadId,
+      instruction: text,
+      initiator: PERSON_INITIATOR,
+      userMessage: {
+        id: messageId,
+        role: "user",
+        content: text,
+      },
+    });
+    const replyAt = new Date();
+    if (outcome.replyText) {
+      await channelStore
+        .recordActivity(
+          actor,
+          channelId,
+          { text: outcome.replyText, agentId: agent.id, at: replyAt },
+          { id: messageId },
+        )
+        .catch(() => {});
+      await replyNotifier
+        .notifyReply({
+          userId: actor.id,
+          channelId,
+          agentId: agent.id,
+          agentName: agent.name,
+          messageId: `${channelId}:${replyAt.toISOString()}`,
+          text: outcome.replyText,
+          kind: "task-complete",
+          createdAt: replyAt.toISOString(),
+        })
+        .catch(() => {});
+    }
+    return { replyText: outcome.replyText };
+  },
+});
+
+const sharingCheckpoints = createPgShareImportStore(database);
+sharingService = createSharingService({
+  checkpoints: sharingCheckpoints,
+  actorFor: async (userId) => {
+    const actor = await actorFor(userId);
+    return {
+      id: actor.id,
+      role: actor.role === "admin" ? "admin" : "user",
+    };
+  },
+  adapters: {
+    async getBot(actor, botId) {
+      const profile = await agentProfileStore.get(actor, botId);
+      if (!profile) return null;
+      return {
+        name: profile.name,
+        title: profile.title,
+        roleDescription: profile.roleDescription,
+        avatarSeed: profile.avatarSeed,
+      };
+    },
+    async createBot(actor, profile) {
+      const created = await agentProfileStore.create(actor, {
+        name: profile.name.slice(0, 80),
+        title: (profile.title || profile.name).slice(0, 120),
+        roleDescription: (
+          profile.roleDescription ||
+          profile.title ||
+          profile.name
+        ).slice(0, 1000),
+        visibility: "private",
+        ...(profile.roleDescription.trim()
+          ? { systemPrompt: profile.roleDescription.trim() }
+          : {}),
+      });
+      return { id: created.id, name: created.name };
+    },
+    async listSkills(actor) {
+      const rows = await chisaSkills.visible(actor.id);
+      const filesBySlug = await Promise.all(
+        rows.map(
+          async (row) =>
+            [
+              row.slug,
+              await skillVersions.listSkillFiles(row.slug).catch(() => []),
+            ] as const,
+        ),
+      );
+      const fileMap = new Map(filesBySlug);
+      return rows.map((row) => {
+        const aux = fileMap.get(row.slug) ?? [];
+        return {
+          slug: row.slug,
+          title: row.title,
+          summary: row.summary,
+          instructions: row.instructions,
+          ownerUserId: row.ownerUserId,
+          ...(row.requiresTools && row.requiresTools.length > 0
+            ? { requiresTools: row.requiresTools }
+            : {}),
+          ...(aux.length > 0
+            ? {
+                files: aux.map((f) => ({
+                  path: f.path,
+                  content: f.content,
+                  sha256: f.sha256,
+                  bytes: f.bytes,
+                })),
+              }
+            : {}),
+        };
+      });
+    },
+    skillOwner: (slug) => pluginStore.skillOwner(slug),
+    async installSkill(actor, skill, reason) {
+      // 纵深防御：写入前复验归属，杜绝越权覆盖他人或部署共享技能
+      const existingOwner = await pluginStore.skillOwner(skill.slug);
+      const canWrite =
+        existingOwner === undefined ||
+        existingOwner === actor.id ||
+        (actor.role === "admin" && existingOwner === null);
+      if (!canWrite) {
+        throw new SharePackageError("无权覆盖他人或共享技能。", 403);
+      }
+      enforceSkillSafety({
+        slug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+      });
+      await pluginStore.installSkill({
+        slug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+        ownerUserId:
+          existingOwner === null && actor.role === "admin" ? null : actor.id,
+        by: actor.id,
+      });
+      await skillVersions.recordRevision({
+        skillSlug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+        ...(skill.requiresTools ? { requiresTools: skill.requiresTools } : {}),
+        author: actor.id,
+        reason,
+      });
+      if (skill.files && skill.files.length > 0) {
+        await skillVersions.setSkillFiles(
+          skill.slug,
+          skill.files.map((f) => ({ path: f.path, content: f.content })),
+          actor.id,
+        );
+      }
+    },
+    async listSchedules(ownerUserId, botId) {
+      const rows = await schedules.list(ownerUserId, {
+        agentId: botId,
+        includeEnded: false,
+      });
+      return rows.map((item) => ({
+        title: item.title,
+        instruction: item.instruction,
+        kind: item.kind,
+        cron: item.cron,
+        timezone: item.timezone,
+      }));
+    },
+    async createPausedSchedule(actor, botId, schedule) {
+      let targetBotId = botId;
+      if (!targetBotId) {
+        targetBotId = await primaryAgentService
+          .resolveForBackground(actor.id)
+          .catch(() => null);
+      }
+      if (!targetBotId) {
+        const profiles = await agentProfileStore.list(actor);
+        targetBotId = profiles[0]?.id ?? null;
+      }
+      if (!targetBotId) {
+        throw new SharePackageError(
+          "当前账号下没有可用机器人，无法导入定时任务。",
+          400,
+        );
+      }
+      const current = await botThreads
+        .current(actor.id, targetBotId)
+        .catch(() => null);
+      const threadId = current?.threadId
+        ? current.threadId
+        : (await channelStore.direct(actor, targetBotId)).threadId;
+      const cronExpr =
+        schedule.kind === "cron" && schedule.cron?.trim()
+          ? schedule.cron.trim()
+          : "0 9 * * *";
+      try {
+        const paused = await schedules.create({
+          owner: actor.id,
+          agentId: targetBotId,
+          threadId,
+          title: schedule.title,
+          instruction: schedule.instruction,
+          when: { repeat: "cron", cron: cronExpr },
+          ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
+          paused: true,
+        });
+        return { id: paused.id, enabled: false };
+      } catch (error) {
+        if (error instanceof ScheduleError) {
+          throw new SharePackageError(error.message, 400);
+        }
+        throw error;
+      }
+    },
+    async listCandidateMemories(ownerUserId, botId) {
+      const notes = await memoryNotes.search(ownerUserId, "", undefined, 200, {
+        agentId: botId,
+      });
+      return notes.map((note) => ({
+        id: note.id,
+        kind: note.kind,
+        subject: note.subject,
+        content: note.content,
+        context: note.context,
+        createdAt: new Date(note.created_at).toISOString(),
+      }));
+    },
+    async createMemory(actor, botId, memory) {
+      const allowedKinds = new Set([
+        "profile",
+        "preference",
+        "person",
+        "project",
+        "place",
+        "daily",
+        "note",
+      ]);
+      const kind = (
+        allowedKinds.has(memory.kind) ? memory.kind : "note"
+      ) as Parameters<typeof memoryNotes.create>[1]["kind"];
+      const created = await memoryNotes.create(
+        actor.id,
+        {
+          kind,
+          subject: memory.subject ?? null,
+          content: memory.content,
+          context: memory.context ?? null,
+          visibility: "private",
+        },
+        botId,
+        actor.role === "admin",
+      );
+      return { id: created.note.id };
+    },
+    async listBotDependencies(_actor, botId) {
+      const servers = await pluginStore.listServers();
+      const deps = [];
+      for (const server of servers) {
+        const matched = server.tools.filter(
+          (t) => server.autoGrantAll === true || t.grantedTo.includes(botId),
+        );
+        if (matched.length === 0) continue;
+        deps.push({
+          pluginId: server.id,
+          name: server.title,
+          ...(server.vendor ? { vendor: server.vendor } : {}),
+          ...(server.summary ? { summary: server.summary } : {}),
+          tools: matched.map((t) => `${server.id}/${t.name}`),
+        });
+      }
+      return deps;
+    },
+    async listInstalledPlugins() {
+      const servers = await pluginStore.listServers();
+      return servers.map((server) => ({
+        pluginId: server.id,
+        name: server.title,
+        tools: server.tools.map((t) => `${server.id}/${t.name}`),
+      }));
+    },
+  },
+});
+await sharingService.ensure();
+
+// Wave 7：全链路双向实时语音通话（独立流式 PCM TTS + 复用主 Bot 上下文与工具链 + 仅已播报入史）。
+await database.$client.unsafe(`
+  CREATE TABLE IF NOT EXISTS chisabot_voice_turns (
+    turn_id text PRIMARY KEY,
+    call_id text NOT NULL,
+    user_id text NOT NULL,
+    bot_id text NOT NULL,
+    channel_id text NOT NULL,
+    user_text text NOT NULL,
+    spoken_text text NOT NULL DEFAULT '',
+    draft_text text,
+    interrupted boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+`);
+const voiceStreamTts = createVoiceStreamTts({
+  resolveConfig: async () => (await speechSettings.resolveConfig()).tts,
+});
+const voiceCallService = createVoiceCallService({
+  checkReady: async () => {
+    const status = await speechService.statusView();
+    return { asrReady: status.asrReady, ttsReady: status.ttsReady };
+  },
+  resolveTargetChannel: async (actor, botId, channelId) => {
+    const profile = await agentProfileStore.get(actor, botId);
+    if (!profile || profile.deletedAt) return null;
+    if (channelId) {
+      const existing = await channelStore
+        .get(actor, channelId)
+        .catch(() => null);
+      if (!existing?.agentIds.includes(botId)) return null;
+      return { channelId: existing.id };
+    }
+    const direct = await channelStore.direct(actor, botId);
+    return { channelId: direct.id };
+  },
+  transcribe: async ({ wav, signal }) =>
+    speechService.transcribeAudio({
+      data: wav,
+      mimeType: "audio/wav",
+      fileName: "voice-turn.wav",
+      signal,
+    }),
+  synthesizeStream: (input) => voiceStreamTts.stream(input),
+  runBotTurn: async ({
+    botId,
+    userId,
+    channelId,
+    turnId,
+    text,
+    signal,
+    onTextDelta,
+  }) => {
+    const actor = await actorFor(userId);
+    const channel =
+      (await channelStore.get(actor, channelId).catch(() => null)) ??
+      (await channelStore.direct(actor, botId));
+    let previousText = "";
+    const result = await governedTurnRunner({
+      ownerUserId: userId,
+      routineId: `voice:${turnId}`,
+      agentId: botId,
+      threadId: channel.threadId,
+      instruction: text,
+      initiator: PERSON_INITIATOR,
+      signal,
+      userMessage: {
+        id: `voice-u-${turnId}`,
+        role: "user",
+        content: text,
+      } as Message,
+      onText: (accumulated) => {
+        if (accumulated.length <= previousText.length) return;
+        const delta = accumulated.startsWith(previousText)
+          ? accumulated.slice(previousText.length)
+          : accumulated;
+        previousText = accumulated;
+        if (delta) onTextDelta(delta);
+      },
+    });
+    return { replyText: result.replyText };
+  },
+  recordSpokenTurn: async (record) => {
+    await database.$client.unsafe(
+      `INSERT INTO chisabot_voice_turns
+        (turn_id, call_id, user_id, bot_id, channel_id, user_text, spoken_text, draft_text, interrupted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (turn_id) DO UPDATE SET
+        spoken_text = EXCLUDED.spoken_text,
+        draft_text = EXCLUDED.draft_text,
+        interrupted = EXCLUDED.interrupted`,
+      [
+        record.turnId,
+        record.callId,
+        record.userId,
+        record.botId,
+        record.channelId,
+        record.userText,
+        record.spokenText,
+        record.draftText ?? null,
+        record.interrupted,
+      ],
+    );
+    const actor = await actorFor(record.userId);
+    const channel = await channelStore
+      .get(actor, record.channelId)
+      .catch(() => null);
+    if (channel && record.interrupted && record.draftText) {
+      // 单事务 + 行锁 + owner_user_id 校验：仅裁剪本回合（至下一条 user 消息前）的助手消息，绝不跨回合篡改后续轮次。
+      await database.$client
+        .begin(async (tx) => {
+          const rows = await tx.unsafe<{ messages: Message[] }[]>(
+            "SELECT messages FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2 AND run_id IS NULL FOR UPDATE",
+            [channel.threadId, record.userId],
+          );
+          const current = rows[0]?.messages;
+          if (!Array.isArray(current)) return;
+          const { updated, changed } = trimInterruptedVoiceTurnMessages(
+            current,
+            record.turnId,
+            record.spokenText,
+          );
+          if (!changed) return;
+          await tx.unsafe(
+            "UPDATE chisabot_local_threads SET messages = $3::text::jsonb, updated_at = now() WHERE id = $1 AND owner_user_id = $2 AND run_id IS NULL",
+            [channel.threadId, record.userId, JSON.stringify(updated)],
+          );
+        })
+        .catch(() => {});
+    }
+    if (record.spokenText.trim()) {
+      await channelStore
+        .recordActivity(
+          actor,
+          record.channelId,
+          {
+            text: record.spokenText.slice(0, 500),
+            agentId: record.botId,
+            at: new Date(),
+          },
+          { id: `voice-spoken:${record.turnId}` },
+        )
+        .catch(() => {});
+    }
+  },
+  ...(config.auth?.trustedOrigins
+    ? { trustedOrigins: config.auth.trustedOrigins }
+    : {}),
+});
+
+const federationService = createFederationService({
+  encryptionKey: config.keyEncryptionKey,
+  ...(config.publicUrl ? { hostUrl: config.publicUrl } : {}),
 });
 
 const app = createApp(
@@ -4904,7 +6018,8 @@ const app = createApp(
         },
       ),
       ...(!imUntrusted ? fleetAudit.tools(actorId) : []),
-      ...chisaSkills.tools(actorId, botId),
+      // skill_* 工具统一走下方 imUntrustedScopeStore.run(imUntrusted, loadToolsForActor) 实时构造可用工具集，
+      // 既消除跨上下文缓存串味，也防止重启冷启动绕过 requiresTools 动态隐身。
       ...(!imUntrusted
         ? vault.tools(actorId, botId, initiator ?? undefined)
         : []),
@@ -4924,6 +6039,14 @@ const app = createApp(
             .tools(actorId, botId, initiator ?? undefined)
             .catch(() => [])
         : []),
+      ...(!imUntrusted &&
+      /^(media_pool_list$|image_generate_multi$|video_generate$|video_inspect$)/.test(
+        name,
+      )
+        ? await mediaPool
+            .tools(actorId, botId, initiator ?? undefined)
+            .catch(() => [])
+        : []),
       ...(!imUntrusted && name === "session_search"
         ? createSessionSearchTools({
             database,
@@ -4933,7 +6056,12 @@ const app = createApp(
               : {}),
           })
         : []),
-      ...(name === "speech_synthesize" ? speechService.tools() : []),
+      ...(name === "speech_synthesize"
+        ? speechService.tools({ actorId, agentId: botId })
+        : []),
+      ...(!imUntrusted && name === "export_bot_template" && sharingService
+        ? sharingService.tools(actorId, botId)
+        : []),
     ].find((candidate) => candidate.name === name);
     if (memory) {
       const text = await memory.execute(args);
@@ -5027,17 +6155,15 @@ const app = createApp(
         profilesDir: config.profilesDir,
         stopWorkers: async (agentId) => workerService?.stopForAgent(agentId),
         retirePanels: async (agentId) => livePanelService.retireBot(agentId),
-        ...(computerGateway
-          ? {
-              forgetComputer: (agentId: string, actor: { id: string }) =>
-                computerGateway.forgetComputer(
-                  agentId,
-                  // 不写 userId：内置管理员不一定是 users 表里的行（审计表外键），是谁记在内容里。
-                  { id: actor.id },
-                  "机器人被删除，它的浏览器（配置文件、登录状态、接管记录）随之删除",
-                ),
-            }
-          : {}),
+        forgetComputer: async (agentId: string, actor: { id: string }) => {
+          if (!hasConfiguredComputer()) return { cleared: false };
+          return computerGateway.forgetComputer(
+            agentId,
+            // 不写 userId：内置管理员不一定是 users 表里的行（审计表外键），是谁记在内容里。
+            { id: actor.id },
+            "机器人被删除，它的浏览器（配置文件、登录状态、接管记录）随之删除",
+          );
+        },
       }),
       activity: createActivityStore(database),
       wakeUps: wakeUpStore,
@@ -5055,6 +6181,7 @@ const app = createApp(
     modelCatalogRefreshMinutes,
     primaryAgentService,
     quotaService,
+    demonstrationStore,
     ...(gatewaySecret
       ? {
           singleUserGuard: createGatewayRequireUser(
@@ -5091,45 +6218,41 @@ const app = createApp(
           gatewayMode: gatewaySecret ? "on" : "off",
           dshRequired: !!config.dshKernel,
           ...(probeConfiguredDsh ? { probeDsh: probeConfiguredDsh } : {}),
-          ...(computerProvider
-            ? {
-                probeComputer: async () => {
-                  try {
-                    // list() proves the provider answers. Do NOT invent a fake bot id:
-                    // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
-                    const list = await computerProvider.list();
-                    let reachable = list.length === 0;
-                    let error: string | undefined;
-                    if (list[0]) {
-                      const status = await computerProvider.status(
-                        list[0].botId,
-                      );
-                      reachable = status.state === "ready";
-                      if (!reachable && status.reason)
-                        error = status.reason.slice(0, 200);
-                    }
-                    return {
-                      // Provider reachable (list worked). Per-bot ready is informational.
-                      ok: true as const,
-                      configured: true as const,
-                      provider: computerProvider.name,
-                      reachable,
-                      running: list.filter((c) => c.status === "running")
-                        .length,
-                      total: list.length,
-                      ...(error ? { error } : {}),
-                    };
-                  } catch (error) {
-                    return {
-                      ok: false,
-                      configured: true as const,
-                      provider: computerProvider.name,
-                      error: reasonWithoutStatement(error),
-                    };
-                  }
-                },
+          probeComputer: async () => {
+            if (!hasConfiguredComputer()) {
+              return { ok: null, configured: false as const };
+            }
+            try {
+              // list() proves the provider answers. Do NOT invent a fake bot id:
+              // agent-computer /health with x-chisabot-bot-id opens a session and 500s.
+              const list = await computerProvider.list();
+              let reachable = list.length === 0;
+              let error: string | undefined;
+              if (list[0]) {
+                const status = await computerProvider.status(list[0].botId);
+                reachable = status.state === "ready";
+                if (!reachable && status.reason)
+                  error = status.reason.slice(0, 200);
               }
-            : {}),
+              return {
+                // Provider reachable (list worked). Per-bot ready is informational.
+                ok: true as const,
+                configured: true as const,
+                provider: computerProvider.name,
+                reachable,
+                running: list.filter((c) => c.status === "running").length,
+                total: list.length,
+                ...(error ? { error } : {}),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                configured: true as const,
+                provider: computerProvider.name,
+                error: reasonWithoutStatement(error),
+              };
+            }
+          },
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
@@ -5141,6 +6264,16 @@ const app = createApp(
         "/api/admin/history-summary-model",
         historySummaryModel.routes(requireUser),
       ],
+      ["/api/admin/context-policies", contextPolicyStore.routes(requireUser)],
+      [
+        "/api/web-search",
+        createWebSearchRoutes({ store: webSearchSettings, requireUser }),
+      ],
+      [
+        "/api/webhooks",
+        createWebhookPanelRoutes({ store: webhookPanelStore, requireUser }),
+      ],
+      ["/api/bots", botLibrary.routes(requireUser)],
       [
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({
@@ -5162,7 +6295,8 @@ const app = createApp(
       ["/api/bot-threads", botThreads.routes(requireUser)],
       ["/api/side-threads", createSideThreadRoutes(sideThreads, requireUser)],
       ["/api/im", readyImService.routes(requireUser)],
-      ["/api/speech", speechService.routes(requireUser)],
+      ["/api/speech", speechService.routes(requireUser, requireAdmin)],
+      ["/api/voice", voiceCallService.routes(requireUser)],
       ["/api/memory-notes", memoryNotes.routes(requireUser)],
       ["/api/bot-avatars", botAvatars.routes(requireUser)],
       ["/api/browser-bookmarks", browserBookmarks.routes(requireUser)],
@@ -5183,9 +6317,13 @@ const app = createApp(
             ],
           ]
         : []),
+      ["/api/chat-files/chunked", chunkedUploads.routes(requireUser)],
       ["/api/chat-files", chatFiles.routes(requireUser)],
+      ["/api/desktop-browser", desktopBrowserBridge.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
+      ["/api/media-pool", mediaPool.routes(requireUser)],
+      ["/api/bots", mediaPool.botAvatarRoutes(requireUser)],
       ["/api/link-preview", linkPreviews.routes(requireUser)],
       [
         "/api/workflows",
@@ -5255,6 +6393,78 @@ const app = createApp(
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
       ],
+      ["/api/push", pushService.routes(requireUser)],
+      ["/api/notifications/foreground", foregroundRegistry.routes(requireUser)],
+      ["/api/intents", quickIntents.routes(requireUser)],
+      [
+        "/api/admin/routing",
+        createRoutingAdminRoutes({
+          storage: routingLogStorage,
+          router: adaptiveRouter,
+          requireUser,
+          getDefaultModel: async () =>
+            (await resolveRuntimeConnection()).model.defaultModel,
+          getProviderKind: async () =>
+            (await resolveRuntimeConnection()).model.provider,
+        }),
+      ],
+      ["/api/usage", usageBreakdownService.routes(requireUser)],
+      ["/api/admin/observation", modelObservationService.routes(requireUser)],
+      ["/api/admin/harness", harnessSettingsService.routes(requireUser)],
+      [
+        "/api/admin/prompts",
+        createPromptWorkbenchRoutes({
+          store: promptWorkbenchStore,
+          requireUser,
+        }),
+      ],
+      ["/api/sharing", createSharingRoutes(sharingService, requireUser)],
+      [
+        "/api/apps",
+        createAppBuilderRoutes({
+          store: appPackageStore,
+          runner: appSandboxRunner,
+          requireUser,
+          encryptionKey: config.keyEncryptionKey,
+          publicUrl: config.publicUrl,
+          appUrl: config.appUrl,
+          resolveSessionUserId: async (headers) => {
+            if (!auth) return DEV_ACTOR.id;
+            const session = await auth.api
+              .getSession({ headers })
+              .catch(() => null);
+            return session?.user?.id ?? null;
+          },
+        }),
+      ],
+      [
+        "/api/mcp-enhancements",
+        createMcpEnhancementRoutes({
+          store: mcpEnhancementStore,
+          requireUser,
+        }),
+      ],
+      [
+        "/api/admin/execution-nodes",
+        executionNodeStore.routes(requireUser),
+      ],
+      [
+        "/api/internal",
+        createInternalQuiesceRoutes({
+          controller: getRuntimeQuiesceController(),
+          ...(config.internalQuiesceToken
+            ? { internalToken: config.internalQuiesceToken }
+            : {}),
+          requireUser,
+        }),
+      ],
+      [
+        "/api/federation",
+        createFederationRoutes({
+          service: federationService,
+          requireUser,
+        }),
+      ],
     ],
   },
 );
@@ -5270,12 +6480,17 @@ const app = createApp(
  * Not a Hono route because an upgrade is not a request/response: Bun hands it over before Hono sees a
  * body, so it is handled in `fetch` ahead of the app.
  */
-const toStreamUrl = (baseUrl: string, botId: string) =>
+const toStreamUrl = (baseUrl: string, botId: string, recordingId?: string) =>
   // The Bot travels in the query, because a websocket upgrade carries no custom header for the
   // computer to read and every call it serves is per Bot. The secret travels the same way and for the
   // same reason, this socket is the one a person can type into, so it is the last thing that should
   // be reachable without it.
-  `${baseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/stream?bot=${encodeURIComponent(botId)}&token=${encodeURIComponent(config.computer?.token ?? "")}`;
+  buildComputerStreamUrl(
+    baseUrl,
+    botId,
+    resolveComputerToken() ?? "",
+    recordingId,
+  );
 
 /** What each proxied socket carries: where to connect inward, and the socket once opened. */
 type StreamData = {
@@ -5284,6 +6499,7 @@ type StreamData = {
   botId: string;
   recordingId?: string;
   inward?: WebSocket;
+  detachLive?: () => void;
 };
 
 /**
@@ -5293,7 +6509,7 @@ type StreamData = {
  * not, rather than either feature quietly taking the slot and breaking the other on connect.
  */
 type ChannelSocket = Parameters<typeof channelSocket.open>[0];
-type SocketData = StreamData | ChannelSocket["data"];
+type SocketData = StreamData | VoiceSocketData | ChannelSocket["data"];
 
 const isProxiedStream = (data: SocketData): data is StreamData =>
   typeof (data as StreamData).upstream === "string";
@@ -5360,6 +6576,25 @@ serve<SocketData>({
         request.headers.get("accept")?.includes("text/event-stream"))
     )
       server.timeout(request, 0);
+    if (
+      url.pathname === VOICE_WS_PATH &&
+      request.headers.get("upgrade")?.toLowerCase() === "websocket"
+    ) {
+      const upgraded = await voiceCallService.prepareUpgrade(request);
+      if (!upgraded.ok) {
+        return new Response(upgraded.message, { status: upgraded.status });
+      }
+      if (
+        server.upgrade(request, {
+          data: upgraded.data,
+          headers: { "sec-websocket-protocol": upgraded.protocol },
+        })
+      ) {
+        return undefined as unknown as Response;
+      }
+      voiceCallService.releaseFailedUpgrade(upgraded.data);
+      return new Response("Expected a WebSocket upgrade.", { status: 400 });
+    }
     const streamBotId = streamPathBotId(url.pathname);
     if (
       streamBotId !== null &&
@@ -5393,9 +6628,19 @@ serve<SocketData>({
        * host was handed the deployment's computer token, which is the case that check was written
        * for. Every acting path already went through the gateway; this one did not.
        */
+      const rawRecording = url.searchParams.get("recording");
+      const recordingId =
+        isValidRecordingId(rawRecording) &&
+        demonstrationStore.isActiveRecording(
+          actor.id,
+          streamBotId,
+          rawRecording,
+        )
+          ? rawRecording
+          : undefined;
       let upstream: string;
       try {
-        const streamBase = computerGateway
+        const streamBase = hasConfiguredComputer()
           ? await computerGateway.locate(streamBotId)
           : undefined;
         if (!streamBase) {
@@ -5403,7 +6648,7 @@ serve<SocketData>({
             status: 503,
           });
         }
-        upstream = toStreamUrl(streamBase, streamBotId);
+        upstream = toStreamUrl(streamBase, streamBotId, recordingId);
       } catch (error) {
         // Said out loud rather than falling back to another Bot's computer, which is the failure this
         // whole path exists to prevent.
@@ -5420,6 +6665,7 @@ serve<SocketData>({
             upstream,
             ownerUserId: actor.id,
             botId: streamBotId,
+            ...(recordingId ? { recordingId } : {}),
           },
         })
       ) {
@@ -5436,6 +6682,10 @@ serve<SocketData>({
     sendPings: true,
     idleTimeout: 120,
     open(ws) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleOpen(ws, ws.data);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.open(asChannelSocket(ws));
         return;
@@ -5459,18 +6709,54 @@ serve<SocketData>({
         return;
       }
       stream.inward = inward;
+      stream.detachLive = liveConnections.track(
+        [stream.ownerUserId, `user:${stream.ownerUserId}`],
+        {
+          kind: "ws",
+          close: (reason) => {
+            try {
+              inward.close();
+            } catch {
+              /* ignore */
+            }
+            try {
+              ws.close(4401, reason ?? "revoked");
+            } catch {
+              /* ignore */
+            }
+          },
+        },
+      );
       // Frames outward, input inward. Buffered by neither side: a frame the browser is too slow for
       // should be dropped, not queued, because a stale frame is worse than a missing one.
       // Bun's ws.send throws when the socket is not OPEN; if a future runtime queues instead,
       // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
+          const payload = String(event.data);
+          if (
+            stream.recordingId &&
+            payload.startsWith('{"type":"demonstration.action"')
+          ) {
+            const action = parseDemonstrationActionFrame(
+              payload,
+              stream.recordingId,
+            );
+            if (action) {
+              demonstrationStore.appendAction(
+                stream.ownerUserId,
+                stream.botId,
+                stream.recordingId,
+                action,
+              );
+            }
+          }
           const buffered = (ws as unknown as { bufferedAmount?: number })
             .bufferedAmount;
           if (typeof buffered === "number" && buffered > 2_000_000) {
             return; // drop stale frame rather than queue forever
           }
-          ws.send(String(event.data));
+          ws.send(payload);
         } catch {
           try {
             inward.close();
@@ -5498,13 +6784,26 @@ serve<SocketData>({
       };
     },
     message(ws, raw) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleMessage(ws, ws.data, raw);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.message(asChannelSocket(ws), raw);
         return;
       }
       if (ws.data.inward?.readyState === 1) ws.data.inward.send(String(raw));
     },
+    pong(ws) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handlePong(ws.data);
+      }
+    },
     close(ws, code, reason) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleClose(ws.data, code, reason);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.close(asChannelSocket(ws), code, reason);
         return;
@@ -5515,6 +6814,8 @@ serve<SocketData>({
           fields: { reason: "ws-close", code },
         });
       }
+      ws.data.detachLive?.();
+      ws.data.detachLive = undefined;
       ws.data.inward?.close();
     },
   },
@@ -5533,6 +6834,8 @@ if (config.singleUser) {
 // so a watch-mode restart does not leave two behind on every reload.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    getRuntimeQuiesceController().markQuiescing();
+    liveConnections.closeAll("shutdown");
     void flushOpsMetrics().catch(() => {});
     responsibilitySweep.stop();
     livePanelService.stop();
@@ -5547,6 +6850,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     personResponseSweep.stop();
     groupSweep.stop();
     void Promise.allSettled([
+      voiceCallService.closeAll(),
+      Promise.resolve(voiceStreamTts.close()),
+      appSandboxRunner.shutdown(),
       imService?.stopAll() ?? Promise.resolve(),
       channelActivityListener.stop(),
       policyListener.stop(),
@@ -5554,6 +6860,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       workOfferedListener?.stop() ?? Promise.resolve(),
       Promise.resolve(retentionSweeps.stop()),
       Promise.resolve(draftSweeps.stop()),
+      chunkedUploads.dispose().catch(() => {}),
+      Promise.resolve(desktopBrowserBridge.dispose()),
     ]).finally(() => process.exit(0));
   });
 }

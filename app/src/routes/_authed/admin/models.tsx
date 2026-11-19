@@ -1,14 +1,10 @@
-import { IconCheck, IconKey, IconNetwork } from "@tabler/icons-react";
-import { useAsyncAction } from "@/components/ui/async-action";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ImageDefaultCard,
-  VisionDefaultCard,
-} from "@/components/settings/media-models";
-import { FallbackModelsCard } from "@/components/settings/fallback-models";
-import { HistorySummaryModelCard } from "@/components/settings/history-summary-model";
-import { ErrorCard } from "@/components/ui/skyglass";
-import { mediaAdminQueryOptions } from "@/lib/media-models";
+  IconAdjustmentsHorizontal,
+  IconCheck,
+  IconKey,
+  IconNetwork,
+} from "@tabler/icons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
@@ -16,7 +12,18 @@ import {
   PageShell,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { ContextPolicyPanel } from "@/components/settings/context-policy-panel";
+import { FallbackModelsCard } from "@/components/settings/fallback-models";
+import { HistorySummaryModelCard } from "@/components/settings/history-summary-model";
+import {
+  ImageDefaultCard,
+  VisionDefaultCard,
+} from "@/components/settings/media-models";
+import { MediaPoolSettingsSection } from "@/components/settings/media-pool-settings";
 import { PooledApiKeysSection } from "@/components/settings/pooled-api-keys";
+import { SpeechSettingsSection } from "@/components/settings/speech-settings";
+import { WebSearchSettingsSection } from "@/components/settings/web-search-settings";
+import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -33,13 +40,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ErrorCard } from "@/components/ui/skyglass";
+import { mediaAdminQueryOptions } from "@/lib/media-models";
 import {
   type ModelSettingsCurrent,
   type ModelSettingsDraft,
   type ModelSettingsErrors,
-  type PooledKeyDraft,
   modelSettingsInput,
   modelSettingsValidation,
+  type PooledKeyDraft,
   pooledKeyDraftKey,
   pooledKeyDraftsFromCurrent,
 } from "@/lib/model-settings/form";
@@ -77,6 +86,15 @@ function ModelSettingsPage() {
           >
             <IconNetwork />
             {"Magpie 网关"}
+          </Button>
+          <Button
+            nativeButton={false}
+            render={<Link to="/admin/enterprise" />}
+            size="sm"
+            variant="outline"
+          >
+            <IconAdjustmentsHorizontal />
+            {"白盒工作台"}
           </Button>
         </div>
       }
@@ -121,7 +139,11 @@ function ModelSettingsPage() {
           </PageSection>
         </div>
       ) : null}
+      <ContextPolicyPanel />
       <MediaDefaults />
+      <MediaPoolSettingsSection />
+      <SpeechSettingsSection />
+      <WebSearchSettingsSection />
     </PageShell>
   );
 }

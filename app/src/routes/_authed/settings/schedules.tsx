@@ -25,6 +25,7 @@ import {
   ScheduleRuns,
   statusTone,
 } from "@/components/schedules/schedule-runs";
+import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -289,6 +290,7 @@ function SchedulesPage() {
             </span>
           </PageEmpty>
         )}
+        <WebhooksPanel />
       </PageShell>
     </>
   );
