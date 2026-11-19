@@ -788,6 +788,12 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         description: "friend-up.sh 好友可装包",
         find: "路径二",
       },
+      {
+        id: "share-recipes",
+        title: "Bot 配方与多文件技能包",
+        description: "脱敏导出 ZIP、记忆逐条勾选与断点续导",
+        find: "路径三",
+      },
     ],
   },
 

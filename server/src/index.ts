@@ -339,6 +339,7 @@ import { backfillComposioLogos } from "./plugins/logos";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
 import {
+  type GrantedTool,
   grantedSkills,
   grantedTools,
   REFUSAL_MARKER,
@@ -383,7 +384,14 @@ import { createTriggerStore } from "./responsibilities/triggers";
 import type { Responsibility } from "./responsibilities/types";
 import { createModelCompleter } from "./routing/model";
 import { createSchedules } from "./schedules/service";
+import { createSharingRoutes } from "./sharing/routes";
+import {
+  createPgShareImportStore,
+  createSharingService,
+  type SharingService,
+} from "./sharing/service";
 import { createChisaSkills, enforceSkillSafety } from "./skills-chisa/tools";
+import { createSkillVersionStore } from "./skills-chisa/version-store";
 import {
   createSystemUpdateRoutes,
   createSystemUpdateService,
@@ -2015,24 +2023,50 @@ setChannelUploadMirror(
     upload: (owner, agentId, file) => chatFiles.upload(owner, agentId, file),
   }),
 );
-/** 技能（DESIGN.md §51）：用户自己的 + 部署共享的，所有机器人按需加载，不用逐个授权。 */
+/** 技能（DESIGN.md §51）：用户自己的 + 部署共享的，所有机器人按需加载，不用逐个授权；接入不可变版本栈与多文件只读包。 */
+const skillVersions = createSkillVersionStore(database);
+await skillVersions.ensure();
 const chisaSkills = createChisaSkills({
   store: pluginStore,
   actorFor: async (userId) => {
     const actor = await actorFor(userId);
     return { id: actor.id, isAdmin: actor.role === "admin" };
   },
+  versionStore: skillVersions,
 });
+let sharingService: SharingService | undefined;
+/** 记录每回合最近一次为 (ownerUserId, botId) 组装出的可用工具名集合，用于 requiresTools 技能动态隐身。 */
+const lastTurnToolNames = new Map<string, Set<string>>();
+function rememberTurnToolNames(
+  actorId: string,
+  botId: string,
+  names: Set<string>,
+): void {
+  const key = `${actorId}:${botId}`;
+  if (lastTurnToolNames.has(key)) lastTurnToolNames.delete(key);
+  lastTurnToolNames.set(key, names);
+  if (lastTurnToolNames.size > 500) {
+    const oldest = lastTurnToolNames.keys().next().value;
+    if (oldest !== undefined) lastTurnToolNames.delete(oldest);
+  }
+}
 // 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
 const loadPersonalMemoryForActor =
   (ownerUserId: string): LoadPersonalMemory =>
   async (botId, question, options) => {
     const personalMemory = createPersonalMemoryLoader(memoryNotes, ownerUserId);
+    const availableToolNames = lastTurnToolNames.get(`${ownerUserId}:${botId}`);
     return (
       await Promise.all([
         currentDateContext(),
         personalMemory(botId, question, options).catch(() => ""),
-        chisaSkills.catalog(ownerUserId, question).catch(() => ""),
+        chisaSkills
+          .catalog(
+            ownerUserId,
+            question,
+            availableToolNames ? { availableToolNames } : undefined,
+          )
+          .catch(() => ""),
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
         chatFiles.guidance(ownerUserId, botId).catch(() => ""),
@@ -2071,7 +2105,7 @@ const loadToolsForActor =
     const offerMcpAdd =
       !imConnection && !isPanelRefresh && chatActor?.role === "admin";
     // 有后果的工具（删除 / 付款 / 对外发消息）按审批偏好先出确认卡片（server/src/confirmations）。
-    const rawTools = [
+    const rawTools: GrantedTool[] = [
       ...(stripOwnerPrivate
         ? []
         : confirmations.tools(actorId, botId, initiator)),
@@ -2095,7 +2129,14 @@ const loadToolsForActor =
           )),
       // 车队模型审计（server/src/fleet-audit）：只读，评估每个 bot 的模型是否匹配它的活动；后台刷新面板与 IM 隔离回合不给。
       ...(stripOwnerPrivate ? [] : fleetAudit.tools(actorId)),
-      ...(isPanelRefresh ? [] : chisaSkills.tools(actorId, botId)),
+      ...(isPanelRefresh
+        ? []
+        : chisaSkills.tools(actorId, botId, {
+            availableToolNames: () => rawTools.flatMap((t) => [t.name, t.ref]),
+          })),
+      ...(!stripOwnerPrivate && sharingService
+        ? sharingService.tools(actorId, botId)
+        : []),
       ...(stripOwnerPrivate ? [] : vault.tools(actorId, botId, initiator)),
       ...(stripOwnerPrivate
         ? []
@@ -2191,6 +2232,11 @@ const loadToolsForActor =
         : []),
     ];
     rawTools.push(createInspectToolSchemaTool(() => rawTools));
+    rememberTurnToolNames(
+      actorId,
+      botId,
+      new Set(rawTools.flatMap((t) => [t.name, t.ref])),
+    );
     return confirmations.wrap(rawTools, {
       ownerUserId: actorId,
       agentId: botId,
@@ -5073,6 +5119,233 @@ const quickIntents = createQuickIntents({
   },
 });
 
+const sharingCheckpoints = createPgShareImportStore(database);
+sharingService = createSharingService({
+  checkpoints: sharingCheckpoints,
+  actorFor: async (userId) => {
+    const actor = await actorFor(userId);
+    return {
+      id: actor.id,
+      role: actor.role === "admin" ? "admin" : "user",
+    };
+  },
+  adapters: {
+    async getBot(actor, botId) {
+      const profile = await agentProfileStore.get(actor, botId);
+      if (!profile) return null;
+      return {
+        name: profile.name,
+        title: profile.title,
+        roleDescription: profile.roleDescription,
+        avatarSeed: profile.avatarSeed,
+      };
+    },
+    async createBot(actor, profile) {
+      const created = await agentProfileStore.create(actor, {
+        name: profile.name.slice(0, 80),
+        title: (profile.title || profile.name).slice(0, 120),
+        roleDescription: (
+          profile.roleDescription ||
+          profile.title ||
+          profile.name
+        ).slice(0, 1000),
+        visibility: "private",
+        ...(profile.roleDescription.trim()
+          ? { systemPrompt: profile.roleDescription.trim() }
+          : {}),
+      });
+      return { id: created.id, name: created.name };
+    },
+    async listSkills(actor) {
+      const rows = await chisaSkills.visible(actor.id);
+      const filesBySlug = await Promise.all(
+        rows.map(
+          async (row) =>
+            [
+              row.slug,
+              await skillVersions.listSkillFiles(row.slug).catch(() => []),
+            ] as const,
+        ),
+      );
+      const fileMap = new Map(filesBySlug);
+      return rows.map((row) => {
+        const aux = fileMap.get(row.slug) ?? [];
+        return {
+          slug: row.slug,
+          title: row.title,
+          summary: row.summary,
+          instructions: row.instructions,
+          ownerUserId: row.ownerUserId,
+          ...(row.requiresTools && row.requiresTools.length > 0
+            ? { requiresTools: row.requiresTools }
+            : {}),
+          ...(aux.length > 0
+            ? {
+                files: aux.map((f) => ({
+                  path: f.path,
+                  content: f.content,
+                  sha256: f.sha256,
+                  bytes: f.bytes,
+                })),
+              }
+            : {}),
+        };
+      });
+    },
+    skillOwner: (slug) => pluginStore.skillOwner(slug),
+    async installSkill(actor, skill, reason) {
+      enforceSkillSafety({
+        slug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+      });
+      await pluginStore.installSkill({
+        slug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+        ownerUserId: actor.id,
+        by: actor.id,
+      });
+      await skillVersions.recordRevision({
+        skillSlug: skill.slug,
+        title: skill.title,
+        summary: skill.summary,
+        instructions: skill.instructions,
+        ...(skill.requiresTools ? { requiresTools: skill.requiresTools } : {}),
+        author: actor.id,
+        reason,
+      });
+      if (skill.files && skill.files.length > 0) {
+        await skillVersions.setSkillFiles(
+          skill.slug,
+          skill.files.map((f) => ({ path: f.path, content: f.content })),
+          actor.id,
+        );
+      }
+    },
+    async listSchedules(ownerUserId, botId) {
+      const rows = await schedules.list(ownerUserId, {
+        agentId: botId,
+        includeEnded: false,
+      });
+      return rows.map((item) => ({
+        title: item.title,
+        instruction: item.instruction,
+        kind: item.kind,
+        cron: item.cron,
+        timezone: item.timezone,
+      }));
+    },
+    async createPausedSchedule(actor, botId, schedule) {
+      let targetBotId = botId;
+      if (!targetBotId) {
+        targetBotId = await primaryAgentService
+          .resolveForBackground(actor.id)
+          .catch(() => null);
+      }
+      if (!targetBotId) {
+        const profiles = await agentProfileStore.list(actor);
+        targetBotId = profiles[0]?.id ?? null;
+      }
+      if (!targetBotId) {
+        throw new Error("当前账号下没有可用机器人，无法导入定时任务。");
+      }
+      const current = await botThreads
+        .current(actor.id, targetBotId)
+        .catch(() => null);
+      const threadId = current?.threadId
+        ? current.threadId
+        : (await channelStore.direct(actor, targetBotId)).threadId;
+      const cronExpr =
+        schedule.kind === "cron" && schedule.cron?.trim()
+          ? schedule.cron.trim()
+          : "0 9 * * *";
+      const created = await schedules.create({
+        owner: actor.id,
+        agentId: targetBotId,
+        threadId,
+        title: schedule.title,
+        instruction: schedule.instruction,
+        when: { repeat: "cron", cron: cronExpr },
+        ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
+      });
+      const paused = await schedules.update(actor.id, created.id, {
+        paused: true,
+      });
+      return { id: paused.id, enabled: false };
+    },
+    async listCandidateMemories(ownerUserId, botId) {
+      const notes = await memoryNotes.search(ownerUserId, "", undefined, 200, {
+        agentId: botId,
+      });
+      return notes.map((note) => ({
+        id: note.id,
+        kind: note.kind,
+        subject: note.subject,
+        content: note.content,
+        context: note.context,
+        createdAt: new Date(note.created_at).toISOString(),
+      }));
+    },
+    async createMemory(actor, botId, memory) {
+      const allowedKinds = new Set([
+        "profile",
+        "preference",
+        "person",
+        "project",
+        "place",
+        "daily",
+        "note",
+      ]);
+      const kind = (
+        allowedKinds.has(memory.kind) ? memory.kind : "note"
+      ) as Parameters<typeof memoryNotes.create>[1]["kind"];
+      const created = await memoryNotes.create(
+        actor.id,
+        {
+          kind,
+          subject: memory.subject ?? null,
+          content: memory.content,
+          context: memory.context ?? null,
+          visibility: "private",
+        },
+        botId,
+        actor.role === "admin",
+      );
+      return { id: created.note.id };
+    },
+    async listBotDependencies(_actor, botId) {
+      const servers = await pluginStore.listServers();
+      const deps = [];
+      for (const server of servers) {
+        const matched = server.tools.filter(
+          (t) => server.autoGrantAll === true || t.grantedTo.includes(botId),
+        );
+        if (matched.length === 0) continue;
+        deps.push({
+          pluginId: server.id,
+          name: server.title,
+          ...(server.vendor ? { vendor: server.vendor } : {}),
+          ...(server.summary ? { summary: server.summary } : {}),
+          tools: matched.map((t) => `${server.id}/${t.name}`),
+        });
+      }
+      return deps;
+    },
+    async listInstalledPlugins() {
+      const servers = await pluginStore.listServers();
+      return servers.map((server) => ({
+        pluginId: server.id,
+        name: server.title,
+        tools: server.tools.map((t) => `${server.id}/${t.name}`),
+      }));
+    },
+  },
+});
+await sharingService.ensure();
+
 const app = createApp(
   config,
   auth,
@@ -5164,7 +5437,11 @@ const app = createApp(
         },
       ),
       ...(!imUntrusted ? fleetAudit.tools(actorId) : []),
-      ...chisaSkills.tools(actorId, botId),
+      ...chisaSkills.tools(actorId, botId, {
+        ...(lastTurnToolNames.has(`${actorId}:${botId}`)
+          ? { availableToolNames: lastTurnToolNames.get(`${actorId}:${botId}`) }
+          : {}),
+      }),
       ...(!imUntrusted
         ? vault.tools(actorId, botId, initiator ?? undefined)
         : []),
@@ -5195,6 +5472,9 @@ const app = createApp(
         : []),
       ...(name === "speech_synthesize"
         ? speechService.tools({ actorId, agentId: botId })
+        : []),
+      ...(!imUntrusted && name === "export_bot_template" && sharingService
+        ? sharingService.tools(actorId, botId)
         : []),
     ].find((candidate) => candidate.name === name);
     if (memory) {
@@ -5543,6 +5823,7 @@ const app = createApp(
           requireUser,
         }),
       ],
+      ["/api/sharing", createSharingRoutes(sharingService, requireUser)],
     ],
   },
 );
