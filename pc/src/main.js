@@ -99,6 +99,86 @@ const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 if (!app.requestSingleInstanceLock()) app.quit();
 
+const DEEP_LINK_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+
+function hasControlChar(value) {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** 解析 `chisabot://agent/<id>` 与 `chisabot://channel/<id>[?agent=<id>]` 深链。 */
+function parseDeepLinkUrl(rawUrl) {
+  if (typeof rawUrl !== "string") return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 2048 || hasControlChar(trimmed)) return null;
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol.toLowerCase() !== "chisabot:") return null;
+  if (url.username || url.password || url.hash) return null;
+
+  const host = url.hostname.toLowerCase();
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length !== 1) return null;
+  let id;
+  try {
+    id = decodeURIComponent(segments[0]);
+  } catch {
+    return null;
+  }
+  if (!DEEP_LINK_ID_RE.test(id) || id === "." || id === "..") return null;
+
+  if (host === "agent") {
+    if (url.search) return null;
+    return {
+      kind: "agent",
+      agentId: id,
+      pathname: `/channel/new?agent=${encodeURIComponent(id)}`,
+      raw: trimmed,
+    };
+  }
+  if (host === "channel") {
+    const agentParam = url.searchParams.get("agent")?.trim() || "";
+    if (agentParam && !DEEP_LINK_ID_RE.test(agentParam)) return null;
+    return {
+      kind: "channel",
+      channelId: id,
+      ...(agentParam ? { agentId: agentParam } : {}),
+      pathname: `/channel/${encodeURIComponent(id)}`,
+      raw: trimmed,
+    };
+  }
+  return null;
+}
+
+function extractDeepLinkFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const arg of argv) {
+    if (typeof arg === "string" && /^chisabot:\/\//i.test(arg.trim())) {
+      const parsed = parseDeepLinkUrl(arg);
+      if (parsed) return parsed;
+    }
+  }
+  return null;
+}
+
+try {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("chisabot", process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient("chisabot");
+  }
+} catch {}
+
+let pendingDeepLink = extractDeepLinkFromArgv(process.argv);
+let chatDomReady = false;
+
 let config;
 let agent = null;
 /** 节点最近一次状态说明（例如「设备令牌无效」「设备已被撤销」），托盘和网页设备页用。 */
@@ -310,17 +390,59 @@ function isServerUrl(url) {
   }
 }
 
+function focusMainWindow(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  if (typeof win.moveTop === "function") win.moveTop();
+  win.focus();
+}
+
+function flushPendingDeepLink() {
+  if (!pendingDeepLink) return;
+  const win = windows.chat;
+  if (!win || win.isDestroyed() || chatOffline || !chatDomReady) return;
+  if (!isServerUrl(win.webContents.getURL())) return;
+  const target = pendingDeepLink;
+  pendingDeepLink = null;
+  win.webContents.send("pc:deep-link", {
+    kind: target.kind,
+    ...(target.agentId ? { agentId: target.agentId } : {}),
+    ...(target.channelId ? { channelId: target.channelId } : {}),
+    pathname: target.pathname,
+  });
+  focusMainWindow(win);
+}
+
+function handleDeepLinkUrl(rawUrl) {
+  const target = parseDeepLinkUrl(rawUrl);
+  if (!target) return false;
+  pendingDeepLink = target;
+  if (!app.isReady() || !config) return true;
+  if (!config.get().serverUrl) {
+    openLogin();
+    return true;
+  }
+  if (windows.chat && !windows.chat.isDestroyed() && !chatOffline && chatDomReady) {
+    flushPendingDeepLink();
+    return true;
+  }
+  void openApp(target.pathname);
+  return true;
+}
+
 function openChat(pathname, options) {
   const { serverUrl } = config.get();
   if (!serverUrl) return openLogin();
-  const target = pathname ? `${serverOrigin()}${pathname}` : null;
+  const effectivePath = pathname || pendingDeepLink?.pathname || null;
+  const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
   if (windows.chat && !windows.chat.isDestroyed()) {
     if (target && !chatOffline) windows.chat.loadURL(target);
-    else if (pathname) lastWebPath = pathname;
-    windows.chat.show();
-    windows.chat.focus();
+    else if (effectivePath) lastWebPath = effectivePath;
+    focusMainWindow(windows.chat);
     return windows.chat;
   }
+  chatDomReady = false;
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -378,6 +500,12 @@ function openChat(pathname, options) {
     event.preventDefault();
     if (/^https?:/i.test(url)) shell.openExternal(url);
   });
+  win.webContents.on("did-finish-load", () => {
+    if (isServerUrl(win.webContents.getURL())) {
+      chatDomReady = true;
+      flushPendingDeepLink();
+    }
+  });
   win.webContents.on("did-navigate", (_event, url) => {
     if (loginUrl(url)) return setImmediate(sessionExpired);
     if (isServerUrl(url)) {
@@ -424,6 +552,7 @@ function openChat(pathname, options) {
     }
   });
   win.on("closed", () => {
+    chatDomReady = false;
     windows.chat = null;
     clearInterval(chatRetryTimer);
     cancelChatRetry();
@@ -1466,6 +1595,21 @@ function registerIpc() {
   handleWeb("pc:check-update", async () => (updater ? updater.check() : { supported: false, status: "idle" }));
   // 网页只能把「新版本已下载」的本机窗口叫出来；立即重启要在那个窗口里由本人点。
   handleWeb("pc:install-update", () => openUpdateWindow());
+  handleWeb("pc:focus-window", () => {
+    focusMainWindow(windows.chat);
+    return true;
+  });
+  handleWeb("pc:consume-deep-link", () => {
+    if (!pendingDeepLink) return null;
+    const next = {
+      kind: pendingDeepLink.kind,
+      ...(pendingDeepLink.agentId ? { agentId: pendingDeepLink.agentId } : {}),
+      ...(pendingDeepLink.channelId ? { channelId: pendingDeepLink.channelId } : {}),
+      pathname: pendingDeepLink.pathname,
+    };
+    pendingDeepLink = null;
+    return next;
+  });
   handleWeb("pc:appearance", (value) => {
     const next = { dark: typeof value?.dark === "boolean" ? value.dark : null, sky: value?.sky !== false };
     const prev = config.get().appearance || {};
@@ -1480,7 +1624,18 @@ function registerIpc() {
 
 // ---------- 生命周期 ----------
 
-app.on("second-instance", () => void openApp());
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLinkUrl(url);
+});
+app.on("second-instance", (_event, argv) => {
+  const link = extractDeepLinkFromArgv(argv);
+  if (link) {
+    handleDeepLinkUrl(link.raw);
+    return;
+  }
+  void Promise.resolve(openApp()).then((win) => focusMainWindow(win));
+});
 // macOS：点 Dock 图标把主窗口叫回来（窗口关掉只是隐藏，应用常驻）。
 app.on("activate", () => void openApp());
 app.on("window-all-closed", () => {
@@ -1634,7 +1789,8 @@ app.whenReady().then(() => {
     if (config.getToken()) startAgent();
     // 已登录但没有设备令牌（重装、令牌解不开、旧版配置）：用还有效的会话补登记，不再永远「看不到这台电脑」。
     else void repairDevice();
-    if (!HIDDEN && !config.get().startHidden) void openApp();
+    if (pendingDeepLink) void openApp(pendingDeepLink.pathname);
+    else if (!HIDDEN && !config.get().startHidden) void openApp();
   } else {
     openLogin();
   }

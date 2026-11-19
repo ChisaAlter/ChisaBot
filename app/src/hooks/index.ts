@@ -13,6 +13,10 @@ export {
   useResizeObserver,
 } from "./use-observers";
 export {
+  activeChannelIdFromPath,
+  useReplyNotifications,
+} from "./use-reply-notifications";
+export {
   useAnimationFrame,
   useIdleTask,
   useInterval,

@@ -142,6 +142,7 @@ import {
 } from "./channels/attachments";
 import { startDraftSweeps } from "./channels/drafts";
 import {
+  type ChannelActivityEvent,
   createChannelEventHub,
   startChannelActivityListener,
 } from "./channels/events";
@@ -259,8 +260,15 @@ import {
   users,
 } from "./db/schema";
 import { panelTaskRequests } from "./db/schema/panels";
+import { createForegroundRegistry } from "./delivery/foreground-registry";
 import { createHostNotifications } from "./delivery/host-notifications";
 import { createPersonalNotifications } from "./delivery/personal-notifications";
+import { createPushService } from "./delivery/push-service";
+import { createQuickIntents } from "./delivery/quick-intents";
+import {
+  createReplyNotifier,
+  type ReplyNotifier,
+} from "./delivery/reply-notifier";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
@@ -511,7 +519,43 @@ const channelStore = createChannelStore(
   threadIdentity,
   { localConversations: config.runtime.mode === "local" },
 );
-const channelEvents = createChannelEventHub();
+let replyNotifierRef: ReplyNotifier | undefined;
+const dispatchChannelActivityToNotifier = (event: ChannelActivityEvent) => {
+  if (
+    !replyNotifierRef ||
+    !event.lastMessageAgentId ||
+    !event.lastMessage ||
+    !event.lastMessageAt ||
+    event.deleted ||
+    event.pinned !== undefined ||
+    event.busy !== undefined ||
+    event.summary !== undefined
+  ) {
+    return;
+  }
+  const messageId = `${event.channelId}:${event.lastMessageAt}`;
+  for (const userId of event.memberIds) {
+    void replyNotifierRef
+      .notifyReply({
+        userId,
+        channelId: event.channelId,
+        agentId: event.lastMessageAgentId,
+        messageId,
+        text: event.lastMessage,
+        kind: "reply",
+        createdAt: event.lastMessageAt,
+      })
+      .catch(() => {});
+  }
+};
+const foregroundRegistry = createForegroundRegistry({
+  hasUserLiveConnection: (userId) => channelEvents.connectionCount(userId) > 0,
+});
+const channelEvents = createChannelEventHub({
+  onConnection: (userId, deviceId) =>
+    foregroundRegistry.trackConnection(userId, deviceId),
+  onActivity: dispatchChannelActivityToNotifier,
+});
 // One reset for the profile screen's "重置" and for deleting a Bot, which starts with the same reset.
 const botReset = createBotReset({
   database,
@@ -1754,6 +1798,21 @@ deliveryNotifications = async (scope, input) => {
         state: "staging_failed",
       }),
     );
+  }
+  if (replyNotifierRef) {
+    await replyNotifierRef
+      .notifyReply({
+        userId: scope.ownerUserId,
+        channelId: scope.channelId,
+        agentId: scope.agentId,
+        messageId: input.id,
+        text: input.text,
+        kind:
+          input.kind === "approval" || input.kind === "question"
+            ? "needs-input"
+            : "task-complete",
+      })
+      .catch(() => {});
   }
 };
 /** 页面（DESIGN.md §54）：机器人做的单页网页，/p/<随机串>/ 公开可看（沙箱 CSP），设置 → 页面。 */
@@ -4835,6 +4894,112 @@ startEgressPolicyPush({
 
 const demonstrationStore = createDemonstrationStore();
 
+const pushService = createPushService({
+  store: deliveryStore,
+  encryptionKey: config.keyEncryptionKey,
+});
+const replyNotifier = createReplyNotifier({
+  foregroundRegistry,
+  getFrequency: async (userId) =>
+    (await userPreferencesStore.read(userId)).notificationFrequency,
+  resolveAgentName: async (_userId, agentId) =>
+    (await agentProfileStore.record?.(agentId))?.name ?? null,
+  pushService,
+  onInAppNotification: (userId, event) => {
+    channelEvents.deliverNotification?.(userId, event);
+  },
+});
+replyNotifierRef = replyNotifier;
+// 启动基线：将已有频道最近一条 Bot 消息写入去重基线，防止重启或重连时重发旧回复。
+try {
+  const baselineRows = await database
+    .select({
+      userId: channelMemberships.userId,
+      channelId: channels.id,
+      agentId: channels.lastMessageAgentId,
+      lastMessageAt: channels.lastMessageAt,
+    })
+    .from(channels)
+    .innerJoin(channelMemberships, eq(channelMemberships.channelId, channels.id))
+    .where(
+      and(
+        isNull(channels.deletedAt),
+        sql`${channels.lastMessageAgentId} is not null`,
+        sql`${channels.lastMessageAt} is not null`,
+      ),
+    )
+    .limit(2000);
+  await replyNotifier.seedBaseline(
+    baselineRows.flatMap((row) =>
+      row.agentId && row.lastMessageAt
+        ? [
+            {
+              userId: row.userId,
+              agentId: row.agentId,
+              messageId: `${row.channelId}:${row.lastMessageAt.toISOString()}`,
+            },
+          ]
+        : [],
+    ),
+  );
+} catch {
+  await replyNotifier.seedBaseline([]);
+}
+
+const quickIntents = createQuickIntents({
+  agentProfileStore,
+  channelStore,
+  getMainBotId: async (userId) =>
+    (await userPreferencesStore.read(userId)).mainBotId,
+  dispatchTurn: async ({
+    actor,
+    agent,
+    channelId,
+    threadId,
+    messageId,
+    clientNonce,
+    text,
+  }) => {
+    const outcome = await governedTurnRunner({
+      ownerUserId: actor.id,
+      routineId: `intent:${clientNonce}`,
+      agentId: agent.id,
+      threadId,
+      instruction: text,
+      initiator: PERSON_INITIATOR,
+      userMessage: {
+        id: messageId,
+        role: "user",
+        content: text,
+      },
+    });
+    const replyAt = new Date();
+    if (outcome.replyText) {
+      await channelStore
+        .recordActivity(
+          actor,
+          channelId,
+          { text: outcome.replyText, agentId: agent.id, at: replyAt },
+          { id: messageId },
+        )
+        .catch(() => {});
+      await replyNotifier
+        .notifyReply({
+          userId: actor.id,
+          channelId,
+          agentId: agent.id,
+          agentName: agent.name,
+          messageId: `${channelId}:${replyAt.toISOString()}`,
+          text: outcome.replyText,
+          kind: "task-complete",
+          createdAt: replyAt.toISOString(),
+        })
+        .catch(() => {});
+    }
+    return { replyText: outcome.replyText };
+  },
+});
+
 const app = createApp(
   config,
   auth,
@@ -5280,6 +5445,12 @@ const app = createApp(
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
       ],
+      ["/api/push", pushService.routes(requireUser)],
+      [
+        "/api/notifications/foreground",
+        foregroundRegistry.routes(requireUser),
+      ],
+      ["/api/intents", quickIntents.routes(requireUser)],
     ],
   },
 );

@@ -130,6 +130,8 @@ function client(channels?: ChannelSummary[]) {
     messageListEmphasis: "thread",
     brandAccent: "Chisa",
     brandRest: "Bot",
+    notificationFrequency: "every-reply",
+    notificationSound: "soft-blip",
   });
   if (channels)
     value.setQueryData(channelKeys.list(), {

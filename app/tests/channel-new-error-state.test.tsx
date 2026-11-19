@@ -220,6 +220,8 @@ test("/channel/new keeps a successful empty roster as an empty state, not a fail
     mainBotId: null,
     brandAccent: "Chisa",
     brandRest: "Bot",
+    notificationFrequency: "every-reply",
+    notificationSound: "soft-blip",
   });
 
   const view = renderChannelNew(queryClient);

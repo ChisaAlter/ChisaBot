@@ -7,6 +7,7 @@ import {
 } from "@/components/layout/page-shell";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 
+import { NotificationSettingsSection } from "@/components/settings/notification-settings";
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { useTheme } from "@/components/theme-provider";
@@ -103,6 +104,7 @@ function RouteComponent() {
         </PageRows>
       </PageSection>
       <StandingInstructions />
+      <NotificationSettingsSection />
       {/*
        * Drawn from the same registry the listeners match against, so this list is what the keys
        * actually do rather than what somebody remembered they did. Read-only on purpose: these

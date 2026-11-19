@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +65,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
+import cn.ayase.chisabot.ShareDraft
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,26 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     var loadError by remember(origin) { mutableStateOf<String?>(null) }
     var renewing by remember(origin) { mutableStateOf(false) }
     var web by remember(origin) { mutableStateOf<WebView?>(null) }
+    var pageReady by remember(origin) { mutableStateOf(false) }
+
+    LaunchedEffect(web, vm.pendingWebRoute) {
+        val w = web ?: return@LaunchedEffect
+        if (vm.pendingWebRoute == null) return@LaunchedEffect
+        val consumed = vm.consumePendingWebRoute() ?: return@LaunchedEffect
+        if (consumed.startsWith("/") && !consumed.startsWith("//")) {
+            pageReady = false
+            w.loadUrl(origin + consumed)
+        }
+    }
+
+    LaunchedEffect(web, pageReady, vm.pendingShareDraft) {
+        val w = web ?: return@LaunchedEffect
+        if (!pageReady) return@LaunchedEffect
+        if (originKey(w.url) != originKey(origin)) return@LaunchedEffect
+        if (vm.pendingShareDraft == null) return@LaunchedEffect
+        val draft = vm.consumePendingShareDraft() ?: return@LaunchedEffect
+        injectNativeShareDraft(w, draft)
+    }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var cameraFile by remember { mutableStateOf<File?>(null) }
@@ -245,7 +267,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 }
                                 return true
                             }
-                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { loadError = null }
+                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { loadError = null; pageReady = false }
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                                 if (originKey(url)?.let { it == originKey(origin) } == true) {
                                     val uri = Uri.parse(url)
@@ -258,7 +280,10 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                             }
                             override fun onPageFinished(view: WebView, url: String) {
                                 syncTheme(view, theme)
-                                if (originKey(url) == originKey(origin)) installWebExportCapture(view)
+                                if (originKey(url) == originKey(origin)) {
+                                    installWebExportCapture(view)
+                                    pageReady = true
+                                }
                                 CookieManager.getInstance().flush()
                                 if (originKey(url) == originKey(origin) && Uri.parse(url).path?.startsWith("/login") == true) recoverLogin()
                             }
@@ -372,6 +397,20 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
             }
         }
     }
+}
+
+/** 仅向同源页面注入系统分享草稿，由网页侧 `useReplyNotifications` 预填至输入框或附件草稿。 */
+private fun injectNativeShareDraft(view: WebView, draft: ShareDraft) {
+    val payload = org.json.JSONObject().apply {
+        draft.text?.let { put("text", it) }
+        draft.imageName?.let { put("imageName", it) }
+        draft.imageMime?.let { put("imageMime", it) }
+        draft.imageBase64?.let { put("imageBase64", it) }
+    }.toString()
+    view.evaluateJavascript(
+        "(function(detail){try{window.dispatchEvent(new CustomEvent('chisabot-native-share',{detail:detail}));}catch(e){}})($payload);",
+        null,
+    )
 }
 
 /** 首次使用沿用系统主题；之后由同一网页的设置控制，不能每次导航重写用户选择。 */

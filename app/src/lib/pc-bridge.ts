@@ -66,6 +66,10 @@ export type PcLocalPatch = Partial<
   Pick<PcLocalState, "localPaused" | "forceLocalApproval" | "autoStart" | "startHidden" | "autoUpdate">
 >;
 
+export type PcDeepLink =
+  | { kind: "agent"; agentId: string; pathname: string }
+  | { kind: "channel"; channelId: string; agentId?: string; pathname: string };
+
 export type PcBridge = {
   state(): Promise<PcLocalState>;
   /** 收紧（开启紧急停止 / 开启本机确认）立即生效；放松要在 PC 上本机确认，用户取消时返回的状态不变。 */
@@ -85,6 +89,12 @@ export type PcBridge = {
   checkUpdate?(): Promise<PcUpdateState>;
   /** 新版本已下载时，退出并安装（会先在本机弹确认窗）。 */
   installUpdate?(): Promise<boolean>;
+  /** 响应通知点击等场景，把主窗口从托盘/最小化恢复并置顶聚焦。 */
+  focusWindow?(): Promise<boolean>;
+  /** 拉取窗口就绪前缓冲的 chisabot:// 深链（消费即清空）。 */
+  consumeDeepLink?(): Promise<PcDeepLink | null>;
+  /** 监听主进程转发的 chisabot:// 深链导航事件。 */
+  onDeepLink?(callback: (link: PcDeepLink) => void): () => void;
   onChange(callback: () => void): () => void;
 };
 

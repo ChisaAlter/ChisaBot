@@ -1,5 +1,9 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
+import {
+  NOTIFICATION_FREQUENCIES,
+  NOTIFICATION_SOUNDS,
+} from "../../shared/notifications";
 import type { AgentActor } from "./agents/profile-types";
 import type { AppVariables } from "./auth/guards";
 import { mapPrimaryAgentError } from "./settings/primary-agent-routes";
@@ -16,6 +20,8 @@ const preferencesPatch = z
     mainBotId: z.string().min(1).max(200).nullable().optional(),
     brandAccent: z.string().trim().max(24).optional(),
     brandRest: z.string().trim().max(24).optional(),
+    notificationFrequency: z.enum(NOTIFICATION_FREQUENCIES).optional(),
+    notificationSound: z.enum(NOTIFICATION_SOUNDS).optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0);
 

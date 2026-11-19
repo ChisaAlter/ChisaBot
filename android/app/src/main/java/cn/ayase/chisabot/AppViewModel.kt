@@ -259,7 +259,96 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun enterApp() {
         notice = ""
-        stack.clear(); stack += Screen.Web(webStartPath(), "ChisaBot")
+        val targetPath = consumePendingWebRoute() ?: webStartPath()
+        stack.clear(); stack += Screen.Web(targetPath, "ChisaBot")
+    }
+
+    /** 推送深链或系统分享触发的待导航路径；登录后或 WebView 就绪时自动消费。 */
+    var pendingWebRoute by mutableStateOf<String?>(null)
+        private set
+
+    /** 外部应用 `ACTION_SEND` 分享进来的待预填草稿（文本或图片）。 */
+    var pendingShareDraft by mutableStateOf<ShareDraft?>(null)
+        private set
+
+    fun openWebDeepLink(path: String) {
+        if (!path.startsWith("/") || path.startsWith("//")) return
+        rememberWebPath(path)
+        if (screen is Screen.Web) {
+            pendingWebRoute = path
+        } else if (prefs.getBoolean("loggedIn", true) && !prefs.getString("server", null).isNullOrBlank()) {
+            pendingWebRoute = null
+            stack.clear()
+            stack += Screen.Web(path, "ChisaBot")
+        } else {
+            pendingWebRoute = path
+        }
+    }
+
+    fun consumePendingWebRoute(): String? {
+        val next = pendingWebRoute
+        pendingWebRoute = null
+        return next
+    }
+
+    fun consumePendingShareDraft(): ShareDraft? {
+        val next = pendingShareDraft
+        pendingShareDraft = null
+        return next
+    }
+
+    /** 接收系统分享的文本或图片（限制图片 <= 4MB，在 IO 线程有界读取避免 OOM），带入 WebView 草稿。 */
+    fun receiveSharedContent(text: String?, imageUri: Uri?) {
+        val cleanText = text?.trim()?.take(16_000)?.takeIf { it.isNotEmpty() }
+        if (cleanText == null && imageUri == null) return
+        if (imageUri == null) {
+            pendingShareDraft = ShareDraft(id = UUID.randomUUID().toString(), text = cleanText)
+            if (screen !is Screen.Web && prefs.getBoolean("loggedIn", true) && !prefs.getString("server", null).isNullOrBlank()) {
+                stack.clear(); stack += Screen.Web(webStartPath(), "ChisaBot")
+            }
+            return
+        }
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching {
+                    var name = "shared-image.png"
+                    ctx.contentResolver.query(imageUri, null, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { idx ->
+                                c.getString(idx)?.takeIf { it.isNotBlank() }?.let { name = it }
+                            }
+                        }
+                    }
+                    val mime = guessMime(name, ctx.contentResolver.getType(imageUri))
+                    if (mime !in imageMimes) {
+                        throw IllegalStateException("仅支持分享 PNG、JPEG、GIF 或 WebP 图片。")
+                    }
+                    val maxShareImageBytes = 4 * 1024 * 1024
+                    val bytes = ctx.contentResolver.openInputStream(imageUri)?.use {
+                        readBounded(it, maxShareImageBytes, "分享的图片超过 4 MB，请在对话中手动选择上传。")
+                    } ?: throw IllegalStateException("无法读取分享的图片。")
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    Triple(name, mime, b64)
+                }
+            }
+            loaded.onSuccess { (name, mime, b64) ->
+                pendingShareDraft = ShareDraft(
+                    id = UUID.randomUUID().toString(),
+                    text = cleanText,
+                    imageName = name,
+                    imageMime = mime,
+                    imageBase64 = b64,
+                )
+                if (screen !is Screen.Web && prefs.getBoolean("loggedIn", true) && !prefs.getString("server", null).isNullOrBlank()) {
+                    stack.clear(); stack += Screen.Web(webStartPath(), "ChisaBot")
+                }
+            }.onFailure { err ->
+                notice = err.message ?: "无法导入分享的图片。"
+                if (cleanText != null) {
+                    pendingShareDraft = ShareDraft(id = UUID.randomUUID().toString(), text = cleanText)
+                }
+            }
+        }
     }
 
     fun logout() {

@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import type { ReplyNotificationEvent } from "../../../shared/notifications";
 
 /**
  * Live channel activity, from whoever ran an agent to everybody else in the channel.
@@ -56,26 +57,45 @@ const RESYNC_PAYLOAD = JSON.stringify({
 
 type Send = (payload: string) => void;
 
+export type ChannelEventHubOptions = {
+  /** 连接建立时联动外部在线态追踪（如前台抑制注册表），返回断开时的清理回调。 */
+  onConnection?: (userId: string, deviceId?: string) => () => void;
+  /** 每当本实例收到频道活动事件时回调（例如驱动主动回复通知器）。 */
+  onActivity?: (event: ChannelActivityEvent) => void;
+};
+
 export type ChannelEventHub = {
   /** Attach a connection for a person. Returns the detach. */
-  register(userId: string, send: Send): () => void;
+  register(userId: string, send: Send, deviceId?: string): () => void;
   /** Fan one event out to this instance's own connections. */
   deliver(event: ChannelActivityEvent): void;
+  /** 向某用户的活跃连接实时派发一条主动通知事件（不改写左侧会话列表）。 */
+  deliverNotification?(
+    userId: string,
+    notification: ReplyNotificationEvent,
+  ): void;
   /** Tell every connection to refetch. Everybody, because the lost events named their own members. */
   resyncAll(): void;
   connectionCount(userId: string): number;
 };
 
-export function createChannelEventHub(): ChannelEventHub {
+export function createChannelEventHub(
+  options: ChannelEventHubOptions = {},
+): ChannelEventHub {
   const connections = new Map<string, Set<Send>>();
 
   return {
-    register(userId, send) {
+    register(userId, send, deviceId) {
       const existing = connections.get(userId) ?? new Set<Send>();
       existing.add(send);
       connections.set(userId, existing);
+      const releaseTracked = options.onConnection?.(userId, deviceId);
+      let detached = false;
 
       return () => {
+        if (detached) return;
+        detached = true;
+        releaseTracked?.();
         const remaining = connections.get(userId);
         if (!remaining) return;
         remaining.delete(send);
@@ -94,6 +114,25 @@ export function createChannelEventHub(): ChannelEventHub {
             // A connection that cannot be written to is one that is closing. Its own close handler
             // detaches it; failing here would deny the event to everybody after it in the set.
           }
+        }
+      }
+      try {
+        options.onActivity?.(event);
+      } catch {
+        // 活动观察者异常不影响广播主链路
+      }
+    },
+
+    deliverNotification(userId, notification) {
+      const payload = JSON.stringify({
+        channelId: notification.channelId,
+        replyNotification: notification,
+      });
+      for (const send of connections.get(userId) ?? []) {
+        try {
+          send(payload);
+        } catch {
+          // Closing connection; detached by its own close handler.
         }
       }
     },

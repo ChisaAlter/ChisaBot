@@ -74,6 +74,13 @@ if (isLocalPage) {
       enroll: () => ipcRenderer.invoke("pc:enroll"),
       reconnect: () => ipcRenderer.invoke("pc:reconnect"),
       logout: () => ipcRenderer.invoke("pc:logout"),
+      focusWindow: () => ipcRenderer.invoke("pc:focus-window"),
+      consumeDeepLink: () => ipcRenderer.invoke("pc:consume-deep-link"),
+      onDeepLink(callback) {
+        const listener = (_event, link) => callback(link);
+        ipcRenderer.on("pc:deep-link", listener);
+        return () => ipcRenderer.removeListener("pc:deep-link", listener);
+      },
       onChange(callback) {
         const listener = () => callback();
         ipcRenderer.on("state:changed", listener);

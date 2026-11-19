@@ -2,8 +2,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
-import { type ChannelPage, type ChannelSummary, channelKeys } from "./queries";
+import {
+  emitReplyNotification,
+  getClientDeviceId,
+} from "@/lib/notifications/api";
 import { socketUrl as buildSocketUrl } from "@/lib/socket-url";
+import type { ReplyNotificationEvent } from "../../../../shared/notifications";
+import { type ChannelPage, type ChannelSummary, channelKeys } from "./queries";
 
 /**
  * Keep the roster live.
@@ -91,6 +96,8 @@ export type ChannelActivityEvent = {
    * indicator without disturbing the preview or the order.
    */
   busy?: boolean;
+  /** 服务端主动回复/任务/审批通知事件，由 `useReplyNotifications` 消费，不改写会话列表缓存。 */
+  replyNotification?: ReplyNotificationEvent;
 };
 
 /** The infinite query's cache, which holds pages rather than one array. */
@@ -199,7 +206,10 @@ const FIRST_RETRY_MS = 500;
 const MAX_RETRY_MS = 30_000;
 
 function socketUrl() {
-  return buildSocketUrl("/api/channels/events");
+  const deviceId = getClientDeviceId();
+  return buildSocketUrl(
+    `/api/channels/events?deviceId=${encodeURIComponent(deviceId)}`,
+  );
 }
 
 const activeClients = new WeakSet<object>();
@@ -235,6 +245,11 @@ export function useChannelEvents() {
           // `channelId`, because this message has none.
           if (isResync(parsed)) {
             void queryClient.invalidateQueries({ queryKey: channelKeys.list() });
+            return;
+          }
+
+          if (parsed.replyNotification) {
+            emitReplyNotification(parsed.replyNotification);
             return;
           }
 
