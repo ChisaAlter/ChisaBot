@@ -820,6 +820,22 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         find: "识图模型",
         keywords: ["看图", "vision", "图片理解"],
       },
+      {
+        id: "speech-service",
+        title: "语音服务（ASR / TTS）",
+        description: "语音识别、朗读合成与音色试听配置",
+        find: "语音服务",
+        keywords: [
+          "asr",
+          "tts",
+          "语音",
+          "朗读",
+          "音色",
+          "fish",
+          "whisper",
+          "speech",
+        ],
+      },
     ],
   },
   {

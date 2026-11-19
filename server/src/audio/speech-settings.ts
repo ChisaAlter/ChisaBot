@@ -105,6 +105,21 @@ function normalizeProvider(raw: string | undefined): SpeechTtsProvider {
   return raw === "fish" ? "fish" : "openai";
 }
 
+/** 校验两个端点地址是否同源（协议 + 主机 + 端口一致），防止将旧密钥跨源发往新主机。 */
+export function sameSpeechOrigin(
+  a: string | undefined,
+  b: string | undefined,
+): boolean {
+  const left = a?.trim();
+  const right = b?.trim();
+  if (!left || !right) return false;
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** 严格校验语音服务端点 URL：仅允许 http/https，拒绝 userinfo、query 与 hash。 */
 export function parseSpeechEndpointUrl(raw: string, label: string): string {
   const trimmed = raw.trim();
@@ -228,16 +243,48 @@ export function createSpeechSettingsStore(
     return rows[0] ?? null;
   }
 
-  async function decryptOrFallback(
-    sealed: string | null | undefined,
-    envKey: string | undefined,
-  ): Promise<string | undefined> {
-    if (sealed) {
-      const plaintext = await decryptSecret(options.encryptionKey, sealed);
+  async function resolveScopedKey(params: {
+    explicitKey?: string;
+    targetBaseUrl: string;
+    targetProvider?: SpeechTtsProvider;
+    savedSealed: string | null | undefined;
+    savedBaseUrl: string | undefined;
+    savedProvider?: SpeechTtsProvider;
+    envApiKey: string | undefined;
+    envBaseUrl: string | undefined;
+    envProvider?: SpeechTtsProvider;
+  }): Promise<string | undefined> {
+    const explicit = params.explicitKey?.trim();
+    if (explicit) return explicit;
+
+    const savedProviderMatches =
+      params.targetProvider === undefined ||
+      params.targetProvider === params.savedProvider;
+    if (
+      params.savedSealed &&
+      savedProviderMatches &&
+      sameSpeechOrigin(params.targetBaseUrl, params.savedBaseUrl)
+    ) {
+      const plaintext = await decryptSecret(
+        options.encryptionKey,
+        params.savedSealed,
+      );
       if (plaintext.trim()) return plaintext.trim();
     }
-    const fallback = envKey?.trim();
-    return fallback || undefined;
+
+    const envProviderMatches =
+      params.targetProvider === undefined ||
+      params.targetProvider === params.envProvider;
+    const envSecret = params.envApiKey?.trim();
+    if (
+      envSecret &&
+      envProviderMatches &&
+      sameSpeechOrigin(params.targetBaseUrl, params.envBaseUrl)
+    ) {
+      return envSecret;
+    }
+
+    return undefined;
   }
 
   function buildView(row: SpeechSettingsRow | null): SpeechSettingsView {
@@ -247,14 +294,18 @@ export function createSpeechSettingsStore(
     const asrEnabled = row ? Boolean(row.asr_enabled) : Boolean(asrEnv);
     const asrBaseUrl = row?.asr_base_url.trim() || asrEnv?.baseUrl || "";
     const asrModel = row?.asr_model.trim() || asrEnv?.model || "";
+    const asrEnvMatches =
+      Boolean(asrEnv?.apiKey) && sameSpeechOrigin(asrBaseUrl, asrEnv?.baseUrl);
     const asrKeySource: SpeechKeySource = row?.asr_api_key
       ? "saved"
-      : asrEnv?.apiKey
+      : asrEnvMatches
         ? "environment"
         : "none";
     const asrKeyHint = row?.asr_api_key
       ? row.asr_key_hint
-      : keyHintOf(asrEnv?.apiKey);
+      : asrEnvMatches
+        ? keyHintOf(asrEnv?.apiKey)
+        : "";
 
     const ttsEnabled = row ? Boolean(row.tts_enabled) : Boolean(ttsEnv);
     const ttsProvider = row
@@ -269,14 +320,20 @@ export function createSpeechSettingsStore(
     const ttsSpeed = row
       ? normalizeSpeed(row.tts_speed)
       : normalizeSpeed(ttsEnv?.speed);
+    const ttsEnvMatches =
+      Boolean(ttsEnv?.apiKey) &&
+      sameSpeechOrigin(ttsBaseUrl, ttsEnv?.baseUrl) &&
+      ttsProvider === normalizeProvider(ttsEnv?.provider);
     const ttsKeySource: SpeechKeySource = row?.tts_api_key
       ? "saved"
-      : ttsEnv?.apiKey
+      : ttsEnvMatches
         ? "environment"
         : "none";
     const ttsKeyHint = row?.tts_api_key
       ? row.tts_key_hint
-      : keyHintOf(ttsEnv?.apiKey);
+      : ttsEnvMatches
+        ? keyHintOf(ttsEnv?.apiKey)
+        : "";
 
     return {
       asr: {
@@ -307,13 +364,26 @@ export function createSpeechSettingsStore(
   async function resolveConfig(): Promise<SpeechConfig> {
     const row = await readRow();
     const merged = buildView(row);
+    const savedAsrBaseUrl = row
+      ? row.asr_base_url.trim() || envConfig.asr?.baseUrl || ""
+      : undefined;
+    const savedTtsBaseUrl = row
+      ? row.tts_base_url.trim() || envConfig.tts?.baseUrl || ""
+      : undefined;
+    const savedTtsProvider = row
+      ? normalizeProvider(row.tts_provider)
+      : undefined;
+    const envTtsProvider = normalizeProvider(envConfig.tts?.provider);
 
     let asr: SpeechAsrConfig | undefined;
     if (merged.asr.enabled && merged.asr.baseUrl && merged.asr.model) {
-      const apiKey = await decryptOrFallback(
-        row?.asr_api_key,
-        envConfig.asr?.apiKey,
-      );
+      const apiKey = await resolveScopedKey({
+        targetBaseUrl: merged.asr.baseUrl,
+        savedSealed: row?.asr_api_key,
+        savedBaseUrl: savedAsrBaseUrl,
+        envApiKey: envConfig.asr?.apiKey,
+        envBaseUrl: envConfig.asr?.baseUrl,
+      });
       asr = {
         baseUrl: merged.asr.baseUrl,
         model: merged.asr.model,
@@ -327,10 +397,16 @@ export function createSpeechSettingsStore(
       merged.tts.baseUrl &&
       (merged.tts.provider === "fish" || merged.tts.model)
     ) {
-      const apiKey = await decryptOrFallback(
-        row?.tts_api_key,
-        envConfig.tts?.apiKey,
-      );
+      const apiKey = await resolveScopedKey({
+        targetBaseUrl: merged.tts.baseUrl,
+        targetProvider: merged.tts.provider,
+        savedSealed: row?.tts_api_key,
+        savedBaseUrl: savedTtsBaseUrl,
+        savedProvider: savedTtsProvider,
+        envApiKey: envConfig.tts?.apiKey,
+        envBaseUrl: envConfig.tts?.baseUrl,
+        envProvider: envTtsProvider,
+      });
       const speedFromDb =
         row !== null || envConfig.tts?.speed !== undefined
           ? merged.tts.speed
@@ -402,10 +478,23 @@ export function createSpeechSettingsStore(
     }
 
     const row = await readRow();
+    const prevAsrBaseUrl = row
+      ? row.asr_base_url.trim() || envConfig.asr?.baseUrl || ""
+      : "";
+    const prevTtsBaseUrl = row
+      ? row.tts_base_url.trim() || envConfig.tts?.baseUrl || ""
+      : "";
+    const prevTtsProvider = row
+      ? normalizeProvider(row.tts_provider)
+      : normalizeProvider(envConfig.tts?.provider);
 
-    // 空密钥保留原已存密钥；只有显式 clearApiKey === true 时才清空。
-    let asrSealed = row?.asr_api_key ?? null;
-    let asrKeyHint = row?.asr_key_hint ?? "";
+    // 同源（TTS 同时要求同厂商）且未填新密钥时保留原已存密钥；跨源/切厂商或显式 clearApiKey 时绝不继承旧密钥。
+    const canKeepSavedAsrKey = sameSpeechOrigin(
+      effectiveAsrBaseUrl,
+      prevAsrBaseUrl,
+    );
+    let asrSealed = canKeepSavedAsrKey ? (row?.asr_api_key ?? null) : null;
+    let asrKeyHint = canKeepSavedAsrKey ? (row?.asr_key_hint ?? "") : "";
     const nextAsrKey = input.asr.apiKey?.trim() ?? "";
     if (input.asr.clearApiKey) {
       asrSealed = null;
@@ -415,8 +504,11 @@ export function createSpeechSettingsStore(
       asrKeyHint = keyHintOf(nextAsrKey);
     }
 
-    let ttsSealed = row?.tts_api_key ?? null;
-    let ttsKeyHint = row?.tts_key_hint ?? "";
+    const canKeepSavedTtsKey =
+      sameSpeechOrigin(effectiveTtsBaseUrl, prevTtsBaseUrl) &&
+      input.tts.provider === prevTtsProvider;
+    let ttsSealed = canKeepSavedTtsKey ? (row?.tts_api_key ?? null) : null;
+    let ttsKeyHint = canKeepSavedTtsKey ? (row?.tts_key_hint ?? "") : "";
     const nextTtsKey = input.tts.apiKey?.trim() ?? "";
     if (input.tts.clearApiKey) {
       ttsSealed = null;
@@ -503,10 +595,20 @@ export function createSpeechSettingsStore(
       override?.speed !== undefined
         ? normalizeSpeed(override.speed)
         : merged.tts.speed;
-    const explicitKey = override?.apiKey?.trim();
-    const apiKey =
-      explicitKey ||
-      (await decryptOrFallback(row?.tts_api_key, envConfig.tts?.apiKey));
+    const savedTtsBaseUrl = row
+      ? row.tts_base_url.trim() || envConfig.tts?.baseUrl || ""
+      : undefined;
+    const apiKey = await resolveScopedKey({
+      explicitKey: override?.apiKey,
+      targetBaseUrl: baseUrl,
+      targetProvider: provider,
+      savedSealed: row?.tts_api_key,
+      savedBaseUrl: savedTtsBaseUrl,
+      savedProvider: row ? normalizeProvider(row.tts_provider) : undefined,
+      envApiKey: envConfig.tts?.apiKey,
+      envBaseUrl: envConfig.tts?.baseUrl,
+      envProvider: normalizeProvider(envConfig.tts?.provider),
+    });
     return {
       provider,
       baseUrl,
@@ -528,10 +630,17 @@ export function createSpeechSettingsStore(
     const model =
       override?.model !== undefined ? override.model.trim() : merged.asr.model;
     if (!model) return null;
-    const explicitKey = override?.apiKey?.trim();
-    const apiKey =
-      explicitKey ||
-      (await decryptOrFallback(row?.asr_api_key, envConfig.asr?.apiKey));
+    const savedAsrBaseUrl = row
+      ? row.asr_base_url.trim() || envConfig.asr?.baseUrl || ""
+      : undefined;
+    const apiKey = await resolveScopedKey({
+      explicitKey: override?.apiKey,
+      targetBaseUrl: baseUrl,
+      savedSealed: row?.asr_api_key,
+      savedBaseUrl: savedAsrBaseUrl,
+      envApiKey: envConfig.asr?.apiKey,
+      envBaseUrl: envConfig.asr?.baseUrl,
+    });
     return {
       baseUrl,
       model,

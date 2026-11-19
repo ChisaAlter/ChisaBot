@@ -200,8 +200,8 @@ describe("speech-settings 存储、合并优先级与 URL 校验", () => {
     expect(resolved2.tts?.apiKey).toBe("sk-fish-live-secret-9876");
     expect(resolved2.tts?.voice).toBe("fish-voice-002");
 
-    // 4. 显式 clearApiKey 清空已存密钥后回退 env 密钥
-    await store.save("admin-1", {
+    // 4. 显式 clearApiKey 清空 Fish Audio 已存密钥后，绝不跨源/跨厂商回退到 OpenAI env 密钥
+    const clearedCrossOrigin = await store.save("admin-1", {
       asr: { enabled: false, baseUrl: "", model: "" },
       tts: {
         enabled: true,
@@ -212,8 +212,212 @@ describe("speech-settings 存储、合并优先级与 URL 校验", () => {
         clearApiKey: true,
       },
     });
+    expect(clearedCrossOrigin.ttsKeySource).toBe("none");
+    expect(clearedCrossOrigin.ttsKeyHint).toBe("");
     const resolved3 = await store.resolveConfig();
-    expect(resolved3.tts?.apiKey).toBe("env-tts-secret-2222");
+    expect(resolved3.tts?.apiKey).toBeUndefined();
+
+    // 5. 切回与 env 同源且同厂商（openai + https://env-tts.example/v1）后，正常平滑回退到 env 密钥
+    const sameOriginView = await store.save("admin-1", {
+      asr: { enabled: false, baseUrl: "", model: "" },
+      tts: {
+        enabled: true,
+        provider: "openai",
+        baseUrl: "https://env-tts.example/v1",
+        model: "tts-1",
+        voice: "alloy",
+      },
+    });
+    expect(sameOriginView.ttsKeySource).toBe("environment");
+    expect(sameOriginView.ttsKeyHint).toBe("2222");
+    const resolved4 = await store.resolveConfig();
+    expect(resolved4.tts?.apiKey).toBe("env-tts-secret-2222");
+  });
+
+  test("跨源或切换厂商绝不复用已存密钥或环境变量密钥（含 save/resolveConfig/test-tts/test-asr 与降级路由）", async () => {
+    const fakeDb = makeFakeSpeechDb();
+    const store = createSpeechSettingsStore(fakeDb.database, {
+      encryptionKey: TEST_ENCRYPTION_KEY,
+      envSpeechConfig: {
+        asr: {
+          baseUrl: "https://env-asr.example/v1",
+          model: "whisper-env",
+          apiKey: "env-asr-secret-1111",
+        },
+        tts: {
+          provider: "openai",
+          baseUrl: "https://env-tts.example/v1",
+          model: "tts-env",
+          apiKey: "env-tts-secret-2222",
+        },
+      },
+    });
+    await store.ensure();
+
+    // 保存已存密钥绑定在 saved-asr.example / saved-tts.example（openai）
+    await store.save("admin-1", {
+      asr: {
+        enabled: true,
+        baseUrl: "https://saved-asr.example/v1",
+        model: "whisper-1",
+        apiKey: "db-asr-secret-3333",
+      },
+      tts: {
+        enabled: true,
+        provider: "openai",
+        baseUrl: "https://saved-tts.example/v1",
+        model: "tts-1",
+        voice: "alloy",
+        apiKey: "db-tts-secret-4444",
+      },
+    });
+
+    // 1. resolveForTestTts：同源同厂商复用 DB 密钥；跨源或切换 provider 必须为 undefined
+    const sameTts = await store.resolveForTestTts({
+      provider: "openai",
+      baseUrl: "https://saved-tts.example/v2",
+      model: "tts-1",
+    });
+    expect(sameTts?.apiKey).toBe("db-tts-secret-4444");
+
+    const crossOriginTts = await store.resolveForTestTts({
+      provider: "openai",
+      baseUrl: "https://attacker.example/v1",
+      model: "tts-1",
+    });
+    expect(crossOriginTts?.apiKey).toBeUndefined();
+
+    const switchedProviderTts = await store.resolveForTestTts({
+      provider: "fish",
+      baseUrl: "https://saved-tts.example/v1",
+      model: "s1",
+    });
+    expect(switchedProviderTts?.apiKey).toBeUndefined();
+
+    // 2. resolveForTestAsr：同源复用 DB 密钥；跨源必须为 undefined
+    const sameAsr = await store.resolveForTestAsr({
+      baseUrl: "https://saved-asr.example/v2",
+      model: "whisper-1",
+    });
+    expect(sameAsr?.apiKey).toBe("db-asr-secret-3333");
+
+    const crossOriginAsr = await store.resolveForTestAsr({
+      baseUrl: "https://attacker-asr.example/v1",
+      model: "whisper-1",
+    });
+    expect(crossOriginAsr?.apiKey).toBeUndefined();
+
+    // 3. save() 改配不同 origin 且未填 apiKey 时，既不继承旧 DB 密钥，也不回退跨源 env 密钥
+    const switchedView = await store.save("admin-1", {
+      asr: {
+        enabled: true,
+        baseUrl: "https://new-asr.example/v1",
+        model: "whisper-1",
+      },
+      tts: {
+        enabled: true,
+        provider: "openai",
+        baseUrl: "https://new-tts.example/v1",
+        model: "tts-1",
+        voice: "alloy",
+      },
+    });
+    expect(switchedView.asrKeySource).toBe("none");
+    expect(switchedView.ttsKeySource).toBe("none");
+    const resolvedSwitched = await store.resolveConfig();
+    expect(resolvedSwitched.asr?.apiKey).toBeUndefined();
+    expect(resolvedSwitched.tts?.apiKey).toBeUndefined();
+
+    // 4. 无 settingsStore 降级分支下的 /test-tts 与 /test-asr 同样拦截跨源/切厂商密钥复用
+    const seenAuthHeaders: { url: string; auth: string | null }[] = [];
+    const statelessService = createSpeechService({
+      getConfig: () => ({
+        asr: {
+          baseUrl: "https://env-asr.example/v1",
+          model: "whisper-1",
+          apiKey: "env-only-asr-secret",
+        },
+        tts: {
+          provider: "openai",
+          baseUrl: "https://env-tts.example/v1",
+          model: "tts-1",
+          apiKey: "env-only-tts-secret",
+        },
+      }),
+      transport: async (url, init) => {
+        seenAuthHeaders.push({
+          url,
+          auth: new Headers(init.headers).get("authorization"),
+        });
+        if (url.endsWith("/audio/transcriptions")) {
+          return Response.json({ text: "" });
+        }
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg" },
+        });
+      },
+    });
+    const adminApp = new Hono().route(
+      "/api/speech",
+      statelessService.routes(makeAuthMiddleware("admin"), requireAdmin),
+    );
+
+    // 跨源 test-tts 不得带 Authorization
+    const resCrossTts = await adminApp.request("/api/speech/test-tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "openai",
+        baseUrl: "https://evil-tts.example/v1",
+        model: "tts-1",
+      }),
+    });
+    expect(resCrossTts.status).toBe(200);
+
+    // 同源但切 provider 到 fish 不得带 Authorization
+    const resSwitchProvider = await adminApp.request("/api/speech/test-tts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "fish",
+        baseUrl: "https://env-tts.example/v1",
+        model: "s1",
+      }),
+    });
+    expect(resSwitchProvider.status).toBe(200);
+
+    // 跨源 test-asr 不得带 Authorization
+    const resCrossAsr = await adminApp.request("/api/speech/test-asr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://evil-asr.example/v1",
+        model: "whisper-1",
+      }),
+    });
+    expect(resCrossAsr.status).toBe(200);
+
+    // 同源 test-asr 正常带 Authorization
+    const resSameAsr = await adminApp.request("/api/speech/test-asr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://env-asr.example/v1",
+        model: "whisper-1",
+      }),
+    });
+    expect(resSameAsr.status).toBe(200);
+
+    expect(seenAuthHeaders).toEqual([
+      { url: "https://evil-tts.example/v1/audio/speech", auth: null },
+      { url: "https://env-tts.example/v1/tts", auth: null },
+      { url: "https://evil-asr.example/v1/audio/transcriptions", auth: null },
+      {
+        url: "https://env-asr.example/v1/audio/transcriptions",
+        auth: "Bearer env-only-asr-secret",
+      },
+    ]);
   });
 
   test("严格校验端点 URL：拒绝非 HTTP(S)、userinfo、query 与 hash", async () => {

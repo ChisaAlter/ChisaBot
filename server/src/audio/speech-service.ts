@@ -24,6 +24,7 @@ import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
   parseSpeechEndpointUrl,
+  sameSpeechOrigin,
   type SpeechSettingsStore,
   SpeechSettingsValidationError,
 } from "./speech-settings";
@@ -1481,7 +1482,12 @@ export function createSpeechService(options: {
           const model = data.model ?? current?.model ?? "";
           if (rawBaseUrl && (provider === "fish" || model)) {
             const baseUrl = parseSpeechEndpointUrl(rawBaseUrl, "TTS 接口地址");
-            const apiKey = data.apiKey?.trim() || current?.apiKey;
+            const canReuseCurrentKey =
+              sameSpeechOrigin(baseUrl, current?.baseUrl) &&
+              provider === (current?.provider ?? "openai");
+            const apiKey =
+              data.apiKey?.trim() ||
+              (canReuseCurrentKey ? current?.apiKey : undefined);
             const voice = data.voice ?? current?.voice;
             const speed = data.speed ?? current?.speed;
             ttsOverride = {
@@ -1567,7 +1573,13 @@ export function createSpeechService(options: {
           const model = data.model ?? current?.model ?? "";
           if (rawBaseUrl && model) {
             const baseUrl = parseSpeechEndpointUrl(rawBaseUrl, "ASR 接口地址");
-            const apiKey = data.apiKey?.trim() || current?.apiKey;
+            const canReuseCurrentKey = sameSpeechOrigin(
+              baseUrl,
+              current?.baseUrl,
+            );
+            const apiKey =
+              data.apiKey?.trim() ||
+              (canReuseCurrentKey ? current?.apiKey : undefined);
             asrConfig = {
               baseUrl,
               model,

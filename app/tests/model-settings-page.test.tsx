@@ -105,6 +105,31 @@ beforeEach(() => {
           },
         });
       }
+      if (path === "/api/speech/settings" && method === "GET") {
+        return Response.json({
+          asr: {
+            enabled: false,
+            baseUrl: "",
+            model: "",
+          },
+          tts: {
+            enabled: false,
+            provider: "openai",
+            baseUrl: "",
+            model: "",
+            voice: "alloy",
+            speed: 1,
+          },
+          asrKeySource: "none",
+          asrKeyHint: "",
+          ttsKeySource: "none",
+          ttsKeyHint: "",
+          updatedAt: null,
+        });
+      }
+      if (path.startsWith("/api/speech/voices") && method === "GET") {
+        return Response.json({ voices: [] });
+      }
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       writes.push({ path, body });
       if (path === "/api/admin/model-settings/test") {
