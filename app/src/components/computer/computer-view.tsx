@@ -1,13 +1,32 @@
-import { IconAlertTriangle, IconDeviceDesktop, IconWorld, IconX } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconCopy,
+  IconDeviceDesktop,
+  IconPlayerStopFilled,
+  IconSparkles,
+  IconWorld,
+  IconX,
+} from "@tabler/icons-react";
 import { type CSSProperties, useRef, useState } from "react";
-import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
+import { syncStartLinks } from "@/lib/browser-bookmarks";
+import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
 import {
   browserPresenceCardLabel,
   browserPresenceFootLabel,
   browserPresenceKind,
 } from "@/lib/computers/browser-presence";
 import { CONTROL_UNREACHABLE_ZH, supplySecret } from "@/lib/computers/control";
+import {
+  describeDemonstrationAction,
+  type RecordedDemonstrationAction,
+  type StopDemonstrationResult,
+  startDemonstration,
+  stopDemonstration,
+} from "@/lib/computers/demonstration";
 import {
   readPageFrame,
   readScreenshot,
@@ -16,21 +35,20 @@ import {
 } from "@/lib/computers/screen";
 import {
   applyScreenshotPollResult,
-  screenshotPollBlocked,
   nextScreenshotPollDelay,
+  screenshotPollBlocked,
 } from "@/lib/computers/screenshot-poll";
+import { humanTab, useBrowserTabs } from "@/lib/computers/tabs";
 import { useComputerControl } from "@/lib/computers/use-control";
 import { useComputerStatus } from "@/lib/computers/use-status";
+import { presenceRef } from "@/lib/presence-flag";
 import { ChannelAvatar } from "../channels/avatar";
-import { ComputerControlButton } from "./computer-controls";
-import { syncStartLinks } from "@/lib/browser-bookmarks";
-import { humanTab, useBrowserTabs } from "@/lib/computers/tabs";
-import { BookmarkStar, BookmarksBar } from "./bookmarks-bar";
+import { BookmarksBar, BookmarkStar } from "./bookmarks-bar";
 import { TabStrip } from "./browser-tabs";
+import { ComputerControlButton } from "./computer-controls";
 import { LiveScreen, type LiveScreenController } from "./live-screen";
 import { useElementVisible, usePageVisible } from "./preview-visibility";
 import { useTakeoverFit } from "./takeover-fit";
-import { presenceRef } from "@/lib/presence-flag";
 
 /** Explicit blank-browser URLs use placeholder artwork; missing URL fields are treated as real pages. */
 function isBlankBrowser(shot: Screenshot): boolean {
@@ -648,6 +666,199 @@ export function ComputerView({
    */
   const wheelHere = driving && !settled;
 
+  type CompletedDemonstration = StopDemonstrationResult & {
+    steps: Array<{ uid: string; label: string }>;
+  };
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [recordedCount, setRecordedCount] = useState(0);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoProblem, setDemoProblem] = useState<string | null>(null);
+  const [completedDemo, setCompletedDemo] =
+    useState<CompletedDemonstration | null>(null);
+  const [copiedCompilePrompt, setCopiedCompilePrompt] = useState(false);
+  const stepUidRef = useRef(0);
+  const buildCompletedDemo = (
+    result: StopDemonstrationResult,
+  ): CompletedDemonstration => ({
+    ...result,
+    steps: result.recording.actions.map((action) => ({
+      uid: `${result.recording.id}:${++stepUidRef.current}`,
+      label: describeDemonstrationAction(action),
+    })),
+  });
+  const [demoComputerId, setDemoComputerId] = useState(computerId);
+  if (demoComputerId !== computerId) {
+    setDemoComputerId(computerId);
+    setRecordingId(null);
+    setRecordedCount(0);
+    setDemoProblem(null);
+    setCompletedDemo(null);
+    setCopiedCompilePrompt(false);
+  }
+  useTimeout(
+    () => setCopiedCompilePrompt(false),
+    copiedCompilePrompt ? 2000 : null,
+  );
+  // 录制中途交还或失控时自动停录并保留脱敏摘要，避免用户白录。
+  useExternalConnection(
+    recordingId && !wheelHere ? `${computerId}\0${recordingId}` : null,
+    (_key, signal) => {
+      if (!recordingId) return;
+      const activeId = recordingId;
+      void stopDemonstration(computerId, activeId)
+        .then((result) => {
+          if (signal.aborted) return;
+          setRecordingId(null);
+          setRecordedCount(result.recording.actions.length);
+          setCompletedDemo(buildCompletedDemo(result));
+        })
+        .catch(() => {
+          if (signal.aborted) return;
+          setRecordingId(null);
+        });
+    },
+  );
+  const handleStartDemonstration = async () => {
+    if (!wheelHere || demoBusy || recordingId) return;
+    setDemoBusy(true);
+    setDemoProblem(null);
+    setCompletedDemo(null);
+    setCopiedCompilePrompt(false);
+    try {
+      const session = await startDemonstration(computerId);
+      setRecordingId(session.id);
+      setRecordedCount(0);
+    } catch (error) {
+      setDemoProblem(
+        error instanceof Error ? error.message : "无法开始录制示教。",
+      );
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+  const handleStopDemonstration = async () => {
+    if (!recordingId || demoBusy) return;
+    const activeId = recordingId;
+    setDemoBusy(true);
+    setDemoProblem(null);
+    try {
+      const result = await stopDemonstration(computerId, activeId);
+      setRecordingId(null);
+      setRecordedCount(result.recording.actions.length);
+      setCompletedDemo(buildCompletedDemo(result));
+    } catch (error) {
+      setDemoProblem(
+        error instanceof Error ? error.message : "无法结束录制示教。",
+      );
+      setRecordingId(null);
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+  const handleDemonstrationAction = (_action: RecordedDemonstrationAction) => {
+    setRecordedCount((count) => Math.min(200, count + 1));
+  };
+  const handlePrefillCompilePrompt = () => {
+    if (!completedDemo) return;
+    dispatchComposerPrefill(completedDemo.compilePrompt);
+    if (expanded) {
+      if (wheelHere) void changeControl?.("release");
+      setExpanded(false);
+    }
+  };
+  const handleCopyCompilePrompt = async () => {
+    if (!completedDemo) return;
+    try {
+      await navigator.clipboard?.writeText(completedDemo.compilePrompt);
+      setCopiedCompilePrompt(true);
+    } catch {
+      setDemoProblem("复制编译指令失败，可直接填入对话。");
+    }
+  };
+  const visibleDemoSteps = completedDemo ? completedDemo.steps.slice(0, 5) : [];
+  const hiddenDemoStepCount = completedDemo
+    ? Math.max(0, completedDemo.steps.length - visibleDemoSteps.length)
+    : 0;
+  const demonstrationBanner =
+    !settled && (demoProblem || (!recordingId && completedDemo)) ? (
+      <div className="flex flex-col gap-1.5 border-t bg-muted/40 px-3 py-2 text-xs">
+        {demoProblem ? (
+          <div
+            className="flex items-center justify-between gap-2 text-destructive"
+            role="alert"
+          >
+            <span className="min-w-0 truncate">{demoProblem}</span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              onClick={() => setDemoProblem(null)}
+            >
+              {"忽略"}
+            </button>
+          </div>
+        ) : null}
+        {!recordingId && completedDemo ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-foreground">
+                {`已录制 ${completedDemo.steps.length} 步示教（敏感输入已脱敏）`}
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={handlePrefillCompilePrompt}
+                >
+                  <IconSparkles className="size-3.5" />
+                  {"填入对话编译成技能"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleCopyCompilePrompt()}
+                >
+                  {copiedCompilePrompt ? (
+                    <IconCheck className="size-3.5" />
+                  ) : (
+                    <IconCopy className="size-3.5" />
+                  )}
+                  {copiedCompilePrompt ? "已复制" : "复制编译指令"}
+                </Button>
+                <button
+                  type="button"
+                  aria-label={"关闭示教摘要"}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground"
+                  onClick={() => setCompletedDemo(null)}
+                >
+                  <IconX className="size-3.5" />
+                </button>
+              </div>
+            </div>
+            {visibleDemoSteps.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1 text-muted-foreground">
+                {visibleDemoSteps.map((step) => (
+                  <span
+                    key={step.uid}
+                    className="max-w-44 truncate rounded bg-background/80 px-1.5 py-0.5 border text-[11px]"
+                    title={step.label}
+                  >
+                    {step.label}
+                  </span>
+                ))}
+                {hiddenDemoStepCount > 0 ? (
+                  <span className="text-[11px]">{`等共 ${completedDemo.steps.length} 步`}</span>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-muted-foreground">
+                {"未捕获到页面点击或输入步骤，填入对话后可补充说明让机器人整理成技能。"}
+              </p>
+            )}
+          </>
+        ) : null}
+      </div>
+    ) : null;
+
   const takeoverRef = useTakeoverFit(expanded);
   const closeButton = (
     <button
@@ -853,6 +1064,8 @@ export function ComputerView({
           </form>
         ) : null}
 
+        {!expanded ? demonstrationBanner : null}
+
         {!settled ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2">
             <span className="text-xs text-muted-foreground">{cardPresence}</span>
@@ -952,7 +1165,9 @@ export function ComputerView({
                       computerId={computerId}
                       controllerRef={liveController}
                       driving={driving}
+                      onDemonstrationAction={handleDemonstrationAction}
                       onProblem={setStreamProblem}
+                      recordingId={wheelHere ? recordingId : null}
                       retryKey={retryKey}
                       urlbarEnd={(url) => (
                         <BookmarkStar
@@ -1022,30 +1237,68 @@ export function ComputerView({
                   present and this view is a record; a record does not get a steering wheel.
                 */}
                 {settled ? null : (
-                  <div className="ctk-foot computer-takeover-controls">
-                    {name ? (
-                      <span className="ctk-who">
-                        <ChannelAvatar participantIds={[computerId]} size={20} />
-                        <span className="ctk-who-n">{name}</span>
+                  <>
+                    {demonstrationBanner}
+                    <div className="ctk-foot computer-takeover-controls">
+                      {name ? (
+                        <span className="ctk-who">
+                          <ChannelAvatar
+                            participantIds={[computerId]}
+                            size={20}
+                          />
+                          <span className="ctk-who-n">{name}</span>
+                        </span>
+                      ) : null}
+                      <span
+                        className="ctk-status"
+                        title={control?.reason ? control.reason : undefined}
+                      >
+                        {wheelHere && recordingId ? (
+                          `正在录制示教 · 已录 ${recordedCount} 步（敏感字段自动脱敏）`
+                        ) : control?.requested &&
+                          !driving &&
+                          !control.transitioning ? (
+                          <>
+                            <strong className="font-medium text-foreground">
+                              {"机器人需要你"}
+                            </strong>
+                            {control.reason ? `：${control.reason}` : null}
+                          </>
+                        ) : (
+                          footPresence
+                        )}
                       </span>
-                    ) : null}
-                    <span
-                      className="ctk-status"
-                      title={control?.reason ? control.reason : undefined}
-                    >
-                      {control?.requested && !driving && !control.transitioning ? (
-                        <>
-                          <strong className="font-medium text-foreground">{"机器人需要你"}</strong>
-                          {control.reason ? `：${control.reason}` : null}
-                        </>
-                      ) : (
-                        footPresence
-                      )}
-                    </span>
-                    <span className="ctk-act">
-                      <ComputerControlButton computerId={computerId} />
-                    </span>
-                  </div>
+                      <span className="ctk-act flex items-start gap-2">
+                        {wheelHere ? (
+                          recordingId ? (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={demoBusy}
+                              onClick={() => void handleStopDemonstration()}
+                            >
+                              <IconPlayerStopFilled className="size-3.5" />
+                              {`结束录制（已录 ${recordedCount} 步）`}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={demoBusy}
+                              onClick={() => void handleStartDemonstration()}
+                            >
+                              <span
+                                className="size-2 rounded-full bg-red-500"
+                                aria-hidden="true"
+                              />
+                              {"录制示教"}
+                            </Button>
+                          )
+                        ) : null}
+                        <ComputerControlButton computerId={computerId} />
+                      </span>
+                    </div>
+                  </>
                 )}
               </div>
             </div>,

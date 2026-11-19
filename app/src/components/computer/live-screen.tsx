@@ -18,6 +18,11 @@ import {
   useExternalConnection,
   useWindowEvent,
 } from "@/hooks";
+import {
+  buildLiveStreamPath,
+  parseDemonstrationActionMessage,
+  type RecordedDemonstrationAction,
+} from "@/lib/computers/demonstration";
 import { setTabsView } from "@/lib/computers/tabs";
 import {
   connectScreen,
@@ -124,6 +129,10 @@ type Props = {
   urlbarEnd?: (pageUrl: string) => ReactNode;
   /** 让外面（收藏栏）也能打开网址：接管中才生效，返回是否发出去了。 */
   controllerRef?: MutableRefObject<LiveScreenController | null>;
+  /** 当前演示录制会话 ID；非空时通过 ?recording= 透传，开关录制时平滑重连。 */
+  recordingId?: string | null;
+  /** 收到后端透传的脱敏 DOM 示教步骤事件时回调。 */
+  onDemonstrationAction?: (action: RecordedDemonstrationAction) => void;
 };
 
 export type LiveScreenController = {
@@ -224,6 +233,8 @@ export function LiveScreen({
   belowUrlbar,
   urlbarEnd,
   controllerRef,
+  recordingId,
+  onDemonstrationAction,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -254,8 +265,13 @@ export function LiveScreen({
   const [navProblem, setNavProblem] = useState<string | null>(null);
   /** 用户最后一次在地址栏里要打开的网址。 */
   const lastAttempt = useRef("");
+  const onDemonstrationActionRef = useRef(onDemonstrationAction);
+  onDemonstrationActionRef.current = onDemonstrationAction;
+  const activeRecordingId = recordingId?.trim() ?? "";
 
-  useExternalConnection(`${computerId}\0${retryKey}`, () => {
+  useExternalConnection(
+    `${computerId}\0${retryKey}\0${activeRecordingId}`,
+    () => {
     let closed = false;
     setConnected(false);
     hasFrameRef.current = false;
@@ -369,6 +385,13 @@ export function LiveScreen({
         setTabsView(computerId, parsed);
         return;
       }
+      if (message.type === "demonstration.action") {
+        const action = parseDemonstrationActionMessage(
+          parsed as Record<string, unknown>,
+        );
+        if (action) onDemonstrationActionRef.current?.(action);
+        return;
+      }
       if (typeof message.url === "string" && message.url.length < 4096) {
         // 打不开时 Chrome 停在 chrome-error://，地址栏留着用户刚输入的网址，方便改了再试。
         if (
@@ -443,7 +466,7 @@ export function LiveScreen({
     const connection = connectScreen({
       open: () => {
         const socket = new WebSocket(
-          socketUrl(`/api/computers/${encodeURIComponent(computerId)}/stream`),
+          socketUrl(buildLiveStreamPath(computerId, activeRecordingId || null)),
         );
         socketRef.current = socket;
         // Event handlers use only data, so adapt the native event surface without changing the protocol.

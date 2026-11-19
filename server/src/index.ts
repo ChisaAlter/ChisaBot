@@ -172,6 +172,12 @@ import {
   installActivityStore,
 } from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
+import {
+  buildComputerStreamUrl,
+  createDemonstrationStore,
+  isValidRecordingId,
+  parseDemonstrationActionFrame,
+} from "./computer/demonstration-store";
 import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
@@ -4813,6 +4819,8 @@ startEgressPolicyPush({
   ...(config.computer?.token ? { token: config.computer.token } : {}),
 });
 
+const demonstrationStore = createDemonstrationStore();
+
 const app = createApp(
   config,
   auth,
@@ -5055,6 +5063,7 @@ const app = createApp(
     modelCatalogRefreshMinutes,
     primaryAgentService,
     quotaService,
+    demonstrationStore,
     ...(gatewaySecret
       ? {
           singleUserGuard: createGatewayRequireUser(
@@ -5270,12 +5279,17 @@ const app = createApp(
  * Not a Hono route because an upgrade is not a request/response: Bun hands it over before Hono sees a
  * body, so it is handled in `fetch` ahead of the app.
  */
-const toStreamUrl = (baseUrl: string, botId: string) =>
+const toStreamUrl = (baseUrl: string, botId: string, recordingId?: string) =>
   // The Bot travels in the query, because a websocket upgrade carries no custom header for the
   // computer to read and every call it serves is per Bot. The secret travels the same way and for the
   // same reason, this socket is the one a person can type into, so it is the last thing that should
   // be reachable without it.
-  `${baseUrl.replace(/^http/, "ws").replace(/\/$/, "")}/stream?bot=${encodeURIComponent(botId)}&token=${encodeURIComponent(config.computer?.token ?? "")}`;
+  buildComputerStreamUrl(
+    baseUrl,
+    botId,
+    config.computer?.token ?? "",
+    recordingId,
+  );
 
 /** What each proxied socket carries: where to connect inward, and the socket once opened. */
 type StreamData = {
@@ -5393,6 +5407,16 @@ serve<SocketData>({
        * host was handed the deployment's computer token, which is the case that check was written
        * for. Every acting path already went through the gateway; this one did not.
        */
+      const rawRecording = url.searchParams.get("recording");
+      const recordingId =
+        isValidRecordingId(rawRecording) &&
+        demonstrationStore.isActiveRecording(
+          actor.id,
+          streamBotId,
+          rawRecording,
+        )
+          ? rawRecording
+          : undefined;
       let upstream: string;
       try {
         const streamBase = computerGateway
@@ -5403,7 +5427,7 @@ serve<SocketData>({
             status: 503,
           });
         }
-        upstream = toStreamUrl(streamBase, streamBotId);
+        upstream = toStreamUrl(streamBase, streamBotId, recordingId);
       } catch (error) {
         // Said out loud rather than falling back to another Bot's computer, which is the failure this
         // whole path exists to prevent.
@@ -5420,6 +5444,7 @@ serve<SocketData>({
             upstream,
             ownerUserId: actor.id,
             botId: streamBotId,
+            ...(recordingId ? { recordingId } : {}),
           },
         })
       ) {
@@ -5465,12 +5490,30 @@ serve<SocketData>({
       // drop when bufferedAmount is already large rather than grow without bound.
       inward.onmessage = (event) => {
         try {
+          const payload = String(event.data);
+          if (
+            stream.recordingId &&
+            payload.startsWith('{"type":"demonstration.action"')
+          ) {
+            const action = parseDemonstrationActionFrame(
+              payload,
+              stream.recordingId,
+            );
+            if (action) {
+              demonstrationStore.appendAction(
+                stream.ownerUserId,
+                stream.botId,
+                stream.recordingId,
+                action,
+              );
+            }
+          }
           const buffered = (ws as unknown as { bufferedAmount?: number })
             .bufferedAmount;
           if (typeof buffered === "number" && buffered > 2_000_000) {
             return; // drop stale frame rather than queue forever
           }
-          ws.send(String(event.data));
+          ws.send(payload);
         } catch {
           try {
             inward.close();

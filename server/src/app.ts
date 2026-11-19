@@ -66,6 +66,7 @@ import { createComponentRoutes } from "./components/routes";
 import type { SandboxedStore } from "./components/sandboxed";
 import { createSandboxedRoutes } from "./components/sandboxed-routes";
 import type { ComponentStore } from "./components/store";
+import type { DemonstrationStore } from "./computer/demonstration-store";
 import type { ComputerGateway } from "./computer/gateway";
 import type { PageFrameStore } from "./computer/page-frames";
 import type { PolicyStore } from "./computer/policy-store";
@@ -423,6 +424,7 @@ export function createApp(
     singleUserGuard?: MiddlewareHandler<{ Variables: AppVariables }>;
     primaryAgentService?: PrimaryAgentService;
     quotaService?: QuotaService;
+    demonstrationStore?: DemonstrationStore;
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -1408,6 +1410,7 @@ export function createApp(
               return record && !record.deleted ? { name: record.name } : null;
             }
           : undefined,
+        options.demonstrationStore,
       ),
     );
   }

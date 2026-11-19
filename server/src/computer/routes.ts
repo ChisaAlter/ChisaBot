@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { isHandoffSource } from "../../../shared/computer-control";
 import { downloadHeaders } from "../../../shared/file-download";
 import type { BotAccessCheck } from "../agents/profile-policy";
@@ -13,6 +14,11 @@ import {
 } from "./activity-routes";
 import { activityStore } from "./activity-store";
 import { readControlStatus } from "./control-status";
+import {
+  type DemonstrationStore,
+  formatDemonstrationCompilePrompt,
+  isValidRecordingId,
+} from "./demonstration-store";
 import { DEPLOYMENT_ROUTES } from "./deployment-routes";
 import {
   type ActionActor,
@@ -72,6 +78,10 @@ export function createComputerRoutes(
     actor: AppVariables["actor"],
     botId: string,
   ) => Promise<{ name: string } | null>,
+  /**
+   * 演示录制会话存储（Teach by Demonstration）。缺省时对应路由返回 501，不破坏旧部署。
+   */
+  demonstrations?: DemonstrationStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
 
@@ -545,6 +555,89 @@ export function createComputerRoutes(
       gateway.cancelControl(botId, actor, handoffId(body)),
     ),
   );
+
+  /* ---------- 演示录制与示教编译（Teach by Demonstration） ---------- */
+
+  routes.post(
+    "/:botId/demonstrations/start",
+    bodyLimit({
+      maxSize: 8_192,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+    async (context) => {
+      if (!demonstrations) {
+        return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
+      }
+      const rawBody = await context.req.json().catch(() => null);
+      if (
+        rawBody !== null &&
+        (typeof rawBody !== "object" || Array.isArray(rawBody))
+      ) {
+        return context.json({ error: "请求体必须是 JSON 对象。" }, 400);
+      }
+      const goal = (rawBody as { goal?: unknown } | null)?.goal;
+      if (goal !== undefined && goal !== null && typeof goal !== "string") {
+        return context.json({ error: "goal 必须是字符串。" }, 400);
+      }
+      const botId = context.req.param("botId");
+      const recording = demonstrations.start(
+        context.var.actor.id,
+        botId,
+        typeof goal === "string" ? goal : undefined,
+      );
+      return context.json({ recording }, 201);
+    },
+  );
+
+  routes.post(
+    "/:botId/demonstrations/:recordingId/stop",
+    bodyLimit({
+      maxSize: 4_096,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+    (context) => {
+      if (!demonstrations) {
+        return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
+      }
+      const botId = context.req.param("botId");
+      const recordingId = context.req.param("recordingId");
+      if (!isValidRecordingId(recordingId)) {
+        return context.json({ error: "找不到该演示录制会话。" }, 404);
+      }
+      const recording = demonstrations.stop(
+        context.var.actor.id,
+        botId,
+        recordingId,
+      );
+      if (!recording) {
+        return context.json({ error: "找不到该演示录制会话。" }, 404);
+      }
+      return context.json({
+        recording,
+        compilePrompt: formatDemonstrationCompilePrompt(recording),
+      });
+    },
+  );
+
+  routes.get("/:botId/demonstrations/:recordingId", (context) => {
+    if (!demonstrations) {
+      return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
+    }
+    const botId = context.req.param("botId");
+    const recordingId = context.req.param("recordingId");
+    if (!isValidRecordingId(recordingId)) {
+      return context.json({ error: "找不到该演示录制会话。" }, 404);
+    }
+    const recording = demonstrations.get(
+      context.var.actor.id,
+      botId,
+      recordingId,
+    );
+    if (!recording) {
+      return context.json({ error: "找不到该演示录制会话。" }, 404);
+    }
+    return context.json({ recording });
+  });
 
   /** The Bot asking for a value it must not be told. */
   routes.post("/:botId/control/secret", (context) =>
