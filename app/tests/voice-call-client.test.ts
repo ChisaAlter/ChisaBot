@@ -11,10 +11,12 @@ import {
   computeNormalizedAmplitude,
   computePcm16Amplitude,
   decodeBase64ToPcm16,
+  detectAudioProcessingMode,
   encodePcm16ToBase64,
   float32ToPcm16,
   pcm16ToFloat32,
   resampleFloat32,
+  resolveAudioProcessingFromTrack,
 } from "../src/lib/voice/call-client";
 
 describe("语音通话协议编解码", () => {
@@ -164,5 +166,43 @@ describe("PCM16 重采样、编码与振幅计算", () => {
     // 极响信号严格钳制在 1.0
     const loud = new Float32Array(64).fill(1);
     expect(computeNormalizedAmplitude(loud)).toBe(1);
+  });
+
+  test("审查回归 P1：无 AEC 浏览器与关闭 echoCancellation 的音轨正确降级为 legacy", () => {
+    expect(
+      detectAudioProcessingMode({
+        getSupportedConstraints: () => ({ echoCancellation: true }),
+      }),
+    ).toBe("web-aec-v1");
+
+    expect(
+      detectAudioProcessingMode({
+        getSupportedConstraints: () => ({ echoCancellation: false }),
+      }),
+    ).toBe("legacy");
+
+    expect(
+      detectAudioProcessingMode({
+        getSupportedConstraints: () => ({}),
+      }),
+    ).toBe("legacy");
+
+    expect(detectAudioProcessingMode(null)).toBe("legacy");
+
+    // 音轨实际设置未启用回声消除时强制降级 legacy，启用时保留原模式
+    expect(
+      resolveAudioProcessingFromTrack("web-aec-v1", {
+        getAudioTracks: () => [
+          { getSettings: () => ({ echoCancellation: false }) },
+        ],
+      }),
+    ).toBe("legacy");
+    expect(
+      resolveAudioProcessingFromTrack("native-aec3-v1", {
+        getAudioTracks: () => [
+          { getSettings: () => ({ echoCancellation: true }) },
+        ],
+      }),
+    ).toBe("native-aec3-v1");
   });
 });

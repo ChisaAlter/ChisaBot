@@ -249,16 +249,41 @@ function readDesktopVoiceBridge(): DesktopVoiceAudioBridge | undefined {
     .chisabotVoiceAudio;
 }
 
-/** 检测当前客户端支持的回声消除能力。 */
-export function detectAudioProcessingMode(): VoiceAudioProcessing {
-  if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+/** 检测当前客户端支持的回声消除能力；不支持 echoCancellation 时降级为 legacy 触发服务端半双工门控。 */
+export function detectAudioProcessingMode(
+  mediaDevices?: Pick<MediaDevices, "getSupportedConstraints"> | null,
+): VoiceAudioProcessing {
+  const devices =
+    mediaDevices !== undefined
+      ? mediaDevices
+      : typeof navigator !== "undefined"
+        ? navigator.mediaDevices
+        : undefined;
+  if (!devices) {
     return "legacy";
   }
-  const supported = navigator.mediaDevices.getSupportedConstraints?.();
-  if (supported?.echoCancellation) {
-    return "web-aec-v1";
+  const supported = devices.getSupportedConstraints?.();
+  return supported?.echoCancellation === true ? "web-aec-v1" : "legacy";
+}
+
+/** 采集音轨就绪后核查实际生效的回声消除状态：若设备显式关闭了 echoCancellation 则同步降级为 legacy。 */
+export function resolveAudioProcessingFromTrack(
+  preferred: VoiceAudioProcessing,
+  stream?: {
+    getAudioTracks?: () => Array<{
+      getSettings?: () => { echoCancellation?: unknown };
+    }>;
+  } | null,
+): VoiceAudioProcessing {
+  if (preferred === "legacy" || !stream?.getAudioTracks) {
+    return preferred;
   }
-  return "web-aec-v1";
+  const track = stream.getAudioTracks()[0];
+  const settings = track?.getSettings?.();
+  if (settings && settings.echoCancellation === false) {
+    return "legacy";
+  }
+  return preferred;
 }
 
 function resolveAudioContextCtor(): typeof AudioContext | undefined {
@@ -518,7 +543,11 @@ export class VoiceCallClient {
     }
 
     this.stream = stream;
-    this.audioProcessing = preferredProcessing;
+    const effectiveProcessing = resolveAudioProcessingFromTrack(
+      preferredProcessing,
+      stream,
+    );
+    this.audioProcessing = effectiveProcessing;
 
     // 3. 申请 60s 一次性通话票据。
     let ticket: VoiceSessionTicketResponse;
@@ -527,7 +556,7 @@ export class VoiceCallClient {
         {
           botId: options.botId,
           ...(options.channelId ? { channelId: options.channelId } : {}),
-          audioProcessing: preferredProcessing,
+          audioProcessing: effectiveProcessing,
           ...(options.voice ? { voice: options.voice } : {}),
           ...(options.speed !== undefined ? { speed: options.speed } : {}),
         },

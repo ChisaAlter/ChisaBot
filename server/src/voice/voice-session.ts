@@ -8,6 +8,7 @@ import {
   VOICE_HEARTBEAT_MS,
   VOICE_MAX_BACKPRESSURE_BYTES,
   VOICE_MAX_SESSION_MS,
+  VOICE_MAX_WS_PAYLOAD_BYTES,
   VOICE_SAMPLE_RATE,
   type VoiceAudioProcessing,
   type VoiceCallState,
@@ -91,6 +92,7 @@ export type VoiceSessionOptions = {
   heartbeatMs?: number;
   maxSessionMs?: number;
   maxBackpressureBytes?: number;
+  maxPayloadBytes?: number;
   maxFramesPerSecond?: number;
   vadOptions?: Omit<
     VoiceActivityOptions,
@@ -120,6 +122,9 @@ type TurnState = {
   sentences: SentenceTask[];
   rawGeneratedText: string;
   readPendingText: () => string;
+  botSettled: Promise<void>;
+  resolveBotSettled: () => void;
+  receiptFallbackTimer?: ReturnType<typeof setTimeout>;
   llmDone: boolean;
   ttsDone: boolean;
   interrupted: boolean;
@@ -129,6 +134,85 @@ type TurnState = {
 const WS_OPEN = 1;
 const DEFAULT_MAX_FRAMES_PER_SEC = 200;
 const MAX_PREFETCH_CONCURRENCY = 2;
+const DEFAULT_RECEIPT_FALLBACK_MS = 2_000;
+
+/**
+ * 仅裁剪指定被打断语音回合（`voice-u-${turnId}` 之后、下一条 `role === "user"` 之前）的助手消息，
+ * 绝不跨回合触碰后续轮次的正式对话历史。
+ */
+export function trimInterruptedVoiceTurnMessages<
+  T extends { id?: string; role?: string; content?: unknown },
+>(
+  messages: readonly T[],
+  turnId: string,
+  spokenText: string,
+): { updated: T[]; changed: boolean } {
+  const userMessageId = `voice-u-${turnId}`;
+  const userIndex = messages.findIndex((msg) => msg.id === userMessageId);
+  if (userIndex < 0) {
+    return { updated: [...messages], changed: false };
+  }
+
+  let nextUserIndex = messages.length;
+  for (let i = userIndex + 1; i < messages.length; i += 1) {
+    if (messages[i]?.role === "user") {
+      nextUserIndex = i;
+      break;
+    }
+  }
+
+  const assistantIndices: number[] = [];
+  for (let i = userIndex + 1; i < nextUserIndex; i += 1) {
+    if (messages[i]?.role === "assistant") {
+      assistantIndices.push(i);
+    }
+  }
+  if (assistantIndices.length === 0) {
+    return { updated: [...messages], changed: false };
+  }
+
+  const proseIndices = assistantIndices.filter((idx) => {
+    const content = messages[idx]?.content;
+    return typeof content === "string" && content.trim().length > 0;
+  });
+  const targetIndices =
+    proseIndices.length > 0
+      ? proseIndices
+      : [assistantIndices[assistantIndices.length - 1] ?? -1].filter(
+          (idx) => idx >= 0,
+        );
+
+  const replacement = spokenText || "[语音回复已中断]";
+  let changed = false;
+  const updated = messages.map((msg, idx) => {
+    const pos = targetIndices.indexOf(idx);
+    if (pos < 0) return msg;
+    const nextContent = pos === 0 ? replacement : "";
+    if (msg.content === nextContent) return msg;
+    changed = true;
+    return { ...msg, content: nextContent };
+  });
+
+  return { updated, changed };
+}
+
+function waitForPromiseOrAbort(
+  promise: Promise<unknown>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    void promise.then(finish, finish);
+  });
+}
 
 function isAbortError(error: unknown): boolean {
   if (error instanceof VoiceStreamTtsError && error.code === "cancelled") {
@@ -184,7 +268,9 @@ export class VoiceSession {
   private readonly heartbeatMs: number;
   private readonly maxSessionMs: number;
   private readonly maxBackpressureBytes: number;
+  private readonly maxPayloadBytes: number;
   private readonly maxFramesPerSecond: number;
+  private readonly receiptFallbackMs: number;
 
   private readonly vad: VoiceActivityDetector;
   private readonly playback: VoicePlaybackTracker;
@@ -194,9 +280,10 @@ export class VoiceSession {
   private streamingAudio = false;
   private activeTurn: TurnState | null = null;
   private activeAsrController: AbortController | null = null;
+  private lastBotSettled: Promise<void> = Promise.resolve();
   private readonly pendingReceiptTurns = new Map<string, TurnState>();
   private readonly itemToTurn = new Map<string, TurnState>();
-  private readonly pendingCommits: Promise<void>[] = [];
+  private readonly pendingCommits = new Set<Promise<void>>();
 
   private lastActivityAt: number;
   private frameWindowStartMs: number;
@@ -224,8 +311,15 @@ export class VoiceSession {
     this.maxSessionMs = options.maxSessionMs ?? VOICE_MAX_SESSION_MS;
     this.maxBackpressureBytes =
       options.maxBackpressureBytes ?? VOICE_MAX_BACKPRESSURE_BYTES;
+    this.maxPayloadBytes =
+      options.maxPayloadBytes ?? VOICE_MAX_WS_PAYLOAD_BYTES;
     this.maxFramesPerSecond =
       options.maxFramesPerSecond ?? DEFAULT_MAX_FRAMES_PER_SEC;
+    this.receiptFallbackMs = Math.max(
+      100,
+      options.playbackOptions?.missingReceiptTimeoutMs ??
+        DEFAULT_RECEIPT_FALLBACK_MS,
+    );
 
     this.lastActivityAt = this.now();
     this.frameWindowStartMs = this.lastActivityAt;
@@ -291,6 +385,24 @@ export class VoiceSession {
   /** 处理客户端上行 JSON 文本消息。 */
   handleRawMessage(raw: string | Buffer | Uint8Array): void {
     if (this.closed) return;
+
+    // 前置单帧原始字节硬上限：在解码 UTF-8 与 JSON.parse 之前拦截恶意或异常超大帧。
+    const rawByteLength =
+      typeof raw === "string"
+        ? raw.length > this.maxPayloadBytes
+          ? raw.length
+          : Buffer.byteLength(raw, "utf8")
+        : raw.byteLength;
+    if (rawByteLength > this.maxPayloadBytes) {
+      this.emitError(
+        "payload_too_large",
+        "单条语音消息超过允许的大小上限，连接已关闭。",
+        false,
+      );
+      this.close("payload-too-large", 1009, "Voice message too large");
+      return;
+    }
+
     this.lastActivityAt = this.now();
 
     if (!this.checkFrameRateLimit()) {
@@ -598,7 +710,18 @@ export class VoiceSession {
 
     this.emit({ type: "transcript.final", turnId, text: userText });
 
+    // 等待上一轮被打断的 Bot 推理彻底退出并落库释放线程锁后，再启动本轮推理，避免 409 锁冲突与脏历史。
+    await waitForPromiseOrAbort(
+      Promise.allSettled([this.lastBotSettled, ...this.pendingCommits]),
+      signal,
+    );
+    if (this.closed || signal.aborted) return;
+
     const chunker = new SentenceChunker();
+    let resolveBotSettled = () => {};
+    const botSettled = new Promise<void>((resolve) => {
+      resolveBotSettled = resolve;
+    });
     const turn: TurnState = {
       turnId,
       userText,
@@ -606,12 +729,15 @@ export class VoiceSession {
       sentences: [],
       rawGeneratedText: "",
       readPendingText: () => chunker.pending.trim(),
+      botSettled,
+      resolveBotSettled,
       llmDone: false,
       ttsDone: false,
       interrupted: false,
       committed: false,
     };
     this.activeTurn = turn;
+    this.lastBotSettled = botSettled;
     this.pendingReceiptTurns.set(turnId, turn);
     this.setState("thinking", { detail: "思考中…" });
 
@@ -814,6 +940,7 @@ export class VoiceSession {
       botError = error;
     } finally {
       turn.llmDone = true;
+      turn.resolveBotSettled();
       queueEnded = true;
       notifyQueue();
     }
@@ -846,6 +973,40 @@ export class VoiceSession {
 
     turn.ttsDone = true;
     this.tryFinalizeTurnReceipt(turn);
+    this.scheduleReceiptFallback(turn);
+  }
+
+  private clearReceiptFallback(turn: TurnState): void {
+    if (turn.receiptFallbackTimer !== undefined) {
+      clearTimeout(turn.receiptFallbackTimer);
+      turn.receiptFallbackTimer = undefined;
+    }
+  }
+
+  /** 若客户端丢失 `playback.done` 回执，在估算播报时长 + 兜底窗后自动收口入史并切回 listening。 */
+  private scheduleReceiptFallback(turn: TurnState): void {
+    if (this.closed || turn.committed || !turn.ttsDone) return;
+    this.clearReceiptFallback(turn);
+    const pendingIds = turn.sentences
+      .filter((item) => !item.played)
+      .map((item) => item.itemId);
+    if (pendingIds.length === 0) return;
+
+    const delayMs =
+      this.playback.estimatedRemainingMs(pendingIds) + this.receiptFallbackMs;
+    const timer = setTimeout(() => {
+      turn.receiptFallbackTimer = undefined;
+      if (this.closed || turn.committed || turn.interrupted) return;
+      for (const sentence of turn.sentences) {
+        if (!sentence.played) {
+          sentence.played = true;
+          this.playback.finish(sentence.itemId);
+        }
+      }
+      this.tryFinalizeTurnReceipt(turn);
+    }, delayMs);
+    timer.unref?.();
+    turn.receiptFallbackTimer = timer;
   }
 
   private sendAudioChunk(
@@ -898,6 +1059,7 @@ export class VoiceSession {
   private commitTurnHistory(turn: TurnState): void {
     if (turn.committed) return;
     turn.committed = true;
+    this.clearReceiptFallback(turn);
     this.pendingReceiptTurns.delete(turn.turnId);
     for (const sentence of turn.sentences) {
       this.itemToTurn.delete(sentence.itemId);
@@ -947,12 +1109,17 @@ export class VoiceSession {
     }
 
     if (this.recordSpokenTurn) {
+      // 等在途 `runBotTurn` 真正退出并释放线程锁后，再执行正式对话历史修订落库，彻底消除竞态。
       const promise = Promise.resolve()
+        .then(() => turn.botSettled)
         .then(() => this.recordSpokenTurn?.(record))
         .catch(() => {
           // 历史落库失败不阻断当前语音通话会话
+        })
+        .finally(() => {
+          this.pendingCommits.delete(promise);
         });
-      this.pendingCommits.push(promise);
+      this.pendingCommits.add(promise);
     }
   }
 }

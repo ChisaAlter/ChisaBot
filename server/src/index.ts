@@ -457,6 +457,7 @@ import {
   isVoiceSocketData,
   type VoiceSocketData,
 } from "./voice/voice-routes";
+import { trimInterruptedVoiceTurnMessages } from "./voice/voice-session";
 import { createVoiceStreamTts } from "./voice/voice-stream-tts";
 import { createWebSearchSettingsStore } from "./web/search-settings";
 import {
@@ -5776,38 +5777,27 @@ const voiceCallService = createVoiceCallService({
       .get(actor, record.channelId)
       .catch(() => null);
     if (channel && record.interrupted && record.draftText) {
-      // 被打断时仅保留客户端已播报确认的文本在正式对话历史中，未播完内容已落库为 draft_text。
-      const rows = await database.$client.unsafe<{ messages: Message[] }[]>(
-        "SELECT messages FROM chisabot_local_threads WHERE id = $1 AND run_id IS NULL",
-        [channel.threadId],
-      );
-      const current = rows[0]?.messages;
-      if (Array.isArray(current)) {
-        const userIndex = current.findIndex(
-          (msg) => msg.id === `voice-u-${record.turnId}`,
-        );
-        if (userIndex >= 0) {
-          let changed = false;
-          const updated = current.map((msg, idx) => {
-            if (idx > userIndex && msg.role === "assistant") {
-              changed = true;
-              return {
-                ...msg,
-                content: record.spokenText || "[语音回复已中断]",
-              };
-            }
-            return msg;
-          });
-          if (changed) {
-            await database.$client
-              .unsafe(
-                "UPDATE chisabot_local_threads SET messages = $2::text::jsonb, updated_at = now() WHERE id = $1 AND run_id IS NULL",
-                [channel.threadId, JSON.stringify(updated)],
-              )
-              .catch(() => {});
-          }
-        }
-      }
+      // 单事务 + 行锁 + owner_user_id 校验：仅裁剪本回合（至下一条 user 消息前）的助手消息，绝不跨回合篡改后续轮次。
+      await database.$client
+        .begin(async (tx) => {
+          const rows = await tx.unsafe<{ messages: Message[] }[]>(
+            "SELECT messages FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2 AND run_id IS NULL FOR UPDATE",
+            [channel.threadId, record.userId],
+          );
+          const current = rows[0]?.messages;
+          if (!Array.isArray(current)) return;
+          const { updated, changed } = trimInterruptedVoiceTurnMessages(
+            current,
+            record.turnId,
+            record.spokenText,
+          );
+          if (!changed) return;
+          await tx.unsafe(
+            "UPDATE chisabot_local_threads SET messages = $3::text::jsonb, updated_at = now() WHERE id = $1 AND owner_user_id = $2 AND run_id IS NULL",
+            [channel.threadId, record.userId, JSON.stringify(updated)],
+          );
+        })
+        .catch(() => {});
     }
     if (record.spokenText.trim()) {
       await channelStore

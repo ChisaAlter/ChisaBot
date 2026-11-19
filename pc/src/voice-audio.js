@@ -107,10 +107,11 @@ async function enumerateAudioDevices(mediaDevices) {
  */
 function registerVoiceAudioIpc(ipcMain, options = {}) {
   if (!ipcMain || typeof ipcMain.handle !== "function") return;
+  // 默认 fail-closed：要求调用方显式传入来源窗口与 Origin 校验器，严禁未校验直接放行。
   const verifySender =
     typeof options.verifySender === "function"
       ? options.verifySender
-      : () => true;
+      : () => false;
   const getPreferredDeviceId =
     typeof options.getPreferredDeviceId === "function"
       ? options.getPreferredDeviceId

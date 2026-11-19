@@ -91,6 +91,27 @@ export class VoicePlaybackTracker {
     return this.activeItems.size;
   }
 
+  /** 估算指定句集合（或当前全部未排空句）距离预计播完的剩余毫秒数。 */
+  estimatedRemainingMs(itemIds?: readonly string[]): number {
+    const current = this.now();
+    let maxEnd = current;
+    if (itemIds) {
+      for (const id of itemIds) {
+        const end = this.activeItems.get(id);
+        if (end !== undefined && end > maxEnd) {
+          maxEnd = end;
+        }
+      }
+    } else {
+      for (const end of this.activeItems.values()) {
+        if (end > maxEnd) {
+          maxEnd = end;
+        }
+      }
+    }
+    return Math.max(0, Math.ceil(maxEnd - current));
+  }
+
   clear(): void {
     this.activeItems.clear();
     this.tailUntilMs = 0;

@@ -9,6 +9,8 @@ export const VOICE_FRAME_MS = 20;
 export const VOICE_FRAME_SAMPLES = (VOICE_SAMPLE_RATE * VOICE_FRAME_MS) / 1000; // 480
 export const VOICE_FRAME_BYTES = VOICE_FRAME_SAMPLES * 2; // 960 bytes (PCM16LE mono)
 export const VOICE_MAX_AUDIO_BASE64_LEN = 256_000;
+/** 单条 WS 原始消息字节上限（256KB base64 音频 + 8KB JSON 封包余量），在解码与 JSON.parse 前强制拦截。 */
+export const VOICE_MAX_WS_PAYLOAD_BYTES = VOICE_MAX_AUDIO_BASE64_LEN + 8 * 1024;
 export const VOICE_TICKET_TTL_MS = 60_000;
 export const VOICE_MAX_GLOBAL_CALLS = 4;
 export const VOICE_MAX_USER_CALLS = 1;

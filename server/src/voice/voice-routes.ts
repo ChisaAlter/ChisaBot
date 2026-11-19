@@ -458,6 +458,9 @@ export function createVoiceCallService(
       }
     }
 
+    // 必须在任何 await（如 checkReady）之前同步原子消费一次性票据，彻底消除并发升级 TOCTOU 重放窗口。
+    tickets.delete(key);
+
     const readiness = await deps
       .checkReady()
       .catch(() => ({ asrReady: false, ttsReady: false }));
@@ -472,9 +475,6 @@ export function createVoiceCallService(
         message: "语音通话并发数已达上限或已有进行中的通话。",
       };
     }
-
-    // 原子消费一次性票据，杜绝重放攻击。
-    tickets.delete(key);
 
     return {
       ok: true,

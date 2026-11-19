@@ -20,6 +20,7 @@ import { VoiceOnset } from "../src/voice/voice-onset";
 import { VoicePlaybackTracker } from "../src/voice/voice-playback";
 import { createVoiceCallService } from "../src/voice/voice-routes";
 import {
+  trimInterruptedVoiceTurnMessages,
   VoiceSession,
   type VoiceSocketLike,
   type VoiceSpokenTurnRecord,
@@ -580,6 +581,213 @@ describe("VoiceSession 全链路状态机（流式分句首字开口 + 真中止
     expect(session.isClosed).toBe(true);
     expect(ws.getClosed().code).toBe(1013);
   });
+
+  test("审查回归 P0：trimInterruptedVoiceTurnMessages 仅裁剪当前打断回合，绝不篡改后续回合回复", () => {
+    const history = [
+      { id: "voice-u-t1", role: "user", content: "第一轮提问" },
+      { id: "a1-tool", role: "assistant", content: "" },
+      { id: "t1-res", role: "tool", content: "ok" },
+      { id: "a1-prose", role: "assistant", content: "第一句。未播完第二句。" },
+      { id: "voice-u-t2", role: "user", content: "第二轮提问" },
+      { id: "a2-prose", role: "assistant", content: "第二轮完整正式回答。" },
+    ];
+
+    const res = trimInterruptedVoiceTurnMessages(history, "t1", "第一句。");
+    expect(res.changed).toBe(true);
+    expect(res.updated[1]?.content).toBe("");
+    expect(res.updated[3]?.content).toBe("第一句。");
+    // 第二轮对话绝对不可被触碰
+    expect(res.updated[4]?.content).toBe("第二轮提问");
+    expect(res.updated[5]?.content).toBe("第二轮完整正式回答。");
+
+    // spokenText 为空时写入中断标记，仍不触碰后续回合
+    const emptyTrim = trimInterruptedVoiceTurnMessages(history, "t1", "");
+    expect(emptyTrim.updated[3]?.content).toBe("[语音回复已中断]");
+    expect(emptyTrim.updated[5]?.content).toBe("第二轮完整正式回答。");
+  });
+
+  test("审查回归 P0：打断落库严格等待旧 runBotTurn 彻底退出后再调用 recordSpokenTurn 与次轮推理", async () => {
+    const ws = createFakeSocket();
+    const timeline: string[] = [];
+    let releaseTurn1Cleanup: (() => void) | undefined;
+    const turn1CleanupGate = new Promise<void>((resolve) => {
+      releaseTurn1Cleanup = resolve;
+    });
+    let turnNum = 0;
+
+    const session = new VoiceSession({
+      ws,
+      userId: "u1",
+      botId: "bot1",
+      channelId: "ch1",
+      audioProcessing: "web-aec-v1",
+      silenceMs: 120,
+      heartbeatMs: 0,
+      maxSessionMs: 0,
+      transcribe: async () => ({
+        text: turnNum === 0 ? "第一轮" : "第二轮",
+      }),
+      runBotTurn: async ({ signal, onTextDelta }) => {
+        turnNum += 1;
+        const current = turnNum;
+        timeline.push(`bot-start-${current}`);
+        if (current === 1) {
+          onTextDelta("第一轮未播完内容。");
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          // 模拟 governedTurnRunner 异步释放线程锁（stopPromise -> run_id = NULL）
+          await turn1CleanupGate;
+          timeline.push("bot-exit-1");
+          throw new DOMException("aborted", "AbortError");
+        }
+        onTextDelta("第二轮正常回复。");
+        timeline.push("bot-exit-2");
+        return { replyText: "第二轮正常回复。" };
+      },
+      synthesizeStream: async function* () {
+        yield Buffer.alloc(960, 1);
+      },
+      recordSpokenTurn: (rec) => {
+        timeline.push(`record-${rec.userText}-${rec.interrupted}`);
+      },
+    });
+
+    // 第一轮触发
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSpeechPcm(8).toString("base64"),
+      }),
+    );
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSilencePcm(8).toString("base64"),
+      }),
+    );
+    await flushMicrotasks(10);
+
+    // 触发打断：前端立刻收到 assistant.spoken.commit，但后端 recordSpokenTurn 必须等 bot-exit-1 后执行！
+    session.handleRawMessage(JSON.stringify({ type: "barge_in" }));
+    await flushMicrotasks(6);
+    expect(ws.sent.some((e) => e.type === "assistant.spoken.commit")).toBe(
+      true,
+    );
+    expect(timeline).toEqual(["bot-start-1"]);
+
+    // 紧接着发起第二轮语音：必须排队等待第一轮释放锁并完成落库，绝不撞 409！
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSpeechPcm(8).toString("base64"),
+      }),
+    );
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSilencePcm(8).toString("base64"),
+      }),
+    );
+    await flushMicrotasks(6);
+    expect(timeline).toEqual(["bot-start-1"]);
+
+    // 释放第一轮清理门：严格顺序 bot-exit-1 -> record-第一轮-true -> bot-start-2 -> bot-exit-2
+    releaseTurn1Cleanup?.();
+    await flushMicrotasks(16);
+    expect(timeline).toEqual([
+      "bot-start-1",
+      "bot-exit-1",
+      "record-第一轮-true",
+      "bot-start-2",
+      "bot-exit-2",
+    ]);
+
+    await session.close();
+  });
+
+  test("审查回归 P1：超长原始 WS 帧在 JSON.parse 前被硬截断并关闭（WS 1009）", () => {
+    const ws = createFakeSocket();
+    const session = new VoiceSession({
+      ws,
+      userId: "u1",
+      botId: "bot1",
+      channelId: "ch1",
+      audioProcessing: "web-aec-v1",
+      heartbeatMs: 0,
+      maxSessionMs: 0,
+      maxPayloadBytes: 256,
+      transcribe: async () => ({ text: "" }),
+      synthesizeStream: async function* () {
+        yield Buffer.alloc(4);
+      },
+      runBotTurn: async () => ({ replyText: "" }),
+    });
+
+    session.handleRawMessage(Buffer.alloc(512, 0x41));
+    expect(session.isClosed).toBe(true);
+    expect(ws.getClosed().code).toBe(1009);
+    expect(
+      ws.sent.some((e) => e.type === "error" && e.code === "payload_too_large"),
+    ).toBe(true);
+  });
+
+  test("审查回归 P1：丢失 playback.done 回执时兜底定时器自动收口入史并切回 listening", async () => {
+    const ws = createFakeSocket();
+    const spokenHistory: VoiceSpokenTurnRecord[] = [];
+    const session = new VoiceSession({
+      ws,
+      userId: "u1",
+      botId: "bot1",
+      channelId: "ch1",
+      audioProcessing: "web-aec-v1",
+      silenceMs: 100,
+      heartbeatMs: 0,
+      maxSessionMs: 0,
+      playbackOptions: { missingReceiptTimeoutMs: 120, tailGuardMs: 20 },
+      transcribe: async () => ({ text: "测试丢回执" }),
+      runBotTurn: async ({ onTextDelta }) => {
+        onTextDelta("回执丢包也要正常收口。");
+        return { replyText: "回执丢包也要正常收口。" };
+      },
+      synthesizeStream: async function* () {
+        // 960 bytes = 20ms @ 24kHz
+        yield Buffer.alloc(960, 1);
+      },
+      recordSpokenTurn: (rec) => {
+        spokenHistory.push(rec);
+      },
+    });
+
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSpeechPcm(8).toString("base64"),
+      }),
+    );
+    session.handleRawMessage(
+      JSON.stringify({
+        type: "audio.append",
+        audio: makeSilencePcm(6).toString("base64"),
+      }),
+    );
+    await flushMicrotasks(10);
+
+    // 客户端不发 playback.done：此时仍停留在 speaking 且未入史
+    expect(session.currentState).toBe("speaking");
+    expect(spokenHistory.length).toBe(0);
+
+    // 等待 20ms 估算播报 + 120ms 兜底窗触发
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await session.flushPendingCommits();
+
+    expect(session.currentState).toBe("listening");
+    expect(spokenHistory.length).toBe(1);
+    expect(spokenHistory[0]?.spokenText).toBe("回执丢包也要正常收口。");
+    expect(spokenHistory[0]?.interrupted).toBe(false);
+
+    await session.close();
+  });
 });
 
 describe("createVoiceCallService 票据防重放、严格 Origin 与并发上限", () => {
@@ -869,6 +1077,78 @@ describe("createVoiceCallService 票据防重放、严格 Origin 与并发上限
     );
     expect(sessionRes.status).toBe(503);
   });
+
+  test("审查回归 P1：异步 checkReady 下并发双 prepareUpgrade 同一票据仅允许至多 1 次成功（防 TOCTOU 重放）", async () => {
+    let releaseReady: (() => void) | undefined;
+    const readyGate = new Promise<void>((resolve) => {
+      releaseReady = resolve;
+    });
+    let issuePhase = true;
+
+    const service = createVoiceCallService({
+      maxUserCalls: 2,
+      checkReady: async () => {
+        if (!issuePhase) {
+          await readyGate;
+        }
+        return { asrReady: true, ttsReady: true };
+      },
+      resolveTargetChannel: async (_actor, botId) => ({
+        channelId: `direct-${botId}`,
+      }),
+      transcribe: async () => ({ text: "" }),
+      synthesizeStream: async function* () {
+        yield Buffer.alloc(4);
+      },
+      runBotTurn: async () => ({ replyText: "" }),
+      sessionDefaults: { heartbeatMs: 0, maxSessionMs: 0 },
+    });
+
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route(
+      "/api/voice",
+      service.routes(async (c, next) => {
+        c.set("actor", { id: "u1", email: "u1@example.com", role: "user" });
+        await next();
+      }),
+    );
+
+    const issuedRes = await app.request(
+      "https://chat.example.com/api/voice/sessions",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://chat.example.com",
+        },
+        body: JSON.stringify({ botId: "bot-1" }),
+      },
+    );
+    expect(issuedRes.status).toBe(201);
+    const { ticket } = (await issuedRes.json()) as { ticket: string };
+
+    issuePhase = false;
+    const makeUpgradeReq = () =>
+      new Request("https://chat.example.com/api/voice/ws", {
+        headers: {
+          origin: "https://chat.example.com",
+          "sec-websocket-protocol": `${VOICE_WS_PROTOCOL_PREFIX}${ticket}`,
+        },
+      });
+
+    // 同一 tick 并发发起两次同票据升级，在 await checkReady 期间验证原子消费。
+    const p1 = service.prepareUpgrade(makeUpgradeReq());
+    const p2 = service.prepareUpgrade(makeUpgradeReq());
+    releaseReady?.();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    const okCount = [r1, r2].filter((r) => r.ok).length;
+    const denied = [r1, r2].find((r) => !r.ok);
+    expect(okCount).toBe(1);
+    expect(denied && !denied.ok ? denied.status : 0).toBe(401);
+
+    await service.closeAll();
+  });
 });
 
 describe("PC Electron 桌面端原生音频钩子", () => {
@@ -913,5 +1193,34 @@ describe("PC Electron 桌面端原生音频钩子", () => {
     expect(listed.inputs[0]?.label).toBe("默认麦克风");
     expect(listed.outputs).toHaveLength(1);
     expect(listed.outputs[0]?.label).toBe("桌面音箱");
+
+    // 审查回归 P2：registerVoiceAudioIpc 未显式传入 verifySender 时默认 fail-closed 拒绝调用。
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    const fakeIpc = {
+      handle(channel: string, fn: (event: unknown) => unknown) {
+        handlers.set(channel, fn);
+      },
+    };
+    desktopVoiceAudio.registerVoiceAudioIpc(fakeIpc);
+    const defaultHandler = handlers.get("voice-audio:preferred-constraints");
+    expect(typeof defaultHandler).toBe("function");
+    expect(() => defaultHandler?.({ sender: "any" })).toThrow("未授权");
+
+    desktopVoiceAudio.registerVoiceAudioIpc(fakeIpc, {
+      platform: "win32",
+      verifySender: (ev: { origin?: string }) =>
+        ev?.origin === "https://trusted.local",
+    });
+    const guardedHandler = handlers.get("voice-audio:preferred-constraints");
+    expect(() => guardedHandler?.({ origin: "https://evil.local" })).toThrow(
+      "未授权",
+    );
+    expect(
+      (
+        guardedHandler?.({ origin: "https://trusted.local" }) as {
+          audioProcessing?: string;
+        }
+      )?.audioProcessing,
+    ).toBe("native-aec3-v1");
   });
 });
