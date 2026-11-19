@@ -149,6 +149,7 @@
 | [141](#141-右边缘面板把手接入液态玻璃材质2026-11-19cb-138)                                               | 右边缘「面板」把手接入液态玻璃材质                                                                               | 2026-11-19，CB-138                                                         |
 | [142](#142-弹出面板与窗口按钮条的材质收口2026-11-19cb-139)                                               | 弹出面板底色单通道收口、窗口按钮条退出材质体系                                                                   | 2026-11-19，CB-139                                                         |
 | [143](#143-主题族双槽独立-seed-派生令牌2026-11-19cb-140)                                                    | 主题族：双槽独立、seed 派生令牌                                                                                  | 2026-11-19，CB-140                                                         |
+| [144](#144-prokbot-全量对标多端-ai-交互体验与底座加固2026-11-19cb-142)                                     | ProkBot 全量对标：多端 AI 交互体验与底座加固（Wave 1–10）                                                         | 2026-11-19，CB-142                                                         |
 
 ## 0. 总原则
 
@@ -3009,3 +3010,13 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **存储与迁移**：新键 `chisabot-theme-family-light` / `chisabot-theme-family-dark` / `chisabot-theme-families`（自定义族 JSON 数组）。旧 `chisabot-theme-palette` 只在 `readInitialAppearance` 与启动脚本里读一次做映射迁移（`migrateLegacyPalette`：sakura/ruby→落樱、emerald→青瓷、aurora/nocturne→暮紫、sunset/gold→琥珀、stardust→晨雾、default/ocean→晴空），两槽同写映射结果，之后不再读；新键已有值时忽略老键。
 - **启动脚本**：`familyBootScript()`（lib/palette.ts → lib/theme-family.ts，`deriveSeed` 函数体构建时 `.toString()` 内联）在 React 挂载前解析当前模式的族（新键 → 自定义族 → 老键迁移 → azure 兜底），写 `data-theme-family` 与整套派生变量、`data-glass`、meta theme-color（`--fam-sky-0`）——启动骨架第一帧就是用户的主题。
 - **auto 天象跟随族**：`harkScene="auto"` 时 `resolveEffectiveHarkScene` 取当前模式 seed 的 `scene`（未写时按浅 0 晴空 / 深 4 柏林夜兜底），再经 §140 的昼夜配对不变式过滤——任何路径都造不出明暗错配的天空。
+
+## 144. ProkBot 全量对标：多端 AI 交互体验与底座加固（2026-11-19，CB-142）
+
+基于全量代码对比审查（详见 `docs/prokbot-comparison.md`），在不破坏 ChisaBot 原有液态玻璃外观、无 `:has()` 性能红线与零 `blur(` 渲染约束的前提下，分 10 个波次补齐多端 AI ↔ 用户交互体验及底层安全可靠性加固（分支 `feat/prokbot-parity`）：
+
+- **左栏与聊天多模态交互**：左栏支持多个置顶 Bot 顺序管理（`app/src/lib/agents/roster-order.ts`、`app-sidebar.tsx`）；聊天框支持 20 MB PDF / DOCX 文档上传与 `/api/chat-files` 持久存储（`shared/chat-files.ts`）；消息气泡支持单实例互斥 TTS 朗读与 `speech_synthesize` `<audio>`/`<video>` 富媒体卡片；支持零 `blur(` CSS 的一键隐私遮罩（`data-private`）；链接预览 Hover 仅命中本地缓存、绝不私自发起探针请求；支持 AI 头像生成、头像视线追踪/登录捂眼与 6 表情 `WorkingCrewStrip` 工位条。
+- **示教录制、语音服务与全链路双向实时语音通话**：右栏计算机支持 WS DOM 示教录制与 4 规则自动编译技能（`server/src/computer/demonstration-store.ts`）；`/admin/models` 新增语音服务（ASR / TTS）配置与音色试听（`speech-settings.tsx`）；聊天输入框就绪时展示双向实时语音通话入口（`VoiceCallSheet` + `AgentOrb` 60fps 声波共振、`call-client.ts`），支持分态 VAD 防回声且不吞短词、流式分句并行 TTS 合成、真 `abort()` 打断、播放完成回执与超时自动兜底、仅已播报内容入正式历史、无 AEC 浏览器自动降级半双工门控，以及 PC/Android 原生 AEC3 音频管理（`pc/src/voice-audio.js`、`VoiceCallAudioManager.kt`）。
+- **主动通知、原生推送与跨端快捷入口**：AI 回复完成触发全局主动通知，按 `(userId, channelId)` 精确抑制前台已打开会话，支持每条/仅任务完成/静音三档频率（`needs-input` 穿透）与 WebAudio 5 档桌面提示音；激活 `push_devices` 支持 APNs / FCM / Bark `curl` 推送；支持 PC Electron 与 Android `chisabot://` 深链、Android `ACTION_SEND` 分享接入及无界面幂等 `/api/intents`。
+- **模型路由、提示词、生态与端侧协同工作台**：在对应设置与管理页收敛交付：联网搜索多后端与在线测连通（`web-search-settings.tsx`）、按模型覆写上下文窗口/摘要阈值、多 Webhook 规则与 7 态流水面板（`webhooks-panel.tsx`）、Bot 常驻参考资料库、自适应任务难度路由与 30 天路由日志/Dry-Run、本地时区/`kind`/`reasoningTokens` 用量账本、热启停脱敏抓包观测器、7 开关 Harness 控制台（`enterprise.tsx`）、7 角色系统提示词版本台（30 版历史/409 乐观锁/LCS Diff/运行态透视）、Bot 配方与多文件技能 ZIP 脱敏分享（`sharing-workbench.tsx`）、技能不可变版本栈/Diff/回滚（`skill-versions-panel.tsx`）、AI 自研微应用（`app-builder` 仅落 `draft` 经审批安装，`app-packages-panel.tsx`）与远程执行节点热切换（`execution-node-panel.tsx`）、本机 Coding Agent 同上下文续接/`needs_input` 追问、`chrome` Cookie 单域名审批导入与 Passkey 转发，以及端侧 500 条脱敏环形诊断日志导出（`diagnostics-export.tsx`）。
+- **端到端性能与材质铁律保持**：全站保持 zero `:has()` / `group-has-*` / 违规 `blur(` 约束，新增隐私遮罩与动画均采用纯色遮罩或 CSS transform/opacity 与 60fps `MotionValue`，通过 `no-group-has` 与 `theme-glass-perf` 等自动门禁。

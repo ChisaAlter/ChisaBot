@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **ProkBot 全量对标：多端 AI 交互体验、实时语音、微应用生态、本机桥接与底座安全加固（DESIGN.md §144，CB-142）**：分支 `feat/prokbot-parity` 分 10 个波次（Wave 1–10）落地全套能力并通过逐波独立安全审查：
+  - **聊天与实时语音**：新增全链路双向实时语音通话（WS 一次性票据、服务端 VAD 与真中止打断、流式分句 TTS、仅已播报入正式历史、`AgentOrb` 声波共振与 PC/Android 原生 AEC3 钩子）、20MB PDF/DOCX 上传、单实例 TTS 朗读、视频理解与生成及 `<audio>`/`<video>` 聊天卡片、AI 生成 Bot 头像与像素炸弹校验、虚拟形象视线追踪与 6 表情工位条、Hover 零网络链接预览缓存、零 `blur(` 隐私遮罩与多 Bot 置顶排序。
+  - **主动通知与跨端接入**：新增按 `(userId, channelId)` 前台抑制的回复完成通知、WebAudio 5 档提示音、激活 `push_devices`（APNs/FCM/Bark `curl`）、PC/Android `chisabot://` 深链与 Android 分享接入、无界面幂等 `/api/intents`。
+  - **模型、工具与端侧协同工作台**：新增 `/admin/models` 语音服务（ASR/TTS）与可插拔联网搜索管理台、按模型上下文/摘要阈值覆写、按任务难度自适应路由（含动态 `reasoning_effort` 与 30 天 Dry-Run/日志）、本地时区/用途/推理用量账本、热启停抓包观测器、多角色系统提示词版本台、7 开关 Harness 台、多 Webhook 规则面板、Bot 常驻资料库、Bot/技能 ZIP 脱敏分享与技能版本栈/多文件只读包、DOM 示教录制编译技能、AI 自研沙箱微应用（`app-builder` 审批安装）+ 远端 MCP 增强 + 远程执行节点热切换，以及本机 Coding Agent 多轮续接/`needs_input` 追问、Chrome Cookie 单域名审批导入与 Passkey 转发、无障碍代际授权、4 MiB 分块传输与端侧脱敏诊断日志导出。
+  - **运维、安全与数据库说明**：无需手动数据库迁移（22 张新增 `chisabot_*` 业务表开机幂等自建，未删除任何既有表）。新增可选环境变量 `CHISABOT_INTERNAL_TOKEN`（/ `CHISABOT_QUIESCE_TOKEN`）与 `CHISABOT_TRUST_PROXY=1`；`deploy/public/nginx.conf` 封禁公网 `/api/internal/` 并清空 `X-ChisaBot-Internal-Token`，更新公网网关时请按 `docs/ops/gateway.md` 同步。落地 Supervisor 静默排空升级（`scripts/ops/deploy-serial.sh`）、付费外部调用幂等账本、凭据 `0600`/`O_NOFOLLOW` 与全仓唯一 tmp 原子写、OAuth/审批/限流/吊销断活流/64 MiB SSE 上限、Tool Journal/Handoff/定时任务重启保护与 Ed25519 联邦签名基础协议。PC/Android 端侧新能力需随后续客户端发版同步更新。
 - **用户单张链接预览卡片右沿对齐（DESIGN.md §135，CB-141）**：修正用户消息下方单张链接预览卡片偏向聊天中间的问题，卡片右沿现在与消息气泡对齐；助手链接卡左对齐与多卡扇形布局不变。无需数据库迁移。
 - **主题族重构：浅 / 深两个模式各自独立选族（DESIGN.md §143，CB-140）**：「皮肤」轴升级为主题族——每族带浅 / 深两个 seed（accent / bg / fg / 对比度），浅色模式与深色模式各自独立选族，允许「浅色落樱 + 深色伦敦雨」混搭；族卡左右分半预览，点半边写对应族槽。全部 CSS 令牌改由 `deriveSeed(seed)` 纯函数派生（styles.css 删掉 10 套 `data-palette` 静态块），启动脚本同步换 `data-theme-family` 解析路径，第一帧仍是用户的主题。8 张内置族卡（晴空 / 晨雾 / 青瓷 / 落樱 / 琥珀 / 暮紫 / 伦敦雨 / 对比）+ 自定义族编辑器（双色 seed 全参数 + 背景材质）；旧 `chisabot-theme-palette` 存档一次性映射迁移到新键。明暗绑定皮肤（素白 / 墨夜）连同 `boundMode` 整体删除——「黑夜观感」用「深色槽选对比族」表达，选族不再翻转模式、也不再劫持天空来源（§140 的昼夜配对不变式与 `auto` 天象改为跟随族 seed 推荐场景）。无需数据库迁移。
 

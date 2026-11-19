@@ -87,6 +87,21 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 
 默认模型连接和备用模型存在 `enterprise_settings`（key `model_connection` / `model_fallbacks`）。
 
+### ProkBot 全量对标增量表（开机幂等自建，CB-142 · DESIGN §144）
+
+以下 22 张新增业务表均采用启动期 `CREATE TABLE IF NOT EXISTS` 幂等建表，未删除任何既有表或 Drizzle schema 声明：
+
+| 表 | 用途 | 代码 |
+| --- | --- | --- |
+| `chisabot_speech_settings` · `chisabot_voice_turns` | 全局与个人 ASR/TTS 语音配置；实时语音通话仅已播报入史的回合幂等账本 | `audio/speech-settings.ts`、`index.ts`（`voice/`） |
+| `chisabot_web_search_settings` · `chisabot_model_context_overrides` | 可插拔联网搜索后端与按模型 override；按模型覆写上下文窗口/摘要阈值 | `web/search-settings.ts`、`agents/context-policy-store.ts` |
+| `chisabot_bot_library_files` · `chisabot_media_model_pool` · `chisabot_video_generation_tasks` | Bot 常驻参考资料库元数据；多生图/视频模型池；视频生成占位与状态任务表 | `chat-files/library-service.ts`、`chat-files/media-pool-service.ts` |
+| `chisabot_routing_policy` · `chisabot_routing_logs` · `chisabot_usage_events` | 自适应难度路由策略与 30 天路由日志；IANA 本地时区/`kind`/`reasoningTokens` 用量账本 | `agents/routing-log.ts`、`quotas/usage-breakdown.ts` |
+| `chisabot_harness_settings` · `chisabot_prompt_overrides` · `chisabot_prompt_revisions` | 7 开关 Harness 管理设置；7 角色系统提示词覆写及 30 版乐观锁修订历史 | `admin/harness-settings.ts`、`prompts/workbench-store.ts` |
+| `chisabot_share_imports` · `chisabot_skill_revisions` · `chisabot_skill_heads` · `chisabot_skill_files` | ZIP 分享幂等断点导入记录；技能不可变版本栈、指针头及多文件只读技能包存储 | `sharing/service.ts`、`skills-chisa/version-store.ts` |
+| `chisabot_app_packages` · `chisabot_app_package_revisions` · `chisabot_mcp_enhancements` · `chisabot_execution_nodes` | AI 自研沙箱微应用包、历史版本与 Host OAuth/digest；远端 MCP 增强配置（SSE/OAuth2/headers/逐工具开关）；远程执行节点注册 | `plugins/app-package.ts`、`plugins/mcp-enhancements.ts`、`computer/execution-node-store.ts` |
+| `chisabot_paid_jobs` | 付费外部调用按 `(principal_id, request_key)` 复合隔离的幂等/断点恢复账本 | `reliability/paid-job-ledger.ts` |
+
 ## 3. 本地对话表（`chisabot_local_*`）
 
 本地会话与 DSH 展示投影共用这些表。0063 已登记原始结构；0067 将旧会话表及相关索引、约束和事件序列原地迁入当前命名，0068 进一步将历史事件 JSONB 载荷中的遗留兼容键名归一。`server/src/conversations/` 使用当前表名并保留幂等初始化。
