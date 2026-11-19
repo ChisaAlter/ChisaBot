@@ -174,6 +174,11 @@ const EXT_MIME: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   mp3: "audio/mpeg",
+  wav: "audio/wav",
+  opus: "audio/opus",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
+  m4a: "audio/mp4",
   mp4: "video/mp4",
 };
 

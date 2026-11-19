@@ -48,6 +48,7 @@ import {
   EditAction,
   MessageEditor,
   RegenerateAction,
+  SpeakAction,
   WithdrawAction,
 } from "@/components/chat/message-actions";
 import { QueuedMessages } from "@/components/chat/queued-messages";
@@ -100,6 +101,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useElementEvent, useExternalConnection, useWindowEvent } from "@/hooks";
 import { approvalInboxOptions } from "@/lib/approvals";
+import { speechStatusQueryOptions } from "@/lib/audio/speech";
 import {
   attachmentThumbUrl,
   attachmentUrl,
@@ -2452,6 +2454,7 @@ function CopyMessage({
   messageId?: string | undefined;
   extra?: React.ReactNode;
 }) {
+  const speechStatus = useQuery(speechStatusQueryOptions());
   const copy = useAsyncAction(() => writeClipboard(text), {
     errorToast: "复制失败，请手动选择文本复制。",
   });
@@ -2499,6 +2502,9 @@ function CopyMessage({
       </button>
       {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
       <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
+      {speechStatus.data?.ttsReady ? (
+        <SpeakAction messageId={messageId ?? "msg"} text={text} />
+      ) : null}
       {extra}
     </div>
   );

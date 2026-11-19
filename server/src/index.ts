@@ -109,6 +109,7 @@ import {
   parseApprovalResult,
 } from "./approvals/types";
 import { createSpeechService } from "./audio/speech-service";
+import { createSpeechSettingsStore } from "./audio/speech-settings";
 import {
   type AuditInitiator,
   createAuditReader,
@@ -128,7 +129,7 @@ import {
   resolveGatewayRequest,
 } from "./auth/gateway-identity";
 import type { AuthenticatedActor, AuthService } from "./auth/guards";
-import { createRoleRepository } from "./auth/guards";
+import { createRoleRepository, requireAdmin } from "./auth/guards";
 import { type ChisaBotRole, setRole } from "./auth/roles";
 import { createBotAvatars } from "./bot-avatars/service";
 import { createBotThreads } from "./bot-threads";
@@ -1725,10 +1726,6 @@ const personalNotifications = createPersonalNotifications({
   sources: personalSources,
   publicUrl: config.rawPublicUrl,
 });
-const speechService = createSpeechService({
-  getConfig: () => config.speech ?? {},
-  ...(config.rawPublicUrl ? { publicOrigin: config.rawPublicUrl } : {}),
-});
 const hostNotificationSweep = createHostNotifications({
   updaterDir: config.updaterDir,
   database,
@@ -1865,6 +1862,21 @@ const chatFiles = createChatFiles(database, {
 });
 await pages.ensure();
 await chatFiles.ensure();
+const speechSettings = createSpeechSettingsStore(database, {
+  encryptionKey: config.keyEncryptionKey,
+  ...(config.speech ? { envSpeechConfig: config.speech } : {}),
+});
+await speechSettings.ensure();
+const speechService = createSpeechService({
+  getConfig: () => speechSettings.resolveConfig(),
+  settingsStore: speechSettings,
+  persistAudio: (actorId, agentId, file) =>
+    chatFiles.upload(actorId, agentId, {
+      name: file.name,
+      bytes: file.bytes,
+    }),
+  ...(config.rawPublicUrl ? { publicOrigin: config.rawPublicUrl } : {}),
+});
 /** 频道聊天的上传也存进机器人工作区 uploads/（CB-046，DESIGN.md §68），和旧 /bot 一样。 */
 setChannelUploadMirror(
   createChannelUploadMirror({
@@ -1968,7 +1980,9 @@ const loadToolsForActor =
       ...(isPanelRefresh
         ? []
         : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
-      ...(config.speech?.tts && !isPanelRefresh ? speechService.tools() : []),
+      ...(!isPanelRefresh && (await speechService.isTtsReady())
+        ? speechService.tools({ actorId, agentId: botId })
+        : []),
       ...(await grantedTools({
         store: pluginStore,
         botId,
@@ -4941,7 +4955,9 @@ const app = createApp(
               : {}),
           })
         : []),
-      ...(name === "speech_synthesize" ? speechService.tools() : []),
+      ...(name === "speech_synthesize"
+        ? speechService.tools({ actorId, agentId: botId })
+        : []),
     ].find((candidate) => candidate.name === name);
     if (memory) {
       const text = await memory.execute(args);
@@ -5171,7 +5187,7 @@ const app = createApp(
       ["/api/bot-threads", botThreads.routes(requireUser)],
       ["/api/side-threads", createSideThreadRoutes(sideThreads, requireUser)],
       ["/api/im", readyImService.routes(requireUser)],
-      ["/api/speech", speechService.routes(requireUser)],
+      ["/api/speech", speechService.routes(requireUser, requireAdmin)],
       ["/api/memory-notes", memoryNotes.routes(requireUser)],
       ["/api/bot-avatars", botAvatars.routes(requireUser)],
       ["/api/browser-bookmarks", browserBookmarks.routes(requireUser)],

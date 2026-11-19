@@ -95,7 +95,19 @@ export const IMAGE_PROVIDER_PRESETS: Record<ImageProviderKind, { label: string; 
 export const chatFileUrl = (id: string) => `${CHAT_FILE_URL_PREFIX}${id}`;
 
 export function isInlineSafeMime(mime: string): boolean {
-  return ["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"].includes(mime);
+  return [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "audio/mpeg",
+    "audio/wav",
+    "audio/opus",
+    "audio/aac",
+    "audio/ogg",
+    "audio/mp4",
+  ].includes(mime);
 }
 
 /** AG-UI 把字符串工具结果再 JSON 编码一次（`"\"…\""`）：先解开。 */

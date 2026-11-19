@@ -17,6 +17,7 @@ import {
   PageSkeleton,
 } from "@/components/layout/page-shell";
 import { PooledApiKeysSection } from "@/components/settings/pooled-api-keys";
+import { SpeechSettingsSection } from "@/components/settings/speech-settings";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -122,6 +123,7 @@ function ModelSettingsPage() {
         </div>
       ) : null}
       <MediaDefaults />
+      <SpeechSettingsSection />
     </PageShell>
   );
 }
