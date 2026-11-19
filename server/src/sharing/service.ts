@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   type BotSharePackageManifest,
@@ -318,14 +318,29 @@ function safeFilenameSlug(name: string): string {
 function buildImportSlugForConflict(
   baseSlug: string,
   importId: string,
+  attempt = 0,
 ): string {
-  const suffix =
+  const suffixBase =
     importId
       .replace(/[^a-z0-9]/gi, "")
       .toLowerCase()
       .slice(0, 8) || "imp";
-  const prefix = baseSlug.slice(0, Math.max(2, 40 - suffix.length - 1));
-  return `${prefix.replace(/-+$/, "")}-${suffix}`;
+  const suffix = attempt > 0 ? `${suffixBase}-${attempt}` : suffixBase;
+  const maxPrefix = Math.max(1, 40 - suffix.length - 1);
+  const prefix =
+    baseSlug.slice(0, maxPrefix).replace(/-+$/g, "").replace(/^-+/g, "") || "s";
+  return `${prefix}-${suffix}`;
+}
+
+function canActorWriteSkillOwner(
+  existingOwner: string | null | undefined,
+  actor: SharingActor,
+): boolean {
+  return (
+    existingOwner === undefined ||
+    existingOwner === actor.id ||
+    (actor.role === "admin" && existingOwner === null)
+  );
 }
 
 function evaluateDependencies(
@@ -710,30 +725,66 @@ export function createSharingService(options: SharingServiceOptions) {
         }
       }
 
-      // 2. 逐个导入技能（已完成项直接跳过，避免重复写入）
-      for (const skill of unpacked.manifest.skills) {
-        const conflictSlug = buildImportSlugForConflict(
-          skill.slug,
-          input.importId,
-        );
-        if (
-          checkpoint.skillsImported.includes(skill.slug) ||
-          checkpoint.skillsImported.includes(conflictSlug)
-        ) {
-          continue;
+      // 2. 逐个导入技能（按索引断点续导 + 循环校验目标 slug 归属，杜绝通过碰撞 importId 越权覆盖他人/共享技能）
+      const reservedSlugs = new Set<string>(checkpoint.skillsImported);
+      for (let i = 0; i < unpacked.manifest.skills.length; i++) {
+        if (i < checkpoint.skillsImported.length) continue;
+        const skill = unpacked.manifest.skills[i];
+        if (!skill) continue;
+
+        let targetSlug: string | null = null;
+        if (!reservedSlugs.has(skill.slug)) {
+          const baseOwner = await adapters.skillOwner(skill.slug);
+          if (canActorWriteSkillOwner(baseOwner, actor)) {
+            targetSlug = skill.slug;
+          }
         }
-        const existingOwner = await adapters.skillOwner(skill.slug);
-        const canWriteOriginal =
-          existingOwner === undefined ||
-          existingOwner === actor.id ||
-          (actor.role === "admin" && existingOwner === null);
-        const targetSlug = canWriteOriginal ? skill.slug : conflictSlug;
+
+        if (!targetSlug) {
+          for (let attempt = 0; attempt <= 32; attempt++) {
+            const candidate = buildImportSlugForConflict(
+              skill.slug,
+              input.importId,
+              attempt,
+            );
+            if (reservedSlugs.has(candidate)) continue;
+            const owner = await adapters.skillOwner(candidate);
+            if (canActorWriteSkillOwner(owner, actor)) {
+              targetSlug = candidate;
+              break;
+            }
+          }
+        }
+
+        if (!targetSlug) {
+          for (let attempt = 0; attempt < 16; attempt++) {
+            const randSuffix = randomBytes(4).toString("hex");
+            const candidate = buildImportSlugForConflict(
+              skill.slug,
+              randSuffix,
+            );
+            if (reservedSlugs.has(candidate)) continue;
+            const owner = await adapters.skillOwner(candidate);
+            if (canActorWriteSkillOwner(owner, actor)) {
+              targetSlug = candidate;
+              break;
+            }
+          }
+        }
+
+        if (!targetSlug) {
+          throw new SharePackageError(
+            `技能「${skill.slug}」名称冲突且无法分配安全的唯一名称，已中止导入。`,
+            409,
+          );
+        }
 
         await adapters.installSkill(
           actor,
           { ...skill, slug: targetSlug },
           `配方包导入 (${input.importId.slice(0, 8)})`,
         );
+        reservedSlugs.add(targetSlug);
         checkpoint.skillsImported = [...checkpoint.skillsImported, targetSlug];
         checkpoint = await checkpoints.save(checkpoint);
       }

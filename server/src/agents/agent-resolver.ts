@@ -85,7 +85,10 @@ export type ActorAgentResolverDependencies = {
   loadInstructionsForActor?: (actorId: string) => LoadInstructions;
   loadAttachmentForActor?: (actorId: string) => LoadAttachment;
   markAttachmentsSentForActor?: (actorId: string) => MarkAttachmentsSent;
-  loadPersonalMemoryForActor?: (actorId: string) => LoadPersonalMemory;
+  loadPersonalMemoryForActor?: (
+    actorId: string,
+    getAvailableToolNames?: (botId: string) => ReadonlySet<string> | undefined,
+  ) => LoadPersonalMemory;
   quota?: Omit<ModelProxyQuotaOptions, "userId" | "isAdmin">;
   describeImageForActor?: (
     actorId: string,
@@ -166,14 +169,29 @@ export function createActorAgentResolver(
               : {}),
           }
         : undefined;
+    // 单次解析作用域内共享当轮实际装载的工具名集合，供 requiresTools 技能动态隐身使用，杜绝跨上下文串味。
+    const turnToolsByBot = new Map<string, ReadonlySet<string>>();
+    const baseLoadTools = deps.loadToolsForActor?.(
+      actor.id,
+      context?.initiator,
+      { isGroupChat: context?.isGroupChat },
+    );
+    const scopedLoadTools: LoadToolsForBot | undefined = baseLoadTools
+      ? async (botId) => {
+          const loaded = await baseLoadTools(botId);
+          turnToolsByBot.set(
+            botId,
+            new Set(loaded.flatMap((t) => [t.name, t.ref])),
+          );
+          return loaded;
+        }
+      : undefined;
     return resolveRuntimeAgents(
       () => Promise.resolve(registered),
       connection?.model ?? deps.model,
       connection ? async () => connection.apiKey : deps.resolveModelApiKey,
       deps.stallGuard,
-      deps.loadToolsForActor?.(actor.id, context?.initiator, {
-        isGroupChat: context?.isGroupChat,
-      }),
+      scopedLoadTools,
       deps.signRunForActor?.(actor.id, context?.initiator, context?.depth),
       deps.computerGuidance,
       deps.loadVendors,
@@ -186,7 +204,9 @@ export function createActorAgentResolver(
       deps.loadAttachmentForActor?.(actor.id),
       deps.markAttachmentsSentForActor?.(actor.id),
       undefined, // 位置占位参数
-      deps.loadPersonalMemoryForActor?.(actor.id),
+      deps.loadPersonalMemoryForActor?.(actor.id, (botId) =>
+        turnToolsByBot.get(botId),
+      ),
       deps.resolveConnectionForAgent,
       // The self-map's one fact about the person: may they approve an admin action.
       { isAdmin: actor.role === "admin" },

@@ -29,7 +29,7 @@ import { decodeZip, encodeZip, normalizeZipEntryPath } from "./zip";
 export class SharePackageError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 413 | 422 = 400,
+    readonly status: 400 | 403 | 404 | 409 | 413 | 422 = 400,
     readonly findings: ShareSafetyFinding[] = [],
   ) {
     super(message);

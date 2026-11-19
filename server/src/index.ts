@@ -392,7 +392,8 @@ import {
   createWebhookPanelRoutes,
 } from "./responsibilities/webhook-panel-routes";
 import { createModelCompleter } from "./routing/model";
-import { createSchedules } from "./schedules/service";
+import { createSchedules, ScheduleError } from "./schedules/service";
+import { SharePackageError } from "./sharing/package";
 import { createSharingRoutes } from "./sharing/routes";
 import {
   createPgShareImportStore,
@@ -2192,27 +2193,16 @@ const chisaSkills = createChisaSkills({
   versionStore: skillVersions,
 });
 let sharingService: SharingService | undefined;
-/** 记录每回合最近一次为 (ownerUserId, botId) 组装出的可用工具名集合，用于 requiresTools 技能动态隐身。 */
-const lastTurnToolNames = new Map<string, Set<string>>();
-function rememberTurnToolNames(
-  actorId: string,
-  botId: string,
-  names: Set<string>,
-): void {
-  const key = `${actorId}:${botId}`;
-  if (lastTurnToolNames.has(key)) lastTurnToolNames.delete(key);
-  lastTurnToolNames.set(key, names);
-  if (lastTurnToolNames.size > 500) {
-    const oldest = lastTurnToolNames.keys().next().value;
-    if (oldest !== undefined) lastTurnToolNames.delete(oldest);
-  }
-}
 // 几段互不相干的读同时发出（原来一段等一段，每轮 /run 前都串着这几次数据库往返）；拼接顺序不变。
+// 当轮实际装载的工具名集合由 agent-resolver 在单次 resolveRegisteredAgents 作用域内传入，避免跨上下文串味。
 const loadPersonalMemoryForActor =
-  (ownerUserId: string): LoadPersonalMemory =>
+  (
+    ownerUserId: string,
+    getAvailableToolNames?: (botId: string) => ReadonlySet<string> | undefined,
+  ): LoadPersonalMemory =>
   async (botId, question, options) => {
     const personalMemory = createPersonalMemoryLoader(memoryNotes, ownerUserId);
-    const availableToolNames = lastTurnToolNames.get(`${ownerUserId}:${botId}`);
+    const availableToolNames = getAvailableToolNames?.(botId);
     return (
       await Promise.all([
         currentDateContext(),
@@ -2398,11 +2388,6 @@ const loadToolsForActor =
         : []),
     ];
     rawTools.push(createInspectToolSchemaTool(() => rawTools));
-    rememberTurnToolNames(
-      actorId,
-      botId,
-      new Set(rawTools.flatMap((t) => [t.name, t.ref])),
-    );
     return confirmations.wrap(rawTools, {
       ownerUserId: actorId,
       agentId: botId,
@@ -5360,6 +5345,15 @@ sharingService = createSharingService({
     },
     skillOwner: (slug) => pluginStore.skillOwner(slug),
     async installSkill(actor, skill, reason) {
+      // 纵深防御：写入前复验归属，杜绝越权覆盖他人或部署共享技能
+      const existingOwner = await pluginStore.skillOwner(skill.slug);
+      const canWrite =
+        existingOwner === undefined ||
+        existingOwner === actor.id ||
+        (actor.role === "admin" && existingOwner === null);
+      if (!canWrite) {
+        throw new SharePackageError("无权覆盖他人或共享技能。", 403);
+      }
       enforceSkillSafety({
         slug: skill.slug,
         title: skill.title,
@@ -5371,7 +5365,8 @@ sharingService = createSharingService({
         title: skill.title,
         summary: skill.summary,
         instructions: skill.instructions,
-        ownerUserId: actor.id,
+        ownerUserId:
+          existingOwner === null && actor.role === "admin" ? null : actor.id,
         by: actor.id,
       });
       await skillVersions.recordRevision({
@@ -5416,7 +5411,10 @@ sharingService = createSharingService({
         targetBotId = profiles[0]?.id ?? null;
       }
       if (!targetBotId) {
-        throw new Error("当前账号下没有可用机器人，无法导入定时任务。");
+        throw new SharePackageError(
+          "当前账号下没有可用机器人，无法导入定时任务。",
+          400,
+        );
       }
       const current = await botThreads
         .current(actor.id, targetBotId)
@@ -5428,19 +5426,24 @@ sharingService = createSharingService({
         schedule.kind === "cron" && schedule.cron?.trim()
           ? schedule.cron.trim()
           : "0 9 * * *";
-      const created = await schedules.create({
-        owner: actor.id,
-        agentId: targetBotId,
-        threadId,
-        title: schedule.title,
-        instruction: schedule.instruction,
-        when: { repeat: "cron", cron: cronExpr },
-        ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
-      });
-      const paused = await schedules.update(actor.id, created.id, {
-        paused: true,
-      });
-      return { id: paused.id, enabled: false };
+      try {
+        const paused = await schedules.create({
+          owner: actor.id,
+          agentId: targetBotId,
+          threadId,
+          title: schedule.title,
+          instruction: schedule.instruction,
+          when: { repeat: "cron", cron: cronExpr },
+          ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
+          paused: true,
+        });
+        return { id: paused.id, enabled: false };
+      } catch (error) {
+        if (error instanceof ScheduleError) {
+          throw new SharePackageError(error.message, 400);
+        }
+        throw error;
+      }
     },
     async listCandidateMemories(ownerUserId, botId) {
       const notes = await memoryNotes.search(ownerUserId, "", undefined, 200, {
@@ -5603,11 +5606,8 @@ const app = createApp(
         },
       ),
       ...(!imUntrusted ? fleetAudit.tools(actorId) : []),
-      ...chisaSkills.tools(actorId, botId, {
-        ...(lastTurnToolNames.has(`${actorId}:${botId}`)
-          ? { availableToolNames: lastTurnToolNames.get(`${actorId}:${botId}`) }
-          : {}),
-      }),
+      // skill_* 工具统一走下方 imUntrustedScopeStore.run(imUntrusted, loadToolsForActor) 实时构造可用工具集，
+      // 既消除跨上下文缓存串味，也防止重启冷启动绕过 requiresTools 动态隐身。
       ...(!imUntrusted
         ? vault.tools(actorId, botId, initiator ?? undefined)
         : []),

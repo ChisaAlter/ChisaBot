@@ -737,6 +737,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     instruction: string;
     when: WhenInput;
     timezone?: string;
+    /** 为 true 时单条 INSERT 原子落库为 paused 且 next_run_at = NULL，消除先 active 再 update 的竞态窗口。 */
+    paused?: boolean;
   }): Promise<ScheduleView> {
     const title = input.title.trim().slice(0, 60);
     const instruction = input.instruction.trim().slice(0, 4000);
@@ -754,9 +756,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
     const id = `sch_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const agentInstanceId = input.agentInstanceId?.trim() || null;
+    const status = input.paused ? "paused" : "active";
+    const nextRunAt = input.paused ? null : iso(resolved.next);
     const rows = await sql.unsafe<Row[]>(
       `INSERT INTO chisabot_schedules (id, owner_user_id, agent_id, agent_instance_id, thread_id, im_connection_id, title, instruction, kind, cron, run_at, timezone, status, next_run_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [
         id,
         input.owner,
@@ -770,7 +774,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         resolved.cron,
         isoOrNull(resolved.runAt),
         timezone,
-        iso(resolved.next),
+        status,
+        nextRunAt,
       ],
     );
     return view(written(rows));

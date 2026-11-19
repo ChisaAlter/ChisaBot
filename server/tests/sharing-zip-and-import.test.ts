@@ -9,8 +9,11 @@ import type {
   ShareSkillEntry,
 } from "../../shared/sharing";
 import type { AppVariables } from "../src/auth/guards";
+import type { Database } from "../src/db/client";
+import { createSchedules, ScheduleError } from "../src/schedules/service";
 import {
   isForbiddenShareFilePath,
+  normalizeShareManifest,
   packSharePackage,
   SharePackageError,
   sanitizeImportedSkillContent,
@@ -699,13 +702,14 @@ describe("sharing service & routes: opt-in memories, paused schedules, checkpoin
     };
     const app = createSharingRoutes(h.service, requireUser);
 
-    // 1. POST /export/draft
+    // 1. POST /export/draft（全部 /api/sharing/* 响应必须带 Cache-Control: no-store）
     const draftRes = await app.request("/export/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ botId: "bot-src" }),
     });
     expect(draftRes.status).toBe(200);
+    expect(draftRes.headers.get("cache-control")).toBe("no-store");
     const draftBody = (await draftRes.json()) as {
       draft: { selectedMemoryIndices: number[] };
     };
@@ -719,6 +723,7 @@ describe("sharing service & routes: opt-in memories, paused schedules, checkpoin
     });
     expect(zipRes.status).toBe(200);
     expect(zipRes.headers.get("content-type")).toBe("application/zip");
+    expect(zipRes.headers.get("cache-control")).toBe("no-store");
     const zipBytes = Buffer.from(await zipRes.arrayBuffer());
 
     // 3. POST /import/preview (JSON base64)
@@ -728,6 +733,7 @@ describe("sharing service & routes: opt-in memories, paused schedules, checkpoin
       body: JSON.stringify({ zipBase64: zipBytes.toString("base64") }),
     });
     expect(previewRes.status).toBe(200);
+    expect(previewRes.headers.get("cache-control")).toBe("no-store");
     const previewBody = (await previewRes.json()) as {
       preview: {
         suggestedImportId: string;
@@ -749,6 +755,7 @@ describe("sharing service & routes: opt-in memories, paused schedules, checkpoin
       }),
     });
     expect(commitRes.status).toBe(200);
+    expect(commitRes.headers.get("cache-control")).toBe("no-store");
     const commitBody = (await commitRes.json()) as {
       result: { memoriesImportedCount: number; schedulesPaused: boolean };
     };
@@ -764,5 +771,296 @@ describe("sharing service & routes: opt-in memories, paused schedules, checkpoin
     expect(toolOutput).toContain("产品助理");
     expect(toolOutput).toContain("已选中 0 条");
     expect(toolOutput).toContain("/settings/share");
+  });
+
+  test("prevents cross-user/shared skill overwrite via colliding importId and rejects duplicate skill slugs in package", async () => {
+    // 同包内重复 skill.slug 必须在归一化时拦截
+    expect(() =>
+      normalizeShareManifest({
+        schemaVersion: 1,
+        kind: "skill",
+        exportedAt: new Date().toISOString(),
+        skills: [
+          {
+            slug: "dup-skill",
+            title: "技能A",
+            summary: "A",
+            instructions: "步骤A",
+          },
+          {
+            slug: "dup-skill",
+            title: "技能B",
+            summary: "B",
+            instructions: "步骤B",
+          },
+        ],
+        schedules: [],
+        dependencies: [],
+        memories: [],
+      }),
+    ).toThrow("重复技能");
+
+    // 模拟：shared-ops 为部署共享技能（owner = null），shared-ops-deadbeef 为他人（u-bob）已有技能
+    const owners = new Map<string, string | null>([
+      ["shared-ops", null],
+      ["shared-ops-deadbeef", "u-bob"],
+    ]);
+    const written: Array<{ slug: string; actorId: string }> = [];
+
+    const adapters: SharingAdapters = {
+      async getBot() {
+        return null;
+      },
+      async createBot(_actor, profile) {
+        return { id: "bot-new", name: profile.name };
+      },
+      async listSkills() {
+        return [];
+      },
+      async skillOwner(slug) {
+        return owners.has(slug) ? owners.get(slug) : undefined;
+      },
+      async installSkill(actor, skill) {
+        const currentOwner = owners.has(skill.slug)
+          ? owners.get(skill.slug)
+          : undefined;
+        if (currentOwner !== undefined && currentOwner !== actor.id) {
+          throw new SharePackageError("无权覆盖他人或共享技能。", 403);
+        }
+        owners.set(skill.slug, actor.id);
+        written.push({ slug: skill.slug, actorId: actor.id });
+      },
+      async listSchedules() {
+        return [];
+      },
+      async createPausedSchedule() {
+        return { id: "sch-1", enabled: false };
+      },
+      async listCandidateMemories() {
+        return [];
+      },
+      async createMemory() {
+        return { id: "mem-1" };
+      },
+      async listBotDependencies() {
+        return [];
+      },
+      async listInstalledPlugins() {
+        return [];
+      },
+    };
+
+    const service = createSharingService({
+      checkpoints: createMemoryShareImportStore(),
+      adapters,
+    });
+
+    const packed = packSharePackage({
+      schemaVersion: 1,
+      kind: "skill",
+      exportedAt: new Date().toISOString(),
+      skills: [
+        {
+          slug: "shared-ops",
+          title: "运维脚本",
+          summary: "尝试导入同名技能",
+          instructions: "安全步骤说明",
+        },
+      ],
+      schedules: [],
+      dependencies: [],
+      memories: [],
+    });
+
+    // 普通用户 u-alice 故意构造 importId = "deadbeef-1234-5678" 让首个冲突名恰好撞上 u-bob 的 shared-ops-deadbeef
+    const result = await service.commitImport(alice, {
+      zipBytes: packed.bytes,
+      importId: "deadbeef-1234-5678",
+      packageDigest: packed.digest,
+    });
+
+    // 既未覆盖部署共享技能，也未覆盖 u-bob 的技能，自动另分配了带递增序号的安全 slug
+    expect(owners.get("shared-ops")).toBeNull();
+    expect(owners.get("shared-ops-deadbeef")).toBe("u-bob");
+    expect(result.skillsImported).toEqual(["shared-ops-deadbeef-1"]);
+    expect(owners.get("shared-ops-deadbeef-1")).toBe("u-alice");
+    expect(written).toEqual([
+      { slug: "shared-ops-deadbeef-1", actorId: "u-alice" },
+    ]);
+
+    // 幂等重放同一 importId：不重复分配、不重复写入
+    const replay = await service.commitImport(alice, {
+      zipBytes: packed.bytes,
+      importId: "deadbeef-1234-5678",
+      packageDigest: packed.digest,
+    });
+    expect(replay.reused).toBe(true);
+    expect(replay.skillsImported).toEqual(["shared-ops-deadbeef-1"]);
+    expect(written).toHaveLength(1);
+  });
+
+  test("schedules.create({ paused: true }) inserts paused atomically without update window and invalid cron returns HTTP 400", async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const fakeDb = {
+      $client: {
+        async unsafe(query: string, params: unknown[] = []) {
+          queries.push({ sql: query, params });
+          if (query.includes("SELECT count(*)")) return [{ n: 0 }];
+          if (query.includes("INSERT INTO chisabot_schedules")) {
+            return [
+              {
+                id: params[0],
+                owner_user_id: params[1],
+                agent_id: params[2],
+                agent_instance_id: params[3],
+                thread_id: params[4],
+                im_connection_id: params[5],
+                title: params[6],
+                instruction: params[7],
+                kind: params[8],
+                cron: params[9],
+                run_at: params[10],
+                timezone: params[11],
+                status: params[12],
+                next_run_at: params[13],
+                last_run_at: null,
+                last_status: null,
+                last_result: null,
+                fail_streak: 0,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    } as unknown as Database;
+
+    const schedulesSvc = createSchedules(fakeDb, {
+      runTurn: async () => ({ replyText: "" }),
+    });
+
+    const created = await schedulesSvc.create({
+      owner: "u-alice",
+      agentId: "bot-1",
+      threadId: "th-1",
+      title: "每日简报",
+      instruction: "生成晨报",
+      when: { repeat: "cron", cron: "0 9 * * *" },
+      paused: true,
+    });
+
+    expect(created.status).toBe("paused");
+    expect(created.nextRunAt).toBeNull();
+    const insertCall = queries.find((q) =>
+      q.sql.includes("INSERT INTO chisabot_schedules"),
+    );
+    expect(insertCall?.params[12]).toBe("paused");
+    expect(insertCall?.params[13]).toBeNull();
+    // 全程零 UPDATE 调用，不存在先 active 后 update 的竞态窗口
+    expect(
+      queries.some((q) => q.sql.includes("UPDATE chisabot_schedules")),
+    ).toBe(false);
+
+    // 通过 /api/sharing/import/commit 导入非法 cron 时映射 ScheduleError -> 400（绝不误返 503）
+    const adapters: SharingAdapters = {
+      async getBot() {
+        return null;
+      },
+      async createBot(_actor, profile) {
+        return { id: "bot-bad-cron", name: profile.name };
+      },
+      async listSkills() {
+        return [];
+      },
+      async skillOwner() {
+        return undefined;
+      },
+      async installSkill() {},
+      async listSchedules() {
+        return [];
+      },
+      async createPausedSchedule(actor, botId, sched) {
+        try {
+          const view = await schedulesSvc.create({
+            owner: actor.id,
+            agentId: botId ?? "bot-1",
+            threadId: "th-1",
+            title: sched.title,
+            instruction: sched.instruction,
+            when: { repeat: "cron", cron: sched.cron ?? "0 9 * * *" },
+            paused: true,
+          });
+          return { id: view.id, enabled: false };
+        } catch (err) {
+          if (err instanceof ScheduleError) {
+            throw new SharePackageError(err.message, 400);
+          }
+          throw err;
+        }
+      },
+      async listCandidateMemories() {
+        return [];
+      },
+      async createMemory() {
+        return { id: "mem-1" };
+      },
+      async listBotDependencies() {
+        return [];
+      },
+      async listInstalledPlugins() {
+        return [];
+      },
+    };
+
+    const service = createSharingService({
+      checkpoints: createMemoryShareImportStore(),
+      adapters,
+    });
+    const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.set("actor", {
+        id: "u-alice",
+        email: "alice@example.com",
+        name: "Alice",
+        image: null,
+        role: "user",
+      });
+      await next();
+    };
+    const app = createSharingRoutes(service, requireUser);
+    const badCronZip = packSharePackage({
+      schemaVersion: 1,
+      kind: "bot",
+      exportedAt: new Date().toISOString(),
+      bot: { name: "坏 Cron 助手", title: "测试", roleDescription: "测试" },
+      skills: [],
+      schedules: [
+        {
+          title: "非法频率任务",
+          instruction: "每分钟跑一次应被拒",
+          kind: "cron",
+          cron: "* * * * *",
+          enabled: false,
+        },
+      ],
+      dependencies: [],
+      memories: [],
+    });
+
+    const badRes = await app.request("/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        zipBase64: badCronZip.bytes.toString("base64"),
+        importId: "bad-cron-import-001",
+        packageDigest: badCronZip.digest,
+      }),
+    });
+    expect(badRes.status).toBe(400);
+    expect(badRes.headers.get("cache-control")).toBe("no-store");
   });
 });

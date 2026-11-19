@@ -36,7 +36,8 @@ export class SkillVersionError extends Error {
 }
 
 export type SkillVersionDatabase = {
-  $client: Pick<Database["$client"], "unsafe">;
+  $client: Pick<Database["$client"], "unsafe"> &
+    Partial<Pick<Database["$client"], "begin">>;
 };
 
 export type RecordSkillRevisionInput = {
@@ -811,18 +812,42 @@ export function createSkillVersionStore(
     const validated = validateAuxFilesBatch(files);
     const actor = updatedBy.trim().slice(0, 120) || "system";
 
-    await sql.unsafe("DELETE FROM chisabot_skill_files WHERE skill_slug = $1", [
-      skillSlug,
-    ]);
-    for (const file of validated) {
-      await sql.unsafe(
-        `INSERT INTO chisabot_skill_files
-           (skill_slug, file_path, content, sha256, bytes, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now())`,
-        [skillSlug, file.path, file.content, file.sha256, file.bytes, actor],
+    const replaceWithin = async (
+      exec: Pick<Database["$client"], "unsafe">,
+    ): Promise<SkillAuxFileView[]> => {
+      // 按 skill_slug 事务级咨询锁串行化同技能并发替换，确保 DELETE + INSERT 原子不丢失也不撞主键
+      await exec.unsafe("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `chisabot_skill_files:${skillSlug}`,
+      ]);
+      await exec.unsafe(
+        "DELETE FROM chisabot_skill_files WHERE skill_slug = $1",
+        [skillSlug],
+      );
+      for (const file of validated) {
+        await exec.unsafe(
+          `INSERT INTO chisabot_skill_files
+             (skill_slug, file_path, content, sha256, bytes, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now())`,
+          [skillSlug, file.path, file.content, file.sha256, file.bytes, actor],
+        );
+      }
+      const rows = await exec.unsafe<FileRow[]>(
+        `SELECT * FROM chisabot_skill_files
+         WHERE skill_slug = $1
+         ORDER BY file_path ASC`,
+        [skillSlug],
+      );
+      return rows.map(toAuxFileView);
+    };
+
+    if (typeof sql.begin === "function") {
+      return await sql.begin(async (transaction) =>
+        replaceWithin(
+          transaction as unknown as Pick<Database["$client"], "unsafe">,
+        ),
       );
     }
-    return listSkillFiles(skillSlug);
+    return replaceWithin(sql);
   }
 
   async function listSkillFiles(

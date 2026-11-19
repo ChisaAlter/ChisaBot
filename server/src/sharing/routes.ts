@@ -158,6 +158,10 @@ export function createSharingRoutes(
   const app = new Hono<{ Variables: AppVariables }>();
 
   app.use("*", requireUser);
+  app.use("*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+  });
 
   app.onError((error, c) => {
     if (error instanceof z.ZodError) {
