@@ -5,7 +5,7 @@ import { usesThemeGradientSky } from "../src/lib/appearance";
 import { deriveSeed, THEME_FAMILIES } from "../src/lib/theme-family";
 
 /*
- * 主题族要真的看得出来（CB-134 fix/palette-theme → CB-137 主题族）：
+ * 主题族要真的看得出来（CB-134 fix/palette-theme → CB-140 主题族）：
  * 每个族 × 每种模式的派生令牌——强调色、强调浅底、玻璃色调、主按钮、天空渐变——
  * 都由 seed 直接算出且和 default 兜底令牌不同，主按钮文字对比度 ≥ 4.5。
  * 令牌不再躺在 styles.css 的 data-palette 静态块里，改由 deriveSeed(seed) 写入 DOM。

@@ -9557,7 +9557,7 @@ html[data-theme="dark"] #sky-root::after {
   );
 }
 
-/* CB-137：旧的 10 套 data-palette 令牌块已全部删除——主题族的整套派生令牌
+/* CB-140：旧的 10 套 data-palette 令牌块已全部删除——主题族的整套派生令牌
  * （--accent-*、--ink-*、--focus、--glass-tint、--fam-sky-* 等）由 JS 的 deriveSeed
  * 按当前族 seed 算好，内联写在 <html>/<body> 上（lib/theme-family.ts，
  * applyAppearanceToDocument / 启动脚本）。这里只留 :root / .dark 的兜底默认值。 */
@@ -10531,7 +10531,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   gap: 8px;
   flex-wrap: wrap;
 }
-/* CB-137 主题族卡：88px 左右分半预览（左 = 浅色 seed，右 = 深色 seed），点半边写对应族槽。 */
+/* CB-140 主题族卡：88px 左右分半预览（左 = 浅色 seed，右 = 深色 seed），点半边写对应族槽。 */
 .appearance-fam-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -11253,7 +11253,7 @@ html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn
 }
 
 /* ==========================================================================================
- * 主题族落到大面上（CB-137，原 fix/palette-theme）：族 seed 派生的整套令牌由 JS deriveSeed
+ * 主题族落到大面上（CB-140，原 fix/palette-theme）：族 seed 派生的整套令牌由 JS deriveSeed
  * 内联写在 <html> 上（--accent-*、--ink-*、--glass-bg、--glass-tint 等）；--pal-tint-layer 把
  * --glass-tint（强调色约 8%）叠进左栏 / 右栏 / 账号卡 / 输入框 / 卡片的毛玻璃；聊天输入框
  * 发送键用强调色描边阴影；「主题天空」时 #skyph 画 --fam-sky-* 四段渐变，偏蓝的柔光薄纱

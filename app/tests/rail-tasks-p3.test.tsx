@@ -383,7 +383,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         root: ":root",
         // QA r2 默认配色最暗胶囊底是 (217,229,246)；r3 换配色后最暗是 aurora crystal
         // (195,171,220)、sakura crystal (230,170,187)、ocean liquid (157,205,219)。
-        // CB-137：族令牌改由 deriveSeed 写 DOM，这组底色仍是已量到的最差情形兜底。
+        // CB-140：族令牌改由 deriveSeed 写 DOM，这组底色仍是已量到的最差情形兜底。
         backgrounds: [
           [255, 255, 255],
           [217, 229, 246],
@@ -557,7 +557,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         "--task-tone",
         token,
       );
-    // CB-137：配色轴换成主题族（令牌由 deriveSeed 写 DOM，不再躺在样式表选择器里）。
+    // CB-140：配色轴换成主题族（令牌由 deriveSeed 写 DOM，不再躺在样式表选择器里）。
     expect(FAMILY_IDS.length).toBeGreaterThanOrEqual(7);
 
     const modes = [

@@ -82,7 +82,7 @@ if (isLocalPage) {
     });
 
     // 外观：网页在 <html> 上切 .dark；时间天空看 <html data-sky>——SkyBackground 按外观模型
-    // （模式 × 主题族双槽 × 天空来源，DESIGN §140/§141）写 "live"（实时动态天象）/ "snapshot"（固定场景）/
+    // （模式 × 主题族双槽 × 天空来源，DESIGN §140/§143）写 "live"（实时动态天象）/ "snapshot"（固定场景）/
     // "off"（壁纸 · 主题渐变 · 性能模式），启动脚本在 React 前先写 "time"；旧键 chisabot-sky="off"
     // 时启动脚本不写属性 → 原生窗不画时间天空（老用户兼容）。
     const report = () => {

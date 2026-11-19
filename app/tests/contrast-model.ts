@@ -174,7 +174,7 @@ export const GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"] as const;
 /** lib/appearance.ts 存储 / 校验的雾度范围（clampNumber(…, 5, 55, …)）。 */
 export const HAZE_RANGE = [0.05, 0.55] as const;
 
-/** 天空：带高度位置的 4 个色标（CB-137：族 seed 派生的 --fam-sky-* 四段）。 */
+/** 天空：带高度位置的 4 个色标（CB-140：族 seed 派生的 --fam-sky-* 四段）。 */
 export function skyStops(familyId: string, scheme: Scheme): Stop[] {
   const sel =
     scheme === "dark"

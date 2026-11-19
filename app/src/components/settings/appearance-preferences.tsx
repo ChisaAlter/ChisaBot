@@ -181,7 +181,7 @@ export function AppearancePreferences() {
           (item) => item.category === wallpaperCategory,
         );
 
-  // 主题族（CB-137）：浅 / 深两槽各自独立；点卡片的某半边只写那一槽。
+  // 主题族（CB-140）：浅 / 深两槽各自独立；点卡片的某半边只写那一槽。
   const families = listThemeFamilies(appearance.customFamilies);
   const resolvedFamily = resolvedThemeFamily(appearance, dark);
   const [familyDraft, setFamilyDraft] = useState<FamilyDraft | null>(null);
@@ -407,7 +407,7 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 外观模型（CB-137）：外观 = 模式 × 主题族 × 背景。
+      {/* 1. 外观模型（CB-140）：外观 = 模式 × 主题族 × 背景。
        *    族卡的左右半边分别写浅 / 深族槽（允许混搭）；天空背景在
        *    「主题天空 / Hark 动态天象 / 壁纸」三选一，昼景只配浅色、夜景只配深色
        *    （错配在解析层自动落到配对场景），晨昏两相宜。 */}

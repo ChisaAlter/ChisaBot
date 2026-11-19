@@ -1,5 +1,5 @@
 /**
- * CB-137：旧的「10 套皮肤」轴已被主题族（{@link ./theme-family}）取代。
+ * CB-140：旧的「10 套皮肤」轴已被主题族（{@link ./theme-family}）取代。
  * 这个文件只剩兼容层：
  *  - 外观存储键（玻璃材质、天空来源）与「存过外观设置」的判定；
  *  - index.html 启动脚本（{@link familyBootScript}，由 vite.config.ts 的
@@ -80,7 +80,7 @@ export const LEGACY_DEFAULT_GLASS_STYLE = "mist";
  * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
  * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
  * 不含 `chisabot-theme`：ThemeProvider 挂载时会自动写入，分不出用户有没有主动选过。
- * CB-137 后主题族键顶替旧的 palette 键；其余键与 appearance.ts 的同名常量对应
+ * CB-140 后主题族键顶替旧的 palette 键；其余键与 appearance.ts 的同名常量对应
  * （tests/default-mist-glass.test.tsx 核对）。
  * 写在这里而不是 appearance.ts：启动脚本要内联这份列表，palette.ts 是不依赖 DOM 的纯模块。
  */

@@ -617,7 +617,7 @@ function resolveStoredGlassStyle(rawGlass: GlassStyleId | null): GlassStyleId {
 /**
  * 单个族槽的存储值 → 有效族 id：
  * 存的值能解析出族（内置或自定义）就用它；否则按旧 palette 键一次性迁移（两槽同结果）；
- * 都没有 → azure。旧键读这一次就完了，正常路径不再读（CB-137 迁移规则）。
+ * 都没有 → azure。旧键读这一次就完了，正常路径不再读（CB-140 迁移规则）。
  */
 function readFamilySlot(
   raw: string | null,

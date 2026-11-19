@@ -1,5 +1,5 @@
 /**
- * CB-137 主题族（theme family）：外观模型从「模式 × 皮肤」升级为「模式 × 主题族」。
+ * CB-140 主题族（theme family）：外观模型从「模式 × 皮肤」升级为「模式 × 主题族」。
  *
  * ThemeFamily = { id, name, light: Seed, dark: Seed }
  * Seed = { ac, bg, fg, c }（accent / background / foreground / 对比度 30-70）
@@ -43,7 +43,7 @@ export const PALETTE_STORAGE_KEY = "chisabot-theme-palette";
 
 export const DEFAULT_FAMILY_ID = "azure";
 
-/** 八个内置族（CB-137 §141；色值是规格常量，不要重新采样）。 */
+/** 八个内置族（CB-140 §143；色值是规格常量，不要重新采样）。 */
 export const THEME_FAMILIES: ThemeFamily[] = [
   {
     id: "azure",
