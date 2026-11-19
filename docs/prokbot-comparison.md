@@ -195,7 +195,7 @@
 - [x] **Wave 3**：可插拔联网搜索后端 + 按模型覆写上下文/摘要阈值 + 多 Webhook 规则与 7 态流水面板 + Bot 常驻参考资料库与防注入清单 + 一键隐私遮罩 + 桌面壳右键/时区/硬件加速/出口白名单 + `docs/AI-INSTALL.md`
 - [x] **Wave 4**：按任务难度自适应路由 + 动态 `reasoning_effort` + 30 天路由日志与 Dry-Run 试跑 + 本地时区/用途/`reasoning` 用量账本 + 热启停脱敏抓包观测器 + 多角色系统提示词版本台（LCS Diff + 组装/工具透视）+ Harness 开关台
 - [x] **Wave 5**：Bot 配方与多文件技能一键脱敏分享 ZIP 生态 + 技能不可变版本栈/Diff/回滚 + 按 `requiresTools` 动态隐身 + 多文件只读技能包
-- [ ] **Wave 6**：AI 视频生成/理解子会话 + 聊天 `<video>`/`<audio>` 卡片 + 多生图/视频模型池与多参考图 + AI 生成 Bot 头像 + FFmpeg 音频转码 + 虚拟形象情感微交互 + 头像防像素炸弹 + 链接预览 Hover 零网络探测
+- [x] **Wave 6**：AI 视频生成/理解子会话 + 聊天 `<video>`/`<audio>` 卡片 + 多生图/视频模型池与多参考图 + AI 生成 Bot 头像 + FFmpeg 音频转码 + 虚拟形象情感微交互 + 头像防像素炸弹 + 链接预览 Hover 零网络探测
 - [ ] **Wave 7**：全链路双向实时语音通话（WS 双向流 + 服务端 VAD/分态打断 + 真中止推理 + 流式分句 TTS + 播放回执 + 仅已播报入史 + 客户端 AEC3/WebAudio + `AgentOrb` 声波共振）
 - [ ] **Wave 8**：AI 自研可执行后端微应用 / MCP 工具包（`app-builder` + 沙箱 `node-stdio` + Host 托管 OAuth + digest 锚定）+ 远端 MCP 全量增强 + 远程执行节点热切换
 - [ ] **Wave 9**：Coding Agent 同上下文续接/`needs_input`/`status(waitMs)`/`pwd -P` + Chrome Cookie 按域名审批导入与 Passkey 跨端转发 + 无障碍控件树语义操控与 `bundleId` 回合授权 + 4MiB 分块上传下载 + 端侧诊断日志
