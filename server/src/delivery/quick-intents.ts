@@ -246,9 +246,10 @@ export function createQuickIntents(options: QuickIntentsOptions) {
           trimmedText,
           requestedChannelId,
         );
-        const existing = records.get(key);
-        if (existing) {
-          if (existing.digest !== digest) {
+        const checkExistingRecord = () => {
+          const hit = records.get(key);
+          if (!hit) return null;
+          if (hit.digest !== digest) {
             return context.json(
               {
                 status: "REJECTED" as const,
@@ -260,15 +261,18 @@ export function createQuickIntents(options: QuickIntentsOptions) {
           }
           return context.json({
             status: "DUPLICATE" as const,
-            clientNonce: existing.clientNonce,
-            agentId: existing.agentId,
-            channelId: existing.channelId,
-            messageId: existing.messageId,
-            deepLink: existing.deepLink,
-            runStatus: existing.runStatus,
-            replySummary: existing.replySummary,
+            clientNonce: hit.clientNonce,
+            agentId: hit.agentId,
+            channelId: hit.channelId,
+            messageId: hit.messageId,
+            deepLink: hit.deepLink,
+            runStatus: hit.runStatus,
+            replySummary: hit.replySummary,
           });
-        }
+        };
+
+        const beforeChannel = checkExistingRecord();
+        if (beforeChannel) return beforeChannel;
 
         const channel = requestedChannelId
           ? await options.channelStore.get(actor, requestedChannelId)
@@ -283,6 +287,10 @@ export function createQuickIntents(options: QuickIntentsOptions) {
             404,
           );
         }
+
+        // 在 await channelStore 之后、写入账本之前做同步复检，彻底消除并发相同 clientNonce 的双发竞态。
+        const afterChannel = checkExistingRecord();
+        if (afterChannel) return afterChannel;
 
         evictIfNeeded();
         const nowIso = new Date(clock()).toISOString();

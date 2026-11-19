@@ -43,7 +43,7 @@ function authGuard(
   };
 }
 
-function fixture() {
+function fixture(options?: { directDelayMs?: number }) {
   const profiles: AgentProfile[] = [
     makeProfile({ id: "bot_regular", name: "普通助手", ownerUserId: "alice" }),
     makeProfile({
@@ -113,6 +113,11 @@ function fixture() {
     },
     channelStore: {
       async direct(actor, agentId) {
+        if (options?.directDelayMs) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.directDelayMs),
+          );
+        }
         const id = `ch_${actor.id}_${agentId}`;
         const existing = channels.get(id);
         if (existing) return existing;
@@ -345,5 +350,39 @@ describe("quick-intents 无界面快捷指令入口", () => {
     };
     expect(json.status).toBe("failed");
     expect(json.error).toContain("模型配额不足");
+  });
+
+  test("并发相同 clientNonce 请求跨越 await channelStore.direct 仍严格只派发 1 次", async () => {
+    const { appFor, dispatched } = fixture({ directDelayMs: 25 });
+    const aliceApp = appFor({ id: "alice", role: "user" });
+    const reqInit = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: "bot_main",
+        text: "并发幂等发送测试",
+        clientNonce: "concurrent-nonce-1",
+      }),
+    };
+
+    const [first, second] = await Promise.all([
+      aliceApp.request("/api/intents/send", reqInit),
+      aliceApp.request("/api/intents/send", reqInit),
+    ]);
+    const statuses = [first.status, second.status].sort((a, b) => a - b);
+    expect(statuses).toEqual([200, 202]);
+
+    const bodies = (await Promise.all([first.json(), second.json()])) as Array<{
+      status: string;
+      messageId: string;
+    }>;
+    expect(bodies.map((b) => b.status).sort()).toEqual([
+      "ACCEPTED",
+      "DUPLICATE",
+    ]);
+    expect(bodies[0]?.messageId).toBe(bodies[1]?.messageId);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(dispatched).toHaveLength(1);
   });
 });

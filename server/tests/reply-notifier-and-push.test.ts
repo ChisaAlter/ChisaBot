@@ -431,6 +431,55 @@ describe("replyNotifier 启动基线防风暴、单 Bot 有界 256 去重与精�
     });
     expect(retainedAfterReinsert.verdict).toBe("duplicate");
   });
+
+  test("task-complete 模式下同 messageId 先收 reply 被过滤不占坑，后续 task-complete 正常派发", async () => {
+    const registry = createForegroundRegistry();
+    const delivered: ReplyNotificationEvent[] = [];
+    const notifier = createReplyNotifier({
+      foregroundRegistry: registry,
+      getFrequency: async () => "task-complete",
+      onInAppNotification: (_userId, event) => {
+        delivered.push(event);
+      },
+    });
+    await notifier.seedBaseline([]);
+
+    // 快捷指令或后台任务先触发 recordActivity 的 kind="reply" -> 被频率过滤，绝不写入 seen 占坑
+    const filtered = await notifier.notifyReply({
+      userId: "alice",
+      channelId: "ch_intent",
+      agentId: "bot_1",
+      messageId: "ch_intent:2026-11-19T09:00:00.000Z",
+      text: "任务执行完成摘要",
+      kind: "reply",
+    });
+    expect(filtered.verdict).toBe("frequency-filtered");
+    expect(delivered).toHaveLength(0);
+
+    // 紧接着相同 messageId 的 kind="task-complete" 到达 -> 必须正常派发
+    const completed = await notifier.notifyReply({
+      userId: "alice",
+      channelId: "ch_intent",
+      agentId: "bot_1",
+      messageId: "ch_intent:2026-11-19T09:00:00.000Z",
+      text: "任务执行完成摘要",
+      kind: "task-complete",
+    });
+    expect(completed.verdict).toBe("delivered");
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.kind).toBe("task-complete");
+
+    // 派发成功后再次重复到达才判定 duplicate
+    const duplicate = await notifier.notifyReply({
+      userId: "alice",
+      channelId: "ch_intent",
+      agentId: "bot_1",
+      messageId: "ch_intent:2026-11-19T09:00:00.000Z",
+      text: "任务执行完成摘要",
+      kind: "task-complete",
+    });
+    expect(duplicate.verdict).toBe("duplicate");
+  });
 });
 
 describe("Bark curl 解析、AES-256-GCM 凭据封存与移动推送服务", () => {
@@ -603,5 +652,30 @@ describe("Bark curl 解析、AES-256-GCM 凭据封存与移动推送服务", () 
     );
     expect(crossDelete.status).toBe(404);
     expect(rows.get(barkView.id)?.enabled).toBe(true);
+
+    // 6. POST /api/push/devices/:id/test 对非法 channelId / agentId 返回 400 而非 500
+    const aliceApp = new Hono().route(
+      "/api/push",
+      service.routes(authGuard("alice")),
+    );
+    const badChannelTest = await aliceApp.request(
+      `/api/push/devices/${barkView.id}/test`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ channelId: "bad/channel/path" }),
+      },
+    );
+    expect(badChannelTest.status).toBe(400);
+
+    const badAgentTest = await aliceApp.request(
+      `/api/push/devices/${barkView.id}/test`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ channelId: "ch_ok", agentId: ".." }),
+      },
+    );
+    expect(badAgentTest.status).toBe(400);
   });
 });

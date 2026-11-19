@@ -78,6 +78,10 @@ export function createReplyNotifier(options: ReplyNotifierOptions) {
     return kind === "needs-input" ? `needs-input:${messageId}` : messageId;
   }
 
+  function hasSeen(userId: string, agentId: string, token: string): boolean {
+    return seenByBot.get(botKey(userId, agentId))?.has(token) ?? false;
+  }
+
   function recordSeen(userId: string, agentId: string, token: string): boolean {
     const key = botKey(userId, agentId);
     let history = seenByBot.get(key);
@@ -98,7 +102,7 @@ export function createReplyNotifier(options: ReplyNotifierOptions) {
     input: ReplyNotifierInput,
   ): Promise<ReplyNotifyVerdict> {
     const token = dedupeToken(input.kind, input.messageId);
-    if (!recordSeen(input.userId, input.agentId, token)) {
+    if (hasSeen(input.userId, input.agentId, token)) {
       return { verdict: "duplicate" };
     }
 
@@ -128,6 +132,13 @@ export function createReplyNotifier(options: ReplyNotifierOptions) {
       if (frequency === "muted") return { verdict: "muted" };
       if (channelForeground) return { verdict: "foreground-suppressed" };
       return { verdict: "frequency-filtered" };
+    }
+
+    // 仅在通过频率与前台校验、准备实际派发前同步占坑：
+    // 1. 避免 task-complete 模式下先到的 kind="reply" 占坑吞掉同 messageId 的 kind="task-complete"；
+    // 2. 同时阻断并发同 messageId 跨过 await getFrequency 后产生双发。
+    if (!recordSeen(input.userId, input.agentId, token)) {
+      return { verdict: "duplicate" };
     }
 
     let agentName = input.agentName?.trim() || "";

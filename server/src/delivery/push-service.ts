@@ -418,6 +418,23 @@ function validatePublicPushUrl(raw: string): URL {
   return url;
 }
 
+const SAFE_DEEP_LINK_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
+
+const testDeviceBodySchema = z.strictObject({
+  channelId: z
+    .string()
+    .trim()
+    .regex(SAFE_DEEP_LINK_ID_RE, "channelId 格式无效。")
+    .refine((value) => value !== "." && value !== "..", "channelId 格式无效。")
+    .optional(),
+  agentId: z
+    .string()
+    .trim()
+    .regex(SAFE_DEEP_LINK_ID_RE, "agentId 格式无效。")
+    .refine((value) => value !== "." && value !== "..", "agentId 格式无效。")
+    .optional(),
+});
+
 const registerDeviceSchema = z.discriminatedUnion("provider", [
   z.strictObject({
     provider: z.literal("bark"),
@@ -904,17 +921,30 @@ export function createPushService(options: PushServiceOptions) {
         if (!id || id.length > 200) {
           return context.json({ error: "设备 ID 无效。" }, 400);
         }
-        const body = (await context.req.json().catch(() => ({}))) as {
-          channelId?: unknown;
-          agentId?: unknown;
-        };
+        const rawText = await context.req.text().catch(() => "");
+        let rawBody: unknown = {};
+        if (rawText.trim().length > 0) {
+          try {
+            rawBody = JSON.parse(rawText);
+          } catch {
+            return context.json({ error: "测试推送请求体 JSON 无效。" }, 400);
+          }
+        }
+        const parsed = testDeviceBodySchema.safeParse(rawBody);
+        if (!parsed.success) {
+          return context.json(
+            {
+              error:
+                parsed.error.issues[0]?.message ?? "测试推送目标参数无效。",
+            },
+            400,
+          );
+        }
         const outcome = await sendTest(context.var.actor.id, id, {
-          ...(typeof body?.channelId === "string" && body.channelId.trim()
-            ? { channelId: body.channelId.trim() }
+          ...(parsed.data.channelId
+            ? { channelId: parsed.data.channelId }
             : {}),
-          ...(typeof body?.agentId === "string" && body.agentId.trim()
-            ? { agentId: body.agentId.trim() }
-            : {}),
+          ...(parsed.data.agentId ? { agentId: parsed.data.agentId } : {}),
         });
         if (!outcome) {
           return context.json({ error: "推送设备不存在。" }, 404);
