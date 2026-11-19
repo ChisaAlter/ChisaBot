@@ -50,7 +50,7 @@ ChisaBot 功能入口与实现位置：**做什么 · 入口 · 代码 · 数据
 | 滚动与状态              | 贴底不跳、上滑不拽；打开落在最新一条；5 分钟内连续发不翻页；按机器人记住面板 / 计算机、草稿、滚动          | —                                                  | `app/src/components/chat/`、`app/src/lib/chat/`                                                                                               | 浏览器 localStorage `chisabot-ui-memory:v1`（`app/src/lib/chat/ui-memory.ts`）                           | §35、§83、§88、§94                  | 上线 · `tests/chat-scroll/`                                               |
 | 聊天文件 · 生图         | ＋ / 拖拽 / 粘贴上传（≤20 MB）进机器人工作区；机器人交付文件、画图、改图、看图                             | ＋；设置 → 模型（生图 / 识图）                     | `server/src/chat-files/`                                                                                                                      | `chisabot_chat_files`、`chisabot_image_settings`、`chisabot_media_models`、`chisabot_image_descriptions` | §56、§59                            | 上线 · [chat-files.md](chat-files.md)                                     |
 | 备用模型                | 主模型限流、缺失或可恢复故障时按管理员顺序有限切换；区分主/备错误，Stop 不切换                             | 设置 → 模型 → 备用模型                             | `runtime/dsh/src/model-router.mjs`、`server/src/agents/model-fallback.ts`                                                                     | `enterprise_settings`（key `model_fallbacks`）                                                           | §60、§61                            | 已上线（v0.1.138+） · [models.md](models.md)                              |
-| 实时语音通话            | 全链路双向实时语音通话：60s 一次性票据 + Origin 校验、VAD/真打断、流式分句 TTS、仅已播报入史、AgentOrb 共振与端侧 AEC3 | 输入框「语音通话」（服务就绪时显示） | `shared/voice-call.ts`、`server/src/voice/`、`app/src/components/voice/`、`pc/src/voice-audio.js`、`android/…/VoiceCallAudioManager.kt` | `chisabot_voice_turns` | §144 | 已落地（分支 `feat/prokbot-parity`，CB-142）；`voice_sessions` 旧表保留 |
+| 实时语音通话            | 全链路双向实时语音通话：60s 一次性票据 + Origin 校验、VAD/真打断、流式分句 TTS、仅已播报入史、AgentOrb 共振与端侧 AEC3 | 输入框「语音通话」（服务就绪时显示） | `shared/voice-call.ts`、`server/src/voice/`、`app/src/components/voice/`、`pc/src/voice-audio.js`、`android/…/VoiceCallAudioManager.kt` | `chisabot_voice_turns` | §144 | 已合入 `main`（CB-142）；`voice_sessions` 旧表保留 |
 
 ## 2. 右栏：面板与计算机
 
@@ -134,7 +134,7 @@ ChisaBot 功能入口与实现位置：**做什么 · 入口 · 代码 · 数据
 | 品牌               | 头像 logo；字标「Chisa」红 +「Bot」墨色，每人可改                                            | 点左上字标                               | `assets/brand/`、`app/src/components/layout/`                                 | 用户偏好                                              | §28             | 上线                                                                          |
 | 时间天空           | 实时动态天象（原「背景随时间变化」）                                                         | 设置 → 通用 · 天空背景卡                  | `app/src/lib/sky.ts`、`app/src/components/sky-background.tsx`                 | localStorage `chisabot-hark-scene` / `chisabot-sky-source` | §7、§140        | 上线                                                                          |
 
-### ProkBot 全量对标增量能力（CB-142 · DESIGN §144 · 分支 `feat/prokbot-parity`）
+### ProkBot 全量对标增量能力（CB-142 · DESIGN §144 · 已合入 `main`）
 
 | 领域 | 新增能力 | 入口 | 主要代码 | 数据表 | 状态 |
 | --- | --- | --- | --- | --- | --- |

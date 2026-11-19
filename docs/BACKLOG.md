@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-19（分支 `feat/prokbot-parity`）。
+> 状态最后核对：2026-11-19（`main`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,7 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（分支 `feat/prokbot-parity`） |
+| [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（已合入 `main`） |
 | [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（从 `wip/link-card-align-recovered` 提取合入 `main`） |
 | [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`（已本地合入 `main`） |
 | [CB-139](#cb-139) | 弹出面板颜色回归——底色多通道收口；窗口按钮条退出材质体系                | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#565 · `v0.1.169`）                                     |
@@ -143,7 +143,7 @@
 
 标签：`type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`
 
-- 分支：`feat/prokbot-parity`（基于 `main`，Wave 1–10 全部 39 个 commit 经独立代码/安全复审闭环，对照清单见 [prokbot-comparison.md](prokbot-comparison.md) §6–§7，界面规范见 `DESIGN.md` §144）。
+- 状态：已由原开发分支 `feat/prokbot-parity` 合入 `main`（Wave 1–10 全部 39 个 commit 经独立代码/安全复审闭环，对照清单见 [prokbot-comparison.md](prokbot-comparison.md) §6–§7，界面规范见 `DESIGN.md` §144）。
 - [x] **Wave 1**：建档建分支 + 4 处半成品断口接通（多 Bot 置顶排序、20MB PDF/DOCX 上传、单实例聊天 TTS 与音频卡、DOM 示教录制 → 4 规则编译技能）+ `/admin/models` 语音服务管理台与音色试听。
 - [x] **Wave 2**：AI 回复完成主动通知 + `(userId, channelId)` 前台抑制 + 全局频率策略 + WebAudio 5 档提示音 + 跨端 `chisabot://` 深链与 Android `ACTION_SEND` + `push_devices` 原生推送（APNs/FCM/Bark）+ 无界面幂等 `/api/intents`。
 - [x] **Wave 3**：可插拔联网搜索后端 + 按模型覆写上下文/摘要阈值 + 多 Webhook 规则与 7 态流水面板 + Bot 常驻资料库 + 零 `blur(` 一键隐私遮罩 + 桌面壳右键/硬件加速/时区/出口白名单 + `docs/AI-INSTALL.md`。
