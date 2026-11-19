@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// 外观模型重构（模式 × 皮肤 × 背景，DESIGN.md §140，CB-134）的真浏览器验收。
+// 外观模型重构（模式 × 主题族 × 背景，DESIGN.md §143，CB-134 → CB-140）的真浏览器验收。
 //
 // 覆盖：
-//  - 外观块：皮肤网格 + 「主题天空」卡 + 8 张天象卡（昼 / 暮 / 夜角标）；
-//  - 皮肤卡 = 强调色 + 主题天空：点配色把 chisabot-sky-source 写到 "theme"，主题天空卡选中；
+//  - 外观块：8 张主题族卡（每卡浅 / 深两个可点半边）+ 自定义族卡 +「主题天空」卡
+//    + 8 张天象卡（昼 / 暮 / 夜角标）；
+//  - 族卡半边 = 对应模式的族槽：点 fam-half-*-light 写 chisabot-theme-family-light，
+//    不碰天空来源；「主题天空」卡才把 chisabot-sky-source 写到 "theme"；
 //  - 天象卡切回引擎：skySource 写 "hark" 并退出壁纸；
 //  - 昼夜配对：浅色下点「柏林夜」，--sky-lift 落在配对场景（檀香山晨霞 darkness 0.55 → 0.07）
 //    而不是夜景本体的 0.14 顶格；引擎活着时顺带记录 applyScene 的真实解析下标；
-//  - 明暗绑定皮肤：深色下点「素白星尘」连模式一起切回浅色；
-//  - 壁纸互斥：选壁纸后天空卡组不亮 + 「壁纸启用中 · 皮肤仅更新强调色」提示；
+//  - 两槽独立：深色下点「对比」的深色半边只写深色族槽，外观模式不翻转；
+//  - 壁纸互斥：选壁纸后天空卡组不亮，点族半边只换族、壁纸与来源都不动；
 //  - live 天象 → <html data-sky="live">（PC 原生窗同步语义）；
 //  - 桌面 + 移动视口截图、零控制台报错。
 //
@@ -95,8 +97,8 @@ const ls = (page, key) =>
 const skyAttr = (page) =>
   page.evaluate(() => document.documentElement.getAttribute("data-sky"));
 const lift = (page) =>
-  page.evaluate(() =>
-    document.documentElement.style.getPropertyValue("--sky-lift") || null,
+  page.evaluate(
+    () => document.documentElement.style.getPropertyValue("--sky-lift") || null,
   );
 const isDark = (page) =>
   page.evaluate(() => document.documentElement.classList.contains("dark"));
@@ -134,7 +136,10 @@ try {
   /* ---------- 1. 默认（浅色 + auto + 引擎源）：新外观块结构 ---------- */
   log("1) 外观块结构：皮肤 / 主题天空 / 天象卡 + 昼夜角标");
   const p1 = await openSettings();
-  check("主题天空卡在", (await p1.locator('[data-testid="sky-source-theme"]').count()) === 1);
+  check(
+    "主题天空卡在",
+    (await p1.locator('[data-testid="sky-source-theme"]').count()) === 1,
+  );
   check(
     "8 张天象卡",
     (await p1.locator('[data-testid^="hark-scene-"]').count()) === 8,
@@ -150,19 +155,19 @@ try {
     badges.join(","),
   );
   check(
-    "素白 / 墨夜色板带明暗绑定角标",
-    (await p1.locator('[data-testid="palette-option-stardust"] .appearance-palette-mode').count()) === 1 &&
-      (await p1.locator('[data-testid="palette-option-nocturne"] .appearance-palette-mode').count()) === 1,
+    "8 张内置族卡 × 浅 / 深两个可点半边 + 自定义族卡",
+    (await p1.locator('[data-testid^="fam-half-"]').count()) === 16 &&
+      (await p1.locator('[data-testid="fam-custom"]').count()) === 1,
   );
   check(
     "默认 auto 天象卡选中、data-sky 是引擎模式",
-    (await p1.locator('[data-testid="hark-scene-auto"].is-active').count()) === 1 &&
-      ["live", "snapshot"].includes(await skyAttr(p1)),
+    (await p1.locator('[data-testid="hark-scene-auto"].is-active').count()) ===
+      1 && ["live", "snapshot"].includes(await skyAttr(p1)),
     `data-sky=${await skyAttr(p1)}`,
   );
   check(
     "独立「背景随时间变化」开关已删",
-    (await p1.locator('text=背景随时间变化').count()) === 0,
+    (await p1.locator("text=背景随时间变化").count()) === 0,
   );
 
   /* ---------- 2. 浅色 + 夜景卡：解析到配对场景（护栏证据） ---------- */
@@ -188,38 +193,66 @@ try {
       `calls=${calls.join(",")}`,
     );
   } else {
-    log("  info 引擎未起（无 WebGL），applyScene 不可考 —— 配对已由 --sky-lift 佐证");
+    log(
+      "  info 引擎未起（无 WebGL），applyScene 不可考 —— 配对已由 --sky-lift 佐证",
+    );
   }
 
-  /* ---------- 3. 点皮肤卡：切主题天空（引擎退出） ---------- */
-  log("3) 点「樱语粉」皮肤卡：skySource=theme、主题天空卡选中、data-sky=off");
-  await p1.locator('[data-testid="palette-option-sakura"]').click();
+  /* ---------- 3. 点族卡半边：只写族槽；「主题天空」卡才切渐变 ---------- */
+  log(
+    "3) 点「落樱」浅色半边：family-light 落库、data-theme-family 跟上，天空来源不动",
+  );
+  await p1.locator('[data-testid="fam-half-sakura-light"]').click();
   await p1.waitForTimeout(700);
   check(
-    "skySource=theme 已存、皮肤已换",
-    (await ls(p1, "chisabot-sky-source")) === "theme" &&
-      (await ls(p1, "chisabot-theme-palette")) === "sakura",
+    "浅色族槽 = sakura、深色槽不变，data-theme-family = sakura",
+    (await ls(p1, "chisabot-theme-family-light")) === "sakura" &&
+      (await ls(p1, "chisabot-theme-family-dark")) !== "sakura" &&
+      (await p1.evaluate(() =>
+        document.documentElement.getAttribute("data-theme-family"),
+      )) === "sakura",
   );
   check(
-    "主题天空卡选中、引擎关掉",
-    (await p1.locator('[data-testid="sky-source-theme"].is-active').count()) ===
-      1 && (await skyAttr(p1)) === "off",
+    "族卡不劫持天空：skySource 仍是 hark、引擎天象照常",
+    ["hark", null].includes(await ls(p1, "chisabot-sky-source")) &&
+      (await p1.locator('[data-testid="hark-scene-4"].is-active').count()) ===
+        1,
+  );
+  log("3b) 点「主题天空」卡：skySource=theme、引擎退出");
+  await p1.locator('[data-testid="sky-source-theme"]').click();
+  await p1.waitForTimeout(700);
+  check(
+    "skySource=theme 已存、主题天空卡选中、引擎关掉",
+    (await ls(p1, "chisabot-sky-source")) === "theme" &&
+      (await p1
+        .locator('[data-testid="sky-source-theme"].is-active')
+        .count()) === 1 &&
+      (await skyAttr(p1)) === "off",
     `data-sky=${await skyAttr(p1)}`,
   );
   check("--sky-lift 移除（主题渐变不需要护栏）", (await lift(p1)) === null);
-  await p1.screenshot({ path: path.join(OUT, "settings-theme-sky.png"), fullPage: true });
+  await p1.screenshot({
+    path: path.join(OUT, "settings-theme-sky.png"),
+    fullPage: true,
+  });
 
-  /* ---------- 4. 深色 + 明暗绑定皮肤 ---------- */
-  log("4) 深色外观：点「素白星尘」连模式一起切回浅色");
+  /* ---------- 4. 深色外观：两个族槽互相独立 ---------- */
+  log("4) 深色外观：点「对比」深色半边只写深色槽，模式不翻转");
   const p2 = await openSettings({ "chisabot-theme": "dark" });
   check("深色生效", await isDark(p2));
-  await p2.locator('[data-testid="palette-option-stardust"]').click();
+  await p2.locator('[data-testid="fam-half-mono-dark"]').click();
   await p2.waitForTimeout(900);
   check(
-    "点素白后外观翻浅、皮肤已换",
-    !(await isDark(p2)) &&
-      (await ls(p2, "chisabot-theme-palette")) === "stardust" &&
-      (await ls(p2, "chisabot-theme")) === "light",
+    "深色族槽 = mono、外观仍是深色、data-theme-family = mono",
+    (await ls(p2, "chisabot-theme-family-dark")) === "mono" &&
+      (await isDark(p2)) &&
+      (await p2.evaluate(() =>
+        document.documentElement.getAttribute("data-theme-family"),
+      )) === "mono",
+  );
+  check(
+    "浅色槽没有被带上（默认 azure）",
+    (await ls(p2, "chisabot-theme-family-light")) !== "mono",
   );
   await p2.close();
 
@@ -227,22 +260,15 @@ try {
   log("5) 壁纸盖过天空组；live 天象写 data-sky=live");
   await p1.locator('[data-testid="wallpaper-preset-waterlily-pond"]').click();
   await p1.waitForTimeout(700);
-  const hint = await p1
-    .locator('[data-testid="palette-sky-hint"]')
-    .textContent()
-    .catch(() => "");
   check(
-    "壁纸启用：天空卡组不亮 + 提示行",
-    (await p1.locator('[aria-label="天空背景选择"] .is-active').count()) === 0 &&
-      typeof hint === "string" &&
-      hint.includes("壁纸启用中"),
-    hint,
+    "壁纸启用：天空卡组不亮",
+    (await p1.locator('[aria-label="天空背景选择"] .is-active').count()) === 0,
   );
-  await p1.locator('[data-testid="palette-option-emerald"]').click();
+  await p1.locator('[data-testid="fam-half-celadon-light"]').click();
   await p1.waitForTimeout(500);
   check(
-    "壁纸启用中点皮肤只换强调色（壁纸与来源都不动）",
-    (await ls(p1, "chisabot-theme-palette")) === "emerald" &&
+    "壁纸启用中点族半边只换族（壁纸与来源都不动）",
+    (await ls(p1, "chisabot-theme-family-light")) === "celadon" &&
       (await ls(p1, "chisabot-wallpaper-id")) === "waterlily-pond" &&
       (await ls(p1, "chisabot-sky-source")) === "theme",
   );
@@ -255,7 +281,10 @@ try {
       (await skyAttr(p1)) === "live",
     `data-sky=${await skyAttr(p1)}`,
   );
-  await p1.screenshot({ path: path.join(OUT, "settings-desktop.png"), fullPage: true });
+  await p1.screenshot({
+    path: path.join(OUT, "settings-desktop.png"),
+    fullPage: true,
+  });
   await p1.close();
 
   /* ---------- 6. 移动视口 ---------- */
@@ -267,7 +296,10 @@ try {
     () => document.documentElement.scrollWidth > window.innerWidth + 2,
   );
   check("移动端无横向溢出", !overflow);
-  await p3.screenshot({ path: path.join(OUT, "settings-mobile.png"), fullPage: true });
+  await p3.screenshot({
+    path: path.join(OUT, "settings-mobile.png"),
+    fullPage: true,
+  });
   await p3.close();
 
   check(

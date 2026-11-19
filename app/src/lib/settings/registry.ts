@@ -22,7 +22,7 @@ import {
   IconWorldWww,
 } from "@tabler/icons-react";
 import type * as React from "react";
-import { THEME_PALETTES } from "@/lib/appearance";
+import { THEME_FAMILIES } from "@/lib/appearance";
 
 /**
  * 设置的唯一登记表（DESIGN.md §97）：左栏导航和设置搜索都从这里来，加一页 / 一项只改这里。
@@ -118,23 +118,26 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       },
       {
         id: "palette",
-        title: "主题皮肤与天空背景",
-        description: `${THEME_PALETTES.map((palette) => palette.name).join("、")}，共 ${THEME_PALETTES.length} 款主题皮肤与动态天象`,
-        find: "主题皮肤",
+        title: "主题族与天空背景",
+        description: `${THEME_FAMILIES.map((family) => family.name).join("、")}，共 ${THEME_FAMILIES.length} 款主题族与动态天象`,
+        find: "主题族",
         keywords: [
           "配色",
           "主题色",
+          "主题族",
           "皮肤",
           "天象",
           "天空",
-          "极光",
-          "樱花",
-          "翡翠",
-          "深海",
-          "暮光",
-          "曜石",
+          "晴空",
+          "晨雾",
+          "青瓷",
+          "落樱",
+          "琥珀",
+          "暮紫",
+          "伦敦雨",
           "palette",
           "color",
+          "family",
         ],
       },
       {
@@ -178,7 +181,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       {
         id: "sky",
         title: "实时动态天象",
-        description: "天空背景跟随本机时间渲染（原「背景随时间变化」开关，现为天象卡）",
+        description:
+          "天空背景跟随本机时间渲染（原「背景随时间变化」开关，现为天象卡）",
         find: "动态天象",
         keywords: [
           "天空",

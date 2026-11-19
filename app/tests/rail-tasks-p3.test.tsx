@@ -50,7 +50,7 @@ import type {
   TaskCenterTask,
 } from "../../shared/task-center";
 import type { WorkflowRunView } from "../../shared/workflows";
-import { lastDecl, stylesCss } from "./contrast-model";
+import { FAMILY_IDS, lastDecl, stylesCss } from "./contrast-model";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -381,9 +381,9 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
       {
         name: "light",
         root: ":root",
-        sel: (p: string) => `html[data-palette="${p}"]`,
         // QA r2 默认配色最暗胶囊底是 (217,229,246)；r3 换配色后最暗是 aurora crystal
         // (195,171,220)、sakura crystal (230,170,187)、ocean liquid (157,205,219)。
+        // CB-140：族令牌改由 deriveSeed 写 DOM，这组底色仍是已量到的最差情形兜底。
         backgrounds: [
           [255, 255, 255],
           [217, 229, 246],
@@ -397,7 +397,6 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
       {
         name: "dark",
         root: ".dark",
-        sel: (p: string) => `html.dark[data-palette="${p}"]`,
         // 深色下量到的胶囊底在 (29–36, 35–40, 48–53) 之间；再往亮处留出余量。
         backgrounds: [
           [0, 0, 0],
@@ -558,10 +557,8 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         "--task-tone",
         token,
       );
-    const palettes = [
-      ...stylesCss.matchAll(/html\[data-palette="([a-z]+)"\]\s*\{/g),
-    ].map((m) => m[1]);
-    expect(palettes.length).toBeGreaterThanOrEqual(7);
+    // CB-140：配色轴换成主题族（令牌由 deriveSeed 写 DOM，不再躺在样式表选择器里）。
+    expect(FAMILY_IDS.length).toBeGreaterThanOrEqual(7);
 
     const modes = [
       { name: "light", root: ":root", inks: ["#0f172a", "#111a2b"] },

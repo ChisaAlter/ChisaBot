@@ -9557,244 +9557,10 @@ html[data-theme="dark"] #sky-root::after {
   );
 }
 
-/* 1. 精选 8 款主题配色令牌覆盖（支持浅色与深色高对比度）。
- * 除了旧的 --accent-blue，还要覆盖 --accent-color / --accent-soft（强调色）、--ink-primary（主按钮）、
- * --focus / --focus-line（聚焦）和 --glass-tint（混进毛玻璃的强调色，约 8%）；default 不写，保持原样。
- * 主按钮底色与 --on-primary 的对比度都 ≥ 4.5（见 PR 描述里的表）。 */
-html[data-palette="aurora"] {
-  --accent-blue: #7c3aed;
-  --accent-blue-ink: #6d28d9;
-  --accent-blue-soft: rgba(124, 58, 237, 0.14);
-  --accent-color: #7c3aed;
-  --accent-soft: rgba(124, 58, 237, 0.14);
-  --ink-primary: #6d28d9;
-  --ink-primary-hover: #5b21b6;
-  --on-primary: #ffffff;
-  --focus: rgba(124, 58, 237, 0.24);
-  --focus-line: rgba(124, 58, 237, 0.6);
-  --glass-tint: rgba(124, 58, 237, 0.08);
-}
-html.dark[data-palette="aurora"] {
-  --accent-blue: #b197fc;
-  --accent-blue-ink: #c4b5fd;
-  --accent-blue-soft: rgba(177, 151, 252, 0.2);
-  --accent-color: #b197fc;
-  --accent-soft: rgba(177, 151, 252, 0.2);
-  --ink-primary: #c4b5fd;
-  --ink-primary-hover: #ddd6fe;
-  --on-primary: #0b1020;
-  --focus: rgba(177, 151, 252, 0.28);
-  --focus-line: rgba(177, 151, 252, 0.7);
-  --glass-tint: rgba(177, 151, 252, 0.1);
-}
-html[data-palette="emerald"] {
-  --accent-blue: #047857;
-  --accent-blue-ink: #065f46;
-  --accent-blue-soft: rgba(4, 120, 87, 0.14);
-  --accent-color: #047857;
-  --accent-soft: rgba(4, 120, 87, 0.14);
-  --ink-primary: #065f46;
-  --ink-primary-hover: #064e3b;
-  --on-primary: #ffffff;
-  --focus: rgba(4, 120, 87, 0.24);
-  --focus-line: rgba(4, 120, 87, 0.6);
-  --glass-tint: rgba(4, 120, 87, 0.08);
-}
-html.dark[data-palette="emerald"] {
-  --accent-blue: #38d9a9;
-  --accent-blue-ink: #63e6be;
-  --accent-blue-soft: rgba(56, 217, 169, 0.2);
-  --accent-color: #38d9a9;
-  --accent-soft: rgba(56, 217, 169, 0.2);
-  --ink-primary: #63e6be;
-  --ink-primary-hover: #96f2d7;
-  --on-primary: #0b1020;
-  --focus: rgba(56, 217, 169, 0.28);
-  --focus-line: rgba(56, 217, 169, 0.7);
-  --glass-tint: rgba(56, 217, 169, 0.1);
-}
-html[data-palette="sakura"] {
-  --accent-blue: #be185d;
-  --accent-blue-ink: #9d174d;
-  --accent-blue-soft: rgba(190, 24, 93, 0.14);
-  --accent-color: #be185d;
-  --accent-soft: rgba(190, 24, 93, 0.14);
-  --ink-primary: #9d174d;
-  --ink-primary-hover: #831843;
-  --on-primary: #ffffff;
-  --focus: rgba(190, 24, 93, 0.24);
-  --focus-line: rgba(190, 24, 93, 0.6);
-  --glass-tint: rgba(190, 24, 93, 0.08);
-}
-html.dark[data-palette="sakura"] {
-  --accent-blue: #f783ac;
-  --accent-blue-ink: #faa2c1;
-  --accent-blue-soft: rgba(247, 131, 172, 0.2);
-  --accent-color: #f783ac;
-  --accent-soft: rgba(247, 131, 172, 0.2);
-  --ink-primary: #faa2c1;
-  --ink-primary-hover: #fcc2d7;
-  --on-primary: #0b1020;
-  --focus: rgba(247, 131, 172, 0.28);
-  --focus-line: rgba(247, 131, 172, 0.7);
-  --glass-tint: rgba(247, 131, 172, 0.1);
-}
-html[data-palette="ocean"] {
-  --accent-blue: #0369a1;
-  --accent-blue-ink: #075985;
-  --accent-blue-soft: rgba(3, 105, 161, 0.14);
-  --accent-color: #0369a1;
-  --accent-soft: rgba(3, 105, 161, 0.14);
-  --ink-primary: #075985;
-  --ink-primary-hover: #0c4a6e;
-  --on-primary: #ffffff;
-  --focus: rgba(3, 105, 161, 0.24);
-  --focus-line: rgba(3, 105, 161, 0.6);
-  --glass-tint: rgba(3, 105, 161, 0.08);
-}
-html.dark[data-palette="ocean"] {
-  --accent-blue: #4dabf7;
-  --accent-blue-ink: #74c0fc;
-  --accent-blue-soft: rgba(77, 171, 247, 0.2);
-  --accent-color: #4dabf7;
-  --accent-soft: rgba(77, 171, 247, 0.2);
-  --ink-primary: #74c0fc;
-  --ink-primary-hover: #a5d8ff;
-  --on-primary: #0b1020;
-  --focus: rgba(77, 171, 247, 0.28);
-  --focus-line: rgba(77, 171, 247, 0.7);
-  --glass-tint: rgba(77, 171, 247, 0.1);
-}
-html[data-palette="sunset"] {
-  --accent-blue: #b45309;
-  --accent-blue-ink: #92400e;
-  --accent-blue-soft: rgba(180, 83, 9, 0.14);
-  --accent-color: #b45309;
-  --accent-soft: rgba(180, 83, 9, 0.14);
-  --ink-primary: #92400e;
-  --ink-primary-hover: #78350f;
-  --on-primary: #ffffff;
-  --focus: rgba(180, 83, 9, 0.24);
-  --focus-line: rgba(180, 83, 9, 0.6);
-  --glass-tint: rgba(180, 83, 9, 0.08);
-}
-html.dark[data-palette="sunset"] {
-  --accent-blue: #ffc048;
-  --accent-blue-ink: #ffd37a;
-  --accent-blue-soft: rgba(255, 192, 72, 0.2);
-  --accent-color: #ffc048;
-  --accent-soft: rgba(255, 192, 72, 0.2);
-  --ink-primary: #ffd37a;
-  --ink-primary-hover: #ffe3a3;
-  --on-primary: #0b1020;
-  --focus: rgba(255, 192, 72, 0.28);
-  --focus-line: rgba(255, 192, 72, 0.7);
-  --glass-tint: rgba(255, 192, 72, 0.1);
-}
-html[data-palette="gold"] {
-  --accent-blue: #a16207;
-  --accent-blue-ink: #854d0e;
-  --accent-blue-soft: rgba(161, 98, 7, 0.14);
-  --accent-color: #a16207;
-  --accent-soft: rgba(161, 98, 7, 0.14);
-  --ink-primary: #854d0e;
-  --ink-primary-hover: #713f12;
-  --on-primary: #ffffff;
-  --focus: rgba(161, 98, 7, 0.24);
-  --focus-line: rgba(161, 98, 7, 0.6);
-  --glass-tint: rgba(161, 98, 7, 0.08);
-}
-html.dark[data-palette="gold"] {
-  --accent-blue: #facc15;
-  --accent-blue-ink: #fde047;
-  --accent-blue-soft: rgba(250, 204, 21, 0.2);
-  --accent-color: #facc15;
-  --accent-soft: rgba(250, 204, 21, 0.2);
-  --ink-primary: #fde047;
-  --ink-primary-hover: #fef08a;
-  --on-primary: #0b1020;
-  --focus: rgba(250, 204, 21, 0.28);
-  --focus-line: rgba(250, 204, 21, 0.7);
-  --glass-tint: rgba(250, 204, 21, 0.1);
-}
-html[data-palette="ruby"] {
-  --accent-blue: #dc2626;
-  --accent-blue-ink: #b91c1c;
-  --accent-blue-soft: rgba(220, 38, 38, 0.14);
-  --accent-color: #dc2626;
-  --accent-soft: rgba(220, 38, 38, 0.14);
-  --ink-primary: #b91c1c;
-  --ink-primary-hover: #991b1b;
-  --on-primary: #ffffff;
-  --focus: rgba(220, 38, 38, 0.24);
-  --focus-line: rgba(220, 38, 38, 0.6);
-  --glass-tint: rgba(220, 38, 38, 0.08);
-}
-html.dark[data-palette="ruby"] {
-  --accent-blue: #f87171;
-  --accent-blue-ink: #fca5a5;
-  --accent-blue-soft: rgba(248, 113, 113, 0.2);
-  --accent-color: #f87171;
-  --accent-soft: rgba(248, 113, 113, 0.2);
-  --ink-primary: #fca5a5;
-  --ink-primary-hover: #fecaca;
-  --on-primary: #0b1020;
-  --focus: rgba(248, 113, 113, 0.28);
-  --focus-line: rgba(248, 113, 113, 0.7);
-  --glass-tint: rgba(248, 113, 113, 0.1);
-}
-html[data-palette="stardust"] {
-  --accent-blue: #5d6f9e;
-  --accent-blue-ink: #4a5b85;
-  --accent-blue-soft: rgba(93, 111, 158, 0.14);
-  --accent-color: #5d6f9e;
-  --accent-soft: rgba(93, 111, 158, 0.14);
-  --ink-primary: #4a5b85;
-  --ink-primary-hover: #3d4d70;
-  --on-primary: #ffffff;
-  --focus: rgba(93, 111, 158, 0.24);
-  --focus-line: rgba(93, 111, 158, 0.6);
-  --glass-tint: rgba(93, 111, 158, 0.08);
-}
-html.dark[data-palette="stardust"] {
-  --accent-blue: #a9b8e6;
-  --accent-blue-ink: #bfcbee;
-  --accent-blue-soft: rgba(169, 184, 230, 0.2);
-  --accent-color: #a9b8e6;
-  --accent-soft: rgba(169, 184, 230, 0.2);
-  --ink-primary: #bfcbee;
-  --ink-primary-hover: #d8e0f6;
-  --on-primary: #0b1020;
-  --focus: rgba(169, 184, 230, 0.28);
-  --focus-line: rgba(169, 184, 230, 0.7);
-  --glass-tint: rgba(169, 184, 230, 0.1);
-}
-html[data-palette="nocturne"] {
-  --accent-blue: #4c63a8;
-  --accent-blue-ink: #3d5088;
-  --accent-blue-soft: rgba(76, 99, 168, 0.14);
-  --accent-color: #4c63a8;
-  --accent-soft: rgba(76, 99, 168, 0.14);
-  --ink-primary: #3d5088;
-  --ink-primary-hover: #32426f;
-  --on-primary: #ffffff;
-  --focus: rgba(76, 99, 168, 0.24);
-  --focus-line: rgba(76, 99, 168, 0.6);
-  --glass-tint: rgba(76, 99, 168, 0.08);
-}
-html.dark[data-palette="nocturne"] {
-  --accent-blue: #a9bdf2;
-  --accent-blue-ink: #c3d1f5;
-  --accent-blue-soft: rgba(169, 189, 242, 0.2);
-  --accent-color: #a9bdf2;
-  --accent-soft: rgba(169, 189, 242, 0.2);
-  --ink-primary: #c3d1f5;
-  --ink-primary-hover: #dbe4f9;
-  --on-primary: #0b1020;
-  --focus: rgba(169, 189, 242, 0.28);
-  --focus-line: rgba(169, 189, 242, 0.7);
-  --glass-tint: rgba(169, 189, 242, 0.1);
-}
+/* CB-140：旧的 10 套 data-palette 令牌块已全部删除——主题族的整套派生令牌
+ * （--accent-*、--ink-*、--focus、--glass-tint、--fam-sky-* 等）由 JS 的 deriveSeed
+ * 按当前族 seed 算好，内联写在 <html>/<body> 上（lib/theme-family.ts，
+ * applyAppearanceToDocument / 启动脚本）。这里只留 :root / .dark 的兜底默认值。 */
 
 /* 2. 环境流光层、自定义壁纸层与容器层级（彻底消除祖先 animation 导致的 Chromium Backdrop Root 采样阻断） */
 .chisabot-ambient-orbs {
@@ -10765,42 +10531,289 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   gap: 8px;
   flex-wrap: wrap;
 }
-.appearance-palette-grid {
+/* CB-140 主题族卡：88px 左右分半预览（左 = 浅色 seed，右 = 深色 seed），点半边写对应族槽。 */
+.appearance-fam-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
 }
-.appearance-palette-card {
+.appearance-fam-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--stroke-primary);
+  background: var(--glass-1);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.appearance-fam-card:hover {
+  border-color: var(--stroke);
+  box-shadow: var(--shadow-1);
+}
+.appearance-fam-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 88px;
+}
+.appearance-fam-half {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.appearance-fam-half.is-sel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--fam-ac, var(--accent-blue));
+  pointer-events: none;
+}
+.appearance-fam-half:first-child.is-sel::after { border-radius: 12px 0 0 0; }
+.appearance-fam-half:last-child.is-sel::after { border-radius: 0 12px 0 0; }
+.appearance-fam-mini {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+.appearance-fam-dot {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.appearance-fam-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.appearance-fam-lines i {
+  display: block;
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.45;
+}
+.appearance-fam-lines i + i {
+  width: 28px;
+  opacity: 0.25;
+}
+.appearance-fam-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.appearance-fam-current {
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+}
+.appearance-fam-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--fam-ac, var(--accent-blue));
+  color: #fff;
+}
+.appearance-fam-meta {
   padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.appearance-fam-meta b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.appearance-fam-meta small {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.appearance-fam-plus {
+  align-items: center;
+  justify-content: center;
+  min-height: 132px;
+  padding: 14px;
+  border: 1.5px dashed var(--line-strong);
+  background: transparent;
+  cursor: pointer;
+}
+.appearance-fam-plus:hover {
+  background: var(--glass-1);
+}
+.appearance-fam-plus-ic {
+  width: 26px;
+  height: 26px;
+  color: var(--ink-2);
+  opacity: 0.5;
+}
+.appearance-fam-plus-tx {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.appearance-fam-plus-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+/* 自定义族编辑器（族卡 grid 下方拉开的抽屉面板）。 */
+.appearance-fam-editor {
+  margin-top: 14px;
+  padding: 16px 18px;
   border-radius: 14px;
   border: 1px solid var(--stroke-primary);
   background: var(--glass-1);
-  text-align: left;
-  cursor: pointer;
-  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.appearance-palette-card:hover {
-  transform: translateY(-1px);
-  background: var(--glass-2);
-  border-color: var(--stroke);
+.appearance-fam-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
 }
-.appearance-palette-card.is-active {
-  background: var(--glass-3);
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 1.5px var(--accent-blue-soft), var(--shadow-1);
+.appearance-fam-ed-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
 }
-.appearance-palette-swatch {
-  position: relative;
-  width: 34px;
-  height: 34px;
+@media (max-width: 620px) {
+  .appearance-fam-ed-cols { grid-template-columns: 1fr; }
+}
+.appearance-fam-ed-col {
   border-radius: 10px;
-  flex: none;
+  padding: 12px;
+  border: 1px solid var(--stroke-primary);
+}
+.appearance-fam-ed-col h4 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.appearance-fam-ed-col h4 i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.appearance-fam-ed-colors {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.appearance-fam-ed-color {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.appearance-fam-ed-color input[type="color"] {
+  width: 40px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.appearance-fam-ed-sample {
+  margin-left: auto;
+  width: 44px;
+  height: 30px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 2px 6px rgba(0, 0, 0, 0.18);
+  font-size: 14px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+}
+.appearance-fam-ed-sample i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+}
+.appearance-fam-ed-ct {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.appearance-fam-ed-ct input[type="range"] {
+  flex: 1;
+}
+.appearance-fam-ed-ct b {
+  min-width: 2ch;
+  text-align: right;
+  font-weight: 600;
+}
+.appearance-fam-ed-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.appearance-fam-ed-bg {
+  display: flex;
+  gap: 6px;
+}
+.appearance-fam-ed-bg-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--glass-2);
+  color: var(--ink-2);
+  border: 1px solid var(--stroke-primary);
+  cursor: pointer;
+}
+.appearance-fam-ed-bg-chip.is-on {
+  background: var(--accent-color);
+  color: var(--on-primary);
+  border-color: transparent;
+}
+.appearance-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 .appearance-swatch-check {
   width: 20px;
@@ -10811,21 +10824,6 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   background: rgba(15, 23, 42, 0.68);
   color: #fff;
   backdrop-filter: blur(4px);
-}
-.appearance-palette-mode {
-  position: absolute;
-  right: -5px;
-  bottom: -5px;
-  width: 17px;
-  height: 17px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: var(--glass-3);
-  color: var(--ink-2);
-  border: 1px solid var(--stroke-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
-  pointer-events: none;
 }
 .appearance-scene-daylight {
   position: absolute;
@@ -10848,12 +10846,6 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink-2);
-}
-.appearance-palette-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
 }
 .appearance-palette-name {
   font-size: 13.5px;
@@ -11261,57 +11253,49 @@ html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn
 }
 
 /* ==========================================================================================
- * 主题配色落到大面上（fix/palette-theme）：非 default 配色时，把 --glass-tint（强调色约 8–10%）
- * 叠进左栏 / 右栏 / 账号卡 / 输入框 / 卡片的毛玻璃；聊天输入框发送键用强调色描边阴影；
- * 天空改用 computePaletteSky 的主题渐变（sky-background.tsx 不启动 WebGL，#skyph 露出来），
- * 这里把原本偏蓝的柔光薄纱 / 深色压暗层换成中性色，主题色相才不会被盖成蓝色。
+ * 主题族落到大面上（CB-140，原 fix/palette-theme）：族 seed 派生的整套令牌由 JS deriveSeed
+ * 内联写在 <html> 上（--accent-*、--ink-*、--glass-bg、--glass-tint 等）；--pal-tint-layer 把
+ * --glass-tint（强调色约 8%）叠进左栏 / 右栏 / 账号卡 / 输入框 / 卡片的毛玻璃；聊天输入框
+ * 发送键用强调色描边阴影；「主题天空」时 #skyph 画 --fam-sky-* 四段渐变，偏蓝的柔光薄纱
+ * 换成中性色，主题色相才不会被盖成蓝色。
  * 不加模糊、不用 :has()，只改颜色，不动布局。
  * ========================================================================================== */
 :root,
 html.dark {
   --glass-tint: transparent;
 }
-html[data-palette]:not([data-palette="default"]) {
-  --glass-bg: color-mix(in srgb, rgba(255, 255, 255, 0.6) 92%, var(--accent-color));
-  --glass-input-bg: color-mix(in srgb, rgba(255, 255, 255, 0.55) 93%, var(--accent-color));
-}
-html.dark[data-palette]:not([data-palette="default"]) {
-  --glass-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 90%, var(--accent-color));
-  --glass-input-bg: color-mix(in srgb, rgba(29, 29, 31, 0.52) 91%, var(--accent-color));
-}
-/* 大板块的强调色：非 default 时 --pal-tint-layer 在 --lg-surface 上面叠一层 --glass-tint 纯色（见上方大板块规则），
- * default 时没有这层；不动 --lg-shadow，不改尺寸、不加模糊、不增加重绘。 */
 /* 写死蓝色的位置（侧栏选中条、未读点、开关、加载图标、进度条、聚焦环、flash 等）写成 var(--pal-accent, 旧值)：
- * --pal-accent 只在非 default 配色下定义，default 或没有 data-palette 时走回退值，和 main 像素一致。 */
-html[data-palette]:not([data-palette="default"]) {
+ * --pal-accent 在族派生变量写入后 = --accent-color；data-theme-family 未写入（启动脚本没跑）时走回退值。 */
+html[data-theme-family] {
   --pal-accent: var(--accent-color);
   --pal-accent-soft: var(--accent-soft);
-  /* 大板块 background 最上面叠的一层强调色；default 时不定义，规则读到的是空，和 main 完全一样 */
+  /* 大板块 background 最上面叠的一层强调色；未写入族时 --glass-tint 是 transparent，规则与默认一致 */
   --pal-tint-layer: linear-gradient(var(--glass-tint), var(--glass-tint)),;
 }
-html[data-palette]:not([data-palette="default"]) .glass-composer {
+html[data-theme-family] .glass-composer {
   --composer-accent: var(--accent-color);
 }
-html[data-palette]:not([data-palette="default"]) .glass-composer-send:not(:disabled) {
+html[data-theme-family] .glass-composer-send:not(:disabled) {
   box-shadow: 0 4px 12px var(--accent-soft);
 }
-html[data-palette]:not([data-palette="default"]) .glass-main [data-slot="bubble-content"] a {
+html[data-theme-family] .glass-main [data-slot="bubble-content"] a {
   color: var(--accent-color);
 }
-html[data-palette]:not([data-palette="default"]):not(.dark) #sky-root::after {
+/* 引擎不画天空（主题渐变 / 壁纸 / 性能模式）时换成中性薄纱：主题色相才不会被盖成蓝色。 */
+html[data-theme-family][data-sky-off]:not(.dark) #sky-root::after {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.26) 52%, rgba(255, 255, 255, 0.3) 100%);
 }
-html.dark[data-palette]:not([data-palette="default"]) #sky-root::after {
+html.dark[data-theme-family][data-sky-off] #sky-root::after {
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.34) 55%, rgba(0, 0, 0, 0.4) 100%);
 }
-/* 主题渐变天空：#skyph 读挂在 <html> 上的 --palette-sky-*（--sky-1..3 注册成不继承，传不到这里）。 */
-html[data-palette]:not([data-palette="default"]) #sky-root #skyph {
+/* 主题渐变天空：#skyph 读挂在 <html> 上的 --fam-sky-*（--sky-1..4 注册成不继承，传不到这里）。 */
+html[data-theme-family] #sky-root #skyph {
   background: linear-gradient(
     to bottom,
-    var(--palette-sky-0, var(--sky-0)) 0%,
-    var(--palette-sky-1, var(--sky-0)) 36%,
-    var(--palette-sky-2, var(--sky-0)) 72%,
-    var(--palette-sky-3, var(--sky-0)) 100%
+    var(--fam-sky-0, var(--sky-0)) 0%,
+    var(--fam-sky-1, var(--sky-0)) 36%,
+    var(--fam-sky-2, var(--sky-0)) 72%,
+    var(--fam-sky-3, var(--sky-0)) 100%
   );
 }
 

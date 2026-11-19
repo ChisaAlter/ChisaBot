@@ -8,7 +8,7 @@ import {
   type ElementId,
   lastDecl,
   opaqueSurface,
-  PALETTE_IDS,
+  FAMILY_IDS,
   parseColor,
   range,
   SCHEMES,
@@ -25,7 +25,7 @@ import {
 
 /**
  * 模块 11 第 6 条：左栏「主机器人」分组标题、字母头像、左栏副标题，
- * 在 8 套配色 × 浅色 / 深色的每一种组合下都要 ≥ 4.5:1（WCAG AA 正文）。
+ * 在 8 个主题族 × 浅色 / 深色的每一种组合下都要 ≥ 4.5:1（WCAG AA 正文）。
  * 背景怎么叠出来见 contrast-model.ts。
  */
 const AA = 4.5;
@@ -47,7 +47,7 @@ function ink(element: ElementId, scheme: Scheme) {
   return parseColor(value);
 }
 
-describe("sidebar small text and letter avatars meet WCAG AA in every palette × scheme", () => {
+describe("sidebar small text and letter avatars meet WCAG AA in every theme family × scheme", () => {
   test("the three elements read their color from the tokens", () => {
     for (const { token, selector } of Object.values(TOKENS)) {
       const bodies = blocks(stylesCss, selector);
@@ -80,7 +80,7 @@ describe("sidebar small text and letter avatars meet WCAG AA in every palette ×
   });
 
   for (const scheme of SCHEMES)
-    for (const palette of PALETTE_IDS)
+    for (const palette of FAMILY_IDS)
       test(`${palette} / ${scheme}`, () => {
         for (const element of Object.keys(TOKENS) as ElementId[]) {
           const { min } = rangeAdaptive(
@@ -98,7 +98,7 @@ describe("sidebar small text and letter avatars meet WCAG AA in every palette ×
 
 describe("custom / preset wallpapers: worst case still meets WCAG AA", () => {
   for (const scheme of SCHEMES)
-    for (const palette of PALETTE_IDS)
+    for (const palette of FAMILY_IDS)
       test(`wallpaper ${palette} / ${scheme}`, () => {
         for (const element of Object.keys(TOKENS) as ElementId[]) {
           const { min } = rangeAdaptive(
@@ -152,10 +152,7 @@ describe("wallpapers: text on the wallpaper, cards, chat bubbles, nested cards a
       test(`${id} / ${scheme}`, () => {
         const backdrops = wallpaperSurfaceBackdrops(id, scheme);
         for (const ink of SURFACES[id].inks) {
-          const { min } = rangeAdaptive(
-            (s) => surfaceInk(s, ink),
-            backdrops,
-          );
+          const { min } = rangeAdaptive((s) => surfaceInk(s, ink), backdrops);
           if (!(min >= AA))
             throw new Error(
               `${id} ${ink} wallpaper/${scheme}: ${min.toFixed(2)} < ${AA}`,

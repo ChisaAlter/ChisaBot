@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`（已本地合入 `main`） |
 | [CB-139](#cb-139) | 弹出面板颜色回归——底色多通道收口；窗口按钮条退出材质体系                | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#565 · `v0.1.169`）                                     |
 | [CB-138](#cb-138) | 右边缘「面板」把手不进液态玻璃材质，浅色下是一块白牌                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#563 · `v0.1.168`）                                     |
 | [CB-137](#cb-137) | PC 更新「稍后」永远不再提醒——待安装状态按周期重弹提示窗                    | 设备核心 Devices core | `type: bug` · `area: pc` · `P1` · `status: done`（#560 · `v0.1.167`）                                     |
@@ -134,6 +135,20 @@
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
 
+## CB-140
+
+**皮肤轴升级为主题族：浅 / 深两个模式各自独立选族，令牌由 seed 派生**
+
+标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`
+
+分支：`feat/theme-families`。CB-134 把模型收成「模式 × 皮肤 × 背景」后，皮肤轴仍是一条单选轴：一套皮肤的浅 / 深两版绑死在同一选项（造不出「浅色落樱 + 深色伦敦雨」混搭），10 套 `html[data-palette]` 静态令牌块躺样式表，明暗绑定皮肤只能靠 `boundMode` 特判翻转模式。按 DESIGN §143 重构：`ThemeFamily = { id, name, light, dark }`、`Seed = { ac, bg, fg, c }`，`AppearanceState` 换 `familyLight` / `familyDark` 双槽 + `customFamilies`，令牌全部由 `deriveSeed` 派生、启动脚本写 `data-theme-family`。
+
+- [x] **双槽独立选族**：`setThemeHalf(mode, id)` 只写对应槽；族卡左右分半预览（各 seed 的 bg/ac 小样），8 内置族 + 第 9 张自定义族卡 / 编辑器（`chisabot-theme-families`）。
+- [x] **seed 派生令牌**：`deriveSeed(seed, dark)` 出强调色 / 文字层级 / 边框 / 玻璃 / `--fam-sky-*` 四段天空；styles.css 删全部 `data-palette` 块，启动脚本（`familyBootScript`，构建时内联 `deriveSeed`）与 `applyAppearanceToDocument` 同一路径写 DOM。
+- [x] **迁移与兼容**：`chisabot-theme-palette` 老键一次性映射迁移两槽（boot 与应用同规则）；`boundMode` 明暗绑定皮肤删除；auto 天象改随族 `seed.scene`，§140 昼夜配对不变式不动；壁纸 / 玻璃 / skySource 行为全部保留。
+- [ ] **验收**：`bun run check` + `bun run test:app`（theme-family / palette-theme / appearance-* / theme-glass-perf / default-mist-glass / settings-audit 等迁移后全绿）；`tests/appearance-model/appearance.mjs` 真浏览器验收（族半边点击、两槽独立、主题天空卡、壁纸互斥）。
+- [ ] 本地合入 `main` 后按需推送并串行部署观察。
+
 ## CB-139
 
 **弹出面板颜色回归——底色多通道收口；窗口按钮条退出材质体系**
@@ -176,7 +191,7 @@
 
 标签：`type: bug` · `area: pc` · `P1` · `status: in-progress`
 
-分支：`fix/pc-update-converge`。问题（2026-11-18 用户实测）：客户端 0.1.159 装着，0.1.160 下载完「待安装」后更新器永久停止检查（`check()` 对 downloaded 直接返回），错过 0.1.161–0.1.164 四次发版；应用常驻托盘几乎不退出，autoInstallOnAppQuit 也轮不到，客户端无限期落后。同时「内置前端优先 + 服务器更高切远程」的仲裁结果只存内存：启动探测一失败，整个会话锁死在旧 bundle，会话中嗅探到新版本也只广播状态不重载已加载页面。
+分支：`fix/pc-update-converge`。问题（2026-11-18 用户实测）：客户端 0.1.159 装着，0.1.160 下载完「待安装」后更新器永久停止检查（`check()` 对 downloaded 直接返回），错过 0.1.161–0.164 四次发版；应用常驻托盘几乎不退出，autoInstallOnAppQuit 也轮不到，客户端无限期落后。同时「内置前端优先 + 服务器更高切远程」的仲裁结果只存内存：启动探测一失败，整个会话锁死在旧 bundle，会话中嗅探到新版本也只广播状态不重载已加载页面。
 
 - [x] **待安装不冻结检查（updater.js）**：`downloaded` 状态照常进入检查，复查时临时关 `autoDownload`——同版本不重复拉包，源上出现更新版本就顶掉待安装的重新下载；复查失败 / 源上没更新都保留待安装状态。
 - [x] **local→remote 翻转即重载（local-web.js / main.js）**：`onModeChange` 带上 `prevMode`，探测 / 嗅探晚于页面加载导致模式翻到 `remote` 时重载聊天窗口一次换到服务器前端（serverVersions 单调递增，每会话最多一次）。

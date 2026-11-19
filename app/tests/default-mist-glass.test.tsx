@@ -16,6 +16,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import {
   DEFAULT_GLASS_OPACITY,
   DEFAULT_GLASS_STYLE,
+  FAMILY_LIGHT_STORAGE_KEY,
   flushAppearanceWrites,
   GLASS_OPACITY_DARK_STORAGE_KEY,
   GLASS_OPACITY_STORAGE_KEY,
@@ -23,7 +24,6 @@ import {
   getAppearanceState,
   HARK_SCENE_STORAGE_KEY,
   LEGACY_DEFAULT_GLASS_STYLE,
-  PALETTE_STORAGE_KEY,
   PRIOR_APPEARANCE_STORAGE_KEYS,
   reloadAppearanceFromStorage,
   resetAppearanceDefaults,
@@ -34,7 +34,7 @@ import {
   WALLPAPER_DIM_STORAGE_KEY,
   WALLPAPER_ID_STORAGE_KEY,
 } from "@/lib/appearance";
-import { paletteBootScript } from "@/lib/palette";
+import { familyBootScript } from "@/lib/palette";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
 import { settleReactWork } from "./settle-react-work";
 
@@ -75,7 +75,7 @@ describe("default glass is mist", () => {
   });
 
   test("boot script writes mist when localStorage has no glass style", () => {
-    const boot = paletteBootScript();
+    const boot = familyBootScript();
     expect(boot).toContain('"mist"');
     // Evaluate the boot snippet against an empty storage.
     document.documentElement.removeAttribute("data-glass");
@@ -108,7 +108,7 @@ describe("default glass is mist", () => {
 /** 在空 <html> 上跑一遍启动脚本，返回它写的 data-glass。 */
 function bootGlass(): string | null {
   document.documentElement.removeAttribute("data-glass");
-  Function(paletteBootScript())();
+  Function(familyBootScript())();
   return document.documentElement.getAttribute("data-glass");
 }
 
@@ -116,7 +116,7 @@ describe("existing users also fall back to mist", () => {
   test("the prior-appearance key list is every appearance key except the glass style and the auto-written theme", () => {
     expect([...PRIOR_APPEARANCE_STORAGE_KEYS].sort()).toEqual(
       [
-        PALETTE_STORAGE_KEY,
+        FAMILY_LIGHT_STORAGE_KEY,
         WALLPAPER_ID_STORAGE_KEY,
         WALLPAPER_CUSTOM_URL_STORAGE_KEY,
         WALLPAPER_BLUR_STORAGE_KEY,
@@ -137,9 +137,7 @@ describe("existing users also fall back to mist", () => {
       window.localStorage.setItem(key, key.includes("opacity") ? "21" : "x");
       reloadAppearanceFromStorage();
       expect(getAppearanceState().glassStyle).toBe("mist");
-      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe(
-        "mist",
-      );
+      expect(window.localStorage.getItem(GLASS_STYLE_STORAGE_KEY)).toBe("mist");
       expect(bootGlass()).toBe("mist");
     });
   }

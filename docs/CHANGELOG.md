@@ -1,3 +1,7 @@
+## Unreleased
+
+- 主题族重构（模式 × 主题族双槽）：`familyLight` / `familyDark` 两槽独立选族、允许混搭；族卡左右分半预览，`setThemeHalf(mode, id)` 只写对应槽；全部令牌改由 `deriveSeed(seed)` 派生（删 `data-palette` 静态块），启动脚本写 `data-theme-family`；8 内置族 + 自定义族编辑器（`chisabot-theme-families`）；旧 `chisabot-theme-palette` 一次性映射迁移；`boundMode` 明暗绑定皮肤删除，auto 天象改随族 seed.scene，选族不再动天空来源（theme-family.ts 新增 · palette.ts 兼容层 · appearance.ts · appearance-preferences.tsx · sky-background.tsx · styles.css，DESIGN §143，CB-140）。验证：`app/tests/theme-family.test.ts`、`palette-theme.test.ts`、`appearance-*.test.tsx` 迁移 + `tests/appearance-model/appearance.mjs` 族半边点击路径。
+
 ## 0.1.169 — 2026-11-19
 
 - 弹出面板与窗口按钮条材质收口（CB-139，DESIGN §142）：`.rail-sheet` 移出 perf-noblur / resize-pause 的直接实心底名单，底色只经 `--lg-surface` 一条通道（与每个 `.rail-card` 同升同降，不再单独长成另一块颜色）；`.win-ctrls` 退出 `--lg-surface-strong` 画底名单——4 个窗口控制键常态无底，悬停 / 按下 / 关闭红 / 焦点环不变；新增回归门断言 `.win-ctrls` 不进任何 `--lg-*` 画底选择器（styles.css · perf-noblur.css · resize-pause.css · theme-glass-perf.test.tsx · render-budget.test.ts）。

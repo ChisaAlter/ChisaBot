@@ -142,5 +142,8 @@ ChisaBot 的产品数据保存在 PostgreSQL；登录网关另有一个 SQLite�
 | `chisabot-ui-memory:v1` | 每个机器人的右栏标签 / 展开 / 宽度；每段对话的草稿、滚动位置；干活卡展开（§88） |
 | `chisabot-sky`          | （旧版遗留）时间天空开关；§140 起只由启动脚本认 `off`，实时天象看 `chisabot-hark-scene` |
 | `chisabot-sky-source`   | 天空来源 `hark` / `theme`（§140 外观模型）                                      |
+| `chisabot-theme-family-light` / `chisabot-theme-family-dark` | 浅 / 深两个模式各自的主题族 id（§143，双槽独立、允许混搭） |
+| `chisabot-theme-families` | 用户自定义主题族 JSON 数组（§143）                                       |
+| `chisabot-theme-palette`  | （旧版遗留）皮肤 id；§143 起只做一次性映射迁移、不再作为权威来源          |
 | `chisabot-layout`       | 强制 `phone` / `wide` 布局（§40）                                               |
 | `chisabot-sw`           | `off` = 本浏览器停用 Service Worker（§40）                                      |

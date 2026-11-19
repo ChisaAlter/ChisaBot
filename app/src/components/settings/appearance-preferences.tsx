@@ -2,10 +2,9 @@ import {
   IconCheck,
   IconCloud,
   IconCrop,
-  IconMoonStars,
   IconPhoto,
+  IconPlus,
   IconRefresh,
-  IconSunHigh,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
@@ -29,32 +28,35 @@ import { toast } from "@/components/ui/toast";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
   compressCroppedWallpaper,
-  computePaletteSky,
   DEFAULT_GLASS_OPACITY,
   DEFAULT_GLASS_STYLE,
+  familySkyStops,
   GLASS_OPACITY_MAX,
   GLASS_OPACITY_MIN,
   type GlassStyleId,
   HARK_SCENE_INFO,
   HARK_SKY_SCENES,
   type HarkSkySceneId,
+  listThemeFamilies,
   loadUploadedWallpaperSource,
   resetAppearanceDefaults,
+  resolvedSeed,
+  resolvedThemeFamily,
+  saveCustomFamily,
   saveUploadedWallpaper,
   saveUploadedWallpaperSource,
+  type Seed,
   setCustomWallpaperUrl,
   setGlassOpacity,
   setGlassOpacityDark,
   setGlassStyle,
   setHarkSkyScene,
   setSkySource,
-  setThemePalette,
+  setThemeHalf,
   setWallpaperBlur,
   setWallpaperDim,
   setWallpaperPreset,
   setWallpaperScrim,
-  THEME_PALETTES,
-  type ThemePaletteMeta,
   updateAppearance,
   useAppearance,
   validateWallpaperFile,
@@ -130,9 +132,12 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+/** 自定义族编辑器草稿：name + 两个 seed；None = 编辑器关闭。 */
+type FamilyDraft = { name: string; light: Seed; dark: Seed };
+
 export function AppearancePreferences() {
   const appearance = useAppearance();
-  const { dark, setDark } = useTheme();
+  const { dark } = useTheme();
   const glassKeys = useSegmentedKeys<GlassStyleId>({
     value: appearance.glassStyle,
     values: GLASS_STYLE_VALUES,
@@ -176,31 +181,58 @@ export function AppearancePreferences() {
           (item) => item.category === wallpaperCategory,
         );
 
-  /**
-   * 皮肤卡 = 强调色 + 配套主题天空（壁纸启用中只换强调色）。
-   * 素白 / 墨夜是明暗绑定皮肤：色板承诺整套明暗观感，点击连外观模式一起切（「所见即所得」）。
-   */
-  const handlePalettePick = (item: ThemePaletteMeta) => {
-    setThemePalette(item.id);
-    if (item.boundMode && dark !== (item.boundMode === "dark")) {
-      setDark(item.boundMode === "dark");
-      toast.success(
-        item.boundMode === "dark" ? "已切换到深色外观" : "已切换到浅色外观",
-      );
-    }
+  // 主题族（CB-140）：浅 / 深两槽各自独立；点卡片的某半边只写那一槽。
+  const families = listThemeFamilies(appearance.customFamilies);
+  const resolvedFamily = resolvedThemeFamily(appearance, dark);
+  const [familyDraft, setFamilyDraft] = useState<FamilyDraft | null>(null);
+
+  const openFamilyEditor = () => {
+    // 草稿从两个模式当前各自选中的族复制：改完保存就成一套新族。
+    const light = resolvedThemeFamily(appearance, false).light;
+    const darkSeed = resolvedThemeFamily(appearance, true).dark;
+    setFamilyDraft({
+      name: "",
+      light: { ...light },
+      dark: { ...darkSeed },
+    });
   };
 
-  // 「主题天空」卡的预览 = 当前皮肤配套渐变（default 皮肤 = 经典蓝天 / 夜空静态渐变）。
-  const paletteSky = computePaletteSky(appearance.palette, dark);
-  const themeSkyGradient = paletteSky
-    ? `linear-gradient(180deg, ${paletteSky.body["--sky-0"]} 0%, ${paletteSky.body["--sky-1"]} 36%, ${paletteSky.body["--sky-2"]} 72%, ${paletteSky.body["--sky-3"]} 100%)`
-    : dark
-      ? "linear-gradient(180deg, #070b16 0%, #0c1324 38%, #121c32 74%, #182540 100%)"
-      : "linear-gradient(180deg, #4b89dc 0%, #6ea5eb 36%, #95c2f4 72%, #c5e1fb 100%)";
-  const themeSkySubtitle =
-    appearance.palette === "default"
-      ? "经典蓝天 / 夜空的静态渐变，不启动 WebGL 更省电"
-      : `「${THEME_PALETTES.find((p) => p.id === appearance.palette)?.name ?? ""}」配套的主题渐变天空`;
+  const handleSaveCustomFamily = () => {
+    if (!familyDraft) return;
+    const name = familyDraft.name.trim() || "我的主题";
+    saveCustomFamily({
+      id: `custom-${Date.now().toString(36)}`,
+      name,
+      light: familyDraft.light,
+      dark: familyDraft.dark,
+    });
+    setFamilyDraft(null);
+    toast.success(`已保存主题族「${name}」`);
+  };
+
+  const patchDraftSeed = (mode: "light" | "dark", patch: Partial<Seed>) => {
+    setFamilyDraft((draft) =>
+      draft ? { ...draft, [mode]: { ...draft[mode], ...patch } } : draft,
+    );
+  };
+
+  // 编辑器里的背景材质选择：写的就是天空来源三选一（壁纸有已存的自定义图就回填，否则给第一张预设）。
+  const bgPick =
+    appearance.wallpaperId !== "none" ? "wallpaper" : appearance.skySource;
+  const applyBgPick = (pick: "theme" | "hark" | "wallpaper") => {
+    if (pick === "wallpaper") {
+      setWallpaperPreset(
+        appearance.customWallpaperUrl ? "custom" : "waterlily-pond",
+      );
+      return;
+    }
+    setSkySource(pick);
+  };
+
+  // 「主题天空」卡的预览 = 当前族 seed 派生的四段渐变。
+  const famStops = familySkyStops(resolvedSeed(appearance, dark), dark);
+  const themeSkyGradient = `linear-gradient(180deg, ${famStops[0]} 0%, ${famStops[1]} 36%, ${famStops[2]} 72%, ${famStops[3]} 100%)`;
+  const themeSkySubtitle = `「${resolvedFamily.name}」配套的主题渐变天空`;
 
   const openWallpaperCropForFile = async (file: File) => {
     // 先校验类型和大小，超限的文件不读进内存
@@ -375,96 +407,249 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 外观模型（2026-11 重构）：外观 = 模式 × 皮肤 × 背景。
-          *    皮肤卡 = 强调色 + 配套主题天空；天空背景在「主题天空 / Hark 动态天象 / 壁纸」三选一，
-          *    昼景只配浅色、夜景只配深色（错配在解析层自动落到配对场景），晨昏两相宜。 */}
+      {/* 1. 外观模型（CB-140）：外观 = 模式 × 主题族 × 背景。
+       *    族卡的左右半边分别写浅 / 深族槽（允许混搭）；天空背景在
+       *    「主题天空 / Hark 动态天象 / 壁纸」三选一，昼景只配浅色、夜景只配深色
+       *    （错配在解析层自动落到配对场景），晨昏两相宜。 */}
       <div
         className="appearance-block"
-        data-setting-item="主题皮肤 主题配色 general.sky"
+        data-setting-item="主题皮肤 主题配色 主题族 general.sky"
       >
         <div className="appearance-block-head">
           <div>
-            <div className="appearance-block-title">{"主题皮肤与天空背景"}</div>
+            <div className="appearance-block-title">{"主题族与天空背景"}</div>
             <div className="appearance-block-desc">
               {
-                "皮肤决定强调色与配套主题天空；天象由 Hark WebGL 引擎实时渲染，昼夜场景按外观明暗自动配对呈现"
+                "主题族决定整套强调色、文字与配套天空渐变；浅 / 深模式各选一族。天象由 Hark WebGL 引擎实时渲染，昼夜场景按外观明暗自动配对呈现"
               }
             </div>
           </div>
-          {appearance.harkScene !== "auto" ||
-          appearance.palette !== "default" ||
-          appearance.wallpaperId !== "none" ||
-          appearance.glassStyle !== DEFAULT_GLASS_STYLE ||
-          appearance.glassOpacity !== DEFAULT_GLASS_OPACITY ||
-          appearance.glassOpacityDark !== DEFAULT_GLASS_OPACITY ? (
-            <Button
-              onClick={() => {
-                resetAppearanceDefaults();
-                toast.success("已恢复默认外观");
-              }}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <IconRefresh className="size-3.5" />
-              {"恢复默认"}
-            </Button>
-          ) : null}
+          <div className="appearance-head-actions">
+            {appearance.harkScene !== "auto" ||
+            appearance.familyLight !== "azure" ||
+            appearance.familyDark !== "azure" ||
+            appearance.customFamilies.length > 0 ||
+            appearance.wallpaperId !== "none" ||
+            appearance.glassStyle !== DEFAULT_GLASS_STYLE ||
+            appearance.glassOpacity !== DEFAULT_GLASS_OPACITY ||
+            appearance.glassOpacityDark !== DEFAULT_GLASS_OPACITY ? (
+              <Button
+                onClick={() => {
+                  resetAppearanceDefaults();
+                  setFamilyDraft(null);
+                  toast.success("已恢复默认外观");
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <IconRefresh className="size-3.5" />
+                {"恢复默认"}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="appearance-subhead">{"皮肤"}</div>
-        <div
-          aria-label="主题皮肤选择"
-          className="appearance-palette-grid"
-          role="radiogroup"
-        >
-          {THEME_PALETTES.map((item) => {
-            const active = appearance.palette === item.id;
+        <div className="appearance-subhead">{"主题族"}</div>
+        <fieldset aria-label="主题族选择" className="appearance-fam-grid">
+          {families.map((family) => {
             return (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
-              <button
-                aria-checked={active}
-                className={cn("appearance-palette-card", active && "is-active")}
-                data-testid={`palette-option-${item.id}`}
-                key={item.id}
-                onClick={() => handlePalettePick(item)}
-                role="radio"
-                type="button"
-              >
-                <span
-                  aria-hidden="true"
-                  className="appearance-palette-swatch"
-                  style={{ background: item.swatchGradient }}
-                >
-                  {item.boundMode ? (
-                    <span className="appearance-palette-mode">
-                      {item.boundMode === "dark" ? (
-                        <IconMoonStars className="size-3" />
-                      ) : (
-                        <IconSunHigh className="size-3" />
-                      )}
-                    </span>
-                  ) : null}
-                  {active ? (
-                    <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5 stroke-[2.6]" />
-                    </span>
-                  ) : null}
-                </span>
-                <span className="appearance-palette-info">
-                  <span className="appearance-palette-name">{item.name}</span>
-                  <span className="appearance-palette-sub">
-                    {item.subtitle}
-                  </span>
-                </span>
-              </button>
+              <div className="appearance-fam-card" key={family.id}>
+                <div className="appearance-fam-preview">
+                  {(["light", "dark"] as const).map((mode) => {
+                    const s = family[mode];
+                    const selected =
+                      (mode === "light"
+                        ? appearance.familyLight
+                        : appearance.familyDark) === family.id;
+                    const current = dark === (mode === "dark");
+                    return (
+                      <button
+                        aria-pressed={selected}
+                        className={cn(
+                          "appearance-fam-half",
+                          selected && "is-sel",
+                        )}
+                        data-testid={`fam-half-${family.id}-${mode}`}
+                        key={mode}
+                        onClick={() => setThemeHalf(mode, family.id)}
+                        style={
+                          {
+                            background: s.bg,
+                            color: s.fg,
+                            "--fam-ac": s.ac,
+                          } as CSSProperties
+                        }
+                        type="button"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="appearance-fam-mini"
+                        >
+                          <i
+                            className="appearance-fam-dot"
+                            style={{ background: s.ac }}
+                          />
+                          <span className="appearance-fam-lines">
+                            <i />
+                            <i />
+                          </span>
+                        </span>
+                        <span className="appearance-fam-label">
+                          {mode === "light" ? "浅色" : "深色"}
+                          {current ? (
+                            <span className="appearance-fam-current">当前</span>
+                          ) : null}
+                        </span>
+                        {selected ? (
+                          <span className="appearance-fam-check">
+                            <IconCheck className="size-3 stroke-[2.8]" />
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="appearance-fam-meta">
+                  <b>{family.name}</b>
+                  <small>
+                    {family.light.ac} · {family.dark.ac}
+                  </small>
+                </div>
+              </div>
             );
           })}
-        </div>
-        {appearance.wallpaperId !== "none" ? (
-          <p className="appearance-palette-sub" data-testid="palette-sky-hint">
-            壁纸启用中 · 皮肤仅更新强调色
-          </p>
+          <button
+            className="appearance-fam-card appearance-fam-plus"
+            data-testid="fam-custom"
+            onClick={openFamilyEditor}
+            type="button"
+          >
+            <IconPlus className="appearance-fam-plus-ic" />
+            <span className="appearance-fam-plus-tx">{"自定义主题"}</span>
+            <span className="appearance-fam-plus-sub">
+              {"命名 + 双色种子 + 对比度"}
+            </span>
+          </button>
+        </fieldset>
+
+        {familyDraft ? (
+          <div className="appearance-fam-editor" data-testid="fam-editor">
+            <div className="appearance-fam-editor-head">
+              <span>{"自定义主题族"}</span>
+              <Button
+                onClick={() => setFamilyDraft(null)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                {"取消"}
+              </Button>
+            </div>
+            <Input
+              onChange={(e) =>
+                setFamilyDraft({ ...familyDraft, name: e.target.value })
+              }
+              placeholder="主题名称（如：我的晨间）"
+              value={familyDraft.name}
+            />
+            <div className="appearance-fam-ed-cols">
+              {(["light", "dark"] as const).map((mode) => {
+                const s = familyDraft[mode];
+                return (
+                  <div
+                    className="appearance-fam-ed-col"
+                    data-testid={`fam-ed-${mode}`}
+                    key={mode}
+                  >
+                    <h4>
+                      <i
+                        style={{
+                          background: mode === "light" ? "#f6c945" : "#7c8db5",
+                        }}
+                      />
+                      {mode === "light" ? "浅色 Light" : "深色 Dark"}
+                    </h4>
+                    <div className="appearance-fam-ed-colors">
+                      {(
+                        [
+                          ["ac", "强调色"],
+                          ["bg", "底色"],
+                          ["fg", "文字"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label className="appearance-fam-ed-color" key={key}>
+                          <input
+                            onChange={(e) =>
+                              patchDraftSeed(mode, { [key]: e.target.value })
+                            }
+                            type="color"
+                            value={s[key]}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                      <span
+                        aria-hidden="true"
+                        className="appearance-fam-ed-sample"
+                        style={{ background: s.bg, color: s.fg }}
+                      >
+                        <i style={{ background: s.ac }} />
+                        {"Aa"}
+                      </span>
+                    </div>
+                    <label className="appearance-fam-ed-ct">
+                      {"对比度"}
+                      <input
+                        max={70}
+                        min={30}
+                        onChange={(e) =>
+                          patchDraftSeed(mode, { c: Number(e.target.value) })
+                        }
+                        type="range"
+                        value={s.c}
+                      />
+                      <b>{s.c}</b>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="appearance-fam-ed-foot">
+              <div
+                aria-label="背景材质"
+                className="appearance-fam-ed-bg"
+                role="radiogroup"
+              >
+                {(
+                  [
+                    ["theme", "主题天空"],
+                    ["hark", "动态天象"],
+                    ["wallpaper", "壁纸"],
+                  ] as const
+                ).map(([pick, label]) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片（与下方天空背景组同一模式），原生 radio 换不了
+                  <button
+                    aria-checked={bgPick === pick}
+                    className={cn(
+                      "appearance-fam-ed-bg-chip",
+                      bgPick === pick && "is-on",
+                    )}
+                    data-testid={`fam-bg-${pick}`}
+                    key={pick}
+                    onClick={() => applyBgPick(pick)}
+                    role="radio"
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <Button onClick={handleSaveCustomFamily} type="button">
+                {"保存主题族"}
+              </Button>
+            </div>
+          </div>
         ) : null}
 
         <div className="appearance-subhead">{"天空背景"}</div>
@@ -509,9 +694,7 @@ export function AppearancePreferences() {
             </div>
             <div className="appearance-wallpaper-meta">
               <span className="appearance-palette-name">{"主题天空"}</span>
-              <span className="appearance-palette-sub">
-                {themeSkySubtitle}
-              </span>
+              <span className="appearance-palette-sub">{themeSkySubtitle}</span>
             </div>
           </button>
           {HARK_SKY_SCENES.map((scene) => {

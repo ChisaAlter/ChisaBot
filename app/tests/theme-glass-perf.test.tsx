@@ -70,7 +70,7 @@ afterEach(() => {
   cleanup();
   /*
    * 共享进程里后面的文件（wallpaper-loading 等）接着用这个 documentElement、这份 localStorage 和
-   * perf / appearance 的模块状态：用例里写过的 data-perf、data-palette、data-glass、dark、
+   * perf / appearance 的模块状态：用例里写过的 data-perf、data-theme-family、data-glass、dark、
    * body 的天空色都要收干净，不然「退回天空」之类的断言拿到的还是这摊剩局。
    */
   perf.setPerfMode(false);
@@ -83,7 +83,7 @@ afterEach(() => {
   window.localStorage.clear();
   const root = document.documentElement;
   for (const name of [
-    "data-palette",
+    "data-theme-family",
     "data-glass",
     "data-perf",
     "data-theme",
@@ -280,30 +280,33 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
 });
 
 describe("2) 地址栏颜色跟随应用主题", () => {
-  test("默认配色用固定的两色，别的配色取天空顶部颜色", () => {
-    expect(palette.paletteThemeColor("default", false)).toBe("#9dbddc");
-    expect(palette.paletteThemeColor("default", true)).toBe("#0c1626");
-    for (const p of palette.THEME_PALETTES) {
+  test("每个主题族的地址栏颜色都取 seed 天空顶部段，族间不同", () => {
+    for (const f of palette.THEME_FAMILIES) {
       for (const dark of [false, true]) {
-        expect(palette.paletteThemeColor(p.id, dark)).toMatch(/^#[0-9a-f]{6}$/);
+        expect(palette.familyThemeColor(dark ? f.dark : f.light, dark)).toMatch(
+          /^#[0-9a-f]{6}$/,
+        );
       }
     }
-    expect(palette.paletteThemeColor("sakura", false)).not.toBe(
-      palette.paletteThemeColor("aurora", false),
+    const sakura = palette.THEME_FAMILIES.find((f) => f.id === "sakura");
+    const azure = palette.THEME_FAMILIES.find((f) => f.id === "azure");
+    expect(sakura).toBeTruthy();
+    expect(azure).toBeTruthy();
+    expect(palette.familyThemeColor(sakura!.light, false)).not.toBe(
+      palette.familyThemeColor(azure!.light, false),
     );
   });
 
   test("两条按系统配色分的 meta 都改成应用的颜色", () => {
     document.head.innerHTML =
       '<meta name="theme-color" content="#9dbddc" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0c1626" media="(prefers-color-scheme: dark)">';
-    palette.applyThemeColor(palette.paletteThemeColor("sakura", true));
+    const sakura = palette.THEME_FAMILIES.find((f) => f.id === "sakura");
+    const color = palette.familyThemeColor(sakura!.dark, true);
+    palette.applyThemeColor(color);
     const metas = [
       ...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'),
     ];
-    expect(metas.map((m) => m.content)).toEqual([
-      palette.paletteThemeColor("sakura", true),
-      palette.paletteThemeColor("sakura", true),
-    ]);
+    expect(metas.map((m) => m.content)).toEqual([color, color]);
   });
 });
 
@@ -318,7 +321,7 @@ describe("3) 多标签页同步", () => {
     );
   }
 
-  test("别的标签页换配色 / 材质 / 雾度：这边状态和页面跟着变，不写回存储", async () => {
+  test("别的标签页换主题族 / 材质 / 雾度：这边状态和页面跟着变，不写回存储", async () => {
     appearance.installAppearanceStorageSync();
     const writes: string[] = [];
     const original = window.localStorage.setItem.bind(window.localStorage);
@@ -327,18 +330,19 @@ describe("3) 多标签页同步", () => {
       original(k, v);
     };
     try {
-      original(appearance.PALETTE_STORAGE_KEY, "aurora");
-      fireStorage(appearance.PALETTE_STORAGE_KEY, "aurora");
+      original(appearance.FAMILY_LIGHT_STORAGE_KEY, "sakura");
+      fireStorage(appearance.FAMILY_LIGHT_STORAGE_KEY, "sakura");
       original(appearance.GLASS_STYLE_STORAGE_KEY, "frosted");
       fireStorage(appearance.GLASS_STYLE_STORAGE_KEY, "frosted");
       original(appearance.GLASS_OPACITY_STORAGE_KEY, "30");
       fireStorage(appearance.GLASS_OPACITY_STORAGE_KEY, "30");
       const state = appearance.getAppearanceState();
-      expect(state.palette).toBe("aurora");
+      expect(state.familyLight).toBe("sakura");
+      expect(state.familyDark).toBe("azure");
       expect(state.glassStyle).toBe("frosted");
       expect(state.glassOpacity).toBe(30);
-      expect(document.documentElement.getAttribute("data-palette")).toBe(
-        "aurora",
+      expect(document.documentElement.getAttribute("data-theme-family")).toBe(
+        "sakura",
       );
       expect(document.documentElement.getAttribute("data-glass")).toBe(
         "frosted",
@@ -503,7 +507,7 @@ describe("1b) 换配色：天空换场景等点击先上屏", () => {
         );
       const before = calls.length;
       act(() => {
-        appearance.setThemePalette("sakura");
+        appearance.setThemeHalf("light", "sakura");
       });
       // 同步提交（含 effect）结束时还没换场景。
       expect(calls.length).toBe(before);
@@ -520,71 +524,91 @@ describe("1b) 换配色：天空换场景等点击先上屏", () => {
   });
 });
 
-describe("5) 启动骨架用用户选的配色", () => {
+describe("5) 启动骨架用用户选的主题族", () => {
   function runBoot(stored: Record<string, string>, dark: boolean) {
     window.localStorage.clear();
     for (const [k, v] of Object.entries(stored))
       window.localStorage.setItem(k, v);
     const root = document.documentElement;
-    root.removeAttribute("data-palette");
+    root.removeAttribute("data-theme-family");
     root.removeAttribute("data-glass");
     root.classList.toggle("dark", dark);
     document.body.removeAttribute("style");
     document.head.innerHTML =
       '<meta name="theme-color" content="#9dbddc" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0c1626" media="(prefers-color-scheme: dark)">';
-    new Function(palette.paletteBootScript())();
+    new Function(palette.familyBootScript())();
   }
 
-  test("vite 插件把配色启动脚本内联进 index.html", () => {
-    expect(viteConfig).toContain("paletteBootScript()");
+  test("vite 插件把主题族启动脚本内联进 index.html", () => {
+    expect(viteConfig).toContain("familyBootScript()");
   });
 
-  test("非默认配色：根上写 data-palette，body 写和应用同样的天空颜色，地址栏同色", () => {
+  test("非默认族：根上写 data-theme-family，body 写和应用同样的派生变量，地址栏同色", () => {
     runBoot(
       {
-        [palette.PALETTE_STORAGE_KEY]: "sakura",
+        [palette.FAMILY_DARK_STORAGE_KEY]: "sakura",
         [palette.GLASS_STYLE_STORAGE_KEY]: "crystal",
       },
       true,
     );
-    const expected = palette.computePaletteSky("sakura", true)?.body ?? {};
-    expect(document.documentElement.getAttribute("data-palette")).toBe(
+    const sakura = palette.THEME_FAMILIES.find((f) => f.id === "sakura");
+    const expected = palette.deriveSeed(sakura!.dark, true);
+    expect(document.documentElement.getAttribute("data-theme-family")).toBe(
       "sakura",
     );
     expect(document.documentElement.getAttribute("data-glass")).toBe("crystal");
-    for (const [k, v] of Object.entries(expected)) {
+    for (const [k, v] of Object.entries(expected.body)) {
       expect(document.body.style.getPropertyValue(k)).toBe(v);
     }
     for (const m of document.querySelectorAll<HTMLMetaElement>(
       'meta[name="theme-color"]',
     )) {
       expect(m.getAttribute("content")).toBe(
-        palette.paletteThemeColor("sakura", true),
+        palette.familyThemeColor(sakura!.dark, true),
       );
     }
   });
 
-  test("默认配色或存的值不认识：不改天空，玻璃按「存过外观就是老用户」回落，只按应用深浅色写地址栏颜色", () => {
+  test("存的值不认识或什么都没存：族回落 azure 照常派生，玻璃按「存过外观就是老用户」回落", () => {
     // 只存了个不认识的材质、别的外观都没存过：新用户 → mist。
     runBoot({ [palette.GLASS_STYLE_STORAGE_KEY]: "bogus" }, false);
     expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
-    // 存过配色键（哪怕值不认识）：算存过外观的老用户 → 0.1.155 起统一回落 mist。
+    expect(document.documentElement.getAttribute("data-theme-family")).toBe(
+      "azure",
+    );
+    // 存过族键（哪怕值不认识）：算存过外观的老用户 → 0.1.155 起统一回落 mist；
+    // 族解析不到仍落 azure，派生变量与地址栏颜色照常写。
     runBoot(
       {
-        [palette.PALETTE_STORAGE_KEY]: "nope",
+        [palette.FAMILY_LIGHT_STORAGE_KEY]: "nope",
         [palette.GLASS_STYLE_STORAGE_KEY]: "bogus",
       },
       false,
     );
-    expect(document.documentElement.hasAttribute("data-palette")).toBe(false);
+    expect(document.documentElement.getAttribute("data-theme-family")).toBe(
+      "azure",
+    );
     expect(document.documentElement.getAttribute("data-glass")).toBe("mist");
-    expect(document.body.style.getPropertyValue("--sky-1")).toBe("");
+    const azure = palette.THEME_FAMILIES.find((f) => f.id === "azure");
+    const expected = palette.deriveSeed(azure!.light, false);
+    expect(document.body.style.getPropertyValue("--sky-1")).toBe(
+      expected.body["--sky-1"],
+    );
     for (const m of document.querySelectorAll<HTMLMetaElement>(
       'meta[name="theme-color"]',
     )) {
-      expect(m.getAttribute("content")).toBe("#9dbddc");
+      expect(m.getAttribute("content")).toBe(
+        palette.familyThemeColor(azure!.light, false),
+      );
     }
     document.documentElement.classList.remove("dark");
+  });
+
+  test("旧 palette 键一次性迁移：老存档 sakura → 落樱族", () => {
+    runBoot({ [palette.PALETTE_STORAGE_KEY]: "sakura" }, false);
+    expect(document.documentElement.getAttribute("data-theme-family")).toBe(
+      "sakura",
+    );
   });
 });
 

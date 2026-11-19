@@ -1,13 +1,24 @@
 import { useSyncExternalStore } from "react";
 import {
+  applyThemeColor,
+  CUSTOM_FAMILIES_STORAGE_KEY,
+  DEFAULT_FAMILY_ID,
   DEFAULT_GLASS_STYLE,
+  deriveSeed,
   fallbackGlassStyle,
+  FAMILY_DARK_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
+  familySeed,
+  familyThemeColor,
   GLASS_STYLE_STORAGE_KEY,
+  migrateLegacyPalette,
   PALETTE_STORAGE_KEY,
+  parseCustomFamilies,
+  resolveThemeFamily,
+  type Seed,
   SKY_SOURCE_STORAGE_KEY,
   type SkySourceId,
-  THEME_PALETTES,
-  type ThemePaletteId,
+  type ThemeFamily,
 } from "@/lib/palette";
 import { computeSky, currentMinuteOfDay } from "@/lib/sky";
 import {
@@ -22,22 +33,35 @@ import {
   type WallpaperSourceRecord,
 } from "@/lib/wallpaper-store";
 
-// 配色表搬到了纯模块 lib/palette.ts（构建时要内联进 index.html 的启动脚本），这里照旧导出。
+// 主题族数据与派生逻辑在纯模块 lib/theme-family.ts（启动脚本要序列化 deriveSeed 进 index.html），
+// lib/palette.ts 是兼容转口层，这里照旧转口。
 export {
   applyThemeColor,
-  computePaletteSky,
+  CUSTOM_FAMILIES_STORAGE_KEY,
+  DEFAULT_FAMILY_ID,
   DEFAULT_GLASS_STYLE,
+  deriveSeed,
   fallbackGlassStyle,
+  FAMILY_DARK_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
+  familySeed,
+  familySkyStops,
+  familyThemeColor,
   GLASS_STYLE_STORAGE_KEY,
+  isValidFamily,
+  isValidFamilyId,
   LEGACY_DEFAULT_GLASS_STYLE,
+  listThemeFamilies,
+  migrateLegacyPalette,
   PALETTE_STORAGE_KEY,
+  parseCustomFamilies,
   PRIOR_APPEARANCE_STORAGE_KEYS,
-  paletteThemeColor,
+  resolveThemeFamily,
+  type Seed,
   SKY_SOURCE_STORAGE_KEY,
   type SkySourceId,
-  THEME_PALETTES,
-  type ThemePaletteId,
-  type ThemePaletteMeta,
+  THEME_FAMILIES,
+  type ThemeFamily,
 } from "@/lib/palette";
 export const WALLPAPER_ID_STORAGE_KEY = "chisabot-wallpaper-id";
 export const WALLPAPER_CUSTOM_URL_STORAGE_KEY = "chisabot-wallpaper-custom-url";
@@ -120,18 +144,78 @@ export type HarkSceneInfo = {
 };
 
 export const HARK_SCENE_INFO: readonly HarkSceneInfo[] = [
-  /* 0  Palo Alto · 正午晴空 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.15 },
-  /* 1  纽约 · 日落 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.5 },
-  /* 2  雷克雅未克 · 午夜 */ { daylight: "night", lightPair: 1, darkPair: null, darkness: 0.9 },
-  /* 3  伦敦 · 雨 */ { daylight: "day", lightPair: null, darkPair: 10, darkness: 0.35 },
-  /* 4  柏林 · 夜 */ { daylight: "night", lightPair: 11, darkPair: null, darkness: 0.9 },
-  /* 5  太浩湖 · 雪霁正午 */ { daylight: "day", lightPair: null, darkPair: 2, darkness: 0.1 },
-  /* 6  凤凰城 · 黄金时刻 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.45 },
-  /* 7  东京 · 晴朗上午 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.15 },
-  /* 8  德里 · 霾暮 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.5 },
-  /* 9  旧金山 · 雾 */ { daylight: "day", lightPair: null, darkPair: 4, darkness: 0.3 },
-  /* 10 迈阿密 · 风暴 */ { daylight: "night", lightPair: 3, darkPair: null, darkness: 0.75 },
-  /* 11 檀香山 · 晨霞 */ { daylight: "dusk", lightPair: null, darkPair: null, darkness: 0.55 },
+  /* 0  Palo Alto · 正午晴空 */ {
+    daylight: "day",
+    lightPair: null,
+    darkPair: 4,
+    darkness: 0.15,
+  },
+  /* 1  纽约 · 日落 */ {
+    daylight: "dusk",
+    lightPair: null,
+    darkPair: null,
+    darkness: 0.5,
+  },
+  /* 2  雷克雅未克 · 午夜 */ {
+    daylight: "night",
+    lightPair: 1,
+    darkPair: null,
+    darkness: 0.9,
+  },
+  /* 3  伦敦 · 雨 */ {
+    daylight: "day",
+    lightPair: null,
+    darkPair: 10,
+    darkness: 0.35,
+  },
+  /* 4  柏林 · 夜 */ {
+    daylight: "night",
+    lightPair: 11,
+    darkPair: null,
+    darkness: 0.9,
+  },
+  /* 5  太浩湖 · 雪霁正午 */ {
+    daylight: "day",
+    lightPair: null,
+    darkPair: 2,
+    darkness: 0.1,
+  },
+  /* 6  凤凰城 · 黄金时刻 */ {
+    daylight: "dusk",
+    lightPair: null,
+    darkPair: null,
+    darkness: 0.45,
+  },
+  /* 7  东京 · 晴朗上午 */ {
+    daylight: "day",
+    lightPair: null,
+    darkPair: 4,
+    darkness: 0.15,
+  },
+  /* 8  德里 · 霾暮 */ {
+    daylight: "dusk",
+    lightPair: null,
+    darkPair: null,
+    darkness: 0.5,
+  },
+  /* 9  旧金山 · 雾 */ {
+    daylight: "day",
+    lightPair: null,
+    darkPair: 4,
+    darkness: 0.3,
+  },
+  /* 10 迈阿密 · 风暴 */ {
+    daylight: "night",
+    lightPair: 3,
+    darkPair: null,
+    darkness: 0.75,
+  },
+  /* 11 檀香山 · 晨霞 */ {
+    daylight: "dusk",
+    lightPair: null,
+    darkPair: null,
+    darkness: 0.55,
+  },
 ] as const;
 
 export const HARK_SKY_SCENES: readonly HarkSkySceneMeta[] = [
@@ -452,7 +536,12 @@ export const LEGACY_WALLPAPER_ID_MAP: Readonly<
 };
 
 export type AppearanceState = {
-  palette: ThemePaletteId;
+  /** 浅色模式用的主题族 id（默认 azure）。浅 / 深两个槽互相独立，允许混搭。 */
+  familyLight: string;
+  /** 深色模式用的主题族 id（默认 azure）。 */
+  familyDark: string;
+  /** 用户保存的自定义主题族（持久化在 chisabot-theme-families）。 */
+  customFamilies: ThemeFamily[];
   glassStyle: GlassStyleId;
   /** 玻璃面板不透明度（GLASS_OPACITY_MIN ~ MAX，默认 DEFAULT_GLASS_OPACITY）——浅色档 */
   glassOpacity: number;
@@ -473,7 +562,6 @@ export type AppearanceState = {
   wallpaperScrim: number;
 };
 
-const VALID_PALETTES = new Set<ThemePaletteId>(THEME_PALETTES.map((p) => p.id));
 const VALID_GLASS_STYLES = new Set<GlassStyleId>([
   "liquid",
   "mist",
@@ -526,10 +614,33 @@ function resolveStoredGlassStyle(rawGlass: GlassStyleId | null): GlassStyleId {
   return glass;
 }
 
+/**
+ * 单个族槽的存储值 → 有效族 id：
+ * 存的值能解析出族（内置或自定义）就用它；否则按旧 palette 键一次性迁移（两槽同结果）；
+ * 都没有 → azure。旧键读这一次就完了，正常路径不再读（CB-140 迁移规则）。
+ */
+function readFamilySlot(
+  raw: string | null,
+  custom: ThemeFamily[],
+  legacyFamily: string | null,
+): string {
+  if (raw) {
+    const found = resolveThemeFamily(raw, custom);
+    // 解析结果不是 fallback 才说明这个 id 真实存在。
+    if (found.id === raw) return raw;
+  }
+  return legacyFamily ?? DEFAULT_FAMILY_ID;
+}
+
 function readInitialAppearance(): AppearanceState {
-  const rawPalette = readStoredPreference(
-    PALETTE_STORAGE_KEY,
-  ) as ThemePaletteId | null;
+  // 旧 palette 键只在这里读：一是迁移出两槽的初始族，二是天空来源的旧语义迁移。
+  const rawPalette = readStoredPreference(PALETTE_STORAGE_KEY);
+  const customFamilies = parseCustomFamilies(
+    readStoredPreference(CUSTOM_FAMILIES_STORAGE_KEY),
+  );
+  const legacyFamily = migrateLegacyPalette(rawPalette);
+  const rawFamilyLight = readStoredPreference(FAMILY_LIGHT_STORAGE_KEY);
+  const rawFamilyDark = readStoredPreference(FAMILY_DARK_STORAGE_KEY);
   const rawGlass = readStoredPreference(
     GLASS_STYLE_STORAGE_KEY,
   ) as GlassStyleId | null;
@@ -567,11 +678,10 @@ function readInitialAppearance(): AppearanceState {
     GLASS_OPACITY_MAX,
     DEFAULT_GLASS_OPACITY,
   );
-  const palette =
-    rawPalette && VALID_PALETTES.has(rawPalette) ? rawPalette : "default";
-
   return {
-    palette,
+    familyLight: readFamilySlot(rawFamilyLight, customFamilies, legacyFamily),
+    familyDark: readFamilySlot(rawFamilyDark, customFamilies, legacyFamily),
+    customFamilies,
     // 没存材质：按 fallbackGlassStyle 判定一次（不含会自动写入的深浅主题），并立刻写入
     // glass-style，这样 ThemeProvider 随后写入 chisabot-theme 也不会在下次加载时改口径。
     glassStyle: resolveStoredGlassStyle(rawGlass),
@@ -592,7 +702,7 @@ function readInitialAppearance(): AppearanceState {
     skySource:
       rawSkySource && VALID_SKY_SOURCES.has(rawSkySource)
         ? rawSkySource
-        : palette !== "default"
+        : rawPalette && rawPalette !== "default"
           ? "theme"
           : "hark",
     wallpaperId:
@@ -950,12 +1060,64 @@ function setRootAttribute(
   else root.setAttribute(name, value);
 }
 
+/**
+ * 解析当前（dark / light）应显示的主题族：先按该模式的族槽解析，自定义族也认。
+ * 族槽永远解析得到一个族（fallback azure），所以这里不会返回 null。
+ */
+export function resolvedThemeFamily(
+  state: Pick<AppearanceState, "familyLight" | "familyDark" | "customFamilies">,
+  dark: boolean,
+): ThemeFamily {
+  return resolveThemeFamily(
+    dark ? state.familyDark : state.familyLight,
+    state.customFamilies,
+  );
+}
+
+/** 当前模式的 seed（family.light / family.dark）。 */
+export function resolvedSeed(
+  state: Pick<AppearanceState, "familyLight" | "familyDark" | "customFamilies">,
+  dark: boolean,
+): Seed {
+  return familySeed(resolvedThemeFamily(state, dark), dark);
+}
+
+/**
+ * 把主题族派生的整套 CSS 变量写到文档上（root 走 <html> 内联样式、天空注册变量走 <body>）。
+ * 返回解析出的族（调用方要写 data-theme-family / 渲染卡片时用）。
+ */
+function writeFamilyVars(
+  state: AppearanceState,
+  root: HTMLElement,
+  dark: boolean,
+): ThemeFamily {
+  const family = resolvedThemeFamily(state, dark);
+  const vars = deriveSeed(familySeed(family, dark), dark);
+  // 同值不写回：style.setProperty 哪怕值没变也会记一条 attribute 突变，
+  // 「换材质 / 同值重新应用」这类无关调用会把 <html> 行内样式全部重写一遍。
+  for (const [name, value] of Object.entries(vars.root))
+    if (root.style.getPropertyValue(name) !== value)
+      root.style.setProperty(name, value);
+  const body = document.body;
+  if (body) {
+    for (const [name, value] of Object.entries(vars.body))
+      if (body.style.getPropertyValue(name) !== value)
+        body.style.setProperty(name, value);
+  }
+  return family;
+}
+
 export function applyAppearanceToDocument(
   state: AppearanceState = ensureState(),
 ) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  setRootAttribute(root, "data-palette", state.palette);
+  const dark = root.classList.contains("dark");
+  const family = writeFamilyVars(state, root, dark);
+  setRootAttribute(root, "data-theme-family", family.id);
+  // 旧版 palette 轴的根属性：清掉，避免新样式表之外还有残留引用。
+  setRootAttribute(root, "data-palette", null);
+  applyThemeColor(familyThemeColor(familySeed(family, dark), dark));
   setRootAttribute(root, "data-glass", state.glassStyle);
   // 旧版本写在 <html> 行内的 --lg-alpha：清掉（它会让整页跟着重算），改由 #chisabot-glass-alpha 规则承担。
   if (root.style.getPropertyValue("--lg-alpha"))
@@ -976,11 +1138,18 @@ export function applyAppearanceToDocument(
 
 export function updateAppearance(patch: Partial<AppearanceState>) {
   const prev = ensureState();
+  const customFamilies =
+    patch.customFamilies !== undefined
+      ? parseCustomFamilies(JSON.stringify(patch.customFamilies))
+      : prev.customFamilies;
+  const familyIdOr = (raw: string | undefined, fallback: string) => {
+    if (!raw) return fallback;
+    return resolveThemeFamily(raw, customFamilies).id === raw ? raw : fallback;
+  };
   const next: AppearanceState = {
-    palette:
-      patch.palette && VALID_PALETTES.has(patch.palette)
-        ? patch.palette
-        : prev.palette,
+    familyLight: familyIdOr(patch.familyLight, prev.familyLight),
+    familyDark: familyIdOr(patch.familyDark, prev.familyDark),
+    customFamilies,
     glassStyle:
       patch.glassStyle && VALID_GLASS_STYLES.has(patch.glassStyle)
         ? patch.glassStyle
@@ -1038,7 +1207,8 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   // including the custom wallpaper's data URL. Slider keys are debounced (the preview stays live),
   // and the wallpaper image itself goes to IndexedDB, not localStorage.
   const writes: Array<[string, string, string]> = [
-    [PALETTE_STORAGE_KEY, prev.palette, next.palette],
+    [FAMILY_LIGHT_STORAGE_KEY, prev.familyLight, next.familyLight],
+    [FAMILY_DARK_STORAGE_KEY, prev.familyDark, next.familyDark],
     [GLASS_STYLE_STORAGE_KEY, prev.glassStyle, next.glassStyle],
     [HARK_SCENE_STORAGE_KEY, prev.harkScene, next.harkScene],
     [SKY_SOURCE_STORAGE_KEY, prev.skySource, next.skySource],
@@ -1047,6 +1217,10 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   for (const [key, before, after] of writes) {
     if (before !== after) writeStoredPreference(key, after);
   }
+  // 自定义族列表整体替换式存储：任何成员变化就重写整个 JSON。
+  const customJson = JSON.stringify(next.customFamilies);
+  if (JSON.stringify(prev.customFamilies) !== customJson)
+    writeStoredPreference(CUSTOM_FAMILIES_STORAGE_KEY, customJson);
   // 第一次存任何外观设置时把当前材质一起钉进存储：不然新用户（mist）只拖一下雾度，
   // 下次加载会因为「存过外观设置」被当成老用户落回 liquid。
   if (
@@ -1084,7 +1258,9 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
   const onlyGlassOpacity =
     (prev.glassOpacity !== next.glassOpacity ||
       prev.glassOpacityDark !== next.glassOpacityDark) &&
-    prev.palette === next.palette &&
+    prev.familyLight === next.familyLight &&
+    prev.familyDark === next.familyDark &&
+    prev.customFamilies === next.customFamilies &&
     prev.glassStyle === next.glassStyle &&
     prev.skySource === next.skySource &&
     prev.wallpaperId === next.wallpaperId &&
@@ -1097,7 +1273,9 @@ export function updateAppearance(patch: Partial<AppearanceState>) {
 
 /** 别的标签页改了这些键：这边跟着改（只改状态和页面，不写回存储）。 */
 const SYNCED_APPEARANCE_KEYS = new Set<string>([
-  PALETTE_STORAGE_KEY,
+  FAMILY_LIGHT_STORAGE_KEY,
+  FAMILY_DARK_STORAGE_KEY,
+  CUSTOM_FAMILIES_STORAGE_KEY,
   WALLPAPER_ID_STORAGE_KEY,
   WALLPAPER_CUSTOM_URL_STORAGE_KEY,
   WALLPAPER_BLUR_STORAGE_KEY,
@@ -1160,13 +1338,31 @@ export function installAppearanceStorageSync() {
   });
 }
 
-export function setThemePalette(palette: ThemePaletteId) {
+/**
+ * 点主题族卡的某半边：只写对应模式的族槽（light → familyLight、dark → familyDark），
+ * 另一槽不动——「浅色 = 落樱 + 深色 = 琥珀」这类混搭就是这么点出来的。
+ * 不触碰天空来源与壁纸：族卡只管整套派生令牌，背景由天空卡 / 壁纸区单独管。
+ */
+export function setThemeHalf(mode: "light" | "dark", familyId: string) {
+  updateAppearance(
+    mode === "light" ? { familyLight: familyId } : { familyDark: familyId },
+  );
+}
+
+/**
+ * 自定义族编辑器「保存」：upsert 进 customFamilies（按 id 去重），并把浅 / 深两个族槽
+ * 都指向它（与外观原型一致：保存后立即整套应用）。
+ */
+export function saveCustomFamily(family: ThemeFamily) {
   const prev = ensureState();
+  const customFamilies = [
+    ...prev.customFamilies.filter((f) => f.id !== family.id),
+    family,
+  ];
   updateAppearance({
-    palette,
-    // 皮肤卡承诺的是「强调色 + 配套主题天空」：壁纸启用中只换强调色（壁纸是用户在下方
-    // 单独选的背景，不被皮肤卡带走）；否则把天空切到主题渐变，兑现色板上画的观感。
-    skySource: prev.wallpaperId === "none" ? "theme" : prev.skySource,
+    customFamilies,
+    familyLight: family.id,
+    familyDark: family.id,
   });
 }
 
@@ -1217,7 +1413,9 @@ export function setWallpaperScrim(wallpaperScrim: number) {
 
 export function resetAppearanceDefaults() {
   updateAppearance({
-    palette: "default",
+    familyLight: DEFAULT_FAMILY_ID,
+    familyDark: DEFAULT_FAMILY_ID,
+    customFamilies: [],
     glassStyle: DEFAULT_GLASS_STYLE,
     glassOpacity: DEFAULT_GLASS_OPACITY,
     glassOpacityDark: DEFAULT_GLASS_OPACITY,
@@ -1258,9 +1456,9 @@ export function resolveEffectiveHarkScene(
     if (Number.isInteger(n) && n >= 0 && n <= 11) idx = n;
   }
   if (idx === undefined) {
-    const meta =
-      THEME_PALETTES.find((p) => p.id === state.palette) ?? THEME_PALETTES[0];
-    idx = dark ? meta.harkSceneDark : meta.harkSceneLight;
+    // "auto"：跟随当前模式的主题族——seed.scene 是这个族配套的推荐场景，
+    // 自定义族没写 scene 时用 azure 的昼夜默认（0 晴空 / 4 柏林夜）。
+    idx = resolvedSeed(state, dark).scene ?? (dark ? 4 : 0);
   }
   // 昼夜配对（明暗错配的硬不变式）：夜景在浅色外观下落到它的黄昏 / 雨景配对，
   // 日景在深色外观下落到夜景配对。存量的手动场景、auto 映射、多标签页同步都走这里，
@@ -1338,8 +1536,8 @@ export function resolveActiveWallpaperCss(
 }
 
 /**
- * 背景来源是「皮肤配套主题渐变」（引擎不启动）：用户在天象卡里选了「主题天空」，
- * 或点了皮肤卡。引擎没有色相参数，主题渐变由 computePaletteSky 直接画在 #skyph 上，更省。
+ * 背景来源是「主题族配套静态渐变」（引擎不启动）：用户在天空卡里选了「主题天空」。
+ * 引擎没有色相参数，主题渐变由当前族 seed 经 deriveSeed 派生的 --fam-sky-* 直接画在 #skyph 上，更省。
  */
 export function usesThemeGradientSky(
   state: Pick<AppearanceState, "skySource">,

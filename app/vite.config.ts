@@ -8,7 +8,7 @@ import { listenPort } from "../shared/listen-port";
 import { bundleReport } from "./scripts/bundle-report";
 import { chunkGuard } from "./scripts/chunk-graph";
 import { routePreload } from "./scripts/route-preload";
-import { paletteBootScript } from "./src/lib/palette";
+import { familyBootScript } from "./src/lib/palette";
 import { skyBootScript } from "./src/lib/sky";
 
 /*
@@ -106,11 +106,12 @@ function skyBoot(): Plugin {
   return {
     name: "chisabot-sky-boot",
     transformIndexHtml(html) {
-      // 时段天空之后是用户选的配色（覆盖 --sky-1..3）、玻璃材质和地址栏颜色（lib/palette.ts）。
+      // 时段天空之后是用户选的主题族（deriveSeed 整套派生变量覆盖 --sky-*/--accent-* 等）、
+      // 玻璃材质和地址栏颜色（lib/palette.ts → lib/theme-family.ts）。
       return html.replace(
         marker,
         () =>
-          `<script>${skyBootScript()}</script><script>${paletteBootScript()}</script>`,
+          `<script>${skyBootScript()}</script><script>${familyBootScript()}</script>`,
       );
     },
   };
