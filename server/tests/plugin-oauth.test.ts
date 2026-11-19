@@ -553,7 +553,7 @@ describe("registering this deployment as an OAuth client", () => {
           redirectUri: "https://chisabot.example/cb",
         }),
       ).toBeNull();
-      expect(seen[0]?.redirect).toBe("manual");
+      expect(seen[0]?.redirect).toBe("error");
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -752,7 +752,7 @@ describe("redeeming an authorization code", () => {
           verifier: "verifier-1",
         }),
       ).toBeNull();
-      expect(seen[0]?.redirect).toBe("manual");
+      expect(seen[0]?.redirect).toBe("error");
     } finally {
       globalThis.fetch = realFetch;
     }

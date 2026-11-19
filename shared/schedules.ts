@@ -25,6 +25,7 @@ export type ScheduleRunStatus =
   | "running"
   | "ok"
   | "failed"
+  | "interrupted"
   | "waiting"
   | "skipped"
   | "queued";
@@ -131,6 +132,7 @@ export function partitionScheduleList(
   const needsAttention = active.filter(
     (s) =>
       s.lastStatus === "failed" ||
+      s.lastStatus === "interrupted" ||
       s.lastStatus === "waiting" ||
       (s.running && s.lastStatus === "running"),
   );
@@ -235,6 +237,7 @@ export const RUN_STATUS_ZH: Record<ScheduleRunStatus, string> = {
   running: "运行中",
   ok: "已完成",
   failed: "失败",
+  interrupted: "已中断",
   waiting: "等你确认",
   skipped: "已跳过",
   queued: "已插入对话",

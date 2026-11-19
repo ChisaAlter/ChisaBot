@@ -345,6 +345,10 @@ export type DeploymentConfig = {
   linkPreviewShotsEnabled: boolean;
   livePanelSweepEnabled: boolean;
   desktopHostToken?: string;
+  /** 内部静默排空与健康探针令牌（CHISABOT_INTERNAL_TOKEN / CHISABOT_QUIESCE_TOKEN）。 */
+  internalQuiesceToken?: string;
+  /** 是否显式信任反代写入的 X-Forwarded-For / X-Real-IP（CHISABOT_TRUST_PROXY=1）。 */
+  trustForwardedHeaders?: boolean;
   modelOauthFile?: string;
   imEnabled: boolean;
   releaseLocksOnStart: boolean;
@@ -1566,6 +1570,17 @@ export function loadConfig(
     ...(environment.CHISABOT_DESKTOP_HOST_TOKEN !== undefined
       ? { desktopHostToken: environment.CHISABOT_DESKTOP_HOST_TOKEN }
       : {}),
+    ...(optional(environment, "CHISABOT_INTERNAL_TOKEN") ??
+    optional(environment, "CHISABOT_QUIESCE_TOKEN")
+      ? {
+          internalQuiesceToken:
+            optional(environment, "CHISABOT_INTERNAL_TOKEN") ??
+            optional(environment, "CHISABOT_QUIESCE_TOKEN"),
+        }
+      : {}),
+    trustForwardedHeaders: ["1", "true", "yes"].includes(
+      (optional(environment, "CHISABOT_TRUST_PROXY") ?? "").toLowerCase(),
+    ),
     ...(optional(environment, "CHISABOT_MODEL_OAUTH_FILE")
       ? { modelOauthFile: optional(environment, "CHISABOT_MODEL_OAUTH_FILE") }
       : {}),

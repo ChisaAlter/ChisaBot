@@ -16,6 +16,7 @@
  * allowFullAccess = 网页上为这台机器打开「完全访问」时本机是否接受（默认接受；安装时 --no-full-access 关掉，
  * 之后网页即使打开也会被本机立刻关回去）。
  */
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -55,8 +56,29 @@ function readConfig(dir) {
 function writeConfig(dir, config) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = configPath(dir);
-  fs.writeFileSync(`${file}.tmp`, JSON.stringify(config, null, 2), { mode: 0o600 });
-  fs.renameSync(`${file}.tmp`, file);
+  const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let fd;
+  let renamed = false;
+  try {
+    fd = fs.openSync(tmp, "wx", 0o600);
+    fs.writeFileSync(fd, JSON.stringify(config, null, 2));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+    renamed = true;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+    if (!renamed) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {}
+    }
+  }
   try {
     fs.chmodSync(file, 0o600);
   } catch {}

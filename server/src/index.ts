@@ -416,7 +416,16 @@ import {
   createWebhookPanelRoutes,
 } from "./responsibilities/webhook-panel-routes";
 import { createModelCompleter } from "./routing/model";
+import {
+  createFederationRoutes,
+  createFederationService,
+} from "./federation/routes";
+import {
+  createInternalQuiesceRoutes,
+  getRuntimeQuiesceController,
+} from "./runtime/quiesce";
 import { createSchedules, ScheduleError } from "./schedules/service";
+import { liveConnections } from "./security/http-hardening";
 import { SharePackageError } from "./sharing/package";
 import { createSharingRoutes } from "./sharing/routes";
 import {
@@ -5820,6 +5829,11 @@ const voiceCallService = createVoiceCallService({
     : {}),
 });
 
+const federationService = createFederationService({
+  encryptionKey: config.keyEncryptionKey,
+  ...(config.publicUrl ? { hostUrl: config.publicUrl } : {}),
+});
+
 const app = createApp(
   config,
   auth,
@@ -6340,6 +6354,23 @@ const app = createApp(
         "/api/admin/execution-nodes",
         executionNodeStore.routes(requireUser),
       ],
+      [
+        "/api/internal",
+        createInternalQuiesceRoutes({
+          controller: getRuntimeQuiesceController(),
+          ...(config.internalQuiesceToken
+            ? { internalToken: config.internalQuiesceToken }
+            : {}),
+          requireUser,
+        }),
+      ],
+      [
+        "/api/federation",
+        createFederationRoutes({
+          service: federationService,
+          requireUser,
+        }),
+      ],
     ],
   },
 );
@@ -6374,6 +6405,7 @@ type StreamData = {
   botId: string;
   recordingId?: string;
   inward?: WebSocket;
+  detachLive?: () => void;
 };
 
 /**
@@ -6583,6 +6615,24 @@ serve<SocketData>({
         return;
       }
       stream.inward = inward;
+      stream.detachLive = liveConnections.track(
+        [stream.ownerUserId, `user:${stream.ownerUserId}`],
+        {
+          kind: "ws",
+          close: (reason) => {
+            try {
+              inward.close();
+            } catch {
+              /* ignore */
+            }
+            try {
+              ws.close(4401, reason ?? "revoked");
+            } catch {
+              /* ignore */
+            }
+          },
+        },
+      );
       // Frames outward, input inward. Buffered by neither side: a frame the browser is too slow for
       // should be dropped, not queued, because a stale frame is worse than a missing one.
       // Bun's ws.send throws when the socket is not OPEN; if a future runtime queues instead,
@@ -6670,6 +6720,8 @@ serve<SocketData>({
           fields: { reason: "ws-close", code },
         });
       }
+      ws.data.detachLive?.();
+      ws.data.detachLive = undefined;
       ws.data.inward?.close();
     },
   },
@@ -6688,6 +6740,8 @@ if (config.singleUser) {
 // so a watch-mode restart does not leave two behind on every reload.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    getRuntimeQuiesceController().markQuiescing();
+    liveConnections.closeAll("shutdown");
     void flushOpsMetrics().catch(() => {});
     responsibilitySweep.stop();
     livePanelService.stop();

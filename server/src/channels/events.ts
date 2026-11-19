@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import type { ReplyNotificationEvent } from "../../../shared/notifications";
+import { liveConnections } from "../security/http-hardening";
 
 /**
  * Live channel activity, from whoever ran an agent to everybody else in the channel.
@@ -66,7 +67,12 @@ export type ChannelEventHubOptions = {
 
 export type ChannelEventHub = {
   /** Attach a connection for a person. Returns the detach. */
-  register(userId: string, send: Send, deviceId?: string): () => void;
+  register(
+    userId: string,
+    send: Send,
+    deviceId?: string,
+    onClose?: (reason?: string) => void,
+  ): () => void;
   /** Fan one event out to this instance's own connections. */
   deliver(event: ChannelActivityEvent): void;
   /** 向某用户的活跃连接实时派发一条主动通知事件（不改写左侧会话列表）。 */
@@ -85,16 +91,17 @@ export function createChannelEventHub(
   const connections = new Map<string, Set<Send>>();
 
   return {
-    register(userId, send, deviceId) {
+    register(userId, send, deviceId, onClose) {
       const existing = connections.get(userId) ?? new Set<Send>();
       existing.add(send);
       connections.set(userId, existing);
       const releaseTracked = options.onConnection?.(userId, deviceId);
       let detached = false;
 
-      return () => {
+      const detach = () => {
         if (detached) return;
         detached = true;
+        detachLive();
         releaseTracked?.();
         const remaining = connections.get(userId);
         if (!remaining) return;
@@ -103,6 +110,23 @@ export function createChannelEventHub(
         // set per person who ever connected.
         if (remaining.size === 0) connections.delete(userId);
       };
+
+      const detachLive = liveConnections.track(
+        [
+          userId,
+          `user:${userId}`,
+          ...(deviceId ? [deviceId, `device:${deviceId}`] : []),
+        ],
+        {
+          kind: "ws",
+          close: (reason) => {
+            detach();
+            onClose?.(reason);
+          },
+        },
+      );
+
+      return detach;
     },
 
     deliver(event) {

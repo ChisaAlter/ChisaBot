@@ -7,10 +7,10 @@
  *
  * See docs/ops/monitoring.md §「错误预算时序」.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { defaultRuntimeEnvironment } from "./config";
 import { reasonWithoutStatement } from "./db/query-failure";
+import { atomicWriteFileUnique } from "./security/file-hygiene";
 import {
   exportOpsMetricsFile,
   importOpsMetricsFile,
@@ -37,10 +37,7 @@ export function resolveOpsMetricsPath(
 }
 
 async function writeAtomic(path: string, body: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, body, "utf8");
-  await rename(tmp, path);
+  await atomicWriteFileUnique(path, body, { mode: 0o600 });
 }
 
 export async function flushOpsMetrics(

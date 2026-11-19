@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import type { Message } from "@ag-ui/client";
 import { and, asc, desc, eq, isNull, min, sql } from "drizzle-orm";
 import { Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { HandoffCaps } from "../agents/handoff";
 import type { ApprovalContinuation } from "../approvals/types";
@@ -1575,7 +1576,14 @@ export function createGroupRoutes(
 ) {
   const enforceAdmin = options.requireAdmin ?? true;
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser);
+  routes.use(
+    "*",
+    requireUser,
+    bodyLimit({
+      maxSize: 256 * 1024,
+      onError: (context) => context.json({ error: "群聊请求体过大。" }, 413),
+    }),
+  );
   if (enforceAdmin) {
     routes.use("*", async (context, next) => {
       const denied = requireAdmin(context);

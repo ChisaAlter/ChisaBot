@@ -42,6 +42,7 @@ import {
 } from "./conversations/inbox-message";
 import { createConversationInteractions } from "./conversations/interactions";
 import { assertConversationAdmissionOpen } from "./conversations/maintenance";
+import { beginTurn } from "./runtime/quiesce";
 import { createDshRunJournal } from "./conversations/run-journal";
 import {
   type AgentRunnerConnectRequest,
@@ -1117,8 +1118,11 @@ class PostgresAgentRunner implements ConversationRunner {
       inboxRunIds: [...(relay?.inboxRunIds ?? []), request.input.runId],
       inputMessageIds: new Set(),
     };
+    const releaseQuiesceTurn = request.recover
+      ? () => {}
+      : beginTurn(request.input.runId);
     this.active.set(request.threadId, entry);
-    entry.done = this.execute(request, entry);
+    entry.done = this.execute(request, entry).finally(releaseQuiesceTurn);
     // Do not let a fast frontend continuation overtake the old lease cleanup.
     return withRunStartedAck(
       request,

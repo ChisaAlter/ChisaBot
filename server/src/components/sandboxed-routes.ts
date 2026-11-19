@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
 import {
@@ -25,6 +26,13 @@ export function createSandboxedRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 2 * 1024 * 1024,
+      onError: (context) => context.json({ error: "沙箱组件请求体过大。" }, 413),
+    }),
+  );
 
   const actorEmail = (context: { var: AppVariables }) =>
     context.var.actor?.email ?? "unknown";

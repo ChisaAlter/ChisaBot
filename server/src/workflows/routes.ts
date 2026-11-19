@@ -3,6 +3,7 @@
  */
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import {
   type WorkflowDefinition,
   type WorkflowDetail,
@@ -129,7 +130,14 @@ export function createWorkflowRoutes(options: {
 }) {
   const { store, engine } = options;
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", options.requireUser);
+  routes.use(
+    "*",
+    options.requireUser,
+    bodyLimit({
+      maxSize: 1024 * 1024,
+      onError: (context) => context.json({ error: "工作流请求体过大。" }, 413),
+    }),
+  );
   routes.use("*", async (context, next) => {
     context.header("Cache-Control", "no-store");
     await next();

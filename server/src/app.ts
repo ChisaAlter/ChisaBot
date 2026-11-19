@@ -575,7 +575,20 @@ export function createApp(
       },
     });
   });
-  app.patch("/api/me/profile", requireUser, async (context) => {
+  const jsonWriteBodyLimit = bodyLimit({
+    maxSize: 256 * 1024,
+    onError: (context) => context.json({ error: "请求体过大。" }, 413),
+  });
+  const agentToolBodyLimit = bodyLimit({
+    maxSize: 2 * 1024 * 1024,
+    onError: (context) => context.json({ error: "工具调用请求体过大。" }, 413),
+  });
+
+  app.patch(
+    "/api/me/profile",
+    requireUser,
+    jsonWriteBodyLimit,
+    async (context) => {
     if (!onboardingStore)
       return context.json({ error: "个人资料不可用。" }, 503);
     const parsed = parseProfileInput(
@@ -591,7 +604,11 @@ export function createApp(
     await onboardingStore.setProfile(context.var.actor.id, next);
     return context.json({ profile: next });
   });
-  app.post("/api/me/onboarding", requireUser, async (context) => {
+  app.post(
+    "/api/me/onboarding",
+    requireUser,
+    jsonWriteBodyLimit,
+    async (context) => {
     if (!onboardingStore) {
       return context.json({ error: "Onboarding is not available." }, 503);
     }
@@ -685,7 +702,11 @@ export function createApp(
       instructions: (await userInstructions.read(context.var.actor.id)) ?? "",
     });
   });
-  app.put("/api/settings/instructions", requireUser, async (context) => {
+  app.put(
+    "/api/settings/instructions",
+    requireUser,
+    jsonWriteBodyLimit,
+    async (context) => {
     if (!userInstructions) {
       return context.json(
         { error: "Standing instructions are not available." },
@@ -956,7 +977,7 @@ export function createApp(
     ["PUT", "/api/admin/model-settings", "save"],
     ["POST", "/api/admin/model-settings/test", "test"],
   ] as const) {
-    app.on(method, path, requireUser, async (context) => {
+    app.on(method, path, requireUser, jsonWriteBodyLimit, async (context) => {
       const denied = requireAdmin(context);
       if (denied) return denied;
       context.header("Cache-Control", "no-store");
@@ -1083,7 +1104,11 @@ export function createApp(
     }
   });
 
-  app.put("/api/admin/quotas/:userId", requireUser, async (context) => {
+  app.put(
+    "/api/admin/quotas/:userId",
+    requireUser,
+    jsonWriteBodyLimit,
+    async (context) => {
     const denied = requireAdmin(context);
     if (denied) return denied;
     context.header("Cache-Control", "no-store");
@@ -1144,7 +1169,11 @@ export function createApp(
 
     return context.json({ credentials: await credentialService.list() });
   });
-  app.post("/api/admin/credentials", requireUser, async (context) => {
+  app.post(
+    "/api/admin/credentials",
+    requireUser,
+    jsonWriteBodyLimit,
+    async (context) => {
     const denied = requireAdmin(context);
     if (denied) {
       return denied;
@@ -1170,6 +1199,7 @@ export function createApp(
   app.post(
     "/api/admin/credentials/:credentialId/rotate",
     requireUser,
+    jsonWriteBodyLimit,
     async (context) => {
       const denied = requireAdmin(context);
       if (denied) {
@@ -1206,6 +1236,7 @@ export function createApp(
   app.post(
     "/api/admin/credentials/:credentialId/revoke",
     requireUser,
+    jsonWriteBodyLimit,
     async (context) => {
       const denied = requireAdmin(context);
       if (denied) {
@@ -1644,6 +1675,16 @@ export function createApp(
           botsMayCallBack: Boolean(config.agentToolToken),
           publicUrl: config.publicUrl,
           appUrl: config.appUrl,
+          ...(auth
+            ? {
+                resolveSessionUserId: async (request: Request) => {
+                  const session = await auth.api
+                    .getSession({ headers: request.headers })
+                    .catch(() => null);
+                  return session?.user?.id ?? null;
+                },
+              }
+            : {}),
         },
         composio,
       ),
@@ -1664,7 +1705,10 @@ export function createApp(
    */
   if (pluginStore || deploymentToolCaller) {
     const legacyToken = config.agentToolToken ?? "";
-    app.post("/api/agent-tools/call", async (context) => {
+    app.post(
+      "/api/agent-tools/call",
+      agentToolBodyLimit,
+      async (context) => {
       /*
        * Who is calling, and on whose behalf. Two questions, two credentials.
        *

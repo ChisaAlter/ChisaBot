@@ -450,6 +450,104 @@ export type ScheduleDeps = {
 export const THREAD_DELETED_RESULT =
   "原对话已删除，定时任务已自动取消（不会发到别的对话）。";
 
+/** Wave 10 §6.3 #9：进程重启恢复时，上次遗留 running 态显式标 interrupted，绝不静默重放副作用。 */
+export const BOOT_INTERRUPTED_RESULT =
+  "服务器重启，原定时任务执行已中断（未自动重放，避免重复副作用）。";
+
+export type ScheduleDedupEntry = {
+  scheduleId: string;
+  runId: string;
+  scheduledForIso: string;
+  state: "running" | "completed" | "interrupted";
+  updatedAt: number;
+};
+
+/**
+ * 定时任务去重账本（Wave 10 §6.3 #9）：
+ * - 启动恢复时把上次遗留 `running` 条目显式转为 `interrupted`（绝不自动重放）；
+ * - 只有在调用方确认定时任务记录已真实删除后（`confirmDeleted(id) === true`）才允许清理去重账本；
+ *   临时枚举缺失/查询错误绝不误删防重放保护。
+ */
+export class ScheduleDedupLedger {
+  private readonly entries = new Map<string, ScheduleDedupEntry>();
+
+  recordClaim(
+    scheduleId: string,
+    runId: string,
+    scheduledForIso: string,
+    nowMs = Date.now(),
+  ): ScheduleDedupEntry {
+    const entry: ScheduleDedupEntry = {
+      scheduleId,
+      runId,
+      scheduledForIso,
+      state: "running",
+      updatedAt: nowMs,
+    };
+    this.entries.set(scheduleId, entry);
+    return { ...entry };
+  }
+
+  markFinished(
+    scheduleId: string,
+    runId: string,
+    state: "completed" | "interrupted" = "completed",
+    nowMs = Date.now(),
+  ): void {
+    const current = this.entries.get(scheduleId);
+    if (!current || current.runId !== runId) return;
+    current.state = state;
+    current.updatedAt = nowMs;
+  }
+
+  /** 启动恢复：将所有遗留 `running` 显式转为 `interrupted`，返回受影响的任务 ID 列表。 */
+  markRunningInterruptedOnBoot(nowMs = Date.now()): string[] {
+    const interrupted: string[] = [];
+    for (const [scheduleId, entry] of this.entries) {
+      if (entry.state === "running") {
+        entry.state = "interrupted";
+        entry.updatedAt = nowMs;
+        interrupted.push(scheduleId);
+      }
+    }
+    return interrupted;
+  }
+
+  /**
+   * 仅在 `isConfirmedDeleted(scheduleId)` 明确返回 `true` 时清理去重条目；
+   * 若检测函数抛错或返回 `false`，保留条目防误清去重保护。
+   */
+  async pruneConfirmedDeleted(
+    scheduleIds: readonly string[],
+    isConfirmedDeleted: (scheduleId: string) => Promise<boolean> | boolean,
+  ): Promise<string[]> {
+    const pruned: string[] = [];
+    for (const scheduleId of scheduleIds) {
+      if (!this.entries.has(scheduleId)) continue;
+      let confirmed = false;
+      try {
+        confirmed = (await isConfirmedDeleted(scheduleId)) === true;
+      } catch {
+        confirmed = false;
+      }
+      if (confirmed) {
+        this.entries.delete(scheduleId);
+        pruned.push(scheduleId);
+      }
+    }
+    return pruned;
+  }
+
+  get(scheduleId: string): ScheduleDedupEntry | null {
+    const hit = this.entries.get(scheduleId);
+    return hit ? { ...hit } : null;
+  }
+
+  size(): number {
+    return this.entries.size;
+  }
+}
+
 /**
  * M2：删话题时取消挂在这些话题上的网页例程（IM 例程不挂本地话题，不动）。
  * threadIds=null 表示该用户的全部本地话题（清空历史）。出错只记日志，不挡删除。
@@ -549,6 +647,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   const sql = database.$client;
   const now = deps.now ?? (() => new Date());
   const running = new Set<string>();
+  const dedupLedger = new ScheduleDedupLedger();
   let timer: ReturnType<typeof setInterval> | null = null;
   let sweeping = false;
   let lastAutoPurge = 0;
@@ -599,6 +698,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       "UPDATE chisabot_schedules SET next_run_at = NULL WHERE status = 'paused' AND next_run_at IS NOT NULL",
     );
     await reconcileDurableRuns();
+    await reclaimInterruptedOnBoot();
     await reclaimStuckRuns();
   }
 
@@ -874,15 +974,22 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   }
 
   async function remove(owner: string, id: string): Promise<boolean> {
-    const rows = await sql.unsafe(
+    const trimmedId = id.trim();
+    const rows = await sql.unsafe<{ id: string }[]>(
       "DELETE FROM chisabot_schedules WHERE id = $1 AND owner_user_id = $2 RETURNING id",
-      [id.trim(), owner],
+      [trimmedId, owner],
     );
-    if (rows.length)
+    const confirmedIds = new Set(rows.map((r) => r.id));
+    if (confirmedIds.has(trimmedId)) {
       await sql.unsafe(
         "DELETE FROM chisabot_schedule_runs WHERE schedule_id = $1",
-        [id.trim()],
+        [trimmedId],
       );
+      await dedupLedger.pruneConfirmedDeleted([trimmedId], (candidate) =>
+        confirmedIds.has(candidate),
+      );
+      running.delete(trimmedId);
+    }
     return rows.length > 0;
   }
 
@@ -965,6 +1072,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       "UPDATE chisabot_schedule_runs SET status=$2, result=$3, finished_at=now() WHERE id=$1",
       [runId, status, text],
     );
+    dedupLedger.markFinished(
+      scheduleId,
+      runId,
+      status === "interrupted" ? "interrupted" : "completed",
+      now().getTime(),
+    );
     await sql.unsafe(
       "UPDATE chisabot_schedules SET last_run_at=now(), last_status=$2, last_result=$3, run_count=run_count+1, updated_at=now() WHERE id=$1",
       [scheduleId, status, text],
@@ -1009,6 +1122,53 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         }
       }
     }
+  }
+
+  /**
+   * Wave 10 §6.3 #9：进程重启恢复时，将上次遗留的 `running` 任务显式标记为 `interrupted`
+   * （绝不静默重放副作用，避免跨重启重复发送消息/外部动作），并释放对应对话锁。
+   */
+  async function reclaimInterruptedOnBoot(): Promise<number> {
+    const [journal] = await sql.unsafe<{ available: boolean }[]>(
+      "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
+    );
+    const preserved = journal?.available
+      ? "AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id)"
+      : "";
+    const interrupted = await sql.unsafe<
+      { id: string; schedule_id: string; thread_id: string | null }[]
+    >(
+      `UPDATE chisabot_schedule_runs r
+       SET status = 'interrupted', finished_at = now(),
+           result = coalesce(result, $1)
+       FROM chisabot_schedules s
+       WHERE r.schedule_id = s.id AND r.status = 'running'
+         ${preserved}
+       RETURNING r.id, r.schedule_id, s.thread_id`,
+      [BOOT_INTERRUPTED_RESULT],
+    );
+    dedupLedger.markRunningInterruptedOnBoot(now().getTime());
+    for (const row of interrupted) {
+      await sql
+        .unsafe(
+          "UPDATE chisabot_schedules SET last_status='interrupted', last_result=$2, updated_at=now() WHERE id=$1",
+          [row.schedule_id, BOOT_INTERRUPTED_RESULT],
+        )
+        .catch(() => {});
+      running.delete(row.schedule_id);
+      if (row.thread_id) {
+        await deps.releaseThread?.(row.thread_id).catch(() => {});
+      }
+    }
+    if (interrupted.length) {
+      console.warn(
+        JSON.stringify({
+          type: "schedule-boot-runs-interrupted",
+          count: interrupted.length,
+        }),
+      );
+    }
+    return interrupted.length;
   }
 
   /** Track B / v0.1.34：卡死的 running 记录标失败；对话仍被占着则 releaseThread；连续失败则暂停（从不 auto-resume）。 */
@@ -1164,6 +1324,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       });
     if (rows.length) {
       const ids = rows.map((r) => r.id);
+      const confirmedSet = new Set(ids);
       for (const id of ids) running.delete(id);
       await sql
         .unsafe(
@@ -1171,6 +1332,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           [JSON.stringify(ids)],
         )
         .catch(() => undefined);
+      await dedupLedger.pruneConfirmedDeleted(ids, (candidate) =>
+        confirmedSet.has(candidate),
+      );
       console.warn(
         JSON.stringify({
           type: "schedule-orphans-purged",
@@ -1640,6 +1804,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           continue;
         }
         report.fired.push(row.id);
+        dedupLedger.recordClaim(
+          row.id,
+          runId,
+          iso(scheduledNextRun),
+          at.getTime(),
+        );
         void fire(row, runId, { manual: false, lateMs });
       } catch (error) {
         console.warn(
@@ -1865,7 +2035,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       },
     });
     const line = (s: ScheduleView) =>
-      `- ${s.id}「${s.title}」${s.schedule} · ${s.status === "active" ? (s.nextRunAt ? `下次 ${formatWhen(s.nextRunAt, s.timezone, now())}` : "进行中") : ({ paused: "已暂停", done: "已结束", cancelled: "已取消", active: "" } as const)[s.status]}${s.lastStatus ? ` · 上次${({ ok: "完成", failed: "失败", waiting: "等确认", skipped: "跳过", queued: "已插入对话", running: "运行中" } as const)[s.lastStatus]}` : ""} · 做什么：${clip(s.instruction, 80)}`;
+      `- ${s.id}「${s.title}」${s.schedule} · ${s.status === "active" ? (s.nextRunAt ? `下次 ${formatWhen(s.nextRunAt, s.timezone, now())}` : "进行中") : ({ paused: "已暂停", done: "已结束", cancelled: "已取消", active: "" } as const)[s.status]}${s.lastStatus ? ` · 上次${({ ok: "完成", failed: "失败", interrupted: "已中断", waiting: "等确认", skipped: "跳过", queued: "已插入对话", running: "运行中" } as const)[s.lastStatus]}` : ""} · 做什么：${clip(s.instruction, 80)}`;
     const confirmation = (s: ScheduleView, verb: string) =>
       s.kind === "once"
         ? `${verb}：${s.nextRunAt ? formatWhen(s.nextRunAt, s.timezone, now()) : s.schedule}${s.timezone !== SCHEDULE_DEFAULT_TZ ? `（${tzLabel(s.timezone)}）` : ""} ${s.title}`
@@ -2147,7 +2317,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     skipNext,
     runNow,
     sweep,
+    reclaimInterruptedOnBoot,
     reclaimStuckRuns,
+    dedupLedger,
     cancelOrphanSchedules,
     purgeOrphanSchedules,
     start,

@@ -22,6 +22,55 @@ locks() {
   '
 }
 for i in $(seq 1 240); do busy || break; sleep 10; done
+
+# Wave 10 §1.1：串行重启旧容器前先执行静默排空握手（POST /api/internal/quiesce），
+# 拒接新回合进入并等待在途 runningTurns === 0（带上限超时；旧版本无此端点时优雅降级）。
+quiesce_app() {
+  q_timeout=${CHISABOT_QUIESCE_TIMEOUT_S:-120}
+  q_url=${CHISABOT_INTERNAL_URL:-http://127.0.0.1:3001}
+  q_strict=${CHISABOT_QUIESCE_STRICT:-0}
+  q_token=${CHISABOT_INTERNAL_TOKEN:-${CHISABOT_QUIESCE_TOKEN:-}}
+  if [ -z "$q_token" ]; then
+    q_token=$(docker exec "$APP" sh -c 'cat /run/s6/container_environment/CHISABOT_INTERNAL_TOKEN 2>/dev/null || cat /run/s6/container_environment/CHISABOT_QUIESCE_TOKEN 2>/dev/null' 2>/dev/null || true)
+  fi
+  if [ -z "$q_token" ]; then
+    echo "[$(date -u +%T)] quiesce skipped: no CHISABOT_INTERNAL_TOKEN configured (fallback to thread locks)"
+    return 0
+  fi
+  echo "[$(date -u +%T)] requesting graceful quiesce (timeout=${q_timeout}s) via $APP"
+  q_res=$(docker exec "$APP" sh -c "
+    curl -sS --max-time $((q_timeout + 15)) -w '\n%{http_code}' \
+      -X POST -H 'Content-Type: application/json' \
+      -H 'Authorization: Bearer $q_token' \
+      -d '{\"timeoutMs\":$((q_timeout * 1000))}' \
+      '$q_url/api/internal/quiesce'
+  " 2>/dev/null || true)
+  q_code=$(printf '%s\n' "$q_res" | tail -n 1)
+  q_body=$(printf '%s\n' "$q_res" | sed '$d')
+  case "$q_code" in
+    200)
+      echo "[$(date -u +%T)] quiesce drained cleanly: $q_body"
+      return 0
+      ;;
+    404)
+      echo "[$(date -u +%T)] quiesce endpoint not present on running build (404) — graceful fallback to thread locks"
+      return 0
+      ;;
+    409)
+      echo "[$(date -u +%T)] quiesce timed out with turns still active: $q_body"
+      if [ "$q_strict" = 1 ] || [ "$q_strict" = true ]; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      echo "[$(date -u +%T)] quiesce probe returned HTTP ${q_code:-unreachable} — graceful fallback to thread locks"
+      return 0
+      ;;
+  esac
+}
+
+quiesce_app || { echo "QUIESCE FAILED IN STRICT MODE"; exit 4; }
 for i in $(seq 1 120); do [ "$(locks)" = 0 ] && break; sleep 10; done
 [ "$(locks)" = 0 ] || { echo "THREAD LOCKS STILL >0, giving up"; exit 4; }
 ACTOR=$WHO sh $U/request.sh check; sleep 5

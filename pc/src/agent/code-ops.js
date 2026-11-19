@@ -1025,12 +1025,18 @@ Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
     const helper = await ensureHelper();
     const id = crypto.randomBytes(6).toString("hex");
     const started = Date.now();
-    await fsp.writeFile(
-      P.join(helper.dir, `${id}.tmp`),
-      JSON.stringify({ key: helper.key, script: encodePowerShell(PS_PREFIX + command), cwd: cwd || os.homedir(), timeoutMs }),
-      "utf8",
-    );
-    await fsp.rename(P.join(helper.dir, `${id}.tmp`), P.join(helper.dir, `${id}.cmd`));
+    const tmpFile = P.join(helper.dir, `${id}.${process.pid}.${crypto.randomUUID()}.tmp`);
+    try {
+      await fsp.writeFile(
+        tmpFile,
+        JSON.stringify({ key: helper.key, script: encodePowerShell(PS_PREFIX + command), cwd: cwd || os.homedir(), timeoutMs }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      await fsp.rename(tmpFile, P.join(helper.dir, `${id}.cmd`));
+    } catch (error) {
+      await fsp.unlink(tmpFile).catch(() => {});
+      throw error;
+    }
     const rcFile = P.join(helper.dir, `${id}.rc`);
     while (!(await fsp.stat(rcFile).catch(() => null))) {
       if (signal?.aborted) throw new OpError("已取消。");

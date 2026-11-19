@@ -41,7 +41,7 @@ export function statusTone(status: ScheduleRunStatus | null) {
     ? "is-ok"
     : status === "failed"
       ? "is-bad"
-      : status === "waiting"
+      : status === "waiting" || status === "interrupted"
         ? "is-wait"
         : status === "running"
           ? "is-run"

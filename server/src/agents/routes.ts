@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
@@ -172,6 +173,13 @@ export function createAgentRoutes(
     ...(auditStore ? { auditStore } : {}),
   });
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 512 * 1024,
+      onError: (context) => context.json({ error: "机器人配置请求体过大。" }, 413),
+    }),
+  );
 
   /**
    * The Bot declined something, and says so.

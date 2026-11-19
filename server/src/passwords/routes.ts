@@ -1,4 +1,5 @@
 import { Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AppVariables } from "../auth/guards";
 import type { ActionActor } from "../computer/gateway";
@@ -60,7 +61,14 @@ export function createSignInRoutes(
   canUseBot: BotAccessCheck,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser);
+  routes.use(
+    "*",
+    requireUser,
+    bodyLimit({
+      maxSize: 64 * 1024,
+      onError: (context) => context.json({ error: "登录请求体过大。" }, 413),
+    }),
+  );
   routes.onError((error, context) => {
     if (error instanceof SignInRefusedError)
       return context.json({ error: error.message }, error.status);
@@ -174,7 +182,14 @@ export function createPasswordRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use("*", requireUser);
+  routes.use(
+    "*",
+    requireUser,
+    bodyLimit({
+      maxSize: 64 * 1024,
+      onError: (context) => context.json({ error: "登录请求体过大。" }, 413),
+    }),
+  );
   routes.onError((error, context) => {
     if (error instanceof SignInRefusedError)
       return context.json({ error: error.message }, error.status);

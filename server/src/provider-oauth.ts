@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, rename, unlink } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Env, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { sameToken } from "./agents/callback-token";
 import {
@@ -14,6 +14,7 @@ import {
   CredentialLockUnavailable,
   lockProviderCredentials,
 } from "./provider-oauth-lock";
+import { atomicWriteFileUnique } from "./security/file-hygiene";
 
 export type ModelOAuthRecord = {
   version: 1;
@@ -80,7 +81,7 @@ async function readRecord(file: string): Promise<ModelOAuthRecord> {
     if (
       !info.isFile() ||
       info.size > 64n * 1024n ||
-      (process.platform !== "win32" && (info.mode & 0o077n) !== 0n)
+      (process.platform !== "win32" && (info.mode & 0o777n) !== 0o600n)
     )
       throw new Error("The private model credential file is not valid.");
     const record = schema.parse(JSON.parse(await handle.readFile("utf8")));
@@ -92,37 +93,19 @@ async function readRecord(file: string): Promise<ModelOAuthRecord> {
   }
 }
 
-function hasCode(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
-}
-
 /** Native sign-in uses the same lock. A new session must win over an older refresh. */
 async function persistRotation(
   file: string,
   previous: ModelOAuthRecord,
   next: ModelOAuthRecord,
 ): Promise<void> {
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    const current = await readRecord(file);
-    if (
-      current.sessionId !== previous.sessionId ||
-      current.refreshToken !== previous.refreshToken
-    )
-      throw new SignInRequired("The model sign-in changed during refresh.");
-    const handle = await open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(JSON.stringify(next));
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(temporary, file);
-  } finally {
-    await unlink(temporary).catch((error: unknown) => {
-      if (!hasCode(error, "ENOENT")) throw error;
-    });
-  }
+  const current = await readRecord(file);
+  if (
+    current.sessionId !== previous.sessionId ||
+    current.refreshToken !== previous.refreshToken
+  )
+    throw new SignInRequired("The model sign-in changed during refresh.");
+  await atomicWriteFileUnique(file, JSON.stringify(next), { mode: 0o600 });
 }
 
 function refused(status: number, error: string): Response {
@@ -338,7 +321,13 @@ export function mountProviderOAuthProxy<T extends Env>(
   proxy: ModelProviderProxy | undefined,
 ): void {
   if (proxy)
-    app.post("/api/model-provider/v1/chat/completions", (context) =>
-      proxy(context.req.raw),
+    app.post(
+      "/api/model-provider/v1/chat/completions",
+      bodyLimit({
+        maxSize: 32 * 1024 * 1024,
+        onError: (context) =>
+          context.json({ error: "模型代理请求体过大。" }, 413),
+      }),
+      (context) => proxy(context.req.raw),
     );
 }

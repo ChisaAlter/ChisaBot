@@ -1,6 +1,7 @@
 import { accessSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readDshMaintenanceRoot } from "../config";
+import { isQuiescing } from "../runtime/quiesce";
 
 export class ConversationMaintenanceError extends Error {
   readonly status = 503;
@@ -12,6 +13,7 @@ export class ConversationMaintenanceError extends Error {
 
 /** The updater closes admission before draining and backing up the persistent runtime volume. */
 export function conversationAdmissionClosed(): boolean {
+  if (isQuiescing()) return true;
   const root = readDshMaintenanceRoot();
   if (!root) return false;
   try {

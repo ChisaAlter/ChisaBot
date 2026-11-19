@@ -54,6 +54,13 @@ export type GuardedFetchOptions = {
   maxRedirects?: number;
   /** Return 3xx responses directly without following the Location hop. */
   manualRedirect?: boolean;
+  /**
+   * 显式指定重定向策略：
+   * - `"error"`：OAuth token 交换、联邦签名信封等敏感请求强制拒接一切 3xx 重定向并抛错（透传 `redirect: "error"`）；
+   * - `"manual"`：同 `manualRedirect: true`，原样返回 3xx；
+   * - `"follow"`（默认）：按 `maxRedirects` 逐跳执行 SSRF 校验后跟随。
+   */
+  redirectMode?: "follow" | "manual" | "error";
   headers?: Record<string, string>;
   signal?: AbortSignal;
   /** 读到这么多字节就够了（例如 HTML 只要 <head>），可以提前停；默认 = maxBytes。 */
@@ -324,6 +331,8 @@ async function oneHopViaFetch(
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;
   const method = (options.method ?? "GET").toUpperCase();
+  const redirectInit: RequestRedirect =
+    options.redirectMode === "error" ? "error" : "manual";
   const res = await customFetch(url.toString(), {
     method,
     headers: options.headers,
@@ -331,7 +340,7 @@ async function oneHopViaFetch(
       options.body !== undefined && method !== "GET" && method !== "HEAD"
         ? (options.body as BodyInit)
         : undefined,
-    redirect: "manual",
+    redirect: redirectInit,
     signal,
   });
   const headers: Record<string, string> = {};
@@ -339,6 +348,10 @@ async function oneHopViaFetch(
     headers[key.toLowerCase()] = value;
   });
   const status = res.status;
+  if (options.redirectMode === "error" && status >= 300 && status < 400) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`Redirect refused by redirectMode=error (HTTP ${status})`);
+  }
   if (status >= 300 && status < 400 && headers.location) {
     await res.body?.cancel().catch(() => {});
     return {
@@ -449,8 +462,11 @@ export async function guardedFetch(
           hopOptions,
           deadline,
         );
+    if (options.redirectMode === "error" && result.status >= 300 && result.status < 400) {
+      throw new Error(`Redirect refused by redirectMode=error (HTTP ${result.status})`);
+    }
     if (result.location) {
-      if (options.manualRedirect) {
+      if (options.manualRedirect || options.redirectMode === "manual") {
         return {
           url: verdict.url.toString(),
           status: result.status,

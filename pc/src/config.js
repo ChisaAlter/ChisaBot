@@ -3,6 +3,7 @@
  * 本机配置与本机审计日志（userData 目录）。
  * 设备令牌用 Electron safeStorage（Windows 上是 DPAPI）加密后保存；不可用时才明文保存并在设置页提示。
  */
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -47,9 +48,29 @@ function createConfig({ dir, safeStorage }) {
 
   function save() {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    let fd;
+    let renamed = false;
+    try {
+      fd = fs.openSync(tmp, "wx", 0o600);
+      fs.writeFileSync(fd, JSON.stringify(data, null, 2));
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = undefined;
+      fs.renameSync(tmp, file);
+      renamed = true;
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      }
+      if (!renamed) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
+      }
+    }
   }
 
   const encryptionAvailable = () => {

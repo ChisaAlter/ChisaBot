@@ -43,6 +43,10 @@ import { reasonWithoutStatement } from "../db/query-failure";
 import type { DeviceConfirmLink } from "../devices/hub";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
+  ApprovalArgsRejectedError,
+  validateApprovalMethodArgs,
+} from "./args-whitelist";
+import {
   categoryOfPageAction,
   categoryOfTool,
   decideMode,
@@ -1421,6 +1425,8 @@ export function createConfirmations(
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser, bodyLimit({ maxSize: 16_384 }));
     app.onError((error, c) => {
+      if (error instanceof ApprovalArgsRejectedError)
+        return c.json({ error: error.message }, error.status);
       if (error instanceof ConfirmError)
         return c.json({ error: error.message }, 400);
       if (error instanceof z.ZodError)
@@ -1520,12 +1526,13 @@ export function createConfirmations(
       );
     });
     app.post("/requests/:id", async (c) => {
-      const body = z
-        .object({ decision: z.enum(["approve", "deny"]) })
-        .strict()
-        .parse(await c.req.json());
+      const raw = (await c.req.json()) as Record<string, unknown>;
+      const parsed = validateApprovalMethodArgs("confirm_decision", {
+        ...raw,
+        requestId: c.req.param("id"),
+      });
       return c.json({
-        request: await decide(c.var.actor.id, c.req.param("id"), body.decision),
+        request: await decide(c.var.actor.id, parsed.requestId, parsed.decision),
       });
     });
     app.post("/requests/:id/retry", async (c) => {

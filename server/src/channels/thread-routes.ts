@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { AppVariables } from "../auth/guards";
 import type { ThreadIdentity } from "./thread-identity";
 
@@ -52,6 +53,13 @@ export function createThreadRoutes(
   readThread?: ThreadReader,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
+  routes.use(
+    "*",
+    bodyLimit({
+      maxSize: 64 * 1024,
+      onError: (context) => context.json({ error: "请求体过大。" }, 413),
+    }),
+  );
 
   routes.post("/mint", requireUser, (context) =>
     context.json({ threadId: identity.mint() }),
