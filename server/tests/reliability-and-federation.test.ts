@@ -769,3 +769,328 @@ describe("§1.2 Host↔Host 联邦协议基础底盘（Ed25519、±5min 防重�
     }
   });
 });
+
+describe("Wave 10 审查修复回归（#107 Group 3/4/5：联邦防桶投毒、回合可靠边界、定时去重联动）", () => {
+  const ENC_KEY = "federation-test-master-encryption-key-32bytes!";
+
+  test("Group 3: 联邦路由先验签再扣 per-peer 限流（防 Rate-Limit Bucket Poisoning DoS），/v1/* 统一 Cache-Control: no-store", async () => {
+    const now = 1_770_000_000_000;
+    const primary = createFederationService({
+      encryptionKey: ENC_KEY,
+      hostName: "Primary",
+      now: () => now,
+    });
+    const honestPeer = createFederationIdentity();
+    primary.registerPeerForSync({
+      id: honestPeer.id,
+      publicKey: honestPeer.publicKey,
+      name: "Honest Peer",
+      allowedBots: ["bot-1"],
+      remoteBots: [{ id: "r-1", name: "R1", description: "" }],
+    });
+
+    const asAdmin: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.set("actor", { id: "admin-1", role: "admin", email: "a@t" } as never);
+      await next();
+    };
+    const app = new Hono().route(
+      "/api/federation",
+      createFederationRoutes({
+        service: primary,
+        requireUser: asAdmin,
+        peerRateLimitPerMinute: 2,
+        preAuthRateLimitPerMinute: 50,
+      }),
+    );
+
+    // 攻击者伪造 honestPeer.id 连续发送 6 条伪造签名垃圾包：全部 401，且绝不能扣减 honestPeer 的 per-peer 配额
+    for (let i = 0; i < 6; i += 1) {
+      const forged = {
+        payload: {
+          version: 1,
+          purpose: "sync",
+          sender: honestPeer.id,
+          senderKey: honestPeer.publicKey,
+          timestamp: now,
+          nonce: randomUUID(),
+          body: { messages: [], acks: [] },
+        },
+        signature: Buffer.alloc(64, i + 1).toString("base64url"),
+      };
+      const res = await app.request("/api/federation/v1/sync", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": `attacker-${i}`,
+        },
+        body: JSON.stringify(forged),
+      });
+      expect(res.status).toBe(401);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    }
+
+    // 合法节点仍完整拥有 2 次/分钟配额：前 2 次 200，第 3 次触发 429 PEER_RATE_LIMITED
+    for (let i = 0; i < 2; i += 1) {
+      const validEnv = signFederationEnvelope(
+        honestPeer,
+        "sync",
+        { messages: [], acks: [] },
+        { now },
+      );
+      const okRes = await app.request("/api/federation/v1/sync", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "honest-peer-client",
+        },
+        body: JSON.stringify(validEnv),
+      });
+      expect(okRes.status).toBe(200);
+      expect(okRes.headers.get("cache-control")).toBe("no-store");
+    }
+
+    const thirdEnv = signFederationEnvelope(
+      honestPeer,
+      "sync",
+      { messages: [], acks: [] },
+      { now },
+    );
+    const limitedRes = await app.request("/api/federation/v1/sync", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "honest-peer-client",
+      },
+      body: JSON.stringify(thirdEnv),
+    });
+    expect(limitedRes.status).toBe(429);
+    expect(limitedRes.headers.get("cache-control")).toBe("no-store");
+    expect(await limitedRes.json()).toMatchObject({
+      code: "PEER_RATE_LIMITED",
+    });
+  });
+
+  test("Group 4: HandoffStore.complete 并发互斥防双触发；启动对账清理已解决卡片残留的旧 pending 绝不复活幽灵角标；已中止续跑不提前消耗 deferred 令牌", async () => {
+    // 1. HandoffStore.complete 并发互斥 + 启动对账处理「pending 仍在但最新卡已解决」
+    const handoffDir = await makeTempDir("cb-handoff-p1-");
+    const store = new HandoffStore(handoffDir);
+    store.set("sess-mutex", { requestId: "h-m", instruction: "完成 OAuth" });
+    store.set("sess-resolved-stale", {
+      requestId: "h-done",
+      instruction: "已完成但忘清 pending",
+    });
+
+    let completeCalls = 0;
+    let releaseComplete!: () => void;
+    const gate = new Promise<void>((resolveGate) => {
+      releaseComplete = resolveGate;
+    });
+
+    const first = store.complete("sess-mutex", async () => {
+      completeCalls += 1;
+      await gate;
+      return "done-once";
+    });
+    const second = store.complete("sess-mutex", async () => {
+      completeCalls += 1;
+      return "duplicate";
+    });
+
+    await expect(second).rejects.toThrow("正在完成中");
+    releaseComplete();
+    expect(await first).toBe("done-once");
+    expect(completeCalls).toBe(1);
+    expect(store.get("sess-mutex")).toBeNull();
+
+    // 启动对账：sess-resolved-stale 在 store 中有旧 pending 且有 handoff 角标，但最新卡片已 resolution != null
+    const sessions = new Map<
+      string,
+      { badge: AwaitingBadgeState | null; cards: SessionHandoffCard[] }
+    >([
+      [
+        "sess-resolved-stale",
+        {
+          badge: {
+            tabId: "handoff",
+            reason: "已完成但忘清 pending",
+            since: 1234,
+          },
+          cards: [
+            {
+              requestId: "h-done",
+              instruction: "已完成但忘清 pending",
+              resolution: "handed_back",
+            },
+          ],
+        },
+      ],
+    ]);
+
+    const report = await reconcileHandoffsOnStartup({
+      handoffStore: store,
+      listSessionIds: () => [...sessions.keys()],
+      openSession: (id) => {
+        const entry = sessions.get(id);
+        if (!entry) return null;
+        return {
+          getAwaitingBadge: () => entry.badge,
+          setAwaitingBadgeForTab: (_tabId, badge) => {
+            entry.badge = badge;
+          },
+          getHandoffCards: () => entry.cards,
+        };
+      },
+      now: () => 9999,
+    });
+
+    expect(store.get("sess-resolved-stale")).toBeNull();
+    expect(sessions.get("sess-resolved-stale")?.badge).toBeNull();
+    expect(report.cleared).toEqual(["sess-resolved-stale"]);
+    expect(report.badgesRepaired).toEqual([]);
+
+    // 2. 已中止信号不提前消耗 deferred 令牌，后续正常续跑仍可一次性成功
+    const journalDir = await makeTempDir("cb-tool-abort-");
+    const journal = createDurableToolJournal(journalDir);
+    class DeferErr extends Error {}
+
+    await withToolJournalScope("conv-abort-defer", async () => {
+      await expect(
+        journal.runJournaledTool({
+          toolCallId: "call-abort-1",
+          toolName: "deploy",
+          args: { env: "prod" },
+          isDeferred: (e) => e instanceof DeferErr,
+          execute: async () => {
+            throw new DeferErr("wait");
+          },
+        }),
+      ).rejects.toBeInstanceOf(DeferErr);
+
+      const abortedCtrl = new AbortController();
+      abortedCtrl.abort(new Error("client_disconnected"));
+      await expect(
+        journal.runJournaledTool({
+          toolCallId: "call-abort-1",
+          toolName: "deploy",
+          args: { env: "prod" },
+          signal: abortedCtrl.signal,
+          execute: async () => ({ ok: true }),
+        }),
+      ).rejects.toThrow("中止");
+
+      // 未消耗 deferred，正常续跑依然成功一次
+      const resumed = await journal.runJournaledTool({
+        toolCallId: "call-abort-1",
+        toolName: "deploy",
+        args: { env: "prod" },
+        execute: async () => ({ ok: true }),
+      });
+      expect(resumed).toEqual({
+        kind: "executed",
+        result: { ok: true },
+        resumedFromDeferred: true,
+      });
+    });
+  });
+
+  test("Group 5: ScheduleDedupLedger 真实读写联动：重启回填 DB running 标 interrupted 并拦阻 sweep/runNow 重复触发", async () => {
+    const slotIso = "2026-11-19T12:00:00.000Z";
+    let runTurnCalls = 0;
+
+    const scheduleRow = {
+      id: "sch_dedup_1",
+      owner_user_id: "user-1",
+      agent_id: "bot-1",
+      agent_instance_id: null,
+      thread_id: "thr-1",
+      im_connection_id: null,
+      title: "防重放例程",
+      instruction: "检查状态",
+      kind: "cron" as const,
+      cron: "0 * * * *",
+      run_at: null,
+      timezone: "UTC",
+      status: "active" as const,
+      next_run_at: slotIso,
+      last_run_at: null,
+      last_status: null,
+      last_result: null,
+      run_count: 0,
+      created_at: slotIso,
+      updated_at: slotIso,
+    };
+
+    const fakeSql = {
+      async unsafe(query: string) {
+        if (query.includes("to_regclass('public.chisabot_dsh_runs')")) {
+          return [{ available: false }];
+        }
+        if (query.includes("SET status = 'interrupted'")) {
+          return [
+            {
+              id: "run_boot_1",
+              schedule_id: "sch_dedup_1",
+              scheduled_for: slotIso,
+              thread_id: "thr-1",
+            },
+          ];
+        }
+        if (
+          query.includes(
+            "SELECT * FROM chisabot_schedules WHERE status = 'active' AND next_run_at <= now()",
+          )
+        ) {
+          return [scheduleRow];
+        }
+        return [];
+      },
+      async begin<T>(
+        fn: (tx: { unsafe: (q: string) => Promise<unknown[]> }) => Promise<T>,
+      ): Promise<T> {
+        return fn({
+          async unsafe(query: string) {
+            if (query.includes("FOR UPDATE")) return [{ id: "sch_dedup_1" }];
+            if (query.includes("INSERT INTO chisabot_schedule_runs")) {
+              return [{ id: "run_skipped_dup" }];
+            }
+            return [];
+          },
+        });
+      },
+    };
+
+    const schedules = createSchedules({ $client: fakeSql } as never, {
+      runTurn: async () => {
+        runTurnCalls += 1;
+        return "ok";
+      },
+      now: () => new Date("2026-11-19T12:00:10.000Z"),
+    });
+
+    // 启动恢复：DB 中遗留的 running 自动回填进 dedupLedger 并转为 interrupted，锁定 slotIso
+    expect(await schedules.reclaimInterruptedOnBoot()).toBe(1);
+    expect(schedules.dedupLedger.get("sch_dedup_1")?.state).toBe("interrupted");
+    expect(schedules.dedupLedger.isSlotClaimed("sch_dedup_1", slotIso)).toBe(
+      true,
+    );
+
+    // 紧接着 sweep() 扫到同一个 slotIso：去重账本拦阻重复触发，记为 skipped 且 runTurnCalls 保持 0
+    const sweepReport = await schedules.sweep();
+    expect(sweepReport.fired).toEqual([]);
+    expect(sweepReport.skipped).toEqual(["sch_dedup_1"]);
+    expect(runTurnCalls).toBe(0);
+
+    // 正在运行态时 runNow() 被去重账本直接拦阻
+    schedules.dedupLedger.recordClaim(
+      "sch_dedup_1",
+      "run_active_now",
+      "2026-11-19T13:00:00.000Z",
+    );
+    await expect(schedules.runNow("user-1", "sch_dedup_1")).rejects.toThrow(
+      "正在运行",
+    );
+  });
+});

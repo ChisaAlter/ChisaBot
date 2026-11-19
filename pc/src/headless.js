@@ -45,9 +45,33 @@ function configPath(dir) {
   return path.join(dir, "config.json");
 }
 
+function readConfigFileStrictSync(filePath) {
+  const before = fs.lstatSync(filePath, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error("拒绝读取非普通文件或符号链接的配置文件。");
+  }
+  if (process.platform !== "win32" && (Number(before.mode) & 0o777) !== 0o600) {
+    throw new Error("配置文件权限不是 0600，已拒绝读取。");
+  }
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(filePath, flags);
+  try {
+    const info = fs.fstatSync(fd, { bigint: true });
+    if (before.dev !== info.dev || before.ino !== info.ino || !info.isFile()) {
+      throw new Error("配置文件在打开期间发生变动，已拒绝读取。");
+    }
+    if (process.platform !== "win32" && (Number(info.mode) & 0o777) !== 0o600) {
+      throw new Error("配置文件句柄权限不是 0600，已拒绝读取。");
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function readConfig(dir) {
   try {
-    return JSON.parse(fs.readFileSync(configPath(dir), "utf8"));
+    return JSON.parse(readConfigFileStrictSync(configPath(dir)));
   } catch {
     return null;
   }

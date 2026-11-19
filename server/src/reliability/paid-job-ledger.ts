@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { Database } from "../db/client";
 import {
   atomicWriteFileUnique,
@@ -14,22 +14,24 @@ import {
 /**
  * 付费外部调用幂等任务账本（Wave 10 §1.3）：
  *
- * 核心不变量：「同一请求键重放绝不重复扣费」。
- * 1. `request_key` 主键 + `input_hash` SHA-256 校验：同键不同输入立即返回 409 Conflict 防误重放；
- * 2. 提交前先落账 `submitting`，拿到 `provider_job_id` 后立刻持久化；重试/重启若已有
- *    `provider_job_id` 则直接断点恢复轮询而不重复提交，若无 `provider_job_id` 且处于不确定态则
+ * 核心不变量：「同一主体 + 同一请求键重放绝不重复扣费，不同主体完全隔离」。
+ * 1. `(principal_id, request_key)` 复合主键 + `input_hash` SHA-256 校验：同主体同键不同输入立即返回 409 Conflict，
+ *    跨主体绝不可探测、抢占或泄露他方 `jobId`；
+ * 2. 先占并发配额再落账 `submitting`（避免 429 留下死记录），拿到 `provider_job_id` 后立刻持久化；
+ *    重试/重启若已有 `provider_job_id` 则直接断点恢复轮询而不重复提交，若无 `provider_job_id` 且处于不确定态则
  *    显式 409 拒绝自动重提；
  * 3. Per-principal 并发 ≤ 4（不共享全局桶）、单任务总时长 ≤ 20 分钟；
- * 4. 输出强制 magic-sniff 校验真实文件头、按内容 SHA-256 哈希命名、以 `0600` 唯一 tmp 原子落盘。
+ * 4. 输出强制 magic-sniff 校验真实文件头、按内容 SHA-256 哈希命名、以 `0600` 唯一 tmp 原子落盘，
+ *    回读缓存强制经 `readSecretFileStrictBytes`（`O_NOFOLLOW` + `0600`）并校验文件名与 SHA-256，绝不降级裸读。
  */
 
 export const MAX_PAID_JOB_CONCURRENCY_PER_PRINCIPAL = 4;
 export const MAX_PAID_JOB_DURATION_MS = 20 * 60_000;
 export const PAID_JOBS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS chisabot_paid_jobs (
-  request_key text PRIMARY KEY,
-  job_id text NOT NULL UNIQUE,
   principal_id text NOT NULL,
+  request_key text NOT NULL,
+  job_id text NOT NULL UNIQUE,
   kind text NOT NULL,
   provider_id text NOT NULL,
   provider_url text NOT NULL,
@@ -40,7 +42,8 @@ CREATE TABLE IF NOT EXISTS chisabot_paid_jobs (
   outputs jsonb NOT NULL DEFAULT '[]'::jsonb,
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (principal_id, request_key)
 );
 CREATE INDEX IF NOT EXISTS chisabot_paid_jobs_principal_status
   ON chisabot_paid_jobs (principal_id, status, updated_at DESC);
@@ -136,6 +139,17 @@ const TERMINAL_FAILED_STATES: ReadonlySet<PaidJobStatus> = new Set([
 ]);
 
 const PROVIDER_JOB_ID_RE = /^[A-Za-z0-9_.:-]{1,200}$/;
+const SAFE_OUTPUT_FILENAME_RE = /^[0-9a-f]{64}\.[a-z0-9]{1,8}$/;
+const HEX_SHA256_RE = /^[0-9a-f]{64}$/;
+
+function compositeJobKey(principalId: string, requestKey: string): string {
+  return `${principalId}\0${requestKey}`;
+}
+
+function sameSha256Hex(left: string, right: string): boolean {
+  if (!HEX_SHA256_RE.test(left) || !HEX_SHA256_RE.test(right)) return false;
+  return timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -234,9 +248,13 @@ export function sniffPaidOutputMime(bytes: Uint8Array): PaidOutputMime | null {
 
 export type PaidJobStorageAdapter = {
   ensure(): Promise<void>;
-  findByRequestKey(requestKey: string): Promise<PaidJobRecord | null>;
+  findByRequestKey(
+    principalId: string,
+    requestKey: string,
+  ): Promise<PaidJobRecord | null>;
   insert(record: PaidJobRecord): Promise<boolean>;
   update(
+    principalId: string,
     requestKey: string,
     patch: Partial<
       Pick<
@@ -300,10 +318,10 @@ export function createPostgresPaidJobStorage(
     async ensure() {
       await sql.unsafe(PAID_JOBS_TABLE_SQL);
     },
-    async findByRequestKey(requestKey) {
+    async findByRequestKey(principalId, requestKey) {
       const rows = await sql.unsafe<DbRow[]>(
-        "SELECT * FROM chisabot_paid_jobs WHERE request_key = $1 LIMIT 1",
-        [requestKey],
+        "SELECT * FROM chisabot_paid_jobs WHERE principal_id = $1 AND request_key = $2 LIMIT 1",
+        [principalId, requestKey],
       );
       const first = rows[0];
       return first ? rowToRecord(first) : null;
@@ -311,15 +329,15 @@ export function createPostgresPaidJobStorage(
     async insert(record) {
       const rows = await sql.unsafe<{ request_key: string }[]>(
         `INSERT INTO chisabot_paid_jobs (
-          request_key, job_id, principal_id, kind, provider_id, provider_url,
+          principal_id, request_key, job_id, kind, provider_id, provider_url,
           model_id, input_hash, provider_job_id, status, outputs, error, created_at, updated_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14)
-        ON CONFLICT (request_key) DO NOTHING
+        ON CONFLICT (principal_id, request_key) DO NOTHING
         RETURNING request_key`,
         [
+          record.principalId,
           record.requestKey,
           record.jobId,
-          record.principalId,
           record.kind,
           record.providerId,
           record.providerUrl,
@@ -335,22 +353,25 @@ export function createPostgresPaidJobStorage(
       );
       return rows.length > 0;
     },
-    async update(requestKey, patch) {
+    async update(principalId, requestKey, patch) {
+      const hasError = patch.error !== undefined;
       const rows = await sql.unsafe<DbRow[]>(
         `UPDATE chisabot_paid_jobs
-            SET provider_job_id = COALESCE($2, provider_job_id),
-                status = COALESCE($3, status),
-                outputs = COALESCE($4::jsonb, outputs),
-                error = $5,
-                updated_at = $6
-          WHERE request_key = $1
+            SET provider_job_id = COALESCE($3, provider_job_id),
+                status = COALESCE($4, status),
+                outputs = COALESCE($5::jsonb, outputs),
+                error = CASE WHEN $7::boolean THEN $6 ELSE error END,
+                updated_at = $8
+          WHERE principal_id = $1 AND request_key = $2
         RETURNING *`,
         [
+          principalId,
           requestKey,
           patch.providerJobId ?? null,
           patch.status ?? null,
           patch.outputs ? JSON.stringify(patch.outputs) : null,
-          patch.error !== undefined ? patch.error : null,
+          hasError ? patch.error : null,
+          hasError,
           patch.updatedAt ?? new Date().toISOString(),
         ],
       );
@@ -381,22 +402,24 @@ export function createInMemoryPaidJobStorage(): PaidJobStorageAdapter {
   const records = new Map<string, PaidJobRecord>();
   return {
     async ensure() {},
-    async findByRequestKey(requestKey) {
-      const hit = records.get(requestKey);
+    async findByRequestKey(principalId, requestKey) {
+      const hit = records.get(compositeJobKey(principalId, requestKey));
       return hit
         ? { ...hit, outputs: hit.outputs.map((item) => ({ ...item })) }
         : null;
     },
     async insert(record) {
-      if (records.has(record.requestKey)) return false;
-      records.set(record.requestKey, {
+      const key = compositeJobKey(record.principalId, record.requestKey);
+      if (records.has(key)) return false;
+      records.set(key, {
         ...record,
         outputs: record.outputs.map((item) => ({ ...item })),
       });
       return true;
     },
-    async update(requestKey, patch) {
-      const current = records.get(requestKey);
+    async update(principalId, requestKey, patch) {
+      const key = compositeJobKey(principalId, requestKey);
+      const current = records.get(key);
       if (!current) {
         throw new PaidJobError(
           404,
@@ -416,7 +439,7 @@ export function createInMemoryPaidJobStorage(): PaidJobStorageAdapter {
         ...(patch.error !== undefined ? { error: patch.error } : {}),
         updatedAt: patch.updatedAt ?? new Date().toISOString(),
       };
-      records.set(requestKey, next);
+      records.set(key, next);
       return { ...next, outputs: next.outputs.map((item) => ({ ...item })) };
     },
     async listByPrincipal(principalId, limit = 50) {
@@ -552,14 +575,41 @@ export function createPaidJobLedger(options: {
       SavedPaidOutput & { filePath: string; bytesData: Buffer }
     > = [];
     for (const item of job.outputs) {
+      if (
+        basename(item.filename) !== item.filename ||
+        !SAFE_OUTPUT_FILENAME_RE.test(item.filename)
+      ) {
+        throw new PaidJobError(
+          500,
+          "EXECUTION_FAILED",
+          "缓存产物文件名非法，已拒绝读取。",
+          job.jobId,
+        );
+      }
       const filePath = join(options.outputDir, item.filename);
       let bytesData: Buffer;
       try {
         bytesData = await readSecretFileStrictBytes(filePath, {
           maxBytes: 256 * 1024 * 1024,
         });
-      } catch {
-        bytesData = await readFile(filePath);
+      } catch (error) {
+        const detail =
+          error instanceof Error ? error.message : String(error ?? "unknown");
+        throw new PaidJobError(
+          500,
+          "EXECUTION_FAILED",
+          `缓存产物未通过严格文件安全校验（拒绝降级裸读）：${detail}`,
+          job.jobId,
+        );
+      }
+      const actualDigest = sha256Bytes(bytesData);
+      if (!sameSha256Hex(actualDigest, item.sha256)) {
+        throw new PaidJobError(
+          500,
+          "EXECUTION_FAILED",
+          "缓存产物 SHA-256 校验失败，内容已被篡改或损坏，已拒绝返回。",
+          job.jobId,
+        );
       }
       outputs.push({ ...item, filePath, bytesData });
     }
@@ -607,22 +657,8 @@ export function createPaidJobLedger(options: {
     job: PaidJobRecord,
     req: PaidJobExecutionRequest,
     shouldSubmit: boolean,
+    releaseQuota: () => void,
   ): Promise<PaidJobCompletedResult> {
-    let releaseQuota: (() => void) | undefined;
-    try {
-      releaseQuota = principalQuota.acquire(req.principalId);
-    } catch (error) {
-      if (error instanceof PrincipalQuotaExceededError) {
-        throw new PaidJobError(
-          429,
-          "CONCURRENCY_LIMIT",
-          `当前主体付费任务并发已达上限（≤${maxConcurrent}），请等待已有任务完成。`,
-          job.jobId,
-        );
-      }
-      throw error;
-    }
-
     const deadline = createDeadlineController(req.signal);
     let currentProviderJobId = job.providerJobId;
 
@@ -640,7 +676,7 @@ export function createPaidJobLedger(options: {
             );
           }
           currentProviderJobId = submitted.providerJobId;
-          await storage.update(job.requestKey, {
+          await storage.update(job.principalId, job.requestKey, {
             providerJobId: currentProviderJobId,
             status: "processing",
             error: null,
@@ -665,7 +701,7 @@ export function createPaidJobLedger(options: {
       }
 
       const saved = await saveOutputs(rawOutputs);
-      await storage.update(job.requestKey, {
+      await storage.update(job.principalId, job.requestKey, {
         providerJobId: currentProviderJobId,
         status: "completed",
         outputs: saved.map(({ filename, sha256, mimeType, bytes }) => ({
@@ -709,7 +745,7 @@ export function createPaidJobLedger(options: {
           : String(error).slice(0, 400);
 
       await storage
-        .update(job.requestKey, {
+        .update(job.principalId, job.requestKey, {
           providerJobId: currentProviderJobId,
           status: nextStatus,
           error: errorMessage,
@@ -738,6 +774,49 @@ export function createPaidJobLedger(options: {
     }
   }
 
+  function validateExistingForReplay(
+    existing: PaidJobRecord,
+    inputHash: string,
+    providerUrl: string,
+  ): "cache" | "resume" {
+    if (existing.inputHash !== inputHash) {
+      throw new PaidJobError(
+        409,
+        "INPUT_MISMATCH",
+        "同一 request_key 的输入内容哈希不匹配，拒绝误重放（409 Conflict）。",
+        existing.jobId,
+      );
+    }
+    if (existing.status === "completed") {
+      return "cache";
+    }
+    if (TERMINAL_FAILED_STATES.has(existing.status)) {
+      throw new PaidJobError(
+        409,
+        "TERMINAL_STATE",
+        `付费任务 ${existing.jobId} 已终态（${existing.status}），请使用新 request_key 发起。`,
+        existing.jobId,
+      );
+    }
+    if (!existing.providerJobId) {
+      throw new PaidJobError(
+        409,
+        "SUBMISSION_UNCERTAIN",
+        `付费任务 ${existing.jobId} 提交结果不确定（缺少 provider_job_id），拒绝自动重复扣费。`,
+        existing.jobId,
+      );
+    }
+    if (existing.providerUrl !== providerUrl) {
+      throw new PaidJobError(
+        409,
+        "PROVIDER_URL_CHANGED",
+        "付费任务续接时提供方地址发生变化，已拒绝恢复。",
+        existing.jobId,
+      );
+    }
+    return "resume";
+  }
+
   async function execute(
     req: PaidJobExecutionRequest,
   ): Promise<PaidJobCompletedResult> {
@@ -756,16 +835,10 @@ export function createPaidJobLedger(options: {
       modelId: req.modelId,
       payload: req.payload,
     });
+    const compositeKey = compositeJobKey(principalId, requestKey);
 
-    const active = inFlight.get(requestKey);
+    const active = inFlight.get(compositeKey);
     if (active) {
-      if (active.principalId !== principalId) {
-        throw new PaidJobError(
-          403,
-          "PRINCIPAL_MISMATCH",
-          "请求键属于其他主体，禁止跨主体访问。",
-        );
-      }
       if (active.inputHash !== inputHash) {
         throw new PaidJobError(
           409,
@@ -776,104 +849,111 @@ export function createPaidJobLedger(options: {
       return active.promise;
     }
 
-    let existing = await storage.findByRequestKey(requestKey);
+    let existing = await storage.findByRequestKey(principalId, requestKey);
     let shouldSubmit = false;
 
-    if (!existing) {
-      const nowIso = new Date(nowFn()).toISOString();
-      const created: PaidJobRecord = {
-        requestKey,
-        jobId: `pjob_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-        principalId,
-        kind: req.kind,
-        providerId: req.providerId,
-        providerUrl: req.providerUrl,
-        modelId: req.modelId,
+    if (existing) {
+      const action = validateExistingForReplay(
+        existing,
         inputHash,
-        providerJobId: null,
-        status: "submitting",
-        outputs: [],
-        error: null,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      const inserted = await storage.insert(created);
-      if (inserted) {
-        existing = created;
-        shouldSubmit = true;
-      } else {
-        existing = await storage.findByRequestKey(requestKey);
-      }
-    }
-
-    if (!existing) {
-      throw new PaidJobError(
-        500,
-        "EXECUTION_FAILED",
-        "无法读取刚创建的付费任务账本记录。",
+        req.providerUrl,
       );
-    }
-
-    if (existing.principalId !== principalId) {
-      throw new PaidJobError(
-        403,
-        "PRINCIPAL_MISMATCH",
-        "请求键属于其他主体，禁止跨主体访问。",
-        existing.jobId,
-      );
-    }
-    if (existing.inputHash !== inputHash) {
-      throw new PaidJobError(
-        409,
-        "INPUT_MISMATCH",
-        "同一 request_key 的输入内容哈希不匹配，拒绝误重放（409 Conflict）。",
-        existing.jobId,
-      );
-    }
-
-    if (!shouldSubmit) {
-      if (existing.status === "completed") {
+      if (action === "cache") {
         return readCachedOutputs(existing);
       }
-      if (TERMINAL_FAILED_STATES.has(existing.status)) {
-        throw new PaidJobError(
-          409,
-          "TERMINAL_STATE",
-          `付费任务 ${existing.jobId} 已终态（${existing.status}），请使用新 request_key 发起。`,
-          existing.jobId,
-        );
-      }
-      if (!existing.providerJobId) {
-        throw new PaidJobError(
-          409,
-          "SUBMISSION_UNCERTAIN",
-          `付费任务 ${existing.jobId} 提交结果不确定（缺少 provider_job_id），拒绝自动重复扣费。`,
-          existing.jobId,
-        );
-      }
-      if (existing.providerUrl !== req.providerUrl) {
-        throw new PaidJobError(
-          409,
-          "PROVIDER_URL_CHANGED",
-          "付费任务续接时提供方地址发生变化，已拒绝恢复。",
-          existing.jobId,
-        );
-      }
     }
 
-    const promise = runExecution(existing, req, shouldSubmit);
-    inFlight.set(requestKey, { principalId, inputHash, promise });
+    // 先占 per-principal 并发配额，再写入 submitting 账本记录，避免触发 429 时留下无 provider_job_id 的死记录。
+    let releaseQuota: () => void;
     try {
-      return await promise;
+      releaseQuota = principalQuota.acquire(principalId);
+    } catch (error) {
+      if (error instanceof PrincipalQuotaExceededError) {
+        throw new PaidJobError(
+          429,
+          "CONCURRENCY_LIMIT",
+          `当前主体付费任务并发已达上限（≤${maxConcurrent}），请等待已有任务完成。`,
+          existing?.jobId,
+        );
+      }
+      throw error;
+    }
+
+    let handedOffToExecution = false;
+    try {
+      if (!existing) {
+        const nowIso = new Date(nowFn()).toISOString();
+        const created: PaidJobRecord = {
+          requestKey,
+          jobId: `pjob_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+          principalId,
+          kind: req.kind,
+          providerId: req.providerId,
+          providerUrl: req.providerUrl,
+          modelId: req.modelId,
+          inputHash,
+          providerJobId: null,
+          status: "submitting",
+          outputs: [],
+          error: null,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        const inserted = await storage.insert(created);
+        if (inserted) {
+          existing = created;
+          shouldSubmit = true;
+        } else {
+          const concurrent = inFlight.get(compositeKey);
+          if (concurrent) {
+            if (concurrent.inputHash !== inputHash) {
+              throw new PaidJobError(
+                409,
+                "INPUT_MISMATCH",
+                "同一 request_key 的输入载荷已变更，拒绝重放（409 Conflict）。",
+              );
+            }
+            return await concurrent.promise;
+          }
+          existing = await storage.findByRequestKey(principalId, requestKey);
+          if (!existing) {
+            throw new PaidJobError(
+              500,
+              "EXECUTION_FAILED",
+              "无法读取刚创建的付费任务账本记录。",
+            );
+          }
+          const action = validateExistingForReplay(
+            existing,
+            inputHash,
+            req.providerUrl,
+          );
+          if (action === "cache") {
+            return await readCachedOutputs(existing);
+          }
+        }
+      }
+
+      const promise = runExecution(existing, req, shouldSubmit, releaseQuota);
+      handedOffToExecution = true;
+      inFlight.set(compositeKey, { principalId, inputHash, promise });
+      try {
+        return await promise;
+      } finally {
+        inFlight.delete(compositeKey);
+      }
     } finally {
-      inFlight.delete(requestKey);
+      if (!handedOffToExecution) {
+        releaseQuota();
+      }
     }
   }
 
   return {
     ensure: () => storage.ensure(),
     execute,
-    get: (requestKey: string) => storage.findByRequestKey(requestKey),
+    get: (principalId: string, requestKey: string) =>
+      storage.findByRequestKey(principalId, requestKey),
     listByPrincipal: (principalId: string, limit?: number) =>
       storage.listByPrincipal(principalId, limit),
     activeCountForPrincipal: (principalId: string) =>

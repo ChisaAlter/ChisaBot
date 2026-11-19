@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -17,8 +17,15 @@ import { type AppVariables, requireAdmin } from "../auth/guards";
 const DEFAULT_QUIESCE_TIMEOUT_MS = 30_000;
 const MAX_QUIESCE_TIMEOUT_MS = 10 * 60_000;
 
-export class QuiescingAdmissionError extends Error {
+export class ConversationMaintenanceError extends Error {
   readonly status = 503;
+  constructor(message = "服务正在更新，请稍后重试。已接收的消息会保留。") {
+    super(message);
+    this.name = "ConversationMaintenanceError";
+  }
+}
+
+export class QuiescingAdmissionError extends ConversationMaintenanceError {
   constructor(
     message = "服务正在静默排空准备升级，暂不接收新回合，请稍后重试。",
   ) {
@@ -46,11 +53,20 @@ export type QuiesceResult = {
   timedOut: boolean;
 };
 
+export type BeginTurnOptions = {
+  /** 崩溃恢复/断点续接类回合允许在排空态继续计入 runningTurns，确保排空等待其自然结束。 */
+  allowDuringQuiesce?: boolean;
+};
+
 export type QuiesceController = {
-  /** 同步登记一个在途回合；若已进入排空态立即抛出 QuiescingAdmissionError。返回幂等释放回调。 */
-  beginTurn(turnId?: string): () => void;
+  /** 同步登记一个在途回合；若已进入排空态（且未显式允许恢复回合）立即抛出 QuiescingAdmissionError。返回幂等释放回调。 */
+  beginTurn(turnId?: string, options?: BeginTurnOptions): () => void;
   /** 包裹一个回合执行生命周期，保证无论成功、失败或中止都精确释放计数。 */
-  trackTurn<T>(fn: () => Promise<T> | T, turnId?: string): Promise<T>;
+  trackTurn<T>(
+    fn: () => Promise<T> | T,
+    turnId?: string,
+    options?: BeginTurnOptions,
+  ): Promise<T>;
   /** 当前在途回合数。 */
   runningTurns(): number;
   /** 是否正处于排空态。 */
@@ -84,8 +100,11 @@ export function createQuiesceController(
     }
   };
 
-  const beginTurn = (_turnId?: string): (() => void) => {
-    if (quiescing) {
+  const beginTurn = (
+    _turnId?: string,
+    turnOptions?: BeginTurnOptions,
+  ): (() => void) => {
+    if (quiescing && !turnOptions?.allowDuringQuiesce) {
       throw new QuiescingAdmissionError();
     }
     activeTurns += 1;
@@ -108,8 +127,12 @@ export function createQuiesceController(
   return {
     beginTurn,
 
-    async trackTurn<T>(fn: () => Promise<T> | T, turnId?: string): Promise<T> {
-      const release = beginTurn(turnId);
+    async trackTurn<T>(
+      fn: () => Promise<T> | T,
+      turnId?: string,
+      turnOptions?: BeginTurnOptions,
+    ): Promise<T> {
+      const release = beginTurn(turnId, turnOptions);
       try {
         return await fn();
       } finally {
@@ -204,15 +227,19 @@ export function getRuntimeQuiesceController(): QuiesceController {
   return defaultController;
 }
 
-export function beginTurn(turnId?: string): () => void {
-  return defaultController.beginTurn(turnId);
+export function beginTurn(
+  turnId?: string,
+  options?: BeginTurnOptions,
+): () => void {
+  return defaultController.beginTurn(turnId, options);
 }
 
 export function trackTurn<T>(
   fn: () => Promise<T> | T,
   turnId?: string,
+  options?: BeginTurnOptions,
 ): Promise<T> {
-  return defaultController.trackTurn(fn, turnId);
+  return defaultController.trackTurn(fn, turnId, options);
 }
 
 export function runningTurns(): number {
@@ -232,10 +259,11 @@ export function runtimeHealthSnapshot(): RuntimeHealthSnapshot {
 }
 
 function sameSecret(presented: string, expected: string): boolean {
-  const a = Buffer.from(presented, "utf8");
-  const b = Buffer.from(expected, "utf8");
-  if (a.length === 0 || a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  if (!presented || !expected) return false;
+  // 先对双方做 SHA-256 哈希再 timingSafeEqual，消除长度差异导致的早退旁道。
+  const digestA = createHash("sha256").update(presented, "utf8").digest();
+  const digestB = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(digestA, digestB);
 }
 
 function extractInternalToken(headers: Headers): string {

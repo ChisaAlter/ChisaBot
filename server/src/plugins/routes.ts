@@ -33,6 +33,7 @@ import {
   sealConnectState,
   verifyOAuthCallbackBinding,
 } from "./oauth";
+import { verifyArtifactProvenance } from "./provenance";
 import {
   CatalogueEntryUnknownError,
   CustomServerRefusedError,
@@ -474,6 +475,8 @@ export function createPluginRoutes(
       title?: unknown;
       url?: unknown;
       credentialId?: unknown;
+      provenance?: unknown;
+      expectedGrantDigest?: unknown;
     } | null;
     if (
       typeof body?.id !== "string" ||
@@ -498,6 +501,27 @@ export function createPluginRoutes(
         { error: "A credential id must be a non-empty string." },
         400,
       );
+    }
+    if (body.provenance !== undefined) {
+      const descriptor = JSON.stringify({
+        id: body.id.trim(),
+        title: body.title.trim(),
+        url: body.url.trim(),
+      });
+      const verdict = verifyArtifactProvenance({
+        manifest: body.provenance,
+        sourceBytes: descriptor,
+        targetBytes: descriptor,
+        ...(typeof body.expectedGrantDigest === "string"
+          ? { expectedGrantDigest: body.expectedGrantDigest }
+          : {}),
+      });
+      if (!verdict.ok) {
+        return context.json(
+          { error: verdict.reason, code: verdict.code },
+          400,
+        );
+      }
     }
 
     try {
@@ -2282,6 +2306,8 @@ export function createPluginRoutes(
       instructions?: unknown;
       global?: boolean;
       tools?: unknown;
+      provenance?: unknown;
+      expectedGrantDigest?: unknown;
     } | null;
     /*
      * The body is JSON, so the annotations are wishes: `{"slug":123}` passes a truthiness
@@ -2357,6 +2383,27 @@ export function createPluginRoutes(
       ? (body.tools as string[]).map((ref) => ref.trim())
       : undefined;
 
+    let provenanceGrantDigest: string | undefined;
+    if (body.provenance !== undefined) {
+      const normalizedInstructions = body.instructions.trim();
+      const verdict = verifyArtifactProvenance({
+        manifest: body.provenance,
+        sourceBytes: normalizedInstructions,
+        targetBytes: normalizedInstructions,
+        requestedBindings: tools ?? [],
+        ...(typeof body.expectedGrantDigest === "string"
+          ? { expectedGrantDigest: body.expectedGrantDigest }
+          : {}),
+      });
+      if (!verdict.ok) {
+        return context.json(
+          { error: verdict.reason, code: verdict.code },
+          400,
+        );
+      }
+      provenanceGrantDigest = verdict.grantDigest;
+    }
+
     try {
       await store.installSkill({
         slug: body.slug,
@@ -2375,7 +2422,10 @@ export function createPluginRoutes(
       }
       throw error;
     }
-    return context.json({ skills: await store.listSkills(actor) });
+    return context.json({
+      skills: await store.listSkills(actor),
+      ...(provenanceGrantDigest ? { provenanceGrantDigest } : {}),
+    });
   });
 
   routes.delete("/skills/:slug", requireUser, async (context) => {

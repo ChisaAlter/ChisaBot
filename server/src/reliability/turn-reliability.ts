@@ -1,7 +1,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
-import { mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  unlink,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   atomicWriteFileUnique,
@@ -146,16 +155,28 @@ function extractDeferredToken(raw: string): string {
   return sha256Hex(raw);
 }
 
+/**
+ * 原子独占写（无 0 字节窗口）：
+ * 先将完整内容写入 `${filePath}.${pid}.${uuid}.tmp` 并 `fsync`，
+ * 再通过 `link(tmpPath, filePath)` 原子发布（目标已存在时精确抛 `EEXIST`），
+ * 保证并发读者绝不会看到半写或 0 字节的 `intent.json` / `scope.json`。
+ */
 async function writeExclusiveFile(
   filePath: string,
   content: string,
 ): Promise<void> {
-  const handle = await open(filePath, "wx", 0o600);
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(tmpPath, "wx", 0o600);
   try {
     await handle.writeFile(content, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
+  }
+  try {
+    await link(tmpPath, filePath);
+  } finally {
+    await unlink(tmpPath).catch(() => {});
   }
 }
 
@@ -298,6 +319,14 @@ export function createDurableToolJournal(rootDir: string) {
           throw readDeferredErr;
         }
 
+        if (input.signal?.aborted) {
+          return {
+            kind: "unknown",
+            reason: "在调用工具正文前收到取消信号，未消耗延迟续跑令牌。",
+            automaticReplayBlocked: true,
+          };
+        }
+
         const deferredToken = extractDeferredToken(deferredRaw);
         const resumeId = randomUUID();
         const claimPath = join(callDir, `deferred-claim-${deferredToken}`);
@@ -316,11 +345,16 @@ export function createDurableToolJournal(rootDir: string) {
         }
 
         const resumedPath = join(callDir, `resumed-${resumeId}`);
-        const renamed = await renameDeferredWithRetry(
-          deferredPath,
-          resumedPath,
-        );
+        let renamed = false;
+        try {
+          renamed = await renameDeferredWithRetry(deferredPath, resumedPath);
+        } catch (renameErr) {
+          // rename 异常失败时立即撤销 claim，避免残留 deferred-claim-* 导致后续重试永久 EEXIST 死锁。
+          await unlink(claimPath).catch(() => {});
+          throw renameErr;
+        }
         if (!renamed) {
+          await unlink(claimPath).catch(() => {});
           return {
             kind: "unknown",
             reason:
@@ -490,6 +524,7 @@ type PersistedHandoffFile = {
 export class HandoffStore {
   readonly filename: string;
   private entriesMap: Map<string, PendingHandoff>;
+  private readonly completingSessions = new Set<string>();
 
   constructor(directory: string) {
     const trimmed = directory.trim();
@@ -575,20 +610,29 @@ export class HandoffStore {
   }
 
   /**
-   * 结束交接：必须等待回调真实成功后才清除 pending；
-   * 若回调抛错，保留 pending 防止丢失交接状态。
+   * 结束交接：
+   * - 按 sessionId 持有内存互斥锁，防止并发重复调用双次触发 `onComplete`；
+   * - 必须等待回调真实成功后才清除 pending；若回调抛错，保留 pending 并释放互斥锁允许后续重试。
    */
   async complete<T>(
     sessionId: string,
     onComplete: (pending: PendingHandoff) => Promise<T> | T,
   ): Promise<T> {
+    if (this.completingSessions.has(sessionId)) {
+      throw new Error(`会话 ${sessionId} 的交接正在完成中，禁止并发重复提交。`);
+    }
     const pending = this.get(sessionId);
     if (!pending) {
       throw new Error(`会话 ${sessionId} 没有待完成的交接记录。`);
     }
-    const result = await onComplete(pending);
-    this.forget(sessionId);
-    return result;
+    this.completingSessions.add(sessionId);
+    try {
+      const result = await onComplete(pending);
+      this.forget(sessionId);
+      return result;
+    } finally {
+      this.completingSessions.delete(sessionId);
+    }
   }
 }
 
@@ -679,6 +723,24 @@ export async function reconcileHandoffsOnStartup(options: {
         restored.push(sessionId);
       } else {
         session.setAwaitingBadgeForTab(tabId, null);
+        cleared.push(sessionId);
+      }
+    }
+
+    if (pending !== null) {
+      const cards = session.getHandoffCards();
+      const latest = cards.length > 0 ? cards[cards.length - 1] : undefined;
+      if (
+        latest &&
+        latest.resolution !== null &&
+        latest.resolution !== undefined
+      ) {
+        // 会话最新交接卡已解决但 handoffStore 残留旧 pending → 清理 pending 与 handoff 角标，绝不复活幽灵角标。
+        options.handoffStore.forget(sessionId);
+        pending = null;
+        if (awaiting?.tabId === tabId) {
+          session.setAwaitingBadgeForTab(tabId, null);
+        }
         cleared.push(sessionId);
       }
     }

@@ -100,6 +100,27 @@ function isHonoContext(value: unknown): value is Context {
  * - 仅在显式可信代理下才读取 `X-Real-IP` / `X-Forwarded-For`；
  * - 绝不把 loopback 隧道下不同会话/令牌折成单一 `127.0.0.1` 互相打满。
  */
+function resolveRightmostUntrustedForwardedIp(
+  rawXff: string | undefined,
+  trustedProxies?: ReadonlySet<string>,
+): string | undefined {
+  if (!rawXff) return undefined;
+  const hops = rawXff
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  // 从右向左（由可信反代向真实客户端回溯）取首个非 trustedProxies 且非 loopback 的地址，
+  // 防止客户端在最左端伪造 X-Forwarded-For 每请求换桶绕过限流。
+  for (let i = hops.length - 1; i >= 0; i -= 1) {
+    const hop = hops[i];
+    if (!hop) continue;
+    if (isLoopbackIp(hop)) continue;
+    if (trustedProxies?.has(hop)) continue;
+    return hop;
+  }
+  return undefined;
+}
+
 export function resolveRateLimitPrincipal(
   contextOrInput: Context | RateLimitPrincipalInput,
   options: {
@@ -167,12 +188,15 @@ export function resolveRateLimitPrincipal(
       (trimmedRemote.length > 0 && trustedProxies.has(trimmedRemote)));
 
   if (proxyTrusted) {
+    const realIp = readHeaderCaseInsensitive(headers, "x-real-ip")?.trim();
     const forwarded =
-      readHeaderCaseInsensitive(headers, "x-real-ip")?.trim() ||
-      readHeaderCaseInsensitive(headers, "x-forwarded-for")
-        ?.split(",")[0]
-        ?.trim();
-    if (forwarded && !isLoopbackIp(forwarded)) {
+      realIp && !isLoopbackIp(realIp) && !trustedProxies?.has(realIp)
+        ? realIp
+        : resolveRightmostUntrustedForwardedIp(
+            readHeaderCaseInsensitive(headers, "x-forwarded-for"),
+            trustedProxies,
+          );
+    if (forwarded) {
       return `ip:${sanitizePrincipalSegment(forwarded)}`;
     }
   }

@@ -12,6 +12,7 @@ import {
   validateApprovalMethodArgs,
   validateAuxiliaryReviewOutput,
 } from "../src/confirmations/args-whitelist";
+import { ConversationMaintenanceError } from "../src/conversations/maintenance";
 import {
   classifyOAuthRefreshFailure,
   oauthConfigRevisionFor,
@@ -33,7 +34,9 @@ import {
 } from "../src/plugins/provenance";
 import { createPluginRoutes } from "../src/plugins/routes";
 import {
+  createInMemoryPaidJobStorage,
   createPaidJobLedger,
+  PAID_JOBS_TABLE_SQL,
   PaidJobError,
   sniffPaidOutputMime,
 } from "../src/reliability/paid-job-ledger";
@@ -1051,7 +1054,16 @@ describe("§2.3–§2.7 限流主体、Per-Principal 配额、吊销断活流、
     expect(keyA).not.toBe("127.0.0.1");
     expect(keyA).not.toBe(keyB);
 
-    // 显式可信代理允许取 X-Forwarded-For
+    // 显式可信代理允许从右向左取 X-Forwarded-For 首个非可信代理/非 loopback 的真实源地址
+    expect(
+      resolveRateLimitPrincipal({
+        remoteAddress: "127.0.0.1",
+        headers: { "x-forwarded-for": "203.0.113.10, 10.0.0.1" },
+        trustForwardedHeaders: true,
+        trustedProxies: new Set(["127.0.0.1", "10.0.0.1"]),
+      }),
+    ).toBe("ip:203.0.113.10");
+    // 未登记为可信代理的右侧跳不会被跳过，客户端最左伪造无法绕过限流
     expect(
       resolveRateLimitPrincipal({
         remoteAddress: "127.0.0.1",
@@ -1059,7 +1071,7 @@ describe("§2.3–§2.7 限流主体、Per-Principal 配额、吊销断活流、
         trustForwardedHeaders: true,
         trustedProxies: new Set(["127.0.0.1"]),
       }),
-    ).toBe("ip:203.0.113.10");
+    ).toBe("ip:10.0.0.1");
   });
 
   test("Per-Principal 配额隔离不同主体，LiveConnectionRegistry 吊销即刻掐断全部活流", () => {
@@ -1180,5 +1192,352 @@ describe("§2.3–§2.7 限流主体、Per-Principal 配额、吊销断活流、
     expect(caught).toBeInstanceOf(SseLimitExceededError);
     expect((caught as SseLimitExceededError).status).toBe(413);
     expect(streamCancelled).toBe(true);
+  });
+});
+
+describe("Wave 10 审查修复回归（#107 P0/P1 全闭环）", () => {
+  const PNG_BYTES = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+  ]);
+
+  test("Group 1 & 6: deploy-serial.sh 禁用命令注入/ps 泄露并强制 Strict 闭环；nginx 封禁公网 /api/internal/；QuiescingAdmissionError 继承 ConversationMaintenanceError 且恢复回合计入排空", async () => {
+    const repoRoot = resolve(import.meta.dir, "../..");
+    const deployScript = readFileSync(
+      join(repoRoot, "scripts/ops/deploy-serial.sh"),
+      "utf8",
+    );
+    // 不得通过 -H Authorization 暴露令牌到命令行，也不得双引号内插 $q_token 到 sh -c
+    expect(deployScript).not.toContain("Authorization: Bearer $q_token");
+    expect(deployScript).toContain("docker exec -i -e Q_URL=");
+    expect(deployScript).toContain("-K -");
+    expect(deployScript).toContain("q_is_strict=1");
+    expect(deployScript).toContain("exceeds 600s limit");
+
+    const nginxConf = readFileSync(
+      join(repoRoot, "deploy/public/nginx.conf"),
+      "utf8",
+    );
+    expect(nginxConf).toContain("location ^~ /api/internal/ { return 404; }");
+    expect(nginxConf).toContain(
+      'proxy_set_header X-ChisaBot-Internal-Token "";',
+    );
+
+    // QuiescingAdmissionError 继承 ConversationMaintenanceError
+    const err = new QuiescingAdmissionError();
+    expect(err).toBeInstanceOf(ConversationMaintenanceError);
+    expect(err.status).toBe(503);
+
+    // 排空态下 allowDuringQuiesce 恢复回合仍计入 runningTurns，requestQuiesce 必须等待其完成
+    const ctrl = createQuiesceController({ pid: 7777 });
+    ctrl.markQuiescing();
+    expect(() => ctrl.beginTurn("normal-new")).toThrow(QuiescingAdmissionError);
+    const releaseRecovered = ctrl.beginTurn("recovered-turn", {
+      allowDuringQuiesce: true,
+    });
+    expect(ctrl.runningTurns()).toBe(1);
+    const drainPromise = ctrl.requestQuiesce(2_000);
+    setTimeout(() => releaseRecovered(), 20);
+    const drainOutcome = await drainPromise;
+    expect(drainOutcome.drained).toBe(true);
+    expect(drainOutcome.runningTurns).toBe(0);
+
+    // sameSecret 不同长度口令走 SHA-256 + timingSafeEqual 正常拒绝 401
+    const app = new Hono().route(
+      "/api/internal",
+      createInternalQuiesceRoutes({
+        controller: ctrl,
+        internalToken: "super-long-internal-secret-token",
+      }),
+    );
+    const shortWrong = await app.request("/api/internal/health", {
+      headers: { authorization: "Bearer short" },
+    });
+    expect(shortWrong.status).toBe(401);
+  });
+
+  test("Group 2: PaidJobLedger (principal_id, request_key) 双键隔离、429 不留死记录、缓存回读严禁裸 readFile 降级且校验文件名与 SHA-256", async () => {
+    expect(PAID_JOBS_TABLE_SQL).toContain(
+      "PRIMARY KEY (principal_id, request_key)",
+    );
+
+    const dir = await makeTempDir("cb-paid-p0-");
+    const storage = createInMemoryPaidJobStorage();
+    const ledger = createPaidJobLedger({ outputDir: dir, storage });
+
+    // 1. 跨用户使用相同 requestKey 完全隔离：不报 403、不泄露 user-1 的 jobId、不阻塞对方
+    const resA = await ledger.execute({
+      requestKey: "shared-key-001",
+      principalId: "user-a",
+      kind: "image",
+      providerId: "p",
+      providerUrl: "https://p.example.com",
+      modelId: "m",
+      payload: { prompt: "user a secret" },
+      submit: async () => ({
+        status: "completed",
+        outputs: [{ bytes: PNG_BYTES }],
+      }),
+      poll: async () => [],
+    });
+    const resB = await ledger.execute({
+      requestKey: "shared-key-001",
+      principalId: "user-b",
+      kind: "image",
+      providerId: "p",
+      providerUrl: "https://p.example.com",
+      modelId: "m",
+      payload: { prompt: "user b completely different" },
+      submit: async () => ({
+        status: "completed",
+        outputs: [{ bytes: PNG_BYTES }],
+      }),
+      poll: async () => [],
+    });
+    expect(resA.jobId).not.toBe(resB.jobId);
+    expect((await ledger.get("user-a", "shared-key-001"))?.jobId).toBe(
+      resA.jobId,
+    );
+    expect((await ledger.get("user-b", "shared-key-001"))?.jobId).toBe(
+      resB.jobId,
+    );
+
+    // 2. 429 CONCURRENCY_LIMIT 绝不留下 submitting 死记录，槽位释放后同键重试成功
+    const releases: Array<() => void> = [];
+    const running: Promise<unknown>[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      running.push(
+        ledger.execute({
+          requestKey: `slot-${i}`,
+          principalId: "user-quota",
+          kind: "image",
+          providerId: "p",
+          providerUrl: "https://p.example.com",
+          modelId: "m",
+          payload: { i },
+          submit: () =>
+            new Promise((resolveSubmit) => {
+              releases.push(() =>
+                resolveSubmit({
+                  status: "completed",
+                  outputs: [{ bytes: PNG_BYTES }],
+                }),
+              );
+            }),
+          poll: async () => [],
+        }),
+      );
+    }
+
+    await expect(
+      ledger.execute({
+        requestKey: "slot-5-retryable",
+        principalId: "user-quota",
+        kind: "image",
+        providerId: "p",
+        providerUrl: "https://p.example.com",
+        modelId: "m",
+        payload: { i: 5 },
+        submit: async () => ({
+          status: "completed",
+          outputs: [{ bytes: PNG_BYTES }],
+        }),
+        poll: async () => [],
+      }),
+    ).rejects.toMatchObject({ status: 429, code: "CONCURRENCY_LIMIT" });
+    // 确认未残留死记录
+    expect(await ledger.get("user-quota", "slot-5-retryable")).toBeNull();
+
+    for (const r of releases) r();
+    await Promise.all(running);
+
+    // 槽位释放后重试同一键正常完成，而非卡死在 409 SUBMISSION_UNCERTAIN
+    const retried = await ledger.execute({
+      requestKey: "slot-5-retryable",
+      principalId: "user-quota",
+      kind: "image",
+      providerId: "p",
+      providerUrl: "https://p.example.com",
+      modelId: "m",
+      payload: { i: 5 },
+      submit: async () => ({
+        status: "completed",
+        outputs: [{ bytes: PNG_BYTES }],
+      }),
+      poll: async () => [],
+    });
+    expect(retried.fromCache).toBe(false);
+    expect(retried.outputs).toHaveLength(1);
+
+    // 3. 缓存文件被篡改（SHA-256 不匹配）-> fail-closed 拒读
+    const cachedFile = resA.outputs[0]?.filePath ?? "";
+    await writeFile(cachedFile, Buffer.from("tampered-bytes"), { mode: 0o600 });
+    await expect(
+      ledger.execute({
+        requestKey: "shared-key-001",
+        principalId: "user-a",
+        kind: "image",
+        providerId: "p",
+        providerUrl: "https://p.example.com",
+        modelId: "m",
+        payload: { prompt: "user a secret" },
+        submit: async () => ({ status: "completed", outputs: [] }),
+        poll: async () => [],
+      }),
+    ).rejects.toThrow("SHA-256 校验失败");
+
+    // 4. 缓存记录含路径穿越文件名 -> fail-closed 拒读
+    await storage.update("user-b", "shared-key-001", {
+      outputs: [
+        {
+          filename: "../escape.png",
+          sha256: "a".repeat(64),
+          mimeType: "image/png",
+          bytes: 16,
+        },
+      ],
+    });
+    await expect(
+      ledger.execute({
+        requestKey: "shared-key-001",
+        principalId: "user-b",
+        kind: "image",
+        providerId: "p",
+        providerUrl: "https://p.example.com",
+        modelId: "m",
+        payload: { prompt: "user b completely different" },
+        submit: async () => ({ status: "completed", outputs: [] }),
+        poll: async () => [],
+      }),
+    ).rejects.toThrow("缓存产物文件名非法");
+  });
+
+  test("Group 7: XFF 从右向左解析防伪造绕过、Provenance 拒多字节/路径穿越/原型保留名并接入插件安装路由", async () => {
+    // 1. XFF 从右向左取首个非 trustedProxies / 非 loopback 地址，客户端最左伪造无效
+    const trustedProxies = new Set(["10.0.0.1", "10.0.0.2"]);
+    const realClientA = resolveRateLimitPrincipal({
+      remoteAddress: "10.0.0.1",
+      trustForwardedHeaders: true,
+      trustedProxies,
+      headers: {
+        "x-forwarded-for": "1.1.1.1, 203.0.113.50, 10.0.0.2",
+      },
+    });
+    const realClientB = resolveRateLimitPrincipal({
+      remoteAddress: "10.0.0.1",
+      trustForwardedHeaders: true,
+      trustedProxies,
+      headers: {
+        "x-forwarded-for":
+          "9.9.9.9, 8.8.8.8, 203.0.113.50, 10.0.0.2, 127.0.0.1",
+      },
+    });
+    expect(realClientA).toBe("ip:203.0.113.50");
+    expect(realClientB).toBe("ip:203.0.113.50");
+
+    // 2. Provenance：多字节 64 字符摘要不抛 RangeError；拒 .. 与原型保留名；码点确定排序
+    const bytes = Buffer.from("skill-instructions-body");
+    const sha = computeContentSha256(bytes);
+    const validManifest = {
+      version: 1 as const,
+      artifactId: "safe-skill",
+      artifactVersion: "1.0.0",
+      sourceSha256: sha,
+      targetSha256: sha,
+      declaredBindings: [
+        { name: "b.tool", kind: "tool" as const, effect: "read" as const },
+        { name: "A.tool", kind: "tool" as const, effect: "read" as const },
+      ],
+    };
+    const multibyteVerdict = verifyProvenanceManifest({
+      manifest: validManifest,
+      sourceBytes: bytes,
+      targetBytes: bytes,
+      expectedGrantDigest: "中".repeat(64),
+    });
+    expect(multibyteVerdict.ok).toBe(false);
+    if (!multibyteVerdict.ok) {
+      expect(multibyteVerdict.code).toBe("GRANT_DIGEST_MISMATCH");
+    }
+
+    for (const badId of ["../evil", "..", "__proto__", "constructor"]) {
+      const bad = verifyProvenanceManifest({
+        manifest: { ...validManifest, artifactId: badId },
+        sourceBytes: bytes,
+        targetBytes: bytes,
+      });
+      expect(bad.ok).toBe(false);
+    }
+    for (const badBinding of ["foo/../bar", "__proto__", "srv/constructor"]) {
+      const bad = verifyProvenanceManifest({
+        manifest: {
+          ...validManifest,
+          declaredBindings: [
+            {
+              name: badBinding,
+              kind: "tool" as const,
+              effect: "read" as const,
+            },
+          ],
+        },
+        sourceBytes: bytes,
+        targetBytes: bytes,
+      });
+      expect(bad.ok).toBe(false);
+    }
+
+    // 3. 接线校验：POST /api/plugins/skills 传入错误 provenance 必须 400 fail-closed 且不调用 installSkill
+    let installCalled = 0;
+    const fakeStore = {
+      skillOwner: async () => undefined,
+      installSkill: async () => {
+        installCalled += 1;
+      },
+      listSkills: async () => [],
+    };
+    const asUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.set("actor", { id: "u-1", role: "admin", email: "u1@test" } as never);
+      await next();
+    };
+    const pluginApp = new Hono().route(
+      "/api/plugins",
+      createPluginRoutes(fakeStore as never, asUser, async () => true),
+    );
+
+    const badInstall = await pluginApp.request("/api/plugins/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        slug: "safe-skill",
+        title: "Safe Skill",
+        instructions: "tampered instructions",
+        provenance: validManifest,
+      }),
+    });
+    expect(badInstall.status).toBe(400);
+    expect(installCalled).toBe(0);
+
+    const okInstall = await pluginApp.request("/api/plugins/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        slug: "safe-skill",
+        title: "Safe Skill",
+        instructions: "skill-instructions-body",
+        tools: ["A.tool"],
+        provenance: validManifest,
+      }),
+    });
+    expect(okInstall.status).toBe(200);
+    expect(installCalled).toBe(1);
+    const okJson = (await okInstall.json()) as {
+      provenanceGrantDigest?: string;
+    };
+    expect(okJson.provenanceGrantDigest).toBe(
+      computeManifestGrantDigest(validManifest),
+    );
   });
 });

@@ -6,6 +6,7 @@ import { type AppVariables, requireAdmin } from "../auth/guards";
 import {
   createPrincipalRateLimiter,
   liveConnections,
+  resolveRateLimitPrincipal,
 } from "../security/http-hardening";
 import {
   type FederationEnvelope,
@@ -194,7 +195,14 @@ export function createFederationService(options: FederationServiceOptions) {
     });
   }
 
-  async function receivePair(envelope: unknown): Promise<
+  type VerifiedSenderHook = {
+    assertPeerRateLimit?: (verifiedSender: string) => void;
+  };
+
+  async function receivePair(
+    envelope: unknown,
+    hook?: VerifiedSenderHook,
+  ): Promise<
     FederationEnvelope<{
       identity: PublicFederationIdentity;
       bots: SharedBotDescriptor[];
@@ -216,6 +224,7 @@ export function createFederationService(options: FederationServiceOptions) {
       now: nowFn(),
       replayCache,
     });
+    hook?.assertPeerRateLimit?.(verified.sender);
     const parsed = pairBodySchema.safeParse(verified.body);
     if (!parsed.success) {
       throw new FederationError(400, "INVALID_PAIR_BODY", "配对载荷格式无效。");
@@ -335,7 +344,7 @@ export function createFederationService(options: FederationServiceOptions) {
     return record;
   }
 
-  function receiveSync(envelope: unknown) {
+  function receiveSync(envelope: unknown, hook?: VerifiedSenderHook) {
     const senderId = (envelope as { payload?: { sender?: unknown } })?.payload
       ?.sender;
     if (typeof senderId !== "string") {
@@ -354,6 +363,7 @@ export function createFederationService(options: FederationServiceOptions) {
       now: nowFn(),
       replayCache,
     });
+    hook?.assertPeerRateLimit?.(verified.sender);
     if (!peer.enabled) {
       return signFederationEnvelope(
         identity,
@@ -427,7 +437,7 @@ export function createFederationService(options: FederationServiceOptions) {
    * 远端控制通道：
    * 严格执行能力白名单，硬禁止远端 peer 代批本地审批（`resolve_approval` 等永拒 403）。
    */
-  function receiveControl(envelope: unknown): never {
+  function receiveControl(envelope: unknown, hook?: VerifiedSenderHook): never {
     const senderId = (envelope as { payload?: { sender?: unknown } })?.payload
       ?.sender;
     if (typeof senderId !== "string") {
@@ -446,6 +456,7 @@ export function createFederationService(options: FederationServiceOptions) {
       now: nowFn(),
       replayCache,
     });
+    hook?.assertPeerRateLimit?.(verified.sender);
     const parsed = controlBodySchema.safeParse(verified.body);
     if (!parsed.success) {
       throw new FederationError(
@@ -472,7 +483,7 @@ export function createFederationService(options: FederationServiceOptions) {
     return peer;
   }
 
-  function receiveRevoke(envelope: unknown) {
+  function receiveRevoke(envelope: unknown, hook?: VerifiedSenderHook) {
     const senderId = (envelope as { payload?: { sender?: unknown } })?.payload
       ?.sender;
     if (typeof senderId !== "string") {
@@ -491,6 +502,7 @@ export function createFederationService(options: FederationServiceOptions) {
       now: nowFn(),
       replayCache,
     });
+    hook?.assertPeerRateLimit?.(verified.sender);
     revokePeer(peer.id);
     return signFederationEnvelope(
       identity,
@@ -584,11 +596,19 @@ export function createFederationRoutes(options: {
   service: FederationService;
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>;
   peerRateLimitPerMinute?: number;
+  preAuthRateLimitPerMinute?: number;
+  trustForwardedHeaders?: boolean;
+  trustedProxies?: ReadonlySet<string>;
 }) {
   const { service, requireUser } = options;
   const routes = new Hono<{ Variables: AppVariables }>();
+  const peerLimit = options.peerRateLimitPerMinute ?? 120;
+  const ingressLimiter = createPrincipalRateLimiter({
+    limit: options.preAuthRateLimitPerMinute ?? Math.max(240, peerLimit * 3),
+    windowMs: 60_000,
+  });
   const peerLimiter = createPrincipalRateLimiter({
-    limit: options.peerRateLimitPerMinute ?? 120,
+    limit: peerLimit,
     windowMs: 60_000,
   });
 
@@ -596,11 +616,15 @@ export function createFederationRoutes(options: {
     "*",
     bodyLimit({
       maxSize: 256 * 1024,
-      onError: (context) => context.json({ error: "联邦请求体过大。" }, 413),
+      onError: (context) => {
+        context.header("Cache-Control", "no-store");
+        return context.json({ error: "联邦请求体过大。" }, 413);
+      },
     }),
   );
 
   routes.onError((error, context) => {
+    context.header("Cache-Control", "no-store");
     if (error instanceof FederationError) {
       return context.json(
         { error: error.message, code: error.code },
@@ -649,46 +673,57 @@ export function createFederationRoutes(options: {
     return context.json({ revoked: true, peerId: peer.id });
   });
 
-  const checkPeerRateLimit = (envelope: unknown): boolean => {
-    const sender = (envelope as { payload?: { sender?: unknown } })?.payload
-      ?.sender;
-    const key =
-      typeof sender === "string" && sender.trim()
-        ? `peer:${sender.trim()}`
-        : "peer:unknown";
-    return peerLimiter.check(key).allowed;
+  // /v1/* 协议端点统一禁止缓存，且验签前仅按请求来源做前置防洪限流，绝不污染合法节点桶。
+  routes.use("/v1/*", async (context, next) => {
+    context.header("Cache-Control", "no-store");
+    const ingressKey = resolveRateLimitPrincipal(context, {
+      trustForwardedHeaders: options.trustForwardedHeaders,
+      trustedProxies: options.trustedProxies,
+    });
+    if (!ingressLimiter.check(ingressKey).allowed) {
+      return context.json(
+        { error: "联邦入口请求过于频繁。", code: "INGRESS_RATE_LIMITED" },
+        429,
+      );
+    }
+    await next();
+  });
+
+  // 仅在 Ed25519 验签通过后才按已认证 sender 扣减 per-peer 配额，彻底防 Rate-Limit Bucket Poisoning DoS。
+  const assertPeerRateLimit = (verifiedSender: string): void => {
+    if (!peerLimiter.check(`peer:${verifiedSender}`).allowed) {
+      throw new FederationError(
+        429,
+        "PEER_RATE_LIMITED",
+        "联邦节点请求过于频繁。",
+      );
+    }
   };
 
   routes.post("/v1/pair", async (context) => {
     const envelope = await context.req.json().catch(() => null);
-    if (!checkPeerRateLimit(envelope)) {
-      return context.json({ error: "联邦配对请求过于频繁。" }, 429);
-    }
-    return context.json(await service.receivePair(envelope));
+    return context.json(
+      await service.receivePair(envelope, { assertPeerRateLimit }),
+    );
   });
 
   routes.post("/v1/sync", async (context) => {
     const envelope = await context.req.json().catch(() => null);
-    if (!checkPeerRateLimit(envelope)) {
-      return context.json({ error: "联邦同步请求过于频繁。" }, 429);
-    }
-    return context.json(service.receiveSync(envelope));
+    return context.json(service.receiveSync(envelope, { assertPeerRateLimit }));
   });
 
   routes.post("/v1/control", async (context) => {
     const envelope = await context.req.json().catch(() => null);
-    if (!checkPeerRateLimit(envelope)) {
-      return context.json({ error: "联邦控制请求过于频繁。" }, 429);
-    }
-    return context.json(service.receiveControl(envelope));
+    return context.json(
+      service.receiveControl(envelope, { assertPeerRateLimit }),
+    );
   });
 
   routes.post("/v1/revoke", async (context) => {
     const envelope = await context.req.json().catch(() => null);
-    if (!checkPeerRateLimit(envelope)) {
-      return context.json({ error: "联邦吊销请求过于频繁。" }, 429);
-    }
-    return context.json(service.receiveRevoke(envelope));
+    return context.json(
+      service.receiveRevoke(envelope, { assertPeerRateLimit }),
+    );
   });
 
   return routes;

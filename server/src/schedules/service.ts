@@ -462,14 +462,34 @@ export type ScheduleDedupEntry = {
   updatedAt: number;
 };
 
+const MAX_TRACKED_SLOTS_PER_SCHEDULE = 32;
+
 /**
  * 定时任务去重账本（Wave 10 §6.3 #9）：
+ * - 持久化与 DB `chisabot_schedule_runs` 状态联动：启动恢复时从 DB 灌入遗留运行态与近期已触发槽位；
+ * - 触发前在 `sweep()` / `runNow()` / `fire()` 读取账本，拦阻同槽位重复触发与并发重叠执行；
  * - 启动恢复时把上次遗留 `running` 条目显式转为 `interrupted`（绝不自动重放）；
  * - 只有在调用方确认定时任务记录已真实删除后（`confirmDeleted(id) === true`）才允许清理去重账本；
  *   临时枚举缺失/查询错误绝不误删防重放保护。
  */
 export class ScheduleDedupLedger {
   private readonly entries = new Map<string, ScheduleDedupEntry>();
+  private readonly claimedSlots = new Map<string, Set<string>>();
+
+  private rememberSlot(scheduleId: string, scheduledForIso: string): void {
+    if (!scheduledForIso) return;
+    let slots = this.claimedSlots.get(scheduleId);
+    if (!slots) {
+      slots = new Set<string>();
+      this.claimedSlots.set(scheduleId, slots);
+    }
+    slots.add(scheduledForIso);
+    while (slots.size > MAX_TRACKED_SLOTS_PER_SCHEDULE) {
+      const oldest = slots.values().next().value;
+      if (oldest === undefined) break;
+      slots.delete(oldest);
+    }
+  }
 
   recordClaim(
     scheduleId: string,
@@ -485,7 +505,63 @@ export class ScheduleDedupLedger {
       updatedAt: nowMs,
     };
     this.entries.set(scheduleId, entry);
+    this.rememberSlot(scheduleId, scheduledForIso);
     return { ...entry };
+  }
+
+  /** 启动时从 DB 运行记录回填账本，使重启后仍能识别遗留 `running` 与已触发槽位。 */
+  hydrateFromRuns(
+    runs: ReadonlyArray<{
+      scheduleId: string;
+      runId: string;
+      scheduledForIso: string;
+      status: ScheduleRunStatus;
+      updatedAt?: number;
+    }>,
+    nowMs = Date.now(),
+  ): void {
+    for (const run of runs) {
+      if (run.status === "skipped") continue;
+      this.rememberSlot(run.scheduleId, run.scheduledForIso);
+      const existing = this.entries.get(run.scheduleId);
+      const nextState: ScheduleDedupEntry["state"] =
+        run.status === "running"
+          ? "running"
+          : run.status === "interrupted"
+            ? "interrupted"
+            : "completed";
+      if (!existing || nextState === "running") {
+        this.entries.set(run.scheduleId, {
+          scheduleId: run.scheduleId,
+          runId: run.runId,
+          scheduledForIso: run.scheduledForIso,
+          state: nextState,
+          updatedAt: run.updatedAt ?? nowMs,
+        });
+      }
+    }
+  }
+
+  /** 该任务在账本中是否仍处于活跃运行态。 */
+  isRunning(scheduleId: string): boolean {
+    return this.entries.get(scheduleId)?.state === "running";
+  }
+
+  /** 该定时任务的指定计划时间槽是否已触发（含已完成或重启中断），防止重复触发副作用。 */
+  isSlotClaimed(scheduleId: string, scheduledForIso: string): boolean {
+    if (!scheduledForIso) return false;
+    if (this.claimedSlots.get(scheduleId)?.has(scheduledForIso)) return true;
+    return this.entries.get(scheduleId)?.scheduledForIso === scheduledForIso;
+  }
+
+  /** 在真正执行 `fire()` 前再次核对：若本次 run 已被标中断/结束或同任务另有活跃 run，则拦阻执行。 */
+  shouldBlockFire(scheduleId: string, runId: string): boolean {
+    const current = this.entries.get(scheduleId);
+    if (!current) return false;
+    if (current.runId === runId) {
+      return current.state !== "running";
+    }
+    return current.state === "running";
   }
 
   markFinished(
@@ -523,7 +599,9 @@ export class ScheduleDedupLedger {
   ): Promise<string[]> {
     const pruned: string[] = [];
     for (const scheduleId of scheduleIds) {
-      if (!this.entries.has(scheduleId)) continue;
+      if (!this.entries.has(scheduleId) && !this.claimedSlots.has(scheduleId)) {
+        continue;
+      }
       let confirmed = false;
       try {
         confirmed = (await isConfirmedDeleted(scheduleId)) === true;
@@ -532,6 +610,7 @@ export class ScheduleDedupLedger {
       }
       if (confirmed) {
         this.entries.delete(scheduleId);
+        this.claimedSlots.delete(scheduleId);
         pruned.push(scheduleId);
       }
     }
@@ -1023,12 +1102,16 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     id: string,
   ): Promise<{ runId: string; schedule: ScheduleView }> {
     assertConversationAdmissionOpen();
+    const trimmedId = id.trim();
+    if (dedupLedger.isRunning(trimmedId)) {
+      throw new ScheduleError("这个任务正在运行，等它跑完。");
+    }
     const runId = `run_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const row = (await sql.begin(async (transaction) => {
       const tx = transaction as unknown as Database["$client"];
       const [current] = await tx.unsafe<Row[]>(
         "SELECT * FROM chisabot_schedules WHERE id = $1 AND owner_user_id = $2 FOR UPDATE",
-        [id.trim(), owner],
+        [trimmedId, owner],
       );
       if (!current)
         throw new ScheduleError(
@@ -1057,6 +1140,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
       return claimed;
     })) as Row;
+    dedupLedger.recordClaim(row.id, runId, `manual:${runId}`, now().getTime());
     void fire(row, runId, { manual: true, lateMs: 0 });
     return { runId, schedule: view(row) };
   }
@@ -1129,6 +1213,40 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
    * （绝不静默重放副作用，避免跨重启重复发送消息/外部动作），并释放对应对话锁。
    */
   async function reclaimInterruptedOnBoot(): Promise<number> {
+    const bootNow = now().getTime();
+    // 启动先从 DB 回填近期已触发槽位，避免进程重启后内存账本为空导致同槽位重复触发。
+    const recentRuns = await sql
+      .unsafe<
+        {
+          id: string;
+          schedule_id: string;
+          scheduled_for: Date | string;
+          status: ScheduleRunStatus;
+        }[]
+      >(
+        `SELECT r.id, r.schedule_id, r.scheduled_for, r.status
+           FROM chisabot_schedule_runs r
+           JOIN chisabot_schedules s ON s.id = r.schedule_id
+          WHERE s.status IN ('active', 'paused')
+            AND r.status <> 'skipped'
+            AND r.started_at > now() - interval '24 hours'
+          ORDER BY r.started_at DESC
+          LIMIT 500`,
+      )
+      .catch(() => []);
+    if (recentRuns.length > 0) {
+      dedupLedger.hydrateFromRuns(
+        recentRuns.map((run) => ({
+          scheduleId: run.schedule_id,
+          runId: run.id,
+          scheduledForIso: run.scheduled_for ? iso(run.scheduled_for) : run.id,
+          status: run.status,
+          updatedAt: bootNow,
+        })),
+        bootNow,
+      );
+    }
+
     const [journal] = await sql.unsafe<{ available: boolean }[]>(
       "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
     );
@@ -1136,7 +1254,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       ? "AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id)"
       : "";
     const interrupted = await sql.unsafe<
-      { id: string; schedule_id: string; thread_id: string | null }[]
+      {
+        id: string;
+        schedule_id: string;
+        scheduled_for?: Date | string | null;
+        thread_id: string | null;
+      }[]
     >(
       `UPDATE chisabot_schedule_runs r
        SET status = 'interrupted', finished_at = now(),
@@ -1144,10 +1267,21 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
        FROM chisabot_schedules s
        WHERE r.schedule_id = s.id AND r.status = 'running'
          ${preserved}
-       RETURNING r.id, r.schedule_id, s.thread_id`,
+       RETURNING r.id, r.schedule_id, r.scheduled_for, s.thread_id`,
       [BOOT_INTERRUPTED_RESULT],
     );
-    dedupLedger.markRunningInterruptedOnBoot(now().getTime());
+    for (const row of interrupted) {
+      // 确保 DB 中被回收的遗留 running 任务同步进入去重账本并被显式转成 interrupted，防重放同一槽位。
+      if (dedupLedger.get(row.schedule_id)?.runId !== row.id) {
+        dedupLedger.recordClaim(
+          row.schedule_id,
+          row.id,
+          row.scheduled_for ? iso(row.scheduled_for) : row.id,
+          bootNow,
+        );
+      }
+    }
+    dedupLedger.markRunningInterruptedOnBoot(bootNow);
     for (const row of interrupted) {
       await sql
         .unsafe(
@@ -1202,6 +1336,12 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         )
         .catch(() => {});
       running.delete(row.schedule_id);
+      dedupLedger.markFinished(
+        row.schedule_id,
+        row.id,
+        "interrupted",
+        now().getTime(),
+      );
       if (row.thread_id)
         await deps.releaseThread?.(row.thread_id).catch(() => {});
     }
@@ -1451,6 +1591,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         ],
       )
       .catch(() => {});
+    dedupLedger.markFinished(row.id, runId, "completed", now().getTime());
     console.warn(
       JSON.stringify({
         type: "schedule-fire-skipped-inactive",
@@ -1472,6 +1613,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     runId: string,
     options: { manual: boolean; lateMs: number },
   ) {
+    if (dedupLedger.shouldBlockFire(row.id, runId)) {
+      return;
+    }
     running.add(row.id);
     try {
       // M3：查不到（异常）≠ 已删除。异常按 BUSY_RETRY 重试；重试完还查不到就跳过这一次，任务保持原状。
@@ -1722,15 +1866,20 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       try {
         const scheduledNextRun = row.next_run_at;
         if (!scheduledNextRun) continue;
+        const scheduledSlotIso = iso(scheduledNextRun);
         const stamp = new Date(scheduledNextRun);
         const lateMs = Math.max(0, at.getTime() - stamp.getTime());
         let nextAt: Date | null = null;
         let status: ScheduleStatus = "active";
         let fireIt = true;
         let skipReason = "";
+        if (dedupLedger.isSlotClaimed(row.id, scheduledSlotIso)) {
+          fireIt = false;
+          skipReason = "该计划时间槽已在去重账本中记录，跳过重复触发。";
+        }
         if (row.kind === "once") {
           status = "done";
-          if (lateMs > ONCE_GRACE_MS) {
+          if (fireIt && lateMs > ONCE_GRACE_MS) {
             fireIt = false;
             skipReason = `服务器停机，错过了这次提醒（原定 ${formatWhen(stamp, row.timezone, at)}）。`;
           }
@@ -1753,7 +1902,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             fireIt = false;
             skipReason = `服务器停机，跳过了原定 ${formatWhen(stamp, row.timezone, at)} 的这一次。`;
           }
-          if (fireIt && running.has(row.id)) {
+          if (fireIt && (running.has(row.id) || dedupLedger.isRunning(row.id))) {
             fireIt = false;
             skipReason = "上一次还没跑完，这一次跳过。";
           }

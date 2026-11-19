@@ -29,22 +29,74 @@ quiesce_app() {
   q_timeout=${CHISABOT_QUIESCE_TIMEOUT_S:-120}
   q_url=${CHISABOT_INTERNAL_URL:-http://127.0.0.1:3001}
   q_strict=${CHISABOT_QUIESCE_STRICT:-0}
+  q_is_strict=0
+  if [ "$q_strict" = 1 ] || [ "$q_strict" = true ]; then
+    q_is_strict=1
+  fi
+
+  case "$q_timeout" in
+    ''|*[!0-9]*)
+      echo "[$(date -u +%T)] quiesce error: CHISABOT_QUIESCE_TIMEOUT_S must be an integer in [0,600]"
+      [ "$q_is_strict" = 1 ] && return 1
+      q_timeout=120
+      ;;
+    *)
+      if [ "$q_timeout" -gt 600 ]; then
+        echo "[$(date -u +%T)] quiesce error: CHISABOT_QUIESCE_TIMEOUT_S=$q_timeout exceeds 600s limit"
+        [ "$q_is_strict" = 1 ] && return 1
+        q_timeout=600
+      fi
+      ;;
+  esac
+
+  case "$q_url" in
+    http://*|https://*) ;;
+    *)
+      echo "[$(date -u +%T)] quiesce error: invalid CHISABOT_INTERNAL_URL"
+      [ "$q_is_strict" = 1 ] && return 1
+      return 0
+      ;;
+  esac
+
   q_token=${CHISABOT_INTERNAL_TOKEN:-${CHISABOT_QUIESCE_TOKEN:-}}
   if [ -z "$q_token" ]; then
     q_token=$(docker exec "$APP" sh -c 'cat /run/s6/container_environment/CHISABOT_INTERNAL_TOKEN 2>/dev/null || cat /run/s6/container_environment/CHISABOT_QUIESCE_TOKEN 2>/dev/null' 2>/dev/null || true)
   fi
   if [ -z "$q_token" ]; then
+    if [ "$q_is_strict" = 1 ]; then
+      echo "[$(date -u +%T)] quiesce failed in strict mode: no CHISABOT_INTERNAL_TOKEN configured"
+      return 1
+    fi
     echo "[$(date -u +%T)] quiesce skipped: no CHISABOT_INTERNAL_TOKEN configured (fallback to thread locks)"
     return 0
   fi
+
+  q_nl=$(printf '\n_')
+  q_nl=${q_nl%_}
+  q_cr=$(printf '\r')
+  case "$q_token" in
+    *"$q_nl"*|*"$q_cr"*)
+      echo "[$(date -u +%T)] quiesce error: CHISABOT_INTERNAL_TOKEN must not contain CR/LF"
+      [ "$q_is_strict" = 1 ] && return 1
+      return 0
+      ;;
+  esac
+
   echo "[$(date -u +%T)] requesting graceful quiesce (timeout=${q_timeout}s) via $APP"
-  q_res=$(docker exec "$APP" sh -c "
-    curl -sS --max-time $((q_timeout + 15)) -w '\n%{http_code}' \
-      -X POST -H 'Content-Type: application/json' \
-      -H 'Authorization: Bearer $q_token' \
-      -d '{\"timeoutMs\":$((q_timeout * 1000))}' \
-      '$q_url/api/internal/quiesce'
-  " 2>/dev/null || true)
+  # 令牌仅通过 stdin 管道进入 curl -K -，绝不拼接到 sh -c 或出现在宿主机/容器 ps 命令行参数中。
+  q_res=$(
+    printf '%s\n' "$q_token" \
+      | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/header = "Authorization: Bearer /; s/$/"/' \
+      | docker exec -i -e Q_URL="$q_url" -e Q_TIMEOUT="$q_timeout" "$APP" sh -c '
+          max_time=$((Q_TIMEOUT + 15))
+          timeout_ms=$((Q_TIMEOUT * 1000))
+          curl -sS --max-time "$max_time" -w "\n%{http_code}" \
+            -X POST -H "Content-Type: application/json" \
+            -K - \
+            -d "{\"timeoutMs\":$timeout_ms}" \
+            "${Q_URL%/}/api/internal/quiesce"
+        ' 2>/dev/null || true
+  )
   q_code=$(printf '%s\n' "$q_res" | tail -n 1)
   q_body=$(printf '%s\n' "$q_res" | sed '$d')
   case "$q_code" in
@@ -58,13 +110,13 @@ quiesce_app() {
       ;;
     409)
       echo "[$(date -u +%T)] quiesce timed out with turns still active: $q_body"
-      if [ "$q_strict" = 1 ] || [ "$q_strict" = true ]; then
-        return 1
-      fi
+      [ "$q_is_strict" = 1 ] && return 1
       return 0
       ;;
     *)
-      echo "[$(date -u +%T)] quiesce probe returned HTTP ${q_code:-unreachable} — graceful fallback to thread locks"
+      echo "[$(date -u +%T)] quiesce probe returned HTTP ${q_code:-unreachable}"
+      [ "$q_is_strict" = 1 ] && return 1
+      echo "[$(date -u +%T)] graceful fallback to thread locks"
       return 0
       ;;
   esac

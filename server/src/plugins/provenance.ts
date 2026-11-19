@@ -14,6 +14,27 @@ import { z } from "zod";
 
 const HEX_SHA256_RE = /^[0-9a-f]{64}$/;
 const BINDING_NAME_RE = /^[A-Za-z0-9_.:/-]{1,128}$/;
+const ARTIFACT_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const PROTOTYPE_RESERVED_NAMES = new Set([
+  "__proto__",
+  "prototype",
+  "constructor",
+  "tostring",
+  "valueof",
+  "hasownproperty",
+]);
+
+function isSafeIdentifierSegment(value: string): boolean {
+  if (!value || value === "." || value.includes("..")) return false;
+  if (value.startsWith(".") || value.endsWith(".")) return false;
+  if (value.startsWith("/") || value.endsWith("/")) return false;
+  const parts = value.split(/[/.:]/);
+  for (const part of parts) {
+    if (!part) continue;
+    if (PROTOTYPE_RESERVED_NAMES.has(part.toLowerCase())) return false;
+  }
+  return !PROTOTYPE_RESERVED_NAMES.has(value.toLowerCase());
+}
 
 export const hexSha256Schema = z
   .string()
@@ -22,9 +43,10 @@ export const hexSha256Schema = z
 export const declaredBindingSchema = z.strictObject({
   name: z
     .string()
-    .regex(
-      BINDING_NAME_RE,
-      "binding 名称只能包含安全标识符字符（≤128 字符）。",
+    .regex(BINDING_NAME_RE, "binding 名称只能包含安全标识符字符（≤128 字符）。")
+    .refine(
+      isSafeIdentifierSegment,
+      "binding 名称禁止包含路径穿越片段（..）或原型保留名。",
     ),
   kind: z.enum(["tool", "skill", "oauth", "webhook", "resource"]),
   effect: z.enum(["read", "write", "admin"]).default("read"),
@@ -38,7 +60,11 @@ export const provenanceManifestSchema = z.strictObject({
     .trim()
     .min(1)
     .max(128)
-    .regex(/^[A-Za-z0-9._-]+$/, "artifactId 仅允许安全 slug 字符。"),
+    .regex(ARTIFACT_ID_RE, "artifactId 仅允许安全 slug 字符。")
+    .refine(
+      isSafeIdentifierSegment,
+      "artifactId 禁止包含路径穿越片段（..）或原型保留名。",
+    ),
   artifactVersion: z.string().trim().min(1).max(64),
   sourceSha256: hexSha256Schema,
   targetSha256: hexSha256Schema,
@@ -92,7 +118,7 @@ export function computeContentSha256(content: string | Uint8Array): string {
 }
 
 function sameHexDigest(left: string, right: string): boolean {
-  if (left.length !== 64 || right.length !== 64) return false;
+  if (!HEX_SHA256_RE.test(left) || !HEX_SHA256_RE.test(right)) return false;
   return timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
@@ -111,7 +137,8 @@ export function computeManifestGrantDigest(
       effect: binding.effect,
       ...(binding.digest ? { digest: binding.digest } : {}),
     }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    // 确定性 Unicode 码点排序，避免不同系统 locale 导致同一清单算出不同 grantDigest。
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   const canonical = JSON.stringify({
     version: manifest.version,
@@ -250,6 +277,9 @@ export function assertProvenanceVerified(input: {
   }
   return verdict;
 }
+
+/** `verifyProvenanceManifest` 语义别名，供插件与微应用包安装校验链统一调用。 */
+export const verifyArtifactProvenance = verifyProvenanceManifest;
 
 /** 仅暴露在已验 Provenance 清单中显式声明过的 binding，过滤掉任何未声明条目。 */
 export function filterDeclaredBindings<T extends { name: string }>(
