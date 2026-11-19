@@ -23,6 +23,10 @@ import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { HandoffResumeNotice } from "@/components/computer/handoff-resume-notice";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import {
+  VoiceCallSheet,
+  VoiceCallTriggerButton,
+} from "@/components/voice/voice-call-sheet";
 import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
 import { useReportBusy } from "@/lib/activity";
 import { activityOf, publishBotActivity } from "@/lib/agents/bot-activity";
@@ -2394,6 +2398,7 @@ export function ChannelChat({
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
     null,
   );
+  const [voiceCallOpen, setVoiceCallOpen] = useState(false);
   const subagentInstancesQuery = useAgentInstances();
   const enabledSubagents = useMemo(
     () => (subagentInstancesQuery.data ?? []).filter((inst) => inst.enabled),
@@ -2407,6 +2412,10 @@ export function ChannelChat({
           disabled={!channelActive}
           onSelect={setSelectedSubagentId}
           selectedId={selectedSubagentId}
+        />
+        <VoiceCallTriggerButton
+          disabled={!channelActive}
+          onOpen={() => setVoiceCallOpen(true)}
         />
       </span>
     ),
@@ -2705,6 +2714,20 @@ export function ChannelChat({
                 setRunError(null);
               }}
             />
+            {voiceCallOpen ? (
+              <VoiceCallSheet
+                botId={runtimeAgentId}
+                botName={draftProfile?.name}
+                channelId={channel.id}
+                onCallEnded={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: channelKeys.all,
+                  });
+                }}
+                onOpenChange={setVoiceCallOpen}
+                open={voiceCallOpen}
+              />
+            ) : null}
           </div>
         </MessageActionsContext.Provider>
       </ConversationProvider>

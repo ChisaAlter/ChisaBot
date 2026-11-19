@@ -17,6 +17,7 @@ import {
   proposedSkillSchema,
   savedSkillAnswer,
 } from "../../shared/skill-authoring";
+import { VOICE_WS_PATH } from "../../shared/voice-call";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
 import {
@@ -419,6 +420,12 @@ import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
 import { createVault, VAULT_GUIDANCE } from "./vault/service";
+import {
+  createVoiceCallService,
+  isVoiceSocketData,
+  type VoiceSocketData,
+} from "./voice/voice-routes";
+import { createVoiceStreamTts } from "./voice/voice-stream-tts";
 import { createWebSearchSettingsStore } from "./web/search-settings";
 import {
   createWebSearchRoutes,
@@ -5538,6 +5545,167 @@ sharingService = createSharingService({
 });
 await sharingService.ensure();
 
+// Wave 7：全链路双向实时语音通话（独立流式 PCM TTS + 复用主 Bot 上下文与工具链 + 仅已播报入史）。
+await database.$client.unsafe(`
+  CREATE TABLE IF NOT EXISTS chisabot_voice_turns (
+    turn_id text PRIMARY KEY,
+    call_id text NOT NULL,
+    user_id text NOT NULL,
+    bot_id text NOT NULL,
+    channel_id text NOT NULL,
+    user_text text NOT NULL,
+    spoken_text text NOT NULL DEFAULT '',
+    draft_text text,
+    interrupted boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+`);
+const voiceStreamTts = createVoiceStreamTts({
+  resolveConfig: async () => (await speechSettings.resolveConfig()).tts,
+});
+const voiceCallService = createVoiceCallService({
+  checkReady: async () => {
+    const status = await speechService.statusView();
+    return { asrReady: status.asrReady, ttsReady: status.ttsReady };
+  },
+  resolveTargetChannel: async (actor, botId, channelId) => {
+    const profile = await agentProfileStore.get(actor, botId);
+    if (!profile || profile.deletedAt) return null;
+    if (channelId) {
+      const existing = await channelStore
+        .get(actor, channelId)
+        .catch(() => null);
+      if (!existing?.agentIds.includes(botId)) return null;
+      return { channelId: existing.id };
+    }
+    const direct = await channelStore.direct(actor, botId);
+    return { channelId: direct.id };
+  },
+  transcribe: async ({ wav, signal }) =>
+    speechService.transcribeAudio({
+      data: wav,
+      mimeType: "audio/wav",
+      fileName: "voice-turn.wav",
+      signal,
+    }),
+  synthesizeStream: (input) => voiceStreamTts.stream(input),
+  runBotTurn: async ({
+    botId,
+    userId,
+    channelId,
+    turnId,
+    text,
+    signal,
+    onTextDelta,
+  }) => {
+    const actor = await actorFor(userId);
+    const channel =
+      (await channelStore.get(actor, channelId).catch(() => null)) ??
+      (await channelStore.direct(actor, botId));
+    let previousText = "";
+    const result = await governedTurnRunner({
+      ownerUserId: userId,
+      routineId: `voice:${turnId}`,
+      agentId: botId,
+      threadId: channel.threadId,
+      instruction: text,
+      initiator: PERSON_INITIATOR,
+      signal,
+      userMessage: {
+        id: `voice-u-${turnId}`,
+        role: "user",
+        content: text,
+      } as Message,
+      onText: (accumulated) => {
+        if (accumulated.length <= previousText.length) return;
+        const delta = accumulated.startsWith(previousText)
+          ? accumulated.slice(previousText.length)
+          : accumulated;
+        previousText = accumulated;
+        if (delta) onTextDelta(delta);
+      },
+    });
+    return { replyText: result.replyText };
+  },
+  recordSpokenTurn: async (record) => {
+    await database.$client.unsafe(
+      `INSERT INTO chisabot_voice_turns
+        (turn_id, call_id, user_id, bot_id, channel_id, user_text, spoken_text, draft_text, interrupted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (turn_id) DO UPDATE SET
+        spoken_text = EXCLUDED.spoken_text,
+        draft_text = EXCLUDED.draft_text,
+        interrupted = EXCLUDED.interrupted`,
+      [
+        record.turnId,
+        record.callId,
+        record.userId,
+        record.botId,
+        record.channelId,
+        record.userText,
+        record.spokenText,
+        record.draftText ?? null,
+        record.interrupted,
+      ],
+    );
+    const actor = await actorFor(record.userId);
+    const channel = await channelStore
+      .get(actor, record.channelId)
+      .catch(() => null);
+    if (channel && record.interrupted && record.draftText) {
+      // 被打断时仅保留客户端已播报确认的文本在正式对话历史中，未播完内容已落库为 draft_text。
+      const rows = await database.$client.unsafe<{ messages: Message[] }[]>(
+        "SELECT messages FROM chisabot_local_threads WHERE id = $1 AND run_id IS NULL",
+        [channel.threadId],
+      );
+      const current = rows[0]?.messages;
+      if (Array.isArray(current)) {
+        const userIndex = current.findIndex(
+          (msg) => msg.id === `voice-u-${record.turnId}`,
+        );
+        if (userIndex >= 0) {
+          let changed = false;
+          const updated = current.map((msg, idx) => {
+            if (idx > userIndex && msg.role === "assistant") {
+              changed = true;
+              return {
+                ...msg,
+                content: record.spokenText || "[语音回复已中断]",
+              };
+            }
+            return msg;
+          });
+          if (changed) {
+            await database.$client
+              .unsafe(
+                "UPDATE chisabot_local_threads SET messages = $2::text::jsonb, updated_at = now() WHERE id = $1 AND run_id IS NULL",
+                [channel.threadId, JSON.stringify(updated)],
+              )
+              .catch(() => {});
+          }
+        }
+      }
+    }
+    if (record.spokenText.trim()) {
+      await channelStore
+        .recordActivity(
+          actor,
+          record.channelId,
+          {
+            text: record.spokenText.slice(0, 500),
+            agentId: record.botId,
+            at: new Date(),
+          },
+          { id: `voice-spoken:${record.turnId}` },
+        )
+        .catch(() => {});
+    }
+  },
+  ...(config.auth?.trustedOrigins
+    ? { trustedOrigins: config.auth.trustedOrigins }
+    : {}),
+});
+
 const app = createApp(
   config,
   auth,
@@ -5916,6 +6084,7 @@ const app = createApp(
       ["/api/side-threads", createSideThreadRoutes(sideThreads, requireUser)],
       ["/api/im", readyImService.routes(requireUser)],
       ["/api/speech", speechService.routes(requireUser, requireAdmin)],
+      ["/api/voice", voiceCallService.routes(requireUser)],
       ["/api/memory-notes", memoryNotes.routes(requireUser)],
       ["/api/bot-avatars", botAvatars.routes(requireUser)],
       ["/api/browser-bookmarks", browserBookmarks.routes(requireUser)],
@@ -6079,7 +6248,7 @@ type StreamData = {
  * not, rather than either feature quietly taking the slot and breaking the other on connect.
  */
 type ChannelSocket = Parameters<typeof channelSocket.open>[0];
-type SocketData = StreamData | ChannelSocket["data"];
+type SocketData = StreamData | VoiceSocketData | ChannelSocket["data"];
 
 const isProxiedStream = (data: SocketData): data is StreamData =>
   typeof (data as StreamData).upstream === "string";
@@ -6146,6 +6315,25 @@ serve<SocketData>({
         request.headers.get("accept")?.includes("text/event-stream"))
     )
       server.timeout(request, 0);
+    if (
+      url.pathname === VOICE_WS_PATH &&
+      request.headers.get("upgrade")?.toLowerCase() === "websocket"
+    ) {
+      const upgraded = await voiceCallService.prepareUpgrade(request);
+      if (!upgraded.ok) {
+        return new Response(upgraded.message, { status: upgraded.status });
+      }
+      if (
+        server.upgrade(request, {
+          data: upgraded.data,
+          headers: { "sec-websocket-protocol": upgraded.protocol },
+        })
+      ) {
+        return undefined as unknown as Response;
+      }
+      voiceCallService.releaseFailedUpgrade(upgraded.data);
+      return new Response("Expected a WebSocket upgrade.", { status: 400 });
+    }
     const streamBotId = streamPathBotId(url.pathname);
     if (
       streamBotId !== null &&
@@ -6233,6 +6421,10 @@ serve<SocketData>({
     sendPings: true,
     idleTimeout: 120,
     open(ws) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleOpen(ws, ws.data);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.open(asChannelSocket(ws));
         return;
@@ -6313,13 +6505,26 @@ serve<SocketData>({
       };
     },
     message(ws, raw) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleMessage(ws, ws.data, raw);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.message(asChannelSocket(ws), raw);
         return;
       }
       if (ws.data.inward?.readyState === 1) ws.data.inward.send(String(raw));
     },
+    pong(ws) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handlePong(ws.data);
+      }
+    },
     close(ws, code, reason) {
+      if (isVoiceSocketData(ws.data)) {
+        voiceCallService.handleClose(ws.data, code, reason);
+        return;
+      }
       if (!isProxiedStream(ws.data)) {
         channelSocket.close(asChannelSocket(ws), code, reason);
         return;
@@ -6362,6 +6567,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     personResponseSweep.stop();
     groupSweep.stop();
     void Promise.allSettled([
+      voiceCallService.closeAll(),
+      Promise.resolve(voiceStreamTts.close()),
       imService?.stopAll() ?? Promise.resolve(),
       channelActivityListener.stop(),
       policyListener.stop(),
