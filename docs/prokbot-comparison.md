@@ -198,5 +198,5 @@
 - [x] **Wave 6**：AI 视频生成/理解子会话 + 聊天 `<video>`/`<audio>` 卡片 + 多生图/视频模型池与多参考图 + AI 生成 Bot 头像 + FFmpeg 音频转码 + 虚拟形象情感微交互 + 头像防像素炸弹 + 链接预览 Hover 零网络探测
 - [x] **Wave 7**：全链路双向实时语音通话（WS 双向流 + 服务端 VAD/分态打断 + 真中止推理 + 流式分句 TTS + 播放回执 + 仅已播报入史 + 客户端 AEC3/WebAudio + `AgentOrb` 声波共振）
 - [ ] **Wave 8**：AI 自研可执行后端微应用 / MCP 工具包（`app-builder` + 沙箱 `node-stdio` + Host 托管 OAuth + digest 锚定）+ 远端 MCP 全量增强 + 远程执行节点热切换
-- [ ] **Wave 9**：Coding Agent 同上下文续接/`needs_input`/`status(waitMs)`/`pwd -P` + Chrome Cookie 按域名审批导入与 Passkey 跨端转发 + 无障碍控件树语义操控与 `bundleId` 回合授权 + 4MiB 分块上传下载 + 端侧诊断日志
+- [x] **Wave 9**：Coding Agent 同上下文续接/`needs_input`/`status(waitMs)`/`pwd -P` + Chrome Cookie 按域名审批导入与 Passkey 跨端转发 + 无障碍控件树语义操控与 `bundleId` 回合授权 + 4MiB 分块上传下载 + 端侧诊断日志
 - [x] **Wave 10**：可靠性与 2026-11-18 安全/运维全量加固（Supervisor 排空升级、付费媒体幂等账本、凭据读时 0600/`O_NOFOLLOW`、唯一 tmp 名、装载物 provenance、OAuth state/审批白名单/限流配额/吊销断活流/hop-by-hop/body cap/SSE 上限、Tool Journal 父子树与原子续跑、Handoff 三方对账、定时任务重启 `interrupted`、联邦签名信封基础协议）
