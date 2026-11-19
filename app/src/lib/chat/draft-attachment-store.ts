@@ -4,6 +4,10 @@ import {
   MAX_FILE_BYTES,
   MAX_IMAGE_BYTES,
 } from "@/lib/channels/attachments";
+import {
+  isChatDocumentFile,
+  MAX_CHAT_FILE_BYTES,
+} from "../../../../shared/chat-files";
 import type { Attachment } from "./attachment-state";
 import { DRAFT_TTL_MS, type DraftFileSubmission } from "./ui-memory";
 
@@ -134,8 +138,9 @@ export async function writeDraftAttachments(
     throw new Error(`当前与发送中的附件草稿最多保存 ${limit} 个文件。`);
   }
   for (const { file } of files) {
-    const limit =
-      classifyAttachment(file.type) === "text"
+    const limit = isChatDocumentFile(file.name, file.type)
+      ? MAX_CHAT_FILE_BYTES
+      : classifyAttachment(file.type) === "text"
         ? MAX_FILE_BYTES
         : MAX_IMAGE_BYTES;
     if (file.size > limit) {

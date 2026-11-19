@@ -6,6 +6,12 @@ import {
 } from "@/lib/channels/attachments";
 import type { AttachmentsConfig } from "@/lib/chat/attachment-state";
 import { readImageDims } from "@/lib/image-dims";
+import {
+  ACCEPTED_CHAT_DOCUMENT_MIME,
+  CHAT_FILE_URL_PREFIX,
+  isChatDocumentFile,
+  MAX_CHAT_FILE_BYTES,
+} from "../../../../../shared/chat-files";
 
 /** Uploads a file and returns its stored reference. Derive result/error types from the composer contract. */
 type AttachmentUploadResult = Awaited<
@@ -102,6 +108,60 @@ export function uploadToChannel(
         attachmentId: body.id,
         filename: body.name,
         ...readImageDims(body.width, body.height),
+      },
+    };
+  };
+}
+
+/** `POST /api/chat-files` 成功时返回的文档描述体。 */
+type UploadedChatFileBody = {
+  file: {
+    id: string;
+    name: string;
+    mimeType: string;
+    url: string;
+  };
+};
+
+/**
+ * 将 ≤20MB 的 PDF / DOCX 文档直传至 `/api/chat-files`，由服务端完成存储、工作区写入、
+ * 文本提取与分块建索，并返回 `/api/chat-files/<id>` 引用供消息发送后模型自动检索阅读。
+ */
+export function uploadChatDocumentToBot(
+  agentId: string,
+  onProgress?: (file: File, fraction: number) => void,
+  signalFor?: (file: File) => AbortSignal | undefined,
+): (file: File) => Promise<AttachmentUploadResult> {
+  return async (file: File): Promise<AttachmentUploadResult> => {
+    const formData = new FormData();
+    formData.append("agentId", agentId);
+    formData.append("file", file, file.name);
+
+    const response = await postWithProgress(
+      "/api/chat-files",
+      formData,
+      (fraction) => onProgress?.(file, fraction),
+      signalFor?.(file),
+    );
+
+    const body: unknown = parseJson(response.text);
+    const couldNotUpload = new Error(UPLOAD_FAILED_MESSAGE);
+
+    if (!response.ok) {
+      throw refusalIn(body) ?? couldNotUpload;
+    }
+
+    if (!isUploadedChatFileBody(body)) {
+      throw couldNotUpload;
+    }
+
+    return {
+      type: "url",
+      value: body.file.url,
+      mimeType: body.file.mimeType,
+      metadata: {
+        chatFileId: body.file.id,
+        filename: body.file.name,
       },
     };
   };
@@ -241,6 +301,25 @@ function isUploadedAttachment(body: unknown): body is UploadedAttachment {
   );
 }
 
+function isUploadedChatFileBody(body: unknown): body is UploadedChatFileBody {
+  if (typeof body !== "object" || body === null) {
+    return false;
+  }
+  const file = (body as { file?: unknown }).file;
+  if (typeof file !== "object" || file === null) {
+    return false;
+  }
+  const { id, name, mimeType, url } = file as Record<string, unknown>;
+  return (
+    typeof id === "string" &&
+    id.length > 0 &&
+    typeof name === "string" &&
+    typeof mimeType === "string" &&
+    typeof url === "string" &&
+    url.startsWith(CHAT_FILE_URL_PREFIX)
+  );
+}
+
 /**
  * WHAT THE `+` BUTTON'S FILE DIALOG OFFERS — A HINT, AND THE ONLY PLACE `accept` IS STILL SPENT.
  *
@@ -268,6 +347,14 @@ export const FILE_PICKER_ACCEPT = [
   ".md",
   ".csv",
   ".json",
+].join(",");
+
+/** 允许直传 PDF / DOCX 聊天文档时的文件选择器提示列表。 */
+export const FILE_PICKER_ACCEPT_WITH_DOCUMENTS = [
+  FILE_PICKER_ACCEPT,
+  ...ACCEPTED_CHAT_DOCUMENT_MIME,
+  ".pdf",
+  ".docx",
 ].join(",");
 
 /**
@@ -333,13 +420,26 @@ export function attachmentsConfigFor(
   onUploaded: (attachmentId: string, file: File) => void,
   onProgress?: (file: File, fraction: number) => void,
   signalFor?: (file: File) => AbortSignal | undefined,
+  chatFileAgentId?: string | null,
+  onChatFileUploaded?: (chatFileId: string, file: File) => void,
 ): AttachmentsConfig {
   const upload = uploadToChannel(channelId, uploadGroup, onProgress, signalFor);
+  const uploadChatDocument = chatFileAgentId
+    ? uploadChatDocumentToBot(chatFileAgentId, onProgress, signalFor)
+    : undefined;
   return {
     enabled: true,
     accept: "*/*",
-    maxSize: MAX_IMAGE_BYTES,
+    maxSize: chatFileAgentId ? MAX_CHAT_FILE_BYTES : MAX_IMAGE_BYTES,
     onUpload: async (file) => {
+      if (uploadChatDocument && isChatDocumentFile(file.name, file.type)) {
+        const uploaded = await uploadChatDocument(file);
+        const chatFileId = chatFileRowId(uploaded);
+        if (chatFileId !== undefined) {
+          onChatFileUploaded?.(chatFileId, file);
+        }
+        return uploaded;
+      }
       const uploaded = await upload(file);
       const rowId = stagedRowId(uploaded);
       /*
@@ -376,5 +476,16 @@ export function stagedRowId(
   const metadata = carrier?.metadata as { attachmentId?: unknown } | undefined;
   return typeof metadata?.attachmentId === "string"
     ? metadata.attachmentId
+    : undefined;
+}
+
+/** 从附件或上传结果的 `metadata` 中读取直传至 `/api/chat-files` 的文件 id。 */
+export function chatFileRowId(
+  carrier: { metadata?: unknown } | undefined,
+): string | undefined {
+  const metadata = carrier?.metadata as { chatFileId?: unknown } | undefined;
+  return typeof metadata?.chatFileId === "string" &&
+    metadata.chatFileId.length > 0
+    ? metadata.chatFileId
     : undefined;
 }

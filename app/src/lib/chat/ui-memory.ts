@@ -329,8 +329,12 @@ const draftFileSubmissions = new Set<
 export function attachmentIdsInContent(content: unknown): string[] {
   if (!Array.isArray(content)) return [];
   return content.flatMap((part) => {
-    const id = part?.metadata?.attachmentId;
-    return typeof id === "string" ? [id] : [];
+    const attachmentId = part?.metadata?.attachmentId;
+    if (typeof attachmentId === "string" && attachmentId) return [attachmentId];
+    const chatFileId = part?.metadata?.chatFileId;
+    if (typeof chatFileId === "string" && chatFileId)
+      return [`cf:${chatFileId}`];
+    return [];
   });
 }
 

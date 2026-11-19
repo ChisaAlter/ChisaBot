@@ -9,6 +9,10 @@ import {
   unsupportedImageReason,
 } from "@/lib/channels/attachments";
 import { newId } from "@/lib/new-id";
+import {
+  isChatDocumentFile,
+  MAX_CHAT_FILE_BYTES,
+} from "../../../../../shared/chat-files";
 import type { RejectedFile } from "./rejected-files";
 
 /**
@@ -47,7 +51,7 @@ export type ScreenedFiles = {
  */
 export function screenPickedFiles(
   files: readonly File[],
-  options: { alreadyStaged: number },
+  options: { alreadyStaged: number; allowDocuments?: boolean },
 ): ScreenedFiles {
   const accepted: File[] = [];
   const rejected: RejectedFile[] = [];
@@ -84,50 +88,72 @@ export function screenPickedFiles(
       continue;
     }
 
-    /*
-     * THE BROWSER TOLD US NOTHING, SO THE SERVER GETS TO LOOK — AND ONLY THEN.
-     *
-     * A claim that names no format is not a refusal, it is an absence: `sniffMimeType` throws
-     * exactly these claims away and reads the bytes, so the server accepts the plain text file
-     * behind an `application/octet-stream` that this screen used to turn away with "not a file type
-     * this chat accepts" — a sentence written by the half of the system that had not looked at it.
-     *
-     * A claim that DOES name a format is still refused here, because there the two halves already
-     * agree: `sniffMimeType` hands such a name straight back for the server to refuse by name.
-     *
-     * The cost, stated because it is real: a genuinely unreadable file the browser could not name
-     * now takes a round trip to be refused, in the server's words rather than ours. That is the
-     * right way round. The server has the bytes; this screen has a string somebody else wrote.
-     */
-    const unnamed = kind === "unsupported" && namesNoFormat(mediaType);
+    const isDocument =
+      kind === "unsupported" && isChatDocumentFile(file.name, file.type);
 
-    if (kind === "unsupported" && !unnamed) {
-      rejected.push(reject(file, "不是这个对话能接受的文件类型。"));
-      continue;
-    }
+    if (isDocument) {
+      if (!options.allowDocuments) {
+        rejected.push(reject(file, "当前对话暂不支持上传 PDF / DOCX 文档。"));
+        continue;
+      }
+      if (file.size > MAX_CHAT_FILE_BYTES) {
+        rejected.push(
+          reject(
+            file,
+            `文档太大（上限 ${formatBytes(MAX_CHAT_FILE_BYTES)}）。`,
+          ),
+        );
+        continue;
+      }
+    } else {
+      /*
+       * THE BROWSER TOLD US NOTHING, SO THE SERVER GETS TO LOOK — AND ONLY THEN.
+       *
+       * A claim that names no format is not a refusal, it is an absence: `sniffMimeType` throws
+       * exactly these claims away and reads the bytes, so the server accepts the plain text file
+       * behind an `application/octet-stream` that this screen used to turn away with "not a file type
+       * this chat accepts" — a sentence written by the half of the system that had not looked at it.
+       *
+       * A claim that DOES name a format is still refused here, because there the two halves already
+       * agree: `sniffMimeType` hands such a name straight back for the server to refuse by name.
+       *
+       * The cost, stated because it is real: a genuinely unreadable file the browser could not name
+       * now takes a round trip to be refused, in the server's words rather than ours. That is the
+       * right way round. The server has the bytes; this screen has a string somebody else wrote.
+       */
+      const unnamed = kind === "unsupported" && namesNoFormat(mediaType);
 
-    if (kind === "image" && file.size > MAX_IMAGE_BYTES) {
-      rejected.push(
-        reject(file, `图片太大（上限 ${formatBytes(MAX_IMAGE_BYTES)}）。`),
-      );
-      continue;
-    }
+      if (kind === "unsupported" && !unnamed) {
+        rejected.push(reject(file, "不是这个对话能接受的文件类型。"));
+        continue;
+      }
 
-    if (kind === "text" && file.size > MAX_FILE_BYTES) {
-      rejected.push(
-        reject(file, `文本附件太大（上限 ${formatBytes(MAX_FILE_BYTES)}）。`),
-      );
-      continue;
-    }
+      if (kind === "image" && file.size > MAX_IMAGE_BYTES) {
+        rejected.push(
+          reject(file, `图片太大（上限 ${formatBytes(MAX_IMAGE_BYTES)}）。`),
+        );
+        continue;
+      }
 
-    // The LOOSE ceiling for a file nobody has named yet, because this screen does not know which
-    // of the two limits applies to it. Guessing the tight one would put back exactly the refusal
-    // this branch exists to remove; the server applies the right limit once it has the bytes.
-    if (unnamed && file.size > MAX_IMAGE_BYTES) {
-      rejected.push(
-        reject(file, `超过附件上限 ${formatBytes(MAX_IMAGE_BYTES)}。`),
-      );
-      continue;
+      if (kind === "text" && file.size > MAX_FILE_BYTES) {
+        rejected.push(
+          reject(
+            file,
+            `文本附件太大（上限 ${formatBytes(MAX_FILE_BYTES)}）。`,
+          ),
+        );
+        continue;
+      }
+
+      // The LOOSE ceiling for a file nobody has named yet, because this screen does not know which
+      // of the two limits applies to it. Guessing the tight one would put back exactly the refusal
+      // this branch exists to remove; the server applies the right limit once it has the bytes.
+      if (unnamed && file.size > MAX_IMAGE_BYTES) {
+        rejected.push(
+          reject(file, `超过附件上限 ${formatBytes(MAX_IMAGE_BYTES)}。`),
+        );
+        continue;
+      }
     }
 
     if (

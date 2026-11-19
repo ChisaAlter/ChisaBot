@@ -146,18 +146,23 @@ function readAttachmentMetadata(part: { type: string }): {
 } {
   const raw = (part as { metadata?: unknown }).metadata;
   if (typeof raw !== "object" || raw === null) return {};
-  const { attachmentId, filename, width, height } = raw as {
+  const { attachmentId, chatFileId, filename, width, height } = raw as {
     attachmentId?: unknown;
+    chatFileId?: unknown;
     filename?: unknown;
     width?: unknown;
     height?: unknown;
   };
+  const resolvedId =
+    typeof attachmentId === "string" && attachmentId
+      ? attachmentId
+      : typeof chatFileId === "string" && chatFileId
+        ? chatFileId
+        : undefined;
 
   return {
     ...readImageDims(width, height),
-    ...(typeof attachmentId === "string" && attachmentId
-      ? { attachmentId }
-      : {}),
+    ...(resolvedId ? { attachmentId: resolvedId } : {}),
     ...(typeof filename === "string" && filename ? { filename } : {}),
   };
 }

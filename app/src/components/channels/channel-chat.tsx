@@ -58,6 +58,7 @@ import {
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+import { chatFileUrl } from "../../../../shared/chat-files";
 import { splitChatOrigin } from "../../../../shared/chat-origin";
 
 const objectIds = new WeakMap<object, number>();
@@ -342,31 +343,41 @@ function mergeStoredMessages(local: Message[], stored: Message[]): Message[] {
   ];
 }
 
+type UploadedAttachmentRef =
+  | { kind: "attachment"; attachmentId: string; filename?: string }
+  | { kind: "chat-file"; chatFileId: string; filename?: string };
+
 /**
  * The uploaded id and filename an `Attachment` carries once it is `ready`, read from the
  * `metadata` the composer's `onUpload` stamped on it — see `composer/attachments.ts`. Not the
  * SDK's own `attachment.id`, which is a client-side handle for the upload placeholder rather than
  * the id this deployment stored the file under.
  */
-function uploadedAttachment(attachment: Attachment): {
-  attachmentId: string;
-  filename?: string;
-} {
+function uploadedAttachment(attachment: Attachment): UploadedAttachmentRef {
   const metadata = attachment.metadata as
     | {
         attachmentId?: unknown;
+        chatFileId?: unknown;
         filename?: unknown;
         width?: unknown;
         height?: unknown;
       }
     | undefined;
-  const attachmentId = metadata?.attachmentId;
-  if (typeof attachmentId !== "string") {
-    throw new Error("附件缺少其上传的 ID。");
-  }
   const filename =
     typeof metadata?.filename === "string" ? metadata.filename : undefined;
-  return filename ? { attachmentId, filename } : { attachmentId };
+  const chatFileId = metadata?.chatFileId;
+  if (typeof chatFileId === "string" && chatFileId.length > 0) {
+    return filename
+      ? { kind: "chat-file", chatFileId, filename }
+      : { kind: "chat-file", chatFileId };
+  }
+  const attachmentId = metadata?.attachmentId;
+  if (typeof attachmentId === "string" && attachmentId.length > 0) {
+    return filename
+      ? { kind: "attachment", attachmentId, filename }
+      : { kind: "attachment", attachmentId };
+  }
+  throw new Error("附件缺少其上传的 ID。");
 }
 
 /**
@@ -394,16 +405,29 @@ function uploadedAttachment(attachment: Attachment): {
  * holds; the justification had rotted, which is why the modality is now derived rather than cast.
  */
 function toAttachmentPart(attachment: Attachment) {
-  const { attachmentId, filename } = uploadedAttachment(attachment);
+  const uploaded = uploadedAttachment(attachment);
   const { source } = attachment;
   const mimeType =
     source.type === "url" && source.mimeType ? source.mimeType : undefined;
+  if (uploaded.kind === "chat-file") {
+    return {
+      type: attachmentModality(attachment.type, mimeType),
+      source: { type: "url" as const, value: chatFileUrl(uploaded.chatFileId) },
+      metadata: {
+        chatFileId: uploaded.chatFileId,
+        ...(uploaded.filename ? { filename: uploaded.filename } : {}),
+      },
+    };
+  }
   return {
     type: attachmentModality(attachment.type, mimeType),
-    source: { type: "url" as const, value: attachmentUrl(attachmentId) },
+    source: {
+      type: "url" as const,
+      value: attachmentUrl(uploaded.attachmentId),
+    },
     metadata: {
-      attachmentId,
-      ...(filename ? { filename } : {}),
+      attachmentId: uploaded.attachmentId,
+      ...(uploaded.filename ? { filename: uploaded.filename } : {}),
       // 上传时服务器读出的宽高（DESIGN.md §83.2）：存进消息，以后每次画这张图都能先留好框。
       ...readImageDims(
         (attachment.metadata as { width?: unknown } | undefined)?.width,

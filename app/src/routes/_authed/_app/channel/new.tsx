@@ -461,6 +461,7 @@ function BotChat({
         </div>
       ) : null}
       <ConversationView
+        {...(chosen ? { agentId: chosen.id } : {})}
         modelControl={
           chosen ? <BotModelSelector agentId={chosen.id} compact /> : null
         }
