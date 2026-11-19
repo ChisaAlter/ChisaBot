@@ -593,8 +593,28 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       "云端电脑",
       "登录状态",
       "cookie",
+      "执行节点",
+      "热切换",
+      "execution node",
     ],
-    items: [],
+    items: [
+      {
+        id: "execution-nodes",
+        title: "远程执行节点热切换",
+        description:
+          "配置多个远程 agent-computer 执行节点，支持连通性探活与一键零重启热切换",
+        find: "远程执行节点热切换",
+        keywords: [
+          "执行节点",
+          "远程节点",
+          "热切换",
+          "探活",
+          "execution node",
+          "agent-computer",
+          "zxjd",
+        ],
+      },
+    ],
   },
 
   // ── 账号与连接 ────────────────────────────────────────
@@ -704,6 +724,23 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
           "接入任意遵循 Streamable HTTP 协议的远程 MCP 服务器（支持全员默认开启）",
         find: "已连接",
         keywords: ["自定义 mcp", "custom mcp", "http mcp", "全员默认开启"],
+      },
+      {
+        id: "app-packages",
+        title: "AI 自研微应用与 MCP 包",
+        description:
+          "审阅 AI 提交的微应用源码、SHA-256 摘要与权限声明，支持沙箱安装授权、版本回滚与脱敏导入导出",
+        find: "AI 自研微应用与 MCP 包",
+        keywords: [
+          "微应用",
+          "应用包",
+          "app-builder",
+          "chisabot-app",
+          "沙箱",
+          "回滚",
+          "脱敏导出",
+          "wyy",
+        ],
       },
       {
         id: "local-stdio-mcp",

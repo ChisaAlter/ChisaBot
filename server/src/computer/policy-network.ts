@@ -22,7 +22,7 @@ export const NO_NETWORK_POLICY: EgressPolicy = { mode: "allow_all", rules: [] };
 /** Keep every running computer on {@link NO_NETWORK_POLICY}; returns a stop function. */
 export function startEgressPolicyPush(options: {
   provider?: ComputerProvider;
-  token?: string;
+  token?: string | (() => string | undefined);
   intervalMs?: number;
 }): () => void {
   const provider = options.provider;
@@ -72,7 +72,7 @@ export type EgressPushReport = {
  */
 export async function pushEgressPolicies(options: {
   provider: ComputerProvider;
-  token?: string;
+  token?: string | (() => string | undefined);
   policyForBot: (botId: string) => Promise<EgressPolicy>;
   fetchImpl?: typeof fetch;
 }): Promise<EgressPushReport> {
@@ -83,8 +83,10 @@ export async function pushEgressPolicies(options: {
     if (computer.status !== "running" || !computer.url) continue;
     try {
       const policy = await options.policyForBot(computer.botId);
+      const token =
+        typeof options.token === "function" ? options.token() : options.token;
       await pushEgressPolicy(computer.url, computer.botId, policy, {
-        ...(options.token ? { token: options.token } : {}),
+        ...(token ? { token } : {}),
         fetchImpl,
       });
       report.pushed.push(computer.botId);
@@ -145,7 +147,7 @@ export function withPolicyPushOnWake(
     policyForBot: (
       botId: string,
     ) => Promise<EgressPolicy | undefined> | undefined;
-    token?: string;
+    token?: string | (() => string | undefined);
     fetchImpl?: typeof fetch;
   },
 ): ComputerProvider {
@@ -165,8 +167,10 @@ export function withPolicyPushOnWake(
       // failed push rather than failing the action.
       const policy = await options.policyForBot(botId);
       if (!policy) return;
+      const token =
+        typeof options.token === "function" ? options.token() : options.token;
       await pushEgressPolicy(url, botId, policy, {
-        ...(options.token ? { token: options.token } : {}),
+        ...(token ? { token } : {}),
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       });
       pushed.set(botId, { run, at: Date.now() });

@@ -1,5 +1,7 @@
 import { computerHeaders } from "../../../shared/protocol-headers";
 import type { ComputerConfig } from "../config";
+import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
+import type { ActiveExecutionNode } from "./execution-node-store";
 import {
   createSandboxComputerProvider,
   inClusterConfig,
@@ -149,7 +151,10 @@ export function createSharedComputerProvider(
   options: SharedComputerProviderOptions,
 ): ComputerProvider {
   const base = options.baseUrl.replace(/\/$/, "");
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchImpl =
+    options.fetchImpl ??
+    ((input: string | URL | Request, init?: RequestInit) =>
+      trustedEndpointFetch("agent-computer", input, init));
   const timeoutMs = options.timeoutMs ?? 45_000;
 
   function headers(botId?: string): Record<string, string> {
@@ -304,6 +309,87 @@ export function createComputerProvider(
        */
       return createLazySandboxProvider(config);
   }
+}
+
+export type DynamicExecutionNodeProviderOptions = {
+  /** 动态读取当前激活的远程执行节点；返回 null 时回退到既有静态环境变量 provider。 */
+  resolveActiveNode: () =>
+    | ActiveExecutionNode
+    | null
+    | Promise<ActiveExecutionNode | null>;
+  /** 静态环境变量回退 provider（未配置远程热切换节点时无缝接管）。 */
+  fallback?: ComputerProvider;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+};
+
+/**
+ * 支持可视化热切换远程执行节点的动态 ComputerProvider（Wave 8）：
+ * - 每次操作按需解析当前激活的远程执行节点，热切换后立即生效、无需重启；
+ * - 未激活远程节点时无缝回退既有环境变量静态模式。
+ */
+export function createDynamicExecutionNodeProvider(
+  options: DynamicExecutionNodeProviderOptions,
+): ComputerProvider {
+  async function currentProvider(): Promise<ComputerProvider> {
+    const active = await options.resolveActiveNode();
+    if (active) {
+      return createSharedComputerProvider({
+        baseUrl: active.baseUrl,
+        ...(active.token ? { token: active.token } : {}),
+        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options.timeoutMs !== undefined
+          ? { timeoutMs: options.timeoutMs }
+          : {}),
+      });
+    }
+    if (options.fallback) {
+      return options.fallback;
+    }
+    throw new ProviderError(
+      "未配置激活的远程执行节点，也未设置静态云端电脑环境变量。",
+    );
+  }
+
+  return {
+    name: options.fallback ? options.fallback.name : "shared",
+    isolation: options.fallback ? options.fallback.isolation : "shared",
+    locate: async (botId) => (await currentProvider()).locate(botId),
+    status: async (botId) => {
+      try {
+        return await (await currentProvider()).status(botId);
+      } catch (error) {
+        return {
+          botId,
+          state: "unreachable",
+          reason:
+            error instanceof Error && error.message
+              ? error.message
+              : "远程执行节点不可用。",
+        };
+      }
+    },
+    stop: async (botId) => (await currentProvider()).stop(botId),
+    reset: async (botId) => (await currentProvider()).reset(botId),
+    forget: async (botId) => {
+      const target = await currentProvider();
+      return target.forget ? target.forget(botId) : target.reset(botId);
+    },
+    list: async () => (await currentProvider()).list(),
+    update: async (botId) => {
+      const target = await currentProvider();
+      if (!target.update) {
+        return { updated: false, wasRunning: false };
+      }
+      return target.update(botId);
+    },
+    warm: async () => {
+      if (options.fallback?.warm) {
+        await options.fallback.warm();
+      }
+    },
+    sessionOf: async (botId) => (await currentProvider()).sessionOf?.(botId),
+  };
 }
 
 /**

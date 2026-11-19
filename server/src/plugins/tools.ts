@@ -4,8 +4,13 @@ import { ApprovalRefusedError } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
+import { emitToolImage } from "../conversations/tool-images";
 import { markUntrusted } from "../untrusted-content";
 import { isMcpAbortError } from "./mcp";
+import {
+  formatConnectorCustomInstructions,
+  formatMcpCallFailure,
+} from "./mcp-enhancements";
 import type { SelectableSkill } from "./selection";
 import {
   isDeploymentFault,
@@ -265,73 +270,72 @@ export async function grantedTools(options: {
 }): Promise<GrantedTool[]> {
   const { store, botId, actorId, initiator, credentialActorFor } = options;
   const granted = await store.listForAgent(botId);
+  const customInstructionsByServer = new Map<string, string>();
+  for (const item of granted.customInstructions ?? []) {
+    const formatted = formatConnectorCustomInstructions([item]);
+    if (formatted) {
+      customInstructionsByServer.set(item.serverId, formatted);
+    }
+  }
 
-  return granted.tools.map((tool) => ({
-    name: tool.toolName,
-    ref: tool.ref,
-    effect: tool.effect,
-    initiator,
-    description: tool.description,
-    parameters: parametersFor(tool.inputSchema),
-    execute: async (args: unknown, ctx?: ToolExecuteContext) => {
-      // FIX-04 residual: Stop must reach MCP / connector calls (ctx.signal from chat; ALS for headless).
-      const signal = ctx?.signal ?? currentToolAbort();
-      if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-      try {
-        const result = await store.callTool({
-          ref: tool.ref,
-          // The runtime hands through whatever the model produced. Anything that is not an object
-          // is not a set of arguments, and the vendor should be the one to say so.
-          args:
-            args && typeof args === "object" && !Array.isArray(args)
-              ? (args as Record<string, unknown>)
-              : {},
-          botId,
-          actorId,
-          ...(initiator ? { initiator } : {}),
-          ...(credentialActorFor
-            ? { credentialActorId: await credentialActorFor(tool.ref) }
-            : {}),
-          ...(signal ? { signal } : {}),
-        });
-        // Stop raced the vendor: do not present a late success as if the user never cancelled.
+  return granted.tools.map((tool) => {
+    const serverId = tool.ref.split("/")[0] ?? "";
+    const serverGuidance = customInstructionsByServer.get(serverId);
+    return {
+      name: tool.toolName,
+      ref: tool.ref,
+      effect: tool.effect,
+      initiator,
+      description: tool.description,
+      parameters: parametersFor(tool.inputSchema),
+      ...(serverGuidance ? { guidance: serverGuidance } : {}),
+      execute: async (args: unknown, ctx?: ToolExecuteContext) => {
+        // FIX-04 residual: Stop must reach MCP / connector calls (ctx.signal from chat; ALS for headless).
+        const signal = ctx?.signal ?? currentToolAbort();
         if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-        return vendorAnswer(result);
-      } catch (error) {
-        if (error instanceof HeadlessToolSuspension) throw error;
-        if (isMcpAbortError(error) || signal?.aborted) {
-          return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+        try {
+          const result = await store.callTool({
+            ref: tool.ref,
+            // The runtime hands through whatever the model produced. Anything that is not an object
+            // is not a set of arguments, and the vendor should be the one to say so.
+            args:
+              args && typeof args === "object" && !Array.isArray(args)
+                ? (args as Record<string, unknown>)
+                : {},
+            botId,
+            actorId,
+            ...(initiator ? { initiator } : {}),
+            ...(credentialActorFor
+              ? { credentialActorId: await credentialActorFor(tool.ref) }
+              : {}),
+            ...(signal ? { signal } : {}),
+          });
+          // Stop raced the vendor: do not present a late success as if the user never cancelled.
+          if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+          if (result.images && result.images.length > 0) {
+            for (const img of result.images) {
+              emitToolImage(img);
+            }
+          }
+          return vendorAnswer(result);
+        } catch (error) {
+          if (error instanceof HeadlessToolSuspension) throw error;
+          if (isMcpAbortError(error) || signal?.aborted) {
+            return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+          }
+          if (
+            error instanceof PluginRefusedError ||
+            error instanceof ApprovalRefusedError
+          ) {
+            return `${REFUSAL_MARKER} ${error.message}`;
+          }
+          if (isDeploymentFault(error)) return "That tool could not be called.";
+          // 超时或网络中断时给出明确「不要自动重试，请先核查外部状态」警示，避免重复副作用。
+          return `That tool could not be called: ${formatMcpCallFailure(error)}`;
         }
-        if (
-          error instanceof PluginRefusedError ||
-          error instanceof ApprovalRefusedError
-        ) {
-          return `${REFUSAL_MARKER} ${error.message}`;
-        }
-        /*
-         * A contradiction in this deployment's own tables says nothing to a model.
-         *
-         * CRITERION. Nothing on the `isDeploymentFault` shelf may have its message relayed from
-         * here, whatever it says.
-         *
-         * REASON. The branch below hands `error.message` to the model, which is right for a
-         * vendor's own words — that is somebody else's software explaining itself, and the
-         * diagnosis is worth having. These are not that. `ServerRowAmbiguousError` names two of
-         * our columns and tells the reader to rename a row or correct its provenance: an
-         * instruction only an operator can carry out, arriving in an end user's model context as
-         * the reason their tool failed, from which the model can only invent something to tell
-         * them. The operator who can act on it is served on the admin surface instead, where the
-         * refresh route now answers with the sentence in full.
-         */
-        if (isDeploymentFault(error)) return "That tool could not be called.";
-        // A vendor that failed is not a refusal, and the difference matters to the person reading
-        // the answer: one means "not allowed", the other means "it broke".
-        return error instanceof Error
-          ? `That tool could not be called: ${error.message}`
-          : "That tool could not be called.";
-      }
-    },
-  }));
+      },
+    };
+  });
 }
 
 /**

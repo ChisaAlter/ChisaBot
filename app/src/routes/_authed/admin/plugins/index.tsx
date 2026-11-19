@@ -17,6 +17,7 @@ import {
   PageSection,
   PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { RowMark } from "@/components/layout/row-mark";
+import { AppPackagesPanel } from "@/components/settings/app-packages-panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -351,6 +352,8 @@ function RouteComponent() {
               )}
             </PageRows>
           </PageSection>
+
+          <AppPackagesPanel settingItem="plugins.app-packages" />
 
           <PageSection
             description={"无需暴露公网 HTTP 端口，直接通过已配对的 PC 客户端在本地电脑上拉起 npx / uvx stdio MCP 工具。"}

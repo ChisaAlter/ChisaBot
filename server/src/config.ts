@@ -524,6 +524,26 @@ export function readLocalAgentLimits(env: Environment = process.env): {
   };
 }
 
+/**
+ * 为 AI 微应用沙箱子进程提取严格最小白名单宿主基础环境变量：
+ * 仅提取 PATH（及 Windows 平台启动 Node 所需的 SYSTEMROOT/COMSPEC），
+ * 严禁透传 HOME、USERPROFILE、DATABASE_URL、API Key、NODE_OPTIONS 等任何宿主状态或凭据。
+ */
+export function readAppSandboxBaseEnv(
+  env: Environment = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const pathVal = env.PATH ?? env.Path;
+  if (pathVal) out.PATH = pathVal;
+  if (process.platform === "win32") {
+    const sysRoot = env.SYSTEMROOT ?? env.SystemRoot;
+    if (sysRoot) out.SYSTEMROOT = sysRoot;
+    const comSpec = env.COMSPEC ?? env.ComSpec;
+    if (comSpec) out.COMSPEC = comSpec;
+  }
+  return out;
+}
+
 export function readReleaseLocksOnStart(
   env: Environment = process.env,
 ): boolean {

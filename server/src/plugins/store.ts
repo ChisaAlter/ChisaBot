@@ -49,11 +49,13 @@ import {
   skillTools,
 } from "../db/schema";
 import type { CheckPrivateShare } from "../proactive/private-share";
+import type { ToolImagePart } from "../conversations/tool-images";
 import {
   accessFor,
   type ServerAccess,
   ServerUnresolvableError,
 } from "./access";
+import type { McpEnhancementStore } from "./mcp-enhancements";
 import {
   type BrokerConnection,
   BrokerRefusalError,
@@ -288,6 +290,8 @@ export type GrantedPlugins = {
      */
     tools: string[];
   }[];
+  /** 已授权且存在有效工具的连接器专属使用指引（customInstructions）。 */
+  customInstructions?: Array<{ serverId: string; customInstructions: string }>;
 };
 
 export type PluginDecision =
@@ -1153,12 +1157,14 @@ export type PluginStoreOptions = {
     connection: {
       url: string;
       token?: string;
+      transport?: "streamable-http" | "sse";
+      extraHeaders?: Record<string, string>;
       actorId?: string;
       botId?: string;
     },
     toolName: string,
     args: Record<string, unknown>,
-  ) => Promise<{ text: string; isError: boolean }>;
+  ) => Promise<{ text: string; isError: boolean; images?: ToolImagePart[] }>;
   /** Trading a refresh token for a short-lived access token. Defaults to a real HTTP exchange. */
   exchangeRefreshToken?: (input: {
     tokenUrl: string;
@@ -1184,6 +1190,8 @@ export type PluginStoreOptions = {
   broker?: ComposioBroker;
   /** Where the vendor sends people back; needed to (re)register a dynamic client. */
   redirectUri?: string;
+  /** 远端 MCP 连接器增强存储（SSE / 加密 Header / OAuth2 / 单工具开关 / customInstructions / mcp-last-good）。 */
+  enhancements?: McpEnhancementStore;
 };
 
 /**
@@ -3883,12 +3891,20 @@ export function createPluginStore(options: PluginStoreOptions) {
         const token = transport.listNeedsCredential
           ? (await connectionTokenFor(row, entry, actorId, access)).token
           : undefined;
+        const overlay =
+          access.transport === "mcp" && options.enhancements
+            ? await options.enhancements.resolveConnectionOverlay(serverId)
+            : undefined;
 
         listed = await transport.listTools({
           url: effectiveUrl(row, entry),
           token,
           keyParam: entry?.keyParam,
           keyHeader: entry?.keyHeader,
+          ...(overlay ? { transport: overlay.transport } : {}),
+          ...(overlay && Object.keys(overlay.extraHeaders).length > 0
+            ? { extraHeaders: overlay.extraHeaders }
+            : {}),
         });
       } catch (error) {
         /*
@@ -3960,6 +3976,11 @@ export function createPluginStore(options: PluginStoreOptions) {
             updatedAt: new Date(),
           })
           .where(eq(mcpServers.id, serverId));
+        if (options.enhancements) {
+          await options.enhancements
+            .recordProbeFailure(serverId, message)
+            .catch(() => {});
+        }
         return { tools: 0 };
       }
 
@@ -4009,20 +4030,19 @@ export function createPluginStore(options: PluginStoreOptions) {
           .where(eq(mcpTools.serverId, serverId));
 
         if (held.length > 0) {
+          const emptyMsg = `This app was asked and answered with no actions at all, so the ${held.length} already recorded for it were kept rather than deleted. Check whether it still publishes them, then refresh again.`;
           await database
             .update(mcpServers)
             .set({
-              // Named as the state it is, because "listed nothing" and "would not answer" send an
-              // operator to different places, and reaching this line settles which one it was: a
-              // listing that could not be made throws and lands in the `catch` above instead. So
-              // this sentence must not send anybody to check their configuration — that is the
-              // other state's sentence, written by the transport that refused. No
-              // `toolsRefreshedAt`: that column says when this deployment last learned what the app
-              // offers, and it did not learn it here.
-              lastError: `This app was asked and answered with no actions at all, so the ${held.length} already recorded for it were kept rather than deleted. Check whether it still publishes them, then refresh again.`,
+              lastError: emptyMsg,
               updatedAt: new Date(),
             })
             .where(eq(mcpServers.id, serverId));
+          if (options.enhancements) {
+            await options.enhancements
+              .recordProbeFailure(serverId, emptyMsg)
+              .catch(() => {});
+          }
           // What the app advertises, which is what it advertised before: the honest count, because
           // nothing was replaced.
           return { tools: held.length };
@@ -4139,6 +4159,11 @@ export function createPluginStore(options: PluginStoreOptions) {
           updatedAt: new Date(),
         })
         .where(eq(mcpServers.id, serverId));
+      if (options.enhancements) {
+        await options.enhancements
+          .recordProbeSuccess(serverId, listed)
+          .catch(() => {});
+      }
 
       /*
        * A grant left pointing at nothing goes in the trail, at the moment it starts pointing at
@@ -4796,11 +4821,15 @@ export function createPluginStore(options: PluginStoreOptions) {
               .orderBy(asc(mcpTools.name));
       // A set, so this is a lookup per row rather than a walk of the grants per row.
       const granted = new Set(toolRefs);
+      const disabledByServer = options.enhancements
+        ? await options.enhancements.disabledToolsMap(grantedServers)
+        : new Map<string, ReadonlySet<string>>();
       const grantedTools = toolRows
         .filter(
           (row) =>
-            autoServers.has(row.serverId) ||
-            granted.has(`${row.serverId}/${row.name}`),
+            (autoServers.has(row.serverId) ||
+              granted.has(`${row.serverId}/${row.name}`)) &&
+            !disabledByServer.get(row.serverId)?.has(row.name),
         )
         .map((row) => {
           const ref = `${row.serverId}/${row.name}`;
@@ -4815,6 +4844,15 @@ export function createPluginStore(options: PluginStoreOptions) {
             inputSchema: row.inputSchema as Record<string, unknown>,
           };
         });
+      const activeServerIds = [
+        ...new Set(grantedTools.map((tool) => tool.ref.split("/")[0] ?? "")),
+      ].filter(Boolean);
+      const customInstructions =
+        options.enhancements && activeServerIds.length > 0
+          ? await options.enhancements.customInstructionsForServers(
+              activeServerIds,
+            )
+          : [];
 
       const skillRows =
         skillSlugs.length === 0
@@ -4842,6 +4880,7 @@ export function createPluginStore(options: PluginStoreOptions) {
           instructions: row.instructions,
           tools: declared.get(row.id) ?? [],
         })),
+        ...(customInstructions.length > 0 ? { customInstructions } : {}),
       };
     },
 
@@ -7194,7 +7233,7 @@ export function createPluginStore(options: PluginStoreOptions) {
       credentialActorId?: string;
       /** Stop / turn abort forwarded to the vendor transport (MCP SDK / Drive fetch). */
       signal?: AbortSignal;
-    }): Promise<{ text: string; isError: boolean }> {
+    }): Promise<{ text: string; isError: boolean; images?: ToolImagePart[] }> {
       const [serverId, ...rest] = input.ref.split("/");
       const toolName = rest.join("/");
       if (!serverId || !toolName) {
@@ -7229,6 +7268,28 @@ export function createPluginStore(options: PluginStoreOptions) {
           },
         });
         throw new PluginRefusedError(decision.reason, null);
+      }
+
+      if (
+        options.enhancements &&
+        (await options.enhancements.isToolDisabled(serverId, toolName))
+      ) {
+        const disabledReason = `工具 ${input.ref} 已被管理员单工具停用。`;
+        await recordAuditEvent(auditStore, {
+          eventType: "mcp.call_rejected",
+          targetType: "mcp_tool",
+          targetId: input.ref,
+          ...(input.initiator ? { initiator: input.initiator } : {}),
+          payload: {
+            actor: auditActor,
+            bot: input.botId,
+            server: serverId,
+            tool: toolName,
+            refusal: "tool_disabled",
+            reason: disabledReason,
+          },
+        });
+        throw new PluginRefusedError(disabledReason, null);
       }
 
       const { row, entry, access } = await requireServer(serverId);
@@ -7524,12 +7585,20 @@ export function createPluginStore(options: PluginStoreOptions) {
           err.name = "AbortError";
           throw err;
         }
+        const overlay =
+          access.transport === "mcp" && options.enhancements
+            ? await options.enhancements.resolveConnectionOverlay(serverId)
+            : undefined;
         const result = await vendor(
           {
             url: effectiveUrl(row, entry),
             token,
             keyParam: entry?.keyParam,
             keyHeader: entry?.keyHeader,
+            ...(overlay ? { transport: overlay.transport } : {}),
+            ...(overlay && Object.keys(overlay.extraHeaders).length > 0
+              ? { extraHeaders: overlay.extraHeaders }
+              : {}),
             actorId: input.credentialActorId ?? input.actorId,
             botId: input.botId,
           },
@@ -7542,18 +7611,6 @@ export function createPluginStore(options: PluginStoreOptions) {
           targetType: "mcp_tool",
           targetId: input.ref,
           ...(input.initiator ? { initiator: input.initiator } : {}),
-          /*
-           * The vendor's own words, when it is reporting a failure.
-           *
-           * Only on the failure branch, and this is the whole point of the distinction. A successful
-           * result is somebody's data — a file listing, a document — and it has no business in an
-           * audit row that an administrator can read. An `isError` result is a message written for
-           * whoever operates this deployment, and it is the most useful sentence available: Google
-           * refuses the Drive MCP server with "The caller does not have permission", which named the
-           * problem after a generic message had already cost a round of probing.
-           *
-           * Capped, because the failure branch is not a promise about length.
-           */
           payload: result.isError
             ? {
                 ...decided,
@@ -7562,7 +7619,17 @@ export function createPluginStore(options: PluginStoreOptions) {
               }
             : decided,
         });
-        const answer = { text: result.text, isError: result.isError };
+        const resultImages =
+          "images" in result && Array.isArray(result.images)
+            ? result.images
+            : undefined;
+        const answer = {
+          text: result.text,
+          isError: result.isError,
+          ...(resultImages && resultImages.length > 0
+            ? { images: resultImages }
+            : {}),
+        };
         await approval?.complete(answer);
         return answer;
       } catch (error) {

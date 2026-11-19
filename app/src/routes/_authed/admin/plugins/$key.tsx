@@ -17,6 +17,7 @@ import {
   BrokeredAccountRow,
   useBrokeredAccount,
 } from "@/components/plugins/brokered-account-row";
+import { McpEnhancementsCard } from "@/components/settings/app-packages-panel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -1071,6 +1072,13 @@ function RouteComponent() {
             ))}
           </PageRows>
         </PageSection>
+      ) : null}
+
+      {server ? (
+        <McpEnhancementsCard
+          serverId={server.id}
+          toolNames={server.tools.map((tool) => tool.name)}
+        />
       ) : null}
 
       <Dialog

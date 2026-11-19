@@ -132,8 +132,8 @@ export type ComputerGatewayOptions = {
   policy: () => ActionPolicy | undefined;
   /** True on a laptop, where browsing private network addresses is required. */
   allowPrivateHosts?: boolean;
-  /** The secret that agent-computer requires on each request. */
-  token?: string;
+  /** The secret that agent-computer requires on each request (static or dynamic hot-switched). */
+  token?: string | (() => string | undefined);
   /** An injectable fetch implementation for focused gateway tests. */
   fetchImpl?: typeof fetch;
   /**

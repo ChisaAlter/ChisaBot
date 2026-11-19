@@ -197,6 +197,10 @@ import {
   isValidRecordingId,
   parseDemonstrationActionFrame,
 } from "./computer/demonstration-store";
+import {
+  createExecutionNodeStore,
+  createPgExecutionNodeStorage,
+} from "./computer/execution-node-store";
 import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
@@ -215,6 +219,7 @@ import {
 } from "./computer/policy-store";
 import {
   createComputerProvider,
+  createDynamicExecutionNodeProvider,
   describeComputerIsolation,
 } from "./computer/provider";
 import { createSnapshotStore } from "./computer/snapshot-store";
@@ -340,10 +345,26 @@ import { createPasswordStore } from "./passwords/store";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { createPersonalSources } from "./personal-sources/service";
+import {
+  createAppBuilderRoutes,
+  createAppBuilderTools,
+  createApprovedAppTools,
+} from "./plugins/app-builder";
+import {
+  createAppPackageStore,
+  createPgAppPackageStorage,
+} from "./plugins/app-package";
+import { createAppSandboxRunner } from "./plugins/app-sandbox-runner";
 import { useComposioClient } from "./plugins/composio";
 import { createComposioClient } from "./plugins/composio-adapter";
 import { connectServiceTools } from "./plugins/connect-service";
 import { backfillComposioLogos } from "./plugins/logos";
+import {
+  createMcpEnhancementRoutes,
+  createMcpEnhancementStore,
+  createPgMcpEnhancementStorage,
+  extractValidatedMcpImages,
+} from "./plugins/mcp-enhancements";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
 import {
@@ -704,14 +725,37 @@ const auth: AuthService | undefined = config.auth
       signInAuditStore,
     )
   : undefined;
+// 远程执行节点可视化热切换存储（未激活时无缝回退既有环境变量静态模式）。
+const executionNodeStore = createExecutionNodeStore({
+  storage: createPgExecutionNodeStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+  auditStore: createAuditStore(database),
+  staticFallbackProvider: config.computer?.provider ?? null,
+});
+await executionNodeStore.ensure();
+const resolveComputerToken = (): string | undefined =>
+  executionNodeStore.getActiveSync()?.token ?? config.computer?.token;
+const staticComputerProvider = config.computer
+  ? createComputerProvider(config.computer)
+  : undefined;
+
 // Each computer is pushed its network policy on the way to the action that woke it, because a
 // computer refuses every connection until one arrives (see `withPolicyPushOnWake`).
-const computerProvider = config.computer
-  ? withPolicyPushOnWake(createComputerProvider(config.computer), {
-      policyForBot: async () => NO_NETWORK_POLICY,
-      ...(config.computer.token ? { token: config.computer.token } : {}),
-    })
-  : undefined;
+const computerProvider =
+  staticComputerProvider || executionNodeStore.getActiveSync()
+    ? withPolicyPushOnWake(
+        createDynamicExecutionNodeProvider({
+          resolveActiveNode: () => executionNodeStore.getActive(),
+          ...(staticComputerProvider
+            ? { fallback: staticComputerProvider }
+            : {}),
+        }),
+        {
+          policyForBot: async () => NO_NETWORK_POLICY,
+          token: resolveComputerToken,
+        },
+      )
+    : undefined;
 
 if (computerProvider?.warm) {
   void computerProvider.warm();
@@ -977,7 +1021,7 @@ const computerGateway = computerProvider
         // sentence on that button already promised.
         pageFrames: pageFrameStore,
         allowPrivateHosts: config.computer?.allowPrivateHosts,
-        token: config.computer?.token,
+        token: resolveComputerToken,
       }),
       { pageFrames: pageFrameStore },
     )
@@ -1071,6 +1115,24 @@ const workflowEngineRef = (): WorkflowEngine => {
   return workflowEngineInstance;
 };
 
+const mcpEnhancementStore = createMcpEnhancementStore({
+  storage: createPgMcpEnhancementStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+});
+await mcpEnhancementStore.ensure();
+
+const appPackageStore = createAppPackageStore({
+  storage: createPgAppPackageStorage(database),
+  encryptionKey: config.keyEncryptionKey,
+  auditStore: bootAuditStore,
+});
+await appPackageStore.ensure();
+
+const appSandboxRunner = createAppSandboxRunner({
+  store: appPackageStore,
+  extractImages: (content) => extractValidatedMcpImages(content).images,
+});
+
 const pluginStore = createPluginStore({
   database,
   auditStore: bootAuditStore,
@@ -1078,6 +1140,7 @@ const pluginStore = createPluginStore({
   encryptionKey: config.keyEncryptionKey,
   policy: () => policyStore.get(),
   approvalGate: approvalService.gate,
+  enhancements: mcpEnhancementStore,
   // A connector send to other people asks the owner first. See plugins/share-target.ts.
   privateShareCheck: createPrivateShareCheck({
     approvals: approvalService.store,
@@ -2417,6 +2480,18 @@ const loadToolsForActor =
         },
         offerMcpAdd,
       }),
+      // 内置 app-builder 3 工具（指南 / 静态预检 / 只入目录草稿不执行）+ 已审阅批准的沙箱微应用工具。
+      ...(!imUntrusted && !isPanelRefresh
+        ? createAppBuilderTools({ store: appPackageStore, actorId })
+        : []),
+      ...(!imUntrusted && !isPanelRefresh
+        ? await createApprovedAppTools({
+            store: appPackageStore,
+            runner: appSandboxRunner,
+            botId,
+            actorId,
+          })
+        : []),
       // 实时面板（server/src/live-panels）：右栏会自己刷新的卡片，规范与 render_ui 同一套组件。
       // 后台刷新面板的无头回合（initiator 是 lp_… 的 routine）只拿 panel_update / panel_fail / panel_list，且只能动那一张：
       // 以前它也拿到 panel_refresh，刷新里又触发一次刷新，回合叠回合（2026-10-13 实测）。
@@ -5225,7 +5300,7 @@ repeatAfterEach(async () => {
 // running computer is kept on "allow all" (the upstream default with no organization row).
 startEgressPolicyPush({
   ...(computerProvider ? { provider: computerProvider } : {}),
-  ...(config.computer?.token ? { token: config.computer.token } : {}),
+  token: resolveComputerToken,
 });
 
 const demonstrationStore = createDemonstrationStore();
@@ -6243,6 +6318,28 @@ const app = createApp(
         }),
       ],
       ["/api/sharing", createSharingRoutes(sharingService, requireUser)],
+      [
+        "/api/apps",
+        createAppBuilderRoutes({
+          store: appPackageStore,
+          runner: appSandboxRunner,
+          requireUser,
+          encryptionKey: config.keyEncryptionKey,
+          publicUrl: config.publicUrl,
+          appUrl: config.appUrl,
+        }),
+      ],
+      [
+        "/api/mcp-enhancements",
+        createMcpEnhancementRoutes({
+          store: mcpEnhancementStore,
+          requireUser,
+        }),
+      ],
+      [
+        "/api/admin/execution-nodes",
+        executionNodeStore.routes(requireUser),
+      ],
     ],
   },
 );
@@ -6266,7 +6363,7 @@ const toStreamUrl = (baseUrl: string, botId: string, recordingId?: string) =>
   buildComputerStreamUrl(
     baseUrl,
     botId,
-    config.computer?.token ?? "",
+    resolveComputerToken() ?? "",
     recordingId,
   );
 
@@ -6607,6 +6704,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     void Promise.allSettled([
       voiceCallService.closeAll(),
       Promise.resolve(voiceStreamTts.close()),
+      appSandboxRunner.shutdown(),
       imService?.stopAll() ?? Promise.resolve(),
       channelActivityListener.stop(),
       policyListener.stop(),
