@@ -254,8 +254,182 @@ function winInputScript(args) {
       if (!keys) throw new OpError("key 需要 keys，例如 {ENTER} 或 ^c。");
       return `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}');`;
     }
+    case "focus": {
+      const target = String(args.app ?? args.bundleId ?? args.title ?? "")
+        .trim()
+        .replace(/'/g, "''");
+      if (!target) throw new OpError("focus 需要 app、bundleId 或 title。");
+      return `$ws = New-Object -ComObject WScript.Shell; if (-not $ws.AppActivate('${target}')) { $p = Get-Process | Where-Object { $_.ProcessName -eq '${target}' -or $_.MainWindowTitle -like '*${target}*' } | Select-Object -First 1; if (-not $p) { throw '未找到目标窗口' }; $ws.AppActivate($p.Id) | Out-Null }`;
+    }
     default:
       throw new OpError(`不支持的输入动作：${args.action}`);
+  }
+}
+
+function escapeAppleScriptString(value) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, "")
+    .replace(/\n/g, "\\n");
+}
+
+const MAC_KEY_CODES = {
+  return: 36,
+  enter: 36,
+  tab: 48,
+  space: 49,
+  escape: 53,
+  esc: 53,
+  backspace: 51,
+  delete: 51,
+  forwarddelete: 117,
+  left: 123,
+  right: 124,
+  down: 125,
+  up: 126,
+  home: 115,
+  end: 119,
+  pageup: 116,
+  pagedown: 121,
+};
+
+const MAC_MODIFIER_MAP = {
+  cmd: "command down",
+  command: "command down",
+  meta: "command down",
+  ctrl: "control down",
+  control: "control down",
+  alt: "option down",
+  option: "option down",
+  shift: "shift down",
+};
+
+/**
+ * macOS 原生输入兜底方案生成器（不依赖第三方付费工具）：
+ * - focus：AppleScript 按 bundleId 或应用名激活窗口；
+ * - type / key：AppleScript System Events keystroke / key code（完整转义防注入）；
+ * - move / click / double_click / right_click / scroll：优先 cliclick，缺失时降级 JXA CoreGraphics CGEvent。
+ */
+function macInputPlan(args = {}, { hasCliclick = false } = {}) {
+  const x = Number.isFinite(args.x) ? Math.round(args.x) : null;
+  const y = Number.isFinite(args.y) ? Math.round(args.y) : null;
+
+  switch (args.action) {
+    case "focus": {
+      const bundleId = String(args.bundleId ?? "").trim();
+      const appName = String(args.app ?? args.title ?? "").trim();
+      if (!bundleId && !appName) {
+        throw new OpError("focus 需要 bundleId 或 app 名称。");
+      }
+      const script = bundleId
+        ? `tell application id "${escapeAppleScriptString(bundleId)}" to activate`
+        : `tell application "${escapeAppleScriptString(appName)}" to activate`;
+      return { file: "osascript", args: ["-e", script], via: "osascript" };
+    }
+    case "type": {
+      const text = String(args.text ?? "");
+      const script = `tell application "System Events" to keystroke "${escapeAppleScriptString(text)}"`;
+      return { file: "osascript", args: ["-e", script], via: "osascript" };
+    }
+    case "key": {
+      const raw = String(args.keys ?? "").trim();
+      if (!raw) throw new OpError("key 需要 keys，例如 Return 或 cmd+c。");
+      const parts = raw
+        .split("+")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const keyToken = parts.pop() || "";
+      const modifiers = parts
+        .map((mod) => MAC_MODIFIER_MAP[mod.toLowerCase()])
+        .filter(Boolean);
+      const usingClause = modifiers.length
+        ? ` using {${modifiers.join(", ")}}`
+        : "";
+      const code = MAC_KEY_CODES[keyToken.toLowerCase()];
+      const script =
+        code !== undefined
+          ? `tell application "System Events" to key code ${code}${usingClause}`
+          : `tell application "System Events" to keystroke "${escapeAppleScriptString(keyToken)}"${usingClause}`;
+      return { file: "osascript", args: ["-e", script], via: "osascript" };
+    }
+    case "move":
+    case "click":
+    case "double_click":
+    case "right_click": {
+      if (x === null || y === null) {
+        throw new OpError(`${args.action} 需要 x 和 y 坐标。`);
+      }
+      if (hasCliclick) {
+        const prefix =
+          args.action === "move"
+            ? "m"
+            : args.action === "double_click"
+              ? "dc"
+              : args.action === "right_click"
+                ? "rc"
+                : "c";
+        return {
+          file: "cliclick",
+          args: [`${prefix}:${x},${y}`],
+          via: "cliclick",
+        };
+      }
+      const jxaLines = [
+        "ObjC.import('CoreGraphics');",
+        `const pt = $.CGPointMake(${x}, ${y});`,
+      ];
+      if (args.action === "move") {
+        jxaLines.push(
+          "const ev = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, pt, $.kCGMouseButtonLeft);",
+          "$.CGEventPost($.kCGHIDEventTap, ev);",
+        );
+      } else if (args.action === "right_click") {
+        jxaLines.push(
+          "const d = $.CGEventCreateMouseEvent(null, $.kCGEventRightMouseDown, pt, $.kCGMouseButtonRight);",
+          "const u = $.CGEventCreateMouseEvent(null, $.kCGEventRightMouseUp, pt, $.kCGMouseButtonRight);",
+          "$.CGEventPost($.kCGHIDEventTap, d); $.CGEventPost($.kCGHIDEventTap, u);",
+        );
+      } else if (args.action === "double_click") {
+        jxaLines.push(
+          "for (let i = 1; i <= 2; i++) {",
+          "  const d = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);",
+          "  const u = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);",
+          "  $.CGEventSetIntegerValueField(d, $.kCGMouseEventClickState, i);",
+          "  $.CGEventSetIntegerValueField(u, $.kCGMouseEventClickState, i);",
+          "  $.CGEventPost($.kCGHIDEventTap, d); $.CGEventPost($.kCGHIDEventTap, u);",
+          "}",
+        );
+      } else {
+        jxaLines.push(
+          "const d = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);",
+          "const u = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);",
+          "$.CGEventPost($.kCGHIDEventTap, d); $.CGEventPost($.kCGHIDEventTap, u);",
+        );
+      }
+      return {
+        file: "osascript",
+        args: ["-l", "JavaScript", "-e", jxaLines.join(" ")],
+        via: "jxa-coregraphics",
+      };
+    }
+    case "scroll": {
+      const amount = Number.isFinite(args.amount)
+        ? Math.round(args.amount)
+        : -3;
+      const moveStmt =
+        x !== null && y !== null
+          ? `const m = $.CGEventCreateMouseEvent(null, $.kCGEventMouseMoved, $.CGPointMake(${x}, ${y}), $.kCGMouseButtonLeft); $.CGEventPost($.kCGHIDEventTap, m);`
+          : "";
+      const jxa = `ObjC.import('CoreGraphics'); ${moveStmt} const s = $.CGEventCreateScrollWheelEvent(null, $.kCGScrollEventUnitLine, 1, ${amount}); $.CGEventPost($.kCGHIDEventTap, s);`;
+      return {
+        file: "osascript",
+        args: ["-l", "JavaScript", "-e", jxa],
+        via: "jxa-coregraphics",
+      };
+    }
+    default:
+      throw new OpError(`不支持的 macOS 输入动作：${args.action}`);
   }
 }
 
@@ -484,6 +658,24 @@ function createOps(options = {}) {
         throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
       return { done: true, action: args.action };
     }
+    if (platform === "darwin") {
+      const plan = macInputPlan(args, {
+        hasCliclick: Boolean(which("cliclick")),
+      });
+      const result = await runProcess(plan.file, plan.args, {
+        timeoutMs: 20_000,
+        platform: "darwin",
+      });
+      if (result.exitCode !== 0) {
+        const hint = /not allowed assistive access|1002|accessibility/i.test(
+          result.stderr,
+        )
+          ? "请在 macOS「系统设置 → 隐私与安全性 → 辅助功能」中允许 ChisaBot 控制电脑。"
+          : result.stderr.slice(0, 300);
+        throw new OpError(`macOS 输入失败：${hint}`);
+      }
+      return { done: true, action: args.action, via: plan.via };
+    }
     if (which("xdotool") && process.env.DISPLAY) {
       const map = {
         move: ["mousemove", String(args.x), String(args.y)],
@@ -507,6 +699,12 @@ function createOps(options = {}) {
         scroll: ["click", (args.amount ?? -3) > 0 ? "4" : "5"],
         type: ["type", "--", String(args.text ?? "")],
         key: ["key", String(args.keys ?? "")],
+        focus: [
+          "search",
+          "--name",
+          String(args.app ?? args.title ?? ""),
+          "windowactivate",
+        ],
       };
       const argv = map[args.action];
       if (!argv) throw new OpError(`不支持的输入动作：${args.action}`);
@@ -699,6 +897,8 @@ module.exports = {
   runProcess,
   encodePowerShell,
   winInputScript,
+  macInputPlan,
+  escapeAppleScriptString,
   escapeSendKeys,
   OpError,
 };

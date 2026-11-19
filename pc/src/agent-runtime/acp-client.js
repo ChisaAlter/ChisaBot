@@ -14,13 +14,22 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { isInside, real } = require("./profile");
 
-const PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"];
+const PROXY_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+];
 
 function killTree(child) {
   if (!child?.pid) return;
   try {
     if (process.platform === "win32") {
-      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+      });
     } else {
       process.kill(-child.pid, "SIGKILL");
     }
@@ -41,7 +50,11 @@ function sanitizeAntigravityEnv(env, fixProxy = true) {
   if (fixProxy !== false) {
     for (const key of PROXY_KEYS) {
       const val = next[key];
-      if (typeof val === "string" && val.trim() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(val.trim())) {
+      if (
+        typeof val === "string" &&
+        val.trim() &&
+        !/^[a-z][a-z0-9+.-]*:\/\//i.test(val.trim())
+      ) {
         next[key] = `http://${val.trim()}`;
       }
     }
@@ -49,7 +62,10 @@ function sanitizeAntigravityEnv(env, fixProxy = true) {
   return next;
 }
 
-function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLine }) {
+function createJsonRpcConnection(
+  child,
+  { onNotification, onRequest, onStderrLine },
+) {
   let seq = 0;
   const pending = new Map();
   let closed = false;
@@ -106,26 +122,46 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
         continue;
       }
       if (!msg || typeof msg !== "object") continue;
-      if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && !msg.method) {
+      if (
+        msg.id !== undefined &&
+        (msg.result !== undefined || msg.error !== undefined) &&
+        !msg.method
+      ) {
         const entry = pending.get(msg.id);
         if (!entry) continue;
         pending.delete(msg.id);
         if (msg.error) {
-          const message = typeof msg.error.message === "string" ? msg.error.message : JSON.stringify(msg.error);
-          entry.reject(Object.assign(new Error(message), { code: msg.error.code, data: msg.error.data }));
+          const message =
+            typeof msg.error.message === "string"
+              ? msg.error.message
+              : JSON.stringify(msg.error);
+          entry.reject(
+            Object.assign(new Error(message), {
+              code: msg.error.code,
+              data: msg.error.data,
+            }),
+          );
         } else {
           entry.resolve(msg.result);
         }
       } else if (msg.id !== undefined && typeof msg.method === "string") {
         Promise.resolve()
-          .then(() => (onRequest ? onRequest(msg.method, msg.params || {}) : Promise.reject(new Error(`不支持的客户端方法: ${msg.method}`))))
+          .then(() =>
+            onRequest
+              ? onRequest(msg.method, msg.params || {})
+              : Promise.reject(new Error(`不支持的客户端方法: ${msg.method}`)),
+          )
           .then(
-            (result) => sendRaw({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }),
+            (result) =>
+              sendRaw({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }),
             (err) =>
               sendRaw({
                 jsonrpc: "2.0",
                 id: msg.id,
-                error: { code: -32000, message: err?.message ? err.message : String(err) },
+                error: {
+                  code: -32000,
+                  message: err?.message ? err.message : String(err),
+                },
               }),
           );
       } else if (typeof msg.method === "string") {
@@ -156,7 +192,9 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
   }
 
   child.on("error", (err) => closeAll(err));
-  child.on("close", (code) => closeAll(new Error(`ACP 进程已退出（退出码 ${code ?? "null"}）`)));
+  child.on("close", (code) =>
+    closeAll(new Error(`ACP 进程已退出（退出码 ${code ?? "null"}）`)),
+  );
 
   return { request, notify, closeAll };
 }
@@ -164,8 +202,10 @@ function createJsonRpcConnection(child, { onNotification, onRequest, onStderrLin
 function extractTextFromContent(content) {
   if (!content) return "";
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(extractTextFromContent).filter(Boolean).join("");
-  if (content.type === "text" && typeof content.text === "string") return content.text;
+  if (Array.isArray(content))
+    return content.map(extractTextFromContent).filter(Boolean).join("");
+  if (content.type === "text" && typeof content.text === "string")
+    return content.text;
   if (typeof content.text === "string") return content.text;
   return "";
 }
@@ -177,7 +217,12 @@ function mapDisposablePath(rawPath, workdir, origin, disposable) {
   const norm = (p) => (win ? path.resolve(p).toLowerCase() : path.resolve(p));
   const origNorm = norm(origin);
   const targNorm = norm(target);
-  if (targNorm === origNorm || targNorm.startsWith(origNorm.endsWith(path.sep) ? origNorm : origNorm + path.sep)) {
+  if (
+    targNorm === origNorm ||
+    targNorm.startsWith(
+      origNorm.endsWith(path.sep) ? origNorm : origNorm + path.sep,
+    )
+  ) {
     return path.join(workdir, path.relative(origNorm, targNorm));
   }
   return target;
@@ -186,7 +231,13 @@ function mapDisposablePath(rawPath, workdir, origin, disposable) {
 /**
  * 探活 ACP 智能体：启动进程并发 initialize 请求，读取版本与认证信息后立即退出。
  */
-async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), timeoutMs = 10_000 }) {
+async function probeAcpAgent({
+  file,
+  args = [],
+  env = {},
+  cwd = process.cwd(),
+  timeoutMs = 10_000,
+}) {
   const win = process.platform === "win32";
   let child;
   let stderrTail = "";
@@ -221,18 +272,25 @@ async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), t
       {
         protocolVersion: 1,
         clientInfo: { name: "ChisaBot", version: "1.0.0" },
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          terminal: true,
+        },
       },
       timeoutMs,
     );
     const info = init?.agentInfo || {};
-    const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
+    const authMethods = Array.isArray(init?.authMethods)
+      ? init.authMethods
+      : [];
     const version = info.version ? String(info.version) : null;
     return {
       status: "available",
       version,
       authenticated: authMethods.length === 0 ? true : null,
-      authLabel: authMethods.length ? `支持 ${authMethods.map((m) => m.name || m.id).join(" / ")}` : "ACP 就绪",
+      authLabel: authMethods.length
+        ? `支持 ${authMethods.map((m) => m.name || m.id).join(" / ")}`
+        : "ACP 就绪",
       message: info.title || info.name || null,
     };
   } catch (error) {
@@ -241,7 +299,10 @@ async function probeAcpAgent({ file, args = [], env = {}, cwd = process.cwd(), t
       version: null,
       authenticated: null,
       authLabel: null,
-      message: (stderrTail.trim() || error?.message || String(error)).slice(0, 300),
+      message: (stderrTail.trim() || error?.message || String(error)).slice(
+        0,
+        300,
+      ),
     };
   } finally {
     rpc.closeAll();
@@ -266,9 +327,11 @@ async function runAcpSession({
   model = null,
   authMethodId = null,
   mcpServers = [],
+  resumeSessionId = null,
   timeoutMs = 600_000,
   signal,
   approve,
+  askUser,
   emit,
 }) {
   const win = process.platform === "win32";
@@ -314,18 +377,36 @@ async function runAcpSession({
     if (isRead) {
       if (!targetPath || isInside(real(targetPath), scope)) return true;
       if (!approve) return false;
-      emit("approval", `需要你批准：${summaryText}（不在工作区文件夹里）`, "等待你批准");
-      return !!(await approve("read_file", `${summaryText}（不在工作区文件夹里）`));
+      emit(
+        "approval",
+        `需要你批准：${summaryText}（不在工作区文件夹里）`,
+        "等待你批准",
+      );
+      return !!(await approve(
+        "read_file",
+        `${summaryText}（不在工作区文件夹里）`,
+      ));
     }
     if (profile === "readonly") {
       if (!approve) return false;
-      emit("approval", `需要你批准：${summaryText}（当前是只读档位）`, "等待你批准");
+      emit(
+        "approval",
+        `需要你批准：${summaryText}（当前是只读档位）`,
+        "等待你批准",
+      );
       return !!(await approve(operation, `${summaryText}（当前是只读档位）`));
     }
     if (targetPath && !isInside(real(targetPath), scope)) {
       if (!approve) return false;
-      emit("approval", `需要你批准：${summaryText}（不在工作区文件夹里）`, "等待你批准");
-      return !!(await approve(operation, `${summaryText}（不在工作区文件夹里）`));
+      emit(
+        "approval",
+        `需要你批准：${summaryText}（不在工作区文件夹里）`,
+        "等待你批准",
+      );
+      return !!(await approve(
+        operation,
+        `${summaryText}（不在工作区文件夹里）`,
+      ));
     }
     return true;
   }
@@ -369,36 +450,115 @@ async function runAcpSession({
           if (id) seenToolIds.add(`${id}:${title}`);
           emit("tool", String(title), String(title));
         }
-      } else if (kind === "plan" && Array.isArray(update.entries) && update.entries.length) {
-        const active = update.entries.find((e) => e.status === "in_progress") || update.entries[0];
+      } else if (
+        kind === "plan" &&
+        Array.isArray(update.entries) &&
+        update.entries.length
+      ) {
+        const active =
+          update.entries.find((e) => e.status === "in_progress") ||
+          update.entries[0];
         if (active?.content) {
-          emit("status", `计划：${String(active.content).slice(0, 140)}`, String(active.content).slice(0, 100));
+          emit(
+            "status",
+            `计划：${String(active.content).slice(0, 140)}`,
+            String(active.content).slice(0, 100),
+          );
         }
       }
     },
     async onRequest(method, params) {
+      if (
+        method === "item/tool/requestUserInput" ||
+        method === "session/request_user_input"
+      ) {
+        const rawQuestions = Array.isArray(params.questions)
+          ? params.questions
+          : [];
+        if (!askUser || !rawQuestions.length) {
+          throw new Error("当前会话不支持交互式用户追问。");
+        }
+        const questions = rawQuestions.map((q, index) => ({
+          id: String(q?.id || `q_${index + 1}`),
+          ...(typeof q?.header === "string" && q.header.trim()
+            ? { header: q.header.trim() }
+            : {}),
+          question: String(q?.question || q?.prompt || "请补充决策信息"),
+          ...(Array.isArray(q?.options)
+            ? {
+                options: q.options
+                  .filter((opt) => opt && typeof opt.label === "string")
+                  .map((opt) => ({
+                    label: String(opt.label),
+                    ...(typeof opt.description === "string"
+                      ? { description: opt.description }
+                      : {}),
+                  })),
+              }
+            : {}),
+          allowMultiple: q?.allowMultiple === true || q?.multiSelect === true,
+          required: q?.required !== false,
+        }));
+        const reply = await askUser(questions);
+        if (reply?.cancelled) {
+          throw new Error(reply.reason || "用户取消了追问。");
+        }
+        const rawAnswers =
+          reply?.answers && typeof reply.answers === "object"
+            ? reply.answers
+            : {};
+        return {
+          answers: Object.fromEntries(
+            questions.map((q) => [
+              q.id,
+              {
+                answers: Array.isArray(rawAnswers[q.id])
+                  ? rawAnswers[q.id].map((v) => String(v))
+                  : [],
+              },
+            ]),
+          ),
+        };
+      }
+
       if (method === "session/request_permission") {
         const options = Array.isArray(params.options) ? params.options : [];
         const allowOpt =
           options.find((o) => o.kind === "allow_once") ||
           options.find((o) => o.kind === "allow_always") ||
-          options.find((o) => /allow|approve|accept|yes/i.test(`${o.kind || ""} ${o.optionId || ""} ${o.name || ""}`)) ||
+          options.find((o) =>
+            /allow|approve|accept|yes/i.test(
+              `${o.kind || ""} ${o.optionId || ""} ${o.name || ""}`,
+            ),
+          ) ||
           options[0];
         const rejectOpt =
           options.find((o) => o.kind === "reject_once") ||
-          options.find((o) => /reject|deny|cancel|no/i.test(`${o.kind || ""} ${o.optionId || ""} ${o.name || ""}`));
+          options.find((o) =>
+            /reject|deny|cancel|no/i.test(
+              `${o.kind || ""} ${o.optionId || ""} ${o.name || ""}`,
+            ),
+          );
 
         const toolCall = params.toolCall || {};
         const title = String(toolCall.title || toolCall.kind || "执行工具操作");
-        const isReadKind = /^(read|search|fetch|think)$/i.test(String(toolCall.kind || ""));
+        const isReadKind = /^(read|search|fetch|think)$/i.test(
+          String(toolCall.kind || ""),
+        );
         let allowed = false;
         if (skipPermissions || profile === "full") {
           allowed = true;
         } else if (isReadKind) {
           allowed = true;
         } else if (profile === "workspace") {
-          const locations = Array.isArray(toolCall.locations) ? toolCall.locations : [];
-          const allInScope = locations.every((loc) => !loc?.path || isInside(real(path.resolve(workdir, loc.path)), scope));
+          const locations = Array.isArray(toolCall.locations)
+            ? toolCall.locations
+            : [];
+          const allInScope = locations.every(
+            (loc) =>
+              !loc?.path ||
+              isInside(real(path.resolve(workdir, loc.path)), scope),
+          );
           if (allInScope && !(disposable && origin && title.includes(origin))) {
             allowed = true;
           }
@@ -408,16 +568,25 @@ async function runAcpSession({
           allowed = !!(await approve("shell", title));
         }
         if (allowed && allowOpt) {
-          return { outcome: { outcome: "selected", optionId: allowOpt.optionId } };
+          return {
+            outcome: { outcome: "selected", optionId: allowOpt.optionId },
+          };
         }
         if (rejectOpt) {
-          return { outcome: { outcome: "selected", optionId: rejectOpt.optionId } };
+          return {
+            outcome: { outcome: "selected", optionId: rejectOpt.optionId },
+          };
         }
         return { outcome: { outcome: "cancelled" } };
       }
 
       if (method === "fs/read_text_file") {
-        const target = mapDisposablePath(params.path, workdir, origin, disposable);
+        const target = mapDisposablePath(
+          params.path,
+          workdir,
+          origin,
+          disposable,
+        );
         const ok = await checkGate("read_file", target, `读取 ${params.path}`);
         if (!ok) throw new Error("用户拒绝读取该工作区外文件");
         const content = await fsp.readFile(target, "utf8");
@@ -431,19 +600,32 @@ async function runAcpSession({
       }
 
       if (method === "fs/write_text_file") {
-        const target = mapDisposablePath(params.path, workdir, origin, disposable);
+        const target = mapDisposablePath(
+          params.path,
+          workdir,
+          origin,
+          disposable,
+        );
         const ok = await checkGate("write_file", target, `写入 ${params.path}`);
         if (!ok) throw new Error("用户拒绝写入该文件");
         await fsp.mkdir(path.dirname(target), { recursive: true });
         await fsp.writeFile(target, String(params.content ?? ""), "utf8");
-        emit("tool", `写入 ${path.relative(workdir, target) || target}`, `写入 ${path.basename(target)}`);
+        emit(
+          "tool",
+          `写入 ${path.relative(workdir, target) || target}`,
+          `写入 ${path.basename(target)}`,
+        );
         return {};
       }
 
       if (method === "terminal/create") {
         const cmd = String(params.command || "");
-        const cmdArgs = Array.isArray(params.args) ? params.args.map(String) : [];
-        const termCwd = params.cwd ? mapDisposablePath(params.cwd, workdir, origin, disposable) : workdir;
+        const cmdArgs = Array.isArray(params.args)
+          ? params.args.map(String)
+          : [];
+        const termCwd = params.cwd
+          ? mapDisposablePath(params.cwd, workdir, origin, disposable)
+          : workdir;
         const label = `运行 ${cmd} ${cmdArgs.join(" ")}`.trim().slice(0, 140);
         const ok = await checkGate("shell", termCwd, label);
         if (!ok) throw new Error("用户拒绝运行该终端命令");
@@ -463,7 +645,10 @@ async function runAcpSession({
           shell: cmdArgs.length === 0 || (win && /\.(cmd|bat)$/i.test(cmd)),
           stdio: ["ignore", "pipe", "pipe"],
         });
-        const byteLimit = Math.min(2_000_000, Math.max(8192, Number(params.outputByteLimit) || 256_000));
+        const byteLimit = Math.min(
+          2_000_000,
+          Math.max(8192, Number(params.outputByteLimit) || 256_000),
+        );
         const state = {
           child: proc,
           output: "",
@@ -548,7 +733,10 @@ async function runAcpSession({
       {
         protocolVersion: 1,
         clientInfo: { name: "ChisaBot", version: "1.0.0" },
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientCapabilities: {
+          fs: { readTextFile: true, writeTextFile: true },
+          terminal: true,
+        },
       },
       30_000,
     );
@@ -560,22 +748,62 @@ async function runAcpSession({
     );
 
     if (authMethodId) {
-      await rpc.request("authenticate", { methodId: authMethodId }, 30_000).catch(() => {});
+      await rpc
+        .request("authenticate", { methodId: authMethodId }, 30_000)
+        .catch(() => {});
     }
 
-    const created = await rpc.request(
-      "session/new",
-      {
-        cwd: workdir,
-        mcpServers: mcpServers || [],
-      },
-      45_000,
-    );
-    sessionId = created?.sessionId;
+    if (resumeSessionId) {
+      let resumed = false;
+      for (const methodName of ["session/load", "thread/resume"]) {
+        try {
+          const loaded = await rpc.request(
+            methodName,
+            {
+              sessionId: resumeSessionId,
+              threadId: resumeSessionId,
+              cwd: workdir,
+              mcpServers: mcpServers || [],
+            },
+            30_000,
+          );
+          sessionId =
+            loaded?.sessionId || loaded?.thread?.id || resumeSessionId;
+          resumed = true;
+          emit("status", `已续接 ACP 上下文（${sessionId}）`, "已续接上下文");
+          break;
+        } catch {
+          // 当前 ACP 实现不支持该续接方法时尝试下一个或新建会话
+        }
+      }
+      if (!resumed) {
+        const created = await rpc.request(
+          "session/new",
+          {
+            cwd: workdir,
+            mcpServers: mcpServers || [],
+          },
+          45_000,
+        );
+        sessionId = created?.sessionId;
+      }
+    } else {
+      const created = await rpc.request(
+        "session/new",
+        {
+          cwd: workdir,
+          mcpServers: mcpServers || [],
+        },
+        45_000,
+      );
+      sessionId = created?.sessionId;
+    }
     if (!sessionId) throw new Error("ACP 智能体未返回有效的 sessionId");
 
     if (model) {
-      await rpc.request("session/set_model", { sessionId, modelId: model }, 10_000).catch(() => {});
+      await rpc
+        .request("session/set_model", { sessionId, modelId: model }, 10_000)
+        .catch(() => {});
     }
 
     const promptResult = await rpc.request(
@@ -590,20 +818,27 @@ async function runAcpSession({
     const stopReason = promptResult?.stopReason;
     return {
       exitCode: 0,
-      summary: fullText.trim() || `（ACP 会话完成${stopReason ? `：${stopReason}` : ""}）`,
+      summary:
+        fullText.trim() ||
+        `（ACP 会话完成${stopReason ? `：${stopReason}` : ""}）`,
       isError: false,
       stderrTail,
+      sessionId,
     };
   } catch (error) {
     flushTextLine(true);
     if (signal?.aborted) {
-      throw signal.reason instanceof Error ? signal.reason : new Error("已停止");
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new Error("已停止");
     }
     return {
       exitCode: 1,
       summary: fullText.trim(),
       isError: true,
-      stderrTail: stderrTail || (error?.message ? error.message : String(error)),
+      stderrTail:
+        stderrTail || (error?.message ? error.message : String(error)),
+      sessionId,
     };
   } finally {
     clearTimeout(timer);

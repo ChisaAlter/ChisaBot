@@ -54,6 +54,9 @@ const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
 const desktopPrefs = require("./desktop-prefs");
+const { createDesktopBrowserBridgeClient } = require("./browser-bridge");
+const { createAccessibilityBridge } = require("./accessibility-bridge");
+const { createDiagnosticsRingBuffer } = require("./diagnostics-log");
 const buildConfig = require("./build-config");
 const BUILD = buildConfig.load();
 const pkg = require("../package.json");
@@ -206,6 +209,21 @@ let approvalWindow = null;
 let currentApproval = null;
 let updater = null;
 let updateWindow = null;
+const diagnosticsLog = createDiagnosticsRingBuffer();
+const accessibilityBridge = createAccessibilityBridge();
+const browserBridge = createDesktopBrowserBridgeClient({
+  getGrantedScopes: () => (Array.isArray(agent?.device?.grantedScopes) ? agent.device.grantedScopes : []),
+  confirmApproval: (req) =>
+    confirmLocal({
+      title: req.kind === "passkey_forward" ? "允许本机通行密钥验证？" : "允许导入单域名登录态？",
+      description:
+        req.kind === "passkey_forward"
+          ? `云端浏览器请求在本机完成 ${req.origin}（rpId: ${req.rpId}）的通行密钥 ${req.ceremonyKind} 操作。`
+          : `云端浏览器请求从「${req.profileLabel}」导入 ${req.origin} 的登录 Cookie（仅限该单一域名）。`,
+      confirmLabel: "允许本次",
+    }),
+  log: (entry) => diagnosticsLog.record(entry),
+});
 
 function clientInfo() {
   return {
@@ -820,8 +838,23 @@ function startAgent() {
   });
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime();
+  const handleExtra = (message) => {
+    if (message?.type === "desktop_browser_cookie_request") {
+      void browserBridge.handleCookieApprovalRequest(message).then((decision) => {
+        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
+      });
+      return true;
+    }
+    if (message?.type === "desktop_browser_webauthn_request") {
+      void browserBridge.handleWebAuthnRequest(message).then((result) => {
+        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
+      });
+      return true;
+    }
+    return agentRuntime.onExtra(message);
+  };
   agent = createNodeAgent({
-    onExtra: agentRuntime.onExtra,
+    onExtra: handleExtra,
     serverUrl: local.serverUrl,
     getToken: () => config.getToken(),
     ops,
@@ -843,6 +876,7 @@ function startAgent() {
   agentRuntime.bind(agent, { isPaused: () => !!config.get().localPaused });
   agent.events.on("state", (event) => {
     agentDetail = event?.detail ? String(event.detail) : event?.state === "online" ? "" : agentDetail;
+    diagnosticsLog.record({ category: "connection", event: "agent_state", message: event?.state || "unknown", detail: event?.detail ? { detail: event.detail } : undefined });
     refreshTray();
     if (event && event.state === "online" && config.get().autoUpdate !== false) {
       void updater?.check();
@@ -1664,6 +1698,14 @@ function registerIpc() {
     }
     return true;
   });
+  handleWeb("pc:diagnostics-export", () =>
+    diagnosticsLog.buildExportPayload({
+      clientVersion: pkg.version,
+      agentState: agent?.state || "offline",
+      accessibilityGrants: accessibilityBridge.authorizer.snapshot().grants.length,
+    }),
+  );
+  handleWeb("pc:browser-profiles", () => browserBridge.discoverProfiles());
 }
 
 // ---------- 生命周期 ----------

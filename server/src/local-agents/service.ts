@@ -43,12 +43,16 @@ import {
   LOCAL_AGENT_KINDS,
   LOCAL_AGENT_MESSAGE_TYPES,
   LOCAL_AGENT_RESULT_MARKER,
+  type LocalAgentContinueMessage,
   type LocalAgentDiff,
   type LocalAgentKind,
   type LocalAgentLine,
+  type LocalAgentPendingInput,
+  type LocalAgentQuestion,
   type LocalAgentRunMessage,
   type LocalAgentTaskStatus,
   type LocalAgentTaskView,
+  MAX_LOCAL_AGENT_WAIT_MS,
   narrowerProfile,
   PROFILE_INFO,
   profileAllows,
@@ -192,6 +196,46 @@ export const BUILTIN_TOOLS: Array<{
       additionalProperties: false,
     },
   },
+  {
+    name: "ask_user",
+    description:
+      "当任务存在关键歧义或需要用户拍板决策时，向用户发送结构化追问卡并等待用户答复后继续执行。",
+    parameters: {
+      type: "object",
+      properties: {
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              header: { type: "string" },
+              question: { type: "string" },
+              options: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["label"],
+                  additionalProperties: false,
+                },
+              },
+              allowMultiple: { type: "boolean" },
+            },
+            required: ["id", "question"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["questions"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 type SettingsRow = {
@@ -242,6 +286,9 @@ type TaskRow = {
   started_at: Date | string | null;
   finished_at: Date | string | null;
   capacity_active: boolean;
+  session_id?: string | null;
+  turn_count?: number | null;
+  pending_input?: LocalAgentPendingInput | null;
 };
 
 function iso(value: Date | string): string;
@@ -299,6 +346,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     flush?: ReturnType<typeof setTimeout>;
     approvalId: string | null;
     approvalSummary: string | null;
+    pendingInput: LocalAgentPendingInput | null;
+    sessionId: string | null;
+    revision: number;
     timer?: ReturnType<typeof setTimeout>;
     deadline?: ReturnType<typeof executionDeadline>;
     dispatching?: boolean;
@@ -469,6 +519,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS parent_task_id text;
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS depth integer NOT NULL DEFAULT 0;
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS invocation_mode text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS session_id text;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS turn_count integer NOT NULL DEFAULT 1;
+      ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS pending_input jsonb;
     `);
     await instancesStore.ensure();
     if (serverHost) {
@@ -484,10 +537,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   /** Never resend an already dispatched task. Its device receipt releases uncertain occupancy. */
   async function recover(): Promise<number> {
     const rows = await sql.unsafe<{ id: string }[]>(
-      `UPDATE chisabot_local_agent_tasks SET status = 'failed', error = CASE WHEN capacity_active
+      `UPDATE chisabot_local_agent_tasks SET status = 'failed', pending_input = NULL, error = CASE WHEN capacity_active
          THEN '服务重启，已请求停止原设备任务；设备确认前保留执行位，请先核对设备结果。'
          ELSE '服务重启，原审批已失效，任务没有继续。' END, finished_at = now(), updated_at = now()
-       WHERE status IN ('pending_approval','running') OR (status='starting' AND capacity_active) RETURNING id`,
+       WHERE status IN ('pending_approval','running','needs_input') OR (status='starting' AND capacity_active) RETURNING id`,
     );
     for (const row of await sql.unsafe<TaskRow[]>(
       "SELECT * FROM chisabot_local_agent_tasks WHERE capacity_active AND status='failed'",
@@ -793,6 +846,14 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       error: row.error,
       approvalId: state?.approvalId ?? null,
       approvalSummary: state?.approvalSummary ?? null,
+      pendingInput: state?.pendingInput ?? row.pending_input ?? null,
+      sessionId: state?.sessionId ?? row.session_id ?? null,
+      turnCount: Number(row.turn_count ?? 1),
+      continuable:
+        row.status === "done" ||
+        row.status === "failed" ||
+        row.status === "cancelled" ||
+        row.status === "needs_input",
       resultMessageId: row.result_message_id,
       createdAt: iso(row.created_at),
       startedAt: iso(row.started_at),
@@ -810,6 +871,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         step: null,
         approvalId: null,
         approvalSummary: null,
+        pendingInput: null,
+        sessionId: null,
+        revision: 0,
       };
       live.set(id, state);
     }
@@ -851,6 +915,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     if (state.lines.length > STORED_LINES)
       state.lines.splice(0, state.lines.length - STORED_LINES);
     state.count++;
+    state.revision++;
     if (step) state.step = clip(step, 200);
     scheduleFlush(id);
   }
@@ -865,13 +930,18 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     for (const [key, value] of Object.entries(extra)) {
       params.push(value);
       sets.push(
-        `${key} = $${params.length}${key === "diff" ? "::text::jsonb" : ""}`,
+        `${key} = $${params.length}${key === "diff" || key === "pending_input" ? "::text::jsonb" : ""}`,
       );
     }
-    await sql.unsafe(
-      `UPDATE chisabot_local_agent_tasks SET ${sets.join(", ")} WHERE id = $1`,
+    const rows = await sql.unsafe<TaskRow[]>(
+      `UPDATE chisabot_local_agent_tasks SET ${sets.join(", ")} WHERE id = $1 RETURNING *`,
       params as never[],
     );
+    const updated = rows[0];
+    if (updated) {
+      liveOf(id).revision++;
+      notifyTaskWaiters(updated);
+    }
   }
 
   async function finish(
@@ -881,6 +951,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       summary?: string | null;
       error?: string | null;
       diff?: LocalAgentDiff | null;
+      sessionId?: string | null;
       deviceConfirmed?: boolean;
       requestDeviceStop?: string;
     },
@@ -893,9 +964,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     state?.deadline?.cancel();
     const rows = await sql.unsafe<TaskRow[]>(
       `UPDATE chisabot_local_agent_tasks SET status = $2, summary = $3, error = $4, diff = coalesce($5::text::jsonb, diff), finished_at = now(), updated_at = now(),
-         transcript = coalesce($6::text::jsonb, transcript), line_count = coalesce($7, line_count), step = NULL,
+         transcript = coalesce($6::text::jsonb, transcript), line_count = coalesce($7, line_count), step = NULL, pending_input = NULL,
+         session_id = coalesce($9, session_id),
          capacity_active = CASE WHEN $8 THEN false ELSE capacity_active END
-       WHERE id = $1 AND status IN ('pending_approval','starting','running') RETURNING *`,
+       WHERE id = $1 AND status IN ('pending_approval','starting','running','needs_input') RETURNING *`,
       [
         id,
         status,
@@ -905,6 +977,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         state ? JSON.stringify(state.lines.slice(-STORED_LINES)) : null,
         state ? state.count : null,
         fields.deviceConfirmed === true && !model,
+        fields.sessionId ?? state?.sessionId ?? null,
       ],
     );
     // Order Stop after the durable transition, serialized with dispatch's final row lock.
@@ -1242,10 +1315,17 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const active = ACTIVE_LOCAL_TASK.includes(row.status);
     switch (message.type) {
       case "agent_started":
-        if (active && row.capacity_active)
+        if (active && row.capacity_active) {
+          const sid =
+            typeof message.sessionId === "string" && message.sessionId.trim()
+              ? message.sessionId.trim().slice(0, 200)
+              : null;
+          if (sid) liveOf(taskId).sessionId = sid;
           await setStatus(taskId, "running", {
             started_at: new Date().toISOString(),
+            ...(sid ? { session_id: sid } : {}),
           });
+        }
         return;
       case "agent_event":
         if (!active || !row.capacity_active) return;
@@ -1255,14 +1335,22 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           });
         pushLine(
           taskId,
-          (["text", "tool", "status", "stderr", "approval"].includes(
-            String(message.kind),
-          )
+          ([
+            "text",
+            "tool",
+            "status",
+            "stderr",
+            "approval",
+            "question",
+          ].includes(String(message.kind))
             ? message.kind
             : "text") as LocalAgentLine["kind"],
           String(message.text ?? ""),
           typeof message.step === "string" ? message.step : null,
         );
+        if (waiters.get(taskId)?.size) {
+          notifyTaskWaiters(row);
+        }
         return;
       case "agent_done": {
         const diff =
@@ -1271,6 +1359,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
             : null;
         const ok = message.ok === true;
         const stopped = message.stopped === true;
+        const sid =
+          typeof message.sessionId === "string" && message.sessionId.trim()
+            ? message.sessionId.trim().slice(0, 200)
+            : null;
         await finish(taskId, ok ? "done" : stopped ? "cancelled" : "failed", {
           summary:
             typeof message.summary === "string"
@@ -1280,6 +1372,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
             ? null
             : clip(String(message.error ?? "本地 agent 没有完成。"), 1500),
           diff,
+          sessionId: sid,
           deviceConfirmed: true,
         });
         return;
@@ -1467,6 +1560,82 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         reply(decision.approved);
         return;
       }
+      case "agent_needs_input": {
+        const reqId = String(message.reqId ?? "").trim();
+        const rejectInput = (reason: string) =>
+          sendToEnvironment(record.id, {
+            type: "agent_user_input_result",
+            taskId,
+            reqId,
+            cancelled: true,
+            reason,
+          });
+        if (!reqId || !active || !row.capacity_active) {
+          return void rejectInput("任务未在运行状态。");
+        }
+        const rawQuestions = Array.isArray(message.questions)
+          ? message.questions
+          : [];
+        const questions: LocalAgentQuestion[] = rawQuestions
+          .slice(0, 5)
+          .map((item, idx) => {
+            const q =
+              item && typeof item === "object"
+                ? (item as Record<string, unknown>)
+                : {};
+            const options = Array.isArray(q.options)
+              ? q.options
+                  .filter(
+                    (opt): opt is Record<string, unknown> =>
+                      Boolean(opt) &&
+                      typeof opt === "object" &&
+                      typeof (opt as Record<string, unknown>).label ===
+                        "string",
+                  )
+                  .slice(0, 8)
+                  .map((opt) => ({
+                    label: clip(String(opt.label), 120),
+                    ...(typeof opt.description === "string" &&
+                    opt.description.trim()
+                      ? { description: clip(opt.description.trim(), 240) }
+                      : {}),
+                  }))
+              : undefined;
+            return {
+              id: clip(String(q.id || `q_${idx + 1}`), 80),
+              ...(typeof q.header === "string" && q.header.trim()
+                ? { header: clip(q.header.trim(), 80) }
+                : {}),
+              question: clip(String(q.question || "请确认任务下一步方案"), 500),
+              ...(options?.length ? { options } : {}),
+              allowMultiple: q.allowMultiple === true,
+              required: q.required !== false,
+            };
+          })
+          .filter((q) => q.question.length > 0);
+        if (!questions.length) {
+          return void rejectInput("追问缺少有效问题内容。");
+        }
+        const pending: LocalAgentPendingInput = {
+          reqId,
+          questions,
+          askedAt: new Date().toISOString(),
+        };
+        const state = liveOf(taskId);
+        state.pendingInput = pending;
+        state.step = "等待你回答追问";
+        pushLine(
+          taskId,
+          "question",
+          `需要你确认：${questions.map((q) => q.question).join("；")}`,
+          "等待你回答追问",
+        );
+        await setStatus(taskId, "needs_input", {
+          step: "等待你回答追问",
+          pending_input: JSON.stringify(pending),
+        });
+        return;
+      }
       case "agent_subcall": {
         const reqId = String(message.reqId ?? "");
         const action = String(message.action ?? "");
@@ -1577,17 +1746,57 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
             if (!subId) {
               return void reply({ ok: false, error: "需要提供 taskId。" });
             }
-            const subRow = await owned(row.owner_user_id, subId);
-            const t = view(subRow);
+            const waitMs = Number(params.waitMs ?? 0) || 0;
+            const t = await waitForStatusChange(
+              row.owner_user_id,
+              subId,
+              waitMs,
+            );
             return void reply({
               ok: true,
               data: {
                 taskId: t.id,
+                sessionId: t.sessionId ?? null,
                 status: t.status,
                 step: t.step,
                 summary: t.summary,
+                pendingInput: t.pendingInput ?? null,
+                continuable: t.continuable ?? false,
+                turnCount: t.turnCount ?? 1,
                 recent: t.lines.slice(-10).map((l) => l.text),
                 error: t.error,
+              },
+            });
+          }
+          if (action === "continue") {
+            const subId = String(params.taskId ?? "").trim();
+            if (!subId) {
+              return void reply({ ok: false, error: "需要提供 taskId。" });
+            }
+            const subMode = params.mode === "async" ? "async" : "wait";
+            const outcome = await continueTask({
+              ownerUserId: row.owner_user_id,
+              taskId: subId,
+              prompt:
+                typeof params.prompt === "string" ? params.prompt : undefined,
+              answers:
+                params.answers && typeof params.answers === "object"
+                  ? (params.answers as Record<string, string[]>)
+                  : undefined,
+              mode: subMode,
+            });
+            const t = outcome.task;
+            return void reply({
+              ok: true,
+              data: {
+                taskId: t.id,
+                sessionId: t.sessionId ?? null,
+                status: t.status,
+                summary: t.summary,
+                pendingInput: t.pendingInput ?? null,
+                turnCount: t.turnCount ?? 1,
+                error: t.error,
+                timedOut: outcome.timedOut,
               },
             });
           }
@@ -1855,11 +2064,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const nestedBonus = input.parentTaskId ? Math.min(depth, 5) : 0;
     const [deviceActive, userActive] = await Promise.all([
       sql.unsafe<{ n: number }[]>(
-        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE device_id = $1 AND status IN ('pending_approval','starting','running')",
+        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE device_id = $1 AND status IN ('pending_approval','starting','running','needs_input')",
         [device.id],
       ),
       sql.unsafe<{ n: number }[]>(
-        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE owner_user_id = $1 AND status IN ('pending_approval','starting','running')",
+        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE owner_user_id = $1 AND status IN ('pending_approval','starting','running','needs_input')",
         [input.ownerUserId],
       ),
     ]);
@@ -2079,7 +2288,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
             deliveredInline.add(initial.id);
             cleanup();
             resolve({ task: view(updated), timedOut: false });
-          } else if (updated.status === "pending_approval") {
+          } else if (
+            updated.status === "pending_approval" ||
+            updated.status === "needs_input"
+          ) {
             settled = true;
             cleanup();
             resolve({ task: view(updated), timedOut: false });
@@ -2162,7 +2374,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   }
 
   /** A queued row is already authorized but has never been dispatched; recovery reuses it. */
-  async function dispatchQueued(row: TaskRow, supplied?: LocalAgentRunMessage) {
+  async function dispatchQueued(
+    row: TaskRow,
+    supplied?: LocalAgentRunMessage | LocalAgentContinueMessage,
+  ) {
     const state = liveOf(row.id);
     if (state.dispatching) return;
     state.dispatching = true;
@@ -2220,7 +2435,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         ? await instancesStore.getBotGrant(row.owner_user_id, row.agent_id)
         : null;
       const rowDepth = Number(row.depth ?? 0);
-      let run: LocalAgentRunMessage;
+      let run: LocalAgentRunMessage | LocalAgentContinueMessage;
       if (supplied) {
         run = { ...supplied, roots };
       } else {
@@ -2319,6 +2534,379 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     return row;
   }
 
+  /** 支持按 taskId 或 sessionId 解析本人拥有的任务（用于多轮续接 / thread/resume）。 */
+  async function ownedByTaskOrSession(
+    actorId: string,
+    input: { taskId?: string; sessionId?: string },
+  ): Promise<TaskRow> {
+    const tid = input.taskId?.trim();
+    if (tid) return owned(actorId, tid);
+    const sid = input.sessionId?.trim();
+    if (!sid) {
+      throw new LocalAgentError("需要提供 taskId 或 sessionId。", 400);
+    }
+    const rows = await sql.unsafe<TaskRow[]>(
+      "SELECT * FROM chisabot_local_agent_tasks WHERE owner_user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT 1",
+      [actorId, sid],
+    );
+    const found = rows[0];
+    if (!found) {
+      throw new LocalAgentError(`找不到会话 ${sid} 对应的任务。`, 404);
+    }
+    return found;
+  }
+
+  /**
+   * 阻塞长轮询等待任务状态或输出发生变化（上限 MAX_LOCAL_AGENT_WAIT_MS = 30s），
+   * 避免主 Bot 频繁空转轮询消耗轮次。
+   */
+  async function waitForStatusChange(
+    actorId: string,
+    id: string,
+    rawWaitMs = 0,
+    full = false,
+  ): Promise<
+    LocalAgentTaskView & { task?: string; transcript?: LocalAgentLine[] }
+  > {
+    const initialRow = await owned(actorId, id);
+    const waitMs = Math.min(
+      MAX_LOCAL_AGENT_WAIT_MS,
+      Math.max(0, Math.floor(Number(rawWaitMs) || 0)),
+    );
+    if (
+      waitMs <= 0 ||
+      (initialRow.status !== "starting" && initialRow.status !== "running")
+    ) {
+      return view(initialRow, full);
+    }
+    const baselineStatus = initialRow.status;
+    const baselineState = live.get(id);
+    const baselineRevision = baselineState?.revision ?? 0;
+
+    const latestRow = await new Promise<TaskRow>((resolve) => {
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        const set = waiters.get(id);
+        if (set) {
+          set.delete(onUpdate);
+          if (set.size === 0) waiters.delete(id);
+        }
+      };
+      const done = (row: TaskRow) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(row);
+      };
+      const onUpdate = (updated: TaskRow) => {
+        const currentRev = live.get(id)?.revision ?? 0;
+        if (
+          updated.status !== baselineStatus ||
+          currentRev !== baselineRevision ||
+          !ACTIVE_LOCAL_TASK.includes(updated.status)
+        ) {
+          done(updated);
+        }
+      };
+      const timer = setTimeout(() => {
+        void taskRow(id)
+          .then((cur) => done(cur ?? initialRow))
+          .catch(() => done(initialRow));
+      }, waitMs);
+      timer.unref?.();
+
+      let set = waiters.get(id);
+      if (!set) {
+        set = new Set();
+        waiters.set(id, set);
+      }
+      set.add(onUpdate);
+
+      // 二次检查，避免注册前状态或输出已经变化
+      void taskRow(id).then((cur) => {
+        if (cur) onUpdate(cur);
+      });
+    });
+
+    return view(latestRow, full);
+  }
+
+  /**
+   * 回答运行中本机 Coding Agent 发出的结构化追问（needs_input 双向通道）。
+   */
+  async function answerPendingInput(
+    actorId: string,
+    id: string,
+    rawAnswers: Record<string, string[] | string>,
+  ): Promise<LocalAgentTaskView> {
+    const row = await owned(actorId, id);
+    const state = liveOf(id);
+    const pending = state.pendingInput ?? row.pending_input ?? null;
+    if (row.status !== "needs_input" || !pending) {
+      throw new LocalAgentError("当前任务没有待回答的追问。", 409);
+    }
+    const normalized: Record<string, string[]> = {};
+    for (const q of pending.questions) {
+      const value = rawAnswers[q.id];
+      const list = Array.isArray(value)
+        ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : typeof value === "string" && value.trim()
+          ? [value.trim()]
+          : [];
+      if (q.required !== false && list.length === 0) {
+        throw new LocalAgentError(
+          `问题「${q.header || q.id}」需要用户给出至少一项答复。`,
+          400,
+        );
+      }
+      normalized[q.id] = list;
+    }
+
+    const sent = sendToEnvironment(row.device_id, {
+      type: "agent_user_input_result",
+      taskId: id,
+      reqId: pending.reqId,
+      answers: normalized,
+    });
+    if (!sent) {
+      throw new LocalAgentError(
+        `「${row.device_name}」现在离线，暂时无法把答复送达给挂起的本地 agent。`,
+        409,
+      );
+    }
+    state.pendingInput = null;
+    state.step = "已收到答复，继续执行";
+    pushLine(
+      id,
+      "status",
+      `已回传用户答复：${Object.entries(normalized)
+        .map(([k, v]) => `${k}=${v.join("/")}`)
+        .join("；")}`,
+      "已收到答复，继续执行",
+    );
+    await setStatus(id, "running", {
+      step: "已收到答复，继续执行",
+      pending_input: null,
+    });
+    return view(await savedTaskRow(id));
+  }
+
+  /**
+   * 同上下文多轮续接（`local_agent_continue` / `thread/resume`）：
+   * - 若任务正处于 `needs_input` 且携带 `answers`，直接回传答复并恢复运行；
+   * - 若任务已结束（done/failed/cancelled），在同一 worktree 与 sessionId 上下文续派后续指令。
+   */
+  async function continueTask(input: {
+    ownerUserId: string;
+    taskId?: string;
+    sessionId?: string;
+    prompt?: string;
+    answers?: Record<string, string[] | string>;
+    mode?: "wait" | "async";
+    waitTimeoutMs?: number;
+  }): Promise<{ task: LocalAgentTaskView; timedOut: boolean }> {
+    const row = await ownedByTaskOrSession(input.ownerUserId, {
+      taskId: input.taskId,
+      sessionId: input.sessionId,
+    });
+    const mode = input.mode === "wait" ? "wait" : "async";
+
+    // 场景 A：回答挂起中的 needs_input 追问
+    if (row.status === "needs_input") {
+      if (!input.answers || Object.keys(input.answers).length === 0) {
+        throw new LocalAgentError(
+          "任务正在等待用户回答追问（needs_input），请传入 answers 后继续。",
+          409,
+        );
+      }
+      const resumed = await answerPendingInput(
+        input.ownerUserId,
+        row.id,
+        input.answers,
+      );
+      if (mode !== "wait") {
+        return { task: resumed, timedOut: false };
+      }
+      const waited = await waitForStatusChange(
+        input.ownerUserId,
+        row.id,
+        Math.min(
+          MAX_LOCAL_AGENT_WAIT_MS,
+          input.waitTimeoutMs ?? MAX_LOCAL_AGENT_WAIT_MS,
+        ),
+      );
+      return {
+        task: waited,
+        timedOut: waited.status === "running" || waited.status === "starting",
+      };
+    }
+
+    if (ACTIVE_LOCAL_TASK.includes(row.status)) {
+      throw new LocalAgentError(
+        "任务仍在运行或等待审批中，请先等待完成（可用 status(waitMs) 长轮询）或停止后再续接。",
+        409,
+      );
+    }
+
+    const followUpPrompt = String(input.prompt ?? "").trim();
+    if (!followUpPrompt) {
+      throw new LocalAgentError("续接任务必须提供后续指令 prompt。", 400);
+    }
+
+    const device = await resolveTargetDevice(input.ownerUserId, row.device_id);
+    if (!device || device.paused || device.revoked) {
+      throw new LocalAgentError(
+        `目标设备「${row.device_name}」不可用、已暂停或已撤销，无法续接。`,
+        409,
+      );
+    }
+    if (!isEnvironmentOnline(row.device_id)) {
+      throw new LocalAgentError(`「${device.name}」现在离线，无法续接。`, 409);
+    }
+    const settings = await settingsFor(row.device_id);
+    const roots = effectiveRoots(settings, device.allowedRoots);
+    if (
+      narrowerProfile(
+        effectiveProfile(settings, device),
+        row.profile as AgentProfile,
+      ) !== row.profile ||
+      (row.profile !== "full" &&
+        !isInsideRoots(row.cwd ?? "", roots, device.platform))
+    ) {
+      throw new LocalAgentError(
+        "设备权限或允许工作区已收窄，无法按原权限续接该任务。",
+        403,
+      );
+    }
+
+    let runtimeInstance: RuntimeInstanceSpec | undefined;
+    if (row.instance_id) {
+      const instRow = await instancesStore.getRow(
+        input.ownerUserId,
+        row.instance_id,
+      );
+      if (instRow) {
+        runtimeInstance = await instancesStore.toRuntimeSpec(instRow);
+      }
+    }
+    const grant = await instancesStore.getBotGrant(
+      input.ownerUserId,
+      row.agent_id,
+    );
+    const rowDepth = Number(row.depth ?? 0);
+    const nextTurnCount = Number(row.turn_count ?? 1) + 1;
+
+    await sql.unsafe(
+      `UPDATE chisabot_local_agent_tasks
+         SET status = 'starting', step = '正在续接上下文', error = NULL, pending_input = NULL,
+             finished_at = NULL, turn_count = $2, capacity_active = false, updated_at = now()
+       WHERE id = $1`,
+      [row.id, nextTurnCount],
+    );
+    const state = liveOf(row.id);
+    state.step = "正在续接上下文";
+    state.pendingInput = null;
+    if (row.session_id) state.sessionId = row.session_id;
+    pushLine(
+      row.id,
+      "status",
+      `第 ${nextTurnCount} 轮续接：${clip(followUpPrompt.replace(/\s+/g, " "), 160)}`,
+      "正在续接上下文",
+    );
+
+    const continueMsg: LocalAgentContinueMessage = {
+      type: "agent_continue",
+      taskId: row.id,
+      sessionId: row.session_id ?? state.sessionId ?? null,
+      agent: row.agent as LocalAgentKind,
+      prompt: followUpPrompt,
+      cwd: row.cwd,
+      profile: row.profile as AgentProfile,
+      isolation: row.isolation as Isolation,
+      network: row.network,
+      roots,
+      skipPermissions:
+        row.profile === "full" ||
+        ISOLATION_INFO[row.isolation as Isolation].sandbox ||
+        Boolean(
+          row.instance_id &&
+            ISOLATION_INFO[row.isolation as Isolation].disposable,
+        ),
+      builtinModel: settings.builtinModel,
+      containerImage: settings.containerImage,
+      timeoutMs,
+      ...(runtimeInstance ? { instance: runtimeInstance } : {}),
+      subagentBridge: {
+        enabled: grant.allowNestedSubagents && rowDepth < grant.maxDepth,
+        depth: rowDepth,
+        maxDepth: grant.maxDepth,
+      },
+    };
+
+    const refreshed = await savedTaskRow(row.id);
+    void dispatchQueued(refreshed, continueMsg).catch((error) => {
+      console.warn("local agent continue dispatch failed", error);
+      void finish(row.id, "failed", { error: "续接派发失败。" });
+    });
+
+    if (mode !== "wait") {
+      return { task: view(refreshed), timedOut: false };
+    }
+    const maxWait = Math.min(
+      timeoutMs,
+      Math.max(1000, input.waitTimeoutMs ?? 180_000),
+    );
+    return new Promise<{ task: LocalAgentTaskView; timedOut: boolean }>(
+      (resolve) => {
+        let settled = false;
+        const cleanup = () => {
+          clearTimeout(timer);
+          const set = waiters.get(row.id);
+          if (set) {
+            set.delete(onUpdate);
+            if (set.size === 0) waiters.delete(row.id);
+          }
+        };
+        const onUpdate = (updated: TaskRow) => {
+          if (settled) return;
+          if (!ACTIVE_LOCAL_TASK.includes(updated.status)) {
+            settled = true;
+            deliveredInline.add(row.id);
+            cleanup();
+            resolve({ task: view(updated), timedOut: false });
+          } else if (
+            updated.status === "pending_approval" ||
+            updated.status === "needs_input"
+          ) {
+            settled = true;
+            cleanup();
+            resolve({ task: view(updated), timedOut: false });
+          }
+        };
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          void savedTaskRow(row.id)
+            .then((cur) => resolve({ task: view(cur), timedOut: true }))
+            .catch(() => resolve({ task: view(refreshed), timedOut: true }));
+        }, maxWait);
+        timer.unref?.();
+
+        let set = waiters.get(row.id);
+        if (!set) {
+          set = new Set();
+          waiters.set(row.id, set);
+        }
+        set.add(onUpdate);
+        void taskRow(row.id).then((latest) => {
+          if (latest) onUpdate(latest);
+        });
+      },
+    );
+  }
+
   async function stop(
     actorId: string,
     id: string,
@@ -2332,6 +2920,16 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     }
     const state = live.get(id);
     if (state?.approvalId) hub.decide(state.approvalId, false, "system");
+    const pending = state?.pendingInput ?? row.pending_input ?? null;
+    if (pending) {
+      sendToEnvironment(row.device_id, {
+        type: "agent_user_input_result",
+        taskId: id,
+        reqId: pending.reqId,
+        cancelled: true,
+        reason: "任务已停止。",
+      });
+    }
     // 电脑会回 agent_done（stopped）；它离线或没回就在这里收尾。
     const done = await finish(id, "cancelled", {
       error:
@@ -2655,7 +3253,10 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       ) {
         return JSON.stringify({
           taskId: task.id,
+          sessionId: task.sessionId ?? null,
           status: task.status,
+          continuable: task.continuable ?? true,
+          turnCount: task.turnCount ?? 1,
           instanceName: label,
           device: task.deviceName,
           profile: profileLine(task),
@@ -2672,8 +3273,22 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           error: task.error,
         });
       }
+      if (task.status === "needs_input" && task.pendingInput) {
+        return JSON.stringify({
+          taskId: task.id,
+          sessionId: task.sessionId ?? null,
+          status: "needs_input",
+          instanceName: label,
+          device: task.deviceName,
+          profile: profileLine(task),
+          cwd: task.cwd,
+          pendingInput: task.pendingInput,
+          note: "本机 Coding Agent 发出了结构化追问，请把这些问题转述给用户，拿到用户明确答复后调用 local_agent_continue(taskId, answers) 回传。",
+        });
+      }
       return JSON.stringify({
         taskId: task.id,
+        sessionId: task.sessionId ?? null,
         status: task.status,
         timedOut,
         instanceName: label,
@@ -2684,7 +3299,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           task.status === "pending_approval"
             ? "已在任务卡片弹出审批，用户批准后开始执行，完成后结果会回到对话。"
             : timedOut
-              ? "子代理仍在后台继续执行，完成后结果会作为消息回到当前对话。"
+              ? "子代理仍在后台继续执行，可用 subagent_status(taskId, waitMs) 长轮询等待状态变化。"
               : "子代理已开始后台执行，进度在聊天任务卡片实时更新，完成后结果会回到当前对话。",
       });
     };
@@ -2795,26 +3410,54 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         {
           name: "subagent_status",
           ref: "local-agents/subagent-status",
-          description: "查询子代理任务的当前状态、最近输出与文件改动摘要。",
-          parameters: z.object({ taskId: z.string().optional() }),
+          description:
+            "查询子代理任务的当前状态、最近输出、结构化追问与文件改动摘要；提供 waitMs（上限 30000ms）时阻塞长轮询等待状态变化。",
+          parameters: z.object({
+            taskId: z.string().optional(),
+            waitMs: z
+              .number()
+              .int()
+              .min(0)
+              .max(MAX_LOCAL_AGENT_WAIT_MS)
+              .optional()
+              .describe("长轮询阻塞等待状态变化的毫秒数（0-30000）"),
+          }),
           execute: async (raw) => {
             try {
-              const { taskId } = z
-                .object({ taskId: z.string().optional() })
+              const { taskId, waitMs } = z
+                .object({
+                  taskId: z.string().optional(),
+                  waitMs: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(MAX_LOCAL_AGENT_WAIT_MS)
+                    .optional(),
+                })
                 .parse(raw);
               const list = taskId
-                ? [view(await owned(input.ownerUserId, taskId))]
+                ? [
+                    await waitForStatusChange(
+                      input.ownerUserId,
+                      taskId,
+                      waitMs ?? 0,
+                    ),
+                  ]
                 : (await forThread(input.ownerUserId, input.threadId)).slice(
                     -3,
                   );
               return JSON.stringify(
                 list.map((t) => ({
                   taskId: t.id,
+                  sessionId: t.sessionId ?? null,
                   instanceName: t.instanceName,
                   title: t.title,
                   status: t.status,
                   step: t.step,
                   summary: t.summary,
+                  pendingInput: t.pendingInput ?? null,
+                  continuable: t.continuable ?? false,
+                  turnCount: t.turnCount ?? 1,
                   recent: t.lines.slice(-8).map((l) => l.text),
                   diff: t.diff
                     ? {
@@ -3048,24 +3691,51 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           name: "device_agent_status",
           ref: "local-agents/status",
           description:
-            "看本地 agent 任务的状态和最近的输出（不给 taskId = 这段对话里最近的任务）。",
-          parameters: z.object({ taskId: z.string().optional() }),
+            "看本地 agent 任务的状态、追问卡和最近输出（不给 taskId = 这段对话里最近的任务）；提供 waitMs（≤30000ms）可阻塞长轮询等待状态变化。",
+          parameters: z.object({
+            taskId: z.string().optional(),
+            waitMs: z
+              .number()
+              .int()
+              .min(0)
+              .max(MAX_LOCAL_AGENT_WAIT_MS)
+              .optional()
+              .describe("长轮询等待状态变化的毫秒数（上限 30000）"),
+          }),
           execute: async (raw) => {
             try {
-              const { taskId } = z
-                .object({ taskId: z.string().optional() })
+              const { taskId, waitMs } = z
+                .object({
+                  taskId: z.string().optional(),
+                  waitMs: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .max(MAX_LOCAL_AGENT_WAIT_MS)
+                    .optional(),
+                })
                 .parse(raw);
               const list = taskId
-                ? [view(await owned(input.ownerUserId, taskId))]
+                ? [
+                    await waitForStatusChange(
+                      input.ownerUserId,
+                      taskId,
+                      waitMs ?? 0,
+                    ),
+                  ]
                 : (await forThread(input.ownerUserId, input.threadId)).slice(
                     -3,
                   );
               return JSON.stringify(
                 list.map((t) => ({
                   taskId: t.id,
+                  sessionId: t.sessionId ?? null,
                   title: t.title,
                   status: t.status,
                   step: t.step,
+                  pendingInput: t.pendingInput ?? null,
+                  continuable: t.continuable ?? false,
+                  turnCount: t.turnCount ?? 1,
                   recent: t.lines.slice(-8).map((l) => l.text),
                   diff: t.diff
                     ? {
@@ -3101,6 +3771,63 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           },
         },
       );
+    }
+
+    // 同上下文多轮续接 & 回答 needs_input 追问（子代理与设备本地 agent 通用）
+    if (online.length > 0 || grantedInstances.length > 0) {
+      const continueSchema = z.object({
+        taskId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("要续接或回答追问的任务 ID（与 sessionId 至少提供一个）"),
+        sessionId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("底层上下文会话 ID（thread/resume 续接）"),
+        prompt: z
+          .string()
+          .min(1)
+          .max(20_000)
+          .optional()
+          .describe("在同一 worktree 与上下文中续派的后续指令"),
+        answers: z
+          .record(z.string(), z.union([z.array(z.string()), z.string()]))
+          .optional()
+          .describe(
+            "仅当任务处于 needs_input 状态时传入用户给出的结构化答复，键为问题 id",
+          ),
+        mode: z
+          .enum(["wait", "async"])
+          .optional()
+          .describe("wait（默认）= 等待本轮完成或新追问；async = 后台异步继续"),
+        waitTimeoutMs: z.number().int().min(1000).max(180_000).optional(),
+      });
+      result.push({
+        name: "local_agent_continue",
+        ref: "local-agents/continue",
+        description:
+          "基于已完成/已暂停任务的 taskId 或 sessionId 在同一 worktree 与上下文中续派后续指令（thread/resume），或回传用户对 needs_input 追问卡的答复让挂起中的本机 Agent 继续执行。",
+        parameters: continueSchema,
+        execute: async (raw) => {
+          try {
+            const args = continueSchema.parse(raw);
+            const outcome = await continueTask({
+              ownerUserId: input.ownerUserId,
+              taskId: args.taskId,
+              sessionId: args.sessionId,
+              prompt: args.prompt,
+              answers: args.answers,
+              mode: args.mode ?? "wait",
+              waitTimeoutMs: args.waitTimeoutMs,
+            });
+            return formatOutcome(outcome);
+          } catch (error) {
+            return refuse(error);
+          }
+        },
+      });
     }
 
     return result;
@@ -3390,11 +4117,58 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         tasks: await forThread(c.var.actor.id, c.req.param("threadId")),
       }),
     );
-    app.get("/tasks/:id", async (c) =>
-      c.json({
-        task: view(await owned(c.var.actor.id, c.req.param("id")), true),
-      }),
-    );
+    app.get("/tasks/:id", async (c) => {
+      const waitMs = Number(c.req.query("waitMs") ?? 0) || 0;
+      const task =
+        waitMs > 0
+          ? await waitForStatusChange(
+              c.var.actor.id,
+              c.req.param("id"),
+              waitMs,
+              true,
+            )
+          : view(await owned(c.var.actor.id, c.req.param("id")), true);
+      return c.json({ task });
+    });
+    app.post("/tasks/:id/continue", async (c) => {
+      const body = z
+        .object({
+          prompt: z.string().min(1).max(20_000).optional(),
+          answers: z
+            .record(z.string(), z.union([z.array(z.string()), z.string()]))
+            .optional(),
+          mode: z.enum(["wait", "async"]).optional(),
+          waitTimeoutMs: z.number().int().min(1000).max(180_000).optional(),
+        })
+        .strict()
+        .parse(await c.req.json());
+      const outcome = await continueTask({
+        ownerUserId: c.var.actor.id,
+        taskId: c.req.param("id"),
+        prompt: body.prompt,
+        answers: body.answers,
+        mode: body.mode ?? "async",
+        waitTimeoutMs: body.waitTimeoutMs,
+      });
+      return c.json(outcome);
+    });
+    app.post("/tasks/:id/answer", async (c) => {
+      const body = z
+        .object({
+          answers: z.record(
+            z.string(),
+            z.union([z.array(z.string()), z.string()]),
+          ),
+        })
+        .strict()
+        .parse(await c.req.json());
+      const task = await answerPendingInput(
+        c.var.actor.id,
+        c.req.param("id"),
+        body.answers,
+      );
+      return c.json({ task });
+    });
     app.post("/tasks/:id/stop", async (c) =>
       c.json({ task: await stop(c.var.actor.id, c.req.param("id")) }),
     );
@@ -3420,6 +4194,9 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     saveSettings,
     start,
     runSubagent,
+    continueTask,
+    answerPendingInput,
+    waitForStatusChange,
     stop,
     applyChanges,
     forThread,

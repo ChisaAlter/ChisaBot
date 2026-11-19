@@ -18,41 +18,131 @@ const OUTPUT_CAP = 30_000;
 const MAX_STEPS = 40;
 
 const TOOLS = [
-  { name: "list_files", description: "列出目录（相对工作目录，默认工作目录本身）。", parameters: { type: "object", properties: { path: { type: "string" } }, additionalProperties: false } },
+  {
+    name: "list_files",
+    description: "列出目录（相对工作目录，默认工作目录本身）。",
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      additionalProperties: false,
+    },
+  },
   {
     name: "read_file",
-    description: "读取文本文件。offset/limit 按行（从 1 开始），默认读前 400 行。",
-    parameters: { type: "object", properties: { path: { type: "string" }, offset: { type: "integer" }, limit: { type: "integer" } }, required: ["path"], additionalProperties: false },
+    description:
+      "读取文本文件。offset/limit 按行（从 1 开始），默认读前 400 行。",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        offset: { type: "integer" },
+        limit: { type: "integer" },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
   },
   {
     name: "write_file",
     description: "新建或整个覆盖一个文件。",
-    parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"], additionalProperties: false },
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
   },
   {
     name: "edit_file",
-    description: "把文件里的 old_string 换成 new_string（old_string 必须唯一，除非 replace_all）。",
+    description:
+      "把文件里的 old_string 换成 new_string（old_string 必须唯一，除非 replace_all）。",
     parameters: {
       type: "object",
-      properties: { path: { type: "string" }, old_string: { type: "string" }, new_string: { type: "string" }, replace_all: { type: "boolean" } },
+      properties: {
+        path: { type: "string" },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+        replace_all: { type: "boolean" },
+      },
       required: ["path", "old_string", "new_string"],
       additionalProperties: false,
     },
   },
   {
     name: "search",
-    description: "在工作目录里按正则搜索文件内容（跳过 .git、node_modules），最多 200 条。glob 例如 *.ts。",
-    parameters: { type: "object", properties: { pattern: { type: "string" }, path: { type: "string" }, glob: { type: "string" } }, required: ["pattern"], additionalProperties: false },
+    description:
+      "在工作目录里按正则搜索文件内容（跳过 .git、node_modules），最多 200 条。glob 例如 *.ts。",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string" },
+        path: { type: "string" },
+        glob: { type: "string" },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
   },
   {
     name: "run",
-    description: "在工作目录里运行一条命令（Windows 是 PowerShell，其它是 sh），默认 120 秒超时。",
-    parameters: { type: "object", properties: { command: { type: "string" }, timeout_sec: { type: "integer" } }, required: ["command"], additionalProperties: false },
+    description:
+      "在工作目录里运行一条命令（Windows 是 PowerShell，其它是 sh），默认 120 秒超时。",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string" },
+        timeout_sec: { type: "integer" },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ask_user",
+    description:
+      "当任务存在关键歧义或需要用户拍板决策时，向用户发送结构化追问卡并等待用户答复后继续执行。",
+    parameters: {
+      type: "object",
+      properties: {
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              header: { type: "string" },
+              question: { type: "string" },
+              options: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["label"],
+                  additionalProperties: false,
+                },
+              },
+              allowMultiple: { type: "boolean" },
+            },
+            required: ["id", "question"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["questions"],
+      additionalProperties: false,
+    },
   },
 ];
 
 function clip(text, max = OUTPUT_CAP) {
-  return text.length > max ? `${text.slice(0, max)}\n…（输出太长，后面省略 ${text.length - max} 字）` : text;
+  return text.length > max
+    ? `${text.slice(0, max)}\n…（输出太长，后面省略 ${text.length - max} 字）`
+    : text;
 }
 
 /** 一次性副本：原文件夹（ctx.origin）下的绝对路径改写成副本（ctx.workdir）里的同一位置。 */
@@ -60,15 +150,25 @@ function mapIntoCopy(args, ctx) {
   if (!ctx.disposable || !ctx.origin || !args) return args;
   // 命令里写了原文件夹的路径（cd /原文件夹 && …）：换成副本的路径。
   if (typeof args.command === "string" && args.command.includes(ctx.origin)) {
-    return { ...args, command: args.command.split(ctx.origin).join(ctx.workdir) };
+    return {
+      ...args,
+      command: args.command.split(ctx.origin).join(ctx.workdir),
+    };
   }
   if (typeof args.path !== "string" || !path.isAbsolute(args.path)) return args;
   const win = process.platform === "win32";
   const norm = (p) => (win ? path.resolve(p).toLowerCase() : path.resolve(p));
   const origin = norm(ctx.origin);
   const target = norm(args.path);
-  if (target !== origin && !target.startsWith(origin.endsWith(path.sep) ? origin : origin + path.sep)) return args;
-  return { ...args, path: path.join(ctx.workdir, path.relative(origin, target)) };
+  if (
+    target !== origin &&
+    !target.startsWith(origin.endsWith(path.sep) ? origin : origin + path.sep)
+  )
+    return args;
+  return {
+    ...args,
+    path: path.join(ctx.workdir, path.relative(origin, target)),
+  };
 }
 
 function resolveIn(workdir, p, ctx) {
@@ -80,7 +180,12 @@ function resolveIn(workdir, p, ctx) {
 }
 
 function globToRegex(glob) {
-  const escaped = String(glob).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, ".").replace(/\u0000/g, ".*");
+  const escaped = String(glob)
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\u0000")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, ".")
+    .replace(/\u0000/g, ".*");
   return new RegExp(`(^|/)${escaped}$`);
 }
 
@@ -122,36 +227,76 @@ async function search(workdir, args) {
         }
         if (text.includes("\u0000")) continue;
         const lines = text.split(/\r?\n/);
-        for (let i = 0; i < lines.length && hits.length < 200; i++) if (regex.test(lines[i])) hits.push(`${rel}:${i + 1}: ${lines[i].slice(0, 240)}`);
+        for (let i = 0; i < lines.length && hits.length < 200; i++)
+          if (regex.test(lines[i]))
+            hits.push(`${rel}:${i + 1}: ${lines[i].slice(0, 240)}`);
       }
     }
   }
   return hits.length ? hits.join("\n") : "没有找到。";
 }
 
-function runCommand(command, { workdir, timeoutSec, signal, isolation, network, containerImage }) {
+function runCommand(
+  command,
+  { workdir, timeoutSec, signal, isolation, network, containerImage },
+) {
   return new Promise((resolve) => {
     const win = process.platform === "win32";
     let file;
     let args;
-    if (isolation === "docker" || isolation === "podman") ({ file, args } = wrap({ isolation, workdir, network, file: "sh", args: ["-c", command], containerImage }));
+    if (isolation === "docker" || isolation === "podman")
+      ({ file, args } = wrap({
+        isolation,
+        workdir,
+        network,
+        file: "sh",
+        args: ["-c", command],
+        containerImage,
+      }));
     else if (win) {
       file = "powershell.exe";
       const script = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;${command}`;
-      args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
-      if (isolation === "wsl") ({ file, args } = wrap({ isolation, workdir, network, file: "sh", args: ["-c", command] }));
-    } else ({ file, args } = wrap({ isolation, workdir, network, file: "/bin/sh", args: ["-c", command] }));
+      args = [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ];
+      if (isolation === "wsl")
+        ({ file, args } = wrap({
+          isolation,
+          workdir,
+          network,
+          file: "sh",
+          args: ["-c", command],
+        }));
+    } else
+      ({ file, args } = wrap({
+        isolation,
+        workdir,
+        network,
+        file: "/bin/sh",
+        args: ["-c", command],
+      }));
     let out = "";
     let child;
     try {
-      child = spawn(file, args, { cwd: workdir, windowsHide: true, detached: !win, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(file, args, {
+        cwd: workdir,
+        windowsHide: true,
+        detached: !win,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } catch (error) {
       resolve(`无法运行：${error.message}`);
       return;
     }
     const kill = () => {
       try {
-        if (win) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+        if (win)
+          spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+            windowsHide: true,
+          });
         else process.kill(-child.pid, "SIGKILL");
       } catch {
         try {
@@ -188,10 +333,12 @@ async function executeTool(name, args, ctx) {
     case "list_files": {
       const dir = resolveIn(workdir, args.path, ctx);
       const entries = await fsp.readdir(dir, { withFileTypes: true });
-      return entries
-        .slice(0, 500)
-        .map((e) => `${e.isDirectory() ? "[目录] " : ""}${e.name}`)
-        .join("\n") || "（空目录）";
+      return (
+        entries
+          .slice(0, 500)
+          .map((e) => `${e.isDirectory() ? "[目录] " : ""}${e.name}`)
+          .join("\n") || "（空目录）"
+      );
     }
     case "read_file": {
       const file = resolveIn(workdir, args.path, ctx);
@@ -199,8 +346,12 @@ async function executeTool(name, args, ctx) {
       const lines = text.split(/\r?\n/);
       const offset = Math.max(1, Number(args.offset) || 1);
       const limit = Math.min(2000, Math.max(1, Number(args.limit) || 400));
-      const slice = lines.slice(offset - 1, offset - 1 + limit).map((l, i) => `${offset + i}\t${l}`);
-      return clip(`${slice.join("\n")}${offset - 1 + limit < lines.length ? `\n…（共 ${lines.length} 行）` : ""}`);
+      const slice = lines
+        .slice(offset - 1, offset - 1 + limit)
+        .map((l, i) => `${offset + i}\t${l}`);
+      return clip(
+        `${slice.join("\n")}${offset - 1 + limit < lines.length ? `\n…（共 ${lines.length} 行）` : ""}`,
+      );
     }
     case "write_file": {
       const file = resolveIn(workdir, args.path, ctx);
@@ -214,14 +365,22 @@ async function executeTool(name, args, ctx) {
       let oldString = String(args.old_string ?? "");
       let newString = String(args.new_string ?? "");
       if (!oldString) return "old_string 不能为空。";
-      if (text.includes("\r\n") && !text.includes(oldString) && !oldString.includes("\r\n")) {
+      if (
+        text.includes("\r\n") &&
+        !text.includes(oldString) &&
+        !oldString.includes("\r\n")
+      ) {
         oldString = oldString.replace(/\n/g, "\r\n");
         newString = newString.replace(/\r?\n/g, "\r\n");
       }
       const count = text.split(oldString).length - 1;
-      if (count === 0) return "没有找到 old_string（要和文件内容逐字一致，包括缩进）。";
-      if (count > 1 && !args.replace_all) return `old_string 出现了 ${count} 次，请给更多上下文让它唯一，或用 replace_all。`;
-      const next = args.replace_all ? text.split(oldString).join(newString) : text.replace(oldString, () => newString);
+      if (count === 0)
+        return "没有找到 old_string（要和文件内容逐字一致，包括缩进）。";
+      if (count > 1 && !args.replace_all)
+        return `old_string 出现了 ${count} 次，请给更多上下文让它唯一，或用 replace_all。`;
+      const next = args.replace_all
+        ? text.split(oldString).join(newString)
+        : text.replace(oldString, () => newString);
       await fsp.writeFile(file, next, "utf8");
       return `已修改 ${path.relative(workdir, file)}（${args.replace_all ? count : 1} 处）`;
     }
@@ -255,6 +414,12 @@ function describe(name, args) {
       return `搜索「${String(args.pattern).slice(0, 60)}」`;
     case "run":
       return `运行 ${String(args.command).replace(/\s+/g, " ").slice(0, 120)}`;
+    case "ask_user": {
+      const first = Array.isArray(args.questions)
+        ? args.questions[0]?.question
+        : "";
+      return `向用户追问：${String(first || "请确认").slice(0, 80)}`;
+    }
     default:
       return name;
   }
@@ -266,28 +431,66 @@ async function localModel({ baseUrl, model }, system, messages, signal) {
   for (const m of messages) {
     if (m.role === "user") toOpenAi.push({ role: "user", content: m.text });
     else if (m.role === "assistant") {
-      const text = m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-      const calls = m.content.filter((p) => p.type === "tool-call").map((p) => ({ id: p.toolCallId, type: "function", function: { name: p.toolName, arguments: p.input || "{}" } }));
-      toOpenAi.push({ role: "assistant", content: text || null, ...(calls.length ? { tool_calls: calls } : {}) });
-    } else if (m.role === "tool") toOpenAi.push({ role: "tool", tool_call_id: m.toolCallId, content: m.output });
+      const text = m.content
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n");
+      const calls = m.content
+        .filter((p) => p.type === "tool-call")
+        .map((p) => ({
+          id: p.toolCallId,
+          type: "function",
+          function: { name: p.toolName, arguments: p.input || "{}" },
+        }));
+      toOpenAi.push({
+        role: "assistant",
+        content: text || null,
+        ...(calls.length ? { tool_calls: calls } : {}),
+      });
+    } else if (m.role === "tool")
+      toOpenAi.push({
+        role: "tool",
+        tool_call_id: m.toolCallId,
+        content: m.output,
+      });
   }
-  const response = await fetch(`${String(baseUrl).replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages: toOpenAi,
-      tools: TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
-    }),
-    signal,
-  });
-  if (!response.ok) throw new Error(`本地模型返回 ${response.status}：${(await response.text()).slice(0, 200)}`);
+  const response = await fetch(
+    `${String(baseUrl).replace(/\/+$/, "")}/chat/completions`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: toOpenAi,
+        tools: TOOLS.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+          },
+        })),
+      }),
+      signal,
+    },
+  );
+  if (!response.ok)
+    throw new Error(
+      `本地模型返回 ${response.status}：${(await response.text()).slice(0, 200)}`,
+    );
   const body = await response.json();
   const message = body.choices?.[0]?.message;
   if (!message) throw new Error("本地模型没有返回内容。");
   const content = [];
-  if (message.content) content.push({ type: "text", text: String(message.content) });
-  for (const call of message.tool_calls || []) content.push({ type: "tool-call", toolCallId: call.id || `call_${content.length}`, toolName: call.function.name, input: call.function.arguments || "{}" });
+  if (message.content)
+    content.push({ type: "text", text: String(message.content) });
+  for (const call of message.tool_calls || [])
+    content.push({
+      type: "tool-call",
+      toolCallId: call.id || `call_${content.length}`,
+      toolName: call.function.name,
+      input: call.function.arguments || "{}",
+    });
   return content;
 }
 
@@ -307,24 +510,36 @@ function systemPrompt(ctx) {
 }
 
 /**
- * 跑一次内置循环。
+ * 跑一次内置循环（支持传入 `initialMessages` 做同上下文多轮续接，并支持 `askUser` 结构化追问用户）。
  * ctx: { workdir, profile, roots, isolation, network, containerImage, disposable, signal, prompt,
- *        model: (messages, system) => Promise<content[]>, approve: (operation, summary) => Promise<boolean>, emit(kind, text, step) }
+ *        initialMessages?: Array, model: (messages, system) => Promise<content[]>,
+ *        approve: (operation, summary) => Promise<boolean>,
+ *        askUser?: (questions) => Promise<{ answers?: Record<string, string[]>, cancelled?: boolean, reason?: string }>,
+ *        emit(kind, text, step) }
  */
 async function runBuiltin(ctx) {
-  const messages = [{ role: "user", text: ctx.prompt }];
+  const messages =
+    Array.isArray(ctx.initialMessages) && ctx.initialMessages.length
+      ? [...ctx.initialMessages, { role: "user", text: ctx.prompt }]
+      : [{ role: "user", text: ctx.prompt }];
   const system = systemPrompt(ctx);
   let finalText = "";
   for (let step = 0; step < MAX_STEPS; step++) {
     if (ctx.signal.aborted) throw new Error("已停止");
     const content = await ctx.model(messages, system);
     messages.push({ role: "assistant", content });
-    const texts = content.filter((p) => p.type === "text" && p.text && p.text.trim()).map((p) => p.text.trim());
+    const texts = content
+      .filter((p) => p.type === "text" && p.text && p.text.trim())
+      .map((p) => p.text.trim());
     for (const text of texts) ctx.emit("text", text);
     const calls = content.filter((p) => p.type === "tool-call");
     if (!calls.length) {
       finalText = texts.join("\n\n");
-      return { summary: finalText || "（做完了，没有写结果。）", steps: step + 1 };
+      return {
+        summary: finalText || "（做完了，没有写结果。）",
+        steps: step + 1,
+        messages,
+      };
     }
     for (const call of calls) {
       if (ctx.signal.aborted) throw new Error("已停止");
@@ -332,7 +547,71 @@ async function runBuiltin(ctx) {
       try {
         args = JSON.parse(call.input || "{}");
       } catch {
-        messages.push({ role: "tool", toolCallId: call.toolCallId, toolName: call.toolName, output: "参数不是合法的 JSON。" });
+        messages.push({
+          role: "tool",
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: "参数不是合法的 JSON。",
+        });
+        continue;
+      }
+      if (call.toolName === "ask_user") {
+        const rawQuestions = Array.isArray(args.questions)
+          ? args.questions
+          : [];
+        if (!rawQuestions.length) {
+          messages.push({
+            role: "tool",
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output: "ask_user 需要至少提供一个问题。",
+          });
+          continue;
+        }
+        if (typeof ctx.askUser !== "function") {
+          messages.push({
+            role: "tool",
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output:
+              "当前运行环境不支持交互式追问，请基于已有信息做最保守处理并说明假设。",
+          });
+          continue;
+        }
+        const questions = rawQuestions.slice(0, 5).map((q, index) => ({
+          id: String(q?.id || `q_${index + 1}`),
+          ...(typeof q?.header === "string" && q.header.trim()
+            ? { header: q.header.trim() }
+            : {}),
+          question: String(q?.question || "请确认"),
+          ...(Array.isArray(q?.options) ? { options: q.options } : {}),
+          allowMultiple: q?.allowMultiple === true,
+          required: q?.required !== false,
+        }));
+        ctx.emit(
+          "question",
+          `等待用户回答：${questions
+            .map((q) => q.question)
+            .join("；")
+            .slice(0, 180)}`,
+          "等待你回答",
+        );
+        const reply = await ctx.askUser(questions);
+        if (reply?.cancelled) {
+          messages.push({
+            role: "tool",
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output: `用户未回答追问（${reply.reason || "已取消"}）。`,
+          });
+        } else {
+          messages.push({
+            role: "tool",
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output: JSON.stringify({ answers: reply?.answers || {} }),
+          });
+        }
         continue;
       }
       // 一次性副本里：模型常按原文件夹的绝对路径写（任务里就是这么说的）——换成副本里的同一个位置，
@@ -343,10 +622,19 @@ async function runBuiltin(ctx) {
       const reason = builtinToolGate(ctx.profile, call.toolName, args, ctx);
       if (reason) {
         ctx.emit("approval", `需要你批准：${line}（${reason}）`, "等待你批准");
-        const approved = await ctx.approve(call.toolName === "run" ? "shell" : "write_file", `${line}（${reason}）`);
+        const approved = await ctx.approve(
+          call.toolName === "run" ? "shell" : "write_file",
+          `${line}（${reason}）`,
+        );
         if (!approved) {
           ctx.emit("status", "你没有批准这一步，agent 会换别的办法");
-          messages.push({ role: "tool", toolCallId: call.toolCallId, toolName: call.toolName, output: "用户没有批准这一步（档位之外）。不要再试同样的操作，换别的办法或在结果里说明。" });
+          messages.push({
+            role: "tool",
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            output:
+              "用户没有批准这一步（档位之外）。不要再试同样的操作，换别的办法或在结果里说明。",
+          });
           continue;
         }
       }
@@ -356,10 +644,28 @@ async function runBuiltin(ctx) {
       } catch (error) {
         output = `失败：${error?.message ? error.message : String(error)}`;
       }
-      messages.push({ role: "tool", toolCallId: call.toolCallId, toolName: call.toolName, output: clip(String(output)) });
+      messages.push({
+        role: "tool",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: clip(String(output)),
+      });
     }
   }
-  return { summary: `${finalText || "步骤用完了（最多 40 步），没有做完。"}`, steps: MAX_STEPS, incomplete: true };
+  return {
+    summary: `${finalText || "步骤用完了（最多 40 步），没有做完。"}`,
+    steps: MAX_STEPS,
+    incomplete: true,
+    messages,
+  };
 }
 
-module.exports = { runBuiltin, executeTool, localModel, TOOLS, describe, systemPrompt, mapIntoCopy };
+module.exports = {
+  runBuiltin,
+  executeTool,
+  localModel,
+  TOOLS,
+  describe,
+  systemPrompt,
+  mapIntoCopy,
+};

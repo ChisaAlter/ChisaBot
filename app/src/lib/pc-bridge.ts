@@ -93,6 +93,10 @@ export type PcBridge = {
   focusWindow?(): Promise<boolean>;
   /** 拉取窗口就绪前缓冲的 chisabot:// 深链（消费即清空）。 */
   consumeDeepLink?(): Promise<PcDeepLink | null>;
+  /** 导出 PC 主进程环形诊断日志（已自动脱敏）。 */
+  diagnosticsExport?(): Promise<Record<string, unknown>>;
+  /** 列出本机发现的 Chrome / Edge 浏览器配置列表。 */
+  browserProfiles?(): Promise<Array<Record<string, unknown>>>;
   /** 监听主进程转发的 chisabot:// 深链导航事件。 */
   onDeepLink?(callback: (link: PcDeepLink) => void): () => void;
   onChange(callback: () => void): () => void;

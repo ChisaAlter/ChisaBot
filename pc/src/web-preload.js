@@ -80,6 +80,8 @@ if (isLocalPage) {
       logout: () => ipcRenderer.invoke("pc:logout"),
       focusWindow: () => ipcRenderer.invoke("pc:focus-window"),
       consumeDeepLink: () => ipcRenderer.invoke("pc:consume-deep-link"),
+      diagnosticsExport: () => ipcRenderer.invoke("pc:diagnostics-export"),
+      browserProfiles: () => ipcRenderer.invoke("pc:browser-profiles"),
       onDeepLink(callback) {
         const listener = (_event, link) => callback(link);
         ipcRenderer.on("pc:deep-link", listener);

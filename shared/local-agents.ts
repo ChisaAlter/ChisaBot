@@ -434,6 +434,7 @@ export type LocalAgentTaskStatus =
   | "pending_approval"
   | "starting"
   | "running"
+  | "needs_input"
   | "done"
   | "failed"
   | "cancelled";
@@ -441,11 +442,38 @@ export const ACTIVE_LOCAL_TASK: readonly LocalAgentTaskStatus[] = [
   "pending_approval",
   "starting",
   "running",
+  "needs_input",
 ];
+
+/** 长轮询状态变化的最大等待时长（毫秒）。 */
+export const MAX_LOCAL_AGENT_WAIT_MS = 30_000;
+
+/** 启动前沙盒目录 `pwd -P` 预检超时（毫秒，fail-closed）。 */
+export const SANDBOX_PREFLIGHT_TIMEOUT_MS = 5_000;
+
+export type LocalAgentQuestionOption = {
+  label: string;
+  description?: string;
+};
+
+export type LocalAgentQuestion = {
+  id: string;
+  header?: string;
+  question: string;
+  options?: LocalAgentQuestionOption[];
+  allowMultiple?: boolean;
+  required?: boolean;
+};
+
+export type LocalAgentPendingInput = {
+  reqId: string;
+  questions: LocalAgentQuestion[];
+  askedAt: string;
+};
 
 export type LocalAgentLine = {
   at: string;
-  kind: "text" | "tool" | "status" | "stderr" | "approval";
+  kind: "text" | "tool" | "status" | "stderr" | "approval" | "question";
   text: string;
 };
 
@@ -495,6 +523,14 @@ export type LocalAgentTaskView = {
   /** 正在等用户批准的审批 id（任务启动或档位之外的一步），卡片上直接给「允许 / 拒绝」。 */
   approvalId: string | null;
   approvalSummary: string | null;
+  /** 正在等待用户回答的结构化追问卡（status === "needs_input" 时非空）。 */
+  pendingInput?: LocalAgentPendingInput | null;
+  /** 底层 Coding Agent 的上下文会话 ID（用于同上下文多轮续接 / thread/resume）。 */
+  sessionId?: string | null;
+  /** 本任务已执行的续接轮次数（首轮为 1）。 */
+  turnCount?: number;
+  /** 当前任务结束后是否可在同一上下文 / worktree 中继续派发后续指令。 */
+  continuable?: boolean;
   resultMessageId: string | null;
   createdAt: string;
   startedAt: string | null;
@@ -507,6 +543,7 @@ export const LOCAL_TASK_STATUS_ZH: Record<LocalAgentTaskStatus, string> = {
   pending_approval: "等待你批准",
   starting: "正在启动",
   running: "运行中",
+  needs_input: "等待你回答",
   done: "已完成",
   failed: "失败",
   cancelled: "已停止",
@@ -552,10 +589,17 @@ export type LocalAgentRunMessage = {
   };
 };
 
+export type LocalAgentContinueMessage = Omit<LocalAgentRunMessage, "type"> & {
+  type: "agent_continue";
+  /** 续接的底层上下文会话 ID（若节点仍保有 worktree / session，将原位恢复）。 */
+  sessionId?: string | null;
+};
+
 export type ServerToNodeAgent =
   | { type: "agent_detect" }
   | { type: "agent_probe"; reqId: string; instance: RuntimeInstanceSpec }
   | LocalAgentRunMessage
+  | LocalAgentContinueMessage
   | { type: "agent_stop"; taskId: string }
   | { type: "agent_apply"; taskId: string }
   | { type: "agent_discard"; taskId: string }
@@ -570,6 +614,14 @@ export type ServerToNodeAgent =
       type: "agent_approval_result";
       reqId: string;
       approved: boolean;
+      reason?: string;
+    }
+  | {
+      type: "agent_user_input_result";
+      taskId: string;
+      reqId: string;
+      answers?: Record<string, string[]>;
+      cancelled?: boolean;
       reason?: string;
     }
   | {
@@ -590,7 +642,7 @@ export type LlmMessage =
   | { role: "assistant"; content: LlmContentPart[] }
   | { role: "tool"; toolCallId: string; toolName: string; output: string };
 
-export type NodeSubcallAction = "list" | "run" | "status" | "stop";
+export type NodeSubcallAction = "list" | "run" | "status" | "stop" | "continue";
 
 export type NodeAgentToServer =
   | {
@@ -609,7 +661,12 @@ export type NodeAgentToServer =
       text: string;
       step?: string;
     }
-  | { type: "agent_started"; taskId: string; workdir?: string }
+  | {
+      type: "agent_started";
+      taskId: string;
+      workdir?: string;
+      sessionId?: string | null;
+    }
   | {
       type: "agent_done";
       taskId: string;
@@ -619,6 +676,8 @@ export type NodeAgentToServer =
       diff?: LocalAgentDiff | null;
       error?: string;
       stopped?: boolean;
+      sessionId?: string | null;
+      continuable?: boolean;
     }
   | {
       type: "agent_applied";
@@ -642,6 +701,12 @@ export type NodeAgentToServer =
       summary: string;
     }
   | {
+      type: "agent_needs_input";
+      taskId: string;
+      reqId: string;
+      questions: LocalAgentQuestion[];
+    }
+  | {
       type: "agent_subcall";
       taskId: string;
       reqId: string;
@@ -658,5 +723,6 @@ export const LOCAL_AGENT_MESSAGE_TYPES = new Set([
   "agent_applied",
   "agent_llm",
   "agent_approval",
+  "agent_needs_input",
   "agent_subcall",
 ]);

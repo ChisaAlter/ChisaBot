@@ -175,6 +175,7 @@ import {
 import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
+import { createChunkedUploadService } from "./chat-files/chunked-upload";
 import { createBotLibraryService } from "./chat-files/library-service";
 import { createMediaPoolService } from "./chat-files/media-pool-service";
 import { createChatFiles, fileView } from "./chat-files/service";
@@ -189,6 +190,7 @@ import {
   installActivityStore,
 } from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
+import { createDesktopBrowserBridge } from "./computer/desktop-browser-bridge";
 import {
   buildComputerStreamUrl,
   createDemonstrationStore,
@@ -1980,6 +1982,19 @@ const chatFiles = createChatFiles(database, {
 });
 await pages.ensure();
 await chatFiles.ensure();
+const chunkedUploads = createChunkedUploadService({
+  ownsBot: async (owner, bot) =>
+    (await agentProfileStore
+      .get(await actorFor(owner), bot)
+      .catch(() => null)) !== null,
+  commitFile: (owner, agentId, file) =>
+    chatFiles.store(owner, agentId, {
+      kind: "upload",
+      name: file.name,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+    }),
+});
 const botLibrary = createBotLibraryService({
   database,
   chatFiles,
@@ -2024,6 +2039,11 @@ const modelObservationService = createModelObservationService();
 const harnessSettingsService = createHarnessSettingsService(
   createPgHarnessSettingsStorage(database),
 );
+const desktopBrowserBridge = createDesktopBrowserBridge({
+  deviceStore,
+  hub: deviceHub,
+  getHarnessFlags: () => harnessSettingsService.currentFlags(),
+});
 const promptWorkbenchStore = createPromptWorkbenchStore(
   createPgPromptWorkbenchStorage(database),
 );
@@ -2247,7 +2267,9 @@ const loadPersonalMemoryForActor =
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
         chatFiles.guidance(ownerUserId, botId).catch(() => ""),
-        botLibrary.buildBotLibraryPromptSection(ownerUserId, botId).catch(() => ""),
+        botLibrary
+          .buildBotLibraryPromptSection(ownerUserId, botId)
+          .catch(() => ""),
         confirmations.context(ownerUserId, botId).catch(() => ""),
       ])
     )
@@ -2346,7 +2368,9 @@ const loadToolsForActor =
         settings: webSearchSettings,
         modelId:
           (await agentModels.resolveModel(botId).catch(() => null)) ??
-          (await modelSettings.resolve().catch(() => null))?.model,
+          (
+            await modelSettings.resolve().catch(() => null)
+          )?.model,
       })),
       // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
       // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
@@ -3269,10 +3293,25 @@ try {
         count: interrupted,
       }),
     );
-  deviceHub.setExtension(localAgents.extension);
+  deviceHub.setExtension({
+    onMessage: async (record, message) => {
+      if (await desktopBrowserBridge.handleDeviceMessage(record, message)) {
+        return;
+      }
+      await localAgents?.extension.onMessage?.(record, message);
+    },
+    onHello: (record) => localAgents?.extension.onHello?.(record),
+    gate: (record, operation, args) =>
+      localAgents?.extension.gate?.(record, operation, args) ?? null,
+  });
 } catch (error) {
   console.warn("local agents unavailable", error);
   localAgents = undefined;
+  deviceHub.setExtension({
+    onMessage: async (record, message) => {
+      await desktopBrowserBridge.handleDeviceMessage(record, message);
+    },
+  });
 }
 /** 群聊（频道）的对话不给委派：交回结果要走频道的记录，这一版只做机器人私聊。 */
 /**
@@ -6049,10 +6088,7 @@ const app = createApp(
         "/api/admin/history-summary-model",
         historySummaryModel.routes(requireUser),
       ],
-      [
-        "/api/admin/context-policies",
-        contextPolicyStore.routes(requireUser),
-      ],
+      ["/api/admin/context-policies", contextPolicyStore.routes(requireUser)],
       [
         "/api/web-search",
         createWebSearchRoutes({ store: webSearchSettings, requireUser }),
@@ -6105,7 +6141,9 @@ const app = createApp(
             ],
           ]
         : []),
+      ["/api/chat-files/chunked", chunkedUploads.routes(requireUser)],
       ["/api/chat-files", chatFiles.routes(requireUser)],
+      ["/api/desktop-browser", desktopBrowserBridge.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
       ["/api/media-pool", mediaPool.routes(requireUser)],

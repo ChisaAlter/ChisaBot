@@ -63,7 +63,12 @@ async function createSubagentBridge(options) {
     const auth = req.headers.authorization || "";
     if (req.method !== "POST" || auth !== `Bearer ${token}`) {
       res.writeHead(401, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: false, error: "Unauthorized subagent bridge request" }));
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: "Unauthorized subagent bridge request",
+        }),
+      );
       return;
     }
     let body = "";
@@ -81,10 +86,13 @@ async function createSubagentBridge(options) {
         return;
       }
       const action = String(parsed.action || "");
-      const params = parsed.params && typeof parsed.params === "object" ? parsed.params : {};
-      if (!["list", "run", "status", "stop"].includes(action)) {
+      const params =
+        parsed.params && typeof parsed.params === "object" ? parsed.params : {};
+      if (!["list", "run", "status", "stop", "continue"].includes(action)) {
         res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: `Unsupported action: ${action}` }));
+        res.end(
+          JSON.stringify({ ok: false, error: `Unsupported action: ${action}` }),
+        );
         return;
       }
       try {
@@ -93,7 +101,12 @@ async function createSubagentBridge(options) {
         res.end(JSON.stringify({ ok: true, data }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: err?.message ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: err?.message ? err.message : String(err),
+          }),
+        );
       }
     });
   });
@@ -111,16 +124,23 @@ async function createSubagentBridge(options) {
   const url = `http://127.0.0.1:${port}/subcall`;
 
   const bridgeFile = path.join(tempDir, "bridge.json");
-  fs.writeFileSync(bridgeFile, JSON.stringify({ url, token, taskId: options.taskId, depth, maxDepth }), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  fs.writeFileSync(
+    bridgeFile,
+    JSON.stringify({ url, token, taskId: options.taskId, depth, maxDepth }),
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
 
   // 若运行在 Electron app.asar 内，将 stdio 桥脚本提取到外部临时目录供外部 CLI 的 node 进程读取。
   let scriptPath = MCP_STDIO_SCRIPT;
   if (scriptPath.includes(".asar") && fs.existsSync(scriptPath)) {
     const extracted = path.join(tempDir, "subagent-mcp-stdio.js");
-    fs.writeFileSync(extracted, fs.readFileSync(scriptPath, "utf8"), { encoding: "utf8", mode: 0o600 });
+    fs.writeFileSync(extracted, fs.readFileSync(scriptPath, "utf8"), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     scriptPath = extracted;
   }
 
@@ -152,7 +172,10 @@ async function createSubagentBridge(options) {
   const acpEnvList = [
     { name: "CHISABOT_BRIDGE_URL", value: url },
     { name: "CHISABOT_BRIDGE_TOKEN", value: token },
-    ...Object.entries(runner.env).map(([name, value]) => ({ name, value: String(value) })),
+    ...Object.entries(runner.env).map(([name, value]) => ({
+      name,
+      value: String(value),
+    })),
   ];
 
   const acpMcpServers = [
@@ -172,7 +195,10 @@ async function createSubagentBridge(options) {
     `mcp_servers.chisabot_subagents.args=[${scriptArgs.map(tomlString).join(", ")}]`,
   ];
   for (const [k, v] of Object.entries(runner.env)) {
-    codexConfigArgs.push("-c", `mcp_servers.chisabot_subagents.env.${k}=${tomlString(v)}`);
+    codexConfigArgs.push(
+      "-c",
+      `mcp_servers.chisabot_subagents.env.${k}=${tomlString(v)}`,
+    );
   }
 
   const cliHint = `"${runner.command}" "${MCP_STDIO_SCRIPT}" --bridge-file "${bridgeFile}" --cli`;
