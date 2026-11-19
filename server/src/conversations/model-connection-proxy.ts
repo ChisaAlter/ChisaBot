@@ -415,10 +415,33 @@ export function createModelConnectionProxy(
     const effortKeys = Object.keys(effortParams);
     if (effortKeys.length > 0) {
       const merged = { ...outboundBody };
+      const maxTokens =
+        typeof merged.max_tokens === "number" &&
+        Number.isFinite(merged.max_tokens)
+          ? Math.floor(merged.max_tokens)
+          : undefined;
       for (const [key, value] of Object.entries(effortParams)) {
-        if (merged[key] === undefined) {
-          merged[key] = value;
+        if (merged[key] !== undefined) continue;
+        if (
+          anthropic &&
+          key === "thinking" &&
+          isRecord(value) &&
+          value.type === "enabled" &&
+          typeof value.budget_tokens === "number" &&
+          Number.isFinite(value.budget_tokens)
+        ) {
+          // Anthropic 要求 budget_tokens >= 1024 且严格小于 max_tokens；max_tokens <= 1024 时跳过开启思考。
+          if (maxTokens !== undefined) {
+            if (maxTokens <= 1024) continue;
+            const clampedBudget = Math.min(
+              Math.floor(value.budget_tokens),
+              Math.max(1024, maxTokens - 1024),
+            );
+            merged[key] = { ...value, budget_tokens: clampedBudget };
+            continue;
+          }
         }
+        merged[key] = value;
       }
       outboundBody = merged;
     }

@@ -94,6 +94,7 @@ export type PromptWorkbenchDatabase = {
 export type PromptTurnSnapshot = {
   resolve(role: PromptRole, fallbackOriginal?: string): string;
   revisionOf(role: PromptRole): number;
+  isModified(role: PromptRole): boolean;
   recordAssembly(
     role: PromptRole,
     sections: readonly AssemblySectionInput[],
@@ -759,14 +760,20 @@ export function createPromptWorkbenchStore(
             fallbackOriginal ?? PROMPT_ROLE_DESCRIPTORS[role].defaultPrompt
           );
         }
-        // 若管理员覆盖过当前角色，使用冻结版本；未修改且调用方传入真实运行期原版时尊重调用方原版。
-        if (entry.revision === 0 && fallbackOriginal) {
+        // 若管理员覆盖过当前角色且当前内容与原版不同，使用冻结版本；
+        // 未修改（含已恢复原版）且调用方传入真实运行期原版时尊重调用方原版。
+        if (entry.content === entry.originalContent && fallbackOriginal) {
           return fallbackOriginal;
         }
         return entry.content;
       },
       revisionOf(role) {
         return frozen.get(role)?.revision ?? 0;
+      },
+      isModified(role) {
+        const entry = frozen.get(role);
+        if (!entry) return false;
+        return entry.content !== entry.originalContent;
       },
       recordAssembly(role, sections, basePrompt) {
         const entry = frozen.get(role);
@@ -791,4 +798,75 @@ export function createPromptWorkbenchStore(
     recordAssembly,
     recordTools,
   };
+}
+
+/**
+ * 将管理员在提示词工作台对 `parent` 角色所做的覆写与内置组装提示词安全合并，并记录脱敏观测快照：
+ * 1. 覆写 `parent` 时始终将角色覆盖作为前置指导块与 `baseAssembledPrompt` 拼接，严禁销毁
+ *    `baseAssembledPrompt` 中携带的防注入（UNTRUSTED_GUIDANCE）、Bot 人设与工具规范；
+ * 2. 写入 `recordAssembly` 的 `basePrompt` 严格仅取静态角色文本 `turnPrompt.resolve("parent")`，
+ *    绝不把包含用户私人常驻指令与 Bot 人设的 `baseAssembledPrompt` 原文暴露给后台观测。
+ */
+export function composeParentPromptWithWorkbench(input: {
+  turnPrompt: PromptTurnSnapshot;
+  baseAssembledPrompt: string;
+  systemMessagesText: readonly string[];
+  inboxText: readonly string[];
+  tools: readonly { name: string; ref: string }[];
+  dynamicToolNames: ReadonlySet<string>;
+}): string {
+  const rolePrompt = input.turnPrompt.resolve("parent");
+  const effectiveBasePrompt = input.turnPrompt.isModified("parent")
+    ? [rolePrompt, input.baseAssembledPrompt].join("\n\n")
+    : input.baseAssembledPrompt;
+
+  input.turnPrompt.recordAssembly(
+    "parent",
+    [
+      {
+        name: "agent-profile",
+        label: "Bot 资料与人设",
+        kind: "dynamic",
+      },
+      {
+        name: "standing-instructions",
+        label: "用户常驻指令",
+        kind: "dynamic",
+      },
+      ...(input.systemMessagesText.length > 0
+        ? [
+            {
+              name: "system-context",
+              label: "会话系统上下文",
+              kind: "dynamic" as const,
+            },
+          ]
+        : []),
+      ...(input.inboxText.length > 0
+        ? [
+            {
+              name: "inbox-skills",
+              label: "中途补充指令",
+              kind: "dynamic" as const,
+            },
+          ]
+        : []),
+    ],
+    rolePrompt,
+  );
+
+  input.turnPrompt.recordTools(
+    "parent",
+    input.tools.map((tool) => ({
+      name: tool.name,
+      ref: tool.ref,
+      placement:
+        input.dynamicToolNames.has(tool.name) || tool.ref.startsWith("host/")
+          ? "dynamic"
+          : "static",
+      enabled: true,
+    })),
+  );
+
+  return effectiveBasePrompt;
 }

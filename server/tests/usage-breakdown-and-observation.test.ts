@@ -292,15 +292,23 @@ describe("按需脱敏模型请求观测器与代理链路集成", () => {
     });
     expect(cleared.status).toBe(200);
     expect(((await cleared.json()) as { count: number }).count).toBe(0);
+
+    // PUT /toggle 超过 4 KiB 必须拒绝返回 413
+    const oversized = await app.request("/api/admin/observation/toggle", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, padding: "x".repeat(5 * 1024) }),
+    });
+    expect(oversized.status).toBe(413);
   });
 
   test("model-connection-proxy 透传 reasoningEffort 参数、提取 reasoningTokens 并写入脱敏观测器", async () => {
-    let capturedBody: Record<string, unknown> | null = null;
+    const capturedBodies: Record<string, unknown>[] = [];
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       async fetch(request) {
-        capturedBody = (await request.json()) as Record<string, unknown>;
+        capturedBodies.push((await request.json()) as Record<string, unknown>);
         return Response.json(
           {
             id: "chatcmpl-test",
@@ -361,7 +369,8 @@ describe("按需脱敏模型请求观测器与代理链路集成", () => {
       // 等待 TransformStream flush 回调完成
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      expect(capturedBody).not.toBeNull();
+      const capturedBody = capturedBodies[0];
+      expect(capturedBody).toBeDefined();
       expect(capturedBody?.reasoning_effort).toBe("high");
       expect(capturedBody?.thinking).toEqual({ type: "enabled" });
       expect(breakdownRecorded).toEqual([
@@ -372,6 +381,108 @@ describe("按需脱敏模型请求观测器与代理链路集成", () => {
       expect(snap.count).toBe(1);
       expect(snap.items[0]?.requestId).toBe("req-proxy-1");
       expect(JSON.stringify(snap)).not.toContain("sk-super-secret-proxy-key");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("Anthropic 代理绝不注入非法 reasoning_effort，并按 max_tokens 钳制 thinking.budget_tokens（max_tokens <= 1024 时跳过）", async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(request) {
+        capturedBodies.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          id: "msg-test",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "ok" }],
+          usage: { input_tokens: 40, output_tokens: 20 },
+        });
+      },
+    });
+
+    try {
+      const proxy = createModelConnectionProxy(
+        {
+          provider: "anthropic",
+          baseUrl: `http://127.0.0.1:${server.port}/v1`,
+          apiKey: "sk-ant-test-key-12345678",
+        },
+        ["claude-sonnet-4-5"],
+        [],
+        new AbortController().signal,
+        {
+          reasoningEffort: "high", // 默认 budget_tokens = 12288
+        },
+      );
+
+      // 1. max_tokens = 4096 -> budget_tokens 钳制为 3072 (< 4096)，且无 reasoning_effort
+      const r1 = await proxy(
+        {
+          model: "claude-sonnet-4-5",
+          max_tokens: 4096,
+          messages: [{ role: "user", content: "hello" }],
+        },
+        new AbortController().signal,
+      );
+      expect(r1.status).toBe(200);
+      await r1.text();
+
+      // 2. max_tokens = 1024 -> 跳过开启 thinking，避免 Anthropic 400
+      const r2 = await proxy(
+        {
+          model: "claude-sonnet-4-5",
+          max_tokens: 1024,
+          messages: [{ role: "user", content: "hello" }],
+        },
+        new AbortController().signal,
+      );
+      expect(r2.status).toBe(200);
+      await r2.text();
+
+      // 3. max_tokens = 2048 -> budget_tokens 钳制为 1024 (满足 >= 1024 且 < max_tokens)
+      const r3 = await proxy(
+        {
+          model: "claude-sonnet-4-5",
+          max_tokens: 2048,
+          messages: [{ role: "user", content: "hello" }],
+        },
+        new AbortController().signal,
+      );
+      expect(r3.status).toBe(200);
+      await r3.text();
+
+      // 4. max_tokens = 32000 -> 保持原始 12288
+      const r4 = await proxy(
+        {
+          model: "claude-sonnet-4-5",
+          max_tokens: 32000,
+          messages: [{ role: "user", content: "hello" }],
+        },
+        new AbortController().signal,
+      );
+      expect(r4.status).toBe(200);
+      await r4.text();
+
+      expect(capturedBodies).toHaveLength(4);
+      for (const body of capturedBodies) {
+        expect("reasoning_effort" in body).toBe(false);
+      }
+      expect(capturedBodies[0]?.thinking).toEqual({
+        type: "enabled",
+        budget_tokens: 3072,
+      });
+      expect(capturedBodies[1]?.thinking).toBeUndefined();
+      expect(capturedBodies[2]?.thinking).toEqual({
+        type: "enabled",
+        budget_tokens: 1024,
+      });
+      expect(capturedBodies[3]?.thinking).toEqual({
+        type: "enabled",
+        budget_tokens: 12288,
+      });
     } finally {
       server.stop(true);
     }

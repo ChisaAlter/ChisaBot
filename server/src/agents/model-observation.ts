@@ -11,6 +11,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type {
   ModelObservationRecord,
@@ -330,18 +331,26 @@ export function createModelObservationService(options?: {
 
       routes.get("/", (context) => context.json(snapshot()));
 
-      routes.put("/toggle", async (context) => {
-        const body: unknown = await context.req.json().catch(() => null);
-        const parsed = toggleSchema.safeParse(body);
-        if (!parsed.success) {
-          return context.json(
-            { error: parsed.error.issues[0]?.message ?? "参数格式无效。" },
-            400,
-          );
-        }
-        enabled = parsed.data.enabled;
-        return context.json(snapshot());
-      });
+      routes.put(
+        "/toggle",
+        bodyLimit({
+          maxSize: 4 * 1024,
+          onError: (context) =>
+            context.json({ error: "观测开关请求体过大。" }, 413),
+        }),
+        async (context) => {
+          const body: unknown = await context.req.json().catch(() => null);
+          const parsed = toggleSchema.safeParse(body);
+          if (!parsed.success) {
+            return context.json(
+              { error: parsed.error.issues[0]?.message ?? "参数格式无效。" },
+              400,
+            );
+          }
+          enabled = parsed.data.enabled;
+          return context.json(snapshot());
+        },
+      );
 
       routes.delete("/", (context) => {
         const cleared = ring.length;

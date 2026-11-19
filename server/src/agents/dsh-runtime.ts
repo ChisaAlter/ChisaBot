@@ -42,7 +42,10 @@ import type { createDshToolGateway } from "../conversations/tool-gateway";
 import type { ToolImagePart } from "../conversations/tool-images";
 import type { ModelConnectionPooledKeyRuntime } from "../model-settings";
 import type { GrantedTool } from "../plugins/tools";
-import type { PromptWorkbenchStore } from "../prompts/workbench-store";
+import {
+  composeParentPromptWithWorkbench,
+  type PromptWorkbenchStore,
+} from "../prompts/workbench-store";
 import type { UsageBreakdownService } from "../quotas/usage-breakdown";
 import { currentSteerSession } from "../thread-inbox";
 import type { AdaptiveRouter } from "./adaptive-router";
@@ -723,49 +726,17 @@ export class DshRuntimeAgent extends AbstractAgent {
             .snapshot()
             .catch(() => null);
           if (turnPrompt) {
-            if (turnPrompt.revisionOf("parent") > 0) {
-              effectiveBasePrompt = turnPrompt.resolve(
-                "parent",
-                baseAssembledPrompt,
-              );
-            }
             const dynamicNames = new Set(
               contributed.map((surface) => surface.definition.name),
             );
-            turnPrompt.recordAssembly(
-              "parent",
-              [
-                {
-                  name: "system-context",
-                  label: "会话系统上下文",
-                  kind: "dynamic",
-                  content: systemMessagesText.join("\n"),
-                },
-                ...(inboxText.length > 0
-                  ? [
-                      {
-                        name: "inbox-skills",
-                        label: "中途补充指令",
-                        kind: "dynamic" as const,
-                        content: inboxText.join("\n"),
-                      },
-                    ]
-                  : []),
-              ],
-              effectiveBasePrompt,
-            );
-            turnPrompt.recordTools(
-              "parent",
-              [...tools.values()].map((tool) => ({
-                name: tool.name,
-                ref: tool.ref,
-                placement:
-                  dynamicNames.has(tool.name) || tool.ref.startsWith("host/")
-                    ? "dynamic"
-                    : "static",
-                enabled: true,
-              })),
-            );
+            effectiveBasePrompt = composeParentPromptWithWorkbench({
+              turnPrompt,
+              baseAssembledPrompt,
+              systemMessagesText,
+              inboxText,
+              tools: [...tools.values()],
+              dynamicToolNames: dynamicNames,
+            });
           }
         }
         const request: DshBindingInput = {

@@ -247,7 +247,7 @@ export function defaultAdaptiveRoutingPolicy(
  * 将统一思考强度映射为各厂商请求参数：
  * - OpenAI / OpenAI-compatible：`{ reasoning_effort }`（若 modelId 为 DeepSeek 则同时附加 `thinking`）；
  * - DeepSeek：`{ reasoning_effort, thinking: { type: "enabled" | "disabled" } }`；
- * - Anthropic：`none` 对应 `{ thinking: { type: "disabled" } }`，其余档位附带 `thinking: { type: "enabled", budget_tokens }` 与 `reasoning_effort`。
+ * - Anthropic：仅输出 `thinking` 字段（Anthropic `/v1/messages` 严格拒绝未知的 `reasoning_effort` 字段）。
  */
 export function mapEffortToProviderParams(
   effort: RoutingEffortSetting | null | undefined,
@@ -273,7 +273,6 @@ export function mapEffortToProviderParams(
       };
     }
     return {
-      reasoning_effort: effort,
       thinking: {
         type: "enabled",
         budget_tokens: ANTHROPIC_THINKING_BUDGETS[effort],
