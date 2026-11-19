@@ -77,18 +77,23 @@ export type ImageSettingsView = {
   updatedAt: string | null;
 };
 
-export const IMAGE_PROVIDER_PRESETS: Record<ImageProviderKind, { label: string; baseUrl: string; model: string; editNote: string }> = {
+export const IMAGE_PROVIDER_PRESETS: Record<
+  ImageProviderKind,
+  { label: string; baseUrl: string; model: string; editNote: string }
+> = {
   minimax: {
     label: "MiniMax（image-01）",
     baseUrl: "https://api.minimax.cn",
     model: "image-01",
-    editNote: "MiniMax 的「修改」是参考图生成：以上传的图为主体参考重新画，不是逐像素修图。",
+    editNote:
+      "MiniMax 的「修改」是参考图生成：以上传的图为主体参考重新画，不是逐像素修图。",
   },
   openai: {
     label: "OpenAI 兼容（/v1/images）",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-image-1",
-    editNote: "走 /v1/images/edits，适用于 gpt-image、new-api / One API 等兼容中转。",
+    editNote:
+      "走 /v1/images/edits，适用于 gpt-image、new-api / One API 等兼容中转。",
   },
 };
 
@@ -107,6 +112,9 @@ export function isInlineSafeMime(mime: string): boolean {
     "audio/aac",
     "audio/ogg",
     "audio/mp4",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
   ].includes(mime);
 }
 
@@ -130,11 +138,17 @@ export function filesFromToolResult(raw: unknown): ChatFileView[] {
   const at = result.lastIndexOf(CHAT_FILES_MARKER);
   if (at < 0) return [];
   try {
-    const parsed = JSON.parse(result.slice(at + CHAT_FILES_MARKER.length).trim()) as unknown;
+    const parsed = JSON.parse(
+      result.slice(at + CHAT_FILES_MARKER.length).trim(),
+    ) as unknown;
     return Array.isArray(parsed)
       ? parsed.filter(
           (f): f is ChatFileView =>
-            Boolean(f) && typeof f === "object" && typeof (f as ChatFileView).id === "string" && typeof (f as ChatFileView).url === "string" && (f as ChatFileView).url.startsWith(CHAT_FILE_URL_PREFIX),
+            Boolean(f) &&
+            typeof f === "object" &&
+            typeof (f as ChatFileView).id === "string" &&
+            typeof (f as ChatFileView).url === "string" &&
+            (f as ChatFileView).url.startsWith(CHAT_FILE_URL_PREFIX),
         )
       : [];
   } catch {

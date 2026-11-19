@@ -3,6 +3,10 @@ import Avatar from "boring-avatars";
 import { memo, useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { ShapeAvatar } from "@/components/agents/shape-avatar";
+import type {
+  BusyExpression,
+  SignAvatarMood,
+} from "@/lib/agents/avatar-expressions";
 import {
   type AvatarDraft,
   type BotAvatar as BotAvatarValue,
@@ -34,6 +38,7 @@ export const BotAvatar = memo(function BotAvatar({
   selected = false,
   thinking = false,
   working = false,
+  expression,
 }: {
   agentId?: string;
   /** 不给就从机器人列表（已在缓存里）里找；只有首字头像要用。 */
@@ -51,6 +56,8 @@ export const BotAvatar = memo(function BotAvatar({
   /** 在想（这一轮在跑但没有工具在跑）：变形比 working 轻。 */
   thinking?: boolean;
   working?: boolean;
+  /** 可选情感微交互神态（供忙碌去重指示条或交互场景使用）。 */
+  expression?: BusyExpression | SignAvatarMood;
 }) {
   // 打开着的对话页发布的实时状态（lib/agents/bot-activity.ts）比调用处给的（服务器的 busy）更细，有就用它。
   const live = useBotActivity(agentId);
@@ -102,6 +109,7 @@ export const BotAvatar = memo(function BotAvatar({
       }}
     >
       <AvatarFace
+        expression={expression}
         name={label}
         seed={seed ?? agentId ?? label}
         selected={selected}
@@ -146,6 +154,7 @@ function AvatarFace({
   thinking,
   working,
   interrupted,
+  expression,
 }: {
   shown: ShownAvatar;
   name: string;
@@ -155,12 +164,14 @@ function AvatarFace({
   thinking: boolean;
   working: boolean;
   interrupted: boolean;
+  expression?: BusyExpression | SignAvatarMood;
 }) {
   const [broken, setBroken] = useState<string | null>(null);
   if (shown.kind === "shape")
     return (
       <ShapeAvatar
         color={shown.color}
+        expression={expression}
         interrupted={interrupted}
         selected={selected}
         shape={shown.shape}

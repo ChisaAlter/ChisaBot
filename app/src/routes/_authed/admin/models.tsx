@@ -19,6 +19,7 @@ import {
   ImageDefaultCard,
   VisionDefaultCard,
 } from "@/components/settings/media-models";
+import { MediaPoolSettingsSection } from "@/components/settings/media-pool-settings";
 import { PooledApiKeysSection } from "@/components/settings/pooled-api-keys";
 import { SpeechSettingsSection } from "@/components/settings/speech-settings";
 import { WebSearchSettingsSection } from "@/components/settings/web-search-settings";
@@ -140,6 +141,7 @@ function ModelSettingsPage() {
       ) : null}
       <ContextPolicyPanel />
       <MediaDefaults />
+      <MediaPoolSettingsSection />
       <SpeechSettingsSection />
       <WebSearchSettingsSection />
     </PageShell>

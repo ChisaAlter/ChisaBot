@@ -151,6 +151,9 @@ beforeEach(() => {
           updatedAt: null,
         });
       }
+      if (path.startsWith("/api/media-pool") && method === "GET") {
+        return Response.json({ entries: [] });
+      }
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       writes.push({ path, body });
       if (path === "/api/admin/model-settings/test") {

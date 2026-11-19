@@ -1,10 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
+import { type CSSProperties, useRef, useState } from "react";
 import AgentOrb from "@/components/agents/orb/agent-orb";
+import { ShapeAvatar } from "@/components/agents/shape-avatar";
 import { ProviderLogo } from "@/components/auth/provider-logo";
 import { Button } from "@/components/ui/button";
+import {
+  useDocumentEvent,
+  useExternalConnection,
+  useWindowEvent,
+} from "@/hooks";
+import {
+  createStaggeredGazeScheduler,
+  deriveSignAvatarMood,
+  SIGN_AVATAR_MOOD_LABELS,
+  type SignAvatarMood,
+  type SignFormAvatarInput,
+} from "@/lib/agents/avatar-expressions";
 import { providerName, signInWith } from "@/lib/auth/client";
 import { appConfig } from "@/lib/generated/application-config";
 import {
@@ -34,20 +47,149 @@ export const Route = createFileRoute("/sign")({
   component: SignScreen,
 });
 
+/**
+ * 登录页情感联动形象舞台：
+ * - 单 rAF 错峰指针凝视，窗口失焦 / 页面隐藏 / 减少动态效果时自动暂停并归零；
+ * - 实时联动登录态表情机：输入密码闭眼回避 (`cover-eyes`)、提交报错摇头 (`shake-error`)、登录成功眯眼笑 (`happy-squint`)。
+ */
+export function SignAvatarStage({
+  passwordFocused = false,
+  passwordFilled = false,
+  submitting = false,
+  hasError = false,
+  succeeded = false,
+}: Omit<SignFormAvatarInput, "hasPointer">) {
+  const prefersReducedMotion = useReducedMotion();
+  const faceWrapRef = useRef<HTMLDivElement | null>(null);
+  const [hasPointer, setHasPointer] = useState(false);
+  const [gazeOffset, setGazeOffset] = useState({ x: 0, y: 0 });
+  const schedulerRef = useRef<ReturnType<
+    typeof createStaggeredGazeScheduler
+  > | null>(null);
+
+  const mood: SignAvatarMood = deriveSignAvatarMood({
+    passwordFocused,
+    passwordFilled,
+    submitting,
+    hasError,
+    succeeded,
+    hasPointer: hasPointer && !prefersReducedMotion,
+  });
+
+  const gazeLocked =
+    Boolean(prefersReducedMotion) ||
+    mood === "cover-eyes" ||
+    mood === "shake-error" ||
+    mood === "happy-squint";
+  const gazeLockedRef = useRef(gazeLocked);
+  gazeLockedRef.current = gazeLocked;
+
+  useExternalConnection(!prefersReducedMotion, () => {
+    const element = faceWrapRef.current;
+    if (!element) return;
+    const scheduler = createStaggeredGazeScheduler({
+      reach: 0.085,
+      minCooldownMs: 60,
+      maxCooldownMs: 180,
+      adapter: {
+        isReducedMotion: () => Boolean(prefersReducedMotion),
+      },
+    });
+    schedulerRef.current = scheduler;
+    const unregister = scheduler.register({
+      element,
+      isLocked: () => gazeLockedRef.current,
+      apply: (offset) => setGazeOffset(offset),
+    });
+    return () => {
+      unregister();
+      scheduler.dispose();
+      schedulerRef.current = null;
+      setGazeOffset({ x: 0, y: 0 });
+    };
+  });
+
+  useWindowEvent("pointermove", (event) => {
+    if (prefersReducedMotion) return;
+    if (!hasPointer) setHasPointer(true);
+    schedulerRef.current?.updatePointer({
+      x: event.clientX,
+      y: event.clientY,
+    });
+  });
+
+  useWindowEvent("blur", () => {
+    schedulerRef.current?.setPaused(true);
+  });
+
+  useWindowEvent("focus", () => {
+    schedulerRef.current?.setPaused(false);
+  });
+
+  useDocumentEvent("visibilitychange", () => {
+    schedulerRef.current?.setPaused(document.visibilityState === "hidden");
+  });
+
+  useDocumentEvent("pointerleave", () => {
+    setHasPointer(false);
+    schedulerRef.current?.updatePointer(null);
+  });
+
+  const orbState = hasError ? "error" : submitting ? "thinking" : "idle";
+
+  return (
+    <div
+      aria-label={SIGN_AVATAR_MOOD_LABELS[mood]}
+      className="sign-avatar-stage relative flex items-center justify-center"
+      data-sign-mood={mood}
+      data-testid="sign-avatar-stage"
+      ref={faceWrapRef}
+      role="img"
+      style={
+        {
+          "--sign-gaze-x": `${gazeLocked ? 0 : gazeOffset.x}px`,
+          "--sign-gaze-y": `${gazeLocked ? 0 : gazeOffset.y}px`,
+        } as CSSProperties
+      }
+    >
+      <AgentOrb active={submitting} size="64px" state={orbState} />
+      <span aria-hidden className="sign-avatar-overlay">
+        <ShapeAvatar
+          color="violet"
+          expression={mood}
+          mood={
+            mood === "happy-squint"
+              ? "done"
+              : mood === "submitting"
+                ? "working"
+                : "idle"
+          }
+          shape="round"
+          size={40}
+          working={mood === "submitting"}
+        />
+      </span>
+    </div>
+  );
+}
+
 function SignScreen() {
   // Which provider is being opened, rather than whether one is: with three buttons, a single
   // boolean would put "Opening…" on all of them.
   const [opening, setOpening] = useState<AuthProviderId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [succeeded, setSucceeded] = useState(false);
   const { data: options } = useQuery(authProvidersQueryOptions());
   const providers = options?.providers ?? [];
 
   async function handleSignIn(provider: AuthProviderId) {
     setError(null);
+    setSucceeded(false);
     setOpening(provider);
 
     try {
       await signInWith(provider);
+      setSucceeded(true);
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -114,11 +256,15 @@ function SignScreen() {
         }}
       >
         <motion.div
+          className="flex items-center justify-center"
           transition={{ duration: ENTRANCE_SECONDS, ease: EASE_OUT }}
           variants={{ hidden, shown }}
-          className="flex items-center justify-center"
         >
-          <AgentOrb size="56px" />
+          <SignAvatarStage
+            hasError={Boolean(error)}
+            submitting={opening !== null}
+            succeeded={succeeded}
+          />
         </motion.div>
         <motion.h1
           className="mt-6 text-center font-semibold text-2xl tracking-tight"

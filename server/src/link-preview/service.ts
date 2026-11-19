@@ -188,14 +188,14 @@ export function directImageTitle(url: string): string {
 
 /** 整个标题就是验证页的标题（可带「 - 站点名」「 | 站点名」后缀）：单凭标题即可判定。 */
 const CHALLENGE_TITLE_STRONG =
-  /^(?:百度安全验证|安全验证|人机验证|访问验证|验证码|滑动验证|Just a moment\.{0,3}|Attention Required! \| Cloudflare|Verify you are human|Are you a robot\??|Human verification|Security check)(?:\s+[-|–—·]\s+.*)?$/i;
+  /^(?:百度安全验证|安全验证|人机验证|访问验证|验证码|滑动验证|环境异常|当前环境异常|请完成验证|完成验证后即可继续访问|安全限制|访问异常|操作频繁|微信公众平台安全验证|Just a moment\.{0,3}|Attention Required! \| Cloudflare|Verify you are human|Are you a robot\??|Human verification|Security check)(?:\s*[-|–—·]\s*.*)?$/i;
 /** 标题以这些开头（后面是分隔符或结束）时可能是验证页，但还要状态码或页面特征佐证（「请稍候，正在加载」「Access Denied (2023 film)」不算）。 */
 const CHALLENGE_TITLE_WEAK =
-  /^(?:请稍候|请稍后|异常请求|访问被拒绝|Access denied|Forbidden|Please wait|Checking your browser|One more step)(?:[\s.!…]*$|\s+[-|–—·:]\s+)/i;
+  /^(?:请稍候|请稍后|异常请求|访问被拒绝|系统繁忙|Access denied|Forbidden|Please wait|Checking your browser|One more step)(?:[\s.!…]*$|\s+[-|–—·:]\s+)/i;
 const CHALLENGE_STATUS = new Set([403, 429, 503]);
-/** 验证页的页面特征：Cloudflare 挑战表单 / 脚本参数、各家验证码组件。 */
+/** 验证页的页面特征：Cloudflare 挑战表单 / 脚本参数、微信/知乎/小红书与各家验证码组件。 */
 const CHALLENGE_MARKERS =
-  /cf-chl-|cf_chl_|challenges\.cloudflare\.com|id=["']challenge-form|g-recaptcha|recaptcha\/api\.js|hcaptcha\.com|turnstile|geetest|TencentCaptcha|captcha\.js|nc_1_wrapper/i;
+  /cf-chl-|cf_chl_|challenges\.cloudflare\.com|id=["']challenge-form|g-recaptcha|recaptcha\/api\.js|hcaptcha\.com|turnstile|geetest|TencentCaptcha|captcha\.js|nc_1_wrapper|weui-msg__title|wappoc_appmsgcaptcha|xhs-captcha|red-captcha|sec-verify/i;
 
 /**
  * 反爬 / 验证页：跳到了 sec.* / captcha 之类的主机；知乎的 zse-ck 挑战页；整个标题就是验证页标题；

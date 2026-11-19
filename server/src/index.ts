@@ -119,6 +119,7 @@ import {
   parseApprovalContinuation,
   parseApprovalResult,
 } from "./approvals/types";
+import { shrinkAvatarImageToJpeg } from "./audio/ffmpeg-transcode";
 import { createSpeechService } from "./audio/speech-service";
 import { createSpeechSettingsStore } from "./audio/speech-settings";
 import {
@@ -174,7 +175,8 @@ import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
 import { createBotLibraryService } from "./chat-files/library-service";
-import { createChatFiles } from "./chat-files/service";
+import { createMediaPoolService } from "./chat-files/media-pool-service";
+import { createChatFiles, fileView } from "./chat-files/service";
 import { turnAttachmentLoader } from "./chat-files/turn-attachments";
 import { createChatShots } from "./chat-shots";
 import { createHeadlessComponentTools } from "./components/headless";
@@ -2052,6 +2054,119 @@ const adaptiveRouter = createAdaptiveRouter({
     });
   },
 });
+
+/** 多模态创作模型池（多生图/多参考图/视频生成与理解/AI 生成 Bot 头像）。 */
+const mediaPool = createMediaPoolService(database, {
+  encryptionKey: config.keyEncryptionKey,
+  agents: agentProfileStore,
+  botAvatars,
+  shrinkAvatarBytes: (bytes) => shrinkAvatarImageToJpeg(bytes),
+  storeFile: (owner, agentId, file) =>
+    chatFiles.store(owner, agentId, {
+      kind: file.kind,
+      name: file.name,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+      prompt: file.prompt ?? null,
+      model: file.model ?? null,
+    }),
+  getFileView: async (owner, fileId) => {
+    const found = await chatFiles.row(owner, fileId, false);
+    return found ? fileView(found) : null;
+  },
+  loadFile: async (owner, agentId, source, opts) => {
+    const ref = source?.trim() ?? "";
+    const id = ref.replace(/^.*\/api\/chat-files\//, "").replace(/[?#].*$/, "");
+    if (/^[0-9a-f-]{36}$/i.test(id)) {
+      const found = await chatFiles.row(owner, id, true);
+      if (!found?.bytes) return null;
+      return {
+        id: found.id,
+        name: found.name,
+        mimeType: found.mime_type,
+        bytes: Buffer.from(found.bytes),
+      };
+    }
+    if (!ref) {
+      const recent = await chatFiles.list(owner, agentId, {
+        imagesOnly: opts?.kind === "image",
+        limit: 20,
+      });
+      const hit =
+        opts?.kind === "video"
+          ? recent.find((item) =>
+              item.mimeType.toLowerCase().startsWith("video/"),
+            )
+          : recent[0];
+      if (!hit) return null;
+      const found = await chatFiles.row(owner, hit.id, true);
+      if (!found?.bytes) return null;
+      return {
+        id: found.id,
+        name: found.name,
+        mimeType: found.mime_type,
+        bytes: Buffer.from(found.bytes),
+      };
+    }
+    if (!computerGateway?.downloadFile) return null;
+    const wsFile = await computerGateway
+      .downloadFile(
+        agentId,
+        { id: owner, userId: owner, initiator: PERSON_INITIATOR },
+        { path: ref },
+      )
+      .catch(() => null);
+    if (!wsFile || wsFile.bytes > 20 * 1024 * 1024) {
+      if (wsFile) await wsFile.body.cancel().catch(() => {});
+      return null;
+    }
+    const wsBytes = Buffer.from(await new Response(wsFile.body).arrayBuffer());
+    const lower = wsFile.name.toLowerCase();
+    const mimeType = lower.endsWith(".mp4")
+      ? "video/mp4"
+      : lower.endsWith(".webm")
+        ? "video/webm"
+        : lower.endsWith(".mov")
+          ? "video/quicktime"
+          : "application/octet-stream";
+    return {
+      id: null,
+      name: wsFile.name,
+      mimeType,
+      bytes: wsBytes,
+    };
+  },
+  fallbackGenerateImage: async (actorId, agentId, prompt) => {
+    const chosen = await chatFiles.media.imageFor(actorId).catch(() => null);
+    if (!chosen) return null;
+    const file = await chatFiles.makeImage(actorId, agentId, {
+      prompt,
+      aspect: "1:1",
+    });
+    const saved = await chatFiles.row(actorId, file.id, true);
+    if (!saved?.bytes) return null;
+    return { bytes: Buffer.from(saved.bytes), model: chosen.config.model };
+  },
+  fallbackVisionModel: async (owner, agentId) => {
+    const vision = await chatFiles.media
+      .visionFor(owner, agentId)
+      .catch(() => null);
+    return vision?.kind === "model" ? vision.config : null;
+  },
+  transcribeVideoAudio: async (bytes, mimeType, name) => {
+    try {
+      const res = await speechService.transcribeAudio({
+        data: bytes,
+        mimeType,
+        fileName: name,
+      });
+      return res.text || null;
+    } catch {
+      return null;
+    }
+  },
+});
+await mediaPool.ensure();
 /** 频道聊天的上传也存进机器人工作区 uploads/（CB-046，DESIGN.md §68），和旧 /bot 一样。 */
 setChannelUploadMirror(
   createChannelUploadMirror({
@@ -2189,6 +2304,9 @@ const loadToolsForActor =
       ...(isPanelRefresh
         ? []
         : await chatFiles.tools(actorId, botId, initiator).catch(() => [])),
+      ...(isPanelRefresh
+        ? []
+        : await mediaPool.tools(actorId, botId).catch(() => [])),
       ...(!isPanelRefresh && (await speechService.isTtsReady())
         ? speechService.tools({ actorId, agentId: botId })
         : []),
@@ -5509,6 +5627,11 @@ const app = createApp(
             .tools(actorId, botId, initiator ?? undefined)
             .catch(() => [])
         : []),
+      ...(/^(media_pool_list$|image_generate_multi$|video_generate$|video_inspect$)/.test(
+        name,
+      )
+        ? await mediaPool.tools(actorId, botId).catch(() => [])
+        : []),
       ...(!imUntrusted && name === "session_search"
         ? createSessionSearchTools({
             database,
@@ -5790,6 +5913,8 @@ const app = createApp(
       ["/api/chat-files", chatFiles.routes(requireUser)],
       ["/api/confirmations", confirmations.routes(requireUser)],
       ["/api/media-models", chatFiles.media.routes(requireUser)],
+      ["/api/media-pool", mediaPool.routes(requireUser)],
+      ["/api/bots", mediaPool.botAvatarRoutes(requireUser)],
       ["/api/link-preview", linkPreviews.routes(requireUser)],
       [
         "/api/workflows",

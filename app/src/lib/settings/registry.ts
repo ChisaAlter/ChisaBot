@@ -907,6 +907,21 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         ],
       },
       {
+        id: "media-pool",
+        title: "多模态创作模型池",
+        description: "多生图、多参考图、视频生成与视频理解模型及参数白名单",
+        find: "多模态创作模型池",
+        keywords: [
+          "模型池",
+          "多模态",
+          "视频生成",
+          "视频理解",
+          "参考图",
+          "media pool",
+          "video",
+        ],
+      },
+      {
         id: "speech-service",
         title: "语音服务（ASR / TTS）",
         description: "语音识别、朗读合成与音色试听配置",

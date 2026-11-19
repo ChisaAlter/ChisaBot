@@ -12,6 +12,20 @@ export type BotActivity = "thinking" | "working" | "interrupted";
 
 const current = new Map<string, BotActivity>();
 const listeners = new Set<() => void>();
+let snapshotVersion = 0;
+let cachedWorkingIds: readonly string[] = [];
+
+function notifyListeners() {
+  snapshotVersion += 1;
+  const next: string[] = [];
+  for (const [id, status] of current.entries()) {
+    if (status === "working" || status === "thinking") {
+      next.push(id);
+    }
+  }
+  cachedWorkingIds = next;
+  for (const listener of listeners) listener();
+}
 
 export function publishBotActivity(
   agentId: string,
@@ -21,12 +35,12 @@ export function publishBotActivity(
   if (before !== activity) {
     if (activity) current.set(agentId, activity);
     else current.delete(agentId);
-    for (const listener of listeners) listener();
+    notifyListeners();
   }
   return () => {
     if (current.get(agentId) === activity && activity !== null) {
       current.delete(agentId);
-      for (const listener of listeners) listener();
+      notifyListeners();
     }
   };
 }
@@ -43,6 +57,18 @@ export function useBotActivity(
     subscribe,
     () => (agentId ? (current.get(agentId) ?? null) : null),
     () => null,
+  );
+}
+
+const EMPTY_IDS: readonly string[] = [];
+
+/** 订阅当前所有正在思考或执行工具的 Bot ID 列表（供顶栏 WorkingCrewStrip 使用）。 */
+export function useActiveBotIds(): readonly string[] {
+  void snapshotVersion;
+  return useSyncExternalStore(
+    subscribe,
+    () => cachedWorkingIds,
+    () => EMPTY_IDS,
   );
 }
 

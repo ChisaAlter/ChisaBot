@@ -23,6 +23,10 @@ import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { trustedEndpointFetch } from "../net/trusted-endpoint-fetch";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
+  type TranscodeToWavResult,
+  transcodeTo16kMonoWav,
+} from "./ffmpeg-transcode";
+import {
   parseSpeechEndpointUrl,
   sameSpeechOrigin,
   type SpeechSettingsStore,
@@ -733,12 +737,18 @@ export function createSpeechService(options: {
   settingsStore?: SpeechSettingsStore;
   persistAudio?: SpeechPersistAudio;
   transport?: SpeechTransport;
+  /** 可选覆盖音频规整转码器（默认走 FFmpeg 16kHz 单声道 WAV 安全转码）。 */
+  transcodeAudio?: (
+    bytes: Uint8Array,
+    opts?: { timeoutMs?: number },
+  ) => Promise<TranscodeToWavResult>;
   publicOrigin?: string;
   timeoutMs?: number;
   maxTtsAudioBytes?: number;
   maxConcurrentTtsPerUser?: number;
 }): SpeechService {
   const transport = options.transport ?? defaultTransport;
+  const transcodeAudio = options.transcodeAudio ?? transcodeTo16kMonoWav;
   const timeoutMs = options.timeoutMs ?? SPEECH_TIMEOUT_MS;
   const maxTtsAudioBytes =
     options.maxTtsAudioBytes ?? MAX_SPEECH_TTS_AUDIO_BYTES;
@@ -916,9 +926,33 @@ export function createSpeechService(options: {
       );
     }
 
+    let uploadFile = file;
+    if (format.extension !== "wav") {
+      try {
+        const rawBytes = new Uint8Array(await file.arrayBuffer());
+        const normalized = await transcodeAudio(rawBytes, {
+          timeoutMs: Math.min(timeoutMs, 15_000),
+        });
+        if (
+          normalized.transcoded &&
+          normalized.bytes.byteLength > 0 &&
+          normalized.bytes.byteLength <= MAX_SPEECH_ASR_BYTES
+        ) {
+          const baseName = file.name.replace(/\.[^.]+$/, "") || "audio";
+          uploadFile = new File(
+            [new Uint8Array(normalized.bytes)],
+            `${baseName}.wav`,
+            { type: "audio/wav" },
+          );
+        }
+      } catch {
+        // 转码异常时静默保留原始字节，确保语音识别主链路不被阻塞。
+      }
+    }
+
     const baseUrl = normalizeEndpointBase(config.asr.baseUrl);
     const form = new FormData();
-    form.set("file", file);
+    form.set("file", uploadFile);
     form.set("model", config.asr.model);
     const language = input.language?.trim();
     if (language) {
