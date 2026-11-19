@@ -3,6 +3,10 @@ import type { Message } from "@ag-ui/core";
 import { toMessageContent } from "@/components/channels/channel-chat";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import {
+  isServableAttachmentUrl,
+  parkedTiles,
+} from "@/components/channels/chat-transcript";
+import {
   attachmentsConfigFor,
   chatFileRowId,
   FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
@@ -10,9 +14,9 @@ import {
   uploadChatDocumentToBot,
 } from "@/components/channels/composer/attachments";
 import { attachmentUrl, MAX_IMAGE_BYTES } from "@/lib/channels/attachments";
-import { deleteChatFile } from "@/lib/chat-files";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import { attachmentIdsInContent } from "@/lib/chat/ui-memory";
+import { deleteChatFile } from "@/lib/chat-files";
 import {
   ACCEPTED_CHAT_DOCUMENT_MIME,
   chatFileUrl,
@@ -182,7 +186,10 @@ describe("attachmentsConfigFor & uploadChatDocumentToBot", () => {
     const uploadedAttachments: string[] = [];
     const uploadedChatFiles: string[] = [];
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
       const path = String(input);
       const form = init?.body as FormData;
       requests.push({
@@ -281,7 +288,10 @@ describe("attachmentsConfigFor & uploadChatDocumentToBot", () => {
 
   test("uploadChatDocumentToBot 校验服务端错误与非法响应体", async () => {
     globalThis.fetch = (async () =>
-      jsonResponse({ error: "文件超过 20.0 MB。" }, 413)) as unknown as typeof fetch;
+      jsonResponse(
+        { error: "文件超过 20.0 MB。" },
+        413,
+      )) as unknown as typeof fetch;
 
     await expect(
       uploadChatDocumentToBot("bot-alpha")(
@@ -321,7 +331,10 @@ describe("attachmentsConfigFor & uploadChatDocumentToBot", () => {
 
   test("deleteChatFile 调用 DELETE /api/chat-files/:id 且忽略 404 与网络失败", async () => {
     const calls: { url: string; method?: string }[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
       calls.push({ url: String(input), method: init?.method });
       return new Response(null, { status: 404 });
     }) as unknown as typeof fetch;
@@ -336,5 +349,37 @@ describe("attachmentsConfigFor & uploadChatDocumentToBot", () => {
     }) as unknown as typeof fetch;
 
     await expect(deleteChatFile("cf-net-err")).resolves.toBeUndefined();
+  });
+
+  test("chat-transcript 放行 /api/chat-files/ 卡片并兼容排队消息的 metadata.chatFileId", () => {
+    expect(isServableAttachmentUrl(chatFileUrl("cf-pdf-1"))).toBe(true);
+    expect(isServableAttachmentUrl(attachmentUrl("att-img-1"))).toBe(true);
+    expect(isServableAttachmentUrl("https://evil.example/a.pdf")).toBe(false);
+    expect(isServableAttachmentUrl("/other/path/a.pdf")).toBe(false);
+
+    const parked: Attachment[] = [
+      {
+        id: "local-1",
+        type: "document",
+        filename: "spec.pdf",
+        status: "ready",
+        source: {
+          type: "url",
+          value: chatFileUrl("cf-pdf-9"),
+          mimeType: PDF_MIME,
+        },
+        metadata: { chatFileId: "cf-pdf-9", filename: "spec.pdf" },
+      },
+    ];
+    const tiles = parkedTiles(parked);
+    expect(tiles).toEqual([
+      {
+        id: "local-1",
+        attachmentId: "cf-pdf-9",
+        url: "/api/chat-files/cf-pdf-9",
+        filename: "spec.pdf",
+        modality: "document",
+      },
+    ]);
   });
 });
