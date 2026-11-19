@@ -2,7 +2,6 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { Env, Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { sameToken } from "./agents/callback-token";
 import {
@@ -115,6 +114,72 @@ function refused(status: number, error: string): Response {
   );
 }
 
+const MAX_MODEL_PROXY_BODY_BYTES = 32 * 1024 * 1024;
+
+type BoundedBodyResult =
+  | { ok: true; body: ArrayBuffer }
+  | { ok: false; status: 400 | 413; error: string };
+
+async function readBoundedBody(
+  request: Request,
+  maxBytes: number,
+): Promise<BoundedBodyResult> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength.trim());
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await request.body?.cancel().catch(() => {});
+      return { ok: false, status: 413, error: "模型代理请求体过大。" };
+    }
+  }
+  if (!request.body) {
+    try {
+      const buffer = await request.arrayBuffer();
+      if (buffer.byteLength > maxBytes) {
+        return { ok: false, status: 413, error: "模型代理请求体过大。" };
+      }
+      return { ok: true, body: buffer };
+    } catch {
+      return {
+        ok: false,
+        status: 400,
+        error: "The model request body could not be read.",
+      };
+    }
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        return { ok: false, status: 413, error: "模型代理请求体过大。" };
+      }
+      chunks.push(value);
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { ok: true, body: merged.buffer };
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      error: "The model request body could not be read.",
+    };
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** One host-server instance owns refresh; agents use only its separate local bearer. */
 export function createProviderOAuthProxy(
   file: string,
@@ -209,12 +274,11 @@ export function createProviderOAuthProxy(
     if (!sameToken(offered, `Bearer ${current.proxyToken}`))
       return refused(401, "The local model proxy requires authentication.");
 
-    let body: ArrayBuffer;
-    try {
-      body = await request.arrayBuffer();
-    } catch {
-      return refused(400, "The model request body could not be read.");
+    const bodyRead = await readBoundedBody(request, MAX_MODEL_PROXY_BODY_BYTES);
+    if (!bodyRead.ok) {
+      return refused(bodyRead.status, bodyRead.error);
     }
+    const body = bodyRead.body;
     try {
       if (current.expiresAt <= Date.now() + 120_000)
         current = await refresh(current);
@@ -321,13 +385,7 @@ export function mountProviderOAuthProxy<T extends Env>(
   proxy: ModelProviderProxy | undefined,
 ): void {
   if (proxy)
-    app.post(
-      "/api/model-provider/v1/chat/completions",
-      bodyLimit({
-        maxSize: 32 * 1024 * 1024,
-        onError: (context) =>
-          context.json({ error: "模型代理请求体过大。" }, 413),
-      }),
-      (context) => proxy(context.req.raw),
+    app.post("/api/model-provider/v1/chat/completions", (context) =>
+      proxy(context.req.raw),
     );
 }

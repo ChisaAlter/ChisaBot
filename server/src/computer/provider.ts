@@ -6,7 +6,7 @@ import {
   assertExecutionNodeDnsSafe,
   type ExecutionNodeDnsResolver,
   ExecutionNodeError,
-} from "./execution-node-store";
+} from "./execution-node-net";
 import {
   createSandboxComputerProvider,
   inClusterConfig,

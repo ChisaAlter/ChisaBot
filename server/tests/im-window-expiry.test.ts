@@ -255,8 +255,8 @@ function createFakePostgres() {
         cron: args[9] == null ? null : String(args[9]),
         run_at: args[10] ? new Date(String(args[10])) : null,
         timezone: String(args[11]),
-        status: "active",
-        next_run_at: args[12] ? new Date(String(args[12])) : null,
+        status: String(args[12]) as ScheduleRow["status"],
+        next_run_at: args[13] ? new Date(String(args[13])) : null,
         last_run_at: null,
         last_status: null,
         last_result: null,
@@ -451,6 +451,14 @@ function createFakePostgres() {
       return [] as unknown as T;
     }
 
+    if (
+      query.startsWith(
+        "UPDATE chisabot_schedule_runs r SET status = 'interrupted'",
+      )
+    ) {
+      return [] as unknown as T;
+    }
+
     throw new Error(`未模拟的 SQL: ${query}`);
   };
 
@@ -468,6 +476,8 @@ function createFakePostgres() {
 
   const database = { $client: client } as unknown as Database;
 
+  let dueSlotOffset = 0;
+
   return {
     database,
     ddlStatements,
@@ -480,7 +490,8 @@ function createFakePostgres() {
     makeScheduleDue(id: string) {
       const row = schedules.get(id);
       if (row) {
-        row.next_run_at = new Date(Date.now() - 60_000);
+        dueSlotOffset += 1;
+        row.next_run_at = new Date(Date.now() - dueSlotOffset * 60_000);
       }
     },
     seedDurableRun(fixture: DurableRunFixture) {

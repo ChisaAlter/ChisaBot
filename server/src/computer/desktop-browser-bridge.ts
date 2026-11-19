@@ -42,7 +42,7 @@ import { isMobilePlatform } from "../../../shared/devices";
 import type { AppVariables } from "../auth/guards";
 import type { DeviceHub } from "../devices/hub";
 import type { DeviceRecord, DeviceStore } from "../devices/store";
-import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
+import { type GrantedTool, REFUSAL_MARKER } from "../tools/contract";
 
 export class DesktopBrowserBridgeError extends Error {
   constructor(

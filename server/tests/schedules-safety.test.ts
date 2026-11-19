@@ -53,10 +53,11 @@ describe.skipIf(!url)("schedules data safety (database)", () => {
   };
   const s = url ? createSchedules(database, deps as never) : (null as never);
   const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+  let dueSlotOffset = 0;
   const due = (id: string) =>
     sql.unsafe(
-      "UPDATE chisabot_schedules SET next_run_at = date_trunc('minute', now() - interval '1 minute') WHERE id = $1",
-      [id],
+      "UPDATE chisabot_schedules SET next_run_at = date_trunc('minute', now()) - ($2::int * interval '1 minute') WHERE id = $1",
+      [id, ++dueSlotOffset],
     );
   const fireDue = async (id: string) => {
     await due(id);

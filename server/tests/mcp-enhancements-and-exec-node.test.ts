@@ -15,7 +15,7 @@ import {
   createExecutionNodeStore,
   createMemoryExecutionNodeStorage,
   ExecutionNodeError,
-} from "../src/computer/execution-node-store";
+} from "../src/admin/execution-node-store";
 import {
   NO_NETWORK_POLICY,
   withPolicyPushOnWake,
@@ -95,7 +95,10 @@ function makeGifBase64(width = 2, height = 2): string {
 
 describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / 降级保护）", () => {
   test("listTools nextCursor 完整多页拉取、环游标拦截与页数上限保护", async () => {
-    const pages: Record<string, { tools: Array<{ name: string }>; nextCursor?: string }> = {
+    const pages: Record<
+      string,
+      { tools: Array<{ name: string }>; nextCursor?: string }
+    > = {
       "": { tools: [{ name: "tool_1" }, { name: "tool_2" }], nextCursor: "p2" },
       p2: { tools: [{ name: "tool_3" }], nextCursor: "p3" },
       p3: { tools: [{ name: "tool_4" }] },
@@ -234,16 +237,17 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
 
     // 路由鉴权检查
     const app = new Hono<{ Variables: AppVariables }>();
-    const requireAdminActor: MiddlewareHandler<{ Variables: AppVariables }> =
-      async (c, next) => {
-        c.set("actor", {
-          id: "u-admin",
-          email: "admin@example.com",
-          role: "admin",
-          name: "Admin",
-        });
-        await next();
-      };
+    const requireAdminActor: MiddlewareHandler<{
+      Variables: AppVariables;
+    }> = async (c, next) => {
+      c.set("actor", {
+        id: "u-admin",
+        email: "admin@example.com",
+        role: "admin",
+        name: "Admin",
+      });
+      await next();
+    };
     app.route(
       "/api/mcp-enhancements",
       createMcpEnhancementRoutes({ store, requireUser: requireAdminActor }),
@@ -257,9 +261,9 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
     const validPng = makePngBase64(32, 32);
     const validGif = makeGifBase64(16, 16);
     const pixelBombPng = makePngBase64(10_000, 10_000);
-    const forgedSvg = Buffer.from("<svg><script>alert(1)</script></svg>").toString(
-      "base64",
-    );
+    const forgedSvg = Buffer.from(
+      "<svg><script>alert(1)</script></svg>",
+    ).toString("base64");
     const oversized = Buffer.alloc(4 * 1024 * 1024 + 64).toString("base64");
 
     const extracted = extractValidatedMcpImages([
@@ -328,7 +332,10 @@ describe("Wave 8 远端 MCP 增强（分页 / SSE / 图像透传 / 防重放 / �
         res.write("event: endpoint\ndata: /messages?sessionId=s1\n\n");
         return;
       }
-      if (req.method === "POST" && req.url?.startsWith("/messages?sessionId=s1")) {
+      if (
+        req.method === "POST" &&
+        req.url?.startsWith("/messages?sessionId=s1")
+      ) {
         const chunks: Buffer[] = [];
         req.on("data", (c: Buffer) => chunks.push(c));
         req.on("end", () => {
@@ -448,22 +455,22 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
       const token = req.headers["x-chisabot-computer-token"];
       if (typeof token === "string") tokensSeenAtA.push(token);
       if (req.url === "/health") {
-        res
-          .writeHead(200, { "content-type": "application/json" })
-          .end(
-            JSON.stringify({
-              ok: true,
-              ready: true,
-              protocol: "chisabot-computer/v1",
-              services: { browser: "ok" },
-            }),
-          );
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            ok: true,
+            ready: true,
+            protocol: "chisabot-computer/v1",
+            services: { browser: "ok" },
+          }),
+        );
         return;
       }
       if (req.url === "/computers") {
         res
           .writeHead(200, { "content-type": "application/json" })
-          .end(JSON.stringify({ computers: [{ botId: "bot-a", running: true }] }));
+          .end(
+            JSON.stringify({ computers: [{ botId: "bot-a", running: true }] }),
+          );
         return;
       }
       res.writeHead(404).end();
@@ -481,7 +488,9 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
       if (req.url === "/computers") {
         res
           .writeHead(200, { "content-type": "application/json" })
-          .end(JSON.stringify({ computers: [{ botId: "bot-b", running: true }] }));
+          .end(
+            JSON.stringify({ computers: [{ botId: "bot-b", running: true }] }),
+          );
         return;
       }
       res.writeHead(404).end();
@@ -551,7 +560,9 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
     });
 
     // 1. 未激活任何远程节点 → 无缝回退静态环境变量地址
-    expect(await dynamicProvider.locate("bot-1")).toBe("http://127.0.0.1:19999");
+    expect(await dynamicProvider.locate("bot-1")).toBe(
+      "http://127.0.0.1:19999",
+    );
 
     // 2. 热切换激活节点 A → 无需重启立即切到节点 A 与其解密令牌
     await store.activate("node-a", "admin");
@@ -577,7 +588,9 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
 
     // 5. 停用所有动态节点 → 无缝回到静态环境变量模式
     await store.deactivateAll("admin");
-    expect(await dynamicProvider.locate("bot-1")).toBe("http://127.0.0.1:19999");
+    expect(await dynamicProvider.locate("bot-1")).toBe(
+      "http://127.0.0.1:19999",
+    );
 
     // 6. 管理员路由测试（非管理员 403，管理员可列表/探活/切换）
     let role: "admin" | "user" = "user";
@@ -716,10 +729,14 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
           url: node1.url,
           token: (req.headers["x-chisabot-computer-token"] as string) ?? null,
         });
-        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end('{"ok":true}');
         return;
       }
-      res.writeHead(200, { "content-type": "application/json" }).end('{"computers":[]}');
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end('{"computers":[]}');
     });
     const node2NoToken = await startHttpServer((req, res) => {
       if (req.url === "/egress-policy") {
@@ -727,10 +744,14 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
           url: node2NoToken.url,
           token: (req.headers["x-chisabot-computer-token"] as string) ?? null,
         });
-        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end('{"ok":true}');
         return;
       }
-      res.writeHead(200, { "content-type": "application/json" }).end('{"computers":[]}');
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end('{"computers":[]}');
     });
 
     const coldStore = createExecutionNodeStore({

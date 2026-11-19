@@ -416,6 +416,29 @@ test("an unreadable request body does not invalidate provider sign-in", async ()
   expect(await authenticationFailure(f.app)).toBeNull();
 });
 
+test("an oversized model proxy request body returns 413 without invalidating provider sign-in", async () => {
+  const f = await fixture(record(), () => new Response("must not be called"));
+  const response = await f.app.request(
+    "/api/model-provider/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        authorization: "Bearer local-proxy-token",
+        "content-length": String(32 * 1024 * 1024 + 1),
+      },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(16));
+          controller.close();
+        },
+      }),
+    },
+  );
+  expect(response.status).toBe(413);
+  expect(f.destinations).toEqual([]);
+  expect(await authenticationFailure(f.app)).toBeNull();
+});
+
 test("a quota-project permission denial stays 403 without invalidating sign-in", async () => {
   const f = await fixture(record(), () =>
     Response.json({ error: "private quota project detail" }, { status: 403 }),

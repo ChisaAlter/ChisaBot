@@ -200,7 +200,7 @@ import {
 import {
   createExecutionNodeStore,
   createPgExecutionNodeStorage,
-} from "./computer/execution-node-store";
+} from "./admin/execution-node-store";
 import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
@@ -6444,10 +6444,7 @@ const app = createApp(
           requireUser,
         }),
       ],
-      [
-        "/api/admin/execution-nodes",
-        executionNodeStore.routes(requireUser),
-      ],
+      ["/api/admin/execution-nodes", executionNodeStore.routes(requireUser)],
       [
         "/api/internal",
         createInternalQuiesceRoutes({

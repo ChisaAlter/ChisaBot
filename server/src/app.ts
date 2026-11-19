@@ -98,6 +98,7 @@ import type { OnboardingStore } from "./people/onboarding";
 import { parseProfileInput, profileNeedsSetup } from "./people/onboarding";
 import { MAX_PAGE, type PeopleStore } from "./people/store";
 import type { ComposioBroker } from "./plugins/broker";
+import { formatMcpCallFailure } from "./plugins/mcp-enhancements";
 import { createPluginRoutes } from "./plugins/routes";
 import {
   isDeploymentFault,
@@ -589,56 +590,58 @@ export function createApp(
     requireUser,
     jsonWriteBodyLimit,
     async (context) => {
-    if (!onboardingStore)
-      return context.json({ error: "个人资料不可用。" }, 503);
-    const parsed = parseProfileInput(
-      await context.req.json().catch(() => undefined),
-    );
-    if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-    const current = await onboardingStore.profile(context.var.actor.id);
-    const next = {
-      name: parsed.value.name ?? current.name,
-      image:
-        parsed.value.image === undefined ? current.image : parsed.value.image,
-    };
-    await onboardingStore.setProfile(context.var.actor.id, next);
-    return context.json({ profile: next });
-  });
+      if (!onboardingStore)
+        return context.json({ error: "个人资料不可用。" }, 503);
+      const parsed = parseProfileInput(
+        await context.req.json().catch(() => undefined),
+      );
+      if (!parsed.ok) return context.json({ error: parsed.error }, 400);
+      const current = await onboardingStore.profile(context.var.actor.id);
+      const next = {
+        name: parsed.value.name ?? current.name,
+        image:
+          parsed.value.image === undefined ? current.image : parsed.value.image,
+      };
+      await onboardingStore.setProfile(context.var.actor.id, next);
+      return context.json({ profile: next });
+    },
+  );
   app.post(
     "/api/me/onboarding",
     requireUser,
     jsonWriteBodyLimit,
     async (context) => {
-    if (!onboardingStore) {
-      return context.json({ error: "Onboarding is not available." }, 503);
-    }
+      if (!onboardingStore) {
+        return context.json({ error: "Onboarding is not available." }, 503);
+      }
 
-    const body = (await context.req.json().catch(() => undefined)) as
-      | { step?: unknown; completed?: unknown }
-      | undefined;
+      const body = (await context.req.json().catch(() => undefined)) as
+        | { step?: unknown; completed?: unknown }
+        | undefined;
 
-    if (body?.completed === true) {
-      await onboardingStore.complete(context.var.actor.id);
-    } else if (
-      typeof body?.step === "number" &&
-      Number.isInteger(body.step) &&
-      body.step >= 0 &&
-      // The column's range — the only bound the server knows, since the wizard's length is the
-      // app's fact rather than the deployment's.
-      body.step <= 2_147_483_647
-    ) {
-      await onboardingStore.setStep(context.var.actor.id, body.step);
-    } else {
-      return context.json(
-        { error: "Send the step to move to, or completed: true." },
-        400,
-      );
-    }
+      if (body?.completed === true) {
+        await onboardingStore.complete(context.var.actor.id);
+      } else if (
+        typeof body?.step === "number" &&
+        Number.isInteger(body.step) &&
+        body.step >= 0 &&
+        // The column's range — the only bound the server knows, since the wizard's length is the
+        // app's fact rather than the deployment's.
+        body.step <= 2_147_483_647
+      ) {
+        await onboardingStore.setStep(context.var.actor.id, body.step);
+      } else {
+        return context.json(
+          { error: "Send the step to move to, or completed: true." },
+          400,
+        );
+      }
 
-    return context.json({
-      onboarding: await onboardingStore.status(context.var.actor.id),
-    });
-  });
+      return context.json({
+        onboarding: await onboardingStore.status(context.var.actor.id),
+      });
+    },
+  );
   /*
    * A person's own standing instructions, read and written by the person they belong to.
    *
@@ -707,64 +710,66 @@ export function createApp(
     requireUser,
     jsonWriteBodyLimit,
     async (context) => {
-    if (!userInstructions) {
-      return context.json(
-        { error: "Standing instructions are not available." },
-        503,
-      );
-    }
-
-    const body = (await context.req.json().catch(() => undefined)) as
-      | { instructions?: unknown }
-      | undefined;
-
-    if (typeof body?.instructions !== "string") {
-      return context.json({ error: "Send the instructions to save." }, 400);
-    }
-
-    /*
-     * The cap is the store's rule, so the store is what enforces it and this catches the refusal
-     * rather than checking the length again. A second copy of `> 4000` here is a second place for
-     * the number to be changed in only one of them.
-     */
-    let saved: string;
-    try {
-      saved = await userInstructions.write(
-        context.var.actor.id,
-        body.instructions,
-      );
-    } catch (error) {
-      if (error instanceof InstructionsTooLongError) {
-        return context.json({ error: error.message }, 400);
+      if (!userInstructions) {
+        return context.json(
+          { error: "Standing instructions are not available." },
+          503,
+        );
       }
-      throw error;
-    }
 
-    /*
-     * The trail records that they changed and how long they now are, NEVER what they say.
-     *
-     * The audit table is append-only and read by administrators, and this is a person's own note
-     * about how they want to be spoken to. Recording the text would put it somewhere they cannot
-     * edit it and somebody else can read it, which is not what a preferences screen promises. The
-     * length is enough to answer the question a trail is for: when did this change, and to what
-     * extent.
-     */
-    if (auditStore) {
-      await recordAuditEvent(auditStore, {
-        eventType: "configuration.changed",
-        targetType: "user_instructions",
-        targetId: context.var.actor.id,
-        actorUserId: context.var.actor.id,
-        payload: {
-          change: saved === "" ? "instructions_cleared" : "instructions_saved",
-          characters: saved.length,
-          limit: INSTRUCTIONS_LIMIT,
-        },
-      });
-    }
+      const body = (await context.req.json().catch(() => undefined)) as
+        | { instructions?: unknown }
+        | undefined;
 
-    return context.json({ instructions: saved });
-  });
+      if (typeof body?.instructions !== "string") {
+        return context.json({ error: "Send the instructions to save." }, 400);
+      }
+
+      /*
+       * The cap is the store's rule, so the store is what enforces it and this catches the refusal
+       * rather than checking the length again. A second copy of `> 4000` here is a second place for
+       * the number to be changed in only one of them.
+       */
+      let saved: string;
+      try {
+        saved = await userInstructions.write(
+          context.var.actor.id,
+          body.instructions,
+        );
+      } catch (error) {
+        if (error instanceof InstructionsTooLongError) {
+          return context.json({ error: error.message }, 400);
+        }
+        throw error;
+      }
+
+      /*
+       * The trail records that they changed and how long they now are, NEVER what they say.
+       *
+       * The audit table is append-only and read by administrators, and this is a person's own note
+       * about how they want to be spoken to. Recording the text would put it somewhere they cannot
+       * edit it and somebody else can read it, which is not what a preferences screen promises. The
+       * length is enough to answer the question a trail is for: when did this change, and to what
+       * extent.
+       */
+      if (auditStore) {
+        await recordAuditEvent(auditStore, {
+          eventType: "configuration.changed",
+          targetType: "user_instructions",
+          targetId: context.var.actor.id,
+          actorUserId: context.var.actor.id,
+          payload: {
+            change:
+              saved === "" ? "instructions_cleared" : "instructions_saved",
+            characters: saved.length,
+            limit: INSTRUCTIONS_LIMIT,
+          },
+        });
+      }
+
+      return context.json({ instructions: saved });
+    },
+  );
   app.get("/api/admin/status", requireUser, (context) => {
     const denied = requireAdmin(context);
     return denied ?? context.json({ status: "ok" });
@@ -1109,51 +1114,52 @@ export function createApp(
     requireUser,
     jsonWriteBodyLimit,
     async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) return denied;
-    context.header("Cache-Control", "no-store");
-    if (!options.quotaService) {
-      return context.json({ error: "配额服务暂时不可用。" }, 503);
-    }
-    const userId = context.req.param("userId").trim();
-    if (!userId) {
-      return context.json({ error: "用户 ID 不能为空。" }, 400);
-    }
-    const body = await context.req.json().catch(() => null);
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return context.json({ error: "请求体必须为 JSON 对象。" }, 400);
-    }
-    const record = body as Record<string, unknown>;
-    const isOptionalLimit = (
-      value: unknown,
-    ): value is number | null | undefined =>
-      value === undefined || value === null || typeof value === "number";
-    if (
-      !isOptionalLimit(record.dailyTokenLimit) ||
-      !isOptionalLimit(record.monthlyTokenLimit) ||
-      !isOptionalLimit(record.dailyRequestLimit) ||
-      (record.bypassAdmin !== undefined &&
-        typeof record.bypassAdmin !== "boolean")
-    ) {
-      return context.json({ error: "配额字段类型无效。" }, 400);
-    }
-    try {
-      const quota = await options.quotaService.setQuota({
-        userId,
-        dailyTokenLimit: record.dailyTokenLimit ?? null,
-        monthlyTokenLimit: record.monthlyTokenLimit ?? null,
-        dailyRequestLimit: record.dailyRequestLimit ?? null,
-        bypassAdmin: record.bypassAdmin ?? true,
-        updatedBy: context.var.actor.id,
-      });
-      return context.json({ quota });
-    } catch (error) {
-      if (error instanceof QuotaValidationError) {
-        return context.json({ error: error.message }, 400);
+      const denied = requireAdmin(context);
+      if (denied) return denied;
+      context.header("Cache-Control", "no-store");
+      if (!options.quotaService) {
+        return context.json({ error: "配额服务暂时不可用。" }, 503);
       }
-      return context.json({ error: "用户配额保存失败，请稍后重试。" }, 503);
-    }
-  });
+      const userId = context.req.param("userId").trim();
+      if (!userId) {
+        return context.json({ error: "用户 ID 不能为空。" }, 400);
+      }
+      const body = await context.req.json().catch(() => null);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return context.json({ error: "请求体必须为 JSON 对象。" }, 400);
+      }
+      const record = body as Record<string, unknown>;
+      const isOptionalLimit = (
+        value: unknown,
+      ): value is number | null | undefined =>
+        value === undefined || value === null || typeof value === "number";
+      if (
+        !isOptionalLimit(record.dailyTokenLimit) ||
+        !isOptionalLimit(record.monthlyTokenLimit) ||
+        !isOptionalLimit(record.dailyRequestLimit) ||
+        (record.bypassAdmin !== undefined &&
+          typeof record.bypassAdmin !== "boolean")
+      ) {
+        return context.json({ error: "配额字段类型无效。" }, 400);
+      }
+      try {
+        const quota = await options.quotaService.setQuota({
+          userId,
+          dailyTokenLimit: record.dailyTokenLimit ?? null,
+          monthlyTokenLimit: record.monthlyTokenLimit ?? null,
+          dailyRequestLimit: record.dailyRequestLimit ?? null,
+          bypassAdmin: record.bypassAdmin ?? true,
+          updatedBy: context.var.actor.id,
+        });
+        return context.json({ quota });
+      } catch (error) {
+        if (error instanceof QuotaValidationError) {
+          return context.json({ error: error.message }, 400);
+        }
+        return context.json({ error: "用户配额保存失败，请稍后重试。" }, 503);
+      }
+    },
+  );
 
   app.get("/api/admin/credentials", requireUser, async (context) => {
     const denied = requireAdmin(context);
@@ -1174,28 +1180,29 @@ export function createApp(
     requireUser,
     jsonWriteBodyLimit,
     async (context) => {
-    const denied = requireAdmin(context);
-    if (denied) {
-      return denied;
-    }
-    if (!credentialService) {
+      const denied = requireAdmin(context);
+      if (denied) {
+        return denied;
+      }
+      if (!credentialService) {
+        return context.json(
+          { error: "Credential storage is not configured." },
+          503,
+        );
+      }
+
+      const body = await context.req.json().catch(() => null);
+      const input = credentialInput(body, context.var.actor.id);
+      if (!input) {
+        return context.json({ error: "Credential input is invalid." }, 400);
+      }
+
       return context.json(
-        { error: "Credential storage is not configured." },
-        503,
+        { credential: await credentialService.create(input) },
+        201,
       );
-    }
-
-    const body = await context.req.json().catch(() => null);
-    const input = credentialInput(body, context.var.actor.id);
-    if (!input) {
-      return context.json({ error: "Credential input is invalid." }, 400);
-    }
-
-    return context.json(
-      { credential: await credentialService.create(input) },
-      201,
-    );
-  });
+    },
+  );
   app.post(
     "/api/admin/credentials/:credentialId/rotate",
     requireUser,
@@ -1705,10 +1712,7 @@ export function createApp(
    */
   if (pluginStore || deploymentToolCaller) {
     const legacyToken = config.agentToolToken ?? "";
-    app.post(
-      "/api/agent-tools/call",
-      agentToolBodyLimit,
-      async (context) => {
+    app.post("/api/agent-tools/call", agentToolBodyLimit, async (context) => {
       /*
        * Who is calling, and on whose behalf. Two questions, two credentials.
        *
@@ -1845,10 +1849,19 @@ export function createApp(
             isError: true,
           });
         }
+        let safeMessage: string | null = null;
+        if (error instanceof Error) {
+          const stripped = withoutStatement(error);
+          const candidate =
+            stripped === error.message ? error : new Error(stripped);
+          if (!isDeploymentFault(error)) {
+            safeMessage = formatMcpCallFailure(candidate);
+          }
+        }
         return context.json({
           text:
-            error instanceof Error && !isDeploymentFault(error)
-              ? `That tool could not be called: ${withoutStatement(error)}`
+            safeMessage !== null
+              ? `That tool could not be called: ${safeMessage}`
               : "That tool could not be called.",
           isError: true,
         });

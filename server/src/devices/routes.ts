@@ -191,13 +191,20 @@ export function createDeviceRoutes(options: {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
   const routes = new Hono<{ Variables: Variables }>();
-  routes.use(
-    "*",
-    bodyLimit({
-      maxSize: 4 * 1024 * 1024,
-      onError: (context) => context.json({ error: "设备接口请求体过大。" }, 413),
-    }),
-  );
+  const deviceBodyLimit = bodyLimit({
+    maxSize: 4 * 1024 * 1024,
+    onError: (context) => context.json({ error: "设备接口请求体过大。" }, 413),
+  });
+  // 流式/chunked 无体请求不触发 bodyLimit 的 EOF 等待；无 Content-Type 的请求亦不读体。
+  routes.use("*", async (context, next) => {
+    if (
+      hasJsonBody(context.req.raw.headers) ||
+      context.req.raw.headers.has("content-length")
+    ) {
+      return deviceBodyLimit(context, next);
+    }
+    return next();
+  });
   const userGuard = requireUser as unknown as MiddlewareHandler<{
     Variables: Variables;
   }>;
@@ -712,9 +719,7 @@ export function createDeviceRoutes(options: {
     const owner = hub.approvalOwner(id);
     if (!owner || owner !== actor.id)
       return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
-    const body = (await context.req.json().catch(() => null)) as {
-      decision?: unknown;
-    } | null;
+    const body = await readJsonObject(context.req);
     const decision = body?.decision;
     if (decision !== "approve" && decision !== "deny")
       return context.json({ error: "decision 必须是 approve 或 deny。" }, 400);
@@ -798,7 +803,7 @@ export function createDeviceRoutes(options: {
     if (!before) return context.json({ error: "没有这台设备。" }, 404);
     if (before.revoked)
       return context.json({ error: "这台设备已被撤销，不能再修改。" }, 409);
-    const patch = parsePatch(await context.req.json().catch(() => null));
+    const patch = parsePatch(await readJsonObject(context.req));
     if (typeof patch === "string") return context.json({ error: patch }, 400);
     const actor = context.var.actor;
     if (patch.fullAccessUntil) {

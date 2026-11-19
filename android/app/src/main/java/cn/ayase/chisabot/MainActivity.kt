@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /** 桌面图标长按、扫码绑定（chisabot://pair）、Bot/会话深链（chisabot://agent|channel/*）以及系统分享（ACTION_SEND）。 */
+    /** 桌面图标长按、扫码绑定（chisabot://pair）、Bot/会话深链（chisabot://agent|channel/<id>）以及系统分享（ACTION_SEND）。 */
     private fun handleIntent(intent: Intent?) {
         when (intent?.action) {
             ACTION_SERVER -> vm.switchServer()
