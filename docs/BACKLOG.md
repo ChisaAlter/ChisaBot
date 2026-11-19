@@ -160,8 +160,8 @@
 - [x] **双槽独立选族**：`setThemeHalf(mode, id)` 只写对应槽；族卡左右分半预览（各 seed 的 bg/ac 小样），8 内置族 + 第 9 张自定义族卡 / 编辑器（`chisabot-theme-families`）。
 - [x] **seed 派生令牌**：`deriveSeed(seed, dark)` 出强调色 / 文字层级 / 边框 / 玻璃 / `--fam-sky-*` 四段天空；styles.css 删全部 `data-palette` 块，启动脚本（`familyBootScript`，构建时内联 `deriveSeed`）与 `applyAppearanceToDocument` 同一路径写 DOM。
 - [x] **迁移与兼容**：`chisabot-theme-palette` 老键一次性映射迁移两槽（boot 与应用同规则）；`boundMode` 明暗绑定皮肤删除；auto 天象改随族 `seed.scene`，§140 昼夜配对不变式不动；壁纸 / 玻璃 / skySource 行为全部保留。
-- [ ] **验收**：`bun run check` + `bun run test:app`（theme-family / palette-theme / appearance-* / theme-glass-perf / default-mist-glass / settings-audit 等迁移后全绿）；`tests/appearance-model/appearance.mjs` 真浏览器验收（族半边点击、两槽独立、主题天空卡、壁纸互斥）。
-- [ ] 本地合入 `main` 后按需推送并串行部署观察。
+- [x] **验收**：`bun run check`（typecheck + biome 全仓 0 error 0 warning）、`bun run test:app` 全绿；`tests/appearance-model/appearance.mjs` 真浏览器验收全项 PASS（族半边点击、两槽独立、主题天空卡、壁纸互斥、420 无横向溢出、零控制台错误），1280 / 420 / 深色三张截图见 PR #562。
+- [ ] PR #562 合并发版；串行部署后生产观察。
 
 ## CB-139
 
