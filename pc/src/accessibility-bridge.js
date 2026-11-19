@@ -15,30 +15,22 @@
 const { runProcess, encodePowerShell } = require("./agent/ops");
 
 const DEFAULT_GRANT_TTL_MS = 10 * 60_000;
+const MAX_GRANT_TTL_MS = 30 * 60_000;
 const ACCESSIBILITY_SCOPE = "accessibility_control";
+const BUNDLE_ID_RE = /^[a-z0-9._-]{1,160}$/;
 
 function normalizeBundleId(raw) {
   const value = String(raw || "")
     .trim()
     .toLowerCase();
-  if (!value || value.length > 200) return "";
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return "";
-  }
+  if (!value || !BUNDLE_ID_RE.test(value)) return "";
   return value;
 }
 
-function escapeAppleScript(value) {
-  return String(value ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\r/g, "")
-    .replace(/\n/g, "\\n");
-}
-
-function escapePowerShellSingle(value) {
-  return String(value ?? "").replace(/'/g, "''");
+/** 用 UTF-8 Base64 构造 PowerShell 字符串表达式，彻底杜绝 PS 5.1 弯单引号逃逸注入。 */
+function psUtf8Literal(value) {
+  const b64 = Buffer.from(String(value ?? ""), "utf8").toString("base64");
+  return `([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')))`;
 }
 
 /**
@@ -46,7 +38,10 @@ function escapePowerShellSingle(value) {
  */
 function createDirectionEpochAuthorizer(options = {}) {
   const now = options.now || Date.now;
-  const defaultTtlMs = options.defaultTtlMs ?? DEFAULT_GRANT_TTL_MS;
+  const defaultTtlMs = Math.min(
+    MAX_GRANT_TTL_MS,
+    Math.max(1000, Number(options.defaultTtlMs) || DEFAULT_GRANT_TTL_MS),
+  );
   const epochs = new Map(); // conversationId -> number
   const grants = new Map(); // key -> { conversationId, deviceId, bundleId, epoch, expiresAt, grantedAt }
 
@@ -84,7 +79,7 @@ function createDirectionEpochAuthorizer(options = {}) {
     bundleId,
     epoch,
     scopes,
-    ttlMs = defaultTtlMs,
+    ttlMs,
   }) {
     const conv = String(conversationId || "").trim();
     const dev = String(deviceId || "").trim();
@@ -94,6 +89,14 @@ function createDirectionEpochAuthorizer(options = {}) {
     }
     if (!hasRequiredScope(scopes)) {
       return { ok: false, reason: "missing_accessibility_scope" };
+    }
+    let effectiveTtlMs = defaultTtlMs;
+    if (ttlMs !== undefined) {
+      const parsedTtl = Number(ttlMs);
+      if (!Number.isFinite(parsedTtl) || parsedTtl <= 0) {
+        return { ok: false, reason: "invalid_ttl" };
+      }
+      effectiveTtlMs = Math.min(MAX_GRANT_TTL_MS, Math.max(1000, parsedTtl));
     }
     const activeEpoch = currentEpoch(conv);
     const targetEpoch = epoch === undefined ? activeEpoch : Number(epoch);
@@ -111,7 +114,7 @@ function createDirectionEpochAuthorizer(options = {}) {
       bundleId: appId,
       epoch: targetEpoch,
       grantedAt: ts,
-      expiresAt: ts + Math.max(1000, Number(ttlMs) || defaultTtlMs),
+      expiresAt: ts + effectiveTtlMs,
     };
     grants.set(grantKey(conv, dev, targetEpoch, appId), record);
     return { ok: true, grant: record };
@@ -201,13 +204,16 @@ function createDirectionEpochAuthorizer(options = {}) {
   };
 }
 
-/** 构造 Windows UI Automation 语义控件树读取脚本。 */
+/** 构造 Windows UI Automation 语义控件树读取脚本（仅精确匹配进程名，且用 Base64 防弯单引号逃逸）。 */
 function buildWinReadTreeScript({ bundleId, maxNodes = 80 }) {
-  const safeTarget = escapePowerShellSingle(bundleId || "");
+  const normalizedTarget = normalizeBundleId(bundleId);
+  if (!normalizedTarget) {
+    throw new Error("必须提供合法的目标应用标识（bundleId / 进程名）。");
+  }
   const limit = Math.min(200, Math.max(10, Number(maxNodes) || 80));
   return [
     "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
-    `$target = '${safeTarget}'`,
+    `$target = ${psUtf8Literal(normalizedTarget)}`,
     `$limit = ${limit}`,
     "$root = [System.Windows.Automation.AutomationElement]::RootElement",
     "$cond = [System.Windows.Automation.Condition]::TrueCondition",
@@ -217,7 +223,7 @@ function buildWinReadTreeScript({ bundleId, maxNodes = 80 }) {
     "  $pidVal = $w.Current.ProcessId",
     "  $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue",
     "  $pname = if ($proc) { $proc.ProcessName.ToLower() } else { '' }",
-    '  if (-not $target -or $pname -eq $target -or $w.Current.Name -like "*$target*") { $picked = $w; break }',
+    "  if ($pname -eq $target) { $picked = $w; break }",
     "}",
     'if (-not $picked) { Write-Output \'{"nodes":[],"found":false}\'; exit 0 }',
     "$all = $picked.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)",
@@ -233,16 +239,21 @@ function buildWinReadTreeScript({ bundleId, maxNodes = 80 }) {
   ].join("\n");
 }
 
-/** 构造 Windows UI Automation 语义操作脚本（focus / click / set_value）。 */
+/** 构造 Windows UI Automation 语义操作脚本（focus / click / set_value，全参数走 Base64 解码）。 */
 function buildWinActionScript({ bundleId, action, name, automationId, value }) {
-  const safeTarget = escapePowerShellSingle(bundleId || "");
-  const safeName = escapePowerShellSingle(name || "");
-  const safeId = escapePowerShellSingle(automationId || "");
-  const safeValue = escapePowerShellSingle(value || "");
-  const safeAction = escapePowerShellSingle(action || "click");
+  const normalizedTarget = normalizeBundleId(bundleId);
+  if (!normalizedTarget) {
+    throw new Error("必须提供合法的目标应用标识（bundleId / 进程名）。");
+  }
+  const normalizedAction =
+    action === "focus" || action === "set_value" ? action : "click";
   return [
     "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
-    `$target = '${safeTarget}'; $matchName = '${safeName}'; $matchId = '${safeId}'; $act = '${safeAction}'; $val = '${safeValue}'`,
+    `$target = ${psUtf8Literal(normalizedTarget)}`,
+    `$matchName = ${psUtf8Literal(name ?? "")}`,
+    `$matchId = ${psUtf8Literal(automationId ?? "")}`,
+    `$act = ${psUtf8Literal(normalizedAction)}`,
+    `$val = ${psUtf8Literal(value ?? "")}`,
     "$root = [System.Windows.Automation.AutomationElement]::RootElement",
     "$cond = [System.Windows.Automation.Condition]::TrueCondition",
     "$wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)",
@@ -250,7 +261,7 @@ function buildWinActionScript({ bundleId, action, name, automationId, value }) {
     "foreach ($w in $wins) {",
     "  $proc = Get-Process -Id $w.Current.ProcessId -ErrorAction SilentlyContinue",
     "  $pname = if ($proc) { $proc.ProcessName.ToLower() } else { '' }",
-    '  if (-not $target -or $pname -eq $target -or $w.Current.Name -like "*$target*") { $picked = $w; break }',
+    "  if ($pname -eq $target) { $picked = $w; break }",
     "}",
     "if (-not $picked) { throw '未找到目标应用窗口' }",
     "$all = $picked.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)",
@@ -270,7 +281,11 @@ function buildWinActionScript({ bundleId, action, name, automationId, value }) {
 
 /** 构造 macOS JXA System Events / AXUIElement 语义树读取脚本。 */
 function buildMacReadTreeScript({ bundleId, maxNodes = 80 }) {
-  const safeBundle = JSON.stringify(bundleId || "");
+  const normalizedTarget = normalizeBundleId(bundleId);
+  if (!normalizedTarget) {
+    throw new Error("必须提供合法的目标应用标识（bundleId / 进程名）。");
+  }
+  const safeBundle = JSON.stringify(normalizedTarget);
   const limit = Math.min(200, Math.max(10, Number(maxNodes) || 80));
   return [
     "const se = Application('System Events');",
@@ -278,7 +293,7 @@ function buildMacReadTreeScript({ bundleId, maxNodes = 80 }) {
     `const limit = ${limit};`,
     "const procs = se.applicationProcesses.whose({ backgroundOnly: false })();",
     "const proc = procs.find((p) => {",
-    "  try { const bid = String(p.bundleIdentifier() || '').toLowerCase(); const n = String(p.name() || '').toLowerCase(); return !target || bid === target || n === target; } catch { return false; }",
+    "  try { const bid = String(p.bundleIdentifier() || '').toLowerCase(); const n = String(p.name() || '').toLowerCase(); return bid === target || n === target; } catch { return false; }",
     "});",
     "if (!proc) { JSON.stringify({ found: false, nodes: [] }); } else {",
     "  const win = proc.windows.length ? proc.windows[0] : null;",
@@ -304,12 +319,15 @@ function buildMacReadTreeScript({ bundleId, maxNodes = 80 }) {
 
 /** 构造 macOS JXA 语义操作脚本（focus / click / set_value）。 */
 function buildMacActionScript({ bundleId, action, name, value }) {
-  const safeBundle = escapeAppleScript(bundleId || "");
+  const normalizedTarget = normalizeBundleId(bundleId);
+  if (!normalizedTarget) {
+    throw new Error("必须提供合法的目标应用标识（bundleId / 进程名）。");
+  }
   const safeName = JSON.stringify(name || "");
   const safeAction = JSON.stringify(action || "click");
   const safeValue = JSON.stringify(value ?? "");
   return [
-    `const target = ${JSON.stringify(safeBundle)};`,
+    `const target = ${JSON.stringify(normalizedTarget)};`,
     `const matchName = ${safeName};`,
     `const act = ${safeAction};`,
     `const val = ${safeValue};`,
@@ -571,7 +589,9 @@ function createAccessibilityBridge(options = {}) {
 module.exports = {
   ACCESSIBILITY_SCOPE,
   DEFAULT_GRANT_TTL_MS,
+  MAX_GRANT_TTL_MS,
   normalizeBundleId,
+  psUtf8Literal,
   createDirectionEpochAuthorizer,
   buildWinReadTreeScript,
   buildWinActionScript,

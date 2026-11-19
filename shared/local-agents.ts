@@ -605,6 +605,7 @@ export type ServerToNodeAgent =
   | { type: "agent_discard"; taskId: string }
   | {
       type: "agent_llm_result";
+      taskId?: string;
       reqId: string;
       ok: boolean;
       content?: LlmContentPart[];
@@ -612,6 +613,7 @@ export type ServerToNodeAgent =
     }
   | {
       type: "agent_approval_result";
+      taskId?: string;
       reqId: string;
       approved: boolean;
       reason?: string;
@@ -626,6 +628,7 @@ export type ServerToNodeAgent =
     }
   | {
       type: "agent_subcall_result";
+      taskId?: string;
       reqId: string;
       ok: boolean;
       data?: unknown;

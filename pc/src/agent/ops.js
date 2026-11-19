@@ -220,7 +220,109 @@ public static class CBInput {
 [CBInput]::SetProcessDPIAware() | Out-Null
 `;
 
-function winInputScript(args) {
+const MAX_INPUT_TEXT_LENGTH = 4096;
+const MAX_INPUT_KEY_LENGTH = 128;
+const MAX_INPUT_FOCUS_LENGTH = 200;
+
+function hasControlChars(value) {
+  const text = String(value ?? "");
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** 用 UTF-8 Base64 构造 PowerShell 字符串表达式，防 PS 5.1 Unicode 弯单引号逃逸注入。 */
+function psUtf8Literal(value) {
+  const b64 = Buffer.from(String(value ?? ""), "utf8").toString("base64");
+  return `([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64}')))`;
+}
+
+function escapeRegexLiteral(value) {
+  return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function validateInputText(raw, maxLen = MAX_INPUT_TEXT_LENGTH) {
+  const text = String(raw ?? "");
+  if (text.length > maxLen) {
+    throw new OpError(`输入文本长度超出上限（最大 ${maxLen} 字符）。`);
+  }
+  return text;
+}
+
+function validateInputKey(raw) {
+  const keys = String(raw ?? "").trim();
+  if (!keys) throw new OpError("key 需要 keys，例如 {ENTER} 或 ^c。");
+  if (keys.length > MAX_INPUT_KEY_LENGTH || hasControlChars(keys)) {
+    throw new OpError(`keys 格式不合法或超过 ${MAX_INPUT_KEY_LENGTH} 字符上限。`);
+  }
+  return keys;
+}
+
+function validateFocusTarget(raw) {
+  const target = String(raw ?? "").trim();
+  if (!target) throw new OpError("focus 需要 app、bundleId 或 title。");
+  if (target.length > MAX_INPUT_FOCUS_LENGTH || hasControlChars(target)) {
+    throw new OpError(
+      `focus 目标格式不合法或超过 ${MAX_INPUT_FOCUS_LENGTH} 字符上限。`,
+    );
+  }
+  return target;
+}
+
+function linuxInputArgs(args = {}) {
+  const requirePoint = () => {
+    if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) {
+      throw new OpError(`${args.action} 需要有效的数字坐标 x 和 y。`);
+    }
+    return [String(Math.round(args.x)), String(Math.round(args.y))];
+  };
+  switch (args.action) {
+    case "move": {
+      const [x, y] = requirePoint();
+      return ["mousemove", "--", x, y];
+    }
+    case "click": {
+      const [x, y] = requirePoint();
+      return ["mousemove", "--", x, y, "click", "1"];
+    }
+    case "double_click": {
+      const [x, y] = requirePoint();
+      return ["mousemove", "--", x, y, "click", "--repeat", "2", "1"];
+    }
+    case "right_click": {
+      const [x, y] = requirePoint();
+      return ["mousemove", "--", x, y, "click", "3"];
+    }
+    case "scroll": {
+      const amount = Number.isFinite(args.amount) ? args.amount : -3;
+      return ["click", amount > 0 ? "4" : "5"];
+    }
+    case "type": {
+      const text = validateInputText(args.text);
+      return ["type", "--", text];
+    }
+    case "key": {
+      const keys = validateInputKey(args.keys);
+      return ["key", "--", keys];
+    }
+    case "focus": {
+      const target = validateFocusTarget(args.app ?? args.bundleId ?? args.title);
+      return [
+        "search",
+        "--name",
+        "--",
+        escapeRegexLiteral(target),
+        "windowactivate",
+      ];
+    }
+    default:
+      throw new OpError(`不支持的输入动作：${args.action}`);
+  }
+}
+
+function winInputScript(args = {}) {
   const x = Number.isFinite(args.x) ? Math.round(args.x) : null;
   const y = Number.isFinite(args.y) ? Math.round(args.y) : null;
   const move =
@@ -246,20 +348,17 @@ function winInputScript(args) {
       return `${WIN_INPUT_TYPE}${move}[CBInput]::mouse_event(0x0800,0,0,${amount * 120},[UIntPtr]::Zero);`;
     }
     case "type": {
-      const text = escapeSendKeys(args.text ?? "").replace(/'/g, "''");
-      return `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${text}');`;
+      const text = validateInputText(args.text);
+      const sendKeysPayload = escapeSendKeys(text);
+      return `Add-Type -AssemblyName System.Windows.Forms; $text = ${psUtf8Literal(sendKeysPayload)}; [System.Windows.Forms.SendKeys]::SendWait($text);`;
     }
     case "key": {
-      const keys = String(args.keys ?? "").replace(/'/g, "''");
-      if (!keys) throw new OpError("key 需要 keys，例如 {ENTER} 或 ^c。");
-      return `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${keys}');`;
+      const keys = validateInputKey(args.keys);
+      return `Add-Type -AssemblyName System.Windows.Forms; $keys = ${psUtf8Literal(keys)}; [System.Windows.Forms.SendKeys]::SendWait($keys);`;
     }
     case "focus": {
-      const target = String(args.app ?? args.bundleId ?? args.title ?? "")
-        .trim()
-        .replace(/'/g, "''");
-      if (!target) throw new OpError("focus 需要 app、bundleId 或 title。");
-      return `$ws = New-Object -ComObject WScript.Shell; if (-not $ws.AppActivate('${target}')) { $p = Get-Process | Where-Object { $_.ProcessName -eq '${target}' -or $_.MainWindowTitle -like '*${target}*' } | Select-Object -First 1; if (-not $p) { throw '未找到目标窗口' }; $ws.AppActivate($p.Id) | Out-Null }`;
+      const target = validateFocusTarget(args.app ?? args.bundleId ?? args.title);
+      return `$target = ${psUtf8Literal(target)}; $ws = New-Object -ComObject WScript.Shell; if (-not $ws.AppActivate($target)) { $p = Get-Process | Where-Object { $_.ProcessName.Equals($target, [System.StringComparison]::OrdinalIgnoreCase) -or ($_.MainWindowTitle -and $_.MainWindowTitle.IndexOf($target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) } | Select-Object -First 1; if (-not $p) { throw '未找到目标窗口' }; $ws.AppActivate($p.Id) | Out-Null }`;
     }
     default:
       throw new OpError(`不支持的输入动作：${args.action}`);
@@ -319,22 +418,19 @@ function macInputPlan(args = {}, { hasCliclick = false } = {}) {
     case "focus": {
       const bundleId = String(args.bundleId ?? "").trim();
       const appName = String(args.app ?? args.title ?? "").trim();
-      if (!bundleId && !appName) {
-        throw new OpError("focus 需要 bundleId 或 app 名称。");
-      }
+      const target = validateFocusTarget(bundleId || appName);
       const script = bundleId
-        ? `tell application id "${escapeAppleScriptString(bundleId)}" to activate`
-        : `tell application "${escapeAppleScriptString(appName)}" to activate`;
+        ? `tell application id "${escapeAppleScriptString(target)}" to activate`
+        : `tell application "${escapeAppleScriptString(target)}" to activate`;
       return { file: "osascript", args: ["-e", script], via: "osascript" };
     }
     case "type": {
-      const text = String(args.text ?? "");
+      const text = validateInputText(args.text);
       const script = `tell application "System Events" to keystroke "${escapeAppleScriptString(text)}"`;
       return { file: "osascript", args: ["-e", script], via: "osascript" };
     }
     case "key": {
-      const raw = String(args.keys ?? "").trim();
-      if (!raw) throw new OpError("key 需要 keys，例如 Return 或 cmd+c。");
+      const raw = validateInputKey(args.keys);
       const parts = raw
         .split("+")
         .map((part) => part.trim())
@@ -677,37 +773,7 @@ function createOps(options = {}) {
       return { done: true, action: args.action, via: plan.via };
     }
     if (which("xdotool") && process.env.DISPLAY) {
-      const map = {
-        move: ["mousemove", String(args.x), String(args.y)],
-        click: ["mousemove", String(args.x), String(args.y), "click", "1"],
-        double_click: [
-          "mousemove",
-          String(args.x),
-          String(args.y),
-          "click",
-          "--repeat",
-          "2",
-          "1",
-        ],
-        right_click: [
-          "mousemove",
-          String(args.x),
-          String(args.y),
-          "click",
-          "3",
-        ],
-        scroll: ["click", (args.amount ?? -3) > 0 ? "4" : "5"],
-        type: ["type", "--", String(args.text ?? "")],
-        key: ["key", String(args.keys ?? "")],
-        focus: [
-          "search",
-          "--name",
-          String(args.app ?? args.title ?? ""),
-          "windowactivate",
-        ],
-      };
-      const argv = map[args.action];
-      if (!argv) throw new OpError(`不支持的输入动作：${args.action}`);
+      const argv = linuxInputArgs(args);
       const result = await runProcess("xdotool", argv, { timeoutMs: 20_000 });
       if (result.exitCode !== 0)
         throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
@@ -729,7 +795,7 @@ function createOps(options = {}) {
       }
       if (platform === "win32") {
         const result = await runPowerShell(
-          `Start-Process -FilePath '${picked.url.replace(/'/g, "''")}'`,
+          `Start-Process -FilePath ${psUtf8Literal(picked.url)}`,
           { timeoutMs: 20_000 },
         );
         if (result.exitCode !== 0)
@@ -896,8 +962,10 @@ module.exports = {
   resolveInRoots,
   runProcess,
   encodePowerShell,
+  psUtf8Literal,
   winInputScript,
   macInputPlan,
+  linuxInputArgs,
   escapeAppleScriptString,
   escapeSendKeys,
   OpError,

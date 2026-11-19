@@ -8,6 +8,8 @@
  * 和设备节点（agent/core.js）共用同一条 WebSocket：core 把不认识的消息交给 handle()，
  * 这里用 core 的 send 回消息；断线期间的消息先存着，重连后补发。
  */
+const crypto = require("node:crypto");
+const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const {
@@ -19,7 +21,12 @@ const {
   which,
 } = require("./detect");
 const sandbox = require("./sandbox");
-const { buildCommand, cmdSafe } = require("./cli-agents");
+const {
+  buildCommand,
+  cmdSafe,
+  assertValidResumeSessionId,
+  normalizeResumeSessionId,
+} = require("./cli-agents");
 const { runBuiltin, localModel } = require("./builtin");
 const { isInside } = require("./profile");
 const { prepareShadowHome } = require("./shadow-home");
@@ -42,6 +49,7 @@ const HANDLED = new Set([
 const MAX_LINES = 3000;
 const LINE_CAP = 2000;
 const MAX_RETAINED_SESSIONS = 16;
+const DEFAULT_SESSION_TTL_MS = 30 * 60_000;
 
 function killTree(child) {
   if (!child?.pid) return;
@@ -82,11 +90,43 @@ function lineSplitter(onLine) {
   };
 }
 
+function combineAbortSignals(primary, secondary) {
+  if (!secondary || secondary === primary) {
+    return { signal: primary, cleanup() {} };
+  }
+  if (typeof AbortSignal.any === "function") {
+    return { signal: AbortSignal.any([primary, secondary]), cleanup() {} };
+  }
+  const merged = new AbortController();
+  const forward = (src) => {
+    if (!merged.signal.aborted) {
+      merged.abort(src.reason || new Error("已停止"));
+    }
+  };
+  if (primary.aborted) forward(primary);
+  else if (secondary.aborted) forward(secondary);
+  const onPrimary = () => forward(primary);
+  const onSecondary = () => forward(secondary);
+  primary.addEventListener("abort", onPrimary, { once: true });
+  secondary.addEventListener("abort", onSecondary, { once: true });
+  return {
+    signal: merged.signal,
+    cleanup() {
+      primary.removeEventListener("abort", onPrimary);
+      secondary.removeEventListener("abort", onSecondary);
+    },
+  };
+}
+
 /**
- * @param {{ send: (message: object) => boolean, log?: (line: string) => void, isPaused?: () => boolean }} options
+ * @param {{ send: (message: object) => boolean, log?: (line: string) => void, isPaused?: () => boolean, sessionTtlMs?: number }} options
  */
 function createAgentRuntime(options) {
   const log = options.log || (() => {});
+  const sessionTtlMs = Math.max(
+    1_000,
+    Number(options.sessionTtlMs) || DEFAULT_SESSION_TTL_MS,
+  );
   const tasks = new Map(); // taskId -> { controller, child }
   const prepared = new Map(); // taskId -> prep（等用户应用 / 放弃）
   const sessions = new Map(); // taskId -> { prep, sessionId, builtinMessages, lastUsedAt }
@@ -96,9 +136,16 @@ function createAgentRuntime(options) {
   const subcallPending = new Map();
   const outbox = [];
   let detection = null;
-  let counter = 0;
 
-  function pruneSessions() {
+  function pruneSessions(now = Date.now()) {
+    for (const [oldTaskId, entry] of [...sessions.entries()]) {
+      if (tasks.has(oldTaskId)) continue;
+      if (now - entry.lastUsedAt <= sessionTtlMs) continue;
+      sessions.delete(oldTaskId);
+      if (entry.prep && prepared.get(oldTaskId) !== entry.prep) {
+        void entry.prep.cleanup().catch(() => {});
+      }
+    }
     if (sessions.size <= MAX_RETAINED_SESSIONS) return;
     const ordered = [...sessions.entries()].sort(
       (a, b) => a[1].lastUsedAt - b[1].lastUsedAt,
@@ -112,6 +159,12 @@ function createAgentRuntime(options) {
       }
     }
   }
+
+  const sessionSweepTimer = setInterval(
+    () => pruneSessions(),
+    Math.min(sessionTtlMs, 5 * 60_000),
+  );
+  sessionSweepTimer.unref?.();
 
   function out(message) {
     if (options.send(message)) return;
@@ -156,19 +209,35 @@ function createAgentRuntime(options) {
   }
 
   function request(map, message, timeoutMs, signal) {
-    const reqId = `${Date.now().toString(36)}-${++counter}`;
+    const reqId = crypto.randomUUID();
+    const expectedTaskId =
+      typeof message?.taskId === "string" && message.taskId
+        ? message.taskId
+        : null;
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(
+          signal.reason instanceof Error ? signal.reason : new Error("已停止"),
+        );
+        return;
+      }
       const timer = setTimeout(() => {
+        if (signal) signal.removeEventListener("abort", onAbort);
         map.delete(reqId);
         reject(new Error("服务器没有及时回应"));
       }, timeoutMs);
       const onAbort = () => {
         clearTimeout(timer);
         map.delete(reqId);
-        reject(new Error("已停止"));
+        reject(
+          signal?.reason instanceof Error
+            ? signal.reason
+            : new Error("已停止"),
+        );
       };
       if (signal) signal.addEventListener("abort", onAbort, { once: true });
       map.set(reqId, {
+        taskId: expectedTaskId,
         resolve: (value) => {
           clearTimeout(timer);
           if (signal) signal.removeEventListener("abort", onAbort);
@@ -177,6 +246,25 @@ function createAgentRuntime(options) {
       });
       out({ ...message, reqId });
     });
+  }
+
+  function resolvePending(map, message) {
+    const reqId = typeof message?.reqId === "string" ? message.reqId : "";
+    if (!reqId) return;
+    const pending = map.get(reqId);
+    if (!pending) return;
+    const msgTaskId =
+      typeof message.taskId === "string" && message.taskId
+        ? message.taskId
+        : null;
+    if (pending.taskId && msgTaskId !== pending.taskId) {
+      log(
+        `拒绝跨任务回包（type=${String(message.type)} reqId=${reqId} expected=${pending.taskId} actual=${String(msgTaskId)}）`,
+      );
+      return;
+    }
+    map.delete(reqId);
+    pending.resolve(message);
   }
 
   async function runCli(message, prep, emit, controller, ctx) {
@@ -327,14 +415,19 @@ function createAgentRuntime(options) {
       });
     };
     const previousSession = isContinue ? sessions.get(taskId) || null : null;
-    const resumeSessionId =
-      (typeof message.sessionId === "string" && message.sessionId.trim()) ||
-      previousSession?.sessionId ||
-      null;
+    let resumeSessionId = null;
     let prep = previousSession?.prep || null;
     let reusedPrep = Boolean(prep);
     let bridge = null;
     try {
+      const validatedInputSessionId =
+        message.sessionId !== undefined && message.sessionId !== null
+          ? assertValidResumeSessionId(message.sessionId)
+          : null;
+      resumeSessionId =
+        validatedInputSessionId ||
+        normalizeResumeSessionId(previousSession?.sessionId) ||
+        null;
       if (options.isPaused?.())
         throw new Error("这台电脑已紧急停止，拒绝启动本地 agent。");
       // 本机再检查一次：工作目录要在工作区文件夹里（完全访问除外）。
@@ -360,22 +453,59 @@ function createAgentRuntime(options) {
       controller.signal.throwIfAborted();
 
       if (prep) {
-        // 校验保留的 worktree / 副本目录仍在且可用；否则重建。
-        try {
-          await sandbox.preflightSandboxCwd({
-            workdir: prep.workdir,
-            roots: [prep.workRoot || prep.workdir, ...(message.roots || [])],
-            profile: message.profile,
-            isolation: message.isolation,
-            network: message.network,
-            timeoutMs:
-              options.preflightTimeoutMs ?? sandbox.PREFLIGHT_TIMEOUT_MS,
-            probeFn: options.preflightProbe,
-          });
-          emit("status", `续接同一工作目录：${prep.workdir}`, "正在续接上下文");
-        } catch {
-          reusedPrep = false;
-          prep = null;
+        // 校验保留的 worktree / 副本目录仍在受控边界内；仅当目录被清理不存在时重建，超时/越界/路径不一致一律 fail-closed。
+        let prepStillPresent = true;
+        if (prep.mode !== "direct") {
+          if (!prep.taskDir) {
+            throw new Error(
+              "续接工作目录安全校验失败：缺少受控 taskDir（fail-closed）。",
+            );
+          }
+          const taskDirStat = await fsp.stat(prep.taskDir).catch(() => null);
+          if (!taskDirStat?.isDirectory()) {
+            prepStillPresent = false;
+            reusedPrep = false;
+            prep = null;
+          } else {
+            const taskDirReal = await fsp.realpath(prep.taskDir);
+            const tmpRootReal = await fsp.realpath(sandbox.tmpRoot());
+            if (!isInside(taskDirReal, [tmpRootReal])) {
+              throw new Error(
+                "续接工作目录安全校验失败：taskDir 不在受控临时根目录内（fail-closed）。",
+              );
+            }
+          }
+        }
+        if (prepStillPresent && prep) {
+          const prepRoots =
+            prep.mode === "direct" ? message.roots || [] : [prep.taskDir];
+          try {
+            await sandbox.preflightSandboxCwd({
+              workdir: prep.workdir,
+              roots: prepRoots,
+              profile: prep.mode === "direct" ? message.profile : "workspace",
+              isolation: message.isolation,
+              network: message.network,
+              timeoutMs:
+                options.preflightTimeoutMs ?? sandbox.PREFLIGHT_TIMEOUT_MS,
+              probeFn: options.preflightProbe,
+            });
+            emit(
+              "status",
+              `续接同一工作目录：${prep.workdir}`,
+              "正在续接上下文",
+            );
+          } catch (preflightError) {
+            const msg = String(preflightError?.message || preflightError || "");
+            const missingDir =
+              preflightError?.code === "ENOENT" ||
+              msg.includes("不存在或不是文件夹");
+            if (!missingDir) {
+              throw preflightError;
+            }
+            reusedPrep = false;
+            prep = null;
+          }
         }
       }
       if (!prep) {
@@ -428,23 +558,33 @@ function createAgentRuntime(options) {
         ...(bridge ? bridge.env : {}),
       };
 
-      const approveStep = async (operation, summary) => {
-        const reply = await request(
-          approvalPending,
-          { type: "agent_approval", taskId, operation, summary },
-          150_000,
-          controller.signal,
-        ).catch(() => ({ approved: false }));
-        return !!reply.approved;
+      const approveStep = async (operation, summary, overrideSignal) => {
+        const linked = combineAbortSignals(controller.signal, overrideSignal);
+        try {
+          const reply = await request(
+            approvalPending,
+            { type: "agent_approval", taskId, operation, summary },
+            150_000,
+            linked.signal,
+          ).catch(() => ({ approved: false }));
+          return !!reply.approved;
+        } finally {
+          linked.cleanup();
+        }
       };
 
-      const askUser = async (questions) => {
-        return request(
-          userInputPending,
-          { type: "agent_needs_input", taskId, questions },
-          600_000,
-          controller.signal,
-        );
+      const askUser = async (questions, overrideSignal) => {
+        const linked = combineAbortSignals(controller.signal, overrideSignal);
+        try {
+          return await request(
+            userInputPending,
+            { type: "agent_needs_input", taskId, questions },
+            600_000,
+            linked.signal,
+          );
+        } finally {
+          linked.cleanup();
+        }
       };
 
       const activeSessionId = resumeSessionId || `sess-${taskId}`;
@@ -580,7 +720,8 @@ function createAgentRuntime(options) {
       emit("status", "正在统计改动", "正在统计改动");
       const diff = await sandbox.diff(prep).catch(() => null);
       if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
-      const finalSessionId = result.sessionId || activeSessionId;
+      const finalSessionId =
+        normalizeResumeSessionId(result.sessionId) || activeSessionId;
       sessions.set(taskId, {
         prep,
         sessionId: finalSessionId,
@@ -645,6 +786,16 @@ function createAgentRuntime(options) {
   }
 
   async function applyOrDiscard(taskId, apply) {
+    if (tasks.has(taskId)) {
+      out({
+        type: "agent_applied",
+        taskId,
+        ok: false,
+        discarded: !apply,
+        error: "任务仍在运行中，禁止在执行期间应用或放弃工作目录。",
+      });
+      return;
+    }
     const prep = prepared.get(taskId);
     if (!prep) {
       out({
@@ -706,38 +857,18 @@ function createAgentRuntime(options) {
         case "agent_discard":
           void applyOrDiscard(message.taskId, false);
           break;
-        case "agent_llm_result": {
-          const pending = llmPending.get(message.reqId);
-          if (pending) {
-            llmPending.delete(message.reqId);
-            pending.resolve(message);
-          }
+        case "agent_llm_result":
+          resolvePending(llmPending, message);
           break;
-        }
-        case "agent_approval_result": {
-          const pending = approvalPending.get(message.reqId);
-          if (pending) {
-            approvalPending.delete(message.reqId);
-            pending.resolve(message);
-          }
+        case "agent_approval_result":
+          resolvePending(approvalPending, message);
           break;
-        }
-        case "agent_user_input_result": {
-          const pending = userInputPending.get(message.reqId);
-          if (pending) {
-            userInputPending.delete(message.reqId);
-            pending.resolve(message);
-          }
+        case "agent_user_input_result":
+          resolvePending(userInputPending, message);
           break;
-        }
-        case "agent_subcall_result": {
-          const pending = subcallPending.get(message.reqId);
-          if (pending) {
-            subcallPending.delete(message.reqId);
-            pending.resolve(message);
-          }
+        case "agent_subcall_result":
+          resolvePending(subcallPending, message);
           break;
-        }
         default:
       }
       return true;
@@ -759,7 +890,9 @@ function createAgentRuntime(options) {
         killTree(task.child);
       }
     },
+    pruneSessions,
     async cleanupSessions() {
+      clearInterval(sessionSweepTimer);
       const cleanups = new Set();
       for (const entry of sessions.values()) {
         if (entry.prep) cleanups.add(entry.prep);

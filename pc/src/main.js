@@ -840,15 +840,45 @@ function startAgent() {
   const agentRuntime = attachAgentRuntime();
   const handleExtra = (message) => {
     if (message?.type === "desktop_browser_cookie_request") {
-      void browserBridge.handleCookieApprovalRequest(message).then((decision) => {
-        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
-      });
+      if (config.get().localPaused || agent?.device?.paused) {
+        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "设备已紧急停止，拒绝本机 Cookie 导入请求。" } });
+        return true;
+      }
+      const exp = Date.parse(String(message.expiresAt || ""));
+      if (!Number.isFinite(exp) || exp <= Date.now()) {
+        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入审批请求已过期。" } });
+        return true;
+      }
+      void browserBridge
+        .handleCookieApprovalRequest(message)
+        .then((decision) => {
+          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
+        })
+        .catch((err) => {
+          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "cookie_approval_failed", message: String(err?.message || err) });
+          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入处理异常，已拒绝。" } });
+        });
       return true;
     }
     if (message?.type === "desktop_browser_webauthn_request") {
-      void browserBridge.handleWebAuthnRequest(message).then((result) => {
-        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
-      });
+      if (config.get().localPaused || agent?.device?.paused) {
+        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "设备已紧急停止，拒绝本机 Passkey 请求。" } });
+        return true;
+      }
+      const exp = Date.parse(String(message.expiresAt || ""));
+      if (!Number.isFinite(exp) || exp <= Date.now()) {
+        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发请求已过期。" } });
+        return true;
+      }
+      void browserBridge
+        .handleWebAuthnRequest(message)
+        .then((result) => {
+          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
+        })
+        .catch((err) => {
+          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "webauthn_forward_failed", message: String(err?.message || err) });
+          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发处理异常，已拒绝。" } });
+        });
       return true;
     }
     return agentRuntime.onExtra(message);

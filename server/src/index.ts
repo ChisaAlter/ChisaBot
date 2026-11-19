@@ -2056,10 +2056,12 @@ const chatFiles = createChatFiles(database, {
 await pages.ensure();
 await chatFiles.ensure();
 const chunkedUploads = createChunkedUploadService({
-  ownsBot: async (owner, bot) =>
-    (await agentProfileStore
+  ownsBot: async (owner, bot) => {
+    const profile = await agentProfileStore
       .get(await actorFor(owner), bot)
-      .catch(() => null)) !== null,
+      .catch(() => null);
+    return Boolean(profile && !profile.deletedAt);
+  },
   commitFile: (owner, agentId, file) =>
     chatFiles.store(owner, agentId, {
       kind: "upload",
@@ -6756,6 +6758,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       workOfferedListener?.stop() ?? Promise.resolve(),
       Promise.resolve(retentionSweeps.stop()),
       Promise.resolve(draftSweeps.stop()),
+      chunkedUploads.dispose().catch(() => {}),
+      Promise.resolve(desktopBrowserBridge.dispose()),
     ]).finally(() => process.exit(0));
   });
 }

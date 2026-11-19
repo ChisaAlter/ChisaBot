@@ -25,10 +25,14 @@ import {
 
 const requireCjs = createRequire(import.meta.url);
 const atomicDownload = requireCjs("../../pc/src/atomic-download.js") as {
+  MAX_DOWNLOAD_BYTES: number;
   atomicChunkedDownload: (opts: {
     destPath: string;
     totalSize: number;
     chunkSize?: number;
+    maxBytes?: number;
+    allowedRoots?: string[];
+    signal?: AbortSignal;
     readChunk: (input: {
       offset: number;
       length: number;
@@ -48,6 +52,7 @@ const atomicDownload = requireCjs("../../pc/src/atomic-download.js") as {
   }>;
   makeAtomicTempPath: (destPath: string, pid?: number, uuid?: string) => string;
   createLocalDraftThumbnail: (opts: {
+    filePath?: string;
     buffer?: Buffer;
     maxWidth?: number;
     maxHeight?: number;
@@ -63,6 +68,7 @@ const atomicDownload = requireCjs("../../pc/src/atomic-download.js") as {
 const pcDiagnostics = requireCjs("../../pc/src/diagnostics-log.js") as {
   MAX_DIAGNOSTIC_ENTRIES: number;
   REDACTED: string;
+  redactDiagnosticString: (input: string) => string;
   createDiagnosticsRingBuffer: (opts?: { maxEntries?: number }) => {
     record: (entry: Record<string, unknown>) => Record<string, unknown>;
     entries: () => Array<Record<string, unknown>>;
@@ -74,6 +80,25 @@ const pcDiagnostics = requireCjs("../../pc/src/diagnostics-log.js") as {
 };
 const accessibility = requireCjs("../../pc/src/accessibility-bridge.js") as {
   ACCESSIBILITY_SCOPE: string;
+  MAX_GRANT_TTL_MS: number;
+  normalizeBundleId: (raw: string) => string;
+  buildWinReadTreeScript: (opts: {
+    bundleId: string;
+    maxNodes?: number;
+  }) => string;
+  buildWinActionScript: (opts: {
+    bundleId: string;
+    action: string;
+    name?: string;
+    automationId?: string;
+    value?: string;
+  }) => string;
+  buildMacActionScript: (opts: {
+    bundleId: string;
+    action: string;
+    name?: string;
+    value?: string;
+  }) => string;
   createDirectionEpochAuthorizer: (opts?: {
     now?: () => number;
     defaultTtlMs?: number;
@@ -83,6 +108,7 @@ const accessibility = requireCjs("../../pc/src/accessibility-bridge.js") as {
     authorizeApp: (input: Record<string, unknown>) => {
       ok: boolean;
       reason?: string;
+      grant?: { expiresAt: number; grantedAt: number };
     };
     checkAuthorization: (input: Record<string, unknown>) => {
       allowed: boolean;
@@ -100,11 +126,15 @@ const accessibility = requireCjs("../../pc/src/accessibility-bridge.js") as {
     ) => Promise<Record<string, unknown>>;
   };
 };
-const { macInputPlan } = requireCjs("../../pc/src/agent/ops.js") as {
+const { winInputScript, macInputPlan, linuxInputArgs } = requireCjs(
+  "../../pc/src/agent/ops.js",
+) as {
+  winInputScript: (args: Record<string, unknown>) => string;
   macInputPlan: (
     args: Record<string, unknown>,
     opts?: { hasCliclick?: boolean },
   ) => { file: string; args: string[]; via: string };
+  linuxInputArgs: (args: Record<string, unknown>) => string[];
 };
 
 const tempDirs: string[] = [];
@@ -262,6 +292,43 @@ describe("Wave 9: 4 MiB 分块切分、变更检测与原子下载", () => {
     expect(thumb.width).toBe(300);
     expect(thumb.height).toBe(150);
     expect(thumb.dataUrl).toContain("thumb-300x150");
+
+    // 文件路径分支经 fd fstat 校验并读取
+    const imgPath = path.join(dir, "draft.png");
+    await fsp.writeFile(imgPath, Buffer.from([1, 2, 3, 4]));
+    const thumbFromFile = await atomicDownload.createLocalDraftThumbnail({
+      filePath: imgPath,
+      maxWidth: 300,
+      maxHeight: 300,
+      nativeImage: fakeNativeImage,
+    });
+    expect(thumbFromFile.ok).toBe(true);
+    expect(thumbFromFile.width).toBe(300);
+
+    // 安全边界：空 destPath、超过 MAX_DOWNLOAD_BYTES、超出 allowedRoots 均必须拒绝
+    await expect(
+      atomicDownload.atomicChunkedDownload({
+        destPath: "   ",
+        totalSize: 16,
+        readChunk: async () => Buffer.alloc(16),
+      }),
+    ).rejects.toThrow(/路径无效/);
+    await expect(
+      atomicDownload.atomicChunkedDownload({
+        destPath: path.join(dir, "huge.bin"),
+        totalSize: atomicDownload.MAX_DOWNLOAD_BYTES + 1,
+        readChunk: async () => Buffer.alloc(16),
+      }),
+    ).rejects.toThrow(/超过上限/);
+    const otherDir = await makeTempDir("cb-atomic-outside-");
+    await expect(
+      atomicDownload.atomicChunkedDownload({
+        destPath: path.join(otherDir, "escape.bin"),
+        totalSize: 16,
+        allowedRoots: [dir],
+        readChunk: async () => Buffer.alloc(16),
+      }),
+    ).rejects.toThrow(/超出允许根目录范围/);
   });
 });
 
@@ -326,6 +393,41 @@ describe("Wave 9: 端侧环形诊断日志上限与敏感凭据自动脱敏", ()
     expect(
       redactDiagnosticText("Authorization: Bearer abcdef123456"),
     ).toContain(DIAGNOSTIC_REDACTED);
+
+    // 回归 #6：多段 Cookie / Set-Cookie 整行脱敏、JSON 敏感键值、URL 凭据、#fragment 与云凭据前缀
+    const multiCookie = redactDiagnosticText(
+      "Cookie: theme=dark; session_id=SECRET_SESS_VAL; csrf=SECRET_CSRF",
+    );
+    expect(multiCookie).not.toContain("SECRET_SESS_VAL");
+    expect(multiCookie).not.toContain("SECRET_CSRF");
+
+    const setCookie = redactDiagnosticText(
+      "Set-Cookie: a=1; refresh_token=TOP_SECRET_REFRESH; HttpOnly",
+    );
+    expect(setCookie).not.toContain("TOP_SECRET_REFRESH");
+
+    const jsonSample = redactDiagnosticText(
+      '{"cookie":"a=1; sid=JSON_COOKIE_SECRET","x-api-key":"JSON_API_KEY_999","ok":true}',
+    );
+    expect(jsonSample).not.toContain("JSON_COOKIE_SECRET");
+    expect(jsonSample).not.toContain("JSON_API_KEY_999");
+    expect(jsonSample).toContain('"ok":true');
+
+    const urlAndKeys = redactDiagnosticText(
+      "https://alice:hunter2pass@api.example.com/cb#access_token=FRAG_TOKEN_888 github_pat_11ABCDEF12345678 AIzaSyA1234567890abcdef12345 AKIAIOSFODNN7EXAMPLE",
+    );
+    expect(urlAndKeys).not.toContain("hunter2pass");
+    expect(urlAndKeys).not.toContain("FRAG_TOKEN_888");
+    expect(urlAndKeys).not.toContain("github_pat_11ABCDEF12345678");
+    expect(urlAndKeys).not.toContain("AIzaSyA1234567890abcdef12345");
+    expect(urlAndKeys).not.toContain("AKIAIOSFODNN7EXAMPLE");
+
+    const pcMulti = pcDiagnostics.redactDiagnosticString(
+      "Cookie: theme=dark; session_id=PC_SECRET_999\nhttps://bob:pass999@host.test/#id_token=PC_FRAG_111",
+    );
+    expect(pcMulti).not.toContain("PC_SECRET_999");
+    expect(pcMulti).not.toContain("pass999");
+    expect(pcMulti).not.toContain("PC_FRAG_111");
   });
 
   test("PC 端环形诊断日志同样执行 500 条上限、全量脱敏与原子 JSON 落盘", async () => {
@@ -482,6 +584,109 @@ describe("Wave 9: 无障碍 directionEpoch 代际授权失效与 macOS 输入兜
     });
     expect(expiredCall.ok).toBe(false);
     expect(expiredCall.status).toBe("denied");
+
+    // 6. ttlMs <= 0 或非有限数必须拒绝（绝不静默扩为 10 分钟），超大 ttlMs 钳位至 MAX_GRANT_TTL_MS
+    expect(
+      bridge.authorizer.authorizeApp({
+        conversationId: convId,
+        deviceId: devId,
+        bundleId: "com.apple.notes",
+        epoch: epoch2,
+        scopes,
+        ttlMs: 0,
+      }),
+    ).toMatchObject({ ok: false, reason: "invalid_ttl" });
+    expect(
+      bridge.authorizer.authorizeApp({
+        conversationId: convId,
+        deviceId: devId,
+        bundleId: "com.apple.notes",
+        epoch: epoch2,
+        scopes,
+        ttlMs: -5000,
+      }),
+    ).toMatchObject({ ok: false, reason: "invalid_ttl" });
+    const clamped = bridge.authorizer.authorizeApp({
+      conversationId: convId,
+      deviceId: devId,
+      bundleId: "com.apple.notes",
+      epoch: epoch2,
+      scopes,
+      ttlMs: 999_999_999,
+    });
+    expect(clamped.ok).toBe(true);
+    expect(
+      (clamped.grant?.expiresAt ?? 0) - (clamped.grant?.grantedAt ?? 0),
+    ).toBe(accessibility.MAX_GRANT_TTL_MS);
+  });
+
+  test("Windows PS 5.1 弯单引号安全 Base64 传参、UIA 精确匹配、Linux xdotool 安全参数与 JXA 无双重转义", () => {
+    // 1. normalizeBundleId 拒绝空串、通配符与弯引号注入
+    expect(accessibility.normalizeBundleId("")).toBe("");
+    expect(accessibility.normalizeBundleId("*")).toBe("");
+    expect(accessibility.normalizeBundleId("notepad’ ; calc")).toBe("");
+    expect(() =>
+      accessibility.buildWinReadTreeScript({ bundleId: "" }),
+    ).toThrow(/合法的目标应用标识/);
+
+    // 2. UIA 仅精确匹配 $pname -eq $target，且含 Unicode 弯单引号的参数全部走 UTF-8 Base64 传入
+    const curlyPayload = "确定’ ; Start-Process calc ; ‘";
+    const winRead = accessibility.buildWinReadTreeScript({
+      bundleId: "notepad",
+    });
+    expect(winRead).toContain("FromBase64String");
+    expect(winRead).toContain("$pname -eq $target");
+    expect(winRead).not.toContain("-like");
+    expect(winRead).not.toContain("-not $target");
+
+    const winAct = accessibility.buildWinActionScript({
+      bundleId: "notepad",
+      action: "set_value",
+      name: curlyPayload,
+      value: curlyPayload,
+    });
+    expect(winAct).toContain("FromBase64String");
+    expect(winAct).not.toContain(curlyPayload);
+    expect(winAct).not.toContain("Start-Process calc");
+    expect(winAct).not.toContain("-like");
+
+    // 3. ops.js Windows 输入脚本（type / key / focus）均使用 Base64 传参并限制长度
+    const psType = winInputScript({ action: "type", text: curlyPayload });
+    expect(psType).toContain("FromBase64String");
+    expect(psType).not.toContain("Start-Process calc");
+    const psFocus = winInputScript({ action: "focus", app: curlyPayload });
+    expect(psFocus).toContain("FromBase64String");
+    expect(psFocus).not.toContain("Start-Process calc");
+    expect(() =>
+      winInputScript({ action: "type", text: "a".repeat(5000) }),
+    ).toThrow(/长度超出上限/);
+
+    // 4. Linux xdotool 强校验坐标有限性、加 -- 防选项注入、转义 focus 正则元字符
+    expect(() =>
+      linuxInputArgs({ action: "click", x: Number.NaN, y: 10 }),
+    ).toThrow(/有效的数字坐标/);
+    expect(linuxInputArgs({ action: "key", keys: "Return" })).toEqual([
+      "key",
+      "--",
+      "Return",
+    ]);
+    expect(() => linuxInputArgs({ action: "focus", app: "   " })).toThrow(
+      /focus 需要/,
+    );
+    expect(linuxInputArgs({ action: "focus", app: "Code (app.ts)*" })).toEqual([
+      "search",
+      "--name",
+      "--",
+      "Code \\(app\\.ts\\)\\*",
+      "windowactivate",
+    ]);
+
+    // 5. macOS JXA 脚本不得对 target 做 escapeAppleScript + JSON.stringify 双重转义
+    const macAct = accessibility.buildMacActionScript({
+      bundleId: "com.apple.Notes",
+      action: "focus",
+    });
+    expect(macAct).toContain('const target = "com.apple.notes";');
   });
 
   test("macOS 输入兜底方案生成（focus / type / key / click / scroll）并正确转义引号", () => {

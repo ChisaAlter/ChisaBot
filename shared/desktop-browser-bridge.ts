@@ -123,7 +123,7 @@ export type WebAuthnForwardResponse =
       error: string;
     };
 
-/** 常见不可作为 Cookie 归属域或 WebAuthn rpId 的顶级/二级公共后缀防线。 */
+/** 常见不可作为 Cookie 归属域或 WebAuthn rpId 的顶级/二级公共后缀及多租户托管域防线。 */
 const PUBLIC_MULTI_LABEL_SUFFIXES = new Set([
   "co.uk",
   "org.uk",
@@ -146,6 +146,30 @@ const PUBLIC_MULTI_LABEL_SUFFIXES = new Set([
   "com.br",
   "co.kr",
   "co.in",
+  // 常见多租户托管 / PaaS 公共后缀（PSL 私有段）
+  "github.io",
+  "gitlab.io",
+  "bitbucket.io",
+  "pages.dev",
+  "workers.dev",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "amazonaws.com",
+  "s3.amazonaws.com",
+  "compute.amazonaws.com",
+  "cloudfront.net",
+  "azurewebsites.net",
+  "fly.dev",
+  "railway.app",
+  "onrender.com",
+  "deno.dev",
+  "replit.dev",
+  "ngrok.io",
+  "trycloudflare.com",
 ]);
 
 function isIpLiteral(hostname: string): boolean {
@@ -168,7 +192,7 @@ function isEffectivePublicSuffix(domain: string): boolean {
   if (lower === "localhost") return false;
   const labels = lower.split(".");
   if (labels.length < 2) return true;
-  if (labels.length === 2 && PUBLIC_MULTI_LABEL_SUFFIXES.has(lower)) {
+  if (PUBLIC_MULTI_LABEL_SUFFIXES.has(lower)) {
     return true;
   }
   return false;
@@ -215,7 +239,9 @@ export function normalizeSingleOrigin(raw: unknown): string {
 }
 
 /**
- * 校验单条 Cookie 的 `domain` 是否合法匹配指定单一 `origin`（RFC 6265 域匹配 + 防后缀混淆）。
+ * 校验单条 Cookie 的 `domain` 是否合法匹配指定单一 `origin`（RFC 6265 域匹配 + host-only 防泄漏 + 防后缀混淆）。
+ * - 无前导点视为 host-only Cookie，仅允许精确主机名匹配，绝不向子域泄漏；
+ * - 仅允许单个前导点（拒绝 `..example.com`）的域 Cookie 匹配其子域，且禁止公共后缀/多租户托管域。
  */
 export function cookieMatchesOrigin(
   rawCookieDomain: string,
@@ -231,19 +257,35 @@ export function cookieMatchesOrigin(
   const raw = String(rawCookieDomain ?? "")
     .trim()
     .toLowerCase();
-  if (!raw || hasControlChars(raw) || raw.includes("/") || raw.includes(":")) {
+  if (
+    !raw ||
+    hasControlChars(raw) ||
+    raw.includes("/") ||
+    raw.includes(":") ||
+    raw.includes("..")
+  ) {
     return false;
   }
   const isDomainCookie = raw.startsWith(".");
-  const normalizedDomain = raw.replace(/^\.+/, "");
-  if (!normalizedDomain || normalizedDomain.endsWith(".")) {
+  const normalizedDomain = isDomainCookie ? raw.slice(1) : raw;
+  if (
+    !normalizedDomain ||
+    normalizedDomain.startsWith(".") ||
+    normalizedDomain.endsWith(".")
+  ) {
     return false;
   }
   if (isIpLiteral(host) || isIpLiteral(normalizedDomain)) {
     return !isDomainCookie && host === normalizedDomain;
   }
+  if (isDomainCookie && isEffectivePublicSuffix(normalizedDomain)) {
+    return false;
+  }
   if (host === normalizedDomain) {
     return true;
+  }
+  if (!isDomainCookie) {
+    return false;
   }
   if (isEffectivePublicSuffix(normalizedDomain)) {
     return false;
@@ -252,7 +294,7 @@ export function cookieMatchesOrigin(
 }
 
 /**
- * 过滤并强校验导入的 Cookie 列表：发现越界域名或非法字段时返回错误（fail-closed）。
+ * 过滤并强校验导入的 Cookie 列表：发现越界域名、非法路径、`__Host-`/`__Secure-` 违约或非法字段时返回错误（fail-closed）。
  */
 export function validateOriginCookies(
   origin: string,
@@ -262,6 +304,7 @@ export function validateOriginCookies(
   | { ok: false; error: string } {
   const normalizedOrigin = normalizeSingleOrigin(origin);
   const parsedOrigin = new URL(normalizedOrigin);
+  const originHost = parsedOrigin.hostname.toLowerCase();
   if (!Array.isArray(cookies)) {
     return { ok: false, error: "cookies 必须是数组。" };
   }
@@ -279,7 +322,8 @@ export function validateOriginCookies(
     const name = String(item.name ?? "").trim();
     const value = String(item.value ?? "");
     const domain = String(item.domain ?? "").trim();
-    const cookiePath = String(item.path ?? "/").trim() || "/";
+    const rawPath = item.path === undefined ? "/" : String(item.path);
+    const cookiePath = rawPath.trim() || "/";
     if (
       !name ||
       name.length > MAX_COOKIE_NAME_LEN ||
@@ -291,17 +335,52 @@ export function validateOriginCookies(
     if (value.length > MAX_COOKIE_VALUE_LEN || hasControlChars(value)) {
       return { ok: false, error: `Cookie「${name}」的值超长或包含控制字符。` };
     }
+    if (
+      cookiePath.length > 1024 ||
+      hasControlChars(rawPath) ||
+      hasControlChars(cookiePath)
+    ) {
+      return {
+        ok: false,
+        error: `Cookie「${name}」的路径超长或包含非法控制字符。`,
+      };
+    }
     if (!cookieMatchesOrigin(domain, normalizedOrigin)) {
       return {
         ok: false,
         error: `Cookie「${name}」所属域「${domain}」与审批目标 ${normalizedOrigin} 不匹配，已拦截。`,
       };
     }
+    const normalizedPath = cookiePath.startsWith("/")
+      ? cookiePath
+      : `/${cookiePath}`;
     if (item.secure && parsedOrigin.protocol !== "https:") {
       return {
         ok: false,
         error: `Secure Cookie「${name}」不可导入至非 HTTPS 源 ${normalizedOrigin}。`,
       };
+    }
+    if (name.startsWith("__Secure-")) {
+      if (!item.secure || parsedOrigin.protocol !== "https:") {
+        return {
+          ok: false,
+          error: `Cookie「${name}」使用 __Secure- 前缀，必须为 Secure 且目标为 HTTPS 源。`,
+        };
+      }
+    }
+    if (name.startsWith("__Host-")) {
+      if (
+        !item.secure ||
+        parsedOrigin.protocol !== "https:" ||
+        normalizedPath !== "/" ||
+        domain.startsWith(".") ||
+        domain.toLowerCase() !== originHost
+      ) {
+        return {
+          ok: false,
+          error: `Cookie「${name}」使用 __Host- 前缀，必须为 Secure、HTTPS、path="/" 且严格 host-only 匹配 ${originHost}。`,
+        };
+      }
     }
     const sameSite =
       item.sameSite === "Strict" ||
@@ -313,7 +392,7 @@ export function validateOriginCookies(
       name,
       value,
       domain,
-      path: cookiePath.startsWith("/") ? cookiePath : `/${cookiePath}`,
+      path: normalizedPath,
       ...(typeof item.expires === "number" && Number.isFinite(item.expires)
         ? { expires: item.expires }
         : {}),
@@ -411,6 +490,173 @@ export function normalizeWebAuthnChallenge(raw: unknown): string {
     );
   }
   return trimmed;
+}
+
+function stripBase64Padding(value: string): string {
+  return value.replace(/=+$/g, "");
+}
+
+function decodeBase64UrlUtf8(raw: string): string | null {
+  const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const padLen = (4 - (normalized.length % 4)) % 4;
+  const padded = `${normalized}${"=".repeat(padLen)}`;
+  try {
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(padded, "base64").toString("utf8");
+    }
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 强校验 WebAuthn 响应中的 `clientDataJSON`（兼容 base64url 与 JSON 字符串）：
+ * - `type` 必须严格对应 `webauthn.create` 或 `webauthn.get`；
+ * - `challenge` 必须与服务端下发的一次性 challenge 一致；
+ * - `origin` 必须归一化后严格等于请求的 origin。
+ */
+export function validateWebAuthnClientDataJson(
+  rawClientDataJSON: unknown,
+  expected: {
+    kind: WebAuthnCeremonyKind;
+    origin: string;
+    challenge: string;
+  },
+): { ok: true } | { ok: false; reason: string } {
+  if (typeof rawClientDataJSON !== "string" || !rawClientDataJSON.trim()) {
+    return { ok: false, reason: "WebAuthn 响应缺少有效的 clientDataJSON。" };
+  }
+  const trimmed = rawClientDataJSON.trim();
+  const decoded = trimmed.startsWith("{")
+    ? trimmed
+    : decodeBase64UrlUtf8(trimmed);
+  if (!decoded) {
+    return { ok: false, reason: "WebAuthn clientDataJSON 解码失败。" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded);
+  } catch {
+    return { ok: false, reason: "WebAuthn clientDataJSON 不是合法 JSON。" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "WebAuthn clientDataJSON 必须是 JSON 对象。" };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const expectedType =
+    expected.kind === "create" ? "webauthn.create" : "webauthn.get";
+  if (obj.type !== expectedType) {
+    return {
+      ok: false,
+      reason: `WebAuthn clientDataJSON.type 不匹配（期望 ${expectedType}，实际 ${String(obj.type ?? "")}）。`,
+    };
+  }
+  if (typeof obj.challenge !== "string" || !obj.challenge.trim()) {
+    return { ok: false, reason: "WebAuthn clientDataJSON 缺少 challenge。" };
+  }
+  if (
+    stripBase64Padding(obj.challenge.trim()) !==
+    stripBase64Padding(expected.challenge.trim())
+  ) {
+    return {
+      ok: false,
+      reason: "WebAuthn clientDataJSON.challenge 与服务端下发挑战不一致。",
+    };
+  }
+  if (typeof obj.origin !== "string" || !obj.origin.trim()) {
+    return { ok: false, reason: "WebAuthn clientDataJSON 缺少 origin。" };
+  }
+  let actualOrigin: string;
+  try {
+    actualOrigin = normalizeSingleOrigin(obj.origin);
+  } catch {
+    return { ok: false, reason: "WebAuthn clientDataJSON.origin 格式非法。" };
+  }
+  const expectedOrigin = normalizeSingleOrigin(expected.origin);
+  if (actualOrigin !== expectedOrigin) {
+    return {
+      ok: false,
+      reason: `WebAuthn clientDataJSON.origin（${actualOrigin}）与请求源（${expectedOrigin}）不一致。`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * 强校验可选的 `optionsJson` 内嵌 `rpId` / `rp.id` 与 `challenge` 是否与外层声明一致，防止钓鱼弹窗参数不一致。
+ */
+export function validateWebAuthnOptionsJson(
+  rawOptionsJson: unknown,
+  expected: { rpId: string; challenge: string },
+): { ok: true } | { ok: false; reason: string } {
+  if (
+    rawOptionsJson === undefined ||
+    rawOptionsJson === null ||
+    rawOptionsJson === ""
+  ) {
+    return { ok: true };
+  }
+  if (typeof rawOptionsJson !== "string") {
+    return { ok: false, reason: "WebAuthn optionsJson 必须是 JSON 字符串。" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawOptionsJson);
+  } catch {
+    return { ok: false, reason: "WebAuthn optionsJson 不是合法 JSON。" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "WebAuthn optionsJson 必须是 JSON 对象。" };
+  }
+  const root = parsed as Record<string, unknown>;
+  const inner =
+    root.publicKey &&
+    typeof root.publicKey === "object" &&
+    !Array.isArray(root.publicKey)
+      ? (root.publicKey as Record<string, unknown>)
+      : root;
+  const rpObj =
+    inner.rp && typeof inner.rp === "object" && !Array.isArray(inner.rp)
+      ? (inner.rp as Record<string, unknown>)
+      : root.rp && typeof root.rp === "object" && !Array.isArray(root.rp)
+        ? (root.rp as Record<string, unknown>)
+        : null;
+  const embeddedRpIds = [inner.rpId, root.rpId, rpObj?.id].filter(
+    (v) => v !== undefined && v !== null,
+  );
+  for (const candidate of embeddedRpIds) {
+    if (
+      typeof candidate !== "string" ||
+      candidate.trim().toLowerCase() !== expected.rpId.toLowerCase()
+    ) {
+      return {
+        ok: false,
+        reason: `WebAuthn optionsJson 内嵌 rpId 与外层 rpId（${expected.rpId}）不一致。`,
+      };
+    }
+  }
+  const embeddedChallenges = [inner.challenge, root.challenge].filter(
+    (v) => v !== undefined && v !== null,
+  );
+  for (const candidate of embeddedChallenges) {
+    if (
+      typeof candidate !== "string" ||
+      stripBase64Padding(candidate.trim()) !==
+        stripBase64Padding(expected.challenge.trim())
+    ) {
+      return {
+        ok: false,
+        reason: "WebAuthn optionsJson 内嵌 challenge 与外层 challenge 不一致。",
+      };
+    }
+  }
+  return { ok: true };
 }
 
 /** 生成不含任何明文值的 Cookie 审计摘要。 */

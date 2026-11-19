@@ -13,6 +13,32 @@
  * - OpenCode / Gemini CLI / Aider 没有可靠的只读模式：服务器只在完全访问、一次性副本或系统级沙盒里交给它们。
  */
 
+const RESUME_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** 过滤不可信输出中的 sessionId；不命中白名单时返回 null。 */
+function normalizeResumeSessionId(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || !RESUME_SESSION_ID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** 强校验外部传入的 resumeSessionId，防命令/选项注入。 */
+function assertValidResumeSessionId(raw) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw !== "string") {
+    throw new Error("无效的续接会话 ID（resumeSessionId 必须为字符串）。");
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (!RESUME_SESSION_ID_RE.test(trimmed)) {
+    throw new Error(
+      "无效的续接会话 ID：必须以字母或数字开头，仅允许字母、数字及 . _ : -（最长 128 字符）。",
+    );
+  }
+  return trimmed;
+}
+
 function short(value, max = 160) {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const one = text.replace(/\s+/g, " ").trim();
@@ -62,8 +88,9 @@ function claudeParser() {
         if (raw.trim()) emit("text", raw.trim());
         return;
       }
-      if (typeof event.session_id === "string" && event.session_id.trim()) {
-        sessionId = event.session_id.trim();
+      const safeSessionId = normalizeResumeSessionId(event.session_id);
+      if (safeSessionId) {
+        sessionId = safeSessionId;
       }
       if (event.type === "system" && event.subtype === "init") {
         emit(
@@ -126,8 +153,9 @@ function codexParser() {
         event.thread?.id ||
         event.item?.thread_id ||
         event.msg?.thread_id;
-      if (typeof detectedSession === "string" && detectedSession.trim()) {
-        sessionId = detectedSession.trim();
+      const safeSessionId = normalizeResumeSessionId(detectedSession);
+      if (safeSessionId) {
+        sessionId = safeSessionId;
       }
       const item = event.item || event.msg || event;
       const type = item.type || event.type || "";
@@ -266,10 +294,7 @@ function buildCommand(
     : [];
   const trimmedModel =
     typeof model === "string" && model.trim() ? model.trim() : null;
-  const trimmedResume =
-    typeof resumeSessionId === "string" && resumeSessionId.trim()
-      ? resumeSessionId.trim()
-      : null;
+  const trimmedResume = assertValidResumeSessionId(resumeSessionId);
 
   switch (kind) {
     case "claude": {
@@ -308,6 +333,16 @@ function buildCommand(
           if (network)
             args.push("-c", "sandbox_workspace_write.network_access=true");
         }
+      } else if (skipPermissions && profile === "full") {
+        args.push("-c", 'sandbox_mode="danger-full-access"');
+      } else if (profile === "readonly") {
+        args.push("-c", 'sandbox_mode="read-only"');
+      } else {
+        args.push("-c", 'sandbox_mode="workspace-write"');
+        args.push(
+          "-c",
+          `sandbox_workspace_write.network_access=${network ? "true" : "false"}`,
+        );
       }
       if (extra.length) args.push(...extra);
       args.push(viaStdin ? "-" : prompt);
@@ -420,4 +455,7 @@ module.exports = {
   textParser,
   describeToolUse,
   cmdSafe,
+  RESUME_SESSION_ID_RE,
+  normalizeResumeSessionId,
+  assertValidResumeSessionId,
 };

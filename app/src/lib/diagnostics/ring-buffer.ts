@@ -69,29 +69,46 @@ const VALID_LEVELS = new Set<DiagnosticLevel>([
   "error",
 ]);
 
-/** 对字符串中的 Authorization / Cookie / Bearer / 设备令牌 / JWT / 查询参数密钥做自动脱敏。 */
+/** 对字符串中的 Authorization / Cookie / JSON 敏感键 / Bearer / 设备令牌 / URL 凭据 / JWT / 查询及 fragment 密钥做自动脱敏。 */
 export function redactDiagnosticText(input: string): string {
   if (!input) return input;
   let text = input;
+  // JSON 引号键值对（如 "cookie":"a=1; sid=SECRET" / "x-api-key":"..."）
   text = text.replace(
-    /\b(authorization|proxy-authorization|x-device-token|x-api-key|cookie|set-cookie)\s*[:=]\s*([^\r\n;]+)/gi,
-    (_match, header: string) => `${header}: ${DIAGNOSTIC_REDACTED}`,
+    /("(?:authorization|proxy-authorization|cookie|set-cookie|x-device-token|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|passwd|session[-_]?id|credential|private[-_]?key)"\s*:\s*")((?:\\.|[^"\\])*)(")/gi,
+    (_match, prefix: string, _val: string, suffix: string) =>
+      `${prefix}${DIAGNOSTIC_REDACTED}${suffix}`,
+  );
+  // HTTP 头行级脱敏至行尾，防止多段 Cookie / Set-Cookie 截断泄漏
+  text = text.replace(
+    /(^|[\r\n\s])(authorization|proxy-authorization|x-device-token|x-api-key|cookie|set-cookie)\s*[:=]\s*([^\r\n]+)/gi,
+    (_match, lead: string, header: string) =>
+      `${lead}${header}: ${DIAGNOSTIC_REDACTED}`,
+  );
+  // URL 内嵌基本认证凭据（https://user:pass@host）
+  text = text.replace(
+    /(\bhttps?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
+    (_match, proto: string) => `${proto}${DIAGNOSTIC_REDACTED}@`,
   );
   text = text.replace(
     /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/-]{6,}=*/gi,
     (_match, scheme: string) => `${scheme} ${DIAGNOSTIC_REDACTED}`,
   );
   text = text.replace(
-    /\b(?:cbd|sk|pk|ghp|gho|ghu|ghs|xoxb|xoxp)_[A-Za-z0-9_-]{8,}\b/g,
+    /\b(?:cbd|sk|pk|ghp|gho|ghu|ghs|xoxb|xoxp|github_pat)_[A-Za-z0-9_-]{8,}\b/g,
     DIAGNOSTIC_REDACTED,
   );
   text = text.replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, DIAGNOSTIC_REDACTED);
+  text = text.replace(
+    /\b(?:AIza[0-9A-Za-z_-]{16,}|(?:AKIA|ASIA)[0-9A-Z]{16})\b/g,
+    DIAGNOSTIC_REDACTED,
+  );
   text = text.replace(
     /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
     DIAGNOSTIC_REDACTED,
   );
   text = text.replace(
-    /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|cookie|auth|code|sig)=)([^&#\s]+)/gi,
+    /([?&#](?:token|access_token|refresh_token|id_token|api_key|apikey|secret|cookie|auth|code|sig)=)([^&#\s]+)/gi,
     (_match, prefix: string) => `${prefix}${DIAGNOSTIC_REDACTED}`,
   );
   return text.length > 2000 ? `${text.slice(0, 1999)}…` : text;

@@ -850,10 +850,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       sessionId: state?.sessionId ?? row.session_id ?? null,
       turnCount: Number(row.turn_count ?? 1),
       continuable:
-        row.status === "done" ||
-        row.status === "failed" ||
-        row.status === "cancelled" ||
-        row.status === "needs_input",
+        row.status === "needs_input" ||
+        (Boolean(row.started_at) &&
+          (row.status === "done" ||
+            row.status === "failed" ||
+            row.status === "cancelled")),
       resultMessageId: row.result_message_id,
       createdAt: iso(row.created_at),
       startedAt: iso(row.started_at),
@@ -1410,6 +1411,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         const reply = (body: Record<string, unknown>) =>
           sendToEnvironment(record.id, {
             type: "agent_llm_result",
+            taskId,
             reqId,
             ...body,
           });
@@ -1470,6 +1472,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         const reply = (approved: boolean) =>
           sendToEnvironment(record.id, {
             type: "agent_approval_result",
+            taskId,
             reqId,
             approved,
           });
@@ -1646,6 +1649,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         const reply = (body: Record<string, unknown>) =>
           sendToEnvironment(record.id, {
             type: "agent_subcall_result",
+            taskId,
             reqId,
             ...body,
           });
@@ -2749,6 +2753,13 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       );
     }
 
+    if (!row.started_at) {
+      throw new LocalAgentError(
+        "任务尚未经过批准并启动执行，无法绕过初始审批直接续接。",
+        409,
+      );
+    }
+
     const followUpPrompt = String(input.prompt ?? "").trim();
     if (!followUpPrompt) {
       throw new LocalAgentError("续接任务必须提供后续指令 prompt。", 400);
@@ -2763,6 +2774,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     }
     if (!isEnvironmentOnline(row.device_id)) {
       throw new LocalAgentError(`「${device.name}」现在离线，无法续接。`, 409);
+    }
+    if (device.capabilities.shell === "off") {
+      throw new LocalAgentError(
+        `「${device.name}」的「命令行」能力已关闭，无法续接任务。`,
+        403,
+      );
     }
     const settings = await settingsFor(row.device_id);
     const roots = effectiveRoots(settings, device.allowedRoots);
@@ -2780,30 +2797,95 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       );
     }
 
+    const grant = await instancesStore.getBotGrant(
+      input.ownerUserId,
+      row.agent_id,
+    );
     let runtimeInstance: RuntimeInstanceSpec | undefined;
     if (row.instance_id) {
       const instRow = await instancesStore.getRow(
         input.ownerUserId,
         row.instance_id,
       );
-      if (instRow) {
-        runtimeInstance = await instancesStore.toRuntimeSpec(instRow);
+      if (!instRow) {
+        throw new LocalAgentError(
+          "原任务绑定的智能体实例已被删除，无法续接。",
+          404,
+        );
       }
+      if (!instRow.enabled) {
+        throw new LocalAgentError(
+          `智能体实例「${instRow.name}」当前已禁用，无法续接。`,
+          403,
+        );
+      }
+      if (
+        grant.mode === "none" ||
+        (grant.mode === "selected" && !grant.instanceIds.includes(instRow.id))
+      ) {
+        throw new LocalAgentError(
+          `当前机器人对子代理「${instRow.name}」的授权已收回，无法续接。`,
+          403,
+        );
+      }
+      if (
+        instRow.config?.maxProfile &&
+        narrowerProfile(
+          row.profile as AgentProfile,
+          instRow.config.maxProfile,
+        ) !== row.profile
+      ) {
+        throw new LocalAgentError(
+          `智能体实例「${instRow.name}」的最大权限档位已收窄，无法续接。`,
+          403,
+        );
+      }
+      runtimeInstance = await instancesStore.toRuntimeSpec(instRow);
     }
-    const grant = await instancesStore.getBotGrant(
-      input.ownerUserId,
-      row.agent_id,
-    );
+
     const rowDepth = Number(row.depth ?? 0);
+    const nestedBonus = row.parent_task_id ? Math.min(rowDepth, 5) : 0;
+    const [deviceActive, userActive] = await Promise.all([
+      sql.unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE device_id = $1 AND status IN ('pending_approval','starting','running','needs_input')",
+        [device.id],
+      ),
+      sql.unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_local_agent_tasks WHERE owner_user_id = $1 AND status IN ('pending_approval','starting','running','needs_input')",
+        [input.ownerUserId],
+      ),
+    ]);
+    if ((deviceActive[0]?.n ?? 0) >= PER_DEVICE_ACTIVE + nestedBonus) {
+      throw new LocalAgentError(
+        `「${device.name}」上已经有 ${PER_DEVICE_ACTIVE} 个本地 agent 任务在跑，等一个结束再续接。`,
+        409,
+      );
+    }
+    if ((userActive[0]?.n ?? 0) >= PER_USER_ACTIVE + nestedBonus) {
+      throw new LocalAgentError(
+        `已经有 ${PER_USER_ACTIVE} 个本地 agent 任务在跑，请稍后再续接。`,
+        409,
+      );
+    }
+
     const nextTurnCount = Number(row.turn_count ?? 1) + 1;
 
-    await sql.unsafe(
+    const claimed = await sql.unsafe<{ id: string }[]>(
       `UPDATE chisabot_local_agent_tasks
          SET status = 'starting', step = '正在续接上下文', error = NULL, pending_input = NULL,
              finished_at = NULL, turn_count = $2, capacity_active = false, updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1
+         AND started_at IS NOT NULL
+         AND status NOT IN ('pending_approval','starting','running','needs_input')
+       RETURNING id`,
       [row.id, nextTurnCount],
     );
+    if (!claimed.length) {
+      throw new LocalAgentError(
+        "任务状态已变化或正在被其他续接请求占用，请稍后重试。",
+        409,
+      );
+    }
     const state = liveOf(row.id);
     state.step = "正在续接上下文";
     state.pendingInput = null;

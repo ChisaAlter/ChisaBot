@@ -40,12 +40,15 @@ import { detectMime, safeName } from "./service";
 export class ChunkedUploadHttpError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 403 | 404 | 409 | 410 | 413 = 400,
+    readonly status: 400 | 403 | 404 | 409 | 410 | 413 | 429 = 400,
   ) {
     super(message);
     this.name = "ChunkedUploadHttpError";
   }
 }
+
+export const DEFAULT_MAX_PER_USER_UPLOAD_SESSIONS = 4;
+export const DEFAULT_MAX_TOTAL_UPLOAD_SESSIONS = 16;
 
 export type ChunkedUploadServiceOptions = {
   ownsBot: (ownerUserId: string, agentId: string) => Promise<boolean>;
@@ -57,6 +60,8 @@ export type ChunkedUploadServiceOptions = {
   /** 临时根路径（默认位于系统临时目录下的专属隔离目录）。 */
   tempRoot?: string;
   ttlMs?: number;
+  maxPerUserSessions?: number;
+  maxTotalSessions?: number;
   now?: () => number;
 };
 
@@ -116,6 +121,16 @@ export function createChunkedUploadService(
 ) {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? CHUNKED_UPLOAD_TTL_MS;
+  const maxPerUserSessions = Math.max(
+    1,
+    Math.floor(
+      options.maxPerUserSessions ?? DEFAULT_MAX_PER_USER_UPLOAD_SESSIONS,
+    ),
+  );
+  const maxTotalSessions = Math.max(
+    maxPerUserSessions,
+    Math.floor(options.maxTotalSessions ?? DEFAULT_MAX_TOTAL_UPLOAD_SESSIONS),
+  );
   const baseTempRoot = path.resolve(
     options.tempRoot ??
       path.join(os.tmpdir(), "chisabot-chunked-uploads", `pid-${process.pid}`),
@@ -168,12 +183,41 @@ export function createChunkedUploadService(
     return session;
   }
 
+  async function sweepExpiredSessions(): Promise<void> {
+    const ts = now();
+    const expired = [...sessions.values()].filter(
+      (session) => !session.committing && session.expiresAtMs <= ts,
+    );
+    for (const session of expired) {
+      await destroySession(session);
+    }
+  }
+
   async function initSession(
     ownerUserId: string,
     rawInput: z.infer<typeof initSchema>,
   ) {
     if (!(await options.ownsBot(ownerUserId, rawInput.agentId))) {
       throw new ChunkedUploadHttpError("找不到这个机器人。", 404);
+    }
+    await sweepExpiredSessions();
+    let userActiveCount = 0;
+    for (const existing of sessions.values()) {
+      if (!existing.closed && existing.ownerUserId === ownerUserId) {
+        userActiveCount += 1;
+      }
+    }
+    if (userActiveCount >= maxPerUserSessions) {
+      throw new ChunkedUploadHttpError(
+        `单用户同时进行的分块上传已达上限（最多 ${maxPerUserSessions} 个），请完成或取消后再试。`,
+        429,
+      );
+    }
+    if (sessions.size >= maxTotalSessions) {
+      throw new ChunkedUploadHttpError(
+        `服务端并发分块上传已达上限（最多 ${maxTotalSessions} 个），请稍后再试。`,
+        429,
+      );
     }
     let filename: string;
     let plan: ChunkPlan;
@@ -425,9 +469,14 @@ export function createChunkedUploadService(
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
+    app.use("*", async (c, next) => {
+      await next();
+      c.header("Cache-Control", "no-store");
+    });
     app.use("*", requireUser);
 
     app.onError((error, c) => {
+      c.header("Cache-Control", "no-store");
       if (error instanceof ChunkedUploadHttpError) {
         return c.json({ error: error.message }, error.status);
       }

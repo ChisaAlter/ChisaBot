@@ -371,6 +371,8 @@ async function runAcpSession({
     terminals.clear();
   }
 
+  const sessionAbortController = new AbortController();
+
   async function checkGate(operation, targetPath, summaryText) {
     if (profile === "full" || skipPermissions) return true;
     const isRead = operation === "read_file";
@@ -385,6 +387,7 @@ async function runAcpSession({
       return !!(await approve(
         "read_file",
         `${summaryText}（不在工作区文件夹里）`,
+        sessionAbortController.signal,
       ));
     }
     if (profile === "readonly") {
@@ -394,7 +397,11 @@ async function runAcpSession({
         `需要你批准：${summaryText}（当前是只读档位）`,
         "等待你批准",
       );
-      return !!(await approve(operation, `${summaryText}（当前是只读档位）`));
+      return !!(await approve(
+        operation,
+        `${summaryText}（当前是只读档位）`,
+        sessionAbortController.signal,
+      ));
     }
     if (targetPath && !isInside(real(targetPath), scope)) {
       if (!approve) return false;
@@ -406,6 +413,7 @@ async function runAcpSession({
       return !!(await approve(
         operation,
         `${summaryText}（不在工作区文件夹里）`,
+        sessionAbortController.signal,
       ));
     }
     return true;
@@ -499,7 +507,7 @@ async function runAcpSession({
           allowMultiple: q?.allowMultiple === true || q?.multiSelect === true,
           required: q?.required !== false,
         }));
-        const reply = await askUser(questions);
+        const reply = await askUser(questions, sessionAbortController.signal);
         if (reply?.cancelled) {
           throw new Error(reply.reason || "用户取消了追问。");
         }
@@ -565,7 +573,11 @@ async function runAcpSession({
         }
         if (!allowed && approve) {
           emit("approval", `需要你批准：${title}`, "等待你批准");
-          allowed = !!(await approve("shell", title));
+          allowed = !!(await approve(
+            "shell",
+            title,
+            sessionAbortController.signal,
+          ));
         }
         if (allowed && allowOpt) {
           return {
@@ -717,15 +729,24 @@ async function runAcpSession({
 
   const timer = setTimeout(() => {
     emit("status", `超过 ${Math.round(timeoutMs / 60000)} 分钟，已停止`);
+    if (!sessionAbortController.signal.aborted) {
+      sessionAbortController.abort(new Error("timeout"));
+    }
     if (sessionId) rpc.notify("session/cancel", { sessionId });
     killTree(child);
   }, timeoutMs);
 
   const onAbort = () => {
+    if (!sessionAbortController.signal.aborted) {
+      sessionAbortController.abort(signal?.reason || new Error("已停止"));
+    }
     if (sessionId) rpc.notify("session/cancel", { sessionId });
     setTimeout(() => killTree(child), 250);
   };
-  if (signal) signal.addEventListener("abort", onAbort, { once: true });
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
 
   try {
     const init = await rpc.request(
@@ -843,6 +864,9 @@ async function runAcpSession({
   } finally {
     clearTimeout(timer);
     if (signal) signal.removeEventListener("abort", onAbort);
+    if (!sessionAbortController.signal.aborted) {
+      sessionAbortController.abort(new Error("closed"));
+    }
     cleanupTerminals();
     rpc.closeAll();
     killTree(child);

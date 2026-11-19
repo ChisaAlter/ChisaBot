@@ -17,34 +17,48 @@ const REDACTED = "[REDACTED]";
 const SENSITIVE_KEY_RE =
   /(authorization|proxy-authorization|cookie|set-cookie|token|secret|password|passwd|api[-_]?key|access[-_]?key|session[-_]?id|credential|private[-_]?key)/i;
 
-/** 对任意纯文本中的常见凭据、请求头、Cookie 与 JWT 做原地脱敏。 */
+/** 对任意纯文本中的常见凭据、请求头、JSON 敏感字段、Cookie、URL 凭据与 JWT 做原地脱敏。 */
 function redactDiagnosticString(input) {
   let text = String(input ?? "");
   if (!text) return text;
-  // Authorization / Cookie / X-Device-Token 等 HTTP 头
+  // JSON 引号键值对（如 "cookie":"a=1; sid=SECRET" / "x-api-key":"..."）
   text = text.replace(
-    /\b(authorization|proxy-authorization|x-device-token|x-api-key|cookie|set-cookie)\s*[:=]\s*([^\r\n;]+)/gi,
-    (_m, header) => `${header}: ${REDACTED}`,
+    /("(?:authorization|proxy-authorization|cookie|set-cookie|x-device-token|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|passwd|session[-_]?id|credential|private[-_]?key)"\s*:\s*")((?:\\.|[^"\\])*)(")/gi,
+    (_m, prefix, _val, suffix) => `${prefix}${REDACTED}${suffix}`,
+  );
+  // Authorization / Cookie / Set-Cookie / X-Device-Token / X-Api-Key 等行级 HTTP 头（脱敏至行尾，防多段 Cookie 泄漏）
+  text = text.replace(
+    /(^|[\r\n\s])(authorization|proxy-authorization|x-device-token|x-api-key|cookie|set-cookie)\s*[:=]\s*([^\r\n]+)/gi,
+    (_m, lead, header) => `${lead}${header}: ${REDACTED}`,
+  );
+  // URL 内嵌基本认证凭据（https://user:pass@host）
+  text = text.replace(
+    /(\bhttps?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
+    (_m, proto) => `${proto}${REDACTED}@`,
   );
   // Bearer / Basic / Token 前缀凭据
   text = text.replace(
     /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/-]{6,}=*/gi,
     (_m, scheme) => `${scheme} ${REDACTED}`,
   );
-  // ChisaBot 设备令牌 / 常见云服务 API key / GitHub token
+  // ChisaBot 设备令牌 / 常见云服务 API key / GitHub token / AWS & Google 密钥前缀
   text = text.replace(
-    /\b(?:cbd|sk|pk|ghp|gho|ghu|ghs|xoxb|xoxp)_[A-Za-z0-9_-]{8,}\b/g,
+    /\b(?:cbd|sk|pk|ghp|gho|ghu|ghs|xoxb|xoxp|github_pat)_[A-Za-z0-9_-]{8,}\b/g,
     REDACTED,
   );
   text = text.replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, REDACTED);
+  text = text.replace(
+    /\b(?:AIza[0-9A-Za-z_-]{16,}|(?:AKIA|ASIA)[0-9A-Z]{16})\b/g,
+    REDACTED,
+  );
   // 三段式 JWT
   text = text.replace(
     /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
     REDACTED,
   );
-  // URL 查询参数中的敏感字段
+  // URL 查询参数及 #fragment 中的敏感字段
   text = text.replace(
-    /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|cookie|auth|code|sig)=)([^&#\s]+)/gi,
+    /([?&#](?:token|access_token|refresh_token|id_token|api_key|apikey|secret|cookie|auth|code|sig)=)([^&#\s]+)/gi,
     (_m, prefix) => `${prefix}${REDACTED}`,
   );
   return text.length > 2000 ? `${text.slice(0, 1999)}…` : text;

@@ -9,6 +9,10 @@ import { Hono } from "hono";
 import { DEFAULT_HARNESS_FLAGS } from "../../shared/admin-workbench";
 import type { ChatFileView } from "../../shared/chat-files";
 import { CHUNK_BYTES } from "../../shared/chunked-transfer";
+import {
+  cookieMatchesOrigin,
+  validateOriginCookies,
+} from "../../shared/desktop-browser-bridge";
 import { defaultCapabilities } from "../../shared/devices";
 import type { AppVariables } from "../src/auth/guards";
 import { createChunkedUploadService } from "../src/chat-files/chunked-upload";
@@ -44,6 +48,7 @@ const { createAgentRuntime } = requireCjs(
     send: (msg: Record<string, unknown>) => boolean;
     log?: (line: string) => void;
     isPaused?: () => boolean;
+    sessionTtlMs?: number;
     preflightTimeoutMs?: number;
     preflightProbe?: (input: {
       workdir: string;
@@ -53,6 +58,7 @@ const { createAgentRuntime } = requireCjs(
     }) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   }) => {
     handle: (msg: Record<string, unknown>) => boolean;
+    pruneSessions: (now?: number) => void;
     cleanupSessions: () => Promise<void>;
     stopAll: () => void;
   };
@@ -181,6 +187,63 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
       }),
     ).rejects.toThrow(/超出允许工作区范围/);
 
+    // 非 full 档位缺少 roots 必须 fail-closed 拒绝
+    await expect(
+      sandbox.preflightSandboxCwd({
+        workdir: inside,
+        roots: [],
+        profile: "workspace",
+        isolation: "none",
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/缺少允许工作区目录/);
+
+    // 允许工作区均不存在时不得回退 path.resolve，必须 fail-closed 拒绝
+    await expect(
+      sandbox.preflightSandboxCwd({
+        workdir: inside,
+        roots: [path.join(root, "does-not-exist-root")],
+        profile: "workspace",
+        isolation: "none",
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/均无法解析真实路径/);
+
+    // WSL 同命名空间预检：放行子目录并拦截 WSL 内 symlink 越界
+    const wslOk = await sandbox.preflightSandboxCwd({
+      workdir: "/mnt/c/workspace/app",
+      roots: ["/mnt/c/workspace"],
+      profile: "workspace",
+      isolation: "wsl",
+      timeoutMs: 5000,
+      probeFn: async ({ workdir }) => ({
+        exitCode: 0,
+        stdout:
+          workdir === "/mnt/c/workspace"
+            ? "/mnt/c/workspace"
+            : "/mnt/c/workspace/app",
+        stderr: "",
+      }),
+    });
+    expect(wslOk.ok).toBe(true);
+    expect(wslOk.normalizedPath).toBe("/mnt/c/workspace/app");
+
+    await expect(
+      sandbox.preflightSandboxCwd({
+        workdir: "/mnt/c/workspace/evil-link",
+        roots: ["/mnt/c/workspace"],
+        profile: "workspace",
+        isolation: "wsl",
+        timeoutMs: 5000,
+        probeFn: async ({ workdir }) => ({
+          exitCode: 0,
+          stdout:
+            workdir === "/mnt/c/workspace" ? "/mnt/c/workspace" : "/etc/secret",
+          stderr: "",
+        }),
+      }),
+    ).rejects.toThrow(/WSL 符号链接越界/);
+
     // 模拟预检挂死超时，必须 fail-closed（额外挂一个定时器避免 Bun 定时器陷阱）
     const keepalive = setTimeout(() => {}, 2000);
     try {
@@ -236,13 +299,56 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
       prompt: "继续优化",
       profile: "workspace",
       skipPermissions: false,
-      network: true,
+      network: false,
       workdir: "/repo",
       resumeSessionId: "thr_999",
     });
     expect(codexCmd.args.slice(0, 3)).toEqual(["exec", "resume", "thr_999"]);
+    // Codex 续接必须保留原沙盒档位与断网设置
+    expect(codexCmd.args).toContain('sandbox_mode="workspace-write"');
+    expect(codexCmd.args).toContain(
+      "sandbox_workspace_write.network_access=false",
+    );
+
+    const codexReadonlyResume = buildCommand("codex", {
+      prompt: "只读检查",
+      profile: "readonly",
+      skipPermissions: false,
+      network: true,
+      workdir: "/repo",
+      resumeSessionId: "thr_ro_1",
+    });
+    expect(codexReadonlyResume.args).toContain('sandbox_mode="read-only"');
+
+    // 恶意 resumeSessionId（选项注入 / shell 元字符）必须被白名单直接拒绝
+    expect(() =>
+      buildCommand("claude", {
+        prompt: "hi",
+        profile: "workspace",
+        skipPermissions: false,
+        network: true,
+        workdir: "/repo",
+        resumeSessionId: "--dangerously-skip-permissions",
+      }),
+    ).toThrow(/无效的续接会话 ID/);
+    expect(() =>
+      buildCommand("codex", {
+        prompt: "hi",
+        profile: "workspace",
+        skipPermissions: false,
+        network: true,
+        workdir: "/repo",
+        resumeSessionId: "thr_1&calc.exe",
+      }),
+    ).toThrow(/无效的续接会话 ID/);
 
     const xp = codexParser();
+    // 不可信 stdout 里的恶意 sessionId 必须被 parser 过滤忽略
+    xp.line(
+      JSON.stringify({ type: "thread.started", thread_id: "-bad&shell" }),
+      () => {},
+    );
+    expect(xp.result().sessionId).toBeNull();
     xp.line(
       JSON.stringify({ type: "thread.started", thread_id: "thr_999" }),
       () => {},
@@ -281,12 +387,14 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
             output?: string;
           }>;
           const reqId = String(msg.reqId);
+          const taskId = String(msg.taskId);
           queueMicrotask(() => {
             if (turn === 0) {
               // 第 1 步：触发 needs_input 追问用户
               turn = 1;
               runtime.handle({
                 type: "agent_llm_result",
+                taskId,
                 reqId,
                 ok: true,
                 content: [
@@ -317,6 +425,7 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
               expect(toolMsg?.output).toContain("bun:test");
               runtime.handle({
                 type: "agent_llm_result",
+                taskId,
                 reqId,
                 ok: true,
                 content: [
@@ -335,6 +444,7 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
               turn = 3;
               runtime.handle({
                 type: "agent_llm_result",
+                taskId,
                 reqId,
                 ok: true,
                 content: [
@@ -346,6 +456,7 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
               secondTurnHistoryCount = messages.length;
               runtime.handle({
                 type: "agent_llm_result",
+                taskId,
                 reqId,
                 ok: true,
                 content: [
@@ -357,6 +468,18 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
         } else if (msg.type === "agent_needs_input") {
           sawQuestion = true;
           queueMicrotask(() => {
+            // 先尝试跨任务伪造 taskId 抢答，必须被运行时拒收；再发正确 taskId 解锁
+            runtime.handle({
+              type: "agent_user_input_result",
+              taskId: "other-hijack-task",
+              reqId: msg.reqId,
+              answers: { framework: ["hijacked"] },
+            });
+            // 运行中发起 agent_discard 也必须被拦截，防止删除活 worktree
+            runtime.handle({
+              type: "agent_discard",
+              taskId: msg.taskId,
+            });
             runtime.handle({
               type: "agent_user_input_result",
               taskId: msg.taskId,
@@ -370,6 +493,7 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
           queueMicrotask(() => {
             runtime.handle({
               type: "agent_approval_result",
+              taskId: msg.taskId,
               reqId: msg.reqId,
               approved: true,
             });
@@ -404,6 +528,15 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
       expect(firstDone.continuable).toBe(true);
       expect(sawQuestion).toBe(true);
       expect(sawApproval).toBe(true);
+      // 验证运行中触发 agent_discard 被明确拦截拒绝
+      expect(
+        sent.some(
+          (m) =>
+            m.type === "agent_applied" &&
+            m.ok === false &&
+            String(m.error || "").includes("仍在运行中"),
+        ),
+      ).toBe(true);
       const written = await fsp.readFile(
         path.join(workRoot, "notes.txt"),
         "utf8",
@@ -433,6 +566,29 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
       expect(secondDone.summary).toContain("第二轮续接完成");
       // 上一轮已有 user + assistant + tool + assistant + tool + assistant，续接后至少 7 条历史消息
       expect(secondTurnHistoryCount).toBeGreaterThanOrEqual(7);
+
+      // 超过 session TTL 后调用 pruneSessions 自动淘汰旧会话（再 continue 时不会携带旧历史）
+      runtime.pruneSessions(Date.now() + 60 * 60_000);
+      const thirdDonePromise = waitDone();
+      runtime.handle({
+        type: "agent_continue",
+        taskId: "task-wave9-1",
+        sessionId: "fresh-sess-after-evict",
+        agent: "builtin",
+        prompt: "TTL 淘汰后新一轮",
+        cwd: workRoot,
+        profile: "readonly",
+        isolation: "none",
+        network: true,
+        roots: [workRoot],
+        skipPermissions: false,
+        builtinModel: { kind: "server" },
+        containerImage: "debian:bookworm-slim",
+        timeoutMs: 30_000,
+      });
+      const thirdDone = await thirdDonePromise;
+      expect(thirdDone.ok).toBe(true);
+      expect(secondTurnHistoryCount).toBe(1);
     } finally {
       await runtime.cleanupSessions();
     }
@@ -582,6 +738,189 @@ describe("Wave 9: Coding Agent 预检 / 多轮续接 / needs_input / status(wait
       outbound.some((item) => item.message.type === "agent_user_input_result"),
     ).toBe(true);
   });
+
+  test("continueTask 安全防线：拒续未启动任务、拒已删实例与收回授权、并发上限与 CAS 防双派发", async () => {
+    const taskId = "task-cont-guard";
+    let deviceActiveCount = 0;
+    let casReturnsRow = true;
+    let instanceRow: Record<string, unknown> | null = {
+      id: "inst-1",
+      owner_user_id: "user-a",
+      environment_id: "dev_1",
+      driver: "codex",
+      name: "本地 Codex",
+      enabled: true,
+      config: {},
+      env_encrypted: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    let grantMode: "all" | "none" = "all";
+    const rowState: Record<string, unknown> = {
+      id: taskId,
+      owner_user_id: "user-a",
+      device_id: "dev_1",
+      device_name: "工作电脑",
+      agent_id: "bot_1",
+      bot_name: "编程助手",
+      thread_id: "thread_1",
+      agent: "codex",
+      instance_id: "inst-1",
+      instance_name: "本地 Codex",
+      environment_id: "dev_1",
+      parent_task_id: null,
+      depth: 0,
+      invocation_mode: "direct",
+      title: "续接防线测试",
+      task: "初始任务",
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      cwd: "/repo",
+      status: "cancelled",
+      step: "已拒绝",
+      transcript: [],
+      line_count: 0,
+      summary: null,
+      diff: null,
+      error: "用户拒绝启动",
+      llm_calls: 0,
+      result_message_id: null,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      finished_at: new Date().toISOString(),
+      capacity_active: false,
+      session_id: null,
+      turn_count: 1,
+      pending_input: null,
+    };
+
+    const fakeSql = {
+      unsafe: async <T>(query: string, params: unknown[] = []): Promise<T> => {
+        if (
+          query.startsWith(
+            "SELECT * FROM chisabot_local_agent_tasks WHERE id = $1",
+          )
+        ) {
+          return (params[0] === taskId
+            ? [{ ...rowState }]
+            : []) as unknown as T;
+        }
+        if (query.includes("FROM chisabot_local_agent_settings")) {
+          return [] as unknown as T;
+        }
+        if (query.includes("FROM chisabot_agent_instances")) {
+          return (instanceRow ? [instanceRow] : []) as unknown as T;
+        }
+        if (query.includes("FROM chisabot_bot_agent_grants")) {
+          return [
+            {
+              owner_user_id: "user-a",
+              bot_id: "bot_1",
+              mode: grantMode,
+              instance_ids: [],
+              allow_nested_subagents: false,
+              max_depth: 2,
+            },
+          ] as unknown as T;
+        }
+        if (query.startsWith("SELECT count(*)::int AS n")) {
+          return [{ n: deviceActiveCount }] as unknown as T;
+        }
+        if (query.startsWith("UPDATE chisabot_local_agent_tasks")) {
+          if (!casReturnsRow) return [] as unknown as T;
+          rowState.status = "starting";
+          return [{ id: taskId }] as unknown as T;
+        }
+        return [] as unknown as T;
+      },
+    };
+    const device = makeDevice({
+      id: "dev_1",
+      ownerUserId: "user-a",
+      allowedRoots: ["/repo"],
+    });
+    const service = createLocalAgentService({
+      database: { $client: fakeSql } as never,
+      hub: {
+        isOnline: () => true,
+        sendRaw: () => true,
+        requestUserApproval: async () => ({ approved: true, by: "user" }),
+        decide: () => false,
+      } as never,
+      deviceStore: {
+        get: async (id) => (id === device.id ? device : null),
+        forOwner: async () => [device],
+        audit: async () => "audit-id",
+      },
+    });
+
+    // 1. 从未批准启动（started_at === null）的任务必须 409 拒绝续接
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "绕过审批继续跑",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // 置为已启动并正常结束
+    rowState.started_at = new Date().toISOString();
+    rowState.status = "done";
+
+    // 2. 绑定实例被删必须 404 拒绝（不再静默丢弃 runtimeInstance）
+    const savedInst = instanceRow;
+    instanceRow = null;
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "继续",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // 3. 实例已禁用或机器人 grant 已收回必须 403 拒绝
+    instanceRow = { ...savedInst, enabled: false };
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "继续",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    instanceRow = { ...savedInst, enabled: true };
+    grantMode = "none";
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "继续",
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    grantMode = "all";
+
+    // 4. 设备活跃任务数达到上限必须 409 拒绝
+    deviceActiveCount = 2;
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "继续",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    deviceActiveCount = 0;
+
+    // 5. 并发续接 CAS 抢占失败（RETURNING id 为空）必须 409 拒绝防双派发
+    casReturnsRow = false;
+    await expect(
+      service.continueTask({
+        ownerUserId: "user-a",
+        taskId,
+        prompt: "并发续接",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
 });
 
 describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 跨端转发", () => {
@@ -721,7 +1060,7 @@ describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 
         }),
       ).rejects.toMatchObject({ status: 400 });
 
-      // 合法单域名 Cookie 放行
+      // 合法单域名 Cookie 放行；消费后内存明文立即清零
       const waitRes = bridge.waitForCookieApproval("user-a", req.requestId);
       const approved = await bridge.respondCookieApproval({
         ownerUserId: "user-a",
@@ -742,7 +1081,87 @@ describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 
         },
       });
       expect(approved.cookies).toHaveLength(1);
-      expect((await waitRes).status).toBe("approved");
+      const firstDelivery = await waitRes;
+      expect(firstDelivery.status).toBe("approved");
+      if (firstDelivery.approved) {
+        expect(firstDelivery.cookies).toHaveLength(1);
+      }
+      // 二次读取不能再拿到明文 Cookie（防明文滞留内存）
+      const secondDelivery = await bridge.waitForCookieApproval(
+        "user-a",
+        req.requestId,
+      );
+      if (secondDelivery.approved) {
+        expect(secondDelivery.cookies).toEqual([]);
+      }
+
+      // 5b. Cookie host-only 防跨子域泄漏、多租户公共后缀与 __Host-/__Secure- 前缀强校验
+      expect(
+        cookieMatchesOrigin("example.com", "https://sub.example.com"),
+      ).toBe(false);
+      expect(
+        cookieMatchesOrigin("..example.com", "https://sub.example.com"),
+      ).toBe(false);
+      expect(
+        cookieMatchesOrigin(".github.io", "https://victim.github.io"),
+      ).toBe(false);
+      expect(cookieMatchesOrigin(".pages.dev", "https://app.pages.dev")).toBe(
+        false,
+      );
+      expect(
+        validateOriginCookies("https://app.example.com", [
+          {
+            name: "__Host-sid",
+            value: "v1",
+            domain: ".app.example.com",
+            path: "/",
+            httpOnly: true,
+            secure: true,
+          },
+        ]).ok,
+      ).toBe(false);
+      expect(
+        validateOriginCookies("https://app.example.com", [
+          {
+            name: "bad_path",
+            value: "v1",
+            domain: "app.example.com",
+            path: "/ok\r\nSet-Cookie: evil=1",
+            httpOnly: true,
+            secure: true,
+          },
+        ]).ok,
+      ).toBe(false);
+
+      // 5c. 设备急停（paused）后响应 Cookie 审批必须 409 拒绝
+      const reqPaused = await bridge.createCookieApproval({
+        ownerUserId: "user-a",
+        deviceId: "dev_a1",
+        botId: "bot-1",
+        origin: "https://paused.example.com",
+      });
+      devA1.paused = true;
+      await expect(
+        bridge.respondCookieApproval({
+          ownerUserId: "user-a",
+          deviceId: "dev_a1",
+          requestId: reqPaused.requestId,
+          decision: { approved: false },
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      devA1.paused = false;
+
+      // 5d. /api/desktop-browser/* 路由响应必须携带 Cache-Control: no-store
+      const bridgeApp = new Hono<{ Variables: AppVariables }>();
+      bridgeApp.route(
+        "/api/desktop-browser",
+        bridge.routes(fakeRequireUser("user-a")),
+      );
+      const listHttpRes = await bridgeApp.request(
+        "/api/desktop-browser/cookie-approvals",
+      );
+      expect(listHttpRes.status).toBe(200);
+      expect(listHttpRes.headers.get("cache-control")).toBe("no-store");
 
       // 6. 超时过期校验
       const req2 = await bridge.createCookieApproval({
@@ -842,7 +1261,35 @@ describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 
         }),
       ).rejects.toMatchObject({ status: 409 });
 
-      // 5. 完成后再次重放同一 challenge 仍必须被拦截（409）
+      // 5. clientDataJSON 篡改（challenge / origin / type 不一致）必须 400 拒绝
+      const badClientData = Buffer.from(
+        JSON.stringify({
+          type: "webauthn.get",
+          challenge: "tampered-challenge-000000",
+          origin: "https://login.example.com",
+        }),
+      ).toString("base64url");
+      await expect(
+        bridge.respondWebAuthn({
+          ownerUserId: "user-a",
+          deviceId: "dev_a1",
+          requestId: created.requestId,
+          response: {
+            ok: true,
+            credentialId: "cred-1",
+            clientDataJSON: badClientData,
+          },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+
+      // 合法 clientDataJSON 完成后，再次重放同一 challenge 仍必须被拦截（409）
+      const validClientData = Buffer.from(
+        JSON.stringify({
+          type: "webauthn.get",
+          challenge,
+          origin: "https://login.example.com",
+        }),
+      ).toString("base64url");
       const completed = await bridge.respondWebAuthn({
         ownerUserId: "user-a",
         deviceId: "dev_a1",
@@ -850,7 +1297,7 @@ describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 
         response: {
           ok: true,
           credentialId: "cred-1",
-          clientDataJSON: "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0In0",
+          clientDataJSON: validClientData,
           authenticatorData: "auth-data",
           signature: "sig-bytes",
         },
@@ -958,6 +1405,31 @@ describe("Wave 9: 本机 Chrome Cookie 单域名审批导入 & WebAuthn/Passkey 
     const cookies = approved.cookies as Array<{ name: string }>;
     expect(cookies).toHaveLength(1);
     expect(cookies[0]?.name).toBe("sid");
+
+    // optionsJson 内嵌 rpId / challenge 与外层不一致时，弹窗前必须直接拒绝
+    let promptShown = false;
+    const passkeyClient = browserBridgePc.createDesktopBrowserBridgeClient({
+      getGrantedScopes: () => ["passkey_forward"],
+      confirmApproval: async () => {
+        promptShown = true;
+        return true;
+      },
+    });
+    const mismatched = await passkeyClient.handleWebAuthnRequest({
+      requestId: "pk-bad-opts",
+      kind: "get",
+      origin: "https://login.example.com",
+      rpId: "example.com",
+      challenge: "valid-challenge-1234567890",
+      optionsJson: JSON.stringify({
+        publicKey: {
+          rpId: "evil.com",
+          challenge: "valid-challenge-1234567890",
+        },
+      }),
+    });
+    expect(mismatched.ok).toBe(false);
+    expect(promptShown).toBe(false);
   });
 });
 
@@ -1110,8 +1582,52 @@ describe("Wave 9: 服务端 4 MiB 分块流式上传（重组、越权拦截、�
         },
       );
       expect(changedRes.status).toBe(409);
+      expect(changedRes.headers.get("cache-control")).toBe("no-store");
       expect(service.activeCount).toBe(0);
       expect(await fsp.readdir(tempRoot)).toEqual([]);
+
+      // 5. 并发会话上限防护（单用户默认 <= 4，第 5 个返回 429）
+      const openedIds: string[] = [];
+      for (let i = 0; i < 4; i += 1) {
+        const res = await appUserA.request("/api/chat-files/chunked/init", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agentId: "bot-1",
+            filename: `batch-${i}.bin`,
+            totalSize: 1024,
+            mtimeMs: 1000 + i,
+            chunkSize: 1024,
+          }),
+        });
+        expect(res.status).toBe(201);
+        expect(res.headers.get("cache-control")).toBe("no-store");
+        const body = (await res.json()) as { uploadId: string };
+        openedIds.push(body.uploadId);
+      }
+      const overflowRes = await appUserA.request(
+        "/api/chat-files/chunked/init",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agentId: "bot-1",
+            filename: "overflow.bin",
+            totalSize: 1024,
+            mtimeMs: 9999,
+            chunkSize: 1024,
+          }),
+        },
+      );
+      expect(overflowRes.status).toBe(429);
+      expect(overflowRes.headers.get("cache-control")).toBe("no-store");
+      for (const id of openedIds) {
+        const del = await appUserA.request(`/api/chat-files/chunked/${id}`, {
+          method: "DELETE",
+        });
+        expect(del.status).toBe(204);
+      }
+      expect(service.activeCount).toBe(0);
     } finally {
       await service.dispose();
     }

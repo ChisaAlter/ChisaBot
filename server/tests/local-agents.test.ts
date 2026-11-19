@@ -601,6 +601,7 @@ describe.skipIf(!url)("local agent tasks (database)", () => {
     );
     expect(reply).toEqual({
       type: "agent_llm_result",
+      taskId: task.id,
       reqId: "r1",
       ok: true,
       content: [{ type: "text", text: "收到 1 条" }],

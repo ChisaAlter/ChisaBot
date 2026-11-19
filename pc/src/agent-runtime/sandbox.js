@@ -54,7 +54,7 @@ function killPreflightChild(child, platform) {
   }
 }
 
-function runPwdProbe({ file, args, cwd, timeoutMs, platform }) {
+function runPwdProbe({ file, args, cwd, env, timeoutMs, platform }) {
   return new Promise((resolve, reject) => {
     let out = "";
     let err = "";
@@ -62,7 +62,8 @@ function runPwdProbe({ file, args, cwd, timeoutMs, platform }) {
     let child;
     try {
       child = spawn(file, args, {
-        cwd,
+        ...(cwd ? { cwd } : {}),
+        ...(env ? { env } : {}),
         windowsHide: true,
         detached: platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
@@ -110,11 +111,20 @@ function runPwdProbe({ file, args, cwd, timeoutMs, platform }) {
   });
 }
 
+function isWithinNormalizedRoots(targetNorm, normalizedRoots) {
+  return normalizedRoots.some(
+    (base) =>
+      targetNorm === base ||
+      targetNorm.startsWith(base === "/" ? "/" : `${base}/`),
+  );
+}
+
 /**
  * 启动前 5s 沙盒目录 `pwd -P` 预检：
- * - 通过真实子进程（POSIX / 沙盒走 `pwd -P`，Windows 走子进程物理 cwd 探测）解析符号链接后的真实路径；
- * - 校验真实路径确实存在、可访问且位于允许工作区内（防 symlink 越界）；
- * - 任何超时（默认 5000ms）或非零退出码一律 fail-closed 拒绝启动。
+ * - 通过真实子进程（POSIX / 沙盒走 `pwd -P`，Windows 走子进程物理 cwd 探测且显式注入 ELECTRON_RUN_AS_NODE=1）解析符号链接后的真实路径；
+ * - 校验真实路径确实存在、可访问且位于允许工作区内（防 symlink 越界；非 full 档位不允许空 roots）；
+ * - WSL 隔离在同命名空间内同时解析 workdir 与每个 root 的物理路径再做前缀包含校验；
+ * - 任何超时（默认 5000ms）、realpath 失败或非零退出码一律 fail-closed 拒绝启动。
  */
 async function preflightSandboxCwd({
   workdir,
@@ -134,72 +144,113 @@ async function preflightSandboxCwd({
   if (!rawCwd) {
     throw new Error("沙盒目录预检失败：未提供工作目录。");
   }
-  const stat = await fsp.stat(rawCwd).catch(() => null);
-  if (!stat?.isDirectory()) {
+  const normalizedRootInputs = Array.isArray(roots)
+    ? roots
+        .map((r) => (typeof r === "string" ? r.trim() : ""))
+        .filter((r) => r.length > 0)
+    : [];
+  if (profile !== "full" && normalizedRootInputs.length === 0) {
     throw new Error(
-      `沙盒目录预检失败：工作目录不存在或不是文件夹（${rawCwd}）。`,
+      "沙盒目录预检拒绝：非完全访问档位缺少允许工作区目录（fail-closed）。",
     );
   }
 
-  let probeResult;
-  if (typeof probeFn === "function") {
-    let timer;
-    try {
-      probeResult = await Promise.race([
-        Promise.resolve().then(() =>
-          probeFn({
-            workdir: rawCwd,
-            isolation,
-            network,
-            timeoutMs: effectiveTimeout,
-          }),
-        ),
-        new Promise((_resolve, reject) => {
-          timer = setTimeout(() => {
-            reject(
-              new Error(
-                `沙盒目录 pwd -P 预检超时（${effectiveTimeout}ms），已安全中止（fail-closed）。`,
-              ),
-            );
-          }, effectiveTimeout);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
+  const isWslPosixCwd = isolation === "wsl" && rawCwd.startsWith("/");
+  if (!isWslPosixCwd) {
+    const stat = await fsp.stat(rawCwd).catch(() => null);
+    if (!stat?.isDirectory()) {
+      throw new Error(
+        `沙盒目录预检失败：工作目录不存在或不是文件夹（${rawCwd}）。`,
+      );
     }
-  } else if (platform === "win32" && isolation !== "wsl") {
-    // Windows 本机子进程真实 cwd 解析（兼容任意 Node/Bun 宿主，启动快且准确解析 symlink/junction）。
-    probeResult = await runPwdProbe({
-      file: process.execPath,
-      args: [
-        "-e",
-        "process.stdout.write(require('node:fs').realpathSync.native(process.cwd()))",
-      ],
-      cwd: rawCwd,
-      timeoutMs: effectiveTimeout,
-      platform,
-    });
-  } else {
-    const pwdCmd =
-      isolation === "wsl"
-        ? { file: "pwd", args: ["-P"] }
-        : { file: "/bin/pwd", args: ["-P"] };
-    const wrapped = wrap({
-      isolation,
-      workdir: rawCwd,
-      network,
-      file: pwdCmd.file,
-      args: pwdCmd.args,
-    });
-    probeResult = await runPwdProbe({
-      file: wrapped.file,
-      args: wrapped.args,
-      cwd: rawCwd,
-      timeoutMs: effectiveTimeout,
-      platform,
-    });
   }
 
+  const probePath = async (targetPath) => {
+    if (typeof probeFn === "function") {
+      let timer;
+      try {
+        return await Promise.race([
+          Promise.resolve().then(() =>
+            probeFn({
+              workdir: targetPath,
+              isolation,
+              network,
+              timeoutMs: effectiveTimeout,
+            }),
+          ),
+          new Promise((_resolve, reject) => {
+            timer = setTimeout(() => {
+              reject(
+                new Error(
+                  `沙盒目录 pwd -P 预检超时（${effectiveTimeout}ms），已安全中止（fail-closed）。`,
+                ),
+              );
+            }, effectiveTimeout);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (platform === "win32" && isolation !== "wsl") {
+      // Windows 本机子进程真实 cwd 解析（打包后 process.execPath 为 Electron 可执行文件，必须带 ELECTRON_RUN_AS_NODE=1）。
+      return runPwdProbe({
+        file: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(require('node:fs').realpathSync.native(process.cwd()))",
+        ],
+        cwd: targetPath,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        timeoutMs: effectiveTimeout,
+        platform,
+      });
+    }
+    if (isolation === "wsl") {
+      if (targetPath.startsWith("/")) {
+        return runPwdProbe({
+          file: "wsl.exe",
+          args: [
+            "-e",
+            "bash",
+            "-lc",
+            `cd ${shellQuote(targetPath)} && pwd -P`,
+          ],
+          timeoutMs: effectiveTimeout,
+          platform,
+        });
+      }
+      const wrappedWsl = wrap({
+        isolation: "wsl",
+        workdir: targetPath,
+        network,
+        file: "pwd",
+        args: ["-P"],
+      });
+      return runPwdProbe({
+        file: wrappedWsl.file,
+        args: wrappedWsl.args,
+        timeoutMs: effectiveTimeout,
+        platform,
+      });
+    }
+    const wrapped = wrap({
+      isolation,
+      workdir: targetPath,
+      network,
+      file: "/bin/pwd",
+      args: ["-P"],
+    });
+    return runPwdProbe({
+      file: wrapped.file,
+      args: wrapped.args,
+      cwd: targetPath,
+      timeoutMs: effectiveTimeout,
+      platform,
+    });
+  };
+
+  const probeResult = await probePath(rawCwd);
   if (
     probeResult?.exitCode !== 0 ||
     !String(probeResult?.stdout || "").trim()
@@ -210,31 +261,84 @@ async function preflightSandboxCwd({
   }
 
   const probedRaw = String(probeResult.stdout).split(/\r?\n/)[0].trim();
-  const realCwd = await fsp.realpath(rawCwd).catch(() => path.resolve(rawCwd));
+
+  if (isolation === "wsl") {
+    if (!probedRaw.startsWith("/")) {
+      throw new Error(
+        `沙盒目录 WSL 预检返回了非物理 POSIX 路径：${probedRaw}`,
+      );
+    }
+    const probedWslNorm = normalizePosixPath(probedRaw, "linux");
+    if (profile !== "full") {
+      const resolvedWslRoots = [];
+      for (const root of normalizedRootInputs) {
+        try {
+          const rootProbe = await probePath(root);
+          if (rootProbe?.exitCode !== 0) continue;
+          const rootOut = String(rootProbe.stdout || "")
+            .split(/\r?\n/)[0]
+            .trim();
+          if (rootOut.startsWith("/")) {
+            resolvedWslRoots.push(normalizePosixPath(rootOut, "linux"));
+          }
+        } catch {
+          // 单个不可解析 root 不加入白名单；若全部不可解析则下方 fail-closed 拒绝。
+        }
+      }
+      if (resolvedWslRoots.length === 0) {
+        throw new Error(
+          "沙盒目录 WSL 预检拒绝：允许工作区在 WSL 命名空间内均无法解析（fail-closed）。",
+        );
+      }
+      if (!isWithinNormalizedRoots(probedWslNorm, resolvedWslRoots)) {
+        throw new Error(
+          `沙盒目录 WSL 预检拒绝：真实路径「${probedWslNorm}」超出允许工作区范围（可能存在 WSL 符号链接越界）。`,
+        );
+      }
+    }
+    return {
+      ok: true,
+      realPath: probedRaw,
+      normalizedPath: probedWslNorm,
+      probedPath: probedRaw,
+    };
+  }
+
+  let realCwd;
+  try {
+    realCwd = await fsp.realpath(rawCwd);
+  } catch (error) {
+    throw new Error(
+      `沙盒目录预检失败：无法解析工作目录真实路径（${error?.message || String(error)}）。`,
+    );
+  }
   const probedNorm = normalizePosixPath(probedRaw, platform);
   const realNorm = normalizePosixPath(realCwd, platform);
-  // 若非 WSL 路径转换场景，要求子进程回报的物理路径与真实路径一致（防虚假探测）。
-  if (isolation !== "wsl" && probedNorm !== realNorm) {
+  if (probedNorm !== realNorm) {
     throw new Error(
       `沙盒目录 pwd -P 预检路径不一致：探测=${probedRaw}，真实=${realCwd}`,
     );
   }
 
-  if (profile !== "full" && Array.isArray(roots) && roots.length > 0) {
-    const resolvedRoots = await Promise.all(
-      roots.map(async (root) => {
-        const resolvedRoot = await fsp
-          .realpath(root)
-          .catch(() => path.resolve(root));
-        return normalizePosixPath(resolvedRoot, platform);
-      }),
-    );
-    const inside = resolvedRoots.some(
-      (base) =>
-        realNorm === base ||
-        realNorm.startsWith(base === "/" ? "/" : `${base}/`),
-    );
-    if (!inside) {
+  if (profile !== "full") {
+    const resolvedRoots = (
+      await Promise.all(
+        normalizedRootInputs.map(async (root) => {
+          try {
+            const resolvedRoot = await fsp.realpath(root);
+            return normalizePosixPath(resolvedRoot, platform);
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter((value) => typeof value === "string" && value.length > 0);
+    if (resolvedRoots.length === 0) {
+      throw new Error(
+        "沙盒目录预检拒绝：允许工作区目录均无法解析真实路径（fail-closed）。",
+      );
+    }
+    if (!isWithinNormalizedRoots(realNorm, resolvedRoots)) {
       throw new Error(
         `沙盒目录预检拒绝：真实路径「${realNorm}」超出允许工作区范围（可能存在符号链接越界）。`,
       );

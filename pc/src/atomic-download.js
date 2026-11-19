@@ -12,6 +12,7 @@ const fsp = require("node:fs/promises");
 const path = require("node:path");
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
+const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_LOCAL_PREVIEW_BYTES = 25 * 1024 * 1024;
 const DEFAULT_THUMB_MAX_DIM = 360;
 
@@ -29,6 +30,71 @@ function normalizePathSlashes(rawPath) {
     .join("/")
     .split("\\")
     .join("/");
+}
+
+function normalizeBoundaryPath(rawPath) {
+  const slashed = normalizePathSlashes(rawPath).replace(/\/+$/g, "") || "/";
+  return process.platform === "win32" ? slashed.toLowerCase() : slashed;
+}
+
+async function resolveDeepestExistingPath(targetPath) {
+  const pending = [];
+  let cursor = path.resolve(targetPath);
+  for (;;) {
+    try {
+      const real = await fsp.realpath(cursor);
+      return pending.length ? path.join(real, ...pending.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cursor);
+      if (parent === cursor) {
+        return path.resolve(targetPath);
+      }
+      pending.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+async function assertWithinAllowedRoots(resolvedDest, allowedRoots) {
+  if (!Array.isArray(allowedRoots) || allowedRoots.length === 0) {
+    throw new Error("下载根目录白名单 allowedRoots 不能为空。");
+  }
+  const resolvedRoots = (
+    await Promise.all(
+      allowedRoots.map(async (root) => {
+        const trimmed = typeof root === "string" ? root.trim() : "";
+        if (!trimmed) return null;
+        try {
+          const real = await fsp.realpath(trimmed);
+          return normalizeBoundaryPath(real);
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((value) => typeof value === "string" && value.length > 0);
+  if (resolvedRoots.length === 0) {
+    throw new Error("下载根目录白名单均无法解析，已拒绝写入（fail-closed）。");
+  }
+  const destLstat = await fsp.lstat(resolvedDest).catch(() => null);
+  if (destLstat?.isSymbolicLink()) {
+    throw new Error("下载目标不能是符号链接，已拒绝覆盖。");
+  }
+  const parentResolved = await resolveDeepestExistingPath(
+    path.dirname(resolvedDest),
+  );
+  const candidate = normalizeBoundaryPath(
+    path.join(parentResolved, path.basename(resolvedDest)),
+  );
+  const allowed = resolvedRoots.some(
+    (base) =>
+      candidate === base ||
+      candidate.startsWith(base === "/" ? "/" : `${base}/`),
+  );
+  if (!allowed) {
+    throw new Error("下载目标路径超出允许根目录范围（可能存在符号链接越界）。");
+  }
+  return resolvedRoots;
 }
 
 /** 构造唯一原子下载临时文件路径：`${dest}.${pid}.${uuid}.tmp`。 */
@@ -60,13 +126,29 @@ async function atomicChunkedDownload({
   destPath,
   totalSize,
   chunkSize = CHUNK_BYTES,
+  maxBytes = MAX_DOWNLOAD_BYTES,
+  allowedRoots,
   readChunk,
   expectedSha256,
   signal,
   onProgress,
 }) {
+  if (
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes <= 0 ||
+    maxBytes > MAX_DOWNLOAD_BYTES
+  ) {
+    throw new Error(
+      `下载大小上限必须在 1 字节到 ${MAX_DOWNLOAD_BYTES} 字节之间。`,
+    );
+  }
   if (!Number.isSafeInteger(totalSize) || totalSize < 0) {
     throw new Error("下载文件大小无效。");
+  }
+  if (totalSize > maxBytes) {
+    throw new Error(
+      `下载文件体积（${totalSize} 字节）超过上限（${maxBytes} 字节）。`,
+    );
   }
   if (
     !Number.isSafeInteger(chunkSize) ||
@@ -79,11 +161,34 @@ async function atomicChunkedDownload({
     throw new Error("缺少分块读取器 readChunk。");
   }
 
-  const resolvedDest = path.resolve(String(destPath || ""));
+  const trimmedDest = typeof destPath === "string" ? destPath.trim() : "";
+  if (!trimmedDest || hasControlChar(trimmedDest)) {
+    throw new Error("下载目标路径无效。");
+  }
+  const resolvedDest = path.resolve(trimmedDest);
   if (!resolvedDest || hasControlChar(resolvedDest)) {
     throw new Error("下载目标路径无效。");
   }
+  let verifiedRoots = null;
+  if (allowedRoots !== undefined) {
+    verifiedRoots = await assertWithinAllowedRoots(resolvedDest, allowedRoots);
+  }
   await fsp.mkdir(path.dirname(resolvedDest), { recursive: true });
+  if (verifiedRoots) {
+    const realParent = normalizeBoundaryPath(
+      await fsp.realpath(path.dirname(resolvedDest)),
+    );
+    const parentAllowed = verifiedRoots.some(
+      (base) =>
+        realParent === base ||
+        realParent.startsWith(base === "/" ? "/" : `${base}/`),
+    );
+    if (!parentAllowed) {
+      throw new Error(
+        "下载目标父目录超出允许根目录范围（可能存在符号链接越界）。",
+      );
+    }
+  }
 
   const tempPath = makeAtomicTempPath(resolvedDest);
   const hash = crypto.createHash("sha256");
@@ -152,6 +257,7 @@ async function atomicChunkedDownload({
     await handle.close();
     handle = null;
 
+    signal?.throwIfAborted();
     await fsp.rename(tempPath, resolvedDest);
     committed = true;
     return {
@@ -198,14 +304,22 @@ async function createLocalDraftThumbnail({
     if (typeof filePath !== "string" || !filePath.trim()) {
       return { ok: false, reason: "missing_source" };
     }
-    const stat = await fsp.stat(filePath).catch(() => null);
-    if (!stat?.isFile()) {
+    let fileHandle = null;
+    try {
+      fileHandle = await fsp.open(filePath, "r");
+      const stat = await fileHandle.stat();
+      if (!stat.isFile()) {
+        return { ok: false, reason: "file_not_found" };
+      }
+      if (stat.size === 0 || stat.size > MAX_LOCAL_PREVIEW_BYTES) {
+        return { ok: false, reason: "file_size_out_of_range" };
+      }
+      rawBuffer = await fileHandle.readFile();
+    } catch {
       return { ok: false, reason: "file_not_found" };
+    } finally {
+      if (fileHandle) await fileHandle.close().catch(() => {});
     }
-    if (stat.size === 0 || stat.size > MAX_LOCAL_PREVIEW_BYTES) {
-      return { ok: false, reason: "file_size_out_of_range" };
-    }
-    rawBuffer = await fsp.readFile(filePath);
   }
 
   const buf = Buffer.isBuffer(rawBuffer) ? rawBuffer : Buffer.from(rawBuffer);
@@ -257,6 +371,7 @@ async function createLocalDraftThumbnail({
 
 module.exports = {
   CHUNK_BYTES,
+  MAX_DOWNLOAD_BYTES,
   MAX_LOCAL_PREVIEW_BYTES,
   makeAtomicTempPath,
   atomicChunkedDownload,

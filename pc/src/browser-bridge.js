@@ -35,6 +35,29 @@ const PUBLIC_MULTI_LABEL_SUFFIXES = new Set([
   "com.br",
   "co.kr",
   "co.in",
+  "github.io",
+  "gitlab.io",
+  "bitbucket.io",
+  "pages.dev",
+  "workers.dev",
+  "vercel.app",
+  "netlify.app",
+  "herokuapp.com",
+  "appspot.com",
+  "web.app",
+  "firebaseapp.com",
+  "amazonaws.com",
+  "s3.amazonaws.com",
+  "compute.amazonaws.com",
+  "cloudfront.net",
+  "azurewebsites.net",
+  "fly.dev",
+  "railway.app",
+  "onrender.com",
+  "deno.dev",
+  "replit.dev",
+  "ngrok.io",
+  "trycloudflare.com",
 ]);
 
 function hasControlChar(text) {
@@ -65,7 +88,7 @@ function isPublicSuffix(domain) {
   if (clean === "localhost") return false;
   const labels = clean.split(".");
   if (labels.length < 2) return true;
-  return labels.length === 2 && PUBLIC_MULTI_LABEL_SUFFIXES.has(clean);
+  return PUBLIC_MULTI_LABEL_SUFFIXES.has(clean);
 }
 
 /** 严格归一化单一 origin（拒绝通配符、多域名、路径、查询串与非 http(s) 协议）。 */
@@ -100,7 +123,7 @@ function normalizeSingleOrigin(raw) {
   return parsed.origin;
 }
 
-/** 校验单条 Cookie 的 domain 是否属于指定单一 origin。 */
+/** 校验单条 Cookie 的 domain 是否属于指定单一 origin（严防 host-only 泄漏至子域与多租户公共后缀）。 */
 function cookieMatchesOrigin(rawCookieDomain, rawOrigin) {
   let origin;
   try {
@@ -112,16 +135,26 @@ function cookieMatchesOrigin(rawCookieDomain, rawOrigin) {
   const raw = String(rawCookieDomain || "")
     .trim()
     .toLowerCase();
-  if (!raw || hasControlChar(raw) || raw.includes("/") || raw.includes(":")) {
+  if (
+    !raw ||
+    hasControlChar(raw) ||
+    raw.includes("/") ||
+    raw.includes(":") ||
+    raw.includes("..")
+  ) {
     return false;
   }
   const isDomain = raw.startsWith(".");
-  const normalized = raw.replace(/^\.+/, "");
-  if (!normalized || normalized.endsWith(".")) return false;
+  const normalized = isDomain ? raw.slice(1) : raw;
+  if (!normalized || normalized.startsWith(".") || normalized.endsWith(".")) {
+    return false;
+  }
   if (isIpLiteral(host) || isIpLiteral(normalized)) {
     return !isDomain && host === normalized;
   }
+  if (isDomain && isPublicSuffix(normalized)) return false;
   if (host === normalized) return true;
+  if (!isDomain) return false;
   if (isPublicSuffix(normalized)) return false;
   return host.endsWith(`.${normalized}`);
 }
@@ -298,12 +331,83 @@ function platformDecryptionHint(platform = process.platform) {
   return "Linux 上 Chrome/Edge Cookie 由 Secret Service（GNOME Keyring / KWallet）加密；如无桌面密钥环服务，请在云端浏览器内手动登录。";
 }
 
+function stripBase64Padding(value) {
+  return String(value || "").replace(/=+$/g, "");
+}
+
+/** 校验 WebAuthn 可选 optionsJson 内嵌 rpId / rp.id / challenge 与外层参数一致，避免确认弹窗与实际签名参数不符。 */
+function validateWebAuthnOptionsJson(rawOptionsJson, { rpId, challenge }) {
+  if (
+    rawOptionsJson === undefined ||
+    rawOptionsJson === null ||
+    rawOptionsJson === ""
+  ) {
+    return { ok: true };
+  }
+  if (typeof rawOptionsJson !== "string") {
+    return { ok: false, reason: "WebAuthn optionsJson 必须是 JSON 字符串。" };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawOptionsJson);
+  } catch {
+    return { ok: false, reason: "WebAuthn optionsJson 不是合法 JSON。" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "WebAuthn optionsJson 必须是 JSON 对象。" };
+  }
+  const inner =
+    parsed.publicKey &&
+    typeof parsed.publicKey === "object" &&
+    !Array.isArray(parsed.publicKey)
+      ? parsed.publicKey
+      : parsed;
+  const rpObj =
+    inner.rp && typeof inner.rp === "object" && !Array.isArray(inner.rp)
+      ? inner.rp
+      : parsed.rp && typeof parsed.rp === "object" && !Array.isArray(parsed.rp)
+        ? parsed.rp
+        : null;
+  const embeddedRpIds = [inner.rpId, parsed.rpId, rpObj?.id].filter(
+    (v) => v !== undefined && v !== null,
+  );
+  for (const candidate of embeddedRpIds) {
+    if (
+      typeof candidate !== "string" ||
+      candidate.trim().toLowerCase() !== String(rpId || "").toLowerCase()
+    ) {
+      return {
+        ok: false,
+        reason: `WebAuthn optionsJson 内嵌 rpId 与声明 rpId（${rpId}）不一致，已拒绝。`,
+      };
+    }
+  }
+  const embeddedChallenges = [inner.challenge, parsed.challenge].filter(
+    (v) => v !== undefined && v !== null,
+  );
+  for (const candidate of embeddedChallenges) {
+    if (
+      typeof candidate !== "string" ||
+      stripBase64Padding(candidate.trim()) !==
+        stripBase64Padding(String(challenge || "").trim())
+    ) {
+      return {
+        ok: false,
+        reason:
+          "WebAuthn optionsJson 内嵌 challenge 与外层挑战不一致，已拒绝。",
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /**
- * 过滤并强校验指定 origin 的 Cookie 列表。
+ * 过滤并强校验指定 origin 的 Cookie 列表（含路径控制字符、`__Secure-` / `__Host-` 前缀校验）。
  */
 function filterAndVerifyOriginCookies(origin, rawCookies) {
   const normalizedOrigin = normalizeSingleOrigin(origin);
   const parsedOrigin = new URL(normalizedOrigin);
+  const originHost = parsedOrigin.hostname.toLowerCase();
   if (!Array.isArray(rawCookies)) return [];
   const clean = [];
   for (const cookie of rawCookies) {
@@ -311,15 +415,45 @@ function filterAndVerifyOriginCookies(origin, rawCookies) {
     const name = String(cookie.name || "").trim();
     const value = String(cookie.value ?? "");
     const domain = String(cookie.domain || "").trim();
-    const cookiePath = String(cookie.path || "/").trim() || "/";
-    if (!name || hasControlChar(name) || hasControlChar(value)) continue;
+    const rawPath = cookie.path === undefined ? "/" : String(cookie.path);
+    const cookiePath = rawPath.trim() || "/";
+    if (
+      !name ||
+      /[;=]/.test(name) ||
+      hasControlChar(name) ||
+      hasControlChar(value) ||
+      cookiePath.length > 1024 ||
+      hasControlChar(rawPath) ||
+      hasControlChar(cookiePath)
+    ) {
+      continue;
+    }
     if (!cookieMatchesOrigin(domain, normalizedOrigin)) continue;
+    const normalizedPath = cookiePath.startsWith("/")
+      ? cookiePath
+      : `/${cookiePath}`;
     if (cookie.secure && parsedOrigin.protocol !== "https:") continue;
+    if (
+      name.startsWith("__Secure-") &&
+      (!cookie.secure || parsedOrigin.protocol !== "https:")
+    ) {
+      continue;
+    }
+    if (
+      name.startsWith("__Host-") &&
+      (!cookie.secure ||
+        parsedOrigin.protocol !== "https:" ||
+        normalizedPath !== "/" ||
+        domain.startsWith(".") ||
+        domain.toLowerCase() !== originHost)
+    ) {
+      continue;
+    }
     clean.push({
       name,
       value,
       domain,
-      path: cookiePath.startsWith("/") ? cookiePath : `/${cookiePath}`,
+      path: normalizedPath,
       ...(typeof cookie.expires === "number" && Number.isFinite(cookie.expires)
         ? { expires: cookie.expires }
         : {}),
@@ -451,6 +585,25 @@ function createDesktopBrowserBridgeClient(options = {}) {
         error: "WebAuthn 操作类型仅支持 create 或 get。",
       };
     }
+    const challenge = String(request?.challenge || "").trim();
+    if (
+      challenge.length < 16 ||
+      challenge.length > 512 ||
+      !/^[A-Za-z0-9_-]+={0,2}$/.test(challenge)
+    ) {
+      return {
+        ok: false,
+        denied: true,
+        error: "WebAuthn challenge 格式非法。",
+      };
+    }
+    const optsCheck = validateWebAuthnOptionsJson(request?.optionsJson, {
+      rpId: rpCheck.rpId,
+      challenge,
+    });
+    if (!optsCheck.ok) {
+      return { ok: false, denied: true, error: optsCheck.reason };
+    }
     if (typeof options.confirmApproval !== "function") {
       return {
         ok: false,
@@ -513,6 +666,7 @@ module.exports = {
   normalizeSingleOrigin,
   cookieMatchesOrigin,
   validateWebAuthnRpId,
+  validateWebAuthnOptionsJson,
   browserUserDataCandidates,
   discoverBrowserProfiles,
   filterAndVerifyOriginCookies,

@@ -31,6 +31,8 @@ import {
   normalizeWebAuthnChallenge,
   redactCookieSummary,
   validateOriginCookies,
+  validateWebAuthnClientDataJson,
+  validateWebAuthnOptionsJson,
   validateWebAuthnRpId,
   type WebAuthnCeremonyKind,
   type WebAuthnForwardRequest,
@@ -66,12 +68,16 @@ export type DesktopBrowserBridgeOptions = {
   cookieApprovalTtlMs?: number;
   webAuthnTtlMs?: number;
   challengeReplayTtlMs?: number;
+  settledRetentionMs?: number;
 };
+
+const DEFAULT_SETTLED_RETENTION_MS = 15_000;
 
 type PendingCookieEntry = {
   request: CookieApprovalRequest;
   expiresAtMs: number;
   timer: ReturnType<typeof setTimeout>;
+  evictTimer?: ReturnType<typeof setTimeout>;
   waiters: Set<
     (
       result: CookieApprovalDecision & {
@@ -86,6 +92,7 @@ type PendingWebAuthnEntry = {
   request: WebAuthnForwardRequest;
   expiresAtMs: number;
   timer: ReturnType<typeof setTimeout>;
+  evictTimer?: ReturnType<typeof setTimeout>;
   waiters: Set<
     (
       result: WebAuthnForwardResponse & {
@@ -212,6 +219,10 @@ export function createDesktopBrowserBridge(
   const webAuthnTtlMs = options.webAuthnTtlMs ?? DEFAULT_WEBAUTHN_TTL_MS;
   const challengeReplayTtlMs =
     options.challengeReplayTtlMs ?? DEFAULT_CHALLENGE_REPLAY_TTL_MS;
+  const settledRetentionMs = Math.max(
+    50,
+    options.settledRetentionMs ?? DEFAULT_SETTLED_RETENTION_MS,
+  );
 
   /** 按 `(ownerUserId, deviceId)` 隔离存储设备配对签发的显式 bridge scopes。 */
   const grantedScopesByPartition = new Map<string, Set<DesktopBridgeScope>>();
@@ -333,6 +344,43 @@ export function createDesktopBrowserBridge(
     return device;
   }
 
+  function scrubCookieResult(
+    result: CookieApprovalDecision & {
+      status: CookieApprovalRequest["status"];
+    },
+  ): CookieApprovalDecision & { status: CookieApprovalRequest["status"] } {
+    if (result.approved) {
+      return {
+        ...result,
+        cookies: [],
+      };
+    }
+    return result;
+  }
+
+  function scheduleCookieEvict(requestId: string, entry: PendingCookieEntry) {
+    if (entry.evictTimer) clearTimeout(entry.evictTimer);
+    entry.evictTimer = setTimeout(() => {
+      if (entry.result) {
+        entry.result = scrubCookieResult(entry.result);
+      }
+      cookieRequests.delete(requestId);
+    }, settledRetentionMs);
+    unrefTimer(entry.evictTimer);
+  }
+
+  function scheduleWebAuthnEvict(
+    requestId: string,
+    entry: PendingWebAuthnEntry,
+  ) {
+    if (entry.evictTimer) clearTimeout(entry.evictTimer);
+    entry.evictTimer = setTimeout(() => {
+      entry.result = undefined;
+      webAuthnRequests.delete(requestId);
+    }, settledRetentionMs);
+    unrefTimer(entry.evictTimer);
+  }
+
   function settleCookieEntry(
     entry: PendingCookieEntry,
     status: CookieApprovalRequest["status"],
@@ -349,11 +397,14 @@ export function createDesktopBrowserBridge(
     entry.request.error =
       error ?? (decision.approved ? null : (decision.reason ?? null));
     const finalResult = { ...decision, status };
-    entry.result = finalResult;
+    const hadWaiters = entry.waiters.size > 0;
     for (const wake of [...entry.waiters]) {
       wake(finalResult);
     }
     entry.waiters.clear();
+    // 一旦已通知当前 waiter，立即清除内存中的明文 Cookie，避免长期滞留。
+    entry.result = hadWaiters ? scrubCookieResult(finalResult) : finalResult;
+    scheduleCookieEvict(entry.request.requestId, entry);
   }
 
   function settleWebAuthnEntry(
@@ -372,6 +423,7 @@ export function createDesktopBrowserBridge(
       wake(finalResult);
     }
     entry.waiters.clear();
+    scheduleWebAuthnEvict(entry.request.requestId, entry);
   }
 
   /**
@@ -493,7 +545,10 @@ export function createDesktopBrowserBridge(
       );
     }
     if (entry.request.status !== "pending" && entry.result) {
-      return Promise.resolve(entry.result);
+      const delivered = entry.result;
+      // 一次性消费后立即抹除内存中的明文 Cookie。
+      entry.result = scrubCookieResult(delivered);
+      return Promise.resolve(delivered);
     }
     if (entry.expiresAtMs <= now()) {
       settleCookieEntry(
@@ -552,6 +607,12 @@ export function createDesktopBrowserBridge(
         410,
       );
     }
+    // 响应阶段二次复核设备有效状态、急停状态、非移动平台与配对签发 scope。
+    await assertAuthorizedDevice(
+      entry.request.ownerUserId,
+      entry.request.deviceId,
+      ["browser_bridge"],
+    );
 
     if (!input.decision.approved) {
       const reason =
@@ -689,6 +750,13 @@ export function createDesktopBrowserBridge(
         error instanceof Error ? error.message : "challenge 无效。",
         400,
       );
+    }
+    const optsCheck = validateWebAuthnOptionsJson(input.optionsJson, {
+      rpId: rpCheck.rpId,
+      challenge,
+    });
+    if (!optsCheck.ok) {
+      throw new DesktopBrowserBridgeError(optsCheck.reason, 400);
     }
     const device = await assertAuthorizedDevice(
       input.ownerUserId,
@@ -845,8 +913,25 @@ export function createDesktopBrowserBridge(
       });
       throw new DesktopBrowserBridgeError("该 WebAuthn 挑战已超时过期。", 410);
     }
+    // 响应阶段二次复核设备未撤销、未急停、非移动平台且仍保有 Passkey 转发 scope。
+    await assertAuthorizedDevice(
+      entry.request.ownerUserId,
+      entry.request.deviceId,
+      ["browser_bridge", "passkey_forward"],
+    );
 
     if (input.response.ok) {
+      const clientDataCheck = validateWebAuthnClientDataJson(
+        input.response.clientDataJSON,
+        {
+          kind: entry.request.kind,
+          origin: entry.request.origin,
+          challenge: entry.request.challenge,
+        },
+      );
+      if (!clientDataCheck.ok) {
+        throw new DesktopBrowserBridgeError(clientDataCheck.reason, 400);
+      }
       settleWebAuthnEntry(entry, "completed", input.response);
     } else {
       settleWebAuthnEntry(
@@ -1081,7 +1166,13 @@ export function createDesktopBrowserBridge(
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
 
+    app.use("*", async (c, next) => {
+      await next();
+      c.header("Cache-Control", "no-store");
+    });
+
     app.onError((error, c) => {
+      c.header("Cache-Control", "no-store");
       if (error instanceof DesktopBrowserBridgeError) {
         return c.json({ error: error.message }, error.status);
       }
@@ -1146,13 +1237,9 @@ export function createDesktopBrowserBridge(
       if (!device) {
         return c.json({ error: "需要有效的 X-Device-Token 设备凭据。" }, 401);
       }
-      const scopes = await scopesOf(device);
-      if (!scopes.has("browser_bridge")) {
-        return c.json(
-          { error: "设备未获授 browser_bridge scope，拒绝拉取审批队列。" },
-          403,
-        );
-      }
+      await assertAuthorizedDevice(device.ownerUserId, device.id, [
+        "browser_bridge",
+      ]);
       return c.json({
         requests: listCookieApprovals(device.ownerUserId, {
           deviceId: device.id,
@@ -1254,13 +1341,10 @@ export function createDesktopBrowserBridge(
       if (!device) {
         return c.json({ error: "需要有效的 X-Device-Token 设备凭据。" }, 401);
       }
-      const scopes = await scopesOf(device);
-      if (!scopes.has("browser_bridge") && !scopes.has("passkey_forward")) {
-        return c.json(
-          { error: "设备未获授 Passkey 转发 scope，拒绝拉取挑战队列。" },
-          403,
-        );
-      }
+      await assertAuthorizedDevice(device.ownerUserId, device.id, [
+        "browser_bridge",
+        "passkey_forward",
+      ]);
       return c.json({
         requests: listWebAuthnRequests(device.ownerUserId, {
           deviceId: device.id,
@@ -1329,9 +1413,13 @@ export function createDesktopBrowserBridge(
   function dispose() {
     for (const entry of cookieRequests.values()) {
       clearTimeout(entry.timer);
+      if (entry.evictTimer) clearTimeout(entry.evictTimer);
+      if (entry.result) entry.result = scrubCookieResult(entry.result);
     }
     for (const entry of webAuthnRequests.values()) {
       clearTimeout(entry.timer);
+      if (entry.evictTimer) clearTimeout(entry.evictTimer);
+      entry.result = undefined;
     }
     cookieRequests.clear();
     webAuthnRequests.clear();
