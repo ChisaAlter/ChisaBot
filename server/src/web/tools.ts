@@ -625,13 +625,7 @@ export function createWebSearchRoutes(deps: {
     async (context) => {
       const body = await context.req.json().catch(() => ({}));
       try {
-        const result = await deps.store.testSearch(body, {
-          ...deps.executeDeps,
-          builtinSearch:
-            deps.executeDeps?.builtinSearch ??
-            ((query, count, signal, timeoutMs) =>
-              searchWeb(query, count, signal, { timeoutMs })),
-        });
+        const result = await deps.store.testSearch(body, deps.executeDeps);
         return context.json(result);
       } catch (error) {
         if (error instanceof WebSearchSettingsValidationError) {
