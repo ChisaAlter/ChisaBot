@@ -12,7 +12,7 @@
 //  - 两槽独立：深色下点「对比」的深色半边只写深色族槽，外观模式不翻转；
 //  - 壁纸互斥：选壁纸后天空卡组不亮，点族半边只换族、壁纸与来源都不动；
 //  - live 天象 → <html data-sky="live">（PC 原生窗同步语义）；
-//  - 桌面 + 移动视口截图、零控制台报错。
+//  - 桌面（浅色 / 深色）+ 420 移动视口截图、零控制台报错。
 //
 // 用法：node tests/appearance-model/appearance.mjs [--dist app/dist] [--out <dir>] [--chrome <path>]
 // 需要 `bun run generate:app-config && bun run --cwd app build` 先产出 --dist。
@@ -170,6 +170,13 @@ try {
     (await p1.locator("text=背景随时间变化").count()) === 0,
   );
 
+  await p1.locator('[aria-label="主题族选择"]').scrollIntoViewIfNeeded();
+  await p1.waitForTimeout(300);
+  await p1.screenshot({
+    path: path.join(OUT, "settings-desktop.png"),
+    fullPage: true,
+  });
+
   /* ---------- 2. 浅色 + 夜景卡：解析到配对场景（护栏证据） ---------- */
   log("2) 浅色 + 柏林夜：--sky-lift 走配对场景 0.07 而非夜景顶格 0.14");
   await p1.locator('[data-testid="hark-scene-4"]').click();
@@ -254,6 +261,12 @@ try {
     "浅色槽没有被带上（默认 azure）",
     (await ls(p2, "chisabot-theme-family-light")) !== "mono",
   );
+  await p2.locator('[aria-label="主题族选择"]').scrollIntoViewIfNeeded();
+  await p2.waitForTimeout(300);
+  await p2.screenshot({
+    path: path.join(OUT, "settings-desktop-dark.png"),
+    fullPage: true,
+  });
   await p2.close();
 
   /* ---------- 5. 壁纸互斥 + live → data-sky ---------- */
@@ -282,20 +295,22 @@ try {
     `data-sky=${await skyAttr(p1)}`,
   );
   await p1.screenshot({
-    path: path.join(OUT, "settings-desktop.png"),
+    path: path.join(OUT, "settings-live-sky.png"),
     fullPage: true,
   });
   await p1.close();
 
   /* ---------- 6. 移动视口 ---------- */
-  log("6) 390 移动视口截图 + 无横向溢出");
+  log("6) 420 移动视口截图 + 无横向溢出");
   const p3 = await openSettings();
-  await p3.setViewportSize({ width: 390, height: 844 });
+  await p3.setViewportSize({ width: 420, height: 860 });
   await p3.waitForTimeout(400);
   const overflow = await p3.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth + 2,
   );
   check("移动端无横向溢出", !overflow);
+  await p3.locator('[aria-label="主题族选择"]').scrollIntoViewIfNeeded();
+  await p3.waitForTimeout(300);
   await p3.screenshot({
     path: path.join(OUT, "settings-mobile.png"),
     fullPage: true,

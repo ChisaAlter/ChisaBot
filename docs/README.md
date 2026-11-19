@@ -66,7 +66,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | GitHub · 页面 · 定时 | [GitHub 账号连接](github.md) · [页面](pages.md) · [定时任务与提醒](schedules.md)                                                                | §53–§55                                                                             |
 | IM                   | [IM 接入](im.md)                                                                                                                                | §49                                                                                 |
 | 账号                 | [朋友账号（多账号，默认隐藏）](accounts.md)                                                                                                     | §65                                                                                 |
-| 设置                 | [设置的信息结构与搜索](settings-ia.md)                                                                                                          | §57、§71、§97                                                                       |
+| 设置                 | [设置的信息结构与搜索](settings-ia.md) · [主题族与天空背景](theme-families.md)                                                                    | §57、§71、§97、§143                                                                  |
 | 工作流（默认隐藏）   | [工作流](workflows.md)                                                                                                                          | §26                                                                                 |
 | 瘦身                 | [瘦身计划与进度](slimming.md)                                                                                                                   | §57、§74                                                                            |
 
