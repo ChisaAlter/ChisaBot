@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.171 — 2026-11-19
+
+全端版本 `0.1.171`，Android `versionCode 351`：修复 `v0.1.170` Android Release 编译阻塞与服务端架构边界/测试回归，正式完成全端打包发行（外壳指纹 `7314f9105596bec5` 不变支持原地自动更新，客户端指纹 `21dcd6dc82559950`）；完整囊括 `v0.1.170` 的 CB-140 / CB-141 / CB-142（Wave 1–10）全部特性，无需手动数据库迁移。
+
+- **Android KDoc 编译阻塞修复**：清理 `MainActivity.kt` 中 `chisabot://agent|channel/*` 误触嵌套块注释引发的 `:app:compileReleaseKotlin` 失败。
+- **`server/src/computer/` 零凭据与连接器隔离边界恢复**：拆分 `server/src/tools/contract.ts` 与 `server/src/computer/execution-node-net.ts`，将 `execution-node-store.ts` 迁入 `server/src/admin/execution-node-store.ts`，恢复 `connector-tokens-never-reach-computer` 静态红线门禁零越界。
+- **工具调用报错统一与 HTTP 体读取稳健性加固**：`/api/agent-tools/call` 接入 `formatMcpCallFailure` 与 `withoutStatement` 同源格式化；`devices/routes.ts` 改为仅对带 JSON/长度头的请求介入 4 MiB `bodyLimit` 并统一 `readJsonObject` 防止无体 chunked 请求阻塞 EOF；`provider-oauth.ts` 改为鉴权后 32 MiB 有界流读取（断流返 400、超限返 413）。
+- **定时任务单测适配**：`im-window-expiry.test.ts` 与 `schedules-safety.test.ts` 补齐 `reclaimInterruptedOnBoot` SQL mock、`INSERT INTO chisabot_schedules` 14 参位对齐及递增历史分钟槽位避免命中 `ScheduleDedupLedger` 同分钟去重。
+
 ## 0.1.170 — 2026-11-19
 
 全端版本 `0.1.170`，Android `versionCode 350`：主题族双槽模型（CB-140）、用户链接卡右沿对齐（CB-141）、ProkBot 全量对标 Wave 1–10 多端 AI 交互体验与安全运维加固（CB-142）。PC 客户端代码指纹更新为 `21dcd6dc82559950`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需手动数据库迁移（22 张新增 `chisabot_*` 表开机幂等自建），更新公网网关时同步 `deploy/public/nginx.conf`。

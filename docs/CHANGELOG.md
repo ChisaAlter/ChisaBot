@@ -1,3 +1,8 @@
+## 0.1.171 — 2026-11-19
+
+- 全端发版：`0.1.171`，Android `versionCode 351`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `21dcd6dc82559950`；完整包含 `v0.1.170`（CB-140 / CB-141 / CB-142 Wave 1–10），无需手动数据库迁移。
+- **Android 编译阻塞与服务端架构边界/测试回归修复**：修复 `MainActivity.kt` KDoc 嵌套 `/*` 编译失败；拆出 `server/src/tools/contract.ts` 与 `server/src/computer/execution-node-net.ts` 并将 `execution-node-store.ts` 迁至 `server/src/admin/`，恢复 `server/src/computer/` 零凭据/连接器依赖边界；`/api/agent-tools/call` 统一 `formatMcpCallFailure`；`/api/devices` 按需 `bodyLimit` + `readJsonObject` 免阻塞 chunked 无体 POST；`provider-oauth` 改为鉴权后 32 MiB 有界流读取（断流 400 / 超限 413）；`im-window-expiry.test.ts` 与 `schedules-safety.test.ts` 适配 `reclaimInterruptedOnBoot`、`$13`/`$14` 字段位与 `ScheduleDedupLedger` 槽位去重。
+
 ## 0.1.170 — 2026-11-19
 
 - 全端发版：`0.1.170`，Android `versionCode 350`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `21dcd6dc82559950`；无需手动数据库迁移（22 张 `chisabot_*` 表开机幂等自建）。
