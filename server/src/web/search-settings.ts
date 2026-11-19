@@ -535,7 +535,8 @@ export async function callExternalSearchProvider(params: {
       ...(body !== undefined ? { body } : {}),
       maxBytes: MAX_SEARCH_RESPONSE_BYTES,
       timeoutMs,
-      maxRedirects: 2,
+      maxRedirects: 0,
+      manualRedirect: true,
       ...(signal ? { signal } : {}),
       ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
       ...(params.resolve ? { resolve: params.resolve } : {}),
@@ -548,6 +549,11 @@ export async function callExternalSearchProvider(params: {
     throw error;
   }
 
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(
+      `${preset.label} 返回了重定向（HTTP ${response.status}），为防止密钥跨源泄露已拒绝跟随。`,
+    );
+  }
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`${preset.label} 返回异常状态码 HTTP ${response.status}。`);
   }

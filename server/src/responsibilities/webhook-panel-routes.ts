@@ -10,6 +10,7 @@ import {
   type WebhookRunView,
   type WebhookTriggerKind,
 } from "../../../shared/webhooks";
+import { AgentNotFoundError } from "../agents/profile-store";
 import type { AgentActor } from "../agents/profile-types";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
@@ -623,6 +624,9 @@ export function createWebhookPanelRoutes(deps: {
   });
 
   routes.onError((error, context) => {
+    if (error instanceof AgentNotFoundError) {
+      return context.json({ error: "找不到指定的机器人或无权访问。" }, 404);
+    }
     if (error instanceof ResponsibilityNotFoundError) {
       return context.json({ error: "找不到该 Webhook 规则。" }, 404);
     }

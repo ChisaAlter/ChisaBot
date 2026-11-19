@@ -466,6 +466,8 @@ export async function guardedFetch(
           "authorization",
           "cookie",
           "proxy-authorization",
+          "x-api-key",
+          "x-subscription-token",
         ]);
       }
       if (

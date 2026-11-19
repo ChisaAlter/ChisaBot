@@ -8,6 +8,7 @@ import {
   parseTokenShorthand,
   validateContextPolicy,
 } from "../../shared/context-policy";
+import { guardedFetch } from "../../shared/net/guarded-fetch";
 import {
   type ContextPolicyDatabase,
   type ContextPolicyRow,
@@ -25,6 +26,7 @@ import {
   SEARCH_TURN_ENOUGH,
 } from "../src/web/search-grounding";
 import {
+  callExternalSearchProvider,
   createWebSearchSettingsStore,
   parseSearchEndpointUrl,
   sameSearchOrigin,
@@ -451,6 +453,83 @@ describe("web-search 多供应商存储、AES 加密、跨源跨厂商隔离与�
     };
     expect(testBody.ok).toBe(true);
     expect(testBody.hits[0]?.title).toContain("ChisaBot");
+  });
+
+  test("跨源重定向防护：Serper/Brave 遇 302 拒绝跟随且 guardedFetch 纵深剥离 x-api-key 与 x-subscription-token", async () => {
+    const serperTargets: string[] = [];
+    await expect(
+      callExternalSearchProvider({
+        provider: "serper",
+        baseUrl: "https://google.serper.dev/search",
+        apiKey: "serper-secret-leak-check",
+        query: "redirect test",
+        count: 3,
+        timeoutMs: 5_000,
+        fetchImpl: (async (input) => {
+          serperTargets.push(String(input));
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://attacker.example/steal" },
+          });
+        }) as typeof fetch,
+      }),
+    ).rejects.toThrow(/重定向/);
+    expect(serperTargets).toEqual(["https://google.serper.dev/search"]);
+
+    const braveTargets: string[] = [];
+    await expect(
+      callExternalSearchProvider({
+        provider: "brave",
+        baseUrl: "https://api.search.brave.com/res/v1/web/search",
+        apiKey: "brave-secret-leak-check",
+        query: "redirect test",
+        count: 3,
+        timeoutMs: 5_000,
+        fetchImpl: (async (input) => {
+          braveTargets.push(String(input));
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://attacker.example/steal" },
+          });
+        }) as typeof fetch,
+      }),
+    ).rejects.toThrow(/重定向/);
+    expect(braveTargets).toHaveLength(1);
+    expect(braveTargets[0]).toContain("api.search.brave.com");
+
+    // 纵深防御：即使直接调用 guardedFetch 允许跟随重定向，跨源跳转也必须剥离 x-api-key 与 x-subscription-token
+    const seenAtTarget: Record<string, string | null> = {};
+    const res = await guardedFetch("https://origin-a.example/start", {
+      maxBytes: 4096,
+      timeoutMs: 5_000,
+      maxRedirects: 2,
+      headers: {
+        "x-api-key": "secret-a",
+        "x-subscription-token": "secret-b",
+        "x-safe-header": "keep-me",
+      },
+      fetchImpl: (async (input, init) => {
+        const url = String(input);
+        if (url === "https://origin-a.example/start") {
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://origin-b.example/final" },
+          });
+        }
+        const headers = new Headers(init?.headers);
+        seenAtTarget.apiKey = headers.get("x-api-key");
+        seenAtTarget.subToken = headers.get("x-subscription-token");
+        seenAtTarget.safe = headers.get("x-safe-header");
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+    expect(res.status).toBe(200);
+    expect(seenAtTarget.apiKey).toBeNull();
+    expect(seenAtTarget.subToken).toBeNull();
+    expect(seenAtTarget.safe).toBe("keep-me");
   });
 });
 

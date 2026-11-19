@@ -10,6 +10,7 @@ import type {
   WebhookRunStatus,
   WebhookRunView,
 } from "../../shared/webhooks";
+import { AgentNotFoundError } from "../src/agents/profile-store";
 import type { AgentProfile } from "../src/agents/profile-types";
 import type { AppVariables } from "../src/auth/guards";
 import {
@@ -642,6 +643,66 @@ describe("Webhook 管理面板：per-principal 限流配额、一次性密钥、
     expect(runsBody.runs).toHaveLength(1);
     expect(runsBody.counts.cancelled).toBe(1);
     expect(runsBody.counts.completed).toBe(1);
+  });
+
+  test("POST /api/webhooks 指向不存在或无权的机器人时返回 404 而非 503", async () => {
+    const missingBotStore: WebhookPanelStore = {
+      async listRules() {
+        return [];
+      },
+      async getRule() {
+        return null;
+      },
+      async createRule(_actor, input) {
+        throw new AgentNotFoundError(input.agentId);
+      },
+      async setEnabled() {
+        throw new ResponsibilityNotFoundError();
+      },
+      async rotateSecret() {
+        throw new ResponsibilityNotFoundError();
+      },
+      async deleteRule() {
+        throw new ResponsibilityNotFoundError();
+      },
+      async listRuns() {
+        return {
+          runs: [],
+          counts: {
+            queued: 0,
+            running: 0,
+            completed: 0,
+            failed: 0,
+            interrupted: 0,
+            cancelled: 0,
+            skipped: 0,
+          },
+        };
+      },
+    };
+
+    const app = new Hono();
+    app.route(
+      "/api/webhooks",
+      createWebhookPanelRoutes({
+        store: missingBotStore,
+        requireUser: makeAuthMiddleware("user-a"),
+      }),
+    );
+
+    const res = await app.request("/api/webhooks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "无权 Bot 规则",
+        agentId: "bot-not-found",
+        kind: "webhook",
+        instruction: "处理事件",
+      }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("机器人");
   });
 });
 
