@@ -14,6 +14,7 @@ import {
 } from "../../../runtime/dsh/src/client.mjs";
 import { filesFromToolResult } from "../../../shared/chat-files";
 import { RENDER_UI_SHOWN } from "../../../shared/json-render/catalog";
+import type { ResolvedReasoningEffort } from "../../../shared/model-routing";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
 import type { ApprovalContinuation } from "../approvals/types";
 import type { HeadlessTool } from "../computer/headless-tools";
@@ -41,8 +42,12 @@ import type { createDshToolGateway } from "../conversations/tool-gateway";
 import type { ToolImagePart } from "../conversations/tool-images";
 import type { ModelConnectionPooledKeyRuntime } from "../model-settings";
 import type { GrantedTool } from "../plugins/tools";
+import type { PromptWorkbenchStore } from "../prompts/workbench-store";
+import type { UsageBreakdownService } from "../quotas/usage-breakdown";
 import { currentSteerSession } from "../thread-inbox";
+import type { AdaptiveRouter } from "./adaptive-router";
 import type { RunAssertion } from "./callback-token";
+import type { ModelObservationService } from "./model-observation";
 import { PLAN_RUN_COMPLETED, type PlanModelConfig } from "./plan-model";
 import { currentRuntimeSurfaceTools } from "./runtime-tool-context";
 
@@ -98,6 +103,10 @@ export type DshRuntimeConfiguration = {
     input: RunAgentInput,
     signal: AbortSignal,
   ) => Promise<readonly GrantedTool[]>;
+  adaptiveRouter?: AdaptiveRouter;
+  modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
+  usageBreakdown?: Pick<UsageBreakdownService, "record">;
+  promptWorkbench?: PromptWorkbenchStore;
 };
 
 type Configuration = DshRuntimeConfiguration;
@@ -473,9 +482,32 @@ export class DshRuntimeAgent extends AbstractAgent {
         const anyNeedsImages = rawPreparedInput.messages.some((message) =>
           messageHasImages(message),
         );
+        let routedModel = this.configuration.connection.model;
+        let routedEffort: ResolvedReasoningEffort = "default";
+        if (this.configuration.adaptiveRouter && !this.configuration.plan) {
+          const forwarded = input.forwardedProps as
+            | { isSummarizationSession?: unknown }
+            | undefined;
+          const decision = await this.configuration.adaptiveRouter
+            .decideRoute({
+              messages: rawPreparedInput.messages,
+              fallbackModel: this.configuration.connection.model,
+              providerKind: this.configuration.connection.provider,
+              ownerUserId: scope.actorId,
+              isSummarizationSession:
+                forwarded?.isSummarizationSession === true,
+              signal: active.toolAbort.signal,
+            })
+            .catch(() => null);
+          if (decision) {
+            routedModel = decision.model || routedModel;
+            routedEffort = decision.effort;
+          }
+        }
         const requestedModels = this.configuration.plan
           ? [this.configuration.plan.provider]
           : [
+              routedModel,
               this.configuration.connection.model,
               ...(await this.configuration.fallbacks()),
             ].filter((id, at, all) => all.indexOf(id) === at);
@@ -532,10 +564,13 @@ export class DshRuntimeAgent extends AbstractAgent {
         const contextWindow = Math.min(
           ...definitions.map((model) => model.contextWindow),
         );
-        const [primary, ...fallbacks] = definitions.map((model) => ({
+        const [primary, ...fallbacks] = definitions.map((model, index) => ({
           provider: "configured",
           model: model.id,
           maxTokens: Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
+          ...(index === 0 && routedEffort !== "default"
+            ? { reasoningEffort: routedEffort }
+            : {}),
         }));
         if (!primary) throw new Error("没有可用的模型。");
         const primarySupportsImages = Boolean(
@@ -583,6 +618,20 @@ export class DshRuntimeAgent extends AbstractAgent {
                   ? { poolId: this.configuration.poolId }
                   : {}),
                 ...(quotaOptions ? { quota: quotaOptions } : {}),
+                ...(routedEffort !== "default"
+                  ? { reasoningEffort: routedEffort }
+                  : {}),
+                ...(this.configuration.modelObserver
+                  ? { observer: this.configuration.modelObserver }
+                  : {}),
+                ...(this.configuration.usageBreakdown
+                  ? {
+                      ownerUserId: scope.actorId,
+                      usageKind: "chat" as const,
+                      onUsageBreakdown: (event) =>
+                        this.configuration.usageBreakdown?.record(event),
+                    }
+                  : {}),
               },
             );
         capability = this.configuration.binding.gateway.register({
@@ -636,14 +685,70 @@ export class DshRuntimeAgent extends AbstractAgent {
         const previous = preparedInput.messages
           .slice(0, at)
           .filter((x) => x.role !== "system");
+        const baseAssembledPrompt = this.configuration.prompt([
+          ...tools.values(),
+        ]);
+        const systemMessagesText = preparedInput.messages
+          .filter((message) => message.role === "system")
+          .map(textOf);
+        const inboxText = inboxInstructions(preparedInput.messages);
+        let effectiveBasePrompt = baseAssembledPrompt;
+        if (this.configuration.promptWorkbench) {
+          const turnPrompt = await this.configuration.promptWorkbench
+            .snapshot()
+            .catch(() => null);
+          if (turnPrompt) {
+            if (turnPrompt.revisionOf("parent") > 0) {
+              effectiveBasePrompt = turnPrompt.resolve(
+                "parent",
+                baseAssembledPrompt,
+              );
+            }
+            const dynamicNames = new Set(
+              contributed.map((surface) => surface.definition.name),
+            );
+            turnPrompt.recordAssembly(
+              "parent",
+              [
+                {
+                  name: "system-context",
+                  label: "会话系统上下文",
+                  kind: "dynamic",
+                  content: systemMessagesText.join("\n"),
+                },
+                ...(inboxText.length > 0
+                  ? [
+                      {
+                        name: "inbox-skills",
+                        label: "中途补充指令",
+                        kind: "dynamic" as const,
+                        content: inboxText.join("\n"),
+                      },
+                    ]
+                  : []),
+              ],
+              effectiveBasePrompt,
+            );
+            turnPrompt.recordTools(
+              "parent",
+              [...tools.values()].map((tool) => ({
+                name: tool.name,
+                ref: tool.ref,
+                placement:
+                  dynamicNames.has(tool.name) || tool.ref.startsWith("host/")
+                    ? "dynamic"
+                    : "static",
+                enabled: true,
+              })),
+            );
+          }
+        }
         const request: DshBindingInput = {
           ...identity,
           prompt: [
-            this.configuration.prompt([...tools.values()]),
-            ...preparedInput.messages
-              .filter((message) => message.role === "system")
-              .map(textOf),
-            ...inboxInstructions(preparedInput.messages),
+            effectiveBasePrompt,
+            ...systemMessagesText,
+            ...inboxText,
           ].join("\n\n"),
           initialContext: migrationContext(previous, contextWindow),
           toolCapability: capability.capability,

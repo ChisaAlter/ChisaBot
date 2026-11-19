@@ -19,6 +19,10 @@ import {
 import type { ModelProxyQuotaOptions } from "../conversations/model-connection-proxy";
 import type { ToolImagePart } from "../conversations/tool-images";
 import type { LoadPersonalMemory } from "../memory/tools";
+import type { PromptWorkbenchStore } from "../prompts/workbench-store";
+import type { UsageBreakdownService } from "../quotas/usage-breakdown";
+import type { AdaptiveRouter } from "./adaptive-router";
+import type { ModelObservationService } from "./model-observation";
 import type { AgentActor } from "./profile-types";
 
 export type AgentResolutionContext = {
@@ -86,6 +90,10 @@ export type ActorAgentResolverDependencies = {
   describeImageForActor?: (
     actorId: string,
   ) => (agentId: string, part: ToolImagePart) => Promise<string | null>;
+  adaptiveRouter?: AdaptiveRouter;
+  modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
+  usageBreakdown?: Pick<UsageBreakdownService, "record">;
+  promptWorkbench?: PromptWorkbenchStore;
 };
 
 /**
@@ -131,7 +139,11 @@ export function createActorAgentResolver(
       connection?.keyPool ||
       connection?.poolId ||
       quotaPolicy ||
-      describeImageForAgent
+      describeImageForAgent ||
+      deps.adaptiveRouter ||
+      deps.modelObserver ||
+      deps.usageBreakdown ||
+      deps.promptWorkbench
         ? {
             ...(connection?.pooledKeys
               ? { pooledKeys: connection.pooledKeys }
@@ -140,6 +152,18 @@ export function createActorAgentResolver(
             ...(connection?.poolId ? { poolId: connection.poolId } : {}),
             ...(quotaPolicy ? { quota: quotaPolicy } : {}),
             ...(describeImageForAgent ? { describeImageForAgent } : {}),
+            ...(deps.adaptiveRouter
+              ? { adaptiveRouter: deps.adaptiveRouter }
+              : {}),
+            ...(deps.modelObserver
+              ? { modelObserver: deps.modelObserver }
+              : {}),
+            ...(deps.usageBreakdown
+              ? { usageBreakdown: deps.usageBreakdown }
+              : {}),
+            ...(deps.promptWorkbench
+              ? { promptWorkbench: deps.promptWorkbench }
+              : {}),
           }
         : undefined;
     return resolveRuntimeAgents(

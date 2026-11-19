@@ -226,7 +226,10 @@ export class ChisaModelRouter extends LlmAdapter {
   }
 
   metadata(provider, id, prepared) {
-    const contextWindow = this.route(id).contextWindow;
+    const route = this.route(id);
+    const contextWindow = route.contextWindow;
+    const choiceEffort = route.candidates[route.index]?.reasoningEffort;
+    const reasoningEffort = prepared.config.reasoningEffort ?? choiceEffort;
     return {
       provider,
       id,
@@ -252,16 +255,16 @@ export class ChisaModelRouter extends LlmAdapter {
       ...(prepared.config.maxTokens
         ? { defaultMaxTokens: prepared.config.maxTokens }
         : {}),
-      ...(prepared.config.reasoningEffort
+      ...(reasoningEffort
         ? {
             reasoning: {
               efforts: [
                 {
-                  id: prepared.config.reasoningEffort,
-                  name: prepared.config.reasoningEffort,
+                  id: reasoningEffort,
+                  name: reasoningEffort,
                 },
               ],
-              defaultEffort: prepared.config.reasoningEffort,
+              defaultEffort: reasoningEffort,
             },
           }
         : {}),
@@ -327,6 +330,9 @@ export class ChisaModelRouter extends LlmAdapter {
               runId: route.runId,
               provider: choice.provider,
               model: choice.model,
+              ...(choice.reasoningEffort
+                ? { reasoningEffort: choice.reasoningEffort }
+                : {}),
               candidate: route.index,
               skipped: route.skipped.splice(0),
               ...(route.lastFailure ? { reason: route.lastFailure } : {}),
@@ -377,6 +383,9 @@ export class ChisaModelRouter extends LlmAdapter {
             );
             for await (const chunk of dispatch.stream({
               ...options,
+              ...(choice.reasoningEffort
+                ? { reasoningEffort: choice.reasoningEffort }
+                : {}),
               ...dispatch.config,
               messages,
               signal: abort.signal,
@@ -411,6 +420,10 @@ export class ChisaModelRouter extends LlmAdapter {
                     },
                   };
                 } else {
+                  const isLengthTruncated =
+                    chunk.reason?.kind === "length" ||
+                    chunk.reason?.finishReason === "length" ||
+                    chunk.finishReason === "length";
                   if (chunk.reason?.kind !== "error")
                     router.breakers.ok(route.keys[position]);
                   else if (isLocalPrivacyGateFailure(chunk.reason.failure)) {
@@ -428,6 +441,22 @@ export class ChisaModelRouter extends LlmAdapter {
                       await ctx.sessions.flush(session);
                     }
                   }
+                  if (isLengthTruncated && session) {
+                    // 触达输出上限绝不整轮报错，而是记录可续写信号，保留全部已输出正文。
+                    appendPluginRecord(
+                      session,
+                      "plugin:chisabot/length-truncated",
+                      {
+                        routeId: id,
+                        runId: route.runId,
+                        model: choice.model,
+                        continuable: true,
+                        notice:
+                          "本轮回复已达到单轮输出长度上限，已保留已生成内容；回复「继续」即可无缝续写。",
+                      },
+                    );
+                    await ctx.sessions.flush(session);
+                  }
                   const { replayState: _privateReplay, ...safe } = chunk;
                   yield safe.reason.kind === "error"
                     ? {
@@ -441,7 +470,13 @@ export class ChisaModelRouter extends LlmAdapter {
                           ),
                         },
                       }
-                    : safe;
+                    : isLengthTruncated
+                      ? {
+                          ...safe,
+                          truncated: true,
+                          continuable: true,
+                        }
+                      : safe;
                 }
               } else yield chunk;
             }

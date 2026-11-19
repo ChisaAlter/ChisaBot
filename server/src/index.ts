@@ -19,7 +19,12 @@ import {
 } from "../../shared/skill-authoring";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
+import {
+  createHarnessSettingsService,
+  createPgHarnessSettingsStorage,
+} from "./admin/harness-settings";
 import { createAdminSmokeRoutes } from "./admin-smoke";
+import { createAdaptiveRouter } from "./agents/adaptive-router";
 import {
   CoworkerUnavailableError,
   createActorAgentResolver,
@@ -72,11 +77,16 @@ import {
   createModelFallbackService,
   createModelFallbackStore,
 } from "./agents/model-fallback-settings";
+import { createModelObservationService } from "./agents/model-observation";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createAgentPurge } from "./agents/purge";
+import {
+  createPgRoutingLogStorage,
+  createRoutingAdminRoutes,
+} from "./agents/routing-log";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
 import { createCoworkerService } from "./agents/service";
 import {
@@ -338,8 +348,17 @@ import {
   createPrivateShareCheck,
   PRIVATE_SHARE_TOOL_REF,
 } from "./proactive/private-share";
+import { createPromptWorkbenchRoutes } from "./prompts/routes";
+import {
+  createPgPromptWorkbenchStorage,
+  createPromptWorkbenchStore,
+} from "./prompts/workbench-store";
 import { createProviderOAuthProxy } from "./provider-oauth";
 import { createPgQuotaStorage, createQuotaService } from "./quotas/service";
+import {
+  createPgUsageBreakdownStorage,
+  createUsageBreakdownService,
+} from "./quotas/usage-breakdown";
 import { createResponsibilityBindingStore } from "./responsibilities/bindings";
 import {
   createEmailTriggerRoutes,
@@ -1935,6 +1954,53 @@ const speechService = createSpeechService({
       bytes: file.bytes,
     }),
   ...(config.rawPublicUrl ? { publicOrigin: config.rawPublicUrl } : {}),
+});
+// Wave 4：自适应难度路由 + 细粒度用量账本 + 按需脱敏观测器 + Harness 开关台 + 多角色提示词工作台。
+const routingLogStorage = createPgRoutingLogStorage(database);
+const usageBreakdownService = createUsageBreakdownService(
+  createPgUsageBreakdownStorage(database),
+);
+const modelObservationService = createModelObservationService();
+const harnessSettingsService = createHarnessSettingsService(
+  createPgHarnessSettingsStorage(database),
+);
+const promptWorkbenchStore = createPromptWorkbenchStore(
+  createPgPromptWorkbenchStorage(database),
+);
+await Promise.all([
+  routingLogStorage.ensure(),
+  usageBreakdownService.ensure(),
+  harnessSettingsService.ensure(),
+  promptWorkbenchStore.ensure(),
+]);
+const adaptiveRouter = createAdaptiveRouter({
+  getPolicy: async () =>
+    routingLogStorage.readPolicy(
+      (await resolveRuntimeConnection()).model.defaultModel,
+    ),
+  getDefaultModel: async () =>
+    (await resolveRuntimeConnection()).model.defaultModel,
+  resolveClassifierConnection: async () => {
+    const resolved = await modelSettings.resolve();
+    return {
+      provider: resolved.provider,
+      baseUrl: resolved.baseUrl,
+      apiKey: resolved.apiKey,
+      useApiKey: resolved.useApiKey,
+    };
+  },
+  onDecisionLog: (payload) => routingLogStorage.appendLog(payload),
+  onClassifierUsage: async (usage) => {
+    await usageBreakdownService.record({
+      ownerUserId: usage.ownerUserId ?? DEV_ACTOR.id,
+      kind: "classifier",
+      modelId: usage.model,
+      effort: "default",
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens,
+    });
+  },
 });
 /** 频道聊天的上传也存进机器人工作区 uploads/（CB-046，DESIGN.md §68），和旧 /bot 一样。 */
 setChannelUploadMirror(
@@ -3688,6 +3754,10 @@ const actorAgentResolver = createActorAgentResolver({
     admit: quotaService.admit,
     recordUsage: quotaService.recordUsage,
   },
+  adaptiveRouter,
+  modelObserver: modelObservationService,
+  usageBreakdown: usageBreakdownService,
+  promptWorkbench: promptWorkbenchStore,
   describeImageForActor: (actorId) => async (agentId, part) => {
     const vision = await chatFiles.media
       .visionFor(actorId, agentId)
@@ -4920,7 +4990,10 @@ try {
       lastMessageAt: channels.lastMessageAt,
     })
     .from(channels)
-    .innerJoin(channelMemberships, eq(channelMemberships.channelId, channels.id))
+    .innerJoin(
+      channelMemberships,
+      eq(channelMemberships.channelId, channels.id),
+    )
     .where(
       and(
         isNull(channels.deletedAt),
@@ -5446,11 +5519,30 @@ const app = createApp(
         }),
       ],
       ["/api/push", pushService.routes(requireUser)],
-      [
-        "/api/notifications/foreground",
-        foregroundRegistry.routes(requireUser),
-      ],
+      ["/api/notifications/foreground", foregroundRegistry.routes(requireUser)],
       ["/api/intents", quickIntents.routes(requireUser)],
+      [
+        "/api/admin/routing",
+        createRoutingAdminRoutes({
+          storage: routingLogStorage,
+          router: adaptiveRouter,
+          requireUser,
+          getDefaultModel: async () =>
+            (await resolveRuntimeConnection()).model.defaultModel,
+          getProviderKind: async () =>
+            (await resolveRuntimeConnection()).model.provider,
+        }),
+      ],
+      ["/api/usage", usageBreakdownService.routes(requireUser)],
+      ["/api/admin/observation", modelObservationService.routes(requireUser)],
+      ["/api/admin/harness", harnessSettingsService.routes(requireUser)],
+      [
+        "/api/admin/prompts",
+        createPromptWorkbenchRoutes({
+          store: promptWorkbenchStore,
+          requireUser,
+        }),
+      ],
     ],
   },
 );

@@ -1,4 +1,10 @@
+import type { UsageKind } from "../../../shared/admin-workbench";
 import { normalizeModelBaseUrl } from "../../../shared/model-base-url";
+import {
+  mapEffortToProviderParams,
+  type ResolvedReasoningEffort,
+} from "../../../shared/model-routing";
+import type { ModelObservationService } from "../agents/model-observation";
 import { reasonWithoutStatement } from "../db/query-failure";
 import {
   buildConnectionPoolKeys,
@@ -27,6 +33,17 @@ export type ModelProxyQuotaOptions = {
   recordUsage: (input: RecordUsageInput) => Promise<void>;
 };
 
+export type ModelProxyUsageBreakdownReporter = (input: {
+  ownerUserId: string;
+  kind: UsageKind;
+  modelId: string;
+  effort: ResolvedReasoningEffort;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  createdAt: number;
+}) => Promise<unknown> | unknown;
+
 export type ModelConnectionProxyOptions = {
   stickyKey?: string;
   keyPool?: ModelKeyPool;
@@ -34,6 +51,14 @@ export type ModelConnectionProxyOptions = {
   quota?: ModelProxyQuotaOptions;
   estimatePromptChars?: (bodyText: string) => number;
   now?: () => number;
+  /** 动态思考强度（非 default 时自动映射并注入厂商请求参数）。 */
+  reasoningEffort?: ResolvedReasoningEffort;
+  /** 可选脱敏请求观测器（管理员热启停，绝不记录凭据与思维链）。 */
+  observer?: Pick<ModelObservationService, "isEnabled" | "record">;
+  /** 可选细分用量账本上报器（含 kind 与 reasoningTokens）。 */
+  onUsageBreakdown?: ModelProxyUsageBreakdownReporter;
+  usageKind?: UsageKind;
+  ownerUserId?: string;
 };
 
 const RETRYABLE_KEY_STATUSES = new Set([429, 402, 401, 403]);
@@ -71,13 +96,18 @@ export function buildQuotaExceededResponse(
 function createUsageTracker(input: {
   model: string;
   requestChars: number;
-  quota: ModelProxyQuotaOptions;
+  quota?: ModelProxyQuotaOptions;
   reservation: QuotaReservation | null;
   nowFn: () => number;
+  onUsageBreakdown?: ModelProxyUsageBreakdownReporter;
+  usageKind?: UsageKind;
+  ownerUserId?: string;
+  effort?: ResolvedReasoningEffort;
 }) {
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let cacheReadTokens = 0;
+  let reasoningTokens = 0;
   let outputChars = 0;
   let rawTextChars = 0;
   let hasStructuredPayload = false;
@@ -103,12 +133,24 @@ function createUsageTracker(input: {
     const inputDetails = isRecord(usage.input_tokens_details)
       ? usage.input_tokens_details
       : undefined;
+    const completionDetails = isRecord(usage.completion_tokens_details)
+      ? usage.completion_tokens_details
+      : undefined;
+    const outputDetails = isRecord(usage.output_tokens_details)
+      ? usage.output_tokens_details
+      : undefined;
     const cacheVal = pickFiniteNumber(
       promptDetails?.cached_tokens,
       inputDetails?.cached_tokens,
       usage.cache_read_input_tokens,
     );
     if (cacheVal !== undefined) cacheReadTokens = cacheVal;
+    const reasoningVal = pickFiniteNumber(
+      completionDetails?.reasoning_tokens,
+      outputDetails?.reasoning_tokens,
+      usage.reasoning_tokens,
+    );
+    if (reasoningVal !== undefined) reasoningTokens = reasoningVal;
   };
 
   const inspectChoices = (choices: unknown[]) => {
@@ -242,28 +284,47 @@ function createUsageTracker(input: {
         inputTokens ?? Math.ceil(Math.max(0, input.requestChars) / 4);
       const finalOutputTokens =
         outputTokens ?? Math.ceil(Math.max(0, effectiveOutputChars) / 4);
-      Promise.resolve(
-        input.quota.recordUsage({
-          userId: input.quota.userId,
-          model: input.model,
-          inputTokens: finalInputTokens,
-          outputTokens: finalOutputTokens,
-          cacheReadTokens,
-          requests: 1,
-          now: input.nowFn(),
-          ...(input.reservation ? { reservation: input.reservation } : {}),
-        }),
-      ).catch((error) => {
-        // 流结束后异步记账失败不能打断已返回给调用方的流，但必须可观测。
-        console.warn(
-          JSON.stringify({
-            type: "quota-usage-record-failed",
-            userId: input.quota.userId,
+      const settledAt = input.nowFn();
+      if (input.quota) {
+        const quota = input.quota;
+        Promise.resolve(
+          quota.recordUsage({
+            userId: quota.userId,
             model: input.model,
-            reason: reasonWithoutStatement(error),
+            inputTokens: finalInputTokens,
+            outputTokens: finalOutputTokens,
+            cacheReadTokens,
+            requests: 1,
+            now: settledAt,
+            ...(input.reservation ? { reservation: input.reservation } : {}),
           }),
-        );
-      });
+        ).catch((error) => {
+          // 流结束后异步记账失败不能打断已返回给调用方的流，但必须可观测。
+          console.warn(
+            JSON.stringify({
+              type: "quota-usage-record-failed",
+              userId: quota.userId,
+              model: input.model,
+              reason: reasonWithoutStatement(error),
+            }),
+          );
+        });
+      }
+      const breakdownUserId = input.ownerUserId ?? input.quota?.userId;
+      if (input.onUsageBreakdown && breakdownUserId) {
+        Promise.resolve(
+          input.onUsageBreakdown({
+            ownerUserId: breakdownUserId,
+            kind: input.usageKind ?? "chat",
+            modelId: input.model,
+            effort: input.effort ?? "default",
+            inputTokens: finalInputTokens,
+            outputTokens: finalOutputTokens,
+            reasoningTokens,
+            createdAt: settledAt,
+          }),
+        ).catch(() => {});
+      }
     },
   };
 }
@@ -342,7 +403,28 @@ export function createModelConnectionProxy(
     const combinedSignal = AbortSignal.any([runSignal, requestSignal]);
     combinedSignal.throwIfAborted();
 
-    const bodyText = JSON.stringify(body);
+    const effortParams =
+      options?.reasoningEffort && options.reasoningEffort !== "default"
+        ? mapEffortToProviderParams(
+            options.reasoningEffort,
+            connection.provider,
+            request.model,
+          )
+        : {};
+    let outboundBody: Record<string, unknown> = body as Record<string, unknown>;
+    const effortKeys = Object.keys(effortParams);
+    if (effortKeys.length > 0) {
+      const merged = { ...outboundBody };
+      for (const [key, value] of Object.entries(effortParams)) {
+        if (merged[key] === undefined) {
+          merged[key] = value;
+        }
+      }
+      outboundBody = merged;
+    }
+
+    const bodyText = JSON.stringify(outboundBody);
+    const requestStartedAt = nowFn();
     const requestChars = options?.estimatePromptChars
       ? Math.max(0, options.estimatePromptChars(bodyText))
       : bodyText.length;
@@ -490,7 +572,34 @@ export function createModelConnectionProxy(
       }
     } catch (error) {
       releaseReservation();
+      if (options?.observer?.isEnabled()) {
+        options.observer.record({
+          provider: connection.provider,
+          model: request.model,
+          effort: options.reasoningEffort ?? null,
+          status: null,
+          durationMs: Math.max(0, nowFn() - requestStartedAt),
+          requestBody: outboundBody,
+          errorCode:
+            error instanceof Error ? error.name || "transport_error" : "error",
+        });
+      }
       throw error;
+    }
+
+    if (options?.observer?.isEnabled()) {
+      options.observer.record({
+        provider: connection.provider,
+        model: request.model,
+        effort: options.reasoningEffort ?? null,
+        status: response.status,
+        durationMs: Math.max(0, nowFn() - requestStartedAt),
+        requestId:
+          response.headers.get("x-request-id") ??
+          response.headers.get("request-id"),
+        requestBody: outboundBody,
+        errorCode: response.ok ? null : `http_${response.status}`,
+      });
     }
 
     const headers = new Headers({ "cache-control": "no-store" });
@@ -499,7 +608,10 @@ export function createModelConnectionProxy(
       if (value) headers.set(name, value);
     }
 
-    if (!options?.quota || !response.ok) {
+    const shouldTrackUsage = Boolean(
+      options?.quota || options?.onUsageBreakdown,
+    );
+    if (!shouldTrackUsage || !response.ok) {
       releaseReservation();
       return new Response(response.body, {
         status: response.status,
@@ -511,9 +623,15 @@ export function createModelConnectionProxy(
     const tracker = createUsageTracker({
       model: request.model,
       requestChars,
-      quota: options.quota,
+      ...(options?.quota ? { quota: options.quota } : {}),
       reservation,
       nowFn,
+      ...(options?.onUsageBreakdown
+        ? { onUsageBreakdown: options.onUsageBreakdown }
+        : {}),
+      ...(options?.usageKind ? { usageKind: options.usageKind } : {}),
+      ...(options?.ownerUserId ? { ownerUserId: options.ownerUserId } : {}),
+      ...(options?.reasoningEffort ? { effort: options.reasoningEffort } : {}),
     });
     reservation = null;
 
