@@ -410,11 +410,15 @@ function BotRow({
         ) : null}
       </span>
       <span className="glass-bot-text">
-        <span className="glass-item-t">{bot.name}</span>
+        <span className="glass-item-t" data-private="">
+          {bot.name}
+        </span>
         {paused ? (
           <span className="glass-item-s">{"已暂停"}</span>
         ) : bot.title ? (
-          <span className="glass-item-s">{bot.title}</span>
+          <span className="glass-item-s" data-private="">
+            {bot.title}
+          </span>
         ) : null}
       </span>
       {!main && bot.pinned ? (
@@ -733,8 +737,14 @@ function HiddenBotRow({
           <ChannelAvatar participantIds={[bot.id]} selected size={28} />
         </span>
         <span className="glass-bot-text">
-          <span className="glass-item-t">{bot.name}</span>
-          {bot.title ? <span className="glass-item-s">{bot.title}</span> : null}
+          <span className="glass-item-t" data-private="">
+            {bot.name}
+          </span>
+          {bot.title ? (
+            <span className="glass-item-s" data-private="">
+              {bot.title}
+            </span>
+          ) : null}
         </span>
       </span>
       <BotRowComputerChip chat={chat} />

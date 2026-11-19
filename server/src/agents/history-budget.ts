@@ -500,6 +500,8 @@ export async function compactHistory(input: {
   history: readonly Message[];
   overheadTokens: number;
   contextWindow?: number;
+  /** 可选：管理员按模型覆写的摘要触发阈值（Token），严格小于 contextWindow 时优先生效。 */
+  summaryThresholdTokens?: number;
   store?: HistorySummaryStore;
   summarize?: Summarize;
   timeoutMs?: number;
@@ -529,6 +531,17 @@ export async function compactHistory(input: {
     input.contextWindow > 0
       ? input.contextWindow
       : ASSUMED_CONTEXT_WINDOW;
+  const summaryThreshold =
+    input.summaryThresholdTokens &&
+    Number.isFinite(input.summaryThresholdTokens) &&
+    input.summaryThresholdTokens > 0 &&
+    input.summaryThresholdTokens < window
+      ? input.summaryThresholdTokens
+      : window * SUMMARY_RATIO;
+  const trimThreshold = Math.min(
+    window * TRIM_RATIO,
+    Math.floor(summaryThreshold * (TRIM_RATIO / SUMMARY_RATIO)),
+  );
   const ratio = calibrationRatio(history, input.previousUsage, input.memo);
   const factor = ratio ?? UNCALIBRATED_MARGIN;
   const scaled = (tokens: number) => Math.ceil(tokens * factor);
@@ -543,7 +556,7 @@ export async function compactHistory(input: {
       trimBeforeId: null,
       overheadTokens,
     };
-    if (beforeTokens <= window * TRIM_RATIO) {
+    if (beforeTokens <= trimThreshold) {
       plan = none;
     } else {
       const starts = userStarts(history);
@@ -551,7 +564,7 @@ export async function compactHistory(input: {
       let summary: string | null = null;
       let summarizedTurns = 0;
       if (
-        beforeTokens > window * SUMMARY_RATIO &&
+        beforeTokens > summaryThreshold &&
         starts.length > SUMMARY_KEEP_TURNS
       ) {
         const cut = starts[starts.length - SUMMARY_KEEP_TURNS] ?? 0;
@@ -602,7 +615,7 @@ export async function compactHistory(input: {
         });
         if (
           scaled(sentTokens(overheadTokens, summarized)) <=
-          window * TRIM_RATIO
+          trimThreshold
         )
           trimBeforeId = null;
       }

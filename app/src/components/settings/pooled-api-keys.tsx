@@ -132,7 +132,10 @@ export function PooledApiKeysSection({
                         <span className="font-medium text-sm truncate">
                           {entry.label.trim() || "未命名备选 Key"}
                         </span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                        <span
+                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                          data-private=""
+                        >
                           {`id: ${entry.id}`}
                         </span>
                         {projection ? (

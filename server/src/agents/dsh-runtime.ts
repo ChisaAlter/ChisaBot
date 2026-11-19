@@ -96,6 +96,7 @@ export type DshRuntimeConfiguration = {
   modelInfo: (model: string) => Promise<{
     maxOutputTokens?: number;
     contextWindow?: number;
+    summaryThresholdTokens?: number;
     supportsImages?: boolean;
   }>;
   fallbacks: () => Promise<readonly string[]>;
@@ -517,12 +518,24 @@ export class DshRuntimeAgent extends AbstractAgent {
               ? {
                   contextWindow: 128_000,
                   maxOutputTokens: 16_000,
+                  summaryThresholdTokens: undefined,
                   supportsImages: true,
                 }
               : await this.configuration.modelInfo(id);
+            const resolvedContextWindow = info.contextWindow ?? 128_000;
+            const resolvedSummaryThreshold =
+              typeof info.summaryThresholdTokens === "number" &&
+              Number.isFinite(info.summaryThresholdTokens) &&
+              info.summaryThresholdTokens > 0 &&
+              info.summaryThresholdTokens < resolvedContextWindow
+                ? info.summaryThresholdTokens
+                : undefined;
             return {
               id,
-              contextWindow: info.contextWindow ?? 128_000,
+              contextWindow: resolvedContextWindow,
+              ...(resolvedSummaryThreshold !== undefined
+                ? { summaryThresholdTokens: resolvedSummaryThreshold }
+                : {}),
               maxTokens: info.maxOutputTokens ?? 32_000,
               input: info.supportsImages ? ["text", "image"] : ["text"],
             };
@@ -564,6 +577,18 @@ export class DshRuntimeAgent extends AbstractAgent {
         const contextWindow = Math.min(
           ...definitions.map((model) => model.contextWindow),
         );
+        const summaryThresholds = definitions
+          .map((model) => model.summaryThresholdTokens)
+          .filter(
+            (value): value is number =>
+              typeof value === "number" &&
+              Number.isFinite(value) &&
+              value > 0 &&
+              value < contextWindow,
+          );
+        const migrationBudget = summaryThresholds.length
+          ? Math.min(contextWindow, ...summaryThresholds)
+          : contextWindow;
         const [primary, ...fallbacks] = definitions.map((model, index) => ({
           provider: "configured",
           model: model.id,
@@ -750,7 +775,7 @@ export class DshRuntimeAgent extends AbstractAgent {
             ...systemMessagesText,
             ...inboxText,
           ].join("\n\n"),
-          initialContext: migrationContext(previous, contextWindow),
+          initialContext: migrationContext(previous, migrationBudget),
           toolCapability: capability.capability,
           steering: Boolean(steering),
           model: {

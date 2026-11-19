@@ -11328,3 +11328,14 @@ html[data-theme-family] #sky-root #skyph {
   color: var(--shiki-dark, var(--ink-1));
   background-color: var(--shiki-dark-bg, transparent);
 }
+
+/* 一键隐私遮罩模式（Ctrl+Shift+P / 设置 → 通用 → 隐私遮罩模式，严禁 :has） */
+[data-privacy-mask="1"] [data-private] {
+  filter: blur(6px);
+  user-select: none;
+  transition: filter 120ms ease;
+}
+[data-privacy-mask="1"] [data-private]:hover,
+[data-privacy-mask="1"] [data-private]:focus-within {
+  filter: blur(2px);
+}

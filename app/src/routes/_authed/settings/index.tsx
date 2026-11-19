@@ -9,6 +9,7 @@ import { AppearancePreferences } from "@/components/settings/appearance-preferen
 
 import { NotificationSettingsSection } from "@/components/settings/notification-settings";
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
+import { PrivacyMaskPreference } from "@/components/settings/privacy-mask-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { useTheme } from "@/components/theme-provider";
 import {
@@ -100,6 +101,8 @@ function RouteComponent() {
           </Item>
           <Separator />
           <PerfModePreference />
+          <Separator />
+          <PrivacyMaskPreference />
           <AppearancePreferences />
         </PageRows>
       </PageSection>

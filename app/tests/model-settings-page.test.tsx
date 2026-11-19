@@ -130,6 +130,27 @@ beforeEach(() => {
       if (path.startsWith("/api/speech/voices") && method === "GET") {
         return Response.json({ voices: [] });
       }
+      if (path === "/api/admin/context-policies" && method === "GET") {
+        return Response.json({ policies: [] });
+      }
+      if (path === "/api/web-search/settings" && method === "GET") {
+        return Response.json({
+          defaultProvider: "builtin",
+          fallbackToBuiltin: true,
+          timeoutMs: 12_000,
+          maxResults: 6,
+          providers: {
+            tavily: { baseUrl: "https://api.tavily.com/search", keySource: "none", keyHint: "" },
+            brave: { baseUrl: "https://api.search.brave.com/res/v1/web/search", keySource: "none", keyHint: "" },
+            serper: { baseUrl: "https://google.serper.dev/search", keySource: "none", keyHint: "" },
+            bocha: { baseUrl: "https://api.bochaai.com/v1/web-search", keySource: "none", keyHint: "" },
+            exa: { baseUrl: "https://api.exa.ai/search", keySource: "none", keyHint: "" },
+            custom: { baseUrl: "", keySource: "none", keyHint: "" },
+          },
+          modelOverrides: [],
+          updatedAt: null,
+        });
+      }
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       writes.push({ path, body });
       if (path === "/api/admin/model-settings/test") {

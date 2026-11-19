@@ -53,6 +53,7 @@ const { animateWindowBounds, createCompactController } = require("./compact-wind
 const { computeUpdateBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
+const desktopPrefs = require("./desktop-prefs");
 const buildConfig = require("./build-config");
 const BUILD = buildConfig.load();
 const pkg = require("../package.json");
@@ -95,6 +96,15 @@ const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
     }
   } catch {}
 })();
+
+// 在 app.whenReady() 之前读取持久化桌面偏好：应用硬件加速开关与显式时区覆盖。
+const bootstrapDesktopPrefs = desktopPrefs.readBootstrapDesktopPrefs(app.getPath("userData"));
+if (bootstrapDesktopPrefs.hardwareAcceleration === false) {
+  app.disableHardwareAcceleration();
+}
+if (bootstrapDesktopPrefs.timezone) {
+  process.env.TZ = bootstrapDesktopPrefs.timezone;
+}
 
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -466,10 +476,20 @@ function openChat(pathname, options) {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      spellcheck: false,
+      spellcheck: config.get().spellcheck !== false,
     },
   });
   win.setMenu(null);
+  win.webContents.on("context-menu", (_event, params) => {
+    const template = desktopPrefs.buildContextMenuTemplate(params, {
+      openExternal: (url) => shell.openExternal(url),
+      writeClipboard: (text) => clipboard.writeText(text),
+      replaceMisspelling: (word) => win.webContents.replaceMisspelling(word),
+    });
+    if (template.length > 0) {
+      Menu.buildFromTemplate(template).popup({ window: win });
+    }
+  });
   win.once("ready-to-show", () => win.show());
   chatOffline = Boolean(options?.offline);
   if (chatOffline) {
@@ -1202,6 +1222,10 @@ function webLocalState() {
     autoStart: local.autoStart,
     startHidden: local.startHidden,
     autoUpdate: local.autoUpdate !== false,
+    hardwareAcceleration: local.hardwareAcceleration !== false,
+    spellcheck: local.spellcheck !== false,
+    timezone: local.timezone || "",
+    allowedEgressDomains: Array.isArray(local.allowedEgressDomains) ? local.allowedEgressDomains : [],
     update: updater ? updater.state : { supported: false, status: "idle" },
     webUi: localWeb.statusFor(serverOrigin()),
   };
@@ -1444,6 +1468,26 @@ async function setLocal(patch) {
     config.set({ autoUpdate: patch.autoUpdate });
     config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "config_changed", outcome: "succeeded", summary: `自动更新 → ${patch.autoUpdate ? "开启" : "关闭"}` });
     updater?.schedule();
+  }
+  const desktopPatch = desktopPrefs.sanitizeDesktopPrefsPatch(patch);
+  if (Object.keys(desktopPatch).length > 0) {
+    config.set(desktopPatch);
+    if (typeof desktopPatch.spellcheck === "boolean") {
+      try {
+        session.fromPartition(PARTITION).setSpellCheckerEnabled?.(desktopPatch.spellcheck);
+      } catch {}
+    }
+    if (typeof desktopPatch.timezone === "string") {
+      if (desktopPatch.timezone) process.env.TZ = desktopPatch.timezone;
+      else delete process.env.TZ;
+    }
+    config.appendAudit({
+      at: new Date().toISOString(),
+      actor: "本机",
+      operation: "config_changed",
+      outcome: "succeeded",
+      summary: `桌面壳偏好已更新：${Object.keys(desktopPatch).join("、")}`,
+    });
   }
   refreshTray();
   return webLocalState();
@@ -1722,7 +1766,16 @@ const localWeb = createLocalWebController({
 });
 
 app.whenReady().then(() => {
-  localWeb.installSessionProtocol(session.fromPartition(PARTITION));
+  const ses = session.fromPartition(PARTITION);
+  localWeb.installSessionProtocol(ses);
+  // 出口域名白名单：仅放行已配 server origin、loopback 与显式放行域名，防恶意渲染脚本外泄。
+  ses.webRequest.onBeforeRequest((details, callback) => {
+    const allowed = desktopPrefs.isEgressUrlAllowed(details.url, {
+      serverOrigin: serverOrigin(),
+      allowedDomains: config?.get().allowedEgressDomains || [],
+    });
+    callback({ cancel: !allowed });
+  });
   // macOS 应用菜单：没有它 ⌘C/⌘V/⌘Q 都不生效（窗口 setMenu 在 mac 上是空的，菜单是应用级的）。
   // 编辑 / 视图 / 窗口用系统 role；退出走 role:"quit"→ before-quit（隐藏语义的「关闭窗口」归 ⌘W）。
   if (process.platform === "darwin") {
@@ -1758,6 +1811,9 @@ app.whenReady().then(() => {
   powerMonitor.on("resume", () => agent?.reconnectNow());
   powerMonitor.on("unlock-screen", () => agent?.reconnectNow());
   config = createConfig({ dir: app.getPath("userData"), safeStorage });
+  try {
+    ses.setSpellCheckerEnabled?.(config.get().spellcheck !== false);
+  } catch {}
   const appearance = config.get().appearance || {};
   nativeTheme.themeSource = typeof appearance.dark === "boolean" ? (appearance.dark ? "dark" : "light") : "system";
   registerIpc();

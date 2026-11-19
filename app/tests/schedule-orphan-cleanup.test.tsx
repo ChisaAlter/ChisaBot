@@ -18,6 +18,7 @@ import type { ComponentType } from "react";
 import { ConfirmHost } from "@/components/ui/confirm";
 import { agentKeys } from "@/lib/agents/queries";
 import { scheduleKeys } from "@/lib/schedules";
+import { webhookKeys } from "@/lib/webhooks";
 import { Route as SchedulesRoute } from "@/routes/_authed/settings/schedules";
 import type { ScheduleView } from "../../shared/schedules";
 import { settleReactWork } from "./settle-react-work";
@@ -67,6 +68,22 @@ function draw() {
   // 列表缓存尚未看到仍有效的机器人，界面暂时将任务列为孤儿。
   client.setQueryData(agentKeys.list(), []);
   client.setQueryData(agentKeys.list(true), []);
+  client.setQueryData(webhookKeys.rules, {
+    rules: [],
+    quota: { used: 0, limit: 30 },
+  });
+  client.setQueryData(webhookKeys.runs(), {
+    runs: [],
+    counts: {
+      queued: 0,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      interrupted: 0,
+      cancelled: 0,
+      skipped: 0,
+    },
+  });
   const Schedules = SchedulesRoute.options.component as ComponentType;
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/"] }),

@@ -385,6 +385,39 @@ export async function resolveContextWindow(
   // must not lose the declared window entirely (QA1104-01).
   return knownContextWindowOf(modelId);
 }
+
+/** 管理员按模型覆写的长对话摘要触发阈值（Token；index.ts 接上）。 */
+type SummaryThresholdResolver = (
+  modelId: string,
+) => Promise<number | undefined>;
+let summaryThresholdFor: SummaryThresholdResolver = async () => undefined;
+export function setModelSummaryThresholdResolver(
+  resolver: SummaryThresholdResolver,
+): void {
+  summaryThresholdFor = resolver;
+}
+export async function resolveSummaryThreshold(
+  modelId: string,
+): Promise<number | undefined> {
+  try {
+    const threshold = await Promise.race([
+      summaryThresholdFor(modelId),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), 1500).unref?.(),
+      ),
+    ]);
+    if (
+      typeof threshold === "number" &&
+      Number.isFinite(threshold) &&
+      threshold > 0
+    ) {
+      return threshold;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 /**
  * 模型目录说这一轮模型能不能看图（DESIGN.md §59 supportsImages；index.ts 接上）。
  * 经 modelInfo 下发给内核，内核按它处理历史/当前消息里的图片与文档块（QA1102-14）：false → 文字占位，
@@ -1516,13 +1549,23 @@ async function buildAgent(
         return configured.prompt;
       },
       modelInfo: async (modelId) => {
-        const [maxOutputTokens, contextWindow, supportsImages] =
-          await Promise.all([
-            resolveOutputLimit(modelId),
-            resolveContextWindow(modelId),
-            resolveModelVisionSupport(modelId),
-          ]);
-        return { maxOutputTokens, contextWindow, supportsImages };
+        const [
+          maxOutputTokens,
+          contextWindow,
+          summaryThresholdTokens,
+          supportsImages,
+        ] = await Promise.all([
+          resolveOutputLimit(modelId),
+          resolveContextWindow(modelId),
+          resolveSummaryThreshold(modelId),
+          resolveModelVisionSupport(modelId),
+        ]);
+        return {
+          maxOutputTokens,
+          contextWindow,
+          summaryThresholdTokens,
+          supportsImages,
+        };
       },
       fallbacks: () =>
         fallbackCandidates(

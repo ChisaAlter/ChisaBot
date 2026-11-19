@@ -27,6 +27,14 @@ const DEFAULTS = {
   shellHash: "",
   /** 主窗口里网页的外观（深色 / 时间天空），本机窗口跟着它走；dark 为 null 时跟随系统。 */
   appearance: { dark: null, sky: true },
+  /** 硬件加速开关（重启客户端后生效）；遇到显卡兼容黑屏/花屏时可关闭。 */
+  hardwareAcceleration: true,
+  /** 渲染进程拼写检查开关（配合原生右键菜单拼写建议）。 */
+  spellcheck: true,
+  /** 显式时区覆盖（IANA 时区如 Asia/Shanghai；留空跟随系统时区）。 */
+  timezone: "",
+  /** 渲染进程出口域名白名单（除已配服务器与 loopback 外显式放行的域名或 *.domain.tld）。 */
+  allowedEgressDomains: [],
 };
 
 function createConfig({ dir, safeStorage }) {

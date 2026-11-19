@@ -42,6 +42,7 @@ import {
 import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
 import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
 import { createDshHealthProbe } from "./agents/dsh-health";
+import { createContextPolicyStore } from "./agents/context-policy-store";
 import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
@@ -172,6 +173,7 @@ import {
 import { createThreadIdentity } from "./channels/thread-identity";
 import { createChannelTitler } from "./channels/titler";
 import { createChannelUploadMirror } from "./chat-files/channel-mirror";
+import { createBotLibraryService } from "./chat-files/library-service";
 import { createChatFiles } from "./chat-files/service";
 import { turnAttachmentLoader } from "./chat-files/turn-attachments";
 import { createChatShots } from "./chat-shots";
@@ -228,6 +230,7 @@ import {
   setModelFallbackList,
   setModelFileResolver,
   setModelOutputLimitResolver,
+  setModelSummaryThresholdResolver,
   setModelVisionResolver,
   setPreviousRunUsageResolver,
   type ToolSelection,
@@ -382,6 +385,10 @@ import { createTriggerIngressRoutes } from "./responsibilities/trigger-routes";
 import { useTriggerTools } from "./responsibilities/trigger-tools";
 import { createTriggerStore } from "./responsibilities/triggers";
 import type { Responsibility } from "./responsibilities/types";
+import {
+  createPgWebhookPanelStore,
+  createWebhookPanelRoutes,
+} from "./responsibilities/webhook-panel-routes";
 import { createModelCompleter } from "./routing/model";
 import { createSchedules } from "./schedules/service";
 import { createSharingRoutes } from "./sharing/routes";
@@ -409,7 +416,13 @@ import { markUntrusted } from "./untrusted-content";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
 import { createVault, VAULT_GUIDANCE } from "./vault/service";
-import { webSearch, webTools } from "./web/tools";
+import { createWebSearchSettingsStore } from "./web/search-settings";
+import {
+  createWebSearchRoutes,
+  searchWeb,
+  webSearch,
+  webToolsForModel,
+} from "./web/tools";
 import { repeatAfterEach } from "./work/loop";
 import {
   createWorkQueue,
@@ -1333,8 +1346,11 @@ const resolveRuntimeConnection = () =>
     };
   });
 
+const contextPolicyStore = createContextPolicyStore(database);
+await contextPolicyStore.ensure();
 const modelCatalog = createModelCatalogService({
   resolveConnection: () => modelSettings.resolve(),
+  resolveContextOverrides: () => contextPolicyStore.list(),
 });
 // 不认识的模型（走 Anthropic 协议的非 Claude 模型）按目录里的 max_output_tokens 定输出上限，别被截在 4096。
 setModelOutputLimitResolver(
@@ -1355,11 +1371,17 @@ setModelFallbackList(() => modelFallbacks.models());
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
 // compactHistory 无调用者，是 Hermes 时代的遗留链路，待决定删除或接回。
-setModelContextWindowResolver(
-  async (modelId) =>
-    (await modelCatalog.list()).models.find((entry) => entry.id === modelId)
-      ?.contextWindow,
-);
+setModelContextWindowResolver(async (modelId) => {
+  const override = await contextPolicyStore.get(modelId).catch(() => null);
+  if (override) return override.contextWindowTokens;
+  return (await modelCatalog.list()).models.find(
+    (entry) => entry.id === modelId,
+  )?.contextWindow;
+});
+setModelSummaryThresholdResolver(async (modelId) => {
+  const override = await contextPolicyStore.get(modelId).catch(() => null);
+  return override?.summaryThresholdTokens;
+});
 // 内核按目录的 supportsImages 处理图片/文档块（经 modelInfo 下发；QA1102-14）：没说就当能看。
 setModelVisionResolver(
   async (modelId) =>
@@ -1948,6 +1970,26 @@ const chatFiles = createChatFiles(database, {
 });
 await pages.ensure();
 await chatFiles.ensure();
+const botLibrary = createBotLibraryService({
+  database,
+  chatFiles,
+  profiles: agentProfileStore,
+});
+await botLibrary.ensure();
+const webSearchSettings = createWebSearchSettingsStore(database, {
+  encryptionKey: config.keyEncryptionKey,
+  builtinSearch: (query, count, signal, timeoutMs) =>
+    searchWeb(query, count, signal, { timeoutMs }),
+});
+await webSearchSettings.ensure();
+const webhookPanelStore = createPgWebhookPanelStore({
+  database,
+  responsibilities: responsibilityStore,
+  triggers: responsibilityTriggerStore,
+  resolveDirectChannel: async (actor, agentId) => ({
+    channelId: (await channelStore.direct(actor, agentId)).id,
+  }),
+});
 const speechSettings = createSpeechSettingsStore(database, {
   encryptionKey: config.keyEncryptionKey,
   ...(config.speech ? { envSpeechConfig: config.speech } : {}),
@@ -2070,6 +2112,7 @@ const loadPersonalMemoryForActor =
         VAULT_GUIDANCE,
         github.guidance(ownerUserId).catch(() => ""),
         chatFiles.guidance(ownerUserId, botId).catch(() => ""),
+        botLibrary.buildBotLibraryPromptSection(ownerUserId, botId).catch(() => ""),
         confirmations.context(ownerUserId, botId).catch(() => ""),
       ])
     )
@@ -2160,8 +2203,13 @@ const loadToolsForActor =
       ...(config.generativeUi && !imConnection
         ? renderUiTools({ replySources: config.replySources === true })
         : []),
-      // 内置联网（web_search / web_fetch）：先搜、再读，浏览器留给需要点击 / 登录 / 给人看的时候。
-      ...webTools(),
+      // 内置联网（web_search / web_fetch）：支持多供应商与按模型覆写（native 模式关闭内置搜改走模型原生联网）。
+      ...(await webToolsForModel({
+        settings: webSearchSettings,
+        modelId:
+          (await agentModels.resolveModel(botId).catch(() => null)) ??
+          (await modelSettings.resolve().catch(() => null))?.model,
+      })),
       // 「把这个服务接进来」：先查这个部署里已启用的连接器和授权，再查官方 API / MCP 的接法。
       // 26 个工具时模型会去挑 device_list / connector_call 这类近邻，只有这个对口的工具才稳定被选中。
       ...connectServiceTools({
@@ -5684,6 +5732,19 @@ const app = createApp(
         "/api/admin/history-summary-model",
         historySummaryModel.routes(requireUser),
       ],
+      [
+        "/api/admin/context-policies",
+        contextPolicyStore.routes(requireUser),
+      ],
+      [
+        "/api/web-search",
+        createWebSearchRoutes({ store: webSearchSettings, requireUser }),
+      ],
+      [
+        "/api/webhooks",
+        createWebhookPanelRoutes({ store: webhookPanelStore, requireUser }),
+      ],
+      ["/api/bots", botLibrary.routes(requireUser)],
       [
         "/api/admin/runtime-kernel",
         createRuntimeKernelRoutes({

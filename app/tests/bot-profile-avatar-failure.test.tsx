@@ -101,6 +101,12 @@ beforeEach(() => {
           canManage: true,
         });
       if (path.includes("/models")) return Response.json({ models: [] });
+      if (path.endsWith("/library"))
+        return Response.json({
+          files: [],
+          limit: 20,
+          maxFileBytes: 20 * 1024 * 1024,
+        });
       if (path === "/api/bot-avatars") return Response.json({ avatars: {} });
       if (path === `/api/bot-avatars/${BASE.id}` && method === "PUT") {
         if (avatarPutStatus !== 200)

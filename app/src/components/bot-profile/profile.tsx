@@ -62,6 +62,7 @@ import { queryClient as sharedQueryClient } from "@/query-client";
 import { ActivityRow } from "./activity";
 import { BotFilesAndPagesSection } from "./files-section";
 import { HandoffPanel } from "./handoff-panel";
+import { BotLibrarySection } from "./library-section";
 
 /*
  * 机器人资料页（/bots/:id，DESIGN.md §47，2026-10-14 用户：「机器人资料页做的太垃圾了。要简洁高效」）。
@@ -281,7 +282,9 @@ export function IdentityCard({
     <Card className="bp-card">
       <div className="bp-row">
         <span className="bp-label">{"名称"}</span>
-        <span className="bp-value">{agent.name}</span>
+        <span className="bp-value" data-private="">
+          {agent.name}
+        </span>
       </div>
       <div className="bp-row">
         <span className="bp-label">{"职责"}</span>
@@ -591,6 +594,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
       </PageSection>
       <HandoffPanel agentId={agent.id} />
       <TasksSection agentId={agent.id} />
+      <BotLibrarySection agentId={agent.id} />
       <BotFilesAndPagesSection agentId={agent.id} />
       <div className="bp-footer">
         <Button onClick={() => setResetOpen(true)} size="sm" variant="ghost">

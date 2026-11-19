@@ -377,6 +377,13 @@ test("[TC-U04] BotProfilePage 异步按钮严格遵循 pending -> success 状态
         models: [{ id: "m-1", label: "Claude", provider: "p" }],
       });
     }
+    if (path.endsWith("/library")) {
+      return NativeResponse.json({
+        files: [],
+        limit: 20,
+        maxFileBytes: 20 * 1024 * 1024,
+      });
+    }
     if (path === "/api/settings/preferences") {
       return NativeResponse.json({
         preferences: { ...DEFAULT_USER_PREFERENCES, mainBotId: currentMain },
@@ -639,6 +646,13 @@ test("[TC-U08] /channel/new 遭遇主 Agent 暂停 409 与切换目标时完整�
     if (path.includes("/models")) {
       return NativeResponse.json({
         models: [{ id: "m-1", label: "Claude", provider: "p" }],
+      });
+    }
+    if (path.endsWith("/library")) {
+      return NativeResponse.json({
+        files: [],
+        limit: 20,
+        maxFileBytes: 20 * 1024 * 1024,
       });
     }
     return NativeResponse.json({});

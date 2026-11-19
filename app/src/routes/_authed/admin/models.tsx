@@ -12,6 +12,7 @@ import {
   PageShell,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { ContextPolicyPanel } from "@/components/settings/context-policy-panel";
 import { FallbackModelsCard } from "@/components/settings/fallback-models";
 import { HistorySummaryModelCard } from "@/components/settings/history-summary-model";
 import {
@@ -20,6 +21,7 @@ import {
 } from "@/components/settings/media-models";
 import { PooledApiKeysSection } from "@/components/settings/pooled-api-keys";
 import { SpeechSettingsSection } from "@/components/settings/speech-settings";
+import { WebSearchSettingsSection } from "@/components/settings/web-search-settings";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
@@ -136,8 +138,10 @@ function ModelSettingsPage() {
           </PageSection>
         </div>
       ) : null}
+      <ContextPolicyPanel />
       <MediaDefaults />
       <SpeechSettingsSection />
+      <WebSearchSettingsSection />
     </PageShell>
   );
 }

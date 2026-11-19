@@ -361,7 +361,7 @@ function SpeechSettingsCard({ current }: { current: SpeechSettingsView }) {
               type="password"
               value={draft.asrApiKey}
             />
-            <span className="im-field-h">
+            <span className="im-field-h" data-private="">
               {keyHintText(
                 draft.asrApiKey,
                 current.asrKeySource,
@@ -546,7 +546,7 @@ function SpeechSettingsCard({ current }: { current: SpeechSettingsView }) {
               type="password"
               value={draft.ttsApiKey}
             />
-            <span className="im-field-h">
+            <span className="im-field-h" data-private="">
               {keyHintText(
                 draft.ttsApiKey,
                 current.ttsKeySource,
