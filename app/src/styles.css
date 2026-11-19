@@ -11329,15 +11329,21 @@ html[data-theme-family] #sky-root #skyph {
   background-color: var(--shiki-dark-bg, transparent);
 }
 
-/* 一键隐私遮罩模式（Ctrl+Shift+P / 设置 → 通用 → 隐私遮罩模式，严禁 :has） */
+/* 一键隐私遮罩模式（Ctrl+Shift+P / 设置 → 通用 → 隐私遮罩模式，无 :has 与无滤镜模糊） */
 [data-privacy-mask="1"] [data-private] {
-  filter: blur(6px);
+  color: transparent !important;
+  text-shadow: 0 0 9px var(--ink-1, #64748b);
+  background-color: color-mix(in srgb, var(--ink-1, #64748b) 14%, transparent);
+  border-radius: 4px;
   user-select: none;
-  transition: filter 120ms ease;
+  transition:
+    text-shadow 120ms ease,
+    background-color 120ms ease;
 }
 [data-privacy-mask="1"] [data-private]:hover,
 [data-privacy-mask="1"] [data-private]:focus-within {
-  filter: blur(2px);
+  text-shadow: 0 0 3px var(--ink-1, #64748b);
+  background-color: color-mix(in srgb, var(--ink-1, #64748b) 7%, transparent);
 }
 
 /* ==========================================================================================

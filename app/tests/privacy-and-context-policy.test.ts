@@ -83,7 +83,11 @@ describe("一键隐私遮罩模式（data-private + Ctrl+Shift+P）", () => {
       path.join(import.meta.dir, "../src/styles.css"),
       "utf8",
     );
-    expect(css).toContain('[data-privacy-mask="1"] [data-private]');
+    const maskStart = css.indexOf('[data-privacy-mask="1"] [data-private]');
+    expect(maskStart).toBeGreaterThan(-1);
+    const maskBlock = css.slice(maskStart);
+    expect(maskBlock).not.toMatch(/blur\(/);
+    expect(maskBlock).not.toContain(":has(");
   });
 });
 
