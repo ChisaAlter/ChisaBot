@@ -190,7 +190,7 @@
 
 ## 7. 10 波次全量落地进度总表（分支：`feat/prokbot-parity`）
 
-- [ ] **Wave 1**：建档建分支 + 4 处半成品断口全接通（多 Bot 置顶排序、20MB PDF/DOCX 上传、聊天 TTS 朗读与音频卡片、DOM 示教录制→编译技能）+ 语音服务（ASR/TTS）管理台与音色试听
+- [x] **Wave 1**：建档建分支 + 4 处半成品断口全接通（多 Bot 置顶排序、20MB PDF/DOCX 上传、聊天 TTS 朗读与音频卡片、DOM 示教录制→编译技能）+ 语音服务（ASR/TTS）管理台与音色试听
 - [ ] **Wave 2**：AI 回复完成主动通知 + 按 `channelId` 前台抑制 + 全局频率策略 + 桌面提示音 + 跨端 `agent` 深链（PC/Android）+ `push_devices` 原生推送（APNs/FCM + Bark `curl`）+ 无界面快捷入口 API
 - [ ] **Wave 3**：可插拔联网搜索后端 + 按模型覆写上下文/摘要阈值 + 多 Webhook 规则与 7 态流水面板 + Bot 常驻参考资料库与防注入清单 + 一键隐私遮罩 + 桌面壳右键/时区/硬件加速/出口白名单 + `docs/AI-INSTALL.md`
 - [ ] **Wave 4**：按任务难度自适应路由 + 动态 `reasoning_effort` + 30 天路由日志与 Dry-Run 试跑 + 本地时区/用途/`reasoning` 用量账本 + 热启停脱敏抓包观测器 + 多角色系统提示词版本台（LCS Diff + 组装/工具透视）+ Harness 开关台
