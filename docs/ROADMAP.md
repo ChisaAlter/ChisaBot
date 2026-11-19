@@ -27,6 +27,7 @@ ChisaBot 主线已完成以下核心工程闭环：
 
 ## 现在（进行中）
 
+- [CB-141](BACKLOG.md#cb-141)：修正用户消息下方单张链接预览卡片偏向聊天中间的问题（`.rp-stack[data-align="end"] .lc-stack-track` 补 `justify-content: flex-end`，DESIGN §135），已从 `wip/link-card-align-recovered` 提取合入本地 `main`。
 - [CB-140](BACKLOG.md#cb-140)：皮肤轴升级为主题族——`familyLight` / `familyDark` 双槽独立选族、族卡分半预览、`deriveSeed(seed)` 派生全部令牌（删 `data-palette` 静态块）、启动脚本写 `data-theme-family`、8 内置族 + 自定义族编辑器、旧 palette 键一次性迁移、`boundMode` 明暗绑定删除（DESIGN §143）；分支 `feat/theme-families`，已本地合入 `main`。
 - [CB-139](BACKLOG.md#cb-139)：#565 合并并纳入 `v0.1.169` 发版；弹出面板底色单通道收口（`--lg-surface` 唯一通道，不再被兜底名单单独画成实心块）+ 右上角窗口按钮条退出材质体系、新增回归门（DESIGN §142）。
 - [CB-138](BACKLOG.md#cb-138)：#563 合并并纳入 `v0.1.168` 发版；右边缘「面板」把手接入液态玻璃小面材质——不再是一块不透明白牌，随雾度滑块、深底自动翻墨（DESIGN §141）。

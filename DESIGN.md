@@ -2927,6 +2927,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 改进消息附件、聊天富预览与生成式界面中多张图片及多张链接卡片的展示姿态，使发送消息的多图与 AI 展示的多图/多卡统一呈现舒展、无裁切的浮动错落扇形牌组：
 
+- **消息归属与对齐**：用户消息下方的单张链接卡右沿与消息气泡右沿一致；满宽 `.lc-stack-track` 内也按主轴末端排列。助手链接卡仍从左边排列，多卡保留扇形布局与容器内边距。
 - **静止即展开与真实包围盒（`ImagePile`）**：取消旧版仅靠悬停才摊开、静态叠压遮挡 85% 且在右对齐（`align="end"`）时向右溢出容器边界的窄堆叠布局；通过 `imagePileGeometry(total)` 将 2 张图排为左上逆时针微倾（`-2.8deg`）与右下顺时针微倾（`+3.5deg`）的舒展双卡扇形，3 张图排为居中抬高置顶、左右微倾的品字扇形，4 张及以上排为四卡拱形扇面并在末卡显示 `+N`。`.rp-pile` 使用单格 CSS Grid 配合基于 `--rp-w`、`--rp-left`、`--rp-right`、`--rp-drop` 精确计算的四向内边距容纳旋转外接矩形，并在 `AttachmentTiles` 提供 `[container-type:inline-size]` 宽度基准，使桌面与 390px 手机端右对齐多图都不再裁切或溢出；同时支持带 `caption` 与外链 `href` 的图注卡片（外链按钮作为 `<button>` 兄弟元素渲染），点击任意卡直接打开 `Lightbox` 看大图，保留 `[data-dimmed]` 降焦柔化及 `perf-noblur.css` 关闭开关。
 - **双卡微倾扇面（`LinkCardStack`）**：2 张链接卡时主卡微逆时针倾斜 `-2.5deg`、右卡顺时针 `+3.5deg` 并下沉 `0.4` 卡宽（窄屏按竖向像素下限兜底），3 张及以上延续居中品字扇形（左卡下沉 `0.32`、右卡下沉 `0.4` 卡宽），标题无需左缩进即可完整露在下方。
 - **生成式界面多图 / 多链接自动升级与同源图片直引**：`shared/json-render/catalog.ts` 新增 `isSafeRenderImageSrc`，在继续拦截 `http://`、`//`、`..` 与 `data:` 的前提下允许 `Image` 引用本站 `/api/chat-files/...` 与 `/api/channels/.../attachments/...`；聊天面 `JsonRenderSurface` 通过 `extractStandaloneMediaDeck` 与 `upgradeNestedMediaDecks` 将仅含 `2+` 张 `Image` 或 `2–3` 张 `Link` 的 `Carousel` / `Stack` / `Grid`（含无描述 `Card` 外壳）直接渲染为无外框扇形牌组，并在提示词引导模型优先用 Markdown 独立行图片/链接直接输出。

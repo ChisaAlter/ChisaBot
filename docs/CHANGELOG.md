@@ -1,5 +1,6 @@
 ## Unreleased
 
+- 修正用户单张链接预览卡片对齐：在 `.rp-stack[data-align="end"] .lc-stack-track` 补充 `justify-content: flex-end`，单张链接卡右沿与消息气泡对齐，保留助手左对齐与多卡扇形布局（link-card.css · tests/link-card-alignment/verify.mjs，DESIGN §135，CB-141）。
 - 主题族重构（模式 × 主题族双槽）：`familyLight` / `familyDark` 两槽独立选族、允许混搭；族卡左右分半预览，`setThemeHalf(mode, id)` 只写对应槽；全部令牌改由 `deriveSeed(seed)` 派生（删 `data-palette` 静态块），启动脚本写 `data-theme-family`；8 内置族 + 自定义族编辑器（`chisabot-theme-families`）；旧 `chisabot-theme-palette` 一次性映射迁移；`boundMode` 明暗绑定皮肤删除，auto 天象改随族 seed.scene，选族不再动天空来源（theme-family.ts 新增 · palette.ts 兼容层 · appearance.ts · appearance-preferences.tsx · sky-background.tsx · styles.css，DESIGN §143，CB-140）。验证：`app/tests/theme-family.test.ts`、`palette-theme.test.ts`、`appearance-*.test.tsx` 迁移 + `tests/appearance-model/appearance.mjs` 族半边点击路径。
 
 ## 0.1.169 — 2026-11-19
