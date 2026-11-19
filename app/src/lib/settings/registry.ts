@@ -258,6 +258,13 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         find: "键盘快捷键",
         keywords: ["快捷键", "热键", "hotkey", "shortcut", "keyboard", "kjj"],
       },
+      {
+        id: "diagnostics",
+        title: "端侧诊断日志",
+        description: "查看最近 500 条本机脱敏诊断事件并导出排障包",
+        find: "端侧诊断日志",
+        keywords: ["诊断", "日志", "排障", "diagnostics", "logs", "export", "zdrz"],
+      },
     ],
   },
 
