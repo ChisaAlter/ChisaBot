@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.170 — 2026-11-19
+
+全端版本 `0.1.170`，Android `versionCode 350`：主题族双槽模型（CB-140）、用户链接卡右沿对齐（CB-141）、ProkBot 全量对标 Wave 1–10 多端 AI 交互体验与安全运维加固（CB-142）。PC 客户端代码指纹更新为 `21dcd6dc82559950`，Windows 外壳指纹（`7314f9105596bec5`）不变，支持原地自动更新；无需手动数据库迁移（22 张新增 `chisabot_*` 表开机幂等自建），更新公网网关时同步 `deploy/public/nginx.conf`。
 
 - **ProkBot 全量对标：多端 AI 交互体验、实时语音、微应用生态、本机桥接与底座安全加固（DESIGN.md §144，CB-142）**：分支 `feat/prokbot-parity` 分 10 个波次（Wave 1–10）落地全套能力并通过逐波独立安全审查：
   - **聊天与实时语音**：新增全链路双向实时语音通话（WS 一次性票据、服务端 VAD 与真中止打断、流式分句 TTS、仅已播报入正式历史、`AgentOrb` 声波共振与 PC/Android 原生 AEC3 钩子）、20MB PDF/DOCX 上传、单实例 TTS 朗读、视频理解与生成及 `<audio>`/`<video>` 聊天卡片、AI 生成 Bot 头像与像素炸弹校验、虚拟形象视线追踪与 6 表情工位条、Hover 零网络链接预览缓存、零 `blur(` 隐私遮罩与多 Bot 置顶排序。

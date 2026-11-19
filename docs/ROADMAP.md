@@ -1,6 +1,6 @@
 # ROADMAP（看板）
 
-## 当前状态（核对至 2026-11-19 · `main`）
+## 当前状态（核对至 2026-11-19 · `v0.1.170`）
 
 ChisaBot 主线已完成以下核心工程闭环：
 
@@ -27,9 +27,9 @@ ChisaBot 主线已完成以下核心工程闭环：
 
 ## 现在（进行中）
 
-- [CB-142](BACKLOG.md#cb-142)：ProkBot 全量代码级对标（Wave 1–10）已由 `feat/prokbot-parity` 合入 `main` 并通过全仓 `bun run check`、形式化与安全守卫、全量 `test:app` 与 10 波独立安全审查——覆盖多端 AI 交互体验（全链路双向实时语音通话、多模态视频生成与音视频卡片、DOM 示教录制、20MB 文档上传、主动通知与原生推送、虚拟形象互动）、扩展工作台（自适应难度路由、7 角色提示词版本台、Harness 台、ZIP 分享/技能版本栈、AI 微应用沙箱与远程执行节点热切换、本机 Coding Agent 续接/追问与浏览器桥接）以及 2026-11-18 安全运维可靠性加固（`DESIGN §144` · [prokbot-comparison.md](prokbot-comparison.md)），后续纳入发版与真机终验。
-- [CB-141](BACKLOG.md#cb-141)：修正用户消息下方单张链接预览卡片偏向聊天中间的问题（`.rp-stack[data-align="end"] .lc-stack-track` 补 `justify-content: flex-end`，DESIGN §135），已从 `wip/link-card-align-recovered` 提取合入本地 `main`。
-- [CB-140](BACKLOG.md#cb-140)：皮肤轴升级为主题族——`familyLight` / `familyDark` 双槽独立选族、族卡分半预览、`deriveSeed(seed)` 派生全部令牌（删 `data-palette` 静态块）、启动脚本写 `data-theme-family`、8 内置族 + 自定义族编辑器、旧 palette 键一次性迁移、`boundMode` 明暗绑定删除（DESIGN §143）；分支 `feat/theme-families`，已本地合入 `main`。
+- [CB-142](BACKLOG.md#cb-142)：纳入 `v0.1.170` 全端发版（Android `versionCode 350`）；ProkBot 全量代码级对标（Wave 1–10）已由 `feat/prokbot-parity` 合入 `main` 并通过全仓 `bun run check`、形式化与安全守卫、全量 `test:app` 与 10 波独立安全审查（`DESIGN §144` · [prokbot-comparison.md](prokbot-comparison.md)），待真实账号与真机终验。
+- [CB-141](BACKLOG.md#cb-141)：纳入 `v0.1.170` 发版；修正用户消息下方单张链接预览卡片偏向聊天中间的问题（`.rp-stack[data-align="end"] .lc-stack-track` 补 `justify-content: flex-end`，DESIGN §135）。
+- [CB-140](BACKLOG.md#cb-140)：#562 合并并纳入 `v0.1.170` 发版；皮肤轴升级为主题族——`familyLight` / `familyDark` 双槽独立选族、族卡分半预览、`deriveSeed(seed)` 派生全部令牌、启动脚本写 `data-theme-family`、8 内置族 + 自定义族编辑器、旧 palette 键一次性迁移、`boundMode` 明暗绑定删除（DESIGN §143）。
 - [CB-139](BACKLOG.md#cb-139)：#565 合并并纳入 `v0.1.169` 发版；弹出面板底色单通道收口（`--lg-surface` 唯一通道，不再被兜底名单单独画成实心块）+ 右上角窗口按钮条退出材质体系、新增回归门（DESIGN §142）。
 - [CB-138](BACKLOG.md#cb-138)：#563 合并并纳入 `v0.1.168` 发版；右边缘「面板」把手接入液态玻璃小面材质——不再是一块不透明白牌，随雾度滑块、深底自动翻墨（DESIGN §141）。
 - [CB-137](BACKLOG.md#cb-137)：#560 合并并纳入 `v0.1.167` 发版；PC 更新「稍后」不再等于永远不装——待安装状态每 4 小时重弹提示窗 + 通知，直到安装或被更新版本顶掉。
@@ -75,6 +75,7 @@ ChisaBot 主线已完成以下核心工程闭环：
 
 | 日期       | 内容                                                                                                                                                                                   | PR / 版本                               | 设计 / 文档                                                                                  |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 2026-11-19 | 全端同步发布 `v0.1.170`（Android `versionCode 350`）：ProkBot 全量对标 Wave 1–10 落地（CB-142）、用户链接卡右沿对齐（CB-141）、主题族双槽模型与 seed 派生令牌（#562 · CB-140）      | #562 · `v0.1.170`                       | `DESIGN.md` §143–§144 · [prokbot-comparison.md](prokbot-comparison.md) · [CB-142](BACKLOG.md#cb-142) |
 | 2026-11-16 | 桌面端内置本地前端与「版本高者优先」同源加载、双版本偏移感知及 ASAR 打包校验（CB-129）                                                                                                 | `v0.1.154`                              | `DESIGN.md` §137 · [CB-129](BACKLOG.md#cb-129)                                               |
 | 2026-11-16 | 全域原生融合配额池、实时接管与 CAPTCHA 阻断、PC 原生 stdio MCP 与局域网配对、多 Bot 群聊、`/side` 旁路、四级记忆隔离、内容安全污点、IM 降级与统一 ASR/TTS 语音（CB-027、CB-045）    | #542 · `v0.1.153`                       | `DESIGN.md` §136 · [CB-027](BACKLOG.md#cb-027) · [CB-045](BACKLOG.md#cb-045)                 |
 | 2026-11-16 | 多图附件与多卡片错落扇形牌组展示、生成式界面自动拆壳升级及 AI 气泡磨砂玻璃一致性修复（CB-128）                                                                                        | `v0.1.152`                              | `DESIGN.md` §135 · [CB-128](BACKLOG.md#cb-128)                                               |

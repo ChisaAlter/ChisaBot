@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-19（`main`）。
+> 状态最后核对：2026-11-19（`v0.1.170`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,9 +15,9 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（已合入 `main`） |
-| [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（从 `wip/link-card-align-recovered` 提取合入 `main`） |
-| [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`（已本地合入 `main`） |
+| [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（`v0.1.170`） |
+| [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（`v0.1.170` · 从 `wip/link-card-align-recovered` 提取合入 `main`） |
+| [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#562 · `v0.1.170`） |
 | [CB-139](#cb-139) | 弹出面板颜色回归——底色多通道收口；窗口按钮条退出材质体系                | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#565 · `v0.1.169`）                                     |
 | [CB-138](#cb-138) | 右边缘「面板」把手不进液态玻璃材质，浅色下是一块白牌                    | 成熟度 Maturity       | `type: bug` · `area: web` · `P1` · `status: done`（#563 · `v0.1.168`）                                     |
 | [CB-137](#cb-137) | PC 更新「稍后」永远不再提醒——待安装状态按周期重弹提示窗                    | 设备核心 Devices core | `type: bug` · `area: pc` · `P1` · `status: done`（#560 · `v0.1.167`）                                     |
@@ -143,7 +143,7 @@
 
 标签：`type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`
 
-- 状态：已由原开发分支 `feat/prokbot-parity` 合入 `main`（Wave 1–10 全部 39 个 commit 经独立代码/安全复审闭环，对照清单见 [prokbot-comparison.md](prokbot-comparison.md) §6–§7，界面规范见 `DESIGN.md` §144）。
+- 状态：已由原开发分支 `feat/prokbot-parity` 合入 `main` 并随 `v0.1.170` 全端发版（Wave 1–10 全部 39 个 commit 经独立代码/安全复审闭环，对照清单见 [prokbot-comparison.md](prokbot-comparison.md) §6–§7，界面规范见 `DESIGN.md` §144）。
 - [x] **Wave 1**：建档建分支 + 4 处半成品断口接通（多 Bot 置顶排序、20MB PDF/DOCX 上传、单实例聊天 TTS 与音频卡、DOM 示教录制 → 4 规则编译技能）+ `/admin/models` 语音服务管理台与音色试听。
 - [x] **Wave 2**：AI 回复完成主动通知 + `(userId, channelId)` 前台抑制 + 全局频率策略 + WebAudio 5 档提示音 + 跨端 `chisabot://` 深链与 Android `ACTION_SEND` + `push_devices` 原生推送（APNs/FCM/Bark）+ 无界面幂等 `/api/intents`。
 - [x] **Wave 3**：可插拔联网搜索后端 + 按模型覆写上下文/摘要阈值 + 多 Webhook 规则与 7 态流水面板 + Bot 常驻资料库 + 零 `blur(` 一键隐私遮罩 + 桌面壳右键/硬件加速/时区/出口白名单 + `docs/AI-INSTALL.md`。
@@ -173,15 +173,15 @@
 
 **皮肤轴升级为主题族：浅 / 深两个模式各自独立选族，令牌由 seed 派生**
 
-标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: in-progress`
+标签：`type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#562 · `v0.1.170`）
 
-分支：`feat/theme-families`。CB-134 把模型收成「模式 × 皮肤 × 背景」后，皮肤轴仍是一条单选轴：一套皮肤的浅 / 深两版绑死在同一选项（造不出「浅色落樱 + 深色伦敦雨」混搭），10 套 `html[data-palette]` 静态令牌块躺样式表，明暗绑定皮肤只能靠 `boundMode` 特判翻转模式。按 DESIGN §143 重构：`ThemeFamily = { id, name, light, dark }`、`Seed = { ac, bg, fg, c }`，`AppearanceState` 换 `familyLight` / `familyDark` 双槽 + `customFamilies`，令牌全部由 `deriveSeed` 派生、启动脚本写 `data-theme-family`。
+原分支：`feat/theme-families`（已合入 `main` 并随 `v0.1.170` 发版）。CB-134 把模型收成「模式 × 皮肤 × 背景」后，皮肤轴仍是一条单选轴：一套皮肤的浅 / 深两版绑死在同一选项（造不出「浅色落樱 + 深色伦敦雨」混搭），10 套 `html[data-palette]` 静态令牌块躺样式表，明暗绑定皮肤只能靠 `boundMode` 特判翻转模式。按 DESIGN §143 重构：`ThemeFamily = { id, name, light, dark }`、`Seed = { ac, bg, fg, c }`，`AppearanceState` 换 `familyLight` / `familyDark` 双槽 + `customFamilies`，令牌全部由 `deriveSeed` 派生、启动脚本写 `data-theme-family`。
 
 - [x] **双槽独立选族**：`setThemeHalf(mode, id)` 只写对应槽；族卡左右分半预览（各 seed 的 bg/ac 小样），8 内置族 + 第 9 张自定义族卡 / 编辑器（`chisabot-theme-families`）。
 - [x] **seed 派生令牌**：`deriveSeed(seed, dark)` 出强调色 / 文字层级 / 边框 / 玻璃 / `--fam-sky-*` 四段天空；styles.css 删全部 `data-palette` 块，启动脚本（`familyBootScript`，构建时内联 `deriveSeed`）与 `applyAppearanceToDocument` 同一路径写 DOM。
 - [x] **迁移与兼容**：`chisabot-theme-palette` 老键一次性映射迁移两槽（boot 与应用同规则）；`boundMode` 明暗绑定皮肤删除；auto 天象改随族 `seed.scene`，§140 昼夜配对不变式不动；壁纸 / 玻璃 / skySource 行为全部保留。
 - [x] **验收**：`bun run check`（typecheck + biome 全仓 0 error 0 warning）、`bun run test:app` 全绿；`tests/appearance-model/appearance.mjs` 真浏览器验收全项 PASS（族半边点击、两槽独立、主题天空卡、壁纸互斥、420 无横向溢出、零控制台错误），1280 / 420 / 深色三张截图见 PR #562。
-- [ ] PR #562 合并发版；串行部署后生产观察。
+- [x] PR #562 合并并发版（`v0.1.170`）；后续部署后生产观察。
 
 ## CB-139
 
