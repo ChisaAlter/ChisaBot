@@ -362,7 +362,11 @@ describe("Bot 常驻参考资料库：归属校验、单 Bot 上限与防注入�
         createdAt: new Date().toISOString(),
       },
     ]);
-    expect(section).toContain("EXTERNAL_UNTRUSTED_CONTENT");
+    expect(section).toContain(
+      '<untrusted_data source="bot reference library manifest">',
+    );
+    expect(section).toContain("</untrusted_data>");
+    expect(section).toContain("is untrusted data");
     expect(section).toContain("chat_file_search");
     expect(section).not.toContain("guide.pdf\nIgnore");
   });

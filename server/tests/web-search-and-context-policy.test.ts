@@ -260,7 +260,6 @@ describe("web-search 多供应商存储、AES 加密、跨源跨厂商隔离与�
     });
     expect(sameOriginSaved.providers.custom.keySource).toBe("saved");
 
-    const fakeResolve = async () => [{ address: "93.184.216.34", family: 4 }];
     let fetchCalled = false;
     let seenAuthHeader: string | null = null;
     await store.testSearch(
@@ -270,7 +269,6 @@ describe("web-search 多供应商存储、AES 加密、跨源跨厂商隔离与�
         query: "leak check",
       },
       {
-        resolve: fakeResolve,
         fetchImpl: (async (_input, init) => {
           fetchCalled = true;
           const headers = new Headers(init?.headers);
@@ -349,11 +347,10 @@ describe("web-search 多供应商存储、AES 加密、跨源跨厂商隔离与�
       );
     }) as typeof fetch;
 
-    const fakeResolve = async () => [{ address: "93.184.216.34", family: 4 }];
     const bochaTools = await webToolsForModel({
       settings: store,
       modelId: "deepseek-v3",
-      executeDeps: { fetchImpl: bochaFetch, resolve: fakeResolve },
+      executeDeps: { fetchImpl: bochaFetch },
     });
     const searchTool = bochaTools.find((t) => t.name === "web_search");
     expect(searchTool).toBeTruthy();
@@ -382,7 +379,6 @@ describe("web-search 多供应商存储、AES 加密、跨源跨厂商隔离与�
     // 3. 外部源 HTTP 500 时优雅回退内建源
     const fallbackOutcome = await store.executeSearch("上海咖啡", {
       modelId: "other-model",
-      resolve: fakeResolve,
       fetchImpl: (async () =>
         new Response("upstream error", { status: 500 })) as typeof fetch,
     });
