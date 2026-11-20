@@ -150,6 +150,7 @@
 | [142](#142-弹出面板与窗口按钮条的材质收口2026-11-19cb-139)                                               | 弹出面板底色单通道收口、窗口按钮条退出材质体系                                                                   | 2026-11-19，CB-139                                                         |
 | [143](#143-主题族双槽独立-seed-派生令牌2026-11-19cb-140)                                                    | 主题族：双槽独立、seed 派生令牌                                                                                  | 2026-11-19，CB-140                                                         |
 | [144](#144-prokbot-全量对标多端-ai-交互体验与底座加固2026-11-19cb-142)                                     | ProkBot 全量对标：多端 AI 交互体验与底座加固（Wave 1–10）                                                         | 2026-11-19，CB-142                                                         |
+| [145](#145-右栏任务底色收口与全站文本可读性统一优化2026-11-20)                                            | 右栏任务底色单通道收口、主题族墨色层级修复与全材质自适应对比度保护                                                 | 2026-11-20                                                                 |
 
 ## 0. 总原则
 
@@ -3020,3 +3021,11 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **主动通知、原生推送与跨端快捷入口**：AI 回复完成触发全局主动通知，按 `(userId, channelId)` 精确抑制前台已打开会话，支持每条/仅任务完成/静音三档频率（`needs-input` 穿透）与 WebAudio 5 档桌面提示音；激活 `push_devices` 支持 APNs / FCM / Bark `curl` 推送；支持 PC Electron 与 Android `chisabot://` 深链、Android `ACTION_SEND` 分享接入及无界面幂等 `/api/intents`。
 - **模型路由、提示词、生态与端侧协同工作台**：在对应设置与管理页收敛交付：联网搜索多后端与在线测连通（`web-search-settings.tsx`）、按模型覆写上下文窗口/摘要阈值、多 Webhook 规则与 7 态流水面板（`webhooks-panel.tsx`）、Bot 常驻参考资料库、自适应任务难度路由与 30 天路由日志/Dry-Run、本地时区/`kind`/`reasoningTokens` 用量账本、热启停脱敏抓包观测器、7 开关 Harness 控制台（`enterprise.tsx`）、7 角色系统提示词版本台（30 版历史/409 乐观锁/LCS Diff/运行态透视）、Bot 配方与多文件技能 ZIP 脱敏分享（`sharing-workbench.tsx`）、技能不可变版本栈/Diff/回滚（`skill-versions-panel.tsx`）、AI 自研微应用（`app-builder` 仅落 `draft` 经审批安装，`app-packages-panel.tsx`）与远程执行节点热切换（`execution-node-panel.tsx`）、本机 Coding Agent 同上下文续接/`needs_input` 追问、`chrome` Cookie 单域名审批导入与 Passkey 转发，以及端侧 500 条脱敏环形诊断日志导出（`diagnostics-export.tsx`）。
 - **端到端性能与材质铁律保持**：全站保持 zero `:has()` / `group-has-*` / 违规 `blur(` 约束，新增隐私遮罩与动画均采用纯色遮罩或 CSS transform/opacity 与 60fps `MotionValue`，通过 `no-group-has` 与 `theme-glass-perf` 等自动门禁。
+
+## 145. 右栏任务底色收口与全站文本可读性统一优化（2026-11-20）
+
+问题：窄窗右栏切到「任务」时整张面板变成近乎纯黑实底，与「面板 / 计算机」的通透玻璃观感割裂；同时在深色模式叠加浅色/自定义壁纸及低薄幕或低雾度配置下，全站次级/弱化文字发虚看不清。根因来自五处叠加缺陷：`tasks-rail-card.css` 对 `.rail-sheet` 单独保留了 `:has(... .task-rail) { background: var(--glass-bg-solid) !important }` 实底覆盖（漏网于 §142 单通道收口）；`deriveSeed` 将过淡的 `--ink-2` / `--ink-4` 直接内联写在 `<html>` 上，不仅造成 `--ink-2` 弱于 `--ink-3` 的层级倒挂，还压死了 `html[data-wallpaper="on"]` 与 `prefers-contrast: more` 的可读性提级；`html.dark[data-theme-family][data-sky-off] #sky-root::after` 把壁纸薄纱减半；深色 `--glass-tint` 与 `.dark .rail-card .glass-card` 叠加白雾漂白暗色面板；且 `mist / crystal / frosted` 三档玻璃未接入 `--lg-aa-boost` 自适应对比度保护。
+
+- **右栏三页签统一单通道底色**：删除 `tasks-rail-card.css` 中 `.rail-sheet[data-slot="sheet-content"]:has(.rail-pane[data-active="true"] .task-rail)` 实底覆盖规则，使「面板 / 任务 / 计算机」在常驻栏与窄窗抽屉里完全共用 `--lg-surface`；深色内嵌卡（`.dark .rail-card .glass-card`、`.dark .task-rail-item`、`.dark .task-rail-empty`、`.dark .computer-status`）与分段槽（`--fill-tertiary`）统一改用暗色半透内层与 1px 细高光边，不再叠加白色薄雾。
+- **主题族墨色单调递增且不遮蔽护栏**：`deriveSeed` 按浅/深色 sRGB 亮度曲线收紧色阶，输出 `--fam-ink-2` / `--fam-ink-3` / `--fam-ink-4`（严格满足 `--ink-1 > --ink-2 > --ink-3 > --ink-4` 且全族在壁纸上达到 WCAG AA ≥ 4.5:1），不再内联覆盖 `<html>` 的 `--ink-2` / `--ink-4`，恢复 `html[data-wallpaper="on"]`、`--sky-muted` 与 `prefers-contrast: more` 的层叠生效；深色 `--glass-tint` 先朝 `seed.bg` 压暗再叠色，避免高亮度强调色漂白暗色玻璃。
+- **壁纸薄纱护栏与全四档玻璃自适应对比度**：将 `styles.css` 中较轻的中性主题天空薄纱限定于 `:not([data-wallpaper="on"])`，壁纸模式维持完整护栏；`crystal / frosted / mist` 三档材质接入 `min(upper, calc(clamp(...) * var(--lg-aa-boost, 1)))`，在常态下 100% 保持原雾度曲线，仅在面板局部压在高亮或极暗背景上时由 `liquid-glass.ts` 按 5×3 采样网格 85%/15% 最不利分位色（`worstBackdropColor`）自动提升 `--lg-aa-boost` 至 WCAG AA，并订阅外观滑块变化实时重采（不给非液态材质挂载透镜或 `data-lg-ink` 翻墨）。

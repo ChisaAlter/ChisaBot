@@ -1,3 +1,8 @@
+## 0.1.172 — 2026-11-20
+
+- 全端发版：`0.1.172`，Android `versionCode 352`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `100230f7caedaf89`；无需手动数据库迁移。
+- **右栏任务面板材质统一与全站文本可读性优化（DESIGN §145）**：删除 `tasks-rail-card.css` 中 `.rail-sheet:has(... .task-rail)` 实黑底覆盖，右栏「面板 / 任务 / 计算机」统一走 `--lg-surface` 且深色内嵌卡改为暗色半透内层；`theme-family.ts` 改为输出严格单调的 `--fam-ink-2/3/4` 与压暗版深色 `--glass-tint`，不再内联遮蔽 `html[data-wallpaper="on"]` 与 `prefers-contrast: more`；`styles.css` 恢复壁纸完整薄纱护栏并为 `mist` / `crystal` / `frosted` 接入 `--lg-aa-boost`；`liquid-glass.ts` 修复 `position: fixed` 面板 `offsetParent === null` 漏采并按 5×3 网格 85%/15% 分位色实时自适应补偿（tasks-rail-card.css · theme-family.ts · styles.css · liquid-glass.ts · contrast-model.ts）。
+
 ## 0.1.171 — 2026-11-19
 
 - 全端发版：`0.1.171`，Android `versionCode 351`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `21dcd6dc82559950`；完整包含 `v0.1.170`（CB-140 / CB-141 / CB-142 Wave 1–10），无需手动数据库迁移。

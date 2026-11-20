@@ -344,9 +344,15 @@ export function deriveSeed(
   /* ---- 对比度 c 驱动的三个量：边框 alpha / 文字弱化 / 玻璃不透明度 ---- */
   const borderPrimary = 0.08 + f * 0.14; // c=46 → ≈0.14（对齐旧默认）
   const borderSecondary = 0.04 + f * 0.07;
-  const ink2 = mixHex(fg, bg, 0.38 - f * 0.14); // secondary 文字
-  const ink4 = mixHex(fg, bg, 0.62 - f * 0.12); // placeholder / 极弱化
+  /* 按 sRGB 亮度衰减分别收紧浅/深色阶，保证 --ink-1 > --ink-2 > --ink-3 > --ink-4 严格递增且均达 WCAG AA；
+   * 仅输出 --fam-ink-2..4 供样式表读取，避免内联 --ink-2/--ink-4 压死壁纸提级与 prefers-contrast 护栏。 */
+  const ink2 = mixHex(fg, bg, (dark ? 0.12 : 0.08) - f * (dark ? 0.06 : 0.04));
+  const ink3 = mixHex(fg, bg, (dark ? 0.2 : 0.14) - f * (dark ? 0.08 : 0.06));
+  const ink4 = mixHex(fg, bg, (dark ? 0.3 : 0.22) - f * (dark ? 0.1 : 0.08));
   const glassBase = mixHex(bg, ac, 0.06 + f * 0.04); // 朝 accent 微偏的玻璃底色
+  const glassTint = dark
+    ? rgbaHex(mixHex(ac, bg, 0.55), 0.12)
+    : rgbaHex(ac, 0.08);
   const glassAlpha = 0.48 + f * 0.16;
   const bubbleUser = mixHex(bg, ac, 0.1 + f * 0.08);
 
@@ -416,10 +422,11 @@ export function deriveSeed(
       "--on-primary": onPrimary,
       "--focus": rgbaHex(ac, 0.24),
       "--focus-line": rgbaHex(ac, 0.6),
-      "--glass-tint": rgbaHex(ac, 0.08),
+      "--glass-tint": glassTint,
       "--ink-1": fg,
-      "--ink-2": ink2,
-      "--ink-4": ink4,
+      "--fam-ink-2": ink2,
+      "--fam-ink-3": ink3,
+      "--fam-ink-4": ink4,
       "--stroke-primary": rgbaHex(fg, borderPrimary),
       "--stroke-secondary": rgbaHex(fg, borderSecondary),
       "--line": rgbaHex(fg, 0.05 + f * 0.07),

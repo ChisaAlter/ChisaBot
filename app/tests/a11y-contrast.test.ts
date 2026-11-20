@@ -6,11 +6,13 @@ import {
   blocks,
   decl,
   type ElementId,
+  FAMILY_IDS,
+  familySurfaceInk,
   lastDecl,
   opaqueSurface,
-  FAMILY_IDS,
   parseColor,
   range,
+  rangeAdaptive,
   SCHEMES,
   type Scheme,
   SURFACES,
@@ -18,7 +20,6 @@ import {
   scrimLayers,
   scrimPainters,
   stylesCss,
-  rangeAdaptive,
   surfaceInk,
   wallpaperSurfaceBackdrops,
 } from "./contrast-model";
@@ -197,5 +198,52 @@ describe("prefers-contrast: more", () => {
           throw new Error(`${token} ${scheme}: ${ratio.toFixed(2)} < 7`);
       }
     }
+  });
+});
+
+describe("theme-family derived inks and rail-sheet surface unity", () => {
+  for (const scheme of SCHEMES)
+    for (const familyId of FAMILY_IDS)
+      test(`runtime derived ink tokens meet WCAG AA on wallpaper (${familyId} / ${scheme})`, () => {
+        for (const id of [
+          "on-wallpaper",
+          "rail-card",
+          "bubble-assistant",
+          "composer",
+        ] as SurfaceId[]) {
+          const backdrops = wallpaperSurfaceBackdrops(id, scheme);
+          for (const ink of ["--ink-1", "--ink-2", "--ink-3", "--ink-4"]) {
+            const { min } = rangeAdaptive(
+              (s) => familySurfaceInk(familyId, s, ink),
+              backdrops,
+            );
+            if (!(min >= AA))
+              throw new Error(
+                `${familyId} ${id} ${ink} wallpaper/${scheme}: ${min.toFixed(2)} < ${AA}`,
+              );
+            expect(min).toBeGreaterThanOrEqual(AA);
+          }
+        }
+      });
+
+  test("tasks-rail-card.css does not override .rail-sheet background or use :has() on the drawer", () => {
+    const tasksCss = readFileSync(
+      path.join(
+        import.meta.dir,
+        "../src/components/panels/tasks-rail-card.css",
+      ),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(tasksCss).not.toContain(".rail-sheet");
+    expect(tasksCss).not.toContain(":has(");
+  });
+
+  test("theme-sky lighter neutral veil excludes active wallpapers", () => {
+    expect(stylesCss).toContain(
+      'html.dark[data-theme-family][data-sky-off]:not([data-wallpaper="on"]) #sky-root::after',
+    );
+    expect(stylesCss).toContain(
+      'html[data-theme-family][data-sky-off]:not([data-wallpaper="on"]):not(.dark) #sky-root::after',
+    );
   });
 });
