@@ -1,3 +1,8 @@
+## 0.1.176 — 2026-11-20
+
+- 全端发版：`0.1.176`，Android `versionCode 356`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `d8d946f4939e3ee8`；无需手动数据库迁移。
+- **窗口拉伸保留磨砂玻璃与液态玻璃拉伸暂停（DESIGN §148）**：删除 `app/src/resize-pause.css` 并移除 `main.tsx` 导入，仅保留 `initResizeState()` 供高开销后台渲染暂停；`liquid-glass.ts` 订阅 `subscribeResizing` 并在解码完成后原子替换 `data-lg-lens`（resize-pause.css · main.tsx · resize-state.ts · liquid-glass.ts · resize-pause.test.ts · liquid-glass-screen-ink.test.ts）。同时调轻 `.dark [data-slot="dialog-overlay"]` 至 `rgba(8, 12, 20, 0.22)` 并合并右栏「任务」顶栏为单一「任务中心」按钮（styles.css · tasks-rail-card.tsx · theme-glass-perf.test.tsx · task-center-board.test.tsx）。
+
 ## 0.1.175 — 2026-11-20
 
 - 全端发版：`0.1.175`，Android `versionCode 355`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `18fca7763cc3ad9d`；无需手动数据库迁移。

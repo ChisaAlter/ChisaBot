@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.176 — 2026-11-20
+
+全端版本 `0.1.176`，Android `versionCode 356`：消除窗口横向拉伸时的全屏闪烁与磨砂玻璃 ↔ 纯黑实底跳变（DESIGN.md §148），调轻深色弹窗遮罩并收束右栏任务顶栏入口（DESIGN.md §147）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `d8d946f4939e3ee8`；无需手动数据库迁移。
+
+- **窗口拉伸保留磨砂玻璃与液态玻璃拉伸暂停（DESIGN.md §148）**：删除 `app/src/resize-pause.css` 并移除 `main.tsx` 导入，保留 `initResizeState()` 仅用于 WebGL 天空与液态玻璃暂停后台重绘；`liquid-glass.ts` 订阅 `subscribeResizing` 与检查 `resizeInProgress()`，拉伸期间暂停采样/扫描、停稳后补扫，并通过微任务合批样式写入与异步解码完成后原子切换 `data-lg-lens` 消除 `liquid` 模式白闪/卡顿。新增 `resize-pause.test.ts` 与 `liquid-glass-screen-ink.test.ts` 回归门。
+- **深色弹窗遮罩通透度与右栏任务顶栏收束（DESIGN.md §147）**：`.dark [data-slot="dialog-overlay"]` 调轻至 `rgba(8, 12, 20, 0.22)` 以避免压暗半透明磨砂弹窗；`TasksRailCard` 移除重复「看板」按钮，只保留「+ 新建」与「任务中心」（无待确认审批和进行中任务时直达看板）。
+
 ## 0.1.175 — 2026-11-20
 
 全端版本 `0.1.175`，Android `versionCode 355`：全站所有弹窗、菜单、抽屉与业务浮层统一接入玻璃材质与深浅色设置通道（DESIGN.md §147），彻底消除账号菜单、个人资料、任务详情、模型/权限选择器、快速搜索等弹层脱离外观设置的割裂感。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `18fca7763cc3ad9d`；无需手动数据库迁移。
