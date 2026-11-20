@@ -79,7 +79,7 @@ afterEach(() => {
 afterAll(async () => {
   await settleReactWork();
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  GlobalRegistrator.unregister();
+  await GlobalRegistrator.unregister();
 });
 
 test("version-skew helpers compute dual-version label only when bundled PC UI is ahead of server", () => {

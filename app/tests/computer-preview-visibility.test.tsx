@@ -136,7 +136,7 @@ afterAll(async () => {
   } else {
     Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
   }
-  GlobalRegistrator.unregister();
+  await GlobalRegistrator.unregister();
 });
 
 function setVisibility(state: DocumentVisibilityState) {
