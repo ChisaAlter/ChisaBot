@@ -26,6 +26,32 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") window.chisa.invoke("update:answer", { restart: false });
   });
+  const card = $("card");
+  const backdropImg = $("backdrop-img");
+  let backdropSeq = 0;
+  function applyBackdrop(data) {
+    if (!card || !backdropImg) return;
+    if (!data?.url) {
+      backdropSeq += 1;
+      card.classList.remove("has-backdrop");
+      backdropImg.removeAttribute("src");
+      return;
+    }
+    const seq = ++backdropSeq;
+    const probe = new Image();
+    probe.onload = () => {
+      if (seq !== backdropSeq) return;
+      backdropImg.style.left = `${data.drawX}px`;
+      backdropImg.style.top = `${data.drawY}px`;
+      backdropImg.style.width = `${data.drawW}px`;
+      backdropImg.style.height = `${data.drawH}px`;
+      backdropImg.src = data.url;
+      card.classList.add("has-backdrop");
+    };
+    probe.src = data.url;
+  }
+  window.chisa.onUpdateBackdrop?.(applyBackdrop);
+
   // 提示窗跟着主窗口放（小窗里会变窄）：量出内容的自然高度报给主进程，窗口高度贴合内容（DESIGN.md §36.5）。
   const fit = () => fitDialog("update:fit");
   let last = 0;

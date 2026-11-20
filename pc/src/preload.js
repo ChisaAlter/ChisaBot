@@ -31,4 +31,9 @@ contextBridge.exposeInMainWorld("chisa", {
     ipcRenderer.on("state:changed", listener);
     return () => ipcRenderer.removeListener("state:changed", listener);
   },
+  onUpdateBackdrop(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("update:backdrop", listener);
+    return () => ipcRenderer.removeListener("update:backdrop", listener);
+  },
 });

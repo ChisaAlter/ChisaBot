@@ -51,6 +51,7 @@ const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
 const { animateWindowBounds, createCompactController } = require("./compact-window");
 const { computeUpdateBounds } = require("./update-placement");
+const { expandUpdateWindowBounds, computeBackdropCrop } = require("./update-backdrop");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
 const desktopPrefs = require("./desktop-prefs");
@@ -1189,17 +1190,20 @@ function openUpdateWindow() {
   if (updater?.state.status !== "downloaded") return false;
   if (updateWindow && !updateWindow.isDestroyed()) {
     placeUpdateWindow();
+    void captureUpdateBackdrop({ force: true });
     updateWindow.show();
     updateWindow.focus();
     return true;
   }
   updateContentHeight = updater.state.fullInstall ? 280 : 260;
+  updateBackdropKey = "";
   const initial = currentUpdateBounds();
+  const winBounds = expandUpdateWindowBounds(initial, FRAME);
   updateWindow = new BrowserWindow({
-    x: initial.x,
-    y: initial.y,
-    width: initial.width,
-    height: initial.height,
+    x: winBounds.x,
+    y: winBounds.y,
+    width: winBounds.width,
+    height: winBounds.height,
     ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
     parent: initial.chat || undefined,
     alwaysOnTop: !initial.attached,
@@ -1207,13 +1211,15 @@ function openUpdateWindow() {
     title: "ChisaBot · 新版本",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
   });
-  dialogWidth.set(updateWindow, initial.width);
+  dialogWidth.set(updateWindow, winBounds.width);
   updateWindow.loadFile(path.join(UI, "update.html"), { query: windowChrome.frameQuery(FRAME) });
+  updateWindow.on("move", () => scheduleUpdateBackdrop(40));
   showAfterFit(updateWindow, () => {
     placeUpdateWindow();
-    updateWindow?.showInactive();
+    void showUpdateWindowWithBackdrop();
   });
   updateWindow.on("closed", () => {
+    clearUpdateBackdropSync();
     updateWindow = null;
   });
   return true;
@@ -1221,6 +1227,111 @@ function openUpdateWindow() {
 
 /** 提示窗内容的实际高度（update.js 量好后报上来，update:fit）。 */
 let updateContentHeight = 260;
+let updateBackdropSeq = 0;
+let updateBackdropTimer = null;
+let updateBackdropKey = "";
+let updateBackdropChat = null;
+let updateBackdropInputHandler = null;
+
+function detachUpdateBackdropChat() {
+  if (updateBackdropChat && !updateBackdropChat.isDestroyed() && updateBackdropInputHandler) {
+    updateBackdropChat.webContents.removeListener("input-event", updateBackdropInputHandler);
+  }
+  updateBackdropChat = null;
+  updateBackdropInputHandler = null;
+}
+
+function attachUpdateBackdropChat(chat) {
+  if (updateBackdropChat === chat) return;
+  detachUpdateBackdropChat();
+  if (!chat || chat.isDestroyed()) return;
+  const onInput = (_event, input) => {
+    if (input?.type === "mouseWheel" || input?.type === "mouseUp" || input?.type === "keyUp") {
+      scheduleUpdateBackdrop(140, { force: true });
+    }
+  };
+  chat.webContents.on("input-event", onInput);
+  updateBackdropChat = chat;
+  updateBackdropInputHandler = onInput;
+}
+
+function clearUpdateBackdropSync() {
+  if (updateBackdropTimer) {
+    clearTimeout(updateBackdropTimer);
+    updateBackdropTimer = null;
+  }
+  updateBackdropSeq += 1;
+  updateBackdropKey = "";
+  detachUpdateBackdropChat();
+}
+
+function scheduleUpdateBackdrop(delayMs = 50, { force = false } = {}) {
+  if (!updateWindow || updateWindow.isDestroyed()) return;
+  if (updateBackdropTimer) clearTimeout(updateBackdropTimer);
+  if (delayMs <= 0) {
+    updateBackdropTimer = null;
+    void captureUpdateBackdrop({ force });
+    return;
+  }
+  updateBackdropTimer = setTimeout(() => {
+    updateBackdropTimer = null;
+    void captureUpdateBackdrop({ force });
+  }, delayMs);
+}
+
+async function captureUpdateBackdrop({ force = false } = {}) {
+  const win = updateWindow;
+  if (!win || win.isDestroyed()) return;
+  const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
+  const attached = Boolean(chat?.isVisible() && !chat.isMinimized() && win.getParentWindow() === chat);
+  if (!attached) {
+    if (updateBackdropKey !== "detached" || force) {
+      updateBackdropKey = "detached";
+      updateBackdropSeq += 1;
+      if (!win.isDestroyed()) win.webContents.send("update:backdrop", null);
+    }
+    return;
+  }
+  const { pad } = expandUpdateWindowBounds({ x: 0, y: 0, width: 0, height: 0 }, FRAME);
+  const crop = computeBackdropCrop({
+    chatContent: chat.getContentBounds(),
+    winBounds: win.getBounds(),
+    pad,
+  });
+  if (!crop) {
+    if (updateBackdropKey !== "detached" || force) {
+      updateBackdropKey = "detached";
+      updateBackdropSeq += 1;
+      if (!win.isDestroyed()) win.webContents.send("update:backdrop", null);
+    }
+    return;
+  }
+  if (!force && crop.key === updateBackdropKey) return;
+  updateBackdropKey = crop.key;
+  const seq = ++updateBackdropSeq;
+  try {
+    const img = await chat.webContents.capturePage(crop.rect);
+    if (seq !== updateBackdropSeq || !updateWindow || updateWindow !== win || win.isDestroyed()) return;
+    const jpeg = img.toJPEG(85);
+    if (!jpeg?.length) return;
+    win.webContents.send("update:backdrop", {
+      url: `data:image/jpeg;base64,${jpeg.toString("base64")}`,
+      drawX: crop.drawX,
+      drawY: crop.drawY,
+      drawW: crop.drawW,
+      drawH: crop.drawH,
+    });
+  } catch {
+    // 截屏失败（窗口刚切换或渲染暂停）时静默保持磨砂兜底色，不影响更新弹窗交互。
+  }
+}
+
+async function showUpdateWindowWithBackdrop() {
+  const win = updateWindow;
+  if (!win || win.isDestroyed()) return;
+  await Promise.race([captureUpdateBackdrop({ force: true }), new Promise((resolve) => setTimeout(resolve, 180))]);
+  if (updateWindow === win && !win.isDestroyed()) win.showInactive();
+}
 
 /**
  * 提示窗位置（DESIGN.md §36.5，update-placement.js）：主窗口看得见就挂在主窗口里（子窗口、正中央居中、跟着走）；
@@ -1229,15 +1340,18 @@ let updateContentHeight = 260;
 function placeUpdateWindow() {
   if (!updateWindow || updateWindow.isDestroyed()) return;
   const b = currentUpdateBounds();
+  const winBounds = expandUpdateWindowBounds(b, FRAME);
   if (b.attached) {
     if (updateWindow.getParentWindow() !== b.chat) updateWindow.setParentWindow(b.chat);
     updateWindow.setAlwaysOnTop(false);
+    attachUpdateBackdropChat(b.chat);
   } else {
     if (updateWindow.getParentWindow()) updateWindow.setParentWindow(null);
     updateWindow.setAlwaysOnTop(true);
+    detachUpdateBackdropChat();
   }
-  dialogWidth.set(updateWindow, b.width);
-  updateWindow.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+  dialogWidth.set(updateWindow, winBounds.width);
+  updateWindow.setBounds({ x: winBounds.x, y: winBounds.y, width: winBounds.width, height: winBounds.height });
   // 小数缩放（125% / 150%）下 Win32 实际分配宽高可能差几 px：按真实尺寸二次对齐中心，消除视觉偏斜。
   if (b.attached) {
     const actual = updateWindow.getBounds();
@@ -1247,6 +1361,7 @@ function placeUpdateWindow() {
       updateWindow.setPosition(cx, cy);
     }
   }
+  scheduleUpdateBackdrop(b.attached ? 50 : 0);
 }
 
 function installUpdateNow() {
@@ -1746,6 +1861,7 @@ function registerIpc() {
       config.set({ appearance: next });
       nativeTheme.themeSource = next.dark === null ? "system" : next.dark ? "dark" : "light";
       broadcast("appearance");
+      if (updateWindow && !updateWindow.isDestroyed()) scheduleUpdateBackdrop(120, { force: true });
     }
     return true;
   });

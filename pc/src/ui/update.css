@@ -1,0 +1,258 @@
+/*
+ * 在线更新提示窗（update.html）：对齐主窗口的磨砂 + 大圆角玻璃质感。
+ * 加载顺序在 chrome.css 之后，仅作用于 body.update-page，不影响登录 / 审批 / 本机确认。
+ */
+:root {
+  --r-update: 28px;
+  --update-shadow-pad: 28px;
+}
+
+/* 去掉 skyglass-tokens 的不透明天空渐变与星星层、chrome.css 的 8px 裁切与深色硬边，由 .update-card 自己承载大圆角与投影。 */
+body.update-page,
+.dark body.update-page {
+  background: transparent;
+  background-color: transparent;
+  border-radius: 0;
+  clip-path: none;
+  padding: 0;
+}
+body.update-page::before,
+html[data-frame="clip"] body.update-page::after {
+  display: none;
+}
+
+html[data-frame="clip"] body.update-page {
+  padding: var(--update-shadow-pad);
+}
+
+.update-page .update-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  backdrop-filter: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-frame="clip"] .update-page .update-card {
+  border-radius: var(--r-update);
+  box-shadow:
+    0 8px 20px rgba(15, 23, 42, 0.14),
+    0 2px 6px rgba(15, 23, 42, 0.08);
+}
+
+html[data-frame="clip"].dark .update-page .update-card {
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.36),
+    0 2px 6px rgba(0, 0, 0, 0.22);
+}
+
+/* 底层实时主窗口背景切片：附着于主窗口时由主进程 capturePage 推送，配合 32px 溢出边做平滑高斯模糊。 */
+.update-backdrop {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.update-backdrop-img {
+  position: absolute;
+  max-width: none;
+  display: block;
+  filter: blur(24px) saturate(175%);
+  opacity: 0;
+  transition: opacity 160ms var(--ease-out);
+  will-change: opacity;
+}
+
+.update-card.has-backdrop .update-backdrop-img {
+  opacity: 1;
+}
+
+/* 磨砂罩层 + 柔和顶部高光：中性灰白/深炭磨砂（去深蓝天底），贴近主窗口无硬边框的悬浮毛玻璃质感。 */
+.update-frost {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(245, 247, 251, 0.94) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 0 0 1px rgba(29, 29, 31, 0.08);
+}
+
+.update-card.has-backdrop .update-frost {
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.66) 0%,
+    rgba(246, 248, 252, 0.54) 54%,
+    rgba(255, 255, 255, 0.64) 100%
+  );
+}
+
+.dark .update-frost {
+  background: linear-gradient(
+    150deg,
+    rgba(38, 40, 46, 0.9) 0%,
+    rgba(26, 28, 34, 0.92) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.dark .update-card.has-backdrop .update-frost {
+  background: linear-gradient(
+    150deg,
+    rgba(32, 33, 38, 0.54) 0%,
+    rgba(22, 23, 28, 0.46) 54%,
+    rgba(28, 29, 34, 0.54) 100%
+  );
+}
+
+.update-content {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 26px 22px;
+}
+
+.update-page.is-measuring .update-content {
+  flex: none;
+}
+
+/* 图标块：与 28px 卡片圆角形成同心曲率。 */
+.update-page .sg-ico.is-accent {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  color: #2563eb;
+  background: rgba(47, 116, 240, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.dark .update-page .sg-ico.is-accent {
+  color: #93c5fd;
+  background: rgba(96, 165, 250, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* 文案层级与光学微投影（对齐主窗口磨砂可读性，避免亮壁纸透出时字缘发虚）。 */
+.update-page .t-eyebrow {
+  color: rgba(29, 29, 31, 0.56);
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
+}
+
+.update-page .dialog-title {
+  color: #1d1d1f;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
+}
+
+.update-page .dialog-desc {
+  margin: 14px 0 18px;
+  color: rgba(29, 29, 31, 0.78);
+  line-height: 1.62;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+.dark .update-page .t-eyebrow {
+  color: rgba(235, 240, 248, 0.72);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
+}
+
+.dark .update-page .dialog-title {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
+}
+
+.dark .update-page .dialog-desc {
+  color: rgba(242, 245, 250, 0.88);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
+}
+
+/* 按钮：磨砂次按钮 + 实心高对比主按钮，胶囊圆角与 24px 大圆角卡片协调。 */
+.update-page .dialog-f {
+  gap: 10px;
+}
+
+.update-page .dialog-f .btn {
+  height: 38px;
+  padding: 0 20px;
+  min-width: 100px;
+  text-shadow: none;
+}
+
+.update-page .btn.outline {
+  color: #1d1d1f;
+  background: rgba(29, 29, 31, 0.06);
+  border-color: rgba(29, 29, 31, 0.1);
+}
+
+.update-page .btn.outline:hover {
+  background: rgba(29, 29, 31, 0.11);
+}
+
+.dark .update-page .btn.outline {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.dark .update-page .btn.outline:hover {
+  background: rgba(255, 255, 255, 0.17);
+}
+
+.update-page .btn:not(.outline) {
+  color: #ffffff;
+  background: #1d1d1f;
+  box-shadow: 0 4px 14px rgba(29, 29, 31, 0.18);
+}
+
+.update-page .btn:not(.outline):hover {
+  background: #2c2c30;
+}
+
+.dark .update-page .btn:not(.outline) {
+  color: #16181d;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.dark .update-page .btn:not(.outline):hover {
+  background: #ffffff;
+}
+
+.update-page .btn[data-state="success"] {
+  background: var(--success);
+  color: #ffffff;
+}
+
+.update-page .btn[data-state="error"] {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .update-backdrop {
+    display: none;
+  }
+  .update-frost,
+  .update-card.has-backdrop .update-frost,
+  .dark .update-frost,
+  .dark .update-card.has-backdrop .update-frost {
+    background: var(--glass-bg-solid);
+  }
+}

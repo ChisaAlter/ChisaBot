@@ -2,30 +2,37 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
 <title>ChisaBot · 新版本</title>
 <link rel="stylesheet" href="skyglass-tokens.css" />
 <link rel="stylesheet" href="ui.css" />
 <link rel="stylesheet" href="dialog.css" />
 <link rel="stylesheet" href="chrome.css" />
+<link rel="stylesheet" href="update.css" />
 <script src="chrome.js"></script>
 </head>
 <body class="dialog-page update-page">
   <!-- 在线更新（updater.js）：新版本在后台下载好后弹出。立即重启 = 退出并静默安装，装好后自动重新打开；稍后 = 下次退出时安装。
        需要重新安装（外壳指纹变了）时标题换成「此更新需要重新安装，以更新图标/组件」，按钮「重新安装」（update.js）。 -->
-  <main class="auth-card dialog enter">
-    <header class="dialog-h drag">
-      <span class="sg-ico is-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></span>
-      <div class="dialog-ht">
-        <div class="t-eyebrow">ChisaBot · 在线更新</div>
-        <div class="dialog-title" id="title">新版本已下载，重启以安装</div>
-      </div>
-    </header>
-    <p class="dialog-desc" id="desc"></p>
-    <footer class="dialog-f">
-      <button id="later" class="btn outline" type="button">稍后</button>
-      <button id="restart" class="btn" type="button">立即重启</button>
-    </footer>
+  <main class="auth-card dialog update-card enter" id="card">
+    <div class="update-backdrop" aria-hidden="true">
+      <img class="update-backdrop-img" id="backdrop-img" alt="" />
+    </div>
+    <div class="update-frost" aria-hidden="true"></div>
+    <div class="update-content">
+      <header class="dialog-h drag">
+        <span class="sg-ico is-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></span>
+        <div class="dialog-ht">
+          <div class="t-eyebrow">ChisaBot · 在线更新</div>
+          <div class="dialog-title" id="title">新版本已下载，重启以安装</div>
+        </div>
+      </header>
+      <p class="dialog-desc" id="desc"></p>
+      <footer class="dialog-f">
+        <button id="later" class="btn outline" type="button">稍后</button>
+        <button id="restart" class="btn" type="button">立即重启</button>
+      </footer>
+    </div>
   </main>
 <script src="sky.js"></script>
 <script src="ui.js"></script>
