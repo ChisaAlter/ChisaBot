@@ -458,7 +458,14 @@ export type ServerToDevice =
     }
   | { type: "cancel"; id: string }
   | { type: "revoked" }
-  | { type: "ping" };
+  | { type: "ping" }
+  | {
+      type: "check_update";
+      /** 服务端已知的最新 PC 客户端版本号（仅作去重/日志参考；客户端始终以自身更新源 + Ed25519 验签为准）。 */
+      version?: string;
+      /** 触发原因（release_watch / hello_behind / admin_push）。 */
+      reason?: string;
+    };
 
 /** 打开就等于运行的文件类型（CB-030）。和 pc/src/agent/open-target.js 的 EXECUTABLE_EXT 一致。 */
 export const OPEN_EXECUTABLE_EXT: ReadonlySet<string> = new Set(

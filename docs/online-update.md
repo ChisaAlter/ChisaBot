@@ -41,11 +41,12 @@ ChisaBot 的共用网页、Windows / Android 外壳和服务器有各自的更�
 - **安装包没有代码签名**：`build.win.verifyUpdateCodeSignature = false`（`app-update.yml` 里就不写 `publisherName`）。
   electron-updater 6.8.9 在没有 `publisherName` 时根本不调用 `verifyUpdateCodeSignature`，`pc/src/updater.js` 里把它设成通过只是两边一致。
   代码签名（Authenticode）是第二阶段，暂缓；以后有了证书：去掉这两处，配置 `win.signtoolOptions.publisherName`。
-- 行为（`pc/src/updater.js`）：开着「自动更新」（默认开）时启动 30 秒后检查一次、之后每 30 分钟一次；发现新版本就在
-  后台下载；下载好后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
-  **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。
-  「已下载待安装」不冻结检查（CB-136）：复查临时关 `autoDownload`，同版本不重复拉包，源上出现更新版本就顶掉待安装的重新下载；复查失败或源上已无更新都保留待安装状态。
-  待安装不沉默（CB-137）：提示窗关掉后每 4 小时重弹一次（30 分钟滴答检查），常驻托盘不退出的客户端也会持续被提醒，直到安装或被更新版本顶掉。
+- 行为（`pc/src/updater.js` + `server/src/devices/pc-release-watcher.ts`）：
+  - **实时推送**：服务端通过条件 GET（`If-None-Match` / `If-Modified-Since`）每 2 分钟轻量监听 `CHISABOT_PC_UPDATE_FEED_URL`（默认 GitHub Releases `latest.yml`，零在线桌面端时零请求），一旦发现新版本立刻经既有设备 WebSocket（`DeviceHub`）广播 `{ type: "check_update", version }` 唤醒所有落后版本的在线桌面端；设备重连 `hello` 时若落后也会立刻收到单播提醒；管理员也可在管理后台「系统更新」点「推送桌面端更新」（`POST /api/devices/push-update`）秒级广播。安全边界不变：服务端只推送触发信号，不指定下载 URL，客户端始终按自身 `updateFeed` 与 Ed25519 公钥验签下载。
+  - **本机兜底与即时反馈**：开着「自动更新」（默认开）时，启动 30 秒后检查一次、之后每 10 分钟兜底检查一次，窗口重新聚焦 / 休眠唤醒 / 屏幕解锁（5 分钟节流）以及嗅探到服务器版本更高时也会自动触发检查；发现新版本开始后台下载时立即发一条轻量系统通知并在托盘显示下载进度，下载并验签完成后弹本机窗口（`src/ui/update.html`，Skyglass 对话框）「新版本已下载，重启以安装」：
+    **立即重启**（`quitAndInstall(静默, 装完自动打开)`）/ **稍后**（下次退出时自动安装）。托盘菜单多一项「重启以安装」。
+  - 「已下载待安装」不冻结检查（CB-136）：复查临时关 `autoDownload`，同版本不重复拉包，源上出现更新版本就顶掉待安装的重新下载；复查失败或源上已无更新都保留待安装状态。
+  - 待安装不沉默（CB-137）：提示窗关掉后每 4 小时重弹一次（30 分钟滴答检查），常驻托盘不退出的客户端也会持续被提醒，直到安装或被更新版本顶掉。
 - 网页 偏好设置 → 设备 → 这台电脑（「本机」标签）：「自动更新」开关、「客户端版本」行（当前 / 新版本 / 状态 / 下载进度）
   - 「检查更新」或「立即重启以安装」。关掉自动更新只停定时检查，手动检查照样能下载。
 - 新 IPC 都经过来源检查：`pc:check-update`、`pc:install-update` 走 `handleWeb`（主窗口 + 顶层框架 + 已登录服务器）；

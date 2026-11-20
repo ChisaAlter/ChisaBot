@@ -1,6 +1,7 @@
 import {
   IconAlertTriangle,
   IconArrowBackUp,
+  IconBellRinging,
   IconBrandGithub,
   IconCheck,
   IconCloudDownload,
@@ -35,6 +36,7 @@ import {
   StatTile,
 } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
+import { toast } from "@/components/ui/toast";
 import { type AdminSmokeResult, runAdminSmoke } from "@/lib/admin-smoke";
 import {
   setToolActivityVisible,
@@ -44,6 +46,7 @@ import { runtimeKernelQueryOptions } from "@/lib/runtime-kernel";
 import {
   durationText,
   loadSystemUpdate,
+  pushDesktopUpdateCheck,
   requestSystemUpdate,
   shortSha,
   systemUpdateKeys,
@@ -147,24 +150,61 @@ function SystemUpdatePage() {
     { errorToast: (error) => error.message },
   );
 
+  const pushDesktop = useAsyncAction(
+    async () => {
+      const result = await pushDesktopUpdateCheck();
+      const ver = result.version ? ` v${result.version}` : "";
+      if (result.totalOnline === 0) {
+        toast.info(`当前没有在线的桌面端${ver ? `（已记录最新${ver}）` : ""}。`);
+        return;
+      }
+      if (result.notified > 0) {
+        toast.success(
+          `已向 ${result.notified} 台在线桌面端推送${ver}更新检查${result.skipped > 0 ? `（另有 ${result.skipped} 台已是最新）` : ""}。`,
+        );
+      } else {
+        toast.info(
+          `在线的 ${result.totalOnline} 台桌面端均已是最新${ver}，无需重复推送。`,
+        );
+      }
+    },
+    { errorToast: (error) => error.message },
+  );
+
   return (
     <PageShell
       action={
-        <Button
-          disabled={!data?.configured}
-          feedback={{
-            pending: "检查中…",
-            success: "已检查",
-            error: "检查失败",
-          }}
-          onClick={() => void check.run()}
-          size="sm"
-          state={check.state}
-          variant="outline"
-        >
-          <IconCloudDownload />
-          {"检查更新"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            feedback={{
+              pending: "推送中…",
+              success: "已推送",
+              error: "推送失败",
+            }}
+            onClick={() => void pushDesktop.run()}
+            size="sm"
+            state={pushDesktop.state}
+            variant="outline"
+          >
+            <IconBellRinging />
+            {"推送桌面端更新"}
+          </Button>
+          <Button
+            disabled={!data?.configured}
+            feedback={{
+              pending: "检查中…",
+              success: "已检查",
+              error: "检查失败",
+            }}
+            onClick={() => void check.run()}
+            size="sm"
+            state={check.state}
+            variant="outline"
+          >
+            <IconCloudDownload />
+            {"检查更新"}
+          </Button>
+        </div>
       }
       description="查看正在运行的版本和 GitHub main 上的新提交，一键更新或回滚。更新由宿主机上的更新程序执行：先备份数据库，再构建、切换、做健康检查，失败会自动回滚。"
       title="系统更新"

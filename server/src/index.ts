@@ -295,6 +295,7 @@ import {
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
 import { createDeviceHub } from "./devices/hub";
+import { createPcReleaseWatcher } from "./devices/pc-release-watcher";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
@@ -1779,6 +1780,16 @@ const deviceHub = createDeviceHub({
   store: deviceStore,
   confirm: confirmations.deviceHook,
 });
+const pcReleaseWatcher = createPcReleaseWatcher({
+  hub: deviceHub,
+  feedUrl: config.pcUpdateFeedUrl,
+  intervalMs: config.pcUpdateWatchIntervalMs,
+  runningVersion: readRunningBuild().version,
+});
+deviceHub.setLatestClientVersionProvider(() =>
+  pcReleaseWatcher.getKnownLatestVersion(),
+);
+if (!config.isTestRuntime) pcReleaseWatcher.start();
 confirmations.setDeviceDecider((approvalId, approved) =>
   deviceHub.decide(approvalId, approved, "web"),
 );
@@ -6389,6 +6400,7 @@ const app = createApp(
           requireUser,
           auditStore: bootAuditStore,
           toolsFor: (actorId, botId) => deviceToolsFor(actorId, botId),
+          checkPcRelease: (opts) => pcReleaseWatcher.checkNow(opts),
           ...(config.appDistDir ? { appDistDir: config.appDistDir } : {}),
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
@@ -6835,6 +6847,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     liveConnections.closeAll("shutdown");
     void flushOpsMetrics().catch(() => {});
     responsibilitySweep.stop();
+    pcReleaseWatcher.stop();
     livePanelService.stop();
     wakeUpSweep.stop();
     schedules.stop();

@@ -463,6 +463,12 @@ function createNodeAgent(options) {
       case "ping":
         send({ type: "pong" });
         return;
+      case "check_update":
+        events.emit("check_update", {
+          version: typeof message.version === "string" ? message.version.trim() : "",
+          reason: typeof message.reason === "string" ? message.reason.trim() : "",
+        });
+        return;
       default:
         // 本地 agent 运行时（agent-runtime/）等扩展：不认识的消息交给它。
         if (options.onExtra) options.onExtra(message);

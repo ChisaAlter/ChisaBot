@@ -9,6 +9,7 @@ import {
   OPERATION_LABEL,
   type ServerToDevice,
 } from "../../../shared/devices";
+import { compareSemver } from "../../../shared/system-update";
 import { redactText } from "../computer/activity-redact";
 import { TOOL_STOPPED_ZH } from "../confirmations/context";
 import { isMobilePlatform, MOBILE_ONLINE_WINDOW_MS } from "./pairing";
@@ -73,6 +74,10 @@ type Connection = {
   ip: string | null;
   /** hello.features（0.1.8 起）；旧客户端为 null。 */
   features: Set<string> | null;
+  /** 设备上报的客户端版本（例如 0.1.172）；未上报时为 null。 */
+  clientVersion: string | null;
+  /** 设备平台（win32 / darwin / linux 等）。 */
+  platform: string | null;
 };
 
 type Approval = {
@@ -178,6 +183,8 @@ export function createDeviceHub(options: {
   approvalTtlMs?: number;
   defaultTimeoutMs?: number;
   now?: () => number;
+  /** 可选：返回服务端当前已知的最新桌面端版本号，用于设备连上 hello 时即时推送更新提醒。 */
+  getLatestClientVersion?: () => string | null;
 }) {
   const { store } = options;
   const now = options.now ?? Date.now;
@@ -189,6 +196,7 @@ export function createDeviceHub(options: {
   let confirm = options.confirm;
   const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let extension: DeviceHubExtension | null = null;
+  let getLatestClientVersion = options.getLatestClientVersion ?? null;
 
   function send(connection: Connection | undefined, message: ServerToDevice) {
     if (!connection) return false;
@@ -526,6 +534,8 @@ export function createDeviceHub(options: {
         lastTouch: now(),
         ip,
         features: null,
+        clientVersion: record.clientVersion ?? null,
+        platform: record.platform ?? null,
       };
       connections.set(record.id, connection);
       scheduleExpiry(record);
@@ -575,6 +585,15 @@ export function createDeviceHub(options: {
                 connection.features = new Set(
                   features.filter((f) => typeof f === "string").slice(0, 200),
                 );
+              if (
+                typeof facts.clientVersion === "string" &&
+                facts.clientVersion.trim()
+              ) {
+                connection.clientVersion = facts.clientVersion.trim();
+              }
+              if (typeof facts.platform === "string" && facts.platform.trim()) {
+                connection.platform = facts.platform.trim();
+              }
               await store.touch(record.id, { ip: connection.ip, ...facts });
               // PC 0.1.7 起带上默认文件夹（桌面 / 文档 / 下载）；只在列表为空、从没被人改过时采用。
               if (Array.isArray(suggestedRoots) && store.seedRoots)
@@ -582,6 +601,18 @@ export function createDeviceHub(options: {
                   .seedRoots(record.id, suggestedRoots)
                   .catch(() => false);
               await pushConfig(record.id);
+              const latest = getLatestClientVersion?.()?.trim() || null;
+              if (
+                latest &&
+                connection.clientVersion &&
+                compareSemver(latest, connection.clientVersion) > 0
+              ) {
+                send(connection, {
+                  type: "check_update",
+                  version: latest,
+                  reason: "hello_behind",
+                });
+              }
               void Promise.resolve(extension?.onHello?.(record)).catch(
                 () => {},
               );
@@ -716,6 +747,56 @@ export function createDeviceHub(options: {
 
     setExtension(next: DeviceHubExtension | null) {
       extension = next;
+    },
+
+    setLatestClientVersionProvider(
+      provider: (() => string | null) | null,
+    ) {
+      getLatestClientVersion = provider;
+    },
+
+    /**
+     * 向在线桌面端主动推送「检查更新」信号（不传递下载 URL，桌面端始终按自身 updateFeed + Ed25519 验签下载）。
+     * 若给出 version 且设备已上报 clientVersion，则跳过已经不落后于 version 的设备。
+     */
+    notifyUpdateAvailable(input?: {
+      version?: string;
+      reason?: string;
+      deviceId?: string;
+    }) {
+      const version = input?.version?.trim() || undefined;
+      const reason = input?.reason?.trim() || undefined;
+      const targetId = input?.deviceId?.trim() || undefined;
+      let notified = 0;
+      let skipped = 0;
+      const targets = targetId
+        ? (() => {
+            const single = connections.get(targetId);
+            return single ? [single] : [];
+          })()
+        : [...connections.values()];
+      for (const connection of targets) {
+        if (
+          version &&
+          connection.clientVersion &&
+          compareSemver(version, connection.clientVersion) <= 0
+        ) {
+          skipped++;
+          continue;
+        }
+        const ok = send(connection, {
+          type: "check_update",
+          ...(version ? { version } : {}),
+          ...(reason ? { reason } : {}),
+        });
+        if (ok) notified++;
+        else skipped++;
+      }
+      return {
+        notified,
+        skipped,
+        totalOnline: connections.size,
+      };
     },
 
     /** 给在线设备发一条扩展协议消息（本地 agent）。离线返回 false。 */

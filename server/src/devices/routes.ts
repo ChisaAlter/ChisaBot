@@ -15,11 +15,12 @@ import {
   localCallerAuthorized,
   trustUnsignedLocal,
 } from "../auth/gateway-identity";
-import type { AppVariables } from "../auth/guards";
+import { type AppVariables, requireAdmin } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { liveConnections } from "../security/http-hardening";
 import { type DeviceHub, DeviceRefusedError, describeChange } from "./hub";
+import type { PcReleaseCheckResult } from "./pc-release-watcher";
 import { installScript, readNodeBundle } from "./node-install";
 import {
   createPairingStore,
@@ -187,6 +188,12 @@ export function createDeviceRoutes(options: {
    * 未配 = 保持旧行为（仅拦带 X-Forwarded-For 的公网探测）。
    */
   localCallerSecret?: string;
+  /** 可选：立刻检查远端 PC latest.yml 并向在线桌面端推送更新通知。 */
+  checkPcRelease?: (options?: {
+    force?: boolean;
+    reason?: string;
+    deviceId?: string;
+  }) => Promise<PcReleaseCheckResult>;
 }) {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
@@ -661,6 +668,56 @@ export function createDeviceRoutes(options: {
     });
     await mainAudit(actor.id, device.id, "device_enrolled", device.name);
     return context.json({ device: hub.view(device), token }, 201);
+  });
+
+  /**
+   * 管理员立即向在线桌面端推送「检查更新」信号（走既有 WebSocket 长连接）。
+   * 客户端收到后仍按自身 updateFeed 与 Ed25519 公钥验签下载，服务端不指定下载地址。
+   */
+  routes.post("/push-update", userGuard, async (context) => {
+    const denied = requireAdmin(context);
+    if (denied) return denied;
+    const raw = await readJsonObject(context.req);
+    const deviceId =
+      typeof raw?.deviceId === "string" && raw.deviceId.trim()
+        ? raw.deviceId.trim()
+        : undefined;
+    const explicitVersion =
+      typeof raw?.version === "string" && raw.version.trim()
+        ? raw.version.trim()
+        : undefined;
+    const result =
+      !explicitVersion && options.checkPcRelease
+        ? await options.checkPcRelease({
+            force: true,
+            reason: "admin_push",
+            ...(deviceId ? { deviceId } : {}),
+          })
+        : {
+            checked: false,
+            version: explicitVersion ?? null,
+            changed: false,
+            ...hub.notifyUpdateAvailable({
+              ...(explicitVersion ? { version: explicitVersion } : {}),
+              reason: "admin_push",
+              ...(deviceId ? { deviceId } : {}),
+            }),
+          };
+    const actor = context.var.actor;
+    await mainAudit(
+      actor.id,
+      deviceId ?? "all",
+      "devices_push_update",
+      `推送桌面端更新检查${result.version ? ` v${result.version}` : ""}（已通知 ${result.notified} 台，跳过 ${result.skipped} 台，在线 ${result.totalOnline} 台）`,
+    );
+    return context.json({
+      ok: true,
+      version: result.version,
+      notified: result.notified,
+      skipped: result.skipped,
+      totalOnline: result.totalOnline,
+      ...(result.error ? { warning: result.error } : {}),
+    });
   });
 
   /** 网页「绑定手机」：签发一次性绑定码（5 分钟），网页把它和服务器地址一起画成二维码。 */

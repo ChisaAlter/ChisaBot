@@ -312,3 +312,56 @@ test("macOS installOnQuit: unsigned quit installs itself (return false); signed 
   assert.deepStrictEqual(signed.autoUpdater.installs, [[true, true]], "quitAndInstall 触发 Squirrel 拉本地包");
   assert.strictEqual(signed.updater.installOnQuit(), false, "已在安装中的重复退出直接放行");
 });
+
+test("nudge triggers check on push, throttles within minGapMs, skips same/older version and respects autoUpdate=false", async () => {
+  let clock = Date.parse("2026-11-20T01:00:00Z");
+  const available = [];
+  const autoUpdater = fakeAutoUpdater({ version: "0.1.173" });
+  const dir = path.dirname(installedExec);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "Uninstall ChisaBot.exe"), "");
+  let auto = true;
+  const updater = createUpdater({
+    autoUpdater,
+    currentVersion: "0.1.172",
+    isPackaged: true,
+    platform: "win32",
+    execPath: installedExec,
+    productName: "ChisaBot",
+    getAutoUpdate: () => auto,
+    onAvailable: (v) => available.push(v),
+    timers: fakeTimers(),
+    now: () => new Date(clock),
+  });
+
+  // 提示版本不高于当前版本：直接跳过
+  await updater.nudge({ version: "0.1.172", reason: "release_watch" });
+  assert.strictEqual(autoUpdater.checks, 0);
+
+  // 关闭自动更新时：推送不触发自动拉包
+  auto = false;
+  await updater.nudge({ version: "0.1.173", reason: "release_watch" });
+  assert.strictEqual(autoUpdater.checks, 0);
+
+  // 打开自动更新并收到 0.1.173 推送：立即检查、触发一次 onAvailable 并下载完成
+  auto = true;
+  const res = await updater.nudge({ version: "0.1.173", reason: "release_watch", minGapMs: 15_000 });
+  assert.strictEqual(autoUpdater.checks, 1);
+  assert.strictEqual(res.status, "downloaded");
+  assert.strictEqual(res.version, "0.1.173");
+  assert.deepStrictEqual(available, ["0.1.173"]);
+
+  // 同版本已下载完成：再次推送直接跳过
+  clock += 60_000;
+  await updater.nudge({ version: "0.1.173", reason: "release_watch", minGapMs: 15_000 });
+  assert.strictEqual(autoUpdater.checks, 1);
+
+  // 更高版本 0.1.174 在节流窗口内（5s < 15s）不重查，过窗后才触发
+  clock += 5_000;
+  await updater.nudge({ version: "0.1.174", reason: "release_watch", minGapMs: 15_000 });
+  assert.strictEqual(autoUpdater.checks, 2, "距上次检查已满 65s，应触发复查");
+
+  clock += 5_000;
+  await updater.nudge({ version: "0.1.175", reason: "release_watch", minGapMs: 15_000 });
+  assert.strictEqual(autoUpdater.checks, 2, "5s 内被 minGapMs=15s 节流");
+});

@@ -36,7 +36,9 @@ const childProcess = require("node:child_process");
 const updateSignature = require("./update-signature");
 
 const FIRST_CHECK_MS = 30 * 1000;
-const INTERVAL_MS = 30 * 60 * 1000;
+const INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_PUSH_GAP_MS = 15 * 1000;
+const DEFAULT_WAKE_GAP_MS = 5 * 60 * 1000;
 
 function cleanMessage(error) {
   const text = error?.message ? String(error.message) : String(error || "未知错误");
@@ -144,7 +146,7 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onDownloaded, onRejected, logger, spawn = defaultSpawn, spawnSync = defaultSpawnSync, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onAvailable, onDownloaded, onRejected, logger, spawn = defaultSpawn, spawnSync = defaultSpawnSync, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
   // Windows：只有 NSIS 安装版能更新（安装目录里有卸载程序）；开发运行、免安装 zip 不行。
   // macOS：打包好的 .app 还得带证书签名——adhoc 签名过不了 Squirrel 的 requirement 校验。
   const supported = Boolean(
@@ -167,6 +169,8 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
   let interval = null;
   let checking = null;
   let supersedeCheck = false;
+  let lastCheckAt = 0;
+  let lastAvailableVersion = "";
 
   function set(patch) {
     Object.assign(state, patch);
@@ -208,6 +212,10 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
         return;
       }
       set({ status: "downloading", version: info?.version, percent: 0, fullInstall: requiresFullInstall(info, shellHash) });
+      if (info?.version && info.version !== lastAvailableVersion) {
+        lastAvailableVersion = info.version;
+        onAvailable?.(info.version);
+      }
       // 复查时 autoDownload 被临时关掉，新版本要手动拉包。
       if ((gateByClient || pending) && typeof autoUpdater.downloadUpdate === "function" && !downloading) {
         downloading = Promise.resolve()
@@ -271,6 +279,7 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     if (!supported) return { ...state };
     if (state.status === "downloading" || state.status === "verifying") return { ...state };
     if (checking) return checking;
+    lastCheckAt = now().getTime();
     supersedeCheck = state.status === "downloaded";
     if (supersedeCheck) autoUpdater.autoDownload = false;
     checking = (async () => {
@@ -309,6 +318,26 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
       return { ...state };
     })();
     return checking;
+  }
+
+  /**
+   * 服务端推送 / 窗口聚焦 / 休眠唤醒触发的轻量检查：
+   *  - 尊重「自动更新」开关（用户关掉后不自动拉包）；
+   *  - 若提示版本号不高于当前已装/已下载版本则直接忽略；
+   *  - 按 minGapMs 节流，避免频繁重连或窗口切换造成请求风暴。
+   */
+  async function nudge({ version = "", reason = "", minGapMs = DEFAULT_PUSH_GAP_MS } = {}) {
+    if (!supported || !getAutoUpdate()) return { ...state };
+    if (checking || state.status === "downloading" || state.status === "verifying") return { ...state };
+    const hint = typeof version === "string" ? version.trim() : "";
+    if (hint) {
+      if (currentVersion && compareVersion(hint, currentVersion) <= 0) return { ...state };
+      if (state.status === "downloaded" && state.version && compareVersion(hint, state.version) <= 0) return { ...state };
+    }
+    const elapsed = lastCheckAt > 0 ? now().getTime() - lastCheckAt : Infinity;
+    if (minGapMs > 0 && elapsed < minGapMs) return { ...state };
+    if (reason) logger?.info?.(`收到更新触发（${reason}${hint ? ` · ${hint}` : ""}），开始检查更新`);
+    return check();
   }
 
   function schedule() {
@@ -396,7 +425,7 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     return true;
   }
 
-  return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, schedule, stop, install, installOnQuit, settled: () => verifying };
+  return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, nudge, schedule, stop, install, installOnQuit, settled: () => verifying };
 }
 
-module.exports = { createUpdater, cleanMessage, isInstalledBuild, hasStableMacSignature, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS };
+module.exports = { createUpdater, cleanMessage, isInstalledBuild, hasStableMacSignature, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS, DEFAULT_PUSH_GAP_MS, DEFAULT_WAKE_GAP_MS };
