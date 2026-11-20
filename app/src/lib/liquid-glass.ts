@@ -28,6 +28,12 @@
  */
 
 import { GLASS_SURFACE_SELECTOR, subscribeAppearance } from "@/lib/appearance";
+import {
+  isResizing,
+  RESIZE_SETTLE_MS,
+  resizeInProgress,
+  subscribeResizing,
+} from "@/lib/resize-state";
 import { getSkySnapshot, subscribeSkySnapshot } from "@/lib/sky-snapshot";
 
 /* ------------------------------------------------------------------ *
@@ -418,7 +424,6 @@ const HTML_WATCHED_ATTRS = [
   "class",
   "data-glass",
   "data-perf",
-  "data-resizing",
   "data-wallpaper",
   "data-theme-family",
   "data-theme",
@@ -474,6 +479,9 @@ class LiquidGlass {
   private destroyed = false;
   private seq = 0;
   private readonly lens = new Map<Element, LensEntry>();
+  private readonly pendingLensKey = new WeakMap<Element, string>();
+  private readonly pendingLensAttrs = new Map<HTMLElement, string>();
+  private lensFlushQueued = false;
   private readonly mapCache = new Map<string, Promise<string>>();
   private readonly lensRules = new Map<string, string>();
   private lensStyle: HTMLStyleElement | null = null;
@@ -499,6 +507,9 @@ class LiquidGlass {
   private lastWallpaperUrl = "";
   private unsubscribeSky: (() => void) | null = null;
   private unsubscribeAppearance: (() => void) | null = null;
+  private unsubscribeResize: (() => void) | null = null;
+  private pendingAfterResize = false;
+  private resizeFallbackTimer = 0;
   private readonly onScroll = () => this.markScrolling();
 
   start() {
@@ -525,6 +536,9 @@ class LiquidGlass {
     this.resizeObs = new ResizeObserver(() => this.refresh());
     this.resizeObs.observe(document.documentElement);
     this.unsubscribeAppearance = subscribeAppearance(() => this.refresh());
+    this.unsubscribeResize = subscribeResizing((resizing) =>
+      this.onResizingChange(resizing),
+    );
     window.addEventListener("scroll", this.onScroll, {
       passive: true,
       capture: true,
@@ -538,6 +552,11 @@ class LiquidGlass {
     window.clearTimeout(this.pendingRescan);
     window.clearTimeout(this.pendingSample);
     window.clearTimeout(this.scrollEndTimer);
+    window.clearTimeout(this.resizeFallbackTimer);
+    this.resizeFallbackTimer = 0;
+    this.pendingAfterResize = false;
+    this.pendingLensAttrs.clear();
+    this.lensFlushQueued = false;
     this.cancelIdleSample();
     this.wallpaperObs?.disconnect();
     this.wallpaperObs = null;
@@ -546,16 +565,59 @@ class LiquidGlass {
     this.unsubscribeSky = null;
     this.unsubscribeAppearance?.();
     this.unsubscribeAppearance = null;
+    this.unsubscribeResize?.();
+    this.unsubscribeResize = null;
     window.removeEventListener("scroll", this.onScroll, {
       capture: true,
     } as EventListenerOptions);
     this.htmlObs?.disconnect();
     this.mutationObs?.disconnect();
     this.resizeObs?.disconnect();
-    for (const el of [...this.lens.keys()]) this.removeLens(el);
+    for (const el of [...this.lens.keys()]) this.removeLens(el, true);
     this.clearAdapted();
     this.lensStyle?.remove();
     this.svgHost?.remove();
+  }
+
+  private pauseForResize() {
+    this.rasterDirty = true;
+    this.pendingAfterResize = true;
+    if (this.pendingSample) {
+      window.clearTimeout(this.pendingSample);
+      this.pendingSample = 0;
+    }
+    if (this.pendingRescan) {
+      window.clearTimeout(this.pendingRescan);
+      this.pendingRescan = 0;
+    }
+    this.cancelIdleSample();
+    if (!isResizing() && !this.resizeFallbackTimer) {
+      this.resizeFallbackTimer = window.setTimeout(() => {
+        this.resizeFallbackTimer = 0;
+        if (
+          !this.destroyed &&
+          !resizeInProgress() &&
+          this.pendingAfterResize
+        ) {
+          this.onResizingChange(false);
+        }
+      }, RESIZE_SETTLE_MS + 32);
+    }
+  }
+
+  private onResizingChange(resizing: boolean) {
+    if (this.destroyed) return;
+    window.clearTimeout(this.resizeFallbackTimer);
+    this.resizeFallbackTimer = 0;
+    if (resizing) {
+      this.pauseForResize();
+      return;
+    }
+    this.rasterDirty = true;
+    const needRescan = this.pendingAfterResize;
+    this.pendingAfterResize = false;
+    if (!this.scrolling) this.scheduleIdleSample();
+    if (needRescan) this.scheduleRescan();
   }
 
   /** 属性 / 结构 / 尺寸有变化：重采样 + 重挂透镜（各自有节流）。 */
@@ -563,6 +625,10 @@ class LiquidGlass {
     this.rasterDirty = true;
     this.syncSkySubscription();
     this.syncWallpaperWatch();
+    if (resizeInProgress()) {
+      this.pauseForResize();
+      return;
+    }
     this.scheduleSample(true);
     this.scheduleRescan();
   }
@@ -616,7 +682,12 @@ class LiquidGlass {
   }
 
   private scheduleRescan() {
-    if (this.pendingRescan || this.destroyed) return;
+    if (this.destroyed) return;
+    if (resizeInProgress()) {
+      this.pauseForResize();
+      return;
+    }
+    if (this.pendingRescan) return;
     this.pendingRescan = window.setTimeout(() => {
       this.pendingRescan = 0;
       this.rescan();
@@ -672,6 +743,10 @@ class LiquidGlass {
 
   private scheduleSample(full: boolean) {
     if (this.destroyed) return;
+    if (resizeInProgress()) {
+      this.pauseForResize();
+      return;
+    }
     if (this.scrolling) return;
     if (this.pendingSample) return;
     this.pendingSample = window.setTimeout(
@@ -733,11 +808,20 @@ class LiquidGlass {
 
   private rescan() {
     if (this.destroyed) return;
+    if (resizeInProgress()) {
+      this.pauseForResize();
+      return;
+    }
     const canLens = liquidActive() && !glassSuppressed() && lensUrlSupported();
+    let removedAny = false;
+    for (const el of [...this.lens.keys()]) {
+      if (!el.isConnected && this.removeLens(el, true)) removedAny = true;
+    }
     for (const el of this.surfaces()) {
       if (canLens && this.eligible(el)) this.ensureLens(el);
-      else this.removeLens(el);
+      else if (this.removeLens(el, true)) removedAny = true;
     }
+    if (removedAny) this.rewriteLensStyle();
   }
 
   private eligible(el: HTMLElement): boolean {
@@ -762,6 +846,7 @@ class LiquidGlass {
     key: string;
     w: number;
     h: number;
+    radius: number;
     rim: number;
   } {
     const rect = el.getBoundingClientRect();
@@ -783,6 +868,7 @@ class LiquidGlass {
       key: `${w}x${h}r${Math.round(radius)}m${Math.round(rim)}`,
       w,
       h,
+      radius,
       rim,
     };
   }
@@ -824,26 +910,30 @@ class LiquidGlass {
   }
 
   private ensureLens(el: HTMLElement) {
-    const { key, w, h, rim } = this.lensKey(el);
-    const cs = getComputedStyle(el);
-    const radius = Math.min(
-      Math.max(
-        Number.parseFloat(cs.borderTopLeftRadius) || 0,
-        Number.parseFloat(cs.borderTopRightRadius) || 0,
-        Number.parseFloat(cs.borderBottomRightRadius) || 0,
-        Number.parseFloat(cs.borderBottomLeftRadius) || 0,
-      ),
-      Math.min(w, h) / 2,
-    );
+    const { key, w, h, radius, rim } = this.lensKey(el);
     const existing = this.lens.get(el);
-    if (existing?.key === key) return;
-    if (existing) this.removeLens(el);
+    if (existing?.key === key) {
+      this.pendingLensKey.delete(el);
+      return;
+    }
+    if (this.pendingLensKey.get(el) === key) return;
+    this.pendingLensKey.set(el, key);
     const id = `lgf${this.seq++}`;
     const scale = displacementScale(rim);
     void this.mapFor(key, w, h, radius, rim)
       .then((url) => {
-        // 解码期间元素可能已挂过新透镜 / 被卸载：已有一条就不再叠第二个 svg。
-        if (this.destroyed || this.lens.has(el)) return;
+        if (
+          this.destroyed ||
+          !el.isConnected ||
+          this.pendingLensKey.get(el) !== key
+        ) {
+          return;
+        }
+        if (!liquidActive() || glassSuppressed()) {
+          this.pendingLensKey.delete(el);
+          return;
+        }
+        this.pendingLensKey.delete(el);
         const host = this.ensureSvgHost();
         const svg = document.createElementNS(
           "http://www.w3.org/2000/svg",
@@ -866,27 +956,54 @@ class LiquidGlass {
           `<feBlend in="rg" in2="cB" mode="screen"/>` +
           `</filter>`;
         host.appendChild(svg);
+        const prev = this.lens.get(el);
+        if (prev) {
+          prev.svg.remove();
+          this.lensRules.delete(prev.id);
+        }
         this.lens.set(el, { id, key, svg });
         this.lensRules.set(
           id,
           `[data-lg-lens="${id}"]{--lg-lens-url:url(#${id});}`,
         );
-        this.rewriteLensStyle();
-        el.setAttribute("data-lg-lens", id);
+        this.pendingLensAttrs.set(el, id);
+        this.queueLensStyleFlush();
       })
       .catch(() => {
+        if (this.pendingLensKey.get(el) === key) {
+          this.pendingLensKey.delete(el);
+        }
         /* 位移图构建失败（canvas 不可用等）：退回无透镜的 CSS 玻璃 */
       });
   }
 
-  private removeLens(el: Element) {
+  private removeLens(el: Element, deferFlush = false): boolean {
+    this.pendingLensKey.delete(el);
+    if (el instanceof HTMLElement) this.pendingLensAttrs.delete(el);
     const entry = this.lens.get(el);
     el.removeAttribute("data-lg-lens");
-    if (!entry) return;
+    if (!entry) return false;
     entry.svg.remove();
     this.lens.delete(el);
     this.lensRules.delete(entry.id);
-    this.rewriteLensStyle();
+    if (!deferFlush) this.rewriteLensStyle();
+    return true;
+  }
+
+  private queueLensStyleFlush() {
+    if (this.lensFlushQueued || this.destroyed) return;
+    this.lensFlushQueued = true;
+    queueMicrotask(() => {
+      this.lensFlushQueued = false;
+      if (this.destroyed) return;
+      this.rewriteLensStyle();
+      for (const [el, id] of this.pendingLensAttrs) {
+        if (el.isConnected && this.lens.get(el)?.id === id) {
+          el.setAttribute("data-lg-lens", id);
+        }
+      }
+      this.pendingLensAttrs.clear();
+    });
   }
 
   private ensureSvgHost(): HTMLDivElement {
@@ -913,6 +1030,10 @@ class LiquidGlass {
 
   private sample(_full: boolean) {
     if (this.destroyed) return;
+    if (resizeInProgress()) {
+      this.pauseForResize();
+      return;
+    }
     if (glassSuppressed() || !liquidActive()) {
       this.clearAdapted();
       return;
