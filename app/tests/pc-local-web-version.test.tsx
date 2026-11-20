@@ -13,12 +13,14 @@ import {
 } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { AccountMenu } from "@/components/layout/account-menu";
+import { ClientUpdateSection } from "@/components/settings/client-update-section";
 import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { approvalInboxOptions } from "@/lib/approvals";
 import { authKeys } from "@/lib/auth/keys";
 import { ClientError, client } from "@/lib/client";
 import { recentConfirmationsQueryOptions } from "@/lib/confirmations";
+import type { PcBridge, PcLocalState } from "@/lib/pc-bridge";
 import {
   formatAccountVersionLabel,
   recordServedVersion,
@@ -71,6 +73,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   resetVersionSkewForTest();
+  delete (window as { chisabotPC?: PcBridge }).chisabotPC;
 });
 
 afterAll(async () => {
@@ -104,7 +107,7 @@ test("client turns bare 404 into actionable version-skew message when bundled UI
   await expect(
     client("/api/new-feature", { fallback: "无法加载新功能", timeoutMs: 5000 }),
   ).rejects.toThrow(
-    "无法加载新功能：当前服务端版本（v0.1.149）低于桌面端（v0.1.154），请在「设置 → 系统更新」升级服务端。",
+    "无法加载新功能：当前服务端版本（v0.1.149）低于桌面端（v0.1.154），请在「设置 → 版本与更新」升级服务端。",
   );
 
   try {
@@ -187,22 +190,137 @@ async function renderAccountMenu(role: "admin" | "user", servedVersion: string) 
   };
 }
 
-test("AccountMenu shows dual version subtitle and admin upgrade link only when bundled UI is ahead", async () => {
+test("AccountMenu hides version subtitle and server upgrade item (moved to 设置 → 版本与更新)", async () => {
   setBundledPcVersionForTest("0.1.154");
   const adminView = await renderAccountMenu("admin", "0.1.149");
-  expect(adminView.getByText("v0.1.154 · 服务端 v0.1.149")).toBeTruthy();
+  expect(adminView.queryByText(/v0\.1\.154/)).toBeNull();
+  expect(adminView.queryByText(/服务端 v0\.1\.149/)).toBeNull();
 
   fireEvent.click(adminView.getByRole("button", { name: "账号与设置" }));
   await waitFor(() => {
-    expect(adminView.getByText("升级服务端（当前 v0.1.149）")).toBeTruthy();
+    expect(adminView.getByText("设置")).toBeTruthy();
   });
+  expect(adminView.queryByText(/升级服务端/)).toBeNull();
+  expect(adminView.queryByText(/v0\.1\.154/)).toBeNull();
 
   cleanup();
   const memberView = await renderAccountMenu("user", "0.1.149");
-  expect(memberView.getByText("v0.1.154 · 服务端 v0.1.149")).toBeTruthy();
+  expect(memberView.queryByText(/v0\.1\.154/)).toBeNull();
   fireEvent.click(memberView.getByRole("button", { name: "账号与设置" }));
   await waitFor(() => {
     expect(memberView.getByText("设置")).toBeTruthy();
   });
-  expect(memberView.queryByText("升级服务端（当前 v0.1.149）")).toBeNull();
+  expect(memberView.queryByText(/升级服务端/)).toBeNull();
+});
+
+test("ClientUpdateSection displays desktop & server versions and triggers desktop update check / install", async () => {
+  setBundledPcVersionForTest("0.1.173");
+  let checked = 0;
+  let installed = 0;
+  let localState: PcLocalState = {
+    version: "0.1.173",
+    platform: "win32",
+    hostname: "dev-pc",
+    serverUrl: `http://127.0.0.1:${serverPort}`,
+    deviceId: "dev-1",
+    agentState: "online",
+    statusText: "在线",
+    tokenProtected: true,
+    localPaused: false,
+    forceLocalApproval: false,
+    autoStart: true,
+    startHidden: false,
+    autoUpdate: true,
+    update: {
+      supported: true,
+      status: "none",
+      signing: true,
+    },
+    webUi: {
+      hasLocalBundle: true,
+      mode: "local",
+      bundledVersion: "0.1.173",
+      serverVersion: "0.1.171",
+    },
+  };
+  (window as { chisabotPC?: PcBridge }).chisabotPC = {
+    state: async () => localState,
+    setLocal: async (patch) => {
+      localState = { ...localState, ...patch };
+      return localState;
+    },
+    pickFolders: async () => [],
+    logout: async () => true,
+    checkUpdate: async () => {
+      checked += 1;
+      localState = {
+        ...localState,
+        update: {
+          supported: true,
+          status: "downloaded",
+          version: "0.1.174",
+          signing: true,
+        },
+      };
+      return localState.update!;
+    },
+    installUpdate: async () => {
+      installed += 1;
+      return true;
+    },
+    onChange: () => () => {},
+  };
+
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  queryClient.setQueryData(["app-version"], {
+    version: "0.1.171",
+    buildId: "srv-0.1.171",
+  });
+
+  const rootRoute = createRootRoute({
+    component: () => (
+      <QueryClientProvider client={queryClient}>
+        <ClientUpdateSection />
+      </QueryClientProvider>
+    ),
+  });
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => null,
+  });
+  const devicesRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/settings/devices",
+    component: () => null,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([indexRoute, devicesRoute]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  await router.load();
+  const view = render(<RouterProvider router={router} />);
+
+  await waitFor(() => {
+    expect(
+      view.getByText(
+        /桌面端 v0\.1\.173 · 服务端 v0\.1\.171 · 本地内置前端 · 服务端版本低于桌面端/,
+      ),
+    ).toBeTruthy();
+  });
+
+  fireEvent.click(view.getByRole("button", { name: "检查更新" }));
+  await waitFor(() => {
+    expect(checked).toBe(1);
+    expect(view.getByRole("button", { name: "立即重启以安装" })).toBeTruthy();
+  });
+
+  fireEvent.click(view.getByRole("button", { name: "立即重启以安装" }));
+  await waitFor(() => {
+    expect(installed).toBe(1);
+  });
 });

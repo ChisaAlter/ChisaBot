@@ -6,7 +6,6 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
-import { DiagnosticsExportSection } from "@/components/settings/diagnostics-export";
 
 import { NotificationSettingsSection } from "@/components/settings/notification-settings";
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
@@ -109,7 +108,6 @@ function RouteComponent() {
       </PageSection>
       <StandingInstructions />
       <NotificationSettingsSection />
-      <DiagnosticsExportSection />
       {/*
        * Drawn from the same registry the listeners match against, so this list is what the keys
        * actually do rather than what somebody remembered they did. Read-only on purpose: these

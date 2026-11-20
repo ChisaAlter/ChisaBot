@@ -12,14 +12,16 @@ import { botsTarget } from "@/lib/bots-location";
 import { navGroups, type SettingsViewer } from "@/lib/settings/registry";
 
 /**
- * 「设置」左栏（偏好设置和管理后台共用，DESIGN.md §97 重新整合）。
+ * 「设置」左栏（偏好设置和管理后台共用，DESIGN.md §97 / §146 重新整理）。
  *
- * 导航和设置搜索都从 lib/settings/registry.ts 一张登记表来：
- * 通用 · 机器人（权限与审批、记忆、技能、定时任务、页面）· 电脑与设备（设备、云端工作区、云端浏览器）·
- * 账号与连接（账号连接、IM 接入、账号；「密钥」并在账号连接的标签里，只能搜到）· 模型（模型、生图与识图）· 系统（系统更新、活动记录、权限规则）· 高级（工作流、插件与 MCP）。
+ * 导航和设置搜索都从 lib/settings/registry.ts 一张登记表来，收束为 5 组：
+ * 顶部直达（通用、版本与更新）· 助手能力（记忆、技能、定时任务、权限与审批、页面）·
+ * 设备与连接（设备、账号连接、IM 接入、智能体提供方、插件与 MCP、云端浏览器）·
+ * 模型与用量（模型、生图与识图、配额与用量、白盒调优工作台）·
+ * 系统管理（成员与账号、分享与部署、活动记录、权限规则、工作流）。
  * 管理员才有的页、部署开关（CHISABOT_EXTRAS / CHISABOT_ACCOUNTS_UI）关着的页不显示；一组一项都不剩就整组不显示。
- * 管理员看到的组多，桌面左栏里除「通用」外每组都能折叠（没记过开关时只展开当前页所在的组，CB-058 / §71.7）；手机抽屉照常全列。
- * 路由都没变，旧地址照常能打开；标题下面是设置搜索（Ctrl/⌘ K 或 /）。
+ * 桌面左栏里除顶部直达组（通用 / 版本与更新）外每组都可折叠（未记过开关时默认展开「助手能力」与当前页所在组）；手机抽屉照常全列。
+ * 旧路由全部保留兼容；标题下面是设置搜索（Ctrl/⌘ K 或 /）。
  */
 export function SettingsSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { data: user } = useQuery(currentUserQueryOptions());
@@ -33,7 +35,7 @@ export function SettingsSidebar(props: React.ComponentProps<typeof Sidebar>) {
       navGroups(viewer).map(({ group, pages }) => ({
         ...(group.label ? { label: group.label } : {}),
         ...(viewer.admin && group.label
-          ? { collapsible: { storageKey: `chisabot-settings-g-${group.id}`, defaultOpen: group.id === "bots", desktopOnly: true } }
+          ? { collapsible: { storageKey: `chisabot-settings-g2-${group.id}`, defaultOpen: group.id === "bots", desktopOnly: true } }
           : {}),
         items: pages.map((page) => ({
           title: page.title,

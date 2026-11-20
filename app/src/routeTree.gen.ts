@@ -55,6 +55,7 @@ import { Route as AuthedSettingsQuotaRouteImport } from './routes/_authed/settin
 import { Route as AuthedSettingsSchedulesRouteImport } from './routes/_authed/settings/schedules'
 import { Route as AuthedSettingsShareRouteImport } from './routes/_authed/settings/share'
 import { Route as AuthedSettingsSkillsRouteImport } from './routes/_authed/settings/skills'
+import { Route as AuthedSettingsUpdatesRouteImport } from './routes/_authed/settings/updates'
 import { Route as AuthedSettingsVaultRouteImport } from './routes/_authed/settings/vault'
 import { Route as AuthedSignInRequestIdRouteImport } from './routes/_authed/sign-in/$requestId'
 import { Route as AuthedAppAgentsIndexRouteImport } from './routes/_authed/_app/agents/index'
@@ -315,6 +316,11 @@ const AuthedSettingsSkillsRoute = AuthedSettingsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => AuthedSettingsRouteRoute,
 } as any)
+const AuthedSettingsUpdatesRoute = AuthedSettingsUpdatesRouteImport.update({
+  id: '/updates',
+  path: '/updates',
+  getParentRoute: () => AuthedSettingsRouteRoute,
+} as any)
 const AuthedSettingsVaultRoute = AuthedSettingsVaultRouteImport.update({
   id: '/vault',
   path: '/vault',
@@ -508,6 +514,7 @@ export interface FileRoutesByFullPath {
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
+  '/settings/updates': typeof AuthedSettingsUpdatesRoute
   '/settings/vault': typeof AuthedSettingsVaultRoute
   '/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
   '/admin/': typeof AuthedAdminIndexRoute
@@ -579,6 +586,7 @@ export interface FileRoutesByTo {
   '/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/settings/share': typeof AuthedSettingsShareRoute
   '/settings/skills': typeof AuthedSettingsSkillsRoute
+  '/settings/updates': typeof AuthedSettingsUpdatesRoute
   '/settings/vault': typeof AuthedSettingsVaultRoute
   '/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
   '/admin': typeof AuthedAdminIndexRoute
@@ -654,6 +662,7 @@ export interface FileRoutesById {
   '/_authed/settings/schedules': typeof AuthedSettingsSchedulesRoute
   '/_authed/settings/share': typeof AuthedSettingsShareRoute
   '/_authed/settings/skills': typeof AuthedSettingsSkillsRoute
+  '/_authed/settings/updates': typeof AuthedSettingsUpdatesRoute
   '/_authed/settings/vault': typeof AuthedSettingsVaultRoute
   '/_authed/sign-in/$requestId': typeof AuthedSignInRequestIdRoute
   '/_authed/_app/': typeof AuthedAppIndexRoute
@@ -730,6 +739,7 @@ export interface FileRouteTypes {
     | '/settings/schedules'
     | '/settings/share'
     | '/settings/skills'
+    | '/settings/updates'
     | '/settings/vault'
     | '/sign-in/$requestId'
     | '/admin/'
@@ -801,6 +811,7 @@ export interface FileRouteTypes {
     | '/settings/schedules'
     | '/settings/share'
     | '/settings/skills'
+    | '/settings/updates'
     | '/settings/vault'
     | '/sign-in/$requestId'
     | '/admin'
@@ -875,6 +886,7 @@ export interface FileRouteTypes {
     | '/_authed/settings/schedules'
     | '/_authed/settings/share'
     | '/_authed/settings/skills'
+    | '/_authed/settings/updates'
     | '/_authed/settings/vault'
     | '/_authed/sign-in/$requestId'
     | '/_authed/_app/'
@@ -1236,6 +1248,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsSkillsRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
+    '/_authed/settings/updates': {
+      id: '/_authed/settings/updates'
+      path: '/updates'
+      fullPath: '/settings/updates'
+      preLoaderRoute: typeof AuthedSettingsUpdatesRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
     '/_authed/settings/vault': {
       id: '/_authed/settings/vault'
       path: '/vault'
@@ -1502,6 +1521,7 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsSchedulesRoute: typeof AuthedSettingsSchedulesRoute
   AuthedSettingsShareRoute: typeof AuthedSettingsShareRoute
   AuthedSettingsSkillsRoute: typeof AuthedSettingsSkillsRoute
+  AuthedSettingsUpdatesRoute: typeof AuthedSettingsUpdatesRoute
   AuthedSettingsVaultRoute: typeof AuthedSettingsVaultRoute
   AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
   AuthedSettingsConnectedAccountsKeyRoute: typeof AuthedSettingsConnectedAccountsKeyRoute
@@ -1523,6 +1543,7 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsSchedulesRoute: AuthedSettingsSchedulesRoute,
   AuthedSettingsShareRoute: AuthedSettingsShareRoute,
   AuthedSettingsSkillsRoute: AuthedSettingsSkillsRoute,
+  AuthedSettingsUpdatesRoute: AuthedSettingsUpdatesRoute,
   AuthedSettingsVaultRoute: AuthedSettingsVaultRoute,
   AuthedSettingsIndexRoute: AuthedSettingsIndexRoute,
   AuthedSettingsConnectedAccountsKeyRoute:
