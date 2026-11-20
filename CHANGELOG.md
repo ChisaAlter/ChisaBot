@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.173 — 2026-11-20
+
+全端版本 `0.1.173`，Android `versionCode 353`：恢复非液态材质纯粹磨砂通透感并从文字层全局提亮与微投影优化可读性（DESIGN.md §145），新增桌面端更新服务端 WebSocket 主动推送与管理后台秒级触发（docs/online-update.md §2）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `e4c6b8a6173cf36e`；无需手动数据库迁移，新增可选环境变量 `CHISABOT_PC_UPDATE_FEED_URL` / `CHISABOT_PC_UPDATE_WATCH_INTERVAL_MS`。
+
+- **恢复磨砂玻璃通透感与文字层可读性修复（DESIGN.md §145）**：移除 `mist` / `crystal` / `frosted` 三档非液态玻璃上的 `--lg-aa-boost` 自动顶升（仅保留 `liquid` 自适应），修复 `v0.1.172` 亮壁纸下磨砂面板被压成近乎不透明实底的问题；提亮 `.dark` 全站墨色阶梯（`--ink-1: #ffffff`、`--ink-2: #edf2fb`、`--ink-3 / --muted-foreground: #d6e0f0`、`--ink-4: rgba(232,240,252,0.78)`）与主题族深色派生衰减，并为深色磨砂表面叠加克制的字缘微投影（浅色壁纸叠轻柔亮托，主按钮/代码段/输入框自动豁免）；修复 `liquid-glass.ts` 同源鉴权壁纸设 `crossOrigin="anonymous"` 丢 Cookie 缺陷。
+- **桌面端更新服务端主动推送与即时进度反馈**：服务端新增 `pc-release-watcher.ts` 以 `If-None-Match` / `If-Modified-Since` 条件 GET 每 2 分钟监听 `latest.yml`（零在线桌面端时零请求），发现新版本立刻通过设备 WebSocket 向落后客户端广播 `{ type: "check_update", version }`；设备重连 `hello` 时若落后亦立即单播提醒；新增管理员秒级推送接口 `POST /api/devices/push-update` 与管理后台「系统更新 → 推送桌面端更新」按钮；PC 客户端接入 `check_update` 推送、服务端版本更高触发、聚焦与唤醒/解锁补查，兜底轮询缩至 10 分钟，开始后台下载时即弹轻通知并在托盘显示进度，且完全保持客户端自有更新源 + Ed25519 验签安全边界不变。
+
 ## 0.1.172 — 2026-11-20
 
 全端版本 `0.1.172`，Android `versionCode 352`：统一右栏「任务」面板玻璃底色通道并全局优化壁纸与半透明玻璃下的文本可读性（DESIGN.md §145）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `100230f7caedaf89`；无需手动数据库迁移。
