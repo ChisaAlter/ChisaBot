@@ -152,6 +152,7 @@
 | [144](#144-prokbot-全量对标多端-ai-交互体验与底座加固2026-11-19cb-142)                                     | ProkBot 全量对标：多端 AI 交互体验与底座加固（Wave 1–10）                                                         | 2026-11-19，CB-142                                                         |
 | [145](#145-右栏任务底色收口与全站文本可读性统一优化2026-11-20)                                            | 右栏任务底色单通道收口、主题族墨色层级修复与全材质自适应对比度保护                                                 | 2026-11-20                                                                 |
 | [146](#146-账号菜单减负统一版本与更新页与设置导航五组重组2026-11-20)                                        | 账号卡与菜单去除版本号/服务端更新、新增全员「版本与更新」页、设置导航收束为五组                                     | 2026-11-20                                                                 |
+| [147](#147-全站弹窗菜单抽屉与浮层统一接入玻璃材质与深浅色通道2026-11-20)                                  | 全站菜单、弹窗、抽屉、模型/权限/搜索等全部浮层去除硬编码实底，统一走 `--lg-surface` 跟随设置                         | 2026-11-20                                                                 |
 
 ## 0. 总原则
 
@@ -3044,3 +3045,10 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   3. 设备与连接：设备、账号连接、IM 接入、智能体提供方、插件与 MCP（管理员）、云端浏览器（管理员）；
   4. 模型与用量：模型（管理员）、生图与识图、配额与用量、白盒调优工作台（管理员）；
   5. 系统管理（仅管理员）：成员与账号、分享与部署、活动记录、权限规则（extra）、工作流（extra）。
+
+## 147. 全站弹窗、菜单、抽屉与浮层统一接入玻璃材质与深浅色通道（2026-11-20）
+
+问题：除主工作台板块外，全站大量弹层仍停留在早期硬编码的高不透明度深蓝实底（`rgba(24, 33, 50, 0.90–0.97)` / `var(--glass-bg-solid)`）且被历史 `§37.3 CB-029` 强行关闭了 `backdrop-filter`，导致账号菜单、右键/下拉菜单、下拉选择框、模型与权限弹出层、个人资料/任务中心/任务详情/语音通话等弹窗、侧滑抽屉、Cmd+K 快速搜索、面板库、书签面板与提示胶囊等完全不跟随设置里的玻璃材质（液态/晶莹/柔光磨砂/薄雾）、雾度滑块（`--lg-alpha`）与主题族染色（`--pal-tint-layer`），与旁边通透磨砂的侧栏/账号卡割裂。
+
+- **全站 24 类浮层统一并入 `GLASS_SURFACE_SELECTOR` 与 `--lg-surface` 单通道**：覆盖全部 Base UI 弹层（`dropdown-menu-content` / `dropdown-menu-sub-content` / `context-menu-content` / `context-menu-sub-content` / `select-content` / `popover-content` / `combobox-content` / `dialog-content:not(.bg-transparent)` / `sheet-content`）、移动侧栏抽屉（`.hk-drawer`）以及全部业务浮层（`.model-popover`、`.perm-popover`、`.context-popover`、`.chat-spotlight-panel`、`.live-panel-src-pop`、`.rail-lib`、`.bm-menu`、`.bm-manager`、`.glass-toast`、`.page-loader-card`、`.sg-savebar`、`.auth-card`、`.update-banner`、`.install-hint`）；删除上述各类在 `styles.css` 与 `tasks-rail-card.css` 中的硬编码实底覆盖与历史静态 `backdrop-filter: none`。透明图片灯箱（`[data-slot="dialog-content"].bg-transparent`）保持透明豁免。
+- **性能与可读性双保护**：保留 `§37` 关闭态 `[data-ending-style]` 与 `§37.2` 打开动画 `glass-hold`（均经 `--lg-blur: none` 生效），并将全部瞬态弹层纳入 `liquid-glass.ts` 的 `LENS_SKIP_SELECTOR`（只享 CSS 玻璃与整屏翻墨、不分配重型 SVG 位移透镜）；所有挂载在 `<body>` 下的 Portal 弹层同步纳入深色与壁纸模式的光学字缘清晰度保护，并在 `perf-noblur.css` 与 `resize-pause.css` 中统一通过 `--lg-surface: var(--glass-bg-opaque)` 单通道降级。

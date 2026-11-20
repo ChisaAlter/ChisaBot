@@ -773,12 +773,7 @@ html[data-sky-ease] body::before {
 /* ---------- Avatar menu ---------- */
 .glass-pop[data-slot="dropdown-menu-content"] {
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: var(--glass-shadow-pop);
   --tw-ring-color: transparent;
-}
-.dark .glass-pop[data-slot="dropdown-menu-content"] {
-  background: rgba(24, 33, 50, 0.92);
 }
 .glass-mi[data-slot="dropdown-menu-item"] {
   gap: 12px;
@@ -862,10 +857,6 @@ html[data-sky-ease] body::before {
   height: auto;
   border-radius: 28px;
   border: 0;
-  background: rgba(255, 255, 255, 0.82);
-}
-.dark .glass-drawer[data-slot="sheet-content"] {
-  background: rgba(24, 33, 50, 0.92);
 }
 @media (max-width: 640px) {
   .glass-drawer[data-slot="sheet-content"] {
@@ -1894,10 +1885,6 @@ html[data-sky-ease] body::before {
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  background: rgba(250, 252, 255, 0.95);
-  backdrop-filter: var(--glass-pop-filter);
-  box-shadow: var(--glass-shadow-pop);
   color: var(--glass-ink);
   transform-origin: var(--transform-origin);
   transition: opacity 0.16s ease, transform 0.16s ease;
@@ -1906,10 +1893,6 @@ html[data-sky-ease] body::before {
 .model-popover[data-ending-style] {
   opacity: 0;
   transform: translateY(4px) scale(0.98);
-}
-.dark .model-popover {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(24, 33, 50, 0.96);
 }
 .model-popover-search {
   display: flex;
@@ -2819,14 +2802,8 @@ button.chat-bottom-pill:hover {
 
 /* ---------- Dialogs ---------- */
 [data-slot="dialog-content"] {
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.84);
   padding: 22px;
   transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.23, 1, 0.32, 1), scale 0.22s cubic-bezier(0.23, 1, 0.32, 1);
-}
-.dark [data-slot="dialog-content"] {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(24, 33, 50, 0.9);
 }
 [data-slot="dialog-content"][data-starting-style],
 [data-slot="dialog-content"][data-ending-style] {
@@ -6267,11 +6244,9 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   position: absolute; z-index: 21; top: 8px; left: 8px; right: 8px; max-height: calc(100% - 16px);
   display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border-radius: calc(var(--r-xl) - 8px); /* 同心：卡片 24 − 间距 8 */
-  background: rgba(255, 255, 255, 0.94); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2);
   transform-origin: top center;
   animation: rail-lib-in var(--dur-2) var(--ease-out) both;
 }
-.dark .rail-lib { background: rgba(24, 33, 50, 0.96); border-color: rgba(255, 255, 255, 0.1); }
 .rail-lib[data-state="closed"] { animation: rail-lib-out var(--dur-1) var(--ease-in) both; pointer-events: none; }
 .rail-lib-scrim[data-state="closed"] { animation: rail-lib-fade-out var(--dur-1) linear both; pointer-events: none; }
 .rail-lib-head { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-left: 4px; }
@@ -6325,36 +6300,16 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
  * 只写不带前缀的 backdrop-filter。 */
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"]) { transition-property: opacity; }
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"], [data-slot="dialog-content"], [data-slot="sheet-content"])[data-ending-style] {
+  --lg-blur: none;
   backdrop-filter: none;
 }
 /* §37.2 开弹窗也不重算毛玻璃（2026-10-13，性能审计）：打开动画期间（遮罩 220ms / 卡片、抽屉 300ms）先不带 backdrop-filter，
- * 动画结束那一帧再加上。以前打开的第一帧就要模糊整块背景、之后每一帧随缩放 / 淡入重做——4× CPU 下点击到第一帧 450–800ms，
- * 主线程上 0 JS。用一段只有 backdrop-filter: none 的离散动画「按住」，动画结束后回到原值；不动 JS、不加类名。
- * 卡片底色 0.86 不透明，毛玻璃晚 300ms 出现看不出来。减少动态效果时不按住（没有打开动画）。 */
-@keyframes glass-hold { from, to { backdrop-filter: none; } }
+ * 动画结束那一帧自动回到用户当前设置的 --lg-blur 玻璃材质（DESIGN.md §147）；减少动态效果时不按住。 */
+@keyframes glass-hold { from, to { --lg-blur: none; backdrop-filter: none; } }
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"])[data-open]:not([data-ending-style]) { animation: glass-hold var(--dur-2) step-end; }
 :is([data-slot="dialog-content"], [data-slot="sheet-content"])[data-open]:not([data-ending-style]) { animation: glass-hold var(--dur-3) step-end; }
 @media (prefers-reduced-motion: reduce) {
   :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"], [data-slot="dialog-content"], [data-slot="sheet-content"])[data-open] { animation: none; }
-}
-
-/* §37.3 CB-029（2026-10-19）：弹窗 / 抽屉 / 菜单静止后也不做大面积毛玻璃。
- * glass-hold 只挡开启动画；动画一结束仍要付 10–50ms 的 saturate+blur(22px) 光栅化（低端 INP）。
- * 卡片 / 菜单底色已是 glass-3（≥0.86 不透明），毛玻璃几乎看不见——拿掉 backdrop-filter，外观不变、
- * 打开到可点更快。遮罩保留轻 blur(2px)+glass-hold（上面 §37.2）。右栏 live-panel 在 .rail-card 里
- * 本就 backdrop-filter:none（用玻璃底色），不在这里重复。只写不带前缀的 backdrop-filter。 */
-:is(
-  [data-slot="dialog-content"],
-  [data-slot="sheet-content"],
-  [data-slot="dropdown-menu-content"],
-  [data-slot="dropdown-menu-sub-content"],
-  [data-slot="context-menu-content"],
-  [data-slot="context-menu-sub-content"],
-  [data-slot="select-content"],
-  [data-slot="combobox-content"],
-  [data-slot="popover-content"]
-) {
-  backdrop-filter: none;
 }
 
 /* ── 回答期间也能发消息 + 后台任务卡片（DESIGN.md §38，2026-10-13）──────────────────────── */
@@ -8011,8 +7966,7 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
 .bm-drop-wrap { position: relative; }
 .bm-drop { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 9px; font-size: 12.5px; color: var(--ink-2); border: 1px solid var(--line); background: var(--glass-hover); }
 .bm-pop { z-index: 30; animation: rail-pane-in var(--dur-2) var(--ease-out); }
-.bm-menu { position: absolute; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(300px, 80vw); max-height: 320px; overflow-y: auto; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.97); border: 1px solid var(--line-strong); box-shadow: 0 12px 32px rgba(22, 36, 62, 0.16); backdrop-filter: var(--glass-pop-filter); }
-.dark .bm-menu, .dark .bm-manager { background: rgba(20, 28, 44, 0.97); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
+.bm-menu { position: absolute; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(300px, 80vw); max-height: 320px; overflow-y: auto; padding: 4px; border-radius: 12px; }
 .bm-menu-i { width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--ink-1); text-align: left; }
 .bm-menu-i:hover, .bm-menu-i:focus-visible { background: var(--accent-blue-soft); outline: none; }
 .bm-menu-i.is-danger { color: var(--destructive, #dc2626); }
@@ -8024,7 +7978,7 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
 .bm-star.is-on { color: #f5a623; }
 .bm-star[data-state="done"] { color: #16a34a; }
 /* 管理面板 */
-.bm-manager { position: absolute; right: 0; top: calc(100% + 4px); width: min(460px, 100%); max-height: min(440px, 60vh); display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; background: rgba(255, 255, 255, 0.98); border: 1px solid var(--line-strong); box-shadow: 0 18px 48px rgba(22, 36, 62, 0.2); backdrop-filter: var(--glass-pop-filter); }
+.bm-manager { position: absolute; right: 0; top: calc(100% + 4px); width: min(460px, 100%); max-height: min(440px, 60vh); display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 16px; }
 .bm-manager-h { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--ink-1); }
 .bm-manager-h > span:first-of-type { flex: none; }
 .bm-manager-n { flex: 1; font-size: 12px; font-weight: 500; color: var(--ink-3); }
@@ -8107,17 +8061,12 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
   width: min(340px, calc(100vw - 24px));
   padding: 6px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  background: rgba(250, 252, 255, 0.96);
-  backdrop-filter: var(--glass-pop-filter);
-  box-shadow: var(--glass-shadow-pop);
   color: var(--glass-ink);
   transform-origin: var(--transform-origin);
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 .perm-popover[data-starting-style],
 .perm-popover[data-ending-style] { opacity: 0; transform: translateY(4px) scale(0.98); }
-.dark .perm-popover { border-color: rgba(255, 255, 255, 0.08); background: rgba(24, 33, 50, 0.97); }
 .perm-popover-head {
   display: flex;
   align-items: center;
@@ -8126,7 +8075,7 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
   padding: 6px 8px 8px 10px;
 }
 .perm-popover-title { min-width: 0; font-size: 13px; color: var(--glass-ink-3, rgba(22, 24, 29, 0.6)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dark .perm-popover-title { color: rgba(255, 255, 255, 0.6); }
+.dark .perm-popover-title { color: var(--ink-3); }
 .perm-popover-more { flex-shrink: 0; font-size: 12px; color: var(--glass-ink-2, inherit); text-decoration: underline; text-underline-offset: 2px; }
 .perm-popover-more:hover { color: var(--accent-blue, #2f7cf6); }
 .perm-popover-list { display: flex; flex-direction: column; gap: 2px; }
@@ -9691,6 +9640,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -9777,6 +9750,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -9854,6 +9851,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -9936,6 +9957,12 @@ html[data-wallpaper="on"] {
   background: rgba(10, 12, 18, 0.5) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 2px 10px rgba(0, 0, 0, 0.2) !important;
 }
+:where(html[data-glass="liquid"]:not(.dark))
+  :where([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"])[data-lg-ink="dark"]
+  .glass-mi:is(:focus, [data-highlighted]) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--glass-ink);
+}
 
 /* 3.2 晶莹全透（crystal）：轻薄透明晶片，最大化透出底层 WebGL 天空与流云，同时保证文字清晰可读 */
 :where(html[data-glass="crystal"])
@@ -9945,6 +9972,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -9998,6 +10049,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -10053,6 +10128,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -10106,6 +10205,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -10162,6 +10285,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -10217,6 +10364,30 @@ html[data-wallpaper="on"] {
     .acct-mini-card,
     .glass-mini-card,
     .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
     .glass-seg,
     .glass-search,
     .glass-pill,
@@ -10267,9 +10438,36 @@ html[data-wallpaper="on"] {
 }
 
 /* 将 .glass-shell 内部嵌套子卡片玻璃变量统一收束为纯净无边框薄纱 */
-/* .rail-sheet 是同一张面板卡 portal 到 body 上的窄窗抽屉，不在 .glass-shell 里：不列进来的话
-   它和它里面的小面读的是 :root 那套深色 0.9/0.09 令牌（性能 / 减透明模式下整块变死黑）。 */
-:is(.glass-shell, .rail-sheet) {
+/* 凡通过 Portal 挂在 body 下的弹层 / 弹窗 / 抽屉 / 菜单均不在 .glass-shell 里：
+   必须一同纳入才能共享玻璃薄纱子令牌与深色/壁纸字缘清晰度保护（DESIGN.md §142 / §145 / §147）。 */
+:is(
+  .glass-shell,
+  .rail-sheet,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"]:not(.bg-transparent),
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint
+) {
   --glass-1: rgba(255, 255, 255, 0.28);
   --glass-2: rgba(255, 255, 255, 0.38);
   --glass-3: rgba(255, 255, 255, 0.52);
@@ -10277,7 +10475,34 @@ html[data-wallpaper="on"] {
   --stroke: transparent;
   --inset-hl: 0 0 0 transparent;
 }
-html.dark :is(.glass-shell, .rail-sheet) {
+html.dark :is(
+  .glass-shell,
+  .rail-sheet,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"]:not(.bg-transparent),
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint
+) {
   --glass-1: rgba(255, 255, 255, 0.06);
   --glass-2: rgba(255, 255, 255, 0.09);
   --glass-3: rgba(255, 255, 255, 0.14);
@@ -10287,11 +10512,65 @@ html.dark :is(.glass-shell, .rail-sheet) {
   /* 保留磨砂通透感，同时用极轻光学暗描影稳住亮壁纸上各级浅色文字的字缘清晰度（DESIGN.md §145）。 */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42), 0 0 1px rgba(0, 0, 0, 0.28);
 }
-html:not(.dark)[data-wallpaper="on"] :is(.glass-shell, .rail-sheet) {
+html:not(.dark)[data-wallpaper="on"] :is(
+  .glass-shell,
+  .rail-sheet,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"]:not(.bg-transparent),
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint
+) {
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
 }
 /* 实心高对比主按钮、代码段与表单控件自身对比充足，不叠字缘描影，避免深字带黑边或代码发虚。 */
-:is(.glass-shell, .rail-sheet) :is(
+:is(
+  .glass-shell,
+  .rail-sheet,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"]:not(.bg-transparent),
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint
+) :is(
   .glass-home,
   .glass-composer-send,
   [data-slot="button"][data-variant="default"],
@@ -10305,8 +10584,38 @@ html:not(.dark)[data-wallpaper="on"] :is(.glass-shell, .rail-sheet) {
   text-shadow: none;
 }
 
-/* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
-:is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
+/* 全站主工作台大板块与所有弹层/菜单/弹窗/抽屉/气泡条：统一纯净无边框悬浮毛玻璃，严格跟随设置里的材质、雾度与深浅色（DESIGN.md §147） */
+:is(
+  .glass-side-card,
+  .acct-card,
+  .acct-mini-card,
+  .glass-mini-card,
+  .rail-card,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"]:not(.bg-transparent),
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint
+) {
   background: var(--pal-tint-layer,) var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
   border: 0 !important;
@@ -10506,7 +10815,13 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
 /* 状态渐变兜底：换主题 / 换档 / 采样改墨时注册的材质参数滑行。
  * :where 优先级为 0——元素自己声明过 transition 的一律按它的走。 */
 :where(
-  .glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card,
+  .glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .hk-drawer,
+  [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"],
+  [data-slot="dialog-content"], [data-slot="sheet-content"],
+  .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop,
+  .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint,
   .glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab,
   .glass-composer, [data-slot="bubble-content"], .jr-card,
   .page-rows, .sg-card, .page-section > form, .page .border
@@ -11149,7 +11464,7 @@ html[data-perf="on"] {
   --glass-filter: none;
   --glass-pop-filter: none;
 }
-html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
+html[data-perf="on"] :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .hk-drawer, [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"], [data-slot="dialog-content"], [data-slot="sheet-content"], .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop, .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
   --lg-blur: none;
   --lg-surface: var(--popover);
   --lg-surface-strong: var(--popover);
@@ -11162,7 +11477,7 @@ html[data-perf="on"] .chat-bubble-bare > [data-slot="bubble-content"] {
     --glass-filter: none;
     --glass-pop-filter: none;
   }
-  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
+  html:root :is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .hk-drawer, [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"], [data-slot="dialog-content"], [data-slot="sheet-content"], .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop, .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint, .glass-seg, .glass-search, .glass-composer, [data-slot="bubble-content"], .jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
     --lg-blur: none;
     --lg-surface: var(--popover);
     --lg-surface-strong: var(--popover);
