@@ -259,6 +259,43 @@ describe("liquid glass installer: one ink for the whole screen", () => {
     expect(new Set(inks())).toEqual(new Set(["light"]));
     expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
   });
+
+  test("mist / crystal / frosted boost --lg-aa-boost over bright wallpaper in dark mode and clear it on dark backdrop", async () => {
+    for (const style of ["mist", "crystal", "frosted"] as const) {
+      document.documentElement.classList.add("dark");
+      document.documentElement.setAttribute("data-glass", style);
+      gray = 230;
+      mountShell();
+      uninstall = installLiquidGlass();
+      await wait(260);
+      const rail = document.querySelector<HTMLElement>(".rail-card");
+      expect(rail?.hasAttribute("data-lg-ink")).toBe(false);
+      expect(
+        Number(rail?.style.getPropertyValue("--lg-aa-boost")),
+      ).toBeGreaterThan(1.2);
+      await resample(24);
+      expect(rail?.style.getPropertyValue("--lg-aa-boost")).toBe("");
+      uninstall();
+      uninstall = null;
+    }
+  });
+
+  test("position: fixed glass surfaces (offsetParent === null, e.g. .rail-sheet) still receive contrast sampling", async () => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.setAttribute("data-glass", "mist");
+    gray = 230;
+    mountShell();
+    const rail = document.querySelector<HTMLElement>(".rail-card")!;
+    Object.defineProperty(rail, "offsetParent", {
+      configurable: true,
+      get: () => null,
+    });
+    uninstall = installLiquidGlass();
+    await wait(260);
+    expect(
+      Number(rail.style.getPropertyValue("--lg-aa-boost")),
+    ).toBeGreaterThan(1.2);
+  });
 });
 
 function mountWallpaper(url: string) {

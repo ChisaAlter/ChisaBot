@@ -27,7 +27,11 @@
  * 对比度模型跑的就是这里同一份判定和求解，不是另一份近似。
  */
 
-import { GLASS_SURFACE_SELECTOR } from "@/lib/appearance";
+import {
+  GLASS_SURFACE_SELECTOR,
+  type GlassStyleId,
+  subscribeAppearance,
+} from "@/lib/appearance";
 import { getSkySnapshot, subscribeSkySnapshot } from "@/lib/sky-snapshot";
 
 /* ------------------------------------------------------------------ *
@@ -199,6 +203,76 @@ export function sampleStats(points: readonly RGBA[]): BgStats {
   chroma /= points.length;
   return { lum, texture, chroma };
 }
+
+/**
+ * 从 5×3 采样点取该墨色下最不利的底色（忽略极值单点噪点）：
+ * - 深釉浅墨（dark）：取 85 分位最亮处，防止面板局部压在亮壁纸上时浅字发虚；
+ * - 浅釉深墨（light）：取 15 分位最暗处，防止局部压在暗壁纸上时深字糊成一片。
+ */
+export function worstBackdropColor(
+  points: readonly RGBA[],
+  ink: GlassInkState,
+): RGBA {
+  if (points.length === 0)
+    return ink === "dark" ? [10, 14, 24, 1] : [180, 200, 225, 1];
+  const lums = points.map(
+    (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255,
+  );
+  const idx = lums.map((_, i) => i).sort((a, b) => lums[a] - lums[b]);
+  const pos =
+    ink === "dark"
+      ? Math.min(idx.length - 1, Math.floor(idx.length * 0.85))
+      : Math.max(0, Math.floor(idx.length * 0.15));
+  return points[idx[pos]];
+}
+
+interface NonLiquidSurfaceSpec {
+  tintRGB: [number, number, number];
+  lo: number;
+  mul: number;
+  hi: number;
+  max: number;
+}
+
+/**
+ * mist / crystal / frosted 三档非液态玻璃最薄一段渐变的釉色参数（与 styles.css 一一对应）。
+ * 按最薄一段求解 --lg-aa-boost，确保整块玻璃上任何位置的弱文字都满足 WCAG AA。
+ */
+export const NON_LIQUID_SURFACE_SPEC: Record<
+  Exclude<GlassStyleId, "liquid">,
+  Record<"light" | "dark", NonLiquidSurfaceSpec>
+> = {
+  crystal: {
+    light: {
+      tintRGB: [255, 255, 255],
+      lo: 0.18,
+      mul: 1.45,
+      hi: 0.44,
+      max: 0.88,
+    },
+    dark: { tintRGB: [8, 13, 24], lo: 0.18, mul: 1.45, hi: 0.44, max: 0.88 },
+  },
+  frosted: {
+    light: {
+      tintRGB: [255, 255, 255],
+      lo: 0.42,
+      mul: 2.8,
+      hi: 0.72,
+      max: 0.88,
+    },
+    dark: { tintRGB: [10, 15, 28], lo: 0.4, mul: 2.7, hi: 0.7, max: 0.88 },
+  },
+  mist: {
+    light: {
+      tintRGB: [255, 255, 255],
+      lo: 0.28,
+      mul: 2.05,
+      hi: 0.58,
+      max: 0.88,
+    },
+    dark: { tintRGB: [9, 14, 26], lo: 0.28, mul: 2.0, hi: 0.58, max: 0.88 },
+  },
+};
 
 /**
  * 整屏光栅的平均亮度（隔 step 个像素抽样，weighted sRGB 与 sampleStats 同公式）。
@@ -423,6 +497,13 @@ function liquidActive(): boolean {
   return document.documentElement.getAttribute("data-glass") === "liquid";
 }
 
+function activeGlassStyle(): GlassStyleId {
+  const g = document.documentElement.getAttribute("data-glass");
+  if (g === "liquid" || g === "crystal" || g === "frosted" || g === "mist")
+    return g;
+  return "mist";
+}
+
 function darkScheme(): boolean {
   return document.documentElement.classList.contains("dark");
 }
@@ -467,6 +548,7 @@ class LiquidGlass {
   private watchedWallpaper: Element | null = null;
   private lastWallpaperUrl = "";
   private unsubscribeSky: (() => void) | null = null;
+  private unsubscribeAppearance: (() => void) | null = null;
   private readonly onScroll = () => this.markScrolling();
 
   start() {
@@ -492,6 +574,7 @@ class LiquidGlass {
     });
     this.resizeObs = new ResizeObserver(() => this.refresh());
     this.resizeObs.observe(document.documentElement);
+    this.unsubscribeAppearance = subscribeAppearance(() => this.refresh());
     window.addEventListener("scroll", this.onScroll, {
       passive: true,
       capture: true,
@@ -511,6 +594,8 @@ class LiquidGlass {
     this.watchedWallpaper = null;
     this.unsubscribeSky?.();
     this.unsubscribeSky = null;
+    this.unsubscribeAppearance?.();
+    this.unsubscribeAppearance = null;
     window.removeEventListener("scroll", this.onScroll, {
       capture: true,
     } as EventListenerOptions);
@@ -537,7 +622,7 @@ class LiquidGlass {
    * 换场景的渐变画完那一帧也有一张）就重采一次，整屏墨色跟着天空走。
    */
   private syncSkySubscription() {
-    const want = !this.destroyed && liquidActive() && !glassSuppressed();
+    const want = !this.destroyed && !glassSuppressed();
     if (want && !this.unsubscribeSky) {
       this.unsubscribeSky = subscribeSkySnapshot(() => {
         this.rasterDirty = true;
@@ -550,9 +635,8 @@ class LiquidGlass {
   }
 
   /**
-   * 结构变化：重挂透镜（防抖）。新出现的玻璃面（后渲染的卡片 / 气泡 / 首屏晚到的面板）
-   * 当场挂上整屏墨色，再排一次采样让它参与下一次整屏判定——以前只 rescan 不采样，
-   * 晚到的面板会一直停在默认浅釉，首屏一块面板都没有时第一次采样也就落空了。
+   * 结构变化：重挂透镜（防抖）。新出现的玻璃面（后渲染的卡片 / 气泡 / 面板抽屉）
+   * 在 liquid 模式下当场挂上整屏墨色，所有玻璃档位都排一次采样以更新对比度补偿。
    */
   private onMutations(records: MutationRecord[]) {
     this.scheduleRescan();
@@ -571,8 +655,8 @@ class LiquidGlass {
       if (added) break;
     }
     this.syncWallpaperWatch();
-    if (!added || !liquidActive() || glassSuppressed()) return;
-    if (!darkScheme() && this.screenInk === "dark") {
+    if (!added || glassSuppressed()) return;
+    if (liquidActive() && !darkScheme() && this.screenInk === "dark") {
       for (const el of this.surfaces()) {
         if (!el.hasAttribute("data-lg-ink"))
           el.setAttribute("data-lg-ink", "dark");
@@ -879,24 +963,44 @@ class LiquidGlass {
 
   private sample(_full: boolean) {
     if (this.destroyed) return;
-    if (!liquidActive() || glassSuppressed()) {
+    if (glassSuppressed()) {
       this.clearAdapted();
       return;
     }
-    const els = this.surfaces().filter((el) => el.offsetParent !== null);
+    const els = this.surfaces();
     if (els.length === 0) return;
+    const style = activeGlassStyle();
     const raster = this.raster();
     const scheme = darkScheme() ? "dark" : "light";
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    // 每块面板背后的真实亮度（按它在屏上的位置取样）→ 面积加权成整屏背后亮度 → 整屏一种墨。
-    const measured = els.map((el) => {
+    // 不用 offsetParent !== null：position: fixed 的玻璃面（如窄窗抽屉 .rail-sheet）在 Chromium 下
+    // offsetParent 恒为 null，会整块漏掉对比度补偿；改按可视盒面积 > 0 过滤。
+    const measured: Array<{
+      el: HTMLElement;
+      pts: RGBA[] | null;
+      stats: BgStats | null;
+      area: number;
+    }> = [];
+    for (const el of els) {
       const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
       const w = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
       const h = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
-      const stats = raster ? this.sampleUnder(el, raster) : null;
-      return { el, stats, area: w * h };
-    });
+      if (w <= 0 || h <= 0) continue;
+      const pts = raster ? this.sampleGrid(el, raster) : null;
+      const stats = pts ? sampleStats(pts) : null;
+      measured.push({ el, pts, stats, area: w * h });
+    }
+    if (measured.length === 0) return;
+    if (style !== "liquid") {
+      this.screenInk = null;
+      for (const m of measured) {
+        this.applyNonLiquidBoost(m.el, style, m.pts, scheme);
+      }
+      return;
+    }
+    // 每块面板背后的真实亮度（按它在屏上的位置取样）→ 面积加权成整屏背后亮度 → 整屏一种墨。
     const { ink } = decideScreenInk(
       scheme,
       measured.flatMap((m) =>
@@ -911,15 +1015,52 @@ class LiquidGlass {
         m.el,
         ink,
         m.stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 },
+        m.pts,
         scheme,
       );
     }
+  }
+
+  private applyNonLiquidBoost(
+    el: HTMLElement,
+    style: Exclude<GlassStyleId, "liquid">,
+    pts: readonly RGBA[] | null,
+    scheme: "light" | "dark",
+  ) {
+    if (el.hasAttribute("data-lg-ink")) el.removeAttribute("data-lg-ink");
+    if (el.style.getPropertyValue("--lg-density-k"))
+      el.style.removeProperty("--lg-density-k");
+    if (el.style.getPropertyValue("--lg-sat-keep"))
+      el.style.removeProperty("--lg-sat-keep");
+    const ink: GlassInkState = scheme === "dark" ? "dark" : "light";
+    const spec = NON_LIQUID_SURFACE_SPEC[style][scheme];
+    const alpha = this.currentAlpha(el);
+    const base = Math.min(spec.hi, Math.max(spec.lo, alpha * spec.mul));
+    const bgColor = pts
+      ? worstBackdropColor(pts, ink)
+      : scheme === "dark"
+        ? ([10, 14, 24, 1] as RGBA)
+        : ([180, 200, 225, 1] as RGBA);
+    const needed = alphaForContrast({
+      bg: bgColor,
+      tintRGB: spec.tintRGB,
+      hlAlpha: 0,
+      ink,
+      base,
+      max: spec.max,
+      inkColor: LG_WORST_INK[ink],
+    });
+    const boost = base > 0 && needed > base ? Math.min(20, needed / base) : 1;
+    if (boost > 1.005) setInlineVar(el, "--lg-aa-boost", boost.toFixed(3));
+    else if (el.style.getPropertyValue("--lg-aa-boost"))
+      el.style.removeProperty("--lg-aa-boost");
   }
 
   private applyAdapt(
     el: HTMLElement,
     ink: GlassInkState,
     stats: BgStats,
+    pts: readonly RGBA[] | null,
     scheme: "light" | "dark",
   ) {
     if (ink === "dark" && scheme === "light") {
@@ -934,7 +1075,11 @@ class LiquidGlass {
     const alpha = this.currentAlpha(el);
     const mul = scheme === "dark" ? 1.75 : ink === "dark" ? 1.4 : 1;
     const raw = alpha * mul * densityK;
-    const bgColor = this.averageColor(el);
+    const bgColor = pts
+      ? worstBackdropColor(pts, ink)
+      : scheme === "dark"
+        ? ([10, 14, 24, 1] as RGBA)
+        : ([180, 200, 225, 1] as RGBA);
     const needed = alphaForContrast({
       bg: bgColor,
       tintRGB:
@@ -946,7 +1091,7 @@ class LiquidGlass {
       max: scheme === "dark" ? 0.9 : ink === "dark" ? 0.95 : 0.85,
       inkColor: LG_WORST_INK[ink],
     });
-    const boost = raw > 0 ? Math.min(4, needed / raw) : 1;
+    const boost = raw > 0 ? Math.min(20, needed / raw) : 1;
     setInlineVar(el, "--lg-density-k", densityK.toFixed(3));
     setInlineVar(el, "--lg-aa-boost", boost.toFixed(3));
     setInlineVar(el, "--lg-sat-keep", satKeep.toFixed(3));
@@ -958,23 +1103,6 @@ class LiquidGlass {
       getComputedStyle(el).getPropertyValue("--lg-alpha"),
     );
     return Number.isFinite(v) ? v : 0.16;
-  }
-
-  private averageColor(el: HTMLElement): RGBA {
-    const raster = this.raster();
-    if (!raster) return darkScheme() ? [10, 14, 24, 1] : [180, 200, 225, 1];
-    // 平均色不逐点平均，用中心点近似（底色变化平缓时误差可忽略）。
-    const rect = el.getBoundingClientRect();
-    const x = Math.min(
-      raster.width - 1,
-      Math.max(0, Math.round((rect.left + rect.width / 2) / this.rasterScale)),
-    );
-    const y = Math.min(
-      raster.height - 1,
-      Math.max(0, Math.round((rect.top + rect.height / 2) / this.rasterScale)),
-    );
-    const i = (y * raster.width + x) * 4;
-    return [raster.data[i], raster.data[i + 1], raster.data[i + 2], 1];
   }
 
   private clearAdapted() {
@@ -1194,7 +1322,22 @@ class LiquidGlass {
     const g = ctx.createLinearGradient(0, 0, 0, vh);
     const stop = (r: number, g_: number, b: number, a: number) =>
       `rgba(${r}, ${g_}, ${b}, ${(a * veilK).toFixed(3)})`;
-    if (dark) {
+    const root = document.documentElement;
+    const themeSkyVeil =
+      root.hasAttribute("data-theme-family") &&
+      root.hasAttribute("data-sky-off") &&
+      root.getAttribute("data-wallpaper") !== "on";
+    if (themeSkyVeil) {
+      if (dark) {
+        g.addColorStop(0, stop(0, 0, 0, 0.28));
+        g.addColorStop(0.55, stop(0, 0, 0, 0.34));
+        g.addColorStop(1, stop(0, 0, 0, 0.4));
+      } else {
+        g.addColorStop(0, stop(255, 255, 255, 0.22));
+        g.addColorStop(0.52, stop(255, 255, 255, 0.26));
+        g.addColorStop(1, stop(255, 255, 255, 0.3));
+      }
+    } else if (dark) {
       g.addColorStop(0, stop(5, 9, 18, 0.5));
       g.addColorStop(0.55, stop(7, 12, 24, 0.58));
       g.addColorStop(1, stop(9, 15, 28, 0.66));
@@ -1207,8 +1350,8 @@ class LiquidGlass {
     ctx.fillRect(0, 0, vw, vh);
   }
 
-  /** 元素下的 5×3 采样网格 → 亮度 / 纹理 / 色度。 */
-  private sampleUnder(el: HTMLElement, raster: ImageData): BgStats {
+  /** 元素下的 5×3 采样网格（RGBA 点集）。 */
+  private sampleGrid(el: HTMLElement, raster: ImageData): RGBA[] {
     const rect = el.getBoundingClientRect();
     const xs = [0.08, 0.28, 0.5, 0.72, 0.92];
     const ys = [0.18, 0.5, 0.82];
@@ -1233,7 +1376,7 @@ class LiquidGlass {
         pts.push([raster.data[i], raster.data[i + 1], raster.data[i + 2], 1]);
       }
     }
-    return sampleStats(pts);
+    return pts;
   }
 }
 

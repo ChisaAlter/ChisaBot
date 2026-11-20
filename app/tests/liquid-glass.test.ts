@@ -29,6 +29,7 @@ import {
   satKeepOf,
   screenBackdropLum,
   type RGBA,
+  worstBackdropColor,
 } from "../src/lib/liquid-glass";
 
 const css = readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8");
@@ -103,6 +104,16 @@ describe("background adaptation (spec §4)", () => {
     expect(sampleStats([flat(128), flat(128)]).chroma).toBe(0);
     const s = sampleStats([[255, 0, 0, 1], [0, 0, 255, 1]]);
     expect(s.chroma).toBeCloseTo(1);
+  });
+
+  test("worstBackdropColor picks bright patch for dark ink and dark patch for light ink", () => {
+    const pts: RGBA[] = [
+      flat(18), flat(22), flat(25), flat(28), flat(30),
+      flat(32), flat(35), flat(40), flat(45), flat(50),
+      flat(60), flat(210), flat(225), flat(235), flat(255),
+    ];
+    expect(worstBackdropColor(pts, "dark")[0]).toBeGreaterThanOrEqual(220);
+    expect(worstBackdropColor(pts, "light")[0]).toBeLessThanOrEqual(30);
   });
 
   test("raster mean luminance averages every pixel with the same weights as sampleStats", () => {

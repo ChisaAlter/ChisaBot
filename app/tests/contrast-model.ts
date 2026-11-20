@@ -354,16 +354,17 @@ function liquidComposite(
   return out;
 }
 
-/** 非液态材质的玻璃面（mist / crystal / frosted，不自适应）：渐变色标照旧解析。 */
+const GLASS_STOP_RE =
+  /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*(?:min\([\d.]+,\s*calc\()?clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)(?:\s*\*\s*var\(--lg-aa-boost,\s*1\)\)\))?\)/g;
+
+/** 非液态材质的玻璃面（mist / crystal / frosted）：按基准（--lg-aa-boost = 1）解析渐变首段。 */
 function glassSurface(
   style: (typeof GLASS_STYLES)[number],
   scheme: Scheme,
   haze: number,
 ): RGBA {
   const value = glassDecl("--lg-surface", style, scheme);
-  const first = value?.match(
-    /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)\)/,
-  );
+  const first = [...(value ?? "").matchAll(GLASS_STOP_RE)][0];
   if (!first) throw new Error(`--lg-surface for ${style}/${scheme}`);
   const [, r, g, b, lo, k, hi] = first.map(Number);
   const alpha = Math.min(hi, Math.max(lo, haze * k));
@@ -567,15 +568,73 @@ const ROOT_BLOCK: Record<Scheme, string> = {
   dark: '.dark, [data-theme="dark"]',
 };
 
-/** 文字令牌的最终值：先找深 / 浅色令牌块，没有就退回浅色块；var() 递归展开。 */
-export function tokenColor(scheme: Scheme, token: string): RGBA {
+function splitTopVar(expr: string): { name: string; fallback?: string } | null {
+  const trimmed = expr.trim();
+  if (!trimmed.startsWith("var(") || !trimmed.endsWith(")")) return null;
+  const inner = trimmed.slice(4, -1);
+  let depth = 0;
+  let comma = -1;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      comma = i;
+      break;
+    }
+  }
+  const name = (comma >= 0 ? inner.slice(0, comma) : inner).trim();
+  if (!/^--[\w-]+$/.test(name)) return null;
+  return comma >= 0
+    ? { name, fallback: inner.slice(comma + 1).trim() }
+    : { name };
+}
+
+function resolveColorExpr(
+  scheme: Scheme,
+  expr: string,
+  overrides?: Record<string, string>,
+): RGBA {
+  const ref = splitTopVar(expr);
+  if (!ref) return parseColor(expr);
+  const fromOverride = overrides?.[ref.name];
+  if (fromOverride) return resolveColorExpr(scheme, fromOverride, overrides);
+  const fromCss =
+    lastDecl(stylesCss, ROOT_BLOCK[scheme], ref.name) ??
+    lastDecl(stylesCss, ROOT_BLOCK.light, ref.name);
+  if (fromCss) return resolveColorExpr(scheme, fromCss, overrides);
+  if (ref.fallback) return resolveColorExpr(scheme, ref.fallback, overrides);
+  throw new Error(`${ref.name} missing for ${scheme}`);
+}
+
+/** 文字令牌的最终值：先找深 / 浅色令牌块，没有就退回浅色块；支持嵌套 var() 与主题族变量覆盖。 */
+export function tokenColor(
+  scheme: Scheme,
+  token: string,
+  overrides?: Record<string, string>,
+): RGBA {
   const raw =
+    overrides?.[token] ??
     lastDecl(stylesCss, ROOT_BLOCK[scheme], token) ??
     lastDecl(stylesCss, ROOT_BLOCK.light, token);
   if (!raw) throw new Error(`${token} missing for ${scheme}`);
-  const ref = raw.match(/^var\((--[\w-]+)(?:,\s*([^)]+))?\)$/);
-  if (ref) return tokenColor(scheme, ref[1]);
-  return parseColor(raw);
+  return resolveColorExpr(scheme, raw, overrides);
+}
+
+/** 某个主题族运行时（deriveSeed 写入 DOM 后）文字令牌的实际颜色。 */
+export function familySurfaceInk(
+  familyId: string,
+  scheme: Scheme,
+  ink: string,
+): RGBA {
+  const dark = scheme === "dark";
+  const overrides = deriveSeed(
+    familySeed(resolveThemeFamily(familyId), dark),
+    dark,
+  ).root;
+  const v = lastDecl(stylesCss, 'html[data-wallpaper="on"]', ink);
+  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1];
+  return tokenColor(scheme, ref ?? ink, overrides);
 }
 
 /** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置；只用于非液态材质）。 */
@@ -587,11 +646,7 @@ export function glassStops(
 ): RGBA[] {
   if (style === "liquid") throw new Error("liquid uses liquidComposite");
   const value = glassDecl(token, style, scheme);
-  const stops = [
-    ...(value ?? "").matchAll(
-      /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)\)/g,
-    ),
-  ].map((m) => {
+  const stops = [...(value ?? "").matchAll(GLASS_STOP_RE)].map((m) => {
     const [, r, g, b, lo, k, hi] = m.map(Number);
     return [r, g, b, Math.min(hi, Math.max(lo, haze * k))] as RGBA;
   });

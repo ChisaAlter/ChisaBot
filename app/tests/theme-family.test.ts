@@ -153,6 +153,33 @@ describe("deriveSeed 纯派生", () => {
     for (const k of ["--sky-1", "--sky-2", "--sky-3", "--sky-4", "--sky-glow"])
       expect(body[k]).toMatch(/^#[0-9a-f]{6}$/i);
   });
+
+  test("派生文字层级严格单调且不内联覆盖 --ink-2 / --ink-4（保留壁纸提级与高对比度规则）", () => {
+    for (const fam of THEME_FAMILIES) {
+      for (const dark of [false, true]) {
+        const seed = familySeed(fam, dark);
+        const root = deriveSeed(seed, dark).root;
+        expect(root["--ink-2"]).toBeUndefined();
+        expect(root["--ink-4"]).toBeUndefined();
+        const c1 = hexContrast(root["--ink-1"]!, seed.bg);
+        const c2 = hexContrast(root["--fam-ink-2"]!, seed.bg);
+        const c3 = hexContrast(root["--fam-ink-3"]!, seed.bg);
+        const c4 = hexContrast(root["--fam-ink-4"]!, seed.bg);
+        expect(c1).toBeGreaterThan(c2);
+        expect(c2).toBeGreaterThan(c3);
+        expect(c3).toBeGreaterThan(c4);
+        // 三级文字在主背景上必须保持高可读性，避免深色下发暗或浅色下发灰。
+        expect(c3).toBeGreaterThanOrEqual(7);
+      }
+    }
+  });
+
+  test("深色模式 --glass-tint 压暗后叠色，避免高亮度强调色漂白暗色玻璃", () => {
+    const monoDark = THEME_FAMILIES.find((f) => f.id === "mono")!.dark;
+    const tint = deriveSeed(monoDark, true).root["--glass-tint"]!;
+    const [r, g, b] = parseColor(tint);
+    expect(Math.max(r, g, b)).toBeLessThan(150);
+  });
 });
 
 describe("migrateLegacyPalette 旧键迁移", () => {
