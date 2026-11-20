@@ -730,15 +730,18 @@ describe("11) 全站弹窗、菜单、抽屉与浮层统一跟随玻璃效果与
   ];
 
   test("全部弹层与弹窗纳入 GLASS_SURFACE_SELECTOR 与主玻璃面画底规则（透明灯箱 dialog 除外）", () => {
-    const mainSurfaceRule = css.match(
-      /:is\(([^{}]*)\)\s*\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface\) !important;\s*backdrop-filter: var\(--lg-blur\) !important;/,
-    );
-    expect(mainSurfaceRule).toBeTruthy();
+    const surfaceRules = [
+      ...css.matchAll(
+        /([^{}]+)\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface\) !important;/g,
+      ),
+    ];
+    const combined = surfaceRules.map((m) => m[1]).join(" ");
+    expect(surfaceRules.length).toBeGreaterThanOrEqual(2);
     for (const sel of OVERLAYS) {
       expect(appearance.GLASS_SURFACE_SELECTOR).toContain(sel);
-      expect(mainSurfaceRule![1]).toContain(sel);
+      expect(combined).toContain(sel);
     }
-    expect(mainSurfaceRule![1]).toContain(
+    expect(combined).toContain(
       '[data-slot="dialog-content"]:not(.bg-transparent)',
     );
   });

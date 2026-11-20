@@ -2,7 +2,7 @@
 
 ## 0.1.175 — 2026-11-20
 
-全端版本 `0.1.175`，Android `versionCode 355`：全站所有弹窗、菜单、抽屉与业务浮层统一接入玻璃材质与深浅色设置通道（DESIGN.md §147），彻底消除账号菜单、个人资料、任务详情、模型/权限选择器、快速搜索等弹层脱离外观设置的割裂感。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `64f85a75bc741187`；无需手动数据库迁移。
+全端版本 `0.1.175`，Android `versionCode 355`：全站所有弹窗、菜单、抽屉与业务浮层统一接入玻璃材质与深浅色设置通道（DESIGN.md §147），彻底消除账号菜单、个人资料、任务详情、模型/权限选择器、快速搜索等弹层脱离外观设置的割裂感。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `18fca7763cc3ad9d`；无需手动数据库迁移。
 
 - **全站 24 类弹窗、菜单、抽屉与浮层统一跟随外观设置（DESIGN.md §147）**：清除 `styles.css` 与 `tasks-rail-card.css` 中早期硬编码的深色 90%–97% 实底覆盖与历史静止态 `backdrop-filter: none`；将全部菜单（账号菜单、下拉/右键菜单、Select、Popover、Combobox）、弹窗（个人资料、绑定手机、任务中心、任务详情、语音通话、确认框等，透明全屏图片灯箱除外）、侧滑/移动抽屉（`sheet-content`、`.hk-drawer`）及全部业务浮层（`.model-popover`、`.perm-popover`、`.context-popover`、`.chat-spotlight-panel`、`.live-panel-src-pop`、`.rail-lib`、`.bm-menu`、`.bm-manager`、`.glass-toast`、`.page-loader-card`、`.sg-savebar`、`.auth-card`、`.update-banner`、`.install-hint`）统一纳入 `GLASS_SURFACE_SELECTOR` 与 `--lg-surface` / `--lg-blur` 单通道，严格跟随液态/晶莹/柔光磨砂/薄雾、雾度滑块、主题族染色与深浅色设置。
 - **动画流畅、可读性与降级同步保护**：保留弹窗打开动画 `glass-hold` 与关闭态 `[data-ending-style]` 去模糊，将瞬态弹层纳入 `LENS_SKIP_SELECTOR` 避免重型位移滤镜；全部 Portal 弹层同步继承深色与壁纸模式的光学字缘清晰度保护，并在性能模式、减少透明度与窗口缩放时经 `--lg-surface: var(--glass-bg-opaque)` 单通道降级。

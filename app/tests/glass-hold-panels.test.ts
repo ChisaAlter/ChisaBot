@@ -19,10 +19,13 @@ test("§37.2 glass-hold still covers dialog / sheet open", () => {
 });
 
 test("§147 dialog / sheet / menu / popover follow unified --lg-surface & --lg-blur at rest", () => {
-  const mainSurface = css.match(
-    /:is\(([^{}]*)\)\s*\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface\) !important;\s*backdrop-filter: var\(--lg-blur\) !important;/,
-  );
-  expect(mainSurface).toBeTruthy();
+  const surfaceRules = [
+    ...css.matchAll(
+      /:is\(([^{}]*)\)\s*\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface\) !important;\s*backdrop-filter: var\(--lg-blur\) !important;/g,
+    ),
+  ];
+  const combined = surfaceRules.map((m) => m[1]).join(" ");
+  expect(surfaceRules.length).toBeGreaterThanOrEqual(2);
   for (const slot of [
     '[data-slot="dialog-content"]:not(.bg-transparent)',
     '[data-slot="sheet-content"]',
@@ -30,7 +33,7 @@ test("§147 dialog / sheet / menu / popover follow unified --lg-surface & --lg-b
     '[data-slot="popover-content"]',
     '[data-slot="select-content"]',
   ]) {
-    expect(mainSurface![1]).toContain(slot);
+    expect(combined).toContain(slot);
   }
 });
 

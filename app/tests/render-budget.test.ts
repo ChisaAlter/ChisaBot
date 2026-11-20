@@ -106,8 +106,9 @@ test("only the rails, the composer, the top bar and popups blur", () => {
     ".install-hint",
     ".live-panel-src-pop",
     ".chat-spotlight-panel",
-    // 统一全站玻璃层（§147）：主板块 + 全部弹窗/抽屉/菜单/弹层统一跟随设置里的材质、雾度与深浅色。
-    ':is( .glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card, .hk-drawer, [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"], [data-slot="dialog-content"]:not(.bg-transparent), [data-slot="sheet-content"], .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop, .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint )',
+    // 主工作台大板块（左栏 / 账号卡 / 右栏）与全站弹窗/抽屉/菜单/浮层（§147）：统一跟随设置里的材质、雾度与深浅色。
+    ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)",
+    ':is( [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"], [data-slot="dialog-content"]:not(.bg-transparent), [data-slot="sheet-content"], .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop, .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint )',
     ":is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
     "html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
     ".glass-composer, .dark .glass-composer, .glass-composer:focus-within, .dark .glass-composer:focus-within",

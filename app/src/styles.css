@@ -10584,14 +10584,17 @@ html:not(.dark)[data-wallpaper="on"] :is(
   text-shadow: none;
 }
 
-/* 全站主工作台大板块与所有弹层/菜单/弹窗/抽屉/气泡条：统一纯净无边框悬浮毛玻璃，严格跟随设置里的材质、雾度与深浅色（DESIGN.md §147） */
+/* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
+:is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card) {
+  background: var(--pal-tint-layer,) var(--lg-surface) !important;
+  backdrop-filter: var(--lg-blur) !important;
+  border: 0 !important;
+  box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* 全站弹窗、菜单、抽屉与业务浮层：与主板块共用 --lg-surface / --lg-blur 单通道，严格跟随玻璃材质、雾度与深浅色设置（DESIGN.md §147） */
 :is(
-  .glass-side-card,
-  .acct-card,
-  .acct-mini-card,
-  .glass-mini-card,
-  .rail-card,
-  .hk-drawer,
   [data-slot="dropdown-menu-content"],
   [data-slot="dropdown-menu-sub-content"],
   [data-slot="context-menu-content"],
@@ -10618,6 +10621,14 @@ html:not(.dark)[data-wallpaper="on"] :is(
 ) {
   background: var(--pal-tint-layer,) var(--lg-surface) !important;
   backdrop-filter: var(--lg-blur) !important;
+  border: 0 !important;
+  box-shadow: var(--lg-shadow) !important;
+  color: var(--lg-ink) !important;
+}
+
+/* 手机 / 窄窗侧栏抽屉：底色与阴影同步走 --lg-surface 跟随外观设置，模糊继续唯一由自身 .glass 提供（mobile-drawer.test.tsx 单层模糊约束）。 */
+.hk-drawer {
+  background: var(--pal-tint-layer,) var(--lg-surface) !important;
   border: 0 !important;
   box-shadow: var(--lg-shadow) !important;
   color: var(--lg-ink) !important;
