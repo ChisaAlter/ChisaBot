@@ -237,3 +237,13 @@ test("stop terminates already-started background jobs", { timeout: 12_000 }, asy
   assert.equal(job.status, "killed");
   assert.ok(job.endedAt, "background process actually exited");
 });
+
+test("server check_update push emits check_update event on agent", async (t) => {
+  const s = setup(t);
+  const ws = await s.connected;
+  await s.waitFor((m) => m.type === "hello");
+  const pushed = new Promise((resolve) => s.agent.events.once("check_update", resolve));
+  ws.send(JSON.stringify({ type: "check_update", version: "0.1.173", reason: "release_watch" }));
+  const event = await pushed;
+  assert.deepEqual(event, { version: "0.1.173", reason: "release_watch" });
+});

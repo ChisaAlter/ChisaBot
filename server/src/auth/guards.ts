@@ -90,7 +90,9 @@ export function createRequireUser(
   };
 }
 
-export function requireAdmin(context: Context<{ Variables: AppVariables }>) {
+export function requireAdmin<V extends AppVariables>(
+  context: Context<{ Variables: V }>,
+) {
   if (context.var.actor.role !== "admin") {
     return context.json({ error: "Administrator access required." }, 403);
   }

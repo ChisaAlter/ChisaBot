@@ -1,3 +1,9 @@
+## 0.1.173 — 2026-11-20
+
+- 全端发版：`0.1.173`，Android `versionCode 353`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `e4c6b8a6173cf36e`；无需手动数据库迁移，新增可选环境变量 `CHISABOT_PC_UPDATE_FEED_URL` / `CHISABOT_PC_UPDATE_WATCH_INTERVAL_MS`。
+- **磨砂玻璃通透感恢复与文字层可读性优化（DESIGN §145）**：移除 `mist` / `crystal` / `frosted` 的 `--lg-aa-boost` 自动顶升（仅保留 `liquid` 自适应），恢复三页签与全站半透明磨砂；提亮 `.dark` 全站墨色（`--ink-1` `#ffffff` / `--ink-2` `#edf2fb` / `--ink-3` `#d6e0f0` / `--ink-4` `0.78`）与 `deriveSeed` 深色派生色阶，叠加克制光学字缘微投影（主按钮/代码/输入控件豁免）；修复 `liquid-glass.ts` 同源鉴权壁纸设 `crossOrigin="anonymous"` 丢 Cookie（styles.css · theme-family.ts · liquid-glass.ts · liquid-glass-screen-ink.test.ts）。
+- **桌面端更新服务端 WebSocket 主动推送**：新增 `server/src/devices/pc-release-watcher.ts`（`guardedFetch` + ETag 2 分钟监听 `latest.yml`，零在线客户端零请求），`DeviceHub` 支持 `notifyUpdateAvailable` 与 `hello` 落后即单播，`POST /api/devices/push-update` + 系统更新页「推送桌面端更新」支持管理员秒级广播；PC 客户端（`core.js` / `updater.js` / `main.js`）接入推送、聚焦/唤醒/服务端版本更高节流触发（`nudge`）、10 分钟兜底与开始下载轻通知/托盘进度，保持客户端自有更新源 + Ed25519 验签边界不变（shared/devices.ts · pc-release-watcher.ts · hub.ts · routes.ts · config.ts · index.ts · system-update.tsx · pc/src/* · online-update.md）。
+
 ## 0.1.172 — 2026-11-20
 
 - 全端发版：`0.1.172`，Android `versionCode 352`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `100230f7caedaf89`；无需手动数据库迁移。

@@ -335,6 +335,10 @@ export type DeploymentConfig = {
   isTestRuntime: boolean;
   updaterDir?: string;
   sourceDir?: string;
+  /** PC 客户端更新源（latest.yml 地址，CHISABOT_PC_UPDATE_FEED_URL；设为 off 禁用自动监听）。 */
+  pcUpdateFeedUrl?: string;
+  /** 服务端监听 PC latest.yml 的轮询间隔毫秒（CHISABOT_PC_UPDATE_WATCH_INTERVAL_MS，默认 120000；0 关闭）。 */
+  pcUpdateWatchIntervalMs: number;
   modelCatalogRefreshMinutes: number;
   deviceAskDefaultsEnabled: boolean;
   githubApiBase?: string;
@@ -1544,6 +1548,17 @@ export function loadConfig(
     ...(environment.CHISABOT_SOURCE_DIR !== undefined
       ? { sourceDir: environment.CHISABOT_SOURCE_DIR }
       : {}),
+    ...(environment.CHISABOT_PC_UPDATE_FEED_URL !== undefined
+      ? { pcUpdateFeedUrl: environment.CHISABOT_PC_UPDATE_FEED_URL }
+      : {}),
+    pcUpdateWatchIntervalMs: (() => {
+      const raw = environment.CHISABOT_PC_UPDATE_WATCH_INTERVAL_MS;
+      if (raw === undefined || raw.trim() === "") return 120_000;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0) return 120_000;
+      if (value === 0) return 0;
+      return Math.min(Math.max(Math.round(value), 30_000), 3_600_000);
+    })(),
     modelCatalogRefreshMinutes: (() => {
       const value = Number(environment.MODEL_CATALOG_REFRESH_MINUTES ?? 10);
       return Number.isFinite(value) && value >= 0

@@ -51,6 +51,31 @@ export async function requestSystemUpdate(
   return response.json();
 }
 
+export type DesktopUpdatePushResult = {
+  ok: boolean;
+  version: string | null;
+  notified: number;
+  skipped: number;
+  totalOnline: number;
+  warning?: string;
+};
+
+/** 管理员主动触发一次 PC 更新源探测，并通过既有设备 WebSocket 向在线桌面端推送更新检查信号。 */
+export async function pushDesktopUpdateCheck(options?: {
+  deviceId?: string;
+  version?: string;
+}): Promise<DesktopUpdatePushResult> {
+  const response = await client("/api/devices/push-update", {
+    method: "POST",
+    body: {
+      ...(options?.deviceId ? { deviceId: options.deviceId } : {}),
+      ...(options?.version ? { version: options.version } : {}),
+    },
+    fallback: "无法推送桌面端更新检查。",
+  });
+  return response.json();
+}
+
 export function shortSha(sha?: string) {
   return sha ? sha.slice(0, 7) : "—";
 }

@@ -46,7 +46,7 @@ const { createOps } = require("./agent/ops");
 const { attachAgentRuntime } = require("./agent-runtime/attach");
 const auth = require("./agent/auth");
 const { ensureEnrolled } = require("./agent/enrollment");
-const { createUpdater } = require("./updater");
+const { createUpdater, compareVersion, DEFAULT_PUSH_GAP_MS, DEFAULT_WAKE_GAP_MS } = require("./updater");
 const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
 const { animateWindowBounds, createCompactController } = require("./compact-window");
@@ -577,6 +577,9 @@ function openChat(pathname, options) {
   compactWindows().watch(win);
   // 「新版本已下载」提示窗挂在主窗口里，主窗口动了它跟着动（DESIGN.md §36.5）。
   for (const name of ["move", "resize", "show", "hide", "minimize", "restore", "maximize", "unmaximize"]) win.on(name, () => placeUpdateWindow());
+  win.on("focus", () => {
+    void updater?.nudge({ reason: "focus", minGapMs: DEFAULT_WAKE_GAP_MS });
+  });
   win.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || !(input.control || input.meta) || !input.shift || input.alt) return;
     if (String(input.key).toLowerCase() !== "m") return;
@@ -701,7 +704,11 @@ function refreshTray() {
         : []),
       ...(updater?.state.status === "downloaded"
         ? [{ label: `重启以安装 ${updater.state.version || "新版本"}…`, click: () => openUpdateWindow() }]
-        : []),
+        : updater?.state.status === "downloading"
+          ? [{ label: `正在下载新版本 ${updater.state.version || ""}（${Math.round(updater.state.percent || 0)}%）…`, enabled: false }]
+          : updater?.state.status === "verifying"
+            ? [{ label: `正在校验新版本 ${updater.state.version || ""}…`, enabled: false }]
+            : []),
       { type: "separator" },
       ...(agent?.fullAccess
         ? [
@@ -928,6 +935,16 @@ function startAgent() {
     if (operation === "input" || operation === "shell") tray?.setToolTip(`ChisaBot · ${botName || "机器人"} 正在操作…`);
   });
   agent.events.on("approval_closed", ({ id }) => closeApproval(id));
+  agent.events.on("check_update", ({ version, reason } = {}) => {
+    config.appendAudit({
+      at: new Date().toISOString(),
+      actor: "服务器",
+      operation: "update_push_received",
+      outcome: "succeeded",
+      summary: `收到服务器更新推送${version ? `（${version}）` : ""}${reason ? ` · ${reason}` : ""}`,
+    });
+    void updater?.nudge({ version, reason: reason || "server_push", minGapMs: DEFAULT_PUSH_GAP_MS });
+  });
   agent.events.on("revoked", () => {
     refreshTray();
     if (Notification.isSupported())
@@ -1127,6 +1144,10 @@ function startUpdater() {
     logger: updateLogger(),
     onState: () => {
       refreshTray();
+    },
+    onAvailable: (version) => {
+      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_available", outcome: "succeeded", summary: `发现新版本 ${version || ""}，正在后台下载` });
+      if (Notification.isSupported()) new Notification({ title: "ChisaBot", body: `发现新版本 ${version || ""}，正在后台下载…` }).show();
     },
     onDownloaded: (version) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_downloaded", outcome: "succeeded", summary: `新版本 ${version || ""} 已下载` });
@@ -1827,8 +1848,11 @@ const localWeb = createLocalWebController({
   bundleDir: path.join(__dirname, "web-bundle"),
   localVersion: pkg.version,
   getServerOrigin: serverOrigin,
-  onModeChange: ({ origin, mode, prevMode }) => {
+  onModeChange: ({ origin, mode, prevMode, serverVersion }) => {
     broadcast();
+    if (serverVersion && compareVersion(serverVersion, pkg.version) > 0) {
+      void updater?.nudge({ version: serverVersion, reason: "server_version", minGapMs: 30_000 });
+    }
     // 探测/嗅探可能晚于页面加载（窗口里还是内置旧前端）：local→remote 一旦翻转就重载聊天窗口，
     // 换到服务器前端。serverVersions 单调递增，local→remote 每会话最多翻一次，不会反复重载。
     if (mode === "remote" && prevMode === "local" && origin === serverOrigin() && windows.chat && !windows.chat.isDestroyed() && !chatOffline) {
@@ -1879,9 +1903,15 @@ app.whenReady().then(() => {
       } catch {}
     }
   }
-  // 休眠唤醒 / 解锁后网络往往刚恢复，旧连接可能已经半死：立刻重连，不等退避和看门狗。
-  powerMonitor.on("resume", () => agent?.reconnectNow());
-  powerMonitor.on("unlock-screen", () => agent?.reconnectNow());
+  // 休眠唤醒 / 解锁后网络往往刚恢复，旧连接可能已经半死：立刻重连，不等退避和看门狗；顺手节流补查一次更新。
+  powerMonitor.on("resume", () => {
+    agent?.reconnectNow();
+    void updater?.nudge({ reason: "resume", minGapMs: DEFAULT_WAKE_GAP_MS });
+  });
+  powerMonitor.on("unlock-screen", () => {
+    agent?.reconnectNow();
+    void updater?.nudge({ reason: "unlock", minGapMs: DEFAULT_WAKE_GAP_MS });
+  });
   config = createConfig({ dir: app.getPath("userData"), safeStorage });
   try {
     ses.setSpellCheckerEnabled?.(config.get().spellcheck !== false);
