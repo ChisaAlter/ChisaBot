@@ -700,3 +700,63 @@ describe("10) 窗口按钮条不进材质画底名单（回归门）", () => {
     }
   });
 });
+
+describe("11) 全站弹窗、菜单、抽屉与浮层统一跟随玻璃效果与深浅色设置（§147）", () => {
+  const OVERLAYS = [
+    ".hk-drawer",
+    '[data-slot="dropdown-menu-content"]',
+    '[data-slot="dropdown-menu-sub-content"]',
+    '[data-slot="context-menu-content"]',
+    '[data-slot="context-menu-sub-content"]',
+    '[data-slot="select-content"]',
+    '[data-slot="popover-content"]',
+    '[data-slot="combobox-content"]',
+    '[data-slot="dialog-content"]',
+    '[data-slot="sheet-content"]',
+    ".model-popover",
+    ".perm-popover",
+    ".context-popover",
+    ".chat-spotlight-panel",
+    ".live-panel-src-pop",
+    ".rail-lib",
+    ".bm-menu",
+    ".bm-manager",
+    ".glass-toast",
+    ".page-loader-card",
+    ".sg-savebar",
+    ".auth-card",
+    ".update-banner",
+    ".install-hint",
+  ];
+
+  test("全部弹层与弹窗纳入 GLASS_SURFACE_SELECTOR 与主玻璃面画底规则（透明灯箱 dialog 除外）", () => {
+    const surfaceRules = [
+      ...css.matchAll(
+        /([^{}]+)\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface\) !important;/g,
+      ),
+    ];
+    const combined = surfaceRules.map((m) => m[1]).join(" ");
+    expect(surfaceRules.length).toBeGreaterThanOrEqual(2);
+    for (const sel of OVERLAYS) {
+      expect(appearance.GLASS_SURFACE_SELECTOR).toContain(sel);
+      expect(combined).toContain(sel);
+    }
+    expect(combined).toContain(
+      '[data-slot="dialog-content"]:not(.bg-transparent)',
+    );
+  });
+
+  test("不再残留硬编码深色 90%–97% 实底覆盖（菜单 / 弹窗 / 抽屉 / 模型与权限弹层 / 面板库 / 书签）", () => {
+    for (const pat of [
+      /\.dark\s+\.glass-pop\[data-slot="dropdown-menu-content"\]\s*\{[^}]*background:/,
+      /\.dark\s+\.glass-drawer\[data-slot="sheet-content"\]\s*\{[^}]*background:/,
+      /\.dark\s+\[data-slot="dialog-content"\]\s*\{[^}]*background:/,
+      /\.dark\s+\.model-popover\s*\{[^}]*background:/,
+      /\.dark\s+\.perm-popover\s*\{[^}]*background:/,
+      /\.dark\s+\.rail-lib\s*\{[^}]*background:/,
+      /\.dark\s+\.bm-menu/,
+    ]) {
+      expect(css).not.toMatch(pat);
+    }
+  });
+});

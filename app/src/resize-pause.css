@@ -18,6 +18,30 @@ html[data-resizing]:not(#chisabot-no-blur)
   .acct-mini-card,
   .glass-mini-card,
   .rail-card,
+  .hk-drawer,
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="popover-content"],
+  [data-slot="combobox-content"],
+  [data-slot="dialog-content"],
+  [data-slot="sheet-content"],
+  .model-popover,
+  .perm-popover,
+  .context-popover,
+  .chat-spotlight-panel,
+  .live-panel-src-pop,
+  .rail-lib,
+  .bm-menu,
+  .bm-manager,
+  .glass-toast,
+  .page-loader-card,
+  .sg-savebar,
+  .auth-card,
+  .update-banner,
+  .install-hint,
   .glass-composer,
   [data-slot="bubble-content"],
   .jr-card,
@@ -48,17 +72,11 @@ html[data-resizing]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubbl
   --lg-surface-strong: transparent;
 }
 
-/* 玻璃外壳、弹出层、卡片：直接写属性。 */
+/* 玻璃外壳、未进 --lg-* 名单的卡片：直接写属性。 */
 html[data-resizing]:not(#chisabot-no-blur)
 :is(
-  .glass:not(.is-flat),
-  .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
-  [data-slot="dropdown-menu-content"],
-  [data-slot="popover-content"],
-  [data-slot="select-content"],
-  .model-popover,
-  .context-popover,
-  .perm-popover
+  .glass:not(.is-flat):not(.hk-drawer),
+  .glass-card:not(.rail-card .glass-card):not(.rail-sheet)
 ) {
   background: var(--glass-bg-opaque);
   backdrop-filter: none;

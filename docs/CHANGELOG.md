@@ -1,3 +1,8 @@
+## 0.1.175 — 2026-11-20
+
+- 全端发版：`0.1.175`，Android `versionCode 355`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `18fca7763cc3ad9d`；无需手动数据库迁移。
+- **全站弹窗、菜单、抽屉与浮层统一玻璃材质通道（DESIGN §147）**：清除 `styles.css` 与 `tasks-rail-card.css` 中账号菜单、弹窗、侧栏抽屉、模型/权限选择器、面板库、书签面板与任务详情窗的硬编码实底与历史静止态 `backdrop-filter: none`；将全站 24 类弹层统一纳入 `GLASS_SURFACE_SELECTOR`、四档玻璃 `--lg-surface` / `--lg-blur` 规则、Portal 光学字缘保护、`LENS_SKIP_SELECTOR` 与 `perf-noblur.css` / `resize-pause.css` 单通道降级（透明灯箱 `[data-slot="dialog-content"].bg-transparent` 保持豁免），同步更新 `render-budget.test.ts`、`glass-hold-panels.test.ts` 与 `theme-glass-perf.test.tsx` 回归门禁（appearance.ts · liquid-glass.ts · styles.css · perf-noblur.css · resize-pause.css · tasks-rail-card.css · pair-phone.tsx）。
+
 ## 0.1.174 — 2026-11-20
 
 - 全端发版：`0.1.174`，Android `versionCode 354`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `a9ab9744e29e60dc`；无需手动数据库迁移。

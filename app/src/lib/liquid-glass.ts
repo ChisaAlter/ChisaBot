@@ -389,19 +389,28 @@ export function alphaForContrast(opts: {
 
 const LENS_SKIP_SELECTOR = [
   '[data-slot="dropdown-menu-content"]',
+  '[data-slot="dropdown-menu-sub-content"]',
   '[data-slot="context-menu-content"]',
+  '[data-slot="context-menu-sub-content"]',
   '[data-slot="select-content"]',
   '[data-slot="popover-content"]',
   '[data-slot="combobox-content"]',
   '[data-slot="dialog-content"]',
   '[data-slot="sheet-content"]',
+  ".hk-drawer",
   ".glass-toast",
   ".model-popover",
   ".context-popover",
   ".perm-popover",
+  ".live-panel-src-pop",
+  ".rail-lib",
   ".bm-menu",
+  ".bm-manager",
   ".chat-spotlight-panel",
+  ".page-loader-card",
   ".sg-savebar",
+  ".update-banner",
+  ".install-hint",
   "[data-lg-skip]",
 ].join(",");
 

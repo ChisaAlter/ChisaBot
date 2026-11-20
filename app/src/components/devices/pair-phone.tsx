@@ -317,7 +317,7 @@ export function PairPhoneDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="pair-dialog max-w-[440px]">
+      <DialogContent className="glass-modal pair-dialog max-w-[440px]">
         <DialogHeader>
           <DialogTitle>{"绑定手机"}</DialogTitle>
           <DialogDescription>
