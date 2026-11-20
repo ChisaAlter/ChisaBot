@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.172 — 2026-11-20
+
+全端版本 `0.1.172`，Android `versionCode 352`：统一右栏「任务」面板玻璃底色通道并全局优化壁纸与半透明玻璃下的文本可读性（DESIGN.md §145）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `100230f7caedaf89`；无需手动数据库迁移。
+
+- **右栏三页签材质通道收口**：删除 `tasks-rail-card.css` 对窄窗抽屉 `.rail-sheet` 的 `:has(... .task-rail) { background: var(--glass-bg-solid) !important }` 实黑底覆盖，「面板 / 任务 / 计算机」完全共用 `--lg-surface`；深色内嵌卡与分段槽统一改为暗色半透内层与 1px 细高光边，消除白色薄雾漂白。
+- **全站主题族墨色层级修复**：`deriveSeed` 按浅/深色 sRGB 亮度衰减输出 `--fam-ink-2/3/4`（消除 `--ink-2` 弱于 `--ink-3` 倒挂并满足全 8 族壁纸 WCAG AA ≥ 4.5:1），不再内联覆盖 `<html>` 的 `--ink-2` / `--ink-4` 以恢复壁纸提级与 `prefers-contrast: more` 生效；深色 `--glass-tint` 压暗叠色。
+- **全四档玻璃背景自适应对比度与 `position: fixed` 采样修复**：主题天空轻薄纱限定 `:not([data-wallpaper="on"])`；`mist` / `crystal` / `frosted` 接入 `--lg-aa-boost` 自动护栏（常规背景保持原雾度曲线不变）；`liquid-glass.ts` 改为按可视盒面积过滤修复 `position: fixed` 抽屉在 Chromium 下 `offsetParent === null` 漏采，并采用 5×3 网格 85%/15% 最不利分位色与外观滑块实时订阅重采。
+
 ## 0.1.171 — 2026-11-19
 
 全端版本 `0.1.171`，Android `versionCode 351`：修复 `v0.1.170` Android Release 编译阻塞与服务端架构边界/测试回归，正式完成全端打包发行（外壳指纹 `7314f9105596bec5` 不变支持原地自动更新，客户端指纹 `21dcd6dc82559950`）；完整囊括 `v0.1.170` 的 CB-140 / CB-141 / CB-142（Wave 1–10）全部特性，无需手动数据库迁移。
