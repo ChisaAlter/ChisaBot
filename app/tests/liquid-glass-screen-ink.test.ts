@@ -260,32 +260,37 @@ describe("liquid glass installer: one ink for the whole screen", () => {
     expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
   });
 
-  test("mist / crystal / frosted boost --lg-aa-boost over bright wallpaper in dark mode and clear it on dark backdrop", async () => {
+  test("mist / crystal / frosted keep frosted translucency and clear any leftover --lg-aa-boost", async () => {
     for (const style of ["mist", "crystal", "frosted"] as const) {
       document.documentElement.classList.add("dark");
-      document.documentElement.setAttribute("data-glass", style);
+      document.documentElement.setAttribute("data-glass", "liquid");
       gray = 230;
       mountShell();
       uninstall = installLiquidGlass();
       await wait(260);
       const rail = document.querySelector<HTMLElement>(".rail-card");
-      expect(rail?.hasAttribute("data-lg-ink")).toBe(false);
       expect(
         Number(rail?.style.getPropertyValue("--lg-aa-boost")),
       ).toBeGreaterThan(1.2);
-      await resample(24);
+
+      document.documentElement.setAttribute("data-glass", style);
+      await wait(260);
+      expect(rail?.hasAttribute("data-lg-ink")).toBe(false);
       expect(rail?.style.getPropertyValue("--lg-aa-boost")).toBe("");
+      expect(rail?.style.getPropertyValue("--lg-density-k")).toBe("");
       uninstall();
       uninstall = null;
     }
   });
 
-  test("position: fixed glass surfaces (offsetParent === null, e.g. .rail-sheet) still receive contrast sampling", async () => {
+  test("position: fixed glass surfaces (offsetParent === null, e.g. .rail-sheet) still receive liquid contrast sampling", async () => {
     document.documentElement.classList.add("dark");
-    document.documentElement.setAttribute("data-glass", "mist");
+    document.documentElement.setAttribute("data-glass", "liquid");
     gray = 230;
     mountShell();
-    const rail = document.querySelector<HTMLElement>(".rail-card")!;
+    const rail = document.querySelector<HTMLElement>(".rail-card");
+    expect(rail).toBeTruthy();
+    if (!rail) return;
     Object.defineProperty(rail, "offsetParent", {
       configurable: true,
       get: () => null,

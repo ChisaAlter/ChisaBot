@@ -344,11 +344,11 @@ export function deriveSeed(
   /* ---- 对比度 c 驱动的三个量：边框 alpha / 文字弱化 / 玻璃不透明度 ---- */
   const borderPrimary = 0.08 + f * 0.14; // c=46 → ≈0.14（对齐旧默认）
   const borderSecondary = 0.04 + f * 0.07;
-  /* 按 sRGB 亮度衰减分别收紧浅/深色阶，保证 --ink-1 > --ink-2 > --ink-3 > --ink-4 严格递增且均达 WCAG AA；
+  /* 按 sRGB 亮度衰减分别收紧浅/深色阶，深色磨砂上保持高亮度锐利可读且严格满足 --ink-1 > --ink-2 > --ink-3 > --ink-4；
    * 仅输出 --fam-ink-2..4 供样式表读取，避免内联 --ink-2/--ink-4 压死壁纸提级与 prefers-contrast 护栏。 */
-  const ink2 = mixHex(fg, bg, (dark ? 0.12 : 0.08) - f * (dark ? 0.06 : 0.04));
-  const ink3 = mixHex(fg, bg, (dark ? 0.2 : 0.14) - f * (dark ? 0.08 : 0.06));
-  const ink4 = mixHex(fg, bg, (dark ? 0.3 : 0.22) - f * (dark ? 0.1 : 0.08));
+  const ink2 = mixHex(fg, bg, dark ? 0.08 - f * 0.04 : 0.08 - f * 0.04);
+  const ink3 = mixHex(fg, bg, dark ? 0.14 - f * 0.05 : 0.14 - f * 0.06);
+  const ink4 = mixHex(fg, bg, dark ? 0.21 - f * 0.07 : 0.22 - f * 0.08);
   const glassBase = mixHex(bg, ac, 0.06 + f * 0.04); // 朝 accent 微偏的玻璃底色
   const glassTint = dark
     ? rgbaHex(mixHex(ac, bg, 0.55), 0.12)

@@ -202,33 +202,33 @@ html.dark {
 
 .dark {
   color-scheme: dark;
-  --glass-ink: #e8ecf3;
-  --glass-ink-2: #c7cedb;
-  --glass-ink-3: #97a1b2;
-  --glass-ink-4: #6f7a8c;
+  --glass-ink: #ffffff;
+  --glass-ink-2: #edf2fb;
+  --glass-ink-3: #d6e0f0;
+  --glass-ink-4: rgba(232, 240, 252, 0.78);
   --glass: rgba(22, 32, 48, 0.55);
   --glass-strong: rgba(30, 42, 60, 0.82);
   --glass-tile: rgba(255, 255, 255, 0.06);
   --glass-dim: rgba(255, 255, 255, 0.07);
   --glass-line: rgba(255, 255, 255, 0.08);
   --glass-user: rgba(120, 150, 200, 0.24);
-  --glass-dark: #e8ecf3;
+  --glass-dark: #ffffff;
   --glass-dark-ink: #10161f;
   --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.2);
   --glass-shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.3);
   --glass-shadow-pop: 0 20px 50px rgba(0, 0, 0, 0.5);
   --background: rgba(14, 22, 36, 0.5);
-  --foreground: #e8ecf3;
+  --foreground: #ffffff;
   --card: rgba(28, 38, 56, 0.75);
-  --card-foreground: #e8ecf3;
+  --card-foreground: #ffffff;
   --popover: rgba(24, 33, 50, 0.92);
-  --popover-foreground: #e8ecf3;
-  --primary: #e8ecf3;
+  --popover-foreground: #ffffff;
+  --primary: #f3f6fb;
   --primary-foreground: #10161f;
   --secondary: rgba(255, 255, 255, 0.08);
-  --secondary-foreground: #e8ecf3;
+  --secondary-foreground: #ffffff;
   --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: #97a1b2;
+  --muted-foreground: #d6e0f0;
   --accent: rgba(255, 255, 255, 0.08);
   --accent-foreground: #e8ecf3;
   --destructive: oklch(0.704 0.191 22.216);
@@ -329,7 +329,7 @@ html.dark {
   --stroke: rgba(255, 255, 255, 0.09);
   --line: rgba(255, 255, 255, 0.07);
   --line-strong: rgba(255, 255, 255, 0.13);
-  --ink-1: #e9eef8; --ink-2: #b7c1d3; --ink-3: #8b97ab; --ink-4: rgba(233, 238, 248, 0.32);
+  --ink-1: #ffffff; --ink-2: #edf2fb; --ink-3: #d6e0f0; --ink-4: rgba(232, 240, 252, 0.78);
   --ink-primary: #e9eff9; --ink-primary-hover: #ffffff; --on-primary: #0e1628;
   --accent-blue: #5b95ff; --accent-blue-ink: #8ab4ff; --accent-blue-soft: rgba(91, 149, 255, 0.16); --focus: rgba(235, 241, 255, 0.22); --focus-line: rgba(235, 241, 255, 0.5);
   --success: #3ccf8a; --success-soft: rgba(60, 207, 138, 0.15);
@@ -9978,13 +9978,13 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(255, 255, 255, min(0.9, calc(clamp(0.26, calc(var(--lg-alpha, 0.16) * 1.95), 0.54) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.88, calc(clamp(0.18, calc(var(--lg-alpha, 0.16) * 1.45), 0.44) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.26, calc(var(--lg-alpha, 0.16) * 1.95), 0.54)) 0%,
+    rgba(255, 255, 255, clamp(0.18, calc(var(--lg-alpha, 0.16) * 1.45), 0.44)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(255, 255, 255, min(0.92, calc(clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.9, calc(clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62)) 0%,
+    rgba(255, 255, 255, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
   --lg-shadow: 0 8px 28px rgba(15, 23, 42, 0.07);
   --lg-ink: var(--glass-ink);
@@ -10031,13 +10031,13 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(12px) saturate(170%);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(12, 18, 32, min(0.9, calc(clamp(0.26, calc(var(--lg-alpha, 0.16) * 1.95), 0.54) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(8, 13, 24, min(0.88, calc(clamp(0.18, calc(var(--lg-alpha, 0.16) * 1.45), 0.44) * var(--lg-aa-boost, 1)))) 100%
+    rgba(12, 18, 32, clamp(0.26, calc(var(--lg-alpha, 0.16) * 1.95), 0.54)) 0%,
+    rgba(8, 13, 24, clamp(0.18, calc(var(--lg-alpha, 0.16) * 1.45), 0.44)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(14, 21, 36, min(0.92, calc(clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(10, 16, 28, min(0.9, calc(clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52) * var(--lg-aa-boost, 1)))) 100%
+    rgba(14, 21, 36, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.4), 0.62)) 0%,
+    rgba(10, 16, 28, clamp(0.24, calc(var(--lg-alpha, 0.16) * 1.85), 0.52)) 100%
   );
   --lg-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
   --lg-ink: var(--glass-ink);
@@ -10086,13 +10086,13 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
     180deg,
-    rgba(255, 255, 255, min(0.92, calc(clamp(0.5, calc(var(--lg-alpha, 0.16) * 3.3), 0.8) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.88, calc(clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.8), 0.72) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.5, calc(var(--lg-alpha, 0.16) * 3.3), 0.8)) 0%,
+    rgba(255, 255, 255, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.8), 0.72)) 100%
   );
   --lg-surface-strong: linear-gradient(
     180deg,
-    rgba(255, 255, 255, min(0.94, calc(clamp(0.58, calc(var(--lg-alpha, 0.16) * 3.7), 0.86) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.9, calc(clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.58, calc(var(--lg-alpha, 0.16) * 3.7), 0.86)) 0%,
+    rgba(255, 255, 255, clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78)) 100%
   );
   --lg-shadow: var(--card-shadow);
   --lg-ink: var(--glass-ink);
@@ -10139,13 +10139,13 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(28px) saturate(185%);
   --lg-surface: linear-gradient(
     180deg,
-    rgba(14, 21, 36, min(0.92, calc(clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(10, 15, 28, min(0.88, calc(clamp(0.4, calc(var(--lg-alpha, 0.16) * 2.7), 0.7) * var(--lg-aa-boost, 1)))) 100%
+    rgba(14, 21, 36, clamp(0.48, calc(var(--lg-alpha, 0.16) * 3.2), 0.78)) 0%,
+    rgba(10, 15, 28, clamp(0.4, calc(var(--lg-alpha, 0.16) * 2.7), 0.7)) 100%
   );
   --lg-surface-strong: linear-gradient(
     180deg,
-    rgba(18, 26, 44, min(0.94, calc(clamp(0.56, calc(var(--lg-alpha, 0.16) * 3.6), 0.84) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(12, 18, 34, min(0.9, calc(clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.76) * var(--lg-aa-boost, 1)))) 100%
+    rgba(18, 26, 44, clamp(0.56, calc(var(--lg-alpha, 0.16) * 3.6), 0.84)) 0%,
+    rgba(12, 18, 34, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.76)) 100%
   );
   --lg-shadow: var(--card-shadow);
   --lg-ink: var(--glass-ink);
@@ -10195,15 +10195,15 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(255, 255, 255, min(0.92, calc(clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.65), 0.7) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.88, calc(clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.05), 0.58) * var(--lg-aa-boost, 1)))) 52%,
-    rgba(255, 255, 255, min(0.9, calc(clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.65), 0.7)) 0%,
+    rgba(255, 255, 255, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.05), 0.58)) 52%,
+    rgba(255, 255, 255, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(255, 255, 255, min(0.94, calc(clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.78) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(255, 255, 255, min(0.9, calc(clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.5), 0.68) * var(--lg-aa-boost, 1)))) 54%,
-    rgba(255, 255, 255, min(0.92, calc(clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.85), 0.74) * var(--lg-aa-boost, 1)))) 100%
+    rgba(255, 255, 255, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.1), 0.78)) 0%,
+    rgba(255, 255, 255, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.5), 0.68)) 54%,
+    rgba(255, 255, 255, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.85), 0.74)) 100%
   );
   --lg-shadow: var(--card-shadow);
   --lg-ink: var(--glass-ink);
@@ -10250,15 +10250,15 @@ html[data-wallpaper="on"] {
   --lg-blur: blur(20px) saturate(180%);
   --lg-surface: linear-gradient(
     135deg,
-    rgba(14, 21, 36, min(0.92, calc(clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.6), 0.7) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(9, 14, 26, min(0.88, calc(clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.0), 0.58) * var(--lg-aa-boost, 1)))) 54%,
-    rgba(12, 18, 32, min(0.9, calc(clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64) * var(--lg-aa-boost, 1)))) 100%
+    rgba(14, 21, 36, clamp(0.38, calc(var(--lg-alpha, 0.16) * 2.6), 0.7)) 0%,
+    rgba(9, 14, 26, clamp(0.28, calc(var(--lg-alpha, 0.16) * 2.0), 0.58)) 54%,
+    rgba(12, 18, 32, clamp(0.34, calc(var(--lg-alpha, 0.16) * 2.35), 0.64)) 100%
   );
   --lg-surface-strong: linear-gradient(
     135deg,
-    rgba(16, 24, 42, min(0.94, calc(clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.0), 0.78) * var(--lg-aa-boost, 1)))) 0%,
-    rgba(11, 17, 30, min(0.9, calc(clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.45), 0.68) * var(--lg-aa-boost, 1)))) 54%,
-    rgba(14, 21, 38, min(0.92, calc(clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.75), 0.74) * var(--lg-aa-boost, 1)))) 100%
+    rgba(16, 24, 42, clamp(0.46, calc(var(--lg-alpha, 0.16) * 3.0), 0.78)) 0%,
+    rgba(11, 17, 30, clamp(0.36, calc(var(--lg-alpha, 0.16) * 2.45), 0.68)) 54%,
+    rgba(14, 21, 38, clamp(0.42, calc(var(--lg-alpha, 0.16) * 2.75), 0.74)) 100%
   );
   --lg-shadow: var(--card-shadow);
   --lg-ink: var(--glass-ink);
@@ -10284,6 +10284,25 @@ html.dark :is(.glass-shell, .rail-sheet) {
   --glass-hover: rgba(255, 255, 255, 0.08);
   --stroke: transparent;
   --inset-hl: 0 0 0 transparent;
+  /* 保留磨砂通透感，同时用极轻光学暗描影稳住亮壁纸上各级浅色文字的字缘清晰度（DESIGN.md §145）。 */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42), 0 0 1px rgba(0, 0, 0, 0.28);
+}
+html:not(.dark)[data-wallpaper="on"] :is(.glass-shell, .rail-sheet) {
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
+}
+/* 实心高对比主按钮、代码段与表单控件自身对比充足，不叠字缘描影，避免深字带黑边或代码发虚。 */
+:is(.glass-shell, .rail-sheet) :is(
+  .glass-home,
+  .glass-composer-send,
+  [data-slot="button"][data-variant="default"],
+  .bg-primary,
+  pre,
+  code,
+  kbd,
+  input,
+  textarea
+) {
+  text-shadow: none;
 }
 
 /* 主工作台大板块（左栏机器人列表、左下角账号卡、收起态左栏、右栏面板容器）：纯净无边框悬浮毛玻璃 */
