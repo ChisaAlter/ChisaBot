@@ -206,7 +206,7 @@ function mountCenter(initialView: TaskCenterView = "board") {
   return renderWithRouter(<Surface />);
 }
 
-test("右栏任务卡片渲染看板入口、已交付原属泳道标记，并支持发到当前对话", async () => {
+test("右栏任务卡片只保留单一任务中心入口、渲染已交付原属泳道标记，并支持发到当前对话", async () => {
   const received: ComposerInput[] = [];
   window.history.replaceState({}, "", "/channel/ch-1");
   const sub = receiveComposerInputs({
@@ -251,6 +251,12 @@ test("右栏任务卡片渲染看板入口、已交付原属泳道标记，并�
     async (input: Parameters<typeof fetch>[0]) => {
       const url = new URL(String(input), "http://localhost");
       if (url.pathname === "/api/task-center") return Response.json(snap);
+      if (url.pathname === "/api/task-center/tasks")
+        return Response.json({
+          tasks: [activeTask],
+          total: 1,
+          nextOffset: null,
+        });
       if (url.pathname === "/api/workflows")
         return Response.json({ workflows: [], runs: [], tools: [] });
       if (url.pathname === "/api/agents") return Response.json({ agents: [] });
@@ -271,7 +277,8 @@ test("右栏任务卡片渲染看板入口、已交付原属泳道标记，并�
   );
 
   await waitFor(() => {
-    expect(view.getByText("看板")).toBeTruthy();
+    expect(view.getByRole("button", { name: "任务中心" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "看板" })).toBeNull();
     expect(view.getByText("原属：接下来")).toBeTruthy();
     expect(view.getByText("AB-9")).toBeTruthy();
   });
@@ -287,12 +294,68 @@ test("右栏任务卡片渲染看板入口、已交付原属泳道标记，并�
     expect(received[0].text).toContain("联调后端接口");
   }
 
-  fireEvent.click(view.getByText("看板"));
+  fireEvent.click(view.getByRole("button", { name: "任务中心" }));
+  const boardTab = await view.findByRole("button", { name: "看板" });
+  fireEvent.click(boardTab);
   await waitFor(() => {
     expect(view.getByText("个人任务看板")).toBeTruthy();
   });
 
   sub.dispose();
+});
+
+test("右栏无进行中任务与待确认审批时，点击任务中心直达看板", async () => {
+  const snap: TaskCenterSnapshot = {
+    tasks: [
+      makeTask({
+        id: "t-idle-board",
+        title: "整理待办事项",
+        status: "inbox",
+        lane: "now",
+      }),
+    ],
+    outbox: [],
+    sources: [],
+    running: true,
+    concurrency: 2,
+    counts: Object.fromEntries(
+      TASK_STATUSES.map((s) => [s, s === "inbox" ? 1 : 0]),
+    ) as TaskCenterSnapshot["counts"],
+    decisionCounts: { pending: 0, approved: 0, rejected: 0, superseded: 0 },
+  };
+
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0]) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/task-center") return Response.json(snap);
+      if (url.pathname === "/api/workflows")
+        return Response.json({ workflows: [], runs: [], tools: [] });
+      if (url.pathname === "/api/agents") return Response.json({ agents: [] });
+      if (url.pathname === "/api/task-center/capabilities")
+        return Response.json({ capabilities: [] });
+      if (url.pathname === "/api/task-center/boards")
+        return Response.json({ boards: [], availableRoots: [] });
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    },
+    originalFetch,
+  );
+
+  const view = renderWithRouter(
+    <TaskCenterProvider>
+      <TasksRailCard />
+    </TaskCenterProvider>,
+    "/channel/ch-1",
+  );
+
+  await waitFor(() => {
+    expect(view.getByRole("button", { name: "任务中心" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "看板" })).toBeNull();
+  });
+
+  fireEvent.click(view.getByRole("button", { name: "任务中心" }));
+  await waitFor(() => {
+    expect(view.getByText("个人任务看板")).toBeTruthy();
+  });
 });
 
 test("个人任务看板四列投影、原属标记与菜单移动排期调用 schedule 接口", async () => {

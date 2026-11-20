@@ -759,4 +759,12 @@ describe("11) 全站弹窗、菜单、抽屉与浮层统一跟随玻璃效果与
       expect(css).not.toMatch(pat);
     }
   });
+
+  test("暗色弹窗遮罩维持轻薄压暗（alpha <= 0.28），避免把半透明磨砂弹窗压成深蓝实底", () => {
+    const match = css.match(
+      /\.dark\s+\[data-slot="dialog-overlay"\]\s*\{\s*background:\s*rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([\d.]+)\s*\)/,
+    );
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBeLessThanOrEqual(0.28);
+  });
 });

@@ -20,6 +20,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 let gray = 200;
 let installLiquidGlass: typeof import("../src/lib/liquid-glass").installLiquidGlass;
 let LG_INK_STORAGE_KEY: string;
+let initResizeState: typeof import("../src/lib/resize-state").initResizeState;
+let RESIZE_SETTLE_MS = 0;
 let uninstall: (() => void) | null = null;
 const restores: Array<() => void> = [];
 
@@ -126,6 +128,9 @@ beforeAll(async () => {
   const mod = await import("../src/lib/liquid-glass");
   installLiquidGlass = mod.installLiquidGlass;
   LG_INK_STORAGE_KEY = mod.LG_INK_STORAGE_KEY;
+  ({ initResizeState, RESIZE_SETTLE_MS } = await import(
+    "../src/lib/resize-state"
+  ));
 });
 
 afterAll(async () => {
@@ -177,8 +182,8 @@ async function resample(g: number) {
   gray = g;
   const de = document.documentElement;
   de.setAttribute(
-    "data-resizing",
-    de.getAttribute("data-resizing") === "1" ? "0" : "1",
+    "data-theme",
+    de.getAttribute("data-theme") === "light-tick" ? "light" : "light-tick",
   );
   await wait(260);
 }
@@ -357,11 +362,120 @@ describe("liquid glass installer: wallpaper image change and scroll sampling", (
       window.dispatchEvent(new Event("scroll"));
     }, 40);
     // 同步改一个被观察的根属性，按修前逻辑 160ms 后就会重采。
-    document.documentElement.setAttribute("data-resizing", "1");
+    document.documentElement.setAttribute("data-theme", "light-tick");
     await wait(400);
     expect(new Set(inks())).toEqual(new Set(["light"]));
     window.clearInterval(ticking);
     await wait(500);
     expect(new Set(inks())).toEqual(new Set(["dark"]));
+  });
+});
+
+describe("liquid glass installer: resize pause and atomic lens swap", () => {
+  test("sampling pauses while window resize events keep arriving and runs after resize settles", async () => {
+    const teardownResize = initResizeState();
+    try {
+      mountShell();
+      uninstall = installLiquidGlass();
+      await wait(260);
+      expect(new Set(inks())).toEqual(new Set(["light"]));
+
+      gray = 60;
+      const ticking = window.setInterval(() => {
+        window.dispatchEvent(new Event("resize"));
+      }, 40);
+      try {
+        window.dispatchEvent(new Event("resize"));
+        document.documentElement.setAttribute("data-theme", "light-resize");
+        await wait(360);
+        expect(new Set(inks())).toEqual(new Set(["light"]));
+      } finally {
+        window.clearInterval(ticking);
+      }
+
+      await wait(RESIZE_SETTLE_MS + 400);
+      expect(new Set(inks())).toEqual(new Set(["dark"]));
+    } finally {
+      teardownResize();
+    }
+  });
+
+  test("lens rebuild swaps atomically after displacement map decodes without clearing data-lg-lens", async () => {
+    const origCss = globalThis.CSS;
+    const origDecodeDesc = Object.getOwnPropertyDescriptor(
+      Image.prototype,
+      "decode",
+    );
+    const pendingDecodes: Array<() => void> = [];
+    let holdDecode = false;
+
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: {
+        supports: (prop: string, val?: string) =>
+          prop === "backdrop-filter" && Boolean(val?.includes("url(")),
+      },
+    });
+    Object.defineProperty(Image.prototype, "decode", {
+      configurable: true,
+      value() {
+        if (!holdDecode) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          pendingDecodes.push(resolve);
+        });
+      },
+    });
+
+    try {
+      document.body.innerHTML =
+        '<aside class="glass-side-card" data-rect="16,56,280,820"></aside>';
+      const side = document.querySelector<HTMLElement>(".glass-side-card");
+      expect(side).toBeTruthy();
+      if (!side) return;
+      side.style.willChange = "auto";
+      side.style.transform = "none";
+      side.style.filter = "none";
+
+      uninstall = installLiquidGlass();
+      await wait(320);
+
+      const id1 = side.getAttribute("data-lg-lens");
+      expect(id1).toBeTruthy();
+      if (!id1) return;
+      expect(document.getElementById(id1)).not.toBeNull();
+
+      holdDecode = true;
+      side.setAttribute("data-rect", "16,56,420,820");
+      document.documentElement.setAttribute("data-theme", "light-rescan");
+      await wait(320);
+
+      expect(pendingDecodes.length).toBe(1);
+      expect(side.getAttribute("data-lg-lens")).toBe(id1);
+      expect(document.getElementById(id1)).not.toBeNull();
+
+      holdDecode = false;
+      pendingDecodes.shift()?.();
+      await wait(40);
+
+      const id2 = side.getAttribute("data-lg-lens");
+      expect(id2).toBeTruthy();
+      expect(id2).not.toBe(id1);
+      expect(document.getElementById(id1)).toBeNull();
+      expect(document.getElementById(String(id2))).not.toBeNull();
+      const lensStyleText =
+        document.getElementById("chisabot-lg-lens")?.textContent ?? "";
+      expect(lensStyleText).toContain(`[data-lg-lens="${id2}"]`);
+      expect(lensStyleText).not.toContain(`[data-lg-lens="${id1}"]`);
+    } finally {
+      Object.defineProperty(globalThis, "CSS", {
+        configurable: true,
+        value: origCss,
+      });
+      if (origDecodeDesc) {
+        Object.defineProperty(Image.prototype, "decode", origDecodeDesc);
+      } else {
+        delete (Image.prototype as { decode?: unknown }).decode;
+      }
+    }
   });
 });

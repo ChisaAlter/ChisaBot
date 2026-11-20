@@ -1,43 +1,52 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 
-const dir = join(import.meta.dir, "..", "src");
-const raw = readFileSync(join(dir, "resize-pause.css"), "utf8");
-const css = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+const srcDir = path.join(import.meta.dir, "..", "src");
 
-describe("resize pause (html[data-resizing])", () => {
-  test("big panels drop blur and shadow and get an opaque background", () => {
-    expect(css).toContain("html[data-resizing]:not(#chisabot-no-blur)");
-    for (const sel of [
-      ".glass-side-card",
-      ".rail-card",
-      ".glass-composer",
-      ".glass:not(.is-flat)",
-      '[data-slot="popover-content"]',
-    ]) {
-      expect(css).toContain(sel);
+function collectCssFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) {
+      files.push(...collectCssFiles(full));
+    } else if (name.endsWith(".css")) {
+      files.push(full);
     }
-    expect(css).toContain("--lg-blur: none;");
-    expect(css).toContain("--lg-shadow: none;");
-    expect(css).toContain("--lg-surface: var(--glass-bg-opaque);");
-    expect(css).toContain("backdrop-filter: none;");
-    expect(css).toContain("-webkit-backdrop-filter: none;");
-    expect(css).toContain("background: var(--glass-bg-opaque);");
-    expect(css).toContain("transition: none;");
+  }
+  return files;
+}
+
+describe("window resize preserves frosted glass (no data-resizing opaque black fallback)", () => {
+  test("resize-pause.css is removed and main.tsx only wires initResizeState()", () => {
+    expect(existsSync(path.join(srcDir, "resize-pause.css"))).toBe(false);
+    const main = readFileSync(path.join(srcDir, "main.tsx"), "utf8");
+    expect(main).not.toContain("resize-pause.css");
+    expect(main).toContain("initResizeState()");
   });
-  test("no :has(), no wildcard, no blur, no !important, no animation", () => {
-    expect(css).not.toContain(":has(");
-    expect(css).not.toMatch(/(^|[\s,(])\*/);
-    expect(css).not.toMatch(/blur\(/);
-    expect(css).not.toContain("!important");
-    expect(css).not.toMatch(/animation|@keyframes/);
-  });
-  test("imported after perf-noblur.css", () => {
-    const main = readFileSync(join(dir, "main.tsx"), "utf8");
-    const a = main.indexOf('import "./perf-noblur.css"');
-    const b = main.indexOf('import "./resize-pause.css"');
-    expect(a).toBeGreaterThan(-1);
-    expect(b).toBeGreaterThan(a);
+
+  test("no stylesheet uses data-resizing to turn off blur or paint glass surfaces opaque", () => {
+    const cssFiles = collectCssFiles(srcDir);
+    const names = cssFiles.map((f) => path.relative(srcDir, f));
+    expect(names).toContain("styles.css");
+    expect(names).toContain("perf-noblur.css");
+    expect(names).toContain("a11y-modes.css");
+
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      const stripped = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const rel = path.relative(srcDir, file);
+      for (const match of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const selector = match[1].trim();
+        const body = match[2];
+        if (!selector.includes("data-resizing")) continue;
+        if (
+          /backdrop-filter|--lg-blur|--glass-bg-opaque/.test(body)
+        ) {
+          offenders.push(`${rel}: ${selector}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

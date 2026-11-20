@@ -10,7 +10,6 @@ import {
   IconDots,
   IconEye,
   IconGitBranch,
-  IconLayoutKanban,
   IconMessageForward,
   IconPaperclip,
   IconPinned,
@@ -175,17 +174,15 @@ export function TasksRailCard() {
           </button>
           <button
             className="task-rail-center-link"
-            onClick={() => openTaskCenter("board")}
-            type="button"
-          >
-            <IconLayoutKanban aria-hidden className="size-3.5" />
-            {"看板"}
-          </button>
-          <button
-            className="task-rail-center-link"
             type="button"
             onClick={() =>
-              openTaskCenter(approvalCount > 0 ? "outbox" : "active")
+              openTaskCenter(
+                approvalCount > 0
+                  ? "outbox"
+                  : activeTasks.length > 0
+                    ? "active"
+                    : "board",
+              )
             }
           >
             {"任务中心"}

@@ -2,8 +2,8 @@
  * 改窗口大小期间的全局状态（P2-3，见 jank-analysis FIX-PLAN）。
  *  - 第一次 resize 事件后，在下一个 rAF 里给 <html> 挂 `data-resizing=""`；
  *  - 最后一次 resize 事件后约 150ms 拿掉；
- *  - 订阅者（WebGL 天空）在挂上时暂停逐帧重绘、拿掉时恢复。
- * CSS（html[data-resizing] 下去掉 backdrop-filter / box-shadow）由前端负责，这里只管属性和 JS 暂停。
+ *  - 订阅者（WebGL 天空画布尺寸变更、液态玻璃后台采样与透镜重建）在挂上时暂停逐帧重绘、拿掉时恢复；
+ *  - 不再通过 CSS 把磨砂玻璃切换为实心不透明底色，防止窗口拉伸时磨砂面在半透明与实黑之间频闪。
  */
 
 export const RESIZE_SETTLE_MS = 150;

@@ -2814,7 +2814,7 @@ button.chat-bottom-pill:hover {
   background: rgba(40, 60, 90, 0.2);
   transition: opacity 0.18s ease;
 }
-.dark [data-slot="dialog-overlay"] { background: rgba(4, 10, 20, 0.45); }
+.dark [data-slot="dialog-overlay"] { background: rgba(8, 12, 20, 0.22); }
 [data-slot="dialog-title"] { font-size: 16px; font-weight: 600; }
 [data-slot="dialog-footer"] [data-slot="button"] { min-width: 72px; border-radius: 999px; }
 [data-slot="dialog-close"] { border-radius: 999px; }
