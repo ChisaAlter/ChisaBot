@@ -1,3 +1,9 @@
+## 0.1.174 — 2026-11-20
+
+- 全端发版：`0.1.174`，Android `versionCode 354`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `a9ab9744e29e60dc`；无需手动数据库迁移。
+- **账号菜单减负、统一「版本与更新」页与设置导航五组重组（DESIGN §146）**：`account-menu.tsx` 移除版本号副标题与「升级服务端」行；新增全员可见的 `/settings/updates` 与 `client-update-section.tsx` 聚合客户端/服务端版本、桌面端检查/重启安装/自动更新与端侧诊断日志，管理员同页复用 `UpdatesScreen` 管理服务端升级/推送桌面端更新/回滚/自检（旧 `/admin/system-update` 兼容且 `nav: false` 去重）；`registry.ts` 与 `settings-sidebar.tsx` 将 7 组重组为「顶部直达 / 助手能力 / 设备与连接 / 模型与用量 / 系统管理」5 组，同步更新 `client.ts`、`devices.tsx` 与单测（account-menu.tsx · client-update-section.tsx · settings/updates.tsx · system-update.tsx · registry.ts · settings-sidebar.tsx · pc-local-web-version.test.tsx · settings-search.test.ts）。
+- **PC 更新弹窗实时磨砂玻璃背景**：新增 `pc/src/update-backdrop.js`、`pc/src/ui/update.css` 与 `pc/test/update-backdrop.check.js`，在 `pc/src/main.js` / `preload.js` / `ui/update.html` / `ui/update.js` 接入主窗区域实时截图裁切与磨砂背景通道（含单测与截图脚本适配）。
+
 ## 0.1.173 — 2026-11-20
 
 - 全端发版：`0.1.173`，Android `versionCode 353`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `e4c6b8a6173cf36e`；无需手动数据库迁移，新增可选环境变量 `CHISABOT_PC_UPDATE_FEED_URL` / `CHISABOT_PC_UPDATE_WATCH_INTERVAL_MS`。
