@@ -24,6 +24,8 @@ import {
   PageShell,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { ClientUpdateSection } from "@/components/settings/client-update-section";
+import { DiagnosticsExportSection } from "@/components/settings/diagnostics-export";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
@@ -38,6 +40,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { type AdminSmokeResult, runAdminSmoke } from "@/lib/admin-smoke";
+import { currentUserQueryOptions } from "@/lib/auth/queries";
 import {
   setToolActivityVisible,
   useToolActivityVisible,
@@ -70,7 +73,7 @@ import {
 } from "../../../../../shared/system-update";
 
 export const Route = createFileRoute("/_authed/admin/system-update")({
-  component: SystemUpdatePage,
+  component: UpdatesScreen,
 });
 
 const STATUS_TEXT: Record<
@@ -119,12 +122,19 @@ function sourceText(data: SystemUpdateOverview) {
 }
 
 /**
- * 管理后台 → 系统更新（模板 E，docs/online-update.md）。当前版本、GitHub main 上的新提交、一键更新
- * （宿主机更新程序：备份 → 构建 → 切换 → 健康检查，失败自动回滚）、进度与日志、回滚到上一版、历史。
+ * 设置 → 版本与更新（兼承接旧路由 /admin/system-update，docs/online-update.md）。
+ *
+ * - 全员可见：客户端与服务端版本号、桌面端自动更新与一键检查/安装、端侧诊断日志；
+ * - 管理员额外可见：服务端系统更新（一键更新/完整构建/回滚）、推送桌面端更新、Magpie 网关、执行内核与自检调试。
  */
-function SystemUpdatePage() {
+export function UpdatesScreen() {
+  const { data: user } = useQuery(currentUserQueryOptions());
+  const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
-  const overview = useQuery(systemUpdateQueryOptions());
+  const overview = useQuery({
+    ...systemUpdateQueryOptions(),
+    enabled: isAdmin,
+  });
   const data = overview.data;
 
   const check = useAsyncAction(
@@ -174,63 +184,73 @@ function SystemUpdatePage() {
   return (
     <PageShell
       action={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            feedback={{
-              pending: "推送中…",
-              success: "已推送",
-              error: "推送失败",
-            }}
-            onClick={() => void pushDesktop.run()}
-            size="sm"
-            state={pushDesktop.state}
-            variant="outline"
-          >
-            <IconBellRinging />
-            {"推送桌面端更新"}
-          </Button>
-          <Button
-            disabled={!data?.configured}
-            feedback={{
-              pending: "检查中…",
-              success: "已检查",
-              error: "检查失败",
-            }}
-            onClick={() => void check.run()}
-            size="sm"
-            state={check.state}
-            variant="outline"
-          >
-            <IconCloudDownload />
-            {"检查更新"}
-          </Button>
-        </div>
-      }
-      description="查看正在运行的版本和 GitHub main 上的新提交，一键更新或回滚。更新由宿主机上的更新程序执行：先备份数据库，再构建、切换、做健康检查，失败会自动回滚。"
-      title="系统更新"
-    >
-      {overview.isPending ? (
-        <PageSkeleton rows={4} tall />
-      ) : !data ? (
-        <ErrorCard
-          action={
+        isAdmin ? (
+          <div className="flex flex-wrap items-center gap-2">
             <Button
-              className="mt-2"
-              onClick={() => void overview.refetch()}
+              feedback={{
+                pending: "推送中…",
+                success: "已推送",
+                error: "推送失败",
+              }}
+              onClick={() => void pushDesktop.run()}
               size="sm"
-              type="button"
+              state={pushDesktop.state}
               variant="outline"
             >
-              {"重试"}
+              <IconBellRinging />
+              {"推送桌面端更新"}
             </Button>
-          }
-          description={overview.error?.message ?? "无法读取系统更新状态。"}
-          title="系统更新状态暂时无法读取"
-        />
-      ) : (
-        <Overview data={data} />
-      )}
-      <DebugSection />
+            <Button
+              disabled={!data?.configured}
+              feedback={{
+                pending: "检查中…",
+                success: "已检查",
+                error: "检查失败",
+              }}
+              onClick={() => void check.run()}
+              size="sm"
+              state={check.state}
+              variant="outline"
+            >
+              <IconCloudDownload />
+              {"检查服务端更新"}
+            </Button>
+          </div>
+        ) : undefined
+      }
+      description={
+        isAdmin
+          ? "统一管理桌面端与服务端版本：查看版本号、检查安装桌面端更新，以及对服务端执行一键升级、回滚与自检。"
+          : "查看当前客户端与服务端版本、管理桌面端自动更新，并导出本机诊断日志。"
+      }
+      title="版本与更新"
+    >
+      <ClientUpdateSection />
+      {isAdmin ? (
+        overview.isPending ? (
+          <PageSkeleton rows={4} tall />
+        ) : !data ? (
+          <ErrorCard
+            action={
+              <Button
+                className="mt-2"
+                onClick={() => void overview.refetch()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {"重试"}
+              </Button>
+            }
+            description={overview.error?.message ?? "无法读取系统更新状态。"}
+            title="服务端系统更新状态暂时无法读取"
+          />
+        ) : (
+          <Overview data={data} />
+        )
+      ) : null}
+      {isAdmin ? <DebugSection /> : null}
+      <DiagnosticsExportSection />
     </PageShell>
   );
 }

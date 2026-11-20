@@ -57,10 +57,16 @@ describe("settings registry", () => {
     expect(visiblePages({ ...admin, extras: ["workflows"], accountsUi: true }).map((page) => page.to)).toEqual(
       expect.arrayContaining(["/workflows", "/admin/plugins", "/admin/accounts"]),
     );
-    // 空组不显示（「高级」默认一项都没有）。
-    expect(visibleGroups(admin).map((entry) => entry.group.id)).not.toContain("advanced");
-    expect(visibleGroups(admin)[0]!.group.id).toBe("general");
-    expect(visibleGroups(admin)[1]!.group.id).toBe("bots");
+    // 5 个清晰分组，旧的「高级」空组已移除。
+    expect(visibleGroups(admin).map((entry) => entry.group.id)).toEqual([
+      "general",
+      "bots",
+      "connections",
+      "models",
+      "system",
+    ]);
+    // 「版本与更新」对全员可见，桌面端更新与版本号不再藏在设备三级页面或账号菜单里。
+    expect(shown).toContain("/settings/updates");
   });
 });
 
@@ -91,6 +97,8 @@ describe("settings search", () => {
     expect(searchSettings("回滚", user)).toEqual([]);
     expect(searchSettings("备用模型", user)).toEqual([]);
     expect(searchSettings("记忆", user)[0]!.page.id).toBe("memory");
+    expect(searchSettings("桌面端更新", user)[0]!.id).toBe("updates.desktop-client");
+    expect(searchSettings("当前版本", user)[0]!.id).toBe("updates.versions");
   });
 
   test("multi-word: every word must match; page words narrow the item", () => {
@@ -101,9 +109,9 @@ describe("settings search", () => {
 
   test("results carry a breadcrumb and a jump hash for items only", () => {
     const [hit] = searchSettings("备用模型", admin);
-    expect(hit!.path).toBe("模型");
+    expect(hit!.path).toBe("模型与用量 › 模型");
     expect(searchSettings("常驻指令", admin)[0]!.path).toBe("通用");
-    expect(searchSettings("记忆 机器人", admin).find((h) => h.item)?.path).toBe("机器人 › 记忆");
+    expect(searchSettings("记忆 机器人", admin).find((h) => h.item)?.path).toBe("助手能力 › 记忆");
     expect(hitHash(hit!)).toBe("find=models.fallback-models");
     const [page] = searchSettings("密钥", admin);
     expect(hitHash(page!)).toBeUndefined();

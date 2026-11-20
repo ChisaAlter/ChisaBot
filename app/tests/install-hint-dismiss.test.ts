@@ -7,9 +7,14 @@ import {
   rememberInstallHintSnooze,
 } from "@/lib/install-hint-storage";
 
-beforeAll(() => {
-  if (!(globalThis as { window?: unknown }).window)
+beforeAll(async () => {
+  if (
+    !(globalThis as { window?: { localStorage?: unknown } }).window
+      ?.localStorage
+  ) {
+    if (GlobalRegistrator.isRegistered) await GlobalRegistrator.unregister();
     GlobalRegistrator.register();
+  }
 });
 
 afterEach(() => {
@@ -17,8 +22,8 @@ afterEach(() => {
 });
 
 // 2026-10-20 清基线：注册过就要收回来，否则后面的文件会撞「already been globally registered」。
-afterAll(() => {
-  if (GlobalRegistrator.isRegistered) GlobalRegistrator.unregister();
+afterAll(async () => {
+  if (GlobalRegistrator.isRegistered) await GlobalRegistrator.unregister();
 });
 
 test("× dismiss is permanent", () => {

@@ -162,7 +162,7 @@ export async function client<T>(
         ? serverSkewBehindBundled()
         : null;
     const message = skew
-      ? `${options.fallback ? `${options.fallback}：` : ""}当前服务端版本（v${skew.serverVersion}）低于桌面端（v${skew.uiVersion}），请在「设置 → 系统更新」升级服务端。`
+      ? `${options.fallback ? `${options.fallback}：` : ""}当前服务端版本（v${skew.serverVersion}）低于桌面端（v${skew.uiVersion}），请在「设置 → 版本与更新」升级服务端。`
       : (errorBody?.error ?? options.fallback ?? "该请求失败。");
     throw new ClientError(message, response.status, {
       ...(typeof errorBody?.code === "string" ? { code: errorBody.code } : {}),

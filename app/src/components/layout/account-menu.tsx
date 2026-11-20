@@ -1,6 +1,5 @@
 import {
   IconAlarm,
-  IconCloudDownload,
   IconInbox,
   IconListCheck,
   IconLogout,
@@ -34,17 +33,15 @@ import { recentConfirmationsQueryOptions } from "@/lib/confirmations";
 import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
-import { fetchServedVersion } from "@/lib/version";
-import { formatAccountVersionLabel, serverSkewBehindBundled } from "@/lib/version-skew";
 import { cn } from "@/lib/utils";
 
 
 /**
- * 账号（DESIGN-v4）：左栏最底下一张小玻璃卡 —— 头像 + 名字 + 版本号，点开账号菜单（向上弹出）。
+ * 账号（DESIGN-v4）：左栏最底下一张小玻璃卡 —— 头像 + 名字，点开账号菜单（向上弹出）。
  * 聊天、偏好设置、管理后台三个区域都在同一个位置。左栏收起后只剩头像，菜单向右弹出。
  *
- * 菜单只放「我」的事（DESIGN.md §57 导航收敛）：个人资料 · 设置 · 定时任务 · 待处理（审批角标）‖ 绑定手机 ‖ 暗色外观 ‖ 退出登录。
- * 「通知」（上游 Slack/Teams/短信可达性页）去掉了，IM 接入在设置里；设备管理在 设置 → 设备。
+ * 菜单只放「我」的高频入口（DESIGN.md §57 导航收敛）：个人资料 · 设置 · 任务中心 · 定时任务 · 待处理（审批角标）‖ 绑定手机 ‖ 暗色外观 ‖ 退出登录。
+ * 版本号、桌面端更新与服务端更新统一收束至「设置 → 版本与更新」，不占用账号卡与账号菜单。
  */
 export function AccountMenu({
   compact = false,
@@ -73,14 +70,6 @@ export function AccountMenu({
     (confirms.data?.filter((r) => r.status === "pending").length ?? 0);
   const [open, setOpen] = useState(false);
   const openTaskCenter = useOpenTaskCenter();
-  // 当前应用版本（/api/version 的 version，例如 0.1.0）。
-  const served = useQuery({
-    queryKey: ["app-version"],
-    queryFn: () => fetchServedVersion(),
-    staleTime: 5 * 60_000,
-  });
-  const skew = serverSkewBehindBundled(served.data?.version);
-  const version = formatAccountVersionLabel(served.data?.version);
 
   /*
    * 点菜单项去别的页（jank P1-6）：菜单立刻收起、不播退出动画，收起那一帧画出来后马上切页——
@@ -109,9 +98,8 @@ export function AccountMenu({
     }
   };
 
-  // 只显示头像 + 名称 + 版本号；不显示邮箱和身份。
+  // 只显示头像 + 名称；版本号与升级入口统一收束在「设置 → 版本与更新」。
   const name = user?.name || user?.email || "";
-  const sub = version;
   const icon = "size-[18px] shrink-0";
 
   const topbar = placement === "topbar";
@@ -142,7 +130,6 @@ export function AccountMenu({
         <span className="acct-name" data-private="">
           {name}
         </span>
-        {sub ? <span className="acct-sub">{sub}</span> : null}
       </span>
     </>
   );
@@ -187,7 +174,6 @@ export function AccountMenu({
               <span className="acct-name" data-private="">
                 {name}
               </span>
-              {version ? <span className="acct-sub">{version}</span> : null}
             </span>
           </DropdownMenuLabel>
         </DropdownMenuGroup>
@@ -203,13 +189,6 @@ export function AccountMenu({
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
-          {skew && user?.role === "admin" ? (
-            <Row
-              icon={<IconCloudDownload className={icon} />}
-              label={`升级服务端（当前 v${skew.serverVersion}）`}
-              onClick={() => go("/admin/system-update")}
-            />
-          ) : null}
           <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => {
             setOpen(false);
             if (sidebar?.isMobile) sidebar.setOpenMobile(false);

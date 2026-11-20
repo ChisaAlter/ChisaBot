@@ -110,11 +110,11 @@ export function DiagnosticsExportSection() {
   return (
     <PageSection
       description={`仅保存在本机内存中（环形上限 ${MAX_DIAGNOSTIC_ENTRIES} 条），导出时自动脱敏所有 Token、Cookie 与 Authorization 请求头。`}
-      settingItem="general.diagnostics"
+      settingItem="updates.diagnostics"
       title="端侧诊断日志"
     >
       <PageRows>
-        <Item data-setting-item="general.diagnostics.export" size="sm">
+        <Item data-setting-item="updates.diagnostics.export" size="sm">
           <ItemContent>
             <ItemTitle className="flex items-center gap-1.5">
               <IconBug className="size-4 text-muted-foreground" />

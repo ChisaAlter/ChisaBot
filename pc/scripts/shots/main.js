@@ -17,6 +17,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require("electron");
 const chrome = require("../../src/window-chrome");
+const { expandUpdateWindowBounds } = require("../../src/update-backdrop");
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -75,7 +76,10 @@ function register() {
     return true;
   };
   ipcMain.handle("dialog:fit", (event, { height } = {}) => fit(event, height));
-  ipcMain.handle("update:fit", (event, { height } = {}) => fit(event, height));
+  ipcMain.handle("update:fit", (event, { height } = {}) => {
+    const pad = expandUpdateWindowBounds({ x: 0, y: 0, width: 0, height: 0 }, FRAME).pad;
+    return fit(event, typeof height === "number" ? height + pad * 2 : height);
+  });
 }
 
 /** 中灰垫底窗口：白边 / 双层边框在它上面最明显。 */
@@ -210,8 +214,10 @@ async function run() {
     if (!ONLY || ONLY.includes("confirm"))
       await open("confirm", "confirm.html", { ...chrome.dialogWindowOptions(FRAME, { background: background() }), width: 440, height: 260 }, { fitted: true });
     current.update = { version: "0.1.15", currentVersion: "0.1.14", fullInstall: false };
-    if (!ONLY || ONLY.includes("update"))
-      await open("update", "update.html", { ...chrome.dialogWindowOptions(FRAME, { background: background() }), width: 440, height: 260 }, { fitted: true });
+    if (!ONLY || ONLY.includes("update")) {
+      const updateBox = expandUpdateWindowBounds({ x: 0, y: 0, width: 440, height: 260 }, FRAME);
+      await open("update", "update.html", { ...chrome.dialogWindowOptions(FRAME, { background: background() }), width: updateBox.width, height: updateBox.height }, { fitted: true });
+    }
   }
   bg.destroy();
   fs.writeFileSync(path.join(OUT, "shots.json"), JSON.stringify({ frame: FRAME, scale: SCALE, os: `${os.type()} ${os.release()}`, electron: process.versions.electron, shots: log }, null, 2));

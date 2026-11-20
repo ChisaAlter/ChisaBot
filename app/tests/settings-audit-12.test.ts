@@ -90,16 +90,18 @@ describe("settings copy matches the product", () => {
     );
   });
 
-  test("vault is searchable but not a separate rail item", () => {
+  test("vault and legacy system-update are searchable but not duplicate rail items", () => {
     const rail = navGroups(admin).flatMap((entry) =>
       entry.pages.map((page) => page.id),
     );
     expect(rail).not.toContain("vault");
     expect(rail).toContain("connected-accounts");
+    expect(rail).not.toContain("system-update");
+    expect(rail).toContain("updates");
     expect(
       visibleGroups(admin).flatMap((entry) =>
         entry.pages.map((page) => page.id),
       ),
-    ).toContain("vault");
+    ).toEqual(expect.arrayContaining(["vault", "system-update", "updates"]));
   });
 });
