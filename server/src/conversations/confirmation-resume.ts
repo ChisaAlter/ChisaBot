@@ -21,6 +21,7 @@ import {
 import { assertConversationAdmissionOpen } from "./maintenance";
 import { runAssertionValue } from "./protocol";
 import { createDshRunJournal } from "./run-journal";
+import { stripWaitingContinuationMessages } from "./wire-events";
 
 /** Resume the saved effect once, then continue the conversation from its real receipt. */
 export function createConfirmationResumer(options: {
@@ -176,7 +177,7 @@ export function createConfirmationResumer(options: {
               "UPDATE chisabot_dsh_runs SET status='waiting',updated_at=now() WHERE thread_id=$1 AND run_id=$2 AND NOT stop_requested",
               [snapshot.threadId, snapshot.runId],
             );
-            const event = {
+            const event = stripWaitingContinuationMessages({
               type: "RUN_FINISHED",
               threadId: snapshot.threadId,
               runId: snapshot.runId,
@@ -191,7 +192,7 @@ export function createConfirmationResumer(options: {
                   },
                 ],
               },
-            };
+            } as import("@ag-ui/client").BaseEvent);
             await tx.unsafe(
               `INSERT INTO chisabot_local_events(thread_id,run_id,event) SELECT $1,$2,$3::text::jsonb
               WHERE EXISTS(SELECT 1 FROM chisabot_dsh_runs WHERE thread_id=$1 AND run_id=$2 AND NOT stop_requested)`,

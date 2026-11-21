@@ -156,6 +156,7 @@
 | [148](#148-窗口拉伸保留磨砂玻璃与液态玻璃拉伸暂停2026-11-20)                                               | 移除 `data-resizing` 实底黑块降级并暂停液态玻璃拉伸期重采样/透镜重建，消除横向拉伸全屏闪烁                           | 2026-11-20                                                                 |
 | [149](#149-回复中途阶段感知实时插话与前后端全链路丝滑优化2026-11-20)                                       | 阶段感知 mid-turn 实时插话、无等待实时 SSE + 50ms 写库合批 + DSH 连接池与单跳发送、前端叶子流式与交互预算优化        | 2026-11-20                                                                 |
 | [150](#150-pc-右上角窗口控制键恢复磨砂玻璃角托与高对比图标保护2026-11-21)                                  | PC `.win-ctrls` 恢复四档 `--lg-surface-strong` + `--lg-blur` 磨砂角托、`1.25px` 描边、光学字缘保护并跳过液态位移滤镜 | 2026-11-21                                                                 |
+| [151](#151-聊天思考胶囊玻璃质感统一底部锚定不漂移快照顺序保护与工具只读失败收敛2026-11-22)                 | 状态/思考胶囊恢复四档磨砂模糊、固定底部槽与忙碌态留白收回、叶子流式结束零回缩、快照顺序修复与只读/前置失败收敛   | 2026-11-22                                                                 |
 
 ## 0. 总原则
 
@@ -3087,5 +3088,24 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - **跳过液态玻璃 SVG 位移滤镜**：将 `.win-ctrls` 写入 `app/src/lib/liquid-glass.ts` 的 `LENS_SKIP_SELECTOR`，避免右上角高频交互区叠加重型位错折射滤镜，同时保留 `GLASS_SURFACE_SELECTOR` 提供的屏幕字色翻转（`data-lg-ink="dark"`）。
   - **高对比图标与悬停交互**：将 `app/src/components/layout/glass-topbar.tsx` 中 `WindowControls` 4 个 SVG 图标描边统一加粗至 `strokeWidth="1.25"`；为 `.dark .win-ctrl svg` 与 `html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl svg` 叠加克制阴影（浅色开启壁纸配浅晕边缘），关闭键悬停/按下（`#c42b1c` / `#c84031`）时清除额外阴影；同步提升悬停/按下叠加态透明度，保证任意壁纸角落均可清晰辨认并点击。
   - **门禁更新**：`app/tests/render-budget.test.ts` 与 `app/tests/theme-glass-perf.test.tsx` §9/§10 同步更新并锁定 `.win-ctrls` 磨砂角托、`LENS_SKIP_SELECTOR`、降级文件与 SVG 字缘保护。
+
+---
+
+## 151. 聊天思考胶囊玻璃质感统一、底部锚定不漂移、快照顺序保护与工具只读失败收敛（2026-11-22）
+
+- **背景与 6 处根因**：用户反馈聊天时「思考/干活气泡未统一成当前磨砂质感、胶囊越漂越高离输入框越来越远、突然报错后对话记录跳到未知历史位置并弹出异常核对弹窗」。全链路排查定位 6 处独立根因：
+  1. **状态胶囊漏掉磨砂模糊**：`app/src/styles.css` 将 `.rs-capsule` / `.chat-thinking` 拆到不含 `backdrop-filter: var(--lg-blur)` 的独立规则里，与聊天气泡、浮动卡割裂。
+  2. **多步工具下胶囊上漂与流式末尾回缩跳位**：`chat-transcript.tsx` 在工具回合进行中把折叠过程话产生的留白锁进 `skip:busy` 持续累积，且 `liveWork` 曾离开 `.chat-status-slot` 或在过程话与工具步之间反复迁移；同时 `session-client.ts` 在 `TEXT_MESSAGE_END` 同步 `clearLiveMessageText` 早于 `useConversationSession` 提交新 `agent.messages`，导致 `<LiveBotBubbles>` 单帧回退到首 token 文本并触发 `dropOversizedBlank()` 将 `scrollTop` 夹回两千余像素；叠加 Streamdown 代码块内联 `content-visibility: auto; contain-intrinsic-size: auto 200px` 在未入屏时虚报 `218px` 造成 `+422px / -316px` 二次跳动。
+  3. **长对话快照顺序倒挂**：`@ag-ui/client` 默认 `MESSAGES_SNAPSHOT` 合并把缺失的旧消息 `.push()` 到数组末尾（`[2069..2272, 0..2068]`），报错或重连下发全量快照时对话末尾直接跳到历史开头；服务端中途 `MESSAGES_SNAPSHOT` 与等待续传事件也未在写库/SSE 出口封顶脱载。
+  4. **只读与前置校验失败误判为 `outcome_unknown` 核对弹窗**：部分只读内置工具漏标 `effect: "read"`，且 `tool-gateway.ts` 未把参数/路径/策略拒绝等前置失败归类为普通 `failed`，导致诸如 `computer_list_files({ path: "/" })` 抛出 `WorkspaceRequestError` 后错误挂起为「结果尚待核对」202 中断弹窗。
+  5. **历史卡片挂载触发机器人列表重拉风暴**：`bot-factory-tool.tsx` 的 `useAgentsInvalidated` 在历史已完成卡片挂载时也触发 `invalidateAgents`，长历史滚动或快照同步瞬间产生大量重复拉取。
+- **方案落地**：
+  - **状态胶囊磨砂统一**：将 `.rs-capsule`、`.chat-thinking` 并入 `app/src/styles.css` 浮动玻璃面 `--lg-surface-strong` + `--lg-blur` + `--lg-shadow` 单通道规则，加入 `liquid-glass.ts` 的 `LENS_SKIP_SELECTOR` 跳过重型 SVG 位移透镜，并在 `perf-noblur.css` 与 `status-capsule.css` 保留性能模式 / 减少透明度不透明降级。
+  - **胶囊固定底部槽与流式零跳动**：`chat-transcript.tsx` 将进行中的 `WorkRow` 始终锚定在 `.chat-status-slot`（全部工具完成且开始输出正文时原地切为「正在整理回复」，不再与 `liveAnchorId` 来回迁移；`shownRef` 仅记录实际展示过的行，回合结束按 §123 原地清空不留幻影折叠行）；`SettleAtEnd` 区分翻页/恢复有意留白（`holdBlank`）与过程话折叠临时留白，折叠落稳 `260ms` 后平滑收回；`session-client.ts` 将 `TEXT_MESSAGE_END` / `RUN_FINISHED` / `MESSAGES_SNAPSHOT` 改为先置 `streaming: false` 保住全文、待 `useConversationSession` 提交匹配的 `agent.messages` 后再静默清理，并修正 `onTextMessageContentEvent` 增量拼接；`styles.css` 对 `[data-streamdown="code-block"]` 强制 `content-visibility: visible; contain-intrinsic-size: none` 消除代码块二次布局。
+  - **快照规范序与出口封顶**：`session-client.ts` 重写 `ConversationSession.apply` 通过 `applyMessagesSnapshot` 严格保留服务端时间顺序与已加载旧前缀；新增 `server/src/conversations/wire-events.ts` 在持久化与 SSE 出口封顶 `MESSAGES_SNAPSHOT` 并剥离 `continuation.messages`（保留进程内 `entry.stream` 完整事件）。
+  - **只读与前置失败收敛**：为只读内置工具补全 `effect: "read"`，在 `tool-gateway.ts` 新增 `isPreEffectFailure` 将路径/参数/策略/元素未找到等未产生副作用的异常直接按 `failed` 返还模型自纠，真不确定写入失败仍保留 `outcome_unknown`。
+  - **工厂卡片防重拉风暴**：`bot-factory-tool.tsx` 仅在实时 `running -> done` 迁移时失效机器人列表缓存，且只读 `ManagedBotsCard` 关闭 `refreshAgents`。
+- **验证**：`app/tests/session-snapshot-order.test.ts`、`app/tests/wave3-smoothness.test.tsx`、`app/tests/reply-steps.test.tsx`、`app/tests/theme-glass-perf.test.tsx`、`app/tests/bot-factory-tool.test.tsx`、`server/tests/tool-gateway-read-effects.test.ts`、`server/tests/wire-events.test.ts` 及真浏览器 `tests/chat-scroll/work-card-jump.mjs` 双视口回归。
+
 
 

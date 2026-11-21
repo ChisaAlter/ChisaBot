@@ -733,6 +733,7 @@ export function deviceTools(options: {
     {
       name: "device_list",
       ref: "devices/list",
+      effect: "read",
       description: `列出用户账号下关联的全部设备（ChisaBot 桌面客户端 / 手机客户端）及其在线状态和已开启的能力。这些设备由用户的所有机器人共用。被问到「能不能看到 / 用我的电脑」时先调用它。当前：${roster}`,
       parameters: schemas.list,
       execute: async () => {
@@ -772,6 +773,7 @@ export function deviceTools(options: {
     {
       name: "device_system_info",
       ref: "devices/system_info",
+      effect: "read",
       description:
         "读取设备的系统信息（系统版本、主机名、用户、CPU、内存、屏幕分辨率）。",
       parameters: schemas.info,
@@ -850,6 +852,7 @@ export function deviceTools(options: {
       {
         name: "device_shell_output",
         ref: "devices/shell_output",
+        effect: "read",
         description:
           "查看后台命令（device_run_shell background: true 启动的）的状态和新输出：带上上次的 nextOffset 只拿新增部分；waitSec 可以等新输出。省略 jobId = 列出全部后台命令。",
         parameters: schemas.shellOutput,
@@ -921,6 +924,7 @@ export function deviceTools(options: {
       {
         name: "device_list_files",
         ref: "devices/list_files",
+        effect: "read",
         description:
           "列出【用户电脑】上的文件和子文件夹（不是云端工作区）。不给 path 列出「允许的文件夹」；给允许的文件夹之外的绝对路径时，用户批准后会把它加入允许的文件夹。机器人自己的云端目录请用 computer_list_files。",
         parameters: schemas.listFiles,
@@ -937,6 +941,7 @@ export function deviceTools(options: {
       {
         name: "device_read_file",
         ref: "devices/read_file",
+        effect: "read",
         description:
           "读取用户设备上的文本文件。给 startLine / endLine 时按行读取（带行号，一次最多 2000 行，返回 totalLines），大文件、代码文件用这个只读需要的部分；不给时读整个文件（默认最多 256KB）。",
         parameters: schemas.readFile,
@@ -961,6 +966,7 @@ export function deviceTools(options: {
       {
         name: "device_search",
         ref: "devices/search",
+        effect: "read",
         description:
           "在用户设备上搜索代码 / 文本（类似 ripgrep）：pattern 搜内容（返回 文件:行号:内容），glob 过滤文件名；只给 glob 就是按名字找文件。默认跳过 node_modules、.git、dist 等目录和二进制文件，最多 100 条。",
         parameters: schemas.search,
@@ -1177,6 +1183,7 @@ export function deviceTools(options: {
     tools.push({
       name: "device_screenshot",
       ref: "devices/screenshot",
+      effect: "read",
       description: "截取用户电脑的主屏幕，返回截图地址和尺寸。",
       parameters: schemas.screenshot,
       execute: async (input) => {
@@ -1257,6 +1264,7 @@ export function deviceTools(options: {
     tools.push({
       name: "device_desktop_context",
       ref: "devices/desktop_context",
+      effect: "read",
       description:
         "一键感知用户电脑当前的桌面上下文（当前剪贴板内容 + 设备基本状态）。当用户说「帮我看下这个报错」「翻译/解释我刚复制的内容」时，直接调用本工具获取上下文。",
       parameters: schemas.desktopContext,
@@ -1377,6 +1385,7 @@ export function deviceTools(options: {
     tools.push({
       name: "device_mcp_discover",
       ref: "devices/mcp_discover",
+      effect: "read",
       description:
         "只读扫描用户电脑上的本地 MCP 客户端配置（Claude Desktop / Claude Code / Cursor / VS Code），返回脱敏清单（不含真实环境变量值或 Header 密钥）及导入说明。",
       parameters: schemas.mcpDiscover,

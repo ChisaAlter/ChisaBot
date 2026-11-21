@@ -11,6 +11,16 @@ import {
   withApprovalContext,
 } from "../approvals/types";
 import type { AuditInitiator } from "../audit";
+import {
+  ElementNotFoundError,
+  NavigationRefusedError,
+  StaleSnapshotError,
+  WorkspaceNotFoundError,
+  WorkspaceRefusedError,
+  WorkspaceRequestError,
+  WorkspaceTooLargeError,
+} from "../computer/client";
+import { ActionRefusedError } from "../computer/gateway";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import {
   withConfirmActor,
@@ -79,6 +89,27 @@ export function isPromotableReadTool(
   tool: Pick<GrantedTool, "effect" | "prepareConfirm">,
 ): boolean {
   return tool.effect === "read" && !tool.prepareConfirm;
+}
+
+/**
+ * Typed validation / refusal / target-not-found errors thrown before any external mutation occurs.
+ * Settling these as `"failed"` lets the model self-correct instead of triggering a false
+ * `outcome_unknown` reconciliation interrupt.
+ */
+export function isPreEffectFailure(error: unknown): boolean {
+  return (
+    error instanceof ApprovalRefusedError ||
+    error instanceof PluginRefusedError ||
+    error instanceof ActionRefusedError ||
+    error instanceof StaleSnapshotError ||
+    error instanceof ElementNotFoundError ||
+    error instanceof NavigationRefusedError ||
+    error instanceof WorkspaceRefusedError ||
+    error instanceof WorkspaceRequestError ||
+    error instanceof WorkspaceNotFoundError ||
+    error instanceof WorkspaceTooLargeError ||
+    error instanceof z.ZodError
+  );
 }
 
 export type DshToolRegistration = {
@@ -296,12 +327,7 @@ export function createDshToolGateway(
         });
         throw error;
       }
-      if (
-        !invoked ||
-        tool.effect === "read" ||
-        error instanceof ApprovalRefusedError ||
-        error instanceof PluginRefusedError
-      ) {
+      if (!invoked || tool.effect === "read" || isPreEffectFailure(error)) {
         const result = { content: `工具未完成：${message}`, error: message };
         await operations.settle(claim.id, "failed", result);
         return result;
@@ -669,10 +695,7 @@ export function createDshToolGateway(
         const message = publicErrorMessage(error, "工具执行失败。");
         if (
           !deferred &&
-          (!invoked ||
-            tool.effect === "read" ||
-            error instanceof ApprovalRefusedError ||
-            error instanceof PluginRefusedError)
+          (!invoked || tool.effect === "read" || isPreEffectFailure(error))
         ) {
           const result = { content: `工具未完成：${message}`, error: message };
           await operations.settle(claim.id, "failed", result);

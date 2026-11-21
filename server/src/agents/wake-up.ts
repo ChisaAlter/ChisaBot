@@ -310,10 +310,12 @@ export function wakeUpTools(options: {
     description: string,
     parameters: z.ZodType<T>,
     execute: (value: T) => Promise<unknown>,
+    effect?: "read" | "write",
   ): GrantedTool {
     return {
       name,
       ref: `lifecycle/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args) {
@@ -364,6 +366,7 @@ export function wakeUpTools(options: {
             dueAt,
             state,
           })),
+      "read",
     ),
     tool(
       "cancel_follow_up",

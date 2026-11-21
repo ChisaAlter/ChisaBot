@@ -1108,3 +1108,152 @@ describe("窄屏也看得到「N 步失败」（复审 #404 第 2 条）", () =>
     );
   });
 });
+
+describe("实时状态胶囊固定在底部槽位（不随工具步数上漂）", () => {
+  const wrap = (node: ReactNode) => (
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      {node}
+    </QueryClientProvider>
+  );
+
+  test("思考中 -> 工具步 1 -> 中间过程话 -> 工具步 2 -> 流式正文 -> 回合结束：live WorkRow 始终留在 .chat-status-slot 内不来回迁移，结束后按 §123 原地清空", () => {
+    const u1: Message = { id: "u1", role: "user", content: "查一下仓库文件" };
+    const view = render(
+      wrap(
+        <ChatTranscript busy messages={[u1]} scrollKey="rs-slot-anchor-1" />,
+      ),
+    );
+    const slot = () => view.container.querySelector(".chat-status-slot");
+    expect(
+      slot()?.querySelector("[data-testid='transcript-thinking']"),
+    ).not.toBeNull();
+    expect(slot()?.querySelector(".rs-capsule")).not.toBeNull();
+    expect(slot()?.querySelector("[data-testid='chat-work-card']")).toBeNull();
+
+    // 工具 1 进行中：WorkRow 接管同一个 .chat-status-slot，不再把空槽留在下方。
+    const step1: Message[] = [
+      u1,
+      {
+        id: "a1",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "tc1",
+            type: "function",
+            function: {
+              name: "web_search",
+              arguments: '{"query":"东京天气"}',
+            },
+          },
+        ],
+      },
+    ];
+    view.rerender(
+      wrap(
+        <ChatTranscript busy messages={step1} scrollKey="rs-slot-anchor-1" />,
+      ),
+    );
+    const initialWorkCard = slot()?.querySelector(
+      "[data-testid='chat-work-card']",
+    );
+    expect(initialWorkCard).not.toBeNull();
+    expect(
+      view.container.querySelectorAll("[data-testid='chat-work-card']"),
+    ).toHaveLength(1);
+
+    // 工具 1 返回后模型先写一句过程话，此时 live WorkRow 仍留在 .chat-status-slot 同一个节点里，不跳回上方。
+    const midNote: Message[] = [
+      ...step1,
+      { id: "t1", role: "tool", toolCallId: "tc1", content: '{"ok":true}' },
+      { id: "a-note", role: "assistant", content: "查到了，再核对一个来源。" },
+    ];
+    view.rerender(
+      wrap(
+        <ChatTranscript busy messages={midNote} scrollKey="rs-slot-anchor-1" />,
+      ),
+    );
+    expect(
+      slot()?.querySelector("[data-testid='chat-work-card']") ===
+        initialWorkCard,
+    ).toBe(true);
+    expect(initialWorkCard?.textContent).toContain("正在整理回复");
+
+    // 工具 2 启动：同一 .chat-status-slot 节点平滑切回具体工具动作，不卸载、不跳动。
+    const step2: Message[] = [
+      ...midNote,
+      {
+        id: "a2",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "tc2",
+            type: "function",
+            function: {
+              name: "web_search",
+              arguments: '{"query":"大阪天气"}',
+            },
+          },
+        ],
+      },
+    ];
+    view.rerender(
+      wrap(
+        <ChatTranscript busy messages={step2} scrollKey="rs-slot-anchor-1" />,
+      ),
+    );
+    expect(
+      slot()?.querySelector("[data-testid='chat-work-card']") ===
+        initialWorkCard,
+    ).toBe(true);
+    expect(initialWorkCard?.textContent).toContain("大阪天气");
+    expect(
+      view.container.querySelectorAll("[data-testid='chat-work-card']"),
+    ).toHaveLength(1);
+
+    // 所有工具完成、正式回答开始流式输出时：live WorkRow 继续留在底部槽并切换为「正在整理回复」，不中途插入锚点行导致 ±62px 跳动。
+    const streamingAnswer: Message[] = [
+      ...step2,
+      { id: "t2", role: "tool", toolCallId: "tc2", content: '{"ok":true}' },
+      { id: "a3", role: "assistant", content: "东京和大阪今天都晴。" },
+    ];
+    view.rerender(
+      wrap(
+        <ChatTranscript
+          busy
+          messages={streamingAnswer}
+          scrollKey="rs-slot-anchor-1"
+        />,
+      ),
+    );
+    expect(
+      slot()?.querySelector("[data-testid='chat-work-card']") ===
+        initialWorkCard,
+    ).toBe(true);
+    expect(initialWorkCard?.textContent).toContain("正在整理回复");
+    expect(
+      view.container.querySelectorAll("[data-testid='chat-work-card']"),
+    ).toHaveLength(1);
+
+    // 回合结束并产出最终回答：按 §123 胶囊原地清空，不留历史干活行、正文保留。
+    view.rerender(
+      wrap(
+        <ChatTranscript
+          busy={false}
+          messages={streamingAnswer}
+          scrollKey="rs-slot-anchor-1"
+        />,
+      ),
+    );
+    expect(slot()?.querySelector("[data-testid='chat-work-card']")).toBeNull();
+    expect(
+      view.container.querySelector("[data-testid='chat-work-done']"),
+    ).toBeNull();
+    expect(view.getByText("东京和大阪今天都晴。")).not.toBeNull();
+  });
+});

@@ -853,11 +853,13 @@ export function createWorkerService(
         description: string,
         parameters: z.ZodType,
         execute: (args: never) => Promise<string>,
+        effect?: "read" | "write",
       ): GrantedTool => ({
         name,
         description,
         parameters,
         ref: `chisabot/${name}`,
+        ...(effect ? { effect } : {}),
         execute: (args: unknown) => execute(args as never),
       });
       return [
@@ -960,6 +962,7 @@ export function createWorkerService(
                 };
               }),
             ),
+          "read",
         ),
       ];
     },

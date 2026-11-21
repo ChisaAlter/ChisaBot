@@ -1,7 +1,7 @@
 import { IconChevronDown, IconRobot } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { useExternalConnection } from "@/hooks";
@@ -180,9 +180,11 @@ export function botFactoryApprovalSpec(
   }
 }
 
-/** 建 / 改 / 停成真后让机器人列表重读：新 bot 和「由 X 创建」徽章才有东西可画。 */
+/** 建 / 改 / 停成真后让机器人列表重读：只在实时运行态过渡到完成时触发，历史卡片挂载不触发重拉风暴。 */
 function useAgentsInvalidated(active: boolean) {
-  useExternalConnection(active || false, () => {
+  const initiallyActive = useRef(active);
+  const transitioned = !initiallyActive.current && active;
+  useExternalConnection(transitioned || false, () => {
     void invalidateAgents(sharedQueryClient);
   });
 }
@@ -222,6 +224,7 @@ export function FactoryCard({
   note,
   rows,
   linkBot,
+  refreshAgents = true,
 }: {
   state: FactoryCardState;
   title: string;
@@ -233,9 +236,11 @@ export function FactoryCard({
   rows?: readonly { label: string; value: string }[] | undefined;
   /** 有它就在展开区画「去和『X』聊天」。 */
   linkBot?: { id: string; name: string } | undefined;
+  /** 只读列表卡不会改变机器人名册，设为 false 避免无效刷新。 */
+  refreshAgents?: boolean | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  useAgentsInvalidated(state === "done");
+  useAgentsInvalidated(refreshAgents && state === "done");
   return (
     <div
       className="bot-exchange-card"
@@ -373,6 +378,7 @@ export function ManagedBotsCard({
         label: bot.paused ? "已暂停" : "机器人",
         value: bot.name,
       }))}
+      refreshAgents={false}
       state={running ? "running" : "done"}
       title={"查看了它创建的机器人"}
     />

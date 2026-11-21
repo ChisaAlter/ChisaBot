@@ -550,9 +550,11 @@ export function createGithub(
       description: string,
       parameters: T,
       run: (input: z.infer<T>) => Promise<string>,
+      effect?: "read" | "write",
     ): GrantedTool => ({
       name,
       ref: `github/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args) {
@@ -634,6 +636,7 @@ export function createGithub(
             "github repos",
           );
         },
+        "read",
       ),
       tool(
         "github_list_issues",
@@ -676,6 +679,7 @@ export function createGithub(
             `github ${repo} issues`,
           );
         },
+        "read",
       ),
       tool(
         "github_list_pulls",
@@ -715,6 +719,7 @@ export function createGithub(
             `github ${repo} pulls`,
           );
         },
+        "read",
       ),
       tool(
         "github_get_issue",
@@ -782,6 +787,7 @@ export function createGithub(
           }
           return untrusted(lines.join("\n"), `github ${repo}#${number}`);
         },
+        "read",
       ),
       tool(
         "github_read_file",
@@ -826,6 +832,7 @@ export function createGithub(
             `github ${repo}/${data.path}`,
           );
         },
+        "read",
       ),
       tool(
         "github_create_issue",

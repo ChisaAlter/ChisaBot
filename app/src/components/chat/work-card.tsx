@@ -68,8 +68,9 @@ function restartTurnClock(turnKey: string) {
   endedRuns.delete(turnKey);
   startedAt.delete(turnKey);
   finishedAt.delete(turnKey);
-  if (workUi(turnKey)?.seconds !== undefined)
-    setWorkUi(turnKey, { seconds: undefined });
+  const ui = workUi(turnKey);
+  if (ui?.seconds !== undefined || ui?.open)
+    setWorkUi(turnKey, { seconds: undefined, open: false });
 }
 
 /**

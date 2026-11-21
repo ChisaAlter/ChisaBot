@@ -3,14 +3,24 @@ import { setTimeout as wait } from "node:timers/promises";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { domainAllowed, VAULT_DOMAIN, VAULT_NAME, vaultReserved, type VaultRequestView, type VaultSecretView } from "../../../shared/vault";
+import {
+  domainAllowed,
+  VAULT_DOMAIN,
+  VAULT_NAME,
+  vaultReserved,
+  type VaultRequestView,
+  type VaultSecretView,
+} from "../../../shared/vault";
 import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { markUntrusted } from "../untrusted-content";
-import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
+import {
+  BlockedUrlError,
+  guardedFetch,
+} from "../../../shared/net/guarded-fetch";
 import { assertPublicUrl } from "../web/tools";
 import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -67,7 +77,9 @@ export function domainList(value: unknown): string[] {
       return [];
     }
   }
-  return Array.isArray(v) ? v.filter((d): d is string => typeof d === "string") : [];
+  return Array.isArray(v)
+    ? v.filter((d): d is string => typeof d === "string")
+    : [];
 }
 const secretView = (row: SecretRow): VaultSecretView => ({
   id: row.id,
@@ -80,7 +92,8 @@ const secretView = (row: SecretRow): VaultSecretView => ({
   lastUsedAt: row.last_used_at ? iso(row.last_used_at) : null,
   ...(vaultReserved(row.name) ? { managedBy: vaultReserved(row.name) } : {}),
 });
-const RESERVED_TEXT = "「github」由 设置 → 账号连接 → GitHub 管理，请在那里连接、更换或断开。";
+const RESERVED_TEXT =
+  "「github」由 设置 → 账号连接 → GitHub 管理，请在那里连接、更换或断开。";
 const requestView = (row: RequestRow): VaultRequestView => ({
   id: row.id,
   name: row.name,
@@ -92,9 +105,19 @@ const requestView = (row: RequestRow): VaultRequestView => ({
   createdAt: iso(row.created_at),
 });
 const hintOf = (value: string) => (value.length >= 8 ? value.slice(-4) : "");
-const nameSchema = z.string().trim().toLowerCase().regex(VAULT_NAME, "名字只能用小写字母、数字、下划线和连字符（2–40 个字符）");
+const nameSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(VAULT_NAME, "名字只能用小写字母、数字、下划线和连字符（2–40 个字符）");
 const domainsSchema = z
-  .array(z.string().trim().toLowerCase().regex(VAULT_DOMAIN, "域名写成 api.example.com 或 *.example.com"))
+  .array(
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(VAULT_DOMAIN, "域名写成 api.example.com 或 *.example.com"),
+  )
   .min(1, "至少写一个能用这个密钥的域名")
   .max(10);
 
@@ -115,7 +138,10 @@ export function interactive(initiator: AuditInitiator | undefined) {
   );
 }
 
-export function createVault(database: Database, options: { encryptionKey: string; fetch?: typeof fetch }) {
+export function createVault(
+  database: Database,
+  options: { encryptionKey: string; fetch?: typeof fetch },
+) {
   const sql = database.$client;
   const doFetch = options.fetch ?? fetch;
 
@@ -150,11 +176,30 @@ export function createVault(database: Database, options: { encryptionKey: string
   }
 
   const list = async (owner: string) =>
-    (await sql.unsafe<SecretRow[]>("SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 ORDER BY name", [owner])).map(secretView);
+    (
+      await sql.unsafe<SecretRow[]>(
+        "SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 ORDER BY name",
+        [owner],
+      )
+    ).map(secretView);
   const byName = async (owner: string, name: string) =>
-    (await sql.unsafe<SecretRow[]>("SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND name = $2", [owner, name]))[0] ?? null;
+    (
+      await sql.unsafe<SecretRow[]>(
+        "SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND name = $2",
+        [owner, name],
+      )
+    )[0] ?? null;
 
-  async function save(owner: string, input: { name: string; label: string; domains: string[]; value?: string | null }, internal = false) {
+  async function save(
+    owner: string,
+    input: {
+      name: string;
+      label: string;
+      domains: string[];
+      value?: string | null;
+    },
+    internal = false,
+  ) {
     const name = nameSchema.parse(input.name);
     if (vaultReserved(name) && !internal) throw new VaultError(RESERVED_TEXT);
     const label = z.string().trim().min(1).max(60).parse(input.label);
@@ -178,42 +223,93 @@ export function createVault(database: Database, options: { encryptionKey: string
        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
        ON CONFLICT (owner_user_id, name) DO UPDATE SET label = EXCLUDED.label, domains = EXCLUDED.domains, value = EXCLUDED.value, hint = EXCLUDED.hint, updated_at = now()
        RETURNING *`,
-      [`vs_${randomUUID().replace(/-/g, "").slice(0, 20)}`, owner, name, label, JSON.stringify(domains), sealed, hint],
+      [
+        `vs_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
+        owner,
+        name,
+        label,
+        JSON.stringify(domains),
+        sealed,
+        hint,
+      ],
     );
     if (!row) throw new Error("密钥保存后没有返回记录。");
     return secretView(row);
   }
 
   async function remove(owner: string, id: string) {
-    const target = (await sql.unsafe<SecretRow[]>("SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND id = $2", [owner, id]))[0];
-    if (target && vaultReserved(target.name)) throw new VaultError(RESERVED_TEXT);
-    const rows = await sql.unsafe<SecretRow[]>("DELETE FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND id = $2 RETURNING *", [owner, id]);
+    const target = (
+      await sql.unsafe<SecretRow[]>(
+        "SELECT * FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND id = $2",
+        [owner, id],
+      )
+    )[0];
+    if (target && vaultReserved(target.name))
+      throw new VaultError(RESERVED_TEXT);
+    const rows = await sql.unsafe<SecretRow[]>(
+      "DELETE FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND id = $2 RETURNING *",
+      [owner, id],
+    );
     return rows.length > 0;
   }
 
   const requestById = async (owner: string, id: string) =>
-    (await sql.unsafe<RequestRow[]>("SELECT * FROM chisabot_vault_requests WHERE id = $1 AND owner_user_id = $2", [id, owner]))[0] ?? null;
+    (
+      await sql.unsafe<RequestRow[]>(
+        "SELECT * FROM chisabot_vault_requests WHERE id = $1 AND owner_user_id = $2",
+        [id, owner],
+      )
+    )[0] ?? null;
 
-  async function fill(owner: string, id: string, value: string, overrides: { label?: string; domains?: string[] } = {}) {
+  async function fill(
+    owner: string,
+    id: string,
+    value: string,
+    overrides: { label?: string; domains?: string[] } = {},
+  ) {
     const request = await requestById(owner, id);
     if (!request) throw new VaultError("找不到这个请求。");
-    if (request.status !== "pending") throw new VaultError("这个请求已经结束了。");
+    if (request.status !== "pending")
+      throw new VaultError("这个请求已经结束了。");
     if (Date.now() - new Date(request.created_at).getTime() > REQUEST_WAIT_MS) {
-      await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1", [id]);
+      await sql.unsafe(
+        "UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1",
+        [id],
+      );
       throw new VaultError("这个请求已经过期，请让机器人重新请求。");
     }
     if (!value.trim()) throw new VaultError("要填密钥的值。");
-    const saved = await save(owner, { name: request.name, label: overrides.label ?? request.label, domains: overrides.domains ?? domainList(request.domains), value });
-    await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'filled' WHERE id = $1", [id]);
+    const saved = await save(owner, {
+      name: request.name,
+      label: overrides.label ?? request.label,
+      domains: overrides.domains ?? domainList(request.domains),
+      value,
+    });
+    await sql.unsafe(
+      "UPDATE chisabot_vault_requests SET status = 'filled' WHERE id = $1",
+      [id],
+    );
     return saved;
   }
 
   async function cancel(owner: string, id: string) {
-    await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'cancelled' WHERE id = $1 AND owner_user_id = $2 AND status = 'pending'", [id, owner]);
+    await sql.unsafe(
+      "UPDATE chisabot_vault_requests SET status = 'cancelled' WHERE id = $1 AND owner_user_id = $2 AND status = 'pending'",
+      [id, owner],
+    );
   }
 
   /** 发请求：替换占位、只发往绑定的域名、不跟随重定向、回来的内容抹掉密钥。 */
-  async function request(owner: string, input: { method: string; url: string; headers?: Record<string, string>; body?: string }, signal?: AbortSignal) {
+  async function request(
+    owner: string,
+    input: {
+      method: string;
+      url: string;
+      headers?: Record<string, string>;
+      body?: string;
+    },
+    signal?: AbortSignal,
+  ) {
     signal?.throwIfAborted();
     const used = new Map<string, SecretRow>();
     const names = new Set<string>();
@@ -229,24 +325,40 @@ export function createVault(database: Database, options: { encryptionKey: string
     }
     if (input.body) scan(input.body);
     for (const name of names) {
-      if (vaultReserved(name)) throw new VaultError("GitHub 令牌不能用在 api_request 里，请用 github_* 工具（写操作要用户确认）。");
+      if (vaultReserved(name))
+        throw new VaultError(
+          "GitHub 令牌不能用在 api_request 里，请用 github_* 工具（写操作要用户确认）。",
+        );
       const row = await byName(owner, name);
-      if (!row) throw new VaultError(`保险箱里没有叫「${name}」的密钥。先用 vault_list 看看，或者用 vault_request_secret 请用户存一个。`);
+      if (!row)
+        throw new VaultError(
+          `保险箱里没有叫「${name}」的密钥。先用 vault_list 看看，或者用 vault_request_secret 请用户存一个。`,
+        );
       used.set(name, row);
     }
     // 先按占位后的网址校验域名：密钥只能发往它绑定的域名。
     const target = new URL(input.url.replace(PLACEHOLDER, "x"));
-    if (target.protocol !== "https:") throw new VaultError("带密钥的请求只能发 https。");
+    if (target.protocol !== "https:")
+      throw new VaultError("带密钥的请求只能发 https。");
     for (const [name, row] of used)
       if (!domainAllowed(target.hostname, domainList(row.domains)))
-        throw new VaultError(`密钥「${name}」只能发往 ${domainList(row.domains).join("、")}，不能发往 ${target.hostname}。如果确实要用在这个网站，请用户在 设置 → 密钥 里给它加上这个域名。`);
+        throw new VaultError(
+          `密钥「${name}」只能发往 ${domainList(row.domains).join("、")}，不能发往 ${target.hostname}。如果确实要用在这个网站，请用户在 设置 → 密钥 里给它加上这个域名。`,
+        );
     const values = new Map<string, string>();
-    for (const [name, row] of used) values.set(name, await decryptSecret(options.encryptionKey, row.value));
-    const fillIn = (text: string) => text.replace(PLACEHOLDER, (_, name: string) => values.get(name) ?? "");
+    for (const [name, row] of used)
+      values.set(name, await decryptSecret(options.encryptionKey, row.value));
+    const fillIn = (text: string) =>
+      text.replace(PLACEHOLDER, (_, name: string) => values.get(name) ?? "");
     const scrub = (s: string) => {
       let out = s;
-      const representations = [...values.values()].flatMap((value) => [value, encodeURIComponent(value)]);
-      for (const value of [...new Set(representations)].sort((a, b) => b.length - a.length)) {
+      const representations = [...values.values()].flatMap((value) => [
+        value,
+        encodeURIComponent(value),
+      ]);
+      for (const value of [...new Set(representations)].sort(
+        (a, b) => b.length - a.length,
+      )) {
         if (value) out = out.split(value).join("••••");
       }
       return out;
@@ -254,13 +366,18 @@ export function createVault(database: Database, options: { encryptionKey: string
     try {
       const method = input.method.toUpperCase();
       const headerRecord: Record<string, string> = {};
-      for (const [k, v] of Object.entries(input.headers ?? {})) headerRecord[fillIn(k)] = fillIn(v);
-      if (!Object.keys(headerRecord).some((k) => k.toLowerCase() === "user-agent")) {
-        headerRecord["user-agent"] = "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)";
+      for (const [k, v] of Object.entries(input.headers ?? {}))
+        headerRecord[fillIn(k)] = fillIn(v);
+      if (
+        !Object.keys(headerRecord).some((k) => k.toLowerCase() === "user-agent")
+      ) {
+        headerRecord["user-agent"] =
+          "ChisaBot/0.1 (+https://github.com/ChisaAlter/ChisaBot)";
       }
       const filledUrl = fillIn(input.url);
       const filledTarget = new URL(filledUrl);
-      if (filledTarget.protocol !== "https:") throw new VaultError("带密钥的请求只能发 https。");
+      if (filledTarget.protocol !== "https:")
+        throw new VaultError("带密钥的请求只能发 https。");
       for (const [name, row] of used) {
         if (!domainAllowed(filledTarget.hostname, domainList(row.domains))) {
           throw new VaultError(`替换后的网址不在密钥「${name}」允许的域名内。`);
@@ -287,7 +404,8 @@ export function createVault(database: Database, options: { encryptionKey: string
             signal: abort,
           });
         } catch (error) {
-          if (error instanceof BlockedUrlError) throw new VaultError(error.message);
+          if (error instanceof BlockedUrlError)
+            throw new VaultError(error.message);
           throw error;
         }
         if (used.size)
@@ -295,7 +413,9 @@ export function createVault(database: Database, options: { encryptionKey: string
             "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))",
             [owner, [...used.keys()].join(",")],
           );
-        const bodyText = new TextDecoder("utf-8", { fatal: false }).decode(guarded.body);
+        const bodyText = new TextDecoder("utf-8", { fatal: false }).decode(
+          guarded.body,
+        );
         return {
           status: guarded.status,
           contentType: scrub(guarded.contentType),
@@ -310,12 +430,17 @@ export function createVault(database: Database, options: { encryptionKey: string
       const response = await doFetch(url, {
         method,
         headers,
-        ...(input.body && method !== "GET" && method !== "HEAD" ? { body: fillIn(input.body) } : {}),
+        ...(input.body && method !== "GET" && method !== "HEAD"
+          ? { body: fillIn(input.body) }
+          : {}),
         redirect: "manual",
         signal: abort,
       });
       if (used.size)
-        await sql.unsafe("UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))", [owner, [...used.keys()].join(",")]);
+        await sql.unsafe(
+          "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE owner_user_id = $1 AND name = ANY(string_to_array($2, ','))",
+          [owner, [...used.keys()].join(",")],
+        );
       let text = "";
       const reader = response.body?.getReader();
       let size = 0;
@@ -330,7 +455,9 @@ export function createVault(database: Database, options: { encryptionKey: string
         }
         chunks.push(value);
       }
-      text = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
+      text = new TextDecoder("utf-8", { fatal: false }).decode(
+        Buffer.concat(chunks),
+      );
       const location = response.headers.get("location");
       return {
         status: response.status,
@@ -341,30 +468,48 @@ export function createVault(database: Database, options: { encryptionKey: string
       };
     } catch (error) {
       if (signal?.aborted) signal.throwIfAborted();
-      if (error instanceof Error) throw new VaultError(scrub(reasonWithoutStatement(error)));
+      if (error instanceof Error)
+        throw new VaultError(scrub(reasonWithoutStatement(error)));
       throw new VaultError("请求未能完成，请稍后重试。");
     }
   }
 
-  function tools(owner: string, agentId: string, initiator?: AuditInitiator): GrantedTool[] {
-    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>, signal?: AbortSignal) => Promise<string>): GrantedTool => ({
+  function tools(
+    owner: string,
+    agentId: string,
+    initiator?: AuditInitiator,
+  ): GrantedTool[] {
+    const tool = <T extends z.ZodType>(
+      name: string,
+      description: string,
+      parameters: T,
+      run: (input: z.infer<T>, signal?: AbortSignal) => Promise<string>,
+      effect?: "read" | "write",
+    ): GrantedTool => ({
       name,
       ref: `vault/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args, context) {
         const signal = context?.signal ?? currentToolAbort();
         if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
         const parsed = parameters.safeParse(args);
-        if (!parsed.success) return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
+        if (!parsed.success)
+          return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.message ?? ""}`;
         try {
           const result = await run(parsed.data, signal);
-          return signal?.aborted ? `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}` : result;
+          return signal?.aborted
+            ? `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`
+            : result;
         } catch (error) {
           if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
-          if (error instanceof VaultError) return `${REFUSAL_MARKER} ${error.message}`;
-          if (error instanceof z.ZodError) return `${REFUSAL_MARKER} ${error.issues[0]?.message ?? "参数不对。"}`;
-          if (error instanceof Error && /网址|内网|http/.test(error.message)) return `${REFUSAL_MARKER} ${error.message}`;
+          if (error instanceof VaultError)
+            return `${REFUSAL_MARKER} ${error.message}`;
+          if (error instanceof z.ZodError)
+            return `${REFUSAL_MARKER} ${error.issues[0]?.message ?? "参数不对。"}`;
+          if (error instanceof Error && /网址|内网|http/.test(error.message))
+            return `${REFUSAL_MARKER} ${error.message}`;
           throw error;
         }
       },
@@ -376,42 +521,81 @@ export function createVault(database: Database, options: { encryptionKey: string
         z.object({}).strict(),
         async () => {
           const rows = await list(owner);
-          return rows.length ? rows.map((r) => `- ${r.name}：${r.label}（可用于 ${r.domains.join("、")}${r.hint ? `，末四位 ${r.hint}` : ""}）`).join("\n") : "保险箱是空的。";
+          return rows.length
+            ? rows
+                .map(
+                  (r) =>
+                    `- ${r.name}：${r.label}（可用于 ${r.domains.join("、")}${r.hint ? `，末四位 ${r.hint}` : ""}）`,
+                )
+                .join("\n")
+            : "保险箱是空的。";
         },
+        "read",
       ),
       tool(
         "vault_request_secret",
         "需要用户的 API 密钥 / 令牌时调用：聊天里会出现一张安全输入卡片，用户填的值直接加密存进保险箱，你永远看不到值。千万不要让用户把密钥直接发在聊天里。存好后用 api_request 加 {{secret:名字}} 使用。登录网站用 computer_request_sign_in，不用这个。",
         z
           .object({
-            name: z.string().max(40).describe("保险箱里的名字，小写字母数字下划线连字符，如 openai_key"),
-            label: z.string().min(1).max(60).describe("给用户看的名字，如「OpenAI API 密钥」"),
-            purpose: z.string().max(200).optional().describe("一句话说明拿来做什么"),
-            domains: z.array(z.string()).min(1).max(5).describe("这个密钥能发往的域名，如 [\"api.openai.com\"]"),
+            name: z
+              .string()
+              .max(40)
+              .describe(
+                "保险箱里的名字，小写字母数字下划线连字符，如 openai_key",
+              ),
+            label: z
+              .string()
+              .min(1)
+              .max(60)
+              .describe("给用户看的名字，如「OpenAI API 密钥」"),
+            purpose: z
+              .string()
+              .max(200)
+              .optional()
+              .describe("一句话说明拿来做什么"),
+            domains: z
+              .array(z.string())
+              .min(1)
+              .max(5)
+              .describe('这个密钥能发往的域名，如 ["api.openai.com"]'),
           })
           .strict(),
         async (input, signal) => {
-          if (!interactive(initiator)) return `${REFUSAL_MARKER} 这一轮不是在网页聊天里，弹不出安全输入卡片。请用户去 ChisaBot 网页的 设置 → 密钥 里添加「${input.label}」（名字 ${input.name}），或在网页聊天里再让你请求一次。`;
+          if (!interactive(initiator))
+            return `${REFUSAL_MARKER} 这一轮不是在网页聊天里，弹不出安全输入卡片。请用户去 ChisaBot 网页的 设置 → 密钥 里添加「${input.label}」（名字 ${input.name}），或在网页聊天里再让你请求一次。`;
           const name = nameSchema.parse(input.name);
-          if (vaultReserved(name)) return `${REFUSAL_MARKER} 要用 GitHub 请让用户在对话里就地连接——引导输出独立一行的链接卡 [连接 GitHub](/settings/connected-accounts/github)；不要用保险箱卡片要 GitHub 令牌。`;
+          if (vaultReserved(name))
+            return `${REFUSAL_MARKER} 要用 GitHub 请让用户在对话里就地连接——引导输出独立一行的链接卡 [连接 GitHub](/settings/connected-accounts/github)；不要用保险箱卡片要 GitHub 令牌。`;
           const domains = domainsSchema.parse(input.domains);
           const id = `vr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
           await sql.unsafe(
             "INSERT INTO chisabot_vault_requests (id, owner_user_id, agent_id, name, label, purpose, domains) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)",
-            [id, owner, agentId, name, input.label.trim(), input.purpose?.trim() || null, JSON.stringify(domains)],
+            [
+              id,
+              owner,
+              agentId,
+              name,
+              input.label.trim(),
+              input.purpose?.trim() || null,
+              JSON.stringify(domains),
+            ],
           );
           const deadline = Date.now() + REQUEST_WAIT_MS;
           try {
             while (Date.now() < deadline) {
               await wait(1000, undefined, { signal });
               const row = await requestById(owner, id);
-              if (!row || row.status === "cancelled") return `用户取消了，没有存「${input.label}」。不要换别的方式索要密钥。`;
+              if (!row || row.status === "cancelled")
+                return `用户取消了，没有存「${input.label}」。不要换别的方式索要密钥。`;
               if (row.status === "filled") {
                 const secret = await byName(owner, name);
                 return `⟦vault:${id}⟧ 用户已把「${secret?.label ?? input.label}」存进保险箱，名字 ${name}，可用于 ${(secret ? domainList(secret.domains) : domains).join("、")}。用法：在 api_request 的网址 / 请求头 / 请求体里写 {{secret:${name}}}。`;
               }
             }
-            await sql.unsafe("UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1 AND status = 'pending'", [id]);
+            await sql.unsafe(
+              "UPDATE chisabot_vault_requests SET status = 'expired' WHERE id = $1 AND status = 'pending'",
+              [id],
+            );
             return `⟦vault:${id}⟧ 等了 10 分钟用户没有填。告诉用户可以稍后在 设置 → 密钥 里添加。`;
           } finally {
             if (signal?.aborted) await cancel(owner, id);
@@ -423,9 +607,13 @@ export function createVault(database: Database, options: { encryptionKey: string
         "调用需要密钥的 HTTP 接口（https）。在网址、请求头或请求体里用 {{secret:名字}} 引用保险箱里的密钥，服务器替换后发出，回来的内容里密钥会被抹掉。密钥只能发往它绑定的域名；不跟随重定向。不需要密钥的公开网页用 web_fetch。",
         z
           .object({
-            method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).default("GET"),
+            method: z
+              .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+              .default("GET"),
             url: z.string().max(2000),
-            headers: z.record(z.string().max(100), z.string().max(4000)).optional(),
+            headers: z
+              .record(z.string().max(100), z.string().max(4000))
+              .optional(),
             body: z.string().max(100_000).optional(),
           })
           .strict(),
@@ -441,15 +629,39 @@ export function createVault(database: Database, options: { encryptionKey: string
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser, bodyLimit({ maxSize: 32_768 }));
     app.onError((error, c) => {
-      if (error instanceof VaultError) return c.json({ error: error.message }, 400);
-      if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "vault-error", error: error.name, route: c.req.path }));
+      if (error instanceof VaultError)
+        return c.json({ error: error.message }, 400);
+      if (error instanceof z.ZodError)
+        return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
+      console.error(
+        JSON.stringify({
+          type: "vault-error",
+          error: error.name,
+          route: c.req.path,
+        }),
+      );
       return c.json({ error: "保险箱暂时不可用，请重试。" }, 503);
     });
-    const input = z.object({ name: z.string(), label: z.string(), domains: z.array(z.string()), value: z.string().max(8000).nullable().optional() }).strict();
+    const input = z
+      .object({
+        name: z.string(),
+        label: z.string(),
+        domains: z.array(z.string()),
+        value: z.string().max(8000).nullable().optional(),
+      })
+      .strict();
     app.get("/", async (c) => c.json({ secrets: await list(c.var.actor.id) }));
-    app.post("/", async (c) => c.json({ secret: await save(c.var.actor.id, input.parse(await c.req.json())) }, 201));
-    app.delete("/:id", async (c) => ((await remove(c.var.actor.id, c.req.param("id"))) ? c.body(null, 204) : c.json({ error: "找不到这个密钥。" }, 404)));
+    app.post("/", async (c) =>
+      c.json(
+        { secret: await save(c.var.actor.id, input.parse(await c.req.json())) },
+        201,
+      ),
+    );
+    app.delete("/:id", async (c) =>
+      (await remove(c.var.actor.id, c.req.param("id")))
+        ? c.body(null, 204)
+        : c.json({ error: "找不到这个密钥。" }, 404),
+    );
     // 卡片在工具还没返回时就要知道请求 id：按名字拿这个人最新的、还在等的请求。
     app.get("/requests", async (c) => {
       const name = c.req.query("name") ?? "";
@@ -461,10 +673,19 @@ export function createVault(database: Database, options: { encryptionKey: string
     });
     app.get("/requests/:id", async (c) => {
       const row = await requestById(c.var.actor.id, c.req.param("id"));
-      return row ? c.json({ request: requestView(row) }) : c.json({ error: "找不到这个请求。" }, 404);
+      return row
+        ? c.json({ request: requestView(row) })
+        : c.json({ error: "找不到这个请求。" }, 404);
     });
     app.post("/requests/:id/fill", async (c) => {
-      const body = z.object({ value: z.string().min(1).max(8000), label: z.string().max(60).optional(), domains: z.array(z.string()).optional() }).strict().parse(await c.req.json());
+      const body = z
+        .object({
+          value: z.string().min(1).max(8000),
+          label: z.string().max(60).optional(),
+          domains: z.array(z.string()).optional(),
+        })
+        .strict()
+        .parse(await c.req.json());
       const saved = await fill(c.var.actor.id, c.req.param("id"), body.value, {
         ...(body.label?.trim() ? { label: body.label.trim() } : {}),
         ...(body.domains?.length ? { domains: body.domains } : {}),
@@ -480,18 +701,43 @@ export function createVault(database: Database, options: { encryptionKey: string
 
   /** 只给服务器内部（GitHub 连接）用：存 / 取 / 删保留名字的密钥。值不离开服务器。 */
   const internal = {
-    save: (owner: string, input: { name: string; label: string; domains: string[]; value: string }) => save(owner, input, true),
+    save: (
+      owner: string,
+      input: { name: string; label: string; domains: string[]; value: string },
+    ) => save(owner, input, true),
     async reveal(owner: string, name: string) {
       const row = await byName(owner, name);
       if (!row) return null;
-      await sql.unsafe("UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE id = $1", [row.id]);
-      return { value: await decryptSecret(options.encryptionKey, row.value), hint: row.hint, domains: domainList(row.domains) };
+      await sql.unsafe(
+        "UPDATE chisabot_vault_secrets SET last_used_at = now() WHERE id = $1",
+        [row.id],
+      );
+      return {
+        value: await decryptSecret(options.encryptionKey, row.value),
+        hint: row.hint,
+        domains: domainList(row.domains),
+      };
     },
     async remove(owner: string, name: string) {
-      await sql.unsafe("DELETE FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND name = $2", [owner, name]);
+      await sql.unsafe(
+        "DELETE FROM chisabot_vault_secrets WHERE owner_user_id = $1 AND name = $2",
+        [owner, name],
+      );
     },
   };
 
-  return { ensure, list, save, remove, fill, cancel, request, tools, routes, requestById, internal };
+  return {
+    ensure,
+    list,
+    save,
+    remove,
+    fill,
+    cancel,
+    request,
+    tools,
+    routes,
+    requestById,
+    internal,
+  };
 }
 export type Vault = ReturnType<typeof createVault>;

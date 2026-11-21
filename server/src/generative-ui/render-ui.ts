@@ -69,6 +69,7 @@ export function renderUiTools(
       ...(options.replySources ? { guidance: REPLY_SOURCES_GUIDANCE } : {}),
       name: RENDER_UI_TOOL,
       ref: `generative-ui/${RENDER_UI_TOOL}`,
+      effect: "read",
       description: description(),
       parameters: renderUiParameters,
       execute: async (args) => executeRenderUi(args),

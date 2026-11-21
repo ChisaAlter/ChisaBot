@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.180 — 2026-11-22
+
+全端版本 `0.1.180`，Android `versionCode 360`：聊天全面修复——统一 AI「思考中 / 干活」状态胶囊四档磨砂玻璃质感、修复多步工具与流式输出下胶囊上漂及末尾回缩跳位、防止长对话全量快照顺序倒置回跳旧历史、收敛只读与前置校验工具失败避免误弹核对卡片，并消除历史工厂卡片挂载风暴（DESIGN.md §151）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5d175b026b079ac5`；无需手动数据库迁移。
+
+- **聊天状态胶囊磨砂玻璃统一与底槽锚定防上漂（DESIGN.md §151）**：
+  - 将 `.rs-capsule`、`.chat-thinking` 纳入 `app/src/styles.css` `--lg-surface-strong` + `--lg-blur` + `--lg-shadow` 单通道磨砂规则（保持在 `liquid-glass.ts` `LENS_SKIP_SELECTOR` 并延续 `perf-noblur.css` / `status-capsule.css` 降级），同步调整 `.chat-status-slot`、`SettleAtEnd`（`holdBlank` + `BUSY_SLACK_SETTLE_MS` 收回折叠过程话留白）、`session-client.ts` 流式收尾时序与代码块 `content-visibility: visible`，消除思考/干活胶囊越漂越高与流式结束回跳。
+- **长对话快照顺序保护与载荷脱载（DESIGN.md §151）**：
+  - `session-client.ts` 重写 `ConversationSession.apply` 接入 `applyMessagesSnapshot`，保留服务端规范时间序并防止缺失前缀被追加至末尾；服务端新增 `server/src/conversations/wire-events.ts`，在落库与 SSE 出口封顶 `MESSAGES_SNAPSHOT` 并剥离客户端冗余 `continuation.messages`。
+- **只读与前置校验失败收敛及工厂卡片防重拉（DESIGN.md §151）**：
+  - 为全仓纯只读内置工具补全 `effect: "read"`，并在 `tool-gateway.ts` 中将路径/参数/策略拒绝等前置失败直接结算为普通 `failed`（不再误判 `outcome_unknown` 中断弹窗）；`bot-factory-tool.tsx` 仅在实时状态跃迁时失效机器人列表缓存。
+
 ## 0.1.179 — 2026-11-21
 
 全端版本 `0.1.179`，Android `versionCode 359`：修复 PC 客户端右上角窗口控制键（`.win-ctrls`）在浅色/高光壁纸角落近乎不可见的问题，恢复与全站一致的四档磨砂玻璃角托并增强图标对比度（DESIGN.md §150）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `e60cce22d806c1e4`；无需手动数据库迁移。

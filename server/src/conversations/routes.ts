@@ -15,6 +15,7 @@ import { publicErrorMessage } from "../public-error";
 import type { ConversationCommandRecord } from "./commands";
 import { assertConversationAdmissionOpen } from "./maintenance";
 import type { ToolOperationStore } from "./tool-operations";
+import { sanitizeWireEvent } from "./wire-events";
 
 /**
  * What a failed conversation may tell the browser or the log: never a raw `error.message`.
@@ -109,7 +110,9 @@ export function eventStream(
           }
           flushCoalesced(true);
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+            encoder.encode(
+              `data: ${JSON.stringify(sanitizeWireEvent(event))}\n\n`,
+            ),
           );
         },
         error: (error) => {

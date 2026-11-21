@@ -1902,7 +1902,10 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             fireIt = false;
             skipReason = `服务器停机，跳过了原定 ${formatWhen(stamp, row.timezone, at)} 的这一次。`;
           }
-          if (fireIt && (running.has(row.id) || dedupLedger.isRunning(row.id))) {
+          if (
+            fireIt &&
+            (running.has(row.id) || dedupLedger.isRunning(row.id))
+          ) {
             fireIt = false;
             skipReason = "上一次还没跑完，这一次跳过。";
           }
@@ -2163,10 +2166,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       description: string,
       parameters: T,
       run: (args: z.infer<T>) => Promise<string>,
-      extra?: { guidance?: string },
+      extra?: { guidance?: string; effect?: "read" | "write" },
     ): GrantedTool => ({
       name,
       ref: `chisabot/${name}`,
+      ...(extra?.effect ? { effect: extra.effect } : {}),
       description,
       parameters,
       ...(extra?.guidance ? { guidance: extra.guidance } : {}),
@@ -2280,6 +2284,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           });
           return items.length ? items.map(line).join("\n") : "还没有定时任务。";
         },
+        { effect: "read" },
       ),
       tool(
         "schedule_update",

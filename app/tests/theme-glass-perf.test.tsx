@@ -689,16 +689,26 @@ describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass
       expect(appearance.GLASS_SURFACE_SELECTOR).toContain(cls);
     }
   });
-  test("各自有规则把底画成 --lg-surface-strong（含不带模糊的胶囊组）", () => {
+  test("全部与气泡共用 --lg-surface-strong + --lg-blur + --lg-shadow 磨砂玻璃规则", () => {
     const rules = [
       ...css.matchAll(
-        /:is\(([^)]*)\)\s*\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface-strong\)/g,
+        /:is\(([^)]*)\)\s*\{\s*background:\s*var\(--pal-tint-layer,\)\s*var\(--lg-surface-strong\)\s*!important;\s*backdrop-filter:\s*var\(--lg-blur\)\s*!important;\s*box-shadow:\s*var\(--lg-shadow\)\s*!important;/g,
       ),
     ];
-    expect(rules.length).toBeGreaterThanOrEqual(2);
+    expect(rules.length).toBeGreaterThanOrEqual(1);
     for (const cls of FLOATING) {
       expect(rules.some(([, list]) => list.includes(cls))).toBe(true);
     }
+  });
+  test(".rs-capsule 与 .chat-thinking 跳过液态位移 SVG 透镜并保留性能模式 / 减少透明度不透明降级", () => {
+    expect(liquidGlassSrc).toMatch(
+      /LENS_SKIP_SELECTOR\s*=[\s\S]*?"\.rs-capsule"/,
+    );
+    expect(liquidGlassSrc).toMatch(
+      /LENS_SKIP_SELECTOR\s*=[\s\S]*?"\.chat-thinking"/,
+    );
+    expect(perfNoBlurCss).toContain(".rs-capsule");
+    expect(perfNoBlurCss).toContain(".chat-thinking");
   });
 });
 
