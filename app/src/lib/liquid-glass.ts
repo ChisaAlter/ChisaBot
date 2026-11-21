@@ -417,6 +417,7 @@ const LENS_SKIP_SELECTOR = [
   ".sg-savebar",
   ".update-banner",
   ".install-hint",
+  ".win-ctrls",
   "[data-lg-skip]",
 ].join(",");
 
@@ -594,11 +595,7 @@ class LiquidGlass {
     if (!isResizing() && !this.resizeFallbackTimer) {
       this.resizeFallbackTimer = window.setTimeout(() => {
         this.resizeFallbackTimer = 0;
-        if (
-          !this.destroyed &&
-          !resizeInProgress() &&
-          this.pendingAfterResize
-        ) {
+        if (!this.destroyed && !resizeInProgress() && this.pendingAfterResize) {
           this.onResizingChange(false);
         }
       }, RESIZE_SETTLE_MS + 32);
@@ -1203,7 +1200,9 @@ class LiquidGlass {
       // 仅对真正跨域的图片启用 anonymous CORS，避免同源鉴权壁纸被剥掉 Cookie 导致加载失败。
       if (/^https?:/i.test(url)) {
         try {
-          if (new URL(url, window.location.href).origin !== window.location.origin) {
+          if (
+            new URL(url, window.location.href).origin !== window.location.origin
+          ) {
             img.crossOrigin = "anonymous";
           }
         } catch {

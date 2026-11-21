@@ -115,7 +115,7 @@ test("only the rails, the composer, the top bar and popups blur", () => {
     '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card',
     '.glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"]',
     // 聊天区浮在壁纸上的卡（确认/提问/核对/历史/交接/窗口按钮条）：和气泡同档釉面，带持续动画的胶囊走下面不带模糊的那条。
-    ":is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card)",
+    ":is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls)",
     ".page-rows, .sg-card, .page-section > form, .page :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(.border-dashed):not(.page-rows)",
     // Hark 唯一玻璃材质（第 1 步只定义，组件在第 2–4 步换上）。
     ".glass",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.179 — 2026-11-21
+
+全端版本 `0.1.179`，Android `versionCode 359`：修复 PC 客户端右上角窗口控制键（`.win-ctrls`）在浅色/高光壁纸角落近乎不可见的问题，恢复与全站一致的四档磨砂玻璃角托并增强图标对比度（DESIGN.md §150）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `e60cce22d806c1e4`；无需手动数据库迁移。
+
+- **PC 窗口控制键磨砂角托与高对比图标保护（DESIGN.md §150）**：
+  - 将 `.win-ctrls` 重新纳入 `app/src/styles.css` 浮动玻璃面 `--lg-surface-strong` + `--lg-blur` + `--lg-shadow` 单通道规则（保持右上贴边与 `border-radius: 0 0 0 14px` 收口，并延续 `perf-noblur.css` 降级），使四档玻璃材质与侧栏/气泡保持一致并在高光壁纸上提供稳定托底。
+  - 将 `.win-ctrls` 加入 `app/src/lib/liquid-glass.ts` 的 `LENS_SKIP_SELECTOR` 跳过液态玻璃 SVG 位移折射（保留屏幕字色翻转 `data-lg-ink`），统一 `app/src/components/layout/glass-topbar.tsx` 4 个控制键 SVG 描边至 `strokeWidth="1.25"`，为深色模式及壁纸场景叠加克制 `--win-ctrl-shadow` 光学保护并在关闭键悬停/按下时清空，同时提升悬停/按下态可见度；同步更新 `app/tests/render-budget.test.ts` 与 `app/tests/theme-glass-perf.test.tsx` §9/§10 回归守卫。
+
 ## 0.1.178 — 2026-11-21
 
 全端版本 `0.1.178`，Android `versionCode 358`：恢复 AI 聊天气泡与顶层对话卡片与侧栏/右栏/输入框一致的四档磨砂玻璃质感（修复 `v0.1.177` #572 对 CB-128 的回退）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `955713d4e85bf6eb`；无需手动数据库迁移。

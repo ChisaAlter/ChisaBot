@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-21（`v0.1.178`）。
+> 状态最后核对：2026-11-21（`v0.1.179`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -203,7 +203,7 @@
 - 问题（2026-11-19 用户截图实测）：窄窗口「面板」抽屉是一块均匀 `rgb(29,31,36)` 实心板而左栏仍是半透明玻璃；面板弹出后右上角 4 个窗口控制键带上深色药丸底。审计：`.rail-sheet` 的底历史上有三条通道都能画（`--lg-surface` 材质变量、perf/减透明/高对比/`data-resizing` 兜底名单的直接 `background`、sheet 基类 `bg-popover`），每次修一条另一条还会画；`.win-ctrls` 在 `--lg-surface-strong` 画底名单里，面板展开触发整屏 `data-lg-ink` 翻深釉时它跟着变出一块药丸。
 - 验收：
   - [x] `.rail-sheet` 从 perf-noblur（两段）与 resize-pause 的直接实心底名单剔除，底色只走 `--lg-surface` 一条通道
-  - [x] `.win-ctrls` 移出 `--lg-surface-strong` 画底名单，4 键常态无底；悬停 / 按下 / 关闭红 / 焦点环不变
+  - [x] `.win-ctrls` 移出 `--lg-surface-strong` 画底名单，4 键常态无底；悬停 / 按下 / 关闭红 / 焦点环不变（已于 `DESIGN.md` §150 / `v0.1.179` 调整恢复四档 `--lg-surface-strong` + `--lg-blur` 磨砂角托、`1.25px` 描边与光学字缘保护以防亮壁纸下按键不可见，并跳过液态位移滤镜）
   - [x] `theme-glass-perf` 回归门：`.win-ctrls` 不进任何 `--lg-*` 画底选择器；render-budget 名单同步
   - [x] 矩阵 probe（明暗 × mist × perf/减透明/高对比/forced-colors/resizing）计算值 + 截图确认面板与按键条行为
 

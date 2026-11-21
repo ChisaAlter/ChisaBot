@@ -257,7 +257,7 @@ export function WindowControls({
                 height="6"
                 rx="1.2"
                 stroke="currentColor"
-                strokeWidth="1.1"
+                strokeWidth="1.25"
                 width="8.4"
                 x="0.8"
                 y="0.9"
@@ -266,7 +266,7 @@ export function WindowControls({
                 d="M3.2 9.1h3.6"
                 stroke="currentColor"
                 strokeLinecap="round"
-                strokeWidth="1.1"
+                strokeWidth="1.25"
               />
             </svg>
           ) : (
@@ -282,7 +282,7 @@ export function WindowControls({
                 height="8.6"
                 rx="1.4"
                 stroke="currentColor"
-                strokeWidth="1.1"
+                strokeWidth="1.25"
                 width="5.6"
                 x="2.2"
                 y="0.7"
@@ -291,7 +291,7 @@ export function WindowControls({
                 d="M4.3 7.4h1.4"
                 stroke="currentColor"
                 strokeLinecap="round"
-                strokeWidth="1.1"
+                strokeWidth="1.25"
               />
             </svg>
           )}
@@ -312,7 +312,7 @@ export function WindowControls({
                 d="M1 5.5h8"
                 stroke="currentColor"
                 strokeLinecap="round"
-                strokeWidth="1.2"
+                strokeWidth="1.25"
               />
             </svg>
           </button>
@@ -335,7 +335,7 @@ export function WindowControls({
                   height="6"
                   rx="1.2"
                   stroke="currentColor"
-                  strokeWidth="1.1"
+                  strokeWidth="1.25"
                   width="6"
                   x="1"
                   y="3"
@@ -343,7 +343,7 @@ export function WindowControls({
                 <path
                   d="M3.2 1.2h4.4c.7 0 1.2.5 1.2 1.2v4.4"
                   stroke="currentColor"
-                  strokeWidth="1.1"
+                  strokeWidth="1.25"
                 />
               </svg>
             ) : (
@@ -358,7 +358,7 @@ export function WindowControls({
                   height="8"
                   rx="1.6"
                   stroke="currentColor"
-                  strokeWidth="1.1"
+                  strokeWidth="1.25"
                   width="8"
                   x="1"
                   y="1"
@@ -378,7 +378,7 @@ export function WindowControls({
                 d="M1.5 1.5l7 7M8.5 1.5l-7 7"
                 stroke="currentColor"
                 strokeLinecap="round"
-                strokeWidth="1.2"
+                strokeWidth="1.25"
               />
             </svg>
           </button>

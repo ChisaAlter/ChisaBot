@@ -34,6 +34,14 @@ const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
   "utf8",
 );
+const perfNoBlurCss = readFileSync(
+  path.join(import.meta.dir, "../src/perf-noblur.css"),
+  "utf8",
+);
+const liquidGlassSrc = readFileSync(
+  path.join(import.meta.dir, "../src/lib/liquid-glass.ts"),
+  "utf8",
+);
 const viteConfig = readFileSync(
   path.join(import.meta.dir, "../vite.config.ts"),
   "utf8",
@@ -672,6 +680,7 @@ describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass
     ".chat-history-more",
     ".to-card",
     ".hr-card",
+    ".win-ctrls",
     ".rs-capsule",
     ".chat-thinking",
   ];
@@ -693,17 +702,31 @@ describe("9) 聊天浮动面与窗口按钮进玻璃面名单（不再吃 .glass
   });
 });
 
-describe("10) 窗口按钮条不进材质画底名单（回归门）", () => {
-  test(".win-ctrls 不出现在任何 --lg-* 画底规则的选择器里", () => {
-    const rules = [
-      ...css.matchAll(
-        /([^{}]+)\{\s*background: var\(--pal-tint-layer,\) var\(--lg-surface/g,
-      ),
-    ];
-    expect(rules.length).toBeGreaterThan(0);
-    for (const [sel] of rules) {
-      expect(sel).not.toContain(".win-ctrls");
-    }
+describe("10) PC 右上角窗口按钮条回归磨砂玻璃角托与高对比图标保护（§150）", () => {
+  test(".win-ctrls 纳入浮动磨砂玻璃角托（四档 --lg-surface-strong + --lg-blur + --lg-shadow）", () => {
+    expect(appearance.GLASS_SURFACE_SELECTOR).toContain(".win-ctrls");
+    expect(css).toMatch(
+      /:is\([^)]*\.win-ctrls[^)]*\)\s*\{\s*background:\s*var\(--pal-tint-layer,\)\s*var\(--lg-surface-strong\)\s*!important;\s*backdrop-filter:\s*var\(--lg-blur\)\s*!important;\s*box-shadow:\s*var\(--lg-shadow\)\s*!important;/,
+    );
+  });
+
+  test(".win-ctrls 跳过液态位移 SVG 滤镜且覆盖性能模式 / 减少透明度降级", () => {
+    expect(liquidGlassSrc).toMatch(
+      /LENS_SKIP_SELECTOR\s*=[\s\S]*?"\.win-ctrls"/,
+    );
+    expect(perfNoBlurCss).toContain(".win-ctrls");
+  });
+
+  test(".dark 与壁纸场景下 .win-ctrl svg 带对比投影，关闭键悬停清空投影", () => {
+    expect(css).toMatch(
+      /\.dark\s+\.win-ctrl\s*\{[^}]*--win-ctrl-shadow:\s*drop-shadow\(/,
+    );
+    expect(css).toMatch(
+      /html\[data-glass="liquid"\]:not\(\.dark\)\s+\.win-ctrls\[data-lg-ink="dark"\]\s+\.win-ctrl\s*\{[^}]*--win-ctrl-shadow:\s*drop-shadow\(/,
+    );
+    expect(css).toMatch(
+      /\.win-ctrls\s+\.win-ctrl\.is-close:hover[\s\S]*--win-ctrl-shadow:\s*none;/,
+    );
   });
 });
 

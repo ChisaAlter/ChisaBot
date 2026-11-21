@@ -1,3 +1,8 @@
+## 0.1.179 — 2026-11-21
+
+- 全端发版：`0.1.179`，Android `versionCode 359`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `e60cce22d806c1e4`；无需手动数据库迁移。
+- **PC 右上角窗口控制键磨砂角托与高对比图标保护（DESIGN §150）**：将 `.win-ctrls` 重新纳入 `styles.css` `--lg-surface-strong` + `--lg-blur` + `--lg-shadow` 单通道规则并加入 `liquid-glass.ts` `LENS_SKIP_SELECTOR`，`glass-topbar.tsx` `WindowControls` 4 枚 SVG 图标描边加粗至 `1.25px` 并为深色/壁纸态补充 `--win-ctrl-shadow` 字缘保护与更清晰的悬停/按下对比（关闭键悬停清除额外阴影）；同步更新 `render-budget.test.ts`、`theme-glass-perf.test.tsx` §9/§10、`DESIGN.md` 与 `pc/src/shell-fingerprint.json`。
+
 ## 0.1.178 — 2026-11-21
 
 - 全端发版：`0.1.178`，Android `versionCode 358`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `955713d4e85bf6eb`；无需手动数据库迁移。

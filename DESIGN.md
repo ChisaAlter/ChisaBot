@@ -155,6 +155,7 @@
 | [147](#147-全站弹窗菜单抽屉与浮层统一接入玻璃材质与深浅色通道2026-11-20)                                  | 全站菜单、弹窗、抽屉、模型/权限/搜索等全部浮层去除硬编码实底，统一走 `--lg-surface` 跟随设置                         | 2026-11-20                                                                 |
 | [148](#148-窗口拉伸保留磨砂玻璃与液态玻璃拉伸暂停2026-11-20)                                               | 移除 `data-resizing` 实底黑块降级并暂停液态玻璃拉伸期重采样/透镜重建，消除横向拉伸全屏闪烁                           | 2026-11-20                                                                 |
 | [149](#149-回复中途阶段感知实时插话与前后端全链路丝滑优化2026-11-20)                                       | 阶段感知 mid-turn 实时插话、无等待实时 SSE + 50ms 写库合批 + DSH 连接池与单跳发送、前端叶子流式与交互预算优化        | 2026-11-20                                                                 |
+| [150](#150-pc-右上角窗口控制键恢复磨砂玻璃角托与高对比图标保护2026-11-21)                                  | PC `.win-ctrls` 恢复四档 `--lg-surface-strong` + `--lg-blur` 磨砂角托、`1.25px` 描边、光学字缘保护并跳过液态位移滤镜 | 2026-11-21                                                                 |
 
 ## 0. 总原则
 
@@ -3002,7 +3003,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 问题：窄窗口「面板」抽屉（`.rail-sheet`）颜色屡屡回归不对——用户截图实测面板是一块均匀的 `rgb(29,31,36)` 实心板而左侧栏仍是半透明玻璃；同时右上角 4 个窗口控制键在面板弹出后带上了深色药丸底。审计发现这块面的底色历史上由**三条通道**都能画：材质规则的 `--lg-surface`、perf / 减透明 / 高对比 / `data-resizing` 兜底名单里的直接 `background: var(--glass-bg-opaque)`、以及 sheet 基类的 `bg-popover`——每次修一条通道，另一条通道还会把它画成别的颜色。
 
 - **面板只留一条底通道**：`.rail-sheet` 从 perf-noblur（`prefers-reduced-transparency` / `prefers-contrast` / `forced-colors` 与 `data-perf="on"` 两段）和 resize-pause 的「直接画实心底」名单里剔除（`:not(.rail-sheet)`），它和每个 `.rail-card` 一样只经由 `--lg-surface` 变量换底——任何模式下都和别的玻璃面同升同降，不可能再单独长成另一块颜色。
-- **窗口按钮条退出材质体系**：`.win-ctrls` 移出 `--lg-surface-strong` 画底名单——4 个键常态无底色（基础样式本就无底），悬停 / 按下 / 关闭键红色 / `focus-visible` 焦点环这些**按钮自身**的态不变。它留在 `GLASS_SURFACE_SELECTOR` 里仍拿得到 `--lg-*` 变量，但不再有任何规则把底画上去；`theme-glass-perf` 新增回归门断言它不进任何 `--lg-*` 画底选择器。
+- **窗口按钮条退出材质体系**：`.win-ctrls` 移出 `--lg-surface-strong` 画底名单——4 个键常态无底色（基础样式本就无底），悬停 / 按下 / 关闭键红色 / `focus-visible` 焦点环这些**按钮自身**的态不变。它留在 `GLASS_SURFACE_SELECTOR` 里仍拿得到 `--lg-*` 变量，但不再有任何规则把底画上去；`theme-glass-perf` 新增回归门断言它不进任何 `--lg-*` 画底选择器(已于 §150 调整为常驻四档磨砂角托以防亮壁纸下按键不可见)。
 - **为什么面板一弹出按键就「变色」**：液态玻璃是整屏单墨色——`liquid-glass.ts` 按各面背后的壁纸亮度**面积加权**算 `data-lg-ink`，大面板一展开盖住壁纸深色区就把整屏翻成深釉，所有面（含当时的 `.win-ctrls` 药丸）同时变深。按键退出材质体系后不再随这个翻转出现「多出来一块底」的观感；面板自身的深釉是采样系统的既定行为。
 
 ## 143. 主题族：双槽独立、seed 派生令牌（2026-11-19，CB-140）
@@ -3075,4 +3076,16 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **Wave 3 · 前端叶子级渲染与视觉性能预算**：
   - `app/src/lib/chat/session-client.ts` 提供按 `messageId` rAF 合批的 `useLiveMessageText` 与结构签名门控 `refresh()`，配合 `chat-transcript.tsx` `<LiveBotBubbles>`、`bot-bubbles.tsx` 段级 `memo` 及 `SmoothStreamdown` `memo` 实现流式期间仅尾气泡叶子更新。
   - 新增 `fold-long-message.ts` 对超过 20,000 字符的已落定消息执行围栏代码块安全折叠与展开；`smooth-reveal.ts` 启用连续顺滑流零延迟贴合；`styles.css` 保持 `.chat-bubble-bare > [data-slot="bubble-content"]` 无框无模糊，普通 AI 气泡、用户气泡与顶层对话卡片沿用 CB-128 规范与侧栏/输入框共用四档 `--lg-blur` 磨砂材质；`<SettleAtEnd busy={busy || live} />` 对齐进行中状态保持滚动收白零跳动，配合 `useMotionRest` 与边缘触发的 `nextIdleInboxCheck` 消除闲置闪烁重绘与稳态 `/inbox` 空轮询。
+
+---
+
+## 150. PC 右上角窗口控制键恢复磨砂玻璃角托与高对比图标保护（2026-11-21）
+
+- **背景与根因**：§142 将 `.win-ctrls` 移出 `--lg-surface-strong` / `--lg-blur` 画底选择器后，右上角按钮条背景完全透明且无磨砂模糊，也未继承 `.glass-shell` 的 `text-shadow`。当浅色/高光壁纸落在深色模式窗口右上角（或暗角落在浅色模式下）时，细白/细暗 SVG 线条与壁纸直接重叠，出现按钮近乎隐形的问题。
+- **方案落地**：
+  - **恢复四档磨砂玻璃角托**：将 `.win-ctrls` 重新纳入 `app/src/styles.css` 浮动玻璃面 `--lg-surface-strong` + `--lg-blur` + `--lg-shadow` 单通道规则（保持 `border-radius: 0 0 0 14px` 贴住右上角），并与气泡/输入框/性能模式/减少透明度降级（`app/src/perf-noblur.css`）及四模式背景色保持一致。
+  - **跳过液态玻璃 SVG 位移滤镜**：将 `.win-ctrls` 写入 `app/src/lib/liquid-glass.ts` 的 `LENS_SKIP_SELECTOR`，避免右上角高频交互区叠加重型位错折射滤镜，同时保留 `GLASS_SURFACE_SELECTOR` 提供的屏幕字色翻转（`data-lg-ink="dark"`）。
+  - **高对比图标与悬停交互**：将 `app/src/components/layout/glass-topbar.tsx` 中 `WindowControls` 4 个 SVG 图标描边统一加粗至 `strokeWidth="1.25"`；为 `.dark .win-ctrl svg` 与 `html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl svg` 叠加克制阴影（浅色开启壁纸配浅晕边缘），关闭键悬停/按下（`#c42b1c` / `#c84031`）时清除额外阴影；同步提升悬停/按下叠加态透明度，保证任意壁纸角落均可清晰辨认并点击。
+  - **门禁更新**：`app/tests/render-budget.test.ts` 与 `app/tests/theme-glass-perf.test.tsx` §9/§10 同步更新并锁定 `.win-ctrls` 磨砂角托、`LENS_SKIP_SELECTOR`、降级文件与 SVG 字缘保护。
+
 
