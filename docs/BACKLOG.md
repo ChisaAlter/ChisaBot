@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-20（`v0.1.176`）。
+> 状态最后核对：2026-11-21（`v0.1.177`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -15,7 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-143](#cb-143) | 回复中途阶段感知实时插话与前后端全链路丝滑优化（Wave 1–3）                        | 成熟度 Maturity       | `type: feat` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`           |
+| [CB-143](#cb-143) | 回复中途阶段感知实时插话与前后端全链路丝滑优化（Wave 1–3）                        | 成熟度 Maturity       | `type: feat` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`（#572 · `v0.1.177`）           |
 | [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（`v0.1.170`） |
 | [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（`v0.1.170` · 从 `wip/link-card-align-recovered` 提取合入 `main`） |
 | [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#562 · `v0.1.170`） |

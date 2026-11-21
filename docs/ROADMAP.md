@@ -1,6 +1,6 @@
 # ROADMAP（看板）
 
-## 当前状态（核对至 2026-11-20 · `v0.1.176`）
+## 当前状态（核对至 2026-11-21 · `v0.1.177`）
 
 ChisaBot 主线已完成以下核心工程闭环：
 
@@ -27,6 +27,7 @@ ChisaBot 主线已完成以下核心工程闭环：
 
 ## 现在（进行中）
 
+- [CB-143](BACKLOG.md#cb-143)：#572 合并并纳入 `v0.1.177` 全端发版（Android `versionCode 357`）；阶段感知回复中途实时插话与前后端全链路丝滑优化（DSH `STEER_CUT` / `phase`、`epoch` 并发护栏、50ms 写库合批、`POST /commands` 单跳 SSE、`dsh-client-pool`、按 `messageId` rAF 叶子流式更新与 `QueueDock` 编辑/撤回，`DESIGN §149`），并通过 Windows PC 客户端全链路 §0 实机验收。
 - [CB-142](BACKLOG.md#cb-142)：纳入 `v0.1.170` 全端发版（Android `versionCode 350`）；ProkBot 全量代码级对标（Wave 1–10）已由 `feat/prokbot-parity` 合入 `main` 并通过全仓 `bun run check`、形式化与安全守卫、全量 `test:app` 与 10 波独立安全审查（`DESIGN §144` · [prokbot-comparison.md](prokbot-comparison.md)），待真实账号与真机终验。
 - [CB-141](BACKLOG.md#cb-141)：纳入 `v0.1.170` 发版；修正用户消息下方单张链接预览卡片偏向聊天中间的问题（`.rp-stack[data-align="end"] .lc-stack-track` 补 `justify-content: flex-end`，DESIGN §135）。
 - [CB-140](BACKLOG.md#cb-140)：#562 合并并纳入 `v0.1.170` 发版；皮肤轴升级为主题族——`familyLight` / `familyDark` 双槽独立选族、族卡分半预览、`deriveSeed(seed)` 派生全部令牌、启动脚本写 `data-theme-family`、8 内置族 + 自定义族编辑器、旧 palette 键一次性迁移、`boundMode` 明暗绑定删除（DESIGN §143）。
