@@ -315,6 +315,7 @@ export class DshRuntimeAgent extends AbstractAgent {
         name: surface.definition.name,
         description: surface.definition.description ?? "",
         ref: `host/${surface.definition.name}`,
+        ...(surface.effect ? { effect: surface.effect } : {}),
         parameters: z.fromJSONSchema(surface.definition.parameters),
         execute: async (args, context) => {
           const toolCallId = currentConfirmToolCall()?.toolCallId;

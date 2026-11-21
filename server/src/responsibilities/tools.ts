@@ -38,10 +38,12 @@ export function responsibilityTools(options: {
     description: string,
     parameters: z.ZodType<T>,
     execute: (value: T) => Promise<unknown>,
+    effect?: "read" | "write",
   ): GrantedTool {
     return {
       name,
       ref: `responsibility/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args) {
@@ -76,6 +78,7 @@ export function responsibilityTools(options: {
         (await store.list(ownerUserId)).filter(
           (goal) => goal.agentId === agentId,
         ),
+      "read",
     ),
     tool(
       "update_responsibility",

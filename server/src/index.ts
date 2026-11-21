@@ -4476,6 +4476,7 @@ const responsibilityEngine: ResponsibilityEngine = createResponsibilityEngine({
               description: tool.description,
               parameters: z.toJSONSchema(tool.parameters),
             },
+            ...(tool.effect ? { effect: tool.effect } : {}),
             execute: (args: unknown) => tool.execute(args),
           })),
         ];

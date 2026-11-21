@@ -1658,6 +1658,7 @@ export function createPersonalSources(
       {
         name: "calendar_list_events",
         ref: "personal-sources/calendar_list_events",
+        effect: "read",
         description:
           "查看用户已连接的个人日历（iCal / ICS）近期日程安排（只读）。",
         parameters: z.object({
@@ -1696,6 +1697,7 @@ export function createPersonalSources(
       {
         name: "calendar_connect",
         ref: "personal-sources/calendar_connect",
+        effect: "read",
         description:
           "打开日历的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
@@ -1705,6 +1707,7 @@ export function createPersonalSources(
       {
         name: "email_list_recent",
         ref: "personal-sources/email_list_recent",
+        effect: "read",
         description:
           "查看用户已连接的个人收件箱（IMAP 只读，支持 Gmail / QQ / 163 / Outlook / iCloud）最近邮件与未读邮件摘要。",
         parameters: z.object({
@@ -1743,6 +1746,7 @@ export function createPersonalSources(
       {
         name: "email_connect",
         ref: "personal-sources/email_connect",
+        effect: "read",
         description:
           "打开邮箱的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
@@ -1782,6 +1786,7 @@ export function createPersonalSources(
       {
         name: "notify_webhook_connect",
         ref: "personal-sources/notify_webhook_connect",
+        effect: "read",
         description:
           "打开通知推送的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
@@ -1823,6 +1828,7 @@ export function createPersonalSources(
       {
         name: "webhook_trigger_info",
         ref: "personal-sources/webhook_trigger_info",
+        effect: "read",
         description:
           "打开入站 Webhook 的安全设置入口，复制或重置地址均在账号连接设置中完成。",
         parameters: z.object({}).strict(),
@@ -1832,6 +1838,7 @@ export function createPersonalSources(
       {
         name: "personal_check_updates",
         ref: "personal-sources/personal_check_updates",
+        effect: "read",
         description:
           "主动巡检用户的最新动态：检查 2 小时内即将开始的日历会议、重要未读邮件以及最近收到的外部 Webhook 事件。",
         parameters: z.object({}),
@@ -1843,6 +1850,7 @@ export function createPersonalSources(
       {
         name: "morning_brief_generate",
         ref: "personal-sources/morning_brief_generate",
+        effect: "read",
         description:
           "为用户生成今日晨报卡片（聚合天气、日历日程、未读邮件、定时提醒与近期记忆）。返回的内容包含 ```brief 代码块，请原样放进回复里展示为晨报卡片。",
         parameters: z.object({

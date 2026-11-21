@@ -205,6 +205,7 @@ export function createFleetAudit(deps: {
       {
         name: "fleet_audit",
         ref: "fleet/fleet_audit",
+        effect: "read",
         description:
           "审计用户的机器人车队：列出每个 bot 的职责、正在用的模型（覆盖或部署默认）、定时任务与频道活动，以及当前可用的模型目录；用来评估「谁的模型配贵了 / 配弱了 / 缺能力」，输出带具体换模型建议的报告。只读，不改任何配置。用户说「审计车队」「模型合不合适」「谁在用贵的模型」「省 token」「模型体检」时用。",
         parameters: z

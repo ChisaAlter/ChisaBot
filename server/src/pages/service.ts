@@ -2,7 +2,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { BlockedUrlError, guardedFetch } from "../../../shared/net/guarded-fetch";
+import {
+  BlockedUrlError,
+  guardedFetch,
+} from "../../../shared/net/guarded-fetch";
 import {
   PAGE_ASSET_NAME,
   PAGE_ASSET_TYPES,
@@ -17,7 +20,12 @@ import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
-import { composePage, isFullDocument, notFoundPage, PAGE_TEMPLATE_GUIDE } from "./template";
+import {
+  composePage,
+  isFullDocument,
+  notFoundPage,
+  PAGE_TEMPLATE_GUIDE,
+} from "./template";
 import { reasonWithoutStatement } from "../db/query-failure";
 
 /**
@@ -59,7 +67,14 @@ type VersionRow = {
   note: string | null;
   created_at: Date | string;
 };
-type AssetRow = { page_id: string; name: string; type: string; bytes: number; data?: Uint8Array; created_at: Date | string };
+type AssetRow = {
+  page_id: string;
+  name: string;
+  type: string;
+  bytes: number;
+  data?: Uint8Array;
+  created_at: Date | string;
+};
 
 const iso = (value: Date | string) => new Date(value).toISOString();
 const byteLength = (text: string) => Buffer.byteLength(text, "utf8");
@@ -103,8 +118,12 @@ export function assetName(raw: string) {
     .replace(/^[-._]+|[-._]+$/g, "")
     .slice(0, 60);
   const name = `${stem || "file"}.${ext}`;
-  if (!PAGE_ASSET_TYPES[ext]) throw new PageError(`不支持的素材类型「.${ext || "?"}」。可以用：${Object.keys(PAGE_ASSET_TYPES).join("、")}。`);
-  if (!PAGE_ASSET_NAME.test(name)) throw new PageError(`素材名「${raw}」不合适，换一个只含字母数字的名字。`);
+  if (!PAGE_ASSET_TYPES[ext])
+    throw new PageError(
+      `不支持的素材类型「.${ext || "?"}」。可以用：${Object.keys(PAGE_ASSET_TYPES).join("、")}。`,
+    );
+  if (!PAGE_ASSET_NAME.test(name))
+    throw new PageError(`素材名「${raw}」不合适，换一个只含字母数字的名字。`);
   return name;
 }
 
@@ -122,7 +141,10 @@ export function sniffMatches(name: string, bytes: Uint8Array) {
     case "gif":
       return head(4).toString("latin1") === "GIF8";
     case "webp":
-      return head(4).toString("latin1") === "RIFF" && Buffer.from(bytes.slice(8, 12)).toString("latin1") === "WEBP";
+      return (
+        head(4).toString("latin1") === "RIFF" &&
+        Buffer.from(bytes.slice(8, 12)).toString("latin1") === "WEBP"
+      );
     case "avif":
     case "mp4":
     case "m4a":
@@ -131,15 +153,25 @@ export function sniffMatches(name: string, bytes: Uint8Array) {
       return head(5).toString("latin1") === "%PDF-";
     case "svg": {
       const text = head(2048).toString("utf8").trimStart().toLowerCase();
-      return text.startsWith("<svg") || text.startsWith("<?xml") || text.startsWith("<!--") || text.startsWith("<!doctype svg");
+      return (
+        text.startsWith("<svg") ||
+        text.startsWith("<?xml") ||
+        text.startsWith("<!--") ||
+        text.startsWith("<!doctype svg")
+      );
     }
     default:
       return true;
   }
 }
 
-const HTML_TEXT_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
-const escapeText = (text: string) => text.replace(/[&<>]/g, (c) => HTML_TEXT_ESCAPES[c] ?? c);
+const HTML_TEXT_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+};
+const escapeText = (text: string) =>
+  text.replace(/[&<>]/g, (c) => HTML_TEXT_ESCAPES[c] ?? c);
 /** 把第一个内容正好是旧标题的 <h1> 换成新标题（找不到就原样返回）。 */
 export function syncHeading(html: string, from: string, to: string) {
   const match = /<h1(\s[^>]*)?>([\s\S]*?)<\/h1>/i.exec(html);
@@ -171,16 +203,30 @@ export function pageHeaders(type: string): Record<string, string> {
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "x-robots-tag": "noindex, nofollow",
-    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=()",
+    "permissions-policy":
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=()",
     "cache-control": "no-cache",
   };
 }
 
-const titleSchema = z.string().trim().min(1, "要有标题").max(80, "标题最多 80 个字");
+const titleSchema = z
+  .string()
+  .trim()
+  .min(1, "要有标题")
+  .max(80, "标题最多 80 个字");
 const descriptionSchema = z.string().trim().max(200).optional().nullable();
 
-export type ReadBotFile = (input: { ownerUserId: string; botId: string; path: string; initiator?: AuditInitiator }) => Promise<{ bytes: Uint8Array; name: string }>;
-export type AssetSource = { name?: string | undefined; path?: string | undefined; url?: string | undefined };
+export type ReadBotFile = (input: {
+  ownerUserId: string;
+  botId: string;
+  path: string;
+  initiator?: AuditInitiator;
+}) => Promise<{ bytes: Uint8Array; name: string }>;
+export type AssetSource = {
+  name?: string | undefined;
+  path?: string | undefined;
+  url?: string | undefined;
+};
 
 export function createPages(
   database: Database,
@@ -189,7 +235,9 @@ export function createPages(
     readBotFile?: ReadBotFile;
     /** 部署固定的公网地址（CHISABOT_PUBLIC_URL），优先于浏览器报来的。 */
     publicUrl?: string | null;
-    fetchImage?: (url: string) => Promise<{ bytes: Uint8Array; contentType: string }>;
+    fetchImage?: (
+      url: string,
+    ) => Promise<{ bytes: Uint8Array; contentType: string }>;
   } = {},
 ) {
   const sql = database.$client;
@@ -243,7 +291,9 @@ export function createPages(
 
   /** 删除超过 24 小时的已删页面（删除后 24 小时内可撤销）。 */
   async function purge() {
-    await sql.unsafe("DELETE FROM chisabot_pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - interval '24 hours'");
+    await sql.unsafe(
+      "DELETE FROM chisabot_pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - interval '24 hours'",
+    );
   }
 
   async function list(owner: string, agentId?: string) {
@@ -260,7 +310,12 @@ export function createPages(
     return rows.map(pageView);
   }
 
-  async function row(owner: string, ref: string, query: PageSql = sql, lock = false) {
+  async function row(
+    owner: string,
+    ref: string,
+    query: PageSql = sql,
+    lock = false,
+  ) {
     const key = ref.trim();
     const slug = key.match(/\/p\/([a-z0-9]{16})/)?.[1] ?? key;
     const rows = await query.unsafe<PageRow[]>(
@@ -269,9 +324,15 @@ export function createPages(
     );
     return rows[0] ?? null;
   }
-  async function mustRow(owner: string, ref: string, query: PageSql = sql, lock = false) {
+  async function mustRow(
+    owner: string,
+    ref: string,
+    query: PageSql = sql,
+    lock = false,
+  ) {
     const found = await row(owner, ref, query, lock);
-    if (!found) throw new PageError(`找不到页面「${ref}」。用 page_list 看看有哪些。`);
+    if (!found)
+      throw new PageError(`找不到页面「${ref}」。用 page_list 看看有哪些。`);
     return found;
   }
   const get = async (owner: string, ref: string) => {
@@ -281,65 +342,146 @@ export function createPages(
 
   async function version(pageId: string, n?: number, query: PageSql = sql) {
     const rows = n
-      ? await query.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 AND version = $2", [pageId, n])
-      : await query.unsafe<VersionRow[]>("SELECT * FROM chisabot_page_versions WHERE page_id = $1 ORDER BY version DESC LIMIT 1", [pageId]);
+      ? await query.unsafe<VersionRow[]>(
+          "SELECT * FROM chisabot_page_versions WHERE page_id = $1 AND version = $2",
+          [pageId, n],
+        )
+      : await query.unsafe<VersionRow[]>(
+          "SELECT * FROM chisabot_page_versions WHERE page_id = $1 ORDER BY version DESC LIMIT 1",
+          [pageId],
+        );
     return rows[0] ?? null;
   }
 
-  async function versions(owner: string, ref: string): Promise<PageVersionView[]> {
+  async function versions(
+    owner: string,
+    ref: string,
+  ): Promise<PageVersionView[]> {
     const page = await mustRow(owner, ref);
     const rows = await sql.unsafe<(VersionRow & { size: number })[]>(
       "SELECT version, title, note, created_at, octet_length(html) + coalesce(octet_length(css), 0) AS size FROM chisabot_page_versions WHERE page_id = $1 ORDER BY version DESC",
       [page.id],
     );
-    return rows.map((r) => ({ version: r.version, title: r.title, note: r.note, bytes: Number(r.size), createdAt: iso(r.created_at), current: r.version === page.current_version }));
+    return rows.map((r) => ({
+      version: r.version,
+      title: r.title,
+      note: r.note,
+      bytes: Number(r.size),
+      createdAt: iso(r.created_at),
+      current: r.version === page.current_version,
+    }));
   }
 
   async function assets(owner: string, ref: string): Promise<PageAssetView[]> {
     const page = await mustRow(owner, ref);
-    const rows = await sql.unsafe<AssetRow[]>("SELECT page_id, name, type, bytes, created_at FROM chisabot_page_assets WHERE page_id = $1 ORDER BY name", [page.id]);
-    return rows.map((r) => ({ name: r.name, type: r.type, bytes: r.bytes, createdAt: iso(r.created_at) }));
+    const rows = await sql.unsafe<AssetRow[]>(
+      "SELECT page_id, name, type, bytes, created_at FROM chisabot_page_assets WHERE page_id = $1 ORDER BY name",
+      [page.id],
+    );
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.type,
+      bytes: r.bytes,
+      createdAt: iso(r.created_at),
+    }));
   }
 
   function checkContent(html: string, css?: string | null) {
     if (!html.trim()) throw new PageError("页面内容是空的。");
-    if (byteLength(html) > PAGE_LIMITS.htmlBytes) throw new PageError("页面 HTML 超过 1MB，太大了。图片请作为素材（assets）上传，不要内嵌 base64。");
-    if (css && byteLength(css) > PAGE_LIMITS.cssBytes) throw new PageError("额外 CSS 超过 200KB。");
+    if (byteLength(html) > PAGE_LIMITS.htmlBytes)
+      throw new PageError(
+        "页面 HTML 超过 1MB，太大了。图片请作为素材（assets）上传，不要内嵌 base64。",
+      );
+    if (css && byteLength(css) > PAGE_LIMITS.cssBytes)
+      throw new PageError("额外 CSS 超过 200KB。");
   }
 
   // The caller owns the page row lock for the transaction, including the read used to build edits.
-  async function addVersion(query: PageSql, pageId: string, input: { title: string; html: string; css?: string | null; note?: string | null }) {
-    const [next] = await query.unsafe<{ n: number }[]>("SELECT coalesce(max(version), 0) + 1 AS n FROM chisabot_page_versions WHERE page_id = $1", [pageId]);
+  async function addVersion(
+    query: PageSql,
+    pageId: string,
+    input: {
+      title: string;
+      html: string;
+      css?: string | null;
+      note?: string | null;
+    },
+  ) {
+    const [next] = await query.unsafe<{ n: number }[]>(
+      "SELECT coalesce(max(version), 0) + 1 AS n FROM chisabot_page_versions WHERE page_id = $1",
+      [pageId],
+    );
     if (!next) throw new Error("无法生成页面版本号。");
     const n = Number(next.n);
-    await query.unsafe("INSERT INTO chisabot_page_versions (page_id, version, title, html, css, note) VALUES ($1, $2, $3, $4, $5, $6)", [
-      pageId,
-      n,
-      input.title,
-      input.html,
-      input.css?.trim() ? input.css : null,
-      input.note?.trim() ? input.note.trim().slice(0, 200) : null,
-    ]);
-    await query.unsafe("UPDATE chisabot_pages SET current_version = $2, title = $3, updated_at = now() WHERE id = $1", [pageId, n, input.title]);
+    await query.unsafe(
+      "INSERT INTO chisabot_page_versions (page_id, version, title, html, css, note) VALUES ($1, $2, $3, $4, $5, $6)",
+      [
+        pageId,
+        n,
+        input.title,
+        input.html,
+        input.css?.trim() ? input.css : null,
+        input.note?.trim() ? input.note.trim().slice(0, 200) : null,
+      ],
+    );
+    await query.unsafe(
+      "UPDATE chisabot_pages SET current_version = $2, title = $3, updated_at = now() WHERE id = $1",
+      [pageId, n, input.title],
+    );
     // 只留最近 50 版（当前版永远在）。
-    await query.unsafe("DELETE FROM chisabot_page_versions WHERE page_id = $1 AND version <= $2", [pageId, n - PAGE_LIMITS.versionsKept]);
+    await query.unsafe(
+      "DELETE FROM chisabot_page_versions WHERE page_id = $1 AND version <= $2",
+      [pageId, n - PAGE_LIMITS.versionsKept],
+    );
     return n;
   }
 
-  async function create(owner: string, input: { agentId?: string | null; title: string; description?: string | null; html: string; css?: string | null; published?: boolean }) {
+  async function create(
+    owner: string,
+    input: {
+      agentId?: string | null;
+      title: string;
+      description?: string | null;
+      html: string;
+      css?: string | null;
+      published?: boolean;
+    },
+  ) {
     const title = titleSchema.parse(input.title);
     const description = descriptionSchema.parse(input.description) || null;
     checkContent(input.html, input.css);
     const id = `pg_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
     return sql.begin(async (transaction) => {
-      await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended('chisabot-pages:' || $1, 0))", [owner]);
-      const [count] = await transaction.unsafe<{ n: number }[]>("SELECT count(*)::int AS n FROM chisabot_pages WHERE owner_user_id = $1 AND deleted_at IS NULL", [owner]);
-      if (Number(count?.n ?? 0) >= PAGE_LIMITS.pagesPerUser) throw new PageError(`页面已经有 ${PAGE_LIMITS.pagesPerUser} 个了，先在 设置 → 页面 里删掉一些。`);
+      await transaction.unsafe(
+        "SELECT pg_advisory_xact_lock(hashtextextended('chisabot-pages:' || $1, 0))",
+        [owner],
+      );
+      const [count] = await transaction.unsafe<{ n: number }[]>(
+        "SELECT count(*)::int AS n FROM chisabot_pages WHERE owner_user_id = $1 AND deleted_at IS NULL",
+        [owner],
+      );
+      if (Number(count?.n ?? 0) >= PAGE_LIMITS.pagesPerUser)
+        throw new PageError(
+          `页面已经有 ${PAGE_LIMITS.pagesPerUser} 个了，先在 设置 → 页面 里删掉一些。`,
+        );
       await transaction.unsafe(
         "INSERT INTO chisabot_pages (id, owner_user_id, agent_id, slug, title, description, published, current_version) VALUES ($1, $2, $3, $4, $5, $6, $7, 0)",
-        [id, owner, input.agentId ?? null, newSlug(), title, description, input.published ?? true],
+        [
+          id,
+          owner,
+          input.agentId ?? null,
+          newSlug(),
+          title,
+          description,
+          input.published ?? true,
+        ],
       );
-      await addVersion(transaction, id, { title, html: input.html, css: input.css ?? null, note: "创建" });
+      await addVersion(transaction, id, {
+        title,
+        html: input.html,
+        css: input.css ?? null,
+        note: "创建",
+      });
       return pageView(await mustRow(owner, id, transaction));
     });
   }
@@ -348,7 +490,14 @@ export function createPages(
   async function update(
     owner: string,
     ref: string,
-    input: { title?: string | null; description?: string | null; html?: string | null; css?: string | null; edits?: { find: string; replace: string }[]; note?: string | null },
+    input: {
+      title?: string | null;
+      description?: string | null;
+      html?: string | null;
+      css?: string | null;
+      edits?: { find: string; replace: string }[];
+      note?: string | null;
+    },
   ) {
     return sql.begin(async (transaction) => {
       const page = await mustRow(owner, ref, transaction, true);
@@ -358,21 +507,55 @@ export function createPages(
       for (const edit of input.edits ?? []) {
         if (!edit.find) throw new PageError("替换的原文不能是空的。");
         const first = html.indexOf(edit.find);
-        if (first < 0) throw new PageError(`当前版里找不到这段原文：「${edit.find.slice(0, 80)}」。先用 page_get 看最新内容。`);
-        if (html.indexOf(edit.find, first + 1) >= 0) throw new PageError(`这段原文出现了不止一次：「${edit.find.slice(0, 80)}」。多带一点上下文让它唯一。`);
-        html = html.slice(0, first) + edit.replace + html.slice(first + edit.find.length);
+        if (first < 0)
+          throw new PageError(
+            `当前版里找不到这段原文：「${edit.find.slice(0, 80)}」。先用 page_get 看最新内容。`,
+          );
+        if (html.indexOf(edit.find, first + 1) >= 0)
+          throw new PageError(
+            `这段原文出现了不止一次：「${edit.find.slice(0, 80)}」。多带一点上下文让它唯一。`,
+          );
+        html =
+          html.slice(0, first) +
+          edit.replace +
+          html.slice(first + edit.find.length);
       }
-      const css = input.css === undefined || input.css === null ? current.css : input.css;
+      const css =
+        input.css === undefined || input.css === null ? current.css : input.css;
       const title = input.title ? titleSchema.parse(input.title) : page.title;
       // 换标题时，正文里第一个和旧标题一字不差的 <h1> 跟着换（机器人常常只改 title，页面上的大标题没变）。
-      if (title !== page.title && !html.includes(title)) html = syncHeading(html, page.title, title);
+      if (title !== page.title && !html.includes(title))
+        html = syncHeading(html, page.title, title);
       checkContent(html, css);
-      const description = input.description === undefined || input.description === null ? undefined : descriptionSchema.parse(input.description) || null;
-      if (description !== undefined) await transaction.unsafe("UPDATE chisabot_pages SET description = $2 WHERE id = $1", [page.id, description]);
-      const changed = html !== current.html || (css ?? null) !== (current.css ?? null) || title !== current.title;
-      if (changed) await addVersion(transaction, page.id, { title, html, css, note: input.note ?? null });
-      else await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
-      return { page: pageView(await mustRow(owner, page.id, transaction)), changed };
+      const description =
+        input.description === undefined || input.description === null
+          ? undefined
+          : descriptionSchema.parse(input.description) || null;
+      if (description !== undefined)
+        await transaction.unsafe(
+          "UPDATE chisabot_pages SET description = $2 WHERE id = $1",
+          [page.id, description],
+        );
+      const changed =
+        html !== current.html ||
+        (css ?? null) !== (current.css ?? null) ||
+        title !== current.title;
+      if (changed)
+        await addVersion(transaction, page.id, {
+          title,
+          html,
+          css,
+          note: input.note ?? null,
+        });
+      else
+        await transaction.unsafe(
+          "UPDATE chisabot_pages SET updated_at = now() WHERE id = $1",
+          [page.id],
+        );
+      return {
+        page: pageView(await mustRow(owner, page.id, transaction)),
+        changed,
+      };
     });
   }
 
@@ -380,16 +563,27 @@ export function createPages(
     return sql.begin(async (transaction) => {
       const page = await mustRow(owner, ref, transaction, true);
       const old = await version(page.id, n, transaction);
-      if (!old) throw new PageError(`没有第 ${n} 版（只保留最近 ${PAGE_LIMITS.versionsKept} 版）。`);
+      if (!old)
+        throw new PageError(
+          `没有第 ${n} 版（只保留最近 ${PAGE_LIMITS.versionsKept} 版）。`,
+        );
       if (n === page.current_version) return pageView(page);
-      await addVersion(transaction, page.id, { title: old.title, html: old.html, css: old.css, note: `恢复到第 ${n} 版` });
+      await addVersion(transaction, page.id, {
+        title: old.title,
+        html: old.html,
+        css: old.css,
+        note: `恢复到第 ${n} 版`,
+      });
       return pageView(await mustRow(owner, page.id, transaction));
     });
   }
 
   async function setPublished(owner: string, ref: string, published: boolean) {
     const page = await mustRow(owner, ref);
-    await sql.unsafe("UPDATE chisabot_pages SET published = $2, updated_at = now() WHERE id = $1", [page.id, published]);
+    await sql.unsafe(
+      "UPDATE chisabot_pages SET published = $2, updated_at = now() WHERE id = $1",
+      [page.id, published],
+    );
     return pageView(await mustRow(owner, page.id));
   }
 
@@ -397,83 +591,153 @@ export function createPages(
   async function remove(owner: string, ref: string) {
     const page = await row(owner, ref);
     if (!page) return false;
-    await sql.unsafe("UPDATE chisabot_pages SET deleted_at = now() WHERE id = $1", [page.id]);
+    await sql.unsafe(
+      "UPDATE chisabot_pages SET deleted_at = now() WHERE id = $1",
+      [page.id],
+    );
     return true;
   }
   async function undoRemove(owner: string, id: string) {
-    const rows = await sql.unsafe<PageRow[]>("UPDATE chisabot_pages SET deleted_at = NULL WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL RETURNING *", [id, owner]);
+    const rows = await sql.unsafe<PageRow[]>(
+      "UPDATE chisabot_pages SET deleted_at = NULL WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL RETURNING *",
+      [id, owner],
+    );
     return rows.length > 0;
   }
 
-  async function putAsset(owner: string, ref: string, rawName: string, bytes: Uint8Array) {
+  async function putAsset(
+    owner: string,
+    ref: string,
+    rawName: string,
+    bytes: Uint8Array,
+  ) {
     const name = assetName(rawName);
-    if (bytes.byteLength === 0) throw new PageError(`素材「${name}」是空文件。`);
-    if (bytes.byteLength > PAGE_LIMITS.assetBytes) throw new PageError(`素材「${name}」超过 8MB。先压缩一下（比如缩小图片尺寸）。`);
-    if (!sniffMatches(name, bytes)) throw new PageError(`素材「${name}」的内容和扩展名对不上。`);
+    if (bytes.byteLength === 0)
+      throw new PageError(`素材「${name}」是空文件。`);
+    if (bytes.byteLength > PAGE_LIMITS.assetBytes)
+      throw new PageError(
+        `素材「${name}」超过 8MB。先压缩一下（比如缩小图片尺寸）。`,
+      );
+    if (!sniffMatches(name, bytes))
+      throw new PageError(`素材「${name}」的内容和扩展名对不上。`);
     return sql.begin(async (transaction) => {
       const page = await mustRow(owner, ref, transaction, true);
       const [usage] = await transaction.unsafe<{ n: number; total: number }[]>(
         "SELECT count(*)::int AS n, coalesce(sum(bytes), 0)::bigint AS total FROM chisabot_page_assets WHERE page_id = $1 AND name <> $2",
         [page.id, name],
       );
-      if (Number(usage?.n ?? 0) >= PAGE_LIMITS.assetsPerPage) throw new PageError(`一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`);
-      if (Number(usage?.total ?? 0) + bytes.byteLength > PAGE_LIMITS.pageAssetBytes) throw new PageError("这个页面的素材加起来超过 40MB 了。");
+      if (Number(usage?.n ?? 0) >= PAGE_LIMITS.assetsPerPage)
+        throw new PageError(
+          `一个页面最多 ${PAGE_LIMITS.assetsPerPage} 个素材。`,
+        );
+      if (
+        Number(usage?.total ?? 0) + bytes.byteLength >
+        PAGE_LIMITS.pageAssetBytes
+      )
+        throw new PageError("这个页面的素材加起来超过 40MB 了。");
       const ext = name.slice(name.lastIndexOf(".") + 1);
       const contentType = PAGE_ASSET_TYPES[ext];
-      if (!contentType) throw new PageError(`不支持的素材类型「.${ext || "?"}」。`);
+      if (!contentType)
+        throw new PageError(`不支持的素材类型「.${ext || "?"}」。`);
       await transaction.unsafe(
         `INSERT INTO chisabot_page_assets (page_id, name, type, bytes, data) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (page_id, name) DO UPDATE SET type = EXCLUDED.type, bytes = EXCLUDED.bytes, data = EXCLUDED.data, created_at = now()`,
         [page.id, name, contentType, bytes.byteLength, Buffer.from(bytes)],
       );
-      await transaction.unsafe("UPDATE chisabot_pages SET updated_at = now() WHERE id = $1", [page.id]);
+      await transaction.unsafe(
+        "UPDATE chisabot_pages SET updated_at = now() WHERE id = $1",
+        [page.id],
+      );
       return name;
     });
   }
   async function deleteAsset(owner: string, ref: string, name: string) {
     const page = await mustRow(owner, ref);
-    const rows = await sql.unsafe("DELETE FROM chisabot_page_assets WHERE page_id = $1 AND name = $2 RETURNING name", [page.id, name]);
+    const rows = await sql.unsafe(
+      "DELETE FROM chisabot_page_assets WHERE page_id = $1 AND name = $2 RETURNING name",
+      [page.id, name],
+    );
     return rows.length > 0;
   }
 
   async function defaultFetchImage(url: string) {
-    const response = await guardedFetch(url, { maxBytes: PAGE_LIMITS.assetBytes + 1, timeoutMs: 20_000 });
-    if (response.status >= 400) throw new PageError(`下载素材失败（${response.status}）：${url}`);
+    const response = await guardedFetch(url, {
+      maxBytes: PAGE_LIMITS.assetBytes + 1,
+      timeoutMs: 20_000,
+    });
+    if (response.status >= 400)
+      throw new PageError(`下载素材失败（${response.status}）：${url}`);
     if (response.truncated) throw new PageError(`素材超过 8MB：${url}`);
-    return { bytes: new Uint8Array(response.body), contentType: response.contentType };
+    return {
+      bytes: new Uint8Array(response.body),
+      contentType: response.contentType,
+    };
   }
 
   /** 机器人给的素材：工作区文件（path）或公网图片（url）。 */
-  async function ingest(owner: string, ref: string, botId: string | null, sources: AssetSource[], initiator?: AuditInitiator) {
+  async function ingest(
+    owner: string,
+    ref: string,
+    botId: string | null,
+    sources: AssetSource[],
+    initiator?: AuditInitiator,
+  ) {
     const saved: string[] = [];
     for (const source of sources) {
       if (source.path) {
-        if (!options.readBotFile || !botId) throw new PageError("这个部署没有机器人工作区，素材请给公网图片网址（url）。");
-        const file = await options.readBotFile({ ownerUserId: owner, botId, path: source.path, ...(initiator ? { initiator } : {}) });
-        saved.push(await putAsset(owner, ref, source.name || file.name || source.path, file.bytes));
+        if (!options.readBotFile || !botId)
+          throw new PageError(
+            "这个部署没有机器人工作区，素材请给公网图片网址（url）。",
+          );
+        const file = await options.readBotFile({
+          ownerUserId: owner,
+          botId,
+          path: source.path,
+          ...(initiator ? { initiator } : {}),
+        });
+        saved.push(
+          await putAsset(
+            owner,
+            ref,
+            source.name || file.name || source.path,
+            file.bytes,
+          ),
+        );
       } else if (source.url) {
         let fetched: { bytes: Uint8Array; contentType: string };
         try {
           fetched = await (options.fetchImage ?? defaultFetchImage)(source.url);
         } catch (error) {
           if (error instanceof PageError) throw error;
-          if (error instanceof BlockedUrlError) throw new PageError(`不能从这个地址下载素材：${error.message}`);
+          if (error instanceof BlockedUrlError)
+            throw new PageError(`不能从这个地址下载素材：${error.message}`);
           throw new PageError(`下载素材失败：${source.url}`);
         }
-        let name = source.name || new URL(source.url).pathname.split("/").pop() || "image";
+        let name =
+          source.name ||
+          new URL(source.url).pathname.split("/").pop() ||
+          "image";
         if (!/\.[a-z0-9]+$/i.test(name)) {
-          const ext = Object.entries(PAGE_ASSET_TYPES).find(([, type]) => fetched.contentType.startsWith(type.split(";")[0] ?? type))?.[0];
+          const ext = Object.entries(PAGE_ASSET_TYPES).find(([, type]) =>
+            fetched.contentType.startsWith(type.split(";")[0] ?? type),
+          )?.[0];
           name = `${name}.${ext ?? "bin"}`;
         }
         saved.push(await putAsset(owner, ref, name, fetched.bytes));
-      } else throw new PageError("每个素材要给 path（工作区文件）或 url（公网图片）。");
+      } else
+        throw new PageError(
+          "每个素材要给 path（工作区文件）或 url（公网图片）。",
+        );
     }
     return saved;
   }
 
   async function originFor(owner: string) {
     if (options.publicUrl) return options.publicUrl.replace(/\/+$/, "");
-    const rows = await sql.unsafe<{ origin: string }[]>("SELECT origin FROM chisabot_page_origins WHERE owner_user_id = $1", [owner]);
+    const rows = await sql.unsafe<{ origin: string }[]>(
+      "SELECT origin FROM chisabot_page_origins WHERE owner_user_id = $1",
+      [owner],
+    );
     return rows[0]?.origin ?? "";
   }
   async function setOrigin(owner: string, raw: string) {
@@ -483,24 +747,34 @@ export function createPages(
     } catch {
       throw new PageError("网址不对。");
     }
-    if (url.protocol !== "https:" && url.protocol !== "http:") throw new PageError("网址不对。");
+    if (url.protocol !== "https:" && url.protocol !== "http:")
+      throw new PageError("网址不对。");
     await sql.unsafe(
       "INSERT INTO chisabot_page_origins (owner_user_id, origin) VALUES ($1, $2) ON CONFLICT (owner_user_id) DO UPDATE SET origin = EXCLUDED.origin, updated_at = now()",
       [owner, url.origin],
     );
     return url.origin;
   }
-  const linkFor = async (owner: string, page: PageView) => `${await originFor(owner)}${page.path}`;
+  const linkFor = async (owner: string, page: PageView) =>
+    `${await originFor(owner)}${page.path}`;
 
   /** 公开读：只认 slug，只给已发布、没删的。 */
   async function publicPage(slug: string) {
     if (!PAGE_SLUG.test(slug)) return null;
-    const rows = await sql.unsafe<PageRow[]>("SELECT * FROM chisabot_pages WHERE slug = $1 AND published AND deleted_at IS NULL", [slug]);
+    const rows = await sql.unsafe<PageRow[]>(
+      "SELECT * FROM chisabot_pages WHERE slug = $1 AND published AND deleted_at IS NULL",
+      [slug],
+    );
     const page = rows[0];
     if (!page) return null;
     const current = await version(page.id, page.current_version);
     if (!current) return null;
-    return composePage({ title: current.title, description: page.description, html: current.html, css: current.css });
+    return composePage({
+      title: current.title,
+      description: page.description,
+      html: current.html,
+      css: current.css,
+    });
   }
   async function publicAsset(slug: string, name: string) {
     if (!PAGE_SLUG.test(slug) || !PAGE_ASSET_NAME.test(name)) return null;
@@ -515,20 +789,42 @@ export function createPages(
   /** /p/ 路由：不用登录。挂在 /p。 */
   function publicRoutes() {
     const app = new Hono();
-    const notFound = () => new Response(notFoundPage(), { status: 404, headers: pageHeaders("text/html; charset=utf-8") });
-    app.on(["GET", "HEAD"], "/:slug{[a-z0-9]{16}}", (c) => c.redirect(`/p/${c.req.param("slug")}/`, 301));
+    const notFound = () =>
+      new Response(notFoundPage(), {
+        status: 404,
+        headers: pageHeaders("text/html; charset=utf-8"),
+      });
+    app.on(["GET", "HEAD"], "/:slug{[a-z0-9]{16}}", (c) =>
+      c.redirect(`/p/${c.req.param("slug")}/`, 301),
+    );
     app.on(["GET", "HEAD"], "/:slug{[a-z0-9]{16}}/", async (c) => {
       const html = await publicPage(c.req.param("slug"));
       if (html === null) return notFound();
-      return new Response(c.req.method === "HEAD" ? null : html, { headers: pageHeaders("text/html; charset=utf-8") });
+      return new Response(c.req.method === "HEAD" ? null : html, {
+        headers: pageHeaders("text/html; charset=utf-8"),
+      });
     });
     app.on(["GET", "HEAD"], "/:slug{[a-z0-9]{16}}/assets/:name", async (c) => {
       const asset = await publicAsset(c.req.param("slug"), c.req.param("name"));
-      if (!asset?.data) return new Response("Not found", { status: 404, headers: pageHeaders("text/plain; charset=utf-8") });
-      const data = asset.data instanceof Uint8Array ? asset.data : Buffer.from(asset.data as never);
-      return new Response(c.req.method === "HEAD" ? null : (data as unknown as BodyInit), {
-        headers: { ...pageHeaders(asset.type), "content-length": String(data.byteLength), "content-disposition": "inline" },
-      });
+      if (!asset?.data)
+        return new Response("Not found", {
+          status: 404,
+          headers: pageHeaders("text/plain; charset=utf-8"),
+        });
+      const data =
+        asset.data instanceof Uint8Array
+          ? asset.data
+          : Buffer.from(asset.data as never);
+      return new Response(
+        c.req.method === "HEAD" ? null : (data as unknown as BodyInit),
+        {
+          headers: {
+            ...pageHeaders(asset.type),
+            "content-length": String(data.byteLength),
+            "content-disposition": "inline",
+          },
+        },
+      );
     });
     app.all("*", () => notFound());
     return app;
@@ -538,85 +834,187 @@ export function createPages(
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser);
     app.onError((error, c) => {
-      if (error instanceof PageError) return c.json({ error: error.message }, 400);
-      if (error instanceof z.ZodError) return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
-      console.error(JSON.stringify({ type: "pages-error", error: error.name, message: reasonWithoutStatement(error).slice(0, 200), route: c.req.path }));
+      if (error instanceof PageError)
+        return c.json({ error: error.message }, 400);
+      if (error instanceof z.ZodError)
+        return c.json({ error: error.issues[0]?.message ?? "参数不对。" }, 400);
+      console.error(
+        JSON.stringify({
+          type: "pages-error",
+          error: error.name,
+          message: reasonWithoutStatement(error).slice(0, 200),
+          route: c.req.path,
+        }),
+      );
       return c.json({ error: "页面服务暂时不可用，请重试。" }, 503);
     });
     const small = bodyLimit({ maxSize: 16_384 });
     app.get("/", async (c) => {
       const agentId = c.req.query("agentId") || undefined;
-      return c.json({ pages: await list(c.var.actor.id, agentId), origin: await originFor(c.var.actor.id) });
+      return c.json({
+        pages: await list(c.var.actor.id, agentId),
+        origin: await originFor(c.var.actor.id),
+      });
     });
     app.put("/origin", small, async (c) => {
-      const body = z.object({ origin: z.string().max(200) }).parse(await c.req.json());
+      const body = z
+        .object({ origin: z.string().max(200) })
+        .parse(await c.req.json());
       return c.json({ origin: await setOrigin(c.var.actor.id, body.origin) });
     });
     app.get("/:id", async (c) => {
       const page = await get(c.var.actor.id, c.req.param("id"));
-      return page ? c.json({ page }) : c.json({ error: "找不到这个页面。" }, 404);
+      return page
+        ? c.json({ page })
+        : c.json({ error: "找不到这个页面。" }, 404);
     });
-    app.get("/:id/versions", async (c) => c.json({ versions: await versions(c.var.actor.id, c.req.param("id")) }));
-    app.get("/:id/assets", async (c) => c.json({ assets: await assets(c.var.actor.id, c.req.param("id")) }));
+    app.get("/:id/versions", async (c) =>
+      c.json({ versions: await versions(c.var.actor.id, c.req.param("id")) }),
+    );
+    app.get("/:id/assets", async (c) =>
+      c.json({ assets: await assets(c.var.actor.id, c.req.param("id")) }),
+    );
     app.patch("/:id", small, async (c) => {
-      const body = z.object({ title: z.string().optional(), description: z.string().nullable().optional(), published: z.boolean().optional() }).strict().parse(await c.req.json());
+      const body = z
+        .object({
+          title: z.string().optional(),
+          description: z.string().nullable().optional(),
+          published: z.boolean().optional(),
+        })
+        .strict()
+        .parse(await c.req.json());
       const owner = c.var.actor.id;
       const id = c.req.param("id");
-      if (body.title || body.description !== undefined) await update(owner, id, { title: body.title ?? null, ...(body.description !== undefined ? { description: body.description ?? "" } : {}), note: "改了标题" });
-      if (body.published !== undefined) await setPublished(owner, id, body.published);
+      if (body.title || body.description !== undefined)
+        await update(owner, id, {
+          title: body.title ?? null,
+          ...(body.description !== undefined
+            ? { description: body.description ?? "" }
+            : {}),
+          note: "改了标题",
+        });
+      if (body.published !== undefined)
+        await setPublished(owner, id, body.published);
       return c.json({ page: await get(owner, id) });
     });
     app.post("/:id/restore", small, async (c) => {
-      const body = z.object({ version: z.number().int().min(1) }).parse(await c.req.json());
-      return c.json({ page: await restore(c.var.actor.id, c.req.param("id"), body.version) });
+      const body = z
+        .object({ version: z.number().int().min(1) })
+        .parse(await c.req.json());
+      return c.json({
+        page: await restore(c.var.actor.id, c.req.param("id"), body.version),
+      });
     });
     // ?purge=1 立刻连版本 / 素材一起删掉（不能撤销）；默认软删，24 小时内可撤销。
     app.delete("/:id", async (c) => {
       const owner = c.var.actor.id;
       const id = c.req.param("id");
       if (c.req.query("purge") === "1") {
-        const rows = await sql.unsafe("DELETE FROM chisabot_pages WHERE owner_user_id = $1 AND (id = $2 OR slug = $2) RETURNING id", [owner, id]);
-        return rows.length ? c.body(null, 204) : c.json({ error: "找不到这个页面。" }, 404);
+        const rows = await sql.unsafe(
+          "DELETE FROM chisabot_pages WHERE owner_user_id = $1 AND (id = $2 OR slug = $2) RETURNING id",
+          [owner, id],
+        );
+        return rows.length
+          ? c.body(null, 204)
+          : c.json({ error: "找不到这个页面。" }, 404);
       }
-      return (await remove(owner, id)) ? c.body(null, 204) : c.json({ error: "找不到这个页面。" }, 404);
+      return (await remove(owner, id))
+        ? c.body(null, 204)
+        : c.json({ error: "找不到这个页面。" }, 404);
     });
-    app.post("/:id/undo-delete", async (c) => ((await undoRemove(c.var.actor.id, c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "已经无法撤销。" }, 404)));
+    app.post("/:id/undo-delete", async (c) =>
+      (await undoRemove(c.var.actor.id, c.req.param("id")))
+        ? c.json({ ok: true })
+        : c.json({ error: "已经无法撤销。" }, 404),
+    );
     // 上传素材：原始字节，文件名在 ?name=。
-    app.put("/:id/assets", bodyLimit({ maxSize: PAGE_LIMITS.assetBytes + 1024 }), async (c) => {
-      const name = c.req.query("name") ?? "";
-      const bytes = new Uint8Array(await c.req.arrayBuffer());
-      return c.json({ name: await putAsset(c.var.actor.id, c.req.param("id"), name, bytes) }, 201);
-    });
+    app.put(
+      "/:id/assets",
+      bodyLimit({ maxSize: PAGE_LIMITS.assetBytes + 1024 }),
+      async (c) => {
+        const name = c.req.query("name") ?? "";
+        const bytes = new Uint8Array(await c.req.arrayBuffer());
+        return c.json(
+          {
+            name: await putAsset(
+              c.var.actor.id,
+              c.req.param("id"),
+              name,
+              bytes,
+            ),
+          },
+          201,
+        );
+      },
+    );
     app.delete("/:id/assets/:name", async (c) =>
-      (await deleteAsset(c.var.actor.id, c.req.param("id"), c.req.param("name"))) ? c.body(null, 204) : c.json({ error: "找不到这个素材。" }, 404),
+      (await deleteAsset(
+        c.var.actor.id,
+        c.req.param("id"),
+        c.req.param("name"),
+      ))
+        ? c.body(null, 204)
+        : c.json({ error: "找不到这个素材。" }, 404),
     );
     return app;
   }
 
-  function tools(owner: string, agentId: string, initiator?: AuditInitiator): GrantedTool[] {
-    const tool = <T extends z.ZodType>(name: string, description: string, parameters: T, run: (input: z.infer<T>) => Promise<string>): GrantedTool => ({
+  function tools(
+    owner: string,
+    agentId: string,
+    initiator?: AuditInitiator,
+  ): GrantedTool[] {
+    const tool = <T extends z.ZodType>(
+      name: string,
+      description: string,
+      parameters: T,
+      run: (input: z.infer<T>) => Promise<string>,
+      effect?: "read" | "write",
+    ): GrantedTool => ({
       name,
       ref: `pages/${name}`,
+      ...(effect ? { effect } : {}),
       description,
       parameters,
       async execute(args) {
         const parsed = parameters.safeParse(args);
-        if (!parsed.success) return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.path.join(".") ?? ""} ${parsed.error.issues[0]?.message ?? ""}`;
+        if (!parsed.success)
+          return `${REFUSAL_MARKER} ${name} 参数不对：${parsed.error.issues[0]?.path.join(".") ?? ""} ${parsed.error.issues[0]?.message ?? ""}`;
         try {
           return await run(parsed.data);
         } catch (error) {
-          if (error instanceof PageError) return `${REFUSAL_MARKER} ${error.message}`;
-          if (error instanceof z.ZodError) return `${REFUSAL_MARKER} ${error.issues[0]?.message ?? "参数不对。"}`;
-          if (error instanceof Error && /file|path|workspace|文件|not found|refused|denied/i.test(error.message)) return `${REFUSAL_MARKER} 读不到素材文件：${error.message.slice(0, 200)}`;
+          if (error instanceof PageError)
+            return `${REFUSAL_MARKER} ${error.message}`;
+          if (error instanceof z.ZodError)
+            return `${REFUSAL_MARKER} ${error.issues[0]?.message ?? "参数不对。"}`;
+          if (
+            error instanceof Error &&
+            /file|path|workspace|文件|not found|refused|denied/i.test(
+              error.message,
+            )
+          )
+            return `${REFUSAL_MARKER} 读不到素材文件：${error.message.slice(0, 200)}`;
           throw error;
         }
       },
     });
     const assetSchema = z
       .object({
-        path: z.string().max(500).optional().describe("你工作区里的文件路径，如 images/cover.jpg"),
-        url: z.string().max(2000).optional().describe("公网图片网址（会下载存进页面，不会热链）"),
-        name: z.string().max(80).optional().describe("页面里用的名字，如 cover.jpg；页面里写 assets/cover.jpg"),
+        path: z
+          .string()
+          .max(500)
+          .optional()
+          .describe("你工作区里的文件路径，如 images/cover.jpg"),
+        url: z
+          .string()
+          .max(2000)
+          .optional()
+          .describe("公网图片网址（会下载存进页面，不会热链）"),
+        name: z
+          .string()
+          .max(80)
+          .optional()
+          .describe("页面里用的名字，如 cover.jpg；页面里写 assets/cover.jpg"),
       })
       .strict();
     const done = async (page: PageView, what: string, extra = "") => {
@@ -633,20 +1031,53 @@ export function createPages(
           `内容要具体、真实、完整（日期、地点、时间、价格、联系方式都写上），不要占位文字；结构清楚、留白充足，一页讲一件事。`,
         z
           .object({
-            title: z.string().min(1).max(80).describe("页面标题（浏览器标签和卡片上显示）"),
-            description: z.string().max(200).optional().describe("一句话简介（分享预览用）"),
-            html: z.string().min(1).describe("正文 HTML（用上面的类名，不用写 <html>/<head>）；完全自己设计时写完整文档"),
+            title: z
+              .string()
+              .min(1)
+              .max(80)
+              .describe("页面标题（浏览器标签和卡片上显示）"),
+            description: z
+              .string()
+              .max(200)
+              .optional()
+              .describe("一句话简介（分享预览用）"),
+            html: z
+              .string()
+              .min(1)
+              .describe(
+                "正文 HTML（用上面的类名，不用写 <html>/<head>）；完全自己设计时写完整文档",
+              ),
             css: z.string().optional().describe("追加的 CSS（可选）"),
-            assets: z.array(assetSchema).max(PAGE_LIMITS.assetsPerPage).optional().describe("页面用到的图片等文件"),
-            published: z.boolean().optional().describe("默认 true；用户说先别发出去时传 false"),
+            assets: z
+              .array(assetSchema)
+              .max(PAGE_LIMITS.assetsPerPage)
+              .optional()
+              .describe("页面用到的图片等文件"),
+            published: z
+              .boolean()
+              .optional()
+              .describe("默认 true；用户说先别发出去时传 false"),
           })
           .strict(),
         async (input) => {
-          let page = await create(owner, { agentId, title: input.title, description: input.description ?? null, html: input.html, css: input.css ?? null, published: input.published ?? true });
+          let page = await create(owner, {
+            agentId,
+            title: input.title,
+            description: input.description ?? null,
+            html: input.html,
+            css: input.css ?? null,
+            published: input.published ?? true,
+          });
           let extra = "";
           if (input.assets?.length) {
             try {
-              const saved = await ingest(owner, page.id, agentId, input.assets, initiator);
+              const saved = await ingest(
+                owner,
+                page.id,
+                agentId,
+                input.assets,
+                initiator,
+              );
               extra = `\n素材：${saved.map((n) => `assets/${n}`).join("、")}。`;
             } catch (error) {
               extra = `\n⚠ 页面已发布，但素材没有全部存上：${error instanceof Error ? error.message : String(error)} 修好后用 page_update 的 assets 再传。`;
@@ -662,25 +1093,47 @@ export function createPages(
         z
           .object({
             page: z.string().describe("页面 id、slug 或链接"),
-            edits: z.array(z.object({ find: z.string().min(1), replace: z.string() }).strict()).max(30).optional(),
+            edits: z
+              .array(
+                z
+                  .object({ find: z.string().min(1), replace: z.string() })
+                  .strict(),
+              )
+              .max(30)
+              .optional(),
             html: z.string().optional().describe("整页换成这份新正文"),
             css: z.string().optional().describe("整份替换追加的 CSS"),
             title: z.string().max(80).optional(),
             description: z.string().max(200).optional(),
-            assets: z.array(assetSchema).max(PAGE_LIMITS.assetsPerPage).optional(),
-            note: z.string().max(200).optional().describe("这一版改了什么（一句话）"),
+            assets: z
+              .array(assetSchema)
+              .max(PAGE_LIMITS.assetsPerPage)
+              .optional(),
+            note: z
+              .string()
+              .max(200)
+              .optional()
+              .describe("这一版改了什么（一句话）"),
           })
           .strict(),
         async (input) => {
           const target = await mustRow(owner, input.page);
           let extra = "";
           if (input.assets?.length) {
-            const saved = await ingest(owner, target.id, agentId, input.assets, initiator);
+            const saved = await ingest(
+              owner,
+              target.id,
+              agentId,
+              input.assets,
+              initiator,
+            );
             extra = `\n素材：${saved.map((n) => `assets/${n}`).join("、")}。`;
           }
           const { page, changed } = await update(owner, target.id, {
             title: input.title ?? null,
-            ...(input.description !== undefined ? { description: input.description } : {}),
+            ...(input.description !== undefined
+              ? { description: input.description }
+              : {}),
             html: input.html ?? null,
             css: input.css ?? null,
             edits: input.edits ?? [],
@@ -689,16 +1142,29 @@ export function createPages(
           if (input.title && input.title.trim() !== target.title) {
             const current = await version(page.id, page.version);
             const body = current?.html ?? "";
-            if (!body.includes(input.title.trim()) && body.includes(target.title))
+            if (
+              !body.includes(input.title.trim()) &&
+              body.includes(target.title)
+            )
               extra += `\n⚠ 只改了浏览器标签上的标题；页面正文里的大标题还是「${target.title}」。要一起改就再用 edits 把正文里的「${target.title}」换掉。`;
           }
-          return done(page, changed ? "已更新" : input.assets?.length ? "已更新素材" : "内容没有变化", extra);
+          return done(
+            page,
+            changed
+              ? "已更新"
+              : input.assets?.length
+                ? "已更新素材"
+                : "内容没有变化",
+            extra,
+          );
         },
       ),
       tool(
         "page_get",
         "读一个页面当前版的内容（正文 HTML、追加 CSS、素材列表），改之前用。",
-        z.object({ page: z.string().describe("页面 id、slug 或链接") }).strict(),
+        z
+          .object({ page: z.string().describe("页面 id、slug 或链接") })
+          .strict(),
         async (input) => {
           const page = await mustRow(owner, input.page);
           const current = await version(page.id, page.current_version);
@@ -713,13 +1179,25 @@ export function createPages(
             .filter(Boolean)
             .join("\n");
         },
+        "read",
       ),
-      tool("page_list", "列出用户的页面（标题、状态、链接）。", z.object({}).strict(), async () => {
-        const pages = await list(owner);
-        if (!pages.length) return "还没有页面。";
-        const origin = await originFor(owner);
-        return pages.map((p) => `- ${p.title}（id ${p.id}，第 ${p.version} 版，${p.published ? "已发布" : "已下线"}）${origin}${p.path}`).join("\n");
-      }),
+      tool(
+        "page_list",
+        "列出用户的页面（标题、状态、链接）。",
+        z.object({}).strict(),
+        async () => {
+          const pages = await list(owner);
+          if (!pages.length) return "还没有页面。";
+          const origin = await originFor(owner);
+          return pages
+            .map(
+              (p) =>
+                `- ${p.title}（id ${p.id}，第 ${p.version} 版，${p.published ? "已发布" : "已下线"}）${origin}${p.path}`,
+            )
+            .join("\n");
+        },
+        "read",
+      ),
       tool(
         "page_publish",
         "发布或下线一个页面。下线后链接打不开（内容保留，可以再发布）。",
@@ -742,6 +1220,29 @@ export function createPages(
     ];
   }
 
-  return { ensure, list, get, create, update, restore, setPublished, remove, undoRemove, versions, assets, putAsset, deleteAsset, ingest, setOrigin, originFor, publicPage, publicAsset, publicRoutes, routes, tools, purge };
+  return {
+    ensure,
+    list,
+    get,
+    create,
+    update,
+    restore,
+    setPublished,
+    remove,
+    undoRemove,
+    versions,
+    assets,
+    putAsset,
+    deleteAsset,
+    ingest,
+    setOrigin,
+    originFor,
+    publicPage,
+    publicAsset,
+    publicRoutes,
+    routes,
+    tools,
+    purge,
+  };
 }
 export type Pages = ReturnType<typeof createPages>;

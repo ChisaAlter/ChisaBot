@@ -882,9 +882,11 @@ export function createBotFactory(options: {
     description: string,
     parameters: z.ZodType,
     execute: (args: unknown) => Promise<{ text: string; isError: boolean }>,
+    effect?: "read" | "write",
   ): GrantedTool => ({
     name,
     ref: `bot/${name}`,
+    ...(effect ? { effect } : {}),
     description,
     parameters,
     execute: async (args) => (await execute(args)).text,
@@ -917,6 +919,7 @@ export function createBotFactory(options: {
           "List the Bots you created that are still live: their ids, names, whether they are paused.",
           listParameters,
           () => listManagedBots(from),
+          "read",
         ),
         tool(
           UPDATE_BOT_TOOL,

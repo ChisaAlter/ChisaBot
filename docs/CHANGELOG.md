@@ -1,3 +1,8 @@
+## 0.1.180 — 2026-11-22
+
+- 全端发版：`0.1.180`，Android `versionCode 360`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5d175b026b079ac5`；无需手动数据库迁移。
+- **聊天状态胶囊磨砂统一、底部锚定防上漂、快照规范序与只读工具收敛（DESIGN §151）**：状态/干活胶囊恢复 `--lg-blur`（`styles.css` · `status-capsule.css` · `status-capsule.tsx` · `liquid-glass.ts`）；固定 `.chat-status-slot`、`holdBlank` 临时留白收敛与流式收尾保文（`chat-transcript.tsx` · `work-card.tsx` · `session-client.ts`）；`applyMessagesSnapshot` 与服务端出口封顶/脱载（`wire-events.ts` · `local-conversations.ts` · `routes.ts` · `confirmation-resume.ts`）；只读工具补全 `effect: "read"`、`isPreEffectFailure` 收敛与 `bot-factory-tool.tsx` 防重拉，同步新增/更新单元与真实浏览器回归测试。
+
 ## 0.1.179 — 2026-11-21
 
 - 全端发版：`0.1.179`，Android `versionCode 359`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `e60cce22d806c1e4`；无需手动数据库迁移。

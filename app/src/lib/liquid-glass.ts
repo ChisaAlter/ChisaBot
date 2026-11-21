@@ -418,6 +418,8 @@ const LENS_SKIP_SELECTOR = [
   ".update-banner",
   ".install-hint",
   ".win-ctrls",
+  ".rs-capsule",
+  ".chat-thinking",
   "[data-lg-skip]",
 ].join(",");
 

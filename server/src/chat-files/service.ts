@@ -2301,6 +2301,7 @@ export function createChatFiles(
             );
             return `识图模型（${vision.label}）对「${src.name}」的回答：\n${answer}`;
           },
+          "read",
         ),
       );
     }

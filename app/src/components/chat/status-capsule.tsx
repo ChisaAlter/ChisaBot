@@ -10,7 +10,7 @@ import "./status-capsule.css";
  * 一轮里同一时刻只画一个：还没开始干活时画在对话末尾（「思考中」），开始干活后由干活卡自己画（同一套 rs- 类）。
  * 以前末尾的「思考中」是一个带三个跳点的气泡、一句话之后又是一排不带字的小点，两种占位长得不一样；现在都是这一个胶囊。
  *
- * - 不用 backdrop-filter：底色是设计系统的 `--glass-strong`，减少透明度 / 性能模式下换不透明底色。
+ * - 玻璃质感与聊天气泡统一由 styles.css 按四档材质下发（--lg-surface-strong + --lg-blur + --lg-shadow），减少透明度 / 性能模式下由 perf-noblur 换不透明底色。
  * - 动画只有 transform（转圈、进场上移）和 opacity（进场淡入）；减少动态效果时都不动。
  * - 读屏：胶囊自己不带 role=status——对话末尾有一个一直挂着的 role=status（chat-transcript.tsx 的
  *   `transcript-live-status`），「思考中」换成干活卡时同一个节点里换字。秒数 aria-hidden，不会每秒播一次。

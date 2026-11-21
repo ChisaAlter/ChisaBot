@@ -3435,6 +3435,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         {
           name: "subagent_list",
           ref: "local-agents/subagent-list",
+          effect: "read",
           description:
             "列出当前已配置且获授权在线的所有子代理实例（Codex、Claude、Antigravity、Codebuddy 等）、所属运行环境与各自擅长的职责。",
           parameters: z.object({}),
@@ -3492,6 +3493,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         {
           name: "subagent_status",
           ref: "local-agents/subagent-status",
+          effect: "read",
           description:
             "查询子代理任务的当前状态、最近输出、结构化追问与文件改动摘要；提供 waitMs（上限 30000ms）时阻塞长轮询等待状态变化。",
           parameters: z.object({
@@ -3692,6 +3694,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         {
           name: "device_agent_list",
           ref: "local-agents/list",
+          effect: "read",
           description:
             "列出用户在线电脑上的本地 agent（已安装的 Claude Code / Codex / OpenCode… 和 ChisaBot 内置）、权限档位、可用的沙盒和工作区文件夹。",
           parameters: z.object({}),
@@ -3772,6 +3775,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         {
           name: "device_agent_status",
           ref: "local-agents/status",
+          effect: "read",
           description:
             "看本地 agent 任务的状态、追问卡和最近输出（不给 taskId = 这段对话里最近的任务）；提供 waitMs（≤30000ms）可阻塞长轮询等待状态变化。",
           parameters: z.object({

@@ -52,6 +52,11 @@ import {
   createEventLifecycles,
   createRunEventFinalizer,
 } from "./conversations/runner";
+import {
+  capMessagesSnapshotEvent,
+  sanitizeWireEvent,
+  stripWaitingContinuationMessages,
+} from "./conversations/wire-events";
 import type { Database } from "./db/client";
 import { imageDimsFor } from "./image-dims";
 import {
@@ -1650,8 +1655,10 @@ class PostgresAgentRunner implements ConversationRunner {
             message: redactPublicText(failure.message) || GENERIC_FAILURE,
           } as BaseEvent;
       }
-      const published = prepared.event(event);
-      if (!published || !canCommit()) return;
+      const preparedEvent = prepared.event(event);
+      if (!preparedEvent || !canCommit()) return;
+      const published = capMessagesSnapshotEvent(preparedEvent);
+      const wireEvent = stripWaitingContinuationMessages(published);
       const isTerminal =
         published.type === EventType.RUN_FINISHED ||
         published.type === EventType.RUN_ERROR;
@@ -1666,11 +1673,11 @@ class PostgresAgentRunner implements ConversationRunner {
           const sequence = await this.store.append(
             threadId,
             entry.runId,
-            published,
+            wireEvent,
           );
           recordDbWrite(sequence, undefined);
           entry.stream.next(published);
-          entry.live.next({ sequence, event: published });
+          entry.live.next({ sequence, event: wireEvent });
           notify(published);
         });
       }
@@ -1681,7 +1688,7 @@ class PostgresAgentRunner implements ConversationRunner {
       runStarted ||= published.type === EventType.RUN_STARTED;
       const liveOrder = ++entry.liveOrder;
       entry.stream.next(published);
-      entry.live.next({ sequence: null, liveOrder, event: published });
+      entry.live.next({ sequence: null, liveOrder, event: wireEvent });
       notify(published);
       if (published.type === EventType.RUN_STARTED) {
         void flushPendingDelta();
@@ -1761,7 +1768,7 @@ class PostgresAgentRunner implements ConversationRunner {
         const sequence = await this.store.append(
           threadId,
           entry.runId,
-          published,
+          wireEvent,
         );
         recordDbWrite(sequence, liveOrder);
       });
@@ -2580,7 +2587,7 @@ class PostgresAgentRunner implements ConversationRunner {
           ).includes(item.event.type)
         )
           return;
-        const event = item.event;
+        const event = sanitizeWireEvent(item.event);
         if (lifecycles.accept(event)) subscriber.next(event);
       };
       const selectRun = (runId: string | undefined) => {
@@ -2665,7 +2672,7 @@ class PostgresAgentRunner implements ConversationRunner {
               [request.threadId, run.run_id],
             );
             if (terminal) {
-              const event = terminal.event;
+              const event = sanitizeWireEvent(terminal.event);
               subscriber.next(
                 event.type === EventType.RUN_FINISHED
                   ? ({

@@ -981,6 +981,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
       {
         name: "panel_list",
         ref: "live-panels/panel_list",
+        effect: "read",
         description:
           "列出当前机器人右栏里的实时面板（id、标题、状态、刷新说明、刷新间隔、上次更新）。修改或删除面板前先用它找到 id。",
         parameters: z.object({}),

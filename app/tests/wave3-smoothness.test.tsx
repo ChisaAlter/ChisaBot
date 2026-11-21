@@ -45,6 +45,7 @@ describe("Wave 3 frontend smoothness", () => {
   test("leaf streaming isolates parent re-renders on tokens #2..#20 while leaf stays live", async () => {
     let parentRenders = 0;
     let leafRenders = 0;
+    const observedLengths: number[] = [];
 
     function StreamingLeaf({
       threadId,
@@ -57,6 +58,7 @@ describe("Wave 3 frontend smoothness", () => {
     }) {
       leafRenders += 1;
       const live = useLiveMessageText(threadId, messageId, fallbackText);
+      observedLengths.push(live.text.length);
       return (
         <div data-testid="leaf" data-streaming={String(live.streaming)}>
           {live.text}
@@ -158,6 +160,13 @@ describe("Wave 3 frontend smoothness", () => {
       expect(parentDeltaDuringStream).toBeLessThanOrEqual(6);
       expect(leafRenders).toBeGreaterThanOrEqual(2);
       expect(view.getByTestId("leaf").textContent).toContain("tok20");
+      // Leaf text length must be monotonically non-decreasing across TEXT_MESSAGE_END / RUN_FINISHED
+      // (never regress back to the stale first-token fallbackText prop for even a single render).
+      for (let i = 1; i < observedLengths.length; i++) {
+        expect(observedLengths[i] ?? 0).toBeGreaterThanOrEqual(
+          observedLengths[i - 1] ?? 0,
+        );
+      }
     } finally {
       ConversationSession.prototype.run = origRun;
     }

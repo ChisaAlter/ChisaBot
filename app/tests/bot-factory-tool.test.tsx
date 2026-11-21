@@ -5,6 +5,7 @@ import {
   beforeEach,
   describe,
   expect,
+  spyOn,
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
@@ -32,6 +33,7 @@ import {
   UpdateBotCard,
 } from "@/lib/conversations/bot-factory-tool";
 import { Route as BotsRoute } from "@/routes/_authed/_app/bots.index";
+import { queryClient as sharedQueryClient } from "@/query-client";
 import { settleReactWork } from "./settle-react-work";
 
 /**
@@ -286,6 +288,96 @@ describe("bot factory tool renderers", () => {
     expect(empty.getByTestId("bot-factory-body").textContent).toContain(
       "它还没有创建过机器人",
     );
+  });
+
+  test("historical completed cards do not invalidate agents on mount; only live running -> done mutations do", async () => {
+    const spy = spyOn(sharedQueryClient, "invalidateQueries");
+    try {
+      // Mounting historical completed cards from transcript history must cause 0 invalidations.
+      const histCreate = await renderCard(
+        <CreateBotCard
+          knownBots={[{ id: "bot-9", name: "数据蛙" }]}
+          name="数据蛙"
+          result={CREATED_OK}
+          running={false}
+          title="看数"
+        />,
+      );
+      const histUpdate = await renderCard(
+        <UpdateBotCard
+          fields={[{ label: "职责", value: "改稿" }]}
+          id="bot-9"
+          result='Updated the Bot "数据蛙" (bot-9).'
+          running={false}
+        />,
+      );
+      const histDisable = await renderCard(
+        <DisableBotCard
+          id="bot-9"
+          result='"数据蛙" (bot-9) is paused: it will not take turns or handoffs until it is resumed.'
+          running={false}
+        />,
+      );
+      await settleReactWork();
+      expect(spy).toHaveBeenCalledTimes(0);
+      histCreate.unmount();
+      histUpdate.unmount();
+      histDisable.unmount();
+
+      // Live transition running -> done on a mutating card triggers exactly 1 invalidation.
+      let setState!: (next: { running: boolean; result?: unknown }) => void;
+      function LiveHarness() {
+        const React = require("react") as typeof import("react");
+        const [st, setSt] = React.useState<{
+          running: boolean;
+          result?: unknown;
+        }>({ running: true, result: undefined });
+        setState = setSt;
+        return (
+          <CreateBotCard
+            knownBots={[{ id: "bot-9", name: "数据蛙" }]}
+            name="数据蛙"
+            result={st.result}
+            running={st.running}
+            title="看数"
+          />
+        );
+      }
+      const live = await renderCard(<LiveHarness />);
+      await settleReactWork();
+      expect(spy).toHaveBeenCalledTimes(0);
+
+      await act(async () => {
+        setState({ running: false, result: CREATED_OK });
+      });
+      await settleReactWork();
+      expect(spy).toHaveBeenCalledTimes(1);
+      live.unmount();
+
+      // Read-only ManagedBotsCard never invalidates agents even on live completion.
+      let setListState!: (next: { running: boolean; result?: unknown }) => void;
+      function LiveListHarness() {
+        const React = require("react") as typeof import("react");
+        const [st, setSt] = React.useState<{
+          running: boolean;
+          result?: unknown;
+        }>({ running: true, result: undefined });
+        setListState = setSt;
+        return <ManagedBotsCard result={st.result} running={st.running} />;
+      }
+      const liveList = await renderCard(<LiveListHarness />);
+      await act(async () => {
+        setListState({
+          running: false,
+          result: "You have not created any Bots.",
+        });
+      });
+      await settleReactWork();
+      expect(spy).toHaveBeenCalledTimes(1);
+      liveList.unmount();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

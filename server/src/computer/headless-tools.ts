@@ -49,6 +49,8 @@ import type { ControlState } from "./schema";
 /** Client tools supplied by ChisaBot when the caller has no browser. */
 export type HeadlessTool = {
   definition: Tool;
+  /** Declared side-effect class; propagated to GrantedTool in DSH runtime. */
+  effect?: "read" | "write";
   /**
    * Executed when called but never offered to the model. For a tool the Bot does not hold, so a
    * call it makes anyway gets a governed refusal rather than going unanswered.
@@ -445,9 +447,11 @@ export function createHeadlessComputerTools(options: {
       input: z.output<T>,
       context: { toolCallId: string; signal: AbortSignal },
     ) => Promise<unknown>,
+    effect?: "read" | "write",
   ): HeadlessTool {
     return {
       definition: { name, description, parameters: z.toJSONSchema(schema) },
+      ...(effect ? { effect } : {}),
       execute: async (args, context) => {
         const input = schema.parse(args);
         if (context.signal.aborted)
@@ -550,6 +554,7 @@ export function createHeadlessComputerTools(options: {
       noArgs,
       async (_input, { toolCallId }) =>
         handleChallenge(await gateway.read(botId), toolCallId),
+      "read",
     ),
     tool(
       "computer_snapshot",
@@ -557,12 +562,14 @@ export function createHeadlessComputerTools(options: {
       noArgs,
       async (_input, { toolCallId }) =>
         handleChallenge(await gateway.snapshot(botId), toolCallId),
+      "read",
     ),
     tool(
       "computer_screenshot",
       "Return an image of the browser currently open on your computer.",
       noArgs,
       async () => ({ ok: true, ...(await gateway.screenshot(botId)) }),
+      "read",
     ),
     tool(
       "computer_click",
@@ -614,6 +621,7 @@ export function createHeadlessComputerTools(options: {
         ok: true,
         ...(await gateway.scroll(botId, actor, input)),
       }),
+      "read",
     ),
     tool(
       "computer_list_files",
@@ -630,6 +638,7 @@ export function createHeadlessComputerTools(options: {
           note: "这是机器人云端工作区（不是用户电脑）。用户电脑请用 device_list_files。",
         };
       },
+      "read",
     ),
     tool(
       "computer_read_file",
@@ -639,6 +648,7 @@ export function createHeadlessComputerTools(options: {
         ok: true,
         ...(await gateway.readFile(botId, actor, input)),
       }),
+      "read",
     ),
     tool(
       "computer_write_file",

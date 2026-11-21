@@ -1,6 +1,9 @@
 import {
+  type AgentStateMutation,
+  type AgentSubscriber,
   type BaseEvent,
   HttpAgent,
+  type Message,
   type RunAgentInput,
   type RunAgentParameters,
 } from "@ag-ui/client";
@@ -24,8 +27,13 @@ import { draftFilesAccepted, draftFilesSubmitting } from "./ui-memory";
 const ConversationTransport = createContext<"commands">("commands");
 export type ConversationConnection = "online" | "reconnecting";
 
+type LiveMessageEntry = {
+  readonly text: string;
+  readonly streaming: boolean;
+};
+
 type LiveThreadStore = {
-  texts: Map<string, string>;
+  entries: Map<string, LiveMessageEntry>;
   listeners: Map<string, Set<() => void>>;
   dirty: Set<string>;
   rafId: number | null;
@@ -38,7 +46,7 @@ function getLiveThread(threadId: string): LiveThreadStore {
   let store = liveThreads.get(threadId);
   if (!store) {
     store = {
-      texts: new Map(),
+      entries: new Map(),
       listeners: new Map(),
       dirty: new Set(),
       rafId: null,
@@ -86,19 +94,122 @@ export function setLiveMessageText(
   text: string,
 ) {
   const store = getLiveThread(threadId);
-  if (store.texts.get(messageId) === text) return;
-  store.texts.set(messageId, text);
+  const existing = store.entries.get(messageId);
+  if (existing?.text === text && existing.streaming) return;
+  store.entries.set(messageId, { text, streaming: true });
   scheduleLiveFlush(threadId, messageId);
+}
+
+/**
+ * Transitions live streaming entry(ies) to settled (`streaming: false`) WITHOUT deleting their
+ * text before `useConversationSession` commits the updated `agent.messages` prop to children.
+ * Deleting immediately on `TEXT_MESSAGE_END` caused `LiveBotBubbles` to flash back to the stale
+ * first-token `fallbackText` prop for one frame, collapsing message height by thousands of pixels.
+ */
+function finishLiveMessageText(
+  threadId: string,
+  messageId?: string,
+  finalText?: string,
+) {
+  const store = liveThreads.get(threadId);
+  if (!store) return;
+  if (messageId !== undefined) {
+    const existing = store.entries.get(messageId);
+    const text = finalText ?? existing?.text;
+    store.dirty.delete(messageId);
+    if (
+      text !== undefined &&
+      (existing?.text !== text || existing.streaming !== false)
+    ) {
+      store.entries.set(messageId, { text, streaming: false });
+      notifyLiveListeners(store, [messageId]);
+    }
+    return;
+  }
+  if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(store.rafId);
+  }
+  store.rafId = null;
+  store.microtaskScheduled = false;
+  store.dirty.clear();
+  const changed: string[] = [];
+  for (const [id, entry] of store.entries) {
+    if (!entry.streaming) continue;
+    store.entries.set(id, { text: entry.text, streaming: false });
+    changed.push(id);
+  }
+  if (changed.length > 0) notifyLiveListeners(store, changed);
+}
+
+function syncLiveMessagesFromSnapshot(
+  threadId: string,
+  messages: readonly Message[],
+) {
+  const store = liveThreads.get(threadId);
+  if (!store) return;
+  if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(store.rafId);
+  }
+  store.rafId = null;
+  store.microtaskScheduled = false;
+  store.dirty.clear();
+  const byId = new Map<string, string>();
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      byId.set(message.id, message.content);
+    }
+  }
+  const changed: string[] = [];
+  for (const [id, entry] of [...store.entries]) {
+    const snapshotText = byId.get(id);
+    if (snapshotText !== undefined) {
+      if (entry.text !== snapshotText || entry.streaming) {
+        store.entries.set(id, { text: snapshotText, streaming: false });
+        changed.push(id);
+      }
+    } else {
+      store.entries.delete(id);
+      changed.push(id);
+    }
+  }
+  if (changed.length > 0) notifyLiveListeners(store, changed);
+  if (store.entries.size === 0 && store.listeners.size === 0) {
+    liveThreads.delete(threadId);
+  }
+}
+
+function pruneSettledLiveMessages(
+  threadId: string,
+  messages: readonly Message[],
+) {
+  const store = liveThreads.get(threadId);
+  if (!store || store.entries.size === 0) return;
+  const byId = new Map<string, Message>();
+  for (const message of messages) byId.set(message.id, message);
+  for (const [id, entry] of [...store.entries]) {
+    if (entry.streaming) continue;
+    const committed = byId.get(id);
+    if (
+      !committed ||
+      typeof committed.content !== "string" ||
+      committed.content === entry.text
+    ) {
+      store.entries.delete(id);
+    }
+  }
+  if (store.entries.size === 0 && store.listeners.size === 0) {
+    liveThreads.delete(threadId);
+  }
 }
 
 export function clearLiveMessageText(threadId: string, messageId?: string) {
   const store = liveThreads.get(threadId);
   if (!store) return;
   if (messageId !== undefined) {
-    const existed = store.texts.delete(messageId);
+    const existed = store.entries.delete(messageId);
     store.dirty.delete(messageId);
     if (existed) notifyLiveListeners(store, [messageId]);
-    if (store.texts.size === 0 && store.listeners.size === 0) {
+    if (store.entries.size === 0 && store.listeners.size === 0) {
       if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
         cancelAnimationFrame(store.rafId);
       }
@@ -106,8 +217,8 @@ export function clearLiveMessageText(threadId: string, messageId?: string) {
     }
     return;
   }
-  const ids = [...new Set([...store.texts.keys(), ...store.dirty])];
-  store.texts.clear();
+  const ids = [...new Set([...store.entries.keys(), ...store.dirty])];
+  store.entries.clear();
   store.dirty.clear();
   if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(store.rafId);
@@ -136,7 +247,7 @@ function subscribeLiveMessage(
     const bucket = current?.listeners.get(messageId);
     bucket?.delete(listener);
     if (bucket && bucket.size === 0) current?.listeners.delete(messageId);
-    if (current && current.texts.size === 0 && current.listeners.size === 0) {
+    if (current && current.entries.size === 0 && current.listeners.size === 0) {
       liveThreads.delete(threadId);
     }
   };
@@ -145,9 +256,9 @@ function subscribeLiveMessage(
 function getLiveMessageSnapshot(
   threadId: string | undefined,
   messageId: string | undefined,
-): string | undefined {
+): LiveMessageEntry | undefined {
   if (!threadId || !messageId) return undefined;
-  return liveThreads.get(threadId)?.texts.get(messageId);
+  return liveThreads.get(threadId)?.entries.get(messageId);
 }
 
 /** Subscribes only a single message leaf to rAF-coalesced token deltas. */
@@ -161,13 +272,13 @@ export function useLiveMessageText(
       subscribeLiveMessage(threadId, messageId, listener),
     [threadId, messageId],
   );
-  const liveText = useSyncExternalStore(
+  const liveEntry = useSyncExternalStore(
     subscribe,
     () => getLiveMessageSnapshot(threadId, messageId),
     () => undefined,
   );
-  return liveText !== undefined
-    ? { text: liveText, streaming: true }
+  return liveEntry !== undefined
+    ? liveEntry
     : { text: fallbackText, streaming: false };
 }
 
@@ -193,6 +304,120 @@ export function isConversationProgressEvent(event: {
     event.type !== "RAW" &&
     !(event.type === "CUSTOM" && event.name === "chisabot.connection")
   );
+}
+
+const AGUI_CLIENT_META_KEY = "@ag-ui/client";
+
+function authoritativeActivityTypes(
+  event: unknown,
+): string[] | null | undefined {
+  if (!event || typeof event !== "object" || !("metadata" in event))
+    return undefined;
+  const meta = (event as { metadata?: Record<string, unknown> }).metadata;
+  if (
+    !meta ||
+    typeof meta !== "object" ||
+    !Object.hasOwn(meta, AGUI_CLIENT_META_KEY)
+  ) {
+    return undefined;
+  }
+  const clientMeta = meta[AGUI_CLIENT_META_KEY];
+  if (
+    !clientMeta ||
+    typeof clientMeta !== "object" ||
+    Array.isArray(clientMeta)
+  ) {
+    return [];
+  }
+  if (!Object.hasOwn(clientMeta, "authoritativeActivityTypes")) {
+    return undefined;
+  }
+  const types = (clientMeta as { authoritativeActivityTypes?: unknown })
+    .authoritativeActivityTypes;
+  if (types === null) return null;
+  if (Array.isArray(types) && types.every((item) => typeof item === "string")) {
+    return types;
+  }
+  return [];
+}
+
+/**
+ * Replaces `@ag-ui/client`'s default `MESSAGES_SNAPSHOT` merge, which kept existing IDs in place
+ * and `.push()`ed missing older IDs to the end (`[2069..2272, 0..2068]`).
+ *
+ * Keeps `incoming` in canonical chronological order; when `incoming` is a capped tail overlapping
+ * `current` past index 0, preserves the disjoint older prefix `current.slice(0, earliestOverlap)`
+ * in front, and preserves local-only `activity`/`reasoning` messages at their relative positions.
+ */
+export function applyMessagesSnapshot(
+  current: readonly Message[],
+  incoming: readonly Message[],
+  event?: { metadata?: Record<string, unknown> },
+): Message[] {
+  const normalized = incoming.map((message) => {
+    const raw = message as Message & { subagentRunId?: string | null };
+    if (raw.subagentRunId !== null) return message;
+    const copy = { ...raw };
+    delete copy.subagentRunId;
+    return copy as Message;
+  });
+
+  const authActivity = authoritativeActivityTypes(event);
+  const incomingHasActivity = normalized.some((m) => m.role === "activity");
+  const incomingHasReasoning = normalized.some((m) => m.role === "reasoning");
+  const keepLocalSynthetic = (message: Message): boolean => {
+    if (message.role === "activity") {
+      const activityType = (message as { activityType?: string }).activityType;
+      return authActivity
+        ? !(activityType !== undefined && authActivity.includes(activityType))
+        : authActivity !== null && !incomingHasActivity;
+    }
+    return message.role === "reasoning" && !incomingHasReasoning;
+  };
+
+  if (normalized.length === 0) {
+    return current.filter(keepLocalSynthetic);
+  }
+
+  const incomingIds = new Set(normalized.map((m) => m.id));
+  const currentIndex = new Map(current.map((m, i) => [m.id, i]));
+
+  let earliestOverlap = Number.POSITIVE_INFINITY;
+  for (const m of normalized) {
+    const idx = currentIndex.get(m.id);
+    if (idx !== undefined && idx < earliestOverlap) {
+      earliestOverlap = idx;
+      if (earliestOverlap === 0) break;
+    }
+  }
+
+  const hasOlderPrefix =
+    earliestOverlap > 0 && Number.isFinite(earliestOverlap);
+  const olderPrefix = hasOlderPrefix ? current.slice(0, earliestOverlap) : [];
+  const tailSlice = hasOlderPrefix ? current.slice(earliestOverlap) : current;
+
+  const result: Message[] = [...olderPrefix, ...normalized];
+  const syntheticToKeep: { afterId: string | null; message: Message }[] = [];
+  let lastSurvivingId: string | null = olderPrefix.at(-1)?.id ?? null;
+  for (const message of tailSlice) {
+    if (incomingIds.has(message.id)) {
+      lastSurvivingId = message.id;
+    } else if (keepLocalSynthetic(message)) {
+      syntheticToKeep.push({ afterId: lastSurvivingId, message });
+      lastSurvivingId = message.id;
+    }
+  }
+  for (const { afterId, message } of syntheticToKeep) {
+    if (afterId === null) {
+      result.unshift(message);
+    } else {
+      const idx = result.findIndex((m) => m.id === afterId);
+      if (idx >= 0) result.splice(idx + 1, 0, message);
+      else result.push(message);
+    }
+  }
+
+  return result;
 }
 
 /** An observer has no model or tool loop. The server owns every execution. */
@@ -255,30 +480,38 @@ export class ConversationSession extends HttpAgent {
       },
       onTextMessageContentEvent: ({ event, textMessageBuffer }) => {
         this.activeLiveMessageIds.add(event.messageId);
-        setLiveMessageText(this.threadId, event.messageId, textMessageBuffer);
+        setLiveMessageText(
+          this.threadId,
+          event.messageId,
+          `${textMessageBuffer}${event.delta ?? ""}`,
+        );
       },
-      onTextMessageEndEvent: ({ event }) => {
+      onTextMessageEndEvent: ({ event, textMessageBuffer }) => {
         this.activeLiveMessageIds.delete(event.messageId);
-        clearLiveMessageText(this.threadId, event.messageId);
+        finishLiveMessageText(
+          this.threadId,
+          event.messageId,
+          textMessageBuffer,
+        );
       },
       onRunFinishedEvent: () => {
         this.activeLiveMessageIds.clear();
-        clearLiveMessageText(this.threadId);
+        finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onRunErrorEvent: () => {
         this.activeLiveMessageIds.clear();
-        clearLiveMessageText(this.threadId);
+        finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onRunFinalized: () => {
         this.activeLiveMessageIds.clear();
-        clearLiveMessageText(this.threadId);
+        finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onMessagesSnapshotEvent: ({ event }) => {
         this.activeLiveMessageIds.clear();
-        clearLiveMessageText(this.threadId);
+        syncLiveMessagesFromSnapshot(this.threadId, event.messages);
         for (const message of event.messages)
           if (message.role === "user") this.acceptedCommands.add(message.id);
       },
@@ -299,6 +532,25 @@ export class ConversationSession extends HttpAgent {
   }
   isCommandAccepted(commandId: string) {
     return this.acceptedCommands.has(commandId);
+  }
+  protected override apply(
+    input: RunAgentInput,
+    events$: Observable<BaseEvent>,
+    subscribers: AgentSubscriber[],
+  ): Observable<AgentStateMutation> {
+    return super.apply(input, events$, [
+      ...subscribers,
+      {
+        onMessagesSnapshotEvent: ({ event, messages }) => ({
+          messages: applyMessagesSnapshot(
+            messages,
+            event.messages,
+            event as unknown as { metadata?: Record<string, unknown> },
+          ),
+          stopPropagation: true,
+        }),
+      },
+    ]);
   }
   override run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable((observer) => {
@@ -534,6 +786,7 @@ function retainSession(key: string, entry: SessionEntry) {
     queueMicrotask(() => {
       if (entry.consumers !== 0 || sessions.get(key) !== entry) return;
       sessions.delete(key);
+      clearLiveMessageText(entry.agent.threadId);
       // This only closes the browser's observer. A server-owned run keeps executing.
       void entry.agent.detachActiveRun();
     });
@@ -586,7 +839,10 @@ export function useConversationSession({
     agent.connectionSnapshot,
     agent.connectionSnapshot,
   );
-  const [, refresh] = useReducer((value) => value + 1, 0);
+  const [revision, refresh] = useReducer((value) => value + 1, 0);
+  useLayoutEffect(() => {
+    if (revision >= 0) pruneSettledLiveMessages(threadId, agent.messages);
+  }, [threadId, agent, revision]);
   useExternalConnection(objectConnectionKey(agent), () => {
     let lastSignature = agent.structuralSignature();
     const forceRefresh = () => {

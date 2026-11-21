@@ -2467,6 +2467,10 @@ button.chat-bottom-pill:hover {
   border-radius: 14px !important;
   overflow: hidden;
   border-color: rgba(22, 24, 29, 0.08) !important;
+  /* Override Streamdown's inline `content-visibility: auto; contain-intrinsic-size: auto 200px`,
+     which reserves fake 218px heights for off-screen code blocks and snaps back -105px on paint. */
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
 }
 .dark [data-streamdown="code-block"] { border-color: rgba(255, 255, 255, 0.08) !important; }
 [data-streamdown="code-block"] pre { overflow-x: auto; }
@@ -10788,17 +10792,13 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
 
 /* 聊天栏里直接浮在壁纸上的卡与胶囊（确认卡、GitHub 卡、页面卡、定时卡、网关确认卡、提问卡、
  * 干活步骤、草稿卡、历史提示、工具结果核对 .to-card、交接恢复 .hr-card、状态/干活胶囊、
- * 「显示更早」胶囊、PC 窗口按钮）：和气泡同一档釉面，不吃 .glass-shell 的薄纱令牌。
+ * 「显示更早」胶囊、PC 窗口按钮）：和气泡同一档釉面与磨砂模糊，不吃 .glass-shell 的薄纱令牌；
+ * .rs-capsule / .chat-thinking 在 liquid 档跳过 SVG 位移透镜（LENS_SKIP_SELECTOR），
+ * 性能模式 / 减少透明度下由 perf-noblur 换成实心底。
  * .cf-card 完成态用更弱一档的 --lg-surface。 */
-:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls) {
+:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking) {
   background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
-  box-shadow: var(--lg-shadow) !important;
-}
-/* 状态/干活胶囊里有持续动画（spinner、逐字点）：釉面同档但不用 backdrop-filter
- *（status-capsule.css 头注的既有约束），性能/减少透明度下仍由 perf-noblur 换成实心底。 */
-:is(.rs-capsule, .chat-thinking) {
-  background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   box-shadow: var(--lg-shadow) !important;
 }
 .cf-card:not([data-state="pending"]) {

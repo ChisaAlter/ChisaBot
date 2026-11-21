@@ -37,6 +37,7 @@ export async function createConversationSurfaceTools(options: {
     description: string,
     schema: z.ZodType,
     execute: HeadlessTool["execute"],
+    effect?: "read" | "write",
   ) =>
     tools.push({
       definition: {
@@ -44,6 +45,7 @@ export async function createConversationSurfaceTools(options: {
         description,
         parameters: z.toJSONSchema(schema, { io: "input" }),
       },
+      ...(effect ? { effect } : {}),
       execute: async (args, context) => execute(schema.parse(args), context),
     });
   if (options.computer) {
@@ -153,6 +155,7 @@ export async function createConversationSurfaceTools(options: {
           tools: skill.tools,
         }));
       }),
+      "read",
     );
     add(
       "read_skill",
@@ -166,6 +169,7 @@ export async function createConversationSurfaceTools(options: {
           ) ?? { error: "No visible skill has this slug." }
         );
       }),
+      "read",
     );
     add(
       "list_skill_tools",
@@ -183,6 +187,7 @@ export async function createConversationSurfaceTools(options: {
           })),
         })),
       ),
+      "read",
     );
     add(
       "save_skill",
