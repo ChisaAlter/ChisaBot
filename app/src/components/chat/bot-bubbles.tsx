@@ -35,6 +35,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
+import {
+  foldLongMessage,
+  LONG_MESSAGE_FOLD_THRESHOLD,
+} from "@/lib/chat/fold-long-message";
 import { githubQueryOptions } from "@/lib/github";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import {
@@ -63,11 +67,24 @@ export const BEAT_SECONDS = 0.16;
 
 const EMPTY_COMPONENTS: Record<string, unknown> = {};
 
+const ARRIVE_ANIMATE = { opacity: 1, transform: "translateY(0px)" } as const;
+const ARRIVE_INITIAL_PLAIN = { opacity: 0, transform: "none" } as const;
+const ARRIVE_INITIAL_SLIDE = {
+  opacity: 0,
+  transform: "translateY(6px)",
+} as const;
+const ARRIVE_ZERO_TRANSITION = {
+  delay: 0,
+  duration: ENTRANCE_SECONDS,
+  ease: EASE_OUT,
+} as const;
+
 export const BotBubbles = memo(function BotBubbles({
   text,
   components = EMPTY_COMPONENTS,
   delay = 0,
   animate = false,
+  streaming,
   tone,
   replyTo,
   replyToId,
@@ -78,6 +95,7 @@ export const BotBubbles = memo(function BotBubbles({
   delay?: number;
   /** 仅对当前会话实时新到的回复播放逐段淡入；打开/切换会话时的历史消息直接实心绘制，避免整屏闪烁。 */
   animate?: boolean | undefined;
+  streaming?: boolean | undefined;
   tone?: "lead" | "final" | undefined;
   /** 智能回复引用：当用户在回合内连发多条或隔着干活步骤时，若机器人未手写 `> 引用`，首段自动挂上 `╭─` 引用胶囊。 */
   replyTo?: ReplyTarget | undefined;
@@ -87,9 +105,18 @@ export const BotBubbles = memo(function BotBubbles({
   const effectiveReplyText = replyToText ?? replyTo?.text;
   const effectiveReplyId = replyToId ?? replyTo?.id;
   const display = useDisplayText(text);
+  const [expanded, setExpanded] = useState(false);
+  const foldState = useMemo(
+    () =>
+      !streaming && !expanded && display.length > LONG_MESSAGE_FOLD_THRESHOLD
+        ? foldLongMessage(display)
+        : null,
+    [display, expanded, streaming],
+  );
+  const sourceDisplay = foldState ? foldState.preview : display;
   const normalizedDisplay = useMemo(
-    () => normalizeDirectiveCards(display),
-    [display],
+    () => normalizeDirectiveCards(sourceDisplay),
+    [sourceDisplay],
   );
   const segments = useMemo(
     () => splitBubbles(normalizedDisplay),
@@ -120,37 +147,43 @@ export const BotBubbles = memo(function BotBubbles({
           seg.quote ??
           (!hasExplicitQuote && i === 0 ? effectiveReplyText : undefined);
         const targetId = seg.quote ? undefined : effectiveReplyId;
+        const transitionDelay =
+          !animate || reduce || i >= (initial.current ?? 0)
+            ? 0
+            : delay + i * BEAT_SECONDS;
         return (
-          <motion.div
-            animate={{ opacity: 1, transform: "translateY(0px)" }}
-            className="chat-bubble-arrive"
-            data-slot="bubble-arriving"
-            initial={
-              !animate || i === 0
-                ? false
-                : { opacity: 0, transform: reduce ? "none" : "translateY(6px)" }
-            }
+          <SegmentRow
+            animateEntrance={Boolean(animate) && i > 0}
+            components={components}
             // 段落的序号就是它的身份：流式时只会在末尾追加，前面的段不会换位置。
             // biome-ignore lint/suspicious/noArrayIndexKey: 流式分段只在末尾追加，前序段落位置不变且没有独立 id
             key={i}
-            transition={{
-              delay:
-                !animate || reduce || i >= (initial.current ?? 0)
-                  ? 0
-                  : delay + i * BEAT_SECONDS,
-              duration: ENTRANCE_SECONDS,
-              ease: EASE_OUT,
-            }}
-          >
-            <Segment
-              components={components}
-              quote={effectiveQuote}
-              seg={seg}
-              targetMessageId={targetId ?? effectiveReplyId}
-            />
-          </motion.div>
+            kind={seg.kind}
+            quote={effectiveQuote}
+            reduce={Boolean(reduce)}
+            streaming={
+              streaming === undefined
+                ? undefined
+                : Boolean(streaming) && i === segments.length - 1
+            }
+            targetMessageId={targetId ?? effectiveReplyId}
+            text={seg.text}
+            title={seg.title}
+            transitionDelay={transitionDelay}
+            wide={seg.wide}
+          />
         );
       })}
+      {foldState?.folded && (
+        <button
+          className="mt-1 inline-flex w-fit items-center gap-1 rounded-full border border-border/60 bg-background/70 px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          data-testid="expand-long-message"
+          onClick={() => setExpanded(true)}
+          type="button"
+        >
+          {`展开完整内容（剩余 ${foldState.hiddenChars.toLocaleString("zh-CN")} 字）`}
+        </button>
+      )}
     </div>
   );
 });
@@ -515,46 +548,102 @@ function GithubConnectPill({
   );
 }
 
-function Segment({
-  seg,
-  components,
-  quote,
-  targetMessageId,
+const SegmentRow = memo(function SegmentRow({
+  animateEntrance,
+  reduce,
+  transitionDelay,
+  ...segmentProps
 }: {
-  seg: BubbleSegment;
+  animateEntrance: boolean;
+  reduce: boolean;
+  transitionDelay: number;
+  kind: BubbleSegment["kind"];
+  text: string;
+  title?: string | undefined;
+  wide: boolean;
   components: Record<string, unknown>;
   quote?: string | undefined;
   targetMessageId?: string | undefined;
+  streaming?: boolean | undefined;
+}) {
+  const transition = useMemo(
+    () =>
+      transitionDelay === 0
+        ? ARRIVE_ZERO_TRANSITION
+        : {
+            delay: transitionDelay,
+            duration: ENTRANCE_SECONDS,
+            ease: EASE_OUT,
+          },
+    [transitionDelay],
+  );
+  return (
+    <motion.div
+      animate={ARRIVE_ANIMATE}
+      className="chat-bubble-arrive"
+      data-slot="bubble-arriving"
+      initial={
+        animateEntrance
+          ? reduce
+            ? ARRIVE_INITIAL_PLAIN
+            : ARRIVE_INITIAL_SLIDE
+          : false
+      }
+      transition={transition}
+    >
+      <Segment {...segmentProps} />
+    </motion.div>
+  );
+});
+
+const Segment = memo(function Segment({
+  kind,
+  text,
+  title,
+  wide,
+  components,
+  quote,
+  targetMessageId,
+  streaming,
+}: {
+  kind: BubbleSegment["kind"];
+  text: string;
+  title?: string | undefined;
+  wide: boolean;
+  components: Record<string, unknown>;
+  quote?: string | undefined;
+  targetMessageId?: string | undefined;
+  streaming?: boolean | undefined;
 }) {
   const quoteNode = quote ? (
     <ReplyQuote targetMessageId={targetMessageId} text={quote} />
   ) : null;
-  if (seg.kind === "draft") {
+  if (kind === "draft") {
     return (
       <>
         {quoteNode}
-        <DraftCard text={seg.text} title={seg.title} />
+        <DraftCard text={text} title={title} />
       </>
     );
   }
-  if (seg.kind === "doc") {
+  if (kind === "doc") {
     return (
       <>
         {quoteNode}
-        <DocCard components={components} text={seg.text} title={seg.title} />
+        <DocCard components={components} text={text} title={title} />
       </>
     );
   }
-  if (seg.kind === "brief") {
+  if (kind === "brief") {
     return (
       <>
         {quoteNode}
-        <BriefCard components={components} text={seg.text} title={seg.title} />
+        <BriefCard components={components} text={text} title={title} />
       </>
     );
   }
-  if (seg.kind === "code") {
-    const statusCards = parseStatusCardsFence(seg.text);
+  if (kind === "code") {
+    const statusCards = parseStatusCardsFence(text);
     if (statusCards) {
       return (
         <>
@@ -563,7 +652,7 @@ function Segment({
         </>
       );
     }
-    const artifact = parseArtifactFence(seg.text);
+    const artifact = parseArtifactFence(text);
     if (artifact) {
       return (
         <>
@@ -573,8 +662,8 @@ function Segment({
       );
     }
   }
-  if (seg.kind === "text") {
-    const actionPill = parseActionPillSegment(seg.text);
+  if (kind === "text") {
+    const actionPill = parseActionPillSegment(text);
     if (actionPill) {
       return (
         <>
@@ -590,24 +679,27 @@ function Segment({
       <Bubble
         align="start"
         className={
-          seg.kind === "code" && /^\s*(`{3,}|~{3,})/.test(seg.text)
+          kind === "code" && /^\s*(`{3,}|~{3,})/.test(text)
             ? "chat-bubble-bare w-full"
-            : seg.wide
+            : wide
               ? "w-full"
               : "chat-bubble-fit"
         }
-        data-cb-bubble={seg.kind}
+        data-cb-bubble={kind}
         variant="ghost"
       >
-        <BubbleContent className={seg.wide ? "w-full" : undefined}>
-          <SmoothStreamdown components={components as never}>
-            {seg.text}
+        <BubbleContent className={wide ? "w-full" : undefined}>
+          <SmoothStreamdown
+            components={components as never}
+            streaming={streaming}
+          >
+            {text}
           </SmoothStreamdown>
         </BubbleContent>
       </Bubble>
     </>
   );
-}
+});
 
 function flashMessageElement(el: HTMLElement) {
   const bubble =

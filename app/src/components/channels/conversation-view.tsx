@@ -24,6 +24,7 @@ import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/cha
 import { deleteChatFile } from "@/lib/chat-files";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
+import type { BusySendMode } from "@/lib/conversations/send-mode";
 import { newId } from "../../lib/new-id";
 
 /** 默认值用同一个空数组：每次渲染新建 `[]` 会让 memo 过的 Composer 跟着每个 token 重渲。 */
@@ -89,6 +90,7 @@ export function ConversationView({
    */
   queueToServer?: (
     draft: ComposerDraft,
+    mode?: BusySendMode,
   ) => Promise<"queued" | "send" | "failed">;
   /** Shown above the composer. An error, or why this conversation is read-only. */
   notice?: ReactNode;
@@ -561,16 +563,19 @@ export function ConversationView({
   );
   const stopRun = useCallback(() => latest.current.onStop?.(), []);
   const retryStopRun = useCallback(() => latest.current.onRetryStop?.(), []);
-  const queueDraft = useCallback((draft: ComposerDraft) => {
-    const { queueToServer: toServer, submit: runSubmit } = latest.current;
-    if (!toServer) {
-      runSubmit(draft, true);
-      return;
-    }
-    void toServer(draft).then((outcome) => {
-      if (outcome === "send") latest.current.submit(draft, true);
-    });
-  }, []);
+  const queueDraft = useCallback(
+    (draft: ComposerDraft, mode?: BusySendMode) => {
+      const { queueToServer: toServer, submit: runSubmit } = latest.current;
+      if (!toServer) {
+        runSubmit(draft, true);
+        return;
+      }
+      void toServer(draft, mode).then((outcome) => {
+        if (outcome === "send") latest.current.submit(draft, true);
+      });
+    },
+    [],
+  );
   const removeQueued = useCallback((id: string) => {
     latest.current.apply({ id, type: "remove" });
   }, []);

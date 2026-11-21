@@ -8,6 +8,7 @@ import {
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 
 import { NotificationSettingsSection } from "@/components/settings/notification-settings";
+import { BusySendModePreference } from "@/components/settings/busy-send-mode-preference";
 import { PerfModePreference } from "@/components/settings/perf-mode-preference";
 import { PrivacyMaskPreference } from "@/components/settings/privacy-mask-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
@@ -101,6 +102,8 @@ function RouteComponent() {
           </Item>
           <Separator />
           <PerfModePreference />
+          <Separator />
+          <BusySendModePreference />
           <Separator />
           <PrivacyMaskPreference />
           <AppearancePreferences />

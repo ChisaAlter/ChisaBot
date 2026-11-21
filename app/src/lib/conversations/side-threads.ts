@@ -51,7 +51,12 @@ export type DeleteSideThreadVariables = {
 };
 
 export type LiveSteerResult =
-  | { kind: "queued"; status: string; id: string }
+  | {
+      kind: "queued";
+      status: string;
+      id: string;
+      steerAction?: "cut" | "next-step" | "segment-cut" | "queued";
+    }
   | { kind: "idle"; id: string }
   | { kind: "stopping"; id: string };
 
@@ -158,7 +163,7 @@ export async function sendLiveSteer(
     `/api/conversations/threads/${encodeURIComponent(threadId)}/inbox`,
     {
       method: "POST",
-      body: payload,
+      body: { ...payload, mode: "steer" },
       fallback: STEER_FALLBACK,
     },
   );
@@ -166,12 +171,21 @@ export async function sendLiveSteer(
     queued?: unknown;
     status?: unknown;
     stopping?: unknown;
+    steerAction?: unknown;
   } | null;
   if (body?.queued === true) {
+    const steerAction =
+      body.steerAction === "cut" ||
+      body.steerAction === "next-step" ||
+      body.steerAction === "segment-cut" ||
+      body.steerAction === "queued"
+        ? body.steerAction
+        : undefined;
     return {
       kind: "queued",
       status: typeof body.status === "string" ? body.status : "queued",
       id: payload.id,
+      ...(steerAction ? { steerAction } : {}),
     };
   }
   if (body?.stopping === true) {

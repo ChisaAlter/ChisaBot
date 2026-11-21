@@ -25,7 +25,11 @@ interface InFlightAttempt {
 
 interface LockState {
   currentEpoch: number;
-  leaseHolder: { worker: WorkerId; epoch: number; abortRequested: boolean } | null;
+  leaseHolder: {
+    worker: WorkerId;
+    epoch: number;
+    abortRequested: boolean;
+  } | null;
   runningAttempts: readonly InFlightAttempt[];
   committedEpochs: readonly number[];
   illegalDoubleRunDetected: boolean;
@@ -36,6 +40,7 @@ interface LockState {
 interface LockFaults {
   releaseWithoutEpochCheck?: boolean;
   writebackWithoutEpochCheck?: boolean;
+  steerCutWithoutEpochBump?: boolean;
 }
 
 const WORKERS: readonly WorkerId[] = ["reqA", "reqB"];
@@ -123,6 +128,51 @@ function createLockModel(
           };
         },
       },
+      {
+        name: "steerCutSupersede",
+        guard: (s) =>
+          s.leaseHolder !== null &&
+          !s.leaseHolder.abortRequested &&
+          s.currentEpoch < MAX_EPOCH,
+        apply: (s): LockState => {
+          const holder = s.leaseHolder;
+          if (!holder) return s;
+          if (faults.steerCutWithoutEpochBump) {
+            return {
+              ...s,
+              illegalDoubleRunDetected: true,
+              runningAttempts: [
+                ...s.runningAttempts,
+                {
+                  worker: holder.worker,
+                  epoch: holder.epoch,
+                  expiredOrAborted: false,
+                },
+              ],
+            };
+          }
+          const nextEpoch = s.currentEpoch + 1;
+          return {
+            ...s,
+            currentEpoch: nextEpoch,
+            leaseHolder: {
+              worker: holder.worker,
+              epoch: nextEpoch,
+              abortRequested: false,
+            },
+            runningAttempts: [
+              ...s.runningAttempts.map((a) =>
+                a.epoch === holder.epoch ? { ...a, expiredOrAborted: true } : a,
+              ),
+              {
+                worker: holder.worker,
+                epoch: nextEpoch,
+                expiredOrAborted: false,
+              },
+            ],
+          };
+        },
+      },
       ...WORKERS.map((worker) => ({
         name: `finishCommitAndRelease(${worker})`,
         guard: (s: Readonly<LockState>) =>
@@ -147,7 +197,10 @@ function createLockModel(
           let staleWriteFlag = s.illegalStaleWriteDetected;
           if (holdsCurrentLease) {
             nextCommitted = [...s.committedEpochs, attempt.epoch];
-          } else if (staleWriteAllowed && !s.committedEpochs.includes(attempt.epoch)) {
+          } else if (
+            staleWriteAllowed &&
+            !s.committedEpochs.includes(attempt.epoch)
+          ) {
             nextCommitted = [...s.committedEpochs, attempt.epoch];
             staleWriteFlag = true;
           }
@@ -269,7 +322,7 @@ describe("会话回合租约与栅栏锁形式化验证", () => {
     expect(result.counterexample?.failedInvariant).toBe(
       "fencingTokenProtectsLeaseAndTranscript",
     );
-    expect(result.counterexample?.actions.length).toBeGreaterThanOrEqual(4);
+    expect(result.counterexample?.actions.length).toBeGreaterThanOrEqual(3);
   });
 
   test("变异体 2 捕杀：过期/被中止回合漏检栅栏令牌写回时被精确拦截", () => {
@@ -283,6 +336,21 @@ describe("会话回合租约与栅栏锁形式化验证", () => {
     expect(result.counterexample?.kind).toBe("invariant");
     expect(result.counterexample?.failedInvariant).toBe(
       "fencingTokenProtectsLeaseAndTranscript",
+    );
+    expect(result.counterexample?.actions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("变异体 3 捕杀：STEER_CUT 抢占续跑未递增 epoch 时破坏单活互斥与递增序列", () => {
+    const result = exploreModel(
+      createLockModel(
+        { steerCutWithoutEpochBump: true },
+        "变异体-steerCut未递增epoch",
+      ),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.counterexample?.kind).toBe("invariant");
+    expect(result.counterexample?.failedInvariant).toBe(
+      "singleActiveLeaseExclusion",
     );
     expect(result.counterexample?.actions.length).toBeGreaterThanOrEqual(2);
   });

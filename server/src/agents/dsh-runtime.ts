@@ -24,10 +24,12 @@ import {
 } from "../confirmations/context";
 import { readStepUsage } from "../context-usage";
 import type { ConversationBindings } from "../conversations/bindings";
+import { sharedDshClientPool } from "../conversations/dsh-client-pool";
 import {
   DshEventProjection,
   type DshLiveFrame,
   type DshTurnReason,
+  isSteerCutReason,
 } from "../conversations/dsh-events";
 import { inboxInstructions } from "../conversations/inbox-message";
 import type { ModelKeyPool } from "../conversations/key-pool";
@@ -252,6 +254,17 @@ function migrationContext(
   });
 }
 
+const SETTLEMENT_EVENT_TYPES = new Set([
+  "assistant/message",
+  "assistant/attempt",
+  "tool/call",
+  "tool/result",
+  "turn/end",
+  "user/message",
+  "plugin:chisabot/waiting",
+  "plugin:chisabot/loop-stop",
+]);
+
 /** Transitional AG-UI adapter: the existing clients consume events; DSH owns persistent execution. */
 export class DshRuntimeAgent extends AbstractAgent {
   readonly acknowledgesStop = true;
@@ -259,8 +272,10 @@ export class DshRuntimeAgent extends AbstractAgent {
   private active?: {
     abort: AbortController;
     client?: DshHostClient;
+    endpoint?: string;
     sessionId?: string;
     runId: string;
+    input?: RunAgentInput;
     toolAbort: AbortController;
     stopping?: Promise<unknown>;
   };
@@ -347,6 +362,7 @@ export class DshRuntimeAgent extends AbstractAgent {
         abort: new AbortController(),
         toolAbort: new AbortController(),
         runId: input.runId,
+        input,
       } as NonNullable<DshRuntimeAgent["active"]>;
       this.active = active;
       const outerSignal = currentToolAbort();
@@ -381,9 +397,10 @@ export class DshRuntimeAgent extends AbstractAgent {
         const endpoint = JSON.parse(
           await readFile(target.connectionFile, "utf8"),
         ) as { endpoint: string };
-        let client = await DshHostClient.connect(endpoint.endpoint);
+        let client = await sharedDshClientPool.acquire(endpoint.endpoint);
         active.client = client;
-        const health = await client.health();
+        active.endpoint = endpoint.endpoint;
+        const health = client.lastHealth ?? (await client.health());
         if (health.ownerUserId !== scope.actorId || health.protocol !== 1)
           throw new Error("DSH owner or plugin protocol does not match.");
         const resolved =
@@ -808,6 +825,7 @@ export class DshRuntimeAgent extends AbstractAgent {
             else emit(event);
           },
           recovered?.input.messages ?? input.messages,
+          new Set([requestId]),
         );
         projection.baseline(page.records, page.cursor);
         if (!recovered)
@@ -889,7 +907,7 @@ export class DshRuntimeAgent extends AbstractAgent {
                   current.generation !== health.generation ||
                   current.ownerUserId !== scope.actorId
                 ) {
-                  await next.close();
+                  await sharedDshClientPool.invalidate(next);
                   // The old generation can no longer execute this run. Settle its observation
                   // just as the startup-recovery path does; pending approval/effect rows stay
                   // intact and are resumed only by their durable decision.
@@ -910,7 +928,8 @@ export class DshRuntimeAgent extends AbstractAgent {
                 }
                 const old = client;
                 client = active.client = next;
-                await old.close();
+                active.endpoint = address.endpoint;
+                await sharedDshClientPool.invalidate(old);
                 return;
               } catch (error) {
                 if (
@@ -936,14 +955,16 @@ export class DshRuntimeAgent extends AbstractAgent {
                 follow.signal,
               )) {
                 if (frame.type === "snapshot") {
-                  const missing = await followedClient.eventsAfter(
-                    binding.sessionId,
-                    projection.cursor,
-                    frame.cursor,
-                    follow.signal,
-                  );
-                  for (const record of missing.records)
-                    projection.durable(record.event);
+                  if (frame.cursor > projection.cursor) {
+                    const missing = await followedClient.eventsAfter(
+                      binding.sessionId,
+                      projection.cursor,
+                      frame.cursor,
+                      follow.signal,
+                    );
+                    for (const record of missing.records)
+                      projection.durable(record.event);
+                  }
                   projection.restoreLive(frame.assistantStream);
                   if (replaying) {
                     emit({
@@ -966,17 +987,24 @@ export class DshRuntimeAgent extends AbstractAgent {
                   }
                   openedResolve();
                 } else if (frame.type === "event") {
-                  // Session event notifications precede persistence's bounded flush. Project only
-                  // a checkpointed prefix so a killed Host cannot reuse a committed source seq.
+                  // Session event notifications precede persistence's bounded flush. Project
+                  // contiguous non-settlement events immediately, while checkpointing settlements.
                   if (frame.event.seq > projection.cursor) {
-                    const missing = await followedClient.eventsAfter(
-                      binding.sessionId,
-                      projection.cursor,
-                      frame.event.seq,
-                      follow.signal,
-                    );
-                    for (const record of missing.records)
-                      projection.durable(record.event);
+                    if (
+                      frame.event.seq === projection.cursor + 1 &&
+                      !SETTLEMENT_EVENT_TYPES.has(frame.event.type)
+                    ) {
+                      projection.durable(frame.event);
+                    } else {
+                      const missing = await followedClient.eventsAfter(
+                        binding.sessionId,
+                        projection.cursor,
+                        frame.event.seq,
+                        follow.signal,
+                      );
+                      for (const record of missing.records)
+                        projection.durable(record.event);
+                    }
                   }
                 } else projection.live(frame.frame as DshLiveFrame);
               }
@@ -1050,75 +1078,99 @@ export class DshRuntimeAgent extends AbstractAgent {
           input.runId,
           "observing",
         );
-        let result: { reason: string };
-        do {
-          if (
-            (
-              await this.configuration.binding.journal?.get(
-                input.threadId,
-                input.runId,
-              )
-            )?.stop_requested
-          )
-            active.abort.abort();
-          if (streamError) throw streamError;
-          try {
-            if (active.abort.signal.aborted) await this.stopActive(active);
-            result = await client.wait(binding.sessionId, {
-              timeoutMs: 10_000,
-              afterSeq: page.cursor,
-            });
-          } catch {
+        let waitAfterSeq = page.cursor;
+        for (;;) {
+          let result: { reason: string };
+          do {
+            if (
+              (
+                await this.configuration.binding.journal?.get(
+                  input.threadId,
+                  input.runId,
+                )
+              )?.stop_requested
+            )
+              active.abort.abort();
             if (streamError) throw streamError;
-            await reconnect();
-            result = { reason: "timeout" };
-          }
-          if (result.reason === "timeout" && recovered) {
-            /*
-             * 进程重启接管的回合只有在内核里还留着在途执行时才值得继续等。
-             * 会话已空闲（prompt 随旧进程消失，也没有等待中的决议）意味着
-             * 永远等不到完成事件——drain 会被卡死。按 interrupted 收尾，
-             * 并把仍停在 dispatching 的操作统一落 outcome_unknown。
-             */
-            let alive = true;
             try {
-              const status = await client.health();
-              const session = status.sessions.find(
-                (x) => x.sessionId === binding.sessionId,
-              );
-              alive = Boolean(
-                session && (session.state !== "idle" || session.waiting),
-              );
+              if (active.abort.signal.aborted) await this.stopActive(active);
+              result = await client.wait(binding.sessionId, {
+                timeoutMs: 10_000,
+                afterSeq: waitAfterSeq,
+              });
             } catch {
-              // 探活失败按存活处理；下一次 wait 超时会重新检查。
+              if (streamError) throw streamError;
+              await reconnect();
+              result = { reason: "timeout" };
             }
-            if (!alive) {
-              this.executionSettled = true;
-              await this.configuration.binding.journal?.status(
-                input.threadId,
-                input.runId,
-                "interrupted",
-              );
-              await this.configuration.binding.gateway.abandonRun(input.runId);
-              throw new Error(
-                "执行内核中已没有这一轮的在途执行，本轮按未完成收尾。已完成的操作保留；未确认的操作需要核对后再继续。",
-              );
+            if (result.reason === "timeout" && recovered) {
+              /*
+               * 进程重启接管的回合只有在内核里还留着在途执行时才值得继续等。
+               * 会话已空闲（prompt 随旧进程消失，也没有等待中的决议）意味着
+               * 永远等不到完成事件——drain 会被卡死。按 interrupted 收尾，
+               * 并把仍停在 dispatching 的操作统一落 outcome_unknown。
+               */
+              let alive = true;
+              try {
+                const status = await client.health();
+                const session = status.sessions.find(
+                  (x) => x.sessionId === binding.sessionId,
+                );
+                alive = Boolean(
+                  session && (session.state !== "idle" || session.waiting),
+                );
+              } catch {
+                // 探活失败按存活处理；下一次 wait 超时会重新检查。
+              }
+              if (!alive) {
+                this.executionSettled = true;
+                await this.configuration.binding.journal?.status(
+                  input.threadId,
+                  input.runId,
+                  "interrupted",
+                );
+                await this.configuration.binding.gateway.abandonRun(
+                  input.runId,
+                );
+                throw new Error(
+                  "执行内核中已没有这一轮的在途执行，本轮按未完成收尾。已完成的操作保留；未确认的操作需要核对后再继续。",
+                );
+              }
+            }
+          } while (result.reason === "timeout");
+          if (active.abort.signal.aborted)
+            await this.configuration.binding.gateway.whenIdle(
+              input.threadId,
+              input.runId,
+            );
+          const settled = await client.eventsAfter(
+            binding.sessionId,
+            projection.cursor,
+          );
+          for (const record of settled.records)
+            if (record.event.seq > projection.cursor)
+              projection.durable(record.event);
+          if (
+            !active.abort.signal.aborted &&
+            isSteerCutReason(projection.lastReason)
+          ) {
+            const steerCheck = await client.health();
+            const activeSession = steerCheck.sessions.find(
+              (x) => x.sessionId === binding.sessionId,
+            );
+            if (
+              activeSession &&
+              !activeSession.stopped &&
+              activeSession.state !== "idle" &&
+              !activeSession.waiting
+            ) {
+              waitAfterSeq = projection.cursor;
+              continue;
             }
           }
-        } while (result.reason === "timeout");
-        if (active.abort.signal.aborted)
-          await this.configuration.binding.gateway.whenIdle(
-            input.threadId,
-            input.runId,
-          );
+          break;
+        }
         this.executionSettled = true;
-        const settled = await client.eventsAfter(
-          binding.sessionId,
-          projection.cursor,
-        );
-        for (const record of settled.records)
-          if (record.event.seq > projection.cursor)
-            projection.durable(record.event);
         follow.abort();
         await observing;
         if (streamError) throw streamError;
@@ -1160,7 +1212,8 @@ export class DshRuntimeAgent extends AbstractAgent {
           } as BaseEvent);
         } else if (
           active.abort.signal.aborted ||
-          projection.lastReason?.kind === "aborted"
+          (projection.lastReason?.kind === "aborted" &&
+            !isSteerCutReason(projection.lastReason))
         )
           emit({
             type: EventType.RUN_ERROR,
@@ -1264,7 +1317,18 @@ export class DshRuntimeAgent extends AbstractAgent {
               /* An active or unreachable Host retains its execution; recovery reconciles it. */
             }
           }
-          await active.client?.close();
+          if (active.client) {
+            if (
+              this.executionSettled &&
+              !active.abort.signal.aborted &&
+              active.endpoint &&
+              active.client.isConnected
+            ) {
+              sharedDshClientPool.release(active.endpoint, active.client);
+            } else {
+              await sharedDshClientPool.invalidate(active.client);
+            }
+          }
           if (this.active === active) this.active = undefined;
           subscriber.complete();
         });
@@ -1285,6 +1349,83 @@ export class DshRuntimeAgent extends AbstractAgent {
         });
     return active.stopping;
   }
+  async pushMidTurn(input: {
+    id: string;
+    message: Message;
+    mode: "steer" | "queue";
+  }): Promise<{ delivered: boolean; action?: "cut" | "next-step" | "queued" }> {
+    const active = this.active;
+    if (
+      !active?.client ||
+      !active.sessionId ||
+      !active.input ||
+      active.abort.signal.aborted
+    )
+      return { delivered: false };
+    try {
+      const prepared = this.configuration.prepareInput
+        ? await this.configuration.prepareInput({
+            ...active.input,
+            messages: [input.message],
+          })
+        : { ...active.input, messages: [input.message] };
+      const content = dshUserContent(prepared.messages);
+      if (!content.length) return { delivered: false };
+      const instructions = inboxInstructions([input.message]);
+      if (input.mode === "steer") {
+        const result = await active.client.steer({
+          sessionId: active.sessionId,
+          runId: active.runId,
+          requestId: input.id,
+          content,
+          ...(instructions.length ? { instructions } : {}),
+        });
+        return { delivered: true, action: result.action };
+      }
+      await active.client.prompt({
+        sessionId: active.sessionId,
+        requestId: input.id,
+        mode: "queue",
+        content,
+      });
+      return { delivered: true, action: "queued" };
+    } catch {
+      return { delivered: false };
+    }
+  }
+
+  async updateMidTurnQueue(input: {
+    itemId: string;
+    action:
+      | { kind: "steer" }
+      | { kind: "remove" }
+      | { kind: "edit"; text: string };
+  }): Promise<{ updated: boolean; action?: "cut" | "next-step" | "queued" }> {
+    const active = this.active;
+    if (!active?.client || !active.sessionId || active.abort.signal.aborted)
+      return { updated: false };
+    try {
+      const result = await active.client.updateQueuedItem({
+        sessionId: active.sessionId,
+        runId: active.runId,
+        itemId: input.itemId,
+        action:
+          input.action.kind === "edit"
+            ? {
+                kind: "edit",
+                content: [{ type: "text", text: input.action.text }],
+              }
+            : input.action,
+      });
+      return {
+        updated: result.accepted,
+        ...(result.action ? { action: result.action } : {}),
+      };
+    } catch {
+      return { updated: false };
+    }
+  }
+
   override abortRun() {
     if (this.active) void this.stopActive(this.active)?.catch(() => {});
   }

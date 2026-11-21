@@ -25,6 +25,8 @@ export const inject = [
   "attachments",
 ];
 
+const STEER_CUT = "chisabot/steer";
+
 const requiredText = (value, label) => {
   if (typeof value !== "string" || !value.trim() || value.length > 512)
     throw new Error(`Invalid ${label}.`);
@@ -92,9 +94,18 @@ export async function apply(ctx, config) {
   const pending = new Map();
   ctx.on("session/event", (session, event) => {
     const state = sessions.get(session.id);
+    if (state && event.type === "turn/start") {
+      state.phase = "model";
+      state.currentTurn = event.data?.turn ?? state.currentTurn;
+      state.inFlightTools?.clear();
+    }
     if (event.type === "tool/call") {
       state?.calls.set(event.data.callId, { ...event.data, seq: event.seq });
       state?.toolTurns.add(event.data.turn);
+      if (state) {
+        state.phase = "tools";
+        state.inFlightTools?.add(event.data.callId);
+      }
     }
     // The last model reply of each turn, for the promise-without-action guard.
     if (state && event.type === "assistant/message")
@@ -116,6 +127,14 @@ export async function apply(ctx, config) {
       state.resultIds.push(
         `${session.id}:${key}:${event.data.message.toolCallId}`,
       );
+      const finishedCallId = event.data.message?.toolCallId;
+      if (finishedCallId) state.inFlightTools?.delete(finishedCallId);
+      if ((state.inFlightTools?.size ?? 0) === 0 && state.phase === "tools")
+        state.phase = "model";
+    }
+    if (state && event.type === "turn/end") {
+      state.phase = "boundary";
+      state.inFlightTools?.clear();
     }
   });
   const serialized = (id, work) => {
@@ -225,6 +244,9 @@ export async function apply(ctx, config) {
   }
 
   function compose(agentCtx, agent, state) {
+    state.phase = "boundary";
+    state.inFlightTools = new Set();
+    state.currentTurn = 0;
     state.steeringInstructions = [];
     state.toolTurns = new Set();
     state.nudgedTurns = new Set();
@@ -542,6 +564,9 @@ export async function apply(ctx, config) {
           : `route-${randomUUID()}`;
       let routeFiber;
       let keyRef;
+      let providerId;
+      let connectionFingerprint;
+      let reusedProvider = false;
       if (binding.connection) {
         const connection = binding.connection;
         if (
@@ -562,28 +587,55 @@ export async function apply(ctx, config) {
           url.hash
         )
           throw new Error("Invalid model endpoint.");
-        const provider = `chisabot-${randomUUID()}`;
-        if (connection.apiKey) {
-          keyRef = `CHISABOT_ROUTE_${randomUUID().replaceAll("-", "_")}`;
-          keyRefs.add(keyRef);
-          await saveKeyRefs();
-          await ctx.credentials.set(keyRef, connection.apiKey);
-        }
-        try {
-          await updateProvider(provider, {
-            api: connection.api,
-            baseURL: connection.baseURL,
-            models: connection.models,
-            ...(keyRef ? { apiKeyEnv: keyRef } : {}),
-            // No implicit deadline in either HTTP setup or an idle response stream.
-            // Explicit caller deadlines still apply; user stop propagates its signal.
-            timeoutMs: connection.timeoutMs ?? 0,
-            streamIdleTimeoutMs: 0,
-          });
-          routeFiber = { dispose: () => updateProvider(provider, undefined) };
-        } catch (error) {
-          await removeKey(keyRef);
-          throw error;
+        connectionFingerprint = JSON.stringify({
+          api: connection.api,
+          baseURL: connection.baseURL,
+          target: connection.target ?? null,
+          models: connection.models,
+          timeoutMs: connection.timeoutMs ?? 0,
+          hasKey: Boolean(connection.apiKey),
+          modelProxy: input.connection?.modelProxy === true,
+        });
+        if (
+          state?.routeFiber &&
+          state.providerId &&
+          state.connectionFingerprint === connectionFingerprint &&
+          (!connection.apiKey || state.keyRef)
+        ) {
+          reusedProvider = true;
+          providerId = state.providerId;
+          routeFiber = state.routeFiber;
+          keyRef = state.keyRef;
+          if (connection.apiKey && keyRef) {
+            await ctx.credentials.set(keyRef, connection.apiKey);
+          }
+        } else {
+          providerId = `chisabot-${randomUUID()}`;
+          if (connection.apiKey) {
+            keyRef = `CHISABOT_ROUTE_${randomUUID().replaceAll("-", "_")}`;
+            keyRefs.add(keyRef);
+            await saveKeyRefs();
+            await ctx.credentials.set(keyRef, connection.apiKey);
+          }
+          try {
+            await updateProvider(providerId, {
+              api: connection.api,
+              baseURL: connection.baseURL,
+              models: connection.models,
+              ...(keyRef ? { apiKeyEnv: keyRef } : {}),
+              // No implicit deadline in either HTTP setup or an idle response stream.
+              // Explicit caller deadlines still apply; user stop propagates its signal.
+              timeoutMs: connection.timeoutMs ?? 0,
+              streamIdleTimeoutMs: 0,
+            });
+            const createdProviderId = providerId;
+            routeFiber = {
+              dispose: () => updateProvider(createdProviderId, undefined),
+            };
+          } catch (error) {
+            await removeKey(keyRef);
+            throw error;
+          }
         }
         // The provider id is per binding; the model breaker keys on the real endpoint and model
         // so a dead model stays skipped across turns, sessions and bots of this Host.
@@ -592,7 +644,7 @@ export async function apply(ctx, config) {
           ...(binding.model.fallbacks ?? []),
         ]) {
           candidate.breakerKey = `${connection.baseURL}\u0000${connection.target ?? ""}\u0000${candidate.model}`;
-          candidate.provider = provider;
+          candidate.provider = providerId;
         }
         delete binding.connection;
       }
@@ -606,8 +658,10 @@ export async function apply(ctx, config) {
           )
             throw new Error("Session binding conflict.");
           for (const dispose of state.disposers.splice(0)) await dispose();
-          await state.routeFiber?.dispose();
-          await removeKey(state.keyRef);
+          if (!reusedProvider) {
+            await state.routeFiber?.dispose();
+            await removeKey(state.keyRef);
+          }
           router.routes.delete(state.routeId);
           state.binding = binding;
           state.stopped = false;
@@ -663,6 +717,8 @@ export async function apply(ctx, config) {
           );
         state.routeFiber = routeFiber;
         state.keyRef = keyRef;
+        state.providerId = providerId;
+        state.connectionFingerprint = connectionFingerprint;
         state.modelProxy = input.connection?.modelProxy === true;
         await ctx.sessions.flush(state.handle.agent.session);
         return {
@@ -690,7 +746,9 @@ export async function apply(ctx, config) {
         requestBody: "buffered",
         fetch: async (request) => {
           try {
-            return Response.json(await handler(await request.json()));
+            return Response.json(
+              await handler(await request.json(), request.signal),
+            );
           } catch (error) {
             return Response.json({ error: error.message }, { status: 409 });
           }
@@ -766,6 +824,167 @@ export async function apply(ctx, config) {
       return { accepted: true, generation, sessionId: input.sessionId };
     }),
   );
+  function applySteerDecision(state, agent, item, requestId) {
+    const inFlight = state.inFlightTools?.size ?? 0;
+    if (
+      !state.waiting &&
+      state.phase === "model" &&
+      inFlight === 0 &&
+      agent.status === "running"
+    ) {
+      agent.inbox.remove(item.id);
+      agent.cancel({ kind: "hook", reason: STEER_CUT }, { keepInbox: true });
+      agent.followup(item);
+      if (
+        agent.inbox.nextTurn.length > 1 &&
+        agent.inbox.nextTurn[0]?.id !== item.id
+      ) {
+        agent.inbox.remove(item.id);
+        agent.inbox.prepend("next-turn", item);
+      }
+      return { action: "cut", flush: true };
+    }
+    if (state.phase === "tools" || inFlight > 0) {
+      if (agent.inbox.nextTurn.some((entry) => entry.id === item.id)) {
+        agent.inbox.remove(item.id);
+        agent.steer(item);
+      }
+      void invokeGateway(
+        state,
+        "steer-signal",
+        {
+          sessionId: state.binding.sessionId,
+          runId: state.binding.runId,
+          requestId,
+          phase: "tools",
+        },
+        AbortSignal.timeout(3_000),
+      ).catch(() => {});
+      return {
+        action: "next-step",
+        flush: false,
+        inFlightTools: [...(state.inFlightTools ?? [])],
+      };
+    }
+    if (
+      agent.status === "running" &&
+      !state.waiting &&
+      agent.inbox.nextTurn.some((entry) => entry.id === item.id)
+    ) {
+      agent.inbox.remove(item.id);
+      agent.steer(item);
+    }
+    return { action: "queued", flush: false };
+  }
+
+  route("steer", (input, signal) =>
+    serialized(requiredText(input.sessionId, "sessionId"), async () => {
+      const state = sessions.get(input.sessionId);
+      if (!state || state.binding.runId !== input.runId)
+        throw new Error("The requested run does not own this session.");
+      if (state.stopped) throw new Error("This run was stopped.");
+      const requestId = requiredText(input.requestId, "requestId");
+      const content = Array.isArray(input.content) ? input.content : [];
+      if (content.length === 0) throw new Error("Steer content is required.");
+      const instructions = Array.isArray(input.instructions)
+        ? input.instructions.filter(
+            (text) => typeof text === "string" && text.trim().length > 0,
+          )
+        : [];
+      if (instructions.length > 0) {
+        state.steeringInstructions.push(...instructions);
+      }
+      const agent = state.handle.agent;
+      const inFlight = state.inFlightTools?.size ?? 0;
+      const mode =
+        state.phase === "model" && inFlight === 0
+          ? "queue"
+          : agent.status === "running" && !state.waiting
+            ? "steer"
+            : "queue";
+      await ctx.sessionController.prompt(
+        {
+          sessionId: input.sessionId,
+          requestId,
+          mode,
+          content,
+        },
+        signal ?? new AbortController().signal,
+      );
+      const item =
+        agent.inbox.nextTurn.find(
+          (msg) =>
+            msg.source?.kind === "user" && msg.source.rpcId === requestId,
+        ) ??
+        agent.inbox.nextStep.find(
+          (msg) =>
+            msg.source?.kind === "user" && msg.source.rpcId === requestId,
+        );
+      if (!item) {
+        return {
+          accepted: true,
+          action:
+            state.phase === "tools" || inFlight > 0 ? "next-step" : "queued",
+          phase: state.phase ?? "boundary",
+          ...(inFlight > 0
+            ? { inFlightTools: [...(state.inFlightTools ?? [])] }
+            : {}),
+        };
+      }
+      const decision = applySteerDecision(state, agent, item, requestId);
+      if (decision.flush) await ctx.sessions.flush(agent.session);
+      return {
+        accepted: true,
+        action: decision.action,
+        phase: state.phase ?? "boundary",
+        ...(decision.inFlightTools
+          ? { inFlightTools: decision.inFlightTools }
+          : {}),
+      };
+    }),
+  );
+  route("update-queue", (input) =>
+    serialized(requiredText(input.sessionId, "sessionId"), async () => {
+      const state = sessions.get(input.sessionId);
+      if (!state || state.binding.runId !== input.runId)
+        throw new Error("The requested run does not own this session.");
+      const itemId = requiredText(input.itemId, "itemId");
+      const agent = state.handle.agent;
+      const pendingItem =
+        agent.inbox.nextTurn.find(
+          (msg) =>
+            msg.id === itemId ||
+            (msg.source?.kind === "user" && msg.source.rpcId === itemId),
+        ) ??
+        agent.inbox.nextStep.find(
+          (msg) =>
+            msg.id === itemId ||
+            (msg.source?.kind === "user" && msg.source.rpcId === itemId),
+        );
+      if (!pendingItem) return { accepted: false };
+      if (input.action?.kind === "steer") {
+        if (state.stopped) throw new Error("This run was stopped.");
+        const rpcId =
+          pendingItem.source?.kind === "user" &&
+          typeof pendingItem.source.rpcId === "string"
+            ? pendingItem.source.rpcId
+            : itemId;
+        const decision = applySteerDecision(state, agent, pendingItem, rpcId);
+        if (decision.flush) await ctx.sessions.flush(agent.session);
+        return {
+          accepted: true,
+          action: decision.action,
+          phase: state.phase ?? "boundary",
+        };
+      }
+      await ctx.sessionController.updateQueue({
+        sessionId: input.sessionId,
+        itemId: pendingItem.id,
+        action: input.action,
+      });
+      return { accepted: true };
+    }),
+  );
   route("release", (input) =>
     serialized(requiredText(input.sessionId, "sessionId"), async () => {
       const state = sessions.get(input.sessionId);
@@ -778,6 +997,8 @@ export async function apply(ctx, config) {
       await removeKey(state.keyRef);
       state.routeFiber = undefined;
       state.keyRef = undefined;
+      state.providerId = undefined;
+      state.connectionFingerprint = undefined;
       delete state.binding.toolCapability;
       router.routes.delete(state.routeId);
       return { released: true };
@@ -799,6 +1020,8 @@ export async function apply(ctx, config) {
             sessionId: x.binding.sessionId,
             runId: x.binding.runId,
             state: x.handle.agent.status,
+            phase: x.phase ?? "boundary",
+            inFlightTools: x.inFlightTools?.size ?? 0,
             stopped: x.stopped,
             ...(x.waiting ? { waiting: x.waiting } : {}),
           })),

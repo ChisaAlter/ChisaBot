@@ -30,12 +30,15 @@ export function inboxMessageText(message: { content?: unknown }): string {
  * 运行结束时还在排队的（入队和结束撞上了），由客户端按普通消息发出去，不会丢。
  */
 export type QueuedStatus = "sending" | "queued" | "paused" | "failed";
+export type QueuedSteerAction = "cut" | "next-step" | "segment-cut" | "queued";
 export type QueuedMessage = {
   id: string;
   text: string;
   message?: InboxMessage;
   skillIds?: string[];
   status: QueuedStatus;
+  deliveryMode?: "steer" | "queue";
+  steerAction?: QueuedSteerAction;
   at: number;
   /**
    * 别的设备排的（全端同步，DESIGN.md §42）：这里只显示，回答结束时不由这台设备补发——补发只归排它的那台，
@@ -163,8 +166,11 @@ export async function queueMessage(
   id: string = typeof draft === "string"
     ? crypto.randomUUID()
     : draft.message.id,
-  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> & {
+    mode?: "steer" | "queue";
+  } = {},
 ): Promise<"queued" | "send" | "failed"> {
+  const mode = options.mode;
   const text =
     typeof draft === "string" ? draft : inboxMessageText(draft.message);
   const item: QueuedMessage = {
@@ -177,6 +183,7 @@ export async function queueMessage(
           skillIds: draft.skillIds,
         }),
     status: "sending",
+    ...(mode ? { deliveryMode: mode } : {}),
     at: Date.now(),
   };
   rememberOwn(id);
@@ -184,29 +191,38 @@ export async function queueMessage(
     ...queuedFor(threadId).filter((other) => other.id !== id),
     item,
   ]);
-  const update = (status: QueuedStatus) =>
+  const update = (
+    status: QueuedStatus,
+    extra?: {
+      deliveryMode?: "steer" | "queue";
+      steerAction?: QueuedSteerAction;
+    },
+  ) =>
     set(
       threadId,
       queuedFor(threadId).map((other) =>
-        other.id === id ? { ...other, status } : other,
+        other.id === id ? { ...other, status, ...extra } : other,
       ),
     );
   try {
     await draftFilesSubmitting(item.message?.content, threadId);
     const post = async () => {
+      const baseBody =
+        typeof draft === "string"
+          ? { id, text }
+          : { id, message: item.message, skillIds: item.skillIds };
       const response = await tryClient(api(threadId), {
         ...options,
         method: "POST",
-        body:
-          typeof draft === "string"
-            ? { id, text }
-            : { id, message: item.message, skillIds: item.skillIds },
+        body: mode ? { ...baseBody, mode } : baseBody,
       });
       if (!response.ok) throw new Error(String(response.status));
       const body = (await response.json()) as {
         queued?: boolean;
         status?: string;
         stopping?: boolean;
+        mode?: "steer" | "queue";
+        steerAction?: QueuedSteerAction;
       } | null;
       if (!body || typeof body.queued !== "boolean")
         throw new Error("Invalid inbox response");
@@ -240,6 +256,10 @@ export async function queueMessage(
         ["paused", "owed", "stopped"].includes(body.status ?? "")
           ? "paused"
           : "queued",
+        {
+          ...(body.mode ? { deliveryMode: body.mode } : {}),
+          ...(body.steerAction ? { steerAction: body.steerAction } : {}),
+        },
       );
     draftFilesAccepted(item.message?.content);
     return "queued";
@@ -247,6 +267,106 @@ export async function queueMessage(
     update("failed");
     return "failed";
   }
+}
+
+export async function patchInboxMessage(
+  threadId: string,
+  payload:
+    | { id: string; action: "steer" | "remove" }
+    | { id: string; action: "edit"; text: string },
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<{ ok: boolean; steerAction?: QueuedSteerAction }> {
+  try {
+    const response = await tryClient(api(threadId), {
+      ...options,
+      method: "PATCH",
+      body: payload,
+    });
+    if (!response.ok) return { ok: false };
+    const body = (await response.json()) as {
+      ok?: boolean;
+      withdrawn?: boolean;
+      steerAction?: QueuedSteerAction;
+      item?: {
+        id: string;
+        status?: string;
+        deliveryMode?: "steer" | "queue";
+        message?: InboxMessage;
+      };
+    } | null;
+    if (payload.action === "remove") {
+      if (body?.withdrawn === true) {
+        set(
+          threadId,
+          queuedFor(threadId).filter((other) => other.id !== payload.id),
+        );
+        return { ok: true };
+      }
+      return { ok: false };
+    }
+    if (payload.action === "edit") {
+      const trimmed = payload.text.trim();
+      set(
+        threadId,
+        queuedFor(threadId).map((other) =>
+          other.id === payload.id
+            ? {
+                ...other,
+                text: trimmed,
+                ...(body?.item?.message
+                  ? { message: body.item.message }
+                  : other.message
+                    ? {
+                        message: {
+                          ...other.message,
+                          content: trimmed,
+                        } as InboxMessage,
+                      }
+                    : {}),
+              }
+            : other,
+        ),
+      );
+      return { ok: true };
+    }
+    set(
+      threadId,
+      queuedFor(threadId).map((other) =>
+        other.id === payload.id
+          ? {
+              ...other,
+              deliveryMode: "steer",
+              ...(body?.steerAction ? { steerAction: body.steerAction } : {}),
+            }
+          : other,
+      ),
+    );
+    return {
+      ok: true,
+      ...(body?.steerAction ? { steerAction: body.steerAction } : {}),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function promoteAllQueued(
+  threadId: string,
+  options: Pick<ClientOptions, "signal" | "timeoutMs"> = {},
+): Promise<number> {
+  const candidates = queuedFor(threadId).filter(
+    (entry) => entry.status === "queued" && entry.kind !== "worker_result",
+  );
+  let promoted = 0;
+  for (const entry of candidates) {
+    const res = await patchInboxMessage(
+      threadId,
+      { id: entry.id, action: "steer" },
+      options,
+    );
+    if (res.ok) promoted += 1;
+  }
+  return promoted;
 }
 
 /** 撤回一条还没被读到的。服务器那边已经读了就撤不回（返回 false，气泡等快照来了自己消失）。 */
@@ -309,6 +429,7 @@ export type InboxState = {
     id: string;
     status: string;
     kind: string;
+    deliveryMode?: "steer" | "queue";
     message: { content?: unknown; metadata?: InboxMessage["metadata"] };
   }[];
 };
@@ -361,6 +482,7 @@ export function applyInboxState(threadId: string, state: InboxState) {
         ...rest,
         ...visibleMessage(item),
         skillIds: item.message.metadata?.chisabotInbox?.skillIds,
+        ...(item.deliveryMode ? { deliveryMode: item.deliveryMode } : {}),
         // A failed send stays failed until the person retries it; the server still holding the
         // row as queued must not turn it back into something this tab sends on its own.
         status:
@@ -392,6 +514,7 @@ export function applyInboxState(threadId: string, state: InboxState) {
         text,
         ...visibleMessage(item),
         skillIds: item.message.metadata?.chisabotInbox?.skillIds,
+        ...(item.deliveryMode ? { deliveryMode: item.deliveryMode } : {}),
         kind: item.kind === "worker_result" ? "worker_result" : "message",
         status: item.status === "queued" && !state.paused ? "queued" : "paused",
         at: Date.now(),

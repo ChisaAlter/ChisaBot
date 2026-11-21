@@ -741,14 +741,27 @@ type FrontendRelay = {
   timer: ReturnType<typeof setTimeout>;
   closing?: Promise<void>;
 };
-type LiveEvent = { sequence: bigint; event: BaseEvent };
+type LiveEvent = {
+  sequence: bigint | null;
+  liveOrder?: number;
+  event: BaseEvent;
+};
 type ActiveRun = {
   runId: string;
+  epoch: number;
   agent: AbstractAgent;
   stream: ReplaySubject<BaseEvent>;
   live: Subject<LiveEvent>;
   stopped: boolean;
+  settled: boolean;
+  liveOrder: number;
+  flushedLiveOrderHighWater: number;
+  dbSeqToLiveOrder: Map<bigint, number>;
+  flushDurable: () => Promise<void>;
+  freezeStopped?: () => void;
   done: Promise<void>;
+  inputReady: Promise<void>;
+  markInputReady: () => void;
   /** 用户按停止时 abort：工具（web_search 等）通过 currentToolAbort 收到（FIX-04）。 */
   abort: AbortController;
   /** 当前分段（segment）的取消控制器：用户中途发来「打断/换方向」指令时只中断当前段，接着开下一段处理新指令。 */
@@ -760,6 +773,21 @@ type ActiveRun = {
   inboxRunIds: string[];
   inputMessageIds: Set<string>;
 };
+
+const DELTA_FLUSH_MS = 50;
+
+function deltaCoalesceKey(event: BaseEvent): string | null {
+  if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
+    return `text:${(event as BaseEvent & { messageId?: string }).messageId ?? ""}`;
+  }
+  if (event.type === EventType.REASONING_MESSAGE_CONTENT) {
+    return `reasoning:${(event as BaseEvent & { messageId?: string }).messageId ?? ""}`;
+  }
+  if (event.type === EventType.TOOL_CALL_ARGS) {
+    return `tool:${(event as BaseEvent & { toolCallId?: string }).toolCallId ?? ""}`;
+  }
+  return null;
+}
 
 /** 一次运行最多接着跑几段（每段 = 一次完整的模型循环；段与段之间读进新排队的消息）。 */
 
@@ -854,6 +882,7 @@ export function withRunStartedAck(
 class PostgresAgentRunner implements ConversationRunner {
   readonly ownsThreadLease = true;
   private readonly active = new Map<string, ActiveRun>();
+  private readonly threadEpochs = new Map<string, number>();
   /** Kept between wire runs, until all dispatched frontend results arrive or the turn is stopped. */
   private readonly frontend = new Map<string, FrontendRelay>();
   /** Observers of persisted capacity waits, not execution slots or thread owners. */
@@ -965,6 +994,82 @@ class PostgresAgentRunner implements ConversationRunner {
       /* ignore */
     }
     return true;
+  }
+
+  /** 将一条补充指令即时引导进正在运行的回合（DSH 走阶段感知抢占，否则切分分段）。 */
+  async steerActive(
+    threadId: string,
+    message: Message,
+  ): Promise<{ action: "cut" | "next-step" | "segment-cut" | "queued" }> {
+    const entry = this.active.get(threadId);
+    if (!entry || entry.stopped) return { action: "queued" };
+    const pushMidTurn = (
+      entry.agent as AbstractAgent & {
+        pushMidTurn?: (input: {
+          id: string;
+          message: Message;
+          mode: "steer" | "queue";
+        }) => Promise<{
+          delivered: boolean;
+          action?: "cut" | "next-step" | "queued";
+        }>;
+      }
+    ).pushMidTurn;
+    if (typeof pushMidTurn === "function") {
+      const result = await pushMidTurn.call(entry.agent, {
+        id: message.id,
+        message,
+        mode: "steer",
+      });
+      if (result.delivered) {
+        await this.inbox
+          .merge(threadId, entry.runId, [message.id])
+          .catch(() => {});
+        return { action: result.action ?? "queued" };
+      }
+      if (classifyMidTurnIntent(textOfMessage(message)) !== "interrupt") {
+        return { action: "queued" };
+      }
+    }
+    return this.interruptSegment(threadId)
+      ? { action: "segment-cut" }
+      : { action: "queued" };
+  }
+
+  /** 同步更新运行中会话待处理队列里的某条消息。 */
+  async updateActiveQueueItem(
+    threadId: string,
+    input: {
+      itemId: string;
+      action:
+        | { kind: "steer" }
+        | { kind: "remove" }
+        | { kind: "edit"; text: string };
+    },
+  ): Promise<{
+    updated: boolean;
+    action?: "cut" | "next-step" | "queued";
+  }> {
+    const entry = this.active.get(threadId);
+    if (!entry || entry.stopped) return { updated: false };
+    const updateMidTurnQueue = (
+      entry.agent as AbstractAgent & {
+        updateMidTurnQueue?: (input: {
+          itemId: string;
+          action:
+            | { kind: "steer" }
+            | { kind: "remove" }
+            | { kind: "edit"; text: string };
+        }) => Promise<{
+          updated: boolean;
+          action?: "cut" | "next-step" | "queued";
+        }>;
+      }
+    ).updateMidTurnQueue;
+    if (typeof updateMidTurnQueue === "function") {
+      return updateMidTurnQueue.call(entry.agent, input);
+    }
+    return { updated: false };
   }
 
   /** 在进程内旁听一个对话的事件（后台任务卡片读它的步骤）。返回取消函数。 */
@@ -1114,20 +1219,39 @@ class PostgresAgentRunner implements ConversationRunner {
       if (relay) {
         this.clearFrontend(request.threadId);
       }
+      const epoch = (this.threadEpochs.get(request.threadId) ?? 0) + 1;
+      this.threadEpochs.set(request.threadId, epoch);
+      let markInputReady = () => {};
+      const inputReady = new Promise<void>((resolve) => {
+        markInputReady = resolve;
+      });
       entry = {
         runId: request.input.runId,
+        epoch,
         agent: request.agent,
         stream: new ReplaySubject<BaseEvent>(),
         live: new Subject<LiveEvent>(),
         stopped: false,
+        settled: false,
+        liveOrder: 0,
+        flushedLiveOrderHighWater: 0,
+        dbSeqToLiveOrder: new Map(),
+        flushDurable: () => Promise.resolve(),
         abort: new AbortController(),
         done: Promise.resolve(),
+        inputReady,
+        markInputReady,
         injections: [],
         inboxRunIds: [...(relay?.inboxRunIds ?? []), request.input.runId],
         inputMessageIds: new Set(),
       };
       this.active.set(request.threadId, entry);
-      entry.done = this.execute(request, entry).finally(releaseQuiesceTurn);
+      entry.done = this.execute(request, entry)
+        .finally(() => {
+          entry.settled = true;
+          entry.markInputReady();
+        })
+        .finally(releaseQuiesceTurn);
     } catch (error) {
       releaseQuiesceTurn();
       throw error;
@@ -1329,9 +1453,24 @@ class PostgresAgentRunner implements ConversationRunner {
     let failed = false;
     let durableWrites = Promise.resolve();
     let lastSequence = 0n;
+    let deltaCooldownTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingDelta:
+      | {
+          key: string;
+          maxLiveOrder: number;
+          event: BaseEvent & { delta: string };
+        }
+      | undefined;
     let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
     let checkpointing = true;
-    let pendingCheckpoint:
+    type CaptureWatermark = {
+      order: number;
+      messages: Message[];
+      state: unknown;
+      injections: TranscriptInjection[];
+    };
+    const pendingCaptures: CaptureWatermark[] = [];
+    let latestCommitted:
       | {
           messages: Message[];
           state: unknown;
@@ -1339,6 +1478,7 @@ class PostgresAgentRunner implements ConversationRunner {
           injections: TranscriptInjection[];
         }
       | undefined;
+    let maxCommittedOrder = 0;
     const finalizer = createRunEventFinalizer();
     const newMessages: Message[] = [];
     let prepared = prepareConversationMessages([], [], []);
@@ -1378,6 +1518,92 @@ class PostgresAgentRunner implements ConversationRunner {
           /* 旁听者出错不影响这一轮。 */
         }
       }
+    };
+    const canCommit = () =>
+      this.threadEpochs.get(threadId) === entry.epoch &&
+      this.active.get(threadId) === entry;
+    // AG-UI catches subscriber exceptions. Remember failed writes and stop the producer ourselves.
+    const guarded = (action: () => Promise<unknown>): Promise<void> => {
+      durableWrites = durableWrites.then(async () => {
+        if (persistenceError) return;
+        try {
+          await action();
+        } catch (error) {
+          persistenceError = error;
+          try {
+            agent.abortRun();
+          } catch {
+            /* Finalization reports the original write failure. */
+          }
+          if (!("acknowledgesStop" in agent && agent.acknowledgesStop === true))
+            void agent.detachActiveRun();
+        }
+      });
+      return durableWrites;
+    };
+    const armCheckpointTimer = () => {
+      if (checkpointing && !checkpointTimer && latestCommitted) {
+        checkpointTimer = setTimeout(() => {
+          void flushCheckpoint();
+        }, SNAPSHOT_CHECKPOINT_MS);
+        checkpointTimer.unref?.();
+      }
+    };
+    const recordDbWrite = (
+      seq: bigint,
+      liveOrder: number | undefined,
+    ): void => {
+      lastSequence = seq;
+      if (liveOrder !== undefined) {
+        entry.dbSeqToLiveOrder.set(seq, liveOrder);
+        if (liveOrder > entry.flushedLiveOrderHighWater) {
+          entry.flushedLiveOrderHighWater = liveOrder;
+        }
+        if (liveOrder > maxCommittedOrder) {
+          maxCommittedOrder = liveOrder;
+        }
+        let promoted: CaptureWatermark | undefined;
+        while (
+          pendingCaptures.length > 0 &&
+          (pendingCaptures[0]?.order ?? 0) <= maxCommittedOrder
+        ) {
+          promoted = pendingCaptures.shift();
+        }
+        if (promoted) {
+          latestCommitted = {
+            messages: promoted.messages,
+            state: promoted.state,
+            sequence: seq,
+            injections: promoted.injections,
+          };
+          armCheckpointTimer();
+        }
+      }
+    };
+    const clearDeltaFlush = () => {
+      if (deltaCooldownTimer) {
+        clearTimeout(deltaCooldownTimer);
+        deltaCooldownTimer = undefined;
+      }
+    };
+    const flushPendingDelta = (): Promise<void> => {
+      clearDeltaFlush();
+      const batch = pendingDelta;
+      pendingDelta = undefined;
+      if (!batch || !canCommit()) return durableWrites;
+      return guarded(async () => {
+        if (!canCommit()) return;
+        const seq = await this.store.append(threadId, entry.runId, batch.event);
+        recordDbWrite(seq, batch.maxLiveOrder);
+      });
+    };
+    entry.flushDurable = async () => {
+      await flushPendingDelta();
+      await durableWrites;
+    };
+    entry.freezeStopped = () => {
+      latest = structuredClone(latest) as Message[];
+      latestState = structuredClone(latestState);
     };
     const emit = async (source: BaseEvent) => {
       let event = source;
@@ -1425,90 +1651,154 @@ class PostgresAgentRunner implements ConversationRunner {
           } as BaseEvent;
       }
       const published = prepared.event(event);
-      if (!published) return;
-      const sequence = await this.store.append(
-        threadId,
-        entry.runId,
-        published,
-      );
-      lastSequence = sequence;
-      if (published.type === EventType.RUN_STARTED) {
-        await createConversationCommands(this.store.database).status(
-          threadId,
-          entry.runId,
-          "dispatched",
-        );
-        if (
-          request.onAdmitted &&
-          (await createDshRunJournal(this.store.database).get(
+      if (!published || !canCommit()) return;
+      const isTerminal =
+        published.type === EventType.RUN_FINISHED ||
+        published.type === EventType.RUN_ERROR;
+      if (isTerminal) {
+        finalizer.observe(published);
+        runStarted ||= published.type === EventType.RUN_STARTED;
+        terminal = true;
+        failed ||= published.type === EventType.RUN_ERROR;
+        void flushPendingDelta();
+        return guarded(async () => {
+          if (!canCommit() || persistenceError) return;
+          const sequence = await this.store.append(
             threadId,
             entry.runId,
-          ))
-        )
-          request.onAdmitted();
+            published,
+          );
+          recordDbWrite(sequence, undefined);
+          entry.stream.next(published);
+          entry.live.next({ sequence, event: published });
+          notify(published);
+        });
       }
       if (published.type !== EventType.RUN_STARTED) {
         segFinalizer.observe(published);
       }
       finalizer.observe(published);
       runStarted ||= published.type === EventType.RUN_STARTED;
-      terminal ||=
-        published.type === EventType.RUN_FINISHED ||
-        published.type === EventType.RUN_ERROR;
-      failed ||= published.type === EventType.RUN_ERROR;
+      const liveOrder = ++entry.liveOrder;
       entry.stream.next(published);
-      entry.live.next({ sequence, event: published });
+      entry.live.next({ sequence: null, liveOrder, event: published });
       notify(published);
-    };
-    // AG-UI catches subscriber exceptions. Remember failed writes and stop the producer ourselves.
-    const guarded = (action: () => Promise<unknown>): Promise<void> => {
-      durableWrites = durableWrites.then(async () => {
-        if (persistenceError) return;
-        try {
-          await action();
-        } catch (error) {
-          persistenceError = error;
-          try {
-            agent.abortRun();
-          } catch {
-            /* Finalization reports the original write failure. */
-          }
-          if (!("acknowledgesStop" in agent && agent.acknowledgesStop === true))
-            void agent.detachActiveRun();
+      if (published.type === EventType.RUN_STARTED) {
+        void flushPendingDelta();
+        void guarded(async () => {
+          if (!canCommit()) return;
+          const sequence = await this.store.append(
+            threadId,
+            entry.runId,
+            published,
+          );
+          recordDbWrite(sequence, liveOrder);
+          await createConversationCommands(this.store.database).status(
+            threadId,
+            entry.runId,
+            "dispatched",
+          );
+          if (
+            request.onAdmitted &&
+            (await createDshRunJournal(this.store.database).get(
+              threadId,
+              entry.runId,
+            ))
+          )
+            request.onAdmitted();
+        });
+        return;
+      }
+      const deltaKey = deltaCoalesceKey(published);
+      if (deltaKey !== null) {
+        const deltaText =
+          "delta" in published && typeof published.delta === "string"
+            ? published.delta
+            : "";
+        if (!deltaCooldownTimer && !pendingDelta) {
+          void guarded(async () => {
+            if (!canCommit()) return;
+            const sequence = await this.store.append(
+              threadId,
+              entry.runId,
+              published,
+            );
+            recordDbWrite(sequence, liveOrder);
+          });
+          deltaCooldownTimer = setTimeout(() => {
+            deltaCooldownTimer = undefined;
+            void flushPendingDelta();
+          }, DELTA_FLUSH_MS);
+          deltaCooldownTimer.unref?.();
+          return;
         }
+        if (pendingDelta && pendingDelta.key === deltaKey) {
+          pendingDelta.event.delta += deltaText;
+          pendingDelta.maxLiveOrder = liveOrder;
+        } else {
+          void flushPendingDelta();
+          pendingDelta = {
+            key: deltaKey,
+            maxLiveOrder: liveOrder,
+            event: {
+              ...published,
+              delta: deltaText,
+            } as BaseEvent & { delta: string },
+          };
+        }
+        if (!deltaCooldownTimer) {
+          deltaCooldownTimer = setTimeout(() => {
+            deltaCooldownTimer = undefined;
+            void flushPendingDelta();
+          }, DELTA_FLUSH_MS);
+          deltaCooldownTimer.unref?.();
+        }
+        return;
+      }
+      void flushPendingDelta();
+      void guarded(async () => {
+        if (!canCommit()) return;
+        const sequence = await this.store.append(
+          threadId,
+          entry.runId,
+          published,
+        );
+        recordDbWrite(sequence, liveOrder);
       });
-      return durableWrites;
     };
     const clearCheckpoint = () => {
       clearTimeout(checkpointTimer);
       checkpointTimer = undefined;
-      pendingCheckpoint = undefined;
+      latestCommitted = undefined;
+      pendingCaptures.length = 0;
     };
     const flushCheckpoint = () => {
-      const checkpoint = pendingCheckpoint;
-      clearCheckpoint();
-      if (!checkpoint) return durableWrites;
+      const checkpoint = latestCommitted;
+      clearTimeout(checkpointTimer);
+      checkpointTimer = undefined;
+      latestCommitted = undefined;
+      if (!checkpoint || !canCommit()) return durableWrites;
       return guarded(() =>
-        this.store.snapshot(
-          threadId,
-          entry.runId,
-          prepared.project(
-            weaveMessages(checkpoint.messages, checkpoint.injections),
-          ),
-          prepared.sanitize(checkpoint.state),
-          checkpoint.sequence,
-        ),
+        canCommit()
+          ? this.store.snapshot(
+              threadId,
+              entry.runId,
+              prepared.project(
+                weaveMessages(checkpoint.messages, checkpoint.injections),
+              ),
+              prepared.sanitize(checkpoint.state),
+              checkpoint.sequence,
+            )
+          : Promise.resolve(),
       );
     };
     /** 推一张带插话的完整快照给界面（幂等：同 id 的消息替换，不会重复）。 */
     const pushSnapshot = (messages: readonly Message[]) => {
       const snapshot = structuredClone(woven(messages)) as Message[];
-      return guarded(() =>
-        emit({
-          type: EventType.MESSAGES_SNAPSHOT,
-          messages: snapshot,
-        } as BaseEvent),
-      );
+      return emit({
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: snapshot,
+      } as BaseEvent);
     };
     // Keep a frozen Stop boundary, but coalesce the expensive projection and database update.
     // Coverage belongs to the captured messages, never to a later SELECT max(sequence).
@@ -1517,20 +1807,43 @@ class PostgresAgentRunner implements ConversationRunner {
       state: unknown,
     ) => {
       if (dropLate("messages")) return Promise.resolve();
-      latest = structuredClone(messages) as Message[];
-      latestState = structuredClone(state);
+      const shallowMessages = messages.map((message) =>
+        "toolCalls" in message && Array.isArray(message.toolCalls)
+          ? {
+              ...message,
+              toolCalls: message.toolCalls.map((call) => ({
+                ...call,
+                function: { ...call.function },
+              })),
+            }
+          : { ...message },
+      ) as Message[];
+      latest = shallowMessages;
+      latestState = state;
       if (checkpointing) {
-        pendingCheckpoint = {
-          messages: latest,
-          state: latestState,
-          sequence: lastSequence,
+        const order = entry.liveOrder;
+        const watermark: CaptureWatermark = {
+          order,
+          messages: shallowMessages,
+          state: structuredClone(state),
           injections: [...entry.injections],
         };
-        if (!checkpointTimer) {
-          checkpointTimer = setTimeout(() => {
-            void flushCheckpoint();
-          }, SNAPSHOT_CHECKPOINT_MS);
-          checkpointTimer.unref?.();
+        if (order <= maxCommittedOrder) {
+          pendingCaptures.length = 0;
+          latestCommitted = {
+            messages: watermark.messages,
+            state: watermark.state,
+            sequence: lastSequence,
+            injections: watermark.injections,
+          };
+          armCheckpointTimer();
+        } else {
+          const lastPending = pendingCaptures[pendingCaptures.length - 1];
+          if (lastPending && lastPending.order === order) {
+            pendingCaptures[pendingCaptures.length - 1] = watermark;
+          } else {
+            pendingCaptures.push(watermark);
+          }
         }
       }
       if (
@@ -1545,10 +1858,10 @@ class PostgresAgentRunner implements ConversationRunner {
     const steering = () =>
       newSteerSession(
         async () => {
-          if (entry.stopped) return [];
-          return (await this.inbox.claim(threadId, entry.runId)).map(
-            (claimed) => claimed.message,
-          );
+          if (entry.stopped || !canCommit()) return [];
+          return (
+            await this.inbox.claim(threadId, entry.runId, { mode: "steer" })
+          ).map((claimed) => claimed.message);
         },
         (messages, anchors) => {
           for (const message of messages)
@@ -1601,15 +1914,19 @@ class PostgresAgentRunner implements ConversationRunner {
         }
         await emit(event);
       }
+      // Stopped/edited state snapshot may already exist. Flush coalesced deltas before finalizing.
+      await flushPendingDelta();
       await durableWrites;
       // An admission refusal has no new execution snapshot. In particular, a stale paused
       // resend must not replace the saved transcript with an uninitialized agent's messages.
-      if (inputPrepared)
+      if (inputPrepared && canCommit())
         await this.store.snapshot(
           threadId,
           entry.runId,
           prepared.project(woven(closed ?? agent.messages)),
-          prepared.sanitize(entry.stopped ? latestState : agent.state),
+          prepared.sanitize(
+            entry.stopped ? structuredClone(latestState) : agent.state,
+          ),
           lastSequence,
         );
       if (lateDropped)
@@ -1887,6 +2204,7 @@ class PostgresAgentRunner implements ConversationRunner {
         prepared.sanitize(agent.state),
         snapshotSequence,
       );
+      entry.markInputReady();
       let renewing = false;
       const runStartedAt = Date.now();
       heartbeat = setInterval(() => {
@@ -1901,6 +2219,7 @@ class PostgresAgentRunner implements ConversationRunner {
             }),
           );
           entry.stopped = true;
+          entry.freezeStopped?.();
           try {
             entry.abort.abort();
           } catch {
@@ -1969,10 +2288,10 @@ class PostgresAgentRunner implements ConversationRunner {
                   withSteering(steering(), () =>
                     agent
                       .runAgent(segmentInput, {
-                        onEvent: ({ event }) =>
-                          dropLate(event.type)
-                            ? undefined
-                            : guarded(() => emit(structuredClone(event))),
+                        onEvent: ({ event }) => {
+                          if (dropLate(event.type)) return;
+                          void emit(event);
+                        },
                         onMessagesChanged: ({ messages, state }) =>
                           capture(messages, state),
                         onStateChanged: ({ messages, state }) =>
@@ -2023,6 +2342,8 @@ class PostgresAgentRunner implements ConversationRunner {
           entry.abort.signal.removeEventListener("abort", onRunAbort);
           if (entry.segmentAbort === segAbort) entry.segmentAbort = undefined;
         }
+        await flushPendingDelta();
+        await durableWrites;
         await flushCheckpoint();
         const wasInterrupted =
           Boolean(entry.segmentInterrupted) && !entry.stopped;
@@ -2108,6 +2429,7 @@ class PostgresAgentRunner implements ConversationRunner {
         clearInterval(heartbeat);
         heartbeat = undefined;
       }
+      await flushPendingDelta();
       await durableWrites;
       if (persistenceError) throw persistenceError;
       await finalize();
@@ -2118,6 +2440,7 @@ class PostgresAgentRunner implements ConversationRunner {
         clearInterval(heartbeat);
         heartbeat = undefined;
       }
+      await flushPendingDelta();
       await durableWrites;
       if (started && !persistenceError) {
         try {
@@ -2132,7 +2455,9 @@ class PostgresAgentRunner implements ConversationRunner {
         entry.live.error(failure);
       }
     } finally {
+      entry.markInputReady();
       checkpointing = false;
+      clearDeltaFlush();
       clearCheckpoint();
       if (heartbeat) clearInterval(heartbeat);
       if (started) {
@@ -2220,14 +2545,30 @@ class PostgresAgentRunner implements ConversationRunner {
       const pending: LiveEvent[] = [];
       let ready = false;
       let lastSequence = 0n;
+      let maxSeenLiveOrder = 0;
+      let coveredLiveOrder = 0;
+      let doneHooked = false;
       let observedRunId: string | undefined;
       let streamRunId: string | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let checking = false;
       const lifecycles = createEventLifecycles();
       const publish = (item: LiveEvent) => {
-        if (item.sequence <= lastSequence) return;
-        lastSequence = item.sequence;
+        if (item.sequence === null) {
+          if (item.liveOrder !== undefined) {
+            if (item.liveOrder <= Math.max(coveredLiveOrder, maxSeenLiveOrder))
+              return;
+            maxSeenLiveOrder = Math.max(maxSeenLiveOrder, item.liveOrder);
+          }
+        } else {
+          if (item.sequence <= lastSequence) return;
+          lastSequence = item.sequence;
+          const mappedOrder = entry?.dbSeqToLiveOrder.get(item.sequence);
+          if (mappedOrder !== undefined) {
+            if (mappedOrder <= maxSeenLiveOrder) return;
+            maxSeenLiveOrder = Math.max(maxSeenLiveOrder, mappedOrder);
+          }
+        }
         // The durable run row, rather than the HTTP/live subscription, decides completion.
         if (
           (
@@ -2351,10 +2692,28 @@ class PostgresAgentRunner implements ConversationRunner {
           subscriber.error(error);
         } finally {
           checking = false;
-          if (!subscriber.closed) timer = setTimeout(() => void check(), 500);
+          if (!subscriber.closed) {
+            if (entry && !entry.settled) {
+              if (!doneHooked) {
+                doneHooked = true;
+                void entry.done.finally(() => {
+                  if (!subscriber.closed) void check();
+                });
+              }
+            } else {
+              timer = setTimeout(() => void check(), 500);
+            }
+          }
         }
       };
       void (async () => {
+        if (entry && !entry.settled) {
+          await entry.inputReady;
+        }
+        if (subscriber.closed) return;
+        if (entry && entry.liveOrder > 0) {
+          await entry.flushDurable();
+        }
         /*
          * DOG-01 follow-up（2026-10-18）：长对话的事件日志可达数千条 / ~1MB。旧逻辑把 slimReplay 后的
          * 全量事件回放给浏览器——实测 星灵 一条对话 connect 仍 ~825KB、3882 条事件。浏览器主线程解析 /
@@ -2391,6 +2750,13 @@ class PostgresAgentRunner implements ConversationRunner {
             previous?.run_id,
         );
         lastSequence = BigInt(row.snapshot_sequence ?? 0);
+        if (entry) {
+          for (const [seq, order] of entry.dbSeqToLiveOrder) {
+            if (seq <= lastSequence && order > coveredLiveOrder) {
+              coveredLiveOrder = order;
+            }
+          }
+        }
         const dims = imageDimsFor(this.store.database);
         /*
          * Track B：长对话压力——全量 annotate 上千条再一次塞进浏览器仍会拖住 `/run`。
@@ -2528,7 +2894,10 @@ class PostgresAgentRunner implements ConversationRunner {
       current !== undefined &&
       !current.stopped &&
       (runId === undefined || current.runId === runId);
-    if (claimed) current.stopped = true;
+    if (claimed) {
+      current.stopped = true;
+      current.freezeStopped?.();
+    }
     const queued = await createExecutionCapacity(this.store.database).stop(
       threadId,
       runId,
@@ -2628,6 +2997,10 @@ export type LocalRunControl = {
   isActive(threadId: string): boolean;
   observe(threadId: string, listener: (event: BaseEvent) => void): () => void;
   stop(request: AgentRunnerStopRequest): Promise<boolean>;
+  steerActive?(
+    threadId: string,
+    message: Message,
+  ): Promise<{ action: "cut" | "next-step" | "segment-cut" | "queued" }>;
 };
 
 export type LocalConversationBackend = {
@@ -3166,15 +3539,20 @@ export async function createLocalConversations(
         });
       }
       if (operation === "inbox" && request.method === "POST") {
-        // 正在回答时又发来的一条：进收件箱（这一轮的下一步读进去）。没在跑就告诉客户端照常发送。
+        // 正在回答时又发来的一条：按 mode 决定即时引导（steer）还是排队（queue）。
         const body = (await request.json()) as {
           id?: unknown;
           text?: unknown;
           message?: unknown;
           skillIds?: unknown;
+          mode?: unknown;
         };
         const fullMessage =
           body.message !== undefined || body.skillIds !== undefined;
+        const explicitMode =
+          body.mode === "steer" || body.mode === "queue"
+            ? body.mode
+            : undefined;
         const id = typeof body.id === "string" ? body.id.trim() : "";
         if (!id || id.length > 128)
           throw new LocalConversationError("Message id is required", 400);
@@ -3214,6 +3592,9 @@ export async function createLocalConversations(
           return Response.json({
             queued: true,
             status: existing.status,
+            ...(explicitMode !== undefined
+              ? { mode: existing.deliveryMode }
+              : {}),
             ...(fullMessage ? { message: existing.message } : {}),
           });
         // CB-104: a message typed after Stop is explicit intent. Idle (even with held items) → send
@@ -3223,6 +3604,7 @@ export async function createLocalConversations(
           return Response.json({ queued: false, stopping: true });
         if (row.messages.some((message) => message.id === id))
           return Response.json({ queued: true, status: "read" });
+        const deliveryMode = explicitMode ?? "steer";
         const message = await resolveInboxMessage(
           database,
           actorId,
@@ -3235,6 +3617,7 @@ export async function createLocalConversations(
             threadId,
             ownerUserId: actorId,
             message,
+            deliveryMode,
             beforeInsert: (sql) =>
               retainInboxAttachments(sql, { actorId, threadId }, message),
           });
@@ -3246,24 +3629,159 @@ export async function createLocalConversations(
         }
         const saved = await inbox.get(threadId, id);
         const status = saved?.status ?? "queued";
-        if (
+        let steerAction:
+          | "cut"
+          | "next-step"
+          | "segment-cut"
+          | "queued"
+          | undefined;
+        const shouldSteerNow =
           status === "queued" &&
-          classifyMidTurnIntent(text) === "interrupt"
-        ) {
-          runner.interruptSegment(threadId);
+          (explicitMode === "steer" ||
+            (explicitMode === undefined &&
+              classifyMidTurnIntent(text) === "interrupt"));
+        if (shouldSteerNow) {
+          const steered = await runner.steerActive(
+            threadId,
+            saved?.message ?? message,
+          );
+          steerAction = steered.action;
         }
         return Response.json({
           queued: true,
           status,
+          ...(explicitMode !== undefined || steerAction !== undefined
+            ? { mode: deliveryMode }
+            : {}),
+          ...(steerAction ? { steerAction } : {}),
           ...(fullMessage ? { message: saved?.message ?? message } : {}),
         });
+      }
+      if (operation === "inbox" && request.method === "PATCH") {
+        const body = (await request.json()) as {
+          id?: unknown;
+          action?: unknown;
+          text?: unknown;
+        };
+        const id = typeof body.id === "string" ? body.id.trim() : "";
+        if (!id || id.length > 128)
+          throw new LocalConversationError("Message id is required", 400);
+        if (body.action === "remove") {
+          const removedFromActive = await runner.updateActiveQueueItem(
+            threadId,
+            {
+              itemId: id,
+              action: { kind: "remove" },
+            },
+          );
+          const withdrawn = await inbox.withdrawPending(threadId, id, actorId, {
+            allowRead: removedFromActive.updated,
+          });
+          return Response.json({ ok: withdrawn, withdrawn });
+        }
+        if (body.action === "edit") {
+          const nextText =
+            typeof body.text === "string" ? body.text.trim() : "";
+          if (!nextText)
+            throw new LocalConversationError(
+              "Message content is required",
+              400,
+            );
+          if (nextText.length > INBOX_TEXT_LIMIT)
+            throw new LocalConversationError("Message is too long", 413);
+          const current = await inbox.get(threadId, id);
+          if (!current)
+            throw new LocalConversationError("Queue item not found", 404);
+          if (current.status !== "queued" && current.status !== "read")
+            throw new LocalConversationError(
+              "Queue item is no longer pending",
+              409,
+            );
+          const nextContent = Array.isArray(current.message.content)
+            ? [
+                { type: "text" as const, text: nextText },
+                ...current.message.content.filter(
+                  (part) =>
+                    Boolean(part) &&
+                    typeof part === "object" &&
+                    (part as { type?: unknown }).type !== "text",
+                ),
+              ]
+            : nextText;
+          const nextMessage = {
+            ...current.message,
+            content: nextContent,
+          } as Message;
+          if (current.status === "read") {
+            const editedInActive = await runner.updateActiveQueueItem(
+              threadId,
+              {
+                itemId: id,
+                action: { kind: "edit", text: nextText },
+              },
+            );
+            if (!editedInActive.updated)
+              throw new LocalConversationError(
+                "Queue item is no longer pending",
+                409,
+              );
+            const updated = await inbox.updatePending(threadId, id, actorId, {
+              message: nextMessage,
+              allowRead: true,
+            });
+            if (!updated)
+              throw new LocalConversationError(
+                "Queue item is no longer pending",
+                409,
+              );
+            return Response.json({ ok: true, item: updated });
+          }
+          const updated = await inbox.updatePending(threadId, id, actorId, {
+            message: nextMessage,
+          });
+          if (!updated)
+            throw new LocalConversationError(
+              "Queue item is no longer pending",
+              409,
+            );
+          await runner.updateActiveQueueItem(threadId, {
+            itemId: id,
+            action: { kind: "edit", text: nextText },
+          });
+          return Response.json({ ok: true, item: updated });
+        }
+        if (body.action === "steer") {
+          const updated = await inbox.updatePending(threadId, id, actorId, {
+            deliveryMode: "steer",
+          });
+          if (!updated)
+            throw new LocalConversationError(
+              "Queue item is no longer pending",
+              409,
+            );
+          const steered = runner.isActive(threadId)
+            ? await runner.steerActive(threadId, updated.message)
+            : { action: "queued" as const };
+          return Response.json({
+            ok: true,
+            item: updated,
+            steerAction: steered.action,
+          });
+        }
+        throw new LocalConversationError("Unsupported inbox action", 400);
       }
       if (operation === "inbox" && request.method === "DELETE") {
         const id = (url.searchParams.get("id") ?? "").trim();
         if (!id || id.length > 128)
           throw new LocalConversationError("Message id is required", 400);
+        const removedFromActive = await runner.updateActiveQueueItem(threadId, {
+          itemId: id,
+          action: { kind: "remove" },
+        });
         return Response.json({
-          withdrawn: await inbox.withdrawPending(threadId, id, actorId),
+          withdrawn: await inbox.withdrawPending(threadId, id, actorId, {
+            allowRead: removedFromActive.updated,
+          }),
         });
       }
       if (operation === "workers" && request.method === "POST") {
@@ -3402,6 +3920,7 @@ export async function createLocalConversations(
     isActive: (threadId) => runner.isActive(threadId),
     observe: (threadId, listener) => runner.observe(threadId, listener),
     stop: (request) => runner.stop(request),
+    steerActive: (threadId, message) => runner.steerActive(threadId, message),
   };
   return {
     commands,

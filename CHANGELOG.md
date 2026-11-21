@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **阶段感知回复中途实时插话（DESIGN.md §149 / CB-143）**：
+  - 将 DSH 执行内核（`runtime/dsh/src/plugin.mjs`、`client.mjs`）升级为阶段感知实时转向：模型/推理阶段立即下发 `abort("chisabot/steer")` 截断并带上新指令开启下一轮，工具运行阶段排入安全边界队列（对标记为只读的工具超过 1 秒自动后台化以便及时转向），并发回合采用单调 `epoch` 护栏防迟到事件覆盖。
+  - 新增 `PATCH /api/conversations/:threadId/inbox` 与 `ThreadInbox` `deliveryMode`（`steer` / `queue`），默认在回复中途采用实时插话；对话页发送区右侧提供快捷切换（仅影响后续发送）、设置「通用」页提供「回复中途再发送」偏好项，并增强 `QueueDock` 支持待插话条目的行内编辑、立即插话与撤回。侧边追问抽屉同步支持回流插话主会话。
+- **零等待 SSE、50ms 写库合批、DSH 连接池与单跳发送（DESIGN.md §149 / CB-143）**：
+  - `server/src/local-conversations.ts` 将实时 SSE 广播路径与 PG `append` 落库路径彻底解耦，token 流优先直推订阅端并按 50ms 窗口合批写库，移除逐 token `structuredClone` 与进程内 500ms PG 轮询。
+  - `server/src/conversations/routes.ts` 导出带 `desiredSize <= 0` 背压合批的 `eventStream` 并支持 `POST /api/conversations/:threadId/commands` 在携带 `Accept: text/event-stream` 时直接单跳返回 SSE（`x-chisabot-command-id` / `x-chisabot-run-id` + `chisabot.admission` 帧）；前端 `session-client.ts` 默认使用单跳流式建连并在异常时回退既有 `/events` 链路，同时 `panels/api.ts` 为转发会话新增 30s TTL 缓存。
+  - 新增 `server/src/conversations/dsh-client-pool.ts` 复用已连接 `DshHostClient` 与健康状态缓存，跳过冗余健康探针与连续非收尾事件 `/checkpoint` 拉取。
+- **前端叶子节点流式渲染与交互预算优化（DESIGN.md §149 / CB-143）**：
+  - `session-client.ts` 引入按 `messageId` 归类的 `useLiveMessageText`（rAF 合批）并以结构签名门控 `useConversationSession` 的 `refresh()` 触发，配合 `memo` 化的 `LiveBotBubbles`、`BotBubbles` `Segment` 与 `SmoothStreamdown`，避免流式输出期间整列表与输入框反复重绘。
+  - 收紧 `smooth-reveal.ts` 参数并在连续小块顺滑流上自动贴合 0ms 延迟；新增超过 20,000 字符的围栏代码块安全折叠与展开；`styles.css` 为可滚动聊天气泡/卡片禁用 `--lg-blur`；`<SettleAtEnd busy={busy || live} />` 对齐收白边界，配合 `useMotionRest` 与边缘触发的 `nextIdleInboxCheck` 停止稳态 `/inbox` 轮询。
+
 ## 0.1.176 — 2026-11-20
 
 全端版本 `0.1.176`，Android `versionCode 356`：消除窗口横向拉伸时的全屏闪烁与磨砂玻璃 ↔ 纯黑实底跳变（DESIGN.md §148），调轻深色弹窗遮罩并收束右栏任务顶栏入口（DESIGN.md §147）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `d8d946f4939e3ee8`；无需手动数据库迁移。

@@ -57,21 +57,51 @@ export type PanelStateRead = {
 
 export type PanelGrantRow = { capabilityId: string } & Record<string, unknown>;
 
+const PANEL_SESSION_CACHE_TTL_MS = 30_000;
+const PANEL_SESSION_REVALIDATE_MS = 10_000;
+const panelSessionCache = new Map<
+  string,
+  { sessionId: string | null; at: number }
+>();
+
+export function clearPanelSessionCache() {
+  panelSessionCache.clear();
+}
+
 export const panelsApi = {
   list: (botId: string, offset = 0) =>
     call<PanelListPage>(botId, `?limit=50&offset=${offset}`),
   library: (botId: string, offset = 0) =>
     call<PanelLibraryPage>(botId, `/library?limit=50&offset=${offset}`),
-  session: (botId: string) => call<PanelSession | null>(botId, "/authoring"),
-  begin: (botId: string, targetInstanceId?: string) =>
-    call<PanelSession>(botId, "/authoring", {
+  session: async (botId: string) => {
+    const res = await call<PanelSession | null>(botId, "/authoring");
+    panelSessionCache.set(botId, {
+      sessionId: res?.sessionId ?? null,
+      at: Date.now(),
+    });
+    return res;
+  },
+  begin: async (botId: string, targetInstanceId?: string) => {
+    const res = await call<PanelSession>(botId, "/authoring", {
       method: "POST",
       body: targetInstanceId ? { targetInstanceId } : {},
-    }),
-  cancel: (botId: string, sessionId: string) =>
-    call<{ ok: true }>(botId, `/authoring/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    }),
+    });
+    panelSessionCache.set(botId, {
+      sessionId: res?.sessionId ?? null,
+      at: Date.now(),
+    });
+    return res;
+  },
+  cancel: async (botId: string, sessionId: string) => {
+    panelSessionCache.delete(botId);
+    return call<{ ok: true }>(
+      botId,
+      `/authoring/${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
   draft: (botId: string, draftId: string) =>
     call<PanelDraft>(botId, `/drafts/${encodeURIComponent(draftId)}`),
   saveDraft: (
@@ -83,6 +113,7 @@ export const panelsApi = {
     },
   ) => call<PanelDraft>(botId, "/drafts", { method: "POST", body }),
   commit: async (botId: string, body: CommitInput) => {
+    panelSessionCache.delete(botId);
     try {
       return await call<CommitResult>(botId, "/commit", {
         method: "POST",
@@ -305,6 +336,19 @@ export async function panelAuthoringForwardedProps(
   onBegan?: () => void,
 ): Promise<Record<string, unknown> | undefined> {
   if (!botId) return undefined;
+  const cached = panelSessionCache.get(botId);
+  if (
+    cached &&
+    Date.now() - cached.at < PANEL_SESSION_CACHE_TTL_MS &&
+    (!asksForPanel(text) || cached.sessionId !== null)
+  ) {
+    if (Date.now() - cached.at > PANEL_SESSION_REVALIDATE_MS) {
+      void panelsApi.session(botId).catch(() => null);
+    }
+    return cached.sessionId
+      ? { [PANEL_AUTHORING_PROP]: { sessionId: cached.sessionId } }
+      : undefined;
+  }
   let session = await panelsApi.session(botId).catch(() => null);
   if (!session?.sessionId && asksForPanel(text)) {
     session = await panelsApi.begin(botId).catch(() => null);

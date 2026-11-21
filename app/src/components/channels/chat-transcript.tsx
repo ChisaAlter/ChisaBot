@@ -99,7 +99,11 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useElementEvent, useExternalConnection, useWindowEvent } from "@/hooks";
+import {
+  useElementEvent,
+  useExternalConnection,
+  useWindowEvent,
+} from "@/hooks";
 import { approvalInboxOptions } from "@/lib/approvals";
 import { speechStatusQueryOptions } from "@/lib/audio/speech";
 import {
@@ -135,6 +139,7 @@ import {
   staysInSameTurn,
   takeSendWhileBusy,
 } from "@/lib/chat/send-scroll";
+import { useLiveMessageText } from "@/lib/chat/session-client";
 import {
   TAIL_ANCHOR_SLACK_EVENT,
   windowMarks,
@@ -2260,6 +2265,39 @@ function sameTranscriptMessage(
   );
 }
 
+const LiveBotBubbles = memo(function LiveBotBubbles({
+  animate,
+  delay,
+  messageId,
+  replyToId,
+  replyToText,
+  text,
+  tone,
+}: {
+  animate?: boolean | undefined;
+  delay?: number | undefined;
+  messageId?: string | undefined;
+  replyToId?: string | undefined;
+  replyToText?: string | undefined;
+  text: string;
+  tone?: "lead" | "final" | undefined;
+}) {
+  const scope = useConversationScope();
+  const live = useLiveMessageText(scope?.threadId, messageId, text);
+  return (
+    <BotBubbles
+      animate={animate}
+      components={richMarkdownComponents}
+      delay={delay}
+      replyToId={replyToId}
+      replyToText={replyToText}
+      streaming={live.streaming}
+      text={live.text}
+      tone={tone}
+    />
+  );
+});
+
 const TranscriptMessage = memo(function TranscriptMessage({
   animate = false,
   attachments,
@@ -2344,10 +2382,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
             清单 / 草稿整列宽。下面这个 Bubble 现在只画人的消息。
           */}
           {!isUser ? (
-            <BotBubbles
+            <LiveBotBubbles
               animate={animate}
-              components={richMarkdownComponents}
               delay={delay}
+              messageId={messageId}
               replyToId={replyToId}
               replyToText={replyToText}
               text={text}
@@ -4280,7 +4318,7 @@ export function ChatTranscript({
           viewport={viewportRef}
         />
         <SettleAtEnd
-          busy={busy}
+          busy={busy || live}
           hydrating={hydrating}
           newestUserMessageId={newestUserMessageId}
           opening={opening}

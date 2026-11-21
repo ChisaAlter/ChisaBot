@@ -1,6 +1,9 @@
 import {
+  IconBolt,
+  IconCheck,
   IconClockHour4,
   IconPaperclip,
+  IconPencil,
   IconRefresh,
   IconX,
 } from "@tabler/icons-react";
@@ -8,6 +11,7 @@ import { useState } from "react";
 import { toVisibleChatItems } from "@/components/channels/chat-messages";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
+  patchInboxMessage,
   queueMessage,
   sendPausedMessage,
   useQueuedMessages,
@@ -24,7 +28,41 @@ export function QueuedMessages() {
   const threadId = chat?.threadId;
   const items = useQueuedMessages(threadId);
   const [sending, setSending] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   const [error, setError] = useState<{ id: string; text: string } | null>(null);
+  const steer = async (id: string) => {
+    if (!threadId) return;
+    setSending(id);
+    setError(null);
+    try {
+      const res = await patchInboxMessage(threadId, { id, action: "steer" });
+      if (!res.ok) setError({ id, text: "无法引导这条消息，请稍后重试。" });
+    } finally {
+      setSending(null);
+    }
+  };
+  const saveEdit = async (id: string) => {
+    if (!threadId) return;
+    const trimmed = editText.trim();
+    if (!trimmed) {
+      setError({ id, text: "内容不能为空。" });
+      return;
+    }
+    setSending(id);
+    setError(null);
+    try {
+      const res = await patchInboxMessage(threadId, {
+        id,
+        action: "edit",
+        text: trimmed,
+      });
+      if (res.ok) setEditingId(null);
+      else setError({ id, text: "修改失败，该消息可能已被读取。" });
+    } finally {
+      setSending(null);
+    }
+  };
   const send = async (id: string) => {
     if (!threadId) return;
     setSending(id);
@@ -117,7 +155,44 @@ export function QueuedMessages() {
                     {file.filename || "附件"}
                   </a>
                 ))}
-            {item.text}
+            {editingId === item.id ? (
+              <form
+                className="flex flex-col gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void saveEdit(item.id);
+                }}
+              >
+                <input
+                  aria-label={"编辑排队消息内容"}
+                  className="w-full rounded-md border border-border/60 bg-background/80 px-2 py-1 text-sm text-foreground outline-none focus:border-ring"
+                  data-testid="queued-edit-input"
+                  onChange={(e) => setEditText(e.target.value)}
+                  value={editText}
+                />
+                <div className="flex items-center justify-end gap-1.5">
+                  <button
+                    className="queued-action"
+                    data-testid="queued-edit-cancel"
+                    onClick={() => setEditingId(null)}
+                    type="button"
+                  >
+                    {"取消"}
+                  </button>
+                  <button
+                    className="queued-action"
+                    data-testid="queued-edit-save"
+                    disabled={sending !== null}
+                    type="submit"
+                  >
+                    <IconCheck className="size-3" />
+                    {"保存"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              item.text
+            )}
           </div>
           <div className="queued-meta">
             {item.status === "paused" ? (
@@ -149,6 +224,7 @@ export function QueuedMessages() {
                         ? { message: item.message, skillIds: item.skillIds }
                         : item.text,
                       item.id,
+                      item.deliveryMode ? { mode: item.deliveryMode } : {},
                     )
                   }
                   title={"重新发送"}
@@ -159,12 +235,50 @@ export function QueuedMessages() {
                 </button>
               </>
             ) : (
-              <span className="queued-state">
-                <IconClockHour4 className="size-3" />
-                {item.status === "sending"
-                  ? "发送中…"
-                  : "已排队 · 当前步骤结束后读取"}
-              </span>
+              <>
+                <span className="queued-state">
+                  <IconClockHour4 className="size-3" />
+                  {item.status === "sending"
+                    ? "发送中…"
+                    : item.steerAction === "next-step"
+                      ? "已插话 · 当前操作后接管"
+                      : item.deliveryMode === "steer"
+                        ? "已引导 · 正在切入当前回复"
+                        : "已排队 · 当前步骤结束后读取"}
+                </span>
+                {item.status === "queued" && item.kind !== "worker_result" && (
+                  <>
+                    <button
+                      aria-label={"立即引导这条消息"}
+                      className="queued-action"
+                      data-testid="queued-steer-btn"
+                      disabled={sending !== null}
+                      onClick={() => void steer(item.id)}
+                      title={"立即插话引导"}
+                      type="button"
+                    >
+                      <IconBolt className="size-3" />
+                      {"立即引导"}
+                    </button>
+                    <button
+                      aria-label={"编辑这条排队消息"}
+                      className="queued-action"
+                      data-testid="queued-edit-btn"
+                      disabled={sending !== null}
+                      onClick={() => {
+                        setError(null);
+                        setEditingId(item.id);
+                        setEditText(item.text);
+                      }}
+                      title={"编辑"}
+                      type="button"
+                    >
+                      <IconPencil className="size-3" />
+                      {"编辑"}
+                    </button>
+                  </>
+                )}
+              </>
             )}
             <button
               aria-label={"撤回这条排队的消息"}

@@ -16,6 +16,7 @@ import type { Database } from "./db/client";
  *   没有一条会被悄悄丢掉。
  */
 export type InboxKind = "message" | "worker_result";
+export type InboxDeliveryMode = "steer" | "queue";
 export type InboxStatus =
   | "queued"
   | "paused"
@@ -29,6 +30,7 @@ export type InboxItem = {
   id: string;
   threadId: string;
   kind: InboxKind;
+  deliveryMode: InboxDeliveryMode;
   message: Message;
   status: InboxStatus;
   runId: string | null;
@@ -41,6 +43,7 @@ type InboxRow = {
   thread_id: string;
   owner_user_id: string;
   kind: InboxKind;
+  delivery_mode?: InboxDeliveryMode | null;
   message: Message;
   status: InboxStatus;
   run_id: string | null;
@@ -57,6 +60,7 @@ const item = (row: InboxRow): InboxItem => ({
   id: row.id,
   threadId: row.thread_id,
   kind: row.kind,
+  deliveryMode: row.delivery_mode === "steer" ? "steer" : "queue",
   message: row.message,
   status: row.status,
   runId: row.run_id,
@@ -75,12 +79,16 @@ export class ThreadInbox {
   async ensure() {
     await this.database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_thread_inbox (
       thread_id text NOT NULL, id text NOT NULL, owner_user_id text NOT NULL,
-      kind text NOT NULL DEFAULT 'message', message jsonb NOT NULL,
+      kind text NOT NULL DEFAULT 'message', delivery_mode text NOT NULL DEFAULT 'queue',
+      message jsonb NOT NULL,
       status text NOT NULL DEFAULT 'queued', run_id text,
       created_at timestamptz NOT NULL DEFAULT clock_timestamp(), read_at timestamptz,
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (thread_id, id)
     )`);
+    await this.database.$client.unsafe(
+      "ALTER TABLE chisabot_thread_inbox ADD COLUMN IF NOT EXISTS delivery_mode text NOT NULL DEFAULT 'queue'",
+    );
     await this.database.$client.unsafe(
       "CREATE INDEX IF NOT EXISTS chisabot_thread_inbox_status ON chisabot_thread_inbox(thread_id, status, created_at)",
     );
@@ -174,6 +182,7 @@ export class ThreadInbox {
     ownerUserId: string;
     message: Message;
     kind?: InboxKind;
+    deliveryMode?: InboxDeliveryMode;
     beforeInsert?: (sql: Database["$client"]) => Promise<void>;
   }): Promise<boolean> {
     return this.locked(input.threadId, async (sql, paused) => {
@@ -198,13 +207,14 @@ export class ThreadInbox {
         throw new Error("排队的消息太多了，请先发送或撤回保留的消息。");
       await input.beforeInsert?.(sql);
       const rows = await sql.unsafe(
-        `INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, message, status)
-        VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
+        `INSERT INTO chisabot_thread_inbox (thread_id, id, owner_user_id, kind, delivery_mode, message, status)
+        VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7) ON CONFLICT (thread_id, id) DO NOTHING RETURNING id`,
         [
           input.threadId,
           input.message.id,
           input.ownerUserId,
           input.kind ?? "message",
+          input.deliveryMode ?? "queue",
           JSON.stringify(input.message),
           paused ? "paused" : "queued",
         ],
@@ -221,21 +231,70 @@ export class ThreadInbox {
     return rows.map(item);
   }
 
-  /** 把排队的全部标成「已读」并归到这次运行，按进队顺序返回。 */
-  async claim(threadId: string, runId: string): Promise<InboxItem[]> {
+  /** 把排队的（或仅即时引导消息）标成「已读」并归到这次运行，按进队顺序返回。 */
+  async claim(
+    threadId: string,
+    runId: string,
+    options?: { mode?: "steer" | "all" },
+  ): Promise<InboxItem[]> {
     return this.locked(threadId, async (sql, paused) => {
       if (paused) return [];
-      const rows = await sql.unsafe<InboxRow[]>(
-        `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
-         WHERE thread_id = $1 AND status = 'queued' RETURNING *`,
-        [threadId, runId],
-      );
+      const rows =
+        options?.mode === "steer"
+          ? await sql.unsafe<InboxRow[]>(
+              `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
+               WHERE thread_id = $1 AND status = 'queued' AND (delivery_mode = 'steer' OR kind = 'worker_result') RETURNING *`,
+              [threadId, runId],
+            )
+          : await sql.unsafe<InboxRow[]>(
+              `UPDATE chisabot_thread_inbox SET status = 'read', run_id = $2, read_at = now(), updated_at = now()
+               WHERE thread_id = $1 AND status = 'queued' RETURNING *`,
+              [threadId, runId],
+            );
       return rows
         .map(item)
         .sort(
           (a, b) =>
             a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
         );
+    });
+  }
+
+  async updatePending(
+    threadId: string,
+    id: string,
+    ownerUserId: string,
+    patch: {
+      deliveryMode?: InboxDeliveryMode;
+      message?: Message;
+      allowRead?: boolean;
+    },
+  ): Promise<InboxItem | null> {
+    return this.locked(threadId, async (sql, paused) => {
+      if (paused) return null;
+      const [row] = await sql.unsafe<InboxRow[]>(
+        patch.allowRead
+          ? `UPDATE chisabot_thread_inbox
+             SET delivery_mode = coalesce($4, delivery_mode),
+                 message = coalesce($5::text::jsonb, message),
+                 updated_at = now()
+             WHERE thread_id = $1 AND id = $2 AND owner_user_id = $3 AND status IN ('queued', 'read')
+             RETURNING *`
+          : `UPDATE chisabot_thread_inbox
+             SET delivery_mode = coalesce($4, delivery_mode),
+                 message = coalesce($5::text::jsonb, message),
+                 updated_at = now()
+             WHERE thread_id = $1 AND id = $2 AND owner_user_id = $3 AND status = 'queued'
+             RETURNING *`,
+        [
+          threadId,
+          id,
+          ownerUserId,
+          patch.deliveryMode ?? null,
+          patch.message ? JSON.stringify(patch.message) : null,
+        ],
+      );
+      return row ? item(row) : null;
     });
   }
 
@@ -293,6 +352,7 @@ export class ThreadInbox {
     threadId: string,
     id: string,
     ownerUserId: string,
+    options?: { allowRead?: boolean },
   ): Promise<boolean> {
     return this.locked(threadId, async (sql) => {
       await sql.unsafe(
@@ -306,8 +366,11 @@ export class ThreadInbox {
         ],
       );
       const rows = await sql.unsafe(
-        `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
-        WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`,
+        options?.allowRead
+          ? `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
+            WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'read', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`
+          : `UPDATE chisabot_thread_inbox SET status = 'withdrawn', updated_at = now()
+            WHERE thread_id = $1 AND id = $2 AND status IN ('queued', 'paused', 'owed', 'stopped', 'withdrawn') RETURNING id`,
         [threadId, id],
       );
       return rows.length > 0;
@@ -493,33 +556,6 @@ export function formatMidTurnMessageForModel(message: Message): string {
     return `（你在处理上一条消息的过程中，用户又发来了【新的独立需求】。请主动多并发处理：若当前任务或这条新需求较耗时，主动用 delegate_task 交给后台并行执行，同时在主对话处理另一项；结束时确保原任务与新需求都回应到。）\n${text}`;
   }
   return `（你在处理上一条消息的过程中，用户又发来下面这条消息。请先判断它是对当前工作的【补充更正】还是【独立新需求】：若是补充或更正就并入当前工作接着做；若是独立新需求就并发处理或用 delegate_task 委派后台；若是打断旧需求就立即切换新方向。结束时每条用户消息都要回应到。）\n${text}`;
-}
-
-/**
- * 供 Hermes 等通过 HTTP 工具网关运行的内核在工具返回时顺带把收件箱里刚领到的中途消息带给模型，
- * 让模型在下一步立刻看到用户的补充或新需求，而不必等整轮结束。
- */
-export function attachMidTurnNoticeToToolResult(
-  rawResult: string,
-  messages: readonly Message[],
-): string {
-  if (!messages.length) return rawResult;
-  const notice = messages.map(formatMidTurnMessageForModel).join("\n\n");
-  const trimmed = rawResult.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return JSON.stringify({
-          ...(parsed as Record<string, unknown>),
-          _userMidTurnNotice: notice,
-        });
-      }
-    } catch {
-      // 不是普通 JSON 对象则走文本追加。
-    }
-  }
-  return `${rawResult}\n\n${notice}`;
 }
 
 /** 插进 prompt 时给模型看的样子：用户插话带一句说明，后台任务结果本身已经写清楚了。 */

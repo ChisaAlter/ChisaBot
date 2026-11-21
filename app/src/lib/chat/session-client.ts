@@ -8,6 +8,7 @@ import {
   createContext,
   createElement,
   type ReactNode,
+  useCallback,
   useContext,
   useLayoutEffect,
   useMemo,
@@ -22,6 +23,153 @@ import { draftFilesAccepted, draftFilesSubmitting } from "./ui-memory";
 
 const ConversationTransport = createContext<"commands">("commands");
 export type ConversationConnection = "online" | "reconnecting";
+
+type LiveThreadStore = {
+  texts: Map<string, string>;
+  listeners: Map<string, Set<() => void>>;
+  dirty: Set<string>;
+  rafId: number | null;
+  microtaskScheduled: boolean;
+};
+
+const liveThreads = new Map<string, LiveThreadStore>();
+
+function getLiveThread(threadId: string): LiveThreadStore {
+  let store = liveThreads.get(threadId);
+  if (!store) {
+    store = {
+      texts: new Map(),
+      listeners: new Map(),
+      dirty: new Set(),
+      rafId: null,
+      microtaskScheduled: false,
+    };
+    liveThreads.set(threadId, store);
+  }
+  return store;
+}
+
+function notifyLiveListeners(store: LiveThreadStore, ids: Iterable<string>) {
+  for (const id of ids) {
+    const set = store.listeners.get(id);
+    if (!set) continue;
+    for (const listener of [...set]) listener();
+  }
+}
+
+function flushLiveThread(threadId: string) {
+  const store = liveThreads.get(threadId);
+  if (!store) return;
+  store.rafId = null;
+  store.microtaskScheduled = false;
+  if (store.dirty.size === 0) return;
+  const ids = [...store.dirty];
+  store.dirty.clear();
+  notifyLiveListeners(store, ids);
+}
+
+function scheduleLiveFlush(threadId: string, messageId: string) {
+  const store = getLiveThread(threadId);
+  store.dirty.add(messageId);
+  if (store.rafId !== null || store.microtaskScheduled) return;
+  if (typeof requestAnimationFrame === "function") {
+    store.rafId = requestAnimationFrame(() => flushLiveThread(threadId));
+    return;
+  }
+  store.microtaskScheduled = true;
+  queueMicrotask(() => flushLiveThread(threadId));
+}
+
+export function setLiveMessageText(
+  threadId: string,
+  messageId: string,
+  text: string,
+) {
+  const store = getLiveThread(threadId);
+  if (store.texts.get(messageId) === text) return;
+  store.texts.set(messageId, text);
+  scheduleLiveFlush(threadId, messageId);
+}
+
+export function clearLiveMessageText(threadId: string, messageId?: string) {
+  const store = liveThreads.get(threadId);
+  if (!store) return;
+  if (messageId !== undefined) {
+    const existed = store.texts.delete(messageId);
+    store.dirty.delete(messageId);
+    if (existed) notifyLiveListeners(store, [messageId]);
+    if (store.texts.size === 0 && store.listeners.size === 0) {
+      if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(store.rafId);
+      }
+      liveThreads.delete(threadId);
+    }
+    return;
+  }
+  const ids = [...new Set([...store.texts.keys(), ...store.dirty])];
+  store.texts.clear();
+  store.dirty.clear();
+  if (store.rafId !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(store.rafId);
+  }
+  store.rafId = null;
+  store.microtaskScheduled = false;
+  if (ids.length > 0) notifyLiveListeners(store, ids);
+  if (store.listeners.size === 0) liveThreads.delete(threadId);
+}
+
+function subscribeLiveMessage(
+  threadId: string | undefined,
+  messageId: string | undefined,
+  listener: () => void,
+): () => void {
+  if (!threadId || !messageId) return () => {};
+  const store = getLiveThread(threadId);
+  let set = store.listeners.get(messageId);
+  if (!set) {
+    set = new Set();
+    store.listeners.set(messageId, set);
+  }
+  set.add(listener);
+  return () => {
+    const current = liveThreads.get(threadId);
+    const bucket = current?.listeners.get(messageId);
+    bucket?.delete(listener);
+    if (bucket && bucket.size === 0) current?.listeners.delete(messageId);
+    if (current && current.texts.size === 0 && current.listeners.size === 0) {
+      liveThreads.delete(threadId);
+    }
+  };
+}
+
+function getLiveMessageSnapshot(
+  threadId: string | undefined,
+  messageId: string | undefined,
+): string | undefined {
+  if (!threadId || !messageId) return undefined;
+  return liveThreads.get(threadId)?.texts.get(messageId);
+}
+
+/** Subscribes only a single message leaf to rAF-coalesced token deltas. */
+export function useLiveMessageText(
+  threadId: string | undefined,
+  messageId: string | undefined,
+  fallbackText: string,
+): { text: string; streaming: boolean } {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      subscribeLiveMessage(threadId, messageId, listener),
+    [threadId, messageId],
+  );
+  const liveText = useSyncExternalStore(
+    subscribe,
+    () => getLiveMessageSnapshot(threadId, messageId),
+    () => undefined,
+  );
+  return liveText !== undefined
+    ? { text: liveText, streaming: true }
+    : { text: fallbackText, streaming: false };
+}
 
 async function readAdmissionReceipt(response: Response, commandId: string) {
   const body: unknown = await response.json().catch(() => null);
@@ -51,6 +199,7 @@ export function isConversationProgressEvent(event: {
 export class ConversationSession extends HttpAgent {
   private observedRunId?: string;
   private readonly acceptedCommands = new Set<string>();
+  private readonly activeLiveMessageIds = new Set<string>();
   private connection: ConversationConnection = "online";
   private readonly connectionListeners = new Set<() => void>();
   readonly connectionSnapshot = () => this.connection;
@@ -62,6 +211,26 @@ export class ConversationSession extends HttpAgent {
     if (this.connection === connection) return;
     this.connection = connection;
     for (const listener of this.connectionListeners) listener();
+  }
+  hasActiveLiveMessage() {
+    return this.activeLiveMessageIds.size > 0;
+  }
+  structuralSignature(): string {
+    return this.messages
+      .map((message) => {
+        const toolCount =
+          message.role === "assistant" &&
+          "toolCalls" in message &&
+          Array.isArray(message.toolCalls)
+            ? message.toolCalls.length
+            : 0;
+        const hasText =
+          typeof message.content === "string"
+            ? message.content.length > 0
+            : Array.isArray(message.content) && message.content.length > 0;
+        return `${message.id}:${message.role}:${toolCount}:${hasText ? 1 : 0}`;
+      })
+      .join("|");
   }
   constructor(
     readonly runtimeAgentId: string,
@@ -80,10 +249,36 @@ export class ConversationSession extends HttpAgent {
         this.observedRunId = event.runId;
         this.setConnection("online");
       },
-      onRunFinishedEvent: () => this.setConnection("online"),
-      onRunErrorEvent: () => this.setConnection("online"),
-      onRunFinalized: () => this.setConnection("online"),
+      onTextMessageStartEvent: ({ event }) => {
+        this.activeLiveMessageIds.add(event.messageId);
+        setLiveMessageText(this.threadId, event.messageId, "");
+      },
+      onTextMessageContentEvent: ({ event, textMessageBuffer }) => {
+        this.activeLiveMessageIds.add(event.messageId);
+        setLiveMessageText(this.threadId, event.messageId, textMessageBuffer);
+      },
+      onTextMessageEndEvent: ({ event }) => {
+        this.activeLiveMessageIds.delete(event.messageId);
+        clearLiveMessageText(this.threadId, event.messageId);
+      },
+      onRunFinishedEvent: () => {
+        this.activeLiveMessageIds.clear();
+        clearLiveMessageText(this.threadId);
+        this.setConnection("online");
+      },
+      onRunErrorEvent: () => {
+        this.activeLiveMessageIds.clear();
+        clearLiveMessageText(this.threadId);
+        this.setConnection("online");
+      },
+      onRunFinalized: () => {
+        this.activeLiveMessageIds.clear();
+        clearLiveMessageText(this.threadId);
+        this.setConnection("online");
+      },
       onMessagesSnapshotEvent: ({ event }) => {
+        this.activeLiveMessageIds.clear();
+        clearLiveMessageText(this.threadId);
         for (const message of event.messages)
           if (message.role === "user") this.acceptedCommands.add(message.id);
       },
@@ -126,7 +321,10 @@ export class ConversationSession extends HttpAgent {
             method: "POST",
             credentials: "include",
             signal: abort.signal,
-            headers: { "content-type": "application/json" },
+            headers: {
+              "content-type": "application/json",
+              accept: "text/event-stream, application/json",
+            },
             body: JSON.stringify({
               agentId: this.runtimeAgentId,
               input: { ...input, tools: [] },
@@ -135,9 +333,93 @@ export class ConversationSession extends HttpAgent {
         } catch {
           abort.signal.throwIfAborted();
         }
-        if (response?.ok) {
+        const responseContentType = response?.headers.get("content-type") ?? "";
+        if (response?.ok && responseContentType.includes("text/event-stream")) {
+          const headerCommandId = response.headers.get("x-chisabot-command-id");
+          const headerRunId = response.headers.get("x-chisabot-run-id");
+          let admittedInStream =
+            headerCommandId === commandId &&
+            typeof headerRunId === "string" &&
+            headerRunId.length > 0;
+          if (admittedInStream && headerRunId) {
+            this.acceptedCommands.add(commandId);
+            draftFilesAccepted(commandContent);
+            this.observedRunId = headerRunId;
+          }
+          const reader = response.body?.getReader();
+          const onAbort = () => {
+            void reader?.cancel().catch(() => {});
+          };
+          abort.signal.addEventListener("abort", onAbort, { once: true });
+          const parseSseBlock = (block: string) => {
+            const dataLines: string[] = [];
+            for (const line of block.split(/\r?\n/)) {
+              if (!line.startsWith("data:")) continue;
+              const raw = line.slice(5);
+              dataLines.push(raw.startsWith(" ") ? raw.slice(1) : raw);
+            }
+            if (dataLines.length === 0) return;
+            const payload = dataLines.join("\n").trim();
+            if (!payload || payload === "[DONE]") return;
+            const event = JSON.parse(payload) as BaseEvent & {
+              name?: string;
+              value?: { commandId?: string; runId?: string };
+            };
+            if (
+              event.type === "CUSTOM" &&
+              event.name === "chisabot.admission" &&
+              event.value?.commandId === commandId &&
+              typeof event.value?.runId === "string" &&
+              event.value.runId.length > 0
+            ) {
+              admittedInStream = true;
+              this.acceptedCommands.add(commandId);
+              draftFilesAccepted(commandContent);
+              this.observedRunId = event.value.runId;
+            }
+            observer.next(event);
+          };
+          try {
+            if (reader) {
+              const decoder = new TextDecoder();
+              let buffer = "";
+              while (!abort.signal.aborted) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const normalized = buffer.replace(/\r\n/g, "\n");
+                const parts = normalized.split("\n\n");
+                buffer = parts.pop() ?? "";
+                for (const part of parts) {
+                  parseSseBlock(part);
+                }
+              }
+              buffer += decoder.decode();
+              if (buffer.trim().length > 0) {
+                for (const part of buffer
+                  .replace(/\r\n/g, "\n")
+                  .split("\n\n")) {
+                  if (part.trim().length > 0) parseSseBlock(part);
+                }
+              }
+            }
+            if (admittedInStream) {
+              if (!abort.signal.aborted) observer.complete();
+              return;
+            }
+          } finally {
+            abort.signal.removeEventListener("abort", onAbort);
+          }
+          if (admittedInStream) {
+            return;
+          }
+        }
+        if (
+          response?.ok &&
+          !responseContentType.includes("text/event-stream")
+        ) {
           receipt = await readAdmissionReceipt(response, commandId);
-        } else if (response && response.status < 500) {
+        } else if (response && !response.ok && response.status < 500) {
           const error = await response.json().catch(() => ({}));
           throw new Error(error?.error ?? "消息未被接纳，请重试。");
         }
@@ -306,11 +588,24 @@ export function useConversationSession({
   );
   const [, refresh] = useReducer((value) => value + 1, 0);
   useExternalConnection(objectConnectionKey(agent), () => {
+    let lastSignature = agent.structuralSignature();
+    const forceRefresh = () => {
+      lastSignature = agent.structuralSignature();
+      refresh();
+    };
     const subscription = agent.subscribe({
-      onMessagesChanged: refresh,
-      onStateChanged: refresh,
-      onRunInitialized: refresh,
-      onRunFinalized: refresh,
+      onMessagesChanged: () => {
+        const nextSignature = agent.structuralSignature();
+        if (nextSignature !== lastSignature || !agent.hasActiveLiveMessage()) {
+          lastSignature = nextSignature;
+          refresh();
+        }
+      },
+      onStateChanged: forceRefresh,
+      onRunInitialized: forceRefresh,
+      onRunFinalized: forceRefresh,
+      onTextMessageEndEvent: forceRefresh,
+      onMessagesSnapshotEvent: forceRefresh,
     });
     return () => subscription.unsubscribe();
   });
