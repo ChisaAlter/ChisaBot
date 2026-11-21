@@ -1,4 +1,4 @@
-import { type ComponentProps, useContext, useRef } from "react";
+import { type ComponentProps, memo, useContext, useRef } from "react";
 import {
   Block,
   type BlockProps,
@@ -37,11 +37,15 @@ export function CachedBlock(props: BlockProps) {
  * Streamdown 本身就是给流式写的（未闭合的 ** / ``` 先补上），这里只是把喂给它的文字变匀。
  * 历史消息挂载时整段显示；只有挂载之后继续变长的内容才放字。
  */
-export function SmoothStreamdown({
+export const SmoothStreamdown = memo(function SmoothStreamdown({
   children,
+  streaming,
   ...props
-}: Omit<ComponentProps<typeof Streamdown>, "children"> & { children: string }) {
-  const shown = useSmoothText(children ?? "");
+}: Omit<ComponentProps<typeof Streamdown>, "children"> & {
+  children: string;
+  streaming?: boolean;
+}) {
+  const shown = useSmoothText(children ?? "", streaming !== false);
   // 正文里的 Vec<String>、Option<T> 不是 HTML：先转义成文字，免得被当未知标签丢掉（escape-unknown-tags.ts）。
   // 工作区文件链接换成这个机器人的下载地址（§101）；在看的就是这个机器人的对话。
   const bot = useDeclaredBotId();
@@ -51,7 +55,9 @@ export function SmoothStreamdown({
   const first = useRef(children);
   const tail = useRef<MdTail | null>(null);
   if (!tail.current) tail.current = { live: false, count: 0 };
-  if (children !== first.current) tail.current.live = true;
+  if (streaming === false) tail.current.live = false;
+  else if (streaming === true || children !== first.current)
+    tail.current.live = true;
   const incRef = useRef<ReturnType<typeof createIncrementalBlockParser> | null>(
     null,
   );
@@ -81,4 +87,4 @@ export function SmoothStreamdown({
       </Streamdown>
     </MdTailContext.Provider>
   );
-}
+});

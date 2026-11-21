@@ -90,12 +90,46 @@ export class DshHostClient {
     },
     signal?: AbortSignal,
   ): Promise<{ attached: true; generation: string }>;
+  lastHealth?: {
+    ok: true;
+    protocol: number;
+    version: string;
+    generation: string;
+    ownerUserId: string;
+    sessions: {
+      sessionId: string;
+      runId: string;
+      state: string;
+      phase?: string;
+      inFlightTools?: number;
+      stopped: boolean;
+      waiting?: Record<string, unknown>;
+    }[];
+  };
   receipt(
     sessionId: string,
     runId: string,
     requestId: string,
     signal?: AbortSignal,
   ): Promise<{ accepted: boolean }>;
+  steer(
+    request: {
+      sessionId: string;
+      runId: string;
+      requestId: string;
+      content: (
+        | { type: "text"; text: string }
+        | { type: "image"; mediaType: string; data: string; name?: string }
+      )[];
+      instructions?: string[];
+    },
+    signal?: AbortSignal,
+  ): Promise<{
+    accepted: boolean;
+    action: "cut" | "next-step" | "queued";
+    phase?: string;
+    inFlightTools?: string[];
+  }>;
   stop(
     sessionId: string,
     runId: string,
@@ -122,6 +156,33 @@ export class DshHostClient {
     },
     signal?: AbortSignal,
   ): Promise<{ accepted: true }>;
+  updateQueue(
+    request: {
+      sessionId: string;
+      itemId: string;
+      action:
+        | { kind: "steer" }
+        | { kind: "remove" }
+        | { kind: "edit"; content: readonly { type: "text"; text: string }[] };
+    },
+    signal?: AbortSignal,
+  ): Promise<{ accepted: true }>;
+  updateQueuedItem(
+    request: {
+      sessionId: string;
+      runId: string;
+      itemId: string;
+      action:
+        | { kind: "steer" }
+        | { kind: "remove" }
+        | { kind: "edit"; content: readonly { type: "text"; text: string }[] };
+    },
+    signal?: AbortSignal,
+  ): Promise<{
+    accepted: boolean;
+    action?: "cut" | "next-step" | "queued";
+    phase?: string;
+  }>;
   state(
     sessionId: string,
     signal?: AbortSignal,
@@ -156,6 +217,7 @@ export class DshHostClient {
     signal?: AbortSignal,
   ): Promise<{ records: { type: "event"; event: DshEvent }[]; cursor: number }>;
   follow(sessionId: string, signal?: AbortSignal): AsyncIterable<DshFrame>;
+  readonly isConnected: boolean;
   close(): Promise<void>;
 }
 export function expandActiveAttempt(baseline: unknown):

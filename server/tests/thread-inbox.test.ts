@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { Message } from "@ag-ui/client";
 import {
   anchorsPresent,
-  attachMidTurnNoticeToToolResult,
   classifyMidTurnIntent,
   formatMidTurnMessageForModel,
   isWorkerResult,
@@ -208,27 +207,6 @@ describe("steerLanguageModel", () => {
     expect(formatMidTurnMessageForModel(user("s1", "预算改成 2000"))).toContain(
       "补充更正",
     );
-  });
-
-  test("attachMidTurnNoticeToToolResult preserves JSON structure or appends text", () => {
-    const jsonOut = attachMidTurnNoticeToToolResult(
-      JSON.stringify({ ok: true, count: 3 }),
-      [user("m1", "另外帮我查一下机票")],
-    );
-    const parsed = JSON.parse(jsonOut) as {
-      ok: boolean;
-      count: number;
-      _userMidTurnNotice: string;
-    };
-    expect(parsed.ok).toBe(true);
-    expect(parsed.count).toBe(3);
-    expect(parsed._userMidTurnNotice).toContain("新的独立需求");
-
-    const textOut = attachMidTurnNoticeToToolResult("搜索完成", [
-      user("m2", "只要 256G 的"),
-    ]);
-    expect(textOut).toContain("搜索完成");
-    expect(textOut).toContain("只要 256G 的");
   });
 
   test("trailing tool call ids", () => {

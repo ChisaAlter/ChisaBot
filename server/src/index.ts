@@ -5080,6 +5080,39 @@ const sideThreadTurnRunner = createTurnRunner({
 const sideThreads = createSideThreadStore(database, {
   runTurn: sideThreadTurnRunner,
 });
+const steerParentFromSideThread = async (input: {
+  ownerUserId: string;
+  parentThreadId: string;
+  id: string;
+  text: string;
+}) => {
+  await conversationClient.getThread({
+    threadId: input.parentThreadId,
+    userId: input.ownerUserId,
+  });
+  const message = {
+    id: input.id,
+    role: "user" as const,
+    content: input.text,
+  };
+  await localBackend.inbox.enqueue({
+    threadId: input.parentThreadId,
+    ownerUserId: input.ownerUserId,
+    message,
+    deliveryMode: "steer",
+  });
+  if (
+    localBackend.control.isActive(input.parentThreadId) &&
+    localBackend.control.steerActive
+  ) {
+    const steered = await localBackend.control.steerActive(
+      input.parentThreadId,
+      message,
+    );
+    return { ok: true, steered: true, steerAction: steered.action };
+  }
+  return { ok: true, steered: false };
+};
 
 const personResponseSweep = repeatAfterEach(async () => {
   try {
@@ -6304,7 +6337,12 @@ const app = createApp(
       ["/api/live-panels", livePanelService.routes(requireUser)],
       ["/api/chat-shots", chatShots.routes(requireUser)],
       ["/api/bot-threads", botThreads.routes(requireUser)],
-      ["/api/side-threads", createSideThreadRoutes(sideThreads, requireUser)],
+      [
+        "/api/side-threads",
+        createSideThreadRoutes(sideThreads, requireUser, {
+          steerParentThread: steerParentFromSideThread,
+        }),
+      ],
       ["/api/im", readyImService.routes(requireUser)],
       ["/api/speech", speechService.routes(requireUser, requireAdmin)],
       ["/api/voice", voiceCallService.routes(requireUser)],

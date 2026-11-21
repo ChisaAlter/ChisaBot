@@ -41,8 +41,21 @@ export type DshLiveFrame =
 /** Why a DSH turn ended (`turn/end`). */
 export type DshTurnReason = {
   kind?: string;
+  reason?: string | { kind?: string; reason?: string };
+  cause?: { kind?: string; reason?: string };
   error?: { message?: string; code?: string };
 };
+
+export function isSteerCutReason(reason: DshTurnReason | undefined): boolean {
+  if (reason?.kind !== "aborted") return false;
+  const nested =
+    typeof reason.reason === "object" && reason.reason !== null
+      ? reason.reason.reason
+      : reason.reason;
+  return (
+    nested === "chisabot/steer" || reason.cause?.reason === "chisabot/steer"
+  );
+}
 
 /** The durable event fields this projection reads; DSH validates the shapes it commits. */
 type DurableData = {
@@ -97,14 +110,18 @@ export class DshEventProjection {
     { function: { arguments: string } }
   >();
 
+  private readonly ignoredUserRpcIds: ReadonlySet<string>;
+
   constructor(
     private readonly sessionId: string,
     private readonly emit: (event: BaseEvent) => void,
     initialMessages: readonly Message[] = [],
+    ignoredUserRpcIds: ReadonlySet<string> = new Set(),
   ) {
     this.messages = new Map(
       initialMessages.map((message) => [message.id, structuredClone(message)]),
     );
+    this.ignoredUserRpcIds = ignoredUserRpcIds;
   }
 
   baseline(records: { event: DshEvent }[], cursor: number) {
@@ -555,9 +572,63 @@ export class DshEventProjection {
           .map((block) => block.text)
           .join("\n"),
       });
+    } else if (event.type === "user/message") {
+      const userData = event.data as
+        | {
+            id?: string;
+            content?: unknown;
+            source?: { kind?: string; rpcId?: string };
+          }
+        | undefined;
+      const rpcId =
+        typeof userData?.source?.rpcId === "string"
+          ? userData.source.rpcId
+          : undefined;
+      if (
+        userData?.source?.kind === "user" &&
+        rpcId &&
+        rpcId.length > 0 &&
+        !rpcId.includes(":resume:") &&
+        !this.ignoredUserRpcIds.has(rpcId) &&
+        !this.messages.has(rpcId)
+      ) {
+        const blocks = Array.isArray(userData.content) ? userData.content : [];
+        const text = blocks
+          .filter(
+            (block): block is TextBlock =>
+              Boolean(block) &&
+              typeof block === "object" &&
+              (block as { type?: unknown }).type === "text" &&
+              typeof (block as { text?: unknown }).text === "string",
+          )
+          .map((block) => block.text)
+          .join("");
+        const hasNonText = blocks.some(
+          (block) =>
+            Boolean(block) &&
+            typeof block === "object" &&
+            (block as { type?: unknown }).type !== "text",
+        );
+        const projected =
+          typeof userData.content === "string"
+            ? userData.content
+            : text || (hasNonText ? "[附件]" : "");
+        if (projected) {
+          this.messages.set(rpcId, {
+            id: rpcId,
+            role: "user",
+            content: projected,
+          } as Message);
+          this.replace();
+        }
+      }
     } else if (event.type === "turn/end") {
       // The runtime ended a runaway tool loop: its plain account is this turn's answer, after
       // every tool result, so the person never waits on a turn that has nothing more to say.
+      if (isSteerCutReason(data.reason)) {
+        for (const attempt of this.attempts.values()) this.end(attempt);
+        for (const attempt of this.presentations.values()) this.end(attempt);
+      }
       const stop = this.loopStop;
       this.loopStop = undefined;
       if (stop && !this.messages.has(stop.id)) {

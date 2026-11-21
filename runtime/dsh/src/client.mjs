@@ -55,7 +55,7 @@ export class DshHostClient {
       await ctx.plugin(Typert);
       await ctx.plugin(Gateway);
       await ctx.remote.$mount(sessionRemote);
-      await client.health(signal);
+      client.lastHealth = await client.health(signal);
       return client;
     } catch (error) {
       await client.close();
@@ -67,6 +67,14 @@ export class DshHostClient {
     this.ctx = ctx;
     this.origin = origin;
     this.cookie = cookie;
+    this.closed = false;
+  }
+
+  get isConnected() {
+    return (
+      !this.closed &&
+      (!this.socket || this.socket.readyState === WebSocket.OPEN)
+    );
   }
 
   fetch(path, init = {}) {
@@ -98,8 +106,10 @@ export class DshHostClient {
     return result;
   }
 
-  health(signal) {
-    return this.request("health", undefined, signal);
+  async health(signal) {
+    const result = await this.request("health", undefined, signal);
+    this.lastHealth = result;
+    return result;
   }
   bind(binding, signal) {
     return this.request("bind", binding, signal);
@@ -109,6 +119,9 @@ export class DshHostClient {
   }
   receipt(sessionId, runId, requestId, signal) {
     return this.request("receipt", { sessionId, runId, requestId }, signal);
+  }
+  steer(input, signal) {
+    return this.request("steer", input, signal);
   }
   stop(sessionId, runId, signal) {
     return this.request("stop", { sessionId, runId }, signal);
@@ -121,6 +134,12 @@ export class DshHostClient {
   }
   prompt(request, signal) {
     return unwrap(this.ctx.remote.session.prompt(request, signal));
+  }
+  updateQueue(request, signal) {
+    return unwrap(this.ctx.remote.session.updateQueue(request, signal));
+  }
+  updateQueuedItem(request, signal) {
+    return this.request("update-queue", request, signal);
   }
   state(sessionId, signal) {
     return unwrap(this.ctx.remote.session.state({ sessionId }, signal));
@@ -188,6 +207,7 @@ export class DshHostClient {
     );
   }
   async close() {
+    this.closed = true;
     await this.ctx.fiber.dispose();
   }
 }

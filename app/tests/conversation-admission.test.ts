@@ -275,3 +275,50 @@ test("an admission response cut off after its headers is recovered by the same c
     { name: "chisabot.admission", value: { runId: "stored-run" } },
   ]);
 });
+
+test("single-hop SSE on POST /commands streams admission and events in one HTTP request", async () => {
+  const calls: { path: string; method: string; accept: string | null }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    calls.push({
+      path: String(url),
+      method: init?.method ?? "GET",
+      accept: headers.get("accept"),
+    });
+    if (String(url).endsWith("/commands")) {
+      return new Response(
+        [
+          { type: "RUN_STARTED", threadId: "thread", runId: "stored-run" },
+          {
+            type: "CUSTOM",
+            name: "chisabot.admission",
+            value: { commandId: "user-1", runId: "stored-run" },
+          },
+          { type: "TEXT_MESSAGE_START", messageId: "m1", role: "assistant" },
+          { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "hi" },
+          { type: "TEXT_MESSAGE_END", messageId: "m1" },
+          { type: "RUN_FINISHED", threadId: "thread", runId: "stored-run" },
+        ]
+          .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-chisabot-command-id": "user-1",
+            "x-chisabot-run-id": "stored-run",
+          },
+        },
+      );
+    }
+    throw new Error(`Unexpected second request ${url}`);
+  }) as unknown as typeof fetch;
+
+  const agent = new ConversationSession("bot", "thread", "channel");
+  const streamed = await lastValueFrom(agent.run(input).pipe(toArray()));
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.path).toBe("/api/conversations/thread/commands");
+  expect(calls[0]?.accept).toContain("text/event-stream");
+  expect(agent.isCommandAccepted("user-1")).toBe(true);
+  expect(streamed.some((event) => event.type === "RUN_FINISHED")).toBe(true);
+});

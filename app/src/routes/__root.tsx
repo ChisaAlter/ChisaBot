@@ -3,7 +3,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { MotionConfig } from "motion/react";
-import { useDocumentEvent } from "@/hooks";
+import { useDocumentEvent, useMotionRest } from "@/hooks";
 import { NotFoundRoute } from "@/components/not-found";
 import { StartupFailure } from "@/components/startup-status";
 import { SkyBackground } from "@/components/sky-background";
@@ -123,6 +123,7 @@ export function useUnclaimedDropGuard() {
 
 function RootComponent() {
   useUnclaimedDropGuard();
+  useMotionRest();
   return (
     <div className="min-h-dvh w-full antialiased">
       {/* 系统「减少动态效果」打开时，所有 motion 动画只留淡入淡出（DESIGN.md §34.5）。 */}

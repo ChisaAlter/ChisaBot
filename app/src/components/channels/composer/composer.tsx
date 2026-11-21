@@ -1,5 +1,6 @@
 import {
   IconArrowUp,
+  IconBolt,
   IconChevronDown,
   IconChevronUp,
   IconPlayerStopFilled,
@@ -55,6 +56,14 @@ import {
   useAttachments,
 } from "@/lib/chat/attachment-state";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
+import {
+  type BusySendMode,
+  getBusySendMode,
+  reverseBusySendMode,
+  setBusySendMode,
+  useBusySendMode,
+} from "@/lib/conversations/send-mode";
+import { promoteAllQueued, queuedFor } from "@/lib/conversations/thread-inbox";
 import {
   type PersistedDraftFile,
   readDraftAttachments,
@@ -277,7 +286,9 @@ export type ComposerProps = {
    * a state change, and awaiting one would hold the composer's send lock for the length of somebody
    * else's turn and block the next correction.
    */
-  onQueue?: (draft: ComposerDraft) => void;
+  onQueue?: (draft: ComposerDraft, mode?: BusySendMode) => void;
+  /** Promote all pending queued user messages into immediate steer when pressing Enter on an empty box. */
+  onPromoteQueued?: () => void;
   /** Stop the Bot mid-answer; while pending, the send button becomes a stop button. */
   onStop?: () => void;
   /**
@@ -471,6 +482,7 @@ function ComposerImpl({
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onQueue,
+  onPromoteQueued,
   onStop,
   disabled = false,
   pending = false,
@@ -491,6 +503,7 @@ function ComposerImpl({
   const accountId = currentDraftFileAccount();
   const conversationScope = useConversationScope();
   const fileDraft = useRef(new Map<string, PersistedDraftFile>());
+  const pendingBusyModeRef = useRef<BusySendMode | null>(null);
   const fileDraftRevision = useRef(0);
   const fileDraftRead = useRef(false);
   const fileDraftAlive = useRef(true);
@@ -767,7 +780,10 @@ function ComposerImpl({
     { coarsePointer, compact },
     (container, next) => {
       const editor = container.querySelector("[contenteditable]");
-      editor?.setAttribute("enterkeyhint", next.coarsePointer ? "enter" : "send");
+      editor?.setAttribute(
+        "enterkeyhint",
+        next.coarsePointer ? "enter" : "send",
+      );
     },
   );
   /** Dictation returns the caret once the editor can accept it. */
@@ -2127,7 +2143,9 @@ function ComposerImpl({
   );
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
   useExternalConnection(
-    onAgentChange ? `${draft.agentId ?? ""}\0${objectKey(onAgentChange)}` : false,
+    onAgentChange
+      ? `${draft.agentId ?? ""}\0${objectKey(onAgentChange)}`
+      : false,
     () => {
       onAgentChange?.(draft.agentId ?? undefined);
     },
@@ -2329,7 +2347,9 @@ function ComposerImpl({
         for (const attachment of submitted.attachments) {
           removeAttachment(attachment.id);
         }
-        onQueue(submitted);
+        const busyMode = pendingBusyModeRef.current ?? getBusySendMode();
+        pendingBusyModeRef.current = null;
+        onQueue(submitted, busyMode);
         return;
       }
 
@@ -2506,7 +2526,12 @@ function ComposerImpl({
     () => {
       if (wasDictating.current && !dictation.busy) wantsFocus.current = true;
       wasDictating.current = dictation.busy;
-      if (disabled || isBusy || dictation.busy || !activeComposerRef.current()) {
+      if (
+        disabled ||
+        isBusy ||
+        dictation.busy ||
+        !activeComposerRef.current()
+      ) {
         return;
       }
       const owed =
@@ -2614,6 +2639,44 @@ function ComposerImpl({
     event.preventDefault();
     onStop?.();
   };
+  const handleBusyModeKeyCapture = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (
+      !isBusy ||
+      !canQueue ||
+      disabled ||
+      composingRef.current ||
+      event.nativeEvent.isComposing ||
+      event.key !== "Enter" ||
+      event.altKey ||
+      event.shiftKey
+    )
+      return;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      pendingBusyModeRef.current = reverseBusySendMode(getBusySendMode());
+      void submitDraft(value);
+      return;
+    }
+    if (!canSendDraft(toDraft(value, staged))) {
+      if (onPromoteQueued) {
+        event.preventDefault();
+        onPromoteQueued();
+        return;
+      }
+      const tid = conversationScope?.threadId;
+      if (
+        tid &&
+        queuedFor(tid).some(
+          (item) => item.status === "queued" && item.kind !== "worker_result",
+        )
+      ) {
+        event.preventDefault();
+        void promoteAllQueued(tid);
+      }
+    }
+  };
+  const busySendPill =
+    isBusy && canQueue && !disabled ? <BusySendModePill /> : null;
   const primaryAction =
     stopFailed && onRetryStop && !parking ? (
       <StopFailedButton className={actionClassName} onRetry={onRetryStop} />
@@ -2891,6 +2954,7 @@ function ComposerImpl({
             aria-busy={isBusy}
             data-drag-over={canAttach && dragOver ? "true" : undefined}
             onKeyDown={handleEscapeStop}
+            onKeyDownCapture={handleBusyModeKeyCapture}
             /*
              * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列已挪到框外，
              * 引用条仍在编辑区上方，日常只剩「+ · 输入区 · 上箭头 · 发送」一行。
@@ -2940,6 +3004,7 @@ function ComposerImpl({
                 />
                 {/* 上传中发送键变灰的那句解释（M4-2），收起态一样要有——它不是按钮。 */}
                 {uploadHint}
+                {busySendPill}
                 {expandToggle}
                 {primaryAction}
               </div>
@@ -2961,6 +3026,7 @@ function ComposerImpl({
           aria-busy={isBusy}
           data-drag-over={canAttach && dragOver ? "true" : undefined}
           onKeyDown={handleEscapeStop}
+          onKeyDownCapture={handleBusyModeKeyCapture}
           className={cn(
             /*
              * A COLUMN: attachment strip, editor, then the toolbar. The frame's padding lives on the
@@ -3051,6 +3117,7 @@ function ComposerImpl({
                 {contextControl}
                 <DictationButton dictation={dictation} disabled={disabled} />
                 {uploadHint}
+                {busySendPill}
                 {expandToggle}
                 {primaryAction}
               </div>
@@ -3075,6 +3142,7 @@ function ComposerImpl({
         aria-busy={isBusy}
         data-drag-over={canAttach && dragOver ? "true" : undefined}
         onKeyDown={handleEscapeStop}
+        onKeyDownCapture={handleBusyModeKeyCapture}
         className="glass-composer glass-composer-hero"
         ref={presenceRef("has-composer")}
         onSubmit={handleFormSubmit}
@@ -3168,6 +3236,7 @@ function ComposerImpl({
             <div className="flex shrink-0 items-center gap-1.5">
               <DictationButton dictation={dictation} disabled={disabled} />
               {uploadHint}
+              {busySendPill}
               {primaryAction}
             </div>
           </div>
@@ -3236,6 +3305,33 @@ export function isPromptSegment(value: unknown): value is Segment {
     typeof segment.displayText === "string"
   );
 }
+
+const BusySendModePill = memo(function BusySendModePill() {
+  const mode = useBusySendMode();
+  const isSteer = mode === "steer";
+  return (
+    <button
+      aria-label={
+        isSteer
+          ? "当前回复中模式：立即插话引导，点击改为排到下轮"
+          : "当前回复中模式：排到下一轮，点击改为立即插话引导"
+      }
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
+        isSteer
+          ? "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15"
+          : "border-border/60 bg-muted/60 text-muted-foreground hover:text-foreground",
+      )}
+      data-testid="busy-send-mode-toggle"
+      onClick={() => setBusySendMode(reverseBusySendMode(mode))}
+      title={"切换回复中途发消息默认方式（桌面端可用 Ctrl/Cmd+Enter 临时切换）"}
+      type="button"
+    >
+      <IconBolt className="size-3 shrink-0" />
+      <span>{isSteer ? "插话" : "排队"}</span>
+    </button>
+  );
+});
 
 /** CB-104: shown at once when the stop request fails (network, non-2xx, 5xx); pressing it asks again. */
 export function StopFailedButton({

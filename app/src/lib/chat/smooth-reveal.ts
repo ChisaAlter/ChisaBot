@@ -13,12 +13,12 @@
  * 纯函数，不碰 DOM / React；节拍和「标签页隐藏 / 减少动态效果时立刻显示」在 use-smooth-text.ts。
  */
 
-/** 指数追赶的时间常数：稳定输入时，显示大约落后这么多毫秒。 */
-export const TAU_MS = 180;
+/** 指数追赶的时间常数：突发阻塞批次下约落后这么多毫秒。 */
+export const TAU_MS = 90;
 /** 硬上限：收到的字最多晚这么久显示。 */
-export const MAX_LAG_MS = 400;
+export const MAX_LAG_MS = 220;
 /** 积压很少时的最低速度（字/秒），尾巴不会一个字一个字地爬。 */
-export const MIN_CPS = 40;
+export const MIN_CPS = 60;
 
 export type RevealState = {
   /** 当前要显示到的全文。 */
@@ -31,19 +31,54 @@ export type RevealState = {
   marks: Array<[number, number]>;
   /** 上一帧时间。 */
   last: number;
+  /** 最近一次收到 delta 的时间（用于识别连续均匀小包直通模式）。 */
+  lastReceiveAt?: number;
+  /** 连续收到小增量、低间隔流式包的次数。 */
+  smoothStreak?: number;
 };
 
 /** 挂载时已有的内容（历史消息、刷新后）直接整段显示，不重放打字效果。 */
 export function initialReveal(text: string, now: number): RevealState {
-  return { target: text, pos: text.length, cut: text.length, marks: [], last: now };
+  return {
+    target: text,
+    pos: text.length,
+    cut: text.length,
+    marks: [],
+    last: now,
+    lastReceiveAt: now,
+    smoothStreak: 0,
+  };
 }
 
 /** 收到新内容。返回新的状态（不改旧对象）。 */
-export function receive(state: RevealState, text: string, now: number): RevealState {
+export function receive(
+  state: RevealState,
+  text: string,
+  now: number,
+): RevealState {
   if (text === state.target) return state;
   if (!text.startsWith(state.target)) {
     // 不是延续（重新生成、内容被替换）：不做动画，直接整段。
     return initialReveal(text, now);
+  }
+  const deltaLen = text.length - state.target.length;
+  const gap =
+    state.lastReceiveAt !== undefined
+      ? now - state.lastReceiveAt
+      : Number.POSITIVE_INFINITY;
+  const smoothStreak =
+    deltaLen <= 8 && gap < 80 ? (state.smoothStreak ?? 0) + 1 : 0;
+  // 上游已经是高频小包平滑流时直接 0ms 贴合，不再人为滞后一帧以上。
+  if (smoothStreak >= 2) {
+    return {
+      target: text,
+      pos: text.length,
+      cut: text.length,
+      marks: [],
+      last: now,
+      lastReceiveAt: now,
+      smoothStreak,
+    };
   }
   const caughtUp = state.cut >= state.target.length;
   return {
@@ -53,13 +88,18 @@ export function receive(state: RevealState, text: string, now: number): RevealSt
     marks: [...state.marks, [text.length, now]],
     // 之前已经追平：从现在开始计时，免得空闲那段时间被算成一大步。
     last: caughtUp ? now : state.last,
+    lastReceiveAt: now,
+    smoothStreak,
   };
 }
 
 /** 往前走一帧。 */
 export function step(state: RevealState, now: number): RevealState {
   const len = state.target.length;
-  if (state.cut >= len) return state.last === now ? state : { ...state, pos: len, last: now, marks: [] };
+  if (state.cut >= len)
+    return state.last === now
+      ? state
+      : { ...state, pos: len, last: now, marks: [] };
   const dt = Math.max(0, Math.min(now - state.last, 100));
   const backlog = len - state.pos;
   const perMs = Math.max(backlog / TAU_MS, MIN_CPS / 1000);
@@ -75,7 +115,15 @@ export function step(state: RevealState, now: number): RevealState {
   });
   pos = Math.max(pos, floor);
   const cut = Math.max(state.cut, snapCut(state.target, Math.floor(pos)));
-  return { target: state.target, pos: Math.max(pos, Math.min(cut, len)), cut, marks, last: now };
+  return {
+    target: state.target,
+    pos: Math.max(pos, Math.min(cut, len)),
+    cut,
+    marks,
+    last: now,
+    lastReceiveAt: state.lastReceiveAt,
+    smoothStreak: state.smoothStreak,
+  };
 }
 
 /** 是否还有没放出来的字。 */
@@ -84,9 +132,30 @@ export function pending(state: RevealState): boolean {
 }
 
 /** Markdown 里单独出现会被画成别的样子的记号字符。 */
-const SYNTAX = new Set(["*", "_", "~", "`", "#", ">", "-", "+", "|", "[", "]", "(", ")", "!", "\\", "=", "<", "&", ":"]);
+const SYNTAX = new Set([
+  "*",
+  "_",
+  "~",
+  "`",
+  "#",
+  ">",
+  "-",
+  "+",
+  "|",
+  "[",
+  "]",
+  "(",
+  ")",
+  "!",
+  "\\",
+  "=",
+  "<",
+  "&",
+  ":",
+]);
 /** 行首的块记号：列表、标题、引用、有序列表、代码围栏、表格行。 */
-const LINE_MARKER = /^[ \t]*(?:[-*+>|]+|#{1,6}|\d{1,3}[.)]?|`{1,3}\w*|~{1,3})[ \t]?$/;
+const LINE_MARKER =
+  /^[ \t]*(?:[-*+>|]+|#{1,6}|\d{1,3}[.)]?|`{1,3}\w*|~{1,3})[ \t]?$/;
 
 /**
  * 把切口挪到一个「画出来不会变样」的位置（只往后挪，最多 24 个字符）：
@@ -110,7 +179,14 @@ export function snapCut(text: string, cut: number): number {
   // 行内记号：结尾是记号字符（或「记号+空格」）就再往后带。
   while (c < limit) {
     const prev = text.charAt(c - 1);
-    if (SYNTAX.has(prev) || (prev === " " && c >= 2 && SYNTAX.has(text.charAt(c - 2)) && c - 1 > lineStart)) c++;
+    if (
+      SYNTAX.has(prev) ||
+      (prev === " " &&
+        c >= 2 &&
+        SYNTAX.has(text.charAt(c - 2)) &&
+        c - 1 > lineStart)
+    )
+      c++;
     else break;
   }
   // 不拆开代理对。

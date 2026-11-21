@@ -206,6 +206,66 @@ export function buildSideContextDigest(
   return kept.join("\n");
 }
 
+/**
+ * 裁掉末尾尚未闭合工具结果的悬挂 tool_call 轮次，保证侧边上下文落在完整边界。
+ */
+export function trimToolBoundary<
+  T extends {
+    role?: unknown;
+    toolCalls?: unknown;
+    tool_calls?: unknown;
+    toolCallId?: unknown;
+    tool_call_id?: unknown;
+  },
+>(messages: readonly T[]): T[] {
+  let end = messages.length;
+  while (end > 0) {
+    let probe = end - 1;
+    const answeredIds = new Set<string>();
+    while (probe >= 0 && messages[probe]?.role === "tool") {
+      const toolMsg = messages[probe];
+      const id =
+        typeof toolMsg?.toolCallId === "string"
+          ? toolMsg.toolCallId
+          : typeof toolMsg?.tool_call_id === "string"
+            ? toolMsg.tool_call_id
+            : undefined;
+      if (id) answeredIds.add(id);
+      probe -= 1;
+    }
+    const candidate = probe >= 0 ? messages[probe] : undefined;
+    const rawCalls =
+      candidate?.role === "assistant"
+        ? Array.isArray(candidate.toolCalls)
+          ? candidate.toolCalls
+          : Array.isArray(candidate.tool_calls)
+            ? candidate.tool_calls
+            : []
+        : [];
+    const callIds = rawCalls
+      .map((call) =>
+        isPlainObject(call) && typeof call.id === "string"
+          ? call.id
+          : undefined,
+      )
+      .filter((id): id is string => Boolean(id));
+    if (candidate?.role === "assistant" && callIds.length > 0) {
+      const complete = callIds.every((id) => answeredIds.has(id));
+      if (!complete) {
+        end = probe;
+        continue;
+      }
+      break;
+    }
+    if (probe < end - 1) {
+      end = probe + 1;
+      continue;
+    }
+    break;
+  }
+  return messages.slice(0, end);
+}
+
 export function buildSteerInboxPayload(
   id: string,
   text: string,
@@ -436,8 +496,11 @@ export function createSideThreadStore(
     }
 
     const rawParentMessages = parseJsonValue(parent.messages);
+    const parentMessages = Array.isArray(rawParentMessages)
+      ? trimToolBoundary(rawParentMessages)
+      : [];
     const contextDigest = buildSideContextDigest(
-      Array.isArray(rawParentMessages) ? rawParentMessages : [],
+      parentMessages,
       anchorMessageId,
     );
     const sideThreadId = `side_${randomUUID()}`;

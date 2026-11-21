@@ -154,6 +154,7 @@
 | [146](#146-账号菜单减负统一版本与更新页与设置导航五组重组2026-11-20)                                        | 账号卡与菜单去除版本号/服务端更新、新增全员「版本与更新」页、设置导航收束为五组                                     | 2026-11-20                                                                 |
 | [147](#147-全站弹窗菜单抽屉与浮层统一接入玻璃材质与深浅色通道2026-11-20)                                  | 全站菜单、弹窗、抽屉、模型/权限/搜索等全部浮层去除硬编码实底，统一走 `--lg-surface` 跟随设置                         | 2026-11-20                                                                 |
 | [148](#148-窗口拉伸保留磨砂玻璃与液态玻璃拉伸暂停2026-11-20)                                               | 移除 `data-resizing` 实底黑块降级并暂停液态玻璃拉伸期重采样/透镜重建，消除横向拉伸全屏闪烁                           | 2026-11-20                                                                 |
+| [149](#149-回复中途阶段感知实时插话与前后端全链路丝滑优化2026-11-20)                                       | 阶段感知 mid-turn 实时插话、无等待实时 SSE + 50ms 写库合批 + DSH 连接池与单跳发送、前端叶子流式与交互预算优化        | 2026-11-20                                                                 |
 
 ## 0. 总原则
 
@@ -3060,3 +3061,18 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 - **窗口拉伸保留磨砂玻璃**：删除 `app/src/resize-pause.css` 并移除 `main.tsx` 导入，保留 `initResizeState()` 与 `html[data-resizing]` 状态供高开销 JS/GPU 后台重绘（WebGL 天空与液态玻璃）暂停；窗口拉伸全过程保持通透磨砂与零黑闪。
 - **液态玻璃拉伸期暂停与原子换透镜**：`app/src/lib/liquid-glass.ts` 移除 `HTML_WATCHED_ATTRS` 中的 `data-resizing`，改为订阅 `subscribeResizing` 与检查 `resizeInProgress()`，拉伸期间暂停采样与透镜扫描并在停稳后补扫一次；`ensureLens` 在新位移图解码完成前不再提前调用 `removeLens` 置空 `data-lg-lens`，改用微任务合并重写 `#chisabot-lg-lens` 样式表后原子切换。
+
+## 149. 回复中途阶段感知实时插话与前后端全链路丝滑优化（2026-11-20）
+
+问题：（1）旧架构把「回复进行中再发新消息」一律当作忙碌排队阻塞（无阶段区分、无原地改向或插话编辑能力），且长耗时只读工具执行期间用户必须干等工具或整轮结束；（2）服务端每个流式 delta 都要同步 `await store.append(...)` 与逐 token `structuredClone`，发送链路存在转发鉴权直查、PG 500ms 轮询以及 `POST /commands` 后再开 `/events` 的双跳建连与额外 `/health`、`/checkpoint` 往返；（3）前端每次 token 到达触发整条会话状态 `refresh()`，引起消息列表与输入区联动重绘，超长回答直接全量解析渲染、固定积分平滑吐字在顺滑流上仍有拖尾，且可滚动气泡开启 `--lg-blur` 与空闲态周期轮询带来额外合成开销。
+
+- **Wave 1 · 阶段感知实时插话（Live Steer）**：
+  - `runtime/dsh/src/plugin.mjs` / `client.mjs` 引入 `STEER_CUT = "chisabot/steer"`、执行阶段 `phase`（`boundary | model | tools`）与活跃工具列表追踪、`steer` / `updateQueue` / `updateQueuedItem` 与连接状态暴露；只读工具超过 1 秒自动后台化以便及时响应转向。
+  - `server/src/conversations/`（`dsh-events.ts`、`dsh-runtime.ts`、`tool-gateway.ts`）、`thread-inbox.ts`、`local-conversations.ts`、`side-threads.ts` 与 `routes.ts` 引入 `InboxDeliveryMode`（`steer | queue`）、单调 `epoch` + `canCommit()` 并发护栏、`PATCH /api/conversations/:threadId/inbox` 与侧边追问抽屉回流插话；前端在设置「通用」页、发送区模式切换与 `QueueDock`（行内编辑、立即插话、撤回）完整暴露且默认采用实时插话。
+- **Wave 2 · 零等待流式发送与写库/连接合批**：
+  - `server/src/local-conversations.ts` 将 live SSE 分发从 PG `store.append` 阻塞中剥离并按 50ms 窗口合批写库，消除逐 token `structuredClone` 与进程内 500ms PG 轮询。
+  - `server/src/conversations/routes.ts` 与 `app/src/lib/chat/session-client.ts` 打通 `POST /api/conversations/:threadId/commands` `Accept: text/event-stream` 单跳直连与 `desiredSize <= 0` 背压合批（保留既有 JSON + `/events` 降级通道）；`app/src/lib/panels/api.ts` 为转发会话增加 30s TTL 缓存；新增 `dsh-client-pool.ts` 复用 `DshHostClient` 与健康状态并跳过连续非收尾事件 `/checkpoint` 拉取。
+- **Wave 3 · 前端叶子级渲染与视觉性能预算**：
+  - `app/src/lib/chat/session-client.ts` 提供按 `messageId` rAF 合批的 `useLiveMessageText` 与结构签名门控 `refresh()`，配合 `chat-transcript.tsx` `<LiveBotBubbles>`、`bot-bubbles.tsx` 段级 `memo` 及 `SmoothStreamdown` `memo` 实现流式期间仅尾气泡叶子更新。
+  - 新增 `fold-long-message.ts` 对超过 20,000 字符的已落定消息执行围栏代码块安全折叠与展开；`smooth-reveal.ts` 启用连续顺滑流零延迟贴合；`styles.css` 保持 `.chat-bubble-bare > [data-slot="bubble-content"]` 选择器并禁用可滚动气泡与卡片的 `--lg-blur`；`<SettleAtEnd busy={busy || live} />` 对齐进行中状态保持滚动收白零跳动，配合 `useMotionRest` 与边缘触发的 `nextIdleInboxCheck` 消除闲置闪烁重绘与稳态 `/inbox` 空轮询。
+

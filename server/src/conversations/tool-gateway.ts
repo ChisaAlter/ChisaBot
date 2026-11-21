@@ -66,9 +66,20 @@ function unknownEffect(
   });
 }
 
+const STEER_TOOL_GRACE_MS = 1_000;
+const BACKGROUND_PROMOTED_NOTICE =
+  "该只读查询仍在后台继续执行（未中止），请先响应用户刚刚插入的新指令；后台完成后结果会自动记录。";
+
 export type DshToolExecuteResult = ToolOperationResult & {
   images?: ToolImagePart[];
+  backgroundPromoted?: boolean;
 };
+
+export function isPromotableReadTool(
+  tool: Pick<GrantedTool, "effect" | "prepareConfirm">,
+): boolean {
+  return tool.effect === "read" && !tool.prepareConfirm;
+}
 
 export type DshToolRegistration = {
   bindingId: string;
@@ -95,7 +106,9 @@ export type DshToolRegistration = {
 export function createDshToolGateway(
   operations: ToolOperationStore,
   journal?: DshRunJournal,
+  options: { steerGraceMs?: number } = {},
 ) {
+  const steerGraceMs = Math.max(0, options.steerGraceMs ?? STEER_TOOL_GRACE_MS);
   const runs = new Map<string, DshToolRegistration>();
   const live = new Map<
     string,
@@ -107,6 +120,19 @@ export function createDshToolGateway(
     }
   >();
   const steering = new Map<string, Promise<unknown>>();
+  const steerSignals = new Map<
+    string,
+    { signaledAt?: number; listeners: Set<() => void> }
+  >();
+  const notifySteerSignal = (runId: string) => {
+    let entry = steerSignals.get(runId);
+    if (!entry) {
+      entry = { listeners: new Set() };
+      steerSignals.set(runId, entry);
+    }
+    entry.signaledAt = Date.now();
+    for (const listener of entry.listeners) listener();
+  };
   const suspendConfirmation =
     (operationId: string, continuation: ApprovalContinuation) =>
     async (requestId: string): Promise<never> => {
@@ -127,6 +153,7 @@ export function createDshToolGateway(
     };
     const close = () => {
       runs.delete(capability);
+      steerSignals.delete(registration.identity.runId);
       for (const key of steering.keys())
         if (key.startsWith(`${capability}:`)) steering.delete(key);
       registration.signal.removeEventListener("abort", close);
@@ -229,9 +256,10 @@ export function createDshToolGateway(
       );
     }
     let invoked = false;
-    try {
+    const callStartedAt = Date.now();
+    const executionPromise = Promise.resolve().then(() => {
       run.signal.throwIfAborted();
-      const collected = await withToolImageCollector(
+      return withToolImageCollector(
         {
           supportsImages: run.supportsImages ?? false,
           ...(run.describeImage ? { describeImage: run.describeImage } : {}),
@@ -257,14 +285,8 @@ export function createDshToolGateway(
             ),
           ),
       );
-      // 账本仅落盘纯文本结果，避免将大体积 base64 写入 PostgreSQL JSONB。
-      await operations.settle(claim.id, "completed", {
-        content: collected.content,
-      });
-      return collected.images?.length
-        ? { content: collected.content, images: collected.images }
-        : { content: collected.content };
-    } catch (error) {
+    });
+    const settleFailure = async (error: unknown) => {
       const message = publicErrorMessage(error, "工具执行失败。");
       if (error instanceof HeadlessToolSuspension) {
         error.waiting.continuation ??= continuation;
@@ -290,7 +312,110 @@ export function createDshToolGateway(
         error: message,
       });
       throw unknownEffect(claim.id, continuation);
+    };
+
+    if (!isPromotableReadTool(tool)) {
+      try {
+        const collected = await executionPromise;
+        // 账本仅落盘纯文本结果，避免将大体积 base64 写入 PostgreSQL JSONB。
+        await operations.settle(claim.id, "completed", {
+          content: collected.content,
+        });
+        return collected.images?.length
+          ? { content: collected.content, images: collected.images }
+          : { content: collected.content };
+      } catch (error) {
+        return settleFailure(error);
+      }
     }
+
+    let promoted = false;
+    let finished = false;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    let signalEntry = steerSignals.get(run.identity.runId);
+    let signalListener: (() => void) | undefined;
+    const cleanupWatch = () => {
+      if (graceTimer) clearTimeout(graceTimer);
+      graceTimer = undefined;
+      if (signalListener && signalEntry) {
+        signalEntry.listeners.delete(signalListener);
+        if (
+          signalEntry.listeners.size === 0 &&
+          signalEntry.signaledAt === undefined
+        )
+          steerSignals.delete(run.identity.runId);
+      }
+    };
+
+    const raceOutcome = await new Promise<
+      | { kind: "completed"; collected: Awaited<typeof executionPromise> }
+      | { kind: "failed"; error: unknown }
+      | { kind: "promoted" }
+    >((resolve) => {
+      const armTimer = () => {
+        if (finished || promoted || graceTimer) return;
+        graceTimer = setTimeout(() => {
+          if (finished || run.signal.aborted) return;
+          promoted = true;
+          cleanupWatch();
+          resolve({ kind: "promoted" });
+        }, steerGraceMs);
+        graceTimer.unref?.();
+      };
+      if (!signalEntry) {
+        signalEntry = { listeners: new Set() };
+        steerSignals.set(run.identity.runId, signalEntry);
+      }
+      signalListener = armTimer;
+      signalEntry.listeners.add(armTimer);
+      if (
+        signalEntry.signaledAt !== undefined &&
+        signalEntry.signaledAt >= callStartedAt - 500
+      )
+        armTimer();
+
+      void executionPromise.then(
+        async (collected) => {
+          finished = true;
+          cleanupWatch();
+          if (promoted) {
+            await operations
+              .settle(claim.id, "completed", { content: collected.content })
+              .catch(() => {});
+            return;
+          }
+          resolve({ kind: "completed", collected });
+        },
+        async (error) => {
+          finished = true;
+          cleanupWatch();
+          if (promoted) {
+            await settleFailure(error).catch(() => {});
+            return;
+          }
+          resolve({ kind: "failed", error });
+        },
+      );
+    });
+
+    if (raceOutcome.kind === "promoted") {
+      return {
+        content: BACKGROUND_PROMOTED_NOTICE,
+        backgroundPromoted: true,
+      };
+    }
+    if (raceOutcome.kind === "failed") {
+      return settleFailure(raceOutcome.error);
+    }
+    await operations.settle(claim.id, "completed", {
+      content: raceOutcome.collected.content,
+    });
+    return raceOutcome.collected.images?.length
+      ? {
+          content: raceOutcome.collected.content,
+          images: raceOutcome.collected.images,
+        }
+      : { content: raceOutcome.collected.content };
   }
 
   const routes = new Hono();
@@ -360,6 +485,29 @@ export function createDshToolGateway(
       steering.set(key, pending);
     }
     return context.json(await pending);
+  });
+  routes.post("/steer-signal", async (context) => {
+    const token = /^Bearer\s+(\S+)$/i.exec(
+      context.req.header("authorization") ?? "",
+    )?.[1];
+    const run = token ? runs.get(token) : undefined;
+    if (!run)
+      return context.json(
+        { error: "The runtime capability is no longer active." },
+        401,
+      );
+    const body = (await context.req.json().catch(() => null)) as {
+      binding?: Record<string, unknown>;
+    } | null;
+    if (
+      !body?.binding ||
+      Object.entries(run.identity).some(
+        ([key, value]) => body.binding?.[key] !== value,
+      )
+    )
+      return context.json({ error: "Run identity mismatch." }, 403);
+    notifySteerSignal(run.identity.runId);
+    return context.json({ ok: true });
   });
   routes.post("/execute", async (context) => {
     context.header("Cache-Control", "no-store");

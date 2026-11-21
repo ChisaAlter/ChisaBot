@@ -800,7 +800,7 @@ describe("P3-2 出错后的后台轮询不再闪骨架屏", () => {
       ]);
     });
     await waitFor(() =>
-      expect(rail.querySelector(".task-rail-notice")).toBeNull(),
+      expect(rail.querySelector(".task-rail-notice") === null).toBe(true),
     );
   });
 });
@@ -1230,11 +1230,11 @@ describe("P3-5 审批返回 409 后卡片立刻消失", () => {
     });
     await waitFor(() => {
       expect(
-        view.container.querySelector('article[data-kind="task"]'),
-      ).toBeNull();
+        view.container.querySelector('article[data-kind="task"]') === null,
+      ).toBe(true);
       expect(
-        view.container.querySelector('article[data-kind="recent"]'),
-      ).not.toBeNull();
+        view.container.querySelector('article[data-kind="recent"]') !== null,
+      ).toBe(true);
     });
     expect(posts).toHaveLength(1);
     expect(posts[0]).toContain("/api/task-center/tasks/task-1/pause");

@@ -25,42 +25,113 @@ export function publicConversationError(error: unknown): string {
 }
 
 /** Subscription lifetime controls delivery only. The runner owns execution and persistence. */
-function eventStream(source: Observable<BaseEvent>) {
+function sseDeltaKey(event: BaseEvent): string | null {
+  const fields = event as BaseEvent & {
+    messageId?: string;
+    toolCallId?: string;
+    delta?: string;
+  };
+  if (typeof fields.delta !== "string") return null;
+  if (event.type === "TEXT_MESSAGE_CONTENT") {
+    return `text:${fields.messageId ?? ""}`;
+  }
+  if (event.type === "REASONING_MESSAGE_CONTENT") {
+    return `reasoning:${fields.messageId ?? ""}`;
+  }
+  if (event.type === "TOOL_CALL_ARGS") {
+    return `tool:${fields.toolCallId ?? ""}`;
+  }
+  return null;
+}
+
+export function eventStream(
+  source: Observable<BaseEvent>,
+  extraHeaders?: Record<string, string>,
+) {
   const encoder = new TextEncoder();
   let subscription: Subscription | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let closed = false;
+  const coalescedDeltas = new Map<string, BaseEvent & { delta: string }>();
+
+  const flushCoalesced = (ignoreBackpressure = false) => {
+    if (closed || !streamController || coalescedDeltas.size === 0) return;
+    for (const [key, event] of coalescedDeltas) {
+      if (
+        !ignoreBackpressure &&
+        streamController.desiredSize !== null &&
+        streamController.desiredSize <= 0
+      ) {
+        break;
+      }
+      coalescedDeltas.delete(key);
+      streamController.enqueue(
+        encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+      );
+    }
+  };
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      let closed = false;
+      streamController = controller;
       const close = () => {
         if (closed) return;
+        flushCoalesced(true);
         closed = true;
         clearInterval(heartbeat);
         controller.close();
       };
       heartbeat = setInterval(() => {
-        if (!closed) controller.enqueue(encoder.encode(": keepalive\n\n"));
+        if (closed) return;
+        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+          return;
+        }
+        controller.enqueue(encoder.encode(": keepalive\n\n"));
       }, 15_000);
       subscription = source.subscribe({
         next: (event) => {
-          if (!closed)
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
-            );
+          if (closed) return;
+          const pressured =
+            controller.desiredSize !== null && controller.desiredSize <= 0;
+          const deltaKey = sseDeltaKey(event);
+          if (pressured && deltaKey !== null) {
+            const deltaText = (event as BaseEvent & { delta: string }).delta;
+            const existing = coalescedDeltas.get(deltaKey);
+            if (existing) {
+              existing.delta += deltaText;
+            } else {
+              coalescedDeltas.set(deltaKey, {
+                ...(event as BaseEvent & { delta: string }),
+              });
+            }
+            return;
+          }
+          flushCoalesced(true);
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+          );
         },
         error: (error) => {
-          if (!closed)
+          if (!closed) {
+            flushCoalesced(true);
             controller.enqueue(
               encoder.encode(
                 `data: ${JSON.stringify({ type: "RUN_ERROR", code: "CONVERSATION_FAILED", message: publicConversationError(error) })}\n\n`,
               ),
             );
+          }
           close();
         },
         complete: close,
       });
     },
+    pull() {
+      flushCoalesced(false);
+    },
     cancel() {
+      closed = true;
+      coalescedDeltas.clear();
       clearInterval(heartbeat);
       subscription?.unsubscribe();
     },
@@ -70,6 +141,7 @@ function eventStream(source: Observable<BaseEvent>) {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
       "x-accel-buffering": "no",
+      ...extraHeaders,
     },
   });
 }
@@ -190,7 +262,45 @@ export function createConversationRoutes(options: {
     if (typeof body.agentId !== "string" || !body.agentId)
       return context.json({ error: "Bot is required." }, 400);
     const receipt = await admit(context.req.raw, body.agentId, input);
-    return context.json(receipt, receipt.alreadyAccepted ? 200 : 202);
+    const wantsStream = (context.req.header("accept") ?? "").includes(
+      "text/event-stream",
+    );
+    if (!wantsStream) {
+      return context.json(receipt, receipt.alreadyAccepted ? 200 : 202);
+    }
+    const liveSource = backend.runner.connect({
+      threadId: receipt.threadId,
+      agentId: body.agentId,
+      commandId: receipt.commandId,
+    });
+    const withAdmission = new Observable<BaseEvent>((subscriber) => {
+      let admissionSent = false;
+      const emitAdmission = () => {
+        if (admissionSent) return;
+        admissionSent = true;
+        subscriber.next({
+          type: "CUSTOM",
+          name: "chisabot.admission",
+          value: { commandId: receipt.commandId, runId: receipt.runId },
+        } as BaseEvent);
+      };
+      const sub = liveSource.subscribe({
+        next: (event) => {
+          subscriber.next(event);
+          if (event.type === "RUN_STARTED") emitAdmission();
+        },
+        error: (error) => subscriber.error(error),
+        complete: () => {
+          emitAdmission();
+          subscriber.complete();
+        },
+      });
+      return () => sub.unsubscribe();
+    });
+    return eventStream(withAdmission, {
+      "x-chisabot-command-id": receipt.commandId,
+      "x-chisabot-run-id": receipt.runId,
+    });
   });
   routes.get("/api/conversations/:threadId/operations", async (context) => {
     const actor = await identifyActor(context.req.raw);

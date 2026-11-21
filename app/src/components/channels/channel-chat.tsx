@@ -156,6 +156,10 @@ import {
   rememberTranscript,
 } from "@/lib/conversations/transcript-cache";
 import {
+  type BusySendMode,
+  getBusySendMode,
+} from "@/lib/conversations/send-mode";
+import {
   useFallbackTurns,
   useLastSentAt,
   useStoppedTurnIds,
@@ -478,6 +482,33 @@ function describeAttachments(attachments: readonly Attachment[]): string {
  * The local agent id is channel-scoped so two channels with the same coworker keep separate
  * durable threads.
  */
+export function nextIdleInboxCheck(
+  wasRunning: boolean | undefined,
+  running: boolean,
+): { nextRunning: boolean; shouldFetchInbox: boolean } {
+  if (running) return { nextRunning: true, shouldFetchInbox: false };
+  if (wasRunning === false) {
+    return { nextRunning: false, shouldFetchInbox: false };
+  }
+  return { nextRunning: false, shouldFetchInbox: true };
+}
+
+/** 仅按 running -> idle 边沿与首次挂载对齐收件箱，不在稳态空闲轮询里重复请求。 */
+function applyIdleInboxTick(
+  wasRunning: boolean | undefined,
+  running: boolean,
+  onLive: (live: boolean) => void,
+  fetchInbox: () => void,
+): boolean {
+  const step = nextIdleInboxCheck(wasRunning, running);
+  if (running) {
+    onLive(true);
+    return step.nextRunning;
+  }
+  if (step.shouldFetchInbox) fetchInbox();
+  return step.nextRunning;
+}
+
 export function ChannelChat({
   channel,
   runtimeAgentId,
@@ -821,17 +852,23 @@ export function ChannelChat({
   useExternalConnection(
     `${objectKey(activity)}\0${channel.threadId}`,
     (_key, signal) => {
+      let wasRunning: boolean | undefined;
       const off = activity.onActivity((value) => {
         if (signal.aborted) return;
-        if (value.running) setThreadLive(true);
-        else
-          void inboxState(channel.threadId)
-            .then((state) => {
-              if (!signal.aborted) setThreadLive(inboxLive(state));
-            })
-            .catch(() => {
-              if (!signal.aborted) setThreadLive(false);
-            });
+        wasRunning = applyIdleInboxTick(
+          wasRunning,
+          value.running,
+          setThreadLive,
+          () => {
+            void inboxState(channel.threadId)
+              .then((state) => {
+                if (!signal.aborted) setThreadLive(inboxLive(state));
+              })
+              .catch(() => {
+                if (!signal.aborted) setThreadLive(false);
+              });
+          },
+        );
       });
       return () => off();
     },
@@ -2152,15 +2189,22 @@ export function ChannelChat({
    * 补发的那一轮也算「在跑」（Stop 能停、输入框显示在回答）。
    */
   const queueToServer = useCallback(
-    (draft: ComposerDraft) =>
-      queueMessage(channel.threadId, {
-        message: {
-          id: newId(),
-          role: "user",
-          content: toMessageContent(draft.text.trim(), draft.attachments),
-        } as Message,
-        skillIds: draft.commandIds,
-      }),
+    (draft: ComposerDraft, mode?: BusySendMode) => {
+      const messageId = newId();
+      return queueMessage(
+        channel.threadId,
+        {
+          message: {
+            id: messageId,
+            role: "user",
+            content: toMessageContent(draft.text.trim(), draft.attachments),
+          } as Message,
+          skillIds: draft.commandIds,
+        },
+        messageId,
+        { mode: mode ?? getBusySendMode() },
+      );
+    },
     [channel.threadId],
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: conversationClient 是模块级网关对象，列上只是声明「这个回调靠它」，不变
@@ -2219,7 +2263,9 @@ export function ChannelChat({
       if (!said) return;
       // 正在回答时：进收件箱，下一步读到（§38.1），不再报「代理仍在处理另一个请求」。
       if (turnsRef.current > 0 || agentRef.current.isRunning) {
-        void queueMessage(channel.threadId, said).then((outcome) => {
+        void queueMessage(channel.threadId, said, undefined, {
+          mode: getBusySendMode(),
+        }).then((outcome) => {
           if (outcome === "send")
             void sayRef.current(said).catch(() => undefined);
         });

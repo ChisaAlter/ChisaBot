@@ -52,6 +52,10 @@ export type SideChatDrawerProps = {
 function steerNoticeText(result: LiveSteerResult): string {
   switch (result.kind) {
     case "queued":
+      if (result.steerAction === "next-step")
+        return "已插话 · 当前操作后接管。";
+      if (result.steerAction === "cut" || result.steerAction === "segment-cut")
+        return "已立即切入并引导当前回复。";
       return "已将补充指令插入主回合队列，下一步执行时自动生效。";
     case "stopping":
       return "主回合正在停止中，请等待停止完成后在主输入框发送。";

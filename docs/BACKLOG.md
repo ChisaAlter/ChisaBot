@@ -15,6 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-143](#cb-143) | 回复中途阶段感知实时插话与前后端全链路丝滑优化（Wave 1–3）                        | 成熟度 Maturity       | `type: feat` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`           |
 | [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（`v0.1.170`） |
 | [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（`v0.1.170` · 从 `wip/link-card-align-recovered` 提取合入 `main`） |
 | [CB-140](#cb-140) | 皮肤轴升级为主题族：浅 / 深双槽独立选族、seed 派生令牌                          | 成熟度 Maturity       | `type: feat` · `area: settings` · `area: web` · `P1` · `status: done`（#562 · `v0.1.170`） |
@@ -136,6 +137,17 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-143
+
+**回复中途阶段感知实时插话与前后端全链路丝滑优化（Wave 1–3）**
+
+标签：`type: feat` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`
+
+- 状态：已在分支 `feat/smooth-chat-and-live-steer` 完成 Wave 1–3 全量实现与自动化验证（规范见 `DESIGN.md` §149）。
+- [x] **Wave 1 · 阶段感知实时插话**：DSH 插件/客户端支持 `STEER_CUT`、`phase` 追踪与只读工具 1s 自动后台化；服务端新增 `InboxDeliveryMode`（`"steer" | "queue"`）、单调 `epoch` 并发护栏、`PATCH .../inbox` 与侧边抽屉主线插话；前端默认开启实时插话并提供设置偏好、发送区切换与 `QueueDock` 行内编辑/立即插话/撤回。
+- [x] **Wave 2 · 零等待 SSE、写库合批、DSH 连接池与单跳发送**：`local-conversations.ts` 解耦 live 推送与 50ms 写库合批、消除逐 token `structuredClone` 与 500ms PG 轮询；`routes.ts` 与 `session-client.ts` 实现 `POST /commands` 单跳 SSE 与背压合批；`dsh-client-pool.ts` 与 `dsh-runtime.ts` 复用 `DshHostClient`、健康缓存并跳过冗余 `/checkpoint`；`panels/api.ts` 增加 30s 转发头缓存。
+- [x] **Wave 3 · 前端叶子级流式、长消息折叠与交互性能预算**：`useLiveMessageText`（rAF 合批）+ 结构签名门控 + `<LiveBotBubbles>`/`Segment`/`SmoothStreamdown` `memo`；>20k 围栏代码块安全折叠；`smooth-reveal.ts` 顺滑流贴合；可滚动气泡与卡片禁用 `--lg-blur`；`<SettleAtEnd busy={busy || live} />`、`useMotionRest` 与边缘触发 `nextIdleInboxCheck`。
 
 ## CB-142
 

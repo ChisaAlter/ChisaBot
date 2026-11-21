@@ -1,4 +1,8 @@
-export { useDocumentEvent, useElementEvent, useWindowEvent } from "./use-dom-events";
+export {
+  useDocumentEvent,
+  useElementEvent,
+  useWindowEvent,
+} from "./use-dom-events";
 export { useAutoFocus, useDocumentSync, useElementSync } from "./use-dom-sync";
 export {
   type AbortScope,
@@ -7,6 +11,7 @@ export {
   useExternalConnection,
 } from "./use-external-connection";
 export { useIsMobile, useMediaQuery } from "./use-mobile";
+export { useMotionRest } from "./use-motion-rest";
 export {
   useIntersectionObserver,
   useMutationObserver,
