@@ -3064,7 +3064,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 ## 149. 回复中途阶段感知实时插话与前后端全链路丝滑优化（2026-11-20）
 
-问题：（1）旧架构把「回复进行中再发新消息」一律当作忙碌排队阻塞（无阶段区分、无原地改向或插话编辑能力），且长耗时只读工具执行期间用户必须干等工具或整轮结束；（2）服务端每个流式 delta 都要同步 `await store.append(...)` 与逐 token `structuredClone`，发送链路存在转发鉴权直查、PG 500ms 轮询以及 `POST /commands` 后再开 `/events` 的双跳建连与额外 `/health`、`/checkpoint` 往返；（3）前端每次 token 到达触发整条会话状态 `refresh()`，引起消息列表与输入区联动重绘，超长回答直接全量解析渲染、固定积分平滑吐字在顺滑流上仍有拖尾，且可滚动气泡开启 `--lg-blur` 与空闲态周期轮询带来额外合成开销。
+问题：（1）旧架构把「回复进行中再发新消息」一律当作忙碌排队阻塞（无阶段区分、无原地改向或插话编辑能力），且长耗时只读工具执行期间用户必须干等工具或整轮结束；（2）服务端每个流式 delta 都要同步 `await store.append(...)` 与逐 token `structuredClone`，发送链路存在转发鉴权直查、PG 500ms 轮询以及 `POST /commands` 后再开 `/events` 的双跳建连与额外 `/health`、`/checkpoint` 往返；（3）前端每次 token 到达触发整条会话状态 `refresh()`，引起消息列表与输入区联动重绘，超长回答直接全量解析渲染、固定积分平滑吐字在顺滑流上仍有拖尾，且空闲态周期轮询与未收敛的静态微动画带来额外开销。
 
 - **Wave 1 · 阶段感知实时插话（Live Steer）**：
   - `runtime/dsh/src/plugin.mjs` / `client.mjs` 引入 `STEER_CUT = "chisabot/steer"`、执行阶段 `phase`（`boundary | model | tools`）与活跃工具列表追踪、`steer` / `updateQueue` / `updateQueuedItem` 与连接状态暴露；只读工具超过 1 秒自动后台化以便及时响应转向。
@@ -3074,5 +3074,5 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - `server/src/conversations/routes.ts` 与 `app/src/lib/chat/session-client.ts` 打通 `POST /api/conversations/:threadId/commands` `Accept: text/event-stream` 单跳直连与 `desiredSize <= 0` 背压合批（保留既有 JSON + `/events` 降级通道）；`app/src/lib/panels/api.ts` 为转发会话增加 30s TTL 缓存；新增 `dsh-client-pool.ts` 复用 `DshHostClient` 与健康状态并跳过连续非收尾事件 `/checkpoint` 拉取。
 - **Wave 3 · 前端叶子级渲染与视觉性能预算**：
   - `app/src/lib/chat/session-client.ts` 提供按 `messageId` rAF 合批的 `useLiveMessageText` 与结构签名门控 `refresh()`，配合 `chat-transcript.tsx` `<LiveBotBubbles>`、`bot-bubbles.tsx` 段级 `memo` 及 `SmoothStreamdown` `memo` 实现流式期间仅尾气泡叶子更新。
-  - 新增 `fold-long-message.ts` 对超过 20,000 字符的已落定消息执行围栏代码块安全折叠与展开；`smooth-reveal.ts` 启用连续顺滑流零延迟贴合；`styles.css` 保持 `.chat-bubble-bare > [data-slot="bubble-content"]` 选择器并禁用可滚动气泡与卡片的 `--lg-blur`；`<SettleAtEnd busy={busy || live} />` 对齐进行中状态保持滚动收白零跳动，配合 `useMotionRest` 与边缘触发的 `nextIdleInboxCheck` 消除闲置闪烁重绘与稳态 `/inbox` 空轮询。
+  - 新增 `fold-long-message.ts` 对超过 20,000 字符的已落定消息执行围栏代码块安全折叠与展开；`smooth-reveal.ts` 启用连续顺滑流零延迟贴合；`styles.css` 保持 `.chat-bubble-bare > [data-slot="bubble-content"]` 无框无模糊，普通 AI 气泡、用户气泡与顶层对话卡片沿用 CB-128 规范与侧栏/输入框共用四档 `--lg-blur` 磨砂材质；`<SettleAtEnd busy={busy || live} />` 对齐进行中状态保持滚动收白零跳动，配合 `useMotionRest` 与边缘触发的 `nextIdleInboxCheck` 消除闲置闪烁重绘与稳态 `/inbox` 空轮询。
 

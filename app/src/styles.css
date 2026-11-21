@@ -11461,14 +11461,13 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
 
 /* ==========================================================================================
  * 渲染预算（2026-10-29，性能审计：毛玻璃层数、天空每帧重画、无限动画是卡顿的主要来源）
- * - 允许 backdrop-filter 的只有：左栏、右栏、输入框、顶栏（大面板 20px）和弹层（12px），不嵌套，滚动区里不模糊。
+ * - 允许 backdrop-filter 的元素：左栏、右栏、输入框、顶栏、聊天气泡、顶层对话卡片（各 20px）和弹层（12px）；
+ *   裸代码块气泡、按钮/胶囊、嵌套卡片、设置页卡片关闭模糊，滚动区不嵌套多层模糊。
  * - 上面「三档玻璃材质」那层用 !important 给不少小元素加了 backdrop-filter: var(--lg-blur)。
  *   那层不改、这里也不加 !important：在不该模糊的元素自己身上把 --lg-blur 设成 none，那条规则读到的就是 none。
  * ======================================================================================== */
 :is(.glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab),
 .glass-main .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"],
-.glass-main .chat-bubbles [data-slot="bubble"] > [data-slot="bubble-content"],
-.glass-main [data-testid="chat-transcript"] :is(.jr-card, .cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .to-card, .hr-card),
 .page-rows,
 .sg-card,
 .page-section > form,
