@@ -3967,7 +3967,7 @@ html[data-desktop="darwin"] .glass-topbar-start { width: auto; }
   html[data-desktop="darwin"] .glass-topbar[data-winctrls="1"] { padding-right: calc(46px + 12px); }
 }
 html[data-desktop] .glass-brand { cursor: default; }
-/* 传统 Windows 标题按钮：46×40，贴住窗口右上角，无胶囊底、无圆角。 */
+/* 传统 Windows 标题按钮：46×40 磨砂玻璃角托，贴住窗口右上角（左下角微圆角收口）。 */
 .win-ctrls {
   position: absolute;
   top: 0;
@@ -3989,14 +3989,43 @@ html[data-desktop] .glass-brand { cursor: default; }
   color: var(--ink-1);
   transition: background var(--dur-1) linear, color var(--dur-1) linear;
 }
-.win-ctrl:hover { background: rgba(17, 26, 43, 0.07); }
-.win-ctrl:active { background: rgba(17, 26, 43, 0.12); }
-.dark .win-ctrl:hover { background: rgba(255, 255, 255, 0.08); }
-.dark .win-ctrl:active { background: rgba(255, 255, 255, 0.04); }
-.win-ctrl.is-close:hover,
-.dark .win-ctrl.is-close:hover { background: #c42b1c; color: #fff; }
-.win-ctrl.is-close:active,
-.dark .win-ctrl.is-close:active { background: #c84031; color: rgba(255, 255, 255, 0.85); }
+.win-ctrl svg {
+  filter: var(--win-ctrl-shadow, none);
+  transition: filter var(--dur-1) linear;
+}
+.dark .win-ctrl {
+  --win-ctrl-shadow: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.52));
+}
+html:not(.dark)[data-wallpaper="on"] .win-ctrl {
+  --win-ctrl-shadow: drop-shadow(0 1px 1.5px rgba(255, 255, 255, 0.55));
+}
+html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl {
+  --win-ctrl-shadow: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.52));
+}
+.win-ctrl:hover { background: rgba(17, 26, 43, 0.08); }
+.win-ctrl:active { background: rgba(17, 26, 43, 0.14); }
+.dark .win-ctrl:hover,
+html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.dark .win-ctrl:active,
+html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+.win-ctrls .win-ctrl.is-close:hover,
+.dark .win-ctrls .win-ctrl.is-close:hover,
+html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl.is-close:hover {
+  background: #c42b1c;
+  color: #fff;
+  --win-ctrl-shadow: none;
+}
+.win-ctrls .win-ctrl.is-close:active,
+.dark .win-ctrls .win-ctrl.is-close:active,
+html[data-glass="liquid"]:not(.dark) .win-ctrls[data-lg-ink="dark"] .win-ctrl.is-close:active {
+  background: #c84031;
+  color: rgba(255, 255, 255, 0.85);
+  --win-ctrl-shadow: none;
+}
 .win-ctrl:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus); }
 .desk-strip {
   position: fixed;
@@ -10761,7 +10790,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
  * 干活步骤、草稿卡、历史提示、工具结果核对 .to-card、交接恢复 .hr-card、状态/干活胶囊、
  * 「显示更早」胶囊、PC 窗口按钮）：和气泡同一档釉面，不吃 .glass-shell 的薄纱令牌。
  * .cf-card 完成态用更弱一档的 --lg-surface。 */
-:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card) {
+:is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls) {
   background: var(--pal-tint-layer,) var(--lg-surface-strong) !important;
   backdrop-filter: var(--lg-blur) !important;
   box-shadow: var(--lg-shadow) !important;
