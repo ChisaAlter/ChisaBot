@@ -1,3 +1,8 @@
+## 0.1.178 — 2026-11-21
+
+- 全端发版：`0.1.178`，Android `versionCode 358`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `955713d4e85bf6eb`；无需手动数据库迁移。
+- **聊天气泡与对话卡片磨砂玻璃一致性修复（CB-128 / DESIGN §149）**：移除 `app/src/styles.css` 渲染预算中误关闭 `.chat-bubbles [data-slot="bubble"] > [data-slot="bubble-content"]` 与 `[data-testid="chat-transcript"] :is(.jr-card, ...)` `--lg-blur` 的规则，仅保留 `.chat-bubble-bare` 无框无模糊及性能模式/减少透明度降级；同步恢复并强化 `app/tests/theme-glass-perf.test.tsx` 回归门禁，更新 `DESIGN.md` §149 与 `pc/src/shell-fingerprint.json`。
+
 ## 0.1.177 — 2026-11-21
 
 - 全端发版：`0.1.177`，Android `versionCode 357`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `68e010822f6483be`；无需手动数据库迁移。

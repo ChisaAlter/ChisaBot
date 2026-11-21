@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-21（`v0.1.177`）。
+> 状态最后核对：2026-11-21（`v0.1.178`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -147,7 +147,7 @@
 - 状态：已在分支 `feat/smooth-chat-and-live-steer` 完成 Wave 1–3 全量实现与自动化验证（规范见 `DESIGN.md` §149）。
 - [x] **Wave 1 · 阶段感知实时插话**：DSH 插件/客户端支持 `STEER_CUT`、`phase` 追踪与只读工具 1s 自动后台化；服务端新增 `InboxDeliveryMode`（`"steer" | "queue"`）、单调 `epoch` 并发护栏、`PATCH .../inbox` 与侧边抽屉主线插话；前端默认开启实时插话并提供设置偏好、发送区切换与 `QueueDock` 行内编辑/立即插话/撤回。
 - [x] **Wave 2 · 零等待 SSE、写库合批、DSH 连接池与单跳发送**：`local-conversations.ts` 解耦 live 推送与 50ms 写库合批、消除逐 token `structuredClone` 与 500ms PG 轮询；`routes.ts` 与 `session-client.ts` 实现 `POST /commands` 单跳 SSE 与背压合批；`dsh-client-pool.ts` 与 `dsh-runtime.ts` 复用 `DshHostClient`、健康缓存并跳过冗余 `/checkpoint`；`panels/api.ts` 增加 30s 转发头缓存。
-- [x] **Wave 3 · 前端叶子级流式、长消息折叠与交互性能预算**：`useLiveMessageText`（rAF 合批）+ 结构签名门控 + `<LiveBotBubbles>`/`Segment`/`SmoothStreamdown` `memo`；>20k 围栏代码块安全折叠；`smooth-reveal.ts` 顺滑流贴合；可滚动气泡与卡片禁用 `--lg-blur`；`<SettleAtEnd busy={busy || live} />`、`useMotionRest` 与边缘触发 `nextIdleInboxCheck`。
+- [x] **Wave 3 · 前端叶子级流式、长消息折叠与交互性能预算**：`useLiveMessageText`（rAF 合批）+ 结构签名门控 + `<LiveBotBubbles>`/`Segment`/`SmoothStreamdown` `memo`；>20k 围栏代码块安全折叠；`smooth-reveal.ts` 顺滑流贴合；保留裸代码块无模糊，普通聊天气泡与顶层对话卡片在 `v0.1.178` 恢复与侧栏一致的四档 `--lg-blur` 磨砂质感；`<SettleAtEnd busy={busy || live} />`、`useMotionRest` 与边缘触发 `nextIdleInboxCheck`。
 
 ## CB-142
 

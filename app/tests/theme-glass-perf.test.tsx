@@ -212,12 +212,15 @@ describe("1) 玻璃变量只算在读它的元素上（不再整页重算）", (
     }
   });
 
-  test("渲染预算关闭滚动区气泡与对话卡片的模糊，固定边框栏与弹层共用磨砂模糊", () => {
+  test("渲染预算只关闭裸代码块气泡的模糊，普通 AI 气泡与对话卡片与侧栏共用磨砂模糊", () => {
     expect(css).toContain(
       '.glass-main .chat-bubbles [data-slot="bubble"].chat-bubble-bare > [data-slot="bubble-content"],',
     );
-    expect(css).toContain(
-      '.glass-main .chat-bubbles [data-slot="bubble"] > [data-slot="bubble-content"],',
+    expect(css).not.toContain(
+      '.glass-main .chat-bubbles [data-slot="bubble"] > [data-slot="bubble-content"]',
+    );
+    expect(css).not.toContain(
+      '.glass-main [data-testid="chat-transcript"] :is(.jr-card',
     );
     expect(css).not.toContain(
       '.glass-main :where([data-slot="bubble"] > [data-slot="bubble-content"])',
