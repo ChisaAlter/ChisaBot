@@ -361,4 +361,137 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     await settleReactWork();
     expect(view.container.textContent).toContain("首段流式回复已更新");
   });
+
+  test("SettleAtEnd.onScroll 常规无留白滚动零脏写 data-cb-release 且缓存 spacer 零重复 querySelector", async () => {
+    const messages: Message[] = [
+      { id: "s1", role: "user", content: "第一条历史消息" },
+      { id: "s2", role: "assistant", content: "第一条历史回复" },
+      { id: "s3", role: "user", content: "第二条历史消息" },
+      { id: "s4", role: "assistant", content: "第二条历史回复" },
+    ];
+    const client = createClient();
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ChatTranscript messages={messages} scrollKey="scroll-zero-dirty" />
+      </QueryClientProvider>,
+    );
+    await settleReactWork();
+
+    const viewport = view.container.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]',
+    );
+    const content = view.container.querySelector<HTMLElement>(
+      '[data-testid="chat-transcript"]',
+    );
+    const spacer = content?.querySelector<HTMLElement>(
+      "[data-message-scroller-spacer]",
+    );
+    expect(viewport).not.toBeNull();
+    expect(content).not.toBeNull();
+    expect(spacer).not.toBeNull();
+    if (!viewport || !content || !spacer) return;
+
+    let scrollTop = 1200;
+    Object.defineProperty(viewport, "scrollHeight", {
+      configurable: true,
+      get: () => 2400,
+    });
+    Object.defineProperty(viewport, "clientHeight", {
+      configurable: true,
+      get: () => 600,
+    });
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    Object.defineProperty(content, "clientWidth", {
+      configurable: true,
+      get: () => 560,
+    });
+    Object.defineProperty(content, "offsetHeight", {
+      configurable: true,
+      get: () => 2400,
+    });
+    // 确保 spacer 处于隐藏态（常规无留白滚动）
+    spacer.hidden = true;
+    delete viewport.dataset.cbRelease;
+
+    // 预热一次滚动使 spacer 引用进入缓存
+    viewport.dispatchEvent(new Event("scroll"));
+
+    let cbReleaseWrites = 0;
+    const origSetAttr = viewport.setAttribute.bind(viewport);
+    viewport.setAttribute = ((name: string, value: string) => {
+      if (name === "data-cb-release") cbReleaseWrites += 1;
+      origSetAttr(name, value);
+    }) as typeof viewport.setAttribute;
+
+    let spacerQueries = 0;
+    const origQuerySelector = content.querySelector.bind(content);
+    content.querySelector = ((selector: string) => {
+      if (selector.includes("data-message-scroller-spacer")) {
+        spacerQueries += 1;
+      }
+      return origQuerySelector(selector);
+    }) as typeof content.querySelector;
+
+    try {
+      for (let i = 0; i < 12; i += 1) {
+        scrollTop = 1200 - i * 40;
+        viewport.dispatchEvent(new Event("scroll"));
+      }
+      expect(cbReleaseWrites).toBe(0);
+      expect(viewport.dataset.cbRelease).toBeUndefined();
+      expect(spacerQueries).toBe(0);
+
+      // 存在真实留白（spacer 可见）且未滚过留白区时，仍按契约记录 data-cb-release，且滚动期间 gap:* 不逐帧脏写
+      spacer.hidden = false;
+      Object.defineProperty(spacer, "offsetHeight", {
+        configurable: true,
+        get: () => 300,
+      });
+      // scrollTop + clientHeight (1500 + 600 = 2100) >= scrollHeight - blank - 1 (2400 - 300 - 1 = 2099)
+      // 且 contentGap = 2400 - 1500 - 600 - 300 = 0；先测 gap > 4（scrollTop = 1490 -> contentGap = 10 -> 但 1490+600=2090 < 2099 会被上翻收掉），
+      // 改为 scrollHeight=2400, clientHeight=600, spacer=300, scrollTop=1500 触发真实 release:300
+      scrollTop = 1500;
+      viewport.dispatchEvent(new Event("scroll"));
+      expect(viewport.getAttribute("data-cb-release")).toBe("release:300");
+      expect(cbReleaseWrites).toBe(1);
+    } finally {
+      viewport.setAttribute = origSetAttr;
+      content.querySelector = origQuerySelector;
+    }
+  });
+
+  test("Arriving 历史消息渲染普通 div（保留 data-slot）且无 translateY 内联样式", async () => {
+    const messages: Message[] = [
+      { id: "h1", role: "user", content: "历史用户消息" },
+      { id: "h2", role: "assistant", content: "历史助手回复第一段\n\n第二段" },
+      { id: "h3", role: "user", content: "第二条历史用户消息" },
+    ];
+    const client = createClient();
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ChatTranscript messages={messages} scrollKey="history-no-motion" />
+      </QueryClientProvider>,
+    );
+    await settleReactWork();
+
+    const arrivingNodes = view.container.querySelectorAll<HTMLElement>(
+      '[data-slot="message-arriving"]',
+    );
+    expect(arrivingNodes.length).toBe(3);
+    for (const node of arrivingNodes) {
+      expect(node.tagName).toBe("DIV");
+      expect(node.className).toContain("flex");
+      expect(node.className).toContain("w-full");
+      expect(node.className).toContain("flex-col");
+      const inlineStyle = node.getAttribute("style") ?? "";
+      expect(inlineStyle).not.toContain("translateY");
+      expect(inlineStyle).not.toContain("transform");
+    }
+  });
 });

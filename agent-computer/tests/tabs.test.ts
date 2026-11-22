@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { startPageHtml } from "../src/start-page";
 import {
+  createTabMetadataCache,
   MAX_TABS,
   neighbourAfterClose,
   parseSavedTabs,
@@ -95,6 +96,107 @@ describe("start page links (= bookmarks)", () => {
     expect(html).toContain("&lt;img src=x");
     expect(html).not.toContain("javascript:alert");
     expect(html).toContain("https://evil.test/?a=&lt;b&gt;&amp;c=&quot;d&quot;");
+  });
+});
+
+describe("tab metadata cache", () => {
+  test("caches title and favicon href across repeated reads on unchanged URL", async () => {
+    const cache = createTabMetadataCache();
+    let currentUrl = "https://example.test/page";
+    let currentTitle = "Example Page";
+    let currentIcon = "https://example.test/favicon.png";
+    let titleReads = 0;
+    let faviconReads = 0;
+    const target = {
+      url: () => currentUrl,
+      isClosed: () => false,
+    };
+    const readers = {
+      readTitle: async () => {
+        titleReads += 1;
+        return currentTitle;
+      },
+      readFaviconHref: async () => {
+        faviconReads += 1;
+        return currentIcon;
+      },
+    };
+
+    const first = await cache.resolve(target, readers);
+    const second = await cache.resolve(target, readers);
+    expect(first).toEqual({
+      url: "https://example.test/page",
+      title: "Example Page",
+      faviconHref: "https://example.test/favicon.png",
+    });
+    expect(second).toEqual(first);
+    expect(titleReads).toBe(1);
+    expect(faviconReads).toBe(1);
+
+    // Load-complete invalidation with keepFavicon refreshes title only.
+    currentTitle = "Loaded Title";
+    cache.invalidate(target, { keepFavicon: true });
+    const afterLoad = await cache.resolve(target, readers);
+    expect(afterLoad.title).toBe("Loaded Title");
+    expect(titleReads).toBe(2);
+    expect(faviconReads).toBe(1);
+
+    // Navigating to a new URL invalidates both title and favicon automatically.
+    currentUrl = "https://other.test/next";
+    currentTitle = "Other";
+    currentIcon = "https://other.test/icon.ico";
+    const afterNav = await cache.resolve(target, readers);
+    expect(afterNav).toEqual({
+      url: "https://other.test/next",
+      title: "Other",
+      faviconHref: "https://other.test/icon.ico",
+    });
+    expect(titleReads).toBe(3);
+    expect(faviconReads).toBe(2);
+
+    // Explicit delete drops cached entry.
+    cache.delete(target);
+    await cache.resolve(target, readers);
+    expect(titleReads).toBe(4);
+    expect(faviconReads).toBe(3);
+  });
+
+  test("skips favicon evaluation for about:blank and drops stale result if page navigates mid-read", async () => {
+    const cache = createTabMetadataCache();
+    let currentUrl = "about:blank";
+    let faviconReads = 0;
+    const blank = { url: () => currentUrl, isClosed: () => false };
+    const blankRes = await cache.resolve(blank, {
+      readTitle: async () => "",
+      readFaviconHref: async () => {
+        faviconReads += 1;
+        return "https://never.test/favicon.ico";
+      },
+    });
+    expect(blankRes.faviconHref).toBeNull();
+    expect(faviconReads).toBe(0);
+
+    // URL changes mid-evaluation: result must not poison the cache for the new URL.
+    currentUrl = "https://first.test/";
+    let titleReads = 0;
+    await cache.resolve(blank, {
+      readTitle: async () => {
+        titleReads += 1;
+        currentUrl = "https://second.test/";
+        return "Stale First";
+      },
+      readFaviconHref: async () => null,
+    });
+    const fresh = await cache.resolve(blank, {
+      readTitle: async () => {
+        titleReads += 1;
+        return "Real Second";
+      },
+      readFaviconHref: async () => "https://second.test/icon.png",
+    });
+    expect(titleReads).toBe(2);
+    expect(fresh.title).toBe("Real Second");
+    expect(fresh.faviconHref).toBe("https://second.test/icon.png");
   });
 });
 

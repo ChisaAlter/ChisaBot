@@ -20,10 +20,20 @@ type ThreadRow = {
 function fakeDatabase(
   threads: Record<string, ThreadRow> = {},
   events: Record<string, number> = {},
+  options: {
+    hasWorkersTable?: boolean;
+    hasTruncationsTable?: boolean;
+    onQuery?: (query: string, params: unknown[]) => void;
+  } = {},
 ) {
+  const hasWorkersTable = options.hasWorkersTable ?? true;
+  const hasTruncationsTable = options.hasTruncationsTable ?? true;
   const pointers = new Map<string, { thread_id: string; updated_at: Date }>();
+  const queries: string[] = [];
   const unsafe = async (query: string, params: unknown[] = []) => {
     const q = query.replace(/\s+/g, " ").trim();
+    queries.push(q);
+    options.onQuery?.(q, params);
     if (q.startsWith("CREATE TABLE")) return [];
     if (
       q.startsWith("SELECT thread_id, updated_at FROM chisabot_bot_threads")
@@ -46,7 +56,43 @@ function fakeDatabase(
       const row = threads[String(params[0])];
       return row ? [row] : [];
     }
-    if (q.startsWith("SELECT (SELECT owner_user_id")) {
+    if (
+      q.startsWith("SELECT t.owner_user_id AS owner") &&
+      q.includes("AS revision")
+    ) {
+      const row = threads[String(params[0])];
+      const owner = row?.owner_user_id ?? null;
+      const caller = String(params[1]);
+      if (owner && owner !== caller) {
+        return [
+          {
+            owner,
+            locked: row?.locked ?? null,
+            seq: null,
+            inbox: null,
+            workers: null,
+            revision: null,
+          },
+        ];
+      }
+      const seq = events[String(params[0])];
+      const includesTruncations = q.includes("chisabot_thread_truncations");
+      return [
+        {
+          owner,
+          locked: row?.locked ?? null,
+          seq: seq ? String(seq) : null,
+          inbox: null,
+          workers: null,
+          revision: includesTruncations
+            ? params[0] === "t1"
+              ? "3"
+              : "0"
+            : "0",
+        },
+      ];
+    }
+    if (q.startsWith("SELECT t.owner_user_id AS owner")) {
       const row = threads[String(params[0])];
       const seq = events[String(params[0])];
       return [
@@ -58,14 +104,28 @@ function fakeDatabase(
         },
       ];
     }
-    if (q.startsWith("SELECT max(updated_at) AS at FROM chisabot_workers"))
+    if (q.startsWith("SELECT max(updated_at) AS at FROM chisabot_workers")) {
+      if (!hasWorkersTable) {
+        throw Object.assign(
+          new Error('relation "chisabot_workers" does not exist'),
+          { code: "42P01" },
+        );
+      }
       return [{ at: null }];
+    }
     if (
       q.startsWith(
         "SELECT count(*)::text AS n FROM chisabot_thread_truncations",
       )
-    )
+    ) {
+      if (!hasTruncationsTable) {
+        throw Object.assign(
+          new Error('relation "chisabot_thread_truncations" does not exist'),
+          { code: "42P01" },
+        );
+      }
       return [{ n: params[0] === "t1" ? "3" : "0" }];
+    }
     if (q.startsWith("SELECT id, name, jsonb_array_length(messages)")) {
       // 只模拟 WHERE 条件：自己的、这个机器人的、不是 worker-*、有消息；按 updated 倒序。
       return Object.entries(threads)
@@ -87,7 +147,9 @@ function fakeDatabase(
     }
     throw new Error(`unexpected query: ${q}`);
   };
-  return { $client: { unsafe } } as unknown as Database;
+  return Object.assign({ $client: { unsafe } } as unknown as Database, {
+    queries,
+  });
 }
 
 const asUser =
@@ -292,5 +354,81 @@ describe("bot thread pointer", () => {
       ["named", "周报", 2],
       ["old", "帮我查一下 明天的天气", 2],
     ]);
+  });
+
+  test("sync caches optional table presence and collapses steady-state activity into one SQL query", async () => {
+    const db = fakeDatabase(
+      {
+        t1: { owner_user_id: "u1", agent_id: "bot-a" },
+        tOther: { owner_user_id: "u2", agent_id: "bot-a" },
+      },
+      { t1: 11, tOther: 99 },
+    );
+    const routes = await app(db, "u1");
+    db.queries.length = 0;
+
+    // 首次 /sync：并发探测主表与可选表（1 current + 3 activity = 4 queries）
+    const first = await (
+      await routes.request("/bot-a/sync?threadId=t1")
+    ).json();
+    expect(first.thread).toEqual({
+      threadId: "t1",
+      seq: "11",
+      running: false,
+      workers: null,
+      inbox: null,
+      revision: "3",
+    });
+    expect(db.queries).toHaveLength(4);
+
+    // 热路径 /sync：可选表存在性已缓存，activity 合并为单条 SQL（仅 1 current + 1 activity = 2 queries）
+    db.queries.length = 0;
+    const second = await (
+      await routes.request("/bot-a/sync?threadId=t1")
+    ).json();
+    expect(second.thread).toEqual(first.thread);
+    expect(db.queries).toHaveLength(2);
+
+    // 热路径同样严守所有权隔离：他人对话返回 null
+    const other = await (
+      await routes.request("/bot-a/sync?threadId=tOther")
+    ).json();
+    expect(other.thread).toBeNull();
+  });
+
+  test("sync caches missing optional tables (42P01) and skips re-probing them on subsequent polls", async () => {
+    const db = fakeDatabase(
+      { t1: { owner_user_id: "u1", agent_id: "bot-a" } },
+      { t1: 5 },
+      { hasWorkersTable: false, hasTruncationsTable: false },
+    );
+    const routes = await app(db, "u1");
+    db.queries.length = 0;
+
+    const first = await (
+      await routes.request("/bot-a/sync?threadId=t1")
+    ).json();
+    expect(first.thread).toEqual({
+      threadId: "t1",
+      seq: "5",
+      running: false,
+      workers: null,
+      inbox: null,
+      revision: "0",
+    });
+
+    db.queries.length = 0;
+    const second = await (
+      await routes.request("/bot-a/sync?threadId=t1")
+    ).json();
+    expect(second.thread).toEqual(first.thread);
+    expect(db.queries).toHaveLength(2);
+    expect(
+      db.queries.some(
+        (q) =>
+          q.includes("chisabot_workers") ||
+          q.includes("chisabot_thread_truncations"),
+      ),
+    ).toBe(false);
   });
 });

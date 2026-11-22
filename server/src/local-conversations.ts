@@ -79,6 +79,12 @@ import {
   withSteering,
 } from "./thread-inbox";
 import {
+  messagesDelta,
+  parseTailLimit,
+  sliceTailMessages,
+  THREAD_MESSAGES_DELTA_HANDLED_HEADER,
+} from "./thread-messages-delta";
+import {
   afterTruncate,
   dropTombstoned,
   ensureTruncationTable,
@@ -220,19 +226,21 @@ export function prepareConversationMessages(
   const inputIds = new Set(execution.map((message) => message.id));
   const privateIds = new Set(
     execution
-      .filter(
-        (message) =>
-          JSON.stringify(message) !==
-          JSON.stringify(visibleById.get(message.id)),
-      )
+      .filter((message) => {
+        const visibleMessage = visibleById.get(message.id);
+        if (message === visibleMessage) return false;
+        return JSON.stringify(message) !== JSON.stringify(visibleMessage);
+      })
       .map((message) => message.id),
   );
   const privateTools = new Set(
-    execution.flatMap((message) =>
-      privateIds.has(message.id) && message.role === "assistant"
-        ? (message.toolCalls ?? []).map((call) => call.id)
-        : [],
-    ),
+    privateIds.size === 0
+      ? []
+      : execution.flatMap((message) =>
+          privateIds.has(message.id) && message.role === "assistant"
+            ? (message.toolCalls ?? []).map((call) => call.id)
+            : [],
+        ),
   );
   const project = (messages: readonly Message[]) => {
     const recovered = new Map(
@@ -248,6 +256,7 @@ export function prepareConversationMessages(
   // Snapshots also appear inside custom event/state payloads. Replace only known input message
   // objects; fresh outputs, tool results, and arbitrary domain state retain their original values.
   const sanitize = (value: unknown): unknown => {
+    if (privateIds.size === 0) return value;
     if (Array.isArray(value))
       return value.map(sanitize).filter((item) => item !== undefined);
     if (!value || typeof value !== "object") return value;
@@ -264,40 +273,49 @@ export function prepareConversationMessages(
     );
   };
   const event = (source: BaseEvent): BaseEvent | undefined => {
-    const fields = source as BaseEvent & {
-      messageId?: string;
-      toolCallId?: string;
-      messages?: Message[];
-    };
-    if (
-      (fields.messageId && privateIds.has(fields.messageId)) ||
-      (fields.toolCallId && privateTools.has(fields.toolCallId))
-    )
-      return undefined;
+    if (privateIds.size > 0 || privateTools.size > 0) {
+      const fields = source as BaseEvent & {
+        messageId?: string;
+        toolCallId?: string;
+      };
+      if (
+        (fields.messageId && privateIds.has(fields.messageId)) ||
+        (fields.toolCallId && privateTools.has(fields.toolCallId))
+      )
+        return undefined;
+    }
     if (source.type === EventType.MESSAGES_SNAPSHOT) {
+      const fields = source as BaseEvent & { messages?: Message[] };
       return {
         ...source,
         messages: project(fields.messages ?? []),
       } as BaseEvent;
     }
+    if (privateIds.size === 0) return source;
     return sanitize(source) as BaseEvent;
   };
   return { execution, visible, project, sanitize, event };
 }
 
-type ThreadRow = {
+const THREAD_META_COLUMNS =
+  "id, owner_user_id, agent_id, name, archived, run_id, lock_expires_at, created_at, updated_at, snapshot_sequence";
+
+type ThreadMetaRow = {
   id: string;
   owner_user_id: string;
   agent_id: string;
   name: string | null;
   archived: boolean;
-  messages: Message[];
-  state: Record<string, unknown>;
   run_id: string | null;
   lock_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
   snapshot_sequence?: string | number | bigint | null;
+};
+
+type ThreadRow = ThreadMetaRow & {
+  messages: Message[];
+  state: Record<string, unknown>;
 };
 type EventRow = { sequence: string | number | bigint; event: BaseEvent };
 type ThreadIdentity = { threadId: string; userId: string };
@@ -313,7 +331,7 @@ type ThreadLock = ThreadCreation & {
 };
 type LeaseIdentity = { threadId: string; runId: string };
 
-function record(row: ThreadRow) {
+function record(row: ThreadMetaRow) {
   return {
     id: row.id,
     name: row.name,
@@ -344,11 +362,59 @@ class ConversationStore {
     return rows[0];
   }
 
+  async threadMeta(threadId: string): Promise<ThreadMetaRow> {
+    const rows = await this.database.$client.unsafe<ThreadMetaRow[]>(
+      `SELECT ${THREAD_META_COLUMNS} FROM chisabot_local_threads WHERE id = $1`,
+      [threadId],
+    );
+    if (!rows[0]) throw new LocalConversationError("Thread not found", 404);
+    return rows[0];
+  }
+
   async owned({ threadId, userId }: ThreadIdentity): Promise<ThreadRow> {
     const row = await this.thread(threadId);
     if (row.owner_user_id !== userId)
       throw new LocalConversationError("Thread not found", 404);
     return row;
+  }
+
+  async ownedMeta({
+    threadId,
+    userId,
+  }: ThreadIdentity): Promise<ThreadMetaRow> {
+    const row = await this.threadMeta(threadId);
+    if (row.owner_user_id !== userId)
+      throw new LocalConversationError("Thread not found", 404);
+    return row;
+  }
+
+  async threadMessages(threadId: string): Promise<Message[]> {
+    const rows = await this.database.$client.unsafe<{ messages: Message[] }[]>(
+      "SELECT messages FROM chisabot_local_threads WHERE id = $1",
+      [threadId],
+    );
+    if (!rows[0]) throw new LocalConversationError("Thread not found", 404);
+    return rows[0].messages;
+  }
+
+  async ownedMessages({ threadId, userId }: ThreadIdentity): Promise<Message[]> {
+    const rows = await this.database.$client.unsafe<
+      { owner_user_id: string; messages: Message[] }[]
+    >(
+      "SELECT owner_user_id, messages FROM chisabot_local_threads WHERE id = $1",
+      [threadId],
+    );
+    if (!rows[0] || rows[0].owner_user_id !== userId)
+      throw new LocalConversationError("Thread not found", 404);
+    return rows[0].messages;
+  }
+
+  async threadState(threadId: string): Promise<Record<string, unknown>> {
+    const rows = await this.database.$client.unsafe<
+      { state: Record<string, unknown> }[]
+    >("SELECT state FROM chisabot_local_threads WHERE id = $1", [threadId]);
+    if (!rows[0]) throw new LocalConversationError("Thread not found", 404);
+    return rows[0].state;
   }
 
   async events(threadId: string): Promise<EventRow[]> {
@@ -523,7 +589,7 @@ export class LocalConversationClient {
   constructor(private readonly store: ConversationStore) {}
 
   async getThread(identity: ThreadIdentity) {
-    return record(await this.store.owned(identity));
+    return record(await this.store.ownedMeta(identity));
   }
 
   async getOrCreateThread(identity: ThreadCreation) {
@@ -537,7 +603,7 @@ export class LocalConversationClient {
        ON CONFLICT (id) DO NOTHING`,
       [identity.threadId, identity.userId, identity.agentId],
     );
-    const row = await this.store.owned(identity);
+    const row = await this.store.ownedMeta(identity);
     if (row.agent_id !== identity.agentId)
       throw new LocalConversationError(
         "Thread belongs to a different agent",
@@ -550,7 +616,7 @@ export class LocalConversationClient {
     identity: ThreadIdentity,
   ): Promise<{ messages: LocalHistoryMessage[] }> {
     return {
-      messages: (await this.store.owned(identity)).messages.map(
+      messages: (await this.store.ownedMessages(identity)).map(
         toLocalHistoryMessage,
       ),
     };
@@ -808,8 +874,115 @@ function quietAgUiFailure(error: Error): boolean {
 }
 const MAX_SEGMENTS = 8;
 
-/** Events remain durable individually; the full transcript is checkpointed at most four times/s. */
-const SNAPSHOT_CHECKPOINT_MS = 250;
+/** Events remain durable individually (50ms delta flush); the full transcript is checkpointed every 1s to cut PG WAL write amplification. */
+export const SNAPSHOT_CHECKPOINT_MS = 1_000;
+
+function cloneCapturedMessage(message: Readonly<Message>): Message {
+  return "toolCalls" in message && Array.isArray(message.toolCalls)
+    ? ({
+        ...message,
+        toolCalls: message.toolCalls.map((call) => ({
+          ...call,
+          function: { ...call.function },
+        })),
+      } as Message)
+    : ({ ...message } as Message);
+}
+
+export type CapturedEventHint = {
+  type: string;
+  messageId?: string;
+  toolCallId?: string;
+};
+
+/**
+ * 流式消息增量快照器：
+ * - 严禁将拷贝推迟到 flushCheckpoint（会破坏 Stop 冻结边界与 watermark 覆盖不变量）；
+ * - 末尾活跃消息流式增长时复用前 M-1 条已定型历史消息引用（O(M)→O(1)），同时即时克隆变更的末尾消息并生成新数组外壳；
+ * - 遇 MESSAGES_SNAPSHOT、非末尾消息改动或消息缩短自动回退全量克隆。
+ */
+export function createIncrementalMessageCapture() {
+  let prevSnapshot: Message[] | undefined;
+
+  return {
+    reset() {
+      prevSnapshot = undefined;
+    },
+    current(): Message[] | undefined {
+      return prevSnapshot;
+    },
+    capture(
+      messages: readonly Readonly<Message>[],
+      hint?: CapturedEventHint,
+    ): Message[] {
+      const count = messages.length;
+      if (count === 0) {
+        prevSnapshot = [];
+        return prevSnapshot;
+      }
+      if (prevSnapshot && hint) {
+        const prevCount = prevSnapshot.length;
+        const tail = messages[count - 1];
+        if (tail) {
+          const sameLengthTailUpdate =
+            count === prevCount &&
+            (hint.type === EventType.TEXT_MESSAGE_CONTENT ||
+              hint.type === EventType.TEXT_MESSAGE_END ||
+              hint.type === EventType.REASONING_MESSAGE_CONTENT ||
+              hint.type === EventType.REASONING_MESSAGE_END) &&
+            typeof hint.messageId === "string" &&
+            tail.id === hint.messageId &&
+            prevSnapshot[prevCount - 1]?.id === hint.messageId;
+
+          const sameLengthToolUpdate =
+            count === prevCount &&
+            (hint.type === EventType.TOOL_CALL_ARGS ||
+              hint.type === EventType.TOOL_CALL_START ||
+              hint.type === EventType.TOOL_CALL_END) &&
+            prevSnapshot[prevCount - 1]?.id === tail.id &&
+            ((typeof hint.messageId === "string" &&
+              tail.id === hint.messageId) ||
+              (typeof hint.toolCallId === "string" &&
+                "toolCalls" in tail &&
+                Array.isArray(tail.toolCalls) &&
+                tail.toolCalls.some((call) => call.id === hint.toolCallId)));
+
+          if (sameLengthTailUpdate || sameLengthToolUpdate) {
+            const next = prevSnapshot.slice();
+            next[count - 1] = cloneCapturedMessage(tail);
+            prevSnapshot = next;
+            return next;
+          }
+
+          const appendedOne =
+            count === prevCount + 1 &&
+            (hint.type === EventType.TEXT_MESSAGE_START ||
+              hint.type === EventType.REASONING_MESSAGE_START ||
+              hint.type === EventType.TOOL_CALL_START ||
+              hint.type === EventType.TOOL_CALL_RESULT) &&
+            (prevCount === 0 ||
+              messages[prevCount - 1]?.id === prevSnapshot[prevCount - 1]?.id);
+
+          if (appendedOne) {
+            const next = prevSnapshot.slice();
+            if (prevCount > 0) {
+              const prevTail = messages[prevCount - 1];
+              if (prevTail) {
+                next[prevCount - 1] = cloneCapturedMessage(prevTail);
+              }
+            }
+            next.push(cloneCapturedMessage(tail));
+            prevSnapshot = next;
+            return next;
+          }
+        }
+      }
+      const full = messages.map(cloneCapturedMessage);
+      prevSnapshot = full;
+      return full;
+    },
+  };
+}
 
 /**
  * Track B：交互回合墙钟上限。锁心跳每 30s 续 120s，挂死的 agent 会一直占着锁 → 永久 busy。
@@ -887,7 +1060,8 @@ export function withRunStartedAck(
 class PostgresAgentRunner implements ConversationRunner {
   readonly ownsThreadLease = true;
   private readonly active = new Map<string, ActiveRun>();
-  private readonly threadEpochs = new Map<string, number>();
+  /** 全局单调递增栅栏代次，彻底替代无限增长的 threadEpochs Map。 */
+  private nextEpoch = 0;
   /** Kept between wire runs, until all dispatched frontend results arrive or the turn is stopped. */
   private readonly frontend = new Map<string, FrontendRelay>();
   /** Observers of persisted capacity waits, not execution slots or thread owners. */
@@ -1224,8 +1398,7 @@ class PostgresAgentRunner implements ConversationRunner {
       if (relay) {
         this.clearFrontend(request.threadId);
       }
-      const epoch = (this.threadEpochs.get(request.threadId) ?? 0) + 1;
-      this.threadEpochs.set(request.threadId, epoch);
+      const epoch = ++this.nextEpoch;
       let markInputReady = () => {};
       const inputReady = new Promise<void>((resolve) => {
         markInputReady = resolve;
@@ -1298,7 +1471,7 @@ class PostgresAgentRunner implements ConversationRunner {
     this.capacityWaits.set(key, stream);
     const pending = stream;
     void (async () => {
-      const identity = await this.store.thread(request.threadId);
+      const identity = await this.store.threadMeta(request.threadId);
       if (request.agent.agentId && request.agent.agentId !== identity.agent_id)
         throw new LocalConversationError(
           "Thread belongs to a different agent",
@@ -1494,7 +1667,10 @@ class PostgresAgentRunner implements ConversationRunner {
     let segFinalizer = createRunEventFinalizer();
     /** 智能体最近一次报告的消息列表（不含插话）。 */
     let latest: Message[] = [];
-    let latestState: unknown = agent.state;
+    let latestState: unknown = structuredClone(agent.state);
+    let lastRawStateRef: unknown = agent.state;
+    const messageCapture = createIncrementalMessageCapture();
+    let lastEventHint: CapturedEventHint | undefined;
     /** CB-104: output the runtime produces after Stop is dropped, never written or forwarded. */
     let lateDropped = 0;
     const dropLate = (kind: string): boolean => {
@@ -1524,9 +1700,10 @@ class PostgresAgentRunner implements ConversationRunner {
         }
       }
     };
-    const canCommit = () =>
-      this.threadEpochs.get(threadId) === entry.epoch &&
-      this.active.get(threadId) === entry;
+    const canCommit = () => {
+      const current = this.active.get(threadId);
+      return current === entry && current.epoch === entry.epoch;
+    };
     // AG-UI catches subscriber exceptions. Remember failed writes and stop the producer ourselves.
     const guarded = (action: () => Promise<unknown>): Promise<void> => {
       durableWrites = durableWrites.then(async () => {
@@ -1607,6 +1784,7 @@ class PostgresAgentRunner implements ConversationRunner {
       await durableWrites;
     };
     entry.freezeStopped = () => {
+      messageCapture.reset();
       latest = structuredClone(latest) as Message[];
       latestState = structuredClone(latestState);
     };
@@ -1812,27 +1990,29 @@ class PostgresAgentRunner implements ConversationRunner {
     const capture = (
       messages: readonly Readonly<Message>[],
       state: unknown,
+      changed: { messagesChanged: boolean; stateChanged: boolean },
     ) => {
       if (dropLate("messages")) return Promise.resolve();
-      const shallowMessages = messages.map((message) =>
-        "toolCalls" in message && Array.isArray(message.toolCalls)
-          ? {
-              ...message,
-              toolCalls: message.toolCalls.map((call) => ({
-                ...call,
-                function: { ...call.function },
-              })),
-            }
-          : { ...message },
-      ) as Message[];
-      latest = shallowMessages;
-      latestState = state;
+      const prev = messageCapture.current();
+      const snapshotMessages =
+        !changed.messagesChanged &&
+        prev &&
+        prev.length === messages.length &&
+        (prev.length === 0 ||
+          prev[prev.length - 1]?.id === messages[messages.length - 1]?.id)
+          ? prev
+          : messageCapture.capture(messages, lastEventHint);
+      latest = snapshotMessages;
+      if (changed.stateChanged || state !== lastRawStateRef) {
+        lastRawStateRef = state;
+        latestState = structuredClone(state);
+      }
       if (checkpointing) {
         const order = entry.liveOrder;
         const watermark: CaptureWatermark = {
           order,
-          messages: shallowMessages,
-          state: structuredClone(state),
+          messages: snapshotMessages,
+          state: latestState,
           injections: [...entry.injections],
         };
         if (order <= maxCommittedOrder) {
@@ -1947,7 +2127,7 @@ class PostgresAgentRunner implements ConversationRunner {
         );
     };
     try {
-      const identity = await this.store.thread(threadId);
+      const identity = await this.store.threadMeta(threadId);
       lastSequence = BigInt(identity.snapshot_sequence ?? 0);
       if (agent.agentId && agent.agentId !== identity.agent_id)
         throw new LocalConversationError(
@@ -2009,8 +2189,10 @@ class PostgresAgentRunner implements ConversationRunner {
       const snapshotSequence = BigInt(row.snapshot_sequence ?? 0);
       if (snapshotSequence > lastSequence) lastSequence = snapshotSequence;
       // 重新生成 / 编辑后重发截掉的消息（DESIGN.md §67）：还没收到截断的旧设备会把它们一起发上来，滤掉，不让它们复活。
-      const dead = await tombstones(this.store.database, threadId);
-      const held = await this.inbox.heldIds(threadId);
+      const [dead, held] = await Promise.all([
+        tombstones(this.store.database, threadId),
+        this.inbox.heldIds(threadId),
+      ]);
       // A stale tab may still append a paused row as ordinary input. Only a new explicit
       // user message or the per-row action below can authorize new work after Stop.
       let incoming = dropTombstoned(input.messages, dead).filter(
@@ -2198,12 +2380,15 @@ class PostgresAgentRunner implements ConversationRunner {
       }
       agent.threadId = threadId;
       agent.setMessages(execution);
+      messageCapture.reset();
       latest = execution;
       agent.setState(
         Object.keys(row.state ?? {}).length > 0
           ? row.state
           : (input.state ?? {}),
       );
+      lastRawStateRef = agent.state;
+      latestState = structuredClone(agent.state);
       await this.store.snapshot(
         threadId,
         entry.runId,
@@ -2297,12 +2482,34 @@ class PostgresAgentRunner implements ConversationRunner {
                       .runAgent(segmentInput, {
                         onEvent: ({ event }) => {
                           if (dropLate(event.type)) return;
+                          const fields = event as BaseEvent & {
+                            messageId?: string;
+                            parentMessageId?: string;
+                            toolCallId?: string;
+                          };
+                          lastEventHint = {
+                            type: event.type,
+                            ...(typeof fields.messageId === "string"
+                              ? { messageId: fields.messageId }
+                              : typeof fields.parentMessageId === "string"
+                                ? { messageId: fields.parentMessageId }
+                                : {}),
+                            ...(typeof fields.toolCallId === "string"
+                              ? { toolCallId: fields.toolCallId }
+                              : {}),
+                          };
                           void emit(event);
                         },
                         onMessagesChanged: ({ messages, state }) =>
-                          capture(messages, state),
+                          capture(messages, state, {
+                            messagesChanged: true,
+                            stateChanged: false,
+                          }),
                         onStateChanged: ({ messages, state }) =>
-                          capture(messages, state),
+                          capture(messages, state, {
+                            messagesChanged: false,
+                            stateChanged: true,
+                          }),
                         onRunFinalized: () => {
                           finalized();
                         },
@@ -2418,6 +2625,8 @@ class PostgresAgentRunner implements ConversationRunner {
           base.push(claimed.message);
         }
         agent.setMessages(base);
+        messageCapture.reset();
+        lastEventHint = undefined;
         latest = base;
         heldFinish = undefined;
         await pushSnapshot(base);
@@ -3136,11 +3345,11 @@ export async function createLocalConversations(
   }
   /*
    * 输入框「上下文」读数（DESIGN.md §25）：最近一次带用量的 RUN_FINISHED；一条都没有就按消息文字粗估。
-   * 只读一行（按 thread_id + sequence 索引倒序），不扫整张事件表。
+   * 只读一行（按 thread_id + sequence 索引倒序），不扫整张事件表；99% 场景无需拉取 messages JSONB。
    */
   const contextReading = async (
     threadId: string,
-    messages: readonly unknown[],
+    loadMessages: () => Promise<readonly unknown[]>,
   ): Promise<ThreadContextReading | null> => {
     const rows = await database.$client.unsafe<
       { event: Record<string, unknown>; created_at: Date }[]
@@ -3153,6 +3362,7 @@ export async function createLocalConversations(
     );
     const measured = rows[0] ? readingFromRunFinished(rows[0]) : undefined;
     if (measured) return measured;
+    const messages = await loadMessages();
     if (!messages.length) return null;
     return { tokens: estimateTokens(messages), source: "estimate" };
   };
@@ -3161,10 +3371,11 @@ export async function createLocalConversations(
    * 「已停止」标记（2026-10-13 第四轮）：用户按停止的那些轮次，用开启那一轮的用户消息 id 表示。
    * 一轮里用到浏览器时会拆成好几次运行（前端工具要回到浏览器执行），被停的那次运行输入里可能只有工具
    * 结果，所以往回找它前面最近的一条用户消息。只读，不改历史；标记本身不进对话（不会发给模型）。
+   * 无 stopped run 时直接返回空数组，不拉取 messages JSONB。
    */
   const stoppedTurns = async (
     threadId: string,
-    messages: readonly Message[],
+    loadMessages: () => Promise<readonly Message[]>,
   ): Promise<string[]> => {
     // 一条 SQL 连表（Bun SQL 的 unsafe 不会把 JS 数组变成 text[] 参数）。
     const started = await database.$client.unsafe<
@@ -3177,6 +3388,7 @@ export async function createLocalConversations(
       [threadId],
     );
     if (!started.length) return [];
+    const messages = await loadMessages();
     const ids = new Set<string>();
     for (const { event } of started) {
       const inputIds = (event.input?.messages ?? [])
@@ -3190,10 +3402,11 @@ export async function createLocalConversations(
   /**
    * 「主模型额度用完，已改用 X」（DESIGN.md §61）：换过备用模型的那些轮次（RUN_FINISHED 的
    * metadata.modelFallback），同「已停止」一样用开启那一轮的用户消息 id 表示。只读，不进对话。
+   * 无 fallback 记录时直接返回空数组，不拉取 messages JSONB。
    */
   const fallbackTurns = async (
     threadId: string,
-    messages: readonly Message[],
+    loadMessages: () => Promise<readonly Message[]>,
   ) => {
     const rows = await database.$client.unsafe<
       {
@@ -3211,6 +3424,7 @@ export async function createLocalConversations(
       [threadId],
     );
     if (!rows.length) return [];
+    const messages = await loadMessages();
     const position = new Map(
       messages.map((message, index) => [message.id, index]),
     );
@@ -3259,10 +3473,21 @@ export async function createLocalConversations(
    * RUN_STARTED 输入里的那一刻（存的 RUN_STARTED 只带这次新进来的消息，见 slimReplay 上面的说明，所以很小）。
    * 只看最近 40 次运行；找不到（太旧 / 还没跑过）回 null。同时回服务器的「现在」，浏览器用差值换算，不受两边时钟差影响。只读。
    */
-  const lastSentAt = async (threadId: string, messages: readonly Message[]) => {
+  const lastSentAt = async (threadId: string) => {
     const now = new Date().toISOString();
-    const newest = messages.findLast((message) => message.role === "user");
-    if (!newest) return { userMessageId: null, at: null, now };
+    const newestRows = await database.$client.unsafe<{ id: string | null }[]>(
+      `SELECT elem->>'id' AS id
+       FROM chisabot_local_threads,
+            jsonb_array_elements(
+              CASE WHEN jsonb_typeof(messages) = 'array' THEN messages ELSE '[]'::jsonb END
+            ) WITH ORDINALITY AS t(elem, ord)
+       WHERE id = $1 AND elem->>'role' = 'user'
+       ORDER BY ord DESC LIMIT 1`,
+      [threadId],
+    );
+    const newestId = newestRows[0]?.id;
+    if (newestId === undefined || newestId === null)
+      return { userMessageId: null, at: null, now };
     const rows = await database.$client.unsafe<
       {
         event: { input?: { messages?: { id?: unknown }[] } };
@@ -3278,13 +3503,13 @@ export async function createLocalConversations(
     for (const row of rows) {
       if (
         (row.event.input?.messages ?? []).some(
-          (message) => message?.id === newest.id,
+          (message) => message?.id === newestId,
         )
       )
         at = row.created_at;
     }
     return {
-      userMessageId: newest.id,
+      userMessageId: newestId,
       at: at ? new Date(at).toISOString() : null,
       now,
     };
@@ -3322,8 +3547,8 @@ export async function createLocalConversations(
         throw new LocalConversationError("A verified user is required", 401);
       const suffix = matched[1] ?? "";
       if (!suffix && request.method === "GET") {
-        const rows = await database.$client.unsafe<ThreadRow[]>(
-          `SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1
+        const rows = await database.$client.unsafe<ThreadMetaRow[]>(
+          `SELECT ${THREAD_META_COLUMNS} FROM chisabot_local_threads WHERE owner_user_id = $1
            AND ($2::text IS NULL OR agent_id = $2) AND ($3::boolean OR NOT archived)
            ORDER BY updated_at DESC LIMIT 100`,
           [
@@ -3336,8 +3561,10 @@ export async function createLocalConversations(
       }
       if (suffix === "clear" && request.method === "POST") {
         await database.$client.begin(async (transaction) => {
-          const rows = await transaction.unsafe<ThreadRow[]>(
-            "SELECT * FROM chisabot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
+          const rows = await transaction.unsafe<
+            { id: string; run_id: string | null; lock_expires_at: Date | null }[]
+          >(
+            "SELECT id, run_id, lock_expires_at FROM chisabot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
             [actorId],
           );
           if (
@@ -3372,79 +3599,112 @@ export async function createLocalConversations(
       if (!encodedId)
         throw new LocalConversationError("Thread is required", 400);
       const threadId = decodeURIComponent(encodedId);
+      // 单次轻量元数据查询完成鉴权与空读分流，避免重复查主键以及拉取多 MB 的 messages/state JSONB。
       // 新对话第一次打开时还没有这一行（第一条消息才建）：输入框读数、停止标记、收件箱、任务卡片这几个
-      // 只读接口回空结果（200），不报 404 —— 浏览器控制台里每开一个新对话就是三条红字（实测 2026-10-13）。
-      // 别人的对话也走这里，回的同样是空结果，看不出它存不存在。
-      if (
+      // 只读接口回空结果（200），不报 404；别人的对话也走这里，回同样空结果，看不出它存不存在。
+      const isEmptyThreadRead =
         request.method === "GET" &&
-        operation &&
-        Object.hasOwn(EMPTY_THREAD_READS, operation)
-      ) {
-        const found = await database.$client.unsafe<
-          { owner_user_id: string }[]
-        >("SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1", [
-          threadId,
-        ]);
-        if (!found[0] || found[0].owner_user_id !== actorId)
+        Boolean(operation) &&
+        Object.hasOwn(EMPTY_THREAD_READS, operation);
+      const metaRows = await database.$client.unsafe<ThreadMetaRow[]>(
+        `SELECT ${THREAD_META_COLUMNS} FROM chisabot_local_threads WHERE id = $1`,
+        [threadId],
+      );
+      const row = metaRows[0];
+      if (!row || row.owner_user_id !== actorId) {
+        if (isEmptyThreadRead && operation) {
           return Response.json(EMPTY_THREAD_READS[operation]);
+        }
+        throw new LocalConversationError("Thread not found", 404);
       }
-      // Inbox polling needs identity and queue rows, never the growing transcript JSON.
-      if (operation === "inbox" && request.method === "GET") {
-        const [identity] = await database.$client.unsafe<
-          { agent_id: string }[]
-        >(
-          "SELECT agent_id FROM chisabot_local_threads WHERE id = $1 AND owner_user_id = $2",
-          [threadId, actorId],
-        );
-        if (!identity) return Response.json(EMPTY_THREAD_READS.inbox);
-        const requestedAgent = url.searchParams.get("agentId");
-        if (requestedAgent && requestedAgent !== identity.agent_id)
-          throw new LocalConversationError("Thread not found", 404);
-        return Response.json({
-          running: await runner.isRunning({ threadId }),
-          paused: await inbox.isPaused(threadId),
-          items: await inbox.list(threadId),
-        });
-      }
-      const row = await store.owned({ threadId, userId: actorId });
       const requestedAgent = url.searchParams.get("agentId");
       if (requestedAgent && requestedAgent !== row.agent_id)
         throw new LocalConversationError("Thread not found", 404);
       if (request.method === "GET") {
         // 图片带上宽高，网页先按比例留框（DESIGN.md §83.2）。只改回给浏览器的这份，不改存储。
-        if (operation === "messages")
-          return Response.json({
-            messages: await imageDimsFor(database).annotateMessages(
-              row.messages,
-            ),
+        // 本地路由原生支持 tail / since / cursor 并加跳过头，避免 threadMessagesDelta 中间件二次解析与截尾。
+        if (operation === "messages") {
+          const rawMessages = await store.threadMessages(threadId);
+          const hasSince = url.searchParams.has("since");
+          const hasCursor = url.searchParams.has("cursor");
+          const hasTail = url.searchParams.has("tail");
+          const dims = imageDimsFor(database);
+          if (!hasSince && !hasCursor && !hasTail) {
+            return Response.json({
+              messages: await dims.annotateMessages(rawMessages),
+            });
+          }
+          const since = url.searchParams.get("since");
+          const cursor = url.searchParams.get("cursor");
+          const tail =
+            !since && !cursor
+              ? parseTailLimit(url.searchParams.get("tail"))
+              : null;
+          let payload: Record<string, unknown>;
+          if (tail !== null) {
+            const tailed = sliceTailMessages(rawMessages, tail);
+            if (tailed.length < rawMessages.length) {
+              const annotatedTail = await dims.annotateMessages(tailed);
+              payload = {
+                messages: annotatedTail,
+                total: rawMessages.length,
+                partial: true,
+              };
+            } else {
+              const annotated = await dims.annotateMessages(rawMessages);
+              payload = {
+                ...messagesDelta(annotated, since, cursor),
+              };
+            }
+          } else {
+            const annotated = await dims.annotateMessages(rawMessages);
+            payload = {
+              ...messagesDelta(annotated, since, cursor),
+            };
+          }
+          return Response.json(payload, {
+            headers: {
+              "cache-control": "no-store",
+              [THREAD_MESSAGES_DELTA_HANDLED_HEADER]: "1",
+            },
           });
-        if (operation === "state") return Response.json({ state: row.state });
+        }
+        if (operation === "state")
+          return Response.json({ state: await store.threadState(threadId) });
         if (operation === "context")
           return Response.json({
-            context: await contextReading(threadId, row.messages),
+            context: await contextReading(threadId, () =>
+              store.threadMessages(threadId),
+            ),
           });
         if (operation === "stopped")
           return Response.json({
-            userMessageIds: await stoppedTurns(threadId, row.messages),
+            userMessageIds: await stoppedTurns(threadId, () =>
+              store.threadMessages(threadId),
+            ),
           });
         if (operation === "fallbacks")
           return Response.json({
-            turns: await fallbackTurns(threadId, row.messages),
+            turns: await fallbackTurns(threadId, () =>
+              store.threadMessages(threadId),
+            ),
           });
         if (operation === "sent-at")
-          return Response.json(await lastSentAt(threadId, row.messages));
+          return Response.json(await lastSentAt(threadId));
         if (operation === "events")
           return Response.json({
             events: compactEvents(
               (await store.events(threadId)).map((event) => event.event),
             ),
           });
-        if (operation === "inbox")
-          return Response.json({
-            running: runner.isActive(threadId),
-            paused: await inbox.isPaused(threadId),
-            items: await inbox.list(threadId),
-          });
+        if (operation === "inbox") {
+          const [running, paused, items] = await Promise.all([
+            runner.isRunning({ threadId }),
+            inbox.isPaused(threadId),
+            inbox.list(threadId),
+          ]);
+          return Response.json({ running, paused, items });
+        }
         if (operation === "workers")
           return Response.json({
             workers: workers ? await workers.list(threadId, actorId) : [],
@@ -3609,7 +3869,20 @@ export async function createLocalConversations(
         if (!runner.isActive(threadId)) return Response.json({ queued: false });
         if (runner.isStopping(threadId))
           return Response.json({ queued: false, stopping: true });
-        if (row.messages.some((message) => message.id === id))
+        const [alreadyInTranscript] = await database.$client.unsafe<
+          { found: boolean }[]
+        >(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM chisabot_local_threads,
+                  jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(messages) = 'array' THEN messages ELSE '[]'::jsonb END
+                  ) AS elem
+             WHERE id = $1 AND elem->>'id' = $2
+           ) AS found`,
+          [threadId, id],
+        );
+        if (alreadyInTranscript?.found)
           return Response.json({ queued: true, status: "read" });
         const deliveryMode = explicitMode ?? "steer";
         const message = await resolveInboxMessage(
@@ -3864,9 +4137,9 @@ export async function createLocalConversations(
           throw new LocalConversationError("Thread name must be text", 400);
         if (body.archived !== undefined && typeof body.archived !== "boolean")
           throw new LocalConversationError("Archived must be boolean", 400);
-        const changed = await database.$client.unsafe<ThreadRow[]>(
+        const changed = await database.$client.unsafe<ThreadMetaRow[]>(
           `UPDATE chisabot_local_threads SET name = $3, archived = $4, updated_at = now()
-           WHERE id = $1 AND owner_user_id = $2 RETURNING *`,
+           WHERE id = $1 AND owner_user_id = $2 RETURNING ${THREAD_META_COLUMNS}`,
           [
             threadId,
             actorId,

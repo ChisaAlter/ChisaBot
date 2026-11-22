@@ -588,7 +588,31 @@ function ComposerImpl({
    * 状态是全局偏好：一次展开对所有 compact 输入框生效、跨刷新保留。
    */
   const [expanded, setExpandedState] = useState(readComposerExpanded);
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  /**
+   * 收起横条 ⇄ 展开卡片是两棵 DOM 分支，React 换形本身没有过渡。这里做 FLIP：
+   * ResizeObserver 仅从 ResizeObserverEntry.borderBoxSize 缓存高度（零强制回流）；
+   * 仅在用户切换 expanded 前采样一次旧高度与圆角，新表单 commit 时再用 WAAPI 反向补间。
+   * 首次挂载、打字换行与 prefers-reduced-motion 时零 offsetHeight / getComputedStyle 回流。
+   */
+  const formEl = useRef<HTMLFormElement | null>(null);
+  const cachedFormHeight = useRef<number | null>(null);
+  const pendingFlipFrom = useRef<{ h: number; r: string } | null>(null);
+  const reduceMotion = useReducedMotion();
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
   const setExpanded = useCallback((next: boolean) => {
+    if (next === expandedRef.current) return;
+    const el = formEl.current;
+    if (el && !reduceMotionRef.current && typeof el.animate === "function") {
+      pendingFlipFrom.current = {
+        h: cachedFormHeight.current ?? el.offsetHeight,
+        r: getComputedStyle(el).borderRadius,
+      };
+    } else {
+      pendingFlipFrom.current = null;
+    }
     setExpandedState(next);
     try {
       window.localStorage.setItem(COMPOSER_EXPANDED_KEY, next ? "1" : "0");
@@ -596,62 +620,56 @@ function ComposerImpl({
       /* 存储不可用时只影响本次挂载，不挡切换。 */
     }
   }, []);
-  /**
-   * 收起横条 ⇄ 展开卡片是两棵 DOM 分支，React 换形本身没有过渡。这里做 FLIP：
-   * ResizeObserver 随时记录当前表单的高和圆角；表单 ref 在 commit 阶段、绘制前
-   * 拿旧值用 WAAPI 从新高度反向补间（高度 + 圆角 + 淡入），再交出真实布局。
-   * prefers-reduced-motion 时跳过（collapse.tsx 同款约定）。
-   */
-  const formEl = useRef<HTMLFormElement | null>(null);
-  const lastFormFrame = useRef<{ h: number; r: string } | null>(null);
-  const reduceMotion = useReducedMotion();
-  const reduceMotionRef = useRef(reduceMotion);
-  reduceMotionRef.current = reduceMotion;
   const composerFormRef = useCallback((el: HTMLFormElement | null) => {
     formEl.current = el;
-    if (el) {
-      const prev = lastFormFrame.current;
-      const next = {
-        h: el.offsetHeight,
-        r: getComputedStyle(el).borderRadius,
-      };
-      lastFormFrame.current = next;
-      if (
-        prev &&
-        !reduceMotionRef.current &&
-        typeof el.animate === "function" &&
-        (Math.abs(prev.h - next.h) >= 1 || prev.r !== next.r)
-      ) {
-        el.animate(
-          [
-            {
-              height: `${prev.h}px`,
-              borderRadius: prev.r,
-              opacity: 0.4,
-              overflow: "hidden",
-            },
-            {
-              height: `${next.h}px`,
-              borderRadius: next.r,
-              opacity: 1,
-              overflow: "hidden",
-            },
-          ],
-          { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
-        );
+    if (!el) {
+      cachedFormHeight.current = null;
+    } else if (pendingFlipFrom.current) {
+      const prev = pendingFlipFrom.current;
+      pendingFlipFrom.current = null;
+      if (!reduceMotionRef.current && typeof el.animate === "function") {
+        const next = {
+          h: el.offsetHeight,
+          r: getComputedStyle(el).borderRadius,
+        };
+        cachedFormHeight.current = next.h;
+        if (Math.abs(prev.h - next.h) >= 1 || prev.r !== next.r) {
+          el.animate(
+            [
+              {
+                height: `${prev.h}px`,
+                borderRadius: prev.r,
+                opacity: 0.4,
+                overflow: "hidden",
+              },
+              {
+                height: `${next.h}px`,
+                borderRadius: next.r,
+                opacity: 1,
+                overflow: "hidden",
+              },
+            ],
+            { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
+          );
+        }
       }
     }
     return presenceRef("has-composer")(el) as (() => void) | undefined;
   }, []);
   useResizeObserver(
     formEl,
-    () => {
-      const el = formEl.current;
-      if (!el) return;
-      lastFormFrame.current = {
-        h: el.offsetHeight,
-        r: getComputedStyle(el).borderRadius,
-      };
+    (entry) => {
+      const borderBox = entry.borderBoxSize;
+      const blockSize =
+        borderBox && borderBox.length > 0 ? borderBox[0]?.blockSize : undefined;
+      if (typeof blockSize === "number" && blockSize > 0) {
+        cachedFormHeight.current = blockSize;
+        return;
+      }
+      const rectHeight = entry.contentRect?.height;
+      if (typeof rectHeight === "number" && rectHeight > 0) {
+        cachedFormHeight.current = rectHeight;
+      }
     },
     true,
     expanded,

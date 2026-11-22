@@ -11,13 +11,15 @@ import {
   IconFileZip,
   IconMessageReply,
 } from "@tabler/icons-react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
-  QueryClientProvider,
-  useQueries,
-  useQuery,
-} from "@tanstack/react-query";
-import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
-import { useTimeout } from "@/hooks";
+  type CSSProperties,
+  memo,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useExternalConnection } from "@/hooks";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { CopyButton } from "@/components/ui/copy-button";
 import {
@@ -62,11 +64,32 @@ import { hostOf, previewClient, previewQuery } from "./link-preview-query";
 
 export type { LinkPreviewData } from "./link-preview-query";
 
-/** 预览查询缓存的 Provider（useQueries 等没传 client 的调用用它）。 */
-function WithPreviewClient({ children }: { children: ReactNode }) {
-  return (
-    <QueryClientProvider client={previewClient}>{children}</QueryClientProvider>
-  );
+const HAS_HTTP_URL_RE = /https?:\/\//i;
+const HTTP_SCHEME_RE = /^https?:/i;
+const PARTIAL_LINK_HEAD_RE = /^[ \t]*(?:\*\*|__)*[hH<[]/;
+const EMPTY_EXTRACTED_IMAGES: readonly ExtractedImage[] = [];
+const EMPTY_FILES: readonly NonNullable<MessageMedia["files"]>[number][] = [];
+const EMPTY_LINK_LINES = {
+  links: [] as LinkRef[],
+  display: "",
+  pending: false,
+  pendingUrl: undefined as string | undefined,
+};
+
+function lastLineOf(text: string): string {
+  const nl = text.lastIndexOf("\n");
+  return nl === -1 ? text : text.slice(nl + 1);
+}
+
+function mayHaveRichPreviews(text: string, media?: MessageMedia): boolean {
+  if (
+    (media?.images && media.images.length > 0) ||
+    (media?.files && media.files.length > 0)
+  ) {
+    return true;
+  }
+  if (!text) return false;
+  return text.includes("![") || HAS_HTTP_URL_RE.test(text);
 }
 
 /**
@@ -101,11 +124,48 @@ export function usePreviewImage(
  * 文字停下 `ms` 毫秒后才返回它（流式回复时不追着半截文字跑）。
  *
  * 刚挂载时当作已经写完（历史消息、重放的记录立刻出卡）；之后每变一次都要再停 `ms` 才算写完。
+ * 用单一定时器 + 截止时间戳避免流式 60fps 每帧拆装 effect/setTimeout；显式 `streaming === false` 直接返回零定时器。
  */
-export function useSettledText(text: string, ms = 900): string {
-  const [settled, setSettled] = useState(text);
-  useTimeout(() => setSettled(text), settled === text ? null : ms, text);
-  return settled;
+export function useSettledText(
+  text: string,
+  ms = 900,
+  streaming?: boolean,
+  initiallyUnsettled = false,
+): string {
+  const [settled, setSettled] = useState(() =>
+    initiallyUnsettled && streaming !== false ? "" : text,
+  );
+  const latestRef = useRef(text);
+  const deadlineRef = useRef(
+    initiallyUnsettled && streaming !== false ? Date.now() + ms : 0,
+  );
+  if (latestRef.current !== text) {
+    latestRef.current = text;
+    if (streaming !== false) {
+      deadlineRef.current = Date.now() + ms;
+    }
+  }
+  const active = streaming !== false && settled !== text;
+  useExternalConnection(active ? `settled:${ms}` : false, () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const wait = Math.max(0, deadlineRef.current - Date.now());
+      timer = setTimeout(() => {
+        timer = null;
+        const remaining = deadlineRef.current - Date.now();
+        if (remaining > 0) {
+          schedule();
+          return;
+        }
+        setSettled(latestRef.current);
+      }, wait);
+    };
+    schedule();
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+    };
+  });
+  return streaming === false ? text : settled;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -487,12 +547,18 @@ export function ImagePile({
 
 /** 网址指向第三方的图片：先请服务器转存（同一个链接预览接口），浏览器只读本站的副本。 */
 function useResolvedImages(images: readonly ExtractedImage[]): PileImage[] {
-  const external = images.filter((image) => /^https?:/i.test(image.src));
-  const results = useQueries({
-    queries: external.map((image) => previewQuery(image.src)),
-  });
+  const external = useMemo(
+    () => images.filter((image) => HTTP_SCHEME_RE.test(image.src)),
+    [images],
+  );
+  const results = useQueries(
+    {
+      queries: external.map((image) => previewQuery(image.src)),
+    },
+    previewClient,
+  );
   return images.flatMap((image): PileImage[] => {
-    if (!/^https?:/i.test(image.src))
+    if (!HTTP_SCHEME_RE.test(image.src))
       return [{ src: image.src, alt: image.alt }];
     const result = results[external.indexOf(image)];
     const data = result?.data;
@@ -555,13 +621,16 @@ function useRemoteSize(
   probe: boolean,
 ): number | null {
   const sameOrigin = url.startsWith("/") && !url.startsWith("//");
-  const { data } = useQuery({
-    queryKey: ["file-size", url],
-    enabled: probe && sameOrigin && (known === undefined || known === null),
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: false,
-    queryFn: () => remoteFileSize(url),
-  });
+  const { data } = useQuery(
+    {
+      queryKey: ["file-size", url],
+      enabled: probe && sameOrigin && (known === undefined || known === null),
+      staleTime: Number.POSITIVE_INFINITY,
+      retry: false,
+      queryFn: () => remoteFileSize(url),
+    },
+    previewClient,
+  );
   return known ?? data ?? null;
 }
 
@@ -886,45 +955,32 @@ export type MessageMedia = {
   }[];
 };
 
-function MessageRichPreviewsInner({
-  text,
-  align = "start",
-  media,
-}: {
+type MessageRichPreviewsProps = {
   text: string;
   align?: "start" | "end";
   media?: MessageMedia;
+};
+
+function MessageRichPreviewsStack({
+  align,
+  images,
+  files,
+  links,
+  pending,
+  pendingUrl,
+}: {
+  align: "start" | "end";
+  images: readonly PileImage[];
+  files: readonly NonNullable<MessageMedia["files"]>[number][];
+  links: readonly LinkRef[];
+  pending: boolean;
+  pendingUrl?: string | undefined;
 }) {
-  const settled = useSettledText(text);
-  // 用户消息是一次发完的；机器人消息在文字停下前最后一行不算写完。
-  const final = align === "end" || settled === text;
-  const split = useMemo(() => splitLinkLines(text, { final }), [text, final]);
-  const found = useMemo(() => extractRichContent(settled), [settled]);
-  const fromText = useResolvedImages(found.images);
-  const images = useMemo(
-    () => [...(media?.images ?? []), ...fromText],
-    [media?.images, fromText],
-  );
-  const imageSet = useMemo(
-    () => new Set(found.images.map((i) => i.src)),
-    [found.images],
-  );
-  // 用户的消息：句子中间的链接也出卡（extractUserLinks）；机器人的只认单独一行的（§48）。
-  const isUser = align === "end";
-  const userLinks = useMemo(
-    () => (isUser ? extractUserLinks(text) : null),
-    [isUser, text],
-  );
-  const links = useMemo(
-    () => (userLinks ?? split.links).filter((l) => !imageSet.has(l.url)),
-    [userLinks, split.links, imageSet],
-  );
-  const files = media?.files ?? [];
   if (
     images.length === 0 &&
     files.length === 0 &&
     links.length === 0 &&
-    !split.pending
+    !pending
   )
     return null;
   return (
@@ -939,10 +995,128 @@ function MessageRichPreviewsInner({
       ) : null}
       <LinkPreviewCards
         links={links}
+        pending={pending}
+        pendingUrl={pendingUrl}
+      />
+    </div>
+  );
+}
+
+/** 仅在消息中真正包含外链 Markdown 图片时挂载，避免无图消息创建空 QueriesObserver。 */
+function MessageRichPreviewsWithExternalImages({
+  align,
+  foundImages,
+  mediaImages,
+  files,
+  links,
+  pending,
+  pendingUrl,
+}: {
+  align: "start" | "end";
+  foundImages: readonly ExtractedImage[];
+  mediaImages: readonly PileImage[] | undefined;
+  files: readonly NonNullable<MessageMedia["files"]>[number][];
+  links: readonly LinkRef[];
+  pending: boolean;
+  pendingUrl?: string | undefined;
+}) {
+  const fromText = useResolvedImages(foundImages);
+  const images = useMemo(
+    () => (mediaImages?.length ? [...mediaImages, ...fromText] : fromText),
+    [mediaImages, fromText],
+  );
+  return (
+    <MessageRichPreviewsStack
+      align={align}
+      files={files}
+      images={images}
+      links={links}
+      pending={pending}
+      pendingUrl={pendingUrl}
+    />
+  );
+}
+
+function MessageRichPreviewsInner({
+  text,
+  align = "start",
+  media,
+  initiallyUnsettled = false,
+}: MessageRichPreviewsProps & { initiallyUnsettled?: boolean }) {
+  const isUser = align === "end";
+  const settled = useSettledText(
+    text,
+    900,
+    isUser ? false : undefined,
+    initiallyUnsettled,
+  );
+  // 用户消息是一次发完的；机器人消息在文字停下前最后一行不算写完。
+  const final = isUser || settled === text;
+  const split = useMemo(
+    () => (isUser ? EMPTY_LINK_LINES : splitLinkLines(text, { final })),
+    [isUser, text, final],
+  );
+  const foundImages = useMemo(
+    () =>
+      settled.includes("![")
+        ? extractRichContent(settled).images
+        : EMPTY_EXTRACTED_IMAGES,
+    [settled],
+  );
+  const hasExternalImages = useMemo(
+    () => foundImages.some((image) => HTTP_SCHEME_RE.test(image.src)),
+    [foundImages],
+  );
+  const imageSet = useMemo(
+    () =>
+      foundImages.length > 0
+        ? new Set(foundImages.map((i) => i.src))
+        : null,
+    [foundImages],
+  );
+  // 用户的消息：句子中间的链接也出卡（extractUserLinks）；机器人的只认单独一行的（§48）。
+  const userLinks = useMemo(
+    () => (isUser && HAS_HTTP_URL_RE.test(text) ? extractUserLinks(text) : null),
+    [isUser, text],
+  );
+  const links = useMemo(() => {
+    const raw = userLinks ?? split.links;
+    if (!imageSet || raw.length === 0) return raw;
+    return raw.filter((l) => !imageSet.has(l.url));
+  }, [userLinks, split.links, imageSet]);
+  const localImages = useMemo<readonly PileImage[]>(() => {
+    if (hasExternalImages) return [];
+    const mediaImgs = media?.images ?? [];
+    if (foundImages.length === 0) return mediaImgs;
+    const fromLocal = foundImages.map((image) => ({
+      src: image.src,
+      alt: image.alt,
+    }));
+    return mediaImgs.length > 0 ? [...mediaImgs, ...fromLocal] : fromLocal;
+  }, [hasExternalImages, media?.images, foundImages]);
+  const files = media?.files ?? EMPTY_FILES;
+  if (hasExternalImages) {
+    return (
+      <MessageRichPreviewsWithExternalImages
+        align={align}
+        files={files}
+        foundImages={foundImages}
+        links={links}
+        mediaImages={media?.images}
         pending={split.pending}
         pendingUrl={split.pendingUrl}
       />
-    </div>
+    );
+  }
+  return (
+    <MessageRichPreviewsStack
+      align={align}
+      files={files}
+      images={localImages}
+      links={links}
+      pending={split.pending}
+      pendingUrl={split.pendingUrl}
+    />
   );
 }
 
@@ -950,41 +1124,48 @@ function MessageRichPreviewsInner({
  * 给 Markdown 渲染的正文：出了链接卡的那几行拿掉（和 {@link MessageRichPreviews} 用同一套判断，DESIGN.md §48）。
  * 只用于机器人消息；用户自己的消息原样显示。
  */
-export function useDisplayText(text: string): string {
-  const settled = useSettledText(text);
-  return useMemo(
-    () => splitLinkLines(text, { final: settled === text }).display,
-    [text, settled],
-  );
+export function useDisplayText(text: string, streaming?: boolean): string {
+  const settled = useSettledText(text, 900, streaming);
+  const final = streaming === false || settled === text;
+  return useMemo(() => {
+    if (!text) return text ?? "";
+    // 快速路径：不含任何 http(s):// 且非半截链接行开头时不可能提取链接卡，跳过逐行 split 与正则扫描。
+    if (
+      !HAS_HTTP_URL_RE.test(text) &&
+      (final || !PARTIAL_LINK_HEAD_RE.test(lastLineOf(text)))
+    ) {
+      return text;
+    }
+    return splitLinkLines(text, { final }).display;
+  }, [text, final]);
 }
 
 export function LinkPreviewCards(
   props: Parameters<typeof LinkPreviewCardsInner>[0],
 ) {
-  return (
-    <WithPreviewClient>
-      <LinkPreviewCardsInner {...props} />
-    </WithPreviewClient>
-  );
+  return <LinkPreviewCardsInner {...props} />;
 }
 
 export function FileCard(props: Parameters<typeof FileCardInner>[0]) {
-  return (
-    <WithPreviewClient>
-      <FileCardInner {...props} />
-    </WithPreviewClient>
-  );
+  return <FileCardInner {...props} />;
 }
 
-export function MessageRichPreviews(
-  props: Parameters<typeof MessageRichPreviewsInner>[0],
+export const MessageRichPreviews = memo(function MessageRichPreviews(
+  props: MessageRichPreviewsProps,
 ) {
+  // 记录首次挂载时的文本：流式回答若原本无链接、半途长出链接，须按「未落定」初始化，避免半截网址立刻发请求。
+  const initialTextRef = useRef(props.text);
+  const grewSinceMount = props.text !== initialTextRef.current;
+  if (!mayHaveRichPreviews(props.text, props.media)) {
+    return null;
+  }
   return (
-    <WithPreviewClient>
-      <MessageRichPreviewsInner {...props} />
-    </WithPreviewClient>
+    <MessageRichPreviewsInner
+      {...props}
+      initiallyUnsettled={grewSinceMount}
+    />
   );
-}
+});
 
 /** 机器人的 Markdown 正文（频道聊天用）：出卡的链接行拿掉，内联图片不画。 */
 export function RichBotStreamdown({

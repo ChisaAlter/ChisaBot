@@ -68,15 +68,62 @@ const RETRY_AFTER_DEFAULT_MS = 60_000;
 const QUOTA_EXHAUSTED_COOLDOWN_MS = 600_000;
 const AUTH_FAILURE_COOLDOWN_MS = 3_600_000;
 
-const utf8Encoder = new TextEncoder();
+const RETRY_AFTER_NUM_RE = /^-?\d+(?:\.\d+)?$/;
 
-/** 标准 32 位 FNV-1a 哈希（按 UTF-8 字节计算）。 */
+/** 标准 32 位 FNV-1a 哈希（按 UTF-8 字节流在线计算，与 TextEncoder 逐字节一致且零堆分配）。 */
 export function fnv1a32(input: string): number {
-  const bytes = utf8Encoder.encode(input);
   let hash = FNV1A_OFFSET_BASIS;
-  for (const byte of bytes) {
-    hash ^= byte;
-    hash = Math.imul(hash, FNV1A_PRIME);
+  const len = input.length;
+  for (let i = 0; i < len; i++) {
+    let code = input.charCodeAt(i);
+    if (code < 0x80) {
+      hash ^= code;
+      hash = Math.imul(hash, FNV1A_PRIME);
+    } else if (code < 0x800) {
+      hash ^= 0xc0 | (code >> 6);
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0x80 | (code & 0x3f);
+      hash = Math.imul(hash, FNV1A_PRIME);
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      if (i + 1 < len) {
+        const low = input.charCodeAt(i + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          i++;
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          hash ^= 0xf0 | (code >> 18);
+          hash = Math.imul(hash, FNV1A_PRIME);
+          hash ^= 0x80 | ((code >> 12) & 0x3f);
+          hash = Math.imul(hash, FNV1A_PRIME);
+          hash ^= 0x80 | ((code >> 6) & 0x3f);
+          hash = Math.imul(hash, FNV1A_PRIME);
+          hash ^= 0x80 | (code & 0x3f);
+          hash = Math.imul(hash, FNV1A_PRIME);
+          continue;
+        }
+      }
+      // 孤立高代理按 WHATWG TextEncoder 规范编码为 U+FFFD (EF BF BD)
+      hash ^= 0xef;
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0xbf;
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0xbd;
+      hash = Math.imul(hash, FNV1A_PRIME);
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      // 孤立低代理按 WHATWG TextEncoder 规范编码为 U+FFFD (EF BF BD)
+      hash ^= 0xef;
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0xbf;
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0xbd;
+      hash = Math.imul(hash, FNV1A_PRIME);
+    } else {
+      hash ^= 0xe0 | (code >> 12);
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0x80 | ((code >> 6) & 0x3f);
+      hash = Math.imul(hash, FNV1A_PRIME);
+      hash ^= 0x80 | (code & 0x3f);
+      hash = Math.imul(hash, FNV1A_PRIME);
+    }
   }
   return hash >>> 0;
 }
@@ -89,10 +136,13 @@ function readHeader(
   if (headers instanceof Headers) {
     return headers.get(targetName) ?? undefined;
   }
+  const direct = headers[targetName];
+  if (typeof direct === "string") return direct;
   const lower = targetName.toLowerCase();
-  for (const [name, value] of Object.entries(headers)) {
-    if (name.toLowerCase() === lower && typeof value === "string") {
-      return value;
+  for (const name in headers) {
+    if (name.toLowerCase() === lower) {
+      const value = headers[name];
+      if (typeof value === "string") return value;
     }
   }
   return undefined;
@@ -110,7 +160,7 @@ export function parseRetryAfterMs(
   const raw = readHeader(headers, "retry-after")?.trim();
   if (!raw) return RETRY_AFTER_DEFAULT_MS;
 
-  if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+  if (RETRY_AFTER_NUM_RE.test(raw)) {
     const seconds = Number(raw);
     if (Number.isFinite(seconds)) {
       return clamp(
@@ -148,38 +198,90 @@ function isKeyHealthy(key: ModelPoolKey, now: number): boolean {
   return true;
 }
 
+function clearKeyCooldown(item: ModelPoolKey): ModelPoolKey {
+  if (item.disabled !== undefined) {
+    return {
+      id: item.id,
+      label: item.label,
+      apiKey: item.apiKey,
+      disabled: item.disabled,
+    };
+  }
+  return {
+    id: item.id,
+    label: item.label,
+    apiKey: item.apiKey,
+  };
+}
+
+function setKeyCooldown(
+  item: ModelPoolKey,
+  cooldownUntil: number,
+  lastStatus: number,
+): ModelPoolKey {
+  if (item.disabled !== undefined) {
+    return {
+      id: item.id,
+      label: item.label,
+      apiKey: item.apiKey,
+      disabled: item.disabled,
+      cooldownUntil,
+      lastStatus,
+    };
+  }
+  return {
+    id: item.id,
+    label: item.label,
+    apiKey: item.apiKey,
+    cooldownUntil,
+    lastStatus,
+  };
+}
+
 /** 纯状态转移：从密钥池按粘性哈希选取健康 Key；全池冷却时返回最短恢复时间戳。 */
 export function selectKeyFromPool(
   keys: readonly ModelPoolKey[],
   stickyKey: string,
   now: number = Date.now(),
 ): KeySelection {
-  if (keys.length === 0) {
+  const len = keys.length;
+  if (len === 0) {
     return { key: null, nextAvailableAt: null };
   }
 
-  const primaryIndex = fnv1a32(stickyKey) % keys.length;
-  for (let offset = 0; offset < keys.length; offset++) {
-    const candidate = keys[(primaryIndex + offset) % keys.length];
-    if (candidate && isKeyHealthy(candidate, now)) {
-      return { key: candidate, nextAvailableAt: null };
-    }
+  const primaryIndex = fnv1a32(stickyKey) % len;
+  const primary = keys[primaryIndex];
+  if (primary && isKeyHealthy(primary, now)) {
+    return { key: primary, nextAvailableAt: null };
   }
 
-  let nextAvailableAt: number | null = null;
-  for (const candidate of keys) {
-    if (candidate.disabled) continue;
-    if (
-      candidate.cooldownUntil !== undefined &&
-      candidate.cooldownUntil > now
-    ) {
+  let nextAvailableAt: number | null =
+    primary &&
+    !primary.disabled &&
+    primary.cooldownUntil !== undefined &&
+    primary.cooldownUntil > now
+      ? primary.cooldownUntil
+      : null;
+
+  let idx = primaryIndex + 1;
+  if (idx === len) idx = 0;
+  for (let step = 1; step < len; step++) {
+    const candidate = keys[idx];
+    if (candidate) {
+      if (isKeyHealthy(candidate, now)) {
+        return { key: candidate, nextAvailableAt: null };
+      }
       if (
-        nextAvailableAt === null ||
-        candidate.cooldownUntil < nextAvailableAt
+        !candidate.disabled &&
+        candidate.cooldownUntil !== undefined &&
+        candidate.cooldownUntil > now &&
+        (nextAvailableAt === null || candidate.cooldownUntil < nextAvailableAt)
       ) {
         nextAvailableAt = candidate.cooldownUntil;
       }
     }
+    idx++;
+    if (idx === len) idx = 0;
   }
 
   return { key: null, nextAvailableAt };
@@ -196,18 +298,23 @@ export function applyKeyResultToPool(
   const duration = cooldownDurationForStatus(status, headers, now);
   if (duration === null) return [...keys];
 
-  return keys.map((item) => {
-    if (item.id !== keyId) return item;
-    if (duration === 0) {
-      const { cooldownUntil: _c, lastStatus: _s, ...rest } = item;
-      return rest;
+  const len = keys.length;
+  const out = new Array<ModelPoolKey>(len);
+  for (let i = 0; i < len; i++) {
+    const item = keys[i];
+    if (!item) continue;
+    if (item.id !== keyId) {
+      out[i] = item;
+    } else if (duration === 0) {
+      out[i] =
+        item.cooldownUntil === undefined && item.lastStatus === undefined
+          ? item
+          : clearKeyCooldown(item);
+    } else {
+      out[i] = setKeyCooldown(item, now + duration, status);
     }
-    return {
-      ...item,
-      cooldownUntil: now + duration,
-      lastStatus: status,
-    };
-  });
+  }
+  return out;
 }
 
 /**
@@ -271,72 +378,172 @@ export function reconcilePoolKeys(
   return { keys: merged, changed: true };
 }
 
+function buildStatusEntry(
+  descriptor: ModelPoolKeyDescriptor,
+  current: ModelPoolKey | undefined,
+  now: number,
+): ModelKeyStatus {
+  if (!current) {
+    return {
+      id: descriptor.id,
+      label: descriptor.label,
+      healthy: true,
+      cooldownUntil: null,
+    };
+  }
+  const cooling =
+    current.cooldownUntil !== undefined && current.cooldownUntil > now;
+  const healthy = !current.disabled && !cooling;
+  const cooldownUntil = cooling ? (current.cooldownUntil ?? null) : null;
+  if (current.lastStatus !== undefined) {
+    return {
+      id: descriptor.id,
+      label: descriptor.label,
+      healthy,
+      cooldownUntil,
+      lastStatus: current.lastStatus,
+    };
+  }
+  return {
+    id: descriptor.id,
+    label: descriptor.label,
+    healthy,
+    cooldownUntil,
+  };
+}
+
 /** 生成不含明文密钥的池健康状态投影。 */
 export function projectPoolStatus(
   poolKeys: readonly ModelPoolKey[],
   requestedKeys: readonly ModelPoolKeyDescriptor[],
   now: number = Date.now(),
 ): ModelKeyStatus[] {
-  const byId = new Map(poolKeys.map((item) => [item.id, item]));
-  return requestedKeys.map((descriptor) => {
-    const current = byId.get(descriptor.id);
-    if (!current) {
-      return {
-        id: descriptor.id,
-        label: descriptor.label,
-        healthy: true,
-        cooldownUntil: null,
-      };
+  const reqLen = requestedKeys.length;
+  const poolLen = poolKeys.length;
+  const out = new Array<ModelKeyStatus>(reqLen);
+  let byId: Map<string, ModelPoolKey> | null = null;
+
+  for (let i = 0; i < reqLen; i++) {
+    const descriptor = requestedKeys[i];
+    if (!descriptor) continue;
+    let current: ModelPoolKey | undefined;
+    if (i < poolLen && poolKeys[i]?.id === descriptor.id) {
+      current = poolKeys[i];
+    } else if (poolLen > 0) {
+      if (byId === null) {
+        byId = new Map<string, ModelPoolKey>();
+        for (let j = 0; j < poolLen; j++) {
+          const item = poolKeys[j];
+          if (item) byId.set(item.id, item);
+        }
+      }
+      current = byId.get(descriptor.id);
     }
-    const cooling =
-      current.cooldownUntil !== undefined && current.cooldownUntil > now;
-    const healthy = !current.disabled && !cooling;
-    return {
-      id: descriptor.id,
-      label: descriptor.label,
-      healthy,
-      cooldownUntil: cooling ? (current.cooldownUntil ?? null) : null,
-      ...(current.lastStatus !== undefined
-        ? { lastStatus: current.lastStatus }
-        : {}),
-    };
-  });
+    out[i] = buildStatusEntry(descriptor, current, now);
+  }
+  return out;
+}
+
+type PoolEntry = {
+  keys: ModelPoolKey[];
+  indexById: Map<string, number>;
+};
+
+function buildIndexById(keys: readonly ModelPoolKey[]): Map<string, number> {
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < keys.length; i++) {
+    const item = keys[i];
+    if (item) indexById.set(item.id, i);
+  }
+  return indexById;
 }
 
 export function createModelKeyPool(): ModelKeyPool {
-  const pools = new Map<string, ModelPoolKey[]>();
+  const pools = new Map<string, PoolEntry>();
 
   return {
     setPool(poolId, keys) {
       const existing = pools.get(poolId);
       if (!existing) {
-        pools.set(
-          poolId,
-          keys.map((item) => ({ ...item })),
-        );
+        const cloned = keys.map((item) => ({ ...item }));
+        pools.set(poolId, {
+          keys: cloned,
+          indexById: buildIndexById(cloned),
+        });
         return;
       }
-      const { keys: reconciled, changed } = reconcilePoolKeys(existing, keys);
+      const { keys: reconciled, changed } = reconcilePoolKeys(
+        existing.keys,
+        keys,
+      );
       if (changed) {
-        pools.set(poolId, reconciled);
+        pools.set(poolId, {
+          keys: reconciled,
+          indexById: buildIndexById(reconciled),
+        });
       }
     },
 
     selectKey(poolId, stickyKey, now = Date.now()) {
-      const pool = pools.get(poolId) ?? [];
-      return selectKeyFromPool(pool, stickyKey, now);
+      const entry = pools.get(poolId);
+      if (!entry) return { key: null, nextAvailableAt: null };
+      return selectKeyFromPool(entry.keys, stickyKey, now);
     },
 
     reportResult(poolId, keyId, status, headers, now = Date.now()) {
-      const pool = pools.get(poolId);
-      if (!pool) return;
-      const updated = applyKeyResultToPool(pool, keyId, status, headers, now);
-      pools.set(poolId, updated);
+      const entry = pools.get(poolId);
+      if (!entry) return;
+      const duration = cooldownDurationForStatus(status, headers, now);
+      if (duration === null) return;
+      const idx = entry.indexById.get(keyId);
+      if (idx === undefined) return;
+      const item = entry.keys[idx];
+      if (!item) return;
+      if (duration === 0) {
+        if (item.cooldownUntil === undefined && item.lastStatus === undefined) {
+          return;
+        }
+        entry.keys[idx] = clearKeyCooldown(item);
+      } else {
+        entry.keys[idx] = setKeyCooldown(item, now + duration, status);
+      }
     },
 
     getPoolStatus(poolId, keys, now = Date.now()) {
-      const pool = pools.get(poolId) ?? [];
-      return projectPoolStatus(pool, keys, now);
+      const entry = pools.get(poolId);
+      const reqLen = keys.length;
+      const out = new Array<ModelKeyStatus>(reqLen);
+      if (!entry) {
+        for (let i = 0; i < reqLen; i++) {
+          const descriptor = keys[i];
+          if (descriptor) {
+            out[i] = {
+              id: descriptor.id,
+              label: descriptor.label,
+              healthy: true,
+              cooldownUntil: null,
+            };
+          }
+        }
+        return out;
+      }
+
+      const poolKeys = entry.keys;
+      const poolLen = poolKeys.length;
+      const indexById = entry.indexById;
+      for (let i = 0; i < reqLen; i++) {
+        const descriptor = keys[i];
+        if (!descriptor) continue;
+        let current: ModelPoolKey | undefined;
+        if (i < poolLen && poolKeys[i]?.id === descriptor.id) {
+          current = poolKeys[i];
+        } else {
+          const idx = indexById.get(descriptor.id);
+          if (idx !== undefined) current = poolKeys[idx];
+        }
+        out[i] = buildStatusEntry(descriptor, current, now);
+      }
+      return out;
     },
 
     deletePool(poolId) {

@@ -444,6 +444,10 @@ export type ScheduleDeps = {
   now?: () => Date;
   /** 测试用：覆盖 BUSY_RETRY_MS。 */
   retryDelayMs?: number;
+  /** 可选自定义巡检空闲退避阶梯（毫秒），默认 [15000, 30000]。 */
+  sweepDelaysMs?: readonly number[];
+  /** 可选自定义首次延迟（毫秒），默认 5000。 */
+  initialDelayMs?: number;
 };
 
 /** M2：原对话被删时写在任务上的说明，设置页据此标「原对话已删除」。 */
@@ -727,10 +731,29 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   const now = deps.now ?? (() => new Date());
   const running = new Set<string>();
   const dedupLedger = new ScheduleDedupLedger();
-  let timer: ReturnType<typeof setInterval> | null = null;
+  const sweepDelays =
+    deps.sweepDelaysMs && deps.sweepDelaysMs.length > 0
+      ? deps.sweepDelaysMs
+      : ([SWEEP_MS, 30_000] as const);
+  const initialDelayMs = deps.initialDelayMs ?? 5_000;
+  let loop: { wake: () => void; stop: () => void } | null = null;
   let sweeping = false;
   let lastAutoPurge = 0;
+  let dshRunsTableAvailable = false;
   const retryDelay = deps.retryDelayMs ?? BUSY_RETRY_MS;
+  const wake = () => loop?.wake();
+
+  async function hasDshRunsTable(): Promise<boolean> {
+    if (dshRunsTableAvailable) return true;
+    const [journal] = await sql.unsafe<{ available: boolean }[]>(
+      "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
+    );
+    if (journal?.available) {
+      dshRunsTableAvailable = true;
+      return true;
+    }
+    return false;
+  }
 
   async function ensure() {
     await sql.unsafe(`
@@ -770,6 +793,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_sched ON chisabot_schedule_runs (schedule_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_owner ON chisabot_schedule_runs (owner_user_id, finished_at DESC);
+      CREATE INDEX IF NOT EXISTS chisabot_schedule_runs_active ON chisabot_schedule_runs (started_at) WHERE status IN ('running', 'waiting');
       ALTER TABLE chisabot_schedules ADD COLUMN IF NOT EXISTS agent_instance_id text;
     `);
     // CB-105b：CB-105 之前暂停的任务库里还留着 next_run_at；一次性、幂等地清掉（之后暂停时就置空）。
@@ -957,7 +981,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         nextRunAt,
       ],
     );
-    return view(written(rows));
+    const created = view(written(rows));
+    if (created.status === "active") wake();
+    return created;
   }
 
   async function update(
@@ -1049,7 +1075,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
         agentInstanceId,
       ],
     );
-    return view(written(rows));
+    const created = view(written(rows));
+    if (created.status === "active") wake();
+    return created;
   }
 
   async function remove(owner: string, id: string): Promise<boolean> {
@@ -1094,7 +1122,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       "UPDATE chisabot_schedules SET next_run_at=$2, updated_at=now() WHERE id=$1 RETURNING *",
       [row.id, iso(next)],
     );
-    return view(written(rows));
+    const created = view(written(rows));
+    if (created.status === "active") wake();
+    return created;
   }
 
   async function runNow(
@@ -1142,6 +1172,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     })) as Row;
     dedupLedger.recordClaim(row.id, runId, `manual:${runId}`, now().getTime());
     void fire(row, runId, { manual: true, lateMs: 0 });
+    wake();
     return { runId, schedule: view(row) };
   }
 
@@ -1247,10 +1278,8 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
       );
     }
 
-    const [journal] = await sql.unsafe<{ available: boolean }[]>(
-      "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
-    );
-    const preserved = journal?.available
+    const hasDshRuns = await hasDshRunsTable();
+    const preserved = hasDshRuns
       ? "AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id)"
       : "";
     const interrupted = await sql.unsafe<
@@ -1307,11 +1336,9 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
 
   /** Track B / v0.1.34：卡死的 running 记录标失败；对话仍被占着则 releaseThread；连续失败则暂停（从不 auto-resume）。 */
   async function reclaimStuckRuns(): Promise<number> {
-    const [journal] = await sql.unsafe<{ available: boolean }[]>(
-      "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
-    );
+    const hasDshRuns = await hasDshRunsTable();
     // An API lease does not own the lifetime of a surviving DSH execution.
-    const preserved = journal?.available
+    const preserved = hasDshRuns
       ? "AND NOT EXISTS(SELECT 1 FROM chisabot_dsh_runs d WHERE d.owner_user_id=r.owner_user_id AND d.input->'forwardedProps'->'chisabotSchedule'->>'runId'=r.id)"
       : "";
     const stuck = await sql.unsafe<
@@ -1977,10 +2004,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   }
 
   async function reconcileDurableRuns() {
-    const [journal] = await sql.unsafe<{ available: boolean }[]>(
-      "SELECT to_regclass('public.chisabot_dsh_runs') IS NOT NULL AS available",
-    );
-    if (!journal?.available) return;
+    if (!(await hasDshRunsTable())) return;
     const runs = await sql.unsafe<
       {
         id: string;
@@ -2052,30 +2076,49 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
   }
 
   function start() {
-    if (timer) return;
-    const tick = async () => {
-      if (sweeping) return;
+    if (loop) return;
+    let stopped = false;
+    let runningPass = false;
+    let pendingWake = false;
+    let backoffIndex = 0;
+    let nextTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleNext = (delayMs: number) => {
+      if (stopped) return;
+      if (nextTimer) clearTimeout(nextTimer);
+      nextTimer = setTimeout(() => {
+        nextTimer = null;
+        void runTick();
+      }, delayMs);
+      nextTimer.unref?.();
+    };
+    const tick = async (): Promise<boolean> => {
+      if (sweeping) return false;
       sweeping = true;
+      let hadWork = false;
       try {
-        await reclaimStuckRuns().catch((error) =>
+        const reclaimed = await reclaimStuckRuns().catch((error) => {
           console.warn(
             JSON.stringify({
               type: "schedule-stuck-reclaim-failed",
               reason: reasonWithoutStatement(error).slice(0, 200),
             }),
-          ),
-        );
-        await cancelOrphanSchedules().catch((error) =>
-          console.warn(
-            JSON.stringify({
-              type: "schedule-orphan-cancel-tick-failed",
-              reason: reasonWithoutStatement(error).slice(0, 200),
-            }),
-          ),
-        );
-        // 硬删结束态孤儿（cancel 只把 live 标 cancelled，按钮会一直显示「清理 N 条」）
+          );
+          return 0;
+        });
+        if (reclaimed > 0) hadWork = true;
+        // 孤儿定时取消与硬删降频至小时级（首次 tick 跑一次；删 Bot 入口另有显式触发）。
         if (Date.now() - lastAutoPurge >= ORPHAN_PURGE_EVERY_MS) {
           lastAutoPurge = Date.now();
+          const cancelled = await cancelOrphanSchedules().catch((error) => {
+            console.warn(
+              JSON.stringify({
+                type: "schedule-orphan-cancel-tick-failed",
+                reason: reasonWithoutStatement(error).slice(0, 200),
+              }),
+            );
+            return 0;
+          });
+          if (cancelled > 0) hadWork = true;
           await purgeOrphanSchedules().catch((error) =>
             console.warn(
               JSON.stringify({
@@ -2086,8 +2129,11 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
           );
         }
         const report = await sweep();
-        if (report.fired.length || report.skipped.length)
+        if (report.fired.length || report.skipped.length) {
+          hadWork = true;
           console.info(JSON.stringify({ type: "schedule-sweep", ...report }));
+        }
+        return hadWork || running.size > 0;
       } catch (error) {
         console.error(
           JSON.stringify({
@@ -2095,16 +2141,55 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
             reason: reasonWithoutStatement(error).slice(0, 300),
           }),
         );
+        return false;
       } finally {
         sweeping = false;
       }
     };
-    setTimeout(() => void tick(), 5_000);
-    timer = setInterval(() => void tick(), SWEEP_MS);
+    const runTick = async () => {
+      if (stopped || runningPass) return;
+      runningPass = true;
+      pendingWake = false;
+      let busy = false;
+      try {
+        busy = await tick();
+      } catch {
+        busy = false;
+      } finally {
+        runningPass = false;
+      }
+      if (stopped) return;
+      if (pendingWake) {
+        backoffIndex = 0;
+        scheduleNext(0);
+        return;
+      }
+      backoffIndex = busy
+        ? 0
+        : Math.min(backoffIndex + 1, sweepDelays.length - 1);
+      scheduleNext(sweepDelays[backoffIndex] ?? SWEEP_MS);
+    };
+    loop = {
+      wake: () => {
+        if (stopped) return;
+        backoffIndex = 0;
+        if (runningPass) {
+          pendingWake = true;
+        } else {
+          scheduleNext(0);
+        }
+      },
+      stop: () => {
+        stopped = true;
+        if (nextTimer) clearTimeout(nextTimer);
+        nextTimer = null;
+      },
+    };
+    scheduleNext(initialDelayMs);
   }
   function stop() {
-    if (timer) clearInterval(timer);
-    timer = null;
+    loop?.stop();
+    loop = null;
   }
 
   async function events(owner: string, after: Date): Promise<ScheduleEvent[]> {
@@ -2478,6 +2563,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     purgeOrphanSchedules,
     start,
     stop,
+    wake,
     events,
     tools,
     guidance,

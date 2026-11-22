@@ -102,6 +102,18 @@ const CREDENTIAL_KEY_ID = "model-connection-api-key";
 const POOLED_CREDENTIAL_KEY_PREFIX = `${CREDENTIAL_KEY_ID}:`;
 const MAX_POOLED_KEYS = 32;
 const PROBE_TIMEOUT_MS = 20_000;
+const RESOLVE_CACHE_TTL_MS = 5_000;
+
+function cloneModelConnectionRuntime(
+  runtime: ModelConnectionRuntime,
+): ModelConnectionRuntime {
+  return {
+    ...runtime,
+    ...(runtime.pooledKeys
+      ? { pooledKeys: runtime.pooledKeys.map((item) => ({ ...item })) }
+      : {}),
+  };
+}
 
 export function modelPoolId(
   connection: Pick<ModelConnectionConfig, "provider" | "baseUrl">,
@@ -758,10 +770,28 @@ export function createModelSettingsService(options: {
   keyPool?: ModelKeyPool;
   poolId?: string;
   now?: () => number;
+  resolveCacheTtlMs?: number;
 }): ModelSettingsService {
   const fallback = configuration(parseModelConnectionInput(options.fallback));
   const request = options.fetch ?? fetch;
   const nowFn = options.now ?? Date.now;
+  const resolveCacheTtlMs =
+    options.resolveCacheTtlMs ?? RESOLVE_CACHE_TTL_MS;
+  let resolveGeneration = 0;
+  let cachedResolve: {
+    value: ModelConnectionRuntime;
+    expiresAt: number;
+    generation: number;
+  } | null = null;
+  let inflightResolve: {
+    generation: number;
+    promise: Promise<ModelConnectionRuntime>;
+  } | null = null;
+  function invalidateResolveCache() {
+    resolveGeneration += 1;
+    cachedResolve = null;
+    inflightResolve = null;
+  }
   function poolIdFor(
     connection: Pick<ModelConnectionConfig, "provider" | "baseUrl">,
   ) {
@@ -794,23 +824,27 @@ export function createModelSettingsService(options: {
     snapshot: ModelSettingsSnapshot,
   ): Promise<ModelConnectionRuntime> {
     try {
-      const apiKey =
+      const decryptPrimary =
         snapshot.connection.useApiKey && snapshot.encryptedApiKey
-          ? await decryptSecret(options.encryptionKey, snapshot.encryptedApiKey)
-          : null;
-      const pooledKeys: ModelConnectionPooledKeyRuntime[] = [];
-      if (snapshot.connection.useApiKey && snapshot.pooledKeys) {
-        for (const entry of snapshot.pooledKeys) {
-          pooledKeys.push({
-            id: entry.id,
-            label: entry.label,
-            apiKey: await decryptSecret(
-              options.encryptionKey,
-              entry.encryptedApiKey,
-            ),
-          });
-        }
-      }
+          ? decryptSecret(options.encryptionKey, snapshot.encryptedApiKey)
+          : Promise.resolve(null);
+      const decryptPooled =
+        snapshot.connection.useApiKey && snapshot.pooledKeys?.length
+          ? Promise.all(
+              snapshot.pooledKeys.map(async (entry) => ({
+                id: entry.id,
+                label: entry.label,
+                apiKey: await decryptSecret(
+                  options.encryptionKey,
+                  entry.encryptedApiKey,
+                ),
+              })),
+            )
+          : Promise.resolve<ModelConnectionPooledKeyRuntime[]>([]);
+      const [apiKey, pooledKeys] = await Promise.all([
+        decryptPrimary,
+        decryptPooled,
+      ]);
       return {
         ...configuration(snapshot.connection),
         source: "saved",
@@ -822,10 +856,40 @@ export function createModelSettingsService(options: {
     }
   }
   async function resolve(): Promise<ModelConnectionRuntime> {
-    const saved = await options.store.read();
-    const runtime = saved ? await runtimeFrom(saved) : await fallbackRuntime();
-    syncPoolFromRuntime(runtime);
-    return runtime;
+    const now = nowFn();
+    if (
+      resolveCacheTtlMs > 0 &&
+      cachedResolve &&
+      cachedResolve.generation === resolveGeneration &&
+      now < cachedResolve.expiresAt
+    ) {
+      return cloneModelConnectionRuntime(cachedResolve.value);
+    }
+    const generation = resolveGeneration;
+    if (inflightResolve && inflightResolve.generation === generation) {
+      return cloneModelConnectionRuntime(await inflightResolve.promise);
+    }
+    const promise = (async () => {
+      const saved = await options.store.read();
+      const runtime = saved ? await runtimeFrom(saved) : await fallbackRuntime();
+      syncPoolFromRuntime(runtime);
+      if (resolveCacheTtlMs > 0 && resolveGeneration === generation) {
+        cachedResolve = {
+          value: cloneModelConnectionRuntime(runtime),
+          expiresAt: nowFn() + resolveCacheTtlMs,
+          generation,
+        };
+      }
+      return runtime;
+    })();
+    inflightResolve = { generation, promise };
+    try {
+      return cloneModelConnectionRuntime(await promise);
+    } finally {
+      if (inflightResolve?.promise === promise) {
+        inflightResolve = null;
+      }
+    }
   }
   return {
     resolve,
@@ -884,6 +948,7 @@ export function createModelSettingsService(options: {
               }),
             )
           : undefined;
+      invalidateResolveCache();
       const saved = await options.store.update(async (current) => {
         const currentPoolById = new Map(
           (current?.pooledKeys ?? []).map((item) => [item.id, item]),
@@ -954,6 +1019,7 @@ export function createModelSettingsService(options: {
             : {}),
         };
       }, actorUserId);
+      invalidateResolveCache();
       if (options.keyPool) {
         if (previouslySaved) {
           const oldPid = poolIdFor(previouslySaved.connection);

@@ -26,17 +26,10 @@ import {
   type QueryClient,
   type UseQueryResult,
   useMutation,
-  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useContext, useMemo, useState } from "react";
 import { CreateTask } from "@/components/task-center/create-task";
 import {
   ACTIVE_STATUSES,
@@ -64,7 +57,6 @@ import {
   type TaskControl,
   taskCenterApi,
   taskCenterKeys,
-  taskCenterSnapshotOptions,
 } from "@/lib/task-center-api";
 import {
   getItemOrderMeta,
@@ -78,7 +70,6 @@ import {
 import {
   WorkflowSaveError,
   workflowKeys,
-  workflowLibraryQueryOptions,
   workflowsApi,
 } from "@/lib/workflows";
 import type {
@@ -94,6 +85,10 @@ import {
   type WorkflowStepStatus,
 } from "../../../../shared/workflows";
 import {
+  RailTasksActiveContext,
+  useRailTasksSummary,
+} from "./rail-tasks-summary";
+import {
   CATEGORY_ICONS,
   formatRailErrorSummary,
   type RailDetailTarget,
@@ -102,52 +97,7 @@ import {
 import "../task-center/task-center.css";
 import "./tasks-rail-card.css";
 
-/**
- * 控制右栏「任务」卡是否处于可见激活态：右栏折叠、切到别的页签或离开聊天页时为 false，
- * 暂停后台 3s/5s 轮询；独立挂载（单测或弹窗）默认 true，行为不变。
- */
-export const RailTasksActiveContext = createContext(true);
-
-/**
- * 供右栏顶部「任务」选项卡读取角标状态（是否有待确认审批、是否有进行中任务/工作流）。
- */
-export function useRailTasksSummary(active = true) {
-  const snapshot = useQuery(taskCenterSnapshotOptions({ poll: active }));
-  const workflows = useQuery(workflowLibraryQueryOptions({ poll: active }));
-  const data = snapshot.data;
-  const outbox = Array.isArray(data?.outbox) ? data.outbox : [];
-  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
-  const runs = Array.isArray(workflows.data?.runs) ? workflows.data.runs : [];
-
-  const pendingDecisions = outbox.filter(
-    (decision) => decision.status === "pending",
-  );
-  const activeTasks = tasks.filter(
-    (task) =>
-      ACTIVE_STATUSES.includes(task.status) ||
-      task.status === "paused" ||
-      task.status === "waiting_approval",
-  );
-  const activeRuns = runs.filter((run) =>
-    ACTIVE_RUN_STATUSES.includes(run.status),
-  );
-  const waitingApprovalRuns = activeRuns.filter(
-    (run) => run.status === "waiting_approval",
-  );
-
-  return {
-    snapshot,
-    workflows,
-    pendingDecisions,
-    activeTasks,
-    activeRuns,
-    approvalCount:
-      (data?.decisionCounts?.pending ?? pendingDecisions.length) +
-      waitingApprovalRuns.length,
-    activeCount:
-      (data?.counts ? activeTaskCount(data.counts) : 0) + activeRuns.length,
-  };
-}
+export { RailTasksActiveContext, useRailTasksSummary };
 
 /**
  * 右栏「任务」选项卡内容：集中展示待确认审批、进行中的任务与工作流步骤进度、近期交付记录，

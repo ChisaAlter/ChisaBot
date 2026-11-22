@@ -350,7 +350,6 @@ export function createChunkedUploadService(
         0o600,
       );
       await handle.writeFile(input.bytes);
-      await handle.sync();
       await handle.close();
       handle = null;
       await fsp.rename(tmpPath, partPath);
@@ -413,20 +412,33 @@ export function createChunkedUploadService(
         );
       }
 
-      const buffers: Buffer[] = [];
+      const expectedSize = session.plan.totalSize;
+      const fullBuffer = Buffer.allocUnsafe(expectedSize);
       const hash = createHash("sha256");
       let assembledSize = 0;
       for (let i = 0; i < session.plan.totalChunks; i += 1) {
         const partPath = path.join(session.sessionDir, `chunk-${i}.part`);
         const chunkBytes = await fsp.readFile(partPath);
+        if (assembledSize + chunkBytes.length > expectedSize) {
+          throw new ChunkedUploadHttpError(
+            `合并后文件大小不匹配（实际超过 ${expectedSize}，期望 ${expectedSize}）。`,
+            400,
+          );
+        }
         hash.update(chunkBytes);
-        buffers.push(chunkBytes);
-        assembledSize += chunkBytes.length;
+        const copied = chunkBytes.copy(fullBuffer, assembledSize);
+        if (copied !== chunkBytes.length) {
+          throw new ChunkedUploadHttpError(
+            `合并写入分块 ${i} 字节数不完整（写入 ${copied}，期望 ${chunkBytes.length}）。`,
+            400,
+          );
+        }
+        assembledSize += copied;
       }
 
-      if (assembledSize !== session.plan.totalSize) {
+      if (assembledSize !== expectedSize) {
         throw new ChunkedUploadHttpError(
-          `合并后文件大小不匹配（实际 ${assembledSize}，期望 ${session.plan.totalSize}）。`,
+          `合并后文件大小不匹配（实际 ${assembledSize}，期望 ${expectedSize}）。`,
           400,
         );
       }
@@ -441,7 +453,6 @@ export function createChunkedUploadService(
         );
       }
 
-      const fullBuffer = Buffer.concat(buffers, assembledSize);
       const cleanedName = safeName(session.filename);
       const detected = detectMime(fullBuffer, cleanedName);
       const mimeType =

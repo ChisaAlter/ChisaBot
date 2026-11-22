@@ -4,8 +4,10 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
@@ -54,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,7 +79,6 @@ import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
 import cn.ayase.chisabot.ShareDraft
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -104,12 +106,16 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     val navigationBars = WindowInsets.navigationBars
     val displayCutout = WindowInsets.displayCutout
     val ime = WindowInsets.ime
+    // 用 derivedStateOf 仅订阅「键盘是否可见」布尔翻转，避免 60/120Hz 键盘动画每帧触发整个 WebScreen 重组。
+    val imeVisible by remember(ime, density) {
+        derivedStateOf { ime.getBottom(density) > 0 }
+    }
     val topPx = maxOf(statusBars.getTop(density), displayCutout.getTop(density))
     val leftPx = maxOf(navigationBars.getLeft(density, layoutDir), displayCutout.getLeft(density, layoutDir))
     val rightPx = maxOf(navigationBars.getRight(density, layoutDir), displayCutout.getRight(density, layoutDir))
     val bottomPx = effectiveBottomInsetPx(
         maxOf(navigationBars.getBottom(density), displayCutout.getBottom(density)),
-        ime.getBottom(density),
+        if (imeVisible) 1 else 0,
     )
     val d = density.density.coerceAtLeast(1f)
     val safeInsets = SafeInsetsDp(
@@ -162,6 +168,45 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     // 网页要麦克风（语音输入）且系统还没给 RECORD_AUDIO 时，先问系统；拒绝就拒绝网页的请求。
     // 被拒时要告诉用户：这次拒绝给一句提示；选了「不再询问」（拒绝后系统不再给理由提示）就弹框引导去应用设置。
     val context = LocalContext.current
+    val pendingDownloadIds = remember { mutableSetOf<Long>() }
+    // 用系统 ACTION_DOWNLOAD_COMPLETE 广播替代每秒轮询 DownloadManager，消除 60 次 IPC 并兼容 >60s 大文件下载。
+    DisposableEffect(context) {
+        val appContext = context.applicationContext
+        val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == -1L || !pendingDownloadIds.remove(id)) return
+                scope.launch {
+                    val state = withContext(Dispatchers.IO) {
+                        runCatching {
+                            manager.query(DownloadManager.Query().setFilterById(id))?.use { row ->
+                                if (row.moveToFirst()) {
+                                    row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) to
+                                        row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                                } else null
+                            }
+                        }.getOrNull()
+                    }
+                    if (state?.first == DownloadManager.STATUS_FAILED) {
+                        android.util.Log.w("ChisaDownload", "Download failed: ${state.second}")
+                        Toast.makeText(context, "下载失败，请检查网络后重试。", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            appContext,
+            receiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+        onDispose {
+            pendingDownloadIds.clear()
+            runCatching { appContext.unregisterReceiver(receiver) }
+        }
+    }
     var pendingExport by remember { mutableStateOf<WebExport?>(null) }
     var readingExport by remember { mutableStateOf(false) }
     val saveExport = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -258,12 +303,16 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         }
     }
     androidx.compose.runtime.key(origin) {
+        val desiredBgColor = if (sky.dark) android.graphics.Color.rgb(13, 22, 36) else android.graphics.Color.rgb(247, 249, 252)
+        val desiredVisibility = if (loadError == null) View.VISIBLE else View.INVISIBLE
+        var lastBgColor by remember(origin) { mutableStateOf<Int?>(null) }
         Box(Modifier.fillMaxSize().imePadding()) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                        setBackgroundColor(if (sky.dark) android.graphics.Color.rgb(13, 22, 36) else android.graphics.Color.rgb(247, 249, 252))
+                        setBackgroundColor(desiredBgColor)
+                        lastBgColor = desiredBgColor
                         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
                         CookieManager.getInstance().setAcceptCookie(true)
                         settings.apply {
@@ -342,7 +391,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                     installWebExportCapture(view)
                                     pageReady = true
                                 }
-                                CookieManager.getInstance().flush()
+                                scope.launch(Dispatchers.IO) { CookieManager.getInstance().flush() }
                                 if (originKey(url) == originKey(origin) && Uri.parse(url).path?.startsWith("/login") == true) recoverLogin()
                             }
                             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -405,22 +454,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 if (originKey(url) == originKey(origin)) CookieManager.getInstance().getCookie(url)?.let { request.addRequestHeader("Cookie", it) }
                                 val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                                 val id = manager.enqueue(request)
-                                scope.launch {
-                                    repeat(60) {
-                                        delay(1000)
-                                        val state = withContext(Dispatchers.IO) {
-                                            manager.query(DownloadManager.Query().setFilterById(id))?.use { row ->
-                                                if (row.moveToFirst()) row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) to row.getInt(row.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON)) else null
-                                            }
-                                        }
-                                        if (state?.first == DownloadManager.STATUS_SUCCESSFUL) return@launch
-                                        if (state?.first == DownloadManager.STATUS_FAILED) {
-                                            android.util.Log.w("ChisaDownload", "Download failed: ${state.second}")
-                                            Toast.makeText(context, "下载失败，请检查网络后重试。", Toast.LENGTH_LONG).show()
-                                            return@launch
-                                        }
-                                    }
-                                }
+                                pendingDownloadIds.add(id)
                                 Toast.makeText(context, "已开始下载 $name", Toast.LENGTH_SHORT).show()
                             }.onFailure {
                                 android.util.Log.w("ChisaDownload", "Download admission failed", it)
@@ -432,10 +466,15 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                     }
                 },
                 // 主框架加载失败时 WebView 自己会画英文错误页（net::ERR_…），和上面的中文提示叠在一起；
-                // 藏掉它（INVISIBLE 的 View 也不接触摸），让后面的 SkyBackground 露出来。
-                update = {
-                    it.setBackgroundColor(if (sky.dark) android.graphics.Color.rgb(13, 22, 36) else android.graphics.Color.rgb(247, 249, 252))
-                    it.visibility = if (loadError == null) View.VISIBLE else View.INVISIBLE
+                // 藏掉它（INVISIBLE 的 View 也不接触摸），让后面的错误页 SkyBackground 露出来。
+                update = { view ->
+                    if (lastBgColor != desiredBgColor) {
+                        view.setBackgroundColor(desiredBgColor)
+                        lastBgColor = desiredBgColor
+                    }
+                    if (view.visibility != desiredVisibility) {
+                        view.visibility = desiredVisibility
+                    }
                 },
                 // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
                 modifier = Modifier.fillMaxSize(),
@@ -445,15 +484,17 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().statusBarsPadding().height(2.dp), color = sky.accent, trackColor = Color.Transparent)
             }
             loadError?.let { message ->
-                Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(message, color = sky.ink1, textAlign = TextAlign.Center)
-                    // 首屏加载就失败时 WebView 没有已提交的 URL，reload() 是空操作；退回原始地址重新加载。
-                    TextButton(onClick = {
-                        loadError = null
-                        val w = web
-                        if (w?.url != null) w.reload() else w?.loadUrl(origin + path)
-                    }) { Text("重新连接") }
-                    TextButton(onClick = { vm.switchServer() }) { Text("切换服务器") }
+                SkyBackground(showClouds = true) {
+                    Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(message, color = sky.ink1, textAlign = TextAlign.Center)
+                        // 首屏加载就失败时 WebView 没有已提交的 URL，reload() 是空操作；退回原始地址重新加载。
+                        TextButton(onClick = {
+                            loadError = null
+                            val w = web
+                            if (w?.url != null) w.reload() else w?.loadUrl(origin + path)
+                        }) { Text("重新连接") }
+                        TextButton(onClick = { vm.switchServer() }) { Text("切换服务器") }
+                    }
                 }
             }
         }

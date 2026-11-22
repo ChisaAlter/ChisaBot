@@ -11,12 +11,13 @@ import {
   Component,
   type CSSProperties,
   type ReactNode,
+  useCallback,
   useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { useTimeout } from "@/hooks";
+import { useResizeObserver, useTimeout } from "@/hooks";
 import { LinkCard, LinkCardStack } from "@/components/rich-previews/link-card";
 import { Lightbox } from "@/components/rich-previews/lightbox";
 import { ImagePile } from "@/components/rich-previews/rich-previews";
@@ -128,6 +129,39 @@ export function splitMetricValue(value: string): { num: string; unit: string } {
   return { num: m[1], unit: m[2].trim() };
 }
 
+const FIT_LINE_MIN_PX = 13;
+
+/**
+ * 单次比例估算 + 至多 1 次微调确认：避免逐 1px 递减循环触发最多 11 次强制同步回流。
+ * 未溢出时零 getComputedStyle、零内联样式写入；隐藏态（clientWidth <= 0）直接跳过。
+ */
+export function fitLineElement(el: HTMLDivElement): void {
+  if (el.style.fontSize !== "") el.style.fontSize = "";
+  const clientWidth = el.clientWidth;
+  if (clientWidth <= 0) return;
+  const scrollWidth = el.scrollWidth;
+  if (scrollWidth <= clientWidth + 0.5) return;
+  const base = Number.parseFloat(getComputedStyle(el).fontSize) || 24;
+  if (base <= FIT_LINE_MIN_PX) return;
+  const estimated = Math.max(
+    FIT_LINE_MIN_PX,
+    Math.min(base - 1, Math.floor((base * clientWidth) / scrollWidth)),
+  );
+  el.style.fontSize = `${estimated}px`;
+  if (estimated <= FIT_LINE_MIN_PX) return;
+  const afterWidth = el.scrollWidth;
+  if (afterWidth > clientWidth + 0.5) {
+    const adjusted = Math.max(
+      FIT_LINE_MIN_PX,
+      Math.min(
+        estimated - 1,
+        Math.floor((estimated * clientWidth) / afterWidth),
+      ),
+    );
+    el.style.fontSize = `${adjusted}px`;
+  }
+}
+
 /**
  * 数字永远一行：放不下就把字号往小调（最小 13px），绝不把「26.9℃」折成两行（DESIGN.md §29）。
  * 每次尺寸变化先回到样式表里的字号再量，所以卡片变宽时字会长回去。
@@ -140,24 +174,15 @@ function FitLine({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (el) fitLineElement(el);
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: children 变了内容可能变宽，要重算字号
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const fit = () => {
-      el.style.fontSize = "";
-      let size = Number.parseFloat(getComputedStyle(el).fontSize) || 24;
-      while (el.scrollWidth > el.clientWidth + 0.5 && size > 13) {
-        size -= 1;
-        el.style.fontSize = `${size}px`;
-      }
-    };
     fit();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => fit());
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [children]);
+  }, [children, fit]);
+  useResizeObserver(ref, fit);
   return (
     <div className={className} ref={ref}>
       {children}

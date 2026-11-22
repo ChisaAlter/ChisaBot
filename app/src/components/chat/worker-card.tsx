@@ -20,8 +20,12 @@ import {
   WORKER_STATUS_ZH,
   type WorkerView,
 } from "@/lib/conversations/workers";
+import { useKeptVisible } from "@/lib/kept-visible";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
+
+/** 刚委派的任务最多补查次数：防止历史已清理的孤儿 workerId 陷入 400ms 无限重试死循环。 */
+const MAX_MISSING_WORKER_RETRIES = 6;
 
 /**
  * 后台任务卡片（DESIGN.md §38.2，「思考提示框」）：机器人委派一件事时，在那条回复里出现一张紧凑的玻璃卡——
@@ -41,19 +45,41 @@ export function WorkerCard({
   workerId?: string;
   pendingTitle?: string;
 }) {
+  const keptVisible = useKeptVisible();
   const chat = useConversationScope();
   const threadId = chat?.threadId;
   const workers = useThreadWorkers(threadId);
   const worker = workerId
     ? workers.data?.find((item) => item.id === workerId)
     : undefined;
-  // 刚委派、列表里还没有它：马上再取一次（之后有任务在跑就自动轮询）。
+  const [retryState, setRetryState] = useState<{
+    workerId: string | undefined;
+    attempts: number;
+  }>(() => ({ workerId, attempts: 0 }));
+  if (retryState.workerId !== workerId) {
+    setRetryState({ workerId, attempts: 0 });
+  }
+  const attempts = retryState.workerId === workerId ? retryState.attempts : 0;
+  // 刚委派、列表里还没有它：在可见且空闲时有上限补查（之后有任务在跑就自动轮询），
+  // 避免历史已清理的 workerId 因 dataUpdatedAt/fetchStatus 变化陷入 400ms 无限重建死循环。
+  const shouldRetryMissing =
+    keptVisible &&
+    Boolean(workerId) &&
+    workers.data !== undefined &&
+    !worker &&
+    workers.fetchStatus === "idle" &&
+    attempts < MAX_MISSING_WORKER_RETRIES;
   useTimeout(
     () => {
+      setRetryState((prev) =>
+        prev.workerId === workerId
+          ? { workerId, attempts: prev.attempts + 1 }
+          : { workerId, attempts: 1 },
+      );
       void workers.refetch();
     },
-    workerId && workers.data && !worker ? 400 : null,
-    `${workerId ?? ""}:${workers.dataUpdatedAt}:${workers.errorUpdatedAt}:${workers.fetchStatus}`,
+    shouldRetryMissing ? 400 : null,
+    `${workerId ?? ""}:${attempts}`,
   );
   if (!worker || !threadId) {
     return (
@@ -172,9 +198,10 @@ export function WorkerCardBody({
   threadId: string;
   worker: WorkerView;
 }) {
+  const keptVisible = useKeptVisible();
   const active = ACTIVE_WORKER.includes(worker.status);
   const planId = useId();
-  const now = useNow(active);
+  const now = useNow(active && keptVisible);
   const [planOpen, setPlanOpen] = useState(true);
   const [expanded, setExpanded] = useState(false);
   // 在跑时的展开 / 收起：没点过就跟着「是不是不止一个在跑」走。

@@ -48,6 +48,14 @@ export const localThreads = pgTable(
       table.ownerUserId,
       table.parentThreadId,
     ),
+    index("chisabot_local_threads_owner_agent_updated_idx").on(
+      table.ownerUserId,
+      table.agentId,
+      table.updatedAt.desc().nullsFirst(),
+    ),
+    index("chisabot_local_threads_locked_idx")
+      .on(table.lockExpiresAt)
+      .where(sql`${table.runId} IS NOT NULL`),
   ],
 );
 
@@ -73,6 +81,14 @@ export const localRuns = pgTable(
       columns: [table.threadId],
       foreignColumns: [localThreads.id],
     }).onDelete("cascade"),
+    index("chisabot_local_runs_thread_created_idx").on(
+      table.threadId,
+      table.createdAt.desc().nullsFirst(),
+      table.runId.desc().nullsFirst(),
+    ),
+    index("chisabot_local_runs_active_idx")
+      .on(table.threadId, table.runId, table.createdAt)
+      .where(sql`${table.status} IN ('running', 'reserved', 'capacity_wait')`),
   ],
 );
 
@@ -97,6 +113,16 @@ export const localEvents = pgTable(
       table.threadId,
       table.sequence,
     ),
+    index("chisabot_local_events_thread_run_seq_idx").on(
+      table.threadId,
+      table.runId,
+      table.sequence,
+    ),
+    index("chisabot_local_events_thread_run_lifecycle_idx")
+      .on(table.threadId, table.sequence.desc().nullsFirst())
+      .where(
+        sql`(${table.event}->>'type') IN ('RUN_STARTED', 'RUN_FINISHED', 'RUN_ERROR')`,
+      ),
   ],
 );
 
@@ -159,6 +185,9 @@ export const conversationCommands = pgTable(
       table.threadId,
       table.runId,
     ),
+    index("chisabot_conversation_commands_active_created_idx")
+      .on(table.createdAt)
+      .where(sql`${table.status} IN ('accepted', 'queued', 'dispatched')`),
   ],
 );
 
@@ -190,6 +219,9 @@ export const dshRuns = pgTable(
       name: "chisabot_dsh_runs_pkey",
       columns: [table.threadId, table.runId],
     }),
+    index("chisabot_dsh_runs_active_owner_idx")
+      .on(table.ownerUserId, table.threadId, table.runId)
+      .where(sql`${table.status} IN ('admitting', 'observing', 'projecting')`),
   ],
 );
 
@@ -226,6 +258,13 @@ export const toolOperations = pgTable(
       table.stepNumber,
       table.callId,
     ),
+    index("chisabot_tool_operations_owner_confirmation_idx").on(
+      table.ownerUserId,
+      table.confirmationId,
+    ),
+    index("chisabot_tool_operations_inflight_run_idx")
+      .on(table.runId)
+      .where(sql`${table.status} IN ('dispatching', 'outcome_unknown')`),
   ],
 );
 
@@ -247,6 +286,11 @@ export const conversationInteractions = pgTable(
       .defaultNow(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
   },
+  (table) => [
+    index("chisabot_conversation_interactions_pending_thread_idx")
+      .on(table.threadId)
+      .where(sql`${table.status} = 'pending'`),
+  ],
 );
 
 /** Existing confirmation cards retain their identifiers and gain a durable continuation. */

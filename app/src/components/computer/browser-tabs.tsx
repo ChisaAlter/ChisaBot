@@ -30,6 +30,7 @@ export function TabFavicon({ tab, size = 16 }: { tab: Pick<BrowserTab, "favicon"
         alt=""
         aria-hidden
         className={`btab-ic${darkInk ? " is-dark-ink" : ""}`}
+        decoding="async"
         height={size}
         onError={() => setBroken(true)}
         src={imgSrc}

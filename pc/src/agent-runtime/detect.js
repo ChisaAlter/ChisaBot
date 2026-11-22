@@ -4,11 +4,20 @@
  * 并支持对单个智能体提供方实例按自定义路径、环境变量、影子 Home 与 ACP 协议做精准探活。
  */
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { expandHome, inspectHomeAuth } = require("./shadow-home");
 const { probeAcpAgent, sanitizeAntigravityEnv } = require("./acp-client");
+
+const WHICH_CACHE_TTL_MS = 30_000;
+const WHICH_CACHE_MAX_ENTRIES = 512;
+const whichCache = new Map();
+
+function clearWhichCache() {
+  whichCache.clear();
+}
 
 const AGENT_BINARIES = {
   claude: ["claude"],
@@ -81,14 +90,17 @@ function extraSearchDirs() {
   return dirs;
 }
 
-/** 在 PATH 里找可执行文件（Windows 也认 .cmd / .exe）。支持直接传入路径或 ~/ 路径。 */
+/** 在 PATH 里找可执行文件（Windows 也认 .cmd / .exe）。支持直接传入路径或 ~/ 路径，按 PATH/PATHEXT 短 TTL 缓存。 */
 function which(name, customEnv) {
   if (!name || typeof name !== "string") return null;
   const trimmed = name.trim();
   if (!trimmed) return null;
   const win = process.platform === "win32";
+  const pathExtRaw = win
+    ? customEnv?.PATHEXT || process.env.PATHEXT || ".EXE;.CMD;.BAT"
+    : "";
   const exts = win
-    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT")
+    ? pathExtRaw
         .split(";")
         .filter(Boolean)
         .map((e) => e.toLowerCase())
@@ -108,23 +120,52 @@ function which(name, customEnv) {
   }
 
   const pathVar = (customEnv && (customEnv.PATH || customEnv.Path)) || process.env.PATH || "";
-  const dirs = [...pathVar.split(path.delimiter).filter(Boolean), ...extraSearchDirs()];
+  const cacheKey = `${process.platform}\0${pathVar}\0${pathExtRaw}\0${win ? trimmed.toLowerCase() : trimmed}`;
+  const now = Date.now();
+  const cached = whichCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const seenDirs = new Set();
+  const dirs = [];
+  for (const dir of [...pathVar.split(path.delimiter).filter(Boolean), ...extraSearchDirs()]) {
+    const norm = win ? dir.toLowerCase() : dir;
+    if (seenDirs.has(norm)) continue;
+    seenDirs.add(norm);
+    dirs.push(dir);
+  }
+
+  let found = null;
+  const hasExplicitExt = win && Boolean(path.extname(trimmed));
   for (const dir of dirs) {
-    if (win && path.extname(trimmed)) {
+    if (hasExplicitExt) {
       const direct = path.join(dir, trimmed);
       try {
-        if (fs.statSync(direct).isFile()) return direct;
+        if (fs.statSync(direct).isFile()) {
+          found = direct;
+          break;
+        }
       } catch {}
     }
     for (const ext of exts) {
       const candidate = path.join(dir, win ? trimmed + ext : trimmed);
       try {
         const stat = fs.statSync(candidate);
-        if (stat.isFile()) return candidate;
+        if (stat.isFile()) {
+          found = candidate;
+          break;
+        }
       } catch {}
     }
+    if (found) break;
   }
-  return null;
+
+  if (whichCache.size >= WHICH_CACHE_MAX_ENTRIES) {
+    whichCache.clear();
+  }
+  whichCache.set(cacheKey, { value: found, expiresAt: now + WHICH_CACHE_TTL_MS });
+  return found;
 }
 
 function resolveExecutable(commandPath, defaultNames = [], customEnv) {
@@ -430,28 +471,99 @@ async function detectAgents() {
   return found;
 }
 
-async function detectSandboxes() {
-  const platform = process.platform;
-  const has = {};
-  has.git = (await capture(which("git") || "git", ["--version"])).code === 0;
-  has.worktree = has.git;
-  has.copy = true;
-  has.none = true;
+async function detectSandboxes(options = {}) {
+  const platform = options.platform || process.platform;
+  const captureImpl = options.capture || capture;
+  const whichImpl = options.which || which;
+  const existsAsync =
+    options.exists ||
+    ((targetPath) =>
+      fsp.access(targetPath).then(
+        () => true,
+        () => false,
+      ));
+
+  const tasks = [
+    [
+      "git",
+      captureImpl(whichImpl("git") || "git", ["--version"]).then(
+        (res) => res?.code === 0,
+      ),
+    ],
+  ];
+
   if (platform === "linux") {
-    const bwrap = which("bwrap");
+    const bwrap = whichImpl("bwrap");
     // 能装上不等于能用（容器里没有 user namespace）：真的跑一次 /bin/true。
-    has.bwrap = !!bwrap && (await capture(bwrap, ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "true"])).code === 0;
+    tasks.push([
+      "bwrap",
+      bwrap
+        ? captureImpl(bwrap, [
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--",
+            "true",
+          ]).then((res) => res?.code === 0)
+        : Promise.resolve(false),
+    ]);
   }
-  if (platform === "darwin") has["sandbox-exec"] = fs.existsSync("/usr/bin/sandbox-exec");
+
+  if (platform === "darwin") {
+    tasks.push(["sandbox-exec", existsAsync("/usr/bin/sandbox-exec")]);
+  }
+
   for (const engine of ["docker", "podman"]) {
-    const file = which(engine);
-    has[engine] = !!file && (await capture(file, ["info", "--format", "{{.ServerVersion}}"], { timeoutMs: 8000 })).code === 0;
+    const file = whichImpl(engine);
+    tasks.push([
+      engine,
+      file
+        ? captureImpl(file, ["info", "--format", "{{.ServerVersion}}"], {
+            timeoutMs: 8000,
+          }).then((res) => res?.code === 0)
+        : Promise.resolve(false),
+    ]);
   }
+
   if (platform === "win32") {
-    const wsl = which("wsl");
-    has.wsl = !!wsl && (await capture(wsl, ["--status"], { timeoutMs: 8000 })).code === 0;
-    has["windows-sandbox"] = fs.existsSync(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsSandbox.exe"));
+    const wsl = whichImpl("wsl");
+    tasks.push([
+      "wsl",
+      wsl
+        ? captureImpl(wsl, ["--status"], { timeoutMs: 8000 }).then(
+            (res) => res?.code === 0,
+          )
+        : Promise.resolve(false),
+    ]);
+    tasks.push([
+      "windows-sandbox",
+      existsAsync(
+        path.join(
+          process.env.SystemRoot || "C:\\Windows",
+          "System32",
+          "WindowsSandbox.exe",
+        ),
+      ),
+    ]);
   }
+
+  const settled = await Promise.allSettled(tasks.map(([, promise]) => promise));
+  const has = {
+    git: false,
+    worktree: false,
+    copy: true,
+    none: true,
+  };
+  for (let i = 0; i < tasks.length; i += 1) {
+    const key = tasks[i][0];
+    const outcome = settled[i];
+    has[key] = outcome.status === "fulfilled" && Boolean(outcome.value);
+  }
+  has.worktree = has.git;
   return has;
 }
 
@@ -469,6 +581,7 @@ module.exports = {
   resolveExecutable,
   resolveAcpCommand,
   which,
+  clearWhichCache,
   capture,
   firstVersion,
   AGENT_BINARIES,

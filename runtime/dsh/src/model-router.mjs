@@ -162,6 +162,19 @@ export class ChisaModelRouter extends LlmAdapter {
     this.routes = new Map();
     this.breakers = new ModelBreakers();
     this.privacyBlockedSessions = new Set();
+    this.privacyCheckedSessions = new Set();
+  }
+
+  markPrivacyBlocked(sessionId) {
+    if (!sessionId) return;
+    this.privacyBlockedSessions.add(sessionId);
+    this.privacyCheckedSessions.add(sessionId);
+  }
+
+  clearSession(sessionId) {
+    if (!sessionId) return;
+    this.privacyBlockedSessions.delete(sessionId);
+    this.privacyCheckedSessions.delete(sessionId);
   }
 
   bind(id, input, runId) {
@@ -315,15 +328,25 @@ export class ChisaModelRouter extends LlmAdapter {
               : prepared;
           const session =
             options.sessionId && ctx.sessions.get(options.sessionId);
-          const privacyBlocked = Boolean(
-            (options.sessionId &&
-              router.privacyBlockedSessions.has(options.sessionId)) ||
-              session
-                ?.snapshotEvents?.()
-                .some((event) => event.type === "plugin:chisabot/privacy-gate"),
-          );
-          if (privacyBlocked && options.sessionId)
-            router.privacyBlockedSessions.add(options.sessionId);
+          let privacyBlocked = false;
+          if (options.sessionId) {
+            if (router.privacyBlockedSessions.has(options.sessionId)) {
+              privacyBlocked = true;
+            } else if (!router.privacyCheckedSessions.has(options.sessionId)) {
+              const events = session?.snapshotEvents?.();
+              if (events) {
+                for (let i = events.length - 1; i >= 0; i -= 1) {
+                  if (events[i]?.type === "plugin:chisabot/privacy-gate") {
+                    privacyBlocked = true;
+                    break;
+                  }
+                }
+                router.privacyCheckedSessions.add(options.sessionId);
+                if (privacyBlocked)
+                  router.privacyBlockedSessions.add(options.sessionId);
+              }
+            }
+          }
           if (session) {
             appendPluginRecord(session, "plugin:chisabot/model-route", {
               routeId: id,
@@ -427,8 +450,7 @@ export class ChisaModelRouter extends LlmAdapter {
                   if (chunk.reason?.kind !== "error")
                     router.breakers.ok(route.keys[position]);
                   else if (isLocalPrivacyGateFailure(chunk.reason.failure)) {
-                    if (options.sessionId)
-                      router.privacyBlockedSessions.add(options.sessionId);
+                    router.markPrivacyBlocked(options.sessionId);
                     if (session && !privacyBlocked) {
                       appendPluginRecord(
                         session,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { inflateRawSync, inflateSync } from "node:zlib";
+import { promisify } from "node:util";
+import { inflate, inflateRaw } from "node:zlib";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -478,8 +479,11 @@ function readZipEntriesFromLocalHeaders(bytes: Uint8Array): ZipEntrySlice[] {
   return results;
 }
 
+const inflateAsync = promisify(inflate);
+const inflateRawAsync = promisify(inflateRaw);
+
 /** 零依赖解析 DOCX（ZIP Local File Header / Central Directory + deflate）并清洗正文 XML。 */
-export function extractDocxText(buffer: Uint8Array): string {
+export async function extractDocxText(buffer: Uint8Array): Promise<string> {
   if (!buffer || buffer.length < 30 || buffer.length > MAX_DOCX_ARCHIVE_BYTES) {
     return "";
   }
@@ -504,7 +508,7 @@ export function extractDocxText(buffer: Uint8Array): string {
         if (entry.method === 0) {
           xmlBytes = entry.data;
         } else if (entry.method === 8) {
-          xmlBytes = inflateRawSync(entry.data, {
+          xmlBytes = await inflateRawAsync(entry.data, {
             maxOutputLength: MAX_DOCX_ENTRY_BYTES,
           });
         } else {
@@ -915,7 +919,7 @@ function isPdfStreamKeywordBoundary(byte: number | undefined): boolean {
 }
 
 /** 零依赖解析 PDF stream（含未压缩与 FlateDecode）内 BT...ET 的 Tj/TJ 文本，安全跳过损坏流。 */
-export function extractPdfText(buffer: Uint8Array): string {
+export async function extractPdfText(buffer: Uint8Array): Promise<string> {
   if (!buffer || buffer.length < 8 || buffer.length > MAX_PDF_BYTES) {
     return "";
   }
@@ -1016,12 +1020,12 @@ export function extractPdfText(buffer: Uint8Array): string {
       let decoded: Uint8Array | null = null;
       if (isFlate) {
         try {
-          decoded = inflateSync(slice, {
+          decoded = await inflateAsync(slice, {
             maxOutputLength: MAX_PDF_STREAM_OUT_BYTES,
           });
         } catch {
           try {
-            decoded = inflateRawSync(slice, {
+            decoded = await inflateRawAsync(slice, {
               maxOutputLength: MAX_PDF_STREAM_OUT_BYTES,
             });
           } catch {
@@ -1220,13 +1224,13 @@ function isTextFile(mimeType: string, name: string): boolean {
   );
 }
 
-function extractDocumentChunks(
+async function extractDocumentChunks(
   bytes: Uint8Array,
   mimeType: string,
   name: string,
-): { text: string; chunks: string[]; isStructuredDoc: boolean } {
+): Promise<{ text: string; chunks: string[]; isStructuredDoc: boolean }> {
   if (isDocxFile(mimeType, name)) {
-    const text = extractDocxText(bytes);
+    const text = await extractDocxText(bytes);
     return {
       text,
       chunks: text ? chunkDocumentText(text) : [],
@@ -1234,7 +1238,7 @@ function extractDocumentChunks(
     };
   }
   if (isPdfFile(mimeType, name)) {
-    const text = extractPdfText(bytes);
+    const text = await extractPdfText(bytes);
     return {
       text,
       chunks: text ? chunkDocumentText(text) : [],
@@ -1393,7 +1397,7 @@ export function createChatFiles(
     mimeType: string,
     name: string,
   ): Promise<void> {
-    const extracted = extractDocumentChunks(bytes, mimeType, name);
+    const extracted = await extractDocumentChunks(bytes, mimeType, name);
     if (extracted.chunks.length === 0) return;
     try {
       for (let index = 0; index < extracted.chunks.length; index += 1) {
@@ -1543,6 +1547,8 @@ export function createChatFiles(
     return rows.map(fileView);
   }
 
+  let threadInboxTablePresent = false;
+
   async function remove(owner: string, id: string): Promise<boolean> {
     if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
     const rows = await sql.begin(async (transaction) => {
@@ -1551,10 +1557,15 @@ export function createChatFiles(
         "SELECT id FROM chisabot_chat_files WHERE id=$1 AND owner_user_id=$2 FOR UPDATE",
         [id, owner],
       );
-      const [inbox] = await transaction.unsafe<{ present: boolean }[]>(
-        "SELECT to_regclass('chisabot_thread_inbox') IS NOT NULL AS present",
-      );
-      if (inbox?.present) {
+      let inboxPresent = threadInboxTablePresent;
+      if (!inboxPresent) {
+        const [inbox] = await transaction.unsafe<{ present: boolean }[]>(
+          "SELECT to_regclass('chisabot_thread_inbox') IS NOT NULL AS present",
+        );
+        inboxPresent = Boolean(inbox?.present);
+        if (inboxPresent) threadInboxTablePresent = true;
+      }
+      if (inboxPresent) {
         const held = await transaction.unsafe(
           `SELECT 1 FROM chisabot_thread_inbox i,
           LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(i.message->'content')='array' THEN i.message->'content' ELSE '[]'::jsonb END) part
@@ -1921,7 +1932,7 @@ export function createChatFiles(
     const storedChunks = await loadFileChunks(owner, found.id);
     const fallbackExtracted =
       storedChunks.length === 0
-        ? extractDocumentChunks(bytes, found.mime_type, found.name)
+        ? await extractDocumentChunks(bytes, found.mime_type, found.name)
         : null;
     const chunks =
       storedChunks.length > 0
@@ -2579,8 +2590,10 @@ export function createChatFiles(
       },
     );
     app.get("/:id", async (c) => {
-      const found = await row(c.var.actor.id, c.req.param("id"), true);
-      if (!found?.bytes) return c.json({ error: "找不到这个文件。" }, 404);
+      const isHead = c.req.method === "HEAD";
+      const found = await row(c.var.actor.id, c.req.param("id"), !isHead);
+      if (!found || (!isHead && !found.bytes))
+        return c.json({ error: "找不到这个文件。" }, 404);
       const inline =
         isInlineSafeMime(found.mime_type) && c.req.query("download") !== "1";
       const encoded = encodeURIComponent(found.name);
@@ -2594,10 +2607,14 @@ export function createChatFiles(
       // PDF 要浏览器自带的阅读器，沙箱 CSP 会把它挡掉；图片和附件都加沙箱。
       if (found.mime_type !== "application/pdf" || !inline)
         headers["content-security-policy"] = "sandbox; default-src 'none'";
-      return new Response(
-        c.req.method === "HEAD" ? null : new Uint8Array(found.bytes),
-        { headers },
-      );
+      const bytes = found.bytes;
+      const bodyView =
+        isHead || !bytes
+          ? null
+          : bytes.buffer instanceof ArrayBuffer
+            ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+            : new Uint8Array(bytes);
+      return new Response(bodyView, { headers });
     });
     app.delete("/:id", async (c) =>
       (await remove(c.var.actor.id, c.req.param("id")))

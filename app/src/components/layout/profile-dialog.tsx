@@ -148,6 +148,7 @@ function AvatarCropper({
         {crop ? (
           <img
             alt=""
+            decoding="async"
             draggable={false}
             src={crop.src}
             style={{
@@ -157,7 +158,7 @@ function AvatarCropper({
             }}
           />
         ) : current ? (
-          <img alt="" className="profile-crop-current" src={current} />
+          <img alt="" className="profile-crop-current" decoding="async" src={current} />
         ) : (
           <IconUser className="profile-crop-empty" />
         )}

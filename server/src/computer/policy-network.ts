@@ -19,24 +19,80 @@ export type { EgressPolicy, EgressRule };
 /** The only policy ChisaBot pushes: the computer reaches the network freely. */
 export const NO_NETWORK_POLICY: EgressPolicy = { mode: "allow_all", rules: [] };
 
+/** Low-frequency reconcile cadence for already-confirmed static policies. */
+const STATIC_POLICY_RECONCILE_MS = 5 * 60_000;
+
 /** Keep every running computer on {@link NO_NETWORK_POLICY}; returns a stop function. */
 export function startEgressPolicyPush(options: {
   provider?: ComputerProvider;
   token?: string | (() => string | undefined);
   intervalMs?: number;
+  reconcileMs?: number;
+  fetchImpl?: typeof fetch;
 }): () => void {
   const provider = options.provider;
   if (!provider) return () => undefined;
+  const reconcileMs = options.reconcileMs ?? STATIC_POLICY_RECONCILE_MS;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const confirmed = new Map<
+    string,
+    { url: string; run: string | undefined; at: number }
+  >();
   let pushing = false;
   const push = async () => {
     if (pushing) return;
     pushing = true;
     try {
-      const report = await pushEgressPolicies({
-        provider,
-        ...(options.token ? { token: options.token } : {}),
-        policyForBot: async () => NO_NETWORK_POLICY,
-      });
+      const computers = await provider.list();
+      const runningIds = new Set<string>();
+      const report: EgressPushReport = { pushed: [], failed: [] };
+      const now = Date.now();
+      for (const computer of computers) {
+        if (computer.status !== "running" || !computer.url) continue;
+        runningIds.add(computer.botId);
+        const run = await provider
+          .sessionOf?.(computer.botId)
+          .catch(() => undefined);
+        const last = confirmed.get(computer.botId);
+        if (
+          last &&
+          last.url === computer.url &&
+          last.run === run &&
+          now - last.at < reconcileMs
+        ) {
+          continue;
+        }
+        try {
+          const token =
+            typeof options.token === "function"
+              ? options.token()
+              : options.token;
+          await pushEgressPolicy(
+            computer.url,
+            computer.botId,
+            NO_NETWORK_POLICY,
+            {
+              ...(token ? { token } : {}),
+              fetchImpl,
+            },
+          );
+          confirmed.set(computer.botId, {
+            url: computer.url,
+            run,
+            at: Date.now(),
+          });
+          report.pushed.push(computer.botId);
+        } catch (error) {
+          confirmed.delete(computer.botId);
+          report.failed.push({
+            botId: computer.botId,
+            reason: reasonWithoutStatement(error),
+          });
+        }
+      }
+      for (const botId of confirmed.keys()) {
+        if (!runningIds.has(botId)) confirmed.delete(botId);
+      }
       if (report.failed.length > 0)
         console.warn(
           JSON.stringify({ type: "egress-policy-push-incomplete", ...report }),

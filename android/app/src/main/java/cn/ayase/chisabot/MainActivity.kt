@@ -33,6 +33,7 @@ import cn.ayase.chisabot.ui.SkyBackground
 import cn.ayase.chisabot.ui.WebScreen
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -66,8 +67,6 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
         )
-        // 图片走同一个会话 Cookie（上传的机器人头像、对话里的服务器文件都要登录才能取）。
-        coil.Coil.setImageLoader(coil.ImageLoader.Builder(this).okHttpClient { cn.ayase.chisabot.net.Api.imageClient }.crossfade(180).build())
         updater = Updater(this)
         vm.start()
         setContent {
@@ -78,11 +77,16 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = bar, navigationBarStyle = bar)
             }
             ChisaTheme(dark = dark) {
-                SkyBackground { App() }
+                // 全屏不透明 WebScreen 正常态下完全遮挡底层，无需常驻 3 个 60dp 模糊云朵离屏纹理。
+                SkyBackground(showClouds = vm.screen is Screen.Login) { App() }
             }
         }
         if (savedInstanceState == null) {
-            updater.check(silent = true)
+            // 避开冷启动首屏加载峰值，待 WebView 首屏稳态后再静默检查更新。
+            lifecycleScope.launch {
+                delay(3_000)
+                updater.check(silent = true)
+            }
             handleIntent(intent)
         }
     }

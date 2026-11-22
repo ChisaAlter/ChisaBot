@@ -421,14 +421,27 @@ export async function createLinkPreviews(
     url_key text PRIMARY KEY, url text NOT NULL, ok boolean NOT NULL, data jsonb NOT NULL,
     fetched_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
   )`);
+  await database.$client.unsafe(
+    "CREATE INDEX IF NOT EXISTS chisabot_link_previews_expires_at ON chisabot_link_previews (expires_at)",
+  );
   await database.$client.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_link_preview_assets (
     id text PRIMARY KEY, mime text NOT NULL, data bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(), used_at timestamptz NOT NULL DEFAULT now()
   )`);
+  await database.$client.unsafe(
+    "CREATE INDEX IF NOT EXISTS chisabot_link_preview_assets_used_at ON chisabot_link_preview_assets (used_at)",
+  );
 
   const inFlight = new Map<string, Promise<LinkPreview | null>>();
   const shotsRunning = new Set<string>();
   const rate = new Map<string, number[]>();
+  const assetTouchedAt = new Map<string, number>();
+  const PRUNE_INTERVAL_MS = 60 * 60_000;
+  const ASSET_TOUCH_INTERVAL_MS = 24 * 60 * 60_000;
+  const ASSET_TOUCH_MAP_LIMIT = 4096;
+  let lastPruneAt = 0;
+  let pruning = false;
+  let lastRateSweepAt = 0;
 
   async function readCache(key: string): Promise<{
     ok: boolean;
@@ -469,13 +482,59 @@ export async function createLinkPreviews(
   }
 
   async function prune() {
-    await database.$client.unsafe(
-      "DELETE FROM chisabot_link_previews WHERE expires_at < now() - interval '7 days'",
-    );
-    await database.$client.unsafe(
-      `DELETE FROM chisabot_link_preview_assets WHERE used_at < now() - $1 * interval '1 day'`,
-      [ASSET_KEEP_DAYS],
-    );
+    const now = Date.now();
+    if (pruning || (lastPruneAt > 0 && now - lastPruneAt < PRUNE_INTERVAL_MS)) {
+      return;
+    }
+    pruning = true;
+    try {
+      await database.$client.unsafe(
+        "DELETE FROM chisabot_link_previews WHERE expires_at < now() - interval '7 days'",
+      );
+      await database.$client.unsafe(
+        `DELETE FROM chisabot_link_preview_assets WHERE used_at < now() - $1 * interval '1 day'`,
+        [ASSET_KEEP_DAYS],
+      );
+      lastPruneAt = Date.now();
+    } finally {
+      pruning = false;
+    }
+  }
+
+  function rememberAssetTouched(id: string, now: number) {
+    if (assetTouchedAt.size >= ASSET_TOUCH_MAP_LIMIT && !assetTouchedAt.has(id)) {
+      const oldestKey = assetTouchedAt.keys().next().value;
+      if (oldestKey !== undefined) assetTouchedAt.delete(oldestKey);
+    }
+    assetTouchedAt.set(id, now);
+  }
+
+  function maybeTouchAssetAsync(id: string) {
+    const now = Date.now();
+    const last = assetTouchedAt.get(id);
+    if (last !== undefined && now - last < ASSET_TOUCH_INTERVAL_MS) return;
+    rememberAssetTouched(id, now);
+    void database.$client
+      .unsafe(
+        "UPDATE chisabot_link_preview_assets SET used_at = now() WHERE id = $1 AND used_at < now() - interval '1 day'",
+        [id],
+      )
+      .catch(() => {
+        assetTouchedAt.delete(id);
+      });
+  }
+
+  function matchesAssetEtag(header: string | undefined, id: string): boolean {
+    if (!header) return false;
+    const trimmed = header.trim();
+    if (!trimmed) return false;
+    if (trimmed === "*") return true;
+    const expected = `"${id}"`;
+    for (const part of trimmed.split(",")) {
+      const token = part.trim();
+      if (token === expected || token === `W/${expected}`) return true;
+    }
+    return false;
   }
 
   async function storeAsset(bytes: Uint8Array, mime: string): Promise<string> {
@@ -485,6 +544,7 @@ export async function createLinkPreviews(
        ON CONFLICT (id) DO UPDATE SET used_at = now()`,
       [id, mime, Buffer.from(bytes)],
     );
+    rememberAssetTouched(id, Date.now());
     await imageDimsFor(database).remember(`lp:${id}`, bytes);
     return `/api/link-preview/asset/${id}`;
   }
@@ -942,11 +1002,11 @@ export async function createLinkPreviews(
     return preview;
   }
 
-  async function previewFor(
+  async function previewForWithCached(
     url: string,
+    key: string,
+    cached: Awaited<ReturnType<typeof readCache>>,
   ): Promise<{ preview: LinkPreview | null; cached: boolean }> {
-    const key = keyOf(url);
-    const cached = await readCache(key);
     if (cached?.fresh) {
       const preview = cached.ok ? (cached.data as LinkPreview) : null;
       // 截图那一步如果因为重启丢了，补做。
@@ -969,6 +1029,14 @@ export async function createLinkPreviews(
     return { preview: await job, cached: false };
   }
 
+  async function previewFor(
+    url: string,
+  ): Promise<{ preview: LinkPreview | null; cached: boolean }> {
+    const key = keyOf(url);
+    const cached = await readCache(key);
+    return previewForWithCached(url, key, cached);
+  }
+
   /** 预览图的宽高（DESIGN.md §83.2）：缓存里存的预览不带，回答时按资源查（旧资源第一次现算）。 */
   async function withImageDims(preview: LinkPreview): Promise<LinkPreview> {
     const key = imageKeyForUrl(preview.image);
@@ -981,6 +1049,14 @@ export async function createLinkPreviews(
 
   function allow(userId: string): boolean {
     const now = Date.now();
+    if (now - lastRateSweepAt >= 60_000 || rate.size > 256) {
+      lastRateSweepAt = now;
+      for (const [uid, times] of rate) {
+        const alive = times.filter((t) => now - t < 60_000);
+        if (alive.length === 0) rate.delete(uid);
+        else if (alive.length !== times.length) rate.set(uid, alive);
+      }
+    }
     const recent = (rate.get(userId) ?? []).filter((t) => now - t < 60_000);
     if (recent.length >= RATE_PER_MINUTE) {
       rate.set(userId, recent);
@@ -996,7 +1072,10 @@ export async function createLinkPreviews(
     // 非 2xx 一律 no-store（包括登录校验的拒绝）：只有成功的预览才带 private, max-age=600。
     app.use("*", async (c, next) => {
       await next();
-      if (c.res.status < 200 || c.res.status >= 300)
+      if (
+        c.res.status !== 304 &&
+        (c.res.status < 200 || c.res.status >= 300)
+      )
         c.header("cache-control", "no-store");
     });
     app.use("*", requireUser);
@@ -1008,7 +1087,7 @@ export async function createLinkPreviews(
       if (!cachedRow?.fresh && !inFlight.has(key) && !allow(c.var.actor.id)) {
         return c.json({ error: "预览请求太频繁，稍后再试" }, 429);
       }
-      const { preview } = await previewFor(url);
+      const { preview } = await previewForWithCached(url, key, cachedRow);
       if (!preview) return c.json({ error: "这个网址没有可显示的预览" }, 422);
       return c.json({ preview: await withImageDims(preview) }, 200, {
         "cache-control": preview.imagePending
@@ -1019,17 +1098,44 @@ export async function createLinkPreviews(
     app.get("/asset/:id", async (c) => {
       const id = c.req.param("id");
       if (!ASSET_ID.test(id)) return c.json({ error: "没有这张图" }, 404);
+      const ifNoneMatch = c.req.header("if-none-match");
+      if (matchesAssetEtag(ifNoneMatch, id)) {
+        const present = await database.$client.unsafe<{ ok: number }[]>(
+          "SELECT 1 AS ok FROM chisabot_link_preview_assets WHERE id = $1",
+          [id],
+        );
+        if (!present[0]) return c.json({ error: "没有这张图" }, 404);
+        maybeTouchAssetAsync(id);
+        return new Response(null, {
+          status: 304,
+          headers: {
+            etag: `"${id}"`,
+            "cache-control": "private, max-age=604800, immutable",
+            "x-content-type-options": "nosniff",
+            "content-security-policy":
+              "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          },
+        });
+      }
       const rows = await database.$client.unsafe<
         { mime: string; data: Uint8Array }[]
       >(
-        "UPDATE chisabot_link_preview_assets SET used_at = now() WHERE id = $1 RETURNING mime, data",
+        "SELECT mime, data FROM chisabot_link_preview_assets WHERE id = $1",
         [id],
       );
       const row = rows[0];
       if (!row) return c.json({ error: "没有这张图" }, 404);
-      return new Response(Buffer.from(row.data), {
+      maybeTouchAssetAsync(id);
+      const raw =
+        row.data instanceof Uint8Array ? row.data : Buffer.from(row.data);
+      const bodyView =
+        raw.buffer instanceof ArrayBuffer
+          ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
+          : new Uint8Array(raw);
+      return new Response(c.req.method === "HEAD" ? null : bodyView, {
         headers: {
           "content-type": row.mime,
+          etag: `"${id}"`,
           "cache-control": "private, max-age=604800, immutable",
           "x-content-type-options": "nosniff",
           // svg 图标即使被直接打开也不能跑脚本。

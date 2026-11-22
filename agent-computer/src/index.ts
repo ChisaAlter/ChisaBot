@@ -87,6 +87,7 @@ import {
   STREAM_KEEPALIVE_MS,
 } from "./stream-keepalive";
 import { TabError } from "./tabs";
+import { shouldDropViewerFrame } from "./viewer";
 import { startVirtualDisplay } from "./virtual-display";
 import {
   createWorkspace,
@@ -346,12 +347,19 @@ const workspace = createWorkspace(
 // Only the running computer points its shell at it: a test that imports this module shares its
 // process with every later test.
 await startEgressFilter({ forShell: import.meta.main });
+/** 标签变了时立刻让直播画面跟过去，不用等下一次 1 秒的轮询。 */
+const kickers = new Map<string, Set<() => void>>();
+function kick(botId: string): void {
+  for (const run of kickers.get(botId) ?? []) run();
+}
+
 const profiles = createProfiles(
   process.env.PROFILES_DIR?.trim() || "/profiles",
   async (botId) => {
     if (sessions.get(botId)) sessions.renewRun(botId);
     await sessions.get(botId)?.viewer.releaseAll(COMPUTER_STOPPED);
   },
+  (botId) => kick(botId),
 );
 
 /**
@@ -361,12 +369,6 @@ const profiles = createProfiles(
 const startLinks = new Map<string, StartLink[]>();
 const linksFor = (botId: string): StartLink[] =>
   startLinks.get(botId) ?? DEFAULT_START_LINKS;
-
-/** 标签变了时立刻让直播画面跟过去，不用等下一次 1 秒的轮询。 */
-const kickers = new Map<string, Set<() => void>>();
-function kick(botId: string): void {
-  for (const run of kickers.get(botId) ?? []) run();
-}
 
 /** 标签接口的统一出错处理：TabError 带自己的状态码，别的当 502。 */
 function tabFailure(error: unknown): Response {
@@ -668,12 +670,20 @@ serve<StreamData>({
           // Best effort. The socket may already be gone, which is not a reason to stop anything.
         }
       };
-      const send = (frame: unknown) => {
+      const sendEncoded = (encoded: string, frame: unknown) => {
         try {
-          ws.send(JSON.stringify(frame));
+          const buffered =
+            typeof ws.getBufferedAmount === "function"
+              ? ws.getBufferedAmount()
+              : 0;
+          if (shouldDropViewerFrame(buffered, frame)) return;
+          ws.send(encoded);
         } catch {
           // A closed socket is removed by its close handler; until then it simply misses frames.
         }
+      };
+      const send = (frame: unknown) => {
+        sendEncoded(JSON.stringify(frame), frame);
       };
       /*
        * A second window watching the same Bot joins the screen already running instead of replacing
@@ -689,6 +699,7 @@ serve<StreamData>({
         socket: ws,
         notify: (reason) => say({ type: "error", error: reason }),
         send,
+        sendEncoded,
       });
       if (!first) {
         // The owner's loop pushes tabs when they change; the newcomer still needs today's list.
@@ -704,7 +715,10 @@ serve<StreamData>({
         let casting: Page | undefined;
         /** 上一次推给界面的标签列表，没变就不再推。 */
         let lastTabs = "";
-        const pushTabs = async () => {
+        /** 上一次已同步的标签版本，静止页面不再每秒跑 CDP evaluate。 */
+        let lastTabsVersion = -1;
+        const pushTabs = async (version: number) => {
+          lastTabsVersion = version;
           const view = await profiles.tabs(ws.data.botId).catch(() => null);
           if (!view) return;
           const encoded = JSON.stringify(view);
@@ -712,12 +726,21 @@ serve<StreamData>({
           lastTabs = encoded;
           slot.broadcast({ type: "tabs", ...view });
         };
-        const attach = async () => {
+        let attachInFlight: Promise<void> | null = null;
+        let attachQueued = false;
+        let queuedForceTabs = false;
+        const runAttach = async (forceTabs: boolean) => {
           const target = await currentPage(ws.data.botId);
-          // 接管时看到的也是起始页，而不是一片白。
-          void ensureStartPage(target, linksFor(ws.data.botId));
-          void pushTabs();
-          if (target === casting) return;
+          const pageChanged = target !== casting;
+          // 仅在切换页面或仍是空白页时画起始页，避免静止页面每秒重复探测。
+          if (pageChanged || target.url() === "about:blank") {
+            void ensureStartPage(target, linksFor(ws.data.botId));
+          }
+          const version = profiles.tabsVersion(ws.data.botId);
+          if (forceTabs || pageChanged || version !== lastTabsVersion) {
+            void pushTabs(version);
+          }
+          if (!pageChanged) return;
           const cast = await startScreencast(target, (frame) =>
             slot.broadcast(frame),
           );
@@ -725,13 +748,33 @@ serve<StreamData>({
           if (await slot.install(cast)) casting = target;
           else casting = undefined;
         };
+        const attach = (forceTabs = false): Promise<void> => {
+          if (attachInFlight) {
+            attachQueued = true;
+            if (forceTabs) queuedForceTabs = true;
+            return attachInFlight;
+          }
+          const work = (async () => {
+            let nextForce = forceTabs;
+            do {
+              attachQueued = false;
+              queuedForceTabs = false;
+              await runAttach(nextForce);
+              nextForce = queuedForceTabs;
+            } while (attachQueued);
+          })().finally(() => {
+            attachInFlight = null;
+          });
+          attachInFlight = work;
+          return work;
+        };
 
-        await attach();
+        await attach(true);
         const follow = setInterval(() => {
-          void attach().catch(() => undefined);
+          void attach(false).catch(() => undefined);
         }, FOLLOW_INTERVAL_MS);
         const kicked = () => {
-          void attach().catch(() => undefined);
+          void attach(true).catch(() => undefined);
         };
         const botKickers = kickers.get(ws.data.botId) ?? new Set();
         botKickers.add(kicked);

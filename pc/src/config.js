@@ -5,7 +5,11 @@
  */
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const path = require("node:path");
+
+const AUDIT_MAX_BYTES = 2 * 1024 * 1024;
+const AUDIT_KEEP_LINES = 2000;
 
 const DEFAULTS = {
   serverUrl: "",
@@ -70,6 +74,37 @@ function createConfig({ dir, safeStorage }) {
     data = { ...DEFAULTS, ...JSON.parse(readConfigFileStrictSync(file)) };
   } catch {}
 
+  /** 内存解密缓存：仅随当前加密密文命中，不落盘，令牌变更或清空时即时失效。 */
+  let hasCachedToken = false;
+  let cachedTokenEnc = "";
+  let cachedTokenValue = null;
+
+  /** 配置变更监听器（供主进程按变更刷新预编译出网策略等派生缓存）。 */
+  const changeListeners = new Set();
+
+  /** 审计日志异步串行写盘队列 + 读合并状态。 */
+  let auditDirReady = false;
+  let auditBytes = null;
+  let pendingAudit = [];
+  let inflightAudit = [];
+  let inflightBaseBytes = 0;
+  let inflightTotalBytes = 0;
+  let auditFlushPromise = null;
+
+  function invalidateTokenCache() {
+    hasCachedToken = false;
+    cachedTokenEnc = "";
+    cachedTokenValue = null;
+  }
+
+  function notifyChange() {
+    for (const listener of changeListeners) {
+      try {
+        listener(data);
+      } catch {}
+    }
+  }
+
   function save() {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -105,52 +140,185 @@ function createConfig({ dir, safeStorage }) {
     }
   };
 
+  function drainAuditQueue() {
+    if (auditFlushPromise) return auditFlushPromise;
+    auditFlushPromise = (async () => {
+      try {
+        while (pendingAudit.length > 0) {
+          if (!auditDirReady) {
+            await fsp.mkdir(dir, { recursive: true });
+            auditDirReady = true;
+          }
+          if (auditBytes === null) {
+            const st = await fsp.stat(auditFile).catch(() => null);
+            auditBytes = st ? st.size : 0;
+          }
+          const batch = pendingAudit;
+          pendingAudit = [];
+          const chunk = `${batch.map((item) => item.line).join("\n")}\n`;
+          const chunkBytes = Buffer.byteLength(chunk, "utf8");
+          inflightAudit = batch;
+          inflightBaseBytes = auditBytes;
+          inflightTotalBytes = chunkBytes;
+          await fsp.appendFile(auditFile, chunk, "utf8");
+          auditBytes += chunkBytes;
+          inflightAudit = [];
+          inflightTotalBytes = 0;
+
+          if (auditBytes > AUDIT_MAX_BYTES) {
+            const raw = await fsp.readFile(auditFile, "utf8");
+            const lines = raw.trim().split("\n").filter(Boolean);
+            const rotated = `${lines.slice(-AUDIT_KEEP_LINES).join("\n")}\n`;
+            await fsp.writeFile(auditFile, rotated, "utf8");
+            auditBytes = Buffer.byteLength(rotated, "utf8");
+          }
+        }
+      } catch {
+        inflightAudit = [];
+        inflightTotalBytes = 0;
+        auditBytes = null;
+        auditDirReady = false;
+      } finally {
+        auditFlushPromise = null;
+        if (pendingAudit.length > 0) {
+          void drainAuditQueue();
+        }
+      }
+    })();
+    return auditFlushPromise;
+  }
+
+  function flushAuditSync() {
+    if (pendingAudit.length === 0 && inflightAudit.length === 0) return;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      auditDirReady = true;
+      let diskSize = 0;
+      try {
+        diskSize = fs.statSync(auditFile).size;
+      } catch {}
+      const toWrite = [];
+      if (
+        inflightAudit.length > 0 &&
+        diskSize < inflightBaseBytes + inflightTotalBytes
+      ) {
+        toWrite.push(...inflightAudit);
+        inflightAudit = [];
+        inflightTotalBytes = 0;
+      }
+      if (pendingAudit.length > 0) {
+        toWrite.push(...pendingAudit);
+        pendingAudit = [];
+      }
+      if (toWrite.length > 0) {
+        const chunk = `${toWrite.map((item) => item.line).join("\n")}\n`;
+        fs.appendFileSync(auditFile, chunk, "utf8");
+        auditBytes = diskSize + Buffer.byteLength(chunk, "utf8");
+      }
+    } catch {}
+  }
+
+  function setToken(token) {
+    if (!token) {
+      data.tokenEnc = "";
+      data.tokenPlain = "";
+      invalidateTokenCache();
+    } else if (encryptionAvailable()) {
+      const enc = safeStorage.encryptString(token).toString("base64");
+      data.tokenEnc = enc;
+      data.tokenPlain = "";
+      cachedTokenEnc = enc;
+      cachedTokenValue = String(token);
+      hasCachedToken = true;
+    } else {
+      data.tokenEnc = "";
+      data.tokenPlain = token;
+      invalidateTokenCache();
+    }
+    save();
+    notifyChange();
+  }
+
   return {
     get: () => ({ ...data }),
+    /** 内部只读访问当前配置对象（避免热路径整对象浅拷贝；调用方严禁修改返回对象）。 */
+    peek: () => data,
+    onChange(listener) {
+      if (typeof listener !== "function") return () => {};
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
     set(patch) {
+      if (patch && ("tokenEnc" in patch || "tokenPlain" in patch)) {
+        invalidateTokenCache();
+      }
       data = { ...data, ...patch };
       save();
+      notifyChange();
       return { ...data };
     },
     getToken() {
       if (data.tokenEnc && encryptionAvailable()) {
+        if (hasCachedToken && cachedTokenEnc === data.tokenEnc) {
+          return cachedTokenValue;
+        }
         try {
-          return safeStorage.decryptString(Buffer.from(data.tokenEnc, "base64"));
+          const decrypted = safeStorage.decryptString(
+            Buffer.from(data.tokenEnc, "base64"),
+          );
+          cachedTokenEnc = data.tokenEnc;
+          cachedTokenValue = decrypted;
+          hasCachedToken = true;
+          return decrypted;
         } catch {
+          invalidateTokenCache();
           return null;
         }
       }
+      invalidateTokenCache();
       return data.tokenPlain || null;
     },
-    setToken(token) {
-      if (!token) {
-        data.tokenEnc = "";
-        data.tokenPlain = "";
-      } else if (encryptionAvailable()) {
-        data.tokenEnc = safeStorage.encryptString(token).toString("base64");
-        data.tokenPlain = "";
-      } else {
-        data.tokenEnc = "";
-        data.tokenPlain = token;
-      }
-      save();
+    setToken,
+    clearToken() {
+      setToken(null);
     },
     tokenProtected: () => !!data.tokenEnc,
     appendAudit(entry) {
       try {
-        fs.mkdirSync(dir, { recursive: true });
-        fs.appendFileSync(auditFile, `${JSON.stringify(entry)}\n`);
-        const stat = fs.statSync(auditFile);
-        if (stat.size > 2 * 1024 * 1024) {
-          const lines = fs.readFileSync(auditFile, "utf8").trim().split("\n");
-          fs.writeFileSync(auditFile, `${lines.slice(-2000).join("\n")}\n`);
-        }
+        const line = JSON.stringify(entry);
+        pendingAudit.push({ line });
+        void drainAuditQueue();
       } catch {}
     },
+    flushAudit() {
+      return auditFlushPromise || (pendingAudit.length > 0 ? drainAuditQueue() : Promise.resolve());
+    },
+    flushAuditSync,
     readAudit(limit = 200) {
       try {
-        const lines = fs.readFileSync(auditFile, "utf8").trim().split("\n").filter(Boolean);
-        return lines.slice(-limit).reverse().map((line) => JSON.parse(line));
+        let diskLines = [];
+        let diskSize = 0;
+        try {
+          const buf = fs.readFileSync(auditFile);
+          diskSize = buf.length;
+          if (diskSize > 0) {
+            diskLines = buf.toString("utf8").trim().split("\n").filter(Boolean);
+          }
+        } catch {}
+
+        const merged = diskLines.slice();
+        if (
+          inflightAudit.length > 0 &&
+          diskSize < inflightBaseBytes + inflightTotalBytes
+        ) {
+          for (const item of inflightAudit) merged.push(item.line);
+        }
+        if (pendingAudit.length > 0) {
+          for (const item of pendingAudit) merged.push(item.line);
+        }
+        if (merged.length === 0) return [];
+        const take = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+        return merged.slice(-take).reverse().map((line) => JSON.parse(line));
       } catch {
         return [];
       }

@@ -317,10 +317,21 @@ function perInteraction(clicks, r) {
 
 async function idleStats(page) {
   return page.evaluate(() => {
-    const all = document.querySelectorAll("*");
+    const isHiddenKept = (el) =>
+      (el.getAttribute("data-testid") === "kept-page" &&
+        el.getAttribute("data-visible") === "false") ||
+      el.style?.contentVisibility === "hidden";
+
+    let nodes = 0;
     let bf = 0;
     let bigShadow = 0;
-    for (const el of all) {
+    let canvases = 0;
+    const stack = document.documentElement ? [document.documentElement] : [];
+    while (stack.length > 0) {
+      const el = stack.pop();
+      if (!el || isHiddenKept(el)) continue;
+      nodes++;
+      if (el.tagName === "CANVAS") canvases++;
       const cs = getComputedStyle(el);
       if (cs.backdropFilter && cs.backdropFilter !== "none") bf++;
       if (
@@ -331,6 +342,9 @@ async function idleStats(page) {
         ].some((x) => +x[3] >= 24)
       )
         bigShadow++;
+      for (let i = el.children.length - 1; i >= 0; i--) {
+        stack.push(el.children[i]);
+      }
     }
     let rules = 0;
     let selectors = 0;
@@ -355,9 +369,15 @@ async function idleStats(page) {
         visit(s.cssRules);
         for (const r of s.cssRules) bytes += r.cssText.length;
       } catch {}
-    const anims = document.getAnimations();
+    const anims = document.getAnimations().filter((a) => {
+      const target = a.effect?.target;
+      return !(
+        target instanceof Element &&
+        target.closest('[data-testid="kept-page"][data-visible="false"]')
+      );
+    });
     return {
-      nodes: all.length,
+      nodes,
       backdropFilter: bf,
       bigShadow,
       runningAnimations: anims.filter((a) => a.playState === "running").length,
@@ -369,7 +389,7 @@ async function idleStats(page) {
       selectors,
       hasSelectors: has,
       universalSelectors: universal,
-      canvases: document.querySelectorAll("canvas").length,
+      canvases,
     };
   });
 }

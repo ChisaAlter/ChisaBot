@@ -39,6 +39,94 @@ export function chooseEvictions(
     .map(([botId]) => botId);
 }
 
+/** Extra live+closing slots allowed transiently above `maxLive` before blocking new launches. */
+export const DEFAULT_HARD_CAP_SLACK = 2;
+
+export type CapEnforcerOptions = {
+  maxLive: number;
+  hardCapSlack?: number;
+  listEntries: () => [string, Evictable][];
+  inFlightCount: () => number;
+  evict: (botId: string) => Promise<void>;
+};
+
+export type CapEnforcer = {
+  /**
+   * Enforce the browser cap after a launch.
+   *
+   * When above `maxLive` but within `maxLive + hardCapSlack` (and `maxLive > 0`), eviction runs
+   * asynchronously in the background (reentrancy-guarded) so the caller gets its new page without
+   * waiting 2-12s for `closeAndWait`. Once `live + inFlight` exceeds the hard watermark, callers
+   * wait synchronously for eviction steps to reclaim memory and prevent burst OOM.
+   */
+  enforce: () => Promise<void>;
+  /** Wait for any active background eviction pass to finish (test / shutdown seam). */
+  settled: () => Promise<void>;
+};
+
+export function createCapEnforcer(options: CapEnforcerOptions): CapEnforcer {
+  const {
+    maxLive,
+    hardCapSlack = DEFAULT_HARD_CAP_SLACK,
+    listEntries,
+    inFlightCount,
+    evict,
+  } = options;
+  const hardCap = maxLive > 0 ? maxLive + Math.max(0, hardCapSlack) : 0;
+
+  let loop: Promise<void> | null = null;
+  let stepWaiters: (() => void)[] = [];
+
+  const notifyStep = () => {
+    const waiting = stepWaiters;
+    stepWaiters = [];
+    for (const wake of waiting) wake();
+  };
+
+  const waitForNextStep = () =>
+    new Promise<void>((resolve) => {
+      stepWaiters.push(resolve);
+    });
+
+  const startLoop = (): Promise<void> => {
+    if (loop) return loop;
+    let run: Promise<void> | null = null;
+    run = (async () => {
+      try {
+        while (true) {
+          const victims = chooseEvictions(listEntries(), maxLive);
+          const next = victims[0];
+          if (!next) break;
+          await evict(next);
+          notifyStep();
+        }
+      } finally {
+        if (loop === run) loop = null;
+        notifyStep();
+      }
+    })();
+    loop = run;
+    return run;
+  };
+
+  const totalCount = () => listEntries().length + inFlightCount();
+
+  return {
+    async enforce() {
+      const victims = chooseEvictions(listEntries(), maxLive);
+      if (victims.length === 0) return;
+      const running = startLoop();
+      while (totalCount() > hardCap && loop !== null) {
+        await Promise.race([running, waitForNextStep()]);
+      }
+    },
+
+    async settled() {
+      if (loop) await loop;
+    },
+  };
+}
+
 /**
  * Which to close because nothing has touched them.
  *

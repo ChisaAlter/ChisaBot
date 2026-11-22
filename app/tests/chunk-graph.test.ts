@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 import {
   type ChunkGraph,
@@ -121,3 +122,47 @@ test.skipIf(!dist)(
     expect(names("admin").has("vendor-markdown")).toBe(false);
   },
 );
+
+test("first-screen bundle boundaries stay free of Zod, liquid-glass, motion barrel, and cross-area route imports", () => {
+  const read = (rel: string) =>
+    fs.readFileSync(path.join(import.meta.dir, "..", "..", rel), "utf8");
+
+  // 1. 路由查询参数与 json-render 纯工具不静态拉入 Zod / catalog.ts
+  for (const file of [
+    "app/src/routes/_authed/_app/skills.tsx",
+    "app/src/routes/_authed/_app/agents/index.tsx",
+    "app/src/components/channels/chat-search.ts",
+    "shared/json-render/utils.ts",
+  ]) {
+    expect(read(file)).not.toMatch(/from\s+["']zod(?:\/[^"']+)?["']/);
+  }
+  expect(read("app/src/lib/conversations/json-render/rich-utils.ts")).not.toContain(
+    "shared/json-render/catalog",
+  );
+
+  // 2. 右栏轻量摘要 hook 不拉入 Zod 或重型 TasksRailCard，且 panel-rail 按需懒加载 TasksRailCard
+  const summarySrc = read("app/src/components/panels/rail-tasks-summary.ts");
+  expect(summarySrc).not.toMatch(
+    /^\s*import\s+(?!type\b)[^;]*?shared\/(?:task-center|workflows)/m,
+  );
+  expect(summarySrc).not.toContain("tasks-rail-card");
+  const railSrc = read("app/src/components/panels/panel-rail.tsx");
+  expect(railSrc).not.toMatch(/from\s+["']\.\/tasks-rail-card["']/);
+  expect(railSrc).toContain('import("./tasks-rail-card")');
+
+  // 3. liquid-glass 仅按需动态加载，默认 mist 零加载
+  const skySrc = read("app/src/components/sky-background.tsx");
+  expect(skySrc).not.toMatch(/from\s+["']@\/lib\/liquid-glass["']/);
+  expect(skySrc).toContain('import("@/lib/liquid-glass")');
+
+  // 4. hooks 桶不 re-export useVoiceCall，切断 motion-dom 链；__root 不重复导入 Inter 且低频提示走 AfterIdle
+  expect(read("app/src/hooks/index.ts")).not.toContain("use-voice-call");
+  const rootSrc = read("app/src/routes/__root.tsx");
+  expect(rootSrc).not.toContain("@fontsource-variable/inter");
+  expect(rootSrc).toContain("<AfterIdle>");
+
+  // 5. settings/updates 不再跨区静态导入 admin/system-update
+  const updatesRouteSrc = read("app/src/routes/_authed/settings/updates.tsx");
+  expect(updatesRouteSrc).not.toContain("admin/system-update");
+  expect(updatesRouteSrc).toContain("@/components/system-update/updates-screen");
+});

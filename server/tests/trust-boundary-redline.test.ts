@@ -105,11 +105,16 @@ describe("friend-pack TRUSTED_ORIGINS", () => {
 
 describe("nginx clears Local-Caller on app proxies", () => {
   test("deploy/public/nginx.conf", () => {
-    const result = nginxClearsLocalCallerForAppProxies(
-      read("deploy/public/nginx.conf"),
-    );
+    const conf = read("deploy/public/nginx.conf");
+    const result = nginxClearsLocalCallerForAppProxies(conf);
     expect(result.missingNear).toEqual([]);
+    expect(result.proxies).toBeGreaterThanOrEqual(6);
     expect(result.ok).toBe(true);
+    // Keep HTTP/2 + upstream keepalive (< Bun 10s idleTimeout) and static auth asset security headers intact.
+    expect(conf).toMatch(/upstream\s+chisabot_api\s*\{[\s\S]*?keepalive_timeout\s+8s;/);
+    expect(conf).toMatch(/upstream\s+chisabot_auth\s*\{[\s\S]*?keepalive_timeout\s+8s;/);
+    expect(conf).toContain("http2 on;");
+    expect(conf).not.toMatch(/gzip_types[^;]*text\/event-stream/);
   });
 });
 

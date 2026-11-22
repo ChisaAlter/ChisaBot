@@ -44,16 +44,22 @@ function instantMode(): boolean {
 
 export function useSmoothText(text: string, enabled = true): string {
   const state = useRef<RevealState | null>(null);
-  if (state.current === null) state.current = initialReveal(text, now());
+  if (state.current === null) {
+    state.current = initialReveal(text, enabled ? now() : 0);
+  }
   const [, force] = useState(0);
   const lastPaint = useRef(0);
 
   if (state.current.target !== text) {
     // 渲染期间同步记下新内容（不触发额外渲染）；放字由下面的帧循环做。
-    state.current = !enabled || instantMode() ? initialReveal(text, now()) : receive(state.current, text, now());
+    state.current =
+      !enabled || instantMode()
+        ? initialReveal(text, enabled ? now() : 0)
+        : receive(state.current, text, now());
   }
 
   const s = state.current;
+  const isPending = Boolean(s && pending(s));
   useAnimationFrame(() => {
     const cur = state.current;
     if (!cur || !pending(cur)) return;
@@ -71,15 +77,21 @@ export function useSmoothText(text: string, enabled = true): string {
       lastPaint.current = t;
       force((n) => n + 1);
     }
-  }, Boolean(s && pending(s)));
+  }, isPending);
 
-  useDocumentEvent("visibilitychange", () => {
-    const cur = state.current;
-    if (cur && pending(cur) && instantMode()) {
-      state.current = initialReveal(cur.target, now());
-      force((n) => n + 1);
-    }
-  });
+  // 仅存在待追赶积压时挂 visibilitychange，历史/已落定消息零全局监听。
+  useDocumentEvent(
+    "visibilitychange",
+    isPending
+      ? () => {
+          const cur = state.current;
+          if (cur && pending(cur) && instantMode()) {
+            state.current = initialReveal(cur.target, now());
+            force((n) => n + 1);
+          }
+        }
+      : null,
+  );
 
   return s.cut >= s.target.length ? s.target : s.target.slice(0, s.cut);
 }

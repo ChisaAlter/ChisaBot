@@ -218,7 +218,17 @@ describe("public cookie login", () => {
     expect(blocked.status).toBe(429);
     expect(blocked.headers.has("Retry-After")).toBe(true);
     time += 15 * 60 * 1000 + 1;
+    // 窗口过期后再次失败应原地重置计数并重新开启 15 分钟窗口，而非依赖请求热路径同步 clean()
+    expect(
+      (
+        await service.fetch(
+          request("/auth/login", { username: "admin", password: "wrong" }),
+        )
+      ).status,
+    ).toBe(401);
     expect((await login(service)).status).toBe(200);
+    service.close();
+    // close() 清理后台定时器后应幂等
     service.close();
   });
   test("existing app's empty-body logout still revokes the gateway session", async () => {

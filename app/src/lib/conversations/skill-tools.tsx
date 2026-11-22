@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { ProposedSkillCard } from "@/components/skills/proposed-skill";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import {
@@ -7,6 +7,7 @@ import {
   useInteractionRenderer,
 } from "@/lib/chat/renderers";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
+import { useBotOnScreen, useKeptVisibility } from "@/lib/kept-visible";
 import {
   agentPluginsQueryOptions,
   pluginsPageQueryOptions,
@@ -42,13 +43,27 @@ import {
  * write skills with, and it is granted the same way everything else is.
  */
 
+const AGENT_PLUGINS_POLL_MS = 15_000;
+
 export function SkillTools() {
   // Grants are only fetched once a surface has declared its Bot; the placeholder is not one the
   // server knows, and asking would 404 on every poll.
   const declared = useDeclaredBotId();
+  // 隐藏 KeepAlive 或切到设置页时仅门控 refetchInterval（用非重渲 useKeptVisibility，避免切换期重渲或翻转 enabled）。
+  const visibility = useKeptVisibility();
+  const declaredOnScreen = useBotOnScreen(declared);
+  const declaredOnScreenRef = useRef(declaredOnScreen);
+  declaredOnScreenRef.current = declaredOnScreen;
   // Empty rather than undefined: the factory's own `enabled: agentId.length > 0` is the guard for
   // "no Bot declared yet", so the placeholder never reaches the server.
-  const { data: granted } = useQuery(agentPluginsQueryOptions(declared ?? ""));
+  const { data: granted } = useQuery({
+    ...agentPluginsQueryOptions(declared ?? ""),
+    refetchInterval: () =>
+      visibility.get() && declaredOnScreenRef.current
+        ? AGENT_PLUGINS_POLL_MS
+        : false,
+    refetchIntervalInBackground: false,
+  });
   const authoring = (granted?.skills ?? []).some(
     (skill) => skill.slug === SKILL_CREATOR_SLUG,
   );
