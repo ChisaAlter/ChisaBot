@@ -33,8 +33,8 @@ import {
 const ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 describe("local-conversations streaming hot path & metadata projection", () => {
-  test("SNAPSHOT_CHECKPOINT_MS is raised to 2500ms to cut PG WAL write amplification", () => {
-    expect(SNAPSHOT_CHECKPOINT_MS).toBe(2_500);
+  test("SNAPSHOT_CHECKPOINT_MS is raised to 1000ms to cut PG WAL write amplification", () => {
+    expect(SNAPSHOT_CHECKPOINT_MS).toBe(1_000);
   });
 
   test("prepareConversationMessages short-circuits sanitize and event when privateIds is empty", () => {

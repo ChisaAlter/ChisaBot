@@ -874,8 +874,8 @@ function quietAgUiFailure(error: Error): boolean {
 }
 const MAX_SEGMENTS = 8;
 
-/** Events remain durable individually (50ms delta flush); the full transcript is checkpointed every 2.5s to cut PG WAL write amplification. */
-export const SNAPSHOT_CHECKPOINT_MS = 2_500;
+/** Events remain durable individually (50ms delta flush); the full transcript is checkpointed every 1s to cut PG WAL write amplification. */
+export const SNAPSHOT_CHECKPOINT_MS = 1_000;
 
 function cloneCapturedMessage(message: Readonly<Message>): Message {
   return "toolCalls" in message && Array.isArray(message.toolCalls)
