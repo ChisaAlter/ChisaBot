@@ -298,7 +298,7 @@ describe("PostgresAgentRunner non-blocking live deltas & 50ms DB coalescing", ()
 
     const unsafe = async (sql: string, params: unknown[] = []) => {
       const q = sql.trim().replace(/\s+/g, " ");
-      if (q.startsWith("SELECT * FROM chisabot_local_threads WHERE id = $1")) {
+      if (/^SELECT .+ FROM chisabot_local_threads WHERE id = \$1\b/.test(q)) {
         return [{ ...threadRow }];
       }
       if (q.startsWith("UPDATE chisabot_local_threads SET run_id = $2")) {
@@ -446,7 +446,7 @@ describe("PostgresAgentRunner non-blocking live deltas & 50ms DB coalescing", ()
 
     const unsafe = async (sql: string, params: unknown[] = []) => {
       const q = sql.trim().replace(/\s+/g, " ");
-      if (q.startsWith("SELECT * FROM chisabot_local_threads WHERE id = $1")) {
+      if (/^SELECT .+ FROM chisabot_local_threads WHERE id = \$1\b/.test(q)) {
         return [{ ...threadRow }];
       }
       if (q.startsWith("UPDATE chisabot_local_threads SET run_id = $2")) {
@@ -609,7 +609,7 @@ describe("PostgresAgentRunner non-blocking live deltas & 50ms DB coalescing", ()
 
     const unsafe = async (sql: string, params: unknown[] = []) => {
       const q = sql.trim().replace(/\s+/g, " ");
-      if (q.startsWith("SELECT * FROM chisabot_local_threads WHERE id = $1")) {
+      if (/^SELECT .+ FROM chisabot_local_threads WHERE id = \$1\b/.test(q)) {
         return [{ ...threadRow }];
       }
       if (q.startsWith("UPDATE chisabot_local_threads SET run_id = $2")) {
