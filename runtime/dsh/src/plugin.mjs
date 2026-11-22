@@ -110,8 +110,11 @@ export async function apply(ctx, config) {
     modifyRecord: (key, mutate) => baseCredentials.modifyRecord(key, mutate),
     deleteRecord: (key) => baseCredentials.deleteRecord(key),
   };
-  const piAiCtx = ctx.isolate("credentials");
-  piAiCtx.provide("credentials", overlayCredentials);
+  const piAiCtx =
+    typeof ctx.isolate === "function" ? ctx.isolate("credentials") : ctx;
+  if (typeof piAiCtx.provide === "function") {
+    piAiCtx.provide("credentials", overlayCredentials);
+  }
   let providerProfiles = Object.fromEntries(
     Object.entries(config.providers).map(([id, profile]) => [
       id,
